@@ -6,7 +6,6 @@ read never fails a render: ticker and name only, the bar still mounts, one notic
 """
 import json
 import re
-from pathlib import Path
 
 import pytest
 
@@ -179,48 +178,6 @@ def test_count_line_mounts(render):
     page = render([_card("IN")])
     assert 'id="kit-count"' in page
     assert 'class="n"' in page and "data-total=" in page
-
-
-_KIT_COUNTS = Path(__file__).resolve().parents[2] / "scripts/research/383_card_e_kit_counts.py"
-
-
-@pytest.mark.skipif(not _KIT_COUNTS.exists(),
-                    reason=f"{_KIT_COUNTS.name} is not in this tree")
-def test_counts_script_earnings_reads_the_latest_run(monkeypatch, tmp_path):
-    import importlib.util
-    from pathlib import Path
-    spec = importlib.util.spec_from_file_location(
-        "kit_counts_ke", Path(__file__).resolve().parents[2] / "scripts/research/383_card_e_kit_counts.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    assert "earnings" in mod.BOARDS
-
-    monkeypatch.setattr("RevenueChaser.core.history.last_run",
-                        lambda board: {"run_id": "r9"} if board == "module_earnings_radar" else None)
-
-    def query(sql, params=None, **kw):
-        assert "earnings_cards_history" in sql
-        assert params == ["r9"]
-        assert kw.get("db") == "history"
-        return [{"ticker": "AAA"}, {"ticker": "EXC"}]
-    monkeypatch.setattr("RevenueChaser.core.rawstore.query", query)
-    monkeypatch.setattr("RevenueChaser.core.universe.filter_fields",
-                        lambda ts: {t: {"ticker": t, "index": [], "market_cap": None,
-                                        "gics": ["Unclassified"], "theme_ids": []} for t in ts})
-    out = mod.measure_earnings()
-    assert out["board"] == "earnings"
-    assert out["rows_before"] == 2
-    assert out["rows_after_no_filter"] is None      # no board file: not measured, never a copy of rows_before
-    assert out["filtered_universe"]["rows"] == 2
-
-    # The "after" side is the last Fetch's board file, read as text: its <tr data-ticker> rows.
-    board = tmp_path / "earnings_radar_latest.html"
-    board.write_text('<table><tbody><tr data-ticker="AAA" data-name="A"></tr></tbody></table>'
-                     '<div class="section"><table><tbody><tr class="x" data-ticker="ZZZ"></tr></tbody></table></div>',
-                     encoding="utf-8")
-    out = mod.measure_earnings(board)
-    assert out["rows_after_no_filter"] == 2
-    assert out["board_file_only"] == ["ZZZ"] and out["run_only"] == ["EXC"]
 
 
 def test_count_line_and_section_counts_only_while_a_filter_is_on(render, tmp_path):

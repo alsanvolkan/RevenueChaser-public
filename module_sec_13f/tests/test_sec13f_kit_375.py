@@ -1,10 +1,7 @@
 """SEC 13F filter-kit tests (KF, #375 Card E)."""
 from __future__ import annotations
 
-import json
 import shutil
-import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -138,36 +135,3 @@ console.log(JSON.stringify({calls: calls}));
 """
         got = run_board_js(html, tail, tmp_path, payload=payload)
         assert "applyFilters" in got["calls"]
-
-
-_KIT_COUNTS = Path(__file__).resolve().parents[2] / "scripts/research/383_card_e_kit_counts.py"
-
-
-@pytest.mark.skipif(not _KIT_COUNTS.exists(),
-                    reason=f"{_KIT_COUNTS.name} is not in this tree")
-def test_counts_script_13f_counts_the_payload_rows(monkeypatch):
-    """R7 review: since #429 the 13F page holds no row, so the KF counts card counts the payload's rows (and their
-    filter fields), not ``<tr data-ticker>`` in the HTML (which is always 0 now)."""
-    import importlib.util
-    from pathlib import Path
-    spec = importlib.util.spec_from_file_location(
-        "kit_counts_kf", Path(__file__).resolve().parents[2] / "scripts/research/383_card_e_kit_counts.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    assert "13f" in mod.BOARDS
-
-    totals = {"AAA": {"2025-06-30": _row(100.0)}, "BBB": {"2025-06-30": _row(50.0)}}
-    monkeypatch.setattr("RevenueChaser.module_sec_13f.engine.load_totals", lambda: totals)
-    monkeypatch.setattr("RevenueChaser.module_sec_13f.engine.load_sec13f_meta",
-                        lambda: {"AAA": {"name": "A"}, "BBB": {"name": "B"}})
-    monkeypatch.setattr("RevenueChaser.module_sec_13f.enrich.load_inputs", lambda t: {})
-    monkeypatch.setattr("RevenueChaser.core.universe.filter_fields", lambda ts: {
-        t: {"ticker": t, "name": t, "index": [], "market_cap": 5e10 if t == "AAA" else None,
-            "gics": ["Technology" if t == "AAA" else "Unclassified", ""], "theme_ids": [], "earnings_date": None}
-        for t in ts})
-    out = mod.measure_13f()
-    assert out["board"] == "13f"
-    assert out["rows_before"] == 2
-    assert out["rows_after_no_filter"] == 2
-    assert out["filtered_universe"]["rows"] == 2
-    assert out["filtered_universe"]["sector"] == {"Technology": 1, "Unclassified": 1}

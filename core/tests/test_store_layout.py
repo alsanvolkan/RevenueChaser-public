@@ -25,13 +25,10 @@ from RevenueChaser.core import config
 ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Modules that may legitimately name DATA_DIR: the two store files live there.
-# The #207 dry run reads DATA_DIR only to refuse a snapshot or copy inside the live store (it writes under
-# .cache/research/207/), so it builds no path from it. The #429 13F profile reads it only to refuse running unless the
-# store root is its own copy under .cache/research/429/; the #375 F2 card script likewise (.cache/research/375/); the #379
-# D01 cluster comparison likewise refuses unless the store root is its copy under .cache/research/379/store/.
-_DATA_DIR_ALLOWED = {"core/config.py", "core/rawstore.py", "core/edgar_store.py",
-                     "scripts/research/207_openfigi_dryrun.py", "scripts/research/429_13f_refresh_profile.py",
-                     "scripts/research/375_f2_filled_cells.py", "scripts/research/379_d01_vs_swing_ohlc.py"}
+# This repository carries no research scripts, so the four `scripts/research/*` entries this set used to
+# exempt (the #207, #429, #375 and #379 dry runs, each of which read DATA_DIR only to refuse running against
+# the live store) are gone with them.
+_DATA_DIR_ALLOWED = {"core/config.py", "core/rawstore.py", "core/edgar_store.py"}
 
 _MODULE_DIRS = ["app", "core", "main.py", "module_asymmetric_growth", "module_earnings_radar",
                 "module_financials", "module_fundamentals",
