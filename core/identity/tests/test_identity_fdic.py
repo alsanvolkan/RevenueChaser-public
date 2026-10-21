@@ -114,3 +114,16 @@ def test_default_base_is_the_real_fdic_host(http):
 def test_no_names_is_ok_and_makes_no_call(http):
     r = fdic.match_banks({}, sleep=lambda s: None)
     assert r.status == "ok" and r.rows == [] and not http.calls
+
+
+def test_every_query_follows_a_redirect(monkeypatch):
+    """httpx follows no redirect by default: a 301 would be read as an empty answer, not as a bank."""
+    seen = []
+
+    def get(url, *args, params=None, timeout=None, follow_redirects=False, **kwargs):
+        seen.append(follow_redirects)
+        return FakeResp({"data": []})
+
+    monkeypatch.setattr("httpx.get", get)
+    fdic._lookup("TOWN", "Towne Bank", "https://api.fdic.gov/banks/institutions", lambda s: None)
+    assert seen and set(seen) == {True}
