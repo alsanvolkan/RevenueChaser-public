@@ -347,3 +347,39 @@ class TestDriftInStoreMeta:
         monkeypatch.setenv("RC_STORE_AUTO_ENSURE", "1")      # the same read with the apply on records it
         assert rawstore.query("SELECT count(*) AS n FROM board_settings")[0]["n"] == 0
         assert _stored()["drift"]
+
+
+# ── the two empty legacy columns of edgar_documents (#431, option B) ─────────────────────────
+# Every store open logged twice that edgar_documents carries ``ticker`` and ``content_gzip``, two empty
+# leftovers of the pre-D16 shape (0 non-null rows of 3257). Dropping them is a live-store write, so the
+# MANIFEST names them instead and the drift check leaves them out. Nothing migrates.
+
+_EDGAR_DOCUMENTS = (
+    "CREATE TABLE edgar_documents (accession TEXT PRIMARY KEY, cik TEXT, tickers TEXT, form TEXT, "
+    "filed TEXT, fiscal_year TEXT, doc_url TEXT, path TEXT, sha256 TEXT, bytes_raw BIGINT, "
+    "bytes_gzip BIGINT, fetched_at DOUBLE, source TEXT, run_at DOUBLE")
+
+
+class TestLegacyColumns:
+    def test_the_two_empty_pre_d16_columns_are_not_drift(self, isolate_rawstore, caplog):
+        _live(_EDGAR_DOCUMENTS + ", ticker TEXT, content_gzip BLOB)", db="edgar")
+        with caplog.at_level("WARNING"):
+            _ensure("edgar_documents")
+        assert rawstore.schema_drift() == []
+        assert [r.getMessage() for r in caplog.records if "schema drift" in r.getMessage()] == []
+
+    def test_any_other_extra_column_is_still_drift(self, isolate_rawstore, caplog):
+        _live(_EDGAR_DOCUMENTS + ", ticker TEXT, content_gzip BLOB, legacy TEXT)", db="edgar")
+        with caplog.at_level("WARNING"):
+            _ensure("edgar_documents")
+        assert rawstore.schema_drift() == [{
+            "db": "edgar", "table": "edgar_documents", "kind": "extra_column", "column": "legacy",
+            "live": "VARCHAR", "manifest": None}]
+        assert len([r for r in caplog.records if "schema drift" in r.getMessage()]) == 1
+
+
+def test_no_legacy_column_is_also_a_manifest_column():
+    """A name in ``legacy_columns`` is a live-only leftover: declaring it too would make the exception dead."""
+    wrong = {name: sorted(set(spec.get("legacy_columns", ())) & set(rawstore._columns_of(spec)))
+             for name, spec in rawstore.MANIFEST.items()}
+    assert {k: v for k, v in wrong.items() if v} == {}

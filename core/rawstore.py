@@ -704,6 +704,9 @@ MANIFEST: dict[str, dict] = {
         "write": "append",
         "db": "edgar",
         "sources": [],
+        # Two empty leftovers of the pre-D16 shape (0 non-null rows); dropping them is a separate live-store
+        # change (alsanvolkan/RevenueChaser#431), so the drift check leaves them out instead of warning twice.
+        "legacy_columns": ["ticker", "content_gzip"],
     },
     "edgar_facts": {
         "history_mode": "event",
@@ -2575,9 +2578,12 @@ def _note_drift(conn, name: str, existing: dict[str, str], skip: list[str],
     rebuilt = bool(skip)
     try:
         declared = {col: _base_type(name, col) for col in _columns_of(MANIFEST[name])}
+        # A named leftover of an older shape is not drift and does not migrate (#431).
+        legacy = set(MANIFEST[name].get("legacy_columns") or ())
         for col, live_type in existing.items():
             if col not in declared:
-                _record_drift(name, "extra_column", col, live_type, None, rebuilt)
+                if col not in legacy:
+                    _record_drift(name, "extra_column", col, live_type, None, rebuilt)
             elif col not in skip:
                 want = _canon_type(conn, declared[col])
                 if want.upper() != live_type.upper():
