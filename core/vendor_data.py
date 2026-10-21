@@ -34,6 +34,7 @@ import time
 from datetime import date, datetime
 
 from RevenueChaser.core import calendar, ledger, ownership, rawstore
+from RevenueChaser.core.providers.yfinance import MAX_YEARS
 
 logger = logging.getLogger(__name__)
 
@@ -339,10 +340,11 @@ def read_financials(ticker: str) -> dict | None:
     """The ``yfinance.get_financials``-shaped payload of the newest stored rows for ``ticker``, read-only.
 
     The statements are the newest ``vendor_financials`` row of each (statement, period_end) of source ``yfinance``
-    and report_type ``annual``, merged per fiscal year; the ``.info`` part is the newest ``vendor_valuation`` row's
-    payload. Zero network and zero writes: a Refresh builds its model inputs from these rows instead of fetching
-    (FIN-5, #385), and a ticker the store never fetched reads as ``None`` — no empty payload that would look like
-    data.
+    and report_type ``annual``, merged per fiscal year and cut to the newest ``MAX_YEARS`` fiscal years (the window
+    ``get_financials`` serves, so a Refresh averages over the years its Fetch did); the ``.info`` part is the newest
+    ``vendor_valuation`` row's payload. Zero network and zero writes: a Refresh builds its model inputs from these
+    rows instead of fetching (FIN-5, #385), and a ticker the store never fetched reads as ``None`` — no empty payload
+    that would look like data.
 
     Only ``yfinance`` rows are read: the payload is rebuilt in ``get_financials``' shape, which is what that source
     was mapped from (a UW row carries neither the balance-sheet fields nor ``.info``).
@@ -371,7 +373,7 @@ def read_financials(ticker: str) -> dict | None:
             rec.update({k: v for k, v in payload.items() if k != "fiscal_year"})
             if payload.get("fiscal_year") is not None:
                 rec["fiscal_year"] = payload["fiscal_year"]
-    annual = [years[k] for k in sorted(years)]
+    annual = [years[k] for k in sorted(years)][-MAX_YEARS:]
     for rec in annual:
         rec.setdefault("fiscal_year", str(rec["period_end"])[:4])
 
@@ -387,6 +389,30 @@ def read_financials(ticker: str) -> dict | None:
         "currency": info.get("currency") or "USD",
         "source": "yfinance",
     }
+
+
+def merge_for_refresh(stored: dict | None, cached: dict | None) -> dict | None:
+    """The Refresh's model inputs: each half from the payload that has it (FIN-5, #385).
+
+    ``stored`` is :func:`read_financials`' payload and ``cached`` the raw ``ticker_payload_cache`` payload of the
+    same ticker (a store written before #297 has only the cache). The two halves go missing separately, so a
+    payload cannot be taken whole: an intraday Fetch stores statements and no valuation row (``.info`` is empty,
+    and with it the market cap, beta, price and share count), and an EDGAR-backed AG name has a valuation row and
+    no statement rows (#150, ``annual`` is empty). The statements therefore come from ``stored`` when it has any,
+    else from ``cached``; the valuation part — ``.info`` and the scalars ``get_financials`` derives from it, every
+    key of the payload but ``annual`` — comes from ``stored`` when it has an ``.info`` (a stored valuation row is
+    never empty: ``valuation_row_yfinance`` refuses an empty one), else from ``cached``. A half missing from both
+    stays empty. Either payload alone is returned as it is, and ``None`` means neither exists (the caller turns
+    that into no report).
+    """
+    if stored is None or cached is None:
+        return cached if stored is None else stored
+    out = dict(cached)
+    if stored.get("annual"):
+        out["annual"] = stored["annual"]
+    if stored.get("info"):
+        out.update({k: v for k, v in stored.items() if k != "annual"})
+    return out
 
 
 # ── the capture a job fills ──────────────────────────────────────────────────
