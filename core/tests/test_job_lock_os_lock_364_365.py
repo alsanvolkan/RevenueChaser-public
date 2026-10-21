@@ -11,10 +11,14 @@ covers the single byte at ``_LOCK_BYTE`` and never the metadata another process 
 """
 from __future__ import annotations
 
+import errno
 import os
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+import pytest
 
 from RevenueChaser.core import job_lock, procs
 
@@ -213,3 +217,68 @@ def test_holders_lists_the_live_lock_and_leaves_both_files_alone(rawstore_tmp_db
         assert {p.name: p.read_bytes() for p in (live, stale)} == before, "holders() wrote to a lock file"
     finally:
         _release(fd)
+
+
+# ── R6: a lock that cannot be tried because it is held is TAKEN ───────────────
+
+_HELD = pytest.mark.skipif(not job_lock._OS_LOCK_AVAILABLE, reason="no OS lock on this host")
+
+
+def _held_lock(directory, pid: int = 4242):
+    path = directory / "universe_run.lock"
+    path.write_text(f"{pid} tok 1")
+    return path
+
+
+def _raising(exc):
+    def _os_lock(_fd):
+        raise exc
+    return _os_lock
+
+
+@_HELD
+def test_an_eacces_from_the_lock_attempt_lists_the_holder(tmp_path, monkeypatch):
+    """A held Windows byte-range lock surfaces as PermissionError/EACCES: it is a holder, not "nobody"."""
+    path = _held_lock(tmp_path)
+    monkeypatch.setattr(job_lock, "_os_lock", _raising(PermissionError(errno.EACCES, "Permission denied")))
+    assert job_lock.holders(tmp_path) == [("universe_run", 4242)]
+    assert path.read_text() == "4242 tok 1", "holders() wrote to the lock file"
+
+
+@_HELD
+def test_an_eperm_from_the_lock_attempt_lists_the_holder(tmp_path, monkeypatch):
+    """POSIX lockf reports a held lock as EPERM on some filesystems."""
+    _held_lock(tmp_path)
+    monkeypatch.setattr(job_lock, "_os_lock", _raising(PermissionError(errno.EPERM, "Operation not permitted")))
+    assert job_lock.holders(tmp_path) == [("universe_run", 4242)]
+
+
+@_HELD
+def test_a_lock_file_that_cannot_be_opened_lists_the_holder(tmp_path, monkeypatch):
+    """The open itself is refused (a mandatory range, or an unreadable file): that is a holder too."""
+    path = _held_lock(tmp_path)
+    real_open = os.open
+
+    def deny(target, flags, *args, **kwargs):
+        if Path(target) == path:
+            raise PermissionError(errno.EACCES, "Permission denied", str(target))
+        return real_open(target, flags, *args, **kwargs)
+
+    monkeypatch.setattr(job_lock.os, "open", deny)
+    assert job_lock.holders(tmp_path) == [("universe_run", 4242)]
+
+
+@_HELD
+def test_a_lock_file_that_vanishes_before_the_try_is_no_holder(tmp_path, monkeypatch):
+    """ENOENT is the one answer that means nobody holds it: it must not raise, and must not be listed."""
+    path = _held_lock(tmp_path)
+    real_open = os.open
+
+    def gone(target, flags, *args, **kwargs):
+        if Path(target) == path:
+            raise FileNotFoundError(errno.ENOENT, "No such file or directory", str(target))
+        return real_open(target, flags, *args, **kwargs)
+
+    monkeypatch.setattr(job_lock.os, "open", gone)
+    assert job_lock.holders(tmp_path) == []
+

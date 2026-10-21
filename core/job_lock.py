@@ -15,7 +15,8 @@ was taken and ``False`` when another holder exists.
 The file holds ``"<pid> <token> <start>"`` at offset 0: that is what ``holders()`` reports and what a release checks
 before removing the file, so a holder whose lock was broken can never delete the lock of whoever took it over. On
 Windows the OS lock is a mandatory byte range, so it covers the one byte at ``_LOCK_BYTE`` and never the metadata a
-second process has to read.
+second process has to read. ``holders()`` reads a lock it cannot try — ``EACCES``, ``EPERM``, ``EAGAIN`` /
+``EWOULDBLOCK``, from the try or from the open — as held, and only ``ENOENT`` as no holder (#365).
 
 A second thread of this process is excluded too: a lock file carrying a token this process issued and still holds is
 live even though the kernel would let the same process re-take it.
@@ -36,6 +37,7 @@ itself, can carry the PID in an old lock file. So a lock is live only when
 """
 from __future__ import annotations
 
+import errno
 import os
 import threading
 import time
@@ -158,17 +160,36 @@ def _holder_live(pid: int | None, token: str, start: str) -> bool:
     return True
 
 
+def _taken_error(exc: OSError) -> bool:
+    """True when ``exc`` says the lock is HELD (or cannot be tried), False only when the file is gone.
+
+    A held lock surfaces as ``PermissionError`` / ``EACCES`` (a Windows mandatory byte range refusing the open
+    or the try), ``EPERM`` (POSIX ``lockf`` through some filesystems, and ``flock``) or ``EAGAIN`` /
+    ``EWOULDBLOCK`` (a non-blocking lock that is taken). None of those may read as "no holder":
+    ``core.universe_fetch.universe_run_holder`` uses ``holders()`` to hold a board Fetch off during a universe
+    run, and "nobody holds it" there starts the Fetch beside the run (#365). Only ENOENT — the file vanished
+    between the glob and here — is nobody's lock.
+    """
+    return getattr(exc, "errno", None) != errno.ENOENT
+
+
 def _os_lock_is_taken(path: Path) -> bool:
-    """True when a holder has ``path``'s OS lock. Tries it and releases it at once; writes nothing to the file."""
+    """True when a holder has ``path``'s OS lock. Tries it and releases it at once; writes nothing.
+
+    A try the platform refuses is a held lock (``_taken_error``), never "no holder", and nothing here raises.
+    """
     try:
         fd = os.open(path, os.O_RDWR)
-    except OSError:
-        return False
+    except OSError as exc:                              # ENOENT: gone; anything else: it cannot be tried
+        return _taken_error(exc)
     try:
-        if not _os_lock(fd):
-            return True
-        _os_unlock(fd)
-        return False
+        try:
+            got = _os_lock(fd)
+        except OSError as exc:                          # a platform that reports the refusal by raising
+            return _taken_error(exc)
+        if got:
+            _os_unlock(fd)
+        return not got
     finally:
         os.close(fd)
 
@@ -208,7 +229,10 @@ def _break_if_unchanged(path: Path, seen: tuple[int | None, str, str]) -> None:
 
 
 def holders(directory: Path | None = None) -> list[tuple[str, int]]:
-    """``(name, pid)`` of every live lock in the store dir. Checks only: never takes, truncates or removes a lock."""
+    """``(name, pid)`` of every live lock in the store dir. Checks only: never takes, truncates or removes a lock.
+
+    A lock this cannot be tried — permission denied, or any OS-lock error but ENOENT — is a holder (``_taken_error``).
+    """
     d = Path(directory or Path(rawstore.DB_PATH).parent)
     out = []
     for p in d.glob("*.lock"):
