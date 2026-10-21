@@ -8,9 +8,14 @@ import zlib
 from datetime import date, timedelta
 from pathlib import Path
 
+import pytest
+
 import duckdb
 
 RESEARCH = Path(__file__).resolve().parents[1] / "research"
+
+pytestmark = pytest.mark.skipif(not RESEARCH.is_dir(),
+                                reason="scripts/research/ is not in this tree")
 
 
 def _load(name):

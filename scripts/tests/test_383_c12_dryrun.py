@@ -18,6 +18,9 @@ from RevenueChaser.module_swing_potential import pipeline as sp
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "research" / "383_c12_dryrun.py"
 
+pytestmark = pytest.mark.skipif(not _SCRIPT.exists(),
+                                reason=f"{_SCRIPT.name} is not in this tree")
+
 
 @pytest.fixture(scope="module")
 def dry():

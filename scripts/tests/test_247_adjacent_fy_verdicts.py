@@ -16,9 +16,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from RevenueChaser.core import rawstore
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "research" / "247_adjacent_fy_verdicts.py"
+
+pytestmark = pytest.mark.skipif(not _SCRIPT.exists(),
+                                reason=f"{_SCRIPT.name} is not in this tree")
+
 _QUOTE = {"regularMarketPrice": 95.0, "fiftyTwoWeekHigh": 100.0, "fiftyDayAverage": 90.0,
           "averageDailyVolume10Day": 2e6, "averageDailyVolume3Month": 1e6}
 

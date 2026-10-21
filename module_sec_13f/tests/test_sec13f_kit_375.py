@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -139,6 +140,11 @@ console.log(JSON.stringify({calls: calls}));
         assert "applyFilters" in got["calls"]
 
 
+_KIT_COUNTS = Path(__file__).resolve().parents[2] / "scripts/research/383_card_e_kit_counts.py"
+
+
+@pytest.mark.skipif(not _KIT_COUNTS.exists(),
+                    reason=f"{_KIT_COUNTS.name} is not in this tree")
 def test_counts_script_13f_counts_the_payload_rows(monkeypatch):
     """R7 review: since #429 the 13F page holds no row, so the KF counts card counts the payload's rows (and their
     filter fields), not ``<tr data-ticker>`` in the HTML (which is always 0 now)."""

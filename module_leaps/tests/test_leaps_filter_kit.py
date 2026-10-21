@@ -112,6 +112,8 @@ def _counts_mod():
     return mod
 
 
+@pytest.mark.skipif(not _COUNTS.exists(),
+                    reason=f"{_COUNTS.name} is not in this tree")
 def test_counts_script_imports_nothing_of_revenuechaser_before_the_store_root_points_at_the_copy():
     """Run as a file on the PC: the env seam (RC_STORE_DIR) only works before the first RevenueChaser import, and
     the package is importable only once the checkout's parent is on sys.path (429 pattern)."""
@@ -124,6 +126,8 @@ def test_counts_script_imports_nothing_of_revenuechaser_before_the_store_root_po
     assert 'RC_STORE_AUTO_ENSURE="0"' in src and "RC_STORE_DIR=" in src
 
 
+@pytest.mark.skipif(not _COUNTS.exists(),
+                    reason=f"{_COUNTS.name} is not in this tree")
 def test_counts_script_copies_the_newest_snapshot_and_refuses_a_store_root_that_is_not_the_copy(
         tmp_path, monkeypatch):
     mod = _counts_mod()
@@ -143,6 +147,8 @@ def test_counts_script_copies_the_newest_snapshot_and_refuses_a_store_root_that_
     assert os.environ["RC_STORE_DIR"] == str(tmp_path / "out" / "store")
 
 
+@pytest.mark.skipif(not _COUNTS.exists(),
+                    reason=f"{_COUNTS.name} is not in this tree")
 def test_counts_script_store_dir_must_be_a_copy_under_its_folder(tmp_path, monkeypatch):
     mod = _counts_mod()
     monkeypatch.setattr(mod, "OUT", tmp_path / "out")
@@ -152,11 +158,15 @@ def test_counts_script_store_dir_must_be_a_copy_under_its_folder(tmp_path, monke
         mod.main(["--board", "leaps", "--store-dir", str(tmp_path / "live")])
 
 
+@pytest.mark.skipif(not _COUNTS.exists(),
+                    reason=f"{_COUNTS.name} is not in this tree")
 def test_counts_script_counts_the_rendered_rows_per_tier(render):
     page = render([_snap("WL1")], [_snap("U1"), _snap("U2", score=30), _snap("U3", score=5)])
     assert _counts_mod().rendered_rows(page) == {"watchlist": 1, "high": 1, "emerging": 1, "quiet": 1}
 
 
+@pytest.mark.skipif(not _COUNTS.exists(),
+                    reason=f"{_COUNTS.name} is not in this tree")
 def test_counts_script_summarize():
     mod = _counts_mod()
     rows = [{"index": ["S&P 500"], "market_cap": 5e11, "gics": ["Technology", "x"], "theme_ids": ["a"]},

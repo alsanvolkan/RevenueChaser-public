@@ -30,6 +30,9 @@ from RevenueChaser.core.providers import sec_edgar as se
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "research" / "246_reextract_dryrun.py"
 
+pytestmark = pytest.mark.skipif(not _SCRIPT.exists(),
+                                reason=f"{_SCRIPT.name} is not in this tree")
+
 REV = "Revenues"
 RFC = "RevenueFromContractWithCustomerExcludingAssessedTax"
 SALES = "SalesRevenueNet"
