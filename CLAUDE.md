@@ -64,9 +64,10 @@ Code, comments, commit messages, issues and docs are written in **English**.
 
 ## Research scripts
 
-Research and one-off measurement scripts are not part of the package. Their outputs and raw caches belong in
-`.cache/research/<issue>/`, which is gitignored and regenerable.
+Research and one-off measurement scripts are **not part of this repository**. A measurement is run once, its
+number is recorded in the issue or the doc that needed it, and the script does not stay behind. So this tree
+carries no `scripts/research/`, and no test drives one; `scripts/tests/` tests the real jobs in `scripts/`.
+Outputs and raw caches belong in `.cache/research/<issue>/`, which is gitignored and regenerable.
 
-This tree does not carry `scripts/research/`, so the tests that drive those scripts have no subject here and skip
-themselves (`pytestmark = pytest.mark.skipif(not _SCRIPT.exists(), ...)`). Everything the package itself ships is
-tested; nothing is skipped to make the suite pass. A test that drives a research script carries the same guard.
+A few docstrings in `core/` still credit the research script a number came from (`core/reaction_anchor.py`,
+`core/rawstore.py`, `core/providers/openfigi.py`). Those names are provenance, not files in this tree.
