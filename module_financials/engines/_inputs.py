@@ -9,6 +9,12 @@ from __future__ import annotations
 from ..config import DEFAULT_TAX_RATE, sector_defaults, to_float
 
 
+# A measured tax rate is only believable inside this band: a reported "Tax Provision" can be negative (a tax
+# benefit) or larger than pretax income (a one-off, a valuation-allowance release), and such a ratio is not the
+# firm's tax rate. Outside the band the rate is unknown, so the sector default stands and the report says so.
+MEASURED_TAX_RATE_BAND = (0.0, 0.60)
+
+
 # A missing D&A line is modelled as 0 (EBIT = EBITDA, no add-back); both engines say so in these words (FIN-2).
 DNA_ASSUMED_ZERO = "D&A: assumed 0 (not reported)"
 
@@ -30,23 +36,28 @@ def default_tax_rate(sector: str | None) -> float:
 
 
 def statement_tax_rate(statement: dict) -> float | None:
-    """``tax_provision / pretax_income`` from the statements, ``None`` when either is missing.
+    """``tax_provision / pretax_income`` from the statements, ``None`` when it is not a believable rate.
 
-    A negative or zero pretax income has no meaningful rate (the ratio flips or explodes), so it is
-    unknown too, not a rate.
+    Unknown, not a rate: either line missing; a negative or zero pretax income (the ratio flips or explodes);
+    and a ratio outside ``MEASURED_TAX_RATE_BAND`` — a negative provision (a tax benefit) or a provision larger
+    than pretax income. The caller then falls back to the sector default.
     """
     pretax = to_float((statement or {}).get("pretax_income"))
     provision = to_float((statement or {}).get("tax_provision"))
     if pretax is None or provision is None or pretax <= 0:
         return None
-    return provision / pretax
+    rate = provision / pretax
+    low, high = MEASURED_TAX_RATE_BAND
+    return None if rate < low or rate > high else rate
 
 
 def effective_tax_rate(assumptions: dict, statement: dict, sector: str | None) -> tuple[float, str]:
     """``(rate, source)``: the user's (0 included), then the statements, then the sector default.
 
     The statement rung is a stored ``tax_rate`` when the payload has one, else ``tax_provision / pretax_income``
-    (FIN-3); ``source`` is ``assumption`` / ``statements`` / ``default`` and the report labels the default (FIN-9 B).
+    inside ``MEASURED_TAX_RATE_BAND`` (FIN-3); an implausible ratio is unknown, so it takes the sector default and
+    is labelled ``default``. ``source`` is ``assumption`` / ``statements`` / ``default``; the report labels the
+    default (FIN-9 B). A rate the user typed is their number, band or no band — a typed 0 is a 0.
     """
     given = to_float((assumptions or {}).get("tax_rate"))
     if given is not None:

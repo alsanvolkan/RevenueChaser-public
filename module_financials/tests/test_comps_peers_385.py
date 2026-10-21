@@ -154,3 +154,48 @@ def test_tax_is_provision_over_pretax_and_the_sector_default_where_the_statement
     # The DCF reads the same rule (one helper, two engines).
     assert run_dcf(financials)["assumptions"]["tax_rate"] == pytest.approx(50.0 / 240.0)
     assert run_dcf(without)["assumptions"]["tax_rate"] == pytest.approx(0.21)
+
+
+# ── a measured rate outside a plausible band is unknown, not a rate (review MUST-1) ───────────────────
+def _with_statement_tax(financials, pretax, provision):
+    """The latest year reports this pretax income and this tax provision; the earlier years are untouched."""
+    f = copy.deepcopy(financials)
+    f["annual"][-1]["pretax_income"] = pretax
+    f["annual"][-1]["tax_provision"] = provision
+    f["annual"][-1].pop("tax_rate", None)
+    return f
+
+
+@pytest.mark.parametrize("pretax, provision, what", [
+    (240.0, -30.0, "a tax benefit: yfinance reports a negative Tax Provision, so the ratio is negative"),
+    (240.0, 300.0, "a one-off or a valuation-allowance release: the ratio is above 1"),
+])
+def test_a_measured_rate_outside_the_band_falls_back_to_the_default(financials, pretax, provision, what):
+    """Both engines: an implausible ratio is not a rate, and the FIN-9 B label says "default" so it reads honestly.
+
+    Unbounded, it would flip the DCF's NOPAT sign and drive the after-tax cost of debt negative (lowering WACC
+    and raising the valuation), and make the 3-statement tax line a permanent cash inflow.
+    """
+    fin = _with_statement_tax(financials, pretax, provision)
+    for engine in (run_dcf, run_three_statement):
+        got = engine(fin)["assumptions"]
+        assert got["tax_rate"] == pytest.approx(0.21), what
+        assert got["tax_rate_source"] == "default", what
+
+
+@pytest.mark.parametrize("provision, rate", [(0.0, 0.0), (144.0, 0.60)])
+def test_the_band_edges_are_kept_as_measured_rates(financials, provision, rate):
+    """0.0 and 0.60 are inside the band: a zero-tax year is a real rate, not a missing one."""
+    fin = _with_statement_tax(financials, 240.0, provision)
+    for engine in (run_dcf, run_three_statement):
+        got = engine(fin)["assumptions"]
+        assert got["tax_rate"] == pytest.approx(rate)
+        assert got["tax_rate_source"] == "statements"
+
+
+def test_a_rate_the_user_typed_is_never_banded(financials):
+    """The band judges a measured ratio, not the user: a typed rate is their number, even outside the band."""
+    for engine in (run_dcf, run_three_statement):
+        got = engine(financials, {"tax_rate": 0.75})["assumptions"]
+        assert got["tax_rate"] == pytest.approx(0.75)
+        assert got["tax_rate_source"] == "assumption"
