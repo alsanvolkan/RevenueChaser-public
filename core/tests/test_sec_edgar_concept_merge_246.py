@@ -8,7 +8,8 @@ included), so a key one year apart that is two fiscal years apart is never chain
 at the first year that is missing or fails. Quarterly series are not merged.
 
 Synthetic companyfacts only, no network. ``CONCEPTS["revenue"]`` lists, in order:
-``Revenues``, ``RevenueFromContractWithCustomerExcludingAssessedTax``, ``SalesRevenueNet``.
+``Revenues``, ``RevenueFromContractWithCustomerExcludingAssessedTax``, ``SalesRevenueNet``,
+``RevenueFromContractWithCustomerIncludingAssessedTax``.
 """
 from __future__ import annotations
 
@@ -242,14 +243,24 @@ _REVENUE_TAGS = se.CONCEPTS["revenue"][0]
 
 
 def _today_pick(facts: dict) -> dict:
-    """A copy of the selection before #246: one series, the newest year then the longest."""
+    """A copy of the selection before #246: one series, the newest year then the longest.
+
+    It carries the #435 exception too: ``_annual_facts`` makes the excluding-tax sibling the
+    primary when both ASC 606 tax tags end in the same newest year, so the oracle must as well.
+    """
     best: dict = {}
+    by_concept: dict = {}
     for concept in _REVENUE_TAGS:
         series = se._annual_facts(facts, [concept], "USD")
         if not series:
             continue
+        by_concept[concept] = series
         if not best or max(series) > max(best) or (max(series) == max(best) and len(series) > len(best)):
             best = series
+    broader, narrower = se._ASSESSED_TAX_SIBLINGS
+    if (best and best is by_concept.get(broader) and narrower in by_concept
+            and max(by_concept[narrower]) == max(best)):
+        best = by_concept[narrower]
     return best
 
 

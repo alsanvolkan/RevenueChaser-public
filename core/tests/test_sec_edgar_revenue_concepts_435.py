@@ -84,3 +84,31 @@ def test_c5_a_bank_concept_only_filer_still_yields_no_revenue():
     recs = _recs(facts)
     assert recs and all(r["revenue"] is None for r in recs.values())
     assert _rev(facts) == {}
+
+
+# ── F1 / F2: a longer including-tax series must not replace overlapping years ─
+
+def test_f1_the_longer_including_tax_series_never_replaces_an_overlapping_year():
+    """F1 — same newest year, so the excluding-tax series stays primary however long the sibling is.
+
+    Every year's value names its source (``base + year``): 2024-2025 must keep the
+    excluding-tax figure (``10000 + y``) they already held, and 2019-2023 are the backfilled
+    contiguous run only the including-tax tag reports (``20000 + y``).
+    """
+    facts = _facts(flow={RFC: _s(range(2024, 2026), 10000), RFC_INC: _s(range(2019, 2026), 20000)})
+    assert _rev(facts) == {
+        "2019": 22019.0, "2020": 22020.0, "2021": 22021.0, "2022": 22022.0, "2023": 22023.0,
+        "2024": 12024.0, "2025": 12025.0}
+    assert max(_recs(facts)) == "2025"
+
+
+def test_f2_an_including_tax_series_with_a_newer_newest_year_still_wins_the_pick():
+    """F2 — #435's own case: the including-tax tag ends in a newer year, so it is the primary.
+
+    The older excluding-tax years below it are backfilled, and an overlapping year (2021-2023)
+    keeps the primary's including-tax value — the sibling rule only fires on an equal newest year.
+    """
+    facts = _facts(flow={RFC: _s(range(2019, 2024), 10000), RFC_INC: _s(range(2021, 2026), 20000)})
+    assert _rev(facts) == {
+        "2019": 12019.0, "2020": 12020.0,
+        "2021": 22021.0, "2022": 22022.0, "2023": 22023.0, "2024": 22024.0, "2025": 22025.0}

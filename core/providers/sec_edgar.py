@@ -191,16 +191,21 @@ _STI_HTM_TAGS = ["HeldToMaturitySecuritiesCurrent",
 #
 # ``revenue`` reads the ASC 606 including-assessed-tax sibling
 # (``RevenueFromContractWithCustomerIncludingAssessedTax``) LAST (#435): of 39 filers measured with a
-# fresh record and no revenue, 25 tag only that one in their newest years. It goes after the
-# excluding-tax concept because the two differ by the assessed tax, so on a tie (both tags on the
-# same year) the narrower figure must win; the list order is the tie-break. A filer whose
-# including-tax series is older than what the other tags already hold (AMH 2018 vs 2020, BESS 2021
-# vs 2023, WOLF 2020 vs 2025) keeps its numbers: the newest series wins the pick and the sibling
-# can only backfill years below it. Bank top lines (``InterestAndDividendIncomeOperating``,
-# ``RevenuesNetOfInterestExpense``) are NOT read: interest income is a different definition of the
-# top line and therefore the owner's decision, and no other tag that merely contains the word
-# "Revenue" is one (``ContractWithCustomerLiabilityRevenueRecognized``,
-# ``IncreaseDecreaseInDeferredRevenue``, ``CostOfRevenue`` and pro-forma acquisition revenue).
+# fresh record and no revenue, 25 tag only that one in their newest years. The pick itself is the
+# newest year, then the longest series, then list order; length is therefore NOT a safe tie-break
+# between these two tags, because a filer can tag the broader one over a longer history. They differ
+# only by the assessed tax, so ``_annual_facts`` has one explicit rule for the pair: when the pick is
+# the including-tax sibling and the excluding-tax tag reports the SAME newest year, the
+# excluding-tax series is the primary, and the sibling can only add years it alone reports. List
+# order is the tie-break for an ADDED year (``_backfill_history``), which is why the new tag goes
+# last. A filer whose including-tax series is older than what the other tags already hold (AMH 2018
+# vs 2020, BESS 2021 vs 2023, WOLF 2020 vs 2025) keeps its numbers: the newest series wins the pick
+# and the sibling can only backfill years below it. Bank top lines
+# (``InterestAndDividendIncomeOperating``, ``RevenuesNetOfInterestExpense``) are NOT read: interest
+# income is a different definition of the top line and therefore the owner's decision, and no other
+# tag that merely contains the word "Revenue" is one
+# (``ContractWithCustomerLiabilityRevenueRecognized``, ``IncreaseDecreaseInDeferredRevenue``,
+# ``CostOfRevenue`` and pro-forma acquisition revenue).
 #
 # ``cost_of_revenue`` is the one exception: it is resolved PER PERIOD in strict
 # priority order (``_PRIORITY_FIELDS`` below), never by the longest series, and it
@@ -213,6 +218,11 @@ _STI_HTM_TAGS = ["HeldToMaturitySecuritiesCurrent",
 # only one that is ever counted (``core/liquidity.py``); ``marketable_securities_noncurrent``
 # and ``long_term_investments`` (equity-method and strategic stakes, not cash-like) are stored
 # for visibility and never enter a gate. None of the fields in ``_NEVER_A_RECORD`` adds a record.
+# ``RevenueFromContractWithCustomerIncludingAssessedTax`` and its excluding-tax sibling are one
+# definition apart: broader first, narrower second (#435).
+_ASSESSED_TAX_SIBLINGS = ("RevenueFromContractWithCustomerIncludingAssessedTax",
+                          "RevenueFromContractWithCustomerExcludingAssessedTax")
+
 CONCEPTS = {
     "revenue": (["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet",
                  "RevenueFromContractWithCustomerIncludingAssessedTax"], "USD"),
@@ -436,15 +446,23 @@ def _annual_facts(facts: dict, concepts: list[str], unit: str) -> dict[str, tupl
 
     # En güncel (maks yıl) ve en kapsamlı konsept serisini seç; diğer konseptler yalnızca onun
     # eksik bıraktığı bitişik yılları ekler (#246)
-    found = []
+    found: dict[str, dict[str, tuple[float, str]]] = {}
+    picked = ""
     for concept in concepts:
         series = _one(concept)
         if not series:
             continue
-        found.append(series)
+        found[concept] = series
         if not best or max(series) > max(best) or (max(series) == max(best) and len(series) > len(best)):
-            best = series
-    return _backfill_history(best, found) if best else best
+            best, picked = series, concept
+    # The two ASC 606 tax siblings are one definition apart, so the broader one must never take
+    # over years the narrower tag already reports: on an equal newest year the narrower series is
+    # the primary however long the broader one is (#435). It stays in ``found``, so the backfill
+    # still adds the years only it reports.
+    broader, narrower = _ASSESSED_TAX_SIBLINGS
+    if best and picked == broader and narrower in found and max(found[narrower]) == max(best):
+        best = found[narrower]
+    return _backfill_history(best, list(found.values())) if best else best
 
 
 def _series_by_year(facts: dict, concepts: list[str], unit: str) -> dict[str, float]:
