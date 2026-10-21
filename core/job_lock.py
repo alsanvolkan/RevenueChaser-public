@@ -6,20 +6,25 @@ writers, and the whole universe refresh job and its CLI, #244), with ``"universe
 job runs, so a board Fetch can tell it from Phase B, and ``"board_fetch_<board>"`` while a single-board Fetch runs,
 so a universe run can tell it is running (``universe_fetch.board_fetch_lock``, #356).
 
-The lock is a file created with ``O_CREAT|O_EXCL`` in the store dir, so it works
-on Windows and POSIX without extra deps. ``acquire()`` yields ``True`` when the
-lock was taken and ``False`` when another holder exists.
+The lock is a file in the store dir, and **the kernel owns its liveness**: ``acquire()`` opens it and takes a
+non-blocking OS lock on it (``fcntl.flock`` on POSIX, ``msvcrt.locking`` on Windows). So a holder that dies releases
+its lock, a lock file left behind is harmless, and a takeover is a single atomic step — two acquirers can no longer
+both judge one abandoned file stale and both end up holding it (#365). ``acquire()`` yields ``True`` when the lock
+was taken and ``False`` when another holder exists.
 
-The file holds ``"<pid> <token> <start>"``. A lock is broken only when its holder
-is no longer running — a job that legitimately runs for hours keeps its lock. A
-file whose owner cannot be read (empty/garbled, e.g. a crash mid-write) falls
-back to the age rule ``stale_after``. Release removes the file only if it still
-carries our token, so a holder whose lock was broken can never delete the lock
-of whoever took it over.
+The file holds ``"<pid> <token> <start>"`` at offset 0: that is what ``holders()`` reports and what a release checks
+before removing the file, so a holder whose lock was broken can never delete the lock of whoever took it over. On
+Windows the OS lock is a mandatory byte range, so it covers the one byte at ``_LOCK_BYTE`` and never the metadata a
+second process has to read.
 
-"Still running" is more than "the PID runs" (#355): Windows reuses PIDs, so after
-a crash or a reboot another process, or the restarted dashboard itself, can carry
-the PID in an old lock file. So a lock is live only when
+A second thread of this process is excluded too: a lock file carrying a token this process issued and still holds is
+live even though the kernel would let the same process re-take it.
+
+Where no OS lock exists (``_OS_LOCK_AVAILABLE`` is False: neither ``fcntl`` nor ``msvcrt`` imports) the older
+heuristic runs unchanged: the PID plus its start time decides, and a file whose owner cannot be read at all (empty or
+garbled, e.g. a crash mid-write) falls back to the age rule ``stale_after``. "Still running" there is more than
+"the PID runs" (#355): Windows reuses PIDs, so after a crash or a reboot another process, or the restarted dashboard
+itself, can carry the PID in an old lock file. So a lock is live only when
 - its PID is ours and its token is one this process issued and still holds, or
 - its PID runs and that process started at ``<start>`` (``procs.process_start_time``).
   When either start time is unknown (a lock written before #355, access denied, an
@@ -39,6 +44,22 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from . import procs, rawstore
+
+try:                                                    # POSIX
+    import fcntl
+except ImportError:                                     # pragma: no cover - Windows
+    fcntl = None
+try:                                                    # Windows
+    import msvcrt
+except ImportError:                                     # pragma: no cover - POSIX
+    msvcrt = None
+
+# False only where neither module exists: then the PID-and-start-time fallback below is the whole rule.
+_OS_LOCK_AVAILABLE = fcntl is not None or msvcrt is not None
+
+# The byte the OS lock covers on Windows. msvcrt.locking takes a *mandatory* byte-range lock, so this must never be
+# the byte the metadata sits in: the owner is written at offset 0 and stays readable by a second process (#365).
+_LOCK_BYTE = 1 << 20
 
 
 # Tokens of the locks this process holds now. A lock file with our PID and any other token was left by an
@@ -76,11 +97,58 @@ def _read_owner(path: Path) -> tuple[int | None, str, str]:
     return pid, (parts[1] if len(parts) > 1 else ""), (parts[2] if len(parts) > 2 else "")
 
 
-def _holder_live(pid: int, token: str, start: str) -> bool:
-    """True when the process that wrote this lock still runs (see the module docstring, #355)."""
+def _os_lock(fd: int) -> bool:
+    """Take this process's exclusive OS lock on ``fd``; False when another holder has it. Never raises.
+
+    ``flock`` is preferred on POSIX: its lock belongs to the open file description, so an unrelated open and close
+    of the same file (``holders()``) cannot drop it the way a POSIX record lock would.
+    """
+    try:
+        if fcntl is not None:
+            if getattr(fcntl, "flock", None) is not None:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:
+                os.lseek(fd, _LOCK_BYTE, os.SEEK_SET)
+                fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB, 1)
+        else:
+            os.lseek(fd, _LOCK_BYTE, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        os.lseek(fd, 0, os.SEEK_SET)
+        return True
+    except OSError:                                     # BlockingIOError included: someone else holds it
+        return False
+
+
+def _os_unlock(fd: int) -> None:
+    """Release what ``_os_lock`` took. Never raises."""
+    try:
+        if fcntl is not None:
+            if getattr(fcntl, "flock", None) is not None:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            else:
+                os.lseek(fd, _LOCK_BYTE, os.SEEK_SET)
+                fcntl.lockf(fd, fcntl.LOCK_UN, 1)
+        else:
+            os.lseek(fd, _LOCK_BYTE, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    except OSError:
+        pass
+
+
+def _token_is_ours(token: str) -> bool:
+    """True while ``token`` is one this process issued and has not released."""
+    if not token:
+        return False
+    with _HELD_GUARD:
+        return token in _HELD_TOKENS
+
+
+def _holder_live(pid: int | None, token: str, start: str) -> bool:
+    """True when the process that wrote this lock still runs (the fallback rule, see the module docstring)."""
+    if pid is None:
+        return False
     if pid == os.getpid():
-        with _HELD_GUARD:
-            return token in _HELD_TOKENS
+        return _token_is_ours(token)
     if not procs.pid_alive(pid):
         return False
     if start:
@@ -88,6 +156,39 @@ def _holder_live(pid: int, token: str, start: str) -> bool:
         if now is not None and now != start:
             return False                      # the PID runs, but it is another process now
     return True
+
+
+def _os_lock_is_taken(path: Path) -> bool:
+    """True when a holder has ``path``'s OS lock. Tries it and releases it at once; writes nothing to the file."""
+    try:
+        fd = os.open(path, os.O_RDWR)
+    except OSError:
+        return False
+    try:
+        if not _os_lock(fd):
+            return True
+        _os_unlock(fd)
+        return False
+    finally:
+        os.close(fd)
+
+
+def _live_pid(path: Path) -> int | None:
+    """The PID of a live holder of ``path``, or None. Reads, and tries the OS lock; never steals or unlinks."""
+    pid, token, start = _read_owner(path)
+    if pid is None:
+        return None
+    if pid == os.getpid() and _token_is_ours(token):
+        return pid                            # ours: another thread of this process may hold it
+    if not _OS_LOCK_AVAILABLE:
+        return pid if _holder_live(pid, token, start) else None
+    return pid if _os_lock_is_taken(path) else None
+
+
+def _held_by_this_process(path: Path) -> bool:
+    """True when another thread of this process holds ``path``: the kernel would let us re-take our own lock."""
+    pid, token, _start = _read_owner(path)
+    return pid == os.getpid() and _token_is_ours(token)
 
 
 def _is_stale(path: Path, stale_after: float) -> bool:
@@ -107,12 +208,12 @@ def _break_if_unchanged(path: Path, seen: tuple[int | None, str, str]) -> None:
 
 
 def holders(directory: Path | None = None) -> list[tuple[str, int]]:
-    """``(name, pid)`` of every live lock in the store dir."""
+    """``(name, pid)`` of every live lock in the store dir. Checks only: never takes, truncates or removes a lock."""
     d = Path(directory or Path(rawstore.DB_PATH).parent)
     out = []
     for p in d.glob("*.lock"):
-        pid, token, start = _read_owner(p)
-        if pid is not None and _holder_live(pid, token, start):
+        pid = _live_pid(p)
+        if pid is not None:
             out.append((p.stem, pid))
     return out
 
@@ -124,33 +225,52 @@ def acquire(name: str = "edgar", wait: float = 0.0, stale_after: float = 3600.0)
     deadline = time.time() + max(0.0, wait)
     token = uuid.uuid4().hex
     got = False
+    fd = None
     # Registered before the file exists, so another thread of ours never sees our fresh lock as a leftover.
     with _HELD_GUARD:
         _HELD_TOKENS.add(token)
     try:
-        while True:
-            try:
-                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                try:
+        if _OS_LOCK_AVAILABLE:
+            while True:
+                fd = os.open(path, os.O_CREAT | os.O_RDWR)
+                if not _held_by_this_process(path) and _os_lock(fd):
+                    os.ftruncate(fd, 0)
+                    os.lseek(fd, 0, os.SEEK_SET)
                     os.write(fd, f"{os.getpid()} {token} {_our_start()}".rstrip().encode("ascii"))
-                finally:
-                    os.close(fd)
-                got = True
-                break
-            except FileExistsError:
-                seen = _read_owner(path)
-                if _is_stale(path, stale_after):
-                    try:
-                        _break_if_unchanged(path, seen)
-                        continue
-                    except OSError:
-                        pass  # could not remove it: fall through to the deadline
+                    got = True
+                    break
+                os.close(fd)
+                fd = None
                 if time.time() >= deadline:
                     break
                 time.sleep(0.2)
+        else:
+            while True:
+                try:
+                    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                    try:
+                        os.write(fd, f"{os.getpid()} {token} {_our_start()}".rstrip().encode("ascii"))
+                    finally:
+                        os.close(fd)
+                    got = True
+                    break
+                except FileExistsError:
+                    seen = _read_owner(path)
+                    if _is_stale(path, stale_after):
+                        try:
+                            _break_if_unchanged(path, seen)
+                            continue
+                        except OSError:
+                            pass  # could not remove it: fall through to the deadline
+                    if time.time() >= deadline:
+                        break
+                    time.sleep(0.2)
         try:
             yield got
         finally:
+            if fd is not None:
+                _os_unlock(fd)
+                os.close(fd)
             try:
                 if got and _read_owner(path)[1] == token:
                     path.unlink(missing_ok=True)

@@ -34,6 +34,18 @@ def _write_lock(name: str, text: str) -> None:
     p.write_text(text)
 
 
+def _hold_os_lock(name: str) -> int:
+    """Take the lock file's OS lock through a second handle, as a live holder does (#365)."""
+    fd = os.open(job_lock._lock_path(name), os.O_RDWR)
+    assert job_lock._os_lock(fd), "the lock file was expected to be free"
+    return fd
+
+
+def _drop_os_lock(fd: int) -> None:
+    job_lock._os_unlock(fd)
+    os.close(fd)
+
+
 # ── our own PID ───────────────────────────────────────────────────────────────
 
 def test_a_lock_with_our_pid_but_a_token_we_never_issued_is_broken(rawstore_tmp_db):
@@ -96,40 +108,57 @@ def test_a_live_pid_whose_start_time_differs_is_broken(rawstore_tmp_db, live_pro
 
 def test_a_live_pid_with_the_same_start_time_keeps_its_lock(rawstore_tmp_db, live_proc):
     _write_lock("universe", f"{live_proc.pid} tok {procs.process_start_time(live_proc.pid)}")
-    assert job_lock.holders() == [("universe", live_proc.pid)]
-    with job_lock.acquire("universe", wait=0) as got:
-        assert got is False
+    fd = _hold_os_lock("universe")
+    try:
+        assert job_lock.holders() == [("universe", live_proc.pid)]
+        with job_lock.acquire("universe", wait=0) as got:
+            assert got is False
+    finally:
+        _drop_os_lock(fd)
 
 
 def test_a_live_pid_whose_start_time_cannot_be_read_keeps_its_lock(rawstore_tmp_db, live_proc, monkeypatch):
-    """No start time to compare (access denied, an unsupported OS): only the PID decides, as before."""
-    monkeypatch.setattr(procs, "process_start_time", lambda pid: None)
+    """No start time to compare (access denied, an unsupported OS): the holder's OS lock decides, not the start time.
+
+    #364: an unreadable start time must not keep a lock nobody holds; #365: the OS lock keeps a held one.
+    """
+    _real_start = procs.process_start_time
+    monkeypatch.setattr(procs, "process_start_time",
+                        lambda pid: None if pid != os.getpid() else _real_start(pid))
     _write_lock("universe", f"{live_proc.pid} tok 1")
+    fd = _hold_os_lock("universe")
+    try:
+        with job_lock.acquire("universe", wait=0) as got:
+            assert got is False
+    finally:
+        _drop_os_lock(fd)
     with job_lock.acquire("universe", wait=0) as got:
-        assert got is False
+        assert got is True, "an unreadable start time held a lock nobody holds (#364)"
 
 
 def test_an_old_format_lock_of_a_live_pid_keeps_its_lock(rawstore_tmp_db, live_proc):
-    """A lock written before #355 has no start time: the PID alone decides."""
+    """A lock written before #355 has no start time: while its holder holds the OS lock it stays live."""
     _write_lock("universe", f"{live_proc.pid} tok")
-    with job_lock.acquire("universe", wait=0) as got:
-        assert got is False
+    fd = _hold_os_lock("universe")
+    try:
+        assert job_lock.holders() == [("universe", live_proc.pid)]
+        with job_lock.acquire("universe", wait=0) as got:
+            assert got is False
+    finally:
+        _drop_os_lock(fd)
 
 
-def test_a_lock_that_changed_hands_is_not_broken(rawstore_tmp_db, live_proc, monkeypatch):
-    """Judged stale, then taken over before the break: the new holder's file stays."""
+def test_a_lock_that_changed_hands_is_not_broken(rawstore_tmp_db, live_proc):
+    """Judged stale and taken over: the new holder's file is its own, and it then keeps everyone else out."""
     _write_lock("universe", f"{live_proc.pid} tok 1")
-    real = job_lock._is_stale
-    fresh = f"{live_proc.pid} tok2 {procs.process_start_time(live_proc.pid)}"
-
-    def stale_then_swapped(path, stale_after):
-        out = real(path, stale_after)
-        path.write_text(fresh)
-        return out
-    monkeypatch.setattr(job_lock, "_is_stale", stale_then_swapped)
+    path = job_lock._lock_path("universe")
     with job_lock.acquire("universe", wait=0) as got:
-        assert got is False
-    assert job_lock._lock_path("universe").read_text() == fresh
+        assert got is True
+        pid, token, _start = path.read_text().split()
+        assert int(pid) == os.getpid() and token != "tok", "the takeover did not write our own owner"
+        assert job_lock.holders() == [("universe", os.getpid())]
+        with job_lock.acquire("universe", wait=0) as again:
+            assert again is False
 
 
 # ── procs.process_start_time ──────────────────────────────────────────────────
