@@ -24,6 +24,15 @@ MODULES = ["dcf", "3stmt", "comps", "credit", "sensitivity"]
 COMPLETE = datetime(2026, 10, 6, 22, 0, tzinfo=timezone.utc).timestamp()
 INTRADAY = datetime(2026, 10, 6, 14, 0, tzinfo=timezone.utc).timestamp()
 _PEER_INFO = {"enterpriseValue": 9.0e9, "ebitda": 1.0e9, "totalRevenue": 4.0e9, "trailingPE": 18.0}
+# The spine's Energy names the comps ladder picks for TEST (same industry, nearest market cap first).
+PEERS = [("XOM", 1.1e9), ("CVX", 0.9e9), ("COP", 1.2e9), ("SLB", 1.3e9), ("EOG", 1.4e9)]
+
+
+def _energy_row(ticker, market_cap):
+    return {"ticker": ticker, "cik": "", "name": ticker, "market_cap": market_cap, "price": 100.0,
+            "sector": "Energy", "industry": "Oil & Gas E&P", "industry_group": "", "sub_industry": "",
+            "quote": {"symbol": ticker}}
+
 
 
 @pytest.fixture
@@ -36,9 +45,8 @@ def store(rawstore_tmp_db):
 def results(store, tmp_path, monkeypatch, financials):
     """What a real Financials run returns for TEST: every module, peers from the spine sector, no network."""
     monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
-    rawstore.replace_all("equity_universe", [{
-        "ticker": "TEST", "cik": "", "name": "Test Co", "market_cap": 1e9, "price": 100.0, "sector": "Energy",
-        "industry": "x", "industry_group": "", "sub_industry": "", "quote": {"symbol": "TEST"}}])
+    rawstore.replace_all("equity_universe", [_energy_row("TEST", 1e9)] +
+                         [_energy_row(t, cap) for t, cap in PEERS])
     monkeypatch.setattr(fm.cache_manager, "get_or_fetch", lambda t, fn, use_cache=True: dict(financials))
     qr = fm.quick_remarks_engine
     monkeypatch.setattr(qr, "run_quick_remarks", lambda ticker, no_fetch=False: qr._from_card(ticker, {}, "yfinance"))

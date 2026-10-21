@@ -42,6 +42,8 @@ def _fmt_usd(v) -> str:
 def _fmt_num(v, nd=2) -> str:
     if v is None:
         return "N/A"
+    if isinstance(v, str):
+        return v          # a word the engine chose ("NM": a non-positive denominator has no multiple)
     return f"{v:,.{nd}f}"
 
 

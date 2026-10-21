@@ -55,9 +55,18 @@ def test_three_statement_user_dna_rate_is_not_an_assumed_zero(financials):
     assert DNA_WARNING not in res["warnings"]
 
 
-# ── FIN-9 option B: the tax rate row says it is the default ──────────────────
+# ── FIN-9 option B / FIN-3: the tax rate row says when it is the default ─────
+def _without_statement_tax(financials):
+    """The statements carry no tax basis: no stored rate, no provision / pretax pair."""
+    f = copy.deepcopy(financials)
+    for rec in f["annual"]:
+        for key in ("tax_rate", "pretax_income", "tax_provision"):
+            rec.pop(key, None)
+    return f
+
+
 def test_dcf_tax_rate_is_marked_default(financials):
-    res = run_dcf(financials)
+    res = run_dcf(_without_statement_tax(financials))
     assert res["assumptions"]["tax_rate_source"] == "default"
     assert res["assumptions"]["tax_rate"] == 0.21
 
@@ -68,12 +77,13 @@ def test_dcf_tax_rate_from_an_assumption_is_not_default(financials):
 
 
 def test_three_statement_tax_rate_source(financials):
-    assert run_three_statement(financials)["assumptions"]["tax_rate_source"] == "default"
+    assert run_three_statement(_without_statement_tax(financials))["assumptions"]["tax_rate_source"] == "default"
     assert run_three_statement(financials, {"tax_rate": 0.3})["assumptions"]["tax_rate_source"] == "assumption"
 
 
 def test_report_shows_default_tax_rate_row(financials):
-    html = _html(financials, {"dcf": run_dcf(financials), "three_statement": run_three_statement(financials)})
+    f = _without_statement_tax(financials)
+    html = _html(f, {"dcf": run_dcf(f), "three_statement": run_three_statement(f)})
     assert html.count("default 21.0%") == 2               # the DCF WACC panel and the 3-statement panel
 
 

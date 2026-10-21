@@ -254,6 +254,24 @@ def test_classification_universe_drops_excluded_types_at_any_cap(rawstore_tmp_db
         "CEFBIG", "ETFX", "SPACX", "PREF", "WARR", "UNIT", "CEFLOW"}
 
 
+def test_classification_universe_rows_carries_the_columns_the_peer_ladder_needs(rawstore_tmp_db):
+    """FIN-3: comps peers are picked inside the spine, so the reader that feeds them carries sector and industry.
+
+    The rows are the same slice as the ticker list (same floor, same excluded types, same cap-descending order);
+    ``sub_industry`` is not read — the identity master writes it NULL.
+    """
+    _seed_universe([
+        {"ticker": "BIG", "market_cap": 4e9, "sector": "Energy", "industry": "Oil & Gas E&P"},
+        {"ticker": "ETFX", "market_cap": 3e9, "sector": "Energy", "industry": "Oil & Gas E&P"},
+        {"ticker": "TINY", "market_cap": 50e6, "sector": "Energy", "industry": "Oil & Gas E&P"}])
+    _seed_master({"BIG": "common", "ETFX": "etp"})
+    assert universe.classification_universe_rows() == [
+        {"ticker": "BIG", "market_cap": 4e9, "sector": "Energy", "industry": "Oil & Gas E&P"}]
+    for mc_min in (universe.DEFAULT_MC_MIN, 0):
+        assert ([r["ticker"] for r in universe.classification_universe_rows(mc_min)]
+                == universe.classification_universe(mc_min))
+
+
 def test_every_operating_type_stays(rawstore_tmp_db):
     ops = sorted(id_types.OPERATING_TYPES)
     _seed_universe([{"ticker": f"T{i}", "market_cap": 1e9 - i} for i in range(len(ops))])

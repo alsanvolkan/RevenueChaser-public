@@ -6,7 +6,7 @@ from pathlib import Path
 
 from RevenueChaser.core.reporting_common import write_artifact
 
-from .config import OUTPUT_DIR, default_peers
+from .config import OUTPUT_DIR, PEER_K
 from .engines import (
     comps_engine,
     credit_capacity_engine,
@@ -15,6 +15,7 @@ from .engines import (
     sensitivity_engine,
     three_statement_engine,
 )
+from .peers import select_peers
 from .reporting.html_builder import build_report_html
 from RevenueChaser.core import vendor_data
 from RevenueChaser.core.providers import cache as cache_manager
@@ -111,7 +112,15 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
                 warnings.append("comps: peer quotes require a live Fetch — run the Fetch button for comps")
                 results["modules"]["comps"] = {"error": "comps requires a live Fetch (no network in store-only refresh)"}
             else:
-                used_peers = list(peers) if peers else default_peers(sector)
+                if peers:
+                    used_peers = list(peers)
+                else:
+                    # FIN-3: the peers are the spine's (industry at the nearest market cap, then sector), never
+                    # a static list. A short ladder is reported, not silently padded.
+                    used_peers = select_peers(ticker, _spine.classification_universe_rows())
+                    if len(used_peers) < PEER_K:
+                        warnings.append(f"comps: {len(used_peers)} of {PEER_K} peers — the spine industry and "
+                                        f"sector have no more names")
                 results["modules"]["comps"] = comps_engine.run_comps(financials, used_peers, fetch_info=_peer_info)
         elif m in ("credit", "credit_capacity"):
             results["modules"]["credit"] = credit_capacity_engine.run_credit_capacity(financials, assumptions)

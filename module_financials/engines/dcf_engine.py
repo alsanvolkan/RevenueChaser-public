@@ -11,7 +11,6 @@ from ..config import (
     DEFAULT_EBITDA_MARGIN,
     DEFAULT_EXIT_MULTIPLE,
     DEFAULT_REVENUE_GROWTH,
-    DEFAULT_TAX_RATE,
     EQUITY_RISK_PREMIUM,
     PROJECTION_YEARS,
     RISK_FREE_RATE,
@@ -20,7 +19,8 @@ from ..config import (
 )
 from RevenueChaser.core.providers.validator import validate_annual
 
-from ._inputs import DNA_ASSUMED_ZERO, first_known, net_debt as _net_debt, pick
+from ._inputs import (DNA_ASSUMED_ZERO, effective_tax_rate as _effective_tax_rate, first_known,
+                      net_debt as _net_debt, pick)
 
 
 def _nwc(rec: dict) -> float | None:
@@ -93,9 +93,6 @@ def run_dcf(financials: dict, assumptions: dict | None = None) -> dict:
     projection_years = int(pick(a, "projection_years", PROJECTION_YEARS))
     if projection_years < 1:
         return {"error": "projection_years must be at least 1", "warnings": warnings}
-    tax_rate = pick(a, "tax_rate", DEFAULT_TAX_RATE)
-    # The payload carries no tax rate, so without an assumption it is always the default (FIN-9 B: labelled).
-    tax_rate_source = "assumption" if to_float(a.get("tax_rate")) is not None else "default"
 
     # Varsayım override'ları
     growth = list(a.get("revenue_growth") or DEFAULT_REVENUE_GROWTH)[:projection_years]
@@ -111,6 +108,9 @@ def run_dcf(financials: dict, assumptions: dict | None = None) -> dict:
     dep0 = to_float(latest.get("depreciation"))
     if rev0 is None or rev0 <= 0:
         return {"error": "no revenue in latest year", "warnings": warnings}
+
+    # The user's rate, else the statements' (provision / pretax), else the sector default (FIN-3; labelled, FIN-9 B).
+    tax_rate, tax_rate_source = _effective_tax_rate(a, latest, financials.get("sector"))
 
     margin0 = (ebitda0 / rev0) if ebitda0 is not None else DEFAULT_EBITDA_MARGIN
     ebitda_margin = pick(a, "ebitda_margin", margin0)
