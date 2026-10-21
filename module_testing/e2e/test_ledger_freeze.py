@@ -252,7 +252,11 @@ def _alerts_and_seen(chrome: str, dashboard, tmp_path: Path) -> tuple[list[str],
     out = subprocess.run(
         [chrome, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", "--disable-extensions",
          "--disable-web-security",                      # the page is a file: its fetches to the dashboard are cross-origin
-         f"--user-data-dir={tmp_path / 'chrome-profile'}", "--virtual-time-budget=12000", "--dump-dom",
+         f"--user-data-dir={tmp_path / 'chrome-profile'}",
+         # Boards embed plotly from a CDN (``core.config.PLOTLY_CDN_URL``). A real request pauses the
+         # virtual clock, so ``--dump-dom`` never returns: resolve every host but the dashboard to nothing.
+         "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1",
+         "--virtual-time-budget=12000", "--dump-dom",
          page.as_uri()],
         capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert "<html" in out.stdout.lower(), f"Chrome dumped no DOM: {out.stderr[-1500:]}"

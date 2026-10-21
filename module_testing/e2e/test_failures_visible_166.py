@@ -224,7 +224,10 @@ def chrome() -> str:
 def _dump_dom(chrome: str, url: str, profile: Path) -> str:
     out = subprocess.run(
         [chrome, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", "--disable-extensions",
-         f"--user-data-dir={profile}", "--virtual-time-budget=6000", "--dump-dom", url],
+         f"--user-data-dir={profile}",
+         # as in ``test_board_sec_13f``: a board's CDN plotly request would pause the virtual clock
+         "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1",
+         "--virtual-time-budget=6000", "--dump-dom", url],
         capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert "<html" in out.stdout.lower(), f"Chrome dumped no DOM: {out.stderr[-1500:]}"
     return out.stdout

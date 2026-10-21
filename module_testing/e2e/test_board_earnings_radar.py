@@ -161,6 +161,8 @@ def _drive_filters(html: str, tmp_path: Path) -> str:
     out = subprocess.run(
         [chrome, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", "--disable-extensions",
          f"--user-data-dir={tmp_path / 'chrome-profile'}",
+         # as in ``test_board_sec_13f``: a board's CDN plotly request would pause the virtual clock
+         "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1",
          "--virtual-time-budget=6000", "--dump-dom", page.as_uri()],
         capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert "<html" in out.stdout.lower(), f"Chrome dumped no DOM: {out.stderr[-1500:]}"
