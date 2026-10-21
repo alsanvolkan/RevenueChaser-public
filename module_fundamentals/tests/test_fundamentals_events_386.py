@@ -135,14 +135,15 @@ def test_a_non_digit_cik_is_no_cik_and_never_an_exception(rawstore_tmp_db):
 
 # ── the bounded reads ────────────────────────────────────────────────────────
 
-_BIG = 1_200                       # candidate tickers in the chunking test: several slices of ``events.CHUNK``
+_BIG = events.CHUNK + 400          # candidate tickers in the chunking test: two slices whatever ``CHUNK`` becomes
+_MANY = 4_500                      # candidates in the session test: the field size the review priced (24 statements)
 
 
-def _big_store() -> list[str]:
-    """``_BIG`` candidates, each with its own CIK; the first two have filings (one flagged, one routine)."""
-    _master(*((f"T{i:04d}", str(100_000 + i)) for i in range(_BIG)))
+def _big_store(n: int = _BIG) -> list[str]:
+    """``n`` candidates, each with its own CIK; the first two have filings (one flagged, one routine)."""
+    _master(*((f"T{i:04d}", str(100_000 + i)) for i in range(n)))
     _filings(_filing("100000", "a1", _INSIDE, "2.01"), _filing("100001", "a2", _INSIDE, "9.01"))
-    return [f"T{i:04d}" for i in range(_BIG)]
+    return [f"T{i:04d}" for i in range(n)]
 
 
 def test_the_store_reads_are_chunked_and_the_answer_is_the_unchunked_one(monkeypatch, rawstore_tmp_db):
@@ -176,6 +177,39 @@ def test_the_store_reads_are_chunked_and_the_answer_is_the_unchunked_one(monkeyp
 
     monkeypatch.setattr(events, "CHUNK", 10 * _BIG)       # one slice per table: the slicing changes no answer
     assert events.corporate_events(tickers, today=TODAY) == chunked
+
+
+def test_the_store_reads_share_one_session(monkeypatch, rawstore_tmp_db):
+    """E7: every store read of one call runs inside one ``rawstore.session()``: one connect per store file.
+
+    A job's worker and the scheduled CLI Fetch have no outer request session, so the reader's own block is what
+    keeps 4,500 candidates from opening the 500 MB store once per statement (the reviewer's field measurement: 24
+    connects, 9.5 s). ``security_master`` lives in ``raw``, ``sec_submissions`` in ``edgar``: at most two connects,
+    whatever the candidate count, and the answer is the same one statement per table gives.
+    """
+    tickers = _big_store(_MANY)
+    with pytest.MonkeyPatch.context() as mp:          # the answer of one statement per table
+        mp.setattr(events, "CHUNK", 10 * _MANY)
+        reference = events.corporate_events(tickers, today=TODAY)
+        ref_stats: dict = {}
+        events.corporate_events(tickers, today=TODAY, stats=ref_stats)
+
+    opened = []
+    real = rawstore._connect_with_retry
+
+    def counting(*args, **kwargs):
+        opened.append(str(kwargs.get("path") or (args[1] if len(args) > 1 else rawstore.DB_PATH)))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(rawstore, "_connect_with_retry", counting)
+
+    stats: dict = {}
+    assert events.corporate_events(tickers, today=TODAY, stats=stats) == reference
+    assert stats == ref_stats                          # the stats read rides the same session, and agrees
+    assert stats["no_submissions"] == _MANY - 2        # every filer but the two with a filing row
+    assert reference == {"T0000": {"items": ["2.01"], "last_filing_date": _INSIDE}}
+    assert len(opened) <= 2, opened                    # one handle per store file, never one per statement
+    assert len(set(opened)) == len(opened), opened     # and never the same file opened twice
 
 
 def test_a_mixed_input_answers_exactly_what_the_unbounded_read_answered(rawstore_tmp_db):
@@ -271,7 +305,11 @@ def test_the_selection_version_and_the_freeze_hash_are_untouched():
 
 
 def test_no_submissions_counts_only_the_candidates_the_store_cannot_answer_for(monkeypatch, rawstore_tmp_db):
-    """E5: the flag's blind spot, counted. A candidate whose CIK has no filing row at all is not "no event"."""
+    """E5: the flag's blind spot, counted. A candidate whose CIK has no filing row at all is not "no event".
+
+    Two blind spots, counted apart: ``no_submissions`` (a CIK, no row) and ``no_cik`` (no usable CIK at all — a
+    candidate with no ``security_master`` row like EEE, or a value that is no CIK like DDD, is counted nowhere else).
+    """
     _master(("AAA", "0001234"), ("BBB", "0002345"), ("CCC", "0003456"), ("DDD", "not-a-cik"))
     _filings(_filing("1234", "a1", _INSIDE, "2.01"),                       # AAA: an 8-K
              _filing("2345", "b1", _INSIDE, "9.01", form="10-K"))          # BBB: a filing of another form
@@ -283,6 +321,8 @@ def test_no_submissions_counts_only_the_candidates_the_store_cannot_answer_for(m
 
     assert p["data_quality"]["no_submissions"] == 1
     assert stats["no_submissions"] == 1
+    assert p["data_quality"]["no_cik"] == 2                # DDD and EEE: no usable CIK in security_master
+    assert stats["no_cik"] == 2
     cards = {c["ticker"]: c for c in p["candidates"]}
     assert cards["AAA"]["corporate_event"] == {"items": ["2.01"], "last_filing_date": _INSIDE}
     assert all("flags" not in c for c in cards.values())
