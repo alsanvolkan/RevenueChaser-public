@@ -673,12 +673,20 @@ def active_accessions_db() -> set:
         by_key[(r["cik"], period)].append(r)
 
     def _order_key(r: dict) -> tuple:
+        """``(filing_date, amendment_no, amendment-before-original, accession)``.
+
+        The date decides first; among filings of one date the higher ``AMENDMENTNO`` is later.
+        When both are equal (an original and its amendment filed the same day, no number on either)
+        ``filing_rank``'s ``/A`` preference still puts the amendment last, so it is the one that
+        survives the walk, and the accession is the final tiebreak.
+        """
         fd = r.get("filing_date") or ""
         try:
             amend_no = int(r.get("amendment_no") or 0)
         except (ValueError, TypeError):
             amend_no = 0
-        return (fd, amend_no, r.get("accession") or "")
+        rank = filing_rank(fd, r.get("type") or "", r.get("accession") or "")
+        return (fd, amend_no, rank[1], rank[2])
 
     active: set[str] = set()
     for group in by_key.values():

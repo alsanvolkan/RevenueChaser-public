@@ -81,6 +81,62 @@ def _write_zip(path, submission_rows, infotable_rows=(), coverpage_rows=None,
     return path
 
 
+class TestAmendmentsV12:
+    """brief.md §3 tests 5 and 21-22, the S3 walk's conservative and normalised branches."""
+
+    def test_unknown_amendment_type_replaces(self, store, tmp_path):
+        """brief.md §1 S3: an unrecognised AMENDMENTTYPE never unions on a guess."""
+        orig = _write_zip(
+            tmp_path / "orig_form13f.zip",
+            [_sub("o", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            [_row("o", "ALPHA INC", "111111111", "100", "1000")],
+            coverpage_rows=[_cover("o", "31-MAR-2026")])
+        amend = _write_zip(
+            tmp_path / "amend_form13f.zip",
+            [_sub("a", "1000", "15-MAY-2026", "13F-HR/A", "31-MAR-2026")],
+            [_row("a", "ALPHA INC", "111111111", "40", "400")],
+            coverpage_rows=[_cover("a", "31-MAR-2026", "13F-HR/A", "Y", "1", "REPLACES PRIOR")])
+        engine.ingest_zips([orig, amend])
+        engine.save_cusip_ticker({"111111111": "A"})
+        totals = engine.recompute_totals()
+        assert totals["A"]["2026-03-31"]["shares"] == 40.0
+
+    def test_amendment_type_is_matched_after_case_and_whitespace_collapse(self, store, tmp_path):
+        """brief.md §7: the real file spells it "NEW HOLDINGS"; case and runs of spaces must not matter."""
+        orig = _write_zip(
+            tmp_path / "orig_form13f.zip",
+            [_sub("o", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            [_row("o", "ALPHA INC", "111111111", "100", "1000")],
+            coverpage_rows=[_cover("o", "31-MAR-2026")])
+        amend = _write_zip(
+            tmp_path / "amend_form13f.zip",
+            [_sub("a", "1000", "15-MAY-2026", "13F-HR/A", "31-MAR-2026")],
+            [_row("a", "ALPHA INC", "111111111", "40", "400")],
+            coverpage_rows=[_cover("a", "31-MAR-2026", "13F-HR/A", "Y", "1", "  new \t holdings ")])
+        engine.ingest_zips([orig, amend])
+        engine.save_cusip_ticker({"111111111": "A"})
+        totals = engine.recompute_totals()
+        assert totals["A"]["2026-03-31"]["shares"] == 140.0
+
+    def test_amendment_on_the_same_day_wins_over_its_original(self, store, tmp_path):
+        """Same FILING_DATE and no AMENDMENTNO: ``filing_rank`` still puts the /A last, so it survives."""
+        orig = _write_zip(
+            tmp_path / "orig_form13f.zip",
+            # the original's accession sorts after the amendment's
+            [_sub("z-orig", "1000", "15-MAY-2026", "13F-HR", "31-MAR-2026")],
+            [_row("z-orig", "ALPHA INC", "111111111", "100", "1000")],
+            coverpage_rows=[_cover("z-orig", "31-MAR-2026")])
+        amend = _write_zip(
+            tmp_path / "amend_form13f.zip",
+            [_sub("a-amend", "1000", "15-MAY-2026", "13F-HR/A", "31-MAR-2026")],
+            [_row("a-amend", "ALPHA INC", "111111111", "40", "400")],
+            coverpage_rows=[_cover("a-amend", "31-MAR-2026", "13F-HR/A", "Y", "", "NEW HOLDINGS")])
+        engine.ingest_zips([orig, amend])
+        engine.save_cusip_ticker({"111111111": "A"})
+        totals = engine.recompute_totals()
+        assert totals["A"]["2026-03-31"]["shares"] == 140.0
+
+
 class TestNonLossyIngest:
     """brief.md §3 tests 7-10 and 23."""
 

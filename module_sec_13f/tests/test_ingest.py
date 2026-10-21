@@ -766,22 +766,28 @@ class TestAmendments:
         assert totals["A"]["2026-03-31"]["shares"] == 200.0
 
     def test_same_filing_date_ordered_by_amendment_no(self, isolated_store, tmp_path):
-        orig = self._make_original(tmp_path, acc="o", filed="01-MAY-2026")
-        a1 = self._make_amendment(tmp_path, "a1", "1000", "31-MAR-2026",
-                                  "15-MAY-2026", "NEW HOLDINGS", "50", "500")
-        # a2 has amendment_no = 2 and is a RESTATEMENT, so it wins over a1
-        a2 = _write_zip(
-            tmp_path / "a2_form13f.zip",
-            [_sub("a2", "1000", "15-MAY-2026", "13F-HR/A", "31-MAR-2026")],
-            [_row("a2", "ALPHA INC", "111111111", "999", "9999")],
-            coverpage_rows=[{"ACCESSION_NUMBER": "a2",
-                             "REPORTCALENDARORQUARTER": "31-MAR-2026",
-                             "ISAMENDMENT": "Y", "AMENDMENTNO": "2",
-                             "AMENDMENTTYPE": "RESTATEMENT", "REPORTTYPE": "13F-HR/A"}])
-        sf.ingest_zips([orig, a1, a2])
+        """Two /A on one FILING_DATE: AMENDMENTNO decides, and a union-then-replace chain proves it.
+
+        ``amendment 1`` restates (300 shares), ``amendment 2`` adds 50. Ordered by AMENDMENTNO the
+        restatement lands first and the addition unions onto it (350). Ordered by accession instead
+        — the reverse of AMENDMENTNO on purpose — the addition lands first and the restatement
+        wipes it (300), so this test fails when AMENDMENTNO is dropped from the order.
+        """
+        self._make_original(tmp_path, acc="o", filed="01-MAY-2026")
+        rest = _write_zip(
+            tmp_path / "b_rest_form13f.zip",
+            [_sub("b-rest", "1000", "15-MAY-2026", "13F-HR/A", "31-MAR-2026")],
+            [_row("b-rest", "ALPHA INC", "111111111", "300", "3000")],
+            coverpage_rows=[_cover("b-rest", "31-MAR-2026", "13F-HR/A", "Y", "1", "RESTATEMENT")])
+        add = _write_zip(
+            tmp_path / "a_add_form13f.zip",
+            [_sub("a-add", "1000", "15-MAY-2026", "13F-HR/A", "31-MAR-2026")],
+            [_row("a-add", "ALPHA INC", "111111111", "50", "500")],
+            coverpage_rows=[_cover("a-add", "31-MAR-2026", "13F-HR/A", "Y", "2", "NEW HOLDINGS")])
+        sf.ingest_zips([tmp_path / "o_form13f.zip", rest, add])
         sf.save_cusip_ticker({"111111111": "A"})
         totals = sf.recompute_totals()
-        assert totals["A"]["2026-03-31"]["shares"] == 999.0
+        assert totals["A"]["2026-03-31"]["shares"] == 350.0
 
     def test_non_amendment_with_new_holdings_resets_active_set(self, isolated_store, tmp_path):
         """A 13F-HR (no /A) carrying AMENDMENTTYPE=NEW HOLDINGS still replaces."""
