@@ -5,13 +5,13 @@ they grow over time and CANNOT be regenerated from the app, yet (post-migration)
 nothing ships a backup step. This module fixes that:
 
   python -m RevenueChaser.scripts.backup_store [--out DIR] [--keep N] [--keep-edgar N]
-      [--keep-docs N] [--keep-discord N] [--keep-history N] [--keep-prices N] [--no-weekly] [--keep-mirror N]
-      [--keep-mirror-big N] [--mirror-big-every-days N] [--mirror-big-now]
+      [--keep-docs N] [--keep-discord N] [--keep-history N] [--keep-prices N] [--keep-weekly N] [--no-weekly]
+      [--keep-mirror N] [--keep-mirror-big N] [--mirror-big-every-days N] [--mirror-big-now]
 
 - Backs up ``raw.duckdb`` (structured data, ``--keep``), ``edgar.duckdb`` (raw
   10-K/20-F documents, ``--keep-edgar``) and ``discord.duckdb`` (the Discord archive,
-  ``--keep-discord``) and ``history.duckdb`` (result history, #287, ``--keep-history``, default 5, plus a
-  weekly copy like raw; skipped while the file does not exist) and ``prices.duckdb`` (the daily price tables, #156,
+  ``--keep-discord``) and ``history.duckdb`` (result history, #287, ``--keep-history``, default 5, no weekly copy
+  since #342; skipped while the file does not exist) and ``prices.duckdb`` (the daily price tables, #156,
   ``--keep-prices``, default 2 and no weekly copy: the tables are append-only, so the newest snapshot holds every
   row an older one held), plus the ``edgar_docs/`` tree (a verified zip, ``--keep-docs``; an unchanged tree keeps the
   newest zip instead of zipping again, #336)
@@ -36,9 +36,11 @@ nothing ships a backup step. This module fixes that:
 - Mirrors the SPX Gamma data tree (``module_spx_gamma/data``: the UW day files, ``brier.json``, the GEX
   history) into ``<backup dir>/spx_gamma_mirror/`` the same way (#276). UW serves only recent days, so the
   tree cannot be fetched again; the mirror is additive too.
-- Keeps the first verified ``raw.duckdb`` snapshot of every ISO week in ``<backup dir>/weekly/`` and never
-  prunes it (#277, a stopgap from before the change history; that has landed, so the owner turns it off with
-  ``--no-weekly`` or ``RAW_STORE_BACKUP_WEEKLY=0``; the default is on). ``weekly/`` is a sub-folder, so the prune globs and ``restore_store --latest`` never see it.
+- Keeps the first verified ``raw.duckdb`` snapshot of every ISO week in ``<backup dir>/weekly/``, the newest
+  ``KEEP_WEEKLY`` (12) of them (#277 a stopgap from before the change history, which has landed; #342 bounds the
+  copies and dropped history's, which the owner deleted by hand). ``--no-weekly`` or
+  ``RAW_STORE_BACKUP_WEEKLY=0`` stops new copies. ``weekly/`` is a sub-folder: the top-folder prune globs and
+  ``restore_store --latest`` never see it, and the weekly prune never sees the top folder.
 - With ``RAW_STORE_BACKUP_MIRROR`` set, copies the newest snapshot of each kind and the three mirror folders
   into ``<that folder>/RevenueChaser-backup`` (it may be an existing Drive folder: nothing outside the sub-folder
   is written, pruned or deleted) after everything above was verified (#275), writing each file under a temporary
@@ -112,8 +114,11 @@ SPX_MIRROR_DIRNAME = "spx_gamma_mirror"
 SPX_VERSIONS_DIRNAME = "spx_gamma_versions"
 SPX_VERSIONED_FILES = ("brier.json", "spx_gamma_gex_history.json")     # module_spx_gamma/config.py:25-26
 
-# #277: one raw snapshot per ISO week, in a sub-folder the prune and restore globs never reach.
+# #277: one raw snapshot per ISO week, in a sub-folder the top-folder prune and the restore globs never reach.
 WEEKLY_DIRNAME = "weekly"
+# #342 (owner's decision, 2026-10-21): the weekly copies are bounded. History's weekly copy is gone — it grows
+# ~6.55 GB/yr against raw's 603 MB — and the raw copies keep the newest KEEP_WEEKLY.
+KEEP_WEEKLY = 12
 
 # #275 (review M2): RAW_STORE_BACKUP_MIRROR may be an existing Google Drive folder that holds other files, so
 # the off-machine copy writes, prunes and cleans only inside this sub-folder of it.
@@ -355,6 +360,23 @@ def _prune_sorted(snaps: list[Path], keep: int, manifest: _Manifest | None) -> l
     return removed
 
 
+def _prune_weekly(out: Path, keep: int = KEEP_WEEKLY) -> list[Path]:
+    """Delete all but the newest ``keep`` weekly ``raw_*`` copies (#342); the top folder's globs stay as they are.
+
+    The removed copies leave the #309 manifest BEFORE they are deleted (``_record_written``, the same order the
+    snapshot prune uses), so a run killed in between leaves a listed file that still exists, never a "missing" one
+    for the integrity scan.
+    """
+    wdir = out / WEEKLY_DIRNAME
+    if not wdir.is_dir():
+        return []
+    snaps = sorted(wdir.glob("raw_*.duckdb"))
+    cut = snaps[:-keep] if keep > 0 else snaps
+    if cut:
+        _record_written(out, removed=cut)
+    return _prune_sorted(snaps, keep, None)
+
+
 def _snapshot_one(db_path: Path, out: Path, prefix: str, keep: int,
                   attempts: int) -> Path:
     """Write one verified snapshot of ``db_path``; return its path."""
@@ -454,14 +476,16 @@ def _iso_week_of(snapshot_name: str) -> tuple[int, int] | None:
 
 
 def keep_weekly(snap: Path, out_dir: Path | None = None, enabled: bool | None = None) -> Path | None:
-    """Keep ``snap`` (a verified ``raw_*`` or ``history_*`` snapshot) in ``<backup dir>/weekly/`` when it is the
-    first of its ISO week for its kind (#287: a history copy never stands in for the raw one of that week).
+    """Keep ``snap`` (a verified ``raw_*`` snapshot) in ``<backup dir>/weekly/`` when it is the first of its ISO week
+    (#277).
 
     Returns the new weekly copy, or None when this week already has one (or the copy is switched off).
     The copy keeps the snapshot's name, so ``restore_store --from <dir>/weekly --latest raw`` reads it. It is
     written under a temporary name, fingerprinted against the snapshot (row count and content checksum per
     table) and only then renamed; a failure leaves nothing under the final name and the next night tries again.
-    ``_prune`` globs the top folder only, so nothing here is ever pruned.
+    The copies are bounded by ``KEEP_WEEKLY`` (#342): the nightly run prunes them with ``_prune_weekly``, which
+    never looks at the top folder — and the top folder's ``_prune`` globs never look in here. The kind is part of
+    the week key, so the ``history_*`` copies an older run left here are neither counted nor pruned.
     """
     if not (weekly_enabled() if enabled is None else enabled):
         return None
@@ -1325,8 +1349,10 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"re-read the local backup folder against the copy-time manifest every this many days "
                          f"(default {SCAN_EVERY_DAYS}; 0 = every run). Read-only; a mismatch makes the run exit 1 (#309)")
     ap.add_argument("--scan-now", action="store_true", help="run the integrity scan this run, whatever its marker says")
+    ap.add_argument("--keep-weekly", type=_positive_int, default=KEEP_WEEKLY,
+                    help=f"retain this many newest weekly raw snapshots in weekly/ (default {KEEP_WEEKLY}, #342)")
     ap.add_argument("--no-weekly", action="store_true",
-                    help="do not keep the first raw snapshot of each ISO week in weekly/ (history keeps its own) "
+                    help="do not keep the first raw snapshot of each ISO week in weekly/ "
                          "(RAW_STORE_BACKUP_WEEKLY=0 does the same)")
     args = ap.parse_args(argv)
 
@@ -1354,10 +1380,16 @@ def main(argv: list[str] | None = None) -> int:
     dest = step("backup", lambda: snapshot(out_dir=out, keep=args.keep))
     if dest is not None:
         print(f"backup OK: {dest}")
+        failed_before = failed
         weekly = step("weekly backup", lambda: keep_weekly(dest, out_dir=out,
                                                            enabled=False if args.no_weekly else None))
         if weekly is not None:
             print(f"weekly backup OK: {weekly}")
+        if failed == failed_before:
+            # #342: bound the weekly copies, after tonight's copy (or after the week already had one — the prune
+            # runs on a night that adds nothing too). Never on a night whose weekly copy failed, and never in the
+            # top folder.
+            step("weekly prune", lambda: _prune_weekly(out or default_backup_dir(), args.keep_weekly))
 
     for label, run in (("edgar backup", lambda: snapshot_edgar(out_dir=out, keep=args.keep_edgar)),
                        ("edgar_docs backup", lambda: archive_edgar_docs(out_dir=out, keep=args.keep_docs)),
@@ -1371,10 +1403,6 @@ def main(argv: list[str] | None = None) -> int:
     hist = step("history backup", lambda: snapshot_history(out_dir=out, keep=args.keep_history))
     if hist is not None:
         print(f"backup OK: {hist}")
-        weekly_hist = step("history weekly backup", lambda: keep_weekly(
-            hist, out_dir=out, enabled=True))   # not the raw stopgap's switch (#279)
-        if weekly_hist is not None:
-            print(f"weekly backup OK: {weekly_hist}")
 
     prices = step("prices backup", lambda: snapshot_prices(out_dir=out, keep=args.keep_prices))
     if prices is not None:                  # no weekly copy: the price tables are append-only (#156)

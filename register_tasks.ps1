@@ -7,8 +7,8 @@
 #
 # The backup snapshots every durable store file (raw, edgar and discord DuckDB), zips the
 # edgar_docs tree, mirrors the discord_media and SPX Gamma trees incrementally (only new or
-# changed files) and keeps the 5 newest raw snapshots, plus the first raw snapshot of each ISO
-# week (one per week, in weekly/, never pruned).
+# changed files) and keeps the 5 newest raw snapshots, plus a copy of the first raw snapshot
+# of each ISO week (one per week, in weekly/; the newest 12 are kept).
 #
 # Usage:  powershell -ExecutionPolicy Bypass -File register_tasks.ps1 [-Remove]
 
