@@ -652,6 +652,10 @@ def _tx(conn):
 #   change_history   every change of a slow-moving value, with ``valid_from``
 #   latest_cache     latest value only, for data that can be fetched or rebuilt again
 #   operational      run stamps, pointers and logs of the store itself
+# planned: True marks a table that has NO writer yet (data backbone review B15, #289). The first store call
+# creates it like any other, so without the flag an empty table reads as "0 rows", the same as one whose writer
+# broke. Like ``history_mode`` it is data only: rawstore does not read it, so it changes no DDL and no write.
+# Drop the flag and the name in ``core/tests/test_manifest_planned_289.py`` together when a writer lands.
 HISTORY_MODES = ("event", "session_snapshot", "change_history", "latest_cache", "operational")
 _JSON_TYPES = {"JSON"}
 _STRUCT_TYPES = {"STRUCT", "UNION"}
@@ -1281,6 +1285,7 @@ MANIFEST: dict[str, dict] = {
     },
     "leaps_daily_scores": {
         "history_mode": "session_snapshot",
+        "planned": True,          # no writer (#289): only the legacy import fills it
         "key": ["ticker", "date"],
         "columns": [
             "ticker TEXT", "date TEXT", "frequency TEXT", "notional DOUBLE",
@@ -1354,6 +1359,7 @@ MANIFEST: dict[str, dict] = {
     },
     "sec13f_edgar_backfill": {
         "history_mode": "event",
+        "planned": True,          # no writer (#289): retired, only the legacy import fills it
         "key": ["cik", "period"],
         "columns": ["cik TEXT", "period TEXT", "accession TEXT", "fetched_at TEXT",
                     "PRIMARY KEY (cik, period)"],
@@ -1509,6 +1515,7 @@ MANIFEST: dict[str, dict] = {
     # the ClinicalTrials.gov / FDA / 8-K fetchers (#186-#192) write it later.
     "catalyst_events": {
         "history_mode": "change_history",
+        "planned": True,          # no writer (#289): the fetchers of #186-#192 arrive later
         "key": ["source", "source_event_id"],
         "columns": [
             "ticker TEXT", "event_date DATE", "date_precision TEXT", "kind TEXT",
@@ -1527,6 +1534,7 @@ MANIFEST: dict[str, dict] = {
     # writer skips and reports such rows. Manifest only: the writer is #190's.
     "orphan_designations": {
         "history_mode": "change_history",
+        "planned": True,          # no writer (#289): #190's OOPD writer is not in the tree
         "key": ["ticker", "generic_name", "designation", "date_designated"],
         "columns": [
             "ticker TEXT", "generic_name TEXT", "designation TEXT", "date_designated DATE",
@@ -1544,6 +1552,7 @@ MANIFEST: dict[str, dict] = {
     # orphan_designations gate on ``match``.
     "orphan_lookups": {
         "history_mode": "event",
+        "planned": True,          # no writer (#289): the outcome table of #190's lookup
         "key": ["ticker", "session_date"],
         "columns": [
             "ticker TEXT", "session_date DATE", "sec_name TEXT", "query TEXT", "match TEXT",
