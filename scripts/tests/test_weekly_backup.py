@@ -227,6 +227,22 @@ def test_the_raw_weekly_copies_keep_the_newest_twelve(rawstore_tmp_db, tmp_path,
     assert not (out / "weekly" / made[0].name).exists()
 
 
+def test_a_failed_weekly_copy_prunes_nothing(rawstore_tmp_db, tmp_path, clock, capsys, monkeypatch):
+    """SHOULD-9 (#342): the bound is applied only after a weekly step that succeeded. A night whose copy fails keeps
+    every copy it has, so a copy that keeps failing can never thin the folder down to nothing."""
+    out = tmp_path / "out"
+    _thirteen_weeks(out, clock)
+    clock(_day(2026, 4, 6))                                  # the fourteenth week's Monday: a copy is due
+
+    def boom(*a, **k):
+        raise bs.BackupError("disk full")
+
+    monkeypatch.setattr(bs, "keep_weekly", boom)
+    assert bs.main(["--out", str(out), "--keep", "20"]) == 1
+    assert "weekly backup FAILED: disk full" in capsys.readouterr().err
+    assert len(list((out / "weekly").glob("raw_*.duckdb"))) == 13, "a night with a failed weekly copy pruned a copy"
+
+
 def test_the_two_prunes_stay_in_their_own_folders(rawstore_tmp_db, tmp_path, clock):
     """W3: the top-folder keep counts never see ``weekly/``, and the weekly prune never sees the top folder."""
     out = tmp_path / "out"

@@ -263,6 +263,7 @@ def test_the_off_machine_copy_carries_history_but_not_its_weekly_copies(rawstore
     drive = mirror / SUBDIR
     assert _names(drive, "history_*.duckdb") == _names(out, "history_*.duckdb") and _names(drive, "history_*.duckdb")
     assert not (drive / "weekly").exists()                                    # #349: weekly stays local
+    assert _names(out / "weekly", "raw_*.duckdb")                             # ...but raw still gets its weekly copy
     name = _names(drive, "history_*.duckdb")[-1]
     assert bs._table_fingerprints(drive / name) == bs._table_fingerprints(out / name)
 
