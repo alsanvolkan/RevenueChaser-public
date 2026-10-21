@@ -1,11 +1,13 @@
-"""#277 (review B4 stopgap): one verified raw snapshot per ISO week is kept in ``weekly/`` and never pruned,
-until the change history lands. Temp stores only; the clock is driven through ``backup_store._utcnow``."""
+"""#277 (review B4 stopgap): one verified raw snapshot per ISO week is kept in ``weekly/``, bounded at the newest
+``KEEP_WEEKLY`` (12) since #342. Temp stores only; the clock is driven through ``backup_store._utcnow``."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+
+import duckdb
 
 from RevenueChaser.core import config, rawstore
 from RevenueChaser.scripts import backup_store as bs
@@ -67,7 +69,7 @@ def test_several_weeks_keep_the_newest_dailies_plus_exactly_one_weekly_each(raws
     assert not set(dailies) & set(firsts[:4])                # older weeks' firsts are gone from the top folder, kept in weekly/
 
 
-def test_a_weekly_copy_is_never_deleted_by_prune(rawstore_tmp_db, tmp_path, clock):
+def test_the_top_folder_prune_never_deletes_a_weekly_copy(rawstore_tmp_db, tmp_path, clock):
     out = tmp_path / "out"
     d1, w1 = _run(out, clock, _day(2026, 9, 28), 1)
     _run(out, clock, _day(2026, 10, 5), 2)
@@ -195,3 +197,79 @@ def test_the_nightly_task_text_says_what_is_kept():
 def test_register_tasks_comment_matches_the_retention():
     ps1 = (Path(__file__).resolve().parents[2] / "register_tasks.ps1").read_text(encoding="utf-8")
     assert "keeps the 5 newest raw snapshots" in ps1 and "one per week" in ps1
+
+
+# ── #342: the weekly copies are bounded, and only raw has them ────────────────────────────────
+
+def _fake_snapshot(path: Path) -> Path:
+    """A real (empty but valid) DuckDB file: the integrity scan opens every ``*.duckdb`` it lists."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = duckdb.connect(str(path))
+    try:
+        conn.execute("CREATE TABLE probe (k TEXT)")
+        conn.execute("CHECKPOINT")
+    finally:
+        conn.close()
+    return path
+
+
+def _fake_weeklies(wdir: Path, count: int, day: int = 6) -> list[Path]:
+    """``raw_*`` copies with past stamps, oldest first: what earlier weeks left in ``weekly/``."""
+    return [_fake_snapshot(wdir / f"raw_202001{day + i:02d}_020005_123456.duckdb") for i in range(count)]
+
+
+def test_the_newest_twelve_weekly_copies_are_kept(rawstore_tmp_db, tmp_path, clock):
+    """W2: 13 copies in ``weekly/``, one night's run: the oldest goes and the newest 12 stay."""
+    out = tmp_path / "out"
+    made = _fake_weeklies(out / "weekly", 13)
+    clock(_day(2026, 9, 28))
+    _seed(1)
+    assert bs.main(["--out", str(out)]) == 0
+    left = sorted(p.name for p in (out / "weekly").glob("raw_*.duckdb"))
+    assert bs.KEEP_WEEKLY == 12 and len(left) == 12
+    assert made[0].name not in left                       # the oldest went first
+    assert all(p.name in left for p in made[-11:])        # the newest ones, tonight's copy included
+    assert bs._iso_week_of(left[-1]) == (2026, 40)        # tonight's copy is the newest and stayed
+
+
+def test_the_weekly_prune_leaves_the_top_folder_alone(rawstore_tmp_db, tmp_path, clock):
+    """W3: the new prune is scoped to ``weekly/``; the nightly dailies it must not touch are still there."""
+    out = tmp_path / "out"
+    out.mkdir(parents=True)
+    dailies = [_fake_snapshot(out / f"raw_2020010{n}_020005_1234{n}1.duckdb") for n in range(1, 5)]
+    _fake_weeklies(out / "weekly", 3)
+    clock(_day(2026, 9, 28))
+    _seed(1)
+    assert bs.main(["--out", str(out), "--keep", "5", "--keep-weekly", "1"]) == 0
+    assert len(list((out / "weekly").glob("raw_*.duckdb"))) == 1      # the weekly prune ran ...
+    assert all(p.is_file() for p in dailies)                           # ... and left the dailies alone
+    assert len(list(out.glob("raw_*.duckdb"))) == 5                    # four kept, plus tonight's
+
+
+def test_a_pruned_weekly_copy_leaves_the_manifest(rawstore_tmp_db, tmp_path, clock, capsys):
+    """W4: the removed copy is forgotten at copy time, so the week's integrity scan never calls it missing."""
+    out = tmp_path / "out"
+    clock(_day(2026, 9, 28))
+    _seed(1)
+    assert bs.main(["--out", str(out), "--keep-weekly", "1"]) == 0
+    first = sorted((out / "weekly").glob("raw_*.duckdb"))[0]
+    capsys.readouterr()
+    clock(_day(2026, 10, 5))                               # next ISO week: a second weekly copy
+    _seed(2)
+    assert bs.main(["--out", str(out), "--keep-weekly", "1", "--scan-now"]) == 0
+    assert not first.exists()                              # --keep-weekly 1: the older one went
+    text = capsys.readouterr()
+    assert "integrity scan OK" in text.out and "integrity scan FAILED" not in text.out + text.err
+    listed = (out / bs.MANIFEST_NAME).read_text(encoding="utf-8")
+    assert f"weekly/{first.name}" not in listed            # its top-folder namesake stays listed
+
+
+def test_restore_from_the_weekly_folder_still_reads_the_newest_raw_copy(rawstore_tmp_db, tmp_path, clock):
+    """W5: after the bound, ``--from <dir>/weekly --latest raw`` is still the newest weekly copy."""
+    out = tmp_path / "out"
+    _, w1 = _run(out, clock, _day(2026, 9, 28), 1)
+    _, w2 = _run(out, clock, _day(2026, 10, 5), 2)
+    assert rs.snapshots(out / "weekly", "raw") == [w1, w2]
+    _seed(99)
+    assert rs.main(["--from", str(out / "weekly"), "--latest", "raw"]) == 0
+    assert rawstore.count("watchlist") == 2                 # the state of the newest weekly copy
