@@ -133,3 +133,27 @@ def test_d29_is_registered_in_the_step():
     assert "D29" in [s.name for s in inputs.sweeps()]
     assert d29.SWEEP.tables == ("cftc_cot",)
     assert rawstore.MANIFEST["cftc_cot"]["key"] == ["report_type", "market", "report_date"]
+
+
+# --- the fetch ------------------------------------------------------------------------------------------------------
+
+def test_d29_follows_the_socrata_redirect(monkeypatch):
+    # publicreporting.cftc.gov answers a redirect, and httpx follows none by default: the fake keeps that default,
+    # so this is red until the read asks for the follow (Socrata then answered a body the parser rejects, #447).
+    seen = []
+
+    class _Resp:
+        status_code, text = 200, ""
+
+        def json(self):
+            return [ROW]
+
+    def get(url, params=None, timeout=None, headers=None, follow_redirects=False, **kwargs):
+        seen.append(follow_redirects)
+        return _Resp()
+
+    monkeypatch.setattr("httpx.get", get)
+    rows, why = d29.fetch_rows()
+    assert why is None and rows == [ROW]
+    assert seen == [True]                              # one read, one follow
+

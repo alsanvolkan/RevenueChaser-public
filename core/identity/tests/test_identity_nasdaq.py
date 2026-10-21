@@ -4,7 +4,7 @@ from __future__ import annotations
 import httpx
 
 from RevenueChaser.core.identity.sources import nasdaq
-from RevenueChaser.core.identity.tests.helpers import fixture_text
+from RevenueChaser.core.identity.tests.helpers import FakeResp, fixture_text
 
 
 def route(http):
@@ -79,3 +79,21 @@ def test_base_url_env_override_disables_the_fallback(http, monkeypatch):
     nasdaq.symbol_directory()
     assert http.urls() == ["http://127.0.0.1:9/SymDir/nasdaqlisted.txt",
                            "http://127.0.0.1:9/SymDir/otherlisted.txt"]
+
+
+def test_the_symbol_files_are_read_with_the_redirect_followed(monkeypatch):
+    # nasdaqtrader.com answers a redirect, and httpx follows none by default: the fake keeps that default, so this
+    # is red until the adapter asks for the follow (#447's class of bug: the parser saw the redirect body).
+    bodies = {"nasdaqlisted.txt": fixture_text("nasdaqlisted.txt"),
+              "otherlisted.txt": fixture_text("otherlisted.txt")}
+    seen = []
+
+    def get(url, headers=None, timeout=None, follow_redirects=False, **kwargs):
+        seen.append(follow_redirects)
+        return FakeResp(bodies[url.rsplit("/", 1)[-1]])
+
+    monkeypatch.setattr("httpx.get", get)
+    r = nasdaq.symbol_directory()
+    assert r.status == "ok" and any(x["ticker"] == "AAPL" for x in r.rows)
+    assert seen == [True, True]                       # one per file, both of them
+

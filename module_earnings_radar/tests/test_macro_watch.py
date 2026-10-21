@@ -43,6 +43,27 @@ class TestFredWeekly:
         monkeypatch.setattr("httpx.get", lambda *a, **k: _Resp())
         assert macro_watch._fred_weekly("X", "fakekey") == []
 
+    def test_fred_follows_the_redirect(self, monkeypatch):
+        # api.stlouisfed.org answers a redirect, and httpx follows none by default: the fake keeps that default,
+        # so this is red until the fetch asks for the follow (the series would otherwise read as empty, #447).
+        seen = []
+
+        class _Resp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"observations": [{"date": "2026-08-14", "value": "4.68"}]}
+
+        def get(url, params=None, timeout=None, follow_redirects=False, **kwargs):
+            seen.append(follow_redirects)
+            return _Resp()
+
+        monkeypatch.setattr("httpx.get", get)
+        assert macro_watch._fred_weekly("DGS10", "fakekey") == [4.68]
+        assert seen == [True]
+
+
 
 class TestFredDaily:
     def test_fred_daily_no_key(self):

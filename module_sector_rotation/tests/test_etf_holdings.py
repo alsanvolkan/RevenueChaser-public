@@ -43,6 +43,20 @@ class TestFmp:
         rows = fetch_from_fmp("SKYY", "fakekey")
         assert rows[0]["weight"] == 5.25, "weight > 100 should be /100"
 
+    def test_follows_the_redirect(self, monkeypatch):
+        # financialmodelingprep.com answers a redirect, and httpx follows none by default: the fake keeps that
+        # default, so this is red until the fetch asks for the follow (the JSON read saw the redirect, #447).
+        seen = []
+
+        def get(url, params=None, timeout=None, follow_redirects=False, **kwargs):
+            seen.append(follow_redirects)
+            return _FmpResp()
+
+        monkeypatch.setattr("httpx.get", get)
+        assert fetch_from_fmp("SKYY", "fakekey")[0]["ticker"] == "NTNX"
+        assert seen == [True]
+
+
 
 class _FmpResp:
     def raise_for_status(self):

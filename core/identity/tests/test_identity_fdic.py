@@ -114,3 +114,21 @@ def test_default_base_is_the_real_fdic_host(http):
 def test_no_names_is_ok_and_makes_no_call(http):
     r = fdic.match_banks({}, sleep=lambda s: None)
     assert r.status == "ok" and r.rows == [] and not http.calls
+
+
+def test_the_institutions_api_is_read_with_the_redirect_followed(monkeypatch):
+    # api.fdic.gov answers a redirect, and httpx follows none by default: the fake keeps that default, so this is
+    # red until the adapter asks for the follow (the parser would otherwise see the redirect body, #447's bug).
+    towne = fixture_json("fdic_towne.json")
+    seen = []
+
+    def get(url, params=None, timeout=None, follow_redirects=False, **kwargs):
+        seen.append(follow_redirects)
+        return FakeResp(towne if 'NAME:"TowneBank"' in (params or {}).get("filters", "") else {"data": []})
+
+    monkeypatch.setattr("httpx.get", get)
+    by = {x["ticker"]: x for x in fdic.match_banks({"TOWN": "Towne Bank"}, sleep=lambda s: None).rows}
+    assert by["TOWN"]["cert"] == 35095
+    assert seen, "the adapter sent no query"
+    assert set(seen) == {True}                        # every query variant, not only the first
+
