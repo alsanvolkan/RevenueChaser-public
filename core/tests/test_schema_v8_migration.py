@@ -77,9 +77,9 @@ def _migrate():
     rawstore.ensure_all_tables()
 
 
-def test_schema_version_label_moved_on_to_11_with_the_history_tables():
-    """The v8 tables below still migrate; the label itself is 11 since the history redesign C (25 tables)."""
-    assert rawstore.schema_version() == "11"
+def test_schema_version_label_moved_on_to_12_with_the_13f_tables():
+    """The v8 tables below still migrate; the label itself is 12 since the 13F v12 key (#208)."""
+    assert rawstore.schema_version() == "12"
 
 
 def test_v7_store_gains_job_runs_and_fetched_at_and_keeps_every_row(v7_store):
