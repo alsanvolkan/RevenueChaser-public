@@ -1322,7 +1322,7 @@ MANIFEST: dict[str, dict] = {
             "accession TEXT PRIMARY KEY", "cik TEXT", "period TEXT",
             "filing_date TEXT", "type TEXT",
             "report_type TEXT", "is_amendment BOOLEAN", "amendment_type TEXT",
-            "other_managers_count INTEGER",
+            "amendment_no INTEGER", "other_managers_count INTEGER",
         ],
         "kind": "tabular",
         "write": "upsert",
