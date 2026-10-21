@@ -11,6 +11,9 @@ from RevenueChaser.core import rawstore
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "research" / "87_r4_type_filter_evidence.py"
 
+pytestmark = pytest.mark.skipif(not _SCRIPT.exists(),
+                                reason=f"{_SCRIPT.name} is not in this tree")
+
 
 @pytest.fixture(scope="module")
 def evidence():

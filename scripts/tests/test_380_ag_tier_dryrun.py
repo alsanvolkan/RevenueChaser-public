@@ -7,11 +7,17 @@ import json
 import zlib
 from pathlib import Path
 
+import pytest
+
 import duckdb
 
 from RevenueChaser.core import rawstore
 
 RESEARCH = Path(__file__).resolve().parents[1] / "research"
+
+pytestmark = pytest.mark.skipif(not RESEARCH.is_dir(),
+                                reason="scripts/research/ is not in this tree")
+
 FETCHED = 1_792_000_000.0            # 2026-10-14
 
 

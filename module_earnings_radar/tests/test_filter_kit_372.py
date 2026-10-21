@@ -6,6 +6,7 @@ read never fails a render: ticker and name only, the bar still mounts, one notic
 """
 import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -180,6 +181,11 @@ def test_count_line_mounts(render):
     assert 'class="n"' in page and "data-total=" in page
 
 
+_KIT_COUNTS = Path(__file__).resolve().parents[2] / "scripts/research/383_card_e_kit_counts.py"
+
+
+@pytest.mark.skipif(not _KIT_COUNTS.exists(),
+                    reason=f"{_KIT_COUNTS.name} is not in this tree")
 def test_counts_script_earnings_reads_the_latest_run(monkeypatch, tmp_path):
     import importlib.util
     from pathlib import Path

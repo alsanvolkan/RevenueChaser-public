@@ -8,7 +8,7 @@ from RevenueChaser.core import rawstore, subscription_usage
 from RevenueChaser.module_relatedness import __main__ as cli
 from RevenueChaser.module_relatedness import engine, themes
 from RevenueChaser.module_relatedness.tests.test_grok_writer_388 import (  # noqa: F401
-    TICKERS, TOKEN, _window, deepseek_calls, world)
+    RESETS_AT_TEXT, TICKERS, TOKEN, _window, deepseek_calls, world)
 from RevenueChaser.module_relatedness.tests.test_naming import _seed_run
 from RevenueChaser.module_relatedness.tests.test_relatedness import _seed_universe
 
@@ -41,7 +41,7 @@ def test_a_spent_allowance_writes_nothing_and_asks_sec_nothing(world, corpus, mo
     monkeypatch.setattr(subscription_usage, "fetch_grok", lambda now=None: [_window(95)])
     assert cli.main(["--run", "--provider", "grok", "--limit", "10"]) == 0
     out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
-    assert out["stopped_reason"] == "allowance" and out["next_reset"] == "2026-10-20 12:00"
+    assert out["stopped_reason"] == "allowance" and out["next_reset"] == RESETS_AT_TEXT
     assert corpus == [] and world.posts == []
     _nothing_written(tmp_path)
 

@@ -76,9 +76,14 @@ class _GrokHttp:
         pass
 
 
+# ``core.subscription_usage.next_available`` keeps only a reset that is still ahead of ``now``, so a fixed date
+# makes ``next_reset`` None once that date passes (it did, 2026-10-21). The reset is relative to this run.
+RESETS_AT = (datetime.now(timezone.utc) + timedelta(days=1)).replace(second=0, microsecond=0)
+RESETS_AT_TEXT = RESETS_AT.strftime("%Y-%m-%d %H:%M")
+
+
 def _window(percent):
-    return subscription_usage.Window(key="seven_day", percent=percent,
-                                     resets_at=datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc))
+    return subscription_usage.Window(key="seven_day", percent=percent, resets_at=RESETS_AT)
 
 
 @pytest.fixture
@@ -201,11 +206,11 @@ def test_an_exhausted_allowance_stops_the_run_cleanly(world, monkeypatch, capsys
     payload = engine.run(provider="grok", max_calls=10)
     assert world.posts == []
     assert payload["stopped_reason"] == "allowance" and payload["pending"] == 3
-    assert payload["next_reset"] == "2026-10-20 12:00"
+    assert payload["next_reset"] == RESETS_AT_TEXT
     assert cli.main(["--run", "--provider", "grok", "--limit", "10"]) == 0
     out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert out["provider"] == "grok" and out["calls"] == 0 and "pending" not in out    # stopped before the engine
-    assert out["stopped_reason"] == "allowance" and out["cost_usd"] == 0.0 and out["next_reset"] == "2026-10-20 12:00"
+    assert out["stopped_reason"] == "allowance" and out["cost_usd"] == 0.0 and out["next_reset"] == RESETS_AT_TEXT
 
 
 def test_the_grok_run_has_no_off_peak_gate(world, monkeypatch):
@@ -344,7 +349,7 @@ def test_grok_naming_stops_at_the_allowance_and_keeps_names(world, monkeypatch):
     run_id = _seed_run()
     monkeypatch.setattr(subscription_usage, "fetch_grok", lambda now=None: [_window(100)])
     out = naming.name_themes(run_id, complete=grok.complete)
-    assert out["named"] == 0 and out["pending"] > 0 and out["next_reset"] == "2026-10-20 12:00"
+    assert out["named"] == 0 and out["pending"] > 0 and out["next_reset"] == RESETS_AT_TEXT
     assert world.posts == []
 
 

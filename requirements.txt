@@ -8,8 +8,10 @@ pytest>=8.0.0
 pytest-xdist>=3.6.0
 flask>=3.0.0
 # Single-file raw data store (all caches / derived data). Pin >=1.0: on-disk
-# format only became stable at 1.0.
-duckdb>=1.0
+# format only became stable at 1.0. Capped below 2.0: the block layout
+# ``scripts/tests/duckdb_damage.py`` damages and the statement classification the
+# history guard reads (#308) are 1.x behaviour, so 2.0 needs its own migration.
+duckdb>=1.0,<2.0
 # Charts in scripts/ (e.g. scripts/ai_cloud_revenue.py)
 matplotlib>=3.7.0
 # Co-movement board: hierarchical clustering (scipy.cluster.hierarchy)

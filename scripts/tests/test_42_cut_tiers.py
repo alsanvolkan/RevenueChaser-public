@@ -17,6 +17,9 @@ import pytest
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "research" / "42_cut_tiers.py"
 
+pytestmark = pytest.mark.skipif(not _SCRIPT.exists(),
+                                reason=f"{_SCRIPT.name} is not in this tree")
+
 
 @pytest.fixture(scope="module")
 def mod():

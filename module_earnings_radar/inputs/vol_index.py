@@ -78,9 +78,9 @@ def parse_csv(body: str) -> tuple[list[dict] | None, str | None]:
 
 
 def fetch_csv(symbol: str) -> tuple[list[dict] | None, str | None]:
-    """``(bars, why)`` for one symbol: one GET of its CSV, no retry."""
+    """``(bars, why)`` for one symbol: one GET of its CSV, no retry (cdn.cboe.com answers 307 to cdn-api.cboe.com)."""
     try:
-        resp = httpx.get(url_for(symbol), timeout=TIMEOUT, headers={"User-Agent": USER_AGENT})
+        resp = httpx.get(url_for(symbol), timeout=TIMEOUT, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
     except httpx.HTTPError as exc:
         return None, f"{type(exc).__name__}: {exc}"[:200]
     if resp.status_code != 200:

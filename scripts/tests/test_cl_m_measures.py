@@ -22,6 +22,9 @@ from RevenueChaser.core import rawstore
 
 RESEARCH = Path(__file__).resolve().parents[1] / "research"
 
+pytestmark = pytest.mark.skipif(not RESEARCH.is_dir(),
+                                reason="scripts/research/ is not in this tree")
+
 
 def _load(name: str):
     spec = importlib.util.spec_from_file_location("clm_" + name, RESEARCH / f"{name}.py")

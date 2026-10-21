@@ -19,6 +19,10 @@ from RevenueChaser.module_sector_rotation import engine
 from RevenueChaser.module_sector_rotation.tests.d01_seed import sessions
 
 RESEARCH = Path(__file__).resolve().parents[1] / "research"
+
+pytestmark = pytest.mark.skipif(not RESEARCH.is_dir(),
+                                reason="scripts/research/ is not in this tree")
+
 SESSION = date(2026, 10, 7)
 
 

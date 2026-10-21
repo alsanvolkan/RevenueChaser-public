@@ -17,6 +17,10 @@ import duckdb
 import pytest
 
 RESEARCH = Path(__file__).resolve().parents[1] / "research"
+
+pytestmark = pytest.mark.skipif(not RESEARCH.is_dir(),
+                                reason="scripts/research/ is not in this tree")
+
 NY = ZoneInfo("America/New_York")
 LATEST = date(2026, 10, 14)                 # the newest session in the fixtures (the pinned clock)
 NOW = datetime(2026, 10, 14, 21, 0, tzinfo=timezone.utc)

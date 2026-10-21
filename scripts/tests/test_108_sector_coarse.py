@@ -15,6 +15,9 @@ from RevenueChaser.module_relatedness import themes
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "research" / "108_sector_coarse.py"
 
+pytestmark = pytest.mark.skipif(not _SCRIPT.exists(),
+                                reason=f"{_SCRIPT.name} is not in this tree")
+
 
 @pytest.fixture(scope="module")
 def script():

@@ -13,6 +13,10 @@ import pandas as pd
 import pytest
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "research" / "169_interest_label_probe.py"
+
+pytestmark = pytest.mark.skipif(not _SCRIPT.exists(),
+                                reason=f"{_SCRIPT.name} is not in this tree")
+
 _Y1, _Y2 = pd.Timestamp("2022-12-31"), pd.Timestamp("2023-12-31")
 
 

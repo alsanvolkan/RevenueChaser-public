@@ -17,6 +17,10 @@ import pytest
 from RevenueChaser.core import rawstore
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "research" / "263_phase1_state_counts.py"
+
+pytestmark = pytest.mark.skipif(not _SCRIPT.exists(),
+                                reason=f"{_SCRIPT.name} is not in this tree")
+
 REF = datetime(2026, 10, 1, tzinfo=timezone.utc).timestamp()     # the provenance generated_at below
 DAY = 86400.0
 

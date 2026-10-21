@@ -8,6 +8,10 @@ from pathlib import Path
 import pytest
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "research" / "377_leaps_l3_label_card.py"
+
+pytestmark = pytest.mark.skipif(not _SCRIPT.exists(),
+                                reason=f"{_SCRIPT.name} is not in this tree")
+
 FAR = "2027-12-17"
 
 

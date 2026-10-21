@@ -66,3 +66,7 @@ Code, comments, commit messages, issues and docs are written in **English**.
 
 Research and one-off measurement scripts are not part of the package. Their outputs and raw caches belong in
 `.cache/research/<issue>/`, which is gitignored and regenerable.
+
+This tree does not carry `scripts/research/`, so the tests that drive those scripts have no subject here and skip
+themselves (`pytestmark = pytest.mark.skipif(not _SCRIPT.exists(), ...)`). Everything the package itself ships is
+tested; nothing is skipped to make the suite pass. A test that drives a research script carries the same guard.

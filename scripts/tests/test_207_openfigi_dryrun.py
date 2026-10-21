@@ -15,6 +15,10 @@ from RevenueChaser.module_sec_13f import engine
 from RevenueChaser.module_sec_13f.tests.test_sec13f_openfigi_207 import _seed
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "research" / "207_openfigi_dryrun.py"
+
+pytestmark = pytest.mark.skipif(not _SCRIPT.exists(),
+                                reason=f"{_SCRIPT.name} is not in this tree")
+
 Q = "2026-06-30"
 
 
