@@ -121,6 +121,10 @@ def last_report(ticker: str) -> dict | None:
     walked newest first and the first with usable comps wins (:func:`has_comps`); when no stored run has any, the
     newest row is returned as it is, which the board renders as its empty state.
 
+    The walk is bounded and lazy: at most the newest 20 runs are read, and each is decoded only when the walk
+    reaches it, so a ticker with a long run history neither scans it all nor decodes rows it never looks at — this
+    runs on the Refresh thread, which holds the DuckDB writer.
+
     Read-only: ``rawstore.query`` opens the history file read-only and writes nothing; a store with no recorded run
     (no history file at all) reads as ``None``. This is how a Refresh renders the comps its last Fetch computed,
     without a network call (FIN-4, #385)."""
@@ -128,11 +132,19 @@ def last_report(ticker: str) -> dict | None:
         "SELECT h.run_id, h.ticker, h.sector, h.modules_run, h.peers, h.assumptions, h.data_fetched_at, "
         "h.warnings, h.quick_remarks, h.modules, r.run_at "
         f"FROM {TABLE} h JOIN result_runs r ON r.board = ? AND r.run_id = h.run_id "
-        "WHERE h.ticker = ? ORDER BY r.run_at DESC, h.run_id DESC",
+        "WHERE h.ticker = ? ORDER BY r.run_at DESC, h.run_id DESC LIMIT 20",
         [BOARD, (ticker or "").strip().upper()], db="history")
     if not rows:
         return None
-    reports = [rawstore._decode_row(TABLE, row) for row in rows]
-    report = next((r for r in reports if has_comps(r)), reports[0])
+    report = None
+    newest = None
+    for row in rows:
+        decoded = rawstore._decode_row(TABLE, row)
+        if newest is None:
+            newest = decoded
+        if has_comps(decoded):
+            report = decoded
+            break
+    report = report or newest
     report["as_of"] = _as_of(report.get("data_fetched_at"), report.get("run_at"))
     return report

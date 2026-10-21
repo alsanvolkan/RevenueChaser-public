@@ -392,26 +392,25 @@ def read_financials(ticker: str) -> dict | None:
 
 
 def merge_for_refresh(stored: dict | None, cached: dict | None) -> dict | None:
-    """The Refresh's model inputs: each half from the payload that has it (FIN-5, #385).
+    """The Refresh's model inputs: the statements from the stored rows, the valuation from the last Fetch's cache.
 
     ``stored`` is :func:`read_financials`' payload and ``cached`` the raw ``ticker_payload_cache`` payload of the
     same ticker (a store written before #297 has only the cache). The two halves go missing separately, so a
-    payload cannot be taken whole: an intraday Fetch stores statements and no valuation row (``.info`` is empty,
-    and with it the market cap, beta, price and share count), and an EDGAR-backed AG name has a valuation row and
-    no statement rows (#150, ``annual`` is empty). The statements therefore come from ``stored`` when it has any,
-    else from ``cached``; the valuation part — ``.info`` and the scalars ``get_financials`` derives from it, every
-    key of the payload but ``annual`` — comes from ``stored`` when it has an ``.info`` (a stored valuation row is
-    never empty: ``valuation_row_yfinance`` refuses an empty one), else from ``cached``. A half missing from both
-    stays empty. Either payload alone is returned as it is, and ``None`` means neither exists (the caller turns
-    that into no report).
+    payload cannot be taken whole: an EDGAR-backed AG name has a valuation row and no statement rows (#150,
+    ``annual`` is empty), while ``vendor_valuation`` is written only for a closed session, so an intraday Fetch
+    stores statements and its own ``.info`` in the cache but no valuation row. The statements are therefore
+    ``stored``'s when it has any, else ``cached``'s; the valuation — ``.info`` and the scalars ``get_financials``
+    derives from it, every key of the payload but ``annual`` — is ``cached``'s when it carries an ``.info``, else
+    ``stored``'s, so the board shows the market snapshot of the last Fetch instead of an older session's. Either
+    payload alone is returned as it is, and ``None`` means neither exists (the caller turns that into no report).
     """
     if stored is None or cached is None:
         return cached if stored is None else stored
-    out = dict(cached)
-    if stored.get("annual"):
-        out["annual"] = stored["annual"]
-    if stored.get("info"):
-        out.update({k: v for k, v in stored.items() if k != "annual"})
+    out = dict(stored)
+    if not out.get("annual") and cached.get("annual"):
+        out["annual"] = cached["annual"]
+    if cached.get("info"):
+        out.update({k: v for k, v in cached.items() if k != "annual"})
     return out
 
 

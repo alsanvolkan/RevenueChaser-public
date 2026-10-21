@@ -59,12 +59,12 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
     if not _TICKER_RE.fullmatch(ticker):
         raise ValueError(f"bad ticker: {ticker!r}")
     if no_fetch:
-        # FIN-5 (#385): a store-only render's model inputs are the rows its last Fetch stored (the statements and
-        # the ``.info`` of ``vendor_financials`` / ``vendor_valuation``), read back with zero network. The two halves
-        # go missing separately — an intraday Fetch stores no valuation row, an EDGAR-backed name no statements — so
-        # each is taken from the side that has it, and a store written before #297 (vendor rows absent) still reads
-        # its raw cached payload. With neither there is no report to render and the caller gets ``_NoCachedData`` —
-        # never a live fetch from this path.
+        # FIN-5 (#385): a store-only render's model inputs come from the store, with zero network. The statements
+        # are the rows its last Fetch stored (``vendor_financials``); the valuation is the raw cached payload's
+        # ``.info`` when it has one — ``vendor_valuation`` is written only for a closed session, so an intraday
+        # Fetch leaves its own ``.info`` in the cache and no row behind it — and the stored row otherwise. With
+        # neither half present anywhere there is no report to render and the caller gets ``_NoCachedData``, never
+        # a live fetch from this path.
         financials = vendor_data.merge_for_refresh(vendor_data.read_financials(ticker),
                                                   cache_manager.load(ticker, ignore_ttl=True))
         if financials is None:

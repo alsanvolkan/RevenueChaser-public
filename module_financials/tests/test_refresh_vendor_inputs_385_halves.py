@@ -60,12 +60,15 @@ def _annual(first_year: int, years: int) -> list[dict]:
 
 
 def _payload(annual: list[dict], info: dict | None = None) -> dict:
-    """What ``yfinance.get_financials`` returns (``_payload`` in ``core/providers/yfinance.py``): its exact keys."""
+    """What ``yfinance.get_financials`` returns (``_payload`` in ``core/providers/yfinance.py``): its exact keys,
+    the scalars derived from ``.info`` as the provider derives them."""
+    info = copy.deepcopy(_INFO if info is None else info)
     return {
-        "ticker": "TEST", "info": copy.deepcopy(_INFO if info is None else info), "sector": "Technology",
+        "ticker": "TEST", "info": info, "sector": "Technology",
         "annual": copy.deepcopy(annual),
-        "shares_outstanding": 1000.0, "market_cap": 100_000.0, "enterprise_value": 1.0e9,
-        "beta": 1.2, "current_price": 100.0, "currency": "USD", "source": "yfinance",
+        "shares_outstanding": info.get("sharesOutstanding"), "market_cap": info.get("marketCap"),
+        "enterprise_value": info.get("enterpriseValue"), "beta": info.get("beta"),
+        "current_price": info.get("currentPrice"), "currency": info.get("currency", "USD"), "source": "yfinance",
     }
 
 
@@ -134,9 +137,13 @@ def test_a_valuation_only_fetchs_statements_come_from_the_cache(rawstore_tmp_db,
     assert "error" not in res["results"]["modules"]["dcf"]
 
 
-# ── T3: both halves stored — FIN-5's own behaviour is unchanged ───────────────────────────────────────────────
-def test_both_halves_stored_take_nothing_from_the_cache(rawstore_tmp_db, tmp_path, monkeypatch):
-    """A decoy payload in the raw cache: the stored rows win for the statements and the valuation alike."""
+# ── T3: both halves stored — the statements are the stored rows, the valuation is the last Fetch's ────────────
+def test_both_halves_stored_still_take_the_valuation_from_the_cache(rawstore_tmp_db, tmp_path, monkeypatch):
+    """The statements are the stored rows; the market snapshot is the last Fetch's, which the cache holds.
+
+    ``vendor_valuation`` is written only for a closed session, so a later intraday Fetch leaves its own ``.info``
+    in the raw cache and no valuation row behind it. The Refresh shows that Fetch's market cap, price and beta.
+    """
     _fetch(monkeypatch, tmp_path, _payload(_annual(2021, 3)))
     assert _rows("vendor_financials") > 0 and _rows("vendor_valuation") == 1
 
@@ -147,9 +154,9 @@ def test_both_halves_stored_take_nothing_from_the_cache(rawstore_tmp_db, tmp_pat
     fin = res["results"]["financials"]
     assert fin["annual"] == stored["annual"]
     assert [r["fiscal_year"] for r in fin["annual"]] == ["2021", "2022", "2023"]
-    assert fin["info"] == stored["info"] == _INFO
-    assert fin["market_cap"] == 100_000.0 and fin["beta"] == 1.2 and fin["current_price"] == 100.0
-    assert fin["shares_outstanding"] == 1000.0
+    assert fin["info"] == _DECOY_INFO
+    assert fin["market_cap"] == 5.0 and fin["beta"] == 0.1 and fin["current_price"] == 5.0
+    assert fin["shares_outstanding"] == 1.0
 
 
 # ── T4: the Refresh reads the same six years the Fetch serves ─────────────────────────────────────────────────
@@ -180,3 +187,44 @@ def test_with_neither_half_stored_and_no_cache_the_no_data_error_still_raises(ra
     monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
     with pytest.raises(fm._NoCachedData):
         fm.run("TEST", modules=["dcf"], output="none", no_fetch=True)
+
+
+# ── T6: the valuation is the LAST Fetch's session snapshot (FIN-5, #385 review) ─────────────────────────────
+def test_the_valuation_is_the_last_fetchs_own_info(rawstore_tmp_db, tmp_path, monkeypatch):
+    """A closed-session valuation row (market cap 100) and a later intraday Fetch (market cap 120): 120 wins.
+
+    The intraday Fetch wrote statements and no valuation row, so the store still holds yesterday's snapshot; the
+    cache holds the newer one. The statements stay the stored rows.
+    """
+    monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
+    closed = _payload(_annual(2021, 3))
+    vendor_data.record(statements=vendor_data.statement_rows_yfinance("TEST", closed),
+                       valuations=[vendor_data.valuation_row_yfinance("TEST", dict(_INFO))],
+                       run_id="job-closed", run_at=COMPLETE)
+    cache_manager.save("TEST", _payload(_annual(2019, 3), info={
+        **_INFO, "marketCap": 120_000.0, "currentPrice": 120.0, "beta": 1.5}))
+    assert _rows("vendor_valuation") == 1
+
+    res = _refresh(monkeypatch, tmp_path)
+    fin = res["results"]["financials"]
+    assert fin["market_cap"] == 120_000.0 and fin["beta"] == 1.5 and fin["current_price"] == 120.0
+    assert fin["info"]["marketCap"] == 120_000.0
+    assert [r["fiscal_year"] for r in fin["annual"]] == ["2021", "2022", "2023"]   # the stored statements
+
+
+# ── T7: a cache with no `.info` falls back to the stored valuation ──────────────────────────────────────────
+def test_a_cache_without_an_info_falls_back_to_the_stored_valuation(rawstore_tmp_db, tmp_path, monkeypatch):
+    """The last Fetch's payload carries no `.info`, so the stored valuation row is the only market snapshot."""
+    monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
+    vendor_data.record(valuations=[vendor_data.valuation_row_yfinance("TEST", dict(_INFO))],
+                       run_id="job-closed", run_at=COMPLETE)
+    cached = _payload(_annual(2021, 3), info={})
+    cached.update({"market_cap": 7.0, "beta": 0.1, "current_price": 7.0, "shares_outstanding": 7.0})
+    cache_manager.save("TEST", cached)
+
+    res = _refresh(monkeypatch, tmp_path)
+    fin = res["results"]["financials"]
+    assert fin["info"] == _INFO
+    assert fin["market_cap"] == 100_000.0 and fin["beta"] == 1.2 and fin["current_price"] == 100.0
+    assert fin["shares_outstanding"] == 1000.0
+    assert [r["fiscal_year"] for r in fin["annual"]] == ["2021", "2022", "2023"]   # statements from the cache

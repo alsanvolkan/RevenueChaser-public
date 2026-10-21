@@ -142,15 +142,51 @@ def _record_failed_comps(*, run_id: str, run_at: float = COMPLETE):
     return fin_history.record(results, ticker="TEST", run_id=run_id, run_at=run_at, modules=["comps"])
 
 
-def test_last_report_prefers_the_newest_run_that_has_comps(rawstore_tmp_db):
-    """A newer Fetch whose comps step errored must not hide the comps an older Fetch did compute."""
+class _DecodeSpy:
+    """Counts ``rawstore._decode_row`` calls, so a test can see how many stored runs the reader actually decoded."""
+
+    def __init__(self, monkeypatch):
+        self.rows = 0
+        self._real = rawstore._decode_row
+        monkeypatch.setattr(rawstore, "_decode_row", self._decode)
+
+    def _decode(self, name, row):
+        self.rows += 1
+        return self._real(name, row)
+
+
+def test_last_report_prefers_the_newest_run_that_has_comps(rawstore_tmp_db, monkeypatch):
+    """A newer Fetch whose comps step errored must not hide the comps an older Fetch did compute.
+
+    The walk is lazy: it decodes the two rows up to the hit and stops there, never the third.
+    """
+    _record_failed_comps(run_id="older", run_at=COMPLETE - 3600)
     _record("AAA", run_id="old")
     _record_failed_comps(run_id="new", run_at=COMPLETE + 3600)
+    spy = _DecodeSpy(monkeypatch)
 
     report = fin_history.last_report("TEST")
     assert report["run_id"] == "old"
     assert [p["ticker"] for p in report["modules"]["comps"]["peers"]] == ["AAA"]
     assert report["modules"]["comps"]["multiples"]["ev_ebitda"]["p50"] == 9.0
+    assert spy.rows == 2                             # the hit is the second row: nothing after it is decoded
+
+
+def test_last_report_reads_at_most_twenty_runs(rawstore_tmp_db, monkeypatch):
+    """Only the oldest of 25 stored runs has comps, and it is beyond the window: the read is bounded.
+
+    The Refresh decodes on the thread that holds the DuckDB writer, so an unbounded read stalls the store; the
+    reader looks at the newest 20 runs and falls back to the newest row, and it decodes no more than those 20.
+    """
+    _record("AAA", run_id="r1")                      # the only run with comps: the 25th newest
+    for i in range(2, 26):
+        _record_failed_comps(run_id=f"r{i}", run_at=COMPLETE + 3600 * i)
+    spy = _DecodeSpy(monkeypatch)
+
+    report = fin_history.last_report("TEST")
+    assert report["run_id"] == "r25"                 # the newest row, not the 25th row back
+    assert fin_history.has_comps(report) is False
+    assert spy.rows <= 20
 
 
 def test_with_no_run_having_comps_the_newest_run_is_returned(rawstore_tmp_db):
