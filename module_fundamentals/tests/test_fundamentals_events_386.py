@@ -8,6 +8,8 @@ from __future__ import annotations
 import copy
 from datetime import date, timedelta
 
+import pytest
+
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.tests.board_js import run_board_js
 from RevenueChaser.module_fundamentals import config, events, freeze, pipeline
@@ -80,6 +82,34 @@ def test_every_item_of_the_set_counts_and_the_newest_filing_dates_it(rawstore_tm
     assert found["AAA"]["last_filing_date"] == (TODAY - timedelta(days=5)).isoformat()
 
 
+@pytest.mark.parametrize("item", config.CORPORATE_EVENT_ITEMS)
+def test_every_configured_item_raises_the_flag(item, rawstore_tmp_db):
+    """E1: the reader follows the configuration, not a hard-coded subset — every item of the set counts.
+
+    Parametrised over ``CORPORATE_EVENT_ITEMS`` (E1): a dropped or forgotten code fails one case by name.
+    """
+    _master(("AAA", "1234"))
+    _filings(_filing("1234", "a1", _INSIDE, f"{item},9.01"))
+
+    assert events.corporate_events(["AAA"], today=TODAY) == {
+        "AAA": {"items": [item], "last_filing_date": _INSIDE}}
+
+
+@pytest.mark.parametrize("item", ["2.02", "9.01"])
+def test_an_item_outside_the_set_does_not_raise_the_flag(item, rawstore_tmp_db):
+    """E1: results of operations (2.02) and exhibits (9.01) are routine; they are not corporate events."""
+    _master(("AAA", "1234"))
+    _filings(_filing("1234", "a1", _INSIDE, item))
+
+    assert events.corporate_events(["AAA"], today=TODAY) == {}
+
+
+def test_the_configured_item_set_is_the_eight_items():
+    """E2: the brief's eight items, in the brief's order."""
+    assert config.CORPORATE_EVENT_ITEMS == ["1.02", "2.01", "2.06", "3.01",
+                                           "4.01", "4.02", "5.01", "5.03"]
+
+
 def test_a_10k_with_a_corporate_item_is_not_an_8k(rawstore_tmp_db):
     _master(("AAA", "1234"))
     _filings(_filing("1234", "a1", _INSIDE, "2.01", form="10-K"))
@@ -90,6 +120,85 @@ def test_a_10k_with_a_corporate_item_is_not_an_8k(rawstore_tmp_db):
 def test_an_empty_or_absent_store_is_no_event(rawstore_tmp_db):
     assert events.corporate_events(["AAA"], today=TODAY) == {}
     assert events.corporate_events([], today=TODAY) == {}
+
+
+def test_a_non_digit_cik_is_no_cik_and_never_an_exception(rawstore_tmp_db):
+    """E6: the shared normaliser raises on a non-digit CIK; the reader answers "unknown", it does not raise."""
+    _master(("AAA", "45-12"), ("BBB", "0001234"))
+    _filings(_filing("1234", "a1", _INSIDE, "2.01"))
+
+    assert events.corporate_events(["AAA", "BBB"], today=TODAY) == {
+        "BBB": {"items": ["2.01"], "last_filing_date": _INSIDE}}
+    assert events._norm_cik("45-12") is None and events._norm_cik("") is None
+    assert events._norm_cik("0001234") == "1234"
+
+
+# ── the bounded reads ────────────────────────────────────────────────────────
+
+_BIG = 1_200                       # candidate tickers in the chunking test: several slices of ``events.CHUNK``
+
+
+def _big_store() -> list[str]:
+    """``_BIG`` candidates, each with its own CIK; the first two have filings (one flagged, one routine)."""
+    _master(*((f"T{i:04d}", str(100_000 + i)) for i in range(_BIG)))
+    _filings(_filing("100000", "a1", _INSIDE, "2.01"), _filing("100001", "a2", _INSIDE, "9.01"))
+    return [f"T{i:04d}" for i in range(_BIG)]
+
+
+def test_the_store_reads_are_chunked_and_the_answer_is_the_unchunked_one(monkeypatch, rawstore_tmp_db):
+    """E3: production passes no top_n, so the candidate list is unbounded: both reads walk it in slices.
+
+    The spy sees every store call of the chunked read; the same input read in one slice must answer the same dict.
+    """
+    tickers = _big_store()
+    calls = []
+    real = rawstore.query
+
+    def spy(sql, params=None, **kwargs):
+        calls.append((sql, list(params or [])))
+        return real(sql, params, **kwargs)
+
+    monkeypatch.setattr(rawstore, "query", spy)
+    chunked = events.corporate_events(tickers, today=TODAY)
+    master = [c for c in calls if "security_master" in c[0]]
+    filings = [c for c in calls if "8-K" in c[0]]
+    absent = [c for c in calls if "DISTINCT cik" in c[0]]
+
+    assert chunked == {"T0000": {"items": ["2.01"], "last_filing_date": _INSIDE}}
+    assert len(master) > 1 and len(filings) > 1, "the reads must be sliced, not one statement for every candidate"
+    for sql, params in master:
+        assert "ticker IN" in sql, sql            # the whole security_master is never read
+        assert len(params) <= events.CHUNK
+    for _sql, params in filings:
+        assert len(params) - 1 <= events.CHUNK    # the window date plus at most one slice of CIKs
+    for _sql, params in absent:
+        assert len(params) <= events.CHUNK
+
+    monkeypatch.setattr(events, "CHUNK", 10 * _BIG)       # one slice per table: the slicing changes no answer
+    assert events.corporate_events(tickers, today=TODAY) == chunked
+
+
+def test_a_mixed_input_answers_exactly_what_the_unbounded_read_answered(rawstore_tmp_db):
+    """E4: the expected dict is written by hand from the old (unbounded, every-ticker) implementation's rules."""
+    _master(("AAA", "0001234"), ("BBB", "2345"), ("CCC", "3456"), ("DDD", "4567"),
+            ("FFF", "00001234"), ("GGG", "5678"))
+    _filings(
+        _filing("1234", "a1", _INSIDE, "2.01,9.01"),
+        _filing("1234", "a2", (TODAY - timedelta(days=5)).isoformat(), "4.02"),
+        _filing("1234", "a3", _OUTSIDE, "5.01"),                       # outside the window: ignored
+        _filing("2345", "b1", _INSIDE, "9.01"),                        # routine only
+        _filing("3456", "c1", _AT_THE_EDGE, "5.03,1.02"),              # the window edge is inside
+        _filing("3456", "c2", (TODAY - timedelta(days=1)).isoformat(), "3.01"),
+        _filing("4567", "d1", _INSIDE, "2.01", form="10-Q"),           # not an 8-K
+    )
+
+    assert events.corporate_events(["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG"], today=TODAY) == {
+        # AAA and FFF are the same filer: both carry its items, sorted, and its newest qualifying date.
+        "AAA": {"items": ["2.01", "4.02"], "last_filing_date": (TODAY - timedelta(days=5)).isoformat()},
+        "FFF": {"items": ["2.01", "4.02"], "last_filing_date": (TODAY - timedelta(days=5)).isoformat()},
+        "CCC": {"items": ["1.02", "3.01", "5.03"], "last_filing_date": (TODAY - timedelta(days=1)).isoformat()},
+        # BBB: routine items only; DDD: a 10-Q is not an 8-K; EEE: no CIK; GGG: no filings at all.
+    }
 
 
 # ── the card ─────────────────────────────────────────────────────────────────
@@ -125,10 +234,11 @@ def test_a_ticker_with_no_cik_is_unknown_not_clean(monkeypatch, rawstore_tmp_db)
     p = _build(monkeypatch)
     cards = {c["ticker"]: c for c in p["candidates"]}
 
-    assert cards["AAA"]["flags"] == [] and "corporate_event" not in cards["AAA"]
-    assert cards["BBB"]["flags"] == ["corporate_event"]
+    assert "corporate_event" not in cards["AAA"]                  # unknown, never "no event"
     assert cards["BBB"]["corporate_event"] == {"items": ["2.01"], "last_filing_date": _INSIDE}
-    assert cards["CCC"]["flags"] == [] and "corporate_event" not in cards["CCC"]
+    assert "corporate_event" not in cards["CCC"]
+    for c in cards.values():
+        assert "flags" not in c                                   # the unread list is gone: a card says an event or nothing
 
 
 def test_the_flag_changes_nothing_that_is_scored(monkeypatch, rawstore_tmp_db):
@@ -144,8 +254,8 @@ def test_the_flag_changes_nothing_that_is_scored(monkeypatch, rawstore_tmp_db):
     assert any(c.get("corporate_event") for c in flagged["candidates"]), "the fixture must flag something"
     assert [c["ticker"] for c in plain["candidates"]] == [c["ticker"] for c in flagged["candidates"]]
     for a, b in zip(plain["candidates"], flagged["candidates"]):
-        assert {k: v for k, v in a.items() if k not in ("flags", "corporate_event")} == \
-               {k: v for k, v in b.items() if k not in ("flags", "corporate_event")}, a["ticker"]
+        assert {k: v for k, v in a.items() if k != "corporate_event"} == \
+               {k: v for k, v in b.items() if k != "corporate_event"}, a["ticker"]
         assert a["bucket"] == b["bucket"] and a["rules_passed"] == b["rules_passed"]
         assert a["passed_count"] == b["passed_count"] and a["ro40"] == b["ro40"]
     for c in (plain["candidates"][0], flagged["candidates"][0]):
@@ -160,12 +270,29 @@ def test_the_selection_version_and_the_freeze_hash_are_untouched():
     assert "CORPORATE_EVENT_WINDOW_DAYS" not in freeze._HASHED
 
 
+def test_no_submissions_counts_only_the_candidates_the_store_cannot_answer_for(monkeypatch, rawstore_tmp_db):
+    """E5: the flag's blind spot, counted. A candidate whose CIK has no filing row at all is not "no event"."""
+    _master(("AAA", "0001234"), ("BBB", "0002345"), ("CCC", "0003456"), ("DDD", "not-a-cik"))
+    _filings(_filing("1234", "a1", _INSIDE, "2.01"),                       # AAA: an 8-K
+             _filing("2345", "b1", _INSIDE, "9.01", form="10-K"))          # BBB: a filing of another form
+    # CCC's CIK has no row at all; DDD has a CIK-shaped value that is no CIK; EEE is not in security_master.
+    monkeypatch.setattr(pipeline, "_today", lambda: TODAY)
+    stats = {"regime": "RISK-ON"}
+    p = build_payload([_row(t, _m(**_RO40)) for t in ("AAA", "BBB", "CCC", "DDD", "EEE")],
+                      top_n=10, run_stats=stats)
+
+    assert p["data_quality"]["no_submissions"] == 1
+    assert stats["no_submissions"] == 1
+    cards = {c["ticker"]: c for c in p["candidates"]}
+    assert cards["AAA"]["corporate_event"] == {"items": ["2.01"], "last_filing_date": _INSIDE}
+    assert all("flags" not in c for c in cards.values())
+
+
 def test_a_hostile_item_string_is_escaped_on_the_card(monkeypatch, tmp_path, rawstore_tmp_db):
     """The card is the only sink: a value shaped like a store item must never reach markup raw."""
     evil = "<img src=x onerror=alert(1)>"
     p = _build(monkeypatch)
     c = p["candidates"][0]
-    c["flags"] = ["corporate_event"]
     c["corporate_event"] = {"items": ["2.01" + evil], "last_filing_date": evil}
 
     out = run_board_js(render_fundamental_dashboard(p),

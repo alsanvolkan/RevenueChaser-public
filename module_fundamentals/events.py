@@ -9,17 +9,27 @@ newest such filing.
 changes no ``ledger.model_version``.
 
 **Unknown is not false.** A ticker with no CIK, no filings or no qualifying item is absent from the result, never a
-positive "no event" answer; a board that cannot see itself in the store says nothing.
+positive "no event" answer; a board that cannot see itself in the store says nothing. The caller that wants the
+blind spot counted asks for it: ``stats["no_submissions"]`` is the number of candidates whose CIK has no filing row
+at all, of any form.
 
-Two read-only store reads, no write and no network call; a missing table read answers empty, like an empty store.
+**Bounded reads.** Production passes no ``top_n``, so the candidate list is unbounded and grows with the screen
+(``pipeline.build_payload``). Every store read therefore walks its keys in slices of ``CHUNK``: the statement and its
+``IN (...)`` list stay the same size whatever the board's universe.
+
+Read-only store reads, no write and no network call; a missing table read answers empty, like an empty store.
 """
 from __future__ import annotations
 
 from datetime import date, timedelta
 
-from RevenueChaser.core import rawstore
+from RevenueChaser.core import rawstore, sec_submissions
 
 from . import config
+
+# Keys per store read (#386 F5 review): one constant for both tables, so the number of candidates a Fetch or a
+# Refresh has to cover changes the number of statements, never the size of one.
+CHUNK = 500
 
 
 def _today():
@@ -29,12 +39,23 @@ def _today():
 
 
 def _norm_cik(v) -> str | None:
-    """``sec_submissions`` stores CIKs as text without leading zeros (``core.sec_submissions.norm_cik``); a
-    non-numeric one is no CIK. ``'0001234'`` and ``'1234'`` both become ``'1234'``."""
-    s = "" if v is None else str(v).strip()
-    if not s.isdigit():
+    """``core.sec_submissions.norm_cik``, or None for a value that is not a CIK. ``'0001234'`` and ``'1234'`` both
+    become ``'1234'``; a non-numeric or zero value is no CIK, so the ticker stays unknown rather than clean."""
+    try:
+        cik = sec_submissions.norm_cik(v)
+    except (TypeError, ValueError):
         return None
-    return s.lstrip("0") or None
+    return cik if cik != "0" else None
+
+
+def _slices(keys: list[str]):
+    """``keys`` in slices of at most ``CHUNK``: one bounded store read per slice."""
+    for i in range(0, len(keys), CHUNK):
+        yield keys[i:i + CHUNK]
+
+
+def _placeholders(n: int) -> str:
+    return ", ".join(["?"] * n)
 
 
 def _items(raw) -> set[str]:
@@ -42,11 +63,14 @@ def _items(raw) -> set[str]:
     return {part.strip() for part in str(raw or "").split(",") if part.strip()}
 
 
-def corporate_events(tickers, *, today=None) -> dict[str, dict]:
+def corporate_events(tickers, *, today=None, stats: dict | None = None) -> dict[str, dict]:
     """``{ticker: {"items": [codes, sorted], "last_filing_date": "YYYY-MM-DD"}}`` for tickers that have one.
 
-    A ticker with no CIK, no row, or no qualifying filing is simply absent from the result.
+    A ticker with no CIK, no row, or no qualifying filing is simply absent from the result. ``stats``, when given,
+    receives ``{"no_submissions": n}``: the candidates whose CIK has no ``sec_submissions`` row at all.
     """
+    if stats is not None:
+        stats["no_submissions"] = 0
     today = _today() if today is None else today
     if not isinstance(today, date):
         today = date.fromisoformat(str(today)[:10])
@@ -55,11 +79,14 @@ def corporate_events(tickers, *, today=None) -> dict[str, dict]:
         return {}
 
     cik_of = {}
-    for row in rawstore.query("SELECT ticker, cik FROM security_master WHERE cik IS NOT NULL AND cik <> ''",
-                              db="raw"):
-        cik = _norm_cik(row.get("cik"))
-        if cik and row.get("ticker"):
-            cik_of[row["ticker"]] = cik
+    for chunk in _slices(wanted):
+        rows = rawstore.query(
+            f"SELECT ticker, cik FROM security_master WHERE ticker IN ({_placeholders(len(chunk))}) "
+            "AND cik IS NOT NULL AND cik <> ''", chunk, db="raw")
+        for row in rows:
+            cik = _norm_cik(row.get("cik"))
+            if cik and row.get("ticker"):
+                cik_of[row["ticker"]] = cik
     by_cik = {}
     for ticker in wanted:
         cik = cik_of.get(ticker)
@@ -70,10 +97,12 @@ def corporate_events(tickers, *, today=None) -> dict[str, dict]:
 
     ciks = list(by_cik)
     since = today - timedelta(days=config.CORPORATE_EVENT_WINDOW_DAYS)
-    rows = rawstore.query(
-        "SELECT cik, items, filing_date FROM sec_submissions "
-        f"WHERE form = '8-K' AND filing_date >= ? AND cik IN ({', '.join(['?'] * len(ciks))})",
-        [since, *ciks], db="edgar")
+    rows = []
+    for chunk in _slices(ciks):
+        rows += rawstore.query(
+            "SELECT cik, items, filing_date FROM sec_submissions "
+            f"WHERE form = '8-K' AND filing_date >= ? AND cik IN ({_placeholders(len(chunk))})",
+            [since, *chunk], db="edgar")
 
     wanted_items = set(config.CORPORATE_EVENT_ITEMS)
     found: dict[str, dict] = {}
@@ -86,5 +115,15 @@ def corporate_events(tickers, *, today=None) -> dict[str, dict]:
             ev = found.setdefault(ticker, {"items": set(), "last_filing_date": ""})
             ev["items"] |= hit
             ev["last_filing_date"] = max(ev["last_filing_date"], filed)
+    if stats is not None:
+        stored: set[str] = set()
+        for chunk in _slices(ciks):
+            for row in rawstore.query(
+                    f"SELECT DISTINCT cik FROM sec_submissions WHERE cik IN ({_placeholders(len(chunk))})",
+                    chunk, db="edgar"):
+                cik = _norm_cik(row.get("cik"))
+                if cik:
+                    stored.add(cik)
+        stats["no_submissions"] = sum(len(names) for cik, names in by_cik.items() if cik not in stored)
     return {t: {"items": sorted(ev["items"]), "last_filing_date": ev["last_filing_date"]}
             for t, ev in found.items()}

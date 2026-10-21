@@ -557,13 +557,14 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
     if top_n:
         candidates = candidates[:top_n]
     annotate_cards(candidates)
-    # #386 F5: the corporate-event flag, display only — no rule, bucket, count or sort key reads it. Every card
-    # gets ``flags`` (empty when nothing is known), and only a card with an event gets ``corporate_event``:
-    # a ticker the store cannot answer for stays unknown, never "no event".
-    found = events.corporate_events([c["ticker"] for c in candidates])
+    # #386 F5: the corporate-event flag, display only — no rule, bucket, count or sort key reads it. Only a card
+    # with an event gets ``corporate_event``: a ticker the store cannot answer for stays unknown, never "no event".
+    # ``no_submissions`` is the blind spot counted, in ``data_quality``: the candidates whose CIK has no filing row.
+    event_stats: dict = {}
+    found = events.corporate_events([c["ticker"] for c in candidates], stats=event_stats)
+    run_stats["no_submissions"] = int(event_stats.get("no_submissions") or 0)
     for c in candidates:
         ev = found.get(c["ticker"])
-        c["flags"] = ["corporate_event"] if ev else []
         if ev:
             c["corporate_event"] = ev
 
@@ -583,6 +584,7 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
         "no_data": False,
         "data_quality": {"stale_ohlc": run_stats.get("stale_ohlc", 0),
                          "stale_info": run_stats.get("stale_info", 0),
+                         "no_submissions": run_stats.get("no_submissions", 0),
                          "short_refetch_refused": run_stats.get("short_refetch_refused", 0),
                          "spy_stale": bool(run_stats.get("spy_stale")),
                          "dropped": run_stats.get("dropped") or {}},
