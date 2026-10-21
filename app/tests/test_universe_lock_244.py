@@ -269,16 +269,24 @@ def test_a_universe_run_holds_the_run_marker_only_while_it_runs(sync_jobs, order
 
 
 def test_a_lock_with_an_unknown_holder_refuses_the_universe_run(sync_jobs, order, writes):
-    """Review N3 (R3): an unreadable lock file (holder 0) still refuses; nothing is fetched or written."""
+    """Review N3 (R3): an unreadable holder (no PID to name) still refuses; nothing is fetched or written.
+
+    #365: a *leftover* file that nobody holds is not a holder any more (the OS lock decides), so this one is held
+    for real, with its record left empty the way a run killed between taking the byte and writing its PID leaves it.
+    """
     path = job_lock._lock_path("universe")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("")
+    fd = job_lock._open_lock_file(path)
+    assert job_lock._os_lock(fd)
     try:
         jid = _universe_job()
         jobs.execute(jid)
         assert jobs.get(jid)["message"].startswith("the universe data is being written by another job, pid unknown")
         assert order == [] and writes == []
     finally:
+        job_lock._os_unlock(fd)
+        os.close(fd)
         path.unlink(missing_ok=True)
 
 

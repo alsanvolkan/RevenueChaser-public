@@ -101,12 +101,16 @@ def test_a_live_pid_with_the_same_start_time_keeps_its_lock(rawstore_tmp_db, liv
         assert got is False
 
 
-def test_a_live_pid_whose_start_time_cannot_be_read_keeps_its_lock(rawstore_tmp_db, live_proc, monkeypatch):
-    """No start time to compare (access denied, an unsupported OS): only the PID decides, as before."""
+def test_a_live_pid_whose_start_time_cannot_be_read_no_longer_keeps_its_lock(rawstore_tmp_db, live_proc, monkeypatch):
+    """#364: no start time to compare (access denied, an unsupported OS) vouches for nothing, so the lock is free.
+
+    It used to keep the file held for ever: the PID ran, and ``process_start_time`` returning None skipped the
+    comparison instead of refusing to vouch for the holder.
+    """
     monkeypatch.setattr(procs, "process_start_time", lambda pid: None)
     _write_lock("universe", f"{live_proc.pid} tok 1")
     with job_lock.acquire("universe", wait=0) as got:
-        assert got is False
+        assert got is True
 
 
 def test_an_old_format_lock_of_a_live_pid_keeps_its_lock(rawstore_tmp_db, live_proc):
