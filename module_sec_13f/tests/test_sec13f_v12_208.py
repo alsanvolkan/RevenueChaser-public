@@ -24,10 +24,11 @@ def _sub(acc, cik, filed, kind, period):
             "SUBMISSIONTYPE": kind, "PERIODOFREPORT": period}
 
 
-def _row(acc, name, cusip, shares, value="1000", typ="SH", putcall="", line_no=None):
+def _row(acc, name, cusip, shares, value="1000", typ="SH", putcall="", line_no=None,
+         other_manager=""):
     row = {"ACCESSION_NUMBER": acc, "NAMEOFISSUER": name, "CUSIP": cusip, "VALUE": value,
            "SSHPRNAMT": shares, "SSHPRNAMTTYPE": typ, "PUTCALL": putcall,
-           "TITLEOFCLASS": "COM", "INVESTMENTDISCRETION": "SOLE", "OTHERMANAGER": "",
+           "TITLEOFCLASS": "COM", "INVESTMENTDISCRETION": "SOLE", "OTHERMANAGER": other_manager,
            "VOTING_AUTH_SOLE": "0", "VOTING_AUTH_SHARED": "0", "VOTING_AUTH_NONE": "0"}
     if line_no is not None:
         row["INFOTABLE_SK"] = str(line_no)
@@ -167,6 +168,49 @@ class TestValueUnitsV12:
         totals = engine.recompute_totals()
         assert totals["TICK"]["2026-03-31"]["value"] == 500_000.0
         assert engine.value_scale_summary()["rescaled"] == 1
+
+
+class TestHoldersV12:
+    """brief.md §3 tests 19-20: holder counts are distinct filing CIKs; no behaviour change (defect E)."""
+
+    def test_an_other_manager_name_never_becomes_a_holder(self, store, tmp_path):
+        """``OTHERMANAGER`` names an included manager, not a filer: the holder count comes from ``h.cik``.
+
+        The named manager is the other real filer of the same CUSIP, so counting the name instead of
+        the filing CIK would merge the two filers into one holder.
+        """
+        z = _write_zip(
+            tmp_path / "othermgr_form13f.zip",
+            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026"),
+             _sub("b", "2000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            [_row("a", "ALPHA INC", "111111111", "100", "1000", other_manager="2000"),
+             _row("b", "ALPHA INC", "111111111", "200", "2000")])
+        engine.ingest_zips([z])
+        stored = {r["accession"]: r["other_manager"] for r in rawstore.query(
+            "SELECT accession, other_manager FROM sec13f_holdings")}
+        assert stored["a"] == "2000"
+        engine.save_cusip_ticker({"111111111": "A"})
+        totals = engine.recompute_totals()
+        assert totals["A"]["2026-03-31"]["holders"] == 2
+        assert totals["A"]["2026-03-31"]["shares"] == 300.0
+
+    def test_new_holdings_by_the_same_cik_counts_once(self, store, tmp_path):
+        """A NEW HOLDINGS /A by the same CIK unions its rows, and the CIK is still one holder."""
+        orig = _write_zip(
+            tmp_path / "orig_form13f.zip",
+            [_sub("o", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            [_row("o", "ALPHA INC", "111111111", "100", "1000")],
+            coverpage_rows=[_cover("o", "31-MAR-2026")])
+        add = _write_zip(
+            tmp_path / "nh_form13f.zip",
+            [_sub("nh", "1000", "15-MAY-2026", "13F-HR/A", "31-MAR-2026")],
+            [_row("nh", "ALPHA INC", "111111111", "50", "500")],
+            coverpage_rows=[_cover("nh", "31-MAR-2026", "13F-HR/A", "Y", "1", "NEW HOLDINGS")])
+        engine.ingest_zips([orig, add])
+        engine.save_cusip_ticker({"111111111": "A"})
+        totals = engine.recompute_totals()
+        assert totals["A"]["2026-03-31"]["holders"] == 1
+        assert totals["A"]["2026-03-31"]["shares"] == 150.0
 
 
 class TestNonLossyIngest:

@@ -964,35 +964,3 @@ class TestValueUnits:
         totals = sf.recompute_totals()
         assert totals["TICK"]["2026-03-31"]["value"] == 500.0
         assert sf.value_scale_summary()["checked"] == 0
-
-
-class TestHolders:
-    """S5: holder counts stay correct."""
-
-    def test_other_manager_name_is_not_a_holder(self, isolated_store, tmp_path):
-        z = _write_zip(
-            tmp_path / "othermgr_form13f.zip",
-            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
-            [_row("a", "ALPHA INC", "111111111", "100", "1000",
-                  other_manager="9999")])
-        sf.ingest_zips([z])
-        sf.save_cusip_ticker({"111111111": "A"})
-        totals = sf.recompute_totals()
-        assert totals["A"]["2026-03-31"]["holders"] == 1
-
-    def test_new_holdings_by_same_cik_counts_once(self, isolated_store, tmp_path):
-        orig = _write_zip(
-            tmp_path / "orig_form13f.zip",
-            [_sub("o", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
-            [_row("o", "ALPHA INC", "111111111", "100", "1000")],
-            coverpage_rows=[_cover("o", "31-MAR-2026")])
-        nh = _write_zip(
-            tmp_path / "nh_form13f.zip",
-            [_sub("nh", "1000", "15-MAY-2026", "13F-HR/A", "31-MAR-2026")],
-            [_row("nh", "BETA INC", "222222222", "50", "500")],
-            coverpage_rows=[_cover("nh", "31-MAR-2026", "13F-HR/A", "Y", "1", "NEW HOLDINGS")])
-        sf.ingest_zips([orig, nh])
-        sf.save_cusip_ticker({"111111111": "A", "222222222": "B"})
-        totals = sf.recompute_totals()
-        assert totals["A"]["2026-03-31"]["holders"] == 1
-        assert totals["B"]["2026-03-31"]["holders"] == 1
