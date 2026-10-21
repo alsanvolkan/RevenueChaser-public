@@ -67,6 +67,26 @@ class TestFredDaily:
     def test_fred_daily_no_key(self):
         assert macro_watch._fred_daily("DGS10", "") == []
 
+    def test_the_daily_read_follows_a_redirect(self, monkeypatch):
+        """httpx follows no redirect by default: a redirect body is not the observations JSON."""
+        seen = []
+
+        class _Resp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"observations": [{"date": "2026-08-14", "value": "4.68"}]}
+
+        def get(url, *a, params=None, timeout=None, follow_redirects=False, **k):
+            seen.append(follow_redirects)
+            return _Resp()
+
+        monkeypatch.setattr("httpx.get", get)
+        res = macro_watch.fred_daily_result("DGS10", "fakekey")
+        assert res.status == "ok" and res.data == [("2026-08-14", 4.68)]
+        assert seen == [True]
+
     def test_fred_daily_parses_dated_pairs(self, monkeypatch):
         class _Resp:
             def raise_for_status(self):
