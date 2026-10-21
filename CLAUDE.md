@@ -3,15 +3,35 @@
 Read [`AGENTS.md`](AGENTS.md) first; it is the source of truth for how data is stored, retrieved and tested. This
 file holds the short version plus the rules that are easy to get wrong.
 
+## Where work happens
+
+This repository is where RevenueChaser is developed. The private `alsanvolkan/RevenueChaser` still holds the
+issues, the project board and three folders that are not published (`.hermes/`, `.bookkeeping/` and
+`scripts/pc/`), but **no new code goes there.** Work is authored, reviewed and merged here, because this is
+where CI runs.
+
+- **Branch from `origin/main` of this repository,** push here, open the PR here.
+- **Issues live in the private repository.** Reference one in full — `alsanvolkan/RevenueChaser#447`, never
+  the bare `#447`, which would point at an issue of *this* repository that does not exist. GitHub auto-links
+  the full form across repositories.
+- **Few pull requests, each carrying real work.** One per lane; a one-line follow-up rides the next PR that is
+  open anyway rather than getting one of its own. An earlier rule of one batched PR per day existed because
+  Actions minutes were scarce. They are not scarce here, and the two jobs run concurrently in well under an
+  hour, so the reason to batch is now shared files, not cost.
+- **Still its own PR, never batched:** a `_SCHEMA_VERSION` bump, a write to the live store, and a change to a
+  job the dashboard runs. Each carries a backup and a rollback, and has to be revertable alone.
+- **Work that touches only `.hermes/`, `.bookkeeping/` or `scripts/pc/`** is the one exception to "nothing new
+  in private", and it is rare.
+
 ## Language
 
 Code, comments, commit messages, issues and docs are written in **English**.
 
 ## Tracking and branches
 
-- Every change maps to a **GitHub issue** in this repository, attached as a sub-issue of its area epic.
+- Every change maps to a **GitHub issue**, attached as a sub-issue of its area epic. The issues and the board
+  live in the private repository — see **Where work happens** for how to reference one.
 - Branch naming: `area/<key>/<slice>`, where `<key>` comes from the issue's `area:` label.
-- One pull request per lane. A `_SCHEMA_VERSION` bump or anything that writes a live store is always its own PR.
 
 ## Tests
 
