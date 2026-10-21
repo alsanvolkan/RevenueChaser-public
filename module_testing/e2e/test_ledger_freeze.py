@@ -222,13 +222,25 @@ def chrome() -> str:
 # hook forgets that once the page's own startup is done and starts polling: ``poll()`` then meets the four
 # finished Fetches the way it meets a Fetch that finishes while the page is open. The last ``alert`` is the
 # hook's own: it proves the recorder works, so "no alert" cannot be an empty pass.
-_ALERT_HOOK = """<base href="%(base)s/"><script>
+_ALERT_HOOK = """<script>
 window.__alerts = [];
 window.alert = function (m) {
   window.__alerts.push(String(m));
   document.documentElement.setAttribute('data-alerts', window.__alerts.join('\\n'));
 };
 window.confirm = function () { return false; };
+// The page's own startup calls eleven endpoints and ``poll()`` reloads an iframe per finished job. Each one is
+// a real request, and under ``--virtual-time-budget`` a pending request pauses the virtual clock, so one slow
+// answer means ``--dump-dom`` never returns (on a hosted runner it did not: two rounds of 120 s). Every request
+// is answered here instead, from the body the test read itself, so the browser needs no network at all. What is
+// under test is untouched: ``poll()`` runs on the real ``/api/jobs`` body and alerts, or does not, from it.
+window.__jobs = %(jobs)s;
+window.fetch = function (url) {
+  var body = String(url).indexOf('/api/jobs') >= 0 ? window.__jobs : {};
+  return Promise.resolve({ok: true, status: 200,
+                          json: function () { return Promise.resolve(body); },
+                          text: function () { return Promise.resolve(JSON.stringify(body)); }});
+};
 window.addEventListener('load', function () {
   setTimeout(function () {
     window._seenDone = {};
@@ -244,21 +256,29 @@ window.addEventListener('load', function () {
 
 def _alerts_and_seen(chrome: str, dashboard, tmp_path: Path) -> tuple[list[str], int]:
     html = dashboard.get("/").text
-    hooked = re.sub(r"(<head[^>]*>)", lambda m: m.group(1) + _ALERT_HOOK % {"base": dashboard.url}, html, count=1,
+    jobs = dashboard.get("/api/jobs").text                 # the real payload, handed to the page by the hook
+    blank = tmp_path / "blank.html"
+    blank.write_text("<!doctype html><title>blank</title>", encoding="utf-8")
+    # ``poll()`` reloads the iframe of every module a finished job produces. Point them at a local file: the
+    # reload still happens, so the alert path is unchanged, but it fetches nothing from the dashboard.
+    framed = re.sub(r'data-src="[^"]*"', 'data-src="%s"' % blank.as_uri(), html)
+    assert framed != html, "the dashboard page has no iframe to point at a blank file"
+    hooked = re.sub(r"(<head[^>]*>)", lambda m: m.group(1) + _ALERT_HOOK % {"jobs": jobs}, framed, count=1,
                     flags=re.I)
-    assert hooked != html, "the dashboard page has no <head> to hook"
+    assert hooked != framed, "the dashboard page has no <head> to hook"
     page = tmp_path / "dashboard_hooked.html"
     page.write_text(hooked, encoding="utf-8")
-    out = subprocess.run(
-        [chrome, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", "--disable-extensions",
-         "--disable-web-security",                      # the page is a file: its fetches to the dashboard are cross-origin
-         f"--user-data-dir={tmp_path / 'chrome-profile'}",
-         # Boards embed plotly from a CDN (``core.config.PLOTLY_CDN_URL``). A real request pauses the
-         # virtual clock, so ``--dump-dom`` never returns: resolve every host but the dashboard to nothing.
-         "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1",
-         "--virtual-time-budget=12000", "--dump-dom",
-         page.as_uri()],
-        capture_output=True, text=True, encoding="utf-8", timeout=120)
+    argv = [chrome, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", "--disable-extensions",
+            f"--user-data-dir={tmp_path / 'chrome-profile'}",
+            # Nothing here reaches the network: the hook answers every request and the iframes point at a local
+            # file, so this only makes a stray host fail at once instead of pausing the virtual clock.
+            "--host-resolver-rules=MAP * ~NOTFOUND",
+            "--virtual-time-budget=12000", "--dump-dom", page.as_uri()]
+    try:
+        out = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", timeout=120)
+    except subprocess.TimeoutExpired as exc:               # it never returned: say what it had to say
+        err = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode("utf-8", "replace")
+        raise AssertionError(f"Chrome did not finish in 120 s. Its stderr: {err[-2000:]}") from exc
     assert "<html" in out.stdout.lower(), f"Chrome dumped no DOM: {out.stderr[-1500:]}"
     root = re.search(r"<html[^>]*>", out.stdout, re.I).group(0)
     alerts = re.search(r'data-alerts="([^"]*)"', root)
