@@ -936,13 +936,14 @@ class TestValueUnits:
 
     def test_no_rescale_when_implied_price_matches_close(self, isolated_store, tmp_path):
         from RevenueChaser.core import rawstore
-        z, cmap = self._filings_for_scale(tmp_path, value="100000", shares="1000", n_names=5)
+        # Slightly under the close (0.98), the real shape of a quarter: near 1.0, not on it.
+        z, cmap = self._filings_for_scale(tmp_path, value="98000", shares="1000", n_names=5)
         rawstore.write_rows("price_bars_daily", [
             self._bar("TICK", "2026-03-31", 100.0)])
         sf.ingest_zips([z])
         sf.save_cusip_ticker(cmap)
         totals = sf.recompute_totals()
-        assert totals["TICK"]["2026-03-31"]["value"] == 500_000.0
+        assert totals["TICK"]["2026-03-31"]["value"] == 490_000.0
         assert sf.value_scale_summary()["rescaled"] == 0
 
     def test_not_rescaled_with_too_few_names(self, isolated_store, tmp_path):

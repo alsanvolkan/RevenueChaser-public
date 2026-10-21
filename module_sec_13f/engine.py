@@ -472,6 +472,9 @@ _LONG_EQUITY_SQL = "h.sshprnamttype = 'SH' AND (h.putcall IS NULL OR h.putcall =
 # mappings.
 _VALUE_SCALE_BAND = (1.0 / 3000.0, 1.0 / 300.0)
 _VALUE_SCALE_MIN_NAMES = 5
+# How far back of a period end one prices read looks before falling back to the one bar
+# ``daily_bars`` returns from before the window.
+_CLOSE_LOOKBACK_DAYS = 10
 
 
 def _normalize_amendment_type(raw: str) -> Optional[str]:
@@ -795,6 +798,38 @@ def value_scale_summary() -> dict:
     return {"checked": checked, "rescaled": rescaled, "periods": periods}
 
 
+def _reference_closes(tickers: Iterable[str], periods: Iterable[str]) -> dict[tuple[str, str], float]:
+    """``{(ticker, period): close}`` — the last stored nominal close on or before each period end.
+
+    One ``prices.daily_bars`` read per period for every ticker, not one read per pair:
+    ``prices.duckdb`` is a separate store file, so the closes are read in Python and the triples are
+    handed to the aggregation as a list parameter (the ``pairs`` pattern). A bar with no close (a
+    halted name) is skipped, so the reference is the last session that has a real price.
+    """
+    out: dict[tuple[str, str], float] = {}
+    names = sorted({t for t in tickers if t})
+    if not names:
+        return out
+    for period in sorted(set(periods)):
+        try:
+            end = date.fromisoformat(period)
+        except (TypeError, ValueError):
+            continue
+        try:
+            df = prices.daily_bars(names, basis="nominal",
+                                   start=end - timedelta(days=_CLOSE_LOOKBACK_DAYS), end=end)
+        except Exception:  # a store without bars, or a ticker the price tables reject
+            logger.warning("13F derive: no stored closes for %s; VALUE units not checked there",
+                           period, exc_info=True)
+            continue
+        if df is None or df.empty or "close" not in df:
+            continue
+        usable = df[df["close"].notna()].sort_values("session_date")
+        for ticker, group in usable.groupby("ticker"):
+            out[(ticker, period)] = float(group["close"].iloc[-1])
+    return out
+
+
 def _value_scale_factors(cusip_ticker: dict, active: set[str]) -> dict[tuple[str, str], float]:
     """``{(cik, period): factor}`` for VALUE-units rescale, 1 when no rescale.
 
@@ -837,19 +872,9 @@ def _value_scale_factors(cusip_ticker: dict, active: set[str]) -> dict[tuple[str
     if not ticker_periods:
         return {}
 
-    # last close per (ticker, period)
-    close_by_tp: dict[tuple[str, str], float] = {}
-    for ticker, periods in ticker_periods.items():
-        for period in periods:
-            try:
-                from datetime import date as _date
-                end = _date.fromisoformat(period)
-                df = prices.daily_bars([ticker], basis="nominal", end=end)
-            except Exception:
-                df = None
-            if df is not None and not df.empty and df["close"].notna().any():
-                close_by_tp[(ticker, period)] = float(df["close"].iloc[-1])
-
+    # last close per (ticker, period), one read per period
+    close_by_tp = _reference_closes(ticker_periods.keys(),
+                                    {p for ps in ticker_periods.values() for p in ps})
     if not close_by_tp:
         return {}
 
@@ -860,6 +885,7 @@ def _value_scale_factors(cusip_ticker: dict, active: set[str]) -> dict[tuple[str
             "SELECT h.cik, h.accession, h.cusip, h.shares, h.value "
             "FROM sec13f_holdings h "
             "WHERE h.accession IN (SELECT unnest(?::VARCHAR[])) "
+            "AND h.cik IS NOT NULL AND h.cik <> '' "
             f"AND {_LONG_EQUITY_SQL}",
             [sorted(active)]):
         acc = r["accession"]
@@ -906,6 +932,8 @@ def compute_totals(cusip_ticker: dict) -> dict:
     """
     active = active_accessions_db()
     pairs = [[cusip, ticker_of(info)] for cusip, info in cusip_ticker.items() if ticker_of(info)]
+    # A run that checks nothing must not report the previous run's counts.
+    compute_totals._last_scale_factors = {}  # type: ignore[attr-defined]
     if not active or not pairs:
         return {}
 

@@ -137,6 +137,38 @@ class TestAmendmentsV12:
         assert totals["A"]["2026-03-31"]["shares"] == 140.0
 
 
+class TestValueUnitsV12:
+    """S4: the VALUE-units check's edge cases (brief.md §3 tests 11-14 live in test_ingest.py)."""
+
+    def _seed(self, tmp_path, *, closes):
+        rows = [_row("a", f"NAME{i}", f"11111111{i}", "1000", "100", line_no=i + 1) for i in range(5)]
+        z = _write_zip(
+            tmp_path / "scale_form13f.zip",
+            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            rows)
+        rawstore.write_rows("price_bars_daily", [
+            {"ticker": "TICK", "session_date": d, "close": c, "source": "test"} for d, c in closes])
+        engine.ingest_zips([z])
+        engine.save_cusip_ticker({f"11111111{i}": "TICK" for i in range(5)})
+
+    def test_summary_does_not_carry_the_previous_run(self, store, tmp_path):
+        """A derive with nothing to derive from must not report the last run's counts."""
+        self._seed(tmp_path, closes=[("2026-03-31", 100.0)])
+        engine.recompute_totals()
+        assert engine.value_scale_summary()["rescaled"] == 1
+        rawstore.execute("DELETE FROM sec13f_holdings")
+        rawstore.execute("DELETE FROM sec13f_submissions")
+        assert engine.compute_totals(engine.load_cusip_ticker()) == {}
+        assert engine.value_scale_summary() == {"checked": 0, "rescaled": 0, "periods": {}}
+
+    def test_a_missing_final_close_falls_back_to_the_last_usable_one(self, store, tmp_path):
+        """A halted name with a NULL close on the period end still has a reference: its last real close."""
+        self._seed(tmp_path, closes=[("2026-03-30", 100.0), ("2026-03-31", None)])
+        totals = engine.recompute_totals()
+        assert totals["TICK"]["2026-03-31"]["value"] == 500_000.0
+        assert engine.value_scale_summary()["rescaled"] == 1
+
+
 class TestNonLossyIngest:
     """brief.md §3 tests 7-10 and 23."""
 
