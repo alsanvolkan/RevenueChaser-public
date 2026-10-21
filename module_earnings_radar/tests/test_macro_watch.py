@@ -19,6 +19,25 @@ class TestFredWeekly:
     def test_fred_no_key(self):
         assert macro_watch._fred_weekly("DGS10", "") == []
 
+    def test_the_weekly_read_follows_a_redirect(self, monkeypatch):
+        """FRED answers a redirect for a moved series: without the flag the body is not JSON."""
+        seen = []
+
+        class _Resp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"observations": [{"date": "2026-08-14", "value": "4.68"}]}
+
+        def get(url, *a, params=None, timeout=None, follow_redirects=False, **k):
+            seen.append(follow_redirects)
+            return _Resp()
+
+        monkeypatch.setattr("httpx.get", get)
+        assert macro_watch._fred_weekly("DGS10", "fakekey") == [4.68]
+        assert seen == [True]
+
     def test_fred_parses_values(self, monkeypatch):
         class _Resp:
             def raise_for_status(self):

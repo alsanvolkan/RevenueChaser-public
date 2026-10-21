@@ -30,7 +30,7 @@ def _fred_weekly(series_id: str, api_key: str, limit: int = 160):
             "series_id": series_id, "api_key": api_key,
             "file_type": "json", "frequency": "w", "aggregation_method": "eop",
             "sort_order": "desc", "limit": limit,
-        }, timeout=25)
+        }, timeout=25, follow_redirects=True)
         r.raise_for_status()
         obs = r.json().get("observations", [])
     except Exception as exc:
