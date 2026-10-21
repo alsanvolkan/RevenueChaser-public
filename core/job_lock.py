@@ -271,11 +271,13 @@ def acquire(name: str = "edgar", wait: float = 0.0, stale_after: float = 3600.0)
         else:
             while True:
                 try:
-                    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                    # Its own handle, never ``fd``: the fallback takes no OS lock, and the release below must
+                    # not try to unlock or close a descriptor this branch has already closed.
+                    new_fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                     try:
-                        os.write(fd, f"{os.getpid()} {token} {_our_start()}".rstrip().encode("ascii"))
+                        os.write(new_fd, f"{os.getpid()} {token} {_our_start()}".rstrip().encode("ascii"))
                     finally:
-                        os.close(fd)
+                        os.close(new_fd)
                     got = True
                     break
                 except FileExistsError:
