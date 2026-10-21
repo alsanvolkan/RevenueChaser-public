@@ -103,9 +103,23 @@ def _as_of(data_fetched_at, run_at) -> str | None:
     return datetime.fromtimestamp(float(run_at), timezone.utc).date().isoformat() if run_at else None
 
 
+def has_comps(report: dict | None) -> bool:
+    """True when a recorded report carries comps a Fetch computed: a ``comps`` module that ran without an error.
+
+    The encodings a run leaves in ``modules``: ``comps_engine.run_comps`` returns ``{"error": ...}`` when the step
+    could not run, a Fetch that did not ask for comps has no ``comps`` key at all, and the Refresh's own empty state
+    (``not_stored``) is never recorded (``run_quick_cached`` writes no history row)."""
+    comps = ((report or {}).get("modules") or {}).get("comps")
+    return isinstance(comps, dict) and bool(comps) and not comps.get("error")
+
+
 def last_report(ticker: str) -> dict | None:
-    """The newest recorded Fetch's report for ``ticker``, decoded: ``modules`` (comps included), ``warnings``,
-    ``quick_remarks``, ``sector``, ``run_id`` and ``as_of`` (the date its data was fetched).
+    """The newest recorded Fetch's report for ``ticker`` that has comps, decoded: ``modules`` (comps included),
+    ``warnings``, ``quick_remarks``, ``sector``, ``run_id`` and ``as_of`` (the date its data was fetched).
+
+    A run whose comps step errored must not hide the comps an older run did compute (FIN-4, #385), so the rows are
+    walked newest first and the first with usable comps wins (:func:`has_comps`); when no stored run has any, the
+    newest row is returned as it is, which the board renders as its empty state.
 
     Read-only: ``rawstore.query`` opens the history file read-only and writes nothing; a store with no recorded run
     (no history file at all) reads as ``None``. This is how a Refresh renders the comps its last Fetch computed,
@@ -114,10 +128,11 @@ def last_report(ticker: str) -> dict | None:
         "SELECT h.run_id, h.ticker, h.sector, h.modules_run, h.peers, h.assumptions, h.data_fetched_at, "
         "h.warnings, h.quick_remarks, h.modules, r.run_at "
         f"FROM {TABLE} h JOIN result_runs r ON r.board = ? AND r.run_id = h.run_id "
-        "WHERE h.ticker = ? ORDER BY r.run_at DESC, h.run_id DESC LIMIT 1",
+        "WHERE h.ticker = ? ORDER BY r.run_at DESC, h.run_id DESC",
         [BOARD, (ticker or "").strip().upper()], db="history")
     if not rows:
         return None
-    report = rawstore._decode_row(TABLE, rows[0])
+    reports = [rawstore._decode_row(TABLE, row) for row in rows]
+    report = next((r for r in reports if has_comps(r)), reports[0])
     report["as_of"] = _as_of(report.get("data_fetched_at"), report.get("run_at"))
     return report

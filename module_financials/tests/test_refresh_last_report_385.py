@@ -132,3 +132,32 @@ def test_with_no_stored_run_the_board_says_so_instead_of_raising(rawstore_tmp_db
     assert comps["not_stored"] is True and "error" not in comps
     assert "No stored comps" in _html(res)
     assert not rawstore.history_db_path().exists()
+
+
+# ── FIN-4: the newest run that HAS comps ────────────────────────────────────────────────────────────────────────
+def _record_failed_comps(*, run_id: str, run_at: float = COMPLETE):
+    """A Fetch whose comps step errored: ``run_comps`` stores ``{"error": ...}``, and the run is recorded as partial."""
+    results = _results("AAA")
+    results["modules"]["comps"] = {"error": "target financial data missing", "warnings": []}
+    return fin_history.record(results, ticker="TEST", run_id=run_id, run_at=run_at, modules=["comps"])
+
+
+def test_last_report_prefers_the_newest_run_that_has_comps(rawstore_tmp_db):
+    """A newer Fetch whose comps step errored must not hide the comps an older Fetch did compute."""
+    _record("AAA", run_id="old")
+    _record_failed_comps(run_id="new", run_at=COMPLETE + 3600)
+
+    report = fin_history.last_report("TEST")
+    assert report["run_id"] == "old"
+    assert [p["ticker"] for p in report["modules"]["comps"]["peers"]] == ["AAA"]
+    assert report["modules"]["comps"]["multiples"]["ev_ebitda"]["p50"] == 9.0
+
+
+def test_with_no_run_having_comps_the_newest_run_is_returned(rawstore_tmp_db):
+    """Nothing usable stored: the newest row, as before, so the board still shows its empty state."""
+    _record_failed_comps(run_id="old")
+    _record_failed_comps(run_id="new", run_at=COMPLETE + 3600)
+
+    report = fin_history.last_report("TEST")
+    assert report["run_id"] == "new"
+    assert fin_history.has_comps(report) is False

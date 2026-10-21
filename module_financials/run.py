@@ -121,9 +121,8 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
                 # labelled with that run's fetch date. Nothing stored yet is an empty state on the board, never an
                 # error and never a live fetch, so the reader keeps its promise of no network.
                 stored = fin_history.last_report(ticker)
-                comps = ((stored or {}).get("modules") or {}).get("comps")
-                if isinstance(comps, dict) and comps and not comps.get("error"):
-                    results["modules"]["comps"] = {**comps, "as_of": stored.get("as_of"),
+                if fin_history.has_comps(stored):
+                    results["modules"]["comps"] = {**stored["modules"]["comps"], "as_of": stored.get("as_of"),
                                                    "stored_run_id": stored.get("run_id")}
                 else:
                     results["modules"]["comps"] = {
