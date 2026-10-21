@@ -55,18 +55,30 @@ def _rows(table, order="symbol, session_date"):
 def _cboe(*, status=200, html=(), body=None):
     """A fake ``httpx.get``: ``html`` symbols answer an error page, every other symbol a good CSV."""
     asked = []
+    seen_redirects = []
 
-    def get(url, timeout=None, headers=None):
+    def get(url, timeout=None, headers=None, follow_redirects=False):
+        seen_redirects.append(follow_redirects)
         symbol = url.rsplit("/", 1)[-1].removesuffix("_History.csv")
         asked.append(symbol)
         if symbol in html:
             return _Resp(status, "<html><body>error</body></html>")
         return _Resp(status, body(symbol) if body else _csv())
 
+    get.seen_redirects = seen_redirects
     return get, asked
 
 
 # --- date parsing ---------------------------------------------------------------------------------------------------
+
+def test_d28_follows_the_cboe_redirect(monkeypatch):
+    # cdn.cboe.com answers 307 -> cdn-api.cboe.com; without follow_redirects the 2026-10-20 run stored HTTP 307 for all 7
+    get, _ = _cboe()
+    monkeypatch.setattr("httpx.get", get)
+    bars, why = d28.fetch_csv("VIX")
+    assert why is None and len(bars) == len(DATES)
+    assert get.seen_redirects == [True]
+
 
 def test_d28_parses_both_cboe_date_formats():
     assert d28.parse_date("10/13/2026") == date(2026, 10, 13)        # Cboe's CSV today
@@ -153,7 +165,7 @@ def test_d28_a_500_and_an_html_body_are_per_symbol_errors_that_name_the_symbol(r
                                                                               monkeypatch):
     get, asked = _cboe(status=500, html=("VIX",))
 
-    def get_mixed(url, timeout=None, headers=None):
+    def get_mixed(url, timeout=None, headers=None, follow_redirects=False):
         symbol = url.rsplit("/", 1)[-1].removesuffix("_History.csv")
         asked.append(symbol)
         if symbol == "VIX":
