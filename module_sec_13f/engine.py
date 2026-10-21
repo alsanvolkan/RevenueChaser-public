@@ -531,13 +531,15 @@ def ingest_zips(zip_paths: Iterable[str | Path]) -> int:
 
             # submissions (accession -> cik) for this zip; written last
             acc_cik = {}
+            acc_period = {}
             sub_rows = []
             with z.open(sub_member) as f:
                 for row in csv.DictReader(io.TextIOWrapper(f, encoding="utf-8"), delimiter="\t"):
                     acc = row["ACCESSION_NUMBER"]
                     acc_cik[acc] = row.get("CIK", "")
+                    acc_period[acc] = normalize_period(row.get("PERIODOFREPORT", ""))
                     sub_rows.append({"accession": acc, "cik": row.get("CIK", ""),
-                                     "period": normalize_period(row.get("PERIODOFREPORT", "")),
+                                     "period": acc_period[acc],
                                      "filing_date": row.get("FILING_DATE", ""),
                                      "type": row.get("SUBMISSIONTYPE", "")})
 
@@ -597,8 +599,10 @@ def ingest_zips(zip_paths: Iterable[str | Path]) -> int:
                     except ValueError:
                         line_no = None
                     if line_no is None or (acc, line_no) in seen_keys:
-                        line_no_fallback[acc] = line_no_fallback.get(acc, 0) + 1
-                        line_no = line_no_fallback[acc]
+                        line_no = line_no_fallback.get(acc, 0) + 1
+                        while (acc, line_no) in seen_keys:
+                            line_no += 1
+                        line_no_fallback[acc] = line_no
                     seen_keys.add((acc, line_no))
 
                     cusip = normalize_cusip(row.get("CUSIP", ""))
@@ -607,7 +611,7 @@ def ingest_zips(zip_paths: Iterable[str | Path]) -> int:
                         name_counter[cusip][nm] += 1
                         name_raw.setdefault(cusip, row.get("NAMEOFISSUER", ""))
 
-                    period = sub_rows[0]["period"] if sub_rows else None
+                    period = acc_period.get(acc)
                     batch.append({"accession": acc, "line_no": line_no,
                                   "cusip": cusip,
                                   "cik": acc_cik.get(acc, ""),

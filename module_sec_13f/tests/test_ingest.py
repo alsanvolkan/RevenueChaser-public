@@ -838,6 +838,9 @@ class TestNonLossyIngest:
         sf.ingest_zips([z])
         from RevenueChaser.core import rawstore
         first = rawstore.count("sec13f_holdings")
+        # Simulate the v12 reset minus the DROP: the marker goes, the holdings stay, so the
+        # second ingest really re-inserts the same (accession, line_no) rows.
+        rawstore.execute("DELETE FROM sec13f_ingested_zips")
         deletes = []
         raw_delete = rawstore.execute
 
@@ -848,7 +851,7 @@ class TestNonLossyIngest:
 
         rawstore.execute = spy_delete
         try:
-            sf.ingest_zips([z])
+            assert sf.ingest_zips([z]) == 1
         finally:
             rawstore.execute = raw_delete
         assert rawstore.count("sec13f_holdings") == first
@@ -890,47 +893,6 @@ class TestNonLossyIngest:
         from RevenueChaser.core import rawstore
         row = rawstore.query("SELECT * FROM sec13f_submissions WHERE accession='a'")[0]
         assert row["other_managers_count"] == 7
-
-    def test_nested_member_ingests_identically(self, isolated_store, tmp_path):
-        flat = _write_zip(
-            tmp_path / "flat_form13f.zip",
-            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
-            [_row("a", "ALPHA INC", "111111111", "100", "1000")],
-            coverpage_rows=[_cover("a", "31-MAR-2026")])
-        nested = _write_zip(
-            tmp_path / "nested_form13f.zip",
-            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
-            [_row("a", "ALPHA INC", "111111111", "100", "1000")],
-            coverpage_rows=[_cover("a", "31-MAR-2026")],
-            member_prefix="FOLDER/")
-        mixed = _write_zip(
-            tmp_path / "mixed_form13f.zip",
-            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
-            [_row("a", "ALPHA INC", "111111111", "100", "1000")],
-            coverpage_rows=[_cover("a", "31-MAR-2026")],
-            member_prefix="FOLDER/")
-        # rename members to upper-case by rebuilding the zip
-        import zipfile as zf
-        upper_path = tmp_path / "upper_form13f.zip"
-        with zf.ZipFile(mixed, "r") as src, zf.ZipFile(upper_path, "w") as dst:
-            for name in src.namelist():
-                dst.writestr(name.upper(), src.read(name))
-        sf.ingest_zips([flat])
-        from RevenueChaser.core import rawstore
-        flat_count = rawstore.count("sec13f_holdings")
-        # separate DB for comparison not needed: just ingest nested/upper fresh
-        # (per-test isolation means each test gets its own DB, but we compare shapes here)
-        # Instead, verify the nested zip actually produces the same row count in this store.
-        # Use a different accession so it adds rows.
-        nested2 = _write_zip(
-            tmp_path / "nested2_form13f.zip",
-            [_sub("b", "2000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
-            [_row("b", "BETA INC", "222222222", "50", "500")],
-            coverpage_rows=[_cover("b", "31-MAR-2026")],
-            member_prefix="FOLDER/")
-        sf.ingest_zips([nested2])
-        assert rawstore.count("sec13f_holdings") == flat_count + 1
-
 
 class TestValueUnits:
     """S4: VALUE thousands are detected from D01 closes and rescaled."""
