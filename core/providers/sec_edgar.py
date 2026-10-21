@@ -190,20 +190,21 @@ _STI_HTM_TAGS = ["HeldToMaturitySecuritiesCurrent",
 # Quarterly series are not merged.
 #
 # ``revenue`` reads the ASC 606 including-assessed-tax sibling
-# (``RevenueFromContractWithCustomerIncludingAssessedTax``) LAST (#435): of 39 filers measured with a
-# fresh record and no revenue, 25 tag only that one in their newest years. The pick itself is the
-# newest year, then the longest series, then list order; length is therefore NOT a safe tie-break
-# between these two tags, because a filer can tag the broader one over a longer history. They differ
-# only by the assessed tax, so ``_annual_facts`` has one explicit rule for the pair: when the pick is
-# the including-tax sibling and the excluding-tax tag reports the SAME newest year, the
-# excluding-tax series is the primary, and the sibling can only add years it alone reports. List
-# order is the tie-break for an ADDED year (``_backfill_history``), which is why the new tag goes
-# last. A filer whose including-tax series is older than what the other tags already hold (AMH 2018
-# vs 2020, BESS 2021 vs 2023, WOLF 2020 vs 2025) keeps its numbers: the newest series wins the pick
-# and the sibling can only backfill years below it. Bank top lines
-# (``InterestAndDividendIncomeOperating``, ``RevenuesNetOfInterestExpense``) are NOT read: interest
-# income is a different definition of the top line and therefore the owner's decision, and no other
-# tag that merely contains the word "Revenue" is one
+# (``RevenueFromContractWithCustomerIncludingAssessedTax``) LAST (#435): 341 US filers have a fresh
+# record and no revenue, and 25 of 39 measured tag only that one in the newest annual period. It
+# NEVER competes for the pick, though: the pick is exactly the one over the three older tags
+# (``Revenues``, ``...ExcludingAssessedTax``, ``SalesRevenueNet``), and this tag then only ADDS the
+# years that pick lacks (``_ADD_ONLY_CONCEPTS`` below). When those three hold no series at all, the
+# including-tax series IS the primary, so the filers it is here for keep gaining revenue.
+#
+# Letting it win the pick was measured to regress filers that already had revenue: it ends later
+# than the other tags often enough to be the newest series, and the merge then replaced years the
+# older tags already reported (Regal Rexnord FY2022 3.81bn became 5.22bn, AST SpaceMobile FY2024
+# moved by -68%, one filer lost eleven years). The premise that the two tax tags differ only by the
+# assessed tax is false, so neither is "the narrower one" and neither may take a year from the
+# other. Bank top lines (``InterestAndDividendIncomeOperating``, ``RevenuesNetOfInterestExpense``)
+# are NOT read: interest income is a different definition of the top line and therefore the owner's
+# decision, and no other tag that merely contains the word "Revenue" is one
 # (``ContractWithCustomerLiabilityRevenueRecognized``, ``IncreaseDecreaseInDeferredRevenue``,
 # ``CostOfRevenue`` and pro-forma acquisition revenue).
 #
@@ -218,10 +219,11 @@ _STI_HTM_TAGS = ["HeldToMaturitySecuritiesCurrent",
 # only one that is ever counted (``core/liquidity.py``); ``marketable_securities_noncurrent``
 # and ``long_term_investments`` (equity-method and strategic stakes, not cash-like) are stored
 # for visibility and never enter a gate. None of the fields in ``_NEVER_A_RECORD`` adds a record.
-# ``RevenueFromContractWithCustomerIncludingAssessedTax`` and its excluding-tax sibling are one
-# definition apart: broader first, narrower second (#435).
-_ASSESSED_TAX_SIBLINGS = ("RevenueFromContractWithCustomerIncludingAssessedTax",
-                          "RevenueFromContractWithCustomerExcludingAssessedTax")
+#
+# A concept listed here may be the primary only when no other tag of its field reports anything,
+# and otherwise only adds the years the primary lacks (any missing year, not just a contiguous run).
+_ADD_ONLY_CONCEPTS = frozenset({"RevenueFromContractWithCustomerIncludingAssessedTax"})
+
 
 CONCEPTS = {
     "revenue": (["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet",
@@ -445,24 +447,26 @@ def _annual_facts(facts: dict, concepts: list[str], unit: str) -> dict[str, tupl
                 for y, (fl, v, e, ac, st) in by_year.items()}
 
     # En güncel (maks yıl) ve en kapsamlı konsept serisini seç; diğer konseptler yalnızca onun
-    # eksik bıraktığı bitişik yılları ekler (#246)
+    # eksik bıraktığı bitişik yılları ekler (#246). An add-only concept (#435) does not compete:
+    # it is left out of ``best`` here and adds its years after the merge, so it can never take a
+    # year an older tag already holds.
     found: dict[str, dict[str, tuple[float, str]]] = {}
-    picked = ""
     for concept in concepts:
+        if concept in _ADD_ONLY_CONCEPTS:
+            continue
         series = _one(concept)
         if not series:
             continue
         found[concept] = series
         if not best or max(series) > max(best) or (max(series) == max(best) and len(series) > len(best)):
-            best, picked = series, concept
-    # The two ASC 606 tax siblings are one definition apart, so the broader one must never take
-    # over years the narrower tag already reports: on an equal newest year the narrower series is
-    # the primary however long the broader one is (#435). It stays in ``found``, so the backfill
-    # still adds the years only it reports.
-    broader, narrower = _ASSESSED_TAX_SIBLINGS
-    if best and picked == broader and narrower in found and max(found[narrower]) == max(best):
-        best = found[narrower]
-    return _backfill_history(best, list(found.values())) if best else best
+            best = series
+    merged = _backfill_history(best, list(found.values())) if best else {}
+    for concept in concepts:  # the years the pick lacks, older, newer or inside a hole (#435)
+        if concept not in _ADD_ONLY_CONCEPTS:
+            continue
+        for year, val_end in _one(concept).items():
+            merged.setdefault(year, val_end)
+    return merged
 
 
 def _series_by_year(facts: dict, concepts: list[str], unit: str) -> dict[str, float]:

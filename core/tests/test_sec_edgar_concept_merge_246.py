@@ -8,8 +8,9 @@ included), so a key one year apart that is two fiscal years apart is never chain
 at the first year that is missing or fails. Quarterly series are not merged.
 
 Synthetic companyfacts only, no network. ``CONCEPTS["revenue"]`` lists, in order:
-``Revenues``, ``RevenueFromContractWithCustomerExcludingAssessedTax``, ``SalesRevenueNet``,
-``RevenueFromContractWithCustomerIncludingAssessedTax``.
+``Revenues``, ``RevenueFromContractWithCustomerExcludingAssessedTax``, ``SalesRevenueNet``, and
+last ``RevenueFromContractWithCustomerIncludingAssessedTax``, which never competes for the pick: it
+only adds the years those three lack (#435).
 """
 from __future__ import annotations
 
@@ -240,28 +241,28 @@ def test_the_gross_margin_pairing_still_needs_the_same_end():
 # ── property: today's pick is only ever extended ────────────────────────────
 
 _REVENUE_TAGS = se.CONCEPTS["revenue"][0]
+_INCLUDING_TAX = "RevenueFromContractWithCustomerIncludingAssessedTax"
+_OLD_REVENUE_TAGS = tuple(t for t in _REVENUE_TAGS if t != _INCLUDING_TAX)
 
 
 def _today_pick(facts: dict) -> dict:
-    """A copy of the selection before #246: one series, the newest year then the longest.
+    """Today's pick over the THREE older revenue tags, exactly as it was at 6250a89.
 
-    It carries the #435 exception too: ``_annual_facts`` makes the excluding-tax sibling the
-    primary when both ASC 606 tax tags end in the same newest year, so the oracle must as well.
+    One series wins: the newest year, then the longest, then list order; ``_backfill_history``
+    extends it with the other OLD tags' holes and contiguous runs. The including-tax tag (#435) is
+    left out on purpose: it may only ADD years to this result, never change one it holds, which is
+    the regression this oracle has to catch.
     """
     best: dict = {}
-    by_concept: dict = {}
-    for concept in _REVENUE_TAGS:
+    found: list = []
+    for concept in _OLD_REVENUE_TAGS:
         series = se._annual_facts(facts, [concept], "USD")
         if not series:
             continue
-        by_concept[concept] = series
+        found.append(series)
         if not best or max(series) > max(best) or (max(series) == max(best) and len(series) > len(best)):
             best = series
-    broader, narrower = se._ASSESSED_TAX_SIBLINGS
-    if (best and best is by_concept.get(broader) and narrower in by_concept
-            and max(by_concept[narrower]) == max(best)):
-        best = by_concept[narrower]
-    return best
+    return se._backfill_history(best, found) if best else best
 
 
 def _random_facts(rng: random.Random) -> dict:
@@ -282,30 +283,18 @@ def _random_facts(rng: random.Random) -> dict:
     return _facts(flow=flow)
 
 
-def _days(newer_end: str, older_end: str) -> int:
-    return (date.fromisoformat(newer_end) - date.fromisoformat(older_end)).days
-
-
 @pytest.mark.parametrize("seed", range(600))
 def test_property_todays_pick_is_only_ever_extended(seed):
     facts = _random_facts(random.Random(seed))
-    old = _today_pick(facts)
+    old = _today_pick(facts)  # the three old tags only: the 6250a89 pick
+    inc = se._annual_facts(facts, [_INCLUDING_TAX], "USD")  # what the #435 tag reports
     new = se._annual_facts(facts, _REVENUE_TAGS, "USD")
-    assert {y: new[y] for y in old} == old  # no existing (year, value, end) changes
-    if not old:
-        assert new == {}
+    assert {y: new[y] for y in old} == old  # no year the old tags hold changes, value or end
+    if not old:  # the target class: no old tag, so the including-tax series IS the primary
+        assert new == inc
         return
-    assert max(new) == max(old)  # the newest year is unchanged
-    added = set(new) - set(old)
-    assert all(y < min(old) or min(old) < y < max(old) for y in added)  # nothing above, only holes and below
-    old_pairs = set(zip(sorted(old), sorted(old)[1:]))
-    merged = sorted(new)
-    assert all((a, b) in old_pairs for a, b in zip(merged, merged[1:]) if int(b) - int(a) > 1)  # no new gap
-    for y in added:  # every added year ends one fiscal year from each neighbour that exists
-        for neighbour in (str(int(y) - 1), str(int(y) + 1)):
-            if neighbour in new:
-                older, newer = sorted((y, neighbour))
-                assert 350 <= _days(new[newer][1], new[older][1]) <= 380
+    assert set(new) == set(old) | set(inc)  # the new tag only ADDS years ...
+    assert all(new[y] == inc[y] for y in set(new) - set(old))  # ... with its own values
 
 
 def test_the_property_run_adds_something():
