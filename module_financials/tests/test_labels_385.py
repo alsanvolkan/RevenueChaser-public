@@ -87,6 +87,16 @@ def test_report_shows_default_tax_rate_row(financials):
     assert html.count("default 21.0%") == 2               # the DCF WACC panel and the 3-statement panel
 
 
+def test_report_shows_a_measured_tax_rate_without_default(financials):
+    """The common case since FIN-3: the rate came from the statements, so the row carries no "default" word.
+
+    The fixture's latest year reports 50 of 240 pretax, so both panels read that rate (review S2).
+    """
+    html = _html(financials, {"dcf": run_dcf(financials), "three_statement": run_three_statement(financials)})
+    assert "default" not in html
+    assert html.count("20.8%") == 2                       # the DCF WACC panel and the 3-statement panel
+
+
 def test_report_shows_an_assumed_tax_rate_without_default(financials):
     a = {"tax_rate": 0.25}
     html = _html(financials, {"dcf": run_dcf(financials, a), "three_statement": run_three_statement(financials, a)})
