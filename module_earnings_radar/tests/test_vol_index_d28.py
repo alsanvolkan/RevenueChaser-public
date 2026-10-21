@@ -5,6 +5,7 @@ No request leaves the process: Cboe goes through a monkeypatched ``httpx.get`` (
 """
 from __future__ import annotations
 
+import importlib
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -80,6 +81,22 @@ def test_d28_follows_the_cboe_redirect(monkeypatch):
     assert get.seen_redirects == [True]
 
 
+def test_d28_the_base_is_the_host_that_answers_and_the_env_override_still_wins(monkeypatch):
+    # cdn.cboe.com answers 307 to cdn-api.cboe.com, so the base is the host that answers (C1); RC_CBOE_BASE still
+    # wins, all of it or none of it
+    assert d28.CBOE_BASE == "https://cdn-api.cboe.com/api/global/us_indices/daily_prices"
+    assert d28.url_for("VIX") == "https://cdn-api.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
+
+    monkeypatch.setenv("RC_CBOE_BASE", "https://mirror.example/cboe")
+    try:
+        importlib.reload(d28)                    # the module reads the base once, at import
+        assert d28.CBOE_BASE == "https://mirror.example/cboe"
+        assert d28.url_for("VIX9D") == "https://mirror.example/cboe/VIX9D_History.csv"
+    finally:
+        monkeypatch.delenv("RC_CBOE_BASE")
+        importlib.reload(d28)                    # leave the default behind for every later test
+
+
 def test_d28_parses_both_cboe_date_formats():
     assert d28.parse_date("10/13/2026") == date(2026, 10, 13)        # Cboe's CSV today
     assert d28.parse_date("2026-10-13") == date(2026, 10, 13)        # the defensive second shape
@@ -122,6 +139,18 @@ def test_d28_stores_all_seven_cboe_symbols_and_move(rawstore_tmp_db, tmp_path, m
     assert [r["source"] for r in move] == ["yfinance"] * len(DATES) and d28.MOVE == "MOVE"
     assert (move[-1]["session_date"], move[-1]["close"]) == (DATES[3], 21.25)
     assert move[-1]["operator"] is None
+
+
+def test_d28_one_symbol_is_one_request_against_the_cboe_cap(rawstore_tmp_db, tmp_path, monkeypatch):
+    # the base is the host that answers, so a symbol costs one GET: 7 of the 20 the cap allows, not 14 (C2)
+    get, asked = _cboe()
+    monkeypatch.setattr("httpx.get", get)
+    monkeypatch.setattr(d28, "download_move", lambda download=None: (None, None))
+    res = _run((d28.SWEEP,), tmp_path)
+
+    assert asked == list(d28.SYMBOLS)                            # one logical call per symbol
+    assert get.seen_redirects == [True] * len(d28.SYMBOLS)       # the follow stays, the defensive second
+    assert res["calls"]["cboe"] == {"limit": 20, "before": 0, "used": 7, "refused": 0}
 
 
 def test_d28_a_second_run_adds_no_duplicate_row(rawstore_tmp_db, tmp_path, monkeypatch):
