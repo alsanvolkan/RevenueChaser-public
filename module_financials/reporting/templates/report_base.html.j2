@@ -215,9 +215,17 @@
 </section>
 {% endif %}
 
-{% if comps and not comps.error %}
+{% if comps and comps.not_stored %}
 <section>
   <h2>Comps Analysis</h2>
+  <p style="color:var(--muted);">{{ comps.note }}</p>
+</section>
+{% elif comps and not comps.error %}
+<section>
+  <h2>Comps Analysis</h2>
+  {% if comps.as_of %}
+  <p style="color:var(--muted); font-size:12px; margin:-6px 0 12px;">as of {{ comps.as_of }} — the last stored Fetch; the Refresh fetched nothing.</p>
+  {% endif %}
   {% if comps.pe_only %}
   <p style="color:var(--muted);">A Financial Services target is valued on P/E only: EV/EBITDA and EV/Revenue do not describe a bank.</p>
   {% endif %}

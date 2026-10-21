@@ -15,6 +15,7 @@ from .engines import (
     sensitivity_engine,
     three_statement_engine,
 )
+from . import history as fin_history
 from .peers import select_peers
 from .reporting.html_builder import build_report_html
 from RevenueChaser.core import vendor_data
@@ -107,10 +108,20 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
             results["modules"]["three_statement"] = three_statement_engine.run_three_statement(financials, assumptions)
         elif m in ("comps", "comps_engine"):
             if no_fetch:
-                # Peer quotes (EV/EBITDA, P/E) are a live network fetch — not
-                # available in a store-only re-render. Degrade with a warning.
-                warnings.append("comps: peer quotes require a live Fetch — run the Fetch button for comps")
-                results["modules"]["comps"] = {"error": "comps requires a live Fetch (no network in store-only refresh)"}
+                # FIN-4 (#385): a Refresh fetches nothing, so it renders the comps its last stored Fetch computed,
+                # labelled with that run's fetch date. Nothing stored yet is an empty state on the board, never an
+                # error and never a live fetch, so the reader keeps its promise of no network.
+                stored = fin_history.last_report(ticker)
+                comps = ((stored or {}).get("modules") or {}).get("comps")
+                if isinstance(comps, dict) and comps and not comps.get("error"):
+                    results["modules"]["comps"] = {**comps, "as_of": stored.get("as_of"),
+                                                   "stored_run_id": stored.get("run_id")}
+                else:
+                    results["modules"]["comps"] = {
+                        "not_stored": True,
+                        "note": f"No stored comps for {ticker} yet — the Refresh shows its last stored Fetch and "
+                                f"fetches nothing; run the Fetch button to compute them.",
+                    }
             else:
                 if peers:
                     used_peers = list(peers)

@@ -6,6 +6,9 @@ that ran, the comps peers, the assumptions each model used, when the data was fe
 and every module's numbers (``modules``, compressed). The mapping lives here, in the module, not in ``core/``. A
 Refresh (``run_quick_cached``) never calls it (06 rule 9).
 
+``last_report`` is the other side of that row (FIN-4, #385): the Refresh's way back to what its last Fetch computed.
+It opens the history file read-only and writes nothing, and a store with no recorded run reads as ``None``.
+
 Financials is a run board: every run keeps its row, and a degraded run is kept too, marked 'partial' with the reason
 in ``quality_note`` (design C rule E). The reasons, all run-level: a module that could not run (its ``error``), a
 report the board did not get (the copy to ``financials_latest.html`` failed), or a run that returned no report.
@@ -13,8 +16,9 @@ report the board did not get (the copy to ``financials_latest.html`` failed), or
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
-from RevenueChaser.core import history, ledger
+from RevenueChaser.core import history, ledger, rawstore
 from RevenueChaser.module_financials import config
 from RevenueChaser.module_financials.engines import credit_capacity_engine as credit, sensitivity_engine as sens
 
@@ -86,3 +90,34 @@ def record(results: dict, *, ticker: str, run_id: str, run_at: float, modules, r
         BOARD, run_id=run_id, run_at=run_at, model_version=model_version(), rows={TABLE: rows},
         params={"modules": list(modules), "defaults": effective_config()},
         context={"ticker": ticker, "sector": rows[0]["sector"] if rows else None}, partial=note)
+
+
+def _as_of(data_fetched_at, run_at) -> str | None:
+    """The date the run's data was fetched: the payload's stamp, else the run's own date (UTC)."""
+    text = str(data_fetched_at or "").strip()
+    if len(text) >= 10:
+        try:
+            return datetime.fromisoformat(text).date().isoformat()
+        except ValueError:
+            pass
+    return datetime.fromtimestamp(float(run_at), timezone.utc).date().isoformat() if run_at else None
+
+
+def last_report(ticker: str) -> dict | None:
+    """The newest recorded Fetch's report for ``ticker``, decoded: ``modules`` (comps included), ``warnings``,
+    ``quick_remarks``, ``sector``, ``run_id`` and ``as_of`` (the date its data was fetched).
+
+    Read-only: ``rawstore.query`` opens the history file read-only and writes nothing; a store with no recorded run
+    (no history file at all) reads as ``None``. This is how a Refresh renders the comps its last Fetch computed,
+    without a network call (FIN-4, #385)."""
+    rows = rawstore.query(
+        "SELECT h.run_id, h.ticker, h.sector, h.modules_run, h.peers, h.assumptions, h.data_fetched_at, "
+        "h.warnings, h.quick_remarks, h.modules, r.run_at "
+        f"FROM {TABLE} h JOIN result_runs r ON r.board = ? AND r.run_id = h.run_id "
+        "WHERE h.ticker = ? ORDER BY r.run_at DESC, h.run_id DESC LIMIT 1",
+        [BOARD, (ticker or "").strip().upper()], db="history")
+    if not rows:
+        return None
+    report = rawstore._decode_row(TABLE, rows[0])
+    report["as_of"] = _as_of(report.get("data_fetched_at"), report.get("run_at"))
+    return report
