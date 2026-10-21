@@ -1,0 +1,139 @@
+"""Tests for module_financials/run.py orchestration.
+
+``run.py`` was previously untested. The load-bearing behaviour is that a
+store-only render (``no_fetch=True``) must never die writing its report because
+the output directory is missing: ``.cache`` is regenerable and may be cleared
+while the server runs, and this module's write was the one writer in the repo
+that did not recreate its parent — a cleared cache turned Refresh into a
+FileNotFoundError that the caller could only swallow.
+"""
+from __future__ import annotations
+
+import RevenueChaser.module_financials.run as fm
+
+
+def test_run_writes_report_even_when_output_dir_was_deleted(rawstore_tmp_db,
+                                                            tmp_path, monkeypatch,
+                                                            financials):
+    """A cleared .cache must not break a store-only render.
+
+    Regression: ``run()`` wrote ``{OUTPUT_DIR}/{ticker}_report.html`` with a bare
+    ``write_text`` and no ``parent.mkdir``, so after a cache clear the write
+    raised FileNotFoundError and the Financials tab silently degraded.
+    """
+    from RevenueChaser.core.providers import cache as cache_manager
+
+    missing = tmp_path / "gone" / "cache"
+    monkeypatch.setattr(fm, "OUTPUT_DIR", missing)
+    cache_manager.save("AAPL", dict(financials))
+
+    res = fm.run("AAPL",
+                 modules=["dcf", "3stmt", "comps", "credit", "sensitivity"],
+                 output="html", no_fetch=True)
+
+    report = missing / "AAPL_report.html"
+    assert report.exists()
+    assert res["paths"]["html"] == str(report)
+    assert report.read_text(encoding="utf-8").strip()
+
+
+def test_run_no_fetch_requires_a_cached_payload(rawstore_tmp_db, tmp_path, monkeypatch):
+    """A store-only render for a ticker with no cached payload raises, so the
+    caller can fall back to an empty state instead of touching the network."""
+    monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
+
+    import pytest
+    with pytest.raises(fm._NoCachedData):
+        fm.run("ZZZZ", modules=["dcf"], output="html", no_fetch=True)
+
+
+def _run_comps(monkeypatch, financials, spine_sector):
+    from RevenueChaser.core import rawstore
+    from RevenueChaser.core.providers import cache as cache_manager
+    if spine_sector is not None:
+        rawstore.replace_all("equity_universe", [{
+            "ticker": "AAPL", "cik": "", "name": "A", "market_cap": 1e9, "price": 10.0,
+            "sector": spine_sector, "industry": "x", "industry_group": "", "sub_industry": "",
+            "quote": {"symbol": "AAPL"}}])
+    vendor = dict(financials, sector="Technology")                        # what yfinance says
+    monkeypatch.setattr(cache_manager, "get_or_fetch", lambda t, fn, use_cache=True: vendor)
+    # No store card for AAPL, so quick remarks would fall back to a live yfinance score: stub it (the same
+    # empty card a store-only render gets)
+    qr = fm.quick_remarks_engine
+    monkeypatch.setattr(qr, "run_quick_remarks", lambda ticker, no_fetch=False: qr._from_card(ticker, {}, "yfinance"))
+    seen = {}
+    monkeypatch.setattr(fm.comps_engine, "run_comps",
+                        lambda fin, peers, **kw: seen.update(peers=peers, sector=fin.get("sector")) or {})
+    return seen
+
+
+def test_comps_default_peers_follow_the_spine_sector(rawstore_tmp_db, tmp_path, monkeypatch, financials):
+    """R5 (#88): peers come from the spine sector, not the yfinance one."""
+    monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
+    seen = _run_comps(monkeypatch, financials, "Energy")
+    fm.run("AAPL", modules=["comps"], output="html", no_fetch=False)
+    assert seen["peers"] == fm.default_peers("Energy") == ["XOM", "CVX", "COP", "SLB", "EOG"]
+    assert seen["sector"] == "Energy"
+
+
+def test_comps_without_a_spine_row_has_no_default_peers(rawstore_tmp_db, tmp_path, monkeypatch, financials):
+    monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
+    seen = _run_comps(monkeypatch, financials, None)
+    fm.run("AAPL", modules=["comps"], output="html", no_fetch=False)
+    assert seen["peers"] == []
+    assert seen["sector"] == "Unclassified"
+
+
+# ── #266: the sector keys are the Morningstar names the spine stores ──────────────────────────────────
+import pytest
+
+
+@pytest.mark.parametrize("sector, first_peers", [
+    ("Technology", ["MSFT", "GOOGL"]),
+    ("Consumer Defensive", ["PG", "KO"]),
+    ("Financial Services", ["JPM", "BAC"]),
+    ("Healthcare", ["JNJ", "PFE"]),
+])
+def test_comps_default_peers_for_a_morningstar_sector(rawstore_tmp_db, tmp_path, monkeypatch, financials,
+                                                      sector, first_peers):
+    """The spine stores Morningstar names, so the peer table is keyed by them (it was keyed by GICS names, and
+    only Energy matched)."""
+    monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
+    seen = _run_comps(monkeypatch, financials, sector)
+    fm.run("AAPL", modules=["comps"], output="html", no_fetch=False)
+    assert seen["sector"] == sector
+    assert seen["peers"][:2] == first_peers and len(seen["peers"]) == 5
+
+
+def test_default_peers_are_keyed_by_morningstar_names_only():
+    from RevenueChaser.core.gics_map import MORNINGSTAR_SECTORS
+    from RevenueChaser.module_financials import config
+    assert set(config.DEFAULT_PEERS) - {"default"} <= set(MORNINGSTAR_SECTORS)
+    for old in ("Information Technology", "Consumer Staples", "Financials", "Health Care"):
+        assert config.default_peers(old) == []                    # an old spelling is no longer a key
+
+
+def test_embedded_sector_bands_match_the_json_file():
+    """The embedded fallback and ``config/sector_defaults.json`` carry the same keys and numbers, so the DCF band
+    is the same whether or not the file is readable."""
+    import json
+    from RevenueChaser.core.gics_map import MORNINGSTAR_SECTORS
+    from RevenueChaser.module_financials import config
+    from_file = json.loads(config.SECTOR_DEFAULTS_FILE.read_text(encoding="utf-8"))
+    assert set(config.SECTOR_DEFAULTS) == set(from_file)
+    assert set(config.SECTOR_DEFAULTS) - {"default"} <= set(MORNINGSTAR_SECTORS)
+    for key, band in from_file.items():
+        assert {k: tuple(v) for k, v in band.items()} == {k: tuple(v) for k, v in config.SECTOR_DEFAULTS[key].items()}
+
+
+@pytest.mark.parametrize("sector", ["Technology", "Consumer Defensive", "Financial Services", "Energy", "Healthcare"])
+def test_dcf_band_is_the_sector_band_with_or_without_the_json_file(tmp_path, monkeypatch, sector):
+    """Every banded Morningstar sector gets its own band, not ``default``, from the file and from the embedded copy."""
+    from RevenueChaser.module_financials import config
+    default = config.sector_defaults("Unclassified")
+    from_file = config.sector_defaults(sector)
+    assert from_file != default
+    monkeypatch.setattr(config, "SECTOR_DEFAULTS_FILE", tmp_path / "missing.json")
+    embedded = config.sector_defaults(sector)
+    assert {k: tuple(v) for k, v in embedded.items()} == {k: tuple(v) for k, v in from_file.items()}
+    assert embedded != config.sector_defaults("Unclassified")

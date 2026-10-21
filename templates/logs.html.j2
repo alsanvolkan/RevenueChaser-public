@@ -1,0 +1,154 @@
+{# Logs tab (/view/logs): read-only tails of the dashboard's own log files. Rendered by app/logview.py with
+   autoescape on; the two JSON values arrive as Markup from html_safe.script_json. Log lines are untrusted
+   text and go into the page through textContent only. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Logs</title>
+<link rel="icon" href="/static/icons/icon-192.png">
+<style>
+:root{--bg:#05111F;--panel:#12161e;--panel2:#1a1f2b;--border:#232a38;
+--text:#d7dce5;--muted:#8a93a6;--accent:#0EA5E9;--red:#e74c3c;}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5}
+.wrap{display:flex;flex-direction:column;height:100%;padding:20px 24px 12px}
+.topbar{border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:12px}
+.topbar h1{margin:0;font-size:22px;letter-spacing:-.4px}
+.topbar .sub{color:var(--muted);margin-top:2px;font-size:13px}
+.topbar code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--text)}
+.controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px}
+.tabs{display:inline-flex;gap:4px}
+.tab{background:var(--panel2);border:1px solid var(--border);color:var(--muted);border-radius:6px;height:32px;padding:0 14px;font:600 13px/1 inherit;cursor:pointer}
+.tab:hover{color:var(--text)}
+.tab.on{background:rgba(14,165,233,.12);border-color:var(--accent);color:var(--accent)}
+.chk{display:inline-flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;user-select:none}
+.chk input{margin:0;accent-color:var(--accent)}
+.btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;height:32px;padding:0 14px;font:600 13px/1 inherit;cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+.btn[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.hint,.meta{color:var(--muted);font-size:12.5px;line-height:1.5;min-height:1.5em;margin:8px 0 0}
+pre.logview{flex:1 1 auto;min-height:200px;margin:8px 0 0;overflow:auto;padding:10px 12px;background:var(--panel);
+  border:1px solid var(--border);border-radius:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:12px;line-height:1.45;white-space:pre;color:var(--text)}
+pre.logview .bad{color:var(--red);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <h1>Logs</h1>
+    <div class="sub">What the console window used to show, read-only. Files in <code>{{ log_dir }}</code>;
+      each start keeps the previous run.</div>
+  </div>
+  <div class="controls">
+    <div class="tabs" role="tablist" aria-label="Log source">
+      {% for s in sources %}
+      <button type="button" role="tab" class="tab{{ ' on' if loop.first else '' }}" data-src="{{ s.key }}"
+              aria-selected="{{ 'true' if loop.first else 'false' }}">{{ s.label }}</button>
+      {% endfor %}
+    </div>
+    <label class="chk" for="log-prev"><input type="checkbox" id="log-prev"> Previous run</label>
+    <label class="chk" for="log-problems"><input type="checkbox" id="log-problems"> Problems only</label>
+    <label class="chk" for="log-follow"><input type="checkbox" id="log-follow" checked> Follow</label>
+    <button type="button" class="btn" id="log-pause" aria-pressed="false">Pause</button>
+  </div>
+  <p class="hint" id="log-hint"></p>
+  <pre class="logview" id="log-text" tabindex="0" aria-label="Log lines">Loading...</pre>
+  <p class="meta" id="log-meta" aria-live="polite"></p>
+</div>
+<script>
+var HINTS = {{ hints_json }};
+var INITIAL = {{ initial_json }};
+(function () {
+  var PROBLEM = /traceback|error|exception|warning|critical|failed|" 5\d\d /i;
+  var NOT_A_PROBLEM = /This is a development server/;   // Flask says it on every start
+  function isProblem(line) { return PROBLEM.test(line) && !NOT_A_PROBLEM.test(line); }
+  var pre = document.getElementById("log-text"), meta = document.getElementById("log-meta");
+  var hint = document.getElementById("log-hint"), prev = document.getElementById("log-prev");
+  var problems = document.getElementById("log-problems"), follow = document.getElementById("log-follow");
+  var pause = document.getElementById("log-pause");
+  var tabs = Array.prototype.slice.call(document.querySelectorAll(".tab[data-src]"));
+  var src = tabs[0].getAttribute("data-src"), paused = false, busy = false, shown = null;
+
+  function size(n) { return n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(1) + " KB" : (n / 1048576).toFixed(1) + " MB"; }
+
+  // A board iframe the shell is not showing still runs its timers: poll only while this one is on screen.
+  function onScreen() {
+    if (document.hidden) return false;
+    try { var f = window.frameElement; return !f || f.getClientRects().length > 0; } catch (e) { return true; }
+  }
+
+  function render(lines, empty) {
+    var key = empty + "\n" + lines.join("\n");
+    if (key === shown) return;           // unchanged: keep the reader's scroll and text selection
+    shown = key;
+    var frag = document.createDocumentFragment();
+    if (!lines.length) frag.appendChild(document.createTextNode(empty));
+    lines.forEach(function (line) {
+      var span = document.createElement("span");
+      span.textContent = line + "\n";    // a log line is untrusted text: never markup
+      if (isProblem(line)) span.className = "bad";
+      frag.appendChild(span);
+    });
+    pre.replaceChildren(frag);
+    pin();
+  }
+
+  function show(d) {
+    var all = d.lines || [];
+    var lines = problems.checked ? all.filter(isProblem) : all;
+    var empty = !d.exists ? "This file has not been written yet." :
+                problems.checked ? "No problems in the last lines." : "The file is empty.";
+    meta.textContent = d.file + (d.exists ? " · " + size(d.size) + " · last written " +
+                       String(d.modified || "").replace("T", " ") : "") + (paused ? " · paused" : "");
+    render(lines, empty);                // after the meta line, so Follow pins against the final layout
+  }
+
+  // poll: a timer or visibility tick; its answer is dropped when Pause was pressed while it was in flight.
+  function load(poll) {
+    if (busy) return;
+    busy = true;
+    var q = new URLSearchParams({src: src, run: prev.checked ? "prev" : "current", tail: "1000"});
+    fetch("/api/logs?" + q, {cache: "no-store"})
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (d) { if (!(poll && paused)) show(d); })
+      .catch(function (e) { meta.textContent = "Could not read the log: " + e.message; })
+      .then(function () { busy = false; });
+  }
+
+  function select(tab) {
+    tabs.forEach(function (t) {
+      var on = t === tab;
+      t.classList.toggle("on", on);
+      t.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    src = tab.getAttribute("data-src");
+    hint.textContent = HINTS[src] || "";
+    shown = null;
+    load();
+  }
+
+  tabs.forEach(function (t) { t.addEventListener("click", function () { select(t); }); });
+  [prev, problems].forEach(function (el) { el.addEventListener("change", function () { shown = null; load(); }); });
+  function pin() { if (follow.checked) pre.scrollTop = pre.scrollHeight; }
+  follow.addEventListener("change", pin);
+  // The shell sizes this iframe after the first render, and shows it again from display:none.
+  window.addEventListener("resize", pin);
+  pause.addEventListener("click", function () {
+    paused = !paused;
+    pause.textContent = paused ? "Resume" : "Pause";
+    pause.setAttribute("aria-pressed", paused ? "true" : "false");
+    if (!paused) load();
+  });
+  document.addEventListener("visibilitychange", function () { if (!paused && onScreen()) load(true); });
+  setInterval(function () { if (!paused && onScreen()) load(true); }, 3000);
+  hint.textContent = HINTS[src] || "";
+  if (INITIAL && INITIAL.src === src) show(INITIAL); else load();
+})();
+</script>
+</body>
+</html>

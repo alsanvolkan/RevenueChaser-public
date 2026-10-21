@@ -1,0 +1,558 @@
+{
+ "payload": {
+  "avg_quality": 91.33,
+  "candidates": [
+   {
+    "atr": 2.0,
+    "bucket": "minervini+weinstein+qullamaggie",
+    "change_1m": null,
+    "change_1w": null,
+    "change_pct": 0.01,
+    "direction_ok": true,
+    "earnings_date": 1790000000.0,
+    "entry": 100.0,
+    "flow": {
+     "status": "not_scanned"
+    },
+    "gates": {
+     "direction": {
+      "passed": true,
+      "rules": [
+       {
+        "actual": 95.0,
+        "id": "sma50_ge_sma200",
+        "passed": true
+       },
+       {
+        "actual": 0.1,
+        "id": "ret_3m_ge_0",
+        "passed": true
+       }
+      ],
+      "score": "2/2"
+     },
+     "minervini": {
+      "passed": true,
+      "rules": [
+       {
+        "actual": 100.0,
+        "id": "price_above_150_200",
+        "passed": true
+       },
+       {
+        "actual": 90.0,
+        "id": "ma150_above_ma200",
+        "passed": true
+       },
+       {
+        "actual": 2.0,
+        "id": "ma200_rising",
+        "passed": true
+       },
+       {
+        "actual": 95.0,
+        "id": "ma50_leading",
+        "passed": true
+       },
+       {
+        "actual": 100.0,
+        "id": "price_above_50",
+        "passed": true
+       },
+       {
+        "actual": 1.5,
+        "id": "above_52w_low",
+        "passed": true
+       },
+       {
+        "actual": 0.99,
+        "id": "within_52w_high",
+        "passed": true
+       },
+       {
+        "actual": 33.33,
+        "id": "rs_ge_70",
+        "passed": false
+       }
+      ],
+      "score": "7/8"
+     },
+     "qullamaggie": {
+      "passed": true,
+      "rules": [
+       {
+        "actual": 0.35,
+        "id": "large_move",
+        "passed": true
+       },
+       {
+        "actual": 100.0,
+        "id": "price_above_ema10",
+        "passed": true
+       },
+       {
+        "actual": 100.0,
+        "id": "price_above_ema20",
+        "passed": true
+       },
+       {
+        "actual": 96.0,
+        "id": "ema10_above_ema20",
+        "passed": true
+       },
+       {
+        "actual": 96.0,
+        "id": "emas_rising",
+        "passed": true
+       },
+       {
+        "actual": 0.04,
+        "id": "adr_ge_3",
+        "passed": true
+       }
+      ],
+      "score": "6/6"
+     },
+     "weinstein": {
+      "passed": true,
+      "rules": [
+       {
+        "actual": 100.0,
+        "id": "price_above_30w",
+        "passed": true
+       },
+       {
+        "actual": 2.0,
+        "id": "ma30w_rising",
+        "passed": true
+       },
+       {
+        "actual": 0.99,
+        "id": "overhead_breakout",
+        "passed": true
+       },
+       {
+        "actual": 2.0,
+        "id": "volume_confirmation",
+        "passed": true
+       },
+       {
+        "actual": 0.05,
+        "id": "rs_3m_gt_spy",
+        "passed": true
+       }
+      ],
+      "score": "5/5"
+     }
+    },
+    "index": [],
+    "industry": "Software - Application",
+    "ma_alignment": "aligned",
+    "market_cap": 1000000000.0,
+    "methods": [
+     "minervini",
+     "weinstein",
+     "qullamaggie"
+    ],
+    "momentum": 25.0,
+    "name": "Alpha",
+    "price": 100.0,
+    "quality": 95,
+    "rr": 2.0,
+    "rs_rating": 33.33,
+    "sector": "Technology",
+    "stop": 96.0,
+    "target": 108.0,
+    "themes": [
+     "Software"
+    ],
+    "ticker": "AAA"
+   },
+   {
+    "atr": 2.0,
+    "bucket": "minervini+weinstein+qullamaggie",
+    "change_1m": null,
+    "change_1w": null,
+    "change_pct": 0.01,
+    "direction_ok": true,
+    "earnings_date": null,
+    "entry": 100.0,
+    "flow": {
+     "status": "not_scanned"
+    },
+    "gates": {
+     "direction": {
+      "passed": true,
+      "rules": [
+       {
+        "actual": 95.0,
+        "id": "sma50_ge_sma200",
+        "passed": true
+       },
+       {
+        "actual": 0.1,
+        "id": "ret_3m_ge_0",
+        "passed": true
+       }
+      ],
+      "score": "2/2"
+     },
+     "minervini": {
+      "passed": true,
+      "rules": [
+       {
+        "actual": 100.0,
+        "id": "price_above_150_200",
+        "passed": true
+       },
+       {
+        "actual": 90.0,
+        "id": "ma150_above_ma200",
+        "passed": true
+       },
+       {
+        "actual": 2.0,
+        "id": "ma200_rising",
+        "passed": true
+       },
+       {
+        "actual": 95.0,
+        "id": "ma50_leading",
+        "passed": true
+       },
+       {
+        "actual": 100.0,
+        "id": "price_above_50",
+        "passed": true
+       },
+       {
+        "actual": 1.5,
+        "id": "above_52w_low",
+        "passed": true
+       },
+       {
+        "actual": 0.99,
+        "id": "within_52w_high",
+        "passed": true
+       },
+       {
+        "actual": 0.0,
+        "id": "rs_ge_70",
+        "passed": false
+       }
+      ],
+      "score": "7/8"
+     },
+     "qullamaggie": {
+      "passed": true,
+      "rules": [
+       {
+        "actual": 0.26,
+        "id": "large_move",
+        "passed": true
+       },
+       {
+        "actual": 100.0,
+        "id": "price_above_ema10",
+        "passed": true
+       },
+       {
+        "actual": 100.0,
+        "id": "price_above_ema20",
+        "passed": true
+       },
+       {
+        "actual": 96.0,
+        "id": "ema10_above_ema20",
+        "passed": true
+       },
+       {
+        "actual": 96.0,
+        "id": "emas_rising",
+        "passed": true
+       },
+       {
+        "actual": 0.032,
+        "id": "adr_ge_3",
+        "passed": true
+       }
+      ],
+      "score": "6/6"
+     },
+     "weinstein": {
+      "passed": true,
+      "rules": [
+       {
+        "actual": 100.0,
+        "id": "price_above_30w",
+        "passed": true
+       },
+       {
+        "actual": 2.0,
+        "id": "ma30w_rising",
+        "passed": true
+       },
+       {
+        "actual": 0.99,
+        "id": "overhead_breakout",
+        "passed": true
+       },
+       {
+        "actual": 1.6,
+        "id": "volume_confirmation",
+        "passed": true
+       },
+       {
+        "actual": 0.05,
+        "id": "rs_3m_gt_spy",
+        "passed": true
+       }
+      ],
+      "score": "5/5"
+     }
+    },
+    "index": [],
+    "industry": "Biotechnology",
+    "ma_alignment": "aligned",
+    "market_cap": 5000000000.0,
+    "methods": [
+     "minervini",
+     "weinstein",
+     "qullamaggie"
+    ],
+    "momentum": 0.0,
+    "name": "Beta",
+    "price": 100.0,
+    "quality": 95,
+    "rr": 2.0,
+    "rs_rating": 0.0,
+    "sector": "Healthcare",
+    "stop": 96.0,
+    "target": 108.0,
+    "themes": [],
+    "ticker": "BBB"
+   },
+   {
+    "atr": 2.0,
+    "bucket": "minervini+qullamaggie",
+    "change_1m": null,
+    "change_1w": null,
+    "change_pct": 0.01,
+    "direction_ok": true,
+    "earnings_date": null,
+    "entry": 100.0,
+    "flow": {
+     "status": "not_scanned"
+    },
+    "gates": {
+     "direction": {
+      "passed": true,
+      "rules": [
+       {
+        "actual": 95.0,
+        "id": "sma50_ge_sma200",
+        "passed": true
+       },
+       {
+        "actual": 0.1,
+        "id": "ret_3m_ge_0",
+        "passed": true
+       }
+      ],
+      "score": "2/2"
+     },
+     "minervini": {
+      "passed": true,
+      "rules": [
+       {
+        "actual": 100.0,
+        "id": "price_above_150_200",
+        "passed": true
+       },
+       {
+        "actual": 90.0,
+        "id": "ma150_above_ma200",
+        "passed": true
+       },
+       {
+        "actual": 2.0,
+        "id": "ma200_rising",
+        "passed": true
+       },
+       {
+        "actual": 95.0,
+        "id": "ma50_leading",
+        "passed": true
+       },
+       {
+        "actual": 100.0,
+        "id": "price_above_50",
+        "passed": true
+       },
+       {
+        "actual": 1.5,
+        "id": "above_52w_low",
+        "passed": true
+       },
+       {
+        "actual": 0.99,
+        "id": "within_52w_high",
+        "passed": true
+       },
+       {
+        "actual": 33.33,
+        "id": "rs_ge_70",
+        "passed": false
+       }
+      ],
+      "score": "7/8"
+     },
+     "qullamaggie": {
+      "passed": true,
+      "rules": [
+       {
+        "actual": 0.35,
+        "id": "large_move",
+        "passed": true
+       },
+       {
+        "actual": 100.0,
+        "id": "price_above_ema10",
+        "passed": true
+       },
+       {
+        "actual": 100.0,
+        "id": "price_above_ema20",
+        "passed": true
+       },
+       {
+        "actual": 96.0,
+        "id": "ema10_above_ema20",
+        "passed": true
+       },
+       {
+        "actual": 96.0,
+        "id": "emas_rising",
+        "passed": true
+       },
+       {
+        "actual": 0.02,
+        "id": "adr_ge_3",
+        "passed": false
+       }
+      ],
+      "score": "5/6"
+     },
+     "weinstein": {
+      "passed": false,
+      "rules": [
+       {
+        "actual": 100.0,
+        "id": "price_above_30w",
+        "passed": true
+       },
+       {
+        "actual": 2.0,
+        "id": "ma30w_rising",
+        "passed": true
+       },
+       {
+        "actual": 0.99,
+        "id": "overhead_breakout",
+        "passed": true
+       },
+       {
+        "actual": 1.2,
+        "id": "volume_confirmation",
+        "passed": false
+       },
+       {
+        "actual": 0.05,
+        "id": "rs_3m_gt_spy",
+        "passed": true
+       }
+      ],
+      "score": "4/5"
+     }
+    },
+    "index": [],
+    "industry": "Oil & Gas",
+    "ma_alignment": "aligned",
+    "market_cap": 3000000000.0,
+    "methods": [
+     "minervini",
+     "qullamaggie"
+    ],
+    "momentum": 25.0,
+    "name": "Delta",
+    "price": 100.0,
+    "quality": 84,
+    "rr": 2.0,
+    "rs_rating": 33.33,
+    "sector": "Energy",
+    "stop": 96.0,
+    "target": 108.0,
+    "themes": [],
+    "ticker": "DDD"
+   }
+  ],
+  "data_as_of": null,
+  "data_quality": {
+   "dropped": {},
+   "short_refetch_refused": 0,
+   "spy_stale": false,
+   "stale_info": 0,
+   "stale_ohlc": 0
+  },
+  "is_fixture": false,
+  "no_data": false,
+  "passing": {
+   "direction": 3,
+   "minervini": 4,
+   "qullamaggie": 4,
+   "weinstein": 3
+  },
+  "regime": null,
+  "selection_version": "4",
+  "summary": {
+   "avg_quality": 91.33,
+   "data_short": null,
+   "excluded_types": 0,
+   "filtered_universe": null,
+   "hygiene": null,
+   "no_spine_gics": 0,
+   "out_of_universe": null,
+   "passing": {
+    "direction": 3,
+    "minervini": 4,
+    "qullamaggie": 4,
+    "weinstein": 3
+   },
+   "regime": null,
+   "spy_3m_return": null,
+   "spy_price": null,
+   "spy_sma200": null,
+   "spy_stale": false,
+   "stale_ohlc": 0,
+   "top_n": 3
+  },
+  "universe_generated_at": null,
+  "universe_partial": false,
+  "universe_refreshed_by": null,
+  "universe_total": 4
+ },
+ "prefilter": {
+  "drops": {
+   "low_dollar_volume": [
+    "THIN"
+   ],
+   "low_price": [
+    "LOWP"
+   ]
+  },
+  "kept": [
+   "OK"
+  ],
+  "no_volume": []
+ }
+}

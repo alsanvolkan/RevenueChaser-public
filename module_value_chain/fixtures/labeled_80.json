@@ -1,0 +1,722 @@
+[
+ {
+  "id": "S01",
+  "src": "MRAM",
+  "dst_ticker": "MU",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "crete NOR, DRAM and NVSRAM where persistence is required and thus compete with DRAM and NVSRAM suppliers such as Hynix, Micron, Winbond, Samsung, and several other smaller companies. In the future we may also face competition from"
+ },
+ {
+  "id": "S02",
+  "src": "SITM",
+  "dst_ticker": "UMC",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "ure our products. We use Robert Bosch LLC (“Bosch”) in Germany, Taiwan Semiconductor Manufacturing Company (“TSMC”) and United Microelectronics Corporation (\"UMC\") in Taiwan, and Teledyne Digital Imaging Inc. (\"Teledyne\") in Canad"
+ },
+ {
+  "id": "S03",
+  "src": "CPAC",
+  "dst_ticker": "AMZN",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "members attending the assembly is required; and ● for local indigenous communities located in the highlands and the Amazon region, approval of at least 2/3 of all members attending the assembly is required. Permits and License"
+ },
+ {
+  "id": "S04",
+  "src": "ONTO",
+  "dst_ticker": "KLAC",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "a”) for thin film and critical dimension OCD metrology. Our principal competitors for advanced packaging inspection are KLA and Camtek Ltd. (“Camtek”). While the advanced packaging lithography market is served by various competito"
+ },
+ {
+  "id": "S05",
+  "src": "BILL",
+  "dst_ticker": "ORCL",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "a entry activities. • Purchase order (PO) matching – We sync POs directly from accounting software systems, including Oracle NetSuite, Sage Intacct, and QuickBooks Desktop into our platform. Users can compare POs and invoices on"
+ },
+ {
+  "id": "S06",
+  "src": "ATLC",
+  "dst_ticker": "AAPL",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "s; technology solutions, including those provided by financial technology or payment companies; mobile wallets, such as Apple and PayPal; and pay-over-time solutions providers, including Block and Klarna. Many of these competitors"
+ },
+ {
+  "id": "S07",
+  "src": "CENTA",
+  "dst_ticker": "AMZN",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "and service levels. We believe these strengths have positioned us as one of the largest pet supplies vendors to Costco, Amazon and Walmart, a leading supplier to independent pet retailers in the United States and among the largest"
+ },
+ {
+  "id": "S08",
+  "src": "NXPI",
+  "dst_ticker": "TSM",
+  "relation": "supplier",
+  "label": false,
+  "borderline": true,
+  "snippet": "will build and operate a new 300mm semiconductor wafer manufacturing facility in Dresden, Germany. ESMC is 70% owned by TSMC, with 8 Bosch, Infineon, and NXP each owning 10%. NXP is entitled to 10% of the fab facility capacity. In"
+ },
+ {
+  "id": "S09",
+  "src": "ALAB",
+  "dst_ticker": "TSM",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "cturing process is subject to extensive testing and verification. We use a fabless manufacturing model and partner with TSMC to fabricate all of our ICs. We use Advanced Semiconductor Engineering and Amkor Technologies to assemble"
+ },
+ {
+  "id": "S10",
+  "src": "RR",
+  "dst_ticker": "NVDA",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "ks such as part handling, machine tending, quality inspection and packaging. At its core, Dex is powered by the latest NVIDIA Jetson Thor module, enabling advanced AI capabilities for real-time perception, motion planning and dec"
+ },
+ {
+  "id": "S11",
+  "src": "CHMG",
+  "dst_ticker": "ASML",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "kyo Electron, and the facility aims to complement the existing semiconductor supply chain presence of companies such as ASML and GlobalFoundries, as well as enhance the research capabilities of local universities such as Rensselae"
+ },
+ {
+  "id": "S12",
+  "src": "UCTT",
+  "dst_ticker": "KLAC",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "served in various accounting and finance roles at Protiviti, a global business consulting and internal audit firm, and KLA-Tencor Corporation, a supplier of process control and yield management solutions for the semiconductor and"
+ },
+ {
+  "id": "S13",
+  "src": "AVGO",
+  "dst_ticker": "TSM",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "functions. The majority of our front-end wafer manufacturing operations is outsourced to external foundries, including Taiwan Semiconductor Manufacturing Company Limited (“TSMC”). We use third-party CMs for a significant majority"
+ },
+ {
+  "id": "S14",
+  "src": "LAES",
+  "dst_ticker": "TSM",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "Partnerships IC’Alps has expanded its ecosystem of preferred partnerships with leading global foundries, including: ● TSMC (DCA trusted design partner) 69 Table of Contents ● X-FAB (xchain network partner) ● ams-OSRAM (preferred"
+ },
+ {
+  "id": "S15",
+  "src": "WYFI",
+  "dst_ticker": "NVDA",
+  "relation": "supplier",
+  "label": false,
+  "borderline": true,
+  "snippet": "de OEM and ODM suppliers and data center planning partners. For example, we have a co-marketing agreement in place with NVIDIA as a function of being a NVIDIA Preferred Partner through the NPN and with Hewlett Packard Enterprise, "
+ },
+ {
+  "id": "S16",
+  "src": "AVO",
+  "dst_ticker": "INTC",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "es of our avocados. For example, we operate category management, merchandising and packaging programs, such as our “Avo Intel,” “Minis—small but mighty,” “Emeralds in the Rough,” “Ready,” “Size Minded,” “Jumbos—more to eat, more t"
+ },
+ {
+  "id": "S17",
+  "src": "INTA",
+  "dst_ticker": "MSFT",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "keting, and increased sales via the Azure Marketplace and the ability for clients to purchase our solutions using their Microsoft Azure consumption commitments. 6 Table of Contents Our Clients Intapp is a leading global provider o"
+ },
+ {
+  "id": "S18",
+  "src": "GFS",
+  "dst_ticker": "SNPS",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "ducts and foundry capabilities, including through our recent acquisitions of MIPS, a leader in AI and processor IP, and Synopsys, Inc., which will allow us to offer a comprehensive processor IP suite tailored for physical AI appli"
+ },
+ {
+  "id": "S19",
+  "src": "AIP",
+  "dst_ticker": "QCOM",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "and intellectual property rights to the same extent as under U.S. law. 17 Table of Contents Material Agreements Qualcomm Agreements In connection with an Asset Purchase Agreement by and among Qualcomm Technologies, Inc. an"
+ },
+ {
+  "id": "S20",
+  "src": "WAY",
+  "dst_ticker": "GOOGL",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "nts. We have infrastructure in place with co-located data centers, and within Microsoft Azure, Amazon Web Services, and Google Cloud Platform environments, to securely manage and maintain our clients’ patient information. We use e"
+ },
+ {
+  "id": "S21",
+  "src": "IREN",
+  "dst_ticker": "DELL",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "ufacturers (“OEMs”), original design manufacturers (“ODMs”), and other infrastructure suppliers, including NVIDIA, AMD, Dell Technologies, Lenovo, Supermicro, Gigabyte and leading storage and networking providers. We work with the"
+ },
+ {
+  "id": "S22",
+  "src": "CRUS",
+  "dst_ticker": "GFS",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "ication and product assembly and test. We use a variety of foundries in the production of wafers, primarily supplied by GLOBALFOUNDRIES Inc., (\"GlobalFoundries\") and Taiwan Semiconductor Manufacturing Company, Limited (\"TSMC\"). In"
+ },
+ {
+  "id": "S23",
+  "src": "DDI",
+  "dst_ticker": "META",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "layers who download or play our games, as we mainly rely on third-party distribution platforms such as Apple App Store, Facebook, Google Play Store, and Amazon Appstore. We cannot predict the likelihood, timing, or scope of any co"
+ },
+ {
+  "id": "S24",
+  "src": "VIV",
+  "dst_ticker": "SSNLF",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "offers on smartphones and other data devices for customers of bundled packages. Our current smartphone suppliers are Samsung, Apple, Motorola and Oppo, our device suppliers area Intelbras, Flex (Mitrastar), Blucastle, Tellescom"
+ },
+ {
+  "id": "S25",
+  "src": "WYFI",
+  "dst_ticker": "SMCI",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "l to our business operations, as we rely on these relationships, such as with Dell, NVIDIA, Hewlett Packard Enterprise, Super Micro and Quanta Computing, to secure GPUs, servers, essential computing hardware, infrastructure compon"
+ },
+ {
+  "id": "S26",
+  "src": "AMD",
+  "dst_ticker": "SSNLF",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "s at the 12 nm and 14 nm technology nodes. Additionally, we utilize TSMC, United Microelectronics Corporation (UMC) and Samsung Electronics Co., Ltd. for the production of our ICs in the form of programmable logic devices. Other T"
+ },
+ {
+  "id": "S27",
+  "src": "TBLA",
+  "dst_ticker": "AAPL",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "s trust us to drive growth, while approximately 14,000 digital property partners, including NBCNews, Disney, Yahoo, and Apple, rely on us for monetization and audience growth. Our scale is meaningful - we reach over 600 million pe"
+ },
+ {
+  "id": "S28",
+  "src": "LSCC",
+  "dst_ticker": "UMC",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "rder fulfillment, and the shipment of inventory to third party distributors. Wafer Fabrication Lattice partners with United Microelectronics Corporation (\"UMC\") and its subsidiary United Semiconductor Japan Corporation (\"USJC\")"
+ },
+ {
+  "id": "S29",
+  "src": "MSCI",
+  "dst_ticker": "INTC",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "that is sourced from original documents provided by managers and augmented with extensive research. • Private Capital Intel . Private Capital Intel provides extensive private capital data with coverage of historical profiles, so"
+ },
+ {
+  "id": "S30",
+  "src": "TTWO",
+  "dst_ticker": "MSFT",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "ir respective hardware platforms. We place a purchase order for the manufacture of our products with Sony, Nintendo, or Microsoft's approved replicator and then send software code to the manufacturer, together with related artwork"
+ },
+ {
+  "id": "S31",
+  "src": "LSCC",
+  "dst_ticker": "SSNLF",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "manufacture our 500nm, 350nm, 250nm and 180nm products. We source silicon wafers from our foundry partners, UMC, USJC, Samsung, TSMC, and Epson, pursuant to agreements with each company and their respective affiliates. We negotia"
+ },
+ {
+  "id": "S32",
+  "src": "EYE",
+  "dst_ticker": "CDNS",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "departure from the seasonal norms we have experienced in the past and may continue to disrupt the historical quarterly cadence of our results of operations for an unknown period of time. Our Sourcing and Supplier Relationships We"
+ },
+ {
+  "id": "S33",
+  "src": "CHRN",
+  "dst_ticker": "NVDA",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "agreements, thus extending finance lease payments through fiscal year 2028. We currently rely on one major supplier, Nvidia, for the GPU chips we offer, and plan to rely on another major supplier, AMD. Our strong relationships "
+ },
+ {
+  "id": "S34",
+  "src": "MXL",
+  "dst_ticker": "TSM",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "dependent silicon foundry manufacturers to support our wafer fabrication requirements. Our key foundry partners include Taiwan Semiconductor Manufacturing Corporation, or TSMC, in Taiwan, and United Microelectronics Corporation, o"
+ },
+ {
+  "id": "S35",
+  "src": "INGM",
+  "dst_ticker": "MSFT",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "omputer hardware suppliers, mobility hardware suppliers, networking equipment suppliers and software publishers such as Microsoft, Amazon Web Services, Google Cloud, NVIDIA, Advanced Micro Devices, Apple, Cisco, Dell Technologies,"
+ },
+ {
+  "id": "S36",
+  "src": "LAES",
+  "dst_ticker": "GFS",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "tel Foundry (Design Services Alliance – DSA and Value Chain Alliance – VCA within the Accelerator Alliance Program) ● GlobalFoundries (GlobalSolutions design & supply partner) These alliances enable design expertise across proce"
+ },
+ {
+  "id": "S37",
+  "src": "CNXN",
+  "dst_ticker": "DELL",
+  "relation": "supplier",
+  "label": true,
+  "borderline": false,
+  "snippet": "ectively, of our total product purchases in 2025. Product purchases from Ingram Micro, Inc., TD Synnex Corporation, and Dell Inc. accounted for approximately 25%, 23%, and 11%, respectively, of our total product purchases in 2024."
+ },
+ {
+  "id": "S38",
+  "src": "OPTU",
+  "dst_ticker": "AAPL",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "n fixed Internet service), and we began offering customers the ability to purchase additional mobile equipment, such as Apple iPads, in addition to phones. Our mobile product is sold at Optimum stores as well as online. Consumers "
+ },
+ {
+  "id": "S39",
+  "src": "TBLA",
+  "dst_ticker": "GOOGL",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "ions for personalized advertising and measurement, while others must rely on low scale signals like alternative IDs, or Google's limited, aggregated insights, reducing their control over audience targeting and performance tracking"
+ },
+ {
+  "id": "S40",
+  "src": "FPS",
+  "dst_ticker": "ETN",
+  "relation": "supplier",
+  "label": false,
+  "borderline": false,
+  "snippet": "ular market, we compete with Schneider Electric SE’s prefabricated data center and electrical infrastructure solutions; Eaton Corporation plc’s modular integrated power assembly and eHouse offerings; Vertiv Holdings Co.’s Modular "
+ },
+ {
+  "id": "C01",
+  "src": "BTBT",
+  "dst_ticker": "DELL",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "NPN”), an authorized partner with SuperMicro Computer Inc.®, an authorized Communications Service Provider (“CSP”) with Dell (through Dell’s exclusive distributor in Iceland, Advania), an official partnership with Hewlett Packard "
+ },
+ {
+  "id": "C02",
+  "src": "PSNYW",
+  "dst_ticker": "GOOGL",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "design seeks to capitalize on the evolution of the Human Machine Interface (\"HMI\") based on Polestar 4 interactions and Google Android Automotive to deliver an enhanced customer experience. Polestar 5 comes with a total cradle-to-"
+ },
+ {
+  "id": "C03",
+  "src": "FICO",
+  "dst_ticker": "HPQ",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "e 2007, various positions, including VP Sales & Operations and VP Sales & Customer Service, Home & Home Office Store of Hewlett Packard. 51 Thomas A. Bowers August 2020–present, Executive Vice President, Corporate Strategy of the "
+ },
+ {
+  "id": "C04",
+  "src": "WYFI",
+  "dst_ticker": "HPQ",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "®, an authorized CSP with Dell (through Dell’s exclusive distributor in Iceland, Advania), an official partnership with Hewlett Packard Enterprise and a commercial relationship with QCT. Based on Management’s knowledge of the indu"
+ },
+ {
+  "id": "C05",
+  "src": "UPS",
+  "dst_ticker": "AMZN",
+  "relation": "customer",
+  "label": true,
+  "borderline": false,
+  "snippet": ", we served 1.6 million shipping customers and more than 10.7 million delivery recipients daily. In 2025, one customer, Amazon.com, Inc. and its affiliates, represented approximately 10.6% of our consolidated revenues, substantial"
+ },
+ {
+  "id": "C06",
+  "src": "EGHT",
+  "dst_ticker": "GOOGL",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "interaction. The AI features in the platform leverage a variety of AI models, including models from OpenAI, Anthropic, Google, Eleven Labs and xAI Grok. To address specialized customer needs, the 8x8 Platform for CX is supported "
+ },
+ {
+  "id": "C07",
+  "src": "NXPI",
+  "dst_ticker": "SSNLF",
+  "relation": "customer",
+  "label": true,
+  "borderline": false,
+  "snippet": "by distributors, in alphabetical order, are Apple, Aptiv, Aumovio, Bosch, Denso, Harman Auto, Hyundai, LGE Automotive, Samsung and Visteon. We also have a strong position with our distribution partners, including our five largest"
+ },
+ {
+  "id": "C08",
+  "src": "HLF",
+  "dst_ticker": "ORCL",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "ent of technology around the globe to support a more robust Member and customer experience. In addition, we leverage an Oracle business suite platform to support our business operations, improve productivity and support our strate"
+ },
+ {
+  "id": "C09",
+  "src": "SMTI",
+  "dst_ticker": "CRM",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "significant new opportunities for sales growth. In addition, we believe that as we continue to offer new products, our salesforce’s ability to reach additional customers in new and existing geographic regions, while also penetrat"
+ },
+ {
+  "id": "C10",
+  "src": "DNA",
+  "dst_ticker": "GOOGL",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "ls and from there, build fine-tuned models designed to cater to our customer needs, all powered by our partnership with Google Cloud. We have released a selection of these models on our Model API. Cell Engineering Solutions A sele"
+ },
+ {
+  "id": "C11",
+  "src": "GXO",
+  "dst_ticker": "ORCL",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "intelligence to manage their supply chains. Our connection management software module facilitates integration with SAP, Oracle and other external systems, enabling our customers to get the maximum benefit from our technology. Pred"
+ },
+ {
+  "id": "C12",
+  "src": "ACIW",
+  "dst_ticker": "MSFT",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "ncepts and ideas that will benefit the market, our customers, and ACI. We have alliances with our technology partners Microsoft Corporation, Amazon, HPE, IBM, Red Hat, and Oracle, whose industry-leading hardware, software, and c"
+ },
+ {
+  "id": "C13",
+  "src": "SHAZ",
+  "dst_ticker": "AMZN",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "tely connect to the SharonAI Cloud. This collaboration allows our customers to utilize connectivity options including Amazon’s AWS Direct Connect, Microsoft’s Azure ExpressRoute and Australia’s own AARNet to reduce costs and inc"
+ },
+ {
+  "id": "C14",
+  "src": "SPB",
+  "dst_ticker": "AMZN",
+  "relation": "customer",
+  "label": true,
+  "borderline": false,
+  "snippet": "ficant concentration of sales to a limited group of retail customers each exceeding 10% of segment sales, consisting of Amazon and Walmart, representing approximately 34% of segment sales for the year ended September 30, 2025. A p"
+ },
+ {
+  "id": "C15",
+  "src": "AMKR",
+  "dst_ticker": "AAPL",
+  "relation": "customer",
+  "label": true,
+  "borderline": false,
+  "snippet": "largest semiconductor companies. Our ten largest customers accounted for 72% of our net sales in 2025. Direct sales to Apple and Qualcomm accounted for 29.8% and 11.1% of our net sales, respectively, for the year ended December 3"
+ },
+ {
+  "id": "C16",
+  "src": "CARR",
+  "dst_ticker": "AMZN",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "ding solutions to improve occupant experiences. In addition, our Lynx digital platform, developed in collaboration with Amazon Web Services (“AWS”), allows customers to leverage data to enhance visibility, resiliency, agility and "
+ },
+ {
+  "id": "C17",
+  "src": "SLAB",
+  "dst_ticker": "AMZN",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "s. Our secure, reliable, and robust smart home solutions also include support for emerging applications like Matter and Amazon Sidewalk that are designed to streamline customer adoption while providing functionality that reinforce"
+ },
+ {
+  "id": "C18",
+  "src": "AMKR",
+  "dst_ticker": "QCOM",
+  "relation": "customer",
+  "label": true,
+  "borderline": false,
+  "snippet": "emiconductor companies. Our ten largest customers accounted for 72% of our net sales in 2025. Direct sales to Apple and Qualcomm accounted for 29.8% and 11.1% of our net sales, respectively, for the year ended December 31, 2025. M"
+ },
+ {
+  "id": "C19",
+  "src": "IDT",
+  "dst_ticker": "MSFT",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "ugh its online console. net2phone’s UCaaS service integrates seamlessly with business communication platforms (such as Microsoft Teams and Slack), leading customer relationship management, or CRM, services (such as SalesForce, Zo"
+ },
+ {
+  "id": "C20",
+  "src": "PPLI",
+  "dst_ticker": "GOOGL",
+  "relation": "customer",
+  "label": true,
+  "borderline": false,
+  "snippet": "s where the user’s click is generated due to the efforts of a third-party distributor, we recognize the amount due from Google as revenue and record a revenue share or other payment obligation to the third-party distributor as tra"
+ },
+ {
+  "id": "C21",
+  "src": "ICHR",
+  "dst_ticker": "LRCX",
+  "relation": "customer",
+  "label": true,
+  "borderline": false,
+  "snippet": "located in close proximity to our customers. We have long standing relationships with top tier OEM customers, including Lam Research, Applied Materials, and ASML which were our largest customers by sales in 2025. We generated reve"
+ },
+ {
+  "id": "C22",
+  "src": "BOX",
+  "dst_ticker": "MSFT",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "ious AI vendors to provide the best user experience for our customers. For example, Box has announced partnerships with Microsoft’s Azure OpenAI, Google Cloud’s Vertex AI, and Anthropic’s Claude and Amazon Titan via Amazon Bedrock"
+ },
+ {
+  "id": "C23",
+  "src": "NABL",
+  "dst_ticker": "MSFT",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "customers and identify opportunities for operational improvement; • monitor, manage, secure, standardize and automate Microsoft 365 users, Azure resources and Intune devices; • easily update systems, applications and devices to "
+ },
+ {
+  "id": "C24",
+  "src": "IONQ",
+  "dst_ticker": "GOOGL",
+  "relation": "customer",
+  "label": false,
+  "borderline": true,
+  "snippet": "rs available through three major cloud platforms, Amazon Web Services’, or AWS’s, Braket, Microsoft’s Azure Quantum and Google’s Cloud Marketplace, and also to select customers via our own cloud service. This cloud-based approach "
+ },
+ {
+  "id": "C25",
+  "src": "WDAY",
+  "dst_ticker": "MSFT",
+  "relation": "customer",
+  "label": false,
+  "borderline": true,
+  "snippet": "rk, a global ecosystem of partners building AI agents that will connect with Workday. For example, our partnership with Microsoft Corporation (“Microsoft”), announced in fiscal 2026, will enable customers to register and manage ag"
+ },
+ {
+  "id": "C26",
+  "src": "CLS",
+  "dst_ticker": "DELL",
+  "relation": "customer",
+  "label": true,
+  "borderline": false,
+  "snippet": "CCS segment customers include Amazon Fulfillment Services, Inc., Meta Platforms, Inc., Google Inc., Ciena Corporation, Dell Technologies, Hewlett-Packard Enterprise, and IBM Corporation, Inc. Our ATS segment customers include App"
+ },
+ {
+  "id": "C27",
+  "src": "TEAM",
+  "dst_ticker": "MSFT",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "aking our apps open and interoperable with a wide range of other platforms and applications that customers use, such as Microsoft, Zoom, Anthropic, Cursor, OpenAI, Salesforce, Workday, and Dropbox. Our open platform also supports "
+ },
+ {
+  "id": "C28",
+  "src": "RIVN",
+  "dst_ticker": "AMZN",
+  "relation": "customer",
+  "label": true,
+  "borderline": false,
+  "snippet": "orm, which underpins the Electric Delivery Van (“EDV”) variant, designed and engineered by Rivian in collaboration with Amazon.com, Inc. and its affiliates (collectively, “Amazon”), our first commercial customer. The Rivian Commer"
+ },
+ {
+  "id": "C29",
+  "src": "BTBT",
+  "dst_ticker": "HPQ",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "ice Provider (“CSP”) with Dell (through Dell’s exclusive distributor in Iceland, Advania), an official partnership with Hewlett Packard Enterprise and a commercial relationship with Quanta Computer Inc. (“QCT”). Based on managemen"
+ },
+ {
+  "id": "C30",
+  "src": "CLMB",
+  "dst_ticker": "ADBE",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "gme nt, we sell a wide variety of technology products from a broad range of software vendors and manufacturers, such as Adobe, Bluebeam Software, Dark Trace, Delinea, ExtraHop, Fortinet, Micro Focus, Microsoft, SmartBear Software,"
+ },
+ {
+  "id": "C31",
+  "src": "NBIS",
+  "dst_ticker": "NVDA",
+  "relation": "customer",
+  "label": false,
+  "borderline": true,
+  "snippet": "t Nebius will be among the first NVIDIA Cloud Partners to bring the next-generation accelerated computing platform, the NVIDIA Vera Rubin NVL72"
+ },
+ {
+  "id": "C32",
+  "src": "VIA",
+  "dst_ticker": "CRM",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "hanced with data from our simulation tools. Our sales motion coordinates between several key teams including our direct salesforce, business development, strategy, marketing, customer success, expansion, and consulting. The Via Pl"
+ },
+ {
+  "id": "C33",
+  "src": "SAIL",
+  "dst_ticker": "AMZN",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "alliance partners help us extend our reach throughout a customer’s IT environment with integrations with products like Amazon Web Services (\"AWS\"), Proofpoint, SAP, and ServiceNow. Expand our Global Footprint Today, we offer our "
+ },
+ {
+  "id": "C34",
+  "src": "UCTT",
+  "dst_ticker": "AMAT",
+  "relation": "customer",
+  "label": true,
+  "borderline": false,
+  "snippet": "dependent upon a small number of customers. Our two largest revenue customers in fiscal years 2025, 2024 and 2023 were Applied Materials, Inc. and Lam Research Corporation, each of which accounted for more than 10% of our total r"
+ },
+ {
+  "id": "C35",
+  "src": "TLS",
+  "dst_ticker": "AMZN",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "ed competition or sole-source contracts. Partner Organizations Our sales team works with partner organizations like Amazon Web Services (\"AWS\") to pursue mutual customers and leverage their marketplace platforms and marketing "
+ },
+ {
+  "id": "C36",
+  "src": "CLS",
+  "dst_ticker": "LRCX",
+  "relation": "customer",
+  "label": true,
+  "borderline": false,
+  "snippet": "ogies, Hewlett-Packard Enterprise, and IBM Corporation, Inc. Our ATS segment customers include Applied Materials, Inc., LAM Research and Honeywell Inc. We are focused on strengthening our relationships with strategic customers thr"
+ },
+ {
+  "id": "C37",
+  "src": "RUM",
+  "dst_ticker": "AMZN",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": ", with a majority of the cloud services market owned by the major cloud hyperscalers, Google Cloud, Microsoft Azure and Amazon Web Services. These companies have significantly greater resources than us and significant existing cus"
+ },
+ {
+  "id": "C38",
+  "src": "MDB",
+  "dst_ticker": "MSFT",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "egions worldwide across all three major cloud providers (Amazon Web Services (“AWS”), Google Cloud Platform (“GCP”) and Microsoft Azure), enabling our customers to leverage the benefits of different cloud platforms for different u"
+ },
+ {
+  "id": "C39",
+  "src": "HPE",
+  "dst_ticker": "HPQ",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "Hewlett Packard Enterprise is a global technology leader focused on developing intelligent solutions that allo"
+ },
+ {
+  "id": "C40",
+  "src": "SHAZ",
+  "dst_ticker": "MSFT",
+  "relation": "customer",
+  "label": false,
+  "borderline": false,
+  "snippet": "Cloud. This collaboration allows our customers to utilize connectivity options including Amazon’s AWS Direct Connect, Microsoft’s Azure ExpressRoute and Australia’s own AARNet to reduce costs and increase reliability to enterpri"
+ }
+]

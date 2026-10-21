@@ -1,0 +1,8 @@
+{
+  "path": "/api/stock/NVDA/flow-per-expiry",
+  "payload": {
+    "data": [
+      {"expiry": "2030-01-18", "call_premium_ask_side": "900000", "put_premium_ask_side": "100000"}
+    ]
+  }
+}

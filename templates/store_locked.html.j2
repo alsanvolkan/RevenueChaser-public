@@ -1,0 +1,52 @@
+{#
+  Shown when .store/raw.duckdb is held by another process.
+
+  This used to surface as a bare Flask 500 on every tab at once, with the real
+  cause — DuckDB naming the holding process — buried in the server log. The one
+  failure with a concrete, one-step fix deserves to say so on the page.
+#}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Database locked</title>
+<style>
+body{background:#0d1117;color:#c9d1d9;font-family:'Segoe UI',Consolas,monospace;padding:40px;font-size:13px;line-height:1.6}
+h1{color:#f85149;font-size:18px;margin-bottom:14px}
+.holder{background:#161b22;border:1px solid #30363d;border-left:3px solid #f85149;border-radius:6px;padding:12px 14px;margin:16px 0}
+.holder .who{color:#f0f6fc;font-size:15px;font-weight:700}
+.holder .pid{color:#8b949e;font-size:12px;margin-top:4px}
+.fix{background:#12161c;border:1px solid #21262d;border-radius:6px;padding:14px 16px;margin:16px 0}
+.fix h2{color:#58a6ff;font-size:13px;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
+code{background:#161b22;border:1px solid #30363d;border-radius:4px;padding:1px 6px;color:#79c0ff}
+.why{color:#8b949e;font-size:12px;margin-top:20px;padding-top:14px;border-top:1px solid #21262d}
+details{margin-top:10px}
+summary{color:#8b949e;font-size:11px;cursor:pointer}
+pre{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px;overflow-x:auto;
+    color:#8b949e;font-size:11px;margin-top:8px;white-space:pre-wrap;word-break:break-word}
+</style></head><body>
+
+<h1>The database is currently locked by another process</h1>
+
+<div class="holder">
+  <div class="who">{{ holder }}</div>
+  {% if pid %}<div class="pid">PID {{ pid }}{% if holder_path %} · {{ holder_path }}{% endif %}</div>{% endif %}
+</div>
+
+<div class="fix">
+  <h2>How to fix it</h2>
+  {{ remedy }}
+</div>
+
+<p>No data has been lost. Every board will work again as soon as the lock is
+released — nothing needs to be re-fetched.</p>
+
+<div class="why">
+  DuckDB allows one writer process at a time, so any other program holding
+  <code>{{ db_path }}</code> blocks every board at once.
+  {% if pid %}To see all holders: <code>lsof {{ db_path }}</code>{% endif %}
+  <details>
+    <summary>Show the raw driver error</summary>
+    <pre>{{ detail }}</pre>
+  </details>
+</div>
+
+</body></html>

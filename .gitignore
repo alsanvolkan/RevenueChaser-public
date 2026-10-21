@@ -1,0 +1,40 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+RevenueChaser.egg-info/
+.pytest_cache/
+
+# Durable data (.store) / regenerable artifacts (.cache) — code-only repo
+.store/
+.cache/
+edgar_docs/
+discord_media/
+output/
+data/
+varyemez.jpg
+rawData/*
+.vscode/settings.json
+
+# Local tooling downloaded into the tree (the DiscordChatExporter CLI that RC_DCE_CLI points at)
+.tools/
+
+# Owner-only notes: a clone of the private repo RevenueChaser-private (CLAUDE.md "Owner's private notes")
+.private/
+
+# Any .env variant, never only the exact name (.env.local, .env.production, …).
+# The template is the one exception.
+.env.*
+!.env.example
+
+# Durable/embedded databases anywhere in the tree, not just under .store/.
+# Mirrors scripts/private_check.py's own list, so `git add` cannot stage one.
+*.duckdb
+*.duckdb.wal
+*.duckdb-wal
+*.sqlite
+*.sqlite3
+*.db
+*.pem
+*.p12
+*.pfx

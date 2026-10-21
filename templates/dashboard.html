@@ -1,0 +1,1185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>REVENUE CHASER - ONLY THE GOOD ONES</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/static/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+<meta name="theme-color" content="#05111F">
+<style>
+:root{
+  --bg:#05111F; --fg:#C5C6C8; --bright:#F0F0F0; --card:#0B1828;
+  --border:rgba(197,198,200,.15); --sidebar:#0B1828;
+  --pos:#34D399; --neg:#F87171; --amber:#FBBF24; --sky:#0EA5E9; --muted:#9C9DA1;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;
+  display:grid;grid-template-columns:240px 1fr;grid-template-rows:100dvh;height:100dvh;overflow:hidden}
+/* sidebar */
+.sidebar{background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:14px 0}
+.brand{flex:none;display:flex;flex-direction:column;align-items:center;padding:4px 16px 14px}
+.brand .logo{width:170px;height:170px}
+.brand .logo img{width:170px;height:170px;border-radius:12px;display:block;object-fit:cover;box-shadow:0 2px 8px rgba(0,0,0,.35)}
+.brand .tag{margin-top:10px;font-size:11px;letter-spacing:3px;color:var(--muted);font-weight:700;text-align:center}
+/* Nav scrolls when the groups overflow the viewport (Testing etc. stay reachable). */
+.nav{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:4px;padding:0 12px 4px;
+  overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:#5b7a8c #0b1620}
+.nav::-webkit-scrollbar{width:8px}
+.nav::-webkit-scrollbar-track{background:transparent}
+.nav::-webkit-scrollbar-thumb{background:#5b7a8c;border-radius:4px}
+.nav::-webkit-scrollbar-thumb:hover{background:#6f93a7}
+.nav-group{margin-top:2px}
+.nav-header{display:flex;align-items:center;gap:6px;width:100%;background:none;border:0;text-align:left;
+  font:inherit;font-size:10px;letter-spacing:2px;color:var(--muted);font-weight:700;text-transform:uppercase;
+  padding:10px 12px;min-height:40px;cursor:pointer}
+.nav-header:hover{color:var(--fg)}
+.nav-header .caret{width:0;height:0;border-left:4px solid currentColor;border-top:4px solid transparent;
+  border-bottom:4px solid transparent;transform:rotate(90deg);transition:transform .15s ease}
+.nav-group.collapsed .nav-header .caret{transform:rotate(0deg)}
+.nav-group.collapsed .nav-items{display:none}
+.nav-item{display:flex;align-items:center;gap:10px;height:38px;padding:0 12px;border-radius:6px;
+  color:rgba(224,233,235,.75);cursor:pointer;user-select:none;font-weight:500}
+.nav-item.sub{padding-left:24px;font-weight:400;font-size:13px}
+.nav-item:hover{background:rgba(255,255,255,.04)}
+.nav-item.on{background:#101F33;color:var(--fg)}
+.nav-item .job-badge{margin-left:auto;font-size:10px;color:var(--amber);font-weight:600}
+:focus-visible{outline:2px solid var(--sky);outline-offset:2px}
+.cnt,.count,.stat .v,.big,.pct,.nav-item .job-badge{font-variant-numeric:tabular-nums}
+@media (prefers-reduced-motion: reduce){
+  .nav-header .caret{transition:none}
+  .spin{animation:none}
+}
+.side-foot{flex:none;margin-top:auto;padding:14px 12px 2px;border-top:1px solid var(--border);font-size:11px;color:var(--muted)}
+/* Short screens: shrink the brand so more nav groups are visible before scrolling. */
+@media (max-height:760px){
+  .sidebar{padding:8px 0}
+  .brand{padding:2px 14px 8px}
+  .brand .logo,.brand .logo img{width:110px;height:110px}
+  .brand .tag{margin-top:6px}
+  .nav-header{padding:6px 12px 0}
+  .side-foot{padding:10px 12px 2px}
+}
+/* main */
+.main{display:flex;flex-direction:column;min-width:0}
+.topbar{min-height:56px;flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:8px 20px;
+  border-bottom:1px solid var(--border);background:rgba(12,20,24,.8)}
+.topbar .sync{color:var(--muted);font-size:13px;margin-left:auto}
+.topbar .sync b{color:var(--fg);font-weight:500}
+.hbadge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap}
+.hb-regime{background:rgba(52,211,153,.12);color:#34D399}
+.hb-regime-off{background:rgba(248,113,113,.12);color:#F87171}
+.hb-spx-red{background:rgba(248,113,113,.14);color:#F87171}
+.hb-spx-green{background:rgba(52,211,153,.14);color:#34D399}
+.hb-spx-blue{background:rgba(56,189,248,.14);color:#38BDF8}
+.hb-spx-gray{background:rgba(148,163,184,.14);color:#94A3B8}
+.hb-us{background:rgba(14,165,233,.12);color:#0EA5E9}
+.ctl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#range-label{white-space:nowrap;flex:0 0 auto}
+.chk{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--fg);cursor:pointer;user-select:none}
+.chk input{margin:0;accent-color:var(--sky)}
+input[type=date]{background:#101F33;border:1px solid #2F434C;color:var(--fg);border-radius:6px;height:32px;padding:0 8px;font:500 13px/1 var(--sans,inherit)}
+input[type=text]{background:#101F33;border:1px solid #2F434C;color:var(--fg);border-radius:6px;height:32px;padding:0 8px;font:500 13px/1 var(--sans,inherit);text-transform:uppercase}
+button{background:#101F33;color:var(--fg);border:1px solid #2F434C;border-radius:6px;height:32px;padding:0 14px;cursor:pointer;font-weight:600;font-size:13px}
+button:hover{background:#18293a}
+button.primary{background:var(--primary,#E2E3E5);color:#0A1420}
+button:disabled{opacity:.5;cursor:default}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--muted);border-top-color:transparent;border-radius:50%;animation:r .7s linear infinite;vertical-align:-2px}
+@keyframes r{to{transform:rotate(360deg)}}
+.content{flex:1;overflow-x:auto;overflow-y:hidden;position:relative;min-width:0}
+/* Persistent, chunky horizontal scrollbar at the page level. */
+.content{scrollbar-width:auto;scrollbar-color:#5b7a8c #0b1620}
+.content::-webkit-scrollbar{height:16px;width:16px}
+.content::-webkit-scrollbar-track{background:#0b1620}
+.content::-webkit-scrollbar-thumb{background:#5b7a8c;border-radius:8px;border:3px solid #0b1620}
+.content::-webkit-scrollbar-thumb:hover{background:#6f93a7}
+.content::-webkit-scrollbar-corner{background:#0b1620}
+.frame{border:0;width:1280px;max-width:none;height:calc(100% - 16px);display:none;background:#12131c}
+.frame.on{display:block}
+#overlay{position:absolute;inset:0;background:rgba(5,17,31,.7);display:none;align-items:center;justify-content:center;z-index:10}
+#overlay.show{display:flex}
+#overlay .msg{background:var(--card);border:1px solid var(--border);border-radius:9px;padding:16px 24px;color:var(--bright);font-size:14px}
+/* week range calendar */
+.range-dd{position:relative;display:flex;align-items:center;gap:8px}
+.cal-popover{position:absolute;top:40px;left:0;z-index:100;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px;display:none;max-height:60vh;overflow-y:auto;box-shadow:0 8px 30px rgba(0,0,0,.6)}
+.cal-popover.open{display:block}
+.cal-month{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin:10px 0 4px;padding-left:4px}
+.cal-table{width:100%;border-collapse:collapse;font-size:12px}
+.cal-table th{color:var(--muted);font-weight:600;font-size:10px;padding:3px 4px;text-align:center}
+.cal-table .wk-col{text-align:left;padding-left:6px;color:var(--sky);font-weight:700;font-size:11px}
+.cal-table td{text-align:center;padding:3px 4px;border-radius:4px;cursor:pointer;color:var(--fg)}
+.cal-week-row{cursor:pointer}
+.cal-week-row:hover td{background:rgba(255,255,255,.06)}
+.cal-week-row.hover td{background:rgba(14,165,233,.14)}
+.cal-week-row .wk-col{background:transparent!important}
+.cal-week-row.in-range td{background:rgba(14,165,233,.22)}
+.cal-week-row.sel-start td{background:rgba(52,211,153,.35)}
+.cal-week-row.sel-end td{background:rgba(251,191,36,.35)}
+.cal-week-row.this-week .wk-col{color:var(--fg);text-decoration:underline}
+.cal-week-row.has-data .wk-col{font-weight:800}
+.cal-week-row.this-week td{box-shadow:inset 0 -1px 0 rgba(14,165,233,.55)}
+.cal-day-label{font-size:9px;color:var(--muted)}
+.cal-hint{font-size:10px;color:var(--muted);padding:6px 4px 2px}
+.cal-month.earn-month{cursor:pointer}
+.cal-month.earn-month:hover{color:var(--sky)}
+.cal-day.sel{background:rgba(14,165,233,.28)!important}
+.cal-day.today{box-shadow:inset 0 0 0 1px var(--sky)}
+.cal-day.weekend{opacity:.35;cursor:default}
+.cal-day.out{opacity:.2;cursor:default}
+.cal-day:not(.weekend):not(.out):hover{background:rgba(255,255,255,.08)}
+</style>
+</head>
+<body>
+<aside class="sidebar">
+  <div class="brand"><div class="logo"><img src="/static/icons/icon-192.png" alt="RevenueChaser"></div><div class="tag">REVENUE CHASER</div></div>
+  <nav class="nav">
+    {% for g in nav_groups %}
+    <div class="nav-group" data-group="{{ g.label }}">
+      <button class="nav-header" type="button" aria-expanded="true">{{ g.label }}<span class="caret" aria-hidden="true"></span></button>
+      <div class="nav-items">
+        {% for t in g['tabs'] %}
+        <div class="nav-item{% if t.sub %} sub{% endif %}" data-tab="{{ t.key }}" data-url="{{ t.url }}" role="button" tabindex="0">{{ t.label }}</div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </nav>
+  <div class="side-foot">Local dashboard · iframe tabs<br>on-demand fetch per module</div>
+</aside>
+<div class="main">
+  <header class="topbar">
+    <button id="btn-refresh" title="Re-render this tab from the store (.store/raw.duckdb) — no network calls">Refresh Tab</button>
+    <button id="btn-fetch" style="display:none" title="Fetch fresh data over the network, cache it, then re-render">Fetch</button>
+    <button id="btn-refresh-universe" style="display:none" title="Fetch the shared ticker universe over the network, then run the scan">Fetch Universe</button>
+    <button id="btn-sec13f-check" style="display:none" title="Ask the SEC whether a new Form 13F data set is out. Downloads nothing; press Fetch to ingest it.">Check for new data set</button>
+    <button id="btn-sec13f-rebuild" style="display:none" title="Re-derive the 13F totals from the data already ingested. Store only: no download, no network.">Rebuild totals</button>
+    <div class="ctl" id="earnings-ctl">
+      <button class="primary" id="btn-earnings-today" title="Load today's earnings">Load Earnings Today</button>
+      <button id="btn-earnings-load" title="Fetch earnings for the selected days from UW" style="display:none">Load Selected</button>
+      <div class="range-dd" id="earnings-range-dd">
+         <button class="dd-btn" id="earnings-range-btn" onclick="toggleCal('earnings-cal-popover')">Load Earnings by Day ▾</button>
+        <div class="cal-popover" id="earnings-cal-popover">
+          <div class="cal-body" id="earnings-cal-body"></div>
+        </div>
+      </div>
+      <span id="earnings-range-label" style="font-size:12px;color:var(--sky)"></span>
+    </div>
+    <div class="ctl" id="rotation-ctl" style="display:none">
+      <button id="btn-rot-fetch-today" title="Fetch today's rotation snapshot from the API (money flow is refreshed right after)">Fetch Data Today</button>
+      <button id="btn-rot-holdings" title="Fetch ETF holdings and their RS vs SPY (long job; the holdings rows read the stored result)">Fetch holdings</button>
+      <div class="range-dd" id="range-dd">
+        <button class="dd-btn" id="range-btn" onclick="toggleCal('cal-popover')">Fetch Data Range ▾</button>
+        <span id="range-label" style="font-size:12px;color:var(--sky)"></span>
+        <div class="cal-popover" id="cal-popover">
+          <div class="cal-body" id="cal-body"></div>
+        </div>
+      </div>
+      <label class="chk"><input type="checkbox" id="trail-toggle"> Show trail</label>
+      <button id="btn-today">Today</button>
+    </div>
+    <div class="ctl" id="spxgamma-ctl" style="display:none">
+      <div class="range-dd" id="spxgamma-range-dd">
+        <button class="dd-btn" id="spxgamma-range-btn" onclick="toggleCal('spxgamma-cal-popover')">📅 <span id="selected-date-display" data-date="">—</span> ▾</button>
+        <div class="cal-popover" id="spxgamma-cal-popover">
+          <div class="cal-body" id="spxgamma-cal-body"></div>
+          <div class="cal-hint" style="font-size:10px;color:var(--muted);padding:6px 4px 2px">🟢 Positive Gamma · 🔴 Negative Gamma · ⚪ No Data</div>
+        </div>
+      </div>
+      <button id="btn-spx-fetch" title="Force refresh the selected date's snapshot">Fetch</button>
+    </div>
+    <div class="ctl" id="quick-ctl" style="display:none">
+      <input type="text" id="quick-ticker" value="{{ quick_ticker }}" placeholder="Ticker" style="width:110px" />
+    </div>
+<span class="hbadge hb-regime">Regime: —</span>
+<span class="hbadge hb-spx-gray" id="spx-status">SPX: —</span>
+<span class="hbadge hb-us">US-listed only</span>
+    <div class="sync">Universe: <b id="universe-label">—</b></div>
+    <div class="sync">Data: <b id="data-label">—</b></div>
+    <div class="sync">Last run: <b id="sync-label">—</b></div>
+  </header>
+  <div class="content" id="content">
+    {% for t in tabs %}
+    {% if t.type == 'tab' %}
+    <iframe class="frame" data-tab="{{ t.key }}" data-src="{{ t.url }}" title="{{ t.label }}"></iframe>
+    {% endif %}
+    {% endfor %}
+    <div id="overlay"><div class="msg"><span class="spin"></span> Running… this may take a few minutes</div></div>
+  </div>
+</div>
+<script>
+var ACTIVE = 'module_earnings_radar';
+// Fluid boards (fully width:100% pages with inner overflow wrappers): their
+// iframe FILLS the visible pane instead of being grown to a natural content
+// width like the intentionally-wide boards below (Earnings ~2600px).
+var FILL_WIDTH = {'module_spx_gamma': true, 'module_earnings_radar': true, 'module_oipd': true, 'logs': true, 'dealer_hedge': true};
+var UNIVERSE_TABS = ['module_asymmetric_growth','module_swing_potential','module_fundamentals'];
+// Boards backed by .store data: Refresh drops the cached html and recomputes
+// from raw.duckdb (mirrors _STORE_REFRESHABLE in app/dashboard.py).
+var STORE_BACKED = ['module_sec_13f','module_sector_rotation',
+                    'module_swing_potential','module_fundamentals','module_asymmetric_growth',
+                    'module_leaps','module_financials',
+                    'module_comovement','module_value_chain','module_relatedness',
+                    'module_oipd','module_settings','module_discord','module_spx_gamma'];
+var RUN_URLS = {
+  module_earnings_radar: '/run/earnings',
+  module_leaps: '/run/module_leaps',
+  module_sec_13f: '/run/module_sec_13f',
+  module_sector_rotation: '/run/rotation',
+  module_spx_gamma: '/run/spxgamma',
+  module_financials: '/run/quick',
+  module_uw_interaction: '/run/uw',
+  module_asymmetric_growth: '/run/module_asymmetric_growth',
+  module_swing_potential: '/run/swing',
+  module_fundamentals: '/run/module_fundamentals',
+  module_comovement: '/run/module_comovement',
+  module_value_chain: '/run/module_value_chain',
+  module_oipd: '/run/module_oipd',
+  module_discord: '/run/module_discord'
+};
+var POLLING = false;
+var POLL_TIMER = null;
+
+function frames(){ return document.querySelectorAll('.frame'); }
+
+// Grow each iframe to its content's natural width so wide boards (Earnings
+// ~2600px) render un-squashed and the OUTER .content scrollbar provides the
+// horizontal scroll (always visible, page level). Fluid boards (FILL_WIDTH)
+// instead track the pane width so they span the screen when it is enlarged.
+function fitFrameWidth(f){
+  try {
+    var tab = f.getAttribute('data-tab');
+    if(FILL_WIDTH[tab]){
+      var avail = document.getElementById('content').clientWidth;
+      if(avail > 20 && Math.abs(f.offsetWidth - avail) > 4) f.style.width = avail + 'px';
+      return;
+    }
+    var doc = f.contentDocument || f.contentWindow.document;
+    var w = doc.documentElement ? doc.documentElement.scrollWidth : 0;
+    var bodyW = doc.body ? doc.body.scrollWidth : 0;
+    var inner = Math.max(w, bodyW);
+    if(inner > 20){
+      // +40 leaves room for the inner vertical scrollbar (~14-16px) so a wide
+      // board does not re-trigger an inner HORIZONTAL scrollbar; the outer
+      // .content scrollbar stays the single horizontal scroller.
+      var target = Math.min(Math.max(inner + 40, f.offsetWidth || 1280), 8000);
+      if(Math.abs(f.offsetWidth - target) > 4) f.style.width = target + 'px';
+    }
+  } catch(e){}
+}
+function hookFrameFit(f){
+  f.addEventListener('load', function(){ fitFrameWidth(f); });
+  setTimeout(function(){ fitFrameWidth(f); }, 300);
+}
+
+// Re-fit the active FILL_WIDTH board when the pane changes size (window
+// maximize/restore, devtools, sidebar drag) so it keeps spanning the width.
+var FIT_DEBOUNCE = null;
+function refitActiveFrames(){
+  if(FIT_DEBOUNCE) clearTimeout(FIT_DEBOUNCE);
+  FIT_DEBOUNCE = setTimeout(function(){
+    frames().forEach(function(f){
+      if(FILL_WIDTH[f.getAttribute('data-tab')] && f.classList.contains('on')) fitFrameWidth(f);
+    });
+  }, 120);
+}
+if('ResizeObserver' in window){
+  new ResizeObserver(refitActiveFrames).observe(document.getElementById('content'));
+}else{
+  window.addEventListener('resize', refitActiveFrames);
+}
+
+function showTab(key){
+  ACTIVE = key;
+  try{ if(location.hash.slice(1) !== key) history.replaceState(null, '', '#' + key); }catch(e){}
+  if(typeof navOpenGroup === 'function') navOpenGroup(key);
+  document.querySelectorAll('.nav-item').forEach(function(n){ n.classList.toggle('on', n.getAttribute('data-tab')===key); });
+  frames().forEach(function(f){
+    var on = f.getAttribute('data-tab')===key;
+    f.classList.toggle('on', on);
+    if(on && !f.getAttribute('src')){
+      f.setAttribute('src', f.getAttribute('data-src'));
+      hookFrameFit(f);
+    }
+    if(on) fitFrameWidth(f);
+  });
+  document.getElementById('earnings-ctl').style.display = (key==='module_earnings_radar') ? 'flex' : 'none';
+  document.getElementById('rotation-ctl').style.display = (key==='module_sector_rotation') ? 'flex' : 'none';
+  document.getElementById('spxgamma-ctl').style.display = (key==='module_spx_gamma') ? 'flex' : 'none';
+  document.getElementById('quick-ctl').style.display = (key==='module_financials') ? 'flex' : 'none';
+  var uwBtn = document.getElementById('btn-sec13f-check');
+  if(uwBtn) uwBtn.style.display = (key==='module_sec_13f') ? 'inline-block' : 'none';
+  var rbBtn = document.getElementById('btn-sec13f-rebuild');
+  if(rbBtn) rbBtn.style.display = (key==='module_sec_13f') ? 'inline-block' : 'none';
+  var rfBtn = document.getElementById('btn-refresh');
+  // Logs is a read-only view of the dashboard's own log files: it polls by itself, nothing to refresh.
+  if(rfBtn) rfBtn.style.display = (key==='module_earnings_radar' || key==='logs' || key==='dealer_hedge') ? 'none' : 'inline-block';
+  var ftBtn = document.getElementById('btn-fetch');
+  if(ftBtn) ftBtn.style.display = (key==='module_leaps' || key==='module_sec_13f' || key==='module_financials' || key==='module_oipd' || key==='module_comovement' || key==='module_discord') ? 'inline-block' : 'none';
+  var ruBtn = document.getElementById('btn-refresh-universe');
+  if(ruBtn) ruBtn.style.display = (UNIVERSE_TABS.indexOf(key) >= 0) ? 'inline-block' : 'none';
+  checkDataAsOf(key);
+  if(key==='module_sector_rotation'){ loadRotationWeeks(); checkRotationFreshness(); }
+  if(key==='module_spx_gamma'){ checkSpxgammaFreshness(); }
+  if(key==='module_asymmetric_growth'){ checkAsymmetricGrowthFreshness(); }
+  if(key==='module_swing_potential'){ checkSwingFreshness(); }
+  if(key==='module_fundamentals'){ checkFundamentalsFreshness(); }
+  syncOverlay();
+  renderStatus();
+}
+
+var CAL_WEEKS = [];   // [{label,start,end,date}] from /api/rotation/weeks
+var CAL_START = null; // selected start week (ISO Monday)
+var CAL_END = null;   // selected end week (ISO Sunday)
+var CAL_PENDING = null; // hovered week while picking
+
+function loadRotationWeeks(){
+  fetch('/api/rotation/weeks').then(function(r){return r.json();}).then(function(d){
+    CAL_WEEKS = d.weeks||[];
+    // Default the label to the span that actually HAS data — the picker now
+    // also lists weeks you can fetch, and showing those as "selected" would
+    // claim a range the board is not rendering.
+    var withData = CAL_WEEKS.filter(function(w){ return w.has_data; });
+    var span = withData.length ? withData : CAL_WEEKS;
+    if(span.length){
+      CAL_START = span[0];
+      CAL_END = span[span.length-1];
+    }
+    buildCalendar();
+    updateRangeLabel();
+  });
+}
+
+function isoWeekInfo(dstr){
+  // Monday-start ISO week: returns {label, monday, sunday}
+  var d = new Date(dstr + 'T00:00:00');
+  var day = (d.getDay() + 6) % 7; // Mon=0
+  var monday = new Date(d); monday.setDate(d.getDate() - day);
+  var sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
+  // ISO week number
+  var thursday = new Date(monday); thursday.setDate(monday.getDate() + 3);
+  var yearStart = new Date(thursday.getFullYear(), 0, 1);
+  var weekNum = Math.ceil((((thursday - yearStart) / 86400000) + 1) / 7);
+  // fmtLocal, not toISOString(): the dates above are LOCAL midnight, and
+  // toISOString() converts to UTC — east of UTC that lands on the previous day,
+  // shifting every week to Sunday..Saturday and capping the picker a day early.
+  return {label: 'W' + String(weekNum).padStart(2,'0') + ' ' + thursday.getFullYear(),
+          monday: fmtLocal(monday), sunday: fmtLocal(sunday), weekNum: weekNum, year: thursday.getFullYear()};
+}
+
+function buildCalendar(){
+  var body = document.getElementById('cal-body');
+  body.innerHTML = '';
+  if(!CAL_WEEKS.length){ body.innerHTML = '<div class="cal-hint">No snapshots available.</div>'; return; }
+  // month header + week rows spanning each available week
+  var months = [];
+  CAL_WEEKS.forEach(function(w){ months.push(w.start.slice(0,7)); });
+  months = Array.from(new Set(months)).sort();
+  body.innerHTML = '<div class="cal-hint">Hover = highlight week · 1st click = start · 2nd click = end · bold week = snapshot already stored</div>';
+  months.forEach(function(m){
+    var hdr = document.createElement('div');
+    hdr.className = 'cal-month';
+    hdr.textContent = m;
+    body.appendChild(hdr);
+    var tbl = document.createElement('table');
+    tbl.className = 'cal-table';
+    tbl.innerHTML = '<thead><tr><th class="wk-col">WK</th><th>Mo</th><th>Tu</th><th>We</th><th>Th</th><th>Fr</th><th>Sa</th><th>Su</th></tr></thead><tbody></tbody>';
+    var tb = tbl.querySelector('tbody');
+    CAL_WEEKS.forEach(function(w){
+      if(w.start.slice(0,7) !== m) return;
+      var info = isoWeekInfo(w.date);
+      var tr = document.createElement('tr');
+      tr.className = 'cal-week-row' + (w.has_data ? ' has-data' : '');
+      tr.dataset.start = info.monday;
+      tr.dataset.end = info.sunday;
+      tr.dataset.label = info.label;
+      // week number cell
+      var wkTd = document.createElement('td');
+      wkTd.className = 'wk-col';
+      wkTd.textContent = info.weekNum;
+      tr.appendChild(wkTd);
+      // day cells Mon..Sun
+      var mon = new Date(info.monday + 'T00:00:00');
+      for(var i=0;i<7;i++){
+        var dd = new Date(mon); dd.setDate(mon.getDate()+i);
+        var td = document.createElement('td');
+        td.textContent = dd.getDate();
+        tr.appendChild(td);
+      }
+      tr.addEventListener('mouseenter', function(){ CAL_PENDING = this; paintCalendar(); });
+      tr.addEventListener('mouseleave', function(){ CAL_PENDING = null; paintCalendar(); });
+      tr.addEventListener('click', function(){ clickWeek(this); });
+      tb.appendChild(tr);
+    });
+    body.appendChild(tbl);
+  });
+  paintCalendar();
+}
+
+function clickWeek(tr){
+  var s = tr.dataset.start;
+  if(CAL_START === null || (CAL_END !== null)){
+    // start a fresh selection
+    CAL_START = {start: tr.dataset.start, end: tr.dataset.end, label: tr.dataset.label};
+    CAL_END = null;
+  } else {
+    // second click: define end (swap if before start)
+    var cur = {start: tr.dataset.start, end: tr.dataset.end, label: tr.dataset.label};
+    if(cur.start < CAL_START.start){
+      var tmp = CAL_START; CAL_START = cur; CAL_END = tmp;
+    } else {
+      CAL_END = cur;
+    }
+    document.getElementById('trail-toggle').checked = true;
+    showTrail();
+    // Fetch the selected date range from the API (UW + cache write).
+    var s = CAL_START.start;
+    var e = CAL_END.end;
+    fetchTab('/run/rotation', new URLSearchParams({start: s, end: e}));
+  }
+  paintCalendar();
+  updateRangeLabel();
+}
+
+function paintCalendar(){
+  document.querySelectorAll('.cal-week-row').forEach(function(tr){
+    tr.classList.remove('hover','in-range','sel-start','sel-end');
+    var s = tr.dataset.start;
+    if(CAL_PENDING && CAL_PENDING.dataset.start === s){ tr.classList.add('hover'); }
+    if(CAL_START && CAL_END){
+      var a = CAL_START.start, b = CAL_END.start;
+      var lo = a < b ? a : b, hi = a < b ? b : a;
+      if(s >= lo && s <= hi) tr.classList.add('in-range');
+      if(s === CAL_START.start) tr.classList.add('sel-start');
+      if(s === CAL_END.start) tr.classList.add('sel-end');
+    } else if(CAL_START){
+      if(s === CAL_START.start) tr.classList.add('sel-start');
+      // preview range to hover
+      if(CAL_PENDING){
+        var p = CAL_PENDING.dataset.start;
+        var lo2 = p < CAL_START.start ? p : CAL_START.start;
+        var hi2 = p < CAL_START.start ? CAL_START.start : p;
+        if(s >= lo2 && s <= hi2) tr.classList.add('in-range');
+      }
+    }
+  });
+}
+
+function updateRangeLabel(){
+  var el = document.getElementById('range-label');
+  if(CAL_START && CAL_END){
+    el.textContent = CAL_START.label + ' → ' + CAL_END.label;
+  } else if(CAL_START){
+    el.textContent = CAL_START.label + ' → …';
+  } else {
+    el.textContent = '';
+  }
+}
+
+function toggleCal(id){
+  var p = document.getElementById(id);
+  if(!p) return;
+  p.classList.toggle('open');
+  if(id === 'earnings-cal-popover' && p.classList.contains('open')){
+    var today = p.querySelector('.cal-day.today');
+    if(today && today.scrollIntoView) today.scrollIntoView({block: 'center', inline: 'nearest'});
+  }
+}
+document.addEventListener('click', function(e){
+  ['range-dd','earnings-range-dd','spxgamma-range-dd'].forEach(function(ddId){
+    var dd = document.getElementById(ddId);
+    if(dd && !dd.contains(e.target)){
+      var pop = dd.querySelector('.cal-popover');
+      if(pop) pop.classList.remove('open');
+    }
+  });
+});
+
+// ── Earnings day calendar (toggle weekdays; month header = all weekdays) ──
+var EARN_DAYS = {};          // iso YYYY-MM-DD -> true
+var EARN_WEEKS_BACK = 12;    // past weeks (window size; re-running a scored day)
+var EARN_WEEKS_FWD = 8;      // upcoming weeks (the board's actual purpose)
+
+function earnWindowMonths(){
+  var now = new Date();
+  var day = (now.getDay() + 6) % 7;
+  var monday = new Date(now); monday.setDate(now.getDate() - day);
+  var start = new Date(monday); start.setDate(monday.getDate() - EARN_WEEKS_BACK * 7);
+  var end = new Date(monday); end.setDate(monday.getDate() + EARN_WEEKS_FWD * 7 + 6);
+  var months = [];
+  var cur = new Date(start.getFullYear(), start.getMonth(), 1);
+  var last = new Date(end.getFullYear(), end.getMonth(), 1);
+  while(cur <= last){
+    months.push(cur.getFullYear() + '-' + String(cur.getMonth() + 1).padStart(2, '0'));
+    cur.setMonth(cur.getMonth() + 1);
+  }
+  return months;
+}
+
+function buildEarningsCalendar(){
+  var body = document.getElementById('earnings-cal-body');
+  if(!body) return;
+  var today = todayISO();
+  body.innerHTML = '<div class="cal-hint">Click days to toggle (e.g. 7, 9, 11) · click month name to select all weekdays · weekends have no reports</div>';
+  var actions = document.createElement('div');
+  actions.style.cssText = 'display:flex;gap:8px;margin:8px 0 10px;align-items:center;position:sticky;top:0;background:var(--card);z-index:2;padding:4px 0';
+  var load = document.createElement('button');
+  load.className = 'primary';
+  load.id = 'btn-earnings-load-selected';
+  load.textContent = 'Load selected';
+  load.addEventListener('click', runEarningsRange);
+  actions.appendChild(load);
+  body.appendChild(actions);
+  earnWindowMonths().forEach(function(ym){
+    var hdr = document.createElement('div');
+    hdr.className = 'cal-month earn-month';
+    hdr.dataset.month = ym;
+    hdr.textContent = ym + ' · all weekdays';
+    hdr.title = 'Select every weekday in ' + ym;
+    hdr.addEventListener('click', function(){ toggleEarnMonth(ym); });
+    body.appendChild(hdr);
+    var tbl = document.createElement('table');
+    tbl.className = 'cal-table earn-month-grid';
+    tbl.innerHTML = '<thead><tr><th>Mo</th><th>Tu</th><th>We</th><th>Th</th><th>Fr</th><th>Sa</th><th>Su</th></tr></thead><tbody></tbody>';
+    var tb = tbl.querySelector('tbody');
+    var y = parseInt(ym.slice(0, 4), 10), mo = parseInt(ym.slice(5, 7), 10) - 1;
+    var first = new Date(y, mo, 1);
+    var startPad = (first.getDay() + 6) % 7;
+    var dim = new Date(y, mo + 1, 0).getDate();
+    var tr = document.createElement('tr');
+    for(var i = 0; i < startPad; i++){
+      var pad = document.createElement('td');
+      pad.className = 'cal-day out';
+      tr.appendChild(pad);
+    }
+    for(var d = 1; d <= dim; d++){
+      if(tr.children.length === 7){ tb.appendChild(tr); tr = document.createElement('tr'); }
+      var dt = new Date(y, mo, d);
+      var iso = fmtLocal(dt);
+      var td = document.createElement('td');
+      td.className = 'cal-day';
+      td.dataset.iso = iso;
+      td.textContent = d;
+      if(dt.getDay() === 0 || dt.getDay() === 6){
+        td.className += ' weekend';
+      } else {
+        td.addEventListener('click', function(){ toggleEarnDay(this.dataset.iso); });
+      }
+      if(iso === today) td.classList.add('today');
+      tr.appendChild(td);
+    }
+    while(tr.children.length && tr.children.length < 7){
+      var trail = document.createElement('td');
+      trail.className = 'cal-day out';
+      tr.appendChild(trail);
+    }
+    if(tr.children.length) tb.appendChild(tr);
+    body.appendChild(tbl);
+  });
+  paintEarningsCalendar();
+  updateEarningsRangeLabel();
+}
+
+function toggleEarnDay(iso){
+  if(EARN_DAYS[iso]) delete EARN_DAYS[iso]; else EARN_DAYS[iso] = true;
+  paintEarningsCalendar();
+  updateEarningsRangeLabel();
+}
+
+function toggleEarnMonth(ym){
+  var y = parseInt(ym.slice(0, 4), 10), mo = parseInt(ym.slice(5, 7), 10) - 1;
+  var dim = new Date(y, mo + 1, 0).getDate();
+  var weekdays = [];
+  for(var d = 1; d <= dim; d++){
+    var dt = new Date(y, mo, d);
+    if(dt.getDay() === 0 || dt.getDay() === 6) continue;
+    weekdays.push(fmtLocal(dt));
+  }
+  var allOn = weekdays.every(function(iso){ return EARN_DAYS[iso]; });
+  weekdays.forEach(function(iso){ if(allOn) delete EARN_DAYS[iso]; else EARN_DAYS[iso] = true; });
+  paintEarningsCalendar();
+  updateEarningsRangeLabel();
+}
+
+function paintEarningsCalendar(){
+  document.querySelectorAll('#earnings-cal-body .cal-day[data-iso]').forEach(function(td){
+    td.classList.toggle('sel', !!EARN_DAYS[td.dataset.iso]);
+  });
+}
+
+function selectedEarnDays(){
+  return Object.keys(EARN_DAYS).sort();
+}
+
+function updateEarningsRangeLabel(){
+  var el = document.getElementById('earnings-range-label');
+  var btn = document.getElementById('btn-earnings-load');
+  var days = selectedEarnDays();
+  if(!days.length){ el.textContent = ''; if(btn) btn.style.display = 'none'; return; }
+  if(btn){ btn.style.display = ''; btn.textContent = 'Load Selected (' + days.length + ')'; }
+  if(days.length <= 5){
+    el.textContent = days.map(function(d){ return d.slice(8); }).join(', ');
+  } else {
+    el.textContent = days.length + ' days';
+  }
+}
+
+function runEarningsRange(){
+  var days = selectedEarnDays();
+  if(!days.length) return;
+  var pop = document.getElementById('earnings-cal-popover');
+  if(pop) pop.classList.remove('open');
+  var url = RUN_URLS[ACTIVE] || '/run/earnings';
+  fetchTab(url, new URLSearchParams({dates: days.join(',')}));
+}
+
+function showToday(){
+  // Show the current map view (today's data) and clear the trail checkbox.
+  var cb = document.getElementById('trail-toggle');
+  if(cb) cb.checked = false;  var f = document.querySelector('.frame[data-tab="module_sector_rotation"]');
+  if(f){ f.setAttribute('src', f.getAttribute('data-src') + '?t=' + Date.now()); }
+}
+
+function activeJobs(list){
+  return (list||[]).filter(function(j){ return j.status==='queued' || j.status==='running'; });
+}
+
+// Jobs that block one tab: queued/running jobs whose ``produces`` lists it.
+// The "Running…" overlay covers only that tab; every other board stays usable
+// and just shows its nav job badge (N2 — a long-lane job used to blank them all).
+function jobsForTab(list, tab){
+  return activeJobs(list).filter(function(j){ return (j.produces||[]).indexOf(tab) >= 0; });
+}
+var ACTIVE_JOBS = [];  // last /api/jobs active list (poll keeps it current)
+function syncOverlay(){ showOverlay(jobsForTab(ACTIVE_JOBS, ACTIVE).length > 0); }
+
+function renderStatus(){
+  // mark tabs with a running badge
+  fetch('/api/jobs').then(function(r){return r.json();}).then(function(d){
+    var running = {};
+    (d.jobs||[]).forEach(function(j){
+      if(j.status==='queued' || j.status==='running'){
+        (j.produces||[]).forEach(function(m){ running[m]=j; });
+      }
+    });
+    document.querySelectorAll('.nav-item').forEach(function(n){
+      var key = n.getAttribute('data-tab');
+      var job = running[key];
+      var badge = n.querySelector('.job-badge');
+      if(job){
+        if(!badge){ badge = document.createElement('span'); badge.className='job-badge'; n.appendChild(badge); }
+        /* A running job that can stop early (job.cancellable, #243) stops at its next safe point: the badge says
+           "stopping…" until it has. Any other running job runs to the end and offers no cancel. */
+        var isRunning = job.status==='running';  /* not `running`: that is the map above */
+        var stopping = isRunning && job.cancel_requested;
+        var fixed = isRunning && !job.cancellable;
+        badge.textContent = stopping ? 'stopping…' : (isRunning ? (fixed ? 'running…' : 'running… ✕') : 'queued ✕');
+        badge.title = stopping ? 'Stopping at the next safe point'
+          : (fixed ? 'Running — this job cannot stop early'
+                   : (isRunning ? 'Running — click to cancel (it stops at the next safe point)'
+                              : 'Queued — click to cancel'));
+        badge.onclick = (stopping || fixed) ? null : (function(id, wasRunning){ return function(ev){
+          ev.stopPropagation();
+          if(confirm(wasRunning ? 'Cancel this running job? It stops at the next safe point; work already written stays.'
+                                : 'Cancel this queued job?')) cancelJob(id); }; })(job.id, isRunning);
+      } else if(badge){ badge.remove(); }
+    });
+  });
+}
+
+function fmtStamp(iso){
+  if(!iso) return '';
+  // Stamps are written in UTC ("...+00:00"). The old slice(0,19) chopped the
+  // offset off and showed UTC as if it were local time. Render in the
+  // viewer's own timezone instead.
+  var d = new Date(iso);
+  if(isNaN(d)) return String(iso).replace('T',' ').replace(/Z$/,' UTC').slice(0,19);
+  var p = function(n){ return String(n).padStart(2,'0'); };
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '
+       + p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+}
+
+// The date a board's data is computed against — a different fact from when the
+// scan last ran, because a cached re-render touches no network. Shown for every
+// tab, so no board can silently present stale data as fresh.
+function checkDataAsOf(key){
+  var el = document.getElementById('data-label');
+  el.textContent = '—';
+  fetch('/api/data_asof/' + encodeURIComponent(key))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(ACTIVE !== key) return;           // tab changed while in flight
+      el.textContent = d.data_as_of || 'n/a';
+      el.title = d.data_as_of
+        ? 'Newest data this board is computed against'
+        : (STORE_BACKED.indexOf(key) >= 0
+            ? 'This board reads the store and has no single data date'     // DF103
+            : 'This board fetches live; it keeps no downloaded data');
+    })
+    .catch(function(){});
+}
+
+function checkSpxgammaFreshness(){
+  fetch('/api/spxgamma/latest').then(function(r){return r.json();}).then(function(d){
+    if(d.asof_date){
+      setSpxDate(d.asof_date);
+      document.getElementById('sync-label').textContent = fmtStamp(d.api_snapshot_time) || d.asof_date;
+    }
+    var badge = document.querySelector('.hb-regime');
+    if(badge && d.regime){
+      badge.textContent = 'Regime: ' + d.regime + ' · ' + (d.asof_date || '');
+      badge.classList.toggle('hb-regime-off', d.regime.indexOf('Short') >= 0);
+    }
+    // Global SPX live status pill (Breakdown / Pin Zone / Acceleration).
+    var spx = document.getElementById('spx-status');
+    if(spx){
+      var pv = d.put_wall_vol, cw = d.call_wall_vol, spot = d.spx_spot;
+      if(pv == null || cw == null || spot == null){
+        spx.textContent = 'SPX: —';
+        spx.className = 'hbadge hb-spx-gray';
+      } else if(spot < pv){
+        spx.textContent = 'SPX: 🔴 Breakdown';
+        spx.className = 'hbadge hb-spx-red';
+      } else if(spot <= cw){
+        spx.textContent = 'SPX: 🟢 Pin Zone @ ' + Math.round(spot);
+        spx.className = 'hbadge hb-spx-green';
+      } else {
+        spx.textContent = 'SPX: 🔵 Acceleration';
+        spx.className = 'hbadge hb-spx-blue';
+      }
+    }
+  }).catch(function(){});
+  buildSpxgammaCalendar();
+}
+
+// Local-date formatter (avoids toISOString()'s UTC shift that made the picker
+// select the wrong day in UTC+x timezones).
+function fmtLocal(d){
+  function p(n){ return String(n).padStart(2,'0'); }
+  return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate());
+}
+// Set the selected SPX Gamma date (display + dataset) on the unified picker button.
+function setSpxDate(iso){
+  var el = document.getElementById('selected-date-display');
+  if(!el) return;
+  el.textContent = iso;
+  el.dataset.date = iso;
+}
+
+// GEX history heatmap calendar for the SPX Gamma date picker.
+var SPXG_CAL = {};  // {date: {net_gex_oi, source_chip, regime}}
+function buildSpxgammaCalendar(){
+  var body = document.getElementById('spxgamma-cal-body');
+  if(!body) return;
+  fetch('/api/spxgamma/history').then(function(r){return r.json();}).then(function(d){
+    SPXG_CAL = d.days || {};
+    renderSpxgammaCalendar();
+  }).catch(function(){});
+}
+function renderSpxgammaCalendar(){
+  var body = document.getElementById('spxgamma-cal-body');
+  if(!body) return;
+  body.innerHTML = '';
+  // last ~6 weeks of days (Mon..Fri), grouped by month
+  var now = new Date();
+  var days = [];
+  for(var i=45; i>=0; i--){
+    var d = new Date(now); d.setDate(now.getDate() - i);
+    var wd = d.getDay();
+    if(wd===0 || wd===6) continue;
+    days.push(d);
+  }
+  var months = [];
+  days.forEach(function(d){ months.push(fmtLocal(d).slice(0,7)); });
+  months = Array.from(new Set(months)).sort();
+  months.forEach(function(m){
+    var hdr = document.createElement('div');
+    hdr.className = 'cal-month';
+    hdr.textContent = m;
+    body.appendChild(hdr);
+    var tbl = document.createElement('table');
+    tbl.className = 'cal-table';
+    tbl.innerHTML = '<thead><tr><th>Mo</th><th>Tu</th><th>We</th><th>Th</th><th>Fr</th></tr></thead><tbody></tbody>';
+    var tb = tbl.querySelector('tbody');
+    var tr = document.createElement('tr');
+    // JS getDay(): Sun=0, Mon=1..Fri=5. Weekends filtered, so dow0 in [1,5].
+    // 0-based padding: Mon(1)->0 pad, Tue(2)->1 pad, ..., Fri(5)->4 pad.
+    var dow0 = days.filter(function(d){return fmtLocal(d).slice(0,7)===m;})[0].getDay();
+    for(var pad=0; pad<(dow0-1); pad++){ tr.appendChild(document.createElement('td')); }
+    days.forEach(function(d){
+      if(fmtLocal(d).slice(0,7)!==m) return;
+      var iso = fmtLocal(d);
+      var td = document.createElement('td');
+      td.textContent = d.getDate();
+      var rec = SPXG_CAL[iso];
+      if(rec){
+        var chip = (rec.source_chip || '').toUpperCase();
+        if(chip==='POSITIVE' || (rec.net_gex_oi||0) > 0){
+          td.style.background='rgba(52,211,153,.35)';
+          td.style.color='#eafff5';
+          td.style.fontWeight='700';
+        } else {
+          td.style.background='rgba(248,113,113,.35)';
+          td.style.color='#ffd9d9';
+          td.style.fontWeight='700';
+        }
+        td.title = iso + ' · Net GEX ' + (rec.net_gex_oi!=null ? Math.round(rec.net_gex_oi) : 'n/a') + ' · ' + (rec.regime||'');
+      }
+      td.style.cursor='pointer';
+      td.onclick = (function(iso){ return function(){
+        setSpxDate(iso);
+        document.getElementById('spxgamma-cal-popover').classList.remove('open');
+        fetchTab('/run/spxgamma', new URLSearchParams({date: iso}));  // direct fetch on click
+      }; })(iso);
+      tr.appendChild(td);
+      if(d.getDay()===5){ tb.appendChild(tr); tr = document.createElement('tr'); }
+    });
+    if(tr.children.length) tb.appendChild(tr);
+    body.appendChild(tbl);
+  });
+}
+
+function checkAsymmetricGrowthFreshness(){
+  fetch('/api/module_asymmetric_growth/latest').then(function(r){return r.json();}).then(function(d){
+    if(d.asof){
+      document.getElementById('sync-label').textContent = fmtStamp(d.asof);
+    }
+  }).catch(function(){});
+}
+
+function checkSwingFreshness(){
+  fetch('/api/swing/latest').then(function(r){return r.json();}).then(function(d){
+    if(d.generated_at){
+      document.getElementById('sync-label').textContent = fmtStamp(d.generated_at);
+    }
+  }).catch(function(){});
+}
+
+function checkFundamentalsFreshness(){
+  fetch('/api/module_fundamentals/latest').then(function(r){return r.json();}).then(function(d){
+    if(d.generated_at){
+      document.getElementById('sync-label').textContent = fmtStamp(d.generated_at);
+    }
+  }).catch(function(){});
+}
+
+function nowStamp(){
+  var d = new Date();
+  function p(n){ return String(n).padStart(2,'0'); }
+  return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate())
+       + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+function loadUniverseMeta(){
+  fetch('/api/universe').then(function(r){ return r.json(); }).then(function(d){
+    var el = document.getElementById('universe-label');
+    if(!el) return;
+    if(d.refreshed_by){
+      var ts = String(d.generated_at || '').replace('T',' ').slice(0,16);
+      el.textContent = 'refreshed by ' + d.refreshed_by + (ts ? ' · ' + ts : '');
+    } else if(d.count){
+      el.textContent = d.count + ' tickers cached';
+    } else {
+      el.textContent = 'not fetched yet';
+    }
+  }).catch(function(){});
+}
+loadUniverseMeta();
+
+function poll(){
+  fetch('/api/jobs').then(function(r){return r.json();}).then(function(d){
+    var list = d.jobs||[];
+    if(window._seenDone === undefined){ window._seenDone = {}; }
+    // process finished jobs first (before the active check, so a lone job that
+    // just completed still updates the label + reloads its iframe)
+    list.forEach(function(j){
+      var wasActive = (j.status==='done'||j.status==='error'||j.status==='cancelled');
+      if(wasActive && !window._seenDone[j.id]){
+        window._seenDone[j.id] = true;
+        if(j.status==='error'){
+          alert('Run failed: ' + (j.error||'unknown'));
+        } else if(j.status==='cancelled'){
+          /* cancelled by the user — nothing to reload */
+        } else {
+          document.getElementById('sync-label').textContent = nowStamp();
+          (j.produces||[]).forEach(function(m){
+            var f = document.querySelector('.frame[data-tab="'+m+'"]');
+            if(f){ f.setAttribute('src', f.getAttribute('data-src') + '?t=' + Date.now()); }
+          });
+          // A job can finish successfully with nothing to show (no earnings in
+          // range). Say so — otherwise the tab just silently does not change.
+          if(j.message){ alert(j.message); }
+        }
+      }
+    });
+    var act = activeJobs(list);
+    ACTIVE_JOBS = act;
+    syncOverlay();
+    if(act.length===0){
+      POLLING = false;
+      if(POLL_TIMER){ clearInterval(POLL_TIMER); POLL_TIMER=null; }
+    }
+    renderStatus();
+  }).catch(function(){});
+}
+
+function startPolling(){
+  if(POLLING) return;
+  POLLING = true;
+  poll();
+  POLL_TIMER = setInterval(poll, 2000);
+}
+
+// The OIPD ticker picker lives inside the iframe (in-board combobox), not in a
+// parent header box. Read the iframe's selected ticker; fall back to the
+// combobox's visible value (its closed label is "TICKER — full name").
+function oipdTickerFromFrame(){
+  var f = document.querySelector('.frame[data-tab="module_oipd"]');
+  if(!f) return '';
+  try{
+    var t = f.contentWindow && f.contentWindow.OIPD_TICKER;
+    if(t) return String(t).trim().toUpperCase();
+  }catch(e){}
+  try{
+    var c = f.contentDocument && f.contentDocument.getElementById('ticker-combo');
+    if(c && c.value) return String(c.value).split(' — ')[0].trim().toUpperCase();
+  }catch(e){}
+  return '';
+}
+
+function refreshTab(){
+  // Refresh = drop the cached html and re-derive the board FROM THE STORE
+  // (.store/raw.duckdb) — no network. Applies to every store-backed board; the
+  // ?refresh=1 query tells /view to ignore the .cache artifact and recompute.
+  // Financials additionally passes the ticker in the box.
+  var f = document.querySelector('.frame[data-tab="'+ACTIVE+'"]');
+  if(f){
+    if(STORE_BACKED.indexOf(ACTIVE) >= 0){
+      var url = f.getAttribute('data-src') + '?refresh=1';
+      if(ACTIVE==='module_financials'){
+        var box = (document.getElementById('quick-ticker').value||'').trim().toUpperCase() || 'AAPL';
+        url += '&ticker=' + encodeURIComponent(box) + '&t=' + Date.now();
+        fetch(url, {cache: 'no-store'}).then(function(){
+          f.setAttribute('src', f.getAttribute('data-src') + '?t=' + Date.now());
+          checkDataAsOf(ACTIVE);
+        }).catch(function(){
+          f.setAttribute('src', url);
+          checkDataAsOf(ACTIVE);
+        });
+        return;
+      }
+      if(ACTIVE==='module_oipd'){
+        var ot = oipdTickerFromFrame();
+        if(ot) url += '&ticker=' + encodeURIComponent(ot);
+      }
+      f.setAttribute('src', url + '&t=' + Date.now());
+    } else {
+      // Cache view (live-only board): reload the iframe, no API calls.
+      f.setAttribute('src', f.getAttribute('data-src') + '?t=' + Date.now());
+    }
+  }
+  // Refresh the timestamp shown in the header.
+  checkDataAsOf(ACTIVE);
+  if(ACTIVE==='module_sector_rotation'){ checkRotationFreshness(); }
+  else if(ACTIVE==='module_spx_gamma'){ checkSpxgammaFreshness(); }
+  else if(ACTIVE==='module_swing_potential'){ checkSwingFreshness(); }
+  else if(ACTIVE==='module_fundamentals'){ checkFundamentalsFreshness(); }
+  else if(ACTIVE==='module_asymmetric_growth'){ checkAsymmetricGrowthFreshness(); }
+  else if(ACTIVE==='module_earnings_radar'){ checkEarningsFreshness(); }
+}
+
+function showOverlay(on){
+  var o = document.getElementById('overlay');
+  if(o) o.classList.toggle('show', !!on);
+}
+function fetchTab(url, body){
+  // API fetch: call the run route (UW + cache write), poll until done. Cover
+  // this tab right away; the next poll replaces the placeholder with the real job.
+  ACTIVE_JOBS = ACTIVE_JOBS.concat([{status:'queued', produces:[ACTIVE]}]);
+  syncOverlay();
+  fetch(url, {method:'POST', body:body, headers: body?{'Content-Type':'application/x-www-form-urlencoded', 'X-RC-Panel':'dashboard'}:{'X-RC-Panel':'dashboard'}})
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      if(!res.ok){ dropPlaceholder(); alert('Run failed: ' + (res.error||'unknown')); return; }
+      startPolling();
+    })
+    .catch(function(e){ dropPlaceholder(); alert('Error: ' + e); });
+}
+function dropPlaceholder(){
+  ACTIVE_JOBS = ACTIVE_JOBS.filter(function(j){ return j.id; });
+  syncOverlay();
+}
+
+function checkEarningsFreshness(){
+  // Earnings board timestamp: derived from the report file mtime when available.
+  // The report file carries its own time; never invent "now" as a last run.
+  var t = document.getElementById('sync-label');
+  if(t && (!t.textContent || t.textContent==='—')){ t.textContent = '—'; }
+}
+
+function refreshUniverse(){
+  // One-stop: fetch the universe + all per-ticker data the 3 scanners need, run all 3.
+  fetchTab('/run/universe', null);
+}
+
+function checkRotationFreshness(){
+  // On rotation tab open: show last-run time from the newest snapshot (display only).
+  fetch('/api/rotation/latest').then(function(r){return r.json();}).then(function(d){
+    var latest = d.as_of_date || null;
+    var gen = d.generated_at || null;
+    if(gen){
+      document.getElementById('sync-label').textContent = fmtStamp(gen);
+    } else if(latest){
+      document.getElementById('sync-label').textContent = latest;
+    }
+  }).catch(function(){});
+}
+
+var NAV_LS = 'rc.nav.collapsed';
+function navCollapsed(){ try{ return JSON.parse(localStorage.getItem(NAV_LS)||'[]'); }catch(e){ return []; } }
+function navSaveNav(c){ try{ localStorage.setItem(NAV_LS, JSON.stringify(c)); }catch(e){} }
+function navApply(){
+  var collapsed = navCollapsed();
+  document.querySelectorAll('.nav-group').forEach(function(g){
+    var on = collapsed.indexOf(g.getAttribute('data-group')) >= 0;
+    g.classList.toggle('collapsed', on);
+    var h = g.querySelector('.nav-header');
+    if(h) h.setAttribute('aria-expanded', on ? 'false' : 'true');
+  });
+}
+function navOpenGroup(key){
+  var item = document.querySelector('.nav-item[data-tab="'+key+'"]'); if(!item) return;
+  var g = item.closest('.nav-group'); if(!g) return;
+  var k = g.getAttribute('data-group'); var c = navCollapsed(); var i = c.indexOf(k);
+  if(i >= 0){ c.splice(i,1); navSaveNav(c); navApply(); }
+}
+document.querySelectorAll('.nav-header').forEach(function(h){
+  h.addEventListener('click', function(){
+    var g = h.closest('.nav-group'); if(!g) return;
+    var k = g.getAttribute('data-group'); var c = navCollapsed(); var i = c.indexOf(k);
+    if(i >= 0) c.splice(i,1); else c.push(k);
+    navSaveNav(c); navApply();
+  });
+});
+navApply();
+
+document.querySelectorAll('.nav-item').forEach(function(n){
+  n.addEventListener('click', function(){ showTab(n.getAttribute('data-tab')); });
+  n.addEventListener('keydown', function(e){
+    if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); showTab(n.getAttribute('data-tab')); }
+  });
+});
+document.getElementById('btn-earnings-today').addEventListener('click', function(){
+  // Load today's earnings: clear any calendar selection and fetch today for the active tab.
+  EARN_DAYS = {};
+  updateEarningsRangeLabel();
+  paintEarningsCalendar();
+  var today = todayISO();
+  fetchTab(RUN_URLS[ACTIVE] || '/run/earnings', new URLSearchParams({start: today, end: today}));
+});
+document.getElementById('btn-earnings-load').addEventListener('click', runEarningsRange);
+function todayISO(){
+  return fmtLocal(new Date());
+}
+document.getElementById('btn-refresh').addEventListener('click', refreshTab);
+document.getElementById('btn-refresh-universe').addEventListener('click', refreshUniverse);
+
+// Generic Fetch button: POST to the active tab's run route (UW + cache write).
+document.getElementById('btn-fetch').addEventListener('click', function(){
+  var url = RUN_URLS[ACTIVE];
+  if(!url) return;
+  var body = null;
+  if(ACTIVE==='module_financials'){
+    var qt = document.getElementById('quick-ticker').value.trim().toUpperCase() || 'AAPL';
+    body = new URLSearchParams({ticker: qt});
+  }
+  if(ACTIVE==='module_oipd'){
+    // Ticker comes from the iframe's in-board combobox, not a header box.
+    // Missing -> omit it; the server already allows a null ticker.
+    var ot = oipdTickerFromFrame();
+    if(ot) body = new URLSearchParams({ticker: ot});
+  }
+  fetchTab(url, body);
+});
+// Sector Rotation fetch buttons.
+document.getElementById('btn-rot-fetch-today').addEventListener('click', function(){
+  fetchTab('/run/rotation', new URLSearchParams());
+});
+document.getElementById('btn-rot-holdings').addEventListener('click', function(){
+  fetchTab('/run/holdings', null);
+});
+// SPX Gamma Fetch: force refresh the currently selected date (from the picker button).
+document.getElementById('btn-spx-fetch').addEventListener('click', function(){
+  var el = document.getElementById('selected-date-display');
+  var d = el ? el.dataset.date : '';
+  if(d) fetchTab('/run/spxgamma', new URLSearchParams({date: d}));
+});
+
+// SEC 13F: is a new Form 13F data set out? A short job that downloads nothing and
+// answers through its job message ("New set … — press Fetch" / "Up to date").
+document.getElementById('btn-sec13f-check').addEventListener('click', function(){
+  fetchTab('/run/module_sec_13f-check', null);
+});
+
+// SEC 13F: re-derive the totals from the ingested holdings (store only, zero network).
+document.getElementById('btn-sec13f-rebuild').addEventListener('click', function(){
+  fetchTab('/run/module_sec_13f-rebuild', null);
+});
+
+function showTrail(){
+  if(!CAL_START) return;
+  var s = CAL_START.start;
+  var e = (CAL_END || CAL_START).end;
+  var url = '/view/module_sector_rotation/trail?start=' + s + '&end=' + e;
+  var f = document.querySelector('.frame[data-tab="module_sector_rotation"]');
+  if(f){ f.setAttribute('src', url + '&t=' + Date.now()); }
+}
+document.getElementById('trail-toggle').addEventListener('change', function(e){
+  if(e.target.checked){ showTrail(); } else { showToday(); }
+});
+document.getElementById('btn-today').addEventListener('click', showToday);
+
+// default dates
+(function(){
+  var now = new Date();
+  // SPX Gamma default: previous Friday (7 days back, roll back to the last weekday).
+  var prev = new Date(now); prev.setDate(now.getDate() - 7);
+  while(prev.getDay() === 0 || prev.getDay() === 6){ prev.setDate(prev.getDate() - 1); }
+  setSpxDate(fmtLocal(prev));
+  buildEarningsCalendar();
+})();
+
+// B6/B7 — jobs that finished before this page loaded are "seen" (no alert storm on
+// the first Fetch after a reload); jobs still running, or started later from
+// inside a board iframe (which posts {type:'rc-job-submitted'}), are followed.
+(function(){
+  window._seenDone = window._seenDone || {};
+  fetch('/api/jobs').then(function(r){return r.json();}).then(function(d){
+    var any = false;
+    (d.jobs||[]).forEach(function(j){
+      if(j.status==='done'||j.status==='error'||j.status==='cancelled'){ window._seenDone[j.id] = true; }
+      else { any = true; }
+    });
+    // Only the tab a running job produces is covered (N2); poll keeps it current.
+    ACTIVE_JOBS = activeJobs(d.jobs);
+    syncOverlay();
+    if(any){ startPolling(); }
+  }).catch(function(){});
+  window.addEventListener('message', function(e){
+    if(e.origin !== location.origin) return;
+    if(e.data && e.data.type === 'rc-job-submitted'){ startPolling(); }
+  });
+})();
+function cancelJob(id){
+  fetch('/api/job/' + encodeURIComponent(id) + '/cancel', {method:'POST', headers:{'X-RC-Panel':'dashboard'}})
+    .then(function(r){ return r.json(); })
+    .then(function(d){ if(!d.ok){ alert('Cannot cancel: ' + (d.error||'unknown')); } renderStatus(); })
+    .catch(function(){});
+}
+
+var _h = location.hash.slice(1);
+showTab(document.querySelector('.nav-item[data-tab="' + _h + '"]') ? _h : 'module_earnings_radar');
+</script>
+</body>
+</html>

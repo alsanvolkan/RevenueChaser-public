@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ company }} — Fin Research</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #131722;
+    --panel2: #1a1f2e;
+    --border: #232a3b;
+    --text: #d7dce5;
+    --muted: #8a93a6;
+    --accent: #4f9dff;
+    --green: #2ecc71;
+    --red: #e74c3c;
+    --amber: #f1c40f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 20px 60px; }
+  header { margin-bottom: 24px; }
+  header h1 { margin: 0; font-size: 26px; letter-spacing: -0.5px; }
+  header .sub { color: var(--muted); margin-top: 4px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 8px; color: var(--muted); }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 28px; }
+  .kpi {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .kpi .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .kpi .value { font-size: 20px; font-weight: 600; margin-top: 4px; }
+  .kpi .hint { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .tone-green { color: var(--green); }
+  .tone-red { color: var(--red); }
+  .tone-amber { color: var(--amber); }
+  section { margin-bottom: 32px; }
+  section h2 {
+    font-size: 18px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+    margin: 0 0 16px;
+  }
+  section h3 { font-size: 14px; color: var(--muted); margin: 18px 0 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 11px; letter-spacing: 0.4px; }
+  td:first-child, th:first-child { text-align: left; }
+  tr:last-child td { border-bottom: none; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+  .kv { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--panel2); }
+  .kv:last-child { border-bottom: none; }
+  .kv .k { color: var(--muted); }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+  .b-healthy { background: rgba(46, 204, 113, 0.15); color: var(--green); }
+  .b-moderate { background: rgba(241, 196, 15, 0.15); color: var(--amber); }
+  .b-stressed { background: rgba(231, 76, 60, 0.15); color: var(--red); }
+  .b-unknown { background: rgba(138, 147, 166, 0.15); color: var(--muted); }
+  .warn { color: var(--amber); font-size: 12px; }
+  .heat { text-align: center; font-variant-numeric: tabular-nums; }
+  .heat-hi { color: var(--green); }
+  .heat-lo { color: var(--red); }
+  footer { color: var(--muted); font-size: 12px; margin-top: 40px; border-top: 1px solid var(--border); padding-top: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>{{ company }} <span style="color:var(--accent)">{{ ticker }}</span></h1>
+  <div class="sub">Fin Research — Quick Remarks + Financial Model</div>
+  <div class="meta">
+    <span>Sector: {{ sector or "N/A" }}</span>
+    <span>Price: {{ price|price }}</span>
+    <span>Market Cap: {{ market_cap|usd }}</span>
+    <span>EV: {{ enterprise_value|usd }}</span>
+    <span>Source: {{ source }}</span>
+    <span>Last sync: {{ data_date|friendly_day }}{% if data_date %} EOD{% endif %}</span>
+  </div>
+</header>
+
+{{ provider_banner }}
+{{ help_block }}
+{{ history_block }}
+
+{% if quick_remarks_section %}
+{{ quick_remarks_section }}
+{% endif %}
+
+{% if warnings %}
+<div class="panel" style="margin-bottom:20px;">
+  {% for w in warnings %}<div class="warn">⚠ {{ w }}</div>{% endfor %}
+</div>
+{% endif %}
+
+{% if dcf and not dcf.error %}
+<section>
+  <h2>DCF Valuation</h2>
+  <div class="grid2">
+    <div class="panel">
+      <h3>WACC Components</h3>
+      <div class="kv"><span class="k">Beta</span><span>{{ dcf.wacc.beta|num }}</span></div>
+      <div class="kv"><span class="k">Cost of Equity (Ke)</span><span>{{ dcf.wacc.cost_of_equity|pct }}</span></div>
+      <div class="kv"><span class="k">Cost of Debt (Kd, after tax)</span><span>{{ dcf.wacc.cost_of_debt_after_tax|pct }}</span></div>
+      <div class="kv"><span class="k">Equity Weight</span><span>{{ dcf.wacc.equity_weight|pct }}</span></div>
+      <div class="kv"><span class="k">Debt Weight</span><span>{{ dcf.wacc.debt_weight|pct }}</span></div>
+      <div class="kv"><span class="k">Tax Rate</span><span>{{ dcf.assumptions|tax_rate }}</span></div>
+      <div class="kv"><span class="k" style="font-weight:600">WACC</span><span style="font-weight:600">{{ dcf.wacc.wacc|pct }}</span></div>
+    </div>
+    <div class="panel">
+      <h3>Base Year ({{ dcf.base_year.fiscal_year }})</h3>
+      <div class="kv"><span class="k">Revenue</span><span>{{ dcf.base_year.revenue|usd }}</span></div>
+      <div class="kv"><span class="k">EBITDA Margin</span><span>{{ dcf.base_year.ebitda_margin|pct }}</span></div>
+      <div class="kv"><span class="k">D&amp;A / Revenue</span><span>{{ dcf.base_year.dep_pct_rev|pct }}</span></div>
+      <div class="kv"><span class="k">Capex / Revenue</span><span>{{ dcf.base_year.capex_pct_rev|pct }}</span></div>
+      <div class="kv"><span class="k">NWC / Revenue</span><span>{{ dcf.base_year.nwc_pct_rev|pct }}</span></div>
+    </div>
+  </div>
+
+  <h3>Projection</h3>
+  <div class="panel" style="overflow-x:auto;">
+    <table>
+      <thead><tr>
+        <th>Year</th><th>Revenue</th><th>EBITDA</th><th>EBIT</th><th>NOPAT</th>
+        <th>D&amp;A</th><th>Capex</th><th>ΔNWC</th><th>FCFF</th><th>PV</th>
+      </tr></thead>
+      <tbody>
+      {% for p in dcf.projection %}
+        <tr>
+          <td>{{ p.year }}</td>
+          <td>{{ p.revenue|usd }}</td>
+          <td>{{ p.ebitda|usd }}</td>
+          <td>{{ p.ebit|usd }}</td>
+          <td>{{ p.nopat|usd }}</td>
+          <td>{{ p.dna|usd }}</td>
+          <td>{{ p.capex|usd }}</td>
+          <td>{{ p.dnwc|usd }}</td>
+          <td>{{ p.fcff|usd }}</td>
+          <td>{{ p.pv_fcff|usd }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Terminal Value &amp; Result</h3>
+  <div class="grid2">
+    <div class="panel">
+      <div class="kv"><span class="k">Terminal (Gordon)</span><span>{{ dcf.terminal_value.gordon|usd }}{% if dcf.terminal_value.gordon_note %} <small title="{{ dcf.terminal_value.gordon_note }}">(g ≥ WACC)</small>{% endif %}</span></div>
+      <div class="kv"><span class="k">Terminal (Exit {{ dcf.assumptions.exit_multiple|num }}x)</span><span>{{ dcf.terminal_value.exit_multiple|usd }}</span></div>
+      <div class="kv"><span class="k">PV FCF</span><span>{{ dcf.valuation.pv_fcff|usd }}</span></div>
+      <div class="kv"><span class="k">EV (Gordon)</span><span>{{ dcf.valuation.ev_gordon|usd }}</span></div>
+      <div class="kv"><span class="k">EV (Exit)</span><span>{{ dcf.valuation.ev_exit|usd }}</span></div>
+      <div class="kv"><span class="k">Net Debt</span><span>{{ dcf.valuation.net_debt|usd }}</span></div>
+    </div>
+    <div class="panel">
+      <div class="kv"><span class="k">Equity (Gordon)</span><span>{{ dcf.valuation.equity_gordon|usd }}</span></div>
+      <div class="kv"><span class="k">Equity (Exit)</span><span>{{ dcf.valuation.equity_exit|usd }}</span></div>
+      <div class="kv"><span class="k">Shares Outstanding</span><span>{{ dcf.valuation.shares_outstanding|num }}</span></div>
+      <div class="kv"><span class="k" style="font-weight:600">Per Share (Gordon)</span><span style="font-weight:600">{{ dcf.valuation.per_share_gordon|price }}</span></div>
+      <div class="kv"><span class="k" style="font-weight:600">Per Share (Exit)</span><span style="font-weight:600">{{ dcf.valuation.per_share_exit|price }}</span></div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if three_statement and not three_statement.error %}
+<section>
+  <h2>Three Statement Model</h2>
+  <div class="panel" style="margin-bottom:12px;">
+    <span class="badge b-{{ 'healthy' if three_statement.balance_check.balanced else 'stressed' }}">
+      {{ 'Balanced' if three_statement.balance_check.balanced else 'UNBALANCED' }}
+    </span>
+    <span style="color:var(--muted); margin-left:8px;">Max deviation: {{ three_statement.balance_check.max_residual|num }}</span>
+    <span style="color:var(--muted); margin-left:8px;">Tax rate: {{ three_statement.assumptions|tax_rate }}</span>
+  </div>
+  <div class="panel" style="overflow-x:auto;">
+    <table>
+      <thead><tr>
+        <th>Year</th><th>Revenue</th><th>EBITDA</th><th>EBIT</th><th>Interest</th><th>Net Income</th>
+        <th>CFO</th><th>Capex</th><th>Cash</th><th>Debt</th><th>Equity</th><th>Assets</th>
+      </tr></thead>
+      <tbody>
+      {% for p in three_statement.projection %}
+        <tr>
+          <td>{{ p.year }}</td>
+          <td>{{ p.revenue|usd }}</td>
+          <td>{{ p.ebitda|usd }}</td>
+          <td>{{ p.ebit|usd }}</td>
+          <td>{{ p.interest|usd }}</td>
+          <td>{{ p.net_income|usd }}</td>
+          <td>{{ p.cfo|usd }}</td>
+          <td>{{ p.capex|usd }}</td>
+          <td>{{ p.cash|usd }}</td>
+          <td>{{ p.total_debt|usd }}</td>
+          <td>{{ p.equity|usd }}</td>
+          <td>{{ p.total_assets|usd }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if comps and not comps.error %}
+<section>
+  <h2>Comps Analysis</h2>
+  <div class="panel" style="overflow-x:auto;">
+    <table>
+      <thead><tr>
+        <th>Ticker</th><th>EV/EBITDA</th><th>EV/Revenue</th><th>P/E</th>
+      </tr></thead>
+      <tbody>
+      {% for p in comps.peers %}
+        <tr>
+          <td>{{ p.ticker }}</td>
+          <td>{{ p.ev_ebitda|num }}</td>
+          <td>{{ p.ev_revenue|num }}</td>
+          <td>{{ p.pe|num }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="grid2">
+    <div class="panel">
+      <h3>Percentiles</h3>
+      <div class="kv"><span class="k">EV/EBITDA (25/50/75)</span><span>{{ comps.multiples.ev_ebitda.p25|num }} / {{ comps.multiples.ev_ebitda.p50|num }} / {{ comps.multiples.ev_ebitda.p75|num }}</span></div>
+      <div class="kv"><span class="k">EV/Revenue (25/50/75)</span><span>{{ comps.multiples.ev_revenue.p25|num }} / {{ comps.multiples.ev_revenue.p50|num }} / {{ comps.multiples.ev_revenue.p75|num }}</span></div>
+      <div class="kv"><span class="k">P/E (25/50/75)</span><span>{{ comps.multiples.pe.p25|num }} / {{ comps.multiples.pe.p50|num }} / {{ comps.multiples.pe.p75|num }}</span></div>
+    </div>
+    <div class="panel">
+      <h3>Implied Value</h3>
+      <div class="kv"><span class="k">EV (EV/EBITDA)</span><span>{{ comps.implied.ev_ebitda|usd }}</span></div>
+      <div class="kv"><span class="k">EV (EV/Revenue)</span><span>{{ comps.implied.ev_revenue|usd }}</span></div>
+      <div class="kv"><span class="k">Equity (P/E)</span><span>{{ comps.implied.equity_pe|usd }}</span></div>
+      <div class="kv"><span class="k">Per Share (EV/EBITDA)</span><span>{{ comps.implied.per_share_ev_ebitda|price }}</span></div>
+      <div class="kv"><span class="k">Per Share (EV/Revenue)</span><span>{{ comps.implied.per_share_ev_revenue|price }}</span></div>
+      <div class="kv"><span class="k">Per Share (P/E)</span><span>{{ comps.implied.per_share_pe|price }}</span></div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if credit and not credit.error %}
+<section>
+  <h2>Credit Capacity</h2>
+  <div class="grid2">
+    <div class="panel">
+      <div class="kv"><span class="k">EBITDA</span><span>{{ credit.metrics.ebitda|usd }}</span></div>
+      <div class="kv"><span class="k">Total Debt</span><span>{{ credit.metrics.total_debt|usd }}</span></div>
+      <div class="kv"><span class="k">Cash</span><span>{{ credit.metrics.cash|usd }}</span></div>
+      <div class="kv"><span class="k">Net Debt</span><span>{{ credit.metrics.net_debt|usd }}</span></div>
+    </div>
+    <div class="panel">
+      <div class="kv"><span class="k">Gross Debt/EBITDA</span>
+        <span>{% if credit.metrics.gross_debt_to_ebitda_state == 'n/m' %}n/m (negative EBITDA){% else %}{{ credit.metrics.gross_debt_to_ebitda|num }}x{% endif %} <span class="badge b-{{ credit.grades.gross_leverage }}">{{ credit.grades.gross_leverage }}</span></span></div>
+      <div class="kv"><span class="k">Net Debt/EBITDA</span>
+        <span>{% if credit.metrics.net_debt_to_ebitda_state == 'n/m' %}n/m (negative EBITDA){% else %}{{ credit.metrics.net_debt_to_ebitda|num }}x{% endif %} <span class="badge b-{{ credit.grades.net_leverage }}">{{ credit.grades.net_leverage }}</span></span></div>
+      <div class="kv"><span class="k">Interest Coverage ({{ credit.metrics.interest_coverage_base }})</span>
+        <span>{% if credit.metrics.interest_coverage_state == 'n/m' %}n/m (negative EBITDA){% else %}{{ credit.metrics.interest_coverage|num }}x{% endif %} <span class="badge b-{{ credit.grades.interest_coverage }}">{{ credit.grades.interest_coverage }}</span></span></div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if sensitivity and not sensitivity.error %}
+<section>
+  <h2>Sensitivity — WACC × Growth (Per Share)</h2>
+  <div class="panel" style="overflow-x:auto;">
+    <table>
+      <thead><tr>
+        <th>g \ WACC</th>
+        {% for w in sensitivity.wacc_axis %}<th>{{ (w * 100)|round(1) }}%</th>{% endfor %}
+      </tr></thead>
+      <tbody>
+      {% for row in sensitivity.matrix %}
+        <tr>
+          <td>{{ (row.terminal_growth * 100)|round(1) }}%</td>
+          {% for v in row["values"] %}
+          <td class="heat {{ 'heat-hi' if (v is not none and sensitivity.base_per_share is not none and v >= sensitivity.base_per_share) else 'heat-lo' }}">{{ v|price }}</td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<footer>
+  Source: {{ source }}. This report is for informational
+  purposes only and does not constitute financial advice. Model assumptions (growth, margin,
+  WACC) are estimates with no guarantee of accuracy. Valuation results are not investment
+  recommendations.
+</footer>
+
+</div>
+</body>
+</html>

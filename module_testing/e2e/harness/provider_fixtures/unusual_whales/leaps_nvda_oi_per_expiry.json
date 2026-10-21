@@ -1,0 +1,9 @@
+{
+  "path": "/api/stock/NVDA/oi-per-expiry",
+  "payload": {
+    "data": [
+      {"expiry": "2030-01-18", "call_oi": 52000, "put_oi": 8000},
+      {"expiry": "2030-06-21", "call_oi": 31000, "put_oi": 6000}
+    ]
+  }
+}

@@ -1,0 +1,3610 @@
+{
+ "fundamentals": {
+  "fetch": {
+   "candidates": [
+    {
+     "anchor_period_end": null,
+     "bucket": "rule_of_40+momentum",
+     "distorted": true,
+     "earnings_date": null,
+     "fcf_margin": 0.097656,
+     "gates": {
+      "momentum": {
+       "known": 3,
+       "name": "Momentum",
+       "passed": true,
+       "rules": [
+        {
+         "actual": 0.990099,
+         "id": "near_52w_high",
+         "label": "Within 25% of 52-week high",
+         "passed": true,
+         "threshold": "≥ 75% of high",
+         "unit": "pct_high"
+        },
+        {
+         "actual": 0.23584,
+         "id": "rs_6m",
+         "label": "6-month RS vs SPY positive",
+         "passed": true,
+         "threshold": "> 0 pp",
+         "unit": "pp"
+        },
+        {
+         "actual": true,
+         "id": "above_200d",
+         "label": "Price above 200-day MA",
+         "passed": true,
+         "threshold": "> 200d MA",
+         "unit": "bool"
+        }
+       ],
+       "score": "3/3",
+       "total": 3
+      },
+      "quality": {
+       "known": 3,
+       "name": "Quality",
+       "passed": false,
+       "rules": [
+        {
+         "actual": 0.6,
+         "id": "growth_or_roic",
+         "label": "Growth ≥20% or ROIC ≥15%",
+         "passed": true,
+         "threshold": "≥20% / ≥15%",
+         "unit": "pct"
+        },
+        {
+         "actual": 0.257812,
+         "id": "gross_margin",
+         "label": "Gross margin ≥30%",
+         "passed": false,
+         "threshold": "≥ 30%",
+         "unit": "pct"
+        },
+        {
+         "actual": -0.740741,
+         "id": "net_debt_ebitda",
+         "label": "Net Debt / EBITDA < 3×",
+         "passed": true,
+         "threshold": "< 3.0×",
+         "unit": "ratio"
+        }
+       ],
+       "score": "2/3",
+       "total": 3
+      },
+      "rule_of_40": {
+       "known": 1,
+       "name": "Rule of 40",
+       "passed": true,
+       "rules": [
+        {
+         "actual": 69.765625,
+         "id": "ro40",
+         "label": "Revenue growth + FCF margin (FY)",
+         "passed": true,
+         "threshold": "≥ 40",
+         "unit": "pts"
+        }
+       ],
+       "score": "69.8",
+       "total": 1
+      }
+     },
+     "index": [],
+     "industry": "Unclassified",
+     "info_stale": false,
+     "market_cap": 600000000.0,
+     "momentum_score": "3/3",
+     "name": "UP3 Holdings",
+     "passed_count": 2,
+     "pb": 6000000.0,
+     "pe": 41666666.666667,
+     "period": "FY2024 vs FY2023",
+     "price": 117.000316,
+     "quality_score": "2/3",
+     "rev_growth_ttm": 0.6,
+     "ro40": 69.765625,
+     "ro40_basis": "FY",
+     "roic": 0.237,
+     "rules_passed": [
+      "rule_of_40",
+      "momentum"
+     ],
+     "sector": "Technology",
+     "themes": [
+      "Software",
+      "Cloud Computing",
+      "Infra / Reshoring"
+     ],
+     "ticker": "UP3"
+    },
+    {
+     "anchor_period_end": null,
+     "bucket": "rule_of_40+momentum",
+     "distorted": true,
+     "earnings_date": 1790000000.0,
+     "fcf_margin": 0.095125,
+     "gates": {
+      "momentum": {
+       "known": 3,
+       "name": "Momentum",
+       "passed": true,
+       "rules": [
+        {
+         "actual": 0.990099,
+         "id": "near_52w_high",
+         "label": "Within 25% of 52-week high",
+         "passed": true,
+         "threshold": "≥ 75% of high",
+         "unit": "pct_high"
+        },
+        {
+         "actual": 0.188059,
+         "id": "rs_6m",
+         "label": "6-month RS vs SPY positive",
+         "passed": true,
+         "threshold": "> 0 pp",
+         "unit": "pp"
+        },
+        {
+         "actual": true,
+         "id": "above_200d",
+         "label": "Price above 200-day MA",
+         "passed": true,
+         "threshold": "> 200d MA",
+         "unit": "bool"
+        }
+       ],
+       "score": "3/3",
+       "total": 3
+      },
+      "quality": {
+       "known": 3,
+       "name": "Quality",
+       "passed": false,
+       "rules": [
+        {
+         "actual": 0.45,
+         "id": "growth_or_roic",
+         "label": "Growth ≥20% or ROIC ≥15%",
+         "passed": true,
+         "threshold": "≥20% / ≥15%",
+         "unit": "pct"
+        },
+        {
+         "actual": 0.261593,
+         "id": "gross_margin",
+         "label": "Gross margin ≥30%",
+         "passed": false,
+         "threshold": "≥ 30%",
+         "unit": "pct"
+        },
+        {
+         "actual": -0.869565,
+         "id": "net_debt_ebitda",
+         "label": "Net Debt / EBITDA < 3×",
+         "passed": true,
+         "threshold": "< 3.0×",
+         "unit": "ratio"
+        }
+       ],
+       "score": "2/3",
+       "total": 3
+      },
+      "rule_of_40": {
+       "known": 1,
+       "name": "Rule of 40",
+       "passed": true,
+       "rules": [
+        {
+         "actual": 54.512485,
+         "id": "ro40",
+         "label": "Revenue growth + FCF margin (FY)",
+         "passed": true,
+         "threshold": "≥ 40",
+         "unit": "pts"
+        }
+       ],
+       "score": "54.5",
+       "total": 1
+      }
+     },
+     "index": [],
+     "industry": "Unclassified",
+     "info_stale": false,
+     "market_cap": 1000000000.0,
+     "momentum_score": "3/3",
+     "name": "UP1 Holdings",
+     "passed_count": 2,
+     "pb": 10000000.0,
+     "pe": 83333333.333333,
+     "period": "FY2024 vs FY2023",
+     "price": 99.173021,
+     "quality_score": "2/3",
+     "rev_growth_ttm": 0.45,
+     "ro40": 54.512485,
+     "ro40_basis": "FY",
+     "roic": 0.1975,
+     "rules_passed": [
+      "rule_of_40",
+      "momentum"
+     ],
+     "sector": "Technology",
+     "themes": [
+      "Software",
+      "Cloud Computing",
+      "Infra / Reshoring"
+     ],
+     "ticker": "UP1"
+    },
+    {
+     "anchor_period_end": null,
+     "bucket": "rule_of_40+quality",
+     "distorted": true,
+     "earnings_date": null,
+     "fcf_margin": 0.118343,
+     "gates": {
+      "momentum": {
+       "known": 3,
+       "name": "Momentum",
+       "passed": false,
+       "rules": [
+        {
+         "actual": 0.988155,
+         "id": "near_52w_high",
+         "label": "Within 25% of 52-week high",
+         "passed": true,
+         "threshold": "≥ 75% of high",
+         "unit": "pct_high"
+        },
+        {
+         "actual": -0.042715,
+         "id": "rs_6m",
+         "label": "6-month RS vs SPY positive",
+         "passed": false,
+         "threshold": "> 0 pp",
+         "unit": "pp"
+        },
+        {
+         "actual": true,
+         "id": "above_200d",
+         "label": "Price above 200-day MA",
+         "passed": true,
+         "threshold": "> 200d MA",
+         "unit": "bool"
+        }
+       ],
+       "score": "2/3",
+       "total": 3
+      },
+      "quality": {
+       "known": 3,
+       "name": "Quality",
+       "passed": true,
+       "rules": [
+        {
+         "actual": 0.3,
+         "id": "growth_or_roic",
+         "label": "Growth ≥20% or ROIC ≥15%",
+         "passed": true,
+         "threshold": "≥20% / ≥15%",
+         "unit": "pct"
+        },
+        {
+         "actual": 0.325444,
+         "id": "gross_margin",
+         "label": "Gross margin ≥30%",
+         "passed": true,
+         "threshold": "≥ 30%",
+         "unit": "pct"
+        },
+        {
+         "actual": -0.869565,
+         "id": "net_debt_ebitda",
+         "label": "Net Debt / EBITDA < 3×",
+         "passed": true,
+         "threshold": "< 3.0×",
+         "unit": "ratio"
+        }
+       ],
+       "score": "3/3",
+       "total": 3
+      },
+      "rule_of_40": {
+       "known": 1,
+       "name": "Rule of 40",
+       "passed": true,
+       "rules": [
+        {
+         "actual": 41.83432,
+         "id": "ro40",
+         "label": "Revenue growth + FCF margin (FY)",
+         "passed": true,
+         "threshold": "≥ 40",
+         "unit": "pts"
+        }
+       ],
+       "score": "41.8",
+       "total": 1
+      }
+     },
+     "index": [],
+     "industry": "Unclassified",
+     "info_stale": false,
+     "market_cap": 550000000.0,
+     "momentum_score": "2/3",
+     "name": "BELOW50 Inc",
+     "passed_count": 2,
+     "pb": 5500000.0,
+     "pe": 45833333.333333,
+     "period": "FY2024 vs FY2023",
+     "price": 51.633569,
+     "quality_score": "3/3",
+     "rev_growth_ttm": 0.3,
+     "ro40": 41.83432,
+     "ro40_basis": "FY",
+     "roic": 0.1975,
+     "rules_passed": [
+      "rule_of_40",
+      "quality"
+     ],
+     "sector": "Utilities",
+     "themes": [
+      "Other"
+     ],
+     "ticker": "BELOW50"
+    },
+    {
+     "anchor_period_end": null,
+     "bucket": "rule_of_40+quality",
+     "distorted": true,
+     "earnings_date": null,
+     "fcf_margin": 0.118343,
+     "gates": {
+      "momentum": {
+       "known": 3,
+       "name": "Momentum",
+       "passed": false,
+       "rules": [
+        {
+         "actual": 0.988155,
+         "id": "near_52w_high",
+         "label": "Within 25% of 52-week high",
+         "passed": true,
+         "threshold": "≥ 75% of high",
+         "unit": "pct_high"
+        },
+        {
+         "actual": -0.042715,
+         "id": "rs_6m",
+         "label": "6-month RS vs SPY positive",
+         "passed": false,
+         "threshold": "> 0 pp",
+         "unit": "pp"
+        },
+        {
+         "actual": true,
+         "id": "above_200d",
+         "label": "Price above 200-day MA",
+         "passed": true,
+         "threshold": "> 200d MA",
+         "unit": "bool"
+        }
+       ],
+       "score": "2/3",
+       "total": 3
+      },
+      "quality": {
+       "known": 3,
+       "name": "Quality",
+       "passed": true,
+       "rules": [
+        {
+         "actual": 0.3,
+         "id": "growth_or_roic",
+         "label": "Growth ≥20% or ROIC ≥15%",
+         "passed": true,
+         "threshold": "≥20% / ≥15%",
+         "unit": "pct"
+        },
+        {
+         "actual": 0.325444,
+         "id": "gross_margin",
+         "label": "Gross margin ≥30%",
+         "passed": true,
+         "threshold": "≥ 30%",
+         "unit": "pct"
+        },
+        {
+         "actual": -0.869565,
+         "id": "net_debt_ebitda",
+         "label": "Net Debt / EBITDA < 3×",
+         "passed": true,
+         "threshold": "< 3.0×",
+         "unit": "ratio"
+        }
+       ],
+       "score": "3/3",
+       "total": 3
+      },
+      "rule_of_40": {
+       "known": 1,
+       "name": "Rule of 40",
+       "passed": true,
+       "rules": [
+        {
+         "actual": 41.83432,
+         "id": "ro40",
+         "label": "Revenue growth + FCF margin (FY)",
+         "passed": true,
+         "threshold": "≥ 40",
+         "unit": "pts"
+        }
+       ],
+       "score": "41.8",
+       "total": 1
+      }
+     },
+     "index": [],
+     "industry": "Unclassified",
+     "info_stale": false,
+     "market_cap": 500000000.0,
+     "momentum_score": "2/3",
+     "name": "FAR Inc",
+     "passed_count": 2,
+     "pb": 5000000.0,
+     "pe": 41666666.666667,
+     "period": "FY2024 vs FY2023",
+     "price": 51.633569,
+     "quality_score": "3/3",
+     "rev_growth_ttm": 0.3,
+     "ro40": 41.83432,
+     "ro40_basis": "FY",
+     "roic": 0.1975,
+     "rules_passed": [
+      "rule_of_40",
+      "quality"
+     ],
+     "sector": "Utilities",
+     "themes": [
+      "Other"
+     ],
+     "ticker": "FAR"
+    },
+    {
+     "anchor_period_end": null,
+     "bucket": "quality+momentum",
+     "distorted": true,
+     "earnings_date": null,
+     "fcf_margin": 0.104167,
+     "gates": {
+      "momentum": {
+       "known": 3,
+       "name": "Momentum",
+       "passed": true,
+       "rules": [
+        {
+         "actual": 0.990099,
+         "id": "near_52w_high",
+         "label": "Within 25% of 52-week high",
+         "passed": true,
+         "threshold": "≥ 75% of high",
+         "unit": "pct_high"
+        },
+        {
+         "actual": 0.098955,
+         "id": "rs_6m",
+         "label": "6-month RS vs SPY positive",
+         "passed": true,
+         "threshold": "> 0 pp",
+         "unit": "pp"
+        },
+        {
+         "actual": true,
+         "id": "above_200d",
+         "label": "Price above 200-day MA",
+         "passed": true,
+         "threshold": "> 200d MA",
+         "unit": "bool"
+        }
+       ],
+       "score": "3/3",
+       "total": 3
+      },
+      "quality": {
+       "known": 3,
+       "name": "Quality",
+       "passed": true,
+       "rules": [
+        {
+         "actual": 0.2,
+         "id": "growth_or_roic",
+         "label": "Growth ≥20% or ROIC ≥15%",
+         "passed": true,
+         "threshold": "≥20% / ≥15%",
+         "unit": "pct"
+        },
+        {
+         "actual": 0.305556,
+         "id": "gross_margin",
+         "label": "Gross margin ≥30%",
+         "passed": true,
+         "threshold": "≥ 30%",
+         "unit": "pct"
+        },
+        {
+         "actual": -1.052632,
+         "id": "net_debt_ebitda",
+         "label": "Net Debt / EBITDA < 3×",
+         "passed": true,
+         "threshold": "< 3.0×",
+         "unit": "ratio"
+        }
+       ],
+       "score": "3/3",
+       "total": 3
+      },
+      "rule_of_40": {
+       "known": 1,
+       "name": "Rule of 40",
+       "passed": false,
+       "rules": [
+        {
+         "actual": 30.416667,
+         "id": "ro40",
+         "label": "Revenue growth + FCF margin (FY)",
+         "passed": false,
+         "threshold": "≥ 40",
+         "unit": "pts"
+        }
+       ],
+       "score": "30.4",
+       "total": 1
+      }
+     },
+     "index": [],
+     "industry": "Unclassified",
+     "info_stale": false,
+     "market_cap": 2500000000.0,
+     "momentum_score": "3/3",
+     "name": "UP2 Inc",
+     "passed_count": 2,
+     "pb": 25000000.0,
+     "pe": 260416666.666667,
+     "period": "FY2024 vs FY2023",
+     "price": 75.403295,
+     "quality_score": "3/3",
+     "rev_growth_ttm": 0.2,
+     "ro40": 30.416667,
+     "ro40_basis": "FY",
+     "roic": 0.158,
+     "rules_passed": [
+      "quality",
+      "momentum"
+     ],
+     "sector": "Healthcare",
+     "themes": [
+      "Biotechnology"
+     ],
+     "ticker": "UP2"
+    }
+   ],
+   "data_as_of": "2026-10-14",
+   "data_quality": {
+    "dropped": {
+     "no_bars": 1,
+     "no_edgar_annual": 1,
+     "short_bars": 1
+    },
+    "no_avg_volume": 0,
+    "older_quotes": 0,
+    "quote_session": "2026-10-14",
+    "short_refetch_refused": 0,
+    "spy_stale": false,
+    "stale_info": 0,
+    "stale_ohlc": 0
+   },
+   "distorted_count": 5,
+   "funnel_steps": [
+    {
+     "count": 13,
+     "fix": null,
+     "key": "universe",
+     "kind": "start",
+     "label": "Universe, all stored names"
+    },
+    {
+     "by_design": true,
+     "count": 1,
+     "fix": null,
+     "key": "excluded_types",
+     "kind": "drop",
+     "label": "Excluded security types (ETF, CEF, SPAC, preferred, unit, warrant)"
+    },
+    {
+     "by_design": true,
+     "count": 1,
+     "fix": null,
+     "key": "low_price",
+     "kind": "drop",
+     "label": "Price under $5.00",
+     "tickers": [
+      "LOWPX"
+     ]
+    },
+    {
+     "by_design": true,
+     "count": 1,
+     "fix": null,
+     "key": "low_dollar_volume",
+     "kind": "drop",
+     "label": "Average daily dollar volume under $250,000",
+     "tickers": [
+      "LOWVOL"
+     ]
+    },
+    {
+     "by_design": false,
+     "count": 1,
+     "fix": null,
+     "key": "no_bars",
+     "kind": "drop",
+     "label": "No stored daily price bars (D01)",
+     "tickers": [
+      "NOBARS1"
+     ]
+    },
+    {
+     "by_design": true,
+     "count": 1,
+     "fix": null,
+     "key": "short_bars",
+     "kind": "drop",
+     "label": "Fewer than 252 stored daily bars",
+     "tickers": [
+      "SHORT1"
+     ]
+    },
+    {
+     "by_design": false,
+     "count": 1,
+     "fix": null,
+     "key": "no_edgar_annual",
+     "kind": "drop",
+     "label": "No EDGAR annual data",
+     "tickers": [
+      "NOEDGAR"
+     ]
+    },
+    {
+     "by_design": true,
+     "count": 2,
+     "fix": null,
+     "key": "passed_no_screen",
+     "kind": "drop",
+     "label": "Scored, passed none of the board's three screens"
+    },
+    {
+     "count": 5,
+     "fix": null,
+     "key": "candidates",
+     "kind": "result",
+     "label": "Candidates (a card on the board)"
+    }
+   ],
+   "generated_at": "<ts>",
+   "is_fixture": false,
+   "no_data": false,
+   "passing": {
+    "momentum": 3,
+    "quality": 3,
+    "rule_of_40": 4
+   },
+   "regime": "RISK-ON",
+   "selection_version": "6",
+   "summary": {
+    "data_short": 2,
+    "distorted_count": 5,
+    "excluded_types": 1,
+    "filtered_universe": 10,
+    "health_drops": {
+     "edgar_fetch_failed": 0,
+     "ro40_barrier": 0,
+     "sector_excluded": 0,
+     "stale_annual": 0
+    },
+    "hygiene": 2,
+    "no_edgar": 1,
+    "no_spine_gics": 0,
+    "out_of_universe": null,
+    "passing": {
+     "momentum": 3,
+     "quality": 3,
+     "rule_of_40": 4
+    },
+    "regime": "RISK-ON",
+    "spy_3m_return": 0.0474,
+    "spy_price": 57.58,
+    "spy_sma200": 51.93,
+    "spy_stale": false,
+    "stale_ohlc": 0,
+    "top_n": 5
+   },
+   "universe_generated_at": "<ts>",
+   "universe_refreshed_by": "Swing Potential",
+   "universe_total": 13
+  },
+  "tables": {
+   "fundamentals_gates": [
+    {
+     "actual": -0.042715,
+     "gate": "momentum",
+     "passed": 0,
+     "rule_id": "rs_6m",
+     "ticker": "BELOW50",
+     "unit": "pp"
+    },
+    {
+     "actual": -0.042715,
+     "gate": "momentum",
+     "passed": 0,
+     "rule_id": "rs_6m",
+     "ticker": "FAR",
+     "unit": "pp"
+    },
+    {
+     "actual": -0.150313,
+     "gate": "momentum",
+     "passed": 0,
+     "rule_id": "rs_6m",
+     "ticker": "FLAT1",
+     "unit": "pp"
+    },
+    {
+     "actual": -0.740741,
+     "gate": "quality",
+     "passed": 1,
+     "rule_id": "net_debt_ebitda",
+     "ticker": "UP3",
+     "unit": "ratio"
+    },
+    {
+     "actual": -0.869565,
+     "gate": "quality",
+     "passed": 1,
+     "rule_id": "net_debt_ebitda",
+     "ticker": "BELOW50",
+     "unit": "ratio"
+    },
+    {
+     "actual": -0.869565,
+     "gate": "quality",
+     "passed": 1,
+     "rule_id": "net_debt_ebitda",
+     "ticker": "FAR",
+     "unit": "ratio"
+    },
+    {
+     "actual": -0.869565,
+     "gate": "quality",
+     "passed": 1,
+     "rule_id": "net_debt_ebitda",
+     "ticker": "UP1",
+     "unit": "ratio"
+    },
+    {
+     "actual": -1.052632,
+     "gate": "quality",
+     "passed": 1,
+     "rule_id": "net_debt_ebitda",
+     "ticker": "UP2",
+     "unit": "ratio"
+    },
+    {
+     "actual": -1.070179,
+     "gate": "momentum",
+     "passed": 0,
+     "rule_id": "rs_6m",
+     "ticker": "DOWN1",
+     "unit": "pp"
+    },
+    {
+     "actual": -1.538462,
+     "gate": "quality",
+     "passed": 1,
+     "rule_id": "net_debt_ebitda",
+     "ticker": "FLAT1",
+     "unit": "ratio"
+    },
+    {
+     "actual": -2.222222,
+     "gate": "quality",
+     "passed": 1,
+     "rule_id": "net_debt_ebitda",
+     "ticker": "DOWN1",
+     "unit": "ratio"
+    },
+    {
+     "actual": -2.229917,
+     "gate": "rule_of_40",
+     "passed": 0,
+     "rule_id": "ro40",
+     "ticker": "DOWN1",
+     "unit": "pts"
+    },
+    {
+     "actual": 0.0,
+     "gate": "momentum",
+     "passed": 0,
+     "rule_id": "above_200d",
+     "ticker": "DOWN1",
+     "unit": "bool"
+    },
+    {
+     "actual": 0.0,
+     "gate": "momentum",
+     "passed": 0,
+     "rule_id": "above_200d",
+     "ticker": "FLAT1",
+     "unit": "bool"
+    },
+    {
+     "actual": 0.030186,
+     "gate": "momentum",
+     "passed": 0,
+     "rule_id": "near_52w_high",
+     "ticker": "DOWN1",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.05925,
+     "gate": "quality",
+     "passed": 0,
+     "rule_id": "growth_or_roic",
+     "ticker": "DOWN1",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.09875,
+     "gate": "quality",
+     "passed": 0,
+     "rule_id": "growth_or_roic",
+     "ticker": "FLAT1",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.098955,
+     "gate": "momentum",
+     "passed": 1,
+     "rule_id": "rs_6m",
+     "ticker": "UP2",
+     "unit": "pp"
+    },
+    {
+     "actual": 0.182825,
+     "gate": "quality",
+     "passed": 0,
+     "rule_id": "gross_margin",
+     "ticker": "DOWN1",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.188059,
+     "gate": "momentum",
+     "passed": 1,
+     "rule_id": "rs_6m",
+     "ticker": "UP1",
+     "unit": "pp"
+    },
+    {
+     "actual": 0.2,
+     "gate": "quality",
+     "passed": 1,
+     "rule_id": "growth_or_roic",
+     "ticker": "UP2",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.23584,
+     "gate": "momentum",
+     "passed": 1,
+     "rule_id": "rs_6m",
+     "ticker": "UP3",
+     "unit": "pp"
+    },
+    {
+     "actual": 0.257812,
+     "gate": "quality",
+     "passed": 0,
+     "rule_id": "gross_margin",
+     "ticker": "UP3",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.261593,
+     "gate": "quality",
+     "passed": 0,
+     "rule_id": "gross_margin",
+     "ticker": "UP1",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.264321,
+     "gate": "quality",
+     "passed": 0,
+     "rule_id": "gross_margin",
+     "ticker": "FLAT1",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.3,
+     "gate": "quality",
+     "passed": 1,
+     "rule_id": "growth_or_roic",
+     "ticker": "BELOW50",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.3,
+     "gate": "quality",
+     "passed": 1,
+     "rule_id": "growth_or_roic",
+     "ticker": "FAR",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.305556,
+     "gate": "quality",
+     "passed": 1,
+     "rule_id": "gross_margin",
+     "ticker": "UP2",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.325444,
+     "gate": "quality",
+     "passed": 1,
+     "rule_id": "gross_margin",
+     "ticker": "BELOW50",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.325444,
+     "gate": "quality",
+     "passed": 1,
+     "rule_id": "gross_margin",
+     "ticker": "FAR",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.45,
+     "gate": "quality",
+     "passed": 1,
+     "rule_id": "growth_or_roic",
+     "ticker": "UP1",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.6,
+     "gate": "quality",
+     "passed": 1,
+     "rule_id": "growth_or_roic",
+     "ticker": "UP3",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.96934,
+     "gate": "momentum",
+     "passed": 1,
+     "rule_id": "near_52w_high",
+     "ticker": "FLAT1",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.988155,
+     "gate": "momentum",
+     "passed": 1,
+     "rule_id": "near_52w_high",
+     "ticker": "BELOW50",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.988155,
+     "gate": "momentum",
+     "passed": 1,
+     "rule_id": "near_52w_high",
+     "ticker": "FAR",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.990099,
+     "gate": "momentum",
+     "passed": 1,
+     "rule_id": "near_52w_high",
+     "ticker": "UP1",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.990099,
+     "gate": "momentum",
+     "passed": 1,
+     "rule_id": "near_52w_high",
+     "ticker": "UP2",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.990099,
+     "gate": "momentum",
+     "passed": 1,
+     "rule_id": "near_52w_high",
+     "ticker": "UP3",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 1.0,
+     "gate": "momentum",
+     "passed": 1,
+     "rule_id": "above_200d",
+     "ticker": "BELOW50",
+     "unit": "bool"
+    },
+    {
+     "actual": 1.0,
+     "gate": "momentum",
+     "passed": 1,
+     "rule_id": "above_200d",
+     "ticker": "FAR",
+     "unit": "bool"
+    },
+    {
+     "actual": 1.0,
+     "gate": "momentum",
+     "passed": 1,
+     "rule_id": "above_200d",
+     "ticker": "UP1",
+     "unit": "bool"
+    },
+    {
+     "actual": 1.0,
+     "gate": "momentum",
+     "passed": 1,
+     "rule_id": "above_200d",
+     "ticker": "UP2",
+     "unit": "bool"
+    },
+    {
+     "actual": 1.0,
+     "gate": "momentum",
+     "passed": 1,
+     "rule_id": "above_200d",
+     "ticker": "UP3",
+     "unit": "bool"
+    },
+    {
+     "actual": 30.416667,
+     "gate": "rule_of_40",
+     "passed": 0,
+     "rule_id": "ro40",
+     "ticker": "UP2",
+     "unit": "pts"
+    },
+    {
+     "actual": 41.83432,
+     "gate": "rule_of_40",
+     "passed": 1,
+     "rule_id": "ro40",
+     "ticker": "BELOW50",
+     "unit": "pts"
+    },
+    {
+     "actual": 41.83432,
+     "gate": "rule_of_40",
+     "passed": 1,
+     "rule_id": "ro40",
+     "ticker": "FAR",
+     "unit": "pts"
+    },
+    {
+     "actual": 54.512485,
+     "gate": "rule_of_40",
+     "passed": 1,
+     "rule_id": "ro40",
+     "ticker": "UP1",
+     "unit": "pts"
+    },
+    {
+     "actual": 69.765625,
+     "gate": "rule_of_40",
+     "passed": 1,
+     "rule_id": "ro40",
+     "ticker": "UP3",
+     "unit": "pts"
+    },
+    {
+     "actual": 9.208766,
+     "gate": "rule_of_40",
+     "passed": 0,
+     "rule_id": "ro40",
+     "ticker": "FLAT1",
+     "unit": "pts"
+    }
+   ],
+   "fundamentals_scores": [
+    {
+     "above_200d": 0,
+     "anchor_period_end": null,
+     "dist_52w_pct": 0.030186,
+     "distorted": 1,
+     "fcf_margin": 0.027701,
+     "gross_margin": 0.182825,
+     "market_cap": 900000000.0,
+     "momentum_pass": 0,
+     "multiplier": 0,
+     "net_debt_ebitda": -2.222222,
+     "pb": 9000000.0,
+     "pe": 250000000.0,
+     "period": "FY2024 vs FY2023",
+     "price": 1.0,
+     "quality_pass": 1,
+     "rev_growth_ttm": -0.05,
+     "ro40": -2.229917,
+     "ro40_basis": "FY",
+     "roic": 0.05925,
+     "rs_6m": -1.070179,
+     "ticker": "DOWN1",
+     "ttm_revenue": 90.25
+    },
+    {
+     "above_200d": 0,
+     "anchor_period_end": null,
+     "dist_52w_pct": 0.96934,
+     "distorted": 1,
+     "fcf_margin": 0.072088,
+     "gross_margin": 0.264321,
+     "market_cap": 1500000000.0,
+     "momentum_pass": 1,
+     "multiplier": 0,
+     "net_debt_ebitda": -1.538462,
+     "pb": 15000000.0,
+     "pe": 250000000.0,
+     "period": "FY2024 vs FY2023",
+     "price": 39.748706,
+     "quality_pass": 1,
+     "rev_growth_ttm": 0.02,
+     "ro40": 9.208766,
+     "ro40_basis": "FY",
+     "roic": 0.09875,
+     "rs_6m": -0.150313,
+     "ticker": "FLAT1",
+     "ttm_revenue": 104.04
+    },
+    {
+     "above_200d": 1,
+     "anchor_period_end": null,
+     "dist_52w_pct": 0.988155,
+     "distorted": 1,
+     "fcf_margin": 0.118343,
+     "gross_margin": 0.325444,
+     "market_cap": 500000000.0,
+     "momentum_pass": 2,
+     "multiplier": 2,
+     "net_debt_ebitda": -0.869565,
+     "pb": 5000000.0,
+     "pe": 41666666.666667,
+     "period": "FY2024 vs FY2023",
+     "price": 51.633569,
+     "quality_pass": 3,
+     "rev_growth_ttm": 0.3,
+     "ro40": 41.83432,
+     "ro40_basis": "FY",
+     "roic": 0.1975,
+     "rs_6m": -0.042715,
+     "ticker": "FAR",
+     "ttm_revenue": 169.0
+    },
+    {
+     "above_200d": 1,
+     "anchor_period_end": null,
+     "dist_52w_pct": 0.988155,
+     "distorted": 1,
+     "fcf_margin": 0.118343,
+     "gross_margin": 0.325444,
+     "market_cap": 550000000.0,
+     "momentum_pass": 2,
+     "multiplier": 2,
+     "net_debt_ebitda": -0.869565,
+     "pb": 5500000.0,
+     "pe": 45833333.333333,
+     "period": "FY2024 vs FY2023",
+     "price": 51.633569,
+     "quality_pass": 3,
+     "rev_growth_ttm": 0.3,
+     "ro40": 41.83432,
+     "ro40_basis": "FY",
+     "roic": 0.1975,
+     "rs_6m": -0.042715,
+     "ticker": "BELOW50",
+     "ttm_revenue": 169.0
+    },
+    {
+     "above_200d": 1,
+     "anchor_period_end": null,
+     "dist_52w_pct": 0.990099,
+     "distorted": 1,
+     "fcf_margin": 0.095125,
+     "gross_margin": 0.261593,
+     "market_cap": 1000000000.0,
+     "momentum_pass": 3,
+     "multiplier": 2,
+     "net_debt_ebitda": -0.869565,
+     "pb": 10000000.0,
+     "pe": 83333333.333333,
+     "period": "FY2024 vs FY2023",
+     "price": 99.173021,
+     "quality_pass": 2,
+     "rev_growth_ttm": 0.45,
+     "ro40": 54.512485,
+     "ro40_basis": "FY",
+     "roic": 0.1975,
+     "rs_6m": 0.188059,
+     "ticker": "UP1",
+     "ttm_revenue": 210.25
+    },
+    {
+     "above_200d": 1,
+     "anchor_period_end": null,
+     "dist_52w_pct": 0.990099,
+     "distorted": 1,
+     "fcf_margin": 0.097656,
+     "gross_margin": 0.257812,
+     "market_cap": 600000000.0,
+     "momentum_pass": 3,
+     "multiplier": 2,
+     "net_debt_ebitda": -0.740741,
+     "pb": 6000000.0,
+     "pe": 41666666.666667,
+     "period": "FY2024 vs FY2023",
+     "price": 117.000316,
+     "quality_pass": 2,
+     "rev_growth_ttm": 0.6,
+     "ro40": 69.765625,
+     "ro40_basis": "FY",
+     "roic": 0.237,
+     "rs_6m": 0.23584,
+     "ticker": "UP3",
+     "ttm_revenue": 256.0
+    },
+    {
+     "above_200d": 1,
+     "anchor_period_end": null,
+     "dist_52w_pct": 0.990099,
+     "distorted": 1,
+     "fcf_margin": 0.104167,
+     "gross_margin": 0.305556,
+     "market_cap": 2500000000.0,
+     "momentum_pass": 3,
+     "multiplier": 2,
+     "net_debt_ebitda": -1.052632,
+     "pb": 25000000.0,
+     "pe": 260416666.666667,
+     "period": "FY2024 vs FY2023",
+     "price": 75.403295,
+     "quality_pass": 3,
+     "rev_growth_ttm": 0.2,
+     "ro40": 30.416667,
+     "ro40_basis": "FY",
+     "roic": 0.158,
+     "rs_6m": 0.098955,
+     "ticker": "UP2",
+     "ttm_revenue": 144.0
+    }
+   ]
+  }
+ },
+ "swing": {
+  "fetch": {
+   "avg_quality": 82.75,
+   "candidates": [
+    {
+     "atr": 2.29,
+     "bucket": "minervini",
+     "change_1m": 0.031048,
+     "change_1w": 0.019396,
+     "change_pct": 0.004409,
+     "direction_ok": true,
+     "earnings_date": null,
+     "entry": 117.0,
+     "flow": {
+      "status": "not_scanned"
+     },
+     "gates": {
+      "direction": {
+       "passed": true,
+       "rules": [
+        {
+         "actual": 111.032094,
+         "id": "sma50_ge_sma200",
+         "passed": true
+        },
+        {
+         "actual": 0.13728,
+         "id": "ret_3m_ge_0",
+         "passed": true
+        }
+       ],
+       "score": "2/2"
+      },
+      "minervini": {
+       "passed": true,
+       "rules": [
+        {
+         "actual": 117.000316,
+         "id": "price_above_150_200",
+         "passed": true
+        },
+        {
+         "actual": 98.349616,
+         "id": "ma150_above_ma200",
+         "passed": true
+        },
+        {
+         "actual": 5.329114,
+         "id": "ma200_rising",
+         "passed": true
+        },
+        {
+         "actual": 111.032094,
+         "id": "ma50_leading",
+         "passed": true
+        },
+        {
+         "actual": 117.000316,
+         "id": "price_above_50",
+         "passed": true
+        },
+        {
+         "actual": 2.219015,
+         "id": "above_52w_low",
+         "passed": true
+        },
+        {
+         "actual": 0.990099,
+         "id": "within_52w_high",
+         "passed": true
+        },
+        {
+         "actual": 100.0,
+         "id": "rs_ge_70",
+         "passed": true
+        }
+       ],
+       "score": "8/8"
+      },
+      "qullamaggie": {
+       "passed": false,
+       "rules": [
+        {
+         "actual": 0.13728,
+         "id": "large_move",
+         "passed": false
+        },
+        {
+         "actual": 117.000316,
+         "id": "price_above_ema10",
+         "passed": true
+        },
+        {
+         "actual": 117.000316,
+         "id": "price_above_ema20",
+         "passed": true
+        },
+        {
+         "actual": 115.403829,
+         "id": "ema10_above_ema20",
+         "passed": true
+        },
+        {
+         "actual": 115.403829,
+         "id": "emas_rising",
+         "passed": true
+        },
+        {
+         "actual": 0.02,
+         "id": "adr_ge_3",
+         "passed": false
+        }
+       ],
+       "score": "4/6"
+      },
+      "weinstein": {
+       "passed": false,
+       "rules": [
+        {
+         "actual": 117.000316,
+         "id": "price_above_30w",
+         "passed": true
+        },
+        {
+         "actual": 5.425205,
+         "id": "ma30w_rising",
+         "passed": true
+        },
+        {
+         "actual": 0.990099,
+         "id": "overhead_breakout",
+         "passed": true
+        },
+        {
+         "actual": 1.0,
+         "id": "volume_confirmation",
+         "passed": false
+        },
+        {
+         "actual": 0.089887,
+         "id": "rs_3m_gt_spy",
+         "passed": true
+        }
+       ],
+       "score": "4/5"
+      }
+     },
+     "index": [],
+     "industry": "Unclassified",
+     "ma_alignment": "aligned",
+     "market_cap": 600000000.0,
+     "methods": [
+      "minervini"
+     ],
+     "momentum": 71.43,
+     "name": "UP3 Holdings",
+     "price": 117.000316,
+     "quality": 84,
+     "rr": 2.0,
+     "rs_rating": 100.0,
+     "sector": "Technology",
+     "stop": 112.41,
+     "target": 126.17,
+     "themes": [
+      "Software",
+      "Cloud Computing",
+      "Infra / Reshoring"
+     ],
+     "ticker": "UP3"
+    },
+    {
+     "atr": 1.95,
+     "bucket": "minervini",
+     "change_1m": 0.026432,
+     "change_1w": 0.018344,
+     "change_pct": 0.004204,
+     "direction_ok": true,
+     "earnings_date": 1790000000.0,
+     "entry": 99.17,
+     "flow": {
+      "status": "not_scanned"
+     },
+     "gates": {
+      "direction": {
+       "passed": true,
+       "rules": [
+        {
+         "actual": 94.612185,
+         "id": "sma50_ge_sma200",
+         "passed": true
+        },
+        {
+         "actual": 0.120531,
+         "id": "ret_3m_ge_0",
+         "passed": true
+        }
+       ],
+       "score": "2/2"
+      },
+      "minervini": {
+       "passed": true,
+       "rules": [
+        {
+         "actual": 99.173021,
+         "id": "price_above_150_200",
+         "passed": true
+        },
+        {
+         "actual": 84.884525,
+         "id": "ma150_above_ma200",
+         "passed": true
+        },
+        {
+         "actual": 4.085969,
+         "id": "ma200_rising",
+         "passed": true
+        },
+        {
+         "actual": 94.612185,
+         "id": "ma50_leading",
+         "passed": true
+        },
+        {
+         "actual": 99.173021,
+         "id": "price_above_50",
+         "passed": true
+        },
+        {
+         "actual": 1.990119,
+         "id": "above_52w_low",
+         "passed": true
+        },
+        {
+         "actual": 0.990099,
+         "id": "within_52w_high",
+         "passed": true
+        },
+        {
+         "actual": 85.71,
+         "id": "rs_ge_70",
+         "passed": true
+        }
+       ],
+       "score": "8/8"
+      },
+      "qullamaggie": {
+       "passed": false,
+       "rules": [
+        {
+         "actual": 0.120531,
+         "id": "large_move",
+         "passed": false
+        },
+        {
+         "actual": 99.173021,
+         "id": "price_above_ema10",
+         "passed": true
+        },
+        {
+         "actual": 99.173021,
+         "id": "price_above_ema20",
+         "passed": true
+        },
+        {
+         "actual": 97.910728,
+         "id": "ema10_above_ema20",
+         "passed": true
+        },
+        {
+         "actual": 97.910728,
+         "id": "emas_rising",
+         "passed": true
+        },
+        {
+         "actual": 0.02,
+         "id": "adr_ge_3",
+         "passed": false
+        }
+       ],
+       "score": "4/6"
+      },
+      "weinstein": {
+       "passed": false,
+       "rules": [
+        {
+         "actual": 99.173021,
+         "id": "price_above_30w",
+         "passed": true
+        },
+        {
+         "actual": 4.17388,
+         "id": "ma30w_rising",
+         "passed": true
+        },
+        {
+         "actual": 0.990099,
+         "id": "overhead_breakout",
+         "passed": true
+        },
+        {
+         "actual": 1.0,
+         "id": "volume_confirmation",
+         "passed": false
+        },
+        {
+         "actual": 0.073138,
+         "id": "rs_3m_gt_spy",
+         "passed": true
+        }
+       ],
+       "score": "4/5"
+      }
+     },
+     "index": [],
+     "industry": "Unclassified",
+     "ma_alignment": "aligned",
+     "market_cap": 1000000000.0,
+     "methods": [
+      "minervini"
+     ],
+     "momentum": 64.28,
+     "name": "UP1 Holdings",
+     "price": 99.173021,
+     "quality": 84,
+     "rr": 2.0,
+     "rs_rating": 85.71,
+     "sector": "Technology",
+     "stop": 95.28,
+     "target": 106.96,
+     "themes": [
+      "Software",
+      "Cloud Computing",
+      "Infra / Reshoring"
+     ],
+     "ticker": "UP1"
+    },
+    {
+     "atr": 1.72,
+     "bucket": "minervini",
+     "change_1m": 0.022341,
+     "change_1w": 0.017406,
+     "change_pct": 0.00402,
+     "direction_ok": true,
+     "earnings_date": null,
+     "entry": 87.29,
+     "flow": {
+      "status": "not_scanned"
+     },
+     "gates": {
+      "direction": {
+       "passed": true,
+       "rules": [
+        {
+         "actual": 83.665579,
+         "id": "sma50_ge_sma200",
+         "passed": true
+        },
+        {
+         "actual": 0.105977,
+         "id": "ret_3m_ge_0",
+         "passed": true
+        }
+       ],
+       "score": "2/2"
+      },
+      "minervini": {
+       "passed": true,
+       "rules": [
+        {
+         "actual": 87.288158,
+         "id": "price_above_150_200",
+         "passed": true
+        },
+        {
+         "actual": 75.907798,
+         "id": "ma150_above_ma200",
+         "passed": true
+        },
+        {
+         "actual": 3.257206,
+         "id": "ma200_rising",
+         "passed": true
+        },
+        {
+         "actual": 83.665579,
+         "id": "ma50_leading",
+         "passed": true
+        },
+        {
+         "actual": 87.288158,
+         "id": "price_above_50",
+         "passed": true
+        },
+        {
+         "actual": 1.822159,
+         "id": "above_52w_low",
+         "passed": true
+        },
+        {
+         "actual": 0.990099,
+         "id": "within_52w_high",
+         "passed": true
+        },
+        {
+         "actual": 71.43,
+         "id": "rs_ge_70",
+         "passed": true
+        }
+       ],
+       "score": "8/8"
+      },
+      "qullamaggie": {
+       "passed": false,
+       "rules": [
+        {
+         "actual": 0.105977,
+         "id": "large_move",
+         "passed": false
+        },
+        {
+         "actual": 87.288158,
+         "id": "price_above_ema10",
+         "passed": true
+        },
+        {
+         "actual": 87.288158,
+         "id": "price_above_ema20",
+         "passed": true
+        },
+        {
+         "actual": 86.248661,
+         "id": "ema10_above_ema20",
+         "passed": true
+        },
+        {
+         "actual": 86.248661,
+         "id": "emas_rising",
+         "passed": true
+        },
+        {
+         "actual": 0.02,
+         "id": "adr_ge_3",
+         "passed": false
+        }
+       ],
+       "score": "4/6"
+      },
+      "weinstein": {
+       "passed": false,
+       "rules": [
+        {
+         "actual": 87.288158,
+         "id": "price_above_30w",
+         "passed": true
+        },
+        {
+         "actual": 3.339662,
+         "id": "ma30w_rising",
+         "passed": true
+        },
+        {
+         "actual": 0.990099,
+         "id": "overhead_breakout",
+         "passed": true
+        },
+        {
+         "actual": 1.0,
+         "id": "volume_confirmation",
+         "passed": false
+        },
+        {
+         "actual": 0.058584,
+         "id": "rs_3m_gt_spy",
+         "passed": true
+        }
+       ],
+       "score": "4/5"
+      }
+     },
+     "index": [],
+     "industry": "Unclassified",
+     "ma_alignment": "aligned",
+     "market_cap": 800000000.0,
+     "methods": [
+      "minervini"
+     ],
+     "momentum": 57.14,
+     "name": "NOEDGAR Inc",
+     "price": 87.288158,
+     "quality": 84,
+     "rr": 2.0,
+     "rs_rating": 71.43,
+     "sector": "Utilities",
+     "stop": 83.86,
+     "target": 94.15,
+     "themes": [
+      "Other"
+     ],
+     "ticker": "NOEDGAR"
+    },
+    {
+     "atr": 1.48,
+     "bucket": "minervini",
+     "change_1m": 0.01701,
+     "change_1w": 0.016176,
+     "change_pct": 0.003779,
+     "direction_ok": true,
+     "earnings_date": null,
+     "entry": 75.4,
+     "flow": {
+      "status": "not_scanned"
+     },
+     "gates": {
+      "direction": {
+       "passed": true,
+       "rules": [
+        {
+         "actual": 72.718973,
+         "id": "sma50_ge_sma200",
+         "passed": true
+        },
+        {
+         "actual": 0.0874,
+         "id": "ret_3m_ge_0",
+         "passed": true
+        }
+       ],
+       "score": "2/2"
+      },
+      "minervini": {
+       "passed": true,
+       "rules": [
+        {
+         "actual": 75.403295,
+         "id": "price_above_150_200",
+         "passed": true
+        },
+        {
+         "actual": 66.93107,
+         "id": "ma150_above_ma200",
+         "passed": true
+        },
+        {
+         "actual": 2.428443,
+         "id": "ma200_rising",
+         "passed": true
+        },
+        {
+         "actual": 72.718973,
+         "id": "ma50_leading",
+         "passed": true
+        },
+        {
+         "actual": 75.403295,
+         "id": "price_above_50",
+         "passed": true
+        },
+        {
+         "actual": 1.640104,
+         "id": "above_52w_low",
+         "passed": true
+        },
+        {
+         "actual": 0.990099,
+         "id": "within_52w_high",
+         "passed": true
+        },
+        {
+         "actual": 57.14,
+         "id": "rs_ge_70",
+         "passed": false
+        }
+       ],
+       "score": "7/8"
+      },
+      "qullamaggie": {
+       "passed": false,
+       "rules": [
+        {
+         "actual": 0.089202,
+         "id": "large_move",
+         "passed": false
+        },
+        {
+         "actual": 75.403295,
+         "id": "price_above_ema10",
+         "passed": true
+        },
+        {
+         "actual": 75.403295,
+         "id": "price_above_ema20",
+         "passed": true
+        },
+        {
+         "actual": 74.586593,
+         "id": "ema10_above_ema20",
+         "passed": true
+        },
+        {
+         "actual": 74.586593,
+         "id": "emas_rising",
+         "passed": true
+        },
+        {
+         "actual": 0.02,
+         "id": "adr_ge_3",
+         "passed": false
+        }
+       ],
+       "score": "4/6"
+      },
+      "weinstein": {
+       "passed": false,
+       "rules": [
+        {
+         "actual": 75.403295,
+         "id": "price_above_30w",
+         "passed": true
+        },
+        {
+         "actual": 2.505445,
+         "id": "ma30w_rising",
+         "passed": true
+        },
+        {
+         "actual": 0.990099,
+         "id": "overhead_breakout",
+         "passed": true
+        },
+        {
+         "actual": 1.0,
+         "id": "volume_confirmation",
+         "passed": false
+        },
+        {
+         "actual": 0.040007,
+         "id": "rs_3m_gt_spy",
+         "passed": true
+        }
+       ],
+       "score": "4/5"
+      }
+     },
+     "index": [],
+     "industry": "Unclassified",
+     "ma_alignment": "aligned",
+     "market_cap": 2500000000.0,
+     "methods": [
+      "minervini"
+     ],
+     "momentum": 50.0,
+     "name": "UP2 Inc",
+     "price": 75.403295,
+     "quality": 79,
+     "rr": 2.0,
+     "rs_rating": 57.14,
+     "sector": "Healthcare",
+     "stop": 72.43,
+     "target": 81.34,
+     "themes": [
+      "Biotechnology"
+     ],
+     "ticker": "UP2"
+    }
+   ],
+   "data_as_of": "2026-10-14",
+   "data_quality": {
+    "dropped": {
+     "no_bars": 1,
+     "short_bars": 1
+    },
+    "no_avg_volume": 0,
+    "older_quotes": 0,
+    "quote_session": "2026-10-14",
+    "short_refetch_refused": 0,
+    "spy_stale": false,
+    "stale_info": 0,
+    "stale_ohlc": 0
+   },
+   "funnel_steps": [
+    {
+     "count": 13,
+     "fix": null,
+     "key": "universe",
+     "kind": "start",
+     "label": "Universe, all stored names"
+    },
+    {
+     "by_design": true,
+     "count": 1,
+     "fix": null,
+     "key": "excluded_types",
+     "kind": "drop",
+     "label": "Excluded security types (ETF, CEF, SPAC, preferred, unit, warrant)"
+    },
+    {
+     "by_design": true,
+     "count": 1,
+     "fix": null,
+     "key": "low_price",
+     "kind": "drop",
+     "label": "Price under $5.00",
+     "tickers": [
+      "LOWPX"
+     ]
+    },
+    {
+     "by_design": true,
+     "count": 1,
+     "fix": null,
+     "key": "low_dollar_volume",
+     "kind": "drop",
+     "label": "Average daily dollar volume under $250,000",
+     "tickers": [
+      "LOWVOL"
+     ]
+    },
+    {
+     "by_design": false,
+     "count": 1,
+     "fix": null,
+     "key": "no_bars",
+     "kind": "drop",
+     "label": "No stored daily price bars (D01)",
+     "tickers": [
+      "NOBARS1"
+     ]
+    },
+    {
+     "by_design": true,
+     "count": 1,
+     "fix": null,
+     "key": "short_bars",
+     "kind": "drop",
+     "label": "Fewer than 252 stored daily bars",
+     "tickers": [
+      "SHORT1"
+     ]
+    },
+    {
+     "by_design": true,
+     "count": 4,
+     "fix": null,
+     "key": "passed_no_screen",
+     "kind": "drop",
+     "label": "Scored, passed none of the board's three screens"
+    },
+    {
+     "count": 4,
+     "fix": null,
+     "key": "candidates",
+     "kind": "result",
+     "label": "Candidates (a card on the board)"
+    }
+   ],
+   "generated_at": "<ts>",
+   "is_fixture": false,
+   "no_data": false,
+   "passing": {
+    "direction": 6,
+    "minervini": 4,
+    "qullamaggie": 0,
+    "weinstein": 0
+   },
+   "regime": "RISK-ON",
+   "selection_version": "4",
+   "summary": {
+    "avg_quality": 82.75,
+    "data_short": 2,
+    "excluded_types": 1,
+    "filtered_universe": 10,
+    "hygiene": 2,
+    "no_spine_gics": 0,
+    "out_of_universe": null,
+    "passing": {
+     "direction": 6,
+     "minervini": 4,
+     "qullamaggie": 0,
+     "weinstein": 0
+    },
+    "regime": "RISK-ON",
+    "spy_3m_return": 0.0474,
+    "spy_price": 57.58,
+    "spy_sma200": 51.93,
+    "spy_stale": false,
+    "stale_ohlc": 0,
+    "top_n": 4
+   },
+   "universe_generated_at": "<ts>",
+   "universe_refreshed_by": "Swing Potential",
+   "universe_total": 13
+  },
+  "tables": {
+   "swing_gates": [
+    {
+     "actual": -0.018428,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "rs_3m_gt_spy",
+     "ticker": "BELOW50",
+     "unit": "diff_pct"
+    },
+    {
+     "actual": -0.018428,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "rs_3m_gt_spy",
+     "ticker": "FAR",
+     "unit": "diff_pct"
+    },
+    {
+     "actual": -0.020939,
+     "gate": "direction",
+     "passed": 0,
+     "rule_id": "ret_3m_ge_0",
+     "ticker": "FLAT1",
+     "unit": "pct"
+    },
+    {
+     "actual": -0.057847,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "ma200_rising",
+     "ticker": "FLAT1",
+     "unit": "diff_price"
+    },
+    {
+     "actual": -0.068332,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "rs_3m_gt_spy",
+     "ticker": "FLAT1",
+     "unit": "diff_pct"
+    },
+    {
+     "actual": -0.560156,
+     "gate": "direction",
+     "passed": 0,
+     "rule_id": "ret_3m_ge_0",
+     "ticker": "DOWN1",
+     "unit": "pct"
+    },
+    {
+     "actual": -0.607549,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "rs_3m_gt_spy",
+     "ticker": "DOWN1",
+     "unit": "diff_pct"
+    },
+    {
+     "actual": -2.327598,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "ma30w_rising",
+     "ticker": "DOWN1",
+     "unit": "diff_price"
+    },
+    {
+     "actual": -2.618042,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "ma200_rising",
+     "ticker": "DOWN1",
+     "unit": "diff_price"
+    },
+    {
+     "actual": 0.0,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "rs_ge_70",
+     "ticker": "DOWN1",
+     "unit": "rating"
+    },
+    {
+     "actual": 0.0,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "large_move",
+     "ticker": "DOWN1",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.002794,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "ma30w_rising",
+     "ticker": "FLAT1",
+     "unit": "diff_price"
+    },
+    {
+     "actual": 0.008803,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "large_move",
+     "ticker": "FLAT1",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.02,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "adr_ge_3",
+     "ticker": "BELOW50",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.02,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "adr_ge_3",
+     "ticker": "DOWN1",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.02,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "adr_ge_3",
+     "ticker": "FAR",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.02,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "adr_ge_3",
+     "ticker": "FLAT1",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.02,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "adr_ge_3",
+     "ticker": "NOEDGAR",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.02,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "adr_ge_3",
+     "ticker": "UP1",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.02,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "adr_ge_3",
+     "ticker": "UP2",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.02,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "adr_ge_3",
+     "ticker": "UP3",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.028965,
+     "gate": "direction",
+     "passed": 1,
+     "rule_id": "ret_3m_ge_0",
+     "ticker": "BELOW50",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.028965,
+     "gate": "direction",
+     "passed": 1,
+     "rule_id": "ret_3m_ge_0",
+     "ticker": "FAR",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.030186,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "within_52w_high",
+     "ticker": "DOWN1",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.030186,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "overhead_breakout",
+     "ticker": "DOWN1",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.040007,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "rs_3m_gt_spy",
+     "ticker": "UP2",
+     "unit": "diff_pct"
+    },
+    {
+     "actual": 0.045412,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "large_move",
+     "ticker": "BELOW50",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.045412,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "large_move",
+     "ticker": "FAR",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.058584,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "rs_3m_gt_spy",
+     "ticker": "NOEDGAR",
+     "unit": "diff_pct"
+    },
+    {
+     "actual": 0.073138,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "rs_3m_gt_spy",
+     "ticker": "UP1",
+     "unit": "diff_pct"
+    },
+    {
+     "actual": 0.0874,
+     "gate": "direction",
+     "passed": 1,
+     "rule_id": "ret_3m_ge_0",
+     "ticker": "UP2",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.089202,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "large_move",
+     "ticker": "UP2",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.089887,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "rs_3m_gt_spy",
+     "ticker": "UP3",
+     "unit": "diff_pct"
+    },
+    {
+     "actual": 0.105977,
+     "gate": "direction",
+     "passed": 1,
+     "rule_id": "ret_3m_ge_0",
+     "ticker": "NOEDGAR",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.105977,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "large_move",
+     "ticker": "NOEDGAR",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.120531,
+     "gate": "direction",
+     "passed": 1,
+     "rule_id": "ret_3m_ge_0",
+     "ticker": "UP1",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.120531,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "large_move",
+     "ticker": "UP1",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.13728,
+     "gate": "direction",
+     "passed": 1,
+     "rule_id": "ret_3m_ge_0",
+     "ticker": "UP3",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.13728,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "large_move",
+     "ticker": "UP3",
+     "unit": "pct"
+    },
+    {
+     "actual": 0.770917,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma200_rising",
+     "ticker": "BELOW50",
+     "unit": "diff_price"
+    },
+    {
+     "actual": 0.770917,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma200_rising",
+     "ticker": "FAR",
+     "unit": "diff_price"
+    },
+    {
+     "actual": 0.837011,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "ma30w_rising",
+     "ticker": "BELOW50",
+     "unit": "diff_price"
+    },
+    {
+     "actual": 0.837011,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "ma30w_rising",
+     "ticker": "FAR",
+     "unit": "diff_price"
+    },
+    {
+     "actual": 0.96934,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "within_52w_high",
+     "ticker": "FLAT1",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.96934,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "overhead_breakout",
+     "ticker": "FLAT1",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.988155,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "within_52w_high",
+     "ticker": "BELOW50",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.988155,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "within_52w_high",
+     "ticker": "FAR",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.988155,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "overhead_breakout",
+     "ticker": "BELOW50",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.988155,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "overhead_breakout",
+     "ticker": "FAR",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.990099,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "within_52w_high",
+     "ticker": "NOEDGAR",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.990099,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "within_52w_high",
+     "ticker": "UP1",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.990099,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "within_52w_high",
+     "ticker": "UP2",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.990099,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "within_52w_high",
+     "ticker": "UP3",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.990099,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "overhead_breakout",
+     "ticker": "NOEDGAR",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.990099,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "overhead_breakout",
+     "ticker": "UP1",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.990099,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "overhead_breakout",
+     "ticker": "UP2",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 0.990099,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "overhead_breakout",
+     "ticker": "UP3",
+     "unit": "pct_high"
+    },
+    {
+     "actual": 1.0,
+     "gate": "direction",
+     "passed": 0,
+     "rule_id": "sma50_ge_sma200",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 1.0,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "ma50_leading",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 1.0,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "price_above_150_200",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 1.0,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "price_above_50",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 1.0,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "price_above_ema10",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 1.0,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "price_above_ema20",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 1.0,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "price_above_30w",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 1.0,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "volume_confirmation",
+     "ticker": "BELOW50",
+     "unit": "ratio"
+    },
+    {
+     "actual": 1.0,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "volume_confirmation",
+     "ticker": "DOWN1",
+     "unit": "ratio"
+    },
+    {
+     "actual": 1.0,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "volume_confirmation",
+     "ticker": "FAR",
+     "unit": "ratio"
+    },
+    {
+     "actual": 1.0,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "volume_confirmation",
+     "ticker": "FLAT1",
+     "unit": "ratio"
+    },
+    {
+     "actual": 1.0,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "volume_confirmation",
+     "ticker": "NOEDGAR",
+     "unit": "ratio"
+    },
+    {
+     "actual": 1.0,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "volume_confirmation",
+     "ticker": "UP1",
+     "unit": "ratio"
+    },
+    {
+     "actual": 1.0,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "volume_confirmation",
+     "ticker": "UP2",
+     "unit": "ratio"
+    },
+    {
+     "actual": 1.0,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "volume_confirmation",
+     "ticker": "UP3",
+     "unit": "ratio"
+    },
+    {
+     "actual": 1.000011,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "ema10_above_ema20",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 1.000011,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "emas_rising",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 1.010101,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "above_52w_low",
+     "ticker": "DOWN1",
+     "unit": "ratio"
+    },
+    {
+     "actual": 1.019041,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "above_52w_low",
+     "ticker": "FLAT1",
+     "unit": "ratio"
+    },
+    {
+     "actual": 1.243096,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "above_52w_low",
+     "ticker": "BELOW50",
+     "unit": "ratio"
+    },
+    {
+     "actual": 1.243096,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "above_52w_low",
+     "ticker": "FAR",
+     "unit": "ratio"
+    },
+    {
+     "actual": 1.640104,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "above_52w_low",
+     "ticker": "UP2",
+     "unit": "ratio"
+    },
+    {
+     "actual": 1.822159,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "above_52w_low",
+     "ticker": "NOEDGAR",
+     "unit": "ratio"
+    },
+    {
+     "actual": 1.990119,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "above_52w_low",
+     "ticker": "UP1",
+     "unit": "ratio"
+    },
+    {
+     "actual": 100.0,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "rs_ge_70",
+     "ticker": "UP3",
+     "unit": "rating"
+    },
+    {
+     "actual": 111.032094,
+     "gate": "direction",
+     "passed": 1,
+     "rule_id": "sma50_ge_sma200",
+     "ticker": "UP3",
+     "unit": "price"
+    },
+    {
+     "actual": 111.032094,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma50_leading",
+     "ticker": "UP3",
+     "unit": "price"
+    },
+    {
+     "actual": 115.403829,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "ema10_above_ema20",
+     "ticker": "UP3",
+     "unit": "price"
+    },
+    {
+     "actual": 115.403829,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "emas_rising",
+     "ticker": "UP3",
+     "unit": "price"
+    },
+    {
+     "actual": 117.000316,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "price_above_150_200",
+     "ticker": "UP3",
+     "unit": "price"
+    },
+    {
+     "actual": 117.000316,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "price_above_50",
+     "ticker": "UP3",
+     "unit": "price"
+    },
+    {
+     "actual": 117.000316,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "price_above_ema10",
+     "ticker": "UP3",
+     "unit": "price"
+    },
+    {
+     "actual": 117.000316,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "price_above_ema20",
+     "ticker": "UP3",
+     "unit": "price"
+    },
+    {
+     "actual": 117.000316,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "price_above_30w",
+     "ticker": "UP3",
+     "unit": "price"
+    },
+    {
+     "actual": 14.29,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "rs_ge_70",
+     "ticker": "FLAT1",
+     "unit": "rating"
+    },
+    {
+     "actual": 2.219015,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "above_52w_low",
+     "ticker": "UP3",
+     "unit": "ratio"
+    },
+    {
+     "actual": 2.428443,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma200_rising",
+     "ticker": "UP2",
+     "unit": "diff_price"
+    },
+    {
+     "actual": 2.505445,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "ma30w_rising",
+     "ticker": "UP2",
+     "unit": "diff_price"
+    },
+    {
+     "actual": 28.57,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "rs_ge_70",
+     "ticker": "BELOW50",
+     "unit": "rating"
+    },
+    {
+     "actual": 28.57,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "rs_ge_70",
+     "ticker": "FAR",
+     "unit": "rating"
+    },
+    {
+     "actual": 3.257206,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma200_rising",
+     "ticker": "NOEDGAR",
+     "unit": "diff_price"
+    },
+    {
+     "actual": 3.339662,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "ma30w_rising",
+     "ticker": "NOEDGAR",
+     "unit": "diff_price"
+    },
+    {
+     "actual": 39.600391,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "ema10_above_ema20",
+     "ticker": "FLAT1",
+     "unit": "price"
+    },
+    {
+     "actual": 39.600391,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "emas_rising",
+     "ticker": "FLAT1",
+     "unit": "price"
+    },
+    {
+     "actual": 39.748706,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "price_above_150_200",
+     "ticker": "FLAT1",
+     "unit": "price"
+    },
+    {
+     "actual": 39.748706,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "price_above_50",
+     "ticker": "FLAT1",
+     "unit": "price"
+    },
+    {
+     "actual": 39.748706,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "price_above_ema10",
+     "ticker": "FLAT1",
+     "unit": "price"
+    },
+    {
+     "actual": 39.748706,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "price_above_ema20",
+     "ticker": "FLAT1",
+     "unit": "price"
+    },
+    {
+     "actual": 39.748706,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "price_above_30w",
+     "ticker": "FLAT1",
+     "unit": "price"
+    },
+    {
+     "actual": 39.879154,
+     "gate": "direction",
+     "passed": 0,
+     "rule_id": "sma50_ge_sma200",
+     "ticker": "FLAT1",
+     "unit": "price"
+    },
+    {
+     "actual": 39.879154,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "ma50_leading",
+     "ticker": "FLAT1",
+     "unit": "price"
+    },
+    {
+     "actual": 4.085969,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma200_rising",
+     "ticker": "UP1",
+     "unit": "diff_price"
+    },
+    {
+     "actual": 4.17388,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "ma30w_rising",
+     "ticker": "UP1",
+     "unit": "diff_price"
+    },
+    {
+     "actual": 40.000888,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma150_above_ma200",
+     "ticker": "FLAT1",
+     "unit": "price"
+    },
+    {
+     "actual": 48.977616,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma150_above_ma200",
+     "ticker": "BELOW50",
+     "unit": "price"
+    },
+    {
+     "actual": 48.977616,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma150_above_ma200",
+     "ticker": "FAR",
+     "unit": "price"
+    },
+    {
+     "actual": 5.329114,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma200_rising",
+     "ticker": "UP3",
+     "unit": "diff_price"
+    },
+    {
+     "actual": 5.425205,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "ma30w_rising",
+     "ticker": "UP3",
+     "unit": "diff_price"
+    },
+    {
+     "actual": 5.747369,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "ma150_above_ma200",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 50.82576,
+     "gate": "direction",
+     "passed": 1,
+     "rule_id": "sma50_ge_sma200",
+     "ticker": "BELOW50",
+     "unit": "price"
+    },
+    {
+     "actual": 50.82576,
+     "gate": "direction",
+     "passed": 1,
+     "rule_id": "sma50_ge_sma200",
+     "ticker": "FAR",
+     "unit": "price"
+    },
+    {
+     "actual": 50.82576,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma50_leading",
+     "ticker": "BELOW50",
+     "unit": "price"
+    },
+    {
+     "actual": 50.82576,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma50_leading",
+     "ticker": "FAR",
+     "unit": "price"
+    },
+    {
+     "actual": 51.262458,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "ema10_above_ema20",
+     "ticker": "BELOW50",
+     "unit": "price"
+    },
+    {
+     "actual": 51.262458,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "ema10_above_ema20",
+     "ticker": "FAR",
+     "unit": "price"
+    },
+    {
+     "actual": 51.262458,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "emas_rising",
+     "ticker": "BELOW50",
+     "unit": "price"
+    },
+    {
+     "actual": 51.262458,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "emas_rising",
+     "ticker": "FAR",
+     "unit": "price"
+    },
+    {
+     "actual": 51.633569,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "price_above_150_200",
+     "ticker": "BELOW50",
+     "unit": "price"
+    },
+    {
+     "actual": 51.633569,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "price_above_150_200",
+     "ticker": "FAR",
+     "unit": "price"
+    },
+    {
+     "actual": 51.633569,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "price_above_50",
+     "ticker": "BELOW50",
+     "unit": "price"
+    },
+    {
+     "actual": 51.633569,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "price_above_50",
+     "ticker": "FAR",
+     "unit": "price"
+    },
+    {
+     "actual": 51.633569,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "price_above_ema10",
+     "ticker": "BELOW50",
+     "unit": "price"
+    },
+    {
+     "actual": 51.633569,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "price_above_ema10",
+     "ticker": "FAR",
+     "unit": "price"
+    },
+    {
+     "actual": 51.633569,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "price_above_ema20",
+     "ticker": "BELOW50",
+     "unit": "price"
+    },
+    {
+     "actual": 51.633569,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "price_above_ema20",
+     "ticker": "FAR",
+     "unit": "price"
+    },
+    {
+     "actual": 51.633569,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "price_above_30w",
+     "ticker": "BELOW50",
+     "unit": "price"
+    },
+    {
+     "actual": 51.633569,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "price_above_30w",
+     "ticker": "FAR",
+     "unit": "price"
+    },
+    {
+     "actual": 57.14,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "rs_ge_70",
+     "ticker": "UP2",
+     "unit": "rating"
+    },
+    {
+     "actual": 66.93107,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma150_above_ma200",
+     "ticker": "UP2",
+     "unit": "price"
+    },
+    {
+     "actual": 71.43,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "rs_ge_70",
+     "ticker": "NOEDGAR",
+     "unit": "rating"
+    },
+    {
+     "actual": 72.718973,
+     "gate": "direction",
+     "passed": 1,
+     "rule_id": "sma50_ge_sma200",
+     "ticker": "UP2",
+     "unit": "price"
+    },
+    {
+     "actual": 72.718973,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma50_leading",
+     "ticker": "UP2",
+     "unit": "price"
+    },
+    {
+     "actual": 74.586593,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "ema10_above_ema20",
+     "ticker": "UP2",
+     "unit": "price"
+    },
+    {
+     "actual": 74.586593,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "emas_rising",
+     "ticker": "UP2",
+     "unit": "price"
+    },
+    {
+     "actual": 75.403295,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "price_above_150_200",
+     "ticker": "UP2",
+     "unit": "price"
+    },
+    {
+     "actual": 75.403295,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "price_above_50",
+     "ticker": "UP2",
+     "unit": "price"
+    },
+    {
+     "actual": 75.403295,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "price_above_ema10",
+     "ticker": "UP2",
+     "unit": "price"
+    },
+    {
+     "actual": 75.403295,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "price_above_ema20",
+     "ticker": "UP2",
+     "unit": "price"
+    },
+    {
+     "actual": 75.403295,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "price_above_30w",
+     "ticker": "UP2",
+     "unit": "price"
+    },
+    {
+     "actual": 75.907798,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma150_above_ma200",
+     "ticker": "NOEDGAR",
+     "unit": "price"
+    },
+    {
+     "actual": 83.665579,
+     "gate": "direction",
+     "passed": 1,
+     "rule_id": "sma50_ge_sma200",
+     "ticker": "NOEDGAR",
+     "unit": "price"
+    },
+    {
+     "actual": 83.665579,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma50_leading",
+     "ticker": "NOEDGAR",
+     "unit": "price"
+    },
+    {
+     "actual": 84.884525,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma150_above_ma200",
+     "ticker": "UP1",
+     "unit": "price"
+    },
+    {
+     "actual": 85.71,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "rs_ge_70",
+     "ticker": "UP1",
+     "unit": "rating"
+    },
+    {
+     "actual": 86.248661,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "ema10_above_ema20",
+     "ticker": "NOEDGAR",
+     "unit": "price"
+    },
+    {
+     "actual": 86.248661,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "emas_rising",
+     "ticker": "NOEDGAR",
+     "unit": "price"
+    },
+    {
+     "actual": 87.288158,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "price_above_150_200",
+     "ticker": "NOEDGAR",
+     "unit": "price"
+    },
+    {
+     "actual": 87.288158,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "price_above_50",
+     "ticker": "NOEDGAR",
+     "unit": "price"
+    },
+    {
+     "actual": 87.288158,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "price_above_ema10",
+     "ticker": "NOEDGAR",
+     "unit": "price"
+    },
+    {
+     "actual": 87.288158,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "price_above_ema20",
+     "ticker": "NOEDGAR",
+     "unit": "price"
+    },
+    {
+     "actual": 87.288158,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "price_above_30w",
+     "ticker": "NOEDGAR",
+     "unit": "price"
+    },
+    {
+     "actual": 94.612185,
+     "gate": "direction",
+     "passed": 1,
+     "rule_id": "sma50_ge_sma200",
+     "ticker": "UP1",
+     "unit": "price"
+    },
+    {
+     "actual": 94.612185,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma50_leading",
+     "ticker": "UP1",
+     "unit": "price"
+    },
+    {
+     "actual": 97.910728,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "ema10_above_ema20",
+     "ticker": "UP1",
+     "unit": "price"
+    },
+    {
+     "actual": 97.910728,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "emas_rising",
+     "ticker": "UP1",
+     "unit": "price"
+    },
+    {
+     "actual": 98.349616,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "ma150_above_ma200",
+     "ticker": "UP3",
+     "unit": "price"
+    },
+    {
+     "actual": 99.173021,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "price_above_150_200",
+     "ticker": "UP1",
+     "unit": "price"
+    },
+    {
+     "actual": 99.173021,
+     "gate": "minervini",
+     "passed": 1,
+     "rule_id": "price_above_50",
+     "ticker": "UP1",
+     "unit": "price"
+    },
+    {
+     "actual": 99.173021,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "price_above_ema10",
+     "ticker": "UP1",
+     "unit": "price"
+    },
+    {
+     "actual": 99.173021,
+     "gate": "qullamaggie",
+     "passed": 1,
+     "rule_id": "price_above_ema20",
+     "ticker": "UP1",
+     "unit": "price"
+    },
+    {
+     "actual": 99.173021,
+     "gate": "weinstein",
+     "passed": 1,
+     "rule_id": "price_above_30w",
+     "ticker": "UP1",
+     "unit": "price"
+    }
+   ],
+   "swing_scores": [
+    {
+     "atr": 0.02,
+     "change_1m": 0.0,
+     "change_1w": 0.0,
+     "change_pct": 0.0,
+     "direction_ok": 0,
+     "entry": 1.0,
+     "m_pass": 0,
+     "ma_alignment": "broken",
+     "multiplier": 0,
+     "price": 1.0,
+     "q_pass": 0,
+     "quality": 0.0,
+     "rr": 2.0,
+     "rs_rating": 0.0,
+     "stop": 0.96,
+     "target": 1.08,
+     "ticker": "DOWN1",
+     "w_pass": 0
+    },
+    {
+     "atr": 0.79,
+     "change_1m": -0.016765,
+     "change_1w": 0.00814,
+     "change_pct": 0.002191,
+     "direction_ok": 0,
+     "entry": 39.75,
+     "m_pass": 0,
+     "ma_alignment": "broken",
+     "multiplier": 0,
+     "price": 39.748706,
+     "q_pass": 0,
+     "quality": 26.0,
+     "rr": 2.0,
+     "rs_rating": 14.29,
+     "stop": 38.17,
+     "target": 42.91,
+     "ticker": "FLAT1",
+     "w_pass": 0
+    },
+    {
+     "atr": 1.02,
+     "change_1m": -0.000608,
+     "change_1w": 0.012036,
+     "change_pct": 0.002963,
+     "direction_ok": 1,
+     "entry": 51.63,
+     "m_pass": 0,
+     "ma_alignment": "aligned",
+     "multiplier": 0,
+     "price": 51.633569,
+     "q_pass": 0,
+     "quality": 68.0,
+     "rr": 2.0,
+     "rs_rating": 28.57,
+     "stop": 49.59,
+     "target": 55.72,
+     "ticker": "BELOW50",
+     "w_pass": 0
+    },
+    {
+     "atr": 1.02,
+     "change_1m": -0.000608,
+     "change_1w": 0.012036,
+     "change_pct": 0.002963,
+     "direction_ok": 1,
+     "entry": 51.63,
+     "m_pass": 0,
+     "ma_alignment": "aligned",
+     "multiplier": 0,
+     "price": 51.633569,
+     "q_pass": 0,
+     "quality": 68.0,
+     "rr": 2.0,
+     "rs_rating": 28.57,
+     "stop": 49.59,
+     "target": 55.72,
+     "ticker": "FAR",
+     "w_pass": 0
+    },
+    {
+     "atr": 1.48,
+     "change_1m": 0.01701,
+     "change_1w": 0.016176,
+     "change_pct": 0.003779,
+     "direction_ok": 1,
+     "entry": 75.4,
+     "m_pass": 1,
+     "ma_alignment": "aligned",
+     "multiplier": 1,
+     "price": 75.403295,
+     "q_pass": 0,
+     "quality": 79.0,
+     "rr": 2.0,
+     "rs_rating": 57.14,
+     "stop": 72.43,
+     "target": 81.34,
+     "ticker": "UP2",
+     "w_pass": 0
+    },
+    {
+     "atr": 1.72,
+     "change_1m": 0.022341,
+     "change_1w": 0.017406,
+     "change_pct": 0.00402,
+     "direction_ok": 1,
+     "entry": 87.29,
+     "m_pass": 1,
+     "ma_alignment": "aligned",
+     "multiplier": 1,
+     "price": 87.288158,
+     "q_pass": 0,
+     "quality": 84.0,
+     "rr": 2.0,
+     "rs_rating": 71.43,
+     "stop": 83.86,
+     "target": 94.15,
+     "ticker": "NOEDGAR",
+     "w_pass": 0
+    },
+    {
+     "atr": 1.95,
+     "change_1m": 0.026432,
+     "change_1w": 0.018344,
+     "change_pct": 0.004204,
+     "direction_ok": 1,
+     "entry": 99.17,
+     "m_pass": 1,
+     "ma_alignment": "aligned",
+     "multiplier": 1,
+     "price": 99.173021,
+     "q_pass": 0,
+     "quality": 84.0,
+     "rr": 2.0,
+     "rs_rating": 85.71,
+     "stop": 95.28,
+     "target": 106.96,
+     "ticker": "UP1",
+     "w_pass": 0
+    },
+    {
+     "atr": 2.29,
+     "change_1m": 0.031048,
+     "change_1w": 0.019396,
+     "change_pct": 0.004409,
+     "direction_ok": 1,
+     "entry": 117.0,
+     "m_pass": 1,
+     "ma_alignment": "aligned",
+     "multiplier": 1,
+     "price": 117.000316,
+     "q_pass": 0,
+     "quality": 84.0,
+     "rr": 2.0,
+     "rs_rating": 100.0,
+     "stop": 112.41,
+     "target": 126.17,
+     "ticker": "UP3",
+     "w_pass": 0
+    }
+   ]
+  }
+ }
+}

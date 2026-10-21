@@ -1,0 +1,36 @@
+{#
+  Shown when a store-only re-render fails.
+
+  The Financials Refresh recomputes the report from .store/raw.duckdb with zero
+  network calls. When that render raises (a cleared cache, an unwritable cache,
+  a malformed payload) it used to be swallowed: the runner logged a warning and
+  returned a stale artifact or nothing, so the tab silently emptied and the app
+  went back over the network. This board is written over the artifact so the
+  failure is displayed instead of papered over. The data itself is untouched in
+  .store — re-running Fetch retries the live path.
+#}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>{{ title }}</title>
+<style>
+body{background:#0d1117;color:#c9d1d9;font-family:'Segoe UI',Consolas,monospace;padding:40px;font-size:13px;line-height:1.6}
+h1{color:#f85149;font-size:18px;margin-bottom:14px}
+.msg{color:#f0f6fc;font-size:14px;margin:14px 0}
+.hint{color:#8b949e;font-size:12px}
+.stamp{color:#484f58;font-size:11px;margin-top:24px;border-top:1px solid #21262d;padding-top:10px}
+details{margin-top:12px}
+summary{color:#8b949e;font-size:11px;cursor:pointer}
+pre{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px;overflow-x:auto;
+    color:#8b949e;font-size:11px;margin-top:8px;white-space:pre-wrap;word-break:break-word}
+</style></head><body>
+<h1>Refresh failed — the report could not be re-rendered from the store</h1>
+<div class="msg">{{ message }}</div>
+<div class="hint">The stored data was not touched, so no re-fetch should be
+needed. If this keeps happening, use the Fetch button to pull fresh data, or
+check the server log for the full traceback.</div>
+<details>
+  <summary>Show the raw error</summary>
+  <pre>{{ detail }}</pre>
+</details>
+<div class="stamp">Generated {{ stamp }}</div>
+</body></html>

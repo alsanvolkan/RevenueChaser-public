@@ -1,0 +1,96 @@
+{
+ "cik": "320193",
+ "name": "Apple Inc.",
+ "sic": "3571",
+ "sicDescription": "Electronic Computers",
+ "entityType": "operating",
+ "tickers": [
+  "AAPL"
+ ],
+ "exchanges": [
+  "Nasdaq"
+ ],
+ "filings": {
+  "recent": {
+   "form": [
+    "10-K",
+    "10-Q",
+    "144",
+    "144/A",
+    "25",
+    "25-NSE",
+    "3",
+    "3/A",
+    "4",
+    "4/A",
+    "424B2",
+    "5",
+    "8-A12B",
+    "8-K",
+    "8-K/A",
+    "CERT",
+    "CERTNYS",
+    "CORRESP",
+    "DEF 14A",
+    "DEFA14A",
+    "FWP",
+    "IRANNOTICE",
+    "NO ACT",
+    "PX14A6G",
+    "PX14A6N",
+    "S-3ASR",
+    "S-8",
+    "S-8 POS",
+    "SC 13G",
+    "SC 13G/A",
+    "SCHEDULE 13G",
+    "SCHEDULE 13G/A",
+    "SD",
+    "UPLOAD",
+    "8-K"
+   ],
+   "items": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "2.02,5.02,5.03,5.07,7.01,8.01,9.01"
+   ]
+  },
+  "files": [
+   {
+    "name": "CIK0000320193-submissions-001.json"
+   }
+  ]
+ }
+}

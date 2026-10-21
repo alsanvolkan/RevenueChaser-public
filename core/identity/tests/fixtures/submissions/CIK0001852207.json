@@ -1,0 +1,72 @@
+{
+ "cik": "1852207",
+ "name": "Bold Eagle Acquisition Corp.",
+ "sic": "6770",
+ "sicDescription": "Blank Checks",
+ "entityType": "operating",
+ "tickers": [
+  "BEAG",
+  "BEAGR",
+  "BEAGU"
+ ],
+ "exchanges": [
+  "Nasdaq",
+  "Nasdaq",
+  "Nasdaq"
+ ],
+ "filings": {
+  "recent": {
+   "form": [
+    "10-K",
+    "10-Q",
+    "3",
+    "4",
+    "424B4",
+    "425",
+    "8-A12B",
+    "8-K",
+    "CERT",
+    "CORRESP",
+    "DRS",
+    "EFFECT",
+    "PRE 14A",
+    "RW",
+    "S-1",
+    "S-1/A",
+    "SC 13D",
+    "SC 13D/A",
+    "SC 13G",
+    "SCHEDULE 13G",
+    "SCHEDULE 13G/A",
+    "UPLOAD",
+    "8-K"
+   ],
+   "items": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "1.01,3.02,5.02,5.03,7.01,8.01,9.01"
+   ]
+  },
+  "files": []
+ }
+}

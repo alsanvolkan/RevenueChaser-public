@@ -1,0 +1,37 @@
+[
+ {
+  "ticker": "AAPL",
+  "sector": "Technology",
+  "industry_type": "Consumer Electronics",
+  "issue_type": "Common Stock",
+  "marketcap": "4881169442800"
+ },
+ {
+  "ticker": "GOOGL",
+  "sector": "Communication Services",
+  "industry_type": "Internet Content & Information",
+  "issue_type": "Common Stock",
+  "marketcap": "2021878080000"
+ },
+ {
+  "ticker": "ASML",
+  "sector": "Technology",
+  "industry_type": "Semiconductor Equipment & Materials",
+  "issue_type": "ADR",
+  "marketcap": "698211079384"
+ },
+ {
+  "ticker": "AZN",
+  "sector": "Healthcare",
+  "industry_type": "Drug Manufacturers",
+  "issue_type": "ADR",
+  "marketcap": "251572774839"
+ },
+ {
+  "ticker": "OZK",
+  "sector": "Financial Services",
+  "industry_type": "Banks",
+  "issue_type": "Common Stock",
+  "marketcap": "4917399274"
+ }
+]

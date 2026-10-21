@@ -1,0 +1,23 @@
+{#
+  Standalone "nothing to show, and here is why" board.
+
+  Written by a runner whose scan produced no rows, so the tab visibly changes
+  instead of silently keeping a stale (or missing) artifact.
+#}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>{{ title }}</title>
+<style>
+body{background:#0d1117;color:#c9d1d9;font-family:'Segoe UI',Consolas,monospace;padding:40px;font-size:13px}
+h1{color:#58a6ff;font-size:18px;margin-bottom:10px}
+.msg{color:#c9d1d9;font-size:14px;margin:14px 0;line-height:1.6}
+.hint{color:#8b949e;font-size:12px;line-height:1.7}
+.stamp{color:#484f58;font-size:11px;margin-top:24px;border-top:1px solid #21262d;padding-top:10px}
+</style></head><body>
+<h1>{{ title }}</h1>
+<div class="msg">{{ message }}</div>
+{% if hint %}
+<div class="hint">{{ hint }}</div>
+{% endif %}
+<div class="stamp">Generated {{ stamp }}</div>
+</body></html>

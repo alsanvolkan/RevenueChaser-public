@@ -1,0 +1,498 @@
+{# Dealer Hedge (demo) tab (/view/dealer_hedge): a static teaching page, rendered by app/dealer_hedge.py with
+   autoescape on. No data, no fetch, no external request: fonts are system fonts and every number comes from the
+   Black-Scholes code in the script below. The only value from the renderer is `source`. #}
+<!DOCTYPE html>
+<html lang="tr" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Dealer Hedge (demo)</title>
+<link rel="icon" href="/static/icons/icon-192.png">
+<style>
+/* Layout: a trading-desk "blotter" — one narrow reading column for theory, a wide instrument panel for the live book. */
+:root{
+  --bg:#f3f1ec; --panel:#ffffff; --fg:#1c1b19; --muted:#6b675f; --line:#d9d4ca;
+  --accent:#0f6e8c;            /* dealer / hedge actions */
+  --buy:#1f8a4c; --sell:#c0392b; /* flow direction */
+  --gamma:#d97b1a; --vanna:#7a4bb8; --charm:#0f6e8c; --vega:#b8266b;
+  --soft:#e9e5dc;
+  --display:Georgia,"Times New Roman",serif; --body:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --bg:#05111F; --panel:#1d2024; --fg:#ebe7df; --muted:#a39d92; --line:#343840; --accent:#5fb8d6; --buy:#4fc07a; --sell:#e8604f; --gamma:#f0a04b; --vanna:#b08ae6; --charm:#5fb8d6; --vega:#e86aa0; --soft:#262a30; color-scheme:dark } }
+:root[data-theme="dark"]{ --bg:#05111F; --panel:#1d2024; --fg:#ebe7df; --muted:#a39d92; --line:#343840; --accent:#5fb8d6; --buy:#4fc07a; --sell:#e8604f; --gamma:#f0a04b; --vanna:#b08ae6; --charm:#5fb8d6; --vega:#e86aa0; --soft:#262a30; color-scheme:dark }
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);line-height:1.55;padding-inline:16px;padding-block:28px 60px;}
+.wrap{max-width:1080px;margin:0 auto;display:grid;gap:40px}
+h1{font-family:var(--display);font-size:clamp(30px,5vw,46px);line-height:1.05;margin:0 0 10px;text-wrap:balance;font-weight:700}
+h2{font-family:var(--display);font-size:clamp(22px,3vw,30px);margin:0 0 14px;line-height:1.15;text-wrap:balance;font-weight:600}
+h3{font-size:16px;margin:0 0 6px;font-weight:600}
+p{margin:0 0 12px;max-width:68ch}
+.lead{font-size:18px;color:var(--muted);max-width:62ch}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;min-width:0}
+.tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.k{font-family:var(--mono)}
+.g-gamma{color:var(--gamma)} .g-vanna{color:var(--vanna)} .g-charm{color:var(--charm)} .g-vega{color:var(--vega)}
+.buy{color:var(--buy);font-weight:600} .sell{color:var(--sell);font-weight:600}
+svg text{font-family:var(--body)}
+.diagram{width:100%;overflow-x:auto}
+.diagram svg{display:block;min-width:640px;max-width:100%;height:auto}
+
+/* Instrument panel */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;display:grid;gap:18px}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px 22px}
+.ctrl label{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-bottom:4px}
+.ctrl label b{color:var(--fg);font-family:var(--mono);font-weight:500}
+.ctrl input[type=range]{width:100%;accent-color:var(--accent)}
+.ctrl select{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit}
+.presets{display:flex;flex-wrap:wrap;gap:8px}
+.presets button, .btn{font:inherit;font-size:13px;padding:7px 12px;border:1px solid var(--line);border-radius:999px;background:var(--bg);color:var(--fg);cursor:pointer}
+.presets button[aria-pressed=true]{background:var(--accent);color:#fff;border-color:var(--accent)}
+.presets button:focus-visible,.btn:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.readout{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.tile{background:var(--bg);border-radius:8px;padding:12px 14px;min-width:0}
+.tile .lbl{font-size:12px;color:var(--muted)}
+.tile .val{font-family:var(--mono);font-size:22px;font-variant-numeric:tabular-nums;margin-top:2px}
+.tile .sub{font-size:12px;color:var(--muted);margin-top:2px}
+.verdict{border-left:4px solid var(--accent);background:var(--bg);padding:12px 16px;border-radius:0 8px 8px 0;font-size:15px}
+.verdict strong{font-size:17px}
+.decomp{display:grid;gap:6px;font-family:var(--mono);font-size:13px;font-variant-numeric:tabular-nums}
+.decomp div{display:grid;grid-template-columns:90px 1fr 110px;gap:10px;align-items:center}
+.bar{height:10px;background:var(--soft);border-radius:4px;position:relative;overflow:hidden}
+.bar i{position:absolute;top:0;bottom:0;border-radius:4px}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.chart{min-width:0}
+.chart canvas{width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.chart .cap{font-size:12px;color:var(--muted);margin-top:6px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.legend span::before{content:"";display:inline-block;width:12px;height:3px;margin-right:6px;vertical-align:middle;background:currentColor}
+
+/* Scenarios */
+.scen{display:grid;gap:10px}
+.scen details{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:0}
+.scen summary{cursor:pointer;padding:14px 18px;font-weight:600;list-style:none;display:flex;gap:10px;align-items:center}
+.scen summary::before{content:"+";font-family:var(--mono);color:var(--accent);width:14px}
+.scen details[open] summary::before{content:"–"}
+.scen .body{padding:0 18px 16px;display:grid;gap:8px}
+.steps{display:grid;gap:6px;counter-reset:s}
+.steps div{display:grid;grid-template-columns:26px 1fr;gap:8px;align-items:start;font-size:14px}
+.steps div::before{counter-increment:s;content:counter(s);font-family:var(--mono);font-size:12px;color:#fff;background:var(--accent);border-radius:50%;width:22px;height:22px;display:grid;place-items:center;margin-top:2px}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tablewrap{overflow-x:auto}
+.res{list-style:none;padding:0;margin:0;display:grid;gap:10px;font-size:14px}
+.res li{padding-left:14px;border-left:2px solid var(--line)}
+.res a{color:var(--accent);font-weight:600;text-decoration:none}
+.res a:hover,.res a:focus-visible{text-decoration:underline}
+.foot{font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
+@media (prefers-reduced-motion:no-preference){ .flowdot{animation:dash 2.4s linear infinite} @keyframes dash{to{stroke-dashoffset:-40}} }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Opsiyon Greek'leri · Dealer akışları · Türkçe anlatım</div>
+  <h1>Piyasa yapıcı nasıl hedge eder, Gamma, Vanna ve Charm bu hedge'i nasıl hareket ettirir?</h1>
+  <p class="lead">Bu sayfa üç videonun anlattığı mekaniği tek bir döngüde birleştirir: müşteri opsiyon alır veya satar, dealer karşı tarafı üstlenir, dayanak varlıkla delta hedge yapar, sonra fiyat, zaman ve oynaklık bu delta'yı değiştirdikçe hedge'ini yeniler. Piyasayı iten "gizli akış" bu yenilemedir.</p>
+</header>
+
+<!-- 1. Core loop -->
+<section>
+  <h2>1. Döngü: her şey dealer'ın delta nötr kalma zorunluluğundan çıkar</h2>
+  <p>Dealer (market maker) yön üzerine bahis oynamaz. Sattığı veya aldığı her opsiyonun delta'sını dayanak varlıkla sıfırlar. Ama delta sabit durmaz. Üç kuvvet onu sürekli değiştirir ve dealer her seferinde hisse alıp satarak sıfıra geri döner. Fiyatı iten şey, bu zorunlu alım satımdır.</p>
+  <div class="diagram card"><svg viewBox="0 0 900 420" role="img" aria-label="Dealer hedge döngüsü">
+    <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker></defs>
+    <!-- boxes -->
+    <g font-size="13">
+      <rect x="20" y="40" width="200" height="70" rx="10" fill="var(--soft)" stroke="var(--line)"/>
+      <text x="120" y="68" text-anchor="middle" font-weight="600" fill="var(--fg)">Müşteriler</text>
+      <text x="120" y="88" text-anchor="middle" fill="var(--muted)">put alır, call satar (koruma)</text>
+
+      <rect x="350" y="40" width="200" height="70" rx="10" fill="var(--accent)" />
+      <text x="450" y="68" text-anchor="middle" font-weight="600" fill="#fff">Dealer defteri</text>
+      <text x="450" y="88" text-anchor="middle" fill="#fff" opacity=".9">short put · long call</text>
+
+      <rect x="680" y="40" width="200" height="70" rx="10" fill="var(--soft)" stroke="var(--line)"/>
+      <text x="780" y="68" text-anchor="middle" font-weight="600" fill="var(--fg)">Delta hedge</text>
+      <text x="780" y="88" text-anchor="middle" fill="var(--muted)">dayanak varlık al / sat</text>
+
+      <rect x="680" y="300" width="200" height="70" rx="10" fill="var(--soft)" stroke="var(--line)"/>
+      <text x="780" y="328" text-anchor="middle" font-weight="600" fill="var(--fg)">Fiyat hareket eder</text>
+      <text x="780" y="348" text-anchor="middle" fill="var(--muted)">hedge akışı piyasayı iter</text>
+
+      <rect x="20" y="300" width="200" height="70" rx="10" fill="var(--soft)" stroke="var(--line)"/>
+      <text x="120" y="328" text-anchor="middle" font-weight="600" fill="var(--fg)">Delta değişir</text>
+      <text x="120" y="348" text-anchor="middle" fill="var(--muted)">yeniden hedge gerekir</text>
+
+      <!-- the three forces -->
+      <rect x="300" y="200" width="300" height="110" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+      <text x="450" y="222" text-anchor="middle" font-size="11" letter-spacing="1.5" fill="var(--muted)">DELTA'YI DEĞİŞTİREN ÜÇ KUVVET</text>
+      <text x="330" y="250" fill="var(--gamma)" font-weight="600">Gamma</text><text x="400" y="250" fill="var(--fg)">fiyat değişince</text>
+      <text x="330" y="272" fill="var(--charm)" font-weight="600">Charm</text><text x="400" y="272" fill="var(--fg)">zaman geçince</text>
+      <text x="330" y="294" fill="var(--vanna)" font-weight="600">Vanna</text><text x="400" y="294" fill="var(--fg)">zımni oynaklık (IV) değişince</text>
+    </g>
+    <!-- arrows -->
+    <g fill="none" stroke="var(--accent)" stroke-width="2.5" marker-end="url(#arr)">
+      <path d="M220,75 L348,75"/>
+      <path d="M550,75 L678,75"/>
+      <path d="M780,112 L780,298"/>
+      <path d="M678,335 L222,335"/>
+      <path d="M120,298 L120,112"/>
+    </g>
+    <g fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="6 6" class="flowdot" opacity=".8" marker-end="url(#arr)">
+      <path d="M560,255 L690,255 L690,300"/>
+      <path d="M300,255 L190,255 L190,300"/>
+    </g>
+    <g font-size="12" fill="var(--muted)">
+      <text x="284" y="65" text-anchor="middle">opsiyon</text>
+      <text x="614" y="65" text-anchor="middle">delta → 0</text>
+      <text x="450" y="355" text-anchor="middle">fiyat, IV, zaman değişti</text>
+      <text x="840" y="200" text-anchor="middle">zorunlu akış</text>
+    </g>
+  </svg></div>
+  <div class="grid2" style="margin-top:14px">
+    <div class="card"><h3>Dealer neden short put, long call?</h3><p>Endekslerde yatırımcılar düşüşe karşı put alır ve getiri için call satar (covered call, overwriting). Dealer bunun karşı tarafıdır: put'ta short, call'da long. Bu yüzden put'ların IV'si call'lardan yüksektir. Bu farka <b>skew</b> denir.</p></div>
+    <div class="card"><h3>Bu defterin delta'sı pozitiftir</h3><p>Short put delta'sı pozitif, long call delta'sı pozitiftir. Dealer net <b>long delta</b> taşır ve nötr kalmak için <b>hisse açığa satar</b>. Bu açık pozisyon, aşağıdaki her kuvvetin "geri alım" baskısına dönüşmesinin sebebidir.</p></div>
+  </div>
+</section>
+
+<!-- 2. Live book -->
+<section>
+  <h2>2. Canlı defter: kaydırıcıları oynatın, dealer'ın ne yapmak zorunda kaldığını izleyin</h2>
+  <p>Aşağıdaki hesaplar Black-Scholes ile yapılır. Defter 100'er kontratlık basit pozisyonlardan oluşur (1 kontrat = 100 hisse). Başlangıç noktası: dayanak 100, IV %20, vadeye 20 gün. Kaydırıcıyı oynattığınızda dealer'ın delta'sı değişir ve sayfa, nötre dönmek için kaç hisse <span class="buy">alması</span> veya <span class="sell">satması</span> gerektiğini gösterir.</p>
+  <div class="panel">
+    <div>
+      <div class="eyebrow">Defter ön ayarı</div>
+      <div class="presets" id="presets">
+        <button data-p="index" aria-pressed="true">Tipik endeks defteri (short put 95, long call 105)</button>
+        <button data-p="shortgamma">Dealer opsiyon satmış (short straddle 100)</button>
+        <button data-p="longgamma">Dealer opsiyon almış (long straddle 100)</button>
+        <button data-p="pin">Tek büyük strike (long call 100, pinning)</button>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="ctrl"><label for="spot">Dayanak fiyat <b id="spotV">100.0</b></label><input type="range" id="spot" min="85" max="115" step="0.25" value="100"></div>
+      <div class="ctrl"><label for="iv">Zımni oynaklık (IV) <b id="ivV">20%</b></label><input type="range" id="iv" min="8" max="60" step="0.5" value="20"></div>
+      <div class="ctrl"><label for="dte">Vadeye kalan gün <b id="dteV">20</b></label><input type="range" id="dte" min="0.25" max="60" step="0.25" value="20"></div>
+      <div class="ctrl"><label for="base">&nbsp;</label><button class="btn" id="reset">Başlangıca dön (100 / %20 / 20 gün)</button></div>
+    </div>
+
+    <div class="verdict" id="verdict">Dealer başlangıçta delta nötr. Bir kaydırıcıyı oynatın.</div>
+
+    <div class="readout">
+      <div class="tile"><div class="lbl">Defterin opsiyon delta'sı</div><div class="val" id="bookDelta">0</div><div class="sub">hisse eşdeğeri</div></div>
+      <div class="tile"><div class="lbl">Dealer'ın hisse hedge'i</div><div class="val" id="hedge">0</div><div class="sub">başlangıçta (− = açığa satış)</div></div>
+      <div class="tile"><div class="lbl">Gereken ek işlem</div><div class="val" id="trade">0</div><div class="sub">şimdi nötre dönmek için</div></div>
+      <div class="tile"><div class="lbl">Defter Gamma'sı</div><div class="val" id="bookGamma">0</div><div class="sub">hisse / 1 puan fiyat</div></div>
+      <div class="tile"><div class="lbl">Defter Vanna'sı</div><div class="val" id="bookVanna">0</div><div class="sub">hisse / +1 puan IV</div></div>
+      <div class="tile"><div class="lbl">Defter Charm'ı</div><div class="val" id="bookCharm">0</div><div class="sub">hisse / 1 gün</div></div>
+      <div class="tile"><div class="lbl">Defter Vega'sı</div><div class="val" id="bookVega">0</div><div class="sub">$ P/L / +1 puan IV</div></div>
+    </div>
+
+    <div>
+      <div class="eyebrow">Ek işlemin kaynağı (yaklaşık ayrıştırma)</div>
+      <div class="decomp" id="decomp"></div>
+    </div>
+
+    <div class="charts">
+      <div class="chart"><canvas id="c1" width="640" height="360"></canvas><div class="cap">Dealer'ın gereken hisse hedge'i, dayanak fiyata göre. Eğrinin eğimi Gamma'dır. Dikey çizgi şu anki fiyat. Soluk eğri: başlangıç durumu.</div></div>
+      <div class="chart"><canvas id="c2" width="640" height="360"></canvas><div class="cap">Her kuvvetin dayanak fiyata göre profili: pozitif değer dealer'ın <b>almak</b> zorunda kaldığı akış (fiyat 1 puan yukarı, IV 1 puan aşağı, 1 gün geçince).</div><div class="legend"><span class="g-gamma">Gamma akışı</span><span class="g-vanna">Vanna akışı (IV −1)</span><span class="g-charm">Charm akışı (1 gün)</span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 3. Greek map -->
+<section>
+  <h2>3. Greek'lerin birbirine bağlantısı</h2>
+  <p>Birinci dereceden Greek'ler opsiyon fiyatının neye duyarlı olduğunu söyler. İkinci dereceden Greek'ler ise <b>Delta'nın</b> neye duyarlı olduğunu söyler. Dealer'ı ilgilendiren hep Delta'dır, çünkü hedge'i Delta'ya göre yapar.</p>
+  <div class="diagram card"><svg viewBox="0 0 900 360" role="img" aria-label="Greek bağlantı haritası">
+    <defs><marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>
+    <g font-size="13">
+      <!-- inputs -->
+      <rect x="30" y="40" width="150" height="54" rx="8" fill="var(--soft)" stroke="var(--line)"/><text x="105" y="72" text-anchor="middle" font-weight="600" fill="var(--fg)">Dayanak fiyat</text>
+      <rect x="30" y="150" width="150" height="54" rx="8" fill="var(--soft)" stroke="var(--line)"/><text x="105" y="182" text-anchor="middle" font-weight="600" fill="var(--fg)">Zaman</text>
+      <rect x="30" y="260" width="150" height="54" rx="8" fill="var(--soft)" stroke="var(--line)"/><text x="105" y="292" text-anchor="middle" font-weight="600" fill="var(--fg)">Zımni oynaklık</text>
+      <!-- delta -->
+      <rect x="390" y="130" width="150" height="80" rx="8" fill="var(--accent)"/><text x="465" y="165" text-anchor="middle" font-weight="700" fill="#fff" font-size="16">Delta</text><text x="465" y="186" text-anchor="middle" fill="#fff" opacity=".9" font-size="12">hedge edilen şey</text>
+      <!-- price -->
+      <rect x="720" y="40" width="150" height="54" rx="8" fill="var(--soft)" stroke="var(--line)"/><text x="795" y="72" text-anchor="middle" font-weight="600" fill="var(--fg)">Opsiyon fiyatı</text>
+      <!-- hedge -->
+      <rect x="720" y="150" width="150" height="54" rx="8" fill="var(--panel)" stroke="var(--accent)" stroke-width="2"/><text x="795" y="182" text-anchor="middle" font-weight="600" fill="var(--fg)">Hisse hedge'i</text>
+      <rect x="720" y="260" width="150" height="54" rx="8" fill="var(--soft)" stroke="var(--line)"/><text x="795" y="292" text-anchor="middle" font-weight="600" fill="var(--fg)">Dealer P/L</text>
+    </g>
+    <g fill="none" stroke-width="2.5" marker-end="url(#arr2)">
+      <path d="M180,67 C300,67 300,160 388,160" stroke="var(--gamma)"/>
+      <path d="M180,177 L388,177" stroke="var(--charm)"/>
+      <path d="M180,287 C300,287 300,195 388,195" stroke="var(--vanna)"/>
+      <path d="M540,170 L718,177" stroke="var(--accent)"/>
+      <path d="M180,287 C450,330 600,330 718,290" stroke="var(--vega)"/>
+      <path d="M180,55 C450,10 600,10 718,55" stroke="var(--muted)"/>
+    </g>
+    <g font-size="12" font-weight="600">
+      <text x="285" y="100" fill="var(--gamma)">Gamma</text>
+      <text x="285" y="170" fill="var(--charm)">Charm</text>
+      <text x="285" y="245" fill="var(--vanna)">Vanna</text>
+      <text x="450" y="340" fill="var(--vega)">Vega (fiyat → IV duyarlılığı)</text>
+      <text x="450" y="22" fill="var(--muted)">Delta (birinci derece)</text>
+      <text x="610" y="160" fill="var(--accent)">hedge = −Delta</text>
+    </g>
+  </svg></div>
+  <div class="tablewrap card" style="margin-top:14px">
+    <table>
+      <thead><tr><th>Greek</th><th>Neyi ölçer</th><th>Uzun opsiyonda işaret (call veya put fark etmez)</th><th>En güçlü olduğu yer</th><th>Dealer için anlamı</th></tr></thead>
+      <tbody>
+        <tr><td class="g-gamma"><b>Gamma</b></td><td>Fiyat → Delta</td><td>Her zaman pozitif</td><td>Strike'ta, kısa vadede</td><td>Long gamma: harekete karşı işlem (sakinleştirir). Short gamma: hareketle aynı yönde (büyütür).</td></tr>
+        <tr><td class="g-charm"><b>Charm</b></td><td>Zaman → Delta</td><td>Strike üstünde +, altında −, strike'ta ≈ 0</td><td>Strike çevresinde, son günlerde</td><td>Long opsiyon: strike altında destekleyici, üstünde bastırıcı. Short opsiyonda tersi.</td></tr>
+        <tr><td class="g-vanna"><b>Vanna</b></td><td>IV → Delta</td><td>Strike üstünde −, altında +, strike'ta ≈ 0</td><td>Tüm vadelerde, moneyness kayar</td><td>IV düşünce OTM opsiyonların delta'sı erir, dealer hedge'ini geri alır.</td></tr>
+        <tr><td class="g-vega"><b>Vega</b></td><td>IV → Opsiyon fiyatı</td><td>Her zaman pozitif</td><td>ATM, uzun vadede</td><td>Dealer genelde short vega (put satmış). IV sıçrayınca zarar eder, baskı altında hedge'i daha sert yapar.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 4. Scenarios -->
+<section>
+  <h2>4. Senaryolar: kuvvetler birleşince piyasa ne yapar?</h2>
+  <p>Her senaryoyu açtığınızda canlı defter o duruma ayarlanır. Adımları okuyup yukarıdaki sayılarla karşılaştırın.</p>
+  <div class="scen" id="scen">
+    <details data-s="dull"><summary>"Durgun piyasada asla açığa satma" (Vanna + Charm geri alımı)</summary><div class="body">
+      <div class="steps">
+        <div>Dealer tipik endeks defterindedir: short put, long call, hisse açığa satılmış.</div>
+        <div>Piyasa sakin. Her geçen gün OTM put'ların delta'sı sıfıra erir (<span class="g-charm">Charm</span>). Dealer'ın short put'tan gelen pozitif delta'sı küçülür.</div>
+        <div>Sakinlik IV'yi de düşürür. OTM delta'ları bir kez daha erir (<span class="g-vanna">Vanna</span>).</div>
+        <div>Defterin delta'sı düştü, ama açık hisse pozisyonu aynı. Dealer artık fazla short. Nötre dönmek için <span class="buy">hisse geri alır</span>.</div>
+        <div>Bu alım gün sonu ve gün başında, olay geçtikten sonra IV çökünce en belirgindir. Durgun piyasa yavaş yavaş yukarı sürüklenir.</div>
+      </div></div></details>
+    <details data-s="squeeze"><summary>Gamma squeeze (dealer short gamma, yükseliş kovalamak zorunda)</summary><div class="body">
+      <div class="steps">
+        <div>Yatırımcılar yoğun şekilde OTM call alır. Dealer call'da short kalır, yani <b>short gamma</b>.</div>
+        <div>Fiyat strike'a yaklaşınca call delta'sı 0'dan 0,5'e, sonra 1'e sıçrar (<span class="g-gamma">Gamma</span>). Dealer'ın negatif delta'sı hızla büyür.</div>
+        <div>Nötre dönmek için dealer <span class="buy">hisse alır</span>. Alım fiyatı yukarı iter, delta yine büyür, dealer yine alır.</div>
+        <div>Vade kısaldıkça Gamma dar aralıkta yoğunlaşır. 0DTE'de bu döngü en serttir.</div>
+      </div></div></details>
+    <details data-s="crash"><summary>Düşüşte hızlanma (short gamma + Vanna ters yönde)</summary><div class="body">
+      <div class="steps">
+        <div>Fiyat düşmeye başlar. Dealer'ın short put'ları ATM'ye yaklaşır, delta'ları büyür (<span class="g-gamma">Gamma</span>). Dealer <span class="sell">hisse satar</span>.</div>
+        <div>Düşüşle birlikte IV sıçrar. OTM put delta'ları daha da büyür (<span class="g-vanna">Vanna</span>, strike altında pozitif). Dealer yine <span class="sell">satar</span>.</div>
+        <div>Dealer short vega olduğundan IV sıçraması P/L'yi de vurur (<span class="g-vega">Vega</span>). Risk limitleri hedge'i daha agresif yapar.</div>
+        <div>Satış fiyatı düşürür, IV'yi yükseltir, döngü kendini besler. Yüksek IV rejiminde düşüşler bu yüzden hızlıdır.</div>
+      </div></div></details>
+    <details data-s="pin"><summary>OPEX pinning (fiyatın büyük strike'a yapışması)</summary><div class="body">
+      <div class="steps">
+        <div>Dealer tek bir strike'ta büyük long opsiyon pozisyonu taşır (yatırımcılar oraya çok satmıştır).</div>
+        <div>Fiyat strike'ın üstüne çıkınca delta büyür, dealer <span class="sell">satar</span> ve fiyatı aşağı çeker.</div>
+        <div>Fiyat strike'ın altına inince delta küçülür, dealer <span class="buy">alır</span> ve fiyatı yukarı çeker (<span class="g-gamma">long Gamma</span>).</div>
+        <div>Vade yaklaştıkça <span class="g-charm">Charm</span> da aynı yönde çalışır: strike altında destekleyici, üstünde bastırıcı. Fiyat strike'a mıhlanır.</div>
+        <div>Dealer bu strike'ta <b>short</b> olsaydı her şey tersine dönerdi: fiyat strike'tan itilirdi.</div>
+      </div></div></details>
+    <details data-s="crush"><summary>Olay sonrası "vol crush" (Fed, bilanço geçince)</summary><div class="body">
+      <div class="steps">
+        <div>Olaydan önce koruma talebi IV'yi şişirir. Dealer yüksek IV'den put satmıştır, bol hisse açığa satmıştır.</div>
+        <div>Olay geçer, belirsizlik çözülür, IV çöker. OTM put delta'ları erir (<span class="g-vanna">Vanna</span>).</div>
+        <div>Dealer fazla short kalır, <span class="buy">hisse geri alır</span>. Piyasa "haber kötü bile olsa" yükselir. Buna "sell the rumor, buy the news" akışı da denir.</div>
+        <div>Aynı anda <span class="g-vega">Vega</span> kanalından opsiyon fiyatları düşer: dealer'ın short vega pozisyonu kazanır, risk bütçesi açılır.</div>
+      </div></div></details>
+  </div>
+</section>
+
+<!-- 5. Market maker mindset -->
+<section>
+  <h2>5. Market maker gözüyle: hedge neden "kenar" değil, zorunluluktur</h2>
+  <div class="grid2">
+    <div class="card"><h3>Delta nötr, ama diğer Greek'lerde çıplak</h3><p>Dealer delta'yı sıfırlar ama Gamma, Vega, Vanna ve Charm'ı taşımaya devam eder. Kazancı spread'den ve zımni oynaklığın gerçekleşen oynaklıktan yüksek olmasından gelir. Zararı, hedge'i yetiştiremediği sert hareketlerden gelir.</p></div>
+    <div class="card"><h3>Hedge yönü pozisyonun işaretine bağlıdır</h3><p>Aynı strike, aynı vade, aynı IV: dealer long ise fiyatı sakinleştirir, short ise büyütür. Bu yüzden "dealer'lar long gamma mı short gamma mı" sorusu, piyasanın o hafta trend mi yoksa ortalamaya dönüş mü yapacağını anlatan en güçlü ipuçlarından biridir.</p></div>
+    <div class="card"><h3>Vanna ve Charm en çok short-stock defterde görünür</h3><p>Dealer'ın tipik endeks defteri hisse açığa satmayı gerektirir. Bu açık pozisyon, zaman ve IV düşüşüyle "fazla" hale gelir ve geri alınır. Vanna/Charm akışlarının genelde yukarı yönlü olmasının nedeni budur. Ancak IV yükselir veya dealer pozisyonu tersine dönerse akış da tersine döner.</p></div>
+    <div class="card"><h3>Rejim düşüncesi</h3><p>Üçüncü videodaki market maker'ın dediği gibi: tahmin yerine "nowcast". Şu anki IV seviyesi, skew, dealer gamma işareti ve vadeye kalan süre bir rejim tanımlar. O rejimde hangi akışın baskın olacağı (trend mi, ortalamaya dönüş mü) buradan okunur.</p></div>
+  </div>
+</section>
+
+<!-- 6. Resources -->
+<section>
+  <h2>6. En kaliteli kaynaklar: öğrenme sırasıyla</h2>
+  <p>Önce kısa tanımlar, sonra akış mekaniği, sonra akademik kanıt, en sonda veri araçları ve kitaplar. Her bağlantı yeni sekmede açılır. Süreler video uzunluğudur.</p>
+  <div class="grid2">
+    <div class="card">
+      <h3>Adım 1 · Temel tanımlar</h3>
+      <ul class="res">
+        <li><a href="https://www.youtube.com/watch?v=X-RylGDzFr0" target="_blank" rel="noopener noreferrer">How Vanna and Charm Effects Work</a> · Cboe, 1:33 · İzlediğiniz ilk video, en kısa resmi tanım.</li>
+        <li><a href="https://www.youtube.com/watch?v=w56Od6_qJ7A" target="_blank" rel="noopener noreferrer">What is Gamma Hedging?</a> · Cboe / Mandy Xu, 1:56 · Dealer neden delta hedge yapar, long/short gamma ne demek. Devamı: <a href="https://www.youtube.com/watch?v=PELhP-lgnIM" target="_blank" rel="noopener noreferrer">The Gamma Squeeze</a>, 1:23.</li>
+        <li><a href="https://www.youtube.com/watch?v=0oJqC9QK-I0" target="_blank" rel="noopener noreferrer">How Options Gamma, Vanna and Charm Flows Move the Markets</a> · Perfiliev Financial Training, 13:15 · Dealer delta'sının fiyat, IV ve zamanla kaymasını en net görselleştiren tek video.</li>
+        <li><a href="https://www.youtube.com/watch?v=NrpdRNWEIHg" target="_blank" rel="noopener noreferrer">The Hidden Forces That Move Markets</a> · OptionsDepth, 11:00 · İzlediğiniz ikinci video. Devamı: <a href="https://www.youtube.com/watch?v=-9EqMXXa0ms" target="_blank" rel="noopener noreferrer">Market Maker Moves with Delta Hedging</a>, 6:20.</li>
+        <li><a href="https://spotgamma.com/gamma-exposure-explained/" target="_blank" rel="noopener noreferrer">Gamma Exposure (GEX) Explained</a> · SpotGamma, yazı · GEX, gamma flip, Call Wall / Put Wall. Ayrıca <a href="https://spotgamma.com/vanna-and-charm-explained/" target="_blank" rel="noopener noreferrer">Vanna and Charm Explained</a> ve <a href="https://spotgamma.com/iv-crush-explained/" target="_blank" rel="noopener noreferrer">IV Crush Explained</a>.</li>
+        <li><a href="https://www.youtube.com/watch?v=nebIvzjd_gw" target="_blank" rel="noopener noreferrer">Gamma Squeeze Explained</a> · Ryan O'Connell CFA, 11:49 · Call alımının dealer hisse alımına nasıl dönüştüğü, ders kitabı düzeni.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Greeks_(finance)" target="_blank" rel="noopener noreferrer">Greeks (finance)</a> · Wikipedia · Delta, Gamma, Vega, Vanna, Charm'ın kapalı form formülleri. Bu sayfanın hesapları da bunlara dayanır.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Adım 2 · Dealer akış mekaniği</h3>
+      <ul class="res">
+        <li><a href="https://www.youtube.com/watch?v=8awiGrquYXI" target="_blank" rel="noopener noreferrer">Vol Curves and Vanna Charm with Cem Karsan</a> · The Derivative (RCM), 1:32 saat · Karsan'ın en kapsamlı röportajı: OPEX'e giden vanna/charm akışları, skew, "window of weakness".</li>
+        <li><a href="https://www.youtube.com/watch?v=o8NMI3jpu3A" target="_blank" rel="noopener noreferrer">Why Opex Week Is the Best Time to Sell Volatility</a> · tastylive / Cem Karsan, 14:56 · "Durgun piyasada açığa satma" mantığının güncel ve kısa anlatımı. Ayrıca <a href="https://www.youtube.com/watch?v=QAFDAuK_tqU" target="_blank" rel="noopener noreferrer">Quarter-End Flow</a>, 12:48.</li>
+        <li><a href="https://www.youtube.com/watch?v=Yz9OtyOHogc" target="_blank" rel="noopener noreferrer">Why Hidden Option Flows Move Markets</a> · Excess Returns / Cem Karsan, 1:04 saat · 2025 tarihli, daha düzenli anlatım.</li>
+        <li><a href="https://www.youtube.com/watch?v=u6KtNfjpm9E" target="_blank" rel="noopener noreferrer">Vanna, Charm &amp; Dealer Hedging Flows</a> · SpotGamma, 13:38 · SpotGamma'nın akış modeli. Ayrıca <a href="https://www.youtube.com/watch?v=mSeZpocDnYk" target="_blank" rel="noopener noreferrer">Brent Kochuba röportajı</a>, 1:03 saat.</li>
+        <li><a href="https://www.youtube.com/watch?v=hXLgfkmDLrw" target="_blank" rel="noopener noreferrer">Trading Volatility in Volatile Markets</a> · Forward Guidance / Benn Eifert (QVR), 1:09 saat · Olay sonrası vol crush, short gamma geri besleme döngüsü.</li>
+        <li><a href="https://www.youtube.com/watch?v=aIbGZQ6x8fU" target="_blank" rel="noopener noreferrer">SPX Implied Volatility &amp; VIX</a> · SpotGamma / Imran Lakha, 1:00 saat · Eski banka vol trader'ından skew ve vol yüzeyi.</li>
+        <li><a href="https://www.cboe.com/insights/posts/volatility-insights-evaluating-the-market-impact-of-spx-0-dte-options/" target="_blank" rel="noopener noreferrer">Much Ado About 0DTEs</a> · Cboe / Mandy Xu, yazı · Katılımcı etiketli gerçek veriyle dealer net gamma'sını ölçer. "Rekor short gamma" iddialarına panzehir.</li>
+        <li><a href="https://moontower.substack.com/p/dynamic-hedging-and-option-pl-decomposition" target="_blank" rel="noopener noreferrer">Dynamic Hedging &amp; Option P/L Decomposition</a> · Moontower / Kris Abdelmessih, yazı · Eski SIG market maker'ı gün gün hedge'i ve P/L ayrışmasını gösterir. Pratikte "hedge nedir" sorusunun en temiz cevabı.</li>
+        <li><a href="https://bsic.it/how-dealers-gamma-impacts-underlying-stocks/" target="_blank" rel="noopener noreferrer">How Dealers' Gamma Impacts Underlying Stocks</a> · BSIC, yazı · Pratisyen dilini akademik makalelere bağlayan ara basamak.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Adım 3 · Akademik kanıt</h3>
+      <ul class="res">
+        <li><a href="https://squeezemetrics.com/download/The_Implied_Order_Book.pdf" target="_blank" rel="noopener noreferrer">The Implied Order Book</a> · SqueezeMetrics, 2020, PDF · GEX ve VEX (vanna exposure) çerçevesinin kaynağı. Öncesi: <a href="https://squeezemetrics.com/download/white_paper.pdf" target="_blank" rel="noopener noreferrer">Gamma Exposure (2017)</a>.</li>
+        <li><a href="https://www3.nd.edu/~zda/intramom.pdf" target="_blank" rel="noopener noreferrer">Hedging Demand and Market Intraday Momentum</a> · Baltussen ve ark., JFE 2021, PDF · 60'tan fazla vadeli piyasada son 30 dakikanın gün içi getiriyi takip ettiğini ve bunun gamma hedge talebiyle ölçeklendiğini gösterir. "Gün sonu akışı" iddiasının en güçlü hakemli kanıtı.</li>
+        <li><a href="https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3725454" target="_blank" rel="noopener noreferrer">Gamma Fragility</a> · Barbon &amp; Buraschi, 2021 · Negatif dealer gamma + düşük likidite = gün içi momentum ve daha büyük flash crash; pozitif gamma = ortalamaya dönüş.</li>
+        <li><a href="https://math.nyu.edu/inmemoriam/avellaneda/qf3601.pdf" target="_blank" rel="noopener noreferrer">A Market-Induced Mechanism for Stock Pinning</a> · Avellaneda &amp; Lipkin, 2003, PDF · Pinning'in teorik modeli. Ampirik kanıt: Ni, Pearson &amp; Poteshman, JFE 2005 ("Stock Price Clustering on Option Expiration Dates") ve <a href="https://ideas.repec.org/a/eee/jfinec/v106y2012i3p566-585.html" target="_blank" rel="noopener noreferrer">Golez &amp; Jackwerth, 2012</a>.</li>
+        <li>0DTE tartışması · Dim, Eraker &amp; Vilkov (SSRN 4692190), Brogaard, Han &amp; Won (SSRN 4426358) ve <a href="https://quantpedia.com/do-sp500-0dtes-options-increase-market-volatility/" target="_blank" rel="noopener noreferrer">Adams ve ark. (2026)</a> · Kanıt karışık: biri 0DTE'nin oynaklığı artırdığını, diğeri dealer karşı yön hedge'iyle azalttığını bulur.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Adım 4 · Veri araçları ve kitaplar</h3>
+      <ul class="res">
+        <li><a href="https://spotgamma.com" target="_blank" rel="noopener noreferrer">SpotGamma</a> · Günlük SPX gamma seviyeleri, HIRO canlı hedge etkisi, vanna/charm haritaları. Ücretli, blog ücretsiz.</li>
+        <li><a href="https://optionsdepth.com" target="_blank" rel="noopener noreferrer">OptionsDepth</a> · Cboe katılımcı etiketli veriyle gamma, vanna, charm ısı haritaları. Tahmin modeli değil, gerçek pozisyon verisi.</li>
+        <li><a href="https://squeezemetrics.com/monitor" target="_blank" rel="noopener noreferrer">SqueezeMetrics DIX/GEX</a> · Orijinal GEX ve Dark Index serileri. Ücretsiz alternatif: <a href="https://www.tradingvolatility.net" target="_blank" rel="noopener noreferrer">tradingvolatility.net</a>. Diğerleri: <a href="https://menthorq.com" target="_blank" rel="noopener noreferrer">MenthorQ</a>, <a href="https://vol.land" target="_blank" rel="noopener noreferrer">Volland</a>, <a href="https://tier1alpha.com" target="_blank" rel="noopener noreferrer">Tier1 Alpha</a>, <a href="https://gexbot.com" target="_blank" rel="noopener noreferrer">GEXBot</a>.</li>
+        <li><b>Option Volatility and Pricing</b> · Sheldon Natenberg, 2. baskı 2014 · Market maker'ların standart ders kitabı. <a href="https://www.youtube.com/watch?v=dfXzwZ8Zl3M" target="_blank" rel="noopener noreferrer">tastytrade röportajı</a>, 18:46.</li>
+        <li><b>Dynamic Hedging</b> · Nassim Taleb, 1997 · Vanna ("DdeltaDvol") ve Charm ("DdeltaDtime") kavramlarının çıktığı yer. Yoğun ama orijinal.</li>
+        <li><b>Positional Option Trading</b> ve <b>Volatility Trading</b> · Euan Sinclair · Varyans primi, skew ve pozisyon boyutu. <a href="https://www.youtube.com/watch?v=yLPiEk1lGHk" target="_blank" rel="noopener noreferrer">Flirting with Models röportajı</a>, 1:01 saat.</li>
+        <li><b>Trading Volatility, Correlation, Term Structure and Skew</b> · Colin Bennett, 2014 · Sell-side el kitabı. <a href="https://moontowermeta.com/notes-on-trading-volatility-correlation-term-structure-and-skew" target="_blank" rel="noopener noreferrer">Moontower notları</a>.</li>
+      </ul>
+    </div>
+  </div>
+  <p style="margin-top:14px;font-size:14px;color:var(--muted)">Uyarı: OptionsDepth ve Cboe dışındaki tüm GEX/vanna/charm panoları dealer pozisyonunu açık pozisyon (open interest) verisi ve varsayımlarla tahmin eder. Seviyeleri yapı olarak okuyun, yön tahmini olarak değil. "Never short a dull market" 1890'lardan kalma bir Wall Street atasözüdür; vanna/charm ile açıklaması Karsan'a aittir.</p>
+</section>
+
+<div class="foot">Hesaplar eğitim amaçlı Black-Scholes modelidir (faiz 0, temettü 0). Gerçek dealer defterleri yüzlerce strike ve vadeden oluşur, IV ve skew ayrı ayrı hareket eder. Yön ve büyüklük ilişkileri doğrudur, sayılar örnektir. Kaynak: {{ source }}. Bu sekme veri okumaz, hiçbir yere istek göndermez ve hiçbir şey kaydetmez.</div>
+</div>
+
+<script>
+(function(){
+  // ---------- Black-Scholes & Greeks ----------
+  function ncdf(x){ const t=1/(1+0.2316419*Math.abs(x)); const d=0.3989422804014327*Math.exp(-x*x/2); let p=d*t*(0.319381530+t*(-0.356563782+t*(1.781477937+t*(-1.821255978+t*1.330274429)))); return x>=0?1-p:p; }
+  function npdf(x){ return Math.exp(-x*x/2)/Math.sqrt(2*Math.PI); }
+  // returns per-share greeks for one option. T in years, sigma decimal.
+  function greeks(S,K,T,sig,isCall){
+    T=Math.max(T,1e-6); const sq=Math.sqrt(T);
+    const d1=(Math.log(S/K)+0.5*sig*sig*T)/(sig*sq), d2=d1-sig*sq;
+    const delta=isCall?ncdf(d1):ncdf(d1)-1;
+    const gamma=npdf(d1)/(S*sig*sq);
+    const vega=S*npdf(d1)*sq;                 // per 1.00 of sigma
+    const vanna=-npdf(d1)*d2/sig;             // dDelta/dSigma per 1.00 of sigma
+    const charm=-npdf(d1)*(-d2)/(2*T);        // dDelta/dT per year (r=0). Sign: dDelta/dt (time forward) = +npdf*d2/(2T)
+    // dDelta/d(time passing) = npdf(d1)*d2/(2T) per year, same for call and put
+    const charmFwd=npdf(d1)*d2/(2*T);
+    return {delta,gamma,vega,vanna,charm:charmFwd};
+  }
+  // Book: array of {K, isCall, qty} qty = dealer contracts (positive = dealer long), 100 shares each
+  const PRESETS={
+    index:{name:'Tipik endeks defteri',legs:[{K:95,isCall:false,qty:-100},{K:105,isCall:true,qty:100}]},
+    shortgamma:{name:'Short straddle',legs:[{K:100,isCall:true,qty:-100},{K:100,isCall:false,qty:-100}]},
+    longgamma:{name:'Long straddle',legs:[{K:100,isCall:true,qty:100},{K:100,isCall:false,qty:100}]},
+    pin:{name:'Tek strike long call',legs:[{K:100,isCall:true,qty:200}]}
+  };
+  const BASE={S:100,iv:20,dte:20};
+  let preset='index';
+  const $=id=>document.getElementById(id);
+  const spot=$('spot'),iv=$('iv'),dte=$('dte');
+
+  function book(S,ivPct,days){
+    const sig=ivPct/100, T=days/365; let d=0,g=0,v=0,va=0,ch=0;
+    for(const l of PRESETS[preset].legs){ const gr=greeks(S,l.K,T,sig,l.isCall); const n=l.qty*100; d+=gr.delta*n; g+=gr.gamma*n; v+=gr.vega*n; va+=gr.vanna*n; ch+=gr.charm*n; }
+    return {delta:d, gamma:g, vega:v/100, vanna:va/100, charm:ch/365}; // vega $ per 1 vol pt; vanna shares per 1 vol pt; charm shares per day
+  }
+  const fmt=(x,dec=0)=>{ const s=(Math.round(x*Math.pow(10,dec))/Math.pow(10,dec)).toLocaleString('tr-TR',{minimumFractionDigits:dec,maximumFractionDigits:dec}); return (x>0?'+':'')+s; };
+
+  function update(){
+    const S=+spot.value, ivP=+iv.value, days=+dte.value;
+    $('spotV').textContent=S.toFixed(2); $('ivV').textContent=ivP+'%'; $('dteV').textContent=days;
+    const b0=book(BASE.S,BASE.iv,BASE.dte), b=book(S,ivP,days);
+    const hedge0=-b0.delta;                 // shares held at baseline
+    const need=-b.delta - hedge0;           // extra trade now
+    $('bookDelta').textContent=fmt(b.delta);
+    $('hedge').textContent=fmt(hedge0);
+    const tr=$('trade'); tr.textContent=fmt(need); tr.className='val '+(need>1?'buy':need<-1?'sell':'');
+    $('bookGamma').textContent=fmt(b.gamma,0);
+    $('bookVanna').textContent=fmt(b.vanna,0);
+    $('bookCharm').textContent=fmt(b.charm,0);
+    $('bookVega').textContent=fmt(b.vega,0);
+    // decomposition (first-order, around baseline): hedge change = -(gamma*dS + vanna*dIV + charm*dt)
+    const dS=S-BASE.S, dIV=ivP-BASE.iv, dt=BASE.dte-days;
+    const cg=-(b0.gamma*dS), cv=-(b0.vanna*dIV), cc=-(b0.charm*dt);
+    const approx=cg+cv+cc; const rest=need-approx;
+    const rows=[['Gamma',cg,'var(--gamma)'],['Vanna',cv,'var(--vanna)'],['Charm',cc,'var(--charm)'],['Konveks.',rest,'var(--muted)']];
+    const mx=Math.max(1,...rows.map(r=>Math.abs(r[1])));
+    $('decomp').innerHTML=rows.map(r=>`<div><span style="color:${r[2]}">${r[0]}</span><div class="bar"><i style="background:${r[2]};left:${r[1]>=0?50:50-Math.abs(r[1])/mx*50}%;width:${Math.abs(r[1])/mx*50}%"></i></div><span class="${r[1]>1?'buy':r[1]<-1?'sell':''}">${fmt(r[1])} hisse</span></div>`).join('');
+    // verdict
+    const v=$('verdict'); const abs=Math.abs(need);
+    let why=[]; if(Math.abs(dS)>0.01) why.push(`fiyat ${dS>0?'yükseldi':'düştü'} (Gamma)`); if(Math.abs(dIV)>0.01) why.push(`IV ${dIV>0?'yükseldi':'düştü'} (Vanna)`); if(Math.abs(dt)>0.01) why.push(`${dt>0?dt+' gün geçti':'vade uzadı'} (Charm)`);
+    if(abs<1){ v.innerHTML='<strong>Dealer delta nötr.</strong> Bir kaydırıcıyı oynatın.'; v.style.borderColor='var(--accent)'; }
+    else { const act=need>0?'<span class="buy">ALMAK</span>':'<span class="sell">SATMAK</span>'; v.innerHTML=`<strong>Dealer ${fmt(Math.abs(need)).replace('+','')} hisse ${act} zorunda.</strong> Sebep: ${why.join(', ')}. ${need>0?'Bu alım fiyatı yukarı iter.':'Bu satış fiyatı aşağı iter.'} ${b.gamma<0?'Defter short gamma: hedge hareketle aynı yönde, hareketi büyütür.':'Defter long gamma: hedge harekete karşı, hareketi sakinleştirir.'}`; v.style.borderColor=need>0?'var(--buy)':'var(--sell)'; }
+    draw1(S,ivP,days,b0); draw2(S,ivP,days);
+  }
+
+  // ---------- charts ----------
+  const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  function axes(ctx,W,H,pad,xmin,xmax,ymin,ymax,xlab,ylab){
+    ctx.clearRect(0,0,W,H); ctx.font='12px -apple-system, Segoe UI, Roboto, Arial, sans-serif'; ctx.fillStyle=css('--muted'); ctx.strokeStyle=css('--line'); ctx.lineWidth=1;
+    const sx=x=>pad.l+(x-xmin)/(xmax-xmin)*(W-pad.l-pad.r), sy=y=>H-pad.b-(y-ymin)/(ymax-ymin)*(H-pad.t-pad.b);
+    for(let x=Math.ceil(xmin/5)*5;x<=xmax;x+=5){ ctx.beginPath(); ctx.moveTo(sx(x),pad.t); ctx.lineTo(sx(x),H-pad.b); ctx.stroke(); ctx.textAlign='center'; ctx.fillText(x,sx(x),H-pad.b+16); }
+    const step=niceStep((ymax-ymin)/5);
+    for(let y=Math.ceil(ymin/step)*step;y<=ymax;y+=step){ ctx.beginPath(); ctx.moveTo(pad.l,sy(y)); ctx.lineTo(W-pad.r,sy(y)); ctx.stroke(); ctx.textAlign='right'; ctx.fillText(Math.round(y).toLocaleString('tr-TR'),pad.l-6,sy(y)+4); }
+    if(ymin<0&&ymax>0){ ctx.strokeStyle=css('--muted'); ctx.beginPath(); ctx.moveTo(pad.l,sy(0)); ctx.lineTo(W-pad.r,sy(0)); ctx.stroke(); }
+    ctx.textAlign='center'; ctx.fillText(xlab,(pad.l+W-pad.r)/2,H-4); ctx.save(); ctx.translate(12,(pad.t+H-pad.b)/2); ctx.rotate(-Math.PI/2); ctx.fillText(ylab,0,0); ctx.restore();
+    return {sx,sy};
+  }
+  function niceStep(r){ const p=Math.pow(10,Math.floor(Math.log10(r))); const m=r/p; return (m<1.5?1:m<3.5?2:m<7.5?5:10)*p; }
+  function line(ctx,pts,color,width,dash){ ctx.strokeStyle=color; ctx.lineWidth=width; ctx.setLineDash(dash||[]); ctx.beginPath(); pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1])); ctx.stroke(); ctx.setLineDash([]); }
+  const xs=[]; for(let x=85;x<=115;x+=0.5) xs.push(x);
+
+  function draw1(S,ivP,days,b0){
+    const c=$('c1'),ctx=c.getContext('2d'),W=c.width,H=c.height,pad={l:62,r:16,t:16,b:34};
+    const cur=xs.map(x=>-book(x,ivP,days).delta), base=xs.map(x=>-book(x,BASE.iv,BASE.dte).delta);
+    const all=cur.concat(base); let ymin=Math.min(...all),ymax=Math.max(...all); const m=(ymax-ymin)*0.1||100; ymin-=m; ymax+=m;
+    const {sx,sy}=axes(ctx,W,H,pad,85,115,ymin,ymax,'Dayanak fiyat','Gereken hisse hedge\'i');
+    line(ctx,xs.map((x,i)=>[sx(x),sy(base[i])]),css('--muted'),1.5,[4,4]);
+    line(ctx,xs.map((x,i)=>[sx(x),sy(cur[i])]),css('--accent'),2.5);
+    ctx.strokeStyle=css('--fg'); ctx.setLineDash([3,3]); ctx.beginPath(); ctx.moveTo(sx(S),pad.t); ctx.lineTo(sx(S),H-pad.b); ctx.stroke(); ctx.setLineDash([]);
+    const y=-book(S,ivP,days).delta; ctx.fillStyle=css('--accent'); ctx.beginPath(); ctx.arc(sx(S),sy(y),5,0,7); ctx.fill();
+    const y0=-b0.delta; ctx.fillStyle=css('--muted'); ctx.beginPath(); ctx.arc(sx(BASE.S),sy(y0),4,0,7); ctx.fill();
+    ctx.fillStyle=css('--fg'); ctx.textAlign='left'; ctx.font='12px ui-monospace, Consolas, Menlo, monospace'; ctx.fillText('hedge '+fmt(y),sx(S)+8,sy(y)-8);
+  }
+  function draw2(S,ivP,days){
+    const c=$('c2'),ctx=c.getContext('2d'),W=c.width,H=c.height,pad={l:62,r:16,t:16,b:34};
+    const g=xs.map(x=>-book(x,ivP,days).gamma), v=xs.map(x=>book(x,ivP,days).vanna), ch=xs.map(x=>-book(x,ivP,days).charm);
+    // sign: flow = -(gamma*dS) with dS=+1 ; vanna flow for dIV=-1 => -(vanna*-1)=+vanna ; charm flow for dt=+1 => -charm
+    const all=g.concat(v,ch); let ymin=Math.min(...all),ymax=Math.max(...all); const m=(ymax-ymin)*0.1||100; ymin-=m; ymax+=m;
+    const {sx,sy}=axes(ctx,W,H,pad,85,115,ymin,ymax,'Dayanak fiyat','Dealer akışı (hisse, + = alım)');
+    line(ctx,xs.map((x,i)=>[sx(x),sy(g[i])]),css('--gamma'),2.2);
+    line(ctx,xs.map((x,i)=>[sx(x),sy(v[i])]),css('--vanna'),2.2);
+    line(ctx,xs.map((x,i)=>[sx(x),sy(ch[i])]),css('--charm'),2.2);
+    ctx.strokeStyle=css('--fg'); ctx.setLineDash([3,3]); ctx.beginPath(); ctx.moveTo(sx(S),pad.t); ctx.lineTo(sx(S),H-pad.b); ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // ---------- wiring ----------
+  [spot,iv,dte].forEach(el=>el.addEventListener('input',update));
+  $('reset').addEventListener('click',()=>{ spot.value=BASE.S; iv.value=BASE.iv; dte.value=BASE.dte; update(); });
+  $('presets').addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b) return; preset=b.dataset.p; [...$('presets').children].forEach(x=>x.setAttribute('aria-pressed',x===b)); update(); });
+  function setPreset(p){ preset=p; [...$('presets').children].forEach(x=>x.setAttribute('aria-pressed',x.dataset.p===p)); }
+  const SCEN={
+    dull:()=>{ setPreset('index'); spot.value=100.5; iv.value=15; dte.value=12; },
+    squeeze:()=>{ setPreset('shortgamma'); spot.value=104; iv.value=24; dte.value=3; },
+    crash:()=>{ setPreset('index'); spot.value=94; iv.value=32; dte.value=18; },
+    pin:()=>{ setPreset('pin'); spot.value=101.5; iv.value=18; dte.value=1; },
+    crush:()=>{ setPreset('index'); spot.value=100; iv.value=12; dte.value=19; }
+  };
+  document.querySelectorAll('#scen details').forEach(d=>d.addEventListener('toggle',()=>{ if(d.open&&SCEN[d.dataset.s]){ SCEN[d.dataset.s](); update(); document.querySelectorAll('#scen details').forEach(o=>{ if(o!==d) o.open=false; }); } }));
+  update();
+  if(window.matchMedia){ window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',update); }
+})();
+</script>
+
+</body>
+</html>

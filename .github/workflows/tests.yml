@@ -1,0 +1,91 @@
+# Unit suite and end-to-end tier on every PR into main and on main (issue #103).
+# Both are offline by design (root conftest.py blocks the network; e2e talks only
+# to its local mock-provider server), so no secrets are needed.
+name: tests
+
+# CI minutes are limited, so this workflow runs only where it decides a merge:
+#   - a pull request whose base is `main` (the daily batch PR, or a gated PR: see CLAUDE.md, PR granularity);
+#   - a push to `main` (the backstop for semantic conflicts).
+# A push to a work branch or to a `batch/*` branch runs nothing until that PR to `main` exists.
+# Docs-only changes skip CI too. The filter lists every path that may run tests, then drops
+# Markdown, .hermes/ and .claude/, then adds back the Markdown files a unit test reads
+# (core/tests/test_doc_constants.py: docs/data_architecture.md and docs/data_health.md; docs/data_health.md also
+# core/tests/test_automation_chain.py) and the workflow files. Order matters: a later pattern
+# overrides an earlier one. Any other file, code or data, runs CI. A skipped run leaves no check
+# on the PR: that is expected for a docs-only PR, not a missing CI.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "**"
+      - "!**.md"
+      - "!.hermes/**"
+      - "!.claude/**"
+      - "docs/data_architecture.md"
+      - "docs/data_health.md"
+      - ".github/**"
+  push:
+    branches: [main]
+    paths:
+      - "**"
+      - "!**.md"
+      - "!.hermes/**"
+      - "!.claude/**"
+      - "docs/data_architecture.md"
+      - "docs/data_health.md"
+      - ".github/**"
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    # The unit tier is ~11.3k tests. Serial it took 1 h 56 on a 4-core box; `-n auto` below should cut that,
+    # but the limit stays generous so a slow runner fails on a real error, not on the clock.
+    timeout-minutes: 240
+    steps:
+      # The code imports itself as `RevenueChaser.*`, so the checkout directory
+      # must carry that name (pytest puts its parent on sys.path).
+      - uses: actions/checkout@v5
+        with:
+          path: RevenueChaser
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: RevenueChaser/requirements.txt
+      - run: pip install -r RevenueChaser/requirements.txt
+      - name: pytest (unit)
+        working-directory: RevenueChaser
+        # -n auto: one worker per core. Each worker is its own process, so the root conftest's
+        # _redirect_data_roots() gives it its own temp .store/.cache and every test still gets a
+        # per-test DuckDB file (conftest.isolate_rawstore). --dist loadfile keeps a file's tests on
+        # one worker, which is what the few order-sensitive files assume.
+        run: python -m pytest -q -n auto --dist loadfile -p no:cacheprovider -rfE
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: RevenueChaser
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: RevenueChaser/requirements.txt
+      - run: pip install -r RevenueChaser/requirements.txt
+      - name: pytest (e2e)
+        working-directory: RevenueChaser
+        env:
+          RC_E2E: "1"
+        # No -n here on purpose: every e2e test starts a real dashboard subprocess and a mock-provider
+        # server, and this tier is the short one. Parallelising it buys minutes and risks flakes.
+        run: python -m pytest module_testing/e2e -q -m e2e -p no:cacheprovider -rfE

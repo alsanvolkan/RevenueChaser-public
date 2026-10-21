@@ -1,0 +1,82 @@
+{
+ "fields": [
+  "cik",
+  "name",
+  "ticker",
+  "exchange"
+ ],
+ "data": [
+  [
+   320193,
+   "Apple Inc.",
+   "AAPL",
+   "Nasdaq"
+  ],
+  [
+   1652044,
+   "Alphabet Inc.",
+   "GOOGL",
+   "Nasdaq"
+  ],
+  [
+   1067983,
+   "BERKSHIRE HATHAWAY INC",
+   "BRK-B",
+   "NYSE"
+  ],
+  [
+   937966,
+   "ASML HOLDING NV",
+   "ASML",
+   "Nasdaq"
+  ],
+  [
+   901832,
+   "ASTRAZENECA PLC",
+   "AZN",
+   "NYSE"
+  ],
+  [
+   1287750,
+   "ARES CAPITAL CORP",
+   "ARCC",
+   "Nasdaq"
+  ],
+  [
+   1510599,
+   "PIMCO Dynamic Income Fund",
+   "PDI",
+   "NYSE"
+  ],
+  [
+   1569650,
+   "Bank OZK",
+   "OZK",
+   "Nasdaq"
+  ],
+  [
+   806628,
+   "DNP SELECT INCOME FUND INC",
+   "DNP",
+   "NYSE"
+  ],
+  [
+   1370755,
+   "BlackRock TCP Capital Corp.",
+   "TCPC",
+   "Nasdaq"
+  ],
+  [
+   1852207,
+   "Bold Eagle Acquisition Corp.",
+   "BEAG",
+   "Nasdaq"
+  ],
+  [
+   1067983,
+   "BERKSHIRE HATHAWAY INC",
+   "BRK.B",
+   "NYSE"
+  ]
+ ]
+}

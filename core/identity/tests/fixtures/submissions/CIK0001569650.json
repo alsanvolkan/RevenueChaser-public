@@ -1,0 +1,34 @@
+{
+ "cik": "1569650",
+ "name": "Bank OZK",
+ "sic": "",
+ "sicDescription": "",
+ "entityType": "other",
+ "tickers": [
+  "OZK",
+  "OZKAP"
+ ],
+ "exchanges": [
+  "Nasdaq",
+  "Nasdaq"
+ ],
+ "filings": {
+  "recent": {
+   "form": [
+    "13F-HR",
+    "N-PX",
+    "SC 13G",
+    "SC 13G/A",
+    "SCHEDULE 13G/A"
+   ],
+   "items": [
+    "",
+    "",
+    "",
+    "",
+    ""
+   ]
+  },
+  "files": []
+ }
+}

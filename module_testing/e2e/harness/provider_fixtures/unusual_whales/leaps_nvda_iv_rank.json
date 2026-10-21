@@ -1,0 +1,9 @@
+{
+  "path": "/api/stock/NVDA/iv-rank",
+  "payload": {
+    "data": [
+      {"date": "2026-10-01", "iv_rank_1y": "41.0"},
+      {"date": "2026-10-02", "iv_rank_1y": "44.0"}
+    ]
+  }
+}

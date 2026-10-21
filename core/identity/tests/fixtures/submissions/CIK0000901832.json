@@ -1,0 +1,100 @@
+{
+ "cik": "901832",
+ "name": "ASTRAZENECA PLC",
+ "sic": "2834",
+ "sicDescription": "Pharmaceutical Preparations",
+ "entityType": "other",
+ "tickers": [
+  "AZN"
+ ],
+ "exchanges": [
+  "NYSE"
+ ],
+ "filings": {
+  "recent": {
+   "form": [
+    "11-K",
+    "144",
+    "20-F",
+    "25",
+    "25-NSE",
+    "3",
+    "3/A",
+    "4",
+    "424B2",
+    "424B3",
+    "425",
+    "6-K",
+    "6-K/A",
+    "8-A12B",
+    "CERT",
+    "CORRESP",
+    "DFAN14A",
+    "EFFECT",
+    "F-3ASR",
+    "F-4",
+    "F-4/A",
+    "F-6",
+    "F-6EF",
+    "FWP",
+    "IRANNOTICE",
+    "S-8",
+    "SC 13D",
+    "SC 13D/A",
+    "SC 13G",
+    "SC 13G/A",
+    "SC TO-C",
+    "SC TO-T",
+    "SC TO-T/A",
+    "SCHEDULE 13D/A",
+    "SCHEDULE 13G",
+    "SCHEDULE 13G/A",
+    "UPLOAD"
+   ],
+   "items": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ]
+  },
+  "files": [
+   {
+    "name": "CIK0000901832-submissions-001.json"
+   }
+  ]
+ }
+}

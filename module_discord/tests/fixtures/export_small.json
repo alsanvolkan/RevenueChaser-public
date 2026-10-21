@@ -1,0 +1,261 @@
+{
+  "guild": {
+    "id": "900000000000000001",
+    "name": "Example Trading Server",
+    "iconUrl": "https://cdn.example.invalid/icon.png"
+  },
+  "channel": {
+    "id": "900000000000000010",
+    "type": "GuildTextChat",
+    "categoryId": "900000000000000005",
+    "category": "Ideas",
+    "name": "swing-setups",
+    "topic": "Chart ideas and trade logs"
+  },
+  "dateRange": {
+    "after": null,
+    "before": null
+  },
+  "exportedAt": "2026-10-02T08:00:00.000000+00:00",
+  "messages": [
+    {
+      "id": "900000000000001001",
+      "type": "Default",
+      "timestamp": "2026-09-30T13:31:05.123+00:00",
+      "timestampEdited": null,
+      "callEndedTimestamp": null,
+      "isPinned": false,
+      "content": "Watching $NVDA for a reclaim of 120. Stop below 114.",
+      "author": {
+        "id": "900000000000000101",
+        "name": "user_alpha",
+        "discriminator": "0000",
+        "nickname": "Alpha",
+        "color": null,
+        "isBot": false,
+        "avatarUrl": "https://cdn.example.invalid/a.png"
+      },
+      "attachments": [],
+      "embeds": [],
+      "stickers": [],
+      "reactions": [],
+      "mentions": []
+    },
+    {
+      "id": "900000000000001002",
+      "type": "Reply",
+      "timestamp": "2026-09-30T13:40:11.000+00:00",
+      "timestampEdited": "2026-09-30T13:41:00.500+00:00",
+      "callEndedTimestamp": null,
+      "isPinned": true,
+      "content": "Agree, volume confirms. Buying 2 call spreads.",
+      "author": {
+        "id": "900000000000000102",
+        "name": "user_beta",
+        "discriminator": "0000",
+        "nickname": "Beta",
+        "color": "#1abc9c",
+        "isBot": false,
+        "avatarUrl": "https://cdn.example.invalid/b.png"
+      },
+      "attachments": [
+        {
+          "id": "900000000000002001",
+          "url": "/data/discord_media/900000000000000010/chart-AB12.png",
+          "fileName": "chart.png",
+          "fileSizeBytes": 20480
+        }
+      ],
+      "embeds": [],
+      "stickers": [],
+      "reactions": [
+        {
+          "emoji": {
+            "id": "",
+            "name": "👍",
+            "code": "thumbsup",
+            "isAnimated": false,
+            "imageUrl": "https://cdn.example.invalid/e.svg"
+          },
+          "count": 3
+        }
+      ],
+      "mentions": [
+        {
+          "id": "900000000000000101",
+          "name": "user_alpha",
+          "discriminator": "0000",
+          "nickname": "Alpha",
+          "isBot": false
+        }
+      ],
+      "reference": {
+        "messageId": "900000000000001001",
+        "channelId": "900000000000000010",
+        "guildId": "900000000000000001",
+        "type": "Default"
+      }
+    },
+    {
+      "id": "900000000000001003",
+      "type": "Default",
+      "timestamp": "2026-10-01T09:02:00.000+00:00",
+      "timestampEdited": null,
+      "callEndedTimestamp": null,
+      "isPinned": false,
+      "content": "<script>alert('x')</script> &amp; <b>raw</b> markup stays plain text",
+      "author": {
+        "id": "900000000000000103",
+        "name": "user_gamma",
+        "discriminator": "0000",
+        "nickname": "Gamma",
+        "color": null,
+        "isBot": false,
+        "avatarUrl": "https://cdn.example.invalid/g.png"
+      },
+      "attachments": [],
+      "embeds": [],
+      "stickers": [],
+      "reactions": [],
+      "mentions": []
+    },
+    {
+      "id": "900000000000001004",
+      "type": "Default",
+      "timestamp": "2026-10-01T09:30:00.000+00:00",
+      "timestampEdited": null,
+      "callEndedTimestamp": null,
+      "isPinned": false,
+      "content": "",
+      "author": {
+        "id": "900000000000000199",
+        "name": "example_bot",
+        "discriminator": "0000",
+        "nickname": "example_bot",
+        "color": null,
+        "isBot": true,
+        "avatarUrl": "https://cdn.example.invalid/bot.png"
+      },
+      "attachments": [],
+      "embeds": [
+        {
+          "title": "Daily recap",
+          "url": "https://news.example.invalid/recap",
+          "color": "#3498DB",
+          "description": "SPX closed +0.4%",
+          "author": {
+            "name": "Recap Bot",
+            "url": "https://news.example.invalid/bot"
+          },
+          "footer": {
+            "text": "Data: example feed"
+          },
+          "fields": [
+            {
+              "name": "SPX",
+              "value": "+0.4%",
+              "isInline": true
+            },
+            {
+              "name": "VIX",
+              "value": "-3.1%",
+              "isInline": true
+            }
+          ],
+          "thumbnail": {
+            "url": "https://cdn.example.invalid/t.png",
+            "width": 64,
+            "height": 64
+          },
+          "images": [
+            {
+              "url": "https://cdn.example.invalid/chart.png",
+              "width": 800,
+              "height": 400
+            }
+          ],
+          "inlineEmojis": []
+        }
+      ],
+      "stickers": [],
+      "reactions": [],
+      "mentions": []
+    },
+    {
+      "id": "900000000000001005",
+      "type": "ChannelPinnedMessage",
+      "timestamp": "2026-10-01T10:00:00.000+00:00",
+      "timestampEdited": null,
+      "callEndedTimestamp": null,
+      "isPinned": false,
+      "content": "Pinned a message.",
+      "author": {
+        "id": "900000000000000102",
+        "name": "user_beta",
+        "discriminator": "0000",
+        "nickname": "Beta",
+        "color": "#1abc9c",
+        "isBot": false,
+        "avatarUrl": "https://cdn.example.invalid/b.png"
+      },
+      "attachments": [],
+      "embeds": [],
+      "stickers": [],
+      "reactions": [],
+      "mentions": [],
+      "reference": {
+        "messageId": "900000000000001002",
+        "channelId": "900000000000000010",
+        "guildId": "900000000000000001",
+        "type": "Default"
+      }
+    },
+    {
+      "id": "900000000000001006",
+      "type": "Default",
+      "timestamp": "2026-10-01T11:00:00.000+00:00",
+      "timestampEdited": null,
+      "callEndedTimestamp": null,
+      "isPinned": false,
+      "content": "",
+      "author": {
+        "id": "900000000000000101",
+        "name": "user_alpha",
+        "discriminator": "0000",
+        "nickname": "Alpha",
+        "color": null,
+        "isBot": false,
+        "avatarUrl": "https://cdn.example.invalid/a.png"
+      },
+      "attachments": [],
+      "embeds": [],
+      "stickers": [],
+      "reactions": [],
+      "mentions": [],
+      "reference": {
+        "type": "Forward",
+        "messageId": "900000000000000777",
+        "channelId": "900000000000000099",
+        "guildId": "900000000000000001"
+      },
+      "forwardedMessage": {
+        "timestamp": "2026-09-29T10:00:00.000+00:00",
+        "content": "Original text that lives only here",
+        "author": {
+          "id": "900000000000000104",
+          "name": "user_delta",
+          "discriminator": "0000",
+          "nickname": "Delta",
+          "color": null,
+          "isBot": false,
+          "avatarUrl": "https://cdn.example.invalid/d.png"
+        },
+        "attachments": [],
+        "embeds": [],
+        "stickers": [],
+        "mentions": []
+      }
+    }
+  ],
+  "messageCount": 6
+}

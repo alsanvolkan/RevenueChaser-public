@@ -1,0 +1,11 @@
+{
+  "path": "/api/screener/stocks",
+  "payload": {
+    "data": [
+      {"ticker": "NVDA", "full_name": "NVIDIA Corporation", "sector": "Technology",
+       "marketcap": "3100000000000", "close": "142.50"},
+      {"ticker": "AMD", "full_name": "Advanced Micro Devices, Inc.", "sector": "Technology",
+       "marketcap": "260000000000", "close": "168.20"}
+    ]
+  }
+}

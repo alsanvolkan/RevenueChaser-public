@@ -1,0 +1,166 @@
+"""Provider credentials — one place that knows which key is needed and why.
+
+A missing or rejected API key used to surface as an empty board: providers
+swallowed the HTTP error, returned ``{}``, and the dashboard rendered "no data".
+An expired token and a quiet market looked identical.
+
+This module is the single source of truth for:
+  - which environment variable holds each provider's key,
+  - where the user goes to get or renew one,
+  - the exact message shown when the key is missing vs. rejected.
+
+Nothing here performs I/O; :func:`describe` reads the already-loaded config so
+callers can build an actionable error without importing a provider client.
+"""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Provider:
+    """A credentialed data provider."""
+
+    slug: str
+    label: str          # human name shown in messages
+    env_var: str        # environment variable / .env key
+    signup_url: str     # where to obtain or renew the key
+    required_for: str   # which boards break without it
+
+
+PROVIDERS: dict[str, Provider] = {
+    "unusual_whales": Provider(
+        slug="unusual_whales",
+        label="Unusual Whales",
+        env_var="UNUSUAL_WHALES_API_KEY",
+        signup_url="https://unusualwhales.com/api",
+        required_for="Earnings Radar, SPX Gamma, LEAPS, Sector Rotation",
+    ),
+    "fmp": Provider(
+        slug="fmp",
+        label="Financial Modeling Prep",
+        env_var="FMP_API_KEY",
+        signup_url="https://site.financialmodelingprep.com/developer/docs",
+        required_for="Sector Rotation ETF holdings (secondary fallback after Unusual Whales)",
+    ),
+    "fred": Provider(
+        slug="fred",
+        label="FRED",
+        env_var="FRED_API_KEY",
+        signup_url="https://fredaccount.stlouisfed.org/apikeys",
+        required_for="Sector Rotation RRG weekly closes; Earnings Radar R6 10Y beta (optional — missing key degrades R6 only)",
+    ),
+    "openfigi": Provider(
+        slug="openfigi",
+        label="OpenFIGI",
+        env_var="OPENFIGI_API_KEY",
+        signup_url="https://www.openfigi.com/api",
+        required_for="Identity refresh: security type (optional; works slower without a key)",
+    ),
+    "deepseek": Provider(
+        slug="deepseek",
+        label="DeepSeek",
+        env_var="DEEPSEEK_API_KEY",
+        signup_url="https://platform.deepseek.com/api_keys",
+        required_for="Relatedness profile extraction and theme naming (optional; off-peak UTC only — see core/offpeak.py)",
+    ),
+    "discord": Provider(
+        slug="discord",
+        label="Discord user token (DiscordChatExporter)",
+        env_var="DISCORD_TOKEN",
+        signup_url="https://github.com/Tyrrrz/DiscordChatExporter/blob/master/.docs/Token-and-IDs.md",
+        required_for="Discord archive (module_discord); also needs RC_DCE_CLI, the path to the DiscordChatExporter CLI",
+    ),
+    "claude_subscription": Provider(
+        slug="claude_subscription",
+        label="Claude subscription",
+        env_var="RC_CLAUDE_OAUTH_FILE",
+        signup_url="https://claude.ai/settings/usage",
+        required_for=(
+            "the optional Claude allowance gate (core/subscription_usage). The "
+            "token itself lives in the Claude Code login at ~/.claude/.credentials.json; "
+            "this variable only overrides that path"
+        ),
+    ),
+    "grok_subscription": Provider(
+        slug="grok_subscription",
+        label="SuperGrok subscription",
+        env_var="RC_XAI_AUTH_FILE",
+        signup_url="https://grok.com/?_s=usage",
+        required_for=(
+            "the optional Grok allowance gate (core/subscription_usage) and the optional "
+            "Grok writer of Relatedness profiles and theme names (core/providers/grok.py, "
+            "--provider grok). The token comes from Hermes's xAI OAuth login in auth.json; "
+            "this variable only overrides that path"
+        ),
+    ),
+}
+
+
+def get(slug: str) -> Provider:
+    """Look up a provider by slug; raises KeyError for an unknown one."""
+    return PROVIDERS[slug]
+
+
+def key_for(slug: str) -> str:
+    """Current value of a provider's key, or ``""`` when unset.
+
+    Read from the environment at call time rather than import time so a key set
+    after startup (or patched in a test) is picked up.
+    """
+    return (os.getenv(PROVIDERS[slug].env_var) or "").strip()
+
+
+def missing_message(slug: str) -> str:
+    """Actionable message for a key that is not set at all."""
+    p = PROVIDERS[slug]
+    return (
+        f"{p.label} API key is missing. Set {p.env_var} in the .env file at the "
+        f"repo root, then restart the dashboard. Get a key at {p.signup_url}. "
+        f"Needed for: {p.required_for}."
+    )
+
+
+def rejected_message(slug: str, status: int | None = None, detail: str = "") -> str:
+    """Actionable message for a key the provider refused (401/403)."""
+    p = PROVIDERS[slug]
+    code = f" (HTTP {status})" if status else ""
+    tail = f" Provider said: {detail.strip()}" if detail.strip() else ""
+    return (
+        f"{p.label} API key was rejected{code} — it is set but not valid "
+        f"(expired, revoked, or the subscription lapsed). Renew it at "
+        f"{p.signup_url}, then update {p.env_var} in .env and restart the "
+        f"dashboard.{tail}"
+    )
+
+
+def describe(slug: str, status: int | None = None, detail: str = "") -> str:
+    """Missing-vs-rejected message, chosen by whether the key is set."""
+    if not key_for(slug):
+        return missing_message(slug)
+    return rejected_message(slug, status, detail)
+
+
+def dce_cli_problem() -> str | None:
+    """Why the DiscordChatExporter CLI cannot run, or ``None`` when ``RC_DCE_CLI`` is fine.
+
+    Only the path is checked; the executable is never started and the token is never read.
+    """
+    raw = (os.getenv("RC_DCE_CLI") or "").strip()
+    if not raw:
+        return ("RC_DCE_CLI is not set. Point it at the DiscordChatExporter CLI executable "
+                "in the .env file at the repo root, then restart the dashboard.")
+    if not os.path.isfile(raw):
+        return f"RC_DCE_CLI is set but is not a file: {raw}. Fix the path in .env and restart the dashboard."
+    return None
+
+
+def discord_guild_problem() -> str | None:
+    """Why Discord channel discovery cannot run, or ``None`` when ``RC_DISCORD_GUILD_ID`` is set.
+
+    Only whether the variable is set; the id itself is never returned.
+    """
+    if (os.getenv("RC_DISCORD_GUILD_ID") or "").strip():
+        return None
+    return "RC_DISCORD_GUILD_ID is not set. Put the server's id in .env, then restart the dashboard."

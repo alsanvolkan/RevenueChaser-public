@@ -1,0 +1,38 @@
+{
+  "default": {
+    "wacc_range": [0.07, 0.12],
+    "growth_range": [0.02, 0.10],
+    "ebitda_margin_range": [0.15, 0.40],
+    "exit_multiple_range": [8.0, 16.0]
+  },
+  "Technology": {
+    "wacc_range": [0.08, 0.12],
+    "growth_range": [0.05, 0.18],
+    "ebitda_margin_range": [0.20, 0.45],
+    "exit_multiple_range": [12.0, 22.0]
+  },
+  "Consumer Defensive": {
+    "wacc_range": [0.06, 0.09],
+    "growth_range": [0.01, 0.05],
+    "ebitda_margin_range": [0.12, 0.30],
+    "exit_multiple_range": [10.0, 18.0]
+  },
+  "Financial Services": {
+    "wacc_range": [0.07, 0.11],
+    "growth_range": [0.02, 0.08],
+    "ebitda_margin_range": [0.25, 0.50],
+    "exit_multiple_range": [8.0, 14.0]
+  },
+  "Energy": {
+    "wacc_range": [0.07, 0.11],
+    "growth_range": [0.00, 0.06],
+    "ebitda_margin_range": [0.15, 0.40],
+    "exit_multiple_range": [5.0, 10.0]
+  },
+  "Healthcare": {
+    "wacc_range": [0.06, 0.10],
+    "growth_range": [0.02, 0.10],
+    "ebitda_margin_range": [0.20, 0.40],
+    "exit_multiple_range": [10.0, 18.0]
+  }
+}

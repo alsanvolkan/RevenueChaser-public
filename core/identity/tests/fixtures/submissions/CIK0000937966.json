@@ -1,0 +1,76 @@
+{
+ "cik": "937966",
+ "name": "ASML HOLDING NV",
+ "sic": "3559",
+ "sicDescription": "Special Industry Machinery, NEC",
+ "entityType": "other",
+ "tickers": [
+  "ASML",
+  "ASMLF"
+ ],
+ "exchanges": [
+  "Nasdaq",
+  "OTC"
+ ],
+ "filings": {
+  "recent": {
+   "form": [
+    "20-F",
+    "20-F/A",
+    "424B3",
+    "425",
+    "6-K",
+    "6-K/A",
+    "8-A12B",
+    "8-A12B/A",
+    "8-A12G/A",
+    "CORRESP",
+    "CT ORDER",
+    "EFFECT",
+    "F-3",
+    "F-4",
+    "F-4/A",
+    "RW",
+    "RW WD",
+    "S-8",
+    "S-8 POS",
+    "SC 13D",
+    "SC 13D/A",
+    "SC 13G",
+    "SC 13G/A",
+    "SCHEDULE 13G/A",
+    "SD",
+    "UPLOAD"
+   ],
+   "items": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ]
+  },
+  "files": []
+ }
+}

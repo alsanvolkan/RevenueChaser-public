@@ -1,0 +1,26 @@
+{
+ "data": [
+  {
+   "data": {
+    "NAME": "TowneBank",
+    "CERT": 35095,
+    "NAMEHCR": "",
+    "CITY": "Portsmouth",
+    "STALP": "VA",
+    "ASSET": 22616959,
+    "ID": "35095"
+   }
+  },
+  {
+   "data": {
+    "NAME": "Towne Bank of Arizona",
+    "CERT": 99999,
+    "NAMEHCR": "",
+    "CITY": "Phoenix",
+    "STALP": "AZ",
+    "ASSET": 100,
+    "ID": "99999"
+   }
+  }
+ ]
+}

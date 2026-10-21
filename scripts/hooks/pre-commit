@@ -1,0 +1,11 @@
+#!/bin/sh
+# Blocks a commit that carries a secret, a personal home path or mailbox, an account id or a private folder
+# (scripts/private_check.py). Enable once per clone: git config core.hooksPath scripts/hooks
+here=$(dirname "$0")
+for py in python3 python "py -3"; do
+    if $py -c "import sys" >/dev/null 2>&1; then
+        exec $py "$here/../private_check.py" --staged
+    fi
+done
+echo "pre-commit: no Python found, private-material check skipped" >&2
+exit 0

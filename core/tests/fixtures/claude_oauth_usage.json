@@ -1,0 +1,45 @@
+{
+ "five_hour": {
+  "utilization": 37.0,
+  "resets_at": "2026-09-25T01:30:00.231990+00:00",
+  "locked_reason": null
+ },
+ "seven_day": {
+  "utilization": 4.0,
+  "resets_at": "2026-09-30T08:00:00.232010+00:00",
+  "locked_reason": null
+ },
+ "seven_day_opus": null,
+ "seven_day_sonnet": null,
+ "iguana_necktie": {
+  "utilization": 0.0,
+  "resets_at": "2026-11-05T07:59:00+00:00"
+ },
+ "extra_usage": {
+  "is_enabled": false
+ },
+ "seven_day_breakdown": {
+  "rows": [
+   {
+    "key": "claude_code",
+    "display_name": "Claude Code",
+    "percent": 97
+   },
+   {
+    "key": "chat",
+    "display_name": "Chats",
+    "percent": 3
+   },
+   {
+    "key": "cowork",
+    "display_name": "Cowork",
+    "percent": 0
+   },
+   {
+    "key": "other",
+    "display_name": "Other",
+    "percent": 0
+   }
+  ]
+ }
+}

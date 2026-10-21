@@ -1,0 +1,228 @@
+{{ header.ticker }} · Price {{ header.price_source }} · Report date {{ header.report_date }} · Sessions {{ header.sessions }} · Data retrieved {{ header.retrieved_at }} from {{ header.source }}
+
+## At a Glance — Single Source of Truth
+
+| Metric | Value |
+|---|---|
+| Spot | {{ header_strip.spot }} |
+| Net GEX | {{ header_strip.net_gex }} |
+| Call Wall | {{ header_strip.call_wall }} |
+| Put Support | {{ header_strip.put_support }} |
+| Gamma Flip (all-tenor) | {{ header_strip.gamma_flip }} |
+| Gamma Flip (0DTE) | {{ header_strip.gamma_flip_0dte }} |
+| Charm | {{ header_strip.charm }} |
+| Vanna | {{ header_strip.vanna }} |
+| Expected Move | {{ header_strip.expected_move }} |
+| Regime | {{ header_strip.regime }} |
+
+## Gamma flip methods
+
+| Method | Flip | Spot is | Note |
+|---|---|---|---|
+{% for m in flip_methods %}| {{ m.method }} | {{ m.value }} | {{ m.side }} | {{ m.note }} |
+{% endfor %}
+
+UW does not document how it computes its gamma flip, and the open-interest and volume flips can differ. The regime follows the open-interest flip; the other rows are cross-checks and do not vote.
+
+## DTE Band Walls
+
+| DTE Band | Put Wall | Put Wall Net GEX | Call Wall | Call Wall Net GEX |
+|---|---|---|---|---|
+{% for w in dte_band_walls %}| {{ w.band }}{% if w.band == '181-365' %} **(Put Wall standard)**{% endif %} | {{ w.put_wall }} | {{ w.put_wall_net }} | {{ w.call_wall }} | {{ w.call_wall_net }} |
+{% endfor %}
+
+Put Wall (main level) is the 181-365 day band. The ALL row is the all-expiry reference.
+
+## Summary
+
+**{{ at_glance }}**
+
+{% for card in summary %}
+#### {{ card.title }} — {{ card.tag }} `{{ card.signal.label }}`
+
+{{ card.narrative }}
+
+| Metric | Value | Note |
+|---|---|---|
+{% for label, value, note in card.rows %}| {{ label }} | {{ value }} | {{ note }} |
+{% endfor %}
+{% endfor %}
+## SPX Option Position Map
+
+{% if chart_image %}![SPX Option Position Map]({{ chart_image }})
+{% endif %}
+## Liquidity Layer — Dealer Flow
+
+| Band | Range | Net GEX | ~ /25pt |
+|---|---|---|---|
+| Absorption (positive gamma) | {{ gex_envelope.absorption.range }} | {{ gex_envelope.absorption.net_gex }} | {{ gex_envelope.absorption.per_25pt }} |
+| Air Gap (negative gamma) | {{ gex_envelope.air_gap.range }} | {{ gex_envelope.air_gap.net_gex }} | {{ gex_envelope.air_gap.per_25pt }} |
+
+Zero crossing (approx. gamma flip): **{{ gex_envelope.zero_crossing }}**
+
+## Cross-Signal Synthesis
+
+**{{ signal_matrix.stance }}** — {{ signal_matrix.summary }}
+
+| Signal | Lean |
+|---|---|
+{% for r in signal_matrix.rows %}| {{ r.title }} | {{ r.label }} |
+{% endfor %}
+## Greek Relations — How They Interact
+
+{% for s in chain %}{{ loop.index }}. **{{ s.label }}** ({{ s.icon }}): {{ s.english }}
+{% endfor %}
+{% for r in relations %}
+### {{ r.greek }} — {{ r.headline }}
+
+{{ r.english }}
+
+| Metric | Value | Note |
+|---|---|---|
+{% for label, value, note in r.row %}| {{ label }} | {{ value }} | {{ note }} |
+{% endfor %}
+> TR: {{ r.turkish }}
+{% endfor %}
+## Volatility Board
+
+What it tells you: whether implied vol is cheap or expensive, how the term structure slopes, and what the skew costs.
+
+{% if vix %}VIX family: VIX {{ vix.vix }} · 9D {{ vix.vix9d }} · 3M {{ vix.vix3m }} · 6M {{ vix.vix6m }} · 1Y {{ vix.vix1y }} · VVIX {{ vix.vvix }} — term structure: **{{ vix.term_mode or 'n/a' }}**
+{% endif %}
+{% if iv_rank %}IV Rank (1Y): **{{ iv_rank.iv_rank_1y }}%** (ATM IV {{ iv_rank.volatility }})
+{% endif %}
+{% if skew %}Skew (Put Bias): 1M **{{ skew.put_bias_1m | fmtnum('{:.1%}') }}** · 3M **{{ skew.put_bias_3m | fmtnum('{:.1%}') }}** — *(derived/unverified: {{ skew.note }})*
+{% endif %}
+{% if realized_vol %}Realized vs Implied: IV **{{ realized_vol.implied_volatility | fmtnum('{:.1%}') }}** · RV **{{ realized_vol.realized_volatility | fmtnum('{:.1%}') }}**
+{% endif %}
+{% if vrp %}Variance Risk Premium: **{{ vrp.risk_premium | fmtnum('{:.2%}') }}** (rank {{ vrp.rank | fmtnum('{:,.2f}') }})
+{% endif %}
+
+## Options Volume & P/C
+
+What it tells you: whether options flow is protective (put-heavy) or directional, and how rich the premium is.
+
+{% if options_volume %}
+| Metric | Value |
+|---|---|
+| Put/Call Volume | {{ options_volume.pc_ratio }} |
+| Call / Put Volume | {{ options_volume.call_volume }} / {{ options_volume.put_volume }} |
+| Net Call Premium | {{ options_volume.net_call_premium }} |
+| Net Put Premium | {{ options_volume.net_put_premium }} |
+{% else %}
+Options volume data unavailable.
+{% endif %}
+
+## Max Pain
+
+What it tells you: the strike where the most options expire worthless; a structural gravity center, NOT a directional signal.
+
+| Expiry | Max Pain | % from Spot |
+|---|---|---|
+{% for m in max_pain %}| {{ m.expiry }} | {{ m.max_pain }} | {{ m.distance_pct }} |
+{% endfor %}
+## CFTC COT — E-mini S&P 500 (TFF)
+
+What it tells you: how big players (asset managers, leveraged funds, dealers) are positioned; weekly-delayed but regular.
+
+{% if cftc %}
+Report date {{ cftc.report_date or 'n/a' }} · Open interest {{ cftc.open_interest or 'n/a' }}
+
+| Group | Long | Short | Net | Weekly Δ |
+|---|---|---|---|---|
+{% for c in cftc.rows %}| {{ c.group }} | {{ c.long | fmtnum('{:,.0f}') }} | {{ c.short | fmtnum('{:,.0f}') }} | {{ c.net | fmtnum('{:+,.0f}') }} | {{ c.change | fmtnum('{:+,.0f}') }} |
+{% endfor %}
+{% else %}
+CFTC COT data unavailable.
+{% endif %}
+
+## Scenario Set
+
+| Scenario | Range | P | R:R | Expectancy E | Trade |
+|---|---|---|---|---|---|
+{% for s in scenarios.scenarios %}| {{ s.name }} | {{ s.range }} | {{ s.p }} | {{ s.rr if s.rr is not none else 'n/a' }} | {{ s.expectancy if s.expectancy is not none else 'n/a' }} | {{ s.trade }} |
+{% endfor %}
+
+{{ scenarios.note }}
+
+{% if iron_butterfly %}
+## Iron Butterfly — Pin Harvest
+
+**Signal: `{{ iron_butterfly.signal.signal }}`** — {{ iron_butterfly.signal.action }}{% if iron_butterfly.signal.target %} → target {{ iron_butterfly.signal.target | fmtnum }}{% endif %}
+
+Center pin: **{{ iron_butterfly.center_strike | fmtnum }}** · Wing width: **{{ iron_butterfly.wing_width | fmtnum }}** (EM {{ iron_butterfly.width_source.em_points | fmtnum }} pts @ IV {{ iron_butterfly.width_source.iv_used | fmtnum('{:,.2f}') }})
+
+| Leg | Action | Type | Strike | Mid | IV | Θ /day |
+|---|---|---|---|---|---|---|
+{% for leg in iron_butterfly.legs %}| {{ loop.index }} | {{ leg.action }} | {{ leg.type }} | {{ leg.strike | fmtnum }} | {{ leg.mid | fmtnum('{:,.2f}') }} | {{ leg.iv | fmtnum('{:,.1%}') }} | {{ leg.theta | fmtnum('{:,.1f}') }} |
+{% endfor %}
+
+Net credit **+{{ iron_butterfly.net_credit | fmtnum }}** · Max risk **{{ iron_butterfly.max_risk | fmtnum }}** · R:R **1 : {{ iron_butterfly.return_on_risk | fmtnum('{:,.2f}') }}** · Net Θ/day **{{ iron_butterfly.net_theta | fmtnum }}** · Breakevens **{{ iron_butterfly.lower_breakeven | fmtnum }} – {{ iron_butterfly.upper_breakeven | fmtnum }}**
+
+{% if iron_butterfly.alternates %}Alternate widths: {% for a in iron_butterfly.alternates %}**{{ a.width | fmtnum }} pts** (credit {{ a.net_credit | fmtnum }}, R:R 1 : {{ a.return_on_risk | fmtnum('{:,.2f}') }}){% if not loop.last %} · {% endif %}{% endfor %}
+{% endif %}
+{% endif %}
+
+## Level Migration vs Prior Snapshot
+
+| Level | This Week | Previous | Δ |
+|---|---|---|---|
+{% for m in migration %}| {{ m.level }} | {{ m.now | fmtnum }} | {{ m.prev | fmtnum }} | {{ m.delta | fmtnum('{:+,.1f}') }} |
+{% endfor %}
+## Top-10 GEX Strikes
+
+| # | Strike | Net GEX | Gamma-Flip Side |
+|---|---|---|---|
+{% for t in top_gex %}| {{ loop.index }} | {{ t.strike|round|int }} | {{ t.net_gex | fmtnum('{:+,.1f}') }} | {{ t.side }} |
+{% endfor %}
+## Expiry Distribution
+
+| Expiry | DTE | Band | Net GEX | Net DEX |
+|---|---|---|---|---|
+{% for e in summary_expiry %}| {{ e.expiry }} | {{ e.dte }} | {{ e.band }} | {{ e.net_gex }} | {{ e.net_dex }} |
+{% endfor %}
+## Brier Scorecard
+
+Scored weeks: {{ brier.scored_count }} · Avg Brier: {{ brier.average if brier.average is not none else '—' }} · Equal-weight ref: {{ ('%.4f'|format(brier.equal_weight_reference)) if brier.equal_weight_reference is number else brier.equal_weight_reference }}{% if brier.skill_score is number %} · Skill score: {{ '%+.2f'|format(brier.skill_score) }}{% endif %}
+
+{{ brier.verdict }}
+
+## Details
+
+| Level | Value | Reference Type | Method / Disclosure |
+|---|---|---|---|
+{% for row in details %}| {{ row.level }} | {{ row.value }} | {{ row.ref }} | {{ row.method }} |
+{% endfor %}
+## How to read this map (Gamma)
+
+- Call Wall ({{ how_to_read.call_wall }}): magnetic ceiling — dealers may sell into rallies (take-profit zone).
+- Put Wall ({{ how_to_read.put_wall }}): trampoline floor — dealers may buy into dips (bounce zone).
+
+Gamma Flip ({{ how_to_read.flip }}) — the volatility turning point:
+
+```
+[ ABOVE FLIP LEVEL ]  ->  Positive Gamma Zone  ->  Volatility Suppressed (Calm)
+-------------------------------------------------------------------------------
+[ GAMMA FLIP LEVEL ]  ->  The Volatility Turning Point
+-------------------------------------------------------------------------------
+[ BELOW FLIP LEVEL ]  ->  Negative Gamma Zone  ->  Volatility Accelerated (Wild)
+```
+
+- Crossing below the flip -> Danger zone: reduce position sizes, expect wider price swings, or buy protective puts.
+- Crossing above the flip -> Safety zone: expect steady, grinding upward movement with low volatility.
+
+## Delta Map — Walkthrough
+
+{% for p in walkthrough %}- {{ p }}
+{% endfor %}
+## Greek Sözlüğü & İlişkiler — Türkçe
+
+Aşağıdaki tanımlar ve ilişkiler eğitim amaçlıdır; bu raporun İngilizce başlıklarıyla aynı veriden türetilmiştir.
+
+{% for g in glossary_tr %}- **{{ g.greek }}**: {{ g.def }}
+{% endfor %}
+Bu haftaki veriye göre greek ilişkileri:
+
+{% for r in relations %}- **{{ r.greek }}** — {{ r.turkish }}
+{% endfor %}
+{{ footer }}

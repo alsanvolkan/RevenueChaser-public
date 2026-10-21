@@ -1,0 +1,194 @@
+{
+ "PDI": {
+  "data": [
+   {
+    "figi": "BBG002Q8P7Z8",
+    "name": "PIMCO DYNAMIC INCOME FUND",
+    "ticker": "PDI",
+    "exchCode": "US",
+    "compositeFIGI": "BBG002Q8P7Z8",
+    "securityType": "Closed-End Fund",
+    "marketSector": "Equity",
+    "shareClassFIGI": "BBG002Q8P804",
+    "securityType2": "Mutual Fund",
+    "securityDescription": "PDI"
+   }
+  ]
+ },
+ "DNP": {
+  "data": [
+   {
+    "figi": "BBG000BH8RD7",
+    "name": "DNP SELECT INCOME FUND INC",
+    "ticker": "DNP",
+    "exchCode": "US",
+    "compositeFIGI": "BBG000BH8RD7",
+    "securityType": "Closed-End Fund",
+    "marketSector": "Equity",
+    "shareClassFIGI": "BBG001S5QKC9",
+    "securityType2": "Mutual Fund",
+    "securityDescription": "DNP"
+   }
+  ]
+ },
+ "ARCC": {
+  "data": [
+   {
+    "figi": "BBG000PD6X77",
+    "name": "ARES CAPITAL CORP",
+    "ticker": "ARCC",
+    "exchCode": "US",
+    "compositeFIGI": "BBG000PD6X77",
+    "securityType": "Common Stock",
+    "marketSector": "Equity",
+    "shareClassFIGI": "BBG001SL96Z9",
+    "securityType2": "Common Stock",
+    "securityDescription": "ARCC"
+   }
+  ]
+ },
+ "OZK": {
+  "data": [
+   {
+    "figi": "BBG000QFJJW0",
+    "name": "BANK OZK",
+    "ticker": "OZK",
+    "exchCode": "US",
+    "compositeFIGI": "BBG000QFJJW0",
+    "securityType": "Common Stock",
+    "marketSector": "Equity",
+    "shareClassFIGI": "BBG001SMRQL8",
+    "securityType2": "Common Stock",
+    "securityDescription": "OZK"
+   }
+  ]
+ },
+ "TOWN": {
+  "data": [
+   {
+    "figi": "BBG000BBSC23",
+    "name": "TOWNE BANK",
+    "ticker": "TOWN",
+    "exchCode": "US",
+    "compositeFIGI": "BBG000BBSC23",
+    "securityType": "Common Stock",
+    "marketSector": "Equity",
+    "shareClassFIGI": "BBG001S5WTN1",
+    "securityType2": "Common Stock",
+    "securityDescription": "TOWN"
+   }
+  ]
+ },
+ "LAZR": {
+  "data": [
+   {
+    "figi": "BBG022PX4277",
+    "name": "TEMA PHOTONICS & OPTICAL ETF",
+    "ticker": "LAZR",
+    "exchCode": "US",
+    "compositeFIGI": "BBG022PX4277",
+    "securityType": "ETP",
+    "marketSector": "Equity",
+    "shareClassFIGI": "BBG022PX4366",
+    "securityType2": "Mutual Fund",
+    "securityDescription": "LAZR"
+   }
+  ]
+ },
+ "ASML": {
+  "data": [
+   {
+    "figi": "BBG000K6MRN4",
+    "name": "ASML HOLDING NV-NY REG SHS",
+    "ticker": "ASML",
+    "exchCode": "US",
+    "compositeFIGI": "BBG000K6MRN4",
+    "securityType": "NY Reg Shrs",
+    "marketSector": "Equity",
+    "shareClassFIGI": "BBG001SCG0R3",
+    "securityType2": "Depositary Receipt",
+    "securityDescription": "ASML"
+   }
+  ]
+ },
+ "AZN": {
+  "data": [
+   {
+    "figi": "BBG000D3MHB4",
+    "name": "ASTRAZENECA PLC",
+    "ticker": "AZN",
+    "exchCode": "US",
+    "compositeFIGI": "BBG000D3MHB4",
+    "securityType": "Common Stock",
+    "marketSector": "Equity",
+    "shareClassFIGI": "BBG001SCNW31",
+    "securityType2": "Common Stock",
+    "securityDescription": "AZN"
+   }
+  ]
+ },
+ "AAPL": {
+  "data": [
+   {
+    "figi": "BBG000B9XRY4",
+    "name": "APPLE INC",
+    "ticker": "AAPL",
+    "exchCode": "US",
+    "compositeFIGI": "BBG000B9XRY4",
+    "securityType": "Common Stock",
+    "marketSector": "Equity",
+    "shareClassFIGI": "BBG001S5N8V8",
+    "securityType2": "Common Stock",
+    "securityDescription": "AAPL"
+   }
+  ]
+ },
+ "GOOGL": {
+  "data": [
+   {
+    "figi": "BBG009S39JX6",
+    "name": "ALPHABET INC-CL A",
+    "ticker": "GOOGL",
+    "exchCode": "US",
+    "compositeFIGI": "BBG009S39JX6",
+    "securityType": "Common Stock",
+    "marketSector": "Equity",
+    "shareClassFIGI": "BBG009S39JY5",
+    "securityType2": "Common Stock",
+    "securityDescription": "GOOGL"
+   }
+  ]
+ },
+ "BRK-B": {
+  "data": [
+   {
+    "figi": "BBG000DWG505",
+    "name": "BERKSHIRE HATHAWAY INC-CL B",
+    "ticker": "BRK/B",
+    "exchCode": "US",
+    "compositeFIGI": "BBG000DWG505",
+    "securityType": "Common Stock",
+    "marketSector": "Equity",
+    "shareClassFIGI": "BBG001S90346",
+    "securityType2": "Common Stock",
+    "securityDescription": "BRK/B"
+   }
+  ]
+ },
+ "TCPC": {
+  "data": [
+   {
+    "figi": "BBG001P0TNW2",
+    "name": "BLACKROCK TCP CAPITAL CORP",
+    "ticker": "TCPC",
+    "exchCode": "US",
+    "compositeFIGI": "BBG001P0TNW2",
+    "securityType": "Common Stock",
+    "marketSector": "Equity",
+    "shareClassFIGI": "BBG001V17VG7",
+    "securityType2": "Common Stock",
+    "securityDescription": "TCPC"
+   }
+  ]
+ }
+}

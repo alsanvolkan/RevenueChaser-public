@@ -1,0 +1,157 @@
+"""Orkestrasyon: ticker -> Quick Remarks + Fin Model engine'leri -> rapor."""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+from RevenueChaser.core.reporting_common import write_artifact
+
+from .config import OUTPUT_DIR, default_peers
+from .engines import (
+    comps_engine,
+    credit_capacity_engine,
+    dcf_engine,
+    quick_remarks_engine,
+    sensitivity_engine,
+    three_statement_engine,
+)
+from .reporting.html_builder import build_report_html
+from RevenueChaser.core import vendor_data
+from RevenueChaser.core.providers import cache as cache_manager
+from RevenueChaser.core.providers import yfinance as yfinance_client
+
+
+# An upper-cased symbol such as BRK.B. The ticker becomes a file name (CLI report), so a path piece
+# must never get through (#173 D5, #175).
+_TICKER_RE = re.compile(r"[A-Z0-9][A-Z0-9.\-]{0,9}")
+
+
+class _NoCachedData(Exception):
+    """No cached payload in .store for the ticker (store-only render)."""
+
+    def __init__(self, ticker: str):
+        super().__init__(f"no cached financials for {ticker}")
+        self.ticker = ticker
+
+
+def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
+        output: str = "html", use_cache: bool = True, no_fetch: bool = False,
+        assumptions: dict | None = None, peers: list[str] | None = None,
+        report_path: Path | str | None = None, run_id: str | None = None) -> dict:
+    """Uçtan uca Fin Research çalıştırır; rapor yolunu ve sonuçları döndürür.
+
+    ``no_fetch=True`` — store-only (model-only) render: reads the cached payload
+    from ``.store/raw.duckdb`` (ignoring TTL) and never touches the network.
+    When no cached payload exists it raises ``_NoCachedData`` so the caller can
+    fall back to an empty state / live fetch.
+
+    The report goes to ``report_path`` when given (the dashboard's single ``financials_latest.html``).
+    Without it, ``output="html"`` writes the per-ticker file ``<OUTPUT_DIR>/<TICKER>_report.html``:
+    that is the CLI's behaviour and nothing else writes per-ticker files (#173 D5/M18).
+
+    A Fetch stores what it fetched from Yahoo (the ticker's statements and ``.info``, the comps peers' ``.info``)
+    in ``vendor_financials`` / ``vendor_valuation`` (#297), stamped ``run_id`` (the job's id; a fresh one without
+    it). A cache hit fetched nothing and stores nothing.
+    """
+    ticker = ticker.upper()
+    if not _TICKER_RE.fullmatch(ticker):
+        raise ValueError(f"bad ticker: {ticker!r}")
+    if no_fetch:
+        financials = cache_manager.load(ticker, ignore_ttl=True)
+        if financials is None:
+            raise _NoCachedData(ticker)
+    vendor = None if no_fetch else vendor_data.Capture()
+
+    def _fetch(t: str) -> dict:
+        fetched = yfinance_client.get_financials(t)
+        vendor.add_yfinance(t, fetched)
+        return fetched
+
+    def _peer_info(t: str) -> dict:
+        info = comps_engine._default_fetch(t)
+        vendor.add_valuation(t, info)
+        return info
+
+    if not no_fetch:
+        financials = cache_manager.get_or_fetch(ticker, _fetch, use_cache)
+
+    # Always stamp the data date — when the raw yfinance payload was fetched into
+    # .store. The report renders it in the header so the viewer knows how fresh
+    # the numbers are, whether this was a live Fetch or a store-only Refresh.
+    try:
+        from RevenueChaser.core import rawstore
+        row = rawstore.get("ticker_payload_cache", ticker)
+        if row and row.get("fetched_at_iso"):
+            financials["_fetched_at_iso"] = row["fetched_at_iso"]
+            financials["fetched_at_iso"] = row["fetched_at_iso"]
+    except Exception:  # pragma: no cover - a missing stamp must not break a report
+        pass
+
+    warnings: list[str] = []
+    results: dict = {"ticker": ticker, "financials": financials, "modules": {}, "warnings": warnings}
+
+    # Quick Remarks — her zaman üstte (ticker_scores'dan beslenir, yfinance fallback)
+    results["quick_remarks"] = quick_remarks_engine.run_quick_remarks(ticker, no_fetch=no_fetch)
+
+    # R5 (#88): the sector is the spine's (DCF bands, comps peers and the report header all read it);
+    # the yfinance sector no longer feeds GICS. A name the spine lacks is Unclassified.
+    from RevenueChaser.core import universe as _spine
+    sector = _spine.gics_of(ticker, _spine.spine_gics([ticker])).sector
+    financials["sector"] = sector
+    for m in modules:
+        m = m.strip().lower()
+        if m in ("dcf", "dcf_engine"):
+            results["modules"]["dcf"] = dcf_engine.run_dcf(financials, assumptions)
+        elif m in ("3stmt", "three_statement", "3statement"):
+            results["modules"]["three_statement"] = three_statement_engine.run_three_statement(financials, assumptions)
+        elif m in ("comps", "comps_engine"):
+            if no_fetch:
+                # Peer quotes (EV/EBITDA, P/E) are a live network fetch — not
+                # available in a store-only re-render. Degrade with a warning.
+                warnings.append("comps: peer quotes require a live Fetch — run the Fetch button for comps")
+                results["modules"]["comps"] = {"error": "comps requires a live Fetch (no network in store-only refresh)"}
+            else:
+                used_peers = list(peers) if peers else default_peers(sector)
+                results["modules"]["comps"] = comps_engine.run_comps(financials, used_peers, fetch_info=_peer_info)
+        elif m in ("credit", "credit_capacity"):
+            results["modules"]["credit"] = credit_capacity_engine.run_credit_capacity(financials, assumptions)
+        elif m in ("sensitivity", "sensitivity_engine"):
+            results["modules"]["sensitivity"] = sensitivity_engine.run_sensitivity(financials, assumptions)
+        else:
+            warnings.append(f"unknown module skipped: {m}")
+
+    # Engine warnings/errors (deduplicated, order preserved)
+    seen: set[str] = set()
+    for name, res in results["modules"].items():
+        if isinstance(res, dict):
+            for w in res.get("warnings", []):
+                if w not in seen:
+                    seen.add(w)
+                    warnings.append(w)
+            err = res.get("error")
+            if err:
+                msg = f"{name}: {err}"
+                if msg not in seen:
+                    seen.add(msg)
+                    warnings.append(msg)
+
+    paths: dict = {}
+    if output in ("html", "both"):
+        html = build_report_html(results)
+        path = Path(report_path) if report_path else OUTPUT_DIR / f"{ticker}_report.html"
+        # OUTPUT_DIR is created at import time only; if the (regenerable)
+        # .cache tree was cleared while the server runs, recreate it here like
+        # every other writer in the repo does. A bare write_text made a store-only
+        # refresh die with FileNotFoundError and silently fall back to the network.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_artifact(path, html)
+        paths["html"] = str(path)
+
+    # After the report (FIN-7): a render or write that raises stores no vendor rows, so no run_id lands in
+    # vendor_* without its board file. A cache hit (e.g. a same-day re-Fetch) stores no
+    # new statements; the comps peers' quotes are still fetched and stored.
+    if vendor is not None:
+        from RevenueChaser.core import ledger
+        vendor.flush(run_id=run_id or ledger.new_run_id(), label="Financials")
+
+    return {"paths": paths, "results": results}

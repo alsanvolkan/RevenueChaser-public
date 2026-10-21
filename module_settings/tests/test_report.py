@@ -1,0 +1,1139 @@
+"""Settings / Data health HTML renderer: table, Fetch buttons, help, empty state."""
+from __future__ import annotations
+
+from RevenueChaser.module_settings import report
+
+
+def _payload():
+    return {
+        "generated_at": "2026-09-25T20:00:00+00:00",
+        "tickers": [
+            {"ticker": "AAPL", "name": "Apple Inc."},
+            {"ticker": "MU", "name": "Micron Technology"},
+        ],
+        "rows": [
+            {
+                "key": "universe", "label": "Equity universe",
+                "tables": ["equity_universe"], "rows": 7403,
+                "last_date": "—", "holes": 1710, "hole_label": "null market cap",
+                "fetch": {"route": "/run/universe-stats", "label": "Fetch caps"},
+                "fetch_alt": {"route": "/run/universe", "label": "Fetch universe"},
+                "note": "provenance: __meta__",
+            },
+            {
+                "key": "corpus", "label": "10-K / 20-F corpus",
+                "tables": ["chain_filings", "edgar_documents"], "rows": 3278,
+                "last_date": "2026-09-18", "holes": 42, "hole_label": "no filing",
+                "fetch": {"route": "/run/edgar-sync", "label": "Fetch 10-K sync"},
+                "note": "",
+            },
+        ],
+    }
+
+
+def test_renders_the_inventory_table_headers_and_rows():
+    html = report.render_settings_dashboard(_payload())
+    for header in ("Dataset", "Store table", "Last data date", "Rows", "Holes",
+                   "Action", "Notes"):
+        assert header in html
+    assert "Equity universe" in html
+    assert "equity_universe" in html
+    assert "2026-09-18" in html
+
+
+def test_renders_the_fetch_buttons_including_alt():
+    html = report.render_settings_dashboard(_payload())
+    assert 'data-fetch="/run/universe-stats"' in html
+    assert 'data-row="universe"' in html
+    assert 'data-fetch="/run/universe"' in html
+    assert 'data-row="universe-alt"' in html
+    assert 'id="msg-universe-alt"' in html
+    assert 'data-fetch="/run/edgar-sync"' in html
+    assert 'data-row="corpus"' in html
+    assert 'class="fetch-btn"' in html
+
+
+def test_has_help_block_and_a_friendly_last_sync():
+    html = report.render_settings_dashboard(_payload())
+    assert 'class="help"' in html
+    assert "<summary>" in html
+    assert "Refresh" in html and "Fetch" in html
+    assert "Last sync:" in html
+    assert "2026-09-25T20:00:00" not in html
+
+
+def test_still_has_no_filter_or_theme_chrome():
+    html = report.render_settings_dashboard(_payload())
+    assert "filter-panel" not in html
+    assert "theme-coarse" not in html
+    assert "mc-tabs" not in html
+
+
+def test_renders_the_shared_ticker_combobox():
+    """#383 C1b: the drill picker is the filter kit's combobox (RCCombobox); the constants-kit picker is gone."""
+    html = report.render_settings_dashboard(_payload())
+    assert 'id="ticker-combo"' in html
+    assert 'role="combobox"' in html
+    assert 'id="ticker-combo-list"' in html
+    assert "RCCombobox.mount(" in html and 'class="rcf-combo"' in html
+    assert "initTickerCombo" not in html and "tcRank" not in html
+    assert 'class="rcf-bar"' not in html                 # an ops board: a picker, no filter bar
+
+
+def test_picking_a_ticker_opens_the_drill_and_clearing_closes_it(tmp_path):
+    from RevenueChaser.core.tests.board_js import run_board_js
+    html = report.render_settings_dashboard(_payload())
+    tail = """
+var picked = [];
+var _orig = onDrillPick; onDrillPick = function(t){ picked.push(t); };
+DRILL_COMBO_OPTS.onPick({ticker: "AAPL", name: "Apple"});
+DRILL_COMBO_OPTS.onClear();
+console.log(JSON.stringify({picked: picked, rows: DRILL_COMBO_OPTS.rows === DATA, clear: DRILL_COMBO_OPTS.clear}));"""
+    got = run_board_js(html, tail, tmp_path)
+    assert got == {"picked": ["AAPL", None], "rows": True, "clear": True}
+
+
+def test_the_drill_picker_is_mounted_with_its_options(tmp_path):
+    """#383 C1b review (N3): the page mounts the kit's combobox with ``DRILL_COMBO_OPTS`` (no browser e2e covers the
+    drill). ``RCCombobox.mount`` is stubbed between the kit's script and the board's."""
+    import json
+    import shutil
+    import subprocess
+    import pytest
+    from RevenueChaser.core.tests.board_js import DOM_STUB, inline_scripts
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    scripts = inline_scripts(report.render_settings_dashboard(_payload()))
+    board = next(i for i, b in enumerate(scripts) if "var DRILL_COMBO_OPTS" in b)
+    assert any("root.RCCombobox" in b for b in scripts[:board]), "the kit loads before the board script"
+    stub = "var mounted = []; RCCombobox.mount = function(o){ mounted.push(o); return {}; };"
+    js = "\n;\n".join(scripts[:board] + [stub] + scripts[board:])
+    js += "\nconsole.log(JSON.stringify({n: mounted.length, same: mounted[0] === DRILL_COMBO_OPTS}));"
+    path = tmp_path / "drill.js"
+    path.write_text(DOM_STUB + js, encoding="utf-8")
+    out = subprocess.run(["node", str(path)], capture_output=True, text=True, encoding="utf-8")
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert json.loads(out.stdout.strip().splitlines()[-1]) == {"n": 1, "same": True}
+
+
+def test_embedded_data_escapes_script_close():
+    payload = _payload()
+    payload["tickers"] = [{"ticker": "XSS", "name": "Bad </script><script>alert(1)</script>"}]
+    html = report.render_settings_dashboard(payload)
+    assert "</script><script>alert(1)" not in html
+    assert "\\u003c/script" in html
+
+
+def test_empty_payload_renders_the_empty_state():
+    html = report.render_settings_dashboard({"rows": []})
+    assert "empty" in html.lower()
+    assert "store is empty" in html.lower()
+    assert "<table" not in html
+
+
+def _run_verdicts(js: str, cases: list) -> list:
+    """Extract ``settingsJobVerdict`` from ``js`` and run it under node."""
+    import json
+    import re
+    import shutil
+    import subprocess
+    import pytest
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    m = re.search(r"function settingsJobVerdict\(.*?\n}\n", js, re.S)
+    assert m, "settingsJobVerdict not found in the Settings JS"
+    script = m.group(0) + "\nvar cases = %s;\nconsole.log(JSON.stringify(cases.map(settingsJobVerdict)));\n" % json.dumps(cases)
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                         encoding="utf-8", check=True)
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+class TestJobVerdict:
+    def test_every_status_maps_truthfully(self):
+        cases = [
+            {"ok": True, "job": {"status": "queued"}},
+            {"ok": True, "job": {"status": "running"}},
+            {"ok": True, "job": {"status": "done", "message": "3 caps filled"}},
+            {"ok": True, "job": {"status": "error", "error": "boom"}},
+            {"ok": True, "job": {"status": "cancelled"}},
+            {"ok": True, "job": {"status": "weird"}},
+            {"ok": False, "error": "unknown job"},
+            {},
+        ]
+        got = _run_verdicts(report.JS, cases)
+        states = [g["state"] for g in got]
+        assert states == ["poll", "poll", "done", "error", "error", "error",
+                          "error", "error"], got
+        assert got[0]["text"] == "Queued…"
+        assert got[1]["text"] == "Running…"
+        assert got[2]["text"] == "3 caps filled"
+        assert got[3]["text"] == "boom"
+        assert got[4]["text"] == "Cancelled"
+        assert got[5]["text"] == "Unknown job status: weird"
+        assert "Job not found" in got[6]["text"]
+        assert "Job not found" in got[7]["text"]
+
+    def test_done_and_error_fall_back_to_defaults(self):
+        got = _run_verdicts(report.JS, [
+            {"ok": True, "job": {"status": "done"}},
+            {"ok": True, "job": {"status": "error"}},
+        ])
+        assert got == [{"state": "done", "text": "Done"},
+                       {"state": "error", "text": "Error"}]
+
+    def test_poller_uses_the_verdict(self):
+        assert "settingsJobVerdict(d)" in report.JS
+
+
+# ── Board inputs section + visible errors (slice 2) ──────────────────────────
+def _card(**over):
+    card = {
+        "key": "module_comovement", "label": "Co-movement",
+        "tables": ["equity_universe", "swing_ohlc"],
+        "price_basis": "dividend-adjusted closes (yfinance auto_adjust); correct for returns",
+        "params": ["Window 252 sessions", "Min observations 126"],
+        "as_of": "2026-09-25T20:00:00+00:00",
+        "window": {"window_start": "2025-09-25", "prices_through": "2026-09-25"},
+        "funnel_steps": [
+            {"key": "scanned", "label": "Scanned universe", "count": 100,
+             "kind": "start", "fix": None},
+            {"key": "below_floor", "label": "Below the $300M classification floor",
+             "count": 30, "kind": "drop", "by_design": True, "fix": None},
+            {"key": "no_market_cap", "label": "No market cap", "count": 10,
+             "kind": "drop", "by_design": False,
+             "fix": {"route": "/run/universe-stats", "label": "Fetch caps"}},
+            {"key": "clustered", "label": "Clustered", "count": 60, "kind": "result",
+             "fix": None},
+        ],
+        "state": "ok", "error": None,
+    }
+    card.update(over)
+    return card
+
+
+def _with(**payload_over):
+    p = _payload()
+    p.update(payload_over)
+    return report.render_settings_dashboard(p)
+
+
+def test_board_inputs_card_renders_funnel_and_fetch_buttons():
+    html = _with(boards=[_card()])
+    assert "Board inputs" in html
+    assert "Co-movement" in html
+    assert "as of Friday, September 25, 2026 EOD" in html
+    assert "equity_universe" in html and "swing_ohlc" in html
+    assert "dividend-adjusted closes" in html
+    assert "Window 252 sessions" in html
+    assert "−30" in html and "−10" in html
+    assert "(by design)" in html
+    # only the fixable drop gets a button, wired to the shared poller
+    assert 'data-fetch="/run/universe-stats" data-row="module_comovement-no_market_cap"' in html
+    assert 'id="msg-module_comovement-no_market_cap"' in html
+    assert html.count("(by design)") == 1
+    assert "Clustered" in html and "60" in html
+
+
+def test_board_card_states():
+    nr = _with(boards=[_card(state="not_rendered", funnel_steps=[], as_of=None)])
+    assert ("Co-movement has not been rendered yet. "
+            "Open or Refresh that tab first.") in nr
+    nf = _with(boards=[_card(state="no_funnel", funnel_steps=[])])
+    assert ("Rendered before funnel reporting; Refresh the Co-movement tab.") in nf
+    bad = _with(boards=[_card(state="invalid", error="start 1 <script>x</script>")])
+    assert 'class="board-err"' in bad
+    assert "<script>x</script>" not in bad and "&lt;script&gt;" in bad
+    err = _with(boards=[_card(state="error", error="JSONDecodeError: bad", funnel_steps=[])])
+    assert "JSONDecodeError: bad" in err and 'class="board-err"' in err
+
+
+def test_board_data_is_escaped():
+    html = _with(boards=[_card(label="<i>x</i>", params=["<b>p</b>"],
+                               price_basis="<u>z</u>")])
+    assert "<i>x</i>" not in html and "<b>p</b>" not in html and "<u>z</u>" not in html
+
+
+def test_no_boards_no_section():
+    assert "Board inputs" not in report.render_settings_dashboard(_payload())
+
+
+def test_errors_are_shown_on_the_affected_row_and_escaped():
+    html = _with(errors=[{"table": "equity_universe", "where": "_count",
+                          "error": "disk <b>on</b> fire"}])
+    assert 'class="row-err"' in html
+    assert "disk &lt;b&gt;on&lt;/b&gt; fire" in html
+    assert "disk <b>on</b> fire" not in html
+    assert 'id="errors"' in html
+
+
+def test_no_errors_no_error_list():
+    html = _with(errors=[])
+    assert 'id="errors"' not in html and 'class="row-err"' not in html
+
+
+# ── editable Co-movement inputs (#40 Part B) ─────────────────────────────────
+import re  # noqa: E402
+
+
+def _field(key, label, value, default, kind="int", lo=None, hi=None, rng="",
+           overridden=False, choices=None):
+    return {"key": key, "label": label, "value": value, "default": default,
+            "kind": kind, "lo": lo, "hi": hi, "range": rng,
+            "overridden": overridden, "choices": choices}
+
+
+def _settings_block(custom=False, **over):
+    s = {
+        "board": "module_comovement", "custom": custom,
+        "inputs": [
+            _field("WINDOW", "Default window (sessions)", 252, 252,
+                   choices=[[21, "1m (21)"], [126, "6m (126)"], [252, "1y (252)"]],
+                   rng="1m, 2m, 6m, 9m, 1y, 1.5y"),
+            _field("MIN_OBS", "Minimum observations", 126, 126, lo=60,
+                   rng="60–WINDOW"),
+            _field("OOS_HOLDOUT", "Out-of-sample holdout (sessions)", 63, 63,
+                   lo=42, hi=126, rng="42–126"),
+        ],
+        "fine": [
+            _field("WINSOR_K", "Winsorize at (sigma)", 5.0, 5.0, kind="float",
+                   lo=4.0, hi=8.0, rng="4–8"),
+            _field("MIN_PERIODS", "Pairwise minimum overlap", 60, 60, lo=20,
+                   rng="20–MIN_OBS"),
+            _field("BENCH_STALE_SESSIONS", "Benchmark lag (sessions)", 2, 2,
+                   lo=0, hi=5, rng="0–5"),
+        ],
+        "derived": {"key": "OOS_MIN_OBS",
+                    "label": "Held-out observations needed (derived)", "value": 40},
+    }
+    s.update(over)
+    return s
+
+
+class TestEditableInputs:
+    def test_inputs_render_with_ranges_and_the_fine_tuning_details(self):
+        html = _with(boards=[_card(settings=_settings_block())])
+        assert 'data-setting="MIN_OBS"' in html
+        assert 'data-setting="OOS_HOLDOUT"' in html
+        assert '<select' in html and 'data-setting="WINDOW"' in html
+        assert "60–WINDOW" in html and "42–126" in html
+        # fine tuning is a collapsed <details>, closed by default, holding 3 inputs
+        m = re.search(r'<details class="fine"(?![^>]*\bopen\b)[^>]*>(.*?)</details>',
+                      html, re.S)
+        assert m, "no collapsed Fine tuning <details>"
+        assert "Fine tuning" in m.group(1)
+        for key in ("WINSOR_K", "MIN_PERIODS", "BENCH_STALE_SESSIONS"):
+            assert f'data-setting="{key}"' in m.group(1)
+        assert 'data-setting="MIN_OBS"' not in m.group(1)
+        # the derived value is read-only text, not an input
+        assert "Held-out observations needed (derived)" in html
+        assert 'data-setting="OOS_MIN_OBS"' not in html
+
+    def test_error_area_and_per_field_error_slots_exist(self):
+        html = _with(boards=[_card(settings=_settings_block())])
+        assert 'id="seterr-module_comovement"' in html
+        assert 'role="alert"' in html
+        for key in ("WINDOW", "MIN_OBS", "OOS_HOLDOUT", "WINSOR_K",
+                    "MIN_PERIODS", "BENCH_STALE_SESSIONS"):
+            assert f'id="err-{key}"' in html
+
+    def test_overridden_fields_are_marked_and_the_badge_shows_only_when_custom(self):
+        plain = _with(boards=[_card(settings=_settings_block())])
+        assert "Custom settings" not in plain
+        assert "Reset to defaults" in plain       # the button is always there
+        assert 'class="ovr"' not in plain
+        s = _settings_block(custom=True)
+        s["inputs"][1] = _field("MIN_OBS", "Minimum observations", 200, 126, lo=60,
+                                rng="60–WINDOW", overridden=True)
+        html = _with(boards=[_card(settings=s)])
+        assert "Custom settings" in html
+        assert html.count('class="ovr"') == 1
+        assert "default 126" in html
+        assert 'value="200"' in html
+
+    def test_everything_data_derived_is_escaped(self):
+        s = _settings_block()
+        s["inputs"][1] = _field("MIN_OBS", '<img src=x onerror=alert(1)>', 126, 126,
+                                lo=60, rng='<script>alert(2)</script>')
+        html = _with(boards=[_card(settings=s)])
+        assert "<img src=x" not in html and "<script>alert(2)" not in html
+        assert "&lt;img src=x" in html
+
+    def test_a_board_without_settings_renders_no_form(self):
+        html = _with(boards=[_card()])
+        assert "data-setting=" not in html and "Save settings" not in html
+
+
+_NODE_STUB = r"""
+var _els = {}, FETCHES = [], RESP = [];
+function mk(id, extra){
+  var a = {}, o = {id: id, textContent: "", innerHTML: "", disabled: false, value: "",
+    open: false, hidden: false, style: {}, classList: {add(){}, remove(){}},
+    setAttribute(k, v){ a[k] = String(v); }, getAttribute(k){ return k in a ? a[k] : null; },
+    closest(){ return o._details || null; }, addEventListener(){}};
+  return Object.assign(o, extra || {});
+}
+globalThis.document = {
+  getElementById(id){ return _els[id] || (_els[id] = mk(id)); },
+  querySelectorAll(sel){ return sel.indexOf("[data-setting]") >= 0 ? (globalThis.INPUTS || []) : []; },
+  querySelector(){ return null; }
+};
+globalThis.location = {search: "", origin: "http://x"};
+globalThis.parent = {postMessage(){}};
+globalThis.fetch = function(url, opts){
+  FETCHES.push({url: url, body: opts && opts.body ? JSON.parse(opts.body) : null});
+  var r = RESP.shift() || {status: 200, body: {ok: true, job: {status: "running"}}};
+  return Promise.resolve({status: r.status, ok: r.status < 400,
+                          json(){ return Promise.resolve(r.body); }});
+};
+function input(key, orig, value){
+  var a = {"data-setting": key, "data-orig": String(orig)};
+  return {value: String(value), getAttribute(k){ return a[k] == null ? null : a[k]; }};
+}
+function saveBtn(){
+  var b = mk("b"); _els["msg-set-module_comovement"] = mk("m");
+  b.getAttribute = function(k){ return k === "data-board" ? "module_comovement" : null; };
+  return b;
+}
+"""
+
+
+def _run_settings_js(driver: str) -> dict:
+    """Run the Settings board's own JS under node with a small DOM/fetch stub."""
+    import json
+    import shutil
+    import subprocess
+    import pytest
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    js = report.JS.replace("document.querySelectorAll('.fetch-btn').forEach", "[].forEach")
+    js = js.replace("document.querySelectorAll('.set-save').forEach", "[].forEach")
+    js = js.replace("document.querySelectorAll('.set-reset').forEach", "[].forEach")
+    script = _NODE_STUB + js + "\n" + driver
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                         encoding="utf-8", check=True)
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+class TestSaveHandler:
+    def test_a_400_shows_the_messages_next_to_the_fields_and_does_not_reload(self):
+        got = _run_settings_js(r"""
+globalThis.INPUTS = [input("WINDOW", 252, 252), input("MIN_OBS", 126, 10),
+                     input("OOS_HOLDOUT", 63, 63)];
+RESP.push({status: 400, body: {ok: false, error: "x", messages: [
+  "MIN_OBS must be between 60 and WINDOW (252); got 10",
+  "WINDOW + OOS_HOLDOUT must not exceed the 500 stored sessions; got 252 + 126",
+  "<img src=x onerror=alert(1)> is odd"]}});
+var btn = saveBtn();
+settingsSave(btn);
+setTimeout(function(){
+  console.log(JSON.stringify({
+    reloaded: location.search !== "",
+    posted: FETCHES.map(function(f){ return f.url; }),
+    body: FETCHES[0].body,
+    minobs: _els["err-MIN_OBS"].textContent,
+    holdout: _els["err-OOS_HOLDOUT"].textContent,
+    window_: (_els["err-WINDOW"] || {}).textContent || "",
+    general: _els["seterr-module_comovement"].textContent,
+    inner: _els["seterr-module_comovement"].innerHTML + _els["err-MIN_OBS"].innerHTML,
+    btnDisabled: btn.disabled}));
+  process.exit(0);
+}, 30);
+""")
+        assert got["reloaded"] is False, "a rejected save must not reload the page"
+        assert got["posted"] == ["/api/settings/board/module_comovement"]
+        assert got["body"] == {"changes": {"MIN_OBS": 10}}, "only changed fields are sent"
+        assert "between 60 and WINDOW" in got["minobs"]
+        assert "WINDOW + OOS_HOLDOUT must not exceed" in got["holdout"]
+        assert "WINDOW + OOS_HOLDOUT" in got["window_"]
+        assert "onerror" in got["general"]           # unmatched message -> general area
+        assert got["inner"] == "", "messages must be set as text, never as HTML"
+        assert got["btnDisabled"] is False
+
+    def test_a_202_starts_the_poll_and_does_not_reload_while_it_runs(self):
+        got = _run_settings_js(r"""
+globalThis.INPUTS = [input("MIN_OBS", 126, 200)];
+RESP.push({status: 202, body: {ok: true, job_id: "J1", values: {}}});
+RESP.push({status: 200, body: {ok: true, job: {status: "running"}}});
+var btn = saveBtn();
+settingsSave(btn);
+setTimeout(function(){
+  console.log(JSON.stringify({
+    urls: FETCHES.map(function(f){ return f.url; }),
+    msg: _els["msg-set-module_comovement"].textContent,
+    reloaded: location.search !== "", btnDisabled: btn.disabled}));
+  process.exit(0);
+}, 60);
+""")
+        assert got["urls"] == ["/api/settings/board/module_comovement", "/api/job/J1"]
+        assert got["msg"] == "Running…"
+        assert got["reloaded"] is False and got["btnDisabled"] is True
+
+    def test_a_finished_job_reloads_with_refresh(self):
+        got = _run_settings_js(r"""
+globalThis.INPUTS = [input("MIN_OBS", 126, 200)];
+RESP.push({status: 202, body: {ok: true, job_id: "J2", values: {}}});
+RESP.push({status: 200, body: {ok: true, job: {status: "done", message: "ok"}}});
+settingsSave(saveBtn());
+setTimeout(function(){ console.log(JSON.stringify({search: location.search})); process.exit(0); }, 60);
+""")
+        assert got["search"] == "?refresh=1"
+
+    def test_nothing_changed_sends_nothing(self):
+        got = _run_settings_js(r"""
+globalThis.INPUTS = [input("MIN_OBS", 126, 126)];
+settingsSave(saveBtn());
+setTimeout(function(){
+  console.log(JSON.stringify({n: FETCHES.length,
+    msg: _els["msg-set-module_comovement"].textContent}));
+  process.exit(0); }, 20);
+""")
+        assert got["n"] == 0 and "No changes" in got["msg"]
+
+    def test_reset_posts_reset_true_and_polls(self):
+        got = _run_settings_js(r"""
+RESP.push({status: 202, body: {ok: true, job_id: "J3", values: {}}});
+settingsReset(saveBtn());
+setTimeout(function(){ console.log(JSON.stringify({f: FETCHES})); process.exit(0); }, 40);
+""")
+        assert got["f"][0]["body"] == {"reset": True}
+        assert got["f"][1]["url"] == "/api/job/J3"
+
+    def test_one_shared_verdict_function(self):
+        from RevenueChaser.core import reporting_common as rc
+        assert "function settingsJobVerdict(" in rc.JOB_JS
+        assert "function settingsJobVerdict(" in report.JS
+        assert report.JS.count("function settingsJobVerdict(") == 1
+
+
+# ── funnel note + type rows on the Board inputs card (#87) ───────────────────
+def _typed_card(note_label="Unknown security type — kept", **over):
+    steps = [
+        {"key": "scanned", "label": "Scanned universe", "count": 100, "kind": "start",
+         "fix": None},
+        {"key": "funds_etfs", "label": "Funds / ETFs", "count": 12, "kind": "drop",
+         "by_design": True, "fix": None},
+        {"key": "unknown_type", "label": note_label, "count": 7, "kind": "note",
+         "fix": None, "link": {"tab": "module_settings", "anchor": "identity",
+                               "label": "Settings → Identity"}},
+        {"key": "clustered", "label": "Clustered", "count": 88, "kind": "result",
+         "fix": None},
+    ]
+    return _card(funnel_steps=steps, **over)
+
+
+def test_the_card_renders_a_note_row_with_an_identity_anchor_and_no_button():
+    html = _with(boards=[_typed_card()])
+    row = re.search(r'<div class="frow2 note">.*?</div>', html, re.S).group(0)
+    assert row == ('<div class="frow2 note"><span>⚠ Unknown security type — kept '
+                   '<a href="#identity">Settings → Identity</a></span>'
+                   '<span class="num">7</span></div>')
+    assert "<button" not in row and "−7" not in html       # a note: no action, positive count
+    assert "−12" in html and "Funds / ETFs" in html        # the type row is a normal by-design drop
+    assert html.count("(by design)") == 1
+
+
+def test_a_note_link_elsewhere_opens_that_tab_and_no_link_renders_none():
+    card = _typed_card()
+    card["funnel_steps"][2]["link"] = {"tab": "module_value_chain", "label": "VC"}
+    row = re.search(r'<div class="frow2 note">.*?</div>', _with(boards=[card]), re.S).group(0)
+    assert '<a href="/#module_value_chain" target="_top">VC</a>' in row
+    del card["funnel_steps"][2]["link"]
+    row = re.search(r'<div class="frow2 note">.*?</div>', _with(boards=[card]), re.S).group(0)
+    assert "<a " not in row and "⚠ Unknown security type — kept</span>" in row
+
+
+def test_the_note_label_is_escaped_on_the_card():
+    html = _with(boards=[_typed_card(note_label="<i>x</i> & y")])
+    assert "&lt;i&gt;x&lt;/i&gt; &amp; y" in html and "<i>x</i>" not in html
+
+
+def test_the_note_row_has_its_own_style():
+    assert ".frow2.note" in report.CSS
+
+
+# ── Identity health card (issue #89) ─────────────────────────────────────────
+IDENTITY_IDS = ("identity-health", "identity-run", "identity-spdr", "identity-types",
+                "identity-sources", "identity-conflicts", "identity-stale")
+
+
+def _identity_row():
+    return {"key": "identity", "label": "Identity spine",
+            "tables": ["security_master", "identity_conflicts", "identity_source_cache", "identity_runs"],
+            "rows": 7366, "last_date": "2026-09-30", "holes": 12, "hole_label": "unclassified ≥$300M",
+            "fetch": {"route": "/run/identity", "label": "Fetch identity"}, "note": "last run ok"}
+
+
+def _src(status="ok", rows=0, fetched=0, error=None, selected=True):
+    return {"status": status, "selected": selected, "rows": rows, "fetched": fetched, "error": error}
+
+
+def _identity(**over):
+    ident = {
+        "last_run": {
+            "run_id": "r2", "status": "partial", "started_at": "2026-09-30T00:00:00Z",
+            "finished_at": "2026-09-30T00:06:00Z",
+            "sources": {"sec_exchange": _src(rows=10300), "nasdaq": _src("error", error="HTTP 503 <b>down</b>"),
+                        "openfigi": _src(rows=120, fetched=120), "fdic": _src("skipped", selected=False)},
+            "counts": {"tickers": 7366, "conflicts": 266, "spdr_checked": 480, "spdr_agree": 478}},
+        "floor": 300_000_000.0,
+        "type_mix": [{"type": "common", "all": 5200, "floor": 2900, "excluded": False},
+                     {"type": "etp", "all": 213, "floor": 40, "excluded": True},
+                     {"type": "unknown", "all": 3, "floor": 0, "excluded": False}],
+        "source_mix": [{"bucket": "official", "all": 1501, "floor": 1501},
+                       {"bucket": "provider", "all": 5100, "floor": 1200},
+                       {"bucket": "SIC", "all": 325, "floor": 20},
+                       {"bucket": "type rule", "all": 400, "floor": 60},
+                       {"bucket": "unclassified", "all": 64, "floor": 12}],
+        "conflicts": {
+            "as_of": "2026-09-30T00:00:00Z",
+            "by_kind": [{"kind": "sector", "count": 200}, {"kind": "spdr", "count": 3}],
+            "top": [{"ticker": "AAPL", "kind": "spdr", "field": "sector", "side_a": "Technology",
+                     "side_b": "Communication Services", "note": "SPDR XLC holdings",
+                     "last_seen": "2026-09-30T00:00:00Z", "market_cap": 3.0e12},
+                    {"ticker": "*", "kind": "source", "field": "uw_snapshot", "side_a": "previous snapshot",
+                     "side_b": "new snapshot (1500 rows)", "note": "gated", "last_seen": "2026-09-30T00:00:00Z",
+                     "market_cap": None}],
+            "older": {"count": 12, "since": "2026-09-20T00:00:00Z"}},
+        "stale": [{"source": "sec_exchange", "newest": "2026-09-30T00:00:00Z", "rows": 7000, "past_window": None,
+                   "window": "every run"},
+                  {"source": "sec_submissions", "newest": "2026-09-25T00:00:00Z", "rows": 6900, "past_window": 17,
+                   "window": "30 days"},
+                  {"source": "fdic", "newest": None, "rows": 0, "past_window": 0, "window": "90 days"}],
+        "spdr": {"state": "ok", "checked": 480, "agree": 478, "date": "2026-09-30T00:00:00Z"},
+    }
+    ident.update(over)
+    return ident
+
+
+def _card_html(**over):
+    return _with(rows=_payload()["rows"] + [_identity_row()], identity=_identity(**over))
+
+
+def test_the_identity_row_gets_a_fetch_identity_button_on_the_shared_poller():
+    html = _with(rows=_payload()["rows"] + [_identity_row()])
+    assert 'data-fetch="/run/identity" data-row="identity"' in html
+    assert ">Fetch identity</button>" in html and 'id="msg-identity"' in html
+    assert "Identity spine" in html and "unclassified ≥$300M" in html
+
+
+def test_the_card_renders_every_section_with_its_id():
+    html = _card_html()
+    for ident in IDENTITY_IDS:
+        assert f'id="{ident}"' in html, ident
+    assert '<div class="bcard" id="identity-health"><h3>Identity health</h3>' in html
+
+
+def test_the_card_sits_directly_below_the_inventory_table_and_above_the_errors_and_boards():
+    html = _with(rows=_payload()["rows"], identity=_identity(), boards=[_card()],
+                 errors=[{"table": "equity_universe", "where": "_count", "error": "x"}])
+    assert (html.index('class="panel"') < html.index('id="identity-health"')
+            < html.index('id="errors"') < html.index("Board inputs"))
+
+
+def test_a_payload_without_identity_renders_no_card():
+    assert "identity-health" not in report.render_settings_dashboard(_payload())
+
+
+def test_the_last_run_line_shows_status_dates_counts_and_each_selected_source():
+    html = _card_html()
+    run = html[html.index('id="identity-run"'):html.index('id="identity-spdr"')]
+    assert "partial" in run and "2026-09-30 00:00 UTC" in run and "2026-09-30 00:06 UTC" in run
+    assert "7,366 tickers" in run and "266 conflicts" in run
+    assert "sec_exchange" in run and "10,300 rows" in run
+    assert "openfigi" in run and "120 fetched" in run
+    assert "nasdaq" in run and "error" in run and "HTTP 503 &lt;b&gt;down&lt;/b&gt;" in run
+    assert "fdic" not in run, "a source that was not selected in the run is not listed"
+
+
+def test_the_spdr_line_in_its_three_states():
+    ok = _card_html()
+    assert "SPDR check: 478/480 agree (2026-09-30)" in ok
+    failed = _card_html(spdr={"state": "error", "error": "SPDR xle: HTTP 500", "date": "2026-10-01T00:00:00Z",
+                              "last_good": {"date": "2026-09-30T00:00:00Z", "checked": 480, "agree": 478}})
+    assert ("SPDR check failed: SPDR xle: HTTP 500 (last good: 2026-09-30, 478/480 agree)") in failed
+    first = _card_html(spdr={"state": "error", "error": "boom", "date": "2026-10-01T00:00:00Z", "last_good": None})
+    assert "SPDR check failed: boom (no good run yet)" in first
+    never = _card_html(spdr={"state": "never"})
+    assert "SPDR check: not run yet" in never
+
+
+def test_the_type_mix_table_flags_excluded_types_and_labels_the_floor():
+    html = _card_html()
+    types = html[html.index('id="identity-types"'):html.index('id="identity-sources"')]
+    assert "<th>Type</th>" in types and "<th>All</th>" in types and "<th>≥$300M</th>" in types
+    assert "common" in types and "5,200" in types and "2,900" in types and "unknown" in types
+    assert types.count("(excluded)") == 1
+    assert types.index("etp") < types.index("(excluded)") < types.index("unknown")
+
+
+def test_the_sector_source_mix_table():
+    html = _card_html()
+    src = html[html.index('id="identity-sources"'):html.index('id="identity-conflicts"')]
+    assert "Sector source mix" in src and "GICS" not in src
+    assert "<th>Bucket</th>" in src and "<th>All</th>" in src and "<th>≥$300M</th>" in src
+    for bucket in ("official", "provider", "SIC", "type rule", "unclassified"):
+        assert bucket in src
+    assert "1,501" in src and "5,100" in src and "1,200" in src and "325" in src
+
+
+def test_the_conflicts_section_shows_as_of_the_kinds_the_older_line_and_a_top_table():
+    html = _card_html()
+    c = html[html.index('id="identity-conflicts"'):html.index('id="identity-stale"')]
+    assert "as of 2026-09-30" in c
+    assert "sector" in c and "200" in c and "spdr" in c
+    assert "12 older, not seen since 2026-09-20" in c
+    assert "<details" in c and "Top 2 by market cap" in c
+    for head in ("Ticker", "Kind", "Field", "Side A", "Side B", "Note", "Last seen"):
+        assert f"<th>{head}</th>" in c
+    assert "AAPL" in c and "Communication Services" in c and "SPDR XLC holdings" in c
+    assert c.index("AAPL") < c.index("uw_snapshot")
+
+
+def test_no_older_line_when_nothing_is_older():
+    html = _card_html(conflicts={"as_of": "2026-09-30T00:00:00Z", "by_kind": [], "top": [],
+                                 "older": {"count": 0, "since": None}})
+    assert "not seen since" not in html
+    assert "no current conflicts" in html
+
+
+def test_the_stale_table_shows_counts_every_run_and_the_window():
+    html = _card_html()
+    s = html[html.index('id="identity-stale"'):]
+    for head in ("Source", "Newest", "Rows", "Past window", "Window"):
+        assert f"<th>{head}</th>" in s
+    assert "sec_exchange" in s and "every run" in s
+    assert "sec_submissions" in s and "6,900" in s and ">17<" in s and "30 days" in s
+    assert "2026-09-25" in s and "90 days" in s
+
+
+def test_the_empty_state_when_there_is_no_run_and_no_master():
+    html = _with(identity=_identity(last_run=None, type_mix=[], source_mix=[], stale=[],
+                                    conflicts={"as_of": None, "by_kind": [], "top": [],
+                                               "older": {"count": 0, "since": None}},
+                                    spdr={"state": "never"}))
+    assert "No identity run yet. Use Fetch identity in the table above." in html
+    assert 'id="identity-health"' in html
+    assert 'id="identity-types"' not in html
+
+
+def test_the_card_escapes_every_data_derived_string():
+    evil = "<script>alert(1)</script>"
+    html = _card_html(
+        type_mix=[{"type": evil, "all": 1, "floor": 1, "excluded": True}],
+        source_mix=[{"bucket": evil, "all": 1, "floor": 1}],
+        conflicts={"as_of": "2026-09-30T00:00:00Z", "by_kind": [{"kind": evil, "count": 1}],
+                   "top": [{"ticker": evil, "kind": evil, "field": evil, "side_a": evil, "side_b": evil,
+                            "note": evil, "last_seen": evil, "market_cap": 1.0}],
+                   "older": {"count": 1, "since": evil}},
+        stale=[{"source": evil, "newest": evil, "rows": 1, "past_window": 1, "window": evil}],
+        spdr={"state": "error", "error": evil, "date": evil, "last_good": {"date": evil, "checked": 1, "agree": 1}})
+    assert evil not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
+def test_the_help_text_says_the_card_is_store_only():
+    html = _card_html()
+    help_ = html[html.index('class="help"'):html.index("</details>", html.index('class="help"'))]
+    assert "Identity health" in help_ and "Fetch identity" in help_
+
+
+def test_the_help_and_the_card_warn_that_fetch_identity_writes_the_universe_classification():
+    """Since R3 (#86) a successful identity run applies the master to equity_universe; since #265 that is the
+    sector and industry plus UW's earnings date, no longer an industry group or a sub-industry."""
+    html = _card_html()
+    help_ = html[html.index('class="help"'):html.index("</details>", html.index('class="help"'))]
+    assert "equity_universe" in help_ and "every board" in help_
+    assert "sector and industry" in help_ and "GICS" not in help_
+    card = html[html.index('id="identity-health"'):]
+    assert 'id="identity-writes"' in card and "equity_universe" in card
+    writes = card[card.index('id="identity-writes"'):card.index("</div>", card.index('id="identity-writes"'))]
+    assert "sector and industry" in writes and "next earnings date" in writes
+    assert "industry group" not in writes and "sub-industry" not in writes
+    empty = report.render_settings_dashboard({"rows": [_identity_row()], "identity": {
+        "last_run": None, "type_mix": [], "source_mix": [], "conflicts": {}, "stale": [], "spdr": {"state": "never"}}})
+    assert 'id="identity-writes"' in empty[empty.index('id="identity-health"'):]
+
+
+def test_a_card_from_a_seeded_store_end_to_end(rawstore_tmp_db):
+    from RevenueChaser.module_settings import inventory
+    from RevenueChaser.module_settings.tests.test_inventory import FIXED, _seed_identity
+    _seed_identity()
+    html = report.render_settings_dashboard(inventory.collect(now=FIXED))
+    assert 'data-fetch="/run/identity"' in html
+    assert "SPDR check: 2/3 agree (2026-09-30)" in html
+    types = html[html.index('id="identity-types"'):html.index('id="identity-sources"')]
+    assert "common" in types and "(excluded)" in types
+    c = html[html.index('id="identity-conflicts"'):html.index('id="identity-stale"')]
+    assert "as of 2026-09-30" in c and "2 older, not seen since 2026-09-20" in c
+    assert "Communication Services" in c
+    s = html[html.index('id="identity-stale"'):]
+    assert "sec_submissions" in s and "every run" in s
+
+
+def test_the_card_is_reachable_at_the_identity_anchor_and_comes_after_the_table():
+    """R4's funnel note links to ``#identity``: the whole card sits in ``<section id="identity">``."""
+    html = _card_html()
+    assert '<section id="identity"><div class="bcard" id="identity-health">' in html
+    assert html.count('id="identity"') == 1, "the anchor must be unique"
+    assert html.index('class="panel"') < html.index('id="identity"') < html.index('id="identity-health"')
+    assert html.index('id="identity-stale"') < html.index("</section>"), "the section wraps every card section"
+    empty = _with(identity=_identity(last_run=None, type_mix=[], source_mix=[], stale=[],
+                                     conflicts={"as_of": None, "by_kind": [], "top": [],
+                                                "older": {"count": 0, "since": None}},
+                                     spdr={"state": "never"}))
+    assert '<section id="identity">' in empty and "</section>" in empty, "the empty state is reachable too"
+
+
+# ── Discord export readiness card (#242) ─────────────────────────────────────
+def _discord(**over):
+    d = {"ready": True, "min_version": "2.45", "checks": [
+        {"key": "cli", "label": "DCE CLI path (RC_DCE_CLI)", "state": "ok",
+         "detail": "C:\\tools\\DiscordChatExporter\\DiscordChatExporter.Cli.exe"},
+        {"key": "version", "label": "DCE version", "state": "ok", "detail": "2.48.0 (needs 2.45 or newer)"},
+        {"key": "token", "label": "Discord token (DISCORD_TOKEN)", "state": "ok",
+         "detail": "DISCORD_TOKEN is set. Its value is never shown."},
+        {"key": "guild", "label": "Server id (RC_DISCORD_GUILD_ID)", "state": "ok",
+         "detail": "RC_DISCORD_GUILD_ID is set."},
+    ]}
+    d.update(over)
+    return d
+
+
+def _not_ready():
+    checks = _discord()["checks"]
+    checks[0] = dict(checks[0], state="bad", detail="RC_DCE_CLI is not set. Point it at the CLI.")
+    checks[1] = dict(checks[1], state="skipped", detail="Needs the CLI path above first.")
+    checks[2] = dict(checks[2], state="unknown", detail="Could not read it.")
+    return _discord(ready=False, checks=checks)
+
+
+def test_the_discord_card_renders_every_check_with_its_id_state_and_detail():
+    html = _with(discord=_discord())
+    card = html[html.index('id="discord-readiness"'):]
+    for key in ("cli", "version", "token", "guild"):
+        assert f'id="discord-check-{key}"' in card, key
+    assert "DCE CLI path (RC_DCE_CLI)" in card and "2.48.0 (needs 2.45 or newer)" in card
+    assert card.count('class="st-ok">ok</span>') == 4
+
+
+def test_the_discord_card_colours_each_state_by_its_meaning():
+    card = _with(discord=_not_ready())
+    card = card[card.index('id="discord-readiness"'):]
+    row = lambda key: card[card.index(f'id="discord-check-{key}"'):].split("</tr>")[0]   # noqa: E731
+    assert 'class="st-bad">fix</span>' in row("cli")
+    assert 'class="st-warn">not checked</span>' in row("version")
+    assert 'class="st-warn">unknown</span>' in row("token")
+    assert 'class="st-ok">ok</span>' in row("guild")
+
+
+def test_the_discord_summary_says_ready_only_when_ready():
+    ready = _with(discord=_discord())
+    assert 'id="discord-summary"' in ready
+    summary = ready[ready.index('id="discord-summary"'):].split("</div>")[0]
+    assert "Ready" in summary and "Not ready" not in summary
+    broken = _with(discord=_not_ready())
+    summary = broken[broken.index('id="discord-summary"'):].split("</div>")[0]
+    assert "Not ready" in summary and "3 checks need attention" in summary
+
+
+def test_the_discord_summary_uses_the_singular_for_one_check():
+    d = _discord(ready=False)
+    d["checks"][2] = dict(d["checks"][2], state="bad", detail="DISCORD_TOKEN is missing.")
+    html = _with(discord=d)
+    summary = html[html.index('id="discord-summary"'):].split("</div>")[0]
+    assert "1 check needs attention" in summary
+
+
+def test_the_discord_card_says_it_cannot_verify_the_token_and_reads_no_network():
+    html = _with(discord=_discord())
+    note = html[html.index('id="discord-note"'):].split("</div>")[0]
+    assert "token" in note and "network" in note
+
+
+def test_the_discord_card_escapes_every_data_derived_string():
+    d = _discord()
+    d["checks"][0] = dict(d["checks"][0], label="<i>lbl</i>", detail='<script>alert(1)</script> & "x"')
+    html = _with(discord=d)
+    assert "<script>alert(1)</script>" not in html and "<i>lbl</i>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;x&quot;" in html
+
+
+def test_no_discord_card_without_the_payload_key_or_when_it_is_none():
+    assert "discord-readiness" not in report.render_settings_dashboard(_payload())
+    assert "discord-readiness" not in _with(discord=None)
+
+
+def test_the_discord_card_sits_after_the_identity_card_and_before_the_errors_and_boards():
+    html = _with(rows=_payload()["rows"], identity=_identity(), discord=_discord(), boards=[_card()],
+                 errors=[{"table": "equity_universe", "where": "_count", "error": "x"}])
+    assert (html.index('class="panel"') < html.index('id="identity-health"') < html.index('id="discord-readiness"')
+            < html.index('id="errors"') < html.index("Board inputs"))
+    assert '<section id="discord"><div class="bcard" id="discord-readiness">' in html
+    assert html.count('id="discord"') == 1
+
+
+def test_the_discord_card_shows_without_the_identity_card():
+    html = _with(discord=_discord())
+    assert 'id="identity-health"' not in html and 'id="discord-readiness"' in html
+
+
+def test_the_help_text_mentions_the_discord_card():
+    html = _with(discord=_discord())
+    help_ = html[html.index('class="help"'):html.index("</details>", html.index('class="help"'))]
+    assert "Discord" in help_ and "--version" in help_
+    # the card does read the token, to see that it is set: the text must say so, and that it is never shown
+    assert "token is read only to check that it is set" in help_ and "never shown" in help_
+    assert "never the token" not in help_
+    assert "no key or token" in help_, "the version probe starts without keys or tokens in its environment"
+
+
+# --- Automations panel (#130) ------------------------------------------------------
+
+def _autos():
+    from RevenueChaser.core import automations
+    return automations.static_rows()
+
+
+def test_automations_section_renders_from_embedded_rows():
+    p = _payload()
+    p["automations"] = _autos()
+    html = report.render_settings_dashboard(p)
+    assert 'id="auto-body"' in html and "Automations" in html
+    assert "var AUTOMATIONS = " in html
+    assert "RC-Store-Backup" in html and "/api/automations" in html
+
+
+def test_automations_section_is_absent_without_rows():
+    html = report.render_settings_dashboard(_payload())
+    assert 'id="auto-body"' not in html
+
+
+def test_the_panel_uses_rcesc_and_never_the_drill_escaper():
+    start = report.AUTOMATIONS_JS
+    assert "rcEsc(" in start and "tcEsc" not in start
+    assert "innerHTML" in start
+
+
+def test_confirm_names_the_task_for_install_remove_and_run():
+    js = report.AUTOMATIONS_JS
+    for verb in ("install", "remove", "run"):
+        assert f"'{verb}'" in js
+    assert "confirm(" in js
+
+
+def _render_rows(rows: list, available: bool = True) -> str:
+    import json
+    import shutil
+    import subprocess
+    import pytest
+    from RevenueChaser.core import html_safe
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    script = (html_safe.ESC_JS + report.AUTOMATIONS_JS +
+              "\nconsole.log(JSON.stringify(autoTableHtml(%s, %s)));\n"
+              % (json.dumps(rows), json.dumps(available)))
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                         encoding="utf-8", check=True)
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+def test_renderer_escapes_every_field_of_a_hostile_row():
+    bad = "<img src=x onerror=__x(1)>"
+    row = {k: bad for k in ("name", "label", "schedule", "command", "settings", "log_path",
+                            "description", "state", "result_text", "result_kind",
+                            "last_run", "next_run", "last_success_age")}
+    row.update(tables_written=[bad], log_tail=[bad], missed_runs=bad)
+    html = _render_rows([row])
+    assert "<img" not in html and "&lt;img" in html
+
+
+def test_renderer_buttons_follow_the_state():
+    rows = [dict(_autos()[0], state=s) for s in
+            ("not_installed", "enabled", "disabled", "running", "unavailable", "weird")]
+    out = [_render_rows([r]) for r in rows]
+    acts = lambda h: sorted(set(__import__("re").findall(r'data-act="(\w+)"', h)))  # noqa: E731
+    assert acts(out[0]) == ["install"]
+    assert acts(out[1]) == ["disable", "remove", "run"]
+    assert acts(out[2]) == ["enable", "remove"]
+    assert acts(out[3]) == [] and acts(out[4]) == [] and acts(out[5]) == []
+
+
+def test_renderer_shows_neutral_not_red_for_a_task_that_never_ran():
+    row = dict(_autos()[0], state="enabled", result_kind="neutral", result_text="not run yet")
+    html = _render_rows([row])
+    assert "not run yet" in html and "st-bad" not in html
+    red = _render_rows([dict(row, result_kind="red", result_text="failed (0x1)")])
+    assert "st-bad" in red
+
+
+def test_rows_without_live_state_show_checking():
+    assert "checking" in _render_rows(_autos()).lower()
+
+
+
+def test_renderer_escapes_a_hostile_name_inside_data_name():
+    bad = 'x" onmouseover="__x(1)" y="<img src=x onerror=__x(2)>'
+    html = _render_rows([dict(_autos()[0], name=bad, state="enabled")])
+    assert 'data-name="x&quot; onmouseover=&quot;__x(1)&quot;' in html
+    assert "<img" not in html
+
+
+def test_error_state_is_red_and_offers_no_button():
+    row = dict(_autos()[0], state="error", result_kind="red",
+               result_text="unreadable scheduler answer")
+    html = _render_rows([row])
+    assert "st-bad" in html and "Scheduler error" in html
+    assert "data-act" not in html
+
+
+def _drill_rows(detail: dict) -> str:
+    """``drillFill(detail)`` run in node: the helpers of ``DRILL_JS`` without the DOM wiring at its end."""
+    import json
+    import shutil
+    import subprocess
+    import pytest
+    from RevenueChaser.core import html_safe
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    helpers = report.DRILL_JS[:report.DRILL_JS.index("function onDrillPick")]
+    script = (html_safe.ESC_JS + helpers +
+              "\nconsole.log(JSON.stringify(drillFill(%s)));\n" % json.dumps(detail))
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                         encoding="utf-8", check=True)
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+def test_the_drill_shows_the_sector_and_the_industry_text():
+    """#266: Sector and Industry rows; the industry group and sub-industry rows are gone."""
+    html = _drill_rows({"name": "Micron", "sector": "Technology", "industry": "Semiconductors",
+                        "presence": {"swing_ohlc": {}}})
+    assert ('<span class="dlbl">Sector</span><span class="dval">Technology</span>' in html)
+    assert ('<span class="dlbl">Industry</span><span class="dval">Semiconductors</span>' in html)
+    assert "Industry group" not in html and "Sub-industry" not in html
+
+
+def test_the_drill_shows_a_dash_for_a_missing_industry_and_escapes_a_hostile_one():
+    bare = _drill_rows({"name": "x", "sector": None, "industry": None, "presence": {"swing_ohlc": {}}})
+    assert '<span class="dlbl">Industry</span><span class="dval">—</span>' in bare
+    bad = "<img src=x onerror=__x(1)>"
+    html = _drill_rows({"name": "x", "sector": bad, "industry": bad, "presence": {"swing_ohlc": {}}})
+    assert "<img" not in html and html.count("&lt;img") == 2
+
+
+def test_panel_posts_send_the_panel_header():
+    assert "'X-RC-Panel': 'automations'" in report.AUTOMATIONS_JS
+
+
+def test_renderer_shows_the_off_machine_line_with_a_fixed_class():
+    row = dict(_autos()[0], state="enabled",
+               offmachine={"configured": True, "kind": "red", "text": "FAILED 8 h ago; last OK 1 d ago"})
+    html = _render_rows([row])
+    assert "off-machine copy: FAILED 8 h ago; last OK 1 d ago" in html
+    assert 'class="auto-desc st-bad"' in html
+    ok = _render_rows([dict(row, offmachine={"configured": True, "kind": "ok", "text": "OK, 8 h ago"})])
+    assert 'class="auto-desc st-ok"' in ok and "st-bad" not in ok.split("off-machine copy:")[1].split("</div>")[0]
+
+
+def test_renderer_shows_no_off_machine_line_for_rows_that_have_none():
+    html = _render_rows([dict(_autos()[0], state="enabled", offmachine=None)])
+    assert "off-machine" not in html
+    assert "off-machine" not in _render_rows(_autos())          # embedded rows before the first poll
+
+
+def test_renderer_escapes_the_off_machine_text_and_never_takes_a_class_from_it():
+    bad = "<img src=x onerror=__x(1)>"
+    row = dict(_autos()[0], state="enabled", offmachine={"configured": True, "kind": bad, "text": bad})
+    html = _render_rows([row])
+    assert "<img" not in html and "&lt;img" in html
+    assert 'class="auto-desc "' in html or 'class="auto-desc"' in html
+
+
+def _size_div(html: str) -> str:
+    return html.split("backup size:")[0].rsplit("<div", 1)[1] + "backup size:" + \
+        html.split("backup size:")[1].split("</div>")[0]
+
+
+def test_renderer_shows_the_backup_size_line_and_warns_with_a_fixed_class():
+    """#309 part 3: both folder sizes on the backup row; amber above a threshold."""
+    row = dict(_autos()[0], state="enabled",
+               backup_size={"kind": "warn", "text": "local 21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)"})
+    html = _render_rows([row])
+    assert "backup size: local 21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)" in html
+    assert 'class="auto-desc st-warn"' in _size_div(html)
+    ok = _render_rows([dict(row, backup_size={"kind": "ok", "text": "local 1.00 GB, off-machine 2.00 GB"})])
+    assert 'class="auto-desc st-ok"' in _size_div(ok)
+    none = _render_rows([dict(row, backup_size={"kind": "none", "text": "not measured yet"})])
+    assert "st-" not in _size_div(none)
+
+
+def test_renderer_shows_no_size_line_for_rows_that_have_none():
+    assert "backup size" not in _render_rows([dict(_autos()[0], state="enabled", backup_size=None)])
+    assert "backup size" not in _render_rows(_autos())
+
+
+def test_renderer_escapes_the_size_text_and_never_takes_a_class_from_it():
+    bad = "<img src=x onerror=__x(1)>"
+    html = _render_rows([dict(_autos()[0], state="enabled", backup_size={"kind": bad, "text": bad})])
+    assert "<img" not in html and "&lt;img" in html
+
+
+_BACKUPS = {
+    "folder": "/b", "recorded_at": "2026-10-16T04:05:00+00:00",
+    "local": {"state": "warn", "bytes": 21_500_000_000, "files": 3382, "duckdb_bytes": 9_589_997_568,
+              "duckdb_files": 21, "docs_zip_bytes": 2_668_865_089, "docs_zip_files": 2, "limit_gb": 20.0,
+              "text": "21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)"},
+    "offmachine": {"state": "ok", "bytes": 7_676_019_838, "files": 3375, "limit_gb": 320.0, "text": "7.68 GB"},
+    "checkpoints": {"state": "unknown", "text": "unknown, not recorded: the backup job does not write that folder"},
+    "scan": {"state": "bad", "last_day": "2026-10-16", "failed": 2, "checked": 3382, "next_due": "2026-10-17",
+             "text": "2 files do not match"},
+}
+
+
+def _backups_card(b) -> str:
+    html = report.render_settings_dashboard(dict(_payload(), backups=b))
+    return html[html.index('id="backups"'):].split("</section>")[0] if 'id="backups"' in html else ""
+
+
+def test_the_backups_card_shows_every_fact_with_its_id():
+    """#309: sizes, file counts, the .duckdb / docs zip split, checkpoints, the last scan and when it was recorded."""
+    card = _backups_card(_BACKUPS)
+    loc = card[card.index('id="backup-local"'):].split("</tr>")[0]
+    assert "21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)" in loc and "3,382" in loc
+    assert "9.59 GB in 21 .duckdb" in loc and "2.67 GB in 2 edgar_docs zips" in loc
+    assert 'class="st-warn"' in loc
+    off = card[card.index('id="backup-offmachine"'):].split("</tr>")[0]
+    assert "7.68 GB" in off and "3,375" in off and "320 GB" in off and 'class="st-ok"' in off
+    cp = card[card.index('id="backup-checkpoints"'):].split("</tr>")[0]
+    assert "unknown" in cp and "not recorded" in cp
+    scan = card[card.index('id="backup-scan"'):].split("</tr>")[0]
+    assert "2026-10-16" in scan and "2 files do not match" in scan and "2026-10-17" in scan and 'class="st-bad"' in scan
+    assert 'id="backup-recorded"' in card and "2026-10-16" in card[card.index('id="backup-recorded"'):]
+
+
+def test_the_backups_card_shows_unknown_for_missing_records():
+    unknown = {"folder": "/b", "recorded_at": None,
+               "local": {"state": "unknown", "bytes": None, "text": "unknown: no backup run has recorded sizes yet"},
+               "offmachine": {"state": "unknown", "bytes": None, "text": "unknown"},
+               "checkpoints": {"state": "unknown", "text": "not recorded"},
+               "scan": {"state": "unknown", "last_day": None, "next_due": None, "text": "unknown: no scan yet"}}
+    card = _backups_card(unknown)
+    assert "unknown: no backup run has recorded sizes yet" in card and "unknown: no scan yet" in card
+    assert "st-ok" not in card and "never" in card[card.index('id="backup-recorded"'):]
+
+
+def test_no_backups_card_without_the_key():
+    assert _backups_card(None) == ""
+
+
+def test_the_backups_card_escapes_its_text_and_never_takes_a_class_from_it():
+    bad = "<img src=x onerror=__x(1)>"
+    b = dict(_BACKUPS, folder=bad, local=dict(_BACKUPS["local"], state=bad, text=bad))
+    card = _backups_card(b)
+    assert "<img" not in card and "&lt;img" in card
+
+
+def test_null_cap_text_does_not_claim_it_is_outside_the_universe():
+    """DF99: a NULL cap also occurs before the caps backfill has resolved it."""
+    html = report.render_settings_dashboard(_payload())
+    assert "not in the $300M classification universe" not in html
+    assert "no cap stored" in html

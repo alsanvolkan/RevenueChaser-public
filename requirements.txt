@@ -1,0 +1,32 @@
+httpx>=0.27.0
+python-dotenv>=1.0.0
+pandas>=2.0.0
+numpy>=1.24.0
+pytest>=8.0.0
+# Parallel test execution: the unit tier is single-core bound (one pytest process at ~100% CPU),
+# so CI runs it with `-n auto`.
+pytest-xdist>=3.6.0
+flask>=3.0.0
+# Single-file raw data store (all caches / derived data). Pin >=1.0: on-disk
+# format only became stable at 1.0.
+duckdb>=1.0
+# Charts in scripts/ (e.g. scripts/ai_cloud_revenue.py)
+matplotlib>=3.7.0
+# Co-movement board: hierarchical clustering (scipy.cluster.hierarchy)
+scipy>=1.11.0
+# Relatedness NMF themes (sklearn.decomposition.NMF)
+scikit-learn>=1.3.0
+# Free market-data fallbacks (etf_holdings / macro_watch)
+yfinance>=0.2.0
+# SEC 13F dashboard charts (interactive Plotly)
+plotly>=6.0.0
+# SPX Option Position Map (spx_gamma_module/)
+jinja2>=3.1.0
+kaleido>=0.2.1
+python-dateutil>=2.8.2
+# FinancialModelEngine (3-statement .xlsx export)
+openpyxl>=3.1.0
+# PWA app icon generation (RevenueChaser brand icon)
+pillow>=10.0.0
+# IANA time zones: core/calendar.py needs America/New_York (Windows has no system tz database)
+tzdata>=2024.1

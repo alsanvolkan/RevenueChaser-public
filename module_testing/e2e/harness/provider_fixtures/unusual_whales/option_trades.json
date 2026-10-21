@@ -1,0 +1,27 @@
+{
+  "path": "/api/option-trades",
+  "payload": {
+    "data": [
+      {"id": "t1", "underlying_symbol": "NVDA", "strike": "140", "expiry": "2027-06-18",
+       "premium": "850000", "size": 500, "option_type": "call", "delta": "0.62",
+       "next_earnings_date": null, "executed_at": "{{today}}T14:31:00Z",
+       "ask_vol": 480, "bid_vol": 20, "tags": []},
+      {"id": "t2", "underlying_symbol": "NVDA", "strike": "160", "expiry": "2027-06-18",
+       "premium": "420000", "size": 300, "option_type": "call", "delta": "0.31",
+       "next_earnings_date": null, "executed_at": "{{today}}T15:02:00Z",
+       "ask_vol": 290, "bid_vol": 10, "tags": []},
+      {"id": "t3", "underlying_symbol": "AMD", "strike": "180", "expiry": "2027-01-15",
+       "premium": "300000", "size": 200, "option_type": "call", "delta": "0.58",
+       "next_earnings_date": null, "executed_at": "{{today}}T16:10:00Z",
+       "ask_vol": 180, "bid_vol": 20, "tags": []},
+      {"id": "t4", "underlying_symbol": "AMD", "strike": "120", "expiry": "2027-01-15",
+       "premium": "260000", "size": 150, "option_type": "put", "delta": "-0.30",
+       "next_earnings_date": null, "executed_at": "{{today}}T16:12:00Z",
+       "ask_vol": 30, "bid_vol": 120, "tags": []},
+      {"id": "t5", "underlying_symbol": "SPX", "strike": "6000", "expiry": "2027-06-18",
+       "premium": "990000", "size": 900, "option_type": "call", "delta": "0.50",
+       "next_earnings_date": null, "executed_at": "{{today}}T16:20:00Z",
+       "ask_vol": 500, "bid_vol": 400, "tags": ["index"]}
+    ]
+  }
+}
