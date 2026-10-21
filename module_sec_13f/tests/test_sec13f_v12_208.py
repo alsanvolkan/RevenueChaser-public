@@ -213,6 +213,75 @@ class TestHoldersV12:
         assert totals["A"]["2026-03-31"]["shares"] == 150.0
 
 
+class TestMigrationV12:
+    """brief.md §3 tests 15-18: the one-time v12 reset (``scripts/migrate_sec13f_v12.py``)."""
+
+    V11_DDL = ("CREATE TABLE sec13f_holdings "
+               "(accession TEXT, cusip TEXT, cik TEXT, shares DOUBLE, value DOUBLE)")
+
+    def _v11_shape(self, rows=()):
+        rawstore.execute("DROP TABLE sec13f_holdings")
+        rawstore.execute(self.V11_DDL)
+        for row in rows:
+            rawstore.execute("INSERT INTO sec13f_holdings VALUES (?, ?, ?, ?, ?)", list(row))
+
+    def _live_key(self):
+        with rawstore.connect() as conn:
+            return rawstore._live_primary_keys(conn, "sec13f_holdings").get("sec13f_holdings", [])
+
+    def test_preflight_refuses_a_missing_zip_and_writes_nothing(self, store, tmp_path):
+        """brief.md §3 test 15, mutation 9: a missing file would cost a multi-GB re-download."""
+        from RevenueChaser.scripts import migrate_sec13f_v12 as migrate
+        self._v11_shape([("a", "111111111", "1000", 100.0, 1000.0)])
+        rawstore.write_rows("sec13f_ingested_zips",
+                            [{"filename": "gone_form13f.zip", "ingested_at": "2026-10-01"}])
+        before = (rawstore.count("sec13f_holdings"), rawstore.count("sec13f_submissions"), self._live_key())
+        assert migrate.main(["--dry-run"]) == 1
+        after = (rawstore.count("sec13f_holdings"), rawstore.count("sec13f_submissions"), self._live_key())
+        assert after == before
+
+    def test_a_full_run_rekeys_refills_and_recomputes(self, store, tmp_path):
+        """brief.md §3 test 16: v12 key, markers cleared then refilled, holdings refilled, totals derived."""
+        from RevenueChaser.scripts import migrate_sec13f_v12 as migrate
+        z = _write_zip(
+            tmp_path / "2026q2_form13f.zip",
+            [_sub("a", "1000", "01-AUG-2026", "13F-HR", "30-JUN-2026")],
+            [_row("a", "ALPHA INC", "111111111", "100", "1000")])
+        self._v11_shape([("a", "111111111", "1000", 999.0, 999.0)])   # the v11 row the reset replaces
+        rawstore.write_rows("sec13f_ingested_zips",
+                            [{"filename": "2026q2_form13f.zip", "ingested_at": "2026-10-01"}])
+        engine.save_cusip_ticker({"111111111": "A"})
+        result = migrate.run(ownership_dir=tmp_path, out=lambda *_: None)
+        assert self._live_key() == ["accession", "line_no"]
+        assert [r["filename"] for r in rawstore.query("SELECT filename FROM sec13f_ingested_zips")] == \
+            ["2026q2_form13f.zip"]
+        # cleared then refilled by the re-ingest, not the seeded marker
+        assert rawstore.query("SELECT ingested_at FROM sec13f_ingested_zips")[0]["ingested_at"] != "2026-10-01"
+        shares = rawstore.query("SELECT shares FROM sec13f_holdings")
+        assert [r["shares"] for r in shares] == [100.0]
+        assert engine.load_totals()["A"]["2026-06-30"]["shares"] == 100.0
+        assert result["after"]["holdings"] == 1
+
+    def test_a_second_run_refuses(self, store, tmp_path):
+        """brief.md §3 test 17: never rebuild a table that is already at the v12 key."""
+        from RevenueChaser.scripts import migrate_sec13f_v12 as migrate
+        assert self._live_key() == ["accession", "line_no"]        # the fixture store is already v12
+        with pytest.raises(migrate.MigrationRefused, match="already at v12"):
+            migrate.run(ownership_dir=tmp_path, out=lambda *_: None)
+
+    def test_ingest_refuses_a_v11_holdings_table_before_writing(self, store, tmp_path):
+        """brief.md §3 test 18, mutation 10: a bare ON CONFLICT error on the live table is not acceptable."""
+        z = _write_zip(
+            tmp_path / "2026q2_form13f.zip",
+            [_sub("a", "1000", "01-AUG-2026", "13F-HR", "30-JUN-2026")],
+            [_row("a", "ALPHA INC", "111111111", "100", "1000")])
+        self._v11_shape()
+        with pytest.raises(RuntimeError, match="v11 13F holdings shape"):
+            engine.ingest_zips([z])
+        assert rawstore.count("sec13f_holdings") == 0
+        assert rawstore.count("sec13f_submissions") == 0
+
+
 class TestNonLossyIngest:
     """brief.md §3 tests 7-10 and 23."""
 

@@ -453,7 +453,7 @@ def _guard_v11_holdings_shape() -> None:
         live = rawstore._live_primary_keys(conn, "sec13f_holdings")
     have = live.get("sec13f_holdings", [])
     want = ["accession", "line_no"]
-    if have and have != want:
+    if have != want:
         raise RuntimeError(
             "`.store/raw.duckdb` is at the v11 13F holdings shape; "
             "run `scripts/migrate_sec13f_v12.py` (gated)")
