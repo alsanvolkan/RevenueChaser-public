@@ -133,22 +133,23 @@ def test_board_renders_after_a_rebuild(rebuilt, store):
     kept = {row["theme_run_id"] for row in store.get_all("ticker_themes")}
     assert {"first", "second"} <= kept
     # The card's label comes from the one Theme vocabulary (core.universe.theme_catalog, #118 C24), which renames a
-    # sector-named coarse theme to its largest medium child; the stored copy is the fallback when it has no row.
+    # sector-named coarse theme to its largest medium child; here the coarse is not sector-named (below), so the
+    # catalog keeps the stored label.
     from RevenueChaser.core.universe import theme_catalog
     catalog = theme_catalog()
     coarse = {row["ticker"]: (catalog.get(row["theme_id"]) or {}).get("label", row["theme"])
               for row in store.get_all("ticker_themes")
               if row["theme_run_id"] == "second" and row["level"] == "coarse"}
     assert all(c["theme_coarse"] == coarse[c["ticker"]] for c in data)
-    # One literal, so the expectation does not only mirror the engine (R2 review S3): both seeded groups get the
-    # sector-named coarse theme "Technology" stored (one of them suffixed " (2)"), and the card shows its largest
-    # medium child instead.
+    # One literal, so the expectation does not only mirror the engine (R2 review S3). Two fine themes leave one
+    # medium theme over both (#433: a medium theme merges at least two fine themes), so rebalance_coarses has a
+    # single medium to work with and never sector-names the coarse: both groups store that merged tag label.
     stored = {row["ticker"]: row["theme"] for row in store.get_all("ticker_themes")
               if row["theme_run_id"] == "second" and row["level"] == "coarse"}
     by_ticker = {c["ticker"]: c for c in data}
-    assert stored["G0"].startswith("Technology") and stored["B0"].startswith("Technology")
+    assert set(stored.values()) == {"accelerated, data center, designer"}
     assert by_ticker["G0"]["theme_coarse"] == "accelerated, data center, designer"
-    assert by_ticker["B0"]["theme_coarse"] == "branch, consumer, deposits"
+    assert by_ticker["B0"]["theme_coarse"] == "accelerated, data center, designer"
     assert rebuilt.table_count("ticker_themes") > 0
     assert rebuilt.table_count("relatedness_theme_etfs") >= 0
 

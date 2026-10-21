@@ -108,16 +108,38 @@ def test_relabel_only_empty_keeps_names(rawstore_tmp_db, monkeypatch):
     assert all(r["label"] for r in others)
 
 
-def test_finalize_run_uniques_fine_and_medium_duplicates(rawstore_tmp_db, monkeypatch):
-    _seed(monkeypatch)
-    themes.build_shadow(run_id="rb6")
-    rows = [r for r in rawstore.get_all("relatedness_themes")
-            if r["theme_id"].startswith("rb6:") and r["level"] in ("fine", "medium")]
-    rawstore.write_rows("relatedness_themes", [{**r, "label": "Same Name"} for r in rows])
-    themes.finalize_run("rb6")
+def test_finalize_run_uniques_fine_and_medium_duplicates(rawstore_tmp_db):
+    """Both levels end unique. A medium theme now always merges two fine themes
+    (#433), so two medium themes need three fine ones — seeded directly, because
+    the two-cluster NMF fixture can only produce one medium theme."""
+    run = "rb6"
+    rawstore.write_rows("equity_universe", [
+        {"ticker": f"G{i}", "name": f"G{i} Inc", "market_cap": 1e10,
+         "sector": "Technology"} for i in range(6)])
+    rawstore.write_rows("relatedness_themes", [
+        {"theme_id": f"{run}:f0", "level": "fine", "parent_id": f"{run}:m0",
+         "label": "Same Name", "size": 2},
+        {"theme_id": f"{run}:f1", "level": "fine", "parent_id": f"{run}:m0",
+         "label": "Same Name", "size": 2},
+        {"theme_id": f"{run}:f2", "level": "fine", "parent_id": f"{run}:m1",
+         "label": "Same Name", "size": 2},
+        {"theme_id": f"{run}:m0", "level": "medium", "parent_id": f"{run}:c0",
+         "label": "Same Name", "size": 4},
+        {"theme_id": f"{run}:m1", "level": "medium", "parent_id": f"{run}:c0",
+         "label": "Same Name", "size": 2},
+        {"theme_id": f"{run}:c0", "level": "coarse", "parent_id": "",
+         "label": "Same Name", "size": 6},
+    ])
+    rawstore.write_rows("relatedness_theme_members", [
+        {"ticker": f"G{i}", "theme_id": f"{run}:f{i // 2}", "weight": 1.0}
+        for i in range(6)])
+    rawstore.write_rows("theme_runs", [{
+        "id": run, "created_at": "2026-01-01", "k_fine": 3, "k_medium": 2,
+        "k_coarse": 1, "jaccard": 1.0, "is_current": 0}])
+    themes.finalize_run(run)
     for level in ("fine", "medium"):
         labs = [r["label"] for r in rawstore.get_all("relatedness_themes")
-                if r["theme_id"].startswith("rb6:") and r["level"] == level]
+                if r["theme_id"].startswith(run + ":") and r["level"] == level]
         assert len(labs) > 1 and len(labs) == len(set(labs)), level
 
 

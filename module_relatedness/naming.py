@@ -128,11 +128,19 @@ def _build_user(level, size, tags, tickers, child_labels) -> str:
     return "\n".join(lines)
 
 
-def _disambiguate(base: str, tags: list[str], used: set[str]) -> str:
-    """Make ``base`` unique within the run, prefix-preserving for the parent."""
+def _disambiguate(base: str, tags: list[str], used: set[str],
+                  doc_freq: dict[str, int] | None = None) -> str:
+    """Make ``base`` unique within the run, prefix-preserving for the parent.
+
+    The suffix is the cluster's most distinctive free tag — ``_ordered_tags``'
+    rarest-first order, the order ``themes._label`` uses — so two clusters never
+    "disagree" because of the alphabet (#433). When every tag is taken, a
+    numbered suffix. Not taken: a plain numbered suffix for every collision, or
+    a second model call asking for a distinct name (avo's call is pending).
+    """
     if base.lower() not in used:
         return base
-    for tag in tags:
+    for tag in themes_mod._ordered_tags(tags, doc_freq):
         # Title case so ``clean_theme_label`` keeps the parenthetical; a tag it
         # would scrub as junk (digits, ``&``) cannot disambiguate.
         cand = f"{base} ({str(tag).title()})"
@@ -189,6 +197,7 @@ def name_themes(run_id: str | None = None, *, complete=None,
     fine_ids = [tid for tid, r in rows.items() if r.get("level") == "fine"]
     tags_by_fine = _fine_tags(run_id)
     members_by_fine = _fine_members(run_id)
+    doc_freq = themes_mod.tag_doc_freq(tags_by_fine.values())
 
     used = {str(r.get("label") or "").strip().lower()
             for r in rows.values() if not _needs_name(r.get("label"))}
@@ -202,6 +211,19 @@ def name_themes(run_id: str | None = None, *, complete=None,
     for row in todo:
         tid, level = row["theme_id"], row.get("level") or "fine"
         fines = _descendant_fines(tid, level, parent, fine_ids)
+        if level == "medium" and len(fines) == 1:
+            child = rows.get(fines[0]) or {}
+            if not _needs_name(child.get("label")):
+                # One fine child: the medium theme *is* that theme, so copy the
+                # name instead of asking the model for a duplicate (#433). Not
+                # taken: asking the model for a distinct name (avo's call is
+                # pending). A child that is still unnamed falls through.
+                row = dict(row)
+                row["label"] = str(child["label"])
+                rawstore.write_rows("relatedness_themes", [row])
+                rows[tid] = row
+                named += 1
+                continue
         tags, tickers = _aggregate(tags_by_fine, members_by_fine, fines)
         user = _build_user(level, row.get("size") or 0, tags, tickers,
                            _child_labels(tid, rows))
@@ -244,7 +266,7 @@ def name_themes(run_id: str | None = None, *, complete=None,
             # theme still "needs a name") and retry on the next run.
             continue
         row = dict(row)
-        row["label"] = _disambiguate(base, tags, used)
+        row["label"] = _disambiguate(base, tags, used, doc_freq)
         rawstore.write_rows("relatedness_themes", [row])
         rows[tid] = row
         used.add(row["label"].lower())

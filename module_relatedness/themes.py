@@ -149,12 +149,24 @@ def nested_parents(X, fine: np.ndarray, k_medium: int, k_coarse: int):
     (so coarse is a merge of medium, not a second independent cut of fine) and is
     mapped back to one coarse id per fine theme. Returns ``(ids, med, coarse)``
     where ``med``/``coarse`` are per-fine-theme label arrays.
+
+    Every cut returns at least one child: a level that ends with a single cluster is
+    returned as-is (agglomerative clustering needs two samples), and the caller
+    keeps a medium theme merging two fines by passing ``k_medium < k_fine``.
     """
     from sklearn.cluster import AgglomerativeClustering
     ids = sorted(set(fine.tolist()))
     centroids = np.vstack([np.asarray(X[fine == i].mean(axis=0)).ravel() for i in ids])
-    med = AgglomerativeClustering(n_clusters=min(k_medium, len(ids))).fit_predict(centroids)
+    if len(ids) < 2:                      # one fine theme: the parents are that theme
+        single = np.zeros(len(ids), dtype=int)
+        return ids, single, single
+    # A medium theme merges at least two fine themes: build_shadow clamps the
+    # cut below ``k_fine`` (#433); here the number of present fine themes is the floor.
+    med = AgglomerativeClustering(
+        n_clusters=min(k_medium, len(ids))).fit_predict(centroids)
     med_ids = sorted(set(med.tolist()))
+    if len(med_ids) < 2:                  # one medium theme: coarse is that theme
+        return ids, med, np.zeros_like(med)
     med_centroids = np.vstack([centroids[med == m].mean(axis=0) for m in med_ids])
     coarse_med = AgglomerativeClustering(
         n_clusters=min(k_coarse, len(med_ids))).fit_predict(med_centroids)
@@ -176,7 +188,8 @@ def build_shadow(candidates=(60, 90, 120, 150), k_medium: int = 70,
     result counts the profiles left out.
 
     Every NMF of the run uses ``fit`` (``DEFAULT_FIT`` unless given); ``fit`` in the result names it, because
-    ``theme_runs`` has no column for it.
+    ``theme_runs`` has no column for it. ``k_medium`` is clamped below ``k_fine``: a medium theme must merge at
+    least two fine themes, or the level is a copy of the fine one (#433).
     """
     if profiles is None:
         profiles = rel_store.load_profiles()
@@ -213,6 +226,13 @@ def build_shadow(candidates=(60, 90, 120, 150), k_medium: int = 70,
     k_fine, fine_stability = _choose(X, list(candidates), SEEDS, MIN_SIZE,
                                      STABILITY_FLOOR, fit)
     fine = nmf_assign(X, k_fine, seed=0, fit=fit)
+    # A medium cut at k >= k_fine gives every medium theme one fine child, so the
+    # level repeats the fine names and pays the model for 60 duplicates (#433).
+    # Not taken: skipping the medium level entirely (avo's call is pending).
+    if k_medium >= k_fine:
+        logger.info("k_medium %d clamped to k_fine - 1 = %d: a medium theme must "
+                    "merge at least two fine themes", k_medium, k_fine - 1)
+        k_medium = k_fine - 1
     ids, med, coarse = nested_parents(X, fine, k_medium, k_coarse)
     run_id = run_id or f"nmf-{_now()}"
 
@@ -323,6 +343,19 @@ def _useful_tag(tag: str) -> bool:
     return digits < 0.5 * len(t)
 
 
+def tag_doc_freq(tag_lists) -> dict[str, int]:
+    """``{tag: number of themes carrying it}`` over an iterable of tag lists.
+
+    The frequency ``_ordered_tags`` sorts by: a tag half the run shares is less
+    distinctive than one a single theme carries.
+    """
+    freq: dict[str, int] = {}
+    for tags in tag_lists:
+        for t in {str(x).strip().lower() for x in tags}:
+            freq[t] = freq.get(t, 0) + 1
+    return freq
+
+
 def _ordered_tags(tags, doc_freq: dict[str, int] | None = None) -> list[str]:
     """Useful tags, rarest-first (more distinctive), stable on ties."""
     freq = doc_freq or {}
@@ -362,10 +395,7 @@ def relabel_from_tags(run_id: str, top: int = 3, only_empty: bool = False) -> in
     for r in run_rows("relatedness_theme_tags", run_id):
         fine_tags.setdefault(r["theme_id"], []).append((r.get("rank") or 0, r["tag"]))
 
-    doc_freq: dict[str, int] = {}
-    for items in fine_tags.values():
-        for t in {str(t).strip().lower() for _r, t in items}:
-            doc_freq[t] = doc_freq.get(t, 0) + 1
+    doc_freq = tag_doc_freq([t for _r, t in items] for items in fine_tags.values())
 
     rows, med_tags, coarse_tags = [], {}, {}
     for tid, items in fine_tags.items():

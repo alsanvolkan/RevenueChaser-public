@@ -5,6 +5,7 @@ DeepSeek is never reached: ``naming.name_themes`` takes an injectable ``complete
 from __future__ import annotations
 
 import json
+import logging
 import pytest
 from datetime import datetime, timezone
 
@@ -298,3 +299,119 @@ def test_markup_in_a_model_name_is_rejected(rawstore_tmp_db):
         run_id, complete=lambda s, u, **kw: json.dumps({"name": "<b>Chips</b>"}))
     assert out["named"] == 0
     assert not any("<" in r["label"] for r in _run_rows(run_id))
+
+
+# --- alsanvolkan/RevenueChaser#433: collision suffix + the medium level -------------
+
+def _seed_plain(run_id, theme_rows, tag_rows=()):
+    """Seed the naming tables directly: full control over tags, parents and labels."""
+    rawstore.ensure_table("ticker_themes")
+    rawstore.write_rows("relatedness_themes", theme_rows)
+    if tag_rows:
+        rawstore.write_rows("relatedness_theme_tags", tag_rows)
+
+
+def _seed_collision(run_id):
+    """Three fine themes where the alphabetical tag and the rarest tag differ.
+
+    ``common`` sits in all three themes, ``zzz`` only in ``f1``: for ``f1`` the
+    doc-frequency order is ``zzz`` first, the alphabetical one ``common``.
+    """
+    _seed_plain(run_id, [
+        {"theme_id": f"{run_id}:f{i}", "level": "fine", "parent_id": "",
+         "label": "", "size": 3} for i in range(3)
+    ], [
+        {"theme_id": f"{run_id}:f0", "tag": "alpha", "rank": 0},
+        {"theme_id": f"{run_id}:f0", "tag": "common", "rank": 1},
+        {"theme_id": f"{run_id}:f1", "tag": "common", "rank": 0},
+        {"theme_id": f"{run_id}:f1", "tag": "zzz", "rank": 1},
+        {"theme_id": f"{run_id}:f2", "tag": "beta", "rank": 0},
+        {"theme_id": f"{run_id}:f2", "tag": "common", "rank": 1},
+    ])
+
+
+def _seed_medium(run_id, fine_labels):
+    """One medium theme over ``fine_labels``' fine themes, which carry human names."""
+    _seed_plain(run_id, [
+        {"theme_id": f"{run_id}:f{i}", "level": "fine",
+         "parent_id": f"{run_id}:m0", "label": label, "size": 2}
+        for i, label in enumerate(fine_labels)
+    ] + [
+        {"theme_id": f"{run_id}:m0", "level": "medium", "parent_id": "",
+         "label": "", "size": 2 * len(fine_labels)},
+    ])
+
+
+def test_collision_suffix_follows_the_doc_frequency_order(rawstore_tmp_db):
+    """#433: the suffix is the rarest free tag, not the alphabetically first one."""
+    _seed_collision("coll")
+    naming.name_themes("coll", complete=lambda s, u, **kw: json.dumps({"name": "Chips"}))
+    labels = _labels("coll")
+    assert labels["coll:f1"] == "Chips (Zzz)"        # in 1 theme
+    assert labels["coll:f1"] != "Chips (Common)"     # in all 3
+
+
+def test_every_taken_tag_falls_back_to_a_number(rawstore_tmp_db):
+    used = {"chips", "chips (asic)", "chips (gpu)"}
+    assert naming._disambiguate("Chips", ["asic", "gpu"], used) == "Chips (2)"
+    used.add("chips (2)")
+    assert naming._disambiguate("Chips", ["asic", "gpu"], used) == "Chips (3)"
+
+
+def test_no_collision_keeps_the_model_name_unchanged(rawstore_tmp_db):
+    assert naming._disambiguate("Chips", ["gpu"], set()) == "Chips"
+    _seed_plain("solo-name", [{"theme_id": "solo-name:f0", "level": "fine",
+                               "parent_id": "", "label": "", "size": 2}])
+    naming.name_themes("solo-name",
+                       complete=lambda s, u, **kw: json.dumps({"name": "Chips"}))
+    assert _labels("solo-name")["solo-name:f0"] == "Chips"
+
+
+def test_naming_is_deterministic_across_identical_runs(rawstore_tmp_db):
+    seen = []
+    for run_id in ("det-a", "det-b"):
+        _seed_collision(run_id)
+        naming.name_themes(run_id,
+                           complete=lambda s, u, **kw: json.dumps({"name": "Chips"}))
+        seen.append({tid.split(":", 1)[1]: label
+                     for tid, label in _labels(run_id).items()})
+    assert seen[0] == seen[1]
+
+
+def test_k_medium_is_clamped_below_k_fine(rawstore_tmp_db, caplog):
+    with caplog.at_level(logging.INFO):
+        out = themes.build_shadow(candidates=(2, 3), k_medium=5, k_coarse=2,
+                                  run_id="clamp", profiles=_profiles())
+    assert out["k_fine"] >= 2
+    assert out["k_medium"] == out["k_fine"] - 1      # not 5: a medium merges >= 2 fines
+    assert rawstore.get("theme_runs", "clamp")["k_medium"] == out["k_medium"]
+    msgs = [r.getMessage() for r in caplog.records if "k_medium" in r.getMessage()]
+    assert len(msgs) == 1                            # logged once, not per medium theme
+    assert "5" in msgs[0] and str(out["k_fine"] - 1) in msgs[0]
+
+
+def test_single_child_medium_reuses_the_fine_name_without_a_call(rawstore_tmp_db):
+    _seed_medium("solo", ["Semiconductors"])
+    calls = []
+
+    def fake(system, user, **kw):
+        calls.append(user)
+        return json.dumps({"name": "Chips"})
+
+    out = naming.name_themes("solo", complete=fake)
+    assert calls == []                               # never a model call for a copy
+    assert _labels("solo")["solo:m0"] == "Semiconductors"
+    assert out["named"] == 1 and out["pending"] == 0
+
+
+def test_medium_with_two_children_still_asks_the_model_once(rawstore_tmp_db):
+    _seed_medium("pair", ["Semiconductors", "Regional Banks"])
+    calls = []
+
+    def fake(system, user, **kw):
+        calls.append(user)
+        return json.dumps({"name": "Merged Business"})
+
+    naming.name_themes("pair", complete=fake)
+    assert len(calls) == 1
+    assert _labels("pair")["pair:m0"] == "Merged Business"
