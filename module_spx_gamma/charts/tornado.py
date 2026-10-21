@@ -185,13 +185,13 @@ def build_tornado_fig(snapshot: dict, height: int = 460) -> go.Figure | None:
             xanchor="left" if v >= 0 else "right",
         ))
 
-    # The footer. The loop this replaces passed it to update_layout after the add_annotation
-    # calls, and plotly applies a single dict given for a list property to EVERY existing element:
-    # each level and bar label took the footer's text and position (only their own colours and
-    # font colour survive). That is the figure the loop always produced and #376 keeps it identical
-    # on purpose (golden test); the merge is done on the dicts here because update_layout over
-    # hundreds of annotations is itself the slow step. Fixing the display (append the footer
-    # instead) is a separate change.
+    # The footer (left/right sign legend + unit) below the panel, appended after every label.
+    # fig.add_annotation is quadratic — it rebuilds the whole annotation tuple on each call — so
+    # the labels and the footer are still collected here and set once through
+    # update_layout(annotations=...) (#376). Do not merge the footer into the collected dicts:
+    # plotly applies a single dict given for a list property to every existing element, so each
+    # label took the footer's text and position. Fixed in alsanvolkan/RevenueChaser#438: the labels
+    # keep their own text.
     footer = dict(
         text="<span style='color:#d64550'>&larr; Negative GEX (short gamma)</span>  "
              "<span style='color:#9c9da1'>| unit: notional</span>  "
@@ -199,10 +199,7 @@ def build_tornado_fig(snapshot: dict, height: int = 460) -> go.Figure | None:
         xref="paper", yref="paper", x=0.5, y=-0.16,
         showarrow=False, font=dict(size=11),
     )
-    if annotations:
-        annotations = [{**a, **footer, "font": {**a["font"], **footer["font"]}} for a in annotations]
-    else:
-        annotations.append(footer)
+    annotations.append(footer)
     fig.update_layout(
         template="plotly_dark",
         paper_bgcolor=BG, plot_bgcolor=BG,
