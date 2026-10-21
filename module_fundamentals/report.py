@@ -78,6 +78,8 @@ input[type=text]{flex:1;min-width:200px}
 .m .k{font-size:9px;color:var(--muted);letter-spacing:.3px;text-transform:uppercase}
 .m .val{font-weight:700;font-size:12px;overflow-wrap:break-word;line-height:1.15}
 .gates{display:flex;gap:6px;border-top:1px solid var(--panel2);padding-top:8px}
+.event{color:var(--amber);font-size:11px;line-height:1.35}
+.event .when{color:var(--muted)}
 .gate{flex:1;background:var(--panel2);color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:5px 0;cursor:pointer;font-weight:700;font-size:12px}
 .gate.on{color:var(--green);border-color:rgba(46,204,113,.4)}
 .gate.off{color:var(--red)}
@@ -306,6 +308,15 @@ function cardHtml(c){
   var indexBadges = (c.index || []).map(function(i){ return '<span class="badge b-index">'+rcEsc(i)+'</span>'; }).join("");
   var r40 = (c.ro40 == null) ? "N/A"
           : fmtNum(c.ro40, 1) + " (" + fmtPct(c.rev_growth_ttm) + " / " + fmtPct(c.fcf_margin) + ")";
+  // #386 F5: the corporate-event flag, a display-only note under the metrics (the item codes of the filer's 8-Ks).
+  var ev = c.corporate_event || null;
+  var evItems = (ev && ev.items) || [];
+  var evLine = evItems.length
+    ? '<div class="event" title="Corporate event: an 8-K item that breaks the comparability of the fundamentals">'
+      + '8-K items ' + evItems.map(function(i){ return rcEsc(i); }).join(" · ")
+      + (ev.last_filing_date ? ' <span class="when">' + rcEsc(ev.last_filing_date) + '</span>' : '')
+      + '</div>'
+    : "";
   return '<div class="card">'
     + '<div class="head">'
     + (sector ? '<span class="badge b-sector">'+sector+'</span>' : '')
@@ -321,6 +332,7 @@ function cardHtml(c){
     + cell("Price", usd(c.price))
     + cell("Mkt cap", usd(c.market_cap))
     + '</div>'
+    + evLine
     + '<div class="gates">' + gates + '</div>'
     + tagsRow
     + '</div>';

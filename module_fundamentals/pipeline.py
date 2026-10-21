@@ -32,6 +32,7 @@ from RevenueChaser.core.taxonomy import assign_themes
 from RevenueChaser.core.scan_quality import ohlc_drop_reason
 
 from . import config
+from . import events
 from .screeners import evaluate_momentum, evaluate_quality, evaluate_rule_of_40, is_distorted
 
 logger = logging.getLogger(__name__)
@@ -556,6 +557,15 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
     if top_n:
         candidates = candidates[:top_n]
     annotate_cards(candidates)
+    # #386 F5: the corporate-event flag, display only — no rule, bucket, count or sort key reads it. Every card
+    # gets ``flags`` (empty when nothing is known), and only a card with an event gets ``corporate_event``:
+    # a ticker the store cannot answer for stays unknown, never "no event".
+    found = events.corporate_events([c["ticker"] for c in candidates])
+    for c in candidates:
+        ev = found.get(c["ticker"])
+        c["flags"] = ["corporate_event"] if ev else []
+        if ev:
+            c["corporate_event"] = ev
 
     regime = run_stats.get("regime")
     return {

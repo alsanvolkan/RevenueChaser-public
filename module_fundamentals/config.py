@@ -42,6 +42,15 @@ EXCLUDED_SECTORS = ["Financial Services", "Real Estate"]
 # A Rule of 40 above this is a data problem, not a pick (#386 F1).
 RO40_BARRIER = 150.0
 
+# ── Corporate-event flag (#386 F5) ──
+# An 8-K item that breaks the comparability of a filer's fundamentals. Display only: it is deliberately NOT in
+# freeze._HASHED, so changing it moves no ledger model_version.
+#   2.01 completion of an acquisition or disposition   2.06 material impairment
+#   3.01 delisting notice / listing-rule failure       4.01 change of certifying accountant
+#   4.02 non-reliance on previously issued financials  5.01 change in control
+CORPORATE_EVENT_ITEMS = ["2.01", "2.06", "3.01", "4.01", "4.02", "5.01"]
+CORPORATE_EVENT_WINDOW_DAYS = 365
+
 # ── ROIC ──
 TAX_RATE = 0.21
 
