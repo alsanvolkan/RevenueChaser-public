@@ -200,7 +200,7 @@ class TestNotDrift:
 # KEY constraint by design. A table not listed here must have one that equals its ``key``.
 _NO_PRIMARY_KEY = {
     "comov_nodes", "comov_members", "comov_lag", "chain_mentions", "swing_ohlc", "rotation_snapshots",
-    "index_constituents", "sec13f_holdings", "oipd_chain",
+    "index_constituents", "oipd_chain",
 }
 
 
