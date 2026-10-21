@@ -1,9 +1,10 @@
 """E0e, D28 (#305, the Cboe part): the daily volatility indices, stored by trading date.
 
-Cboe's public daily-price CSV per symbol (``https://cdn.cboe.com/api/global/us_indices/daily_prices/<SYMBOL>_History.csv``,
-columns ``DATE,OPEN,HIGH,LOW,CLOSE``) — one request per symbol (7 a night, inside the Cboe cap of 20) — plus MOVE, which
-only Yahoo serves (``^MOVE`` daily bars through the repo's ``yf.download`` helper, one ``period="max"`` download sliced
-locally; the existing yfinance budget, 1 call).
+Cboe's public daily-price CSV per symbol (``https://cdn-api.cboe.com/api/global/us_indices/daily_prices/<SYMBOL>_History.csv``,
+columns ``DATE,OPEN,HIGH,LOW,CLOSE``) — one request per symbol: 7 requests of the Cboe cap of 20. The base is the host
+that answers directly (``cdn.cboe.com`` sends a 307 to it) and the GET still follows a redirect, in case Cboe moves the
+file again. Plus MOVE, which only Yahoo serves (``^MOVE`` daily bars through the repo's ``yf.download`` helper, one
+``period="max"`` download sliced locally; the existing yfinance budget, 1 call).
 
 ``session_date`` is the row's own trading date as given (a vol index trades the NYSE calendar; a date the holiday table
 does not list is still stored as served, never shifted). Every symbol keeps its newest ``LIMIT`` rows each run; a symbol
@@ -26,7 +27,7 @@ from RevenueChaser.core import nightly_inputs, prices, rawstore
 from RevenueChaser.module_earnings_radar.inputs._common import CALL_CAP, num, outcome
 
 TABLE = "vol_index_daily"
-CBOE_BASE = os.getenv("RC_CBOE_BASE") or "https://cdn.cboe.com/api/global/us_indices/daily_prices"
+CBOE_BASE = os.getenv("RC_CBOE_BASE") or "https://cdn-api.cboe.com/api/global/us_indices/daily_prices"
 USER_AGENT = "RevenueChaser/1.0 (nightly inputs: Cboe vol indices)"
 TIMEOUT = 30.0
 
@@ -78,7 +79,8 @@ def parse_csv(body: str) -> tuple[list[dict] | None, str | None]:
 
 
 def fetch_csv(symbol: str) -> tuple[list[dict] | None, str | None]:
-    """``(bars, why)`` for one symbol: one GET of its CSV, no retry (cdn.cboe.com answers 307 to cdn-api.cboe.com)."""
+    """``(bars, why)`` for one symbol: one GET of its CSV, no retry (the base answers directly; a redirect is still
+    followed in case Cboe moves the file)."""
     try:
         resp = httpx.get(url_for(symbol), timeout=TIMEOUT, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
     except httpx.HTTPError as exc:
