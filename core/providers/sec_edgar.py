@@ -189,6 +189,19 @@ _STI_HTM_TAGS = ["HeldToMaturitySecuritiesCurrent",
 # (``_backfill_history``). A year the pick holds is never replaced and a gap is never bridged.
 # Quarterly series are not merged.
 #
+# ``revenue`` reads the ASC 606 including-assessed-tax sibling
+# (``RevenueFromContractWithCustomerIncludingAssessedTax``) LAST (#435): of 39 filers measured with a
+# fresh record and no revenue, 25 tag only that one in their newest years. It goes after the
+# excluding-tax concept because the two differ by the assessed tax, so on a tie (both tags on the
+# same year) the narrower figure must win; the list order is the tie-break. A filer whose
+# including-tax series is older than what the other tags already hold (AMH 2018 vs 2020, BESS 2021
+# vs 2023, WOLF 2020 vs 2025) keeps its numbers: the newest series wins the pick and the sibling
+# can only backfill years below it. Bank top lines (``InterestAndDividendIncomeOperating``,
+# ``RevenuesNetOfInterestExpense``) are NOT read: interest income is a different definition of the
+# top line and therefore the owner's decision, and no other tag that merely contains the word
+# "Revenue" is one (``ContractWithCustomerLiabilityRevenueRecognized``,
+# ``IncreaseDecreaseInDeferredRevenue``, ``CostOfRevenue`` and pro-forma acquisition revenue).
+#
 # ``cost_of_revenue`` is the one exception: it is resolved PER PERIOD in strict
 # priority order (``_PRIORITY_FIELDS`` below), never by the longest series, and it
 # feeds ``gross_profit`` when a filer tags no ``GrossProfit`` (#234). Its list is
@@ -201,7 +214,8 @@ _STI_HTM_TAGS = ["HeldToMaturitySecuritiesCurrent",
 # and ``long_term_investments`` (equity-method and strategic stakes, not cash-like) are stored
 # for visibility and never enter a gate. None of the fields in ``_NEVER_A_RECORD`` adds a record.
 CONCEPTS = {
-    "revenue": (["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"], "USD"),
+    "revenue": (["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet",
+                 "RevenueFromContractWithCustomerIncludingAssessedTax"], "USD"),
     "gross_profit": (["GrossProfit"], "USD"),
     "cost_of_revenue": (["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold",
                          "CostOfServices"], "USD"),
