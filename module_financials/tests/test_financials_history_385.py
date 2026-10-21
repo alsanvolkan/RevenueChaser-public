@@ -49,7 +49,7 @@ def results(store, tmp_path, monkeypatch, financials):
                          [_energy_row(t, cap) for t, cap in PEERS])
     monkeypatch.setattr(fm.cache_manager, "get_or_fetch", lambda t, fn, use_cache=True: dict(financials))
     qr = fm.quick_remarks_engine
-    monkeypatch.setattr(qr, "run_quick_remarks", lambda ticker, no_fetch=False: qr._from_card(ticker, {}, "yfinance"))
+    monkeypatch.setattr(qr, "run_quick_remarks", lambda ticker, no_fetch=False, financials=None: qr._from_card(ticker, {}, "yfinance"))
     monkeypatch.setattr(fm.comps_engine, "_default_fetch", lambda t: dict(_PEER_INFO))
     return fm.run("TEST", modules=MODULES, output="none", run_id="job-q")["results"]
 

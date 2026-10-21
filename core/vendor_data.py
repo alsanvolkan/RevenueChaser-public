@@ -333,6 +333,62 @@ def record(statements=(), valuations=(), *, run_id: str, run_at: float | None = 
     return res
 
 
+# ── the reader (FIN-5, #385: a Refresh reads what the Fetch stored) ──────────
+
+def read_financials(ticker: str) -> dict | None:
+    """The ``yfinance.get_financials``-shaped payload of the newest stored rows for ``ticker``, read-only.
+
+    The statements are the newest ``vendor_financials`` row of each (statement, period_end) of source ``yfinance``
+    and report_type ``annual``, merged per fiscal year; the ``.info`` part is the newest ``vendor_valuation`` row's
+    payload. Zero network and zero writes: a Refresh builds its model inputs from these rows instead of fetching
+    (FIN-5, #385), and a ticker the store never fetched reads as ``None`` — no empty payload that would look like
+    data.
+
+    Only ``yfinance`` rows are read: the payload is rebuilt in ``get_financials``' shape, which is what that source
+    was mapped from (a UW row carries neither the balance-sheet fields nor ``.info``).
+    """
+    ticker = (ticker or "").strip().upper()
+    statements = [rawstore._decode_row(STATEMENTS, r) for r in rawstore.query(
+        f"SELECT statement, period_end, payload FROM {STATEMENTS} "
+        f"WHERE ticker = ? AND source = 'yfinance' AND report_type = 'annual' "
+        f"QUALIFY ROW_NUMBER() OVER (PARTITION BY statement, period_end ORDER BY run_at DESC) = 1",
+        [ticker])]
+    valuations = rawstore.query(
+        f"SELECT payload FROM {VALUATION} WHERE ticker = ? AND source = 'yfinance' "
+        f"ORDER BY session_date DESC, run_at DESC LIMIT 1", [ticker])
+    if not statements and not valuations:
+        return None
+
+    years: dict[str, dict] = {}
+    for row in statements:
+        period_end = row.get("period_end")
+        key = period_end.isoformat() if hasattr(period_end, "isoformat") else str(period_end or "")
+        if not key:
+            continue
+        rec = years.setdefault(key, {"period_end": key})
+        payload = row.get("payload")
+        if isinstance(payload, dict):
+            rec.update({k: v for k, v in payload.items() if k != "fiscal_year"})
+            if payload.get("fiscal_year") is not None:
+                rec["fiscal_year"] = payload["fiscal_year"]
+    annual = [years[k] for k in sorted(years)]
+    for rec in annual:
+        rec.setdefault("fiscal_year", str(rec["period_end"])[:4])
+
+    info = rawstore._decode_row(VALUATION, valuations[0]).get("payload") if valuations else None
+    info = info if isinstance(info, dict) else {}
+    return {
+        "ticker": ticker, "info": info, "sector": info.get("sector") or None, "annual": annual,
+        "shares_outstanding": _num(info.get("sharesOutstanding")),
+        "market_cap": _num(info.get("marketCap")),
+        "enterprise_value": _num(info.get("enterpriseValue")),
+        "beta": _num(info.get("beta")),
+        "current_price": _num(info.get("currentPrice")),
+        "currency": info.get("currency") or "USD",
+        "source": "yfinance",
+    }
+
+
 # ── the capture a job fills ──────────────────────────────────────────────────
 
 class Capture:

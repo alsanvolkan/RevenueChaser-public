@@ -59,7 +59,7 @@ def _run_comps(monkeypatch, financials, spine_sector, peers=()):
     # No store card for AAPL, so quick remarks would fall back to a live yfinance score: stub it (the same
     # empty card a store-only render gets)
     qr = fm.quick_remarks_engine
-    monkeypatch.setattr(qr, "run_quick_remarks", lambda ticker, no_fetch=False: qr._from_card(ticker, {}, "yfinance"))
+    monkeypatch.setattr(qr, "run_quick_remarks", lambda ticker, no_fetch=False, financials=None: qr._from_card(ticker, {}, "yfinance"))
     seen = {}
     monkeypatch.setattr(fm.comps_engine, "run_comps",
                         lambda fin, peers, **kw: seen.update(peers=peers, sector=fin.get("sector")) or {})

@@ -128,6 +128,6 @@ def test_warning_shows_once_when_both_engines_raise_it(financials, tmp_path, mon
     cache_manager.save("TEST", f)
     monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
     qr = fm.quick_remarks_engine
-    monkeypatch.setattr(qr, "run_quick_remarks", lambda ticker, no_fetch=False: qr._from_card(ticker, {}, "yfinance"))
+    monkeypatch.setattr(qr, "run_quick_remarks", lambda ticker, no_fetch=False, financials=None: qr._from_card(ticker, {}, "yfinance"))
     out = fm.run("TEST", modules=["dcf", "3stmt"], output="html", no_fetch=True)
     assert out["results"]["warnings"].count(DNA_WARNING) == 1

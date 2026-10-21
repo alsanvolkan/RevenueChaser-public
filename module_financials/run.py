@@ -59,7 +59,11 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
     if not _TICKER_RE.fullmatch(ticker):
         raise ValueError(f"bad ticker: {ticker!r}")
     if no_fetch:
-        financials = cache_manager.load(ticker, ignore_ttl=True)
+        # FIN-5 (#385): a store-only render's model inputs are the rows its last Fetch stored (the statements and
+        # the ``.info`` of ``vendor_financials`` / ``vendor_valuation``), read back with zero network. A store
+        # written before #297 has no vendor rows, so its raw cached payload is the fallback; with neither there is
+        # no report to render and the caller gets ``_NoCachedData`` — never a live fetch from this path.
+        financials = vendor_data.read_financials(ticker) or cache_manager.load(ticker, ignore_ttl=True)
         if financials is None:
             raise _NoCachedData(ticker)
     vendor = None if no_fetch else vendor_data.Capture()
@@ -92,8 +96,10 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
     warnings: list[str] = []
     results: dict = {"ticker": ticker, "financials": financials, "modules": {}, "warnings": warnings}
 
-    # Quick Remarks — her zaman üstte (ticker_scores'dan beslenir, yfinance fallback)
-    results["quick_remarks"] = quick_remarks_engine.run_quick_remarks(ticker, no_fetch=no_fetch)
+    # Quick Remarks — her zaman üstte (ticker_scores'dan beslenir, yfinance fallback). FIN-5: it is handed the
+    # payload this run already has, so it scores from it instead of fetching the same financials a second time.
+    results["quick_remarks"] = quick_remarks_engine.run_quick_remarks(ticker, no_fetch=no_fetch,
+                                                                     financials=financials)
 
     # R5 (#88): the sector is the spine's (DCF bands, comps peers and the report header all read it);
     # the yfinance sector no longer feeds GICS. A name the spine lacks is Unclassified.

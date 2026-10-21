@@ -44,7 +44,7 @@ def _run_peers(monkeypatch, tmp_path, financials, ticker="TEST"):
     monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(cache_manager, "get_or_fetch", lambda t, fn, use_cache=True: dict(financials))
     qr = fm.quick_remarks_engine
-    monkeypatch.setattr(qr, "run_quick_remarks", lambda t, no_fetch=False: qr._from_card(t, {}, "yfinance"))
+    monkeypatch.setattr(qr, "run_quick_remarks", lambda t, no_fetch=False, financials=None: qr._from_card(t, {}, "yfinance"))
     seen = {}
     monkeypatch.setattr(fm.comps_engine, "run_comps",
                         lambda fin, peers, **kw: seen.update(peers=list(peers)) or {})
