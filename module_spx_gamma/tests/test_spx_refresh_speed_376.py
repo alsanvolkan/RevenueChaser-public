@@ -133,7 +133,6 @@ def _overflow_snapshot() -> dict:
 
 # ── #438: the footer is appended, not merged into every level and bar label ──
 FOOTER_MARKERS = ("Negative GEX (short gamma)", "Positive GEX (long gamma)")
-FOOTER_XY = ("paper", 0.5, -0.16, "paper")      # xref, x, y, yref
 
 
 def _annotation_xy(ann) -> tuple:
@@ -203,10 +202,13 @@ def test_tornado_only_the_footer_sits_at_the_footer_position():
         assert fig is not None
         footer = _footer_indices(fig)
         assert len(footer) == 1
-        assert _annotation_xy(fig.layout.annotations[footer[0]]) == FOOTER_XY
+        # read the footer's own place rather than a literal: it is derived from the height (T6)
+        footer_xy = _annotation_xy(fig.layout.annotations[footer[0]])
+        xref, x, y, yref = footer_xy
+        assert (xref, x, yref) == ("paper", 0.5, "paper") and y < 0
         misplaced = [
             (i, a.text) for i, a in enumerate(fig.layout.annotations)
-            if i != footer[0] and _annotation_xy(a) == FOOTER_XY
+            if i != footer[0] and _annotation_xy(a) == footer_xy
         ]
         assert misplaced == [], f"labels carry the footer position: {misplaced[:3]}"
 
@@ -242,6 +244,39 @@ def test_tornado_keeps_every_label_and_adds_the_footer():
         # the bug the old builder carried: every annotation collapsed to the one footer text
         old_texts = {a.text for a in old.layout.annotations}
         assert len(old_texts) == 1, "old builder reference no longer reproduces #438"
+
+
+def test_tornado_footer_sits_inside_the_figure():
+    """T6: the footer's text box ends inside the bottom margin, at the default height and others.
+
+    Derived from the layout, never from an image: paper y is a fraction of the plotting area, so a
+    fixed fraction drifts out of the figure as the height grows. run.py is the only caller and it
+    passes no height, but the parameter exists, so two other heights are checked as well.
+    """
+    snap = _wide_snapshot()
+    for height in (None, 300, 900):
+        fig = (tornado.build_tornado_fig(snap) if height is None
+               else tornado.build_tornado_fig(snap, height=height))
+        assert fig is not None
+        idx = _footer_indices(fig)
+        assert len(idx) == 1
+        footer = fig.layout.annotations[idx[0]]
+        assert footer.yref == "paper"
+        plotting_height = fig.layout.height - fig.layout.margin.t - fig.layout.margin.b
+        below = abs(footer.y) * plotting_height
+        assert below + footer.font.size <= fig.layout.margin.b, (
+            f"the footer is {below:.0f}px below the plotting area but the bottom margin is only "
+            f"{fig.layout.margin.b}px (height={fig.layout.height})"
+        )
+
+
+def test_tornado_footer_arrows_are_characters_not_html_entities():
+    """T7: a PNG export writes &larr; and &rarr; out literally; the characters render everywhere."""
+    fig = tornado.build_tornado_fig(_wide_snapshot())
+    assert fig is not None
+    text = fig.layout.annotations[_footer_indices(fig)[0]].text
+    assert "←" in text and "→" in text
+    assert "&larr;" not in text and "&rarr;" not in text
 
 
 def test_tornado_does_not_call_add_annotation(monkeypatch):

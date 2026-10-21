@@ -192,12 +192,23 @@ def build_tornado_fig(snapshot: dict, height: int = 460) -> go.Figure | None:
     # plotly applies a single dict given for a list property to every existing element, so each
     # label took the footer's text and position. Fixed in alsanvolkan/RevenueChaser#438: the labels
     # keep their own text.
+    #
+    # Its offset is kept in pixels and converted here, because paper y is a fraction of the
+    # PLOTTING area: the fixed y=-0.16 it had put the text 59 px below a 40 px bottom margin at the
+    # default height, outside the figure, and drifted further out the taller the chart got. The
+    # bottom margin is raised to hold the x-axis title and the footer under it; raising it alone
+    # would not do, because a fraction still grows with the height.
+    # The arrows are characters, not &larr;/&rarr;: a PNG export writes the entities out literally.
+    top_margin, bottom_margin = 50, 80
+    footer_size = 11
+    footer_below_px = 52                 # below the plotting area, clear of the x-axis title
     footer = dict(
-        text="<span style='color:#d64550'>&larr; Negative GEX (short gamma)</span>  "
+        text="<span style='color:#d64550'>← Negative GEX (short gamma)</span>  "
              "<span style='color:#9c9da1'>| unit: notional</span>  "
-             "<span style='color:#1e9e63'>Positive GEX (long gamma) &rarr;</span>",
-        xref="paper", yref="paper", x=0.5, y=-0.16,
-        showarrow=False, font=dict(size=11),
+             "<span style='color:#1e9e63'>Positive GEX (long gamma) →</span>",
+        xref="paper", yref="paper", x=0.5,
+        y=-footer_below_px / (height - top_margin - bottom_margin),
+        showarrow=False, font=dict(size=footer_size),
     )
     annotations.append(footer)
     fig.update_layout(
@@ -209,7 +220,7 @@ def build_tornado_fig(snapshot: dict, height: int = 460) -> go.Figure | None:
             font=dict(size=14),
         ),
         height=height,
-        margin=dict(l=60, r=220, t=50, b=40),
+        margin=dict(l=60, r=220, t=top_margin, b=bottom_margin),
         xaxis=dict(
             title="Signed Net GEX", range=[xmin, xmax],
             gridcolor=GRID, zeroline=False, tickformat="~s",
