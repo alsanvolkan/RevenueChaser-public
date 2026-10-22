@@ -14,8 +14,12 @@ _SLASH_PAIR_RE = re.compile(r"\b([A-Za-z])/([A-Za-z])\b")
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 
 # NFKD + ASCII does not fold these, it deletes them; map them first so
-# "Strauß" / "Ørsted" keep their letters.
-_PRE_FOLD = str.maketrans({"ß": "ss", "Ø": "o", "ø": "o"})
+# "Strauß" / "Ørsted" / "Łukasiewicz" keep their letters. Every letter NFKD leaves undecomposed is here, upper
+# and lower case.
+_PRE_FOLD = str.maketrans({
+    "ß": "ss", "ẞ": "ss", "Ø": "o", "ø": "o", "Ł": "l", "ł": "l", "Æ": "ae", "æ": "ae", "Œ": "oe", "œ": "oe",
+    "Þ": "th", "þ": "th", "Ð": "d", "ð": "d", "Đ": "d", "đ": "d", "Ħ": "h", "ħ": "h", "Ŧ": "t", "ŧ": "t",
+})
 
 # Legal-entity / holding-structure suffixes dropped from a TRAILING run of
 # tokens only (never mid-name: "AB Science" keeps "ab"), in no particular

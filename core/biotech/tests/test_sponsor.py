@@ -33,6 +33,13 @@ CASES = [
     # Characters NFKD deletes instead of folding.
     ("Strauß Pharma GmbH", "strauss pharma"),
     ("Ørsted A/S", "orsted"),
+    ("Łukasiewicz Pharma Sp. z o.o.", "lukasiewicz pharma sp z oo"),
+    ("Æterna Zentaris Inc", "aeterna zentaris"),
+    ("Œuvres Sanofi SA", "oeuvres sanofi"),
+    ("Þór Biotech ehf", "thor biotech ehf"),
+    ("Đuro Đaković Pharma", "duro dakovic pharma"),
+    ("Ħal Pharma Ltd", "hal pharma"),
+    ("Ŧest Labs Co", "test labs"),
     ("Sørensen Pharma", "sorensen pharma"),
     # Legal-entity suffixes added with the OOPD orphan-designation provider.
     ("Novo Nordisk SAS", "novo nordisk"),
