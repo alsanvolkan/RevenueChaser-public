@@ -42,7 +42,7 @@ def _candles_fn(asof=None, ticker=None):
 
 
 def test_fetch_snapshot_spot_exposure_window(tmp_path, monkeypatch):
-    monkeypatch.setattr(snap, "fetch_spx_candles", _candles_fn)
+    monkeypatch.setattr(snap, "stored_spx_candles", _candles_fn)
     client = _FakeClient()
     snap.fetch_snapshot(as_uw(client), "2026-08-14", data_root=tmp_path)
     spot_calls = [c for c in client.calls if c[0].endswith("/spot-exposures/strike")]
@@ -54,7 +54,7 @@ def test_fetch_snapshot_spot_exposure_window(tmp_path, monkeypatch):
 
 
 def test_fetch_snapshot_0dte_only(tmp_path, monkeypatch):
-    monkeypatch.setattr(snap, "fetch_spx_candles", _candles_fn)
+    monkeypatch.setattr(snap, "stored_spx_candles", _candles_fn)
     client = _FakeClient()
     snap.fetch_snapshot(as_uw(client), "2026-08-14", data_root=tmp_path)
     se_calls = [c for c in client.calls if "strike-expiry" in c[0]]
@@ -63,18 +63,18 @@ def test_fetch_snapshot_0dte_only(tmp_path, monkeypatch):
 
 
 def test_manifest_has_sha256(tmp_path, monkeypatch):
-    monkeypatch.setattr(snap, "fetch_spx_candles", _candles_fn)
+    monkeypatch.setattr(snap, "stored_spx_candles", _candles_fn)
     client = _FakeClient()
     snap.fetch_snapshot(as_uw(client), "2026-08-14", data_root=tmp_path)
     manifest = json.loads((tmp_path / "2026-08-14" / "manifest.json").read_text(encoding="utf-8"))
     assert "sha256" in manifest
     assert "gex_levels.json" in manifest["sha256"]
-    assert manifest["candle_source"] == "yfinance (^GSPC)"
+    assert manifest["candle_source"] == "index_levels_daily (^GSPC)"
     assert manifest["spot_exposure_mode"] == "open_interest"
 
 
 def test_mandatory_failure_aborts(tmp_path, monkeypatch):
-    monkeypatch.setattr(snap, "fetch_spx_candles", _candles_fn)
+    monkeypatch.setattr(snap, "stored_spx_candles", _candles_fn)
     client = _FakeClient(failures={"/api/stock/SPX/gex-levels": True})
     with pytest.raises(snap.SnapshotError):
         snap.fetch_snapshot(as_uw(client), "2026-08-14", data_root=tmp_path)

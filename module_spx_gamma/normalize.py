@@ -393,7 +393,10 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
     levels["zero_dte_concentration"] = intraday_concentration(strike_expiry_rows, asof_str)
     levels["zero_dte_put_concentration"] = intraday_put_concentration(strike_expiry_rows, asof_str)
     candles = normalize_candles(raw.get("ohlc"))
-    spot = current_level(candles)
+    # The snapshot records a live spot during an open session (the owner's choice, 2026-10-22); the stored
+    # window's last close is the fallback, so a closed-market run is unchanged.
+    recorded = (raw.get("spot") or {}).get("value")
+    spot = recorded if recorded is not None else current_level(candles)
     levels["zero_dte_cumulative_crossing"] = cumulative_gex_crossing(strike_expiry_rows, asof_str, spot)
 
     spot_exposure_rows = normalize_spot_exposure_rows(raw.get("spot_exposure"))
