@@ -676,16 +676,16 @@ def get_quadrant_for_ticker(ticker: str, cluster: str, snapshots_map: dict[str, 
     return max(quadrants, key=quadrants.get)
 
 
-def rotation_quadrant_map(uw: UWClient = None, compute: bool = True,
+def rotation_quadrant_map(uw: UWClient = None, compute: bool = False,
                           as_of: date = None, benchmark: str = "SPY") -> dict[str, str]:
     """Earnings Radar's Sector Rotation dependency — same-session freshness policy.
 
     Returns ``{ETF ticker: quadrant}`` for ``as_of`` (default: the latest complete session, #283). A stored
-    snapshot for that session is reused — the Sector Rotation board or an earlier run already refreshed it. When none
-    exists and ``compute=True`` the engine runs once (D01 closes, no UW call) and persists its snapshot under the
+    snapshot for that session is reused — the Sector Rotation board or an earlier run already refreshed it. With
+    the default ``compute=False`` only the store is read (zero network). When none exists and ``compute=True`` the
+    engine runs once (D01 closes, no UW call) and persists its snapshot under the
     session its closes end on, so Earnings Radar and the Sector Rotation board agree on the same read; a run that is
     not a complete session (intraday, or D01 short of the session) never replaces a snapshot stored for that day.
-    With ``compute=False`` only the store is read (zero network).
     """
     from RevenueChaser.core import calendar
     from . import store as rotation_store

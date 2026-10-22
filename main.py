@@ -145,7 +145,7 @@ def main():
     etf_quadrant_map = {}
     try:
         from RevenueChaser.module_sector_rotation.engine import rotation_quadrant_map
-        etf_quadrant_map = rotation_quadrant_map(uw)
+        etf_quadrant_map = rotation_quadrant_map(uw, compute=True)
         if etf_quadrant_map:
             print(f"  Rotation ready: {len(etf_quadrant_map)} ETFs classified (pipeline maps tickers by cluster).")
         else:

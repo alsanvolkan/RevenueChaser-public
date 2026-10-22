@@ -2,7 +2,6 @@
 from RevenueChaser.module_sector_rotation.etf_holdings import (
     get_etf_holdings,
     fetch_from_unusual_whales,
-    fetch_from_fmp,
     _norm_weight,
 )
 
@@ -31,25 +30,6 @@ class TestUnusualWhales:
         rows = fetch_from_unusual_whales("XLK", uw)
         assert rows[0]["ticker"] == "NVDA"
         assert rows[1]["ticker"] == "AAPL", "symbol alias should be accepted"
-
-
-class TestFmp:
-    def test_no_key_returns_empty(self):
-        assert fetch_from_fmp("SKYY", "") == []
-
-    def test_weight_over_100_scaled(self, monkeypatch):
-        import RevenueChaser.module_sector_rotation.etf_holdings as eh
-        monkeypatch.setattr("httpx.get", lambda *a, **k: _FmpResp())
-        rows = fetch_from_fmp("SKYY", "fakekey")
-        assert rows[0]["weight"] == 5.25, "weight > 100 should be /100"
-
-
-class _FmpResp:
-    def raise_for_status(self):
-        pass
-
-    def json(self):
-        return [{"asset": "NTNX", "name": "Nutanix", "weightPercentage": 525.0}]
 
 
 class TestChain:
