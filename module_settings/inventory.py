@@ -74,6 +74,7 @@ QUERIED_COLUMNS: list[tuple[str, str]] = [
     ("index_constituents", "slug"), ("index_constituents_changes", "run_id"),
     ("index_constituents_changes", "run_at"), ("sec_exchange_file", "ticker"), ("sec_exchange_file", "exchange"),
     ("sec_exchange_file", "status"), ("sec_exchange_file", "run_at"), ("sec_exchange_file", "cik"),
+    ("sec_mf_file", "run_at"),
     ("chain_filings", "ticker"), ("chain_filings", "filed"),
     ("edgar_documents", "filed"), ("edgar_documents", "form"), ("edgar_documents", "fetched_at"),
     # SEC submissions (#299, D15)
@@ -1068,13 +1069,26 @@ def _sec_files_row() -> dict:
     if not h["exchange"]["present"] and not h["mf"]["present"]:
         return row
 
+    def outcome(d: dict) -> str:
+        """The last pull's own outcome, so a stale row is never read as a file that simply did not change
+        (avo 2026-10-22). The table appends on change only, so "appended 0" alone cannot say which happened."""
+        if d.get("last_pull") == "failed":
+            return f"last pull FAILED ({d.get('error') or 'no reason recorded'})"
+        if d.get("last_pull") == "unknown":
+            return "no pull recorded yet"
+        session = d.get("session") or DASH
+        appended = d.get("appended")
+        if appended is None:
+            return f"pulled {session}"
+        if int(appended) == 0 and not int(d.get("absent") or 0):
+            return f"pulled {session}, unchanged"
+        return f"pulled {session}, appended {int(appended):,} (+{int(d.get('absent') or 0):,} absent)"
+
     def one(d: dict) -> str:
         file_rows = f"{int(d['file_rows']):,}" if d["file_rows"] is not None else DASH
         text = (f"{int(d['present']):,} present vs {file_rows} in the file, "
                 f"{int(d['members']):,} members / floor {int(d['floor']):,}")
-        if d["appended"] is not None:
-            text += f", last run appended {int(d['appended']):,} (+{int(d['absent'] or 0):,} absent)"
-        return f"{text}, Last-Modified {d['last_modified'] or DASH}"
+        return f"{text}, {outcome(d)}, Last-Modified {d['last_modified'] or DASH}"
 
     row["note"] = f"exchange: {one(h['exchange'])}; funds: {one(h['mf'])}"
     return row

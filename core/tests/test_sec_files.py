@@ -287,6 +287,32 @@ def test_health_summary_without_a_pull_still_reports_the_store(rawstore_tmp_db, 
     assert h["exchange"]["last_modified"] is None and h["exchange"]["floor"] == sec_files.MIN_MEMBERS
 
 
+def test_health_summary_separates_the_three_pull_outcomes(rawstore_tmp_db, tmp_path, http, monkeypatch):
+    """avo 2026-10-22: the row must tell "pulled, unchanged" from "never written" from "pull failed".
+
+    The tables append on change only, so a stale row and an unchanged file look identical without the pull's
+    own outcome: a nightly that never ran and one that ran and found nothing new both append zero.
+    """
+    markers = tmp_path / "markers"
+    monkeypatch.setattr(sec_files, "MIN_MEMBERS", 3)
+
+    # 1. nothing pulled yet
+    assert sec_files.health_summary(marker_dir=markers)["exchange"]["last_pull"] == "unknown"
+
+    # 2. a good pull
+    _serve(http)
+    _night(tmp_path, TUE)
+    ex = sec_files.health_summary(marker_dir=markers)["exchange"]
+    assert ex["last_pull"] == "ok" and ex["appended"] == 4 and ex["error"] is None
+
+    # 3. a failed pull leaves its own receipt, so the row stops claiming the good one
+    _serve(http, ex_status=500)
+    _night(tmp_path, WED)
+    ex = sec_files.health_summary(marker_dir=markers)["exchange"]
+    assert ex["last_pull"] == "failed" and ex["error"]
+    assert ex["present"] == 4, "a failed pull must not touch the stored rows"
+
+
 def test_old_markers_are_pruned_and_nothing_else(rawstore_tmp_db, tmp_path, http):
     _serve(http)
     markers = tmp_path / "markers"

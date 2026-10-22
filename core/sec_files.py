@@ -208,20 +208,28 @@ def _one(name: str, night: date, *, run_id: str, run_at: float, marker_dir: Path
             return {"status": "skipped", "reason": f"already asked for session {night.isoformat()}"}, 0
     except OSError as exc:
         return {"status": "failed", "error": f"marker not writable, no request made ({type(exc).__name__})"}, 0
+    def failed(error: str, **extra) -> tuple[dict, int]:
+        """A failed pull leaves a receipt too, so Data Health can tell it from a file that was never written
+        (avo 2026-10-22: the row must separate "pulled, unchanged", "never written" and "pull failed")."""
+        res = {"status": "failed", **extra, "error": error}
+        _write_receipt(marker, night, res)
+        return res, 1
+
     try:
         headers: dict = {}
         got = getattr(sec, FILES[name].fetch)(attempts=1, headers_out=headers)
         fetched_at = time.time()
         if not got.ok:
-            return {"status": "failed", "error": got.error or "SEC file failed"}, 1
+            return failed(got.error or "SEC file failed")
         size, short = _short(name, got.rows)
         if short:
-            return {"status": "failed", **size, "error": short}, 1
+            return failed(short, **size)
         out = record(name, got.rows, run_id=run_id, run_at=run_at, fetched_at=fetched_at)
-        _write_receipt(marker, night, {**size, **out, "last_modified": _header(headers, "Last-Modified")})
+        _write_receipt(marker, night, {"status": "ok", **size, **out,
+                                       "last_modified": _header(headers, "Last-Modified")})
         return {"status": "ok", **size, **out}, 1
     except Exception as exc:  # noqa: BLE001 - the step never raises
-        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:300]}, 1
+        return failed(f"{type(exc).__name__}: {exc}"[:300])
 
 
 # --- what the last good pull said (Data Health) ---------------------------------------------------------------------
@@ -269,7 +277,10 @@ def health_summary(marker_dir: Path | None = None) -> dict:
                      "floor": MIN_FUND_CLASSES if name == "mf" else MIN_MEMBERS,
                      "file_rows": receipt.get("file_rows"), "appended": receipt.get("appended"),
                      "absent": receipt.get("absent"), "last_modified": receipt.get("last_modified"),
-                     "session": receipt.get("session")}
+                     "session": receipt.get("session"),
+                     # the last pull's own outcome: "ok", "failed", or "unknown" when no receipt is left
+                     "last_pull": receipt.get("status") or ("unknown" if not receipt else "ok"),
+                     "error": receipt.get("error")}
     return out
 
 
