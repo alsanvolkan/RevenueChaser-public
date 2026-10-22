@@ -133,7 +133,8 @@ def test_a_cik_sec_no_longer_serves_is_closed_not_failed(env):
 
 
 def test_the_document_step_keeps_the_ticker_maps_cik_spelling(env):
-    rawstore.write_rows("sec_exchange_file", [{"ticker": "NVDA", "cik": "0001045810", "name": "N", "status": "present", "run_at": 1.0}])
+    # A later row for the key wins (#301 D21): the newest stored row is the one the sync reads.
+    rawstore.write_rows("sec_exchange_file", [{"ticker": "NVDA", "cik": "0001045810", "name": "N", "status": "present", "run_at": 2.0}])
     out = sync.sync_filings()
     assert len(env["urls"]) == 2                                       # still one request for NVDA and NVDB
     assert rawstore.get("chain_filings", "NVDA")["cik"] == "0001045810"
