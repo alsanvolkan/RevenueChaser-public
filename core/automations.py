@@ -194,6 +194,15 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         tables_written=("earnings_calendar", "short_interest", "economic_calendar", "macro_series",
                         "estimate_snapshots", "vol_index_daily", "cftc_cot"),
         settings=TaskSettings(wake_to_run=True)),
+    AutomationEntry(
+        name="RC-Open-Issues-Check", label="Open issues registry check",
+        args=("-m", "RevenueChaser.scripts.open_issues_sync", "--check"), time="09:30",
+        description="Checks docs/open_issues.json against the open issues of the public repo through the GitHub API "
+                    "(read anonymously, 1-2 requests) and writes nothing, no table and no store file. Exit 1 means "
+                    "the registry is stale and the open-issues panel is missing rows; if this clone is behind "
+                    "main, git pull first (docs/open_issues.json is tracked, so --write on a stale clone sets "
+                    "up a pull conflict), otherwise python -m RevenueChaser.scripts.open_issues_sync --write.",
+        settings=TaskSettings(restart_count=0)),
 )
 _BY_NAME = {e.name: e for e in REGISTRY}
 

@@ -395,13 +395,14 @@ class TestAutomationsPanel:
         html = dashboard.view(_APP).text
         assert 'id="auto-body"' in html
         for name in ("RC-Store-Backup", "RC-Relatedness-OffPeak", "RC-ValueChain-Sync", "RC-Daily-Bars",
-                     "RC-Screeners-Daily", "RC-Forecast-Outcomes", "RC-Index-Lists", "RC-Earnings-Inputs"):
+                     "RC-Screeners-Daily", "RC-Forecast-Outcomes", "RC-Index-Lists", "RC-Earnings-Inputs",
+                     "RC-Open-Issues-Check"):
             assert name in html
 
     def test_the_route_reports_every_row_not_installed(self, dashboard, seeded_settings):
         d = dashboard.get("/api/automations").json()
         assert d["ok"] and d["available"]
-        assert [r["state"] for r in d["rows"]] == ["not_installed"] * 8
+        assert [r["state"] for r in d["rows"]] == ["not_installed"] * 9
 
     def test_install_goes_to_the_fake_scheduler_not_the_real_one(self, dashboard, seeded_settings):
         r = dashboard.client.post("/api/automations/RC-Store-Backup/install", headers=_PANEL)
@@ -411,7 +412,8 @@ class TestAutomationsPanel:
         assert rows == {"RC-Store-Backup": "enabled", "RC-Relatedness-OffPeak": "not_installed",
                         "RC-ValueChain-Sync": "not_installed", "RC-Daily-Bars": "not_installed",
                         "RC-Screeners-Daily": "not_installed", "RC-Forecast-Outcomes": "not_installed",
-                        "RC-Index-Lists": "not_installed", "RC-Earnings-Inputs": "not_installed"}
+                        "RC-Index-Lists": "not_installed", "RC-Earnings-Inputs": "not_installed",
+                        "RC-Open-Issues-Check": "not_installed"}
         r = dashboard.client.post("/api/automations/RC-Store-Backup/remove", headers=_PANEL)
         assert r.json()["row"]["state"] == "not_installed"
 
