@@ -17,6 +17,7 @@ import pytest
 
 from RevenueChaser.core.tests.board_fixtures import BOARDS
 from RevenueChaser.core.tests.board_js import DOM_STUB, inline_scripts
+from RevenueChaser.core.tests.open_issues_shell import strip_open_issues_data
 
 SPY = r"""
 var _calls = [];
@@ -109,7 +110,9 @@ def _function_source(script: str, name: str) -> str:
 def test_the_shell_sends_the_header_from_fetch_tab_and_cancel_job(tmp_path):
     """The shell's script drives iframes and tabs, so only the two write functions run."""
     from RevenueChaser.app import dashboard
-    html = dashboard.app.test_client().get("/").get_data(as_text=True)
+    # Without the open-issues registry block: it is issue text, not the shell's script
+    # (core/tests/open_issues_shell.py).
+    html = strip_open_issues_data(dashboard.app.test_client().get("/").get_data(as_text=True))
     script = next(s for s in inline_scripts(html) if "function fetchTab" in s)
     prelude = ("var ACTIVE = 'module_leaps', ACTIVE_JOBS = [];"
                "function syncOverlay(){} function startPolling(){} function renderStatus(){}\n")
