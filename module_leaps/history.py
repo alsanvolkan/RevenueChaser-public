@@ -169,4 +169,4 @@ def record(footprints, *, run_id: str, run_at: float, uw_health: dict | None = N
         BOARD, run_id=run_id, run_at=run_at, model_version=model_version(), rows={TABLE: rows},
         params=effective_config(), context={"watchlist": len(rows), "shown": shown},
         warnings=list(warnings) if warnings else None,
-        partial="; ".join(_problems(rows, uw_health)) or None)
+        partial="; ".join(_problems(rows, uw_health)) or None, provider_health=uw_health)
