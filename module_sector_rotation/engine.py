@@ -380,6 +380,7 @@ def zscore_normalize(values: list[float]) -> list[float]:
 # ── the RRG cross-section from D01 (M-ROT-2, #374: D-M3 "weekly, both"; #283 session date) ─────────────────────────
 MIN_WEEKS = 48                    # weekly closes an ETF (and SPY) needs to be on the map; fewer is "too short"
 READ_WEEKS = MIN_WEEKS + 8        # the D01 window read before a session: enough ISO weeks for the floor
+GROUP_Z_MIN = 8                   # minimum finite members for a group to use its own z-score; smaller groups pool
 
 
 def _weekly(points, as_of: date) -> dict[tuple, float]:
@@ -465,24 +466,48 @@ def cross_section(closes: dict[str, list[float]], spy_closes: list[float], as_of
     return snaps
 
 
-def normalize_z_scores(snapshots: list[ETFRotationSnapshot]) -> None:
-    """Cross-sectional z-scores of ratio and momentum, and the quadrant, set on ``snapshots`` in place."""
-    ratios = [s.rs_ratio for s in snapshots if _finite(s.rs_ratio)]
-    momentums = [s.rs_momentum for s in snapshots if _finite(s.rs_momentum)]
-    if not ratios or not momentums:
-        return
-    ratio_zs = zscore_normalize(ratios)
-    momentum_zs = zscore_normalize(momentums)
-    # assign z-scores value-by-value over finite snapshots (not positionally),
-    # so a None/NaN entry can never misalign subsequent tickers.
-    ri = mi = 0
+def _grouped_z_scores(snapshots: list[ETFRotationSnapshot], field: str, z_field: str) -> None:
+    """Set ``z_field`` on ``snapshots`` using per-group z-scores when a group has at least ``GROUP_Z_MIN`` finite
+    values, otherwise the pooled cross-sectional z-score.
+
+    ``field`` is ``rs_ratio`` or ``rs_momentum``; ``z_field`` is the matching ``*_z`` attribute. Grouping is by
+    ``group_name``; a missing/blank group name is treated as its own bucket. The pooled fallback uses every finite
+    snapshot so small groups stay comparable to the full cross-section.
+    """
+    from collections import defaultdict
+
+    by_group: dict[str, list[ETFRotationSnapshot]] = defaultdict(list)
+    finite_snapshots = []
     for snap in snapshots:
-        if _finite(snap.rs_ratio):
-            snap.rs_ratio_z = ratio_zs[ri]
-            ri += 1
-        if _finite(snap.rs_momentum):
-            snap.rs_momentum_z = momentum_zs[mi]
-            mi += 1
+        setattr(snap, z_field, None)
+        if _finite(getattr(snap, field)):
+            by_group[snap.group_name or ""].append(snap)
+            finite_snapshots.append(snap)
+
+    for snaps in by_group.values():
+        if len(snaps) >= GROUP_Z_MIN:
+            values = [getattr(s, field) for s in snaps]
+            for snap, z in zip(snaps, zscore_normalize(values)):
+                setattr(snap, z_field, z)
+
+    if finite_snapshots:
+        pooled = zscore_normalize([getattr(s, field) for s in finite_snapshots])
+        for snap, z in zip(finite_snapshots, pooled):
+            if getattr(snap, z_field) is None:
+                setattr(snap, z_field, z)
+
+
+def normalize_z_scores(snapshots: list[ETFRotationSnapshot]) -> None:
+    """Cross-sectional z-scores of ratio and momentum, and the quadrant, set on ``snapshots`` in place.
+
+    Per-group z-scores are used when a group has at least ``GROUP_Z_MIN`` finite members (ROT-4 C4); smaller groups
+    fall back to the pooled cross-sectional z-score. A snapshot missing ratio or momentum receives no z-score for that
+    dimension and no quadrant.
+    """
+    _grouped_z_scores(snapshots, "rs_ratio", "rs_ratio_z")
+    _grouped_z_scores(snapshots, "rs_momentum", "rs_momentum_z")
+    for snap in snapshots:
+        snap.rrg_quadrant = ""
         if snap.rs_ratio_z is not None and snap.rs_momentum_z is not None:
             snap.rrg_quadrant = classify_quadrant(snap.rs_ratio_z, snap.rs_momentum_z)
 
