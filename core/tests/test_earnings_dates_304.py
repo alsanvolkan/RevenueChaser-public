@@ -22,13 +22,13 @@ def test_the_stored_date_is_noon_utc_of_that_day():
 def test_stored_next_dates_reads_the_newest_session_within_the_age_limit(monkeypatch):
     seen = {}
 
-    def query(sql, params=None):
-        seen["sql"], seen["params"] = sql, params
+    def query(sql, params=None, **kw):
+        seen["sql"], seen["params"], seen["kw"] = sql, params, kw
         return [{"ticker": "aaa", "d": date(2026, 10, 28)}, {"ticker": "BBB", "d": date(2026, 11, 2)},
                 {"ticker": None, "d": date(2026, 11, 3)}]
     monkeypatch.setattr(ed.rawstore, "query", query)
     assert ed.stored_next_dates(TODAY) == {"AAA": date(2026, 10, 28), "BBB": date(2026, 11, 2)}
-    assert seen["params"] == [TODAY, date(2026, 10, 18), TODAY]
+    assert seen["params"] == [TODAY, date(2026, 10, 18), TODAY] and seen["kw"] == {"db": "raw"}
     assert "min(earnings_date)" in seen["sql"] and "earnings_date >= ?" in seen["sql"]
 
 
@@ -36,6 +36,42 @@ def test_an_unreadable_store_leaves_yahoo_in_place(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("no such table: earnings_calendar")
     monkeypatch.setattr(ed.rawstore, "query", boom)
+    assert ed.stored_next_dates(TODAY) == {}
+
+
+def test_the_default_day_is_the_new_york_day(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(ed.calendar, "today_ny", lambda: date(2026, 10, 21))
+    monkeypatch.setattr(ed.rawstore, "query", lambda sql, params=None, **kw: seen.setdefault("p", params) and [])
+    ed.stored_next_dates()
+    assert seen["p"][0] == date(2026, 10, 21) and seen["p"][2] == date(2026, 10, 21)
+
+
+def test_a_read_failure_is_logged(monkeypatch, caplog):
+    monkeypatch.setattr(ed.rawstore, "query", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    with caplog.at_level("WARNING"):
+        assert ed.stored_next_dates(TODAY) == {}
+    assert "boom" in caplog.text
+
+
+def test_the_real_query_takes_the_newest_fresh_session_and_future_dates_only(rawstore_tmp_db):
+    """AAA: the older in-window session says 11-02, the newest says 10-28 (newest wins). BBB: only the older session
+    holds it (not the newest, so no value). CCC: only a past date in the newest session (no value)."""
+    from RevenueChaser.core import rawstore
+    old, fresh = date(2026, 10, 19), date(2026, 10, 21)
+    rows = [(old, "AAA", date(2026, 11, 2)), (fresh, "AAA", date(2026, 10, 28)), (fresh, "AAA", date(2026, 11, 20)),
+            (old, "BBB", date(2026, 10, 30)), (fresh, "CCC", date(2026, 10, 15)), (fresh, "DDD", date(2026, 10, 22))]
+    rawstore.write_rows("earnings_calendar", [
+        {"session_date": sd, "earnings_date": ed_, "ticker": t, "report_session": "pm", "item": {}, "source": "uw"}
+        for sd, t, ed_ in rows])
+    assert ed.stored_next_dates(TODAY) == {"AAA": date(2026, 10, 28), "DDD": date(2026, 10, 22)}
+
+
+def test_a_calendar_older_than_the_age_limit_is_not_read(rawstore_tmp_db):
+    from RevenueChaser.core import rawstore
+    rawstore.write_rows("earnings_calendar", [
+        {"session_date": date(2026, 10, 12), "earnings_date": date(2026, 11, 2), "ticker": "AAA",
+         "report_session": "pm", "item": {}, "source": "uw"}])
     assert ed.stored_next_dates(TODAY) == {}
 
 
@@ -74,11 +110,11 @@ def test_run_screen_scores_the_stored_date_and_leaves_the_other_rows_alone(monke
 
 def test_ag_scores_the_stored_date_and_falls_back_to_yahoo(rawstore_tmp_db):
     from datetime import timedelta
-    from RevenueChaser.core import rawstore
+    from RevenueChaser.core import calendar, rawstore
     from RevenueChaser.module_asymmetric_growth import engine
     from RevenueChaser.module_asymmetric_growth.tests.test_ag_dated_momentum_380 import _QUOTE, edgar, row
 
-    today = date.today()
+    today = calendar.today_ny()
     day = today + timedelta(days=6)
     rawstore.write_rows("edgar_financials", [edgar("AAA"), edgar("BBB")])
     rawstore.write_rows("earnings_calendar", [
@@ -90,3 +126,12 @@ def test_ag_scores_the_stored_date_and_falls_back_to_yahoo(rawstore_tmp_db):
                                         preload=preload) for t in ("AAA", "BBB")}
     assert cards["AAA"]["earnings_date"] == ed.epoch(day)
     assert cards["BBB"]["earnings_date"] == YAHOO
+
+
+def test_run_screen_counts_the_names_that_score_the_stored_date(monkeypatch):
+    rows = [{"ticker": t, "quote": {"earningsTimestampStart": YAHOO}} for t in "ABC"]
+    b = Board(monkeypatch, rows=rows)
+    monkeypatch.setattr(sc.earnings_dates, "stored_next_dates",
+                        lambda: {"A": date(2026, 10, 28), "C": date(2026, 11, 2), "ZZZ": date(2026, 11, 3)})
+    b.run()
+    assert b.stats["earnings_stored"] == 2

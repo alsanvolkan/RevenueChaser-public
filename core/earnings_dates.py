@@ -7,9 +7,12 @@ week filter. The overlay only changes the row a score reads, never the stored un
 """
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timedelta, timezone
 
-from RevenueChaser.core import rawstore
+from RevenueChaser.core import calendar, rawstore
+
+logger = logging.getLogger(__name__)
 
 # A stored calendar older than this (calendar days) is not read: a stale sweep must not outrank Yahoo.
 MAX_AGE_DAYS = 4
@@ -18,14 +21,15 @@ MAX_AGE_DAYS = 4
 def stored_next_dates(today: date | None = None) -> dict[str, date]:
     """``{ticker: next earnings date on or after today}`` from the newest stored calendar session, ``{}`` when the store
     has none, a stale one, or cannot be read."""
-    today = today or date.today()
+    today = today or calendar.today_ny()      # the New York date: after midnight in Amsterdam it is still yesterday there
     try:
         rows = rawstore.query(
             "SELECT ticker, min(earnings_date) AS d FROM earnings_calendar "
             "WHERE session_date = (SELECT max(session_date) FROM earnings_calendar "
             "WHERE session_date <= ? AND session_date >= ?) AND earnings_date >= ? GROUP BY ticker",
-            [today, today - timedelta(days=MAX_AGE_DAYS), today])
-    except Exception:  # noqa: BLE001 - a missing table or an unreadable store leaves Yahoo's value in place
+            [today, today - timedelta(days=MAX_AGE_DAYS), today], db="raw")
+    except Exception as exc:  # noqa: BLE001 - a missing table or an unreadable store leaves Yahoo's value in place
+        logger.warning("stored earnings dates could not be read (%s); the cards keep Yahoo's dates", exc)
         return {}
     return {str(r["ticker"]).strip().upper(): r["d"] for r in rows if r.get("ticker") and r.get("d")}
 

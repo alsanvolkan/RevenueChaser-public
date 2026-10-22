@@ -414,6 +414,9 @@ def run_screen(*, board: str, refreshed_by: str, cfg: Any,
 
     pf = prefilter(rows)
     filtered = pf.kept                   # every kept name is scored: no shortlist cap (C12, card C)
+    earnings_stored = sum(1 for r in filtered if earnings_dates.with_stored_date(r, stored_earnings) is not r)
+    logger.info("%s: %d of %d names score the stored earnings date (%d stored in all), the rest keep Yahoo's",
+                board, earnings_stored, len(filtered), len(stored_earnings))
 
     spy_df = load_spy()
     spy = spy_summary(spy_df)
@@ -484,6 +487,7 @@ def run_screen(*, board: str, refreshed_by: str, cfg: Any,
         "hygiene": pf.dropped,
         "data_short": data_short,
         "no_edgar": no_edgar,
+        "earnings_stored": earnings_stored,
         "stale_ohlc": sum(1 for r in results if r.get("ohlc_stale")),
         "spy_stale": bool(getattr(spy_df, "attrs", {}).get("stale")),
         "dropped": count_drops(drops),

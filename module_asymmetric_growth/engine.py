@@ -552,7 +552,7 @@ def _newest_bar_sessions(bars: dict) -> dict[str, date]:
     return out
 
 
-def _preload(tickers: list[str], no_fetch: bool, session: date | None = None) -> dict:
+def _preload(tickers: list[str], no_fetch: bool, session: date | None = None, earnings: dict | None = None) -> dict:
     """The stored EDGAR rows, cached payloads, pinned themes and nominal D01 bars of ``tickers``.
 
     The boards read the store in a fixed number of queries per batch, and the price bars are no exception: ONE
@@ -564,7 +564,7 @@ def _preload(tickers: list[str], no_fetch: bool, session: date | None = None) ->
         "edgar": sec_edgar.stored_annual_many(tickers),
         "payload": cache_manager.load_many(tickers, ignore_ttl=no_fetch, allow_info_only=True),
         "themes": themes_for_many(tickers),
-        "earnings": earnings_dates.stored_next_dates(),      # #304: the stored D26 date, Yahoo's where the store has none
+        "earnings": earnings if earnings is not None else earnings_dates.stored_next_dates(),   # #304 (read once per run)
         "bars": _bars_by_ticker(tickers, session),
         "session": session,
     }
@@ -645,7 +645,8 @@ def enrich_and_score(ticker: str, meta: dict, no_fetch: bool = False,
     if technical.get("price") is None:
         return dropped("no_price")            # no price in any source, momentum unknown is still a card
     stored = preload["earnings"] if preload is not None and "earnings" in preload else earnings_dates.stored_next_dates()
-    card = score_ticker(ticker, financials, technical, earnings_dates.with_stored_date({**meta, "ticker": ticker}, stored), spine,
+    scored_meta = earnings_dates.with_stored_date({**meta, "ticker": ticker}, stored)
+    card = score_ticker(ticker, financials, technical, scored_meta, spine,
                         pinned_themes=preload["themes"] if preload is not None else None, as_of=as_of)
     return card if card is not None else dropped("foreign")
 
@@ -854,6 +855,7 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     vendor_run = run_id or ledger.new_run_id()
     run_day = _run_day()                    # anchor age is judged against the day the scan runs (card O-2)
     scan_session = _d01_session()           # one D01 cutoff for the whole Fetch, so no batch reads a newer SPY bar
+    stored_earnings = earnings_dates.stored_next_dates()      # #304: one read per run, not per batch
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         # The store is read in bulk per batch (a fixed number of queries each), not once per ticker (#150 U13);
         # a batch bounds how many EDGAR and payload rows are in memory at once.
@@ -862,7 +864,7 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
                 vendor.flush(run_id=vendor_run, label="Asymmetric Growth")   # the batch before this one
             job_control.checkpoint()            # a cancel or a passed deadline (#243) loads no further batch
             batch = to_score[start:start + PRELOAD_BATCH]
-            preload = _preload([r["ticker"] for r in batch], no_fetch, scan_session)
+            preload = _preload([r["ticker"] for r in batch], no_fetch, scan_session, stored_earnings)
             preload["drops"] = drops
             preload["vendor"] = vendor
             preload["as_of"] = run_day
