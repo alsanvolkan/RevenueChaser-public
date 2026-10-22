@@ -21,10 +21,20 @@ cost a multi-GB re-download.
 
 A second run refuses with "already at v12; use --force-reingest": rebuilding a table that is
 already at the v12 key would throw the ingested rows away for nothing.
+
+The derive runs in a FRESH process (``--derive-only``), because on the real store the re-ingest
+spends this process's DuckDB temp budget and the VALUE-units median then fails with an
+``OutOfMemoryException`` — see ``derive_in_a_fresh_process``. If that child fails, the re-ingest
+is already committed and only the derive has to be repeated::
+
+    python -m RevenueChaser.scripts.migrate_sec13f_v12 --derive-only
+
+Exit codes: 0 ok, 1 refused (nothing written), 2 the re-ingest committed but the derive failed.
 """
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -36,10 +46,16 @@ V12_KEY = ["accession", "line_no"]
 
 EXIT_OK = 0
 EXIT_REFUSED = 1
+#: The re-ingest committed but the derive process failed: distinct from a refusal, which writes nothing.
+EXIT_DERIVE_FAILED = 2
 
 
 class MigrationRefused(RuntimeError):
     """A preflight check refused the run; nothing was written."""
+
+
+class DeriveSubprocessFailed(RuntimeError):
+    """The re-ingest is committed but the derive process failed; the message names the retry command."""
 
 
 def _store_verdict(ownership_dir: Path) -> dict:
@@ -105,6 +121,40 @@ def reset_holdings_and_markers() -> None:
     rawstore.atomic(_reset)
 
 
+#: The documented rebuild command, as a ``python -m`` argument list (see ``derive_in_a_fresh_process``).
+DERIVE_ARGV = ["-m", "RevenueChaser.scripts.migrate_sec13f_v12", "--derive-only"]
+#: Where that module is importable from: the directory holding the ``RevenueChaser`` package.
+PACKAGE_PARENT = Path(__file__).resolve().parents[2]
+
+
+def derive_command() -> str:
+    """The rebuild command a human can paste, in the form the other store scripts document."""
+    return "python " + " ".join(DERIVE_ARGV)
+
+
+def derive_in_a_fresh_process(out=print) -> None:
+    """Run the derive in a NEW process, and raise ``DeriveSubprocessFailed`` if it fails.
+
+    Measured on the real store (21.2M holdings rows): calling ``recompute_totals()`` in THIS
+    process, straight after the re-ingest, dies with
+    ``duckdb.OutOfMemoryException: failed to offload data block ... (4.3 GiB/4.3 GiB used)`` out
+    of the VALUE-units median, which is the heaviest spill in the derive. The ingest has already
+    spent this connection's temp budget by then. A new process starts with a clean one and the
+    same derive finishes in about seven minutes, so the fix is a process boundary, not a PRAGMA:
+    the 4.3 GiB ceiling appeared with 45 GB of disk free and is not a number worth tuning blind.
+
+    The child is the same entry point as the documented rebuild command, so a failure here leaves
+    the operator one pasteable line rather than a traceback — the re-ingest is already committed
+    and only the derive has to be repeated.
+    """
+    out(f"deriving in a fresh process: {derive_command()}")
+    completed = subprocess.run([sys.executable, *DERIVE_ARGV], cwd=str(PACKAGE_PARENT), check=False)
+    if completed.returncode != 0:
+        raise DeriveSubprocessFailed(
+            f"the re-ingest is committed but the derive failed (exit {completed.returncode}); "
+            f"the stored totals are still the old ones. Run it again with:\n    {derive_command()}")
+
+
 def run(*, dry_run: bool = False, force: bool = False, ownership_dir: Path | None = None,
         out=print) -> dict:
     """Preflight, then the reset + re-ingest + derive. Returns ``{"before", "after", "dry_run"}``."""
@@ -118,7 +168,7 @@ def run(*, dry_run: bool = False, force: bool = False, ownership_dir: Path | Non
     zips = sorted(ownership_dir.glob("*_form13f.zip"))
     out(f"re-ingesting {len(zips)} zip(s)")
     engine.ingest_zips(zips)
-    engine.recompute_totals()
+    derive_in_a_fresh_process(out)
     after = _counts()
     after["zip_markers"] = len(rawstore.query("SELECT filename FROM sec13f_ingested_zips"))
     _report("after", after, out)
@@ -143,12 +193,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="preflight only; write nothing")
     parser.add_argument("--force-reingest", action="store_true",
                         help="rebuild even when sec13f_holdings is already at the v12 key")
+    parser.add_argument("--derive-only", action="store_true",
+                        help="rebuild the totals from what is already ingested and exit; "
+                             "the migration runs this in a fresh process, and it is the command "
+                             "to repeat by hand if that child fails")
     args = parser.parse_args(argv)
+    if args.derive_only:
+        engine.recompute_totals()
+        return EXIT_OK
     try:
         run(dry_run=args.dry_run, force=args.force_reingest)
     except MigrationRefused as exc:
         print(f"refused: {exc}")
         return EXIT_REFUSED
+    except DeriveSubprocessFailed as exc:
+        print(f"derive failed: {exc}")
+        return EXIT_DERIVE_FAILED
     return EXIT_OK
 
 

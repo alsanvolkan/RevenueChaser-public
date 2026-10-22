@@ -6,6 +6,7 @@ one file, so the slices stay reviewable together. All tests run against the per-
 """
 import csv
 import io
+import sys
 import zipfile
 
 import pytest
@@ -408,7 +409,7 @@ class TestMigrationV12:
         after = (rawstore.count("sec13f_holdings"), rawstore.count("sec13f_submissions"), self._live_key())
         assert after == before
 
-    def test_a_full_run_rekeys_refills_and_recomputes(self, store, tmp_path):
+    def test_a_full_run_rekeys_refills_and_recomputes(self, store, tmp_path, monkeypatch):
         """brief.md §3 test 16: v12 key, markers cleared then refilled, holdings refilled, totals derived."""
         from RevenueChaser.scripts import migrate_sec13f_v12 as migrate
         z = _write_zip(
@@ -419,6 +420,10 @@ class TestMigrationV12:
         rawstore.write_rows("sec13f_ingested_zips",
                             [{"filename": "2026q2_form13f.zip", "ingested_at": "2026-10-01"}])
         engine.save_cusip_ticker({"111111111": "A"})
+        # The real run derives in a child process (see test_the_derive_does_not_run_in_the_ingest_process);
+        # here the derive is done in-process so this test can assert the end state without spawning one.
+        monkeypatch.setattr(migrate, "derive_in_a_fresh_process",
+                            lambda out=print: engine.recompute_totals())
         result = migrate.run(ownership_dir=tmp_path, out=lambda *_: None)
         assert self._live_key() == ["accession", "line_no"]
         assert [r["filename"] for r in rawstore.query("SELECT filename FROM sec13f_ingested_zips")] == \
@@ -429,6 +434,74 @@ class TestMigrationV12:
         assert [r["shares"] for r in shares] == [100.0]
         assert engine.load_totals()["A"]["2026-06-30"]["shares"] == 100.0
         assert result["after"]["holdings"] == 1
+
+    def test_the_derive_does_not_run_in_the_ingest_process(self, store, tmp_path, monkeypatch):
+        """The derive is a child process, because in-process it dies on the real store.
+
+        Measured at 21.2M holdings rows: the re-ingest spends this process's DuckDB temp budget and
+        the VALUE-units median then raises ``OutOfMemoryException``. The same derive in a fresh
+        process takes about seven minutes. So this pins the process boundary, not a timing: if
+        ``recompute_totals`` is ever called in the ingest process again, this fails.
+        """
+        from RevenueChaser.scripts import migrate_sec13f_v12 as migrate
+        z = _write_zip(
+            tmp_path / "2026q2_form13f.zip",
+            [_sub("a", "1000", "01-AUG-2026", "13F-HR", "30-JUN-2026")],
+            [_row("a", "ALPHA INC", "111111111", "100", "1000")])
+        self._v11_shape()
+        called: list = []
+        monkeypatch.setattr(engine, "recompute_totals",
+                            lambda *a, **k: called.append("in-process") or {})
+        spawned: list = []
+
+        def fake_run(cmd, **kwargs):
+            spawned.append((cmd, kwargs.get("cwd")))
+            import subprocess as sp
+            return sp.CompletedProcess(cmd, 0)
+
+        monkeypatch.setattr(migrate.subprocess, "run", fake_run)
+        migrate.run(ownership_dir=tmp_path, out=lambda *_: None)
+
+        assert called == [], "the derive ran in the ingest process"
+        assert len(spawned) == 1
+        cmd, cwd = spawned[0]
+        assert cmd[0] == sys.executable
+        assert cmd[1:] == ["-m", "RevenueChaser.scripts.migrate_sec13f_v12", "--derive-only"]
+        assert cwd == str(migrate.PACKAGE_PARENT), "the child must run where the package imports"
+        assert "--derive-only" in migrate.derive_command()
+
+    def test_a_failed_derive_process_names_the_command_to_repeat(self, store, tmp_path, monkeypatch):
+        """The re-ingest is committed by then, so the operator needs the one line, not a traceback."""
+        from RevenueChaser.scripts import migrate_sec13f_v12 as migrate
+        _write_zip(
+            tmp_path / "2026q2_form13f.zip",
+            [_sub("a", "1000", "01-AUG-2026", "13F-HR", "30-JUN-2026")],
+            [_row("a", "ALPHA INC", "111111111", "100", "1000")])
+        self._v11_shape()
+
+        def failing_run(cmd, **kwargs):
+            import subprocess as sp
+            return sp.CompletedProcess(cmd, 9)
+
+        monkeypatch.setattr(migrate.subprocess, "run", failing_run)
+        with pytest.raises(migrate.DeriveSubprocessFailed) as exc:
+            migrate.run(ownership_dir=tmp_path, out=lambda *_: None)
+        assert migrate.derive_command() in str(exc.value)
+        assert "exit 9" in str(exc.value)
+        # the rows the re-ingest committed are still there: only the derive has to be repeated
+        assert rawstore.count("sec13f_holdings") == 1
+        monkeypatch.setattr(migrate, "run", lambda **k: (_ for _ in ()).throw(
+            migrate.DeriveSubprocessFailed("boom")))
+        assert migrate.main([]) == migrate.EXIT_DERIVE_FAILED
+
+    def test_derive_only_rebuilds_the_totals_and_writes_nothing_else(self, store, tmp_path, monkeypatch):
+        """``--derive-only`` is the documented retry: it derives and does not touch the ingest."""
+        from RevenueChaser.scripts import migrate_sec13f_v12 as migrate
+        seen: list = []
+        monkeypatch.setattr(engine, "recompute_totals", lambda *a, **k: seen.append("derived") or {})
+        monkeypatch.setattr(engine, "ingest_zips", lambda *a, **k: pytest.fail("--derive-only ingested"))
+        assert migrate.main(["--derive-only"]) == migrate.EXIT_OK
+        assert seen == ["derived"]
 
     def test_a_second_run_refuses(self, store, tmp_path):
         """brief.md §3 test 17: never rebuild a table that is already at the v12 key."""
