@@ -690,14 +690,16 @@ _DROP_STEPS = (
 
 
 def _funnel_steps(universe_total: int, excluded_types: int, drops: _Drops, score_errors: dict[str, list[str]],
-                  scored: int, low_liquidity: int = 0, unreadable_sec: int = 0) -> list[dict]:
+                  scored: int, low_liquidity: int | None = 0, unreadable_sec: int = 0) -> list[dict]:
     """The shared-format funnel (``core.funnel``): universe, then every reason a name has no card, then scored.
 
     The drops sum to ``universe_total - scored`` by construction: whatever no reason accounts for is shown as
     ``unrecorded`` instead of vanishing. A reason with no names has no row.
 
     ``low_liquidity`` and ``unreadable_sec`` (#41) are ``note`` steps, never drops: those names HAVE a card, so
-    counting them as drops would break the arithmetic above and misstate the board.
+    counting them as drops would break the arithmetic above and misstate the board. They overlap each other by
+    design, and ``low_liquidity`` is ``None`` where no liquidity basis was read — an unknown note is left out
+    rather than shown as 0.
     """
     step = funnel_mod.step
     steps = [step("universe", "Universe, all market caps", universe_total, "start")]
@@ -797,11 +799,16 @@ def _summary(cards: list[dict], excluded_types: int | None, score_errors: dict[s
              info_refetch_failed: int = 0, thin: list[str] | None = None) -> dict:
     """The run's counts. ``thin`` is the batch's low-liquidity note (``_Drops.thin``, #41).
 
-    ``low_liquidity`` and ``unreadable_sec`` are reporting only and never overlap: a scored name is counted once,
-    low liquidity first. A summary counted from cards alone (a Refresh with no stored header) has no liquidity
-    basis, so its ``low_liquidity`` is ``None`` (unknown) and never 0: the cards do not carry ``vol_90d``, and a
-    board that prints 0 for a figure nobody measured is making a claim. ``unreadable_sec`` is a card property, so
-    it is counted on that path too.
+    ``low_liquidity`` and ``unreadable_sec`` answer two independent questions — is this name too thin to read, and
+    were its financials read from EDGAR — so they OVERLAP by design: a thin Yahoo-sourced name is in both. The
+    "counted once" rule belongs to drops, which have to sum to the universe; ``core.funnel.validate`` sums only
+    ``kind == "drop"``, so excluding one note from the other would buy no arithmetic and would instead make
+    ``unreadable_sec`` answer a different question than its label asks (#106 review).
+
+    A summary counted from cards alone (a Refresh with no stored header) has no liquidity basis, so its
+    ``low_liquidity`` is ``None`` (unknown) and never 0: the cards do not carry ``vol_90d``, and a board that prints
+    0 for a figure nobody measured is making a claim. ``unreadable_sec`` is a card property, so it is counted on
+    that path too — and it is the same number there as on a Fetch, which the exclusion would have broken.
     """
     thin_names = set(thin or ())
     return {
@@ -822,11 +829,11 @@ def _summary(cards: list[dict], excluded_types: int | None, score_errors: dict[s
         "score_errors": sum(score_errors.values()),
         "score_error_types": score_errors,
         "info_refetch_failed": info_refetch_failed,   # #260 C15: a stale or empty Yahoo refetch
-        # #41: reporting only, each scored name counted once (low liquidity first, then unreadable SEC). The names
-        # that got no card for a filings reason (``no_annual`` / ``fetch_failed``) are drops and are not counted here.
+        # #41: reporting only, and the two overlap on purpose (a thin Yahoo-sourced name is in both) — each one
+        # answers its own question. The names that got no card for a filings reason (``no_annual`` /
+        # ``fetch_failed``) are drops and are not counted here.
         "low_liquidity": None if thin is None else sum(1 for c in cards if c["ticker"] in thin_names),
-        "unreadable_sec": sum(1 for c in cards if c["ticker"] not in thin_names
-                              and c.get("source") != EDGAR_SOURCE),
+        "unreadable_sec": sum(1 for c in cards if c.get("source") != EDGAR_SOURCE),
     }
 
 
