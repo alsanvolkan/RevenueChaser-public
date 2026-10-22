@@ -6,7 +6,9 @@
 A registry entry runs it (``core/automations.py`` checks the entry: after RC-Daily-Bars, every cap stated). A cap
 left out is 0 for ``uw``, ``fred`` and ``yfinance``: that provider gets no call. ``cboe`` and ``cftc`` default to
 their runaway guard, 20 and 5. Prints the result as one JSON line on stdout and a summary on stderr; exit 0 when every
-sweep finished, 1 when one failed or the run had no session, 2 for a bad command line.
+sweep finished, 1 when one failed or the run had no session, 2 for a bad command line, ``BUSY_EXIT`` (3) when another
+run of this step holds the lock (``job_lock`` name ``"nightly_inputs_<step>"``, #26) — nothing was written then. The
+lock is per step, because the steps write different tables: two different steps may run together.
 """
 from __future__ import annotations
 
@@ -15,7 +17,9 @@ import json
 import sys
 from pathlib import Path
 
-from RevenueChaser.core import nightly_inputs
+from RevenueChaser.core import job_lock, nightly_inputs
+
+BUSY_EXIT = 3
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -41,7 +45,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"unknown step {args.step!r} (known: {known})", file=sys.stderr)
         return 2
 
-    res = nightly_inputs.run_step(args.step, nightly_inputs.load_step(args.step), caps=caps)
+    name = f"nightly_inputs_{args.step}"
+    with job_lock.acquire(name, wait=0) as got:     # as late as possible: the command line is valid here
+        if not got:                                 # the same step runs already: nothing was written
+            pid = dict(job_lock.holders()).get(name, 0)
+            who = f" (pid {pid})" if pid else ""
+            print(f"nightly inputs {args.step}: another run{who} holds {name}; nothing was written.",
+                  file=sys.stderr)
+            return BUSY_EXIT
+        res = nightly_inputs.run_step(args.step, nightly_inputs.load_step(args.step), caps=caps)
     if args.report:
         Path(args.report).write_text(json.dumps(res, default=str), encoding="utf-8")
     print(json.dumps(res, default=str))

@@ -1,10 +1,16 @@
-"""CLI for the identity master: ``python -m RevenueChaser.core.identity --refresh [--limit N] ...``."""
+"""CLI for the identity master: ``python -m RevenueChaser.core.identity --refresh [--limit N] ...``.
+
+Exit codes: ``0`` when the run finished, ``1`` when it recorded an error, ``BUSY_EXIT`` (3) when another identity
+refresh holds the ``"identity"`` lock — nothing was fetched or written then.
+"""
 from __future__ import annotations
 
 import argparse
 import sys
 
 from . import refresh as identity_refresh
+
+BUSY_EXIT = 3
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,6 +29,9 @@ def main(argv: list[str] | None = None) -> int:
     sources = [s.strip() for s in args.sources.split(",") if s.strip()] if args.sources else None
     rec = identity_refresh.refresh(limit=args.limit, sources=sources, yahoo_limit=args.yahoo_limit,
                                    progress=lambda m: print(m, file=sys.stderr, flush=True))
+    if rec.get("status") == "busy":                 # another refresh holds the lock: nothing was written
+        print(identity_refresh.summary(rec), file=sys.stderr)
+        return BUSY_EXIT
     print(identity_refresh.summary(rec))
     for name, s in rec["sources"].items():
         if s.get("selected"):
