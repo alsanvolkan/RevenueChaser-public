@@ -7,7 +7,7 @@ first complete run of a session keeps its rows, a partial, intraday or later run
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -21,7 +21,8 @@ INTRADAY = datetime(2026, 10, 6, 14, 0, tzinfo=timezone.utc).timestamp()
 SECTOR = next(t for t, i in ROTATION_ETFS.items() if i.get("group") == "sector")
 THEME = next(t for t, i in ROTATION_ETFS.items() if i.get("group") == "theme")
 RRG = [t for t in ROTATION_ETFS if t != "SPY" and t not in MACRO_SERIES]
-SNAPS = [SimpleNamespace(ticker=t, group_name=i.get("group", "")) for t, i in ROTATION_ETFS.items()]   # every ETF
+SNAPS = [SimpleNamespace(ticker=t, group_name=i.get("group", ""), as_of_date=date(2026, 10, 6))
+         for t, i in ROTATION_ETFS.items()]   # every ETF
 DETAILED = sorted(t for t, i in ROTATION_ETFS.items() if i.get("group") in ("sector", "theme"))
 EXPANDABLE = sorted(t for t, i in ROTATION_ETFS.items() if i.get("group") == "theme")    # ROT-4: holdings RS rows
 
