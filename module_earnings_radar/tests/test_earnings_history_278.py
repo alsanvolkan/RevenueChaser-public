@@ -13,7 +13,7 @@ from datetime import date, datetime, timezone
 import pytest
 
 from RevenueChaser.core import ledger, rawstore
-from RevenueChaser.core.models.events import TradeCard
+from RevenueChaser.module_earnings_radar.models import TradeCard
 from RevenueChaser.module_earnings_radar import history as er_history
 from RevenueChaser.module_earnings_radar.pipeline import nrc_from_card
 

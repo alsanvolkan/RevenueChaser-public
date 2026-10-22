@@ -20,7 +20,7 @@ from RevenueChaser.core.config import (
 )
 from RevenueChaser.core.calendar import now_ny, today_ny
 from RevenueChaser.core.reaction_anchor import reaction_anchor, session_closes, timing_kind
-from RevenueChaser.core.models.events import TradeCard, RuleResult
+from RevenueChaser.module_earnings_radar.models import TradeCard, RuleResult
 from RevenueChaser.module_sector_rotation.engine import get_quadrant_for_ticker
 from RevenueChaser.module_leaps.engine import load_cache as leaps_load_cache
 

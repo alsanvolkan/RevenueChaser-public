@@ -7,7 +7,7 @@ names its real source (AG). Offline.
 """
 from datetime import date, datetime, timezone
 
-from RevenueChaser.core.models.events import TradeCard
+from RevenueChaser.module_earnings_radar.models import TradeCard
 from RevenueChaser.module_earnings_radar.report import export_html
 
 

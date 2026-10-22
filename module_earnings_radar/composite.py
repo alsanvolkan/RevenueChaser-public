@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 
 from RevenueChaser.core.config import RULE_WEIGHTS, DIRECTION_RANGE, VOLATILITY_EDGE_RANGE
-from RevenueChaser.core.models.events import RuleResult
+from RevenueChaser.module_earnings_radar.models import RuleResult
 
 
 def compute_direction_score(rule_results: dict[str, RuleResult]) -> float:

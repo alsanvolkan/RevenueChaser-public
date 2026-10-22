@@ -13,7 +13,7 @@ import pytest
 from RevenueChaser.app import runners
 from RevenueChaser.app.jobs import JobMessage
 from RevenueChaser.core import ledger, rawstore
-from RevenueChaser.core.models.events import TradeCard
+from RevenueChaser.module_earnings_radar.models import TradeCard
 from RevenueChaser.module_earnings_radar import history as er_history
 
 BOARD = "module_earnings_radar"

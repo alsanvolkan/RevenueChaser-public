@@ -11,7 +11,7 @@ from RevenueChaser.core.config import (
     R3_SGA_Z_SPIKE as SGA_Z_SPIKE,
     R3_MIN_OM_QUARTERS as _MIN_OM_QUARTERS,
 )
-from RevenueChaser.core.models.events import RuleResult
+from RevenueChaser.module_earnings_radar.models import RuleResult
 from RevenueChaser.module_earnings_radar.classifier import get_cluster_red_flags
 
 
