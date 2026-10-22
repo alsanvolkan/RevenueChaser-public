@@ -245,11 +245,16 @@ class TestIdentityRun:
 
         rawstore.query("DELETE FROM sec_exchange_file")
         provider_routes.route("/files/company_tickers_exchange.json", payload={"error": "down"}, status=500)
+        before = {r["run_id"] for r in _q("SELECT run_id FROM identity_runs")}
         result = seeded.run_job("/run/identity")
 
         assert result.ok, seeded.logs()
         assert "sources ok 6/7" in result.message, result.message
-        assert _q("SELECT status FROM identity_runs ORDER BY started_at DESC")[0]["status"] == "partial"
+        # started_at is second-precision TEXT, so two runs in the same second tie and ORDER BY could return
+        # the first one's "ok". Ask for the row this call added instead.
+        added = [r for r in _q("SELECT run_id, status FROM identity_runs") if r["run_id"] not in before]
+        assert len(added) == 1, added
+        assert added[0]["status"] == "partial"
         assert provider_routes.requests("/files/company_tickers_exchange.json") == [], (
             "exchange_source must not reach the network when nothing is stored (#301 D21)")
         assert _master()["AAPL"]["cik"] == "320193", (

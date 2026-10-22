@@ -204,8 +204,9 @@ def _fake_sec_map(monkeypatch, *pairs, status="ok", error=None):
     """Seed the stored SEC exchange file, or set up the "no member list at all" case.
 
     The universe job reads the stored rows and only falls back to a pull when nothing is stored (#301 D21), so
-    ``status="error"`` must do both: store nothing AND make that fallback fail. Otherwise the test would reach
-    the real ``exchange_map`` and its result would depend on the network.
+    ``status="error"`` must do both: store nothing AND make that fallback fail. Without the stub the test would
+    reach the real ``exchange_map`` and die on ``NetworkAccessAttempted`` — the root ``conftest.py`` blocks
+    sockets — rather than exercising the "no member list" path it is about.
     """
     from RevenueChaser.core.identity.sources import sec
     calls: list[int] = []
@@ -364,7 +365,7 @@ def test_a_failed_sec_map_keeps_the_stored_universe_and_writes_nothing(monkeypat
     assert {r["ticker"] for r in rows} == {"AAA", "BBB"}
     assert {r["ticker"] for r in rawstore.query("SELECT ticker FROM equity_universe")} == {"AAA", "BBB"}
     assert screen_calls == [], "no point pulling Yahoo when the member list is unavailable"
-    assert stats["sec_error"], "a member list that cannot be built must be reported"
+    assert "SEC ticker map failed" in stats["sec_error"], stats["sec_error"]
     assert stats["universe_refreshed_by"] == "Swing Potential"     # the stored provenance, unchanged
     assert agh._load_universe_meta()["generated_at"] == "2026-08-24T10:00:00+00:00"
 
@@ -378,7 +379,7 @@ def test_a_failed_sec_map_with_nothing_stored_writes_nothing(monkeypatch, rawsto
 
     assert rows == []
     assert rawstore.count("equity_universe") == 0
-    assert stats["sec_error"], "nothing stored and a failed fallback pull is still no member list"
+    assert "SEC ticker map failed" in stats["sec_error"], stats["sec_error"]
 
 
 def test_an_sec_map_with_no_listed_rows_is_a_failure(monkeypatch, rawstore_tmp_db):
