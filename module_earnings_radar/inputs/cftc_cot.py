@@ -1,8 +1,9 @@
 """E0f, D29 (#305, the CFTC part): the weekly E-mini S&P 500 Traders-in-Financial-Futures row.
 
 One Socrata read a night (inside the CFTC cap of 5) of the newest ``WEEKS`` TFF rows for the E-mini S&P 500, so a
-missed night never leaves a hole and a re-run adds nothing. The parse is SPX Gamma's own (``module_spx_gamma/cftc``
-``_map_row``): this writer reuses it rather than keeping a second reading of the Socrata fields.
+missed night never leaves a hole and a re-run adds nothing. The parse is the shared provider reader
+(``core/providers/cftc``, ``map_row``): this writer reuses it rather than keeping a second reading of the
+Socrata fields.
 
 ``report_date`` is the Tuesday the report covers; ``release_date`` is the Friday CFTC publishes it (the report date + 3
 days, unless the source row states its own); ``session_date`` is the New York session on or before ``report_date``.
@@ -17,8 +18,8 @@ from datetime import date, timedelta
 import httpx
 
 from RevenueChaser.core import calendar, nightly_inputs
+from RevenueChaser.core.providers.cftc import map_row, market_where
 from RevenueChaser.module_earnings_radar.inputs._common import CALL_CAP, json_safe, outcome, text
-from RevenueChaser.module_spx_gamma.cftc import _map_row, _market_where
 
 TABLE = "cftc_cot"
 REPORT_TYPE = "TFF"
@@ -53,7 +54,7 @@ def _session_on_or_before(d: date) -> date | None:
 
 def fetch_rows() -> tuple[list[dict] | None, str | None]:
     """``(source rows newest first, why)``: one Socrata GET of the E-mini's newest TFF rows, no retry."""
-    params = {"$where": _market_where(), "$order": "report_date_as_yyyy_mm_dd DESC", "$limit": WEEKS}
+    params = {"$where": market_where(), "$order": "report_date_as_yyyy_mm_dd DESC", "$limit": WEEKS}
     try:
         resp = httpx.get(CFTC_BASE, params=params, timeout=TIMEOUT, headers={"User-Agent": USER_AGENT})
     except httpx.HTTPError as exc:
@@ -71,7 +72,7 @@ def fetch_rows() -> tuple[list[dict] | None, str | None]:
 
 def row_from(raw: dict, ctx, fetched_at: float) -> dict | None:
     """One ``cftc_cot`` row from a source row, or None when it has no report date or no usable positions."""
-    mapped = _map_row(raw)
+    mapped = map_row(raw)
     report = parse_day(mapped.get("report_date")) if mapped else None
     if report is None:
         return None
