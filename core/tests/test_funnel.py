@@ -92,6 +92,18 @@ def test_note_is_a_kind():
     assert "note" in funnel.KINDS
 
 
+def test_a_note_renders_without_a_minus_sign():
+    """Only a drop subtracts. A note counts names that are still in the result, so a minus sign there reads as a
+    removal (#41, the first production use of the kind)."""
+    html = funnel.funnel_panel_html(_with_note())
+    row = html[html.index("Unknown security type"):]
+    row = row[:row.index("</tr>")]
+
+    assert "&minus;" not in row
+    assert ">7<" in row
+    assert "&minus;30" in html        # a real drop still shows one
+
+
 def test_a_note_in_the_middle_validates_and_the_arithmetic_ignores_it():
     steps = _with_note()
     assert funnel.validate(steps) == []          # 100 - 30 - 10 = 60 with the note's 7 ignored
