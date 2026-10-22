@@ -17,7 +17,7 @@ def test_holdings_row_on_an_empty_store(rawstore_tmp_db):
     assert row["label"] == "Rotation ETF holdings"
     assert row["tables"] == ["etf_holdings", "etf_holdings_changes"]
     assert row["rows"] == 0 and row["last_date"] == "—" and row["fetch"] is None
-    assert row["holes"] == 34 and row["hole_label"] == "ETFs with no holdings"
+    assert row["holes"] == 39 and row["hole_label"] == "ETFs with no holdings"
     assert "no holdings yet" in row["note"]
 
 
@@ -32,10 +32,10 @@ def test_holdings_row_on_a_seeded_store(rawstore_tmp_db):
     rotation_store.save_holdings_cache("SKYY", [{"ticker": "NVDA", "rs_1m": 1.0}])
     row = _rows(inventory.collect(now=FIXED))["etf_holdings"]
     assert row["rows"] == 3 and row["last_date"] == "2026-10-09"
-    assert row["holes"] == 31
-    assert "2 of 34 ETFs on session 2026-10-09" in row["note"]
+    assert row["holes"] == 36
+    assert "2 of 39 ETFs on session 2026-10-09" in row["note"]
     assert "UW 2 / yfinance 1" in row["note"]
-    assert "RS stored 1 of 23 theme ETFs" in row["note"]
+    assert "RS stored 1 of 28 theme ETFs" in row["note"]
     assert "no holdings: AIQ" in row["note"]                             # an ETF with no row is named
 
 

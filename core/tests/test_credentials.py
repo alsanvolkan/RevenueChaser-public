@@ -37,15 +37,16 @@ class TestMissingMessage:
         assert "SPX Gamma" in credentials.missing_message("unusual_whales")
 
     def test_covers_the_other_providers(self):
-        fmp = credentials.missing_message("fmp")
-        assert "FMP_API_KEY" in fmp and "financialmodelingprep" in fmp
+        figi = credentials.missing_message("openfigi")
+        assert "OPENFIGI_API_KEY" in figi and "openfigi.com" in figi
         fred = credentials.missing_message("fred")
         assert "FRED_API_KEY" in fred and "stlouisfed" in fred
 
-    def test_fmp_message_names_etf_holdings_not_index_registry(self):
-        msg = credentials.missing_message("fmp")
-        assert "Sector Rotation" in msg
-        assert "Index membership" not in msg
+    def test_fmp_is_not_a_registered_provider(self):
+        # ROT-4 C5 deleted the FMP holdings fallback; the registry must not advertise a key for it (SHOULD-2).
+        assert "fmp" not in credentials.PROVIDERS
+        with pytest.raises(KeyError):
+            credentials.get("fmp")
 
 
 class TestRejectedMessage:

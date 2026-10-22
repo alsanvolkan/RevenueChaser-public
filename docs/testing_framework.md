@@ -281,7 +281,7 @@ captured from `main` before the refactor (`fixtures/screen_parity_147.json`, sce
 **`module_sector_rotation/`** — the most test-heavy screener, because the RRG dashboard is largely
 client-side JS embedded in rendered HTML. Tests cover quadrant classification with strict boundaries,
 snapshot persistence and weekly Wednesday backfill, the early-turn detector, the money-flow
-leaderboard, the UW → FMP → yfinance holdings fallback chain, and then a long tail of rendered-output
+leaderboard, the UW → yfinance holdings chain, and then a long tail of rendered-output
 assertions: embedded self-contained holdings, dynamic axis range, hover tooltips, leader lines,
 holdings carets absent for non-equity groups, and the parallel set for the trail view.
 

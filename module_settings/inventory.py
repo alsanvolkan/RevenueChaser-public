@@ -381,11 +381,11 @@ def _quotes_row() -> dict:
     return default
 
 
-_HOLDINGS_PROVIDERS = (("uw", "UW"), ("fmp", "FMP"), ("yfinance", "yfinance"))
+_HOLDINGS_PROVIDERS = (("uw", "UW"), ("yfinance", "yfinance"))
 
 
 def _etf_holdings_row() -> dict:
-    """The "Rotation ETF holdings" row (#303, D25): ETFs fetched in the newest session vs the 34 the holdings job
+    """The "Rotation ETF holdings" row (#303, D25): ETFs fetched in the newest session vs the 39 the holdings job
     resolves, the provider share, the ETFs with no holdings and the theme ETFs with stored RS. A failure is a note."""
     row = {
         "key": "etf_holdings", "label": "Rotation ETF holdings",

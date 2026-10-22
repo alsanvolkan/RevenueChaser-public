@@ -1093,7 +1093,7 @@ def run_sec13f_map(uw=None) -> None:
 
 
 def run_etf_holdings_sync(uw: UWClient) -> None:
-    """Bulk-resolve sector+theme ETF holdings via UW->FMP->yfinance, cache once."""
+    """Bulk-resolve sector+theme ETF holdings via UW->yfinance, cache once."""
     from datetime import datetime
     from RevenueChaser.core import calendar, rawstore
     from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
