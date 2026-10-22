@@ -21,10 +21,13 @@ from pathlib import Path
 
 import pytest
 
+from RevenueChaser.core import open_issues
 from RevenueChaser.core.html_safe import script_json
 
 _CANDIDATES = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
 URL_PREFIX = "https://github.com/alsanvolkan/"
+# The board the probe starts on: the registry gives it board-scoped entries, so its list is never empty.
+BOARD_WITH_ENTRIES = "module_sec_13f"
 
 # Before the shell's own scripts: record script hits, silence alerts, and keep every request pending.
 _HOOK = ("<script>window.__x=function(t){var d=document.documentElement;"
@@ -33,7 +36,9 @@ _HOOK = ("<script>window.__x=function(t){var d=document.documentElement;"
          "window.fetch=function(){return new Promise(function(){});};</script>")
 
 # After load: open the group, read it, then switch tabs and read again; the report lands in <pre id="rc-e2e-probe">.
-_PROBE = r"""<script>
+def _probe(board_with_entries: str, board_without: str) -> str:
+    """The probe for these two boards: the first has board-scoped issues, the second has none."""
+    return (r"""<script>
 window.addEventListener('load', function(){ setTimeout(function(){
   var out = [], box = document.getElementById('rc-open-issues');
   function add(k, v){ out.push(k + '=' + v); }
@@ -55,20 +60,20 @@ window.addEventListener('load', function(){ setTimeout(function(){
     return a.getAttribute('target') !== '_blank' || a.getAttribute('rel') !== 'noopener' ||
            (a.getAttribute('href') || '').indexOf('https://github.com/alsanvolkan/') !== 0;
   }).length);
-  showTab('module_sec_13f');
-  add('sec13f.summary', text(document.getElementById('rc-open-issues-summary')));
-  add('sec13f.titles', titles());
-  showTab('module_leaps');
-  add('leaps.summary', text(document.getElementById('rc-open-issues-summary')));
-  add('leaps.titles', titles());
+  showTab('__WITH__');
+  add('with.summary', text(document.getElementById('rc-open-issues-summary')));
+  add('with.titles', titles());
+  showTab('__WITHOUT__');
+  add('without.summary', text(document.getElementById('rc-open-issues-summary')));
+  add('without.titles', titles());
   showTab('logs');
   add('logs.hidden', box.hidden);
-  showTab('module_sec_13f');
+  showTab('__WITH__');
   add('back.summary', text(document.getElementById('rc-open-issues-summary')));
   var pre = document.createElement('pre'); pre.id = 'rc-e2e-probe';
   pre.textContent = out.join('\n'); document.body.appendChild(pre);
 }, 0); });
-</script>"""
+</script>""").replace("__WITH__", board_with_entries).replace("__WITHOUT__", board_without)
 
 _HOSTILE_PROBE = r"""<script>
 window.addEventListener('load', function(){ setTimeout(function(){
@@ -81,6 +86,22 @@ window.addEventListener('load', function(){ setTimeout(function(){
   document.body.appendChild(pre);
 }, 0); });
 </script>"""
+
+
+def _board_without_its_own_issue() -> str:
+    """A data board the registry has no board-scoped entry for (computed, so a re-seeded registry cannot break it).
+
+    The panel's summary says "0 on this board" for that board. Hard-coding one would tie the test to today's seed.
+    """
+    from RevenueChaser.app import dashboard
+
+    keys = [t["key"] for t in dashboard.TABS
+            if t["type"] == "tab" and t["key"] not in open_issues.NOT_A_DATA_BOARD]
+    registry = open_issues.load()
+    named = {board for e in registry.issues if e.scope == "board" for board in e.boards}
+    empty = [k for k in keys if k not in named and k != BOARD_WITH_ENTRIES]
+    assert empty, "every data board has a board-scoped issue: the panel's empty branch has no board to show it on"
+    return empty[0]
 
 
 def _chrome() -> str | None:
@@ -123,7 +144,7 @@ def _dump(chrome: str, page: Path, profile: Path) -> str:
     return out.stdout
 
 
-def _probe(dom: str) -> dict:
+def _probe_parse(dom: str) -> dict:
     m = re.search(r'<pre id="rc-e2e-probe">(.*?)</pre>', dom, re.S)
     assert m, "the probe never ran (the shell's script failed?)"
     text = html_mod.unescape(m.group(1))
@@ -136,9 +157,10 @@ def _probe(dom: str) -> dict:
 
 
 def test_the_group_is_collapsed_opens_and_follows_the_tab(dashboard, chrome, tmp_path):
+    other = _board_without_its_own_issue()
     page = tmp_path / "shell.html"
-    page.write_text(_with_probe(dashboard.get("/").text, _PROBE), encoding="utf-8")
-    report = _probe(_dump(chrome, page, tmp_path / "profile"))
+    page.write_text(_with_probe(dashboard.get("/").text, _probe(BOARD_WITH_ENTRIES, other)), encoding="utf-8")
+    report = _probe_parse(_dump(chrome, page, tmp_path / "profile"))
 
     assert report["initial.hidden"] == "false", "a data board shows the group"
     assert report["initial.open"] == "false", "it starts collapsed"
@@ -151,13 +173,15 @@ def test_the_group_is_collapsed_opens_and_follows_the_tab(dashboard, chrome, tmp
     assert len(report["opened.line"]) > 40, "the one-liner is visible with the group open"
     assert report["links.count"] and report["links.bad"] == "0", "every link is a safe new-tab link"
 
-    # showTab switches the list with no page load: SEC 13F has board-specific entries, LEAPS has none.
-    assert report["sec13f.summary"] != report["leaps.summary"]
-    assert " on this board" in report["sec13f.summary"]
-    assert report["leaps.summary"].startswith("Open issues — 0 on this board")
-    assert report["sec13f.titles"] != report["leaps.titles"]
+    # showTab switches the list with no page load, and the counts are the registry's, not the seed's:
+    # the registry gives SEC 13F board-scoped entries and `other` none.
+    assert report["with.summary"] != report["without.summary"], "a tab switch re-renders the list"
+    assert " on this board" in report["with.summary"]
+    assert report["without.summary"].startswith("Open issues — 0 on this board"), \
+        f"{other} has no board-scoped entry in the registry, so its list starts at 0: {report['without.summary']}"
+    assert report["with.titles"] != report["without.titles"]
     assert report["logs.hidden"] == "true", "Logs is not a data board: no panel"
-    assert report["back.summary"] == report["sec13f.summary"], "coming back restores the same list"
+    assert report["back.summary"] == report["with.summary"], "coming back restores the same list"
 
 
 def test_a_hostile_issue_title_runs_no_script(dashboard, chrome, tmp_path):
@@ -187,5 +211,5 @@ def test_a_hostile_issue_title_runs_no_script(dashboard, chrome, tmp_path):
     assert "<script>window.__x('title')" not in dom, "the hostile title became a script tag"
     assert "<img src=x" not in dom, "the summary rendered as markup"
     assert "&lt;img src=x" in dom, "the summary is on the page as text"
-    report = _probe(dom)
+    report = _probe_parse(dom)
     assert report["title"].endswith(hostile), "the title is still shown, as text"
