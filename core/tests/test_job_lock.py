@@ -7,6 +7,7 @@ import sys
 import time
 
 from RevenueChaser.core import job_lock
+from RevenueChaser.core.tests.lock_holders import lock_held
 
 
 def test_acquire_excludes_second_holder(rawstore_tmp_db):
@@ -76,6 +77,19 @@ def test_release_never_removes_someone_elses_lock(rawstore_tmp_db):
         # unlink a held lock file (Windows refuses), so it writes over it — the release check is the same.
         p.write_text("4242 someone-else")
     assert p.read_text() == "4242 someone-else"
+
+
+def test_a_refused_acquire_leaves_the_holders_lock_intact(rawstore_tmp_db):
+    """Nit (#26): the loser of a race must neither break nor unlock the winner's lock, which it still releases."""
+    name = "edgar_sync"
+    with lock_held(name) as path:
+        holder_text = path.read_text(encoding="utf-8")
+        with job_lock.acquire(name, wait=0) as got:
+            assert got is False
+        assert job_lock.holders() == [(name, os.getpid())], "the refused acquirer dropped the holder's lock"
+        assert path.read_text(encoding="utf-8") == holder_text, "the refused acquirer wrote to the holder's file"
+        assert job_lock._os_lock_is_taken(path), "the holder's OS lock is gone"
+    assert job_lock.holders() == [], "the holder could not release its own lock after a refusal"
 
 
 def test_holders_lists_live_locks_only(rawstore_tmp_db):

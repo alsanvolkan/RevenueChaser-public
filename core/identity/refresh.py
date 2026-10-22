@@ -47,7 +47,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Callable
 
-from .. import index_registry, rawstore, sec_files
+from .. import index_registry, job_lock, rawstore, sec_files
 from . import apply as universe_apply
 from . import cache, gics, master
 from . import types as T
@@ -190,6 +190,20 @@ def _universe(limit):
     return rows[:limit] if limit else rows
 
 
+_LOCK = "identity"
+
+
+def _busy_record(run_id: str, started: str, holder_pid: int) -> dict:
+    """The run record of a refresh another holder kept out: a status, the holder's PID, and no counts.
+
+    ``counts`` is there and empty, never missing: a reader that walks it has nothing to special-case.
+    """
+    return {"run_id": run_id, "started_at": started, "finished_at": now_iso(), "status": "busy", "error": None,
+            "holder_pid": holder_pid, "counts": {},
+            "sources": {s: {"status": "skipped", "selected": False, "rows": 0, "fetched": 0, "seconds": 0.0,
+                            "error": None} for s in SOURCES}}
+
+
 def refresh(limit: int | None = None, sources=None, now: str | None = None, clients: dict | None = None,
             yahoo_limit: int | None = None, progress: Callable[[str], None] | None = None) -> dict:
     """Run one identity refresh. Returns the run record (``run_id``, ``status``, ``sources``, ``counts`` ...).
@@ -197,24 +211,34 @@ def refresh(limit: int | None = None, sources=None, now: str | None = None, clie
     ``sources`` restricts the run to the named sources (``sec, openfigi, nasdaq, uw, yahoo, fdic, spdr``);
     the rest are ``skipped`` and their cached answers are used. ``clients`` replaces source
     functions (tests). Never raises.
+
+    One run at a time (``job_lock`` name ``"identity"``, #26): the lock is taken here, so it covers the dashboard
+    job and the CLI alike. While another refresh holds it, this writes nothing at all — not even an
+    ``identity_runs`` row — and returns a record with ``status`` ``"busy"`` and the holder's ``holder_pid``
+    (``0`` when the lock is held but its owner cannot be read).
     """
     started = now or now_iso()
     run_id = f"{started.replace('-', '').replace(':', '')}-{uuid.uuid4().hex[:6]}"
-    rec: dict = {"run_id": run_id, "started_at": started, "finished_at": None, "status": "error", "error": None,
-                 "sources": {s: {"status": "skipped", "selected": False, "rows": 0, "fetched": 0, "seconds": 0.0,
-                                 "error": None} for s in SOURCES}, "counts": {}}
-    try:
-        _run(rec, limit, sources, started, clients, yahoo_limit, progress or (lambda m: None))
-    except Exception as exc:  # noqa: BLE001 - refresh never raises
-        rec["status"], rec["error"] = "error", redact(f"{type(exc).__name__}: {exc}")[:500]
-    rec["finished_at"] = now_iso()
-    try:
-        rawstore.write_rows("identity_runs", [{
-            "run_id": run_id, "started_at": started, "finished_at": rec["finished_at"], "status": rec["status"],
-            "sources": rec["sources"], "counts": dict(rec["counts"], **({"error": rec["error"]} if rec["error"] else {}))}])
-    except Exception as exc:  # noqa: BLE001
-        rec["record_error"] = redact(f"{type(exc).__name__}: {exc}")[:300]
-    return rec
+    with job_lock.acquire(_LOCK, wait=0) as got:
+        if not got:
+            return _busy_record(run_id, started, dict(job_lock.holders()).get(_LOCK, 0))
+        rec: dict = {"run_id": run_id, "started_at": started, "finished_at": None, "status": "error", "error": None,
+                     "sources": {s: {"status": "skipped", "selected": False, "rows": 0, "fetched": 0, "seconds": 0.0,
+                                     "error": None} for s in SOURCES}, "counts": {}}
+        try:
+            _run(rec, limit, sources, started, clients, yahoo_limit, progress or (lambda m: None))
+        except Exception as exc:  # noqa: BLE001 - refresh never raises
+            rec["status"], rec["error"] = "error", redact(f"{type(exc).__name__}: {exc}")[:500]
+        rec["finished_at"] = now_iso()
+        try:
+            rawstore.write_rows("identity_runs", [{
+                "run_id": run_id, "started_at": started, "finished_at": rec["finished_at"],
+                "status": rec["status"],
+                "sources": rec["sources"],
+                "counts": dict(rec["counts"], **({"error": rec["error"]} if rec["error"] else {}))}])
+        except Exception as exc:  # noqa: BLE001
+            rec["record_error"] = redact(f"{type(exc).__name__}: {exc}")[:300]
+        return rec
 
 
 def _run(rec, limit, sources, started, clients, yahoo_limit, say):
@@ -511,7 +535,15 @@ def _write_conflicts(conflicts: list[dict], now: str) -> None:
 
 
 def summary(rec: dict) -> str:
-    """One line: ``7,366 tickers · 213 funds/ETFs · 116 SPACs · sectors: S&P 1,501 / UW 4,500 / Yahoo 900 / SIC 120 / unclassified 345 · 266 conflicts · universe 7,000 updated / 3 without a master row · sources ok 7/7``."""
+    """One line: ``7,366 tickers · 213 funds/ETFs · 116 SPACs · sectors: S&P 1,501 / UW 4,500 / Yahoo 900 / SIC 120 / unclassified 345 · 266 conflicts · universe 7,000 updated / 3 without a master row · sources ok 7/7``.
+
+    A run another holder kept out has no counts: it says so — ``identity refresh skipped: another identity refresh
+    (pid 1234) is running; nothing was written.`` — rather than printing a row of zeros.
+    """
+    if rec.get("status") == "busy":
+        pid = rec.get("holder_pid") or 0
+        who = f" (pid {pid})" if pid else ""
+        return f"identity refresh skipped: another identity refresh{who} is running; nothing was written."
     if rec.get("status") == "error" and not rec.get("counts"):
         return f"identity refresh failed: {rec.get('error')}"
     c = rec.get("counts") or {}
