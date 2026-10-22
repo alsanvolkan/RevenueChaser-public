@@ -1327,11 +1327,12 @@ def run_quick_cached(uw=None, ticker: str | None = None) -> Path:
 
     explicit = ticker is not None
     ticker = (ticker or _last_quick_ticker()).upper()
-    # The gate is "nothing stored anywhere", not "no ticker_payload_cache row": a Fetch also stores its
-    # statements in ``vendor_financials`` and, for a closed session, its ``.info`` in ``vendor_valuation``
-    # (FIN-5, #385), and ``fm_run(no_fetch=True)`` builds the model inputs from those rows. Gating on the raw
-    # cache alone reported "nothing stored" for a ticker whose vendor rows would have rendered.
-    if cache_manager.load(ticker, ignore_ttl=True) is None and vendor_data.read_financials(ticker) is None:
+    # The gate is "no statements stored anywhere", not "no ticker_payload_cache row": a Fetch also stores its
+    # statements in ``vendor_financials`` (FIN-5, #385), and ``fm_run(no_fetch=True)`` builds the model inputs from
+    # those rows. A ticker with only a ``vendor_valuation`` row (what a comps peer gets) has no annual statements,
+    # so it is "nothing stored", not a board of "insufficient financial data" errors.
+    vendor = vendor_data.read_financials(ticker)
+    if cache_manager.load(ticker, ignore_ttl=True) is None and not (vendor and vendor.get("annual")):
         if explicit:
             QUICK_LATEST.unlink(missing_ok=True)  # no raw data -> drop stale artifact
         if QUICK_LATEST.exists():

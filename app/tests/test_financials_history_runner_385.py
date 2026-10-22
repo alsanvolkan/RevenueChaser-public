@@ -109,7 +109,22 @@ def test_a_refresh_with_vendor_rows_but_no_raw_cache_still_renders(fetch):
     from datetime import datetime, timezone
     from RevenueChaser.core import vendor_data
 
-    vendor_data.record(valuations=[vendor_data.valuation_row_yfinance("MSFT", {"marketCap": 1.0e9})],
+    payload = {"ticker": "MSFT", "annual": [{"fiscal_year": "2025", "period_end": "2025-06-30", "revenue": 2.0e9,
+                                              "net_income": 1.0e8}]}
+    vendor_data.record(statements=vendor_data.statement_rows_yfinance("MSFT", payload),
+                       valuations=[vendor_data.valuation_row_yfinance("MSFT", {"marketCap": 1.0e9})],
                        run_id="job-1", run_at=datetime(2026, 10, 8, 20, 35, tzinfo=timezone.utc).timestamp())
     assert runners.run_quick_cached(ticker="MSFT") == runners.QUICK_LATEST
     assert fetch["no_fetch"] is True and fetch["ticker"] == "MSFT"
+
+
+def test_a_valuation_only_ticker_is_nothing_stored_not_a_board_of_errors(fetch):
+    """S-7 (review): a comps peer gets a ``vendor_valuation`` row and no statements: no annual, so no render."""
+    from datetime import datetime, timezone
+    from RevenueChaser.core import vendor_data
+
+    vendor_data.record(valuations=[vendor_data.valuation_row_yfinance("PEER", {"marketCap": 1.0e9})],
+                       run_id="job-2", run_at=datetime(2026, 10, 8, 20, 35, tzinfo=timezone.utc).timestamp())
+    runners.QUICK_LATEST.unlink(missing_ok=True)
+    assert runners.run_quick_cached(ticker="PEER") is None
+    assert "no_fetch" not in fetch
