@@ -219,14 +219,11 @@ Line numbers are this worktree's.
   and `_market_where` — two **private** helpers, and the module docstring says the parse
   is "SPX Gamma's own". **Worth an issue**: either the CFTC parse becomes a shared
   provider-side reader or the two public names are agreed.
-- `module_earnings_radar/macro_watch.py:16` imports Sector Rotation's `MACRO_SERIES`,
-  while `module_sector_rotation/engine.py:550` imports earnings' `macro_weekly_closes`.
-  The two areas import each other. **Worth an issue**: that pair is the FRED/rotation
-  seam and it already forced a lazy import.
-- `module_earnings_radar/report.py:1578` imports Sector Rotation's `ROTATION_ETFS` with
-  the comment "lazy: no import cycle" — the same list, the same cycle, a third reader.
-- `module_relatedness/themes.py:1038` — a classification module imports Sector
-  Rotation's `ROTATION_ETFS`. Same list again (see the `ROTATION_ETFS` entry below).
+- `module_sector_rotation/engine.py:550` imports earnings' `macro_weekly_closes` from
+  inside a function, so rotation → earnings is the one remaining direction: `#12` moved
+  `module_earnings_radar/macro_watch.py` onto `core/rotation_reference.py`, which removed
+  the other half of the cycle. **Worth an issue** (#13's second half): whether that reader
+  belongs to `earnings` at all, which is what would let its import move to module level.
 - `module_asymmetric_growth/engine.py:842` — a screener imports
   `module_sec_13f.engine`. **Worth an issue** only if the two are meant to stay
   independent; today an AG run cannot be reasoned about without the 13F store.
@@ -241,11 +238,6 @@ Line numbers are this worktree's.
 
 ### `core/` reaching into a board
 
-- `core/taxonomy.py:12` and `core/prices.py:31` import
-  `module_sector_rotation.universe.ROTATION_ETFS`. Core is the layer every module may
-  import; here it imports a market board, so the boards' import graph is no longer a
-  tree. **Worth an issue**: the fix is the `ROTATION_ETFS` move below, which removes
-  both edges.
 - `core/taxonomy.py:138,147` import `module_relatedness.themes` — a classification
   board, reached from the theme SSoT.
 - `core/board_settings.py:51,59` import `module_comovement.config`/`ohlc` and `:113`
@@ -261,15 +253,14 @@ Line numbers are this worktree's.
   vendor statements vs the ownership snapshot). Core-to-core, so cheaper than the
   above, but the same shape. **Not worth its own issue.**
 
-### `ROTATION_ETFS` — a list that is not a board's
+### `ROTATION_ETFS` — moved out of the board (fixed, #12)
 
-`module_sector_rotation/universe.py` holds `ROTATION_ETFS`, imported by
-`core/taxonomy.py`, `core/prices.py`, `module_relatedness/themes.py`,
-`module_earnings_radar/report.py`, `module_sector_rotation/history.py` and
-`app/runners.py`. The ETF list is reference data; its current home is a board module.
-**Worth an issue**: moving it removes four cross-area edges, two of them from inside
-`core/`, and `MACRO_SERIES` — the earnings ↔ rotation pair above — sits in the same
-file.
+`ROTATION_ETFS` and `MACRO_SERIES` are reference data, not a board's, so they live in
+`core/rotation_reference.py`: `core/prices.py`, `module_relatedness/themes.py` and
+`module_earnings_radar/report.py`/`macro_watch.py` import them from there, and
+`module_sector_rotation/universe.py` re-exports both names — the same objects, so a test
+that patches one in place still patches what every reader sees. The board's own
+`history.py` and the composition root (`app/runners.py`) keep importing `universe`.
 
 ### A file whose directory is not its area
 

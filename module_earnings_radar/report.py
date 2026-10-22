@@ -9,6 +9,7 @@ import json
 from RevenueChaser.core import rawstore
 from .composite import classify_bias
 from RevenueChaser.core.html_safe import ESC_JS, esc, script_json
+from RevenueChaser.core.rotation_reference import ROTATION_ETFS
 from RevenueChaser.core.config import (
     OUTPUT_DIR, MIN_OPTION_VOLUME, MIN_TOTAL_OI, MIN_DOLLAR_OPTION_VOLUME, RULE_WEIGHTS,
 )
@@ -1575,7 +1576,6 @@ EXCLUDED_LIST_MAX = 50
 
 def _methodology_tables(filter_stats: dict = None) -> str:
     """Generate explanatory tables at the end of the HTML showing methodology."""
-    from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS  # lazy: no import cycle
     h = '<details class="section methodology" style="margin-top:40px"><summary class="section-title" style="color:#d2991d">Methodology</summary>'
 
     # Table 1: Filter Gates
