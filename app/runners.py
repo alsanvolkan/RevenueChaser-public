@@ -1309,8 +1309,9 @@ def run_quick_cached(uw=None, ticker: str | None = None) -> Path:
     Recomputed from ``.store/raw.duckdb`` (raw yfinance payload, TTL ignored),
     so clicking Refresh always ignores any stale ``financials_latest.html`` and
     re-derives the report. When nothing is stored for the requested ticker —
-    neither a raw payload nor the ``vendor_financials``/``vendor_valuation``
-    rows a Fetch stores (FIN-5) — the stale artifact is dropped and None is
+    neither a raw payload nor the annual statements a Fetch stores in
+    ``vendor_financials`` (FIN-5); a ``vendor_valuation`` row alone does not
+    count — the stale artifact is dropped and None is
     returned, so the view shows an empty state and a live Fetch is genuinely
     required.
 
@@ -1331,8 +1332,8 @@ def run_quick_cached(uw=None, ticker: str | None = None) -> Path:
     # statements in ``vendor_financials`` (FIN-5, #385), and ``fm_run(no_fetch=True)`` builds the model inputs from
     # those rows. A ticker with only a ``vendor_valuation`` row (what a comps peer gets) has no annual statements,
     # so it is "nothing stored", not a board of "insufficient financial data" errors.
-    vendor = vendor_data.read_financials(ticker)
-    if cache_manager.load(ticker, ignore_ttl=True) is None and not (vendor and vendor.get("annual")):
+    if cache_manager.load(ticker, ignore_ttl=True) is None and not (
+            (vendor := vendor_data.read_financials(ticker)) and vendor.get("annual")):
         if explicit:
             QUICK_LATEST.unlink(missing_ok=True)  # no raw data -> drop stale artifact
         if QUICK_LATEST.exists():
