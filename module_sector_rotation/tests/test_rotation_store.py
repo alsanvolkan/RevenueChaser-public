@@ -217,12 +217,12 @@ class TestBackfillWeekly:
 class TestUniverseShape:
     def test_rrg_symbols(self):
         from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
-        assert len(ROTATION_ETFS) == 78, f"expected 78 RRG symbols, got {len(ROTATION_ETFS)}"
+        assert len(ROTATION_ETFS) == 83, f"expected 83 RRG symbols, got {len(ROTATION_ETFS)}"
         groups = {}
         for t, info in ROTATION_ETFS.items():
             groups.setdefault(info["group"], []).append(t)
         assert len(groups["sector"]) == 11, "11 sectors"
-        assert len(groups["theme"]) == 23, "23 themes"
+        assert len(groups["theme"]) == 28, "28 themes"
         assert len(groups["bond"]) == 3, "3 bond ETFs"
         assert len(groups["region"]) == 30, "30 region (2 broad + 28 country)"
         assert len(groups["yield"]) == 7, "7 yield-curve symbols"

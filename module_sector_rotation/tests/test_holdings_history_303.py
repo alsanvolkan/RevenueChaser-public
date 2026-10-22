@@ -179,7 +179,7 @@ def test_a_rotation_fetch_writes_no_holdings(rawstore_tmp_db, monkeypatch):
 # ── Data Health summary ────────────────────────────────────────────────────────────────────────────────────────────
 def test_health_summary_on_an_empty_store(rawstore_tmp_db):
     h = eh.health_summary()
-    assert h["expected"] == len(SYNCED) == 34
+    assert h["expected"] == len(SYNCED) == 39
     assert h["stored"] == 0 and h["newest_session"] is None and h["missing"] == sorted(SYNCED)
 
 
@@ -197,7 +197,7 @@ def test_health_summary_counts_the_newest_session_providers_and_rs(rawstore_tmp_
     assert h["stored"] == len(SYNCED) - 1
     assert h["providers"] == {"uw": len(SYNCED) - 3, "yfinance": 2}
     assert h["missing"] == ["AIQ"]
-    assert h["themes"] == 23 and h["rs_stored"] == 1
+    assert h["themes"] == 28 and h["rs_stored"] == 1
 
 
 def test_fmp_answer_is_tagged_fmp(monkeypatch):

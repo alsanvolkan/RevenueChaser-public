@@ -1,9 +1,9 @@
 """Universe for the RRG rotation engine.
 
-- ``ROTATION_ETFS`` — 50 symbols run through the SPY-relative rotation engine
-  (Z-score, quadrants, trajectory r/theta, money flow). Includes 39 ETFs plus
-  11 macro indicators (yield curve + volatility/commodities) sourced weekly
-  from FRED/yfinance via ``MACRO_SERIES``.
+- ``ROTATION_ETFS`` — 83 symbols: 72 ETFs plus 11 macro indicators
+  (yield curve + volatility/commodities). The 72 ETFs run through the
+  SPY-relative rotation engine (Z-score, quadrants, trajectory r/theta,
+  money flow); macro indicators are shown in the separate macro panel.
 """
 
 # ── 41 ETFs for the RRG rotation pipeline ──
@@ -47,6 +47,11 @@ ROTATION_ETFS = {
     "XBI":  {"name": "Biotechnology", "group": "theme"},
     "JETS": {"name": "Airlines", "group": "theme"},
     "KRE":  {"name": "Regional Banks", "group": "theme"},
+    "HACK": {"name": "Cyber Security", "group": "theme"},
+    "XHB":  {"name": "Homebuilders", "group": "theme"},
+    "XRT":  {"name": "Retail", "group": "theme"},
+    "ARKW": {"name": "Next Gen Internet", "group": "theme"},
+    "IHI":  {"name": "Medical Devices", "group": "theme"},
 
     # ── Asset Class, Regional (5) ──
     "EEM":  {"name": "Emerging Markets", "group": "region"},
