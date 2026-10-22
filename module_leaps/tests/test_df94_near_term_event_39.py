@@ -3,7 +3,7 @@
 Red-first for the five behaviours:
 1. a watchlist ticker with no far-dated print and earnings within ``NEAR_EVENT_DAYS`` is a near event, so Quiet;
 2. the same ticker with earnings beyond the window keeps the label its footprint earns;
-3. a flow candidate keeps its own near-event flag when the calendar has no row for the ticker;
+3. a flow candidate keeps its own near-event flag, whether the calendar has no row or a later one;
 4. the window is inclusive at exactly ``NEAR_EVENT_DAYS`` days, and excludes the next day;
 5. the Refresh (cached path) keeps the recorded flag and never consults today's calendar.
 """
@@ -112,6 +112,17 @@ def test_a_pinned_name_with_earnings_forty_days_out_keeps_its_footprint_label(ra
 def test_a_flow_candidate_keeps_its_own_near_event_flag_without_a_calendar_row(rawstore_tmp_db, monkeypatch):
     _seed_growing()
     _calendar(monkeypatch, {})
+    ned = (TODAY + timedelta(days=3)).isoformat()
+    watched, _ = scan_leaps(_UW({"AAA": GROWING}, tape=[_print("q1", "AAA", ned)]), today=TODAY)
+    (aaa,) = watched
+    assert aaa["near_term_event"] is True and aaa["label"] == "Quiet"
+
+
+def test_a_flow_candidate_keeps_its_flag_against_a_calendar_row_that_says_otherwise(rawstore_tmp_db, monkeypatch):
+    """#99 review: the two sources are OR'd. The candidate's date comes off the tape, the stored calendar may be
+    several sessions old (``earnings_dates.MAX_AGE_DAYS``), so a stale calendar row must never take the flag away."""
+    _seed_growing()
+    _calendar(monkeypatch, {"AAA": TODAY + timedelta(days=40)})
     ned = (TODAY + timedelta(days=3)).isoformat()
     watched, _ = scan_leaps(_UW({"AAA": GROWING}, tape=[_print("q1", "AAA", ned)]), today=TODAY)
     (aaa,) = watched

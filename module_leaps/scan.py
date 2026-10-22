@@ -88,27 +88,35 @@ def _near_event_dates(today: date, warnings: list | None = None) -> dict:
     own errors, so the empty mapping carries the warning on either path.
     """
     from RevenueChaser.core import earnings_dates
+    note = None
     try:
         dates = earnings_dates.stored_next_dates(today)
     except Exception as e:  # noqa: BLE001 - a missing date, never a failed run
         logger.warning(f"LEAPS earnings dates not read: {e}")
-        dates = {}
-    if not dates and warnings is not None:
-        warnings.append("The stored earnings calendar could not be read, so no watchlist name was flagged for a "
-                        "near event: a Quiet label here may be missing calendar data, not a near event.")
+        dates, note = {}, f"could not be read ({type(e).__name__}: {e})"
+    else:
+        # An empty mapping is a successful read of nothing: a fresh store, or the nightly sweep has not run within
+        # ``earnings_dates.MAX_AGE_DAYS``, which refuses an older session rather than outranking the tape. The board
+        # is told which of the two it was, because this sentence is persisted with the run (app/runners.py).
+        if not dates:
+            note = "has no rows from the last few sessions"
+    if note and warnings is not None:
+        warnings.append(f"The stored earnings calendar {note}, so no watchlist name was flagged for a near event "
+                        "from the calendar: a Quiet label here may be missing calendar data, not a near event.")
     return dates or {}
 
 
 def _watchlist_near_event(ticker: str, cand: dict, near: dict, today: date) -> bool:
-    """A pinned name's near-event flag: its own stored earnings date, else the flow candidate's own flag.
+    """A pinned name's near-event flag: its own stored earnings date OR the flow candidate's own flag.
 
     The flow candidate only exists for a name with a far-dated print in the window, so a pinned name without one
-    would never see the event exclusion (DF94). A ticker the calendar has no row for keeps the candidate's flag,
-    which is what the scan used before.
+    would never see the event exclusion (DF94). The two sources are OR'd, never ranked: the candidate's flag comes
+    off the tape's own ``next_earnings_date`` (``engine.aggregate_flow_prints``) while the stored calendar may be up
+    to ``earnings_dates.MAX_AGE_DAYS`` sessions old, so letting the calendar decide alone could take a flag away
+    from a candidate whose print says earnings are days out (#99 review). This only ever adds the flag.
     """
-    if ticker in near:
-        return 0 <= (near[ticker] - today).days <= leaps.NEAR_EVENT_DAYS
-    return bool(cand.get("near_event"))
+    own = ticker in near and 0 <= (near[ticker] - today).days <= leaps.NEAR_EVENT_DAYS
+    return own or bool(cand.get("near_event"))
 
 
 def rederive(snap: dict, oi, base_1d: dict | None, base_q: dict | None, ask_share=None) -> dict:
