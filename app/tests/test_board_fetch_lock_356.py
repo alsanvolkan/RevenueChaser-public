@@ -191,6 +191,21 @@ def test_a_board_fetch_runs_while_another_board_fetch_runs_elsewhere(sync_jobs, 
         gen.close()
 
 
+def test_a_board_fetch_marker_held_by_a_real_process_is_listed_and_free_once_it_is_gone(rawstore_tmp_db):
+    """#365: the marker's liveness is the kernel's OS lock. A process that really holds it is a holder, pid and all;
+    once that process is gone its lock is free, so the file it left behind holds nobody."""
+    gen = _held_by_another_process("board_fetch_swing")
+    pid = next(gen)
+    try:
+        assert dict(job_lock.holders())["board_fetch_swing"] == pid
+        with job_lock.acquire("board_fetch_swing", wait=0) as got:
+            assert got is False, "the holder's byte range did not keep this acquirer out"
+    finally:
+        gen.close()
+    with job_lock.acquire("board_fetch_swing", wait=0) as got:
+        assert got is True, "the lock of a process that is gone was not free"
+
+
 def test_a_universe_run_and_a_board_fetch_starting_together_never_both_go_ahead(rawstore_tmp_db):
     """Each takes its own lock, then checks the other's: whichever checks second sees the first."""
     with uf.board_fetch_lock("swing") as busy:

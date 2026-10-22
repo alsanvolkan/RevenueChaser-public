@@ -5,6 +5,7 @@ No request leaves the process: Cboe goes through a monkeypatched ``httpx.get`` (
 """
 from __future__ import annotations
 
+import importlib
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -249,3 +250,42 @@ def test_d28_a_row_without_a_numeric_close_is_not_stored():
     rows = ["DATE,OPEN,HIGH,LOW,CLOSE", "10/15/2026,1,2,0.5,N/A", "10/16/2026,1,2,0.5,17.5", "10/17/2026,1,2,0.5,"]
     bars, why = d28.parse_csv("\n".join(rows) + "\n")
     assert why is None and [b["close"] for b in bars] == [17.5]
+
+
+# --- the base host: one symbol is one request ----------------------------------------------------------------------
+
+def test_d28_the_base_is_the_host_that_answers_and_the_env_still_wins(monkeypatch):
+    # cdn.cboe.com answers 307 to cdn-api.cboe.com, so the default is the host that answers directly: 7 symbols
+    # are 7 requests, not 14, against the Cboe cap of 20.
+    assert d28.CBOE_BASE == "https://cdn-api.cboe.com/api/global/us_indices/daily_prices"
+    assert d28.url_for("VIX") == ("https://cdn-api.cboe.com/api/global/us_indices/daily_prices/"
+                                  "VIX_History.csv")
+
+    monkeypatch.setenv("RC_CBOE_BASE", "http://127.0.0.1:9/cboe")
+    try:
+        overridden = importlib.reload(d28)
+        assert overridden.CBOE_BASE == "http://127.0.0.1:9/cboe"
+        assert overridden.url_for("VIX") == "http://127.0.0.1:9/cboe/VIX_History.csv"
+    finally:
+        monkeypatch.delenv("RC_CBOE_BASE", raising=False)
+        importlib.reload(d28)
+    assert d28.CBOE_BASE == "https://cdn-api.cboe.com/api/global/us_indices/daily_prices"
+
+
+def test_d28_a_symbol_is_one_request_that_still_follows_a_307(rawstore_tmp_db, tmp_path, monkeypatch):
+    # The base host answers directly; a 307 (Cboe moving the file again) is still followed, so every symbol stays
+    # one logical call and the budget's 7 is the true request count.
+    seen = []
+
+    def get(url, timeout=None, headers=None, follow_redirects=False, **kwargs):
+        seen.append((url, follow_redirects))
+        return _Resp(200, _csv())
+
+    monkeypatch.setattr("httpx.get", get)
+    monkeypatch.setattr(d28, "download_move", lambda download=None: (None, None))
+    res = _run((d28.SWEEP,), tmp_path)
+
+    assert seen == [(f"https://cdn-api.cboe.com/api/global/us_indices/daily_prices/{s}_History.csv", True)
+                    for s in d28.SYMBOLS]
+    assert res["calls"]["cboe"]["used"] == len(d28.SYMBOLS) == 7
+    assert res["sweeps"]["D28"]["written"] == len(d28.SYMBOLS) * len(DATES)

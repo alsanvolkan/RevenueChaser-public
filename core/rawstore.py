@@ -700,6 +700,8 @@ MANIFEST: dict[str, dict] = {
             "sha256 TEXT", "bytes_raw BIGINT", "bytes_gzip BIGINT",
             "fetched_at DOUBLE", "source TEXT", "run_at DOUBLE",
         ],
+        # Empty leftovers of the pre-D16 shape; dropping them is a separate live-store change (#431).
+        "legacy_columns": ["ticker", "content_gzip"],
         "kind": "tabular",
         "write": "append",
         "db": "edgar",
@@ -2582,9 +2584,11 @@ def _note_drift(conn, name: str, existing: dict[str, str], skip: list[str],
     rebuilt = bool(skip)
     try:
         declared = {col: _base_type(name, col) for col in _columns_of(MANIFEST[name])}
+        legacy = set(MANIFEST[name].get("legacy_columns") or ())
         for col, live_type in existing.items():
             if col not in declared:
-                _record_drift(name, "extra_column", col, live_type, None, rebuilt)
+                if col not in legacy:                   # a known empty leftover, named by the MANIFEST (#431)
+                    _record_drift(name, "extra_column", col, live_type, None, rebuilt)
             elif col not in skip:
                 want = _canon_type(conn, declared[col])
                 if want.upper() != live_type.upper():

@@ -50,7 +50,8 @@ def _lookup(ticker: str, name: str, url: str, sleep: Callable[[float], None]) ->
     for q in _queries(name):
         sleep(PACE_S)
         try:
-            r = httpx.get(url, params={"filters": q, "fields": _FIELDS, "limit": 25}, timeout=60)
+            r = httpx.get(url, params={"filters": q, "fields": _FIELDS, "limit": 25}, timeout=60,
+                          follow_redirects=True)
             if r.status_code == 200:
                 hits += [d["data"] for d in r.json().get("data", []) if d.get("data")]
             else:

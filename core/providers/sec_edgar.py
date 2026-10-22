@@ -186,8 +186,31 @@ _STI_HTM_TAGS = ["HeldToMaturitySecuritiesCurrent",
 # A multi-tag field on the annual path keeps today's pick (the newest, then the longest series) and
 # only EXTENDS it (#246): years a filer reported under an older tag are added when they are a hole
 # inside that series or a contiguous run below it, each ending one fiscal year from its neighbour
-# (``_backfill_history``). A year the pick holds is never replaced and a gap is never bridged.
+# (``_backfill_history``). That function never bridges a gap, and a year the pick holds is never
+# replaced. The add-only revenue concept below (#435) is the one exception to adjacency: its merge
+# adds every year it reports that the pick lacks, so a revenue series can hold a non-adjacent pair.
+# It never lands in the newest pair (measured: 5 of 152 filers gain a non-adjacent pair, 0 at the
+# newest), so year-on-year growth — the last two non-null years — still reads the pick's own years.
 # Quarterly series are not merged.
+#
+# ``revenue`` reads the ASC 606 including-assessed-tax sibling
+# (``RevenueFromContractWithCustomerIncludingAssessedTax``) LAST (#435): 341 US filers have a fresh
+# record and no revenue, and 25 of 39 measured tag only that one in the newest annual period. It
+# NEVER competes for the pick, though: the pick is exactly the one over the three older tags
+# (``Revenues``, ``...ExcludingAssessedTax``, ``SalesRevenueNet``), and this tag then only ADDS the
+# years that pick lacks (``_ADD_ONLY_CONCEPTS`` below). When those three hold no series at all, the
+# including-tax series IS the primary, so the filers it is here for keep gaining revenue.
+#
+# Letting it win the pick was measured to regress filers that already had revenue: it ends later
+# than the other tags often enough to be the newest series, and the merge then replaced years the
+# older tags already reported (Regal Rexnord FY2022 3.81bn became 5.22bn, AST SpaceMobile FY2024
+# moved by -68%, one filer lost eleven years). The premise that the two tax tags differ only by the
+# assessed tax is false, so neither is "the narrower one" and neither may take a year from the
+# other. Bank top lines (``InterestAndDividendIncomeOperating``, ``RevenuesNetOfInterestExpense``)
+# are NOT read: interest income is a different definition of the top line and therefore the owner's
+# decision, and no other tag that merely contains the word "Revenue" is one
+# (``ContractWithCustomerLiabilityRevenueRecognized``, ``IncreaseDecreaseInDeferredRevenue``,
+# ``CostOfRevenue`` and pro-forma acquisition revenue).
 #
 # ``cost_of_revenue`` is the one exception: it is resolved PER PERIOD in strict
 # priority order (``_PRIORITY_FIELDS`` below), never by the longest series, and it
@@ -200,8 +223,15 @@ _STI_HTM_TAGS = ["HeldToMaturitySecuritiesCurrent",
 # only one that is ever counted (``core/liquidity.py``); ``marketable_securities_noncurrent``
 # and ``long_term_investments`` (equity-method and strategic stakes, not cash-like) are stored
 # for visibility and never enter a gate. None of the fields in ``_NEVER_A_RECORD`` adds a record.
+#
+# A concept listed here may be the primary only when no other tag of its field reports anything,
+# and otherwise only adds the years the primary lacks (any missing year, not just a contiguous run).
+_ADD_ONLY_CONCEPTS = frozenset({"RevenueFromContractWithCustomerIncludingAssessedTax"})
+
+
 CONCEPTS = {
-    "revenue": (["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"], "USD"),
+    "revenue": (["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet",
+                 "RevenueFromContractWithCustomerIncludingAssessedTax"], "USD"),
     "gross_profit": (["GrossProfit"], "USD"),
     "cost_of_revenue": (["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold",
                          "CostOfServices"], "USD"),
@@ -338,9 +368,14 @@ def _backfill_history(primary: dict[str, tuple[float, str]],
     if its period end is one fiscal year (``_YEAR_DAYS``) from the year next to it. A calendar-year
     key one apart is not always an adjacent fiscal year: a 52/53-week filer's FY2014 can end on
     2015-01-03. The chain stops at the first year that is missing or fails, and nothing is added
-    above the newest year. So a gap is never bridged: the readers take the last two NON-NULL
-    revenues as year-on-year growth, and 2026 against 2024 must stay "unknown". Of several tags
-    reporting one added year, the first in concept-list order whose end fits wins.
+    above the newest year. So THIS function never bridges a gap: the readers take the last two
+    NON-NULL revenues as year-on-year growth, and 2026 against 2024 must stay "unknown". Of several
+    tags reporting one added year, the first in concept-list order whose end fits wins.
+
+    That adjacency is what this function adds. The add-only revenue merge that runs after it
+    (``_annual_facts``, #435) adds any year the pick lacks, adjacent or not, so the result of the
+    whole extraction can hold a non-adjacent pair of years; it is never at the newest pair, which
+    stays adjacent-or-primary (the ``_ADD_ONLY_CONCEPTS`` note above has the measurement).
     """
     candidates: dict[str, list[tuple[float, str]]] = {}
     for series in all_series:
@@ -421,16 +456,26 @@ def _annual_facts(facts: dict, concepts: list[str], unit: str) -> dict[str, tupl
                 for y, (fl, v, e, ac, st) in by_year.items()}
 
     # En güncel (maks yıl) ve en kapsamlı konsept serisini seç; diğer konseptler yalnızca onun
-    # eksik bıraktığı bitişik yılları ekler (#246)
-    found = []
+    # eksik bıraktığı bitişik yılları ekler (#246). An add-only concept (#435) does not compete:
+    # it is left out of ``best`` here and adds its years after the merge, so it can never take a
+    # year an older tag already holds.
+    found: dict[str, dict[str, tuple[float, str]]] = {}
     for concept in concepts:
+        if concept in _ADD_ONLY_CONCEPTS:
+            continue
         series = _one(concept)
         if not series:
             continue
-        found.append(series)
+        found[concept] = series
         if not best or max(series) > max(best) or (max(series) == max(best) and len(series) > len(best)):
             best = series
-    return _backfill_history(best, found) if best else best
+    merged = _backfill_history(best, list(found.values())) if best else {}
+    for concept in concepts:  # the years the pick lacks, older, newer or inside a hole — adjacent or not (#435)
+        if concept not in _ADD_ONLY_CONCEPTS:
+            continue
+        for year, val_end in _one(concept).items():
+            merged.setdefault(year, val_end)
+    return merged
 
 
 def _series_by_year(facts: dict, concepts: list[str], unit: str) -> dict[str, float]:

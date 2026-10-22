@@ -219,7 +219,7 @@ def fred(monkeypatch):
     obs = [{"date": "2026-10-13", "value": "4.05"}, {"date": "2026-10-12", "value": "."},
            {"date": "2026-07-03", "value": "4.30"}]
 
-    def get(url, params=None, timeout=None):
+    def get(url, params=None, timeout=None, **kwargs):
         calls.append(params["series_id"])
         return _FredResp([] if params["series_id"] in fail else obs, 500 if params["series_id"] in fail else 200)
 
@@ -583,7 +583,7 @@ def _all_fakes(monkeypatch):
     from RevenueChaser.module_earnings_radar import macro_watch
     from RevenueChaser.module_earnings_radar.inputs import cftc_cot, vol_index
 
-    monkeypatch.setattr("httpx.get", lambda url, params=None, timeout=None, headers=None: _FredResp(
+    monkeypatch.setattr("httpx.get", lambda url, params=None, timeout=None, headers=None, **kwargs: _FredResp(
         [{"date": "2026-10-13", "value": "4.05"}]))
     monkeypatch.setattr(macro_watch, "FRED_API_KEY", "k")
     monkeypatch.setattr(yfp, "get_info", lambda t: {"info": {}})

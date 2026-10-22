@@ -241,7 +241,7 @@ def universe_run_lock():
 
 
 def universe_run_holder() -> int | None:
-    """PID of the live process running a universe refresh, ``None`` when none does. Checks; never takes a lock.
+    """PID of the live process running a universe refresh, ``None`` when none does (``0``: it runs, PID unreadable).
 
     The single-board Fetches use it (#244): they are refused while a universe run is going, but not while Phase B
     holds only the writer lock.
