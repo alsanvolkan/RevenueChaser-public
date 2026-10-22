@@ -160,7 +160,8 @@ def test_the_store_reads_are_chunked_and_the_answer_is_the_unchunked_one(monkeyp
         return real(sql, params, **kwargs)
 
     monkeypatch.setattr(rawstore, "query", spy)
-    chunked = events.corporate_events(tickers, today=TODAY)
+    stats: dict = {}
+    chunked = events.corporate_events(tickers, today=TODAY, stats=stats)     # stats: the DISTINCT-cik read runs too
     master = [c for c in calls if "security_master" in c[0]]
     filings = [c for c in calls if "8-K" in c[0]]
     absent = [c for c in calls if "DISTINCT cik" in c[0]]
@@ -172,6 +173,7 @@ def test_the_store_reads_are_chunked_and_the_answer_is_the_unchunked_one(monkeyp
         assert len(params) <= events.CHUNK
     for _sql, params in filings:
         assert len(params) - 1 <= events.CHUNK    # the window date plus at most one slice of CIKs
+    assert len(absent) > 1, "the DISTINCT-cik read must run and be sliced too"
     for _sql, params in absent:
         assert len(params) <= events.CHUNK
 
