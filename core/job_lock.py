@@ -16,7 +16,9 @@ The file holds ``"<pid> <token> <start>"`` at offset 0: that is what ``holders()
 before removing the file, so a holder whose lock was broken can never delete the lock of whoever took it over. On
 Windows the OS lock is a mandatory byte range, so it covers the one byte at ``_LOCK_BYTE`` and never the metadata a
 second process has to read. ``holders()`` reads a lock it cannot try — ``EACCES``, ``EPERM``, ``EAGAIN`` /
-``EWOULDBLOCK``, from the try or from the open — as held, and only ``ENOENT`` as no holder (#365).
+``EWOULDBLOCK``, from the try or from the open — as held, and only ``ENOENT`` as no holder (#365). A lock the kernel
+really holds whose owner text is unreadable (not written yet, truncated, garbled) is a holder too, listed with pid
+``0``: "no holder" is ``None``, never ``0``.
 
 A second thread of this process is excluded too: a lock file carrying a token this process issued and still holds is
 live even though the kernel would let the same process re-take it.
@@ -195,10 +197,17 @@ def _os_lock_is_taken(path: Path) -> bool:
 
 
 def _live_pid(path: Path) -> int | None:
-    """The PID of a live holder of ``path``, or None. Reads, and tries the OS lock; never steals or unlinks."""
+    """The PID of a live holder of ``path``; ``0`` when the OS lock is really held but the PID cannot be read; else None.
+
+    Reads, and tries the OS lock; never steals or unlinks.
+    """
     pid, token, start = _read_owner(path)
     if pid is None:
-        return None
+        # The owner text is missing or garbled — not written yet, truncated, a crash mid-write. On the OS-lock path
+        # the kernel still knows whether anybody holds the lock, and a lock it really holds is a holder whose PID we
+        # cannot read: 0. Never "nobody" — ``acquire()`` refuses that same file, and a caller's "no holder" test is
+        # ``is None`` (#365).
+        return 0 if _OS_LOCK_AVAILABLE and _os_lock_is_taken(path) else None
     if pid == os.getpid() and _token_is_ours(token):
         return pid                            # ours: another thread of this process may hold it
     if not _OS_LOCK_AVAILABLE:
@@ -232,6 +241,8 @@ def holders(directory: Path | None = None) -> list[tuple[str, int]]:
     """``(name, pid)`` of every live lock in the store dir. Checks only: never takes, truncates or removes a lock.
 
     A lock this cannot be tried — permission denied, or any OS-lock error but ENOENT — is a holder (``_taken_error``).
+    On the OS-lock path, a lock the kernel really holds whose owner text cannot be read is a holder too, with pid
+    ``0``: the PID is what is unknown, not the holder (#365).
     """
     d = Path(directory or Path(rawstore.DB_PATH).parent)
     out = []

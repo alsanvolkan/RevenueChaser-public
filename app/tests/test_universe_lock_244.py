@@ -328,6 +328,8 @@ def test_a_lock_with_an_unknown_holder_refuses_the_universe_run(sync_jobs, order
     gen = _held_by_another_process("universe", owner=False)
     next(gen)
     try:
+        # #365: it is listed as the holder it is, with pid 0 — the PID is what is unknown, not the holder.
+        assert ("universe", 0) in job_lock.holders()
         jid = _universe_job()
         jobs.execute(jid)
         assert jobs.get(jid)["message"].startswith("the universe data is being written by another job, pid unknown")

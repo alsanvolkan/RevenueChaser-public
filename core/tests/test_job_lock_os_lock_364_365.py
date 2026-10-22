@@ -220,6 +220,40 @@ def test_holders_lists_the_live_lock_and_leaves_both_files_alone(rawstore_tmp_db
         _release(fd)
 
 
+# ── R8: a really-held lock whose owner text cannot be read is a holder, pid 0 ─
+
+@pytest.mark.parametrize("owner", ["", "garbled owner text"], ids=["metadata-not-written", "garbled"])
+def test_a_held_lock_with_an_unreadable_owner_is_listed_as_taken(tmp_path, owner):
+    """The metadata is not written yet, truncated or garbled: the kernel still says the lock is held, so it is a
+    holder whose PID cannot be read — ``(name, 0)``, never "nobody" (#365)."""
+    path = tmp_path / "universe_run.lock"
+    path.write_text(owner)
+    fd = _hold_as_a_holder_does(path)
+    try:
+        assert job_lock.holders(tmp_path) == [("universe_run", 0)]
+    finally:
+        _release(fd)
+
+
+def test_an_unlocked_file_with_an_unreadable_owner_is_no_holder(tmp_path):
+    """The other half: an unreadable owner alone is not a holder. The OS lock decides, and nobody holds this one."""
+    (tmp_path / "universe_run.lock").write_text("")
+    assert job_lock.holders(tmp_path) == []
+
+
+def test_a_held_lock_with_an_unreadable_owner_refuses_the_acquire(tmp_path, monkeypatch):
+    """The reason ``holders()`` must list it: ``acquire()`` already refuses, and the two must agree."""
+    path = tmp_path / "universe_run.lock"
+    path.write_text("")
+    monkeypatch.setattr(job_lock, "_lock_path", lambda name: path)
+    fd = _hold_as_a_holder_does(path)
+    try:
+        with job_lock.acquire("universe_run", wait=0) as got:
+            assert got is False
+    finally:
+        _release(fd)
+
+
 # ── R7: a metadata write that fails after the lock is taken ───────────────────
 
 def test_a_metadata_write_that_fails_releases_the_os_lock(rawstore_tmp_db, monkeypatch):
