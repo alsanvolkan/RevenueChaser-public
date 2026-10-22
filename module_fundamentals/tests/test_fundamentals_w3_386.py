@@ -12,8 +12,8 @@ import pytest
 from RevenueChaser.core import fiscal_year, rawstore
 from RevenueChaser.core.gics_map import GicsPath
 from RevenueChaser.core.tests.board_js import run_board_js
-from RevenueChaser.module_fundamentals import config, pipeline, scores, screeners
-from RevenueChaser.module_fundamentals.pipeline import _quality_metrics, _ttm_metrics, build_payload, demo_payload
+from RevenueChaser.module_fundamentals import pipeline, scores, screeners
+from RevenueChaser.module_fundamentals.pipeline import _quality_metrics, _ttm_metrics, build_payload
 from RevenueChaser.module_fundamentals.report import render_fundamental_dashboard
 from RevenueChaser.module_fundamentals.tests.test_fundamental import _m
 
@@ -325,12 +325,6 @@ def test_the_summary_states_the_new_ranking():
     html = render_fundamental_dashboard(_known_payload())
     assert "ranked by rules passed, then Rule of 40" in html
     assert "gate tier" not in html
-
-
-def test_demo_payload_render_has_the_toggles():
-    p = demo_payload()
-    assert p["selection_version"] == config.SELECTION_VERSION
-    assert 'id="rule-rule_of_40"' in render_fundamental_dashboard(p)
 
 
 def test_the_summary_names_the_health_drops_and_keeps_them_out_of_data_short():

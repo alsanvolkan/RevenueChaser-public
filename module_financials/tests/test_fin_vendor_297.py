@@ -35,7 +35,7 @@ def _setup(monkeypatch, tmp_path, financials):
 
     monkeypatch.setattr(fm.yfinance_client, "get_financials", fetch)
     qr = fm.quick_remarks_engine
-    monkeypatch.setattr(qr, "run_quick_remarks", lambda ticker, no_fetch=False: qr._from_card(ticker, {}, "yfinance"))
+    monkeypatch.setattr(qr, "run_quick_remarks", lambda ticker, no_fetch=False, financials=None: qr._from_card(ticker, {}, "yfinance"))
     monkeypatch.setattr(fm.comps_engine, "_default_fetch", lambda t: dict(_PEER_INFO))
     return calls
 

@@ -52,7 +52,7 @@ def test_swing_ohlc_populated(rawstore_tmp_db):
 
 def test_rotation_snapshot_populated(rawstore_tmp_db):
     from datetime import date
-    from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+    from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
     from RevenueChaser.module_sector_rotation import store as rs
     snap = ETFRotationSnapshot(as_of_date=date(2026, 8, 14), ticker="XLK", group_name="sector",
                                close_price=100.0, rs_1w=1.0, rs_1m=2.0, rs_3m=3.0,
@@ -356,7 +356,7 @@ def test_idempotent_index_members_replace(rawstore_tmp_db):
 
 def test_same_day_snapshot_overwrites(rawstore_tmp_db):
     from datetime import date
-    from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+    from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
     from RevenueChaser.module_sector_rotation import store as rs
 
     def _snap(ticker):

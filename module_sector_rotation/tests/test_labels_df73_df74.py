@@ -14,7 +14,7 @@ def test_df67_a_missing_rs_prints_a_dash_not_plus_zero(tmp_path, monkeypatch, ra
     """DF67: a null RS cell showed '+0.0%' (``or 0``), identical to a real zero."""
     from datetime import date
 
-    from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+    from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 
     monkeypatch.setattr(report, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(report, "coarse_theme_catalog", lambda: {})

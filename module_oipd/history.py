@@ -108,4 +108,4 @@ def record(payload: dict, capture: dict, *, run_id: str, run_at: float, uw_healt
                  "fetched_at": meta.get("fetched_at"), "n_contracts": payload.get("n_contracts"),
                  "expiries_fitted": len(payload.get("expiries") or []), "chain_status": capture.get("status")},
         warnings=list(payload.get("warnings") or []) or None,
-        partial="; ".join(_problems(payload, capture, uw_health)) or None)
+        partial="; ".join(_problems(payload, capture, uw_health)) or None, provider_health=uw_health)

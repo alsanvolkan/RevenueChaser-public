@@ -24,6 +24,15 @@ MODULES = ["dcf", "3stmt", "comps", "credit", "sensitivity"]
 COMPLETE = datetime(2026, 10, 6, 22, 0, tzinfo=timezone.utc).timestamp()
 INTRADAY = datetime(2026, 10, 6, 14, 0, tzinfo=timezone.utc).timestamp()
 _PEER_INFO = {"enterpriseValue": 9.0e9, "ebitda": 1.0e9, "totalRevenue": 4.0e9, "trailingPE": 18.0}
+# The spine's Energy names the comps ladder picks for TEST (same industry, nearest market cap first).
+PEERS = [("XOM", 1.1e9), ("CVX", 0.9e9), ("COP", 1.2e9), ("SLB", 1.3e9), ("EOG", 1.4e9)]
+
+
+def _energy_row(ticker, market_cap):
+    return {"ticker": ticker, "cik": "", "name": ticker, "market_cap": market_cap, "price": 100.0,
+            "sector": "Energy", "industry": "Oil & Gas E&P", "industry_group": "", "sub_industry": "",
+            "quote": {"symbol": ticker}}
+
 
 
 @pytest.fixture
@@ -36,12 +45,11 @@ def store(rawstore_tmp_db):
 def results(store, tmp_path, monkeypatch, financials):
     """What a real Financials run returns for TEST: every module, peers from the spine sector, no network."""
     monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
-    rawstore.replace_all("equity_universe", [{
-        "ticker": "TEST", "cik": "", "name": "Test Co", "market_cap": 1e9, "price": 100.0, "sector": "Energy",
-        "industry": "x", "industry_group": "", "sub_industry": "", "quote": {"symbol": "TEST"}}])
+    rawstore.replace_all("equity_universe", [_energy_row("TEST", 1e9)] +
+                         [_energy_row(t, cap) for t, cap in PEERS])
     monkeypatch.setattr(fm.cache_manager, "get_or_fetch", lambda t, fn, use_cache=True: dict(financials))
     qr = fm.quick_remarks_engine
-    monkeypatch.setattr(qr, "run_quick_remarks", lambda ticker, no_fetch=False: qr._from_card(ticker, {}, "yfinance"))
+    monkeypatch.setattr(qr, "run_quick_remarks", lambda ticker, no_fetch=False, financials=None: qr._from_card(ticker, {}, "yfinance"))
     monkeypatch.setattr(fm.comps_engine, "_default_fetch", lambda t: dict(_PEER_INFO))
     return fm.run("TEST", modules=MODULES, output="none", run_id="job-q")["results"]
 
@@ -109,7 +117,7 @@ def test_the_row_carries_the_data_date_the_warnings_and_quick_remarks(results):
 def test_the_header_carries_model_version_params_and_context(results):
     _record(results)
     (head,) = _headers()
-    assert head["model_version"] == fin_history.model_version() and head["model_version"].startswith("1+")
+    assert head["model_version"] == fin_history.model_version() and head["model_version"].startswith("2+")
     params = json.loads(head["params"])
     assert params["modules"] == MODULES and params["defaults"]["TERMINAL_GROWTH"] == 0.025
     ctx = json.loads(head["context"])
@@ -120,6 +128,15 @@ def test_model_version_changes_with_a_default_assumption(monkeypatch):
     before = fin_history.model_version()
     from RevenueChaser.module_financials import config
     monkeypatch.setattr(config, "TERMINAL_GROWTH", 0.03)
+    assert fin_history.model_version() != before
+
+
+def test_the_measured_tax_rate_band_is_part_of_the_model_version(monkeypatch):
+    """Review S-6: the band decides whether a stored rate counts as measured, so it shapes the stored numbers."""
+    from RevenueChaser.module_financials.engines import _inputs
+    assert fin_history.effective_config()["MEASURED_TAX_RATE_BAND"] == [0.0, 0.60]
+    before = fin_history.model_version()
+    monkeypatch.setattr(_inputs, "MEASURED_TAX_RATE_BAND", (0.0, 0.50))
     assert fin_history.model_version() != before
 
 
