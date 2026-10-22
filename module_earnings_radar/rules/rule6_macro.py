@@ -23,7 +23,7 @@ from RevenueChaser.core.config import (
     R6_RATE_HIGH as RATE_HIGH,
     R6_RATE_VETO as RATE_VETO,
 )
-from RevenueChaser.core.models.events import RuleResult
+from RevenueChaser.module_earnings_radar.models import RuleResult
 
 
 def yield_beta(

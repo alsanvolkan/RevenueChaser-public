@@ -10,6 +10,7 @@ the universe run calls the same runners in-process. ``/run/universe`` does not q
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import subprocess
 import sys
 import threading
@@ -58,17 +59,71 @@ def writes(monkeypatch):
     return seen
 
 
-def _held_by_another_process(*names):
-    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+# A child that holds the lock files it is given the way ``job_lock.acquire`` does: it takes the kernel's OS lock
+# (the byte at ``_LOCK_BYTE``) and, unless told ``bare``, writes "<pid> <token> <start>" at offset 0. A file with the
+# metadata alone is a crashed holder — the kernel holds no lock — so a faked holder must hold the real OS lock
+# (#365). It reports its own pid once every lock is in hand and then waits: the parent closes stdin to stop it, and
+# the kernel releases the locks — the same end a crash has. (It reports its pid because on Windows the venv's
+# python.exe is a launcher that runs the interpreter as a child, so Popen's pid is not the holder's.)
+_HOLDER_SCRIPT = r"""
+import os, sys, uuid
+from RevenueChaser.core import job_lock
+
+mode, paths = sys.argv[1], sys.argv[2:]
+fds = []
+for path in paths:
+    fd = os.open(path, os.O_CREAT | os.O_RDWR)
+    if not job_lock._os_lock(fd):
+        print(f"busy {path}", flush=True)
+        sys.exit(1)
+    if mode == "owner":
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, f"{os.getpid()} {uuid.uuid4().hex} {job_lock._our_start()}".rstrip().encode("ascii"))
+    fds.append(fd)                                  # kept open: only this process's end releases the locks
+print(f"ready {os.getpid()}", flush=True)
+sys.stdin.readline()
+"""
+
+
+def _wait_until_ready(proc, timeout: float = 60.0) -> int:
+    """The PID of the process holding the locks; a holder that could not take them says so here."""
+    line: list[str] = []
+    reader = threading.Thread(target=lambda: line.append(proc.stdout.readline()), daemon=True)
+    reader.start()
+    reader.join(timeout)
+    word, _, pid = (line[0].strip() if line else "").partition(" ")
+    if word == "ready" and pid.isdigit():
+        return int(pid)
+    proc.kill()
+    err = proc.stderr.read() or ""
+    raise RuntimeError(f"the lock holder never reported ready ({line or 'no output'}), stderr: {err}")
+
+
+def _held_by_another_process(*names, owner: bool = True):
+    """A live second process holding ``names``' OS locks, as a real holder does (#365).
+
+    It writes the lock metadata ``acquire()`` writes, or with ``owner=False`` leaves the file empty so a held lock
+    has an unreadable owner. Yields the holder's PID once it holds every lock; ending the process releases them.
+    """
     paths = [job_lock._lock_path(n) for n in names]
     for path in paths:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"{proc.pid} tok")
+    env = dict(os.environ)
+    pkg_root = str(Path(job_lock.__file__).resolve().parents[2])       # the folder that CONTAINS the package
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (pkg_root, env.get("PYTHONPATH"))))
+    proc = subprocess.Popen([sys.executable, "-c", _HOLDER_SCRIPT, "owner" if owner else "bare",
+                             *map(str, paths)],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
     try:
-        yield proc.pid
+        yield _wait_until_ready(proc)
     finally:
-        proc.kill()
-        proc.wait()
+        proc.stdin.close()                          # EOF: the holder exits and the kernel frees its locks
+        try:
+            proc.wait(30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
         for path in paths:
             path.unlink(missing_ok=True)
 
@@ -269,17 +324,19 @@ def test_a_universe_run_holds_the_run_marker_only_while_it_runs(sync_jobs, order
 
 
 def test_a_lock_with_an_unknown_holder_refuses_the_universe_run(sync_jobs, order, writes):
-    """Review N3 (R3): an unreadable lock file (holder 0) still refuses; nothing is fetched or written."""
-    path = job_lock._lock_path("universe")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("")
+    """Review N3 (R3): a held lock whose owner cannot be read (holder 0) still refuses; nothing is fetched or
+    written. The holder is a real process holding the OS lock, with no metadata in the file (#365)."""
+    gen = _held_by_another_process("universe", owner=False)
+    next(gen)
     try:
+        # #365: it is listed as the holder it is, with pid 0 — the PID is what is unknown, not the holder.
+        assert ("universe", 0) in job_lock.holders()
         jid = _universe_job()
         jobs.execute(jid)
         assert jobs.get(jid)["message"].startswith("the universe data is being written by another job, pid unknown")
         assert order == [] and writes == []
     finally:
-        path.unlink(missing_ok=True)
+        gen.close()
 
 
 def test_a_single_board_fetch_runs_when_no_universe_run_holds_the_lock(sync_jobs, order, freezers):

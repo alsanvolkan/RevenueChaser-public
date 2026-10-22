@@ -91,7 +91,7 @@ def test_a_board_with_no_board_issue_still_gets_the_shared_ones(registry):
     assert len(got["board"]) == 0 and len(got["shared"]) == SHARED and got["repo"] == []
 
 
-@pytest.mark.parametrize("key", ["logs", "dealer_hedge"])
+@pytest.mark.parametrize("key", ["logs"])
 def test_not_a_data_tab_gets_nothing(registry, key):
     assert not open_issues.for_board(key, registry)
 
@@ -168,7 +168,7 @@ def test_the_shell_embeds_one_payload_with_the_boards_counts(shell):
     assert len(boards[BOARD]["board"]) == 6 and len(boards[BOARD]["shared"]) == SHARED
     assert len(boards["module_settings"]["repo"]) == REPO
     assert not boards["module_oipd"]["board"]
-    assert "logs" not in boards and "dealer_hedge" not in boards
+    assert "logs" not in boards
 
     # Each issue is shipped once, keyed "<repo>#<number>"; a board lists keys, never a copy of the entry.
     assert set(entries) == {open_issues.entry_key(e) for e in _full_registry()["issues"]}

@@ -16,7 +16,7 @@ from datetime import date
 
 import pytest
 
-from RevenueChaser.core.models.events import TradeCard
+from RevenueChaser.module_earnings_radar.models import TradeCard
 from RevenueChaser.core.tests.board_js import run_board_js
 
 Q_EVIL = "\"'><img src=x onerror=__x(1)>"

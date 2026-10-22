@@ -7,15 +7,31 @@ was removed; yields/futures/volatility are plotted on the RRG via
 """
 from __future__ import annotations
 
-import os
-
 import logging
+import os
+import re
 
 from RevenueChaser.core.config import FRED_API_KEY
 from RevenueChaser.core.providers.result import ProviderResult
 from RevenueChaser.module_sector_rotation.universe import MACRO_SERIES
 
 logger = logging.getLogger(__name__)
+
+_API_KEY_QS = re.compile(rb"api_key=[^&\s]+")
+
+
+def _not_json_diagnostic(r) -> dict:
+    """Key-free diagnostic for a 2xx response whose body is not JSON."""
+    ctype = str(getattr(r, "headers", {}).get("content-type", "") or "")[:60]
+    size = len(getattr(r, "content", b"") or b"")
+    return {"error": f"not_json HTTP {getattr(r, 'status_code', '?')} {ctype} len={size}", "attempts": 1}
+
+
+def _log_body(r) -> None:
+    """Debug-only body snippet with any query-string key scrubbed."""
+    body = (getattr(r, "content", b"") or b"")[:400]
+    if body:
+        logger.debug("[fred-body] %s", _API_KEY_QS.sub(b"api_key=<redacted>", body))
 
 FRED_BASE = os.getenv("RC_FRED_BASE") or "https://api.stlouisfed.org/fred/series/observations"
 
@@ -30,9 +46,15 @@ def _fred_weekly(series_id: str, api_key: str, limit: int = 160):
             "series_id": series_id, "api_key": api_key,
             "file_type": "json", "frequency": "w", "aggregation_method": "eop",
             "sort_order": "desc", "limit": limit,
-        }, timeout=25)
+        }, timeout=25, follow_redirects=True)
         r.raise_for_status()
-        obs = r.json().get("observations", [])
+        try:
+            payload = r.json()
+        except ValueError:
+            logger.warning(f"[fred-weekly] {series_id}: {_not_json_diagnostic(r)['error']}")
+            _log_body(r)
+            return []
+        obs = payload.get("observations", [])
     except Exception as exc:
         logger.debug(f"[fred-weekly] {series_id}: {exc}")
         return []
@@ -63,9 +85,14 @@ def fred_daily_result(series_id: str, api_key: str = None, limit: int = 80) -> P
         r = httpx.get(FRED_BASE, params={
             "series_id": series_id, "api_key": key,
             "file_type": "json", "sort_order": "desc", "limit": limit,
-        }, timeout=25)
+        }, timeout=25, follow_redirects=True)
         r.raise_for_status()
-        obs = r.json().get("observations", [])
+        try:
+            payload = r.json()
+        except ValueError:
+            _log_body(r)
+            return ProviderResult("failed", [], _not_json_diagnostic(r), series_id)
+        obs = payload.get("observations", [])
     except httpx.HTTPStatusError as exc:
         return ProviderResult("failed", [], {"error": f"HTTP {exc.response.status_code}", "attempts": 1}, series_id)
     except Exception as exc:  # noqa: BLE001 - transport or body; the type only (its text can hold the URL)

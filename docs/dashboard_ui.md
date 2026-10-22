@@ -4,8 +4,8 @@ Source of truth for **equity-universe boards**. Filter widgets are implemented
 in [`core/reporting_common.py`](../core/reporting_common.py). Sector names (UW's
 11 Morningstar names) come only from [`core/gics_map.py`](../core/gics_map.py), and the
 industry is the provider text the identity master stored. Coarse **themes** come from
-the pinned NMF run (`relatedness_themes` where `level='coarse'`), not from
-`taxonomy.THEMES` / hand `ROTATION_ETFS` names. Do not fork any of these.
+the pinned NMF run (`relatedness_themes` where `level='coarse'`), not from a
+hard-coded theme list or hand `ROTATION_ETFS` names. Do not fork any of these.
 
 Parent chrome (Regime, last-run) stays in `templates/dashboard.html`. A tab
 report is title + subtitle + `Last sync: <friendly date> EOD`.
@@ -167,13 +167,12 @@ hash. The pure logic is `RCFilters.core`, unit-tested under node (`core/tests/te
 | Discord | **no** | Chat archive, no tickers. Left: channels grouped by server and category (follow checkbox, per-channel Update); right: filters (channel, text, dates) and the feed. |
 | Settings / Data health | **no** | Ops inventory, not an equity board; its ticker drill uses the kit's combobox (C1b). Plan: [`data_health.md`](data_health.md). |
 | Logs | **no** | The dashboard's own log files (`app/logview.py`), read-only: no Fetch, no Refresh, no data date. |
-| Dealer Hedge (demo) | **no** | Static teaching page (`app/dealer_hedge.py`, #376): Black-Scholes in the page itself, no data, no Fetch, no Refresh, no data date. |
 
 ### What am I looking at? — every dashboard
 
 Shared `help_html(body)` under the title, closed by default, same `.help`
 chrome. Every data tab has it (#383 C3): the 16 boards of the fixture registry
-except Logs and the Dealer Hedge demo. `core/tests/test_help_every_tab.py` holds
+except Logs. `core/tests/test_help_every_tab.py` holds
 that: each tab renders the one shared box, no board-local `.help` fork, and a body
 that says what Fetch and Refresh do there. `HELP_CSS` falls back to the standard
 dark tokens, so a board without them (Earnings Radar, SPX Gamma, LEAPS) still
@@ -205,7 +204,7 @@ The three scopes are what keep a board's own problems at the top:
 - **shared** — it affects every data board, so every board lists it;
 - **repo** — repository-wide, listed on **Settings / Data health** only.
 
-`Logs` and the Dealer Hedge demo are not data boards, so they show no group.
+`Logs` is not a data board, so it shows no group.
 
 **Where the data comes from.** One checked-in file, `docs/open_issues.json`,
 read by `core/open_issues.py`; `reporting_common.open_issues_payload` turns it
@@ -236,7 +235,7 @@ board was re-rendered, and Earnings Radar can only be re-rendered by a Fetch.
 ### Not this design
 
 - Ticker inside the filter bar.
-- Treating Theme as a third sector select, or falling back to `taxonomy.THEMES`.
+- Treating Theme as a third sector select, or falling back to a hard-coded theme list.
 - A literal index list in a board or in the component: the registry owns it (`filters_meta`).
 - A Linear/Vercel visual clone — keep RevenueChaser tokens
   (`--bg #05111F`, `--accent #0EA5E9`, `--neon`).
@@ -252,7 +251,7 @@ Theme   [ All themes        ▾ ]  [ All mediums     ▾ ]  [ All fines      ▾
 ```
 
 - Options come from the **pinned** NMF run (`relatedness_themes` +
-  `ticker_themes`), never `taxonomy.THEMES`.
+  `ticker_themes`), never a hard-coded theme list.
 - Each ticker has one path after cutover: coarse parent of its medium,
   medium parent of its fine. Picking a coarse narrows mediums to its
   children (unique `theme_medium` among rows with that coarse); picking a
@@ -260,7 +259,7 @@ Theme   [ All themes        ▾ ]  [ All mediums     ▾ ]  [ All fines      ▾
   constrain that level.”
 - Filtering **intersects** MC / earnings / index / sector (AND) via `themeOk`.
 - Empty catalog (no pin, no `theme_coarse` on `DATA`) → hide the Theme row.
-  Do not fall back to `taxonomy.THEMES`.
+  Do not fall back to a hard-coded theme list (the keyword taxonomy left in #383 C21).
 - Duplicate labels stay uniqued (`label (n)`), already done in
   `unique_theme_labels`.
 - Closed filter summary shows the finest selected label (fine, else medium,

@@ -31,16 +31,16 @@ REGISTRY_PATH = Path(__file__).resolve().parent.parent / "docs" / "open_issues.j
 URL_PREFIX = "https://github.com/alsanvolkan/"
 
 # Not data boards (``core/tests/test_help_every_tab.py``): no report, so no issue panel.
-NOT_A_DATA_BOARD = frozenset({"logs", "dealer_hedge"})
+NOT_A_DATA_BOARD = frozenset({"logs"})
 # Repository-wide entries are listed on the Ops board only.
 REPO_SCOPE_BOARD = "module_settings"
 
 SCOPES = ("board", "shared", "repo")
 KINDS = ("bug", "known-problem", "investigate", "seam", "enhancement", "docs", "epic", "idea")
-STATUSES = ("needs-decision", "in-flight", "approved", "open", "needs-review", "deferred")
+STATUSES = ("needs-decision", "in-flight", "approved", "open", "needs-review", "deferred", "parked")
 
 # The panel's order inside each section: what needs a decision first, a parked entry last.
-STATUS_ORDER = {s: i for i, s in enumerate(("needs-decision", "in-flight", "approved", "open", "needs-review", "deferred"))}
+STATUS_ORDER = {s: i for i, s in enumerate(("needs-decision", "in-flight", "approved", "open", "needs-review", "deferred", "parked"))}
 KIND_ORDER = {k: i for i, k in enumerate(KINDS)}
 
 DETAIL_FIELDS = ("whats_wrong", "evidence", "example", "tried_or_decided", "direction", "next_step")

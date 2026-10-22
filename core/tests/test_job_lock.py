@@ -42,17 +42,21 @@ def _dead_pid():
     return proc.pid
 
 
-def test_an_old_lock_held_by_a_live_process_is_not_broken(rawstore_tmp_db):
-    """A 2-hour crawl keeps its lock: age alone no longer breaks it."""
+def test_an_old_lock_whose_holder_holds_the_os_lock_is_not_broken(rawstore_tmp_db):
+    """A 2-hour crawl keeps its lock: age alone no longer breaks it, and the OS lock is what holds it now (#365)."""
     proc = _live_pid()
+    p = job_lock._lock_path("edgar")
+    p.write_text(f"{proc.pid} tok {job_lock._our_start()}")
+    old = time.time() - 10_000
+    os.utime(p, (old, old))
+    fd = os.open(p, os.O_RDWR)                 # the holder's OS lock
+    assert job_lock._os_lock(fd)
     try:
-        p = job_lock._lock_path("edgar")
-        p.write_text(f"{proc.pid} tok")
-        old = time.time() - 10_000
-        os.utime(p, (old, old))
         with job_lock.acquire("edgar", wait=0, stale_after=3600) as got:
             assert got is False
     finally:
+        job_lock._os_unlock(fd)
+        os.close(fd)
         proc.kill()
         proc.wait()
 
@@ -68,8 +72,8 @@ def test_release_never_removes_someone_elses_lock(rawstore_tmp_db):
     p = job_lock._lock_path("edgar")
     with job_lock.acquire("edgar", wait=0) as got:
         assert got
-        # our lock was (wrongly) broken and another process took it over
-        p.unlink()
+        # our lock was (wrongly) taken over: another holder's owner text is now in the file. It can no longer
+        # unlink a held lock file (Windows refuses), so it writes over it — the release check is the same.
         p.write_text("4242 someone-else")
     assert p.read_text() == "4242 someone-else"
 

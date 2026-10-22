@@ -33,6 +33,14 @@ def _ensure(name: str) -> None:
 
 _BOARD_SETTINGS = "board TEXT, key TEXT, value {value}, updated_at TEXT, PRIMARY KEY ({pk})"
 
+# The pre-D16 shape of edgar_documents: two columns every live store still carries, empty (measured 0 non-null rows
+# of 3257 on 2026-10-21). Dropping them is a separate live-store change (#431); naming them in the MANIFEST stops the
+# drift warning a store open logged twice until now.
+_EDGAR_DOCUMENTS_DECLARED = (
+    "accession TEXT PRIMARY KEY, cik TEXT, tickers TEXT, form TEXT, filed TEXT, fiscal_year TEXT, doc_url TEXT, "
+    "path TEXT, sha256 TEXT, bytes_raw BIGINT, bytes_gzip BIGINT, fetched_at DOUBLE, source TEXT, run_at DOUBLE")
+
+
 
 class TestRecordedDrift:
     def test_a_retyped_column_is_recorded_logged_and_not_migrated(self, isolate_rawstore, caplog):
@@ -193,6 +201,43 @@ class TestNotDrift:
     def test_a_table_created_by_the_reconcile_is_not_compared_with_itself(self, isolate_rawstore):
         _ensure("board_settings")
         assert rawstore.schema_drift() == []
+
+
+class TestLegacyColumns:
+    """#431 (option B): ``edgar_documents`` still carries two empty columns of its pre-D16 shape.
+
+    Every store open logged them twice ("not in the MANIFEST"). The MANIFEST now names them as
+    ``legacy_columns``, so the check skips exactly those and nothing else: nothing migrates, no ALTER runs, and
+    ``schema_drift()`` keeps its shape.
+    """
+
+    def test_the_two_empty_legacy_columns_are_not_drift_and_are_not_logged(self, isolate_rawstore, caplog):
+        _live(f"CREATE TABLE edgar_documents ({_EDGAR_DOCUMENTS_DECLARED}, ticker TEXT, content_gzip BLOB)",
+              db="edgar")
+        with caplog.at_level("WARNING"):
+            _ensure("edgar_documents")
+        assert rawstore.schema_drift() == []
+        assert [r.getMessage() for r in caplog.records if "schema drift" in r.getMessage()] == []
+        # named, not dropped: the columns are still there (dropping them is a live-store change)
+        cols = {r["column_name"] for r in rawstore.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'edgar_documents'", db="edgar")}
+        assert {"ticker", "content_gzip"} <= cols
+
+    def test_an_unexpected_extra_column_is_still_drift_and_still_logged_once(self, isolate_rawstore, caplog):
+        _live(f"CREATE TABLE edgar_documents ({_EDGAR_DOCUMENTS_DECLARED}, ticker TEXT, content_gzip BLOB, "
+              "legacy TEXT)", db="edgar")
+        with caplog.at_level("WARNING"):
+            _ensure("edgar_documents")
+        assert rawstore.schema_drift() == [{
+            "db": "edgar", "table": "edgar_documents", "kind": "extra_column", "column": "legacy",
+            "live": "VARCHAR", "manifest": None}]
+        assert len([r for r in caplog.records if "schema drift" in r.getMessage()]) == 1
+
+    def test_no_legacy_column_is_also_a_declared_column(self):
+        """A name that is both would hide a real extra column instead of explaining a known one."""
+        both = {name: sorted(set(spec.get("legacy_columns") or []) & set(rawstore._columns_of(spec)))
+                for name, spec in rawstore.MANIFEST.items()}
+        assert {name: names for name, names in both.items() if names} == {}
 
 
 # ── a fresh store's keys match the keys the MANIFEST declares ────────────────────────────────

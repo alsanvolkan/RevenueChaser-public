@@ -52,16 +52,12 @@ def test_swing_name_without_a_master_row_is_unclassified_with_no_yfinance_fallba
     assert (out["sector"], out["industry"]) == ("Unclassified", "Unclassified")
 
 
-def test_swing_themes_still_read_the_vendor_industry_text_not_the_spine_industry(
-        rawstore_tmp_db, swing_inputs, monkeypatch):
-    """The keyword matcher keeps the vendor's free text (``Semiconductors`` here); the card's industry is the spine's."""
-    seen = {}
-    monkeypatch.setattr(sp, "assign_themes", lambda sector, industry, *a, **k: seen.update(
-        sector=sector, industry=industry) or ["T"])
+def test_swing_a_ticker_with_no_pinned_theme_gets_no_theme_label(rawstore_tmp_db, swing_inputs):
+    """C21 (#383): no pinned medium theme → ``themes == []``; the row still builds off the spine."""
     _seed([("AAA", "Healthcare", "Biotechnology")])
     out = sp._compute_row({"ticker": "AAA", "name": "A", "market_cap": 1e9}, _ohlcv())
-    assert out["industry"] == "Biotechnology"
-    assert seen == {"sector": "Healthcare", "industry": "Semiconductors"}
+    assert out["themes"] == []
+    assert (out["sector"], out["industry"]) == ("Healthcare", "Biotechnology")
 
 
 def _fund_annual():
@@ -83,18 +79,16 @@ def test_fundamentals_card_sector_and_industry_are_the_spine_not_yfinance(
     assert "industry_group" not in out and "sub_industry" not in out
 
 
-def test_fundamentals_themes_still_read_the_vendor_industry_text_not_the_spine_industry(
+def test_fundamentals_a_ticker_with_no_pinned_theme_gets_no_theme_label(
         rawstore_tmp_db, swing_inputs, monkeypatch):
-    seen = {}
-    monkeypatch.setattr(fp, "assign_themes", lambda sector, industry, *a, **k: seen.update(
-        sector=sector, industry=industry) or ["T"])
+    """C21 (#383): no pinned medium theme → ``themes == []``; the row still builds off the spine."""
     _seed([("AAA", "Healthcare", "Biotechnology")])
     monkeypatch.setattr(fp.sec_edgar, "get_fundamentals", lambda *a, **k: (_fund_annual(), [], {}))
     out = fp._compute_row({"ticker": "AAA", "name": "A", "market_cap": 1e9}, _ohlcv())
     if out is None:
         pytest.skip("fundamentals fixture too thin for this tree")
-    assert out["industry"] == "Biotechnology"
-    assert seen == {"sector": "Healthcare", "industry": "Semiconductors"}
+    assert out["themes"] == []
+    assert (out["sector"], out["industry"]) == ("Healthcare", "Biotechnology")
 
 
 @pytest.mark.parametrize("mod", [sp, fp])

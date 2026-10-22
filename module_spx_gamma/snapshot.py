@@ -10,9 +10,9 @@ from datetime import datetime, timezone
 
 from RevenueChaser.core import calendar as nyse_calendar
 from RevenueChaser.core import credentials
+from RevenueChaser.core.providers.cftc import fetch_cftc_tff
 
 from .candles import fetch_spx_candles, price_window_sessions
-from .cftc import fetch_cftc_tff
 from .config import RAW_ROOT, SPOT_EXPOSURE_WINDOW_PCT, TICKER
 from .expiry_table import normalize_expiry_rows
 from .vix import fetch_vix_family, vix_term_mode

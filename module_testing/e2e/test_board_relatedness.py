@@ -39,6 +39,9 @@ def _profiles():
         out[f"B{i}"] = {"products": ["loans", "deposits"], "end_markets": ["retail"],
                         "business_model": ["interest"], "customer_types": ["consumer"],
                         "value_chain_role": ["lender"], "keywords": ["branch"]}
+        out[f"H{i}"] = {"products": ["drugs", "biologics"], "end_markets": ["patients"],
+                        "business_model": ["royalty"], "customer_types": ["hospital"],
+                        "value_chain_role": ["manufacturer"], "keywords": ["clinical"]}
     return out
 
 
@@ -132,6 +135,10 @@ def test_board_renders_after_a_rebuild(rebuilt, store):
     assert runs == {"first": 0, "second": 1}
     kept = {row["theme_run_id"] for row in store.get_all("ticker_themes")}
     assert {"first", "second"} <= kept
+    # The run's own result, so what the coarse assertions rely on is stated: three fine themes here, a medium cut
+    # held one below them (one pair of fines merged, one single fine child), and two coarse themes (#433).
+    run = store.get("theme_runs", "second")
+    assert (run["k_fine"], run["k_medium"], run["k_coarse"]) == (3, 2, 2)
     # The card's label comes from the one Theme vocabulary (core.universe.theme_catalog, #118 C24), which renames a
     # sector-named coarse theme to its largest medium child; the stored copy is the fallback when it has no row.
     from RevenueChaser.core.universe import theme_catalog
@@ -140,15 +147,23 @@ def test_board_renders_after_a_rebuild(rebuilt, store):
               for row in store.get_all("ticker_themes")
               if row["theme_run_id"] == "second" and row["level"] == "coarse"}
     assert all(c["theme_coarse"] == coarse[c["ticker"]] for c in data)
-    # One literal, so the expectation does not only mirror the engine (R2 review S3): both seeded groups get the
-    # sector-named coarse theme "Technology" stored (one of them suffixed " (2)"), and the card shows its largest
-    # medium child instead.
+    # One literal, so the expectation does not only mirror the engine (R2 review S3): both coarse themes are
+    # sector-named "Technology" (the second suffixed " (2)" by unique_theme_labels), and the card shows its largest
+    # medium child instead. The medium cut pairs the bank and healthcare fines, so that coarse's largest child is
+    # the merged theme; the semiconductor fine kept a single child and its own name.
     stored = {row["ticker"]: row["theme"] for row in store.get_all("ticker_themes")
               if row["theme_run_id"] == "second" and row["level"] == "coarse"}
     by_ticker = {c["ticker"]: c for c in data}
     assert stored["G0"].startswith("Technology") and stored["B0"].startswith("Technology")
+    assert set(stored.values()) == {"Technology", "Technology (2)"}
     assert by_ticker["G0"]["theme_coarse"] == "accelerated, data center, designer"
-    assert by_ticker["B0"]["theme_coarse"] == "branch, consumer, deposits"
+    # The bank and healthcare fines are equal in size and in tag counts, so the offline label of their merged medium
+    # theme is a tie between the two groups' top tags: which one comes first follows the row order of the tag table
+    # (it differed between the Windows and the Linux run). The test states what is guaranteed: the merged theme
+    # carries one of the two groups' own labels, and both groups' cards show the same one.
+    merged = {"branch, consumer, deposits", "biologics, clinical, drugs"}
+    assert by_ticker["B0"]["theme_coarse"] in merged
+    assert by_ticker["H0"]["theme_coarse"] == by_ticker["B0"]["theme_coarse"]
     assert rebuilt.table_count("ticker_themes") > 0
     assert rebuilt.table_count("relatedness_theme_etfs") >= 0
 

@@ -32,6 +32,7 @@ from RevenueChaser.core.taxonomy import assign_themes
 from RevenueChaser.core.scan_quality import ohlc_drop_reason
 
 from . import config
+from . import events
 from .screeners import evaluate_momentum, evaluate_quality, evaluate_rule_of_40, is_distorted
 
 logger = logging.getLogger(__name__)
@@ -461,13 +462,11 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         "above_200d": (price > ind["sma200"]) if (price is not None and ind.get("sma200") is not None) else None,
     }
 
-    vendor_industry = info.get("industry") or ""
     # R5 (#88), #266: the sector and industry are the spine's (UW's two levels); the vendor ``.info`` ones never
-    # fill the row's own fields. The theme keyword matcher keeps the vendor's free-text industry. ``gics`` is read
-    # above, before EDGAR (#386 F1: the sector gate).
+    # fill the row's own fields. ``gics`` is read above, before EDGAR (#386 F1: the sector gate). The theme labels
+    # are the pinned NMF medium run (C21, #383).
     name = info.get("longName") or info.get("shortName") or row.get("name") or ""
-    themes = assign_themes(gics.sector, vendor_industry, name,
-                           info.get("longBusinessSummary") or "", ticker=ticker)
+    themes = assign_themes(ticker)
 
     # #386 F1: the anchor year's period end, the date the Quality/Quality-growth figures are read from.
     ai = fiscal_year.anchor(annual)
@@ -556,6 +555,19 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
     if top_n:
         candidates = candidates[:top_n]
     annotate_cards(candidates)
+    # #386 F5: the corporate-event flag, display only — no rule, bucket, count or sort key reads it. Only a card
+    # with an event gets ``corporate_event``: a ticker the store cannot answer for stays unknown, never "no event".
+    # The blind spots are counted, in ``data_quality``: ``no_submissions`` is a candidate whose CIK has no filing
+    # row, ``no_cik`` one the store cannot map to a CIK at all — counted apart, because a card that says nothing
+    # because it has no CIK is not the same blind spot as one whose filer has never filed.
+    event_stats: dict = {}
+    found = events.corporate_events([c["ticker"] for c in candidates], stats=event_stats)
+    run_stats["no_submissions"] = int(event_stats.get("no_submissions") or 0)
+    run_stats["no_cik"] = int(event_stats.get("no_cik") or 0)
+    for c in candidates:
+        ev = found.get(c["ticker"])
+        if ev:
+            c["corporate_event"] = ev
 
     regime = run_stats.get("regime")
     return {
@@ -573,6 +585,8 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
         "no_data": False,
         "data_quality": {"stale_ohlc": run_stats.get("stale_ohlc", 0),
                          "stale_info": run_stats.get("stale_info", 0),
+                         "no_submissions": run_stats.get("no_submissions", 0),
+                         "no_cik": run_stats.get("no_cik", 0),
                          "short_refetch_refused": run_stats.get("short_refetch_refused", 0),
                          "spy_stale": bool(run_stats.get("spy_stale")),
                          "dropped": run_stats.get("dropped") or {}},

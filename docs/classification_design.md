@@ -35,7 +35,7 @@ single work order.
   artifacts restricted to the classification universe.
 - EDGAR official/free only (bulk zips + per-document `.htm`); no npm/sec-api/GPL.
 - Relatedness profiles: **thinking-high**; theme naming: **thinking-low** (off-peak).
-- Themes: NMF, **nested** (fine ~150 -> medium ~70 -> coarse ~25 via agglomerative
+- Themes: NMF, **nested** (fine ~150 -> medium = max(2, n_fine // 2), halved from the realised fine count (#433) -> coarse ~25 via agglomerative
   merge), LLM-named; replaces the taxonomy theme vocabulary; GICS untouched;
   assignment hybrid (profile weights, else lexicon, else sector fallback).
 
@@ -274,12 +274,17 @@ extracted, facts filtered); **no BLOB duplication**.
 - Tag x ticker TF-IDF matrix.
 - Choose k by **elbow + stability >= 0.90 (5 seeds) + min size >= 20**; min size
   wins ties.
-- Agglomerative nested merge -> medium (~70) / coarse (~25) with `parent_id`.
+- Agglomerative nested merge -> medium (the medium level is halved from the realised
+  fine count: ``k_medium = max(2, n_fine // 2)``; the clamp below ``n_fine`` is only a
+  safety net; the naming step reuses a fine child's name when a medium theme ends with a
+  single fine child, #433) / coarse (~25) with `parent_id`.
 - Coarse option (#108, avo's card 2026-10-16 "Sektörden coarse"): `finalize_run(coarse="sector")` /
   `--coarse sector` parents each medium to the modal Morningstar sector of its members (`sector_coarses`,
   ids `<run>:sec-<slug>`), replacing the agglomerative coarse + `rebalance_coarses`. The default stays `nmf`
   until the cutover card.
-- LLM naming (off-peak, thinking-low).
+- LLM naming (off-peak, thinking-low). A name already used in the run takes a suffix from
+  its rarest tags (`Name (Tag)`), else `Name (2)`; a medium theme with a single fine child
+  reuses that child's name with no model call (#433).
 - Write `relatedness_themes` / `relatedness_theme_tags(theme_id, tag, rank)` /
   `relatedness_theme_members` / `theme_runs` **beside** the old vocabulary; emit a
   stability report.

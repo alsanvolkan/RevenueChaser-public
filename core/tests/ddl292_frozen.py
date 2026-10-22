@@ -171,12 +171,14 @@ ENTRIES = {
     },
     # ── 13F filer names (#191, #208) ──
     "sec13f_filers": {
+        "planned": True,          # no writer yet (#289): data only, not DDL; the whole-entry pin must carry it
         "key": ["accession"],
         "columns": ["accession TEXT PRIMARY KEY", "cik TEXT", "period TEXT", "name TEXT", *STAMP],
         "kind": "tabular", "write": "append", "history_mode": "event", "sources": [],
     },
     # ── D11 SEC companyfacts (#161), edgar.duckdb ──
     "edgar_companyfacts": {
+        "planned": True,          # no writer yet (#289): data only, not DDL; the whole-entry pin must carry it
         "key": ["cik", "taxonomy", "concept", "unit", "period_start", "period_end", "accn"],
         "columns": ["cik TEXT", "taxonomy TEXT", "concept TEXT", "unit TEXT", "period_start TEXT",
                     "period_end DATE", "accn TEXT", "value DOUBLE", "form TEXT", "fy INTEGER", "fp TEXT",

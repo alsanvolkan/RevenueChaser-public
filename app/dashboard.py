@@ -34,7 +34,6 @@ from RevenueChaser.core.reporting_common import payload_path
 from . import runners
 from . import jobs
 from . import logview
-from . import dealer_hedge
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("dashboard")
@@ -227,8 +226,6 @@ TABS = [
     {"type": "header", "label": "Research"},
     {"type": "tab", "key": "module_earnings_radar", "label": "Earnings Radar", "url": "/view/module_earnings_radar", "sub": True},
     {"type": "tab", "key": "module_spx_gamma", "label": "SPX Gamma", "url": "/view/module_spx_gamma", "sub": True},
-    # Read-only teaching page (app/dealer_hedge.py): no data, no Fetch, no Refresh, no data date.
-    {"type": "tab", "key": "dealer_hedge", "label": "Dealer Hedge (demo)", "url": "/view/dealer_hedge", "sub": True},
     {"type": "tab", "key": "module_oipd", "label": "Implied Probability", "url": "/view/module_oipd", "sub": True},
     {"type": "tab", "key": "module_financials", "label": "Financials", "url": "/view/module_financials", "sub": True},
     {"type": "tab", "key": "module_uw_interaction", "label": "UW Interaction (lab)", "url": "/view/module_uw_interaction", "sub": True},
@@ -311,7 +308,7 @@ def index():
 def _open_issues_for_shell() -> tuple[dict, str]:
     """The "Open issues" payload for every data board (``{}`` + a message when the registry cannot be read).
 
-    Not for ``logs`` / ``dealer_hedge``: neither is a data board, so neither gets a panel
+    Not for ``logs``: it is not a data board, so it gets no panel
     (``core/tests/test_help_every_tab.py``). A bad registry never fails the page — the group shows the reason.
     """
     keys = [t["key"] for t in TABS if t["type"] == "tab" and t["key"] not in open_issues.NOT_A_DATA_BOARD]
@@ -352,8 +349,6 @@ def view(mod: str):
         return _view_uw_interaction()
     if mod == "module_discord":
         return _view_discord()
-    if mod == "dealer_hedge":
-        return dealer_hedge.render_page()
     if mod == "logs":
         return logview.render_page(logview.page_payload())
     f = _module_file(mod)

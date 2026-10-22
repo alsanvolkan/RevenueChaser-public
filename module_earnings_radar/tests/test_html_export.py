@@ -17,7 +17,7 @@ from RevenueChaser.module_earnings_radar.pipeline import (
     _compute_earnings_reactions, _compute_price_action, _compute_return_since_er,
     EarningsPipeline,
 )
-from RevenueChaser.core.models.events import TradeCard
+from RevenueChaser.module_earnings_radar.models import TradeCard
 
 
 # ──────────────────────────────────────────────

@@ -336,7 +336,7 @@ def _spx_gamma(tmp_path, monkeypatch):
 
 def _earnings(tmp_path, monkeypatch):
     import RevenueChaser.module_earnings_radar.report as er
-    from RevenueChaser.core.models.events import TradeCard
+    from RevenueChaser.module_earnings_radar.models import TradeCard
     monkeypatch.setattr(er, "OUTPUT_DIR", tmp_path)
     (tmp_path / "earnings").mkdir(parents=True, exist_ok=True)
     t = H("er_ticker")
@@ -357,7 +357,7 @@ def _earnings_detail(tmp_path, monkeypatch):
     provider, #175). The hostile-ticker card above cannot open a drawer (its row selector
     is invalid), so a plain ticker carries the hostile quarters, alone on the board."""
     import RevenueChaser.module_earnings_radar.report as er
-    from RevenueChaser.core.models.events import TradeCard
+    from RevenueChaser.module_earnings_radar.models import TradeCard
     monkeypatch.setattr(er, "OUTPUT_DIR", tmp_path)
     (tmp_path / "earnings").mkdir(parents=True, exist_ok=True)
     detail = [{"q": H("er_q"), "date": H("er_date"), "implied": 5.0, "actual": 3.0, "eps_actual": 1.2,
@@ -450,11 +450,6 @@ def _logs(tmp_path, monkeypatch):
     return logview.render_page(p)
 
 
-def _dealer_hedge(tmp_path, monkeypatch):
-    from RevenueChaser.app import dealer_hedge
-    # A static page: the footer's source note is the only value the renderer passes in.
-    return dealer_hedge.render_page(H("source"))
-
 
 BOARDS: dict[str, Board] = {
     "module_earnings_radar": Board(_earnings),
@@ -480,6 +475,4 @@ BOARDS: dict[str, Board] = {
     "module_settings": Board(_settings),
     # Not a data board: the dashboard's own log files, whose request lines carry attacker-chosen paths.
     "logs": Board(_logs),
-    # Static teaching page: no data; only the footer's source note comes from the renderer.
-    "dealer_hedge": Board(_dealer_hedge),
 }

@@ -311,16 +311,17 @@ def test_inflows_and_outflows_never_overlap():
 # ── DF74 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def test_only_the_region_duplicates_are_renamed():
-    # DF74: EIDO/IDX (region group, read by no taxonomy) get distinct names. SMH/SOXX keep "Semiconductors": the
-    # theme names build core.taxonomy.THEMES, so a rename would leak into the theme filters (reverted 639da86).
+    # DF74: EIDO/IDX (region group, read by no taxonomy) get distinct names. SMH/SOXX keep "Semiconductors":
+    # it is the label the boards show, so a rename would leak into the theme filters (reverted 639da86).
     names = [i["name"] for i in ROTATION_ETFS.values()]
     assert sorted({n for n in names if names.count(n) > 1}) == ["Semiconductors"]
 
 
-def test_the_theme_taxonomy_keeps_semiconductors():
-    from RevenueChaser.core.taxonomy import SORTED_THEMES
-    assert "Semiconductors" in SORTED_THEMES
-    assert not [t for t in SORTED_THEMES if "(VanEck)" in t or "(iShares)" in t]
+def test_the_theme_names_carry_no_etf_suffix():
+    """The rotation theme names are the labels a board shows; an ETF suffix would leak into the filters."""
+    names = [i["name"] for i in ROTATION_ETFS.values() if i.get("group") == "theme"]
+    assert "Semiconductors" in names
+    assert not [n for n in names if "(VanEck)" in n or "(iShares)" in n]
 
 
 def test_the_sector_names_stay_the_morningstar_names():

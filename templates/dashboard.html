@@ -272,10 +272,11 @@ function rcOiText(text){
   return rcEsc(text).replace(/\n/g, '<br>');
 }
 function rcOiChips(it){
-  var chips = ['<span class="rc-oi-chip">' + (it.repo === 'RevenueChaser' ? 'private' : 'public') + '</span>',
-               '<span class="rc-oi-chip">' + rcEsc(it.kind) + '</span>'];
-  if(it.status === 'deferred'){
-    chips.push('<span class="rc-oi-chip">deferred' +
+  var chips = [];
+  if(it.repo !== 'RevenueChaser-public') chips.push('<span class="rc-oi-chip">' + rcEsc(it.repo) + '</span>');
+  chips.push('<span class="rc-oi-chip">' + rcEsc(it.kind) + '</span>');
+  if(it.status === 'deferred' || it.status === 'parked'){
+    chips.push('<span class="rc-oi-chip">' + it.status +
                (it.deferred_until ? ' &rarr; ' + rcEsc(it.deferred_until) : '') + '</span>');
   } else if(it.status === 'needs-review'){
     chips.push('<span class="rc-oi-chip warn"><span class="rc-oi-dot"></span>needs review</span>');
@@ -315,15 +316,17 @@ function rcOpenIssuesRender(key){
     return;
   }
   var data = (RC_OI_DATA.boards || {})[key];
-  if(!data){ box.hidden = true; return; }   // Logs and the Dealer Hedge demo are not data boards
+  if(!data){ box.hidden = true; return; }   // Logs is not a data board
   box.hidden = false;
   var board = rcOiItems(data.board), shared = rcOiItems(data.shared), repo = rcOiItems(data.repo);
   var all = board.concat(shared, repo);
   var deferred = all.filter(function(it){ return it.status === 'deferred'; }).length;
+  var parked = all.filter(function(it){ return it.status === 'parked'; }).length;
   var review = all.filter(function(it){ return it.status === 'needs-review'; }).length;
   var line = 'Open issues — ' + board.length + ' on this board, ' + shared.length + ' shared' +
              ' · as of ' + (rcOiDate(data.generated_at) || 'an unknown date');
   if(deferred) line += ' · ' + deferred + ' deferred';
+  if(parked) line += ' · ' + parked + ' parked';
   if(review) line += ' · ' + review + ' need review';
   summary.textContent = line;
   var html = board.length
@@ -354,7 +357,7 @@ var ACTIVE = 'module_earnings_radar';
 // Fluid boards (fully width:100% pages with inner overflow wrappers): their
 // iframe FILLS the visible pane instead of being grown to a natural content
 // width like the intentionally-wide boards below (Earnings ~2600px).
-var FILL_WIDTH = {'module_spx_gamma': true, 'module_earnings_radar': true, 'module_oipd': true, 'logs': true, 'dealer_hedge': true};
+var FILL_WIDTH = {'module_spx_gamma': true, 'module_earnings_radar': true, 'module_oipd': true, 'logs': true};
 var UNIVERSE_TABS = ['module_asymmetric_growth','module_swing_potential','module_fundamentals'];
 // Boards backed by .store data: Refresh drops the cached html and recomputes
 // from raw.duckdb (mirrors _STORE_REFRESHABLE in app/dashboard.py).
@@ -455,7 +458,7 @@ function showTab(key){
   if(rbBtn) rbBtn.style.display = (key==='module_sec_13f') ? 'inline-block' : 'none';
   var rfBtn = document.getElementById('btn-refresh');
   // Logs is a read-only view of the dashboard's own log files: it polls by itself, nothing to refresh.
-  if(rfBtn) rfBtn.style.display = (key==='module_earnings_radar' || key==='logs' || key==='dealer_hedge') ? 'none' : 'inline-block';
+  if(rfBtn) rfBtn.style.display = (key==='module_earnings_radar' || key==='logs') ? 'none' : 'inline-block';
   var ftBtn = document.getElementById('btn-fetch');
   if(ftBtn) ftBtn.style.display = (key==='module_leaps' || key==='module_sec_13f' || key==='module_financials' || key==='module_oipd' || key==='module_comovement' || key==='module_discord') ? 'inline-block' : 'none';
   var ruBtn = document.getElementById('btn-refresh-universe');
