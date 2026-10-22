@@ -788,8 +788,9 @@ def compute_period_metrics(periods: dict, filers: Optional[dict] = None) -> dict
 
     ``filers`` maps a period to the distinct filer CIKs that period has in the store. It is the denominator of
     ``breadth`` (#375 F4, Chen-Hong-Stein 2002): the share of that quarter's 13F filers holding the name, as a
-    percentage with 4 decimals, and ``breadth_chg``, its change in percentage points against the ticker's prior
-    period. A period ``filers`` does not cover has an unknown breadth: ``None``, never 0.
+    percentage with 4 decimals, and ``breadth_chg``, its change in percentage points against the ticker's
+    previous period present in ``periods`` — its own prior stored quarter, which is not necessarily the
+    calendar quarter before it, so a gap in a name's filings widens the step ``breadth_chg`` measures. A period ``filers`` does not cover has an unknown breadth: ``None``, never 0.
     """
     metrics = {}
     prev = None

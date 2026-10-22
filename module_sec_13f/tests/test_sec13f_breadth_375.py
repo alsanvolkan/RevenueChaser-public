@@ -16,7 +16,7 @@ from RevenueChaser.core import history as core_history, ledger, rawstore
 from RevenueChaser.module_sec_13f import engine, history as sec13f_history, report
 
 Q1, Q2 = "2026-03-31", "2026-06-30"
-RUN_AT = 1759701600.0        # a fixed Thursday (2025-10-06), never "today"
+RUN_AT = 1759701600.0        # a fixed instant after Q1/Q2 above, never "today"
 AAA, BBB, CCC = "111111111", "222222222", "333333333"
 
 
