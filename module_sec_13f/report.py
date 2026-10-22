@@ -582,8 +582,9 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
 <b>Total ownership</b> = shares held by every 13F filer. <b>Δ% vs prior</b> = QoQ change in shares.
 <b>Value</b> = $ market value held. <b>% Out</b> = shares ÷ shares outstanding (newest stored).
 <b>New/Exit</b> = holders entered / exited vs prior quarter.
-<b>Breadth</b> = share of that quarter's 13F filers holding the name (holders ÷ filers), with the change vs the
-prior quarter; as of quarter-end, filed up to 45 days later.
+<b>Breadth</b> = share of that quarter's 13F filers holding the name (holders ÷ filers), with the change in
+percentage points vs the name's own previous stored quarter, which is not necessarily the calendar quarter
+before it; as of quarter-end, filed up to 45 days later.
 <b>Top10%/HHI</b> = ownership concentration.
 <b>Net flow</b> = shares bought − sold (holder-level deltas). <b>Streak</b> = consecutive quarters of net accumulation.
 <b>Accel</b> = Δ%(latest) − Δ%(prior). <b>Insider%</b> = newest stored snapshot. {short_legend}
