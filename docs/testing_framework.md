@@ -191,7 +191,7 @@ than behaviour.
 
 | Module | Does | Tests guarantee |
 |---|---|---|
-| `taxonomy.py` | Theme taxonomy (rotation themes + Photonics/Space) layered over the `core/gics_map.py` sector SSoT (the 11 Morningstar names + Unclassified) | Classification is word-boundary aware (no substring false positives), Space and Aerospace stay distinct, and `assign_themes(ticker=)` prefers the pinned NMF run before the keyword fallback — this is the vocabulary every dashboard shares, so drift here desynchronizes all of them |
+| `taxonomy.py` | The shared sector vocabulary — the `core/gics_map.py` SSoT (the 11 Morningstar names + Unclassified) — and the theme labels: the pinned NMF run's medium themes, loaded per ticker | The sector list is the eleven Morningstar names then `Unclassified`; a ticker's themes are the pinned run's or `[]` — never a keyword or sector guess (C21, #383), because every dashboard's labels come from here and drift desynchronizes all of them |
 | `index_registry.py` | Cache-first `ticker -> index` registry (S&P 500 / Dow / Nasdaq) | Membership inversion is correct, lookups resolve, cards get stamped, and `fetch_index` serves cache rather than refetching |
 | `ticker_store.py` | Shared per-ticker store (the `ticker_scores` table in raw.duckdb) — the Hunter writes, other boards read | Roundtrip, missing keys, and that a repeat write overwrites instead of duplicating |
 | `module_earnings_radar/models.py` | `TradeCard` / `RuleResult` | Every column the radar renders maps to a `TradeCard` field; `TradeCard()` always constructs (all fields defaulted); unavailable rules carry `score=None` |

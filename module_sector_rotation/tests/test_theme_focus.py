@@ -186,6 +186,8 @@ class TestThemeFocusRender:
         ]
 
     def test_omits_control_when_no_coarses(self, tmp_path, monkeypatch, rawstore_tmp_db):
+        # The no-catalog path hides the Theme row and must not invent one from a hard-coded list
+        # (the keyword taxonomy's theme list is gone, #383 C21).
         import RevenueChaser.module_sector_rotation.report as rd
         monkeypatch.setattr(rd, "OUTPUT_DIR", tmp_path)
         p = rd.export_rotation_dashboard(self._snaps(), filename="no_theme.html", uw=None)
@@ -223,17 +225,6 @@ class TestThemeFocusRender:
         assert 'class="filter-btn active" data-group="sector"' in c
         # default is All (full map for active group)
         assert 'value="all"' in c or "THEME = \"all\"" in c or "THEME = 'all'" in c
-
-    def test_never_taxonomy_themes(self, tmp_path, monkeypatch, rawstore_tmp_db):
-        import RevenueChaser.module_sector_rotation.report as rd
-        monkeypatch.setattr(rd, "OUTPUT_DIR", tmp_path)
-        # no NMF coarses — must not invent taxonomy.THEMES menu
-        p = rd.export_rotation_dashboard(self._snaps(), filename="no_tax.html", uw=None)
-        c = p.read_text(encoding="utf-8")
-        from RevenueChaser.core import taxonomy
-        for t in list(getattr(taxonomy, "THEMES", {}) or [])[:5]:
-            # a bare theme name as an option would mean we fell back
-            assert f'>{t}<' not in c or "All themes" not in c
 
 
 def test_catalog_reads_only_the_current_run(rawstore_tmp_db):

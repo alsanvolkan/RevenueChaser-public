@@ -186,12 +186,12 @@ def test_the_bulk_run_gives_the_cards_of_the_per_ticker_path(rawstore_tmp_db, mo
     assert a == b and len(a) == 14          # 2 of 16 are foreign filers
 
 
-def test_a_themed_card_carries_the_run_label_and_an_unthemed_one_the_keyword_fallback(rawstore_tmp_db, monkeypatch):
+def test_a_themed_card_carries_the_run_label_and_an_unthemed_one_stays_empty(rawstore_tmp_db, monkeypatch):
     _Yahoo(monkeypatch)
     tickers = _seed(4)
     cards = {c["ticker"]: c for c in _run(monkeypatch, tickers)["cards"]}
     assert cards["T000"]["themes"] == ["Theme 0"]
-    assert cards["T001"]["themes"] != ["Theme 1"]
+    assert cards["T001"]["themes"] == []          # C21 (#383): no pinned medium theme → no label
 
 
 # ── review M1 (and L1): a stale full row's .info is refreshed once a day, and the Refresh sees it ──
