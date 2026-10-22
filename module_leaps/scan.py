@@ -80,6 +80,45 @@ def _history_baselines(tickers, today: date, warnings: list | None = None) -> di
         return {}
 
 
+def _near_event_dates(today: date, warnings: list | None = None) -> dict:
+    """The whole watchlist's next earnings dates in one batched store read (DF94, #39).
+
+    A calendar read never fails a Fetch: an unreadable store gives no dates and one warning, so the board can say a
+    Quiet label there is missing calendar data rather than a near event. ``stored_next_dates`` already swallows its
+    own errors, so the empty mapping carries the warning on either path.
+    """
+    from RevenueChaser.core import earnings_dates
+    note = None
+    try:
+        dates = earnings_dates.stored_next_dates(today)
+    except Exception as e:  # noqa: BLE001 - a missing date, never a failed run
+        logger.warning(f"LEAPS earnings dates not read: {e}")
+        dates, note = {}, f"could not be read ({type(e).__name__}: {e})"
+    else:
+        # An empty mapping is a successful read of nothing: a fresh store, or the nightly sweep has not run within
+        # ``earnings_dates.MAX_AGE_DAYS``, which refuses an older session rather than outranking the tape. The board
+        # is told which of the two it was, because this sentence is persisted with the run (app/runners.py).
+        if not dates:
+            note = "has no rows from the last few sessions"
+    if note and warnings is not None:
+        warnings.append(f"The stored earnings calendar {note}, so no watchlist name was flagged for a near event "
+                        "from the calendar: a Quiet label here may be missing calendar data, not a near event.")
+    return dates or {}
+
+
+def _watchlist_near_event(ticker: str, cand: dict, near: dict, today: date) -> bool:
+    """A pinned name's near-event flag: its own stored earnings date OR the flow candidate's own flag.
+
+    The flow candidate only exists for a name with a far-dated print in the window, so a pinned name without one
+    would never see the event exclusion (DF94). The two sources are OR'd, never ranked: the candidate's flag comes
+    off the tape's own ``next_earnings_date`` (``engine.aggregate_flow_prints``) while the stored calendar may be up
+    to ``earnings_dates.MAX_AGE_DAYS`` sessions old, so letting the calendar decide alone could take a flag away
+    from a candidate whose print says earnings are days out (#99 review). This only ever adds the flag.
+    """
+    own = ticker in near and 0 <= (near[ticker] - today).days <= leaps.NEAR_EVENT_DAYS
+    return own or bool(cand.get("near_event"))
+
+
 def rederive(snap: dict, oi, base_1d: dict | None, base_q: dict | None, ask_share=None) -> dict:
     """Classify a stored snapshot again from its own OI and the recorded baselines (a copy; nothing is written).
 
@@ -176,7 +215,8 @@ def scan_leaps(uw: UWClient, today: date | None = None, warnings: list | None = 
     times a tiered ITM/OTM delta concentration multiplier.
 
     Returns (watched_candidates, unwatched_candidates). Warnings worth showing on the
-    board (the print scan hit its cap) are appended to ``warnings`` when it is passed.
+    board (the print scan hit its cap, the stored earnings calendar could not be read)
+    are appended to ``warnings`` when it is passed.
 
     ``footprints``, when passed, gets one entry per watchlist ticker, whatever its label (the result history,
     #377): ``snapshot`` (the merged footprint, None when the fetch raised), ``fetch_status`` ('ok',
@@ -187,6 +227,7 @@ def scan_leaps(uw: UWClient, today: date | None = None, warnings: list | None = 
     watched_tickers = sorted(_leaps_tickers())
     logger.info(f"LEAPS scan: {len(watched_tickers)} watchlist tickers.")
     bases = _history_baselines(watched_tickers, d, warnings)      # one batched read for the whole scan (#377 L3)
+    near = _near_event_dates(d, warnings)                         # one batched calendar read for the whole scan (DF94)
 
     try:
         rows, _new = leaps.discover_flow_prints(uw, today=today, warnings=warnings)
@@ -210,7 +251,7 @@ def scan_leaps(uw: UWClient, today: date | None = None, warnings: list | None = 
         cand = candidates.get(t) or {}
         try:
             snap = leaps.fetch_and_classify(t, uw, today=today, inputs=inputs,
-                                            near_term_event=bool(cand.get("near_event")),
+                                            near_term_event=_watchlist_near_event(t, cand, near, d),
                                             ask_share=cand.get("ask_share"),
                                             baselines=bases.get(t, {}))
         except Exception as e:
