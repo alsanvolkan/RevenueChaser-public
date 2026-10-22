@@ -18,7 +18,8 @@ from RevenueChaser.app import runners
 from RevenueChaser.app.jobs import JobMessage
 from RevenueChaser.core import calendar, ledger, rawstore
 from RevenueChaser.module_sector_rotation import engine, history as rot_history, report as rot_report, store, universe
-from RevenueChaser.module_sector_rotation.tests.d01_seed import ny as _at, seed as _seed, sessions as _sessions
+from RevenueChaser.module_sector_rotation.tests.d01_seed import (
+    ny as _at, pin_clock, seed as _seed, sessions as _sessions)
 
 UNIVERSE = {
     "SPY": {"name": "S&P 500", "group": "benchmark"},
@@ -121,6 +122,31 @@ def test_live_and_backfill_produce_the_same_symbol_set(world):
     store.backfill_weekly(_UW(), date(2026, 10, 5), date(2026, 10, 9))
     back = {r["ticker"] for r in _stored(date(2026, 10, 7))}
     assert live == back
+
+
+def test_a_macro_symbol_in_the_universe_never_reaches_the_live_cross_section(rawstore_tmp_db, monkeypatch):
+    """ROT-4 C3 mutation guard: ``rrg_tickers()`` is the only membership rule, live as in the backfill.
+
+    The ``world`` fixture blanks ``MACRO_SERIES``, so its two macro tests cannot see a macro symbol even when one is a
+    ``ROTATION_ETFS`` key (a live cross-section that iterates ``ROTATION_ETFS``, or that fills macro closes, puts it
+    back on the map and they stay green). Here the macro series is real and its live read is a full 60-week series,
+    so the symbol would be on the map if the engine still asked for it; on HEAD it is never asked for at all.
+    """
+    from RevenueChaser.module_earnings_radar import macro_watch
+    monkeypatch.setattr(engine, "ROTATION_ETFS", {
+        "SPY": {"name": "S&P 500", "group": "benchmark"},
+        "XLK": {"name": "Technology", "group": "sector"},
+        "US10Y": {"name": "US 10-Year Treasury Yield", "group": "yield"},
+    })
+    monkeypatch.setattr(engine, "MACRO_SERIES", {"US10Y": {"fred": "DGS10", "yf": "^TNX"}})
+    monkeypatch.setattr(macro_watch, "macro_weekly_closes", lambda t: [4.0 + 0.01 * i for i in range(60)])
+    pin_clock(monkeypatch, _at(2026, 10, 7, 18))
+    for t in ("SPY", "XLK"):
+        _seed(t, date(2026, 10, 7))
+
+    assert engine.rrg_tickers() == ["XLK"]
+    snaps = engine.RotationEngine(_UW()).process_all()
+    assert {s.ticker for s in snaps} == {"XLK"}
 
 
 def test_the_cross_section_uses_weekly_lookbacks_on_iso_weeks():
