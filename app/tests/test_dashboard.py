@@ -6,8 +6,8 @@ from datetime import date, timedelta
 import pytest
 
 from RevenueChaser.app import dashboard, runners
-from RevenueChaser.core.tests.panel_client import panel_test_client
 from RevenueChaser.core.tests.open_issues_shell import strip_open_issues_data
+from RevenueChaser.core.tests.panel_client import panel_test_client
 
 
 class _FakeUW:
