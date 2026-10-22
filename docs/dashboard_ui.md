@@ -161,13 +161,12 @@ hash. The pure logic is `RCFilters.core`, unit-tested under node (`core/tests/te
 | Discord | **no** | Chat archive, no tickers. Left: channels grouped by server and category (follow checkbox, per-channel Update); right: filters (channel, text, dates) and the feed. |
 | Settings / Data health | **no** | Ops inventory, not an equity board; its ticker drill uses the kit's combobox (C1b). Plan: [`data_health.md`](data_health.md). |
 | Logs | **no** | The dashboard's own log files (`app/logview.py`), read-only: no Fetch, no Refresh, no data date. |
-| Dealer Hedge (demo) | **no** | Static teaching page (`app/dealer_hedge.py`, #376): Black-Scholes in the page itself, no data, no Fetch, no Refresh, no data date. |
 
 ### What am I looking at? — every dashboard
 
 Shared `help_html(body)` under the title, closed by default, same `.help`
 chrome. Every data tab has it (#383 C3): the 16 boards of the fixture registry
-except Logs and the Dealer Hedge demo. `core/tests/test_help_every_tab.py` holds
+except Logs. `core/tests/test_help_every_tab.py` holds
 that: each tab renders the one shared box, no board-local `.help` fork, and a body
 that says what Fetch and Refresh do there. `HELP_CSS` falls back to the standard
 dark tokens, so a board without them (Earnings Radar, SPX Gamma, LEAPS) still

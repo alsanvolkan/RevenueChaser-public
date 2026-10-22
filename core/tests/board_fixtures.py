@@ -450,11 +450,6 @@ def _logs(tmp_path, monkeypatch):
     return logview.render_page(p)
 
 
-def _dealer_hedge(tmp_path, monkeypatch):
-    from RevenueChaser.app import dealer_hedge
-    # A static page: the footer's source note is the only value the renderer passes in.
-    return dealer_hedge.render_page(H("source"))
-
 
 BOARDS: dict[str, Board] = {
     "module_earnings_radar": Board(_earnings),
@@ -480,6 +475,4 @@ BOARDS: dict[str, Board] = {
     "module_settings": Board(_settings),
     # Not a data board: the dashboard's own log files, whose request lines carry attacker-chosen paths.
     "logs": Board(_logs),
-    # Static teaching page: no data; only the footer's source note comes from the renderer.
-    "dealer_hedge": Board(_dealer_hedge),
 }
