@@ -87,11 +87,19 @@ with job_lock.acquire("edgar", wait=0) as got:
 """
 
 
+def _child_env() -> dict:
+    """The environment of a spawned child: the package must import there, so PYTHONPATH carries the folder that CONTAINS it."""
+    env = dict(os.environ)
+    pkg_root = str(Path(job_lock.__file__).resolve().parents[2])
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (pkg_root, env.get("PYTHONPATH"))))
+    return env
+
+
 def _acquire_in_a_child(lock_path, ready, judged, go, result, pause: bool):
     return subprocess.Popen(
         [sys.executable, "-c", _ACQUIRE_SCRIPT, str(lock_path), str(ready), str(judged), str(go), str(result),
          "pause" if pause else "plain"],
-        env=dict(os.environ))
+        env=_child_env())
 
 
 def test_two_acquirers_of_one_stale_lock_never_both_hold_it(rawstore_tmp_db, tmp_path):
