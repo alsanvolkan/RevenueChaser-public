@@ -600,6 +600,8 @@
      "short_bars": 1
     },
     "no_avg_volume": 0,
+    "no_cik": 5,
+    "no_submissions": 0,
     "older_quotes": 0,
     "quote_session": "2026-10-14",
     "short_refetch_refused": 0,
