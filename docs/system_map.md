@@ -69,7 +69,7 @@ writers are `data_architecture.md`'s subject; this is only "who reaches for the 
 | `core/reporting_common.py` | Every board: the filter kit, the artifact writers, the health banner |
 | `core/html_safe.py` | The escape helpers: every `module_*/report.py`, plus `core/funnel.py`, `core/reporting_common.py` and `app/logview.py` |
 | `core/static/` | `rc_filters.js` / `rc_filters.css`, read and inlined into every board's page by `core/reporting_common.py` |
-| `core/templating.py` | The pages `app/` renders (`dashboard.py`, `logview.py`, `dealer_hedge.py`, `runners.py`) |
+| `core/templating.py` | The pages `app/` renders (`dashboard.py`, `logview.py`, `runners.py`) |
 
 ## Data flow: providers → jobs → stores → boards
 
@@ -285,8 +285,6 @@ file.
   stays in `core/`: each has more than one reader. The two that had a single importer have
   moved beside it (#18): `core/sector_rules.py` -> `module_asymmetric_growth/sector_rules.py`,
   and `core/ohlc_cache.py` -> `module_swing_potential/ohlc_cache.py`.
-- `templates/dealer_hedge.html.j2` is one page's template in the shared shell directory;
-  its only renderer is `app/dealer_hedge.py`. Cosmetic — **not worth its own issue**.
 - `app/universe_cli.py` is the universe-refresh CLI living in the app shell while the
   universe belongs to `classification` (`core/universe_fetch.py`). **Not worth its own
   issue**; fold it into the next universe change.

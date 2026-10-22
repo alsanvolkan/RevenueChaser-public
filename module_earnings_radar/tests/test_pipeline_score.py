@@ -7,7 +7,7 @@ These tests drive _score end-to-end with a fake client to ensure string prices
 are coerced and a card is always produced.
 """
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline, _safe_float
-from RevenueChaser.core.models.events import TradeCard
+from RevenueChaser.module_earnings_radar.models import TradeCard
 from RevenueChaser.module_earnings_radar.rules import rule5_positioning
 
 import pytest

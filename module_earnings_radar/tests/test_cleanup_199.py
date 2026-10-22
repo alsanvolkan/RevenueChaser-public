@@ -25,7 +25,7 @@ class TestDeadCodeGone:
         assert not hasattr(classifier, "get_cluster_metrics")
 
     def test_rule_result_weight_value(self):
-        from RevenueChaser.core.models.events import RuleResult
+        from RevenueChaser.module_earnings_radar.models import RuleResult
         assert not hasattr(RuleResult, "weight_value")
 
     def test_nrc_latest_constant(self):

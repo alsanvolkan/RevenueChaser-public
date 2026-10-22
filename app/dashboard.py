@@ -33,7 +33,6 @@ from RevenueChaser.core.reporting_common import payload_path
 from . import runners
 from . import jobs
 from . import logview
-from . import dealer_hedge
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("dashboard")
@@ -226,8 +225,6 @@ TABS = [
     {"type": "header", "label": "Research"},
     {"type": "tab", "key": "module_earnings_radar", "label": "Earnings Radar", "url": "/view/module_earnings_radar", "sub": True},
     {"type": "tab", "key": "module_spx_gamma", "label": "SPX Gamma", "url": "/view/module_spx_gamma", "sub": True},
-    # Read-only teaching page (app/dealer_hedge.py): no data, no Fetch, no Refresh, no data date.
-    {"type": "tab", "key": "dealer_hedge", "label": "Dealer Hedge (demo)", "url": "/view/dealer_hedge", "sub": True},
     {"type": "tab", "key": "module_oipd", "label": "Implied Probability", "url": "/view/module_oipd", "sub": True},
     {"type": "tab", "key": "module_financials", "label": "Financials", "url": "/view/module_financials", "sub": True},
     {"type": "tab", "key": "module_uw_interaction", "label": "UW Interaction (lab)", "url": "/view/module_uw_interaction", "sub": True},
@@ -331,8 +328,6 @@ def view(mod: str):
         return _view_uw_interaction()
     if mod == "module_discord":
         return _view_discord()
-    if mod == "dealer_hedge":
-        return dealer_hedge.render_page()
     if mod == "logs":
         return logview.render_page(logview.page_payload())
     f = _module_file(mod)

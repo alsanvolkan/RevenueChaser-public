@@ -16,7 +16,7 @@ recency-aware without changing the −100..+100 ladder:
 
 Unavailable below 3 usable quarters (never 0).
 """
-from RevenueChaser.core.models.events import RuleResult
+from RevenueChaser.module_earnings_radar.models import RuleResult
 from RevenueChaser.core.config import (
     R2_MAX_WINDOW as MAX_WINDOW,
     R2_RECENT_QUARTERS as RECENT_QUARTERS,

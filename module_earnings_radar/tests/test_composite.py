@@ -10,7 +10,7 @@ from RevenueChaser.module_earnings_radar.composite import (
     recommend_options_structure,
     select_action,
 )
-from RevenueChaser.core.models.events import RuleResult
+from RevenueChaser.module_earnings_radar.models import RuleResult
 
 
 def _rr(score_val, available=True, coverage=0.6):

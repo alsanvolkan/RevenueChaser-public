@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from typing import Optional
 
-from RevenueChaser.core.models.events import RuleResult
+from RevenueChaser.module_earnings_radar.models import RuleResult
 
 # The four fields the score needs; the other five only widen the coverage.
 REQUIRED = ("eps_trend_current", "eps_trend_30d", "eps_rev_up_30d", "eps_rev_down_30d")

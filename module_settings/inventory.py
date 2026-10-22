@@ -202,8 +202,12 @@ def _max_date(*pairs: tuple[str, str]) -> str:
     return max(dates) if dates else DASH
 
 
-def _missing(tickers: list[str], table: str) -> int | None:
-    """Classification-universe tickers with no row in ``table`` (cross-file safe)."""
+def _missing(tickers: list[str], table: str, exclude: set[str] | None = None) -> int | None:
+    """Classification-universe tickers with no row in ``table`` (cross-file safe).
+
+    ``exclude`` holds upper-cased tickers the caller has already settled as absent on purpose;
+    they are not holes (#381, DF97: a recorded 10-K / 20-F miss has no ``chain_filings`` row).
+    """
     if not _table_exists(table):
         return None
     try:
@@ -212,7 +216,8 @@ def _missing(tickers: list[str], table: str) -> int | None:
         _record(table, "_missing", exc)
         return None
     present = {r.get("ticker") for r in rows}
-    return sum(1 for t in tickers if t not in present)
+    skip = exclude or frozenset()
+    return sum(1 for t in tickers if t not in present and str(t).upper() not in skip)
 
 
 def _index_last_change() -> tuple[str, int | None]:
@@ -952,6 +957,24 @@ def _corpus_note(tickers: list[str]) -> str:
     return note
 
 
+def _recorded_misses() -> set[str] | None:
+    """#381 (DF97): the tickers the Value Chain settled as "no usable annual filing", upper-cased.
+
+    Store only, read through the function-level import ``_corpus_note`` already uses, so Settings
+    gains no module-level dependency on a board package. ``None`` when the store cannot be read:
+    the corpus holes then keep their old meaning rather than silently dropping to 0.
+    """
+    from RevenueChaser.module_value_chain import engine as vc_engine
+
+    if not _table_exists("chain_meta"):
+        return None
+    try:
+        return {ticker.upper() for ticker in vc_engine.stored_misses()}
+    except Exception as exc:  # noqa: BLE001 - a failed read must not shrink the count
+        _record("chain_meta", "_recorded_misses", exc)
+        return None
+
+
 def _documents_note() -> str:
     """D16 (#299): stored documents per form and the newest ``fetched_at``. Store only."""
     if not _table_exists("edgar_documents"):
@@ -1041,6 +1064,7 @@ def _collect(now: datetime) -> dict:
     master_age = _identity_master_age(now)
 
     corpus_note = _corpus_note(tickers)
+    recorded_misses = _recorded_misses()  # #381 (DF97): settled names are not corpus holes
 
     profiles_count = _count("relatedness_profiles")
     filings_count = _count("chain_filings")
@@ -1091,8 +1115,8 @@ def _collect(now: datetime) -> dict:
             "rows": _sum_counts(["chain_filings", "edgar_documents"]),
             "last_date": _max_date(("chain_filings", "filed"),
                                    ("edgar_documents", "filed")),
-            "holes": _missing(tickers, "chain_filings"),
-            "hole_label": "no filing",
+            "holes": _missing(tickers, "chain_filings", exclude=recorded_misses),
+            "hole_label": "no filing, excluding recorded misses" if recorded_misses is not None else "no filing",
             "fetch": {"route": "/run/edgar-sync", "label": "Fetch 10-K sync"},
             "note": "; ".join(n for n in (corpus_note, _documents_note()) if n),
         },

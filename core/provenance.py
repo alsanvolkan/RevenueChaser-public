@@ -210,8 +210,6 @@ RESOLVERS = {
     "module_uw_interaction": None,
     # the dashboard's own log files: no downloaded dataset
     "logs": None,
-    # static teaching page (Black-Scholes in the page itself): no downloaded dataset
-    "dealer_hedge": None,
 }
 
 
