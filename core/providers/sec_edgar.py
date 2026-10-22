@@ -357,11 +357,14 @@ _CIK_MAP_LOCK = threading.Lock()
 
 
 def _cik_map() -> dict:
-    """ticker -> ``{cik, name}`` from the stored SEC exchange file (#301 D21).
+    """ticker -> ``{cik, name}``, from the first source that answers (#301 D21).
 
-    The file is pulled once a night by RC-Daily-Bars and ``sec_company_tickers`` is retired, so this reads the
-    stored rows. A store with no exchange file yet falls back to SEC's ``company_tickers.json`` read-only: the
-    retired table is never written again (a caller may still need a CIK before the first nightly pull).
+    1. ``sec_exchange_file`` — the rows RC-Daily-Bars stores once a weekday night. The normal path.
+    2. ``sec_company_tickers`` — **retired**: nothing writes it any more, but it still holds every ticker the
+       old writer ever saw, so a store without the new file keeps resolving CIKs without a download.
+    3. ``company_tickers.json`` — one read-only SEC request, for a store that has neither.
+
+    The retired table is never written again. The map is built once per process (see ``reset_cik_map``).
     """
     from .. import sec_files
 

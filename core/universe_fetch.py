@@ -488,7 +488,7 @@ def _sec_member_list() -> tuple[list[dict], str | None]:
     if not rows:
         # Nothing stored yet: a fresh install, a restored store, or any run before the first nightly. Falling
         # back to the pull keeps the universe buildable instead of returning an empty member list (#301).
-        res = sec.exchange_map()
+        res = sec.exchange_map(attempts=1)        # one try: this runs inside the universe write lock
         if not res.ok:
             return [], res.error or "SEC ticker map failed"
         rows = res.rows

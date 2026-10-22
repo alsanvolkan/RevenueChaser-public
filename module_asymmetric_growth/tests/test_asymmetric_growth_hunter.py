@@ -6,6 +6,7 @@ import pytest
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.universe import classification_universe
 from RevenueChaser.core import universe_fetch as uf
+from RevenueChaser.core.identity.sources import SourceResult
 from RevenueChaser.module_asymmetric_growth import engine as agh
 
 
@@ -200,12 +201,22 @@ def _seed_exchange_file(*pairs, run_at=1.0):
 
 
 def _fake_sec_map(monkeypatch, *pairs, status="ok", error=None):
-    """Seed the stored SEC exchange file (no network); a failed pull stored nothing.
+    """Seed the stored SEC exchange file, or set up the "no member list at all" case.
 
-    The universe job no longer pulls the file, so this is the writer's output the reader sees."""
+    The universe job reads the stored rows and only falls back to a pull when nothing is stored (#301 D21), so
+    ``status="error"`` must do both: store nothing AND make that fallback fail. Otherwise the test would reach
+    the real ``exchange_map`` and its result would depend on the network.
+    """
+    from RevenueChaser.core.identity.sources import sec
     calls: list[int] = []
     if status == "ok":
         _seed_exchange_file(*pairs)
+    else:
+        def failed_pull(*a, **k):
+            calls.append(1)
+            return SourceResult("sec_exchange", "error", [], error or "SEC ticker map failed")
+
+        monkeypatch.setattr(sec, "exchange_map", failed_pull)
     return calls
 
 
@@ -353,7 +364,7 @@ def test_a_failed_sec_map_keeps_the_stored_universe_and_writes_nothing(monkeypat
     assert {r["ticker"] for r in rows} == {"AAA", "BBB"}
     assert {r["ticker"] for r in rawstore.query("SELECT ticker FROM equity_universe")} == {"AAA", "BBB"}
     assert screen_calls == [], "no point pulling Yahoo when the member list is unavailable"
-    assert "stored" in stats["sec_error"]
+    assert stats["sec_error"], "a member list that cannot be built must be reported"
     assert stats["universe_refreshed_by"] == "Swing Potential"     # the stored provenance, unchanged
     assert agh._load_universe_meta()["generated_at"] == "2026-08-24T10:00:00+00:00"
 
@@ -367,7 +378,7 @@ def test_a_failed_sec_map_with_nothing_stored_writes_nothing(monkeypatch, rawsto
 
     assert rows == []
     assert rawstore.count("equity_universe") == 0
-    assert "stored" in stats["sec_error"]
+    assert stats["sec_error"], "nothing stored and a failed fallback pull is still no member list"
 
 
 def test_an_sec_map_with_no_listed_rows_is_a_failure(monkeypatch, rawstore_tmp_db):

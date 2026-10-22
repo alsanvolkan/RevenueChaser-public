@@ -178,7 +178,7 @@ network.
 | `rotation_holdings` | Per-ETF holdings + RS rows for today | raw | same-day |
 | `tradewhisperer_*` | Legacy TradeWhisperer caches — board removed 2026-09-30; rows kept untouched, no longer in the MANIFEST | raw | — |
 | `equity_universe` | Shared US universe (members = the SEC exchange file's Nasdaq / NYSE / CBOE rows, with Yahoo market data joined on, #264) + provenance snapshot | raw | refreshed on scan |
-| `sec_company_tickers` | SEC CIK map (ticker → cik/name); **retired** (#301 D21), nothing writes it — the readers use `sec_exchange_file` | raw | frozen |
+| `sec_company_tickers` | SEC CIK map (ticker → cik/name); **retired** (#301 D21): nothing writes it, and the readers use `sec_exchange_file` first — it stays as the CIK map's second source, ahead of a live `company_tickers.json` read | raw | frozen |
 | `sec_company_sic` | SIC per CIK — the fallback behind the SEC submissions code for the SIC sector step (#272) | raw | until refetched |
 | `comov_runs` / `comov_nodes` / `comov_members` / `comov_lag` | Co-movement board: dated return-cluster runs, clusters, members; groups formed a quarter earlier with their held-out-quarter test | raw | per Fetch run (latest as_of wins) |
 | `chain_filings` / `chain_mentions` / `chain_meta` | Value Chain board: latest 10-K/20-F Item 1/4 text + supplier/customer edges | edgar | per fetch (resumable by ticker) |

@@ -228,20 +228,32 @@ class TestIdentityRun:
             "the retired table must be left exactly as it was")
         assert _master()["AAPL"]["cik"] == "320193"
 
-    def test_nothing_stored_and_the_network_down_is_still_a_partial_run(self, seeded, provider_routes):
-        """#301 D21, half two: an EMPTY sec_exchange_file is an error, not a silent ok. "Nothing stored yet"
-        must never be read as "no company has a CIK", so the run is partial and the stored map survives."""
+    def test_an_emptied_exchange_file_is_partial_and_never_falls_back_to_the_network(self, seeded,
+                                                                                     provider_routes):
+        """#301 D21, half two of the split partial contract.
+
+        An empty ``sec_exchange_file`` is an error, not a silent ok: "nothing stored yet" must never be read as
+        "no company has a CIK". The run must be partial, must make NO request of its own (``exchange_source``
+        is the one reader that deliberately does not fall back — ``_sec_member_list`` falls back to a live pull
+        and ``_cik_map`` to the retired table, this one must not), and the previous run's rows must carry the
+        CIKs through, which is what ``identity_source_cache`` holds them for.
+        """
         import RevenueChaser.core.rawstore as rawstore
+        first = seeded.run_job("/run/identity")                 # a good run fills the source cache
+        assert first.ok, seeded.logs()
+        assert _master()["AAPL"]["cik"] == "320193"
+
         rawstore.query("DELETE FROM sec_exchange_file")
-        rawstore.write_rows("sec_company_tickers", [{"ticker": "GONE", "cik": "5", "name": "Delisted Co"},
-                                                    {"ticker": "AAPL", "cik": "320193", "name": "Apple"}])
         provider_routes.route("/files/company_tickers_exchange.json", payload={"error": "down"}, status=500)
         result = seeded.run_job("/run/identity")
+
         assert result.ok, seeded.logs()
         assert "sources ok 6/7" in result.message, result.message
-        assert _q("SELECT status FROM identity_runs")[0]["status"] == "partial"
-        assert {r["ticker"] for r in _q("SELECT ticker FROM sec_company_tickers")} == {"GONE", "AAPL"}
-        assert _master()["AAPL"]["cik"] == "320193", "the stored map must survive the failure"
+        assert _q("SELECT status FROM identity_runs ORDER BY started_at DESC")[0]["status"] == "partial"
+        assert provider_routes.requests("/files/company_tickers_exchange.json") == [], (
+            "exchange_source must not reach the network when nothing is stored (#301 D21)")
+        assert _master()["AAPL"]["cik"] == "320193", (
+            "last run's cached rows must carry the CIK through an empty file")
 
     def test_a_list_name_takes_the_lists_sector_and_keeps_uws_industry(self, seeded):
         assert seeded.run_job("/run/identity").ok
