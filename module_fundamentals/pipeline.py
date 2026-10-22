@@ -462,13 +462,11 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         "above_200d": (price > ind["sma200"]) if (price is not None and ind.get("sma200") is not None) else None,
     }
 
-    vendor_industry = info.get("industry") or ""
     # R5 (#88), #266: the sector and industry are the spine's (UW's two levels); the vendor ``.info`` ones never
-    # fill the row's own fields. The theme keyword matcher keeps the vendor's free-text industry. ``gics`` is read
-    # above, before EDGAR (#386 F1: the sector gate).
+    # fill the row's own fields. ``gics`` is read above, before EDGAR (#386 F1: the sector gate). The theme labels
+    # are the pinned NMF medium run (C21, #383).
     name = info.get("longName") or info.get("shortName") or row.get("name") or ""
-    themes = assign_themes(gics.sector, vendor_industry, name,
-                           info.get("longBusinessSummary") or "", ticker=ticker)
+    themes = assign_themes(ticker)
 
     # #386 F1: the anchor year's period end, the date the Quality/Quality-growth figures are read from.
     ai = fiscal_year.anchor(annual)

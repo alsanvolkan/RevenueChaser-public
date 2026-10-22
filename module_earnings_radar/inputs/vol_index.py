@@ -1,7 +1,7 @@
 """E0e, D28 (#305, the Cboe part): the daily volatility indices, stored by trading date.
 
 Cboe's public daily-price CSV per symbol (``https://cdn-api.cboe.com/api/global/us_indices/daily_prices/<SYMBOL>_History.csv``,
-columns ``DATE,OPEN,HIGH,LOW,CLOSE``) — one request per symbol: 7 requests of the Cboe cap of 20. The base is the host
+columns ``DATE,OPEN,HIGH,LOW,CLOSE`` or ``DATE,<SYMBOL>`` for the close-only indices) — one request per symbol: 7 requests of the Cboe cap of 20. The base is the host
 that answers directly (``cdn.cboe.com`` sends a 307 to it) and the GET still follows a redirect, in case Cboe moves the
 file again. Plus MOVE, which only Yahoo serves (``^MOVE`` daily bars through the repo's ``yf.download`` helper, one
 ``period="max"`` download sliced locally; the existing yfinance budget, 1 call).

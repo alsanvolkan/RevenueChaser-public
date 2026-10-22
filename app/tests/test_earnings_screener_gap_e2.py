@@ -69,7 +69,7 @@ def run(monkeypatch, rawstore_tmp_db):
                                   "by_reason": {}, "excluded": []}
 
         def run(self, use_preselect=True):
-            from RevenueChaser.core.models.events import TradeCard
+            from RevenueChaser.module_earnings_radar.models import TradeCard
             return [TradeCard(ticker="AAA", earnings_date=date(2026, 10, 8), earnings_time="AMC")]
 
     monkeypatch.setattr(runners, "EarningsPipeline", Pipe)

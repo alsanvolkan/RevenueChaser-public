@@ -94,7 +94,7 @@ def test_a_partial_screener_answer_marks_the_recorded_run_partial(rawstore_tmp_d
     from RevenueChaser.core import rawstore
     from RevenueChaser.module_earnings_radar import history as er_history
     from RevenueChaser.module_earnings_radar.pipeline import nrc_from_card
-    from RevenueChaser.core.models.events import TradeCard
+    from RevenueChaser.module_earnings_radar.models import TradeCard
     card = TradeCard(ticker="AAA", earnings_date=date(2026, 10, 8), earnings_time="AMC")
     nrc = {"AAA": nrc_from_card(card, set())}
     er_history.record([card], nrc, run_id="r1", run_at=COMPLETE, uw_health=HEALTHY,
@@ -109,7 +109,7 @@ def test_an_ok_screener_leaves_the_run_note_alone(rawstore_tmp_db):
     from RevenueChaser.core import rawstore
     from RevenueChaser.module_earnings_radar import history as er_history
     from RevenueChaser.module_earnings_radar.pipeline import nrc_from_card
-    from RevenueChaser.core.models.events import TradeCard
+    from RevenueChaser.module_earnings_radar.models import TradeCard
     card = TradeCard(ticker="AAA", earnings_date=date(2026, 10, 8), earnings_time="AMC")
     nrc = {"AAA": nrc_from_card(card, set())}
     er_history.record([card], nrc, run_id="r1", run_at=COMPLETE, uw_health=HEALTHY,
@@ -120,7 +120,7 @@ def test_an_ok_screener_leaves_the_run_note_alone(rawstore_tmp_db):
 
 
 def test_the_board_marks_n_a_liquidity_zero_and_carries_the_new_drawer_fields():
-    from RevenueChaser.core.models.events import TradeCard
+    from RevenueChaser.module_earnings_radar.models import TradeCard
     from RevenueChaser.module_earnings_radar.report import export_html
     card = TradeCard(ticker="AAA", name="A Co", cluster="Technology", earnings_date=date(2026, 8, 11),
                      liquidity_label="N/A", trade_read="NEUTRAL", trade_read_reason="Mixed — no clear edge",

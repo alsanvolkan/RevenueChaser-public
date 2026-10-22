@@ -114,11 +114,7 @@
       "momentum"
      ],
      "sector": "Technology",
-     "themes": [
-      "Software",
-      "Cloud Computing",
-      "Infra / Reshoring"
-     ],
+     "themes": [],
      "ticker": "UP3"
     },
     {
@@ -233,11 +229,7 @@
       "momentum"
      ],
      "sector": "Technology",
-     "themes": [
-      "Software",
-      "Cloud Computing",
-      "Infra / Reshoring"
-     ],
+     "themes": [],
      "ticker": "UP1"
     },
     {
@@ -352,9 +344,7 @@
       "quality"
      ],
      "sector": "Utilities",
-     "themes": [
-      "Other"
-     ],
+     "themes": [],
      "ticker": "BELOW50"
     },
     {
@@ -469,9 +459,7 @@
       "quality"
      ],
      "sector": "Utilities",
-     "themes": [
-      "Other"
-     ],
+     "themes": [],
      "ticker": "FAR"
     },
     {
@@ -586,9 +574,7 @@
       "momentum"
      ],
      "sector": "Healthcare",
-     "themes": [
-      "Biotechnology"
-     ],
+     "themes": [],
      "ticker": "UP2"
     }
    ],
@@ -1469,11 +1455,7 @@
      "sector": "Technology",
      "stop": 112.41,
      "target": 126.17,
-     "themes": [
-      "Software",
-      "Cloud Computing",
-      "Infra / Reshoring"
-     ],
+     "themes": [],
      "ticker": "UP3"
     },
     {
@@ -1635,11 +1617,7 @@
      "sector": "Technology",
      "stop": 95.28,
      "target": 106.96,
-     "themes": [
-      "Software",
-      "Cloud Computing",
-      "Infra / Reshoring"
-     ],
+     "themes": [],
      "ticker": "UP1"
     },
     {
@@ -1801,9 +1779,7 @@
      "sector": "Utilities",
      "stop": 83.86,
      "target": 94.15,
-     "themes": [
-      "Other"
-     ],
+     "themes": [],
      "ticker": "NOEDGAR"
     },
     {
@@ -1965,9 +1941,7 @@
      "sector": "Healthcare",
      "stop": 72.43,
      "target": 81.34,
-     "themes": [
-      "Biotechnology"
-     ],
+     "themes": [],
      "ticker": "UP2"
     }
    ],
