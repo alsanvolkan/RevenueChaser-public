@@ -16,7 +16,7 @@ from .engines import (
     three_statement_engine,
 )
 from . import history as fin_history
-from .peers import select_peers
+from .peers import select_peers, target_row
 from .reporting.html_builder import build_report_html
 from RevenueChaser.core import vendor_data
 from RevenueChaser.core.providers import cache as cache_manager
@@ -135,9 +135,14 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
                     used_peers = list(peers)
                 else:
                     # FIN-3: the peers are the spine's (industry at the nearest market cap, then sector), never
-                    # a static list. A short ladder is reported, not silently padded.
-                    used_peers = select_peers(ticker, _spine.classification_universe_rows())
-                    if len(used_peers) < PEER_K:
+                    # a static list. A short ladder is reported, not silently padded — and a target the spine
+                    # does not carry is not a short ladder: it is the reason there is no ladder at all.
+                    spine_rows = _spine.classification_universe_rows()
+                    used_peers = select_peers(ticker, spine_rows)
+                    if target_row(ticker, spine_rows) is None:
+                        warnings.append(f"comps: {ticker} is not in the spine universe (below the market-cap "
+                                        f"floor, or an excluded security type), so no peers were picked")
+                    elif len(used_peers) < PEER_K:
                         warnings.append(f"comps: {len(used_peers)} of {PEER_K} peers — the spine industry and "
                                         f"sector have no more names")
                 results["modules"]["comps"] = comps_engine.run_comps(financials, used_peers, fetch_info=_peer_info)

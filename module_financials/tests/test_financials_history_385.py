@@ -117,7 +117,7 @@ def test_the_row_carries_the_data_date_the_warnings_and_quick_remarks(results):
 def test_the_header_carries_model_version_params_and_context(results):
     _record(results)
     (head,) = _headers()
-    assert head["model_version"] == fin_history.model_version() and head["model_version"].startswith("1+")
+    assert head["model_version"] == fin_history.model_version() and head["model_version"].startswith("2+")
     params = json.loads(head["params"])
     assert params["modules"] == MODULES and params["defaults"]["TERMINAL_GROWTH"] == 0.025
     ctx = json.loads(head["context"])
@@ -128,6 +128,15 @@ def test_model_version_changes_with_a_default_assumption(monkeypatch):
     before = fin_history.model_version()
     from RevenueChaser.module_financials import config
     monkeypatch.setattr(config, "TERMINAL_GROWTH", 0.03)
+    assert fin_history.model_version() != before
+
+
+def test_the_measured_tax_rate_band_is_part_of_the_model_version(monkeypatch):
+    """Review S-6: the band decides whether a stored rate counts as measured, so it shapes the stored numbers."""
+    from RevenueChaser.module_financials.engines import _inputs
+    assert fin_history.effective_config()["MEASURED_TAX_RATE_BAND"] == [0.0, 0.60]
+    before = fin_history.model_version()
+    monkeypatch.setattr(_inputs, "MEASURED_TAX_RATE_BAND", (0.0, 0.50))
     assert fin_history.model_version() != before
 
 

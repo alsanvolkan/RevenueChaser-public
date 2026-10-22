@@ -11,7 +11,7 @@ from ..config import DEFAULT_TAX_RATE, sector_defaults, to_float
 
 # A measured tax rate is only believable inside this band: a reported "Tax Provision" can be negative (a tax
 # benefit) or larger than pretax income (a one-off, a valuation-allowance release), and such a ratio is not the
-# firm's tax rate. Outside the band the rate is unknown, so the sector default stands and the report says so.
+# firm's tax rate. Outside the band the rate is unknown, so the single default stands and the report says so.
 MEASURED_TAX_RATE_BAND = (0.0, 0.60)
 
 
@@ -26,10 +26,13 @@ def pick(assumptions: dict, key: str, default):
 
 
 def default_tax_rate(sector: str | None) -> float:
-    """The sector's own rate when its band carries one, else the single default.
+    """The tax rate the models use when neither the user nor the statements give one.
 
-    ``SECTOR_DEFAULTS`` is READ here, never written: a sector band without a ``tax_rate`` key takes
-    ``DEFAULT_TAX_RATE``.
+    The sector rung of this ladder is READ but NOT POPULATED: no shipped band carries a ``tax_rate`` key —
+    ``config.SECTOR_DEFAULTS`` and ``config/sector_defaults.json`` hold ``wacc_range``, ``growth_range``,
+    ``ebitda_margin_range`` and ``exit_multiple_range`` only — so every sector, and every unclassified name,
+    takes ``DEFAULT_TAX_RATE``. The lookup is kept because a band that gains a rate then needs no code change;
+    until one does, the report labels the fallback ``default`` (and never as a sector's own rate).
     """
     rate = to_float(sector_defaults(sector).get("tax_rate"))
     return DEFAULT_TAX_RATE if rate is None else rate
@@ -40,7 +43,7 @@ def statement_tax_rate(statement: dict) -> float | None:
 
     Unknown, not a rate: either line missing; a negative or zero pretax income (the ratio flips or explodes);
     and a ratio outside ``MEASURED_TAX_RATE_BAND`` — a negative provision (a tax benefit) or a provision larger
-    than pretax income. The caller then falls back to the sector default.
+    than pretax income. The caller then falls back to the default (no sector band carries a rate today).
     """
     pretax = to_float((statement or {}).get("pretax_income"))
     provision = to_float((statement or {}).get("tax_provision"))
@@ -52,12 +55,13 @@ def statement_tax_rate(statement: dict) -> float | None:
 
 
 def effective_tax_rate(assumptions: dict, statement: dict, sector: str | None) -> tuple[float, str]:
-    """``(rate, source)``: the user's (0 included), then the statements, then the sector default.
+    """``(rate, source)``: the user's (0 included), then the statements, then the one default.
 
     The statement rung is a stored ``tax_rate`` when the payload has one, else ``tax_provision / pretax_income``
-    inside ``MEASURED_TAX_RATE_BAND`` (FIN-3); an implausible ratio is unknown, so it takes the sector default and
-    is labelled ``default``. ``source`` is ``assumption`` / ``statements`` / ``default``; the report labels the
-    default (FIN-9 B). A rate the user typed is their number, band or no band — a typed 0 is a 0.
+    inside ``MEASURED_TAX_RATE_BAND`` (FIN-3); an implausible ratio is unknown, so it takes the default and is
+    labelled ``default`` — the sector lookup of :func:`default_tax_rate` is not populated, so that default is
+    ``DEFAULT_TAX_RATE`` for every sector. ``source`` is ``assumption`` / ``statements`` / ``default``; the report
+    labels the default (FIN-9 B). A rate the user typed is their number, band or no band — a typed 0 is a 0.
     """
     given = to_float((assumptions or {}).get("tax_rate"))
     if given is not None:

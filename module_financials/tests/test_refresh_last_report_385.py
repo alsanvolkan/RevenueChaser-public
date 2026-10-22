@@ -116,6 +116,37 @@ def test_a_refresh_renders_the_last_stored_runs_comps(rawstore_tmp_db, tmp_path,
     assert not [w for w in res["results"]["warnings"] if "comps" in w]
 
 
+# ── the data date is the market's day, not UTC's (review S-4) ─────────────────────────────────────────
+# 2026-10-07 02:00 UTC = 2026-10-06 22:00 ET: the UTC date is already the next day, the New York one is not.
+LATE_ET = datetime(2026, 10, 7, 2, 0, tzinfo=timezone.utc).timestamp()
+
+
+def test_the_fetch_date_is_the_new_york_date_not_the_utc_one(rawstore_tmp_db):
+    """A 22:00 ET Fetch is already Wednesday in UTC; the board's "as of" is the session's Tuesday.
+
+    The stamp is the one run.py copies from ``ticker_payload_cache.fetched_at_iso``, written in UTC. Read as
+    UTC it labelled a Tuesday-evening Fetch Wednesday, a day the market had not traded.
+    """
+    results = _results("AAA")
+    results["financials"]["fetched_at_iso"] = "2026-10-07T02:00:00+00:00"
+    fin_history.record(results, ticker="TEST", run_id="late", run_at=LATE_ET, modules=["comps"])
+
+    report = fin_history.last_report("TEST")
+    assert report["data_fetched_at"] == "2026-10-07T02:00:00+00:00"      # stored as it was stamped
+    assert report["as_of"] == "2026-10-06"                              # read in New York
+
+
+def test_a_run_with_no_stamp_dates_from_its_moment_in_new_york(rawstore_tmp_db):
+    """The fallback (the run's own moment) is read the same way: 02:00 UTC is still the previous NY day."""
+    results = _results("AAA")
+    results["financials"].pop("fetched_at_iso")
+    fin_history.record(results, ticker="TEST", run_id="late", run_at=LATE_ET, modules=["comps"])
+
+    report = fin_history.last_report("TEST")
+    assert report["data_fetched_at"] is None
+    assert report["as_of"] == "2026-10-06"
+
+
 def test_the_comps_are_labelled_with_the_fetch_date(rawstore_tmp_db, tmp_path, monkeypatch, financials):
     """The label is the stored run's fetch date, not the Refresh's own clock."""
     _record("AAA", run_id="r1")

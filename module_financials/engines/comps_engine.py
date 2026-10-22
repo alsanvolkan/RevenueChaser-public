@@ -101,8 +101,17 @@ def run_comps(financials: dict, peers: list[str],
             "pe": pe_val,
         })
 
-    def _implied(median_mult, target_metric):
+    def _implied(median_mult, target_metric, multiple: str, metric: str):
+        """``median_mult * target_metric``, or None when the target's own metric is not positive.
+
+        A peer multiple is a positive price per unit of EBITDA, revenue or earnings; the same multiple of a
+        LOSS is a negative EV (or a negative per-share value — "Per Share $-1.04"), which is not a valuation.
+        The run says which metric was not positive, once per implied value, so the board's N/A is explained.
+        """
         if median_mult is None or target_metric is None:
+            return None
+        if target_metric <= 0:
+            warnings.append(f"comps: implied {multiple} not computed — the target's {metric} is not positive")
             return None
         return median_mult * target_metric
 
@@ -110,9 +119,9 @@ def run_comps(financials: dict, peers: list[str],
     med_ev_rev = _pct(ev_rev)["p50"]
     med_pe = _pct(pe)["p50"]
 
-    implied_ev_ebitda = _implied(med_ev_ebitda, target_ebitda)
-    implied_ev_rev = _implied(med_ev_rev, target_revenue)
-    implied_equity_pe = _implied(med_pe, target_ni)
+    implied_ev_ebitda = _implied(med_ev_ebitda, target_ebitda, "EV/EBITDA", "EBITDA")
+    implied_ev_rev = _implied(med_ev_rev, target_revenue, "EV/Revenue", "revenue")
+    implied_equity_pe = _implied(med_pe, target_ni, "P/E", "net income")
 
     net_debt = _net_debt(target_debt, target_cash)     # None when either is unknown
 

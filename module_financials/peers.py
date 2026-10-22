@@ -33,11 +33,23 @@ def _nearest(target_cap: float, rows: list[dict], limit: int) -> list[dict]:
     return ranked[:limit]
 
 
+def target_row(ticker: str, rows: list[dict]) -> dict | None:
+    """The universe row the ladder starts from: ``ticker`` with a market cap, else None.
+
+    The precondition of the whole ladder: a name the spine does not carry (below the market-cap floor, or an
+    excluded security type) or one with no cap has no "nearest market cap" to rank peers from, so it gets no
+    peer at all — and the caller says that, rather than reporting an exhausted industry.
+    """
+    wanted = (ticker or "").strip().upper()
+    row = next((r for r in rows if r["ticker"] == wanted), None)
+    return row if row is not None and row.get("market_cap") is not None else None
+
+
 def select_peers(ticker: str, rows: list[dict], k: int = PEER_K) -> list[str]:
     """The ``k`` peer tickers of ``ticker`` from the universe ``rows``; the target is never one of them."""
     wanted = (ticker or "").strip().upper()
-    target = next((r for r in rows if r["ticker"] == wanted), None)
-    if target is None or target.get("market_cap") is None:
+    target = target_row(ticker, rows)
+    if target is None:
         return []
     candidates = [r for r in rows if r["ticker"] != wanted]
 

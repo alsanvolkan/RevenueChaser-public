@@ -97,3 +97,19 @@ def test_a_refresh_never_records(fetch, monkeypatch):
     runners.run_quick_cached(ticker="MSFT")
     assert fetch["no_fetch"] is True
     assert not rawstore.history_db_path().exists() or _headers() == []
+
+
+def test_a_refresh_with_vendor_rows_but_no_raw_cache_still_renders(fetch):
+    """Review nit: the Refresh gate is "nothing stored anywhere", not "no ticker_payload_cache row".
+
+    A Financials Fetch stores its statements in ``vendor_financials`` and, for a closed session, its ``.info``
+    in ``vendor_valuation`` (FIN-5, #385); ``fm_run(no_fetch=True)`` builds its model inputs from those rows.
+    With no raw payload cache row at all, the gate used to answer "nothing stored" and serve a stale board.
+    """
+    from datetime import datetime, timezone
+    from RevenueChaser.core import vendor_data
+
+    vendor_data.record(valuations=[vendor_data.valuation_row_yfinance("MSFT", {"marketCap": 1.0e9})],
+                       run_id="job-1", run_at=datetime(2026, 10, 8, 20, 35, tzinfo=timezone.utc).timestamp())
+    assert runners.run_quick_cached(ticker="MSFT") == runners.QUICK_LATEST
+    assert fetch["no_fetch"] is True and fetch["ticker"] == "MSFT"

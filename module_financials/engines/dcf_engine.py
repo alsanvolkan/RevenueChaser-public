@@ -109,7 +109,8 @@ def run_dcf(financials: dict, assumptions: dict | None = None) -> dict:
     if rev0 is None or rev0 <= 0:
         return {"error": "no revenue in latest year", "warnings": warnings}
 
-    # The user's rate, else the statements' (provision / pretax), else the sector default (FIN-3; labelled, FIN-9 B).
+    # The user's rate, else the statements' (provision / pretax), else the default (FIN-3; labelled, FIN-9 B).
+    # No sector band carries a tax_rate, so that default is DEFAULT_TAX_RATE for every sector (see _inputs).
     tax_rate, tax_rate_source = _effective_tax_rate(a, latest, financials.get("sector"))
 
     margin0 = (ebitda0 / rev0) if ebitda0 is not None else DEFAULT_EBITDA_MARGIN

@@ -10,7 +10,7 @@ Offline: a temp DuckDB, an injected ``get_financials``; the Refresh runs with a 
 from __future__ import annotations
 
 import copy
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -85,6 +85,20 @@ def test_the_vendor_reader_returns_the_fetchs_own_rows(rawstore_tmp_db, tmp_path
     assert vendor_data.read_financials("TEST") == got
     assert (_rows("vendor_financials"), _rows("vendor_valuation")) == stored
     assert vendor_data.read_financials("NOPE") is None
+
+
+def test_a_period_closed_as_absent_is_not_read_as_a_value(rawstore_tmp_db, tmp_path, monkeypatch, financials):
+    """Nit (review): the reader takes 'present' rows only. A newer row that closes a period as absent carries
+    no value, so it must not win the newest-row rule over the present row the Fetch stored."""
+    _fetch(monkeypatch, tmp_path, financials)
+    fm.run("TEST", modules=["dcf"], output="none", run_id="job-q")
+    rawstore.write_rows("vendor_financials", [{
+        "ticker": "TEST", "source": "yfinance", "statement": "income", "report_type": "annual",
+        "period_end": date(2023, 12, 31), "valid_from": date(2026, 10, 9), "status": "absent",
+        "fetched_at": COMPLETE, "run_id": "job-later", "run_at": COMPLETE + 86_400, "payload": {}}])
+
+    latest = vendor_data.read_financials("TEST")["annual"][-1]
+    assert latest.get("revenue") == 1000.0 and latest.get("ebitda") == 300.0
 
 
 # ── the Refresh's model inputs are those rows ───────────────────────────────────────────────────────────────

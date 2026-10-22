@@ -84,7 +84,9 @@ def test_three_statement_tax_rate_source(financials):
 def test_report_shows_default_tax_rate_row(financials):
     f = _without_statement_tax(financials)
     html = _html(f, {"dcf": run_dcf(f), "three_statement": run_three_statement(f)})
-    assert html.count("default 21.0%") == 2               # the DCF WACC panel and the 3-statement panel
+    # The DCF WACC panel and the 3-statement panel. No sector band carries a rate, so the row says so rather
+    # than implying a sector-specific one (review S-2, _inputs.default_tax_rate).
+    assert html.count("default 21.0% (no sector rate)") == 2
 
 
 def test_report_shows_a_measured_tax_rate_without_default(financials):

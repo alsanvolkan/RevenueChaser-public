@@ -347,12 +347,14 @@ def read_financials(ticker: str) -> dict | None:
     that would look like data.
 
     Only ``yfinance`` rows are read: the payload is rebuilt in ``get_financials``' shape, which is what that source
-    was mapped from (a UW row carries neither the balance-sheet fields nor ``.info``).
+    was mapped from (a UW row carries neither the balance-sheet fields nor ``.info``). Only rows whose ``status``
+    is 'present' are read: a change-history row that marks a period absent says the vendor stopped serving it,
+    which is not a value — the writer closes no period today, and the reader does not depend on that staying true.
     """
     ticker = (ticker or "").strip().upper()
     statements = [rawstore._decode_row(STATEMENTS, r) for r in rawstore.query(
         f"SELECT statement, period_end, payload FROM {STATEMENTS} "
-        f"WHERE ticker = ? AND source = 'yfinance' AND report_type = 'annual' "
+        f"WHERE ticker = ? AND source = 'yfinance' AND report_type = 'annual' AND status = 'present' "
         f"QUALIFY ROW_NUMBER() OVER (PARTITION BY statement, period_end ORDER BY run_at DESC) = 1",
         [ticker])]
     valuations = rawstore.query(

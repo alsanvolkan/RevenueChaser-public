@@ -24,6 +24,7 @@ from RevenueChaser.module_financials import peers as peer_ladder
 from RevenueChaser.module_financials.engines.comps_engine import NM, run_comps
 from RevenueChaser.module_financials.engines.dcf_engine import run_dcf
 from RevenueChaser.module_financials.engines.three_statement_engine import run_three_statement
+from RevenueChaser.module_financials.reporting.html_builder import build_report_html
 
 
 def _seed(rows):
@@ -70,6 +71,26 @@ def test_a_short_ladder_is_reported_not_padded(rawstore_tmp_db, tmp_path, monkey
     assert "comps: 1 of 8 peers — the spine industry and sector have no more names" in warnings
 
 
+@pytest.mark.parametrize("rows, case", [
+    ([{"ticker": "OIL1", "market_cap": 1.1e9}], "the spine does not carry the target at all"),
+    ([{"ticker": "TEST", "market_cap": None}, {"ticker": "OIL1", "market_cap": 1.1e9}],
+     "the spine carries it with no market cap"),
+])
+def test_a_target_the_spine_cannot_place_says_why_no_peer_was_picked(rawstore_tmp_db, tmp_path, monkeypatch,
+                                                                    financials, rows, case):
+    """Review S-3: "0 of 8 peers — the industry and sector have no more names" is the wrong story here.
+
+    A target the classification universe leaves out (below the $300M floor, or an excluded security type) has
+    no "nearest market cap" to rank from, so the reader is told that, not that its industry ran dry.
+    """
+    _seed(rows)
+    got, warnings = _run_peers(monkeypatch, tmp_path, financials)
+    assert got == [], case
+    assert ("comps: TEST is not in the spine universe (below the market-cap floor, or an excluded security "
+            "type), so no peers were picked") in warnings, case
+    assert not any("no more names" in w for w in warnings), case
+
+
 def test_exactly_eight_peers_when_the_industry_has_enough(rawstore_tmp_db):
     # 10 names in the target's industry; the two furthest by market cap stay out.
     _seed([{"ticker": "TEST", "market_cap": 1.0e9}] +
@@ -114,6 +135,36 @@ def test_a_peer_with_non_positive_ebitda_reads_nm_and_leaves_the_percentile(fina
     assert len(res["peers"]) == 3                           # the row is not dropped
     assert res["multiples"]["ev_ebitda"]["count"] == 2      # and it is not in the percentile
     assert res["multiples"]["ev_ebitda"]["p50"] == pytest.approx(9.0)
+
+
+# ── a loss-making target gets no implied value, and the run says why (review MUST-1) ──────────────────
+def test_a_loss_making_target_gets_no_implied_value_and_says_why(financials):
+    """A negative EBITDA or net income times the peer median is a negative EV, not a value.
+
+    Unbounded, the board read "Per Share $-1.04": a loss is not a valuation. The implied value is absent
+    (``None``, which the board prints as N/A) and the run's warnings say which metric was not positive.
+    A multiple whose metric IS positive is computed as usual.
+    """
+    f = copy.deepcopy(financials)
+    f["annual"][-1]["ebitda"] = -50.0
+    f["annual"][-1]["net_income"] = -120.0
+
+    def fetch(t):
+        return {"enterpriseValue": 900.0, "ebitda": 100.0, "totalRevenue": 300.0, "trailingPE": 18.0}
+
+    res = run_comps(f, ["AAA", "BBB"], fetch_info=fetch)
+    implied = res["implied"]
+    assert implied["ev_ebitda"] is None and implied["per_share_ev_ebitda"] is None
+    assert implied["equity_pe"] is None and implied["per_share_pe"] is None
+    assert implied["ev_revenue"] == pytest.approx(3000.0)                 # revenue is positive: a real value
+    assert implied["per_share_ev_revenue"] == pytest.approx(2.86)         # (3000 - 140 net debt) / 1000 shares
+    assert ("comps: implied EV/EBITDA not computed — the target's EBITDA is not positive"
+            in res["warnings"])
+    assert ("comps: implied P/E not computed — the target's net income is not positive" in res["warnings"])
+
+    html = build_report_html({"ticker": "TEST", "financials": f, "modules": {"comps": res},
+                              "warnings": res["warnings"]})
+    assert "$-" not in html                                             # no negative valuation reaches the board
 
 
 # ── a Financial Services target is a P/E comp ─────────────────────────────────────────────────────────
