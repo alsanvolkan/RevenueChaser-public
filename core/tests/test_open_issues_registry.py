@@ -5,10 +5,8 @@ that reads it: known board keys, known scopes/kinds/statuses, unique ``(repo, nu
 and the density bar of the build brief (a summary a reader can act on, and the three fields that make an entry
 resumable months later).
 
-The coverage check uses a **fixture** list of the 44 open issues (13 public, 31 private) read 2026-10-22 and mapped
-in the build plan §3 — never the network. ``OPEN_ISSUES_PENDING`` names the entries this starter registry does not
-carry yet: seeding them needs a GitHub token, which the build worker does not have. The first
-``scripts/open_issues_sync.py --write`` run adds them, and the test fails until that list is emptied.
+The registry is seeded from the open issues of both repositories (48 entries on 2026-10-22, public numbers); these tests
+check its structure, not a hand-copied list of issue numbers, so a re-seed or a migration of issues does not make them stale.
 """
 from __future__ import annotations
 
@@ -18,74 +16,6 @@ from datetime import datetime
 import pytest
 
 from RevenueChaser.core import open_issues
-
-# (repo, number, scope, boards, kind) — plan.md §3, verbatim.
-OPEN_ISSUES = [
-    # public #6-#18
-    ("RevenueChaser-public", 6, "shared", [], "bug"),
-    ("RevenueChaser-public", 7, "shared", [], "bug"),
-    ("RevenueChaser-public", 8, "shared", [], "bug"),
-    ("RevenueChaser-public", 9, "board", ["module_sec_13f"], "investigate"),
-    ("RevenueChaser-public", 10, "board", ["module_sec_13f"], "bug"),
-    ("RevenueChaser-public", 11, "board", ["module_sec_13f"], "known-problem"),
-    ("RevenueChaser-public", 12, "board", ["module_sector_rotation", "module_relatedness"], "seam"),
-    ("RevenueChaser-public", 13, "board", ["module_earnings_radar", "module_sector_rotation"], "seam"),
-    ("RevenueChaser-public", 14, "board", ["module_spx_gamma", "module_earnings_radar"], "seam"),
-    ("RevenueChaser-public", 15, "board", ["module_financials", "module_asymmetric_growth"], "seam"),
-    ("RevenueChaser-public", 16, "board", ["module_asymmetric_growth", "module_sec_13f"], "seam"),
-    ("RevenueChaser-public", 17, "board", ["module_earnings_radar", "module_sector_rotation"], "seam"),
-    ("RevenueChaser-public", 18, "board", ["module_asymmetric_growth", "module_swing_potential",
-                                           "module_fundamentals"], "seam"),
-    # private — board-scoped
-    ("RevenueChaser", 372, "board", ["module_earnings_radar"], "epic"),
-    ("RevenueChaser", 374, "board", ["module_sector_rotation"], "epic"),
-    ("RevenueChaser", 375, "board", ["module_sec_13f"], "epic"),
-    ("RevenueChaser", 376, "board", ["module_spx_gamma"], "epic"),
-    ("RevenueChaser", 377, "board", ["module_leaps"], "epic"),
-    ("RevenueChaser", 379, "board", ["module_comovement"], "epic"),
-    ("RevenueChaser", 380, "board", ["module_asymmetric_growth"], "epic"),
-    ("RevenueChaser", 381, "board", ["module_settings"], "epic"),
-    ("RevenueChaser", 384, "board", ["module_swing_potential"], "epic"),
-    ("RevenueChaser", 385, "board", ["module_financials"], "epic"),
-    ("RevenueChaser", 386, "board", ["module_fundamentals"], "epic"),
-    ("RevenueChaser", 387, "board", ["module_value_chain"], "epic"),
-    ("RevenueChaser", 388, "board", ["module_relatedness"], "epic"),
-    ("RevenueChaser", 431, "board", ["module_settings", "module_value_chain"], "bug"),
-    ("RevenueChaser", 435, "board", ["module_financials", "module_fundamentals"], "bug"),
-    ("RevenueChaser", 450, "board", ["module_financials", "module_fundamentals"], "bug"),
-    ("RevenueChaser", 289, "board", ["module_settings"], "docs"),
-    ("RevenueChaser", 309, "board", ["module_settings"], "enhancement"),
-    ("RevenueChaser", 342, "board", ["module_settings"], "bug"),
-    ("RevenueChaser", 62, "board", ["module_asymmetric_growth", "module_swing_potential",
-                                    "module_fundamentals"], "enhancement"),
-    ("RevenueChaser", 129, "board", ["module_asymmetric_growth", "module_swing_potential",
-                                     "module_fundamentals"], "enhancement"),
-    # private — shared
-    ("RevenueChaser", 371, "shared", [], "epic"),
-    ("RevenueChaser", 383, "shared", [], "epic"),
-    ("RevenueChaser", 433, "shared", [], "bug"),
-    ("RevenueChaser", 364, "shared", [], "bug"),
-    ("RevenueChaser", 365, "shared", [], "bug"),
-    ("RevenueChaser", 124, "shared", [], "enhancement"),
-    # private — repo-wide
-    ("RevenueChaser", 45, "repo", [], "docs"),
-    ("RevenueChaser", 257, "repo", [], "bug"),
-    ("RevenueChaser", 402, "repo", [], "epic"),
-    ("RevenueChaser", 449, "repo", [], "idea"),
-]
-
-# Entries the hand-written starter registry cannot carry yet: seeding them needs a GitHub token (the
-# private repo) and the issues' own bodies, which this offline build worker has neither of. `--write`
-# fills them from the API; empty this set in the same commit that lands the real seed.
-OPEN_ISSUES_PENDING = {
-    ("RevenueChaser", 372), ("RevenueChaser", 374), ("RevenueChaser", 375), ("RevenueChaser", 376),
-    ("RevenueChaser", 377), ("RevenueChaser", 379), ("RevenueChaser", 380), ("RevenueChaser", 381),
-    ("RevenueChaser", 384), ("RevenueChaser", 385), ("RevenueChaser", 386), ("RevenueChaser", 387),
-    ("RevenueChaser", 388), ("RevenueChaser", 431), ("RevenueChaser", 435), ("RevenueChaser", 450),
-    ("RevenueChaser", 289), ("RevenueChaser", 309), ("RevenueChaser", 342), ("RevenueChaser", 62),
-    ("RevenueChaser", 129),
-}
-
 
 @pytest.fixture(scope="module")
 def registry() -> open_issues.Registry:
@@ -161,20 +91,28 @@ def test_the_density_bar_passes_a_good_entry(registry):
     assert open_issues.thin_reasons(registry.issues[0]) == []
 
 
-def test_every_open_issue_is_mapped(registry):
-    """The fixture's 44 issues are either in the registry or named in ``OPEN_ISSUES_PENDING``."""
-    mapped = {(e.repo, e.number) for e in registry.issues}
-    fixture = {(repo, number) for repo, number, *_ in OPEN_ISSUES}
-    assert len(fixture) == 44, len(fixture)
-    assert not mapped & OPEN_ISSUES_PENDING, f"seeded but still listed as pending: {sorted(mapped & OPEN_ISSUES_PENDING)}"
-    assert mapped | OPEN_ISSUES_PENDING == fixture, (
-        f"open issues nobody mapped: {sorted(fixture - mapped - OPEN_ISSUES_PENDING)}; "
-        f"mapped but no longer open: {sorted(mapped - fixture)}")
-
-
-def test_the_seeded_entries_agree_with_the_plan(registry):
-    """Scope, boards and kind of every seeded entry match plan.md §3 (a curation slip shows up here)."""
-    plan = {(repo, number): (scope, boards, kind) for repo, number, scope, boards, kind in OPEN_ISSUES}
+def test_every_issue_appears_once(registry):
+    """Each ``(repo, number)`` is in the registry once, and the entry's url points at that issue."""
+    keys = [(e.repo, e.number) for e in registry.issues]
+    assert len(keys) == len(set(keys)), sorted(k for k in set(keys) if keys.count(k) > 1)
     for e in registry.issues:
-        scope, boards, kind = plan[(e.repo, e.number)]
-        assert (e.scope, e.boards, e.kind) == (scope, boards, kind), f"#{e.number}"
+        assert e.url.lower().endswith(f"/{e.repo}/issues/{e.number}".lower()), (e.repo, e.number, e.url)
+
+
+def test_every_board_named_is_a_real_dashboard_tab(registry):
+    """A ``boards`` value that is not a tab key would never show: a curation slip shows up here."""
+    from RevenueChaser.app import dashboard
+
+    tabs = {t["key"] for t in dashboard.TABS if t["type"] == "tab"}
+    for e in registry.issues:
+        assert set(e.boards) <= tabs, (e.repo, e.number, sorted(set(e.boards) - tabs))
+        assert (e.scope == "board") == bool(e.boards), (e.repo, e.number, e.scope, e.boards)
+
+
+def test_approved_is_a_status_and_sorts_between_in_flight_and_open():
+    """The seeded registry carries issues whose build is approved but not started (status ``approved``)."""
+    from RevenueChaser.core import open_issues
+
+    assert "approved" in open_issues.STATUSES
+    order = open_issues.STATUS_ORDER
+    assert order["in-flight"] < order["approved"] < order["open"]

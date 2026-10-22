@@ -34,10 +34,10 @@ REPO_SCOPE_BOARD = "module_settings"
 
 SCOPES = ("board", "shared", "repo")
 KINDS = ("bug", "known-problem", "investigate", "seam", "enhancement", "docs", "epic", "idea")
-STATUSES = ("needs-decision", "in-flight", "open", "needs-review", "deferred")
+STATUSES = ("needs-decision", "in-flight", "approved", "open", "needs-review", "deferred")
 
 # The panel's order inside each section: what needs a decision first, a parked entry last.
-STATUS_ORDER = {s: i for i, s in enumerate(("needs-decision", "in-flight", "open", "needs-review", "deferred"))}
+STATUS_ORDER = {s: i for i, s in enumerate(("needs-decision", "in-flight", "approved", "open", "needs-review", "deferred"))}
 KIND_ORDER = {k: i for i, k in enumerate(KINDS)}
 
 DETAIL_FIELDS = ("whats_wrong", "evidence", "example", "tried_or_decided", "direction", "next_step")
