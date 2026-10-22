@@ -28,8 +28,10 @@ BOARD, TABLE = "module_sec_13f", "sec13f_metrics_history"
 # streak / accel / % out formulas, the map's source), not a setting. 2: the name match is retired, the map is
 # OpenFIGI's (#207). 3: plus the legacy entries whose issuer prefix OpenFIGI confirms, 9x issues out (#207).
 # 4: shares out, insider % and price come from ownership_snapshot and D01, not sec13f_enrichment (#375 F2).
-SELECTION_VERSION = "4"
-_LAST = ("shares", "value", "holders", "top10_pct", "hhi", "new_holders", "exited_holders", "buy_flow", "sell_flow")
+# 5: plus ownership breadth, holders ÷ that quarter's filers, and its change (#375 F4, Chen-Hong-Stein 2002).
+SELECTION_VERSION = "5"
+_LAST = ("shares", "value", "holders", "top10_pct", "hhi", "new_holders", "exited_holders", "buy_flow", "sell_flow",
+         "breadth", "breadth_chg")
 _ENTRY = ("name", "sector", "streak", "accel", "pct_out", "price", "price_delta", "shares_outstanding",
           "float_shares", "short_pct", "insider_pct")
 

@@ -481,18 +481,22 @@ class TestBuildSec13f:
 # from the code before the SQL was rewritten). The O6 rewrite must not change a figure.
 GOLDEN_TOTALS = {
     "AAPL": {
-        "2026-03-31": {"buy_flow": None, "exited_holders": None, "hhi": 5421.4, "holders": 2,
+        "2026-03-31": {"breadth": 66.6667, "breadth_chg": None,
+                       "buy_flow": None, "exited_holders": None, "hhi": 5421.4, "holders": 2,
                        "new_holders": None, "sell_flow": None, "shares": 310.0,
                        "top10_pct": 100.0, "value": 3050.0},
-        "2026-06-30": {"buy_flow": 110.0, "exited_holders": 1, "hhi": 5661.2, "holders": 2,
+        "2026-06-30": {"breadth": 66.6667, "breadth_chg": 0.0,
+                       "buy_flow": 110.0, "exited_holders": 1, "hhi": 5661.2, "holders": 2,
                        "new_holders": 1, "sell_flow": 200.0, "shares": 220.0,
                        "top10_pct": 100.0, "value": 2200.0},
     },
     "MSFT": {
-        "2026-03-31": {"buy_flow": None, "exited_holders": None, "hhi": 10000.0, "holders": 1,
+        "2026-03-31": {"breadth": 33.3333, "breadth_chg": None,
+                       "buy_flow": None, "exited_holders": None, "hhi": 10000.0, "holders": 1,
                        "new_holders": None, "sell_flow": None, "shares": 40.0,
                        "top10_pct": 100.0, "value": 400.0},
-        "2026-06-30": {"buy_flow": 20.0, "exited_holders": 0, "hhi": 10000.0, "holders": 1,
+        "2026-06-30": {"breadth": 33.3333, "breadth_chg": 0.0,
+                       "buy_flow": 20.0, "exited_holders": 0, "hhi": 10000.0, "holders": 1,
                        "new_holders": 0, "sell_flow": 0.0, "shares": 60.0,
                        "top10_pct": 100.0, "value": 600.0},
     },
@@ -527,7 +531,7 @@ class TestComputeTotalsGolden:
         """
         import inspect
         for fn in (sf.compute_totals, sf.held_value, sf.unmatched_summary,
-                   sf._value_scale_factors, sf.map_candidates):
+                   sf._value_scale_factors, sf._filers_by_period, sf.map_candidates):
             assert "h.period" not in inspect.getsource(fn), fn.__name__
 
 
