@@ -674,6 +674,10 @@ def run_leaps():
 
 @app.route("/run/module_sec_13f", methods=["POST"])
 def run_module_sec_13f():
+    refused = _busy(("module_sec_13f", "sec13f_rebuild", "sec13f_map"),
+                    "A 13F job is already queued or running.")
+    if refused:
+        return refused
     return _submit("module_sec_13f", {})
 
 
@@ -711,12 +715,20 @@ def run_module_sec_13f_check():
 @app.route("/run/module_sec_13f-rebuild", methods=["POST"])
 def run_module_sec_13f_rebuild():
     """Re-derive the 13F totals from the ingested holdings (store only, zero network)."""
+    refused = _busy(("module_sec_13f", "sec13f_rebuild", "sec13f_map"),
+                    "A 13F job is already queued or running.")
+    if refused:
+        return refused
     return _submit("sec13f_rebuild", {})
 
 
 @app.route("/run/module_sec_13f-map", methods=["POST"])
 def run_module_sec_13f_map():
     """Map the held CUSIPs through OpenFIGI, then re-derive the 13F totals (#207). No button: the PC starts it."""
+    refused = _busy(("module_sec_13f", "sec13f_rebuild", "sec13f_map"),
+                    "A 13F job is already queued or running.")
+    if refused:
+        return refused
     return _submit("sec13f_map", {})
 
 
@@ -828,11 +840,23 @@ def run_module_comovement():
     return _submit("module_comovement", {})
 
 
+def _busy(modules: tuple[str, ...], label: str):
+    """A 409 while a job of one of ``modules`` is already queued or running; ``None`` when the way is clear.
+
+    Repeated clicks on a long-lane Fetch must not queue repeated multi-minute ingests; ``modules`` names one writer
+    family, so the three 13F jobs count as one (#26, PL6-a). The job's own ``job_lock`` covers a run beside the
+    dashboard (a CLI or a scheduled task); this covers the queue in front of it. The body names that job (``job_id``),
+    so a board can follow the run already going instead of starting another (#244).
+    """
+    active = jobs.active_id(modules)
+    if active:
+        return jsonify({"ok": False, "error": label, "job_id": active}), 409
+    return None
+
+
 def _discord_busy():
     """A 409 while a Discord job is already queued or running (repeated clicks must not queue repeated exports)."""
-    if jobs.has_active(("module_discord", "module_discord_discover")):
-        return jsonify({"ok": False, "error": "A Discord job is already queued or running."}), 409
-    return None
+    return _busy(("module_discord", "module_discord_discover"), "A Discord job is already queued or running.")
 
 
 @app.route("/run/module_discord", methods=["POST"])
@@ -920,6 +944,9 @@ def run_edgar_sync():
         if limit <= 0:
             return jsonify({"ok": False, "error": "bad limit"}), 400
         params["limit"] = limit
+    refused = _busy(("edgar_sync",), "An EDGAR sync is already queued or running.")
+    if refused:
+        return refused
     return _submit("edgar_sync", params)
 
 
@@ -937,6 +964,9 @@ def run_daily_bars():
             if not re.fullmatch(r"[A-Z0-9.\-]{1,12}", t):     # no ^: index levels are not bars
                 return jsonify({"ok": False, "error": "bad ticker"}), 400
         params["tickers"] = list(dict.fromkeys(items))
+    refused = _busy(("daily_bars",), "A daily-bars run is already queued or running.")
+    if refused:
+        return refused
     return _submit("daily_bars", params)
 
 
@@ -950,6 +980,9 @@ def run_index_lists():
         if raw != "sp600":
             return jsonify({"ok": False, "error": "first_fill takes sp600 only"}), 400
         params["first_fill"] = [raw]
+    refused = _busy(("index_lists",), "An index-list run is already queued or running.")
+    if refused:
+        return refused
     return _submit("index_lists", params)
 
 
@@ -960,9 +993,9 @@ def run_universe():
 
     A universe job already queued or running is not queued again (#244): 409 with that job's id.
     """
-    active = jobs.active_id(("universe",))
-    if active:
-        return jsonify({"ok": False, "error": "A universe run is already queued or running.", "job_id": active}), 409
+    refused = _busy(("universe",), "A universe run is already queued or running.")
+    if refused:
+        return refused
     return _submit("universe", {})
 
 
@@ -984,6 +1017,9 @@ def run_universe_stats():
         if limit <= 0:
             return jsonify({"ok": False, "error": "bad limit"}), 400
         params["limit"] = limit
+    refused = _busy(("universe_stats",), "A universe-stats run is already queued or running.")
+    if refused:
+        return refused
     return _submit("universe_stats", params)
 
 
@@ -1005,6 +1041,9 @@ def run_identity():
         if limit <= 0:
             return jsonify({"ok": False, "error": "bad limit"}), 400
         params["limit"] = limit
+    refused = _busy(("identity",), "An identity refresh is already queued or running.")
+    if refused:
+        return refused
     return _submit("identity", params)
 
 

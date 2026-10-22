@@ -105,6 +105,16 @@ def test_the_forecast_outcomes_row_is_chained_daily_on_the_daily_bars():
     assert e.chain_wait_minutes == 120 and not e.default_install and not e.offpeak_gated
 
 
+def test_each_busy_capable_nightly_row_says_its_busy_exit_in_the_description():
+    """S-1 (#26): Task Scheduler shows exit 3 as a red "failed (0x3)", so the row itself has to say what it means.
+
+    The wording follows RC-Screeners-Daily's "A busy universe lock exits 3."
+    """
+    for name in ("RC-Forecast-Outcomes", "RC-Earnings-Inputs"):
+        description = A.entry(name).description
+        assert "exits 3" in description and "nothing was written" in description, name
+
+
 def test_the_outcomes_row_cannot_chain_on_the_weekday_screeners_row():
     """``check_chain`` refuses a weekly predecessor; RC-Screeners-Daily runs on weekdays only."""
     import dataclasses
