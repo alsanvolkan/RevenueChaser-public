@@ -213,20 +213,23 @@ class TestFetchButtonPoller:
         assert unknown.status_code == 404
         unknown_body = unknown.json()
 
-        # (b) jobs on the one long lane: later submissions sit queued behind
-        # the first, so reading the last one straight away catches a live job.
-        ids = []
-        for _ in range(4):
-            r = dashboard.post_fetch("/run/universe-stats")
-            assert r.status_code == 202, r.text
-            ids.append(r.json()["job_id"])
-        live = dashboard.get(f"/api/job/{ids[-1]}").json()
+        # (b) one real job, caught while it is still live. Submitting the same writer again used to queue a
+        # second run; since #26 PL6-a it is refused 409 and the body carries the id of the run already going,
+        # which is a stronger way to catch a live job: the refusal itself proves the first has not finished.
+        first = dashboard.post_fetch("/run/universe-stats")
+        assert first.status_code == 202, first.text
+        job_id = first.json()["job_id"]
+
+        again = dashboard.post_fetch("/run/universe-stats")
+        assert again.status_code == 409, again.text
+        assert again.json()["job_id"] == job_id, again.text
+
+        live = dashboard.get(f"/api/job/{job_id}").json()
         live_status = live["job"]["status"]
 
-        # (c) the same jobs once finished.
-        for job_id in ids:
-            dashboard.wait_for_job(job_id)
-        finished = dashboard.get(f"/api/job/{ids[0]}").json()
+        # (c) the same job once finished.
+        dashboard.wait_for_job(job_id)
+        finished = dashboard.get(f"/api/job/{job_id}").json()
         assert finished["job"]["status"] == "done", finished
 
         got = _verdicts(html, [unknown_body, live, finished])
@@ -392,13 +395,14 @@ class TestAutomationsPanel:
         html = dashboard.view(_APP).text
         assert 'id="auto-body"' in html
         for name in ("RC-Store-Backup", "RC-Relatedness-OffPeak", "RC-ValueChain-Sync", "RC-Daily-Bars",
-                     "RC-Screeners-Daily", "RC-Forecast-Outcomes", "RC-Index-Lists", "RC-Earnings-Inputs"):
+                     "RC-Screeners-Daily", "RC-Forecast-Outcomes", "RC-Forecast-Baselines", "RC-Index-Lists",
+                     "RC-Earnings-Inputs", "RC-Open-Issues-Check"):
             assert name in html
 
     def test_the_route_reports_every_row_not_installed(self, dashboard, seeded_settings):
         d = dashboard.get("/api/automations").json()
         assert d["ok"] and d["available"]
-        assert [r["state"] for r in d["rows"]] == ["not_installed"] * 8
+        assert [r["state"] for r in d["rows"]] == ["not_installed"] * 10
 
     def test_install_goes_to_the_fake_scheduler_not_the_real_one(self, dashboard, seeded_settings):
         r = dashboard.client.post("/api/automations/RC-Store-Backup/install", headers=_PANEL)
@@ -408,7 +412,8 @@ class TestAutomationsPanel:
         assert rows == {"RC-Store-Backup": "enabled", "RC-Relatedness-OffPeak": "not_installed",
                         "RC-ValueChain-Sync": "not_installed", "RC-Daily-Bars": "not_installed",
                         "RC-Screeners-Daily": "not_installed", "RC-Forecast-Outcomes": "not_installed",
-                        "RC-Index-Lists": "not_installed", "RC-Earnings-Inputs": "not_installed"}
+                        "RC-Forecast-Baselines": "not_installed", "RC-Index-Lists": "not_installed", "RC-Earnings-Inputs": "not_installed",
+                        "RC-Open-Issues-Check": "not_installed"}
         r = dashboard.client.post("/api/automations/RC-Store-Backup/remove", headers=_PANEL)
         assert r.json()["row"]["state"] == "not_installed"
 

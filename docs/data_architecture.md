@@ -590,7 +590,9 @@ worker thread writes while Flask request threads read. So:
   daily price bars, #129), daily not before 23:45 (the forecast outcomes RC-Forecast-Outcomes, chained on the daily
   price bars, #380 S0), daily 23:50 (the forecast baselines RC-Forecast-Baselines, chained on the outcomes run, #25
   HR-1) and Tuesday to Saturday not before 01:30 (the Earnings inputs RC-Earnings-Inputs, chained on the
-  daily price bars, E0 #372), `core/automations.py`: the two daytime ones are 30 min apart.
+  daily price bars, E0 #372), plus daily 09:30 (the open-issues registry check RC-Open-Issues-Check, #74:
+  `scripts/open_issues_sync.py --check`, which reads the GitHub API, writes nothing and is deliberately not
+  chained on a store writer), `core/automations.py`: the Relatedness and Value Chain rows are 30 min apart.
 
 ### Full-refresh vs. incremental tables
 The JSON files these tables replaced were rewritten wholesale, so the tables

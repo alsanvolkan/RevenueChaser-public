@@ -345,7 +345,9 @@ settings (runs on battery, wakes the PC for the backup, catches up a missed run)
   is neutral; 0x41301 is running; anything else is red), plus next run, missed runs and the age of the last
   success (read from the task's log).
 - **Exit codes.** A task's CLI exits non-zero when it locked out or failed (Value Chain, Relatedness lock skip).
-  Only the Relatedness off-peak deferral exits 0, and it logs `pending` / `next_off_peak`.
+  Only the Relatedness off-peak deferral exits 0, and it logs `pending` / `next_off_peak`. Exit 3 from a nightly
+  writer (Task Scheduler shows it as a red `failed (0x3)`) means another run of that writer held its lock: nothing
+  was written, and the next run picks it up.
 - **Nightly chain (#129).** An entry with `after=<registry name>` is a chained step: still its own task with its own
   daily time, which is its not-before time, and its schedule reads "daily 23:00 (local), after RC-Daily-Bars". When it
   starts (also on a catch-up or Run now), `run_task` reads the predecessor's log and waits, up to

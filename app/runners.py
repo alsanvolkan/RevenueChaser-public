@@ -14,7 +14,7 @@ from RevenueChaser.core.providers.unusual_whales import UWClient
 from RevenueChaser.core.config import OUTPUT_DIR
 from RevenueChaser.core.gics_map import UNCLASSIFIED, is_unclassified, sector_or_unclassified
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline
-from RevenueChaser.core import job_control, ledger
+from RevenueChaser.core import job_control, job_lock, ledger
 from .jobs import JobMessage, run_id
 
 logger = logging.getLogger(__name__)
@@ -885,6 +885,13 @@ def _refresh_13f_meta(uw, ingested: int) -> tuple[dict | None, str | None, UWCli
         raise
 
 
+def _sec13f_busy_message() -> str:
+    """The message a refused 13F job ends with: another Fetch, rebuild or map holds the family's lock (#26)."""
+    pid = dict(job_lock.holders()).get("sec_13f", 0)
+    who = f" (pid {pid})" if pid else ""
+    return f"A 13F job is already running{who}; nothing was written."
+
+
 def build_sec13f(uw: UWClient | None = None) -> Path:
     """The 13F Fetch: download -> ingest (SEC) -> derive (store) -> names -> shares out -> render -> history.
 
@@ -894,7 +901,19 @@ def build_sec13f(uw: UWClient | None = None) -> Path:
     name/sector step is best-effort (``_refresh_13f_meta``), and so is the UW shares
     outstanding step (``_store_13f_shares``, #300 D20), which replaced the 13F enrichment. The shares step runs
     before the render (#375 F2): the board's % Out reads the rows it stores.
+
+    One 13F job at a time (#26): the ``"sec_13f"`` lock covers this job, ``run_sec13f_rebuild`` and
+    ``run_sec13f_map``, because they all write the ``sec13f_*`` tables and the CUSIP map. A second one refuses with a
+    ``JobMessage`` and writes nothing.
     """
+    with job_lock.acquire("sec_13f", wait=0) as got:
+        if not got:
+            raise JobMessage(_sec13f_busy_message())
+        return _build_sec13f(uw)
+
+
+def _build_sec13f(uw: UWClient | None = None) -> Path:
+    """The Fetch's work, once ``build_sec13f`` holds the ``"sec_13f"`` lock."""
     from RevenueChaser.module_sec_13f import engine as sec_13f
 
     run, run_at = run_id(), time.time()
@@ -1038,7 +1057,17 @@ def run_sec13f_rebuild(uw=None) -> None:
 
     The offline path for a fix to the totals logic (or the names it matches by): no
     download, no UW. Ends with a ``JobMessage`` saying what it rebuilt.
+
+    One 13F job at a time (#26): a refused run raises a ``JobMessage`` and writes nothing.
     """
+    with job_lock.acquire("sec_13f", wait=0) as got:
+        if not got:
+            raise JobMessage(_sec13f_busy_message())
+        _run_sec13f_rebuild()
+
+
+def _run_sec13f_rebuild() -> None:
+    """The rebuild's work, once ``run_sec13f_rebuild`` holds the ``"sec_13f"`` lock."""
     from RevenueChaser.module_sec_13f import engine as sec_13f
     totals = sec_13f.recompute_totals()  # the stored map; DeriveRefused propagates
     if not totals:
@@ -1062,7 +1091,17 @@ def run_sec13f_map(uw=None) -> None:
     copy) and the way to finish a map a Fetch left incomplete. The answers go to ``identity_cusip``; ``cusip_ticker``
     is rebuilt from them only when the derive with the new map passes the guards (``DeriveRefused`` propagates; the
     stored map and totals are then kept). A Fetch records the result history; this job, like the rebuild, does not.
+
+    One 13F job at a time (#26): a refused run raises a ``JobMessage`` and writes nothing.
     """
+    with job_lock.acquire("sec_13f", wait=0) as got:
+        if not got:
+            raise JobMessage(_sec13f_busy_message())
+        _run_sec13f_map()
+
+
+def _run_sec13f_map() -> None:
+    """The map's work, once ``run_sec13f_map`` holds the ``"sec_13f"`` lock."""
     from RevenueChaser.module_sec_13f import engine as sec_13f
     cusip_map, map_note, stats = _13f_map_step(run_id(), time.time(), first_run=True)
     asked = (f"CUSIP map: {stats['answered']} of {stats['candidates']} CUSIP(s) answered in {stats['requests']} "
@@ -1958,11 +1997,21 @@ def run_identity(uw=None, limit: int | None = None) -> None:
     raise JobMessage(identity_refresh.summary(identity_refresh.refresh(limit=limit)))
 
 
+def _discord_busy_message(r: dict) -> str:
+    """The sentence a Discord job ends with when ``engine`` reports another Discord job holds the lock (#26)."""
+    pid = r.get("holder_pid") or 0
+    who = f" (pid {pid})" if pid else ""
+    return (f"Discord: another Discord job{who} is running; nothing was written. "
+            "Try again when it finishes.")
+
+
 def run_discord_discover(uw=None) -> None:
     """List the Discord guild's channels via the DCE CLI (new ones start disabled). Needs RC_DCE_CLI, DISCORD_TOKEN and RC_DISCORD_GUILD_ID; network."""
     from RevenueChaser.module_discord import engine
 
     r = engine.discover()
+    if r.get("busy"):                         # another Discord job holds the lock: not an error, nothing written
+        raise JobMessage(_discord_busy_message(r))
     raise JobMessage(f"Discord: {r['channels']} channels found, {r['new']} new (disabled until you enable them).")
 
 
@@ -1995,6 +2044,8 @@ def run_discord(uw=None, media: bool = False, channel_id: str | None = None, for
             names = {c["channel_id"]: c.get("name") or c["channel_id"] for c in store.channels()}
             skipped = [names.get(c, c) for c in targets if c not in ready]
     r = engine.update(media=media, channel_ids=ids)
+    if r.get("busy"):                         # another Discord job holds the lock: not an error, nothing written
+        raise JobMessage(_discord_busy_message(r))
     if not r["channels"] and not r["failed"]:
         raise JobMessage("Discord: no enabled channels; run Discover and enable some first.")
     text = f"Discord: {r['channels']} channels exported, {r['messages']} messages, {r['new']} new."

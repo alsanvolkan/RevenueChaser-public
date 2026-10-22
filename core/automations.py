@@ -168,7 +168,8 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         args=("-m", "RevenueChaser.scripts.forecast_outcomes", "--nightly"), time="23:45", after="RC-Daily-Bars",
         description="Once tonight's daily bars run exited 0, recomputes the 30- and 90-day outcome (reference open, "
                     "MFE, MAE, open/closed) of every frozen pick not closed yet, from the stored bars; no calls "
-                    "(#380 S0). 23:45 keeps it clear of RC-Screeners-Daily, the other raw.duckdb writer.",
+                    "(#380 S0). 23:45 keeps it clear of RC-Screeners-Daily, the other raw.duckdb writer. A busy "
+                    "forecast-outcomes lock exits 3, and nothing was written.",
         tables_written=("forecast_outcomes",)),
     AutomationEntry(
         name="RC-Forecast-Baselines", label="Forecast baselines",
@@ -198,10 +199,20 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "Cboe vol indices (VIX family, VVIX, OVX) with MOVE from yfinance, and the weekly CFTC "
                     "E-mini S&P 500 TFF row. At most 200 UW, 10 FRED, 2000 yfinance, 20 Cboe and 5 CFTC read calls "
                     "a night, no SEC call; one sweep failing leaves the others. 01:30 Tuesday to Saturday keys each "
-                    "run to the US session just closed; a run inside the US session writes nothing.",
+                    "run to the US session just closed; a run inside the US session writes nothing. A busy step "
+                    "lock exits 3, and nothing was written.",
         tables_written=("earnings_calendar", "short_interest", "economic_calendar", "macro_series",
                         "estimate_snapshots", "vol_index_daily", "cftc_cot"),
         settings=TaskSettings(wake_to_run=True)),
+    AutomationEntry(
+        name="RC-Open-Issues-Check", label="Open issues registry check",
+        args=("-m", "RevenueChaser.scripts.open_issues_sync", "--check"), time="09:30",
+        description="Checks docs/open_issues.json against the open issues of the public repo through the GitHub API "
+                    "(read anonymously, 1-2 requests) and writes nothing, no table and no store file. Exit 1 means "
+                    "the registry is stale and the open-issues panel is missing rows; if this clone is behind "
+                    "main, git pull first (docs/open_issues.json is tracked, so --write on a stale clone sets "
+                    "up a pull conflict), otherwise python -m RevenueChaser.scripts.open_issues_sync --write.",
+        settings=TaskSettings(restart_count=0)),
 )
 _BY_NAME = {e.name: e for e in REGISTRY}
 

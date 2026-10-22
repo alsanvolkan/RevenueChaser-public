@@ -303,7 +303,8 @@ def test_unreadable_history_gives_growth_none_and_a_warning(store, monkeypatch):
     notes: list = []
     footprints: list = []
     watched, _ = scan_leaps(_UW({"AAA": (1000, 200)}), today=TODAY, warnings=notes, footprints=footprints)
-    assert len(notes) == 1 and "baseline" in notes[0].lower()
+    # One warning for the baseline read, never one per ticker (the scan's calendar warning may sit beside it, DF94).
+    assert sum("baseline" in n.lower() for n in notes) == 1
     (aaa,) = watched
     (fp,) = footprints
     assert aaa["far_oi_growth_1d_pct"] is None and aaa["far_oi_growth_q_pct"] is None
