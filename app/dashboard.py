@@ -848,10 +848,12 @@ def _busy(modules: tuple[str, ...], label: str):
 
     Repeated clicks on a long-lane Fetch must not queue repeated multi-minute ingests; ``modules`` names one writer
     family, so the three 13F jobs count as one (#26, PL6-a). The job's own ``job_lock`` covers a run beside the
-    dashboard (a CLI or a scheduled task); this covers the queue in front of it.
+    dashboard (a CLI or a scheduled task); this covers the queue in front of it. The body names that job (``job_id``),
+    so a board can follow the run already going instead of starting another (#244).
     """
-    if jobs.has_active(modules):
-        return jsonify({"ok": False, "error": label}), 409
+    active = jobs.active_id(modules)
+    if active:
+        return jsonify({"ok": False, "error": label, "job_id": active}), 409
     return None
 
 
@@ -994,9 +996,9 @@ def run_universe():
 
     A universe job already queued or running is not queued again (#244): 409 with that job's id.
     """
-    active = jobs.active_id(("universe",))
-    if active:
-        return jsonify({"ok": False, "error": "A universe run is already queued or running.", "job_id": active}), 409
+    refused = _busy(("universe",), "A universe run is already queued or running.")
+    if refused:
+        return refused
     return _submit("universe", {})
 
 

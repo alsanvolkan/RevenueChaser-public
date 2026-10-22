@@ -37,7 +37,7 @@ def test_a_held_lock_makes_refresh_busy_and_writes_no_identity_row(rawstore_tmp_
     assert time.monotonic() - started < 10, "a busy refresh must refuse at once, not wait on the lock"
     assert rec["status"] == "busy"
     assert rec["holder_pid"] == os.getpid()
-    assert not rec.get("counts"), "a busy run carries no counts"
+    assert rec["counts"] == {}, "a busy record carries an empty counts map, not a missing key"
     assert fk.calls == {}, "a busy refresh must not ask a source anything"
     for table in ("identity_runs", "security_master", "identity_conflicts", "sec_company_tickers"):
         assert rawstore.query(f"SELECT * FROM {table}") == [], f"a busy refresh wrote {table}"

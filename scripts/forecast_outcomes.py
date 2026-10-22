@@ -6,8 +6,9 @@ computes and counts without writing. Reads ``forecast_ledger`` and the stored ba
 only (``core/outcomes.py``), no network call.
 
 One writer at a time (``job_lock`` name ``"forecast_outcomes"``, #26): a run that holds the lock makes this exit
-``BUSY_EXIT`` with one line on stderr and no write. ``--dry-run`` writes nothing, so it takes no lock and still
-answers while the task runs.
+``BUSY_EXIT`` with one line on stderr and no table write; ``--report`` still gets a ``{"status": "busy"}`` record, so
+yesterday's success JSON cannot be read as tonight's (S-3). ``--dry-run`` writes nothing, so it takes no lock and
+still answers while the task runs.
 """
 from __future__ import annotations
 
@@ -21,6 +22,12 @@ from RevenueChaser.core import job_lock, ledger, outcomes
 BUSY_EXIT = 3
 
 
+def _write_report(path: str | None, res: dict) -> None:
+    """Write ``res`` to ``--report``: the result of a run, or the ``busy`` record of one that wrote nothing (S-3)."""
+    if path:
+        Path(path).write_text(json.dumps(res, default=str), encoding="utf-8")
+
+
 def _compute(args) -> int:
     """The run itself: compute, write the report, print the result JSON."""
     try:
@@ -28,8 +35,7 @@ def _compute(args) -> int:
     except Exception as exc:  # noqa: BLE001 - the task's log and exit code carry the reason
         print(f"forecast outcomes failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
-    if args.report:
-        Path(args.report).write_text(json.dumps(res, default=str), encoding="utf-8")
+    _write_report(args.report, res)
     print(json.dumps(res, default=str))
     return 0
 
@@ -54,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
             who = f" (pid {pid})" if pid else ""
             print(f"forecast outcomes: another run{who} holds the forecast_outcomes lock; nothing was written.",
                   file=sys.stderr)
+            # Over whatever the last success left there: a reader must not read yesterday's JSON as tonight's (S-3).
+            _write_report(args.report, {"status": "busy", "holder_pid": pid})
             return BUSY_EXIT
         return _compute(args)
 

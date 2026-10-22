@@ -2,8 +2,8 @@
 
 #26's body rotted exactly this way: it described a single ``"edgar"`` lock that no longer existed. The module
 docstring is the one place that says which names exist and who takes them, so it is asserted here — the thirteen
-names by contract, plus every literal name the sources hand to ``acquire()``. A new literal lock name that is not in
-the docstring fails this test.
+names by contract, plus every name the sources hand to ``acquire()``, whether it is a literal or a module-level
+constant. A new lock name that is not in the docstring fails this test.
 """
 from __future__ import annotations
 
@@ -35,14 +35,39 @@ def test_the_docstring_names_every_lock():
     assert '"edgar"' not in doc, "the docstring still describes the retired single 'edgar' lock"
 
 
-def test_every_literal_lock_name_in_the_sources_is_documented():
-    """The rot guard: a new ``acquire("name")`` nobody documented fails here, whatever NAMES says."""
+def _sources() -> list[Path]:
+    """Every source file the scan reads: no test module, and not ``job_lock`` itself (its docstring is the list)."""
     root = Path(job_lock.__file__).resolve().parents[1]
     assert (root / "core" / "job_lock.py").exists(), "the scan is looking at the wrong tree"
-    found: set[str] = set()
-    for path in root.rglob("*.py"):
-        if "tests" in path.parts or path.name == "job_lock.py":
-            continue
-        found |= set(re.findall(r'acquire\(\s*"([a-z0-9_]+)"', path.read_text(encoding="utf-8")))
-    assert found, "the scan found no literal lock name at all"
+    return [p for p in root.rglob("*.py") if "tests" not in p.parts and p.name != "job_lock.py"]
+
+
+def _literal_names() -> set[str]:
+    """The names handed to ``acquire()`` as a literal, e.g. ``acquire("daily_bars", wait=0)``."""
+    return {name for path in _sources()
+            for name in re.findall(r'acquire\(\s*"([a-z0-9_]+)"', path.read_text(encoding="utf-8"))}
+
+
+def _constant_names() -> set[str]:
+    """The names held in a module-level lock constant, e.g. ``_LOCK = "identity"`` or ``_RUN_LOCK_NAME = "x"``.
+
+    ``acquire(_LOCK)`` passes a name the literal scan cannot see, so every constant of that shape is collected too.
+    """
+    return {name for path in _sources()
+            for name in re.findall(r'^(?:[A-Z_]*_)?LOCK(?:_NAME)?\s*=\s*"([a-z0-9_]+)"',
+                                   path.read_text(encoding="utf-8"), re.MULTILINE)}
+
+
+def test_every_lock_name_in_the_sources_is_documented():
+    """The rot guard: a new lock name nobody documented fails here, whatever NAMES says."""
+    found = _literal_names() | _constant_names()
+    assert found, "the scan found no lock name at all"
     assert found <= set(NAMES), f"undocumented lock name(s): {sorted(found - set(NAMES))}"
+
+
+def test_a_lock_name_passed_as_a_constant_is_found():
+    """A name only a constant carries — no literal anywhere — still has to reach the scan, or the guard misses it."""
+    literals, constants = _literal_names(), _constant_names()
+    assert {"identity", "discord", "universe", "universe_run", "index_levels"} <= constants
+    assert "universe_run" not in literals, "core/universe_fetch._RUN_LOCK_NAME is the only source of this name"
+    assert constants <= set(NAMES)

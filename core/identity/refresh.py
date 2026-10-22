@@ -191,9 +191,12 @@ _LOCK = "identity"
 
 
 def _busy_record(run_id: str, started: str, holder_pid: int) -> dict:
-    """The run record of a refresh another holder kept out: a status, the holder's PID, and no counts."""
+    """The run record of a refresh another holder kept out: a status, the holder's PID, and no counts.
+
+    ``counts`` is there and empty, never missing: a reader that walks it has nothing to special-case.
+    """
     return {"run_id": run_id, "started_at": started, "finished_at": now_iso(), "status": "busy", "error": None,
-            "holder_pid": holder_pid,
+            "holder_pid": holder_pid, "counts": {},
             "sources": {s: {"status": "skipped", "selected": False, "rows": 0, "fetched": 0, "seconds": 0.0,
                             "error": None} for s in SOURCES}}
 

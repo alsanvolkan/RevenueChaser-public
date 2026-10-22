@@ -7,8 +7,9 @@ A registry entry runs it (``core/automations.py`` checks the entry: after RC-Dai
 left out is 0 for ``uw``, ``fred`` and ``yfinance``: that provider gets no call. ``cboe`` and ``cftc`` default to
 their runaway guard, 20 and 5. Prints the result as one JSON line on stdout and a summary on stderr; exit 0 when every
 sweep finished, 1 when one failed or the run had no session, 2 for a bad command line, ``BUSY_EXIT`` (3) when another
-run of this step holds the lock (``job_lock`` name ``"nightly_inputs_<step>"``, #26) — nothing was written then. The
-lock is per step, because the steps write different tables: two different steps may run together.
+run of this step holds the lock (``job_lock`` name ``"nightly_inputs_<step>"``, #26) — no table was written then, and
+``--report`` gets a ``{"status": "busy"}`` record over the last success (S-3). The lock is per step, because the steps
+write different tables: two different steps may run together.
 """
 from __future__ import annotations
 
@@ -20,6 +21,12 @@ from pathlib import Path
 from RevenueChaser.core import job_lock, nightly_inputs
 
 BUSY_EXIT = 3
+
+
+def _write_report(path: str | None, res: dict) -> None:
+    """Write ``res`` to ``--report``: the result of a run, or the ``busy`` record of one that wrote nothing (S-3)."""
+    if path:
+        Path(path).write_text(json.dumps(res, default=str), encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,10 +59,11 @@ def main(argv: list[str] | None = None) -> int:
             who = f" (pid {pid})" if pid else ""
             print(f"nightly inputs {args.step}: another run{who} holds {name}; nothing was written.",
                   file=sys.stderr)
+            # Over whatever the last success left there: a reader must not read last night's JSON as tonight's (S-3).
+            _write_report(args.report, {"status": "busy", "holder_pid": pid})
             return BUSY_EXIT
         res = nightly_inputs.run_step(args.step, nightly_inputs.load_step(args.step), caps=caps)
-    if args.report:
-        Path(args.report).write_text(json.dumps(res, default=str), encoding="utf-8")
+    _write_report(args.report, res)
     print(json.dumps(res, default=str))
     print(nightly_inputs.summary_line(res), file=sys.stderr)
     return nightly_inputs.exit_code(res)
