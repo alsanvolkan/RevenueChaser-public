@@ -339,7 +339,8 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
 
     # ── v2 components ──
     cards = build_summary(snapshot)
-    # 1D/1W deltas per positioning metric, keyed by summary card title.
+    # 1D/1W deltas per positioning metric, keyed by summary card title. One history read for the whole report:
+    # each card's pill and the header strip's GEX deltas (#49 — it used to be loaded and derived a second time).
     try:
         from .run import _load_history as _lh
         _hist = _lh(Path(data_root) / HISTORY_FILENAME) if data_root else _lh()
@@ -376,16 +377,8 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
     _vix = (snapshot.get("vix") or {}).get("vix")
     _net_delta = delta_map.get("net_gex")
 
-    # ── 1D / 1W positioning deltas from the EOD history ──
-    try:
-        from .run import _load_history as _lh2
-        _hist = _lh2(Path(data_root) / HISTORY_FILENAME) if data_root else _lh2()
-    except Exception:  # noqa: BLE001 — history is best-effort
-        _hist = {}
-    _g_d = compute_positioning_deltas(snapshot.get("net_gamma_total"), "net_gex_oi", _hist, asof=snapshot.get("asof_date"))
-    _dex_d = compute_positioning_deltas(snapshot.get("net_dex"), "net_dex", _hist, asof=snapshot.get("asof_date"))
-    _m_d = compute_positioning_deltas(snapshot.get("matrix_gex"), "matrix_gex", _hist, asof=snapshot.get("asof_date"))
-
+    # ── the header strip (its GEX delta pair comes from the history read above; the ``matrix_gex`` pair
+    #    nobody read is gone, #49) ──
     header_strip = {
         # Row 1 — Structural / Macro (OI)
         "spot": fmt_level(current),

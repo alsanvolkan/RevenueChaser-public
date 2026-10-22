@@ -162,12 +162,12 @@ def _fundamentals(tmp_path, monkeypatch):
 
 
 def _swing(tmp_path, monkeypatch):
-    from RevenueChaser.module_swing_potential.pipeline import demo_payload
+    from RevenueChaser.module_swing_potential.pipeline import build_payload
     from RevenueChaser.module_swing_potential.report import render_swing_dashboard
     gate = lambda n: {"name": n, "passed": True, "score": "3/3", "known": 1, "total": 1,
                       "rules": [{"label": "rule", "passed": True, "threshold": "> 1",
                                  "unit": "ratio", "actual": 1.2}]}
-    p = demo_payload()
+    p = build_payload([], run_stats={})
     p["candidates"] = [{"ticker": "AAA", "name": "Name", "price": 10.0, "change_pct": 1.0,
                         "change_1w": 0.01, "change_1m": 0.01, "market_cap": 1e9,
                         "sector": "Tech", "industry": "Soft", "themes": ["Theme"],
