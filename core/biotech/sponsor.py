@@ -14,11 +14,16 @@ _SLASH_PAIR_RE = re.compile(r"\b([A-Za-z])/([A-Za-z])\b")
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 
 # NFKD + ASCII does not fold these, it deletes them; map them first so
-# "Strauß" / "Ørsted" / "Łukasiewicz" keep their letters. Every letter NFKD leaves undecomposed is here, upper
-# and lower case.
+# "Strauß" / "Ørsted" / "Łukasiewicz" keep their letters. The table covers the
+# undecomposable letters that occur in real company names -- Latin-1 Supplement,
+# Latin Extended-A, and the few Latin Extended-B letters in the table (the Turkish
+# dotless i, the Sami eng, the obsolete Greenlandic kra) -- not every
+# undecomposable Latin letter: the IPA/phonetic letters in U+0180-U+024F are
+# deliberately left out.
 _PRE_FOLD = str.maketrans({
     "ß": "ss", "ẞ": "ss", "Ø": "o", "ø": "o", "Ł": "l", "ł": "l", "Æ": "ae", "æ": "ae", "Œ": "oe", "œ": "oe",
     "Þ": "th", "þ": "th", "Ð": "d", "ð": "d", "Đ": "d", "đ": "d", "Ħ": "h", "ħ": "h", "Ŧ": "t", "ŧ": "t",
+    "ı": "i", "Ŋ": "n", "ŋ": "n", "ĸ": "k",
 })
 
 # Legal-entity / holding-structure suffixes dropped from a TRAILING run of

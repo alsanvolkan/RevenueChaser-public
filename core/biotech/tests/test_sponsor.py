@@ -1,9 +1,11 @@
 """Table-driven tests for :func:`core.biotech.sponsor.normalise_sponsor`."""
 from __future__ import annotations
 
+import unicodedata
+
 import pytest
 
-from RevenueChaser.core.biotech.sponsor import normalise_sponsor
+from RevenueChaser.core.biotech.sponsor import _PRE_FOLD, normalise_sponsor
 
 CASES = [
     ("Tenaya Therapeutics, Inc.", "tenaya therapeutics"),
@@ -41,6 +43,9 @@ CASES = [
     ("Ħal Pharma Ltd", "hal pharma"),
     ("Ŧest Labs Co", "test labs"),
     ("Sørensen Pharma", "sorensen pharma"),
+    # Turkish dotless i and the Sami eng, which NFKD deletes the same way.
+    ("ılaç Sanayi A.Ş.", "ilac sanayi"),
+    ("Ŋuŋŋa Biotech AS", "nunna biotech"),
     # Legal-entity suffixes added with the OOPD orphan-designation provider.
     ("Novo Nordisk SAS", "novo nordisk"),
     ("CSL Pty Ltd", "csl"),
@@ -61,3 +66,26 @@ def test_normalise_sponsor(raw, expected):
 
 def test_edgar_split_suffix_folds_like_the_slash_form():
     assert normalise_sponsor("NOVO NORDISK A S") == normalise_sponsor("Novo Nordisk A/S")
+
+
+def _undecomposable_letters(start, end):
+    """Letters in ``start..end`` that NFKD + ASCII deletes instead of folding."""
+    return [
+        cp for cp in range(start, end + 1)
+        if unicodedata.category(chr(cp)) in ("Ll", "Lu")
+        and not unicodedata.normalize("NFKD", chr(cp)).encode("ascii", "ignore")
+    ]
+
+
+def test_prefold_covers_every_undecomposable_letter_up_to_extended_a():
+    """``_PRE_FOLD`` is complete for Latin-1 Supplement and Latin Extended-A.
+
+    It is deliberately not complete for Latin Extended-B: U+0180-U+024F is the
+    IPA/phonetic range, whose letters no company name carries.
+    """
+    missing = [
+        f"U+{cp:04X} {chr(cp)} ({unicodedata.name(chr(cp))})"
+        for cp in _undecomposable_letters(0x00C0, 0x017F)
+        if cp not in _PRE_FOLD
+    ]
+    assert missing == [], f"NFKD deletes these letters, _PRE_FOLD must fold them: {missing}"
