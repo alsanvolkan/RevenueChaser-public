@@ -172,10 +172,17 @@ class TestProblem:
         assert isinstance(names, frozenset)
 
     def test_no_message_ever_returns_a_key_value(self, monkeypatch):
-        """Presence only: the token is set, and no message any requirement returns may quote it."""
-        monkeypatch.setenv("DISCORD_TOKEN", _DUMMY_DISCORD_TOKEN)
+        """Presence only: every provider's key is set to its own sentinel, and no message may quote any of them.
+
+        One provider is not enough — the promise is about ``problem()`` as a whole, so each key gets a distinct
+        sentinel and every message is checked against all of them.
+        """
+        sentinels = {slug: f"{_DUMMY_DISCORD_TOKEN}-{slug}" for slug in credentials.PROVIDERS}
+        for slug, value in sentinels.items():
+            monkeypatch.setenv(credentials.PROVIDERS[slug].env_var, value)
         monkeypatch.delenv("RC_DCE_CLI", raising=False)
         monkeypatch.delenv("RC_DISCORD_GUILD_ID", raising=False)
         for name in credentials.requirement_names():
             message = credentials.problem(name) or ""
-            assert _DUMMY_DISCORD_TOKEN not in message, name
+            for slug, value in sentinels.items():
+                assert value not in message, f"{name} quoted {slug}'s key"
