@@ -8,7 +8,6 @@ from RevenueChaser.module_fundamentals.pipeline import (
     _quality_metrics,
     _ttm_metrics,
     build_payload,
-    demo_payload,
 )
 from RevenueChaser.module_fundamentals.report import render_fundamental_dashboard
 
@@ -126,18 +125,16 @@ def test_build_payload_ro40_only():
     assert p["candidates"][0]["passed_count"] == 1 and p["candidates"][0]["bucket"] == "rule_of_40"
 
 
-def test_demo_payload_and_render():
-    p = demo_payload()
-    assert p["is_fixture"] is True
+def test_render_dashboard():
+    p = build_payload([], run_stats={})
     html = render_fundamental_dashboard(p)
     assert "Fundamental Analysis" in html
-    assert "[DEMO/FIXTURE]" in html
 
 
 def test_render_uses_the_shared_filter_kit():
     """#383 C1c/#386 F2: the universal filters are the rc_filters bar plus the rule toggles, not the old
     Sector cascade / MC / EWEEK / INDEX controls nor the removed gate tabs."""
-    html = render_fundamental_dashboard(demo_payload())
+    html = render_fundamental_dashboard(build_payload([], run_stats={}))
     for frag in ('id="rc-filters"', "RCFilters.mount", 'id="rule-rule_of_40"', 'class="toggles"', "setRule("):
         assert frag in html, f"missing shared filter fragment: {frag}"
     for gone in ("sectorOk(", "mcRange(", 'id="mc-tabs"', 'id="eweek-tabs"', 'id="index-tabs"',
@@ -149,7 +146,7 @@ def test_render_uses_the_shared_filter_kit():
 
 
 def test_render_dashboard_universe_provenance():
-    p = demo_payload()
+    p = build_payload([], run_stats={})
     p["universe_refreshed_by"] = "Fundamentals"
     p["universe_generated_at"] = "2026-08-24T10:00:00+00:00"
     html = render_fundamental_dashboard(p)

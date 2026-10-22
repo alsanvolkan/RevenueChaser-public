@@ -26,7 +26,7 @@ from . import config, store as rel_store
 logger = logging.getLogger(__name__)
 
 MIN_SIZE = 20
-STABILITY_FLOOR = 0.90
+STABILITY_FLOOR = 0.90    # a k is stable when its mean pairwise ARI across SEEDS runs clears this (choose_k's floor)
 SEEDS = 5
 MIN_PROFILES = 10          # below this NMF themes mean nothing: report, don't build
 NMF_INITS = ("nndsvd", "nndsvda", "nndsvdar", "random")   # MiniBatchNMF inits that need no W/H from the caller

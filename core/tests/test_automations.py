@@ -504,6 +504,9 @@ def test_tables_written_cover_what_each_job_writes():
     rel = set(A.entry("RC-Relatedness-OffPeak").tables_written)
     assert {"relatedness_profiles", "relatedness_attributes", "relatedness_scores",
             "run_registry", "llm_cache", "chain_filings", "edgar_documents"} <= rel
+    # FAM-4: the Relatedness run fetches the filings it scores, so it records its misses in chain_meta through
+    # module_value_chain.engine.record_misses (engine.py: ``vc_engine.fetch_corpus``). The list says so.
+    assert "chain_meta" in rel
     assert "edgar_documents" in A.entry("RC-ValueChain-Sync").tables_written
 
 

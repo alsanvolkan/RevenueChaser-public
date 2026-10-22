@@ -129,8 +129,8 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         args=("-m", "RevenueChaser.module_relatedness", "--run", "--cap", "8"), time="12:30",
         description="Relatedness profiling through DeepSeek; defers itself outside off-peak hours.",
         tables_written=("relatedness_profiles", "relatedness_attributes", "relatedness_scores",
-                        "run_registry", "llm_cache", "chain_filings", "edgar_documents", "result_runs",
-                        "relatedness_scores_history"),
+                        "run_registry", "llm_cache", "chain_filings", "chain_meta", "edgar_documents",
+                        "result_runs", "relatedness_scores_history"),
         offpeak_gated=True),
     AutomationEntry(
         name="RC-ValueChain-Sync", label="Value Chain filing sync",

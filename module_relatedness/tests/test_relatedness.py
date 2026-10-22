@@ -364,6 +364,41 @@ def test_companies_carry_the_sector_and_the_industry_not_the_gics_levels(rawstor
     assert all("sub_industry" not in c and "industry_group" not in c for c in cards.values())
 
 
+def test_the_payload_reads_the_universe_once_for_the_company_fields(rawstore_tmp_db, monkeypatch):
+    """#49: ``_payload`` used to read ``equity_universe`` twice — its own name/sector/cap query beside
+    ``core.universe.filter_fields`` — and the two reads could only ever disagree. One read must give the same
+    card: the name, the Morningstar sector and the cap the seeded row holds."""
+    from RevenueChaser.module_relatedness import store
+    rows = (("AAA", "Aaa Corp", "Information Technology", "Software - Application", 2.0e9),
+            ("BBB", "Bee Corp", "Energy", "", 1.0e9),
+            ("CCC", "", "Utilities", "Regulated Electric", None))
+    rawstore.replace_all("equity_universe", [
+        {"ticker": t, "name": name, "market_cap": cap, "sector": sec, "industry": ind, "price": 1.0,
+         "quote": {}} for t, name, sec, ind, cap in rows])
+    for t, _name, _sec, _ind, _cap in rows:
+        store.save_profile(t, f"cik-{t}", _prof(products=["x"]), "k", "m")
+
+    reads = []
+    real = rawstore.query
+
+    def counting(sql, *a, **k):
+        if "FROM equity_universe" in sql:
+            reads.append(sql)
+        return real(sql, *a, **k)
+
+    monkeypatch.setattr(rawstore, "query", counting)
+    payload = engine._payload(store.load_profiles([r[0] for r in rows]), {})
+
+    # filter_fields (the card fields) + classification_universe (universe_total): the third read is gone.
+    assert len([sql for sql in reads if "ticker, name, sector, industry, market_cap" in sql]) == 1, reads
+    cards = {c["ticker"]: c for c in payload["companies"]}
+    assert {t: (c["name"], c["sector"], c["market_cap"]) for t, c in cards.items()} == {
+        "AAA": ("Aaa Corp", "Technology", 2.0e9),
+        "BBB": ("Bee Corp", "Energy", 1.0e9),
+        # an empty stored name falls back to the ticker; a NULL cap stays NULL (no cap, not zero)
+        "CCC": ("CCC", "Utilities", None)}
+
+
 def test_a_stored_profile_of_an_excluded_type_leaves_companies_and_peer_lists(
         rawstore_tmp_db, monkeypatch, tmp_path):
     """#87: ``run`` loads profiles for the typed universe only, so a fund's stored
