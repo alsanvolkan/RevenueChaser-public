@@ -1073,7 +1073,10 @@ def _sec_files_row() -> dict:
         """The last pull's own outcome, so a stale row is never read as a file that simply did not change
         (avo 2026-10-22). The table appends on change only, so "appended 0" alone cannot say which happened."""
         if d.get("last_pull") == "failed":
-            return f"last pull FAILED ({d.get('error') or 'no reason recorded'})"
+            night = d.get("session") or DASH
+            good = d.get("good_session")
+            tail = f", last good pull {good}" if good else ""
+            return f"pull FAILED {night} ({d.get('error') or 'no reason recorded'}){tail}"
         if d.get("last_pull") == "unknown":
             return "no pull recorded yet"
         session = d.get("session") or DASH

@@ -246,16 +246,32 @@ def _write_receipt(marker: Path, night: date, data: dict) -> None:
         pass
 
 
-def _receipt(marker_dir: Path, name: str) -> dict:
-    """The newest readable receipt of file ``name``; ``{}`` when none is left (pruned, or the cache was cleared)."""
+def _receipts(marker_dir: Path, name: str) -> list[dict]:
+    """Every readable receipt of file ``name``, newest session first."""
+    out = []
     for f in sorted(marker_dir.glob(f"????-??-??_{name}"), reverse=True):
         try:
             data = json.loads(f.read_text(encoding="utf-8") or "{}")
         except (OSError, ValueError):
             continue
         if isinstance(data, dict) and data.get("session"):
-            return data
-    return {}
+            out.append(data)
+    return out
+
+
+def _receipt(marker_dir: Path, name: str) -> dict:
+    """The newest readable receipt of file ``name``; ``{}`` when none is left (pruned, or the cache was cleared)."""
+    rs = _receipts(marker_dir, name)
+    return rs[0] if rs else {}
+
+
+def _last_good(marker_dir: Path, name: str) -> dict:
+    """The newest receipt of a pull that actually read the file.
+
+    A failed night must not erase what the last good pull knew: ``file_rows`` and ``Last-Modified`` describe the
+    file itself, so they stay from the last successful read while the outcome below reports the failure.
+    """
+    return next((r for r in _receipts(marker_dir, name) if r.get("status") != "failed"), {})
 
 
 def health_summary(marker_dir: Path | None = None) -> dict:
@@ -273,11 +289,13 @@ def health_summary(marker_dir: Path | None = None) -> dict:
         members = (len(rows) if name == "mf" else
                    sum(1 for r in rows if str(r.get("exchange") or "").strip().casefold() in SEC_LIST_EXCHANGES))
         receipt = _receipt(marker_dir, name)
+        good = _last_good(marker_dir, name)
         out[name] = {"present": len(rows), "members": members,
                      "floor": MIN_FUND_CLASSES if name == "mf" else MIN_MEMBERS,
-                     "file_rows": receipt.get("file_rows"), "appended": receipt.get("appended"),
-                     "absent": receipt.get("absent"), "last_modified": receipt.get("last_modified"),
-                     "session": receipt.get("session"),
+                     # the file's own figures survive a failed night; the outcome below reports the failure
+                     "file_rows": good.get("file_rows"), "last_modified": good.get("last_modified"),
+                     "appended": good.get("appended"), "absent": good.get("absent"),
+                     "good_session": good.get("session"), "session": receipt.get("session"),
                      # the last pull's own outcome: "ok", "failed", or "unknown" when no receipt is left
                      "last_pull": receipt.get("status") or ("unknown" if not receipt else "ok"),
                      "error": receipt.get("error")}
