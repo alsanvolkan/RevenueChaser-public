@@ -138,7 +138,7 @@ class TestMapJob:
         assert "GOOG" not in sec_13f.load_totals()
 
     def test_a_refused_derive_keeps_the_stored_map(self, fetch, figi, monkeypatch):
-        def refuse(before, totals):
+        def refuse(before, totals, factors=None):
             raise sec_13f.DeriveRefused("the derive would cut the mapped value")
         monkeypatch.setattr(sec_13f, "guard", refuse)
         with pytest.raises(sec_13f.DeriveRefused):
@@ -285,10 +285,10 @@ class TestFetchStep:
     def test_a_refused_new_map_falls_back_to_the_stored_map_and_says_so(self, fetch, figi, monkeypatch):
         real_guard = sec_13f.guard
 
-        def refuse_the_split(before, totals):
+        def refuse_the_split(before, totals, factors=None):
             if "GOOG" in totals:
                 raise sec_13f.DeriveRefused("the derive would cut the mapped value of 2026-03-31")
-            real_guard(before, totals)
+            real_guard(before, totals, factors)
         monkeypatch.setattr(sec_13f, "guard", refuse_the_split)
         with pytest.raises(sec_13f.DeriveRefused):
             runners.run_sec13f_map(None)                      # seeded, but the stored map stays the legacy one

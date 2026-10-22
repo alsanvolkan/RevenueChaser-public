@@ -121,7 +121,7 @@ _READ_DELAYS = (0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0)
 # the lock is NEVER held around the transaction/statements, so operations still
 # overlap exactly as documented (a read during a held write handle works).
 _ATTACH_LOCK = threading.Lock()
-_SCHEMA_VERSION = "11"
+_SCHEMA_VERSION = "12"
 
 
 # A manifest "column" entry is either a column definition (``name TYPE ...``) or
@@ -1321,6 +1321,8 @@ MANIFEST: dict[str, dict] = {
         "columns": [
             "accession TEXT PRIMARY KEY", "cik TEXT", "period TEXT",
             "filing_date TEXT", "type TEXT",
+            "report_type TEXT", "is_amendment BOOLEAN", "amendment_type TEXT",
+            "amendment_no INTEGER", "other_managers_count INTEGER",
         ],
         "kind": "tabular",
         "write": "upsert",
@@ -1328,9 +1330,14 @@ MANIFEST: dict[str, dict] = {
     },
     "sec13f_holdings": {
         "history_mode": "event",
-        "key": [],
+        "key": ["accession", "line_no"],
         "columns": [
-            "accession TEXT", "cusip TEXT", "cik TEXT", "shares DOUBLE", "value DOUBLE",
+            "accession TEXT", "line_no INTEGER", "cusip TEXT", "cik TEXT",
+            "shares DOUBLE", "value DOUBLE", "period TEXT", "putcall TEXT",
+            "sshprnamttype TEXT", "title_of_class TEXT", "investment_discretion TEXT",
+            "other_manager TEXT", "voting_sole DOUBLE", "voting_shared DOUBLE",
+            "voting_none DOUBLE",
+            "PRIMARY KEY (accession, line_no)",
         ],
         "kind": "tabular",
         "write": "append",

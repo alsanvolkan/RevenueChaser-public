@@ -995,7 +995,10 @@ def _13f_unmatched() -> tuple[str | None, dict | None]:
     only. ``(None, None)`` when the summary fails: a coverage note must never fail the job."""
     from RevenueChaser.module_sec_13f import engine as sec_13f
     try:
-        summary = sec_13f.unmatched_summary(sec_13f.load_cusip_ticker())
+        # The note prints dollars next to the totals, so it is on the totals' scale (#208): a filer
+        # reporting in thousands is rescaled in both or the two lines disagree by 1000x.
+        cusip_ticker = sec_13f.load_cusip_ticker()
+        summary = sec_13f.unmatched_summary(cusip_ticker, sec_13f.value_scale_factors(cusip_ticker))
     except Exception as exc:  # noqa: BLE001 - a coverage note must never fail the job
         logger.warning("13F unmatched-CUSIP summary failed: %s", exc)
         return None, None

@@ -49,8 +49,8 @@ def test_rows_written_through_the_manifest_land_in_the_discord_file(rawstore_tmp
 
 
 def test_discord_tables_did_not_bump_the_schema_version_themselves():
-    # The tables live in a new file and shipped without a bump (#72); the pin follows the current version (11, history redesign C).
-    assert rawstore.schema_version() == "11"
+    # The tables live in a new file and shipped without a bump (#72); the pin follows the current version (12, the 13F tables of #208).
+    assert rawstore.schema_version() == "12"
 
 
 def test_reset_db_also_resets_the_discord_file(rawstore_tmp_db):

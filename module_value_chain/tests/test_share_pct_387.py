@@ -80,7 +80,7 @@ def test_the_first_store_call_adds_the_column_to_both_tables_and_old_rows_read_n
     assert rawstore.get_all("chain_mentions") == [{**_edge(), "share_pct": None}]
     (old,) = rawstore.query("SELECT * FROM value_chain_edges_history WHERE run_id = 'old'", db="history")
     assert old["share_pct"] is None and old["src"] == "AMKR"
-    assert rawstore.schema_version() == "11", "the column came without a bump"
+    assert rawstore.schema_version() == "12", "the column came without a bump"
 
 
 def test_the_first_fetch_on_an_old_store_writes_the_share_on_both_tables(old_store):

@@ -338,6 +338,29 @@ COMPOSITE_SQLITE = {
 }
 
 
+# Columns a target table needs that its legacy source cannot supply, as the SQL that derives
+# them during the copy (#208).
+#
+# ``line_no``: ``sec13f_holdings`` gained the (accession, line_no) PRIMARY KEY in schema v12, so
+# the column is NOT NULL, but the legacy ``holdings`` table carries no INFOTABLE_SK. The ORDER BY
+# is what makes the synthetic number deterministic, which a full-refresh re-run needs — the same
+# source must produce the same numbers, not just the same row count.
+#
+# ``sshprnamttype``: the v11 ingest filtered to long equity BEFORE storing a row
+# (``if row.get("SSHPRNAMTTYPE") != "SH" or row.get("PUTCALL"): continue``), so every row in a
+# legacy table is an SH row with no PUTCALL by construction; v11 just had nowhere to record it.
+# Writing 'SH' recovers that fact. Left NULL instead, the derive's long-equity filter would match
+# nothing and a migrated store would silently produce no totals at all.
+#
+# ``period`` is deliberately NOT synthesized: no query reads ``h.period`` (every period filter
+# joins ``sec13f_submissions``), so filling it would be inventing data no reader wants.
+SYNTHETIC_COLUMNS = {
+    ("sec13f_holdings", "line_no"):
+        'row_number() OVER (PARTITION BY "accession" ORDER BY "cusip", "shares", "value")',
+    ("sec13f_holdings", "sshprnamttype"): "'SH'",
+}
+
+
 # Non-composite target tables cleared before import so a re-run never leaves
 # rows the source no longer has (full-refresh semantics).
 CLEAR_BEFORE_IMPORT = {"ticker_scores"}
@@ -370,7 +393,9 @@ def _bulk_copy_sqlite(db_path: Path, tables: list[tuple[str, str]]) -> tuple[int
                 continue
             conn.execute(f"DELETE FROM {tds}")
             col_sql = ", ".join(f'"{c}"' for c in cols)
-            select_sql = ", ".join(f'"{c}"' if c in src_cols else "NULL" for c in cols)
+            select_sql = ", ".join(
+                f'"{c}"' if c in src_cols else SYNTHETIC_COLUMNS.get((tds, c), "NULL")
+                for c in cols)
             expected += conn.execute(
                 f"SELECT COUNT(*) FROM sqlite_scan('{src}', '{table}')").fetchone()[0]
             conn.execute(f"INSERT INTO {tds} ({col_sql}) SELECT {select_sql} FROM sqlite_scan('{src}', '{table}')")

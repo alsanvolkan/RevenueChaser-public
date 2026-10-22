@@ -86,23 +86,32 @@ def seeded_holdings(dashboard):
 
     The zip ingest itself is not reachable from the dashboard without a download, so the
     ingested tables are seeded; what the rebuild promises is "derive from what is stored".
+
+    Both tables are created at the v12 shape, DDL taken from ``rawstore.MANIFEST`` (#208): a
+    v11-shaped table is refused by the derive, and a table without ``(accession, line_no)``
+    only worked while the manifest's ``ALTER TABLE`` happened to run first. Named columns, so
+    a seeded row carries the period and the long-equity marker the derive filters on.
     """
     import json
+
+    from RevenueChaser.core import rawstore
+
     conn = duckdb.connect(str(dashboard.store_dir / "raw.duckdb"))
     try:
-        conn.execute('CREATE TABLE IF NOT EXISTS sec13f_submissions ("accession" TEXT PRIMARY KEY, '
-                     '"cik" TEXT, "period" TEXT, "filing_date" TEXT, "type" TEXT)')
-        conn.execute('CREATE TABLE IF NOT EXISTS sec13f_holdings ("accession" TEXT, "cusip" TEXT, '
-                     '"cik" TEXT, "shares" DOUBLE, "value" DOUBLE)')
+        for table in ("sec13f_submissions", "sec13f_holdings"):
+            conn.execute(f'CREATE TABLE IF NOT EXISTS {table} ('
+                         + ", ".join(rawstore.MANIFEST[table]["columns"]) + ")")
         conn.execute('CREATE TABLE IF NOT EXISTS sec13f_cusip_names ("cusip" TEXT PRIMARY KEY, '
                      '"name_norm" TEXT, "name_raw" TEXT, "count" INTEGER)')
         conn.execute('CREATE TABLE IF NOT EXISTS cusip_ticker '
                      '("cusip" TEXT PRIMARY KEY, "entry" JSON)')
-        for acc, cik in (("a1", "1000"), ("a2", "2000")):
-            conn.execute("INSERT INTO sec13f_submissions VALUES (?, ?, '2026-06-30', "
-                         "'01-AUG-2026', '13F-HR')", [acc, cik])
-        conn.execute("INSERT INTO sec13f_holdings VALUES ('a1', '67066G104', '1000', 100, 1000)")
-        conn.execute("INSERT INTO sec13f_holdings VALUES ('a2', '67066G104', '2000', 250, 2500)")
+        for acc, cik, shares, value in (("a1", "1000", 100, 1000), ("a2", "2000", 250, 2500)):
+            conn.execute("INSERT INTO sec13f_submissions (accession, cik, period, filing_date, type) "
+                         "VALUES (?, ?, '2026-06-30', '01-AUG-2026', '13F-HR')", [acc, cik])
+            conn.execute("INSERT INTO sec13f_holdings (accession, line_no, cusip, cik, shares, value, "
+                         "period, putcall, sshprnamttype) "
+                         "VALUES (?, 1, '67066G104', ?, ?, ?, '2026-06-30', NULL, 'SH')",
+                         [acc, cik, shares, value])
         conn.execute("INSERT INTO sec13f_cusip_names VALUES ('67066G104', 'NVIDIA', 'NVIDIA CORP', 2)")
         conn.execute("INSERT INTO cusip_ticker VALUES ('67066G104', ?)", [json.dumps("NVDA")])
     finally:

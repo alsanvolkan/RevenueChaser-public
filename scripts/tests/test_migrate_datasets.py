@@ -314,7 +314,7 @@ class TestCompositeSqliteMigration:
         _sec13f_db(legacy / "sec_13f" / "sec13f.db")
         _migrate(legacy, "sec13f")
         from RevenueChaser.module_sec_13f import engine as sf
-        totals = sf.compute_totals({"111111111": "AAPL"})
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
         assert totals["AAPL"]["2026-03-31"]["shares"] == 350.0
         assert totals["AAPL"]["2026-03-31"]["holders"] == 2
 

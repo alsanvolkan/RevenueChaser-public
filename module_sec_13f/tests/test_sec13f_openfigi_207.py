@@ -25,8 +25,9 @@ def _seed(holdings, names=None):
     for acc, cik, period, *_ in holdings:
         subs[acc] = {"accession": acc, "cik": cik, "period": period, "filing_date": "2026-08-01", "type": "13F-HR"}
     rawstore.write_rows("sec13f_submissions", list(subs.values()))
-    rawstore.write_rows("sec13f_holdings", [{"accession": a, "cik": c, "cusip": cu, "shares": sh, "value": v}
-                                            for a, c, _p, cu, sh, v in holdings])
+    rawstore.write_rows("sec13f_holdings", [{"accession": a, "cik": c, "cusip": cu, "shares": sh, "value": v,
+                                             "line_no": i + 1, "sshprnamttype": "SH", "putcall": ""}
+                                            for i, (a, c, _p, cu, sh, v) in enumerate(holdings)])
     if names:
         rawstore.write_rows("sec13f_cusip_names", [{"cusip": c, "name_norm": engine.normalize_issuer_name(n),
                                                     "name_raw": n, "count": 1} for c, n in names.items()])
@@ -47,7 +48,7 @@ class TestNoNameMatch:
         """O+E review §10 rule 1: the name seed and the issuer names are there, and still nothing is written."""
         _seed([("a1", "1000", Q2, "037833100", 100, 1000)], names={"037833100": "APPLE INC"})
         rawstore.write_rows("sec13f_ticker_names", [{"ticker": "AAPL", "entry": {"name": "APPLE INC"}}])
-        assert engine.recompute_totals() is None           # nothing mapped: nothing to derive, nothing kept
+        assert engine.recompute_totals() == {}           # nothing mapped: nothing to derive, nothing kept
         assert engine.load_cusip_ticker() == {}
 
     def test_the_stored_map_is_used_as_is_and_not_grown(self, store):
@@ -88,7 +89,7 @@ class TestMapFromIdentity:
     def test_no_holdings_leave_the_stored_map_alone(self, store):
         engine.save_cusip_ticker({"OLDCUSIP1": "OLD"})
         identity_cusip.record({"02079K305": _answer("GOOGL")}, run_id="job-1", run_at=RUN_AT)
-        assert engine.recompute_totals(identity_cusip.current_map()) is None
+        assert engine.recompute_totals(identity_cusip.current_map()) == {}
         assert engine.load_cusip_ticker() == {"OLDCUSIP1": "OLD"}
 
 
@@ -166,9 +167,12 @@ class TestCandidates:
             {"accession": "orig", "cik": "1000", "period": Q2, "filing_date": "2026-08-01", "type": "13F-HR"},
             {"accession": "amend", "cik": "1000", "period": Q2, "filing_date": "2026-08-09", "type": "13F-HR/A"}])
         rawstore.write_rows("sec13f_holdings", [
-            {"accession": "orig", "cik": "1000", "cusip": "ORIGONLY1", "shares": 1, "value": 1.0},
-            {"accession": "amend", "cik": "1000", "cusip": "AMENDED01", "shares": 1, "value": 1.0},
-            {"accession": "amend", "cik": "", "cusip": "NOCIK0001", "shares": 1, "value": 1.0}])
+            {"accession": "orig", "line_no": 1, "cik": "1000", "cusip": "ORIGONLY1", "shares": 1, "value": 1.0,
+             "sshprnamttype": "SH", "putcall": ""},
+            {"accession": "amend", "line_no": 1, "cik": "1000", "cusip": "AMENDED01", "shares": 1, "value": 1.0,
+             "sshprnamttype": "SH", "putcall": ""},
+            {"accession": "amend", "line_no": 2, "cik": "", "cusip": "NOCIK0001", "shares": 1, "value": 1.0,
+             "sshprnamttype": "SH", "putcall": ""}])
         assert engine.map_candidates() == ["AMENDED01"]
 
     def test_an_empty_store_has_no_candidates(self, store):
