@@ -311,7 +311,8 @@ _PRIORITY_FIELDS = frozenset({"cost_of_revenue", "marketable_securities_noncurre
 # resolution (``_short_term_investments``) and so is not in ``_PRIORITY_FIELDS``.
 _NEVER_A_RECORD = frozenset({"cost_of_revenue", "short_term_investments",
                              "marketable_securities_noncurrent", "long_term_investments",
-                             "share_repurchases", "share_based_compensation"}) | _DEBT_COMPONENT_FIELDS
+                             "share_repurchases", "share_based_compensation",
+                             "interest_income_top_line"}) | _DEBT_COMPONENT_FIELDS
 
 # Flows that cannot be negative. A YTD difference that comes out negative for one of them (a Q4 whose
 # FY was restated for discontinued operations while the 9M was not) is dropped and flagged
