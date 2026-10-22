@@ -213,20 +213,23 @@ class TestFetchButtonPoller:
         assert unknown.status_code == 404
         unknown_body = unknown.json()
 
-        # (b) jobs on the one long lane: later submissions sit queued behind
-        # the first, so reading the last one straight away catches a live job.
-        ids = []
-        for _ in range(4):
-            r = dashboard.post_fetch("/run/universe-stats")
-            assert r.status_code == 202, r.text
-            ids.append(r.json()["job_id"])
-        live = dashboard.get(f"/api/job/{ids[-1]}").json()
+        # (b) one real job, caught while it is still live. Submitting the same writer again used to queue a
+        # second run; since #26 PL6-a it is refused 409 and the body carries the id of the run already going,
+        # which is a stronger way to catch a live job: the refusal itself proves the first has not finished.
+        first = dashboard.post_fetch("/run/universe-stats")
+        assert first.status_code == 202, first.text
+        job_id = first.json()["job_id"]
+
+        again = dashboard.post_fetch("/run/universe-stats")
+        assert again.status_code == 409, again.text
+        assert again.json()["job_id"] == job_id, again.text
+
+        live = dashboard.get(f"/api/job/{job_id}").json()
         live_status = live["job"]["status"]
 
-        # (c) the same jobs once finished.
-        for job_id in ids:
-            dashboard.wait_for_job(job_id)
-        finished = dashboard.get(f"/api/job/{ids[0]}").json()
+        # (c) the same job once finished.
+        dashboard.wait_for_job(job_id)
+        finished = dashboard.get(f"/api/job/{job_id}").json()
         assert finished["job"]["status"] == "done", finished
 
         got = _verdicts(html, [unknown_body, live, finished])
