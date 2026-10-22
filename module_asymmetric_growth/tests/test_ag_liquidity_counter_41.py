@@ -5,8 +5,10 @@ funnel **note**, never a drop: the drops must still add up to ``universe - score
 scored card whose ``source`` is not EDGAR — the Yahoo-statements fallback the card already carries; a name that got
 no card for a filings reason is a drop (``no_annual`` / ``fetch_failed``) and is never counted here too.
 
-A name is counted exactly once, low liquidity first: a name that is both thin and non-EDGAR lands under low
-liquidity only.
+The two figures OVERLAP by design: they answer independent questions — is this name too thin to read, and were
+its financials read from EDGAR — so a name that is both thin and non-EDGAR is counted in both. "Counted once"
+belongs to drops, which must sum to the universe; ``core.funnel.validate`` sums only ``kind == "drop"`` (#106
+review).
 
 Synthetic store, pinned session, no network.
 """
@@ -88,19 +90,21 @@ def test_two_scored_names_without_edgar_financials_are_counted(rawstore_tmp_db, 
 
 # ── C. counted exactly once: low liquidity first, then unreadable SEC ───────────────────────────────────────────
 
-def test_a_name_that_is_both_is_counted_once_under_low_liquidity(rawstore_tmp_db, monkeypatch):
+def test_a_name_that_is_both_thin_and_non_edgar_is_counted_in_both(rawstore_tmp_db, monkeypatch):
+    """#106 review: each note answers its own question, so BOTH is in both. Excluding it from ``unreadable_sec``
+    would make that figure disagree with its own label — "the financials are Yahoo statements" — and would give
+    a different answer on a Refresh, where no liquidity basis was read."""
     _yahoo_rows("BOTH")
     _seed_bars({"BOTH": THIN_VOLUME})
 
     result = _scan(monkeypatch, ["BOTH"])
 
     assert result["summary"]["low_liquidity"] == 1
-    assert result["summary"]["unreadable_sec"] == 0
-    assert result["summary"]["low_liquidity"] + result["summary"]["unreadable_sec"] == 1
+    assert result["summary"]["unreadable_sec"] == 1
 
 
 def test_the_funnel_still_adds_up_with_both_figures(rawstore_tmp_db, monkeypatch):
-    """THIN1 is thin; YF1 is non-EDGAR; BOTH is thin AND non-EDGAR (low liquidity wins); GHOST has no data;
+    """THIN1 is thin; YF1 is non-EDGAR; BOTH is thin AND non-EDGAR (counted in both); GHOST has no data;
     FORN is a foreign filer."""
     rawstore.write_rows("edgar_financials", [_edgar("THIN1"), _edgar("FORN", is_us=False)])
     _yahoo_rows("YF1", "BOTH")
@@ -114,8 +118,10 @@ def test_the_funnel_still_adds_up_with_both_figures(rawstore_tmp_db, monkeypatch
     assert sum(s["count"] for s in result["funnel_steps"] if s["kind"] == "drop") == 2
     # the two figures are notes: they do not enter the drop arithmetic
     assert steps["low_liquidity"]["kind"] == "note" and steps["low_liquidity"]["count"] == 2
-    assert steps["unreadable_sec"]["kind"] == "note" and steps["unreadable_sec"]["count"] == 1
-    assert steps["low_liquidity"]["count"] + steps["unreadable_sec"]["count"] == steps["scored"]["count"]
+    assert steps["unreadable_sec"]["kind"] == "note" and steps["unreadable_sec"]["count"] == 2   # YF1 and BOTH
+    # a note counts a subset of the scored names; the two may overlap, so neither sum means anything beyond this
+    for key in ("low_liquidity", "unreadable_sec"):
+        assert steps[key]["count"] <= steps["scored"]["count"]
     # the names that got no card for a filings reason stay drops, and are not counted again above
     assert steps["no_annual"]["count"] == 1 and steps["no_annual"]["tickers"] == ["GHOST"]
     assert steps["foreign"]["count"] == 1 and "fetch_failed" not in steps
@@ -134,7 +140,7 @@ def test_both_figures_are_in_the_funnel_panel(rawstore_tmp_db, monkeypatch):
     for html in (panel, page):
         # A note carries no minus sign: these names are IN the result, so a minus would read as a removal.
         assert "Scored, under $250,000 average daily dollar volume</td><td>2</td>" in html
-        assert "Scored, but the financials are Yahoo statements, not EDGAR filings</td><td>1</td>" in html
+        assert "Scored, but the financials are Yahoo statements, not EDGAR filings</td><td>2</td>" in html
 
 
 # ── the zero case and the untested case ─────────────────────────────────────────────────────────────────────────
