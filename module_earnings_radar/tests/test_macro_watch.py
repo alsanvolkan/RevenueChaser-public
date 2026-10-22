@@ -43,6 +43,22 @@ class TestFredWeekly:
         monkeypatch.setattr("httpx.get", lambda *a, **k: _Resp())
         assert macro_watch._fred_weekly("X", "fakekey") == []
 
+    def test_fred_weekly_returns_empty_on_non_json_body(self, monkeypatch, caplog):
+        class _Resp:
+            status_code = 200
+            headers = {"content-type": "text/plain"}
+            content = b""
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                raise ValueError("No JSON object could be decoded")
+        monkeypatch.setattr("httpx.get", lambda *a, **k: _Resp())
+        with caplog.at_level("WARNING"):
+            assert macro_watch._fred_weekly("DGS10", "fakekey") == []
+        assert any("not_json HTTP 200 text/plain len=0" in r.message for r in caplog.records)
+
 
 class TestFredDaily:
     def test_fred_daily_no_key(self):
@@ -69,6 +85,42 @@ class TestFredDaily:
             lambda sid, api_key=None, limit=80: [("2026-08-13", 4.70)],
         )
         assert macro_watch.fred_daily_map("DGS10") == {"2026-08-13": 4.70}
+
+    def test_fred_daily_reports_non_json_body_without_url_or_key(self, monkeypatch):
+        class _Resp:
+            status_code = 200
+            headers = {"content-type": "text/html; charset=utf-8"}
+            content = b"<html><body>maintenance</body></html>"
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                raise ValueError("No JSON object could be decoded")
+        monkeypatch.setattr("httpx.get", lambda *a, **k: _Resp())
+        res = macro_watch.fred_daily_result("DGS10", "fakekey")
+        assert res.status == "failed"
+        err = res.error.get("error")
+        assert err.startswith("not_json HTTP 200 text/html")
+        assert "api_key" not in err
+        assert "stlouisfed" not in err
+        assert res.error.get("attempts") == 1
+
+    def test_fred_daily_reports_empty_non_json_body(self, monkeypatch):
+        class _Resp:
+            status_code = 200
+            headers = {}
+            content = b""
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                raise ValueError("No JSON object could be decoded")
+        monkeypatch.setattr("httpx.get", lambda *a, **k: _Resp())
+        res = macro_watch.fred_daily_result("DGS10", "fakekey")
+        assert res.status == "failed"
+        assert res.error.get("error").endswith("len=0")
 
 
 class TestMacroWeeklyCloses:
