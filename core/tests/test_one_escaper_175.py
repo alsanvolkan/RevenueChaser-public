@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from RevenueChaser.core.tests.board_fixtures import BOARDS
+from RevenueChaser.core.tests.open_issues_shell import strip_open_issues_data
 
 ROOT = Path(__file__).resolve().parents[2]
 _SKIP_DIRS = {".git", ".cache", ".store", ".claude", ".hermes", "docs", "vendor", "tests",
@@ -105,7 +106,9 @@ def test_the_snippet_check_sees_the_snippets_that_call_the_escaper():
 
 def test_the_shell_defines_every_escaper_it_calls():
     from RevenueChaser.app import dashboard
-    check_page(dashboard.app.test_client().get("/").get_data(as_text=True))
+    # The shell's open-issues block is registry prose (an issue title may quote an escaper); it is not
+    # the page's script, so the scan reads the page without it (core/tests/open_issues_shell.py).
+    check_page(strip_open_issues_data(dashboard.app.test_client().get("/").get_data(as_text=True)))
 
 
 def test_the_page_check_itself_catches_the_three_failure_modes():

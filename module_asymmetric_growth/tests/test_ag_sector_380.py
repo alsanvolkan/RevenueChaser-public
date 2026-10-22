@@ -1,4 +1,4 @@
-"""#380 AG W1 S6 sector not comparable (card 4, AG-10, C17 ``core.sector_rules``).
+"""#380 AG W1 S6 sector not comparable (card 4, AG-10, C17 ``module_asymmetric_growth/sector_rules``).
 
 Financial Services and Real Estate (the **spine** sector, never the vendor's) cannot be compared on revenue growth,
 gross margin and FCF: such a card is flagged ``sector_not_comparable`` and has no tier. It stays a card and a ledger
@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import pytest
 
-from RevenueChaser.core import sector_rules
 from RevenueChaser.core.gics_map import GicsPath
 from RevenueChaser.core.tests.board_js import run_board_js
-from RevenueChaser.module_asymmetric_growth import engine, freeze, report
+from RevenueChaser.module_asymmetric_growth import engine, freeze, report, sector_rules
 from RevenueChaser.module_asymmetric_growth.engine import score_ticker
 from RevenueChaser.module_asymmetric_growth.tests.test_ag_payload_route_380 import _card, _result
 from RevenueChaser.module_asymmetric_growth.tests.test_score_ticker import _fin, _tech

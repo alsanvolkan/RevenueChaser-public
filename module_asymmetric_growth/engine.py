@@ -25,7 +25,6 @@ from RevenueChaser.core import fiscal_year
 from RevenueChaser.core import funnel as funnel_mod
 from RevenueChaser.core import job_control
 from RevenueChaser.core import ledger, prices, rawstore
-from RevenueChaser.core import sector_rules
 from RevenueChaser.core import tristate as tri
 from RevenueChaser.core import vendor_data
 from RevenueChaser.core.config import to_float
@@ -51,6 +50,7 @@ from RevenueChaser.core.universe_fetch import (  # noqa: F401
     fetch_universe_stats,
 )
 from RevenueChaser.core.taxonomy import themes_for_many
+from RevenueChaser.module_asymmetric_growth import sector_rules          # #18: AG's own rule, beside it now
 
 logger = logging.getLogger(__name__)
 

@@ -265,8 +265,9 @@ def load_ohlc(ticker: str, ttl_days: float = 1.0, retries: int = 3,
             logger.warning("ohlc cache write failed for %s", ticker)
             outcome = "failed"
         if outcome == "refused" and rows:
-            # #261 + F2b (``core/ohlc_cache.py``): a short refetch never replaces a longer stored history, unless
-            # it is a new listing (no shared session, starting more than 30 days after the stored last bar).
+            # #261 + F2b (``module_swing_potential/ohlc_cache.py``): a short refetch never replaces a longer stored
+            # history, unless it is a new listing (no shared session, starting more than 30 days after the stored
+            # last bar).
             kept = _df_from_rows(rows)
             kept.attrs["stale"] = True
             kept.attrs["short_refetch_refused"] = True
@@ -296,10 +297,10 @@ def _df_from_rows(rows: list[dict]) -> pd.DataFrame:
 
 def _write_ohlc(ticker: str, df: pd.DataFrame) -> str:
     """``df`` as ``ticker``'s cached series, through the one ``swing_ohlc`` writer (C8, #383 R3): "written" or
-    "refused" (``core/ohlc_cache.write``)."""
+    "refused" (``module_swing_potential/ohlc_cache.write``)."""
     import time as _time
 
-    from RevenueChaser.core import ohlc_cache
+    from RevenueChaser.module_swing_potential import ohlc_cache
     return ohlc_cache.write(ohlc_cache.rows_for(ticker, df, _time.time())).get(ticker, "written")
 
 

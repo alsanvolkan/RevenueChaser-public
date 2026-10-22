@@ -10,6 +10,7 @@ import threading
 import pytest
 
 from RevenueChaser.app import dashboard, jobs
+from RevenueChaser.core.tests.open_issues_shell import strip_open_issues_data
 from RevenueChaser.core.tests.panel_client import panel_test_client
 
 
@@ -332,7 +333,7 @@ class TestDecisions:
         assert seen == ["rotation", "moneyflow"]
 
     def test_template_wiring(self, client):
-        html = client.get("/").get_data(as_text=True)
+        html = strip_open_issues_data(client.get("/").get_data(as_text=True))
         assert "key==='module_comovement'" in html          # D1 Fetch button
         assert "module_relatedness: '/run/module_relatedness'" not in html  # D2
         assert "btn-rot-holdings" in html                    # D3

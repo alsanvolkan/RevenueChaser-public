@@ -24,8 +24,9 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from flask import Flask, Response, g, jsonify, render_template, request, send_from_directory
+from markupsafe import Markup
 
-from RevenueChaser.core import config, credentials, rawstore, templating
+from RevenueChaser.core import config, credentials, html_safe, open_issues, rawstore, reporting_common, templating
 from RevenueChaser.core.calendar import today_ny
 from RevenueChaser.core.providers.unusual_whales import UWClient
 from RevenueChaser.core.rawstore import StoreLockedError
@@ -293,8 +294,30 @@ NAV_GROUPS = _nav_groups(TABS)
 # ── views ──
 @app.route("/")
 def index():
+    issues, issues_error = _open_issues_for_shell()
     return render_template("dashboard.html", tabs=TABS, nav_groups=NAV_GROUPS,
-                           quick_ticker=runners._last_quick_ticker())
+                           quick_ticker=runners._last_quick_ticker(),
+                           # One JSON block for all boards, script-safe (#383): ``script_json`` neutralises
+                           # ``<``, so a hostile issue title cannot close the block. Markup only because the
+                           # block is already escaped JSON and Jinja would otherwise turn ``&`` into ``&amp;``.
+                           open_issues_json=Markup(html_safe.script_json(issues)),
+                           open_issues_error=issues_error,
+                           rc_esc_js=Markup(html_safe.ESC_JS))
+
+
+def _open_issues_for_shell() -> tuple[dict, str]:
+    """The "Open issues" payload for every data board (``{}`` + a message when the registry cannot be read).
+
+    Not for ``logs``: it is not a data board, so it gets no panel
+    (``core/tests/test_help_every_tab.py``). A bad registry never fails the page — the group shows the reason.
+    """
+    keys = [t["key"] for t in TABS if t["type"] == "tab" and t["key"] not in open_issues.NOT_A_DATA_BOARD]
+    try:
+        return {**reporting_common.open_issues_payload(keys), "data_boards": keys}, ""
+    except open_issues.RegistryError as exc:
+        # ``data_boards`` even on this path: without it the shell cannot tell a data board whose entries
+        # failed to load from ``logs``, which has no group at all, and would show the error on both.
+        return {"data_boards": keys}, f"Open issues are unavailable: {exc}"
 
 
 @app.route("/view/<mod>/payload.json")
