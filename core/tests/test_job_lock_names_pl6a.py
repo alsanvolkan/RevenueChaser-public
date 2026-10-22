@@ -83,3 +83,6 @@ def test_a_lock_name_passed_as_a_constant_is_found():
     assert constants <= set(NAMES)
     # What the guard actually judges has to contain them: this is the assertion that keeps the union in place.
     assert constants <= _scanned_names(), "the guard stopped scanning constant lock names"
+    # And the mirror of it, so neither half of the union can be dropped: a literal-only name has to be judged too.
+    assert "sec_13f" in literals and "sec_13f" not in constants, "app/runners.py passes this one as a literal"
+    assert literals <= _scanned_names(), "the guard stopped scanning literal lock names"
