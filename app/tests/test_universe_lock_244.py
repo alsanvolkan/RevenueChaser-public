@@ -10,6 +10,7 @@ the universe run calls the same runners in-process. ``/run/universe`` does not q
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import subprocess
 import sys
 import threading
@@ -109,7 +110,7 @@ def _held_by_another_process(*names, owner: bool = True):
     for path in paths:
         path.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
-    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(job_lock.__file__)))
+    pkg_root = str(Path(job_lock.__file__).resolve().parents[2])       # the folder that CONTAINS the package
     env["PYTHONPATH"] = os.pathsep.join(filter(None, (pkg_root, env.get("PYTHONPATH"))))
     proc = subprocess.Popen([sys.executable, "-c", _HOLDER_SCRIPT, "owner" if owner else "bare",
                              *map(str, paths)],
