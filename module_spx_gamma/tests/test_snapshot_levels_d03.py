@@ -69,11 +69,27 @@ def test_the_snapshot_spot_comes_from_the_newest_stored_level(tmp_path, rawstore
     assert spot and spot[0][1]["min_strike"] == int(7757.0 * 0.75)
 
 
-def test_an_empty_store_warns_and_writes_an_empty_window_rather_than_reaching_out(tmp_path, rawstore_tmp_db):
+def test_an_empty_store_warns_and_writes_an_empty_window_rather_than_reaching_out(tmp_path, rawstore_tmp_db,
+                                                                                  monkeypatch):
+    """#293 review N-6: nothing asserted that the snapshot reaches no provider for candles. The whole point of
+    reading the store is that an empty window costs no request, so count yfinance.Ticker constructions."""
+    import yfinance
+
+    built: list = []
+    real = yfinance.Ticker
+
+    class _Counted(real):                      # a subclass, so anything that does reach it still works
+        def __init__(self, *a, **kw):
+            built.append(a[0] if a else None)
+            super().__init__(*a, **kw)
+
+    monkeypatch.setattr(yfinance, "Ticker", _Counted)
     raw = _fetch(tmp_path)
     man = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
     assert raw["ohlc"]["data"] == []
     assert any("index levels" in w for w in man["warnings"])
+    assert built == [], f"the snapshot built yfinance.Ticker for {built}"
+    assert man["uw_ohlc_attempted"] is False   # no UW index-OHLC request either (#293 review N-3)
 
 
 def test_a_window_that_ends_before_the_last_complete_session_warns(monkeypatch):
@@ -98,3 +114,17 @@ def test_a_window_up_to_the_last_complete_session_does_not_warn(monkeypatch):
     rows = [{"date": d, "close": 1.0} for d in CANDLE_DATES]
     monkeypatch.setattr(nyse_calendar, "latest_complete_session", lambda *a, **k: date(2026, 8, 14))
     assert candles.window_lag(rows, "2026-08-17") == (None, None)
+
+
+def test_the_window_is_sorted_whatever_order_the_store_returns(monkeypatch):
+    """#293 review S-1: spot is candles[-1]["close"] and price_window_sessions does not re-sort, so order is
+    load-bearing. Base sorted explicitly; after the switch it rested on an ORDER BY in another module, which a
+    test seeding ascending rows could not catch."""
+    from RevenueChaser.core import index_levels
+    from RevenueChaser.module_spx_gamma import candles
+
+    shuffled = [{"date": d, "close": float(i)} for i, d in enumerate(reversed(CANDLE_DATES))]
+    monkeypatch.setattr(index_levels, "levels_between", lambda *a, **k: list(shuffled))
+    out = candles.stored_spx_candles(DAY)
+    assert [r["date"] for r in out] == sorted(CANDLE_DATES)
+    assert out[-1]["date"] == max(CANDLE_DATES), "spot would read the wrong session"

@@ -309,28 +309,20 @@ def _price_bars_row(now: datetime) -> dict:
     return default
 
 
-def _sessions_behind(newest: str | None, latest: str | None) -> int | None:
-    """How many complete sessions the stored levels are missing: the trading days after ``newest`` up to and
-    including ``latest``. The column is a count, so a 0/1 flag would read as "one hole" for any size of gap
-    (#293 review SHOULD-5). ``None`` when either date is unknown."""
+def _levels_behind(newest: str | None, latest: str | None) -> int | None:
+    """Complete sessions the stored levels are missing, through ``core.prices.sessions_behind`` so the calendar
+    guard lives in one place: the holiday table starts at ``CALENDAR_START``, and a newest session older than
+    that answers ``None`` instead of walking off the table (#293 review). The column is a count, so a 0/1 flag
+    would read as "one hole" for any size of gap."""
     from datetime import date as _date
-    from datetime import timedelta as _td
 
-    from RevenueChaser.core import calendar as nyse_calendar
+    from RevenueChaser.core import prices
     if not newest or not latest:
         return None
     try:
-        a, b = _date.fromisoformat(newest), _date.fromisoformat(latest)
+        return prices.sessions_behind(_date.fromisoformat(newest), _date.fromisoformat(latest))
     except ValueError:
         return None
-    if a >= b:
-        return 0
-    behind, d = 0, a + _td(days=1)
-    while d <= b:
-        if nyse_calendar.is_trading_day(d):
-            behind += 1
-        d += _td(days=1)
-    return behind
 
 
 def _index_levels_row(now: datetime) -> dict:
@@ -340,26 +332,28 @@ def _index_levels_row(now: datetime) -> dict:
     row = {
         "key": "index_levels", "label": "SPX daily levels",
         "tables": ["index_levels_daily"],
-        "rows": _count("index_levels_daily"),
+        "rows": 0,
         "last_date": _max_date(("index_levels_daily", "session_date")),
         "holes": None, "hole_label": "behind the latest complete session", "fetch": None,
         "note": "no index levels yet (the daily bars --index-levels step writes them)",
     }
     try:
         h = index_levels.health_summary(now)
+        # health_summary counts the one stored symbol; the whole-table count would diverge the day a second
+        # symbol is written, since the key is (symbol, session_date) (#293 review N-1).
+        rows = int(h.get("rows") or 0)
+        row["rows"] = rows
+        if not rows:
+            return row
+        if h.get("calendar_error"):
+            row["note"] = "levels stored, but the latest complete session is unavailable (calendar error)"
+            return row
+        newest, latest = h.get("newest_session"), h.get("latest_complete")
+        row["holes"] = _levels_behind(newest, latest)
+        row["note"] = (f"newest {newest or DASH} vs latest complete {latest or DASH}; {rows:,} rows; "
+                       f"source {h.get('source') or DASH}")
     except Exception as exc:  # noqa: BLE001 - a summary failure must not break the page
         _record("index_levels_daily", "_index_levels_row", exc)
-        return row
-    rows = int(h.get("rows") or 0)
-    if not rows:
-        return row
-    if h.get("calendar_error"):
-        row["note"] = "levels stored, but the latest complete session is unavailable (calendar error)"
-        return row
-    newest, latest = h.get("newest_session"), h.get("latest_complete")
-    row["holes"] = _sessions_behind(newest, latest)
-    row["note"] = (f"newest {newest or DASH} vs latest complete {latest or DASH}; {rows:,} rows; "
-                   f"source {h.get('source') or DASH}")
     return row
 
 

@@ -207,7 +207,7 @@ def _stamp(now_given: bool, run_at: float) -> float:
 # --- the nightly step -----------------------------------------------------------------------------------------------
 
 def nightly(*, run_id: str | None = None, now: datetime | None = None, yf_download=None,
-                        marker_dir: Path | None = None) -> dict:
+            marker_dir: Path | None = None) -> dict:
     """Append the sessions ``^GSPC`` is missing up to the latest complete one, with at most one yfinance request a
     night; see the module docstring. Never raises.
 

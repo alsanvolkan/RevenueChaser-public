@@ -942,7 +942,10 @@ def test_index_levels_row_on_an_empty_store(rawstore_tmp_db):
 
 def test_index_levels_row_on_a_seeded_store(rawstore_tmp_db):
     _seed()
-    rawstore.write_rows("index_levels_daily", [_level(date(2026, 9, 29)), _level(date(2026, 9, 30))])
+    # different sources per row, so the note pins the NEWEST row's source (#293 review S-4): with both rows
+    # "yfinance", swapping the selector in index_levels.health_summary's source query would still pass.
+    rawstore.write_rows("index_levels_daily", [_level(date(2026, 9, 29), source="uw"),
+                                               _level(date(2026, 9, 30))])
     row = _rows(inventory.collect(now=FIXED))["index_levels"]
     assert row["rows"] == 2 and row["last_date"] == "2026-09-30"
     assert "newest 2026-09-30 vs latest complete 2026-09-30" in row["note"]

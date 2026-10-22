@@ -234,7 +234,9 @@ def _fetch_snapshot_staged(
     hashes: dict[str, str] = {}
     candle_source = "unusual_whales"
     uw_ohlc_status = None
-    uw_ohlc_attempted = True
+    # No UW index-OHLC request is made any more: the window comes from the store (D03). The keys
+    # stay for readers of older manifests, with attempted False and no entitlement reason.
+    uw_ohlc_attempted = False
 
     # Last failure seen per endpoint name, so a mandatory abort can explain the
     # actual HTTP status instead of just "failed".
@@ -335,7 +337,6 @@ def _fetch_snapshot_staged(
             symbol = "^GSPC" if ticker == "SPX" else ticker
             candles = price_window_sessions(candle_fetcher(asof_date, ticker=symbol), asof_date)
             candle_source = f"{index_levels.TABLE} ({symbol})"
-            uw_ohlc_status = 422
             if not candles:
                 warnings.append(f"no stored index levels for {symbol} on {asof_date} (the daily bars "
                                 f"--index-levels step has not written this window yet)")
@@ -471,7 +472,7 @@ def _fetch_snapshot_staged(
         "candle_source": candle_source,
         "uw_ohlc_attempted": uw_ohlc_attempted,
         "uw_ohlc_status": uw_ohlc_status,
-        "uw_ohlc_fallback_reason": "Index OHLC entitlement unavailable" if uw_ohlc_status == 422 else None,
+        "uw_ohlc_fallback_reason": None,
         "spot_exposure_mode": mode,
         "spot_exposure_search_bounds": [int(spot * (1 - SPOT_EXPOSURE_WINDOW_PCT)), int(spot * (1 + SPOT_EXPOSURE_WINDOW_PCT))] if spot else None,
         "zero_dte_expiry": asof_date if zero_dte else None,

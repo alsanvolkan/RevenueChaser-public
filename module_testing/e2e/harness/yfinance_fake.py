@@ -7,9 +7,9 @@ boundary.
 
 Thirteen of the fourteen call sites in this repo go through ``yf.Ticker`` and
 one through ``yf.screen``, so replacing those two names on the ``yfinance``
-module covers everything — including ``module_spx_gamma/candles.py`` and
-``vix.py``, which import ``yfinance`` at module top level and would defeat a
-per-module patch.
+module covers everything — including ``module_spx_gamma/vix.py``, which imports
+``yfinance`` at module top level and would defeat a per-module patch.
+(``candles.py`` used to as well; since D03 it reads the stored levels.)
 
 Like the mock HTTP server, this counts calls, so "refresh performed no network"
 stays provable for the yfinance-backed boards (swing, fundamentals, asymmetric

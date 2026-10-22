@@ -37,7 +37,11 @@ def stored_spx_candles(asof: date | str, ticker: str = "^GSPC") -> list[dict]:
     snapshot then reports the window as unavailable instead of falling back to a live candle fetch.
     """
     asof_date = asof if isinstance(asof, date) else date.fromisoformat(asof)
-    return index_levels.levels_between(window_start(asof_date), asof_date, symbol=ticker)
+    rows = index_levels.levels_between(window_start(asof_date), asof_date, symbol=ticker)
+    # Row order is load-bearing: the snapshot's spot is candles[-1]["close"] and price_window_sessions does not
+    # re-sort. Sorting here keeps that true whatever a reader's query does (#293 review S-1).
+    rows.sort(key=lambda r: r["date"])
+    return rows
 
 
 def window_lag(rows: list[dict], asof: date | str) -> tuple[str | None, str | None]:
@@ -53,12 +57,12 @@ def window_lag(rows: list[dict], asof: date | str) -> tuple[str | None, str | No
         return None, None                      # the empty case has its own warning
     try:
         from RevenueChaser.core import calendar as nyse_calendar
-        expected = nyse_calendar.latest_complete_session()
+        expected = min(nyse_calendar.latest_complete_session(), asof_date)
+        if not nyse_calendar.is_trading_day(expected):
+            # the holiday table starts at 2025; an older as-of must not read as a failed window
+            expected = nyse_calendar.previous_trading_day(expected)
     except (ValueError, ImportError):
         return None, None
-    expected = min(expected, asof_date)
-    if not nyse_calendar.is_trading_day(expected):
-        expected = nyse_calendar.previous_trading_day(expected)
     last = max(r["date"] for r in rows)
     return (expected.isoformat(), last) if last < expected.isoformat() else (None, None)
 

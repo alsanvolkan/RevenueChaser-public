@@ -77,7 +77,7 @@ def _levels() -> dict[date, dict]:
 
 def _night(tmp_path, dl, now=NOW, run_id="night"):
     return index_levels.nightly(run_id=run_id, now=now, yf_download=dl,
-                                            marker_dir=tmp_path / "markers")
+                                marker_dir=tmp_path / "markers")
 
 
 # ── the nightly step: at most one yfinance request a night ───────────────────────────────────────────────────────
