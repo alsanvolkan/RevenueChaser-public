@@ -237,11 +237,30 @@ def test_the_universe_reader_uses_the_stored_rows_and_makes_no_sec_call(rawstore
     assert len(http.calls) == asked
 
 
-def test_the_universe_reader_says_so_when_no_file_is_stored(rawstore_tmp_db, monkeypatch):
+def test_the_universe_reader_falls_back_to_the_pull_when_nothing_is_stored(rawstore_tmp_db, http, monkeypatch):
+    """Nothing stored is a fresh install, a restored store, or any run before the first nightly — not a reason
+    to hand back an empty universe. The pull is the fallback, so membership still resolves (#301)."""
     from RevenueChaser.core import universe_fetch as uf
+    monkeypatch.setattr(uf, "MIN_FULL_UNIVERSE", 3)
+    _serve(http)
 
     members, reason = uf._sec_member_list()
-    assert members == [] and "stored" in reason
+
+    assert reason is None, reason
+    # sec.exchange_map() normalises a dotted class ticker the same way on both paths, so BRK.B arrives as BRK-B
+    assert [m["ticker"] for m in members] == ["AAPL", "BRK-B", "SMOL"]
+
+
+def test_the_universe_reader_says_so_when_nothing_is_stored_and_the_pull_fails(rawstore_tmp_db, http, monkeypatch):
+    """The other half: with no stored rows AND no answer from SEC there is genuinely no member list, and the
+    caller must be told rather than shown an empty universe."""
+    from RevenueChaser.core import universe_fetch as uf
+    monkeypatch.setattr(uf, "MIN_FULL_UNIVERSE", 3)
+    _serve(http, ex_status=500)
+
+    members, reason = uf._sec_member_list()
+
+    assert members == [] and reason
 
 
 def test_the_identity_reader_uses_the_stored_rows_and_makes_no_sec_call(rawstore_tmp_db, tmp_path, http):

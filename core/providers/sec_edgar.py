@@ -369,6 +369,10 @@ def _cik_map() -> dict:
         if _CIK_MAP_CACHE:
             return _CIK_MAP_CACHE[0]
         rows = sec_files.latest("exchange")
+        if not rows:
+            # The retired table is the second source, not a dead end: it still holds every ticker the old
+            # writer ever saw, so a store without the new file keeps resolving CIKs without a download (#301).
+            rows = rawstore.query("SELECT ticker, cik, name FROM sec_company_tickers")
         if rows:
             out = {r["ticker"]: {"cik": _as_cik(r["cik"]), "name": r["name"]} for r in rows}
             out = {t: v for t, v in out.items() if v["cik"] is not None}

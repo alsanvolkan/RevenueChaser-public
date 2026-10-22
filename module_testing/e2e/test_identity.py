@@ -119,6 +119,12 @@ def seeded(dashboard, provider_routes, monkeypatch):
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
     rawstore.write_rows("equity_universe", [{"ticker": t, "name": n, "market_cap": c} for t, n, c in _UNIVERSE])
     rawstore.write_rows("index_constituents", [{"slug": "sp500", "ticker": "AAPL"}])      # the SPDR check's members
+    # #301 D21: the nightly step stores the exchange file and the identity run reads those rows, so the
+    # PRIMARY path is a seeded sec_exchange_file — not the pull the mock still routes for other callers.
+    rawstore.write_rows("sec_exchange_file", [
+        {"ticker": t, "cik": str(c), "name": t + " Inc", "exchange": "Nasdaq", "valid_from": None,
+         "status": "present", "source": "sec_exchange", "fetched_at": 1.0, "run_id": "seed", "run_at": 1.0}
+        for t, c in _CIK.items()])
     install(provider_routes)
     return dashboard
 
@@ -195,23 +201,47 @@ class TestIdentityRun:
         second = {p: len(provider_routes.requests(p)) for p in first}
         assert second["/submissions/"] == first["/submissions/"], "SEC submissions are a 30-day delta"
         assert second["/v3/mapping"] == first["/v3/mapping"], "OpenFIGI is a 90-day delta"
-        assert second["/files/company"] > first["/files/company"], "the SEC exchange map refreshes every run"
+        # #301 D21, the new positive contract: membership comes from the stored sec_exchange_file, so the
+        # identity run pulls the exchange file ZERO times — on this run and on every earlier one.
+        assert second["/files/company"] == 0 and first["/files/company"] == 0, (
+            "the identity run must never pull the SEC exchange file (#301 D21); it reads the stored rows")
+        assert _master()["AAPL"]["cik"] == "320193", "and it still resolves CIKs, from the store"
         assert second["/dynamic"] > first["/dynamic"], "Nasdaq refreshes every run"
         assert _master()["FLAGX"]["security_type"] != "etp", (
             "a healthy Nasdaq that no longer lists FLAGX must un-freeze its ETF type")
         assert len(_q("SELECT * FROM identity_runs")) == 2
 
-    def test_a_failed_sec_map_keeps_the_stored_map_and_the_run_is_partial(self, seeded, provider_routes):
+    def test_a_dead_sec_endpoint_cannot_touch_a_run_that_reads_the_stored_file(self, seeded, provider_routes):
+        """#301 D21, half one of the split partial contract: with the file STORED, the network being down is
+        irrelevant - the run is fully ok and never requests the file."""
         import RevenueChaser.core.rawstore as rawstore
         rawstore.write_rows("sec_company_tickers", [{"ticker": "GONE", "cik": "5", "name": "Delisted Co"},
                                                     {"ticker": "AAPL", "cik": "320193", "name": "Apple"}])
         provider_routes.route("/files/company_tickers_exchange.json", payload={"error": "down"}, status=500)
         result = seeded.run_job("/run/identity")
-        assert result.ok, f"{result}\n{seeded.logs()}"
-        assert "sources ok 6/7" in result.message, result.message
-        assert {r["ticker"] for r in _q("SELECT ticker FROM sec_company_tickers")} == {"GONE", "AAPL"}
-        assert _q("SELECT status FROM identity_runs")[0]["status"] == "partial"
+        assert result.ok, seeded.logs()
+        assert "sources ok 7/7" in result.message, result.message
+        assert provider_routes.requests("/files/company_tickers_exchange.json") == [], (
+            "the identity run must not request the exchange file (#301 D21)")
+        assert _q("SELECT status FROM identity_runs")[0]["status"] == "ok"
+        assert {r["ticker"] for r in _q("SELECT ticker FROM sec_company_tickers")} == {"GONE", "AAPL"}, (
+            "the retired table must be left exactly as it was")
         assert _master()["AAPL"]["cik"] == "320193"
+
+    def test_nothing_stored_and_the_network_down_is_still_a_partial_run(self, seeded, provider_routes):
+        """#301 D21, half two: an EMPTY sec_exchange_file is an error, not a silent ok. "Nothing stored yet"
+        must never be read as "no company has a CIK", so the run is partial and the stored map survives."""
+        import RevenueChaser.core.rawstore as rawstore
+        rawstore.query("DELETE FROM sec_exchange_file")
+        rawstore.write_rows("sec_company_tickers", [{"ticker": "GONE", "cik": "5", "name": "Delisted Co"},
+                                                    {"ticker": "AAPL", "cik": "320193", "name": "Apple"}])
+        provider_routes.route("/files/company_tickers_exchange.json", payload={"error": "down"}, status=500)
+        result = seeded.run_job("/run/identity")
+        assert result.ok, seeded.logs()
+        assert "sources ok 6/7" in result.message, result.message
+        assert _q("SELECT status FROM identity_runs")[0]["status"] == "partial"
+        assert {r["ticker"] for r in _q("SELECT ticker FROM sec_company_tickers")} == {"GONE", "AAPL"}
+        assert _master()["AAPL"]["cik"] == "320193", "the stored map must survive the failure"
 
     def test_a_list_name_takes_the_lists_sector_and_keeps_uws_industry(self, seeded):
         assert seeded.run_job("/run/identity").ok

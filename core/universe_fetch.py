@@ -482,10 +482,16 @@ def _sec_member_list() -> tuple[list[dict], str | None]:
     screener's own count is no guard for it).
     """
     from RevenueChaser.core import sec_files
+    from RevenueChaser.core.identity.sources import sec
 
     rows = sec_files.latest("exchange")
     if not rows:
-        return [], "no SEC exchange file stored yet (the nightly RC-Daily-Bars step writes it)"
+        # Nothing stored yet: a fresh install, a restored store, or any run before the first nightly. Falling
+        # back to the pull keeps the universe buildable instead of returning an empty member list (#301).
+        res = sec.exchange_map()
+        if not res.ok:
+            return [], res.error or "SEC ticker map failed"
+        rows = res.rows
     members = [r for r in rows
                if str(r.get("exchange") or "").strip().casefold() in SEC_LIST_EXCHANGES]
     if not members:
