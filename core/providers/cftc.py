@@ -1,8 +1,11 @@
 """CFTC Commitments of Traders — Traders in Financial Futures (TFF).
 
-Pulls the latest E-mini S&P 500 (CME) TFF row from CFTC's public Socrata API.
-Maps directly to the report's COT section: asset manager / leveraged funds /
-dealer net positions and their weekly change.
+Pulls the latest E-mini S&P 500 (CME) TFF row from CFTC's public Socrata API: asset
+manager / leveraged funds / dealer positions, their weekly change, and open interest.
+
+A provider reader only — no storage, no job, no UI. Two boards read it: SPX Gamma's
+snapshot (:func:`fetch_cftc_tff`) and Earnings Radar's D29 ``cftc_cot`` writer
+(:func:`map_row`, :func:`market_where`), which stages the same parse into the store.
 """
 from __future__ import annotations
 
@@ -10,13 +13,18 @@ import os
 
 import httpx
 
-from .config import HTTP_MAX_RETRIES, HTTP_TIMEOUT_SECONDS, to_float
+from ..config import to_float
 
 CFTC_TFF_BASE = os.getenv("RC_CFTC_BASE") or "https://publicreporting.cftc.gov/resource/udgc-27he.json"
 E_MINI_MARKET = "E-MINI S&P 500 - CHICAGO MERCANTILE EXCHANGE"
 
+# The HTTP budget the parse was written with (module_spx_gamma/config.py:32-33). Declared
+# here rather than imported: core/ must not import a board module.
+TIMEOUT_SECONDS = 20
+MAX_RETRIES = 3
 
-def _market_where() -> str:
+
+def market_where() -> str:
     # SoQL: match the E-mini market & exchange name (URL-encoded later by httpx)
     return f"market_and_exchange_names like '{E_MINI_MARKET}'"
 
@@ -24,14 +32,18 @@ def _market_where() -> str:
 def fetch_cftc_tff() -> dict | None:
     """Latest E-mini S&P 500 TFF row: dealer/asset-mgr/leveraged-funds net + Δ."""
     params = {
-        "$where": _market_where(),
+        "$where": market_where(),
         "$order": "report_date_as_yyyy_mm_dd DESC",
         "$limit": 1,
     }
     last_err = None
-    for attempt in range(HTTP_MAX_RETRIES + 1):
+    for attempt in range(MAX_RETRIES + 1):
         try:
+<<<<<<< HEAD:module_spx_gamma/cftc.py
             resp = httpx.get(CFTC_TFF_BASE, params=params, timeout=HTTP_TIMEOUT_SECONDS, follow_redirects=True)
+=======
+            resp = httpx.get(CFTC_TFF_BASE, params=params, timeout=TIMEOUT_SECONDS)
+>>>>>>> 47cb5eb (Move the CFTC TFF parse to core/providers/cftc with public names (#14)):core/providers/cftc.py
         except httpx.HTTPError as exc:
             last_err = str(exc)
             continue
@@ -41,11 +53,11 @@ def fetch_cftc_tff() -> dict | None:
         data = resp.json()
         if not isinstance(data, list) or not data:
             return None
-        return _map_row(data[0])
+        return map_row(data[0])
     return None
 
 
-def _map_row(row: dict) -> dict | None:
+def map_row(row: dict) -> dict | None:
     def g(*keys):
         for k in keys:
             v = to_float(row.get(k))

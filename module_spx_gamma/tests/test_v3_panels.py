@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+from RevenueChaser.core.providers.cftc import map_row
 from RevenueChaser.module_spx_gamma import normalize as nm
-from RevenueChaser.module_spx_gamma.cftc import _map_row
 from RevenueChaser.module_spx_gamma.vix import vix_term_mode
 
 
@@ -125,7 +125,7 @@ def test_cftc_map_row():
         "change_in_asset_mgr_long": "-7338", "change_in_lev_money_long": "-33802",
         "change_in_dealer_long_all": "23379",
     }
-    r = _map_row(row)
+    r = map_row(row)
     assert r["asset_manager"]["net"] == pytest.approx(1166084 - 212856)
     assert r["dealer"]["net"] == pytest.approx(207277 - 968313)
     assert r["leveraged_funds"]["change"] == pytest.approx(-33802)
@@ -133,7 +133,7 @@ def test_cftc_map_row():
 
 
 def test_cftc_map_row_empty():
-    assert _map_row({}) is None
+    assert map_row({}) is None
 
 
 def test_normalize_cftc_shape():
