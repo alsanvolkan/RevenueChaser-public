@@ -13,9 +13,13 @@ TABLES = {
 }
 
 
-def test_schema_version_is_pinned_at_9():
-    """9: the raw SIC group on security_master (#272). Bump the pin, the doc and the checkpoint warning together."""
-    assert rawstore.schema_version() == "11"
+def test_the_schema_version_pin_is_explicit():
+    """The label is pinned to a literal, so a bump is a deliberate act and not a side effect of a new table.
+
+    12: the (accession, line_no) key on ``sec13f_holdings`` (#208). Bump the pin, the doc and the checkpoint
+    warning together.
+    """
+    assert rawstore.schema_version() == "12"
 
 
 @pytest.mark.parametrize("name,key", TABLES.items())
@@ -144,7 +148,7 @@ def test_the_first_store_call_adds_the_column_and_keeps_every_row(old_universe):
     assert set(after) == set(old_universe)
     for t, was in old_universe.items():
         assert after[t] == {**was, "next_earnings_date": None}, t
-    assert rawstore.schema_version() == "11", "the column came without a bump; the label is 11 since the history redesign C"
+    assert rawstore.schema_version() == "12", "the column came without a bump; the label last moved for the 13F v12 tables (#208)"
 
 
 def test_the_first_write_adds_the_column_without_an_explicit_ensure(old_universe):
@@ -214,7 +218,7 @@ def test_the_first_store_call_adds_the_figi_columns_and_keeps_every_row(old_mast
     assert set(after) == set(old_master)
     for t, was in old_master.items():
         assert after[t] == {**was, **dict.fromkeys(_FIGI_COLS)}, t
-    assert rawstore.schema_version() == "11", "the columns came without a bump; the label is 11 since the history redesign C"
+    assert rawstore.schema_version() == "12", "the columns came without a bump; the label last moved for the 13F v12 tables (#208)"
 
 
 def test_the_first_master_write_after_the_migration_takes_the_figi_columns(old_master):
