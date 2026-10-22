@@ -80,6 +80,28 @@ def classification_universe(mc_min: float = DEFAULT_MC_MIN) -> list[str]:
     return [r["ticker"] for r in rows if r["ticker"] not in excluded]
 
 
+def classification_universe_rows(mc_min: float = DEFAULT_MC_MIN) -> list[dict]:
+    """The ``classification_universe`` slice with the columns a board needs, not just the ticker.
+
+    Same floor, same excluded-type rule and same cap-descending order as
+    :func:`classification_universe`; one row per name: ``ticker``, ``market_cap``, ``sector``
+    (the stored label, not normalised) and ``industry``. FIN-3's comps peer ladder is the reader.
+
+    ``sub_industry`` is deliberately absent: the identity master writes it and ``industry_group``
+    NULL (the GICS-only levels were dropped), so a ladder can never widen through them.
+    """
+    rows = rawstore.query(
+        f"SELECT ticker, market_cap, sector, industry FROM {_UNIVERSE_TABLE} "
+        f"WHERE COALESCE(market_cap, 0) >= ? ORDER BY market_cap DESC",
+        [mc_min])
+    excluded = excluded_tickers()
+    return [{"ticker": r["ticker"],
+             "market_cap": r.get("market_cap"),
+             "sector": r.get("sector") or "",
+             "industry": r.get("industry") or ""}
+            for r in rows if r["ticker"] not in excluded]
+
+
 def universe_counts(mc_min: float = DEFAULT_MC_MIN) -> dict:
     """The universe funnel every board states: all caps, the floor slice, the types.
 
@@ -347,5 +369,6 @@ def filter_fields(tickers: list[str] | None = None) -> dict[str, dict]:
     return {c["ticker"]: c for c in cards}
 
 
-__all__ = ["classification_universe", "spine_gics", "gics_of", "DEFAULT_MC_MIN", "TYPE_GROUPS",
-           "excluded_tickers", "filter_fields", "theme_catalog", "current_theme_run", "universe_counts"]
+__all__ = ["classification_universe", "classification_universe_rows", "spine_gics", "gics_of",
+           "DEFAULT_MC_MIN", "TYPE_GROUPS", "excluded_tickers", "filter_fields", "theme_catalog",
+           "current_theme_run", "universe_counts"]

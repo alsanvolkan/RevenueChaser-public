@@ -34,6 +34,25 @@ def _default_fetch(ticker: str) -> dict:
         return {}
 
 
+# A multiple whose denominator was reported and is not positive is not meaningful: the cell reads NM and the
+# value stays out of the percentile. 0 would read as a real multiple, and None as "not reported".
+NM = "NM"
+
+# Banks and insurers are not valued on EV: a Financial Services target is a P/E comp (FIN-3).
+PE_ONLY_SECTOR = "Financial Services"
+
+
+def _multiple(numerator, denominator) -> float | str | None:
+    """``numerator / denominator``, or ``NM`` for a non-positive denominator (missing inputs stay ``None``)."""
+    if numerator is None or denominator is None:
+        return None
+    return NM if denominator <= 0 else numerator / denominator
+
+
+def _measured(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def run_comps(financials: dict, peers: list[str],
               fetch_info: Callable[[str], dict] | None = None) -> dict:
     """Rakip çarpan analizi; fetch_info test için enjekte edilebilir."""
@@ -41,6 +60,8 @@ def run_comps(financials: dict, peers: list[str],
     annual, warnings = validate_annual(financials.get("annual", []))
     if not annual:
         return {"error": "target financial data missing", "warnings": warnings}
+
+    pe_only = financials.get("sector") == PE_ONLY_SECTOR
 
     latest = annual[-1]
     target_ebitda = to_float(latest.get("ebitda"))
@@ -60,14 +81,16 @@ def run_comps(financials: dict, peers: list[str],
         mc = to_float(info.get("marketCap"))
         ni = to_float(info.get("netIncomeToCommon"))
         pe_val = to_float(info.get("trailingPE"))
-        if pe_val is None and mc is not None and ni not in (None, 0):
-            pe_val = mc / ni
+        if pe_val is None and mc is not None:
+            pe_val = _multiple(mc, ni)
+        if _measured(pe_val) and pe_val <= 0:
+            pe_val = NM
 
-        ev_eb = ev / ebitda if (ev and ebitda) else None
-        ev_r = ev / revenue if (ev and revenue) else None
-        if ev_eb is not None: ev_ebitda.append(ev_eb)
-        if ev_r is not None: ev_rev.append(ev_r)
-        if pe_val is not None: pe.append(pe_val)
+        ev_eb = None if pe_only else _multiple(ev, ebitda)
+        ev_r = None if pe_only else _multiple(ev, revenue)
+        for bucket, value in ((ev_ebitda, ev_eb), (ev_rev, ev_r), (pe, pe_val)):
+            if _measured(value):
+                bucket.append(value)
 
         rows.append({
             "ticker": p,
@@ -78,8 +101,17 @@ def run_comps(financials: dict, peers: list[str],
             "pe": pe_val,
         })
 
-    def _implied(median_mult, target_metric):
+    def _implied(median_mult, target_metric, multiple: str, metric: str):
+        """``median_mult * target_metric``, or None when the target's own metric is not positive.
+
+        A peer multiple is a positive price per unit of EBITDA, revenue or earnings; the same multiple of a
+        LOSS is a negative EV (or a negative per-share value — "Per Share $-1.04"), which is not a valuation.
+        The run says which metric was not positive, once per implied value, so the board's N/A is explained.
+        """
         if median_mult is None or target_metric is None:
+            return None
+        if target_metric <= 0:
+            warnings.append(f"comps: implied {multiple} not computed — the target's {metric} is not positive")
             return None
         return median_mult * target_metric
 
@@ -87,9 +119,9 @@ def run_comps(financials: dict, peers: list[str],
     med_ev_rev = _pct(ev_rev)["p50"]
     med_pe = _pct(pe)["p50"]
 
-    implied_ev_ebitda = _implied(med_ev_ebitda, target_ebitda)
-    implied_ev_rev = _implied(med_ev_rev, target_revenue)
-    implied_equity_pe = _implied(med_pe, target_ni)
+    implied_ev_ebitda = _implied(med_ev_ebitda, target_ebitda, "EV/EBITDA", "EBITDA")
+    implied_ev_rev = _implied(med_ev_rev, target_revenue, "EV/Revenue", "revenue")
+    implied_equity_pe = _implied(med_pe, target_ni, "P/E", "net income")
 
     net_debt = _net_debt(target_debt, target_cash)     # None when either is unknown
 
@@ -106,6 +138,8 @@ def run_comps(financials: dict, peers: list[str],
     return {
         "ticker": financials.get("ticker"),
         "warnings": warnings,
+        # A Financial Services target is P/E only: the EV multiples are absent by design, not missing data.
+        "pe_only": pe_only,
         "peers": rows,
         "multiples": {
             "ev_ebitda": _pct(ev_ebitda),

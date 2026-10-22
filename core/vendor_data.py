@@ -34,6 +34,7 @@ import time
 from datetime import date, datetime
 
 from RevenueChaser.core import calendar, ledger, ownership, rawstore
+from RevenueChaser.core.providers.yfinance import MAX_YEARS
 
 logger = logging.getLogger(__name__)
 
@@ -331,6 +332,88 @@ def record(statements=(), valuations=(), *, run_id: str, run_at: float | None = 
 
     res.update(rawstore.atomic(_write))
     return res
+
+
+# ── the reader (FIN-5, #385: a Refresh reads what the Fetch stored) ──────────
+
+def read_financials(ticker: str) -> dict | None:
+    """The ``yfinance.get_financials``-shaped payload of the newest stored rows for ``ticker``, read-only.
+
+    The statements are the newest ``vendor_financials`` row of each (statement, period_end) of source ``yfinance``
+    and report_type ``annual``, merged per fiscal year and cut to the newest ``MAX_YEARS`` fiscal years (the window
+    ``get_financials`` serves, so a Refresh averages over the years its Fetch did); the ``.info`` part is the newest
+    ``vendor_valuation`` row's payload. Zero network and zero writes: a Refresh builds its model inputs from these
+    rows instead of fetching (FIN-5, #385), and a ticker the store never fetched reads as ``None`` — no empty payload
+    that would look like data.
+
+    Only ``yfinance`` rows are read: the payload is rebuilt in ``get_financials``' shape, which is what that source
+    was mapped from (a UW row carries neither the balance-sheet fields nor ``.info``). Only rows whose ``status``
+    is 'present' are read: a change-history row that marks a period absent says the vendor stopped serving it,
+    which is not a value — the writer closes no period today, and the reader does not depend on that staying true.
+    """
+    ticker = (ticker or "").strip().upper()
+    statements = [rawstore._decode_row(STATEMENTS, r) for r in rawstore.query(
+        f"SELECT statement, period_end, payload FROM {STATEMENTS} "
+        f"WHERE ticker = ? AND source = 'yfinance' AND report_type = 'annual' AND status = 'present' "
+        f"QUALIFY ROW_NUMBER() OVER (PARTITION BY statement, period_end ORDER BY run_at DESC) = 1",
+        [ticker])]
+    valuations = rawstore.query(
+        f"SELECT payload FROM {VALUATION} WHERE ticker = ? AND source = 'yfinance' "
+        f"ORDER BY session_date DESC, run_at DESC LIMIT 1", [ticker])
+    if not statements and not valuations:
+        return None
+
+    years: dict[str, dict] = {}
+    for row in statements:
+        period_end = row.get("period_end")
+        key = period_end.isoformat() if hasattr(period_end, "isoformat") else str(period_end or "")
+        if not key:
+            continue
+        rec = years.setdefault(key, {"period_end": key})
+        payload = row.get("payload")
+        if isinstance(payload, dict):
+            rec.update({k: v for k, v in payload.items() if k != "fiscal_year"})
+            if payload.get("fiscal_year") is not None:
+                rec["fiscal_year"] = payload["fiscal_year"]
+    annual = [years[k] for k in sorted(years)][-MAX_YEARS:]
+    for rec in annual:
+        rec.setdefault("fiscal_year", str(rec["period_end"])[:4])
+
+    info = rawstore._decode_row(VALUATION, valuations[0]).get("payload") if valuations else None
+    info = info if isinstance(info, dict) else {}
+    return {
+        "ticker": ticker, "info": info, "sector": info.get("sector") or None, "annual": annual,
+        "shares_outstanding": _num(info.get("sharesOutstanding")),
+        "market_cap": _num(info.get("marketCap")),
+        "enterprise_value": _num(info.get("enterpriseValue")),
+        "beta": _num(info.get("beta")),
+        "current_price": _num(info.get("currentPrice")),
+        "currency": info.get("currency") or "USD",
+        "source": "yfinance",
+    }
+
+
+def merge_for_refresh(stored: dict | None, cached: dict | None) -> dict | None:
+    """The Refresh's model inputs: the statements from the stored rows, the valuation from the last Fetch's cache.
+
+    ``stored`` is :func:`read_financials`' payload and ``cached`` the raw ``ticker_payload_cache`` payload of the
+    same ticker (a store written before #297 has only the cache). The two halves go missing separately, so a
+    payload cannot be taken whole: an EDGAR-backed AG name has a valuation row and no statement rows (#150,
+    ``annual`` is empty), while ``vendor_valuation`` is written only for a closed session, so an intraday Fetch
+    stores statements and its own ``.info`` in the cache but no valuation row. The statements are therefore
+    ``stored``'s when it has any, else ``cached``'s; the valuation — ``.info`` and the scalars ``get_financials``
+    derives from it, every key of the payload but ``annual`` — is ``cached``'s when it carries an ``.info``, else
+    ``stored``'s, so the board shows the market snapshot of the last Fetch instead of an older session's. Either
+    payload alone is returned as it is, and ``None`` means neither exists (the caller turns that into no report).
+    """
+    if stored is None or cached is None:
+        return cached if stored is None else stored
+    out = dict(stored)
+    if not out.get("annual") and cached.get("annual"):
+        out["annual"] = cached["annual"]
+    if cached.get("info"):
+        out.update({k: v for k, v in cached.items() if k != "annual"})
+    return out
 
 
 # ── the capture a job fills ──────────────────────────────────────────────────
