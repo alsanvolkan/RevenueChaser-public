@@ -516,6 +516,20 @@ class TestComputeTotalsGolden:
             assert "executemany" not in inspect.getsource(fn)
         assert "median(" in inspect.getsource(sf._value_scale_factors)
 
+    def test_no_reader_of_the_holdings_period_column(self, isolated_store, tmp_path):
+        """#208: the legacy SQLite migration leaves ``sec13f_holdings.period`` NULL on purpose.
+
+        ``SYNTHETIC_COLUMNS`` in ``scripts/migrate_rawdata_to_duckdb.py`` fills ``line_no`` and
+        ``sshprnamttype`` for a legacy copy but not ``period``, because every period filter joins
+        ``sec13f_submissions``. That is only safe while it stays true, so assert it rather than
+        trust the comment: a query that starts reading ``h.period`` has to fill it in the migration
+        too, or a migrated store answers it with NULL.
+        """
+        import inspect
+        for fn in (sf.compute_totals, sf.held_value, sf.unmatched_summary,
+                   sf._value_scale_factors, sf.map_candidates):
+            assert "h.period" not in inspect.getsource(fn), fn.__name__
+
 
 class TestRecomputeTotals:
     """The derive stage: store only, no network."""

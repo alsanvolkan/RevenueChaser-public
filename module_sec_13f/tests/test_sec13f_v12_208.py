@@ -212,6 +212,71 @@ class TestValueUnitsV12:
         assert set(factors.values()) == {1.0}
         assert engine.value_scale_summary(factors)["rescaled"] == 0
 
+    def test_a_ratio_under_the_lower_edge_is_not_read_as_thousands(self, store, tmp_path):
+        """The band is bounded below too: a ratio far under 1/1000 is not a units error either.
+
+        Five names whose implied price is ~1/30,000 of the close. Reading that as "thousands" and
+        multiplying by 1000 would still leave it 30x off, so it is a different problem (a bad
+        close, a wrong CUSIP map) and the check declines to guess.
+        """
+        rows = [_row("a", f"NAME{i}", f"11111111{i}", "1000", "3", line_no=i + 1) for i in range(5)]
+        z = _write_zip(
+            tmp_path / "tiny_form13f.zip",
+            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            rows)
+        rawstore.write_rows("price_bars_daily", [
+            {"ticker": "TICK", "session_date": "2026-03-31", "close": 100.0, "source": "test"}])
+        engine.ingest_zips([z])
+        engine.save_cusip_ticker({f"11111111{i}": "TICK" for i in range(5)})
+        totals = engine.recompute_totals()
+        assert totals["TICK"]["2026-03-31"]["value"] == 15.0            # 5 x 3, not rescaled
+        _totals, factors = engine.compute_totals(engine.load_cusip_ticker())
+        assert set(factors.values()) == {1.0}
+
+    def test_names_with_an_unparseable_value_do_not_count_toward_the_floor(self, store, tmp_path):
+        """A NULL VALUE is skipped by median(), so it must not be counted as a name either.
+
+        Five mapped names, four of them with VALUE "n/a" (stored NULL by ``_float_or_none``). The
+        median would then rest on ONE name while the count said five, clearing
+        ``_VALUE_SCALE_MIN_NAMES`` on exactly the one-off the floor exists to stop.
+        """
+        rows = [_row("a", "NAME0", "111111110", "1000", "100", line_no=1)]
+        rows += [_row("a", f"NAME{i}", f"11111111{i}", "1000", "n/a", line_no=i + 1)
+                 for i in range(1, 5)]
+        z = _write_zip(
+            tmp_path / "badvalue_form13f.zip",
+            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            rows)
+        rawstore.write_rows("price_bars_daily", [
+            {"ticker": "TICK", "session_date": "2026-03-31", "close": 100.0, "source": "test"}])
+        engine.ingest_zips([z])
+        engine.save_cusip_ticker({f"11111111{i}": "TICK" for i in range(5)})
+        _totals, factors = engine.compute_totals(engine.load_cusip_ticker())
+        assert set(factors.values()) == {1.0}, "one usable name is not five"
+
+    def test_the_board_note_is_on_the_same_scale_as_the_totals(self, store, tmp_path):
+        """MUST (round 2): ``_13f_unmatched`` prints dollars beside the totals, so it scales them.
+
+        The runner used to call ``unmatched_summary`` with no factors, so a rescaled filer's
+        "N CUSIPs with no ticker ($X held in ...)" line was 1000x smaller than the totals printed
+        next to it.
+        """
+        from RevenueChaser.app import runners
+        rows = [_row("a", f"NAME{i}", f"11111111{i}", "1000", "100", line_no=i + 1) for i in range(5)]
+        rows.append(_row("a", "OMEGA INC", "999999999", "1000", "100", line_no=6))   # no ticker
+        z = _write_zip(
+            tmp_path / "note_form13f.zip",
+            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            rows)
+        rawstore.write_rows("price_bars_daily", [
+            {"ticker": "TICK", "session_date": "2026-03-31", "close": 100.0, "source": "test"}])
+        engine.ingest_zips([z])
+        engine.save_cusip_ticker({f"11111111{i}": "TICK" for i in range(5)})
+        engine.recompute_totals()
+        note, summary = runners._13f_unmatched()
+        assert summary["value"] == 100_000.0, "the note's held value is on the raw basis"
+        assert "$100,000" in note          # 100 raw x the filer's 1000 factor, as printed
+
     def test_held_value_and_the_unmatched_note_use_the_totals_scale(self, store, tmp_path):
         """MUST-2: a rescaled filer's held value and its left-out value are on the totals' basis, not the raw one."""
         rows = [_row("a", f"NAME{i}", f"11111111{i}", "1000", "100", line_no=i + 1) for i in range(5)]
@@ -490,3 +555,19 @@ class TestNonLossyIngest:
         assert stored["voting_sole"] is None
         assert stored["voting_shared"] == 0.0                     # a reported 0 stays a 0
         assert stored["shares"] == 100.0 and stored["value"] == 1000.0
+
+    def test_a_non_finite_numeric_field_is_null_too(self, store, tmp_path):
+        """S-D: ``float("nan")`` and ``float("inf")`` do not raise, so ValueError alone is not enough.
+
+        One stored NaN would poison ``SUM(h.value * factor)`` for the whole ticker-period — every
+        comparison against NaN is false, so it would not even show up as a large number.
+        """
+        rows = [_row("a", "ALPHA INC", "111111111", "100", "nan", line_no=1),
+                _row("a", "BETA INC", "222222222", "100", "inf", line_no=2)]
+        z = _write_zip(
+            tmp_path / "nan_form13f.zip",
+            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            rows)
+        assert engine.ingest_zips([z]) == 1
+        stored = rawstore.query("SELECT value FROM sec13f_holdings ORDER BY line_no")
+        assert [r["value"] for r in stored] == [None, None]

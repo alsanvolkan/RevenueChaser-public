@@ -45,6 +45,7 @@ intended way to rebuild the table from the zips on disk.
 import csv
 import hashlib
 import io
+import math
 import os
 import logging
 import zipfile
@@ -505,13 +506,17 @@ def _float_or_none(raw) -> Optional[float]:
     An absent field and a reported 0 are different facts in a non-lossy column, so
     neither is coerced to 0.0, and the bulk files carry text in numeric fields
     (``"n/a"``): one bad cell stores ``None`` instead of aborting a 20M-row re-ingest.
+
+    ``"nan"`` and ``"inf"`` parse without raising, and one NaN would make
+    ``SUM(h.value * factor)`` NaN for a whole ticker-period, so they store ``None`` too.
     """
     if raw is None or str(raw).strip() == "":
         return None
     try:
-        return float(raw)
+        v = float(raw)
     except ValueError:
         return None
+    return v if math.isfinite(v) else None
 
 
 def ingest_zips(zip_paths: Iterable[str | Path]) -> int:
@@ -739,7 +744,13 @@ def active_accessions_db() -> set:
 def map_candidates() -> list[str]:
     """The CUSIPs the map step asks OpenFIGI about (#207): held in an active filing of a period from
     ``START_QUARTER`` on, and with no ``identity_cusip`` row yet (a CUSIP asked once, matched or not, is not asked
-    again). Newest period first, then the largest value held in it, so a capped run maps the biggest holdings."""
+    again). Newest period first, then the largest value held in it, so a capped run maps the biggest holdings.
+
+    The value here is the RAW basis, not the VALUE-units-rescaled one the totals use (#208), so a CUSIP held
+    mostly by filers still reporting in thousands sorts lower than its real size. Accepted: this value only
+    orders the queue, never a stored number, and a CUSIP a capped run does not reach stays a candidate for the
+    next one, so the effect is a delayed mapping that corrects itself. Rescaling here would make the map step
+    read ``prices.duckdb`` and compute the factors before the derive does, for no change to any number."""
     _init_db()
     active = active_accessions_db()
     if not active:
@@ -821,6 +832,22 @@ def value_scale_summary(factors: dict) -> dict:
         if f != 1.0:
             periods[period] = periods.get(period, 0) + 1
     return {"checked": checked, "rescaled": rescaled, "periods": periods}
+
+
+def value_scale_factors(cusip_ticker: dict) -> dict[tuple[str, str], float]:
+    """The VALUE-units factors the derive would apply for ``cusip_ticker``; store read only.
+
+    For a caller that reports on what is stored rather than on a derive it just ran — the board's
+    unmatched note. It has to be on the same basis as the totals printed beside it, so it derives
+    the factors the same way instead of summing raw ``h.value``. Reading them from the store is
+    also what keeps the note honest after a refused derive: the stored map and the stored totals
+    are kept, and the note stays on the basis of what is stored.
+    """
+    active = active_accessions_db()
+    pairs = [[cusip, ticker_of(info)] for cusip, info in cusip_ticker.items() if ticker_of(info)]
+    if not active or not pairs:
+        return {}
+    return _value_scale_factors(pairs, active)
 
 
 def _reference_closes(tickers: Iterable[str], periods: Iterable[str]) -> dict[tuple[str, str], float]:
@@ -911,6 +938,11 @@ def _value_scale_factors(pairs: list, active: set[str]) -> dict[tuple[str, str],
             "JOIN mapped mp ON mp.cusip = h.cusip "
             "JOIN closes cl ON cl.ticker = mp.ticker AND cl.period = s.period "
             "WHERE s.period >= ? AND h.cik IS NOT NULL AND h.cik <> '' "
+            # h.value IS NOT NULL keeps the median and the name count on ONE row set: a row with an
+            # unparseable VALUE stores NULL (``_float_or_none``), median() skips it, and counting its
+            # CUSIP anyway would let a filer with five mapped names but four bad VALUEs clear
+            # _VALUE_SCALE_MIN_NAMES on a one-name median.
+            "AND h.value IS NOT NULL "
             "AND h.shares IS NOT NULL AND h.shares <> 0 AND cl.close <> 0 "
             f"AND {_LONG_EQUITY_SQL} "
             "GROUP BY h.cik, s.period",
