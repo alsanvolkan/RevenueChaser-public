@@ -111,10 +111,10 @@ MACRO_SERIES = {
     "US02Y":       {"fred": "DGS2",  "yf": "2YY=F"},
     "US05Y":       {"fred": "DGS5",  "yf": "^FVX"},
     "US10Y":       {"fred": "DGS10", "yf": "^TNX"},
-    "US20Y":       {"fred": "DGS20", "yf": "^TYX"},
-    "US30Y":       {"fred": "DGS30", "yf": "^TYX"},
+    "US20Y":       {"fred": "DGS20", "yf": None},
+    "US30Y":       {"fred": "DGS30", "yf": None},
     "US10Y-US02Y": {"fred": "T10Y2Y", "yf": None},
-    "USIRYY":      {"fred": "T10YIE", "yf": "TIP"},
+    "USIRYY":      {"fred": "T10YIE", "yf": None},
     "CL1!":        {"fred": "DCOILWTICO", "yf": "CL=F"},
     "MOVE":        {"fred": None, "yf": "^MOVE"},
     "VVIX":        {"fred": None,     "yf": "^VVIX"},  # FRED VIXCLS is the VIX itself; FRED has no VVIX

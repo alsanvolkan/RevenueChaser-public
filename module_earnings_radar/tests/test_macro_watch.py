@@ -14,6 +14,11 @@ class TestSeriesMapping:
             src = MACRO_SERIES[sym]
             assert src.get("fred") or src.get("yf"), f"{sym} has no data source"
 
+    def test_wrong_yf_proxies_are_none(self):
+        assert MACRO_SERIES["US20Y"]["yf"] is None
+        assert MACRO_SERIES["US30Y"]["yf"] is None
+        assert MACRO_SERIES["USIRYY"]["yf"] is None
+
 
 class TestFredWeekly:
     def test_fred_no_key(self):
