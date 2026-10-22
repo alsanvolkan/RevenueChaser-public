@@ -6,8 +6,9 @@ itself (the store only adds missing columns), and re-keying ~20M rows in Python 
 ~14 GB trap the derive avoids on purpose. ``sec13f_holdings`` is fully regenerable from the
 data-set zips, so the table is dropped and refilled instead of copied.
 
-Run it once, through the dashboard's writer, with the store backed up and ``/api/jobs`` idle
-(the script cannot see the job queue; the caller checks it)::
+Run it once, with the dashboard **stopped** (the script writes the store through ``rawstore``
+directly, so a running dashboard's writer would be a second writer on the same file), the store
+backed up and ``/api/jobs`` idle (the script cannot see the job queue; the caller checks it)::
 
     python scripts/migrate_sec13f_v12.py --dry-run
     python scripts/migrate_sec13f_v12.py
@@ -87,7 +88,7 @@ def preflight(ownership_dir: Path | None = None, *, force: bool = False) -> dict
     if verdict["live_key"] == V12_KEY and not force:
         raise MigrationRefused("already at v12; use --force-reingest")
     before = _counts()
-    before.update({"zips": len(verdict["on_disk"]), "live_key": verdict["live_key"]})
+    before.update({"zips_on_disk": len(verdict["on_disk"]), "live_key": verdict["live_key"]})
     return before
 
 
@@ -119,7 +120,7 @@ def run(*, dry_run: bool = False, force: bool = False, ownership_dir: Path | Non
     engine.ingest_zips(zips)
     engine.recompute_totals()
     after = _counts()
-    after["zips"] = len(rawstore.query("SELECT filename FROM sec13f_ingested_zips"))
+    after["zip_markers"] = len(rawstore.query("SELECT filename FROM sec13f_ingested_zips"))
     _report("after", after, out)
     return {"before": before, "after": after, "dry_run": False}
 
@@ -129,7 +130,10 @@ def _report(label: str, counts: dict, out=print) -> None:
     out(f"  holdings rows         {counts['holdings']:,}")
     out(f"  submission rows       {counts['submissions']:,}")
     out(f"  distinct (cik,period) {counts['filer_periods']:,}")
-    out(f"  ingested zips         {counts['zips']}")
+    if "zips_on_disk" in counts:      # before: the files a re-ingest reads
+        out(f"  zips on disk          {counts['zips_on_disk']}")
+    if "zip_markers" in counts:       # after: the rows a later Fetch skips downloading
+        out(f"  ingested zip markers  {counts['zip_markers']}")
     for period, n in sorted((counts.get("holders") or {}).items()):
         out(f"  holders {period}      {n:,}")
 
