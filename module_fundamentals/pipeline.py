@@ -400,7 +400,8 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
     ``non_usd`` (the scan's, one per run) collects the currencies of the names that end on the currency check below
     (#46): they are dropped for that reason, so the count in ``dropped`` and this set are the same names.
     ``non_usd_seen`` collects the names whose stored row carries the measure at all, so a count of 0 can say
-    whether it measured nothing or nothing was measured (#102 review).
+    whether it measured nothing or nothing was measured (#102 review). It stays empty on a Refresh, which scores
+    nothing.
     """
     def _drop(reason: str):
         if drops is not None:
@@ -666,9 +667,11 @@ def _note_non_usd(payload: dict, units: set[str], measured: list | None = None) 
     """
     if units:
         payload.setdefault("data_quality", {})["non_usd_units"] = sorted(units)
-    if measured is not None:
-        # 0 measured rows means the measure has not reached the store yet, which the board must not print
-        # as a measured "0".
+    if measured:
+        # Only a run that measured something writes the key, exactly as ``non_usd_units`` above: a Fetch that
+        # measured nothing leaves it absent (the board reads an absent key as 0 and says so in words), and a
+        # Refresh - which returns the stored payload and collects nothing - leaves the Fetch's number alone
+        # instead of overwriting it with 0 and claiming an unmeasured store (#102 review, K4 Fetch/Refresh).
         payload.setdefault("data_quality", {})["non_usd_measured"] = len(measured)
     steps = payload.get("funnel_steps") or []
     for i, step in enumerate(steps):

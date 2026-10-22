@@ -105,7 +105,9 @@ def test_a_store_row_without_the_measure_is_not_counted_as_non_usd_and_is_no_err
     assert "non_usd_currency" not in payload["data_quality"]["dropped"]
     assert payload["data_quality"]["dropped"]["no_edgar_annual"] == 1
     assert "non_usd_units" not in payload["data_quality"]
-    assert payload["data_quality"]["non_usd_measured"] == 0      # no row carried the measure
+    # No row carried the measure, so the key is absent exactly as ``non_usd_units`` is; the board reads an absent
+    # key as 0 and says in words that nothing was measured.
+    assert "non_usd_measured" not in payload["data_quality"]
     assert not payload.get("no_data")
 
 
@@ -200,3 +202,23 @@ def test_the_scan_makes_no_sec_request(scan_env, monkeypatch):
 
     assert calls == []
     assert payload["data_quality"]["dropped"]["non_usd_currency"] == 2
+
+
+def test_a_refresh_keeps_the_fetch_s_measured_count(scan_env, tmp_path, monkeypatch):
+    """#102 review: a Refresh returns the stored payload and collects nothing, so it must not overwrite the
+    Fetch's ``non_usd_measured`` with 0 - that would print "not measured yet" about a store the Fetch had just
+    measured, a Fetch/Refresh disagreement (K4). The state here is the one that follows the #52 re-extraction:
+    rows carry the measure and none of them is non-USD."""
+    monkeypatch.setattr(fp.config, "FUNDAMENTALS_JSON", tmp_path / "fundamental.json")
+    _edgar("AAA", ANNUAL)
+    _edgar("CCC", [])
+
+    fetched = fp.run_scan()
+    fp.save_payload(fetched)            # what a Fetch does next (app.runners), and what a Refresh reads back
+    refreshed = fp.run_scan(no_fetch=True)
+
+    assert fetched["data_quality"]["non_usd_measured"] == 2
+    assert refreshed["data_quality"]["non_usd_measured"] == 2
+    html = render_fundamental_dashboard(refreshed)
+    assert "0 names report in a currency other than USD and could not be scored" in html
+    assert "not measured yet" not in html
