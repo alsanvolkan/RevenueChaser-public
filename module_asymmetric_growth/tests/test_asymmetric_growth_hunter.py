@@ -365,7 +365,7 @@ def test_a_failed_sec_map_keeps_the_stored_universe_and_writes_nothing(monkeypat
     assert {r["ticker"] for r in rows} == {"AAA", "BBB"}
     assert {r["ticker"] for r in rawstore.query("SELECT ticker FROM equity_universe")} == {"AAA", "BBB"}
     assert screen_calls == [], "no point pulling Yahoo when the member list is unavailable"
-    assert "SEC ticker map failed" in stats["sec_error"], stats["sec_error"]
+    assert "HTTPStatusError: 503" in stats["sec_error"], stats["sec_error"]
     assert stats["universe_refreshed_by"] == "Swing Potential"     # the stored provenance, unchanged
     assert agh._load_universe_meta()["generated_at"] == "2026-08-24T10:00:00+00:00"
 
@@ -379,7 +379,7 @@ def test_a_failed_sec_map_with_nothing_stored_writes_nothing(monkeypatch, rawsto
 
     assert rows == []
     assert rawstore.count("equity_universe") == 0
-    assert "SEC ticker map failed" in stats["sec_error"], stats["sec_error"]
+    assert "boom" in stats["sec_error"], stats["sec_error"]
 
 
 def test_an_sec_map_with_no_listed_rows_is_a_failure(monkeypatch, rawstore_tmp_db):
