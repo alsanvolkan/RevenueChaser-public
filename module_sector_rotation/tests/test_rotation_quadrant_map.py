@@ -60,7 +60,7 @@ class TestComputesAndPersistsWhenMissing:
         _StubEngine.calls = 0
         monkeypatch.setattr(rotation_engine, "RotationEngine", _StubEngine)
 
-        m = rotation_engine.rotation_quadrant_map(uw=object(), as_of=asof)
+        m = rotation_engine.rotation_quadrant_map(uw=object(), as_of=asof, compute=True)
         assert m == {"XLK": "LEADING", "XLF": "LAGGING"}
         assert _StubEngine.calls == 1
         stored = rotation_store.load_snapshot(asof)
@@ -78,13 +78,23 @@ class TestComputesAndPersistsWhenMissing:
 
         _StubEngine.calls = 0
         monkeypatch.setattr(rotation_engine, "RotationEngine", _StubEngine)
-        rotation_engine.rotation_quadrant_map(uw=object(), as_of=asof)
+        rotation_engine.rotation_quadrant_map(uw=object(), as_of=asof, compute=True)
         m = rotation_engine.rotation_quadrant_map(uw=_BoomUW(), as_of=asof)
         assert m == {"XLK": "LEADING"}
         assert _StubEngine.calls == 1  # persisted on run 1, reused on run 2
 
 
 class TestReadOnly:
+    def test_default_compute_is_false(self, rawstore_tmp_db, monkeypatch):
+        asof = date(2026, 9, 10)
+
+        def _boom(uw=None, benchmark="SPY"):
+            raise AssertionError("default compute must be False")
+
+        monkeypatch.setattr(rotation_engine, "RotationEngine", _boom)
+        assert rotation_engine.rotation_quadrant_map(uw=_BoomUW(), as_of=asof) == {}
+        assert rotation_store.load_snapshot(asof) is None
+
     def test_compute_false_never_runs_engine_or_writes(self, rawstore_tmp_db, monkeypatch):
         asof = date(2026, 9, 10)
 

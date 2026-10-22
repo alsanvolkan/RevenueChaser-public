@@ -329,7 +329,7 @@ def run_earnings_range(uw: UWClient, start: date | None = None, end: date | None
 
     try:
         from RevenueChaser.module_sector_rotation.engine import rotation_quadrant_map
-        etf_quadrant_map = rotation_quadrant_map(uw)
+        etf_quadrant_map = rotation_quadrant_map(uw, compute=True)
     except Exception as e:
         logger.warning(f"Rotation engine failed: {e}")
         etf_quadrant_map = {}

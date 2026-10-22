@@ -283,7 +283,7 @@ def test_the_quadrant_map_computes_and_stores_the_session(world):
     world.move(_at(2026, 10, 10, 12))                          # Saturday: the session is Friday
     for t in UNIVERSE:
         _seed(t, date(2026, 10, 9))
-    m = engine.rotation_quadrant_map(uw=_UW())
+    m = engine.rotation_quadrant_map(uw=_UW(), compute=True)
     assert set(m) == {"XLK", "XLF", "XLE", "SMH", "IBB"}
     assert store.list_snapshot_dates() == ["2026-10-09"]
     assert engine.rotation_quadrant_map(uw=None, compute=False) == m      # the stored session is reused
@@ -296,6 +296,6 @@ def test_the_quadrant_map_never_replaces_a_stored_session_from_an_incomplete_run
     runners.run_rotation_latest(_UW())
     before = _stored(date(2026, 10, 6))
     world.move(_at(2026, 10, 7, 17))                           # Wednesday's session is complete, D01 ends Tuesday
-    m = engine.rotation_quadrant_map(uw=_UW())
+    m = engine.rotation_quadrant_map(uw=_UW(), compute=True)
     assert m == {r["ticker"]: r["quadrant"] for r in before}
     assert _stored(date(2026, 10, 6)) == before and store.list_snapshot_dates() == ["2026-10-06"]

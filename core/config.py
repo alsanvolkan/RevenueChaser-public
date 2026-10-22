@@ -98,7 +98,6 @@ EDGAR_DOCS_DIR.mkdir(parents=True, exist_ok=True)
 DISCORD_MEDIA_DIR = _root("RC_DISCORD_MEDIA_DIR", BASE_DIR / "discord_media")
 
 UW_API_KEY = os.getenv("UNUSUAL_WHALES_API_KEY", "")
-FMP_API_KEY = os.getenv("FMP_API_KEY", "")
 FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 
 # Plotly.js CDN used by HTML dashboards. Point at a local file to work offline.
