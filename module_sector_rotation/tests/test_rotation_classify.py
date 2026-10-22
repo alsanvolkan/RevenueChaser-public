@@ -135,3 +135,17 @@ class TestPerGroupZScores:
         assert [sectors[0].rs_momentum_z, sectors[1].rs_momentum_z] == pooled
         assert pooled[0] > 0 > pooled[1]
         assert all(s.rs_momentum_z is None for s in sectors[2:])
+
+    def test_the_group_gate_is_counted_per_dimension_not_from_the_ratio(self):
+        # Two groups have 8 finite ratios each but only one finite momentum each. A gate counted from the
+        # ratio would treat both groups as large and z-score a single value (std 0 -> 0.0); the correct
+        # per-dimension gate sees one finite momentum and pools.
+        sectors = [self._snapshot(f"X{i}", "sector", float(i), None) for i in range(1, 9)]
+        themes = [self._snapshot(f"T{i}", "theme", float(i), None) for i in range(1, 9)]
+        sectors[0].rs_momentum = 1.0
+        themes[0].rs_momentum = -1.0
+        normalize_z_scores(sectors + themes)
+
+        pooled = zscore_normalize([1.0, -1.0])
+        assert [sectors[0].rs_momentum_z, themes[0].rs_momentum_z] == pooled
+        assert pooled[0] > 0 > pooled[1]
