@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 import pytest
@@ -140,6 +141,97 @@ def test_nested_parents_coarse_is_hierarchy():
     for m in set(med.tolist()):
         assert len(set(coarse[med == m].tolist())) == 1   # one coarse per medium
     assert len(set(coarse.tolist())) == 2
+
+
+def test_nested_parents_cuts_below_the_fine_count():
+    """#433: a medium cut at or above the fine count is held below it, so one pair merges."""
+    import numpy as np
+    X = np.eye(5) * 10.0
+    fine = np.arange(5)
+    for k_medium in (5, 9):
+        ids, med, _coarse = themes.nested_parents(X, fine, k_medium=k_medium, k_coarse=2)
+        assert len(ids) == 5
+        assert len(set(med.tolist())) == 4          # not 5: one pair of fine themes merged
+
+
+def test_nested_parents_returns_two_arrays_for_one_fine_theme():
+    """#433: a single fine theme hands back separate medium/coarse arrays, not one object twice."""
+    import numpy as np
+    ids, med, coarse = themes.nested_parents(np.eye(3), np.zeros(3, dtype=int),
+                                             k_medium=2, k_coarse=2)
+    assert ids == [0]
+    assert med is not coarse
+    assert med.tolist() == coarse.tolist() == [0]
+
+
+def test_build_shadow_clamps_k_medium_against_the_realised_fine_count(rawstore_tmp_db, monkeypatch, caplog):
+    """#433: NMF can leave a component empty, so the clamp reads the labels the fine fit produced,
+    not the requested ``k_fine`` (here 3 asked, 2 realised)."""
+    import numpy as np
+    monkeypatch.setattr(themes, "_choose", lambda *a, **k: (3, 1.0))
+    monkeypatch.setattr(themes, "nmf_assign",
+                        lambda X, k, seed=0, fit=None: np.repeat([0, 1], X.shape[0] // 2))
+    with caplog.at_level(logging.INFO):
+        out = themes.build_shadow(candidates=(2, 3), k_medium=5, k_coarse=2,
+                                  run_id="realised", profiles=_profiles())
+    assert out["k_fine"] == 3
+    assert out["k_medium"] == 1                      # the realised 2 fine themes - 1, not 3 - 1
+    meds = {r["theme_id"] for r in rawstore.get_all("relatedness_themes")
+            if r["level"] == "medium"}
+    assert len(meds) == out["k_medium"]
+    msgs = [r.getMessage() for r in caplog.records if "k_medium" in r.getMessage()]
+    assert len(msgs) == 1
+    assert "5" in msgs[0] and "realised 2 fine themes" in msgs[0]
+
+
+def _fixed_labels(n_fine: int):
+    """Return a fake nmf_assign that yields ``n_fine`` distinct labels over X."""
+    import numpy as np
+
+    def inner(X, k, seed=0, fit=None):
+        return np.tile(np.arange(n_fine), (X.shape[0] // n_fine) + 1)[:X.shape[0]]
+
+    return inner
+
+
+def test_build_shadow_halves_k_medium_by_default(rawstore_tmp_db, monkeypatch):
+    """#433 K1: with 60 fine themes and no explicit k_medium, the medium level is halved (30), not 59."""
+    import numpy as np
+
+    monkeypatch.setattr(themes, "_choose", lambda *a, **k: (60, 1.0))
+    monkeypatch.setattr(themes, "nmf_assign", _fixed_labels(60))
+    out = themes.build_shadow(candidates=(60,), run_id="half", profiles=_profiles())
+    assert out["k_medium"] == 30
+
+
+@pytest.mark.parametrize("n_fine, expected", [(3, 2), (2, 1)])
+def test_build_shadow_k_medium_floor_and_clamp(rawstore_tmp_db, monkeypatch, n_fine, expected):
+    """#433 K2: floor of 2 when enough fines; clamp to n_fine - 1 wins below that."""
+    monkeypatch.setattr(themes, "_choose", lambda *a, **k: (n_fine, 1.0))
+    monkeypatch.setattr(themes, "nmf_assign", _fixed_labels(n_fine))
+    out = themes.build_shadow(candidates=(n_fine,), run_id=f"floor{n_fine}", profiles=_profiles())
+    assert out["k_medium"] == expected
+
+
+def test_build_shadow_explicit_k_medium_is_honoured(rawstore_tmp_db, monkeypatch):
+    """#433 K3: an explicit k_medium is still honoured (clamped below n_fine)."""
+    monkeypatch.setattr(themes, "_choose", lambda *a, **k: (8, 1.0))
+    monkeypatch.setattr(themes, "nmf_assign", _fixed_labels(8))
+    out = themes.build_shadow(candidates=(8,), k_medium=5, run_id="explicit", profiles=_profiles())
+    assert out["k_medium"] == 5
+
+
+def test_build_shadow_derives_k_medium_from_realised_fine_count(rawstore_tmp_db, monkeypatch):
+    """#433 K4: k_medium derives from the realised fine count, not the requested k_fine."""
+    import numpy as np
+
+    monkeypatch.setattr(themes, "_choose", lambda *a, **k: (10, 1.0))
+    # Only 6 distinct labels, even though _choose asked for 10.
+    monkeypatch.setattr(themes, "nmf_assign",
+                        lambda X, k, seed=0, fit=None: np.tile(np.arange(6), 10)[:X.shape[0]])
+    out = themes.build_shadow(candidates=(10,), run_id="real", profiles=_profiles())
+    assert out["k_fine"] == 10
+    assert out["k_medium"] == 3   # max(2, 6 // 2) = 3, not max(2, 10 // 2) = 5
 
 
 def test_label_skips_numeric_junk():

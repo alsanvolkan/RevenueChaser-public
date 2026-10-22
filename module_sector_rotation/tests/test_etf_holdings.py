@@ -43,6 +43,19 @@ class TestFmp:
         rows = fetch_from_fmp("SKYY", "fakekey")
         assert rows[0]["weight"] == 5.25, "weight > 100 should be /100"
 
+    def test_the_fmp_read_follows_a_redirect(self, monkeypatch):
+        """httpx follows no redirect by default: a 301 would read as "no holdings", not as an error."""
+        seen = []
+
+        def get(url, *a, params=None, timeout=None, follow_redirects=False, **k):
+            seen.append(follow_redirects)
+            return _FmpResp()
+
+        monkeypatch.setattr("httpx.get", get)
+        rows = fetch_from_fmp("SKYY", "fakekey")
+        assert [r["ticker"] for r in rows] == ["NTNX"]
+        assert seen == [True]
+
 
 class _FmpResp:
     def raise_for_status(self):

@@ -47,7 +47,7 @@ def fetch_from_fmp(ticker: str, api_key: str) -> list[dict]:
     import httpx
     try:
         r = httpx.get(f"https://financialmodelingprep.com/api/v3/etf-holder/{ticker}",
-                      params={"apikey": api_key}, timeout=15)
+                      params={"apikey": api_key}, timeout=15, follow_redirects=True)
         r.raise_for_status()
         items = r.json()
     except Exception as exc:

@@ -1,5 +1,6 @@
-"""#277 (review B4 stopgap): one verified raw snapshot per ISO week is kept in ``weekly/`` and never pruned,
-until the change history lands. Temp stores only; the clock is driven through ``backup_store._utcnow``."""
+"""#277: one verified raw snapshot per ISO week is kept in ``weekly/``; #342 bounds it at ``KEEP_WEEKLY`` (12) and
+drops history's weekly copy (the owner's decision of 2026-10-21: history grows ~6.55 GB/yr against raw's 603 MB).
+Temp stores only; the clock is driven through ``backup_store._utcnow``."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -68,6 +69,7 @@ def test_several_weeks_keep_the_newest_dailies_plus_exactly_one_weekly_each(raws
 
 
 def test_a_weekly_copy_is_never_deleted_by_prune(rawstore_tmp_db, tmp_path, clock):
+    """The top-folder keep counts are scoped to the top folder: no ``_prune(out, ...)`` reaches into ``weekly/``."""
     out = tmp_path / "out"
     d1, w1 = _run(out, clock, _day(2026, 9, 28), 1)
     _run(out, clock, _day(2026, 10, 5), 2)
@@ -195,3 +197,88 @@ def test_the_nightly_task_text_says_what_is_kept():
 def test_register_tasks_comment_matches_the_retention():
     ps1 = (Path(__file__).resolve().parents[2] / "register_tasks.ps1").read_text(encoding="utf-8")
     assert "keeps the 5 newest raw snapshots" in ps1 and "one per week" in ps1
+
+
+# ── #342: the weekly raw copies are bounded, and history's weekly copy is gone ────────────────────
+# The owner decided on 2026-10-21: history's weekly copy goes away (it grows ~6.55 GB/yr against raw's 603 MB, and
+# its switch could not be turned off at all), and the raw weekly copies are kept at KEEP_WEEKLY = 12.
+
+def _thirteen_weeks(out: Path, clock) -> list[Path]:
+    """Thirteen nights' raw snapshots, one per ISO week (2026-01-05 .. 2026-03-30), each with its weekly copy."""
+    _seed(1)
+    made = []
+    for week in range(13):
+        clock(_day(2026, 1, 5) + timedelta(weeks=week))
+        made.append(bs.snapshot(out_dir=out, keep=20))
+        assert bs.keep_weekly(made[-1], out_dir=out) is not None, week
+    return made
+
+
+def test_the_raw_weekly_copies_keep_the_newest_twelve(rawstore_tmp_db, tmp_path, clock):
+    """W2: a thirteenth weekly copy is followed by a night that adds none — that night still prunes, to 12."""
+    out = tmp_path / "out"
+    made = _thirteen_weeks(out, clock)
+    assert len(list((out / "weekly").glob("raw_*.duckdb"))) == 13
+    clock(_day(2026, 3, 31))                                  # later in the same ISO week: no new weekly copy
+    assert bs.main(["--out", str(out), "--keep", "20"]) == 0
+    kept = sorted(p.name for p in (out / "weekly").glob("raw_*.duckdb"))
+    assert len(kept) == 12                                    # the owner's number, not whatever the code says
+    assert kept == sorted(p.name for p in made[-12:])
+    assert not (out / "weekly" / made[0].name).exists()
+
+
+def test_a_failed_weekly_copy_prunes_nothing(rawstore_tmp_db, tmp_path, clock, capsys, monkeypatch):
+    """SHOULD-9 (#342): the bound is applied only after a weekly step that succeeded. A night whose copy fails keeps
+    every copy it has, so a copy that keeps failing can never thin the folder down to nothing."""
+    out = tmp_path / "out"
+    _thirteen_weeks(out, clock)
+    clock(_day(2026, 4, 6))                                  # the fourteenth week's Monday: a copy is due
+
+    def boom(*a, **k):
+        raise bs.BackupError("disk full")
+
+    monkeypatch.setattr(bs, "keep_weekly", boom)
+    assert bs.main(["--out", str(out), "--keep", "20"]) == 1
+    assert "weekly backup FAILED: disk full" in capsys.readouterr().err
+    assert len(list((out / "weekly").glob("raw_*.duckdb"))) == 13, "a night with a failed weekly copy pruned a copy"
+
+
+def test_the_two_prunes_stay_in_their_own_folders(rawstore_tmp_db, tmp_path, clock):
+    """W3: the top-folder keep counts never see ``weekly/``, and the weekly prune never sees the top folder."""
+    out = tmp_path / "out"
+    made = _thirteen_weeks(out, clock)
+    weekly = sorted(p.name for p in (out / "weekly").glob("raw_*.duckdb"))
+    assert bs._prune(out, "raw", 1) == made[:-1]              # the nightly top-folder prune...
+    assert sorted(p.name for p in (out / "weekly").glob("raw_*.duckdb")) == weekly      # ...leaves weekly/ alone
+    removed = bs._prune_weekly(out, bs.KEEP_WEEKLY)
+    assert [p.name for p in removed] == [made[0].name]        # and the weekly prune leaves the top folder alone
+    assert made[-1].is_file()
+    assert len(list((out / "weekly").glob("raw_*.duckdb"))) == bs.KEEP_WEEKLY          # 12 stay
+
+
+def test_a_pruned_weekly_copy_leaves_the_manifest_so_the_scan_stays_green(rawstore_tmp_db, tmp_path, clock):
+    """W4: the removed copy leaves the #309 manifest, so the integrity scan does not report it missing."""
+    out = tmp_path / "out"
+    made = _thirteen_weeks(out, clock)
+    key = f"weekly/{made[0].name}"
+    assert key in bs._local_manifest(out).files
+    bs._prune_weekly(out, bs.KEEP_WEEKLY)
+    assert not (out / "weekly" / made[0].name).exists()
+    assert key not in bs._local_manifest(out).files
+    scan = bs.integrity_scan(out, every_days=7, now=True)
+    assert scan.ran and not scan.failures
+
+
+def test_restore_reads_the_newest_weekly_copy_after_the_prune(rawstore_tmp_db, tmp_path, clock):
+    """W5: bounding the weekly copies keeps ``restore_store --from <dir>/weekly --latest raw`` working."""
+    out = tmp_path / "out"
+    made = _thirteen_weeks(out, clock)
+    clock(_day(2026, 3, 31))
+    assert bs.main(["--out", str(out), "--keep", "20"]) == 0
+    weekly = rs.snapshots(out / "weekly", "raw")
+    assert weekly and weekly[-1].name == made[-1].name
+    assert len(weekly) == 12                                             # bounded, and still what --latest reads
+    _seed(2)                                                  # the live store moves on
+    assert rs.main(["--from", str(out / "weekly"), "--latest", "raw"]) == 0
+    assert [r["ticker"] for r in rawstore.query("SELECT ticker FROM watchlist")] == ["T1"]
+

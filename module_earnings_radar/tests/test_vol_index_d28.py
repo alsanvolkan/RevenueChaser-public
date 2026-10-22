@@ -5,6 +5,7 @@ No request leaves the process: Cboe goes through a monkeypatched ``httpx.get`` (
 """
 from __future__ import annotations
 
+import importlib
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -31,6 +32,13 @@ def _csv(dates=DATES, *, fmt="%m/%d/%Y", base=20.0) -> str:
     lines = ["DATE,OPEN,HIGH,LOW,CLOSE"]
     for i, d in enumerate(dates):
         lines.append(f"{d.strftime(fmt)},{base + i},{base + i + 1},{base + i - 1},{base + i + 0.5}")
+    return "\n".join(lines) + "\n"
+
+
+def _csv_close_only(symbol: str, dates=DATES, *, fmt="%m/%d/%Y", base=20.0) -> str:
+    lines = [f"DATE,{symbol}"]
+    for i, d in enumerate(dates):
+        lines.append(f"{d.strftime(fmt)},{base + i + 0.5}")
     return "\n".join(lines) + "\n"
 
 
@@ -95,6 +103,30 @@ def test_d28_parses_a_2026_iso_csv_into_the_same_rows():
     assert bars[-1]["close"] == 23.5 and bars[-1]["open"] == 23.0
 
 
+def test_d28_parses_a_close_only_csv_with_the_symbol_as_column_name():
+    bars, why = d28.parse_csv(_csv_close_only("VVIX"))
+    assert why is None and [b["session_date"] for b in bars] == DATES
+    assert bars[-1]["close"] == 23.5
+    assert bars[-1]["open"] is bars[-1]["high"] is bars[-1]["low"] is None
+
+
+def test_d28_parses_a_close_only_csv_with_a_different_symbol_name():
+    bars, why = d28.parse_csv(_csv_close_only("OVX"))
+    assert why is None and [b["session_date"] for b in bars] == DATES
+    assert bars[-1]["close"] == 23.5
+    assert bars[-1]["open"] is bars[-1]["high"] is bars[-1]["low"] is None
+
+
+def test_d28_rejects_close_only_csv_without_a_price_column():
+    bars, why = d28.parse_csv("DATE,VOLUME\n10/13/2026,1000\n")
+    assert bars is None and why == "not_a_csv"
+
+
+def test_d28_rejects_a_three_column_csv_without_close():
+    bars, why = d28.parse_csv("DATE,OPEN,HIGH\n10/13/2026,1,2\n")
+    assert bars is None and why == "not_a_csv"
+
+
 # --- the rows -------------------------------------------------------------------------------------------------------
 
 def test_d28_stores_all_seven_cboe_symbols_and_move(rawstore_tmp_db, tmp_path, monkeypatch):
@@ -122,6 +154,29 @@ def test_d28_stores_all_seven_cboe_symbols_and_move(rawstore_tmp_db, tmp_path, m
     assert [r["source"] for r in move] == ["yfinance"] * len(DATES) and d28.MOVE == "MOVE"
     assert (move[-1]["session_date"], move[-1]["close"]) == (DATES[3], 21.25)
     assert move[-1]["operator"] is None
+
+
+def test_d28_stores_all_seven_symbols_when_two_serve_close_only(rawstore_tmp_db, tmp_path, monkeypatch):
+    def body(symbol):
+        if symbol in ("VVIX", "OVX"):
+            return _csv_close_only(symbol)
+        return _csv()
+
+    get, asked = _cboe(body=body)
+    monkeypatch.setattr("httpx.get", get)
+    monkeypatch.setattr(d28, "download_move", lambda download=None: (
+        [{"session_date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0} for d in DATES], None))
+    res = _run((d28.SWEEP,), tmp_path)
+    s = res["sweeps"]["D28"]
+
+    assert asked == list(d28.SYMBOLS)
+    assert s["status"] == "ok" and s["written"] == 7 * len(DATES) + len(DATES)
+    stored = {(r["symbol"], r["source"]): r for r in _rows("vol_index_daily")}
+    for sym in d28.SYMBOLS:
+        assert (sym, "cboe") in stored
+    for sym in ("VVIX", "OVX"):
+        row = stored[(sym, "cboe")]
+        assert row["open"] is row["high"] is row["low"] is None and row["close"] == 23.5
 
 
 def test_d28_a_second_run_adds_no_duplicate_row(rawstore_tmp_db, tmp_path, monkeypatch):
@@ -223,6 +278,19 @@ def test_d28_an_intraday_clock_runs_no_sweep_writes_nothing_and_sends_nothing(ra
 
 # --- registration ---------------------------------------------------------------------------------------------------
 
+def test_d28_download_move_passes_a_list_not_a_string_to_the_downloader():
+    captured = []
+
+    def fake_download(tickers, period=None, **kw):
+        captured.append(tickers)
+        assert tickers == ["^MOVE"]
+        return _frame()
+
+    bars, why = d28.download_move(download=fake_download)
+    assert why is None and len(bars) == len(DATES)
+    assert captured == [["^MOVE"]]
+
+
 def test_d28_is_registered_in_the_step_and_cboe_is_a_known_provider():
     names = [s.name for s in inputs.sweeps()]
     assert "D28" in names and "D29" in names
@@ -249,3 +317,54 @@ def test_d28_a_row_without_a_numeric_close_is_not_stored():
     rows = ["DATE,OPEN,HIGH,LOW,CLOSE", "10/15/2026,1,2,0.5,N/A", "10/16/2026,1,2,0.5,17.5", "10/17/2026,1,2,0.5,"]
     bars, why = d28.parse_csv("\n".join(rows) + "\n")
     assert why is None and [b["close"] for b in bars] == [17.5]
+
+
+# --- the base host: one symbol is one request ----------------------------------------------------------------------
+
+def test_d28_the_base_is_the_host_that_answers_and_the_env_still_wins(monkeypatch):
+    # cdn.cboe.com answers 307 to cdn-api.cboe.com, so the default is the host that answers directly: 7 symbols
+    # are 7 requests, not 14, against the Cboe cap of 20.
+    assert d28.CBOE_BASE == "https://cdn-api.cboe.com/api/global/us_indices/daily_prices"
+    assert d28.url_for("VIX") == ("https://cdn-api.cboe.com/api/global/us_indices/daily_prices/"
+                                  "VIX_History.csv")
+
+    monkeypatch.setenv("RC_CBOE_BASE", "http://127.0.0.1:9/cboe")
+    try:
+        overridden = importlib.reload(d28)
+        assert overridden.CBOE_BASE == "http://127.0.0.1:9/cboe"
+        assert overridden.url_for("VIX") == "http://127.0.0.1:9/cboe/VIX_History.csv"
+    finally:
+        monkeypatch.delenv("RC_CBOE_BASE", raising=False)
+        importlib.reload(d28)
+    assert d28.CBOE_BASE == "https://cdn-api.cboe.com/api/global/us_indices/daily_prices"
+
+
+def test_d28_a_symbol_is_one_request_that_still_follows_a_307(rawstore_tmp_db, tmp_path, monkeypatch):
+    # The base host answers directly; a 307 (Cboe moving the file again) is still followed, so every symbol stays
+    # one logical call and the budget's 7 is the true request count.
+    seen = []
+
+    def get(url, timeout=None, headers=None, follow_redirects=False, **kwargs):
+        seen.append((url, follow_redirects))
+        return _Resp(200, _csv())
+
+    monkeypatch.setattr("httpx.get", get)
+    monkeypatch.setattr(d28, "download_move", lambda download=None: (None, None))
+    res = _run((d28.SWEEP,), tmp_path)
+
+    assert seen == [(f"https://cdn-api.cboe.com/api/global/us_indices/daily_prices/{s}_History.csv", True)
+                    for s in d28.SYMBOLS]
+    assert res["calls"]["cboe"]["used"] == len(d28.SYMBOLS) == 7
+    assert res["sweeps"]["D28"]["written"] == len(d28.SYMBOLS) * len(DATES)
+
+
+def test_d28_a_body_that_parses_to_zero_bars_is_a_per_symbol_error(rawstore_tmp_db, tmp_path, monkeypatch):
+    get, asked = _cboe(body=lambda symbol: "DATE,OPEN,HIGH,LOW,CLOSE\n")
+    monkeypatch.setattr("httpx.get", get)
+    monkeypatch.setattr(d28, "download_move", lambda download=None: ([], None))
+    res = _run((d28.SWEEP,), tmp_path)
+    s = res["sweeps"]["D28"]
+
+    assert s["status"] == "failed"
+    assert s["symbol_errors"] == [f"{sym}: no_rows" for sym in d28.SYMBOLS] + [f"{d28.MOVE}: no_rows"]
+    assert _rows("vol_index_daily") == []

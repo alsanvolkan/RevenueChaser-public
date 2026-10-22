@@ -19,7 +19,8 @@
 - The SPX Gamma tree (#276) is restored by copying ``spx_gamma_mirror/`` back over ``module_spx_gamma/data``
   (or ``SPX_GAMMA_DATA_ROOT``); an earlier version of ``brier.json`` or ``spx_gamma_gex_history.json`` is in
   ``spx_gamma_versions/`` next to it. A weekly raw copy (#277) is restored with
-  ``--from <backup dir>/weekly --latest raw`` (``history`` likewise, #287); the off-machine copy (#275) is read the same way with
+  ``--from <backup dir>/weekly --latest raw`` (the ``history_*`` copies earlier runs left there, until #342, read
+  the same way); the off-machine copy (#275) is read the same way with
   ``--from <RAW_STORE_BACKUP_MIRROR folder>/RevenueChaser-backup``.
 """
 from __future__ import annotations

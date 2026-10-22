@@ -31,7 +31,7 @@ def fetch_cftc_tff() -> dict | None:
     last_err = None
     for attempt in range(HTTP_MAX_RETRIES + 1):
         try:
-            resp = httpx.get(CFTC_TFF_BASE, params=params, timeout=HTTP_TIMEOUT_SECONDS)
+            resp = httpx.get(CFTC_TFF_BASE, params=params, timeout=HTTP_TIMEOUT_SECONDS, follow_redirects=True)
         except httpx.HTTPError as exc:
             last_err = str(exc)
             continue

@@ -55,7 +55,8 @@ def fetch_rows() -> tuple[list[dict] | None, str | None]:
     """``(source rows newest first, why)``: one Socrata GET of the E-mini's newest TFF rows, no retry."""
     params = {"$where": _market_where(), "$order": "report_date_as_yyyy_mm_dd DESC", "$limit": WEEKS}
     try:
-        resp = httpx.get(CFTC_BASE, params=params, timeout=TIMEOUT, headers={"User-Agent": USER_AGENT})
+        resp = httpx.get(CFTC_BASE, params=params, timeout=TIMEOUT, headers={"User-Agent": USER_AGENT},
+                         follow_redirects=True)
     except httpx.HTTPError as exc:
         return None, f"{type(exc).__name__}: {exc}"[:200]
     if resp.status_code != 200:

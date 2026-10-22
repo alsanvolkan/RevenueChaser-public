@@ -140,9 +140,9 @@ below).
 |---|---|---|
 | `.store/raw.duckdb` | Structured raw + derived data (tables below) + the identity/GICS spine (`sec_company_*`) | No — durable source of truth (see `.store` semantics above) |
 | `.store/edgar.duckdb` | EDGAR **content**: `edgar_documents` (metadata only), `edgar_facts`, `edgar_financials`, `chain_filings`/`chain_mentions`/`chain_meta` | No — durable |
-| `.store/history.duckdb` | Result history (#287, 2.6-1; schema 11): `result_runs` (one header row per board run: session, run time, quality, model version, params, funnel, payload) and 16 run-keyed row tables (`ag_scores_history`, `earnings_cards_history`, …). Written only by `core/history.record_run`, in one transaction; a session board keeps one whole run per session (`session_snapshot`), a run board keeps every run. Read views `result_sessions` and `<table>_by_session`. Longer backup retention than `raw.duckdb` (5 nightly snapshots plus the first of every ISO week; unlike raw's, the weekly copy does not follow `--no-weekly` / `RAW_STORE_BACKUP_WEEKLY`). **The file does not exist until the first recorded run** (`rawstore.ensure_history()`); `rawstore.history_db_path()` and `_db_path("history")` resolve it, and the nightly backup and `restore_store` skip it while it is missing. `forecast_ledger` stays in `raw.duckdb`. The 8 change tables live in `raw.duckdb` and ride its backups | No — durable |
+| `.store/history.duckdb` | Result history (#287, 2.6-1; schema 11): `result_runs` (one header row per board run: session, run time, quality, model version, params, funnel, payload) and 16 run-keyed row tables (`ag_scores_history`, `earnings_cards_history`, …). Written only by `core/history.record_run`, in one transaction; a session board keeps one whole run per session (`session_snapshot`), a run board keeps every run. Read views `result_sessions` and `<table>_by_session`. Longer backup retention than `raw.duckdb` (5 nightly snapshots, and an off-machine copy; its weekly copy was dropped in #342 — it grew ~6.55 GB/yr against raw's 603 MB). **The file does not exist until the first recorded run** (`rawstore.ensure_history()`); `rawstore.history_db_path()` and `_db_path("history")` resolve it, and the nightly backup and `restore_store` skip it while it is missing. `forecast_ledger` stays in `raw.duckdb`. The 8 change tables live in `raw.duckdb` and ride its backups | No — durable |
 | `.store/discord.duckdb` | Discord archive (#72): `discord_channels`, `discord_messages`, `discord_export_runs`. Messages are untrusted third-party text, stored verbatim (`text_verbatim`: `get`/`get_all` never re-parse a TEXT cell that looks like JSON), with the full DiscordChatExporter message object kept compressed in `discord_messages.raw`. Needs DiscordChatExporter >= 2.45 (older versions fail on an empty `--after` window). No `_SCHEMA_VERSION` bump: raw and edgar are untouched | No — durable |
-| `.store/prices.duckdb` | Daily prices (#156, moved here before the fill, 2026-10-09): `price_bars_daily`, `price_actions` and their watermarks `price_checks` (the shape of `source_checks`, which stays in raw for the identity stamps), and the SPX daily levels `index_levels_daily` (D03, #293, moved here before its writer, 2026-10-10). One file, so a chunk's bars, actions and watermarks commit in one transaction (`rawstore.atomic(..., db="prices")`); about 2.4 GiB after the `period="max"` fill, kept out of raw's never-pruned weekly copies. Made by the first store call; a store from before has the two tables (and the price rows of `source_checks`; from #293 also the empty `index_levels_daily`) moved over once by that call: copied, checked row by row (`EXCEPT`), then dropped from raw; each table is added to the `migration_manifest` row `price_tables_to_prices_db` in the transaction that removes it from raw. A conflicting row stops that table's move with a warning and overwrites nothing. Two processes starting together may both run the move: what the other one already moved is left alone and logged at INFO. No `_SCHEMA_VERSION` bump (the #72 precedent): an older checkout recreates the empty raw tables and ignores this file. Backup: 2 nightly snapshots, no weekly copy (append-only, so the newest holds every row); off this machine once a week, 1 copy | No — durable |
+| `.store/prices.duckdb` | Daily prices (#156, moved here before the fill, 2026-10-09): `price_bars_daily`, `price_actions` and their watermarks `price_checks` (the shape of `source_checks`, which stays in raw for the identity stamps), and the SPX daily levels `index_levels_daily` (D03, #293, moved here before its writer, 2026-10-10). One file, so a chunk's bars, actions and watermarks commit in one transaction (`rawstore.atomic(..., db="prices")`); about 2.4 GiB after the `period="max"` fill, kept out of raw's weekly copies. Made by the first store call; a store from before has the two tables (and the price rows of `source_checks`; from #293 also the empty `index_levels_daily`) moved over once by that call: copied, checked row by row (`EXCEPT`), then dropped from raw; each table is added to the `migration_manifest` row `price_tables_to_prices_db` in the transaction that removes it from raw. A conflicting row stops that table's move with a warning and overwrites nothing. Two processes starting together may both run the move: what the other one already moved is left alone and logged at INFO. No `_SCHEMA_VERSION` bump (the #72 precedent): an older checkout recreates the empty raw tables and ignores this file. Backup: 2 nightly snapshots, no weekly copy (append-only, so the newest holds every row); off this machine once a week, 1 copy | No — durable |
 | `discord_media/{channel_id}/…` | Attachments downloaded by DiscordChatExporter. Dir via `RC_DISCORD_MEDIA_DIR` | No — durable; backed up nightly as an incremental, verified mirror (`discord_media_mirror/` next to the DB snapshots). Re-downloadable only while the message still exists on Discord: CDN links expire and deleted messages cannot be fetched again |
 | `edgar_docs/{cik}/{accession}.html.gz` | Raw 10-K/20-F HTML (the durable raw-document record; keyed by CIK + accession). Dir via `RC_EDGAR_DOCS_DIR` | No — durable; backed up as a tree |
 | `.cache/sec_13f/*_form13f.zip` | Downloaded SEC 13F source archives (re-downloadable from SEC) | Yes — deletable after ingest (tracked in `ingested_zips`) |
@@ -186,7 +186,7 @@ network.
 | `ticker_themes` | Runtime theme SSoT `(ticker, theme_id, theme, level, theme_run_id)` | raw | per theme run |
 | `sec13f_security_meta` | Shared ticker→{name,sector} across dashboards (merged from old `universe_meta` + `sec13f_universe_meta`) | raw | manual |
 | `sec13f_enrichment` | 13F enrichment (price/short/insider); writer retired (#300), no reader since #375 F2 (the board reads `ownership_snapshot` and D01); the rows stay | raw | none |
-| `sec13f_edgar_backfill` | Retired: the EDGAR backfill is gone, nothing reads or writes it (the table leaves the manifest in the 8→9 bump) | raw | none |
+| `sec13f_edgar_backfill` | Retired: the EDGAR backfill is gone and nothing reads it; no writer either, apart from the legacy import `scripts/migrate_rawdata_to_duckdb.py`, so the entry is flagged MANIFEST `"retired": true` (#289) and scheduled to leave the manifest at the next bump (the table leaves the manifest in the 8→9 bump) | raw | none |
 | `etf_holdings` | Rotation ETF holdings, latest per ETF (top 10, the provider that answered, the fetch time); written by the holdings job, read by the Rotation Fetch (#303, D25); its history is `etf_holdings_changes` | raw | manual (Fetch holdings) |
 | `watchlist` | Watchlist tickers. Writer: the LEAPS pin's `POST /api/watchlist/toggle/<t>` through `rawstore.toggle_watchlist`, which adds or removes that one ticker in one transaction (#306); every add and removal is kept in `watchlist_changes` | raw | manual |
 | `price_actions` | Key `(ticker, ex_date, action)`. `ticker`, `ex_date DATE`, `action`, `value DOUBLE`, `session_date DATE`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE`; writer `core/prices.py` (#156): yfinance dividends (amount), splits (ratio, 4.0 = 4-for-1) and capital gains (amount); first write wins | prices | none |
@@ -210,7 +210,7 @@ network.
 | `price_checks` | Key `(dataset, source, key)`, the shape of `source_checks`; writer `core/prices.py` (#156), in the chunk's transaction: `price_actions`/`yfinance` = per-ticker actions watermark; `price_bars_daily`/`yfinance_max` = fill marker | prices | none |
 | `sec13f_filers` | G1 (#292), manifest only, no writers yet. Key `(accession)`. `accession`, `cik`, `period`, `name`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
 | `edgar_companyfacts` | G1 (#292), manifest only, no writers yet. Key `(cik, taxonomy, concept, unit, period_start, period_end, accn)`. `cik`, `taxonomy`, `concept`, `unit`, `period_start`, `period_end DATE`, `accn`, `value DOUBLE`, `form`, `fy INTEGER`, `fp`, `filed DATE`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | edgar | none |
-| `sec_submissions` | G1 (#292). Writer `core/sec_submissions.record` (#299, D15): the daily EDGAR sync (`edgar_sync`, RC-ValueChain-Sync 13:00) asks `submissions/CIK*.json` once for every CIK of the whole `equity_universe` and stores each `filings.recent` row once per accession (append, first write wins); a failed CIK writes nothing. A Refresh writes nothing. `source` 'sec_submissions', `cik` without leading zeros. Key `(cik, accession)`. `cik`, `accession`, `form`, `filing_date DATE`, `primary_document`, `items`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | edgar | none |
+| `sec_submissions` | G1 (#292). Writer `core/sec_submissions.record` (#299, D15): the daily EDGAR sync (`edgar_sync`, RC-ValueChain-Sync 13:00) asks `submissions/CIK*.json` once for every CIK of the whole `equity_universe` and stores each `filings.recent` row once per accession (append, first write wins); a failed CIK writes nothing. A Refresh writes nothing. `source` 'sec_submissions', `cik` without leading zeros. Read by the Fundamentals board since #386 F5 (`module_fundamentals/events.corporate_events`, windowed reads bounded to 2000 CIKs per statement and all of them inside one `rawstore.session()`, so one connect per store file per call): a card whose filer filed an 8-K carrying item 1.02, 2.01, 2.06, 3.01, 4.01, 4.02, 5.01 or 5.03 in the last 365 days shows those item codes — display only, never scored, ranked or frozen. Key `(cik, accession)`. `cik`, `accession`, `form`, `filing_date DATE`, `primary_document`, `items`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | edgar | none |
 | `sec_submissions_cik` | G1 (#292). Writer `core/sec_submissions.record` (#299, D15), from the same answers: change history (rule A), a row only when name, SIC, SIC text, entity type, tickers or exchanges differ from the CIK's newest row; `valid_from` = the run's session, `status` 'present'; a CIK the SEC answers 404 gets one 'absent' row. Each answered CIK also gets a `source_checks` watermark (dataset 'sec_submissions', key = CIK) for Data Health. Key `(cik, run_at)`. `cik`, `valid_from DATE`, `status`, `name`, `sic`, `sic_description`, `entity_type`, `tickers JSON`, `exchanges JSON`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | edgar | none |
 
 ### Stage 3 — Normalized / derived stores
@@ -507,6 +507,29 @@ worker thread writes while Flask request threads read. So:
   whole, to `core/tests/ddl292_frozen.py` (a frozen copy of the reviewed
   `ddl_292.md` entries). Changing a G1 table's DDL means changing that copy in
   the same commit, on purpose.
+- **A table with no writer is marked planned or retired (#289).** The first
+  store call creates it like any other table, so without a flag an empty one
+  reads as "0 rows" — the same as a table whose writer broke. `"planned": true`
+  means a writer is still to come. `"retired": true` means the only writer is
+  in the past. Both mean an empty table is expected; they differ in the word a
+  future listing prints. A label, as `history_mode` is: rawstore does not read
+  either, so neither changes DDL or a write and neither needs a
+  `_SCHEMA_VERSION` bump. Planned today: `catalyst_events` (the fetchers of
+  #186-#192), `orphan_designations` and `orphan_lookups` (#190), `sec13f_filers`
+  and `edgar_companyfacts` (G1 #292, manifest only). Retired today:
+  `leaps_daily_scores` and `sec13f_ticker_names`, which only the legacy import
+  `scripts/migrate_rawdata_to_duckdb.py` fills, and `sec13f_edgar_backfill`,
+  which that same import fills and which is scheduled to leave the manifest at
+  the next bump. The review that raised this also named `price_bars_daily`,
+  `forecast_ledger` and `job_runs`; each has a writer now (`core/prices.py`,
+  `core/ledger.py`, `app/jobs.py` and `core/automations.py`), so none of the
+  three is marked. Nothing renders either flag yet: the Settings inventory
+  lists its own dataset rows and none of these tables is among them, so showing
+  "planned" or "retired" there instead of a row count is a template change for
+  when such a listing arrives. `core/tests/test_manifest_planned_289.py` pins
+  the flagged set — the thing to edit, together with the entry, when a writer
+  lands — and pins the DDL a fresh store creates for those tables, so neither
+  flag can ever reach the create path.
 - **Contention is retried, at two levels.** DuckDB signals it four different
   ways and `core/rawstore.py` handles each:
   | Where | What DuckDB raises | Retried by |
@@ -855,8 +878,8 @@ Two separate things, deliberately not conflated:
   are append-only and the newest snapshot holds every row: about 4.7 GiB locally at the expected 2.4 GiB file)
   snapshots and 2 `edgar_docs_*.zip` archives (verified: member CRCs + file count; an unchanged tree reuses the
   newest archive, see below)
-  under `%LOCALAPPDATA%\RevenueChaser\backups` (override `RAW_STORE_BACKUP_DIR`), plus one weekly
-  `raw_*` copy (and one weekly `history_*` copy, the first of each ISO week; the raw switch below does not turn it off), the SPX mirror and an optional off-machine copy, described below. A step that fails
+  under `%LOCALAPPDATA%\RevenueChaser\backups` (override `RAW_STORE_BACKUP_DIR`), plus the weekly
+  `raw_*` copies (the first snapshot of each ISO week, the newest `--keep-weekly` of them, #342), the SPX mirror and an optional off-machine copy, described below. A step that fails
   is logged as `<step> FAILED: <why>` and the steps after it still run (so one failed step never costs the rest of
   the night's backup); an unexpected error, such as an `OSError` on a full disk, also prints its type and stack. The
   run then exits 1, and only the off-machine copy is skipped.
@@ -881,14 +904,19 @@ Two separate things, deliberately not conflated:
   corruption, not against losing the disk; the off-machine copy below copies it to a second folder.
   Old `discord_media_*.zip` archives from earlier backups are not touched or pruned any more
   and can be deleted by hand once a mirror run has succeeded.
-- **Weekly raw copy (#277)** — the first verified `raw_*` snapshot of each ISO week (by its UTC stamp) is also
-  copied to `weekly/` in the same backup folder. The copy is written under a temporary name, fingerprinted against
-  the snapshot (row count and content checksum per table) and only then renamed, so a failed copy leaves nothing
-  under the final name and the next night tries again. It is never pruned: the prune and `restore_store --latest`
-  look at the top folder only. It was a stopgap for raw tables that keep only the latest value; the change history has landed (#279), so
-  the owner turns it off (the default is on), about 430 MB a week at today's size. `--no-weekly` or `RAW_STORE_BACKUP_WEEKLY=0` (also `false`,
-  `no`, `off`) stops new weekly `raw_*` copies (not the `history_*` ones, #287); the ones already made stay. Log line: `weekly backup OK: <path>`, printed
-  only in the run that writes a week's copy.
+- **Weekly raw copy (#277, bounded by #342)** — the first verified `raw_*` snapshot of each ISO week (by its UTC
+  stamp) is also copied to `weekly/` in the same backup folder. The copy is written under a temporary name,
+  fingerprinted against the snapshot (row count and content checksum per table) and only then renamed, so a failed
+  copy leaves nothing under the final name and the next night tries again. The newest `--keep-weekly` (12) copies
+  stay: the nightly run prunes the older ones out of `weekly/` (after that night's copy, or after a night that added
+  none because the week had one), they leave the #309 manifest before they are deleted, and the prune never looks at
+  the top folder — as the top folder's `_prune` globs never look in here, so `restore_store --latest` keeps reading
+  the top folder only. It was a stopgap for raw tables that keep only the latest value; the change history has landed
+  (#279), so the owner can turn it off (the default is on), about 430 MB a week at today's size. `--no-weekly` or
+  `RAW_STORE_BACKUP_WEEKLY=0` (also `false`, `no`, `off`) stops new weekly `raw_*` copies; the ones already made stay.
+  The `history_*` weekly copies of earlier runs are no longer written (#342: history grows ~6.55 GB/yr) and this prune
+  does not touch them: deleting them is the owner's own step. Log line: `weekly backup OK: <path>`, printed only in
+  the run that writes a week's copy.
 - **SPX Gamma tree (#276)** — `module_spx_gamma/data/` (or `SPX_GAMMA_DATA_ROOT`) is mirrored into
   `spx_gamma_mirror/` in the same backup folder, by the rules of the `discord_media` mirror above: a `stat` walk,
   each copy through `spx_gamma_mirror/.tmp/` and verified by size and SHA-256, a file modified in the last 10 minutes
