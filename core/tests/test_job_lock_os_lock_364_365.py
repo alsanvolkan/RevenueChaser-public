@@ -254,6 +254,23 @@ def test_a_held_lock_with_an_unreadable_owner_refuses_the_acquire(tmp_path, monk
         _release(fd)
 
 
+# ── R9: the OS-lock path leaves its file behind, and takes no lock with it ────
+
+def test_the_os_lock_path_leaves_its_file_and_frees_the_lock(rawstore_tmp_db):
+    """SHOULD-4: a release must not unlink. Another process can take the lock between our unlock and our
+    unlink — the file still holds OUR owner text until it writes its own — and the unlink would then remove
+    THEIR file. A leftover unlocked file is harmless: the next acquirer and ``holders()`` judge by the OS lock."""
+    path = job_lock._lock_path("universe")
+    with job_lock.acquire("universe", wait=0) as got:
+        assert got is True
+        assert job_lock.holders() == [("universe", os.getpid())]
+
+    assert path.exists(), "the OS-lock path unlinked its lock file at release"
+    assert job_lock.holders() == [], "a released lock is nobody's lock"
+    with job_lock.acquire("universe", wait=0) as again:
+        assert again is True, "the leftover file kept the next acquirer out"
+
+
 # ── R7: a metadata write that fails after the lock is taken ───────────────────
 
 def test_a_metadata_write_that_fails_releases_the_os_lock(rawstore_tmp_db, monkeypatch):

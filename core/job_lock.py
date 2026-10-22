@@ -10,12 +10,14 @@ The lock is a file in the store dir, and **the kernel owns its liveness**: ``acq
 non-blocking OS lock on it (``fcntl.flock`` on POSIX, ``msvcrt.locking`` on Windows). So a holder that dies releases
 its lock, a lock file left behind is harmless, and a takeover is a single atomic step — two acquirers can no longer
 both judge one abandoned file stale and both end up holding it (#365). ``acquire()`` yields ``True`` when the lock
-was taken and ``False`` when another holder exists.
+was taken and ``False`` when another holder exists. A release unlocks and closes the file but does not remove it:
+an unlink could land after another process had taken the lock, and delete that holder's file. Only the fallback
+path below, whose file is its lock, unlinks at release.
 
-The file holds ``"<pid> <token> <start>"`` at offset 0: that is what ``holders()`` reports and what a release checks
-before removing the file, so a holder whose lock was broken can never delete the lock of whoever took it over. On
-Windows the OS lock is a mandatory byte range, so it covers the one byte at ``_LOCK_BYTE`` and never the metadata a
-second process has to read. ``holders()`` reads a lock it cannot try — ``EACCES``, ``EPERM``, ``EAGAIN`` /
+The file holds ``"<pid> <token> <start>"`` at offset 0: that is what ``holders()`` reports, and a fallback release
+checks it before removing the file, so a holder whose lock was broken can never delete the lock of whoever took it
+over. On Windows the OS lock is a mandatory byte range, so it covers the one byte at ``_LOCK_BYTE`` and never the
+metadata a second process has to read. ``holders()`` reads a lock it cannot try — ``EACCES``, ``EPERM``, ``EAGAIN`` /
 ``EWOULDBLOCK``, from the try or from the open — as held, and only ``ENOENT`` as no holder (#365). A lock the kernel
 really holds whose owner text is unreadable (not written yet, truncated, garbled) is a holder too, listed with pid
 ``0``: "no holder" is ``None``, never ``0``.
@@ -320,13 +322,18 @@ def acquire(name: str = "edgar", wait: float = 0.0, stale_after: float = 3600.0)
             if fd is not None:
                 _os_unlock(fd)
                 os.close(fd)
-            try:
-                # After the close, not before: Windows refuses to delete a file this process still has open, and
-                # the token check is what keeps us off a holder's fresh lock — not the order of the two steps.
-                if got and _read_owner(path)[1] == token:
-                    path.unlink(missing_ok=True)
-            except OSError:
-                pass
+            if got and not _OS_LOCK_AVAILABLE:
+                # Only the fallback unlinks: it takes the file with O_CREAT|O_EXCL, so a leftover would keep
+                # every acquirer out. The OS-lock path must NOT unlink — another process can take the lock
+                # between our unlock and our unlink (the file still holds OUR owner text until it writes its
+                # own) and we would remove THEIR file. A file it leaves behind is harmless: the next acquirer
+                # and holders() both judge by the OS lock (#365).
+                try:
+                    # The token check keeps us off whoever holds the file now, if it has written already.
+                    if _read_owner(path)[1] == token:
+                        path.unlink(missing_ok=True)
+                except OSError:
+                    pass
     finally:
         with _HELD_GUARD:
             _HELD_TOKENS.discard(token)

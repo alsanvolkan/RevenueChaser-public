@@ -119,3 +119,26 @@ def test_a_second_acquire_of_a_held_lock_gets_false(rawstore_tmp_db):
 def test_the_fallback_path_is_the_one_these_tests_run():
     """Guard: if the autouse monkeypatch were dropped, the tests above would silently re-test the OS-lock path."""
     assert job_lock._OS_LOCK_AVAILABLE is False
+
+
+# ── release: the fallback still removes its file ──────────────────────────────
+
+def test_the_fallback_release_removes_its_lock_file(rawstore_tmp_db):
+    """The OS-lock path leaves its file (#365), but this path must not: it takes the file with O_CREAT|O_EXCL,
+    so a leftover would block every acquirer."""
+    path = job_lock._lock_path("universe")
+    with job_lock.acquire("universe", wait=0) as got:
+        assert got is True
+        assert path.exists()
+    assert not path.exists(), "the fallback path left its O_CREAT|O_EXCL lock file behind"
+    with job_lock.acquire("universe", wait=0) as got:
+        assert got is True
+
+
+def test_the_fallback_release_never_removes_someone_elses_lock_file(rawstore_tmp_db):
+    """Kept on this path too: the token check is what stops a broken holder deleting the taker's file."""
+    path = job_lock._lock_path("universe")
+    with job_lock.acquire("universe", wait=0) as got:
+        assert got
+        path.write_text("4242 someone-elses-token 1")     # our lock was taken over
+    assert path.read_text() == "4242 someone-elses-token 1"
