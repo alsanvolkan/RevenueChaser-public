@@ -58,9 +58,19 @@ def _constant_names() -> set[str]:
                                    path.read_text(encoding="utf-8"), re.MULTILINE)}
 
 
+def _scanned_names() -> set[str]:
+    """Every lock name the guard judges: the literals plus the constants.
+
+    The guard's own assertion is a subset test, so dropping one half of this union only shrinks the set and
+    still passes. Both halves therefore live here, and the constant test below pins that this function really
+    carries them — otherwise "simplifying" the guard back to literals would silently stop guarding five names.
+    """
+    return _literal_names() | _constant_names()
+
+
 def test_every_lock_name_in_the_sources_is_documented():
     """The rot guard: a new lock name nobody documented fails here, whatever NAMES says."""
-    found = _literal_names() | _constant_names()
+    found = _scanned_names()
     assert found, "the scan found no lock name at all"
     assert found <= set(NAMES), f"undocumented lock name(s): {sorted(found - set(NAMES))}"
 
@@ -71,3 +81,5 @@ def test_a_lock_name_passed_as_a_constant_is_found():
     assert {"identity", "discord", "universe", "universe_run", "index_levels"} <= constants
     assert "universe_run" not in literals, "core/universe_fetch._RUN_LOCK_NAME is the only source of this name"
     assert constants <= set(NAMES)
+    # What the guard actually judges has to contain them: this is the assertion that keeps the union in place.
+    assert constants <= _scanned_names(), "the guard stopped scanning constant lock names"
