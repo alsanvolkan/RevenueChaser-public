@@ -95,9 +95,11 @@ def health_summary(now: datetime | None = None) -> dict:
     except ValueError:
         out["calendar_error"] = True
     stats = rawstore.query(f"SELECT COUNT(*) AS n, MAX(session_date) AS newest FROM {TABLE} WHERE symbol = ?",
-                           [SYMBOL], db=_DB)[0]
-    out["rows"] = int(stats["n"] or 0)
-    newest = stats["newest"]
+                           [SYMBOL], db=_DB)
+    if not stats:  # the table does not exist yet: no rows, not a failure
+        return out
+    out["rows"] = int(stats[0]["n"] or 0)
+    newest = stats[0]["newest"]
     out["newest_session"] = newest.isoformat() if newest is not None else None
     if newest is not None:
         src = rawstore.query(f"SELECT source FROM {TABLE} WHERE symbol = ? AND session_date = ?",

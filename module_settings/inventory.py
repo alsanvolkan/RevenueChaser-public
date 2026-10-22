@@ -332,12 +332,16 @@ def _index_levels_row(now: datetime) -> dict:
     row = {
         "key": "index_levels", "label": "SPX daily levels",
         "tables": ["index_levels_daily"],
-        "rows": 0,
-        "last_date": _max_date(("index_levels_daily", "session_date")),
+        "rows": 0, "last_date": DASH,
         "holes": None, "hole_label": "behind the latest complete session", "fetch": None,
         "note": "no index levels yet (the daily bars --index-levels step writes them)",
     }
+    # A store without the table is the normal "nothing yet" case, not an error: every other row builder
+    # checks _table_exists before reading, and health_summary would raise and be recorded as a failure.
+    if not _table_exists("index_levels_daily"):
+        return row
     try:
+        row["last_date"] = _max_date(("index_levels_daily", "session_date"))
         h = index_levels.health_summary(now)
         # health_summary counts the one stored symbol; the whole-table count would diverge the day a second
         # symbol is written, since the key is (symbol, session_date) (#293 review N-1).

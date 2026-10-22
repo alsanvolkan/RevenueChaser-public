@@ -957,7 +957,10 @@ def test_index_levels_row_counts_a_store_behind_the_latest_complete_session(raws
     _seed()
     rawstore.write_rows("index_levels_daily", [_level(date(2026, 9, 28), source="uw")])
     row = _rows(inventory.collect(now=FIXED))["index_levels"]
-    assert row["holes"] == 1 and row["hole_label"] == "behind the latest complete session"
+    # The cell is a COUNT of sessions behind, not a 0/1 flag (#293 review): newest stored is Mon 2026-09-28 and
+    # the latest complete session at FIXED is Wed 2026-09-30, so Tue 29th and Wed 30th are both missing -> 2.
+    # The old flag said 1 for any size of gap, which is what the review asked to fix.
+    assert row["holes"] == 2 and row["hole_label"] == "behind the latest complete session"
     assert "newest 2026-09-28 vs latest complete 2026-09-30" in row["note"]
     assert "source uw" in row["note"]
 
