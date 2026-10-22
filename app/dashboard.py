@@ -425,6 +425,7 @@ def _render_rotation_dashboard():
     Returns the written HTML path, or None when no snapshots exist yet. The
     rendered artifact lands in .cache/ so later page loads serve the file.
     """
+    from RevenueChaser.module_sector_rotation import engine as rotation_engine
     from RevenueChaser.module_sector_rotation import store as rotation_store
     from RevenueChaser.module_sector_rotation.report import (
         export_rotation_dashboard, _rows_to_snapshots)
@@ -436,7 +437,9 @@ def _render_rotation_dashboard():
     if not rows:
         return None
     snaps = _rows_to_snapshots(rows)
-    return export_rotation_dashboard(snaps, filename="sector_rotation_latest.html", uw=None)
+    as_of = max(s.as_of_date for s in snaps)
+    return export_rotation_dashboard(snaps, filename="sector_rotation_latest.html", uw=None,
+                                     macro_panel=rotation_engine.macro_panel(as_of))
 
 
 # Module -> zero-network renderer (model-only run over raw.duckdb caches), used

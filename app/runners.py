@@ -447,7 +447,7 @@ def run_leaps_cached(uw=None) -> Path:
 def run_rotation_latest(uw: UWClient, benchmark: str = "SPY", start: str = None,
                         end: str = None) -> Path:
     from RevenueChaser.module_sector_rotation.engine import (
-        RotationEngine, fetch_all_holdings, sector_etf_trees,
+        RotationEngine, fetch_all_holdings, macro_panel, sector_etf_trees,
     )
     from RevenueChaser.module_sector_rotation.report import export_rotation_dashboard
     from RevenueChaser.module_sector_rotation import history as rotation_history, store as rotation_store
@@ -522,11 +522,12 @@ def run_rotation_latest(uw: UWClient, benchmark: str = "SPY", start: str = None,
     # (cap-weighted, from the shared universe) rather than a 10-name ETF snapshot.
     holdings = fetch_all_holdings(uw, snapshots) if snapshots else {}
     sector_holdings = sector_etf_trees() if snapshots else {}
+    macro_rows = macro_panel(max(s.as_of_date for s in snapshots)) if snapshots else []
     health = _uw_health(uw)
     html_path = export_rotation_dashboard(snapshots, filename=str(ROTATION_LATEST.relative_to(OUTPUT_DIR)),
                                           uw=uw, benchmark=benchmark, holdings=holdings,
                                           sector_holdings=sector_holdings,
-                                          provider_health=health)
+                                          provider_health=health, macro_panel=macro_rows)
     # Result history (#374): after the board file, so it holds what the board showed.
     _record_rotation(rotation_history, snapshots, holdings, sector_holdings, run, run_at, health, benchmark,
                      window=window, warnings=[backfill_note] if backfill_note else None, snapshot_rows=saved,
@@ -548,10 +549,13 @@ def _record_rotation(rotation_history, snapshots, holdings, sector_holdings, run
 
 
 def _rotation_missing(snapshots, short=()) -> list[str]:
-    """Rotation symbols the live pull did not return, in universe order; the too-short ones (a warning) are not."""
-    from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
+    """Rotation symbols the live pull did not return, in universe order; the too-short ones (a warning) are not.
+
+    Macro indicators are shown in their own panel, not on the RRG map (ROT-4 C3), so they are never "missing" here.
+    """
+    from RevenueChaser.module_sector_rotation.engine import rrg_tickers
     got = {s.ticker for s in snapshots}
-    return [t for t in ROTATION_ETFS if t != "SPY" and t not in got and t not in short]
+    return [t for t in rrg_tickers() if t not in got and t not in short]
 
 
 def _stored_session_snapshot(snapshots, same_width: bool = False) -> list:

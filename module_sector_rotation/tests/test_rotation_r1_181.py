@@ -35,11 +35,12 @@ from RevenueChaser.module_sector_rotation import report as rot_report
 from RevenueChaser.module_sector_rotation import store as rotation_store
 from RevenueChaser.module_sector_rotation.money_flow import get_money_flow_leaderboards
 from RevenueChaser.module_sector_rotation.tests.d01_seed import seed
-from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
+from RevenueChaser.module_sector_rotation.universe import MACRO_SERIES, ROTATION_ETFS
 
 COMPLETE = datetime(2026, 10, 6, 22, 0, tzinfo=timezone.utc).timestamp()   # Tuesday 18:00 ET: a complete session
 DAY = date(2026, 10, 6)
 WANTED = [t for t in ROTATION_ETFS if t != "SPY"]
+RRG = [t for t in ROTATION_ETFS if t != "SPY" and t not in MACRO_SERIES]
 SECTORS = sorted(t for t, i in ROTATION_ETFS.items() if i.get("group") == "sector")
 THEMES = sorted(t for t, i in ROTATION_ETFS.items() if i.get("group") == "theme")
 OK_HEALTH = {"calls": 40, "failed": 0, "auth_error": None, "failures": []}
@@ -127,16 +128,15 @@ def test_a_range_fetch_over_three_stored_dates_renders_one_row_per_ticker_and_th
     for i, d in enumerate(dates):
         rotation_store.save_snapshot([_snap(t, d, close=100.0 + i) for t in ("XLK", "XLE", "IGV")], as_of=d)
     rotation_store.save_snapshot([_snap("XLK", dates[0]), _snap("XLE", dates[0]), _snap("IGV", dates[0]),
-                                  _snap("AIQ", dates[0]), _snap("US10Y", dates[0], close=4.25)], as_of=dates[0])
+                                  _snap("AIQ", dates[0]), _snap("XLU", dates[0])], as_of=dates[0])
     monkeypatch.setattr(rotation_store, "backfill_weekly", lambda uw, s, e: 0)
     runners.run_rotation_latest(None, start="2026-08-01", end="2026-08-31")
     html = runners.ROTATION_LATEST.read_text(encoding="utf-8")
     rows = _table_rows(html)
-    assert sorted(rows) == ["AIQ", "IGV", "US10Y", "XLE", "XLK"]   # one row per ticker, not one per (ticker, date)
+    assert sorted(rows) == ["AIQ", "IGV", "XLE", "XLK", "XLU"]     # one row per ticker, not one per (ticker, date); no macro
     assert _meta(html).startswith("2026-08-19")                     # the newest date, not the first row's (AIQ: 08-05)
     assert "5 ETFs" in _meta(html)
     assert _cell(html, "XLK", "close") == "$102.00"                 # XLK's newest row
-    assert _cell(html, "US10Y", "close") == "4.25"                  # its only (older) row still shows
 
 
 # ── ROT-4: holdings RS for themes only; the sector tree survives ─────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ def test_a_sector_row_keeps_its_industry_tree_even_when_holdings_name_it(board):
 
 
 def test_a_live_fetch_with_a_full_rrg_stays_complete_and_records_theme_holdings_only(board, monkeypatch):
-    _engine(monkeypatch, [_snap(t) for t in WANTED])
+    _engine(monkeypatch, [_snap(t) for t in RRG])
     rawstore.write_rows("etf_holdings", [{"ticker": t, "entry": [{"ticker": f"H{t}", "name": t, "weight": "5"}]}
                                          for t in SECTORS + THEMES])
     for t in ["SPY", *(f"H{t}" for t in SECTORS + THEMES)]:                 # the RS reads D01 (M-ROT-3, #374)
@@ -191,33 +191,33 @@ def test_a_live_fetch_with_a_full_rrg_stays_complete_and_records_theme_holdings_
 # ── ROT-5: a degraded or empty live Fetch ────────────────────────────────────────────────────────────────────────────
 
 def test_a_live_fetch_missing_two_etfs_keeps_the_complete_stored_same_day_snapshot(board, monkeypatch):
-    rotation_store.save_snapshot([_snap(t, close=50.0) for t in WANTED], as_of=DAY)
+    rotation_store.save_snapshot([_snap(t, close=50.0) for t in RRG], as_of=DAY)
     before = rawstore.query("SELECT * FROM rotation_snapshots WHERE as_of_date = ? ORDER BY ticker",
                             [DAY.isoformat()])
-    _engine(monkeypatch, [_snap(t, close=99.0) for t in WANTED[2:]])
+    _engine(monkeypatch, [_snap(t, close=99.0) for t in RRG[2:]])
     monkeypatch.setattr(rot_engine, "fetch_all_holdings", lambda uw, snaps: {})
     monkeypatch.setattr(rot_engine, "sector_etf_trees", lambda: {})
     with pytest.raises(JobMessage) as exc:
         runners.run_rotation_latest(_UW())
     msg = exc.value.message
-    assert WANTED[0] in msg and WANTED[1] in msg and "kept the stored" in msg
+    assert RRG[0] in msg and RRG[1] in msg and "kept the stored" in msg
     assert rawstore.query("SELECT * FROM rotation_snapshots WHERE as_of_date = ? ORDER BY ticker",
                           [DAY.isoformat()]) == before                      # the day was not replaced
     html = runners.ROTATION_LATEST.read_text(encoding="utf-8")
-    assert len(_table_rows(html)) == len(WANTED) and _cell(html, "XLK", "close") == "$50.00"   # the stored rows
+    assert len(_table_rows(html)) == len(RRG) and _cell(html, "XLK", "close") == "$50.00"   # the stored rows
     head = _header()
     assert head["quality"] == "partial" and "kept the stored" in head["quality_note"]
 
 
 def test_a_degraded_live_fetch_with_nothing_better_stored_is_saved_and_says_so(board, monkeypatch):
-    _engine(monkeypatch, [_snap(t) for t in WANTED[2:]])
+    _engine(monkeypatch, [_snap(t) for t in RRG[2:]])
     monkeypatch.setattr(rot_engine, "fetch_all_holdings", lambda uw, snaps: {})
     monkeypatch.setattr(rot_engine, "sector_etf_trees", lambda: {})
     with pytest.raises(JobMessage) as exc:
         runners.run_rotation_latest(_UW())
-    assert WANTED[0] in exc.value.message and WANTED[1] in exc.value.message
+    assert RRG[0] in exc.value.message and RRG[1] in exc.value.message
     stored = rawstore.query("SELECT ticker FROM rotation_snapshots WHERE as_of_date = ?", [DAY.isoformat()])
-    assert len(stored) == len(WANTED) - 2
+    assert len(stored) == len(RRG) - 2
 
 
 def test_an_empty_live_fetch_does_not_rewrite_the_board(board, monkeypatch):
@@ -240,14 +240,20 @@ def test_a_missing_z_renders_a_dash_and_sorts_last(board):
     assert _table_rows(html) == ["XLE", "XLK"]                                 # same quadrant: the missing z last
 
 
-def test_yields_and_index_levels_print_no_dollar_sign(board):
+def test_macro_rows_are_not_in_the_rrg_table(board):
     out = rot_report.export_rotation_dashboard(
-        [_snap("XLK", close=200.0), _snap("US10Y", close=4.25), _snap("MOVE", close=95.3),
-         _snap("XLE", close=None)], filename="px.html")
+        [_snap("XLK", close=200.0), _snap("XLE", close=None)], filename="px.html")
     html = out.read_text(encoding="utf-8")
     assert _cell(html, "XLK", "close") == "$200.00"
-    assert _cell(html, "US10Y", "close") == "4.25" and _cell(html, "MOVE", "close") == "95.30"
     assert _cell(html, "XLE", "close") == "—"                                  # a missing close, not a crash
+    assert "US10Y" not in _table_rows(html) and "MOVE" not in _table_rows(html)
+
+
+def test_macro_panel_formats_levels_without_dollar_sign(board):
+    from RevenueChaser.module_sector_rotation.report import _format_close
+    assert _format_close("US10Y", 4.25) == "4.25"
+    assert _format_close("MOVE", 95.3) == "95.30"
+    assert _format_close("XLK", 200.0) == "$200.00"
 
 
 # ── SR-1, PNG, dead helpers ──────────────────────────────────────────────────────────────────────────────────────────
@@ -264,7 +270,7 @@ def test_the_render_asks_uw_for_no_adv_and_the_caption_says_dots_are_fixed(board
 
 
 def test_a_live_fetch_exports_no_png_and_the_dead_helpers_are_gone(board, monkeypatch):
-    _engine(monkeypatch, [_snap(t) for t in WANTED])
+    _engine(monkeypatch, [_snap(t) for t in RRG])
     monkeypatch.setattr(rot_engine, "fetch_all_holdings", lambda uw, snaps: {})
     monkeypatch.setattr(rot_engine, "sector_etf_trees", lambda: {})
     runners.run_rotation_latest(_UW())
@@ -276,13 +282,16 @@ def test_a_live_fetch_exports_no_png_and_the_dead_helpers_are_gone(board, monkey
 
 # ── DF69 text (D-M7 default) ─────────────────────────────────────────────────────────────────────────────────────────
 
-def test_the_yield_note_says_the_inversion_is_not_applied(board):
-    html = rot_report.export_rotation_dashboard([_snap("US10Y", close=4.25)], filename="y.html").read_text(
+def test_macro_panel_is_present_and_no_yield_inversion_note(board):
+    html = rot_report.export_rotation_dashboard([_snap("XLK", close=200.0)], filename="y.html",
+                                                 macro_panel=[{"ticker": "US10Y", "name": "US 10-Year Treasury Yield",
+                                                               "level": 4.25, "change": 0.05, "as_of": "2026-10-06"}]).read_text(
         encoding="utf-8")
-    assert "inversion is not applied" in html
-    assert "is <b>inverted</b> before RS" not in html and "inverted so falling yields" not in html
+    assert "Macro Panel" in html
+    assert "inversion is not applied" not in html
+    assert "Yield symbols" not in html
     trail = rot_report._trail_html(date(2026, 8, 1), date(2026, 8, 31), [], {})
-    assert "Yield symbols are inverted" not in trail and "inversion is not applied" in trail
+    assert "Yield symbols" not in trail and "inversion is not applied" not in trail
 
 
 # ── DF70 / R20 (D-M8 default) ────────────────────────────────────────────────────────────────────────────────────────

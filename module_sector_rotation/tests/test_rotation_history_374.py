@@ -14,12 +14,13 @@ import pytest
 
 from RevenueChaser.core import ledger, rawstore
 from RevenueChaser.module_sector_rotation import engine, history as rot_history
-from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
+from RevenueChaser.module_sector_rotation.universe import MACRO_SERIES, ROTATION_ETFS
 
 COMPLETE = datetime(2026, 10, 6, 22, 0, tzinfo=timezone.utc).timestamp()   # Tuesday 18:00 ET
 INTRADAY = datetime(2026, 10, 6, 14, 0, tzinfo=timezone.utc).timestamp()
 SECTOR = next(t for t, i in ROTATION_ETFS.items() if i.get("group") == "sector")
 THEME = next(t for t, i in ROTATION_ETFS.items() if i.get("group") == "theme")
+RRG = [t for t in ROTATION_ETFS if t != "SPY" and t not in MACRO_SERIES]
 SNAPS = [SimpleNamespace(ticker=t, group_name=i.get("group", "")) for t, i in ROTATION_ETFS.items()]   # every ETF
 DETAILED = sorted(t for t, i in ROTATION_ETFS.items() if i.get("group") in ("sector", "theme"))
 EXPANDABLE = sorted(t for t, i in ROTATION_ETFS.items() if i.get("group") == "theme")    # ROT-4: holdings RS rows
@@ -131,7 +132,7 @@ def test_an_intraday_rotation_run_keeps_its_header_only(store):
     ({"snapshots": []}, "the RRG pull returned no ETF"),
     ({"holdings": {}}, f"none of the {len(EXPANDABLE)} theme ETFs got its holdings' relative strength"),
     ({"snapshots": [s for s in SNAPS if s.ticker != THEME]},
-     f"1 of {sum(t != 'SPY' for t in ROTATION_ETFS)} rotation ETFs are missing from the RRG (no stored series up to the session, or a macro read failed): {THEME}"),
+     f"1 of {len(RRG)} rotation ETFs are missing from the RRG (no stored series up to the session): {THEME}"),
     ({"uw_health": {"calls": 40, "failed": 3, "auth_error": None}}, "3 of 40 Unusual Whales calls failed"),
 ])
 def test_a_degraded_rotation_run_is_partial_with_its_header_only(store, kw, reason):

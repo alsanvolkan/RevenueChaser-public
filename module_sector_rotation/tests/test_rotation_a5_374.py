@@ -103,6 +103,26 @@ def test_live_and_backfill_give_identical_rows_for_the_same_closes(world):
     assert _strip(back) == _strip(live)
 
 
+def test_the_live_cross_section_contains_no_macro_symbols(world):
+    for t in UNIVERSE:
+        _seed(t, date(2026, 10, 7))
+    snaps = engine.RotationEngine(_UW()).process_all()
+    tickers = {s.ticker for s in snaps}
+    assert not tickers & set(universe.MACRO_SERIES)
+    assert tickers == set(engine.rrg_tickers())
+
+
+def test_live_and_backfill_produce_the_same_symbol_set(world):
+    for t in UNIVERSE:
+        _seed(t, date(2026, 10, 7))
+    live = {s.ticker for s in engine.RotationEngine(_UW()).process_all()}
+    with rawstore.connect() as conn:
+        conn.execute("DELETE FROM rotation_snapshots")
+    store.backfill_weekly(_UW(), date(2026, 10, 5), date(2026, 10, 9))
+    back = {r["ticker"] for r in _stored(date(2026, 10, 7))}
+    assert live == back
+
+
 def test_the_cross_section_uses_weekly_lookbacks_on_iso_weeks():
     """The partial week is closed at the session; lookbacks are 1/4/12 weeks, not 5/21/63 sessions."""
     days = _sessions(date(2025, 6, 2), date(2026, 10, 7))

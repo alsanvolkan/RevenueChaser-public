@@ -4,7 +4,8 @@ A snapshot is the rotation engine's cross-section (z-normalized) keyed by its se
 in ``.store/raw.duckdb`` (``rotation_snapshots``). Backfill reconstructs past sessions from the stored daily bars (D01,
 one read for the whole window, every session computed locally with ``engine.cross_section``, the live Fetch's
 function: D-M3 "weekly, both", M-ROT-2), so the trail view works without waiting for live snapshots to accumulate.
-It makes no provider call; the macro series have no D01 bars and stay live-only.
+It makes no provider call; macro indicators are read from ``macro_series`` / ``vol_index_daily`` for the macro panel
+(ROT-4 C3) and are not part of the RRG cross-section.
 """
 import logging
 from datetime import date, datetime, timedelta

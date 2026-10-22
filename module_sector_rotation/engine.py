@@ -438,7 +438,7 @@ def rrg_tickers() -> list[str]:
 
 def too_short(closes: dict[str, list[float]]) -> list[str]:
     """Symbols with some weekly closes but fewer than ``MIN_WEEKS``, in universe order: a warning, not a failure."""
-    return [t for t in ROTATION_ETFS if 0 < len(closes.get(t) or []) < MIN_WEEKS]
+    return [t for t in rrg_tickers() if 0 < len(closes.get(t) or []) < MIN_WEEKS]
 
 
 def cross_section(closes: dict[str, list[float]], spy_closes: list[float], as_of: date) -> list[ETFRotationSnapshot]:
@@ -446,18 +446,17 @@ def cross_section(closes: dict[str, list[float]], spy_closes: list[float], as_of
     closes, SPY-relative strength over ``LOOKBACKS`` weeks, z-scores across the snapshots and the quadrant.
 
     The one function the live Fetch and the backfill share (D-M3): the same closes give the same rows.
+    Macro indicators are not in the cross-section (ROT-4 C3); they have their own panel.
     """
     snaps = []
-    for ticker, info in ROTATION_ETFS.items():
+    for ticker in rrg_tickers():
         series = closes.get(ticker) or []
-        if ticker == "SPY" or len(series) < MIN_WEEKS:
+        if len(series) < MIN_WEEKS:
             continue
-        # Yield series are interest rates, not prices: a rising yield is bearish.
-        # Invert so that *falling* yields register as positive RS (outperforming).
-        rs_closes = [-c for c in series] if info.get("group") == "yield" else series
-        rs_1w = relative_strength_pct(rs_closes, spy_closes, LOOKBACKS["rs_1w"])
-        rs_1m = relative_strength_pct(rs_closes, spy_closes, LOOKBACKS["rs_1m"])
-        rs_3m = relative_strength_pct(rs_closes, spy_closes, LOOKBACKS["rs_3m"])
+        info = ROTATION_ETFS.get(ticker, {})
+        rs_1w = relative_strength_pct(series, spy_closes, LOOKBACKS["rs_1w"])
+        rs_1m = relative_strength_pct(series, spy_closes, LOOKBACKS["rs_1m"])
+        rs_3m = relative_strength_pct(series, spy_closes, LOOKBACKS["rs_3m"])
         ratio, momentum = calculate_ratio_and_momentum(rs_1w, rs_1m, rs_3m)
         snaps.append(ETFRotationSnapshot(
             as_of_date=as_of, ticker=ticker, group_name=info.get("group", ""), close_price=series[-1],
@@ -488,15 +487,80 @@ def normalize_z_scores(snapshots: list[ETFRotationSnapshot]) -> None:
             snap.rrg_quadrant = classify_quadrant(snap.rs_ratio_z, snap.rs_momentum_z)
 
 
+def _macro_weekly_pair(points: list[tuple[date, float]], as_of: date) -> tuple[float, float, date] | None:
+    """(latest weekly close, week-over-week change, date of latest close) from daily ``(date, close)`` points.
+
+    ``None`` when fewer than two ISO weeks are available up to ``as_of``.
+    """
+    weeks = _weekly(points, as_of)
+    if len(weeks) < 2:
+        return None
+    items = list(weeks.items())
+    (_, prev), (last_week, last) = items[-2], items[-1]
+    last_date = None
+    for d, c in reversed(points):
+        if d <= as_of and tuple(d.isocalendar())[:2] == last_week and _finite(c):
+            last_date = d
+            break
+    if last_date is None:
+        return None
+    return last, last - prev, last_date
+
+
+def macro_panel(as_of: date = None) -> list[dict]:
+    """Latest level, week-over-week change and as-of date for each ``MACRO_SERIES`` symbol, from stored tables only.
+
+    Yields / CL1! come from ``macro_series``; VVIX / MOVE from ``vol_index_daily``. WHEATF has no stored writer, so it
+    renders ``n/a``. A symbol whose stored history covers fewer than two ISO weeks also renders ``n/a``.
+    """
+    from RevenueChaser.core import calendar
+    d = as_of or calendar.latest_complete_session()
+    rows = []
+    for sym, cfg in MACRO_SERIES.items():
+        fred_id = cfg.get("fred")
+        if fred_id:
+            q = rawstore.query(
+                "SELECT obs_date, value FROM macro_series WHERE series_id = ? AND obs_date <= ? ORDER BY obs_date",
+                [fred_id, d.isoformat()])
+            points = []
+            for r in q:
+                val = r.get("value")
+                obs = r["obs_date"]
+                if hasattr(obs, "date"):
+                    obs = obs.date()
+                if _finite(val):
+                    points.append((obs, float(val)))
+        else:
+            q = rawstore.query(
+                "SELECT session_date, close FROM vol_index_daily WHERE symbol = ? AND session_date <= ? ORDER BY session_date",
+                [sym, d.isoformat()])
+            points = []
+            for r in q:
+                val = r.get("close")
+                obs = r["session_date"]
+                if hasattr(obs, "date"):
+                    obs = obs.date()
+                if _finite(val):
+                    points.append((obs, float(val)))
+        pair = _macro_weekly_pair(points, d)
+        name = ROTATION_ETFS.get(sym, {}).get("name", "")
+        if pair:
+            level, change, obs = pair
+            rows.append({"ticker": sym, "name": name, "level": round(level, 2),
+                         "change": round(change, 2), "as_of": obs.isoformat()})
+        else:
+            rows.append({"ticker": sym, "name": name, "level": None,
+                         "change": None, "as_of": None})
+    return rows
+
+
 class RotationEngine:
-    """The live RRG pull: D01 weekly closes for the ETFs, ``macro_weekly_closes`` (FRED/yfinance) for the 11 macro
-    series, one ``cross_section`` dated by the session its closes end on.
+    """The live RRG pull: D01 weekly closes for the ETFs, one ``cross_section`` dated by the session its closes end on.
 
     After ``process_all``:
     - ``as_of`` is that session: the latest complete session, or SPY's last D01 session before it when the nightly has
       not written it yet (``stale`` then says so);
-    - ``intraday`` is true when the run happened while the US session was open (rule B, ``calendar.session_for``):
-      its macro values are not a session close;
+    - ``intraday`` is true when the run happened while the US session was open (rule B, ``calendar.session_for``);
     - ``too_short`` lists the symbols left off the map for having under ``MIN_WEEKS`` weekly closes (a warning).
     ``uw`` is not called for closes any more; it is kept for the callers that pass one.
     """
@@ -537,22 +601,9 @@ class RotationEngine:
                            self.benchmark, len(self.spy_closes), MIN_WEEKS)
             return []
         closes = {t: aligned_weekly_closes(points.get(t) or [], spy, self.as_of) for t in rrg_tickers()}
-        for ticker in MACRO_SERIES:
-            if ticker in ROTATION_ETFS:
-                closes[ticker] = self._macro_closes(ticker)
         self.too_short = too_short(closes)
         self.snapshots = cross_section(closes, self.spy_closes, self.as_of)
         return self.snapshots
-
-    @staticmethod
-    def _macro_closes(ticker: str) -> list[float]:
-        """Weekly closes of one macro series (FRED/yfinance, live path only until #182); ``[]`` when it failed."""
-        from RevenueChaser.module_earnings_radar.macro_watch import macro_weekly_closes
-        try:
-            return list(macro_weekly_closes(ticker) or [])
-        except Exception as exc:  # noqa: BLE001 - one failed series is a missing row, never a failed Fetch
-            logger.error("Rotation macro series %s failed: %s", ticker, exc)
-            return []
 
 
 def ticker_rotation_adjustment(

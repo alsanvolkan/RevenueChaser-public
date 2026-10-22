@@ -116,7 +116,7 @@ def record_rotation(snapshots: list, holdings: dict, sector_holdings: dict, *, r
     problems = history.uw_problems(uw_health)
     # RotationEngine.process_all leaves out a symbol with no series (missing) or under MIN_WEEKS weekly closes (short).
     short = list(too_short or [])
-    wanted = [t for t in ROTATION_ETFS if t != "SPY"]
+    wanted = engine.rrg_tickers()
     got = {s.ticker for s in snapshots}
     missing = [t for t in wanted if t not in got and t not in short]
     if kept:
@@ -127,7 +127,7 @@ def record_rotation(snapshots: list, holdings: dict, sector_holdings: dict, *, r
         problems.insert(0, "the RRG pull returned no ETF")
     elif missing:
         problems.insert(0, f"{len(missing)} of {len(wanted)} rotation ETFs are missing from the RRG (no stored series "
-                           f"up to the session, or a macro read failed): {', '.join(missing)}")
+                           f"up to the session): {', '.join(missing)}")
     elif expandable and not holdings:
         problems.insert(0, f"none of the {len(expandable)} theme ETFs got its holdings' relative strength")
     if stale and not kept and not window:

@@ -4,7 +4,7 @@ import webbrowser
 from pathlib import Path
 
 from RevenueChaser.core.providers.unusual_whales import UWClient
-from .engine import RotationEngine, fetch_all_holdings, sector_etf_trees
+from .engine import RotationEngine, fetch_all_holdings, macro_panel, sector_etf_trees
 from .report import export_rotation_dashboard
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -38,7 +38,8 @@ def run_rotation_map():
     # shared universe) instead of an ETF top-10 snapshot.
     sector_holdings = sector_etf_trees()
     html_path = export_rotation_dashboard(snapshots, holdings=holdings,
-                                          sector_holdings=sector_holdings)
+                                          sector_holdings=sector_holdings,
+                                          macro_panel=macro_panel(snapshots[0].as_of_date))
     print(f"  Dashboard: {html_path}")
 
     webbrowser.open(f"file:///{html_path.as_posix()}")
