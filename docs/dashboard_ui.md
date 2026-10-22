@@ -31,6 +31,12 @@ Co-movement, Value Chain, Relatedness, **and Implied Probability (OIPD)** use
 this order. Sector Rotation stays ETF RRG (Theme focuses dots; no MC/Earnings
 stock filters).
 
+Above all of it, in the shell and not in a board report: one collapsed
+**Open issues** group (`templates/dashboard.html`, see "Open issues — every
+dashboard" below). It is parent chrome alongside the Regime and last-run badges
+— a board's own HTML never contains it, so it cannot go stale in a cached
+artifact.
+
 ---
 
 ## 1. Ticker combobox
@@ -176,6 +182,52 @@ what the tab shows, what Fetch vs Refresh does). Do not rename existing
 “Methodology / Rules” blocks — those stay as deeper docs; help is the
 one-screen intro.
 
+### Open issues — every dashboard
+
+A collapsed group in the shell, directly under the top bar and above the board
+iframe, says what is still open on the board you are looking at:
+
+```
+▸ Open issues — N on this board, M shared · as of 22 Oct 2026
+```
+
+One click opens it. Inside are up to three sub-sections — **This board (N)**,
+**Affects every board (M)**, **Repository-wide (R)** — and each item is a nested
+`<details>`: the title with `public`/`private`, `kind` and (when not `open`) a
+status chip; its one-sentence summary, visible as soon as the group is open; and,
+when the item is opened, the labelled fields `What is wrong`, `Evidence`,
+`Example`, `What was tried or decided`, `Direction`, `Next step`, plus a `Links`
+row (the issue first, then any reference) that opens on GitHub in a new tab.
+
+The three scopes are what keep a board's own problems at the top:
+
+- **board** — the issue names this board (`boards` in the registry);
+- **shared** — it affects every data board, so every board lists it;
+- **repo** — repository-wide, listed on **Settings / Data health** only.
+
+`Logs` and the Dealer Hedge demo are not data boards, so they show no group.
+
+**Where the data comes from.** One checked-in file, `docs/open_issues.json`,
+read by `core/open_issues.py`; `reporting_common.open_issues_payload` turns it
+into one JSON block for the shell, which re-renders it in `showTab` (no page
+load, no board re-render). **Nothing calls GitHub and nothing reads the store at
+render time**, so the group is current on every page load. Every string and link
+is escaped in the shell (`html_safe.script_json` for the block, `rcEsc` for the
+rendering), and only links under `https://github.com/alsanvolkan/` are shown.
+
+**Keeping it current** is a registry job, not a board job:
+`python scripts/open_issues_sync.py --write` reads the open issues of both repos
+from the GitHub API, keeps the curated fields, refreshes title/labels/updated-at,
+adds a new issue (pre-filled from its body) and drops a closed one. Run it after
+each merge round. `--check` fails when the file and GitHub disagree;
+`--report-thin` lists the entries whose summary or detail is too thin to resume
+from. A bad or missing registry renders a message inside the group — never a
+failed page.
+
+Do not add the group to a board's `report.py`: a board's HTML is a cached
+artifact (`reporting_common.write_board`), so the list would freeze until the
+board was re-rendered, and Earnings Radar can only be re-rendered by a Fetch.
+
 ### Not this design
 
 - Ticker inside the filter bar.
@@ -307,6 +359,8 @@ nested grouping). Count is `{n} names`.
 - [ ] Implied Probability uses in-board filters + combobox; no `#oipd-ticker` header box
 - [ ] Universal filters use the shared filter kit (`rc_filters`, `filters_bar_html` + `filters_meta`, `docs/dashboard_ui.md` §2b); no literal index list
 - [ ] Count string matches the grouping
+- [ ] Open issues group present, with the right counts for this board
+- [ ] Registry refreshed (`scripts/open_issues_sync.py --write`) after the merge round
 - [ ] Unit tests assert chrome; e2e if fetch/refresh/routes change
 - [x] Earnings Radar v2 and ER v2 Calibration are gone (no tab, route, job, package)
 
