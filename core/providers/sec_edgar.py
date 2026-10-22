@@ -453,13 +453,22 @@ class _Fact(tuple):
         return obj
 
 
-def _annual_facts(facts: dict, concepts: list[str], unit: str) -> dict[str, tuple[float, str]]:
-    """{fiscal_year: (value, period_end)} of the best concept series (see ``_series_by_year``)."""
+def _annual_facts(facts: dict, concepts: list[str], unit: str,
+                  non_usd: set[str] | None = None) -> dict[str, tuple[float, str]]:
+    """{fiscal_year: (value, period_end)} of the best concept series (see ``_series_by_year``).
+
+    ``non_usd``, when given, collects the currencies other than ``unit`` a money concept was tagged in when it has
+    no ``unit`` fact at all (#46). Those values are never read: the unit is recorded, not converted.
+    """
     from datetime import date as _date
     best: dict[str, tuple[float, str]] = {}
 
     def _one(concept: str) -> dict[str, tuple[float, str]]:
-        units = _gaap(facts).get(concept, {}).get("units", {}).get(unit, [])
+        tagged = _gaap(facts).get(concept, {}).get("units") or {}
+        units = tagged.get(unit, [])
+        if non_usd is not None and unit == "USD" and not units:
+            # #46: a money concept with no USD fact. A share count cannot reach here: its fields are read at "shares".
+            non_usd.update(set(tagged) - {unit})
         by_year: dict[str, tuple[str, float, str, str, str]] = {}
         for f in units:
             if f.get("fp") != "FY":
@@ -622,19 +631,25 @@ def _flow_quarters(units: list[dict]) -> dict[str, _Fact]:
     return out
 
 
-def _quarterly_facts(facts: dict, concepts: list[str], unit: str) -> dict[str, tuple[float, str]]:
+def _quarterly_facts(facts: dict, concepts: list[str], unit: str,
+                     non_usd: set[str] | None = None) -> dict[str, tuple[float, str]]:
     """Çeyreklik seri: {dönem_sonu_iso: (değer, dönem_sonu_iso)}.
 
     Additive USD flows (a fact with a ``start``) go through ``_flow_quarters``: the reported 3M quarter,
     or the quarter derived from YTD facts (#158). Instants (no ``start``) and share counts (weighted
     averages, unit ``shares``) keep the old rule: fp Q1..Q4, a reported ~90 day period only.
+
+    ``non_usd`` is the annual path's (#46): the currencies a money concept was tagged in instead of ``unit``.
     """
     from datetime import date as _date
     best: dict[str, tuple[float, str]] = {}
     best_key: tuple[str, int] = ("", 0)
 
     def _one(concept: str) -> dict[str, tuple[float, str]]:
-        units = _gaap(facts).get(concept, {}).get("units", {}).get(unit, [])
+        tagged = _gaap(facts).get(concept, {}).get("units") or {}
+        units = tagged.get(unit, [])
+        if non_usd is not None and unit == "USD" and not units:
+            non_usd.update(set(tagged) - {unit})      # #46: the same rule as the annual path
         by_end: dict[str, tuple[str, float, str, str]] = {}
         flow = []
         for f in units:
@@ -688,7 +703,8 @@ def _series_by_quarter(facts: dict, concepts: list[str], unit: str) -> dict[str,
     return {e: v for e, (v, _end) in _quarterly_facts(facts, concepts, unit).items()}
 
 
-def _series_by_priority(facts_fn, facts: dict, concepts: list[str], unit: str) -> dict[str, tuple[float, str]]:
+def _series_by_priority(facts_fn, facts: dict, concepts: list[str], unit: str,
+                        non_usd: set[str] | None = None) -> dict[str, tuple[float, str]]:
     """Per period, the (value, period end) of the first concept in ``concepts`` that has one.
 
     ``facts_fn`` is ``_annual_facts`` or ``_quarterly_facts``. Unlike those, a
@@ -697,12 +713,13 @@ def _series_by_priority(facts_fn, facts: dict, concepts: list[str], unit: str) -
     """
     out: dict[str, tuple[float, str]] = {}
     for concept in concepts:
-        for period, val_end in facts_fn(facts, [concept], unit).items():
+        for period, val_end in facts_fn(facts, [concept], unit, non_usd).items():
             out.setdefault(period, val_end)
     return out
 
 
-def _short_term_investments(facts_fn, facts: dict, cash_ends: dict[str, str]):
+def _short_term_investments(facts_fn, facts: dict, cash_ends: dict[str, str],
+                            non_usd: set[str] | None = None):
     """Per period: short-term investments paired with that period's ``cash`` (#187).
 
     Returns ``(values, basis, suspect)`` keyed by period. Only periods that have a ``cash`` fact
@@ -710,9 +727,9 @@ def _short_term_investments(facts_fn, facts: dict, cash_ends: dict[str, str]):
     cash end: a total on another date is dropped, a part on another date is left out. A
     negative fact is a sign error: the period gets no value and is flagged, never ``abs()``.
     """
-    totals = _series_by_priority(facts_fn, facts, _STI_TOTAL_TAGS, "USD")
-    afs = _series_by_priority(facts_fn, facts, _STI_AFS_TAGS, "USD")
-    htm = _series_by_priority(facts_fn, facts, _STI_HTM_TAGS, "USD")
+    totals = _series_by_priority(facts_fn, facts, _STI_TOTAL_TAGS, "USD", non_usd)
+    afs = _series_by_priority(facts_fn, facts, _STI_AFS_TAGS, "USD", non_usd)
+    htm = _series_by_priority(facts_fn, facts, _STI_HTM_TAGS, "USD", non_usd)
     values: dict[str, float] = {}
     basis: dict[str, str] = {}
     suspect: set[str] = set()
@@ -732,12 +749,13 @@ def _short_term_investments(facts_fn, facts: dict, cash_ends: dict[str, str]):
     return values, basis, suspect
 
 
-def _field_series(facts_fn, facts: dict):
+def _field_series(facts_fn, facts: dict, non_usd: set[str] | None = None):
     """Per field, ``{period: value}`` and ``{period: end date of the fact the value came from}``.
 
     A third mapping carries the per-period flags of the derived fields
     (``short_term_investments_basis`` / ``_suspect``), a fourth the per-period provenance (``_Fact.info``)
     of the fact each field's value came from. ``short_term_investments`` has none: it joins several facts.
+    ``non_usd`` collects the other currencies the money concepts were tagged in (#46).
     """
     series: dict[str, dict[str, float]] = {}
     ends: dict[str, dict[str, str]] = {}
@@ -747,9 +765,9 @@ def _field_series(facts_fn, facts: dict):
         if field == "short_term_investments":
             continue  # needs the cash ends: resolved below
         if field in _PRIORITY_FIELDS:
-            picked = _series_by_priority(facts_fn, facts, concepts, unit)
+            picked = _series_by_priority(facts_fn, facts, concepts, unit, non_usd)
         else:
-            picked = facts_fn(facts, concepts, unit)
+            picked = facts_fn(facts, concepts, unit, non_usd)
         if field in _NON_NEGATIVE_FLOWS:
             bad = {p for p, fact in picked.items() if fact[0] < 0 and getattr(fact, "info", {}).get("derived")}
             if bad:
@@ -758,7 +776,7 @@ def _field_series(facts_fn, facts: dict):
         series[field] = {p: v for p, (v, _end) in picked.items()}
         ends[field] = {p: e for p, (_v, e) in picked.items()}
         infos[field] = {p: info for p, fact in picked.items() if (info := getattr(fact, "info", None))}
-    sti, basis, suspect = _short_term_investments(facts_fn, facts, ends["cash"])
+    sti, basis, suspect = _short_term_investments(facts_fn, facts, ends["cash"], non_usd)
     series["short_term_investments"] = sti
     ends["short_term_investments"] = {p: ends["cash"][p] for p in sti}
     flags = {"short_term_investments_basis": basis, "short_term_investments_suspect": suspect,
@@ -880,9 +898,12 @@ def _is_us_filer(facts: dict) -> bool:
     return True  # bilinmiyorsa US varsay (evren zaten US borsalarından)
 
 
-def extract_annual(facts: dict) -> list[dict]:
-    """companyfacts'tan normalize yıllık kayıtlar (eskiden yeniye)."""
-    series, ends, flags, infos = _field_series(_annual_facts, facts)
+def extract_annual(facts: dict, non_usd: set[str] | None = None) -> list[dict]:
+    """companyfacts'tan normalize yıllık kayıtlar (eskiden yeniye).
+
+    ``non_usd`` collects the currencies other than USD the money concepts were tagged in (#46).
+    """
+    series, ends, flags, infos = _field_series(_annual_facts, facts, non_usd)
 
     years = _record_periods(series)
     annual = []
@@ -903,13 +924,14 @@ def extract_annual(facts: dict) -> list[dict]:
     return annual
 
 
-def extract_quarterly(facts: dict) -> list[dict]:
+def extract_quarterly(facts: dict, non_usd: set[str] | None = None) -> list[dict]:
     """companyfacts'tan normalize çeyreklik kayıtlar (eskiden yeniye).
 
     The additive USD flows hold DISCRETE quarters, Q2-Q4 derived from YTD facts when the filer reports
     no 3M figure (#158); ``derived`` lists those fields and ``ytd`` keeps the cumulative facts.
+    ``non_usd`` is the annual path's (#46).
     """
-    series, ends, flags, infos = _field_series(_quarterly_facts, facts)
+    series, ends, flags, infos = _field_series(_quarterly_facts, facts, non_usd)
 
     periods = _record_periods(series)
     quarterly = []
@@ -988,14 +1010,18 @@ def get_fundamentals(ticker: str, no_fetch: bool = False) -> tuple[list[dict], l
     if not facts:
         return [], [], {"source": "sec_edgar", "entity_name": row.get("name", ""), "is_us": True, "available": False}
 
-    annual = extract_annual(facts)
-    quarterly = extract_quarterly(facts)
+    non_usd: set[str] = set()         # #46: the other currencies the money concepts were tagged in
+    annual = extract_annual(facts, non_usd)
+    quarterly = extract_quarterly(facts, non_usd)
     meta = {
         "source": "sec_edgar",
         "entity_name": facts.get("entityName") or row.get("name", ""),
         "is_us": _is_us_filer(facts),
         "available": True,
         "extract_version": EXTRACT_VERSION,
+        # #46: the currencies the money facts were tagged in instead of USD. A row extracted before this measure has
+        # no key, which means "not measured", not "USD": only a re-extraction can tell the two apart.
+        "non_usd_units": sorted(non_usd),
     }
     rawstore.write_rows("edgar_financials", [{
         "ticker": ticker,

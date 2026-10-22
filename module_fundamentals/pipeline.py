@@ -22,6 +22,7 @@ from RevenueChaser.core.index_registry import annotate_cards
 from RevenueChaser.core.liquidity import liquid_assets
 from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.core.reporting_common import write_artifact
+from RevenueChaser.core import funnel
 # load_ohlc: the SPY fallback only (U1); a scored name reads D01 (``screen_common.load_bars``).
 from RevenueChaser.module_swing_potential.indicators import compute_indicators, load_ohlc, load_ticker_info
 from RevenueChaser.core import fiscal_year
@@ -383,9 +384,21 @@ def prefilter(rows: list[dict]) -> screen_common.Prefiltered:
     return screen_common.prefilter(rows, config)
 
 
+# #46, #64 checkbox 6: the names whose money facts are tagged in a currency other than USD. The extraction reads the
+# unit, never converts it, so such a filer yields no series and this board cannot score it. The line says what was
+# measured — the currency on the fact — and never "IFRS": a non-USD filer is usually an IFRS filer, but an IFRS filer
+# may still tag USD, so the standard is not what this counts. Display only: no score, bucket or selection reads it.
+NON_USD_DROP = "non_usd_currency"
+NON_USD_LABEL = "Report in a currency other than USD and could not be scored"
+
+
 def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None = None,
-                 drops: list | None = None) -> dict | None:
-    """One ticker's row, or None. ``drops`` (a list) collects the reason for each None (#205)."""
+                 drops: list | None = None, non_usd: set[str] | None = None) -> dict | None:
+    """One ticker's row, or None. ``drops`` (a list) collects the reason for each None (#205).
+
+    ``non_usd`` (the scan's, one per run) collects the currencies of the names that end on the currency check below
+    (#46): they are dropped for that reason, so the count in ``dropped`` and this set are the same names.
+    """
     def _drop(reason: str):
         if drops is not None:
             drops.append(reason)
@@ -412,7 +425,17 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         return _drop("edgar_fetch_failed")     # the call failed: a data gap, not "EDGAR has nothing" (#386 F1)
     if not annual:
         # sec_edgar swallows a failed download and answers empty; its meta says so (#386 review).
-        return _drop("edgar_fetch_failed" if (emeta or {}).get("fetch_failed") else "no_edgar_annual")
+        if (emeta or {}).get("fetch_failed"):
+            return _drop("edgar_fetch_failed")
+        # #46: the filer tagged its money facts in another currency, so the extraction read nothing. It is not a
+        # filer without data, so it gets its own reason — and a row stored before that measure carries no key, which
+        # means "not measured" and stays ``no_edgar_annual``.
+        units = list((emeta or {}).get("non_usd_units") or [])
+        if units:
+            if non_usd is not None:
+                non_usd.update(units)
+            return _drop(NON_USD_DROP)
+        return _drop("no_edgar_annual")
     # A filer whose newest annual report ended longer ago than fiscal_year.STALE_DAYS is stale. Staleness reads the
     # NEWEST record, never the revenue anchor (an anchor can be old only because a newer year has no revenue figure;
     # core/fiscal_year.py:15-17, the #380 measurement: 341 of 384 anchor-"stale" names were fresh filers, #386 F1).
@@ -497,9 +520,19 @@ def _health_drops(run_stats: dict) -> dict:
     return {k: int(dropped.get(k) or 0) for k in HEALTH_DROPS}
 
 
+def _non_usd_count(run_stats: dict) -> int:
+    """The names whose scan ended on the #46 currency check (0 when none, and for a payload stored before it)."""
+    return int((run_stats.get("dropped") or {}).get(NON_USD_DROP) or 0)
+
+
 def _data_short(run_stats: dict):
     short = run_stats.get("data_short")
-    return None if short is None else max(0, short - sum(_health_drops(run_stats).values()))
+    if short is None:
+        return None
+    # A non-USD filer is unscored for its currency, not for a short price history, and the summary now names it on
+    # its own line, so it leaves "data<252d" for the same reason the HEALTH_DROPS do: a name reported under its own
+    # reason must not be reported twice. (``no_edgar`` predates that rule and is still counted in both places.)
+    return max(0, short - sum(_health_drops(run_stats).values()) - _non_usd_count(run_stats))
 
 
 def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict = None) -> dict:
@@ -635,6 +668,23 @@ def demo_payload() -> dict:
     }
 
 
+def _note_non_usd(payload: dict, units: set[str]) -> None:
+    """The board's own framing of the #46 count: the currencies seen, and the funnel row in the board's words.
+
+    ``core.screen_common.funnel_steps`` labels a reason it does not know by its key; the count and the listed names
+    stay exactly as the funnel built them, so the steps still add up (``core.funnel.validate``). The row is rebuilt
+    through ``core.funnel.step``: still a ``drop``, because these names left the scan, and not ``by_design`` — a
+    filer's reporting currency is a data gap that needs a look, not a rule of the board.
+    """
+    if units:
+        payload.setdefault("data_quality", {})["non_usd_units"] = sorted(units)
+    steps = payload.get("funnel_steps") or []
+    for i, step in enumerate(steps):
+        if step.get("key") == NON_USD_DROP:
+            steps[i] = funnel.step(NON_USD_DROP, NON_USD_LABEL, step["count"], "drop", by_design=False,
+                                   tickers=step.get("tickers"))
+
+
 def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
              no_fetch: bool = False, rows_sink: dict | None = None) -> dict:
     """End-to-end scan; returns the JSON payload. The shared body is ``core.screen_common.run_screen``.
@@ -643,13 +693,20 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
     Refresh persists nothing and leaves it empty. ``no_fetch=True`` (a Refresh) scores nothing: it returns the payload
     the last Fetch recorded (K4, ``screen_common.stored_payload``)."""
     from . import scores
-    return screen_common.run_screen(
+    non_usd: set[str] = set()      # #46: the currencies of the names that drop on the currency check
+
+    def compute_row(row, spy_df, no_fetch: bool = False, spine: dict | None = None, drops: list | None = None):
+        return _compute_row(row, spy_df, no_fetch=no_fetch, spine=spine, drops=drops, non_usd=non_usd)
+
+    payload = screen_common.run_screen(
         board="fundamental", refreshed_by="Fundamentals", cfg=config,
         load_universe=fetch_universe_stats, prefilter=prefilter,
         load_spy=lambda: screen_common.load_spy(lambda: load_ohlc("SPY", ttl_days=0.5, no_fetch=no_fetch)),
-        compute_row=_compute_row, build_payload=build_payload, persist=scores.persist if rows_sink is None else (lambda results: scores.persist(results, sink=rows_sink)),
+        compute_row=compute_row, build_payload=build_payload, persist=scores.persist if rows_sink is None else (lambda results: scores.persist(results, sink=rows_sink)),
         top_n=top_n, refresh_universe=refresh_universe, no_fetch=no_fetch,
         history_board="module_fundamentals", saved=config.FUNDAMENTALS_JSON)
+    _note_non_usd(payload, non_usd)
+    return payload
 
 
 def save_payload(payload: dict) -> str:
