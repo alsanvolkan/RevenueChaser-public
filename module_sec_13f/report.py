@@ -336,6 +336,7 @@ _SNAP_COLS = [
     ("pct_out", "% Out"),
     ("holders", "Holders"),
     ("new_exit", "New/Exit"),
+    ("breadth", "Breadth"),
     ("top10", "Top10%"),
     ("hhi", "HHI"),
     ("netflow", "Net flow"),
@@ -459,6 +460,14 @@ def _payload(quarters: list, entries: list, fields: dict | None = None) -> dict:
         cells.append(_cell(_f(e["pct_out"], 1, "%", False), e["pct_out"], "zero"))
         cells.append(_cell(str(_num(last.get("holders"))), last.get("holders"), "zero"))
         cells.append(_cell(new_exit or "—", new_exit_val, "zero"))
+        breadth = last.get("breadth")
+        breadth_chg = last.get("breadth_chg")
+        breadth_text = "—"
+        if breadth is not None:
+            breadth_text = f"{breadth:.2f}%"
+            if breadth_chg is not None:
+                breadth_text += f" ({breadth_chg:+.2f})"
+        cells.append(_cell(breadth_text, breadth, "zero"))
         cells.append(_cell(_f(last.get("top10_pct"), 1, "%", False), last.get("top10_pct"), "zero"))
         cells.append(_cell(str(_num(last.get("hhi"))), last.get("hhi"), "zero"))
         cells.append(_cell(_fmt_shares(netflow), netflow, _sign_class(netflow)))
@@ -572,7 +581,10 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
 <div style="color:#8b949e;font-size:11px;margin-top:8px;line-height:1.5">
 <b>Total ownership</b> = shares held by every 13F filer. <b>Δ% vs prior</b> = QoQ change in shares.
 <b>Value</b> = $ market value held. <b>% Out</b> = shares ÷ shares outstanding (newest stored).
-<b>New/Exit</b> = holders entered / exited vs prior quarter. <b>Top10%/HHI</b> = ownership concentration.
+<b>New/Exit</b> = holders entered / exited vs prior quarter.
+<b>Breadth</b> = share of that quarter's 13F filers holding the name (holders ÷ filers), with the change vs the
+prior quarter; as of quarter-end, filed up to 45 days later.
+<b>Top10%/HHI</b> = ownership concentration.
 <b>Net flow</b> = shares bought − sold (holder-level deltas). <b>Streak</b> = consecutive quarters of net accumulation.
 <b>Accel</b> = Δ%(latest) − Δ%(prior). <b>Insider%</b> = newest stored snapshot. {short_legend}
 <b>Price Δ</b> = close change since the first quarter end.

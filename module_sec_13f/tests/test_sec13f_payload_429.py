@@ -52,7 +52,7 @@ def test_the_cols_are_the_numbers_the_page_sorts_on():
     totals, meta = _three()
     payload = report.board_payload(totals, meta, {})
     assert payload["cols"] == ["sh_2025-03-31", "sh_2025-06-30", "ch_2025-06-30",
-                               "value", "pct_out", "holders", "new_exit", "top10", "hhi", "netflow",
+                               "value", "pct_out", "holders", "new_exit", "breadth", "top10", "hhi", "netflow",
                                "streak", "accel", "insider", "short", "price_delta"]
 
 
