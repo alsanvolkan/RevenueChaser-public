@@ -149,12 +149,25 @@ def nested_parents(X, fine: np.ndarray, k_medium: int, k_coarse: int):
     (so coarse is a merge of medium, not a second independent cut of fine) and is
     mapped back to one coarse id per fine theme. Returns ``(ids, med, coarse)``
     where ``med``/``coarse`` are per-fine-theme label arrays.
+
+    Every cut returns at least one child: a level that ends with a single cluster is
+    returned as-is (agglomerative clustering needs two samples). The medium cut is
+    halved from the number of fine themes present (``max(2, n_fine // 2)``), so most
+    medium themes merge several fine children; the naming step reuses a single child's
+    name when a medium theme has only one fine child, instead of asking the model (#433).
     """
     from sklearn.cluster import AgglomerativeClustering
     ids = sorted(set(fine.tolist()))
     centroids = np.vstack([np.asarray(X[fine == i].mean(axis=0)).ravel() for i in ids])
-    med = AgglomerativeClustering(n_clusters=min(k_medium, len(ids))).fit_predict(centroids)
+    if len(ids) < 2:                      # one fine theme: the parents are that theme
+        return ids, np.zeros(len(ids), dtype=int), np.zeros(len(ids), dtype=int)
+    # Held below the fine count (#433), the cut merges one pair of fine themes; a floor
+    # of 1 keeps a real merge for a caller that asks for more mediums than there are fines.
+    med = AgglomerativeClustering(
+        n_clusters=max(1, min(k_medium, len(ids) - 1))).fit_predict(centroids)
     med_ids = sorted(set(med.tolist()))
+    if len(med_ids) < 2:                  # one medium theme: coarse is that theme
+        return ids, med, np.zeros_like(med)
     med_centroids = np.vstack([centroids[med == m].mean(axis=0) for m in med_ids])
     coarse_med = AgglomerativeClustering(
         n_clusters=min(k_coarse, len(med_ids))).fit_predict(med_centroids)
@@ -163,7 +176,7 @@ def nested_parents(X, fine: np.ndarray, k_medium: int, k_coarse: int):
     return ids, med, coarse
 
 
-def build_shadow(candidates=(60, 90, 120, 150), k_medium: int = 70,
+def build_shadow(candidates=(60, 90, 120, 150), k_medium: int | None = None,
                  k_coarse: int = 25, run_id: str | None = None,
                  profiles: dict | None = None, universe=None,
                  fit: NmfFit = DEFAULT_FIT) -> dict:
@@ -176,7 +189,9 @@ def build_shadow(candidates=(60, 90, 120, 150), k_medium: int = 70,
     result counts the profiles left out.
 
     Every NMF of the run uses ``fit`` (``DEFAULT_FIT`` unless given); ``fit`` in the result names it, because
-    ``theme_runs`` has no column for it.
+    ``theme_runs`` has no column for it. When ``k_medium`` is not given it is derived as
+    ``max(2, n_fine // 2)`` from the realised fine count; an explicit value is honoured but still clamped below
+    ``n_fine`` as a safety net, so the effective value is ``min(requested_or_derived, n_fine - 1)`` with a floor of 1.
     """
     if profiles is None:
         profiles = rel_store.load_profiles()
@@ -213,6 +228,17 @@ def build_shadow(candidates=(60, 90, 120, 150), k_medium: int = 70,
     k_fine, fine_stability = _choose(X, list(candidates), SEEDS, MIN_SIZE,
                                      STABILITY_FLOOR, fit)
     fine = nmf_assign(X, k_fine, seed=0, fit=fit)
+    n_fine = len(set(fine.tolist()))      # an empty NMF component leaves fewer fine themes
+    # The medium level is halved from the realised fine count (#433). An explicit
+    # k_medium is honoured; when none is given we derive it. In every case the
+    # safety-net clamp keeps the effective cut below n_fine with a floor of 1.
+    requested = k_medium
+    derived = max(2, n_fine // 2) if k_medium is None else k_medium
+    clamped = max(1, min(derived, n_fine - 1))
+    if clamped != derived:
+        logger.info("k_medium requested=%s derived=%d clamped=%d: the run realised %d fine themes",
+                    "default" if requested is None else requested, derived, clamped, n_fine)
+    k_medium = clamped
     ids, med, coarse = nested_parents(X, fine, k_medium, k_coarse)
     run_id = run_id or f"nmf-{_now()}"
 
@@ -323,6 +349,19 @@ def _useful_tag(tag: str) -> bool:
     return digits < 0.5 * len(t)
 
 
+def tag_doc_freq(tag_lists) -> dict[str, int]:
+    """``{tag: number of themes carrying it}`` over an iterable of tag lists.
+
+    The frequency ``_ordered_tags`` sorts by: a tag half the run shares is less
+    distinctive than one a single theme carries.
+    """
+    freq: dict[str, int] = {}
+    for tags in tag_lists:
+        for t in {str(x).strip().lower() for x in tags}:
+            freq[t] = freq.get(t, 0) + 1
+    return freq
+
+
 def _ordered_tags(tags, doc_freq: dict[str, int] | None = None) -> list[str]:
     """Useful tags, rarest-first (more distinctive), stable on ties."""
     freq = doc_freq or {}
@@ -362,10 +401,7 @@ def relabel_from_tags(run_id: str, top: int = 3, only_empty: bool = False) -> in
     for r in run_rows("relatedness_theme_tags", run_id):
         fine_tags.setdefault(r["theme_id"], []).append((r.get("rank") or 0, r["tag"]))
 
-    doc_freq: dict[str, int] = {}
-    for items in fine_tags.values():
-        for t in {str(t).strip().lower() for _r, t in items}:
-            doc_freq[t] = doc_freq.get(t, 0) + 1
+    doc_freq = tag_doc_freq([t for _r, t in items] for items in fine_tags.values())
 
     rows, med_tags, coarse_tags = [], {}, {}
     for tid, items in fine_tags.items():
