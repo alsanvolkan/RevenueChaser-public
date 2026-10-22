@@ -45,14 +45,6 @@ def _seed_levels(dates=CANDLE_DATES) -> None:
         for i, d in enumerate(dates)])
 
 
-@pytest.fixture(autouse=True)
-def _market_closed(monkeypatch):
-    """Spot goes live during an OPEN session (the owner's choice, 2026-10-22), so every test here pins the
-    session shut unless it says otherwise. Without this the file passes or fails by time of day."""
-    from RevenueChaser.core import calendar as nyse_calendar
-    monkeypatch.setattr(nyse_calendar, "in_us_session_window", lambda *a, **k: False)
-
-
 def _fetch(tmp_path, **kw):
     kw.setdefault("vix_fetcher", lambda: {"tickers": {}, "vix": 15.5})
     kw.setdefault("cftc_fetcher", lambda: None)
@@ -141,7 +133,7 @@ def test_the_window_is_sorted_whatever_order_the_store_returns(monkeypatch):
     assert out[-1]["date"] == max(CANDLE_DATES), "spot would read the wrong session"
 
 
-def test_live_spot_is_read_only_while_the_session_is_open(monkeypatch):
+def test_a_closed_session_costs_no_live_request(monkeypatch):
     """The owner's choice, 2026-10-22: the 8-week window stays a store read, but spot goes live during an open
     session, because it sets the +/-25% strike window and the board's current_level."""
     from RevenueChaser.core import calendar as nyse_calendar
@@ -168,33 +160,70 @@ def test_a_failed_live_spot_reports_its_reason(monkeypatch):
     assert spot is None and "yfinance down" in error
 
 
-def test_the_board_prefers_the_recorded_live_spot(monkeypatch):
-    """normalize recomputed current_level from the candles, which would have thrown the live spot away."""
-    from RevenueChaser.module_spx_gamma import normalize
+def test_normalize_and_a_reload_both_keep_the_recorded_live_spot(tmp_path):
+    """#293 review MUST-1 and nit 1: the old version of this test rebuilt the production expression by hand and
+    never called normalize_snapshot, which is exactly why the reload gap slipped through. raw["spot"] lived only
+    in memory: a Fetch showed the live level and any Refresh, re-render or backfill rebuild fell back to the
+    stored window's last close, while the spot_exposure files stayed anchored to the live spot."""
+    import json as _json
 
-    candles_rows = [{"date": d, "close": 100.0} for d in CANDLE_DATES]
-    assert normalize.current_level(candles_rows) == 100.0
-    raw = {"ohlc": {"source": "index_levels_daily (^GSPC)", "data": candles_rows},
-           "spot": {"source": "yfinance (live)", "value": 123.45}}
-    recorded = (raw.get("spot") or {}).get("value")
-    assert (recorded if recorded is not None else normalize.current_level(candles_rows)) == 123.45
+    from RevenueChaser.module_spx_gamma import raw_day
+    from RevenueChaser.module_spx_gamma.normalize import normalize_snapshot
+
+    from .conftest import make_raw
+
+    raw = make_raw()
+    raw["spot"] = {"source": "yfinance (live)", "value": 8123.45}
+    assert normalize_snapshot(raw, "2026-08-14")["current_level"] == 8123.45
+
+    # the same day written out and read back must still answer with the live level
+    day = tmp_path / "2026-08-14"
+    day.mkdir()
+    (day / "ohlc_8wk.json").write_text(_json.dumps(raw["ohlc"]), encoding="utf-8")
+    (day / "manifest.json").write_text(_json.dumps({
+        "asof_date": "2026-08-14", "effective_date": "2026-08-14", "spot": raw["spot"]}), encoding="utf-8")
+    reloaded = raw_day.load_raw_day(day)
+    assert reloaded.get("spot", {}).get("value") == 8123.45, "a Refresh lost the Fetch's live spot"
+    # and the board built from the reloaded day shows the same level, not the window's last close
+    rebuilt = {**raw, **reloaded}
+    assert normalize_snapshot(rebuilt, "2026-08-14")["current_level"] == 8123.45
 
 
-def test_an_open_session_spends_exactly_one_request_on_spot(tmp_path, rawstore_tmp_db, monkeypatch):
-    """The window stays a store read; spot is the one live call, and it moves the strike window with it."""
+def test_live_spot_reads_the_newest_minute_of_todays_bars(monkeypatch):
+    """#293 review nit 2: the happy path was untested, so the period, the interval and which bar is taken were
+    all unpinned."""
+    import pandas as pd
     import yfinance
 
     from RevenueChaser.core import calendar as nyse_calendar
+    from RevenueChaser.module_spx_gamma import candles
 
-    _seed_levels()
     monkeypatch.setattr(nyse_calendar, "in_us_session_window", lambda *a, **k: True)
-    built: list = []
-    # snapshot.py imports the name, so the binding to patch is the one in that module
-    monkeypatch.setattr(snap, "live_spot", lambda *a, **k: (built.append(1), (8000.0, None))[1])
-    client = _FakeClient()
-    snap.fetch_snapshot(as_uw(client), DAY, data_root=tmp_path, vix_fetcher=lambda: {"tickers": {}, "vix": 15.5},
-                        cftc_fetcher=lambda: None)
-    assert len(built) == 1, "spot must cost exactly one live read per snapshot"
-    spot_calls = [c for c in client.calls if c[0].endswith("/spot-exposures/strike")]
-    assert spot_calls and spot_calls[0][1]["min_strike"] == int(8000.0 * 0.75), "the live spot must move the window"
-    assert yfinance is not None
+    seen: dict = {}
+
+    class _T:
+        def __init__(self, symbol):
+            seen["symbol"] = symbol
+
+        def history(self, **kw):
+            seen.update(kw)
+            return pd.DataFrame({"Close": [7700.0, 7750.0, 7777.5]})
+
+    monkeypatch.setattr(yfinance, "Ticker", _T)
+    spot, error = candles.live_spot()
+    assert (spot, error) == (7777.5, None), "the newest minute is the live level"
+    assert seen["symbol"] == "^GSPC"
+    assert seen["period"] == "1d" and seen["interval"] == "1m" and seen["auto_adjust"] is False
+
+
+def test_a_calendar_that_cannot_answer_is_reported_not_silent(monkeypatch):
+    """#293 review nit 3: past the holiday table this returned (None, None), which reads as "market closed"."""
+    from RevenueChaser.core import calendar as nyse_calendar
+    from RevenueChaser.module_spx_gamma import candles
+
+    def boom(*a, **kw):
+        raise ValueError("no holiday table for 2031")
+
+    monkeypatch.setattr(nyse_calendar, "in_us_session_window", boom)
+    spot, error = candles.live_spot()
+    assert spot is None and "session window unknown" in error and "2031" in error

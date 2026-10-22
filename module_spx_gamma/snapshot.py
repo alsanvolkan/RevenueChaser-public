@@ -489,6 +489,10 @@ def _fetch_snapshot_staged(
         "uw_ohlc_fallback_reason": None,
         "spot_exposure_mode": mode,
         "spot_exposure_search_bounds": [int(spot * (1 - SPOT_EXPOSURE_WINDOW_PCT)), int(spot * (1 + SPOT_EXPOSURE_WINDOW_PCT))] if spot else None,
+        # The spot the bounds above were built from, so a Refresh or a re-render reads the same level this
+        # Fetch used. Without it load_raw_day rebuilt spot from the stored window's last close, and a live
+        # Fetch and a later Refresh of the same day disagreed by a whole session (#293 review MUST-1).
+        "spot": raw.get("spot") or None,
         "zero_dte_expiry": asof_date if zero_dte else None,
         "zero_dte_expiry_present": bool(zero_dte),
         "methodology_version": "1.0",

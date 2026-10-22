@@ -79,9 +79,10 @@ def live_spot(ticker: str = "^GSPC", now: datetime | None = None) -> tuple[float
     from RevenueChaser.core import calendar as nyse_calendar
     try:
         if not nyse_calendar.in_us_session_window(now):
-            return None, None
-    except (ValueError, ImportError):
-        return None, None
+            return None, None                  # market closed: the stored close is the right answer, no warning
+    except (ValueError, ImportError) as exc:
+        # past the holiday table (2029+) or a broken import: that is not "the market is closed", so say so
+        return None, f"session window unknown ({type(exc).__name__}: {exc})"[:200]
     try:
         import yfinance as yf
         frame = yf.Ticker(ticker).history(period="1d", interval="1m", auto_adjust=False)
