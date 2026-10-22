@@ -552,7 +552,7 @@ def _newest_bar_sessions(bars: dict) -> dict[str, date]:
     return out
 
 
-def _preload(tickers: list[str], no_fetch: bool, session: date | None = None, earnings: dict | None = None) -> dict:
+def _preload(tickers: list[str], no_fetch: bool, session: date | None = None) -> dict:
     """The stored EDGAR rows, cached payloads, pinned themes and nominal D01 bars of ``tickers``.
 
     The boards read the store in a fixed number of queries per batch, and the price bars are no exception: ONE
@@ -564,7 +564,6 @@ def _preload(tickers: list[str], no_fetch: bool, session: date | None = None, ea
         "edgar": sec_edgar.stored_annual_many(tickers),
         "payload": cache_manager.load_many(tickers, ignore_ttl=no_fetch, allow_info_only=True),
         "themes": themes_for_many(tickers),
-        "earnings": earnings if earnings is not None else earnings_dates.stored_next_dates(),   # #304 (read once per run)
         "bars": _bars_by_ticker(tickers, session),
         "session": session,
     }
@@ -864,7 +863,8 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
                 vendor.flush(run_id=vendor_run, label="Asymmetric Growth")   # the batch before this one
             job_control.checkpoint()            # a cancel or a passed deadline (#243) loads no further batch
             batch = to_score[start:start + PRELOAD_BATCH]
-            preload = _preload([r["ticker"] for r in batch], no_fetch, scan_session, stored_earnings)
+            preload = _preload([r["ticker"] for r in batch], no_fetch, scan_session)
+            preload["earnings"] = stored_earnings   # #304: read once per run, not per batch
             preload["drops"] = drops
             preload["vendor"] = vendor
             preload["as_of"] = run_day

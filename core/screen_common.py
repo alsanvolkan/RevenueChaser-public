@@ -414,7 +414,7 @@ def run_screen(*, board: str, refreshed_by: str, cfg: Any,
 
     pf = prefilter(rows)
     filtered = pf.kept                   # every kept name is scored: no shortlist cap (C12, card C)
-    earnings_stored = sum(1 for r in filtered if earnings_dates.with_stored_date(r, stored_earnings) is not r)
+    earnings_stored = sum(1 for r in filtered if str(r.get("ticker") or "").strip().upper() in stored_earnings)
     logger.info("%s: %d of %d names score the stored earnings date (%d stored in all), the rest keep Yahoo's",
                 board, earnings_stored, len(filtered), len(stored_earnings))
 
