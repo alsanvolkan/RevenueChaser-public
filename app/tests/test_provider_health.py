@@ -180,7 +180,7 @@ class TestEarningsBoard:
 
         monkeypatch.setattr(runners, "EarningsPipeline", _Pipe)
         import RevenueChaser.module_sector_rotation.engine as rot
-        monkeypatch.setattr(rot, "rotation_quadrant_map", lambda uw: {})
+        monkeypatch.setattr(rot, "rotation_quadrant_map", lambda uw, **kw: {})
         from RevenueChaser.module_earnings_radar import report
         seen = {}
         real = report.export_html

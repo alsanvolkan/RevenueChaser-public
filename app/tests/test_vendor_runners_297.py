@@ -75,7 +75,7 @@ def earnings(monkeypatch, rawstore_tmp_db):
     monkeypatch.setattr(runners, "_load_watchlist", lambda: set())
     monkeypatch.setattr(runners, "_freeze_run_id", lambda: "job-er")
     monkeypatch.setattr(runners, "_record_earnings_history", lambda *a, **k: None)
-    monkeypatch.setattr("RevenueChaser.module_sector_rotation.engine.rotation_quadrant_map", lambda uw: {})
+    monkeypatch.setattr("RevenueChaser.module_sector_rotation.engine.rotation_quadrant_map", lambda uw, **kw: {})
     monkeypatch.setattr("RevenueChaser.module_earnings_radar.report.export_html",
                         lambda *a, **k: runners.EARNINGS_LATEST.write_text("<html/>", encoding="utf-8"))
     monkeypatch.setattr(vendor_data, "_clock", lambda: COMPLETE)

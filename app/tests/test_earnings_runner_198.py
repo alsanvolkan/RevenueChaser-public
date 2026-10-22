@@ -50,7 +50,7 @@ def _patch_calendar(monkeypatch, events, raw_cal):
     monkeypatch.setattr(runners, "_load_watchlist", lambda: {"QXO", "AAA"})
     monkeypatch.setattr(runners, "EarningsPipeline", _StubPipeline)
     monkeypatch.setattr("RevenueChaser.module_sector_rotation.engine.rotation_quadrant_map",
-                        lambda uw: {})
+                        lambda uw, **kw: {})
     _stub_export(monkeypatch)
 
 
@@ -87,7 +87,7 @@ class TestDashboardWatchlistAugmentation:
         monkeypatch.setattr(runners, "_fetch_calendar_days", lambda uw, days: ([_event("AAA")], {"AAA": _event("AAA")}))
         monkeypatch.setattr(runners, "_load_watchlist", lambda: {"QXO", "AAA"})
         monkeypatch.setattr(runners, "EarningsPipeline", _StubPipeline)
-        monkeypatch.setattr("RevenueChaser.module_sector_rotation.engine.rotation_quadrant_map", lambda uw: {})
+        monkeypatch.setattr("RevenueChaser.module_sector_rotation.engine.rotation_quadrant_map", lambda uw, **kw: {})
         _stub_export(monkeypatch)
         uw = _UW({"QXO": {"next_earnings_date": "2026-09-09", "er_time": "premarket"}})   # between the two days
         with pytest.raises(JobMessage):
@@ -178,7 +178,7 @@ class TestInputSources:
         self._seed_calendar(day, swept=date(2026, 9, 8))
         monkeypatch.setattr(runners, "_load_watchlist", lambda: set())
         monkeypatch.setattr(runners, "EarningsPipeline", _StubPipeline)
-        monkeypatch.setattr("RevenueChaser.module_sector_rotation.engine.rotation_quadrant_map", lambda uw: {})
+        monkeypatch.setattr("RevenueChaser.module_sector_rotation.engine.rotation_quadrant_map", lambda uw, **kw: {})
         _stub_export(monkeypatch)
         uw = _CountingUW({})
         with pytest.raises(JobMessage):
@@ -194,7 +194,7 @@ class TestInputSources:
         monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 9, 8, 21, 0, tzinfo=timezone.utc))
         monkeypatch.setattr(runners, "_load_watchlist", lambda: set())
         monkeypatch.setattr(runners, "EarningsPipeline", _StubPipeline)
-        monkeypatch.setattr("RevenueChaser.module_sector_rotation.engine.rotation_quadrant_map", lambda uw: {})
+        monkeypatch.setattr("RevenueChaser.module_sector_rotation.engine.rotation_quadrant_map", lambda uw, **kw: {})
         _stub_export(monkeypatch)
         uw = _CountingUW({}, {(day, "premarket"): [{"symbol": "AAA"}]})
 

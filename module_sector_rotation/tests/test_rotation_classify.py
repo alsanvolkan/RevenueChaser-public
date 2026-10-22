@@ -120,7 +120,7 @@ class TestPerGroupZScores:
 
     def test_group_z_threshold_is_per_dimension(self):
         # A group with 8 finite ratios but only 2 finite momentums gets group z for ratio, pooled for momentum.
-        sectors = [self._snapshot(f"X{i}", "sector", float(i), 0.0) for i in range(1, 9)]
+        sectors = [self._snapshot(f"X{i}", "sector", float(i), None) for i in range(1, 9)]
         sectors[0].rs_momentum = 1.0
         sectors[1].rs_momentum = -1.0
         normalize_z_scores(sectors)
@@ -129,7 +129,9 @@ class TestPerGroupZScores:
         assert sectors[-1].rs_ratio_z is not None
         assert sectors[-1].rs_ratio_z > 1.0
 
-        # Momentum: pooled z over the 2 finite values -> std > 0, so z-scores are non-zero.
-        assert sectors[0].rs_momentum_z is not None
-        assert sectors[1].rs_momentum_z is not None
-        assert sectors[0].rs_momentum_z > sectors[1].rs_momentum_z
+        # Momentum: the sector group has only 2 finite values, so it uses the pooled cross-section, not the
+        # group's ratio-sized basis. Pin the pooled values exactly and the six non-finite gaps as no-z.
+        pooled = zscore_normalize([1.0, -1.0])
+        assert [sectors[0].rs_momentum_z, sectors[1].rs_momentum_z] == pooled
+        assert pooled[0] > 0 > pooled[1]
+        assert all(s.rs_momentum_z is None for s in sectors[2:])

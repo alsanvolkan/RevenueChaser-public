@@ -51,7 +51,7 @@ def run(monkeypatch, rawstore_tmp_db):
     monkeypatch.setattr(runners, "_load_watchlist", lambda: set())
     monkeypatch.setattr(runners, "_freeze_run_id", lambda: "job-e2")
     monkeypatch.setattr("RevenueChaser.module_sector_rotation.engine.rotation_quadrant_map",
-                        lambda uw: {"XLK": "LEADING"})
+                        lambda uw, **kw: {"XLK": "LEADING"})
     seen = {}
 
     def fake_export(cards, events, nrc, filename=None, filter_stats=None, provider_health=None, notice=None, run_at=None):
@@ -65,6 +65,8 @@ def run(monkeypatch, rawstore_tmp_db):
 
         def __init__(self, tickers, uw, raw_cal, etf_quadrant_map=None):
             self.tickers = tickers
+            self.etf_quadrant_map = etf_quadrant_map
+            seen["quadrant_map"] = etf_quadrant_map
             self._filter_stats = {"total": len(tickers), "passed": 1, "bypassed": 0, "filtered": 0,
                                   "by_reason": {}, "excluded": []}
 
@@ -83,5 +85,8 @@ def test_the_runner_shows_the_notice_and_records_the_screener_reason(run):
     runners.run_earnings_range(_UW(), date(2026, 10, 8), date(2026, 10, 8))
     expected = er_history.screener_problem({"status": "partial", "error": {"failed_chunks": 1, "chunks": 2}})
     assert run["notice"] == expected and "chunks failed" in run["notice"]
+    # MUST-1: the rotation map is handed to the pipeline (the call takes compute=True), not dropped by a
+    # swallowed TypeError that would make this run partial for a rotation reason the test never intended.
+    assert run["quadrant_map"] == {"XLK": "LEADING"}
     (head,) = rawstore.query("SELECT * FROM result_runs WHERE board = ?", [BOARD], db="history")
     assert head["quality"] == "partial" and "screener" in head["quality_note"]
