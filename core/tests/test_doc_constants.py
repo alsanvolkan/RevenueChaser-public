@@ -78,6 +78,16 @@ def test_every_manifest_table_has_a_row_in_the_per_table_column_table():
     assert not missing, f"tables without a row in the per-table column table: {missing}"
 
 
+def test_the_result_runs_row_names_every_json_column():
+    """A header JSON column added to the MANIFEST must be named in the ``result_runs`` row (PH-1, #23)."""
+    text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
+    row = next(line for line in text.splitlines() if line.startswith("| `result_runs` |"))
+    json_columns = [c for c in rawstore._columns_of(rawstore.MANIFEST["result_runs"])
+                    if rawstore._col_type("result_runs", c).split("(", 1)[0].rstrip("[]") == "JSON"]
+    missing = [c for c in json_columns if f"`{c}`" not in row]
+    assert not missing, f"result_runs JSON columns not named in docs/data_architecture.md: {missing}"
+
+
 def test_the_stage_2_table_names_the_file_each_table_lives_in():
     """The DB column of the Stage 2 table is the file the MANIFEST routes each table to (#293: it said raw for
     ``index_levels_daily`` while #371 read it as the decision still open)."""

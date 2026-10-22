@@ -110,7 +110,7 @@ def test_passed_in_short_spy_closes_are_guarded_too():
 
 def test_fetch_all_holdings_reads_d01_once_for_the_whole_job(rawstore_tmp_db, monkeypatch):
     """Since M-ROT-3 (#374) the holdings RS is one D01 read of SPY and every holding, and no UW call."""
-    from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+    from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
     uw = _healthy()
     for t in ("SPY", "BIG", "DN"):
         seed(t, BASE, start=BASE - timedelta(days=150))
@@ -128,7 +128,7 @@ def test_fetch_all_holdings_reads_d01_once_for_the_whole_job(rawstore_tmp_db, mo
 
 
 def test_fetch_all_holdings_stores_nothing_when_spy_is_missing(rawstore_tmp_db):
-    from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+    from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
     uw = _healthy()
     seed("BIG", BASE, start=BASE - timedelta(days=150))                 # D01 holds the holding, not SPY
     rawstore.write_rows("etf_holdings", [{"ticker": "AIQ", "entry": HOLDINGS}])

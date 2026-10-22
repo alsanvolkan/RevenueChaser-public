@@ -2094,7 +2094,7 @@ HISTORY: dict[str, dict] = {
             "board TEXT", "run_id TEXT", "session_date DATE", "run_at DOUBLE", "quality TEXT", "quality_note TEXT",
             "session_snapshot BOOLEAN",
             "model_version TEXT", "params JSON", "context JSON", "funnel JSON", "row_counts JSON", "warnings JSON",
-            "error TEXT", "payload BLOB",
+            "provider_health JSON", "error TEXT", "payload BLOB",
             "PRIMARY KEY (board, run_id)",
         ],
         "compress": {"payload": "json"}, **_RUN,
