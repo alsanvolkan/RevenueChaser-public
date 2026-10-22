@@ -46,7 +46,9 @@ SNAPSHOTS_TABLE = "rotation_snapshots_history"
 # weekly candles dated by the machine's day.
 # 4 (M-ROT-3, #374): the holdings' relative strength and the money-flow closes and volumes come from D01, not UW
 # candles, and a holding with no bars is a recorded "n/a" row instead of a dropped one (ROT-8).
-SELECTION_VERSION = "4"
+# 5 (ROT-4 C4/C5, #374): RRG z-scores are per group with a pooled fallback; macro indicators are out of the RRG
+# cross-section and shown in a separate panel; rotation_quadrant_map is store-read-only by default.
+SELECTION_VERSION = "5"
 _EXPANDABLE = ("theme",)                  # rows whose detail is the ETF's top holdings with RS (ROT-4)
 _HOLDINGS_GROUPS = ("sector", "theme")    # rows with an expandable detail; a sector's is the industry tree
 _NOT_RANKED = ("region", "bond", "yield", "commodity")       # money_flow.compute_money_flow skips these groups
