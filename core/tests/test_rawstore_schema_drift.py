@@ -198,9 +198,10 @@ class TestNotDrift:
 # ── a fresh store's keys match the keys the MANIFEST declares ────────────────────────────────
 # Tables written in "replace" mode (rows grouped by ``key`` columns) or key-less, which carry no PRIMARY
 # KEY constraint by design. A table not listed here must have one that equals its ``key``.
+# ``sec13f_holdings`` left this set in schema v12: it is keyed on (accession, line_no) now (#208).
 _NO_PRIMARY_KEY = {
     "comov_nodes", "comov_members", "comov_lag", "chain_mentions", "swing_ohlc", "rotation_snapshots",
-    "index_constituents", "sec13f_holdings", "oipd_chain",
+    "index_constituents", "oipd_chain",
 }
 
 
