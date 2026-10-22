@@ -25,7 +25,7 @@ import numpy as np
 from typing import Optional
 
 from RevenueChaser.core.config import SCORE_RANGE
-from RevenueChaser.core.models.events import RuleResult
+from RevenueChaser.module_earnings_radar.models import RuleResult
 
 PEER_STATS = {}
 

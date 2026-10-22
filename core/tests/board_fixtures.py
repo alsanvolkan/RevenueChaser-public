@@ -336,7 +336,7 @@ def _spx_gamma(tmp_path, monkeypatch):
 
 def _earnings(tmp_path, monkeypatch):
     import RevenueChaser.module_earnings_radar.report as er
-    from RevenueChaser.core.models.events import TradeCard
+    from RevenueChaser.module_earnings_radar.models import TradeCard
     monkeypatch.setattr(er, "OUTPUT_DIR", tmp_path)
     (tmp_path / "earnings").mkdir(parents=True, exist_ok=True)
     t = H("er_ticker")
@@ -357,7 +357,7 @@ def _earnings_detail(tmp_path, monkeypatch):
     provider, #175). The hostile-ticker card above cannot open a drawer (its row selector
     is invalid), so a plain ticker carries the hostile quarters, alone on the board."""
     import RevenueChaser.module_earnings_radar.report as er
-    from RevenueChaser.core.models.events import TradeCard
+    from RevenueChaser.module_earnings_radar.models import TradeCard
     monkeypatch.setattr(er, "OUTPUT_DIR", tmp_path)
     (tmp_path / "earnings").mkdir(parents=True, exist_ok=True)
     detail = [{"q": H("er_q"), "date": H("er_date"), "implied": 5.0, "actual": 3.0, "eps_actual": 1.2,

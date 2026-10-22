@@ -2,7 +2,7 @@
 """
 import pytest
 
-from RevenueChaser.core.models.events import TradeCard
+from RevenueChaser.module_earnings_radar.models import TradeCard
 from RevenueChaser.module_earnings_radar.pipeline import (
     compute_nrc_score, nrc_acceleration, nrc_quality, nrc_from_card, _agh_context,
 )
