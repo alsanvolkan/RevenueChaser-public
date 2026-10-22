@@ -313,9 +313,11 @@ def _open_issues_for_shell() -> tuple[dict, str]:
     """
     keys = [t["key"] for t in TABS if t["type"] == "tab" and t["key"] not in open_issues.NOT_A_DATA_BOARD]
     try:
-        return reporting_common.open_issues_payload(keys), ""
+        return {**reporting_common.open_issues_payload(keys), "data_boards": keys}, ""
     except open_issues.RegistryError as exc:
-        return {}, f"Open issues are unavailable: {exc}"
+        # ``data_boards`` even on this path: without it the shell cannot tell a data board whose entries
+        # failed to load from ``logs``, which has no group at all, and would show the error on both.
+        return {"data_boards": keys}, f"Open issues are unavailable: {exc}"
 
 
 @app.route("/view/<mod>/payload.json")

@@ -167,8 +167,6 @@ def test_report_thin_names_every_thin_entry(tmp_path, capsys):
     out = capsys.readouterr().out
     assert f"{PUB}#11" in out
     assert f"{PUB}#12" not in out
-    assert sync.main(["--report-thin", "--registry", str(path.with_name("x.json"))]) == 2 \
-        or True      # a missing registry is an error, checked below
 
 
 def test_report_thin_is_zero_when_every_entry_passes(tmp_path):
@@ -236,3 +234,48 @@ def test_a_title_is_unescaped_from_html_entities(tmp_path):
 
 def test_a_mode_is_required(tmp_path):
     assert sync.main(["--registry", str(tmp_path / "x.json")]) == 2
+
+
+def test_a_fetch_that_would_empty_the_registry_is_refused(tmp_path, capsys):
+    """Measured 2026-10-22: the REST list endpoint answered HTTP 200 with ``[]`` while 53 issues were open.
+
+    ``merge`` reads an empty list as every issue being closed, so ``--write`` deleted the whole curated
+    registry and the suite could not see it, because nothing pins the entry count. A fetcher is never
+    trusted that far: the run is refused and the file left alone.
+    """
+    path = _registry(tmp_path, [_entry(11), _entry(12)])
+    before = path.read_text(encoding="utf-8")
+
+    assert sync.main(["--write", "--registry", str(path)], fetch=lambda repo, token="": []) == 2
+    assert "refusing" in capsys.readouterr().err
+    assert path.read_text(encoding="utf-8") == before, "the registry was written despite the refusal"
+
+
+def test_the_real_fetcher_refuses_an_empty_api_answer(monkeypatch):
+    """The same guard at the source, so ``--check`` cannot report a 53-entry removal either."""
+    class _Response:
+        status = 200
+
+        def read(self):
+            return b"[]"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _Response())
+    with pytest.raises(sync.SyncError, match="no open issues"):
+        sync.github_open_issues(PUB)
+
+
+def test_a_title_keeps_an_incomplete_entity_reference():
+    """``html.unescape`` resolves a reference written without its semicolon, so a literal "&notch" became
+    "\u00acch" — and ``--check`` unescaped the API value to the same string, so the damage never healed.
+    """
+    assert sync._title({"title": "RSI&notch filter"}) == "RSI&notch filter"
+    assert sync._title({"title": "&times2 leverage"}) == "&times2 leverage"
+    # A complete reference is still resolved, which is the whole point of the step.
+    assert sync._title({"title": "Fix &amp; ship &lt;b&gt;"}) == "Fix & ship <b>"
+    assert sync._title({"title": "&#38; and &#x26;"}) == "& and &"

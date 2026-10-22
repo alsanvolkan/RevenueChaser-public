@@ -250,6 +250,9 @@ var RC_OI_DATA = (function(){
   catch(e){ return {}; }
 })();
 var RC_OI_ENTRIES = RC_OI_DATA.entries || {};
+// Which tabs have a group at all. It ships even when the registry failed, so the error is shown on a data
+// board and never on Logs; the fallback keeps an older payload working.
+var RC_OI_DATA_BOARDS = RC_OI_DATA.data_boards || Object.keys(RC_OI_DATA.boards || {});
 function rcOiItems(keys){
   // A key with no entry is dropped rather than rendered as undefined: the payload is one map, not a copy per board.
   return (keys || []).map(function(k){ return RC_OI_ENTRIES[k]; })
@@ -276,7 +279,7 @@ function rcOiChips(it){
   if(it.repo !== 'RevenueChaser-public') chips.push('<span class="rc-oi-chip">' + rcEsc(it.repo) + '</span>');
   chips.push('<span class="rc-oi-chip">' + rcEsc(it.kind) + '</span>');
   if(it.status === 'deferred' || it.status === 'parked'){
-    chips.push('<span class="rc-oi-chip">' + it.status +
+    chips.push('<span class="rc-oi-chip">' + rcEsc(String(it.status)) +
                (it.deferred_until ? ' &rarr; ' + rcEsc(it.deferred_until) : '') + '</span>');
   } else if(it.status === 'needs-review'){
     chips.push('<span class="rc-oi-chip warn"><span class="rc-oi-dot"></span>needs review</span>');
@@ -310,13 +313,16 @@ function rcOpenIssuesRender(key){
   var summary = document.getElementById('rc-open-issues-summary');
   var body = document.getElementById('rc-open-issues-body');
   if(!box || !summary || !body) return;
+  if(RC_OI_DATA_BOARDS.indexOf(key) === -1){ box.hidden = true; return; }   // Logs is not a data board
   if(document.getElementById('rc-open-issues-error')){
     summary.textContent = 'Open issues — registry unavailable';
+    body.hidden = true;            // the reason is in its own .body block; this one would add empty padding
     box.hidden = false;
     return;
   }
+  body.hidden = false;
   var data = (RC_OI_DATA.boards || {})[key];
-  if(!data){ box.hidden = true; return; }   // Logs is not a data board
+  if(!data){ box.hidden = true; return; }   // a data board the registry has no entries for
   box.hidden = false;
   var board = rcOiItems(data.board), shared = rcOiItems(data.shared), repo = rcOiItems(data.repo);
   var all = board.concat(shared, repo);

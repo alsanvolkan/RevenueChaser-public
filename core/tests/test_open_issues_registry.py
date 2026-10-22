@@ -10,6 +10,7 @@ check its structure, not a hand-copied list of issue numbers, so a re-seed or a 
 """
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 
@@ -127,3 +128,24 @@ def test_approved_is_a_status_and_sorts_between_in_flight_and_open():
     assert "approved" in open_issues.STATUSES
     order = open_issues.STATUS_ORDER
     assert order["in-flight"] < order["approved"] < order["open"]
+
+
+def test_load_refuses_a_duplicate_issue(tmp_path):
+    """``panel_payload`` ships each issue once, keyed ``(repo, number)``: a second entry for the same issue
+    would lose its curated text to ``setdefault`` and render the first one twice, on every board that names
+    it. The file is the wrong place to notice that, so ``load`` refuses it.
+    """
+    entry = {
+        "repo": "RevenueChaser-public", "number": 11,
+        "url": f"{open_issues.URL_PREFIX}RevenueChaser-public/issues/11",
+        "title": "t", "state": "open", "labels": [], "boards": ["module_sec_13f"],
+        "scope": "board", "kind": "known-problem", "status": "open", "deferred_until": "",
+        "summary": "A summary comfortably over the sixty character minimum the density bar asks for.",
+        "detail": {k: "x" for k in open_issues.DETAIL_FIELDS}, "refs": [],
+        "issue_updated_at": "2026-10-22T10:00:00Z", "reviewed_at": "2026-10-22",
+    }
+    path = tmp_path / "dup.json"
+    path.write_text(json.dumps({"generated_at": "2026-10-22T10:00:00Z", "generated_from": "abc1234",
+                                "issues": [entry, dict(entry)]}), encoding="utf-8")
+    with pytest.raises(open_issues.RegistryError, match="twice"):
+        open_issues.load(path)

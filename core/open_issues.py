@@ -183,8 +183,15 @@ def load(path: Path | str | None = None) -> Registry:
     issues = raw.get("issues")
     if not isinstance(issues, list):
         raise RegistryError("issue registry has no issues list")
-    return Registry(generated_at=generated_at, generated_from=generated_from,
-                    issues=tuple(_entry(item, i) for i, item in enumerate(issues)))
+    entries = tuple(_entry(item, i) for i, item in enumerate(issues))
+    seen: set[tuple[str, int]] = set()
+    for entry in entries:
+        # panel_payload ships each issue once, keyed (repo, number): a second entry for the same issue would
+        # lose its curated text to setdefault and render the first one twice. Refuse it here, not there.
+        if entry.key in seen:
+            raise RegistryError(f"issue registry lists {entry.repo}#{entry.number} twice")
+        seen.add(entry.key)
+    return Registry(generated_at=generated_at, generated_from=generated_from, issues=entries)
 
 
 def _parse_date(value: str) -> date:

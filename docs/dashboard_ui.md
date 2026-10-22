@@ -192,8 +192,10 @@ iframe, says what is still open on the board you are looking at:
 
 One click opens it. Inside are up to three sub-sections — **This board (N)**,
 **Affects every board (M)**, **Repository-wide (R)** — and each item is a nested
-`<details>`: the title with `public`/`private`, `kind` and (when not `open`) a
-status chip; its one-sentence summary, visible as soon as the group is open; and,
+`<details>`: the title, `kind`, a repo chip only when the issue is not in
+`RevenueChaser-public`, and (when not `open`) a status chip — `parked` and
+`deferred` carry their `deferred_until` date; its one-sentence summary, visible
+as soon as the group is open; and,
 when the item is opened, the labelled fields `What is wrong`, `Evidence`,
 `Example`, `What was tried or decided`, `Direction`, `Next step`, plus a `Links`
 row (the issue first, then any reference) that opens on GitHub in a new tab.
@@ -213,8 +215,8 @@ load, no board re-render). The block ships **each entry once**, under `entries`
 keyed `"<repo>#<number>"`, and a board keeps only its section keys
 (`board` / `shared` / `repo`) plus `generated_at`, `stale_days` and
 `dropped_links` (`open_issues.panel_payload`): the shared entries would otherwise
-be repeated on all 16 boards, which took the block to ~590 KB for a 118 KB
-registry. **Nothing calls GitHub and nothing reads the store at
+be repeated on all 16 boards, which took the block to ~590 KB; the deduped block
+is ~107 KB for a ~111 KB registry. **Nothing calls GitHub and nothing reads the store at
 render time**, so the group is current on every page load. Every string and link
 is escaped in the shell (`html_safe.script_json` for the block, `rcEsc` for the
 rendering), and only links under `https://github.com/alsanvolkan/` are shown.
@@ -223,7 +225,9 @@ rendering), and only links under `https://github.com/alsanvolkan/` are shown.
 `python scripts/open_issues_sync.py --write` reads the open issues of the public
 repo from the GitHub API, keeps the curated fields, refreshes title/labels/updated-at,
 adds a new issue (pre-filled from its body) and drops a closed one. Run it after
-each merge round. `--check` fails when the file and GitHub disagree;
+each merge round. A newly added issue arrives `scope="board"` with no `boards`,
+which the registry tests reject on purpose: the run is not finished until a human
+has named its boards and filled its fields. `--check` fails when the file and GitHub disagree;
 `--report-thin` lists the entries whose summary or detail is too thin to resume
 from. A bad or missing registry renders a message inside the group — never a
 failed page.

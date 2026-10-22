@@ -1,34 +1,7 @@
 {
-  "generated_at": "2026-10-22T13:58:20Z",
-  "generated_from": "554caf0",
+  "generated_at": "2026-10-22T15:03:39Z",
+  "generated_from": "1f49e64",
   "issues": [
-    {
-      "repo": "RevenueChaser-public",
-      "number": 9,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/9",
-      "title": "Investigate the unexplained 4.3 GiB DuckDB temp-budget ceiling in the 13F derive",
-      "state": "open",
-      "labels": [],
-      "boards": [
-        "module_sec_13f"
-      ],
-      "scope": "board",
-      "kind": "investigate",
-      "status": "open",
-      "deferred_until": "",
-      "summary": "The 13F derive needs a DuckDB temp budget of 4.3 GiB that no part of its query plan explains, so the ceiling we set is a guess that can rot.",
-      "detail": {
-        "whats_wrong": "During the schema-12 13F migration, calling `recompute_totals()` **in the same process** as the re-ingest dies\nin the VALUE-units median with:\n\n```\nduckdb.OutOfMemoryException: failed to offload data block ... (4.3 GiB/4.3 GiB used)\n```\n\nThe same derive in a **fresh process** finishes in about seven minutes. Measured on a store holding 21.2M\nholdings rows, with roughly 45 GB of disk free at the time.\n\nThe observation is recorded in the code that works around it:\n\n- `scripts/migrate_sec13f_v12.py:135-155` — `derive_in_a_fresh_process`, whose docstring holds the measurement\n  and states the reasoning: \"the fix is a process boundary, not a PRAGMA: the 4.3 GiB ceiling appeared with\n  45 GB of disk free and is not a number worth tuning blind\"\n- `scripts/migrate_sec13f_v12.py:25-30` — the same point in the module docstring\n- `scripts/migrate_sec13f_v12.py:171` — the migration calls the […]",
-        "evidence": "The process boundary is a correct and shipped workaround, not an explanation. Two things are unknown:\n\n1. **What the 4.3 GiB is.** With 45 GB of disk free it is not the disk. It does not match a stated\n   `max_temp_directory_size` or `memory_limit` the code sets. It needs to be traced to a concrete setting or\n   default, not guessed.\n2. **Why a connection's temp budget is not released** after the ingest commits, so that the same work succeeds\n   on a clean connection and fails on a used one.\n\nUntil the number has a cause, any other long-running derive on an already-used connection carries the same\nunknown risk.",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "Read-only, on a copy of the store, never the live one:\n\n1. Record the active DuckDB version, and `memory_limit`, `temp_directory`, `max_temp_directory_size` and\n   `threads` as actually resolved at runtime (not as assumed), in both a fresh connection and one that has just\n   run the ingest.\n2. Reproduce on a copy: ingest then derive in one process, and confirm the ceiling reappears and that the\n   reported figure is the same 4.3 GiB.\n3. Check whether the temp directory on disk grows to 4.3 GiB and stays there, i.e. whether the budget is held by\n   blocks that are never freed after the ingest's commit.\n4. Report the finding. Only then decide whether anything other than the process boundary is worth changing.\n\nExplicitly out of scope: blind PRAGMA tuning: Raising a limit without knowing which limit was hit moves the\nfailure rather than fixing it, and the existing workaround already […]",
-        "next_step": "Measure the derive's temp use per step on a store copy, read-only, and write the number and its cause into this issue before any code change."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-22T07:35:19Z",
-      "reviewed_at": "2026-10-22"
-    },
     {
       "repo": "RevenueChaser-public",
       "number": 10,
@@ -99,7 +72,7 @@
           "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/34"
         }
       ],
-      "issue_updated_at": "2026-10-22T13:58:05Z",
+      "issue_updated_at": "2026-10-22T14:05:25Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -141,23 +114,25 @@
       "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/13",
       "title": "Seam: Earnings Radar and Sector Rotation import each other (MACRO_SERIES / macro_weekly_closes)",
       "state": "open",
-      "labels": [],
+      "labels": [
+        "parked"
+      ],
       "boards": [
         "module_earnings_radar",
         "module_sector_rotation"
       ],
       "scope": "board",
       "kind": "seam",
-      "status": "open",
-      "deferred_until": "",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
       "summary": "Earnings Radar and Sector Rotation import each other for MACRO_SERIES and macro_weekly_closes, so neither board can be read or changed on its own.",
       "detail": {
         "whats_wrong": "Area: `earnings` / `market`.\nFrom the misplaced-seams table of `docs/system_map.md` (Structure A, `#24`). Listed there, filed here; **not reviewed** — do not build from this issue alone.\n\nThe two areas import each other:\n\n- `module_earnings_radar/macro_watch.py:16` — `from RevenueChaser.module_sector_rotation.universe import MACRO_SERIES` (used at `:123`)\n- `module_sector_rotation/engine.py:550` — `from RevenueChaser.module_earnings_radar.macro_watch import macro_weekly_closes`\n\nThe second one is written inside a function rather than at module top level, which is how the cycle is currently survived. `module_earnings_radar/report.py:1578` is a third reader of the same file, also lazily.",
         "evidence": "A mutual import between two board areas is the one shape that cannot be reasoned about locally: either module's top-level import order can break the other, and the workaround (function-level imports) hides it from the reader instead of removing it. This is the FRED/rotation seam, and it has already forced two lazy imports.",
-        "example": "",
-        "tried_or_decided": "",
+        "example": "`module_sector_rotation/engine.py:550` imports `macro_weekly_closes` inside a function and `module_earnings_radar/report.py:1578` does the same: move either import to module top level and the other module stops importing. That is the test the fix has to pass, and it is why the cycle is invisible to a reader of either file.",
+        "tried_or_decided": "PARKED until after Sunday 25 Oct (owner, 2026-10-22). Filed from the Structure A seam table of `docs/system_map.md` (#24) and not reviewed, so nothing here is approved to build. The two halves were split at filing time because they can land independently.",
         "direction": "Two halves, and they are independent:\n1. `MACRO_SERIES` moves out of the board module with `ROTATION_ETFS` (see the companion `ROTATION_ETFS` issue), which removes the earnings → rotation half.\n2. `macro_weekly_closes` is a weekly-closes reader over stored macro series; deciding whether it belongs to `earnings` at all, or to a shared macro reader both areas import, removes the rotation → earnings half. Whichever way it goes, the top-level import must then be legal — the test is that neither module needs a function-level import of the other.",
-        "next_step": "Review with #17, which moves the other half of the same pair, and do both as one pure move."
+        "next_step": "After Sunday 25 Oct: review with #17, which moves the other half of the same pair (`ROTATION_ETFS`), and do both as one pure move."
       },
       "refs": [
         {
@@ -165,7 +140,7 @@
           "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/56"
         }
       ],
-      "issue_updated_at": "2026-10-22T13:01:40Z",
+      "issue_updated_at": "2026-10-22T14:24:35Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -207,26 +182,28 @@
       "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/16",
       "title": "Seam: the Asymmetric Growth engine imports the SEC 13F engine",
       "state": "open",
-      "labels": [],
+      "labels": [
+        "parked"
+      ],
       "boards": [
         "module_asymmetric_growth",
         "module_sec_13f"
       ],
       "scope": "board",
       "kind": "seam",
-      "status": "open",
-      "deferred_until": "",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
       "summary": "The Asymmetric Growth engine imports the SEC 13F engine, so a change to 13F ownership maths can move Asymmetric Growth's scores with nothing saying so.",
       "detail": {
         "whats_wrong": "Area: `screeners` / `ownership`.\nFrom the misplaced-seams table of `docs/system_map.md` (Structure A, `#24`). Listed there, filed here; **not reviewed** — do not build from this issue alone.\n\n`module_asymmetric_growth/engine.py:842` — `from RevenueChaser.module_sec_13f import engine as sec_13f`.\n\nA screener reaches into an ownership board's engine, so an AG run cannot be reasoned about — or tested — without the 13F side present.",
         "evidence": "This one is **conditional**, unlike the other seams filed from Structure A: it is worth an issue only if the two are meant to stay independent. If the AG score is supposed to include institutional ownership, then the dependency is the feature and the right change is smaller — read the stored rows rather than the other board's engine.\n\nSo the first step is the decision, not the code: should an Asymmetric Growth scan depend on 13F state at all?\n\n- **If no:** the ownership input is dropped or made optional, and the import goes.\n- **If yes:** the import moves from the engine to the stored side (`ownership_snapshot` / `sec13f_totals`, see `docs/data_architecture.md`), so the screener reads rows instead of calling another board's engine, and the AG page can say where the number came from.",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "",
-        "next_step": "Review with #15 and #18; the issue itself says the fix may not be worth it, so the review decides whether to do it at all."
+        "example": "`module_asymmetric_growth/engine.py:842` does `from RevenueChaser.module_sec_13f import engine as sec_13f`, so an AG scan cannot be run or tested without the 13F side present. The stored alternative already exists: `ownership_snapshot` / `sec13f_totals` (`docs/data_architecture.md`).",
+        "tried_or_decided": "PARKED until after Sunday 25 Oct (owner, 2026-10-22). Filed from the Structure A seam table of `docs/system_map.md` (#24), not reviewed. The issue itself says the fix may not be worth it: it is only real if the two areas are meant to stay independent.",
+        "direction": "The decision comes before the code: should an Asymmetric Growth scan depend on 13F state at all? If no, the ownership input is dropped or made optional and the import goes. If yes, the import moves from the engine to the stored side (`ownership_snapshot` / `sec13f_totals`, `docs/data_architecture.md`), so the screener reads rows instead of calling another board's engine and the AG page can say where the number came from. Out of scope either way: any change to the AG score's meaning before that decision is recorded, and any change to the 13F board.",
+        "next_step": "After Sunday 25 Oct: record the owner decision (does AG depend on 13F state at all?) with #15 and #18; only then is there anything to build."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T10:48:57Z",
+      "issue_updated_at": "2026-10-22T14:24:58Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -346,36 +323,6 @@
         }
       ],
       "issue_updated_at": "2026-10-22T12:55:07Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 22,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/22",
-      "title": "Dead theme exports in core/taxonomy.py: THEMES has no reader, resolve_sector_theme has no caller, and core/ imports a board module to build them",
-      "state": "open",
-      "labels": [
-        "parked"
-      ],
-      "boards": [
-        "module_sector_rotation",
-        "module_asymmetric_growth"
-      ],
-      "scope": "board",
-      "kind": "seam",
-      "status": "parked",
-      "deferred_until": "after Sunday 2026-10-25",
-      "summary": "core/taxonomy.py imports a board module to build theme exports that have no reader left, so dead code holds a seam open.",
-      "detail": {
-        "whats_wrong": "**Found while verifying another item on `main` `3670e76`. Logged as an open problem, not scheduled: deliberately left for after 2026-10-25.**\n\n`core/taxonomy.py` keeps three exports that nothing in production reads, and pays a layering cost for one of them.\n\n1. **`THEMES` (`core/taxonomy.py:30`) has no production reader.** Its only importer is\n   `module_asymmetric_growth/engine.py:53`:\n\n   ```python\n   from RevenueChaser.core.taxonomy import THEMES, classify_themes, themes_for_many\n   ```\n\n   `grep -n THEMES module_asymmetric_growth/engine.py` returns that import line and nothing else — the name is\n   never used in the file. Two comments still refer to the list as if a board menu were built from it\n   (`module_sector_rotation/theme_focus.py:142` \"Never falls back to ``taxonomy.THEMES``\",\n   `module_sector_rotation/tests/test_rotation_r1_181.py:315`), which is how it reads as […]",
-        "evidence": "core/taxonomy.py:12 imports ROTATION_ETFS from module_sector_rotation/universe.py (the same seam as #12), and :138 and :147 import module_relatedness.themes. THEMES is still imported by module_asymmetric_growth/engine.py:53, so check each name's use before deleting; module_sector_rotation/theme_focus.py:142 says it never falls back to taxonomy.THEMES.",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "Delete `THEMES`, `_rotation_themes()`, the `ROTATION_ETFS` import, `resolve_sector_theme`, the AG import line's\nunused names and the matching `__all__` entries; reword the two comments that mention the list; drop the tests\nthat exist only to cover the dead resolver.\n\nOverlap: #43's C21 item (remove the keyword theme fallback) already removes all of this as a side effect,\nand its brief instructs the builder to grep `THEMES` first and report. If C21 lands, close this issue with the\ncommit. This issue exists so the finding is not lost if C21 does not land.",
-        "next_step": "Confirm per name that nothing reads it, then delete with #12's move in one commit."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-22T13:58:10Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -534,75 +481,6 @@
       },
       "refs": [],
       "issue_updated_at": "2026-10-22T10:38:02Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 28,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/28",
-      "title": "Storage: confirm no double-encoded JSON cells remain in the live store (#21 S4 was closed as repaired)",
-      "state": "open",
-      "labels": [
-        "bug",
-        "area:platform-store",
-        "priority: medium"
-      ],
-      "boards": [],
-      "scope": "repo",
-      "kind": "bug",
-      "status": "open",
-      "deferred_until": "",
-      "summary": "Nobody has confirmed that the live store holds no double-encoded JSON cells since the earlier repair was closed, so the repair is unverified.",
-      "detail": {
-        "whats_wrong": "Closed-issue audit of 2026-10-03 (main `e83aa26`; project file `issue_audit/2026-10-03_closed_issue_audit.md`). alsanvolkan/RevenueChaser#21 was closed with the checkbox \"S4 all 6,880 live `edgar_financials` rows were double-JSON-encoded → decode on move + repaired by rebuild\" ticked. That was false when it was ticked. **Not reviewed yet.** alsanvolkan/RevenueChaser#21 stays closed.",
-        "evidence": "- **Verified** alsanvolkan/RevenueChaser#202 body (2026-10-02): all 6,880 `edgar_financials.meta` cells were double-encoded (`json_type(meta) = 'VARCHAR'` for every row), and AG silently dropped every ticker with EDGAR annual data because of it.\n- **Verified** `core/rawstore.py:582-584`: only `annual` and `quarterly` are `compress` columns, so `meta` was never part of any rebuild.\n- PR alsanvolkan/RevenueChaser#224 fixed the **reader** (`core/rawstore.py:2202-2235`). It does not rewrite stored rows.\n- alsanvolkan/RevenueChaser#234's close comment (2026-10-02 23:53Z) says 6,880 re-extracted rows were swapped into the live `edgar.duckdb`. If the dry-run copy wrote `meta` as an object, the residue is gone. That is **PC-only**: not settled here.\n- **Inferred, not observed:** `core/universe.py:157-161` calls `json.loads` once on `equity_universe.quote`; a double-encoded cell would stay […]",
-        "example": "",
-        "tried_or_decided": "PC checks, read-only (`RC_STORE_AUTO_ENSURE=0`, `duckdb.connect(..., read_only=True)`):\n- `.store/edgar.duckdb`: `SELECT json_type(meta) t, count(*) FROM edgar_financials GROUP BY 1;`\n- `.store/raw.duckdb`: `SELECT json_type(quote) t, count(*) FROM equity_universe GROUP BY 1;`\nAny `VARCHAR` row means a double-encoded cell.",
-        "direction": "",
-        "next_step": "One read-only pass over a store copy that counts double-encoded cells per table, and the number written into this issue."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-22T10:38:05Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 29,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/29",
-      "title": "MANIFEST: label the eight tables that have no writer (B15)",
-      "state": "open",
-      "labels": [
-        "area:platform-store",
-        "idea",
-        "priority: low"
-      ],
-      "boards": [
-        "module_settings"
-      ],
-      "scope": "board",
-      "kind": "docs",
-      "status": "in-flight",
-      "deferred_until": "",
-      "summary": "Eight MANIFEST tables have no writer, and nothing in the manifest says so, so the data-health inventory shows them as if they were fed.",
-      "detail": {
-        "whats_wrong": "Plan: review finding B15 ([review](https://github.com/alsanvolkan/RevenueChaser/blob/claude/data-needs-study-plan-u5u1wt/.hermes/plans_claude/arch/2026-10-04_data_backbone_review.md), \"B15\"). The review's verdict is B: leave the tables as they are, unless Settings / Data Health starts listing every MANIFEST table. In that case, mark them `\"planned\": true` (option A). Epic alsanvolkan/RevenueChaser#274.",
-        "evidence": "- **The eight tables:** `price_bars_daily`, `catalyst_events`, `orphan_designations`, `orphan_lookups`, `forecast_ledger`, `job_runs`, `leaps_daily_scores` and `sec13f_edgar_backfill`.\n- **Who writes them:** none of them has a production writer. The last two are written only by the legacy import (`scripts/migrate_rawdata_to_duckdb.py:334-336`).\n- **What happens today:** the first store call creates them empty.\n- **What changes in phase 2:** most of them get writers.\n  - `price_bars_daily` → D01, alsanvolkan/RevenueChaser#156.\n  - `forecast_ledger` → alsanvolkan/RevenueChaser#128.\n  - `job_runs` → alsanvolkan/RevenueChaser#282.",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "",
-        "next_step": "In the batch pull request #19. Merge, then check the inventory labels them."
-      },
-      "refs": [
-        {
-          "label": "branch area/platform-store/289-planned-tables",
-          "url": "https://github.com/alsanvolkan/revenuechaser-public/tree/area/platform-store/289-planned-tables"
-        },
-        {
-          "label": "batch PR #19",
-          "url": "https://github.com/alsanvolkan/revenuechaser-public/pull/19"
-        }
-      ],
-      "issue_updated_at": "2026-10-22T10:38:07Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -1139,14 +1017,14 @@
       "kind": "epic",
       "status": "parked",
       "deferred_until": "after Sunday 2026-10-25",
-      "summary": "Relatedness' own epic: 7 items still open, and the theme-naming bugs #20 and #51 are its visible symptoms.",
+      "summary": "Relatedness' own epic: the theme lane (S2, S3, S5 and the theme rebuild) is parked until after 25 Oct; one code-only fix, the coarse-mode default, may still be built.",
       "detail": {
-        "whats_wrong": "7 of 7 tracked items in this epic are still open. The first still-open ones: alsanvolkan/RevenueChaser#29 Classification: theme runs, LLM profiles, XSS, pure Refresh, 10-K sync (C1–C29) | alsanvolkan/RevenueChaser#108 Relatedness: business profiles + themes for operating companies below $300M (plan) | alsanvolkan/RevenueChaser#118 Relatedness and Value Chain theme quality plus Relatedness e2e (alsanvolkan/RevenueChaser#29 pkg E)",
-        "evidence": "- D35 LLM cache\n- D16 documents alsanvolkan/RevenueChaser#299\n- D15 submissions (alsanvolkan/RevenueChaser#108)\n- D01 bars\n\nalsanvolkan/RevenueChaser#299 changes the document source. The DF65 vs history-mirror conflict needs one decision before the writer is built.",
-        "example": "",
-        "tried_or_decided": "Approved items keep their original approval. The comment below lists each one with its approval link and base commit, so a cloud builder can read the approval on this issue (CLAUDE.md, Cloud sessions).",
-        "direction": "",
-        "next_step": "Fix the naming tie-break (#51 with #20) first, because every board's Theme filter reads these labels."
+        "whats_wrong": "The $50-300M band of #108 is still unprofiled, so Relatedness covers only the >= $300M universe, and the CLI default for the coarse level is still 'nmf' although the live coarse level is the 11 Morningstar sectors: any later theme rebuild that forgets '--coarse sector' silently puts the agglomerative coarse level back on every board. S0, the S1 fit pre-slice, the S1 live rebuild (2026-10-15) and the sector-coarse code and cutover (2026-10-21) are done; S4 ran, failed, and its rule was relaxed by the owner on 2026-10-15.",
+        "evidence": "- S0 on main: module_relatedness/__main__.py:21,186; module_value_chain/__main__.py:9,72; module_relatedness/themes.py:179-189\n- fit setting on main: themes.py:39 (nndsvda / 500)\n- sector coarse on main: themes.py:537,790-897; core/universe.py:170,201\n- coarse default still nmf: module_relatedness/__main__.py:178\n- S1 live run 2026-10-15: 3,014 names, 145 themes, 194 naming calls, about $1.13\n- profile cost: module_relatedness/config.py:31 EST_USD_PER_CALL = 0.00143",
+        "example": "The $50-300M band is 923 operating companies and only about 70 of them have a stored 10-K/20-F, so S2 needs an SEC sync for roughly 850 names (planned ceiling 1,000 requests) and S3 about 923 LLM profile calls, an estimated $1.32. S2 also rebuilds the Value Chain edges, so those ~850 small filers appear on the Value Chain board, which keeps below-floor filers on purpose.",
+        "tried_or_decided": "Owner decisions: 2026-10-02 scope $50-300M, hidden by default, and 'Value Chain yes' with before/after evidence; 2026-10-15 the failed S4 rule relaxed; 2026-10-16 coarse level from the sectors, cutover 2026-10-21; 2026-10-22 the theme lane parked until after 25 Oct. Approved items keep their original approval; the approvals comment on the issue lists each one with its base commit.",
+        "direction": "Parked: S2 (--sync-filings --floor 50) and S3 (--run --floor 50 with a USD cap, off-peak) each behind a fresh backup, idle /api/jobs, a reported call count and a named rollback (restore_store --latest edgar / --latest raw); never with --rebuild-themes, because the fit is scoped to the >= $300M universe until S5. S5 is a board control on top of #43's RCFilters slice and needs the owner's before/after. Buildable now, code and tests only: flip the CLI coarse default to 'sector', keep 'nmf' available, and update docs/classification_design.md:281 in the same commit.",
+        "next_step": "Build the coarse-default fix (code only, no run); leave S2, S3, S5 and the theme rebuild parked until the owner reopens them after 25 Oct."
       },
       "refs": [],
       "issue_updated_at": "2026-10-22T13:58:12Z",
@@ -1285,33 +1163,6 @@
     },
     {
       "repo": "RevenueChaser-public",
-      "number": 53,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/53",
-      "title": "Backlog: ideas parked as \"not now\" (11 issues, 2026-10-21)",
-      "state": "open",
-      "labels": [
-        "idea"
-      ],
-      "boards": [],
-      "scope": "repo",
-      "kind": "idea",
-      "status": "open",
-      "deferred_until": "",
-      "summary": "The parked backlog: eleven ideas closed as 'not now' on 21 Oct, kept in one issue so none of them is lost.",
-      "detail": {
-        "whats_wrong": "One list for every idea and new-dashboard issue that has no approved spec. avo's decision of 2026-10-21\n21:49 Amsterdam (\"Tek backlog issue'suna topla\"), taken while planning the Sunday goal of finishing every\nopen issue: these eleven each need a review, a card and a multi-day build, so they were in the way of the\ncount rather than in the queue.\n\nNothing is lost: The original issue keeps its whole discussion; it is closed as *not planned* with a\nlink here. To revive one, reopen it — do not rebuild the plan in this issue.\n\n| Issue | Title | Labels it had | Material on file |\n|---|---|---|---|\n| alsanvolkan/RevenueChaser#3 | Biotech screener — roadmap (4-phase, TNYA baseline) | new dashboard, idea, priority: low, area:screeners | a 4-phase implementation plan and a roadmap review (2026-10-02) |\n| alsanvolkan/RevenueChaser#4 | Long-Term Ranking Board (3 clocks, no full-universe […]",
-        "evidence": "",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "",
-        "next_step": "Nothing. Re-read it when the board epics are done, and promote an idea only then."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-22T10:35:54Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
       "number": 54,
       "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/54",
       "title": "Bank top line: read interest income into its own field, not into revenue",
@@ -1425,6 +1276,379 @@
       },
       "refs": [],
       "issue_updated_at": "2026-10-22T13:21:17Z",
+      "reviewed_at": "2026-10-22"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 60,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/60",
+      "title": "Biotech screener: 4-phase roadmap (TNYA as the calibration baseline)",
+      "state": "open",
+      "labels": [
+        "area:screeners",
+        "idea",
+        "new dashboard",
+        "priority: low",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "idea",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "Biotech screener as a four-phase framework, with TNYA as the live calibration baseline; phases 1 and 3 need data this repo does not carry.",
+      "detail": {
+        "whats_wrong": "There is no biotech board. The idea is a four-phase framework: pipeline discovery from preprints, grants, tech-transfer and patent filings; fundamental triage on runway, institutional validation and regulatory path; a catalyst calendar of data drops and congresses; and risk-managed execution that never takes unhedged equity into a primary readout. Nothing of it exists in the repository.",
+        "evidence": "Phases 1 and 3 depend on preprint, grant, patent and clinical-trial feeds that this repository does not carry today, so they cannot be built from the current store at all. A four-phase implementation plan and a roadmap review of 2026-10-02 are on file (2026-10-02_biotech_implementation_plan.md, 2026-10-02_biotech_roadmap_review.md).",
+        "example": "The execution rule is the concrete part: no unhedged equity into a primary readout, where a failure threatens an 80-90% drawdown; defined-risk option structures instead, or accumulation after the post-readout IV crush.",
+        "tried_or_decided": "Reopened from #53 as its own issue on avo's decision, 2026-10-22; the original and its review history stay in the closed private issue linked from the body. Dashboard-sized build, no approved spec.",
+        "direction": "The first question is scope, not code: either phase 1's discovery sources come into the repository as new feeds, or the board starts at phase 2 over the universe already in `.store/`. The second is much the cheaper shape and needs no new provider.",
+        "next_step": "After Sunday 25 Oct: a review with avo that decides whether phase 1's discovery sources are in scope at all, or whether the board starts at phase 2."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-22T14:37:53Z",
+      "reviewed_at": "2026-10-22"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 61,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/61",
+      "title": "Long-Term Ranking board: Fundamentals + LEAPS + Momentum on three freshness clocks",
+      "state": "open",
+      "labels": [
+        "area:screeners",
+        "idea",
+        "new dashboard",
+        "priority: medium",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "idea",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "Long-Term Ranking board scoring Fundamentals, LEAPS and Momentum together; three data types that age on three different clocks, and four open decisions.",
+      "detail": {
+        "whats_wrong": "A board that ranks tickers on a composite of three independent signals — Fundamentals (quality/value), LEAPS (far-dated call flow) and Momentum (trend) — does not exist. The hard part is not the score: the three inputs age on three different clocks, so one board-level \"as of\" would make a filing date look like a trading day.",
+        "evidence": "Fundamentals come from `ticker_cache` / `sec_facts` and are a *period*, not a date, refreshed roughly quarterly; LEAPS come from `leaps_flow_prints` / `leaps_cache` and are near real-time but UW-expensive and watchlist-scoped today; Momentum comes from `swing_ohlc` bars and is a trading day old, with 1-2 years of history the costliest fetch of the three.",
+        "example": "The proposed funnel keeps the cost down by ordering the steps: the Asymmetric Growth universe and its hard gates first at zero per-ticker calls (the `module_swing_potential` prefilter pattern), then momentum history only for survivors, then LEAPS last over the shortlist — \"universe 4,000 → gates 1,200 → momentum 900 → fundamentals 850 → LEAPS 500\".",
+        "tried_or_decided": "Reopened from #53 as its own issue on avo's decision, 2026-10-22; the original and its review history stay in the closed private issue linked from the body. The most worked-out of the parked ideas. The design stance is already fixed: per-source `as_of` next to each score, a per-source health line in the header, per-source staleness thresholds rather than one TTL, visible gaps that rank below complete rows, and a snapshot table like `rotation_snapshots`.",
+        "direction": "Four decisions, all avo's, and 1 and 4 change the cost of the board by an order of magnitude: (1) universe scope and minimum market-cap band; (2) may a ticker rank with 2 of 3 sources, gap shown as a badge, or must all three exist; (3) ranking method and whether each sub-score reuses an existing engine; (4) where LEAPS sits in the funnel, full-shortlist sweep or watchlist-first tier.",
+        "next_step": "After Sunday 25 Oct: answer the four open decisions on the issue; the funnel then becomes a spec with no further design work."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-22T14:38:13Z",
+      "reviewed_at": "2026-10-22"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 62,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/62",
+      "title": "Stock GEX / Greek Predictor (per-ticker SPX Gamma analog)",
+      "state": "open",
+      "labels": [
+        "area:market",
+        "idea",
+        "new dashboard",
+        "priority: medium",
+        "parked"
+      ],
+      "boards": [
+        "module_spx_gamma"
+      ],
+      "scope": "board",
+      "kind": "idea",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "Per-ticker analog of the SPX Gamma board: net-GEX band, regime and iron-butterfly suggestions, blocked on an unverified UW entitlement audit.",
+      "detail": {
+        "whats_wrong": "A per-stock options-Greeks predictor for high-option-volume names does not exist. It would trace each stock's net dealer gamma, derive a predictable range around spot bounded by the put and call walls, and — when spot sits inside that band — suggest iron-butterfly structures built from the real chain, with the inst:retail and call/put ratios beside them.",
+        "evidence": "Most of the engine is already ticker-parametrized in `module_spx_gamma`: `levels.py` (`map_core_levels`, `gamma_regime`, `cumulative_gex_envelope`), `charm_pin.py` (`normalize_spot_exposure_rows`, `qualify_charm`, `vanna_peaks`) and the tornado and position-map charts. What is missing is a provider method: `UWClient.option_contracts()` does not exist in `core/providers/unusual_whales.py`.",
+        "example": "The band is the whole board: net GEX > 0 means a dampening regime where price is range-bound between `put_wall` and `call_wall` and both directions are predictable; net GEX < 0 amplifies and the pin is unreliable. `band_width_pct` against the IV-implied expected move is the pin-probability proxy.",
+        "tried_or_decided": "Reopened from #53 as its own issue on avo's decision, 2026-10-22; the original and its review history stay in the closed private issue linked from the body. Filed as a sub-issue of the SPX Gamma epic because it reuses that board's engine. Phase 0 is a hard gate written into the plan: build only when the analog is verified against live UW entitlement.",
+        "direction": "Nothing downstream may be built until each endpoint's audit status is PASS or an approved fallback is documented. The endpoints in question are `/stock/{t}/option-contracts`, the `flow-recent` premium fields and `info` bid/ask; every number on the board depends on them.",
+        "next_step": "After Sunday 25 Oct: run the Phase 0 entitlement audit for one ticker (MU) and record PASS / NOT_ENTITLED per endpoint on the issue. The plan is not buildable before that."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-22T14:39:13Z",
+      "reviewed_at": "2026-10-22"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 63,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/63",
+      "title": "Weekly US credit market report module (PDF extraction, charts, own summary)",
+      "state": "open",
+      "labels": [
+        "area:market",
+        "idea",
+        "new dashboard",
+        "priority: low",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "idea",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "Weekly US credit-market report module: PDF ingestion into a validated schema, 11 charts and its own condensed briefing; two decisions block it.",
+      "detail": {
+        "whats_wrong": "A standalone module that ingests a weekly US credit-market risk report PDF, extracts it into a validated schema, charts it and writes its own condensed Markdown briefing does not exist. It would share no table or ingestion logic with SPX Gamma: credit, rates and liquidity regime is a different measurement on a different timing convention from dealer gamma.",
+        "evidence": "Four properties of the source make it hard and must not be simplified away: the timing is base-day with a Wednesday fallback the report states in a \"Taban Notu\", so no weekday may be hardcoded; each series has its own publication rhythm, so every field needs its own `asof_date`; the thresholds are the report's own analytical output and need threshold, meaning, indicators and derivation stored as four linked fields; and declared data gaps (CDS/FINDX, Trepp CRE) are first-class rows, not omissions.",
+        "example": "The one chart with no equivalent in the source, and the module's main value added, is a conditional-map distance-to-threshold heatmap: how close today's HY OAS sits to each derived threshold, per risk family.",
+        "tried_or_decided": "Reopened from #53 as its own issue on avo's decision, 2026-10-22; the original and its review history stay in the closed private issue linked from the body. The full plan — a 14-section source map, the complete `extraction_schema.yaml`, seven SQL tables, the file tree and six phases with acceptance criteria — is in the closed private issue and is not restated here.",
+        "direction": "It does not fit today's architecture as written: the plan proposes a per-module SQLite database and its own `data/` tree, which predates the `.store/` DuckDB contract in `docs/data_architecture.md`. It also needs avo to supply a PDF every week, a manual input no other board has. An LLM firewall is already specified: schema-constrained extraction with page citations, null over guess, and a stage-2 re-extraction that rejects any number that does not match the validated row.",
+        "next_step": "After Sunday 25 Oct: two decisions from avo before any code — is a weekly manual PDF an acceptable input or should this wait for the live-API variant, and does its history live in `.store/` under the MANIFEST like every other board."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-22T14:39:51Z",
+      "reviewed_at": "2026-10-22"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 64,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/64",
+      "title": "Cross-asset derivatives stress module (CFTC positioning, composite stress regime)",
+      "state": "open",
+      "labels": [
+        "area:market",
+        "idea",
+        "new dashboard",
+        "priority: low",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "idea",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "Cross-asset derivatives stress module: CFTC positioning into a weekly composite stress regime, for position sizing rather than direction.",
+      "detail": {
+        "whats_wrong": "A weekly cross-asset derivatives stress report does not exist: market crowding, positioning stress, volatility context and the migration between exchange-traded and OTC derivatives, combined into a composite regime. It answers whether positioning is crowded enough that position size and tail-risk protection should change — a risk-regime tool, explicitly not a directional signal.",
+        "evidence": "It is independent of SPX Gamma (index dealer-gamma regime), of the weekly credit report #63 and of the earnings engine: no shared tables or feature schemas, combination only at a delivery layer. The composite z-score maps to a regime band with a default posture per band, given in the plan as configurable examples rather than advice.",
+        "example": "A 104-week backfill is a prerequisite: until it is done the composite z-score has no distribution to sit in, so the board shows nothing trustworthy no matter how good the weekly run is.",
+        "tried_or_decided": "Reopened from #53 as its own issue on avo's decision, 2026-10-22; the original and its review history stay in the closed private issue linked from the body. The full plan — file tree, the `RawObservation` / `WeeklyStressFeatures` contracts, nine SQL tables, the freshness matrix, six phases with acceptance criteria, the test and dependency lists — is in the closed private issue and is not restated here.",
+        "direction": "Same architecture mismatch as #63: the plan proposes a module-local SQLite database and a `data/` tree, written before the `.store/` DuckDB contract in `docs/data_architecture.md`. That has to be settled before Phase 1, not after.",
+        "next_step": "After Sunday 25 Oct: Phase 0 only — run the source audit and record the classification per source on the issue; alongside it, avo decides whether history lives in `.store/` under the MANIFEST and whether the manually verified MOVE input is acceptable in V1."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-22T14:40:26Z",
+      "reviewed_at": "2026-10-22"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 65,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/65",
+      "title": "Lifecycle board v1 (fallen-angel D×A, calibration set)",
+      "state": "open",
+      "labels": [
+        "area:screeners",
+        "idea",
+        "new dashboard",
+        "priority: medium",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "idea",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "Lifecycle board v1: fallen angels scored on a stage x chart grid, with an 18-name golden set as the acceptance test; nothing blocks it but approval.",
+      "detail": {
+        "whats_wrong": "There is no Lifecycle board. It would screen fallen angels — at least 60% off the all-time high, a base of 12 months or more after the trough, market cap $150M-$50B — on the thesis that shrinking share count (buybacks beating dilution) is the mechanical turn, and place each name in a Desert / Turning / Aligned column and a Not ignited / Young / Confirmed stage.",
+        "evidence": "Nothing blocks it technically: every input already exists — `fetch_universe_stats()` (the shared cache Asymmetric Growth, Swing and Fundamentals use), `sec_facts` net income and share counts, and yfinance max history for the ATH and trough. What it needs is two new store tables, a max-history OHLC job, and several days of work.",
+        "example": "The acceptance test is a supplied 18-name golden set in `module_lifecycle/tests/golden.json`: RAMP, OSPN, RNG, SPB, ILMN, DAR and TWLO must land Aligned + Confirmed; LFST, OKTA, MD, HRMY, BIIB and ROKU Aligned + Young; ATKR, TXG and VIR Turning; VRDN, RCKT and SYNA Desert. Done means those names land in the right column, not that every badge exists.",
+        "tried_or_decided": "Reopened from #53 as its own issue on avo's decision, 2026-10-22; the original and its review history stay in the closed private issue linked from the body. #53 listed this as \"issue discussion only\", which understates it: the spec is close to build-ready. v2 defers buyback dollars from new EDGAR repurchase concepts, the Cross year, the \"Approaching\" suffix, the 2x/3x badge rule and the sector strip. Absolute universe and candidate counts are explicitly not unit gates — a post-Fetch smell test only.",
+        "direction": "Calibration-first, with thresholds tuned in `config.py` and no per-ticker hacks. The starting rules are written: the candidate gate on market cap, drawdown and months since trough; stage from FY GAAP net income and the year-on-year diluted share count; chart state from a rising SMA200 and distance to the 52-week high.",
+        "next_step": "After Sunday 25 Oct: approval, then step 1 of the implementation order. The golden set is the acceptance test, so the build can start with no further design work."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-22T14:41:10Z",
+      "reviewed_at": "2026-10-22"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 66,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/66",
+      "title": "Fib Reclaim board (0.786 gate scan)",
+      "state": "open",
+      "labels": [
+        "area:screeners",
+        "idea",
+        "new dashboard",
+        "priority: medium",
+        "parked"
+      ],
+      "boards": [
+        "module_swing_potential"
+      ],
+      "scope": "board",
+      "kind": "idea",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "Fib Reclaim board: names whose first close reclaims 78.6% of a peak-to-trough correction; spec is close to build-ready, the first Fetch is expensive.",
+      "detail": {
+        "whats_wrong": "There is no 0.786 Fibonacci reclaim scan. It would list names whose first close reclaims 78.6% of a peak-to-trough correction and that still sit between that level and the peak — a transition moment, explicitly not a direction signal, and with no forward or hit-rate ledger in the first ship.",
+        "evidence": "The decisions are already locked: yfinance only, unadjusted history for the signal and adjusted history for the Yahoo ATH gate, no Polygon; list membership is a last close in [0.786, peak] with the first cross no more than 10 trading days ago; retirement is per structure, not a ticker ban, so a later ATH-to-dip can re-enter; the default market cap is ALL, unlike every other board. New tables `fib_reclaim_ohlc` and `fib_reclaim_ath`; `swing_ohlc` must not be reused, because its 2-year window is the wrong series.",
+        "example": "The ATH gate is where the artifacts are caught: a missing Yahoo adjusted ATH drops the name as unconfirmed, and an adjusted ATH that does not confirm the nominal peak date — or an adjusted high that day below 98% of the adjusted ATH — drops it as an artifact, both counted on the note line. Nominal dollars are never compared to adjusted dollars, because splits make that comparison always fail.",
+        "tried_or_decided": "Reopened from #53 as its own issue on avo's decision, 2026-10-22; the original and its review history stay in the closed private issue linked from the body. Placed under the Swing Potential epic at avo's instruction. #53 listed it as \"issue discussion only\", which understates it: the engine, the score and its weights, the store tables and the v1 omissions (no 2x badge, no \"2 structures\") are all written down.",
+        "direction": "The one thing worth re-checking before it ships is cost: the first Fetch is a max-history pull across the whole universe, expensive by design. Everything else is specified.",
+        "next_step": "After Sunday 25 Oct: approval, then engine and unit tests on synthetic bars first, so the 0.786 rule and both ATH-gate drop paths are proven before any network call is made."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-22T14:43:25Z",
+      "reviewed_at": "2026-10-22"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 67,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/67",
+      "title": "Discovery: turnaround mode of Fundamentals ($300M-$5B, FCF turn / margin / Ro40 deltas)",
+      "state": "open",
+      "labels": [
+        "enhancement",
+        "area:screeners",
+        "idea",
+        "priority: low",
+        "parked"
+      ],
+      "boards": [
+        "module_fundamentals"
+      ],
+      "scope": "board",
+      "kind": "idea",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "A turnaround mode of Fundamentals ($300M-$5B) on fiscal-year turn signals; it cannot be judged until the hit-rate ledger #25 can score a candidate set.",
+      "detail": {
+        "whats_wrong": "Fundamentals has no turnaround mode. It would rank $300M-$5B names on fiscal-year turn signals — free cash flow turning positive, operating margin up 3 points, Rule of 40 up 10 — with no theme gate, keeping one-off, base-effect and corporate-event candidates in the pool but unselectable, and treating a commodity tailwind as a label only.",
+        "evidence": "It fits as a mode or sibling tab because it reuses the same EDGAR annual series and Rule of 40 maths with a different universe and ranking. It must skip the momentum prefilter at `module_fundamentals/pipeline.py:177-180`, because turnarounds usually trade below their 50-day average. Already available: `edgar_financials` annual rows, `sec_company_sic`, 13F and market cap. Missing: 8-K 2.01 / 10-KT detection, shared with the fundamentals data-health issue, and the one-off heuristics.",
+        "example": "The reference app says its own edge here is \"not yet measured\", so adopting the ranking on its reputation would be taking an unmeasured claim into a live board.",
+        "tried_or_decided": "Reopened from #53 as its own issue on avo's decision, 2026-10-22; the original and its review history stay in the closed private issue linked from the body. Research behind it: `.hermes/plans_claude/arch/2026-09-30_bsz-research-learnings.md` §5. Low priority, and it sits behind two other pieces of work.",
+        "direction": "It depends on the fundamentals data-health gates and on the hit-rate ledger #25. Without the ledger there is no way to tell whether the turnaround ranking beats the existing one, so building it first would be a board change with no evidence behind it.",
+        "next_step": "Nothing until #25 can score a candidate set. Then it is a measurement first — turnaround gate against the current Fundamentals ranking on the same dates — and a mode only if the measurement supports it."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-22T14:42:09Z",
+      "reviewed_at": "2026-10-22"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 68,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/68",
+      "title": "Setup library: price-pattern detectors from charts and ideas avo shares",
+      "state": "open",
+      "labels": [
+        "area:screeners",
+        "idea",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "idea",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "Setup library: a parent issue for price-pattern detectors from avo's charts, each one a sub-issue that must be measured before it can change a board.",
+      "detail": {
+        "whats_wrong": "This is an input queue rather than a build: a parent for price-pattern setup detectors that come from charts and ideas avo shares, each kept as its own sub-issue. It has nothing to measure until the next chart arrives, and its only entry so far — squeeze continuation, from avo's NOW chart — is already closed.",
+        "evidence": "avo, project chat 2026-10-07 13:36Z: \"Tamam daha bu şekilde setuplar bulmamız gerekiyor issue olarak kalsın.\" The path every entry follows is the one the squeeze-continuation issue took.",
+        "example": "The rule for a new entry is fixed in three steps: the setup written as testable flags on daily bars with its indicator definitions and source; a pre-registered measurement — matches against a control group on the same dates, 5, 10 and 20-day forward returns, the decision threshold and primary endpoint written on the issue before any number is seen, run on a read-only copy of the store with no network; and only then a build proposal.",
+        "tried_or_decided": "Reopened from #53 as its own issue on avo's decision, 2026-10-22; the original and its review history stay in the closed private issue linked from the body. Builds and board-behaviour changes are explicitly out of scope for this issue: they come per entry, after its measurement.",
+        "direction": "A measured edge can become a ranked board filter; no edge means a descriptive tag or nothing at all. Any board change still needs avo's review with before/after numbers on real data.",
+        "next_step": "avo shares a chart or an idea; it becomes a sub-issue here with its rule and its pre-registered measurement written before any number is looked at."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-22T14:42:17Z",
+      "reviewed_at": "2026-10-22"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 70,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/70",
+      "title": "Dashboard: Discord",
+      "state": "open",
+      "labels": [
+        "area:community",
+        "epic",
+        "parked"
+      ],
+      "boards": [
+        "module_discord"
+      ],
+      "scope": "board",
+      "kind": "epic",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "All open Discord work in one epic: S1 and S2 are on main, what is open is acceptance, the schedule, the LLM extraction and two defects.",
+      "detail": {
+        "whats_wrong": "Not idea-level: S1 (the store and DiscordChatExporter wrapper) and S2 (the board) are built and on main. What is still open is S1's acceptance against a real trial export, S3 the opt-in daily schedule, S4 the corpus export and LLM call extraction, and two defects. S3 has nothing built at all — there is no Discord row in `core/automations.py`.",
+        "evidence": "S1 landed with deviations from its checklist: no `discord_settings` or `discord_attachments` tables, no trigger column, temp JSON in the system temp directory; a min-interval guard was added later on main. The acceptance trial — Turkish and emoji names, JSON keys against the fixture, media thumbnails, no token in detail — has not been run. S4 was parked by avo on 2026-10-03.",
+        "example": "DF55 (board behaviour, needs avo's before/after): the stored columns topic, channel kind, author_id, edited_ts, mentions and reference_id are never rendered (`module_discord/report.py:166-183`) — either render them or drop them from the store. DF53 (gated): updates export only after the newest stored id (`module_discord/engine.py:71-72,77-79`), so reaction counts and edits of older messages are never refreshed; the fix is a trailing overlap window.",
+        "tried_or_decided": "avo approved the consolidation on a decision card, 2026-10-09 18:56Z, option \"screeners separate\"; base main 4805fd4, plan `/mnt/project-files/plans/2026-10-09_issue_consolidation.md`. Folded issues are closed with a link here and their bodies remain the full spec. Reopened from #53 as its own issue on avo's decision, 2026-10-22; the original and its review history stay in the closed private issue linked from the body.",
+        "direction": "Take the open parts in their own order: S1's acceptance needs only avo's real trial export; S3 and S4 each need their own approval; DF55 is a board-behaviour change that needs avo's before/after; DF53 is gated because it changes a job that writes the store. The board's own run record lives in `module_discord/engine.py:91 store.record_run`, not in `core/history`.",
+        "next_step": "After Sunday 25 Oct: avo's real trial export, which is the only thing standing between S1 and acceptance; the remaining extras (multi-guild, no date limit, cp857, `<bdi>`, isdigit) are still undecided."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-22T14:42:46Z",
+      "reviewed_at": "2026-10-22"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 71,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/71",
+      "title": "Dashboard: News (X feed from Grok automations)",
+      "state": "open",
+      "labels": [
+        "area:providers",
+        "idea",
+        "new dashboard",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "idea",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "News board fed by the X summaries Grok mails; blocked on a prompt change only avo can make, and on how mail would reach the PC dashboard at all.",
+      "detail": {
+        "whats_wrong": "There is no News board. The idea is to use X as a news source through the two Grok automations that already mail hourly and daily summaries, and make that collection the start of a News dashboard. Nothing is ingested today, and the mails are not yet reliably parseable.",
+        "evidence": "A read-only Gmail check over 2026-10-08..2026-10-14 found 52 Grok threads: an hourly summary Mon-Fri 14:00-23:00 over three accounts and a daily 22:30 summary over nine. Each tweet carries account, Amsterdam time, status id in the link and tickers, so it is parseable in principle. The problems seen: bodies cut with \"...\" and \"Continue reading\", cut links, a wrong time-window label (a 19:10Z mail said 19:08-21:08), \"no activity\" mails, and direction being Grok's inference rather than a stated fact.",
+        "example": "Step 1 is a prompt change only avo can make: v3 prompts add a fixed record line per tweet at the top of every mail, `YYYY-MM-DD HH:MM | @account | status_id | TICKERS | type | option`, pasted into Grok's Edit Automation screen.",
+        "tried_or_decided": "Requested by avo on 2026-10-14. The measurement rule is already written and its thresholds proposed for avo to confirm: over five trading days after v3 is live, at least 95% of mails with a complete record block and at least 95% of record lines with a valid account, time and status id, plus the duplicate and noise rates. Reopened from #53 as its own issue on avo's decision, 2026-10-22; the original and its review history stay in the closed private issue linked from the body.",
+        "direction": "Step 3 is a board-behaviour change and needs avo's review, before/after evidence and \"Approved to build\"; a new table in `.store/` makes it a live-store write under the live-change gate. The ingestion path is its own decision, because the PC dashboard has no Gmail access. Out of scope throughout: paid data, the X API, and any GitHub or store write before approval.",
+        "next_step": "Blocked on avo: paste the v3 prompts into Grok's Edit Automation screen. Only then is there a week of mail worth measuring."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-22T14:43:04Z",
+      "reviewed_at": "2026-10-22"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 74,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/74",
+      "title": "Open issues registry: nothing in CI checks that every open issue has an entry",
+      "state": "open",
+      "labels": [
+        "bug",
+        "area:quality",
+        "priority: low"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "known-problem",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Nothing offline checks that every open issue has a registry entry, so an uncurated issue never reaches any board and CI stays green.",
+      "detail": {
+        "whats_wrong": "`docs/open_issues.json` is this panel's only source, and no test asserts that it covers every open issue of the repository. The panel commit removed `test_every_open_issue_is_mapped` and its `OPEN_ISSUES` fixture, replacing them with `test_every_issue_appears_once` and `test_every_board_named_is_a_real_dashboard_tab` — both of which duplicate tests that already existed.",
+        "evidence": "The replacements restate `test_no_duplicate_issue`, `test_every_board_key_is_a_real_board` and `test_a_board_scoped_entry_names_at_least_one_board`. The only honest coverage check compares the file against the GitHub API, which is `scripts/open_issues_sync.py --check`, and CI is offline by design (`conftest.py` blocks the network).",
+        "example": "Measured 2026-10-22: the REST list endpoint answered HTTP 200 with `[]` while the repo had 53 open issues, and `--write` deleted every entry. The suite stayed green throughout, because no test knows how many entries there should be.",
+        "tried_or_decided": "Found while reviewing PR #59. A checked-in list of issue numbers was considered and rejected: issues open and close several times a day, so the test would be edited to match rather than read.",
+        "direction": "Run `--check` on a schedule rather than in CI: a row in `core/automations.py` that runs it daily and surfaces a non-zero exit, so an uncurated issue shows as a failed automation instead of a silently missing panel row. A nightly Actions workflow would spend CI minutes on work the PC does for free.",
+        "next_step": "Add the daily `--check` row to the Automations panel. `--check` reports `registry is current` today, so there is no backlog to clear first."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-22T14:56:50Z",
       "reviewed_at": "2026-10-22"
     }
   ]

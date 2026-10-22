@@ -94,6 +94,13 @@ def github_open_issues(repo: str, token: str = "") -> list[dict]:
             raise SyncError(f"{repo}: the API did not return a list")
         found += [issue for issue in batch if "pull_request" not in issue]
         if len(batch) < PER_PAGE:
+            if not found:
+                # Measured 2026-10-22: the REST list endpoint answered HTTP 200 with `[]` while the repo had
+                # 53 open issues (GraphQL listed them, the rate limit was untouched). ``merge`` reads an empty
+                # list as "every issue is closed", so ``--write`` deleted the whole registry. An empty answer
+                # is never worth acting on: a repo that truly reaches zero open issues is emptied by hand.
+                raise SyncError(f"{repo}: the API returned no open issues, which would delete every entry; "
+                                f"refusing. Re-run when the API answers, or pass --token-env.")
             return found
         page += 1
 
@@ -230,9 +237,15 @@ def _new_entry(repo: str, issue: dict, today: str) -> dict:
     })
 
 
+# Only a complete, named-or-numeric reference is resolved. ``html.unescape`` also resolves one written without
+# its semicolon, so a literal title such as "RSI&notch filter" would be stored with the "not" sign in it — and
+# ``--check`` unescapes the API value to that same string, so the damage reports as no drift and never heals.
+_ENTITY = re.compile(r"&(?:quot|amp|lt|gt|apos|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});")
+
+
 def _title(issue: dict) -> str:
     """The issue's title as display text: an HTML-escaped title (``&quot;``, ``&lt;``) arrives as the author typed it."""
-    return html.unescape(str(issue.get("title") or ""))
+    return _ENTITY.sub(lambda m: html.unescape(m.group(0)), str(issue.get("title") or ""))
 
 
 def _api_fields(issue: dict) -> dict:
@@ -351,6 +364,14 @@ def main(argv: list[str] | None = None, *, fetch=None, head_sha: str | None = No
     for label, keys in (("added", added), ("removed", removed), ("changed", changed)):
         for key in keys:
             print(f"{label}: {_describe(key)}")
+
+    if entries == [] and registry.issues:
+        # The fetcher is not trusted to be right about "every issue is closed". One empty REST answer
+        # (measured 2026-10-22, HTTP 200 with `[]` while 53 issues were open) would otherwise delete the
+        # whole curated registry, and the suite cannot see the loss because no test pins the entry count.
+        print(f"open issues sync: the fetch would remove all {len(registry.issues)} entries; refusing. "
+              f"Empty the registry by hand if the repo really has no open issue.", file=sys.stderr)
+        return 2
 
     if args.check:
         if added or removed or changed:
