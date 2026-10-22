@@ -146,12 +146,17 @@ def run(ctx, fetch=None, download=None) -> dict:
         if bars is None:
             errors.append(f"{symbol}: {why or 'failed'}")
             continue
+        if not bars:
+            errors.append(f"{symbol}: no_rows")
+            continue
         rows.extend(rows_of(symbol, "cboe", bars, ctx, time.time()))
 
     if ctx.budget("yfinance").take():
         bars, why = download_move(download)
         if bars is None:
             errors.append(f"{MOVE}: {why or 'failed'}")
+        elif not bars:
+            errors.append(f"{MOVE}: no_rows")
         else:
             rows.extend(rows_of(MOVE, "yfinance", bars, ctx, time.time()))
     else:

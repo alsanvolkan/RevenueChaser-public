@@ -303,3 +303,15 @@ def test_d28_a_row_without_a_numeric_close_is_not_stored():
     rows = ["DATE,OPEN,HIGH,LOW,CLOSE", "10/15/2026,1,2,0.5,N/A", "10/16/2026,1,2,0.5,17.5", "10/17/2026,1,2,0.5,"]
     bars, why = d28.parse_csv("\n".join(rows) + "\n")
     assert why is None and [b["close"] for b in bars] == [17.5]
+
+
+def test_d28_a_body_that_parses_to_zero_bars_is_a_per_symbol_error(rawstore_tmp_db, tmp_path, monkeypatch):
+    get, asked = _cboe(body=lambda symbol: "DATE,OPEN,HIGH,LOW,CLOSE\n")
+    monkeypatch.setattr("httpx.get", get)
+    monkeypatch.setattr(d28, "download_move", lambda download=None: ([], None))
+    res = _run((d28.SWEEP,), tmp_path)
+    s = res["sweeps"]["D28"]
+
+    assert s["status"] == "failed"
+    assert s["symbol_errors"] == [f"{sym}: no_rows" for sym in d28.SYMBOLS] + [f"{d28.MOVE}: no_rows"]
+    assert _rows("vol_index_daily") == []
