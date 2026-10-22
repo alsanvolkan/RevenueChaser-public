@@ -13,7 +13,7 @@ import re
 
 from RevenueChaser.core.config import FRED_API_KEY
 from RevenueChaser.core.providers.result import ProviderResult
-from RevenueChaser.module_sector_rotation.universe import MACRO_SERIES
+from RevenueChaser.core.rotation_reference import MACRO_SERIES
 
 logger = logging.getLogger(__name__)
 

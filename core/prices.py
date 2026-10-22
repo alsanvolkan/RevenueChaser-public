@@ -28,7 +28,7 @@ import pandas as pd
 
 from RevenueChaser.core import calendar, job_lock, ledger, rawstore
 from RevenueChaser.core.providers.ohlc import regular_session_bars
-from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
+from RevenueChaser.core.rotation_reference import ROTATION_ETFS
 
 logger = logging.getLogger(__name__)
 
