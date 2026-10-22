@@ -6,11 +6,14 @@ import json
 import logging
 import os
 import shutil
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from RevenueChaser.core import calendar as nyse_calendar
 from RevenueChaser.core import credentials, index_levels
 from RevenueChaser.core.providers.cftc import fetch_cftc_tff
+# The nightly D28/D29 sweeps store the VIX family and the COT in the same shape this board used to fetch live. The
+# tables belong to the Earnings inputs step, so its reader is the one reader of them (see stored_inputs' docstring).
+from RevenueChaser.module_earnings_radar import stored_inputs
 
 from .candles import live_spot, price_window_sessions, stored_spx_candles, window_lag
 from .config import RAW_ROOT, SPOT_EXPOSURE_WINDOW_PCT, TICKER
@@ -246,6 +249,9 @@ def _fetch_snapshot_staged(
     written: dict[str, object] = {}
     limit_hits: dict[str, list[str]] = {}
 
+    # per external input that is not a UW endpoint: read from the nightly store, or asked live (the manifest says so).
+    input_sources: dict[str, dict] = {}
+
     def _request(name: str, path: str, params: dict) -> dict | None:
         try:
             payload = _uw_get(uw, path, params)
@@ -310,18 +316,36 @@ def _fetch_snapshot_staged(
                          "params": {"date": asof_date}, "status": exc.status})
         warnings.append(f"flow_per_strike failed: {exc.message}")
 
-    # 1b. VIX family (yfinance; UW term-structure endpoint is a paid add-on)
+    # 1b. VIX family: the nightly D28 sweep's stored closes when the store has that session (no request at all),
+    #     else yfinance (UW term-structure endpoint is a paid add-on). The readers are anchored on this snapshot's
+    #     own session, so a re-render of an older day reads that day's stored closes rather than today's.
     try:
-        vix = vix_fetcher()
+        asof_day = date.fromisoformat(asof_date)
+    except (TypeError, ValueError):
+        # No session to anchor on: the readers would default to the newest stored session, i.e. today's closes
+        # stamped onto a day that is not today. Go live instead (review #103 S-1).
+        asof_day = None
+    try:
+        vix, vix_session = stored_inputs.vol_index_rows(asof_day) if asof_day else ({}, None)
+        if vix:
+            input_sources["vix"] = {"source": "store", "session": vix_session.isoformat()}
+        else:
+            vix = vix_fetcher()
+            input_sources["vix"] = {"source": "live"}
         vix["term_mode"] = vix_term_mode(vix.get("tickers", {}))
         raw["vix"] = vix
         _persist("vix_family.json", vix, default=str)
     except Exception as exc:  # noqa: BLE001 — VIX degrades gracefully
         warnings.append(f"vix_family failed: {exc}")
 
-    # 1c. CFTC COT (TFF) — public data, best-effort
+    # 1c. CFTC COT (TFF) — the nightly D29 row when it is stored, else the public Socrata read; best-effort
     try:
-        cftc = cftc_fetcher()
+        cftc, cot_session = stored_inputs.cot_row(asof_day) if asof_day else ({}, None)
+        if cftc:
+            input_sources["cftc"] = {"source": "store", "session": cot_session.isoformat()}
+        else:
+            cftc = cftc_fetcher()
+            input_sources["cftc"] = {"source": "live"}
         if cftc:
             raw["cftc"] = cftc
             _persist("cftc_tff.json", cftc, default=str)
@@ -498,6 +522,7 @@ def _fetch_snapshot_staged(
         "methodology_version": "1.0",
         "source": "Unusual Whales API",
         "requests": requests,
+        "input_sources": input_sources,
         "sha256": hashes,
         "files": files,
         "warnings": warnings,

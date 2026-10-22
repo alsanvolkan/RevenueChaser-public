@@ -337,6 +337,18 @@ def normalize_vix(vix_payload: dict | None) -> dict | None:
     }
 
 
+def _report_day(value) -> str | None:
+    """The COT report date as a plain ISO day, whatever the source spelled it as.
+
+    Socrata serves ``"2026-10-06T00:00:00.000"`` and the stored row (D29) gives ``"2026-10-06"``; the panel
+    renders this string raw, so both sources must read the same on the page (review #103, check 2).
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text.split("T", 1)[0] if text else None
+
+
 def normalize_cftc(cftc_payload: dict | None) -> dict | None:
     """CFTC TFF E-mini row mapped to report shape."""
     if not cftc_payload:
@@ -354,7 +366,7 @@ def normalize_cftc(cftc_payload: dict | None) -> dict | None:
             "change": g.get("change"),
         })
     return {
-        "report_date": cftc_payload.get("report_date"),
+        "report_date": _report_day(cftc_payload.get("report_date")),
         "open_interest": cftc_payload.get("open_interest"),
         "rows": rows,
     }
