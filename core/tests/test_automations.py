@@ -451,6 +451,18 @@ def test_install_uses_the_registry_settings():
     assert "-LogonType Interactive" in backup
 
 
+def test_a_row_without_restarts_installs_no_restart_settings():
+    """RC-Open-Issues-Check has ``restart_count=0``: ``-RestartCount 0`` makes Task Scheduler refuse the task
+    (HRESULT 0x80041319, "Count" out of range), so a zero count installs without the restart pair."""
+    ps = FakePS()
+    w = _win(ps)
+    w.install(A.entry("RC-Open-Issues-Check"))
+    w.install(A.entry("RC-Store-Backup"))
+    issues, backup = ps.scripts
+    assert "-RestartCount" not in issues and "-RestartInterval" not in issues
+    assert "-RestartCount 2 -RestartInterval (New-TimeSpan -Minutes 5)" in backup
+
+
 def test_a_weekly_row_installs_a_weekly_trigger():
     ps = FakePS()
     _win(ps).install(A.entry("RC-Index-Lists"))
