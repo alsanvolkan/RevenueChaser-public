@@ -26,7 +26,7 @@ from pathlib import Path
 from flask import Flask, Response, g, jsonify, render_template, request, send_from_directory
 from markupsafe import Markup
 
-from RevenueChaser.core import config, credentials, html_safe, open_issues, rawstore, reporting_common, templating
+from RevenueChaser.core import config, html_safe, open_issues, rawstore, reporting_common, templating
 from RevenueChaser.core.calendar import today_ny
 from RevenueChaser.core.providers.unusual_whales import UWClient
 from RevenueChaser.core.rawstore import StoreLockedError
@@ -216,8 +216,10 @@ jobs.register("daily_bars", runners.run_daily_bars, ["module_settings"], lane="l
 # Index lists (#302): three UW requests plus the SmallCap 600 list from the identity cache.
 jobs.register("index_lists", runners.run_index_lists, ["module_settings"], lane="long")
 jobs.register("module_oipd", runners.run_oipd, ["module_oipd"], requires_uw=True)
-jobs.register("module_discord", runners.run_discord, ["module_discord"], requires_uw=False, lane="long")
-jobs.register("module_discord_discover", runners.run_discord_discover, ["module_discord"], requires_uw=False, lane="long")
+jobs.register("module_discord", runners.run_discord, ["module_discord"], requires_uw=False, lane="long",
+              requires=("discord", "discord_cli"))   # update() needs the token and the CLI, not the guild id
+jobs.register("module_discord_discover", runners.run_discord_discover, ["module_discord"], requires_uw=False,
+              lane="long", requires=("discord", "discord_cli", "discord_guild"))   # discover() also reads the id
 
 # Which store-only job a board's Save / Reset queues (``api_settings_board``, #40 / #384 SW-S4).
 SETTINGS_JOBS = {"module_comovement": "comovement_recompute", "module_swing_potential": "settings_refresh"}
@@ -611,12 +613,19 @@ def _empty_view(mod: str) -> str:
 
 # ── run routes (non-blocking: enqueue a job, return its id) ──
 def _submit(module: str, params: dict):
-    """Enqueue a module run, refusing up front when UW credentials won't work.
+    """Enqueue a module run, refusing up front when a credential it declared is missing or UW's won't work.
 
-    The check is a real authenticated probe, not "is a key set": an expired
-    token used to sail past the old ``uw.active`` gate and fail minutes later
-    inside a module with an opaque message.
+    Two gates, in this order and for different reasons:
+
+    - **Presence** (`jobs.credential_problem`): a module declares the credentials it cannot run without
+      (`register(..., requires=...)`); reading env vars costs nothing, so an unmet one is refused before the
+      HTTPS pool the UW probe builds.
+    - **Validity** (UW): a real authenticated probe, not "is a key set": an expired token used to sail past the
+      old ``uw.active`` gate and fail minutes later inside a module with an opaque message.
     """
+    missing = jobs.credential_problem(module)
+    if missing:
+        return jsonify({"ok": False, "error": missing}), 400
     if jobs._REQUIRES_UW.get(module, True):
         uw = _uw()
         try:
@@ -831,18 +840,6 @@ def run_module_comovement():
     return _submit("module_comovement", {})
 
 
-def _discord_unready(need_guild: bool = False):
-    """A 400 response when a Discord job cannot start (token, CLI path or guild id missing), else ``None``."""
-    problem = None
-    if not credentials.key_for("discord"):
-        problem = credentials.describe("discord")
-    else:
-        problem = credentials.dce_cli_problem()
-    if problem is None and need_guild and not (os.getenv("RC_DISCORD_GUILD_ID") or "").strip():
-        problem = "RC_DISCORD_GUILD_ID is not set. Put the server's id in .env, then restart the dashboard."
-    return (jsonify({"ok": False, "error": problem}), 400) if problem else None
-
-
 def _busy(modules: tuple[str, ...], label: str):
     """A 409 while a job of one of ``modules`` is already queued or running; ``None`` when the way is clear.
 
@@ -867,7 +864,7 @@ def run_module_discord():
     channel = (request.form.get("channel") or "").strip()
     if channel and not channel.isdigit():
         return jsonify({"ok": False, "error": "bad channel"}), 400
-    refused = _discord_unready() or _discord_busy()
+    refused = _discord_busy()      # credentials are the submit gate's job (#26, jobs.credential_problem)
     if refused:
         return refused
     if channel:
@@ -880,7 +877,7 @@ def run_module_discord():
 
 @app.route("/run/module_discord_discover", methods=["POST"])
 def run_module_discord_discover():
-    refused = _discord_unready(need_guild=True) or _discord_busy()
+    refused = _discord_busy()
     if refused:
         return refused
     return _submit("module_discord_discover", {})

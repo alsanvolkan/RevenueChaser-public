@@ -73,7 +73,7 @@ def test_the_symbols_the_validator_refuses_never_expand():
 def test_the_rotation_page_gives_those_rows_no_caret(tmp_path, monkeypatch, rawstore_tmp_db):
     import RevenueChaser.module_sector_rotation.report as rd
     from datetime import date
-    from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+    from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
     monkeypatch.setattr(rd, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(rd, "coarse_theme_catalog", lambda: {})
     snap = lambda t, g: ETFRotationSnapshot(

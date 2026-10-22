@@ -19,7 +19,7 @@ class _FakeUW:
 @pytest.fixture(autouse=True)
 def _keep_registrations(monkeypatch):
     """``_reset`` clears the runner registry; give it copies so later test files keep dashboard.py's jobs."""
-    for name in ("_RUNNERS", "_PRODUCES", "_REQUIRES_UW", "_LANE"):
+    for name in ("_RUNNERS", "_PRODUCES", "_REQUIRES_UW", "_REQUIRES", "_LANE"):
         monkeypatch.setattr(jobs, name, dict(getattr(jobs, name)))
 
 

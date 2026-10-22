@@ -2,7 +2,7 @@
 from datetime import date, timedelta
 
 from RevenueChaser.core import rawstore
-from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 from RevenueChaser.module_sector_rotation import store as rotation_store
 from RevenueChaser.module_sector_rotation.tests.d01_seed import ny, pin_clock, seed
 
@@ -215,6 +215,14 @@ class TestBackfillWeekly:
 
 
 class TestUniverseShape:
+    def test_the_module_docstring_states_the_real_counts(self):
+        """#49: the docstring said 50 symbols and 39/41 ETFs while the code held 78 (67 ETFs + 11 macro)."""
+        from RevenueChaser.module_sector_rotation import universe
+        doc = universe.__doc__ or ""
+        assert f"{len(universe.ROTATION_ETFS)} symbols" in doc
+        assert f"{len(universe.ROTATION_ETFS) - len(universe.MACRO_SERIES)} ETFs" in doc
+        assert f"{len(universe.MACRO_SERIES)} macro" in doc
+
     def test_rrg_symbols(self):
         from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
         assert len(ROTATION_ETFS) == 78, f"expected 78 RRG symbols, got {len(ROTATION_ETFS)}"

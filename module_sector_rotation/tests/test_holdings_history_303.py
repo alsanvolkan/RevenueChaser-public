@@ -15,7 +15,7 @@ import pytest
 from RevenueChaser.app import runners
 from RevenueChaser.app.jobs import JobMessage
 from RevenueChaser.core import calendar, rawstore
-from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 from RevenueChaser.module_sector_rotation import engine
 from RevenueChaser.module_sector_rotation import etf_holdings as eh
 from RevenueChaser.module_sector_rotation.tests.d01_seed import seed

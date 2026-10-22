@@ -28,7 +28,7 @@ import pytest
 from RevenueChaser.app import runners
 from RevenueChaser.app.jobs import JobMessage
 from RevenueChaser.core import ledger, rawstore
-from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 from RevenueChaser.module_sector_rotation import engine as rot_engine
 from RevenueChaser.module_sector_rotation import etf_holdings as eh
 from RevenueChaser.module_sector_rotation import report as rot_report

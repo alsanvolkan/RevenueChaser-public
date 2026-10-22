@@ -143,7 +143,7 @@ def record_rotation(snapshots: list, holdings: dict, sector_holdings: dict, *, r
         context={"snapshots": len(snapshots), "expandable": len(expandable), "missing": missing,
                  "without_holdings": [t for t in detailed if not holdings.get(t)],
                  "window": [str(d) for d in window] if window else None},
-        warnings=warns or None, partial="; ".join(problems) or None)
+        warnings=warns or None, partial="; ".join(problems) or None, provider_health=uw_health)
 
 
 def short_warning(short: list[str]) -> str:
@@ -180,7 +180,7 @@ def record_money_flow(result: dict, *, run_id: str, run_at: float, days: int, wi
         rows={MONEY_FLOW_TABLE: rows}, params=params,
         context={"as_of": result.get("as_of"), "inflows": len(result.get("inflows") or []),
                  "outflows": len(result.get("outflows") or []), "kept": kept},
-        partial="; ".join(problems) or None)
+        partial="; ".join(problems) or None, provider_health=uw_health)
 
 
 def stored_leaderboard() -> dict | None:
