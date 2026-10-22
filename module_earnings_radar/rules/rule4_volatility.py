@@ -36,7 +36,7 @@ from RevenueChaser.core.config import (
     TS_SLOPE_BACKWARDATION, TS_SLOPE_HALF,
     TS_SLOPE_BACK_POINTS, TS_SLOPE_MILD_POINTS, TS_SLOPE_CONTANGO_POINTS,
 )
-from RevenueChaser.core.models.events import RuleResult
+from RevenueChaser.module_earnings_radar.models import RuleResult
 
 
 def score(options_data: dict = None) -> RuleResult:

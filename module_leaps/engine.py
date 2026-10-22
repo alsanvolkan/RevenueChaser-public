@@ -376,8 +376,8 @@ def _prev_quarter_end(today: Optional[date] = None) -> str:
 
 
 # ── DuckDB persistence (flow-print dedup + daily scores) ──────────────────
-# .store/raw.duckdb: leaps_flow_prints (dedup on id), leaps_daily_scores,
-# leaps_cache (per-ticker rolling 60-day history).
+# .store/raw.duckdb: leaps_flow_prints (dedup on id) and leaps_cache (per-ticker rolling 60-day history).
+# leaps_daily_scores is no longer persisted (retired: only the legacy import ever filled it).
 
 PRINTS_SOURCE = "uw"   # /option-trades is the only source of leaps_flow_prints (D09)
 

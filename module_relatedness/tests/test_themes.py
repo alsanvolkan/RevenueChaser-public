@@ -76,7 +76,7 @@ def test_relabel_and_themes_for_ticker(rawstore_tmp_db):
     assert themes.relabel_from_tags("r2") >= 1
     labels = themes.themes_for_ticker("G0")
     assert labels and all(isinstance(x, str) and x for x in labels)
-    assert taxonomy.assign_themes(sector="Technology", ticker="G0") == labels
+    assert taxonomy.assign_themes("G0") == labels          # C21 (#383): the pinned run, and no fallback
 
 
 def _profiles4():

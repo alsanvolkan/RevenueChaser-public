@@ -49,7 +49,8 @@ def test_full_pass():
     assert c is not None
     assert c["total_points"] == 9
     assert c["tech_breakthrough"] is True
-    assert "Biotechnology" in c["themes"]
+    assert c["themes"] == []          # C21 (#383): no pinned medium theme → no label; the points above are the proof
+                                      # that dropping the keyword guess moved no signal
     assert c["dilution_warning"] is False
 
 

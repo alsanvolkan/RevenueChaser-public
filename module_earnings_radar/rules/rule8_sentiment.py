@@ -16,7 +16,7 @@ import re
 from typing import Optional
 
 from RevenueChaser.core.config import SCORE_RANGE, R8_RETAIL_FADE, R8_SIGN
-from RevenueChaser.core.models.events import RuleResult
+from RevenueChaser.module_earnings_radar.models import RuleResult
 from .lm_dictionary import (
     LM_CONSTRAINING,
     LM_LITIGIOUS,

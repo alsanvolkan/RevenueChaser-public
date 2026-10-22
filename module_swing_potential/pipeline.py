@@ -98,12 +98,10 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         return _drop("no_price")
 
     name = info.get("longName") or info.get("shortName") or row.get("name") or ""
-    vendor_industry = info.get("industry") or ""
-    summary = info.get("longBusinessSummary") or ""
     # R5 (#88), #266: the sector and industry are the spine's (UW's two levels); the vendor ``.info`` ones never
-    # fill the row's own fields. The theme keyword matcher keeps the vendor's free-text industry.
+    # fill the row's own fields. The theme labels are the pinned NMF medium run (C21, #383).
     gics = _universe.gics_of(t, _universe.spine_gics([t]) if spine is None else spine)
-    themes = assign_themes(gics.sector, vendor_industry, name, summary, ticker=t)
+    themes = assign_themes(t)
     earnings_date = _to_float((row.get("quote") or {}).get("earningsTimestampStart"))
 
     return {
