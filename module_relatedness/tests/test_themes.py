@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 import pytest
@@ -140,6 +141,47 @@ def test_nested_parents_coarse_is_hierarchy():
     for m in set(med.tolist()):
         assert len(set(coarse[med == m].tolist())) == 1   # one coarse per medium
     assert len(set(coarse.tolist())) == 2
+
+
+def test_nested_parents_cuts_below_the_fine_count():
+    """#433: a medium cut at or above the fine count is held below it, so one pair merges."""
+    import numpy as np
+    X = np.eye(5) * 10.0
+    fine = np.arange(5)
+    for k_medium in (5, 9):
+        ids, med, _coarse = themes.nested_parents(X, fine, k_medium=k_medium, k_coarse=2)
+        assert len(ids) == 5
+        assert len(set(med.tolist())) == 4          # not 5: one pair of fine themes merged
+
+
+def test_nested_parents_returns_two_arrays_for_one_fine_theme():
+    """#433: a single fine theme hands back separate medium/coarse arrays, not one object twice."""
+    import numpy as np
+    ids, med, coarse = themes.nested_parents(np.eye(3), np.zeros(3, dtype=int),
+                                             k_medium=2, k_coarse=2)
+    assert ids == [0]
+    assert med is not coarse
+    assert med.tolist() == coarse.tolist() == [0]
+
+
+def test_build_shadow_clamps_k_medium_against_the_realised_fine_count(rawstore_tmp_db, monkeypatch, caplog):
+    """#433: NMF can leave a component empty, so the clamp reads the labels the fine fit produced,
+    not the requested ``k_fine`` (here 3 asked, 2 realised)."""
+    import numpy as np
+    monkeypatch.setattr(themes, "_choose", lambda *a, **k: (3, 1.0))
+    monkeypatch.setattr(themes, "nmf_assign",
+                        lambda X, k, seed=0, fit=None: np.repeat([0, 1], X.shape[0] // 2))
+    with caplog.at_level(logging.INFO):
+        out = themes.build_shadow(candidates=(2, 3), k_medium=5, k_coarse=2,
+                                  run_id="realised", profiles=_profiles())
+    assert out["k_fine"] == 3
+    assert out["k_medium"] == 1                      # the realised 2 fine themes - 1, not 3 - 1
+    meds = {r["theme_id"] for r in rawstore.get_all("relatedness_themes")
+            if r["level"] == "medium"}
+    assert len(meds) == out["k_medium"]
+    msgs = [r.getMessage() for r in caplog.records if "k_medium" in r.getMessage()]
+    assert len(msgs) == 1
+    assert "5" in msgs[0] and "realised 2 fine themes" in msgs[0]
 
 
 def test_label_skips_numeric_junk():

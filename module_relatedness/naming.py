@@ -181,17 +181,19 @@ def name_themes(run_id: str | None = None, *, complete=None,
     ``next_reset``. Idempotent:
     themes whose label already looks human (no comma) are skipped unless
     ``force``. Labels of every level are copied onto ``ticker_themes.theme``.
+    ``named`` counts every name this run wrote; ``copied`` is the part of it that
+    reused a single fine child's name with no model call (#433).
     """
     run_id = run_id or themes_mod.current_run_id()
     if not run_id:
-        return {"run_id": None, "named": 0, "pending": 0, "next_off_peak": None}
+        return {"run_id": None, "named": 0, "copied": 0, "pending": 0, "next_off_peak": None}
     caller = complete or deepseek.complete
     # A Grok reply that names nothing is not cached, so the next run asks again (review B S3); DeepSeek's stays as is.
     vkw = {"validate": lambda c: bool(_parse_name(c))} if caller is grok.complete else {}
 
     rows = _run_themes(run_id)
     if not rows:
-        return {"run_id": run_id, "named": 0, "pending": 0, "next_off_peak": None}
+        return {"run_id": run_id, "named": 0, "copied": 0, "pending": 0, "next_off_peak": None}
 
     parent = {tid: (r.get("parent_id") or "") for tid, r in rows.items()}
     fine_ids = [tid for tid, r in rows.items() if r.get("level") == "fine"]
@@ -206,7 +208,7 @@ def name_themes(run_id: str | None = None, *, complete=None,
     todo.sort(key=lambda r: (LEVEL_ORDER.get(r.get("level"), 9),
                              str(r.get("theme_id"))))
 
-    named, next_off_peak, error = 0, None, None
+    named, copied, next_off_peak, error = 0, 0, None, None
     allowance = None                      # a SuperGrok allowance stop (#388): the reset time, or "" when unknown
     for row in todo:
         tid, level = row["theme_id"], row.get("level") or "fine"
@@ -215,14 +217,16 @@ def name_themes(run_id: str | None = None, *, complete=None,
             child = rows.get(fines[0]) or {}
             if not _needs_name(child.get("label")):
                 # One fine child: the medium theme *is* that theme, so copy the
-                # name instead of asking the model for a duplicate (#433). Not
-                # taken: asking the model for a distinct name (avo's call is
-                # pending). A child that is still unnamed falls through.
+                # name instead of asking the model for a duplicate (#433). The
+                # child is named earlier in the same pass (LEVEL_ORDER), so this
+                # only falls through when its own call wrote nothing. Not taken:
+                # asking the model for a distinct name (avo's call is pending).
                 row = dict(row)
                 row["label"] = str(child["label"])
                 rawstore.write_rows("relatedness_themes", [row])
                 rows[tid] = row
                 named += 1
+                copied += 1
                 continue
         tags, tickers = _aggregate(tags_by_fine, members_by_fine, fines)
         user = _build_user(level, row.get("size") or 0, tags, tickers,
@@ -273,7 +277,7 @@ def name_themes(run_id: str | None = None, *, complete=None,
         named += 1
 
     _sync_ticker_themes(run_id, rows)
-    out = {"run_id": run_id, "named": named, "pending": len(todo) - named,
+    out = {"run_id": run_id, "named": named, "copied": copied, "pending": len(todo) - named,
            "next_off_peak": next_off_peak}
     if allowance is not None:
         out["stopped_reason"] = "allowance"

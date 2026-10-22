@@ -76,9 +76,9 @@ def _last_run() -> dict:
 
 
 def _summary(**kwargs) -> str:
-    fields = ("provider", "run_id", "named", "pending", "next_off_peak", "stopped_reason", "next_reset", "themes",
-              "rows", "adopted", "fines_reparented", "dropped_mediums", "profiled", "unthemed", "out_of_universe",
-              "fit", "coarse", "k_coarse", "error")
+    fields = ("provider", "run_id", "named", "copied", "pending", "next_off_peak", "stopped_reason",
+              "next_reset", "themes", "rows", "adopted", "fines_reparented", "dropped_mediums", "profiled",
+              "unthemed", "out_of_universe", "fit", "coarse", "k_coarse", "error")
     return json.dumps({k: kwargs.get(k) for k in fields
                        if k in kwargs}, ensure_ascii=False)
 

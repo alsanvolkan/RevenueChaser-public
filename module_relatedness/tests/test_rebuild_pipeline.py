@@ -109,9 +109,9 @@ def test_relabel_only_empty_keeps_names(rawstore_tmp_db, monkeypatch):
 
 
 def test_finalize_run_uniques_fine_and_medium_duplicates(rawstore_tmp_db):
-    """Both levels end unique. A medium theme now always merges two fine themes
-    (#433), so two medium themes need three fine ones — seeded directly, because
-    the two-cluster NMF fixture can only produce one medium theme."""
+    """Both levels end unique. The medium cut is held below the fine count (#433), so
+    two medium themes need three fine ones — seeded directly, because the two-cluster
+    NMF fixture can only produce one medium theme."""
     run = "rb6"
     rawstore.write_rows("equity_universe", [
         {"ticker": f"G{i}", "name": f"G{i} Inc", "market_cap": 1e10,

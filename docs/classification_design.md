@@ -274,8 +274,10 @@ extracted, facts filtered); **no BLOB duplication**.
 - Tag x ticker TF-IDF matrix.
 - Choose k by **elbow + stability >= 0.90 (5 seeds) + min size >= 20**; min size
   wins ties.
-- Agglomerative nested merge -> medium (clamped below `k_fine`, so every medium
-  merges two or more fines) / coarse (~25) with `parent_id`.
+- Agglomerative nested merge -> medium (the medium cut is clamped below the realised
+  fine count, which merges at least one pair of fine themes; most medium themes keep one
+  fine child, and the naming step reuses that child's name instead of asking the model,
+  #433) / coarse (~25) with `parent_id`.
 - Coarse option (#108, avo's card 2026-10-16 "Sektörden coarse"): `finalize_run(coarse="sector")` /
   `--coarse sector` parents each medium to the modal Morningstar sector of its members (`sector_coarses`,
   ids `<run>:sec-<slug>`), replacing the agglomerative coarse + `rebalance_coarses`. The default stays `nmf`

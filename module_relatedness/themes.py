@@ -151,19 +151,20 @@ def nested_parents(X, fine: np.ndarray, k_medium: int, k_coarse: int):
     where ``med``/``coarse`` are per-fine-theme label arrays.
 
     Every cut returns at least one child: a level that ends with a single cluster is
-    returned as-is (agglomerative clustering needs two samples), and the caller
-    keeps a medium theme merging two fines by passing ``k_medium < k_fine``.
+    returned as-is (agglomerative clustering needs two samples). The medium cut is
+    held below the number of fine themes present, so at least one pair of fine themes
+    is merged; most medium themes keep one fine child, and the naming step reuses that
+    child's name instead of asking the model (#433).
     """
     from sklearn.cluster import AgglomerativeClustering
     ids = sorted(set(fine.tolist()))
     centroids = np.vstack([np.asarray(X[fine == i].mean(axis=0)).ravel() for i in ids])
     if len(ids) < 2:                      # one fine theme: the parents are that theme
-        single = np.zeros(len(ids), dtype=int)
-        return ids, single, single
-    # A medium theme merges at least two fine themes: build_shadow clamps the
-    # cut below ``k_fine`` (#433); here the number of present fine themes is the floor.
+        return ids, np.zeros(len(ids), dtype=int), np.zeros(len(ids), dtype=int)
+    # Held below the fine count (#433), the cut merges one pair of fine themes; a floor
+    # of 1 keeps a real merge for a caller that asks for more mediums than there are fines.
     med = AgglomerativeClustering(
-        n_clusters=min(k_medium, len(ids))).fit_predict(centroids)
+        n_clusters=max(1, min(k_medium, len(ids) - 1))).fit_predict(centroids)
     med_ids = sorted(set(med.tolist()))
     if len(med_ids) < 2:                  # one medium theme: coarse is that theme
         return ids, med, np.zeros_like(med)
@@ -188,8 +189,9 @@ def build_shadow(candidates=(60, 90, 120, 150), k_medium: int = 70,
     result counts the profiles left out.
 
     Every NMF of the run uses ``fit`` (``DEFAULT_FIT`` unless given); ``fit`` in the result names it, because
-    ``theme_runs`` has no column for it. ``k_medium`` is clamped below ``k_fine``: a medium theme must merge at
-    least two fine themes, or the level is a copy of the fine one (#433).
+    ``theme_runs`` has no column for it. ``k_medium`` is clamped below the realised fine count (normally
+    ``k_fine``), which merges at least one pair of fine themes; most medium themes keep one fine child, and the
+    naming step reuses that child's name instead of asking the model (#433).
     """
     if profiles is None:
         profiles = rel_store.load_profiles()
@@ -226,13 +228,18 @@ def build_shadow(candidates=(60, 90, 120, 150), k_medium: int = 70,
     k_fine, fine_stability = _choose(X, list(candidates), SEEDS, MIN_SIZE,
                                      STABILITY_FLOOR, fit)
     fine = nmf_assign(X, k_fine, seed=0, fit=fit)
-    # A medium cut at k >= k_fine gives every medium theme one fine child, so the
-    # level repeats the fine names and pays the model for 60 duplicates (#433).
-    # Not taken: skipping the medium level entirely (avo's call is pending).
-    if k_medium >= k_fine:
-        logger.info("k_medium %d clamped to k_fine - 1 = %d: a medium theme must "
-                    "merge at least two fine themes", k_medium, k_fine - 1)
-        k_medium = k_fine - 1
+    n_fine = len(set(fine.tolist()))      # an empty NMF component leaves fewer fine themes
+    # k_medium is clamped below the realised fine count, which merges at least one
+    # pair of fine themes; most medium themes keep one fine child, and the naming step
+    # reuses that child's name instead of asking the model (#433). Not taken:
+    # k_medium = max(2, k_fine // 2), or skipping the medium level entirely (avo's
+    # call is pending).
+    if k_medium >= n_fine:
+        clamped = max(1, n_fine - 1)
+        logger.info("k_medium %d clamped to %d: the run realised %d fine themes, and a "
+                    "medium cut below that merges at least one pair of them",
+                    k_medium, clamped, n_fine)
+        k_medium = clamped
     ids, med, coarse = nested_parents(X, fine, k_medium, k_coarse)
     run_id = run_id or f"nmf-{_now()}"
 
