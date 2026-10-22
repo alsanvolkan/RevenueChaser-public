@@ -11,11 +11,12 @@ import re
 import pytest
 
 from RevenueChaser.app import dashboard
+from RevenueChaser.core.tests.open_issues_shell import strip_open_issues_data
 
 
 @pytest.fixture(scope="module")
 def index_html() -> str:
-    return dashboard.app.test_client().get("/").get_data(as_text=True)
+    return strip_open_issues_data(dashboard.app.test_client().get("/").get_data(as_text=True))
 
 
 def _fn_body(html: str, name: str) -> str:

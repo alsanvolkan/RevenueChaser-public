@@ -783,10 +783,18 @@ def map_identity(cusip_ticker: dict, unmatched: Optional[dict] = None) -> dict:
             "unmatched_cusips": (unmatched or {}).get("cusips"), "unmatched_value": (unmatched or {}).get("value")}
 
 
-def compute_period_metrics(periods: dict) -> dict:
-    """Per-period metrics from ``{period: {"shares", "value", "cik": {cik: shares}}}``."""
+def compute_period_metrics(periods: dict, filers: Optional[dict] = None) -> dict:
+    """Per-period metrics from ``{period: {"shares", "value", "cik": {cik: shares}}}``.
+
+    ``filers`` maps a period to the distinct filer CIKs that period has in the store. It is the denominator of
+    ``breadth`` (#375 F4, Chen-Hong-Stein 2002): the share of that quarter's 13F filers holding the name, as a
+    percentage with 4 decimals, and ``breadth_chg``, its change in percentage points against the ticker's
+    previous period present in ``periods`` — its own prior stored quarter, which is not necessarily the
+    calendar quarter before it, so a gap in a name's filings widens the step ``breadth_chg`` measures. A period ``filers`` does not cover has an unknown breadth: ``None``, never 0.
+    """
     metrics = {}
     prev = None
+    prev_breadth = None
     for period in sorted(periods):
         p = periods[period]
         ciks = p["cik"]
@@ -801,6 +809,10 @@ def compute_period_metrics(periods: dict) -> dict:
             union = ciks.keys() | prev.keys()
             buy = sum(max(0.0, ciks.get(k, 0.0) - prev.get(k, 0.0)) for k in union)
             sell = sum(max(0.0, prev.get(k, 0.0) - ciks.get(k, 0.0)) for k in union)
+        n_filers = (filers or {}).get(period)
+        breadth = round(len(ciks) / n_filers * 100.0, 4) if n_filers else None
+        breadth_chg = (round(breadth - prev_breadth, 4)
+                       if breadth is not None and prev_breadth is not None else None)
         metrics[period] = {
             "shares": total,
             "value": p["value"],
@@ -811,9 +823,35 @@ def compute_period_metrics(periods: dict) -> dict:
             "exited_holders": exited,
             "buy_flow": round(buy, 1) if buy is not None else None,
             "sell_flow": round(sell, 1) if sell is not None else None,
+            "breadth": breadth,
+            "breadth_chg": breadth_chg,
         }
         prev = ciks
+        prev_breadth = breadth
     return metrics
+
+
+def _filers_by_period(accessions: list) -> dict[str, int]:
+    """The distinct 13F filer CIKs reporting long-equity holdings per period, in ONE grouped read.
+
+    The denominator of ``breadth``: the same rows the holder count is taken from (the active accessions, long
+    equity only, a CIK on the row), so the ratio never mixes two universes — a filer whose holdings were not
+    ingested would otherwise shrink every ticker's breadth.
+    """
+    if not accessions:
+        return {}
+    with rawstore.connect() as conn:
+        rows = conn.execute(
+            "WITH active AS (SELECT unnest(?::VARCHAR[]) AS accession) "
+            "SELECT s.period, COUNT(DISTINCT h.cik) "
+            "FROM sec13f_holdings h "
+            "JOIN sec13f_submissions s ON s.accession = h.accession "
+            "JOIN active a ON a.accession = h.accession "
+            "WHERE s.period >= ? AND h.cik IS NOT NULL AND h.cik <> '' "
+            f"AND {_LONG_EQUITY_SQL} "
+            "GROUP BY s.period ORDER BY s.period",
+            [sorted(accessions), START_QUARTER]).fetchall()
+    return {period: n for period, n in rows if period and n}
 
 
 def value_scale_summary(factors: dict) -> dict:
@@ -958,11 +996,11 @@ def compute_totals(cusip_ticker: dict) -> tuple[dict, dict]:
     """Rich per-ticker quarterly metrics from raw.duckdb, and the VALUE-units factors.
 
     Returns ``(totals, factors)``: ``{ticker: {period: {shares, value, holders,
-    new_holders, exited_holders, top10_pct, hhi, buy_flow, sell_flow}}}`` and the
-    ``{(cik, period): factor}`` the sums were scaled by (empty when nothing was
-    checked). Multi-CUSIP tickers are summed; per-holder (CIK) positions are kept
-    so churn can be computed. Only periods >= ``START_QUARTER`` are returned
-    (older periods are stray amendments).
+    new_holders, exited_holders, top10_pct, hhi, buy_flow, sell_flow, breadth,
+    breadth_chg}}}`` and the ``{(cik, period): factor}`` the sums were scaled by
+    (empty when nothing was checked). Multi-CUSIP tickers are summed; per-holder
+    (CIK) positions are kept so churn can be computed. Only periods >=
+    ``START_QUARTER`` are returned (older periods are stray amendments).
 
     Long-equity rows (``SSHPRNAMTTYPE == 'SH'`` and no ``PUTCALL``) are counted;
     puts and PRNs are excluded. VALUE units are checked per (cik, period)
@@ -979,6 +1017,9 @@ def compute_totals(cusip_ticker: dict) -> tuple[dict, dict]:
         return {}, {}
 
     scale_factors = _value_scale_factors(pairs, active)
+
+    # The breadth denominator (#375 F4): one grouped read for every period this derive covers.
+    filers = _filers_by_period(sorted(active))
 
     # Build a (cik, period) -> factor lookup table in DuckDB via a list param.
     factor_pairs = [[cik, period, factor] for (cik, period), factor in scale_factors.items()]
@@ -1016,7 +1057,7 @@ def compute_totals(cusip_ticker: dict) -> tuple[dict, dict]:
 
     totals = {}
     for ticker, periods in periods_by_ticker.items():
-        metrics = compute_period_metrics(dict(periods))
+        metrics = compute_period_metrics(dict(periods), filers)
         if metrics:
             totals[ticker] = metrics
     return totals, scale_factors
