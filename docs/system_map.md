@@ -24,7 +24,7 @@ stored fact.
 | `providers` | Network clients, and the credential and cost gates in front of them | `core/providers/`, `core/credentials.py`, `core/offpeak.py`, `core/subscription_usage.py`, `scripts/cloud_llm_call.py`, `.env.example`, `docs/openapi.yaml` (the UW endpoint contract) | #51 |
 | `classification` | Which sector, industry, theme and index a ticker carries, and the three boards built on that cut | `module_comovement/`, `module_relatedness/`, `module_value_chain/`, `core/universe.py`, `core/universe_fetch.py`, `core/gics_map.py`, `core/taxonomy.py`, `core/index_registry.py` | #55 |
 | `market` | Index-greeks, options-probability, sector-rotation and UW-tool boards | `module_spx_gamma/`, `module_oipd/`, `module_sector_rotation/`, `module_uw_interaction/`, `module_financials/` *(unclear — see below)* | #57 |
-| `screeners` | Per-ticker scans over the universe | `module_asymmetric_growth/`, `module_swing_potential/`, `module_fundamentals/`, `core/screen_common.py`, `core/scan_quality.py`, `core/tristate.py`, `core/sector_rules.py`, `core/info_fallback.py`, `core/ohlc_cache.py` | #56 |
+| `screeners` | Per-ticker scans over the universe | `module_asymmetric_growth/`, `module_swing_potential/`, `module_fundamentals/`, `core/screen_common.py`, `core/scan_quality.py`, `core/tristate.py`, `core/info_fallback.py`, `module_asymmetric_growth/sector_rules.py`, `module_swing_potential/ohlc_cache.py` | #56 |
 | `ownership` | 13F holders, and the LEAPS watchlist that reads their meta | `module_sec_13f/`, `module_leaps/`, `core/ownership.py` | #59 |
 | `earnings` | The Earnings Radar rules and the stored inputs they read | `module_earnings_radar/`, `core/nightly_inputs.py`, `core/reaction_anchor.py`, `core/vol_metrics.py`, `scripts/nightly_inputs.py`, `docs/rules/` | #58 |
 | `data-health` | The Settings board: coverage, refetch, 10-K freshness, per-board settings | `module_settings/`, `core/board_settings.py`, `docs/data_health.md` | #53 |
@@ -277,10 +277,11 @@ file.
   are single-board files in `core/`. `core/gex_profile.py` is shared by Earnings Radar
   and SPX Gamma — two areas, one file.
 - `core/screen_common.py` (Swing + Fundamentals), `core/scan_quality.py` (the three
-  screeners, and `app/dashboard.py`), `core/tristate.py` (the three screeners), `core/sector_rules.py`
-  (Asymmetric Growth), `core/info_fallback.py` (Asymmetric Growth + Swing) and
-  `core/ohlc_cache.py` (`module_swing_potential/indicators.py` is its only reader) are
-  the screeners' machinery kept in `core/`. **Worth an issue** as one move, not six.
+  screeners, and `app/dashboard.py`), `core/tristate.py` (the three screeners) and
+  `core/info_fallback.py` (Asymmetric Growth + Swing) are the screeners' machinery that
+  stays in `core/`: each has more than one reader. The two that had a single importer have
+  moved beside it (#18): `core/sector_rules.py` -> `module_asymmetric_growth/sector_rules.py`,
+  and `core/ohlc_cache.py` -> `module_swing_potential/ohlc_cache.py`.
 - `app/universe_cli.py` is the universe-refresh CLI living in the app shell while the
   universe belongs to `classification` (`core/universe_fetch.py`). **Not worth its own
   issue**; fold it into the next universe change.

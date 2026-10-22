@@ -9,7 +9,7 @@ Helper only: Fundamentals excludes these names (F1) and Asymmetric Growth flags 
 """
 from __future__ import annotations
 
-from .gics_map import GicsPath, canonical_sector
+from RevenueChaser.core.gics_map import GicsPath, canonical_sector
 
 COMPARABLE = "comparable"
 NOT_COMPARABLE = "not_comparable"
@@ -24,7 +24,7 @@ def sector_status(sector: str | None) -> str:
 
 def ticker_status(ticker: str, spine: dict[str, GicsPath] | None = None) -> str:
     """The status of one name from its spine sector; a name the spine has no row for is ``COMPARABLE``."""
-    from .universe import gics_of, spine_gics
+    from RevenueChaser.core.universe import gics_of, spine_gics
 
     t = (ticker or "").upper()
     return sector_status(gics_of(t, spine if spine is not None else spine_gics([t])).sector)
@@ -32,7 +32,7 @@ def ticker_status(ticker: str, spine: dict[str, GicsPath] | None = None) -> str:
 
 def not_comparable(tickers: list[str], spine: dict[str, GicsPath] | None = None) -> dict[str, str]:
     """``{ticker: spine sector}`` of the names that are not comparable (one spine read when ``spine`` is None)."""
-    from .universe import spine_gics
+    from RevenueChaser.core.universe import spine_gics
 
     wanted = [(t or "").upper() for t in tickers]
     spine = spine if spine is not None else spine_gics(wanted)
