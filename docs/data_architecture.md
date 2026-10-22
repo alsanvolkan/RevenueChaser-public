@@ -555,7 +555,7 @@ worker thread writes while Flask request threads read. So:
   price bars, #380 S0) and Tuesday to Saturday not before 01:30 (the Earnings inputs RC-Earnings-Inputs, chained on the
   daily price bars, E0 #372), plus daily 09:30 (the open-issues registry check RC-Open-Issues-Check, #74:
   `scripts/open_issues_sync.py --check`, which reads the GitHub API, writes nothing and is deliberately not
-  chained on a store writer), `core/automations.py`: the two daytime ones are 30 min apart.
+  chained on a store writer), `core/automations.py`: the Relatedness and Value Chain rows are 30 min apart.
 
 ### Full-refresh vs. incremental tables
 The JSON files these tables replaced were rewritten wholesale, so the tables
