@@ -12,14 +12,22 @@ import time
 import uuid
 from pathlib import Path
 
-from RevenueChaser.core import config, credentials
+from RevenueChaser.core import config, credentials, job_lock
 from RevenueChaser.module_discord import exporter, loader, store
 
 _TOKEN_VAR = credentials.get("discord").env_var
 
+# One Discord job at a time (#26): update and discover both write ``discord.duckdb`` and both drive the DCE CLI.
+_LOCK = "discord"
+
 
 class DiscordEngineError(RuntimeError):
     pass
+
+
+def _holder_pid() -> int:
+    """The PID holding the Discord lock: ``0`` when it is held but its owner cannot be read."""
+    return dict(job_lock.holders()).get(_LOCK, 0)
 
 
 def _require_token() -> dict:
@@ -54,17 +62,24 @@ def _fail_text(res: exporter.CliResult, env: dict) -> str:
 
 
 def discover() -> dict:
-    """List the guild's channels and store the new ones (disabled)."""
-    env = _require_token()
-    guild = _guild_id()
-    res = exporter.run_cli(["channels", "-g", guild], env=env, timeout=120)
-    if res.returncode != 0:
-        raise DiscordEngineError(f"channel discovery failed: {_fail_text(res, env)}")
-    found = exporter.parse_channels_output(res.stdout)
-    for c in found:
-        c["guild_id"] = guild
-    new = store.upsert_discovered(found)
-    return {"guild_id": guild, "channels": len(found), "new": new}
+    """List the guild's channels and store the new ones (disabled).
+
+    One Discord job at a time (#26): while another holds the ``"discord"`` lock this starts no subprocess, writes
+    nothing, and returns ``{"busy": True, "holder_pid": pid, "guild_id": None, "channels": 0, "new": 0}``.
+    """
+    with job_lock.acquire(_LOCK, wait=0) as got:
+        if not got:
+            return {"busy": True, "holder_pid": _holder_pid(), "guild_id": None, "channels": 0, "new": 0}
+        env = _require_token()
+        guild = _guild_id()
+        res = exporter.run_cli(["channels", "-g", guild], env=env, timeout=120)
+        if res.returncode != 0:
+            raise DiscordEngineError(f"channel discovery failed: {_fail_text(res, env)}")
+        found = exporter.parse_channels_output(res.stdout)
+        for c in found:
+            c["guild_id"] = guild
+        new = store.upsert_discovered(found)
+        return {"guild_id": guild, "channels": len(found), "new": new}
 
 
 def _export_channel(channel_id: str, env: dict, media: bool) -> dict:
@@ -92,21 +107,29 @@ def _export_channel(channel_id: str, env: dict, media: bool) -> dict:
 
 
 def update(media: bool = False, channel_ids: list[str] | None = None) -> dict:
-    """Export every enabled channel (or just ``channel_ids``); one failing channel does not stop the others."""
-    chans = store.channels(enabled_only=True)
-    if channel_ids is not None:
-        wanted = {str(c) for c in channel_ids}
-        chans = [c for c in store.channels() if c["channel_id"] in wanted]
-    if not chans:
-        return {"channels": 0, "messages": 0, "new": 0, "failed": []}
-    env = _require_token()
-    total = {"channels": 0, "messages": 0, "new": 0, "failed": []}
-    for c in chans:
-        r = _export_channel(c["channel_id"], env, media)
-        if r["ok"]:
-            total["channels"] += 1
-            total["messages"] += r["messages"]
-            total["new"] += r["new"]
-        else:
-            total["failed"].append(c["channel_id"])
-    return total
+    """Export every enabled channel (or just ``channel_ids``); one failing channel does not stop the others.
+
+    One Discord job at a time (#26): while another holds the ``"discord"`` lock this exports nothing and returns
+    ``{"busy": True, "holder_pid": pid, "channels": 0, "messages": 0, "new": 0, "failed": []}``.
+    """
+    with job_lock.acquire(_LOCK, wait=0) as got:
+        if not got:
+            return {"busy": True, "holder_pid": _holder_pid(),
+                    "channels": 0, "messages": 0, "new": 0, "failed": []}
+        chans = store.channels(enabled_only=True)
+        if channel_ids is not None:
+            wanted = {str(c) for c in channel_ids}
+            chans = [c for c in store.channels() if c["channel_id"] in wanted]
+        if not chans:
+            return {"channels": 0, "messages": 0, "new": 0, "failed": []}
+        env = _require_token()
+        total = {"channels": 0, "messages": 0, "new": 0, "failed": []}
+        for c in chans:
+            r = _export_channel(c["channel_id"], env, media)
+            if r["ok"]:
+                total["channels"] += 1
+                total["messages"] += r["messages"]
+                total["new"] += r["new"]
+            else:
+                total["failed"].append(c["channel_id"])
+        return total
