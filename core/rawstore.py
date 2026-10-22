@@ -1622,6 +1622,30 @@ MANIFEST: dict[str, dict] = {
         "write": "upsert",
         "sources": [],
     },
+    # What the same day's universe did after a freeze date (#25 HR-1), so a pick's hit rate has something to be
+    # judged against. Derived from the universe snapshot and the D01 bars, recomputed, never a fact of its own, so a
+    # keyed upsert beside ``forecast_outcomes``. Key ``(forecast_date, horizon_days, basis)``: one row for the whole
+    # universe (``basis`` 'universe') and one per trailing-volatility decile ('vol_decile_1' .. 'vol_decile_10', 1 the
+    # calmest; always all ten, so the set of keys never changes shape). ``n`` counts the members with a usable
+    # reference price; ``ge20``/``ge10``/``ge5`` are cumulative MFE thresholds (>= 20%, >= 10%, >= 5%). A decile's
+    # ``vol_lo``/``vol_hi`` are the realised-vol range it covers (``vol_lo`` inclusive, ``vol_hi`` exclusive, NULL at
+    # either end), so a pick's own trailing vol maps to one basis without a second table. ``status`` is open / closed
+    # like the outcomes, and ``mae_mean`` is there because "up 5% on average" means something else with a -40%
+    # drawdown. Additive (no schema bump; the ``forecast_outcomes`` precedent). Writer: core/baselines.py.
+    "forecast_baselines": {
+        "history_mode": "latest_cache",
+        "key": ["forecast_date", "horizon_days", "basis"],
+        "columns": [
+            "forecast_date DATE", "horizon_days INTEGER", "basis TEXT",
+            "n INTEGER", "ge20 INTEGER", "ge10 INTEGER", "ge5 INTEGER",
+            "mfe_mean DOUBLE", "mae_mean DOUBLE", "vol_lo DOUBLE", "vol_hi DOUBLE",
+            "status TEXT", "computed_at DOUBLE", "model_version TEXT", "run_id TEXT",
+            "PRIMARY KEY (forecast_date, horizon_days, basis)",
+        ],
+        "kind": "tabular",
+        "write": "upsert",
+        "sources": [],
+    },
     # Per-board editable settings (issue #40, schema v6). Only values a user
     # OVERRODE are stored; a default is read from the board's config at call time
     # and Reset deletes the rows (core/board_settings.py). ``value`` is numeric:

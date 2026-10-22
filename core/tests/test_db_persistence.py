@@ -413,6 +413,7 @@ POPULATION: dict[str, str] = {
     "orphan_lookups": "core/tests/test_schema_v8_migration.py::test_orphan_lookups_keeps_one_row_per_ticker_and_session_and_a_later_lookup_adds_one",
     "forecast_ledger": "core/tests/test_schema_v8_migration.py::test_forecast_ledger_first_write_wins_within_one_bulk_batch",
     "forecast_outcomes": "core/tests/test_outcomes.py::test_mfe_and_mae_are_high_and_low_over_exactly_the_window_from_the_next_open",
+    "forecast_baselines": "core/tests/test_baselines_numbers_25.py::test_a_baselines_run_populates_forecast_baselines",
     "price_actions": "core/tests/test_schema_v10_tables.py::test_a_written_row_reads_back",
     "index_levels_daily": "core/tests/test_schema_v10_tables.py::test_a_written_row_reads_back",
     "quote_snapshot": "core/tests/test_schema_v10_tables.py::test_a_written_row_reads_back",
