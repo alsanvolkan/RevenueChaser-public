@@ -423,6 +423,33 @@ def _format_close(ticker: str, close: Optional[float]) -> str:
     return f"{close:.2f}" if ticker in MACRO_SERIES else f"${close:.2f}"
 
 
+def _macro_panel_html(rows: list[dict]) -> str:
+    """A small table of macro levels / week-over-week changes, read from stored tables (ROT-4 C3)."""
+    if not rows:
+        return ""
+    header = ('<thead><tr><th>Macro</th><th class="num">Level</th>'
+              '<th class="num">WoW Chg</th><th>As Of</th></tr></thead>')
+    body = ""
+    for r in rows:
+        name = ROTATION_ETFS.get(r["ticker"], {}).get("name", "")
+        label = f'{esc(r["ticker"])} — {esc(name)}'
+        level = f'{r["level"]:.2f}' if r["level"] is not None else "n/a"
+        change = f'{r["change"]:+.2f}' if r["change"] is not None else "n/a"
+        as_of = r["as_of"] or "n/a"
+        color = "pos" if (r["change"] or 0) > 0 else ("neg" if (r["change"] or 0) < 0 else "zero")
+        body += (f'<tr><td class="ticker">{label}</td>'
+                 f'<td class="num">{level}</td>'
+                 f'<td class="num {color}">{change}</td>'
+                 f'<td class="center">{as_of}</td></tr>')
+    return (
+        f'<div class="table-panel" style="margin-top:24px">'
+        f'<h2 style="color:#c9d1d9;font-size:16px;margin-bottom:14px">Macro Panel</h2>'
+        f'<table>{header}<tbody>{body}</tbody></table>'
+        f'<div style="font-size:11px;color:#8b949e;margin-top:8px">'
+        f'Latest weekly close and week-over-week change from stored FRED / Cboe data. Short history = n/a.'
+        f'</div></div>')
+
+
 def _ticker_label(t: str) -> str:
     """Return 'TICKER — Name' (or just ticker when no name is known)."""
     name = ROTATION_ETFS.get(t, {}).get("name", "")
@@ -879,7 +906,8 @@ def export_rotation_dashboard(snapshots: list[ETFRotationSnapshot], filename: st
                               uw=None, benchmark: str = "SPY",
                               holdings: dict[str, list[dict]] | None = None,
                               sector_holdings: dict[str, list[dict]] | None = None,
-                              provider_health: dict | None = None) -> Path:
+                              provider_health: dict | None = None,
+                              macro_panel: list[dict] | None = None) -> Path:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = OUTPUT_DIR / (filename or f"rotation/rotation_map_{ts}.html")
 
@@ -1034,7 +1062,6 @@ Ratio = 0.20·1W + 0.35·1M + 0.45·3M &nbsp;·&nbsp; Momentum = 0.55·1W + 0.30
 <b style="color:#3fb950">Ratio Z:</b> long-term RS leadership. Positive = outperforming {benchmark} over 1W/1M/3M.<br>
 <b style="color:#58a6ff">Momentum Z:</b> direction. Positive = RS accelerating upward.<br>
 <b>r, θ°:</b> trajectory in the (Ratio Z, Mom Z) plane — r = distance from the origin (magnitude of the move), θ = heading angle (0° = +Ratio, 90° = +Momentum).<br>
-<b style="color:#d2991d">Yield group (US02Y…USIRYY):</b> these are interest rates, not prices — a <i>rising</i> yield is bearish. The intended inversion is not applied: RS compares returns, and negating the series leaves them unchanged. So a positive RS here means the yield <b>rose</b> faster than the benchmark (not that it fell).<br>
 White ring = quadrant transition vs prior snapshot. <span style="color:#8B5CF6">Purple ring</span> = early turn (momentum above 0 on the two prior stored snapshots while ratio is below 0).<br><br>
 <b style="color:#c9d1d9">Quadrants:</b><br>
 <span style="color:#3fb950">LEADING</span>: strong + strengthening → best earnings backdrop.<br>
@@ -1061,9 +1088,11 @@ White ring = quadrant transition vs prior snapshot. <span style="color:#8B5CF6">
 </tr></thead><tbody>{rows}</tbody></table>
 <div style="font-size:11px;color:#8b949e;margin-top:8px;line-height:1.5">
 <b style="color:#c9d1d9">Columns:</b> RS 1W/1M/3M = excess return vs {benchmark} (percentage points). Ratio Z / Mom Z = cross-sectional z-scores of RS Ratio / RS Momentum. r / θ° = magnitude + heading angle of the (Ratio Z, Mom Z) vector.<br>
-<b style="color:#c9d1d9">Groups:</b> sector, theme, bond &amp; commodity are traded prices (RS vs {benchmark} is a standard cross-asset comparison). <b style="color:#d2991d">yield</b> symbols are interest rates; the inversion is not applied, so a rising yield reads as positive RS.
+<b style="color:#c9d1d9">Groups:</b> sector, theme, bond &amp; commodity are traded prices (RS vs {benchmark} is a standard cross-asset comparison).
 </div>
 </div></div>
+
+{_macro_panel_html(macro_panel or [])}
 
 <div class="grid">
 <div class="moneyflow-panel" id="mf-panel">
@@ -1279,7 +1308,7 @@ def _trail_html(start: date, end: date, sampled: list[str], series: dict[str, li
 <div style="font-size:11px;color:#8b949e;max-width:760px;margin:0 auto 20px;line-height:1.6">
 <b style="color:#c9d1d9">Trail legend:</b> each line traces one symbol's (RS Ratio Z, RS Momentum Z) path across the selected weeks — the trail direction is your rotational momentum over time.<br>
 Newest week = largest dot (head node); older dots shrink exponentially. The <b>arrowhead at the head node</b> points in the direction of travel from the previous week (clockwise = improving rotation, counter-clockwise = deteriorating).<br>
-Hover a trail to isolate it (others dim to 15%); hover a dot for its full RS breakdown. Yield symbols: the inversion is not applied, so a rising yield reads as positive RS.
+Hover a trail to isolate it (others dim to 15%); hover a dot for its full RS breakdown.
 </div>
 <script>
 {ESC_JS}

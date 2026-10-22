@@ -28,7 +28,7 @@ def run(monkeypatch, rawstore_tmp_db):
     monkeypatch.setattr(runners, "_load_watchlist", lambda: {"AAA"})
     monkeypatch.setattr(runners, "_freeze_run_id", lambda: "job42")
     monkeypatch.setattr("RevenueChaser.module_sector_rotation.engine.rotation_quadrant_map",
-                        lambda uw: {"XLK": "LEADING"})
+                        lambda uw, **kw: {"XLK": "LEADING"})
     order = []
 
     def fake_export(cards, events, nrc, filename=None, filter_stats=None, provider_health=None, notice=None, run_at=None):
@@ -137,7 +137,7 @@ def test_an_empty_calendar_after_a_rejected_key_says_so_in_the_header(run):
 def test_a_failed_rotation_map_is_recorded_partial_with_rows_kept(run, monkeypatch):
     run["cards"] = [_card()]
     monkeypatch.setattr("RevenueChaser.module_sector_rotation.engine.rotation_quadrant_map",
-                        lambda uw: (_ for _ in ()).throw(RuntimeError("no rotation")))
+                        lambda uw, **kw: (_ for _ in ()).throw(RuntimeError("no rotation")))
     _fetch()
     (head,) = _headers()
     assert head["quality"] == "partial" and "rotation" in head["quality_note"]
@@ -146,7 +146,7 @@ def test_a_failed_rotation_map_is_recorded_partial_with_rows_kept(run, monkeypat
 
 def test_an_empty_rotation_map_is_recorded_partial_with_rows_kept(run, monkeypatch):
     run["cards"] = [_card()]
-    monkeypatch.setattr("RevenueChaser.module_sector_rotation.engine.rotation_quadrant_map", lambda uw: {})
+    monkeypatch.setattr("RevenueChaser.module_sector_rotation.engine.rotation_quadrant_map", lambda uw, **kw: {})
     _fetch()
     (head,) = _headers()
     assert head["quality"] == "partial" and "rotation" in head["quality_note"]
