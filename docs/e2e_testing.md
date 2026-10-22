@@ -128,8 +128,8 @@ route lives with the data instead of in a mapping table that drifts.
 yfinance cannot be redirected by URL (see
 [`data_retrieval.md`](data_retrieval.md)), so it is replaced on the library
 itself — `yfinance.Ticker` and `yfinance.screen`. It must be installed **before**
-any RevenueChaser import, because `module_spx_gamma/candles.py` and `vix.py`
-bind `yf` at module scope; that ordering is the reason
+any RevenueChaser import, because `module_spx_gamma/vix.py` binds `yf`
+at module scope; that ordering is the reason
 `dashboard_entrypoint.py` exists rather than the test importing the app.
 
 ### Credentials in the harness

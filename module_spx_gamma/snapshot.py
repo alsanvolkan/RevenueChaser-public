@@ -9,10 +9,10 @@ import shutil
 from datetime import datetime, timezone
 
 from RevenueChaser.core import calendar as nyse_calendar
-from RevenueChaser.core import credentials
+from RevenueChaser.core import credentials, index_levels
 from RevenueChaser.core.providers.cftc import fetch_cftc_tff
 
-from .candles import fetch_spx_candles, price_window_sessions
+from .candles import live_spot, price_window_sessions, stored_spx_candles, window_lag
 from .config import RAW_ROOT, SPOT_EXPOSURE_WINDOW_PCT, TICKER
 from .expiry_table import normalize_expiry_rows
 from .vix import fetch_vix_family, vix_term_mode
@@ -172,9 +172,11 @@ def fetch_snapshot(
     """Fetch one date's raw snapshot, replacing the cached copy only on success.
 
     ``uw`` is a ``core.providers.unusual_whales.UWClient`` (the job's own, so its call
-    accounting and breaker see these calls). VIX, CFTC and candles come from
-    ``vix_fetcher()``, ``cftc_fetcher()`` and ``candle_fetcher(asof, ticker=...)``; each
-    defaults to the module's live fetch and can be faked offline.
+    accounting and breaker see these calls). VIX and CFTC come from ``vix_fetcher()`` and
+    ``cftc_fetcher()``, which default to the module's live fetch. Candles come from
+    ``candle_fetcher(asof, ticker=...)``, which defaults to the stored ``index_levels_daily``
+    rows (``module_spx_gamma.candles.stored_spx_candles``) — the snapshot makes no candle
+    request of its own (D03). Each can be faked offline.
 
     ``overwrite=False`` (the backfill) never touches a day that already has its
     manifest: nothing is fetched and ``None`` comes back. The returned raw dict
@@ -197,7 +199,7 @@ def fetch_snapshot(
             fetch_candles=fetch_candles, fetch_all_expiries=fetch_all_expiries,
             vix_fetcher=vix_fetcher or fetch_vix_family,
             cftc_fetcher=cftc_fetcher or fetch_cftc_tff,
-            candle_fetcher=candle_fetcher or fetch_spx_candles)
+            candle_fetcher=candle_fetcher or stored_spx_candles)
     finally:
         # Promotion renames the staging dir away; anything left is a failed run.
         if staging.exists():
@@ -215,7 +217,7 @@ def _fetch_snapshot_staged(
     fetch_all_expiries: bool = False,
     vix_fetcher=fetch_vix_family,
     cftc_fetcher=fetch_cftc_tff,
-    candle_fetcher=fetch_spx_candles,
+    candle_fetcher=stored_spx_candles,
 ) -> dict:
     if raw_dir.exists():
         shutil.rmtree(raw_dir)
@@ -232,7 +234,9 @@ def _fetch_snapshot_staged(
     hashes: dict[str, str] = {}
     candle_source = "unusual_whales"
     uw_ohlc_status = None
-    uw_ohlc_attempted = True
+    # No UW index-OHLC request is made any more: the window comes from the store (D03). The keys
+    # stay for readers of older manifests, with attempted False and no entitlement reason.
+    uw_ohlc_attempted = False
 
     # Last failure seen per endpoint name, so a mandatory abort can explain the
     # actual HTTP status instead of just "failed".
@@ -326,16 +330,24 @@ def _fetch_snapshot_staged(
     except Exception as exc:  # noqa: BLE001 — COT degrades gracefully
         warnings.append(f"cftc_tff failed: {exc}")
 
-    # 2. Candles (UW index OHLC is permission-denied -> yfinance ^GSPC)
+    # 2. Candles: the stored ^GSPC levels (D03), never a live fetch (UW index OHLC is permission-denied, G2-06).
     candles = []
     if fetch_candles:
         try:
-            yf_symbol = "^GSPC" if ticker == "SPX" else ticker
-            candles = price_window_sessions(candle_fetcher(asof_date, ticker=yf_symbol), asof_date)
-            candle_source = f"yfinance ({yf_symbol})"
-            uw_ohlc_status = 422
+            symbol = "^GSPC" if ticker == "SPX" else ticker
+            candles = price_window_sessions(candle_fetcher(asof_date, ticker=symbol), asof_date)
+            candle_source = f"{index_levels.TABLE} ({symbol})"
+            if not candles:
+                warnings.append(f"no stored index levels for {symbol} on {asof_date} (the daily bars "
+                                f"--index-levels step has not written this window yet)")
+            else:
+                expected, last = window_lag(candles, asof_date)
+                if expected:
+                    warnings.append(f"stored index levels for {symbol} end {last}, before the last complete "
+                                    f"session {expected} (the daily bars --index-levels step is behind)")
+                    candle_source = f"{index_levels.TABLE} ({symbol}, stale to {last})"
         except Exception as exc:  # noqa: BLE001 — candles degrade gracefully
-            warnings.append(f"ohlc/yfinance failed: {exc}")
+            warnings.append(f"ohlc/index_levels failed: {exc}")
             candle_source = "unavailable"
         ohlc = {"source": candle_source, "data": candles}
         raw["ohlc"] = ohlc
@@ -345,7 +357,21 @@ def _fetch_snapshot_staged(
     #    One call returns at most SPOT_EXPOSURE_LIMIT rows from the low end of the
     #    window, which cut off the upper wing on every stored day. Two calls on the
     #    same endpoint, below and above spot, each get their own cap.
+    # Spot: live during an open session, the last complete close otherwise (the owner's choice, 2026-10-22).
+    # It sets the +/-25% strike window below and the board's current_level, so a day-old spot moves which
+    # strikes are fetched. The 8-week window above still costs no request.
     spot = candles[-1]["close"] if candles and candles[-1].get("close") is not None else None
+    if fetch_candles:
+        live, live_error = live_spot(("^GSPC" if ticker == "SPX" else ticker))
+        if live is not None:
+            spot_source = "yfinance (live)"
+            spot = live
+        else:
+            spot_source = "index_levels_daily (last complete close)"
+            if live_error:                     # a failed live read is never silent
+                warnings.append(f"live spot unavailable ({live_error}); using the last complete close "
+                                f"{spot if spot is not None else 'none'}")
+        raw["spot"] = {"source": spot_source, "value": spot}
     if spot is not None:
         lo = int(spot * (1 - SPOT_EXPOSURE_WINDOW_PCT))
         hi = int(spot * (1 + SPOT_EXPOSURE_WINDOW_PCT))
@@ -460,9 +486,13 @@ def _fetch_snapshot_staged(
         "candle_source": candle_source,
         "uw_ohlc_attempted": uw_ohlc_attempted,
         "uw_ohlc_status": uw_ohlc_status,
-        "uw_ohlc_fallback_reason": "Index OHLC entitlement unavailable" if uw_ohlc_status == 422 else None,
+        "uw_ohlc_fallback_reason": None,
         "spot_exposure_mode": mode,
         "spot_exposure_search_bounds": [int(spot * (1 - SPOT_EXPOSURE_WINDOW_PCT)), int(spot * (1 + SPOT_EXPOSURE_WINDOW_PCT))] if spot else None,
+        # The spot the bounds above were built from, so a Refresh or a re-render reads the same level this
+        # Fetch used. Without it load_raw_day rebuilt spot from the stored window's last close, and a live
+        # Fetch and a later Refresh of the same day disagreed by a whole session (#293 review MUST-1).
+        "spot": raw.get("spot") or None,
         "zero_dte_expiry": asof_date if zero_dte else None,
         "zero_dte_expiry_present": bool(zero_dte),
         "methodology_version": "1.0",

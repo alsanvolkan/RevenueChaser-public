@@ -64,4 +64,8 @@ def load_raw_day(day_dir) -> dict:
         "effective_date": effective,
         "api_snapshot_time": manifest.get("api_snapshot_time"),
     }
+    # The Fetch's own spot, when it recorded one (#293): a day fetched during an open session used a live
+    # level, and a Refresh must show that level, not the stored window's last close.
+    if manifest.get("spot"):
+        raw["spot"] = manifest["spot"]
     return raw
