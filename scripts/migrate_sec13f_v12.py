@@ -149,6 +149,11 @@ def derive_in_a_fresh_process(out=print) -> None:
     """
     out(f"deriving in a fresh process: {derive_command()}")
     completed = subprocess.run([sys.executable, *DERIVE_ARGV], cwd=str(PACKAGE_PARENT), check=False)
+    if completed.returncode == EXIT_REFUSED:
+        raise DeriveSubprocessFailed(
+            f"the re-ingest is committed but the derive refused (exit {completed.returncode}); "
+            f"its reason is printed above, and the stored totals are still the old ones. "
+            f"Running it again refuses the same way — fix what the reason names first.")
     if completed.returncode != 0:
         raise DeriveSubprocessFailed(
             f"the re-ingest is committed but the derive failed (exit {completed.returncode}); "
@@ -199,7 +204,16 @@ def main(argv: list[str] | None = None) -> int:
                              "to repeat by hand if that child fails")
     args = parser.parse_args(argv)
     if args.derive_only:
-        engine.recompute_totals()
+        # Its own try: this branch spawns no child, so the ``DeriveSubprocessFailed`` handler below cannot apply.
+        try:
+            totals = engine.recompute_totals()
+        except engine.DeriveRefused as exc:
+            print(f"refused: {exc}")
+            return EXIT_REFUSED
+        if totals:
+            print(f"derive done: {len(totals):,} ticker(s) in sec13f_totals")
+        else:
+            print("derive done: nothing to derive from; the stored totals were kept")
         return EXIT_OK
     try:
         run(dry_run=args.dry_run, force=args.force_reingest)
