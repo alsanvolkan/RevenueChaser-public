@@ -172,6 +172,16 @@ def test_cli_name_themes_prints_summary(rawstore_tmp_db, monkeypatch, capsys):
     assert out == {"run_id": "r7", "named": 4, "pending": 0, "next_off_peak": None}
 
 
+def test_cli_summary_carries_the_real_copied_count(rawstore_tmp_db, capsys):
+    """The CLI half of ``copied`` (#433): a REAL name_themes result, not a stub dict, goes through the summary."""
+    from RevenueChaser.module_relatedness import __main__ as cli
+
+    _seed_medium("solo", ["Semiconductors"])             # one fine child: the medium theme copies its name
+    assert cli.main(["--name-themes", "--run-id", "solo"]) == 0
+    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert out["run_id"] == "solo" and out["named"] == 1 and out["copied"] == 1 and out["pending"] == 0
+
+
 def test_cli_name_themes_peak_exits_zero(rawstore_tmp_db, monkeypatch, capsys):
     from RevenueChaser.module_relatedness import __main__ as cli
 
