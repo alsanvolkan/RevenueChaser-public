@@ -244,6 +244,11 @@ def holders(directory: Path | None = None) -> list[tuple[str, int]]:
 
 @contextmanager
 def acquire(name: str = "edgar", wait: float = 0.0, stale_after: float = 3600.0):
+    """Hold ``name``'s lock: yields ``True`` when taken, ``False`` when another holder keeps it out.
+
+    ``stale_after`` is used by the fallback only (no OS lock on this host): on the OS-lock path a file whose holder
+    is gone is free at once, and its age means nothing.
+    """
     path = _lock_path(name)
     path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.time() + max(0.0, wait)
@@ -258,9 +263,16 @@ def acquire(name: str = "edgar", wait: float = 0.0, stale_after: float = 3600.0)
             while True:
                 fd = os.open(path, os.O_CREAT | os.O_RDWR)
                 if not _held_by_this_process(path) and _os_lock(fd):
-                    os.ftruncate(fd, 0)
-                    os.lseek(fd, 0, os.SEEK_SET)
-                    os.write(fd, f"{os.getpid()} {token} {_our_start()}".rstrip().encode("ascii"))
+                    try:
+                        os.ftruncate(fd, 0)
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        os.write(fd, f"{os.getpid()} {token} {_our_start()}".rstrip().encode("ascii"))
+                    except OSError:
+                        # The lock is ours but the owner never landed (a full disk): release it here, or this
+                        # process would hold it until it exits and refuse its own next attempt.
+                        _os_unlock(fd)
+                        os.close(fd)
+                        raise
                     got = True
                     break
                 os.close(fd)
@@ -298,6 +310,8 @@ def acquire(name: str = "edgar", wait: float = 0.0, stale_after: float = 3600.0)
                 _os_unlock(fd)
                 os.close(fd)
             try:
+                # After the close, not before: Windows refuses to delete a file this process still has open, and
+                # the token check is what keeps us off a holder's fresh lock — not the order of the two steps.
                 if got and _read_owner(path)[1] == token:
                     path.unlink(missing_ok=True)
             except OSError:

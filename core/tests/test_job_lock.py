@@ -42,7 +42,7 @@ def _dead_pid():
     return proc.pid
 
 
-def test_an_old_lock_held_by_a_live_process_is_not_broken(rawstore_tmp_db):
+def test_an_old_lock_whose_holder_holds_the_os_lock_is_not_broken(rawstore_tmp_db):
     """A 2-hour crawl keeps its lock: age alone no longer breaks it, and the OS lock is what holds it now (#365)."""
     proc = _live_pid()
     p = job_lock._lock_path("edgar")

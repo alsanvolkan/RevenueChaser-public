@@ -111,6 +111,7 @@ def test_two_acquirers_of_one_stale_lock_never_both_hold_it(rawstore_tmp_db, tmp
     try:
         first = _acquire_in_a_child(path, ready, judged, go, first_result, pause=True)
         assert _wait_for(ready, 45), "the first acquirer never started"
+        # The pause machinery is inert under the OS-lock design: there is no read-then-unlink window to pause in.
         _wait_for(judged, 2)                             # no assertion: with the OS lock there is no pause to reach
         second = _acquire_in_a_child(path, ready, judged, go, second_result, pause=False)
         second.wait(60)
@@ -217,6 +218,30 @@ def test_holders_lists_the_live_lock_and_leaves_both_files_alone(rawstore_tmp_db
         assert {p.name: p.read_bytes() for p in (live, stale)} == before, "holders() wrote to a lock file"
     finally:
         _release(fd)
+
+
+# ── R7: a metadata write that fails after the lock is taken ───────────────────
+
+def test_a_metadata_write_that_fails_releases_the_os_lock(rawstore_tmp_db, monkeypatch):
+    """SHOULD-5: the metadata write comes after the OS lock is taken, and it can fail (a full disk). A lock left
+    behind there belongs to this process for the rest of its life, so its next attempt to take it is refused."""
+    real_write = os.write
+    calls: list[bytes] = []
+
+    def write_fails(fd, data):
+        if not calls:                                    # the metadata write: the only write a lock file takes
+            calls.append(data)
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_write(fd, data)
+
+    monkeypatch.setattr(os, "write", write_fails)
+    with pytest.raises(OSError):
+        with job_lock.acquire("universe", wait=0):
+            pass
+
+    monkeypatch.setattr(os, "write", real_write)
+    with job_lock.acquire("universe", wait=0) as got:
+        assert got is True, "the failed attempt's OS lock was never released"
 
 
 # ── R6: a lock that cannot be tried because it is held is TAKEN ───────────────

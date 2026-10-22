@@ -117,7 +117,8 @@ def test_a_live_pid_with_the_same_start_time_keeps_its_lock(rawstore_tmp_db, liv
         _drop_os_lock(fd)
 
 
-def test_a_live_pid_whose_start_time_cannot_be_read_keeps_its_lock(rawstore_tmp_db, live_proc, monkeypatch):
+def test_a_live_pid_whose_start_time_cannot_be_read_is_decided_by_the_os_lock(rawstore_tmp_db, live_proc,
+                                                                              monkeypatch):
     """No start time to compare (access denied, an unsupported OS): the holder's OS lock decides, not the start time.
 
     #364: an unreadable start time must not keep a lock nobody holds; #365: the OS lock keeps a held one.
