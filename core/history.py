@@ -77,7 +77,10 @@ def record_run(board: str, *, run_id: str, run_at: float, model_version: str | N
     was made from, kept as data in its own JSON column (PH-1). It is stored as given, serialised exactly once: an
     already-encoded JSON string is decoded first, so it is never stored as a string of a string."""
     if isinstance(provider_health, (str, bytes, bytearray)):
-        provider_health = json.loads(provider_health)
+        try:                                  # an already-encoded dict is decoded so it is serialised once
+            provider_health = json.loads(provider_health)
+        except (ValueError, TypeError):       # not JSON: keep it as given; a bad value never loses the run
+            pass
     rows = rows or {}
     own = set(tables_of(board))
     stray = [t for t in rows if t not in own]
@@ -127,7 +130,7 @@ def record_run(board: str, *, run_id: str, run_at: float, model_version: str | N
 # ── readers (K2, #383 R1) ────────────────────────────────────────────────────────────────────────────────────────────
 # Every header column but the compressed board payload, which a reader asks for (``payload=True``).
 _HEADER = ("board, run_id, session_date, run_at, quality, quality_note, session_snapshot, model_version, params, "
-           "context, funnel, row_counts, warnings, error")
+           "context, funnel, row_counts, warnings, provider_health, error")
 
 
 def _headers(where: str, params: list, *, payload: bool = False, limit: int | None = None) -> list[dict]:

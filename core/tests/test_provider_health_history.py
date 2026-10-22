@@ -126,3 +126,24 @@ def test_money_flow_records_the_uw_health_it_summarised(rawstore_tmp_db):
     rotation_history.record_money_flow({"inflows": [], "outflows": []}, run_id="mf1", run_at=COMPLETE,
                                        days=5, window=20, top_n=10, uw_health=HEALTH)
     assert _stored("module_money_flow", "mf1") == HEALTH
+
+
+def test_the_readers_return_the_column(rawstore_tmp_db):
+    """#23 review MUST-1: the column was write-only — `_HEADER` did not list it, so `last_run`, `runs` and
+    `sessions` never returned it and the 14-day view PH-2 is meant to build had nothing to read."""
+    history.record_run("module_oipd", run_id="r1", run_at=COMPLETE, model_version="v1", provider_health=HEALTH)
+    assert history.last_run("module_oipd")["provider_health"] == HEALTH
+    assert history.runs("module_oipd")[0]["provider_health"] == HEALTH
+    board = next((b for b in ("module_earnings_radar", "module_sector_rotation", "module_leaps", "module_oipd")
+                  if history.is_session_board(b)), None)
+    if board:                                  # sessions() lists snapshots only; a run board has none
+        history.record_run(board, run_id="s1", run_at=COMPLETE, model_version="v1", provider_health=HEALTH)
+        snaps = history.sessions(board)
+        assert snaps and snaps[0]["provider_health"] == HEALTH
+
+
+def test_a_non_json_string_keeps_the_run(rawstore_tmp_db):
+    """#23 review SHOULD-1: the decode guard used to raise, which lost the header AND the run's rows."""
+    history.record_run("module_oipd", run_id="r2", run_at=COMPLETE, model_version="v1",
+                       provider_health="not json at all")
+    assert history.last_run("module_oipd")["run_id"] == "r2"
