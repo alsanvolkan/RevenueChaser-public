@@ -7,7 +7,7 @@ sessions are stored).
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from RevenueChaser.core import index_levels
 
@@ -65,6 +65,32 @@ def window_lag(rows: list[dict], asof: date | str) -> tuple[str | None, str | No
         return None, None
     last = max(r["date"] for r in rows)
     return (expected.isoformat(), last) if last < expected.isoformat() else (None, None)
+
+
+def live_spot(ticker: str = "^GSPC", now: datetime | None = None) -> tuple[float | None, str | None]:
+    """The live index level during an open US session, as ``(spot, error)``; ``(None, None)`` when closed.
+
+    The 8-week window always comes from the store (no provider call for it). Spot is the exception the owner
+    asked for on 2026-10-22: it sets the +/-25% strike window for the UW spot-exposure calls and the board's
+    ``current_level``, so during an open session the last COMPLETE close can be a full day stale — measured at
+    103 points, 1.33%, on 22 Oct. **One** yfinance request, only while the session is open. A failure returns
+    its reason so the caller can fall back to the stored close with a visible warning, never silently.
+    """
+    from RevenueChaser.core import calendar as nyse_calendar
+    try:
+        if not nyse_calendar.in_us_session_window(now):
+            return None, None
+    except (ValueError, ImportError):
+        return None, None
+    try:
+        import yfinance as yf
+        frame = yf.Ticker(ticker).history(period="1d", interval="1m", auto_adjust=False)
+        closes = [float(v) for v in frame["Close"].tolist() if v == v] if frame is not None else []
+        if not closes:
+            return None, "no live bar returned"
+        return closes[-1], None
+    except Exception as exc:  # noqa: BLE001 - the caller falls back to the stored close
+        return None, f"{type(exc).__name__}: {exc}"[:200]
 
 
 def price_window_sessions(rows: list[dict], asof: date | str) -> list[dict]:

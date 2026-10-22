@@ -12,7 +12,7 @@ from RevenueChaser.core import calendar as nyse_calendar
 from RevenueChaser.core import credentials, index_levels
 from RevenueChaser.core.providers.cftc import fetch_cftc_tff
 
-from .candles import price_window_sessions, stored_spx_candles, window_lag
+from .candles import live_spot, price_window_sessions, stored_spx_candles, window_lag
 from .config import RAW_ROOT, SPOT_EXPOSURE_WINDOW_PCT, TICKER
 from .expiry_table import normalize_expiry_rows
 from .vix import fetch_vix_family, vix_term_mode
@@ -357,7 +357,21 @@ def _fetch_snapshot_staged(
     #    One call returns at most SPOT_EXPOSURE_LIMIT rows from the low end of the
     #    window, which cut off the upper wing on every stored day. Two calls on the
     #    same endpoint, below and above spot, each get their own cap.
+    # Spot: live during an open session, the last complete close otherwise (the owner's choice, 2026-10-22).
+    # It sets the +/-25% strike window below and the board's current_level, so a day-old spot moves which
+    # strikes are fetched. The 8-week window above still costs no request.
     spot = candles[-1]["close"] if candles and candles[-1].get("close") is not None else None
+    if fetch_candles:
+        live, live_error = live_spot(("^GSPC" if ticker == "SPX" else ticker))
+        if live is not None:
+            spot_source = "yfinance (live)"
+            spot = live
+        else:
+            spot_source = "index_levels_daily (last complete close)"
+            if live_error:                     # a failed live read is never silent
+                warnings.append(f"live spot unavailable ({live_error}); using the last complete close "
+                                f"{spot if spot is not None else 'none'}")
+        raw["spot"] = {"source": spot_source, "value": spot}
     if spot is not None:
         lo = int(spot * (1 - SPOT_EXPOSURE_WINDOW_PCT))
         hi = int(spot * (1 + SPOT_EXPOSURE_WINDOW_PCT))

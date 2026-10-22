@@ -7,6 +7,8 @@ The store is the single source of the 8-week candle window (``core/index_levels.
 from __future__ import annotations
 
 import json
+
+import pytest
 from datetime import date
 
 from RevenueChaser.core import rawstore
@@ -43,6 +45,14 @@ def _seed_levels(dates=CANDLE_DATES) -> None:
         for i, d in enumerate(dates)])
 
 
+@pytest.fixture(autouse=True)
+def _market_closed(monkeypatch):
+    """Spot goes live during an OPEN session (the owner's choice, 2026-10-22), so every test here pins the
+    session shut unless it says otherwise. Without this the file passes or fails by time of day."""
+    from RevenueChaser.core import calendar as nyse_calendar
+    monkeypatch.setattr(nyse_calendar, "in_us_session_window", lambda *a, **k: False)
+
+
 def _fetch(tmp_path, **kw):
     kw.setdefault("vix_fetcher", lambda: {"tickers": {}, "vix": 15.5})
     kw.setdefault("cftc_fetcher", lambda: None)
@@ -61,6 +71,7 @@ def test_the_snapshot_builds_its_candle_window_from_the_stored_levels(tmp_path, 
 
 
 def test_the_snapshot_spot_comes_from_the_newest_stored_level(tmp_path, rawstore_tmp_db):
+    """With the market closed there is no live spot, so the strike window rests on the newest stored close."""
     _seed_levels()
     client = _FakeClient()
     snap.fetch_snapshot(as_uw(client), DAY, data_root=tmp_path, vix_fetcher=lambda: {"tickers": {}, "vix": 15.5},
@@ -88,7 +99,7 @@ def test_an_empty_store_warns_and_writes_an_empty_window_rather_than_reaching_ou
     man = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
     assert raw["ohlc"]["data"] == []
     assert any("index levels" in w for w in man["warnings"])
-    assert built == [], f"the snapshot built yfinance.Ticker for {built}"
+    assert built == [], f"the snapshot built yfinance.Ticker for {built} with the market closed"
     assert man["uw_ohlc_attempted"] is False   # no UW index-OHLC request either (#293 review N-3)
 
 
@@ -128,3 +139,62 @@ def test_the_window_is_sorted_whatever_order_the_store_returns(monkeypatch):
     out = candles.stored_spx_candles(DAY)
     assert [r["date"] for r in out] == sorted(CANDLE_DATES)
     assert out[-1]["date"] == max(CANDLE_DATES), "spot would read the wrong session"
+
+
+def test_live_spot_is_read_only_while_the_session_is_open(monkeypatch):
+    """The owner's choice, 2026-10-22: the 8-week window stays a store read, but spot goes live during an open
+    session, because it sets the +/-25% strike window and the board's current_level."""
+    from RevenueChaser.core import calendar as nyse_calendar
+    from RevenueChaser.module_spx_gamma import candles
+
+    monkeypatch.setattr(nyse_calendar, "in_us_session_window", lambda *a, **k: False)
+    assert candles.live_spot() == (None, None), "a closed market must cost no request"
+
+
+def test_a_failed_live_spot_reports_its_reason(monkeypatch):
+    """A failed live read must never be silent: the caller falls back to the last complete close and says so."""
+    import yfinance
+
+    from RevenueChaser.core import calendar as nyse_calendar
+    from RevenueChaser.module_spx_gamma import candles
+
+    monkeypatch.setattr(nyse_calendar, "in_us_session_window", lambda *a, **k: True)
+
+    def boom(*a, **kw):
+        raise RuntimeError("yfinance down")
+
+    monkeypatch.setattr(yfinance, "Ticker", boom)
+    spot, error = candles.live_spot()
+    assert spot is None and "yfinance down" in error
+
+
+def test_the_board_prefers_the_recorded_live_spot(monkeypatch):
+    """normalize recomputed current_level from the candles, which would have thrown the live spot away."""
+    from RevenueChaser.module_spx_gamma import normalize
+
+    candles_rows = [{"date": d, "close": 100.0} for d in CANDLE_DATES]
+    assert normalize.current_level(candles_rows) == 100.0
+    raw = {"ohlc": {"source": "index_levels_daily (^GSPC)", "data": candles_rows},
+           "spot": {"source": "yfinance (live)", "value": 123.45}}
+    recorded = (raw.get("spot") or {}).get("value")
+    assert (recorded if recorded is not None else normalize.current_level(candles_rows)) == 123.45
+
+
+def test_an_open_session_spends_exactly_one_request_on_spot(tmp_path, rawstore_tmp_db, monkeypatch):
+    """The window stays a store read; spot is the one live call, and it moves the strike window with it."""
+    import yfinance
+
+    from RevenueChaser.core import calendar as nyse_calendar
+
+    _seed_levels()
+    monkeypatch.setattr(nyse_calendar, "in_us_session_window", lambda *a, **k: True)
+    built: list = []
+    # snapshot.py imports the name, so the binding to patch is the one in that module
+    monkeypatch.setattr(snap, "live_spot", lambda *a, **k: (built.append(1), (8000.0, None))[1])
+    client = _FakeClient()
+    snap.fetch_snapshot(as_uw(client), DAY, data_root=tmp_path, vix_fetcher=lambda: {"tickers": {}, "vix": 15.5},
+                        cftc_fetcher=lambda: None)
+    assert len(built) == 1, "spot must cost exactly one live read per snapshot"
+    spot_calls = [c for c in client.calls if c[0].endswith("/spot-exposures/strike")]
+    assert spot_calls and spot_calls[0][1]["min_strike"] == int(8000.0 * 0.75), "the live spot must move the window"
+    assert yfinance is not None
