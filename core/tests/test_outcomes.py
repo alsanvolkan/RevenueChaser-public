@@ -431,6 +431,42 @@ def test_an_empty_ledger_writes_nothing_and_says_so(rawstore_tmp_db):
     assert rawstore.count("forecast_outcomes") == 0
 
 
+def test_one_grouped_read_per_pick_writes_the_same_rows_in_the_same_order(rawstore_tmp_db, monkeypatch):
+    """Review round 2, nit 3: ``run`` called ``outcome`` once per (pick, horizon), walking each ticker's series twice.
+    It now takes one ``outcome_by_horizon`` per pick. With the per-horizon entry point made unusable, the rows must
+    still be exactly the ones it returns — and in the order the per-horizon loop wrote them in."""
+    _seed_bars(_series("AAA") + _series("BBB", last=date(2026, 9, 18)))
+    _freeze(["AAA", "BBB"])
+    latest = cal.latest_complete_session(NOW)
+    series = outcomes._bars(["AAA", "BBB"], D)          # the same read the run makes (it starts at the oldest pick)
+    per_horizon = outcomes.outcome                      # captured before the spy: the rule the grouping must match
+    expected = []
+    for t in ("AAA", "BBB"):
+        for h in outcomes.HORIZONS:
+            expected.append({"source": "swing", "forecast_date": D, "subject": t, "target_type": outcomes.PICK,
+                             "target_date": D,          # the ledger stamps a pick's target_date with its date
+                             "horizon_days": h, **per_horizon(D, h, series[t], latest),
+                             "computed_at": NOW.timestamp(), "model_version": outcomes.MODEL_VERSION, "run_id": "r1"})
+
+    reads = []
+    real = outcomes.outcome_by_horizon
+
+    def spy(day, horizons, bars, latest_session):
+        reads.append((day, tuple(horizons)))
+        return real(day, horizons, bars, latest_session)
+
+    written = []
+    real_write = rawstore.write_rows
+    monkeypatch.setattr(outcomes, "outcome_by_horizon", spy)
+    monkeypatch.setattr(outcomes, "outcome", lambda *a, **k: (_ for _ in ()).throw(AssertionError("per-horizon read")))
+    monkeypatch.setattr(rawstore, "write_rows",
+                        lambda name, rows: written.append(list(rows)) or real_write(name, rows))
+    out = outcomes.run(now=NOW, run_id="r1")
+    assert [row for chunk in written for row in chunk] == expected       # same rows, same order
+    assert (out["rows"], out["status"]) == (4, {outcomes.CLOSED: 1, outcomes.OPEN: 3})
+    assert reads == [(D, outcomes.HORIZONS)] * 2, "one pass per pick, not one per (pick, horizon)"
+
+
 # ── guards (green from the start; each killed by its mutation) ──────────────
 
 def test_the_writer_never_writes_forecast_ledger(rawstore_tmp_db, monkeypatch):

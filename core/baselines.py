@@ -46,10 +46,12 @@ Rules (HR-1 of #25; every number below is a constant, so a change is one edit pl
   names are counted in the universe row alone (a single-name universe is in no decile, not in decile 10).
 - A decile's ``vol_lo``/``vol_hi`` are its boundaries (lo inclusive, hi exclusive, NULL at either end), which is what
   ``basis_of`` reads: a pick's own trailing vol lands in exactly one row.
-- The rows are ``open`` until the horizon's window has ended (``outcomes.window_end``), the run at or after that moment
-  writes ``closed``, and the following nights recompute only the rows still open (a date whose 30-day window has ended
-  keeps its 30-day rows and is recomputed for its 90-day ones); ``full`` recomputes every date (after a bar backfill,
-  or a rule change).
+- The rows are ``open`` until the horizon's window has ended (``outcomes.window_end``) **and** the store holds a bar on
+  or after that end (``outcomes._newest_bar``), which is the rule ``core/outcomes.py`` closes a pick on; the run past
+  both moments writes ``closed``, and the following nights recompute only the rows still open (a date whose 30-day
+  window has ended keeps its 30-day rows and is recomputed for its 90-day ones); ``full`` recomputes every date (after
+  a bar backfill, or a rule change). A close on the calendar alone would freeze a row on a night whose Daily Bars had
+  failed, because a closed row is never rewritten.
 - With no daily bar stored at all while a freeze date is in the past, the run refuses before any write: it would
   otherwise turn every baseline into ``n = 0`` (the same guard ``core/outcomes.py`` carries).
 
@@ -270,7 +272,9 @@ def _membership(wanted: list[str], universes: dict[date, list[str]], horizons: d
     One read per chunk of both bases (nominal for the outcomes, adjusted for the vol), bounded to the latest complete
     session. Per ticker the usable adjusted closes are filtered once and each day's vol is the 21-close window ending
     there; the day's outcomes for every horizon still open come from one pass over its bars
-    (``outcomes.outcome_by_horizon``). A member without bars is simply absent, which is what keeps it out of ``n``.
+    (``outcomes.outcome_by_horizon``). A member the store has no bars for is **not** absent: it is a ``Member`` with
+    ``vol=None`` and a ``None`` MFE per horizon, which the ``mfe[pos] is not None`` filter in ``_rows_for`` keeps out
+    of ``n`` (and out of every decile, since it has no vol).
     """
     members: dict[date, list[Member]] = {d: [] for d in universes}
     seen_in = {d: set(tickers) for d, tickers in universes.items()}      # a snapshot is read once per ticker
@@ -291,9 +295,14 @@ def _membership(wanted: list[str], universes: dict[date, list[str]], horizons: d
     return members, bars_seen
 
 
-def _rows_for(day: date, members: list[Member], horizons: tuple[int, ...], latest: date, stamp: float,
-              run_id: str | None) -> list[dict]:
-    """The eleven rows of one freeze date (the universe and its ten deciles) for the ``horizons`` still open."""
+def _rows_for(day: date, members: list[Member], horizons: tuple[int, ...], latest: date, newest: date | None,
+              stamp: float, run_id: str | None) -> list[dict]:
+    """The eleven rows of one freeze date (the universe and its ten deciles) for the ``horizons`` still open.
+
+    ``latest`` is the newest complete session (the clock) and ``newest`` the newest bar the store holds
+    (``outcomes._newest_bar``): a row closes only when both have passed its window end, so a night without Daily Bars
+    leaves it open instead of freezing it on the bars the store happens to have.
+    """
     vols = [m.vol for m in members if m.vol is not None]
     # Fewer than ten usable vols cannot make ten groups, and a "decile" of one name is not a peer group: then every
     # decile row is written empty and the names are counted in the universe row alone.
@@ -309,7 +318,8 @@ def _rows_for(day: date, members: list[Member], horizons: tuple[int, ...], lates
     rows = []
     for horizon in horizons:
         pos = HORIZONS.index(horizon)
-        status = CLOSED if outcomes.window_end(day, horizon) <= latest else OPEN
+        ended = outcomes.window_end(day, horizon)
+        status = CLOSED if ended <= latest and newest is not None and newest >= ended else OPEN
         for basis, group in groups:
             usable = [m for m in group if m.mfe[pos] is not None]
             counts = bucket_counts(m.mfe[pos] for m in usable)
@@ -345,13 +355,14 @@ def run(*, now: datetime | None = None, run_id: str | None = None, full: bool = 
         res["no_snapshot"] = sum(1 for tickers in universes.values() if not tickers)
         wanted = sorted({t for tickers in universes.values() for t in tickers})
         members, bars_seen = _membership(wanted, universes, todo, latest)
+        newest = outcomes._newest_bar()          # the store's newest bar, not the clock (see _rows_for)
         if wanted and not bars_seen and min(todo) < latest:
             raise RuntimeError("no daily bars in the price store: refusing to compute baselines "
                                "(every row would turn into n = 0)")
         status: Counter = Counter()
         rows_total = written = 0
         for day in todo:
-            rows = _rows_for(day, members[day], todo[day], latest, stamp, run_id)
+            rows = _rows_for(day, members[day], todo[day], latest, newest, stamp, run_id)
             status.update(r["status"] for r in rows)
             rows_total += len(rows)
             if write:

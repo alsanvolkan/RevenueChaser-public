@@ -340,9 +340,11 @@ universe did, over the same windows (`outcomes.outcome` is reused, so the rules 
 - `ge20` / `ge10` / `ge5` are the cumulative counts a baseline hit rate is read off, `mfe_mean` / `mae_mean` the means
   ("up 5% on average" means something else with a −40% drawdown);
 - all eleven bases are written for every date, so the table's key set never changes shape; `status` is `open` until
-  the horizon's window has ended, the run at or after that moment writes `closed`, and the following nights recompute
+  the horizon's window has ended **and** the store holds a bar on or after that end (the rule the outcomes writer
+  closes a pick on), the run past both moments writes `closed`, and the following nights recompute
   only the rows still open (a date whose 30-day window has ended keeps its 30-day rows and is recomputed for its
-  90-day ones; `full` recomputes the date, after a bar backfill or a rule change).
+  90-day ones; `full` recomputes the date, after a bar backfill or a rule change). A night whose Daily Bars failed
+  therefore leaves the rows open instead of freezing them on a short window.
 
 The task RC-Forecast-Outcomes runs daily at 23:45, chained on RC-Daily-Bars (the bars it reads), after
 RC-Screeners-Daily (weekdays from 23:00), the other `raw.duckdb` writer of the night. The task RC-Forecast-Baselines

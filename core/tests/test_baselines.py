@@ -287,7 +287,8 @@ def test_a_rerun_upserts_the_same_rows_and_adds_none(rawstore_tmp_db, clock):
 
 
 def test_the_nightly_skips_a_date_whose_windows_have_ended(rawstore_tmp_db, clock):
-    _seed(_series("AAA"))
+    """Both windows have ended *and* the store holds a bar past their ends: the rows are final from then on."""
+    _seed(_series("AAA", last=date(2026, 12, 1)))
     _freeze(["AAA"])
     baselines.run(now=NOW, run_id="r1")
     assert _row(h=90)["status"] == baselines.OPEN
@@ -300,6 +301,23 @@ def test_the_nightly_skips_a_date_whose_windows_have_ended(rawstore_tmp_db, cloc
     assert {r["run_id"] for r in _rows() if r["horizon_days"] == 90} == {"r2"}
     full = baselines.run(now=LATER, run_id="r4", full=True)
     assert full["dates"] == 1 and {r["run_id"] for r in _rows()} == {"r4"}
+
+
+def test_a_row_stays_open_until_the_store_holds_a_bar_on_or_after_its_window_end(rawstore_tmp_db, clock):
+    """Daily Bars failed for the night END30 passed: the calendar says the 30-day window has ended, but the store's
+    newest bar is still 2026-09-25. A row closed there would be frozen on a short window — ``_open_rows`` never
+    recomputes a closed row — so it stays open until a bar on or after the end is stored."""
+    _seed(_series("AAA", last=date(2026, 9, 25)))
+    _freeze(["AAA"])
+    first = baselines.run(now=NOW, run_id="r1")                  # 2026-10-09: past END30 on the clock alone
+    assert first["status"] == {baselines.OPEN: 22}
+    assert {_row(h=h)["status"] for h in baselines.HORIZONS} == {baselines.OPEN}
+    baselines.run(now=NOW, run_id="r2")                          # still no bar at the window end: still open
+    assert {_row(h=h)["status"] for h in baselines.HORIZONS} == {baselines.OPEN}
+    _seed(_series("AAA", last=END30))                            # the backfill reaches the window's last session
+    baselines.run(now=NOW, run_id="r3")
+    assert _row(h=30)["status"] == baselines.CLOSED
+    assert _row(h=90)["status"] == baselines.OPEN                # END90 has no bar yet
 
 
 def test_the_nightly_recomputes_only_the_horizon_still_open(rawstore_tmp_db, clock):

@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
+from contextlib import contextmanager
 
 import pytest
 
-from RevenueChaser.core import baselines, rawstore
+from RevenueChaser.core import baselines, job_lock, rawstore
 from RevenueChaser.scripts import forecast_baselines
 
 
@@ -82,3 +85,68 @@ def test_the_real_run_end_to_end_on_an_empty_store(rawstore_tmp_db, capsys):
     assert forecast_baselines.main(["--nightly"]) == 0
     res = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert (res["freeze_dates"], res["rows"]) == (0, 0)
+
+
+# ── one writer at a time (#26, the shape scripts/forecast_outcomes.py carries) ──
+
+@contextmanager
+def _lock_held(name: str = "forecast_baselines"):
+    """Hold ``name``'s lock from another thread for the block: a second holder, as a running task would be.
+
+    ``job_lock`` refuses a second acquirer in this process by the token it issued, so the CLI's
+    ``acquire(name, wait=0)`` sees a real holder — the same refusal a second process gets. The lock file lands in
+    the per-test store dir (``isolate_rawstore`` is autouse), never the developer's.
+    """
+    got: list[bool] = []
+    ready, done = threading.Event(), threading.Event()
+
+    def hold() -> None:
+        with job_lock.acquire(name, wait=0) as taken:
+            got.append(taken)
+            ready.set()
+            done.wait(30)
+
+    t = threading.Thread(target=hold, daemon=True)
+    t.start()
+    try:
+        assert ready.wait(30), f"the {name} holder never started"
+        assert got == [True], f"this test could not take the {name} lock, so it would prove nothing"
+        yield
+    finally:
+        done.set()
+        t.join(30)
+
+
+def test_the_task_exits_with_its_busy_code_while_the_lock_is_held(calls, capsys):
+    seen, _ = calls
+    with _lock_held():
+        assert forecast_baselines.main(["--nightly"]) == forecast_baselines.BUSY_EXIT == 3
+    err = capsys.readouterr().err
+    assert "forecast_baselines" in err and "nothing was written" in err
+    assert f"pid {os.getpid()}" in err
+    assert seen == [], "a busy run computed and wrote anyway"
+
+
+def test_a_busy_run_writes_its_busy_report_over_yesterdays_night(calls, tmp_path):
+    """S-3: a busy run wrote no report before, so yesterday's success JSON stayed and read as tonight's."""
+    seen, _ = calls
+    report = tmp_path / "baselines.json"
+    report.write_text('{"status": "ok", "written": 11}', encoding="utf-8")
+    with _lock_held():
+        assert forecast_baselines.main(["--nightly", "--report", str(report)]) == forecast_baselines.BUSY_EXIT
+    assert json.loads(report.read_text(encoding="utf-8")) == {"status": "busy", "holder_pid": os.getpid()}
+    assert seen == [], "a busy run computed and wrote anyway"
+
+
+def test_a_free_lock_runs_and_releases(calls):
+    seen, _ = calls
+    assert forecast_baselines.main(["--nightly"]) == 0
+    assert seen == [{"full": False, "write": True, "run_id": seen[0]["run_id"]}]
+    assert "forecast_baselines" not in dict(job_lock.holders()), "the lock outlived the run"
+
+
+def test_a_dry_run_takes_no_lock_and_still_answers(calls):
+    seen, _ = calls
+    with _lock_held():
+        assert forecast_baselines.main(["--nightly", "--dry-run"]) == 0
+    assert seen[0]["write"] is False

@@ -78,10 +78,11 @@ def outcome(forecast_date: date, horizon_days: int, bars: list[dict], latest_ses
 
 def outcome_by_horizon(forecast_date: date, horizons: tuple[int, ...], bars: list[dict],
                        latest_session: date) -> dict[int, dict]:
-    """``{horizon: outcome columns}`` for every horizon, from one pass over ``bars``.
+    """``{horizon: outcome columns}`` for every horizon, bucketed per horizon in one pass over ``bars``.
 
-    The windows nest, so a bar is bucketed once per horizon it falls in instead of ``bars`` being filtered again for
-    each horizon: ``outcome`` is this function with one horizon, and its rules are the ones applied here.
+    Each bar is tested against every horizon's window in that single pass, so a pick with both horizons walks its
+    series once instead of once per horizon; ``outcome`` is this function with one horizon, and its rules are the ones
+    applied here.
     """
     ends = {h: window_end(forecast_date, h) for h in horizons}
     windows: dict[int, list[dict]] = {h: [] for h in horizons}
@@ -210,9 +211,15 @@ def run(*, now: datetime | None = None, run_id: str | None = None, full: bool = 
         rows = []
         for t in chunk:
             series = bars.get(t, [])
+            # One grouped read per pick rather than one per (pick, horizon): the horizons still open for that date
+            # are bucketed together in a single pass over the series, and each horizon gets the columns ``outcome``
+            # would have returned for it. Rows stay in ``todo`` order, the order the per-horizon loop wrote them in.
+            wanted: dict[date, list[int]] = {}
             for p, h in todo[t]:
-                row = {**{k: p[k] for k in _KEY}, "horizon_days": h,
-                       **outcome(p["forecast_date"], h, series, latest),
+                wanted.setdefault(p["forecast_date"], []).append(h)
+            got = {d: outcome_by_horizon(d, tuple(hs), series, latest) for d, hs in wanted.items()}
+            for p, h in todo[t]:
+                row = {**{k: p[k] for k in _KEY}, "horizon_days": h, **got[p["forecast_date"]][h],
                        "computed_at": stamp, "model_version": MODEL_VERSION, "run_id": run_id}
                 status[row["status"]] += 1
                 rows.append(row)
