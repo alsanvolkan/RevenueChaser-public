@@ -10,8 +10,8 @@ Run it once, with the dashboard **stopped** (the script writes the store through
 directly, so a running dashboard's writer would be a second writer on the same file), the store
 backed up and ``/api/jobs`` idle (the script cannot see the job queue; the caller checks it)::
 
-    python scripts/migrate_sec13f_v12.py --dry-run
-    python scripts/migrate_sec13f_v12.py
+    python -m RevenueChaser.scripts.migrate_sec13f_v12 --dry-run
+    python -m RevenueChaser.scripts.migrate_sec13f_v12
 
 Inputs: ``.store/raw.duckdb`` and the ``*_form13f.zip`` files in ``.cache/sec_13f``. The zips are
 passed to ``ingest_zips`` as paths, so no SEC request is made and ``download_missing_zips`` never
@@ -149,6 +149,11 @@ def derive_in_a_fresh_process(out=print) -> None:
     """
     out(f"deriving in a fresh process: {derive_command()}")
     completed = subprocess.run([sys.executable, *DERIVE_ARGV], cwd=str(PACKAGE_PARENT), check=False)
+    if completed.returncode == EXIT_REFUSED:
+        raise DeriveSubprocessFailed(
+            f"the re-ingest is committed but the derive refused (exit {completed.returncode}); "
+            f"its reason is printed above, and the stored totals are still the old ones. "
+            f"Running it again refuses the same way — fix what the reason names first.")
     if completed.returncode != 0:
         raise DeriveSubprocessFailed(
             f"the re-ingest is committed but the derive failed (exit {completed.returncode}); "
@@ -199,7 +204,16 @@ def main(argv: list[str] | None = None) -> int:
                              "to repeat by hand if that child fails")
     args = parser.parse_args(argv)
     if args.derive_only:
-        engine.recompute_totals()
+        # Its own try: this branch spawns no child, so the ``DeriveSubprocessFailed`` handler below cannot apply.
+        try:
+            totals = engine.recompute_totals()
+        except engine.DeriveRefused as exc:
+            print(f"refused: {exc}")
+            return EXIT_REFUSED
+        if totals:
+            print(f"derive done: {len(totals):,} ticker(s) in sec13f_totals")
+        else:
+            print("derive done: nothing to derive from; the stored totals were kept")
         return EXIT_OK
     try:
         run(dry_run=args.dry_run, force=args.force_reingest)
