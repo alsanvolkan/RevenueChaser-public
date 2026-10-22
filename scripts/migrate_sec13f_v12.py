@@ -10,8 +10,8 @@ Run it once, with the dashboard **stopped** (the script writes the store through
 directly, so a running dashboard's writer would be a second writer on the same file), the store
 backed up and ``/api/jobs`` idle (the script cannot see the job queue; the caller checks it)::
 
-    python scripts/migrate_sec13f_v12.py --dry-run
-    python scripts/migrate_sec13f_v12.py
+    python -m RevenueChaser.scripts.migrate_sec13f_v12 --dry-run
+    python -m RevenueChaser.scripts.migrate_sec13f_v12
 
 Inputs: ``.store/raw.duckdb`` and the ``*_form13f.zip`` files in ``.cache/sec_13f``. The zips are
 passed to ``ingest_zips`` as paths, so no SEC request is made and ``download_missing_zips`` never
