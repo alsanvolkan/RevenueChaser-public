@@ -151,6 +151,7 @@ __all__ = [
     "notice_html",
     "write_artifact", "write_board", "payload_path", "PAYLOAD_JS",
     "recorded_sessions_html",
+    "open_issues_payload",
 ]
 
 
@@ -255,6 +256,23 @@ def recorded_sessions_html(board: str, limit: int = 10, *, panel_id: str = "hist
             for h in found)
     return (head + f"<p>{intro} {html.escape(read_note or _HISTORY_READ_NOTE)}</p>"
             f"<table>{cols}{rows}</table></div></details>")
+
+
+def open_issues_payload(board_keys) -> dict:
+    """The shell's "Open issues" data for these boards, ready for one embedded JSON block (#383, #21).
+
+    Parent chrome, so the payload is built when the page renders and shipped as JSON; the shell re-renders it in
+    ``showTab`` with no page load (``templates/dashboard.html``). No HTML here — the shell owns the markup. The
+    registry is loaded **once** per call and every entry is shipped **once**, under ``entries``; each board names the
+    entries it shows by key (``core.open_issues.panel_payload``), because the shared entries would otherwise be
+    repeated on all 16 boards.
+
+    Raises ``open_issues.RegistryError`` when the registry is missing or malformed; the caller renders that as a
+    message inside the group, never as a failed page (the ``recorded_sessions_html`` convention).
+    """
+    from RevenueChaser.core import open_issues
+
+    return open_issues.panel_payload(board_keys)
 
 
 def universe_provenance_html(generated_at, refreshed_by, partial: bool = False) -> str:

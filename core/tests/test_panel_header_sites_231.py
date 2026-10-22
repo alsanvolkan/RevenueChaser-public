@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from RevenueChaser.core.tests.board_fixtures import BOARDS
+from RevenueChaser.core.tests.open_issues_shell import strip_open_issues_data
 
 ROOT = Path(__file__).resolve().parents[2]
 HEADER = "X-RC-Panel"
@@ -110,7 +111,9 @@ def test_a_rendered_board_sends_the_panel_header(key, tmp_path, monkeypatch, raw
 
 def test_the_rendered_shell_sends_the_panel_header():
     from RevenueChaser.app import dashboard
-    html = dashboard.app.test_client().get("/").get_data(as_text=True)
+    # Without the open-issues registry block: it is issue text, not the shell's script
+    # (core/tests/open_issues_shell.py).
+    html = strip_open_issues_data(dashboard.app.test_client().get("/").get_data(as_text=True))
     calls = post_calls(html)
     assert len(calls) == 2, "fetchTab and cancelJob"
     assert all(HEADER in c for c in calls), calls
