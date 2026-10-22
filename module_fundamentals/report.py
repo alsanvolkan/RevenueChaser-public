@@ -117,7 +117,7 @@ def _theme_catalog() -> dict:
         return {}
 
 
-def _summary_html(s: dict) -> str:
+def _summary_html(s: dict, data_quality: dict | None = None) -> str:
     regime_cls, regime, momentum = regime_parts(s.get("regime"))
     spy_price = s.get("spy_price")
     spy_sma200 = s.get("spy_sma200")
@@ -157,6 +157,12 @@ def _summary_html(s: dict) -> str:
         bits = ([f"{_fmt_int(stale_n)} tickers"] if stale_n else []) + (["SPY"] if s.get("spy_stale") else [])
         elim_part += (f" Stale price cache (refetch failed, last cached bars used): "
                       f"{_html.escape(' + '.join(bits))}.")
+    # The F5 blind spots (#58): a candidate with no amber event line is either clean or one the store cannot answer
+    # for. A payload stored before the counters existed has neither key, and says nothing rather than "0".
+    dq = data_quality or {}
+    if "no_submissions" in dq or "no_cik" in dq:
+        elim_part += (f" Corporate-event check could not run: No filings on record: {_fmt_int(dq.get('no_submissions'))}"
+                      f" · no CIK: {_fmt_int(dq.get('no_cik'))}.")
     dist_part = f" [DISTORTED] {_fmt_int(distorted)}." if distorted else ""
 
     return (
@@ -207,7 +213,7 @@ def _render(payload: dict, inline: bool) -> tuple[str, dict | None]:
             "distorted_count": distorted_count,
             "top_n": len(candidates),
         }
-    summary_html = _summary_html(summary)
+    summary_html = _summary_html(summary, payload.get("data_quality"))
     universe_prov = universe_provenance_html(
         payload.get("universe_generated_at"), payload.get("universe_refreshed_by"),
         partial=bool(payload.get("universe_partial")))
