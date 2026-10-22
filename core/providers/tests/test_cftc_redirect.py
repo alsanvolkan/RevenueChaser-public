@@ -1,4 +1,4 @@
-"""SPX Gamma's CFTC TFF read against a redirecting host.
+"""The CFTC TFF provider read against a redirecting host (core/providers/cftc.py).
 
 httpx follows no redirect by default, so a 301/307 from the Socrata host would be read as the payload:
 the retry loop would take the redirect body as the row. No request leaves the process: ``httpx.get`` is
@@ -6,7 +6,7 @@ a fake that records whether it was asked to follow.
 """
 from __future__ import annotations
 
-from RevenueChaser.module_spx_gamma import cftc
+from RevenueChaser.core.providers import cftc
 
 ROW = {
     "market_and_exchange_names": cftc.E_MINI_MARKET,
