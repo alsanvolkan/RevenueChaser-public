@@ -11,7 +11,7 @@ from RevenueChaser.core import rawstore
 from RevenueChaser.core.gics_map import UNCLASSIFIED, canonical_sector, is_unclassified
 from RevenueChaser.core.providers.result import ProviderResult
 from RevenueChaser.core.providers.unusual_whales import UWClient
-from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 
 logger = logging.getLogger(__name__)
 
