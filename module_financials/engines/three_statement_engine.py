@@ -7,10 +7,10 @@ Nakit açığı "revolver" (plug borç) ile kapatılır; fazla nakit revolver'ı
 """
 from __future__ import annotations
 
-from ..config import DEFAULT_EBITDA_MARGIN, DEFAULT_REVENUE_GROWTH, DEFAULT_TAX_RATE, PROJECTION_YEARS, to_float
+from ..config import DEFAULT_EBITDA_MARGIN, DEFAULT_REVENUE_GROWTH, PROJECTION_YEARS, to_float
 from RevenueChaser.core.providers.validator import validate_annual
 
-from ._inputs import DNA_ASSUMED_ZERO, pick
+from ._inputs import DNA_ASSUMED_ZERO, effective_tax_rate, pick
 
 
 def _get(rec: dict, key: str, default: float | None = None) -> float | None:
@@ -38,10 +38,8 @@ def run_three_statement(financials: dict, assumptions: dict | None = None) -> di
         warnings.append(f"revenue growth given for {len(growth)} years, last rate held for "
                         f"the other {n - len(growth)} of {n}")
         growth += [growth[-1]] * (n - len(growth))
-    # The user's rate beats the statements' (a typed 0 is a 0), then history, then the default (#173 M19).
-    tax_rate = pick(a, "tax_rate", _get(latest, "tax_rate", DEFAULT_TAX_RATE))
-    tax_rate_source = ("assumption" if to_float(a.get("tax_rate")) is not None
-                       else "statements" if _get(latest, "tax_rate") is not None else "default")   # FIN-9 B
+    # The user's rate beats the statements' (a typed 0 is a 0), then provision / pretax, then the default (#173 M19).
+    tax_rate, tax_rate_source = effective_tax_rate(a, latest, financials.get("sector"))
 
     # The opening balance sheet needs debt and equity: unknown is not zero.
     missing = [k for k in ("total_debt", "total_equity") if _get(latest, k) is None]
