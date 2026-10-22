@@ -24,7 +24,8 @@ def test_a_bank_with_no_revenue_gets_no_ev_revenue_multiple():
     # Both bank tags are present, so adding EITHER of them to ``CONCEPTS["revenue"]`` shows up here
     # as a revenue value (and an EV/Revenue the bank should not have).
     annual = se.extract_annual(_facts(flow={RNOI: _s([2024, 2025], 10000),
-                                           IODI: _s([2024, 2025], 20000)}))
+                                           IODI: _s([2024, 2025], 20000),
+                                           "NetIncomeLoss": _s([2024, 2025], 500)}))
     assert annual[-1][BANK] == 12025.0   # the net-of-interest-expense tag wins the tie
     assert annual[-1]["revenue"] is None
 

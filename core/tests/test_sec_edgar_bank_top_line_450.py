@@ -50,7 +50,8 @@ def test_revenue_keeps_its_concepts_and_the_bank_tags_have_their_own_field():
 # ── a bank that reports only its top line gains the field and no revenue ────
 
 def test_a_bank_tag_alone_fills_the_new_field_and_leaves_revenue_empty():
-    facts = _facts(flow={IODI: _s([2024, 2025], 20000)})
+    # A bank also reports net income, which is what makes the period a record: the bank top line only rides on it.
+    facts = _facts(flow={IODI: _s([2024, 2025], 20000), "NetIncomeLoss": _s([2024, 2025], 500)})
     recs = _recs(facts)
     assert _bank(facts) == {"2024": 22024.0, "2025": 22025.0}
     assert all(r["revenue"] is None for r in recs.values())
@@ -60,14 +61,14 @@ def test_a_bank_tag_alone_fills_the_new_field_and_leaves_revenue_empty():
 # ── the list order decides a tie, and only a tie ────────────────────────────
 
 def test_net_of_interest_expense_wins_when_the_two_tags_cover_the_same_years():
-    facts = _facts(flow={RNOI: _s([2024, 2025], 10000), IODI: _s([2024, 2025], 20000)})
+    facts = _facts(flow={RNOI: _s([2024, 2025], 10000), IODI: _s([2024, 2025], 20000), "NetIncomeLoss": _s(range(2020, 2026), 500)})
     assert _bank(facts) == {"2024": 12024.0, "2025": 12025.0}
 
 
 def test_the_modules_newest_then_longest_pick_still_beats_the_list_order():
     # The order above is a tie-break, not a priority: a filer that switched tags keeps the newer
     # series as the primary and the older tag only adds the contiguous year below it (#246).
-    facts = _facts(flow={RNOI: _s([2022, 2023], 10000), IODI: _s([2023, 2024, 2025], 20000)})
+    facts = _facts(flow={RNOI: _s([2022, 2023], 10000), IODI: _s([2023, 2024, 2025], 20000), "NetIncomeLoss": _s(range(2020, 2026), 500)})
     assert _bank(facts) == {"2022": 12022.0, "2023": 22023.0, "2024": 22024.0, "2025": 22025.0}
 
 
@@ -76,7 +77,7 @@ def test_the_modules_newest_then_longest_pick_still_beats_the_list_order():
 def test_revenue_is_exactly_what_it_is_today_and_the_new_field_is_filled_beside_it():
     # The bank tag is newer AND longer than ``Revenues`` here, so a bank tag added to
     # ``CONCEPTS["revenue"]`` would take the pick and this filer's revenue would move.
-    facts = _facts(flow={REV: _s([2020, 2021], 30000), IODI: _s(range(2020, 2026), 20000)})
+    facts = _facts(flow={REV: _s([2020, 2021], 30000), IODI: _s(range(2020, 2026), 20000), "NetIncomeLoss": _s(range(2020, 2026), 500)})
     assert _rev(facts) == {"2020": 32020.0, "2021": 32021.0}
     assert _bank(facts) == {str(y): 20000.0 + y for y in range(2020, 2026)}
 
@@ -90,6 +91,13 @@ def test_a_filer_with_neither_bank_tag_gets_no_key_at_all():
     assert all(BANK not in r for r in recs.values())
 
 
+def test_the_bank_tag_alone_never_creates_a_record():
+    """``interest_income_top_line`` is in ``_NEVER_A_RECORD``: a period holding only it is no period (#450)."""
+    facts = _facts(flow={IODI: _s([2024, 2025], 20000)})
+    assert _recs(facts) == {}
+    assert se._record_periods({BANK: {"2024-12-31": 1.0}}) == []
+
+
 # ── the quarterly path falls out of the same extractor ─────────────────────
 
 def test_the_quarterly_path_carries_the_field_with_no_quarterly_specific_code():
@@ -98,7 +106,8 @@ def test_the_quarterly_path_carries_the_field_with_no_quarterly_specific_code():
         return {"start": start, "end": end, "val": val, "form": "10-Q", "fp": "Q2",
                 "filed": f"{end[:4]}-08-01"}
     facts = {"entityName": "Synthetic Bank", "facts": {"us-gaap": {
-        RNOI: {"units": {"USD": [q("2025-03-31", 1.0), q("2025-06-30", 2.0)]}}}}}
+        RNOI: {"units": {"USD": [q("2025-03-31", 1.0), q("2025-06-30", 2.0)]}},
+        "NetIncomeLoss": {"units": {"USD": [q("2025-03-31", 9.0), q("2025-06-30", 9.0)]}}}}}
     got = {r["period"]: r[BANK] for r in se.extract_quarterly(facts)}
     assert got == {"2025-03-31": 1.0, "2025-06-30": 2.0}
     assert all(r["revenue"] is None for r in se.extract_quarterly(facts))
