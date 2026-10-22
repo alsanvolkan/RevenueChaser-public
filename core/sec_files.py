@@ -192,6 +192,14 @@ def _short(name: str, rows: list[dict]) -> tuple[dict, str | None]:
     return size, None
 
 
+def _header(headers: dict, name: str) -> str | None:
+    """One header by name, whatever the case: httpx lowercases what the server sent."""
+    if not headers:
+        return None
+    want = name.lower()
+    return next((v for k, v in headers.items() if k.lower() == want), None)
+
+
 def _one(name: str, night: date, *, run_id: str, run_at: float, marker_dir: Path, log) -> tuple[dict, int]:
     """``(result, requests)`` for one file. Never raises."""
     try:
@@ -210,7 +218,7 @@ def _one(name: str, night: date, *, run_id: str, run_at: float, marker_dir: Path
         if short:
             return {"status": "failed", **size, "error": short}, 1
         out = record(name, got.rows, run_id=run_id, run_at=run_at, fetched_at=fetched_at)
-        _write_receipt(marker, night, {**size, **out, "last_modified": headers.get("Last-Modified")})
+        _write_receipt(marker, night, {**size, **out, "last_modified": _header(headers, "Last-Modified")})
         return {"status": "ok", **size, **out}, 1
     except Exception as exc:  # noqa: BLE001 - the step never raises
         return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:300]}, 1

@@ -197,6 +197,15 @@ def isolate_deepseek_gate(tmp_path, monkeypatch):
     monkeypatch.setenv("DEEPSEEK_GATE_FILE", str(tmp_path / "deepseek_gate.json"))
 
 
+@pytest.fixture(autouse=True)
+def _reset_cik_map():
+    """The CIK map is cached per process (#301 review MUST-2); no test may inherit another's map."""
+    from RevenueChaser.core.providers import sec_edgar
+    sec_edgar.reset_cik_map()
+    yield
+    sec_edgar.reset_cik_map()
+
+
 @pytest.fixture
 def rawstore_tmp_db(isolate_rawstore):
     """The isolated DB path, with every manifest table created."""

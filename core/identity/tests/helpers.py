@@ -24,7 +24,9 @@ class FakeResp:
     def __init__(self, payload=None, status: int = 200, headers: dict | None = None):
         self._payload = payload
         self.status_code = status
-        self.headers = headers or {}
+        # httpx lowercases header names; the fake must too, or a case-sensitive read passes here
+        # and returns None live (#301 review MUST-1).
+        self.headers = {k.lower(): v for k, v in (headers or {}).items()}
         if isinstance(payload, (bytes, bytearray)):
             self.content = bytes(payload)
         elif isinstance(payload, str):

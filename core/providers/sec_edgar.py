@@ -323,6 +323,10 @@ _NON_NEGATIVE_FLOWS = frozenset({"revenue", "cost_of_revenue", "capex", "depreci
 EXTRACT_VERSION = 2
 
 
+_CIK_MAP_CACHE: list[dict] = []          # one slot; get_fundamentals asks per ticker, on a thread pool
+_CIK_MAP_LOCK = threading.Lock()
+
+
 def _cik_map() -> dict:
     """ticker -> ``{cik, name}`` from the stored SEC exchange file (#301 D21).
 
@@ -332,11 +336,34 @@ def _cik_map() -> dict:
     """
     from .. import sec_files
 
-    rows = sec_files.latest("exchange")
-    if rows:
-        return {r["ticker"]: {"cik": r["cik"], "name": r["name"]} for r in rows}
-    payload = get_json(f"{SEC_WWW_BASE}/files/company_tickers.json")
-    return {row["ticker"]: {"cik": row["cik_str"], "name": row["title"]} for row in payload.values()}
+    with _CIK_MAP_LOCK:
+        if _CIK_MAP_CACHE:
+            return _CIK_MAP_CACHE[0]
+        rows = sec_files.latest("exchange")
+        if rows:
+            out = {r["ticker"]: {"cik": _as_cik(r["cik"]), "name": r["name"]} for r in rows}
+            out = {t: v for t, v in out.items() if v["cik"] is not None}
+        else:
+            payload = get_json(f"{SEC_WWW_BASE}/files/company_tickers.json")
+            out = {row["ticker"]: {"cik": _as_cik(row["cik_str"]), "name": row["title"]}
+                   for row in payload.values()}
+            out = {t: v for t, v in out.items() if v["cik"] is not None}
+        _CIK_MAP_CACHE.append(out)
+        return out
+
+
+def reset_cik_map() -> None:
+    """Forget the cached map (the tests' fixture; a nightly pull changes the stored rows under a long run)."""
+    with _CIK_MAP_LOCK:
+        _CIK_MAP_CACHE.clear()
+
+
+def _as_cik(value) -> int | None:
+    """The CIK as the int ``_fetch_facts`` formats with ``{cik:010d}``; the store keeps it as TEXT."""
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def _fetch_facts(cik: int) -> dict | None:
