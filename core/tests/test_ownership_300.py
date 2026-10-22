@@ -242,3 +242,76 @@ def test_a_new_session_asks_again(rawstore_tmp_db):
     assert uw.calls == ["AAA"]
     assert [(r["session_date"], r["shares_outstanding"]) for r in _rows()] == \
         [(date(2026, 10, 8), 1.0), (date(2026, 10, 9), 2.0)]
+
+
+# ── the reader (Asymmetric Growth, #34 D20) ─────────────────────────────────
+
+def _seed(ticker: str, source: str, pct: float | None, run_at: float, session: date | None = None) -> None:
+    """One row written by hand: a source the writer never fills an institutional share for, or a NULL field."""
+    rawstore.write_rows(ownership.TABLE, [{
+        "ticker": ticker, "source": source, "session_date": session or ownership.session_of(run_at)[0],
+        "shares_outstanding": None, "insider_pct": None, "institutional_pct": pct,
+        "fetched_at": run_at, "run_id": "seed", "run_at": run_at}])
+
+
+JANUARY = datetime(2026, 1, 15, 21, 35, tzinfo=UTC).timestamp()     # Thu 16:35 EST: session 01-15, complete
+
+
+def test_the_reader_takes_the_newest_session_and_labels_its_source(rawstore_tmp_db):
+    _seed("AAA", ownership.YFINANCE, 0.31, JANUARY)
+    _seed("AAA", ownership.YFINANCE, 0.55, COMPLETE)
+    assert ownership.latest_institutional(["aaa", "BBB"]) == {
+        "AAA": {"institutional_pct": 0.55, "source": "yfinance",
+                "session": date(2026, 10, 8), "session_label": "2026-10-08"}}
+
+
+def test_a_null_institutional_value_is_not_a_usable_row(rawstore_tmp_db):
+    _seed("AAA", ownership.YFINANCE, 0.31, JANUARY)
+    _seed("AAA", ownership.UW_INFO, None, COMPLETE)          # newer, but a shares-only row
+    _seed("BBB", ownership.UW_INFO, None, COMPLETE)          # nothing usable at all
+    out = ownership.latest_institutional(["AAA", "BBB"])
+    assert set(out) == {"AAA"} and out["AAA"]["institutional_pct"] == 0.31
+    assert out["AAA"]["source"] == "yfinance"
+
+
+def test_inside_one_session_uw_wins_and_a_newer_session_still_beats_it(rawstore_tmp_db):
+    _seed("TIE", ownership.YFINANCE, 0.55, COMPLETE)
+    _seed("TIE", ownership.UW_INFO, 0.21, LATER_SAME)        # the same session: UW first
+    _seed("NEWER", ownership.UW_INFO, 0.21, JANUARY)
+    _seed("NEWER", ownership.YFINANCE, 0.55, COMPLETE)       # a newer session: it wins over the older UW row
+    out = ownership.latest_institutional(["TIE", "NEWER"])
+    assert (out["TIE"]["source"], out["TIE"]["institutional_pct"]) == ("uw_info", 0.21)
+    assert (out["NEWER"]["source"], out["NEWER"]["institutional_pct"]) == ("yfinance", 0.55)
+    assert out["NEWER"]["session_label"] == "2026-10-08"
+
+
+def test_the_session_comes_from_the_rows_run_stamp_not_the_session_column(rawstore_tmp_db):
+    """``session_of(run_at)`` decides: a Saturday run belongs to Friday's session, and the column is not read."""
+    _seed("AAA", ownership.YFINANCE, 0.31, SATURDAY, session=date(2026, 10, 1))
+    (row,) = ownership.latest_institutional(["AAA"]).values()
+    assert (row["session"], row["session_label"]) == (date(2026, 10, 9), "2026-10-09")
+
+
+def test_a_stored_zero_is_a_value_not_a_missing_one(rawstore_tmp_db):
+    _seed("AAA", ownership.YFINANCE, 0.0, COMPLETE)          # a real zero is a value, not a missing one
+    assert ownership.latest_institutional(["AAA"])["AAA"]["institutional_pct"] == 0.0
+
+
+def test_an_empty_list_reads_nothing(rawstore_tmp_db):
+    _seed("AAA", ownership.YFINANCE, 0.31, COMPLETE)
+    assert ownership.latest_institutional([]) == {}
+    assert ownership.latest_institutional(["", None]) == {}
+
+
+def test_a_missing_table_answers_no_rows(rawstore_tmp_db):
+    assert rawstore.query("SELECT 1 FROM ownership_snapshot") == []
+    assert ownership.latest_institutional(["AAA"]) == {}
+
+
+def test_an_unreadable_table_answers_no_rows(rawstore_tmp_db, monkeypatch):
+    """A locked store must not take a board down: the reader says "nothing stored" and the board falls back."""
+    def boom(*a, **k):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(ownership.rawstore, "query", boom)
+    assert ownership.latest_institutional(["AAA"]) == {}
