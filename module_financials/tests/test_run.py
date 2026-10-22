@@ -47,36 +47,42 @@ def test_run_no_fetch_requires_a_cached_payload(rawstore_tmp_db, tmp_path, monke
         fm.run("ZZZZ", modules=["dcf"], output="html", no_fetch=True)
 
 
-def _run_comps(monkeypatch, financials, spine_sector):
+def _run_comps(monkeypatch, financials, spine_sector, peers=()):
     from RevenueChaser.core import rawstore
     from RevenueChaser.core.providers import cache as cache_manager
+    rows = [_row("AAPL", 1e9, spine_sector)]
+    rows += [_row(p, cap, spine_sector) for p, cap in peers]
     if spine_sector is not None:
-        rawstore.replace_all("equity_universe", [{
-            "ticker": "AAPL", "cik": "", "name": "A", "market_cap": 1e9, "price": 10.0,
-            "sector": spine_sector, "industry": "x", "industry_group": "", "sub_industry": "",
-            "quote": {"symbol": "AAPL"}}])
+        rawstore.replace_all("equity_universe", rows)
     vendor = dict(financials, sector="Technology")                        # what yfinance says
     monkeypatch.setattr(cache_manager, "get_or_fetch", lambda t, fn, use_cache=True: vendor)
     # No store card for AAPL, so quick remarks would fall back to a live yfinance score: stub it (the same
     # empty card a store-only render gets)
     qr = fm.quick_remarks_engine
-    monkeypatch.setattr(qr, "run_quick_remarks", lambda ticker, no_fetch=False: qr._from_card(ticker, {}, "yfinance"))
+    monkeypatch.setattr(qr, "run_quick_remarks", lambda ticker, no_fetch=False, financials=None: qr._from_card(ticker, {}, "yfinance"))
     seen = {}
     monkeypatch.setattr(fm.comps_engine, "run_comps",
                         lambda fin, peers, **kw: seen.update(peers=peers, sector=fin.get("sector")) or {})
     return seen
 
 
-def test_comps_default_peers_follow_the_spine_sector(rawstore_tmp_db, tmp_path, monkeypatch, financials):
-    """R5 (#88): peers come from the spine sector, not the yfinance one."""
+def _row(ticker, market_cap, sector):
+    return {"ticker": ticker, "cik": "", "name": ticker, "market_cap": market_cap, "price": 10.0,
+            "sector": sector, "industry": "x", "industry_group": "", "sub_industry": "",
+            "quote": {"symbol": ticker}}
+
+
+def test_comps_peers_come_from_the_spine_universe(rawstore_tmp_db, tmp_path, monkeypatch, financials):
+    """FIN-3: peers are the spine's names in the target's industry, not a static sector list."""
     monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
-    seen = _run_comps(monkeypatch, financials, "Energy")
+    seen = _run_comps(monkeypatch, financials, "Energy",
+                      peers=[("XOM", 1.1e9), ("CVX", 0.9e9)])
     fm.run("AAPL", modules=["comps"], output="html", no_fetch=False)
-    assert seen["peers"] == fm.default_peers("Energy") == ["XOM", "CVX", "COP", "SLB", "EOG"]
+    assert seen["peers"] == ["XOM", "CVX"]
     assert seen["sector"] == "Energy"
 
 
-def test_comps_without_a_spine_row_has_no_default_peers(rawstore_tmp_db, tmp_path, monkeypatch, financials):
+def test_comps_without_a_spine_row_has_no_peers(rawstore_tmp_db, tmp_path, monkeypatch, financials):
     monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
     seen = _run_comps(monkeypatch, financials, None)
     fm.run("AAPL", modules=["comps"], output="html", no_fetch=False)
@@ -84,33 +90,8 @@ def test_comps_without_a_spine_row_has_no_default_peers(rawstore_tmp_db, tmp_pat
     assert seen["sector"] == "Unclassified"
 
 
-# ── #266: the sector keys are the Morningstar names the spine stores ──────────────────────────────────
+# ── the sector band keys are the Morningstar names the spine stores (#266) ────────────────────────────
 import pytest
-
-
-@pytest.mark.parametrize("sector, first_peers", [
-    ("Technology", ["MSFT", "GOOGL"]),
-    ("Consumer Defensive", ["PG", "KO"]),
-    ("Financial Services", ["JPM", "BAC"]),
-    ("Healthcare", ["JNJ", "PFE"]),
-])
-def test_comps_default_peers_for_a_morningstar_sector(rawstore_tmp_db, tmp_path, monkeypatch, financials,
-                                                      sector, first_peers):
-    """The spine stores Morningstar names, so the peer table is keyed by them (it was keyed by GICS names, and
-    only Energy matched)."""
-    monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
-    seen = _run_comps(monkeypatch, financials, sector)
-    fm.run("AAPL", modules=["comps"], output="html", no_fetch=False)
-    assert seen["sector"] == sector
-    assert seen["peers"][:2] == first_peers and len(seen["peers"]) == 5
-
-
-def test_default_peers_are_keyed_by_morningstar_names_only():
-    from RevenueChaser.core.gics_map import MORNINGSTAR_SECTORS
-    from RevenueChaser.module_financials import config
-    assert set(config.DEFAULT_PEERS) - {"default"} <= set(MORNINGSTAR_SECTORS)
-    for old in ("Information Technology", "Consumer Staples", "Financials", "Health Care"):
-        assert config.default_peers(old) == []                    # an old spelling is no longer a key
 
 
 def test_embedded_sector_bands_match_the_json_file():

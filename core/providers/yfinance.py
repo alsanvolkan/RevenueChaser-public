@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 # board banner, not only logged. A run reads it with ``health()`` after ``reset_health()``.
 _HEALTH = ProviderHealth("yfinance")
 
+# The annual window a Fetch serves. A store-only Refresh reads the same window back through
+# ``vendor_data.read_financials``: the store keeps every period it ever saw, so once a seventh fiscal year is
+# stored an uncapped reader would average NWC/revenue over more years than the Fetch did and disagree with it.
+MAX_YEARS = 6
+
 
 def health() -> dict:
     """The Yahoo reads since the last ``reset_health()``, in the shared provider-health shape."""
@@ -92,7 +97,7 @@ def _pick(series_map: dict[str, pd.Series], candidates: list[str]) -> pd.Series 
     return None
 
 
-def _years(df: pd.DataFrame, max_years: int = 6) -> list[Any]:
+def _years(df: pd.DataFrame, max_years: int = MAX_YEARS) -> list[Any]:
     """Kronolojik (eskiden yeniye) geçerli yıl kolonları."""
     cols = []
     for c in df.columns:
@@ -131,7 +136,7 @@ def _sum_series(maps: dict[str, pd.Series], groups: list[list[str]], cols: list[
     return total
 
 
-def get_financials(ticker: str, max_years: int = 6) -> dict:
+def get_financials(ticker: str, max_years: int = MAX_YEARS) -> dict:
     """yfinance'tan normalize finansal tabloları çeker.
 
     Returns:

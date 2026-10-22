@@ -6,7 +6,7 @@ from pathlib import Path
 
 from RevenueChaser.core.reporting_common import write_artifact
 
-from .config import OUTPUT_DIR, default_peers
+from .config import OUTPUT_DIR, PEER_K
 from .engines import (
     comps_engine,
     credit_capacity_engine,
@@ -15,6 +15,8 @@ from .engines import (
     sensitivity_engine,
     three_statement_engine,
 )
+from . import history as fin_history
+from .peers import select_peers, target_row
 from .reporting.html_builder import build_report_html
 from RevenueChaser.core import vendor_data
 from RevenueChaser.core.providers import cache as cache_manager
@@ -57,7 +59,14 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
     if not _TICKER_RE.fullmatch(ticker):
         raise ValueError(f"bad ticker: {ticker!r}")
     if no_fetch:
-        financials = cache_manager.load(ticker, ignore_ttl=True)
+        # FIN-5 (#385): a store-only render's model inputs come from the store, with zero network. The statements
+        # are the rows its last Fetch stored (``vendor_financials``); the valuation is the raw cached payload's
+        # ``.info`` when it has one — ``vendor_valuation`` is written only for a closed session, so an intraday
+        # Fetch leaves its own ``.info`` in the cache and no row behind it — and the stored row otherwise. With
+        # neither half present anywhere there is no report to render and the caller gets ``_NoCachedData``, never
+        # a live fetch from this path.
+        financials = vendor_data.merge_for_refresh(vendor_data.read_financials(ticker),
+                                                  cache_manager.load(ticker, ignore_ttl=True))
         if financials is None:
             raise _NoCachedData(ticker)
     vendor = None if no_fetch else vendor_data.Capture()
@@ -90,8 +99,10 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
     warnings: list[str] = []
     results: dict = {"ticker": ticker, "financials": financials, "modules": {}, "warnings": warnings}
 
-    # Quick Remarks — her zaman üstte (ticker_scores'dan beslenir, yfinance fallback)
-    results["quick_remarks"] = quick_remarks_engine.run_quick_remarks(ticker, no_fetch=no_fetch)
+    # Quick Remarks — her zaman üstte (ticker_scores'dan beslenir, yfinance fallback). FIN-5: it is handed the
+    # payload this run already has, so it scores from it instead of fetching the same financials a second time.
+    results["quick_remarks"] = quick_remarks_engine.run_quick_remarks(ticker, no_fetch=no_fetch,
+                                                                     financials=financials)
 
     # R5 (#88): the sector is the spine's (DCF bands, comps peers and the report header all read it);
     # the yfinance sector no longer feeds GICS. A name the spine lacks is Unclassified.
@@ -106,12 +117,34 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
             results["modules"]["three_statement"] = three_statement_engine.run_three_statement(financials, assumptions)
         elif m in ("comps", "comps_engine"):
             if no_fetch:
-                # Peer quotes (EV/EBITDA, P/E) are a live network fetch — not
-                # available in a store-only re-render. Degrade with a warning.
-                warnings.append("comps: peer quotes require a live Fetch — run the Fetch button for comps")
-                results["modules"]["comps"] = {"error": "comps requires a live Fetch (no network in store-only refresh)"}
+                # FIN-4 (#385): a Refresh fetches nothing, so it renders the comps its last stored Fetch computed,
+                # labelled with that run's fetch date. Nothing stored yet is an empty state on the board, never an
+                # error and never a live fetch, so the reader keeps its promise of no network.
+                stored = fin_history.last_report(ticker)
+                if fin_history.has_comps(stored):
+                    results["modules"]["comps"] = {**stored["modules"]["comps"], "as_of": stored.get("as_of"),
+                                                   "stored_run_id": stored.get("run_id")}
+                else:
+                    results["modules"]["comps"] = {
+                        "not_stored": True,
+                        "note": f"No stored comps for {ticker} yet — the Refresh shows its last stored Fetch and "
+                                f"fetches nothing; run the Fetch button to compute them.",
+                    }
             else:
-                used_peers = list(peers) if peers else default_peers(sector)
+                if peers:
+                    used_peers = list(peers)
+                else:
+                    # FIN-3: the peers are the spine's (industry at the nearest market cap, then sector), never
+                    # a static list. A short ladder is reported, not silently padded — and a target the spine
+                    # does not carry is not a short ladder: it is the reason there is no ladder at all.
+                    spine_rows = _spine.classification_universe_rows()
+                    used_peers = select_peers(ticker, spine_rows)
+                    if target_row(ticker, spine_rows) is None:
+                        warnings.append(f"comps: {ticker} is not in the spine universe (below the market-cap "
+                                        f"floor, or an excluded security type), so no peers were picked")
+                    elif len(used_peers) < PEER_K:
+                        warnings.append(f"comps: {len(used_peers)} of {PEER_K} peers — the spine industry and "
+                                        f"sector have no more names")
                 results["modules"]["comps"] = comps_engine.run_comps(financials, used_peers, fetch_info=_peer_info)
         elif m in ("credit", "credit_capacity"):
             results["modules"]["credit"] = credit_capacity_engine.run_credit_capacity(financials, assumptions)
