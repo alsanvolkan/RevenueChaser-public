@@ -152,29 +152,38 @@
       "url": "https://github.com/alsanvolkan/revenuechaser-public/issues/11",
       "title": "13F: large well-known issuers stay unmatched in the derive — find out why their CUSIPs have no map entry",
       "state": "open",
-      "labels": [],
+      "labels": [
+        "bug",
+        "area:ownership",
+        "area:providers",
+        "parked"
+      ],
       "boards": [
         "module_sec_13f"
       ],
       "scope": "board",
       "kind": "known-problem",
-      "status": "deferred",
-      "summary": "99.7% of the $3,996.89B the 13F totals leave out is CUSIPs that were asked of OpenFIGI and came back with no ticker, and the store cannot tell a failed call from a clean negative.",
+      "status": "parked",
+      "summary": "An input problem, parked: the 13F totals silently drop 10,297 CUSIPs and $3,996.89B because the CUSIP to ticker map has no entry, for three measured reasons no retry can fix.",
       "detail": {
-        "whats_wrong": "After the schema-12 migration the 13F board's \"N CUSIPs with no ticker\" line says 10,297 CUSIPs and $3,996.89B (raw basis) of the newest period (2026-06-30) are left out of the totals. 99.7% of that value is CUSIPs that WERE asked of OpenFIGI and came back with no ticker, all in one run on 2026-10-15; \"never asked\" is 0.3%; no CUSIP has a ticker the map misreads (shape bug 0). Full measurement: see the comment of 2026-10-22 (19 SELECTs, read-only, no provider call).\n\nThe 13F derive's unmatched note reported large, well-known issuers among the biggest left-out positions of the\nlatest period — reportedly Exxon Mobil, Linde and AstraZeneca.\n\nThe specific issuer list is unverified from here: It comes from a run report, not from a measurement made\nfor this issue, and a cloud session never reads the store. Which issuers are actually in the note has to be\nre-read from a live run before […]",
-        "evidence": "A CUSIP is asked once (`map_candidates`: \"asked once, matched or not, is not asked again\"), and `status` holds only `absent` or `present`, so a failed or filtered answer cannot be told from a clean negative: one bad run excludes an issuer permanently, and the board totals for large names (e.g. XOM shows about $6-7B against a $354B holding) are partial without saying so.\n\nMatching is CUSIP-only by design. Nothing is matched by issuer name (#207):\n\n- `module_sec_13f/engine.py:1186-1188` — \"Nothing is matched by issuer name (#207): a CUSIP with no map entry\n  stays out of the totals and in the unmatched note\"\n- `module_sec_13f/engine.py:1028-1029` — \"`compute_totals` joins holdings to `cusip_ticker`; a CUSIP absent from\n  it is dropped without a trace\"\n- `module_sec_13f/engine.py:1039` — only CUSIPs with a non-empty ticker count as mapped (`ticker_of`,\n  `engine.py:333-335`)\n […]",
-        "example": "Exxon Mobil, CUSIP `30231G102` (digit-first, a US issuer): $354.43B held in 2026-06-30, `identity_cusip` row `status = absent`, `source = openfigi`, empty ticker/figi/exch_code/security_type, run on 2026-10-15. The same run gave 14,656 `present` rows (all digit-first CUSIPs) and 15,428 `absent`: 11,518 digit-first and 3,910 letter-first (foreign-domiciled, US-listed: Linde, AstraZeneca, Seagate, ASML, Eaton, Chubb, ...). No letter-first CUSIP was ever matched.",
-        "tried_or_decided": "STATUS 2026-10-22: OPEN, DEFERRED until after Sunday 25 Oct (owner rule: findings are logged, not closed and not built now)",
-        "direction": "1. Record WHY an answer was empty in `identity_cusip.status` (for example an explicit error / unresolved state next to `absent`) so a retry path can tell a failed call from a genuine negative.\n2. Look at the mapping rule for foreign-domiciled / letter-first CUSIPs (none of 3,910 matched, which looks like a filter, not a coin flip).\n3. The 13F data sets already carry a free FIGI column (SEC 13F INFOTABLE): check whether the map can start from it instead of asking OpenFIGI for a CUSIP.\n4. Decision for the owner: whether non-US-domiciled lines belong in these totals at all.\n\nNot for this week: left open on purpose; the follow-up brief comes after Sunday.\n\nRead-only, on a copy of the store:\n\n1. Re-read the current unmatched note and record the actual top issuers, their CUSIPs and their value, so the\n   list this issue works from is measured rather than reported.\n2. For each of those […]",
-        "next_step": "After Sunday 25 Oct, write the follow-up brief starting from direction 3 (the free FIGI column in the SEC 13F INFOTABLE), because it needs no provider call."
+        "whats_wrong": "The 13F board's totals silently drop 10,297 CUSIPs and $3,996.89B of the newest period\n(2026-06-30) because the CUSIP → ticker input map has no entry for them. This is an **input** gap, not a rule or\ndisplay bug: the board is doing the right thing with the identifiers it was given. 99.7% of the missing value is\nCUSIPs that **were** asked of OpenFIGI and came back empty; \"never asked\" is 0.3%; no CUSIP has a ticker the map\nmisreads (shape bug 0).\n\nThe 13F derive's unmatched note leaves large, well-known issuers out of the totals: Exxon Mobil, Linde,\nAstraZeneca and others. Measured 2026-10-22: 10,297 CUSIPs and $3,996.89B (raw basis) of the newest period\n(2026-06-30) are dropped from the board's totals, silently.",
+        "evidence": "One external lookup per CUSIP, whose negative answer is permanent and undifferentiated: a CUSIP with\nan `identity_cusip` row is never asked again (`module_sec_13f/engine.py:744-770`), an OpenFIGI `warning` is\nstored as `absent` (`core/providers/openfigi.py:111-123`), `status` holds only `present` / `absent`\n(`core/identity_cusip.py:27`), and an unmapped CUSIP leaves the totals with no trace but the count\n(`engine.py:1028-1029`). The SEC file's own free `FIGI` column is never stored (`core/rawstore.py:1344-1351`).\n\nThree distinct reasons, not one bug. (1) The `exchCode: \"US\"` filter is sound — AAPL, MSFT, JNJ,\nJPM and T each return one correct hit and the same run matched 14,656 CUSIPs. (2) Letter-first CINS numbers of\nforeign-domiciled issuers (3,910 CUSIPs, most of the value) are **not in OpenFIGI's `ID_CUSIP` index at all**.\n(3) A reorganisation retires the filed identifier.",
+        "example": "Exxon Mobil, CUSIP `30231G102`, $354.43B held in 2026-06-30 — the largest single\nunmatched line. Its `identity_cusip` row says `status = absent`, `source = openfigi`, empty\nticker/figi/exch_code/security_type, run 2026-10-15. Asked again with no exchange filter, OpenFIGI returns 10\nentries and **none of them is a US listing** (CP, RC, X1, UZ, OU, QU, PO, L1, L3, B3); asked by ticker instead,\n`XOM` on US resolves to **`EXXONMOBIL HOLDINGS CORP`**, composite FIGI `BBG023CY9MM1` — a reorganisation retired\nthe filed CUSIP's US record. Linde, CUSIP `G54950103`, $194.34B: \"No identifier found.\" with **and without** the\nfilter, while its ISIN `IE000S9YS762` resolves to `LIN` / `US` in one call. Seagate `G7997R103` behaves the same,\nand so do AstraZeneca, ASML, Eaton, Chubb and the rest of the letter-first block.",
+        "tried_or_decided": "STATUS 2026-10-22: PARKED — this is an INPUT problem (Providers & inputs epic #34, row D19 `identity_cusip`), not a 13F rule problem; left open on purpose, review after Sunday 25 Oct",
+        "direction": "Allowed sources only, nothing new and paid. **A** store the SEC `FIGI` column, map the composite FIGI to a ticker — an\nadditive manifest column, **no `_SCHEMA_VERSION` bump** (`core/rawstore.py:2329`). **B** `unresolved` next to\n`absent`, re-asked. **C** CUSIP → ISIN: needs new external data. **D** name matching: #207 removed it. **E** UW:\nunverified. **F** IBKR: machine only. **G** owner decision instead of code.\n\n**A, then B, with G as a one-line owner decision.** A first: the SEC hands us the\nidentifier for free in a file we already parse, and it is the only option that fixes both the foreign block and\nthe reorganisation case; gated on one read-only zip measurement (composite or share-class FIGI?). B beside it, so\nthe board stops losing value silently. G: do non-US-domiciled, US-listed lines belong in these totals?",
+        "next_step": "Parked until after Sunday 25 Oct. Then one read-only zip measurement first (is the SEC INFOTABLE FIGI column a composite or a share-class FIGI? the store holds no copy of it), then the brief for option A (store that column, map ID_BB_GLOBAL) beside option B (an `unresolved` state next to `absent`). Owner decision G: do non-US-domiciled, US-listed lines belong in these totals at all?"
       },
       "refs": [
         {
-          "label": "measurement comment, 22 Oct",
+          "label": "store measurement, 22 Oct",
           "url": "https://github.com/alsanvolkan/revenuechaser-public/issues/11#issuecomment-6337970398"
+        },
+        {
+          "label": "epic: Providers & inputs, row D19",
+          "url": "https://github.com/alsanvolkan/revenuechaser-public/issues/34"
         }
       ],
-      "issue_updated_at": "2026-10-22T10:03:48Z",
+      "issue_updated_at": "2026-10-22T14:05:25Z",
       "reviewed_at": "2026-10-22",
       "deferred_until": "after Sunday 2026-10-25"
     },
