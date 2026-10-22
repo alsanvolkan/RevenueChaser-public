@@ -21,7 +21,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 
-from RevenueChaser.core import fiscal_year
+from RevenueChaser.core import earnings_dates, fiscal_year
 from RevenueChaser.core import funnel as funnel_mod
 from RevenueChaser.core import job_control
 from RevenueChaser.core import ledger, prices, rawstore
@@ -564,6 +564,7 @@ def _preload(tickers: list[str], no_fetch: bool, session: date | None = None) ->
         "edgar": sec_edgar.stored_annual_many(tickers),
         "payload": cache_manager.load_many(tickers, ignore_ttl=no_fetch, allow_info_only=True),
         "themes": themes_for_many(tickers),
+        "earnings": earnings_dates.stored_next_dates(),      # #304: the stored D26 date, Yahoo's where the store has none
         "bars": _bars_by_ticker(tickers, session),
         "session": session,
     }
@@ -643,7 +644,8 @@ def enrich_and_score(ticker: str, meta: dict, no_fetch: bool = False,
     technical = _technical_for(ticker, financials, meta, preload)
     if technical.get("price") is None:
         return dropped("no_price")            # no price in any source, momentum unknown is still a card
-    card = score_ticker(ticker, financials, technical, meta, spine,
+    stored = preload["earnings"] if preload is not None and "earnings" in preload else earnings_dates.stored_next_dates()
+    card = score_ticker(ticker, financials, technical, earnings_dates.with_stored_date({**meta, "ticker": ticker}, stored), spine,
                         pinned_themes=preload["themes"] if preload is not None else None, as_of=as_of)
     return card if card is not None else dropped("foreign")
 

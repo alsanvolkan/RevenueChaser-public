@@ -37,7 +37,7 @@ from typing import Any, Callable
 
 import pandas as pd
 
-from RevenueChaser.core import calendar, funnel, job_control, ledger
+from RevenueChaser.core import calendar, earnings_dates, funnel, job_control, ledger
 from RevenueChaser.core import universe as _universe
 from RevenueChaser.core.config import to_float
 from RevenueChaser.core.gics_map import UNCLASSIFIED
@@ -410,6 +410,7 @@ def run_screen(*, board: str, refreshed_by: str, cfg: Any,
     all_rows = rows
     rows = [r for r in rows if r.get("ticker") not in excluded]
     spine = _universe.spine_gics()
+    stored_earnings = earnings_dates.stored_next_dates()    # #304: one read per run; Yahoo's date where the store has none
 
     pf = prefilter(rows)
     filtered = pf.kept                   # every kept name is scored: no shortlist cap (C12, card C)
@@ -446,7 +447,8 @@ def run_screen(*, board: str, refreshed_by: str, cfg: Any,
                     data_short += 1
                     dropped.setdefault("stale_bars", []).append(r.get("ticker"))
                     continue
-                fut = ex.submit(_score, compute_row, t, preloaded.get(t), r, spy_df, no_fetch, spine, mine)
+                fut = ex.submit(_score, compute_row, t, preloaded.get(t), earnings_dates.with_stored_date(r, stored_earnings),
+                                spy_df, no_fetch, spine, mine)
                 futs[fut] = (r, mine)
             for f in as_completed(futs):
                 if job_control.stop_requested():  # a cancel or a passed deadline (#243): no more tickers, no persist
