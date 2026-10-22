@@ -139,11 +139,21 @@ def test_parse_results_500_records_under_one_second():
 
 
 # ---------------------------------------------------------------------------
-# _total: the page's own result count, or None if the page is unrecognised
+# _total: the pager's (total, page_size), or None if the page is unrecognised
 # ---------------------------------------------------------------------------
 
 def test_total_from_js_marker():
-    assert fda_orphan._total(TENAYA_HTML) == 3
+    assert fda_orphan._total(TENAYA_HTML) == (3, 25)
+
+
+def test_total_reports_the_page_size_the_server_honoured():
+    """``page=`` in the pager is the page *size*, not a page number: the stored
+    Amgen capture answered ``page=25`` to a ``RecordsPerPage=500`` request."""
+    assert fda_orphan._total(AMGEN_HTML) == (81, 25)
+
+
+def test_total_falls_back_to_the_requested_page_size_when_the_pager_reports_none():
+    assert fda_orphan._total("<script>start=1; page=0; total=7;</script>") == (7, fda_orphan._RECORDS_PER_PAGE)
 
 
 @pytest.mark.parametrize("doc", [
@@ -157,7 +167,7 @@ def test_total_needs_the_anchored_pager_marker(doc):
 
 
 def test_total_zero_on_real_zero_hit_fixture():
-    assert fda_orphan._total(ZERO_HITS_HTML) == 0
+    assert fda_orphan._total(ZERO_HITS_HTML) == (0, 500)
 
 
 def test_total_none_on_real_no_session_fixture():
@@ -461,15 +471,19 @@ def test_do_request_retries_transport_errors_three_times(_record_sleep):
 
 
 def test_designations_for_partial_page_keeps_match_state():
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET":
-            return httpx.Response(200, text="<html></html>")
-        return httpx.Response(200, text=AMGEN_HTML)
+    handler, posts = _search_body_handler({"AMGEN": AMGEN_HTML, "AMGEN INC": AMGEN_HTML})
 
     result = fda_orphan.designations_for("AMGEN INC", client=_make_client(handler))
     assert result.status == "partial"
     assert result.data["match"] == "matched"
     assert result.data["rows"]
+    # ``page=25; total=81`` with 25 rows is a capped page, so the one narrower
+    # retry ("AMGEN" then "AMGEN INC") must have happened.
+    assert posts == ["AMGEN", "AMGEN INC"]
+    # Both pages match; the retry still wins, because its page is the less
+    # truncated one.
+    assert result.data["query"] == "AMGEN INC"
+    assert result.data["retry_from"] == "AMGEN"
 
 
 # ---------------------------------------------------------------------------
@@ -600,10 +614,15 @@ _CAPPED_RECORD = (
 )
 
 
+def _records_page(sponsor: str, *, rows: int, page: int, total: int) -> str:
+    """A page of ``rows`` complete records whose pager reports ``page``/``total``."""
+    body = "".join(_CAPPED_RECORD.format(n=n, sponsor=sponsor) for n in range(1, rows + 1))
+    return f"<html><script>start=1; page={page}; total={total};</script><body>{body}</body></html>"
+
+
 def _capped_page(sponsor: str = "GENE ONE THERAPEUTICS") -> str:
     """One full page of complete records and a pager total larger than it."""
-    body = "".join(_CAPPED_RECORD.format(n=n, sponsor=sponsor) for n in range(1, 501))
-    return f"<html><script>start=1; page=1; total=900;</script><body>{body}</body></html>"
+    return _records_page(sponsor, rows=500, page=500, total=900)
 
 
 def _search_body_handler(pages: dict[str, str]):
@@ -637,6 +656,29 @@ def test_search_sponsor_capped_page_is_partial_with_page_capped_error():
     assert result.error["parsed"] == 500
 
 
+def test_search_sponsor_page_of_25_rows_behind_a_total_of_81_is_page_capped():
+    """The stored Amgen capture: ``page=25; total=81;`` and exactly 25 rows.
+
+    The cap is the page size the pager reports, not the ``RecordsPerPage=500``
+    we asked for, so a 25-row page behind 81 hits is a genuinely capped page.
+    """
+    result = _search_with_page(AMGEN_HTML)
+
+    assert result.status == "partial"
+    assert result.error["error"] == "page_capped"
+    assert result.error["total"] == 81
+    assert result.error["parsed"] == 25
+
+
+def test_search_sponsor_page_holding_everything_it_reports_is_ok():
+    """The live shape: ``page=500``, 396 rows, ``total=396`` -- nothing capped."""
+    result = _search_with_page(_records_page("GENE ONE THERAPEUTICS", rows=396, page=500, total=396))
+
+    assert result.status == "ok"
+    assert result.error is None
+    assert len(result.data) == 396
+
+
 def test_search_sponsor_incomplete_rows_partial_keeps_error_none():
     """An incomplete-row partial is not a capped page: the row count is under
     ``RecordsPerPage`` and there is no retry to attempt."""
@@ -645,6 +687,18 @@ def test_search_sponsor_incomplete_rows_partial_keeps_error_none():
 
     assert result.status == "partial"
     assert result.error is None
+
+
+def test_search_sponsor_full_page_with_one_incomplete_row_is_not_page_capped():
+    """Rows dropped as incomplete are not evidence of a further page: the cap
+    compares the total with the *parsed* count, not with the complete rows."""
+    page = _records_page("GENE ONE THERAPEUTICS", rows=500, page=500, total=500)
+    page = page.replace('id="Sponsor for Record Number 2"', 'id="Removed for Record Number 2"')
+    result = _search_with_page(page)
+
+    assert result.status == "partial"
+    assert result.error is None
+    assert len(result.data) == 499
 
 
 def _gene_therapy_page() -> str:
@@ -698,6 +752,39 @@ def test_designations_for_capped_page_keeps_the_broad_result_when_the_retry_fail
     # The broad page is still the answer: its 500 rows, none of them a match.
     assert result.data["match"] == "unmatched"
     assert result.data["candidates"] == ["GENE ONE THERAPEUTICS"]
+
+
+def test_designations_for_keeps_a_capped_broad_match_when_the_narrower_page_has_none():
+    """A narrower search that comes back ``ok`` with no matching sponsor must
+    not throw away a match the capped broad page actually held."""
+    handler, posts = _search_body_handler({
+        "GENE": _capped_page("GENE THERAPY"),
+        "GENE THERAPY": _records_page("OTHER SPONSOR CO", rows=2, page=500, total=2),
+    })
+
+    result = fda_orphan.designations_for("GENE THERAPY INC", client=_make_client(handler))
+
+    assert posts == ["GENE", "GENE THERAPY"]
+    assert result.status == "partial"
+    # The broad answer is the one returned, so there is no retry to report.
+    assert result.data["query"] == "GENE"
+    assert "retry_from" not in result.data
+    assert result.data["match"] == "matched"
+    assert {r["sponsor"] for r in result.data["rows"]} == {"GENE THERAPY"}
+    assert result.error["error"] == "page_capped"
+
+
+def test_designations_for_capped_partial_carries_the_error_to_the_caller():
+    """A capped answer that cannot be narrowed must stay visibly incomplete."""
+    handler, posts = _search_body_handler({"ABC Bio": _capped_page("ABC BIO")})
+
+    result = fda_orphan.designations_for("ABC Bio Inc", client=_make_client(handler))
+
+    assert posts == ["ABC Bio"]
+    assert result.status == "partial"
+    assert result.error["error"] == "page_capped"
+    assert result.error["total"] == 900
+    assert result.error["parsed"] == 500
 
 
 def test_designations_for_capped_page_makes_no_second_search_when_narrow_equals_broad():
