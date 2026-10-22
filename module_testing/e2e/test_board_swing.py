@@ -133,10 +133,10 @@ class TestEmptyUniverse:
 def test_a_card_with_no_rr_shows_na(tmp_path):
     """#384 SW-S2 (DF81): a null R:R shows "R:R n/a" and no slider, never a made-up 2.0."""
     from RevenueChaser.core.tests.board_js import run_board_js
-    from RevenueChaser.module_swing_potential.pipeline import demo_payload
+    from RevenueChaser.module_swing_potential.pipeline import build_payload
     from RevenueChaser.module_swing_potential.report import render_swing_dashboard
     gate = {"passed": True, "score": "1/1", "rules": [{"id": "r", "passed": True, "actual": 1.0}]}
-    p = demo_payload()
+    p = build_payload([], run_stats={})
     p["is_fixture"] = False
     p["candidates"] = [{
         "ticker": "ZETA", "name": "Zeta Corp", "sector": "Tech", "price": 10.0, "change_1w": 0.01,

@@ -3,8 +3,8 @@
 Both boards ran the same ``run_scan`` body, copied: load the stored universe, drop the identity master's excluded
 types (R5), prefilter on D04's quotes, score every kept ticker on a thread pool (no shortlist cap since C12, #383 R3:
 the whole screenable universe), build the payload, and persist on a Fetch. ``run_screen`` is that body once; what differs per board stays in the
-board's package and is passed in: ``compute_row``, ``build_payload`` and ``persist`` (and the board's own report,
-``demo_payload`` and score tables).
+board's package and is passed in: ``compute_row``, ``build_payload`` and ``persist`` (and the board's own report
+and score tables).
 
 ``prefilter`` and ``spy_summary`` are the two helpers that were identical in both pipelines. ``prefilter`` is the one
 hook for the quote-level hygiene rule (7-A: price and dollar volume on D04, #383 R3 C12); the thresholds come from the

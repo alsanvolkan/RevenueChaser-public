@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from RevenueChaser.module_swing_potential import config, indicators, ranking, screeners
-from RevenueChaser.module_swing_potential.pipeline import build_payload, demo_payload
+from RevenueChaser.module_swing_potential.pipeline import build_payload
 from RevenueChaser.module_swing_potential.report import render_swing_dashboard
 
 
@@ -156,13 +156,6 @@ def test_build_payload_shape():
     assert "industry_group" not in c and "sub_industry" not in c
 
 
-def test_demo_payload():
-    p = demo_payload()
-    assert p["is_fixture"] is True
-    assert p["universe_total"] == 0
-    assert p["candidates"] == []
-
-
 def test_run_scan_passes_refresh_universe_flag(monkeypatch):
     from RevenueChaser.module_swing_potential import pipeline as sp
     captured = {}
@@ -183,16 +176,15 @@ def test_run_scan_default_uses_cache(monkeypatch):
 
 
 def test_render_dashboard():
-    payload = demo_payload()
+    payload = build_payload([], run_stats={})
     html = render_swing_dashboard(payload)
     assert "Swing Screener" in html
-    assert "[DEMO/FIXTURE]" in html
     assert "Flow not scanned" in html
 
 
 def test_render_uses_the_shared_filter_kit():
     """#383 C1c: the universal filters are the rc_filters bar, not the old Sector cascade / MC / EWEEK / INDEX controls."""
-    html = render_swing_dashboard(demo_payload())
+    html = render_swing_dashboard(build_payload([], run_stats={}))
     for frag in ('id="rc-filters"', "RCFilters.mount", 'data-method="minervini"'):
         assert frag in html, f"missing shared filter fragment: {frag}"
     for gone in ("sectorOk(", "mcRange(", 'id="mc-tabs"', 'id="eweek-tabs"', 'id="index-tabs"',
@@ -203,7 +195,7 @@ def test_render_uses_the_shared_filter_kit():
 
 
 def test_render_dashboard_universe_provenance():
-    payload = demo_payload()
+    payload = build_payload([], run_stats={})
     payload["universe_refreshed_by"] = "Swing Potential"
     payload["universe_generated_at"] = "2026-08-24T10:00:00+00:00"
     html = render_swing_dashboard(payload)
@@ -212,7 +204,7 @@ def test_render_dashboard_universe_provenance():
 
 
 def test_render_dashboard_no_provenance_when_missing():
-    html = render_swing_dashboard(demo_payload())
+    html = render_swing_dashboard(build_payload([], run_stats={}))
     assert "Universe refreshed by" not in html
 
 

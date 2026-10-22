@@ -10,7 +10,7 @@ import json
 import re
 
 from RevenueChaser.core.tests.board_js import run_board_js
-from RevenueChaser.module_swing_potential.pipeline import demo_payload
+from RevenueChaser.module_swing_potential.pipeline import build_payload
 from RevenueChaser.module_swing_potential.report import render_swing_dashboard
 
 _EVIL = "\"'><img src=x onerror=alert(1)>"
@@ -23,7 +23,7 @@ def _gate(name: str) -> dict:
 
 
 def _payload() -> dict:
-    p = demo_payload()
+    p = build_payload([], run_stats={})
     p["is_fixture"] = False
     p["candidates"] = [{
         "ticker": "AAA", "name": "Name", "price": 10.0, "change_pct": 1.0,
