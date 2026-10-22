@@ -81,3 +81,55 @@ class TestNormalizeZAlignment:
         assert not any(isinstance(v, float) and math.isnan(v) for v in out)
         assert len(out) == 2, "NaN inputs are dropped from the z-score set"
         assert out[0] > out[1]
+
+
+class TestPerGroupZScores:
+    def _snapshot(self, ticker, group, ratio, momentum):
+        return ETFRotationSnapshot(as_of_date=date(2026, 8, 14), ticker=ticker,
+                                   group_name=group, rs_ratio=ratio, rs_momentum=momentum)
+
+    def test_large_group_uses_its_own_z_score(self):
+        # Eight sector ETFs with a tight spread and one theme ETF far away.
+        # If the sector group used the pooled distribution, its z-scores would be compressed by the outlier.
+        sectors = [self._snapshot(f"X{i}", "sector", float(i), 0.0) for i in range(1, 9)]
+        theme = [self._snapshot("THEME", "theme", 100.0, 0.0)]
+        all_snaps = sectors + theme
+        normalize_z_scores(all_snaps)
+
+        sector_zs = [s.rs_ratio_z for s in sectors]
+
+        # The sector group has 8 finite ratios -> per-group z-scores.
+        assert max(sector_zs) > 1.5, "sector group z-score should reflect its own spread"
+
+        # Compute what the pooled z-score would have been for the top sector.
+        pooled_z = zscore_normalize([s.rs_ratio for s in all_snaps])
+        top_sector_pooled = pooled_z[7]  # sectors[7] has ratio 8.0
+        assert max(sector_zs) != top_sector_pooled, "sector z-score must differ from pooled z-score"
+
+    def test_small_group_falls_back_to_pooled_z_score(self):
+        # Two sector ETFs and eight theme ETFs -> sector group is below the threshold, so it pools.
+        sectors = [self._snapshot("XLK", "sector", 2.0, 0.0), self._snapshot("XLE", "sector", 1.0, 0.0)]
+        themes = [self._snapshot(f"T{i}", "theme", float(i + 2), 0.0) for i in range(8)]
+        all_snaps = sectors + themes
+        normalize_z_scores(all_snaps)
+
+        # Compute what the pooled z-score would be for the sector ETFs.
+        pooled_z = zscore_normalize([s.rs_ratio for s in all_snaps])
+        assert sectors[0].rs_ratio_z == pooled_z[0]
+        assert sectors[1].rs_ratio_z == pooled_z[1]
+
+    def test_group_z_threshold_is_per_dimension(self):
+        # A group with 8 finite ratios but only 2 finite momentums gets group z for ratio, pooled for momentum.
+        sectors = [self._snapshot(f"X{i}", "sector", float(i), 0.0) for i in range(1, 9)]
+        sectors[0].rs_momentum = 1.0
+        sectors[1].rs_momentum = -1.0
+        normalize_z_scores(sectors)
+
+        # Ratio: group z (8 finite values).
+        assert sectors[-1].rs_ratio_z is not None
+        assert sectors[-1].rs_ratio_z > 1.0
+
+        # Momentum: pooled z over the 2 finite values -> std > 0, so z-scores are non-zero.
+        assert sectors[0].rs_momentum_z is not None
+        assert sectors[1].rs_momentum_z is not None
+        assert sectors[0].rs_momentum_z > sectors[1].rs_momentum_z
