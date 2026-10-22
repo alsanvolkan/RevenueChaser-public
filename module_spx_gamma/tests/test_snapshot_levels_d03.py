@@ -227,3 +227,33 @@ def test_a_calendar_that_cannot_answer_is_reported_not_silent(monkeypatch):
     monkeypatch.setattr(nyse_calendar, "in_us_session_window", boom)
     spot, error = candles.live_spot()
     assert spot is None and "session window unknown" in error and "2031" in error
+
+
+def test_an_open_session_spends_exactly_one_request_on_spot(tmp_path, rawstore_tmp_db, monkeypatch):
+    """The window stays a store read; spot is the one live call, it moves the UW strike window, and the Fetch
+    records it in the manifest so a later Refresh can read it back.
+
+    Restored after I dropped it while rewriting this file (#293 review §13). Without the manifest assertion,
+    deleting the "spot" key from the manifest in snapshot.py would still pass, because the reload test writes
+    its own manifest by hand.
+    """
+    import json as _json
+
+    from RevenueChaser.core import calendar as nyse_calendar
+
+    _seed_levels()
+    monkeypatch.setattr(nyse_calendar, "in_us_session_window", lambda *a, **k: True)   # opt out of the pin
+    reads: list = []
+    monkeypatch.setattr(snap, "live_spot", lambda *a, **k: (reads.append(1), (8000.0, None))[1])
+
+    client = _FakeClient()
+    snap.fetch_snapshot(as_uw(client), DAY, data_root=tmp_path, vix_fetcher=lambda: {"tickers": {}, "vix": 15.5},
+                        cftc_fetcher=lambda: None)
+
+    assert len(reads) == 1, "spot must cost exactly one live read per snapshot"
+    spot_calls = [c for c in client.calls if c[0].endswith("/spot-exposures/strike")]
+    assert spot_calls and spot_calls[0][1]["min_strike"] == int(8000.0 * 0.75), (
+        "the live spot must move the UW strike window")
+    man = _json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
+    assert man["spot"]["value"] == 8000.0, "the Fetch must record its spot for a later Refresh"
+    assert man["spot"]["source"] == "yfinance (live)"
