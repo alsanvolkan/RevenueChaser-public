@@ -13,6 +13,7 @@ import pytest
 
 from RevenueChaser.app import dashboard, logview
 from RevenueChaser.core import config, provenance
+from RevenueChaser.core.tests.open_issues_shell import strip_open_issues_data
 
 TEMPLATE = dashboard.Path(dashboard.__file__).resolve().parent.parent / "templates" / "dashboard.html"
 
@@ -45,7 +46,7 @@ def test_the_tab_is_registered_in_the_ops_group():
 
 
 def test_the_shell_lists_the_tab(client):
-    html = client.get("/").get_data(as_text=True)
+    html = strip_open_issues_data(client.get("/").get_data(as_text=True))
     assert 'data-tab="logs"' in html and 'data-url="/view/logs"' in html
 
 

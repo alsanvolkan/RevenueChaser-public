@@ -1,6 +1,8 @@
 """#287 J3: ``.store/history.duckdb`` is a further store file for the backup. Since schema 11 the MANIFEST declares its tables, but the
-tests here create the file by hand. Backup, weekly copy, off-machine copy and restore cover it; a store without the file
-backs up exactly as before. Temp stores only; the clock is driven through ``backup_store._utcnow``."""
+tests here create the file by hand. Backup, off-machine copy and restore cover it; a store without the file backs up exactly as
+before. #342: the nightly run no longer writes a weekly ``history_*`` copy (the owner's decision of 2026-10-21); the
+``weekly/history_*`` files already on disk are left alone and still restore. Temp stores only; the clock is driven
+through ``backup_store._utcnow``."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -112,6 +114,8 @@ def test_snapshot_history_default_keeps_five(rawstore_tmp_db, tmp_path):
 # --- weekly copy ------------------------------------------------------------------------------------------------
 
 def test_weekly_keeps_the_first_history_snapshot_of_a_week_next_to_the_raw_one(rawstore_tmp_db, tmp_path, clock):
+    """``keep_weekly`` keys the ISO week by kind. The nightly run no longer calls it for history (#342), but the
+    ``weekly/history_*`` copies already on disk keep restoring, so the function stays kind-agnostic."""
     _write_history()
     out = tmp_path / "out"
     raw1, hist1 = bs.snapshot(out_dir=out), bs.snapshot_history(out_dir=out)
@@ -127,6 +131,7 @@ def test_weekly_keeps_the_first_history_snapshot_of_a_week_next_to_the_raw_one(r
 
 
 def test_weekly_history_copy_is_verified_and_never_pruned(rawstore_tmp_db, tmp_path, clock):
+    """The copies already in ``weekly/`` are the owner's to delete (#342): the new raw prune never touches them."""
     _write_history()
     out = tmp_path / "out"
     for i in range(4):
@@ -135,11 +140,47 @@ def test_weekly_history_copy_is_verified_and_never_pruned(rawstore_tmp_db, tmp_p
     weekly = _names(out / "weekly", "history_*.duckdb")
     assert len(weekly) == 4 and len(_names(out, "history_*.duckdb")) == 1
     assert bs._table_fingerprints(out / "weekly" / weekly[0]) == bs._table_fingerprints(rawstore.history_db_path())
+    for i in range(4):                                             # a raw prune, well past KEEP_WEEKLY
+        clock(_day(2026, 10, 26) + timedelta(weeks=i))
+        bs.keep_weekly(bs.snapshot(out_dir=out, keep=20), out_dir=out)
+    bs._prune_weekly(out, 1)
+    assert _names(out / "weekly", "history_*.duckdb") == weekly
 
 
 # --- the nightly run --------------------------------------------------------------------------------------------
 
-def test_main_backs_up_history_with_a_weekly_copy_and_logs_it(rawstore_tmp_db, tmp_path, clock, capsys):
+def test_a_full_run_writes_no_weekly_history_copy(rawstore_tmp_db, tmp_path, clock, capsys):
+    """#342: the history weekly copy is gone (the owner's decision, 2026-10-21); the raw one stays."""
+    rawstore.write_rows("watchlist", [{"ticker": "NOK"}])
+    _write_history()
+    out = tmp_path / "out"
+    assert bs.main(["--out", str(out)]) == 0
+    text = capsys.readouterr().out
+    assert _names(out, "history_*.duckdb")                        # the nightly history snapshot is still written
+    assert _names(out / "weekly", "raw_*.duckdb")                 # ...and so is the weekly raw copy
+    assert _names(out / "weekly", "history_*.duckdb") == []
+    assert "history weekly backup" not in text
+
+
+def test_history_keeps_five_nightly_snapshots_and_reaches_the_off_machine_copy(rawstore_tmp_db, tmp_path, clock,
+                                                                               monkeypatch):
+    """#342: the two things the history backup keeps after the weekly copy goes: 5 nightly, and the Drive mirror."""
+    rawstore.write_rows("watchlist", [{"ticker": "NOK"}])
+    _write_history()
+    out, mirror = tmp_path / "out", tmp_path / "drive"
+    mirror.mkdir()
+    monkeypatch.setattr(config, "RAW_STORE_BACKUP_MIRROR", str(mirror))
+    for i in range(7):
+        clock(_day(2026, 9, 28) + timedelta(days=i))
+        assert bs.main(["--out", str(out)]) == 0
+    kept = _names(out, "history_*.duckdb")
+    assert len(kept) == 5
+    drive = _names(mirror / SUBDIR, "history_*.duckdb")
+    assert drive and set(drive) <= set(kept)                      # the mirror still carries history
+    assert not (mirror / SUBDIR / "weekly").exists()              # and no weekly folder travels with it
+
+
+def test_main_backs_up_history_and_logs_it_without_a_weekly_copy(rawstore_tmp_db, tmp_path, clock, capsys):
     rawstore.write_rows("watchlist", [{"ticker": "NOK"}])
     _write_history()
     out = tmp_path / "out"
@@ -147,7 +188,7 @@ def test_main_backs_up_history_with_a_weekly_copy_and_logs_it(rawstore_tmp_db, t
     text = capsys.readouterr().out
     snap = _names(out, "history_*.duckdb")
     assert len(snap) == 1 and f"backup OK: {out / snap[0]}" in text
-    assert _names(out / "weekly", "history_*.duckdb") == snap and f"weekly backup OK: {out / 'weekly' / snap[0]}" in text
+    assert not (out / "weekly" / snap[0]).exists() and _names(out / "weekly", "history_*.duckdb") == []
 
 
 def test_main_keeps_five_history_snapshots_by_default_and_keep_history_overrides(rawstore_tmp_db, tmp_path, clock):
@@ -163,19 +204,20 @@ def test_main_keeps_five_history_snapshots_by_default_and_keep_history_overrides
     assert len(_names(out, "history_*.duckdb")) == 2
 
 
-def test_the_history_weekly_copy_ignores_the_raw_stopgap_switch(rawstore_tmp_db, tmp_path, clock, monkeypatch):
-    """M1 (review): ``--no-weekly`` / ``RAW_STORE_BACKUP_WEEKLY=0`` end the raw stopgap (#279). History keeps its
-    weekly copy, or its retention would fall below raw's ("longer retention", #287)."""
+def test_the_raw_weekly_switch_does_not_touch_the_history_snapshots(rawstore_tmp_db, tmp_path, clock, monkeypatch):
+    """#342: ``--no-weekly`` / ``RAW_STORE_BACKUP_WEEKLY=0`` turn off the raw weekly copies only; history's nightly
+    retention no longer has a weekly copy of its own to keep."""
     rawstore.write_rows("watchlist", [{"ticker": "NOK"}])
     _write_history()
     out = tmp_path / "out"
     assert bs.main(["--out", str(out), "--no-weekly"]) == 0
     assert len(_names(out, "history_*.duckdb")) == 1
-    assert len(_names(out / "weekly", "history_*.duckdb")) == 1 and not _names(out / "weekly", "raw_*.duckdb")
+    assert _names(out / "weekly", "history_*.duckdb") == [] and not _names(out / "weekly", "raw_*.duckdb")
     out2 = tmp_path / "out2"
     monkeypatch.setattr(config, "RAW_STORE_BACKUP_WEEKLY", "0")
     assert bs.main(["--out", str(out2)]) == 0
-    assert len(_names(out2 / "weekly", "history_*.duckdb")) == 1 and not _names(out2 / "weekly", "raw_*.duckdb")
+    assert len(_names(out2, "history_*.duckdb")) == 1
+    assert _names(out2 / "weekly", "history_*.duckdb") == [] and not _names(out2 / "weekly", "raw_*.duckdb")
 
 
 def test_a_store_without_history_backs_up_exactly_as_before(rawstore_tmp_db, tmp_path, clock, capsys):
@@ -220,7 +262,8 @@ def test_the_off_machine_copy_carries_history_but_not_its_weekly_copies(rawstore
     assert bs.main(["--out", str(out)]) == 0
     drive = mirror / SUBDIR
     assert _names(drive, "history_*.duckdb") == _names(out, "history_*.duckdb") and _names(drive, "history_*.duckdb")
-    assert _names(out / "weekly", "history_*.duckdb") and not (drive / "weekly").exists()     # #349: weekly stays local
+    assert not (drive / "weekly").exists()                                    # #349: weekly stays local
+    assert _names(out / "weekly", "raw_*.duckdb")                             # ...but raw still gets its weekly copy
     name = _names(drive, "history_*.duckdb")[-1]
     assert bs._table_fingerprints(drive / name) == bs._table_fingerprints(out / name)
 

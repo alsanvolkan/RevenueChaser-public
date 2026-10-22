@@ -19,7 +19,7 @@ Honest inputs:
 - deferred revenue / RPO are **not** scored here (R3 SaaS already owns them).
 """
 from RevenueChaser.core.config import SCORE_RANGE, R7_NI_MISMATCH_TOL as NI_MISMATCH_TOL
-from RevenueChaser.core.models.events import RuleResult
+from RevenueChaser.module_earnings_radar.models import RuleResult
 
 
 def _get(row, key, default=None):

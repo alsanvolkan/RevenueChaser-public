@@ -4,7 +4,7 @@ from __future__ import annotations
 import httpx
 
 from RevenueChaser.core.identity.sources import nasdaq
-from RevenueChaser.core.identity.tests.helpers import fixture_text
+from RevenueChaser.core.identity.tests.helpers import FakeResp, fixture_text
 
 
 def route(http):
@@ -71,6 +71,19 @@ def test_one_file_missing_is_an_error_not_a_half_directory(http):
     http.add("otherlisted.txt", {}, status=404)
     r = nasdaq.symbol_directory()
     assert r.status == "error"
+
+
+def test_the_symbol_file_follows_a_redirect(monkeypatch):
+    """httpx follows no redirect by default; the redirect body is not a symbol directory."""
+    seen = []
+
+    def get(url, *args, headers=None, timeout=None, follow_redirects=False, **kwargs):
+        seen.append(follow_redirects)
+        return FakeResp(fixture_text("nasdaqlisted.txt"))
+
+    monkeypatch.setattr("httpx.get", get)
+    assert "|" in nasdaq._fetch("nasdaqlisted.txt")
+    assert seen == [True]
 
 
 def test_base_url_env_override_disables_the_fallback(http, monkeypatch):

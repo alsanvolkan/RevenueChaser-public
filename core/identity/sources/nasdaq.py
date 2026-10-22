@@ -30,7 +30,7 @@ def _fetch(filename: str) -> str:
     last = "no host answered"
     for base in bases:
         try:
-            r = httpx.get(f"{base}/{filename}", headers=_HEADERS, timeout=60)
+            r = httpx.get(f"{base}/{filename}", headers=_HEADERS, timeout=60, follow_redirects=True)
         except httpx.HTTPError as exc:
             last = type(exc).__name__
             continue

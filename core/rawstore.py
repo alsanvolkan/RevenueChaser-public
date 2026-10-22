@@ -121,7 +121,7 @@ _READ_DELAYS = (0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0)
 # the lock is NEVER held around the transaction/statements, so operations still
 # overlap exactly as documented (a read during a held write handle works).
 _ATTACH_LOCK = threading.Lock()
-_SCHEMA_VERSION = "11"
+_SCHEMA_VERSION = "12"
 
 
 # A manifest "column" entry is either a column definition (``name TYPE ...``) or
@@ -652,6 +652,12 @@ def _tx(conn):
 #   change_history   every change of a slow-moving value, with ``valid_from``
 #   latest_cache     latest value only, for data that can be fetched or rebuilt again
 #   operational      run stamps, pointers and logs of the store itself
+# planned: True marks a table whose writer is still to come (data backbone review B15, #289). retired: True
+# marks one whose only writer is in the past. Both mean an empty table is expected; they differ in the word a
+# future listing prints. The first store call creates either like any other, so without the flag an empty table
+# reads as "0 rows", the same as one whose writer broke. Like ``history_mode`` they are data only: rawstore does
+# not read either, so neither changes DDL or a write. Drop the flag and the name in
+# ``core/tests/test_manifest_planned_289.py`` together when a writer lands, or when a retired table leaves.
 HISTORY_MODES = ("event", "session_snapshot", "change_history", "latest_cache", "operational")
 _JSON_TYPES = {"JSON"}
 _STRUCT_TYPES = {"STRUCT", "UNION"}
@@ -700,6 +706,8 @@ MANIFEST: dict[str, dict] = {
             "sha256 TEXT", "bytes_raw BIGINT", "bytes_gzip BIGINT",
             "fetched_at DOUBLE", "source TEXT", "run_at DOUBLE",
         ],
+        # Empty leftovers of the pre-D16 shape; dropping them is a separate live-store change (#431).
+        "legacy_columns": ["ticker", "content_gzip"],
         "kind": "tabular",
         "write": "append",
         "db": "edgar",
@@ -987,6 +995,7 @@ MANIFEST: dict[str, dict] = {
     },
     "sec13f_ticker_names": {
         "history_mode": "change_history",
+        "retired": True,          # no writer (#289): only the legacy import fills it
         "key": ["ticker"],
         "columns": ["ticker TEXT PRIMARY KEY", "entry JSON"],
         "kind": "json_payload",
@@ -1281,6 +1290,7 @@ MANIFEST: dict[str, dict] = {
     },
     "leaps_daily_scores": {
         "history_mode": "session_snapshot",
+        "retired": True,          # no writer (#289): only the legacy import fills it
         "key": ["ticker", "date"],
         "columns": [
             "ticker TEXT", "date TEXT", "frequency TEXT", "notional DOUBLE",
@@ -1321,6 +1331,8 @@ MANIFEST: dict[str, dict] = {
         "columns": [
             "accession TEXT PRIMARY KEY", "cik TEXT", "period TEXT",
             "filing_date TEXT", "type TEXT",
+            "report_type TEXT", "is_amendment BOOLEAN", "amendment_type TEXT",
+            "amendment_no INTEGER", "other_managers_count INTEGER",
         ],
         "kind": "tabular",
         "write": "upsert",
@@ -1328,9 +1340,14 @@ MANIFEST: dict[str, dict] = {
     },
     "sec13f_holdings": {
         "history_mode": "event",
-        "key": [],
+        "key": ["accession", "line_no"],
         "columns": [
-            "accession TEXT", "cusip TEXT", "cik TEXT", "shares DOUBLE", "value DOUBLE",
+            "accession TEXT", "line_no INTEGER", "cusip TEXT", "cik TEXT",
+            "shares DOUBLE", "value DOUBLE", "period TEXT", "putcall TEXT",
+            "sshprnamttype TEXT", "title_of_class TEXT", "investment_discretion TEXT",
+            "other_manager TEXT", "voting_sole DOUBLE", "voting_shared DOUBLE",
+            "voting_none DOUBLE",
+            "PRIMARY KEY (accession, line_no)",
         ],
         "kind": "tabular",
         "write": "append",
@@ -1354,6 +1371,7 @@ MANIFEST: dict[str, dict] = {
     },
     "sec13f_edgar_backfill": {
         "history_mode": "event",
+        "retired": True,          # no writer (#289): retired; leaves the manifest at the next bump
         "key": ["cik", "period"],
         "columns": ["cik TEXT", "period TEXT", "accession TEXT", "fetched_at TEXT",
                     "PRIMARY KEY (cik, period)"],
@@ -1509,6 +1527,7 @@ MANIFEST: dict[str, dict] = {
     # the ClinicalTrials.gov / FDA / 8-K fetchers (#186-#192) write it later.
     "catalyst_events": {
         "history_mode": "change_history",
+        "planned": True,          # no writer (#289): the fetchers of #186-#192 arrive later
         "key": ["source", "source_event_id"],
         "columns": [
             "ticker TEXT", "event_date DATE", "date_precision TEXT", "kind TEXT",
@@ -1527,6 +1546,7 @@ MANIFEST: dict[str, dict] = {
     # writer skips and reports such rows. Manifest only: the writer is #190's.
     "orphan_designations": {
         "history_mode": "change_history",
+        "planned": True,          # no writer (#289): #190's OOPD writer is not in the tree
         "key": ["ticker", "generic_name", "designation", "date_designated"],
         "columns": [
             "ticker TEXT", "generic_name TEXT", "designation TEXT", "date_designated DATE",
@@ -1544,6 +1564,7 @@ MANIFEST: dict[str, dict] = {
     # orphan_designations gate on ``match``.
     "orphan_lookups": {
         "history_mode": "event",
+        "planned": True,          # no writer (#289): the outcome table of #190's lookup
         "key": ["ticker", "session_date"],
         "columns": [
             "ticker TEXT", "session_date DATE", "sec_name TEXT", "query TEXT", "match TEXT",
@@ -1871,6 +1892,7 @@ MANIFEST: dict[str, dict] = {
         "kind": "tabular", "write": "upsert", "history_mode": "operational", "sources": [],
     },
     "sec13f_filers": {
+        "planned": True,          # no writer yet (#289): G1 #292, manifest only
         "key": ["accession"],
         "columns": [
             "accession TEXT PRIMARY KEY", "cik TEXT", "period TEXT", "name TEXT", "source TEXT",
@@ -1879,6 +1901,7 @@ MANIFEST: dict[str, dict] = {
         "kind": "tabular", "write": "append", "history_mode": "event", "sources": [],
     },
     "edgar_companyfacts": {
+        "planned": True,          # no writer yet (#289): G1 #292, manifest only
         "key": ["cik", "taxonomy", "concept", "unit", "period_start", "period_end", "accn"],
         "columns": [
             "cik TEXT", "taxonomy TEXT", "concept TEXT", "unit TEXT", "period_start TEXT",
@@ -2113,7 +2136,8 @@ HISTORY: dict[str, dict] = {
     "sec13f_metrics_history": _run_entry(["run_id", "ticker"], [
         "run_id TEXT", "ticker TEXT", "quarter DATE", "name TEXT", "sector TEXT", "shares DOUBLE", "value DOUBLE",
         "holders INTEGER", "top10_pct DOUBLE", "hhi DOUBLE", "new_holders INTEGER", "exited_holders INTEGER",
-        "buy_flow DOUBLE", "sell_flow DOUBLE", "streak INTEGER", "accel DOUBLE", "pct_out DOUBLE", "price DOUBLE",
+        "buy_flow DOUBLE", "sell_flow DOUBLE", "breadth DOUBLE", "breadth_chg DOUBLE",
+        "streak INTEGER", "accel DOUBLE", "pct_out DOUBLE", "price DOUBLE",
         "price_delta DOUBLE", "shares_outstanding DOUBLE", "float_shares DOUBLE", "short_pct DOUBLE",
         "insider_pct DOUBLE", "shares_by_quarter JSON", "chg_by_quarter JSON", "cusips JSON",
     ], "module_sec_13f", "quarter"),
@@ -2575,9 +2599,11 @@ def _note_drift(conn, name: str, existing: dict[str, str], skip: list[str],
     rebuilt = bool(skip)
     try:
         declared = {col: _base_type(name, col) for col in _columns_of(MANIFEST[name])}
+        legacy = set(MANIFEST[name].get("legacy_columns") or ())
         for col, live_type in existing.items():
             if col not in declared:
-                _record_drift(name, "extra_column", col, live_type, None, rebuilt)
+                if col not in legacy:                   # a known empty leftover, named by the MANIFEST (#431)
+                    _record_drift(name, "extra_column", col, live_type, None, rebuilt)
             elif col not in skip:
                 want = _canon_type(conn, declared[col])
                 if want.upper() != live_type.upper():

@@ -4,8 +4,8 @@ Source of truth for **equity-universe boards**. Filter widgets are implemented
 in [`core/reporting_common.py`](../core/reporting_common.py). Sector names (UW's
 11 Morningstar names) come only from [`core/gics_map.py`](../core/gics_map.py), and the
 industry is the provider text the identity master stored. Coarse **themes** come from
-the pinned NMF run (`relatedness_themes` where `level='coarse'`), not from
-`taxonomy.THEMES` / hand `ROTATION_ETFS` names. Do not fork any of these.
+the pinned NMF run (`relatedness_themes` where `level='coarse'`), not from a
+hard-coded theme list or hand `ROTATION_ETFS` names. Do not fork any of these.
 
 Parent chrome (Regime, last-run) stays in `templates/dashboard.html`. A tab
 report is title + subtitle + `Last sync: <friendly date> EOD`.
@@ -30,6 +30,12 @@ third sector level and not an always-on dropdown above the ticker.
 Co-movement, Value Chain, Relatedness, **and Implied Probability (OIPD)** use
 this order. Sector Rotation stays ETF RRG (Theme focuses dots; no MC/Earnings
 stock filters).
+
+Above all of it, in the shell and not in a board report: one collapsed
+**Open issues** group (`templates/dashboard.html`, see "Open issues — every
+dashboard" below). It is parent chrome alongside the Regime and last-run badges
+— a board's own HTML never contains it, so it cannot go stale in a cached
+artifact.
 
 ---
 
@@ -161,13 +167,12 @@ hash. The pure logic is `RCFilters.core`, unit-tested under node (`core/tests/te
 | Discord | **no** | Chat archive, no tickers. Left: channels grouped by server and category (follow checkbox, per-channel Update); right: filters (channel, text, dates) and the feed. |
 | Settings / Data health | **no** | Ops inventory, not an equity board; its ticker drill uses the kit's combobox (C1b). Plan: [`data_health.md`](data_health.md). |
 | Logs | **no** | The dashboard's own log files (`app/logview.py`), read-only: no Fetch, no Refresh, no data date. |
-| Dealer Hedge (demo) | **no** | Static teaching page (`app/dealer_hedge.py`, #376): Black-Scholes in the page itself, no data, no Fetch, no Refresh, no data date. |
 
 ### What am I looking at? — every dashboard
 
 Shared `help_html(body)` under the title, closed by default, same `.help`
 chrome. Every data tab has it (#383 C3): the 16 boards of the fixture registry
-except Logs and the Dealer Hedge demo. `core/tests/test_help_every_tab.py` holds
+except Logs. `core/tests/test_help_every_tab.py` holds
 that: each tab renders the one shared box, no board-local `.help` fork, and a body
 that says what Fetch and Refresh do there. `HELP_CSS` falls back to the standard
 dark tokens, so a board without them (Earnings Radar, SPX Gamma, LEAPS) still
@@ -176,10 +181,71 @@ what the tab shows, what Fetch vs Refresh does). Do not rename existing
 “Methodology / Rules” blocks — those stay as deeper docs; help is the
 one-screen intro.
 
+### Open issues — every dashboard
+
+A collapsed group in the shell, directly under the top bar and above the board
+iframe, says what is still open on the board you are looking at:
+
+```
+▸ Open issues — N on this board, M shared · as of 22 Oct 2026
+```
+
+One click opens it. Inside are up to three sub-sections — **This board (N)**,
+**Affects every board (M)**, **Repository-wide (R)** — and each item is a nested
+`<details>`: the title, `kind`, a repo chip only when the issue is not in
+`RevenueChaser-public`, and (when not `open`) a status chip — `parked` and
+`deferred` carry their `deferred_until` date; its one-sentence summary, visible
+as soon as the group is open; and,
+when the item is opened, the labelled fields `What is wrong`, `Evidence`,
+`Example`, `What was decided`, `Direction`, `Next step`, and last a `Links` row
+(the issue first, then any reference) that opens on GitHub in a new tab.
+
+Those fields carry a little markdown, and the panel renders a fixed subset of it:
+inline `` `code` ``, `**bold**`, `- ` bullets and a fenced block. Everything else,
+links included, stays text — the escaper runs first and the subset works on its
+output, so a field can style itself but never paint an element of its own. The
+sync keeps a clipped field's last `` ` `` span whole for the same reason.
+
+The three scopes are what keep a board's own problems at the top:
+
+- **board** — the issue names this board (`boards` in the registry);
+- **shared** — it affects every data board, so every board lists it;
+- **repo** — repository-wide, listed on **Settings / Data health** only.
+
+`Logs` is not a data board, so it shows no group.
+
+**Where the data comes from.** One checked-in file, `docs/open_issues.json`,
+read by `core/open_issues.py`; `reporting_common.open_issues_payload` turns it
+into one JSON block for the shell, which re-renders it in `showTab` (no page
+load, no board re-render). The block ships **each entry once**, under `entries`
+keyed `"<repo>#<number>"`, and a board keeps only its section keys
+(`board` / `shared` / `repo`) plus `generated_at`, `stale_days` and
+`dropped_links` (`open_issues.panel_payload`): the shared entries would otherwise
+be repeated on all 16 boards, which took the block to ~590 KB; the deduped block
+is ~107 KB for a ~111 KB registry. **Nothing calls GitHub and nothing reads the store at
+render time**, so the group is current on every page load. Every string and link
+is escaped in the shell (`html_safe.script_json` for the block, `rcEsc` for the
+rendering), and only links under `https://github.com/alsanvolkan/` are shown.
+
+**Keeping it current** is a registry job, not a board job:
+`python scripts/open_issues_sync.py --write` reads the open issues of the public
+repo from the GitHub API, keeps the curated fields, refreshes title/labels/updated-at,
+adds a new issue (pre-filled from its body) and drops a closed one. Run it after
+each merge round. A newly added issue arrives `scope="board"` with no `boards`,
+which the registry tests reject on purpose: the run is not finished until a human
+has named its boards and filled its fields. `--check` fails when the file and GitHub disagree;
+`--report-thin` lists the entries whose summary or detail is too thin to resume
+from. A bad or missing registry renders a message inside the group — never a
+failed page.
+
+Do not add the group to a board's `report.py`: a board's HTML is a cached
+artifact (`reporting_common.write_board`), so the list would freeze until the
+board was re-rendered, and Earnings Radar can only be re-rendered by a Fetch.
+
 ### Not this design
 
 - Ticker inside the filter bar.
-- Treating Theme as a third sector select, or falling back to `taxonomy.THEMES`.
+- Treating Theme as a third sector select, or falling back to a hard-coded theme list.
 - A literal index list in a board or in the component: the registry owns it (`filters_meta`).
 - A Linear/Vercel visual clone — keep RevenueChaser tokens
   (`--bg #05111F`, `--accent #0EA5E9`, `--neon`).
@@ -195,7 +261,7 @@ Theme   [ All themes        ▾ ]  [ All mediums     ▾ ]  [ All fines      ▾
 ```
 
 - Options come from the **pinned** NMF run (`relatedness_themes` +
-  `ticker_themes`), never `taxonomy.THEMES`.
+  `ticker_themes`), never a hard-coded theme list.
 - Each ticker has one path after cutover: coarse parent of its medium,
   medium parent of its fine. Picking a coarse narrows mediums to its
   children (unique `theme_medium` among rows with that coarse); picking a
@@ -203,7 +269,7 @@ Theme   [ All themes        ▾ ]  [ All mediums     ▾ ]  [ All fines      ▾
   constrain that level.”
 - Filtering **intersects** MC / earnings / index / sector (AND) via `themeOk`.
 - Empty catalog (no pin, no `theme_coarse` on `DATA`) → hide the Theme row.
-  Do not fall back to `taxonomy.THEMES`.
+  Do not fall back to a hard-coded theme list (the keyword taxonomy left in #383 C21).
 - Duplicate labels stay uniqued (`label (n)`), already done in
   `unique_theme_labels`.
 - Closed filter summary shows the finest selected label (fine, else medium,
@@ -307,6 +373,8 @@ nested grouping). Count is `{n} names`.
 - [ ] Implied Probability uses in-board filters + combobox; no `#oipd-ticker` header box
 - [ ] Universal filters use the shared filter kit (`rc_filters`, `filters_bar_html` + `filters_meta`, `docs/dashboard_ui.md` §2b); no literal index list
 - [ ] Count string matches the grouping
+- [ ] Open issues group present, with the right counts for this board
+- [ ] Registry refreshed (`scripts/open_issues_sync.py --write`) after the merge round
 - [ ] Unit tests assert chrome; e2e if fetch/refresh/routes change
 - [x] Earnings Radar v2 and ER v2 Calibration are gone (no tab, route, job, package)
 

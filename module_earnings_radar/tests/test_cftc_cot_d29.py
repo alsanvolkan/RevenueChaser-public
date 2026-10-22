@@ -12,7 +12,7 @@ from RevenueChaser.core import nightly_inputs as N
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_earnings_radar import inputs
 from RevenueChaser.module_earnings_radar.inputs import cftc_cot as d29
-from RevenueChaser.module_spx_gamma.cftc import _map_row
+from RevenueChaser.core.providers.cftc import map_row
 
 NY = ZoneInfo("America/New_York")
 NIGHT = datetime(2026, 10, 13, 19, 30, tzinfo=NY).timestamp()        # session 2026-10-13, complete
@@ -62,7 +62,7 @@ def test_d29_maps_the_socrata_row_onto_the_table_columns(rawstore_tmp_db, tmp_pa
     assert s["status"] == "ok" and s["written"] == 2
 
     row = _rows()[0]
-    mapped = _map_row(ROW)
+    mapped = map_row(ROW)
     assert mapped is not None
     assert (row["report_type"], row["market"]) == ("TFF", "E-MINI S&P 500")
     assert (row["report_date"], row["release_date"], row["session_date"]) == (
@@ -133,3 +133,25 @@ def test_d29_is_registered_in_the_step():
     assert "D29" in [s.name for s in inputs.sweeps()]
     assert d29.SWEEP.tables == ("cftc_cot",)
     assert rawstore.MANIFEST["cftc_cot"]["key"] == ["report_type", "market", "report_date"]
+
+
+# --- the request ----------------------------------------------------------------------------------------------------
+
+def test_d29_the_socrata_read_follows_a_redirect(monkeypatch):
+    """httpx follows no redirect by default; Socrata's redirect body is not the rows."""
+    seen = []
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return [ROW]
+
+    def get(url, *args, params=None, timeout=None, headers=None, follow_redirects=False, **kwargs):
+        seen.append(follow_redirects)
+        return _Resp()
+
+    monkeypatch.setattr("httpx.get", get)
+    raws, why = d29.fetch_rows()
+    assert why is None and raws == [ROW]
+    assert seen == [True]

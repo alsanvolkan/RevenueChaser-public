@@ -121,7 +121,7 @@ REGISTRY: tuple[AutomationEntry, ...] = (
     AutomationEntry(
         name="RC-Store-Backup", label="Daily store backup",
         args=("-m", "RevenueChaser.scripts.backup_store", "--keep", "5"), time="04:00",
-        description="Verified daily backup of the durable .store/ (raw, edgar, discord, history, prices) and the SPX Gamma tree; keeps 5 daily raw and 5 daily history snapshots plus the first of each week of each, and 2 daily prices snapshots. Every 7 days it re-reads the backup folder against the hashes taken at copy time.",
+        description="Verified daily backup of the durable .store/ (raw, edgar, discord, history, prices) and the SPX Gamma tree; keeps 5 daily raw and 5 daily history snapshots, the newest 12 weekly raw copies, and 2 daily prices snapshots. Every 7 days it re-reads the backup folder against the hashes taken at copy time.",
         default_install=True,
         settings=TaskSettings(wake_to_run=True, time_limit_hours=2), offmachine=True),
     AutomationEntry(

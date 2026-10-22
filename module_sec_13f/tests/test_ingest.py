@@ -8,25 +8,65 @@ import pytest
 from RevenueChaser.module_sec_13f import engine as sf
 
 
-def _write_zip(path, submission_rows, infotable_rows=None):
-    """Build a synthetic ``*_form13f.zip`` with SUBMISSION.tsv (+ optional INFOTABLE.tsv)."""
+def _write_zip(path, submission_rows, infotable_rows=None, coverpage_rows=None,
+               summarypage_rows=None, member_prefix=""):
+    """Build a synthetic ``*_form13f.zip`` with SUBMISSION.tsv (+ optional INFOTABLE.tsv).
+
+    Supports COVERPAGE.tsv and SUMMARYPAGE.tsv rows. INFOTABLE rows get
+    ``INFOTABLE_SK`` assigned sequentially per accession when it is missing, so
+    callers that only pass the legacy seven fields still produce a valid v12 row.
+    """
     with zipfile.ZipFile(path, "w") as z:
+        def writestr(name, content):
+            z.writestr(member_prefix + name, content)
+
         buf = io.StringIO()
         w = csv.DictWriter(buf, fieldnames=[
             "ACCESSION_NUMBER", "CIK", "FILING_DATE", "SUBMISSIONTYPE", "PERIODOFREPORT"],
             delimiter="\t")
         w.writeheader()
         w.writerows(submission_rows)
-        z.writestr("SUBMISSION.tsv", buf.getvalue())
+        writestr("SUBMISSION.tsv", buf.getvalue())
+
+        if coverpage_rows is not None:
+            buf = io.StringIO()
+            w = csv.DictWriter(buf, fieldnames=[
+                "ACCESSION_NUMBER", "REPORTCALENDARORQUARTER", "ISAMENDMENT",
+                "AMENDMENTNO", "AMENDMENTTYPE", "REPORTTYPE"], delimiter="\t")
+            w.writeheader()
+            w.writerows(coverpage_rows)
+            writestr("COVERPAGE.tsv", buf.getvalue())
+
+        if summarypage_rows is not None:
+            buf = io.StringIO()
+            w = csv.DictWriter(buf, fieldnames=[
+                "ACCESSION_NUMBER", "OTHERINCLUDEDMANAGERSCOUNT", "TABLEENTRYTOTAL",
+                "TABLEVALUETOTAL", "ISCONFIDENTIALOMITTED"], delimiter="\t")
+            w.writeheader()
+            w.writerows(summarypage_rows)
+            writestr("SUMMARYPAGE.tsv", buf.getvalue())
 
         if infotable_rows is not None:
             buf2 = io.StringIO()
-            w2 = csv.DictWriter(buf2, fieldnames=[
+            base_fields = [
                 "ACCESSION_NUMBER", "NAMEOFISSUER", "CUSIP", "VALUE",
-                "SSHPRNAMT", "SSHPRNAMTTYPE", "PUTCALL"], delimiter="\t")
+                "SSHPRNAMT", "SSHPRNAMTTYPE", "PUTCALL"]
+            extra_fields = [
+                "TITLEOFCLASS", "INVESTMENTDISCRETION", "OTHERMANAGER",
+                "VOTING_AUTH_SOLE", "VOTING_AUTH_SHARED", "VOTING_AUTH_NONE"]
+            # INFOTABLE_SK is the first column in real files; keep the same order.
+            fieldnames = ["INFOTABLE_SK"] + base_fields + extra_fields
+            w2 = csv.DictWriter(buf2, fieldnames=fieldnames, delimiter="\t")
             w2.writeheader()
-            w2.writerows(infotable_rows)
-            z.writestr("INFOTABLE.tsv", buf2.getvalue())
+            per_acc = {}
+            for row in infotable_rows:
+                acc = row["ACCESSION_NUMBER"]
+                per_acc[acc] = per_acc.get(acc, 0) + 1
+                if "INFOTABLE_SK" not in row or not row["INFOTABLE_SK"]:
+                    row = dict(row)
+                    row["INFOTABLE_SK"] = str(per_acc[acc])
+                w2.writerow(row)
+            writestr("INFOTABLE.tsv", buf2.getvalue())
     return path
 
 
@@ -60,14 +100,34 @@ def _two_holder_zips(tmp_path):
     return zip1, zip2
 
 
-def _row(acc, name, cusip, shares, value="1000", typ="SH", putcall=""):
-    return {"ACCESSION_NUMBER": acc, "NAMEOFISSUER": name, "CUSIP": cusip, "VALUE": value,
-            "SSHPRNAMT": shares, "SSHPRNAMTTYPE": typ, "PUTCALL": putcall}
+def _row(acc, name, cusip, shares, value="1000", typ="SH", putcall="",
+         line_no=None, title_of_class="COM", investment_discretion="SOLE",
+         other_manager="", voting_sole="0", voting_shared="0", voting_none="0"):
+    row = {"ACCESSION_NUMBER": acc, "NAMEOFISSUER": name, "CUSIP": cusip, "VALUE": value,
+           "SSHPRNAMT": shares, "SSHPRNAMTTYPE": typ, "PUTCALL": putcall,
+           "TITLEOFCLASS": title_of_class, "INVESTMENTDISCRETION": investment_discretion,
+           "OTHERMANAGER": other_manager, "VOTING_AUTH_SOLE": voting_sole,
+           "VOTING_AUTH_SHARED": voting_shared, "VOTING_AUTH_NONE": voting_none}
+    if line_no is not None:
+        row["INFOTABLE_SK"] = str(line_no)
+    return row
 
 
 def _sub(acc, cik, filed, kind, period):
     return {"ACCESSION_NUMBER": acc, "CIK": cik, "FILING_DATE": filed,
             "SUBMISSIONTYPE": kind, "PERIODOFREPORT": period}
+
+
+def _cover(acc, period, report_type="13F-HR", is_amendment="", amendment_no="",
+           amendment_type=""):
+    return {"ACCESSION_NUMBER": acc, "REPORTCALENDARORQUARTER": period,
+            "ISAMENDMENT": is_amendment, "AMENDMENTNO": amendment_no,
+            "AMENDMENTTYPE": amendment_type, "REPORTTYPE": report_type}
+
+
+def _summary(acc, other_managers_count="1"):
+    return {"ACCESSION_NUMBER": acc, "OTHERINCLUDEDMANAGERSCOUNT": other_managers_count,
+            "TABLEENTRYTOTAL": "", "TABLEVALUETOTAL": "", "ISCONFIDENTIALOMITTED": ""}
 
 
 def _two_quarter_zips(tmp_path):
@@ -113,9 +173,9 @@ class TestIngestZips:
         """Regression: holdings are written in chunks and the zip's submissions,
         names and ``ingested_zips`` marker land last, in one transaction. If the
         run dies after the holdings but before that, the next run re-ingests the
-        zip — and ``sec13f_holdings`` is append-only with no key, so every
-        share/value/holder figure would DOUBLE. The zip's own rows are cleared
-        before they are re-inserted.
+        zip — with the v12 (accession, line_no) key the second run is a no-op
+        (``ON CONFLICT DO NOTHING``), so the row count stays the same and no
+        ``DELETE`` runs.
         """
         from RevenueChaser.core import rawstore
         zip1, _ = _two_holder_zips(tmp_path)
@@ -138,11 +198,24 @@ class TestIngestZips:
         assert partial > 0, "holdings were written before the interruption"
         assert rawstore.count("sec13f_ingested_zips") == 0, "zip was not marked ingested"
 
-        # the resumed run must REPLACE those rows, not append a second copy
-        assert sf.ingest_zips([zip1]) == 1
-        assert rawstore.count("sec13f_holdings") == partial
+        deletes = []
+        raw_delete = rawstore.execute
 
-        totals = sf.compute_totals({"111111111": "AAPL"})
+        def spy_delete(sql, *args, **kwargs):
+            if isinstance(sql, str) and sql.strip().upper().startswith("DELETE"):
+                deletes.append(sql)
+            return raw_delete(sql, *args, **kwargs)
+
+        rawstore.execute = spy_delete
+        try:
+            assert sf.ingest_zips([zip1]) == 1
+        finally:
+            rawstore.execute = raw_delete
+
+        assert rawstore.count("sec13f_holdings") == partial
+        assert not deletes, "v12 ingest must not DELETE holdings"
+
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
         assert totals["AAPL"]["2026-03-31"]["shares"] == 100.0
         assert totals["AAPL"]["2026-03-31"]["holders"] == 1
 
@@ -170,14 +243,17 @@ class TestIngestZips:
 
         assert rawstore.count("sec13f_submissions") == 0
         assert rawstore.count("sec13f_ingested_zips") == 0
-        assert sf.compute_totals({"111111111": "AAPL"}) == {}  # holdings are not visible yet
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
+        assert totals == {}  # holdings are not visible yet
 
         assert sf.ingest_zips([zip1]) == 1  # a rerun is clean
         assert rawstore.count("sec13f_submissions") == 1
-        assert sf.compute_totals({"111111111": "AAPL"})["AAPL"]["2026-03-31"]["shares"] == 100.0
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
+        assert totals["AAPL"]["2026-03-31"]["shares"] == 100.0
 
     def test_holdings_are_written_in_chunks(self, isolated_store, tmp_path, monkeypatch):
-        """The zip is streamed, not held in memory: a small chunk size splits the write."""
+        """The zip is streamed, not held in memory: a small chunk size splits the write.
+        Non-lossy ingest keeps puts/PRNs too, so the stored row count is 4."""
         from RevenueChaser.core import rawstore
         monkeypatch.setattr(sf, "_HOLDINGS_CHUNK", 1)
         seen = []
@@ -191,11 +267,12 @@ class TestIngestZips:
         monkeypatch.setattr(rawstore, "write_rows", spy)
         zip1, _ = _two_holder_zips(tmp_path)
         sf.ingest_zips([zip1])
-        assert seen == [1, 1] and rawstore.count("sec13f_holdings") == 2
+        assert seen == [1, 1, 1, 1] and rawstore.count("sec13f_holdings") == 4
 
     def test_reingesting_the_same_zip_content_is_not_additive(self, isolated_store, tmp_path):
         """Same accessions arriving again (e.g. a re-downloaded zip under a new
-        name) replace their rows rather than stacking on top of them."""
+        name) are deduped by the (accession, line_no) key rather than stacking on
+        top of them. No DELETE runs."""
         from RevenueChaser.core import rawstore
         zip1, _ = _two_holder_zips(tmp_path)
         sf.ingest_zips([zip1])
@@ -209,9 +286,25 @@ class TestIngestZips:
               "VALUE": "1000", "SSHPRNAMT": "100", "SSHPRNAMTTYPE": "SH", "PUTCALL": ""},
              {"ACCESSION_NUMBER": "acc1", "NAMEOFISSUER": "MICROSOFT CORP", "CUSIP": "222222222",
               "VALUE": "500", "SSHPRNAMT": "50", "SSHPRNAMTTYPE": "SH", "PUTCALL": ""}])
-        assert sf.ingest_zips([same_content_new_name]) == 1
+
+        deletes = []
+        raw_delete = rawstore.execute
+
+        def spy_delete(sql, *args, **kwargs):
+            if isinstance(sql, str) and sql.strip().upper().startswith("DELETE"):
+                deletes.append(sql)
+            return raw_delete(sql, *args, **kwargs)
+
+        rawstore.execute = spy_delete
+        try:
+            assert sf.ingest_zips([same_content_new_name]) == 1
+        finally:
+            rawstore.execute = raw_delete
+
         assert rawstore.count("sec13f_holdings") == first
-        assert sf.compute_totals({"111111111": "AAPL"})["AAPL"]["2026-03-31"]["shares"] == 100.0
+        assert not deletes, "v12 ingest must not DELETE holdings"
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
+        assert totals["AAPL"]["2026-03-31"]["shares"] == 100.0
 
     def test_one_filing_may_list_the_same_cusip_twice(self, isolated_store, tmp_path):
         """So ``sec13f_holdings`` must NOT get an (accession, cusip) primary key —
@@ -227,7 +320,8 @@ class TestIngestZips:
               "VALUE": "2000", "SSHPRNAMT": "200", "SSHPRNAMTTYPE": "SH", "PUTCALL": ""}])
         sf.ingest_zips([z])
         assert rawstore.count("sec13f_holdings") == 2
-        assert sf.compute_totals({"111111111": "AAPL"})["AAPL"]["2026-03-31"]["shares"] == 300.0
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
+        assert totals["AAPL"]["2026-03-31"]["shares"] == 300.0
 
     def test_zip_missing_infotable_is_skipped_not_marked_ingested(self, isolated_store, tmp_path):
         bad_zip = _write_zip(
@@ -255,7 +349,7 @@ class TestIngestZips:
               "VALUE": "1500", "SSHPRNAMT": "150", "SSHPRNAMTTYPE": "SH", "PUTCALL": ""}])
 
         sf.ingest_zips([original, amendment])
-        totals = sf.compute_totals({"111111111": "AAPL"})
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
         # only the later amendment's 150 shares count, not 100 + 150
         assert totals["AAPL"]["2026-03-31"]["shares"] == 150.0
         assert totals["AAPL"]["2026-03-31"]["holders"] == 1
@@ -281,7 +375,7 @@ class TestIngestZips:
               "VALUE": "6446426607", "SSHPRNAMT": "22278223", "SSHPRNAMTTYPE": "SH", "PUTCALL": ""}])
 
         sf.ingest_zips([original, amendment])
-        totals = sf.compute_totals({"111111111": "AAPL"})
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
         assert totals["AAPL"]["2026-06-30"]["shares"] == 22278223.0
         assert totals["AAPL"]["2026-06-30"]["value"] == 6446426607.0
         assert totals["AAPL"]["2026-06-30"]["holders"] == 1
@@ -293,7 +387,7 @@ class TestComputeTotals:
         sf.ingest_zips([zip1, zip2])
 
         cusip_ticker = {"111111111": "AAPL", "222222222": "MSFT"}
-        totals = sf.compute_totals(cusip_ticker)
+        totals, _factors = sf.compute_totals(cusip_ticker)
 
         assert totals["AAPL"]["2026-03-31"]["shares"] == 300.0
         assert totals["AAPL"]["2026-03-31"]["holders"] == 2
@@ -308,7 +402,7 @@ class TestComputeTotals:
             [{"ACCESSION_NUMBER": "acc_old", "NAMEOFISSUER": "APPLE INC", "CUSIP": "111111111",
               "VALUE": "1000", "SSHPRNAMT": "100", "SSHPRNAMTTYPE": "SH", "PUTCALL": ""}])
         sf.ingest_zips([old_zip])
-        totals = sf.compute_totals({"111111111": "AAPL"})
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
         assert totals == {}  # 2024-12-31 predates START_QUARTER (2025-03-31)
 
 
@@ -387,18 +481,22 @@ class TestBuildSec13f:
 # from the code before the SQL was rewritten). The O6 rewrite must not change a figure.
 GOLDEN_TOTALS = {
     "AAPL": {
-        "2026-03-31": {"buy_flow": None, "exited_holders": None, "hhi": 5421.4, "holders": 2,
+        "2026-03-31": {"breadth": 66.6667, "breadth_chg": None,
+                       "buy_flow": None, "exited_holders": None, "hhi": 5421.4, "holders": 2,
                        "new_holders": None, "sell_flow": None, "shares": 310.0,
                        "top10_pct": 100.0, "value": 3050.0},
-        "2026-06-30": {"buy_flow": 110.0, "exited_holders": 1, "hhi": 5661.2, "holders": 2,
+        "2026-06-30": {"breadth": 66.6667, "breadth_chg": 0.0,
+                       "buy_flow": 110.0, "exited_holders": 1, "hhi": 5661.2, "holders": 2,
                        "new_holders": 1, "sell_flow": 200.0, "shares": 220.0,
                        "top10_pct": 100.0, "value": 2200.0},
     },
     "MSFT": {
-        "2026-03-31": {"buy_flow": None, "exited_holders": None, "hhi": 10000.0, "holders": 1,
+        "2026-03-31": {"breadth": 33.3333, "breadth_chg": None,
+                       "buy_flow": None, "exited_holders": None, "hhi": 10000.0, "holders": 1,
                        "new_holders": None, "sell_flow": None, "shares": 40.0,
                        "top10_pct": 100.0, "value": 400.0},
-        "2026-06-30": {"buy_flow": 20.0, "exited_holders": 0, "hhi": 10000.0, "holders": 1,
+        "2026-06-30": {"breadth": 33.3333, "breadth_chg": 0.0,
+                       "buy_flow": 20.0, "exited_holders": 0, "hhi": 10000.0, "holders": 1,
                        "new_holders": 0, "sell_flow": 0.0, "shares": 60.0,
                        "top10_pct": 100.0, "value": 600.0},
     },
@@ -411,12 +509,30 @@ class TestComputeTotalsGolden:
         """O6: amendments, churn, a two-CUSIP ticker, PRN/option noise and a 13F-NT."""
         q1, q2 = _two_quarter_zips(tmp_path)
         sf.ingest_zips([q1, q2])
-        assert sf.compute_totals(CUSIP_MAP) == GOLDEN_TOTALS
+        totals, _factors = sf.compute_totals(CUSIP_MAP)
+        assert totals == GOLDEN_TOTALS
 
     def test_no_python_side_temp_table_inserts(self, isolated_store, tmp_path):
-        """O6: the active/mapped sets reach DuckDB as one statement each, not row by row."""
+        """O6/#208: the active/mapped sets AND the VALUE-units ratio reach DuckDB as one statement each, not row
+        by row: no Python row loop is left where the 14 GB of dicts used to be."""
         import inspect
-        assert "executemany" not in inspect.getsource(sf.compute_totals)
+        for fn in (sf.compute_totals, sf._value_scale_factors):
+            assert "executemany" not in inspect.getsource(fn)
+        assert "median(" in inspect.getsource(sf._value_scale_factors)
+
+    def test_no_reader_of_the_holdings_period_column(self, isolated_store, tmp_path):
+        """#208: the legacy SQLite migration leaves ``sec13f_holdings.period`` NULL on purpose.
+
+        ``SYNTHETIC_COLUMNS`` in ``scripts/migrate_rawdata_to_duckdb.py`` fills ``line_no`` and
+        ``sshprnamttype`` for a legacy copy but not ``period``, because every period filter joins
+        ``sec13f_submissions``. That is only safe while it stays true, so assert it rather than
+        trust the comment: a query that starts reading ``h.period`` has to fill it in the migration
+        too, or a migrated store answers it with NULL.
+        """
+        import inspect
+        for fn in (sf.compute_totals, sf.held_value, sf.unmatched_summary,
+                   sf._value_scale_factors, sf._filers_by_period, sf.map_candidates):
+            assert "h.period" not in inspect.getsource(fn), fn.__name__
 
 
 class TestRecomputeTotals:
@@ -452,12 +568,17 @@ class TestRecomputeTotals:
         """An empty holdings table must not wipe the board's totals."""
         sf.save_totals({"NVDA": {"2026-03-31": {"shares": 5.0, "holders": 1}}})
         sf.save_cusip_ticker({"67066G104": "NVDA"})
-        assert sf.recompute_totals() is None
+        assert sf.recompute_totals() == {}
         assert "NVDA" in sf.load_totals()
 
 
 class TestPartialIngestNeverReachesTotals:
-    """B1: a half-written zip must not replace good totals with partial ones."""
+    """B1 / v12: a half-written re-ingest must not create orphans or corrupt totals.
+
+    With the (accession, line_no) key there is no per-accession DELETE. A crash
+    during re-ingest leaves the previous good submissions and holdings in place,
+    so the derive still sees a consistent (if stale) state.
+    """
 
     def _crash_reingest(self, tmp_path, monkeypatch):
         """Ingest fully, drop the marker (as a forced re-ingest would), die on the 2nd chunk."""
@@ -483,18 +604,19 @@ class TestPartialIngestNeverReachesTotals:
         monkeypatch.setattr(rawstore, "write_rows", real)
         return good
 
-    def test_reingest_drops_the_zips_old_submissions_with_its_holdings(
+    def test_reingest_keeps_the_zips_old_submissions_after_a_crash(
             self, isolated_store, tmp_path, monkeypatch):
+        """v12: no DELETE runs, so the previous submission rows survive the crash."""
         from RevenueChaser.core import rawstore
         self._crash_reingest(tmp_path, monkeypatch)
         accs = {r["accession"] for r in rawstore.query("SELECT accession FROM sec13f_submissions")}
-        assert "acc1" not in accs and "acc2" in accs
+        assert {"acc1", "acc2"} <= accs
 
-    def test_recompute_refuses_orphan_holdings_and_keeps_the_totals(
+    def test_recompute_still_succeeds_after_a_crash_and_keeps_totals(
             self, isolated_store, tmp_path, monkeypatch):
         good = self._crash_reingest(tmp_path, monkeypatch)
-        with pytest.raises(sf.DeriveRefused, match="orphan"):
-            sf.recompute_totals()
+        totals = sf.recompute_totals()
+        assert totals == good
         assert sf.load_totals() == good
 
     def test_a_clean_rerun_recovers(self, isolated_store, tmp_path, monkeypatch):
@@ -514,7 +636,8 @@ class TestOrphanQueryFilter:
         zip1, _ = _two_holder_zips(tmp_path)
         sf.ingest_zips([zip1])
         rawstore.write_rows("sec13f_holdings", [
-            {"accession": "ghost", "cusip": "111111111", "cik": "", "shares": 5.0, "value": 1.0}])
+            {"accession": "ghost", "line_no": 1, "cusip": "111111111", "cik": "",
+             "shares": 5.0, "value": 1.0}])
         assert sf._orphan_holdings() == 0
         sf.save_cusip_ticker({"111111111": "AAPL"})
         assert sf.recompute_totals()["AAPL"]["2026-03-31"]["shares"] == 100.0
@@ -590,3 +713,284 @@ class TestDeadPathsAreGone:
         from RevenueChaser.module_sec_13f import report
         src = inspect.getsource(report)
         assert "edgar_backfill" not in src and "qa_" not in src
+
+
+class TestAmendments:
+    """S3: RESTATEMENT replaces, NEW HOLDINGS unions onto the active set."""
+
+    def _make_original(self, tmp_path, cik="1000", period="31-MAR-2026",
+                       filed="01-MAY-2026", acc="orig"):
+        return _write_zip(
+            tmp_path / f"{acc}_form13f.zip",
+            [_sub(acc, cik, filed, "13F-HR", period)],
+            [_row(acc, "ALPHA INC", "111111111", "100", "1000")],
+            coverpage_rows=[_cover(acc, period, "13F-HR", "", "", "")])
+
+    def _make_amendment(self, tmp_path, acc, cik, period, filed, kind,
+                        shares="50", value="500"):
+        return _write_zip(
+            tmp_path / f"{acc}_form13f.zip",
+            [_sub(acc, cik, filed, "13F-HR/A", period)],
+            [_row(acc, "ALPHA INC", "111111111", shares, value)],
+            coverpage_rows=[_cover(acc, period, "13F-HR/A", "Y", "1", kind)])
+
+    def test_new_holdings_unions_with_original(self, isolated_store, tmp_path):
+        orig = self._make_original(tmp_path)
+        amend = self._make_amendment(tmp_path, "amend", "1000", "31-MAR-2026",
+                                     "15-MAY-2026", "NEW HOLDINGS")
+        sf.ingest_zips([orig, amend])
+        sf.save_cusip_ticker({"111111111": "A"})
+        totals = sf.recompute_totals()
+        assert totals["A"]["2026-03-31"]["shares"] == 150.0
+        assert totals["A"]["2026-03-31"]["holders"] == 1
+
+    def test_restatement_replaces_original(self, isolated_store, tmp_path):
+        orig = self._make_original(tmp_path)
+        amend = self._make_amendment(tmp_path, "amend", "1000", "31-MAR-2026",
+                                     "15-MAY-2026", "RESTATEMENT", "200", "2000")
+        sf.ingest_zips([orig, amend])
+        sf.save_cusip_ticker({"111111111": "A"})
+        totals = sf.recompute_totals()
+        assert totals["A"]["2026-03-31"]["shares"] == 200.0
+        assert totals["A"]["2026-03-31"]["holders"] == 1
+
+    def test_chain_new_holdings_then_restatement(self, isolated_store, tmp_path):
+        orig = self._make_original(tmp_path, acc="o")
+        nh = self._make_amendment(tmp_path, "nh", "1000", "31-MAR-2026",
+                                  "15-MAY-2026", "NEW HOLDINGS", "50", "500")
+        rest = self._make_amendment(tmp_path, "rest", "1000", "31-MAR-2026",
+                                    "20-MAY-2026", "RESTATEMENT", "75", "750")
+        sf.ingest_zips([orig, nh, rest])
+        sf.save_cusip_ticker({"111111111": "A"})
+        totals = sf.recompute_totals()
+        assert totals["A"]["2026-03-31"]["shares"] == 75.0
+
+    def test_chain_restatement_then_new_holdings(self, isolated_store, tmp_path):
+        orig = self._make_original(tmp_path, acc="o")
+        rest = self._make_amendment(tmp_path, "rest", "1000", "31-MAR-2026",
+                                    "15-MAY-2026", "RESTATEMENT", "75", "750")
+        nh = self._make_amendment(tmp_path, "nh", "1000", "31-MAR-2026",
+                                  "20-MAY-2026", "NEW HOLDINGS", "50", "500")
+        sf.ingest_zips([orig, rest, nh])
+        sf.save_cusip_ticker({"111111111": "A"})
+        totals = sf.recompute_totals()
+        assert totals["A"]["2026-03-31"]["shares"] == 125.0
+
+    def test_empty_amendment_type_replaces(self, isolated_store, tmp_path):
+        orig = self._make_original(tmp_path)
+        amend = _write_zip(
+            tmp_path / "amend_form13f.zip",
+            [_sub("amend", "1000", "15-MAY-2026", "13F-HR/A", "31-MAR-2026")],
+            [_row("amend", "ALPHA INC", "111111111", "200", "2000")],
+            coverpage_rows=[{"ACCESSION_NUMBER": "amend",
+                             "REPORTCALENDARORQUARTER": "31-MAR-2026",
+                             "ISAMENDMENT": "Y", "AMENDMENTNO": "1",
+                             "AMENDMENTTYPE": "", "REPORTTYPE": "13F-HR/A"}])
+        sf.ingest_zips([orig, amend])
+        sf.save_cusip_ticker({"111111111": "A"})
+        totals = sf.recompute_totals()
+        assert totals["A"]["2026-03-31"]["shares"] == 200.0
+
+    def test_same_filing_date_ordered_by_amendment_no(self, isolated_store, tmp_path):
+        """Two /A on one FILING_DATE: AMENDMENTNO decides, and a union-then-replace chain proves it.
+
+        ``amendment 1`` restates (300 shares), ``amendment 2`` adds 50. Ordered by AMENDMENTNO the
+        restatement lands first and the addition unions onto it (350). Ordered by accession instead
+        — the reverse of AMENDMENTNO on purpose — the addition lands first and the restatement
+        wipes it (300), so this test fails when AMENDMENTNO is dropped from the order.
+        """
+        self._make_original(tmp_path, acc="o", filed="01-MAY-2026")
+        rest = _write_zip(
+            tmp_path / "b_rest_form13f.zip",
+            [_sub("b-rest", "1000", "15-MAY-2026", "13F-HR/A", "31-MAR-2026")],
+            [_row("b-rest", "ALPHA INC", "111111111", "300", "3000")],
+            coverpage_rows=[_cover("b-rest", "31-MAR-2026", "13F-HR/A", "Y", "1", "RESTATEMENT")])
+        add = _write_zip(
+            tmp_path / "a_add_form13f.zip",
+            [_sub("a-add", "1000", "15-MAY-2026", "13F-HR/A", "31-MAR-2026")],
+            [_row("a-add", "ALPHA INC", "111111111", "50", "500")],
+            coverpage_rows=[_cover("a-add", "31-MAR-2026", "13F-HR/A", "Y", "2", "NEW HOLDINGS")])
+        sf.ingest_zips([tmp_path / "o_form13f.zip", rest, add])
+        sf.save_cusip_ticker({"111111111": "A"})
+        totals = sf.recompute_totals()
+        assert totals["A"]["2026-03-31"]["shares"] == 350.0
+
+    def test_non_amendment_with_new_holdings_resets_active_set(self, isolated_store, tmp_path):
+        """A 13F-HR (no /A) carrying AMENDMENTTYPE=NEW HOLDINGS still replaces."""
+        orig = self._make_original(tmp_path, acc="o")
+        weird = _write_zip(
+            tmp_path / "weird_form13f.zip",
+            [_sub("weird", "1000", "15-MAY-2026", "13F-HR", "31-MAR-2026")],
+            [_row("weird", "ALPHA INC", "111111111", "60", "600")],
+            coverpage_rows=[{"ACCESSION_NUMBER": "weird",
+                             "REPORTCALENDARORQUARTER": "31-MAR-2026",
+                             "ISAMENDMENT": "N", "AMENDMENTNO": "",
+                             "AMENDMENTTYPE": "NEW HOLDINGS", "REPORTTYPE": "13F-HR"}])
+        sf.ingest_zips([orig, weird])
+        sf.save_cusip_ticker({"111111111": "A"})
+        totals = sf.recompute_totals()
+        assert totals["A"]["2026-03-31"]["shares"] == 60.0
+
+    def test_notice_filings_contribute_no_holdings(self, isolated_store, tmp_path):
+        z = _write_zip(
+            tmp_path / "nt_form13f.zip",
+            [_sub("nt1", "1000", "01-MAY-2026", "13F-NT", "31-MAR-2026"),
+             _sub("nt1a", "1000", "15-MAY-2026", "13F-NT/A", "31-MAR-2026")],
+            [_row("nt1", "ALPHA INC", "111111111", "100", "1000")])
+        sf.ingest_zips([z])
+        sf.save_cusip_ticker({"111111111": "A"})
+        assert sf.recompute_totals() == {}
+        assert sf.active_accessions_db() == set()
+
+
+class TestNonLossyIngest:
+    """S2: every INFOTABLE row is stored; the derive filters long equity."""
+
+    def test_put_and_prn_rows_are_stored_but_excluded(self, isolated_store, tmp_path):
+        z = _write_zip(
+            tmp_path / "nonlossy_form13f.zip",
+            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            [_row("a", "ALPHA INC", "111111111", "100", "1000", typ="SH"),
+             _row("a", "ALPHA INC", "111111111", "99", "99", putcall="PUT"),
+             _row("a", "ALPHA INC", "111111111", "88", "88", typ="PRN")])
+        sf.ingest_zips([z])
+        from RevenueChaser.core import rawstore
+        assert rawstore.count("sec13f_holdings") == 3
+        sf.save_cusip_ticker({"111111111": "A"})
+        totals = sf.recompute_totals()
+        assert totals["A"]["2026-03-31"]["shares"] == 100.0
+        assert totals["A"]["2026-03-31"]["value"] == 1000.0
+
+    def test_line_no_stable_on_reingest(self, isolated_store, tmp_path):
+        z = _write_zip(
+            tmp_path / "stable_form13f.zip",
+            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            [_row("a", "ALPHA INC", "111111111", "100", "1000", line_no=1),
+             _row("a", "BETA INC", "222222222", "200", "2000", line_no=2)])
+        sf.ingest_zips([z])
+        from RevenueChaser.core import rawstore
+        first = rawstore.count("sec13f_holdings")
+        # Simulate the v12 reset minus the DROP: the marker goes, the holdings stay, so the
+        # second ingest really re-inserts the same (accession, line_no) rows.
+        rawstore.execute("DELETE FROM sec13f_ingested_zips")
+        deletes = []
+        raw_delete = rawstore.execute
+
+        def spy_delete(sql, *args, **kwargs):
+            if isinstance(sql, str) and sql.strip().upper().startswith("DELETE"):
+                deletes.append(sql)
+            return raw_delete(sql, *args, **kwargs)
+
+        rawstore.execute = spy_delete
+        try:
+            assert sf.ingest_zips([z]) == 1
+        finally:
+            rawstore.execute = raw_delete
+        assert rawstore.count("sec13f_holdings") == first
+        assert not deletes
+
+    def test_missing_coverpage_ingests_with_null_columns(self, isolated_store, tmp_path, caplog):
+        z = _write_zip(
+            tmp_path / "nocover_form13f.zip",
+            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            [_row("a", "ALPHA INC", "111111111", "100", "1000")])
+        import logging
+        with caplog.at_level(logging.WARNING):
+            sf.ingest_zips([z])
+        from RevenueChaser.core import rawstore
+        row = rawstore.query("SELECT * FROM sec13f_submissions WHERE accession='a'")[0]
+        assert row["report_type"] is None
+        assert row["is_amendment"] is None
+        assert row["amendment_type"] is None
+        assert row["other_managers_count"] is None
+        assert any("No COVERPAGE.tsv" in r.getMessage() for r in caplog.records)
+
+    def test_option_only_cusip_is_not_named(self, isolated_store, tmp_path):
+        z = _write_zip(
+            tmp_path / "optiononly_form13f.zip",
+            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            [_row("a", "ALPHA INC", "111111111", "99", "99", putcall="PUT")])
+        sf.ingest_zips([z])
+        from RevenueChaser.core import rawstore
+        assert rawstore.count("sec13f_cusip_names") == 0
+
+    def test_summarypage_populates_other_managers_count(self, isolated_store, tmp_path):
+        z = _write_zip(
+            tmp_path / "summary_form13f.zip",
+            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            [_row("a", "ALPHA INC", "111111111", "100", "1000")],
+            coverpage_rows=[_cover("a", "31-MAR-2026")],
+            summarypage_rows=[_summary("a", "7")])
+        sf.ingest_zips([z])
+        from RevenueChaser.core import rawstore
+        row = rawstore.query("SELECT * FROM sec13f_submissions WHERE accession='a'")[0]
+        assert row["other_managers_count"] == 7
+
+class TestValueUnits:
+    """S4: VALUE thousands are detected from D01 closes and rescaled."""
+
+    def _bar(self, ticker, session_date, close):
+        return {"ticker": ticker, "session_date": session_date, "close": close,
+                "source": "test"}
+
+    def _filings_for_scale(self, tmp_path, cik="1000", period="31-MAR-2026",
+                            ticker_cusip="111111111", shares="1000",
+                            value="100", n_names=5):
+        rows = []
+        for i in range(n_names):
+            cusip = f"{ticker_cusip[:-3]}{i:03d}"
+            rows.append(_row("a", f"NAME{i}", cusip, shares, value, line_no=i + 1))
+        z = _write_zip(
+            tmp_path / "scale_form13f.zip",
+            [_sub("a", cik, "01-MAY-2026", "13F-HR", period)],
+            rows)
+        # map each cusip to the same ticker
+        cusip_map = {f"{ticker_cusip[:-3]}{i:03d}": "TICK" for i in range(n_names)}
+        return z, cusip_map
+
+    def test_rescale_when_implied_price_is_one_thousandth(self, isolated_store, tmp_path):
+        from RevenueChaser.core import rawstore
+        z, cmap = self._filings_for_scale(tmp_path, value="100", shares="1000", n_names=5)
+        rawstore.write_rows("price_bars_daily", [
+            self._bar("TICK", "2026-03-31", 100.0)])
+        sf.ingest_zips([z])
+        sf.save_cusip_ticker(cmap)
+        totals = sf.recompute_totals()
+        assert totals["TICK"]["2026-03-31"]["value"] == 500_000.0
+        assert totals["TICK"]["2026-03-31"]["shares"] == 5000.0
+        _totals, factors = sf.compute_totals(cmap)
+        assert sf.value_scale_summary(factors)["rescaled"] == 1
+
+    def test_no_rescale_when_implied_price_matches_close(self, isolated_store, tmp_path):
+        from RevenueChaser.core import rawstore
+        # Slightly under the close (0.98), the real shape of a quarter: near 1.0, not on it.
+        z, cmap = self._filings_for_scale(tmp_path, value="98000", shares="1000", n_names=5)
+        rawstore.write_rows("price_bars_daily", [
+            self._bar("TICK", "2026-03-31", 100.0)])
+        sf.ingest_zips([z])
+        sf.save_cusip_ticker(cmap)
+        totals = sf.recompute_totals()
+        assert totals["TICK"]["2026-03-31"]["value"] == 490_000.0
+        _totals, factors = sf.compute_totals(cmap)
+        assert sf.value_scale_summary(factors)["rescaled"] == 0
+
+    def test_not_rescaled_with_too_few_names(self, isolated_store, tmp_path):
+        from RevenueChaser.core import rawstore
+        z, cmap = self._filings_for_scale(tmp_path, value="100", shares="1000", n_names=4)
+        rawstore.write_rows("price_bars_daily", [
+            self._bar("TICK", "2026-03-31", 100.0)])
+        sf.ingest_zips([z])
+        sf.save_cusip_ticker(cmap)
+        totals = sf.recompute_totals()
+        assert totals["TICK"]["2026-03-31"]["value"] == 400.0
+        _totals, factors = sf.compute_totals(cmap)
+        assert sf.value_scale_summary(factors)["rescaled"] == 0
+
+    def test_no_prices_skips_check(self, isolated_store, tmp_path):
+        z, cmap = self._filings_for_scale(tmp_path, value="100", shares="1000", n_names=5)
+        sf.ingest_zips([z])
+        sf.save_cusip_ticker(cmap)
+        totals = sf.recompute_totals()
+        assert totals["TICK"]["2026-03-31"]["value"] == 500.0
+        _totals, factors = sf.compute_totals(cmap)
+        assert sf.value_scale_summary(factors)["checked"] == 0

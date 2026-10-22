@@ -42,14 +42,18 @@ def test_card_with_a_blank_spine_industry_reads_unclassified(rawstore_tmp_db):
     assert (card["sector"], card["industry"]) == ("Technology", "Unclassified")
 
 
-def test_themes_still_read_the_vendor_industry_text_not_the_spine_industry(rawstore_tmp_db):
-    """The keyword matcher keeps the vendor's free text; the card's own ``industry`` is the spine's (#266)."""
+def test_themes_are_the_pinned_run_never_the_vendor_industry_text(rawstore_tmp_db):
+    """C21 (#383): the card's themes are the pinned medium labels; the vendor's free text no longer matches any."""
     _seed([("TEST", "Technology", "Software - Application")])
+    rawstore.write_rows("theme_runs", [{"id": "r1", "created_at": "x", "k_fine": 1, "k_medium": 1,
+                                        "k_coarse": 1, "jaccard": 1.0, "is_current": 1}])
+    rawstore.write_rows("ticker_themes", [{"ticker": "TEST", "theme_id": "r1:m0", "theme": "Memory",
+                                           "level": "medium", "theme_run_id": "r1"}])
     fin = _fin()
-    fin["info"]["industry"] = "Airlines"
+    fin["info"]["industry"] = "Airlines"        # a keyword the old matcher would have labelled "Airlines"
     card = engine.score_ticker("TEST", fin, _tech())
-    assert card["industry"] == "Software - Application"
-    assert "Airlines" in card["themes"]
+    assert card["industry"] == "Software - Application"     # still the spine's, not the vendor's (#266)
+    assert card["themes"] == ["Memory"]
 
 
 def test_hunter_skips_excluded_types(rawstore_tmp_db, monkeypatch):

@@ -41,7 +41,7 @@ def _age_cache(ticker: str, days: float):
 @pytest.fixture
 def writes(monkeypatch):
     """Record every series ``_write_ohlc`` wrote. Since C8 (#383 R3) it goes through the one writer
-    (``core/ohlc_cache.py``), which decides #261 itself: a refused series is called but not written."""
+    (``module_swing_potential/ohlc_cache.py``), which decides #261 itself: a refused series is called but not written."""
     seen: list[int] = []
     real = indicators._write_ohlc
 

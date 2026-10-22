@@ -186,8 +186,35 @@ _STI_HTM_TAGS = ["HeldToMaturitySecuritiesCurrent",
 # A multi-tag field on the annual path keeps today's pick (the newest, then the longest series) and
 # only EXTENDS it (#246): years a filer reported under an older tag are added when they are a hole
 # inside that series or a contiguous run below it, each ending one fiscal year from its neighbour
-# (``_backfill_history``). A year the pick holds is never replaced and a gap is never bridged.
+# (``_backfill_history``). That function never bridges a gap, and a year the pick holds is never
+# replaced. The add-only revenue concept below (#435) is the one exception to adjacency: its merge
+# adds every year it reports that the pick lacks, so a revenue series can hold a non-adjacent pair.
+# It never lands in the newest pair (measured: 5 of 152 filers gain a non-adjacent pair, 0 at the
+# newest), so year-on-year growth — the last two non-null years — still reads the pick's own years.
 # Quarterly series are not merged.
+#
+# ``revenue`` reads the ASC 606 including-assessed-tax sibling
+# (``RevenueFromContractWithCustomerIncludingAssessedTax``) LAST (#435): 341 US filers have a fresh
+# record and no revenue, and 25 of 39 measured tag only that one in the newest annual period. It
+# NEVER competes for the pick, though: the pick is exactly the one over the three older tags
+# (``Revenues``, ``...ExcludingAssessedTax``, ``SalesRevenueNet``), and this tag then only ADDS the
+# years that pick lacks (``_ADD_ONLY_CONCEPTS`` below). When those three hold no series at all, the
+# including-tax series IS the primary, so the filers it is here for keep gaining revenue.
+#
+# Letting it win the pick was measured to regress filers that already had revenue: it ends later
+# than the other tags often enough to be the newest series, and the merge then replaced years the
+# older tags already reported (Regal Rexnord FY2022 3.81bn became 5.22bn, AST SpaceMobile FY2024
+# moved by -68%, one filer lost eleven years). The premise that the two tax tags differ only by the
+# assessed tax is false, so neither is "the narrower one" and neither may take a year from the
+# other. Bank top lines are a different definition of the top line and are never revenue: since #450
+# ``RevenuesNetOfInterestExpense`` and ``InterestAndDividendIncomeOperating`` are read into two fields
+# of their own, one tag each, which no reader of ``revenue`` looks at, so no filer's revenue value
+# moves. They are two fields and not one for the same reason the two tax tags may not merge: net of
+# interest expense and gross interest and dividend income differ by the whole interest expense line,
+# so one field fed by both would step wherever a filer switched tags, and the #246 backfill would
+# read that step as history. No other tag that merely contains the word "Revenue" is a top line either
+# (``ContractWithCustomerLiabilityRevenueRecognized``, ``IncreaseDecreaseInDeferredRevenue``,
+# ``CostOfRevenue`` and pro-forma acquisition revenue).
 #
 # ``cost_of_revenue`` is the one exception: it is resolved PER PERIOD in strict
 # priority order (``_PRIORITY_FIELDS`` below), never by the longest series, and it
@@ -200,8 +227,20 @@ _STI_HTM_TAGS = ["HeldToMaturitySecuritiesCurrent",
 # only one that is ever counted (``core/liquidity.py``); ``marketable_securities_noncurrent``
 # and ``long_term_investments`` (equity-method and strategic stakes, not cash-like) are stored
 # for visibility and never enter a gate. None of the fields in ``_NEVER_A_RECORD`` adds a record.
+#
+# A concept listed here may be the primary only when no other tag of its field reports anything,
+# and otherwise only adds the years the primary lacks (any missing year, not just a contiguous run).
+_ADD_ONLY_CONCEPTS = frozenset({"RevenueFromContractWithCustomerIncludingAssessedTax"})
+
+
 CONCEPTS = {
-    "revenue": (["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"], "USD"),
+    "revenue": (["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet",
+                 "RevenueFromContractWithCustomerIncludingAssessedTax"], "USD"),
+    # #450: a bank's income-statement top line, never revenue (see the comment above). One field per
+    # tag, because the two tags are two different quantities: a single field would let the #246
+    # backfill take a year from the other tag and store a series that steps on a tag change.
+    "revenue_net_of_interest_expense": (["RevenuesNetOfInterestExpense"], "USD"),
+    "interest_and_dividend_income": (["InterestAndDividendIncomeOperating"], "USD"),
     "gross_profit": (["GrossProfit"], "USD"),
     "cost_of_revenue": (["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold",
                          "CostOfServices"], "USD"),
@@ -270,18 +309,38 @@ _PRIORITY_FIELDS = frozenset({"cost_of_revenue", "marketable_securities_noncurre
                               "long_term_investments", "share_repurchases",
                               "share_based_compensation"}) | _DEBT_COMPONENT_FIELDS
 
+# The two bank top lines of #450, grouped so the sets below name them once.
+_BANK_TOP_LINE_FIELDS = frozenset({"revenue_net_of_interest_expense", "interest_and_dividend_income"})
+
 # Fields that never add a record: the readers take the last record as the latest period, so a
 # period holding only these fields is no period. ``short_term_investments`` has its own
 # resolution (``_short_term_investments``) and so is not in ``_PRIORITY_FIELDS``.
 _NEVER_A_RECORD = frozenset({"cost_of_revenue", "short_term_investments",
                              "marketable_securities_noncurrent", "long_term_investments",
-                             "share_repurchases", "share_based_compensation"}) | _DEBT_COMPONENT_FIELDS
+                             "share_repurchases", "share_based_compensation",
+                             }) | _DEBT_COMPONENT_FIELDS | _BANK_TOP_LINE_FIELDS
 
 # Flows that cannot be negative. A YTD difference that comes out negative for one of them (a Q4 whose
 # FY was restated for discontinued operations while the 9M was not) is dropped and flagged
 # ``<field>_suspect``, never ``abs()``. Operating cash flow, net income and EBIT may be negative.
+# The two bank top lines (#450) are deliberately out: ``RevenuesNetOfInterestExpense`` can be
+# genuinely negative (net interest expense plus large securities losses), unlike ``revenue``, so a
+# negative derived quarter of theirs is kept and carries no ``_suspect`` flag.
 _NON_NEGATIVE_FLOWS = frozenset({"revenue", "cost_of_revenue", "capex", "depreciation", "rd_expense",
                                  "share_repurchases", "share_based_compensation"})
+
+# Fields written only when they hold a value: a record has no such key when the filer reports none.
+# Every older field is present on every record with ``None``; only a new field can take this shape, and
+# it is the right one for the bank top lines (#450), which no reader consumes yet: "this filer reports
+# no bank top line" must not look like a stored zero.
+#
+# An absent key therefore means one of TWO things: the filer reports neither tag, OR the row was
+# extracted before #450. ``edgar_financials`` has no TTL, ``get_fundamentals`` returns a stored row
+# unconditionally and no re-extraction script exists, so the first reader of these fields has to land
+# an ``EXTRACT_VERSION`` bump TOGETHER with a re-extraction: the bump alone does not fill them, and on
+# its own it marks the whole scored universe behind (``module_fundamentals/history.py``). That is why
+# this change leaves the version at 2.
+_OMIT_WHEN_ABSENT = _BANK_TOP_LINE_FIELDS
 
 # Version of the extraction rules, stored in ``meta`` of every row this module writes. A row without
 # it was extracted before #158 (no YTD-derived quarters, no per-field filed/accn). Bump it whenever
@@ -338,9 +397,14 @@ def _backfill_history(primary: dict[str, tuple[float, str]],
     if its period end is one fiscal year (``_YEAR_DAYS``) from the year next to it. A calendar-year
     key one apart is not always an adjacent fiscal year: a 52/53-week filer's FY2014 can end on
     2015-01-03. The chain stops at the first year that is missing or fails, and nothing is added
-    above the newest year. So a gap is never bridged: the readers take the last two NON-NULL
-    revenues as year-on-year growth, and 2026 against 2024 must stay "unknown". Of several tags
-    reporting one added year, the first in concept-list order whose end fits wins.
+    above the newest year. So THIS function never bridges a gap: the readers take the last two
+    NON-NULL revenues as year-on-year growth, and 2026 against 2024 must stay "unknown". Of several
+    tags reporting one added year, the first in concept-list order whose end fits wins.
+
+    That adjacency is what this function adds. The add-only revenue merge that runs after it
+    (``_annual_facts``, #435) adds any year the pick lacks, adjacent or not, so the result of the
+    whole extraction can hold a non-adjacent pair of years; it is never at the newest pair, which
+    stays adjacent-or-primary (the ``_ADD_ONLY_CONCEPTS`` note above has the measurement).
     """
     candidates: dict[str, list[tuple[float, str]]] = {}
     for series in all_series:
@@ -421,16 +485,26 @@ def _annual_facts(facts: dict, concepts: list[str], unit: str) -> dict[str, tupl
                 for y, (fl, v, e, ac, st) in by_year.items()}
 
     # En güncel (maks yıl) ve en kapsamlı konsept serisini seç; diğer konseptler yalnızca onun
-    # eksik bıraktığı bitişik yılları ekler (#246)
-    found = []
+    # eksik bıraktığı bitişik yılları ekler (#246). An add-only concept (#435) does not compete:
+    # it is left out of ``best`` here and adds its years after the merge, so it can never take a
+    # year an older tag already holds.
+    found: dict[str, dict[str, tuple[float, str]]] = {}
     for concept in concepts:
+        if concept in _ADD_ONLY_CONCEPTS:
+            continue
         series = _one(concept)
         if not series:
             continue
-        found.append(series)
+        found[concept] = series
         if not best or max(series) > max(best) or (max(series) == max(best) and len(series) > len(best)):
             best = series
-    return _backfill_history(best, found) if best else best
+    merged = _backfill_history(best, list(found.values())) if best else {}
+    for concept in concepts:  # the years the pick lacks, older, newer or inside a hole — adjacent or not (#435)
+        if concept not in _ADD_ONLY_CONCEPTS:
+            continue
+        for year, val_end in _one(concept).items():
+            merged.setdefault(year, val_end)
+    return merged
 
 
 def _series_by_year(facts: dict, concepts: list[str], unit: str) -> dict[str, float]:
@@ -692,6 +766,15 @@ def _field_series(facts_fn, facts: dict):
     return series, ends, flags, infos
 
 
+def _put_field_values(rec: dict, period: str, series: dict[str, dict[str, float]]) -> None:
+    """Set every field's value for one period; a field in ``_OMIT_WHEN_ABSENT`` gets no key at all."""
+    for field in CONCEPTS:
+        value = series[field].get(period)
+        if value is None and field in _OMIT_WHEN_ABSENT:
+            continue
+        rec[field] = value
+
+
 def _record_periods(series: dict[str, dict[str, float]]) -> list[str]:
     """The periods that get a record. A field in ``_NEVER_A_RECORD`` alone never adds one: the
     readers take the last record as the latest period, and e.g. a cost with no other figure is
@@ -717,8 +800,14 @@ def _period_ends(rec: dict, period: str, ends: dict[str, dict[str, str]]) -> dic
     two fiscal years ending in one calendar year share a record. A later adoption slice that
     pairs figures from one record can then check they ended on the same date. Only fields
     that hold a value are listed. A derived ``gross_profit`` ends with the revenue it came from.
+
+    A field in ``_OMIT_WHEN_ABSENT`` is left out entirely: ``core/fiscal_year.py`` reads this map as
+    ``ends.get("revenue") or max(ends.values())``, so for a bank — which has no ``revenue`` — any
+    extra end date here would move the record's period end, and with it the staleness and adjacency
+    gates that decide a card. These fields have no reader, so they must not reach that ``max()``.
     """
-    out = {f: ends[f][period] for f in CONCEPTS if period in ends[f]}
+    out = {f: ends[f][period] for f in CONCEPTS
+           if period in ends[f] and f not in _OMIT_WHEN_ABSENT}
     if rec.get("gross_profit_derived") and "revenue" in out:
         out["gross_profit"] = out["revenue"]
     return out
@@ -799,8 +888,7 @@ def extract_annual(facts: dict) -> list[dict]:
     annual = []
     for y in years:
         rec = {"fiscal_year": y}
-        for field in CONCEPTS:
-            rec[field] = series[field].get(y)
+        _put_field_values(rec, y, series)
         lt = rec.get("lt_debt")
         ltc = rec.get("lt_debt_current")
         if lt is not None or ltc is not None:
@@ -827,8 +915,7 @@ def extract_quarterly(facts: dict) -> list[dict]:
     quarterly = []
     for e in periods:
         rec = {"period": e}
-        for field in CONCEPTS:
-            rec[field] = series[field].get(e)
+        _put_field_values(rec, e, series)
         lt = rec.get("lt_debt")
         ltc = rec.get("lt_debt_current")
         if lt is not None or ltc is not None:
