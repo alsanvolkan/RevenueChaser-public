@@ -139,7 +139,8 @@ def coarse_theme_catalog() -> dict[str, list[str]]:
     the Sector Rotation Theme control matches the Relatedness board and still has
     one key per coarse theme when two share a label. The overlay lookup uses the
     label stored in ``relatedness_themes`` (before the catalog renames it and before
-    the suffix is added). Never falls back to ``taxonomy.THEMES``.
+    the suffix is added). Never falls back to a hard-coded theme list (the keyword
+    taxonomy left in #383 C21).
     """
     if not _current_run_id():
         return {}

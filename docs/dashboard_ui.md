@@ -4,8 +4,8 @@ Source of truth for **equity-universe boards**. Filter widgets are implemented
 in [`core/reporting_common.py`](../core/reporting_common.py). Sector names (UW's
 11 Morningstar names) come only from [`core/gics_map.py`](../core/gics_map.py), and the
 industry is the provider text the identity master stored. Coarse **themes** come from
-the pinned NMF run (`relatedness_themes` where `level='coarse'`), not from
-`taxonomy.THEMES` / hand `ROTATION_ETFS` names. Do not fork any of these.
+the pinned NMF run (`relatedness_themes` where `level='coarse'`), not from a
+hard-coded theme list or hand `ROTATION_ETFS` names. Do not fork any of these.
 
 Parent chrome (Regime, last-run) stays in `templates/dashboard.html`. A tab
 report is title + subtitle + `Last sync: <friendly date> EOD`.
@@ -179,7 +179,7 @@ one-screen intro.
 ### Not this design
 
 - Ticker inside the filter bar.
-- Treating Theme as a third sector select, or falling back to `taxonomy.THEMES`.
+- Treating Theme as a third sector select, or falling back to a hard-coded theme list.
 - A literal index list in a board or in the component: the registry owns it (`filters_meta`).
 - A Linear/Vercel visual clone — keep RevenueChaser tokens
   (`--bg #05111F`, `--accent #0EA5E9`, `--neon`).
@@ -195,7 +195,7 @@ Theme   [ All themes        ▾ ]  [ All mediums     ▾ ]  [ All fines      ▾
 ```
 
 - Options come from the **pinned** NMF run (`relatedness_themes` +
-  `ticker_themes`), never `taxonomy.THEMES`.
+  `ticker_themes`), never a hard-coded theme list.
 - Each ticker has one path after cutover: coarse parent of its medium,
   medium parent of its fine. Picking a coarse narrows mediums to its
   children (unique `theme_medium` among rows with that coarse); picking a
@@ -203,7 +203,7 @@ Theme   [ All themes        ▾ ]  [ All mediums     ▾ ]  [ All fines      ▾
   constrain that level.”
 - Filtering **intersects** MC / earnings / index / sector (AND) via `themeOk`.
 - Empty catalog (no pin, no `theme_coarse` on `DATA`) → hide the Theme row.
-  Do not fall back to `taxonomy.THEMES`.
+  Do not fall back to a hard-coded theme list (the keyword taxonomy left in #383 C21).
 - Duplicate labels stay uniqued (`label (n)`), already done in
   `unique_theme_labels`.
 - Closed filter summary shows the finest selected label (fine, else medium,
