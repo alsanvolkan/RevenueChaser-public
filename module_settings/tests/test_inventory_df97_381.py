@@ -100,3 +100,24 @@ def test_the_row_and_its_note_describe_the_same_set(rawstore_tmp_db):
     assert row["holes"] == 1  # DDD, and only DDD
     assert "2 recorded misses (1 no 10-K/20-F, 1 40-F;" in row["note"]
     assert row["holes"] + 2 == 3  # every universe name with no chain_filings row, counted once
+
+
+def test_a_failed_miss_read_keeps_the_old_count_and_the_old_label(rawstore_tmp_db, monkeypatch):
+    """``_recorded_misses`` failing leaves the hole count as it was and the tooltip must not claim an exclusion."""
+    _universe("AAA", "BBB")
+    rawstore.write_rows("chain_filings", [_filing("AAA")])
+    rawstore.write_rows("chain_meta", [_miss("BBB")])
+
+    from RevenueChaser.module_value_chain import engine as vc_engine
+
+    def boom():
+        raise RuntimeError("disk")
+
+    monkeypatch.setattr(vc_engine, "stored_misses", boom)
+    assert inventory._recorded_misses() is None
+    payload = inventory.collect()  # must not raise
+    row = _rows(payload)["corpus"]
+    assert row["holes"] == 1                      # BBB is counted again: the exclusion could not be read
+    assert row["hole_label"] == "no filing"       # and the label does not say it was excluded
+    assert any(e.get("table") == "chain_meta" and e.get("where") == "_recorded_misses"
+               for e in payload["errors"])

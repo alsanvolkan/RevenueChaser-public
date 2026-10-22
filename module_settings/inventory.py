@@ -1116,7 +1116,7 @@ def _collect(now: datetime) -> dict:
             "last_date": _max_date(("chain_filings", "filed"),
                                    ("edgar_documents", "filed")),
             "holes": _missing(tickers, "chain_filings", exclude=recorded_misses),
-            "hole_label": "no filing, excluding recorded misses",
+            "hole_label": "no filing, excluding recorded misses" if recorded_misses is not None else "no filing",
             "fetch": {"route": "/run/edgar-sync", "label": "Fetch 10-K sync"},
             "note": "; ".join(n for n in (corpus_note, _documents_note()) if n),
         },

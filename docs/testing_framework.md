@@ -194,7 +194,7 @@ than behaviour.
 | `taxonomy.py` | Theme taxonomy (rotation themes + Photonics/Space) layered over the `core/gics_map.py` sector SSoT (the 11 Morningstar names + Unclassified) | Classification is word-boundary aware (no substring false positives), Space and Aerospace stay distinct, and `assign_themes(ticker=)` prefers the pinned NMF run before the keyword fallback — this is the vocabulary every dashboard shares, so drift here desynchronizes all of them |
 | `index_registry.py` | Cache-first `ticker -> index` registry (S&P 500 / Dow / Nasdaq) | Membership inversion is correct, lookups resolve, cards get stamped, and `fetch_index` serves cache rather than refetching |
 | `ticker_store.py` | Shared per-ticker store (the `ticker_scores` table in raw.duckdb) — the Hunter writes, other boards read | Roundtrip, missing keys, and that a repeat write overwrites instead of duplicating |
-| `models/events.py` | `TradeCard` / `RuleResult` | Every column the radar renders maps to a `TradeCard` field; `TradeCard()` always constructs (all fields defaulted); unavailable rules carry `score=None` |
+| `module_earnings_radar/models.py` | `TradeCard` / `RuleResult` | Every column the radar renders maps to a `TradeCard` field; `TradeCard()` always constructs (all fields defaulted); unavailable rules carry `score=None` |
 | `config.py`, `reporting_common.py` | Constants; shared dashboard filter HTML/JS | No dedicated tests — exercised incidentally |
 
 `core/tests/test_test_helpers.py` is unusual: it tests the *test infrastructure*, checking that
