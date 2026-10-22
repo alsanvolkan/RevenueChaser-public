@@ -44,7 +44,7 @@ def _candles_fn(asof=None, ticker=None):
 
 @pytest.fixture(autouse=True)
 def _no_candle_network(monkeypatch):
-    monkeypatch.setattr(snap, "fetch_spx_candles", _candles_fn)
+    monkeypatch.setattr(snap, "stored_spx_candles", _candles_fn)
 
 
 class TestMandatoryFailureMessage:

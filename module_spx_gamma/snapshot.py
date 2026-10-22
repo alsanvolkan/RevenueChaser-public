@@ -9,10 +9,10 @@ import shutil
 from datetime import datetime, timezone
 
 from RevenueChaser.core import calendar as nyse_calendar
-from RevenueChaser.core import credentials
+from RevenueChaser.core import credentials, index_levels
 from RevenueChaser.core.providers.cftc import fetch_cftc_tff
 
-from .candles import fetch_spx_candles, price_window_sessions
+from .candles import price_window_sessions, stored_spx_candles
 from .config import RAW_ROOT, SPOT_EXPOSURE_WINDOW_PCT, TICKER
 from .expiry_table import normalize_expiry_rows
 from .vix import fetch_vix_family, vix_term_mode
@@ -172,9 +172,11 @@ def fetch_snapshot(
     """Fetch one date's raw snapshot, replacing the cached copy only on success.
 
     ``uw`` is a ``core.providers.unusual_whales.UWClient`` (the job's own, so its call
-    accounting and breaker see these calls). VIX, CFTC and candles come from
-    ``vix_fetcher()``, ``cftc_fetcher()`` and ``candle_fetcher(asof, ticker=...)``; each
-    defaults to the module's live fetch and can be faked offline.
+    accounting and breaker see these calls). VIX and CFTC come from ``vix_fetcher()`` and
+    ``cftc_fetcher()``, which default to the module's live fetch. Candles come from
+    ``candle_fetcher(asof, ticker=...)``, which defaults to the stored ``index_levels_daily``
+    rows (``module_spx_gamma.candles.stored_spx_candles``) — the snapshot makes no candle
+    request of its own (D03). Each can be faked offline.
 
     ``overwrite=False`` (the backfill) never touches a day that already has its
     manifest: nothing is fetched and ``None`` comes back. The returned raw dict
@@ -197,7 +199,7 @@ def fetch_snapshot(
             fetch_candles=fetch_candles, fetch_all_expiries=fetch_all_expiries,
             vix_fetcher=vix_fetcher or fetch_vix_family,
             cftc_fetcher=cftc_fetcher or fetch_cftc_tff,
-            candle_fetcher=candle_fetcher or fetch_spx_candles)
+            candle_fetcher=candle_fetcher or stored_spx_candles)
     finally:
         # Promotion renames the staging dir away; anything left is a failed run.
         if staging.exists():
@@ -215,7 +217,7 @@ def _fetch_snapshot_staged(
     fetch_all_expiries: bool = False,
     vix_fetcher=fetch_vix_family,
     cftc_fetcher=fetch_cftc_tff,
-    candle_fetcher=fetch_spx_candles,
+    candle_fetcher=stored_spx_candles,
 ) -> dict:
     if raw_dir.exists():
         shutil.rmtree(raw_dir)
@@ -326,16 +328,19 @@ def _fetch_snapshot_staged(
     except Exception as exc:  # noqa: BLE001 — COT degrades gracefully
         warnings.append(f"cftc_tff failed: {exc}")
 
-    # 2. Candles (UW index OHLC is permission-denied -> yfinance ^GSPC)
+    # 2. Candles: the stored ^GSPC levels (D03), never a live fetch (UW index OHLC is permission-denied, G2-06).
     candles = []
     if fetch_candles:
         try:
-            yf_symbol = "^GSPC" if ticker == "SPX" else ticker
-            candles = price_window_sessions(candle_fetcher(asof_date, ticker=yf_symbol), asof_date)
-            candle_source = f"yfinance ({yf_symbol})"
+            symbol = "^GSPC" if ticker == "SPX" else ticker
+            candles = price_window_sessions(candle_fetcher(asof_date, ticker=symbol), asof_date)
+            candle_source = f"{index_levels.TABLE} ({symbol})"
             uw_ohlc_status = 422
+            if not candles:
+                warnings.append(f"no stored index levels for {symbol} on {asof_date} (the daily bars "
+                                f"--index-levels step has not written this window yet)")
         except Exception as exc:  # noqa: BLE001 — candles degrade gracefully
-            warnings.append(f"ohlc/yfinance failed: {exc}")
+            warnings.append(f"ohlc/index_levels failed: {exc}")
             candle_source = "unavailable"
         ohlc = {"source": candle_source, "data": candles}
         raw["ohlc"] = ohlc

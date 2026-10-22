@@ -921,3 +921,53 @@ def test_vendor_row_on_a_seeded_store(rawstore_tmp_db):
 def test_vendor_queries_are_pinned():
     pairs = {("vendor_financials", "fetched_at"), ("vendor_valuation", "session_date")}
     assert pairs <= set(inventory.QUERIED_COLUMNS)
+
+
+# ── SPX daily levels row (D03, #293) ─────────────────────────────────────────
+def _level(day, symbol="^GSPC", source="yfinance", close=6000.0):
+    return {"symbol": symbol, "session_date": day, "open": close, "high": close, "low": close,
+            "close": close, "volume": 1.0, "source": source, "fetched_at": 1.0, "run_id": "r",
+            "run_at": 1.0}
+
+
+def test_index_levels_row_on_an_empty_store(rawstore_tmp_db):
+    _seed()
+    row = _rows(inventory.collect(now=FIXED))["index_levels"]
+    assert row["label"] == "SPX daily levels"
+    assert row["tables"] == ["index_levels_daily"]
+    assert row["rows"] == 0 and row["last_date"] == "—"
+    assert row["holes"] is None and row["fetch"] is None
+    assert "no index levels yet" in row["note"]
+
+
+def test_index_levels_row_on_a_seeded_store(rawstore_tmp_db):
+    _seed()
+    rawstore.write_rows("index_levels_daily", [_level(date(2026, 9, 29)), _level(date(2026, 9, 30))])
+    row = _rows(inventory.collect(now=FIXED))["index_levels"]
+    assert row["rows"] == 2 and row["last_date"] == "2026-09-30"
+    assert "newest 2026-09-30 vs latest complete 2026-09-30" in row["note"]
+    assert "2 rows" in row["note"] and "source yfinance" in row["note"]
+    assert row["holes"] == 0
+
+
+def test_index_levels_row_counts_a_store_behind_the_latest_complete_session(rawstore_tmp_db):
+    _seed()
+    rawstore.write_rows("index_levels_daily", [_level(date(2026, 9, 28), source="uw")])
+    row = _rows(inventory.collect(now=FIXED))["index_levels"]
+    assert row["holes"] == 1 and row["hole_label"] == "behind the latest complete session"
+    assert "newest 2026-09-28 vs latest complete 2026-09-30" in row["note"]
+    assert "source uw" in row["note"]
+
+
+def test_index_levels_note_on_a_calendar_error(rawstore_tmp_db):
+    _seed()
+    rawstore.write_rows("index_levels_daily", [_level(date(2026, 9, 30))])
+    payload = inventory.collect(now=datetime(2029, 1, 2, 12, 0, tzinfo=timezone.utc))
+    assert "calendar error" in _rows(payload)["index_levels"]["note"]
+    assert payload["errors"] == []
+
+
+def test_index_levels_queries_are_pinned():
+    pairs = {("index_levels_daily", "symbol"), ("index_levels_daily", "session_date"),
+             ("index_levels_daily", "source")}
+    assert pairs <= set(inventory.QUERIED_COLUMNS)

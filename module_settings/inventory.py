@@ -85,6 +85,8 @@ QUERIED_COLUMNS: list[tuple[str, str]] = [
     ("price_bars_daily", "ticker"), ("price_bars_daily", "session_date"), ("price_bars_daily", "source"),
     ("price_actions", "ex_date"),
     ("price_checks", "dataset"), ("price_checks", "source"), ("price_checks", "checked_at"),
+    # SPX daily levels (D03, #293)
+    ("index_levels_daily", "symbol"), ("index_levels_daily", "session_date"), ("index_levels_daily", "source"),
     ("vendor_financials", "fetched_at"), ("vendor_valuation", "session_date"),
     ("quote_snapshot", "ticker"), ("quote_snapshot", "session_date"), ("quote_snapshot", "source"),
     ("quote_snapshot", "market_cap"),
@@ -305,6 +307,36 @@ def _price_bars_row(now: datetime) -> dict:
         f"yfinance {int(share.get('yfinance', 0))}; {int(h.get('actions_last_5', 0))} actions in the "
         f"last 5 sessions; last check {check_txt}")
     return default
+
+
+def _index_levels_row(now: datetime) -> dict:
+    """The "SPX daily levels" row (D03, #293): the newest stored ``^GSPC`` session against the latest complete
+    session, the row count and the source. A missing table or a calendar error is a note, never an exception."""
+    from RevenueChaser.core import index_levels
+    row = {
+        "key": "index_levels", "label": "SPX daily levels",
+        "tables": ["index_levels_daily"],
+        "rows": _count("index_levels_daily"),
+        "last_date": _max_date(("index_levels_daily", "session_date")),
+        "holes": None, "hole_label": "behind the latest complete session", "fetch": None,
+        "note": "no index levels yet (the daily bars --index-levels step writes them)",
+    }
+    try:
+        h = index_levels.health_summary(now)
+    except Exception as exc:  # noqa: BLE001 - a summary failure must not break the page
+        _record("index_levels_daily", "_index_levels_row", exc)
+        return row
+    rows = int(h.get("rows") or 0)
+    if not rows:
+        return row
+    if h.get("calendar_error"):
+        row["note"] = "levels stored, but the latest complete session is unavailable (calendar error)"
+        return row
+    newest, latest = h.get("newest_session"), h.get("latest_complete")
+    row["holes"] = 0 if newest and latest and newest >= latest else 1
+    row["note"] = (f"newest {newest or DASH} vs latest complete {latest or DASH}; {rows:,} rows; "
+                   f"source {h.get('source') or DASH}")
+    return row
 
 
 # The eight fields G2-29 measured per source (phase2/06_interface.md §6); the note lists their fill.
@@ -1144,6 +1176,7 @@ def _collect(now: datetime) -> dict:
             "note": "",
         },
         _price_bars_row(now),
+        _index_levels_row(now),
         _vendor_row(now),
         _quotes_row(),
         {

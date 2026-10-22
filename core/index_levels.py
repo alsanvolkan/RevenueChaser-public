@@ -4,8 +4,8 @@ The source is yfinance ``^GSPC`` with ``auto_adjust=False`` (UW's SPX OHLC needs
 words (2026-10-16): "a one-time period=max fill, then at most 1 yfinance request a night. Writes prices.duckdb
 index_levels_daily only." Two entry points, one lock (``job_lock`` name ``"index_levels"``):
 
-- :func:`nightly` is the best-effort last step of the RC-Daily-Bars task (``scripts/daily_bars.py --nightly
-  --index-levels``), after the bars. **At most one yfinance request a night**, and none when:
+- :func:`nightly` is the best-effort last step of the RC-Daily-Bars task (``scripts/daily_bars.py
+  --nightly --index-levels``), after the bars. **At most one yfinance request a night**, and none when:
   - the table already holds the latest complete New York session (a weekend, a holiday, a rerun);
   - the table is empty: the fill is attended and never automatic;
   - this session's marker exists. Before its request the step takes the marker ``<session>_GSPC`` under
@@ -68,6 +68,43 @@ def _err(exc: BaseException) -> str:
 
 
 # --- store reads ----------------------------------------------------------------------------------------------------
+
+def levels_between(start: date | str, end: date | str, symbol: str = SYMBOL) -> list[dict]:
+    """Stored sessions in ``[start, end]`` in the snapshot's candle shape (store only, no network).
+
+    The SPX Gamma snapshot reads its 8-week window from here; this module is the table's only writer.
+    """
+    lo = start if isinstance(start, date) else date.fromisoformat(start)
+    hi = end if isinstance(end, date) else date.fromisoformat(end)
+    rows = rawstore.query(f"SELECT session_date, open, high, low, close, volume FROM {TABLE} "
+                          "WHERE symbol = ? AND session_date BETWEEN ? AND ? ORDER BY session_date",
+                          [symbol, lo, hi], db=_DB)
+    return [{"date": r["session_date"].isoformat(), "open": r["open"], "high": r["high"], "low": r["low"],
+             "close": r["close"], "volume": r["volume"]} for r in rows]
+
+
+def health_summary(now: datetime | None = None) -> dict:
+    """Read-only summary for the Data Health row (§9.6): newest stored session vs the latest complete one, the
+    row count and the source. Store only, zero network; a calendar error is reported, never raised."""
+    now = now or calendar._now()
+    out: dict = {"newest_session": None, "latest_complete": None, "calendar_error": False, "rows": 0,
+                 "source": None}
+    try:
+        latest = calendar.latest_complete_session(now)
+        out["latest_complete"] = latest.isoformat()
+    except ValueError:
+        out["calendar_error"] = True
+    stats = rawstore.query(f"SELECT COUNT(*) AS n, MAX(session_date) AS newest FROM {TABLE} WHERE symbol = ?",
+                           [SYMBOL], db=_DB)[0]
+    out["rows"] = int(stats["n"] or 0)
+    newest = stats["newest"]
+    out["newest_session"] = newest.isoformat() if newest is not None else None
+    if newest is not None:
+        src = rawstore.query(f"SELECT source FROM {TABLE} WHERE symbol = ? AND session_date = ?",
+                             [SYMBOL, newest], db=_DB)
+        out["source"] = src[0]["source"] if src else None
+    return out
+
 
 def _newest() -> date | None:
     rows = rawstore.query(f"SELECT MAX(session_date) AS m FROM {TABLE} WHERE symbol = ?", [SYMBOL], db=_DB)
@@ -170,7 +207,7 @@ def _stamp(now_given: bool, run_at: float) -> float:
 # --- the nightly step -----------------------------------------------------------------------------------------------
 
 def nightly(*, run_id: str | None = None, now: datetime | None = None, yf_download=None,
-            marker_dir: Path | None = None) -> dict:
+                        marker_dir: Path | None = None) -> dict:
     """Append the sessions ``^GSPC`` is missing up to the latest complete one, with at most one yfinance request a
     night; see the module docstring. Never raises.
 
@@ -275,4 +312,5 @@ def summary_line(res: dict) -> str:
     return f"{head}: failed ({res.get('error')}); {asked}"
 
 
-__all__ = ["SYMBOL", "SOURCE", "TABLE", "LOCK", "LOOKBACK_DAYS", "nightly", "fill", "summary_line"]
+__all__ = ["SYMBOL", "SOURCE", "TABLE", "LOCK", "LOOKBACK_DAYS", "nightly", "levels_between",
+           "health_summary", "fill", "summary_line"]

@@ -1,11 +1,17 @@
-"""SPX daily candles: yfinance ^GSPC (UW OHLC is permission-denied for the index)."""
+"""SPX daily candles for the 8-week price window.
+
+The rows come from the store: ``index_levels_daily``, written once a night by ``core/index_levels.py`` from yfinance
+``^GSPC`` (UW index OHLC is permission-denied, G2-06; D03). The snapshot reads here and never calls Yahoo itself, so
+a snapshot run costs no candle request and cannot mix an unfinished session into the window (rule B: only complete
+sessions are stored).
+"""
 from __future__ import annotations
 
 from datetime import date, timedelta
 
-import yfinance as yf
+from RevenueChaser.core import index_levels
 
-from .config import LOOKBACK_WEEKS, to_float
+from .config import LOOKBACK_WEEKS
 
 
 def week_window_start(asof: date | str) -> date:
@@ -19,33 +25,19 @@ def week_window_start(asof: date | str) -> date:
     return monday - timedelta(weeks=LOOKBACK_WEEKS)
 
 
-def fetch_spx_candles(asof: date | str, ticker: str = "^GSPC") -> list[dict]:
-    """Daily OHLC for a symbol from the 8-week window start through ``asof``.
+def window_start(asof: date | str) -> date:
+    """First date the 8-week window may hold, with the 3-day holiday buffer the window has always carried."""
+    return week_window_start(asof) - timedelta(days=3)
 
-    Defaults to ^GSPC (S&P 500 index); pass a yfinance symbol to generalise.
+
+def stored_spx_candles(asof: date | str, ticker: str = "^GSPC") -> list[dict]:
+    """Stored daily OHLC for ``ticker`` from the window start through ``asof`` (store only, no network).
+
+    Defaults to ``^GSPC`` (the one symbol ``index_levels_daily`` holds). Nothing stored yet means an empty list; the
+    snapshot then reports the window as unavailable instead of falling back to a live candle fetch.
     """
     asof_date = asof if isinstance(asof, date) else date.fromisoformat(asof)
-    start = week_window_start(asof_date) - timedelta(days=3)  # holiday buffer
-    end = asof_date + timedelta(days=1)
-    df = yf.Ticker(ticker).history(
-        start=start.isoformat(),
-        end=end.isoformat(),
-        auto_adjust=False,
-    )
-    rows = []
-    if df is not None and not df.empty:
-        for idx, row in df.iterrows():
-            d = idx.date() if hasattr(idx, "date") else date.fromisoformat(str(idx)[:10])
-            rows.append({
-                "date": d.isoformat(),
-                "open": to_float(row.get("Open")),
-                "high": to_float(row.get("High")),
-                "low": to_float(row.get("Low")),
-                "close": to_float(row.get("Close")),
-                "volume": to_float(row.get("Volume")),
-            })
-    rows.sort(key=lambda r: r["date"])
-    return rows
+    return index_levels.levels_between(window_start(asof_date), asof_date, symbol=ticker)
 
 
 def price_window_sessions(rows: list[dict], asof: date | str) -> list[dict]:
