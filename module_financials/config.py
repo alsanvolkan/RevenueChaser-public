@@ -35,20 +35,10 @@ DEFAULT_EBITDA_MARGIN = 0.30
 DEFAULT_CAPEX_PCT_REV = 0.05
 DEFAULT_DNWC_PCT_REV = 0.00
 
-# ── Comps varsayılan rakip listeleri (sektör bazlı) ──
-# Keys are the Morningstar sector names the spine stores (UW's list, #266).
-DEFAULT_PEERS = {
-    "Technology": ["MSFT", "GOOGL", "NVDA", "META", "AMZN"],
-    "Consumer Defensive": ["PG", "KO", "PEP", "COST", "WMT"],
-    "Financial Services": ["JPM", "BAC", "GS", "MS", "WFC"],
-    "Energy": ["XOM", "CVX", "COP", "SLB", "EOG"],
-    "Healthcare": ["JNJ", "PFE", "MRK", "ABBV", "LLY"],
-    "default": [],
-}
-
-
-def default_peers(sector: str | None) -> list[str]:
-    return DEFAULT_PEERS.get(sector, DEFAULT_PEERS["default"])
+# ── Comps peers (FIN-3): k comes from a measurement, never a guess ──
+# A leave-one-out run over 3,365 names: k = 8 was the best of 3/5/8/12 on EV/EBITDA, EV/Revenue and P/E.
+# The peers themselves are the spine universe's (module_financials/peers.py); there is no static list.
+PEER_K = 8
 
 
 # ── Sektör bazlı default bantlar (WACC / büyüme / marj) ──

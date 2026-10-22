@@ -25,7 +25,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
-from RevenueChaser.core import job_control, ledger, rawstore
+from RevenueChaser.core import credentials, job_control, ledger, rawstore
 from RevenueChaser.core.providers.unusual_whales import BREAKER_THRESHOLD, UWClient
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ _LOCK = threading.Lock()
 _RUNNERS: dict[str, Callable] = {}
 _PRODUCES: dict[str, list[str]] = {}
 _REQUIRES_UW: dict[str, bool] = {}
+_REQUIRES: dict[str, tuple[str, ...]] = {}
 _LANE: dict[str, str] = {}
 _DEADLINE: dict[str, Optional[float]] = {}
 _CANCELLABLE: dict[str, bool] = {}
@@ -62,7 +63,8 @@ class JobMessage(Exception):
 
 
 def register(module: str, runner: Callable, produces: list[str], requires_uw: bool = True,
-             lane: str = "short", deadline_s: Optional[float] = None, cancellable: bool = False) -> None:
+             lane: str = "short", deadline_s: Optional[float] = None, cancellable: bool = False,
+             requires: tuple[str, ...] = ()) -> None:
     """Register a module runner. ``runner(uw, **params)`` returns a Path/None.
 
     ``requires_uw=False`` marks a module that does not need the Unusual Whales
@@ -72,17 +74,39 @@ def register(module: str, runner: Callable, produces: list[str], requires_uw: bo
     ``cancellable=True`` marks a runner that reaches ``core.job_control``
     checkpoints, so it can stop early: only such a job accepts a cancel (or
     honours a deadline) while it runs. Any queued job can be cancelled.
+    ``requires`` names the credentials the module cannot run without
+    (:func:`credential_problem` checks them before a job is queued); a name
+    outside ``credentials.requirement_names()`` raises, so a typo fails at
+    import rather than at the first click.
     """
     if lane not in LANES:
         raise ValueError(f"unknown lane {lane!r}")
     if deadline_s is not None and not cancellable:
         raise ValueError(f"{module}: a deadline needs a runner with checkpoints (cancellable=True)")
+    known = credentials.requirement_names()
+    unknown = [name for name in requires if name not in known]
+    if unknown:
+        raise ValueError(f"{module}: unknown credential requirement(s) {', '.join(map(repr, unknown))}")
     _RUNNERS[module] = runner
     _PRODUCES[module] = produces
     _REQUIRES_UW[module] = requires_uw
+    _REQUIRES[module] = tuple(requires)
     _LANE[module] = lane
     _DEADLINE[module] = deadline_s
     _CANCELLABLE[module] = cancellable
+
+
+def credential_problem(module: str) -> Optional[str]:
+    """The first declared requirement the module does not meet, or ``None``.
+
+    Requirements are checked in the order the module declared them, so the message names the credential to fix
+    first. Presence only (`credentials.problem`): no request, no key value.
+    """
+    for name in _REQUIRES.get(module, ()):
+        message = credentials.problem(name)
+        if message:
+            return message
+    return None
 
 
 def current_job_id() -> Optional[str]:

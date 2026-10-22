@@ -265,31 +265,6 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
     }
 
 
-def demo_payload() -> dict:
-    """[DEMO/FIXTURE] — empty scan fallback."""
-    return {
-        "generated_at": _now(),
-        "data_as_of": None,
-        "selection_version": config.SELECTION_VERSION,
-        "regime": "RISK-ON",
-        "universe_total": 0,
-        "universe_generated_at": None,
-        "universe_refreshed_by": None,
-        "passing": {"minervini": 0, "weinstein": 0, "qullamaggie": 0, "direction": 0},
-        "avg_quality": None,
-        "is_fixture": True,
-        "summary": {
-            "regime": "RISK-ON",
-            "spy_price": None, "spy_sma200": None, "spy_3m_return": None,
-            "filtered_universe": 0, "out_of_universe": 0,
-            "hygiene": 0, "data_short": 0,
-            "passing": {"minervini": 0, "weinstein": 0, "qullamaggie": 0, "direction": 0},
-            "avg_quality": None, "top_n": 0,
-        },
-        "candidates": [],
-    }
-
-
 def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
              no_fetch: bool = False, rows_sink: dict | None = None) -> dict:
     """End-to-end scan; returns the JSON payload. ``uw`` is unused (manual flow).

@@ -1308,9 +1308,12 @@ def run_quick_cached(uw=None, ticker: str | None = None) -> Path:
 
     Recomputed from ``.store/raw.duckdb`` (raw yfinance payload, TTL ignored),
     so clicking Refresh always ignores any stale ``financials_latest.html`` and
-    re-derives the report. When no raw payload exists for the requested ticker
-    the stale artifact is dropped and None is returned, so the view shows an
-    empty state and a live Fetch is genuinely required.
+    re-derives the report. When nothing is stored for the requested ticker —
+    neither a raw payload nor the annual statements a Fetch stores in
+    ``vendor_financials`` (FIN-5); a ``vendor_valuation`` row alone does not
+    count — the stale artifact is dropped and None is
+    returned, so the view shows an empty state and a live Fetch is genuinely
+    required.
 
     A failure is never silently swallowed: if the store-only render raises, an
     explicit error board is written over ``financials_latest.html`` and returned,
@@ -1319,12 +1322,18 @@ def run_quick_cached(uw=None, ticker: str | None = None) -> Path:
     bare warning + a FileNotFoundError.)
 
     """
+    from RevenueChaser.core import vendor_data
     from RevenueChaser.core.providers import cache as cache_manager
     from RevenueChaser.module_financials.run import run as fm_run
 
     explicit = ticker is not None
     ticker = (ticker or _last_quick_ticker()).upper()
-    if cache_manager.load(ticker, ignore_ttl=True) is None:
+    # The gate is "no statements stored anywhere", not "no ticker_payload_cache row": a Fetch also stores its
+    # statements in ``vendor_financials`` (FIN-5, #385), and ``fm_run(no_fetch=True)`` builds the model inputs from
+    # those rows. A ticker with only a ``vendor_valuation`` row (what a comps peer gets) has no annual statements,
+    # so it is "nothing stored", not a board of "insufficient financial data" errors.
+    if cache_manager.load(ticker, ignore_ttl=True) is None and not (
+            (vendor := vendor_data.read_financials(ticker)) and vendor.get("annual")):
         if explicit:
             QUICK_LATEST.unlink(missing_ok=True)  # no raw data -> drop stale artifact
         if QUICK_LATEST.exists():

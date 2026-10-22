@@ -6,8 +6,9 @@ Four things must happen here, in this order, which is the whole reason this file
 exists rather than the test importing the app directly:
 
 1. The yfinance fake is installed **before** any RevenueChaser import, because
-   ``module_spx_gamma/candles.py`` and ``vix.py`` do ``import yfinance as yf`` at
-   module scope and would otherwise capture the real class.
+   ``module_spx_gamma/vix.py`` does ``import yfinance as yf`` at module scope and
+   would otherwise capture the real class. (``candles.py`` no longer imports
+   yfinance at all: it reads the stored levels since D03.)
 2. ``RC_STORE_DIR`` / ``RC_CACHE_DIR`` are already in the environment (set by the
    harness), so ``core/config.py`` resolves the throwaway roots on first import.
 3. The Task Scheduler is replaced by a fake, so no e2e run can reach the real one (#130).

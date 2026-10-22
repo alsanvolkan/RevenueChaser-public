@@ -23,10 +23,10 @@ stored fact.
 | `platform-app` | The dashboard process: tabs, routes, the job queue, Fetch vs Refresh, logs, the launcher | `app/` (`dashboard.py`, `jobs.py`, `runners.py`, `logview.py`, `launcher.py`), `templates/` (the shell, the logs page, and the empty / error / locked pages), `app/static/`, `core/job_control.py`, `core/job_lock.py`, `launch.pyw`, `run_dashboard.bat`, `start.ps1`, `stop.ps1`, `app.sh` | #50 |
 | `providers` | Network clients, and the credential and cost gates in front of them | `core/providers/`, `core/credentials.py`, `core/offpeak.py`, `core/subscription_usage.py`, `scripts/cloud_llm_call.py`, `.env.example`, `docs/openapi.yaml` (the UW endpoint contract) | #51 |
 | `classification` | Which sector, industry, theme and index a ticker carries, and the three boards built on that cut | `module_comovement/`, `module_relatedness/`, `module_value_chain/`, `core/universe.py`, `core/universe_fetch.py`, `core/gics_map.py`, `core/taxonomy.py`, `core/index_registry.py` | #55 |
-| `market` | Index-greeks, options-probability, sector-rotation and UW-tool boards | `module_spx_gamma/`, `module_oipd/`, `module_sector_rotation/`, `module_uw_interaction/`, `core/models/rotation.py`, `module_financials/` *(unclear — see below)* | #57 |
+| `market` | Index-greeks, options-probability, sector-rotation and UW-tool boards | `module_spx_gamma/`, `module_oipd/`, `module_sector_rotation/`, `module_uw_interaction/`, `module_financials/` *(unclear — see below)* | #57 |
 | `screeners` | Per-ticker scans over the universe | `module_asymmetric_growth/`, `module_swing_potential/`, `module_fundamentals/`, `core/screen_common.py`, `core/scan_quality.py`, `core/tristate.py`, `core/info_fallback.py`, `module_asymmetric_growth/sector_rules.py`, `module_swing_potential/ohlc_cache.py` | #56 |
 | `ownership` | 13F holders, and the LEAPS watchlist that reads their meta | `module_sec_13f/`, `module_leaps/`, `core/ownership.py` | #59 |
-| `earnings` | The Earnings Radar rules and the stored inputs they read | `module_earnings_radar/`, `core/models/events.py`, `core/nightly_inputs.py`, `core/reaction_anchor.py`, `core/vol_metrics.py`, `scripts/nightly_inputs.py`, `docs/rules/` | #58 |
+| `earnings` | The Earnings Radar rules and the stored inputs they read | `module_earnings_radar/`, `core/nightly_inputs.py`, `core/reaction_anchor.py`, `core/vol_metrics.py`, `scripts/nightly_inputs.py`, `docs/rules/` | #58 |
 | `data-health` | The Settings board: coverage, refetch, 10-K freshness, per-board settings | `module_settings/`, `core/board_settings.py`, `docs/data_health.md` | #53 |
 | `shared-ui` | The filter kit and the HTML trust boundary every board renders through | `core/reporting_common.py`, `core/html_safe.py`, `core/templating.py`, `core/provenance.py`, `core/funnel.py`, `core/static/`, `docs/dashboard_ui.md` | #54 |
 | `quality` | The unit and e2e tiers, their harnesses, and the guards CI runs | `module_testing/` (`e2e/`, `e2e/harness/`), the `tests/` directory beside each package, `core/tests/`, `conftest.py`, `pytest.ini`, `.github/workflows/tests.yml`, `scripts/private_check.py` | #60 |
@@ -264,9 +264,6 @@ that patches one in place still patches what every reader sees. The board's own
 
 ### A file whose directory is not its area
 
-- `core/models/events.py` is imported only by `module_earnings_radar/`;
-  `core/models/rotation.py` only by `module_sector_rotation/`. **Worth an issue**: one
-  board's models in the shared package.
 - `core/vol_metrics.py` (Earnings Radar) and `core/reaction_anchor.py` (Earnings Radar)
   are single-board files in `core/`. `core/gex_profile.py` is shared by Earnings Radar
   and SPX Gamma — two areas, one file.

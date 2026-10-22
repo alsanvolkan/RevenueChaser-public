@@ -101,7 +101,7 @@ def test_vix_cftc_and_candles_are_injected(tmp_path):
     assert raw["vix"]["vix"] == 15.5 and "term_mode" in raw["vix"]
     assert raw["cftc"]["report_date"] == "2026-08-11"
     assert raw["ohlc"]["data"] == CANDLES
-    assert raw["ohlc"]["source"].startswith("yfinance")
+    assert raw["ohlc"]["source"].startswith("index_levels_daily")
 
 
 def test_an_injected_fetcher_failing_is_a_warning_not_an_abort(tmp_path):
@@ -119,7 +119,7 @@ def test_an_injected_fetcher_failing_is_a_warning_not_an_abort(tmp_path):
 
 
 def test_defaults_still_resolve_the_module_functions(tmp_path, monkeypatch):
-    monkeypatch.setattr(snap, "fetch_spx_candles", lambda asof=None, ticker=None: list(CANDLES))
+    monkeypatch.setattr(snap, "stored_spx_candles", lambda asof=None, ticker=None: list(CANDLES))
     monkeypatch.setattr(snap, "fetch_vix_family", lambda: dict(VIX))
     monkeypatch.setattr(snap, "fetch_cftc_tff", lambda: None)
     raw = snap.fetch_snapshot(FakeUW(_handler, prefix=""), DAY, data_root=tmp_path)
@@ -165,7 +165,7 @@ def _no_network(monkeypatch):
 
     monkeypatch.setattr(httpx, "get", boom)
     monkeypatch.setattr(httpx.Client, "send", boom)
-    monkeypatch.setattr(snap, "fetch_spx_candles", boom)
+    monkeypatch.setattr(snap, "stored_spx_candles", boom)
     monkeypatch.setattr(snap, "fetch_vix_family", boom)
     monkeypatch.setattr(snap, "fetch_cftc_tff", boom)
     monkeypatch.setattr(spx_run, "UWClient", boom)

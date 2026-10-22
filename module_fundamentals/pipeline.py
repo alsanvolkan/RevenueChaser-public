@@ -613,28 +613,6 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
     }
 
 
-def demo_payload() -> dict:
-    return {
-        "generated_at": _now(),
-        "regime": "RISK-ON",
-        "universe_total": 0,
-        "universe_generated_at": None,
-        "universe_refreshed_by": None,
-        "passing": {"rule_of_40": 0, "quality": 0, "momentum": 0},
-        "selection_version": config.SELECTION_VERSION,
-        "distorted_count": 0,
-        "data_as_of": None,
-        "is_fixture": True,
-        "summary": {
-            "regime": "RISK-ON", "spy_price": None, "spy_sma200": None, "spy_3m_return": None,
-            "filtered_universe": 0, "out_of_universe": 0, "hygiene": 0, "data_short": 0,
-            "passing": {"rule_of_40": 0, "quality": 0, "momentum": 0},
-            "distorted_count": 0, "top_n": 0,
-        },
-        "candidates": [],
-    }
-
-
 def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
              no_fetch: bool = False, rows_sink: dict | None = None) -> dict:
     """End-to-end scan; returns the JSON payload. The shared body is ``core.screen_common.run_screen``.

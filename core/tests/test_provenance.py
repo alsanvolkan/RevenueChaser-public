@@ -115,9 +115,9 @@ class TestTheLabelIsAboutDataNotTheRun:
             "generated_at is the run time; it must not be mistaken for the data date")
 
     def test_no_internal_jargon_reaches_the_payload(self, rawstore_tmp_db):
-        from RevenueChaser.module_swing_potential.pipeline import build_payload, demo_payload
-        for p in (build_payload([], run_stats={}), demo_payload()):
-            assert "model_only" not in p, "no_fetch is an implementation detail, not a UI field"
+        from RevenueChaser.module_swing_potential.pipeline import build_payload
+        p = build_payload([], run_stats={})
+        assert "model_only" not in p, "no_fetch is an implementation detail, not a UI field"
 
 
 class TestApi:

@@ -1,7 +1,7 @@
 """Universe for the RRG rotation engine.
 
-- ``ROTATION_ETFS`` — 50 symbols run through the SPY-relative rotation engine
-  (Z-score, quadrants, trajectory r/theta, money flow). Includes 39 ETFs plus
+- ``ROTATION_ETFS`` — 78 symbols run through the SPY-relative rotation engine
+  (Z-score, quadrants, trajectory r/theta, money flow). Includes 67 ETFs plus
   11 macro indicators (yield curve + volatility/commodities) sourced weekly
   from FRED/yfinance via ``MACRO_SERIES``.
 

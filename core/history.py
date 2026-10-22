@@ -28,6 +28,7 @@ funnel, the board payload. The row tables carry ``run_id`` and the row's own val
 """
 from __future__ import annotations
 
+import json
 import threading
 
 from RevenueChaser.core import calendar, rawstore
@@ -66,11 +67,20 @@ def is_session_board(board: str) -> bool:
 def record_run(board: str, *, run_id: str, run_at: float, model_version: str | None,
                rows: dict[str, list[dict]] | None = None, params: dict | None = None, context: dict | None = None,
                funnel: dict | None = None, payload=None, warnings: list | None = None, partial: str | None = None,
-               error: str | None = None) -> dict[str, int]:
+               error: str | None = None, provider_health: dict | list[dict] | str | None = None) -> dict[str, int]:
     """Write one board run: the header and the rows it keeps, all or nothing. Returns rows written per table.
 
     ``partial`` is the reason the run is incomplete (a degraded pull, a partial chain); the run is kept with quality
-    'partial' and is never a session snapshot."""
+    'partial' and is never a session snapshot.
+
+    ``provider_health`` is the ``ProviderHealth.health()`` dict (or one dict per provider) the run's prose warning
+    was made from, kept as data in its own JSON column (PH-1). It is stored as given, serialised exactly once: an
+    already-encoded JSON string is decoded first, so it is never stored as a string of a string."""
+    if isinstance(provider_health, (str, bytes, bytearray)):
+        try:                                  # an already-encoded dict is decoded so it is serialised once
+            provider_health = json.loads(provider_health)
+        except (ValueError, TypeError):       # not JSON: keep it as given; a bad value never loses the run
+            pass
     rows = rows or {}
     own = set(tables_of(board))
     stray = [t for t in rows if t not in own]
@@ -104,7 +114,7 @@ def record_run(board: str, *, run_id: str, run_at: float, model_version: str | N
             "board": board, "run_id": run_id, "session_date": session, "run_at": run_at, "quality": quality,
             "quality_note": why, "session_snapshot": snapshot, "model_version": model_version, "params": params,
             "context": context, "funnel": funnel, "row_counts": counts, "warnings": warnings, "error": error,
-            "payload": payload}])
+            "provider_health": provider_health, "payload": payload}])
         if keep:
             for table, trows in rows.items():
                 numbered = "row_no" in rawstore.MANIFEST[table]["key"]     # a key-less latest table's mirror
@@ -120,7 +130,7 @@ def record_run(board: str, *, run_id: str, run_at: float, model_version: str | N
 # ── readers (K2, #383 R1) ────────────────────────────────────────────────────────────────────────────────────────────
 # Every header column but the compressed board payload, which a reader asks for (``payload=True``).
 _HEADER = ("board, run_id, session_date, run_at, quality, quality_note, session_snapshot, model_version, params, "
-           "context, funnel, row_counts, warnings, error")
+           "context, funnel, row_counts, warnings, provider_health, error")
 
 
 def _headers(where: str, params: list, *, payload: bool = False, limit: int | None = None) -> list[dict]:
