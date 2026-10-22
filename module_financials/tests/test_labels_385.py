@@ -55,9 +55,18 @@ def test_three_statement_user_dna_rate_is_not_an_assumed_zero(financials):
     assert DNA_WARNING not in res["warnings"]
 
 
-# ── FIN-9 option B: the tax rate row says it is the default ──────────────────
+# ── FIN-9 option B / FIN-3: the tax rate row says when it is the default ─────
+def _without_statement_tax(financials):
+    """The statements carry no tax basis: no stored rate, no provision / pretax pair."""
+    f = copy.deepcopy(financials)
+    for rec in f["annual"]:
+        for key in ("tax_rate", "pretax_income", "tax_provision"):
+            rec.pop(key, None)
+    return f
+
+
 def test_dcf_tax_rate_is_marked_default(financials):
-    res = run_dcf(financials)
+    res = run_dcf(_without_statement_tax(financials))
     assert res["assumptions"]["tax_rate_source"] == "default"
     assert res["assumptions"]["tax_rate"] == 0.21
 
@@ -68,13 +77,26 @@ def test_dcf_tax_rate_from_an_assumption_is_not_default(financials):
 
 
 def test_three_statement_tax_rate_source(financials):
-    assert run_three_statement(financials)["assumptions"]["tax_rate_source"] == "default"
+    assert run_three_statement(_without_statement_tax(financials))["assumptions"]["tax_rate_source"] == "default"
     assert run_three_statement(financials, {"tax_rate": 0.3})["assumptions"]["tax_rate_source"] == "assumption"
 
 
 def test_report_shows_default_tax_rate_row(financials):
+    f = _without_statement_tax(financials)
+    html = _html(f, {"dcf": run_dcf(f), "three_statement": run_three_statement(f)})
+    # The DCF WACC panel and the 3-statement panel. No sector band carries a rate, so the row says so rather
+    # than implying a sector-specific one (review S-2, _inputs.default_tax_rate).
+    assert html.count("default 21.0% (no sector rate)") == 2
+
+
+def test_report_shows_a_measured_tax_rate_without_default(financials):
+    """The common case since FIN-3: the rate came from the statements, so the row carries no "default" word.
+
+    The fixture's latest year reports 50 of 240 pretax, so both panels read that rate (review S2).
+    """
     html = _html(financials, {"dcf": run_dcf(financials), "three_statement": run_three_statement(financials)})
-    assert html.count("default 21.0%") == 2               # the DCF WACC panel and the 3-statement panel
+    assert "default" not in html
+    assert html.count("20.8%") == 2                       # the DCF WACC panel and the 3-statement panel
 
 
 def test_report_shows_an_assumed_tax_rate_without_default(financials):
@@ -118,6 +140,6 @@ def test_warning_shows_once_when_both_engines_raise_it(financials, tmp_path, mon
     cache_manager.save("TEST", f)
     monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
     qr = fm.quick_remarks_engine
-    monkeypatch.setattr(qr, "run_quick_remarks", lambda ticker, no_fetch=False: qr._from_card(ticker, {}, "yfinance"))
+    monkeypatch.setattr(qr, "run_quick_remarks", lambda ticker, no_fetch=False, financials=None: qr._from_card(ticker, {}, "yfinance"))
     out = fm.run("TEST", modules=["dcf", "3stmt"], output="html", no_fetch=True)
     assert out["results"]["warnings"].count(DNA_WARNING) == 1

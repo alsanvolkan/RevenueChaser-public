@@ -42,6 +42,8 @@ def _fmt_usd(v) -> str:
 def _fmt_num(v, nd=2) -> str:
     if v is None:
         return "N/A"
+    if isinstance(v, str):
+        return v          # a word the engine chose ("NM": a non-positive denominator has no multiple)
     return f"{v:,.{nd}f}"
 
 
@@ -75,10 +77,15 @@ def _fmt_friendly_day(iso: str | None) -> str:
 
 
 def _fmt_tax_rate(assumptions: dict | None) -> str:
-    """The model's tax rate; ``default 21.0%`` when no statement or user value set it (FIN-9 B)."""
+    """The model's tax rate; ``default 21.0% (no sector rate)`` when no statement or user value set it (FIN-9 B).
+
+    The parenthetical is true, not decoration: no sector band carries a ``tax_rate``
+    (``module_financials/engines/_inputs.default_tax_rate``), so the fallback is the single
+    ``DEFAULT_TAX_RATE`` for every sector and the row must not read as a sector-specific one.
+    """
     a = assumptions or {}
     rate = _fmt_pct(a.get("tax_rate"))
-    return f"default {rate}" if a.get("tax_rate_source") == "default" else rate
+    return f"default {rate} (no sector rate)" if a.get("tax_rate_source") == "default" else rate
 
 
 _ENV.filters["usd"] = _fmt_usd
