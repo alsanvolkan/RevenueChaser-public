@@ -382,7 +382,12 @@ def _cik_map() -> dict:
 
 
 def reset_cik_map() -> None:
-    """Forget the cached map (the tests' fixture; a nightly pull changes the stored rows under a long run)."""
+    """Forget the cached map.
+
+    Called by the tests' autouse fixture. **Accepted limit:** nothing calls it in the dashboard, so a long-lived
+    process keeps the map it built until it restarts. The nightly pull runs in another process, so a reset there
+    could not reach this one anyway, and the map only grows a handful of tickers a night (#301 review SHOULD-b).
+    A restart is the refresh; add a MAX(run_at) freshness check here if that ever stops being enough."""
     with _CIK_MAP_LOCK:
         _CIK_MAP_CACHE.clear()
 

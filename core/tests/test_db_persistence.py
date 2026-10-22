@@ -160,8 +160,33 @@ def test_sec_cik_map_reads_the_stored_exchange_file(rawstore_tmp_db, mock_httpx)
         {"ticker": "AAPL", "cik": "320193", "name": "Apple Inc.", "exchange": "Nasdaq", "valid_from": None,
          "status": "present", "source": "sec_exchange", "fetched_at": 1.0, "run_id": "seed", "run_at": 1.0}])
     # any SEC request would fail the test: the store answers, so the retired table is not touched
-    assert sec_edgar._cik_map() == {"AAPL": {"cik": "320193", "name": "Apple Inc."}}
+    assert sec_edgar._cik_map() == {"AAPL": {"cik": 320193, "name": "Apple Inc."}}
     assert rawstore.count("sec_company_tickers") == 0
+
+
+def test_the_cik_map_is_built_once_per_process(rawstore_tmp_db, mock_httpx):
+    """#301 review SHOULD-a: get_fundamentals asks per ticker on a thread pool, so an uncached map meant one
+    multi-megabyte company_tickers.json GET per ticker. A second call must read neither store nor network."""
+    from RevenueChaser.core import sec_files
+    from RevenueChaser.core.providers import sec_edgar
+    rawstore.write_rows("sec_exchange_file", [
+        {"ticker": "AAPL", "cik": "320193", "name": "Apple Inc.", "exchange": "Nasdaq", "valid_from": None,
+         "status": "present", "source": "sec_exchange", "fetched_at": 1.0, "run_id": "seed", "run_at": 1.0}])
+    first = sec_edgar._cik_map()
+    calls = {"n": 0}
+    real_latest = sec_files.latest
+
+    def counted(*a, **kw):
+        calls["n"] += 1
+        return real_latest(*a, **kw)
+
+    sec_files.latest = counted
+    try:
+        second = sec_edgar._cik_map()
+    finally:
+        sec_files.latest = real_latest
+    assert second == first == {"AAPL": {"cik": 320193, "name": "Apple Inc."}}
+    assert calls["n"] == 0, "the second call re-read the store: the map is not cached"
 
 
 def test_sec_cik_map_falls_back_to_the_file_read_only(rawstore_tmp_db, mock_httpx):
