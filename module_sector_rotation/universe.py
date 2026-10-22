@@ -6,7 +6,7 @@
   money flow); macro indicators are shown in the separate macro panel.
 """
 
-# ── 41 ETFs for the RRG rotation pipeline ──
+# ── The rotation universe: sector / theme / region / bond ETFs plus the macro indicators ──
 ROTATION_ETFS = {
     # ── Sectors (11) ──
     # The names are the Morningstar sector names, as stored in ``equity_universe.sector`` (Phase 1, #266):

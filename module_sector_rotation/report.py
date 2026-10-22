@@ -1087,7 +1087,7 @@ White ring = quadrant transition vs prior snapshot. <span style="color:#8B5CF6">
 <th class="th-g1 num">Price</th>
 </tr></thead><tbody>{rows}</tbody></table>
 <div style="font-size:11px;color:#8b949e;margin-top:8px;line-height:1.5">
-<b style="color:#c9d1d9">Columns:</b> RS 1W/1M/3M = excess return vs {benchmark} (percentage points). Ratio Z / Mom Z = cross-sectional z-scores of RS Ratio / RS Momentum. r / θ° = magnitude + heading angle of the (Ratio Z, Mom Z) vector.<br>
+<b style="color:#c9d1d9">Columns:</b> RS 1W/1M/3M = excess return vs {benchmark} (percentage points). Ratio Z / Mom Z = RS Ratio / RS Momentum z-scored within the name's own group (sector / theme / region / bond) when that group has at least 8 finite members, else against the pooled cross-section. r / θ° = magnitude + heading angle of the (Ratio Z, Mom Z) vector.<br>
 <b style="color:#c9d1d9">Groups:</b> sector, theme, bond &amp; commodity are traded prices (RS vs {benchmark} is a standard cross-asset comparison).
 </div>
 </div></div>

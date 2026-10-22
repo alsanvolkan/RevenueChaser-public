@@ -474,8 +474,6 @@ def _grouped_z_scores(snapshots: list[ETFRotationSnapshot], field: str, z_field:
     ``group_name``; a missing/blank group name is treated as its own bucket. The pooled fallback uses every finite
     snapshot so small groups stay comparable to the full cross-section.
     """
-    from collections import defaultdict
-
     by_group: dict[str, list[ETFRotationSnapshot]] = defaultdict(list)
     finite_snapshots = []
     for snap in snapshots:
@@ -545,7 +543,8 @@ def macro_panel(as_of: date = None) -> list[dict]:
         fred_id = cfg.get("fred")
         if fred_id:
             q = rawstore.query(
-                "SELECT obs_date, value FROM macro_series WHERE series_id = ? AND obs_date <= ? ORDER BY obs_date",
+                "SELECT obs_date, value FROM macro_series WHERE series_id = ? AND source = 'fred' "
+                "AND obs_date <= ? ORDER BY obs_date",
                 [fred_id, d.isoformat()])
             points = []
             for r in q:
@@ -557,7 +556,8 @@ def macro_panel(as_of: date = None) -> list[dict]:
                     points.append((obs, float(val)))
         else:
             q = rawstore.query(
-                "SELECT session_date, close FROM vol_index_daily WHERE symbol = ? AND session_date <= ? ORDER BY session_date",
+                "SELECT session_date, close FROM vol_index_daily WHERE symbol = ? "
+                "AND source IN ('cboe', 'yfinance') AND session_date <= ? ORDER BY session_date",
                 [sym, d.isoformat()])
             points = []
             for r in q:
