@@ -12,6 +12,7 @@ import json
 import pytest
 
 from RevenueChaser.core import open_issues, reporting_common
+from RevenueChaser.core.tests.open_issues_shell import open_issues_block, strip_open_issues_data
 
 BOARD = "module_sec_13f"
 SHARED = 9
@@ -196,6 +197,27 @@ def test_a_missing_registry_renders_a_message_not_a_500(shell):
     assert "issue registry" in html
     assert open_issues.NOT_A_DATA_BOARD.isdisjoint(json.loads(
         html.split('id="rc-open-issues-data">', 1)[1].split("</script>", 1)[0]))
+
+
+def test_the_page_scan_helper_removes_exactly_the_registry_block(shell):
+    """A shell scan must read the page, not the registry's prose (``core/tests/open_issues_shell.py``).
+
+    The block is a ``<script type="application/json">`` element holding 48 issue texts, so a word a scan looks for can
+    arrive from an issue rather than from the shell's markup (``TradeWhisperer`` in a migration note is one).
+    """
+    html = shell(_full_registry())
+    data = json.loads(open_issues_block(html))
+    assert data, "the helper returns the embedded registry, not just the tags"
+    assert len(html) - len(open_issues_block(html)) > 100
+
+    stripped = strip_open_issues_data(html)
+    head, rest = html.split('<script type="application/json" id="rc-open-issues-data">', 1)
+    assert stripped == head + rest.split("</script>", 1)[1], "only the block is cut out"
+    assert '<script type="application/json" id="rc-open-issues-data">' not in stripped
+    # The group and its renderer stay: the scan covers the panel's own markup and script.
+    assert 'id="rc-open-issues"' in stripped and "function rcOpenIssuesRender(" in stripped
+    assert strip_open_issues_data(stripped) == stripped, "stripping twice changes nothing"
+    assert strip_open_issues_data("<p>no block here</p>") == "<p>no block here</p>"
 
 
 def test_the_payload_route_is_json_ready(registry):

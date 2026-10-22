@@ -7,6 +7,7 @@ import pytest
 
 from RevenueChaser.app import dashboard, runners
 from RevenueChaser.core.tests.panel_client import panel_test_client
+from RevenueChaser.core.tests.open_issues_shell import strip_open_issues_data
 
 
 class _FakeUW:
@@ -33,7 +34,7 @@ class TestDashboardRoutes:
         c = self._client()
         r = c.get("/")
         assert r.status_code == 200
-        body = r.get_data(as_text=True)
+        body = strip_open_issues_data(r.get_data(as_text=True))
         for label in ("Research", "Earnings Radar",
                       "SPX Gamma", "Financials",
                       "Screeners", "Sector Rotation", "Asymmetric Growth", "Swing Potential",
@@ -56,7 +57,7 @@ class TestDashboardRoutes:
             assert not hasattr(runners, name), f"runners.{name} must be removed"
 
     def test_index_renders_collapsible_nav(self):
-        body = self._client().get("/").get_data(as_text=True)
+        body = strip_open_issues_data(self._client().get("/").get_data(as_text=True))
         assert 'class="nav-group"' in body
         assert 'class="nav-header"' in body and 'aria-expanded="true"' in body
         assert 'class="caret"' in body
@@ -79,7 +80,7 @@ class TestDashboardRoutes:
         """SPX Gamma is a fluid page: its iframe must fill the pane width (and
         re-fit on resize), not sit at the fixed 1280px default."""
         c = self._client()
-        body = c.get("/").get_data(as_text=True)
+        body = strip_open_issues_data(c.get("/").get_data(as_text=True))
         assert 'data-tab="module_spx_gamma"' in body
         assert "'module_spx_gamma': true" in body
         assert "'module_earnings_radar': true" in body
@@ -95,7 +96,9 @@ class TestDashboardRoutes:
         assert c.post("/run/tw").status_code == 404
         assert c.get("/api/tw/chart/AAPL").status_code == 404
         assert not any(k.startswith("tw") for k in jobs._RUNNERS)
-        assert "TradeWhisperer" not in c.get("/").get_data(as_text=True)
+        # The shell embeds the open-issues registry, whose prose mentions the retired board by name;
+        # the scan covers the page, not that block (core/tests/open_issues_shell.py).
+        assert "TradeWhisperer" not in strip_open_issues_data(c.get("/").get_data(as_text=True))
 
     def test_view_missing_module_placeholder(self, tmp_path, monkeypatch):
         monkeypatch.setattr(runners, "EARNINGS_LATEST", tmp_path / "earnings_latest.html")
@@ -145,7 +148,7 @@ class TestDashboardRoutes:
         assert "module_sec_13f_edgar" not in jobs._RUNNERS
         c = self._client()
         assert c.post("/run/module_sec_13f-edgar", data={"period": "2026-06-30"}).status_code == 404
-        assert "sec_13f-edgar" not in c.get("/").get_data(as_text=True)
+        assert "sec_13f-edgar" not in strip_open_issues_data(c.get("/").get_data(as_text=True))
 
     def test_sec13f_fetch_needs_no_uw_key(self):
         """#206: the SEC ingest is not gated on Unusual Whales; its names step is best-effort."""
@@ -166,7 +169,7 @@ class TestDashboardRoutes:
         c = self._client()
         r = c.post("/run/module_sec_13f-rebuild")
         assert r.status_code == 202 and seen == ["sec13f_rebuild"]
-        assert "btn-sec13f-rebuild" in c.get("/").get_data(as_text=True)
+        assert "btn-sec13f-rebuild" in strip_open_issues_data(c.get("/").get_data(as_text=True))
 
     def test_sec13f_check_registered_no_uw(self):
         from RevenueChaser.app import jobs
@@ -180,7 +183,7 @@ class TestDashboardRoutes:
         r = c.post("/run/module_sec_13f-check")
         assert r.status_code == 202 and r.get_json()["job_id"] == "stubjob"
         assert seen == ["sec13f_check"]
-        assert "btn-sec13f-check" in c.get("/").get_data(as_text=True)
+        assert "btn-sec13f-check" in strip_open_issues_data(c.get("/").get_data(as_text=True))
 
     def test_run_earnings_bad_date(self):
         c = self._client()
@@ -648,7 +651,7 @@ class TestQuickTickerCacheState:
         """DF47: the box was a fixed 'AAPL' while the iframe showed the last report (e.g. MSFT)."""
         rn = self._patch_state(monkeypatch, tmp_path)
         rn._remember_quick_ticker("msft")
-        body = dashboard.app.test_client().get("/").get_data(as_text=True)
+        body = strip_open_issues_data(dashboard.app.test_client().get("/").get_data(as_text=True))
         assert 'id="quick-ticker" value="MSFT"' in body
 
     def test_remember_uppercases_ticker_and_stamps_date(self, tmp_path, monkeypatch):
@@ -1111,7 +1114,7 @@ class TestOipdParentChrome:
 
     def _body(self):
         dashboard.app.config["TESTING"] = True
-        return dashboard.app.test_client().get("/").get_data(as_text=True)
+        return strip_open_issues_data(dashboard.app.test_client().get("/").get_data(as_text=True))
 
     def test_header_ticker_box_is_gone(self):
         body = self._body()
@@ -1551,7 +1554,7 @@ class TestPerTabOverlay:
 
     def _body(self):
         dashboard.app.config["TESTING"] = True
-        return dashboard.app.test_client().get("/").get_data(as_text=True)
+        return strip_open_issues_data(dashboard.app.test_client().get("/").get_data(as_text=True))
 
     def test_overlay_is_driven_by_the_active_tab(self):
         body = self._body()
