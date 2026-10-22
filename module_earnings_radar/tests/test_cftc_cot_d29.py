@@ -133,3 +133,25 @@ def test_d29_is_registered_in_the_step():
     assert "D29" in [s.name for s in inputs.sweeps()]
     assert d29.SWEEP.tables == ("cftc_cot",)
     assert rawstore.MANIFEST["cftc_cot"]["key"] == ["report_type", "market", "report_date"]
+
+
+# --- the request ----------------------------------------------------------------------------------------------------
+
+def test_d29_the_socrata_read_follows_a_redirect(monkeypatch):
+    """httpx follows no redirect by default; Socrata's redirect body is not the rows."""
+    seen = []
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return [ROW]
+
+    def get(url, *args, params=None, timeout=None, headers=None, follow_redirects=False, **kwargs):
+        seen.append(follow_redirects)
+        return _Resp()
+
+    monkeypatch.setattr("httpx.get", get)
+    raws, why = d29.fetch_rows()
+    assert why is None and raws == [ROW]
+    assert seen == [True]
