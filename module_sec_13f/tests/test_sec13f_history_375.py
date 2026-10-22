@@ -91,7 +91,7 @@ def test_a_fetch_records_a_header_and_one_row_per_board_row(store):
 def test_the_header_carries_model_version_and_params(store):
     sec13f_history.record(SHOWN, run_id="r1", run_at=COMPLETE)
     (head,) = _headers()
-    assert head["model_version"] == sec13f_history.model_version() and head["model_version"].startswith("4+")   # #375 F2
+    assert head["model_version"] == sec13f_history.model_version() and head["model_version"].startswith("5+")   # #375 F4
     assert json.loads(head["params"])["START_QUARTER"] == engine.START_QUARTER
 
 

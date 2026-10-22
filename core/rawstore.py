@@ -2136,7 +2136,8 @@ HISTORY: dict[str, dict] = {
     "sec13f_metrics_history": _run_entry(["run_id", "ticker"], [
         "run_id TEXT", "ticker TEXT", "quarter DATE", "name TEXT", "sector TEXT", "shares DOUBLE", "value DOUBLE",
         "holders INTEGER", "top10_pct DOUBLE", "hhi DOUBLE", "new_holders INTEGER", "exited_holders INTEGER",
-        "buy_flow DOUBLE", "sell_flow DOUBLE", "streak INTEGER", "accel DOUBLE", "pct_out DOUBLE", "price DOUBLE",
+        "buy_flow DOUBLE", "sell_flow DOUBLE", "breadth DOUBLE", "breadth_chg DOUBLE",
+        "streak INTEGER", "accel DOUBLE", "pct_out DOUBLE", "price DOUBLE",
         "price_delta DOUBLE", "shares_outstanding DOUBLE", "float_shares DOUBLE", "short_pct DOUBLE",
         "insider_pct DOUBLE", "shares_by_quarter JSON", "chg_by_quarter JSON", "cusips JSON",
     ], "module_sec_13f", "quarter"),
