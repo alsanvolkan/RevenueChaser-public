@@ -67,4 +67,4 @@ def test_a_session_one_past_max_lag_is_not_read(table):
 def test_the_lags_are_the_spec_values():
     """The boundaries above follow MAX_LAG; these are the values the spec and the model version name."""
     assert stored_inputs.MAX_LAG == {"earnings_calendar": 1, "short_interest": 3, "estimate_snapshots": 5,
-                                     "macro_series": 3}
+                                     "macro_series": 3, "vol_index_daily": 3, "cftc_cot": 10}
