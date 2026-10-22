@@ -3,8 +3,8 @@
 The dashboard's "Open issues" group reads a checked-in file, never the network
 (``core/open_issues.py``). This script keeps that file honest:
 
-- ``--write`` reads the **open** issues of both repos (paginated, pull requests filtered out), merges them with the
-  registry and writes it back. The **API owns** ``title``, ``state``, ``labels`` and ``issue_updated_at``; a human
+- ``--write`` reads the **open** issues of the public repo (paginated, pull requests filtered out), merges them with
+  the registry and writes it back. The private repo is not read: its issues were migrated here and closed. The **API owns** ``title``, ``state``, ``labels`` and ``issue_updated_at``; a human
   owns ``boards``, ``scope``, ``kind``, ``status``, ``deferred_until``, ``summary``, ``detail``, ``refs`` and
   ``reviewed_at``, and those are never overwritten. A new issue is added (``scope="board"``, no boards, kind from its
   labels) with ``summary``/``detail`` pre-filled from its body. An issue that is no longer open is dropped — but only
@@ -17,7 +17,7 @@ nothing does not touch the file, so two runs produce an empty diff. The header's
 move only when the content does.
 
 Run it after each merge round:  ``python scripts/open_issues_sync.py --write``
-The private repo needs ``RC_GITHUB_TOKEN`` (a token with ``repo`` read); the public one reads anonymously.
+The public repo reads anonymously; pass ``--token-env`` when the shared IP is rate-limited.
 """
 from __future__ import annotations
 
@@ -33,7 +33,9 @@ from pathlib import Path
 from RevenueChaser.core import open_issues
 
 OWNER = "alsanvolkan"
-REPOS = ("RevenueChaser-public", "RevenueChaser")
+# Public only: the private repo's issues were migrated here and closed (2026-10-22), so reading it again would fetch a
+# half-closed set and re-add entries the panel must not show.
+REPOS = ("RevenueChaser-public",)
 API_ROOT = "https://api.github.com"
 PER_PAGE = 100
 
@@ -83,7 +85,7 @@ def github_open_issues(repo: str, token: str = "") -> list[dict]:
             with urllib.request.urlopen(request, timeout=30) as response:
                 batch = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            hint = " (set RC_GITHUB_TOKEN for the private repo)" if exc.code in (401, 404) else ""
+            hint = " (a private repo needs a token; set RC_GITHUB_TOKEN)" if exc.code in (401, 404) else ""
             raise SyncError(f"{repo}: HTTP {exc.code}{hint}") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise SyncError(f"{repo}: {exc}") from exc

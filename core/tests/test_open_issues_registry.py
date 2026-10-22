@@ -5,7 +5,7 @@ that reads it: known board keys, known scopes/kinds/statuses, unique ``(repo, nu
 and the density bar of the build brief (a summary a reader can act on, and the three fields that make an entry
 resumable months later).
 
-The registry is seeded from the open issues of both repositories (48 entries on 2026-10-22, public numbers); these tests
+The registry is seeded from the open issues of the public repository (48 entries on 2026-10-22); these tests
 check its structure, not a hand-copied list of issue numbers, so a re-seed or a migration of issues does not make them stale.
 """
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """``scripts/open_issues_sync.py``: the registry's only writer (#383), tested offline.
 
-The script is the reason the panel is never stale: it reads the open issues of both repos from the GitHub API, merges
+The script is the reason the panel is never stale: it reads the open issues of the public repo from the GitHub API, merges
 them with the curated registry (the API owns title/state/labels/updated_at, a human owns the mapping and the dense
 text), and writes the file back deterministically. Every test here injects a fake fetch — the root ``conftest.py``
 blocks real sockets, and a live comparison is the script's own job, not the suite's.
@@ -14,7 +14,9 @@ import pytest
 from RevenueChaser.core import open_issues
 from RevenueChaser.scripts import open_issues_sync as sync
 
+# The only repo the sync reads.
 PUB = "RevenueChaser-public"
+# The private repo, which it must never read again: used here to prove an unread repo keeps its entries.
 PRIV = "RevenueChaser"
 
 
@@ -113,7 +115,7 @@ def test_a_new_issue_is_added_from_plain_sections(tmp_path):
         "## How to verify\n\nRe-run the derive and compare the totals for AKAM, BALL and ARMK.\n"
     )
     path = _registry(tmp_path, [])
-    api = {PRIV: [_api(435, "EDGAR revenue concept gap", body=body, labels=("bug",), repo=PRIV)]}
+    api = {PUB: [_api(435, "EDGAR revenue concept gap", body=body, labels=("bug",), repo=PUB)]}
     assert sync.main(["--write", "--registry", str(path)], fetch=_fetch(api), head_sha="abc1234") == 0
     issue = _read(path)["issues"][0]
     assert issue["detail"]["whats_wrong"].startswith("The board reads the revenue concept")
@@ -180,12 +182,30 @@ def test_a_missing_registry_is_refused(tmp_path, capsys):
 
 
 def test_the_written_file_is_sorted_and_indented(tmp_path):
-    path = _registry(tmp_path, [])
-    api = {PRIV: [_api(9, "private nine", repo=PRIV)], PUB: [_api(11, "public eleven")]}
+    path = _registry(tmp_path, [_entry(9, repo=PRIV)])   # a repo this run does not read keeps its entry
+    api = {PUB: [_api(11, "public eleven")]}
     assert sync.main(["--write", "--registry", str(path)], fetch=_fetch(api), head_sha="abc1234") == 0
     text = path.read_text(encoding="utf-8")
     assert text.endswith("\n") and '\n  "issues"' in text
     assert [i["repo"] for i in _read(path)["issues"]] == [PRIV, PUB]    # (repo, number) ascending
+
+
+def test_the_sync_reads_the_public_repo_only(tmp_path):
+    """The private repo's issues were migrated to the public one and closed (2026-10-22).
+
+    A run that still read the private repo would fetch its migrated, half-closed set and re-add entries the panel
+    must not show; the registry holds public issues only.
+    """
+    asked = []
+
+    def fetch(repo, token=""):
+        asked.append(repo)
+        return []
+
+    path = _registry(tmp_path, [_entry(11)])
+    sync.main(["--write", "--registry", str(path)], fetch=fetch, head_sha="abc1234")
+    assert asked == [PUB], f"the sync asked GitHub for {asked}, not for the public repo alone"
+    assert not any(PRIV == repo for repo in asked)
 
 
 def test_a_mode_is_required(tmp_path):

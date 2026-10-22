@@ -216,8 +216,8 @@ is escaped in the shell (`html_safe.script_json` for the block, `rcEsc` for the
 rendering), and only links under `https://github.com/alsanvolkan/` are shown.
 
 **Keeping it current** is a registry job, not a board job:
-`python scripts/open_issues_sync.py --write` reads the open issues of both repos
-from the GitHub API, keeps the curated fields, refreshes title/labels/updated-at,
+`python scripts/open_issues_sync.py --write` reads the open issues of the public
+repo from the GitHub API, keeps the curated fields, refreshes title/labels/updated-at,
 adds a new issue (pre-filled from its body) and drops a closed one. Run it after
 each merge round. `--check` fails when the file and GitHub disagree;
 `--report-thin` lists the entries whose summary or detail is too thin to resume
