@@ -34,6 +34,13 @@ def _csv(dates=DATES, *, fmt="%m/%d/%Y", base=20.0) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _csv_close_only(symbol: str, dates=DATES, *, fmt="%m/%d/%Y", base=20.0) -> str:
+    lines = [f"DATE,{symbol}"]
+    for i, d in enumerate(dates):
+        lines.append(f"{d.strftime(fmt)},{base + i + 0.5}")
+    return "\n".join(lines) + "\n"
+
+
 def _frame(dates=DATES, *, base=18.0):
     return pd.DataFrame({"Open": [base + i for i in range(len(dates))],
                          "High": [base + i + 1 for i in range(len(dates))],
@@ -95,6 +102,30 @@ def test_d28_parses_a_2026_iso_csv_into_the_same_rows():
     assert bars[-1]["close"] == 23.5 and bars[-1]["open"] == 23.0
 
 
+def test_d28_parses_a_close_only_csv_with_the_symbol_as_column_name():
+    bars, why = d28.parse_csv(_csv_close_only("VVIX"))
+    assert why is None and [b["session_date"] for b in bars] == DATES
+    assert bars[-1]["close"] == 23.5
+    assert bars[-1]["open"] is bars[-1]["high"] is bars[-1]["low"] is None
+
+
+def test_d28_parses_a_close_only_csv_with_a_different_symbol_name():
+    bars, why = d28.parse_csv(_csv_close_only("OVX"))
+    assert why is None and [b["session_date"] for b in bars] == DATES
+    assert bars[-1]["close"] == 23.5
+    assert bars[-1]["open"] is bars[-1]["high"] is bars[-1]["low"] is None
+
+
+def test_d28_rejects_close_only_csv_without_a_price_column():
+    bars, why = d28.parse_csv("DATE,VOLUME\n10/13/2026,1000\n")
+    assert bars is None and why == "not_a_csv"
+
+
+def test_d28_rejects_a_three_column_csv_without_close():
+    bars, why = d28.parse_csv("DATE,OPEN,HIGH\n10/13/2026,1,2\n")
+    assert bars is None and why == "not_a_csv"
+
+
 # --- the rows -------------------------------------------------------------------------------------------------------
 
 def test_d28_stores_all_seven_cboe_symbols_and_move(rawstore_tmp_db, tmp_path, monkeypatch):
@@ -122,6 +153,29 @@ def test_d28_stores_all_seven_cboe_symbols_and_move(rawstore_tmp_db, tmp_path, m
     assert [r["source"] for r in move] == ["yfinance"] * len(DATES) and d28.MOVE == "MOVE"
     assert (move[-1]["session_date"], move[-1]["close"]) == (DATES[3], 21.25)
     assert move[-1]["operator"] is None
+
+
+def test_d28_stores_all_seven_symbols_when_two_serve_close_only(rawstore_tmp_db, tmp_path, monkeypatch):
+    def body(symbol):
+        if symbol in ("VVIX", "OVX"):
+            return _csv_close_only(symbol)
+        return _csv()
+
+    get, asked = _cboe(body=body)
+    monkeypatch.setattr("httpx.get", get)
+    monkeypatch.setattr(d28, "download_move", lambda download=None: (
+        [{"session_date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0} for d in DATES], None))
+    res = _run((d28.SWEEP,), tmp_path)
+    s = res["sweeps"]["D28"]
+
+    assert asked == list(d28.SYMBOLS)
+    assert s["status"] == "ok" and s["written"] == 7 * len(DATES) + len(DATES)
+    stored = {(r["symbol"], r["source"]): r for r in _rows("vol_index_daily")}
+    for sym in d28.SYMBOLS:
+        assert (sym, "cboe") in stored
+    for sym in ("VVIX", "OVX"):
+        row = stored[(sym, "cboe")]
+        assert row["open"] is row["high"] is row["low"] is None and row["close"] == 23.5
 
 
 def test_d28_a_second_run_adds_no_duplicate_row(rawstore_tmp_db, tmp_path, monkeypatch):
