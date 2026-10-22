@@ -35,7 +35,7 @@ single work order.
   artifacts restricted to the classification universe.
 - EDGAR official/free only (bulk zips + per-document `.htm`); no npm/sec-api/GPL.
 - Relatedness profiles: **thinking-high**; theme naming: **thinking-low** (off-peak).
-- Themes: NMF, **nested** (fine ~150 -> medium ~70 -> coarse ~25 via agglomerative
+- Themes: NMF, **nested** (fine ~150 -> medium = max(2, n_fine // 2), halved from the realised fine count (#433) -> coarse ~25 via agglomerative
   merge), LLM-named; replaces the taxonomy theme vocabulary; GICS untouched;
   assignment hybrid (profile weights, else lexicon, else sector fallback).
 
