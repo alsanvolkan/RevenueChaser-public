@@ -309,6 +309,30 @@ def _price_bars_row(now: datetime) -> dict:
     return default
 
 
+def _sessions_behind(newest: str | None, latest: str | None) -> int | None:
+    """How many complete sessions the stored levels are missing: the trading days after ``newest`` up to and
+    including ``latest``. The column is a count, so a 0/1 flag would read as "one hole" for any size of gap
+    (#293 review SHOULD-5). ``None`` when either date is unknown."""
+    from datetime import date as _date
+    from datetime import timedelta as _td
+
+    from RevenueChaser.core import calendar as nyse_calendar
+    if not newest or not latest:
+        return None
+    try:
+        a, b = _date.fromisoformat(newest), _date.fromisoformat(latest)
+    except ValueError:
+        return None
+    if a >= b:
+        return 0
+    behind, d = 0, a + _td(days=1)
+    while d <= b:
+        if nyse_calendar.is_trading_day(d):
+            behind += 1
+        d += _td(days=1)
+    return behind
+
+
 def _index_levels_row(now: datetime) -> dict:
     """The "SPX daily levels" row (D03, #293): the newest stored ``^GSPC`` session against the latest complete
     session, the row count and the source. A missing table or a calendar error is a note, never an exception."""
@@ -333,7 +357,7 @@ def _index_levels_row(now: datetime) -> dict:
         row["note"] = "levels stored, but the latest complete session is unavailable (calendar error)"
         return row
     newest, latest = h.get("newest_session"), h.get("latest_complete")
-    row["holes"] = 0 if newest and latest and newest >= latest else 1
+    row["holes"] = _sessions_behind(newest, latest)
     row["note"] = (f"newest {newest or DASH} vs latest complete {latest or DASH}; {rows:,} rows; "
                    f"source {h.get('source') or DASH}")
     return row

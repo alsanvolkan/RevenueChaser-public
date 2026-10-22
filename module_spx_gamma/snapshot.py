@@ -12,7 +12,7 @@ from RevenueChaser.core import calendar as nyse_calendar
 from RevenueChaser.core import credentials, index_levels
 from RevenueChaser.core.providers.cftc import fetch_cftc_tff
 
-from .candles import price_window_sessions, stored_spx_candles
+from .candles import price_window_sessions, stored_spx_candles, window_lag
 from .config import RAW_ROOT, SPOT_EXPOSURE_WINDOW_PCT, TICKER
 from .expiry_table import normalize_expiry_rows
 from .vix import fetch_vix_family, vix_term_mode
@@ -339,6 +339,12 @@ def _fetch_snapshot_staged(
             if not candles:
                 warnings.append(f"no stored index levels for {symbol} on {asof_date} (the daily bars "
                                 f"--index-levels step has not written this window yet)")
+            else:
+                expected, last = window_lag(candles, asof_date)
+                if expected:
+                    warnings.append(f"stored index levels for {symbol} end {last}, before the last complete "
+                                    f"session {expected} (the daily bars --index-levels step is behind)")
+                    candle_source = f"{index_levels.TABLE} ({symbol}, stale to {last})"
         except Exception as exc:  # noqa: BLE001 — candles degrade gracefully
             warnings.append(f"ohlc/index_levels failed: {exc}")
             candle_source = "unavailable"

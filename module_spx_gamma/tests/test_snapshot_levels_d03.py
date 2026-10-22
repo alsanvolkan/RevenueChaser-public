@@ -9,8 +9,6 @@ from __future__ import annotations
 import json
 from datetime import date
 
-import pytest
-
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_spx_gamma import snapshot as snap
 
@@ -37,9 +35,9 @@ class _FakeClient:
         return {"data": []}
 
 
-def _seed_levels(dates=CANDLE_DATES, symbol="^GSPC") -> None:
+def _seed_levels(dates=CANDLE_DATES) -> None:
     rawstore.write_rows("index_levels_daily", [
-        {"symbol": symbol, "session_date": date.fromisoformat(d), "open": 7740.0 + i, "high": 7755.0 + i,
+        {"symbol": "^GSPC", "session_date": date.fromisoformat(d), "open": 7740.0 + i, "high": 7755.0 + i,
          "low": 7725.0 + i, "close": 7748.0 + i, "volume": 1_000_000 + i, "source": "yfinance",
          "fetched_at": 1.0, "run_id": "seed", "run_at": 1.0}
         for i, d in enumerate(dates)])
@@ -76,3 +74,27 @@ def test_an_empty_store_warns_and_writes_an_empty_window_rather_than_reaching_ou
     man = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
     assert raw["ohlc"]["data"] == []
     assert any("index levels" in w for w in man["warnings"])
+
+
+def test_a_window_that_ends_before_the_last_complete_session_warns(monkeypatch):
+    """#293 review MUST: the only guard was "no rows at all". A window that merely ends early — the nightly
+    --index-levels step missed a session — passed silently with a healthy source label, which is the default
+    same-day Fetch path. It must say so."""
+    from RevenueChaser.core import calendar as nyse_calendar
+    from RevenueChaser.module_spx_gamma import candles
+
+    rows = [{"date": d, "close": 1.0} for d in CANDLE_DATES]
+    monkeypatch.setattr(nyse_calendar, "latest_complete_session", lambda *a, **k: date(2026, 8, 18))
+    expected, last = candles.window_lag(rows, "2026-08-18")
+    assert (expected, last) == ("2026-08-18", "2026-08-14")
+
+
+def test_a_window_up_to_the_last_complete_session_does_not_warn(monkeypatch):
+    """The same-day Fetch is legitimate: the store holds complete sessions only (rule B), so ending on the last
+    complete session is correct and must stay silent."""
+    from RevenueChaser.core import calendar as nyse_calendar
+    from RevenueChaser.module_spx_gamma import candles
+
+    rows = [{"date": d, "close": 1.0} for d in CANDLE_DATES]
+    monkeypatch.setattr(nyse_calendar, "latest_complete_session", lambda *a, **k: date(2026, 8, 14))
+    assert candles.window_lag(rows, "2026-08-17") == (None, None)

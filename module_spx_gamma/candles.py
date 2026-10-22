@@ -40,6 +40,29 @@ def stored_spx_candles(asof: date | str, ticker: str = "^GSPC") -> list[dict]:
     return index_levels.levels_between(window_start(asof_date), asof_date, symbol=ticker)
 
 
+def window_lag(rows: list[dict], asof: date | str) -> tuple[str | None, str | None]:
+    """``(expected_last_session, stored_last_session)`` when the window ends early, else ``(None, None)``.
+
+    The stored table only holds complete sessions (rule B), so a Fetch asked for today legitimately ends on the
+    last complete session. It is NOT legitimate for the window to end before that: the nightly
+    ``--index-levels`` step missed one or more sessions and the board would show a stale window with a healthy
+    source label (#293 review MUST). A calendar that cannot answer reports nothing rather than raising.
+    """
+    asof_date = asof if isinstance(asof, date) else date.fromisoformat(asof)
+    if not rows:
+        return None, None                      # the empty case has its own warning
+    try:
+        from RevenueChaser.core import calendar as nyse_calendar
+        expected = nyse_calendar.latest_complete_session()
+    except (ValueError, ImportError):
+        return None, None
+    expected = min(expected, asof_date)
+    if not nyse_calendar.is_trading_day(expected):
+        expected = nyse_calendar.previous_trading_day(expected)
+    last = max(r["date"] for r in rows)
+    return (expected.isoformat(), last) if last < expected.isoformat() else (None, None)
+
+
 def price_window_sessions(rows: list[dict], asof: date | str) -> list[dict]:
     """Completed sessions within the 8-week window ending on (or before) ``asof``."""
     asof_date = asof if isinstance(asof, date) else date.fromisoformat(asof)
