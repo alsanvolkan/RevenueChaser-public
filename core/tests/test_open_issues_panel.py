@@ -8,11 +8,15 @@ convention. What the browser makes of the strings is ``module_testing/e2e/test_o
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
 from RevenueChaser.core import open_issues, reporting_common
 from RevenueChaser.core.tests.open_issues_shell import open_issues_block, strip_open_issues_data
+
+# The shell template, read by the tests that check what the panel renders.
+SHELL = Path(__file__).resolve().parents[2] / "templates" / "dashboard.html"
 
 BOARD = "module_sec_13f"
 SHARED = 9
@@ -162,9 +166,12 @@ def test_the_shell_embeds_one_payload_with_the_boards_counts(shell):
     from RevenueChaser.app import dashboard
     data_boards = [t["key"] for t in dashboard.TABS
                    if t["type"] == "tab" and t["key"] not in open_issues.NOT_A_DATA_BOARD]
-    assert set(data) == {"entries", "boards"}
+    assert set(data) == {"entries", "boards", "data_boards"}
     boards, entries = data["boards"], data["entries"]
     assert sorted(boards) == sorted(data_boards)
+    # ``data_boards`` names the same tabs, and ships even when the registry failed, so the shell can tell a
+    # data board from Logs with no ``boards`` at all.
+    assert data["data_boards"] == data_boards
     assert len(boards[BOARD]["board"]) == 6 and len(boards[BOARD]["shared"]) == SHARED
     assert len(boards["module_settings"]["repo"]) == REPO
     assert not boards["module_oipd"]["board"]
@@ -197,8 +204,13 @@ def test_the_embedded_block_is_under_the_size_budget():
     block = open_issues_block(html)
     size = len(block.encode("utf-8"))
     data = json.loads(block)
-    assert set(data) == {"entries", "boards"} and data["entries"], "the pages name entries from one map"
+    assert set(data) == {"entries", "boards", "data_boards"} and data["entries"], \
+        "the pages name entries from one map"
     assert len(data["boards"]) >= 16
+    # ``data_boards`` is the tabs that have a group at all, so the shell can tell one from Logs even when
+    # the registry failed to load and ``boards`` is absent.
+    assert set(data["data_boards"]) == set(data["boards"])
+    assert "logs" not in data["data_boards"]
     assert size < 400_000, f"the embedded open-issues block is {size} bytes, over the 400 KB budget"
     assert size < 3 * len(open_issues.REGISTRY_PATH.read_bytes()), "the block carries the registry, not 16 copies"
 
@@ -215,17 +227,22 @@ def test_a_hostile_title_and_summary_cannot_leave_the_script_block(shell):
     key = data["boards"][BOARD]["board"][0]
     assert data["entries"][key]["title"] == hostile_title     # the text itself survives
     # and the client renderer escapes what it puts into innerHTML (#175's one escaper)
-    assert "rcEsc(it.title)" in html              # the title
-    assert "return rcEsc(text).replace" in html  # and every summary/detail line (rcOiText)
+    assert "rcEsc(it.title)" in html                       # the title
+    assert "rcOiMarkdown(rcEsc(text))" in html             # every summary/detail line (rcOiText)
     assert "function rcEsc(" in html
+    # The subset renders on text rcEsc has already neutralised, so it cannot give a field its own element.
+    assert "function rcOiText(text){\n  // Escaped first" in html
 
 
 def test_a_missing_registry_renders_a_message_not_a_500(shell):
     html = shell({})          # no generated_at, no issues: load() refuses it
     assert 'id="rc-open-issues-error"' in html
     assert "issue registry" in html
-    assert json.loads(open_issues_block(html)) == {}, \
+    block = json.loads(open_issues_block(html))
+    assert "boards" not in block and "entries" not in block, \
         "a registry that cannot be read ships no board (the group shows the reason instead)"
+    # The data-board list is all that travels, so the error shows on a data board and never on Logs.
+    assert set(block) == {"data_boards"} and "logs" not in block["data_boards"]
 
 
 def test_the_page_scan_helper_removes_exactly_the_registry_block(shell):
@@ -264,3 +281,64 @@ def test_the_payload_route_is_json_ready(registry):
 
 def _as_entry(d: dict) -> open_issues.Entry:
     return open_issues._as_entry(d)
+
+
+# ── the detail fields' markdown subset (the approved artboard shows styled code, not backticks) ──────────
+
+def _shell_markdown_steps() -> str:
+    """``rcOiMarkdown``'s body from the shell, so these tests read the shipped source, not a copy."""
+    html = SHELL.read_text(encoding="utf-8")
+    start = html.index("function rcOiMarkdown(safe){")
+    return html[start:html.index("\nfunction rcOiText(", start)]
+
+
+def test_the_detail_markdown_subset_is_rendered_and_nothing_else():
+    """42 of the registry's entries carry a backtick, 30 a markdown bullet, 17 a ``**`` pair and 2 a fence.
+
+    The panel printed all of it literally while the approved artboard shows styled code and clean prose, so
+    ``rcOiText`` renders exactly that subset — code, bold, bullets — and leaves everything else as text.
+    """
+    body = _shell_markdown_steps()
+    # inline code, bold, bullets and fences, each by the pattern that implements it
+    assert "`([^`\\n]+)`" in body, "inline code is not rendered"
+    assert "\\*\\*([^*\\n]+)\\*\\*" in body, "bold is not rendered"
+    assert "rc-oi-ul" in body and "<li>" in body, "bullets are not rendered"
+    assert "rc-oi-pre" in body, "a code fence is not rendered"
+    # and nothing richer: a link or an image would let a registry title paint a live element
+    for forbidden in ("<a ", "<img", "href", "src="):
+        assert forbidden not in body, f"the subset renders {forbidden!r}; it must not"
+
+
+def test_the_markdown_subset_runs_after_escaping():
+    """Order is the whole safety argument: ``rcOiText`` escapes first, then renders the subset.
+
+    Reversed, a field could paint its own element. The patterns only ever look at ` * - and the newline, and
+    ``rcEsc`` produces none of those, so no escaped text can grow a tag.
+    """
+    html = SHELL.read_text(encoding="utf-8")
+    start = html.index("function rcOiText(text){")
+    assert "rcOiMarkdown(rcEsc(text))" in html[start:start + 400], \
+        "rcOiText must escape before it renders the subset"
+    # the shell has exactly one escaper (#175) and the subset did not add a second
+    assert html.count("function rcOiMarkdown(") == 1
+
+
+def test_the_panel_summary_puts_the_counts_before_the_date():
+    """The artboard reads "N on this board, M shared · <what needs attention> · as of <date>"."""
+    html = SHELL.read_text(encoding="utf-8")
+    start = html.index("var line = 'Open issues")
+    block = html[start:html.index("summary.textContent = line;", start)]
+    assert block.index("' deferred'") < block.index("' · as of '"), "the date comes before the counts"
+    assert block.index("' parked'") < block.index("' · as of '"), "the date comes before the counts"
+
+
+def test_the_links_row_is_the_last_field_of_the_list():
+    """The artboard shows Links as the last labelled row, not as a paragraph under the list."""
+    html = SHELL.read_text(encoding="utf-8")
+    assert "'<dt>Links</dt><dd class=\"rc-oi-links\">'" in html
+    assert "<p class=\"rc-oi-links\">" not in html
+
+
+def test_the_decided_field_is_labelled_as_the_artboard_labels_it():
+    html = SHELL.read_text(encoding="utf-8")
+    assert "tried_or_decided:'What was decided'" in html

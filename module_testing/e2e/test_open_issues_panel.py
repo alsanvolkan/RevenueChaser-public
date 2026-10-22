@@ -165,8 +165,13 @@ def test_the_group_is_collapsed_opens_and_follows_the_tab(dashboard, chrome, tmp
     assert report["initial.hidden"] == "false", "a data board shows the group"
     assert report["initial.open"] == "false", "it starts collapsed"
     assert report["opened.open"] == "true", "one click opens it"
-    assert re.fullmatch(r"Open issues — \d+ on this board, \d+ shared · as of \d{1,2} \w{3} \d{4}.*",
-                        report["opened.summary"]), report["opened.summary"]
+    # The counts come first and the date last, as the approved artboard has them; the middle holds whatever
+    # needs attention on this board (deferred, parked, need review), each or none.
+    assert re.fullmatch(
+        r"Open issues — \d+ on this board, \d+ shared"
+        r"(?: · \d+ deferred)?(?: · \d+ parked)?(?: · \d+ need review)?"
+        r" · as of \d{1,2} \w{3} \d{4}",
+        report["opened.summary"]), report["opened.summary"]
     assert report["opened.sections"].startswith("This board (")
     assert "Affects every board (" in report["opened.sections"]
     assert report["opened.titles"].startswith("#"), "items are listed by number and title"

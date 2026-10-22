@@ -197,8 +197,14 @@ One click opens it. Inside are up to three sub-sections — **This board (N)**,
 `deferred` carry their `deferred_until` date; its one-sentence summary, visible
 as soon as the group is open; and,
 when the item is opened, the labelled fields `What is wrong`, `Evidence`,
-`Example`, `What was tried or decided`, `Direction`, `Next step`, plus a `Links`
-row (the issue first, then any reference) that opens on GitHub in a new tab.
+`Example`, `What was decided`, `Direction`, `Next step`, and last a `Links` row
+(the issue first, then any reference) that opens on GitHub in a new tab.
+
+Those fields carry a little markdown, and the panel renders a fixed subset of it:
+inline `` `code` ``, `**bold**`, `- ` bullets and a fenced block. Everything else,
+links included, stays text — the escaper runs first and the subset works on its
+output, so a field can style itself but never paint an element of its own. The
+sync keeps a clipped field's last `` ` `` span whole for the same reason.
 
 The three scopes are what keep a board's own problems at the top:
 

@@ -120,6 +120,10 @@ def _clip(text: str, limit: int = FIELD_LIMIT) -> str:
     cut = text[:limit - len(marker)]
     if " " in cut:
         cut = cut.rsplit(" ", 1)[0]
+    # The panel renders inline code, so a cut inside a `span` would leave a dangling backtick on the board
+    # rather than a styled path. Drop the opened span with it; the full text is on GitHub behind the link.
+    if cut.count("`") % 2:
+        cut = cut[:cut.rfind("`")]
     return cut.rstrip() + marker
 
 

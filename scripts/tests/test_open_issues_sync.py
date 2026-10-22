@@ -279,3 +279,26 @@ def test_a_title_keeps_an_incomplete_entity_reference():
     # A complete reference is still resolved, which is the whole point of the step.
     assert sync._title({"title": "Fix &amp; ship &lt;b&gt;"}) == "Fix & ship <b>"
     assert sync._title({"title": "&#38; and &#x26;"}) == "& and &"
+
+
+def test_a_clip_never_ends_inside_an_inline_code_span():
+    """The panel renders inline code, so half a `span` shows as a dangling backtick on the board.
+
+    The word-boundary cut already drops a partial token, so the span that dangles is one that runs over
+    several words: the cut then falls after a space inside it and the opening backtick survives alone. Three
+    registry entries looked like that on 2026-10-22, e.g. ``land in `result_runs.warnings […]``.
+    """
+    limit, marker = 900, len(" […]")
+    span = "`result_runs.warnings and other fields`"
+    # Put the cut inside the span, just past its second word, so the rsplit keeps the opening backtick.
+    keep = limit - marker
+    filler = "w " * ((keep - span.index(" other") - 2) // 2)
+    text = filler + span + " and the rest of the sentence"
+    assert text[:keep].rsplit(" ", 1)[0].count("`") % 2, "the test no longer cuts inside the span"
+
+    clipped = sync._clip(text, limit=limit)
+    assert clipped.count("`") % 2 == 0, f"dangling backtick: {clipped[-60:]!r}"
+    assert clipped.endswith(" […]")
+    # A whole span and a text with no backtick are both left as they are.
+    assert sync._clip("a `path/to.py` b", limit=limit) == "a `path/to.py` b"
+    assert sync._clip("word " * 300, limit=limit).endswith(" […]")

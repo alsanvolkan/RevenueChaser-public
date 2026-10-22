@@ -127,6 +127,12 @@ button:disabled{opacity:.5;cursor:default}
   margin-right:5px;vertical-align:0}
 .rc-oi-line{display:block;color:var(--muted);padding:2px 0 0 12px}
 .rc-oi-dl{display:grid;grid-template-columns:190px 1fr;gap:2px 12px;margin:6px 0 0 12px;font-size:12px}
+.rc-oi-dl code{font-size:11.5px;color:var(--bright);background:rgba(56,189,248,.08);padding:0 3px;
+  border-radius:3px}
+.rc-oi-pre{margin:4px 0;padding:6px 8px;background:rgba(0,0,0,.25);border:1px solid var(--border);
+  border-radius:4px;overflow:auto}
+.rc-oi-pre code{background:none;padding:0}
+.rc-oi-ul{margin:2px 0;padding-left:18px}
 .rc-oi-dl dt{color:var(--fg);font-weight:600}
 .rc-oi-dl dd{margin:0;color:var(--muted)}
 .rc-oi-links{margin:6px 0 4px 12px;font-size:12px}
@@ -244,7 +250,7 @@ button:disabled{opacity:.5;cursor:default}
 var RC_OI_LS = 'rc-open-issues-open';
 var RC_OI_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 var RC_OI_LABELS = {whats_wrong:'What is wrong', evidence:'Evidence', example:'Example',
-                    tried_or_decided:'What was tried or decided', direction:'Direction', next_step:'Next step'};
+                    tried_or_decided:'What was decided', direction:'Direction', next_step:'Next step'};
 var RC_OI_DATA = (function(){
   try{ return JSON.parse(document.getElementById('rc-open-issues-data').textContent || '{}') || {}; }
   catch(e){ return {}; }
@@ -270,9 +276,29 @@ function rcOiDate(iso){
   if(!iso || isNaN(d.getTime())) return '';
   return d.getUTCDate() + ' ' + RC_OI_MONTHS[d.getUTCMonth()] + ' ' + d.getUTCFullYear();
 }
+function rcOiMarkdown(safe){
+  // Every step below runs on text rcEsc has already neutralised, so none of it can introduce markup the
+  // registry controls: the only characters these patterns look at are ` * - and the newline, and escaping
+  // produces none of them. The subset is what the approved artboard shows — code, bold, bullets — and
+  // nothing else; anything richer belongs on GitHub behind the issue link.
+  var out = safe.replace(/\n?```[^\n]*\n([\s\S]*?)```\n?/g, function(_, code){
+    return '<pre class="rc-oi-pre"><code>' + code.replace(/\n+$/, '') + '</code></pre>';
+  });
+  out = out.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  out = out.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  // A run of "- " lines becomes one list; the lines in between keep their <br> treatment below.
+  out = out.replace(/(?:^|\n)((?:[-*] [^\n]*(?:\n|$))+)/g, function(_, block){
+    var items = block.replace(/\n$/, '').split('\n').map(function(line){
+      return '<li>' + line.replace(/^[-*] /, '') + '</li>';
+    }).join('');
+    return '<ul class="rc-oi-ul">' + items + '</ul>';
+  });
+  // Newlines that are left (plain prose) stay line breaks; the ones the block elements swallowed are gone.
+  return out.replace(/\n/g, '<br>');
+}
 function rcOiText(text){
-  // Escaped first, line breaks second: a detail field's newlines are the only markup that survives.
-  return rcEsc(text).replace(/\n/g, '<br>');
+  // Escaped first, markup second: the registry's text is data, and only this subset of it is rendered.
+  return rcOiMarkdown(rcEsc(text));
 }
 function rcOiChips(it){
   var chips = [];
@@ -294,7 +320,7 @@ function rcOiItem(it){
     var v = (it.detail || {})[k];
     if(v){ dl += '<dt>' + RC_OI_LABELS[k] + '</dt><dd>' + rcOiText(v) + '</dd>'; }
   });
-  var links = '<a href="' + rcEsc(it.url) + '" target="_blank" rel="noopener">#' + rcEsc(it.number) + ' on GitHub</a>';
+  var links = '<a href="' + rcEsc(it.url) + '" target="_blank" rel="noopener">Issue #' + rcEsc(it.number) + '</a>';
   (it.refs || []).forEach(function(r){
     links += ' · <a href="' + rcEsc(r.url) + '" target="_blank" rel="noopener">' + rcEsc(r.label || 'link') + '</a>';
   });
@@ -302,8 +328,8 @@ function rcOiItem(it){
     '<span class="rc-oi-head"><span class="rc-oi-title">#' + rcEsc(it.number) + ' · ' + rcEsc(it.title) +
     '</span><span class="rc-oi-chips">' + rcOiChips(it) + '</span></span>' +
     '<span class="rc-oi-line">' + rcOiText(it.summary) + '</span></summary>' +
-    '<dl class="rc-oi-dl">' + dl + '</dl>' +
-    '<p class="rc-oi-links">Links: ' + links + '</p></details>';
+    '<dl class="rc-oi-dl">' + dl +
+    '<dt>Links</dt><dd class="rc-oi-links">' + links + '</dd></dl></details>';
 }
 function rcOiSection(heading, items){
   return '<section class="rc-oi-sec"><h4>' + rcEsc(heading) + '</h4>' + items.map(rcOiItem).join('') + '</section>';
@@ -329,11 +355,13 @@ function rcOpenIssuesRender(key){
   var deferred = all.filter(function(it){ return it.status === 'deferred'; }).length;
   var parked = all.filter(function(it){ return it.status === 'parked'; }).length;
   var review = all.filter(function(it){ return it.status === 'needs-review'; }).length;
-  var line = 'Open issues — ' + board.length + ' on this board, ' + shared.length + ' shared' +
-             ' · as of ' + (rcOiDate(data.generated_at) || 'an unknown date');
+  // The artboard reads "N on this board, M shared · <what needs attention> · as of <date>": the counts
+  // carry the urgency, so they come before the date rather than after it.
+  var line = 'Open issues — ' + board.length + ' on this board, ' + shared.length + ' shared';
   if(deferred) line += ' · ' + deferred + ' deferred';
   if(parked) line += ' · ' + parked + ' parked';
   if(review) line += ' · ' + review + ' need review';
+  line += ' · as of ' + (rcOiDate(data.generated_at) || 'an unknown date');
   summary.textContent = line;
   var html = board.length
     ? rcOiSection('This board (' + board.length + ')', board)
