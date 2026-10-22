@@ -207,9 +207,12 @@ _STI_HTM_TAGS = ["HeldToMaturitySecuritiesCurrent",
 # moved by -68%, one filer lost eleven years). The premise that the two tax tags differ only by the
 # assessed tax is false, so neither is "the narrower one" and neither may take a year from the
 # other. Bank top lines are a different definition of the top line and are never revenue: since #450
-# ``RevenuesNetOfInterestExpense`` and ``InterestAndDividendIncomeOperating`` are read into their own
-# field (``interest_income_top_line``), which no reader of ``revenue`` looks at, so no filer's revenue
-# value moves. No other tag that merely contains the word "Revenue" is a top line either
+# ``RevenuesNetOfInterestExpense`` and ``InterestAndDividendIncomeOperating`` are read into two fields
+# of their own, one tag each, which no reader of ``revenue`` looks at, so no filer's revenue value
+# moves. They are two fields and not one for the same reason the two tax tags may not merge: net of
+# interest expense and gross interest and dividend income differ by the whole interest expense line,
+# so one field fed by both would step wherever a filer switched tags, and the #246 backfill would
+# read that step as history. No other tag that merely contains the word "Revenue" is a top line either
 # (``ContractWithCustomerLiabilityRevenueRecognized``, ``IncreaseDecreaseInDeferredRevenue``,
 # ``CostOfRevenue`` and pro-forma acquisition revenue).
 #
@@ -233,11 +236,11 @@ _ADD_ONLY_CONCEPTS = frozenset({"RevenueFromContractWithCustomerIncludingAssesse
 CONCEPTS = {
     "revenue": (["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet",
                  "RevenueFromContractWithCustomerIncludingAssessedTax"], "USD"),
-    # #450: a bank's income-statement top line, never revenue (see the comment above). The order is a
-    # tie-break only: net of interest expense is the closer analogue of a top line, so it is preferred
-    # when a filer reports both; the pick rule above then decides as usual (newest, then longest).
-    "interest_income_top_line": (["RevenuesNetOfInterestExpense",
-                                  "InterestAndDividendIncomeOperating"], "USD"),
+    # #450: a bank's income-statement top line, never revenue (see the comment above). One field per
+    # tag, because the two tags are two different quantities: a single field would let the #246
+    # backfill take a year from the other tag and store a series that steps on a tag change.
+    "revenue_net_of_interest_expense": (["RevenuesNetOfInterestExpense"], "USD"),
+    "interest_and_dividend_income": (["InterestAndDividendIncomeOperating"], "USD"),
     "gross_profit": (["GrossProfit"], "USD"),
     "cost_of_revenue": (["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold",
                          "CostOfServices"], "USD"),
@@ -306,25 +309,38 @@ _PRIORITY_FIELDS = frozenset({"cost_of_revenue", "marketable_securities_noncurre
                               "long_term_investments", "share_repurchases",
                               "share_based_compensation"}) | _DEBT_COMPONENT_FIELDS
 
+# The two bank top lines of #450, grouped so the sets below name them once.
+_BANK_TOP_LINE_FIELDS = frozenset({"revenue_net_of_interest_expense", "interest_and_dividend_income"})
+
 # Fields that never add a record: the readers take the last record as the latest period, so a
 # period holding only these fields is no period. ``short_term_investments`` has its own
 # resolution (``_short_term_investments``) and so is not in ``_PRIORITY_FIELDS``.
 _NEVER_A_RECORD = frozenset({"cost_of_revenue", "short_term_investments",
                              "marketable_securities_noncurrent", "long_term_investments",
                              "share_repurchases", "share_based_compensation",
-                             "interest_income_top_line"}) | _DEBT_COMPONENT_FIELDS
+                             }) | _DEBT_COMPONENT_FIELDS | _BANK_TOP_LINE_FIELDS
 
 # Flows that cannot be negative. A YTD difference that comes out negative for one of them (a Q4 whose
 # FY was restated for discontinued operations while the 9M was not) is dropped and flagged
 # ``<field>_suspect``, never ``abs()``. Operating cash flow, net income and EBIT may be negative.
+# The two bank top lines (#450) are deliberately out: ``RevenuesNetOfInterestExpense`` can be
+# genuinely negative (net interest expense plus large securities losses), unlike ``revenue``, so a
+# negative derived quarter of theirs is kept and carries no ``_suspect`` flag.
 _NON_NEGATIVE_FLOWS = frozenset({"revenue", "cost_of_revenue", "capex", "depreciation", "rd_expense",
                                  "share_repurchases", "share_based_compensation"})
 
 # Fields written only when they hold a value: a record has no such key when the filer reports none.
 # Every older field is present on every record with ``None``; only a new field can take this shape, and
-# it is the right one for the bank top line (#450), which no reader consumes yet: "this filer reports
+# it is the right one for the bank top lines (#450), which no reader consumes yet: "this filer reports
 # no bank top line" must not look like a stored zero.
-_OMIT_WHEN_ABSENT = frozenset({"interest_income_top_line"})
+#
+# An absent key therefore means one of TWO things: the filer reports neither tag, OR the row was
+# extracted before #450. ``edgar_financials`` has no TTL, ``get_fundamentals`` returns a stored row
+# unconditionally and no re-extraction script exists, so the first reader of these fields has to land
+# an ``EXTRACT_VERSION`` bump TOGETHER with a re-extraction: the bump alone does not fill them, and on
+# its own it marks the whole scored universe behind (``module_fundamentals/history.py``). That is why
+# this change leaves the version at 2.
+_OMIT_WHEN_ABSENT = _BANK_TOP_LINE_FIELDS
 
 # Version of the extraction rules, stored in ``meta`` of every row this module writes. A row without
 # it was extracted before #158 (no YTD-derived quarters, no per-field filed/accn). Bump it whenever
@@ -784,8 +800,14 @@ def _period_ends(rec: dict, period: str, ends: dict[str, dict[str, str]]) -> dic
     two fiscal years ending in one calendar year share a record. A later adoption slice that
     pairs figures from one record can then check they ended on the same date. Only fields
     that hold a value are listed. A derived ``gross_profit`` ends with the revenue it came from.
+
+    A field in ``_OMIT_WHEN_ABSENT`` is left out entirely: ``core/fiscal_year.py`` reads this map as
+    ``ends.get("revenue") or max(ends.values())``, so for a bank — which has no ``revenue`` — any
+    extra end date here would move the record's period end, and with it the staleness and adjacency
+    gates that decide a card. These fields have no reader, so they must not reach that ``max()``.
     """
-    out = {f: ends[f][period] for f in CONCEPTS if period in ends[f]}
+    out = {f: ends[f][period] for f in CONCEPTS
+           if period in ends[f] and f not in _OMIT_WHEN_ABSENT}
     if rec.get("gross_profit_derived") and "revenue" in out:
         out["gross_profit"] = out["revenue"]
     return out

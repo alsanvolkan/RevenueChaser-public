@@ -1,6 +1,6 @@
 """#450: the bank top line never enters a peer comparison as revenue.
 
-``interest_income_top_line`` is stored next to ``revenue`` in the same annual record. The comps
+The two bank top-line fields are stored next to ``revenue`` in the same annual record. The comps
 engine reads ``revenue`` by name (``latest.get("revenue")``), so a bank record that carries only the
 new field produces no EV/Revenue multiple: the bank does not enter the peer comparison through a
 different definition of the top line. The record here comes from ``extract_annual`` over synthetic
@@ -13,7 +13,8 @@ from RevenueChaser.core.providers import sec_edgar as se
 from RevenueChaser.core.tests.test_sec_edgar_concept_merge_246 import _facts, _s
 from RevenueChaser.module_financials.engines.comps_engine import run_comps
 
-BANK = "interest_income_top_line"
+NET = "revenue_net_of_interest_expense"
+GROSS = "interest_and_dividend_income"
 RNOI = "RevenuesNetOfInterestExpense"
 IODI = "InterestAndDividendIncomeOperating"
 _PEER = {"enterpriseValue": 1000.0, "totalRevenue": 100.0, "ebitda": 50.0, "marketCap": 900.0,
@@ -26,7 +27,8 @@ def test_a_bank_with_no_revenue_gets_no_ev_revenue_multiple():
     annual = se.extract_annual(_facts(flow={RNOI: _s([2024, 2025], 10000),
                                            IODI: _s([2024, 2025], 20000),
                                            "NetIncomeLoss": _s([2024, 2025], 500)}))
-    assert annual[-1][BANK] == 12025.0   # the net-of-interest-expense tag wins the tie
+    assert annual[-1][NET] == 12025.0     # each tag fills its own field, neither is revenue
+    assert annual[-1][GROSS] == 22025.0
     assert annual[-1]["revenue"] is None
 
     res = run_comps({"ticker": "BANK", "annual": annual, "shares_outstanding": 100.0},
