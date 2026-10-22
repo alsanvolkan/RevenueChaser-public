@@ -13,7 +13,7 @@ from datetime import date
 
 import pytest
 
-from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 from RevenueChaser.core.tests.board_js import run_board_js
 
 EVIL = "\"'><img src=x onerror=__x(1)>"

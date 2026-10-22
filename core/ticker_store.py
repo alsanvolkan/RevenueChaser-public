@@ -17,8 +17,11 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = "3"     # 3: tier, flags, model_version, anchor_fy, prior_fy, period_ends (#380 AG W1 S2, S3)
 
 # Kart -> sütun adları. JSON olarak saklananlar ``_JSON_COLS``.
+# ``industry_group`` / ``sub_industry`` are not here: since #265 they are GICS-only levels the AG card never
+# carries, so every row held NULL. The table keeps both columns (docs/data_architecture.md, no schema change);
+# a reader that needs them reads the manifest, not this mapping.
 _SCALAR_COLS = [
-    "ticker", "name", "sector", "industry", "industry_group", "sub_industry",
+    "ticker", "name", "sector", "industry",
     "price", "market_cap", "ps_ratio",
     "rev_growth", "gross_margin", "fcf", "runway_years", "rd_intensity",
     "dilution_yoy", "earnings_date", "total_points", "tech_breakthrough",

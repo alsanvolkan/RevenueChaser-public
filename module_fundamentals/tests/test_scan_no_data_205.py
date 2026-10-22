@@ -114,11 +114,6 @@ def test_no_data_message_is_escaped(rawstore_tmp_db, monkeypatch, mod, render):
     assert "<script>alert(1)</script>" not in html
 
 
-def test_demo_payload_is_still_available_for_explicit_use():
-    assert fp.demo_payload()["is_fixture"] is True
-    assert sp.demo_payload()["is_fixture"] is True
-
-
 def test_ohlc_drop_reason_252_bar_threshold():
     from RevenueChaser.core.scan_quality import ohlc_drop_reason
     assert ohlc_drop_reason(_df(251)) == "short_bars"

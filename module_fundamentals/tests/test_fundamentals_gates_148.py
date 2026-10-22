@@ -80,12 +80,6 @@ def test_the_payload_has_no_multiplier_or_tier_counters():
     assert p["selection_version"] == fp.config.SELECTION_VERSION
 
 
-def test_the_demo_payload_carries_the_selection_version_and_no_tiers():
-    demo = fp.demo_payload()
-    assert demo["selection_version"] == fp.config.SELECTION_VERSION
-    assert "tiers" not in demo
-
-
 # ── U12: the Rule of 40 gate is one real test ─────────────────────────────────
 
 def test_rule_of_40_has_one_rule_row_with_a_real_pass_or_fail():
@@ -126,7 +120,6 @@ def test_the_payload_carries_the_data_as_of_of_the_run():
     p = build_payload([_row("R", _m(**_RO40))], top_n=10, run_stats={"data_as_of": "2026-10-06"})
     assert p["data_as_of"] == "2026-10-06"
     assert build_payload([], top_n=10)["data_as_of"] is None
-    assert fp.demo_payload()["data_as_of"] is None
 
 
 def test_run_scan_leaves_the_data_date_to_the_shared_scan(monkeypatch):

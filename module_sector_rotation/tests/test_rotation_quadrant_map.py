@@ -6,7 +6,7 @@ day is missing, and never touch the network when told ``compute=False``.
 """
 from datetime import date
 
-from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 from RevenueChaser.module_sector_rotation import engine as rotation_engine
 from RevenueChaser.module_sector_rotation import store as rotation_store
 
