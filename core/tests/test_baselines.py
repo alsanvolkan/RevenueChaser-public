@@ -78,6 +78,19 @@ def _seed(rows, *, tickers=None):
     rawstore.write_rows("equity_universe", [{"ticker": t, "name": t, "market_cap": 1e9} for t in names])
 
 
+def _dividend(ticker, day, value):
+    return {"ticker": ticker, "ex_date": day, "action": "dividend", "value": value, "session_date": day,
+            "source": "yfinance", "fetched_at": 0.0, "run_id": "seed", "run_at": 0.0}
+
+
+def _vols(names, basis):
+    """The trailing vol of each name on ``D``, read on ``basis`` through the window ``baselines`` reads."""
+    frame = prices.daily_bars_bases(names, start=D - timedelta(days=baselines.VOL_LOOKBACK_DAYS),
+                                    end=cal.latest_complete_session(NOW))[basis]
+    by = baselines._by_ticker(frame)
+    return [baselines.realised_vol([b["close"] for b in by.get(t, []) if b["session_date"] <= D]) for t in names]
+
+
 def _freeze(subjects, *, source="swing", day=D):
     ledger.write_picks(source, source, [{"subject": s, "rank": i + 1} for i, s in enumerate(subjects)],
                        model_version="v1+abcd", forecast_date=day, run_id="freeze1")
@@ -170,23 +183,61 @@ def test_the_vol_decile_baseline_is_the_mean_of_its_own_decile(rawstore_tmp_db, 
         {"universe", *[f"vol_decile_{d}" for d in range(1, 11)]}
 
 
-def test_a_peer_group_smaller_than_ten_leaves_the_missing_deciles_empty(rawstore_tmp_db, clock):
-    """All eleven bases are always written (the key set never changes shape); a decile with no member has n = 0."""
+def test_fewer_than_ten_members_have_no_deciles_at_all(rawstore_tmp_db, clock):
+    """Ten groups cannot be made of fewer than ten names: a "decile" of one name is not a peer group. All eleven
+    bases are still written (the key set never changes shape) — the deciles with n = 0 and no boundaries — and the
+    names are counted in the universe row alone."""
     names = ("AAA", "BBB", "CCC")
     _seed([b for i, t in enumerate(names, start=1) for b in _series(t, amp=i / 100)], tickers=names)
     _freeze(["AAA"])
     baselines.run(now=NOW, run_id="r1")
-    got = {r["basis"]: r["n"] for r in _rows() if r["horizon_days"] == 30}
+    got = {r["basis"]: (r["n"], r["vol_lo"], r["vol_hi"]) for r in _rows() if r["horizon_days"] == 30}
     assert len(got) == 11
-    assert {b: n for b, n in got.items() if n} == {"universe": 3, "vol_decile_1": 1,
-                                                   "vol_decile_6": 1, "vol_decile_10": 1}
+    assert got["universe"] == (3, None, None)
+    assert {b: v for b, v in got.items() if b != "universe"} == \
+        {f"vol_decile_{k}": (0, None, None) for k in range(1, baselines.DECILES + 1)}
+
+
+def test_a_single_name_universe_is_in_no_decile_not_in_decile_ten(rawstore_tmp_db, clock):
+    """The nine boundaries of one value are all that value, and ``vol_lo`` inclusive would read the lone name as
+    decile 10 — the wildest. There is no peer to be wilder than: the name is in the universe row and in no decile."""
+    _seed(_series("ONLY"))
+    _freeze(["ONLY"])
+    baselines.run(now=NOW, run_id="r1")
+    assert _row(h=30)["n"] == 1
+    assert {r["n"] for r in _rows() if r["basis"] != "universe"} == {0}
+
+
+def test_the_volatility_is_read_adjusted_and_the_outcomes_nominal(rawstore_tmp_db, clock):
+    """The stated choice, from both sides. A dividend is a one-day fall of the printed price that is not a move of
+    the stock: one ex-date inside the vol window (2026-08-28) must not reach the volatility, which reads adjusted
+    closes, while a second one inside the 30-day window (2026-09-15) must not move the MFE, which is the pick's own
+    nominal measure. T01's high rises to 130 after that second ex-date, so the two bases really differ on both
+    numbers: swap either basis and this test goes red."""
+    names = [f"T{i:02d}" for i in range(1, 13)]
+    step = date(2026, 9, 15)
+    bars = [b for i, t in enumerate(names, start=1) for b in _series(t, mfe=0.05, amp=i / 1000)]
+    bars = [{**b, "high": 130.0} if b["ticker"] == "T01" and b["session_date"] > step else b for b in bars]
+    _seed(bars)
+    rawstore.write_rows("price_actions", [_dividend(t, day, 10.0)
+                                         for t in names for day in (date(2026, 8, 28), step)])
+    _freeze([names[0]])
+    baselines.run(now=NOW, run_id="r1")
+
+    stated = {r["basis"]: (r["vol_lo"], r["vol_hi"]) for r in _rows() if r["horizon_days"] == 30}
+    hi = [stated[f"vol_decile_{k}"][1] for k in range(1, baselines.DECILES)]
+    lo = [stated[f"vol_decile_{k}"][0] for k in range(2, baselines.DECILES + 1)]
+    want = baselines.decile_cuts(_vols(names, "adjusted"))
+    assert hi == pytest.approx(want) and lo == pytest.approx(want)          # the nine boundaries, both edges
+    assert hi != pytest.approx(baselines.decile_cuts(_vols(names, "nominal")))   # the two bases really differ
+    assert _row(h=30)["mfe_mean"] == pytest.approx((0.30 + 11 * 0.05) / 12)   # the outcome stays nominal
 
 
 # ── red-first rules: what is not measured ────────────────────────────────────
 
 def test_a_name_flagged_split_check_is_left_out_of_the_baseline(rawstore_tmp_db, clock):
-    """A split the store has no action for mixes two price bases, so the name's MFE is not comparable (HR-2 lists
-    those records and excludes them; the baseline does the same)."""
+    """A split the store has no action for leaves pre- and post-split prices in one nominal series, so the name's MFE
+    is not a return (HR-2 lists those records and excludes them; the baseline does the same)."""
     split_day = date(2026, 9, 15)
     jumped = [{**b, "open": b["open"] * 3, "high": b["high"] * 3, "low": b["low"] * 3, "close": b["close"] * 3}
               if b["session_date"] < split_day else b for b in _series("SPL")]
@@ -244,9 +295,25 @@ def test_the_nightly_skips_a_date_whose_windows_have_ended(rawstore_tmp_db, cloc
     assert closing["dates"] == 1
     assert {_row(h=h)["status"] for h in baselines.HORIZONS} == {baselines.CLOSED}
     assert baselines.run(now=LATER, run_id="r3")["dates"] == 0    # final: skipped
-    assert {r["run_id"] for r in _rows()} == {"r2"}
+    # The 30-day rows were already closed by r1, so r2 left them alone and rewrote the 90-day ones.
+    assert {r["run_id"] for r in _rows() if r["horizon_days"] == 30} == {"r1"}
+    assert {r["run_id"] for r in _rows() if r["horizon_days"] == 90} == {"r2"}
     full = baselines.run(now=LATER, run_id="r4", full=True)
     assert full["dates"] == 1 and {r["run_id"] for r in _rows()} == {"r4"}
+
+
+def test_the_nightly_recomputes_only_the_horizon_still_open(rawstore_tmp_db, clock):
+    """At NOW the 30-day window has ended: its eleven rows are final, and the next nightly rewrites the 90-day
+    eleven alone (11 rows, not 22) — a closed row is never rewritten, and its numbers cannot change."""
+    late = date(2026, 10, 20)
+    _seed(_series("AAA", last=late) + _series("BBB", amp=0.01, last=late))
+    _freeze(["AAA"])
+    baselines.run(now=NOW, run_id="r1")                          # 30-day rows close here, 90-day rows stay open
+    assert {_row(h=30)["run_id"]} == {"r1"}
+    second = baselines.run(now=datetime(2026, 10, 20, 23, 0, tzinfo=timezone.utc), run_id="r2")
+    assert (second["dates"], second["rows"]) == (1, 11) and second["status"] == {baselines.OPEN: 11}
+    assert {r["run_id"] for r in _rows() if r["horizon_days"] == 30} == {"r1"}
+    assert {r["run_id"] for r in _rows() if r["horizon_days"] == 90} == {"r2"}
 
 
 def test_an_empty_price_store_refuses_before_any_write(rawstore_tmp_db, clock):
@@ -266,6 +333,20 @@ def test_dry_run_computes_and_writes_nothing(rawstore_tmp_db, clock):
     out = baselines.run(now=NOW, run_id="r1", write=False)
     assert out["rows"] >= 1 and out["written"] == 0 and out["dry_run"] is True
     assert rawstore.count("forecast_baselines") == 0
+
+
+def test_n_counts_the_members_with_an_mfe_and_mae_mean_rests_on_the_ones_with_a_mae(rawstore_tmp_db, clock):
+    """A window bar can carry a high with no low (a NaN low is dropped, never read as 0). ``n`` counts the members
+    whose MFE is measurable, and ``mae_mean`` averages the MAE of those of them that have one: stated here, not an
+    accident of the filter."""
+    no_low = [dict(b, low=None) if b["session_date"] > D else b for b in _series("NOLOW", mfe=0.30)]
+    _seed(_series("AAA", mfe=0.10, mae=-0.20) + no_low)
+    _freeze(["AAA"])
+    baselines.run(now=NOW, run_id="r1")
+    u = _row(h=30)
+    assert (u["n"], u["ge20"]) == (2, 1)
+    assert u["mfe_mean"] == pytest.approx((0.10 + 0.30) / 2)
+    assert u["mae_mean"] == pytest.approx(-0.20)                 # NOLOW has no MAE, so it adds no drawdown
 
 
 def test_a_ledger_with_no_pick_has_no_baseline(rawstore_tmp_db, clock):

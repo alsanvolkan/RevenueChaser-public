@@ -220,7 +220,7 @@ Computed from raw caches and persisted in `raw.duckdb`.
 |---|---|---|
 | `forecast_ledger` | Frozen forecasts of every board (#128 / #62 D-3) | **append-only, first write wins** (nothing is ever updated; don't call `update_columns`/`replace_all`/`delete`/`clear` on it); `forecast_date` = the NY session of the newest complete bar used; `target_date` = the session the forecast resolves on (the forecast date for picks). Outcomes live in the derived `forecast_outcomes` table (62b-1, #380 S0) |
 | `forecast_outcomes` | `forecast_ledger` picks + D01 bars (`price_bars_daily` / `price_actions`, nominal basis) | **derived, keyed upsert** (`latest_cache`): recomputed from the ledger and the bars, never a fact of its own. Writer `core/outcomes.py` (CLI `scripts/forecast_outcomes.py`, task RC-Forecast-Outcomes 23:45, after RC-Daily-Bars); one row per pick and horizon (30 and 90 calendar days). See "The forecast-outcomes writer" below |
-| `forecast_baselines` | the `equity_universe` snapshot of a freeze date (`equity_universe_changes`) + D01 bars (nominal outcomes, adjusted closes for the volatility) | **derived, keyed upsert** (`latest_cache`, #25 HR-1, added with no schema bump): what the same day's universe did, so a family's hit rate can be compared with something. Writer `core/baselines.py`; one row per freeze date, horizon (30 and 90) and basis (`universe`, `vol_decile_1` … `vol_decile_10`). No scheduled task yet |
+| `forecast_baselines` | the `equity_universe` snapshot of a freeze date (`equity_universe_changes`) + D01 bars (nominal outcomes, adjusted closes for the volatility) | **derived, keyed upsert** (`latest_cache`, #25 HR-1, added with no schema bump): what the same day's universe did, so a family's hit rate can be compared with something. Writer `core/baselines.py` (CLI `scripts/forecast_baselines.py`, task RC-Forecast-Baselines 23:50, after RC-Forecast-Outcomes); one row per freeze date, horizon (30 and 90) and basis (`universe`, `vol_decile_1` … `vol_decile_10`) |
 | `index_constituents` | UW screener (sp500), DIA holdings (dow), ticker-exchanges (nasdaq); sp600 from the last accepted S&P 1500 snapshot in `identity_source_cache` (#302) | replace per slug; written by `index_registry.refresh_lists` (job `index_lists`, task RC-Index-Lists Saturday 10:00, CLI `scripts/index_lists.py`); a list under its floor (`MIN_INDEX`: 400 / 25 / 1,000 / 480) is not written; the first sp600 fill needs the user's OK for that run; joins and leaves are in `index_constituents_changes`. sp600 shows as "S&P SmallCap 600" on the badge and in the filter once stored (#214); `fetch_index` never fills it (Common K1) |
 | `index_tickers` (VIEW) | `index_constituents` ⨝ `equity_universe` | adds `name`/`sector`; replaces the old `ticker_registry` |
 | `ticker_scores` | Asymmetric Growth cards (ex-SQLite `tickers.db`) | single writer = market-cap scan; others read-only |
@@ -316,26 +316,39 @@ per horizon (`HORIZONS` = 30 and 90 calendar days), keyed by the ledger's key pl
 **The baselines beside it (#25 HR-1).** `core/baselines.py` writes `forecast_baselines` and nothing else, from the
 store alone (no provider call, no ledger write). A hit rate on its own says nothing — 41% means a different thing in a
 market where the average name rose 20% — so for every date the ledger froze a pick on it records what the same day's
-universe did, over the same windows and the same nominal basis (`outcomes.outcome` is reused, so the rules cannot
-drift):
+universe did, over the same windows (`outcomes.outcome` is reused, so the rules cannot drift):
 - `basis` `universe`: every ticker in that date's `equity_universe` snapshot, read at the end of the date from its
   change history (`rawstore.changes_as_of`). Never today's membership: a name that has since left still counts on the
   day it was in it. A date before the store recorded membership has no snapshot, and the rows say `n = 0`;
 - `basis` `vol_decile_1` … `vol_decile_10`: the same names split into ten groups by trailing realised volatility (the
   standard deviation of the last 20 daily log returns of the **adjusted** closes up to and including the date,
-  annualised; 1 the calmest). A name with fewer than 21 closes is in the universe baseline and in no decile. `vol_lo` /
-  `vol_hi` are the group's boundaries, so a pick's own trailing vol maps to one basis without a second table;
-- `n` counts the members with a measurable outcome; a `split_check` name is left out (its MFE is an artefact of two
-  price bases, the same exclusion the hit-rate gates make on the picks), a name with no reference open is out too;
+  annualised; 1 the calmest). A name with fewer than 21 closes is in the universe baseline and in no decile. Fewer
+  than ten members with a trailing vol have no deciles at all (ten groups cannot be made of fewer than ten names, and
+  a "decile" of one name is not a peer group): the ten decile rows are still written, with `n = 0`, and those names are
+  counted in the universe row alone. `vol_lo` / `vol_hi` are the group's boundaries, so a pick's own trailing vol maps
+  to one basis without a second table;
+- the **two bases are a stated choice**: the outcomes (MFE/MAE) are on the **nominal** basis — the prices the board
+  froze on, and the basis `forecast_outcomes` measures the pick itself on — while the trailing volatility is on the
+  **adjusted** one. Nominal already carries every split the store has recorded, so a split is the reason for neither;
+  the dividend adjustment is, because an ex-dividend date is a one-day fall of the printed price that is not a move of
+  the stock and one such day distorts a 20-session volatility, while a 30- or 90-day MFE/MAE is not distorted by it;
+- `n` counts the members whose MFE is measurable; a `split_check` name is left out (a previous close → open ratio at or
+  past `SPLIT_JUMP` on that one nominal series: a split the store has no action for, so its window is not one series —
+  the same exclusion the hit-rate gates make on the picks), and a name with no reference open is out too.
+  `mfe_mean` averages those members; `mae_mean` averages their MAE, which a bar can lack when its high is there and
+  its low is not, so it can rest on fewer members than `n`;
 - `ge20` / `ge10` / `ge5` are the cumulative counts a baseline hit rate is read off, `mfe_mean` / `mae_mean` the means
   ("up 5% on average" means something else with a −40% drawdown);
 - all eleven bases are written for every date, so the table's key set never changes shape; `status` is `open` until
-  the horizon's window has ended, the run at or after that moment writes `closed`, and the following nightly skips the
-  date (`full` recomputes it, after a bar backfill or a rule change).
+  the horizon's window has ended, the run at or after that moment writes `closed`, and the following nights recompute
+  only the rows still open (a date whose 30-day window has ended keeps its 30-day rows and is recomputed for its
+  90-day ones; `full` recomputes the date, after a bar backfill or a rule change).
 
 The task RC-Forecast-Outcomes runs daily at 23:45, chained on RC-Daily-Bars (the bars it reads), after
-RC-Screeners-Daily (weekdays from 23:00), the other `raw.duckdb` writer of the night. A dated target (an SPX pin) gets
-one row with `horizon_days` = `target_date` - `forecast_date` from its own writer later; S0 writes picks only.
+RC-Screeners-Daily (weekdays from 23:00), the other `raw.duckdb` writer of the night. The task RC-Forecast-Baselines
+runs daily at 23:50, chained on RC-Forecast-Outcomes (the same night's other `raw.duckdb` writer, so the two never
+overlap) and writes `forecast_baselines` alone; its `--full` is the attended first fill. A dated target (an SPX pin)
+gets one row with `horizon_days` = `target_date` - `forecast_date` from its own writer later; S0 writes picks only.
 
 **Daily-bar cache and the freeze.** To let a post-close Fetch meet the rule above, `load_ohlc`
 (`module_swing_potential/indicators.py`) treats a cached series as stale, besides its TTL, when its last bar is D or
@@ -573,7 +586,8 @@ worker thread writes while Flask request threads read. So:
   `^GSPC` daily levels, #293), plus Saturday 10:00 weekly (index lists,
   RC-Index-Lists, #302), weekdays not before 23:00 (the screeners Fetch RC-Screeners-Daily, chained on the
   daily price bars, #129), daily not before 23:45 (the forecast outcomes RC-Forecast-Outcomes, chained on the daily
-  price bars, #380 S0) and Tuesday to Saturday not before 01:30 (the Earnings inputs RC-Earnings-Inputs, chained on the
+  price bars, #380 S0), daily 23:50 (the forecast baselines RC-Forecast-Baselines, chained on the outcomes run, #25
+  HR-1) and Tuesday to Saturday not before 01:30 (the Earnings inputs RC-Earnings-Inputs, chained on the
   daily price bars, E0 #372), `core/automations.py`: the two daytime ones are 30 min apart.
 
 ### Full-refresh vs. incremental tables
@@ -753,7 +767,7 @@ schema, reachable with path expressions like `payload.market_cap::DOUBLE`).
 | `financials_report_history` | Result history (row table; schema 11, history.duckdb): `run_id`, `ticker`, `sector`, `data_fetched_at`, `modules BLOB`. One row per Financials Fetch: the modules run, the comps peers, the assumptions each model used, the warnings, Quick Remarks and every module's numbers (`modules`, JSON, compressed). Written by a Financials Fetch (#385, `module_financials/history.py`); a module that could not run, or a report the board did not get, makes the run `partial` with its row kept and the reason in `result_runs.quality_note`. Key `(run_id, ticker)`; append-only | ``modules_run``, ``peers``, ``assumptions``, ``warnings``, ``quick_remarks`` |
 | `forecast_ledger` | `source`, `forecast_date DATE`, `subject`, `target_type`, `target_date DATE` (NOT NULL), `frozen_at DOUBLE`, `run_id`, `model_version`, `rank INTEGER`, `score DOUBLE`, `bucket`, `market_cap DOUBLE`, `sector`, `shown_price DOUBLE`, `stop DOUBLE`, `target DOUBLE`. Key `(source, forecast_date, subject, target_type, target_date)`; no outcome columns | `probs` |
 | `forecast_outcomes` | The ledger key (`source`, `forecast_date DATE`, `subject`, `target_type`, `target_date DATE` NOT NULL) + `horizon_days INTEGER`, `ref_price DOUBLE`, `mfe DOUBLE`, `mae DOUBLE`, `sessions_seen INTEGER`, `status` (`open`/`closed`/`no_bars`/`split_check`), `computed_at DOUBLE`, `model_version`, `run_id`. Key `(source, forecast_date, subject, target_type, target_date, horizon_days)`; keyed upsert (derived, #380 S0, added after schema 11 with no bump) | — |
-| `forecast_baselines` | `forecast_date DATE`, `horizon_days INTEGER`, `basis` (`universe` or `vol_decile_1` … `vol_decile_10`, 1 the calmest), `n INTEGER` (members with a measurable outcome), `ge20`/`ge10`/`ge5 INTEGER` (cumulative counts of them whose MFE reached 20% / 10% / 5%), `mfe_mean DOUBLE`, `mae_mean DOUBLE`, `vol_lo DOUBLE`, `vol_hi DOUBLE` (the decile's boundaries, `vol_lo` inclusive and `vol_hi` exclusive, NULL at either end), `status` (`open`/`closed`), `computed_at DOUBLE`, `model_version`, `run_id`. Key `(forecast_date, horizon_days, basis)`; keyed upsert (derived, #25 HR-1, added after schema 11 with no bump) | — |
+| `forecast_baselines` | `forecast_date DATE`, `horizon_days INTEGER`, `basis` (`universe` or `vol_decile_1` … `vol_decile_10`, 1 the calmest), `n INTEGER` (members with a measurable outcome), `ge20`/`ge10`/`ge5 INTEGER` (cumulative counts of them whose MFE reached 20% / 10% / 5%), `mfe_mean DOUBLE`, `mae_mean DOUBLE`, `vol_lo DOUBLE`, `vol_hi DOUBLE` (the decile's boundaries, `vol_lo` inclusive and `vol_hi` exclusive, NULL at either end), `status` (`open`/`closed`), `computed_at DOUBLE`, `model_version`, `run_id`. Key `(forecast_date, horizon_days, basis)`; keyed upsert (derived, #25 HR-1, added after schema 12 with no bump) | — |
 | `rotation_snapshots` | `as_of_date`, `ticker`, `name`, `"group"`, `close_price`, `rs_*`, `rs_ratio`, `rs_momentum`, `quadrant`, `benchmark`, `generated_at`, `source` (`live` from a Rotation Fetch, `backfill` from a range backfill; added by #374, no schema bump; older rows are NULL). Since M-ROT-2 (#374) both come from one function on D01 weekly closes and `as_of_date` is the latest complete session they end on (no weekend or holiday rows) | — |
 | `ticker_scores` | 30 scalar columns (`market_cap DOUBLE`, `sector`, `industry_group`, `sub_industry`, `themes`, `signals`, …), plus `tier INTEGER` (3 Balanced, 2 Strong, NULL none), `flags` (JSON list of the C17/C18 data checks), `model_version` (the AG model version that scored the row), `anchor_fy INTEGER`, `prior_fy INTEGER` and `period_ends` (JSON object: revenue ends of the anchor and two prior years, balance-sheet and cash-flow ends), added by #380 AG W1 with no schema bump (ALTER on the first store call; rows of an older Fetch read NULL and the board shows them under a "scored before" notice) | — |
 | `leaps_flow_prints` | `id`, `ticker`, `strike`, `expiry`, `premium`, `size`, `option_type`, `delta`, `next_earnings_date`, `executed_at`, `discovered_at`, `ask_vol`, `bid_vol`, `source`, `fetched_at DOUBLE`, `session_date DATE`, `run_at DOUBLE` (the last four: schema 11; stamped on each new print since #295: `source` 'uw', `fetched_at` its page, `run_at` the scan's start, `session_date` rule B on `run_at`; older rows NULL) | — |

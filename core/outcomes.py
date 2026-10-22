@@ -73,19 +73,49 @@ def outcome(forecast_date: date, horizon_days: int, bars: list[dict], latest_ses
     """The outcome columns of one pick and horizon. ``bars``: the ticker's nominal bars, sorted by session date
     (``session_date`` a ``date``, ``open``/``high``/``low``/``close``); ``latest_session``: the latest complete
     session."""
-    end = window_end(forecast_date, horizon_days)
-    window = [b for b in bars if forecast_date < b["session_date"] <= end]
+    return outcome_by_horizon(forecast_date, (horizon_days,), bars, latest_session)[horizon_days]
+
+
+def outcome_by_horizon(forecast_date: date, horizons: tuple[int, ...], bars: list[dict],
+                       latest_session: date) -> dict[int, dict]:
+    """``{horizon: outcome columns}`` for every horizon, from one pass over ``bars``.
+
+    The windows nest, so a bar is bucketed once per horizon it falls in instead of ``bars`` being filtered again for
+    each horizon: ``outcome`` is this function with one horizon, and its rules are the ones applied here.
+    """
+    ends = {h: window_end(forecast_date, h) for h in horizons}
+    windows: dict[int, list[dict]] = {h: [] for h in horizons}
+    anchor: list[dict] = []
+    for b in bars:
+        day = b["session_date"]
+        if day == forecast_date:
+            anchor.append(b)
+        for h, end in ends.items():
+            if forecast_date < day <= end:
+                windows[h].append(b)
+    last = bars[-1]["session_date"] if bars else None
+    return {h: _outcome(forecast_date, end, windows[h], anchor, last, latest_session)
+            for h, end in ends.items()}
+
+
+def _outcome(forecast_date: date, end: date, window: list[dict], anchor: list[dict],
+             last: date | None, latest_session: date) -> dict:
+    """The outcome columns of one horizon over its ``window``: ``outcome``'s rule, in one place.
+
+    ``anchor``: the bars on ``forecast_date`` itself (the split check starts from that close); ``last``: the ticker's
+    newest session, the proof its window has ended.
+    """
     if not window:
         status = NO_BARS if latest_session > forecast_date else OPEN
         return {"ref_price": None, "mfe": None, "mae": None, "sessions_seen": 0, "status": status}
-    first = calendar.next_trading_day(forecast_date)
-    ref = _num(window[0]["open"]) if window[0]["session_date"] == first else None
+    first_session = calendar.next_trading_day(forecast_date)
+    ref = _num(window[0]["open"]) if window[0]["session_date"] == first_session else None
     if ref is None or ref <= 0:          # no reference: not final, the nightly retries it
         return {"ref_price": None, "mfe": None, "mae": None, "sessions_seen": len(window), "status": OPEN}
-    if _split_jump([b for b in bars if b["session_date"] == forecast_date] + window):
+    if _split_jump(anchor + window):
         status = SPLIT_CHECK
     else:
-        status = CLOSED if bool(bars) and bars[-1]["session_date"] >= end else OPEN
+        status = CLOSED if last is not None and last >= end else OPEN
     highs = [h for h in (_num(b["high"]) for b in window) if h is not None]
     lows = [lo for lo in (_num(b["low"]) for b in window) if lo is not None]
     return {"ref_price": ref,

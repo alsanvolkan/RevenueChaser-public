@@ -171,6 +171,16 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "(#380 S0). 23:45 keeps it clear of RC-Screeners-Daily, the other raw.duckdb writer.",
         tables_written=("forecast_outcomes",)),
     AutomationEntry(
+        name="RC-Forecast-Baselines", label="Forecast baselines",
+        args=("-m", "RevenueChaser.scripts.forecast_baselines", "--nightly"), time="23:50",
+        after="RC-Forecast-Outcomes",
+        description="Once tonight's outcomes run exited 0, recomputes the baselines still open: what each freeze "
+                    "date's own universe did over the same 30- and 90-day windows, and the same names split into ten "
+                    "trailing-volatility deciles, from the stored bars and the universe change history; no calls "
+                    "(#25 HR-1). Chained on RC-Forecast-Outcomes, the other raw.duckdb writer of the 23:45 slot, so "
+                    "the two never run together; 23:50 is its own trigger.",
+        tables_written=("forecast_baselines",)),
+    AutomationEntry(
         name="RC-Index-Lists", label="Index lists (weekly)",
         args=("-m", "RevenueChaser.scripts.index_lists", "--weekly"), time="10:00", days=("Saturday",),
         description="Writes the S&P 500, Dow and Nasdaq member lists (3 UW requests) and the SmallCap 600 list "
