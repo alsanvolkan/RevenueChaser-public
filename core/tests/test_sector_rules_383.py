@@ -6,8 +6,9 @@ names and AG flags them in their own waves.
 """
 from __future__ import annotations
 
-from RevenueChaser.core import rawstore, sector_rules
+from RevenueChaser.core import rawstore
 from RevenueChaser.core.gics_map import SECTORS_11
+from RevenueChaser.module_asymmetric_growth import sector_rules
 
 
 def _spine(rows):

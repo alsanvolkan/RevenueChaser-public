@@ -5,7 +5,8 @@ fallback) and Co-movement's bulk ``fetch_bulk``. Only Swing's path had #261's gu
 a longer stored history), and the guard took any refetch that shares no session with the stored bars for another
 listing under a reused symbol. The F2b review found the gap: one bar right after the stored last bar shares no
 session either, so a 500-bar history was replaced by 1 bar (card F2b, avo "30 gün şartı", 2026-10-15 20:13
-Amsterdam). Now ``core/ohlc_cache.py`` is the one writer (Co-movement's row format, moved), both paths write through
+Amsterdam). Now ``module_swing_potential/ohlc_cache.py`` is the one writer (Co-movement's row format, moved), both
+paths write through
 it, and a short series that shares no session is a new listing only when it starts more than 30 days after the
 stored last bar. No visible change otherwise: same rows, same ``ts`` format, same replace-per-ticker write.
 Offline: a temp store.
@@ -21,9 +22,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from RevenueChaser.core import ohlc_cache, rawstore
+from RevenueChaser.core import rawstore
 from RevenueChaser.module_comovement import ohlc as comov_ohlc
-from RevenueChaser.module_swing_potential import indicators
+from RevenueChaser.module_swing_potential import indicators, ohlc_cache
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -54,7 +55,8 @@ def test_no_other_production_code_writes_swing_ohlc():
     writers = []
     for path in ROOT.rglob("*.py"):
         rel = path.relative_to(ROOT).as_posix()
-        if "/tests/" in rel or rel.startswith(("scripts/", "module_testing/", ".")) or rel == "core/ohlc_cache.py":
+        if "/tests/" in rel or rel.startswith(("scripts/", "module_testing/", ".")) \
+                or rel == "module_swing_potential/ohlc_cache.py":
             continue
         if pattern.search(path.read_text(encoding="utf-8", errors="replace")):
             writers.append(rel)
