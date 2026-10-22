@@ -109,6 +109,17 @@ def test_every_board_named_is_a_real_dashboard_tab(registry):
         assert (e.scope == "board") == bool(e.boards), (e.repo, e.number, e.scope, e.boards)
 
 
+def test_no_title_carries_an_html_entity_or_a_mojibake_dash(registry):
+    """A title is display text: an entity renders literally ("&quot;JSONDecodeError&quot;"), a replacement char shows "?".
+
+    Seen on public #6 and #8, which arrived HTML-escaped with a mangled em dash; the sync now unescapes titles
+    (``open_issues_sync``), so a re-seed cannot bring them back.
+    """
+    for e in registry.issues:
+        assert not re.search(r"&(?:quot|amp|lt|gt|apos|#\d+|#x[0-9a-fA-F]+);", e.title), (e.repo, e.number, e.title)
+        assert "\ufffd" not in e.title, (e.repo, e.number, e.title)
+
+
 def test_approved_is_a_status_and_sorts_between_in_flight_and_open():
     """The seeded registry carries issues whose build is approved but not started (status ``approved``)."""
     from RevenueChaser.core import open_issues

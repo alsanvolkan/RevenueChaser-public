@@ -22,6 +22,7 @@ The public repo reads anonymously; pass ``--token-env`` when the shared IP is ra
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import re
@@ -222,16 +223,21 @@ def _new_entry(repo: str, issue: dict, today: str) -> dict:
     return _canonical({
         "repo": repo, "number": number,
         "url": f"{open_issues.URL_PREFIX}{repo}/issues/{number}",
-        "title": issue.get("title") or "", "state": "open", "labels": labels,
+        "title": _title(issue), "state": "open", "labels": labels,
         "boards": [], "scope": "board", "kind": guess_kind(labels), "status": "open",
         "summary": pre["summary"], "detail": pre["detail"], "refs": [],
         "issue_updated_at": issue.get("updated_at") or "", "reviewed_at": today,
     })
 
 
+def _title(issue: dict) -> str:
+    """The issue's title as display text: an HTML-escaped title (``&quot;``, ``&lt;``) arrives as the author typed it."""
+    return html.unescape(str(issue.get("title") or ""))
+
+
 def _api_fields(issue: dict) -> dict:
     return {
-        "title": issue.get("title") or "",
+        "title": _title(issue),
         "state": "open",
         "labels": [str(label.get("name") or "") for label in (issue.get("labels") or [])
                    if isinstance(label, dict)],

@@ -210,7 +210,12 @@ The three scopes are what keep a board's own problems at the top:
 **Where the data comes from.** One checked-in file, `docs/open_issues.json`,
 read by `core/open_issues.py`; `reporting_common.open_issues_payload` turns it
 into one JSON block for the shell, which re-renders it in `showTab` (no page
-load, no board re-render). **Nothing calls GitHub and nothing reads the store at
+load, no board re-render). The block ships **each entry once**, under `entries`
+keyed `"<repo>#<number>"`, and a board keeps only its section keys
+(`board` / `shared` / `repo`) plus `generated_at`, `stale_days` and
+`dropped_links` (`open_issues.panel_payload`): the shared entries would otherwise
+be repeated on all 16 boards, which took the block to ~590 KB for a 118 KB
+registry. **Nothing calls GitHub and nothing reads the store at
 render time**, so the group is current on every page load. Every string and link
 is escaped in the shell (`html_safe.script_json` for the block, `rcEsc` for the
 rendering), and only links under `https://github.com/alsanvolkan/` are shown.

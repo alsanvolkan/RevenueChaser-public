@@ -208,5 +208,31 @@ def test_the_sync_reads_the_public_repo_only(tmp_path):
     assert not any(PRIV == repo for repo in asked)
 
 
+def test_check_names_an_open_issue_missing_from_the_registry_and_a_closed_one_still_in_it(tmp_path, capsys):
+    """The comparison both ways: one open issue the registry lacks, one closed issue it still carries.
+
+    ``--check`` is what an operator runs before a merge round; a one-directional comparison would let a stale entry
+    (an issue closed since the last write) stay on the panel for good.
+    """
+    path = _registry(tmp_path, [_entry(11), _entry(22)])
+    api = {PUB: [_api(11, "curated title", updated_at="2026-10-22T10:03:48Z"),
+                 _api(33, "opened since the last sync")]}
+    assert sync.main(["--check", "--registry", str(path)], fetch=_fetch(api), head_sha="abc1234") == 1
+    out = capsys.readouterr()
+    assert f"added: {PUB}#33" in out.out, "the open issue the registry lacks is reported"
+    assert f"removed: {PUB}#22" in out.out, "the closed issue still in the registry is reported"
+    assert f"{PUB}#11" not in out.out, "an unchanged entry is not reported"
+    assert "1 added, 1 removed" in out.err
+
+
+def test_a_title_is_unescaped_from_html_entities(tmp_path):
+    """GitHub returns a title as the author typed it, but a curated one can arrive HTML-escaped (an API/HTML round trip)."""
+    title = 'D28: VVIX and OVX fail with not_a_csv — Cboe serves them as a two-column DATE,&lt;SYMBOL&gt; file'
+    path = _registry(tmp_path, [_entry(11)])
+    api = {PUB: [_api(11, title)]}
+    assert sync.main(["--write", "--registry", str(path)], fetch=_fetch(api), head_sha="abc1234") == 0
+    assert _read(path)["issues"][0]["title"] == title.replace("&lt;", "<").replace("&gt;", ">")
+
+
 def test_a_mode_is_required(tmp_path):
     assert sync.main(["--registry", str(tmp_path / "x.json")]) == 2

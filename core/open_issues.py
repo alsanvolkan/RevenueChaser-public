@@ -14,6 +14,9 @@ Three scopes keep a board's own problems at the top of its group:
 A registry that cannot be read must never turn a dashboard page into a 500 — the same convention as
 ``reporting_common.recorded_sessions_html``.
 
+``for_board`` answers one board. The shell needs all of them, so ``panel_payload`` ships the entries once and lets each
+board name its own by key: sending ``for_board``'s answer per board repeats the shared entries 16 times.
+
 Links are restricted to ``URL_PREFIX`` at two points: the registry test, and ``for_board``, which drops (and counts) an
 entry or a ref whose URL points anywhere else. The panel renders every string through ``html_safe``/``rcEsc``.
 """
@@ -244,6 +247,40 @@ def for_board(board_key: str, registry: Registry | None = None, *, today: date |
         "stale_days": stale_days,
         "dropped_links": dropped,
     }
+
+
+def entry_key(entry: Entry | dict) -> str:
+    """The key the shell's payload uses for one entry: ``"<repo>#<number>"``."""
+    repo, number = (entry.repo, entry.number) if isinstance(entry, Entry) else (entry["repo"], entry["number"])
+    return f"{repo}#{number}"
+
+
+def panel_payload(board_keys, registry: Registry | None = None, *, today: date | None = None) -> dict:
+    """The shell's one JSON block: every entry once, and each board naming the entries it shows (#383, #21).
+
+    ``for_board`` answers one board, so asking it for all 16 repeats the shared and repo entries 16 times: ~590 KB
+    of embedded JSON for a 118 KB registry. Here an entry is shipped once under ``entries`` (keyed
+    ``"<repo>#<number>"``) and a board keeps only its section keys plus the small header fields.
+
+    ``{"entries": {...}, "boards": {board_key: {"board": [key, ...], "shared": [...], "repo": [...],
+    "generated_at": ..., "stale_days": ..., "dropped_links": ...}}}``. A board that is not a data board is absent.
+    """
+    reg = registry if registry is not None else load()
+    entries: dict[str, dict] = {}
+    boards: dict[str, dict] = {}
+    for key in board_keys:
+        found = for_board(key, reg, today=today)
+        if not found:
+            continue
+        for section in SCOPES:
+            keys = []
+            for item in found[section]:
+                name = entry_key(item)
+                entries.setdefault(name, item)
+                keys.append(name)
+            found[section] = keys
+        boards[key] = found
+    return {"entries": entries, "boards": boards}
 
 
 def _sort_pairs(pairs: list[tuple[Entry, dict]]) -> list[dict]:

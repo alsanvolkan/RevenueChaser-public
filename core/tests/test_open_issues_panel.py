@@ -158,21 +158,49 @@ def shell(tmp_path, monkeypatch):
 def test_the_shell_embeds_one_payload_with_the_boards_counts(shell):
     html = shell(_full_registry())
     assert html.count('id="rc-open-issues-data"') == 1
-    blob = html.split('id="rc-open-issues-data">', 1)[1].split("</script>", 1)[0]
-    data = json.loads(blob)
+    data = json.loads(open_issues_block(html))
     from RevenueChaser.app import dashboard
     data_boards = [t["key"] for t in dashboard.TABS
                    if t["type"] == "tab" and t["key"] not in open_issues.NOT_A_DATA_BOARD]
-    assert sorted(data) == sorted(data_boards)
-    assert len(data[BOARD]["board"]) == 6 and len(data[BOARD]["shared"]) == SHARED
-    assert len(data["module_settings"]["repo"]) == REPO
-    assert not data["module_oipd"]["board"]
-    assert "logs" not in data and "dealer_hedge" not in data
+    assert set(data) == {"entries", "boards"}
+    boards, entries = data["boards"], data["entries"]
+    assert sorted(boards) == sorted(data_boards)
+    assert len(boards[BOARD]["board"]) == 6 and len(boards[BOARD]["shared"]) == SHARED
+    assert len(boards["module_settings"]["repo"]) == REPO
+    assert not boards["module_oipd"]["board"]
+    assert "logs" not in boards and "dealer_hedge" not in boards
+
+    # Each issue is shipped once, keyed "<repo>#<number>"; a board lists keys, never a copy of the entry.
+    assert set(entries) == {open_issues.entry_key(e) for e in _full_registry()["issues"]}
+    assert len(entries) == 6 + SHARED + REPO, "one entry per issue: no board carries a second copy"
+    for board in boards.values():
+        for section in open_issues.SCOPES:
+            assert all(key in entries for key in board[section]), (board, section)
 
     # The counts in the summary line come from exactly these lists.
     assert "on this board" in html and "as of " in html and "' shared'" in html
     assert "This board (" in html and "Affects every board (" in html and "Repository-wide (" in html
     assert "No board-specific open issue." in html
+
+
+def test_the_embedded_block_is_under_the_size_budget():
+    """The real registry in the real page: the JSON block stays under 400 KB (build brief §4).
+
+    ``for_board`` answers one board, so it repeats the shared and repo entries on all 16: sending them per board made
+    the block ~590 KB for a 118 KB registry. The payload ships those entries once and each board names them by key,
+    so this is the test that a per-board payload would fail.
+    """
+    from RevenueChaser.app import dashboard
+
+    dashboard.app.config["TESTING"] = True
+    html = dashboard.app.test_client().get("/").get_data(as_text=True)
+    block = open_issues_block(html)
+    size = len(block.encode("utf-8"))
+    data = json.loads(block)
+    assert set(data) == {"entries", "boards"} and data["entries"], "the pages name entries from one map"
+    assert len(data["boards"]) >= 16
+    assert size < 400_000, f"the embedded open-issues block is {size} bytes, over the 400 KB budget"
+    assert size < 3 * len(open_issues.REGISTRY_PATH.read_bytes()), "the block carries the registry, not 16 copies"
 
 
 def test_a_hostile_title_and_summary_cannot_leave_the_script_block(shell):
@@ -183,8 +211,9 @@ def test_a_hostile_title_and_summary_cannot_leave_the_script_block(shell):
     html = shell(payload)
     assert hostile_title not in html
     assert "<img src=x onerror=alert(1)>" not in html
-    blob = html.split('id="rc-open-issues-data">', 1)[1].split("</script>", 1)[0]
-    assert json.loads(blob)[BOARD]["board"][0]["title"] == hostile_title     # the text itself survives
+    data = json.loads(open_issues_block(html))
+    key = data["boards"][BOARD]["board"][0]
+    assert data["entries"][key]["title"] == hostile_title     # the text itself survives
     # and the client renderer escapes what it puts into innerHTML (#175's one escaper)
     assert "rcEsc(it.title)" in html              # the title
     assert "return rcEsc(text).replace" in html  # and every summary/detail line (rcOiText)
@@ -195,8 +224,8 @@ def test_a_missing_registry_renders_a_message_not_a_500(shell):
     html = shell({})          # no generated_at, no issues: load() refuses it
     assert 'id="rc-open-issues-error"' in html
     assert "issue registry" in html
-    assert open_issues.NOT_A_DATA_BOARD.isdisjoint(json.loads(
-        html.split('id="rc-open-issues-data">', 1)[1].split("</script>", 1)[0]))
+    assert json.loads(open_issues_block(html)) == {}, \
+        "a registry that cannot be read ships no board (the group shows the reason instead)"
 
 
 def test_the_page_scan_helper_removes_exactly_the_registry_block(shell):
@@ -223,9 +252,14 @@ def test_the_page_scan_helper_removes_exactly_the_registry_block(shell):
 def test_the_payload_route_is_json_ready(registry):
     """``reporting_common.open_issues_payload`` is the shell's single entry point."""
     payload = reporting_common.open_issues_payload([BOARD, "logs"])
-    assert set(payload) == {BOARD}
+    assert set(payload) == {"entries", "boards"} and set(payload["boards"]) == {BOARD}
     assert json.loads(json.dumps(payload)) == payload
-    assert payload[BOARD]["dropped_links"] == 0
+    assert payload["boards"][BOARD]["dropped_links"] == 0
+    # Every shared entry is named by this board and shipped once, not once per board.
+    board = payload["boards"][BOARD]
+    assert board["shared"], "the seeded registry has shared entries"
+    used = {key for b in payload["boards"].values() for s in open_issues.SCOPES for key in b[s]}
+    assert set(payload["entries"]) == used, "entries is exactly the set of keys a board names"
 
 
 def _as_entry(d: dict) -> open_issues.Entry:

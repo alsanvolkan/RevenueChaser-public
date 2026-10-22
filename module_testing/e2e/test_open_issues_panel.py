@@ -186,19 +186,23 @@ def test_the_group_is_collapsed_opens_and_follows_the_tab(dashboard, chrome, tmp
 
 def test_a_hostile_issue_title_runs_no_script(dashboard, chrome, tmp_path):
     hostile = "</script><script>window.__x('title')</script>"
+    entry = {
+        "repo": "RevenueChaser", "number": 1, "url": f"{URL_PREFIX}RevenueChaser/issues/1",
+        "title": hostile, "state": "open", "labels": [], "boards": ["module_sec_13f"],
+        "scope": "board", "kind": "bug", "status": "open", "stored_status": "open",
+        "deferred_until": "", "summary": '"><img src=x onerror=window.__x("line")>',
+        "detail": {"whats_wrong": "<img src=x onerror=window.__x(\"detail\")>"},
+        "refs": [], "issue_updated_at": "2026-10-22T00:00:00Z", "reviewed_at": "2026-10-22",
+    }
+    # The shell's shape: every entry once under "entries", each board names its keys (#21).
     payload = {
-        "module_sec_13f": {
-            "board": [{
-                "repo": "RevenueChaser", "number": 1, "url": f"{URL_PREFIX}RevenueChaser/issues/1",
-                "title": hostile, "state": "open", "labels": [], "boards": ["module_sec_13f"],
-                "scope": "board", "kind": "bug", "status": "open", "stored_status": "open",
-                "deferred_until": "", "summary": '"><img src=x onerror=window.__x("line")>',
-                "detail": {"whats_wrong": "<img src=x onerror=window.__x(\"detail\")>"},
-                "refs": [], "issue_updated_at": "2026-10-22T00:00:00Z", "reviewed_at": "2026-10-22",
-            }],
-            "shared": [], "repo": [], "generated_at": "2026-10-22T10:30:00Z",
-            "stale_days": 0, "dropped_links": 0,
-        }
+        "entries": {"RevenueChaser#1": entry},
+        "boards": {
+            "module_sec_13f": {
+                "board": ["RevenueChaser#1"], "shared": [], "repo": [],
+                "generated_at": "2026-10-22T10:30:00Z", "stale_days": 0, "dropped_links": 0,
+            },
+        },
     }
     page_html = dashboard.get("/").text
     head, rest = page_html.split('id="rc-open-issues-data">', 1)

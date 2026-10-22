@@ -240,6 +240,7 @@ button:disabled{opacity:.5;cursor:default}
 // Open issues (#383): every data board's own GitHub issues, in the shell, above the board iframe.
 // One JSON block for all boards; rendered as text through rcEsc only, and re-rendered in showTab so a tab switch
 // needs no page load. Nothing here fetches: the registry is a checked-in file (docs/open_issues.json).
+// The block ships each entry once under "entries", keyed "<repo>#<number>"; a board lists the keys it shows (#21).
 var RC_OI_LS = 'rc-open-issues-open';
 var RC_OI_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 var RC_OI_LABELS = {whats_wrong:'What is wrong', evidence:'Evidence', example:'Example',
@@ -248,6 +249,12 @@ var RC_OI_DATA = (function(){
   try{ return JSON.parse(document.getElementById('rc-open-issues-data').textContent || '{}') || {}; }
   catch(e){ return {}; }
 })();
+var RC_OI_ENTRIES = RC_OI_DATA.entries || {};
+function rcOiItems(keys){
+  // A key with no entry is dropped rather than rendered as undefined: the payload is one map, not a copy per board.
+  return (keys || []).map(function(k){ return RC_OI_ENTRIES[k]; })
+                     .filter(function(it){ return !!it; });
+}
 function rcOiStoredOpen(){
   // Private windows throw on localStorage; the group then simply starts collapsed.
   try{ return localStorage.getItem(RC_OI_LS) === '1'; }catch(e){ return false; }
@@ -307,10 +314,10 @@ function rcOpenIssuesRender(key){
     box.hidden = false;
     return;
   }
-  var data = RC_OI_DATA[key];
+  var data = (RC_OI_DATA.boards || {})[key];
   if(!data){ box.hidden = true; return; }   // Logs and the Dealer Hedge demo are not data boards
   box.hidden = false;
-  var board = data.board || [], shared = data.shared || [], repo = data.repo || [];
+  var board = rcOiItems(data.board), shared = rcOiItems(data.shared), repo = rcOiItems(data.repo);
   var all = board.concat(shared, repo);
   var deferred = all.filter(function(it){ return it.status === 'deferred'; }).length;
   var review = all.filter(function(it){ return it.status === 'needs-review'; }).length;
