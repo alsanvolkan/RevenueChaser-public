@@ -55,12 +55,24 @@ def parse_date(value) -> date | None:
 
 
 def parse_csv(body: str) -> tuple[list[dict] | None, str | None]:
-    """``(bars oldest first, why)`` from a daily-price CSV; a body without ``DATE`` and ``CLOSE`` is an error (Cboe
-    answers an HTML error page with a 200). A row whose date will not parse, or whose close is blank or not a number, is skipped."""
+    """``(bars oldest first, why)`` from a daily-price CSV; a body without a usable ``DATE``/price header is an error
+    (Cboe answers an HTML error page with a 200). Cboe serves either OHLC (``DATE,OPEN,HIGH,LOW,CLOSE``) or a
+    close-only file (``DATE,<SYMBOL>``); the latter stores NULL ``open``/``high``/``low``. A row whose date will not
+    parse, or whose close is blank or not a number, is skipped."""
     reader = csv.DictReader(io.StringIO(body or ""))
     keys = {(f or "").strip().upper(): f for f in (reader.fieldnames or [])}
-    if "DATE" not in keys or "CLOSE" not in keys:
+    if "DATE" not in keys:
         return None, "not_a_csv"
+
+    if "CLOSE" in keys:
+        close_key = "CLOSE"
+        has_ohlc = True
+    else:
+        price_cols = [k for k in keys if k not in ("DATE", "OPEN", "HIGH", "LOW", "VOLUME")]
+        if len(price_cols) != 1:
+            return None, "not_a_csv"
+        close_key = price_cols[0]
+        has_ohlc = False
 
     def cell(item: dict, name: str):
         return item.get(keys[name]) if name in keys else None
@@ -70,11 +82,14 @@ def parse_csv(body: str) -> tuple[list[dict] | None, str | None]:
         d = parse_date(cell(item, "DATE"))
         if d is None:
             continue
-        close = num(cell(item, "CLOSE"))
+        close = num(cell(item, close_key))
         if close is None:                       # a bar without a close is not a bar (first write of a key wins)
             continue
-        bars.append({"session_date": d, "open": num(cell(item, "OPEN")), "high": num(cell(item, "HIGH")),
-                     "low": num(cell(item, "LOW")), "close": close})
+        bars.append({"session_date": d,
+                     "open": num(cell(item, "OPEN")) if has_ohlc else None,
+                     "high": num(cell(item, "HIGH")) if has_ohlc else None,
+                     "low": num(cell(item, "LOW")) if has_ohlc else None,
+                     "close": close})
     return bars, None
 
 
@@ -94,7 +109,7 @@ def download_move(download=None) -> tuple[list[dict] | None, str | None]:
     """``(bars oldest first, why)`` for MOVE: one ``yf.download`` of ``^MOVE``, parsed by ``core.prices``."""
     dl = download or prices._yf_download
     try:
-        frame = dl(MOVE_TICKER, period="max", **prices.YF_KW)
+        frame = dl([MOVE_TICKER], period="max", **prices.YF_KW)
     except Exception as exc:  # noqa: BLE001 - one provider's failure is this sweep's error, not the run's
         return None, f"download failed ({type(exc).__name__})"
     bars, _ = prices.rows_from_yf(frame, [MOVE_TICKER], fetched_at=0.0, run_id="", run_at=0.0)
@@ -133,12 +148,17 @@ def run(ctx, fetch=None, download=None) -> dict:
         if bars is None:
             errors.append(f"{symbol}: {why or 'failed'}")
             continue
+        if not bars:
+            errors.append(f"{symbol}: no_rows")
+            continue
         rows.extend(rows_of(symbol, "cboe", bars, ctx, time.time()))
 
     if ctx.budget("yfinance").take():
         bars, why = download_move(download)
         if bars is None:
             errors.append(f"{MOVE}: {why or 'failed'}")
+        elif not bars:
+            errors.append(f"{MOVE}: no_rows")
         else:
             rows.extend(rows_of(MOVE, "yfinance", bars, ctx, time.time()))
     else:
