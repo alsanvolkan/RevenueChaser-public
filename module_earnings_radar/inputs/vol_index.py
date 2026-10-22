@@ -107,7 +107,7 @@ def download_move(download=None) -> tuple[list[dict] | None, str | None]:
     """``(bars oldest first, why)`` for MOVE: one ``yf.download`` of ``^MOVE``, parsed by ``core.prices``."""
     dl = download or prices._yf_download
     try:
-        frame = dl(MOVE_TICKER, period="max", **prices.YF_KW)
+        frame = dl([MOVE_TICKER], period="max", **prices.YF_KW)
     except Exception as exc:  # noqa: BLE001 - one provider's failure is this sweep's error, not the run's
         return None, f"download failed ({type(exc).__name__})"
     bars, _ = prices.rows_from_yf(frame, [MOVE_TICKER], fetched_at=0.0, run_id="", run_at=0.0)

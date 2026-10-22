@@ -277,6 +277,19 @@ def test_d28_an_intraday_clock_runs_no_sweep_writes_nothing_and_sends_nothing(ra
 
 # --- registration ---------------------------------------------------------------------------------------------------
 
+def test_d28_download_move_passes_a_list_not_a_string_to_the_downloader():
+    captured = []
+
+    def fake_download(tickers, period=None, **kw):
+        captured.append(tickers)
+        assert tickers == ["^MOVE"]
+        return _frame()
+
+    bars, why = d28.download_move(download=fake_download)
+    assert why is None and len(bars) == len(DATES)
+    assert captured == [["^MOVE"]]
+
+
 def test_d28_is_registered_in_the_step_and_cboe_is_a_known_provider():
     names = [s.name for s in inputs.sweeps()]
     assert "D28" in names and "D29" in names
