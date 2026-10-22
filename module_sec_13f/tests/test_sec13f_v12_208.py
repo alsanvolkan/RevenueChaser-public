@@ -153,21 +153,113 @@ class TestValueUnitsV12:
         engine.save_cusip_ticker({f"11111111{i}": "TICK" for i in range(5)})
 
     def test_summary_does_not_carry_the_previous_run(self, store, tmp_path):
-        """A derive with nothing to derive from must not report the last run's counts."""
+        """A derive with nothing to derive from reports zero, not the last run's counts: no run state is kept."""
         self._seed(tmp_path, closes=[("2026-03-31", 100.0)])
         engine.recompute_totals()
-        assert engine.value_scale_summary()["rescaled"] == 1
+        _totals, factors = engine.compute_totals(engine.load_cusip_ticker())
+        assert engine.value_scale_summary(factors)["rescaled"] == 1
         rawstore.execute("DELETE FROM sec13f_holdings")
         rawstore.execute("DELETE FROM sec13f_submissions")
-        assert engine.compute_totals(engine.load_cusip_ticker()) == {}
-        assert engine.value_scale_summary() == {"checked": 0, "rescaled": 0, "periods": {}}
+        totals, factors = engine.compute_totals(engine.load_cusip_ticker())
+        assert totals == {}
+        assert engine.value_scale_summary(factors) == {"checked": 0, "rescaled": 0, "periods": {}}
+        assert not hasattr(engine.compute_totals, "_last_scale_factors"), "the factors are returned, not stored"
 
     def test_a_missing_final_close_falls_back_to_the_last_usable_one(self, store, tmp_path):
         """A halted name with a NULL close on the period end still has a reference: its last real close."""
         self._seed(tmp_path, closes=[("2026-03-30", 100.0), ("2026-03-31", None)])
         totals = engine.recompute_totals()
         assert totals["TICK"]["2026-03-31"]["value"] == 500_000.0
-        assert engine.value_scale_summary()["rescaled"] == 1
+        _totals, factors = engine.compute_totals(engine.load_cusip_ticker())
+        assert engine.value_scale_summary(factors)["rescaled"] == 1
+
+    def test_five_rows_of_one_name_do_not_pass_the_name_floor(self, store, tmp_path):
+        """``_VALUE_SCALE_MIN_NAMES`` counts distinct names (CUSIPs), not holdings rows: one name is not five."""
+        rows = [_row("a", "ALPHA INC", "111111111", "1000", "100", line_no=i + 1) for i in range(5)]
+        z = _write_zip(
+            tmp_path / "one_name_form13f.zip",
+            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            rows)
+        rawstore.write_rows("price_bars_daily", [
+            {"ticker": "TICK", "session_date": "2026-03-31", "close": 100.0, "source": "test"}])
+        engine.ingest_zips([z])
+        engine.save_cusip_ticker({"111111111": "TICK"})
+        totals = engine.recompute_totals()
+        assert totals["TICK"]["2026-03-31"]["value"] == 500.0          # 5 x 100, not rescaled
+        _totals, factors = engine.compute_totals(engine.load_cusip_ticker())
+        assert set(factors.values()) == {1.0}
+
+    def test_an_implied_price_merely_off_by_a_factor_is_not_read_as_thousands(self, store, tmp_path):
+        """The band's upper edge is what makes the check specific: only ~1/1000 is thousands.
+
+        Five mapped names reported in dollars, against a reference close twice their implied price (a
+        stale close, or a name that halved during the quarter): ratio 0.5. That is nowhere near 1/1000,
+        so the filer is left alone. Without the upper edge every ratio under 1 would be rescaled by
+        1000, which would multiply an honest dollar filer's value by a thousand.
+        """
+        rows = [_row("a", f"NAME{i}", f"11111111{i}", "1000", "50000", line_no=i + 1) for i in range(5)]
+        z = _write_zip(
+            tmp_path / "dollars_form13f.zip",
+            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            rows)
+        rawstore.write_rows("price_bars_daily", [
+            {"ticker": "TICK", "session_date": "2026-03-31", "close": 100.0, "source": "test"}])
+        engine.ingest_zips([z])
+        engine.save_cusip_ticker({f"11111111{i}": "TICK" for i in range(5)})
+        totals = engine.recompute_totals()
+        assert totals["TICK"]["2026-03-31"]["value"] == 250_000.0       # 5 x 50,000, not rescaled
+        _totals, factors = engine.compute_totals(engine.load_cusip_ticker())
+        assert set(factors.values()) == {1.0}
+        assert engine.value_scale_summary(factors)["rescaled"] == 0
+
+    def test_held_value_and_the_unmatched_note_use_the_totals_scale(self, store, tmp_path):
+        """MUST-2: a rescaled filer's held value and its left-out value are on the totals' basis, not the raw one."""
+        rows = [_row("a", f"NAME{i}", f"11111111{i}", "1000", "100", line_no=i + 1) for i in range(5)]
+        rows.append(_row("a", "OMEGA INC", "999999999", "1000", "100", line_no=6))   # no ticker
+        z = _write_zip(
+            tmp_path / "scale_form13f.zip",
+            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            rows)
+        rawstore.write_rows("price_bars_daily", [
+            {"ticker": "TICK", "session_date": "2026-03-31", "close": 100.0, "source": "test"}])
+        engine.ingest_zips([z])
+        cusip_map = {f"11111111{i}": "TICK" for i in range(5)}
+        engine.save_cusip_ticker(cusip_map)
+
+        totals, factors = engine.compute_totals(cusip_map)
+        assert totals["TICK"]["2026-03-31"]["value"] == 500_000.0
+        assert factors[("1000", "2026-03-31")] == 1000.0
+        assert engine.held_value("2026-03-31", factors) == 600_000.0   # 6 x 100 on the totals' basis
+        assert engine.held_value("2026-03-31") == 600.0                # the default: no scaling
+        summary = engine.unmatched_summary(cusip_map, factors)
+        assert summary["cusips"] == 1 and summary["value"] == 100_000.0
+        assert engine.unmatched_summary(cusip_map)["value"] == 100.0
+
+    def test_the_guard_still_refuses_a_large_name_dropped_from_the_map(self, store, tmp_path):
+        """13F-6 with scaled values: one big ticker leaves the map, the ticker count holds, the dollars say so."""
+        rows, full_map = [], {}
+        for i in range(12):
+            for j in range(5):
+                cusip = f"{i + 1:03d}{j:03d}000"
+                rows.append(_row(f"a{i}", f"NAME{i}{j}", cusip, "1000", "100", line_no=j + 1))
+                full_map[cusip] = f"T{i}"
+        z = _write_zip(
+            tmp_path / "many_form13f.zip",
+            [_sub(f"a{i}", str(1000 + i), "01-MAY-2026", "13F-HR", "31-MAR-2026") for i in range(12)],
+            rows)
+        rawstore.write_rows("price_bars_daily", [
+            {"ticker": f"T{i}", "session_date": "2026-03-31", "close": 100.0, "source": "test"}
+            for i in range(12)])
+        engine.ingest_zips([z])
+        engine.save_cusip_ticker(full_map)
+
+        totals, _factors = engine.compute_totals(full_map)
+        dropped = {c: t for c, t in full_map.items() if t != "T0"}
+        smaller, smaller_factors = engine.compute_totals(dropped)
+        assert len(totals) == 12 and len(smaller) == 11       # the ticker-count guard does not see the drop
+        assert set(smaller_factors.values()) == {1000.0}
+        with pytest.raises(engine.DeriveRefused, match="unmapped share"):
+            engine.guard(totals, smaller, smaller_factors)
 
 
 class TestHoldersV12:
@@ -224,10 +316,21 @@ class TestMigrationV12:
         rawstore.execute(self.V11_DDL)
         for row in rows:
             rawstore.execute("INSERT INTO sec13f_holdings VALUES (?, ?, ?, ?, ?)", list(row))
+        # ``_ensure_table`` is memoised per (file, table) for the life of the process, so a second
+        # ensure here would be a no-op and ``_init_db`` could not ALTER anything whatever the order
+        # of the guard. A live v11 store is met by a fresh process with empty memos: reset them, or
+        # "the refusal came before ``_init_db``" is a claim no test can fail.
+        rawstore._TABLE_READY.clear()
+        rawstore._ENSURED.clear()
 
     def _live_key(self):
         with rawstore.connect() as conn:
             return rawstore._live_primary_keys(conn, "sec13f_holdings").get("sec13f_holdings", [])
+
+    def _columns(self):
+        return [r["column_name"] for r in rawstore.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = 'main' "
+            "AND table_name = 'sec13f_holdings' ORDER BY ordinal_position")]
 
     def test_preflight_refuses_a_missing_zip_and_writes_nothing(self, store, tmp_path):
         """brief.md §3 test 15, mutation 9: a missing file would cost a multi-GB re-download."""
@@ -280,6 +383,27 @@ class TestMigrationV12:
             engine.ingest_zips([z])
         assert rawstore.count("sec13f_holdings") == 0
         assert rawstore.count("sec13f_submissions") == 0
+        # the refusal comes before ``_init_db``: not one of the ten v12 columns landed
+        assert self._columns() == ["accession", "cusip", "cik", "shares", "value"]
+
+    def test_the_derive_refuses_a_v11_holdings_table_before_writing(self, store, tmp_path):
+        """A v11 store refuses the derive with the migration's name and writes nothing at all."""
+        engine.save_totals({"NVDA": {"2026-03-31": {"shares": 5.0, "holders": 1}}})
+        self._v11_shape([("a", "111111111", "1000", 100.0, 1000.0)])
+        before = (rawstore.count("sec13f_holdings"), rawstore.count("sec13f_submissions"), self._live_key())
+        with pytest.raises(engine.DeriveRefused, match="migrate_sec13f_v12.py"):
+            engine.recompute_totals()
+        assert (rawstore.count("sec13f_holdings"), rawstore.count("sec13f_submissions"),
+                self._live_key()) == before
+        assert self._columns() == ["accession", "cusip", "cik", "shares", "value"]
+        assert "NVDA" in engine.load_totals()
+
+    def test_a_store_with_no_holdings_table_is_not_refused(self, store, tmp_path):
+        """A fresh store is not a v11 store: the derive creates the v12 table and derives nothing."""
+        rawstore.execute("DROP TABLE IF EXISTS sec13f_holdings")
+        rawstore._TABLE_READY.clear()       # as a fresh process sees it: the next store call creates the table
+        assert engine.recompute_totals() == {}
+        assert self._live_key() == ["accession", "line_no"]
 
 
 class TestNonLossyIngest:
@@ -352,3 +476,17 @@ class TestNonLossyIngest:
             # COVERPAGE was found in every shape: report_type is populated, not NULL
             assert rows[acc]["report_type"] == "13F-HR"
         assert rawstore.count("sec13f_holdings") == 3
+
+    def test_a_non_numeric_numeric_field_is_null_not_zero_and_does_not_abort(self, store, tmp_path):
+        """SHOULD-1: an absent field and a reported 0 differ; SEC text ("n/a") must not abort the zip."""
+        row = _row("a", "ALPHA INC", "111111111", "100", "1000")
+        row["VOTING_AUTH_SOLE"] = "n/a"
+        z = _write_zip(
+            tmp_path / "text_form13f.zip",
+            [_sub("a", "1000", "01-MAY-2026", "13F-HR", "31-MAR-2026")],
+            [row])
+        assert engine.ingest_zips([z]) == 1
+        stored = rawstore.query("SELECT voting_sole, voting_shared, shares, value FROM sec13f_holdings")[0]
+        assert stored["voting_sole"] is None
+        assert stored["voting_shared"] == 0.0                     # a reported 0 stays a 0
+        assert stored["shares"] == 100.0 and stored["value"] == 1000.0

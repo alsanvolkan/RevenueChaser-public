@@ -442,19 +442,29 @@ def _init_db() -> None:
     rawstore.ensure_table("identity_cusip")
 
 
-def _guard_v11_holdings_shape() -> None:
-    """Refuse to ingest against the v11 ``sec13f_holdings`` shape (no key).
+def _guard_v11_holdings_shape(exc_type: type[Exception] = RuntimeError) -> None:
+    """Refuse a write against the v11 ``sec13f_holdings`` shape (no key).
 
     Without this, the first ``ON CONFLICT (accession, line_no)`` against an
-    un-indexed live table raises a bare DuckDB error. The migration script is
-    the only supported path to v12.
+    un-indexed live table raises a bare DuckDB error, and a derive reads a NULL
+    ``sshprnamttype`` on every row: it matches nothing, returns no totals and
+    leaves the stored ones alone with only a log line. The migration script is
+    the only supported path to v12. A store with no ``sec13f_holdings`` table at
+    all is not a v11 store (``_init_db`` creates it at the v12 shape).
+
+    ``exc_type`` is what the caller raises: ``RuntimeError`` from the ingest,
+    ``DeriveRefused`` from the derive so the dashboard shows the message.
     """
     with rawstore.connect() as conn:
+        if not conn.execute(
+                "SELECT 1 FROM information_schema.tables WHERE table_schema = 'main' "
+                "AND table_name = 'sec13f_holdings'").fetchone():
+            return
         live = rawstore._live_primary_keys(conn, "sec13f_holdings")
     have = live.get("sec13f_holdings", [])
     want = ["accession", "line_no"]
     if have != want:
-        raise RuntimeError(
+        raise exc_type(
             "`.store/raw.duckdb` is at the v11 13F holdings shape; "
             "run `scripts/migrate_sec13f_v12.py` (gated)")
 
@@ -489,6 +499,21 @@ def _is_long_equity(row: dict) -> bool:
     return row.get("SSHPRNAMTTYPE") == "SH" and not row.get("PUTCALL")
 
 
+def _float_or_none(raw) -> Optional[float]:
+    """A numeric SEC field as a float; ``None`` when it is absent or not numeric.
+
+    An absent field and a reported 0 are different facts in a non-lossy column, so
+    neither is coerced to 0.0, and the bulk files carry text in numeric fields
+    (``"n/a"``): one bad cell stores ``None`` instead of aborting a 20M-row re-ingest.
+    """
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
 def ingest_zips(zip_paths: Iterable[str | Path]) -> int:
     """Stream any not-yet-ingested ZIPs into raw.duckdb (returns count).
 
@@ -506,8 +531,8 @@ def ingest_zips(zip_paths: Iterable[str | Path]) -> int:
     Re-ingesting relies on the (accession, line_no) PRIMARY KEY and
     ``ON CONFLICT DO NOTHING``: no per-accession DELETE runs.
     """
-    _init_db()
     _guard_v11_holdings_shape()
+    _init_db()
     ingested = {r["filename"] for r in rawstore.query("SELECT filename FROM sec13f_ingested_zips")}
     new = 0
     now = datetime.now().isoformat()
@@ -618,17 +643,17 @@ def ingest_zips(zip_paths: Iterable[str | Path]) -> int:
                     batch.append({"accession": acc, "line_no": line_no,
                                   "cusip": cusip,
                                   "cik": acc_cik.get(acc, ""),
-                                  "shares": float(row.get("SSHPRNAMT") or 0),
-                                  "value": float(row.get("VALUE") or 0),
+                                  "shares": _float_or_none(row.get("SSHPRNAMT")),
+                                  "value": _float_or_none(row.get("VALUE")),
                                   "period": period,
                                   "putcall": row.get("PUTCALL") or None,
                                   "sshprnamttype": row.get("SSHPRNAMTTYPE") or None,
                                   "title_of_class": row.get("TITLEOFCLASS") or None,
                                   "investment_discretion": row.get("INVESTMENTDISCRETION") or None,
                                   "other_manager": row.get("OTHERMANAGER") or None,
-                                  "voting_sole": float(row.get("VOTING_AUTH_SOLE") or 0) or 0.0,
-                                  "voting_shared": float(row.get("VOTING_AUTH_SHARED") or 0) or 0.0,
-                                  "voting_none": float(row.get("VOTING_AUTH_NONE") or 0) or 0.0})
+                                  "voting_sole": _float_or_none(row.get("VOTING_AUTH_SOLE")),
+                                  "voting_shared": _float_or_none(row.get("VOTING_AUTH_SHARED")),
+                                  "voting_none": _float_or_none(row.get("VOTING_AUTH_NONE"))})
                     if len(batch) >= _HOLDINGS_CHUNK:
                         rawstore.write_rows("sec13f_holdings", batch)
                         batch = []
@@ -780,13 +805,13 @@ def compute_period_metrics(periods: dict) -> dict:
     return metrics
 
 
-def value_scale_summary() -> dict:
-    """Summary of the last ``compute_totals`` VALUE-units check.
+def value_scale_summary(factors: dict) -> dict:
+    """Summary of one derive's VALUE-units check (``_value_scale_factors``'s result).
 
     Returns ``{"checked": n, "rescaled": n, "periods": {period: n}}``.
-    When no check ran (no active filings or no stored closes), every count is 0.
+    When the derive checked nothing, every count is 0 — the caller hands in the
+    factors of the run it is reporting, so a run cannot see another run's counts.
     """
-    factors = getattr(compute_totals, "_last_scale_factors", {})
     if not factors:
         return {"checked": 0, "rescaled": 0, "periods": {}}
     checked = len(factors)
@@ -830,96 +855,82 @@ def _reference_closes(tickers: Iterable[str], periods: Iterable[str]) -> dict[tu
     return out
 
 
-def _value_scale_factors(cusip_ticker: dict, active: set[str]) -> dict[tuple[str, str], float]:
+def _value_scale_factors(pairs: list, active: set[str]) -> dict[tuple[str, str], float]:
     """``{(cik, period): factor}`` for VALUE-units rescale, 1 when no rescale.
 
     Reference closes are the last stored session on or before each period end
     for each mapped ticker, from ``prices.daily_bars`` (prices.duckdb, nominal
-    basis). A filer with at least ``_VALUE_SCALE_MIN_NAMES`` mapped holdings
-    whose median ``(value/shares)/close`` sits inside ``_VALUE_SCALE_BAND`` gets
-    ``factor = 1000``; otherwise ``1``.
+    basis). A filer with at least ``_VALUE_SCALE_MIN_NAMES`` mapped *names* (distinct
+    CUSIPs) whose median ``(value/shares)/close`` sits inside ``_VALUE_SCALE_BAND``
+    gets ``factor = 1000``; otherwise ``1``.
+
+    ``compute_totals``' pattern: the joins AND both aggregations run inside DuckDB,
+    so one row per (cik, period) crosses into Python instead of every holdings row
+    (~14 GB of dicts on a real store). ``prices.duckdb`` is a separate file, so the
+    closes are read in Python and handed to the aggregation as a list parameter.
     """
-    if not active:
-        return {}
-    # latest period per active accession
-    period_for_acc: dict[str, str] = {}
-    for r in rawstore.query(
-            "SELECT accession, period FROM sec13f_submissions "
-            "WHERE accession IN (SELECT unnest(?::VARCHAR[])) AND period >= ?",
-            [sorted(active), START_QUARTER]):
-        period_for_acc[r["accession"]] = r["period"]
-    if not period_for_acc:
+    if not active or not pairs:
         return {}
 
-    # map each holding's (cusip, period) -> ticker for the price lookup
-    cusip_to_ticker = {c: ticker_of(info) for c, info in cusip_ticker.items() if ticker_of(info)}
-    if not cusip_to_ticker:
-        return {}
-
-    # ticker -> set of periods it is held in (for which we need a close)
-    ticker_periods: dict[str, set[str]] = defaultdict(set)
-    for r in rawstore.query(
-            "SELECT DISTINCT h.accession, h.cusip FROM sec13f_holdings h "
-            "WHERE h.accession IN (SELECT unnest(?::VARCHAR[])) "
+    # Which (ticker, period) closes the check needs: one grouped read.
+    with rawstore.connect() as conn:
+        ticker_periods = conn.execute(
+            "WITH active AS (SELECT unnest(?::VARCHAR[]) AS accession), "
+            "mapped AS (SELECT m[1] AS cusip, m[2] AS ticker "
+            "           FROM (SELECT unnest(?::VARCHAR[][]) AS m)) "
+            "SELECT DISTINCT mp.ticker, s.period "
+            "FROM sec13f_holdings h "
+            "JOIN sec13f_submissions s ON s.accession = h.accession "
+            "JOIN active a ON a.accession = h.accession "
+            "JOIN mapped mp ON mp.cusip = h.cusip "
+            "WHERE s.period >= ? AND h.cik IS NOT NULL AND h.cik <> '' "
+            "AND h.shares IS NOT NULL AND h.shares <> 0 "
             f"AND {_LONG_EQUITY_SQL}",
-            [sorted(active)]):
-        acc = r["accession"]
-        cusip = r["cusip"]
-        period = period_for_acc.get(acc)
-        if not period or cusip not in cusip_to_ticker:
-            continue
-        ticker_periods[cusip_to_ticker[cusip]].add(period)
+            [sorted(active), pairs, START_QUARTER]).fetchall()
     if not ticker_periods:
         return {}
 
     # last close per (ticker, period), one read per period
-    close_by_tp = _reference_closes(ticker_periods.keys(),
-                                    {p for ps in ticker_periods.values() for p in ps})
+    close_by_tp = _reference_closes((t for t, _ in ticker_periods), (p for _, p in ticker_periods))
     if not close_by_tp:
         return {}
 
-    # per (cik, period), collect implied prices for mapped long-equity holdings
-    from statistics import median
-    ratios: dict[tuple[str, str], list[float]] = defaultdict(list)
-    for r in rawstore.query(
-            "SELECT h.cik, h.accession, h.cusip, h.shares, h.value "
+    closes = [[ticker, period, close] for (ticker, period), close in sorted(close_by_tp.items())]
+    with rawstore.connect() as conn:
+        rows = conn.execute(
+            "WITH active AS (SELECT unnest(?::VARCHAR[]) AS accession), "
+            "mapped AS (SELECT m[1] AS cusip, m[2] AS ticker "
+            "           FROM (SELECT unnest(?::VARCHAR[][]) AS m)), "
+            "closes AS (SELECT c[1] AS ticker, c[2] AS period, c[3]::DOUBLE AS close "
+            "           FROM (SELECT unnest(?::VARCHAR[][]) AS c)) "
+            "SELECT h.cik, s.period, median((h.value / h.shares) / cl.close) AS ratio, "
+            "       count(DISTINCT h.cusip) AS names "
             "FROM sec13f_holdings h "
-            "WHERE h.accession IN (SELECT unnest(?::VARCHAR[])) "
-            "AND h.cik IS NOT NULL AND h.cik <> '' "
-            f"AND {_LONG_EQUITY_SQL}",
-            [sorted(active)]):
-        acc = r["accession"]
-        cusip = r["cusip"]
-        period = period_for_acc.get(acc)
-        ticker = cusip_to_ticker.get(cusip)
-        shares = r["shares"] or 0.0
-        if not period or not ticker or not shares:
-            continue
-        close = close_by_tp.get((ticker, period))
-        if not close:
-            continue
-        implied = (r["value"] or 0.0) / shares
-        ratios[(r["cik"], period)].append(implied / close)
+            "JOIN sec13f_submissions s ON s.accession = h.accession "
+            "JOIN active a ON a.accession = h.accession "
+            "JOIN mapped mp ON mp.cusip = h.cusip "
+            "JOIN closes cl ON cl.ticker = mp.ticker AND cl.period = s.period "
+            "WHERE s.period >= ? AND h.cik IS NOT NULL AND h.cik <> '' "
+            "AND h.shares IS NOT NULL AND h.shares <> 0 AND cl.close <> 0 "
+            f"AND {_LONG_EQUITY_SQL} "
+            "GROUP BY h.cik, s.period",
+            [sorted(active), pairs, closes, START_QUARTER]).fetchall()
 
-    factors: dict[tuple[str, str], float] = {}
-    for key, vals in ratios.items():
-        if len(vals) < _VALUE_SCALE_MIN_NAMES:
-            factors[key] = 1.0
-            continue
-        m = median(vals)
-        lo, hi = _VALUE_SCALE_BAND
-        factors[key] = 1000.0 if lo < m < hi else 1.0
-    return factors
+    lo, hi = _VALUE_SCALE_BAND
+    return {(cik, period): 1000.0
+            if ratio is not None and names >= _VALUE_SCALE_MIN_NAMES and lo < ratio < hi else 1.0
+            for cik, period, ratio, names in rows}
 
 
-def compute_totals(cusip_ticker: dict) -> dict:
-    """Rich per-ticker quarterly metrics from raw.duckdb.
+def compute_totals(cusip_ticker: dict) -> tuple[dict, dict]:
+    """Rich per-ticker quarterly metrics from raw.duckdb, and the VALUE-units factors.
 
-    Returns ``{ticker: {period: {shares, value, holders, new_holders,
-    exited_holders, top10_pct, hhi, buy_flow, sell_flow}}}``. Multi-CUSIP
-    tickers are summed; per-holder (CIK) positions are kept so churn can be
-    computed. Only periods >= ``START_QUARTER`` are returned (older periods are
-    stray amendments).
+    Returns ``(totals, factors)``: ``{ticker: {period: {shares, value, holders,
+    new_holders, exited_holders, top10_pct, hhi, buy_flow, sell_flow}}}`` and the
+    ``{(cik, period): factor}`` the sums were scaled by (empty when nothing was
+    checked). Multi-CUSIP tickers are summed; per-holder (CIK) positions are kept
+    so churn can be computed. Only periods >= ``START_QUARTER`` are returned
+    (older periods are stray amendments).
 
     Long-equity rows (``SSHPRNAMTTYPE == 'SH'`` and no ``PUTCALL``) are counted;
     puts and PRNs are excluded. VALUE units are checked per (cik, period)
@@ -932,14 +943,10 @@ def compute_totals(cusip_ticker: dict) -> dict:
     """
     active = active_accessions_db()
     pairs = [[cusip, ticker_of(info)] for cusip, info in cusip_ticker.items() if ticker_of(info)]
-    # A run that checks nothing must not report the previous run's counts.
-    compute_totals._last_scale_factors = {}  # type: ignore[attr-defined]
     if not active or not pairs:
-        return {}
+        return {}, {}
 
-    scale_factors = _value_scale_factors(cusip_ticker, active)
-    # Make the factors available to callers (history writer, job note).
-    compute_totals._last_scale_factors = scale_factors  # type: ignore[attr-defined]
+    scale_factors = _value_scale_factors(pairs, active)
 
     # Build a (cik, period) -> factor lookup table in DuckDB via a list param.
     factor_pairs = [[cik, period, factor] for (cik, period), factor in scale_factors.items()]
@@ -980,21 +987,25 @@ def compute_totals(cusip_ticker: dict) -> dict:
         metrics = compute_period_metrics(dict(periods))
         if metrics:
             totals[ticker] = metrics
-    return totals
+    return totals, scale_factors
 
 
-def unmatched_summary(cusip_ticker: dict) -> Optional[dict]:
+def unmatched_summary(cusip_ticker: dict, factors: Optional[dict] = None) -> Optional[dict]:
     """What the derive leaves out: CUSIPs of the latest period with no ticker.
 
     ``compute_totals`` joins holdings to ``cusip_ticker``; a CUSIP absent from it is
     dropped without a trace. Read-only. ``{"period", "cusips", "value",
     "top": [(issuer, value), ...]}`` for the newest active period, or ``None`` when there
     is nothing to look at.
+
+    ``factors`` are the VALUE-units factors the derive applied, so the value reported
+    here is on the same basis as the totals it sits next to; ``None`` means no scaling.
     """
     active = active_accessions_db()
     if not active:
         return None
     mapped = sorted(c for c, info in cusip_ticker.items() if ticker_of(info))
+    factor_pairs = [[cik, p, factor] for (cik, p), factor in (factors or {}).items()]
     with rawstore.connect() as conn:
         period = conn.execute(
             "SELECT max(s.period) FROM sec13f_submissions s "
@@ -1003,14 +1014,18 @@ def unmatched_summary(cusip_ticker: dict) -> Optional[dict]:
         if not period:
             return None
         rows = conn.execute(
-            "SELECT h.cusip, SUM(h.value) AS value FROM sec13f_holdings h "
+            "WITH scale AS (SELECT f[1] AS cik, f[2] AS period, f[3]::DOUBLE AS factor "
+            "               FROM (SELECT unnest(?::VARCHAR[][]) AS f)) "
+            "SELECT h.cusip, SUM(h.value * COALESCE(sc.factor, 1.0)) AS value "
+            "FROM sec13f_holdings h "
             "JOIN sec13f_submissions s ON s.accession = h.accession "
+            "LEFT JOIN scale sc ON sc.cik = h.cik AND sc.period = s.period "
             "WHERE s.period = ? AND s.accession IN (SELECT unnest(?::VARCHAR[])) "
             "AND h.cik IS NOT NULL AND h.cik <> '' "
             f"AND {_LONG_EQUITY_SQL} "
             "AND h.cusip NOT IN (SELECT unnest(?::VARCHAR[])) "
             "GROUP BY h.cusip ORDER BY value DESC NULLS LAST",
-            [period, sorted(active), mapped]).fetchall()
+            [factor_pairs, period, sorted(active), mapped]).fetchall()
         names = {r[0]: r[1] for r in conn.execute(
             "SELECT cusip, name_raw FROM sec13f_cusip_names").fetchall()}
     top = [(names.get(c) or c, float(v or 0.0)) for c, v in rows[:3]]
@@ -1073,28 +1088,45 @@ def _period_value(totals: dict, period: str) -> float:
     return float(sum((periods.get(period) or {}).get("value") or 0.0 for periods in totals.values()))
 
 
-def held_value(period: str) -> float:
-    """The value held in a quarter's active filings, mapped or not (the map does not change it)."""
+def held_value(period: str, factors: Optional[dict] = None) -> float:
+    """The value held in a quarter's active filings, mapped or not (the map does not change it).
+
+    ``factors`` are the VALUE-units factors the derive applied, so a rescaled filer's
+    holdings are on the same basis as its totals; ``None`` means no scaling.
+    """
     active = active_accessions_db()
     if not active:
         return 0.0
+    factor_pairs = [[cik, p, factor] for (cik, p), factor in (factors or {}).items()]
     with rawstore.connect() as conn:
         v = conn.execute(
-            "SELECT SUM(h.value) FROM sec13f_holdings h "
+            "WITH scale AS (SELECT f[1] AS cik, f[2] AS period, f[3]::DOUBLE AS factor "
+            "               FROM (SELECT unnest(?::VARCHAR[][]) AS f)) "
+            "SELECT SUM(h.value * COALESCE(sc.factor, 1.0)) FROM sec13f_holdings h "
             "JOIN sec13f_submissions s ON s.accession = h.accession "
+            "LEFT JOIN scale sc ON sc.cik = h.cik AND sc.period = s.period "
             "WHERE s.period = ? AND s.accession IN (SELECT unnest(?::VARCHAR[])) "
             "AND h.cik IS NOT NULL AND h.cik <> '' "
-            f"AND {_LONG_EQUITY_SQL}", [period, sorted(active)]).fetchone()[0]
+            f"AND {_LONG_EQUITY_SQL}", [factor_pairs, period, sorted(active)]).fetchone()[0]
     return float(v or 0.0)
 
 
-def guard(before: dict, totals: dict) -> None:
+def guard(before: dict, totals: dict, factors: Optional[dict] = None) -> None:
     """Raise ``DeriveRefused`` when ``totals`` would replace ``before`` with something much smaller.
+
+    ``factors`` are the VALUE-units factors this derive applied: ``held_value`` uses them
+    so a rescaled filer's denominator is on the same basis as the scaled ``totals``.
+    ``None`` means no scaling, the pre-#208 basis.
 
     Stores with fewer than ``_SHRINK_MIN_TICKERS`` tickers are not guarded. Otherwise, in this order: the ticker
     count falls under ``_SHRINK_RATIO``; the newest stored quarter's mapped value falls under ``_VALUE_RATIO``; the
     share of that quarter's held value left unmapped rises by more than ``_UNMATCHED_RISE`` (13F-6: a map change that
     drops a few large names keeps the ticker count).
+
+    Known, accepted limitation: on the first post-migration derive, ``before`` (the
+    stored totals) is still on the old unscaled basis while ``totals`` is scaled, so
+    that one run's dollar-ratio check is uninformative — it can only pass, never
+    falsely refuse.
     """
     if len(before) < _SHRINK_MIN_TICKERS:
         return
@@ -1108,7 +1140,7 @@ def guard(before: dict, totals: dict) -> None:
         raise DeriveRefused(
             f"the derive would cut the mapped value of {period} from {_money(was)} to {_money(now)} "
             f"(under {_VALUE_RATIO:.0%}); the stored totals were kept.")
-    held = max(held_value(period), was, now)
+    held = max(held_value(period, factors), was, now)
     if held > 0 and (was - now) / held > _UNMATCHED_RISE:
         raise DeriveRefused(
             f"the derive would raise the unmapped share of {period}'s held value from "
@@ -1127,9 +1159,11 @@ def recompute_totals(cusip_map: Optional[dict] = None, force: bool = False) -> d
     When ``cusip_map`` is given and the derive passes, ``cusip_ticker`` is replaced by it (old rows deleted) before
     the totals are saved. A refused derive keeps the stored map and the stored totals, so the two always match.
 
-    Raises ``DeriveRefused`` when holdings exist without a submission row (an ingest died half-way; the derive would
-    see partial data) or when ``guard`` refuses the result (``force`` overrides ``guard`` only).
+    Raises ``DeriveRefused`` when the store is still at the v11 holdings shape, when holdings exist without a
+    submission row (an ingest died half-way; the derive would see partial data) or when ``guard`` refuses the result
+    (``force`` overrides ``guard`` only).
     """
+    _guard_v11_holdings_shape(DeriveRefused)
     _init_db()
     orphans = _orphan_holdings()
     if orphans:
@@ -1138,16 +1172,16 @@ def recompute_totals(cusip_map: Optional[dict] = None, force: bool = False) -> d
             "the stored totals were kept. Re-ingest the data set.")
     stored_map = load_cusip_ticker()
     use = stored_map if cusip_map is None else cusip_map
-    totals = compute_totals(use)
+    totals, factors = compute_totals(use)
     if not totals:
         logger.warning("13F derive: no holdings to derive totals from; kept the stored totals")
         return totals
     before = load_totals()
     if not force:
-        guard(before, totals)
+        guard(before, totals, factors)
     logger.info("13F derive: %d -> %d tickers, %d -> %d ticker-periods",
                 len(before), len(totals), _ticker_periods(before), _ticker_periods(totals))
-    scale = value_scale_summary()
+    scale = value_scale_summary(factors)
     if scale["checked"]:
         logger.info("13F derive: VALUE unit check checked=%d rescaled=%d periods=%s",
                     scale["checked"], scale["rescaled"], scale["periods"])

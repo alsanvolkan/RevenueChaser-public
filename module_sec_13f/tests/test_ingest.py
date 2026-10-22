@@ -215,7 +215,7 @@ class TestIngestZips:
         assert rawstore.count("sec13f_holdings") == partial
         assert not deletes, "v12 ingest must not DELETE holdings"
 
-        totals = sf.compute_totals({"111111111": "AAPL"})
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
         assert totals["AAPL"]["2026-03-31"]["shares"] == 100.0
         assert totals["AAPL"]["2026-03-31"]["holders"] == 1
 
@@ -243,11 +243,13 @@ class TestIngestZips:
 
         assert rawstore.count("sec13f_submissions") == 0
         assert rawstore.count("sec13f_ingested_zips") == 0
-        assert sf.compute_totals({"111111111": "AAPL"}) == {}  # holdings are not visible yet
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
+        assert totals == {}  # holdings are not visible yet
 
         assert sf.ingest_zips([zip1]) == 1  # a rerun is clean
         assert rawstore.count("sec13f_submissions") == 1
-        assert sf.compute_totals({"111111111": "AAPL"})["AAPL"]["2026-03-31"]["shares"] == 100.0
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
+        assert totals["AAPL"]["2026-03-31"]["shares"] == 100.0
 
     def test_holdings_are_written_in_chunks(self, isolated_store, tmp_path, monkeypatch):
         """The zip is streamed, not held in memory: a small chunk size splits the write.
@@ -301,7 +303,8 @@ class TestIngestZips:
 
         assert rawstore.count("sec13f_holdings") == first
         assert not deletes, "v12 ingest must not DELETE holdings"
-        assert sf.compute_totals({"111111111": "AAPL"})["AAPL"]["2026-03-31"]["shares"] == 100.0
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
+        assert totals["AAPL"]["2026-03-31"]["shares"] == 100.0
 
     def test_one_filing_may_list_the_same_cusip_twice(self, isolated_store, tmp_path):
         """So ``sec13f_holdings`` must NOT get an (accession, cusip) primary key —
@@ -317,7 +320,8 @@ class TestIngestZips:
               "VALUE": "2000", "SSHPRNAMT": "200", "SSHPRNAMTTYPE": "SH", "PUTCALL": ""}])
         sf.ingest_zips([z])
         assert rawstore.count("sec13f_holdings") == 2
-        assert sf.compute_totals({"111111111": "AAPL"})["AAPL"]["2026-03-31"]["shares"] == 300.0
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
+        assert totals["AAPL"]["2026-03-31"]["shares"] == 300.0
 
     def test_zip_missing_infotable_is_skipped_not_marked_ingested(self, isolated_store, tmp_path):
         bad_zip = _write_zip(
@@ -345,7 +349,7 @@ class TestIngestZips:
               "VALUE": "1500", "SSHPRNAMT": "150", "SSHPRNAMTTYPE": "SH", "PUTCALL": ""}])
 
         sf.ingest_zips([original, amendment])
-        totals = sf.compute_totals({"111111111": "AAPL"})
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
         # only the later amendment's 150 shares count, not 100 + 150
         assert totals["AAPL"]["2026-03-31"]["shares"] == 150.0
         assert totals["AAPL"]["2026-03-31"]["holders"] == 1
@@ -371,7 +375,7 @@ class TestIngestZips:
               "VALUE": "6446426607", "SSHPRNAMT": "22278223", "SSHPRNAMTTYPE": "SH", "PUTCALL": ""}])
 
         sf.ingest_zips([original, amendment])
-        totals = sf.compute_totals({"111111111": "AAPL"})
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
         assert totals["AAPL"]["2026-06-30"]["shares"] == 22278223.0
         assert totals["AAPL"]["2026-06-30"]["value"] == 6446426607.0
         assert totals["AAPL"]["2026-06-30"]["holders"] == 1
@@ -383,7 +387,7 @@ class TestComputeTotals:
         sf.ingest_zips([zip1, zip2])
 
         cusip_ticker = {"111111111": "AAPL", "222222222": "MSFT"}
-        totals = sf.compute_totals(cusip_ticker)
+        totals, _factors = sf.compute_totals(cusip_ticker)
 
         assert totals["AAPL"]["2026-03-31"]["shares"] == 300.0
         assert totals["AAPL"]["2026-03-31"]["holders"] == 2
@@ -398,7 +402,7 @@ class TestComputeTotals:
             [{"ACCESSION_NUMBER": "acc_old", "NAMEOFISSUER": "APPLE INC", "CUSIP": "111111111",
               "VALUE": "1000", "SSHPRNAMT": "100", "SSHPRNAMTTYPE": "SH", "PUTCALL": ""}])
         sf.ingest_zips([old_zip])
-        totals = sf.compute_totals({"111111111": "AAPL"})
+        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
         assert totals == {}  # 2024-12-31 predates START_QUARTER (2025-03-31)
 
 
@@ -501,12 +505,16 @@ class TestComputeTotalsGolden:
         """O6: amendments, churn, a two-CUSIP ticker, PRN/option noise and a 13F-NT."""
         q1, q2 = _two_quarter_zips(tmp_path)
         sf.ingest_zips([q1, q2])
-        assert sf.compute_totals(CUSIP_MAP) == GOLDEN_TOTALS
+        totals, _factors = sf.compute_totals(CUSIP_MAP)
+        assert totals == GOLDEN_TOTALS
 
     def test_no_python_side_temp_table_inserts(self, isolated_store, tmp_path):
-        """O6: the active/mapped sets reach DuckDB as one statement each, not row by row."""
+        """O6/#208: the active/mapped sets AND the VALUE-units ratio reach DuckDB as one statement each, not row
+        by row: no Python row loop is left where the 14 GB of dicts used to be."""
         import inspect
-        assert "executemany" not in inspect.getsource(sf.compute_totals)
+        for fn in (sf.compute_totals, sf._value_scale_factors):
+            assert "executemany" not in inspect.getsource(fn)
+        assert "median(" in inspect.getsource(sf._value_scale_factors)
 
 
 class TestRecomputeTotals:
@@ -932,7 +940,8 @@ class TestValueUnits:
         totals = sf.recompute_totals()
         assert totals["TICK"]["2026-03-31"]["value"] == 500_000.0
         assert totals["TICK"]["2026-03-31"]["shares"] == 5000.0
-        assert sf.value_scale_summary()["rescaled"] == 1
+        _totals, factors = sf.compute_totals(cmap)
+        assert sf.value_scale_summary(factors)["rescaled"] == 1
 
     def test_no_rescale_when_implied_price_matches_close(self, isolated_store, tmp_path):
         from RevenueChaser.core import rawstore
@@ -944,7 +953,8 @@ class TestValueUnits:
         sf.save_cusip_ticker(cmap)
         totals = sf.recompute_totals()
         assert totals["TICK"]["2026-03-31"]["value"] == 490_000.0
-        assert sf.value_scale_summary()["rescaled"] == 0
+        _totals, factors = sf.compute_totals(cmap)
+        assert sf.value_scale_summary(factors)["rescaled"] == 0
 
     def test_not_rescaled_with_too_few_names(self, isolated_store, tmp_path):
         from RevenueChaser.core import rawstore
@@ -955,7 +965,8 @@ class TestValueUnits:
         sf.save_cusip_ticker(cmap)
         totals = sf.recompute_totals()
         assert totals["TICK"]["2026-03-31"]["value"] == 400.0
-        assert sf.value_scale_summary()["rescaled"] == 0
+        _totals, factors = sf.compute_totals(cmap)
+        assert sf.value_scale_summary(factors)["rescaled"] == 0
 
     def test_no_prices_skips_check(self, isolated_store, tmp_path):
         z, cmap = self._filings_for_scale(tmp_path, value="100", shares="1000", n_names=5)
@@ -963,4 +974,5 @@ class TestValueUnits:
         sf.save_cusip_ticker(cmap)
         totals = sf.recompute_totals()
         assert totals["TICK"]["2026-03-31"]["value"] == 500.0
-        assert sf.value_scale_summary()["checked"] == 0
+        _totals, factors = sf.compute_totals(cmap)
+        assert sf.value_scale_summary(factors)["checked"] == 0
