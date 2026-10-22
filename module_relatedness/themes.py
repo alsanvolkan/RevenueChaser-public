@@ -152,9 +152,9 @@ def nested_parents(X, fine: np.ndarray, k_medium: int, k_coarse: int):
 
     Every cut returns at least one child: a level that ends with a single cluster is
     returned as-is (agglomerative clustering needs two samples). The medium cut is
-    held below the number of fine themes present, so at least one pair of fine themes
-    is merged; most medium themes keep one fine child, and the naming step reuses that
-    child's name instead of asking the model (#433).
+    halved from the number of fine themes present (``max(2, n_fine // 2)``), so most
+    medium themes merge several fine children; the naming step reuses a single child's
+    name when a medium theme has only one fine child, instead of asking the model (#433).
     """
     from sklearn.cluster import AgglomerativeClustering
     ids = sorted(set(fine.tolist()))
@@ -176,7 +176,7 @@ def nested_parents(X, fine: np.ndarray, k_medium: int, k_coarse: int):
     return ids, med, coarse
 
 
-def build_shadow(candidates=(60, 90, 120, 150), k_medium: int = 70,
+def build_shadow(candidates=(60, 90, 120, 150), k_medium: int | None = None,
                  k_coarse: int = 25, run_id: str | None = None,
                  profiles: dict | None = None, universe=None,
                  fit: NmfFit = DEFAULT_FIT) -> dict:
@@ -189,9 +189,9 @@ def build_shadow(candidates=(60, 90, 120, 150), k_medium: int = 70,
     result counts the profiles left out.
 
     Every NMF of the run uses ``fit`` (``DEFAULT_FIT`` unless given); ``fit`` in the result names it, because
-    ``theme_runs`` has no column for it. ``k_medium`` is clamped below the realised fine count (normally
-    ``k_fine``), which merges at least one pair of fine themes; most medium themes keep one fine child, and the
-    naming step reuses that child's name instead of asking the model (#433).
+    ``theme_runs`` has no column for it. When ``k_medium`` is not given it is derived as
+    ``max(2, n_fine // 2)`` from the realised fine count; an explicit value is honoured but still clamped below
+    ``n_fine`` as a safety net, so the effective value is ``min(requested_or_derived, n_fine - 1)`` with a floor of 1.
     """
     if profiles is None:
         profiles = rel_store.load_profiles()
@@ -229,17 +229,16 @@ def build_shadow(candidates=(60, 90, 120, 150), k_medium: int = 70,
                                      STABILITY_FLOOR, fit)
     fine = nmf_assign(X, k_fine, seed=0, fit=fit)
     n_fine = len(set(fine.tolist()))      # an empty NMF component leaves fewer fine themes
-    # k_medium is clamped below the realised fine count, which merges at least one
-    # pair of fine themes; most medium themes keep one fine child, and the naming step
-    # reuses that child's name instead of asking the model (#433). Not taken:
-    # k_medium = max(2, k_fine // 2), or skipping the medium level entirely (avo's
-    # call is pending).
-    if k_medium >= n_fine:
-        clamped = max(1, n_fine - 1)
-        logger.info("k_medium %d clamped to %d: the run realised %d fine themes, and a "
-                    "medium cut below that merges at least one pair of them",
-                    k_medium, clamped, n_fine)
-        k_medium = clamped
+    # The medium level is halved from the realised fine count (#433). An explicit
+    # k_medium is honoured; when none is given we derive it. In every case the
+    # safety-net clamp keeps the effective cut below n_fine with a floor of 1.
+    requested = k_medium
+    derived = max(2, n_fine // 2) if k_medium is None else k_medium
+    clamped = max(1, min(derived, n_fine - 1))
+    if clamped != derived:
+        logger.info("k_medium requested=%s derived=%d clamped=%d: the run realised %d fine themes",
+                    "default" if requested is None else requested, derived, clamped, n_fine)
+    k_medium = clamped
     ids, med, coarse = nested_parents(X, fine, k_medium, k_coarse)
     run_id = run_id or f"nmf-{_now()}"
 
