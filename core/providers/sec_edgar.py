@@ -186,7 +186,11 @@ _STI_HTM_TAGS = ["HeldToMaturitySecuritiesCurrent",
 # A multi-tag field on the annual path keeps today's pick (the newest, then the longest series) and
 # only EXTENDS it (#246): years a filer reported under an older tag are added when they are a hole
 # inside that series or a contiguous run below it, each ending one fiscal year from its neighbour
-# (``_backfill_history``). A year the pick holds is never replaced and a gap is never bridged.
+# (``_backfill_history``). That function never bridges a gap, and a year the pick holds is never
+# replaced. The add-only revenue concept below (#435) is the one exception to adjacency: its merge
+# adds every year it reports that the pick lacks, so a revenue series can hold a non-adjacent pair.
+# It never lands in the newest pair (measured: 5 of 152 filers gain a non-adjacent pair, 0 at the
+# newest), so year-on-year growth — the last two non-null years — still reads the pick's own years.
 # Quarterly series are not merged.
 #
 # ``revenue`` reads the ASC 606 including-assessed-tax sibling
@@ -364,9 +368,14 @@ def _backfill_history(primary: dict[str, tuple[float, str]],
     if its period end is one fiscal year (``_YEAR_DAYS``) from the year next to it. A calendar-year
     key one apart is not always an adjacent fiscal year: a 52/53-week filer's FY2014 can end on
     2015-01-03. The chain stops at the first year that is missing or fails, and nothing is added
-    above the newest year. So a gap is never bridged: the readers take the last two NON-NULL
-    revenues as year-on-year growth, and 2026 against 2024 must stay "unknown". Of several tags
-    reporting one added year, the first in concept-list order whose end fits wins.
+    above the newest year. So THIS function never bridges a gap: the readers take the last two
+    NON-NULL revenues as year-on-year growth, and 2026 against 2024 must stay "unknown". Of several
+    tags reporting one added year, the first in concept-list order whose end fits wins.
+
+    That adjacency is what this function adds. The add-only revenue merge that runs after it
+    (``_annual_facts``, #435) adds any year the pick lacks, adjacent or not, so the result of the
+    whole extraction can hold a non-adjacent pair of years; it is never at the newest pair, which
+    stays adjacent-or-primary (the ``_ADD_ONLY_CONCEPTS`` note above has the measurement).
     """
     candidates: dict[str, list[tuple[float, str]]] = {}
     for series in all_series:
@@ -461,7 +470,7 @@ def _annual_facts(facts: dict, concepts: list[str], unit: str) -> dict[str, tupl
         if not best or max(series) > max(best) or (max(series) == max(best) and len(series) > len(best)):
             best = series
     merged = _backfill_history(best, list(found.values())) if best else {}
-    for concept in concepts:  # the years the pick lacks, older, newer or inside a hole (#435)
+    for concept in concepts:  # the years the pick lacks, older, newer or inside a hole — adjacent or not (#435)
         if concept not in _ADD_ONLY_CONCEPTS:
             continue
         for year, val_end in _one(concept).items():
