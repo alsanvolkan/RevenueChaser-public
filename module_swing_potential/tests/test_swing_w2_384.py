@@ -12,7 +12,7 @@ import json
 
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_swing_potential import config, freeze, scores
-from RevenueChaser.module_swing_potential.pipeline import build_payload, demo_payload
+from RevenueChaser.module_swing_potential.pipeline import build_payload
 from RevenueChaser.module_swing_potential.ranking import quality_403030
 from RevenueChaser.module_swing_potential.report import render_swing_dashboard
 from RevenueChaser.module_swing_potential.screeners import (
@@ -158,7 +158,7 @@ def test_the_page_has_the_method_toggles_and_no_multiplier_tabs():
 def _old_payload() -> dict:
     gate = {"name": "Minervini", "passed": True, "score": "3/3",
             "rules": [{"label": "rule", "passed": True, "threshold": "> 1", "unit": "ratio", "actual": 1.2}]}
-    p = demo_payload()
+    p = build_payload([], run_stats={})
     p["is_fixture"] = False
     p["selection_version"] = "3"
     p["candidates"] = [{
@@ -182,7 +182,7 @@ def test_a_hostile_candidate_is_escaped(tmp_path):
     from RevenueChaser.core.tests.board_js import run_board_js
     evil = "\"'><img src=x onerror=alert(1)>"
     gate = {"passed": True, "score": "1/1", "rules": [{"id": "r", "passed": True, "actual": 1.2}]}
-    p = demo_payload()
+    p = build_payload([], run_stats={})
     p["is_fixture"] = False
     p["candidates"] = [{
         "ticker": evil, "name": evil, "sector": evil, "price": 10.0, "change_1w": 0.01, "change_1m": 0.01,
@@ -239,7 +239,7 @@ def _card_candidate(**over) -> dict:
 
 def _card_html(candidate: dict, tmp_path) -> str:
     from RevenueChaser.core.tests.board_js import run_board_js
-    p = demo_payload()
+    p = build_payload([], run_stats={})
     p["is_fixture"] = False
     p["candidates"] = [candidate]
     return run_board_js(render_swing_dashboard(p),

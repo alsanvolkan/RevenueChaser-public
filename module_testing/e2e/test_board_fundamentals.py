@@ -1,7 +1,7 @@
 """Fundamentals board, end to end: Refresh shows real rows, never the fixture (#205).
 
 Since 2026-09-27 the board showed its demo fixture because a Fetch dropped cached
-bars when yfinance failed and ``run_scan`` then silently emitted ``demo_payload``.
+bars when yfinance failed and ``run_scan`` then silently emitted the fixture payload.
 These tests seed the store, run a Fetch, press Refresh, and assert the rows on
 the board are the seeded ones. A Refresh shows the last Fetch and never re-scores
 (K4, #383 R1); with no Fetch it says no scan is stored.
