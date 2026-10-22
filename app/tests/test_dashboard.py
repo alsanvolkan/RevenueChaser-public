@@ -615,7 +615,7 @@ class TestRunners:
         assert runners.FUNDAMENTALS_LATEST.name == "fundamentals_latest.html"
 
     def test_nrc_results_computed(self):
-        from RevenueChaser.core.models.events import TradeCard
+        from RevenueChaser.module_earnings_radar.models import TradeCard
         cards = [TradeCard(ticker="AAPL", direction_score=20.0, confidence_score=65.0)]
         nrc = runners._compute_nrc_results(cards)
         assert "AAPL" in nrc

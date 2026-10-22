@@ -50,7 +50,7 @@ from RevenueChaser.core.universe_fetch import (  # noqa: F401
     fetch_universe,
     fetch_universe_stats,
 )
-from RevenueChaser.core.taxonomy import THEMES, classify_themes, themes_for_many
+from RevenueChaser.core.taxonomy import themes_for_many
 
 logger = logging.getLogger(__name__)
 
@@ -383,13 +383,8 @@ def score_ticker(ticker: str, financials: dict, technical: dict, meta: dict | No
     tier = None if (not_comparable or anchor_flags) else tier_of(signals)
 
     from RevenueChaser.core.taxonomy import themes_for
-    # The keyword matcher keeps the vendor's free-text industry (``info``), not the spine industry on the card.
-    pinned = pinned_themes.get(ticker, []) if pinned_themes is not None else themes_for(ticker)
-    themes = pinned or classify_themes(
-        info.get("industry") or "",
-        info.get("longName") or info.get("shortName") or meta.get("name") or ticker,
-        info.get("longBusinessSummary") or "",
-    )
+    # C21 (#383): a theme label is the pinned NMF medium run or nothing — no keyword matcher, no sector guess.
+    themes = pinned_themes.get(ticker, []) if pinned_themes is not None else themes_for(ticker)
     tech_breakthrough = rd_intensity is not None and rd_intensity >= RND_INTENSITY_MIN
     dilution_warning = dilution_yoy is not None and dilution_yoy > DILUTION_WARN
     earnings_date = to_float((meta.get("quote") or {}).get("earningsTimestampStart"))
