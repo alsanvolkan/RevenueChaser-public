@@ -322,9 +322,11 @@ def _fetch_snapshot_staged(
     try:
         asof_day = date.fromisoformat(asof_date)
     except (TypeError, ValueError):
+        # No session to anchor on: the readers would default to the newest stored session, i.e. today's closes
+        # stamped onto a day that is not today. Go live instead (review #103 S-1).
         asof_day = None
     try:
-        vix, vix_session = stored_inputs.vol_index_rows(asof_day)
+        vix, vix_session = stored_inputs.vol_index_rows(asof_day) if asof_day else ({}, None)
         if vix:
             input_sources["vix"] = {"source": "store", "session": vix_session.isoformat()}
         else:
@@ -338,7 +340,7 @@ def _fetch_snapshot_staged(
 
     # 1c. CFTC COT (TFF) — the nightly D29 row when it is stored, else the public Socrata read; best-effort
     try:
-        cftc, cot_session = stored_inputs.cot_row(asof_day)
+        cftc, cot_session = stored_inputs.cot_row(asof_day) if asof_day else ({}, None)
         if cftc:
             input_sources["cftc"] = {"source": "store", "session": cot_session.isoformat()}
         else:

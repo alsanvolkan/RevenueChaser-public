@@ -175,3 +175,39 @@ def test_a_broken_store_still_degrades_to_live(rawstore_tmp_db, tmp_path, monkey
 
     assert calls == ["vix", "cftc"]
     assert raw["vix"]["tickers"]["^VIX"] == 1.0
+
+
+# ── review #103 S-1: no session to anchor on means live, never "the newest stored" ───────────────────────────────
+
+def test_an_unanchored_run_goes_live_instead_of_reading_the_newest_session(rawstore_tmp_db, tmp_path,
+                                                                          monkeypatch):
+    """An ``asof`` that is not a date used to fall through to the readers' own default, which is the newest stored
+    session — i.e. today's closes stamped onto a day that is not today. It must ask live instead."""
+    _seed_vol()
+    _seed_cot()
+    reads = []
+    monkeypatch.setattr(stored_inputs, "vol_index_rows",
+                        lambda *a, **k: reads.append("vix") or ({"tickers": {"^VIX": 99.0}}, DAY_DATE))
+    monkeypatch.setattr(stored_inputs, "cot_row",
+                        lambda *a, **k: reads.append("cftc") or ({"report_date": "1999-01-01"}, DAY_DATE))
+    calls = []
+    vix_live, cftc_live = _spies(calls)
+
+    raw = snap.fetch_snapshot(FakeUW(_handler, prefix=""), "not-a-date", data_root=tmp_path,
+                              vix_fetcher=vix_live, cftc_fetcher=cftc_live,
+                              candle_fetcher=lambda *a, **k: list(CANDLES))
+
+    assert reads == []                                   # neither reader was consulted
+    assert calls == ["vix", "cftc"]
+    assert raw["vix"]["tickers"]["^VIX"] == 1.0          # the live payload, not the stored 99.0
+
+
+# ── review #103 check 2: the panel renders report_date raw, so both sources must spell it the same ───────────────
+
+def test_the_cot_report_date_reads_the_same_whichever_source_served_it():
+    """Socrata serves ``2026-10-06T00:00:00.000`` and the stored row ``2026-10-06``; the panel prints this string
+    as it is (``section_position_map.html.j2``), so the normalizer settles on the plain day."""
+    live = normalize_cftc({"report_date": "2026-10-06T00:00:00.000", "open_interest": 1.0})
+    stored = normalize_cftc({"report_date": "2026-10-06", "open_interest": 1.0})
+    assert live["report_date"] == stored["report_date"] == "2026-10-06"
+    assert normalize_cftc({"report_date": None, "open_interest": 1.0})["report_date"] is None
