@@ -652,10 +652,12 @@ def _tx(conn):
 #   change_history   every change of a slow-moving value, with ``valid_from``
 #   latest_cache     latest value only, for data that can be fetched or rebuilt again
 #   operational      run stamps, pointers and logs of the store itself
-# planned: True marks a table that has NO writer yet (data backbone review B15, #289). The first store call
-# creates it like any other, so without the flag an empty table reads as "0 rows", the same as one whose writer
-# broke. Like ``history_mode`` it is data only: rawstore does not read it, so it changes no DDL and no write.
-# Drop the flag and the name in ``core/tests/test_manifest_planned_289.py`` together when a writer lands.
+# planned: True marks a table whose writer is still to come (data backbone review B15, #289). retired: True
+# marks one whose only writer is in the past. Both mean an empty table is expected; they differ in the word a
+# future listing prints. The first store call creates either like any other, so without the flag an empty table
+# reads as "0 rows", the same as one whose writer broke. Like ``history_mode`` they are data only: rawstore does
+# not read either, so neither changes DDL or a write. Drop the flag and the name in
+# ``core/tests/test_manifest_planned_289.py`` together when a writer lands, or when a retired table leaves.
 HISTORY_MODES = ("event", "session_snapshot", "change_history", "latest_cache", "operational")
 _JSON_TYPES = {"JSON"}
 _STRUCT_TYPES = {"STRUCT", "UNION"}
@@ -991,6 +993,7 @@ MANIFEST: dict[str, dict] = {
     },
     "sec13f_ticker_names": {
         "history_mode": "change_history",
+        "retired": True,          # no writer (#289): only the legacy import fills it
         "key": ["ticker"],
         "columns": ["ticker TEXT PRIMARY KEY", "entry JSON"],
         "kind": "json_payload",
@@ -1285,7 +1288,7 @@ MANIFEST: dict[str, dict] = {
     },
     "leaps_daily_scores": {
         "history_mode": "session_snapshot",
-        "planned": True,          # no writer (#289): only the legacy import fills it
+        "retired": True,          # no writer (#289): only the legacy import fills it
         "key": ["ticker", "date"],
         "columns": [
             "ticker TEXT", "date TEXT", "frequency TEXT", "notional DOUBLE",
@@ -1359,7 +1362,7 @@ MANIFEST: dict[str, dict] = {
     },
     "sec13f_edgar_backfill": {
         "history_mode": "event",
-        "planned": True,          # no writer (#289): retired, only the legacy import fills it
+        "retired": True,          # no writer (#289): retired; leaves the manifest at the next bump
         "key": ["cik", "period"],
         "columns": ["cik TEXT", "period TEXT", "accession TEXT", "fetched_at TEXT",
                     "PRIMARY KEY (cik, period)"],
@@ -1880,6 +1883,7 @@ MANIFEST: dict[str, dict] = {
         "kind": "tabular", "write": "upsert", "history_mode": "operational", "sources": [],
     },
     "sec13f_filers": {
+        "planned": True,          # no writer yet (#289): G1 #292, manifest only
         "key": ["accession"],
         "columns": [
             "accession TEXT PRIMARY KEY", "cik TEXT", "period TEXT", "name TEXT", "source TEXT",
@@ -1888,6 +1892,7 @@ MANIFEST: dict[str, dict] = {
         "kind": "tabular", "write": "append", "history_mode": "event", "sources": [],
     },
     "edgar_companyfacts": {
+        "planned": True,          # no writer yet (#289): G1 #292, manifest only
         "key": ["cik", "taxonomy", "concept", "unit", "period_start", "period_end", "accn"],
         "columns": [
             "cik TEXT", "taxonomy TEXT", "concept TEXT", "unit TEXT", "period_start TEXT",

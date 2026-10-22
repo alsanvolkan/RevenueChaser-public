@@ -186,7 +186,7 @@ network.
 | `ticker_themes` | Runtime theme SSoT `(ticker, theme_id, theme, level, theme_run_id)` | raw | per theme run |
 | `sec13f_security_meta` | Shared ticker→{name,sector} across dashboards (merged from old `universe_meta` + `sec13f_universe_meta`) | raw | manual |
 | `sec13f_enrichment` | 13F enrichment (price/short/insider); writer retired (#300), no reader since #375 F2 (the board reads `ownership_snapshot` and D01); the rows stay | raw | none |
-| `sec13f_edgar_backfill` | Retired: the EDGAR backfill is gone and nothing reads it; no writer either, apart from the legacy import `scripts/migrate_rawdata_to_duckdb.py`, so the entry is MANIFEST `"planned": true` (#289) | raw | none |
+| `sec13f_edgar_backfill` | Retired: the EDGAR backfill is gone and nothing reads it; no writer either, apart from the legacy import `scripts/migrate_rawdata_to_duckdb.py`, so the entry is flagged MANIFEST `"retired": true` (#289) and scheduled to leave the manifest at the next bump (the table leaves the manifest in the 8→9 bump) | raw | none |
 | `etf_holdings` | Rotation ETF holdings, latest per ETF (top 10, the provider that answered, the fetch time); written by the holdings job, read by the Rotation Fetch (#303, D25); its history is `etf_holdings_changes` | raw | manual (Fetch holdings) |
 | `watchlist` | Watchlist tickers. Writer: the LEAPS pin's `POST /api/watchlist/toggle/<t>` through `rawstore.toggle_watchlist`, which adds or removes that one ticker in one transaction (#306); every add and removal is kept in `watchlist_changes` | raw | manual |
 | `price_actions` | Key `(ticker, ex_date, action)`. `ticker`, `ex_date DATE`, `action`, `value DOUBLE`, `session_date DATE`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE`; writer `core/prices.py` (#156): yfinance dividends (amount), splits (ratio, 4.0 = 4-for-1) and capital gains (amount); first write wins | prices | none |
@@ -507,25 +507,29 @@ worker thread writes while Flask request threads read. So:
   whole, to `core/tests/ddl292_frozen.py` (a frozen copy of the reviewed
   `ddl_292.md` entries). Changing a G1 table's DDL means changing that copy in
   the same commit, on purpose.
-- **A table with no writer is marked planned (#289).** A MANIFEST entry with
-  `"planned": true` has no writer in this tree yet. The first store call
-  creates it like any other table, so without the flag an empty one reads as
-  "0 rows" — the same as a table whose writer broke. A label, as `history_mode`
-  is: rawstore does not read it, so it changes no DDL and no write and needs no
-  `_SCHEMA_VERSION` bump. On it today: `catalyst_events` (the fetchers of
-  #186-#192), `orphan_designations` and `orphan_lookups` (#190), and
-  `leaps_daily_scores` and `sec13f_edgar_backfill`, which only the legacy import
-  `scripts/migrate_rawdata_to_duckdb.py` fills (that backfill itself is
-  retired). The review that raised this also named `price_bars_daily`,
+- **A table with no writer is marked planned or retired (#289).** The first
+  store call creates it like any other table, so without a flag an empty one
+  reads as "0 rows" — the same as a table whose writer broke. `"planned": true`
+  means a writer is still to come. `"retired": true` means the only writer is
+  in the past. Both mean an empty table is expected; they differ in the word a
+  future listing prints. A label, as `history_mode` is: rawstore does not read
+  either, so neither changes DDL or a write and neither needs a
+  `_SCHEMA_VERSION` bump. Planned today: `catalyst_events` (the fetchers of
+  #186-#192), `orphan_designations` and `orphan_lookups` (#190), `sec13f_filers`
+  and `edgar_companyfacts` (G1 #292, manifest only). Retired today:
+  `leaps_daily_scores` and `sec13f_ticker_names`, which only the legacy import
+  `scripts/migrate_rawdata_to_duckdb.py` fills, and `sec13f_edgar_backfill`,
+  which that same import fills and which is scheduled to leave the manifest at
+  the next bump. The review that raised this also named `price_bars_daily`,
   `forecast_ledger` and `job_runs`; each has a writer now (`core/prices.py`,
   `core/ledger.py`, `app/jobs.py` and `core/automations.py`), so none of the
-  three is marked. Nothing renders the flag yet: the Settings inventory lists
-  its own dataset rows and none of these tables is among them, so showing
-  "planned" there instead of a row count is a template change for when such a
-  listing arrives. `core/tests/test_manifest_planned_289.py` pins the flagged
-  set — the thing to edit, together with the entry, when a writer lands — and
-  pins the DDL a fresh store creates for those tables, so the flag can never
-  reach the create path.
+  three is marked. Nothing renders either flag yet: the Settings inventory
+  lists its own dataset rows and none of these tables is among them, so showing
+  "planned" or "retired" there instead of a row count is a template change for
+  when such a listing arrives. `core/tests/test_manifest_planned_289.py` pins
+  the flagged set — the thing to edit, together with the entry, when a writer
+  lands — and pins the DDL a fresh store creates for those tables, so neither
+  flag can ever reach the create path.
 - **Contention is retried, at two levels.** DuckDB signals it four different
   ways and `core/rawstore.py` handles each:
   | Where | What DuckDB raises | Retried by |
