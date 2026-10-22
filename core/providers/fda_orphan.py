@@ -31,6 +31,9 @@ _THROTTLE_INTERVAL = 1.0
 _MAX_RETRIES = 3
 _RETRY_AFTER_MAX = 60
 _RETRY_BASE = 2.0
+# OOPD's own page size; a page carrying this many rows may be truncated, so a
+# larger pager total means the query was too broad, not that records are bad.
+_RECORDS_PER_PAGE = 500
 
 _throttle_lock = threading.Lock()
 _throttle_last = [0.0]
@@ -222,7 +225,7 @@ def _search_form(query: str) -> dict:
         "Search_param": "DESDATE",
         "Output_Format": "Detailed",
         "Sort_order": "GENERIC_NAME",
-        "RecordsPerPage": "500",
+        "RecordsPerPage": str(_RECORDS_PER_PAGE),
         "newSearch": "Run Search",
     }
 
@@ -243,8 +246,11 @@ def search_sponsor(query: str, client=None) -> ProviderResult:
     ``status="failed"`` on an empty query (no request made), a network/HTTP
     failure, an unrecognised page (no session cookie), or a page that claims
     hits but yields no parsed rows. ``status="partial"`` when the page
-    reports more total records than were parsed from it (OOPD paginates);
-    ``status="ok"`` otherwise (``data`` is the parsed row list).
+    reports more total records than were parsed from it (OOPD paginates), or
+    when the page is *capped* -- a full ``_RECORDS_PER_PAGE`` of rows behind a
+    larger total, whose ``error`` says ``"page_capped"`` so the caller can ask
+    a narrower question; ``status="ok"`` otherwise (``data`` is the parsed row
+    list).
     """
     endpoint = f"{OOPD_BASE}/OOPD_Results.cfm"
     if not query or not query.strip():
@@ -280,6 +286,14 @@ def search_sponsor(query: str, client=None) -> ProviderResult:
     if total > 0 and not rows:
         return _failed(endpoint, None, "parse_failed",
                         f"page reports total={total} but no complete rows parsed", counter[0])
+    if total > len(rows) and len(parsed) >= _RECORDS_PER_PAGE:
+        logger.warning(f"FDA OOPD search_sponsor({query!r}): page capped at {len(parsed)} of {total} records")
+        return ProviderResult("partial", rows, {
+            "endpoint": endpoint,
+            "error": "page_capped",
+            "total": total,
+            "parsed": len(parsed),
+        }, endpoint)
     if len(rows) < len(parsed):
         logger.warning(f"FDA OOPD search_sponsor({query!r}): {len(parsed) - len(rows)} incomplete row(s) dropped")
         return ProviderResult("partial", rows, None, endpoint)
@@ -288,7 +302,7 @@ def search_sponsor(query: str, client=None) -> ProviderResult:
     return ProviderResult("ok", rows, None, endpoint)
 
 
-def sponsor_query(sec_name: str) -> str:
+def sponsor_query(sec_name: str, *, narrow: bool = False) -> str:
     """A short OOPD sponsor-search query derived from a raw SEC filer name.
 
     OOPD's sponsor search is a substring match, so a long, punctuation-heavy
@@ -299,6 +313,11 @@ def sponsor_query(sec_name: str) -> str:
     its own), else the first two tokens joined by a space; a leading "The"
     is skipped. Internal hyphens/slashes are kept (``"Y-mAbs"``), only
     leading/trailing ``,.;:()`` are stripped per token.
+
+    ``narrow=True`` always takes the first two tokens (the query used to retry
+    a capped page): it is "one word narrower" than the default query whenever
+    the default took a single token, and empty when there are fewer than two
+    tokens to join.
     """
     if not sec_name:
         return ""
@@ -310,12 +329,17 @@ def sponsor_query(sec_name: str) -> str:
     if not tokens:
         return ""
 
-    first = tokens[0]
-    alnum_count = sum(1 for c in first if c.isalnum())
-    if alnum_count >= 4 or len(tokens) < 2:
-        query = first
-    else:
+    if narrow:
+        if len(tokens) < 2:
+            return ""
         query = f"{tokens[0]} {tokens[1]}"
+    else:
+        first = tokens[0]
+        alnum_count = sum(1 for c in first if c.isalnum())
+        if alnum_count >= 4 or len(tokens) < 2:
+            query = first
+        else:
+            query = f"{tokens[0]} {tokens[1]}"
 
     if not normalise_sponsor(query) or sum(1 for c in query if c.isalnum()) < 3:
         return ""
@@ -325,13 +349,19 @@ def sponsor_query(sec_name: str) -> str:
 def designations_for(sec_name: str, client=None) -> ProviderResult:
     """Orphan designations for a SEC filer name, matched by normalised sponsor.
 
-    ``data`` is always ``{"match", "rows", "candidates", "query"}``:
+    ``data`` is always ``{"match", "rows", "candidates", "query"}``, plus
+    ``"retry_from"`` when a capped page was retried with a narrower query (it
+    holds the broad query that came back capped):
     ``match`` is ``"matched"`` (``rows`` holds only the matching records),
     ``"unmatched"`` (hits exist but none match; ``candidates`` lists the
     sponsors seen), ``"no_hits"`` (no OOPD sponsor name contains the query
     text; this is not proof the company has no designations, e.g. a filing
     under a subsidiary or a different spelling) or
     ``None`` (the query was empty, or the search failed -- see ``error``).
+
+    A broad query (``"GENE"``) can fill the page and report a larger total;
+    that one retry with the two-word query is the only follow-up: a retry that
+    fails leaves the broad result in place.
     """
     query = sponsor_query(sec_name)
     if not query:
@@ -348,6 +378,14 @@ def designations_for(sec_name: str, client=None) -> ProviderResult:
         return ProviderResult("failed", {"match": None, "rows": [], "candidates": [], "query": query},
                                result.error, result.endpoint)
 
+    retry_from = None
+    if (result.error or {}).get("error") == "page_capped":
+        narrow = sponsor_query(sec_name, narrow=True)
+        if narrow and narrow != query:
+            retried = search_sponsor(narrow, client=client)
+            if retried.status != "failed":
+                retry_from, query, result = query, narrow, retried
+
     rows = result.data
     target = normalise_sponsor(sec_name)
     if not rows:
@@ -360,5 +398,7 @@ def designations_for(sec_name: str, client=None) -> ProviderResult:
             data = {"match": "matched", "rows": matched, "candidates": candidates, "query": query}
         else:
             data = {"match": "unmatched", "rows": [], "candidates": candidates, "query": query}
+    if retry_from is not None:
+        data["retry_from"] = retry_from
 
     return ProviderResult(result.status, data, None, result.endpoint)

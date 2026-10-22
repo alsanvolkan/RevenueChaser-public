@@ -577,3 +577,142 @@ def test_designations_for_empty_query_makes_no_request():
     assert result.data == {"match": None, "rows": [], "candidates": [], "query": ""}
     assert result.error["error"] == "empty_query"
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# F5: a capped page (RecordsPerPage rows, pager total higher) and its one
+# narrower retry
+# ---------------------------------------------------------------------------
+
+_CAPPED_RECORD = (
+    '<tr><th id="Generic name for Record Number {n}">Generic name:</th>'
+    '<td>GENE therapy product {n}</td></tr>'
+    '<tr><th id="Date designated for Record Number {n}">Date designated:</th>'
+    '<td>05/12/2021</td></tr>'
+    '<tr><th id="Orphan designation for Record Number {n}">Orphan designation:</th>'
+    '<td>Treatment of a rare disease</td></tr>'
+    '<tr><th id="Orphan designation status for Record Number {n}">status:</th>'
+    '<td>Designated</td></tr>'
+    '<tr><th id="FDA Orphan Approval status for Record Number {n}">approval:</th>'
+    '<td>Not FDA Approved for Orphan Indication</td></tr>'
+    '<tr><th id="Sponsor for Record Number {n}">Sponsor:</th>'
+    "<td>{sponsor}<BR/>1 Main St</td></tr>"
+)
+
+
+def _capped_page(sponsor: str = "GENE ONE THERAPEUTICS") -> str:
+    """One full page of complete records and a pager total larger than it."""
+    body = "".join(_CAPPED_RECORD.format(n=n, sponsor=sponsor) for n in range(1, 501))
+    return f"<html><script>start=1; page=1; total=900;</script><body>{body}</body></html>"
+
+
+def _search_body_handler(pages: dict[str, str]):
+    """A fake client that answers each POST with the page for its query.
+
+    ``pages`` maps a ``sponsor_name`` form value to the HTML to return; a
+    value that is itself an ``httpx.Response`` is returned as-is (to simulate a
+    failing retry). Every POST is recorded in the returned list.
+    """
+    posts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, text="<html></html>")
+        form = parse_qs(request.content.decode("utf-8"), keep_blank_values=True)
+        query = form["sponsor_name"][0]
+        posts.append(query)
+        page = pages[query]
+        return page if isinstance(page, httpx.Response) else httpx.Response(200, text=page)
+
+    return handler, posts
+
+
+def test_search_sponsor_capped_page_is_partial_with_page_capped_error():
+    result = _search_with_page(_capped_page())
+
+    assert result.status == "partial"
+    assert len(result.data) == 500
+    assert result.error["error"] == "page_capped"
+    assert result.error["total"] == 900
+    assert result.error["parsed"] == 500
+
+
+def test_search_sponsor_incomplete_rows_partial_keeps_error_none():
+    """An incomplete-row partial is not a capped page: the row count is under
+    ``RecordsPerPage`` and there is no retry to attempt."""
+    page = TENAYA_HTML.replace('id="Sponsor for Record Number 2"', 'id="Removed for Record Number 2"')
+    result = _search_with_page(page)
+
+    assert result.status == "partial"
+    assert result.error is None
+
+
+def _gene_therapy_page() -> str:
+    """A complete, non-capped results page for the narrower query."""
+    page = TENAYA_HTML.replace("Tenaya Therapeutics<BR/>", "Gene Therapy<BR/>")
+    return page.replace("Tenaya Therapeutics, Inc.<BR/>", "Gene Therapy<BR/>")
+
+
+def test_designations_for_capped_page_retries_once_with_the_two_word_query():
+    handler, posts = _search_body_handler({
+        "GENE": _capped_page("GENE ONE THERAPEUTICS"),
+        "GENE THERAPY": _gene_therapy_page(),
+    })
+
+    result = fda_orphan.designations_for("GENE THERAPY INC", client=_make_client(handler))
+
+    assert posts == ["GENE", "GENE THERAPY"]
+    assert result.status == "ok"
+    assert result.data["query"] == "GENE THERAPY"
+    assert result.data["retry_from"] == "GENE"
+    assert result.data["match"] == "matched"
+    assert {r["sponsor"] for r in result.data["rows"]} == {"Gene Therapy"}
+
+
+def test_designations_for_never_retries_the_retry():
+    """The narrower page may itself be capped; there is still no third search."""
+    handler, posts = _search_body_handler({
+        "GENE": _capped_page("GENE ONE THERAPEUTICS"),
+        "GENE THERAPY": _capped_page("GENE THERAPY"),
+    })
+
+    result = fda_orphan.designations_for("GENE THERAPY INC", client=_make_client(handler))
+
+    assert posts == ["GENE", "GENE THERAPY"]
+    assert result.status == "partial"
+    assert result.data["query"] == "GENE THERAPY"
+
+
+def test_designations_for_capped_page_keeps_the_broad_result_when_the_retry_fails():
+    handler, posts = _search_body_handler({
+        "GENE": _capped_page("GENE ONE THERAPEUTICS"),
+        "GENE THERAPY": httpx.Response(404, text="not found"),
+    })
+
+    result = fda_orphan.designations_for("GENE THERAPY INC", client=_make_client(handler))
+
+    assert posts == ["GENE", "GENE THERAPY"]
+    assert result.status == "partial"
+    assert result.data["query"] == "GENE"
+    assert "retry_from" not in result.data
+    # The broad page is still the answer: its 500 rows, none of them a match.
+    assert result.data["match"] == "unmatched"
+    assert result.data["candidates"] == ["GENE ONE THERAPEUTICS"]
+
+
+def test_designations_for_capped_page_makes_no_second_search_when_narrow_equals_broad():
+    """``ABC Bio Inc`` is already at its two-word query, so there is nothing
+    narrower to ask for."""
+    handler, posts = _search_body_handler({"ABC Bio": _capped_page("ABC BIO")})
+
+    fda_orphan.designations_for("ABC Bio Inc", client=_make_client(handler))
+
+    assert posts == ["ABC Bio"]
+
+
+def test_sponsor_query_narrow_takes_the_first_two_tokens():
+    assert fda_orphan.sponsor_query("GENE THERAPY INC", narrow=True) == "GENE THERAPY"
+    assert fda_orphan.sponsor_query("Tenaya Therapeutics, Inc.", narrow=True) == "Tenaya Therapeutics"
+    assert fda_orphan.sponsor_query("The Medicines Company", narrow=True) == "Medicines Company"
+    assert fda_orphan.sponsor_query("Inc.", narrow=True) == ""
+    assert fda_orphan.sponsor_query("", narrow=True) == ""
