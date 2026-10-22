@@ -147,12 +147,29 @@ def test_rotation_holdings_populated(rawstore_tmp_db):
     assert rs.load_holdings_cache("XLK") == [{"ticker": "AAPL", "weight": 0.2}]
 
 
-def test_sec_company_tickers_populated(rawstore_tmp_db, mock_httpx):
+def test_sec_company_tickers_populated(rawstore_tmp_db):
+    # #301 D21: the table is retired (no writer, no reader); the legacy rows stay readable until a cleanup
+    # issue drops it, as for sec13f_ticker_names.
+    rawstore.write_rows("sec_company_tickers", [{"ticker": "AAPL", "cik": "320193", "name": "Apple Inc."}])
+    assert rawstore.get("sec_company_tickers", "AAPL")["name"] == "Apple Inc."
+
+
+def test_sec_cik_map_reads_the_stored_exchange_file(rawstore_tmp_db, mock_httpx):
+    from RevenueChaser.core.providers import sec_edgar
+    rawstore.write_rows("sec_exchange_file", [
+        {"ticker": "AAPL", "cik": "320193", "name": "Apple Inc.", "exchange": "Nasdaq", "valid_from": None,
+         "status": "present", "source": "sec_exchange", "fetched_at": 1.0, "run_id": "seed", "run_at": 1.0}])
+    # any SEC request would fail the test: the store answers, so the retired table is not touched
+    assert sec_edgar._cik_map() == {"AAPL": {"cik": "320193", "name": "Apple Inc."}}
+    assert rawstore.count("sec_company_tickers") == 0
+
+
+def test_sec_cik_map_falls_back_to_the_file_read_only(rawstore_tmp_db, mock_httpx):
+    """An empty store is not "no company has a CIK": the CIK map may read the file, never write the retired table."""
     from RevenueChaser.core.providers import sec_edgar
     mock_httpx("company_tickers.json", {"0": {"ticker": "AAPL", "cik_str": 320193, "title": "Apple Inc."}})
     assert sec_edgar._cik_map()["AAPL"]["cik"] == 320193
-    row = rawstore.get("sec_company_tickers", "AAPL")
-    assert row["name"] == "Apple Inc."
+    assert rawstore.count("sec_company_tickers") == 0
 
 
 def test_run_registry_populated(rawstore_tmp_db):

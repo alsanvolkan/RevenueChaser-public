@@ -136,8 +136,7 @@ def test_40f_filer_is_a_named_miss_without_download(fetch_env):
 
 
 def test_refresh_pending_excludes_misses_and_no_cik_with_reads_only(fetch_env):
-    rawstore.write_rows("sec_company_tickers", [
-        {"ticker": t, "cik": c, "name": t} for t, c in (("AAA", "1"), ("NEW", "3"))])
+    _seed_tickers((("AAA", "1"), ("NEW", "3")))
     engine.fetch_corpus(tickers=["AAA"])
     before = rawstore.get_all("chain_meta")
     fetch_env["cmap"] = None  # the Refresh must not call _cik_map (it may hit SEC)
@@ -162,8 +161,7 @@ def test_miss_keys_survive_a_fetch_run(fetch_env):
 def test_board_payload_pending_excludes_misses_and_no_cik(rawstore_tmp_db, monkeypatch):
     monkeypatch.setattr("RevenueChaser.core.universe.classification_universe",
                         lambda *a, **k: ["AAA", "BBB", "CCC", "DDD"])
-    rawstore.write_rows("sec_company_tickers", [
-        {"ticker": t, "cik": c, "name": t} for t, c in (("AAA", "1"), ("BBB", "2"), ("CCC", "3"))])
+    _seed_tickers((("AAA", "1"), ("BBB", "2"), ("CCC", "3")))
     rawstore.write_rows("chain_meta", [{"key": "miss:BBB", "value": json.dumps(
         {"reason": "no_filing", "cik": "2", "checked": datetime.now(timezone.utc).isoformat()})}])
     payload = engine._board_payload([{"ticker": "AAA"}], [], "2026-10-02T00:00:00+00:00", None)
@@ -180,8 +178,7 @@ def test_board_payload_pending_counts_universe_names_with_no_filing(rawstore_tmp
     """D4: Pending is the universe names with no filing row, less no-CIK names and recorded misses. A stored
     filing of a name now outside the universe (it fell below the $300M floor) is not one less pending name."""
     monkeypatch.setattr("RevenueChaser.core.universe.classification_universe", lambda *a, **k: ["AAA", "BBB"])
-    rawstore.write_rows("sec_company_tickers", [
-        {"ticker": t, "cik": c, "name": t} for t, c in (("AAA", "1"), ("BBB", "2"), ("OLD", "9"))])
+    _seed_tickers((("AAA", "1"), ("BBB", "2"), ("OLD", "9")))
     payload = engine._board_payload([{"ticker": "AAA"}, {"ticker": "OLD"}], [], "2026-10-02T00:00:00+00:00", None)
     assert (payload["pending"], payload["misses"], payload["no_cik"]) == (1, 0, 0)
 
@@ -192,8 +189,7 @@ def test_the_pending_tile_after_a_fetch_matches_the_refresh(fetch_env, monkeypat
     universe = ["AAA", "BBB", "CCC"]
     monkeypatch.setattr("RevenueChaser.core.universe.classification_universe", lambda *a, **k: list(universe))
     fetch_env["cmap"]["BBB"] = {"cik": "2"}
-    rawstore.write_rows("sec_company_tickers", [
-        {"ticker": t, "cik": c, "name": t} for t, c in (("AAA", "1"), ("BBB", "2"))])
+    _seed_tickers((("AAA", "1"), ("BBB", "2")))
 
     def _fetch_filing(ticker, cik, client=None):
         if ticker == "BBB":
@@ -215,7 +211,7 @@ def sync_env(rawstore_tmp_db, monkeypatch):
     env = {"subs": _subs(), "calls": 0}
     rawstore.replace_all("equity_universe", [{"ticker": t, "market_cap": 1e9, "name": t}
                                              for t in ("NVDA", "NOCIK")])
-    rawstore.write_rows("sec_company_tickers", [{"ticker": "NVDA", "cik": "1045810", "name": "N"}])
+    _seed_tickers((("NVDA", "1045810"),))
 
     def _get_json(url, client=None):
         env["calls"] += 1
@@ -293,6 +289,15 @@ def test_last_sync_text_is_escaped():
 
 
 # ── corpus_miss_summary (#194 Settings note) ───────────────────────────────
+def _seed_tickers(rows):
+    """The stored SEC exchange file (#301 D21): the store-only CIK map every reader now uses.
+
+    ``sec_company_tickers`` is retired and no longer written, so a test that seeds a CIK map seeds its rows."""
+    rawstore.write_rows("sec_exchange_file", [
+        {"ticker": t, "cik": c, "name": t, "exchange": "Nasdaq", "valid_from": None, "status": "present",
+         "source": "sec_exchange", "fetched_at": 1.0, "run_id": "seed", "run_at": 1.0} for t, c in rows])
+
+
 def _put_miss(ticker, reason, cik, days_ago=0):
     checked = (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
     rawstore.write_rows("chain_meta", [{"key": "miss:" + ticker, "value": json.dumps(
@@ -300,9 +305,7 @@ def _put_miss(ticker, reason, cik, days_ago=0):
 
 
 def test_corpus_miss_summary_splits_by_reason_and_counts_due_and_no_cik(rawstore_tmp_db):
-    rawstore.write_rows("sec_company_tickers", [
-        {"ticker": t, "cik": c, "name": t} for t, c in
-        (("AAA", "1"), ("BBB", "2"), ("CCC", "3"), ("OLD", "4"))])
+    _seed_tickers((("AAA", "1"), ("BBB", "2"), ("CCC", "3"), ("OLD", "4")))
     _put_miss("AAA", "no_filing", "1")
     _put_miss("BBB", "form_40f", "2")
     _put_miss("CCC", "no_filing", "3", days_ago=config.MISS_RETRY_DAYS + 1)  # due
@@ -327,4 +330,5 @@ def test_corpus_miss_summary_is_none_when_the_store_cannot_be_read(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("store locked")
     monkeypatch.setattr(rawstore, "get_all", boom)
+    monkeypatch.setattr(rawstore, "query", boom)
     assert engine.corpus_miss_summary(["AAA"]) is None

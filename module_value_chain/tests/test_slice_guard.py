@@ -32,7 +32,7 @@ def _subs(accession, form="10-K", filed="2026-02-01"):
 def _seed_sync(monkeypatch, subs, html, tickers=(("NVDA", "1045810"),)):
     rawstore.replace_all("equity_universe", [{"ticker": t, "market_cap": 1e9, "name": t}
                                              for t, _ in tickers])
-    rawstore.write_rows("sec_company_tickers", [{"ticker": t, "cik": c, "name": t}
+    rawstore.write_rows("sec_exchange_file", [{"ticker": t, "cik": c, "name": t, "status": "present", "run_at": 1.0}
                                                 for t, c in tickers])
     monkeypatch.setattr(sync.sec_edgar, "get_json", lambda url, client=None: subs)
     calls = {"n": 0}

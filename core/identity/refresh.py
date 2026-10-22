@@ -3,17 +3,18 @@ fetch the deltas, build the master, record the run.
 
 ``refresh()`` wires the pieces together and **never raises**: any exception becomes a recorded run
 with status ``error``. It writes the identity tables (``security_master``, ``identity_conflicts``,
-``identity_source_cache``, ``identity_runs``) plus two sanctioned writes outside them: new tickers and
-changed CIKs are *upserted* into ``sec_company_tickers`` (the SEC exchange map is refreshed every
-run; nothing is ever deleted there), and, after a successful master build (status ``ok`` or ``partial``,
-never after an error), the master's sector and industry (plus UW's next earnings date) are applied to
-``equity_universe`` (issue #86, R3; #265): see ``core.identity.apply`` -- those columns only, tickers without a
-master row untouched. The apply counts are in the run record (``counts["applied"]`` / ``unchanged`` /
-``not_in_master``).
+``identity_source_cache``, ``identity_runs``), and, after a successful master build (status ``ok`` or
+``partial``, never after an error), the master's sector and industry (plus UW's next earnings date) are
+applied to ``equity_universe`` (issue #86, R3; #265): see ``core.identity.apply`` -- those columns only,
+tickers without a master row untouched. The apply counts are in the run record (``counts["applied"]`` /
+``unchanged`` / ``not_in_master``).
 
 Fetch plan (per run):
 
-* SEC exchange map, Nasdaq directory, the S&P 1500 snapshot and UW sectors: every run.
+* SEC exchange file: no fetch. The nightly RC-Daily-Bars step pulls ``company_tickers_exchange.json`` and
+  stores its change history (#301 D21); this job reads the stored rows (the retired ``sec_company_tickers``
+  is not written any more).
+* Nasdaq directory, the S&P 1500 snapshot and UW sectors: every run.
 * SEC submissions: tickers with no cached row, or one older than 30 days (per-CIK; a CIK shared
   by several tickers is fetched once and cached for each of them), plus a stagger: the oldest 25% of the
   cached rows that are at least 7 days old, so a universe fetched in one day does not expire together.
@@ -46,7 +47,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Callable
 
-from .. import index_registry, rawstore
+from .. import index_registry, rawstore, sec_files
 from . import apply as universe_apply
 from . import cache, gics, master
 from . import types as T
@@ -83,8 +84,10 @@ _TS = "%Y-%m-%dT%H:%M:%SZ"
 
 
 def _default_clients() -> dict[str, Callable]:
+    from .. import sec_files
     from .sources import fdic, nasdaq, openfigi, sec, sp1500, spdr, uw_sector, yahoo_sector
-    return {"sec_exchange": sec.exchange_map, "sec_submissions": sec.submissions,
+    # The exchange file is pulled once a night by RC-Daily-Bars (#301 D21); this job reuses its stored rows.
+    return {"sec_exchange": sec_files.exchange_source, "sec_submissions": sec.submissions,
             "openfigi": openfigi.security_types, "nasdaq": nasdaq.symbol_directory, "sp1500": sp1500.snapshot,
             "uw": uw_sector.sectors, "yahoo": yahoo_sector.sectors, "fdic": fdic.match_banks,
             "spdr": spdr.holdings}
@@ -256,16 +259,14 @@ def _run(rec, limit, sources, started, clients, yahoo_limit, say):
             if r.get("status") == "error" and r.get("ticker"):
                 failed[name].add(r["ticker"])
 
-    # ── SEC exchange map (every run; upsert only) ──
+    # ── SEC exchange file (the stored rows; the nightly step pulls the file, #301 D21) ──
     if "sec_exchange" in selected:
         res = call("sec_exchange", "sec_exchange")
-        if res.ok:
-            _upsert_sec_map(res.rows)
         cache.save_results([res])
     else:
         healthy["sec_exchange"] = False
     emap = _by_ticker("sec_exchange")
-    store_map = {r["ticker"]: r for r in rawstore.query("SELECT ticker, cik, name FROM sec_company_tickers")}
+    store_map = {r["ticker"]: r for r in sec_files.latest("exchange")}
 
     def cik_of(t):
         r = emap.get(t) or store_map.get(t)
@@ -401,7 +402,7 @@ def _run(rec, limit, sources, started, clients, yahoo_limit, say):
         c = cik_of(t)
         inputs[t] = {
             "name": uni[t]["name"], "market_cap": uni[t]["market_cap"], "cik": c,
-            "cik_source": "sec_exchange" if t in emap else "sec_company_tickers",
+            "cik_source": "sec_exchange",
             "exchange": (emap.get(t) or {}).get("exchange"), "sic_store": (sic_rows.get(t) or {}).get("sic"),
             "sic_store_description": (sic_rows.get(t) or {}).get("sic_description"),
             "sec": _pick(t, sec_rows, healthy.get("sec_submissions", False), failed["sec_submissions"], _conv_sec),
@@ -497,22 +498,6 @@ def _spdr_check(res: SourceResult, master_rows: list[dict]) -> tuple[list[dict],
             "ticker": t, "kind": "spdr", "field": "sector", "side_a": sector[t], "side_b": hold[t].get("sector"),
             "note": f"SPDR {fund} holdings" if fund else "SPDR holdings"})
     return conflicts, {"spdr_checked": len(checked), "spdr_agree": len(checked) - len(mismatch)}
-
-
-def _upsert_sec_map(rows: list[dict]) -> int:
-    """Insert new tickers and update changed CIKs in ``sec_company_tickers``. Never deletes."""
-    have = {r["ticker"]: r["cik"] for r in rawstore.query("SELECT ticker, cik FROM sec_company_tickers")}
-    out = []
-    for r in rows:
-        t, c = r.get("ticker"), str(r.get("cik") or "")
-        if not t or not c.isdigit():
-            continue
-        old = have.get(t)
-        if old is None or not str(old).isdigit() or int(old) != int(c):
-            out.append({"ticker": t, "cik": str(int(c)), "name": r.get("name")})
-    if out:
-        rawstore.write_rows("sec_company_tickers", out)
-    return len(out)
 
 
 def _write_conflicts(conflicts: list[dict], now: str) -> None:

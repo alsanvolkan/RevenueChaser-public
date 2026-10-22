@@ -117,7 +117,7 @@ def _retry_delay(resp, attempt: int) -> float:
     return _RETRY_BASE ** attempt
 
 
-def _request(url: str, client=None, attempts: int | None = None) -> bytes:
+def _request(url: str, client=None, attempts: int | None = None, headers_out: dict | None = None) -> bytes:
     """GET one EDGAR URL through the shared throttle, 429/5xx/transport backoff and the breaker.
 
     The single retry point for every EDGAR caller. A 404 is raised (callers that
@@ -125,6 +125,8 @@ def _request(url: str, client=None, attempts: int | None = None) -> bytes:
     uses ``httpx.get`` so the test suite's ``mock_httpx`` boundary still applies.
     ``attempts`` (default ``_MAX_RETRIES``) caps the requests this call may make: a caller
     with a per-night request budget passes 1 (#301), and a 429/5xx then fails at once.
+    ``headers_out`` receives the answering response's headers (the SEC file step reports the file's
+    ``Last-Modified``, #301 D21).
     """
     if breaker_open():
         raise SECUnavailable(f"SEC unavailable (circuit breaker open): {url}")
@@ -153,6 +155,8 @@ def _request(url: str, client=None, attempts: int | None = None) -> bytes:
         else:
             _breaker_ok()
         r.raise_for_status()
+        if headers_out is not None:
+            headers_out.update(dict(r.headers))
         return r.content
     raise RuntimeError(f"EDGAR request failed: {url}")  # pragma: no cover
 
@@ -162,9 +166,9 @@ def get_bytes(url: str, client=None) -> bytes:
     return _request(url, client)
 
 
-def get_json(url: str, client=None, *, attempts: int | None = None) -> dict:
-    """JSON for an EDGAR URL (throttled, backoff on 429/5xx; ``attempts`` as in ``_request``)."""
-    return json.loads(_request(url, client, attempts).decode("utf-8"))
+def get_json(url: str, client=None, *, attempts: int | None = None, headers_out: dict | None = None) -> dict:
+    """JSON for an EDGAR URL (throttled, backoff on 429/5xx; ``attempts`` and ``headers_out`` as in ``_request``)."""
+    return json.loads(_request(url, client, attempts, headers_out).decode("utf-8"))
 
 
 def get_text(url: str, client=None) -> str:
@@ -320,15 +324,19 @@ EXTRACT_VERSION = 2
 
 
 def _cik_map() -> dict:
-    rows = rawstore.get_all("sec_company_tickers")
+    """ticker -> ``{cik, name}`` from the stored SEC exchange file (#301 D21).
+
+    The file is pulled once a night by RC-Daily-Bars and ``sec_company_tickers`` is retired, so this reads the
+    stored rows. A store with no exchange file yet falls back to SEC's ``company_tickers.json`` read-only: the
+    retired table is never written again (a caller may still need a CIK before the first nightly pull).
+    """
+    from .. import sec_files
+
+    rows = sec_files.latest("exchange")
     if rows:
         return {r["ticker"]: {"cik": r["cik"], "name": r["name"]} for r in rows}
     payload = get_json(f"{SEC_WWW_BASE}/files/company_tickers.json")
-    m = {row["ticker"]: {"cik": row["cik_str"], "name": row["title"]} for row in payload.values()}
-    rawstore.write_rows("sec_company_tickers", [
-        {"ticker": t, "cik": v["cik"], "name": v["name"]} for t, v in m.items()
-    ])
-    return m
+    return {row["ticker"]: {"cik": row["cik_str"], "name": row["title"]} for row in payload.values()}
 
 
 def _fetch_facts(cik: int) -> dict | None:

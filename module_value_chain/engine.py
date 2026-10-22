@@ -146,8 +146,8 @@ def miss_is_current(miss: dict | None, cik, now: datetime | None = None) -> bool
 def corpus_miss_summary(tickers: list[str]) -> dict | None:
     """Recorded misses for ``tickers`` by reason, plus the no-CIK count (read only).
 
-    Store reads only, no network: the CIK map comes from ``sec_company_tickers``
-    as stored, never through ``sec_edgar._cik_map`` (which fetches when empty).
+    Store reads only, no network: the CIK map comes from the stored SEC exchange file
+    (``core.sec_files.latest``), never through ``sec_edgar._cik_map`` (which fetches when empty).
     A ``miss:`` key is deleted only when a slice is written, so a ticker that left
     the universe keeps its key; only ``tickers`` are counted. ``due`` is the
     misses the next sync asks SEC about again (``not miss_is_current``).
@@ -157,8 +157,7 @@ def corpus_miss_summary(tickers: list[str]) -> dict | None:
     reads as "every ticker has no CIK".
     """
     try:
-        ciks = {str(r["ticker"]).upper(): r.get("cik")
-                for r in rawstore.get_all("sec_company_tickers") if r.get("cik")}
+        ciks = _stored_ciks()
         misses = stored_misses()
     except Exception:  # noqa: BLE001 - unreadable store reads as "unknown"
         return None
@@ -178,9 +177,13 @@ def corpus_miss_summary(tickers: list[str]) -> dict | None:
 
 
 def _stored_ciks() -> dict[str, str]:
-    """The stored SEC ticker map, read only (``_cik_map`` may fill it from SEC)."""
-    return {r["ticker"]: r["cik"] for r in rawstore.get_all(
-        "sec_company_tickers", columns=["ticker", "cik"]) if r.get("cik")}
+    """The stored SEC ticker map, read only: the newest present row per ticker of ``sec_exchange_file``.
+
+    The file is pulled once a night by RC-Daily-Bars (#301 D21); ``sec_company_tickers`` is retired, so nothing
+    here may reach for it (nor for ``_cik_map``, which fetches when the store is empty).
+    """
+    from RevenueChaser.core import sec_files
+    return {r["ticker"]: r["cik"] for r in sec_files.latest("exchange") if r.get("cik")}
 
 
 def fetch_corpus(tickers: list[str] | None = None, no_fetch: bool = False,

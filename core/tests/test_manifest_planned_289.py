@@ -34,6 +34,7 @@ from RevenueChaser.core import rawstore
 #   leaps_daily_scores     only scripts/migrate_rawdata_to_duckdb.py, the legacy one-time import
 #   sec13f_edgar_backfill  same, and the backfill itself is retired (leaves the manifest at the next bump)
 #   sec13f_ticker_names    named only by that same legacy import (scripts/migrate_rawdata_to_duckdb.py)
+#   sec_company_tickers    #301 D21: `sec_exchange_file` replaced it; its readers now read the file's rows
 # NOT marked, though the issue's list named them — each has a writer since: price_bars_daily
 # (core/prices.py), forecast_ledger (core/ledger.py) and job_runs (app/jobs.py, core/automations.py).
 # migration_manifest is legacy-import-only in that script, but the store writes it itself, so it stays unmarked.
@@ -48,6 +49,7 @@ RETIRED = frozenset({
     "leaps_daily_scores",
     "sec13f_edgar_backfill",
     "sec13f_ticker_names",
+    "sec_company_tickers",
 })
 # An empty table is expected for either word. The invariant tests run over this union.
 WRITERLESS = PLANNED | RETIRED
@@ -116,6 +118,10 @@ FROZEN_DDL = {
     },
     "sec13f_ticker_names": {
         "ticker": "VARCHAR", "entry": "JSON",
+    },
+    # #301 D21: retired (sec_exchange_file replaced its writer); the rows stay, so the DDL must not move.
+    "sec_company_tickers": {
+        "ticker": "VARCHAR", "cik": "VARCHAR", "name": "VARCHAR",
     },
     "sec13f_filers": {
         "accession": "VARCHAR", "cik": "VARCHAR", "period": "VARCHAR", "name": "VARCHAR",

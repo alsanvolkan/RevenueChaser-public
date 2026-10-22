@@ -50,8 +50,10 @@ def test_ingest_companyfacts(rawstore_tmp_db, tmp_path):
 
 
 def test_ingest_submissions(rawstore_tmp_db, tmp_path):
-    rawstore.write_rows("sec_company_tickers",
-                        [{"ticker": "AAPL", "cik": "320193", "name": "Apple"}])
+    rawstore.write_rows("sec_exchange_file",
+                        [{"ticker": "AAPL", "cik": "320193", "name": "Apple", "exchange": "Nasdaq",
+                          "valid_from": None, "status": "present", "source": "sec_exchange", "fetched_at": 1.0,
+                          "run_id": "seed", "run_at": 1.0}])
     p = _zip(tmp_path, "submissions.zip", {"CIK0000320193.json": {
         "cik": "320193", "name": "Apple Inc.", "sic": "3571",
         "sicDescription": "Electronic Computers"}})

@@ -73,11 +73,10 @@ QUERIED_COLUMNS: list[tuple[str, str]] = [
     # index lists against their floors (#302)
     ("index_constituents", "slug"), ("index_constituents_changes", "run_id"),
     ("index_constituents_changes", "run_at"), ("sec_exchange_file", "ticker"), ("sec_exchange_file", "exchange"),
-    ("sec_exchange_file", "status"), ("sec_exchange_file", "run_at"),
+    ("sec_exchange_file", "status"), ("sec_exchange_file", "run_at"), ("sec_exchange_file", "cik"),
     ("chain_filings", "ticker"), ("chain_filings", "filed"),
     ("edgar_documents", "filed"), ("edgar_documents", "form"), ("edgar_documents", "fetched_at"),
     # SEC submissions (#299, D15)
-    ("sec_company_tickers", "ticker"), ("sec_company_tickers", "cik"),
     ("sec_submissions", "cik"), ("sec_submissions", "filing_date"), ("sec_submissions", "fetched_at"),
     ("source_checks", "key"), ("source_checks", "run_id"),
     ("edgar_financials", "ticker"),
@@ -530,7 +529,7 @@ def _ticker_detail(ticker: str) -> dict | None:
         return None
 
     universe = rawstore.get("equity_universe", t) if _table_exists("equity_universe") else None
-    sec = rawstore.get("sec_company_tickers", t) if _table_exists("sec_company_tickers") else None
+    sec = (_sec_file_row(t) if _table_exists("sec_exchange_file") else None)
     sic = rawstore.get("sec_company_sic", t) if _table_exists("sec_company_sic") else None
     filing = rawstore.get("chain_filings", t) if _table_exists("chain_filings") else None
     swing = _swing_presence(t)
@@ -991,17 +990,26 @@ def _documents_note() -> str:
     return f"documents {forms}; newest fetched {_fmt_date(_max_value('edgar_documents', 'fetched_at'))}"
 
 
+def _sec_file_row(ticker: str) -> dict | None:
+    """One ticker's newest present row in the SEC exchange file (#301 D21); None when it is not there."""
+    from RevenueChaser.core import sec_files
+    rows = sec_files.latest("exchange", keys=[ticker])
+    return rows[0] if rows else None
+
+
 def _universe_ciks() -> set[str] | None:
-    """CIKs of every ``equity_universe`` ticker (all caps), via the stored SEC ticker map; None when unreadable."""
-    if not (_table_exists("equity_universe") and _table_exists("sec_company_tickers")):
+    """CIKs of every ``equity_universe`` ticker, via the stored SEC exchange file; None when unreadable."""
+    if not (_table_exists("equity_universe") and _table_exists("sec_exchange_file")):
         return None
     from RevenueChaser.core.sec_submissions import norm_cik
     try:
-        rows = rawstore.query("SELECT DISTINCT s.cik FROM equity_universe u "
-                              "JOIN sec_company_tickers s ON s.ticker = u.ticker WHERE s.cik IS NOT NULL")
+        rows = rawstore.query(
+            "SELECT DISTINCT s.cik FROM equity_universe u JOIN (SELECT ticker, cik, status FROM sec_exchange_file "
+            "QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY run_at DESC) = 1) s "
+            "ON s.ticker = u.ticker WHERE s.status = 'present' AND s.cik IS NOT NULL")
         return {norm_cik(r["cik"]) for r in rows if str(r["cik"]).strip().isdigit()}
     except Exception as exc:  # noqa: BLE001
-        _record("sec_company_tickers", "_universe_ciks", exc)
+        _record("sec_exchange_file", "_universe_ciks", exc)
         return None
 
 
@@ -1037,6 +1045,38 @@ def _sec_submissions_row() -> dict:
     parts.append(f"{h['ciks']:,} CIKs with filings; newest filing {_fmt_date(h['newest_filing_date'])}, "
                  f"newest fetched {_fmt_date(h['newest_fetched_at'])}")
     row["note"] = "; ".join(parts)
+    return row
+
+
+def _sec_files_row() -> dict:
+    """The "SEC exchange & fund files" row (#301 D21 + D8): present rows against the file, members against the
+    floor, the last pull's appends and the file's Last-Modified. Store plus the pull receipts, zero network."""
+    row = {
+        "key": "sec_files", "label": "SEC exchange & fund files",
+        "tables": ["sec_exchange_file", "sec_mf_file"],
+        "rows": _count("sec_exchange_file"),
+        "last_date": _max_date(("sec_exchange_file", "run_at"), ("sec_mf_file", "run_at")),
+        "holes": None, "hole_label": "", "fetch": None,
+        "note": "no SEC file stored yet (RC-Daily-Bars writes it on a weekday night)",
+    }
+    from RevenueChaser.core import sec_files
+    try:
+        h = sec_files.health_summary()
+    except Exception as exc:  # noqa: BLE001 - a summary failure must not break the page
+        _record("sec_exchange_file", "_sec_files_row", exc)
+        return row
+    if not h["exchange"]["present"] and not h["mf"]["present"]:
+        return row
+
+    def one(d: dict) -> str:
+        file_rows = f"{int(d['file_rows']):,}" if d["file_rows"] is not None else DASH
+        text = (f"{int(d['present']):,} present vs {file_rows} in the file, "
+                f"{int(d['members']):,} members / floor {int(d['floor']):,}")
+        if d["appended"] is not None:
+            text += f", last run appended {int(d['appended']):,} (+{int(d['absent'] or 0):,} absent)"
+        return f"{text}, Last-Modified {d['last_modified'] or DASH}"
+
+    row["note"] = f"exchange: {one(h['exchange'])}; funds: {one(h['mf'])}"
     return row
 
 
@@ -1121,6 +1161,7 @@ def _collect(now: datetime) -> dict:
             "note": "; ".join(n for n in (corpus_note, _documents_note()) if n),
         },
         _sec_submissions_row(),
+        _sec_files_row(),
         {
             "key": "companyfacts",
             "label": "Companyfacts",

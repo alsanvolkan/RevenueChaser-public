@@ -274,38 +274,34 @@ def test_sources_filter_runs_only_the_named_sources(fk):
     assert res["sources"]["nasdaq"]["status"] == "ok" and res["sources"]["openfigi"]["status"] == "skipped"
 
 
-# ── the SEC exchange map: upsert only, never delete ───────────────────────────────────────────
-def test_sec_map_inserts_new_and_updates_changed_ciks_and_never_deletes(fk):
-    rawstore.write_rows("sec_company_tickers", [
-        {"ticker": "AAPL", "cik": "111", "name": "Apple old"},
-        {"ticker": "GONE", "cik": "5", "name": "Delisted Co"},
-        {"ticker": "PDI", "cik": "1510281", "name": "PIMCO Dynamic Income Fund"}])
+# ── the SEC exchange file: the job reads the stored rows, the retired table is not written (#301 D21) ─────────
+def _seed_exchange(rows, run_at=1.0):
+    rawstore.write_rows("sec_exchange_file", [
+        {**r, "valid_from": None, "status": "present", "source": "sec_exchange", "fetched_at": run_at,
+         "run_id": "seed", "run_at": run_at} for r in rows])
+
+
+def test_the_run_does_not_write_the_retired_sec_company_tickers_table(fk):
     run(fk)
-    rows = {r["ticker"]: r for r in rawstore.query("SELECT * FROM sec_company_tickers")}
-    assert rows["AAPL"]["cik"] == "320193", "changed CIK is updated"
-    assert rows["ZZZ"]["cik"] == "999", "new ticker is inserted"
-    assert rows["GONE"]["cik"] == "5", "a ticker missing from the new map must survive"
+    assert rawstore.count("sec_company_tickers") == 0, "sec_exchange_file replaced its writer (#301)"
 
 
-def test_a_failed_sec_map_leaves_every_row_alone(fk):
-    rawstore.write_rows("sec_company_tickers", [{"ticker": "AAPL", "cik": "111", "name": "Apple old"},
-                                                {"ticker": "GONE", "cik": "5", "name": "Delisted Co"}])
+def test_a_failed_sec_exchange_source_falls_back_to_the_stored_file(fk):
+    _seed_exchange([{"ticker": "AAPL", "cik": "111", "name": "Apple old", "exchange": "Nasdaq"}])
     fk.results["sec_exchange"] = bad("sec_exchange")
     res = run(fk)
-    rows = {r["ticker"]: r["cik"] for r in rawstore.query("SELECT * FROM sec_company_tickers")}
-    assert rows == {"AAPL": "111", "GONE": "5"}
     assert res["status"] == "partial" and res["sources"]["sec_exchange"]["status"] == "error"
-    assert master_rows()["AAPL"]["cik"] == "111", "the master falls back to the stored SEC map"
+    assert master_rows()["AAPL"]["cik"] == "111", "the master falls back to the stored SEC exchange file"
 
 
-def test_a_partial_sec_map_does_not_shrink_the_table(fk):
-    rawstore.write_rows("sec_company_tickers", [{"ticker": "AAPL", "cik": "320193", "name": "Apple"},
-                                                {"ticker": "PDI", "cik": "1510281", "name": "PDI"},
-                                                {"ticker": "GONE", "cik": "5", "name": "Delisted Co"}])
+def test_a_run_never_rewrites_the_stored_sec_exchange_file(fk):
+    _seed_exchange([{"ticker": "AAPL", "cik": "320193", "name": "Apple", "exchange": "Nasdaq"},
+                    {"ticker": "PDI", "cik": "1510281", "name": "PDI", "exchange": "NYSE"},
+                    {"ticker": "GONE", "cik": "5", "name": "Delisted Co", "exchange": "NYSE"}])
     fk.results["sec_exchange"] = ok("sec_exchange", [{"ticker": "AAPL", "cik": "320193", "name": "Apple",
                                                       "exchange": "Nasdaq"}])
     run(fk)
-    assert {r["ticker"] for r in rawstore.query("SELECT ticker FROM sec_company_tickers")} == {"AAPL", "PDI", "GONE"}
+    assert rawstore.count("sec_exchange_file") == 3, "only RC-Daily-Bars writes this table"
 
 
 # ── deltas ────────────────────────────────────────────────────────────────────────────────────
@@ -933,14 +929,14 @@ def day(n: int) -> str:
 def stagger_world(cached_at: dict | None = None, extra=()):
     """8 tickers with distinct CIKs (1001..1008), each with a cached sec_submissions row from day 0.
 
-    Only the SEC map in ``sec_company_tickers`` is seeded and runs use ``sources=["sec_submissions"]``,
+    Only the SEC exchange file in ``sec_exchange_file`` is seeded and runs use ``sources=["sec_submissions"]``,
     so nothing else is fetched. ``cached_at`` overrides the fetch time of single tickers.
     """
     rawstore.execute("DELETE FROM equity_universe")
     names = list(STAGGER_TICKERS) + list(extra)
     rawstore.write_rows("equity_universe", [{"ticker": t, "name": f"{t} Corp", "market_cap": 1e9} for t in names])
-    rawstore.write_rows("sec_company_tickers", [
-        {"ticker": t, "cik": str(1001 + i), "name": t} for i, t in enumerate(names)])
+    _seed_exchange([{"ticker": t, "cik": str(1001 + i), "name": t, "exchange": "Nasdaq"}
+                    for i, t in enumerate(names)])
     for i, t in enumerate(STAGGER_TICKERS):
         seed_cache("sec_submissions", [{"ticker": t, "cik": str(1001 + i), "status": "ok", "forms": ["10-K"],
                                         "sic": "3571", "name": t}], (cached_at or {}).get(t, day(0)))

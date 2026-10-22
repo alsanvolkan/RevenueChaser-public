@@ -121,8 +121,8 @@ def _seed_detail():
          "price": 110.0, "sector": "Technology", "industry": "Semiconductors"},
         {"ticker": "AAPL", "market_cap": 3.0e12, "name": "Apple Inc."},
     ])
-    rawstore.write_rows("sec_company_tickers", [
-        {"ticker": "MU", "cik": "0000723125", "name": "Micron Technology"},
+    rawstore.write_rows("sec_exchange_file", [
+        {"ticker": "MU", "cik": "0000723125", "name": "Micron Technology", "status": "present", "run_at": 1.0},
     ])
     rawstore.write_rows("sec_company_sic", [
         {"ticker": "MU", "cik": "0000723125", "sic": "3674",
@@ -861,7 +861,7 @@ def test_corpus_note_names_recorded_misses_and_no_cik(rawstore_tmp_db):
     _seed()
     # No CIK map stored: unknown, so the note stays empty (not "2 no CIK").
     assert _rows(inventory.collect())["corpus"]["note"] == ""
-    rawstore.write_rows("sec_company_tickers", [{"ticker": "MSFT", "cik": "7", "name": "Microsoft"}])
+    rawstore.write_rows("sec_exchange_file", [{"ticker": "MSFT", "cik": "7", "name": "Microsoft", "status": "present", "run_at": 1.0}])
     rawstore.write_rows("chain_meta", [{"key": "miss:MSFT", "value": json.dumps(
         {"reason": "form_40f", "cik": "7", "checked": datetime.now(timezone.utc).isoformat()})}])
     note = _rows(inventory.collect())["corpus"]["note"]

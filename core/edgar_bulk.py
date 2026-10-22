@@ -25,7 +25,7 @@ import time
 import zipfile
 from pathlib import Path
 
-from . import rawstore
+from . import rawstore, sec_files
 from .config import OUTPUT_DIR
 from .providers import sec_edgar
 
@@ -193,7 +193,7 @@ def ingest_submissions(zip_path: Path, limit: int | None = None) -> dict:
                 break
 
     tickers = {r["ticker"]: str(r["cik"]).lstrip("0")
-               for r in rawstore.get_all("sec_company_tickers") if r.get("cik")}
+               for r in sec_files.latest("exchange") if r.get("cik")}
     now = time.time()
     rows = [{"ticker": t, "cik": c, "sic": by_cik[c]["sic"],
              "sic_description": by_cik[c]["sic_description"], "fetched_at": now}

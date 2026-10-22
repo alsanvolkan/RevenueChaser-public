@@ -14,7 +14,7 @@ Cache-first and resumable: a ticker already in ``sec_company_sic`` is skipped, s
 an interrupted run continues where it stopped. Rows are written every
 ``_FLUSH_EVERY`` fetched tickers and once more in a ``finally`` (also on Ctrl-C),
 so an interrupt keeps what was fetched. ``no_fetch=True`` never touches the
-network: it counts pending tickers from the stored ``sec_company_tickers`` rows.
+network: it counts pending tickers from the stored ``sec_exchange_file`` rows (#301 D21).
 
     python -m RevenueChaser.core.sic_registry --refresh
     python -m RevenueChaser.core.sic_registry --refresh --limit 200
@@ -80,9 +80,9 @@ def _universe_tickers() -> list[str]:
 
 
 def _stored_cik_map() -> dict[str, dict]:
-    """The stored SEC ticker map, read only (``sec_edgar._cik_map`` may fill it from SEC)."""
-    return {r["ticker"]: {"cik": r["cik"]} for r in rawstore.get_all(
-        "sec_company_tickers", columns=["ticker", "cik"]) if r.get("cik")}
+    """The stored SEC exchange file rows, read only (never a network call)."""
+    from . import sec_files
+    return {r["ticker"]: {"cik": r["cik"]} for r in sec_files.latest("exchange") if r.get("cik")}
 
 
 def fetch_missing(tickers: list[str] | None = None, limit: int | None = None,

@@ -27,9 +27,9 @@ def env(rawstore_tmp_db, monkeypatch):
     rawstore.replace_all("equity_universe", [
         {"ticker": "NVDA", "market_cap": 2e9, "name": "N"}, {"ticker": "NVDB", "market_cap": 1e9, "name": "N"},
         {"ticker": "TINY", "market_cap": 1e6, "name": "T"}])
-    rawstore.write_rows("sec_company_tickers", [
-        {"ticker": "NVDA", "cik": "1045810", "name": "N"}, {"ticker": "NVDB", "cik": "1045810", "name": "N"},
-        {"ticker": "TINY", "cik": "0000000077", "name": "T"}])
+    rawstore.write_rows("sec_exchange_file", [
+        {"ticker": "NVDA", "cik": "1045810", "name": "N", "status": "present", "run_at": 1.0}, {"ticker": "NVDB", "cik": "1045810", "name": "N", "status": "present", "run_at": 1.0},
+        {"ticker": "TINY", "cik": "0000000077", "name": "T", "status": "present", "run_at": 1.0}])
     e = {"urls": [], "downloads": 0, "subs": {1045810: _subs(), 77: _subs("tiny-1", sic="1000")}, "raise": {}}
 
     def _get_json(url, client=None):
@@ -133,7 +133,7 @@ def test_a_cik_sec_no_longer_serves_is_closed_not_failed(env):
 
 
 def test_the_document_step_keeps_the_ticker_maps_cik_spelling(env):
-    rawstore.write_rows("sec_company_tickers", [{"ticker": "NVDA", "cik": "0001045810", "name": "N"}])
+    rawstore.write_rows("sec_exchange_file", [{"ticker": "NVDA", "cik": "0001045810", "name": "N", "status": "present", "run_at": 1.0}])
     out = sync.sync_filings()
     assert len(env["urls"]) == 2                                       # still one request for NVDA and NVDB
     assert rawstore.get("chain_filings", "NVDA")["cik"] == "0001045810"

@@ -788,6 +788,7 @@ MANIFEST: dict[str, dict] = {
     },
     "sec_company_tickers": {
         "history_mode": "change_history",
+        "retired": True,          # #301 D21: `sec_exchange_file` replaced its writer; the rows stay, nothing writes it
         "key": ["ticker"],
         "columns": ["ticker TEXT PRIMARY KEY", "cik TEXT", "name TEXT"],
         "kind": "json_payload",

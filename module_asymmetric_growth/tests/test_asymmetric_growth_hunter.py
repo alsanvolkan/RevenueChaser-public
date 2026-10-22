@@ -191,12 +191,21 @@ def _sec_rows(*pairs):
             for i, (t, ex) in enumerate(pairs)]
 
 
+def _seed_exchange_file(*pairs, run_at=1.0):
+    """The nightly step's output: one 'present' row per ticker in the stored SEC exchange file (#301 D21)."""
+    import datetime as dt
+    rawstore.write_rows("sec_exchange_file", [
+        {**row, "valid_from": dt.date(2026, 10, 13), "status": "present", "source": "sec_exchange",
+         "fetched_at": run_at, "run_id": "seed", "run_at": run_at} for row in _sec_rows(*pairs)])
+
+
 def _fake_sec_map(monkeypatch, *pairs, status="ok", error=None):
-    """Fake ``sec.exchange_map`` (no network); the returned list records each call."""
-    from RevenueChaser.core.identity.sources import SourceResult, sec
+    """Seed the stored SEC exchange file (no network); a failed pull stored nothing.
+
+    The universe job no longer pulls the file, so this is the writer's output the reader sees."""
     calls: list[int] = []
-    res = SourceResult("sec_exchange", status, _sec_rows(*pairs) if status == "ok" else [], error)
-    monkeypatch.setattr(sec, "exchange_map", lambda: calls.append(1) or res)
+    if status == "ok":
+        _seed_exchange_file(*pairs)
     return calls
 
 
@@ -344,7 +353,7 @@ def test_a_failed_sec_map_keeps_the_stored_universe_and_writes_nothing(monkeypat
     assert {r["ticker"] for r in rows} == {"AAA", "BBB"}
     assert {r["ticker"] for r in rawstore.query("SELECT ticker FROM equity_universe")} == {"AAA", "BBB"}
     assert screen_calls == [], "no point pulling Yahoo when the member list is unavailable"
-    assert "503" in stats["sec_error"]
+    assert "stored" in stats["sec_error"]
     assert stats["universe_refreshed_by"] == "Swing Potential"     # the stored provenance, unchanged
     assert agh._load_universe_meta()["generated_at"] == "2026-08-24T10:00:00+00:00"
 
@@ -358,7 +367,7 @@ def test_a_failed_sec_map_with_nothing_stored_writes_nothing(monkeypatch, rawsto
 
     assert rows == []
     assert rawstore.count("equity_universe") == 0
-    assert stats["sec_error"] == "boom"
+    assert "stored" in stats["sec_error"]
 
 
 def test_an_sec_map_with_no_listed_rows_is_a_failure(monkeypatch, rawstore_tmp_db):
@@ -412,16 +421,22 @@ def test_an_sec_member_list_at_the_floor_is_saved(monkeypatch, rawstore_tmp_db):
     assert "sec_error" not in stats
 
 
-def test_the_sec_map_is_fetched_once_per_pull_and_never_on_the_cached_path(monkeypatch, rawstore_tmp_db):
+def test_the_universe_reads_the_stored_file_and_never_calls_sec(monkeypatch, rawstore_tmp_db):
+    """#301 D21: the reader reuses the nightly step's rows; a refresh pulls no SEC file of its own."""
     agh._save_universe([{"ticker": "AAA", "market_cap": 1e9, "sector": "Technology"}])
     _fast_universe(monkeypatch)
-    calls = _fake_sec_map(monkeypatch, ("AAA", "Nasdaq"))
+    _fake_sec_map(monkeypatch, ("AAA", "Nasdaq"))
     _screen_quotes(monkeypatch, [_one_quote("AAA", marketCap=1e9)])
+    from RevenueChaser.core.identity.sources import sec
+
+    def no_sec(*a, **k):  # pragma: no cover - the reader must not ask
+        raise AssertionError("the universe reader must not pull the SEC file")
+
+    monkeypatch.setattr(sec, "exchange_map", no_sec)
 
     agh.fetch_universe_stats()                       # cache-first: no network at all
-    assert calls == []
-    agh.fetch_universe_stats(refresh=True)
-    assert calls == [1]
+    rows, _ = agh.fetch_universe_stats(refresh=True)
+    assert [r["ticker"] for r in rows] == ["AAA"]
 
 
 def test_technical_from_quote():
