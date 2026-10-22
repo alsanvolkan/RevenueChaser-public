@@ -184,4 +184,4 @@ def record(cards, nrc: dict, *, run_id: str, run_at: float, uw_health: dict | No
         BOARD, run_id=run_id, run_at=run_at, model_version=model_version(), rows={TABLE: rows},
         params=effective_config(),
         context=context,
-        funnel=filter_stats, partial=note)
+        funnel=filter_stats, partial=note, provider_health=uw_health)

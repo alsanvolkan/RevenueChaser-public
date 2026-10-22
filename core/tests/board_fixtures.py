@@ -377,7 +377,7 @@ def _rotation(tmp_path, monkeypatch):
     config entry spells. They reach the quadrant points, the table, the filter buttons
     and the summary chips; the config names are what ``_build_svg`` and the table read."""
     import RevenueChaser.module_sector_rotation.report as rd
-    from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+    from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
     monkeypatch.setattr(rd, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(rd, "coarse_theme_catalog", lambda: {H("theme"): ["XLK"]})
     hostile = H("rot_ticker")

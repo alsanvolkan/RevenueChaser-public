@@ -2,7 +2,7 @@
 from datetime import date, timedelta
 
 from RevenueChaser.core import rawstore
-from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 from RevenueChaser.module_sector_rotation import store as rotation_store
 from RevenueChaser.module_sector_rotation.tests.d01_seed import ny, pin_clock, seed
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 from RevenueChaser.core.config import OUTPUT_DIR
 from RevenueChaser.core.gics_map import UNCLASSIFIED
-from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 from .universe import MACRO_SERIES, ROTATION_ETFS, GROUP_COLORS, QUADRANT_COLORS
 from .theme_focus import coarse_theme_catalog
 

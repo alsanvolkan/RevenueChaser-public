@@ -117,7 +117,7 @@ def _theme_catalog() -> dict:
         return {}
 
 
-def _summary_html(s: dict) -> str:
+def _summary_html(s: dict, data_quality: dict | None = None) -> str:
     regime_cls, regime, momentum = regime_parts(s.get("regime"))
     spy_price = s.get("spy_price")
     spy_sma200 = s.get("spy_sma200")
@@ -157,6 +157,15 @@ def _summary_html(s: dict) -> str:
         bits = ([f"{_fmt_int(stale_n)} tickers"] if stale_n else []) + (["SPY"] if s.get("spy_stale") else [])
         elim_part += (f" Stale price cache (refetch failed, last cached bars used): "
                       f"{_html.escape(' + '.join(bits))}.")
+    # The F5 blind spots (#58): a card with no amber event line is either clean or one the store cannot answer for.
+    # The counters cover the shown cards (counted after top_n); a payload from before they existed has neither key.
+    dq = data_quality or {}
+    n_filings, n_cik = int(dq.get("no_submissions") or 0), int(dq.get("no_cik") or 0)
+    if n_filings or n_cik:
+        shown = f" of the {_fmt_int(top_n)} shown" if top_n else ""
+        parts = ([f"{_fmt_int(n_filings)} with no filings on record"] if n_filings else []) +                 ([f"{_fmt_int(n_cik)} with no CIK"] if n_cik else [])
+        elim_part += (f" No corporate-event check{shown}: {' · '.join(parts)}"
+                      " (a card without an amber event line is not proven event-free for these).")
     dist_part = f" [DISTORTED] {_fmt_int(distorted)}." if distorted else ""
 
     return (
@@ -207,7 +216,7 @@ def _render(payload: dict, inline: bool) -> tuple[str, dict | None]:
             "distorted_count": distorted_count,
             "top_n": len(candidates),
         }
-    summary_html = _summary_html(summary)
+    summary_html = _summary_html(summary, payload.get("data_quality"))
     universe_prov = universe_provenance_html(
         payload.get("universe_generated_at"), payload.get("universe_refreshed_by"),
         partial=bool(payload.get("universe_partial")))

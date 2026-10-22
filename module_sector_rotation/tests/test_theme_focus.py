@@ -3,7 +3,7 @@ import json
 from datetime import date
 
 from RevenueChaser.core import rawstore
-from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 
 
 def _pin_run(run_id: str = "tf-run"):

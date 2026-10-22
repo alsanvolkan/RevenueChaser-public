@@ -7,7 +7,7 @@ from RevenueChaser.module_sector_rotation.engine import (
     normalize_z_scores,
     zscore_normalize,
 )
-from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 
 
 class TestClassifyQuadrant:
