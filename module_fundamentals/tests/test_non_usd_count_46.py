@@ -41,6 +41,19 @@ def _edgar(ticker: str, annual: list[dict], **meta) -> None:
         "meta": {**_USD_ROW, "entity_name": ticker, **meta}, "fetched_at": time.time()}])
 
 
+def _edgar_pre_measure(ticker: str, annual: list[dict]) -> None:
+    """A row as the extraction wrote it BEFORE #46: no ``non_usd_units`` key at all.
+
+    ``_USD_ROW`` carries ``non_usd_units: []``, which is the measured-none state, so a test of the absent-key path
+    cannot go through ``_edgar`` (#102 review MUST 1). A stored row is never re-extracted, so this is what every
+    row in the live store looks like until the #52 re-extraction runs.
+    """
+    meta = {k: v for k, v in {**_USD_ROW, "entity_name": ticker}.items() if k != "non_usd_units"}
+    rawstore.write_rows("edgar_financials", [{
+        "ticker": ticker, "annual": annual, "quarterly": [],
+        "meta": meta, "fetched_at": time.time()}])
+
+
 @pytest.fixture
 def scan_env(rawstore_tmp_db, monkeypatch):
     """Four scanned names with a full D01 history; EDGAR comes from the store, never the network."""
@@ -84,14 +97,15 @@ def test_the_scan_counts_the_non_usd_names_and_names_the_currencies(scan_env):
 def test_a_store_row_without_the_measure_is_not_counted_as_non_usd_and_is_no_error(scan_env):
     """Limitation of #46: rows stored before the measure carry no ``non_usd_units``. Absent is "not measured":
     such a name drops as ``no_edgar_annual``, exactly as before, and the currency count stays 0."""
-    _edgar("AAA", ANNUAL)
-    _edgar("CCC", [])
+    _edgar_pre_measure("AAA", ANNUAL)
+    _edgar_pre_measure("CCC", [])
 
     payload = fp.run_scan()
 
     assert "non_usd_currency" not in payload["data_quality"]["dropped"]
     assert payload["data_quality"]["dropped"]["no_edgar_annual"] == 1
     assert "non_usd_units" not in payload["data_quality"]
+    assert payload["data_quality"]["non_usd_measured"] == 0      # no row carried the measure
     assert not payload.get("no_data")
 
 
@@ -130,8 +144,9 @@ def test_the_board_says_what_was_measured_and_never_ifrs(scan_env):
     assert "IFRS" not in html
 
 
-def test_zero_non_usd_names_renders_zero_not_a_blank(scan_env):
-    """0 is a measurement, so it is shown: never a blank, never a dropped clause."""
+def test_a_measured_zero_renders_zero_not_a_blank(scan_env):
+    """A MEASURED 0 is a result, so it is shown: never a blank, never a dropped clause. Both rows here carry the
+    measure (``_USD_ROW`` has ``non_usd_units: []``), so the board may state zero."""
     _edgar("AAA", ANNUAL)
     _edgar("CCC", [])
 
@@ -139,7 +154,21 @@ def test_zero_non_usd_names_renders_zero_not_a_blank(scan_env):
     html = render_fundamental_dashboard(payload)
 
     assert payload["data_quality"]["dropped"].get("non_usd_currency", 0) == 0
+    assert payload["data_quality"]["non_usd_measured"] == 2
     assert "0 names report in a currency other than USD and could not be scored" in html
+
+
+def test_an_unmeasured_store_does_not_render_a_measured_zero(scan_env):
+    """#102 review MUST 1: 0 with no stored row carrying the measure is not a result. A stored row is never
+    re-extracted, so the board must say the currency has not been read instead of claiming zero names."""
+    _edgar_pre_measure("AAA", ANNUAL)
+    _edgar_pre_measure("CCC", [])
+
+    html = render_fundamental_dashboard(fp.run_scan())
+
+    assert "0 names report in a currency other than USD" not in html
+    assert "Reporting currency not measured yet" in html
+    assert "#52" in html
 
 
 def test_a_hostile_currency_string_is_escaped_on_the_board(scan_env):

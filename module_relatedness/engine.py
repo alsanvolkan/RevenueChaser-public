@@ -51,12 +51,6 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _universe() -> list[dict]:
-    return rawstore.query(
-        f"SELECT ticker, name, sector, market_cap "
-        f"FROM {_UNIVERSE} ORDER BY market_cap DESC")
-
-
 def select_pilot(limit: int | None = None) -> list[str]:
     """The shared classification universe (>= $300M), cap-descending.
 
@@ -375,10 +369,6 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
     return store.load_profiles(tickers)
 
 
-def _company_meta() -> dict[str, dict]:
-    return {r["ticker"]: r for r in _universe()}
-
-
 # The shared coarse / medium / fine order. It names theme levels directly and
 # maps co-movement's three cuts (broad -> tight, docs/dashboard_ui.md §8) so the
 # first cut is Coarse and the last is Fine.
@@ -547,26 +537,27 @@ def _payload(profiles: dict[str, dict], thinking: dict[str, dict],
              stale: set[str] | None = None) -> dict:
     from RevenueChaser.core.gics_map import canonical_sector, sector_path
     from RevenueChaser.core.universe import classification_universe, filter_fields, theme_catalog
-    meta = _company_meta()
+    # One read of the company fields (#49): ``filter_fields`` carries name/sector/industry/market_cap already,
+    # so the second ``equity_universe`` query this function used to run only risked disagreeing with it.
     extra = filter_fields(list(profiles))
     themes = _theme_levels()
     companies = []
     for t in sorted(profiles):
-        m = meta.get(t) or {}
         x = extra.get(t) or {}
         tl = themes.get(t) or {}
         companies.append({
             "ticker": t,
-            "name": m.get("name") or x.get("name") or t,
-            # An old GICS spelling still in the store reads as its Morningstar name.
-            "sector": canonical_sector(m.get("sector") or x.get("sector")),
+            "name": x.get("name") or t,
+            # An old GICS spelling still in the store reads as its Morningstar name (filter_fields normalises it,
+            # and ``canonical_sector`` is idempotent on the names it returns).
+            "sector": canonical_sector(x.get("sector")),
             "industry": x.get("industry") or "",
-            "market_cap": m.get("market_cap") if m.get("market_cap") is not None else x.get("market_cap"),
+            "market_cap": x.get("market_cap"),
             "earnings_date": x.get("earnings_date"),
             "index": x.get("index") or [],
             # The shared filter row (core.universe.filter_fields, #383 C1b): the sector path and every level of
             # the pinned theme run the Theme facet filters on.
-            "gics": x.get("gics") or sector_path(canonical_sector(m.get("sector") or x.get("sector")),
+            "gics": x.get("gics") or sector_path(canonical_sector(x.get("sector")),
                                                  x.get("industry") or ""),
             "theme_ids": x.get("theme_ids") or [],
             "theme_coarse": tl.get("coarse") or "",

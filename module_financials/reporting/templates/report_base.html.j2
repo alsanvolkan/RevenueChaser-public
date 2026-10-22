@@ -215,20 +215,31 @@
 </section>
 {% endif %}
 
-{% if comps and not comps.error %}
+{% if comps and comps.not_stored %}
 <section>
   <h2>Comps Analysis</h2>
+  <p style="color:var(--muted);">{{ comps.note }}</p>
+</section>
+{% elif comps and not comps.error %}
+<section>
+  <h2>Comps Analysis</h2>
+  {% if comps.as_of %}
+  <p style="color:var(--muted); font-size:12px; margin:-6px 0 12px;">as of {{ comps.as_of }} — the last stored Fetch; the Refresh fetched nothing.</p>
+  {% endif %}
+  {% if comps.pe_only %}
+  <p style="color:var(--muted);">A Financial Services target is valued on P/E only: EV/EBITDA and EV/Revenue do not describe a bank.</p>
+  {% endif %}
   <div class="panel" style="overflow-x:auto;">
     <table>
       <thead><tr>
-        <th>Ticker</th><th>EV/EBITDA</th><th>EV/Revenue</th><th>P/E</th>
+        <th>Ticker</th>{% if not comps.pe_only %}<th>EV/EBITDA</th><th>EV/Revenue</th>{% endif %}<th>P/E</th>
       </tr></thead>
       <tbody>
       {% for p in comps.peers %}
         <tr>
           <td>{{ p.ticker }}</td>
-          <td>{{ p.ev_ebitda|num }}</td>
-          <td>{{ p.ev_revenue|num }}</td>
+          {% if not comps.pe_only %}<td>{{ p.ev_ebitda|num }}</td>
+          <td>{{ p.ev_revenue|num }}</td>{% endif %}
           <td>{{ p.pe|num }}</td>
         </tr>
       {% endfor %}
@@ -238,17 +249,23 @@
   <div class="grid2">
     <div class="panel">
       <h3>Percentiles</h3>
+      {% if not comps.pe_only %}
       <div class="kv"><span class="k">EV/EBITDA (25/50/75)</span><span>{{ comps.multiples.ev_ebitda.p25|num }} / {{ comps.multiples.ev_ebitda.p50|num }} / {{ comps.multiples.ev_ebitda.p75|num }}</span></div>
       <div class="kv"><span class="k">EV/Revenue (25/50/75)</span><span>{{ comps.multiples.ev_revenue.p25|num }} / {{ comps.multiples.ev_revenue.p50|num }} / {{ comps.multiples.ev_revenue.p75|num }}</span></div>
+      {% endif %}
       <div class="kv"><span class="k">P/E (25/50/75)</span><span>{{ comps.multiples.pe.p25|num }} / {{ comps.multiples.pe.p50|num }} / {{ comps.multiples.pe.p75|num }}</span></div>
     </div>
     <div class="panel">
       <h3>Implied Value</h3>
+      {% if not comps.pe_only %}
       <div class="kv"><span class="k">EV (EV/EBITDA)</span><span>{{ comps.implied.ev_ebitda|usd }}</span></div>
       <div class="kv"><span class="k">EV (EV/Revenue)</span><span>{{ comps.implied.ev_revenue|usd }}</span></div>
+      {% endif %}
       <div class="kv"><span class="k">Equity (P/E)</span><span>{{ comps.implied.equity_pe|usd }}</span></div>
+      {% if not comps.pe_only %}
       <div class="kv"><span class="k">Per Share (EV/EBITDA)</span><span>{{ comps.implied.per_share_ev_ebitda|price }}</span></div>
       <div class="kv"><span class="k">Per Share (EV/Revenue)</span><span>{{ comps.implied.per_share_ev_revenue|price }}</span></div>
+      {% endif %}
       <div class="kv"><span class="k">Per Share (P/E)</span><span>{{ comps.implied.per_share_pe|price }}</span></div>
     </div>
   </div>

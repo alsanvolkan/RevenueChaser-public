@@ -1019,8 +1019,11 @@ def get_fundamentals(ticker: str, no_fetch: bool = False) -> tuple[list[dict], l
         "is_us": _is_us_filer(facts),
         "available": True,
         "extract_version": EXTRACT_VERSION,
-        # #46: the currencies the money facts were tagged in instead of USD. A row extracted before this measure has
-        # no key, which means "not measured", not "USD": only a re-extraction can tell the two apart.
+        # #46: every currency seen while reading this filer's money concepts, the annual and quarterly passes
+        # sharing one set — NOT "this filer reports in EUR". A scorable USD filer with one EUR-only concept
+        # lands here too; the only reader is the scan, which looks at the key when the annual series is empty.
+        # A row extracted before this measure has no key, which means "not measured", never "USD", and a stored
+        # row is never re-extracted (``_stored_fundamentals``): only a re-extraction can tell the two apart.
         "non_usd_units": sorted(non_usd),
     }
     rawstore.write_rows("edgar_financials", [{

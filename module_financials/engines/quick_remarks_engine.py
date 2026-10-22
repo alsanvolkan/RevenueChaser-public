@@ -31,7 +31,11 @@ def _from_card(ticker: str, card: dict, source: str) -> dict:
     }
 
 
-def run_quick_remarks(ticker: str, no_fetch: bool = False) -> dict:
+def run_quick_remarks(ticker: str, no_fetch: bool = False, financials: dict | None = None) -> dict:
+    """``financials`` is the ``get_financials`` payload the caller already holds (the Fetch it just read, or the
+    rows it read back from the store): the score is built from it, so this makes no second ``get_financials`` call
+    (FIN-5, #385). Only a caller that passes none falls back to a fetch, and ``no_fetch`` (store-only render) never
+    fetches at all."""
     ticker = ticker.upper()
 
     # 1. Paylaşılan store (market-cap taraması zaten Hunter metodolojisiyle skorladı)
@@ -49,7 +53,8 @@ def run_quick_remarks(ticker: str, no_fetch: bool = False) -> dict:
         return _from_card(ticker, {}, "yfinance")
     try:
         from RevenueChaser.module_asymmetric_growth.engine import score_ticker
-        financials = yfinance_client.get_financials(ticker)
+        if financials is None:
+            financials = yfinance_client.get_financials(ticker)
         technical = fetch_technical(ticker)
         card = score_ticker(ticker, financials, technical)
         if card:

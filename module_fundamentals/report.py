@@ -169,13 +169,19 @@ def _summary_html(s: dict, data_quality: dict | None = None) -> str:
                       " (a card without an amber event line is not proven event-free for these).")
     # #46: what the extraction could not read. The measure is the unit on the money facts, never the accounting
     # standard — a non-USD filer is usually an IFRS filer, but an IFRS filer may still tag USD — so the line says
-    # exactly what was counted, and shows 0 rather than going blank when there is nothing to name. A payload stored
-    # before the measure has neither key: that is 0 names, not "not checked".
+    # exactly what was counted. A MEASURED 0 is a result and is shown as 0; a 0 with no stored row carrying the
+    # measure is not a result, because a stored row is never re-extracted, so the line says that instead (#102
+    # review): the count fills once the #52 re-extraction has run.
     n_non_usd = int((dq.get("dropped") or {}).get(NON_USD_DROP) or 0)
     units = ", ".join(str(u) for u in (dq.get("non_usd_units") or []))
-    noun = "name reports" if n_non_usd == 1 else "names report"
-    non_usd_part = (f" {_fmt_int(n_non_usd)} {noun} in a currency other than USD and could not be scored"
-                    + (esc(f" ({units})") if units else "") + ".")
+    measured = int(dq.get("non_usd_measured") or 0)
+    if n_non_usd or measured:
+        noun = "name reports" if n_non_usd == 1 else "names report"
+        non_usd_part = (f" {_fmt_int(n_non_usd)} {noun} in a currency other than USD and could not be scored"
+                        + (esc(f" ({units})") if units else "") + ".")
+    else:
+        non_usd_part = (" Reporting currency not measured yet: no re-extraction has run since the measure"
+                        " landed, so no filer's currency has been read (#52).")
     dist_part = f" [DISTORTED] {_fmt_int(distorted)}." if distorted else ""
 
     return (

@@ -134,7 +134,7 @@ class _FallbackClient:
 
 @pytest.fixture
 def _no_candle_network(monkeypatch):
-    monkeypatch.setattr(snap, "fetch_spx_candles", lambda asof=None, ticker=None: [
+    monkeypatch.setattr(snap, "stored_spx_candles", lambda asof=None, ticker=None: [
         {"date": "2026-08-14", "open": 1.0, "high": 2.0, "low": 0.5,
          "close": 7785.76, "volume": 1.0}])
 

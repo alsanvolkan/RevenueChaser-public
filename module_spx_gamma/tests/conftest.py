@@ -214,3 +214,15 @@ def raw():
 @pytest.fixture
 def snapshot():
     return make_snapshot()
+
+
+@pytest.fixture(autouse=True)
+def market_closed(monkeypatch):
+    """Pin the US session shut for every test in this module.
+
+    Since D03 the snapshot reads a LIVE spot while the session is open (the owner's choice, 2026-10-22), so any
+    test that builds a snapshot would otherwise pass or fail by the time of day it runs — the strike window is
+    derived from spot. A test that wants the open-session path patches ``in_us_session_window`` itself.
+    """
+    from RevenueChaser.core import calendar as nyse_calendar
+    monkeypatch.setattr(nyse_calendar, "in_us_session_window", lambda *a, **k: False)

@@ -393,11 +393,14 @@ NON_USD_LABEL = "Report in a currency other than USD and could not be scored"
 
 
 def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None = None,
-                 drops: list | None = None, non_usd: set[str] | None = None) -> dict | None:
+                 drops: list | None = None, non_usd: set[str] | None = None,
+                 non_usd_seen: list | None = None) -> dict | None:
     """One ticker's row, or None. ``drops`` (a list) collects the reason for each None (#205).
 
     ``non_usd`` (the scan's, one per run) collects the currencies of the names that end on the currency check below
     (#46): they are dropped for that reason, so the count in ``dropped`` and this set are the same names.
+    ``non_usd_seen`` collects the names whose stored row carries the measure at all, so a count of 0 can say
+    whether it measured nothing or nothing was measured (#102 review).
     """
     def _drop(reason: str):
         if drops is not None:
@@ -423,13 +426,18 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
     except Exception as exc:  # pragma: no cover - network
         logger.debug("fundamental edgar %s: %s", ticker, exc)
         return _drop("edgar_fetch_failed")     # the call failed: a data gap, not "EDGAR has nothing" (#386 F1)
+    # #46: whether this row was extracted since the currency measure landed at all. An absent key is "not
+    # measured", and a stored row is never re-extracted (``sec_edgar._stored_fundamentals``), so only a
+    # re-extraction fills it.
+    if non_usd_seen is not None and "non_usd_units" in (emeta or {}):
+        non_usd_seen.append(ticker)
     if not annual:
         # sec_edgar swallows a failed download and answers empty; its meta says so (#386 review).
         if (emeta or {}).get("fetch_failed"):
             return _drop("edgar_fetch_failed")
         # #46: the filer tagged its money facts in another currency, so the extraction read nothing. It is not a
         # filer without data, so it gets its own reason — and a row stored before that measure carries no key, which
-        # means "not measured" and stays ``no_edgar_annual``.
+        # means "not measured" (never "USD") and stays ``no_edgar_annual``.
         units = list((emeta or {}).get("non_usd_units") or [])
         if units:
             if non_usd is not None:
@@ -530,8 +538,8 @@ def _data_short(run_stats: dict):
     if short is None:
         return None
     # A non-USD filer is unscored for its currency, not for a short price history, and the summary now names it on
-    # its own line, so it leaves "data<252d" for the same reason the HEALTH_DROPS do: a name reported under its own
-    # reason must not be reported twice. (``no_edgar`` predates that rule and is still counted in both places.)
+    # its own line, so it leaves "data<252d" for the same reason the HEALTH_DROPS and ``no_edgar`` do (the latter one
+    # layer earlier, in ``core.screen_common``): a name reported under its own reason must not be reported twice.
     return max(0, short - sum(_health_drops(run_stats).values()) - _non_usd_count(run_stats))
 
 
@@ -646,38 +654,22 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
     }
 
 
-def demo_payload() -> dict:
-    return {
-        "generated_at": _now(),
-        "regime": "RISK-ON",
-        "universe_total": 0,
-        "universe_generated_at": None,
-        "universe_refreshed_by": None,
-        "passing": {"rule_of_40": 0, "quality": 0, "momentum": 0},
-        "selection_version": config.SELECTION_VERSION,
-        "distorted_count": 0,
-        "data_as_of": None,
-        "is_fixture": True,
-        "summary": {
-            "regime": "RISK-ON", "spy_price": None, "spy_sma200": None, "spy_3m_return": None,
-            "filtered_universe": 0, "out_of_universe": 0, "hygiene": 0, "data_short": 0,
-            "passing": {"rule_of_40": 0, "quality": 0, "momentum": 0},
-            "distorted_count": 0, "top_n": 0,
-        },
-        "candidates": [],
-    }
-
-
-def _note_non_usd(payload: dict, units: set[str]) -> None:
+def _note_non_usd(payload: dict, units: set[str], measured: list | None = None) -> None:
     """The board's own framing of the #46 count: the currencies seen, and the funnel row in the board's words.
 
-    ``core.screen_common.funnel_steps`` labels a reason it does not know by its key; the count and the listed names
+    The post-process exists for the LABEL, not the count: ``core.screen_common.funnel_steps`` labels an unlisted
+    reason with ``DROP_LABELS.get(key, key).capitalize()``, which would render this one as "...other than usd",
+    so a one-line ``DROP_LABELS`` entry cannot carry it. The count and the listed names
     stay exactly as the funnel built them, so the steps still add up (``core.funnel.validate``). The row is rebuilt
     through ``core.funnel.step``: still a ``drop``, because these names left the scan, and not ``by_design`` — a
     filer's reporting currency is a data gap that needs a look, not a rule of the board.
     """
     if units:
         payload.setdefault("data_quality", {})["non_usd_units"] = sorted(units)
+    if measured is not None:
+        # 0 measured rows means the measure has not reached the store yet, which the board must not print
+        # as a measured "0".
+        payload.setdefault("data_quality", {})["non_usd_measured"] = len(measured)
     steps = payload.get("funnel_steps") or []
     for i, step in enumerate(steps):
         if step.get("key") == NON_USD_DROP:
@@ -694,9 +686,11 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
     the last Fetch recorded (K4, ``screen_common.stored_payload``)."""
     from . import scores
     non_usd: set[str] = set()      # #46: the currencies of the names that drop on the currency check
+    non_usd_seen: list[str] = []   # #46: the names whose stored row carries the measure at all
 
     def compute_row(row, spy_df, no_fetch: bool = False, spine: dict | None = None, drops: list | None = None):
-        return _compute_row(row, spy_df, no_fetch=no_fetch, spine=spine, drops=drops, non_usd=non_usd)
+        return _compute_row(row, spy_df, no_fetch=no_fetch, spine=spine, drops=drops, non_usd=non_usd,
+                            non_usd_seen=non_usd_seen)
 
     payload = screen_common.run_screen(
         board="fundamental", refreshed_by="Fundamentals", cfg=config,
@@ -705,7 +699,7 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
         compute_row=compute_row, build_payload=build_payload, persist=scores.persist if rows_sink is None else (lambda results: scores.persist(results, sink=rows_sink)),
         top_n=top_n, refresh_universe=refresh_universe, no_fetch=no_fetch,
         history_board="module_fundamentals", saved=config.FUNDAMENTALS_JSON)
-    _note_non_usd(payload, non_usd)
+    _note_non_usd(payload, non_usd, non_usd_seen)
     return payload
 
 
