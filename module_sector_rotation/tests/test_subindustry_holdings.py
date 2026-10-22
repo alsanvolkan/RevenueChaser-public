@@ -180,7 +180,7 @@ class TestFragments:
     def test_the_exported_map_embeds_the_industry_tree_for_a_sector_row(self, tmp_path, monkeypatch):
         import RevenueChaser.module_sector_rotation.report as rd
         from datetime import date
-        from RevenueChaser.core.models.rotation import ETFRotationSnapshot
+        from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
         monkeypatch.setattr(rd, "OUTPUT_DIR", tmp_path)
         snap = ETFRotationSnapshot(
             as_of_date=date(2026, 8, 14), ticker="XLK", group_name="sector", close_price=100.0,
