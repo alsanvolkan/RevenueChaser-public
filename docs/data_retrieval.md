@@ -213,9 +213,23 @@ different messages:
 - **rejected** — the key is set but the provider returns 401/403 (expired,
   revoked, lapsed subscription).
 
-`UWClient.verify()` runs one cheap authenticated probe and is called *before* a
-job is enqueued, so a bad key is refused at the button with a message naming the
-variable, the file and the signup URL — not minutes later from inside a module.
+A Fetch is refused at the button by two checks, in this order, and they answer
+different questions:
+
+- **presence** (`jobs.credential_problem`, #26) — a module declares the
+  credentials it cannot run without, `jobs.register(..., requires=(...))`, and
+  `_submit` answers `400` with `credentials.problem(name)`'s message **before**
+  the job is queued. The names are the provider slugs plus the extra checks in
+  `credentials.EXTRA_CHECKS` (`discord_cli` → `RC_DCE_CLI`,
+  `discord_guild` → `RC_DISCORD_GUILD_ID`); an unknown name fails `register`
+  at import. Presence only: no request is made and no key value is read, logged
+  or returned. A module with `requires=()` is not gated, and neither is an
+  optional provider (fred, fmp, openfigi, deepseek, the subscription gates) —
+  their absence degrades a board rather than breaking a job.
+- **validity** (`UWClient.verify()`) — one cheap authenticated probe, which
+  catches a key that is set but expired. `requires_uw` still decides whether a
+  `UWClient` is built at all (`app/jobs.py`), so the two flags are not
+  interchangeable.
 
 `active` only means "a key is present". It is **not** a validity check; use
 `verify()`.

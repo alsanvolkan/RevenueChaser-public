@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Callable
 
 
 @dataclass(frozen=True)
@@ -164,3 +165,37 @@ def discord_guild_problem() -> str | None:
     if (os.getenv("RC_DISCORD_GUILD_ID") or "").strip():
         return None
     return "RC_DISCORD_GUILD_ID is not set. Put the server's id in .env, then restart the dashboard."
+
+
+# A requirement that is more than "an env var is non-empty": the check answers for itself, and its message is
+# the one a submit shows.
+EXTRA_CHECKS: dict[str, Callable[[], str | None]] = {
+    "discord_cli": dce_cli_problem,
+    "discord_guild": discord_guild_problem,
+}
+
+
+def requirement_names() -> frozenset[str]:
+    """Every name :func:`problem` accepts: the provider slugs plus :data:`EXTRA_CHECKS`."""
+    return frozenset(PROVIDERS) | frozenset(EXTRA_CHECKS)
+
+
+def problem(name: str) -> str | None:
+    """Why the requirement ``name`` is unmet, or ``None`` when it is.
+
+    A module declares the names it cannot run without (``jobs.register(..., requires=...)``) and the dashboard
+    asks this before queueing it, so a missing credential is refused at the button rather than minutes later
+    from inside a runner.
+
+    **Presence only.** A provider slug is satisfied when its key is set — this never makes a request and never
+    compares, logs or returns a key value. Validity is the provider client's business (``UWClient.verify()``
+    runs a real authenticated probe).
+
+    Raises ``KeyError`` for a name that is neither a provider slug nor an extra check.
+    """
+    if name in PROVIDERS:
+        return None if key_for(name) else missing_message(name)
+    check = EXTRA_CHECKS.get(name)
+    if check is None:
+        raise KeyError(f"unknown credential requirement: {name!r}")
+    return check()
