@@ -206,9 +206,10 @@ _STI_HTM_TAGS = ["HeldToMaturitySecuritiesCurrent",
 # older tags already reported (Regal Rexnord FY2022 3.81bn became 5.22bn, AST SpaceMobile FY2024
 # moved by -68%, one filer lost eleven years). The premise that the two tax tags differ only by the
 # assessed tax is false, so neither is "the narrower one" and neither may take a year from the
-# other. Bank top lines (``InterestAndDividendIncomeOperating``, ``RevenuesNetOfInterestExpense``)
-# are NOT read: interest income is a different definition of the top line and therefore the owner's
-# decision, and no other tag that merely contains the word "Revenue" is one
+# other. Bank top lines are a different definition of the top line and are never revenue: since #450
+# ``RevenuesNetOfInterestExpense`` and ``InterestAndDividendIncomeOperating`` are read into their own
+# field (``interest_income_top_line``), which no reader of ``revenue`` looks at, so no filer's revenue
+# value moves. No other tag that merely contains the word "Revenue" is a top line either
 # (``ContractWithCustomerLiabilityRevenueRecognized``, ``IncreaseDecreaseInDeferredRevenue``,
 # ``CostOfRevenue`` and pro-forma acquisition revenue).
 #
@@ -232,6 +233,11 @@ _ADD_ONLY_CONCEPTS = frozenset({"RevenueFromContractWithCustomerIncludingAssesse
 CONCEPTS = {
     "revenue": (["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet",
                  "RevenueFromContractWithCustomerIncludingAssessedTax"], "USD"),
+    # #450: a bank's income-statement top line, never revenue (see the comment above). The order is a
+    # tie-break only: net of interest expense is the closer analogue of a top line, so it is preferred
+    # when a filer reports both; the pick rule above then decides as usual (newest, then longest).
+    "interest_income_top_line": (["RevenuesNetOfInterestExpense",
+                                  "InterestAndDividendIncomeOperating"], "USD"),
     "gross_profit": (["GrossProfit"], "USD"),
     "cost_of_revenue": (["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold",
                          "CostOfServices"], "USD"),
@@ -312,6 +318,12 @@ _NEVER_A_RECORD = frozenset({"cost_of_revenue", "short_term_investments",
 # ``<field>_suspect``, never ``abs()``. Operating cash flow, net income and EBIT may be negative.
 _NON_NEGATIVE_FLOWS = frozenset({"revenue", "cost_of_revenue", "capex", "depreciation", "rd_expense",
                                  "share_repurchases", "share_based_compensation"})
+
+# Fields written only when they hold a value: a record has no such key when the filer reports none.
+# Every older field is present on every record with ``None``; only a new field can take this shape, and
+# it is the right one for the bank top line (#450), which no reader consumes yet: "this filer reports
+# no bank top line" must not look like a stored zero.
+_OMIT_WHEN_ABSENT = frozenset({"interest_income_top_line"})
 
 # Version of the extraction rules, stored in ``meta`` of every row this module writes. A row without
 # it was extracted before #158 (no YTD-derived quarters, no per-field filed/accn). Bump it whenever
@@ -737,6 +749,15 @@ def _field_series(facts_fn, facts: dict):
     return series, ends, flags, infos
 
 
+def _put_field_values(rec: dict, period: str, series: dict[str, dict[str, float]]) -> None:
+    """Set every field's value for one period; a field in ``_OMIT_WHEN_ABSENT`` gets no key at all."""
+    for field in CONCEPTS:
+        value = series[field].get(period)
+        if value is None and field in _OMIT_WHEN_ABSENT:
+            continue
+        rec[field] = value
+
+
 def _record_periods(series: dict[str, dict[str, float]]) -> list[str]:
     """The periods that get a record. A field in ``_NEVER_A_RECORD`` alone never adds one: the
     readers take the last record as the latest period, and e.g. a cost with no other figure is
@@ -844,8 +865,7 @@ def extract_annual(facts: dict) -> list[dict]:
     annual = []
     for y in years:
         rec = {"fiscal_year": y}
-        for field in CONCEPTS:
-            rec[field] = series[field].get(y)
+        _put_field_values(rec, y, series)
         lt = rec.get("lt_debt")
         ltc = rec.get("lt_debt_current")
         if lt is not None or ltc is not None:
@@ -872,8 +892,7 @@ def extract_quarterly(facts: dict) -> list[dict]:
     quarterly = []
     for e in periods:
         rec = {"period": e}
-        for field in CONCEPTS:
-            rec[field] = series[field].get(e)
+        _put_field_values(rec, e, series)
         lt = rec.get("lt_debt")
         ltc = rec.get("lt_debt_current")
         if lt is not None or ltc is not None:
