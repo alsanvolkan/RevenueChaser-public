@@ -66,7 +66,8 @@ ${B}Utility${RST}
   migrate-raw-data [flags] one-time import of rawData files + SQLite DBs into raw.duckdb
                            flags: --purge (full cleanup) | --delete | --reset [--force] | --dataset {name,...}
                            see scripts/README.md
-  clean                   remove __pycache__ and .pytest_cache
+  clean                   remove __pycache__, .pytest_cache and stale test scratch
+  clean-scratch [--apply] test scratch a killed run left in the temp dir (report without --apply)
   help                    this message
 
 ${DIM}Interpreter: $PY${RST}
@@ -132,6 +133,11 @@ case "$cmd" in
     find "$REPO" -path "$REPO/.venv" -prune -o -name __pycache__ -type d -print0 2>/dev/null | xargs -0 rm -rf 2>/dev/null || true
     rm -rf "$REPO/.pytest_cache"
     printf '%s\n' "${GRN}✓ cleaned __pycache__ and .pytest_cache${RST}"
+    # Scratch a killed run left behind; a run in progress is protected by the age rule.
+    run -m RevenueChaser.scripts.clean_test_scratch --apply
+    ;;
+  clean-scratch)
+    run -m RevenueChaser.scripts.clean_test_scratch "$@"
     ;;
   help|-h|--help) usage ;;
   *) printf '%s\n' "${RED}✗ unknown command: $cmd${RST}" >&2; echo; usage; exit 2 ;;
