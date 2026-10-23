@@ -65,6 +65,16 @@ table.inv .warnv{color:var(--amber)}
 .db-prices{color:#e06088}
 .dblegend{color:var(--muted);font-size:11.5px;margin:6px 2px 0}
 .dblegend .db{margin:0 8px 0 4px}
+/* G11 (#124): the gap tag beside the dataset name - the same words as its detail line, the colour
+   the kind. Colour is never the only signal: the chip always carries its words. */
+.gap{display:inline-block;background:transparent;border:1px solid currentColor;border-radius:99px;
+  padding:0 6px;font:600 10.5px/1.4 inherit;letter-spacing:0;text-transform:none;vertical-align:middle}
+.gap-fixable{color:var(--green)}
+.gap-in_build{color:var(--accent)}
+.gap-needs_decision{color:var(--amber)}
+.gap-ceiling{color:var(--red)}
+.gap-self_heals{color:var(--muted)}
+.gap-none{color:var(--neon)}
 /* S5 (#124): one closed detail row per dataset; the store tables, writer, action and notes live
    there, and the cell wraps so the table gains no nowrap column. */
 table.inv tr[hidden]{display:none}
@@ -1147,14 +1157,81 @@ def _fresh_note_html(row: dict) -> str:
     return f'<div class="dline"><b>Freshness note</b>{_html.escape(note)}</div>'
 
 
+# ── G11 (#124): what is missing, and how it improves ─────────────────────────────────────────
+# The number is measured (the coverage record) and the interpretation is written (the registry's
+# ``gap_kind`` and ``next_step``). Neither is ever the other: no prose here states a count, and a
+# gap with no written kind draws no chip rather than a "Complete" it cannot prove.
+GAP_WORDS = {
+    "fixable": "Can be fixed now",
+    "in_build": "Being built",
+    "needs_decision": "Waiting for a decision from you",
+    "ceiling": "Cannot be improved",
+    "self_heals": "Fills in by itself over time",
+    "none": "Complete",
+}
+
+
+def _gap_kind(row: dict) -> str:
+    """The row's gap kind when it is one of the six, else ``""`` — so a class never comes from data."""
+    kind = str(row.get("gap_kind") or "")
+    return kind if kind in GAP_WORDS else ""
+
+
+def _what_is_missing(row: dict) -> str:
+    """The measured hole in plain words, from the coverage record alone.
+
+    ``nothing, by design`` for a retired dataset; ``the coverage query failed`` for a failed read;
+    ``the coverage could not be read`` when the summary returned no ``Health``; ``no population is
+    defined`` when the record carries no denominator; otherwise ``N of M names have no row``, with
+    ``N`` zero at full coverage.
+    """
+    if row.get("retired"):
+        return "nothing, by design"
+    coverage = row.get("coverage") or {}
+    label = str(coverage.get("label") or "").strip()
+    if label == "error":
+        return "the coverage query failed"
+    expected, covered = coverage.get("expected"), coverage.get("covered")
+    if coverage.get("fraction") is None or expected is None or covered is None:
+        return "the coverage could not be read" if label == "unknown" else "no population is defined"
+    missing = max(int(expected) - int(covered), 0)
+    return f"{missing:,} of {int(expected):,} names have no row"
+
+
+def _how_it_improves(row: dict) -> str:
+    """The gap kind in words plus its next step; ``—`` when nothing is written down for the row.
+
+    A ``ceiling``'s next step IS its reason, so the two read as one sentence: "Cannot be improved:
+    <reason>".
+    """
+    kind = _gap_kind(row)
+    if not kind:
+        return DASH
+    words = GAP_WORDS[kind]
+    step = str(row.get("next_step") or "").strip()
+    if kind == "ceiling":
+        return f"{words}: {step}" if step else words
+    return f"{words}. {step}" if step else words
+
+
+def _gap_chip(row: dict) -> str:
+    """The tag beside the dataset name: the kind's words, and a class from the six, never from data."""
+    kind = _gap_kind(row)
+    if not kind:
+        return ""
+    return f'<span class="gap gap-{kind}">{_html.escape(GAP_WORDS[kind])}</span>'
+
+
 def _detail_row(row: dict, row_id: str, errors: list[dict]) -> str:
-    """One dataset's store tables, writer, action, freshness note and notes: closed until its name
-    is pressed."""
+    """One dataset's gap, store tables, writer, action, freshness note and notes: closed until its
+    name is pressed."""
     tables = ", ".join(_html.escape(str(t)) for t in (row.get("tables") or []))
     note = str(row.get("note") or "").strip()
     return (
         f'<tr class="detail" id="det-{_html.escape(row_id, quote=True)}" hidden>'
         '<td colspan="7">'
+        f'<div class="dline"><b>What is missing</b>{_html.escape(_what_is_missing(row))}</div>'
+        f'<div class="dline"><b>How it improves</b>{_html.escape(_how_it_improves(row))}</div>'
         f'<div class="dline"><b>Store table(s)</b><span class="tbl">{tables or DASH}</span></div>'
         f'<div class="dline"><b>Writer</b>{_writer_cell(row)}</div>'
         f'<div class="dline"><b>Action</b>{_action_cell(row)}</div>'
@@ -1204,6 +1281,9 @@ def _table(rows: list[dict], errors: list[dict] | None = None) -> str:
         pill = _db_pill(row.get("db"))
         if pill:
             pill = " " + pill
+        chip = _gap_chip(row)
+        if chip:
+            chip = " " + chip
         body.append(
             f'<tr class="row" id="row-{rid}" data-order="{order}"'
             f" {_attr('data-db', _db_of(row))}"
@@ -1211,7 +1291,7 @@ def _table(rows: list[dict], errors: list[dict] | None = None) -> str:
             f" {_attr('data-state', '|'.join(_states_of(row, errors)))}>"
             f'<td><button type="button" class="det-btn" aria-expanded="false" '
             f'aria-controls="det-{rid}">'
-            f'{_html.escape(str(row.get("label") or row.get("key") or ""))}</button>{pill}{mark}</td>'
+            f'{_html.escape(str(row.get("label") or row.get("key") or ""))}</button>{pill}{chip}{mark}</td>'
             f"<td>{source}</td>"
             f"<td>{coverage}</td>"
             f"<td>{fresh}</td>"

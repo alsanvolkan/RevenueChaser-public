@@ -2316,3 +2316,130 @@ def test_every_registry_source_is_spelled_out_in_words():
         assert words != source.value
         assert len(words) > 3
     assert report.source_words("something-new") == "something-new"
+# ── G11 of the GUI brief (#124): what is missing, and how it improves ───────────────────────
+def _detail_text(html: str, key: str) -> str:
+    import re
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", _detail_row(html, key))).strip()
+
+
+def test_what_is_missing_is_computed_from_the_coverage_counts():
+    """The number is measured, never written in the registry: expected minus covered."""
+    html = _cov_table({"covered": 812, "expected": 905, "fraction": 812 / 905,
+                       "label": "812 / 905 (90%)", "newest": None, "problems": []},
+                      gap_kind="needs_decision", next_step="Decide the population.")
+    detail = _detail_text(html, "quotes")
+    assert "What is missing" in detail
+    assert "93 of 905 names have no row" in detail
+
+
+def test_what_is_missing_at_full_coverage_is_zero_of_the_population():
+    html = _cov_table({"covered": 905, "expected": 905, "fraction": 1.0,
+                       "label": "905 / 905 (100%)", "newest": None, "problems": []},
+                      gap_kind="none")
+    detail = _detail_text(html, "quotes")
+    assert "0 of 905 names have no row" in detail
+
+
+def test_what_is_missing_says_no_population_is_defined_when_expected_is_none():
+    html = _cov_table({"covered": 6084, "expected": None, "fraction": None,
+                       "label": "n/a", "newest": None, "problems": []},
+                      gap_kind="fixable", next_step="Join the universe count.")
+    detail = _detail_text(html, "quotes")
+    assert "no population is defined" in detail
+    assert "names have no row" not in detail
+
+
+def test_what_is_missing_says_the_coverage_query_failed():
+    html = _cov_table({"label": "error", "fraction": None, "covered": None, "expected": None,
+                       "newest": None, "problems": ["the summary could not read the store"]},
+                      gap_kind="fixable", next_step="Fix the summary.")
+    detail = _detail_text(html, "quotes")
+    assert "the coverage query failed" in detail
+    assert "no population is defined" not in detail
+
+
+def test_a_retired_row_says_nothing_is_missing_by_design():
+    html = _cov_table({"label": "n/a", "fraction": None, "covered": None, "expected": None,
+                       "newest": None, "problems": []}, retired=True)
+    detail = _detail_text(html, "quotes")
+    assert "nothing, by design" in detail
+
+
+def test_how_it_improves_speaks_the_kind_and_carries_the_next_step():
+    html = _cov_table({"covered": 812, "expected": 905, "fraction": 812 / 905,
+                       "label": "812 / 905 (90%)", "newest": None, "problems": []},
+                      gap_kind="fixable", next_step="Re-run the join after the next pull.")
+    detail = _detail_text(html, "quotes")
+    assert "How it improves" in detail
+    assert "Can be fixed now. Re-run the join after the next pull." in detail
+
+
+def test_a_ceiling_states_its_reason_and_never_a_schedule():
+    reason = "OpenFIGI maps from a CUSIP, so a name with no CUSIP cannot get one on this route."
+    html = _cov_table({"label": "n/a", "fraction": None, "covered": None, "expected": None,
+                       "newest": None, "problems": []},
+                      gap_kind="ceiling", next_step=reason)
+    detail = _detail_text(html, "quotes")
+    assert f"Cannot be improved: {reason}" in detail
+
+
+def test_a_row_with_no_gap_kind_draws_no_chip_and_no_complete_claim():
+    """No kind means nothing is written down, not that the dataset is complete."""
+    html = _cov_table({"label": "n/a", "fraction": None, "covered": None, "expected": None,
+                       "newest": None, "problems": []})
+    assert 'class="gap ' not in _main_row(html, "quotes")
+    detail = _detail_text(html, "quotes")
+    assert "How it improves" in detail and "Complete" not in detail
+
+
+@pytest.mark.parametrize("kind, said", [
+    ("fixable", "Can be fixed now"),
+    ("in_build", "Being built"),
+    ("needs_decision", "Waiting for a decision from you"),
+    ("self_heals", "Fills in by itself over time"),
+    ("none", "Complete"),
+])
+def test_the_name_cell_carries_a_tag_chip_with_the_same_words(kind, said):
+    html = _cov_table({"fraction": None, "label": "n/a"}, gap_kind=kind)
+    main = _main_row(html, "quotes")
+    assert f'<span class="gap gap-{kind}">{said}</span>' in main
+    assert _cells(main)[0] == f"Quotes {said}", "the chip's words sit beside the name"
+
+
+def test_a_ceiling_chip_stays_short_while_the_detail_carries_the_reason():
+    reason = "The source maps from a CUSIP, so a name with no CUSIP cannot get one."
+    html = _cov_table({"fraction": None, "label": "n/a"}, gap_kind="ceiling", next_step=reason)
+    main = _main_row(html, "quotes")
+    assert '<span class="gap gap-ceiling">Cannot be improved</span>' in main
+    assert reason in _detail_text(html, "quotes")
+
+
+def test_a_hostile_next_step_is_escaped_and_a_hostile_kind_never_sets_the_class():
+    bad = "<img src=x onerror=__x(1)>"
+    html = _cov_table({"fraction": None, "label": "n/a"}, gap_kind="fixable", next_step=bad)
+    assert "<img" not in html
+    assert "&lt;img src=x onerror=__x(1)&gt;" in html
+    # A kind outside the six renders no chip and no claim: its class can never come from data.
+    html = _cov_table({"fraction": None, "label": "n/a"}, gap_kind=bad, next_step=bad)
+    assert "<img" not in html
+    assert "gap-" + bad not in html
+    assert 'class="gap ' not in _main_row(html, "quotes")
+
+
+def test_the_cftc_row_says_fresh_but_shallow_and_names_119_without_calling_it_a_failure():
+    """Read through the real registry and ``_attach_registry``, the way the board builds it."""
+    from RevenueChaser.module_settings import inventory
+    row = {"key": "cftc", "label": "CFTC E-mini Commitments of Traders",
+           "tables": ["cftc_cot"], "rows": 2, "last_date": "2026-10-13", "holes": 0,
+           "hole_label": "", "fetch": None, "note": ""}
+    inventory._begin_call()
+    try:
+        inventory._attach_registry([row])
+    finally:
+        inventory._end_call()
+    main = _main_row(report._table([row]), "cftc")
+    assert "Waiting for a decision from you" in main, "the chip carries the kind in words"
+    detail = _detail_text(report._table([row]), "cftc")
+    assert "#119" in detail
+    assert "fresh but shallow" in detail
+    assert "failure" not in detail.lower() and "failed" not in detail.lower()

@@ -425,3 +425,43 @@ def test_the_payload_carries_an_unclaimed_table(rawstore_tmp_db, monkeypatch):
     _leave_unclaimed(monkeypatch, "watchlist")
     assert inventory.collect(now=_NOW)["other_tables"] == [
         {"table": "watchlist", "db": "raw", "rows": 1, "newest": None}]
+
+
+# ── G11 of the GUI brief (#124): what is missing, and how it improves ───────────────────────
+def test_attach_registry_carries_the_gap_kind_and_the_next_step(monkeypatch):
+    """The renderer reads both from the row: the kind as one of its six names, the step as text."""
+    monkeypatch.setitem(datasets._BY_KEY, "quotes", _spec(
+        "quotes", coverage=None, gap_kind=datasets.GapKind.needs_decision,
+        next_step="Decide whether those names belong in the population."))
+    out, _errors = _attach([_row("quotes")])
+    assert out[0]["gap_kind"] == "needs_decision"
+    assert out[0]["next_step"] == "Decide whether those names belong in the population."
+
+
+def test_a_dataset_with_no_gap_carries_none_and_no_invented_text(monkeypatch):
+    monkeypatch.setitem(datasets._BY_KEY, "quotes", _spec(
+        "quotes", coverage=None, gap_kind=None, next_step=None))
+    out, _errors = _attach([_row("quotes")])
+    assert out[0]["gap_kind"] is None and out[0]["next_step"] is None
+
+
+def test_a_row_without_a_spec_gains_no_gap_fields():
+    row = _row("not_in_the_registry")
+    out, _errors = _attach([row])
+    assert "gap_kind" not in row and "next_step" not in row and "retired" not in row
+
+
+def test_the_retired_dataset_is_flagged_so_the_board_can_say_by_design():
+    out, _errors = _attach([_row("retired")])
+    assert out[0]["retired"] is True
+    out, _errors = _attach([_row("quotes")])
+    assert out[0]["retired"] is False
+
+
+def test_cftc_waits_on_a_decision_and_names_the_backfill_issue():
+    """The Commitments of Traders table is fresh but shallow: #119 is how deep to backfill."""
+    out, _errors = _attach([_row("cftc")])
+    row = out[0]
+    assert row["gap_kind"] == "needs_decision"
+    assert "#119" in row["next_step"]
+    assert "fresh but shallow" in row["next_step"]

@@ -1497,13 +1497,23 @@ def _fresh_record(spec: datasets.DatasetSpec, run_dates: dict[str, str] | None =
     return _fresh(FRESH_DATE, date, date)
 
 
+def _retired_dataset(spec: datasets.DatasetSpec) -> bool:
+    """True when every table the dataset owns is MANIFEST ``retired`` (G11: "nothing, by design")."""
+    return all(bool((rawstore.MANIFEST.get(table) or {}).get("retired")) for table in spec.tables)
+
+
 def _attach_registry(rows: list[dict]) -> list[dict]:
-    """Add the registry's source, writer, coverage and freshness to each collected row (S5, #124).
+    """Add the registry's source, writer, coverage, freshness and gap to each collected row (S5, #124).
 
     A row whose key is not in ``datasets.REGISTRY`` keeps everything it carries and gains
     ``source: None`` — the table renders a dash in the three registry cells. Nothing is invented.
 
     The run log is read at most once, and only when a row on this page dates itself by it.
+
+    G11 (#124) adds three facts of its own: ``gap_kind`` (the kind's name or None), ``next_step``
+    (the written sentence, or None) and ``retired`` (every owned table is MANIFEST retired, so the
+    detail row says "nothing, by design"). ``gap_kind`` is None when nothing is written down; the
+    renderer must not read that as complete.
     """
     run_dates: dict[str, str] | None = None
     for row in rows:
@@ -1523,6 +1533,9 @@ def _attach_registry(rows: list[dict]) -> list[dict]:
         row["fresh"] = _fresh_record(spec, run_dates)
         # The registry's own caveat (the #82/#83 wording), shown in the detail row, never invented here.
         row["fresh_note"] = spec.freshness_note
+        row["gap_kind"] = spec.gap_kind.value if spec.gap_kind is not None else None
+        row["next_step"] = spec.next_step
+        row["retired"] = _retired_dataset(spec)
     return rows
 
 
