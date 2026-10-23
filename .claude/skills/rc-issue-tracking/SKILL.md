@@ -6,7 +6,8 @@ description: Track RevenueChaser work on GitHub — open an issue for every slic
 # RevenueChaser issue tracking
 
 The user's rule (2026-09-30): **everything is tracked as a GitHub issue, and every issue
-hangs under an epic as a sub-issue.** Plan files in `.hermes/plans_claude/` stay as the
+hangs under an epic as a sub-issue.** Plan files (`plans_claude/`, in the private repo, not carried
+here) stay as the
 detailed work order and must cite their issue numbers. The GitHub board is the single
 source of truth for status; never keep a local backlog file.
 
@@ -30,33 +31,46 @@ Levels:
 - **Research**: measurements only.
 
 Review happens **one area at a time** via a review packet (see
-`.hermes/plans_claude/2026-09-30_plan_restructure.md` §5). Record each decision with
+`plans_claude/2026-09-30_plan_restructure.md` §5, in the private repo, not carried here). Record each decision with
 `--review`, as a comment on the issue, and as a packet summary on the area epic.
 - Labels: `area:<key>` (exactly one per issue), `epic`, `research`, `bug`, `enhancement`,
   `idea`, `documentation`, `new dashboard`, `missing module`, `priority: high|medium|low`.
 
 ## Hierarchy (at most 3 levels)
 
-`area epic` → `feature / plan epic` → `slice`.
+`epic` → `feature / plan epic` → `slice`.
 
-| Area key | Area epic | Feature epics / notable children |
+The epics are per **board**, not per area key, so several share a key. Each row below is an open issue
+in this repo carrying the `epic` label; read it from the repo rather than trusting this copy, because
+issue numbers are the one thing a table like this gets wrong:
+
+    gh issue list -R alsanvolkan/RevenueChaser-public --label epic --state open
+
+| Epic | Board / scope | `--area` key |
 |---|---|---|
-| `platform-store` | #49 | #21 |
-| `platform-app` | #50 | #22 |
-| `providers` | #51 | #23, #12 |
-| `spine` | #52 | #35 GICS accuracy, #9 |
-| `data-health` | #53 | #36 Settings v2 → #37–#41 |
-| `shared-ui` | #54 | #32 |
-| `classification` | #55 | #29, #31 research → #42, #43 · #33 Value Chain → #34, #61 |
-| `screeners` | #56 | #27, #2, #3, #4, #13, #14 |
-| `market` | #57 | #24, #26, #30, #5, #6, #7 |
-| `earnings` | #58 | #28, #15 |
-| `ownership` | #59 | #25 |
-| `quality` | #60 | #11 |
-| `community` | #79 | #72 Discord ingest + board → #73–#75, #77, #78 |
+| #34 | Inputs: every dashboard data request (D01–D37) | `providers` |
+| #35 | Earnings Radar | `earnings` |
+| #38 | SPX Gamma | `market` |
+| #39 | LEAPS | `ownership` |
+| #40 | Co-movement | `classification` |
+| #41 | Asymmetric Growth | `screeners` |
+| #42 | Settings / Data health | `data-health` |
+| #43 | Common: shared work found in the dashboard reviews | `shared-ui` |
+| #44 | Swing Potential | `screeners` |
+| #45 | Financials | `market` |
+| #46 | Fundamentals | `screeners` |
+| #47 | Value Chain | `classification` |
+| #48 | Relatedness (parked) | `classification` |
+| #49 | Final pass: core + health ledger | `platform-app`, `platform-store`, `quality` |
+| #56 | Sector Rotation: redevelopment, umbrella (parked) | `market` |
+| #70 | Discord (parked) | `community` |
 
-Cross-cutting: **#44 Project structure** → #45 A, #46 B, #47 C, #48 D (no area).
 Pass `--area <key>` to the helper so the label and the board field are both set.
+
+**Two gaps to know about.** Board #1's Area field offers 12 options and has no `community`, so
+`--area community` creates and labels the issue and then exits on `unknown Area 'community'`, leaving
+the Area field unset — use `--label area:community` for Discord work, or add the board option first.
+And `spine` is a board Area option with no epic, so spine work has no parent to attach to.
 
 **Big umbrella issues #22–#30** hold findings as checklists. **Convert an item to a
 sub-issue only when work on it starts** (user decision), not in bulk.

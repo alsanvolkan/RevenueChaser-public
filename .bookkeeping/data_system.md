@@ -232,13 +232,8 @@ Step 2.4 (avo, 2026-10-04 10:06Z): all 28 PC measurements approved as pre-regist
   matches 2.5-5 (one-time yfinance fill). avo confirmed at 10:24Z: continue with yfinance for the history.
 
 Step 2.5 area decisions (one card each, 13 in all):
-- **2.5-1 FRED (avo, 10:08Z): stored anyway.** The FRED series (DGS2-30, T10Y2Y, T10YIE, DCOILWTICO;
-  `module_sector_rotation/universe.py:105-116`) get their own raw table under D4, for personal use, although the
-  FRED terms forbid storing or caching FRED content (project files `phase2/20_doc_pages.md:34`). avo accepts that
-  risk.
-- **2.5-2 Cboe (avo, 10:09Z): stored anyway.** The Cboe `_History.csv` files (VIX family, OVX) get their own raw
-  table under D4, for personal use, although Cboe's terms forbid storing them without written consent
-  (`phase2/20_doc_pages.md:29`). avo accepts that risk.
+- **2.5-1 FRED, 2.5-2 Cboe: decided, recorded in the private repo.** Both series sets get their own raw table
+  under D4. The decision text and its reasoning stay in the private record and are not carried here.
 - **2.5-3 Crypto for #7 (avo, 10:10Z): deferred with #7.** OKX and Deribit (BTC/ETH open interest, funding, DVOL)
   are decided when #7's build is approved; no source work now.
 - **2.5-4 Short interest (avo, 10:11Z): stay on UW.** UW `/short_screener` and interest-float are the primary
@@ -334,7 +329,8 @@ Step 2.7 issue impact (project files `data_sources/study/phase2/07_issue_impact.
 **Open, decided next:** which intermediate (computed) data is kept with history for later backtesting. Raw option
 chains and price candles can be fetched again and are large; computed results mostly cannot be rebuilt for a past
 day because their inputs keep only the latest value (§4). The architecture review of the data backbone
-([2026-10-04](../.hermes/plans_claude/arch/2026-10-04_data_backbone_review.md)) lists the findings and the cards
+(2026-10-04, `plans_claude/arch/2026-10-04_data_backbone_review.md`, which lives in the private repo and is
+not carried here) lists the findings and the cards
 avo answers one at a time; the item list is `data_sources/study/phase3/01_intermediate_inventory.md` in the project
 files (61 items). Each answer is recorded here.
 

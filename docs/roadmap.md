@@ -12,6 +12,9 @@ stale local file. The former `future_ideas/` docs were migrated there.
 - **Statuses (single-select):** `Todo` · `In Progress` · `Done`
 - **Review (single-select):** `Not reviewed` · `Reviewed` · `Approved to build` · `Accepted`.
   Only `Approved to build` may go `In Progress`.
+- **Area (single-select), 12 options:** `platform-store`, `platform-app`, `providers`, `spine`,
+  `data-health`, `shared-ui`, `classification`, `screeners`, `market`, `earnings`, `ownership`,
+  `quality`. There is no `community` option; Discord work carries the `area:community` label only.
 
 Requires the `gh` CLI authenticated to the `alsanvolkan` account with the
 `project` scope (`gh auth status` → scopes must include `project`/`read:project`).

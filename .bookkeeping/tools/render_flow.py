@@ -280,7 +280,7 @@ __SVGCSS__
 def build_md():
     L = ["# Storage flow today", "",
          "Per dataset: the source, the function that writes it, the DuckDB file and table, the key and write rule, and how long the rows stay. "
-         f"Source basis: {AS_OF}; no store read or network call. `:NNNN` = core/rawstore.py manifest line; "
+         f"Source basis: {AS_OF.rstrip().rstrip('.')}; no store read or network call. `:NNNN` = core/rawstore.py manifest line; "
          "R2/C2/O2 = lineage v2 rows; uw.py = core/providers/unusual_whales.py. Page view: see the RevenueChaser Data Flow artifact.", "",
          "**Write rules:** " + "; ".join(f"`{k}` = {v}" for k, v in MODES.items()) + ".", ""]
     L.append("## Store files"); L.append("")
