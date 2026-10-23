@@ -1,7 +1,7 @@
 """SEC adapters: the ticker/exchange map and per-CIK filing summaries.
 
 Both go through :mod:`core.providers.sec_edgar` so they share its User-Agent, the
-process-wide <= 10 req/s throttle (``www.sec.gov`` and ``data.sec.gov`` share the limit),
+process-wide <= 10 req/s throttle (since #26 PL6-b a cross-process 8/s bucket, burst 2, in front of it) (``www.sec.gov`` and ``data.sec.gov`` share the limit),
 the 429/5xx backoff, and the ``RC_SEC_WWW_BASE`` / ``RC_SEC_DATA_BASE`` overrides.
 
 ``exchange_map`` is refreshed every run (it is what keeps new listings and delistings
