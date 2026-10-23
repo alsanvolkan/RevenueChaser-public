@@ -523,7 +523,7 @@ visibility**, not another crawler.
 Run: `python -m RevenueChaser.module_value_chain --sync-filings [--limit N] [--force] [--floor M | --tickers A,B]`.
 `--floor` (USD millions) or `--tickers` choose the names (#108 S0); without either it covers the $300M
 classification universe, and the submissions sweep every universe CIK.
-Cost: one submissions call per CIK at 10 req/s, archive GETs only on mismatch.
+Cost: one submissions call per CIK at 8 req/s (shared bucket), archive GETs only on mismatch.
 
 What to add:
 

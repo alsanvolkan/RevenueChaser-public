@@ -60,7 +60,7 @@ def _log_once(kind: str, message: str, *args) -> None:
     if kind in _LOGGED:
         return
     _LOGGED.add(kind)
-    logger.info(message, *args)
+    logger.warning(message, *args)   # no SEC CLI sets up logging: INFO would vanish in exactly the second process
 
 
 def _burst(rate: float) -> float:

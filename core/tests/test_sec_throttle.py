@@ -300,9 +300,9 @@ def test_uncontended_burst_stays_cheap(monkeypatch, tmp_path):
     for _ in range(n):
         assert sec_throttle.pace() is True
     elapsed = time.perf_counter() - started
-    # Today's in-process take is microseconds. Half a second for the whole burst is
-    # generous, and still fails if each take sleeps an interval (8 * 0.125s = 1s).
-    assert elapsed < 0.5, f"burst of {n} took {elapsed:.3f}s"
+    # Today's in-process take is microseconds. 0.05 s for the whole burst still fails if each take
+    # sleeps an interval (2 * 0.125 s = 0.25 s).
+    assert elapsed < 0.05, f"burst of {n} took {elapsed:.3f}s"
 
 
 def test_every_sec_request_takes_one_shared_token(monkeypatch):

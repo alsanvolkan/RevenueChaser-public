@@ -52,7 +52,7 @@ SEC_DATA_BASE = os.getenv("RC_SEC_DATA_BASE") or "https://data.sec.gov"
 # SEC fair-use throttle. Both hosts share the limit (www.sec.gov and data.sec.gov).
 # Every caller goes through ``_throttle`` (``get_json`` / ``get_text`` / ``get_bytes``,
 # and the bulk download, which calls ``_throttle`` itself). That spends one token from
-# the cross-process bucket (``sec_throttle``, 8/s, burst 8). When the shared file cannot
+# the cross-process bucket (``sec_throttle``, 8/s, burst 2). When the shared file cannot
 # be used, the in-process bucket below is the fallback — it never fails the request.
 # The in-process interval stays at 10/s, the fair-access ceiling, and only runs then (never on top of the shared bucket).
 _throttle_lock = threading.Lock()
