@@ -26,7 +26,7 @@ import duckdb
 import numpy as np
 import pandas as pd
 
-from RevenueChaser.core import calendar, job_lock, ledger, rawstore
+from RevenueChaser.core import calendar, job_control, job_lock, ledger, rawstore
 from RevenueChaser.core.providers.ohlc import regular_session_bars
 from RevenueChaser.core.rotation_reference import ROTATION_ETFS
 
@@ -991,6 +991,9 @@ def ensure_daily_bars(tickers=None, *, uw, yf_download=None, now=None, run_id=No
         chunk_set = [t for t in scope if t in due_set or t in actions_due]
         pairs: list[tuple[dict, dict]] = []      # the whole run's overlap, so median/p90 cover every chunk
         for chunk in _chunks(chunk_set, CHUNK):
+            # Before the chunk's UW/yfinance calls and its one atomic write. A stop leaves the previous chunk
+            # committed and this one unstarted (#26 PL4).
+            job_control.checkpoint(f"daily bars {chunk[0]}")
             pairs += _process_chunk(chunk, due_set=due_set, uw=uw, dl=dl, latest=latest,
                                     last=last, action_marks=action_marks, reference=reference,
                                     stamp=stamp, rid=rid, run_at=run_at, res=res,
@@ -1004,6 +1007,7 @@ def ensure_daily_bars(tickers=None, *, uw, yf_download=None, now=None, run_id=No
         new_fill = cls["no_hist"][:max_new_fill]
         res["awaiting_fill"] = len(cls["no_hist"]) - len(new_fill)
         if new_fill:
+            job_control.checkpoint(f"daily bars fill {new_fill[0]}")
             _fill_batch(new_fill, dl=dl, latest=latest, reference=reference, stamp=stamp,
                         rid=rid, run_at=run_at, res=res, mark_fill=True)
         return res
