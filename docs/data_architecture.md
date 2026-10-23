@@ -453,15 +453,16 @@ worker thread writes while Flask request threads read. So:
   process. `app/jobs.py:run_id()` returns the running job's id (else a fresh one); it is per thread, so a writer
   captures it once on the runner thread and passes it down. `app/jobs.py` is the only writer of a dashboard job's
   row, and an upsert sets every column, so a value for `trigger`, `source`, `registry_name` or `counts`
-  must travel through the job dict (#83 adds it), not be written to the table directly. The write waits at
+  must travel through the job dict (#83), not be written to the table directly. The write waits at
   most ~0.35 s for a store another process holds (`rawstore.brief_wait`); a skipped or failed write is a
   `job_runs: could not record` warning in the Server log and never changes the job's outcome. So a row can
   stay `running` when the server stopped mid-job, when an end write was skipped, or when the job was evicted
-  from the registry first. **Judging such a row as interrupted — `running` with a `pid` that is not the
-  current dashboard — is deferred to #82**, which owns the restart and pid-reuse cases that make the test
-  unreliable on its own; nothing reconciles one today. The reader is the **Runs** tab (`app/runview.py`,
-  `/view/runs`, `GET /api/runs`, #26 PL5-b), and until #82 lands it lists such a row as running with its
-  age instead of deciding: it derives nothing from `pid`, and a row with no `trigger` shows none (#83).
+  from the registry first. `app/jobs.reconcile_lost_runs` (#82) closes such a row as `lost`
+  (no `finished_at`, outcome unknown) when its `pid` names no process, or when it is older than its bound
+  (the module's `deadline_s`, else the scheduled task's time limit, else 6 h) and the pid is gone or reused;
+  it runs at dashboard start and at the start of a scheduled writer. The reader is the **Runs** tab
+  (`app/runview.py`, `/view/runs`, `GET /api/runs`, #26 PL5-b); it derives nothing from `pid`, and a row
+  from before #83 shows no `trigger`.
   Every job now opens the store twice, including jobs that never used it (Money flow, queued after each
   Rotation Fetch).
 - **A scheduled task that writes tables leaves a `job_runs` row too (#129 A1).** `core/automations.run_task` runs
@@ -732,7 +733,7 @@ schema, reachable with path expressions like `payload.market_cap::DOUBLE`).
 | `relatedness_themes` / `relatedness_theme_tags` / `relatedness_theme_members` / `relatedness_theme_etfs` | `theme_id` (run id is its prefix), `level`, `parent_id`, `label`, `size` / `tag`, `rank` / `ticker`, `weight` / `etf`, `overlap`, `rank` | — |
 | `theme_runs` | `id`, `created_at`, `k_fine`, `k_medium`, `k_coarse`, `jaccard`, `is_current`, `session_date DATE`, `run_at DOUBLE` (schema 11) | — |
 | `llm_cache` | `cache_key`, `ticker`, `cik`, `model`, `thinking`, `effort`, `prompt_version`, `input_hash`, `fetched_at`, `status` | `response` |
-| `job_runs` | `run_id`, `job_id`, `module`, `lane`, `trigger`, `source`, `pid`, `registry_name`, `queued_at DOUBLE`, `started_at DOUBLE`, `finished_at DOUBLE`, `status` (`queued`/`running`/`done`/`error`/`cancelled`, the `app/jobs.py` vocabulary), `error`, `message` | `params`, `counts` |
+| `job_runs` | `run_id`, `job_id`, `module`, `lane`, `trigger`, `source`, `pid`, `registry_name`, `queued_at DOUBLE`, `started_at DOUBLE`, `finished_at DOUBLE`, `status` (`queued`/`running`/`done`/`error`/`cancelled`/`lost`, the `app/jobs.py` vocabulary), `error`, `message` | `params`, `counts` |
 | `run_registry` | `key`, `value` | — |
 | `sec13f_security_meta` | `ticker`, `fetched_at DOUBLE` (#127; NULL on older rows is unknown, never 0) | `entry` (`{name, sector, type}`) |
 | `sec13f_enrichment` | `ticker` | `entry` (`{price{period: close}, …}`) |
