@@ -63,6 +63,10 @@ VOL_RATIO_MIN = 1.4   # volume-ratio floor; the band we accept is ~1.4-1.6x
 RND_INTENSITY_MIN = 0.15
 DILUTION_WARN = 0.20
 TIER_MIN_PASSES = 2   # a signal counts toward the tier with at least 2 of its 3 sub-criteria passed (#380 S2)
+# #41 (#66 checkbox 5): reporting only — a scored name under this average daily dollar volume (price * vol_90d) is
+# counted in the run summary. A reporting-only default chosen by Claude, not the owner's number; it gates nothing.
+THIN_DOLLAR_VOLUME = 250_000
+EDGAR_SOURCE = "sec_edgar"   # ``financials["source"]`` when EDGAR supplied the annual figures (the card keeps it)
 
 # Market-cap filtre kovaları (varsayılan aralık + 5 kova)
 DEFAULT_MC_RANGE = (50_000_000, 5_000_000_000)
@@ -495,7 +499,7 @@ def _cached_financials(ticker: str, no_fetch: bool = False, preload: dict | None
 
     if edgar_annual:
         financials["annual"] = edgar_annual
-        financials["source"] = "sec_edgar"
+        financials["source"] = EDGAR_SOURCE
         info = financials.get("info") or {}
         if edgar_meta.get("is_us") is False:
             info["country"] = "Foreign"
@@ -570,12 +574,17 @@ def _preload(tickers: list[str], no_fetch: bool, session: date | None = None) ->
 
 
 class _Drops:
-    """Why names got no card, by reason (#150 / #232): the funnel's drop steps. Thread-safe."""
+    """Why names got no card, by reason (#150 / #232): the funnel's drop steps. Thread-safe.
+
+    It also carries the run's reporting notes (#41, #260 C15) — ``info_refetch_failed`` and the scored names under
+    ``THIN_DOLLAR_VOLUME`` — which are counted in the summary and never enter the drop arithmetic.
+    """
 
     def __init__(self):
         self._lock = threading.Lock()
         self.by_reason: dict[str, list[str]] = {}
         self.info_refetch_failed = 0   # a refetch that answered nothing (stale or none, #260 C15)
+        self.thin: list[str] = []      # scored names under THIN_DOLLAR_VOLUME (#41): a note, never a drop
 
     def add(self, reason: str, ticker: str) -> None:
         with self._lock:
@@ -585,6 +594,11 @@ class _Drops:
         """A ``stale`` or ``none`` info refetch, counted once per name so the run summary can report it."""
         with self._lock:
             self.info_refetch_failed += 1
+
+    def note_thin(self, ticker: str) -> None:
+        """A scored name whose ``price * vol_90d`` is under ``THIN_DOLLAR_VOLUME``: reported, never dropped."""
+        with self._lock:
+            self.thin.append(ticker)
 
 
 def _technical_for(ticker: str, financials: dict, meta: dict, preload: dict | None) -> dict:
@@ -606,6 +620,15 @@ def _technical_for(ticker: str, financials: dict, meta: dict, preload: dict | No
         technical["price"] = (to_float(financials.get("current_price")) or to_float(meta.get("price"))
                               or to_float(quote.get("regularMarketPrice")))
     return technical
+
+
+def _is_thin(price, vol_90d) -> bool:
+    """True when ``price * vol_90d`` is under ``THIN_DOLLAR_VOLUME`` (#41).
+
+    Unknown inputs (no price, no 90-day volume) are UNTESTED, never thin: the name is counted nowhere, because
+    calling a name whose volume nobody read "thin" would be a lie.
+    """
+    return price is not None and vol_90d is not None and price * vol_90d < THIN_DOLLAR_VOLUME
 
 
 def enrich_and_score(ticker: str, meta: dict, no_fetch: bool = False,
@@ -647,7 +670,12 @@ def enrich_and_score(ticker: str, meta: dict, no_fetch: bool = False,
     scored_meta = earnings_dates.with_stored_date({**meta, "ticker": ticker}, stored)
     card = score_ticker(ticker, financials, technical, scored_meta, spine,
                         pinned_themes=preload["themes"] if preload is not None else None, as_of=as_of)
-    return card if card is not None else dropped("foreign")
+    if card is None:
+        return dropped("foreign")
+    # #41: the one place the technical inputs are in hand for a scored name (the card does not carry vol_90d).
+    if drops is not None and _is_thin(technical.get("price"), technical.get("vol_90d")):
+        drops.note_thin(ticker)
+    return card
 
 
 # Funnel steps in the order a name can leave: (key, label, by design). ``excluded_types`` and the scorer's own
@@ -662,11 +690,16 @@ _DROP_STEPS = (
 
 
 def _funnel_steps(universe_total: int, excluded_types: int, drops: _Drops, score_errors: dict[str, list[str]],
-                  scored: int) -> list[dict]:
+                  scored: int, low_liquidity: int | None = 0, unreadable_sec: int = 0) -> list[dict]:
     """The shared-format funnel (``core.funnel``): universe, then every reason a name has no card, then scored.
 
     The drops sum to ``universe_total - scored`` by construction: whatever no reason accounts for is shown as
     ``unrecorded`` instead of vanishing. A reason with no names has no row.
+
+    ``low_liquidity`` and ``unreadable_sec`` (#41) are ``note`` steps, never drops: those names HAVE a card, so
+    counting them as drops would break the arithmetic above and misstate the board. They overlap each other by
+    design, and ``low_liquidity`` is ``None`` where no liquidity basis was read — an unknown note is left out
+    rather than shown as 0.
     """
     step = funnel_mod.step
     steps = [step("universe", "Universe, all market caps", universe_total, "start")]
@@ -688,6 +721,12 @@ def _funnel_steps(universe_total: int, excluded_types: int, drops: _Drops, score
     rest = universe_total - accounted - scored
     if rest > 0:
         steps.append(step("unrecorded", "Not scored, reason not recorded", rest, "drop", by_design=False))
+    if low_liquidity:
+        steps.append(step("low_liquidity", f"Scored, under ${THIN_DOLLAR_VOLUME:,} average daily dollar volume",
+                          low_liquidity, "note"))
+    if unreadable_sec:
+        steps.append(step("unreadable_sec", "Scored, but the financials are Yahoo statements, not EDGAR filings",
+                          unreadable_sec, "note"))
     steps.append(step("scored", "Scored (a card on the board)", scored, "result"))
     return steps
 
@@ -757,7 +796,21 @@ def scored_before(cards: list[dict]) -> bool:
 
 
 def _summary(cards: list[dict], excluded_types: int | None, score_errors: dict[str, int],
-             info_refetch_failed: int = 0) -> dict:
+             info_refetch_failed: int = 0, thin: list[str] | None = None) -> dict:
+    """The run's counts. ``thin`` is the batch's low-liquidity note (``_Drops.thin``, #41).
+
+    ``low_liquidity`` and ``unreadable_sec`` answer two independent questions — is this name too thin to read, and
+    were its financials read from EDGAR — so they OVERLAP by design: a thin Yahoo-sourced name is in both. The
+    "counted once" rule belongs to drops, which have to sum to the universe; ``core.funnel.validate`` sums only
+    ``kind == "drop"``, so excluding one note from the other would buy no arithmetic and would instead make
+    ``unreadable_sec`` answer a different question than its label asks (#106 review).
+
+    A summary counted from cards alone (a Refresh with no stored header) has no liquidity basis, so its
+    ``low_liquidity`` is ``None`` (unknown) and never 0: the cards do not carry ``vol_90d``, and a board that prints
+    0 for a figure nobody measured is making a claim. ``unreadable_sec`` is a card property, so it is counted on
+    that path too — and it is the same number there as on a Fetch, which the exclusion would have broken.
+    """
+    thin_names = set(thin or ())
     return {
         "scanned": len(cards),
         "excluded_types": excluded_types,
@@ -776,6 +829,11 @@ def _summary(cards: list[dict], excluded_types: int | None, score_errors: dict[s
         "score_errors": sum(score_errors.values()),
         "score_error_types": score_errors,
         "info_refetch_failed": info_refetch_failed,   # #260 C15: a stale or empty Yahoo refetch
+        # #41: reporting only, and the two overlap on purpose (a thin Yahoo-sourced name is in both) — each one
+        # answers its own question. The names that got no card for a filings reason (``no_annual`` /
+        # ``fetch_failed``) are drops and are not counted here.
+        "low_liquidity": None if thin is None else sum(1 for c in cards if c["ticker"] in thin_names),
+        "unreadable_sec": sum(1 for c in cards if c.get("source") != EDGAR_SOURCE),
     }
 
 
@@ -901,7 +959,7 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     from RevenueChaser.core.index_registry import annotate_cards
     annotate_cards(cards)
 
-    summary = _summary(cards, len(universe) - len(to_score), score_errors, drops.info_refetch_failed)
+    summary = _summary(cards, len(universe) - len(to_score), score_errors, drops.info_refetch_failed, drops.thin)
 
     result = {
         "asof": datetime.now(timezone.utc).isoformat(),
@@ -910,7 +968,8 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
         "universe_generated_at": u_stats.get("universe_generated_at"),
         "universe_refreshed_by": u_stats.get("universe_refreshed_by"),
         "universe_partial": bool(u_stats.get("partial")),
-        "funnel_steps": _funnel_steps(len(universe), summary["excluded_types"], drops, error_tickers, len(cards)),
+        "funnel_steps": _funnel_steps(len(universe), summary["excluded_types"], drops, error_tickers, len(cards),
+                                      summary["low_liquidity"], summary["unreadable_sec"]),
         "summary": summary,
         "cards": cards,
         "thresholds": THRESHOLDS,

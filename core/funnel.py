@@ -113,7 +113,10 @@ def funnel_panel_html(steps, *, panel_id: str = "funnel-panel",
             more = st["count"] - len(st["tickers"])
             names = (f'<div class="note">{esc(", ".join(st["tickers"]))}'
                      f'{esc(f" and {more} more" if more > 0 else "")}</div>')
-        sign = "" if st["kind"] in ("start", "result") else "&minus;"
+        # Only a ``drop`` subtracts. A ``note`` counts names that are still in the result, so a minus sign there
+        # would read as a removal. #41 is this panel's first note ROW, and a positive number is already the
+        # convention for the kind: ``module_comovement`` renders its own note as "Shown, never counted".
+        sign = "&minus;" if st["kind"] == "drop" else ""
         design = "" if st["kind"] != "drop" else (" by design" if st.get("by_design") else " needs a look")
         rows.append(f'<tr><td>{esc(st["label"])}{names}</td><td>{sign}{esc(st["count"])}</td>'
                     f'<td>{esc(design.strip())}</td></tr>')
