@@ -93,9 +93,9 @@ def test_the_params_come_back_as_an_object():
 
 
 def test_only_the_columns_the_page_shows_are_read():
-    """The payload travels on every poll, and a column with no reader is weight. ``counts`` also has no
-    writer — neither app/jobs._record nor core/automations.run_task passes it (#83), so reading it would
-    ship a NULL every time; it comes back with the writer."""
+    """The payload travels on every poll, and a column with no reader is weight. ``counts`` is written
+    only when a runner returns a counts dict (none does; core/automations.run_task passes none), so reading
+    it would ship a NULL every time; it comes back with a runner that returns counts."""
     _write(_row("k", counts={"rows": 12}))
     row = runview.read()["rows"][0]
     assert set(row) == {"run_id", "module", "source", "trigger", "params", "queued_at", "started_at",

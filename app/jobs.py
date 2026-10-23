@@ -310,7 +310,8 @@ def reconcile_lost_runs(*, now: float | None = None) -> int:
 
 
 def _reconcile_lost_runs(now: float) -> int:
-    with rawstore.brief_wait():     # a start at backup time must not freeze for the full retry budget
+    with rawstore.brief_wait():     # harmless, but a read waits the full reader budget: if a peer holds the
+                                    # store, startup can wait ~29 s (open)
         rows = rawstore.query(
             "SELECT run_id, module, pid, started_at, queued_at FROM job_runs WHERE status = 'running'")
     if not rows:
