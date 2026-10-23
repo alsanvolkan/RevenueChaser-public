@@ -691,6 +691,15 @@
     "quality": 3,
     "rule_of_40": 4
    },
+   "provider_health": {
+    "auth_error": null,
+    "breaker_open": false,
+    "calls": 0,
+    "failed": 0,
+    "failures": [],
+    "provider": "SEC EDGAR",
+    "skipped_calls": 0
+   },
    "regime": "RISK-ON",
    "selection_version": "6",
    "summary": {
@@ -2043,6 +2052,36 @@
     "minervini": 4,
     "qullamaggie": 0,
     "weinstein": 0
+   },
+   "provider_health": {
+    "auth_error": null,
+    "breaker_open": false,
+    "calls": 5,
+    "failed": 5,
+    "failures": [
+     {
+      "endpoint": "BELOW50.info",
+      "error": "empty"
+     },
+     {
+      "endpoint": "DOWN1.info",
+      "error": "empty"
+     },
+     {
+      "endpoint": "FAR.info",
+      "error": "empty"
+     },
+     {
+      "endpoint": "NOEDGAR.info",
+      "error": "empty"
+     },
+     {
+      "endpoint": "UP2.info",
+      "error": "empty"
+     }
+    ],
+    "provider": "yfinance",
+    "skipped_calls": 0
    },
    "regime": "RISK-ON",
    "selection_version": "4",

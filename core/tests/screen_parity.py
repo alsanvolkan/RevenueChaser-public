@@ -191,7 +191,10 @@ def snapshot() -> dict:
     """A Fetch on both boards, and the rows each Fetch persisted."""
     out: dict = {}
     for name, mod in (("swing", sp), ("fundamentals", fp)):
-        fetch = mod.run_scan()
-        out[name] = {"fetch": _norm(fetch),
+        fetch = _norm(mod.run_scan())
+        health = fetch.get("provider_health")
+        if health and health.get("failures"):   # the worker pool reports failures in completion order
+            health["failures"] = sorted(health["failures"], key=lambda f: str(f.get("endpoint")))
+        out[name] = {"fetch": fetch,
                      "tables": {t: _table(t) for t in TABLES[name]}}
     return out

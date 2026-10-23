@@ -25,6 +25,10 @@ it drives changed. Then ``json.dumps(payloads())`` was written.
 #379 review RB-8 regenerated it once more: a Fetch downloads no prices, so the ``no_prices`` and ``missing_bars``
 funnel steps carry ``fix`` = null instead of "Fetch prices". Compared key by key with the old golden: exactly those
 8 ``fix`` values differ (4 cases x 2 steps), nothing else. Then ``json.dumps(payloads())`` was written.
+
+Data Health S11 (#80, #124) regenerated it once more: every payload gains the additive ``provider_health`` key for
+the provider-health banner. Compared with the old golden with ``provider_health`` removed: no key differed (floats
+within the 1e-9 tolerance). Then ``json.dumps(payloads())`` was written.
 """
 from __future__ import annotations
 
