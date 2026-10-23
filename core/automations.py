@@ -465,8 +465,8 @@ class WindowsScheduler(Scheduler):
              if e.days else f"$tr = New-ScheduledTaskTrigger -Daily -At {_ps_quote(e.time)}"),
             f"$s = New-ScheduledTaskSettingsSet {' '.join(flags)}"
             f" -ExecutionTimeLimit (New-TimeSpan -Hours {int(s.time_limit_hours)})"
-            f" -RestartCount {int(s.restart_count)}"
-            f" -RestartInterval (New-TimeSpan -Minutes {int(s.restart_minutes)})",
+            + (f" -RestartCount {int(s.restart_count)}"
+               f" -RestartInterval (New-TimeSpan -Minutes {int(s.restart_minutes)})" if s.restart_count else ""),
             "$p = New-ScheduledTaskPrincipal"
             " -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
             f" -LogonType {logon}",
