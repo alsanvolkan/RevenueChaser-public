@@ -1044,6 +1044,65 @@ def test_the_drill_shows_zero_d01_and_the_legacy_count_under_its_label():
             '<span class="dval">4 bars · newest 2026-02-02</span>' in html)
 
 
+def test_the_drill_lists_the_five_scoring_datasets_with_their_newest_date():
+    """S10 (#126): bars, quote, vendor statements, EDGAR facts and ownership, in plain English."""
+    html = _drill_rows({
+        "ticker": "MU", "name": "Micron",
+        "presence": {
+            "price_bars_daily": {"bars": 2, "newest": "2026-02-02"},
+            "quote_snapshot": {"rows": 1, "newest": "2026-10-20", "source": "uw"},
+            "vendor_financials": {"rows": 2, "newest": "2026-06-04"},
+            "edgar_financials": {"periods": 2, "newest": "2026-08-27"},
+            "ownership_snapshot": {"rows": 1, "newest": "2026-10-21", "source": "yfinance"},
+        },
+    })
+    assert ('<span class="dlbl">Daily price bars</span>'
+            '<span class="dval">2 bars · newest 2026-02-02</span>' in html)
+    assert ('<span class="dlbl">Quote</span>'
+            '<span class="dval">1 row · newest 2026-10-20 · uw</span>' in html)
+    assert ('<span class="dlbl">Vendor financials</span>'
+            '<span class="dval">2 rows · newest 2026-06-04</span>' in html)
+    assert ('<span class="dlbl">EDGAR facts</span>'
+            '<span class="dval">2 periods · newest 2026-08-27</span>' in html)
+    assert ('<span class="dlbl">Ownership</span>'
+            '<span class="dval">1 row · newest 2026-10-21 · yfinance</span>' in html)
+
+
+def test_the_drill_says_which_scoring_dataset_has_no_row():
+    html = _drill_rows({
+        "name": "NVDA",
+        "presence": {
+            "price_bars_daily": {"bars": 1, "newest": "2026-02-02"},
+            "quote_snapshot": {"rows": 0, "newest": None, "source": None},
+            "vendor_financials": {"rows": 0, "newest": None},
+            "edgar_financials": {"periods": 0, "newest": None},
+            "ownership_snapshot": {"rows": 0, "newest": None, "source": None},
+        },
+    })
+    assert ('<span class="dlbl">Quote</span><span class="dval">no quote stored</span>' in html)
+    assert ('<span class="dlbl">Vendor financials</span>'
+            '<span class="dval">no vendor statements stored</span>' in html)
+    assert ('<span class="dlbl">EDGAR facts</span><span class="dval">no facts stored</span>' in html)
+    assert ('<span class="dlbl">Ownership</span><span class="dval">no ownership stored</span>' in html)
+
+
+def test_the_drill_shows_the_identifiers_at_the_top():
+    html = _drill_rows({"ticker": "MU", "cik": "0000723125", "figi": "BBG000BLNNH6",
+                        "cusip": "n/a", "isin": "n/a", "presence": {}})
+    assert ('<span class="dlbl">CIK</span><span class="dval">0000723125</span>' in html)
+    assert ('<span class="dlbl">FIGI</span><span class="dval">BBG000BLNNH6</span>' in html)
+    # The columns arrive in a later PR: the drill says n/a rather than pretending there is no value.
+    assert ('<span class="dlbl">CUSIP</span><span class="dval">n/a</span>' in html)
+    assert ('<span class="dlbl">ISIN</span><span class="dval">n/a</span>' in html)
+
+
+def test_the_drill_escapes_a_hostile_identifier():
+    bad = "<img src=x onerror=__x(1)>"
+    html = _drill_rows({"ticker": "MU", "cik": bad, "figi": bad, "cusip": bad, "isin": bad,
+                        "presence": {}})
+    assert "<img" not in html and html.count("&lt;img") == 4
+
+
 def test_the_drill_shows_the_sector_and_the_industry_text():
     """#266: Sector and Industry rows; the industry group and sub-industry rows are gone."""
     html = _drill_rows({"name": "Micron", "sector": "Technology", "industry": "Semiconductors",

@@ -12,7 +12,7 @@ import json
 import threading
 from datetime import datetime, timezone
 
-from RevenueChaser.core import automations, rawstore
+from RevenueChaser.core import automations, fiscal_year, rawstore
 from RevenueChaser.core.gics_map import canonical_sector
 from RevenueChaser.core.identity import refresh as identity_refresh
 from RevenueChaser.core.identity import types as identity_types
@@ -23,6 +23,8 @@ from RevenueChaser.module_settings import boards
 from RevenueChaser.core.universe import DEFAULT_MC_MIN, classification_universe
 
 DASH = "—"
+# The drill's value for a security_master column this store does not carry yet (CUSIP / ISIN arrive later).
+IDENTIFIER_NA = "n/a"
 # The Settings banner reads this board's last recorded run (#80). Settings itself makes no provider call.
 BOARD = "module_settings"
 # Warn once ``security_master.updated_at`` is older than this many days (#345, #381).
@@ -42,11 +44,13 @@ _CALL = threading.local()
 
 def _begin_call() -> None:
     _CALL.tables = {}
+    _CALL.columns = {}
     _CALL.errors = []
 
 
 def _end_call() -> None:
     _CALL.tables = None
+    _CALL.columns = None
     _CALL.errors = None
 
 
@@ -109,6 +113,10 @@ QUERIED_COLUMNS: list[tuple[str, str]] = [
     ("identity_source_cache", "source"), ("identity_source_cache", "ticker"),
     ("identity_source_cache", "fetched_at"), ("identity_source_cache", "status"),
     ("watchlist_changes", "run_at"), ("board_settings_changes", "run_at"),
+    # the drill's scoring datasets and identifiers (S10, #126)
+    ("vendor_financials", "ticker"), ("vendor_financials", "period_end"),
+    ("ownership_snapshot", "ticker"), ("ownership_snapshot", "session_date"), ("ownership_snapshot", "source"),
+    ("security_master", "cik"), ("security_master", "figi"),
 ]
 
 
@@ -134,6 +142,34 @@ def _table_exists(name: str) -> bool:
     if name not in rawstore.MANIFEST:
         return False
     return name in _existing_tables(_db_of(name))
+
+
+def _existing_columns(table: str) -> set[str]:
+    """Column names ``table`` carries in this store, cached for one call.
+
+    Read the same way as ``_existing_tables``: a column that arrives in a later release is
+    absent here, so the drill can say ``n/a`` instead of raising on a ``SELECT`` of it.
+    """
+    cache = getattr(_CALL, "columns", None)
+    key = (_db_of(table), table)
+    if cache is not None and key in cache:
+        return cache[key]
+    try:
+        rows = rawstore.query(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema='main' AND table_name = ?", [table], db=key[0])
+        names = {r["column_name"] for r in rows}
+    except Exception as exc:  # noqa: BLE001 - recorded (F4), degrades to "the column is not there"
+        _record(table, "_existing_columns", exc)
+        names = set()
+    if cache is not None:
+        cache[key] = names
+    return names
+
+
+def _has_column(table: str, column: str) -> bool:
+    """Whether ``table`` carries ``column`` today (a later-release column reads absent, never raises)."""
+    return _table_exists(table) and column in _existing_columns(table)
 
 
 def _count(name: str) -> int | None:
@@ -576,6 +612,92 @@ def _d01_presence(ticker: str) -> dict:
     return {"bars": int(row.get("n") or 0), "newest": newest}
 
 
+def _presence(table: str, ticker: str, *, date_column: str, count_key: str = "rows",
+              source_column: str | None = None) -> dict:
+    """Row count and newest ``date_column`` for ``ticker`` in ``table``: one query, store only.
+
+    The same shape as :func:`_d01_presence` — the count under ``count_key``, ``newest`` as
+    ``YYYY-MM-DD`` — plus the newest row's ``source_column`` when asked. A table this store does
+    not carry, or a failed query, reads as no rows (recorded, never raised): a board's absence
+    must not break the drill.
+    """
+    empty = {count_key: 0, "newest": None}
+    if source_column:
+        empty["source"] = None
+    if not _table_exists(table):
+        return empty
+    source = f", arg_max({source_column}, {date_column}) AS src" if source_column else ""
+    try:
+        rows = rawstore.query(
+            f"SELECT COUNT(*) AS n, MAX({date_column}) AS newest{source} FROM {table} WHERE ticker = ?",
+            [ticker], db=_db_of(table))
+    except Exception as exc:  # noqa: BLE001
+        _record(table, "_presence", exc)
+        return empty
+    row = rows[0] if rows else {}
+    newest = _fmt_date(row.get("newest"))
+    out = {count_key: int(row.get("n") or 0), "newest": None if newest == DASH else newest}
+    if source_column:
+        out["source"] = row.get("src")
+    return out
+
+
+def _quote_presence(ticker: str) -> dict:
+    """The newest stored quote for ``ticker``, read by ``core.quotes``' own reader.
+
+    ``latest_caps`` is the rule a board uses (newest session, Yahoo's row where both sources have
+    one), so the source the drill shows is the one a reader would take. One query; absent = no rows.
+    """
+    empty = {"rows": 0, "newest": None, "source": None}
+    if not _table_exists("quote_snapshot"):
+        return empty
+    from RevenueChaser.core import quotes
+    try:
+        got = quotes.latest_caps([ticker]).get(ticker) or {}
+    except Exception as exc:  # noqa: BLE001
+        _record("quote_snapshot", "_quote_presence", exc)
+        return empty
+    if not got:
+        return empty
+    newest = _fmt_date(got.get("session_date"))
+    return {"rows": 1, "newest": None if newest == DASH else newest, "source": got.get("source")}
+
+
+def _edgar_presence(ticker: str) -> dict:
+    """Annual period count and newest fiscal period end of the ``edgar_financials`` row.
+
+    One row per ticker, holding the extracted annual/quarterly lists. ``periods`` counts the annual
+    records the financials boards read and ``newest`` is the latest of their period ends
+    (``core.fiscal_year.period_end``, the same end a score anchors on) — read across the list, not
+    off its last position. A row with no annual extract falls back to its quarterly periods, so a
+    stored row never reads as absent.
+    """
+    empty = {"periods": 0, "newest": None}
+    if not _table_exists("edgar_financials"):
+        return empty
+    try:
+        row = rawstore.get("edgar_financials", ticker)
+    except Exception as exc:  # noqa: BLE001
+        _record("edgar_financials", "_edgar_presence", exc)
+        return empty
+    if not row:
+        return empty
+    annual = [r for r in (row.get("annual") or []) if isinstance(r, dict)]
+    if annual:
+        ends = [end for end in (fiscal_year.period_end(r) for r in annual) if end is not None]
+        return {"periods": len(annual), "newest": max(ends).isoformat() if ends else None}
+    quarterly = [r for r in (row.get("quarterly") or []) if isinstance(r, dict)]
+    periods = [str(r["period"])[:10] for r in quarterly if r.get("period")]
+    return {"periods": len(quarterly), "newest": max(periods) if periods else None}
+
+
+def _master_identifier(master: dict | None, column: str):
+    """One ``security_master`` identifier: its value, or ``n/a`` when the column is not in this store."""
+    if not _has_column("security_master", column):
+        return IDENTIFIER_NA
+    return (master or {}).get(column)
+
+
 def _universe_tickers() -> list[dict]:
     """``[{ticker, name}]`` for the ticker combobox — one store read, no network."""
     try:
@@ -602,10 +724,11 @@ def _read_sector(stored):
 
 
 def _ticker_detail(ticker: str) -> dict | None:
-    """Per-ticker drill: identity, cap, sector and industry, SIC, latest filing and dataset
-    presence — read straight from ``.store`` with zero network.
+    """Per-ticker drill: identifiers, cap, sector and industry, SIC, latest filing and the
+    presence of the datasets that decide whether a board can score the name — read straight
+    from ``.store`` with zero network, one query per table.
 
-    Unknown ticker (absent from every dataset) returns ``None`` so the route can
+    Unknown ticker (absent from every dataset it reads) returns ``None`` so the route can
     answer 404. A NULL ``market_cap`` stays ``None`` — never coerced.
     """
     t = (ticker or "").strip().upper()
@@ -613,25 +736,32 @@ def _ticker_detail(ticker: str) -> dict | None:
         return None
 
     universe = rawstore.get("equity_universe", t) if _table_exists("equity_universe") else None
+    master = rawstore.get("security_master", t) if _table_exists("security_master") else None
     sec = (_sec_file_row(t) if _table_exists("sec_exchange_file") else None)
     sic = rawstore.get("sec_company_sic", t) if _table_exists("sec_company_sic") else None
     filing = rawstore.get("chain_filings", t) if _table_exists("chain_filings") else None
+    # The five datasets a board needs to score a name; each is a count plus its newest date.
     d01 = _d01_presence(t)
+    quote = _quote_presence(t)
+    vendor = _presence("vendor_financials", t, date_column="period_end")
+    edgar = _edgar_presence(t)
+    ownership = _presence("ownership_snapshot", t, date_column="session_date", source_column="source")
     swing = _swing_presence(t)
 
-    if not any(x is not None for x in (universe, sec, sic, filing)) \
-            and not _exists_row("edgar_financials", t) \
+    if not any(x is not None for x in (universe, master, sec, sic, filing)) \
+            and not edgar["periods"] \
             and d01["bars"] == 0 \
+            and not quote["rows"] \
+            and not vendor["rows"] \
+            and not ownership["rows"] \
             and swing["bars"] == 0 \
             and not _exists_row("oipd_meta", t) \
             and not _exists_row("relatedness_profiles", t):
         return None
 
-    cik = None
-    for src in (sec, sic, filing):
-        if src and src.get("cik"):
-            cik = src["cik"]
-            break
+    # The identity spine's CIK is the current one; the older tables stay the fallback.
+    cik = (master or {}).get("cik") or next(
+        (src["cik"] for src in (sec, sic, filing) if src and src.get("cik")), None)
     cap = universe.get("market_cap") if universe else None
     return {
         "ticker": t,
@@ -641,15 +771,22 @@ def _ticker_detail(ticker: str) -> dict | None:
         "sector": _read_sector((universe or {}).get("sector")),
         "industry": (universe or {}).get("industry"),
         "cik": cik,
+        "figi": (master or {}).get("figi"),
+        # CUSIP / ISIN are not in the manifest yet: n/a, not a made-up value, until the columns arrive.
+        "cusip": _master_identifier(master, "cusip"),
+        "isin": _master_identifier(master, "isin"),
         "sic": (sic or {}).get("sic"),
         "sic_description": (sic or {}).get("sic_description"),
         "filing": ({"form": filing.get("form"), "filed": filing.get("filed"),
                     "accession": filing.get("accession"),
                     "quality": filing.get("quality")} if filing else None),
         "presence": {
-            "edgar_financials": _exists_row("edgar_financials", t),
+            "edgar_financials": edgar,
             # D01 is the price of record. swing_ohlc is the SPY-fallback cache.
             "price_bars_daily": d01,
+            "quote_snapshot": quote,
+            "vendor_financials": vendor,
+            "ownership_snapshot": ownership,
             "swing_ohlc": swing,
             "oipd_meta": _exists_row("oipd_meta", t),
             "relatedness_profiles": _exists_row("relatedness_profiles", t),
