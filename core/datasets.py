@@ -72,6 +72,7 @@ _BOOKKEEPING = (
     "migration_manifest",
     "run_registry",
     "job_runs",
+    "store_schema",
 )
 
 
@@ -579,8 +580,8 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         key="bookkeeping", label="Store bookkeeping",
         tables=_BOOKKEEPING,
         db="raw", source=Source.store, writer=None,
-        writer_note=("store_meta, migration_manifest, run_registry and job_runs are the store's own "
-                     "pins and job log; no freshness claim"),
+        writer_note=("store_meta, migration_manifest, store_schema (one stamp per store file, #26 PL7), "
+                     "run_registry and job_runs are the store's own pins and job log; no freshness claim"),
         freshness=NO_CLAIM,
     ),
     DatasetSpec(
