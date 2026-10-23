@@ -220,6 +220,10 @@ def test_an_edgar_cancel_inside_the_pool_does_not_start_the_next_filer(sync_jobs
     job = _run("edgar_sync", deadline_s=3600, params={"limit": 2})
     assert job["status"] == "cancelled", job
     assert len(seen) == 1
+    # The filer that was fetched before the stop stays committed: its submissions answer sat in the capture buffer
+    # when the stop raised, and the pool's ``finally`` flushes it instead of throwing it away.
+    stored = {r["cik"] for r in rawstore.query("SELECT cik FROM sec_submissions", db="edgar")}
+    assert "1045810" in stored and "1045811" not in stored
 
 
 # ── identity: between sources, before the first source write ─────────────────
@@ -252,6 +256,34 @@ def test_an_identity_cancel_at_the_first_source_writes_nothing(sync_jobs, rawsto
     assert "identity sec_exchange" in job["message"]
     assert fk.calls == {}
     assert rawstore.count("identity_runs") == 0
+
+
+def test_an_identity_stop_at_the_master_checkpoint_keeps_the_sources_and_writes_no_master(
+        sync_jobs, rawstore_tmp_db, monkeypatch):
+    """The ``security_master`` write is the most critical write of the PL4 change: a stop requested after the
+    last source and before the master must leave the master unwritten (delete the guard and this goes red)."""
+    fk = _identity_fakes(monkeypatch)
+    held = {}
+    real_bind, real_cp = job_control.bind, job_control.checkpoint
+
+    def _bind(token):
+        if token is not None:
+            held["token"] = token
+        return real_bind(token)
+
+    def _cp(name=None):
+        if name == "identity master":
+            held["token"].cancel()
+        return real_cp(name)
+
+    monkeypatch.setattr(job_control, "bind", _bind)
+    monkeypatch.setattr(job_control, "checkpoint", _cp)
+    job = _run("identity", deadline_s=3600)
+    assert job["status"] == "cancelled", job
+    assert "identity master" in job["message"]
+    assert "sec_exchange" in fk.calls
+    assert rawstore.count("identity_source_cache") >= 1      # the earlier sources stay committed
+    assert rawstore.count("security_master") == 0
 
 
 def test_an_identity_run_inside_its_deadline_writes_the_master(sync_jobs, rawstore_tmp_db, monkeypatch):
@@ -324,6 +356,39 @@ def test_a_bars_cancel_at_the_first_chunk_writes_nothing(sync_jobs, rawstore_tmp
     assert "daily bars AAA" in job["message"]
     assert uw.requests == []
     assert rawstore.count("price_bars_daily") == before
+
+
+def test_a_bars_stop_between_two_chunks_keeps_the_first_and_never_starts_the_second(
+        sync_jobs, rawstore_tmp_db, monkeypatch):
+    """Per-chunk atomicity: the first chunk's write stays, the second chunk's calls and write never start."""
+    from RevenueChaser.core import prices
+    from RevenueChaser.core.tests.test_prices import bar_row, rows_for
+    _seed_bars()
+    rawstore.write_rows("price_bars_daily", [bar_row("BBB", "2026-10-07", close=20.0)])
+    uw = _quiet_bars(monkeypatch)
+    monkeypatch.setattr(prices, "CHUNK", 1)
+    held = {}
+    real_bind = job_control.bind
+
+    def _bind(token):
+        if token is not None:
+            held["token"] = token
+        return real_bind(token)
+
+    monkeypatch.setattr(job_control, "bind", _bind)
+    real_request = uw.ohlc_daily_result
+
+    def _request(ticker, days=500):
+        out = real_request(ticker, days=days)
+        held["token"].cancel()          # the stop arrives while the first chunk is being served
+        return out
+
+    uw.ohlc_daily_result = _request
+    job = _run("daily_bars", deadline_s=9600, params={"tickers": ["AAA", "BBB"]})
+    assert job["status"] == "cancelled", job
+    assert uw.requests == ["AAA"]                  # the second chunk never asked
+    assert rows_for("AAA", "2026-10-08")           # the first chunk's session is committed
+    assert not rows_for("BBB", "2026-10-08")
 
 
 def test_a_bars_run_inside_its_deadline_writes_the_session(sync_jobs, rawstore_tmp_db, monkeypatch):

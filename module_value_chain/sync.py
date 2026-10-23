@@ -185,58 +185,63 @@ def sync_filings(tickers: list[str] | None = None, limit: int | None = None,
         # One filer is submitted only after a checkpoint, and only while the pool has a free worker. A cancel or a
         # passed deadline therefore stops before the next filer starts, not inside its submissions write (#26 PL4).
         pending = iter(list(work.items()))
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            futs = {}
+        # A cancel or deadline raises out of the pool block (``job_control.stop_pool``): the CIK answers already
+        # fetched are still captured, so they are flushed on the way out, not thrown away (#26 PL4, review MUST-1).
+        # ``Capture.flush`` does not raise, so it cannot mask the stop.
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                futs = {}
 
-            def _submit_until_full():
-                while len(futs) < workers:
-                    try:
-                        c, ts = next(pending)
-                    except StopIteration:
-                        return
-                    # Name the filer first, so a deadline already past says where it stopped, before any submit.
-                    job_control.checkpoint(f"EDGAR filer {c}")
+                def _submit_until_full():
+                    while len(futs) < workers:
+                        try:
+                            c, ts = next(pending)
+                        except StopIteration:
+                            return
+                        # Name the filer first, so a deadline already past says where it stopped, before any submit.
+                        job_control.checkpoint(f"EDGAR filer {c}")
+                        if job_control.stop_requested():
+                            job_control.stop_pool(futs)
+                        futs[ex.submit(_sync_cik, c, ts, None, force, capture, capture.run_at)] = (c, ts)
+
+                _submit_until_full()
+                while futs:
+                    finished, _ = wait(set(futs), return_when=FIRST_COMPLETED)
+                    for f in finished:
+                        c, ts = futs.pop(f)
+                        try:
+                            results = f.result()
+                        except sec_edgar.SECUnavailable:
+                            # SEC is down for this process: stop queueing, let running calls finish.
+                            stopped = True
+                            for other in futs:
+                                other.cancel()
+                            continue
+                        except CancelledError:
+                            continue
+                        except Exception as exc:  # noqa: BLE001 - per-CIK failure
+                            counts["failed"] += len(ts)
+                            lost += len(ts)
+                            if _status_code(exc) == 404:   # answered: the SEC does not serve this CIK
+                                logger.info("sync CIK %s (%s): not served by SEC", c, ",".join(t for t, _c in ts) or "-")
+                                answered += 1
+                            else:
+                                logger.warning("sync CIK %s (%s) failed: %s", c, ",".join(t for t, _c in ts) or "-", exc)
+                                subs["failed"] += 1
+                                subs["failed_ciks"].append(c)
+                            continue
+                        done += len(results)
+                        for res in results:
+                            counts[res["status"]] = counts.get(res["status"], 0) + 1
+                        answered += 1
+                        if len(capture) >= FLUSH_EVERY:
+                            _flush()
                     if job_control.stop_requested():
                         job_control.stop_pool(futs)
-                    futs[ex.submit(_sync_cik, c, ts, None, force, capture, capture.run_at)] = (c, ts)
-
-            _submit_until_full()
-            while futs:
-                finished, _ = wait(set(futs), return_when=FIRST_COMPLETED)
-                for f in finished:
-                    c, ts = futs.pop(f)
-                    try:
-                        results = f.result()
-                    except sec_edgar.SECUnavailable:
-                        # SEC is down for this process: stop queueing, let running calls finish.
-                        stopped = True
-                        for other in futs:
-                            other.cancel()
-                        continue
-                    except CancelledError:
-                        continue
-                    except Exception as exc:  # noqa: BLE001 - per-CIK failure
-                        counts["failed"] += len(ts)
-                        lost += len(ts)
-                        if _status_code(exc) == 404:   # answered: the SEC does not serve this CIK
-                            logger.info("sync CIK %s (%s): not served by SEC", c, ",".join(t for t, _c in ts) or "-")
-                            answered += 1
-                        else:
-                            logger.warning("sync CIK %s (%s) failed: %s", c, ",".join(t for t, _c in ts) or "-", exc)
-                            subs["failed"] += 1
-                            subs["failed_ciks"].append(c)
-                        continue
-                    done += len(results)
-                    for res in results:
-                        counts[res["status"]] = counts.get(res["status"], 0) + 1
-                    answered += 1
-                    if len(capture) >= FLUSH_EVERY:
-                        _flush()
-                if job_control.stop_requested():
-                    job_control.stop_pool(futs)
-                if not stopped:
-                    _submit_until_full()
-        _flush()
+                    if not stopped:
+                        _submit_until_full()
+        finally:
+            _flush()
         if stopped:
             counts["sec_unavailable"] = True
             counts["pending"] = len(todo) - done - lost
