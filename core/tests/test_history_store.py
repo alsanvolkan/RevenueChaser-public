@@ -50,7 +50,7 @@ def test_the_manifest_puts_18_tables_in_the_history_file_and_none_in_raw(store):
     rawstore.ensure_history()
     assert {r["table_name"] for r in rawstore.query(
         "SELECT table_name FROM information_schema.tables WHERE table_schema='main' AND table_type='BASE TABLE'",
-        db="history")} == set(names)
+        db="history")} == set(names) | {"store_schema"}   # #26 PL7: the file's own stamp, not a history table
     raw_tables = {r["table_name"] for r in rawstore.query(
         "SELECT table_name FROM information_schema.tables WHERE table_schema='main'")}
     assert not raw_tables & set(names)

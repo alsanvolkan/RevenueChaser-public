@@ -130,7 +130,8 @@ def test_price_checks_has_the_shape_of_source_checks():
 def test_a_fresh_store_makes_prices_duckdb_with_exactly_the_four_tables(rawstore_tmp_db):
     prices = rawstore.prices_db_path()
     assert prices.is_file()
-    assert _tables(prices) == set(PRICE_TABLES)
+    assert _tables(prices) - {"store_schema"} == set(PRICE_TABLES)
+    assert "store_schema" in _tables(prices)          # #26 PL7: the file's own schema stamp
     assert not (set(PRICE_TABLES) & _tables(Path(rawstore.DB_PATH)))
     assert "source_checks" in _tables(Path(rawstore.DB_PATH))
     assert rawstore.count("price_bars_daily") == 0                # Data Health shows 0, not "no table"
@@ -168,7 +169,7 @@ def test_the_live_case_two_empty_tables_are_dropped_from_raw(legacy_store):
     rawstore.ensure_all_tables()
     raw = _tables(legacy_store)
     assert not (set(MOVED) & raw) and "source_checks" in raw
-    assert _tables(rawstore.prices_db_path()) == set(PRICE_TABLES)
+    assert _tables(rawstore.prices_db_path()) - {"store_schema"} == set(PRICE_TABLES)
     assert all(rawstore.count(t) == 0 for t in PRICE_TABLES)
     assert _marker() == [{"dataset": MARKER, "source_count": 0, "verify": "PASS",
                           "source_hash": "price_bars_daily:0,price_actions:0"}]
@@ -476,14 +477,14 @@ def d03_store(isolate_rawstore):
         "dataset": MARKER, "migrated_at": "2026-10-09T16:00:00Z", "schema_version": "11", "source_count": 0,
         "source_bytes": 0, "source_hash": LIVE_156_MARKER, "verify": "PASS"}])
     assert D03 in _tables(raw)
-    assert _tables(rawstore.prices_db_path()) == set(PRICE_TABLES) - {D03}
+    assert _tables(rawstore.prices_db_path()) - {"store_schema"} == set(PRICE_TABLES) - {D03}
     return raw
 
 
 def test_the_live_case_d03_the_empty_index_levels_table_leaves_raw_for_prices(d03_store):
     rawstore.ensure_all_tables()
     assert D03 not in _tables(d03_store)
-    assert _tables(rawstore.prices_db_path()) == set(PRICE_TABLES)
+    assert _tables(rawstore.prices_db_path()) - {"store_schema"} == set(PRICE_TABLES)
     assert rawstore.count(D03) == 0
     assert _marker() == [{"dataset": MARKER, "source_count": 0, "verify": "PASS",
                           "source_hash": f"{LIVE_156_MARKER},index_levels_daily:0"}]
@@ -521,6 +522,6 @@ def test_a_store_from_before_both_moves_moves_all_three_tables_in_one_call(isola
     assert set(MOVED + (D03,)) <= _tables(raw)
     rawstore.ensure_all_tables()
     assert not (set(MOVED + (D03,)) & _tables(raw))
-    assert _tables(rawstore.prices_db_path()) == set(PRICE_TABLES)
+    assert _tables(rawstore.prices_db_path()) - {"store_schema"} == set(PRICE_TABLES)
     assert _marker() == [{"dataset": MARKER, "source_count": 0, "verify": "PASS",
                           "source_hash": "price_bars_daily:0,price_actions:0,index_levels_daily:0"}]
