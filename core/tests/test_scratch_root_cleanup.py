@@ -59,15 +59,30 @@ def _clean_env() -> dict:
 
 # ── in-process: what this session's own conftest recorded ─────────────────────
 
-def test_the_scratch_root_is_recorded_so_it_can_be_removed():
+def _inherited() -> bool:
+    """True when this process was handed a root someone else created — every xdist worker, so this is
+    the normal case in CI (`-n auto`) and the other case in a plain local run."""
+    return os.environ.get("RC_PYTEST_SCRATCH_OWNER") != str(os.getpid())
+
+
+def test_the_scratch_root_is_recorded_when_this_process_created_it():
+    """Either this process made the root and remembers it, or it inherited one and records None.
+    Both are asserted, because which one holds depends on whether xdist is in play."""
     conftest = _live_conftest()
-    assert conftest.SCRATCH_ROOT is not None, "the conftest must remember the root it created"
-    assert Path(conftest.SCRATCH_ROOT).name.startswith("rc-pytest-")
+    if _inherited():
+        assert conftest.SCRATCH_ROOT is None, "an inherited root must not be claimed for removal"
+        assert Path(os.environ["RC_STORE_DIR"]).parent.name.startswith("rc-pytest-")
+    else:
+        assert conftest.SCRATCH_ROOT is not None, "the conftest must remember the root it created"
+        assert Path(conftest.SCRATCH_ROOT).name.startswith("rc-pytest-")
 
 
 def test_the_recorded_root_is_the_one_the_env_points_at():
     """A root that is not the one in use would leave the real scratch behind and delete a stranger's."""
     conftest = _live_conftest()
+    if _inherited():
+        assert conftest.SCRATCH_ROOT is None
+        return
     assert Path(os.environ["RC_STORE_DIR"]).parent == Path(conftest.SCRATCH_ROOT)
     assert Path(os.environ["RC_CACHE_DIR"]).parent == Path(conftest.SCRATCH_ROOT)
 
