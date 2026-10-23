@@ -14,13 +14,16 @@ default ``raw``). ``writer`` is an ``automations.REGISTRY`` name, or None with `
 A freshness pair is a ``(table, column)`` ``_max_date`` can read. ``source`` is a provider named in
 ``core/providers`` or ``docs/data_architecture.md``; ``unknown`` means a single enum value would be a guess.
 
-Does not read the store. S5 switches the inventory reader; S4 adapts the seven ``health_summary`` dicts.
+Does not read the store. Seven datasets have an existing summary: their ``coverage`` is a zero-argument
+callable returning that module's ``Health``, imported and called when a reader asks for the row (S4).
+S5 switches the inventory reader to it.
 """
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum
+from importlib import import_module
 
 from RevenueChaser.core.datahealth import Health
 
@@ -106,7 +109,7 @@ Freshness = tuple[str, str] | tuple[tuple[str, str], ...] | str | None
 
 @dataclass(frozen=True)
 class DatasetSpec:
-    """One dataset. ``coverage`` is None until a population is defined or S4 adapts a health summary."""
+    """One dataset. ``coverage`` is None, a ``CoverageSpec`` of two SQL queries, or a callable returning ``Health``."""
 
     key: str
     label: str
@@ -168,8 +171,20 @@ class DatasetSpec:
         )
 
 
-def _todo(fn: str) -> str:
-    return f"TODO S4: adapt {fn} to Health; it returns a dict, not Health"
+def _summary_health(dotted: str) -> Callable[[], Health]:
+    """The ``Health`` of the module that owns this dataset's summary, read when the row is read (S4).
+
+    A callable, not a call: the registry is imported by pages that never open this dataset, and these modules
+    read the store (and, for four of them, the calendar). One argument-free call per row is all a reader needs.
+    """
+
+    def coverage() -> Health:
+        module = import_module(f"RevenueChaser.{dotted}")
+        return getattr(module, "health")()
+
+    coverage.__name__ = f"{dotted}.health"
+    coverage.__doc__ = f"The dataset's Health from ``{dotted}.health()``."
+    return coverage
 
 
 def _runlog(key: str, label: str, tables: tuple[str, ...], db: str, source: Source,
@@ -220,14 +235,16 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         tables=("sec_submissions", "sec_submissions_cik"),
         db="edgar", source=Source.sec, writer="RC-ValueChain-Sync",
         freshness=("sec_submissions", "filing_date"),
-        coverage_note=_todo("core.sec_submissions.health_summary"),
+        coverage=_summary_health("core.sec_submissions"),
+        coverage_note="expected is None: the universe CIK count is the inventory's query, not the summary's",
     ),
     DatasetSpec(
         key="sec_files", label="SEC exchange & fund files",
         tables=("sec_exchange_file", "sec_mf_file"),
         db="raw", source=Source.sec, writer="RC-Daily-Bars",
         freshness=(("sec_exchange_file", "run_at"), ("sec_mf_file", "run_at")),
-        coverage_note=_todo("core.sec_files.health_summary"),
+        coverage=_summary_health("core.sec_files"),
+        coverage_note="both files summed; expected is None until a good pull records file_rows",
     ),
     DatasetSpec(
         key="companyfacts", label="Companyfacts",
@@ -247,14 +264,14 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         tables=("price_bars_daily", "price_actions", "price_checks"),
         db="prices", source=Source.uw, writer="RC-Daily-Bars",
         freshness=("price_bars_daily", "session_date"),
-        coverage_note=_todo("core.prices.health_summary"),
+        coverage=_summary_health("core.prices"),
     ),
     DatasetSpec(
         key="index_levels", label="SPX daily levels",
         tables=("index_levels_daily",),
         db="prices", source=Source.yfinance, writer="RC-Daily-Bars",
         freshness=("index_levels_daily", "session_date"),
-        coverage_note=_todo("core.index_levels.health_summary"),
+        coverage=_summary_health("core.index_levels"),
     ),
     # source unknown: yfinance via the screeners Fetch and uw via the Earnings Fetch are both writers.
     DatasetSpec(
@@ -263,7 +280,8 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         db="raw", source=Source.unknown, writer="RC-Screeners-Daily",
         freshness=(("vendor_financials", "fetched_at"), ("vendor_valuation", "session_date")),
         writer_note="Earnings Fetch also appends UW statements (docs/data_architecture.md Stage 2)",
-        coverage_note=_todo("core.vendor_data.health_summary"),
+        coverage=_summary_health("core.vendor_data"),
+        coverage_note="expected is None: the universe is not read by the summary",
     ),
     # Yahoo leads (inventory._quotes_row). UW rows are stored too.
     DatasetSpec(
@@ -271,7 +289,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         tables=("quote_snapshot",),
         db="raw", source=Source.yfinance, writer="RC-Screeners-Daily",
         freshness=("quote_snapshot", "session_date"),
-        coverage_note=_todo("core.quotes.health_summary"),
+        coverage=_summary_health("core.quotes"),
     ),
     # Lead source uw. sp600 is copied from the last accepted identity snapshot, not a UW call.
     DatasetSpec(
@@ -304,7 +322,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         db="raw", source=Source.uw, writer=None,
         writer_note="dashboard job POST /run/holdings; not an automations.REGISTRY entry",
         freshness=("etf_holdings", "fetched_at"),
-        coverage_note=_todo("module_sector_rotation.etf_holdings.health_summary"),
+        coverage=_summary_health("module_sector_rotation.etf_holdings"),
     ),
     DatasetSpec(
         key="relatedness", label="Relatedness profiles",

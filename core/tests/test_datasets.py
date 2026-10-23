@@ -20,8 +20,8 @@ SEEDED = (
     "result_history", "inputs",
 )
 
-# Datasets whose coverage is already a ``health_summary`` dict. S4 adapts them to Health.
-COVERAGE_TODO = (
+# The seven datasets S4 adapted: ``coverage`` is a callable returning ``Health``.
+ADAPTED = (
     "price_bars", "index_levels", "vendor", "quotes", "etf_holdings",
     "sec_submissions", "sec_files",
 )
@@ -120,10 +120,19 @@ def test_seeded_inventory_keys_keep_their_labels():
         assert spec.tables, key
 
 
-def test_existing_coverage_callers_are_left_for_s4():
-    """The seven ``health_summary`` dicts are not forced into Health here."""
-    for key in COVERAGE_TODO:
+def test_the_seven_summaries_are_health_coverage_callables():
+    """S4: each adapted dataset's ``coverage`` is a callable returning ``Health``, and the TODO is gone."""
+    for key in ADAPTED:
         spec = datasets.by_key(key)
-        assert spec.coverage is None, f"{key}: coverage should stay None until S4 adapts health_summary"
-        assert spec.coverage_note and "TODO" in spec.coverage_note and "S4" in spec.coverage_note, (
-            f"{key}: coverage_note must say S4 still has to adapt it, not {spec.coverage_note!r}")
+        assert callable(spec.coverage), f"{key}: coverage should be the health callable, not {spec.coverage!r}"
+        assert not (spec.coverage_note and "TODO" in spec.coverage_note), (
+            f"{key}: coverage is adapted, so the TODO note must go, not {spec.coverage_note!r}")
+
+
+def test_every_adapted_coverage_returns_a_health_on_an_empty_store(rawstore_tmp_db):
+    """The callable imports its summary when called and reads the store: the typed contract, empty store."""
+    from RevenueChaser.core import datahealth
+
+    for key in ADAPTED:
+        got = datasets.by_key(key).coverage()
+        assert isinstance(got, datahealth.Health), f"{key}: {got!r}"

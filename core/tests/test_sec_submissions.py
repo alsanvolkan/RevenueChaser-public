@@ -5,7 +5,7 @@ import datetime as dt
 
 import pytest
 
-from RevenueChaser.core import calendar, rawstore
+from RevenueChaser.core import calendar, datahealth, rawstore
 from RevenueChaser.core import sec_submissions as ss
 
 # 2026-10-07 is a Wednesday; 18:00 New York is after the close + 30 min, so the run's session is that day.
@@ -217,3 +217,27 @@ class TestHealth:
         assert h["newest_filing_date"] == dt.date(2026, 5, 28)
         assert h["checked_ciks"] == {"1045810", "320193"}
         assert h["last_run_checked"] == {"1045810"}
+
+    def test_health_is_the_summary_numbers_typed_and_na_without_a_population(self, rawstore_tmp_db):
+        """The typed numbers are the summary's; the population (the universe's CIKs) is a query this summary
+        does not make, so ``expected`` is None and coverage renders ``n/a``, never a percentage.
+
+        ``covered`` is every CIK the sync answered for, a 404 included: it was asked, it is just empty.
+        """
+        _record({"1045810": _payload(("a-1", "a-2", "a-3")), "320193": None}, RUN1, run_id="r1")
+        _record({"1045810": _payload(("a-1", "a-2", "a-3"))}, RUN2, run_id="r2")
+
+        n = ss.health_summary()
+        h = ss.health()
+
+        assert h.covered == len(n["checked_ciks"]) == 2
+        assert (n["ciks"], n["last_run_ciks"]) == (1, 1), "the covered count is not the CIKs with filings"
+        assert h.expected is None
+        assert (h.newest, h.expected_as_of) == (n["newest_filing_date"], None) == (dt.date(2026, 5, 28), None)
+        assert h.source_share is None and h.problems == ()
+        assert datahealth.coverage_text(h) == "n/a" and "%" not in datahealth.coverage_text(h)
+
+    def test_health_on_an_empty_store(self, rawstore_tmp_db):
+        h = ss.health()
+        assert (h.covered, h.expected, h.newest) == (0, None, None)
+        assert datahealth.coverage_text(h) == "n/a"

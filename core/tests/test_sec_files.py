@@ -1,6 +1,7 @@
 """SEC exchange and fund files (#301, D21 + D8): change history, floors, one request per file per weekday night."""
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timezone
 
 import httpx
@@ -341,3 +342,77 @@ def test_old_markers_are_pruned_and_nothing_else(rawstore_tmp_db, tmp_path, http
     _night(tmp_path, TUE)
     assert sorted(f.name for f in markers.iterdir()) == [
         "2026-09-30_notes", "2026-10-09_mf", "2026-10-13_exchange", "2026-10-13_mf", "keep.txt"]
+
+
+# ── the typed numbers (#124 S4) ──────────────────────────────────────────────
+
+def test_health_is_the_summary_numbers_typed(rawstore_tmp_db, tmp_path, http):
+    """Both files summed: present rows against what the last good pull read, the last good pull's session as
+    ``newest`` and the last attempt's as ``expected_as_of``."""
+    from RevenueChaser.core import datahealth
+
+    markers = tmp_path / "markers"
+    _serve(http, ex_headers={"Last-Modified": "Sun, 12 Oct 2026 20:30:00 GMT"})
+    _night(tmp_path, TUE)
+
+    n = sec_files.health_summary(marker_dir=markers)
+    h = sec_files.health(marker_dir=markers)
+
+    assert h.covered == n["exchange"]["present"] + n["mf"]["present"] == 7
+    assert h.expected == n["exchange"]["file_rows"] + n["mf"]["file_rows"] == 7
+    assert (h.newest, h.expected_as_of) == ("2026-10-13", "2026-10-13")
+    assert h.source_share is None
+    assert datahealth.coverage_text(h) == "100.0% (7 of 7)"
+
+
+def test_health_keeps_the_three_pull_outcomes_verbatim(rawstore_tmp_db, tmp_path, http):
+    """avo 2026-10-22: the row must tell "pulled, unchanged" from "never written" from "pull failed".
+
+    The wording is the note's, byte for byte; ``Health.problems`` carries it so S5 derives the note from the
+    typed record instead of re-reading the receipts.
+    """
+    markers = tmp_path / "markers"
+
+    # 1. nothing pulled yet
+    assert sec_files.health(marker_dir=markers).problems == (
+        "exchange: no pull recorded yet", "mf: no pull recorded yet")
+
+    # 2. a good pull that appended rows
+    _serve(http)
+    _night(tmp_path, TUE)
+    assert sec_files.health(marker_dir=markers).problems == (
+        "exchange: pulled 2026-10-13, appended 4 (+0 absent)",
+        "mf: pulled 2026-10-13, appended 3 (+0 absent)")
+
+    # 3. a good pull of an unchanged file
+    _serve(http)
+    _night(tmp_path, WED)
+    assert sec_files.health(marker_dir=markers).problems == (
+        "exchange: pulled 2026-10-14, unchanged", "mf: pulled 2026-10-14, unchanged")
+
+    # 4. a failed night names its own night, keeps the last good pull, and dates the store by the last good pull
+    _serve(http, ex_status=500, mf_status=500)
+    _night(tmp_path, THU)
+    h = sec_files.health(marker_dir=markers)
+    assert h.problems[0].startswith("exchange: pull FAILED 2026-10-15 (")
+    assert h.problems[1].startswith("mf: pull FAILED 2026-10-15 (")
+    assert h.problems[0].endswith("), last good pull 2026-10-14"), h.problems[0]
+    assert (h.newest, h.expected_as_of) == ("2026-10-14", "2026-10-15"), "a failing night makes the store stale"
+
+    # 5. the sentence itself, byte for byte, from a receipt that recorded SEC's own error
+    (markers / "2026-10-16_exchange").write_text(
+        json.dumps({"session": "2026-10-16", "status": "failed", "error": "SEC 500"}), encoding="utf-8")
+    assert sec_files.health(marker_dir=markers).problems[0] == (
+        "exchange: pull FAILED 2026-10-16 (SEC 500), last good pull 2026-10-14")
+
+
+def test_health_without_a_pull_is_na_and_says_so(rawstore_tmp_db, tmp_path):
+    """No receipt: no expected population and no dates, so ``n/a`` and ``unknown`` — never a percentage."""
+    from RevenueChaser.core import datahealth
+
+    h = sec_files.health(marker_dir=tmp_path / "markers")
+
+    assert (h.covered, h.expected) == (0, None)
+    assert (h.newest, h.expected_as_of) == (None, None)
+    assert datahealth.coverage_text(h) == "n/a" and "%" not in datahealth.coverage_text(h)
+    assert datahealth.freshness_text(h, "2026-10-23") == "unknown"

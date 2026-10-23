@@ -31,6 +31,7 @@ import time
 from datetime import date
 
 from RevenueChaser.core import calendar, rawstore
+from RevenueChaser.core.datahealth import Health
 
 logger = logging.getLogger(__name__)
 
@@ -247,4 +248,17 @@ def health_summary() -> dict:
     return out
 
 
-__all__ = ["FILINGS", "HEADER", "SOURCE", "Capture", "record", "rows_from_payload", "norm_cik", "health_summary"]
+def health() -> Health:
+    """The numbers :func:`health_summary` reports, typed (#124 S4).
+
+    ``covered`` is the CIKs the sync has answered for. ``expected`` is ``None``: the population is the
+    universe's CIKs, which the inventory reads with its own query, not this summary — so coverage renders
+    ``n/a`` instead of a percentage of the summary's own count. ``newest`` is the newest filing date stored.
+    """
+    n = health_summary()
+    return Health(covered=len(n["checked_ciks"]), expected=None, newest=n["newest_filing_date"],
+                  expected_as_of=None)
+
+
+__all__ = ["FILINGS", "HEADER", "SOURCE", "Capture", "health", "record", "rows_from_payload", "norm_cik",
+           "health_summary"]

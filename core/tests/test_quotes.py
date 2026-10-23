@@ -506,3 +506,37 @@ def test_health_on_an_empty_store(rawstore_tmp_db):
     h = quotes.health_summary()
     assert h["newest_session"] is None and h["rows"] == {"yfinance": 0, "uw": 0}
     assert h["missing"] == {"yfinance": 1, "uw": 1} and h["gaps"] == 0
+
+
+def test_health_is_the_summary_numbers_typed(rawstore_tmp_db):
+    """The Health's covered/expected are the universe against the tickers with a Yahoo row (Yahoo leads),
+    and its source share is the newest session's rows per source."""
+    from RevenueChaser.core import datahealth
+
+    seed_universe("AAA", "BBB", "CCC", "DDD")
+    quotes.record_yahoo([{"ticker": t, "quote": yahoo_quote(t)}
+                         for t in ("AAA", "BBB", "CCC")], now=AFTER_CLOSE)
+    quotes.ensure_quote_snapshot(uw=FakeUW({"AAA": uw_item(105.0), "BBB": uw_item(105.01),
+                                            "CCC": uw_item(94.0), "DDD": uw_item(1.0)}), now=AFTER_CLOSE)
+
+    n = quotes.health_summary()
+    h = quotes.health()
+
+    assert h.expected == n["universe"] == 4
+    assert h.covered == n["universe"] - n["missing"][quotes.SOURCE_YAHOO] == 3
+    assert (h.newest, h.expected_as_of) == (n["newest_session"], None) == ("2026-10-08", None)
+    assert h.source_share == {s: n["rows"][s] / sum(n["rows"].values()) for s in quotes.SOURCES}
+    assert h.problems == (f"{n['gaps']} caps more than {quotes.CAP_GAP_PCT}% apart",)
+    assert datahealth.coverage_text(h) == "75.0% (3 of 4)"
+
+
+def test_health_without_a_universe_is_na_never_a_percentage(rawstore_tmp_db):
+    """No universe means no population to be a percentage of: ``n/a``, not ``0%``."""
+    from RevenueChaser.core import datahealth
+
+    n = quotes.health_summary()
+    h = quotes.health()
+
+    assert (n["universe"], n["newest_session"]) == (0, None)
+    assert (h.covered, h.expected) == (0, 0) and h.coverage is None
+    assert datahealth.coverage_text(h) == "n/a" and "%" not in datahealth.coverage_text(h)
