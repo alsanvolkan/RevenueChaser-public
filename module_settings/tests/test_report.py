@@ -2190,6 +2190,6 @@ def test_every_registry_source_is_spelled_out_in_words():
     for source in datasets.Source:
         words = report.source_words(source.value)
         assert source.value in report.SOURCE_WORDS, source.value
-        assert words != source.value or source.value == "openfigi"
+        assert words != source.value
         assert len(words) > 3
     assert report.source_words("something-new") == "something-new"

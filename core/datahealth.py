@@ -52,6 +52,7 @@ def scoped(fn):
 
     return wrapper
 
+
 When = date | datetime | str | None
 
 
@@ -110,11 +111,13 @@ class Health:
         ``covered > expected`` is named with both counts, including when
         ``expected == 0`` and the ratio itself cannot be shown.
         """
-        if self.covered is None or self.expected is None:
-            return ()
-        if self.covered > self.expected:
-            return (f"covered {self.covered} exceeds expected {self.expected}",)
-        return ()
+        found: list[str] = []
+        if self.covered is not None and self.expected is not None and self.covered > self.expected:
+            found.append(f"covered {self.covered} exceeds expected {self.expected}")
+        newest, ref = _as_date(self.newest), _as_date(self.expected_as_of)
+        if newest is not None and ref is not None and newest > ref:
+            found.append(f"newest {newest.isoformat()} is after expected_as_of {ref.isoformat()}")
+        return tuple(found)
 
 
 def coverage_text(h: Health) -> str:
@@ -144,4 +147,7 @@ def freshness_text(h: Health, today: When) -> str:
         ref = _as_date(today)
         if ref is None:
             return "unknown"
-    return f"{(ref - newest).days} d old"
+    age = (ref - newest).days
+    if age < 0:
+        return f"newest date is {-age} d after the reference date"
+    return f"{age} d old"
