@@ -16,7 +16,9 @@ nothing) and the first write of a session wins. ``insider_pct`` and ``institutio
 writes no row.
 
 Which source a reader takes first is the readers' rule (06 §3 D20: UW, then SEC dei via D11, then yfinance); this
-module stores every source as served and changes no board.
+module stores every source as served. :func:`latest_institutional` is that rule for the institutional share, read
+by Asymmetric Growth (#34 D20) instead of the yfinance ``.info`` the scan already fetched, whose failures the client
+swallows to ``{}``.
 """
 from __future__ import annotations
 
@@ -136,6 +138,57 @@ def record(rows, *, run_id: str, run_at: float | None = None, fetched_at: float 
 
     out["written"] = rawstore.atomic(_write)
     out["kept"] = len(by_key) - out["written"]
+    return out
+
+
+# ── the reader (Asymmetric Growth, #34 D20) ─────────────────────────────────
+
+# Inside one session the 13F Fetch's own UW answer wins over a yfinance snapshot, the same preference
+# ``module_sec_13f/enrich.py`` applies to shares: UW was asked for that ticker on purpose, while a yfinance row is a
+# bulk screener payload whose ``.info`` can arrive empty. It only decides a tie: a newer session always wins.
+READER_ORDER = (UW_INFO, YFINANCE)
+
+
+def latest_institutional(tickers) -> dict[str, dict]:
+    """``{ticker: {"institutional_pct", "source", "session", "session_label"}}``: the stored institutional share of
+    each ticker that has a usable row.
+
+    Usable means a non-NULL ``institutional_pct`` (a ``uw_info`` row stores shares only, so most of its rows are
+    not). The newest session wins; inside one session :data:`READER_ORDER` decides, UW first. ``session`` is the
+    row's own ``session_date`` — the column the write already mapped through :func:`session_of` — and
+    ``session_label`` its ISO text, for a provenance line. Ranking and display read that one column, so the number
+    shown can never be dated by a different rule than the one that picked it.
+
+    One store read for the whole list (the scan asks for ~4,000 names at once). Read-only, and a missing,
+    unreadable or locked table answers ``{}`` rather than raising: the board must keep scanning without the store.
+    """
+    wanted = sorted({str(t).strip().upper() for t in tickers or () if t and str(t).strip()})
+    if not wanted:
+        return {}
+    try:
+        rows = rawstore.query(
+            f"SELECT ticker, source, institutional_pct, session_date FROM ("
+            f"  SELECT ticker, source, institutional_pct, session_date,"
+            f"         row_number() OVER (PARTITION BY ticker ORDER BY session_date DESC,"
+            f"           CASE source WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END) AS pick"
+            f"  FROM {TABLE} WHERE institutional_pct IS NOT NULL"
+            f"    AND ticker IN ({_placeholders(len(wanted))})"
+            f") WHERE pick = 1",
+            [*READER_ORDER, *wanted], read_only=True)
+    except Exception as exc:  # noqa: BLE001 - a missing, locked or unreadable table is "no stored number"
+        logger.warning("ownership %s: the read failed, readers fall back to their own source: %s: %s",
+                       TABLE, type(exc).__name__, exc)
+        return {}
+    out: dict[str, dict] = {}
+    for r in rows:
+        pct = _num(r.get("institutional_pct"))
+        if pct is None:      # the query already skips NULLs; a broken value is not a number to show either
+            continue
+        session = r.get("session_date")
+        session = session if isinstance(session, date) else None
+        out[str(r["ticker"]).upper()] = {"institutional_pct": pct, "source": r["source"],
+                                         "session": session,
+                                         "session_label": session.isoformat() if session else None}
     return out
 
 

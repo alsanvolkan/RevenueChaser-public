@@ -24,7 +24,7 @@ from datetime import date, datetime, timedelta, timezone
 from RevenueChaser.core import earnings_dates, fiscal_year
 from RevenueChaser.core import funnel as funnel_mod
 from RevenueChaser.core import job_control
-from RevenueChaser.core import ledger, prices, rawstore
+from RevenueChaser.core import ledger, ownership, prices, rawstore
 from RevenueChaser.core import tristate as tri
 from RevenueChaser.core import vendor_data
 from RevenueChaser.core.config import to_float
@@ -157,9 +157,14 @@ def _end(rec: dict | None, *fields: str) -> str | None:
     return next((str(ends[f])[:10] for f in fields if ends.get(f)), None)
 
 
-def _provenance(annual: list[dict], ai: int | None, pi: int | None) -> dict:
+def _provenance(annual: list[dict], ai: int | None, pi: int | None,
+                ownership_source: dict | None = None) -> dict:
     """What the card read (#380 S3, #66 provenance line): the anchor and prior fiscal years, the three revenue
-    period ends (anchor, prior, the year before) and the anchor's balance-sheet and cash-flow period ends."""
+    period ends (anchor, prior, the year before) and the anchor's balance-sheet and cash-flow period ends.
+
+    ``ownership_source`` (#34 D20) is where the institutional share came from — ``ownership_snapshot``'s source and
+    the session it was stored for, or the live ``.info`` with no session — so a card says which value it shows.
+    """
     ppi = _prior(annual, pi)
     cur = annual[ai] if ai is not None else None
     return {
@@ -170,6 +175,7 @@ def _provenance(annual: list[dict], ai: int | None, pi: int | None) -> dict:
             "balance_sheet": _end(cur, "total_assets", "cash", "total_debt"),
             "cash_flow": _end(cur, "operating_cash_flow", "capex", "capital_expenditure"),
         },
+        "ownership": ownership_source,
     }
 
 
@@ -269,13 +275,35 @@ def technical_from_bars(rows, session: date | None = None) -> dict:
     }
 
 
+OWNERSHIP_LIVE = "info"   # the provenance source of a number read straight off the yfinance ``.info`` (#34 D20)
+
+
+def _ownership_number(info: dict, stored: dict | None) -> tuple:
+    """(the institutional share the card shows, where it came from): the stored row first (#34 D20), ``.info``
+    second.
+
+    The Yahoo client swallows a failed ``.info`` to ``{}`` (#23/#169), so a name can arrive with no live number
+    while ``ownership_snapshot`` already holds one. A name with neither has no number and no provenance to stamp.
+    The scale cannot change: the stored column is the same Yahoo field this read used to take
+    (``core/ownership.py`` maps ``institutional_pct`` to ``heldPercentInstitutions`` and stores fractions as
+    served), so a stored number and a live one are the same kind of number.
+    """
+    if stored and stored.get("institutional_pct") is not None:
+        return stored["institutional_pct"], {"source": stored.get("source"),
+                                             "session": stored.get("session_label")}
+    live = info.get("heldPercentInstitutions")
+    return (live, {"source": OWNERSHIP_LIVE, "session": None}) if live is not None else (None, None)
+
+
 def score_ticker(ticker: str, financials: dict, technical: dict, meta: dict | None = None,
                  spine: dict | None = None, pinned_themes: dict | None = None,
-                 as_of: date | None = None) -> dict | None:
+                 as_of: date | None = None, stored_ownership: dict | None = None) -> dict | None:
     """Build the Small/Micro Cap card from already-fetched data; non-US or missing data -> None.
 
     ``pinned_themes`` is ``taxonomy.themes_for_many`` of the whole batch; without it the ticker is looked up alone.
     ``as_of`` is the run day the record choice is judged on (``_card_anchor``); a Fetch always passes it.
+    ``stored_ownership`` is this ticker's row of ``ownership.latest_institutional`` (read once per scan) and wins
+    over the live ``.info`` number.
     """
     meta = meta or {}
     info = financials.get("info", {})
@@ -392,6 +420,7 @@ def score_ticker(ticker: str, financials: dict, technical: dict, meta: dict | No
     tech_breakthrough = rd_intensity is not None and rd_intensity >= RND_INTENSITY_MIN
     dilution_warning = dilution_yoy is not None and dilution_yoy > DILUTION_WARN
     earnings_date = to_float((meta.get("quote") or {}).get("earningsTimestampStart"))
+    inst_pct, ownership_src = _ownership_number(info, stored_ownership)
 
     return {
         "ticker": ticker,
@@ -399,7 +428,7 @@ def score_ticker(ticker: str, financials: dict, technical: dict, meta: dict | No
         "name": info.get("longName") or info.get("shortName") or meta.get("name") or ticker,
         "sector": sector,
         "industry": gics.industry,
-        "inst_ownership_pct": info.get("heldPercentInstitutions"),
+        "inst_ownership_pct": inst_pct,
         "price": price,
         "market_cap": market_cap,
         "ps_ratio": ps_ratio,
@@ -414,7 +443,7 @@ def score_ticker(ticker: str, financials: dict, technical: dict, meta: dict | No
         "tier": tier,
         "signals": signals,
         "flags": flags,
-        **_provenance(annual, ai, pi),
+        **_provenance(annual, ai, pi, ownership_src),
         "themes": themes,
         "tech_breakthrough": tech_breakthrough,
         "dilution_warning": dilution_warning,
@@ -669,7 +698,8 @@ def enrich_and_score(ticker: str, meta: dict, no_fetch: bool = False,
     stored = preload["earnings"] if preload is not None and "earnings" in preload else earnings_dates.stored_next_dates()
     scored_meta = earnings_dates.with_stored_date({**meta, "ticker": ticker}, stored)
     card = score_ticker(ticker, financials, technical, scored_meta, spine,
-                        pinned_themes=preload["themes"] if preload is not None else None, as_of=as_of)
+                        pinned_themes=preload["themes"] if preload is not None else None, as_of=as_of,
+                        stored_ownership=((preload or {}).get("ownership") or {}).get(ticker))
     if card is None:
         return dropped("foreign")
     # #41: the one place the technical inputs are in hand for a scored name (the card does not carry vol_90d).
@@ -795,6 +825,26 @@ def scored_before(cards: list[dict]) -> bool:
     return any(c.get("model_version") != current for c in cards)
 
 
+def _ownership_counts(cards: list[dict]) -> dict:
+    """``{"stored", "live", "session"}`` (#34 D20; the input-record shape of ``module_earnings_radar``): how many
+    scored names took their institutional share from ``ownership_snapshot`` and how many from the live ``.info``,
+    plus the newest stored session behind them.
+
+    Their sum is the number of cards that show an ownership figure at all, so the owner can tell on real data
+    whether the switch worked. ``session`` is the newest stored session behind those numbers (labels are ISO dates,
+    so the largest string is the newest). A card read back from ``ticker_scores`` carries no provenance (the table
+    has no such column), so a summary counted from cards alone answers ``None``/``None`` — unknown, never 0, the
+    same rule ``low_liquidity`` follows.
+    """
+    if not any("ownership" in c for c in cards):
+        return {"stored": None, "live": None, "session": None}
+    marks = [c.get("ownership") for c in cards]
+    stored = [m for m in marks if m and m.get("source") != OWNERSHIP_LIVE]
+    live = [m for m in marks if m and m.get("source") == OWNERSHIP_LIVE]
+    sessions = [m["session"] for m in stored if m.get("session")]
+    return {"stored": len(stored), "live": len(live), "session": max(sessions) if sessions else None}
+
+
 def _summary(cards: list[dict], excluded_types: int | None, score_errors: dict[str, int],
              info_refetch_failed: int = 0, thin: list[str] | None = None) -> dict:
     """The run's counts. ``thin`` is the batch's low-liquidity note (``_Drops.thin``, #41).
@@ -809,6 +859,7 @@ def _summary(cards: list[dict], excluded_types: int | None, score_errors: dict[s
     ``low_liquidity`` is ``None`` (unknown) and never 0: the cards do not carry ``vol_90d``, and a board that prints
     0 for a figure nobody measured is making a claim. ``unreadable_sec`` is a card property, so it is counted on
     that path too — and it is the same number there as on a Fetch, which the exclusion would have broken.
+    ``ownership`` (#34 D20) is counted the same way, from the cards' provenance.
     """
     thin_names = set(thin or ())
     return {
@@ -834,6 +885,7 @@ def _summary(cards: list[dict], excluded_types: int | None, score_errors: dict[s
         # ``fetch_failed``) are drops and are not counted here.
         "low_liquidity": None if thin is None else sum(1 for c in cards if c["ticker"] in thin_names),
         "unreadable_sec": sum(1 for c in cards if c.get("source") != EDGAR_SOURCE),
+        "ownership": _ownership_counts(cards),   # #34 D20: stored vs live institutional shares
     }
 
 
@@ -913,6 +965,12 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     run_day = _run_day()                    # anchor age is judged against the day the scan runs (card O-2)
     scan_session = _d01_session()           # one D01 cutoff for the whole Fetch, so no batch reads a newer SPY bar
     stored_earnings = earnings_dates.stored_next_dates()      # #304: one read per run, not per batch
+    # #34 D20: ONE store read for the whole scan, never one per card. The stored institutional share wins over the
+    # live ``.info`` one, which the Yahoo client can swallow to ``{}`` (#23/#169); a name with no stored row keeps
+    # today's number.
+    # A list, not a generator: a caller that looks at the argument (a test spy, a future log line) must not
+    # be able to consume it before the reader sees it.
+    stored_ownership = ownership.latest_institutional([r["ticker"] for r in to_score])
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         # The store is read in bulk per batch (a fixed number of queries each), not once per ticker (#150 U13);
         # a batch bounds how many EDGAR and payload rows are in memory at once.
@@ -923,6 +981,7 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
             batch = to_score[start:start + PRELOAD_BATCH]
             preload = _preload([r["ticker"] for r in batch], no_fetch, scan_session)
             preload["earnings"] = stored_earnings   # #304: read once per run, not per batch
+            preload["ownership"] = stored_ownership  # #34 D20: the same rows for every batch
             preload["drops"] = drops
             preload["vendor"] = vendor
             preload["as_of"] = run_day
