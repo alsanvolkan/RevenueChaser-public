@@ -79,7 +79,8 @@ def _store_locked(exc: StoreLockedError):
 # visits could POST to it (start a 2 h crawl, burn UW quota, edit the
 # watchlist) or, via DNS rebinding, read its APIs. Two cheap checks close that:
 #   - Host must be a loopback name (a rebinding page arrives with its own
-#     hostname in Host);
+#     hostname in Host), or one of the exact names RC_ALLOWED_HOSTS lists, for a
+#     machine reached over a private network by its own name;
 #   - a state-changing request must not come from another site (browsers send
 #     Origin and Sec-Fetch-Site on cross-site requests; same-origin fetches from
 #     the dashboard's own pages and its iframes pass).
@@ -102,6 +103,26 @@ def _host_name(value: str) -> str:
     return value.rsplit(":", 1)[0] if value.count(":") == 1 else value
 
 
+def _extra_allowed_hosts() -> frozenset[str]:
+    """The ``Host`` names ``RC_ALLOWED_HOSTS`` adds to the loopback set, read per request.
+
+    A machine reached over a private network by its own name (a tailnet name, say) arrives with
+    that name in ``Host``, which the loopback-only check refuses. This variable names the extra
+    hosts, comma-separated and **exact**: a wildcard is not a host name and is dropped, so one
+    entry can never widen to a whole suffix. Unset or empty changes nothing, so the default stays
+    loopback only. It widens the ``Host`` check alone — the server still binds 127.0.0.1, so
+    reaching it by that name needs something that forwards the port.
+    """
+    raw = os.getenv("RC_ALLOWED_HOSTS", "")
+    return frozenset(h for h in (_host_name(part) for part in raw.split(",")) if h and "*" not in h)
+
+
+def _allowed_host(value: str) -> bool:
+    """True when ``value`` (a ``Host``, or an ``Origin``'s netloc) is loopback or listed."""
+    name = _host_name(value)
+    return name in _LOCAL_HOSTS or name in _extra_allowed_hosts()
+
+
 def _from_another_site() -> bool:
     """True when the browser says the request came from a page of another site.
 
@@ -114,7 +135,7 @@ def _from_another_site() -> bool:
 
 @app.before_request
 def _local_only():
-    if _host_name(request.host) not in _LOCAL_HOSTS:
+    if not _allowed_host(request.host):
         return jsonify({"ok": False, "error": "forbidden host"}), 403
     if request.method in _SAFE_METHODS:
         return None
@@ -123,7 +144,7 @@ def _local_only():
     origin = request.headers.get("Origin")
     if origin and origin != "null":
         from urllib.parse import urlsplit
-        if _host_name(urlsplit(origin).netloc) not in _LOCAL_HOSTS:
+        if not _allowed_host(urlsplit(origin).netloc):
             return jsonify({"ok": False, "error": "cross-site request refused"}), 403
     elif origin == "null":
         return jsonify({"ok": False, "error": "cross-site request refused"}), 403
