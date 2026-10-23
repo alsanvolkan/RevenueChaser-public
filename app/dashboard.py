@@ -34,11 +34,13 @@ from RevenueChaser.core.reporting_common import payload_path
 from . import runners
 from . import jobs
 from . import logview
+from . import runview
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("dashboard")
-# The Logs tab polls /api/logs every few seconds; keep those requests out of the log it shows.
+# The Logs tab polls /api/logs every few seconds, the Runs tab /api/runs; keep both out of the log it shows.
 logview.quiet_polling()
+logview.quiet_path(runview.POLL_PATH)
 
 app = Flask(__name__, template_folder=str(Path(__file__).resolve().parent.parent / "templates"))
 # Local tool served with debug=False, which makes Jinja compile the template once
@@ -248,6 +250,8 @@ TABS = [
     {"type": "tab", "key": "module_settings", "label": "Settings / Data health", "url": "/view/module_settings", "sub": True},
     # Read-only: the dashboard's own log files (app/logview.py). No Fetch, no Refresh, no data date.
     {"type": "tab", "key": "logs", "label": "Logs", "url": "/view/logs", "sub": True},
+    # Read-only: the job_runs rows every job and scheduled task leaves (app/runview.py, #26 PL5-b).
+    {"type": "tab", "key": "runs", "label": "Runs", "url": "/view/runs", "sub": True},
 ]
 
 
@@ -355,6 +359,8 @@ def view(mod: str):
         return _view_discord()
     if mod == "logs":
         return logview.render_page(logview.page_payload())
+    if mod == "runs":
+        return runview.render_page(runview.page_payload())
     f = _module_file(mod)
     if f is None:
         return "Unknown module", 404
@@ -1271,6 +1277,13 @@ def api_logs():
     except ValueError:
         return jsonify({"ok": False, "error": "unknown log source or run"}), 400
     return jsonify(data)
+
+
+@app.route("/api/runs")
+def api_runs():
+    """The Runs tab's poll: the newest ``job_runs`` rows (#26 PL5-b). Read-only, and lenient on a store
+    that holds no rows yet."""
+    return jsonify(runview.read(request.args.get("limit", runview.DEFAULT_LIMIT)))
 
 
 @app.route("/api/job/<job_id>/cancel", methods=["POST"])

@@ -167,12 +167,13 @@ hash. The pure logic is `RCFilters.core`, unit-tested under node (`core/tests/te
 | Discord | **no** | Chat archive, no tickers. Left: channels grouped by server and category (follow checkbox, per-channel Update); right: filters (channel, text, dates) and the feed. |
 | Settings / Data health | **no** | Ops inventory, not an equity board; its ticker drill uses the kit's combobox (C1b). Plan: [`data_health.md`](data_health.md). |
 | Logs | **no** | The dashboard's own log files (`app/logview.py`), read-only: no Fetch, no Refresh, no data date. |
+| Runs | **no** | The run log over `job_runs` (`app/runview.py`), read-only: no Fetch, no Refresh, no data date. One row per job and per scheduled task, newest first, with the trigger as stored (a dash where the writer records none, #83). |
 
 ### What am I looking at? — every dashboard
 
 Shared `help_html(body)` under the title, closed by default, same `.help`
 chrome. Every data tab has it (#383 C3): the 16 boards of the fixture registry
-except Logs. `core/tests/test_help_every_tab.py` holds
+except Logs and Runs (neither is a data board). `core/tests/test_help_every_tab.py` holds
 that: each tab renders the one shared box, no board-local `.help` fork, and a body
 that says what Fetch and Refresh do there. `HELP_CSS` falls back to the standard
 dark tokens, so a board without them (Earnings Radar, SPX Gamma, LEAPS) still
@@ -212,7 +213,7 @@ The three scopes are what keep a board's own problems at the top:
 - **shared** — it affects every data board, so every board lists it;
 - **repo** — repository-wide, listed on **Settings / Data health** only.
 
-`Logs` is not a data board, so it shows no group.
+`Logs` and `Runs` are not data boards, so neither shows a group.
 
 **Where the data comes from.** One checked-in file, `docs/open_issues.json`,
 read by `core/open_issues.py`; `reporting_common.open_issues_payload` turns it

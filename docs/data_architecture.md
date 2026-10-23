@@ -457,8 +457,9 @@ worker thread writes while Flask request threads read. So:
   write waits at most ~0.35 s for a store another process holds (`rawstore.brief_wait`); a skipped or failed write
   is a `job_runs: could not record` warning in the Server log and never changes the job's outcome. So a row can
   stay `running` when the server stopped mid-job, when an end write was skipped, or when the job was evicted
-  from the registry first; a reader treats a `running` row whose `pid` is not the current dashboard as
-  interrupted. Every job now opens the store twice, including jobs that never used it (Money flow, queued after
+  from the registry first. The reader is the **Runs** tab (`app/runview.py`, `/view/runs`, `GET /api/runs`,
+  #26 PL5-b): it lists such a row as running with its age rather than judging it, because nothing reconciles
+  one yet (#82). It derives nothing else — a row with no `trigger` shows none (#83). Every job now opens the store twice, including jobs that never used it (Money flow, queued after
   each Rotation Fetch).
 - **A scheduled task that writes tables leaves a `job_runs` row too (#129 A1).** `core/automations.run_task` runs
   the task's command as a subprocess, so the dashboard never sees it; it upserts the run's own row (`run_id` =

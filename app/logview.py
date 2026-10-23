@@ -39,6 +39,9 @@ DEFAULT_TAIL = 400
 MAX_TAIL = 2000
 READ_BYTES = 256 * 1024
 POLL_PATH = "/api/logs"
+# Request lines this tab must not show. Its own poll, plus any other tab that polls and would otherwise fill
+# the log it shows — the Runs tab registers itself with ``quiet_path`` (#26 PL5-b).
+POLL_PATHS = {POLL_PATH}
 # werkzeug colours its request lines (304, 404, 5xx) even when stderr is a file; the tab shows plain text.
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
@@ -116,16 +119,23 @@ def render_page(payload: dict) -> str:
 
 
 class SkipLogPolling(logging.Filter):
-    """Drop werkzeug's request lines for /api/logs: the tab polls every few seconds and would fill its own log."""
+    """Drop werkzeug's request lines for the polling paths: a tab polls every few seconds and would
+    otherwise fill the log this one shows."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
-            return POLL_PATH not in record.getMessage()
+            message = record.getMessage()
         except Exception:  # noqa: BLE001 - a malformed record is not ours to judge
             return True
+        return not any(path in message for path in POLL_PATHS)
 
 
 def quiet_polling(logger_name: str = "werkzeug") -> None:
     logger = logging.getLogger(logger_name)
     if not any(isinstance(f, SkipLogPolling) for f in logger.filters):
         logger.addFilter(SkipLogPolling())
+
+
+def quiet_path(path: str) -> None:
+    """Keep another polling tab's own requests out of the log as well (one filter serves them all)."""
+    POLL_PATHS.add(path)

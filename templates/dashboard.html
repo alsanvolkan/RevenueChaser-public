@@ -383,7 +383,7 @@ function rcOpenIssuesRender(key){
     <iframe class="frame" data-tab="{{ t.key }}" data-src="{{ t.url }}" title="{{ t.label }}"></iframe>
     {% endif %}
     {% endfor %}
-    <div id="overlay"><div class="msg"><span class="spin"></span> Running… this may take a few minutes</div></div>
+    <div id="overlay"><div class="msg"><span class="spin"></span> <span id="overlay-msg">Running… this may take a few minutes</span></div></div>
   </div>
 </div>
 <script>
@@ -391,7 +391,7 @@ var ACTIVE = 'module_earnings_radar';
 // Fluid boards (fully width:100% pages with inner overflow wrappers): their
 // iframe FILLS the visible pane instead of being grown to a natural content
 // width like the intentionally-wide boards below (Earnings ~2600px).
-var FILL_WIDTH = {'module_spx_gamma': true, 'module_earnings_radar': true, 'module_oipd': true, 'logs': true};
+var FILL_WIDTH = {'module_spx_gamma': true, 'module_earnings_radar': true, 'module_oipd': true, 'logs': true, 'runs': true};
 var UNIVERSE_TABS = ['module_asymmetric_growth','module_swing_potential','module_fundamentals'];
 // Boards backed by .store data: Refresh drops the cached html and recomputes
 // from raw.duckdb (mirrors _STORE_REFRESHABLE in app/dashboard.py).
@@ -491,8 +491,9 @@ function showTab(key){
   var rbBtn = document.getElementById('btn-sec13f-rebuild');
   if(rbBtn) rbBtn.style.display = (key==='module_sec_13f') ? 'inline-block' : 'none';
   var rfBtn = document.getElementById('btn-refresh');
-  // Logs is a read-only view of the dashboard's own log files: it polls by itself, nothing to refresh.
-  if(rfBtn) rfBtn.style.display = (key==='module_earnings_radar' || key==='logs') ? 'none' : 'inline-block';
+  // Logs and Runs are read-only views (the log files, the job_runs rows): both poll by themselves,
+  // so there is nothing to refresh.
+  if(rfBtn) rfBtn.style.display = (key==='module_earnings_radar' || key==='logs' || key==='runs') ? 'none' : 'inline-block';
   var ftBtn = document.getElementById('btn-fetch');
   if(ftBtn) ftBtn.style.display = (key==='module_leaps' || key==='module_sec_13f' || key==='module_financials' || key==='module_oipd' || key==='module_comovement' || key==='module_discord') ? 'inline-block' : 'none';
   var ruBtn = document.getElementById('btn-refresh-universe');
@@ -831,7 +832,26 @@ function jobsForTab(list, tab){
   return activeJobs(list).filter(function(j){ return (j.produces||[]).indexOf(tab) >= 0; });
 }
 var ACTIVE_JOBS = [];  // last /api/jobs active list (poll keeps it current)
-function syncOverlay(){ showOverlay(jobsForTab(ACTIVE_JOBS, ACTIVE).length > 0); }
+
+// What the overlay says while a job covers this tab (#26 PL5-b). /api/jobs already serves the job's module,
+// its start and the phase its runner reached; the overlay used to show one fixed sentence whatever ran.
+function overlayText(jobs){
+  var job = (jobs||[])[0];
+  if(!job) return 'Running… this may take a few minutes';
+  if(job.status === 'queued') return 'Queued behind another job…';
+  var what = job.phase && job.phase !== job.module ? job.module + ' · ' + job.phase : (job.module || 'a job');
+  var elapsed = job.started_at ? Math.round((Date.now() - new Date(job.started_at).getTime())/1000) : null;
+  var since = (elapsed === null || isNaN(elapsed) || elapsed < 0) ? ''
+            : (elapsed < 90 ? ' · ' + elapsed + 's'
+                            : ' · ' + Math.floor(elapsed/60) + 'm ' + (elapsed % 60) + 's');
+  return 'Running ' + what + since + (job.cancel_requested ? ' · stopping at the next safe point' : '');
+}
+function syncOverlay(){
+  var jobs = jobsForTab(ACTIVE_JOBS, ACTIVE);
+  var msg = document.getElementById('overlay-msg');
+  if(msg) msg.textContent = overlayText(jobs);   // a module name is code-chosen, but never markup here
+  showOverlay(jobs.length > 0);
+}
 
 function renderStatus(){
   // mark tabs with a running badge
