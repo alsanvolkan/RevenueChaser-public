@@ -81,7 +81,6 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
   var problems = document.getElementById("runs-problems"), filter = document.getElementById("runs-filter");
   var pause = document.getElementById("runs-pause");
   var paused = false, busy = false, shown = null, last = null;
-  var PROBLEM = {error: true, cancelled: true};
 
   function stamp(epoch) {
     if (epoch === null || epoch === undefined) return "—";
@@ -134,24 +133,24 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
     st.appendChild(pill);
     tr.appendChild(st);
     cell(tr, "took", r.status === "running" ? "going" : took(r.duration_s));
-    cell(tr, "note-cell", r.error || r.message);
-    cell(tr, "params", r.params && Object.keys(r.params).length ? r.params : "");
+    cell(tr, "note-cell", r.error || r.message, true);
+    cell(tr, "params", r.params && Object.keys(r.params).length ? r.params : "", true);
     return tr;
   }
 
-  function wanted(rows) {
-    var q = filter.value.trim().toLowerCase();
-    return rows.filter(function (r) {
-      if (problems.checked && !PROBLEM[r.status]) return false;
-      if (!q) return true;
-      return String(r.module || "").toLowerCase().indexOf(q) >= 0
-          || String(r.source || "").toLowerCase().indexOf(q) >= 0;
-    });
+  // What the meta line says. It names the filter the rows were read under, so "0 of 0 problem runs" can
+  // never be read as "no run ever failed" when only the newest page was looked at.
+  function metaText(d, paused) {
+    var kind = d.problems ? " problem runs" : " recorded runs";
+    if (d.query) kind += ' matching "' + d.query + '"';
+    return d.shown + " of " + (d.total || 0) + kind
+      + (d.shown < d.total ? " · the newest " + d.shown + " are read" : "")
+      + (paused ? " · paused" : "");
   }
 
   function draw() {
     if (!last) return;
-    var rows = wanted(last.rows || []);
+    var rows = last.rows || [];
     var key = JSON.stringify(rows.map(function (r) { return [r.run_id, r.status, r.finished_at]; }));
     if (key !== shown) {                  // unchanged: keep the reader's scroll and selection
       shown = key;
@@ -160,16 +159,15 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
         var tr = document.createElement("tr"), td = document.createElement("td");
         td.className = "empty";
         td.colSpan = 7;
-        td.textContent = (last.total ? "No run matches this filter." : "No run has been recorded yet.");
+        td.textContent = (last.problems || last.query) ? "No run matches this filter."
+                                                       : "No run has been recorded yet.";
         tr.appendChild(td);
         frag.appendChild(tr);
       }
       rows.forEach(function (r) { frag.appendChild(line(r)); });
       body.replaceChildren(frag);
     }
-    meta.textContent = rows.length + " of " + (last.total || 0) + " recorded runs"
-      + (last.shown < last.total ? " · the newest " + last.shown + " are read" : "")
-      + (paused ? " · paused" : "");
+    meta.textContent = metaText(last, paused);
   }
 
   // A board iframe the shell is not showing still runs its timers: poll only while this one is on screen.
@@ -178,18 +176,30 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
     try { var f = window.frameElement; return !f || f.getClientRects().length > 0; } catch (e) { return true; }
   }
 
+  function query() {
+    var p = new URLSearchParams();
+    if (problems.checked) p.set("problems", "1");
+    var q = filter.value.trim();
+    if (q) p.set("q", q);
+    var s = p.toString();
+    return s ? POLL + "?" + s : POLL;
+  }
+
   function load(poll) {
     if (busy) return;
     busy = true;
-    fetch(POLL, {cache: "no-store"})
+    fetch(query(), {cache: "no-store"})
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
       .then(function (d) { if (!(poll && paused)) { last = d; draw(); } })
       .catch(function (e) { meta.textContent = "Could not read the run log: " + e.message; })
       .then(function () { busy = false; });
   }
 
-  [problems, filter].forEach(function (el) {
-    el.addEventListener(el === filter ? "input" : "change", function () { shown = null; draw(); });
+  problems.addEventListener("change", function () { shown = null; load(); });
+  var typing = null;
+  filter.addEventListener("input", function () {
+    clearTimeout(typing);
+    typing = setTimeout(function () { shown = null; load(); }, 250);   // one read per pause, not per key
   });
   pause.addEventListener("click", function () {
     paused = !paused;

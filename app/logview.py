@@ -127,7 +127,9 @@ class SkipLogPolling(logging.Filter):
             message = record.getMessage()
         except Exception:  # noqa: BLE001 - a malformed record is not ours to judge
             return True
-        return not any(path in message for path in POLL_PATHS)
+        # Over a snapshot: a tab registering its path (``quiet_path``) while a request is being logged would
+        # otherwise raise "set changed size during iteration" out of the logging call.
+        return not any(path in message for path in tuple(POLL_PATHS))
 
 
 def quiet_polling(logger_name: str = "werkzeug") -> None:

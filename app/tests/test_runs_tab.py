@@ -12,7 +12,7 @@ import re
 
 import pytest
 
-from RevenueChaser.app import dashboard, runview
+from RevenueChaser.app import dashboard, logview, runview
 from RevenueChaser.core import provenance, rawstore
 from RevenueChaser.core.tests.open_issues_shell import strip_open_issues_data
 
@@ -70,6 +70,13 @@ def test_a_finished_run_carries_its_duration_and_a_running_one_does_not():
     assert by_id["going"]["duration_s"] is None and by_id["going"]["status"] == "running"
 
 
+def test_a_negative_span_is_no_duration_at_all():
+    """The two stamps are written in different calls; a clock step between them is not a run that took
+    minus four seconds."""
+    _write(_row("backwards", started_at=2_000.0, finished_at=1_996.0))
+    assert runview.read()["rows"][0]["duration_s"] is None
+
+
 def test_a_run_that_recorded_no_trigger_stays_unrecorded():
     """The dashboard writer leaves trigger/source NULL (#83). The reader must not infer one from the lane."""
     _write(_row("dash", lane="short", trigger=None, source=None),
@@ -80,10 +87,21 @@ def test_a_run_that_recorded_no_trigger_stays_unrecorded():
     assert by_id["task"]["trigger"] == "scheduled" and by_id["task"]["source"] == "RC-Daily-Bars"
 
 
-def test_the_json_columns_come_back_as_objects():
-    _write(_row("j", params={"ticker": "RTX"}, counts={"rows": 12}))
+def test_the_params_come_back_as_an_object():
+    _write(_row("j", params={"ticker": "RTX"}))
+    assert runview.read()["rows"][0]["params"] == {"ticker": "RTX"}
+
+
+def test_only_the_columns_the_page_shows_are_read():
+    """The payload travels on every poll, and a column with no reader is weight. ``counts`` also has no
+    writer — neither app/jobs._record nor core/automations.run_task passes it (#83), so reading it would
+    ship a NULL every time; it comes back with the writer."""
+    _write(_row("k", counts={"rows": 12}))
     row = runview.read()["rows"][0]
-    assert row["params"] == {"ticker": "RTX"} and row["counts"] == {"rows": 12}
+    assert set(row) == {"run_id", "module", "source", "trigger", "params", "queued_at", "started_at",
+                        "finished_at", "status", "error", "message", "duration_s"}
+    for dead in ("counts", "pid", "lane", "registry_name"):
+        assert dead not in runview.COLUMNS, f"{dead} is selected but nothing shows it"
 
 
 def test_the_message_of_a_done_run_and_the_error_of_a_failed_one_both_show():
@@ -92,6 +110,47 @@ def test_the_message_of_a_done_run_and_the_error_of_a_failed_one_both_show():
     by_id = {r["run_id"]: r for r in runview.read()["rows"]}
     assert by_id["said"]["message"] == "nothing to do" and by_id["said"]["error"] is None
     assert by_id["broke"]["error"] == "kaput"
+
+
+def test_the_problems_filter_asks_the_table_not_the_page_of_rows():
+    """The failure that matters is the one off the end of the page. 200 clean runs after it must not make
+    the run log answer "no problems": the filter and the count both run in SQL."""
+    _write(*[_row(f"ok{i}", status="done", started_at=2_000.0 + i) for i in range(5)],
+           _row("bad", status="error", error="kaput", started_at=1_000.0),
+           _row("stopped", status="cancelled", started_at=1_001.0))
+    plain = runview.read(limit=3)
+    assert plain["total"] == 7 and [r["run_id"] for r in plain["rows"]] == ["ok4", "ok3", "ok2"]
+    bad = runview.read(limit=3, problems=True)
+    assert bad["total"] == 2, "the count is of the matching runs in the table"
+    assert {r["run_id"] for r in bad["rows"]} == {"bad", "stopped"}
+    assert bad["problems"] is True
+
+
+def test_a_running_row_is_not_a_problem():
+    """Whether an old `running` row is stale is #82's judgement, not this reader's."""
+    _write(_row("going", status="running", finished_at=None))
+    assert runview.read(problems=True)["total"] == 0
+
+
+def test_the_name_filter_matches_the_job_and_the_task_name():
+    _write(_row("a", module="RC-Daily-Bars", source="RC-Daily-Bars", trigger="scheduled"),
+           _row("b", module="daily_bars"), _row("c", module="rotation"))
+    assert {r["run_id"] for r in runview.read(query="daily")["rows"]} == {"a", "b"}
+    assert runview.read(query="DAILY")["total"] == 2, "the match is case-insensitive"
+    assert runview.read(query="rot")["total"] == 1
+    assert runview.read(query="  ")["total"] == 3, "a blank filter is no filter"
+
+
+def test_a_filter_cannot_reach_the_sql_text():
+    _write(_row("a", module="rotation"))
+    got = runview.read(query="'; DROP TABLE job_runs; --")
+    assert got["total"] == 0 and got["rows"] == []
+    assert runview.read()["total"] == 1, "the table is still there"
+
+
+def test_a_long_filter_is_bounded():
+    assert len(runview.clean_query("x" * 5_000)) == runview.MAX_QUERY
+    assert runview.clean_query(None) == "" and runview.clean_query(12) == ""
 
 
 def test_a_silly_limit_is_clamped_not_refused():
@@ -118,6 +177,18 @@ def test_the_api_serves_the_rows(client):
 def test_the_api_clamps_the_limit(client):
     data = client.get(f"/api/runs?limit={runview.MAX_LIMIT * 10}").get_json()
     assert data["limit"] == runview.MAX_LIMIT
+
+
+def test_the_api_passes_the_filters_through(client):
+    _write(_row("ok", status="done", module="rotation"),
+           _row("bad", status="error", module="RC-Daily-Bars", source="RC-Daily-Bars"))
+    assert client.get("/api/runs").get_json()["total"] == 2
+    problems = client.get("/api/runs?problems=1").get_json()
+    assert problems["total"] == 1 and problems["rows"][0]["run_id"] == "bad"
+    named = client.get("/api/runs?q=daily").get_json()
+    assert named["total"] == 1 and named["query"] == "daily"
+    both = client.get("/api/runs?problems=1&q=rotation").get_json()
+    assert both["total"] == 0, "the two filters are ANDed"
 
 
 def test_the_api_takes_no_write(client):
@@ -208,6 +279,10 @@ def _request(path):
 
 def test_the_tabs_own_polling_stays_out_of_the_log_it_would_fill():
     """The Runs tab polls every few seconds; werkzeug's lines for it must not reach the Logs tab."""
+    # The installer is called here rather than left to the import side effect, so the test says what it
+    # needs. The path itself is NOT registered here: that is app/dashboard.py's wiring, under test.
+    logview.quiet_polling()
+    assert runview.POLL_PATH in logview.POLL_PATHS, "app/dashboard.py must register the Runs tab's path"
     werkzeug = logging.getLogger("werkzeug")
     assert not werkzeug.filter(_request("/api/runs"))
     assert werkzeug.filter(_request("/view/runs"))
