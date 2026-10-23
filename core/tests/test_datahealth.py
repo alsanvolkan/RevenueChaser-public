@@ -170,3 +170,23 @@ def test_module_does_not_import_store_or_network():
               if "rawstore" in name or "provider" in name
               or name.split(".")[0] in {"requests", "httpx", "urllib", "socket", "duckdb"}]
     assert banned == [], banned
+
+
+def test_scoped_runs_a_function_once_per_distinct_call_inside_a_memo_scope_and_always_outside():
+    from RevenueChaser.core import datahealth
+    calls = []
+
+    @datahealth.scoped
+    def summary(x=1):
+        calls.append(x)
+        return {"x": x, "rows": [x]}
+
+    summary(); summary()
+    assert calls == [1, 1]                      # outside a scope: the plain function
+    with datahealth.memo_scope():
+        a = summary(); b = summary(); summary(2)
+        assert calls == [1, 1, 1, 2]            # inside: once per distinct call
+        a["rows"].append(99)
+        assert b["rows"] == [1] and summary()["rows"] == [1]   # callers get copies, never the cached object
+    summary()
+    assert calls == [1, 1, 1, 2, 1]             # the cache does not outlive the scope

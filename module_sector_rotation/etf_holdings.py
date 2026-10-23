@@ -12,6 +12,7 @@ import logging
 from typing import Optional
 
 from RevenueChaser.core.config import FMP_API_KEY
+from RevenueChaser.core import datahealth
 from RevenueChaser.core.datahealth import Health
 
 logger = logging.getLogger(__name__)
@@ -138,6 +139,7 @@ def stored_holdings(ticker: str) -> list[dict]:
     return list((row or {}).get("entry") or [])
 
 
+@datahealth.scoped
 def health_summary() -> dict:
     """What Data Health says about the stored holdings (store only).
 

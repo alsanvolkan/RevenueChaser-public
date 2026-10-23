@@ -1168,7 +1168,8 @@ def collect(now: datetime | None = None) -> dict:
         now = now.replace(tzinfo=timezone.utc)
     _begin_call()
     try:
-        return _collect(now)
+        with rawstore.session(), datahealth.memo_scope():   # one open per store file, not one per query
+            return _collect(now)
     finally:
         _end_call()
 

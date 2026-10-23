@@ -34,6 +34,7 @@ import time
 from datetime import date, datetime
 
 from RevenueChaser.core import calendar, ledger, ownership, rawstore
+from RevenueChaser.core import datahealth
 from RevenueChaser.core.datahealth import Health
 from RevenueChaser.core.providers.yfinance import MAX_YEARS
 
@@ -502,6 +503,7 @@ class Capture:
 
 # ── Data Health ──────────────────────────────────────────────────────────────
 
+@datahealth.scoped
 def health_summary(now: datetime | None = None) -> dict:
     """Read-only summary for the Data Health row, zero network.
 

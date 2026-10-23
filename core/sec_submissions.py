@@ -31,6 +31,7 @@ import time
 from datetime import date
 
 from RevenueChaser.core import calendar, rawstore
+from RevenueChaser.core import datahealth
 from RevenueChaser.core.datahealth import Health
 
 logger = logging.getLogger(__name__)
@@ -228,6 +229,7 @@ class Capture:
             return {**EMPTY_RESULT, "error": f"{type(exc).__name__}: {exc}"}
 
 
+@datahealth.scoped
 def health_summary() -> dict:
     """Read-only summary for the Data Health row, zero network."""
     out = {"filings": 0, "ciks": 0, "newest_filing_date": None, "newest_fetched_at": None, "last_run_id": None,

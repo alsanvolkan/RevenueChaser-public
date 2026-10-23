@@ -12,8 +12,45 @@ Pure module: no store, no network.
 """
 from __future__ import annotations
 
+import copy
+import functools
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
+
+_MEMO = threading.local()
+
+
+@contextmanager
+def memo_scope():
+    """Inside this scope a function wrapped by :func:`scoped` runs once per distinct call.
+
+    One Settings collect asks the same seven store summaries twice (the row builders, then each dataset's
+    ``Health``); this makes the second ask free without a cache that outlives the collect.
+    """
+    prev = getattr(_MEMO, "cache", None)
+    _MEMO.cache = {}
+    try:
+        yield
+    finally:
+        _MEMO.cache = prev
+
+
+def scoped(fn):
+    """Memoise ``fn`` while a :func:`memo_scope` is open; outside one it is the plain function."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        cache = getattr(_MEMO, "cache", None)
+        if cache is None:
+            return fn(*args, **kwargs)
+        key = (fn.__module__, fn.__qualname__, repr(args), repr(sorted(kwargs.items())))
+        if key not in cache:
+            cache[key] = fn(*args, **kwargs)
+        return copy.deepcopy(cache[key])
+
+    return wrapper
 
 When = date | datetime | str | None
 

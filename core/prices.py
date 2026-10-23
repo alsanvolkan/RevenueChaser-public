@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 
 from RevenueChaser.core import calendar, job_control, job_lock, ledger, rawstore
+from RevenueChaser.core import datahealth
 from RevenueChaser.core.datahealth import Health
 from RevenueChaser.core.providers.ohlc import regular_session_bars
 from RevenueChaser.core.rotation_reference import ROTATION_ETFS
@@ -806,6 +807,7 @@ def _last_n_sessions(latest: date, n: int) -> list[date]:
     return out
 
 
+@datahealth.scoped
 def health_summary(now: datetime | None = None) -> dict:
     """Read-only summary for the Data Health row (§9.6), zero network."""
     now = _now(now)

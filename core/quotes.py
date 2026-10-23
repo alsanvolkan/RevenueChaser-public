@@ -31,6 +31,7 @@ import math
 from datetime import date, datetime, timezone
 
 from RevenueChaser.core import calendar, job_control, rawstore
+from RevenueChaser.core import datahealth
 from RevenueChaser.core.datahealth import Health
 from RevenueChaser.core.identity.sources import norm_ticker
 
@@ -451,6 +452,7 @@ def prefilter_quotes(tickers) -> dict[str, dict]:
     return out
 
 
+@datahealth.scoped
 def health_summary() -> dict:
     """The Data Health numbers (#294), store only: the newest session's rows per source against the universe, the
     universe tickers with no row per source, the caps more than ``CAP_GAP_PCT`` percent apart (UW against Yahoo) and

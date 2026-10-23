@@ -35,6 +35,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from RevenueChaser.core import calendar, config, job_lock, ledger, prices, rawstore
+from RevenueChaser.core import datahealth
 from RevenueChaser.core.datahealth import Health
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,7 @@ def levels_between(start: date | str, end: date | str, symbol: str = SYMBOL) -> 
              "close": r["close"], "volume": r["volume"]} for r in rows]
 
 
+@datahealth.scoped
 def health_summary(now: datetime | None = None) -> dict:
     """Read-only summary for the Data Health row (§9.6): newest stored session vs the latest complete one, the
     row count and the source. Store only, zero network; a calendar error is reported, never raised."""

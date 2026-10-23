@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Callable
 
 from RevenueChaser.core import calendar, config, ledger, rawstore
+from RevenueChaser.core import datahealth
 from RevenueChaser.core.datahealth import Health
 from RevenueChaser.core.identity.sources import SourceResult, fail, now_iso, sec
 from RevenueChaser.core.universe_fetch import MIN_FULL_UNIVERSE, SEC_LIST_EXCHANGES
@@ -275,6 +276,7 @@ def _last_good(marker_dir: Path, name: str) -> dict:
     return next((r for r in _receipts(marker_dir, name) if r.get("status") != "failed"), {})
 
 
+@datahealth.scoped
 def health_summary(marker_dir: Path | None = None) -> dict:
     """Read-only Data Health summary of both files, zero network (#301 D21 + D8).
 
