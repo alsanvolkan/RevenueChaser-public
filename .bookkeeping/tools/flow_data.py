@@ -10,6 +10,8 @@ Every value carries its source:
 - "store write scan" means a search of every rawstore write call outside tests found no other writer.
 """
 
+# Prose, and no trailing full stop: render_flow.py puts its own punctuation after this, both in
+# the markdown line and in the HTML page's subtitle.
 AS_OF = (
     "Carried over from the private repo alsanvolkan/RevenueChaser at main f2d74a1c (2026-10-21), "
     "whose history this repo does not share: the 2026-10-22 migration re-rooted the public repo. "
@@ -19,7 +21,7 @@ AS_OF = (
     "point into commits this repo has no copy of, and two cited files moved "
     "(core/ohlc_cache.py -> module_swing_potential/ohlc_cache.py, module_spx_gamma/cftc.py -> "
     "core/providers/cftc.py). Re-reading every cite against this repo is its own pass; until it "
-    "runs, treat a line number here as a hint and the code as the source of truth."
+    "runs, treat a line number here as a hint and the code as the source of truth"
 )
 
 MODES = {

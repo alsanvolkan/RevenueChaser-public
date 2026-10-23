@@ -15,6 +15,8 @@ stale local file. The former `future_ideas/` docs were migrated there.
 - **Area (single-select), 12 options:** `platform-store`, `platform-app`, `providers`, `spine`,
   `data-health`, `shared-ui`, `classification`, `screeners`, `market`, `earnings`, `ownership`,
   `quality`. There is no `community` option; Discord work carries the `area:community` label only.
+  Read from the board on 2026-10-23 with `gh project field-list 1 --owner alsanvolkan`; that command
+  is the current answer if the options change.
 
 Requires the `gh` CLI authenticated to the `alsanvolkan` account with the
 `project` scope (`gh auth status` → scopes must include `project`/`read:project`).

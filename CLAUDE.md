@@ -11,9 +11,10 @@ project board and two folders that are not published (`.hermes/`, the plan and r
 merged here, because this is where CI runs. The issues live here too, and so does `.bookkeeping/`.
 
 - **Branch from `origin/main` of this repository,** push here, open the PR here.
-- **Issues live in the private repository.** Reference one in full — `alsanvolkan/RevenueChaser#447`, never
-  the bare `#447`, which would point at an issue of *this* repository that does not exist. GitHub auto-links
-  the full form across repositories.
+- **Issues live here; the private tracker still holds the old ones.** A bare `#447` means issue 447 of
+  *this* repository, so cite an issue that predates the move in full — `alsanvolkan/RevenueChaser#447` —
+  which GitHub auto-links across repositories. The private numbering and this repository's do not line up,
+  so never assume a number carries over.
 - **Few pull requests, each carrying real work.** One per lane; a one-line follow-up rides the next PR that is
   open anyway rather than getting one of its own. An earlier rule of one batched PR per day existed because
   Actions minutes were scarce. They are not scarce here, and the two jobs run concurrently in well under an

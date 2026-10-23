@@ -1,6 +1,6 @@
 ---
 name: rc-issue-tracking
-description: Track RevenueChaser work on GitHub — open an issue for every slice, review finding or research question, put it on Projects board #1 with a Status, and attach it as a sub-issue of its area epic. Use whenever a review, plan or discussion produces an actionable item, when work on an issue starts or ships (Todo → In Progress → Done), or when the user asks to "open an issue", "add to the roadmap/board", or "track this".
+description: Track RevenueChaser work on GitHub — open an issue for every slice, review finding or research question, put it on Projects board #1 with a Status, and attach it as a sub-issue of its board epic. Use whenever a review, plan or discussion produces an actionable item, when work on an issue starts or ships (Todo → In Progress → Done), or when the user asks to "open an issue", "add to the roadmap/board", or "track this".
 ---
 
 # RevenueChaser issue tracking
@@ -67,13 +67,14 @@ issue numbers are the one thing a table like this gets wrong:
 
 Pass `--area <key>` to the helper so the label and the board field are both set.
 
-**Two gaps to know about.** Board #1's Area field offers 12 options and has no `community`, so
+**Two gaps to know about,** from reading the board itself on 2026-10-23
+(`gh project field-list 1 --owner alsanvolkan`). Its Area field offers 12 options and has no `community`, so
 `--area community` creates and labels the issue and then exits on `unknown Area 'community'`, leaving
 the Area field unset — use `--label area:community` for Discord work, or add the board option first.
 And `spine` is a board Area option with no epic, so spine work has no parent to attach to.
 
-**Big umbrella issues #22–#30** hold findings as checklists. **Convert an item to a
-sub-issue only when work on it starts** (user decision), not in bulk.
+An umbrella issue holds its findings as a checklist. **Convert an item to a sub-issue only when work on
+it starts** (user decision), not in bulk.
 
 ## How
 
