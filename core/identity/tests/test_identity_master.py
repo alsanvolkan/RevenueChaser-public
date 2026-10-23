@@ -13,7 +13,8 @@ COLUMNS = {"ticker", "cik", "cik_source", "exchange", "name", "name_source", "se
            "type_asof", "sector", "sector_source", "industry_group", "group_source", "industry", "industry_source",
            "sub_industry", "sub_source", "gics_asof", "updated_at",
            "figi", "composite_figi", "share_class_figi", "exch_code", "security_description", "figi_source",
-           "sic", "sic_description", "sic_group2", "sic_source"}
+           "sic", "sic_description", "sic_group2", "sic_source",
+           "cusip", "isin", "cusip_source", "isin_source"}
 
 
 def full(**over):

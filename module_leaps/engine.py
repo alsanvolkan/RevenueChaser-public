@@ -16,6 +16,7 @@ import json
 import logging
 import math
 from collections import defaultdict
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -278,6 +279,7 @@ def save_cache(ticker: str, snapshot: dict):
     rawstore.write_rows("leaps_cache", [{
         "ticker": ticker.upper(),
         "payload": {"latest": snapshot, "history": history},
+        "fetched_at": time.time(),
     }])
 
 

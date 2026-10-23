@@ -334,8 +334,9 @@ def load_ticker_info(ticker: str, no_fetch: bool = False) -> dict:
     info, status = refetch_or_keep(stale, lambda: yf.Ticker(ticker).info or {}, has_fields, label=ticker)
     if status == "fresh":
         try:
+            now = time.time()
             rawstore.write_rows("swing_info", [{
-                "ticker": ticker, "payload": info, "cached_at": time.time(),
+                "ticker": ticker, "payload": info, "cached_at": now, "fetched_at": now,
             }])
         except Exception:  # noqa: BLE001
             logger.warning("info cache write failed for %s", ticker)

@@ -7,6 +7,7 @@ function: D-M3 "weekly, both", M-ROT-2), so the trail view works without waiting
 It makes no provider call; the macro series have no D01 bars and stay live-only.
 """
 import logging
+import time
 from datetime import date, datetime, timedelta
 
 from RevenueChaser.core import calendar, rawstore
@@ -66,6 +67,7 @@ def save_holdings_cache(ticker: str, rows: list[dict]) -> None:
         "ticker": ticker.upper(),
         "date": date.today().isoformat(),
         "rows": rows,
+        "fetched_at": time.time(),
     }])
 
 

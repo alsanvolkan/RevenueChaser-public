@@ -124,16 +124,23 @@ def _key_col(ds: str) -> str:
     return key[0] if key else "ticker"
 
 
+# Fetch stamps are not the blob a legacy ``{key: object}`` file carries. A migrated row leaves them NULL
+# (unknown, never 0) — #127 added ``fetched_at`` to ``sec13f_security_meta`` without a legacy source for it.
+_STAMP_COLS = {"fetched_at", "cached_at", "fetched_at_iso"}
+
+
 def _value_col(ds: str) -> str:
     """The single non-key column of a ``{key: blob}`` store.
 
     Read from the manifest rather than hardcoded: these tables are split
     between ``entry`` and ``payload``, and writing the wrong name stored the
     keys with a NULL blob while the row COUNT still matched — so the migration
-    reported PASS and ``--purge`` deleted the originals.
+    reported PASS and ``--purge`` deleted the originals. Stamp columns are not
+    that blob.
     """
     key_cols = set(MANIFEST[ds].get("key") or [])
-    value_cols = [c for c in rawstore._columns_of(MANIFEST[ds]) if c not in key_cols]
+    value_cols = [c for c in rawstore._columns_of(MANIFEST[ds])
+                  if c not in key_cols and c not in _STAMP_COLS]
     if len(value_cols) != 1:
         raise ValueError(f"{ds}: expected exactly one value column, got {value_cols}")
     return value_cols[0]
