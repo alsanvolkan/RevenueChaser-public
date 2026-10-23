@@ -62,10 +62,12 @@ def load_holdings_cache(ticker: str, any_age: bool = False) -> dict | None:
 
 
 def save_holdings_cache(ticker: str, rows: list[dict]) -> None:
+    import time
     rawstore.write_rows("rotation_holdings", [{
         "ticker": ticker.upper(),
         "date": date.today().isoformat(),
         "rows": rows,
+        "fetched_at": time.time(),
     }])
 
 

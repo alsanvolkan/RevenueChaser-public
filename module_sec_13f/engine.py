@@ -266,8 +266,10 @@ def load_sec13f_meta() -> dict:
 
 
 def save_sec13f_meta(meta: dict):
+    import time
+    fetched_at = time.time()
     rawstore.write_rows("sec13f_security_meta", [
-        {"ticker": t, "entry": v} for t, v in meta.items()
+        {"ticker": t, "entry": v, "fetched_at": fetched_at} for t, v in meta.items()
     ])
 
 

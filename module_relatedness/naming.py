@@ -159,7 +159,7 @@ def _sync_ticker_themes(run_id: str, rows: dict[str, dict]) -> int:
         return 0
     updates = []
     for r in rawstore.query(
-            "SELECT ticker, theme_id, theme, level, theme_run_id FROM ticker_themes "
+            "SELECT ticker, theme_id, theme, level, theme_run_id, fetched_at FROM ticker_themes "
             "WHERE theme_run_id = ?", [run_id]):
         want = labels.get(r.get("theme_id"))
         if want and r.get("theme") != want:

@@ -41,6 +41,11 @@ COLUMNS = ("sector", "industry", "industry_group", "sub_industry", "next_earning
 CHUNK = 2000          # rows per ``update_columns`` call (one transaction each)
 _UNIVERSE = "equity_universe"
 _UW_SOURCE = "uw_sector"
+# #127: identifiers copied from the CUSIP map we already hold. Not a provider call.
+ID_COLS = ("cusip", "isin", "cusip_source", "isin_source")
+CUSIP_SOURCE = "openfigi_13f"
+ISIN_SOURCE = "derived_cusip"
+_EMPTY_IDS = dict.fromkeys(ID_COLS)
 
 
 def _text(value) -> str:
@@ -105,3 +110,106 @@ def apply_to_universe() -> dict:
         rawstore.update_columns(_UNIVERSE, "ticker", plan[i:i + CHUNK], list(COLUMNS))
     counts["applied"], counts["unchanged"] = len(plan), known - len(plan)
     return counts
+
+
+# ── CUSIP / ISIN onto the spine (#127) ───────────────────────────────────────
+# ``identity_cusip.current_map`` is keyed by CUSIP. The live store was 1:1
+# (14,656 CUSIPs, 14,656 tickers); the table does not forbid two present CUSIPs
+# naming one ticker (an old and a new CUSIP both still 'present', or two share
+# classes OpenFIGI both spell as the same ticker). A single column cannot hold
+# both. Tie, deterministic: newest ``valid_from``, then the lowest CUSIP. A
+# missing ``valid_from`` (a run outside the holiday table) loses to any date.
+
+
+def _ticker(raw) -> str:
+    """The spine's spelling: upper-case, ``BRK/B`` and ``BRK.B`` both ``BRK-B``."""
+    from .sources import norm_ticker
+    return norm_ticker(str(raw or "").replace("/", "-"))
+
+
+def _iso_date(value) -> str:
+    if value is None or value == "":
+        return ""
+    if hasattr(value, "isoformat"):
+        return value.isoformat()[:10]
+    return str(value)[:10]
+
+
+def _tie_key(cusip: str, info: dict) -> tuple:
+    """Sort key for ``max``: a real date beats none, a later date beats an earlier one, then the lowest CUSIP."""
+    when = _iso_date(info.get("valid_from"))
+    return (when != "", when, "".join(chr(255 - ord(c)) for c in cusip))
+
+
+def ticker_identifiers(cmap: dict[str, dict]) -> dict[str, dict]:
+    """``{ticker: {cusip, isin, cusip_source, isin_source}}`` from a ``current_map``-shaped dict.
+
+    Each entry may carry ``valid_from`` (the tie). A CUSIP that is not a US CUSIP
+    (a CINS, a bad check digit) is still stored; its ISIN stays NULL. Pure.
+    """
+    from .isin import from_cusip
+    groups: dict[str, list[tuple[str, dict]]] = {}
+    for cusip, info in cmap.items():
+        ticker = _ticker((info or {}).get("ticker"))
+        cusip = str(cusip or "").strip().upper()
+        if not ticker or not cusip:
+            continue
+        groups.setdefault(ticker, []).append((cusip, info or {}))
+    out: dict[str, dict] = {}
+    for ticker, items in groups.items():
+        cusip, _info = max(items, key=lambda item: _tie_key(item[0], item[1]))
+        isin = from_cusip(cusip)
+        out[ticker] = {"cusip": cusip, "isin": isin, "cusip_source": CUSIP_SOURCE,
+                       "isin_source": ISIN_SOURCE if isin else None}
+    return out
+
+
+def _map_with_valid_from() -> dict[str, dict] | None:
+    """The current CUSIP map enriched with ``valid_from``, or None when it is empty.
+
+    An empty map is not "every ticker lost its CUSIP": the apply writes nothing, so a
+    missing table or a map that has not been built yet cannot blank the spine.
+    """
+    from .. import identity_cusip
+    cmap = identity_cusip.current_map()
+    if not cmap:
+        return None
+    dated = {r["cusip"]: r["valid_from"] for r in rawstore.query(
+        "SELECT cusip, valid_from FROM identity_cusip "
+        "QUALIFY ROW_NUMBER() OVER (PARTITION BY cusip ORDER BY run_at DESC) = 1")}
+    return {cusip: {**info, "valid_from": dated.get(cusip)} for cusip, info in cmap.items()}
+
+
+def stamp_rows(rows: list[dict]) -> list[dict]:
+    """The identifier columns on master rows about to be written. Empty map: rows unchanged."""
+    cmap = _map_with_valid_from()
+    if cmap is None:
+        return rows
+    want = ticker_identifiers(cmap)
+    return [{**row, **want.get(_ticker(row.get("ticker")), _EMPTY_IDS)} for row in rows]
+
+
+def apply_identifiers() -> dict:
+    """Write ``cusip`` / ``isin`` onto ``security_master`` from ``identity_cusip.current_map``.
+
+    Inverted by ticker (tie: newest ``valid_from``, then lowest CUSIP). ``cusip_source``
+    is ``openfigi_13f``; ``isin`` is derived (ISO 6166) and ``isin_source`` is
+    ``derived_cusip``. A ticker the map does not name is cleared. An empty map writes
+    nothing. No provider call. Returns ``{cusip_applied, cusip_unchanged, cusip_mapped}``
+    (plus ``cusip_skipped`` when the map is empty).
+    """
+    cmap = _map_with_valid_from()
+    if cmap is None:
+        return {"cusip_applied": 0, "cusip_unchanged": 0, "cusip_mapped": 0,
+                "cusip_skipped": "identity_cusip has no present rows: nothing applied"}
+    want = ticker_identifiers(cmap)
+    stored = rawstore.query(f"SELECT ticker, {', '.join(ID_COLS)} FROM security_master")
+    updates = []
+    for row in stored:
+        new = want.get(_ticker(row.get("ticker")), _EMPTY_IDS)
+        if any(row.get(col) != new[col] for col in ID_COLS):
+            updates.append({"ticker": row["ticker"], **new})
+    for i in range(0, len(updates), CHUNK):
+        rawstore.update_columns("security_master", "ticker", updates[i:i + CHUNK], list(ID_COLS))
+    return {"cusip_applied": len(updates), "cusip_unchanged": len(stored) - len(updates),
+            "cusip_mapped": len(want)}

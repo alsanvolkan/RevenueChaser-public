@@ -6,7 +6,8 @@ with status ``error``. It writes the identity tables (``security_master``, ``ide
 ``identity_source_cache``, ``identity_runs``), and, after a successful master build (status ``ok`` or
 ``partial``, never after an error), the master's sector and industry (plus UW's next earnings date) are
 applied to ``equity_universe`` (issue #86, R3; #265): see ``core.identity.apply`` -- those columns only,
-tickers without a master row untouched. The apply counts are in the run record (``counts["applied"]`` /
+tickers without a master row untouched. The same apply step copies ``cusip`` / ``isin`` onto ``security_master``
+from the CUSIP map already in the store (#127); it does not call a provider. The apply counts are in the run record (``counts["applied"]`` /
 ``unchanged`` / ``not_in_master``).
 
 Fetch plan (per run):
@@ -476,6 +477,9 @@ def _run(rec, limit, sources, started, clients, yahoo_limit, say):
         extra_conflicts.extend(spdr_conflicts)
     conflicts = conflicts + extra_conflicts
     _write_conflicts(conflicts, started)
+    # #127: CUSIP/ISIN from the map we already hold, on the rows about to be written (one history row, not a
+    # NULL-then-fill). ``apply_identifiers`` below covers spine tickers this run did not rebuild.
+    rows = universe_apply.stamp_rows(rows)
     rawstore.write_rows("security_master", rows)
 
     # ── run record ──
@@ -493,6 +497,7 @@ def _run(rec, limit, sources, started, clients, yahoo_limit, say):
     # ── apply the master's sector and industry to equity_universe (R3, #86; #265): only after a successful build ──
     # An exception here is a recorded error (the generic handler in ``refresh``): the master above stays.
     rec["counts"].update(universe_apply.apply_to_universe())
+    rec["counts"].update(universe_apply.apply_identifiers())
     say(f"apply: {rec['counts'].get('applied', 0)} universe rows updated, "
         f"{rec['counts'].get('not_in_master', 0)} without a master row")
 

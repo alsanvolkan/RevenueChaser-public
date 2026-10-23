@@ -275,9 +275,11 @@ def save_cache(ticker: str, snapshot: dict):
     """
     data = load_cache(ticker) or {}
     history = data.get("history") or []
+    import time
     rawstore.write_rows("leaps_cache", [{
         "ticker": ticker.upper(),
         "payload": {"latest": snapshot, "history": history},
+        "fetched_at": time.time(),
     }])
 
 

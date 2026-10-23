@@ -732,7 +732,10 @@ MANIFEST: dict[str, dict] = {
     "swing_info": {
         "history_mode": "session_snapshot",
         "key": ["ticker"],
-        "columns": ["ticker TEXT PRIMARY KEY", "payload JSON", "cached_at DOUBLE"],
+        "columns": ["ticker TEXT PRIMARY KEY", "payload JSON", "cached_at DOUBLE",
+                    # #127: epoch seconds at fetch. NULL on rows written before the column (unknown, never 0).
+                    # Added by ALTER, no schema bump.
+                    "fetched_at DOUBLE"],
         "kind": "json_payload",
         "write": "upsert",
         "sources": ["swing_potential/info/{TICKER}.json"],
@@ -740,7 +743,9 @@ MANIFEST: dict[str, dict] = {
     "leaps_cache": {
         "history_mode": "latest_cache",
         "key": ["ticker"],
-        "columns": ["ticker TEXT PRIMARY KEY", "payload JSON"],
+        "columns": ["ticker TEXT PRIMARY KEY", "payload JSON",
+                    # #127: epoch seconds at fetch. NULL on older rows (unknown, never 0). ALTER, no bump.
+                    "fetched_at DOUBLE"],
         "kind": "json_payload",
         "write": "upsert",
         "sources": ["leaps/cache/{TICKER}.json"],
@@ -748,7 +753,9 @@ MANIFEST: dict[str, dict] = {
     "rotation_holdings": {
         "history_mode": "latest_cache",
         "key": ["ticker"],
-        "columns": ["ticker TEXT PRIMARY KEY", "date TEXT", "rows JSON"],
+        "columns": ["ticker TEXT PRIMARY KEY", "date TEXT", "rows JSON",
+                    # #127: epoch seconds at fetch. NULL on older rows (unknown, never 0). ALTER, no bump.
+                    "fetched_at DOUBLE"],
         "kind": "json_payload",
         "write": "upsert",
         "sources": ["sector_rotation/holdings/{TICKER}.json"],
@@ -942,7 +949,9 @@ MANIFEST: dict[str, dict] = {
     "chain_meta": {
         "history_mode": "latest_cache",
         "key": ["key"],
-        "columns": ["key TEXT PRIMARY KEY", "value TEXT"],
+        "columns": ["key TEXT PRIMARY KEY", "value TEXT",
+                    # #127: epoch seconds at fetch. NULL on older rows (unknown, never 0). ALTER, no bump.
+                    "fetched_at DOUBLE"],
         "kind": "tabular",
         "write": "replace",
         "db": "edgar",
@@ -961,7 +970,9 @@ MANIFEST: dict[str, dict] = {
         # One shared ``{ticker: {name, sector[, type]}}`` map, merged (union)
         # from the legacy ``universe_meta`` + ``sec13f_universe_meta``.
         "key": ["ticker"],
-        "columns": ["ticker TEXT PRIMARY KEY", "entry JSON"],
+        "columns": ["ticker TEXT PRIMARY KEY", "entry JSON",
+                    # #127: epoch seconds at fetch. NULL on older rows (unknown, never 0). ALTER, no bump.
+                    "fetched_at DOUBLE"],
         "kind": "json_payload",
         "write": "upsert",
         "sources": ["universe_meta.json", "sec_13f/universe_meta.json"],
@@ -1057,6 +1068,8 @@ MANIFEST: dict[str, dict] = {
         "columns": [
             "ticker TEXT", "theme_id TEXT", "theme TEXT", "level TEXT",
             "theme_run_id TEXT",
+            # #127: epoch seconds when the row was written. NULL on older rows (unknown, never 0). ALTER, no bump.
+            "fetched_at DOUBLE",
             "PRIMARY KEY (ticker, theme_id, theme_run_id)",
         ],
         "kind": "tabular",
@@ -1435,6 +1448,9 @@ MANIFEST: dict[str, dict] = {
             # Schema v9 (#272): the raw SIC group, copied from the SEC submissions / ``sec_company_sic`` caches by the
             # identity job: the 4-digit code, the SEC's text, the 2-digit major group, and the cache it came from.
             "sic TEXT", "sic_description TEXT", "sic_group2 TEXT", "sic_source TEXT",
+            # #127: CUSIP from the stored OpenFIGI 13F map, ISIN derived (ISO 6166). Added by
+            # ``_reconcile_table`` (ALTER TABLE ADD COLUMN) on the first store call. No schema bump.
+            "cusip TEXT", "cusip_source TEXT", "isin TEXT", "isin_source TEXT",
         ],
         "kind": "tabular",
         "write": "upsert",
@@ -1981,7 +1997,8 @@ CHANGES: dict[str, dict] = {
                                   "type_source", "sector", "sector_source", "industry_group", "group_source",
                                   "industry", "industry_source", "sub_industry", "sub_source", "figi",
                                   "composite_figi", "share_class_figi", "exch_code", "security_description",
-                                  "figi_source", "sic", "sic_description", "sic_group2", "sic_source"],
+                                  "figi_source", "sic", "sic_description", "sic_group2", "sic_source",
+                                  "cusip", "cusip_source", "isin", "isin_source"],
                         "carry": ["type_asof", "gics_asof"]},
     # The source answers behind type, sector and CIK; none can be fetched again for a past date (06 §7, D22/D23).
     # The payload is carried, not compared: it holds values that move every pull (uw_sector market_cap and
