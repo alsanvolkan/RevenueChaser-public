@@ -176,7 +176,9 @@ jobs.register("module_leaps", runners.run_leaps_latest, ["module_leaps"])  # liv
 # 13F Fetch = download the new SEC Form 13F data set(s), ingest, derive the totals, render (backend D4).
 # The SEC form-13f zips are the only trusted 13F source. The Fetch needs no UW key: the names/sectors
 # step uses the UW screener best-effort and opens its own client (#206).
-jobs.register("module_sec_13f", runners.build_sec13f, ["module_sec_13f"], requires_uw=False, lane="long")
+jobs.register("module_sec_13f", runners.build_sec13f, ["module_sec_13f"], requires_uw=False, lane="long",
+              cancellable=True)
+# no deadline: fewer than 5 recorded runs (23 Oct); set from job_runs when measured
 # Store-only: re-derive sec13f_totals from the ingested holdings. Zero network, no UW key.
 jobs.register("sec13f_rebuild", runners.run_sec13f_rebuild, ["module_sec_13f"], requires_uw=False,
               lane="long")
@@ -190,7 +192,7 @@ jobs.register("spxgamma_stored", runners.run_spxgamma_stored, ["module_spx_gamma
 jobs.register("quick", runners.run_quick, ["module_financials"], requires_uw=False)
 # The single-board Fetches are refused while a universe run holds the universe lock (#244), and a universe run is
 # refused while one of them runs (#356).
-# These four reach job_control checkpoints, so a running one can be cancelled (#243). Swing and Fundamentals score
+# These reach job_control checkpoints, so a running one can be cancelled (#243, #26 PL4). Swing and Fundamentals score
 # the whole screenable universe since #383 R3 C12 (card C: ~3,520 names), so they run on the long lane.
 jobs.register("module_asymmetric_growth", runners.refused_during_universe(runners.run_asymmetric_growth),
               ["module_asymmetric_growth"], requires_uw=False, cancellable=True)
@@ -211,15 +213,23 @@ jobs.register("comovement_recompute", runners.run_comovement_recompute,
 # re-derives the Settings card alone (#384 SW-S4).
 jobs.register("settings_refresh", runners.run_settings, ["module_settings"], requires_uw=False)
 jobs.register("module_value_chain", runners.run_value_chain, ["module_value_chain"], requires_uw=False)
-jobs.register("edgar_sync", runners.run_edgar_sync, ["module_value_chain"], requires_uw=False, lane="long")
+jobs.register("edgar_sync", runners.run_edgar_sync, ["module_value_chain"], requires_uw=False, lane="long",
+              cancellable=True)
+# no deadline: fewer than 5 recorded runs (23 Oct); set from job_runs when measured
 jobs.register("universe_stats", runners.run_universe_stats, ["module_settings"], requires_uw=False, lane="long")
-jobs.register("identity", runners.run_identity, ["module_settings"], requires_uw=False, lane="long")
-jobs.register("daily_bars", runners.run_daily_bars, ["module_settings"], lane="long")
+jobs.register("identity", runners.run_identity, ["module_settings"], requires_uw=False, lane="long",
+              cancellable=True)
+# no deadline: fewer than 5 recorded runs (23 Oct); set from job_runs when measured
+# 160 min = 3 x p95 of RC-Daily-Bars (52.1 min, 12 runs, 23 Oct), rounded up. The 30 min floor does not bind.
+jobs.register("daily_bars", runners.run_daily_bars, ["module_settings"], lane="long",
+              cancellable=True, deadline_s=9600)
 # Index lists (#302): three UW requests plus the SmallCap 600 list from the identity cache.
 jobs.register("index_lists", runners.run_index_lists, ["module_settings"], lane="long")
 jobs.register("module_oipd", runners.run_oipd, ["module_oipd"], requires_uw=True)
 jobs.register("module_discord", runners.run_discord, ["module_discord"], requires_uw=False, lane="long",
+              cancellable=True,
               requires=("discord", "discord_cli"))   # update() needs the token and the CLI, not the guild id
+# no deadline: fewer than 5 recorded runs (23 Oct); set from job_runs when measured
 jobs.register("module_discord_discover", runners.run_discord_discover, ["module_discord"], requires_uw=False,
               lane="long", requires=("discord", "discord_cli", "discord_guild"))   # discover() also reads the id
 
@@ -1600,6 +1610,11 @@ def main(port: int = 8000, open_browser: bool = True):
         logger.error("%s", exc)
         print(f"\n  {exc}\n", file=sys.stderr)
         raise SystemExit(2) from exc
+    # After the stale server is gone, so a row it left ``running`` can be closed (#82).
+    try:
+        jobs.reconcile_lost_runs()
+    except Exception:  # noqa: BLE001 - the run log must not stop the dashboard from starting
+        logger.warning("job_runs: could not reconcile stuck runs", exc_info=True)
     if open_browser:
         chrome = _find_chrome()
         if chrome:

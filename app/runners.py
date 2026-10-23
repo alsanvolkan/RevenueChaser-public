@@ -904,7 +904,8 @@ def build_sec13f(uw: UWClient | None = None) -> Path:
 
     One 13F job at a time (#26): the ``"sec_13f"`` lock covers this job, ``run_sec13f_rebuild`` and
     ``run_sec13f_map``, because they all write the ``sec13f_*`` tables and the CUSIP map. A second one refuses with a
-    ``JobMessage`` and writes nothing.
+    ``JobMessage`` and writes nothing. A cancel or a deadline stops between zips (``engine.ingest_zips``), before the
+    next zip's holdings write.
     """
     with job_lock.acquire("sec_13f", wait=0) as got:
         if not got:
@@ -974,8 +975,8 @@ def _build_sec13f(uw: UWClient | None = None) -> Path:
 def _store_13f_shares(uw: UWClient | None) -> None:
     """D20 (#300): UW ``info`` shares outstanding of every 13F ticker into ``ownership_snapshot``, best-effort.
 
-    One call per ticker, once per complete session, at most ``ownership.UW_MAX_CALLS_PER_FETCH`` per Fetch (the job
-    cannot be cancelled, so the cap is the bound; a capped run is one job note). An intraday run, or a session whose
+    One call per ticker, once per complete session, at most ``ownership.UW_MAX_CALLS_PER_FETCH`` per Fetch (the cap is
+    the bound; a capped run is one job note). The shares step already checkpoints between batches. An intraday run, or a session whose
     tickers are all stored, asks nothing and opens no client (``ownership.pending_uw``). A client is opened here
     only when the runner has none, and closed here. A key that fails ``verify`` (cached per client) asks nothing; it
     and a store error are a job note, never a failed Fetch: the board then shows the shares stored before.
@@ -1765,7 +1766,10 @@ def run_value_chain(uw=None, no_fetch: bool = False) -> Path:
 
 
 def run_daily_bars(uw=None, tickers: list[str] | None = None) -> None:
-    """Write the latest complete session's daily bars (#156); RC-Daily-Bars runs the same function."""
+    """Write the latest complete session's daily bars (#156); RC-Daily-Bars runs the same function.
+
+    A cancel or a deadline stops between ticker chunks, before that chunk's atomic write (``prices.ensure_daily_bars``).
+    """
     from RevenueChaser.core import prices
 
     res = prices.ensure_daily_bars(tickers, uw=uw, run_id=run_id())
@@ -1804,6 +1808,8 @@ def run_edgar_sync(uw=None, limit: int | None = None, force: bool = False) -> Pa
     already holds ``job_lock('edgar_sync')`` and the SEC throttle, so no second
     lock is added here. A run that changed nothing still raises ``JobMessage``
     with its counts, so the UI says so instead of looking like a silent no-op.
+
+    A cancel or a deadline stops between filers, before the next CIK is submitted (``sync.sync_filings``).
 
     The same run is the daily SEC submissions sweep (#299, D15): one request per
     CIK of the whole universe, each answer stored in ``sec_submissions`` /
@@ -1990,7 +1996,8 @@ def run_identity(uw=None, limit: int | None = None) -> None:
     the identity tables (plus new SEC ticker-map rows). After a successful build it also applies the master's
     sector and industry (and UW's next earnings date) to ``equity_universe`` (issues #86, #265): those columns
     only, never another column, and never a ticker the master does not know.
-    ``refresh`` never raises; this runner always ends with ``JobMessage`` so the UI shows what happened.
+    ``refresh`` never raises an ``Exception``; this runner always ends with ``JobMessage`` so the UI shows what
+    happened. A cancel or a deadline stops between sources, before that source's cache write.
     """
     from RevenueChaser.core.identity import refresh as identity_refresh
 
@@ -2022,7 +2029,8 @@ def run_discord(uw=None, media: bool = False, channel_id: str | None = None, for
     """Export enabled Discord channels (or just ``channel_id``) incrementally into ``.store/discord.duckdb`` (#72).
 
     A channel exported (successfully or not) less than 15 minutes ago is skipped unless ``force``;
-    if every target is that recent the job ends with a ``JobMessage`` and runs no export.
+    if every target is that recent the job ends with a ``JobMessage`` and runs no export. A cancel or a deadline
+    stops between channels, before the next export; the per-channel CLI timeout stays underneath it.
     """
     import time
 

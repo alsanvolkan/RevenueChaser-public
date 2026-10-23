@@ -69,9 +69,10 @@ td.dash{color:var(--muted)}
     </table>
   </div>
   <p class="meta" id="runs-meta" aria-live="polite"></p>
-  <p class="note">A dash under Trigger means the row records none: only the scheduled tasks write that column
-    today, so those runs came from this dashboard — #83 fills it in. A run left on <em>running</em> may still be
-    going, or its end write was skipped and nothing reconciles the row yet (#82).</p>
+  <p class="note">A dash under Trigger means an older row that recorded none: dashboard runs now write
+    <em>manual</em>, scheduled tasks <em>scheduled</em>. A run left on <em>running</em> may still be
+    going, or its end write was skipped; a row older than its bound whose process is gone is closed as <em>lost</em>
+    (outcome unknown, no end time recorded).</p>
 </div>
 <script>
 var INITIAL = {{ initial_json }};

@@ -12,7 +12,7 @@ import time
 import uuid
 from pathlib import Path
 
-from RevenueChaser.core import config, credentials, job_lock
+from RevenueChaser.core import config, credentials, job_control, job_lock
 from RevenueChaser.module_discord import exporter, loader, store
 
 _TOKEN_VAR = credentials.get("discord").env_var
@@ -125,6 +125,8 @@ def update(media: bool = False, channel_ids: list[str] | None = None) -> dict:
         env = _require_token()
         total = {"channels": 0, "messages": 0, "new": 0, "failed": []}
         for c in chans:
+            # Between channels. The per-channel CLI timeout (``exporter.run_cli``) stays; this deadline sits above it.
+            job_control.checkpoint(f"Discord channel {c['channel_id']}")
             r = _export_channel(c["channel_id"], env, media)
             if r["ok"]:
                 total["channels"] += 1

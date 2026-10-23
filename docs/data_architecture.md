@@ -134,6 +134,10 @@ columns (#272, the v9 bump), its four identifier columns (`cusip`, `cusip_source
 written to `migration_manifest`, and the bump is what makes the change a gated one (manual `.store` checkpoint, see
 below).
 
+Each store file carries its own schema stamp (#26 PL7-a): a `store_schema` row, key `schema_version`, equal to `_SCHEMA_VERSION`. The ensure path writes it when the row is absent or older than the code, and leaves a newer stamp as stored; an upgrade of an older stamp is a warning and keeps the old value in the same table (`upgraded_from`, `upgraded_at`), so a restored older file leaves a trace. `rawstore.store_schema_mismatch()` lists those (`db`, `file`, `stored`, `code`); a read logs a warning and does not raise. An existing file with no stamp is stamped with the current version on that first ensure — an already-wrong file would be marked current; `schema_drift()` remains the backstop for a retyped column, a changed key or an extra column. The table is additive (`CREATE TABLE` plus one row) in each of `raw`, `edgar`, `discord`, `prices` and, when that file exists, `history`. It does not bump `_SCHEMA_VERSION` and does not need a Drive checkpoint. `history.duckdb` is stamped by `ensure_history`, not created just to hold a stamp.
+
+Refusing writes on a mismatch is off (#26 PL7-b). `SCHEMA_REFUSE_WRITES` in `core/store_schema_refuse.py` is `False`. Set `RC_STORE_SCHEMA_REFUSE=1` to refuse a data write when that file's stamp is ahead of this code: newer, or not a version number. A file with no stamp is not refused: the ensure stamps it current. The same check runs before the ensure, so an old checkout never renames, merges or ALTERs a newer file; the ensure then logs one warning and the writes are refused. A refused write is also a skipped `job_runs` row (the run log goes quiet while jobs fail), so read the Server log first. `store_schema_mismatch()` opens the files read-write, so run the gate check with the dashboard stopped or on the fresh backup copy. Readers still only warn. `RC_STORE_SCHEMA_OK=1` is the escape for a deliberate migration: writes are allowed and the warning is suppressed. The exception is `StoreSchemaMismatch`; it names the file, the stored version, the code version and `python -m RevenueChaser.scripts.restore_store --latest <raw|edgar|discord|history|prices>`. It does not run at import. Leave the switch off unless that refusal is intended.
+
 ## Storage layout
 
 | Path | Contents | Clearable? |
@@ -453,15 +457,16 @@ worker thread writes while Flask request threads read. So:
   process. `app/jobs.py:run_id()` returns the running job's id (else a fresh one); it is per thread, so a writer
   captures it once on the runner thread and passes it down. `app/jobs.py` is the only writer of a dashboard job's
   row, and an upsert sets every column, so a value for `trigger`, `source`, `registry_name` or `counts`
-  must travel through the job dict (#83 adds it), not be written to the table directly. The write waits at
+  must travel through the job dict (#83), not be written to the table directly. The write waits at
   most ~0.35 s for a store another process holds (`rawstore.brief_wait`); a skipped or failed write is a
   `job_runs: could not record` warning in the Server log and never changes the job's outcome. So a row can
   stay `running` when the server stopped mid-job, when an end write was skipped, or when the job was evicted
-  from the registry first. **Judging such a row as interrupted — `running` with a `pid` that is not the
-  current dashboard — is deferred to #82**, which owns the restart and pid-reuse cases that make the test
-  unreliable on its own; nothing reconciles one today. The reader is the **Runs** tab (`app/runview.py`,
-  `/view/runs`, `GET /api/runs`, #26 PL5-b), and until #82 lands it lists such a row as running with its
-  age instead of deciding: it derives nothing from `pid`, and a row with no `trigger` shows none (#83).
+  from the registry first. `app/jobs.reconcile_lost_runs` (#82) closes such a row as `lost`
+  (no `finished_at`, outcome unknown) when its `pid` names no process, or when it is older than its bound
+  (the module's `deadline_s`, else the scheduled task's time limit, else 6 h) and the pid is gone or reused;
+  it runs at dashboard start and at the start of a scheduled writer. The reader is the **Runs** tab
+  (`app/runview.py`, `/view/runs`, `GET /api/runs`, #26 PL5-b); it derives nothing from `pid`, and a row
+  from before #83 shows no `trigger`.
   Every job now opens the store twice, including jobs that never used it (Money flow, queued after each
   Rotation Fetch).
 - **A scheduled task that writes tables leaves a `job_runs` row too (#129 A1).** `core/automations.run_task` runs
@@ -732,7 +737,7 @@ schema, reachable with path expressions like `payload.market_cap::DOUBLE`).
 | `relatedness_themes` / `relatedness_theme_tags` / `relatedness_theme_members` / `relatedness_theme_etfs` | `theme_id` (run id is its prefix), `level`, `parent_id`, `label`, `size` / `tag`, `rank` / `ticker`, `weight` / `etf`, `overlap`, `rank` | — |
 | `theme_runs` | `id`, `created_at`, `k_fine`, `k_medium`, `k_coarse`, `jaccard`, `is_current`, `session_date DATE`, `run_at DOUBLE` (schema 11) | — |
 | `llm_cache` | `cache_key`, `ticker`, `cik`, `model`, `thinking`, `effort`, `prompt_version`, `input_hash`, `fetched_at`, `status` | `response` |
-| `job_runs` | `run_id`, `job_id`, `module`, `lane`, `trigger`, `source`, `pid`, `registry_name`, `queued_at DOUBLE`, `started_at DOUBLE`, `finished_at DOUBLE`, `status` (`queued`/`running`/`done`/`error`/`cancelled`, the `app/jobs.py` vocabulary), `error`, `message` | `params`, `counts` |
+| `job_runs` | `run_id`, `job_id`, `module`, `lane`, `trigger`, `source`, `pid`, `registry_name`, `queued_at DOUBLE`, `started_at DOUBLE`, `finished_at DOUBLE`, `status` (`queued`/`running`/`done`/`error`/`cancelled`/`lost`, the `app/jobs.py` vocabulary), `error`, `message` | `params`, `counts` |
 | `run_registry` | `key`, `value` | — |
 | `sec13f_security_meta` | `ticker`, `fetched_at DOUBLE` (#127; NULL on older rows is unknown, never 0) | `entry` (`{name, sector, type}`) |
 | `sec13f_enrichment` | `ticker` | `entry` (`{price{period: close}, …}`) |
@@ -795,6 +800,7 @@ schema, reachable with path expressions like `payload.market_cap::DOUBLE`).
 | `watchlist` | `ticker` (one row per pinned ticker; `rawstore.toggle_watchlist` writes one ticker per click, #306) | — |
 | `migration_manifest` | `dataset`, `migrated_at`, `schema_version`, `source_count`, `source_bytes`, `source_hash`, `verify` | — |
 | `store_meta` | `key`, `value` | — |
+| `store_schema` | `key`, `value` (one row, key `schema_version`, this code's `_SCHEMA_VERSION`; the same table is created in every store file on ensure, #26 PL7, no schema bump — not `store_meta`'s ticker-store `schema_version`) | — |
 | `price_actions` | `ticker`, `ex_date DATE`, `action`, `value DOUBLE`, `session_date DATE`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE`. Key `(ticker, ex_date, action)` | — |
 | `index_levels_daily` | `symbol`, `session_date DATE`, `open DOUBLE`, `high DOUBLE`, `low DOUBLE`, `close DOUBLE`, `volume DOUBLE`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE`. Key `(symbol, session_date)`; prices.duckdb (#293) | — |
 | `quote_snapshot` | `ticker`, `session_date DATE`, `source`, `market_cap DOUBLE`, `price DOUBLE`, `shares_outstanding DOUBLE`, `week_52_high DOUBLE`, `week_52_low DOUBLE`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE`. Key `(ticker, session_date, source)` | `payload` is **zlib-compressed JSON** (`BLOB`) |

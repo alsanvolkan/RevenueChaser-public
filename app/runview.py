@@ -6,19 +6,20 @@ is the only reader, and it is read-only — no route here starts, retries or del
 
 It reports a row as stored rather than as it would like it to be:
 
-* a dashboard-written row carries no ``trigger``, ``source`` or ``registry_name`` (#83), so those come back
-  ``None`` instead of being inferred from the lane the row does carry;
-* a row whose end write was skipped stays ``running`` for ever (#82), so it is listed as running with its age
-  and not quietly re-labelled.
+* a row written before #83 carries no ``trigger`` or ``source`` (and a dashboard row never has a
+  ``registry_name``), so those come back ``None`` instead of being inferred from the lane the row does carry;
+* a row whose end write was skipped stays ``running`` until ``app.jobs.reconcile_lost_runs`` closes it as
+  ``lost`` (#82: process gone, or older than its bound), so a ``running`` row is listed with its age and not
+  quietly re-labelled.
 
-The page explains both in a footnote, which is the honest version until those two land.
+The page explains both in a footnote.
 
 ``COLUMNS`` is what the page shows, and nothing else is read: the payload travels on every poll. That leaves
 out four columns the table declares. ``pid`` and ``lane`` have writers but no reader here — a stale-run
-judgement from ``pid`` belongs to #82, which owns the restart and pid-reuse cases. ``counts`` has **no writer
-at all**: neither ``app/jobs._record`` nor ``core/automations.run_task`` passes it, so it is NULL in every row
-on the live store; it is #83's to fill, and this reader should select it in the same change that gives it a
-writer. ``registry_name`` repeats ``source`` for every row a scheduled task writes.
+judgement from ``pid`` belongs to ``reconcile_lost_runs`` (#82). ``counts`` is written by ``app/jobs._record``
+only when a runner returns a counts dict (none does today) and ``core/automations.run_task`` passes none, so it
+is NULL in practice; this reader should select it in the same change that gives a runner counts.
+``registry_name`` repeats ``source`` for every row a scheduled task writes.
 
 Filtering happens in SQL, not on the page. A page-side filter over the newest ``limit`` rows would answer
 "when did this last fail?" with "never" as soon as ``limit`` clean runs had happened since the failure.
@@ -40,8 +41,8 @@ MAX_LIMIT = 1000
 MAX_QUERY = 100
 POLL_PATH = "/api/runs"
 # What "Problems only" means: a run that ended badly. A `running` row is not a problem — it may still be
-# going, and whether an old one is stale is #82's judgement, not this reader's.
-PROBLEM_STATUSES = ("error", "cancelled")
+# going; a stale one is closed as ``lost`` by ``app.jobs.reconcile_lost_runs`` (#82), not judged here.
+PROBLEM_STATUSES = ("error", "cancelled", "lost")
 # Read on every poll, so it holds what the page shows and no more (see the module docstring).
 COLUMNS = ("run_id", "module", "source", "trigger", "params",
            "queued_at", "started_at", "finished_at", "status", "error", "message")

@@ -208,7 +208,7 @@ Kept: swing_info.
 **P4c — new-filing sync (network, no LLM)**
 - `--sync-filings`: CIKs = `equity_universe` ⨝ `sec_company_tickers`; compare the
   stored latest accession to `submissions.recent`; on newer → download → file +
-  metadata → re-slice → upsert; idempotent, shares the 10 req/s throttle
+  metadata → re-slice → upsert; idempotent, shares the SEC throttle (cross-process 8 req/s bucket, in-process 10/s fallback, #26 PL6-b)
   (`sec_edgar._throttle`) + host job lock. Parallel `ThreadPoolExecutor(8)`;
   form-aware slicer (10-K Item 1 / 20-F Item 4 / 40-F; a 10-K/A wins only when
   its extracted Item 1 is non-empty and its section hash differs from the
