@@ -1,8 +1,9 @@
 """The identity refresh (issue #85, Part 3; sector and industry reworked in #265, S&P list and SIC fallback in #272):
 fetch the deltas, build the master, record the run.
 
-``refresh()`` wires the pieces together and **never raises**: any exception becomes a recorded run
-with status ``error``. It writes the identity tables (``security_master``, ``identity_conflicts``,
+``refresh()`` wires the pieces together and **never raises** an ``Exception``: any exception becomes a recorded
+run with status ``error``. A job cancel or deadline (``job_control.JobStopped``, a ``BaseException``) propagates,
+so the job ends ``cancelled`` or ``error`` and this function does not write the run row. It writes the identity tables (``security_master``, ``identity_conflicts``,
 ``identity_source_cache``, ``identity_runs``), and, after a successful master build (status ``ok`` or
 ``partial``, never after an error), the master's sector and industry (plus UW's next earnings date) are
 applied to ``equity_universe`` (issue #86, R3; #265): see ``core.identity.apply`` -- those columns only,
@@ -47,7 +48,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Callable
 
-from .. import index_registry, job_lock, rawstore, sec_files
+from .. import index_registry, job_control, job_lock, rawstore, sec_files
 from . import apply as universe_apply
 from . import cache, gics, master
 from . import types as T
@@ -210,7 +211,7 @@ def refresh(limit: int | None = None, sources=None, now: str | None = None, clie
 
     ``sources`` restricts the run to the named sources (``sec, openfigi, nasdaq, uw, yahoo, fdic, spdr``);
     the rest are ``skipped`` and their cached answers are used. ``clients`` replaces source
-    functions (tests). Never raises.
+    functions (tests). Never raises an ``Exception``; a job cancel or deadline propagates (see the module note).
 
     One run at a time (``job_lock`` name ``"identity"``, #26): the lock is taken here, so it covers the dashboard
     job and the CLI alike. While another refresh holds it, this writes nothing at all — not even an
@@ -284,7 +285,10 @@ def _run(rec, limit, sources, started, clients, yahoo_limit, say):
                 failed[name].add(r["ticker"])
 
     # ── SEC exchange file (the stored rows; the nightly step pulls the file, #301 D21) ──
+    # A checkpoint before each source, and before the master write: a stop never lands inside a source's
+    # cache write or the security_master write (#26 PL4).
     if "sec_exchange" in selected:
+        job_control.checkpoint("identity sec_exchange")
         res = call("sec_exchange", "sec_exchange")
         cache.save_results([res])
     else:
@@ -298,6 +302,7 @@ def _run(rec, limit, sources, started, clients, yahoo_limit, say):
 
     # ── SEC submissions (delta: new or > 30 days, plus the oldest quarter of the cache) ──
     if "sec_submissions" in selected:
+        job_control.checkpoint("identity sec_submissions")
         fetched = _fetched("sec_submissions")
         by_cik: dict[int, list[str]] = {}
         for t in tickers:
@@ -334,6 +339,7 @@ def _run(rec, limit, sources, started, clients, yahoo_limit, say):
 
     # ── OpenFIGI (delta: new, > 90 days, or a miss > 7 days) ──
     if "openfigi" in selected:
+        job_control.checkpoint("identity openfigi")
         fetched = _fetched("openfigi")
         misses = _misses("openfigi")
         need_f = [t for t in tickers if _stale(fetched.get(t), now_dt, FIGI_DAYS)
@@ -353,6 +359,7 @@ def _run(rec, limit, sources, started, clients, yahoo_limit, say):
     # A healthy full snapshot is authoritative for its own run: a ticker it no longer lists must read
     # as "not listed" ({}), not as the stale cached row (the cache itself never deletes).
     if "nasdaq" in selected:
+        job_control.checkpoint("identity nasdaq")
         res = call("nasdaq", "nasdaq")
         cache.save_results([res])
         nasdaq_rows = _rows_of(res) if res.ok else _by_ticker("nasdaq")
@@ -362,6 +369,7 @@ def _run(rec, limit, sources, started, clients, yahoo_limit, say):
 
     sp_rows = None
     if "sp1500" in selected:
+        job_control.checkpoint("identity sp1500")
         res = call("sp1500", "sp1500")
         if res.ok:
             accept, share, changed = _gate(res)
@@ -385,9 +393,12 @@ def _run(rec, limit, sources, started, clients, yahoo_limit, say):
     sp_rows = sp_rows if sp_rows is not None else {r["ticker"]: r for r in _last_snapshot("sp1500")}
 
     # ── SPDR sector check: fetched here, compared below with the master the run builds (never a value) ──
+    if "spdr" in selected:
+        job_control.checkpoint("identity spdr")
     spdr_res = call("spdr", "spdr") if "spdr" in selected else None      # not cached, not read by the master
 
     if "uw_sector" in selected:
+        job_control.checkpoint("identity uw_sector")
         res = call("uw_sector", "uw")
         cache.save_results([res])
         uw_rows = _rows_of(res) if res.ok else _by_ticker("uw_sector")
@@ -397,6 +408,7 @@ def _run(rec, limit, sources, started, clients, yahoo_limit, say):
 
     # ── Yahoo sector: only tickers UW has no usable sector for ──
     if "yahoo_sector" in selected:
+        job_control.checkpoint("identity yahoo_sector")
         fetched = _fetched("yahoo_sector")
         if not (healthy.get("uw_sector") or uw_rows):
             srec["yahoo_sector"].update(status="skipped", error="no UW sector data: every ticker would look sector-less")
@@ -446,6 +458,7 @@ def _run(rec, limit, sources, started, clients, yahoo_limit, say):
 
     fdic_cached = _by_ticker("fdic")
     if "fdic" in selected:
+        job_control.checkpoint("identity fdic")
         fetched = _fetched("fdic")
         need_d = {t: (uni[t]["name"] or (inputs[t]["openfigi"] or {}).get("name") or t) for t in tickers
                   if fdic_candidate(t) and _stale(fetched.get(t), now_dt, FDIC_DAYS)}
@@ -468,6 +481,7 @@ def _run(rec, limit, sources, started, clients, yahoo_limit, say):
             inputs[t]["fdic"] = {}
 
     # ── build and store ──
+    job_control.checkpoint("identity master")
     previous = {r["ticker"]: r for r in rawstore.query("SELECT * FROM security_master")}
     rows, conflicts = master.build(inputs, previous, now=started)
     spdr_counts: dict = {}
