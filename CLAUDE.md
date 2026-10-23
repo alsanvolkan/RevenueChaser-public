@@ -6,22 +6,23 @@ file holds the short version plus the rules that are easy to get wrong.
 ## Where work happens
 
 This repository is where RevenueChaser is developed. The private `alsanvolkan/RevenueChaser` still holds the
-issues, the project board and three folders that are not published (`.hermes/`, `.bookkeeping/` and
-`scripts/pc/`), but **no new code goes there.** Work is authored, reviewed and merged here, because this is
-where CI runs.
+project board and two folders that are not published (`.hermes/`, the plan and research history, and
+`scripts/pc/`, the machine-specific scripts), but **no new code goes there.** Work is authored, reviewed and
+merged here, because this is where CI runs. The issues live here too, and so does `.bookkeeping/`.
 
 - **Branch from `origin/main` of this repository,** push here, open the PR here.
-- **Issues live in the private repository.** Reference one in full — `alsanvolkan/RevenueChaser#447`, never
-  the bare `#447`, which would point at an issue of *this* repository that does not exist. GitHub auto-links
-  the full form across repositories.
+- **Issues live here; the private tracker still holds the old ones.** A bare `#447` means issue 447 of
+  *this* repository, so cite an issue that predates the move in full — `alsanvolkan/RevenueChaser#447` —
+  which GitHub auto-links across repositories. The private numbering and this repository's do not line up,
+  so never assume a number carries over.
 - **Few pull requests, each carrying real work.** One per lane; a one-line follow-up rides the next PR that is
   open anyway rather than getting one of its own. An earlier rule of one batched PR per day existed because
   Actions minutes were scarce. They are not scarce here, and the two jobs run concurrently in well under an
   hour, so the reason to batch is now shared files, not cost.
 - **Still its own PR, never batched:** a `_SCHEMA_VERSION` bump, a write to the live store, and a change to a
   job the dashboard runs. Each carries a backup and a rollback, and has to be revertable alone.
-- **Work that touches only `.hermes/`, `.bookkeeping/` or `scripts/pc/`** is the one exception to "nothing new
-  in private", and it is rare.
+- **Work that touches only `.hermes/` or `scripts/pc/`** is the one exception to "nothing new in private",
+  and it is rare. `.bookkeeping/` is published here, so it is not one of them.
 
 ## Language
 
