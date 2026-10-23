@@ -14,7 +14,7 @@ import html as _html
 
 from RevenueChaser.core import universe as _universe
 from RevenueChaser.core.gics_map import sector_path
-from RevenueChaser.core.html_safe import ESC_JS, fill, script_json
+from RevenueChaser.core.html_safe import ESC_JS, esc, fill, script_json
 from RevenueChaser.core.reporting_common import (
     FILTERS_CSS,
     FILTERS_JS,
@@ -27,6 +27,7 @@ from RevenueChaser.core.reporting_common import (
     universe_provenance_html,
 )
 from RevenueChaser.core.scan_quality import no_data_hint, regime_parts
+from RevenueChaser.module_fundamentals.pipeline import NON_USD_DROP
 
 CSS = """
 :root{--bg:#0a0d12;--panel:#12161e;--panel2:#1a1f2b;--border:#232a38;
@@ -166,6 +167,21 @@ def _summary_html(s: dict, data_quality: dict | None = None) -> str:
         parts = ([f"{_fmt_int(n_filings)} with no filings on record"] if n_filings else []) +                 ([f"{_fmt_int(n_cik)} with no CIK"] if n_cik else [])
         elim_part += (f" No corporate-event check{shown}: {' · '.join(parts)}"
                       " (a card without an amber event line is not proven event-free for these).")
+    # #46: what the extraction could not read. The measure is the unit on the money facts, never the accounting
+    # standard — a non-USD filer is usually an IFRS filer, but an IFRS filer may still tag USD — so the line says
+    # exactly what was counted. A MEASURED 0 is a result and is shown as 0; a 0 with no stored row carrying the
+    # measure is not a result, because a stored row is never re-extracted, so the line says that instead (#102
+    # review): the count fills once the #52 re-extraction has run.
+    n_non_usd = int((dq.get("dropped") or {}).get(NON_USD_DROP) or 0)
+    units = ", ".join(str(u) for u in (dq.get("non_usd_units") or []))
+    measured = int(dq.get("non_usd_measured") or 0)
+    if n_non_usd or measured:
+        noun = "name reports" if n_non_usd == 1 else "names report"
+        non_usd_part = (f" {_fmt_int(n_non_usd)} {noun} in a currency other than USD and could not be scored"
+                        + (esc(f" ({units})") if units else "") + ".")
+    else:
+        non_usd_part = (" Reporting currency not measured yet: no re-extraction has run since the measure"
+                        " landed, so no filer's currency has been read (#52).")
     dist_part = f" [DISTORTED] {_fmt_int(distorted)}." if distorted else ""
 
     return (
@@ -175,7 +191,7 @@ def _summary_html(s: dict, data_quality: dict | None = None) -> str:
         f'{_fmt_int(passing.get("rule_of_40"))} pass the Rule of 40. '
         'Layer 1: three quality-growth methods (Rule of 40 / Quality / Momentum) filter. '
         'Layer 2: survivors ranked by rules passed, then Rule of 40; DISTORTED last at an equal count. '
-        f'Strongest <b>{_fmt_int(top_n)}</b> names.{spy_3m_part}{elim_part}{dist_part}'
+        f'Strongest <b>{_fmt_int(top_n)}</b> names.{spy_3m_part}{elim_part}{non_usd_part}{dist_part}'
         '</div>'
     )
 
