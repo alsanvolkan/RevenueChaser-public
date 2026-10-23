@@ -422,3 +422,31 @@ def test_health_summary_names_the_run_that_changed_something_not_a_quiet_one():
     assert quiet["statements_appended"] == 0
     h = vendor_data.health_summary(now=datetime.fromtimestamp(NEXT_DAY, tz=UTC))
     assert (h["last_change_run_id"], h["last_change_appended"], h["last_change_session"]) == ("r1", 3, "2026-10-08")
+
+
+def test_health_is_the_summary_numbers_typed_and_na_without_a_population():
+    """Valuation tickers are the covered count; the population (the universe) is a query this summary does not
+    make, so ``expected`` is None and coverage renders ``n/a``, never a percentage."""
+    from RevenueChaser.core import datahealth
+
+    vendor_data.record(statements=vendor_data.statement_rows_yfinance("AAA", _yf_payload()),
+                       valuations=[vendor_data.valuation_row_yfinance("AAA", _INFO),
+                                   vendor_data.valuation_row_yfinance("BBB", _INFO)], run_id="r1", run_at=COMPLETE)
+
+    n = vendor_data.health_summary(now=datetime.fromtimestamp(NEXT_DAY, tz=UTC))
+    h = vendor_data.health(now=datetime.fromtimestamp(NEXT_DAY, tz=UTC))
+
+    assert h.covered == n["valuation_tickers"] == 2
+    assert h.expected is None
+    assert (h.newest, h.expected_as_of) == (n["valuation_session"], n["latest_complete"]) == ("2026-10-08",
+                                                                                              "2026-10-09")
+    assert h.source_share is None and h.problems == ()
+    assert datahealth.coverage_text(h) == "n/a" and "%" not in datahealth.coverage_text(h)
+
+
+def test_health_on_an_empty_store_is_na():
+    from RevenueChaser.core import datahealth
+
+    h = vendor_data.health(now=datetime.fromtimestamp(NEXT_DAY, tz=UTC))
+    assert (h.covered, h.expected, h.newest) == (0, None, None)
+    assert datahealth.coverage_text(h) == "n/a"

@@ -1,9 +1,11 @@
 """Settings / Data health board — self-contained dark-theme HTML renderer.
 
-An ops inventory, not an equity board: no filter bar, no Theme cascade; one ticker
-combobox (the filter kit's, #383 C1b) opens the stored-data drill. One row per dataset with its store table(s), newest data date,
-row count, hole count and a per-dataset Fetch button. Refresh re-reads the store
-with zero network; Fetch enqueues that dataset's async job. See
+An ops inventory, not an equity board: its own filters over the table (a find box and store file /
+source / state chips, #124 G4 — not the equity filter kit), no Theme cascade; one ticker
+combobox (the filter kit's, #383 C1b) opens the stored-data drill. One row per dataset with its
+source, coverage, freshness, newest data date, row count and hole count, then a detail row
+(store table(s), writer, per-dataset Fetch, notes) opened from the dataset's name. Refresh
+re-reads the store with zero network; Fetch enqueues that dataset's async job. See
 ``docs/data_health.md`` §2.
 """
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import html as _html
 from datetime import datetime
 
+from RevenueChaser.core import automations, datasets
 from RevenueChaser.core.html_safe import script_json
 from RevenueChaser.core.reporting_common import (
     FILTERS_CSS,
@@ -20,6 +23,9 @@ from RevenueChaser.core.reporting_common import (
     help_html,
     provider_health_html,
 )
+
+# The empty cell of the inventory table (the inventory's own ``inventory.DASH``).
+DASH = "—"
 
 CSS = """
 :root{--bg:#05111F;--panel:#12161e;--panel2:#1a1f2b;--border:#232a38;
@@ -38,15 +44,50 @@ table.inv th,table.inv td{padding:7px 10px;border-bottom:1px solid var(--border)
 table.inv th{color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.03em}
 table.inv td.num{text-align:right;font-variant-numeric:tabular-nums}
 table.inv tr:last-child td{border-bottom:none}
-table.inv .tbl{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 table.inv .note{color:var(--muted);white-space:normal;max-width:320px}
+.tbl{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 table.inv .ok{color:var(--neon)}
 table.inv .warnv{color:var(--amber)}
+/* G2 (#124): the Coverage bar — 64px wide inside the cell, so the table gains no width; its colour is the
+   band, and the counts stay as text beside it. */
+.covbar{display:inline-block;width:64px;height:6px;border-radius:3px;background:var(--panel2);
+  vertical-align:middle;margin-right:7px;overflow:hidden}
+.covbar>span{display:block;height:100%;background:currentColor}
+.muted{color:var(--muted)}
+/* G2: the store-file pill — the Data Flow artifact's DB hues, with history and prices given their own.
+   The pill's text always names the file, so colour is never the only signal. */
+.db{display:inline-block;background:transparent;border:1px solid currentColor;border-radius:99px;
+  padding:0 6px;font:600 10.5px/1.4 inherit;letter-spacing:0;text-transform:none;vertical-align:middle}
+.db-raw{color:#4f8cff}
+.db-edgar{color:#e0a030}
+.db-discord{color:#a070e0}
+.db-history{color:#3cb89a}
+.db-prices{color:#e06088}
+.dblegend{color:var(--muted);font-size:11.5px;margin:6px 2px 0}
+.dblegend .db{margin:0 8px 0 4px}
+/* S5 (#124): one closed detail row per dataset; the store tables, writer, action and notes live
+   there, and the cell wraps so the table gains no nowrap column. */
+table.inv tr[hidden]{display:none}
+table.inv tr.detail td{white-space:normal;background:var(--panel2)}
+table.inv tr.detail .dline{margin:2px 0}
+table.inv tr.detail .dline b{color:var(--text);font-weight:600;margin-right:6px}
+.det-btn{background:none;border:0;color:var(--text);font:inherit;padding:0;text-align:left;cursor:pointer}
+.det-btn:hover{color:var(--accent)}
+.det-btn::before{content:"▸ ";color:var(--muted)}
+.det-btn[aria-expanded="true"]::before{content:"▾ "}
+.grp{background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--muted);
+  font:600 10.5px/1.2 inherit;padding:1px 6px;margin-left:6px;cursor:pointer;text-transform:none;letter-spacing:0}
+.grp:hover,.grp[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
 .hlabel{color:var(--muted);font-size:11px;margin-left:6px}
 .fetch-btn,.set-btn{background:rgba(14,165,233,.12);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:4px 10px;font:600 12px/1.2 inherit;cursor:pointer}
 .fetch-btn:hover,.set-btn:hover{background:rgba(14,165,233,.22)}
 .fetch-btn:disabled,.set-btn:disabled{opacity:.55;cursor:default}
 .fetchmsg{color:var(--muted);font-size:11.5px;margin-left:8px}
+/* G5 (#124): the summary tiles above the table, counted from the rows already collected. */
+.stiles{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px}
+.stile{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:10px 16px;min-width:132px}
+.stile-n{font-size:22px;font-weight:700;letter-spacing:-.4px;font-variant-numeric:tabular-nums}
+.stile-l{color:var(--muted);font-size:12px}
 .empty{background:var(--panel);border:1px solid var(--border);border-radius:12px;color:var(--muted);font-size:13px;padding:24px;text-align:center}
 .frow{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
 .flbl{color:var(--muted);font-size:12px;font-weight:600}
@@ -65,9 +106,15 @@ select,input[type=text],input[type=number]{background:#10151f;border:1px solid #
 h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .bcard{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
 .bcard h3{margin:0 0 2px;font-size:15px}
+.bcard>details>summary{cursor:pointer}
+.bcard>details>summary h3{display:inline}
 .bcard .asof{color:var(--muted);font-size:12.5px;margin-bottom:8px}
 .bcard .kv{color:var(--muted);font-size:12.5px;margin:2px 0}
 .bcard .kv b{color:var(--text);font-weight:600}
+/* G8 (#124): a folder path shown in full, in monospace; it wraps rather than being shortened. */
+.bpath{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--text);
+  background:var(--panel2);border:1px solid var(--border);border-radius:4px;padding:1px 6px;
+  white-space:pre-wrap;word-break:break-all}
 .bcard ul.params{margin:4px 0 8px;padding-left:18px;color:var(--text);font-size:12.5px}
 .bnote{color:var(--muted);font-size:13px;padding:6px 0}
 .frow2{display:flex;justify-content:space-between;align-items:center;gap:10px;border-bottom:1px dashed var(--border);padding:4px 0;font-size:12.5px}
@@ -107,10 +154,44 @@ details.fine>summary{cursor:pointer;color:var(--accent);font-size:12.5px;font-we
 .auto-btn{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 9px;margin:1px 4px 1px 0;cursor:pointer;font-size:12px}
 .auto-btn:hover{border-color:var(--accent)}
 .auto-btn:disabled{opacity:.5;cursor:default}
-table.auto td{vertical-align:top}
+/* G10 (#124): one line per automation. The description, command, run conditions, store tables,
+   log and buttons sit behind the row's own ▸, so ten tasks read as ten lines. */
+.auto-list{font-size:12.5px}
+.auto-item{border-bottom:1px solid var(--border)}
+.auto-item:last-child{border-bottom:none}
+.auto-item>summary{display:grid;grid-template-columns:minmax(220px,1.5fr) minmax(160px,1.1fr) minmax(120px,max-content) minmax(150px,1fr) minmax(170px,1.1fr);gap:12px;align-items:baseline;padding:8px 10px;cursor:pointer;list-style:none}
+.auto-item>summary:hover{background:rgba(255,255,255,.03)}
+.auto-item>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.auto-item[open]>summary{background:rgba(14,165,233,.06);box-shadow:inset 2px 0 0 var(--accent)}
+.auto-item>summary::-webkit-details-marker{display:none}
+.auto-caret::before{content:"▸ "}
+.auto-item[open] .auto-caret::before{content:"▾ "}
+.auto-when,.auto-next{color:var(--muted);font-variant-numeric:tabular-nums}
+.auto-detail{border-top:1px dashed var(--border);padding:6px 10px 12px 26px}
+.auto-detail .aline{margin:3px 0;white-space:normal}
+.auto-detail .aline b{color:var(--text);font-weight:600;margin-right:6px}
+.auto-detail .auto-desc{max-width:none;margin:3px 0}
+.auto-detail .auto-log{max-width:none;margin:3px 0;overflow-wrap:anywhere}
+.auto-actions{margin:2px 0 10px}
 .auto-desc{color:var(--muted);font-size:12px;white-space:normal;max-width:340px}
 .auto-log{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;white-space:pre-wrap;max-width:380px}
 #auto-msg{color:var(--amber);margin:6px 0;min-height:1em}
+/* G4 (#124): the inventory filters above the table. Each chip carries its value as its text, so
+   colour is never the only signal; a pressed chip also shows a tick beside its word. */
+.filters{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:14px}
+.filters .frow{margin-bottom:8px}
+.filters .frow:last-child{margin-bottom:0}
+.fchips{display:flex;flex-wrap:wrap;gap:6px}
+.fchip{background:var(--panel2);border:1px solid var(--border);border-radius:99px;color:var(--text);
+  font:600 12px/1.2 inherit;padding:4px 10px;cursor:pointer}
+.fchip:hover{border-color:var(--accent)}
+.fchip[aria-pressed="true"]{background:rgba(14,165,233,.18);border-color:var(--accent);color:var(--accent)}
+.fchip[aria-pressed="true"]::before{content:"✓ "}
+.fcount{color:var(--text);font-size:12.5px;font-variant-numeric:tabular-nums}
+.fclear{background:none;border:1px solid var(--border);border-radius:6px;color:var(--muted);
+  font:600 12px/1.2 inherit;padding:4px 10px;cursor:pointer}
+.fclear:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.fclear:disabled{opacity:.55;cursor:default}
 """
 
 JS = JOB_JS + r"""
@@ -193,6 +274,88 @@ function settingsReset(btn){
   var board = btn.getAttribute('data-board');
   boardSettingsReset(btn, document.getElementById('msg-set-' + board), board);
 }
+// S5 (#124): each dataset's detail row (store tables, writer, action, notes) opens from its name.
+// A button, not a click on a <td>: it is focusable and announces its state.
+function settingsDetail(btn){
+  var row = document.getElementById(btn.getAttribute('aria-controls'));
+  if(!row) return;
+  var open = btn.getAttribute('aria-expanded') !== 'true';
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  row.hidden = !open;
+}
+// One pair per dataset — its detail row always travels with the row above it — for the group
+// toggle and the filters: the count line always says how many of the total are shown.
+function settingsRowPairs(body){
+  var pairs = [], cur = null;
+  Array.prototype.forEach.call(body.children, function(tr){
+    if(tr.className.indexOf('detail') >= 0){ if(cur) cur.push(tr); return; }
+    cur = [tr]; pairs.push(cur);
+  });
+  return pairs;
+}
+// Group the inventory rows by Source, or put them back in the rendered (worst coverage first) order.
+function settingsGroupRows(body, on){
+  if(!body) return;
+  var pairs = settingsRowPairs(body);
+  function key(pair){
+    var order = String(pair[0].getAttribute('data-order') || 0);
+    var source = on ? (pair[0].getAttribute('data-source') || '\uffff') : '';
+    return source + ('0000' + order).slice(-4);
+  }
+  pairs.sort(function(a, b){ var x = key(a), y = key(b); return x < y ? -1 : x > y ? 1 : 0; });
+  pairs.forEach(function(pair){ pair.forEach(function(tr){ body.appendChild(tr); }); });
+}
+function settingsFilter(){
+  var body = document.querySelector('#inv-table tbody'); if(!body) return;
+  var box = document.getElementById('inv-find'), word = String((box && box.value) || '').trim();
+  var pick = {db: [], source: [], state: []}, named = [], shown = 0, pairs = settingsRowPairs(body);
+  document.querySelectorAll('#inv-filters button[aria-pressed="true"]').forEach(function(b){
+    pick[b.getAttribute('data-chips')].push(b.getAttribute('data-value')); });
+  pairs.forEach(function(pair){
+    var tr = pair[0], btn = tr.querySelector('.det-btn'), tbl = pair[1] && pair[1].querySelector('.tbl');
+    var find = ((btn ? btn.textContent : '') + ' ' + (tbl ? tbl.textContent : '')).toLowerCase();
+    var states = String(tr.getAttribute('data-state') || '').split('|');
+    var ok = (!word || find.indexOf(word.toLowerCase()) >= 0)
+      && (!pick.db.length || pick.db.indexOf(tr.getAttribute('data-db')) >= 0)
+      && (!pick.source.length || pick.source.indexOf(tr.getAttribute('data-source')) >= 0)
+      && (!pick.state.length || pick.state.some(function(s){ return states.indexOf(s) >= 0; }));
+    if(ok){ tr.hidden = false; shown += 1; return; }
+    if(btn) btn.setAttribute('aria-expanded', 'false');   // a hidden dataset's detail row goes
+    pair.forEach(function(el){ el.hidden = true; });      // down with it, and stays collapsed
+  });
+  if(word) named.push('search "' + word + '"');
+  ['db', 'source', 'state'].forEach(function(k){ if(pick[k].length)
+    named.push((k === 'db' ? 'store file' : k) + ' ' + pick[k].join(' or ')); });
+  document.getElementById('inv-count').textContent = 'Showing ' + shown + ' of ' + pairs.length +
+    ' datasets' + (named.length ? ' · filtered by ' + named.join(' · ') : '');
+  document.getElementById('inv-clear').disabled = !named.length;
+}
+function settingsFilterClear(){
+  document.getElementById('inv-find').value = '';
+  document.querySelectorAll('#inv-filters button[aria-pressed="true"]')
+    .forEach(function(b){ b.setAttribute('aria-pressed', 'false'); });
+  settingsFilter();
+}
+var invFind = document.getElementById('inv-find'), invClear = document.getElementById('inv-clear');
+if(invFind) invFind.addEventListener('input', settingsFilter);
+if(invClear) invClear.addEventListener('click', settingsFilterClear);
+document.querySelectorAll('#inv-filters button[aria-pressed]').forEach(function(b){
+  b.addEventListener('click', function(){
+    b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
+    settingsFilter();
+  });
+});
+var groupBtn = document.querySelector('[data-group="source"] button');
+if(groupBtn){
+  groupBtn.addEventListener('click', function(){
+    var on = groupBtn.getAttribute('aria-pressed') !== 'true';
+    groupBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    settingsGroupRows(document.querySelector('#inv-table tbody'), on);
+  });
+}
+document.querySelectorAll('.det-btn').forEach(function(b){
+  b.addEventListener('click', function(){ settingsDetail(b); });
+});
 document.querySelectorAll('.fetch-btn').forEach(function(b){
   b.addEventListener('click', function(){ settingsFetch(b); });
 });
@@ -216,6 +379,50 @@ var AUTO_BUTTONS = {not_installed:[['install','Install']],
   enabled:[['disable','Disable'],['run','Run now'],['remove','Remove']],
   disabled:[['enable','Enable'],['remove','Remove']]};
 var AUTO_CONFIRM = {install:'Install', remove:'Remove', run:'Run now'};
+// G10 (#124): the closed line carries the name, the schedule time, the state word, the last
+// result and the next run. Everything else — description, command, run conditions, store
+// tables, off-machine copy, sizes, log and buttons — is inside the row's own <details>.
+function autoWhen(r){
+  // The clock part of the schedule: the day list and ", after <task>" are conditions, and read in the detail.
+  var text = String(r.schedule == null ? '' : r.schedule).replace(/\s*,\s*after .*$/, '');
+  return text.replace(/^weekly\s+.*?\s(\d{1,2}:\d{2}\s+\(local\))$/, 'weekly $1');
+}
+function autoNext(r){
+  // Task Scheduler answers with an ISO stamp ("2026-10-24T04:00:00.0000000+02:00"); show date and time.
+  var text = String(r.next_run == null ? '' : r.next_run);
+  return text.indexOf('T') > 0 ? text.replace('T', ' ').slice(0, 16) : text;
+}
+function autoSummaryHtml(r, live, st, stText, rcls){
+  var result = live && r.result_text && r.result_text !== '—' ? 'last result: ' + rcEsc(r.result_text) : '';
+  var next = live && r.next_run ? 'next run: ' + rcEsc(autoNext(r)) : '';
+  return '<summary>' +
+    '<span class="auto-name"><span class="auto-caret" aria-hidden="true"></span><b>' + rcEsc(r.label) + '</b> ' +
+      '<span class="tbl">' + rcEsc(r.name) + '</span></span>' +
+    '<span class="auto-when">' + rcEsc(autoWhen(r)) + '</span>' +
+    '<span class="auto-state ' + st[1] + '">' + rcEsc(stText) + '</span>' +
+    '<span class="auto-res ' + rcls + '">' + result + '</span>' +
+    '<span class="auto-next">' + next + '</span>' +
+    '</summary>';
+}
+function autoDetailHtml(r, live, btns, tables, tail, off, size){
+  var lines = '<div class="aline"><b>What it does</b>' + rcEsc(r.description) + '</div>' +
+    '<div class="aline"><b>Command</b><span class="tbl">' + rcEsc(r.command) + '</span></div>' +
+    '<div class="aline"><b>Schedule</b>' + rcEsc(r.schedule) + '</div>' +
+    '<div class="aline"><b>Run conditions</b>' + rcEsc(r.settings) + '</div>';
+  if(r.offpeak_gated) lines += '<div class="aline"><b>Off-peak only</b>it defers itself outside the peak hours</div>';
+  if(tables) lines += '<div class="aline"><b>Store tables it writes</b><span class="tbl">' + tables + '</span></div>';
+  if(live){
+    lines += '<div class="aline"><b>Last run</b>' + rcEsc(r.last_run || 'not recorded') +
+      ' · next run ' + rcEsc(autoNext(r) || 'not known') +
+      ' · missed runs ' + rcEsc(r.missed_runs) +
+      ' · last success ' + rcEsc(r.last_success_age) + '</div>';
+  }
+  lines += off + size +
+    '<div class="aline"><b>Log file</b><div class="auto-log">' + rcEsc(r.log_path) +
+    (tail ? '\n' + tail : '') + '</div></div>';
+  return '<div class="auto-detail">' + (btns ? '<div class="auto-actions">' + btns + '</div>' : '') +
+    lines + '</div>';
+}
 function autoRowHtml(r){
   var live = r.state != null;
   var st = AUTO_STATE.hasOwnProperty(r.state) ? AUTO_STATE[r.state] : [r.state, ''];
@@ -236,32 +443,41 @@ function autoRowHtml(r){
   var size = r.backup_size ? '<div class="auto-desc ' +
     (AUTO_RESULT.hasOwnProperty(r.backup_size.kind) ? AUTO_RESULT[r.backup_size.kind] : '') + '">backup size: ' +
     rcEsc(r.backup_size.text) + '</div>' : '';
-  return '<tr>' +
-    '<td><b>' + rcEsc(r.label) + '</b> <span class="tbl">' + rcEsc(r.name) + '</span>' +
-      '<div class="auto-desc">' + rcEsc(r.description) + '</div>' +
-      '<div class="auto-desc">' + rcEsc(r.command) + '</div>' +
-      '<div class="auto-desc">' + rcEsc(r.settings) + '</div>' +
-      (tables ? '<div class="auto-desc">writes ' + tables + '</div>' : '') + off + size + '</td>' +
-    '<td>' + rcEsc(r.schedule) + (r.offpeak_gated ? '<div class="auto-desc">off-peak gated</div>' : '') + '</td>' +
-    '<td class="' + st[1] + '">' + rcEsc(stText) + '</td>' +
-    '<td class="' + rcls + '">' + (live ? rcEsc(r.result_text) : '—') +
-      (live ? '<div class="auto-desc">last run ' + rcEsc(r.last_run || '—') +
-       ' · next ' + rcEsc(r.next_run || '—') + ' · missed ' + rcEsc(r.missed_runs) +
-       ' · last success ' + rcEsc(r.last_success_age) + '</div>' : '') + '</td>' +
-    '<td><div class="auto-log">' + rcEsc(r.log_path) + (tail ? '\n' + tail : '') + '</div></td>' +
-    '<td>' + btns + '</td></tr>';
+  return '<details class="auto-item" id="auto-' + rcEsc(r.name) + '">' +
+    autoSummaryHtml(r, live, st, stText, rcls) +
+    autoDetailHtml(r, live, btns, tables, tail, off, size) +
+    '</details>';
 }
 function autoTableHtml(rows, available){
-  var head = '<div class="panel"><table class="inv auto"><thead><tr><th>Automation</th>' +
-    '<th>Schedule</th><th>State</th><th>Last result</th><th>Log</th><th>Action</th></tr></thead><tbody>';
   var note = available === false
     ? '<div class="auto-desc">Task Scheduler is not available on this host.</div>' : '';
-  return note + head + rows.map(autoRowHtml).join('') + '</tbody></table></div>';
+  var list = rows.length
+    ? '<div class="auto-list">' + rows.map(autoRowHtml).join('') + '</div>'
+    : '<div class="auto-desc">No scheduled tasks are registered.</div>';
+  return note + '<div class="panel">' + list + '</div>';
 }
 var autoTimer = null;
 function autoRender(rows, available){
   var body = document.getElementById('auto-body');
-  if(body) body.innerHTML = autoTableHtml(rows, available);
+  if(!body) return;
+  // The panel re-renders on every poll while a task runs: the row the reader opened stays open,
+  // and focus stays in that row instead of falling back to the page.
+  var open = [];
+  var was = body.querySelectorAll ? body.querySelectorAll('details[open]') : [];
+  Array.prototype.forEach.call(was, function(d){ if(d.id) open.push(d.id); });
+  var here = document.activeElement && document.activeElement.closest
+    ? document.activeElement.closest('details') : null;
+  var focusId = here && here.id ? here.id : '';
+  body.innerHTML = autoTableHtml(rows, available);
+  open.forEach(function(id){
+    var d = document.getElementById(id);
+    if(d) d.open = true;
+  });
+  if(focusId){
+    var row = document.getElementById(focusId);
+    var head = row && row.querySelector ? row.querySelector('summary') : null;
+    if(head && head.focus) head.focus();
+  }
 }
 function autoMsg(text){
   var m = document.getElementById('auto-msg');
@@ -313,8 +529,18 @@ function drillCap(cap){
   if(cap == null) return 'null — no cap stored (outside the $300M universe or not yet resolved)';
   return '$' + Number(cap).toLocaleString('en-US', {maximumFractionDigits: 0});
 }
+// A dataset's presence as one line: its count, the newest stored session/date, and the source
+// where the dataset carries one. null when the ticker has no row in it.
+function drillCount(presence, unit){
+  var got = presence || {};
+  var n = got[unit] || 0;
+  if(!n) return null;
+  var text = n + ' ' + (n === 1 ? unit.replace(/s$/, '') : unit) + ' · newest ' + (got.newest || '—');
+  return got.source ? text + ' · ' + got.source : text;
+}
 function drillFill(d){
   var p = d.presence || {};
+  var d01 = p.price_bars_daily || {};
   var swing = p.swing_ohlc || {};
   var f = d.filing;
   var filing = f
@@ -323,15 +549,23 @@ function drillFill(d){
   var sic = d.sic ? (d.sic + (d.sic_description ? ' — ' + d.sic_description : '')) : '—';
   return ''
     + drillRow('Name', d.name || '—')
+    + drillRow('CIK', d.cik || '—')
+    + drillRow('FIGI', d.figi || '—')
+    + drillRow('CUSIP', d.cusip || '—')
+    + drillRow('ISIN', d.isin || '—')
     + drillRow('Market cap', drillCap(d.market_cap))
     + drillRow('Price', d.price == null ? '—' : '$' + Number(d.price).toFixed(2))
     + drillRow('Sector', d.sector || '—')
     + drillRow('Industry', d.industry || '—')
-    + drillRow('CIK', d.cik || '—')
     + drillRow('SIC', sic)
     + drillRow('Last 10-K / 20-F', filing)
-    + drillRow('Companyfacts', p.edgar_financials ? 'present' : 'missing')
-    + drillRow('Daily OHLC', swing.bars
+    + drillRow('EDGAR facts', drillCount(p.edgar_financials, 'periods') || 'no facts stored')
+    + drillRow('Daily price bars', d01.bars
+        ? (d01.bars + ' bars · newest ' + (d01.newest || '—')) : 'no bars')
+    + drillRow('Quote', drillCount(p.quote_snapshot, 'rows') || 'no quote stored')
+    + drillRow('Vendor financials', drillCount(p.vendor_financials, 'rows') || 'no vendor statements stored')
+    + drillRow('Ownership', drillCount(p.ownership_snapshot, 'rows') || 'no ownership stored')
+    + drillRow('Legacy OHLC cache (SPY fallback)', swing.bars
         ? (swing.bars + ' bars · newest ' + (swing.newest || '—')) : 'no bars')
     + drillRow('OIPD chain', p.oipd_meta ? 'present' : 'missing')
     + drillRow('Relatedness profile', p.relatedness_profiles ? 'present' : 'missing');
@@ -398,6 +632,64 @@ def _fmt_holes(row: dict) -> str:
     return cell
 
 
+# G5 (#124): the coverage line under which a dataset is called out on the summary tiles.
+NEEDS_ATTENTION_BELOW = 0.70
+
+
+def _shows_dash(value) -> bool:
+    """True when the cell renders the dash: an empty value and the dash look the same on the table."""
+    text = str(value or "").strip()
+    return not text or text == DASH
+
+
+def _seconds_text(payload: dict) -> str:
+    """How long the collect took, in words; a payload that carries no measurement says so."""
+    timing = (payload or {}).get("timing")
+    seconds = timing.get("collect_seconds") if isinstance(timing, dict) else None
+    if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and seconds >= 0:
+        return f"{float(seconds):.2f} seconds"
+    return "not measured"
+
+
+def _tile(key: str, label: str, value: str, title: str = "") -> str:
+    """One summary tile: a number and the words it counts. A plain labelled div, no script."""
+    tid = f"tile-{key}"
+    tip = f' title="{_html.escape(title, quote=True)}"' if title else ""
+    return (f'<div class="stile" role="group" aria-labelledby="{tid}"{tip}>'
+            f'<div class="stile-n">{_html.escape(value)}</div>'
+            f'<div class="stile-l" id="{tid}">{_html.escape(label)}</div></div>')
+
+
+def _summary_tiles(rows: list[dict], payload: dict) -> str:
+    """The board's totals, counted from the rows already collected: no second query, no guess."""
+    rows = rows or []
+    errors = (payload or {}).get("errors") or []
+    attention = empty = no_time = 0
+    for row in rows:
+        coverage = row.get("coverage")
+        fraction = coverage.get("fraction") if isinstance(coverage, dict) else None
+        thin = (isinstance(fraction, (int, float)) and not isinstance(fraction, bool)
+                and fraction < NEEDS_ATTENTION_BELOW)
+        if thin or _row_error_records(row, errors):
+            attention += 1
+        count = row.get("rows")
+        if isinstance(count, (int, float)) and not isinstance(count, bool) and count == 0:
+            empty += 1
+        if _shows_dash(row.get("last_date")):
+            no_time += 1
+    return ('<div class="stiles" id="summary-tiles">'
+            + _tile("datasets", "Datasets", str(len(rows)),
+                    "Every dataset in the table below")
+            + _tile("needs-attention", "Needs attention", str(attention),
+                    "Datasets whose coverage is below 70%, or whose query failed")
+            + _tile("empty", "Empty", str(empty), "Datasets that store nothing yet")
+            + _tile("no-time-column", "No time column", str(no_time),
+                    "Datasets whose last data date is a dash")
+            + _tile("refresh-took", "Refresh took", _seconds_text(payload),
+                    "Seconds this page took to read the store")
+            + "</div>")
+
+
 def _button(spec: dict, row_id: str) -> str:
     """A Fetch button wired to the shared ``settingsFetch`` poller (JS above)."""
     route = _html.escape(str(spec.get("route") or ""))
@@ -433,16 +725,18 @@ def _master_age_html(row: dict) -> str:
     return f'<div id="identity-master-age">{safe}</div>'
 
 
+def _row_error_records(row: dict, errors: list[dict]) -> list[dict]:
+    """The payload's error records that name one of this row's tables."""
+    mine = set(row.get("tables") or [])
+    return [e for e in errors if e.get("table") in mine]
+
+
 def _row_errors(row: dict, errors: list[dict]) -> str:
     """Red notes for query failures on this row's tables (F4)."""
-    mine = set(row.get("tables") or [])
-    out = []
-    for e in errors:
-        if e.get("table") in mine:
-            where = _html.escape(str(e.get("where") or ""))
-            msg = _html.escape(str(e.get("error") or ""))
-            out.append(f'<div class="row-err">query failed ({where}): {msg}</div>')
-    return "".join(out)
+    return "".join(
+        f'<div class="row-err">query failed ({_html.escape(str(e.get("where") or ""))}): '
+        f'{_html.escape(str(e.get("error") or ""))}</div>'
+        for e in _row_error_records(row, errors))
 
 
 def _errors_list(errors: list[dict]) -> str:
@@ -583,14 +877,19 @@ def _board_card(card: dict) -> str:
     if card.get("funnel_steps") and state in ("ok", "invalid"):
         funnel = f'<div class="funnel2">{_funnel_rows(card)}</div>'
     basis = _html.escape(str(card.get("price_basis") or "—"))
-    return (
-        f'<div class="bcard" id="board-{_html.escape(str(card.get("key") or ""))}">'
-        f"<h3>{label}</h3>{asof}"
+    # Closed <details>: the card stays collapsed until the reader opens it (S9).
+    # The outer div keeps the id the Co-movement e2e parser keys on.
+    body = (
+        f"{asof}"
         f'<div class="kv"><b>Reads</b> {tables}</div>'
         f'<div class="kv"><b>Price basis</b> {basis}</div>'
         + (f'<div class="kv"><b>Window</b> {win_txt}</div>' if win_txt else "")
         + (f'<ul class="params">{params}</ul>' if params else "")
-        + note + funnel + _settings_form(card) + "</div>")
+        + note + funnel + _settings_form(card))
+    return (
+        f'<div class="bcard" id="board-{_html.escape(str(card.get("key") or ""))}">'
+        f'<details><summary><h3>{label}</h3></summary>'
+        f'<div class="bbody">{body}</div></details></div>')
 
 
 def _boards_section(cards: list[dict]) -> str:
@@ -607,35 +906,305 @@ def _automations_section(rows: list[dict]) -> str:
         '<h2 class="sec">Automations</h2>'
         '<div class="sub">Scheduled tasks RevenueChaser owns. Nothing is installed '
         "until you press <b>Install</b>; the state below is read live from Task Scheduler "
-        "(this page itself stays store-only).</div>"
+        "(this page itself stays store-only). Each task is one line; press a line to see "
+        "what it does, its command, its run conditions, its log and its buttons.</div>"
         '<div id="auto-msg"></div><div id="auto-body"></div>')
 
 
+def _cov_bar(fraction) -> tuple[str, str]:
+    """The bar's band class and drawn percentage, or ``("", "")`` when the record has no fraction.
+
+    The drawn width is clamped to 100%, but the label beside it keeps the real counts: a coverage
+    above 100% draws a full bar and still says so. Bands are the page's own state classes.
+    """
+    if fraction is None:
+        return "", ""
+    try:
+        pct = max(0, min(100, int(round(float(fraction) * 100))))
+    except (TypeError, ValueError):
+        return "", ""
+    band = "st-ok" if pct >= 95 else "st-warn" if pct >= 70 else "st-bad"
+    return band, str(pct)
+
+
+def _coverage_cell(row: dict) -> str:
+    """The Coverage cell: the fill bar and its percentage, then the counts (S5, G2).
+
+    A record with no fraction (``n/a``, ``unknown``) draws no bar and reads muted, never 0%, so an
+    unmeasurable dataset cannot look empty. ``error`` keeps its red label: a failed query is not a
+    quiet hole.
+    """
+    coverage = row.get("coverage") or {}
+    label = str(coverage.get("label") or DASH)
+    band, pct = _cov_bar(coverage.get("fraction"))
+    bar = (f'<span class="covbar {band}" role="img" aria-label="coverage {pct} percent">'
+           f'<span style="width:{pct}%"></span></span>') if band else ""
+    text = _html.escape(label)
+    if label == "error":
+        out = f'<span class="warnv">{text}</span>'
+    elif band:
+        out = text
+    else:
+        out = f'<span class="muted">{text}</span>'
+    problems = [str(p) for p in coverage.get("problems") or [] if str(p).strip()]
+    if problems:
+        out += f'<span class="hlabel">{_html.escape("; ".join(problems))}</span>'
+    return bar + out
+
+
+# The five store files a dataset can be written to: the Data Flow artifact's DB hues (G2).
+DB_PILLS = ("raw", "edgar", "discord", "history", "prices")
+
+
+def _db_pill(db) -> str:
+    """The store-file pill for ``db``, or ``""`` for no file and for any name outside the palette.
+
+    The name is matched against the palette, never interpolated into the class, so a hostile value
+    draws nothing rather than a class.
+    """
+    name = str(db or "").strip().lower()
+    if name not in DB_PILLS:
+        return ""
+    title = _html.escape(f"stored in {name}.duckdb under .store/", quote=True)
+    return f'<span class="db db-{name}" title="{title}">{name}</span>'
+
+
+def _db_legend() -> str:
+    """One line under the table naming every store file, so a pill is explained once (G2)."""
+    pills = " ".join(_db_pill(db) for db in DB_PILLS)
+    return (f'<div class="dblegend" id="db-legend">Store file: {pills} '
+            "— each pill names the .store/ DuckDB that dataset is written to.</div>")
+
+
+# Provider names spelled out for the reader (avo's copy rule, 23 Oct 2026). The registry value stays the
+# machine key (``data-source``, the filter chips' ``data-value``); only the visible text is words.
+SOURCE_WORDS = {
+    "uw": "Unusual Whales",
+    "fmp": "Financial Modeling Prep",
+    "yfinance": "Yahoo Finance",
+    "sec": "SEC EDGAR filings",
+    "finra/cftc": "FINRA and the Commodity Futures Trading Commission",
+    "cboe": "Cboe (Chicago Board Options Exchange)",
+    "fred": "FRED (Federal Reserve Economic Data)",
+    "openfigi": "OpenFIGI",
+    "derived": "worked out by us from other datasets",
+    "manual": "entered by hand",
+    "store": "the store's own bookkeeping",
+    "unknown": "more than one provider, or not known",
+}
+
+
+def source_words(value) -> str:
+    """The plain-words name of a registry source value; an unlisted value is shown as it is."""
+    return SOURCE_WORDS.get(str(value), str(value))
+
+
+def _source_cells(row: dict) -> tuple[str, str, str]:
+    """Source, Coverage and Fresh. A row the registry does not know is a dash in all three."""
+    if row.get("source") is None:
+        return DASH, DASH, DASH
+    fresh = row.get("fresh")
+    return (_html.escape(source_words(row.get("source"))), _coverage_cell(row),
+            _html.escape(str(fresh)) if fresh else DASH)
+
+
+def _writer_cell(row: dict) -> str:
+    """The writer's name, or a dash, with the note a spec without a writer carries."""
+    writer = row.get("writer")
+    out = _html.escape(str(writer)) if writer else DASH
+    note = str(row.get("writer_note") or "").strip()
+    if note:
+        out += f'<span class="hlabel">{_html.escape(note)}</span>'
+    return out
+
+
+# G4 of the GUI brief (#124): the filters above the table. Every axis is a fact the row already
+# carries — its store file, its source, its state — so no filter changes what a number means.
+
+# A row whose coverage is below this is called out as needing attention.
+ATTENTION_FRACTION = 0.70
+# What a coverage with no definable population reads (``inventory.COVERAGE_NA``, S2 / ADR-2).
+# Matched as text because that is what a row carries by the time it reaches the table.
+COVERAGE_NA = "n/a"
+# The state chips, in the order they are offered. A row may answer more than one of them.
+STATE_CHIPS = ("needs attention", "no time column", "no denominator")
+
+
+def _attr(name: str, value) -> str:
+    """One escaped HTML attribute. Every ``data-*`` the filters read is written through here."""
+    return f'{name}="{_html.escape(str(value), quote=True)}"'
+
+
+def _db_of(row: dict) -> str:
+    """The store file a dataset lives in: the row's own ``db`` when ``_attach_registry`` set it (G2),
+    else the registry's, read without a query. Empty when the registry does not know the key."""
+    if row.get("db"):
+        return str(row["db"])
+    try:
+        return str(datasets.by_key(str(row.get("key") or "")).db)
+    except KeyError:
+        return ""
+
+
+def _states_of(row: dict, errors: list[dict]) -> list[str]:
+    """The state chips this row answers, in ``STATE_CHIPS`` order.
+
+    ``needs attention`` — its coverage is below 0.70, or one of its tables failed a query;
+    ``no time column`` — it has no last data date, so no freshness can be read from it;
+    ``no denominator`` — its coverage has no definable population (``n/a``), which is not 0%.
+    """
+    coverage = row.get("coverage") or {}
+    fraction = coverage.get("fraction")
+    states = []
+    if _row_errors(row, errors) or (isinstance(fraction, (int, float)) and fraction < ATTENTION_FRACTION):
+        states.append("needs attention")
+    if str(row.get("last_date") or "").strip() in ("", DASH):
+        states.append("no time column")
+    if str(coverage.get("label") or "").strip() == COVERAGE_NA:
+        states.append("no denominator")
+    return states
+
+
+def _filter_chip(kind: str, value: str) -> str:
+    """One filter chip: a real toggle button. ``data-value`` is the machine value the filter compares; the
+    visible text is the plain-words name for a source and the value itself for the other axes."""
+    val = _html.escape(value, quote=True)
+    text = source_words(value) if kind == "source" else value
+    return (f'<button type="button" class="fchip" data-chips="{kind}" data-value="{val}" '
+            f'aria-pressed="false">{_html.escape(text)}</button>')
+
+
+def _filter_group(label: str, kind: str, values: list[str]) -> str:
+    """One chip group. A group with no value present renders nothing rather than a dead chip."""
+    if not values:
+        return ""
+    lbl = _html.escape(label, quote=True)
+    return (f'<span class="flbl">{lbl}</span>'
+            f'<div class="fchips" role="group" aria-label="{lbl}">'
+            + "".join(_filter_chip(kind, v) for v in values) + "</div>")
+
+
+def _filter_bar(rows: list[dict], errors: list[dict]) -> str:
+    """The filter bar above the inventory table (G4, #124): a find box over the dataset and store
+    table names, one chip group per axis, the count line and Clear filters.
+
+    No filter is on by default, and the count line always says how many of the total are shown, so
+    a filter can never make a broken row look fixed by hiding it silently. The client half is
+    ``settingsFilter``; it reads the ``data-*`` facts ``_table`` puts on each row.
+    """
+    state_of = [_states_of(r, errors) for r in rows]
+    present = {_db_of(r) for r in rows}
+    dbs = [d for d in datasets.DBS if d in present]
+    sources = sorted({str(r.get("source")) for r in rows if r.get("source")}, key=str.lower)
+    states = [s for s in STATE_CHIPS if any(s in got for got in state_of)]
+    groups = (_filter_group("Store file", "db", dbs) + _filter_group("Source", "source", sources)
+              + _filter_group("State", "state", states))
+    shown = len(rows)  # no filter is on, so the count starts at every dataset shown
+    return (
+        '<div class="filters" id="inv-filters">'
+        '<div class="frow"><label class="flbl" for="inv-find">Find a dataset or store table</label>'
+        '<input id="inv-find" type="text" autocomplete="off"></div>'
+        + (f'<div class="frow">{groups}</div>' if groups else "")
+        + f'<div class="frow"><span class="fcount" id="inv-count" role="status">Showing {shown} of '
+          f'{shown} datasets</span>'
+          '<button type="button" class="fclear" id="inv-clear" disabled>Clear filters</button></div>'
+          "</div>")
+
+
+def _detail_row(row: dict, row_id: str, errors: list[dict]) -> str:
+    """One dataset's store tables, writer, action and notes: closed until its name is pressed."""
+    tables = ", ".join(_html.escape(str(t)) for t in (row.get("tables") or []))
+    note = str(row.get("note") or "").strip()
+    return (
+        f'<tr class="detail" id="det-{_html.escape(row_id, quote=True)}" hidden>'
+        '<td colspan="7">'
+        f'<div class="dline"><b>Store table(s)</b><span class="tbl">{tables or DASH}</span></div>'
+        f'<div class="dline"><b>Writer</b>{_writer_cell(row)}</div>'
+        f'<div class="dline"><b>Action</b>{_action_cell(row)}</div>'
+        f'<div class="dline"><b>Notes</b>{_html.escape(note) if note else DASH}'
+        f'{_master_age_html(row)}</div>'
+        f'{_row_errors(row, errors)}'
+        "</td></tr>")
+
+
 def _table(rows: list[dict], errors: list[dict] | None = None) -> str:
+    """The inventory table (S5, #124): Source / Coverage / Fresh lead, then last date, rows, holes.
+
+    Each dataset's store tables, writer, action and notes sit in one closed detail row, opened by
+    a button on its name (keyboard reachable). The detail cell wraps, so the table gains no nowrap
+    column. ``data-order`` is the rendered (worst coverage first) position, which the group toggle
+    uses to restore this order; ``data-source`` is what it groups by.
+
+    ``data-db`` / ``data-source`` / ``data-state`` are the facts the G4 filters read
+    (``_filter_bar``); ``data-state`` is a ``|``-separated list.
+    """
     errors = errors or []
     body = []
-    for row in rows:
-        tables = ", ".join(_html.escape(str(t)) for t in (row.get("tables") or []))
+    for order, row in enumerate(rows):
+        row_id = str(row.get("key") or f"row-{order}")
+        rid = _html.escape(row_id, quote=True)
+        source, coverage, fresh = _source_cells(row)
+        # A query failure on this row is stated in the detail; the marker keeps it visible here.
+        mark = ' <span class="row-err">⚠</span>' if _row_errors(row, errors) else ""
+        pill = _db_pill(row.get("db"))
+        if pill:
+            pill = " " + pill
         body.append(
-            "<tr>"
-            f'<td>{_html.escape(str(row.get("label") or row.get("key") or ""))}</td>'
-            f'<td class="tbl">{tables}</td>'
-            f'<td>{_html.escape(str(row.get("last_date") or "—"))}</td>'
+            f'<tr class="row" id="row-{rid}" data-order="{order}"'
+            f" {_attr('data-db', _db_of(row))}"
+            f" {_attr('data-source', row.get('source') or '')}"
+            f" {_attr('data-state', '|'.join(_states_of(row, errors)))}>"
+            f'<td><button type="button" class="det-btn" aria-expanded="false" '
+            f'aria-controls="det-{rid}">'
+            f'{_html.escape(str(row.get("label") or row.get("key") or ""))}</button>{pill}{mark}</td>'
+            f"<td>{source}</td>"
+            f"<td>{coverage}</td>"
+            f"<td>{fresh}</td>"
+            f'<td>{_html.escape(str(row.get("last_date") or DASH))}</td>'
             f'<td class="num">{_fmt_rows(row.get("rows"))}</td>'
             f'<td class="num">{_fmt_holes(row)}</td>'
-            f'<td>{_action_cell(row)}</td>'
-            f'<td class="note">{_html.escape(str(row.get("note") or ""))}'
-            f'{_master_age_html(row)}'
-            f'{_row_errors(row, errors)}</td>'
             "</tr>")
+        body.append(_detail_row(row, row_id, errors))
     return (
-        '<div class="panel"><table class="inv">'
+        _filter_bar(rows, errors)
+        + '<div class="panel"><table class="inv" id="inv-table">'
         "<thead><tr>"
-        "<th>Dataset</th><th>Store table(s)</th><th>Last data date</th>"
-        "<th>Rows</th><th>Holes</th><th>Action</th><th>Notes</th>"
+        "<th>Dataset</th>"
+        '<th data-group="source">Source<button type="button" class="grp" aria-pressed="false" '
+        'title="Group the rows by source">Group</button></th>'
+        "<th>Coverage</th><th>Freshness</th><th>Last data date</th><th>Rows</th><th>Holes</th>"
         "</tr></thead><tbody>"
         + "".join(body)
-        + "</tbody></table></div>")
+        + "</tbody></table></div>"
+        + _db_legend())
+
+
+def _other_tables_section(rows: list[dict] | None) -> str:
+    """S6 (#124): the store tables no dataset claims, with a row count and newest date only.
+
+    An empty list renders nothing at all — no heading, no empty table: the honest intermediate
+    state says nothing when there is nothing to say. The sentence states plainly that these
+    tables carry no source and no coverage, because the inventory table above cannot speak
+    for them.
+    """
+    if not rows:
+        return ""
+    body = []
+    for row in rows:
+        db = str(row.get("db") or "")
+        newest = row.get("newest")
+        body.append(
+            f'<tr><td>{_html.escape(str(row.get("table") or DASH))}</td>'
+            f'<td>{_html.escape(f"{db}.duckdb") if db else DASH}</td>'
+            f'<td class="num">{_fmt_rows(row.get("rows"))}</td>'
+            f'<td>{_html.escape(str(newest)) if newest else "no time column"}</td></tr>')
+    return (
+        '<section id="other-tables"><div class="bcard" id="other-store-tables">'
+        "<h3>Other store tables</h3>"
+        '<div class="asof" id="other-tables-note">These store tables are not claimed by any dataset '
+        "yet, so they carry no source and no coverage.</div>"
+        f'{_mini_table(["Table", "Store file", "Rows", "Newest date"], body)}'
+        "</div></section>")
 
 
 def _day(ts) -> str:
@@ -826,10 +1395,36 @@ def _gb(nbytes) -> str:
     return f"{nbytes / 1e9:.2f} GB" if isinstance(nbytes, (int, float)) else "—"
 
 
+def _retention_from_description(description: str) -> str:
+    """"keeps 5 daily raw and 5 daily history snapshots, ..." — the retention clause of the backup job's registry
+    description, cut out of the text itself so the numbers are read here and never retyped in the renderer."""
+    text = str(description or "")
+    start = text.find("keeps ")
+    if start < 0:
+        return ""
+    end = text.find(".", start)
+    return text[start:end + 1 if end >= 0 else len(text)].strip()
+
+
+def _retention_rule(b: dict) -> str:
+    """The retention rule in plain words: the record's own text when it carries one, else the registry
+    description of RC-Store-Backup (``core.automations``, the job's own entry), else "unknown"."""
+    rule = str(b.get("retention") or "").strip()
+    if rule:
+        return rule
+    try:
+        rule = _retention_from_description(automations.entry("RC-Store-Backup").description)
+    except Exception:  # noqa: BLE001 - a registry without the entry says so on the card, never fails the page
+        rule = ""
+    return rule or "unknown: the job's record names no retention rule"
+
+
 def _backups_card(b: dict | None) -> str:
-    """The Backups card (#309): both folder sizes, the checkpoints folder, the last integrity scan and when the sizes
-    were recorded. Store-free and folder-free: ``payload["backups"]`` comes from the backup job's own records
-    (``inventory._backups``). Without that key there is no card; a missing record reads "unknown"."""
+    """The Backups card (#309, G8): where the backups are (the local folder in full, and the off-machine
+    location the job's own record names), the retention rule, the last integrity self-check in words, and that
+    nothing here deletes. Store-free and folder-free: ``payload["backups"]`` comes from the backup job's own
+    records (``inventory._backups``); the card walks no folder and opens the off-machine copy never. Without
+    that key there is no card; a missing record reads "unknown"."""
     if not b:
         return ""
     esc = _html.escape
@@ -840,6 +1435,14 @@ def _backups_card(b: dict | None) -> str:
 
     loc, off = b.get("local") or {}, b.get("offmachine") or {}
     cp, scan = b.get("checkpoints") or {}, b.get("scan") or {}
+    folder = str(b.get("folder") or "").strip() or "unknown"
+    offmachine_at = str(b.get("offmachine_path") or "").strip() or "unknown"
+    checked = scan.get("checked")
+    selfcheck = (f'last checked {scan.get("last_day") or "never"}, '
+                 f'next due {scan.get("next_due") or "the next backup run"}, '
+                 + (f"{_fmt_rows(checked)} files re-read against their hashes" if isinstance(checked, int)
+                    else "no files re-read yet" if not scan.get("last_day")
+                    else "the number of files re-read was not recorded"))
     split = ""
     if loc.get("duckdb_files") is not None or loc.get("docs_zip_files") is not None:
         split = (f'{esc(_gb(loc.get("duckdb_bytes")))} in {_fmt_rows(loc.get("duckdb_files"))} .duckdb files; '
@@ -860,11 +1463,21 @@ def _backups_card(b: dict | None) -> str:
         f'{esc(str(scan.get("next_due") or "the next backup run"))}</td></tr>',
     ]
     recorded = b.get("recorded_at")
+    summary = (
+        f'<div class="kv">Local backup folder: <code class="bpath" id="backup-folder">{esc(folder)}</code></div>'
+        '<div class="kv">Off-machine copy location: '
+        f'<code class="bpath" id="backup-offmachine-path">{esc(offmachine_at)}</code></div>'
+        f'<div class="kv" id="backup-retention">How long backups are kept: {esc(_retention_rule(b))}</div>'
+        f'<div class="kv" id="backup-selfcheck">Integrity self-check: {esc(selfcheck)}</div>'
+        '<div class="kv" id="backup-nodelete">Nothing on this page deletes or moves a backup file: it reads the '
+        "backup job's own records and shows them.</div>"
+    )
     return ('<section id="backups"><div class="bcard" id="backups-card"><h3>Backups</h3>'
-            '<div class="asof" id="backups-note">Read from the nightly backup\'s own records in '
-            f'<b>{esc(str(b.get("folder") or "the backup folder"))}</b>; this page walks no folder and never reads '
-            "the off-machine (Drive) folder. The self-check re-reads the local folder against the hashes taken "
-            "when each file was copied, every 7 days by default.</div>"
+            '<div class="asof" id="backups-note">Read from the nightly backup job\'s own records in the local backup '
+            "folder (shown below); this page walks no folder and never reads the off-machine (Drive) folder. The "
+            "self-check re-reads the local folder against the hashes taken when each file was copied, every 7 days "
+            "by default.</div>"
+            f'{summary}'
             f'<div class="kv" id="backup-recorded">Sizes recorded {esc(str(recorded).replace("T", " ").replace("+00:00", " UTC") if recorded else "never")}</div>'
             f'{_mini_table(["Backup", "Size / result", "Files", "Detail"], rows)}</div></section>')
 
@@ -875,8 +1488,11 @@ def render_settings_dashboard(payload: dict) -> str:
     generated = payload.get("generated_at")
 
     help_block = help_html(
-        "This is an ops inventory of the local <b>.store/</b>: one row per dataset with "
-        "its row count, newest data date and known holes. <b>Refresh</b> re-reads the store "
+        "This is an ops inventory of the local <b>.store/</b>: one row per dataset with its row count, "
+        "newest data date and known holes. <b>Source</b> is the provider the registry names, <b>Coverage</b> "
+        "is the stored rows against the population they should cover (<b>n/a</b> when there is no population "
+        "to count), and <b>Fresh</b> is the newest date the registry ages that dataset by. Press a dataset's "
+        "name to open its store tables, writer and <b>Fetch</b> action. <b>Refresh</b> re-reads the store "
         "with <b>no network</b> — it is instant and always safe. <b>Fetch</b> enqueues that "
         "dataset's job, hits a provider and can take minutes; the row reports back when it "
         "finishes. The ticker drill shows <b>stored</b> data only — it does not ask SEC or "
@@ -906,6 +1522,7 @@ def render_settings_dashboard(payload: dict) -> str:
     )
 
     identity_html = _identity_card(payload.get("identity"))
+    other_tables_html = _other_tables_section(payload.get("other_tables"))
     discord_html = _discord_card(payload.get("discord"))
     backups_html = _backups_card(payload.get("backups"))
     errors_html = _errors_list(payload.get("errors") or [])
@@ -934,8 +1551,10 @@ def render_settings_dashboard(payload: dict) -> str:
   </div>
   {provider_health_html(payload.get("provider_health"))}
   {help_block}
+  {_summary_tiles(rows, payload)}
   {drill}
   {body}
+  {other_tables_html}
   {identity_html}
   {discord_html}
   {errors_html}

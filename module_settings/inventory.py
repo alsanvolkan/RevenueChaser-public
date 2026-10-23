@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from datetime import datetime, timezone
 
-from RevenueChaser.core import automations, rawstore
+from RevenueChaser.core import automations, datahealth, datasets, fiscal_year, rawstore
 from RevenueChaser.core.gics_map import canonical_sector
 from RevenueChaser.core.identity import refresh as identity_refresh
 from RevenueChaser.core.identity import types as identity_types
@@ -23,6 +24,10 @@ from RevenueChaser.module_settings import boards
 from RevenueChaser.core.universe import DEFAULT_MC_MIN, classification_universe
 
 DASH = "—"
+# The drill's value for a security_master column this store does not carry yet (CUSIP / ISIN arrive later).
+IDENTIFIER_NA = "n/a"
+# The Settings banner reads this board's last recorded run (#80). Settings itself makes no provider call.
+BOARD = "module_settings"
 # Warn once ``security_master.updated_at`` is older than this many days (#345, #381).
 IDENTITY_MASTER_STALE_DAYS = 7
 
@@ -40,11 +45,13 @@ _CALL = threading.local()
 
 def _begin_call() -> None:
     _CALL.tables = {}
+    _CALL.columns = {}
     _CALL.errors = []
 
 
 def _end_call() -> None:
     _CALL.tables = None
+    _CALL.columns = None
     _CALL.errors = None
 
 
@@ -107,6 +114,10 @@ QUERIED_COLUMNS: list[tuple[str, str]] = [
     ("identity_source_cache", "source"), ("identity_source_cache", "ticker"),
     ("identity_source_cache", "fetched_at"), ("identity_source_cache", "status"),
     ("watchlist_changes", "run_at"), ("board_settings_changes", "run_at"),
+    # the drill's scoring datasets and identifiers (S10, #126)
+    ("vendor_financials", "ticker"), ("vendor_financials", "period_end"),
+    ("ownership_snapshot", "ticker"), ("ownership_snapshot", "session_date"), ("ownership_snapshot", "source"),
+    ("security_master", "cik"), ("security_master", "figi"),
 ]
 
 
@@ -132,6 +143,34 @@ def _table_exists(name: str) -> bool:
     if name not in rawstore.MANIFEST:
         return False
     return name in _existing_tables(_db_of(name))
+
+
+def _existing_columns(table: str) -> set[str]:
+    """Column names ``table`` carries in this store, cached for one call.
+
+    Read the same way as ``_existing_tables``: a column that arrives in a later release is
+    absent here, so the drill can say ``n/a`` instead of raising on a ``SELECT`` of it.
+    """
+    cache = getattr(_CALL, "columns", None)
+    key = (_db_of(table), table)
+    if cache is not None and key in cache:
+        return cache[key]
+    try:
+        rows = rawstore.query(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema='main' AND table_name = ?", [table], db=key[0])
+        names = {r["column_name"] for r in rows}
+    except Exception as exc:  # noqa: BLE001 - recorded (F4), degrades to "the column is not there"
+        _record(table, "_existing_columns", exc)
+        names = set()
+    if cache is not None:
+        cache[key] = names
+    return names
+
+
+def _has_column(table: str, column: str) -> bool:
+    """Whether ``table`` carries ``column`` today (a later-release column reads absent, never raises)."""
+    return _table_exists(table) and column in _existing_columns(table)
 
 
 def _count(name: str) -> int | None:
@@ -532,7 +571,7 @@ def _exists_row(table: str, ticker: str) -> bool:
 
 
 def _swing_presence(ticker: str) -> dict:
-    """Bar count + newest ``ts`` for ``ticker`` in ``swing_ohlc``."""
+    """Bar count + newest ``ts`` for ``ticker`` in ``swing_ohlc`` (the SPY-fallback cache)."""
     empty = {"bars": 0, "newest": None}
     if not _table_exists("swing_ohlc"):
         return empty
@@ -545,6 +584,119 @@ def _swing_presence(ticker: str) -> dict:
         return empty
     row = rows[0] if rows else {}
     return {"bars": int(row.get("n") or 0), "newest": row.get("newest")}
+
+
+def _d01_presence(ticker: str) -> dict:
+    """Bar count and newest session for ``ticker`` in D01, the price of record.
+
+    D01 is ``price_bars_daily`` plus ``price_actions`` in ``prices.duckdb``.
+    Coverage is the stored bar count; actions adjust those bars on read
+    (``core.prices.daily_bars``) and do not add sessions, so the count and the
+    newest session both come from ``price_bars_daily``. ``swing_ohlc`` is not
+    this number.
+    """
+    empty = {"bars": 0, "newest": None}
+    if not _table_exists("price_bars_daily"):
+        return empty
+    try:
+        rows = rawstore.query(
+            "SELECT COUNT(*) AS n, MAX(session_date) AS newest FROM price_bars_daily WHERE ticker = ?",
+            [ticker], db=_db_of("price_bars_daily"))
+    except Exception as exc:  # noqa: BLE001
+        _record("price_bars_daily", "_d01_presence", exc)
+        return empty
+    row = rows[0] if rows else {}
+    newest = row.get("newest")
+    if newest is not None:
+        newest = _fmt_date(newest)
+        newest = None if newest == DASH else newest
+    return {"bars": int(row.get("n") or 0), "newest": newest}
+
+
+def _presence(table: str, ticker: str, *, date_column: str, count_key: str = "rows",
+              source_column: str | None = None) -> dict:
+    """Row count and newest ``date_column`` for ``ticker`` in ``table``: one query, store only.
+
+    The same shape as :func:`_d01_presence` — the count under ``count_key``, ``newest`` as
+    ``YYYY-MM-DD`` — plus the newest row's ``source_column`` when asked. A table this store does
+    not carry, or a failed query, reads as no rows (recorded, never raised): a board's absence
+    must not break the drill.
+    """
+    empty = {count_key: 0, "newest": None}
+    if source_column:
+        empty["source"] = None
+    if not _table_exists(table):
+        return empty
+    source = f", arg_max({source_column}, {date_column}) AS src" if source_column else ""
+    try:
+        rows = rawstore.query(
+            f"SELECT COUNT(*) AS n, MAX({date_column}) AS newest{source} FROM {table} WHERE ticker = ?",
+            [ticker], db=_db_of(table))
+    except Exception as exc:  # noqa: BLE001
+        _record(table, "_presence", exc)
+        return empty
+    row = rows[0] if rows else {}
+    newest = _fmt_date(row.get("newest"))
+    out = {count_key: int(row.get("n") or 0), "newest": None if newest == DASH else newest}
+    if source_column:
+        out["source"] = row.get("src")
+    return out
+
+
+def _quote_presence(ticker: str) -> dict:
+    """The newest stored quote for ``ticker``, read by ``core.quotes``' own reader.
+
+    ``latest_caps`` is the rule a board uses (newest session, Yahoo's row where both sources have
+    one), so the source the drill shows is the one a reader would take. One query; absent = no rows.
+    """
+    empty = {"rows": 0, "newest": None, "source": None}
+    if not _table_exists("quote_snapshot"):
+        return empty
+    from RevenueChaser.core import quotes
+    try:
+        got = quotes.latest_caps([ticker]).get(ticker) or {}
+    except Exception as exc:  # noqa: BLE001
+        _record("quote_snapshot", "_quote_presence", exc)
+        return empty
+    if not got:
+        return empty
+    newest = _fmt_date(got.get("session_date"))
+    return {"rows": 1, "newest": None if newest == DASH else newest, "source": got.get("source")}
+
+
+def _edgar_presence(ticker: str) -> dict:
+    """Annual period count and newest fiscal period end of the ``edgar_financials`` row.
+
+    One row per ticker, holding the extracted annual/quarterly lists. ``periods`` counts the annual
+    records the financials boards read and ``newest`` is the latest of their period ends
+    (``core.fiscal_year.period_end``, the same end a score anchors on) — read across the list, not
+    off its last position. A row with no annual extract falls back to its quarterly periods, so a
+    stored row never reads as absent.
+    """
+    empty = {"periods": 0, "newest": None}
+    if not _table_exists("edgar_financials"):
+        return empty
+    try:
+        row = rawstore.get("edgar_financials", ticker)
+    except Exception as exc:  # noqa: BLE001
+        _record("edgar_financials", "_edgar_presence", exc)
+        return empty
+    if not row:
+        return empty
+    annual = [r for r in (row.get("annual") or []) if isinstance(r, dict)]
+    if annual:
+        ends = [end for end in (fiscal_year.period_end(r) for r in annual) if end is not None]
+        return {"periods": len(annual), "newest": max(ends).isoformat() if ends else None}
+    quarterly = [r for r in (row.get("quarterly") or []) if isinstance(r, dict)]
+    periods = [str(r["period"])[:10] for r in quarterly if r.get("period")]
+    return {"periods": len(quarterly), "newest": max(periods) if periods else None}
+
+
+def _master_identifier(master: dict | None, column: str):
+    """One ``security_master`` identifier: its value, or ``n/a`` when the column is not in this store."""
+    if not _has_column("security_master", column):
+        return IDENTIFIER_NA
+    return (master or {}).get(column)
 
 
 def _universe_tickers() -> list[dict]:
@@ -573,10 +725,11 @@ def _read_sector(stored):
 
 
 def _ticker_detail(ticker: str) -> dict | None:
-    """Per-ticker drill: identity, cap, sector and industry, SIC, latest filing and dataset
-    presence — read straight from ``.store`` with zero network.
+    """Per-ticker drill: identifiers, cap, sector and industry, SIC, latest filing and the
+    presence of the datasets that decide whether a board can score the name — read straight
+    from ``.store`` with zero network, one query per table.
 
-    Unknown ticker (absent from every dataset) returns ``None`` so the route can
+    Unknown ticker (absent from every dataset it reads) returns ``None`` so the route can
     answer 404. A NULL ``market_cap`` stays ``None`` — never coerced.
     """
     t = (ticker or "").strip().upper()
@@ -584,23 +737,32 @@ def _ticker_detail(ticker: str) -> dict | None:
         return None
 
     universe = rawstore.get("equity_universe", t) if _table_exists("equity_universe") else None
+    master = rawstore.get("security_master", t) if _table_exists("security_master") else None
     sec = (_sec_file_row(t) if _table_exists("sec_exchange_file") else None)
     sic = rawstore.get("sec_company_sic", t) if _table_exists("sec_company_sic") else None
     filing = rawstore.get("chain_filings", t) if _table_exists("chain_filings") else None
+    # The five datasets a board needs to score a name; each is a count plus its newest date.
+    d01 = _d01_presence(t)
+    quote = _quote_presence(t)
+    vendor = _presence("vendor_financials", t, date_column="period_end")
+    edgar = _edgar_presence(t)
+    ownership = _presence("ownership_snapshot", t, date_column="session_date", source_column="source")
     swing = _swing_presence(t)
 
-    if not any(x is not None for x in (universe, sec, sic, filing)) \
-            and not _exists_row("edgar_financials", t) \
+    if not any(x is not None for x in (universe, master, sec, sic, filing)) \
+            and not edgar["periods"] \
+            and d01["bars"] == 0 \
+            and not quote["rows"] \
+            and not vendor["rows"] \
+            and not ownership["rows"] \
             and swing["bars"] == 0 \
             and not _exists_row("oipd_meta", t) \
             and not _exists_row("relatedness_profiles", t):
         return None
 
-    cik = None
-    for src in (sec, sic, filing):
-        if src and src.get("cik"):
-            cik = src["cik"]
-            break
+    # The identity spine's CIK is the current one; the older tables stay the fallback.
+    cik = (master or {}).get("cik") or next(
+        (src["cik"] for src in (sec, sic, filing) if src and src.get("cik")), None)
     cap = universe.get("market_cap") if universe else None
     return {
         "ticker": t,
@@ -610,13 +772,22 @@ def _ticker_detail(ticker: str) -> dict | None:
         "sector": _read_sector((universe or {}).get("sector")),
         "industry": (universe or {}).get("industry"),
         "cik": cik,
+        "figi": (master or {}).get("figi"),
+        # CUSIP / ISIN are not in the manifest yet: n/a, not a made-up value, until the columns arrive.
+        "cusip": _master_identifier(master, "cusip"),
+        "isin": _master_identifier(master, "isin"),
         "sic": (sic or {}).get("sic"),
         "sic_description": (sic or {}).get("sic_description"),
         "filing": ({"form": filing.get("form"), "filed": filing.get("filed"),
                     "accession": filing.get("accession"),
                     "quality": filing.get("quality")} if filing else None),
         "presence": {
-            "edgar_financials": _exists_row("edgar_financials", t),
+            "edgar_financials": edgar,
+            # D01 is the price of record. swing_ohlc is the SPY-fallback cache.
+            "price_bars_daily": d01,
+            "quote_snapshot": quote,
+            "vendor_financials": vendor,
+            "ownership_snapshot": ownership,
             "swing_ohlc": swing,
             "oipd_meta": _exists_row("oipd_meta", t),
             "relatedness_profiles": _exists_row("relatedness_profiles", t),
@@ -977,7 +1148,21 @@ def _backups(now: datetime) -> dict:
                         text=(f"OK, {_int_or_none(scan.get('checked')) or 0:,} files match the manifest" if ok
                               else f"{failed} file{'s do' if failed != 1 else ' does'} not match (see the backup log)"))
     return {"folder": facts.get("folder"), "recorded_at": sizes.get("recorded_at") or None,
+            # G8 (#124): the off-machine location the job itself copies to. A setting read as text; the folder is
+            # never listed, walked or stat-ed from this page.
+            "offmachine_path": str(config.RAW_STORE_BACKUP_MIRROR or "").strip() or None,
             "local": local, "offmachine": off, "checkpoints": checkpoints, "scan": scan_out}
+
+
+def _provider_health() -> dict | None:
+    """The banner's health: ``history.last_run(BOARD)["provider_health"]``. Store-only; None when nothing is recorded."""
+    from RevenueChaser.core import history
+
+    try:
+        row = history.last_run(BOARD)
+    except Exception:  # noqa: BLE001 - a missing or locked history file never fails the inventory
+        return None
+    return (row or {}).get("provider_health")
 
 
 def collect(now: datetime | None = None) -> dict:
@@ -986,10 +1171,15 @@ def collect(now: datetime | None = None) -> dict:
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     _begin_call()
+    # G5 (#124): how long the read took, so the board can print it instead of guessing.
+    started = time.perf_counter()
     try:
-        return _collect(now)
+        with rawstore.session(), datahealth.memo_scope():   # one open per store file, not one per query
+            result = _collect(now)
     finally:
         _end_call()
+    result["timing"] = {"collect_seconds": round(time.perf_counter() - started, 2)}
+    return result
 
 
 def _corpus_note(tickers: list[str]) -> str:
@@ -1151,6 +1341,133 @@ def _sec_files_row() -> dict:
     return row
 
 
+# ── The registry on each row (S5 of the Data Health plan, #124) ─────────────────────────────────
+# ``_collect`` keeps building the rows it always built. Below, ``_attach_registry`` adds what
+# ``core.datasets.REGISTRY`` knows about that dataset — source, writer, coverage, freshness — and
+# ``sort_key`` orders the table worst coverage first. A row's own counts, holes, action and note
+# are never touched or replaced here.
+
+# What a coverage with no definable population reads. Never "0%": a percentage of nothing is a lie.
+COVERAGE_NA = "n/a"
+
+
+def _coverage_record(spec: datasets.DatasetSpec, row: dict) -> dict:
+    """One dataset's coverage as a renderable record. Never raises.
+
+    ``label`` is ``n/a`` when there is no definable population (no ``expected``, zero ``expected``,
+    or no ``covered``), the counts and the rounded percentage when there is one, ``unknown`` when
+    the callable returned no ``Health``, ``error`` when it raised — recorded on this row's table,
+    so the page shows it in the row's own errors rather than failing the whole board.
+    """
+    empty = {"covered": None, "expected": None, "fraction": None, "newest": None, "problems": []}
+    coverage = spec.coverage
+    if coverage is None or isinstance(coverage, datasets.CoverageSpec):
+        # The two-query form has no population/presence evaluator here yet (#124): say n/a.
+        return dict(empty, label=COVERAGE_NA)
+    try:
+        health = coverage()
+    except Exception as exc:  # noqa: BLE001 - a summary failure must not break the page
+        # The summary that just failed is the one the row's own builder already reported: one
+        # entry for one cause, so the error list names each failure once.
+        table = (row.get("tables") or [None])[0]
+        seen = getattr(_CALL, "errors", None) or []
+        if not any(e.get("table") == table and e.get("error") == str(exc) for e in seen):
+            _record(table, "_coverage", exc)
+        return dict(empty, label="error", problems=[str(exc)[:120]])
+    if not isinstance(health, datahealth.Health):
+        return dict(empty, label="unknown")
+    ratio = health.coverage
+    newest = _fmt_date(health.newest)
+    return {
+        "covered": health.covered,
+        "expected": health.expected,
+        "fraction": ratio,
+        "label": (COVERAGE_NA if ratio is None
+                  else f"{health.covered:,} / {health.expected:,} ({ratio * 100:.0f}%)"),
+        "newest": None if newest == DASH else newest,
+        "problems": list(health.problems) + list(health.consistency_problems()),
+    }
+
+
+def _fresh_record(spec: datasets.DatasetSpec) -> str | None:
+    """The newest date of the spec's freshness pair(s), read by ``_max_date``; None when it has none."""
+    pairs = spec.freshness_pairs()
+    if not pairs:
+        return None
+    fresh = _max_date(*pairs)
+    return None if fresh == DASH else fresh
+
+
+def _attach_registry(rows: list[dict]) -> list[dict]:
+    """Add the registry's source, writer, coverage and freshness to each collected row (S5, #124).
+
+    A row whose key is not in ``datasets.REGISTRY`` keeps everything it carries and gains
+    ``source: None`` — the table renders a dash in the three registry cells. Nothing is invented.
+    """
+    for row in rows:
+        try:
+            spec = datasets.by_key(str(row.get("key") or ""))
+        except KeyError:
+            row["source"] = None
+            continue
+        # The store file the dataset is written to (G2): the table's store pill names it.
+        row["db"] = spec.db
+        row["source"] = spec.source.value
+        row["writer"] = spec.writer
+        row["writer_note"] = spec.writer_note
+        row["coverage"] = _coverage_record(spec, row)
+        row["fresh"] = _fresh_record(spec)
+    return rows
+
+
+# ── "Other store tables" (S6 of the Data Health plan, #124) ─────────────────────────────────────
+# The backstop for a MANIFEST table no dataset claims. Normally empty: ``core.datasets`` claims
+# every table, and ``core/tests/test_datasets.py`` pins that. If a table ever escapes the
+# registry, this section says so in plain words instead of the table vanishing from the board.
+#
+# The column names this store writes a date or a timestamp into. An unclaimed table shows its
+# newest value only when it carries one of them; a table with none of them says "no time column"
+# rather than guessing at a date.
+TIME_COLUMNS: tuple[str, ...] = (
+    "run_at", "fetched_at", "checked_at", "generated_at", "updated_at", "started_at", "finished_at",
+    "last_seen", "session_date", "filed", "period_end", "period", "as_of", "ex_date", "ts",
+)
+
+
+def unclaimed_tables() -> list[dict]:
+    """Every MANIFEST table no dataset claims (S6, #124): store file, row count, newest date.
+
+    One entry per table, ordered by name, read per store file through the usual helpers. ``newest``
+    is ``None`` when the table carries no known time column. With nothing unclaimed this asks the
+    store nothing at all: an empty section must not cost a query.
+    """
+    names = datasets.unclaimed(rawstore.MANIFEST)
+    if not names:
+        return []
+    out = []
+    for table in sorted(names):
+        columns = [c for c in TIME_COLUMNS if c in _existing_columns(table)]
+        newest = _max_date(*[(table, c) for c in columns]) if columns else DASH
+        out.append({"table": table, "db": _db_of(table), "rows": _count(table),
+                    "newest": None if newest == DASH else newest})
+    return out
+
+
+def sort_key(row: dict) -> tuple:
+    """The table's default order: worst coverage first, a row with none after the known ones.
+
+    A row counts as known when its coverage has a ``fraction``; ``n/a``, ``unknown`` and ``error``
+    all have none and follow. Ties break case-insensitively by label, and ``sorted`` is stable, so
+    two rows alike in both keep the order ``_collect`` built them in.
+    """
+    coverage = row.get("coverage") or {}
+    fraction = coverage.get("fraction")
+    label = str(row.get("label") or row.get("key") or "").lower()
+    if fraction is None:
+        return (1, 0.0, label)
+    return (0, float(fraction), label)
+
+
 def _collect(now: datetime) -> dict:
     """Inventory of every dataset. Zero network, store only."""
     tickers = classification_universe()
@@ -1246,7 +1563,7 @@ def _collect(now: datetime) -> dict:
         },
         {
             "key": "ohlc",
-            "label": "Daily OHLC",
+            "label": "Legacy OHLC cache (SPY fallback)",
             "tables": ["swing_ohlc"],
             "rows": _count("swing_ohlc"),
             "last_date": _max_date(("swing_ohlc", "ts")),
@@ -1320,7 +1637,8 @@ def _collect(now: datetime) -> dict:
     tickers_list = _universe_tickers()
     board_cards = boards.board_cards()
     return {
-        "rows": rows,
+        # Worst coverage first: the rows that need a Fetch are at the top (#124).
+        "rows": sorted(_attach_registry(rows), key=sort_key),
         "tickers": tickers_list,
         "boards": board_cards,
         "identity": identity,
@@ -1328,6 +1646,10 @@ def _collect(now: datetime) -> dict:
         "automations": automations.static_rows(),
         "discord": _discord_readiness(),
         "backups": _backups(now),
+        # S6 (#124): the backstop for a MANIFEST table no dataset claims. Built before the errors
+        # list, so a failed read here is reported like any other.
+        "other_tables": unclaimed_tables(),
         "errors": list(getattr(_CALL, "errors", None) or []),
         "generated_at": now.isoformat(timespec="seconds"),
+        "provider_health": _provider_health(),
     }

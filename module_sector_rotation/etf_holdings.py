@@ -12,6 +12,8 @@ import logging
 from typing import Optional
 
 from RevenueChaser.core.config import FMP_API_KEY
+from RevenueChaser.core import datahealth
+from RevenueChaser.core.datahealth import Health
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +139,7 @@ def stored_holdings(ticker: str) -> list[dict]:
     return list((row or {}).get("entry") or [])
 
 
+@datahealth.scoped
 def health_summary() -> dict:
     """What Data Health says about the stored holdings (store only).
 
@@ -169,3 +172,22 @@ def health_summary() -> dict:
         "themes": len(themes),
         "rs_stored": sum(1 for t in themes if t in with_rs),
     }
+
+
+def health() -> Health:
+    """The numbers :func:`health_summary` reports, typed (#124 S4).
+
+    ``covered`` is the ETFs with stored holdings against the ``expected`` the holdings job resolves;
+    ``source_share`` is the provider of each stored list as a share of the stored lists (a list stored without a
+    provider is in no numerator, so the shares can sum below 1). ``newest`` is the session of the newest fetch;
+    the summary reads no calendar, so it has no ``expected_as_of``.
+    """
+    n = health_summary()
+    stored = n["stored"]
+    return Health(
+        covered=stored,
+        expected=n["expected"],
+        newest=n["newest_session"],
+        expected_as_of=None,
+        source_share={p: c / stored for p, c in n["providers"].items()} if stored else None,
+    )

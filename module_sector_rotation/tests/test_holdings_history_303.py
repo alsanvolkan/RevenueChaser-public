@@ -215,3 +215,41 @@ def test_health_summary_counts_an_empty_list_as_missing(rawstore_tmp_db, monkeyp
     assert h["missing"] == ["AIQ"]
     assert h["stored"] == h["in_newest"] == len(SYNCED) - 1
     assert h["providers"] == {"uw": len(SYNCED) - 1}
+
+
+# ── the typed numbers (#124 S4) ───────────────────────────────────────────────────────────────────────────────────
+def test_health_is_the_summary_numbers_typed(rawstore_tmp_db, monkeypatch):
+    """Covered is the ETFs with stored holdings against the 34 the job resolves; the provider share is the
+    provider of every stored list. The newest fetch is the session, not a population."""
+    from RevenueChaser.core import datahealth
+
+    _sync(monkeypatch, lambda t: eh.HoldingsList(HOLD, "yfinance" if t in ("SKYY", "XLK") else "uw"))
+
+    n = eh.health_summary()
+    h = eh.health()
+
+    assert h.covered == n["stored"] == len(SYNCED) == 34
+    assert h.expected == n["expected"] == 34
+    assert (h.newest, h.expected_as_of) == (n["newest_session"], None) == ("2026-10-09", None)
+    assert h.source_share == {p: c / n["stored"] for p, c in n["providers"].items()}
+    assert h.source_share["yfinance"] == 2 / 34
+    assert h.problems == ()
+    assert datahealth.coverage_text(h) == "100.0% (34 of 34)"
+
+
+def test_health_counts_a_missing_etf_and_a_list_without_a_provider(rawstore_tmp_db, monkeypatch):
+    """An ETF with no row and one whose list is empty are both uncovered; a stored list with no provider is
+    counted as a stored list, so the provider shares sum to less than 1."""
+    from RevenueChaser.core import datahealth
+
+    _sync(monkeypatch, lambda t: eh.HoldingsList([], None) if t == "AIQ" else eh.HoldingsList(HOLD, "uw"))
+    rawstore.write_rows("etf_holdings", [{"ticker": "XLE", "entry": HOLD, "provider": None,
+                                          "fetched_at": SAT.timestamp()}])
+
+    n = eh.health_summary()
+    h = eh.health()
+
+    assert (h.covered, h.expected) == (n["stored"], n["expected"]) == (33, 34)
+    assert n["missing"] == ["AIQ"] and n["providers"] == {"uw": 32}
+    assert h.source_share == {"uw": 32 / 33}, "the denominator is every stored list, not only the tagged ones"
+    assert datahealth.coverage_text(h) == "97.1% (33 of 34)"

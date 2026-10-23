@@ -13,6 +13,9 @@ scenario's bars are D01 rows (``screen_parity.seed``). The diff and its reasons:
 Re-captured for #384 Swing W2 and #386 Fundamentals W3 (2026-10-16): Swing gains UP2 (RS no longer gates Minervini;
 the 40/30/30 quality, methods/bucket, the direction gate rows, slim gate rows), Fundamentals keeps its 5 candidates
 with rules_passed/bucket instead of multiplier/tiers; both tables gain the additive columns.
+Data Health S11 (#80, #124) re-captured it: the Swing and Fundamentals Fetch payloads gain the additive
+``provider_health`` key (the provider-health banner); compared with the old golden with that key removed, nothing
+else differed.
 To re-capture on another commit, run this file with ``RC_PARITY_CAPTURE=<path>`` (it writes the snapshot there
 instead of comparing).
 """

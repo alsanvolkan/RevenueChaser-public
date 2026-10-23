@@ -252,6 +252,9 @@ def load_ohlc(ticker: str, ttl_days: float = 1.0, retries: int = 3,
         except Exception as exc:  # noqa: BLE001 - rate limit / transient
             error = exc
             logger.debug("ohlc %s attempt %d/%d: %s", ticker, attempt + 1, retries, exc)
+            # Counted for the board banner (#80); the frame returned below is unchanged.
+            from RevenueChaser.core.providers.yfinance import _HEALTH
+            _HEALTH.call(error=str(exc) or type(exc).__name__, endpoint=f"{ticker}.history")
         if not reset and yf_session.recover(started, error):
             reset = True
             continue                  # the retry, at once; it is not one of ``retries``
@@ -332,6 +335,12 @@ def load_ticker_info(ticker: str, no_fetch: bool = False) -> dict:
     import yfinance as yf
     # #259: a failed or empty refetch keeps the expired info, marked stale (never mutating the store).
     info, status = refetch_or_keep(stale, lambda: yf.Ticker(ticker).info or {}, has_fields, label=ticker)
+    # A refetch that did not answer is a failed Yahoo read (#80). The value returned below is unchanged.
+    from RevenueChaser.core.providers.yfinance import _HEALTH
+    if status == "fresh":
+        _HEALTH.call(endpoint=f"{ticker}.info")
+    else:
+        _HEALTH.call(error="refetch failed" if status == "stale" else "empty", endpoint=f"{ticker}.info")
     if status == "fresh":
         try:
             now = time.time()

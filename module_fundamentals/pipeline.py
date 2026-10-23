@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from RevenueChaser.core.index_registry import annotate_cards
 from RevenueChaser.core.liquidity import liquid_assets
 from RevenueChaser.core.providers import sec_edgar
+from RevenueChaser.core.providers.result import ProviderHealth
 from RevenueChaser.core.reporting_common import write_artifact
 from RevenueChaser.core import funnel
 # load_ohlc: the SPY fallback only (U1); a scored name reads D01 (``screen_common.load_bars``).
@@ -37,6 +38,9 @@ from . import events
 from .screeners import evaluate_momentum, evaluate_quality, evaluate_rule_of_40, is_distorted
 
 logger = logging.getLogger(__name__)
+
+# This Fetch's EDGAR reads (Common K3, #80). A Refresh does not reset it: it serves the stored payload.
+_EDGAR_HEALTH = ProviderHealth("SEC EDGAR")
 
 
 def _to_float(v):
@@ -426,6 +430,8 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         annual, quarterly, emeta = sec_edgar.get_fundamentals(ticker, no_fetch=no_fetch)
     except Exception as exc:  # pragma: no cover - network
         logger.debug("fundamental edgar %s: %s", ticker, exc)
+        if not no_fetch:
+            _EDGAR_HEALTH.call(error=str(exc) or type(exc).__name__, endpoint=f"{ticker}.companyfacts")
         return _drop("edgar_fetch_failed")     # the call failed: a data gap, not "EDGAR has nothing" (#386 F1)
     # #46: whether this row was extracted since the currency measure landed at all. An absent key is "not
     # measured", and a stored row is never re-extracted (``sec_edgar._stored_fundamentals``), so only a
@@ -435,6 +441,8 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
     if not annual:
         # sec_edgar swallows a failed download and answers empty; its meta says so (#386 review).
         if (emeta or {}).get("fetch_failed"):
+            if not no_fetch:
+                _EDGAR_HEALTH.call(error="fetch failed", endpoint=f"{ticker}.companyfacts")
             return _drop("edgar_fetch_failed")
         # #46: the filer tagged its money facts in another currency, so the extraction read nothing. It is not a
         # filer without data, so it gets its own reason — and a row stored before that measure carries no key, which
@@ -690,6 +698,8 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
     from . import scores
     non_usd: set[str] = set()      # #46: the currencies of the names that drop on the currency check
     non_usd_seen: list[str] = []   # #46: the names whose stored row carries the measure at all
+    if not no_fetch:
+        _EDGAR_HEALTH.reset()
 
     def compute_row(row, spy_df, no_fetch: bool = False, spine: dict | None = None, drops: list | None = None):
         return _compute_row(row, spy_df, no_fetch=no_fetch, spine=spine, drops=drops, non_usd=non_usd,
@@ -703,6 +713,9 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
         top_n=top_n, refresh_universe=refresh_universe, no_fetch=no_fetch,
         history_board="module_fundamentals", saved=config.FUNDAMENTALS_JSON)
     _note_non_usd(payload, non_usd, non_usd_seen)
+    # The banner reads this key (#80). A Refresh serves the stored payload, which already carries it.
+    if not no_fetch:
+        payload["provider_health"] = _EDGAR_HEALTH.health()
     return payload
 
 

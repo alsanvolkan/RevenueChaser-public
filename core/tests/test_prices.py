@@ -970,3 +970,44 @@ def test_a_chunk_commits_its_bars_actions_and_watermarks_in_prices_duckdb(rawsto
     assert _in_file("prices", "SELECT ticker, action FROM price_actions") == [("AAA", "dividend")]
     assert ("price_actions", "yfinance", "AAA") in _in_file("prices", "SELECT dataset, source, key FROM price_checks")
     assert _in_file("raw", "SELECT * FROM source_checks") == []
+
+
+# ── Data Health (#124 S4): the typed numbers the note is derived from ────────
+
+def test_health_is_the_summary_numbers_typed(rawstore_tmp_db):
+    """``health`` and ``health_summary`` are one computation: covered is the scope minus the tickers behind it,
+    and the source share is the newest session's rows per source (Health stores a share, the dict a count)."""
+    from RevenueChaser.core import datahealth
+
+    rawstore.write_rows("equity_universe", [{"ticker": "AAA", "market_cap": 1e9},
+                                            {"ticker": "BBB", "market_cap": 1e9}])
+    rawstore.write_rows("price_bars_daily", [bar_row("AAA", "2026-10-08", close=10.0, source="uw"),
+                                             bar_row("BBB", "2026-10-08", close=11.0)])
+
+    n = prices.health_summary(now=NOW)
+    h = prices.health(now=NOW)
+
+    scope = len(prices.bar_scope())
+    assert n["scope"] == scope and n["behind"] == scope - 2, "only AAA and BBB have a bar on the newest session"
+    assert h.covered == n["scope"] - n["behind"] == 2
+    assert h.expected == n["scope"] == scope
+    assert (h.newest, h.expected_as_of) == (n["newest_session"], n["latest_complete"]) == ("2026-10-08", "2026-10-08")
+    assert n["source_share"] == {"uw": 1, "yfinance": 1}
+    assert h.source_share == {"uw": 0.5, "yfinance": 0.5}
+    assert h.problems == ()
+    assert datahealth.coverage_text(h) == f"{2 / scope * 100:.1f}% (2 of {scope:,})"
+
+
+def test_health_names_a_calendar_error_and_reports_no_expected_as_of(rawstore_tmp_db):
+    """A calendar error leaves no latest complete session: the numbers stay the store's, and the fact is a problem."""
+    from RevenueChaser.core import datahealth
+
+    later = datetime(2029, 1, 2, 20, 35, tzinfo=UTC)      # past the holiday table's end
+    n = prices.health_summary(now=later)
+    h = prices.health(now=later)
+
+    assert n["calendar_error"] is True
+    assert (h.newest, h.expected_as_of) == (n["newest_session"], n["latest_complete"]) == (None, None)
+    assert h.covered == n["scope"] - n["behind"] == 0 and h.expected == n["scope"] > 0
+    assert h.problems == ("calendar error: the latest complete session is unavailable",)
+    assert datahealth.coverage_text(h) == f"0.0% (0 of {n['scope']:,})", "a real population with nothing in it"

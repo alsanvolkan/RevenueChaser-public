@@ -1,6 +1,8 @@
 """Settings / Data health HTML renderer: table, Fetch buttons, help, empty state."""
 from __future__ import annotations
 
+import pytest
+
 from RevenueChaser.module_settings import report
 
 
@@ -32,10 +34,12 @@ def _payload():
 
 
 def test_renders_the_inventory_table_headers_and_rows():
+    """S5 (#124): the table leads with Source / Coverage / Fresh; the store tables, writer,
+    action and notes moved into a detail row (asserted in the S5 tests below)."""
     html = report.render_settings_dashboard(_payload())
-    for header in ("Dataset", "Store table", "Last data date", "Rows", "Holes",
-                   "Action", "Notes"):
+    for header in ("Dataset", "Source", "Coverage", "Freshness", "Last data date", "Rows", "Holes"):
         assert header in html
+    assert "Store table(s)" in html and "Action" in html and "Notes" in html
     assert "Equity universe" in html
     assert "equity_universe" in html
     assert "2026-09-18" in html
@@ -232,6 +236,20 @@ def test_board_inputs_card_renders_funnel_and_fetch_buttons():
     assert 'id="msg-module_comovement-no_market_cap"' in html
     assert html.count("(by design)") == 1
     assert "Clustered" in html and "60" in html
+
+
+def test_board_cards_are_collapsed_by_default():
+    """S9: a board card is a closed <details>, not an always-open panel."""
+    html = _with(boards=[_card(settings=_settings_block())])
+    m = re.search(r'<div class="bcard" id="board-module_comovement">'
+                  r'<details(?![^>]*\bopen\b)>', html)
+    assert m, "board card is not collapsed by default"
+    assert "<summary>" in html
+    # The Co-movement e2e parser keys on this div and the frow2 rows inside it.
+    parsed = re.search(
+        r'<div class="bcard" id="board-module_comovement">(.*?)</div></div>'
+        r'(?=<div class="bcard"|\s*</div>|\s*<script)', html, re.S)
+    assert parsed and 'class="frow2' in parsed.group(1)
 
 
 def test_board_card_states():
@@ -908,6 +926,20 @@ def test_automations_section_is_absent_without_rows():
     assert 'id="auto-body"' not in html
 
 
+def test_the_automations_section_says_a_line_opens():
+    """G10 (#124): a reader must know the long text is behind the line, not gone."""
+    p = _payload()
+    p["automations"] = _autos()
+    html = report.render_settings_dashboard(p)
+    assert "press a line to see" in html
+
+
+def test_an_empty_automations_list_says_so():
+    html = _render_rows([])
+    assert "No scheduled tasks are registered." in html
+    assert "<details" not in html
+
+
 def test_the_panel_uses_rcesc_and_never_the_drill_escaper():
     start = report.AUTOMATIONS_JS
     assert "rcEsc(" in start and "tcEsc" not in start
@@ -986,6 +1018,170 @@ def test_error_state_is_red_and_offers_no_button():
     assert "data-act" not in html
 
 
+# --- G10 (#124): one line per automation, the rest behind a click -------------------
+
+def _one_line(html: str) -> str:
+    """The closed line of the first automation: the whole ``<summary>`` element."""
+    start = html.index("<summary>")
+    return html[start:html.index("</summary>", start) + len("</summary>")]
+
+
+def _behind_the_click(html: str) -> str:
+    """Everything after the first automation's closed line: what opening it shows."""
+    return html[html.index("</summary>") + len("</summary>"):]
+
+
+def _live_row(**fields) -> dict:
+    """The Daily store backup row as the poll returns it: installed, last run ok, next run known."""
+    row = dict(_autos()[0], state="enabled", result_kind="ok", result_text="ok",
+               last_run="2026-10-23T04:00:05", next_run="2026-10-24T04:00:00",
+               missed_runs=0, last_success_age="8 h ago", log_tail=[])
+    row.update(fields)
+    return row
+
+
+def test_the_automation_line_carries_its_name_schedule_state_result_and_next_run():
+    line = _one_line(_render_rows([_live_row()]))
+    assert "Daily store backup" in line and "RC-Store-Backup" in line
+    assert "daily 04:00 (local)" in line
+    assert "Enabled" in line
+    assert "last result: ok" in line
+    assert "next run: 2026-10-24 04:00" in line
+
+
+def test_a_task_that_is_not_installed_shows_its_state_and_no_dash_result():
+    row = dict(_autos()[0], state="not_installed", result_kind="none", result_text="—",
+               last_run=None, next_run=None, missed_runs=0, last_success_age="never")
+    line = _one_line(_render_rows([row]))
+    assert "Not installed" in line
+    assert "last result" not in line and "next run" not in line
+
+
+def test_the_automation_line_leaves_the_long_text_behind_the_click():
+    auto = _autos()[0]
+    line = _one_line(_render_rows([_live_row()]))
+    assert auto["description"][:60] not in line
+    assert auto["command"] not in line
+    assert auto["settings"] not in line
+    assert auto["log_path"] not in line
+
+
+def test_the_line_shows_the_schedule_time_and_the_chain_condition_waits_behind_the_click():
+    auto = next(a for a in _autos() if a["name"] == "RC-Screeners-Daily")
+    row = dict(auto, state="enabled", result_kind="ok", result_text="ok",
+               last_run="2026-10-22T23:00:00", next_run="2026-10-23T23:00:00", missed_runs=0,
+               last_success_age="18 h ago", log_tail=[])
+    html = _render_rows([row])
+    line = _one_line(html)
+    assert "23:00 (local)" in line and "after RC-Daily-Bars" not in line
+    assert "weekly 23:00 (local)" in line and "Wednesday" not in line
+    opened = _behind_the_click(html)
+    assert "after RC-Daily-Bars" in opened and "Wednesday" in opened
+
+
+def test_the_expanded_part_keeps_the_description_command_and_run_conditions_word_for_word():
+    auto = _autos()[0]
+    opened = _behind_the_click(_render_rows([_live_row()]))
+    assert auto["description"] in opened
+    assert auto["command"] in opened
+    assert auto["settings"] in opened
+    assert auto["schedule"] in opened
+    assert "What it does" in opened and "Command" in opened and "Run conditions" in opened
+
+
+def test_every_automation_is_a_closed_details_row_with_its_own_id():
+    html = _render_rows(_autos())
+    for auto in _autos():
+        assert f'<details class="auto-item" id="auto-{auto["name"]}">' in html
+    assert html.count("<details") == html.count("</details>") == len(_autos())
+
+
+def test_the_line_opens_from_the_keyboard_without_a_click_handler():
+    line = _one_line(_render_rows([_live_row()]))
+    assert line.startswith("<summary>") and "onclick" not in line and "onkeydown" not in line
+
+
+def test_the_buttons_are_behind_the_click():
+    html = _render_rows([_live_row()])
+    assert "data-act" not in _one_line(html)
+    assert 'data-act="run"' in _behind_the_click(html)
+
+
+def test_the_daily_store_backup_keeps_its_off_machine_line_and_sizes_in_the_expanded_part():
+    row = _live_row(offmachine={"configured": True, "kind": "ok", "text": "OK, 8 h ago"},
+                    backup_size={"kind": "warn",
+                                 "text": "local 21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)"})
+    html = _render_rows([row])
+    opened = _behind_the_click(html)
+    assert "off-machine copy: OK, 8 h ago" in opened
+    assert "backup size: local 21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)" in opened
+    line = _one_line(html)
+    assert "off-machine copy" not in line and "backup size" not in line
+
+
+def test_the_expanded_part_keeps_the_store_tables_the_log_and_its_tail():
+    auto = next(a for a in _autos() if a["name"] == "RC-Daily-Bars")
+    row = dict(auto, state="enabled", result_kind="ok", result_text="ok",
+               last_run="2026-10-23T22:35:00", next_run="2026-10-24T22:35:00", missed_runs=0,
+               last_success_age="7 h ago",
+               log_tail=["=== 2026-10-23T22:35:00 exit 0", "wrote 3,582 rows"])
+    opened = _behind_the_click(_render_rows([row]))
+    for table in auto["tables_written"]:
+        assert table in opened
+    assert auto["log_path"] in opened and "wrote 3,582 rows" in opened
+    assert "Store tables it writes" in opened
+
+
+def test_the_automation_line_escapes_hostile_schedule_result_and_next_run():
+    bad = "<img src=x onerror=__x(1)>"
+    line = _one_line(_render_rows([_live_row(schedule=bad, result_text=bad, next_run=bad)]))
+    assert "<img" not in line and line.count("&lt;img") == 3
+
+
+def _auto_poll(open_ids: list, focused_id: str | None) -> dict:
+    """``autoRender`` against a fake DOM: which rows it left open, and whether it put focus back."""
+    import json
+    import shutil
+    import subprocess
+    import pytest
+    from RevenueChaser.core import html_safe
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    script = (html_safe.ESC_JS + report.AUTOMATIONS_JS
+              + "\nvar openIds = " + json.dumps(open_ids) + ";"
+              + "\nvar focusedId = " + json.dumps(focused_id) + ";"
+              + "\nvar focused = false;"
+              + "\nvar head = {focus: function(){ focused = true; }};"
+              + "\nvar made = {};"
+              + "\nvar body = {innerHTML: '', querySelectorAll: function(){"
+              + " return openIds.map(function(id){ return {id: id}; }); }};"
+              + "\nglobalThis.document = {"
+              + " activeElement: focusedId ? {closest: function(){ return {id: focusedId}; }} : null,"
+              + " getElementById: function(id){"
+              + " if(id === 'auto-body') return body;"
+              + " if(!made[id]) made[id] = {id: id, open: false,"
+              + " querySelector: function(){ return head; }};"
+              + " return made[id]; }};"
+              + "\nautoRender(" + json.dumps(_autos()) + ", true);"
+              + "\nconsole.log(JSON.stringify({rendered: body.innerHTML.length, focused: focused,"
+              + " open: openIds.map(function(id){ return made[id] ? made[id].open : null; })}));")
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                         encoding="utf-8", check=True)
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+def test_a_row_the_reader_opened_stays_open_across_a_poll():
+    """The panel re-renders on every poll while a task runs; the row being watched must not snap shut."""
+    seen = _auto_poll(open_ids=["auto-RC-Store-Backup"], focused_id=None)
+    assert seen["rendered"] > 0 and seen["open"] == [True]
+
+
+def test_the_focused_automation_keeps_focus_across_a_poll():
+    """A keyboard reader inside an opened row must not be dropped back to the page by the 5 s poll."""
+    seen = _auto_poll(open_ids=["auto-RC-Store-Backup"], focused_id="auto-RC-Store-Backup")
+    assert seen["open"] == [True] and seen["focused"] is True
+
+
 def _drill_rows(detail: dict) -> str:
     """``drillFill(detail)`` run in node: the helpers of ``DRILL_JS`` without the DOM wiring at its end."""
     import json
@@ -1001,6 +1197,92 @@ def _drill_rows(detail: dict) -> str:
     out = subprocess.run(["node", "-e", script], capture_output=True, text=True,
                          encoding="utf-8", check=True)
     return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+def test_the_drill_shows_d01_bars_when_the_legacy_cache_is_empty():
+    """The number the drill shows is D01, not swing_ohlc. Empty cache must not read 'no bars'."""
+    html = _drill_rows({
+        "name": "Nvidia",
+        "presence": {
+            "price_bars_daily": {"bars": 3, "newest": "2026-02-02"},
+            "swing_ohlc": {"bars": 0, "newest": None},
+        },
+    })
+    assert ('<span class="dlbl">Daily price bars</span>'
+            '<span class="dval">3 bars · newest 2026-02-02</span>' in html)
+    assert "Daily OHLC" not in html
+
+
+def test_the_drill_shows_zero_d01_and_the_legacy_count_under_its_label():
+    html = _drill_rows({
+        "name": "SPY",
+        "presence": {
+            "price_bars_daily": {"bars": 0, "newest": None},
+            "swing_ohlc": {"bars": 4, "newest": "2026-02-02"},
+        },
+    })
+    assert '<span class="dlbl">Daily price bars</span><span class="dval">no bars</span>' in html
+    assert ('<span class="dlbl">Legacy OHLC cache (SPY fallback)</span>'
+            '<span class="dval">4 bars · newest 2026-02-02</span>' in html)
+
+
+def test_the_drill_lists_the_five_scoring_datasets_with_their_newest_date():
+    """S10 (#126): bars, quote, vendor statements, EDGAR facts and ownership, in plain English."""
+    html = _drill_rows({
+        "ticker": "MU", "name": "Micron",
+        "presence": {
+            "price_bars_daily": {"bars": 2, "newest": "2026-02-02"},
+            "quote_snapshot": {"rows": 1, "newest": "2026-10-20", "source": "uw"},
+            "vendor_financials": {"rows": 2, "newest": "2026-06-04"},
+            "edgar_financials": {"periods": 2, "newest": "2026-08-27"},
+            "ownership_snapshot": {"rows": 1, "newest": "2026-10-21", "source": "yfinance"},
+        },
+    })
+    assert ('<span class="dlbl">Daily price bars</span>'
+            '<span class="dval">2 bars · newest 2026-02-02</span>' in html)
+    assert ('<span class="dlbl">Quote</span>'
+            '<span class="dval">1 row · newest 2026-10-20 · uw</span>' in html)
+    assert ('<span class="dlbl">Vendor financials</span>'
+            '<span class="dval">2 rows · newest 2026-06-04</span>' in html)
+    assert ('<span class="dlbl">EDGAR facts</span>'
+            '<span class="dval">2 periods · newest 2026-08-27</span>' in html)
+    assert ('<span class="dlbl">Ownership</span>'
+            '<span class="dval">1 row · newest 2026-10-21 · yfinance</span>' in html)
+
+
+def test_the_drill_says_which_scoring_dataset_has_no_row():
+    html = _drill_rows({
+        "name": "NVDA",
+        "presence": {
+            "price_bars_daily": {"bars": 1, "newest": "2026-02-02"},
+            "quote_snapshot": {"rows": 0, "newest": None, "source": None},
+            "vendor_financials": {"rows": 0, "newest": None},
+            "edgar_financials": {"periods": 0, "newest": None},
+            "ownership_snapshot": {"rows": 0, "newest": None, "source": None},
+        },
+    })
+    assert ('<span class="dlbl">Quote</span><span class="dval">no quote stored</span>' in html)
+    assert ('<span class="dlbl">Vendor financials</span>'
+            '<span class="dval">no vendor statements stored</span>' in html)
+    assert ('<span class="dlbl">EDGAR facts</span><span class="dval">no facts stored</span>' in html)
+    assert ('<span class="dlbl">Ownership</span><span class="dval">no ownership stored</span>' in html)
+
+
+def test_the_drill_shows_the_identifiers_at_the_top():
+    html = _drill_rows({"ticker": "MU", "cik": "0000723125", "figi": "BBG000BLNNH6",
+                        "cusip": "n/a", "isin": "n/a", "presence": {}})
+    assert ('<span class="dlbl">CIK</span><span class="dval">0000723125</span>' in html)
+    assert ('<span class="dlbl">FIGI</span><span class="dval">BBG000BLNNH6</span>' in html)
+    # The columns arrive in a later PR: the drill says n/a rather than pretending there is no value.
+    assert ('<span class="dlbl">CUSIP</span><span class="dval">n/a</span>' in html)
+    assert ('<span class="dlbl">ISIN</span><span class="dval">n/a</span>' in html)
+
+
+def test_the_drill_escapes_a_hostile_identifier():
+    bad = "<img src=x onerror=__x(1)>"
+    html = _drill_rows({"ticker": "MU", "cik": bad, "figi": bad, "cusip": bad, "isin": bad,
+                        "presence": {}})
+    assert "<img" not in html and html.count("&lt;img") == 4
 
 
 def test_the_drill_shows_the_sector_and_the_industry_text():
@@ -1132,8 +1414,782 @@ def test_the_backups_card_escapes_its_text_and_never_takes_a_class_from_it():
     assert "<img" not in card and "&lt;img" in card
 
 
+# ── G8 of the GUI brief (#124): where the backups are, what is kept, the last self-check ──────────
+def _backup_line(card: str, ident: str) -> str:
+    """One summary line of the Backups card, from its id to the end of its div."""
+    return card[card.index(f'id="{ident}"'):].split("</div>")[0]
+
+
+def test_the_backups_card_shows_the_local_folder_path_in_full_and_in_monospace():
+    """avo 2026-10-23: "show where the backups are" — the whole path, not a shortened one."""
+    long_path = "D:/RevenueChaser backups/raw-store/2026-10-16-with-a-deliberately-long-folder-name"
+    card = _backups_card(dict(_BACKUPS, folder=long_path))
+    assert f'<code class="bpath" id="backup-folder">{long_path}</code>' in card
+    assert "font-family:ui-monospace" in report.CSS[report.CSS.index(".bpath"):].split("}")[0]
+
+
+def test_the_backups_card_says_unknown_in_words_when_the_record_carries_no_folder():
+    card = _backups_card(dict(_BACKUPS, folder=None))
+    assert 'id="backup-folder">unknown</code>' in card
+
+
+def test_the_backups_card_shows_the_offmachine_copy_location_the_record_names():
+    """The location is the job's own record of where it copies; the card never opens that folder."""
+    where = "G:/my-drive/revenuechaser-backups"
+    card = _backups_card(dict(_BACKUPS, offmachine_path=where))
+    assert f'<code class="bpath" id="backup-offmachine-path">{where}</code>' in card
+    assert 'id="backup-offmachine-path">unknown' in _backups_card(_BACKUPS)   # _BACKUPS carries no location
+
+
+def test_the_retention_rule_is_read_from_the_job_registry_description():
+    """The rule's numbers live in core/automations.py; the card reads them there instead of retyping them."""
+    line = _backup_line(_backups_card(_BACKUPS), "backup-retention")
+    assert ("keeps 5 daily raw and 5 daily history snapshots, the newest 12 weekly raw copies, "
+            "and 2 daily prices snapshots") in line
+
+
+def test_a_changed_registry_rule_reaches_the_card(monkeypatch):
+    """Mutation guard: edit the registry text and the card must follow it, not a copy of its own."""
+    from dataclasses import replace
+
+    from RevenueChaser.core import automations
+    real = automations.entry("RC-Store-Backup")
+    monkeypatch.setattr(report.automations, "entry",
+                        lambda name: replace(real, description="Backup; keeps 9 daily raw snapshots. Then a scan."))
+    line = _backup_line(_backups_card(_BACKUPS), "backup-retention")
+    assert "keeps 9 daily raw snapshots." in line and "12 weekly" not in line
+
+
+def test_a_rule_the_record_carries_wins_over_the_registry_text():
+    line = _backup_line(_backups_card(dict(_BACKUPS, retention="keeps 3 daily copies")), "backup-retention")
+    assert "keeps 3 daily copies" in line and "12 weekly" not in line
+
+
+def test_the_integrity_self_check_reads_as_one_sentence_with_its_numbers():
+    line = _backup_line(_backups_card(_BACKUPS), "backup-selfcheck")
+    assert "last checked 2026-10-16" in line
+    assert "next due 2026-10-17" in line
+    assert "3,382 files re-read against their hashes" in line
+
+
+def test_a_missing_self_check_says_never_and_invents_no_count():
+    line = _backup_line(_backups_card(dict(_BACKUPS, scan={"state": "unknown", "text": "unknown: no scan yet"})),
+                        "backup-selfcheck")
+    assert "last checked never" in line and "next due the next backup run" in line
+    assert "no files re-read yet" in line
+
+
+def test_the_backups_card_has_no_delete_control_and_says_nothing_is_deleted():
+    """G8 ships no delete: arming one is G9, a separate gated change with avo's typed words."""
+    card = _backups_card(_BACKUPS)
+    assert "<button" not in card and "<form" not in card
+    assert "Nothing on this page deletes or moves a backup file" in _backup_line(card, "backup-nodelete")
+
+
+def test_the_backups_card_escapes_the_paths_and_the_rule():
+    bad = "<img src=x onerror=__x(1)>"
+    card = _backups_card(dict(_BACKUPS, folder=bad, offmachine_path=bad, retention=bad))
+    assert "<img" not in card and card.count("&lt;img") >= 3
+
+
 def test_null_cap_text_does_not_claim_it_is_outside_the_universe():
     """DF99: a NULL cap also occurs before the caps backfill has resolved it."""
     html = report.render_settings_dashboard(_payload())
     assert "not in the $300M classification universe" not in html
     assert "no cap stored" in html
+
+
+# ── S5 of the Data Health plan (#124): Source / Coverage / Fresh and a detail row ────────────
+def _s5_payload():
+    """The two rows above, with the registry facts ``_attach_registry`` adds."""
+    p = _payload()
+    p["rows"][0].update(
+        source="yfinance", writer="RC-Screeners-Daily",
+        writer_note="caps-only fill is POST /run/universe-stats",
+        coverage={"covered": 812, "expected": 905, "fraction": 812 / 905,
+                  "label": "812 / 905 (90%)", "newest": "2026-09-20", "problems": []},
+        fresh="2026-09-20")
+    return p
+
+
+def _thead_cells(html: str) -> list[str]:
+    """The table's header cells as plain text (a header may hold a button, e.g. Source)."""
+    import re
+    thead = re.search(r"<thead><tr>(.*?)</tr></thead>", html, re.S).group(1)
+    return [h.split("<")[0].strip()
+            for h in re.findall(r"<th[^>]*>(.*?)</th>", thead, re.S)]
+
+
+def _main_row(html: str, key: str) -> str:
+    start = html.index(f'id="row-{key}"')
+    return html[start:html.index("</tr>", start)]
+
+
+def _detail_row(html: str, key: str) -> str:
+    start = html.index(f'id="det-{key}"')
+    return html[start:html.index("</tr>", start)]
+
+
+def _cells(row: str) -> list[str]:
+    import re
+    return [re.sub(r"<[^>]+>", "", c).strip() for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)]
+
+
+def test_the_table_leads_with_source_coverage_and_fresh_then_the_old_columns():
+    html = report.render_settings_dashboard(_s5_payload())
+    assert _thead_cells(html) == ["Dataset", "Source", "Coverage", "Freshness",
+                                  "Last data date", "Rows", "Holes"]
+
+
+def test_the_three_new_cells_carry_the_registry_facts():
+    html = report.render_settings_dashboard(_s5_payload())
+    cells = _cells(_main_row(html, "universe"))
+    assert cells[0] == "Equity universe"
+    assert cells[1] == "Yahoo Finance"
+    assert cells[2] == "812 / 905 (90%)"
+    assert cells[3] == "2026-09-20"
+    assert cells[4] == "—" and cells[5] == "7,403"
+    assert cells[6].startswith("1,710") and "null market cap" in cells[6]
+
+
+def test_a_row_the_registry_does_not_know_shows_a_dash_in_the_three_new_cells():
+    html = report.render_settings_dashboard(_payload())      # neither row carries a source
+    cells = _cells(_main_row(html, "corpus"))
+    assert cells[1:4] == ["—", "—", "—"], cells
+
+
+def test_store_tables_writer_action_and_notes_live_in_a_closed_detail_row():
+    html = report.render_settings_dashboard(_s5_payload())
+    main = _main_row(html, "universe")
+    detail = _detail_row(html, "universe")
+    assert '<tr class="detail" id="det-universe" hidden>' in html, "closed until asked for"
+    assert '<button type="button" class="det-btn" aria-expanded="false"' in main
+    assert 'aria-controls="det-universe"' in main
+    for gone in ("equity_universe", "RC-Screeners-Daily", "/run/universe-stats",
+                 "provenance: __meta__"):
+        assert gone not in main, gone
+    for held in ("Store table(s)", "equity_universe", "RC-Screeners-Daily",
+                 "caps-only fill is POST /run/universe-stats",
+                 'data-fetch="/run/universe-stats"', 'id="msg-universe"',
+                 "provenance: __meta__"):
+        assert held in detail, held
+    assert 'class="tbl"' in detail and 'colspan="7"' in detail
+
+
+def test_every_row_has_one_detail_row_carrying_its_own_action():
+    html = report.render_settings_dashboard(_s5_payload())
+    assert 'id="det-corpus"' in html
+    detail = _detail_row(html, "corpus")
+    assert 'data-fetch="/run/edgar-sync"' in detail and 'id="msg-corpus"' in detail
+    assert 'id="msg-universe"' not in detail, "an action belongs to its own dataset"
+
+
+def test_a_coverage_error_is_red_and_says_why():
+    p = _payload()
+    p["rows"][0].update(source="sec", coverage={"label": "error", "fraction": None,
+                                                "problems": ["the summary could not read the store"]},
+                        fresh=None)
+    html = report.render_settings_dashboard(p)
+    cells = _cells(_main_row(html, "universe"))
+    assert cells[2].startswith("error")
+    assert 'class="warnv"' in _main_row(html, "universe")
+    assert "the summary could not read the store" in _main_row(html, "universe")
+    assert cells[3] == "—"
+
+
+def test_the_new_cells_escape_a_hostile_label_and_never_take_a_class_from_it():
+    bad = "<img src=x onerror=__x(1)>"
+    p = _payload()
+    p["rows"][0].update(source=bad, fresh=bad, writer=bad, writer_note=bad,
+                        coverage={"label": "<script>alert(1)</script>", "fraction": 0.5,
+                                  "problems": [bad]})
+    html = report.render_settings_dashboard(p)
+    assert "<img" not in html and "<script>alert(1)" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert html.count("&lt;img src=x onerror=__x(1)&gt;") >= 3
+    assert "covbar" in html, "the bar's own class comes from the band, never from the label"
+
+
+def test_the_source_header_offers_the_grouping_toggle():
+    html = report.render_settings_dashboard(_s5_payload())
+    assert '<th data-group="source">' in html
+    assert "function settingsGroupRows(" in html and "function settingsDetail(" in html
+
+
+def test_the_detail_toggle_and_the_grouping_run_under_node(tmp_path):
+    """The two handlers: a detail row opens and closes from its button, and grouping keeps a
+    detail row with its dataset row and puts the worst-coverage order back."""
+    import json
+    import shutil
+    import subprocess
+    import pytest
+    from RevenueChaser.core.tests.board_js import function_source
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    js = (function_source(report.JS, "settingsDetail")
+          + function_source(report.JS, "settingsRowPairs")
+          + function_source(report.JS, "settingsGroupRows")
+          + r"""
+var els = {det: {hidden: true}};
+globalThis.document = {getElementById: function(id){ return els[id] || null; }};
+function button(){
+  var a = {"aria-controls": "det", "aria-expanded": "false"};
+  return {getAttribute: function(k){ return a[k] == null ? null : a[k]; },
+          setAttribute: function(k, v){ a[k] = String(v); },
+          state: function(){ return a["aria-expanded"]; }};
+}
+var b = button();
+settingsDetail(b);
+var opened = {expanded: b.state(), hidden: els.det.hidden};
+settingsDetail(b);
+var closed = {expanded: b.state(), hidden: els.det.hidden};
+function tr(kind, source, order){
+  return {className: kind, attrs: {"data-source": source, "data-order": String(order)},
+          getAttribute: function(k){ return this.attrs[k] == null ? null : this.attrs[k]; }};
+}
+function body(children){
+  return {children: children, out: [],
+          appendChild: function(el){ this.out.push(el.attrs["data-order"] +
+                                                    (el.className === "detail" ? "d" : "r")); }};
+}
+var tbody = body([tr("row", "uw", 0), tr("detail", "", 0), tr("row", "sec", 1), tr("detail", "", 1),
+                  tr("row", "derived", 2), tr("detail", "", 2)]);
+settingsGroupRows(tbody, true);
+var grouped = tbody.out.slice();
+tbody.out = [];
+settingsGroupRows(tbody, false);
+console.log(JSON.stringify({opened: opened, closed: closed,
+                            grouped: grouped, restored: tbody.out}));
+""")
+    path = tmp_path / "settings_handlers.js"
+    path.write_text(js, encoding="utf-8")
+    out = subprocess.run(["node", str(path)], capture_output=True, text=True, encoding="utf-8")
+    assert out.returncode == 0, out.stderr[-2000:]
+    got = json.loads(out.stdout.strip().splitlines()[-1])
+    assert got["opened"] == {"expanded": "true", "hidden": False}
+    assert got["closed"] == {"expanded": "false", "hidden": True}
+    assert got["grouped"] == ["2r", "2d", "1r", "1d", "0r", "0d"], "source order, detail with its row"
+    assert got["restored"] == ["0r", "0d", "1r", "1d", "2r", "2d"], "back to worst coverage first"
+
+
+# ── G2 of the GUI redesign (#124): coverage bar, store chip, legend ──────────────────────────
+def _cov_table(coverage: dict, **over) -> str:
+    """One dataset rendered through ``_table`` with the coverage record ``_attach_registry`` builds."""
+    row = {"key": "quotes", "label": "Quotes", "tables": ["quote_snapshot"], "rows": 10,
+           "last_date": "—", "holes": None, "hole_label": "", "fetch": None, "note": "",
+           "source": "uw", "coverage": coverage, "fresh": None}
+    row.update(over)
+    return report._table([row])
+
+
+def test_the_coverage_cell_draws_a_bar_before_its_honest_label():
+    """A thin bar with its percentage beside it: the number stays text, so colour is not the signal."""
+    html = _cov_table({"fraction": 0.9, "label": "812 / 905 (90%)"})
+    bar = ('<span class="covbar st-warn" role="img" aria-label="coverage 90 percent">'
+           '<span style="width:90%"></span></span>')
+    assert bar in html
+    assert html.index(bar) < html.index("812 / 905 (90%)"), "the bar leads, the label follows"
+    assert _cells(_main_row(html, "quotes"))[2] == "812 / 905 (90%)"
+
+
+@pytest.mark.parametrize("label", ["n/a", "unknown", "error"])
+def test_a_coverage_with_no_fraction_draws_no_bar_and_no_zero_percent_look(label):
+    html = _cov_table({"fraction": None, "label": label})
+    assert "covbar" not in html
+    assert "width:0%" not in html
+    assert _cells(_main_row(html, "quotes"))[2].startswith(label)
+
+
+@pytest.mark.parametrize("label", ["n/a", "unknown"])
+def test_a_coverage_with_no_population_reads_muted(label):
+    """No population is a hole in the denominator, not a red failure: muted text, no bar."""
+    html = _cov_table({"fraction": None, "label": label})
+    assert f'<span class="muted">{label}</span>' in html
+
+
+def test_a_coverage_error_stays_red():
+    html = _cov_table({"fraction": None, "label": "error", "problems": []})
+    assert '<span class="warnv">error</span>' in html and "covbar" not in html
+
+
+def test_over_100_percent_draws_a_full_bar_and_keeps_the_real_number():
+    html = _cov_table({"fraction": 1.24, "label": "1,122 / 905 (124%)"})
+    assert '<span style="width:100%"></span>' in html
+    assert "width:124%" not in html
+    assert "1,122 / 905 (124%)" in html, "the text stays honest above 100%"
+    assert 'aria-label="coverage 100 percent"' in html
+
+
+@pytest.mark.parametrize("fraction, band", [(0.69, "st-bad"), (0.70, "st-warn"),
+                                            (0.94, "st-warn"), (0.95, "st-ok")])
+def test_the_bar_colour_follows_the_coverage_band(fraction, band):
+    html = _cov_table({"fraction": fraction, "label": "x"})
+    assert f'<span class="covbar {band}"' in html
+
+
+@pytest.mark.parametrize("db", ["raw", "edgar", "discord", "history", "prices"])
+def test_each_store_file_gets_a_pill_whose_text_names_it(db):
+    html = _cov_table({"fraction": None, "label": "n/a"}, db=db)
+    pill = f'<span class="db db-{db}" title="stored in {db}.duckdb under .store/">{db}</span>'
+    main = _main_row(html, "quotes")
+    assert pill in main
+    assert _cells(main)[0] == f"Quotes {db}", "the pill's text sits beside the name"
+    assert html.count(pill) >= 2, "the legend under the table explains the pill once"
+
+
+def test_a_row_without_a_store_file_draws_no_pill():
+    html = _cov_table({"fraction": None, "label": "n/a"})           # no "db" key at all
+    assert 'class="db ' not in _main_row(html, "quotes")
+
+
+def test_a_store_file_outside_the_palette_draws_no_pill_and_never_takes_a_class_from_it():
+    bad = "<img src=x onerror=__x(1)>"
+    html = _cov_table({"fraction": None, "label": "n/a"}, db=bad)
+    assert 'class="db ' not in _main_row(html, "quotes")
+    assert "<img" not in html
+
+
+def test_a_legend_under_the_table_explains_each_pill_once():
+    html = report._table([{"key": "quotes", "label": "Quotes", "tables": [], "note": ""}])
+    assert html.index("</tbody></table>") < html.index('id="db-legend"'), "under the table"
+    legend = html[html.index('id="db-legend"'):]
+    assert "Store file" in legend
+    for db in ("raw", "edgar", "discord", "history", "prices"):
+        assert f'class="db db-{db}"' in legend, db
+
+
+def _sec_entry(**over) -> dict:
+    """One ``sec_files.health_summary`` entry: stored rows, the file's figures and the last pull."""
+    entry = {"present": 5, "members": 5, "floor": 3, "file_rows": 5,
+             "last_modified": "Mon, 19 Oct 2026 20:30:00 GMT", "appended": 0, "absent": 0,
+             "good_session": "2026-10-19", "session": "2026-10-19",
+             "last_pull": "ok", "error": None}
+    entry.update(over)
+    return entry
+
+
+@pytest.mark.parametrize("exchange, mf, said", [
+    ({"last_pull": "unknown"}, {"last_pull": "unknown"}, "no pull recorded yet"),
+    ({}, {}, "pulled 2026-10-19, unchanged"),
+    ({"last_pull": "failed", "session": "2026-10-20", "error": "SEC 500"}, {},
+     "pull FAILED 2026-10-20 (SEC 500)"),
+])
+def test_the_sec_files_pull_tri_state_reaches_the_table_verbatim(
+        monkeypatch, rawstore_tmp_db, exchange, mf, said):
+    """avo 2026-10-22: the note moved into the detail row; every sentence survives word for word."""
+    from RevenueChaser.core import sec_files
+    from RevenueChaser.module_settings import inventory
+    summary = {"exchange": _sec_entry(**exchange), "mf": _sec_entry(**mf)}
+    monkeypatch.setattr(sec_files, "health_summary", lambda marker_dir=None: summary)
+    row = inventory._sec_files_row()
+    html = report._table([row])
+    assert said in row["note"], "the row builder still writes the sentence"
+    assert said in html, "and the renderer shows it, not a reworded copy"
+
+# ── G4 of the GUI brief (#124): the filters above the table ──────────────────────────────────
+def _g4_payload():
+    """Five datasets, one per thing the filters can say.
+
+    ``universe`` (raw file, 90% coverage, a last data date) answers no state at all;
+    ``corpus`` (edgar file) has no denominator; ``quotes`` (raw file) is only 20% covered and
+    nothing else is wrong with it; ``cftc`` (raw file, 4% coverage) has no time column and a
+    failed query; ``mystery`` is a dataset ``core.datasets`` does not know.
+    """
+    p = _payload()
+    p["rows"] = [
+        {"key": "universe", "label": "Equity universe",
+         "tables": ["equity_universe", "equity_universe_changes"], "rows": 7403,
+         "last_date": "2026-09-20", "holes": 93, "hole_label": "null market cap",
+         "source": "yfinance",
+         "coverage": {"covered": 812, "expected": 905, "fraction": 812 / 905,
+                      "label": "812 / 905 (90%)", "newest": "2026-09-20", "problems": []},
+         "fetch": {"route": "/run/universe-stats", "label": "Fetch caps"}, "note": ""},
+        {"key": "corpus", "label": "10-K / 20-F corpus",
+         "tables": ["chain_filings", "edgar_documents"], "rows": 3278,
+         "last_date": "2026-09-18", "holes": 42, "hole_label": "no filing",
+         "source": "sec",
+         "coverage": {"covered": None, "expected": None, "fraction": None,
+                      "label": "n/a", "newest": None, "problems": []},
+         "fetch": {"route": "/run/edgar-sync", "label": "Fetch 10-K sync"}, "note": ""},
+        {"key": "quotes", "label": "Quotes and market cap", "tables": ["quote_snapshot"],
+         "rows": 180, "last_date": "2026-09-20", "holes": 0, "hole_label": "",
+         "source": "yfinance",
+         "coverage": {"covered": 181, "expected": 905, "fraction": 0.2,
+                      "label": "181 / 905 (20%)", "newest": "2026-09-20", "problems": []},
+         "fetch": {"route": "/run/screeners", "label": "Fetch screeners"}, "note": ""},
+        {"key": "cftc", "label": "CFTC E-mini COT", "tables": ["cftc_cot"], "rows": 2,
+         "last_date": "—", "holes": 0, "hole_label": "",
+         "source": "finra/cftc",
+         "coverage": {"covered": 2, "expected": 50, "fraction": 0.04,
+                      "label": "2 / 50 (4%)", "newest": None, "problems": []},
+         "fetch": {"route": "/run/earnings-inputs", "label": "Fetch inputs"}, "note": ""},
+        {"key": "mystery", "label": "Unregistered dataset", "tables": ["mystery_table"],
+         "rows": 1, "last_date": "—", "holes": 0, "hole_label": "",
+         "fetch": {"route": "/run/mystery", "label": "Fetch"}, "note": ""},
+    ]
+    p["errors"] = [{"table": "cftc_cot", "where": "count", "error": "the query failed"}]
+    return p
+
+
+def _filter_bar(html: str) -> str:
+    """The filter bar alone: everything between it and the table it filters."""
+    return html[html.index('id="inv-filters"'):html.index('id="inv-table"')]
+
+
+def _chip_texts(bar: str, kind: str) -> list:
+    import re
+    return re.findall(r'data-chips="%s"[^>]*>(.*?)</button>' % kind, bar, re.S)
+
+
+def test_every_dataset_row_carries_the_facts_the_filters_read():
+    html = report.render_settings_dashboard(_g4_payload())
+    row = _main_row(html, "universe")
+    assert 'data-db="raw"' in row, "the store file, from the registry"
+    assert 'data-source="yfinance"' in row
+    assert 'data-state=""' in row, "a healthy row answers no state chip"
+    assert "equity_universe" not in row, "the store tables stay in the detail row, where they are read"
+
+
+def test_a_row_below_seventy_percent_coverage_or_with_a_failed_query_needs_attention():
+    html = report.render_settings_dashboard(_g4_payload())
+    assert 'data-state="needs attention|no time column"' in _main_row(html, "cftc"), \
+        "4% coverage and a failed query, and it has no last data date"
+    assert 'data-state="needs attention"' in _main_row(html, "quotes"), \
+        "20% coverage is the whole of its problem"
+    assert 'data-state="no denominator"' in _main_row(html, "corpus")
+    assert 'data-state="no time column"' in _main_row(html, "mystery")
+
+
+def test_the_attention_line_is_seventy_percent_and_a_failed_query_also_counts():
+    """The threshold from both sides: 69% is called out, 70% is not, and a failed query is a
+    failure of its own even at full coverage."""
+    def row(fraction, label="905 / 905 (100%)", tables=()):
+        return {"coverage": {"fraction": fraction, "label": label}, "last_date": "2026-09-20",
+                "tables": list(tables)}
+    assert "needs attention" in report._states_of(row(0.69), [])
+    assert "needs attention" in report._states_of(row(0.0), [])
+    assert "needs attention" not in report._states_of(row(0.70), [])
+    assert "needs attention" not in report._states_of(row(1.0), [])
+    failed = [{"table": "quote_snapshot", "where": "count", "error": "the query failed"}]
+    assert "needs attention" in report._states_of(row(1.0, tables=["quote_snapshot"]), failed)
+    assert "needs attention" not in report._states_of(row(1.0, tables=["other"]), failed)
+    assert "no denominator" in report._states_of(row(None, "n/a"), [])
+    assert "no denominator" not in report._states_of(row("n/a", "error"), [])
+
+
+def test_a_dataset_the_registry_does_not_know_carries_no_store_file_and_no_source():
+    row = _main_row(report.render_settings_dashboard(_g4_payload()), "mystery")
+    assert 'data-db=""' in row and 'data-source=""' in row
+
+
+def test_the_filter_attributes_are_escaped():
+    bad = '<img src=x onerror=__x(1)>"'
+    p = _g4_payload()
+    p["rows"] = [dict(p["rows"][0], db=bad, source=bad, label=bad, tables=[bad])]
+    row = _main_row(report.render_settings_dashboard(p), "universe")
+    assert "<img" not in row
+    assert row.count("&lt;img src=x onerror=__x(1)&gt;") >= 3, "each of the three attributes"
+    assert 'data-db="&lt;img' in row and 'data-source="&lt;img' in row
+
+
+def test_the_count_line_always_says_how_many_of_the_total_are_shown():
+    html = report.render_settings_dashboard(_g4_payload())
+    bar = _filter_bar(html)
+    assert html.index('id="inv-filters"') < html.index('id="inv-table"'), "above the table"
+    assert 'class="flbl" for="inv-find">Find a dataset or store table<' in bar
+    assert 'Showing 5 of 5 datasets' in bar
+    assert 'id="inv-clear"' in bar and "Clear filters" in bar
+    assert 'aria-pressed="true"' not in bar, "no filter is on by default"
+
+
+def test_the_chip_groups_list_only_the_values_the_rows_carry():
+    bar = _filter_bar(report.render_settings_dashboard(_g4_payload()))
+    assert _chip_texts(bar, "db") == ["raw", "edgar"], "prices / history / discord are not here"
+    assert _chip_texts(bar, "source") == ["FINRA and the Commodity Futures Trading Commission",
+                                          "SEC EDGAR filings", "Yahoo Finance"]
+    assert 'data-value="finra/cftc"' in bar and 'data-value="sec"' in bar, "the filter still compares the machine value"
+    assert _chip_texts(bar, "state") == ["needs attention", "no time column", "no denominator"]
+    assert bar.count('<button type="button" class="fchip"') == 8
+    assert bar.count('aria-pressed="false"') == 8, "every chip is a toggle and none is on"
+    assert 'role="group" aria-label="Store file"' in bar
+    assert 'role="group" aria-label="Source"' in bar
+    assert 'role="group" aria-label="State"' in bar
+
+
+def test_the_filters_run_under_node(tmp_path):
+    """``settingsFilter`` against a DOM stub: the find box, the chips, the count line and the
+    detail row that must collapse with its dataset. Nothing here is asserted from the source text."""
+    import json as _json
+    import shutil
+    import subprocess
+    import pytest
+    from RevenueChaser.core.tests.board_js import function_source
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    js = (function_source(report.JS, "settingsRowPairs")
+          + function_source(report.JS, "settingsFilter")
+          + function_source(report.JS, "settingsFilterClear")
+          + r"""
+function el(attrs, cls){
+  var o = {attrs: attrs || {}, hidden: false, className: cls || "", textContent: "",
+           disabled: false, querySelector: function(){ return null; }};
+  o.getAttribute = function(k){ return o.attrs[k] == null ? null : o.attrs[k]; };
+  o.setAttribute = function(k, v){ o.attrs[k] = String(v); };
+  return o;
+}
+function dataset(name, tables, db, source, state){
+  var tr = el({"data-db": db, "data-source": source, "data-state": state}, "row");
+  tr.button = el({"aria-expanded": "false"});
+  tr.button.textContent = name;
+  tr.querySelector = function(sel){ return sel === ".det-btn" ? tr.button : null; };
+  tr.detail = el({}, "detail");
+  tr.detail.hidden = true;
+  tr.tbl = el({});
+  tr.tbl.textContent = tables;
+  tr.detail.querySelector = function(sel){ return sel === ".tbl" ? tr.tbl : null; };
+  return tr;
+}
+var rows = [dataset("Equity universe", "equity_universe equity_universe_changes", "raw", "yfinance", ""),
+            dataset("10-K / 20-F corpus", "chain_filings edgar_documents", "edgar", "sec", "no denominator"),
+            dataset("CFTC E-mini COT", "cftc_cot", "raw", "finra/cftc",
+                    "needs attention|no time column")];
+var tbody = {children: []};
+rows.forEach(function(tr){ tbody.children.push(tr, tr.detail); });
+function chip(kind, value){
+  var b = el({"aria-pressed": "false", "data-chips": kind, "data-value": value});
+  return b;
+}
+var groups = {db: [chip("db", "raw"), chip("db", "edgar")],
+              source: [chip("source", "yfinance"), chip("source", "sec"), chip("source", "finra/cftc")],
+              state: [chip("state", "needs attention"), chip("state", "no time column"),
+                      chip("state", "no denominator")]};
+var box = el({}); box.value = "";
+var count = el({}); var clear = el({}); clear.disabled = true;
+globalThis.document = {
+  getElementById: function(id){
+    return id === "inv-find" ? box : id === "inv-count" ? count : id === "inv-clear" ? clear : null; },
+  querySelector: function(sel){ return sel === "#inv-table tbody" ? tbody : null; },
+  querySelectorAll: function(sel){
+    if(sel === '#inv-filters button[aria-pressed="true"]'){
+      var on = [];
+      Object.keys(groups).forEach(function(k){ groups[k].forEach(function(b){
+        if(b.attrs["aria-pressed"] === "true") on.push(b); }); });
+      return on;
+    }
+    return [];
+  }
+};
+function toggle(kind, value){
+  groups[kind].forEach(function(b){
+    if(b.attrs["data-value"] === value){
+      b.attrs["aria-pressed"] = b.attrs["aria-pressed"] === "true" ? "false" : "true";
+    }
+  });
+}
+function reset(){
+  Object.keys(groups).forEach(function(k){ groups[k].forEach(function(b){ b.attrs["aria-pressed"] = "false"; }); });
+  box.value = "";
+}
+function visible(){ return rows.filter(function(tr){ return !tr.hidden; })
+                                 .map(function(tr){ return tr.button.textContent; }); }
+function state(){ return {shown: visible(), count: count.textContent, clear: !clear.disabled,
+                         details: rows.map(function(tr){ return tr.detail.hidden; })}; }
+var out = {};
+settingsFilter();
+out.none = state();
+box.value = "COT";
+settingsFilter();
+out.byName = state();
+box.value = "chain_filings";
+settingsFilter();
+out.byTable = state();
+reset(); toggle("db", "raw"); toggle("source", "sec");
+settingsFilter();
+out.and = state();
+reset(); toggle("db", "raw");
+groups.db[1].attrs["aria-pressed"] = "true";       // two chips in one group: raw or edgar
+settingsFilter();
+out.or = state();
+reset(); toggle("state", "needs attention");
+settingsFilter();
+out.stateChip = state();
+reset(); toggle("state", "needs attention");
+rows[2].button.setAttribute("aria-expanded", "true");
+rows[2].detail.hidden = false;
+box.value = "universe";
+settingsFilter();
+out.collapsed = {details: rows.map(function(tr){ return tr.detail.hidden; }),
+                 expanded: rows[2].button.attrs["aria-expanded"]};
+toggle("db", "raw");                               // a filter is on, then Clear filters is pressed
+settingsFilterClear();
+out.cleared = state();
+console.log(JSON.stringify(out));
+""")
+    path = tmp_path / "settings_filters.js"
+    path.write_text(js, encoding="utf-8")
+    out = subprocess.run(["node", str(path)], capture_output=True, text=True, encoding="utf-8")
+    assert out.returncode == 0, out.stderr[-2000:]
+    got = _json.loads(out.stdout.strip().splitlines()[-1])
+
+    all_three = ["Equity universe", "10-K / 20-F corpus", "CFTC E-mini COT"]
+    assert got["none"] == {"shown": all_three, "count": "Showing 3 of 3 datasets",
+                           "clear": False, "details": [True, True, True]}
+    assert got["byName"]["shown"] == ["CFTC E-mini COT"], "the dataset name matches"
+    assert got["byName"]["count"] == 'Showing 1 of 3 datasets · filtered by search "COT"'
+    assert got["byName"]["clear"] is True
+    assert got["byTable"]["shown"] == ["10-K / 20-F corpus"], "a store table name matches"
+    assert got["and"]["shown"] == [], "raw AND sec is no row at all"
+    assert got["and"]["count"] == ("Showing 0 of 3 datasets · filtered by store file raw · "
+                                  "source sec")
+    assert got["or"]["shown"] == all_three, "two chips in one group widen the result"
+    assert got["stateChip"]["shown"] == ["CFTC E-mini COT"]
+    assert got["stateChip"]["count"] == "Showing 1 of 3 datasets · filtered by state needs attention"
+    assert got["collapsed"] == {"details": [True, True, True], "expanded": "false"}, \
+        "a hidden dataset takes its detail row down and leaves it collapsed"
+    assert got["cleared"] == {"shown": all_three, "count": "Showing 3 of 3 datasets",
+                              "clear": False, "details": [True, True, True]}
+
+# ── G5 of the GUI redesign (#124): the summary tiles above the table ────────────────────────────
+def _tile_value(html: str, label: str) -> str:
+    """The number the summary tile labelled ``label`` shows; fails when the tile is absent."""
+    import re
+    found = re.search(r'<div class="stile-n">([^<]*)</div><div class="stile-l" id="[^"]*">'
+                      + re.escape(label) + "</div>", html)
+    assert found, f"no summary tile labelled {label}"
+    return found.group(1)
+
+
+def _tile_row(key: str, **over) -> dict:
+    """One row shaped the way ``inventory._collect`` builds it: healthy unless a field is replaced."""
+    row = {"key": key, "label": key, "tables": [f"{key}_table"], "rows": 10,
+           "last_date": "2026-09-18", "holes": None,
+           "coverage": {"fraction": 1.0, "label": "10 / 10 (100%)"}}
+    row.update(over)
+    return row
+
+
+def _tile_html(rows: list[dict], timing=None, errors=None) -> str:
+    payload = {"generated_at": "2026-09-25T20:00:00+00:00", "rows": rows}
+    if timing is not None:
+        payload["timing"] = timing
+    if errors is not None:
+        payload["errors"] = errors
+    return report.render_settings_dashboard(payload)
+
+
+def test_summary_tiles_count_the_rows_already_collected():
+    """G5 (#124): every number is a count over the payload's own rows — no second query, no guess."""
+    html = _tile_html([
+        _tile_row("healthy"),
+        _tile_row("empty", rows=0, coverage={"fraction": None, "label": "n/a"}),
+        _tile_row("thin", coverage={"fraction": 0.42, "label": "5 / 12 (42%)"}),
+        _tile_row("timeless", last_date="—"),
+        _tile_row("broken"),
+        _tile_row("unknown_count", rows=None),
+    ], errors=[{"table": "broken_table", "where": "_quotes_row", "error": "the read failed"}])
+    assert _tile_value(html, "Datasets") == "6"
+    assert _tile_value(html, "Needs attention") == "2", "the 42% row and the row with a failed query"
+    assert _tile_value(html, "Empty") == "1", "a row count of 0; an unknown count is not empty"
+    assert _tile_value(html, "No time column") == "1"
+
+
+def test_a_dataset_at_exactly_seventy_percent_does_not_need_attention():
+    """The line is 'below 70%': 0.70 is in, 0.69 is out."""
+    assert _tile_value(_tile_html([_tile_row("line", coverage={"fraction": 0.70,
+                                                               "label": "7 / 10 (70%)"})]),
+                       "Needs attention") == "0"
+    assert _tile_value(_tile_html([_tile_row("under", coverage={"fraction": 0.69,
+                                                                "label": "69 / 100 (69%)"})]),
+                       "Needs attention") == "1"
+
+
+def test_a_tile_with_nothing_to_count_shows_a_zero():
+    """G5 (#124): zero is written, never left blank — a blank tile reads as 'not measured'."""
+    html = _tile_html([_tile_row("healthy")])
+    assert _tile_value(html, "Needs attention") == "0"
+    assert _tile_value(html, "Empty") == "0"
+    assert _tile_value(html, "No time column") == "0"
+    empty = _tile_html([])
+    assert _tile_value(empty, "Datasets") == "0"
+    assert _tile_value(empty, "Needs attention") == "0"
+
+
+def test_refresh_took_shows_the_seconds_the_collect_measured():
+    assert _tile_value(_tile_html([_tile_row("healthy")],
+                                  timing={"collect_seconds": 1.39}), "Refresh took") == "1.39 seconds"
+
+
+def test_refresh_took_says_not_measured_when_the_payload_carries_no_timing():
+    """No timing is a fact about the payload, not a zero: it is said in words."""
+    for payload in ({}, {"timing": {}}, {"timing": {"collect_seconds": None}},
+                    {"timing": {"collect_seconds": "fast"}}):
+        row = _tile_row("healthy")
+        p = {"generated_at": "2026-09-25T20:00:00+00:00", "rows": [row], **payload}
+        assert _tile_value(report.render_settings_dashboard(p), "Refresh took") == "not measured"
+
+
+def test_the_summary_tiles_sit_above_the_table_with_their_labels_and_no_script():
+    """Placement and accessibility: after the help block, before the table, plain labelled divs."""
+    html = _tile_html([_tile_row("healthy")], timing={"collect_seconds": 1.0})
+    block = html[html.index('id="summary-tiles"'):html.index('id="inv-table"')]
+    assert html.index("What am I looking at?") < html.index('id="summary-tiles"'), "after the intro"
+    assert html.index('id="summary-tiles"') < html.index('id="inv-table"'), "before the table"
+    for label in ("Datasets", "Needs attention", "Empty", "No time column", "Refresh took"):
+        assert f">{label}</div>" in block, label
+    assert 'role="group"' in block and 'aria-labelledby="tile-datasets"' in block
+    assert 'aria-labelledby="tile-refresh-took"' in block
+    assert "<script" not in block.lower() and "onclick" not in block.lower()
+
+# ── S6 of the Data Health plan (#124): "Other store tables" ─────────────────────────────────
+# Every MANIFEST table no dataset claims, with its row count and newest date only. Normally
+# empty (S3 claims them all), so the section is the honest intermediate state and the backstop.
+_OTHER_SENTENCE = ("These store tables are not claimed by any dataset yet, so they carry no "
+                   "source and no coverage.")
+
+
+def _other_section(html: str) -> str:
+    start = html.index('id="other-tables"')
+    return html[start:].split("</section>")[0]
+
+
+def test_no_other_store_tables_section_when_nothing_is_unclaimed():
+    for payload in (_payload(), dict(_payload(), other_tables=[])):
+        html = report.render_settings_dashboard(payload)
+        assert "Other store tables" not in html, "an empty list renders no heading"
+        assert "not claimed by any dataset" not in html
+
+
+def test_the_other_store_tables_section_names_the_table_store_file_rows_and_newest_date():
+    p = dict(_payload(), other_tables=[
+        {"table": "chain_filings", "db": "edgar", "rows": 3278, "newest": "2026-03-01"},
+        {"table": "watchlist", "db": "raw", "rows": 2, "newest": None},
+    ])
+    html = report.render_settings_dashboard(p)
+    section = _other_section(html)
+    assert "Other store tables" in section
+    assert _OTHER_SENTENCE in section
+    assert _thead_cells(section) == ["Table", "Store file", "Rows", "Newest date"]
+    assert "chain_filings" in section and "edgar.duckdb" in section
+    assert "3,278" in section and "2026-03-01" in section
+    assert "watchlist" in section and "raw.duckdb" in section
+    assert "no time column" in section, "a table with no date column says so in plain words"
+
+
+def test_the_other_store_tables_section_escapes_its_cells():
+    bad = "<img src=x onerror=__x(1)>"
+    p = dict(_payload(), other_tables=[{"table": bad, "db": bad, "rows": 1, "newest": bad}])
+    section = _other_section(report.render_settings_dashboard(p))
+    assert "<img" not in section
+    assert section.count("&lt;img src=x onerror=__x(1)&gt;") == 3
+
+
+def test_every_registry_source_is_spelled_out_in_words():
+    """avo's copy rule: no 'uw' or 'sec' shorthand on the board. Every provider value the registry can carry has
+    plain words, and none of them is the raw short form."""
+    from RevenueChaser.core import datasets
+    for source in datasets.Source:
+        words = report.source_words(source.value)
+        assert source.value in report.SOURCE_WORDS, source.value
+        assert words != source.value
+        assert len(words) > 3
+    assert report.source_words("something-new") == "something-new"

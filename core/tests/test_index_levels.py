@@ -330,3 +330,41 @@ def test_the_summary_line_names_the_outcome_and_the_request_count(res, words):
     assert line.startswith("Index levels")
     for w in words:
         assert w in line
+
+
+# ── Data Health (#124 S4): the typed numbers the note is derived from ────────
+
+def test_health_is_the_summary_numbers_typed(rawstore_tmp_db):
+    """The population is the one symbol this table stores: covered 1 when it has a level, against ``expected 1``.
+    Per-session completeness is freshness (``newest`` vs ``expected_as_of``), not a coverage percentage."""
+    from RevenueChaser.core import datahealth
+
+    _seed_levels("2026-10-07", "2026-10-08")
+    n = index_levels.health_summary(now=NOW)
+    h = index_levels.health(now=NOW)
+
+    assert (h.covered, h.expected) == (1, 1)
+    assert n["rows"] == 2 and h.covered == 1, "two sessions of the one symbol are still one covered symbol"
+    assert (h.newest, h.expected_as_of) == (n["newest_session"], n["latest_complete"]) == ("2026-10-08", "2026-10-08")
+    assert h.source_share == {n["source"]: 1.0} == {"yfinance": 1.0}
+    assert h.problems == ()
+    assert datahealth.coverage_text(h) == "100.0% (1 of 1)"
+
+
+def test_health_on_an_empty_store_is_zero_of_the_one_symbol(rawstore_tmp_db):
+    from RevenueChaser.core import datahealth
+
+    n = index_levels.health_summary(now=NOW)
+    h = index_levels.health(now=NOW)
+
+    assert (n["rows"], n["newest_session"], n["source"]) == (0, None, None)
+    assert (h.covered, h.expected, h.newest, h.source_share) == (0, 1, None, None)
+    assert datahealth.coverage_text(h) == "0.0% (0 of 1)"
+
+
+def test_health_names_a_calendar_error(rawstore_tmp_db):
+    later = datetime(2029, 1, 2, 20, 35, tzinfo=UTC)      # past the holiday table's end
+    _seed_levels("2026-10-08")
+    h = index_levels.health(now=later)
+    assert h.expected_as_of is None and h.newest == "2026-10-08"
+    assert h.problems == ("calendar error: the latest complete session is unavailable",)

@@ -35,6 +35,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from RevenueChaser.core import calendar, config, job_lock, ledger, prices, rawstore
+from RevenueChaser.core import datahealth
+from RevenueChaser.core.datahealth import Health
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +85,7 @@ def levels_between(start: date | str, end: date | str, symbol: str = SYMBOL) -> 
              "close": r["close"], "volume": r["volume"]} for r in rows]
 
 
+@datahealth.scoped
 def health_summary(now: datetime | None = None) -> dict:
     """Read-only summary for the Data Health row (§9.6): newest stored session vs the latest complete one, the
     row count and the source. Store only, zero network; a calendar error is reported, never raised."""
@@ -106,6 +109,25 @@ def health_summary(now: datetime | None = None) -> dict:
                              [SYMBOL, newest], db=_DB)
         out["source"] = src[0]["source"] if src else None
     return out
+
+
+def health(now: datetime | None = None) -> Health:
+    """The numbers :func:`health_summary` reports, typed (#124 S4).
+
+    The population is the one symbol this table stores: ``covered`` is 1 when it has a level, ``expected`` 1.
+    How many sessions are stored is not a population, so it stays ``rows`` in the summary and shows here as
+    freshness: ``newest`` against the latest complete ``expected_as_of``. A calendar error is the one problem.
+    """
+    n = health_summary(now)
+    return Health(
+        covered=1 if n["rows"] else 0,
+        expected=1,
+        newest=n["newest_session"],
+        expected_as_of=n["latest_complete"],
+        source_share={n["source"]: 1.0} if n["source"] else None,
+        problems=("calendar error: the latest complete session is unavailable",)
+        if n["calendar_error"] else (),
+    )
 
 
 def _newest() -> date | None:
@@ -315,4 +337,4 @@ def summary_line(res: dict) -> str:
 
 
 __all__ = ["SYMBOL", "SOURCE", "TABLE", "LOCK", "LOOKBACK_DAYS", "nightly", "levels_between",
-           "health_summary", "fill", "summary_line"]
+           "health", "health_summary", "fill", "summary_line"]

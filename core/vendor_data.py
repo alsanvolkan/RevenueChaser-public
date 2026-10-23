@@ -34,6 +34,8 @@ import time
 from datetime import date, datetime
 
 from RevenueChaser.core import calendar, ledger, ownership, rawstore
+from RevenueChaser.core import datahealth
+from RevenueChaser.core.datahealth import Health
 from RevenueChaser.core.providers.yfinance import MAX_YEARS
 
 logger = logging.getLogger(__name__)
@@ -501,6 +503,7 @@ class Capture:
 
 # ── Data Health ──────────────────────────────────────────────────────────────
 
+@datahealth.scoped
 def health_summary(now: datetime | None = None) -> dict:
     """Read-only summary for the Data Health row, zero network.
 
@@ -542,3 +545,16 @@ def health_summary(now: datetime | None = None) -> dict:
                 {f: round(float(r[f]), 1) for f in fields if r[f] is not None})
     out["fill"] = fill
     return out
+
+
+def health(now: datetime | None = None) -> Health:
+    """The numbers :func:`health_summary` reports, typed (#124 S4).
+
+    ``covered`` is the tickers with a valuation row on the newest stored session. ``expected`` is ``None``: the
+    population is the universe, which this summary does not read — coverage renders ``n/a``, never a percentage
+    of the summary's own count. ``newest``/``expected_as_of`` are that valuation session and the latest complete
+    one, so a valuation older than the session reads as stale.
+    """
+    n = health_summary(now)
+    return Health(covered=n["valuation_tickers"], expected=None, newest=n["valuation_session"],
+                  expected_as_of=n["latest_complete"])

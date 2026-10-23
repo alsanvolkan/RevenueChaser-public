@@ -87,13 +87,14 @@ def test_corrupt_json_is_an_error_not_a_raise(payload_file):
 
 
 def test_params_are_read_from_the_config_at_call_time(monkeypatch):
-    text = " | ".join(boards.BOARD_INPUTS[0]["params"]())
+    entry = next(e for e in boards.BOARD_INPUTS if e["key"] == "module_comovement")
+    text = " | ".join(entry["params"]())
     assert str(cfg.WINDOW) in text and str(cfg.MIN_OBS) in text
     assert str(cfg.OOS_HOLDOUT) in text and str(cfg.WINSOR_K) in text
     assert str(cfg.DEFAULT_HORIZON) in text and str(cfg.OHLC_PERIOD) in text
     assert cfg.BENCHMARKS[cfg.DEFAULT_BENCHMARK] in text
     monkeypatch.setattr(cfg, "WINDOW", 999)
-    assert "999" in " | ".join(boards.BOARD_INPUTS[0]["params"]())
+    assert "999" in " | ".join(entry["params"]())
 
 
 def test_every_fix_route_is_a_registered_route():
@@ -164,6 +165,105 @@ def test_the_swing_card_lists_its_editable_thresholds(rawstore_tmp_db, monkeypat
     board_settings.save("module_swing_potential", {"RS_MIN": 80})
     by = {f["key"]: f for f in _card("module_swing_potential")["settings"]["inputs"]}
     assert by["RS_MIN"]["value"] == 80 and by["RS_MIN"]["overridden"] is True
+
+
+def _data_board_keys() -> list[str]:
+    """Dashboard tabs that are data boards: ``TABS`` minus Settings, Logs and Runs (#26 PL5-b: read-only run log,
+    no data and no Fetch)."""
+    from RevenueChaser.app import dashboard
+
+    return [t["key"] for t in dashboard.TABS
+            if t["type"] == "tab" and t["key"] not in ("module_settings", "logs", "runs")]
+
+
+def test_every_data_board_has_a_board_inputs_entry():
+    """S9: the card registry is exactly the data boards, in nav order."""
+    want = _data_board_keys()
+    got = [e["key"] for e in boards.BOARD_INPUTS]
+    assert got == want
+    assert len(got) == 15
+
+
+# Boards whose rendered payload emits ``funnel_steps`` (core.funnel). The rest
+# are marked ``no_funnel``: the card must not invent steps or ask for a refresh.
+_FUNNEL_BOARDS = ("module_comovement", "module_swing_potential",
+                  "module_asymmetric_growth", "module_fundamentals")
+
+
+def _entry(key):
+    return next(e for e in boards.BOARD_INPUTS if e["key"] == key)
+
+
+def test_ag_and_fundamentals_are_registered_with_a_funnel_reference():
+    """Their funnels already exist; the card must name the payload key and the tables the scan reads."""
+    ag = _entry("module_asymmetric_growth")
+    assert ag["funnel"] == "funnel_steps" and ag["label"] == "Asymmetric Growth"
+    assert ag["tables"] == ["equity_universe", "edgar_financials", "price_bars_daily",
+                            "ownership_snapshot"]
+    fund = _entry("module_fundamentals")
+    assert fund["funnel"] == "funnel_steps" and fund["label"] == "Fundamentals"
+    assert fund["tables"] == ["equity_universe", "quote_snapshot", "price_bars_daily",
+                              "edgar_financials"]
+
+
+def test_a_board_that_emits_no_funnel_is_marked():
+    for entry in boards.BOARD_INPUTS:
+        if entry["key"] in _FUNNEL_BOARDS:
+            assert entry["funnel"] == "funnel_steps", entry["key"]
+        else:
+            assert entry["funnel"] == "no_funnel", entry["key"]
+
+
+def _valid_steps():
+    from RevenueChaser.core import funnel
+
+    return [
+        funnel.step("universe", "Universe", 3, "start"),
+        funnel.step("no_annual", "No annual financials", 2, "drop", by_design=False),
+        funnel.step("scored", "Scored", 1, "result"),
+    ]
+
+
+def test_ag_and_fundamentals_cards_read_the_payload_funnel(monkeypatch, tmp_path):
+    """The settings card shows the funnel the board emitted, via core.funnel."""
+    from RevenueChaser.core import funnel
+
+    steps = _valid_steps()
+    for key in ("module_asymmetric_growth", "module_fundamentals"):
+        path = tmp_path / f"{key}.json"
+        path.write_text(json.dumps({"as_of": "2026-09-25T20:00:00+00:00",
+                                    "funnel_steps": steps}), encoding="utf-8")
+        monkeypatch.setitem(_entry(key), "payload_path", lambda p=path: p)
+        card = _card(key)
+        assert card["state"] == "ok", card
+        assert funnel.validate(card["funnel_steps"]) == []
+        assert [s["key"] for s in card["funnel_steps"]] == ["universe", "no_annual", "scored"]
+        assert card["as_of"] == "2026-09-25T20:00:00+00:00"
+        # The shared panel accepts the same steps the settings card shows.
+        assert "No annual financials" in funnel.funnel_panel_html(card["funnel_steps"])
+        from RevenueChaser.module_settings import report
+        assert "No annual financials" in report._board_card(card)
+
+
+def test_an_html_board_with_no_funnel_is_rendered_not_an_error(monkeypatch, tmp_path):
+    """A page that is not JSON must not become a parse error when the board emits no funnel."""
+    path = tmp_path / "earnings_radar_latest.html"
+    path.write_text("<html>not json</html>", encoding="utf-8")
+    monkeypatch.setitem(_entry("module_earnings_radar"), "payload_path", lambda: path)
+    card = _card("module_earnings_radar")
+    assert card["state"] == "ok" and card["funnel_steps"] == []
+
+
+def test_a_no_funnel_board_does_not_ask_for_a_refresh(monkeypatch, tmp_path):
+    """A board that emits none is not 'rendered before funnel reporting'."""
+    path = tmp_path / "oipd.json"
+    path.write_text(json.dumps({"as_of": "2026-09-25T20:00:00+00:00", "ticker": "SPY"}),
+                    encoding="utf-8")
+    monkeypatch.setitem(_entry("module_oipd"), "payload_path", lambda: path)
+    card = _card("module_oipd")
+    assert card["state"] == "ok"
+    assert card["funnel_steps"] == []
+    assert card["as_of"] == "2026-09-25T20:00:00+00:00"
 
 
 def test_the_swing_params_are_read_from_the_effective_settings_at_call_time(

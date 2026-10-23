@@ -28,9 +28,11 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from RevenueChaser.core import calendar, job_control, rawstore
+from RevenueChaser.core import datahealth
+from RevenueChaser.core.datahealth import Health
 from RevenueChaser.core.identity.sources import norm_ticker
 
 logger = logging.getLogger(__name__)
@@ -450,6 +452,7 @@ def prefilter_quotes(tickers) -> dict[str, dict]:
     return out
 
 
+@datahealth.scoped
 def health_summary() -> dict:
     """The Data Health numbers (#294), store only: the newest session's rows per source against the universe, the
     universe tickers with no row per source, the caps more than ``CAP_GAP_PCT`` percent apart (UW against Yahoo) and
@@ -480,3 +483,30 @@ def health_summary() -> dict:
                            list(RATE_LIMIT_CHECK))
     out["rate_limit_stop"] = stamp[0]["checked_at"] if stamp else None
     return out
+
+
+def health() -> Health:
+    """The numbers :func:`health_summary` reports, typed (#124 S4).
+
+    ``covered`` is the universe minus the tickers with no Yahoo row on the newest session (Yahoo leads) and
+    ``expected`` the universe; a universe of nothing is ``expected 0``, which renders ``n/a``. ``source_share``
+    is the newest session's rows per source as a share. ``problems`` carries the two facts the counts cannot:
+    the caps too far apart to trust and the last Yahoo rate-limit stop.
+    """
+    n = health_summary()
+    rows = n["rows"]
+    total = sum(rows.values())
+    problems = []
+    if n["gaps"]:
+        problems.append(f"{n['gaps']} caps more than {CAP_GAP_PCT}% apart")
+    if n["rate_limit_stop"] is not None:
+        stopped = datetime.fromtimestamp(n["rate_limit_stop"], tz=timezone.utc).date()
+        problems.append(f"last Yahoo rate-limit stop {stopped.isoformat()}")
+    return Health(
+        covered=n["universe"] - n["missing"][SOURCE_YAHOO],
+        expected=n["universe"],
+        newest=n["newest_session"],
+        expected_as_of=None,     # this summary reads no calendar: the newest stored session is all it knows
+        source_share={source: rows[source] / total for source in SOURCES} if total else None,
+        problems=tuple(problems),
+    )

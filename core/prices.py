@@ -27,6 +27,8 @@ import numpy as np
 import pandas as pd
 
 from RevenueChaser.core import calendar, job_control, job_lock, ledger, rawstore
+from RevenueChaser.core import datahealth
+from RevenueChaser.core.datahealth import Health
 from RevenueChaser.core.providers.ohlc import regular_session_bars
 from RevenueChaser.core.rotation_reference import ROTATION_ETFS
 
@@ -805,6 +807,7 @@ def _last_n_sessions(latest: date, n: int) -> list[date]:
     return out
 
 
+@datahealth.scoped
 def health_summary(now: datetime | None = None) -> dict:
     """Read-only summary for the Data Health row (§9.6), zero network."""
     now = _now(now)
@@ -850,6 +853,28 @@ def health_summary(now: datetime | None = None) -> dict:
     except Exception:  # noqa: BLE001
         out["last_check"] = None
     return out
+
+
+def health(now: datetime | None = None) -> Health:
+    """The numbers :func:`health_summary` reports, typed (#124 S4).
+
+    ``covered`` is the scope minus the tickers behind the latest complete session and ``expected`` the scope;
+    ``newest``/``expected_as_of`` are the newest stored session and the latest complete one; ``source_share``
+    is the newest session's rows per source as a share (the dict keeps the counts). A calendar error is the one
+    problem: without a latest complete session no ticker can be called behind.
+    """
+    n = health_summary(now)
+    counts = n["source_share"]
+    total = sum(counts.values())
+    return Health(
+        covered=n["scope"] - n["behind"],
+        expected=n["scope"],
+        newest=n["newest_session"],
+        expected_as_of=n["latest_complete"],
+        source_share={source: count / total for source, count in counts.items()} if total else None,
+        problems=("calendar error: the latest complete session is unavailable",)
+        if n["calendar_error"] else (),
+    )
 
 
 def summary_line(res: dict) -> str:
@@ -1304,7 +1329,7 @@ __all__ = [
     "UW_NIGHTLY_CAP", "UW_MAX_DAYS", "CHUNK", "OVERLAP_SESSIONS", "ACTIONS_LOOKBACK_DAYS",
     "FAR_DAYS", "MAX_NEW_FILL", "FILL_RETRY_DAYS", "BENCHMARKS", "REFERENCE_INDEX",
     "CALENDAR_START", "CHECK_ACTIONS", "CHECK_FILL", "YF_KW",
-    "bar_scope", "ensure_daily_bars", "fill_history", "daily_bars", "health_summary",
+    "bar_scope", "ensure_daily_bars", "fill_history", "daily_bars", "health_summary", "health",
     "summary_line", "run_ok", "sessions_behind", "uw_days", "rows_from_uw", "rows_from_yf",
     "keep_session", "apply_events", "overlap_stats",
 ]

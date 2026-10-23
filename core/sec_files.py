@@ -34,6 +34,8 @@ from pathlib import Path
 from typing import Callable
 
 from RevenueChaser.core import calendar, config, ledger, rawstore
+from RevenueChaser.core import datahealth
+from RevenueChaser.core.datahealth import Health
 from RevenueChaser.core.identity.sources import SourceResult, fail, now_iso, sec
 from RevenueChaser.core.universe_fetch import MIN_FULL_UNIVERSE, SEC_LIST_EXCHANGES
 
@@ -274,6 +276,7 @@ def _last_good(marker_dir: Path, name: str) -> dict:
     return next((r for r in _receipts(marker_dir, name) if r.get("status") != "failed"), {})
 
 
+@datahealth.scoped
 def health_summary(marker_dir: Path | None = None) -> dict:
     """Read-only Data Health summary of both files, zero network (#301 D21 + D8).
 
@@ -300,6 +303,52 @@ def health_summary(marker_dir: Path | None = None) -> dict:
                      "last_pull": receipt.get("status") or ("unknown" if not receipt else "ok"),
                      "error": receipt.get("error")}
     return out
+
+
+def pull_outcome(entry: dict) -> str:
+    """One file's last pull, in the Data Health note's own words (avo 2026-10-22).
+
+    The tables append on change only, so "appended 0" cannot say whether the file was pulled and unchanged
+    or never pulled: this is the sentence that separates ``pulled <session>, unchanged``, ``no pull recorded
+    yet`` and ``pull FAILED <night> (<error>)``. It reads one :func:`health_summary` entry.
+    """
+    if entry.get("last_pull") == "failed":
+        night = entry.get("session") or "—"
+        good = entry.get("good_session")
+        tail = f", last good pull {good}" if good else ""
+        return f"pull FAILED {night} ({entry.get('error') or 'no reason recorded'}){tail}"
+    if entry.get("last_pull") == "unknown":
+        return "no pull recorded yet"
+    session = entry.get("session") or "—"
+    appended = entry.get("appended")
+    if appended is None:
+        return f"pulled {session}"
+    if int(appended) == 0 and not int(entry.get("absent") or 0):
+        return f"pulled {session}, unchanged"
+    return f"pulled {session}, appended {int(appended):,} (+{int(entry.get('absent') or 0):,} absent)"
+
+
+def health(marker_dir: Path | None = None) -> Health:
+    """The numbers :func:`health_summary` reports, typed (#124 S4).
+
+    Both files are summed: ``covered`` is what is stored as 'present', ``expected`` what the last good pull read
+    (``None`` until a pull has recorded it, so coverage is ``n/a`` rather than a percentage of nothing). ``newest``
+    is the newest last-good pull session and ``expected_as_of`` the newest attempt, both across the two files, so a
+    night where both failed dates the store by the last good pull. ``problems`` carries each file's pull outcome,
+    verbatim: it is the one fact the counts cannot show, per file.
+    """
+    n = health_summary(marker_dir)
+    files = list(n.values())
+    good = [f["good_session"] for f in files if f.get("good_session")]
+    attempts = [f["session"] for f in files if f.get("session")]
+    return Health(
+        covered=sum(int(f["present"]) for f in files),
+        expected=(None if any(f["file_rows"] is None for f in files)
+                  else sum(int(f["file_rows"]) for f in files)),
+        newest=max(good) if good else None,
+        expected_as_of=max(attempts) if attempts else None,
+        problems=tuple(f"{name}: {pull_outcome(f)}" for name, f in n.items()),
+    )
 
 
 def nightly(*, run_id: str | None = None, run_at: float | None = None, marker_dir: Path | None = None,
@@ -351,5 +400,5 @@ def summary_line(res: dict) -> str:
     return f"{head}; {'; '.join(parts)}; {res.get('requests', 0)} SEC requests"
 
 
-__all__ = ["FILES", "MIN_MEMBERS", "MIN_FUND_CLASSES", "exchange_source", "health_summary", "latest", "nightly",
-           "record", "summary_line"]
+__all__ = ["FILES", "MIN_MEMBERS", "MIN_FUND_CLASSES", "exchange_source", "health", "health_summary", "latest",
+           "nightly", "pull_outcome", "record", "summary_line"]
