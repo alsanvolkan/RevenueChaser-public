@@ -532,7 +532,7 @@ def _exists_row(table: str, ticker: str) -> bool:
 
 
 def _swing_presence(ticker: str) -> dict:
-    """Bar count + newest ``ts`` for ``ticker`` in ``swing_ohlc``."""
+    """Bar count + newest ``ts`` for ``ticker`` in ``swing_ohlc`` (the SPY-fallback cache)."""
     empty = {"bars": 0, "newest": None}
     if not _table_exists("swing_ohlc"):
         return empty
@@ -545,6 +545,33 @@ def _swing_presence(ticker: str) -> dict:
         return empty
     row = rows[0] if rows else {}
     return {"bars": int(row.get("n") or 0), "newest": row.get("newest")}
+
+
+def _d01_presence(ticker: str) -> dict:
+    """Bar count and newest session for ``ticker`` in D01, the price of record.
+
+    D01 is ``price_bars_daily`` plus ``price_actions`` in ``prices.duckdb``.
+    Coverage is the stored bar count; actions adjust those bars on read
+    (``core.prices.daily_bars``) and do not add sessions, so the count and the
+    newest session both come from ``price_bars_daily``. ``swing_ohlc`` is not
+    this number.
+    """
+    empty = {"bars": 0, "newest": None}
+    if not _table_exists("price_bars_daily"):
+        return empty
+    try:
+        rows = rawstore.query(
+            "SELECT COUNT(*) AS n, MAX(session_date) AS newest FROM price_bars_daily WHERE ticker = ?",
+            [ticker], db=_db_of("price_bars_daily"))
+    except Exception as exc:  # noqa: BLE001
+        _record("price_bars_daily", "_d01_presence", exc)
+        return empty
+    row = rows[0] if rows else {}
+    newest = row.get("newest")
+    if newest is not None:
+        newest = _fmt_date(newest)
+        newest = None if newest == DASH else newest
+    return {"bars": int(row.get("n") or 0), "newest": newest}
 
 
 def _universe_tickers() -> list[dict]:
@@ -587,10 +614,12 @@ def _ticker_detail(ticker: str) -> dict | None:
     sec = (_sec_file_row(t) if _table_exists("sec_exchange_file") else None)
     sic = rawstore.get("sec_company_sic", t) if _table_exists("sec_company_sic") else None
     filing = rawstore.get("chain_filings", t) if _table_exists("chain_filings") else None
+    d01 = _d01_presence(t)
     swing = _swing_presence(t)
 
     if not any(x is not None for x in (universe, sec, sic, filing)) \
             and not _exists_row("edgar_financials", t) \
+            and d01["bars"] == 0 \
             and swing["bars"] == 0 \
             and not _exists_row("oipd_meta", t) \
             and not _exists_row("relatedness_profiles", t):
@@ -617,6 +646,8 @@ def _ticker_detail(ticker: str) -> dict | None:
                     "quality": filing.get("quality")} if filing else None),
         "presence": {
             "edgar_financials": _exists_row("edgar_financials", t),
+            # D01 is the price of record. swing_ohlc is the SPY-fallback cache.
+            "price_bars_daily": d01,
             "swing_ohlc": swing,
             "oipd_meta": _exists_row("oipd_meta", t),
             "relatedness_profiles": _exists_row("relatedness_profiles", t),
@@ -1246,7 +1277,7 @@ def _collect(now: datetime) -> dict:
         },
         {
             "key": "ohlc",
-            "label": "Daily OHLC",
+            "label": "Legacy OHLC cache (SPY fallback)",
             "tables": ["swing_ohlc"],
             "rows": _count("swing_ohlc"),
             "last_date": _max_date(("swing_ohlc", "ts")),

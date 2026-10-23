@@ -199,6 +199,74 @@ def test_ticker_detail_reports_dataset_presence_from_the_store(rawstore_tmp_db):
     assert presence["relatedness_profiles"] is False
 
 
+def _d01_bars(ticker, *days):
+    return [{"ticker": ticker, "session_date": date.fromisoformat(day), "close": 1.0,
+             "source": "uw", "volume": 1.0} for day in days]
+
+
+def test_drill_reports_d01_bars_when_swing_ohlc_has_none(rawstore_tmp_db):
+    """F1: a name with D01 bars and no swing_ohlc row is not 'no bars', and is not unknown."""
+    rawstore.write_rows("price_bars_daily", _d01_bars("NVDA", "2024-01-02", "2025-06-02", "2026-02-02"))
+    assert rawstore.count("swing_ohlc") == 0
+    detail = inventory.ticker_detail("NVDA")
+    assert detail is not None
+    assert detail["presence"]["price_bars_daily"] == {"bars": 3, "newest": "2026-02-02"}
+    assert detail["presence"]["swing_ohlc"] == {"bars": 0, "newest": None}
+
+
+def test_drill_keeps_the_legacy_count_when_d01_has_no_bars(rawstore_tmp_db):
+    """A swing_ohlc-only name shows 0 D01 bars; the cache count stays under its own key."""
+    rawstore.write_rows("swing_ohlc", [
+        {"ticker": "SPY", "ts": "2026-02-01", "close": 1.0},
+        {"ticker": "SPY", "ts": "2026-02-02", "close": 1.1},
+    ])
+    presence = inventory.ticker_detail("SPY")["presence"]
+    assert presence["price_bars_daily"] == {"bars": 0, "newest": None}
+    assert presence["swing_ohlc"] == {"bars": 2, "newest": "2026-02-02"}
+
+
+def test_ohlc_dataset_row_is_labelled_as_the_legacy_cache(rawstore_tmp_db):
+    """S1 relabels the swing_ohlc row. It does not add a second D01 dataset row."""
+    _seed()
+    rows = _rows(inventory.collect())
+    assert rows["ohlc"]["key"] == "ohlc"
+    assert rows["ohlc"]["label"] == "Legacy OHLC cache (SPY fallback)"
+    assert rows["ohlc"]["tables"] == ["swing_ohlc"]
+    assert rows["price_bars"]["label"] == "Daily price bars"
+    assert "Daily OHLC" not in {r["label"] for r in rows.values()}
+
+
+# Before = what the drill used to report (swing_ohlc). After = D01, the price of record.
+# One name (AAPL) has D01 bars and no swing_ohlc row — the wrong-number case.
+_EVIDENCE = (
+    ("AAPL", ("2024-01-02", "2025-06-02", "2026-02-02"), ()),
+    ("MSFT", (), ("2026-01-02", "2026-02-02")),
+    ("NVDA", ("2026-01-02", "2026-01-03", "2026-01-06", "2026-02-02"), ("2026-01-02",)),
+    ("MU", ("2026-02-01", "2026-02-02"), ("2026-02-01", "2026-02-02")),
+    ("SPY", (), ("2024-01-02", "2024-06-03", "2025-01-02", "2026-02-02")),
+)
+
+
+def test_evidence_five_tickers_before_swing_after_d01(rawstore_tmp_db, capsys):
+    rawstore.write_rows("price_bars_daily", [
+        bar for ticker, days, _swing in _EVIDENCE for bar in _d01_bars(ticker, *days)])
+    rawstore.write_rows("swing_ohlc", [
+        {"ticker": ticker, "ts": day, "close": 1.0}
+        for ticker, _days, swing in _EVIDENCE for day in swing])
+    lines = ["ticker  before_swing  after_d01  after_newest"]
+    for ticker, days, swing in _EVIDENCE:
+        presence = inventory.ticker_detail(ticker)["presence"]
+        before, after = presence["swing_ohlc"]["bars"], presence["price_bars_daily"]["bars"]
+        newest = presence["price_bars_daily"]["newest"]
+        assert before == len(swing) and after == len(days)
+        assert newest == (max(days) if days else None)
+        lines.append(f"{ticker:<6}  {before:<13}  {after:<9}  {newest}")
+    print("\n".join(lines))
+    captured = capsys.readouterr()
+    assert "AAPL    0              3" in captured.out
+    assert "MSFT    2              0" in captured.out
+
+
 def test_ticker_detail_unknown_is_none(rawstore_tmp_db):
     _seed_detail()
     assert inventory.ticker_detail("ZZZZ") is None

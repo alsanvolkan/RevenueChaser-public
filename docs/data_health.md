@@ -246,7 +246,7 @@ Fetch action, notes.
 | Identity spine | `security_master`, `identity_conflicts`, `identity_source_cache`, `identity_runs` | `/run/identity` (**Fetch identity**) | `security_master` rows with no sector source (`sector_source` none) at market cap >= $300M |
 | 10-K / 20-F corpus | `chain_filings`, `edgar_documents`, `edgar_docs/` | **`sync_filings`** (new job) | missing row vs classification universe; stored accession ≠ SEC latest |
 | Companyfacts | `edgar_financials` / `edgar_facts` | existing EDGAR facts path | tickers with no facts |
-| Daily OHLC | `swing_ohlc` | Co-movement / Swing Fetch | names in universe with no bars |
+| Legacy OHLC cache (SPY fallback) | `swing_ohlc` | Co-movement / Swing Fetch | names in universe with no bars |
 | Index constituents | `index_constituents` | existing UW path | — |
 | 13F | `sec13f_*`, `cusip_ticker`, `identity_cusip` | `/run/module_sec_13f` (Fetch) · `/run/module_sec_13f-rebuild` (store only) · `/run/module_sec_13f-map` (OpenFIGI CUSIP map, #207) | latest period vs expected quarter |
 | OIPD chain | `oipd_chain` / `oipd_meta` | OIPD Fetch | — |
@@ -261,6 +261,9 @@ Type MU → show: name, cap (or **null**), price, GICS, last 10-K
 form/filed/accession/quality vs SEC `submissions.recent` **only after** a
 Fetch of that ticker’s submissions (or from a cached submissions row if we
 add one). Refresh of the drill must not hit SEC; show stored corpus only.
+Price coverage in the drill is D01: the `price_bars_daily` bar count and
+newest session. `swing_ohlc` stays on the drill as Legacy OHLC cache (SPY
+fallback); it is not the price of record.
 
 ### Fetch vs Refresh (this tab)
 
