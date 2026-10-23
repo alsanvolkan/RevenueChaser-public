@@ -343,8 +343,9 @@ def load_ticker_info(ticker: str, no_fetch: bool = False) -> dict:
         _HEALTH.call(error="refetch failed" if status == "stale" else "empty", endpoint=f"{ticker}.info")
     if status == "fresh":
         try:
+            now = time.time()
             rawstore.write_rows("swing_info", [{
-                "ticker": ticker, "payload": info, "cached_at": time.time(),
+                "ticker": ticker, "payload": info, "cached_at": now, "fetched_at": now,
             }])
         except Exception:  # noqa: BLE001
             logger.warning("info cache write failed for %s", ticker)

@@ -2,7 +2,7 @@
 
 ``reporting_common.help_html`` is the one producer: a board that writes its own ``<details class="help">`` (the old
 forks on Implied Probability, Relatedness and Value Chain) fails, and so does a tab without the box. Not a tab here:
-the Logs page (not a data board), and the two sub-pages in the fixture registry.
+the Logs and Runs pages (neither is a data board), and the two sub-pages in the fixture registry.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from RevenueChaser.core.tests.board_fixtures import BOARDS
 
 # What help_html writes, byte for byte (a fork spells it with other whitespace or another class).
 SHARED = '<details class="help"><summary>What am I looking at?</summary>\n<div class="body">'
-NOT_A_DATA_TAB = {"logs"}
+NOT_A_DATA_TAB = {"logs", "runs"}
 SUB_PAGES = {"module_earnings_radar_detail", "module_sector_rotation_trail"}
 HELP_TABS = sorted(set(BOARDS) - NOT_A_DATA_TAB - SUB_PAGES)
 

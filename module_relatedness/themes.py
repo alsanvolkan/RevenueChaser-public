@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -1171,24 +1172,25 @@ def cutover_materialize(run_id: str) -> dict:
         raise ValueError(f"theme run {run_id!r} has no members; cutover refused")
     if rawstore.get("theme_runs", run_id) is None:
         raise ValueError(f"unknown theme run: {run_id}")
+    fetched_at = time.time()
     with rawstore.transaction() as tx:
         tx.execute("DELETE FROM ticker_themes WHERE theme_run_id = ?", [run_id])
         # fine
         tx.execute(
             """
-            INSERT INTO ticker_themes (ticker, theme_id, theme, level, theme_run_id)
-            SELECT m.ticker, f.theme_id, COALESCE(f.label, ''), 'fine', ?
+            INSERT INTO ticker_themes (ticker, theme_id, theme, level, theme_run_id, fetched_at)
+            SELECT m.ticker, f.theme_id, COALESCE(f.label, ''), 'fine', ?, ?
             FROM relatedness_theme_members m
             JOIN relatedness_themes f
               ON f.theme_id = m.theme_id AND f.level = 'fine'
             WHERE m.theme_id = ? OR starts_with(m.theme_id, ?)
             """,
-            [run_id, run_id, prefix])
+            [run_id, fetched_at, run_id, prefix])
         # medium parent
         tx.execute(
             """
-            INSERT INTO ticker_themes (ticker, theme_id, theme, level, theme_run_id)
-            SELECT m.ticker, med.theme_id, COALESCE(med.label, ''), 'medium', ?
+            INSERT INTO ticker_themes (ticker, theme_id, theme, level, theme_run_id, fetched_at)
+            SELECT m.ticker, med.theme_id, COALESCE(med.label, ''), 'medium', ?, ?
             FROM relatedness_theme_members m
             JOIN relatedness_themes f
               ON f.theme_id = m.theme_id AND f.level = 'fine'
@@ -1197,12 +1199,12 @@ def cutover_materialize(run_id: str) -> dict:
             WHERE (m.theme_id = ? OR starts_with(m.theme_id, ?))
               AND f.parent_id IS NOT NULL AND f.parent_id <> ''
             """,
-            [run_id, run_id, prefix])
+            [run_id, fetched_at, run_id, prefix])
         # coarse grandparent
         tx.execute(
             """
-            INSERT INTO ticker_themes (ticker, theme_id, theme, level, theme_run_id)
-            SELECT m.ticker, c.theme_id, COALESCE(c.label, ''), 'coarse', ?
+            INSERT INTO ticker_themes (ticker, theme_id, theme, level, theme_run_id, fetched_at)
+            SELECT m.ticker, c.theme_id, COALESCE(c.label, ''), 'coarse', ?, ?
             FROM relatedness_theme_members m
             JOIN relatedness_themes f
               ON f.theme_id = m.theme_id AND f.level = 'fine'
@@ -1213,7 +1215,7 @@ def cutover_materialize(run_id: str) -> dict:
             WHERE (m.theme_id = ? OR starts_with(m.theme_id, ?))
               AND med.parent_id IS NOT NULL AND med.parent_id <> ''
             """,
-            [run_id, run_id, prefix])
+            [run_id, fetched_at, run_id, prefix])
         tx.execute("UPDATE theme_runs SET is_current = CASE WHEN id = ? THEN 1 ELSE 0 END",
                    [run_id])
 

@@ -50,6 +50,9 @@ LEVEL_COLS = {"sector": ("sector", "sector_source"), "industry": ("industry", "i
 FIGI_COLS = ("figi", "composite_figi", "share_class_figi", "exch_code", "security_description")
 # Raw SIC group (#272), copied from the SEC submissions / ``sec_company_sic`` caches.
 SIC_COLS = ("sic", "sic_description", "sic_group2", "sic_source")
+# CUSIP / ISIN (#127). The apply step owns the values; the builder only carries the previous ones so a
+# master rewrite does not NULL them before that step runs.
+ID_COLS = ("cusip", "isin", "cusip_source", "isin_source")
 
 
 # ── source label -> (input key it needs, precedence rank; lower = stronger) ──────────────
@@ -175,6 +178,10 @@ def build(inputs_by_ticker: dict, previous_master_by_ticker: dict | None = None,
 
         # ── raw SIC group: the code, the SEC's text, the major group and the cache they came from ──
         row.update(_sic(inputs, prev))
+
+        # ── CUSIP / ISIN: kept from the previous row; ``apply.apply_identifiers`` fills them (#127) ──
+        for col in ID_COLS:
+            row[col] = prev.get(col)
 
         # ── sector and industry ──
         new = gics_mod.classify(ticker, inputs, typ, manual=man)

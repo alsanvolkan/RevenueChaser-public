@@ -108,7 +108,8 @@ def miss_row(ticker: str, reason: str, cik) -> dict:
 def record_misses(rows: list[dict]) -> None:
     if rows:
         rawstore.ensure_table("chain_meta")
-        rawstore.write_rows("chain_meta", rows)
+        now = time.time()
+        rawstore.write_rows("chain_meta", [{**r, "fetched_at": now} for r in rows])
 
 
 def stored_misses() -> dict[str, dict]:
@@ -417,10 +418,11 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
     rawstore.ensure_table("chain_meta")
     # write_rows, not replace_all: chain_meta is a "replace" table keyed by
     # ``key``, so only these keys are rewritten and the ``miss:`` keys survive.
+    fetched_at = time.time()
     rawstore.write_rows("chain_meta", [
-        {"key": "last_sync", "value": as_of},
-        {"key": "n_filings", "value": str(len(filings))},
-        {"key": "n_mentions", "value": str(len(edges))},
+        {"key": "last_sync", "value": as_of, "fetched_at": fetched_at},
+        {"key": "n_filings", "value": str(len(filings)), "fetched_at": fetched_at},
+        {"key": "n_mentions", "value": str(len(edges)), "fetched_at": fetched_at},
     ])
     payload = _board_payload(filings, edges, as_of, fetch)
     record_history(edges, info, run_id=run_id, run_at=run_at, payload=payload, counts=fetch)

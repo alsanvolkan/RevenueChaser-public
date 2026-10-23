@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 
 from . import rawstore
 
@@ -73,8 +74,9 @@ def backfill_legacy() -> dict:
         "SELECT ticker, themes FROM ticker_scores "
         "WHERE themes IS NOT NULL AND themes <> ''")
     rows: list[dict] = []
+    fetched_at = time.time()
     for r in src:
-        rows.extend(_rows_for(r["ticker"], r["themes"]))
+        rows.extend({**row, "fetched_at": fetched_at} for row in _rows_for(r["ticker"], r["themes"]))
     with rawstore.transaction() as tx:
         tx.execute("DELETE FROM ticker_themes WHERE theme_run_id = ?", [LEGACY_RUN_ID])
         if rows:
