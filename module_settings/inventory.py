@@ -747,6 +747,59 @@ def _master_identifier(master: dict | None, column: str):
     return (master or {}).get(column)
 
 
+# ── G7 (#124): which boards can score this name ────────────────────────────────────────────────
+# The drill measures a name's presence in these store tables. ``boards.BOARD_INPUTS`` lists the
+# tables each board reads, so a board is decided by the tables this drill measured — and a board
+# that reads any other table is "not checked for this board", never a guess.
+# ``equity_universe`` is read as the list the boards themselves apply (cap floor and security
+# type, ``classification_universe``), not merely as "a row exists".
+_PRESENCE_KEY = {"equity_universe": "in_classification_universe"}
+_DRILL_TABLE_LABELS = {
+    "equity_universe": "equity universe membership",
+    "chain_filings": "10-K / 20-F filing",
+    "price_bars_daily": "daily price bars",
+    "quote_snapshot": "quote",
+    "vendor_financials": "vendor financials",
+    "edgar_financials": "EDGAR facts",
+    "ownership_snapshot": "ownership",
+    "swing_ohlc": "legacy OHLC cache (SPY fallback)",
+    "oipd_meta": "Implied Probability chain",
+    "relatedness_profiles": "Relatedness profile",
+}
+
+
+def _rows_stored(record) -> bool:
+    """Whether a presence record says the name has a row: a count above zero, or ``True`` itself."""
+    if isinstance(record, bool):
+        return record
+    if not isinstance(record, dict):
+        return False
+    return any(int(record.get(key) or 0) for key in ("bars", "rows", "periods"))
+
+
+def _board_fit(presence: dict) -> list[dict]:
+    """One entry per registered board: can it score this name, from the presence the drill read.
+
+    ``can`` when every table the board reads is measured by this drill and has a row; ``cannot``
+    names the measured tables without a row, in plain words; ``not_checked`` when the board reads
+    a table this drill does not measure (or reads none), because the drill does not know. Nav
+    order. One pass over ``presence``: no table is queried again here.
+    """
+    measured = {table: _rows_stored(presence.get(_PRESENCE_KEY.get(table, table)))
+                for table in _DRILL_TABLE_LABELS}
+    out = []
+    for entry in boards.BOARD_INPUTS:
+        tables = list(entry.get("tables") or [])
+        if not tables or any(table not in measured for table in tables):
+            out.append({"key": entry.get("key"), "label": entry.get("label"),
+                        "state": "not_checked", "missing": []})
+            continue
+        missing = [_DRILL_TABLE_LABELS[table] for table in tables if not measured[table]]
+        out.append({"key": entry.get("key"), "label": entry.get("label"),
+                    "state": "cannot" if missing else "can", "missing": missing})
+    return out
+
+
 def _universe_tickers() -> list[dict]:
     """``[{ticker, name}]`` for the ticker combobox — one store read, no network."""
     try:
@@ -773,9 +826,10 @@ def _read_sector(stored):
 
 
 def _ticker_detail(ticker: str) -> dict | None:
-    """Per-ticker drill: identifiers, cap, sector and industry, SIC, latest filing and the
+    """Per-ticker drill: identifiers, cap, sector and industry, SIC, latest filing, the
     presence of the datasets that decide whether a board can score the name — read straight
-    from ``.store`` with zero network, one query per table.
+    from ``.store`` with zero network, one query per table — and which boards can score the
+    name, decided from that presence and ``boards.BOARD_INPUTS`` (no query per board).
 
     Unknown ticker (absent from every dataset it reads) returns ``None`` so the route can
     answer 404. A NULL ``market_cap`` stays ``None`` — never coerced.
@@ -812,6 +866,22 @@ def _ticker_detail(ticker: str) -> dict | None:
     cik = (master or {}).get("cik") or next(
         (src["cik"] for src in (sec, sic, filing) if src and src.get("cik")), None)
     cap = universe.get("market_cap") if universe else None
+    presence = {
+        "edgar_financials": edgar,
+        # D01 is the price of record. swing_ohlc is the SPY-fallback cache.
+        "price_bars_daily": d01,
+        "quote_snapshot": quote,
+        "vendor_financials": vendor,
+        "ownership_snapshot": ownership,
+        "swing_ohlc": swing,
+        "oipd_meta": _exists_row("oipd_meta", t),
+        "relatedness_profiles": _exists_row("relatedness_profiles", t),
+        # The latest stored annual filing, the row the drill shows as "Last 10-K / 20-F".
+        "chain_filings": filing is not None,
+        # One universe definition: the very list the boards read (cap floor and
+        # security type), not a second copy of the rule.
+        "in_classification_universe": t in set(classification_universe()),
+    }
     return {
         "ticker": t,
         "name": (universe or {}).get("name") or (sec or {}).get("name") or t,
@@ -829,20 +899,9 @@ def _ticker_detail(ticker: str) -> dict | None:
         "filing": ({"form": filing.get("form"), "filed": filing.get("filed"),
                     "accession": filing.get("accession"),
                     "quality": filing.get("quality")} if filing else None),
-        "presence": {
-            "edgar_financials": edgar,
-            # D01 is the price of record. swing_ohlc is the SPY-fallback cache.
-            "price_bars_daily": d01,
-            "quote_snapshot": quote,
-            "vendor_financials": vendor,
-            "ownership_snapshot": ownership,
-            "swing_ohlc": swing,
-            "oipd_meta": _exists_row("oipd_meta", t),
-            "relatedness_profiles": _exists_row("relatedness_profiles", t),
-            # One universe definition: the very list the boards read (cap floor and
-            # security type), not a second copy of the rule.
-            "in_classification_universe": t in set(classification_universe()),
-        },
+        "presence": presence,
+        # Which boards can score this name, from the presence just read — no query per board.
+        "boards": _board_fit(presence),
     }
 
 
