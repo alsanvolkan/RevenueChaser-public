@@ -57,6 +57,23 @@ def inline_scripts(html: str) -> list[str]:
             if "src=" not in m.group("attrs").lower()]
 
 
+def function_source(script: str, name: str) -> str:
+    """``function name(...) { ... }`` out of a script, by brace matching.
+
+    How a test calls one function of a page whose script is an IIFE: take the source of the functions it
+    needs, run those under the DOM stub, and assert on what they return.
+    """
+    start = re.search(r"function\s+" + re.escape(name) + r"\s*\(", script)
+    if start is None:
+        raise AssertionError(f"no function {name}(…) in this script")
+    depth, i = 0, script.index("{", start.start())
+    while True:
+        depth += {"{": 1, "}": -1}.get(script[i], 0)
+        if depth == 0:
+            return script[start.start():i + 1]
+        i += 1
+
+
 def with_payload(html: str, payload) -> str:
     """``html`` with a first script that answers the page's ``fetch`` with ``payload`` (K10, #383 C6a).
 
