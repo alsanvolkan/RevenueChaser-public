@@ -76,6 +76,7 @@ def test_a_row_without_a_registry_spec_keeps_its_fields_and_gains_a_none_source(
     assert row["source"] is None
     assert row["holes"] == 3 and row["note"] == "kept"
     assert "coverage" not in row and "fresh" not in row, "no spec: nothing is invented"
+    assert "db" not in row, "no spec: no store file to name, so the table draws no pill"
 
 
 # ── source, writer, fresh ───────────────────────────────────────────────────
@@ -92,6 +93,15 @@ def test_attach_registry_carries_the_writer_note_a_spec_without_a_writer_has(mon
     out, _errors = _attach([_row("sec13f")])
     assert out[0]["writer"] is None
     assert "sec13f_rebuild" in out[0]["writer_note"]
+
+
+def test_attach_registry_carries_the_store_file_the_spec_names(monkeypatch):
+    """G2 (#124): ``DatasetSpec.db`` is the store file, so the table can pill every dataset."""
+    for key, db in (("universe", "raw"), ("corpus", "edgar"), ("price_bars", "prices"),
+                    ("result_history", "history"), ("discord", "discord")):
+        monkeypatch.setitem(datasets._BY_KEY, key, _spec(key, coverage=None))
+        out, _errors = _attach([_row(key)])
+        assert out[0]["db"] == db, key
 
 
 def test_fresh_is_the_max_date_of_the_specs_freshness_pair(rawstore_tmp_db):

@@ -46,6 +46,23 @@ table.inv .tbl{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,
 table.inv .note{color:var(--muted);white-space:normal;max-width:320px}
 table.inv .ok{color:var(--neon)}
 table.inv .warnv{color:var(--amber)}
+/* G2 (#124): the Coverage bar — 64px wide inside the cell, so the table gains no width; its colour is the
+   band, and the counts stay as text beside it. */
+.covbar{display:inline-block;width:64px;height:6px;border-radius:3px;background:var(--panel2);
+  vertical-align:middle;margin-right:7px;overflow:hidden}
+.covbar>span{display:block;height:100%;background:currentColor}
+.muted{color:var(--muted)}
+/* G2: the store-file pill — the Data Flow artifact's DB hues, with history and prices given their own.
+   The pill's text always names the file, so colour is never the only signal. */
+.db{display:inline-block;background:transparent;border:1px solid currentColor;border-radius:99px;
+  padding:0 6px;font:600 10.5px/1.4 inherit;letter-spacing:0;text-transform:none;vertical-align:middle}
+.db-raw{color:#4f8cff}
+.db-edgar{color:#e0a030}
+.db-discord{color:#a070e0}
+.db-history{color:#3cb89a}
+.db-prices{color:#e06088}
+.dblegend{color:var(--muted);font-size:11.5px;margin:6px 2px 0}
+.dblegend .db{margin:0 8px 0 4px}
 /* S5 (#124): one closed detail row per dataset; the store tables, writer, action and notes live
    there, and the cell wraps so the table gains no nowrap column. */
 table.inv tr[hidden]{display:none}
@@ -690,16 +707,69 @@ def _automations_section(rows: list[dict]) -> str:
         '<div id="auto-msg"></div><div id="auto-body"></div>')
 
 
+def _cov_bar(fraction) -> tuple[str, str]:
+    """The bar's band class and drawn percentage, or ``("", "")`` when the record has no fraction.
+
+    The drawn width is clamped to 100%, but the label beside it keeps the real counts: a coverage
+    above 100% draws a full bar and still says so. Bands are the page's own state classes.
+    """
+    if fraction is None:
+        return "", ""
+    try:
+        pct = max(0, min(100, int(round(float(fraction) * 100))))
+    except (TypeError, ValueError):
+        return "", ""
+    band = "st-ok" if pct >= 95 else "st-warn" if pct >= 70 else "st-bad"
+    return band, str(pct)
+
+
 def _coverage_cell(row: dict) -> str:
-    """The Coverage cell: the label (red on ``error``) with any problem stated beside it."""
+    """The Coverage cell: the fill bar and its percentage, then the counts (S5, G2).
+
+    A record with no fraction (``n/a``, ``unknown``) draws no bar and reads muted, never 0%, so an
+    unmeasurable dataset cannot look empty. ``error`` keeps its red label: a failed query is not a
+    quiet hole.
+    """
     coverage = row.get("coverage") or {}
     label = str(coverage.get("label") or DASH)
-    out = (f'<span class="warnv">{_html.escape(label)}</span>' if label == "error"
-           else _html.escape(label))
+    band, pct = _cov_bar(coverage.get("fraction"))
+    bar = (f'<span class="covbar {band}" role="img" aria-label="coverage {pct} percent">'
+           f'<span style="width:{pct}%"></span></span>') if band else ""
+    text = _html.escape(label)
+    if label == "error":
+        out = f'<span class="warnv">{text}</span>'
+    elif band:
+        out = text
+    else:
+        out = f'<span class="muted">{text}</span>'
     problems = [str(p) for p in coverage.get("problems") or [] if str(p).strip()]
     if problems:
         out += f'<span class="hlabel">{_html.escape("; ".join(problems))}</span>'
-    return out
+    return bar + out
+
+
+# The five store files a dataset can be written to: the Data Flow artifact's DB hues (G2).
+DB_PILLS = ("raw", "edgar", "discord", "history", "prices")
+
+
+def _db_pill(db) -> str:
+    """The store-file pill for ``db``, or ``""`` for no file and for any name outside the palette.
+
+    The name is matched against the palette, never interpolated into the class, so a hostile value
+    draws nothing rather than a class.
+    """
+    name = str(db or "").strip().lower()
+    if name not in DB_PILLS:
+        return ""
+    title = _html.escape(f"stored in {name}.duckdb under .store/", quote=True)
+    return f'<span class="db db-{name}" title="{title}">{name}</span>'
+
+
+def _db_legend() -> str:
+    """One line under the table naming every store file, so a pill is explained once (G2)."""
+    pills = " ".join(_db_pill(db) for db in DB_PILLS)
+    return (f'<div class="dblegend" id="db-legend">Store file: {pills} '
+            "— each pill names the .store/ DuckDB that dataset is written to.</div>")
 
 
 def _source_cells(row: dict) -> tuple[str, str, str]:
@@ -753,12 +823,15 @@ def _table(rows: list[dict], errors: list[dict] | None = None) -> str:
         source, coverage, fresh = _source_cells(row)
         # A query failure on this row is stated in the detail; the marker keeps it visible here.
         mark = ' <span class="row-err">⚠</span>' if _row_errors(row, errors) else ""
+        pill = _db_pill(row.get("db"))
+        if pill:
+            pill = " " + pill
         body.append(
             f'<tr class="row" id="row-{rid}" data-order="{order}" '
             f'data-source="{_html.escape(str(row.get("source") or ""), quote=True)}">'
             f'<td><button type="button" class="det-btn" aria-expanded="false" '
             f'aria-controls="det-{rid}">'
-            f'{_html.escape(str(row.get("label") or row.get("key") or ""))}</button>{mark}</td>'
+            f'{_html.escape(str(row.get("label") or row.get("key") or ""))}</button>{pill}{mark}</td>'
             f"<td>{source}</td>"
             f"<td>{coverage}</td>"
             f"<td>{fresh}</td>"
@@ -776,7 +849,8 @@ def _table(rows: list[dict], errors: list[dict] | None = None) -> str:
         "<th>Coverage</th><th>Fresh</th><th>Last data date</th><th>Rows</th><th>Holes</th>"
         "</tr></thead><tbody>"
         + "".join(body)
-        + "</tbody></table></div>")
+        + "</tbody></table></div>"
+        + _db_legend())
 
 
 def _day(ts) -> str:

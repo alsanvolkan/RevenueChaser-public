@@ -1,6 +1,8 @@
 """Settings / Data health HTML renderer: table, Fetch buttons, help, empty state."""
 from __future__ import annotations
 
+import pytest
+
 from RevenueChaser.module_settings import report
 
 
@@ -1349,6 +1351,7 @@ def test_the_new_cells_escape_a_hostile_label_and_never_take_a_class_from_it():
     assert "<img" not in html and "<script>alert(1)" not in html
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
     assert html.count("&lt;img src=x onerror=__x(1)&gt;") >= 3
+    assert "covbar" in html, "the bar's own class comes from the band, never from the label"
 
 
 def test_the_source_header_offers_the_grouping_toggle():
@@ -1410,3 +1413,118 @@ console.log(JSON.stringify({opened: opened, closed: closed,
     assert got["closed"] == {"expanded": "false", "hidden": True}
     assert got["grouped"] == ["2r", "2d", "1r", "1d", "0r", "0d"], "source order, detail with its row"
     assert got["restored"] == ["0r", "0d", "1r", "1d", "2r", "2d"], "back to worst coverage first"
+
+
+# ── G2 of the GUI redesign (#124): coverage bar, store chip, legend ──────────────────────────
+def _cov_table(coverage: dict, **over) -> str:
+    """One dataset rendered through ``_table`` with the coverage record ``_attach_registry`` builds."""
+    row = {"key": "quotes", "label": "Quotes", "tables": ["quote_snapshot"], "rows": 10,
+           "last_date": "—", "holes": None, "hole_label": "", "fetch": None, "note": "",
+           "source": "uw", "coverage": coverage, "fresh": None}
+    row.update(over)
+    return report._table([row])
+
+
+def test_the_coverage_cell_draws_a_bar_before_its_honest_label():
+    """A thin bar with its percentage beside it: the number stays text, so colour is not the signal."""
+    html = _cov_table({"fraction": 0.9, "label": "812 / 905 (90%)"})
+    bar = ('<span class="covbar st-warn" role="img" aria-label="coverage 90 percent">'
+           '<span style="width:90%"></span></span>')
+    assert bar in html
+    assert html.index(bar) < html.index("812 / 905 (90%)"), "the bar leads, the label follows"
+    assert _cells(_main_row(html, "quotes"))[2] == "812 / 905 (90%)"
+
+
+@pytest.mark.parametrize("label", ["n/a", "unknown", "error"])
+def test_a_coverage_with_no_fraction_draws_no_bar_and_no_zero_percent_look(label):
+    html = _cov_table({"fraction": None, "label": label})
+    assert "covbar" not in html
+    assert "width:0%" not in html
+    assert _cells(_main_row(html, "quotes"))[2].startswith(label)
+
+
+@pytest.mark.parametrize("label", ["n/a", "unknown"])
+def test_a_coverage_with_no_population_reads_muted(label):
+    """No population is a hole in the denominator, not a red failure: muted text, no bar."""
+    html = _cov_table({"fraction": None, "label": label})
+    assert f'<span class="muted">{label}</span>' in html
+
+
+def test_a_coverage_error_stays_red():
+    html = _cov_table({"fraction": None, "label": "error", "problems": []})
+    assert '<span class="warnv">error</span>' in html and "covbar" not in html
+
+
+def test_over_100_percent_draws_a_full_bar_and_keeps_the_real_number():
+    html = _cov_table({"fraction": 1.24, "label": "1,122 / 905 (124%)"})
+    assert '<span style="width:100%"></span>' in html
+    assert "width:124%" not in html
+    assert "1,122 / 905 (124%)" in html, "the text stays honest above 100%"
+    assert 'aria-label="coverage 100 percent"' in html
+
+
+@pytest.mark.parametrize("fraction, band", [(0.69, "st-bad"), (0.70, "st-warn"),
+                                            (0.94, "st-warn"), (0.95, "st-ok")])
+def test_the_bar_colour_follows_the_coverage_band(fraction, band):
+    html = _cov_table({"fraction": fraction, "label": "x"})
+    assert f'<span class="covbar {band}"' in html
+
+
+@pytest.mark.parametrize("db", ["raw", "edgar", "discord", "history", "prices"])
+def test_each_store_file_gets_a_pill_whose_text_names_it(db):
+    html = _cov_table({"fraction": None, "label": "n/a"}, db=db)
+    pill = f'<span class="db db-{db}" title="stored in {db}.duckdb under .store/">{db}</span>'
+    main = _main_row(html, "quotes")
+    assert pill in main
+    assert _cells(main)[0] == f"Quotes {db}", "the pill's text sits beside the name"
+    assert html.count(pill) >= 2, "the legend under the table explains the pill once"
+
+
+def test_a_row_without_a_store_file_draws_no_pill():
+    html = _cov_table({"fraction": None, "label": "n/a"})           # no "db" key at all
+    assert 'class="db ' not in _main_row(html, "quotes")
+
+
+def test_a_store_file_outside_the_palette_draws_no_pill_and_never_takes_a_class_from_it():
+    bad = "<img src=x onerror=__x(1)>"
+    html = _cov_table({"fraction": None, "label": "n/a"}, db=bad)
+    assert 'class="db ' not in _main_row(html, "quotes")
+    assert "<img" not in html
+
+
+def test_a_legend_under_the_table_explains_each_pill_once():
+    html = report._table([{"key": "quotes", "label": "Quotes", "tables": [], "note": ""}])
+    assert html.index("</tbody></table>") < html.index('id="db-legend"'), "under the table"
+    legend = html[html.index('id="db-legend"'):]
+    assert "Store file" in legend
+    for db in ("raw", "edgar", "discord", "history", "prices"):
+        assert f'class="db db-{db}"' in legend, db
+
+
+def _sec_entry(**over) -> dict:
+    """One ``sec_files.health_summary`` entry: stored rows, the file's figures and the last pull."""
+    entry = {"present": 5, "members": 5, "floor": 3, "file_rows": 5,
+             "last_modified": "Mon, 19 Oct 2026 20:30:00 GMT", "appended": 0, "absent": 0,
+             "good_session": "2026-10-19", "session": "2026-10-19",
+             "last_pull": "ok", "error": None}
+    entry.update(over)
+    return entry
+
+
+@pytest.mark.parametrize("exchange, mf, said", [
+    ({"last_pull": "unknown"}, {"last_pull": "unknown"}, "no pull recorded yet"),
+    ({}, {}, "pulled 2026-10-19, unchanged"),
+    ({"last_pull": "failed", "session": "2026-10-20", "error": "SEC 500"}, {},
+     "pull FAILED 2026-10-20 (SEC 500)"),
+])
+def test_the_sec_files_pull_tri_state_reaches_the_table_verbatim(
+        monkeypatch, rawstore_tmp_db, exchange, mf, said):
+    """avo 2026-10-22: the note moved into the detail row; every sentence survives word for word."""
+    from RevenueChaser.core import sec_files
+    from RevenueChaser.module_settings import inventory
+    summary = {"exchange": _sec_entry(**exchange), "mf": _sec_entry(**mf)}
+    monkeypatch.setattr(sec_files, "health_summary", lambda marker_dir=None: summary)
+    row = inventory._sec_files_row()
+    html = report._table([row])
+    assert said in row["note"], "the row builder still writes the sentence"
+    assert said in html, "and the renderer shows it, not a reworded copy"

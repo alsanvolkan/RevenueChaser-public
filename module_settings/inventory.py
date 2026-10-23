@@ -1402,6 +1402,8 @@ def _attach_registry(rows: list[dict]) -> list[dict]:
         except KeyError:
             row["source"] = None
             continue
+        # The store file the dataset is written to (G2): the table's store pill names it.
+        row["db"] = spec.db
         row["source"] = spec.source.value
         row["writer"] = spec.writer
         row["writer_note"] = spec.writer_note
