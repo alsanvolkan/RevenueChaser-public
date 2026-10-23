@@ -109,7 +109,8 @@ class Health:
         """Facts the numbers contradict. Does not echo stored ``problems``.
 
         ``covered > expected`` is named with both counts, including when
-        ``expected == 0`` and the ratio itself cannot be shown.
+        ``expected == 0`` and the ratio itself cannot be shown. A ``newest`` date after
+        ``expected_as_of`` is named with both dates.
         """
         found: list[str] = []
         if self.covered is not None and self.expected is not None and self.covered > self.expected:

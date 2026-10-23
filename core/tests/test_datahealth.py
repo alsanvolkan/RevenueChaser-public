@@ -193,7 +193,6 @@ def test_scoped_runs_a_function_once_per_distinct_call_inside_a_memo_scope_and_a
 
 
 def test_a_newest_date_after_the_reference_is_named_not_shown_as_a_negative_age():
-    from datetime import date
     h = datahealth.Health(covered=1, expected=1, newest=date(2026, 10, 25), expected_as_of=date(2026, 10, 24))
     assert datahealth.freshness_text(h, date(2026, 10, 24)) == "newest date is 1 d after the reference date"
     assert "-" not in datahealth.freshness_text(h, date(2026, 10, 24))
@@ -201,7 +200,6 @@ def test_a_newest_date_after_the_reference_is_named_not_shown_as_a_negative_age(
 
 
 def test_a_newest_date_on_or_before_the_reference_raises_no_date_problem():
-    from datetime import date
     h = datahealth.Health(covered=1, expected=1, newest=date(2026, 10, 24), expected_as_of=date(2026, 10, 24))
     assert h.consistency_problems() == ()
     assert datahealth.freshness_text(h, date(2026, 10, 24)) == "0 d old"

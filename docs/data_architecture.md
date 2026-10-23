@@ -461,9 +461,12 @@ worker thread writes while Flask request threads read. So:
   most ~0.35 s for a store another process holds (`rawstore.brief_wait`); a skipped or failed write is a
   `job_runs: could not record` warning in the Server log and never changes the job's outcome. The same
   skip can happen while the Settings board is collected: `inventory.collect()` holds one read-write handle per
-  store file for about 2 s (`rawstore.session()`, so the ~150 queries open each file once), and a peer process
-  that writes with the brief wait during that window (a scheduled task's `job_runs` row, #82/#83) can lose that
-  one row and logs the same warning; nothing else is affected. So a row can
+  store file for about 2 s (`rawstore.session()`, so the ~150 queries open each file once), and in that window
+  another process's `brief_wait` block gives up after ~0.35 s instead of waiting the full peer budget. Ordinary
+  peer reads and writes are unaffected (they wait up to ~29 s), and so is a scheduled task's own `job_runs` row,
+  which is written without the brief wait (`core.automations._record_run`). What can be lost is a peer's
+  best-effort read of result history (`app/runners.py`, `core/reporting_common.py`, `module_leaps`,
+  `module_sector_rotation`): each already falls back to a warning line, a missing history panel or the board file. So a row can
   stay `running` when the server stopped mid-job, when an end write was skipped, or when the job was evicted
   from the registry first. `app/jobs.reconcile_lost_runs` (#82) closes such a row as `lost`
   (no `finished_at`, outcome unknown) when its `pid` names no process, or when it is older than its bound
