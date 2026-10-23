@@ -54,7 +54,7 @@ SEC_DATA_BASE = os.getenv("RC_SEC_DATA_BASE") or "https://data.sec.gov"
 # and the bulk download, which calls ``_throttle`` itself). That spends one token from
 # the cross-process bucket (``sec_throttle``, 8/s, burst 8). When the shared file cannot
 # be used, the in-process bucket below is the fallback — it never fails the request.
-# The in-process interval stays at 10/s, the fair-access ceiling, and only runs then.
+# The in-process interval stays at 10/s, the fair-access ceiling, and only runs then (never on top of the shared bucket).
 _throttle_lock = threading.Lock()
 _throttle_last = [0.0]
 _THROTTLE_INTERVAL = 0.10

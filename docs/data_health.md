@@ -281,7 +281,7 @@ Plan:
 
 - `POST /run/edgar-sync` (name TBD) → `sync.sync_filings()`.
 - `requires_uw=False` (SEC only).
-- Shares `job_lock.acquire("edgar_sync")` + `sec_edgar` 10 req/s throttle.
+- Shares `job_lock.acquire("edgar_sync")` + `sec_edgar` throttle (cross-process 8 req/s bucket, burst 2, in-process 10/s fallback; #26 PL6-b).
 - Idempotent: same accession → `current`, no download (already tested in
   `module_value_chain/tests/test_sync.py`).
 - After updates, `build_edges()` as today; Relatedness Refresh then reads

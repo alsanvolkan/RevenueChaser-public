@@ -13,8 +13,10 @@ section is the OS lock already in ``job_lock`` — ``fcntl.flock`` or
 a crash cannot wedge the bucket. The file is a dotfile, not ``*.lock``:
 ``job_lock.holders()`` globs ``*.lock``, and a token file is not a job mutex.
 
-``RATE`` is the only knob. It is both the sustained rate and the burst, so the
-two cannot drift. 8 stays under the 10/s fair-access limit.
+``RATE`` is the only knob: the sustained rate. The burst is derived from the ceiling,
+``LIMIT - RATE`` (2 at the default 8), so the first second after an idle period carries
+at most ``burst + RATE`` = ``LIMIT`` requests and never above SEC's 10/s, which a burst
+equal to the rate (16 in the first second) would exceed.
 
 When the file or the lock cannot be used, ``pace`` returns False and the caller
 falls back to its in-process throttle. A pacing failure never fails the request.
@@ -22,6 +24,7 @@ falls back to its in-process throttle. A pacing failure never fails the request.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -29,7 +32,11 @@ from pathlib import Path
 
 from . import job_lock, rawstore
 
-# Requests per second, and the burst. SEC fair-access is 10/s; stay under it.
+logger = logging.getLogger(__name__)
+
+# SEC fair-access ceiling, requests per second, per user-agent (both hosts share it).
+LIMIT = 10
+# The sustained rate. The only knob; the burst is derived from the ceiling (see ``_burst``).
 RATE = 8
 
 # How long to wait for the OS lock before giving the caller the in-process fallback.
@@ -45,6 +52,20 @@ _DEFICIT_BURSTS = 8
 
 _GUARD = threading.Lock()
 _NAME = ".sec_throttle.json"
+_LOGGED: set[str] = set()
+
+
+def _log_once(kind: str, message: str, *args) -> None:
+    """One log line per process per kind: whether the shared bucket is in use, or why it is not."""
+    if kind in _LOGGED:
+        return
+    _LOGGED.add(kind)
+    logger.info(message, *args)
+
+
+def _burst(rate: float) -> float:
+    """Tokens a full bucket holds: what the ceiling leaves above the sustained rate (at least 1)."""
+    return max(1.0, float(LIMIT) - float(rate))
 
 
 def bucket_path() -> Path:
@@ -60,13 +81,13 @@ def _take(state: dict, now: float, rate: float) -> tuple[float, dict]:
     spend the last token. ``ts`` is the host monotonic clock (comparable across
     processes on one machine), the time of this reservation — not a future time.
     """
-    burst = float(rate)
+    burst = _burst(rate)
     tokens = state.get("tokens") if isinstance(state, dict) else None
     ts = state.get("ts") if isinstance(state, dict) else None
     trustworthy = (
         isinstance(tokens, (int, float)) and not isinstance(tokens, bool)
         and isinstance(ts, (int, float)) and not isinstance(ts, bool)
-        and -burst * _DEFICIT_BURSTS <= float(tokens) <= burst
+        and -float(rate) * _DEFICIT_BURSTS <= float(tokens) <= burst
         and float(ts) <= now + _SKEW
     )
     if trustworthy:
@@ -151,12 +172,16 @@ def pace() -> bool:
         with _GUARD:
             wait = _reserve(time.monotonic())
         if wait is None:
+            _log_once("fallback", "SEC pacing: the shared bucket %s cannot be used; this process paces itself "
+                      "(in-process, %d/s)", bucket_path(), LIMIT)
             return False
+        _log_once("shared", "SEC pacing: shared bucket %s (rate %s/s, burst %s)", bucket_path(), RATE, _burst(RATE))
         if wait > 0:
             time.sleep(wait)
         return True
     except Exception:
+        _log_once("fallback", "SEC pacing: the shared bucket failed; this process paces itself (in-process)")
         return False
 
 
-__all__ = ["RATE", "bucket_path", "pace"]
+__all__ = ["LIMIT", "RATE", "bucket_path", "pace"]

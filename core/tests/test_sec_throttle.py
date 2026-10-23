@@ -95,10 +95,52 @@ def _hammer(path, ready, go, result, rate, duration):
     )
 
 
-def test_rate_is_one_constant_at_most_eight():
-    """SEC fair-access is 10/s. One constant is both the sustained rate and the burst."""
-    assert sec_throttle.RATE <= 8
-    assert sec_throttle.RATE >= 1
+def test_rate_is_one_constant_below_the_ceiling_and_the_burst_is_what_the_ceiling_leaves():
+    """SEC fair-access is 10/s. RATE is the one knob; the burst is LIMIT - RATE, never the rate itself."""
+    assert sec_throttle.LIMIT == 10
+    assert 1 <= sec_throttle.RATE <= 8
+    assert sec_throttle._burst(sec_throttle.RATE) == sec_throttle.LIMIT - sec_throttle.RATE
+    assert sec_throttle._burst(9.5) == 1.0       # never below one token
+
+
+def test_the_first_second_after_idle_never_carries_more_than_the_ceiling():
+    """A burst equal to the rate (8) plus 8 refilled tokens put ~16 requests into the first second, over 10/s."""
+    for rate in (4, 8):
+        state, now, granted = {}, 0.0, []
+        for _ in range(60):
+            wait, state = sec_throttle._take(state, now, float(rate))
+            now += wait
+            granted.append(now)
+        in_first_second = sum(1 for t in granted if t < 1.0)
+        assert in_first_second <= sec_throttle.LIMIT, f"rate {rate}: {in_first_second} grants in the first second"
+        assert (len(granted) - 1) / granted[-1] <= sec_throttle.LIMIT
+
+
+def test_the_shared_path_skips_the_in_process_interval(monkeypatch):
+    """With the shared bucket the old 0.1 s in-process sleep must not run on top of it (it halves the rate)."""
+    monkeypatch.setattr(se.sec_throttle, "pace", lambda: True)
+    called = []
+    monkeypatch.setattr(se, "_throttle_local", lambda: called.append(1))
+    se._throttle()
+    se._throttle()
+    assert called == []
+    monkeypatch.setattr(se.sec_throttle, "pace", lambda: False)
+    se._throttle()
+    assert called == [1]
+
+
+def test_which_pacing_is_active_is_logged_once(monkeypatch, caplog):
+    """A silent fallback hides that the cross-process budget is off; one line per process says which."""
+    caplog.set_level("INFO", logger=sec_throttle.__name__)
+    monkeypatch.setattr(sec_throttle, "_LOGGED", set())
+    monkeypatch.setattr(sec_throttle, "_reserve", lambda now: None)
+    assert sec_throttle.pace() is False
+    assert sec_throttle.pace() is False
+    assert len(caplog.records) == 1 and "paces itself" in caplog.text
+    caplog.clear()
+    monkeypatch.setattr(sec_throttle, "_reserve", lambda now: 0.0)
+    assert sec_throttle.pace() is True
+    assert len(caplog.records) == 1 and "shared bucket" in caplog.text
 
 
 def test_bucket_sits_beside_the_store_and_is_not_a_job_lock(isolate_rawstore):
@@ -109,13 +151,13 @@ def test_bucket_sits_beside_the_store_and_is_not_a_job_lock(isolate_rawstore):
     assert not path.name.endswith(".lock")
 
 
-def test_burst_matches_the_rate_constant(monkeypatch, tmp_path):
-    """The first ``RATE`` takes do not wait; the next one waits one interval. No second knob."""
+def test_burst_is_what_the_ceiling_leaves(monkeypatch, tmp_path):
+    """The first ``LIMIT - RATE`` takes do not wait; the next one waits one interval."""
     monkeypatch.setattr(sec_throttle, "bucket_path", lambda: tmp_path / ".sec_throttle.json")
     monkeypatch.setattr(sec_throttle, "RATE", 4)
     slept = []
     monkeypatch.setattr(sec_throttle.time, "sleep", lambda s: slept.append(s))
-    for _ in range(4):
+    for _ in range(6):
         assert sec_throttle.pace() is True
     assert slept == []
     assert sec_throttle.pace() is True
@@ -150,11 +192,11 @@ def test_two_processes_share_one_budget(tmp_path):
     times = sorted(a + b)
     span = times[-1] - times[0]
     assert span >= 0.2, f"window too short to prove sharing ({span:.3f}s)"
-    # burst (== rate) plus refill over the observed span, plus one boundary grant.
-    limit = rate + rate * span + 2
+    # burst (LIMIT - rate) plus refill over the observed span, plus one boundary grant.
+    limit = sec_throttle._burst(rate) + rate * span + 2
     assert len(times) <= limit, f"{len(times)} grants in {span:.3f}s, shared cap {limit:.1f}"
     # Two independent buckets would each spend their own burst and refill.
-    assert len(times) < 2 * rate + rate * span, "the two processes did not share one budget"
+    assert len(times) < 2 * sec_throttle._burst(rate) + 2 * rate * span, "the two processes did not share one budget"
 
 
 def test_unavailable_bucket_falls_back_and_the_request_still_succeeds(monkeypatch):
@@ -253,7 +295,7 @@ def test_a_corrupt_or_huge_deficit_does_not_stall(monkeypatch, tmp_path):
 def test_uncontended_burst_stays_cheap(monkeypatch, tmp_path):
     """A full burst, no other process: file locking must not add a per-request sleep."""
     monkeypatch.setattr(sec_throttle, "bucket_path", lambda: tmp_path / ".sec_throttle.json")
-    n = sec_throttle.RATE
+    n = int(sec_throttle._burst(sec_throttle.RATE))
     started = time.perf_counter()
     for _ in range(n):
         assert sec_throttle.pace() is True
