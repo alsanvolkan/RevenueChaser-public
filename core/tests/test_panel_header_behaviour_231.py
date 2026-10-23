@@ -9,14 +9,13 @@ the test cannot pass by testing nothing.
 from __future__ import annotations
 
 import json
-import re
 import shutil
 import subprocess
 
 import pytest
 
 from RevenueChaser.core.tests.board_fixtures import BOARDS
-from RevenueChaser.core.tests.board_js import DOM_STUB, inline_scripts
+from RevenueChaser.core.tests.board_js import DOM_STUB, function_source, inline_scripts
 from RevenueChaser.core.tests.open_issues_shell import strip_open_issues_data
 
 SPY = r"""
@@ -96,17 +95,6 @@ def test_every_button_of_a_board_sends_the_panel_header(key, tmp_path, monkeypat
     _assert_all_post_with_the_header(_run(html, tail, tmp_path), urls)
 
 
-def _function_source(script: str, name: str) -> str:
-    """``function name(...) { ... }`` out of a script, by brace matching."""
-    start = re.search(r"function\s+" + re.escape(name) + r"\s*\(", script).start()
-    depth, i = 0, script.index("{", start)
-    while True:
-        depth += {"{": 1, "}": -1}.get(script[i], 0)
-        if depth == 0:
-            return script[start:i + 1]
-        i += 1
-
-
 def test_the_shell_sends_the_header_from_fetch_tab_and_cancel_job(tmp_path):
     """The shell's script drives iframes and tabs, so only the two write functions run."""
     from RevenueChaser.app import dashboard
@@ -116,7 +104,7 @@ def test_the_shell_sends_the_header_from_fetch_tab_and_cancel_job(tmp_path):
     script = next(s for s in inline_scripts(html) if "function fetchTab" in s)
     prelude = ("var ACTIVE = 'module_leaps', ACTIVE_JOBS = [];"
                "function syncOverlay(){} function startPolling(){} function renderStatus(){}\n")
-    funcs = _function_source(script, "fetchTab") + "\n" + _function_source(script, "cancelJob")
+    funcs = function_source(script, "fetchTab") + "\n" + function_source(script, "cancelJob")
     tail = ("fetchTab('/run/uw', 'tool=x'); fetchTab('/run/swing', null); cancelJob('j1');")
     calls = _run("<script>" + prelude + funcs + "</script>", tail, tmp_path)
     _assert_all_post_with_the_header(calls, ["/run/uw", "/run/swing", "/api/job/j1/cancel"])

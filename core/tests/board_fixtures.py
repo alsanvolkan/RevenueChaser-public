@@ -450,6 +450,20 @@ def _logs(tmp_path, monkeypatch):
     return logview.render_page(p)
 
 
+def _runs(tmp_path, monkeypatch):
+    from RevenueChaser.app import runview
+    from RevenueChaser.core import rawstore
+    # A module name is code-chosen, but a run's message, error and params are not: a ticker comes from the
+    # box, an error text from a provider or a traceback. All of them are shown by the run log.
+    rawstore.write_rows("job_runs", [{
+        "run_id": "r1", "job_id": "r1", "module": H("module"), "lane": "short", "trigger": H("trigger"),
+        "source": H("source"), "pid": 7, "registry_name": H("registry_name"),
+        "params": {"ticker": H("ticker")}, "queued_at": 1.0, "started_at": 2.0, "finished_at": 63.0,
+        "status": "error", "error": H("error"), "message": H("message"), "counts": {"rows": 1},
+    }])
+    return runview.render_page(runview.page_payload())
+
+
 
 BOARDS: dict[str, Board] = {
     "module_earnings_radar": Board(_earnings),
@@ -475,4 +489,6 @@ BOARDS: dict[str, Board] = {
     "module_settings": Board(_settings),
     # Not a data board: the dashboard's own log files, whose request lines carry attacker-chosen paths.
     "logs": Board(_logs),
+    # Not a data board: the run log over job_runs, whose messages and params are stored text (#26 PL5-b).
+    "runs": Board(_runs),
 }
