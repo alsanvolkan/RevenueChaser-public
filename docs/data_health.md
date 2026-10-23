@@ -1,602 +1,530 @@
-# Data health — universe refetch + settings board
+# Data health — the store inventory and the Settings / Data health board
 
-Source of truth for **store coverage, refetch, and 10-K freshness**.
-Companions: [`data_architecture.md`](data_architecture.md) (where data lives),
-[`data_retrieval.md`](data_retrieval.md) (Fetch vs Refresh),
-[`dashboard_ui.md`](dashboard_ui.md) (equity filter chrome — **not** this tab).
+This is the **built contract**, not a plan. It describes what the board does today, what each
+number on it means, and what it refuses to claim. Where the board shows words instead of a number,
+the words are written down here and in the code that renders them, never made up at read time.
 
-**Status: plan only.** Do not implement until an explicit go. Do not write the
-live `.store/`. Do not vendor third-party crawlers.
+Companions: [`data_architecture.md`](data_architecture.md) (where every table lives),
+[`data_retrieval.md`](data_retrieval.md) (Fetch versus Refresh across the app),
+[`dashboard_ui.md`](dashboard_ui.md) (the equity filter chrome, which this tab does **not** use).
 
-### Locked answers (this exchange)
+The code this document is the contract for:
 
-- **The 10-K check already exists.** `module_value_chain/sync.py` compares the
-  stored `chain_filings.accession` against SEC `submissions.recent`. The gap is
-  **trigger + visibility**, not a new crawler.
-- **It gets a GUI**, in the **existing dashboard** as a new parent tab
-  **Settings / Data health** — not a separate app, not inside Value Chain.
-  Refresh = store-only inventory; **Fetch** on the corpus row = the sync job.
-- **Header “Refresh Universe” does not sync 10-Ks.** It is Yahoo screener
-  membership + (planned) cap stats only.
-- **Value Chain / Relatedness Fetch stay cache-first** — they fill tickers with
-  no row and do **not** recrawl names that already have a filing. New-filing
-  detection is the Settings action.
-
-### Feasibility review (2026-09-24) — accepted decisions
-
-Code check against this plan found four gaps; the fixes below are **binding**
-and override older wording further down.
-
-1. **No partial-row upsert.** `equity_universe` is `write: "upsert"` and
-   `_apply_write` overwrites **every** non-key column from `r.get(c)`. Writing
-   `{ticker, market_cap, price}` would NULL name/sector/GICS/quote. Phase B
-   uses a dedicated `UPDATE equity_universe SET market_cap=?, price=? WHERE
-   ticker=?` helper (in `rawstore`, chunked, one transaction per chunk).
-2. **Phase A carries the previous cap forward** (accepted). When a screener
-   quote has no `marketCap`, `_save_universe` keeps the stored
-   `market_cap` for that ticker instead of writing NULL. Otherwise every
-   Refresh Universe re-wipes MU and Phase B re-does ~1.7k lookups.
-3. **No every-ticker `fast_info` pass in v1** (accepted). Phase B only fills
-   rows whose `market_cap IS NULL` after Phase A. `fast_info.market_cap` in
-   yfinance 1.5.2 costs a shares-history + 1y-price request per ticker, and
-   silently falls back to `Ticker.info` when shares are missing — the backfill
-   must read `fast_info.shares` / `last_price` itself and skip (leave NULL)
-   when shares is None, so `.info` is never triggered.
-4. **Provenance: second key, not an overwrite.** `equity_universe_provenance`
-   is `write: "replace"` keyed on `key`; membership stays `__meta__`, the
-   stats pass writes `__stats__`. No schema bump. The table being empty today
-   means the live universe arrived via migration, not a fetch — the next real
-   Phase A run populates `__meta__` as the code already does.
-5. **Inventory column names are pinned to `MANIFEST` (verified 2026-09-25).** The settings
-   inventory must read real columns, because a wrong name degrades silently to `—` and seeded
-   tests still pass. Authoritative list: `equity_universe` (`ticker, market_cap, sector, price,
-   name, …` — **no date column**), `equity_universe_provenance` (`key, generated_at,
-   refreshed_by`), `sec_company_sic` (`…, fetched_at`), `chain_filings` (`…, filed, …`) /
-   `edgar_documents` (`…, filed, …`), `edgar_financials` (`ticker, annual, quarterly, meta` —
-   **no date column; do not parse the blobs**), `swing_ohlc` (`…, ts, …` — the column is `ts`,
-   **not** `date`), `index_constituents` (`slug, ticker`), `sec13f_totals` (`ticker, entry`) +
-   `sec13f_holdings` (`accession, cusip, cik, shares, value`) with the latest period from
-   `sec13f_submissions.period`, `oipd_meta.as_of` (**not** `oipd_chain`, which is per-contract),
-   `relatedness_profiles.fetched_at`. Read via `rawstore.query(sql, params)` /
-   `rawstore.get_all(name)`.
-
-Other findings: `sync_filings` already holds `job_lock("edgar_sync")` + the
-SEC throttle; its `{"locked": True}` / 0-updated returns must become
-`jobs.JobMessage` in the runner. A full sync is ~3.6k SEC GETs (~6+ min) on
-the single worker. No iframe→parent `postMessage` bridge exists — settings-row
-Fetch buttons must call `/run/*` + poll `/api/job/<id>` from the iframe.
-`_STORE_REFRESHABLE` derives from `_MODEL_ONLY_RENDERERS`, so the board needs
-a renderer entry there too.
+| File | What it owns |
+|---|---|
+| `core/datasets.py` | the dataset registry: one record per dataset, and the claim rule over `rawstore.MANIFEST` |
+| `core/datahealth.py` | the `Health` record: typed completeness, with every sentence derived from the counts |
+| `module_settings/inventory.py` | the store read: row counts, newest dates, holes, freshness states, the cards' facts |
+| `module_settings/report.py` | the page: summary tiles, filters, the table, the detail rows, the cards |
+| `module_settings/boards.py` | the Board inputs cards, built from each board's own last rendered payload |
 
 ---
 
-## Why this exists
+## 1. The store inventory contract
 
-Two different holes look the same in the UI (“ticker missing / filing old”):
+### 1.1 One registry, one owner per table
 
-1. **Stats never landed.** MU is on `equity_universe` (Micron Technology, Inc.,
-   IT, last screener price $925.57) but `market_cap` is NULL because Yahoo’s
-   **screener quote had no `marketCap` key**. Boards that gate on
-   `classification_universe()` / `$300M` then drop it. Live `yfinance`
-   `Ticker.fast_info.market_cap` for MU is ~$1.22T — Yahoo knows the cap; the
-   writer never asked that endpoint.
-2. **Fetch is cache-first, not “is there something newer?”.** Value Chain /
-   Relatedness `fetch_corpus` skips any ticker that already has a
-   `chain_filings` row. A later 10-K never arrives unless
-   `python -m RevenueChaser.module_value_chain --sync-filings` runs. That CLI
-   exists (`module_value_chain/sync.py`); **no dashboard job calls it**.
-   `docs/classification_design.md` P4c: “Sync trigger mechanism still deferred.”
+`core/datasets.py` holds `REGISTRY`, a tuple of `DatasetSpec` records. One record is one dataset:
+its key, the words shown for it, the store tables it owns, the store file it lives in, its source,
+its writer, and the rule by which it may claim freshness.
 
-Chrome “Last run” / `core/provenance.py` only shows the **newest date in the
-table**. It does not show holes (null cap, missing filing, stale accession).
+The claim rule over `core.rawstore.MANIFEST`:
 
-Live store snapshot (2026-09-24, read-only):
+- a change-history table (`MANIFEST` `changes_of`) is listed on the dataset that owns its base table;
+- every `history.duckdb` table — `result_runs` and each result-history mirror, eighteen in all — is
+  listed on `result_history`. `earnings_history` is not one of them: it is a raw change-history table;
+- every other `MANIFEST` table is listed on exactly one dataset;
+- `UNCLAIMED_ALLOWLIST` is empty, so a new `MANIFEST` table fails `core/tests/test_datasets.py`
+  until a dataset owns it.
 
-| Dataset | Count | Hole |
-|---|---|---|
-| `equity_universe` | 7,403 | **1,710** null `market_cap`; 3,634 ≥ $300M |
-| `equity_universe_provenance` | **empty** | last membership write left no `generated_at` |
-| `chain_filings` | 3,278 (2,837 10-K + 441 20-F) | newest filed 2026-09-18 |
-| MU 10-K | accession `0000723125-25-000028`, filed 2025-10-03, quality ok | **matches** SEC `submissions.recent` (no newer 10-K yet; FY ends late Aug) |
-| `ticker_payload_cache` | 7,461 | not used as the universe cap source |
-| `swing_info` | 500 | MU absent |
-| `swing_ohlc` | 4,044 tickers | — |
-| Asymmetric payload cache day | 2026-09-11 | universe stats older than the MU price spike |
+A `DatasetSpec` validates itself on construction. A writer of `None` needs a non-empty
+`writer_note` saying who writes the table instead. A freshness pair must name one of the dataset's
+own tables. A freshness of `from_run_log` must carry the caveat that names issues #82 and #83,
+because the run log is not yet trustworthy. `core/datasets.py` reads no store and opens no network.
 
-Refreshing Universe **as it is written today** can still leave MU uncapped:
-`fetch_universe_stats` copies only `q.get("marketCap")` from `yf.screen`.
+### 1.2 What freshness a dataset may claim
 
----
+A table the reader ages row by row carries its own timestamp, and the registry names that
+`(table, column)` pair. A table the board only reports on takes its freshness from the run that
+wrote it. The registry has four answers and no fifth:
 
-## 1. Equity-universe refetch (all tickers)
+| Registry value | Meaning |
+|---|---|
+| a `(table, column)` pair, or several | read the newest value of that column; the newest of several pairs wins |
+| `from_run_log` | a worked-out table: its freshness is the newest finished run of its writer |
+| `no_claim` | the store's own bookkeeping, or a retired table: no freshness is claimed at all |
+| `None` | this dataset carries no date of its own; the date lives in a related table |
 
-Writer: `core.universe_fetch.fetch_universe_stats` (moved out of `module_asymmetric_growth.engine` in #146;
-the engine re-exports the name).
-Header **Refresh Universe** stays `POST /run/universe`
-(`runners.run_universe_refresh` → `refresh=True` then the three scanners).
+`_BOOKKEEPING` is the five tables that are store bookkeeping rather than data a board ages:
+`store_meta`, `migration_manifest`, `run_registry`, `job_runs`, `store_schema`. `_RETIRED` is the
+four tables the `MANIFEST` flags `retired`.
 
-Split **membership** from **stats**. Membership comes from the SEC exchange file (#264); the stats are
-Yahoo's.
+### 1.3 Typed completeness: the `Health` record
 
-### Phase A — membership (the SEC list, Yahoo market data joined on)
+`core/datahealth.py` holds `Health`, a frozen record of `covered`, `expected`, `newest`,
+`expected_as_of`, an optional `source_share` and the problems the producing module recorded. It is
+a pure module: no store, no network. A free-text note cannot be checked, so `Health` carries the
+counts and every sentence shown is derived from them.
 
-- **The member list** is a fresh `sec.exchange_map()` pull (`company_tickers_exchange.json`, one request per
-  pull to www.sec.gov through the shared SEC client; the User-Agent comes from `RC_SEC_USER_AGENT`). It never
-  reads the identity cache. The rows whose exchange is `Nasdaq`, `NYSE` or `CBOE` are the members; OTC rows and
-  rows with no exchange are out (2026-10-03: 7,719 of 10,434 rows).
-- **Market data** is the Yahoo screener as before: `yf.screen` US `EQUITY` / USD / `US_EXCHANGES`,
-  `MC_CHUNKS`, page 250, dedup by ticker. Its quotes join the list by ticker (both spellings meet on
-  `norm_ticker`; Yahoo says `BRK-B`). A screener row that is not on the list is dropped.
-- **A listed name with no quote** is saved with NULL `market_cap`, `price` and `quote` and the SEC name.
-  The stored cap and price still carry forward, and Phase B fills the NULL caps.
-- **Insert order:** the screener rows first, in pull order, then the SEC-only rows. Swing and Fundamentals
-  shortlist the first 500 rows in store order (no `ORDER BY`), so priced names keep that shortlist.
-- **Guards:** a failed SEC map or one listing fewer than `MIN_FULL_UNIVERSE` (3,000) Nasdaq / NYSE / CBOE rows
-  (`stats["sec_error"]`) keeps the stored universe and writes nothing. Tested.
-- **Full vs partial (D6, #146).** The Yahoo side is *full* only when every `MC_CHUNKS` slice ran to the total the
-  screener reported **and** it returned a quote for at least `FULL_PULL_MIN_SHARE` (90%) of the stored names that
-  carry a quote (the stored `SEC only` rows never had one, so they are not in the denominator); then `replace_all`
-  as before. Anything else (a dead slice, an empty page, `max_pages` exhausted, a missing total, or a short pull) is
-  *partial*: it **upserts** the quotes it got and the listed names not stored yet (cap / price / sector carried
-  forward), re-applies the identity master, writes the `__fetch__` provenance row (`refreshed_by` = `partial`; a
-  full pull writes `full`) and skips Phase B. A stored name the screener missed keeps its row, quote included. It
-  never deletes. `stats` carries `partial`, `chunks_complete` / `chunks_total`, `stored_before`, `stored_quoted`,
-  `fetched`, `not_seen`. The boards print "partial fetch" in the universe line. This replaced the absolute
-  `MIN_FULL_UNIVERSE` test on the screener count, which let a 3,000-name pull replace a 7,366-name table.
-- **One writer at a time.** `core.universe_fetch.universe_write_lock()` (a re-entrant `job_lock("universe")`) covers
-  the SEC pull, fetch, write, identity apply, provenance and Phase B. A second run returns the stored universe with
-  `stats["locked"]` = the holder's pid, calls no network and writes nothing. The universe refresh job holds the same
-  lock for its whole run (#244), plus a `universe_run` marker, so the single-board Fetches are refused while it runs
-  (not while Phase B runs). A single-board Fetch holds a `board_fetch_<board>` marker, so a universe run is refused
-  while one runs (#356). A lock left by a crashed process is broken even when its PID was reused (#355).
-- Sector/industry still omitted by the screener; sector and industry come from the identity master
-  (`core/identity/apply.py`, R3 #86, #265, #272: the 11 Morningstar sector names, from the S&P 1500 list for its own
-  names, then UW, Yahoo, the explicit SIC table and the type rule; industry is UW's text), never from a SIC backfill
-  into the universe.
+The rules that keep an unmeasurable dataset from looking like an empty one:
 
-### Phase B — stats backfill (the MU fix)
+- `expected is None` and `expected == 0` both give a coverage of `None`, which renders as **n/a**
+  and never as 0 per cent. A percentage of nothing is not a number.
+- `covered` of `None` also gives `None`.
+- a coverage above 1 is **not** clamped. `consistency_problems()` names `covered N exceeds expected M`
+  with both counts, and names a `newest` date later than `expected_as_of` with both dates.
+- `coverage_text` reads `n/a`, or `65.0% (4,999 of 7,689)`. `freshness_text` reads `unknown` when
+  there is no newest date, else the whole calendar days from it to `expected_as_of`, or to today when
+  no as-of was given. An as-of that cannot be read does **not** fall back to today; it reads `unknown`.
 
-After a successful membership write (or as a standalone job when membership
-is already full):
+Seven datasets already have a summary in their own module. Their `coverage` is a zero-argument
+callable that imports that module and returns its `Health`, called only when a reader asks for the
+row, so importing the registry opens no store. `memo_scope()` makes the second ask within one page
+read free, without a cache that outlives the read.
 
-- Universe of work = **every** `equity_universe.ticker` (not only new names).
-- For each ticker with `market_cap IS NULL` **or** when the job is
-  `refresh=True` for stats: fill `market_cap` and `price` from
-  `yf.Ticker(t).fast_info` (`market_cap`, `last_price`).
-- **Do not** call `Ticker.info` for ~7k names (heavy, rate-limited).
-- Batch / throttle; persist in chunks (DuckDB writer lock).
-- Null after backfill stays null (warrant, OTC leftover, Yahoo gap) — do not
-  invent a cap.
-- Merge into existing rows (`write_rows` / UPDATE), **not** a second
-  `replace_all` that could drop names Phase A just kept.
+### 1.4 The read
 
-**Pacing + resumability (live 2026-09-24 run).** At 4 workers / 0.05s the
-backfill tripped `YFRateLimitError` after ~100 tickers and Yahoo then refused
-every call (`{requested: 1710, filled: 107, skipped: 617, failed: 986}`). Phase
-B now pauses `_CAP_BACKFILL_SLEEP` (0.3s) before each ticker, runs
-`_CAP_BACKFILL_WORKERS` (2), retries `YFRateLimitError` with
-`_CAP_BACKFILL_BACKOFF` (5s, 20s) up to `_CAP_BACKFILL_ATTEMPTS` (3), and after
-`_RATE_LIMIT_STREAK_STOP` (5) consecutive exhausted tickers **stops the run
-early** — the rest stay NULL and are deferred (`rate_limited` is then True in
-the result). Because the work list is null-only, "stop early" costs nothing:
-re-running later resumes exactly where it left off. A full ~1.7k pass is
-~10-20 minutes; a hard limit ends it politely instead of marking the tail
-`failed`.
+`module_settings.inventory.collect(now)` is the whole payload. It opens each store file once
+(`rawstore.session()`), opens one `memo_scope()`, builds every row, and records how long it took in
+`payload["timing"]["collect_seconds"]`. It makes **zero network calls**.
 
-Optional later (not v1): `cap_source TEXT` (`screener` | `fast_info`) as a
-typed column. That is a schema bump → manual `.store/` checkpoint. v1 can
-land without it.
+Honesty rules the read keeps:
 
-### Provenance
+- a missing table, an empty table and a column that does not exist each give `None` or the dash,
+  never a guessed number;
+- a query that **fails** is caught, recorded on the row's own table, and reported as its own state.
+  A broken read is never rendered like a table that holds no rows;
+- `unclaimed_tables()` is the backstop for a `MANIFEST` table no dataset claims. With nothing
+  unclaimed it asks the store nothing at all;
+- rows are sorted worst coverage first (`sort_key`); a row whose coverage has no fraction — `n/a`,
+  `unknown`, `error` — follows the measured ones, and ties break by label.
 
-Write `equity_universe_provenance` on every successful membership **and**
-stats pass (`generated_at`, `refreshed_by`). The table is empty today; the
-settings board should show that as a hole, not “unknown”.
-
-### What Refresh Universe will mean after this
-
-1. Phase A: the SEC member list with the Yahoo screener's market data joined on, carrying forward a
-   stored cap when the quote omits `marketCap`.
-2. Phase B `fast_info` for rows still NULL. (Every-ticker re-fetch: not v1.)
-3. Existing scanner chain (Asymmetric / Swing / Fundamentals) unchanged.
-
-A store-only **Refresh Tab** on Implied Probability still does **zero**
-Yahoo; it only re-reads `classification_universe()`. MU appears there once
-Phase B has written a cap ≥ $300M.
-
-### Tests (TDD, after go)
-
-- Screener quote **without** `marketCap` + stub `fast_info.market_cap` →
-  column filled; MU-class ticker survives `classification_universe()`.
-- A failed SEC map or one listing fewer than `MIN_FULL_UNIVERSE` rows does not shrink cache.
-- Partial screener (a dead chunk, or under 90% of the stored quoted names) upserts, keeps the rest and flags `__fetch__`.
-- The SEC list decides membership (OTC and no-exchange rows out, a screener-only row dropped, an SEC-only row
-  saved with a NULL cap, price and quote); the insert order is screener rows then SEC-only rows. The SEC map is
-  faked in tests (no network).
-- Stats backfill does not delete tickers absent from this screener page.
-- `no_fetch=True` / Refresh path never calls `yf.screen` or `Ticker`.
-- Fake at the Python boundary (`yf.screen`, `yf.Ticker`); yfinance has no
-  redirectable base URL ([`data_retrieval.md`](data_retrieval.md)).
+The payload keys: `rows`, `tickers`, `boards`, `identity`, `automations`, `discord`, `backups`,
+`other_tables`, `errors`, `generated_at`, `provider_health`, `timing`.
 
 ---
 
-## 2. Settings / Data health board
+## 2. The Settings / Data health board
 
-A **new parent tab**, not an equity-universe filter board.
+The tab is `/view/module_settings`, labelled **Settings / Data health**. Its Refresh job is
+`settings_refresh` (`app/runners.py` `run_settings`). It is an ops inventory of the local `.store/`,
+not an equity board.
 
 | | |
 |---|---|
-| Filter panel / Theme cascade | **no** (the drill below has one ticker combobox: the filter kit's `RCCombobox`, #383 C1b) |
-| `help_html` | **yes** — what Fetch vs Refresh does on **this** tab |
-| Refresh | store-only inventory (counts, nulls, last dates, holes) — **zero network** |
-| Fetch | **per dataset**, one existing job (or the new stats-backfill / `--sync-filings` job) |
+| Equity filter panel, Theme cascade | **no** — this tab has its own filters over the inventory table (see 2.2) |
+| Ticker combobox | **one**, the filter kit's `RCCombobox`, which opens the stored-data drill |
+| Help block | yes, and it states Fetch versus Refresh for this tab |
+| Refresh | re-reads `.store/` with zero network: instant and always safe |
+| Fetch | per dataset, one existing asynchronous job; it hits a provider and can take minutes |
 
-Not a Linear clone. Same tokens (`--bg #05111F`, `--accent #0EA5E9`). Compact
-table, one row per dataset.
+Same tokens as the rest of the app (`--bg #05111F`, `--accent #0EA5E9`). There is deliberately no
+"fetch everything" button: the locks, the provider quotas and the hours make it a trap.
 
-### Rows (v1)
+### 2.1 The summary tiles
 
-Each row: dataset name, store table(s), last data date (`provenance` /
-`generated_at` / `max(filed)` / `max(ts)`), row count, **hole count**,
-Fetch action, notes.
+Five tiles above the table, counted from the rows already collected, so no tile costs a second
+query:
 
-| Dataset | Store | Fetch (network) | Hole to show |
-|---|---|---|---|
-| Equity universe | `equity_universe` + provenance | `/run/universe` (Phase A+B) | null `market_cap`; empty provenance |
-| Identity spine | `security_master`, `identity_conflicts`, `identity_source_cache`, `identity_runs` | `/run/identity` (**Fetch identity**) | `security_master` rows with no sector source (`sector_source` none) at market cap >= $300M |
-| 10-K / 20-F corpus | `chain_filings`, `edgar_documents`, `edgar_docs/` | **`sync_filings`** (new job) | missing row vs classification universe; stored accession ≠ SEC latest |
-| Companyfacts | `edgar_financials` / `edgar_facts` | existing EDGAR facts path | tickers with no facts |
-| Legacy OHLC cache (SPY fallback) | `swing_ohlc` | Co-movement / Swing Fetch | names in universe with no bars |
-| Index constituents | `index_constituents` | existing UW path | — |
-| 13F | `sec13f_*`, `cusip_ticker`, `identity_cusip` | `/run/module_sec_13f` (Fetch) · `/run/module_sec_13f-rebuild` (store only) · `/run/module_sec_13f-map` (OpenFIGI CUSIP map, #207) | latest period vs expected quarter |
-| OIPD chain | `oipd_chain` / `oipd_meta` | OIPD Fetch | — |
-| Relatedness profiles | derived from corpus | Relatedness Fetch (LLM; out of v1 actions) | profiles vs `chain_filings` |
+| Tile | What it counts |
+|---|---|
+| Datasets | every dataset in the table below |
+| Needs attention | datasets whose coverage is below 70 per cent, or whose query failed |
+| Empty | datasets that store nothing yet |
+| No time column | datasets whose last data date is a dash |
+| Refresh took | the seconds this page spent reading the store, or "not measured" |
 
-v1 actions on the board: **Universe (A+B)**, **10-K sync**, **Fetch identity**.
-Do not add a “fetch everything” button (locks, quotas, hours).
+### 2.2 The filter bar
 
-### Per-ticker drill (v1, one combobox on this tab only)
+The board **does** have a filter panel of its own. Every axis is a fact the row already carries, so
+no filter can change what a number means:
 
-Type MU → show: name, cap (or **null**), price, GICS, last 10-K
-form/filed/accession/quality vs SEC `submissions.recent` **only after** a
-Fetch of that ticker’s submissions (or from a cached submissions row if we
-add one). Refresh of the drill must not hit SEC; show stored corpus only.
-Price coverage in the drill is D01: the `price_bars_daily` bar count and
-newest session. `swing_ohlc` stays on the drill as Legacy OHLC cache (SPY
-fallback); it is not the price of record.
+- a find box over the dataset names and the store table names;
+- **Store file** chips, one per store file present: `raw`, `edgar`, `prices`, `history`, `discord`;
+- **Source** chips, one per source present, spelled out in words;
+- **State** chips: *needs attention* (coverage under 70 per cent, or a failed query), *no time column*
+  (no last data date, so no freshness can be read from this dataset), *no denominator* (the coverage has
+  no definable population, which is **not** nought per cent).
 
-### Fetch vs Refresh (this tab)
+No filter is on when the page loads. The count line always says how many of the total are shown, and
+**Clear filters** resets them, so a filter can never quietly hide a broken row and make the board
+look fixed. A chip group with no matching row renders nothing rather than a dead chip.
 
-Same contract as every store-backed board:
+### 2.3 The table
 
-- **Refresh** = recompute the inventory HTML from `.store/` with zero
-  network. Register in `_STORE_REFRESHABLE` and `STORE_BACKED`.
-- **Fetch** = enqueue the dataset job; poll `/api/job/<id>`. Empty/noop
-  sync still writes the artifact and raises `jobs.JobMessage` (“0 updated,
-  3278 current”).
+Seven columns: **Dataset**, **Source**, **Coverage**, **Freshness**, **Last data date**, **Rows**,
+**Holes**. The Source heading carries a **Group** toggle that groups the rows by source and restores
+the rendered order when pressed again.
 
-### Wiring `--sync-filings`
+- **Dataset** is the dataset's words, as a button that opens its detail row (reachable by keyboard),
+  then its store-file pill, then its gap tag, then a warning mark when one of its tables failed a query.
+  One line under the table names every store-file pill, so a colour is explained once.
+- **Source** is the provider the registry names, written out: Unusual Whales, Financial Modeling Prep,
+  Yahoo Finance, SEC EDGAR filings, FINRA and the Commodity Futures Trading Commission, Cboe (Chicago
+  Board Options Exchange), FRED (Federal Reserve Economic Data), OpenFIGI, worked out by us from other
+  datasets, entered by hand, the store's own bookkeeping, or "more than one provider, or not known".
+  The machine value stays in the row's data attribute for the filters; only the visible text is words.
+- **Coverage** is a fill bar and the counts: green at 95 per cent and above, amber from 70, red below.
+  The drawn width is clamped to 100 per cent while the label keeps the real counts, so a coverage above
+  100 per cent draws a full bar and still says so. A record with no fraction draws **no bar** and reads
+  muted — never nought per cent. A failed coverage query keeps a red **error** label.
+- **Freshness** is what freshness the registry lets this dataset claim, in words (2.4).
+- **Last data date** is the newest date this dataset's own table carries, or the words
+  *no date of its own*. The reason is the Freshness cell's business, one column over.
+- **Rows** and **Holes** are counts, with the hole's own label beside it ("null market cap",
+  "no filing, excluding recorded misses", and so on). A hole count of `None` is a dash: unknown, not nought.
 
-Today: CLI only. Value Chain dashboard Fetch calls `fetch_corpus` (skip if
-row exists) — **not** `sync_filings`.
+A row whose key the registry does not know keeps everything the read gave it and shows a dash in
+Source, Coverage and Freshness. Nothing is invented for it.
 
-Plan:
+### 2.4 The freshness answers, in words
 
-- `POST /run/edgar-sync` (name TBD) → `sync.sync_filings()`.
-- `requires_uw=False` (SEC only).
-- Shares `job_lock.acquire("edgar_sync")` + `sec_edgar` throttle (cross-process 8 req/s bucket, burst 2, in-process 10/s fallback; #26 PL6-b).
-- Idempotent: same accession → `current`, no download (already tested in
-  `module_value_chain/tests/test_sync.py`).
-- After updates, `build_edges()` as today; Relatedness Refresh then reads
-  new Item 1 without a new LLM run until the user Fetches Relatedness.
+The Freshness column printed a bare dash for four different situations, so "no time column", "the
+query failed" and "this table holds no rows" looked identical. Each now carries its own words:
 
-Do **not** change Value Chain Fetch to always recrawl. Cache-first stays
-for first-time corpus fill; **new-filing** is the sync job.
+| State | What the cell reads |
+|---|---|
+| a date | the newest date, for example `2026-10-20` |
+| no time column | `no time column - see the provenance rows` |
+| taken from the run log | `taken from the run log`, and the date when the run log has one |
+| retired | `retired - no freshness claim made` |
+| store bookkeeping | `store bookkeeping - no freshness claim` |
+| empty | `no date stored yet` |
+| query failed | `query failed - this is not an empty dataset`, in colour |
 
-**Re-slice apply (#185).** `python -m RevenueChaser.module_value_chain --reslice-apply` re-slices every
-stored `chain_filings` row from its stored document (no network), writes it through the slice keep guard,
-rebuilds `chain_mentions` and records a result history run. It holds the `edgar_sync` and `relatedness` locks
-(the 13:00 sync and the 12:30 Relatedness run); a dashboard Value Chain Fetch holds no lock, so check
-`/api/jobs` and `job_lock.holders()` before a live run. Look first with `--reslice-dry-run`. Rollback: stop
-the dashboard, restore edgar and history from the backups taken just before, before the next 13:00 sync.
+The run log is read at most once per page, and only when a row on that page dates itself by it: one
+grouped query over `job_runs` by `registry_name`, which is the same name a `from_run_log` dataset
+carries as its writer. An unreadable run log is recorded and reads as no run; no date is invented.
+A dataset whose `MANIFEST` tables are flagged retired reads as retired rather than as stale, read
+off that flag, so nothing has to be listed twice.
 
-### Board inputs and the funnel
+### 2.5 The detail row: what is missing, and how it improves
 
-The Board inputs card (Co-movement today) shows the funnel the board itself emitted
-(`core/funnel.py`), so the card and the board cannot disagree. Step kinds: `start`,
-`drop` (by design, or fixable with a Fetch button), `note`, `result`, with
-`start - sum(drops) == result`. A **`note`** is shown but never counted: it says
-something about names still in the funnel, sits between the start and the result, and
-may carry a `link` to where its cause is shown. The board and the card render a note
-with a ⚠ marker, a positive count and that link, never a button: long store-writing
-jobs start only from Settings.
+Each dataset's detail row is closed until its name is pressed. It states, in this order: **What is
+missing**, **How it improves**, **Store table(s)**, **Writer** (with the note a dataset without a
+single writer carries), **Action** (its Fetch button, when it has one), the registry's **Freshness
+note** when there is one, **Notes**, and any query failure on this row.
 
-Identity R4 (#87): the classification universe (`core/universe.py`) drops the
-identity-master types `identity.types.EXCLUDED_TYPES` at every cap. Co-movement states
-it as three by-design drops after *No market cap* (*Funds / ETFs*, *SPACs*, *Preferred /
-warrants / units*, from `universe.TYPE_GROUPS`), then, when kept names have no
-established type (no `security_master` row, NULL, `unknown`, `other`), the note
-*Unknown security type — kept* linking to Settings → Identity. A funnel persisted before
-R4 has no type rows and no note. The counts come from `universe_counts()`:
-`scanned_total = below_floor + no_market_cap + floor_total` and
-`floor_total = funds_etfs + spacs + other_securities + classification_total`. The types
-are read with a separate query, never a JOIN: `rawstore.query` answers `[]` for a missing
-table, so a JOIN would silently empty the universe.
+The number is measured and the interpretation is written, and neither is ever the other. No written
+sentence states a count, and a dataset with no written interpretation draws no tag rather than a
+"Complete" it cannot prove.
 
-### Automations panel (#130)
+**What is missing** comes from the coverage record alone: `nothing, by design` for a retired
+dataset; `the coverage query failed`; `the coverage could not be read` when the summary returned no
+`Health`; `no population is defined` when there is no denominator; otherwise `N of M names have no
+row`, with N at nought when coverage is full.
 
-`core/automations.py` is the one registry of the scheduled tasks RevenueChaser owns, and the one installer.
-Rows: `RC-Store-Backup` (daily 04:00, `scripts.backup_store --keep 5`), `RC-Relatedness-OffPeak` (12:30,
-`--run --cap 8`), `RC-ValueChain-Sync` (13:00, `--sync-filings`), `RC-Daily-Bars` (22:35,
-`scripts.daily_bars --nightly --sec-files`), `RC-Screeners-Daily` (weekdays 23:00, after `RC-Daily-Bars`, `app.universe_cli`),
-`RC-Forecast-Outcomes` (daily 23:45, after `RC-Daily-Bars`, `scripts.forecast_outcomes --nightly`; #380 S0),
-`RC-Forecast-Baselines` (daily 23:50, after `RC-Forecast-Outcomes`, `scripts.forecast_baselines --nightly`; #25 HR-1),
-`RC-Index-Lists` (Saturday 10:00, `scripts.index_lists --weekly`) and `RC-Earnings-Inputs` (Tuesday to Saturday
-01:30, after `RC-Daily-Bars`, `scripts.nightly_inputs earnings`; E0 #372). Each entry carries its schedule, the
-tables it writes, whether it is off-peak gated, a `log_path` under `.cache/logs/` and its Windows task
-settings (runs on battery, wakes the PC for the backup, catches up a missed run).
+**How it improves** is the dataset's gap kind in words plus its next step. The six kinds, and the
+tag each draws beside the dataset name:
 
-- **Nothing installs itself.** `default_install` only marks a row. Install, Enable, Disable, Remove and Run now
-  are buttons on the panel (Install, Remove and Run now ask for confirmation); the two `.ps1` files are thin
-  callers of the same installer. Nothing installs on import, dashboard start, Refresh, a GET or in a test.
-- **Live state is polled, not baked in.** The board is a cached artifact, so the panel reads
-  `GET /api/automations` (PowerShell `ScheduledTasks`, exact registry names only) on load, after an action and
-  while a row runs. `POST /api/automations/<name>/<action>` takes a registry name and no other argument, and the header
-  `X-RC-Panel: automations` (exactly; any other value is a 403).
-  Refresh of this board never calls the scheduler.
-- **Row state.** Not installed / disabled / enabled / running, last result mapped (0 ok; 0x41303 "not run yet"
-  is neutral; 0x41301 is running; anything else is red), plus next run, missed runs and the age of the last
-  success (read from the task's log).
-- **Exit codes.** A task's CLI exits non-zero when it locked out or failed (Value Chain, Relatedness lock skip).
-  Only the Relatedness off-peak deferral exits 0, and it logs `pending` / `next_off_peak`. Exit 3 from a nightly
-  writer (Task Scheduler shows it as a red `failed (0x3)`) means another run of that writer held its lock: nothing
-  was written, and the next run picks it up.
-- **Nightly chain (#129).** An entry with `after=<registry name>` is a chained step: still its own task with its own
-  daily time, which is its not-before time, and its schedule reads "daily 23:00 (local), after RC-Daily-Bars". When it
-  starts (also on a catch-up or Run now), `run_task` reads the predecessor's log and waits, up to
-  `chain_wait_minutes` (default 120), for the predecessor's run of tonight: the newest run that started at or after
-  the predecessor's last scheduled time. Exit 0 releases the step. Any other exit, a step blocked in turn, or no such
-  run in time blocks it: its command does not run, the log says `chain: blocked: <why>` and the task exits 5
-  (`CHAIN_BLOCKED`), so the row is red with the reason. A step names an earlier registry entry (no cycles), is due 0
-  to under 12 h after its predecessor on the clock (a step due before it would be released by last night's run),
-  whose predecessor runs daily (the predecessor's time is read as a daily one, so a step after a weekly task would be
-  blocked on every other day), and waits a positive time shorter than its time limit (`check_chain`, run on import).
-  Four rows are chained. `RC-Forecast-Outcomes` (#380 S0) waits for `RC-Daily-Bars` every day, not before 23:45, and
-  recomputes the outcome rows of the frozen picks from the stored bars (no calls; it writes `forecast_outcomes` only).
-  `RC-Forecast-Baselines` (#25 HR-1) waits for that outcomes run, not before 23:50 — the same night's other writer of
-  `raw.duckdb` — and recomputes the baselines still open from the stored bars and the universe change history (no
-  calls; it writes `forecast_baselines` only).
-  S2 `RC-Screeners-Daily` (#129) waits for S1 `RC-Daily-Bars`, Monday to Friday, not before
-  23:00, and runs the universe refresh CLI (AG with the universe pull, Swing, Fundamentals, the #128 freeze; exit 3
-  when another universe run holds the lock). It wakes the PC, runs on battery and catches up a missed run; its 4 h
-  limit counts from the task's start, wait included. It is not installed by default. S3 is `RC-Earnings-Inputs` (below);
-  S4 (market) adds its own when its job exists.
-- **Nightly inputs steps (C25a/K11, #383).** An entry whose command is
-  `scripts.nightly_inputs <step> --max-uw-calls N --max-fred-calls N --max-yf-calls N` runs the sweeps of one
-  inputs step (`core/nightly_inputs.py`, `STEPS`). `check_inputs_steps` (run on import) refuses such an entry unless it
-  runs after `RC-Daily-Bars`, names a known step, lists its tables and states all three caps. The run resolves one
-  New York session; a run inside the US session runs nothing and exits 0. Each sweep runs on its own: one that
-  raises is `failed`, the others still run, and the task exits 1 so the row is red. A cap is per night and per
-  provider, shared by every sweep: a request past it is refused before it is sent (one log line), and a second run
-  of the same session starts from what the first spent (`.cache/nightly_inputs/<step>_calls.json`). A UW call is one
-  `get_result` (its retries are the same call). Writes are first-write-wins appends (`record_first`).
-  The first step is `RC-Earnings-Inputs` (E0, #372; `module_earnings_radar/inputs/`), Tuesday to Saturday 01:30, so
-  each run keys to the US session that just closed. Its sweeps, in order: D26 earnings calendar (UW, ~40 calls), D37
-  economic calendar (1 UW call), D27 eight FRED series (8 FRED calls), D10 short interest (UW screener, then
-  interest-float per miss, then yfinance for calendar tickers; the calendar tickers before the 13F tickers) and D14
-  analyst estimates (one yfinance read per calendar ticker, nearest earnings first; five failures in a row stop it).
-  Caps: 200 UW, 10 FRED, 2000 yfinance a night, no SEC call. Not installed by default; the PC installs it and makes
-  the first run by hand (a run between 15:30 and 22:30 Amsterdam is inside the US session and writes nothing).
-- **SEC exchange and fund files (#301 F0, D21 + D8).** `RC-Daily-Bars` runs `--sec-files`: before the bars, on a
-  New York weekday, `core/sec_files.py` asks `company_tickers_exchange.json` and `company_tickers_mf.json` once each,
-  with no retry (a marker per file and session under `.cache/sec_files/`, so a rerun the same night asks
-  nothing: at most 2 SEC requests a night). It appends their changes to `sec_exchange_file` and `sec_mf_file`
-  (change history, rule A); a file under its floor (3,000 Nasdaq / NYSE / CBOE rows, 10,000 fund classes) writes
-  nothing. Its result is the `sec_files` key of the daily-bars JSON line and a `SEC files:` stderr line; a failure is
-  never a different exit code, so the steps chained on `RC-Daily-Bars` still run. No Data Health row reads the two
-  tables yet.
-- **Run log.** A task that writes tables leaves one `job_runs` row per run (`trigger` `scheduled`,
-  `registry_name`), `running` while its command runs and `done` or `error` after it (a chain-blocked step:
-  `chain blocked: <why>`); what the command writes carries that row's `run_id` (#129 A1, see
-  `docs/data_architecture.md`). The backup records none. The **Runs** tab (`/view/runs`) is the reader of the
-  table, dashboard runs and scheduled ones together.
-- **Tests** use `FakeScheduler`; the e2e harness installs it so no test reaches the real Task Scheduler.
+| Kind | Words on the tag | Meaning |
+|---|---|---|
+| `fixable` | Can be fixed now | we can close it with work we already know how to do |
+| `in_build` | Being built | something already being built closes it |
+| `needs_decision` | Waiting for a decision from you | it waits on a choice, not on work |
+| `ceiling` | Cannot be improved | the source cannot give us the rest on the route we use |
+| `self_heals` | Fills in by itself over time | it closes as the normal nightly runs happen |
+| `none` | Complete | there is no hole |
 
-### Not this board
+`fixable`, `in_build`, `needs_decision` and `ceiling` each require a written next step, enforced when
+the record is constructed. A `ceiling`'s next step **is** its reason, so the two read as one
+sentence: "Cannot be improved: the gold, silver and oil funds hold metal or futures rather than
+company shares, so the holdings providers return no list for them." Colour is never the only signal:
+the tag always carries its words.
 
-- Merging with Implied Probability / Relatedness / Value Chain.
-- Putting MC / GICS / Theme filters here.
-- Scheduling inside the app (no in-app cron). Scheduled tasks are Task Scheduler tasks listed on the Automations panel (above).
-- Downloading 10-Q / 8-K into `chain_filings` (Item 1/4 only).
-- Hoberg–Phillips TNIC as a store table (see §3).
+### 2.6 Other store tables
+
+A section below the table for every `MANIFEST` table no dataset claims, with its store file, its
+row count and its newest date — nothing else, because the registry cannot speak for them. Newest is
+read only from a known time column; a table with none reads `no time column` rather than a guessed
+date. With nothing unclaimed the section renders **nothing at all**: no heading and no empty table.
+It is normally empty, and `core/tests/test_datasets.py` keeps it so.
+
+### 2.7 Fetch versus Refresh on this tab
+
+- **Refresh** recomputes the inventory from `.store/` with zero network. The board is registered in
+  `_STORE_REFRESHABLE` and `STORE_BACKED`.
+- **Fetch** enqueues that one dataset's job and polls `/api/job/<id>`. A sync that changed nothing
+  still writes the artifact and raises `jobs.JobMessage` ("0 updated, 3278 current").
+- Every write through the dashboard needs the panel header (`X-RC-Panel`), and
+  `POST /api/automations/<name>/<action>` needs exactly `X-RC-Panel: automations`. Without it the
+  dashboard answers `403 panel header required` and starts nothing.
+- Per-ticker drill `GET /api/settings/ticker/<t>` — store-only, 404 on an unknown ticker, 500
+  `store read failed` on a failed store read, the shared ticker combobox, and a null market cap
+  rendered as "no cap stored (outside the $300M universe or not yet resolved)". It shows **stored**
+  data only: it asks neither SEC nor Yahoo. Price coverage in the drill is the daily bar count and
+  newest session from `price_bars_daily`; `swing_ohlc` appears as the legacy cache and is not the
+  price of record.
 
 ---
 
-### Identity refresh job (issues #85, #89)
+## 3. The cards below the table
 
-The **Identity spine** row of the inventory table carries the **Fetch identity** button: it posts
-`POST /run/identity` (optional positive `limit`, long lane, `requires_uw=False`) through the shared Settings
-poller. It is a **live universe writer**: a successful run (`ok` or `partial`) applies the master's sector and
-industry (plus UW's next earnings date) to `equity_universe` (`core/identity/apply.py`, R3 #86, #265), so it changes
-sectors on every board; the help text and the card (`#identity-writes`) say so. The job ends with a `JobMessage`,
-e.g. `7,366 tickers · 213 funds/ETFs · 116 SPACs · sectors: S&P 1,501 / UW 4,900 / Yahoo 325 / SIC 120 /
-unclassified 64 · 266 conflicts · universe 7,000 updated / 3 without a master row · sources ok 7/7`. Each run writes an `identity_runs`
-row (per-source status, rows, fetched count, seconds, error). The row's holes are the master tickers with no sector
-source at market cap >= $300M; its note is `last run <status>` or `no identity run yet`. See `data_architecture.md`
-for the fetch plan.
+### 3.1 Identity health
 
-Below the inventory table, the **Identity health** card (`<section id="identity">`, so `#identity` is linkable) is
-rendered from the store only (`inventory.collect()`, zero network; a missing table is an empty section, not an error). With no run and no `security_master` rows it
-shows `No identity run yet. Use Fetch identity in the table above.` Otherwise:
+The **Identity spine** row carries the **Fetch identity** button, which posts `POST /run/identity`
+(optional positive `limit`, long lane, no Unusual Whales requirement). It is a **live universe
+writer**: a run that ends `ok` or `partial` applies the master's sector and industry, plus the next
+earnings date, to `equity_universe`, so it changes sectors on every board. The help text and the card
+say so. Each run writes an `identity_runs` row with per-source status, rows, fetched count, seconds
+and error. The row's holes are the master tickers with no sector source at a market cap of $300M or
+more; its note is `last run <status>` or `no identity run yet`.
 
-- **Last run** (`#identity-run`): status, started and finished, tickers and conflicts, and each selected source's
-  status, fetched / rows and error.
-- **SPDR line** (`#identity-spdr`): `SPDR check: 478/480 agree (date)`, or `SPDR check failed: <error> (last good:
-  <date>, n/m agree)` / `(no good run yet)`, or `not run yet`. It reads the latest run that selected SPDR.
-- **Security types** (`#identity-types`): per type, all tickers and those at or above the $300M floor; excluded
-  types (`cef`, `etp`, `spac`, `preferred`, `unit`, `warrant`) carry an `(excluded)` tag.
-- **Sector source mix** (`#identity-sources`): official (the S&P 1500 list, #272) / provider (UW or Yahoo) / SIC /
-  type rule / unclassified, and `other` (`manual`) only when non-zero.
-- **Conflicts** (`#identity-conflicts`): "current" means `last_seen` equals the `started_at` of the latest `ok` or
-  `partial` run (`refresh._write_conflicts` stamps `last_seen` with it). Counts by kind, an `N older, not seen since
-  <date>` line, and a collapsed table of the top 50 by market cap (the source-level `*` row last).
-- **Cached source freshness** (`#identity-stale`): newest fetch per cached source; for `sec_submissions` (30
-  days), `openfigi` (90 days, 7 for a `no_match` row), `yahoo_sector` and `fdic` (90 days) the number of universe
-  tickers past the window, computed with `refresh._stale` and the refresh job's own constants. `sec_exchange`,
-  `nasdaq`, `sp1500` and `uw_sector` refetch every run and show `every run`. A cached source the refresh no longer
-  fetches is not listed.
+The card itself (`<section id="identity">`) is built from the store only; a missing table is an empty
+section, not an error. With no run and no master rows it reads
+`No identity run yet. Use Fetch identity in the table above.` Otherwise it shows the last run, the
+SPDR check line, the security-type mix at and above the $300M floor with excluded types tagged, the
+sector-source mix (the S&P 1500 list, a provider, the SIC table, the type rule, unclassified, and
+`other` only when non-nought), the conflicts by kind with the top fifty by market cap, and the
+newest fetch per cached source with the number of universe tickers past each source's window.
 
-**SPDR sector check.** The run fetches the 11 SPDR Select Sector holdings files (SSGA daily xlsx, base URL
-`RC_SPDR_BASE`) and compares each S&P 500 member's sector in the master (built in the same run) with the sector of
-the fund that holds it, named the Morningstar way (XLY is Consumer Cyclical, XLP Consumer Defensive, XLV Healthcare,
-XLF Financial Services, XLC Communication Services, XLB Basic Materials). The S&P 500 members are the
-`index_constituents` rows of slug `sp500` (UW's spelling normalised); a ticker is checked only when a fund holds it
-and the master has it. It is a *check*, never a value: nothing in `security_master` reads it and its rows are not
-cached. A mismatch is an `identity_conflicts` row of kind `spdr` (side A the master sector, side B the SPDR sector) and the counts carry
-`spdr_checked` / `spdr_agree`. The source is all or nothing (one fund failing fails the check), it is not counted
-in "sources ok n/m", and a failed check writes no conflicts and no counts and leaves the run `ok`.
+The SPDR sector check compares each S&P 500 member's sector in the master against the sector of the
+Select Sector fund that holds it, named the Morningstar way. It is a **check, never a value**:
+nothing in `security_master` reads it, its rows are not cached, it is all or nothing, it is not
+counted in "sources ok n of m", and a failed check writes no conflicts and leaves the run `ok`.
 
-**SEC submissions stagger.** Besides tickers with no cached row or one older than 30 days, each run refreshes the
-oldest 25% of the cached rows that are at least 7 days old (`SEC_STAGGER`, `SEC_STAGGER_MIN_DAYS`), so a universe
-that was fetched in a single day does not expire together; the run records `fetched` (CIKs) and `staggered`.
+Each run also refreshes the oldest quarter of the cached SEC submissions rows that are at least
+seven days old, so a universe fetched in one day does not expire together.
 
-### Discord export readiness (issue #242)
+### 3.2 Discord export readiness
 
-Below the Identity health card, the **Discord export readiness** card (`<section id="discord">`, card
-`#discord-readiness`) answers "can I run Discover and Update yet?" before the first export. It reads the environment
-and the CLI file: no network call, no `.store/` table. One row per check, in the order the user fixes them
-(`module_discord/readiness.py`, `payload["discord"]`):
+Answers "can I run Discover and Update yet?" before the first export, from the environment and the
+exporter file only: no network call and no store table. Four checks, in the order they are fixed:
+the exporter path, its version against the minimum, the Discord token, and the server id. The summary
+says **Ready** only when all four pass.
 
-| Check | `ok` when | Otherwise |
-|---|---|---|
-| DCE CLI path | `RC_DCE_CLI` is set and the file exists (`credentials.dce_cli_problem()`, the check the jobs use) | `fix`, with that message |
-| DCE version | the CLI check is `ok` and the version is at least `exporter.MIN_DCE_VERSION` (the minimum is named in `data_architecture.md`) | `fix` when too old; `unknown` with the reason when it cannot be read; `not checked` while the CLI check fails |
-| Discord token | `credentials.key_for("discord")` is non-empty | `fix`, with `credentials.missing_message("discord")` |
-| Server id | `RC_DISCORD_GUILD_ID` is set (`credentials.discord_guild_problem()`) | `fix`, with that message |
+Values are never shown. The token is read only to check that it is set, and neither it nor the server
+id reaches the payload, the page or the error list. The one thing that starts the program is the
+version read, run once per exporter file with every key and token removed from its environment and
+cached in the dashboard process, so a hang cannot cost a timeout on every Refresh.
 
-The summary line says **Ready** only when all four are `ok`, else `Not ready: n checks need attention`.
+### 3.3 Backups
 
-- **Values never shown.** The token is read only to check that it is set. The token and the server id appear as set
-  or not set only: not in the payload, the page or the `errors` list. The card says it cannot tell whether Discord accepts the token; only a Discover or Update can.
-- **The version is the one thing that starts the exe.** `exporter.cli_version()` runs `<exe> --version` (offline,
-  10 s timeout, no console window on Windows, every `*_KEY` / `*_TOKEN` variable removed from its environment)
-  and caches the answer in the dashboard process per exe file
-  `(path, size, mtime)`. The first Settings load after a dashboard start, or after the exe file changes, starts it
-  once; every later Refresh reads the cache. A hang, a non-zero exit or unreadable output is `unknown` and is cached
-  the same way, so it cannot cost a timeout per Refresh. A missing path or a file that vanishes before it is read is
-  `unknown` and not cached. Restart the dashboard to force a re-check of an unchanged file.
-- **A failed check is recorded, not hidden.** If building the card raises, the card is omitted and the failure is
-  listed in the page's errors list (F4).
-- The test suite never starts the real exe: the root `conftest.py` clears `RC_DCE_CLI`, `DISCORD_TOKEN` and
-  `RC_DISCORD_GUILD_ID` for every test, and the e2e dashboards start with them blank.
+Built from the backup job's own records in the local backup folder: both folder sizes, and the last
+read-only self-check of the local folder. The off-machine (Google Drive) copy is **never** read,
+walked or listed — walking it took about twenty minutes. The card shows the local folder in full, the
+off-machine location the job's own setting names, how long backups are kept, and the integrity
+self-check in words.
 
-## 3. External research — take / reject
+The card also lists **what the retention rule marks expired**, from one read-only listing of the
+local folder. This is a dry run: nothing is deleted. The totals read "unknown" with the reason when
+the folder could not be read, so an unreadable folder never looks like an empty one. The
+**Delete expired backups** control is disabled in the markup itself, and the line beside it says
+arming a delete is a separate change that needs a typed confirmation. Nothing on this page deletes
+or moves a backup file.
 
-Checked 2026-09-24. None of these replace `sec_edgar` + `edgar_text.pick_filing`.
+The retention rule has one copy in the code, read by both the nightly prune and this dry run: the
+newest five raw snapshots, two EDGAR, two document archives, two Discord, five history, two prices,
+and twelve weekly raw copies. The newest copy of every list is **never** offered as expired,
+whatever a keep count computes, because a restore reads the newest snapshot.
+
+### 3.4 Automations panel
+
+`core/automations.py` is the one registry of the scheduled tasks RevenueChaser owns, and the one
+installer. Rows: `RC-Store-Backup` (daily 04:00, `scripts.backup_store --keep 5`),
+`RC-Relatedness-OffPeak` (12:30, `--run --cap 8`), `RC-ValueChain-Sync` (13:00, `--sync-filings`),
+`RC-Daily-Bars` (22:35, `scripts.daily_bars --nightly --sec-files`), `RC-Screeners-Daily` (weekdays
+23:00, after `RC-Daily-Bars`, `app.universe_cli`), `RC-Forecast-Outcomes` (daily 23:45, after
+`RC-Daily-Bars`, `scripts.forecast_outcomes --nightly`), `RC-Forecast-Baselines` (daily 23:50, after
+`RC-Forecast-Outcomes`, `scripts.forecast_baselines --nightly`), `RC-Index-Lists` (Saturday 10:00,
+`scripts.index_lists --weekly`) and `RC-Earnings-Inputs` (Tuesday to Saturday 01:30, after
+`RC-Daily-Bars`, `scripts.nightly_inputs earnings`). Each entry carries its schedule, the tables it
+writes, whether it is off-peak gated, a log path under `.cache/logs/` and its Windows task settings.
+
+- **Nothing installs itself.** `default_install` only marks a row. Install, Enable, Disable, Remove
+  and Run now are buttons on the panel, and Install, Remove and Run now ask for confirmation. The two
+  PowerShell files are thin callers of the same installer. Nothing installs on import, on dashboard
+  start, on Refresh, on a GET or in a test.
+- **Live state is polled, not baked in.** The board is a cached artifact, so the panel reads
+  `GET /api/automations` on load, after an action and while a row runs.
+  `POST /api/automations/<name>/<action>` takes a registry name and no other argument, and needs the
+  header `X-RC-Panel: automations` exactly. Refresh of this board never calls the scheduler.
+- **Row state.** Not installed, disabled, enabled or running; the last result mapped (nought is ok,
+  "not run yet" is neutral, running is running, anything else is red); next run, missed runs, and the
+  age of the last success read from the task's log.
+- **Exit codes.** A task's command exits non-zero when it locked out or failed. Only the Relatedness
+  off-peak deferral exits nought. Exit 3 from a nightly writer means another run of that writer held
+  its lock: nothing was written, and the next run picks it up.
+- **The nightly chain.** An entry with `after=<registry name>` is a chained step: still its own task
+  with its own daily time, which is its not-before time. When it starts, including on a catch-up or a
+  Run now, it reads the predecessor's log and waits, up to
+  `chain_wait_minutes` (default 120), for the predecessor's run of tonight: the newest run that
+  started at or after the predecessor's last scheduled time. Exit nought releases the step. Any other
+  exit, a step blocked in turn, or no such run in time blocks it: its command does not run, the log
+  says `chain: blocked: <why>` and the task exits 5, so the row is red with the reason. A step must
+  name an earlier registry entry with no cycles, fall nought to under twelve hours after its
+  predecessor on the clock, follow a predecessor that runs daily, and wait a positive time shorter
+  than its own time limit. `check_chain` runs on import.
+- **Nightly inputs steps.** An entry whose command is `scripts.nightly_inputs <step>` with the three
+  call caps runs the sweeps of one inputs step. The checker refuses such an entry unless it runs after
+  `RC-Daily-Bars`, names a known step, lists its tables and states all three caps. Each run resolves
+  one New York session, and a run inside the United States session runs nothing and exits nought. Each
+  sweep runs on its own: one that raises is failed, the others still run, and the task exits 1 so the
+  row is red. A cap is per night and per provider, shared by every sweep; a request past it is refused
+  before it is sent, and a second run of the same session starts from what the first spent.
+- **SEC exchange and fund files.** `RC-Daily-Bars` runs `--sec-files`: before the bars, on a New York
+  weekday, it asks the two SEC company-ticker files once each with no retry, at most two SEC requests
+  a night, and appends their changes as change history. A file under its floor writes nothing. A
+  failure is never a different exit code, so the steps chained on `RC-Daily-Bars` still run.
+- **Run log.** A task that writes tables leaves one `job_runs` row per run, `running` while its
+  command runs and `done` or `error` after it; what the command writes carries that row's run id. The
+  backup records none. The **Runs** tab (`/view/runs`) is the reader of that table, dashboard runs and
+  scheduled ones together.
+- **Tests** use a fake scheduler; the end-to-end harness installs it, so no test reaches the real
+  Windows Task Scheduler.
+
+### 3.5 Board inputs and the funnel
+
+A Board inputs card is built from that board's own last rendered payload in `.cache` and never
+recomputes the board, so the card and the board cannot disagree. The funnel shown is the one the
+board itself emitted. Step kinds are `start`, `drop` (by design, or fixable with a Fetch button),
+`note` and `result`, with `start - sum(drops) == result`. A **note** is shown but never counted: it
+says something about names still in the funnel, sits between the start and the result, and may carry
+a link to where its cause is shown. A note renders with a warning mark, a positive count and that
+link, never a button: long store-writing jobs start only from Settings. A board whose payload emits
+no funnel never asks for a Refresh to grow one, and a missing artifact reads as not rendered.
+
+The classification universe drops the excluded identity-master types at every market cap. Co-movement
+states that as three by-design drops after *No market cap* — funds and exchange-traded funds, blank
+cheque companies, and preferred shares, warrants and units — and then, when kept names have no
+established type, the note *Unknown security type — kept* linking to Settings → Identity. A funnel
+persisted before that change has no type rows and no note. The counts come from `universe_counts()`,
+and the types are read with a separate query, never a join: a missing table answers with no rows, so
+a join would silently empty the universe.
+
+---
+
+## 4. The universe refetch the board reports on
+
+Writer: `core.universe_fetch.fetch_universe_stats`. The header **Refresh Universe** is
+`POST /run/universe`, which runs membership, then the stats backfill, then the three scanners. The
+standalone caps job is `POST /run/universe-stats`: the backfill only, with no screener and no
+scanners.
+
+### 4.1 Phase A — membership
+
+**Membership** (Phase A) is a fresh pull of the SEC exchange file, one request per pull with the User-Agent the
+environment names. It never reads the identity cache. The rows whose exchange is Nasdaq, NYSE or Cboe
+are the members; over-the-counter rows and rows with no exchange are out. Market data is the Yahoo
+screener, joined on the normalised ticker; a screener row that is not on the SEC list is dropped. A
+listed name with no quote is saved with a null market cap, price and quote, and the SEC name; the
+stored cap and price still carry forward.
+
+The Yahoo side counts as **full** only when every slice ran to the total the screener reported and it
+returned a quote for at least ninety per cent of the stored names that carry one; then it replaces the
+table. Anything else is **partial**: it adds what it got and the listed names not stored yet, carries
+cap, price and sector forward, re-applies the identity master, writes the provenance row marked
+partial, and skips the backfill. It never deletes. The boards print "partial fetch" in the universe
+line. This replaced an absolute row-count test that once let a three-thousand-name pull replace a
+table of over seven thousand.
+
+**One writer at a time.** A re-entrant universe write lock covers the SEC pull, the fetch, the write,
+the identity apply, the provenance row and the backfill. A second run returns the stored universe
+with the holder's process id, calls no network and writes nothing. The universe refresh job holds the
+same lock for its whole run, plus a marker, so the single-board Fetches are refused while it runs; a
+single-board Fetch holds its own marker, so a universe run is refused while one runs. A lock left by
+a crashed process is broken even when its process id was reused.
+
+Sector and industry are never in the screener. They come from the identity master: the eleven
+Morningstar sector names, taken from the S&P 1500 list for its own names, then Unusual Whales, then
+Yahoo, then the explicit SIC table, then the type rule; the industry is Unusual Whales' text. Never
+from a SIC backfill into the universe.
+
+### 4.2 Phase B — the market-cap backfill
+
+**The stats backfill** (Phase B) works over every universe ticker whose market cap is null, filling the cap and
+price from Yahoo's fast quote. It never calls the heavy per-ticker information endpoint for seven
+thousand names. It pauses before each ticker, runs two workers, retries a rate-limit refusal with a
+growing wait up to three attempts, and after five consecutive exhausted tickers **stops the run
+early**: the rest stay null and are picked up next time. Because the work list is null-only, stopping
+early costs nothing. A null after the backfill stays null — a warrant, an over-the-counter leftover, a
+Yahoo gap — and no cap is invented. The backfill merges into existing rows with an update helper; it
+never replaces the table, which would drop names membership just kept.
+
+### 4.3 Feasibility review — the rules the writer keeps
+
+Four rules came out of the 2026-09-24 code review of this plan, and the writer still keeps them:
+
+- **No partial-row upsert into `equity_universe`.** That table is written as an upsert that overwrites
+  every non-key column, so writing a ticker with only a cap and a price would blank its name, its
+  sector and its stored quote. The backfill goes through `rawstore.update_columns`, which updates the
+  named columns on matched rows and never inserts, so it can neither grow nor shrink the table.
+- **Phase A carries the stored cap and price forward** when the screener quote omits them.
+- **The backfill is null-only**, not an every-ticker pass, which is what makes stopping early free.
+- **Each provenance key is its own row** — `__meta__` for membership, `__stats__` for the backfill,
+  `__fetch__` for the pull itself — so a stats pass leaves membership's `__meta__` row intact.
+
+`equity_universe_provenance` is written on every successful membership pass and every stats pass. The
+board shows an empty provenance table as a hole, not as unknown.
+
+A store-only Refresh of any board does zero Yahoo work: it re-reads the classification universe.
+
+---
+
+## 5. The newer-filing check
+
+Comparing the stored accession to the SEC's own submissions list, end to end:
+
+1. ticker to central index key, from the stored SEC exchange file rows;
+2. `GET {SEC_DATA_BASE}/submissions/CIK##########.json`;
+3. pick the newest 10-K, else the newest 20-F; an amended 10-K never outranks a 10-K;
+4. compare that accession to the stored one in `chain_filings`:
+   - equal, so `current` and **no download**;
+   - missing or different, so fetch the primary document, store it, re-slice the two items we keep,
+     and upsert the filing row as `updated`;
+   - no 10-K or 20-F in the list, so `no_filing`.
+
+Run: `python -m RevenueChaser.module_value_chain --sync-filings [--limit N] [--force] [--floor M | --tickers A,B]`.
+Without a floor or a ticker list it covers the $300M classification universe, and the submissions
+sweep covers every universe central index key. Cost: one submissions call per key at the shared
+SEC rate, and archive downloads only on a mismatch.
+
+The dashboard job is `POST /run/edgar-sync`, on the corpus row's Fetch. It needs no Unusual Whales
+key, shares the EDGAR sync lock and the SEC token bucket, and is idempotent. Value Chain's own Fetch
+stays cache-first — it fills tickers with no row and does not recrawl a name that already has a
+filing. **New-filing detection is this sync job, not Value Chain Fetch.** After updates it rebuilds
+the edges; Relatedness then reads the new text on its next Refresh without a new language-model run
+until Relatedness is fetched.
+
+A fiscal year that is not a calendar year is not a bug. Compare the accession, never the year in a
+file name.
+
+**Re-slicing what is already stored** is `--reslice-apply`: it re-slices every stored filing from its
+stored document with no network, writes through the slice keep guard, rebuilds the mentions table and
+records a result-history run. It holds the EDGAR sync and Relatedness locks, so check `/api/jobs` and
+the lock holders before a live run. Look first with `--reslice-dry-run`. To roll back: stop the
+dashboard and restore the EDGAR and history stores from the backups taken just before, before the
+next scheduled sync.
+
+---
+
+## 6. External research — take or reject
+
+Checked 2026-09-24. None of these replaces our own SEC client and filing picker.
 
 | Source | What it is | Verdict |
 |---|---|---|
-| [nlpaueb/edgar-crawler](https://github.com/nlpaueb/edgar-crawler) (user link: lefterisloukas/edgar-crawler) | Download + structured JSON items for 10-K / 10-Q / 8-K. GPL-3. WWW 2025. | **Do not vendor** (license). We already pick latest 10-K/20-F from `submissions.recent` and slice Item 1/4. Optional later: 10-Q/8-K item map is a **new** corpus, not a freshness fix. |
-| [pChitral/ETL-SEC-EDGAR-10-k-Filings](https://github.com/pChitral/ETL-SEC-EDGAR-10-k-Filings) | MDA (Item 7) → per-ticker CSV. | **Reject.** Wrong section (we need Item 1/4), file-based, not a DuckDB store. |
-| [psachdev/sec_data_downloader](https://github.com/psachdev/sec_data_downloader) | Thin wrapper around **sec-api** (paid) + `sec-edgar-downloader`. 0 stars. | **Reject.** We hit SEC directly; no paid proxy. |
-| [Hoberg–Phillips Data Library](https://hobergphillips.tuck.dartmouth.edu/) | Academic TNIC / Doc2Vec **product-description** similarity, 1989–**2023**. Annual lag. | **Not a 10-K fetcher.** Relatedness already profiles live Item 1. Optional later overlay to *validate* NMF peers — not SSoT, not v1, coverage stops 2023. |
-
-Idea we **already implemented** (P4c): compare stored accession to
-`submissions.recent`; download only on mismatch. The gap is **trigger +
-visibility**, not another crawler.
+| [nlpaueb/edgar-crawler](https://github.com/nlpaueb/edgar-crawler) | Download plus structured items for 10-K, 10-Q and 8-K. GPL-3. | **Do not vendor** (licence). We already pick the newest 10-K or 20-F from the submissions list and slice the two items we use. A 10-Q and 8-K item map would be a **new** corpus, not a freshness fix. |
+| [pChitral/ETL-SEC-EDGAR-10-k-Filings](https://github.com/pChitral/ETL-SEC-EDGAR-10-k-Filings) | Management discussion to per-ticker comma-separated files. | **Reject.** The wrong section, file-based, and not a DuckDB store. |
+| [psachdev/sec_data_downloader](https://github.com/psachdev/sec_data_downloader) | A thin wrapper around a paid filings interface. | **Reject.** We reach SEC directly; no paid proxy. |
+| [Hoberg–Phillips Data Library](https://hobergphillips.tuck.dartmouth.edu/) | Academic product-description similarity, 1989 to 2023, annual lag. | **Not a filing fetcher.** Relatedness already profiles the live text. A possible later overlay to validate peers; never the source of truth, and its coverage stops in 2023. |
 
 ---
 
-## 4. 10-K “is there a newer filing?”
+## 7. Not this board
 
-**The check, end to end** (already implemented — `sync_one`):
-
-1. ticker → CIK via the stored `sec_exchange_file` rows (`sync.universe_ciks`; #301 D21).
-2. `GET {SEC_DATA_BASE}/submissions/CIK##########.json`
-   (`edgar_text.submissions_url`).
-3. `pick_filing(payload)` — newest **10-K**, else newest **20-F**; a 10-K/A
-   never outranks a 10-K.
-4. Compare that `accession` to `chain_filings.accession`.
-   - equal → `{"status": "current"}`, **no download**
-   - missing / different → fetch the primary HTML → `edgar_docs/` +
-     `edgar_documents` → re-slice Item 1/4 → upsert `chain_filings`
-     (`{"status": "updated"}`)
-   - no 10-K/20-F in `recent` → `no_filing`
-
-Run: `python -m RevenueChaser.module_value_chain --sync-filings [--limit N] [--force] [--floor M | --tickers A,B]`.
-`--floor` (USD millions) or `--tickers` choose the names (#108 S0); without either it covers the $300M
-classification universe, and the submissions sweep every universe CIK.
-Cost: one submissions call per CIK at 8 req/s (shared bucket), archive GETs only on mismatch.
-
-What to add:
-
-1. Dashboard job for `sync_filings` (settings board Fetch on the corpus row).
-2. Inventory column: `classification_universe` tickers with no
-   `chain_filings` row; rows whose accession is older than last sync
-   **once we cache submissions dates** (v2). v1 sync is live SEC;
-   Refresh of the settings board does **not** call submissions.
-3. Do not treat FY vs calendar year as a bug (AMZN FY2025 10-K filed 2026-02).
-   Compare **accession**, not the year in the filename.
-
-MU today: stored accession = SEC latest. A universe cap backfill will not
-change that. Next MU 10-K is the usual October cycle.
+- Merging with Implied Probability, Relatedness or Value Chain.
+- Market-cap, sector or theme filters here. This tab's filters are the ones in 2.2.
+- Scheduling inside the application. Scheduled tasks are Windows Task Scheduler tasks, listed on the
+  Automations panel.
+- Downloading 10-Q or 8-K filings into the corpus.
+- A one-click "refresh every dataset" button.
+- Deleting or moving a backup file from the page.
 
 ---
 
-## 5. Implementation order (after explicit go)
+## 8. Still hand-written
 
-Hermes executes by default (rule E): in-session for light work, or a queued Hermes
-one-shot for a slice. OpenCode only for a mature, already-decided plan. Hermes
-orchestrates and owns review. TDD. Full unit suite. No live store writes in tests.
-
-1. **Universe Phase B** — failing test: screener omits `marketCap`,
-   `fast_info` supplies it → `classification_universe()` includes the name.
-   Then writer + provenance. (Fixes MU on OIPD without a settings board.)
-   Per the feasibility review: UPDATE-only helper, Phase A cap carry-forward,
-   null-only backfill (no every-ticker pass), `.info` fallback never hit,
-   `__stats__` provenance key.
-2. **Wire `sync_filings`** as `POST /run/edgar-sync` (or equivalent); unit +
-   dashboard job tests; e2e: Refresh of Value Chain still zero SEC calls.
-3. **Settings board** — store-only inventory first (Refresh); then Fetch
-   buttons for universe + edgar-sync. `help_html`. Register
-   `_STORE_REFRESHABLE` / `STORE_BACKED`.
-4. Per-ticker drill on that tab.
-5. e2e: settings Refresh makes zero Yahoo/SEC; universe Fetch fake fills
-   a null cap.
-
-Schema: Phase B v1 **no** `_SCHEMA_VERSION` bump if we only fill existing
-columns. Adding `cap_source` later **does** bump (currently `"6"`) → warn
-to snapshot `.store/` by hand.
-
----
-
-## 6. Out of scope
-
-- Filter-panel / Theme cascade (still [`dashboard_ui.md`](dashboard_ui.md) §2b; still waiting on go).
-- Recrawling every 10-K on Value Chain Fetch.
-- 8-K / 10-Q into Value Chain.
-- Hoberg TNIC ingest.
-- Calling `Ticker.info` for the full universe.
-- One-click “refresh all datasets”.
-- Push / live Yahoo on the real store until go.
-
----
-
-## Checklist (when building)
-
-- [x] Phase B backfill + tests; provenance written
-- [x] `/run/universe` runs A then B
-- [x] `sync_filings` job on the dashboard
-- [x] Settings tab: Refresh = inventory, Fetch = per-row job
-- [x] `_STORE_REFRESHABLE` + `STORE_BACKED`
-- [x] `help_html` on the settings tab
-- [x] Full `pytest` (not a `-k` subset) — 1877 passed, 0 failed
-- [x] e2e: settings Refresh zero network — `module_testing/e2e/test_board_settings.py`
-- [x] Standalone caps job `POST /run/universe-stats` — Phase B only (no screener, no
-      scanners), optional positive `limit`, `requires_uw=False`, re-renders Settings
-- [x] Per-ticker drill `GET /api/settings/ticker/<t>` — store-only, 404 on unknown, 500 `store read failed` on a failed store read (DF98),
-      shared ticker combobox, null cap rendered as "no cap stored (outside the $300M universe or not yet resolved)"
-- [x] e2e observability for yfinance — `$RC_E2E_YF_LOG` + `Dashboard.yf_calls()` in the
-      harness, so "Refresh made no Yahoo call" is assertable across the process boundary
-- [x] Tick this list; do not claim the board works from unit tests alone
-
+The Stage 2 and Stage 3 dataset tables in [`data_architecture.md`](data_architecture.md) are still
+written by hand rather than generated from `core/datasets.py`. That generator is code, not
+documentation, so it is not part of this change and issue #146 stays open for it.
