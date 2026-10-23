@@ -2,8 +2,9 @@
 
 The Earnings Fetch used to ask UW (and FRED) for everything it needed, every run. Since E0 the nightly job stores
 the same answers in ``raw.duckdb``: the earnings calendar (D26), short interest (D10), the economic calendar (D37),
-the FRED daily series (D27) and the analyst estimates (D14). This module is the ONE reader of those tables for the
-board — it reads only, over ``rawstore.query(..., read_only=True)``, and never writes, migrates or alters anything.
+the FRED daily series (D27), the analyst estimates (D14), and the two market series SPX Gamma reads instead of
+fetching (the vol indices, D28, and the CFTC COT, D29). This module is the ONE reader of those tables — it reads
+only, over ``rawstore.query(..., read_only=True)``, and never writes, migrates or alters anything.
 
 Two rules hold for every reader here:
 
@@ -34,7 +35,12 @@ NY = ZoneInfo("America/New_York")
 # ``macro_series`` counts the sessions after the newest DGS10 observation. FRED posts a day late, so a normal night
 # reads 1 or 2; 3 covers one missed night. A missed night next to a bond-only holiday (Columbus or Veterans Day)
 # reaches 4 and the run asks FRED, which is one free call.
-MAX_LAG = {"earnings_calendar": 1, "short_interest": 3, "estimate_snapshots": 5, "macro_series": 3}
+# ``vol_index_daily`` is a daily series too, so it gets the same tolerance as ``short_interest``.
+# ``cftc_cot`` is weekly: CFTC publishes on Friday the positions held on the Tuesday before, so on a current night
+# the newest stored row is already ~6 sessions old (measured: 2026-10-13 stored against the 2026-10-21 session). A
+# tighter number would read "nothing stored" every night and the table would never be used.
+MAX_LAG = {"earnings_calendar": 1, "short_interest": 3, "estimate_snapshots": 5, "macro_series": 3,
+           "vol_index_daily": 3, "cftc_cot": 10}
 
 _DGS10_LIMIT = 80                 # the same window ``macro_watch.fred_daily_map`` asks FRED for
 _OHLC_MAX_BARS = 270              # ``pipeline.REACTION_OHLC_SESSIONS``
@@ -82,6 +88,14 @@ def _as_json(value):
         except ValueError:
             return None
     return value
+
+
+def _num(value) -> float | None:
+    """A stored ``DOUBLE`` cell as a float (None for a NULL or an unreadable cell)."""
+    try:
+        return None if value is None else float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _max_session(table: str, latest: date, *, db: str = "raw") -> date | None:
@@ -391,3 +405,79 @@ def ohlc_bars(tickers) -> dict[str, list[dict]]:
         bars.sort(key=lambda b: b["date"])
         out[ticker] = bars[-_OHLC_MAX_BARS:]
     return out
+
+
+# ── D28: the volatility indices (the VIX family) ─────────────────────────────────────────────────────────────────
+
+def vol_index_rows(latest: date | None = None) -> tuple[dict, date | None]:
+    """``({"tickers": {"^VIX": close, ...}, "term_mode": ...}, session|None)`` from the newest fresh session of
+    ``vol_index_daily`` — the payload ``module_spx_gamma.vix.fetch_vix_family`` serves, so ``normalize_vix`` cannot
+    tell the two apart. (The table is this step's; SPX Gamma is its only reader.)
+
+    Only the ``VIX_TICKERS`` closes are mapped: the sweep also stores ``OVX`` and ``MOVE``, which the board's VIX
+    layer does not read. A stored symbol carries no caret (``inputs.vol_index.SYMBOLS`` is ``("VIX", ...)``) and the
+    live payload is keyed with one, so the caret is added here. ``term_mode`` is SPX Gamma's own derivation, called
+    on the dict rather than reimplemented; it is imported inside the function because that module reads this one.
+    """
+    session, usable = _fresh_session("vol_index_daily", latest)
+    if not usable:
+        return {}, None
+    from RevenueChaser.module_spx_gamma.vix import VIX_TICKERS, vix_term_mode
+
+    rows = _query("SELECT symbol, close FROM vol_index_daily WHERE session_date = ? AND close IS NOT NULL",
+                  [session], table="vol_index_daily")
+    tickers: dict[str, float] = {}
+    for r in rows:
+        symbol = str(r.get("symbol") or "").strip().upper()
+        close = _num(r.get("close"))
+        if close is not None and f"^{symbol}" in VIX_TICKERS:
+            tickers[f"^{symbol}"] = close
+    if not tickers:
+        return {}, None
+    return {"tickers": tickers, "term_mode": vix_term_mode(tickers)}, session
+
+
+# ── D29: the CFTC COT (the E-mini S&P 500 TFF row) ──────────────────────────────────────────────────────────────
+
+# The ``cftc_cot`` columns the live payload is rebuilt from: the writer stores the long/short sides and the long
+# change, never a net (``row_from``).
+_COT_COLUMNS = ("report_date", "open_interest",
+                "asset_mgr_long", "asset_mgr_short", "asset_mgr_change_long",
+                "lev_money_long", "lev_money_short", "lev_money_change_long",
+                "dealer_long", "dealer_short", "dealer_change_long")
+
+
+def _cot_group(long, short, change) -> dict:
+    """One position group as ``core.providers.cftc.map_row`` builds it: ``net`` is None unless both sides exist."""
+    long, short = _num(long), _num(short)
+    return {"long": long, "short": short,
+            "net": (long - short) if (long is not None and short is not None) else None,
+            "change": _num(change)}
+
+
+def cot_row(latest: date | None = None) -> tuple[dict, date | None]:
+    """``(E-mini TFF payload, session|None)`` from the newest fresh session of ``cftc_cot`` — the shape
+    ``core.providers.cftc.fetch_cftc_tff`` returns, so ``normalize_cftc`` cannot tell the two apart.
+
+    ``report_date`` is the ISO text of the stored Tuesday (the day the live payload names, without Socrata's
+    ``T00:00:00.000`` tail). The table's only writer keeps one market (the E-mini), so the newest row of the newest
+    stored session is the row the live read would serve.
+    """
+    session, usable = _fresh_session("cftc_cot", latest)
+    if not usable:
+        return {}, None
+    rows = _query(f"SELECT {', '.join(_COT_COLUMNS)} FROM cftc_cot WHERE session_date = ? "
+                  f"ORDER BY report_date DESC LIMIT 1", [session], table="cftc_cot")
+    if not rows:
+        return {}, None
+    r = rows[0]
+    report = _as_date(r.get("report_date"))
+    if report is None:
+        return {}, None
+    return {"report_date": report.isoformat(),
+            "open_interest": _num(r.get("open_interest")),
+            "asset_manager": _cot_group(r.get("asset_mgr_long"), r.get("asset_mgr_short"),
+                                        r.get("asset_mgr_change_long")),
+            "leveraged_funds": _cot_group(r.get("lev_money_long"), r.get("lev_money_short"),
+                                          r.get("lev_money_change_long")),
+            "dealer": _cot_group(r.get("dealer_long"), r.get("dealer_short"), r.get("dealer_change_long"))}, session
