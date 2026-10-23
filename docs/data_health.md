@@ -247,7 +247,17 @@ read only from a known time column; a table with none reads `no time column` rat
 date. With nothing unclaimed the section renders **nothing at all**: no heading and no empty table.
 It is normally empty, and `core/tests/test_datasets.py` keeps it so.
 
-### 2.7 Fetch versus Refresh on this tab
+### 2.7 The IBKR gateway shortcut
+
+Above the help block, one link that opens the IBKR gateway's own login screen in a new tab. The
+address is **not** in this repository: it is `RC_IBKR_LOGIN_URL`, read on every payload build, so an
+unset variable renders no card at all and no host is pinned in the code. Only an absolute `http` or
+`https` address with a host is accepted; anything else (a `javascript:` or `data:` value, a bare
+path, a scheme with no host) counts as unset, so a mistyped variable cannot become a live link. The
+page writes the link and nothing more: it makes no request to that address, and the gateway's own
+login is what asks for credentials.
+
+### 2.8 Fetch versus Refresh on this tab
 
 - **Refresh** recomputes the inventory from `.store/` with zero network. The board is registered in
   `_STORE_REFRESHABLE` and `STORE_BACKED`.

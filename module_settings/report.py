@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import html as _html
 from datetime import datetime
+from urllib.parse import urlsplit
 
 from RevenueChaser.core import automations, datasets, funnel
 from RevenueChaser.core.html_safe import script_json
@@ -2126,6 +2127,39 @@ def _backups_card(b: dict | None) -> str:
             f'{_mini_table(["Backup", "Size / result", "Files", "Detail"], rows)}</div></section>')
 
 
+def _ibkr_login_href(value) -> str | None:
+    """The gateway login address to link to, or ``None`` when there is nothing to show.
+
+    Only an absolute ``http``/``https`` address with a host counts. Anything else — a
+    ``javascript:`` or ``data:`` value, a bare path, a scheme with no host — is treated as not
+    configured, so a mistyped or hostile variable cannot become a live link on the page.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    parts = urlsplit(raw)
+    return raw if parts.scheme in ("http", "https") and parts.netloc else None
+
+
+def _ibkr_login_card(value) -> str:
+    """The "IBKR gateway" shortcut (avo, 23 Oct 2026): one link to the gateway's own login screen.
+
+    The address is never in the code: it is ``RC_IBKR_LOGIN_URL``, so an unset variable shows no
+    card at all and this repository pins no host. The page only writes the link; it makes no
+    request to it.
+    """
+    href = _ibkr_login_href(value)
+    if href is None:
+        return ""
+    esc = _html.escape
+    return ('<section id="ibkr-login"><div class="bcard" id="ibkr-login-card"><h3>IBKR gateway</h3>'
+            f'<div class="kv"><a class="set-btn" id="ibkr-login-link" href="{esc(href, quote=True)}" '
+            'target="_blank" rel="noopener noreferrer">Open the IBKR gateway login screen</a></div>'
+            '<div class="asof" id="ibkr-login-note">The address comes from <code>RC_IBKR_LOGIN_URL</code>. '
+            'This page makes no call to it and shows nothing when the variable is unset; only an absolute '
+            'http or https address is accepted.</div></div></section>')
+
+
 def render_settings_dashboard(payload: dict) -> str:
     payload = payload or {}
     rows = payload.get("rows") or []
@@ -2178,6 +2212,7 @@ def render_settings_dashboard(payload: dict) -> str:
     other_tables_html = _other_tables_section(payload.get("other_tables"))
     discord_html = _discord_card(payload.get("discord"))
     backups_html = _backups_card(payload.get("backups"))
+    ibkr_login_html = _ibkr_login_card(payload.get("ibkr_login_url"))
     errors_html = _errors_list(payload.get("errors") or [])
     boards_html = _boards_section(payload.get("boards") or [], rows)
     flow_html = _flow_section(rows)
@@ -2204,6 +2239,7 @@ def render_settings_dashboard(payload: dict) -> str:
     <div class="sync">Last sync: {_html.escape(_friendly(generated))}</div>
   </div>
   {provider_health_html(payload.get("provider_health"))}
+  {ibkr_login_html}
   {help_block}
   {_summary_tiles(rows, payload)}
   {body}

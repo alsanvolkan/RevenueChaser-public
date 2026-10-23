@@ -23,7 +23,7 @@ def test_data_architecture_names_the_current_schema_version():
 # provider variables (#169a); these tests compare it with the code that owns the names.
 _ENV_EXTRAS = ("RC_SEC_USER_AGENT", "RC_DCE_CLI", "RC_DISCORD_GUILD_ID",
                "RAW_STORE_BACKUP_WARN_GB", "RAW_STORE_BACKUP_MIRROR_WARN_GB",   # #309 part 3
-               "RC_ALLOWED_HOSTS")
+               "RC_ALLOWED_HOSTS", "RC_IBKR_LOGIN_URL")
 
 
 def _env_example_lines() -> list[str]:

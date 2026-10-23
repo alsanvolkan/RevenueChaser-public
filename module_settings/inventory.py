@@ -9,6 +9,7 @@ dash, but one of the named states the registry justifies (S5b, G3). See ``docs/d
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -563,6 +564,16 @@ def _etf_holdings_row() -> dict:
         parts.append(f"no holdings: {named}" + (f" and {len(h['missing']) - 8} more" if len(h["missing"]) > 8 else ""))
     row["note"] = "; ".join(parts)
     return row
+
+
+def _ibkr_login_url() -> str:
+    """``RC_IBKR_LOGIN_URL``: where the IBKR gateway's login screen is reachable, or "" when unset.
+
+    Read per payload build rather than at import, so setting the variable needs no restart, and
+    kept out of the code so no host is pinned here. The page validates it before linking to it
+    (``report._ibkr_login_href``); nothing here or there sends it a request.
+    """
+    return os.getenv("RC_IBKR_LOGIN_URL", "").strip()
 
 
 def _plural(n: int, word: str) -> str:
@@ -2211,6 +2222,7 @@ def _collect(now: datetime) -> dict:
         "automations": automations.static_rows(),
         "discord": _discord_readiness(),
         "backups": _backups(now),
+        "ibkr_login_url": _ibkr_login_url(),
         # S6 (#124): the backstop for a MANIFEST table no dataset claims. Built before the errors
         # list, so a failed read here is reported like any other.
         "other_tables": unclaimed_tables(),
