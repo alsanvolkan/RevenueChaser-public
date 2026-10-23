@@ -32,10 +32,12 @@ def _payload():
 
 
 def test_renders_the_inventory_table_headers_and_rows():
+    """S5 (#124): the table leads with Source / Coverage / Fresh; the store tables, writer,
+    action and notes moved into a detail row (asserted in the S5 tests below)."""
     html = report.render_settings_dashboard(_payload())
-    for header in ("Dataset", "Store table", "Last data date", "Rows", "Holes",
-                   "Action", "Notes"):
+    for header in ("Dataset", "Source", "Coverage", "Fresh", "Last data date", "Rows", "Holes"):
         assert header in html
+    assert "Store table(s)" in html and "Action" in html and "Notes" in html
     assert "Equity universe" in html
     assert "equity_universe" in html
     assert "2026-09-18" in html
@@ -1237,3 +1239,174 @@ def test_null_cap_text_does_not_claim_it_is_outside_the_universe():
     html = report.render_settings_dashboard(_payload())
     assert "not in the $300M classification universe" not in html
     assert "no cap stored" in html
+
+
+# ── S5 of the Data Health plan (#124): Source / Coverage / Fresh and a detail row ────────────
+def _s5_payload():
+    """The two rows above, with the registry facts ``_attach_registry`` adds."""
+    p = _payload()
+    p["rows"][0].update(
+        source="yfinance", writer="RC-Screeners-Daily",
+        writer_note="caps-only fill is POST /run/universe-stats",
+        coverage={"covered": 812, "expected": 905, "fraction": 812 / 905,
+                  "label": "812 / 905 (90%)", "newest": "2026-09-20", "problems": []},
+        fresh="2026-09-20")
+    return p
+
+
+def _thead_cells(html: str) -> list[str]:
+    """The table's header cells as plain text (a header may hold a button, e.g. Source)."""
+    import re
+    thead = re.search(r"<thead><tr>(.*?)</tr></thead>", html, re.S).group(1)
+    return [h.split("<")[0].strip()
+            for h in re.findall(r"<th[^>]*>(.*?)</th>", thead, re.S)]
+
+
+def _main_row(html: str, key: str) -> str:
+    start = html.index(f'id="row-{key}"')
+    return html[start:html.index("</tr>", start)]
+
+
+def _detail_row(html: str, key: str) -> str:
+    start = html.index(f'id="det-{key}"')
+    return html[start:html.index("</tr>", start)]
+
+
+def _cells(row: str) -> list[str]:
+    import re
+    return [re.sub(r"<[^>]+>", "", c).strip() for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)]
+
+
+def test_the_table_leads_with_source_coverage_and_fresh_then_the_old_columns():
+    html = report.render_settings_dashboard(_s5_payload())
+    assert _thead_cells(html) == ["Dataset", "Source", "Coverage", "Fresh",
+                                  "Last data date", "Rows", "Holes"]
+
+
+def test_the_three_new_cells_carry_the_registry_facts():
+    html = report.render_settings_dashboard(_s5_payload())
+    cells = _cells(_main_row(html, "universe"))
+    assert cells[0] == "Equity universe"
+    assert cells[1] == "yfinance"
+    assert cells[2] == "812 / 905 (90%)"
+    assert cells[3] == "2026-09-20"
+    assert cells[4] == "—" and cells[5] == "7,403"
+    assert cells[6].startswith("1,710") and "null market cap" in cells[6]
+
+
+def test_a_row_the_registry_does_not_know_shows_a_dash_in_the_three_new_cells():
+    html = report.render_settings_dashboard(_payload())      # neither row carries a source
+    cells = _cells(_main_row(html, "corpus"))
+    assert cells[1:4] == ["—", "—", "—"], cells
+
+
+def test_store_tables_writer_action_and_notes_live_in_a_closed_detail_row():
+    html = report.render_settings_dashboard(_s5_payload())
+    main = _main_row(html, "universe")
+    detail = _detail_row(html, "universe")
+    assert '<tr class="detail" id="det-universe" hidden>' in html, "closed until asked for"
+    assert '<button type="button" class="det-btn" aria-expanded="false"' in main
+    assert 'aria-controls="det-universe"' in main
+    for gone in ("equity_universe", "RC-Screeners-Daily", "/run/universe-stats",
+                 "provenance: __meta__"):
+        assert gone not in main, gone
+    for held in ("Store table(s)", "equity_universe", "RC-Screeners-Daily",
+                 "caps-only fill is POST /run/universe-stats",
+                 'data-fetch="/run/universe-stats"', 'id="msg-universe"',
+                 "provenance: __meta__"):
+        assert held in detail, held
+    assert 'class="tbl"' in detail and 'colspan="7"' in detail
+
+
+def test_every_row_has_one_detail_row_carrying_its_own_action():
+    html = report.render_settings_dashboard(_s5_payload())
+    assert 'id="det-corpus"' in html
+    detail = _detail_row(html, "corpus")
+    assert 'data-fetch="/run/edgar-sync"' in detail and 'id="msg-corpus"' in detail
+    assert 'id="msg-universe"' not in detail, "an action belongs to its own dataset"
+
+
+def test_a_coverage_error_is_red_and_says_why():
+    p = _payload()
+    p["rows"][0].update(source="sec", coverage={"label": "error", "fraction": None,
+                                                "problems": ["the summary could not read the store"]},
+                        fresh=None)
+    html = report.render_settings_dashboard(p)
+    cells = _cells(_main_row(html, "universe"))
+    assert cells[2].startswith("error")
+    assert 'class="warnv"' in _main_row(html, "universe")
+    assert "the summary could not read the store" in _main_row(html, "universe")
+    assert cells[3] == "—"
+
+
+def test_the_new_cells_escape_a_hostile_label_and_never_take_a_class_from_it():
+    bad = "<img src=x onerror=__x(1)>"
+    p = _payload()
+    p["rows"][0].update(source=bad, fresh=bad, writer=bad, writer_note=bad,
+                        coverage={"label": "<script>alert(1)</script>", "fraction": 0.5,
+                                  "problems": [bad]})
+    html = report.render_settings_dashboard(p)
+    assert "<img" not in html and "<script>alert(1)" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert html.count("&lt;img src=x onerror=__x(1)&gt;") >= 3
+
+
+def test_the_source_header_offers_the_grouping_toggle():
+    html = report.render_settings_dashboard(_s5_payload())
+    assert '<th data-group="source">' in html
+    assert "function settingsGroupRows(" in html and "function settingsDetail(" in html
+
+
+def test_the_detail_toggle_and_the_grouping_run_under_node(tmp_path):
+    """The two handlers: a detail row opens and closes from its button, and grouping keeps a
+    detail row with its dataset row and puts the worst-coverage order back."""
+    import json
+    import shutil
+    import subprocess
+    import pytest
+    from RevenueChaser.core.tests.board_js import function_source
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    js = (function_source(report.JS, "settingsDetail")
+          + function_source(report.JS, "settingsGroupRows")
+          + r"""
+var els = {det: {hidden: true}};
+globalThis.document = {getElementById: function(id){ return els[id] || null; }};
+function button(){
+  var a = {"aria-controls": "det", "aria-expanded": "false"};
+  return {getAttribute: function(k){ return a[k] == null ? null : a[k]; },
+          setAttribute: function(k, v){ a[k] = String(v); },
+          state: function(){ return a["aria-expanded"]; }};
+}
+var b = button();
+settingsDetail(b);
+var opened = {expanded: b.state(), hidden: els.det.hidden};
+settingsDetail(b);
+var closed = {expanded: b.state(), hidden: els.det.hidden};
+function tr(kind, source, order){
+  return {className: kind, attrs: {"data-source": source, "data-order": String(order)},
+          getAttribute: function(k){ return this.attrs[k] == null ? null : this.attrs[k]; }};
+}
+function body(children){
+  return {children: children, out: [],
+          appendChild: function(el){ this.out.push(el.attrs["data-order"] +
+                                                    (el.className === "detail" ? "d" : "r")); }};
+}
+var tbody = body([tr("row", "uw", 0), tr("detail", "", 0), tr("row", "sec", 1), tr("detail", "", 1),
+                  tr("row", "derived", 2), tr("detail", "", 2)]);
+settingsGroupRows(tbody, true);
+var grouped = tbody.out.slice();
+tbody.out = [];
+settingsGroupRows(tbody, false);
+console.log(JSON.stringify({opened: opened, closed: closed,
+                            grouped: grouped, restored: tbody.out}));
+""")
+    path = tmp_path / "settings_handlers.js"
+    path.write_text(js, encoding="utf-8")
+    out = subprocess.run(["node", str(path)], capture_output=True, text=True, encoding="utf-8")
+    assert out.returncode == 0, out.stderr[-2000:]
+    got = json.loads(out.stdout.strip().splitlines()[-1])
+    assert got["opened"] == {"expanded": "true", "hidden": False}
+    assert got["closed"] == {"expanded": "false", "hidden": True}
+    assert got["grouped"] == ["2r", "2d", "1r", "1d", "0r", "0d"], "source order, detail with its row"
+    assert got["restored"] == ["0r", "0d", "1r", "1d", "2r", "2d"], "back to worst coverage first"

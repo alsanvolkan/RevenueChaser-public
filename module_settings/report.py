@@ -1,9 +1,10 @@
 """Settings / Data health board — self-contained dark-theme HTML renderer.
 
 An ops inventory, not an equity board: no filter bar, no Theme cascade; one ticker
-combobox (the filter kit's, #383 C1b) opens the stored-data drill. One row per dataset with its store table(s), newest data date,
-row count, hole count and a per-dataset Fetch button. Refresh re-reads the store
-with zero network; Fetch enqueues that dataset's async job. See
+combobox (the filter kit's, #383 C1b) opens the stored-data drill. One row per dataset with its
+source, coverage, freshness, newest data date, row count and hole count, then a detail row
+(store table(s), writer, per-dataset Fetch, notes) opened from the dataset's name. Refresh
+re-reads the store with zero network; Fetch enqueues that dataset's async job. See
 ``docs/data_health.md`` §2.
 """
 from __future__ import annotations
@@ -20,6 +21,9 @@ from RevenueChaser.core.reporting_common import (
     help_html,
     provider_health_html,
 )
+
+# The empty cell of the inventory table (the inventory's own ``inventory.DASH``).
+DASH = "—"
 
 CSS = """
 :root{--bg:#05111F;--panel:#12161e;--panel2:#1a1f2b;--border:#232a38;
@@ -42,6 +46,19 @@ table.inv .tbl{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,
 table.inv .note{color:var(--muted);white-space:normal;max-width:320px}
 table.inv .ok{color:var(--neon)}
 table.inv .warnv{color:var(--amber)}
+/* S5 (#124): one closed detail row per dataset; the store tables, writer, action and notes live
+   there, and the cell wraps so the table gains no nowrap column. */
+table.inv tr[hidden]{display:none}
+table.inv tr.detail td{white-space:normal;background:var(--panel2)}
+table.inv tr.detail .dline{margin:2px 0}
+table.inv tr.detail .dline b{color:var(--text);font-weight:600;margin-right:6px}
+.det-btn{background:none;border:0;color:var(--text);font:inherit;padding:0;text-align:left;cursor:pointer}
+.det-btn:hover{color:var(--accent)}
+.det-btn::before{content:"▸ ";color:var(--muted)}
+.det-btn[aria-expanded="true"]::before{content:"▾ "}
+.grp{background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--muted);
+  font:600 10.5px/1.2 inherit;padding:1px 6px;margin-left:6px;cursor:pointer;text-transform:none;letter-spacing:0}
+.grp:hover,.grp[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
 .hlabel{color:var(--muted);font-size:11px;margin-left:6px}
 .fetch-btn,.set-btn{background:rgba(14,165,233,.12);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:4px 10px;font:600 12px/1.2 inherit;cursor:pointer}
 .fetch-btn:hover,.set-btn:hover{background:rgba(14,165,233,.22)}
@@ -195,6 +212,43 @@ function settingsReset(btn){
   var board = btn.getAttribute('data-board');
   boardSettingsReset(btn, document.getElementById('msg-set-' + board), board);
 }
+// S5 (#124): each dataset's detail row (store tables, writer, action, notes) opens from its name.
+// A button, not a click on a <td>: it is focusable and announces its state.
+function settingsDetail(btn){
+  var row = document.getElementById(btn.getAttribute('aria-controls'));
+  if(!row) return;
+  var open = btn.getAttribute('aria-expanded') !== 'true';
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  row.hidden = !open;
+}
+// Group the inventory rows by Source, or put them back in the rendered (worst coverage first)
+// order. A detail row always travels with the dataset row above it.
+function settingsGroupRows(body, on){
+  if(!body) return;
+  var pairs = [], cur = null;
+  Array.prototype.forEach.call(body.children, function(tr){
+    if(tr.className.indexOf('detail') >= 0){ if(cur) cur.push(tr); return; }
+    cur = [tr]; pairs.push(cur);
+  });
+  function key(pair){
+    var order = String(pair[0].getAttribute('data-order') || 0);
+    var source = on ? (pair[0].getAttribute('data-source') || '\uffff') : '';
+    return source + ('0000' + order).slice(-4);
+  }
+  pairs.sort(function(a, b){ var x = key(a), y = key(b); return x < y ? -1 : x > y ? 1 : 0; });
+  pairs.forEach(function(pair){ pair.forEach(function(tr){ body.appendChild(tr); }); });
+}
+var groupBtn = document.querySelector('[data-group="source"] button');
+if(groupBtn){
+  groupBtn.addEventListener('click', function(){
+    var on = groupBtn.getAttribute('aria-pressed') !== 'true';
+    groupBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    settingsGroupRows(document.querySelector('#inv-table tbody'), on);
+  });
+}
+document.querySelectorAll('.det-btn').forEach(function(b){
+  b.addEventListener('click', function(){ settingsDetail(b); });
+});
 document.querySelectorAll('.fetch-btn').forEach(function(b){
   b.addEventListener('click', function(){ settingsFetch(b); });
 });
@@ -636,28 +690,90 @@ def _automations_section(rows: list[dict]) -> str:
         '<div id="auto-msg"></div><div id="auto-body"></div>')
 
 
+def _coverage_cell(row: dict) -> str:
+    """The Coverage cell: the label (red on ``error``) with any problem stated beside it."""
+    coverage = row.get("coverage") or {}
+    label = str(coverage.get("label") or DASH)
+    out = (f'<span class="warnv">{_html.escape(label)}</span>' if label == "error"
+           else _html.escape(label))
+    problems = [str(p) for p in coverage.get("problems") or [] if str(p).strip()]
+    if problems:
+        out += f'<span class="hlabel">{_html.escape("; ".join(problems))}</span>'
+    return out
+
+
+def _source_cells(row: dict) -> tuple[str, str, str]:
+    """Source, Coverage and Fresh. A row the registry does not know is a dash in all three."""
+    if row.get("source") is None:
+        return DASH, DASH, DASH
+    fresh = row.get("fresh")
+    return (_html.escape(str(row.get("source"))), _coverage_cell(row),
+            _html.escape(str(fresh)) if fresh else DASH)
+
+
+def _writer_cell(row: dict) -> str:
+    """The writer's name, or a dash, with the note a spec without a writer carries."""
+    writer = row.get("writer")
+    out = _html.escape(str(writer)) if writer else DASH
+    note = str(row.get("writer_note") or "").strip()
+    if note:
+        out += f'<span class="hlabel">{_html.escape(note)}</span>'
+    return out
+
+
+def _detail_row(row: dict, row_id: str, errors: list[dict]) -> str:
+    """One dataset's store tables, writer, action and notes: closed until its name is pressed."""
+    tables = ", ".join(_html.escape(str(t)) for t in (row.get("tables") or []))
+    note = str(row.get("note") or "").strip()
+    return (
+        f'<tr class="detail" id="det-{_html.escape(row_id, quote=True)}" hidden>'
+        '<td colspan="7">'
+        f'<div class="dline"><b>Store table(s)</b><span class="tbl">{tables or DASH}</span></div>'
+        f'<div class="dline"><b>Writer</b>{_writer_cell(row)}</div>'
+        f'<div class="dline"><b>Action</b>{_action_cell(row)}</div>'
+        f'<div class="dline"><b>Notes</b>{_html.escape(note) if note else DASH}'
+        f'{_master_age_html(row)}</div>'
+        f'{_row_errors(row, errors)}'
+        "</td></tr>")
+
+
 def _table(rows: list[dict], errors: list[dict] | None = None) -> str:
+    """The inventory table (S5, #124): Source / Coverage / Fresh lead, then last date, rows, holes.
+
+    Each dataset's store tables, writer, action and notes sit in one closed detail row, opened by
+    a button on its name (keyboard reachable). The detail cell wraps, so the table gains no nowrap
+    column. ``data-order`` is the rendered (worst coverage first) position, which the group toggle
+    uses to restore this order; ``data-source`` is what it groups by.
+    """
     errors = errors or []
     body = []
-    for row in rows:
-        tables = ", ".join(_html.escape(str(t)) for t in (row.get("tables") or []))
+    for order, row in enumerate(rows):
+        row_id = str(row.get("key") or f"row-{order}")
+        rid = _html.escape(row_id, quote=True)
+        source, coverage, fresh = _source_cells(row)
+        # A query failure on this row is stated in the detail; the marker keeps it visible here.
+        mark = ' <span class="row-err">⚠</span>' if _row_errors(row, errors) else ""
         body.append(
-            "<tr>"
-            f'<td>{_html.escape(str(row.get("label") or row.get("key") or ""))}</td>'
-            f'<td class="tbl">{tables}</td>'
-            f'<td>{_html.escape(str(row.get("last_date") or "—"))}</td>'
+            f'<tr class="row" id="row-{rid}" data-order="{order}" '
+            f'data-source="{_html.escape(str(row.get("source") or ""), quote=True)}">'
+            f'<td><button type="button" class="det-btn" aria-expanded="false" '
+            f'aria-controls="det-{rid}">'
+            f'{_html.escape(str(row.get("label") or row.get("key") or ""))}</button>{mark}</td>'
+            f"<td>{source}</td>"
+            f"<td>{coverage}</td>"
+            f"<td>{fresh}</td>"
+            f'<td>{_html.escape(str(row.get("last_date") or DASH))}</td>'
             f'<td class="num">{_fmt_rows(row.get("rows"))}</td>'
             f'<td class="num">{_fmt_holes(row)}</td>'
-            f'<td>{_action_cell(row)}</td>'
-            f'<td class="note">{_html.escape(str(row.get("note") or ""))}'
-            f'{_master_age_html(row)}'
-            f'{_row_errors(row, errors)}</td>'
             "</tr>")
+        body.append(_detail_row(row, row_id, errors))
     return (
-        '<div class="panel"><table class="inv">'
+        '<div class="panel"><table class="inv" id="inv-table">'
         "<thead><tr>"
-        "<th>Dataset</th><th>Store table(s)</th><th>Last data date</th>"
-        "<th>Rows</th><th>Holes</th><th>Action</th><th>Notes</th>"
+        "<th>Dataset</th>"
+        '<th data-group="source">Source<button type="button" class="grp" aria-pressed="false" '
+        'title="Group the rows by source">Group</button></th>'
+        "<th>Coverage</th><th>Fresh</th><th>Last data date</th><th>Rows</th><th>Holes</th>"
         "</tr></thead><tbody>"
         + "".join(body)
         + "</tbody></table></div>")
@@ -900,8 +1016,11 @@ def render_settings_dashboard(payload: dict) -> str:
     generated = payload.get("generated_at")
 
     help_block = help_html(
-        "This is an ops inventory of the local <b>.store/</b>: one row per dataset with "
-        "its row count, newest data date and known holes. <b>Refresh</b> re-reads the store "
+        "This is an ops inventory of the local <b>.store/</b>: one row per dataset with its row count, "
+        "newest data date and known holes. <b>Source</b> is the provider the registry names, <b>Coverage</b> "
+        "is the stored rows against the population they should cover (<b>n/a</b> when there is no population "
+        "to count), and <b>Fresh</b> is the newest date the registry ages that dataset by. Press a dataset's "
+        "name to open its store tables, writer and <b>Fetch</b> action. <b>Refresh</b> re-reads the store "
         "with <b>no network</b> — it is instant and always safe. <b>Fetch</b> enqueues that "
         "dataset's job, hits a provider and can take minutes; the row reports back when it "
         "finishes. The ticker drill shows <b>stored</b> data only — it does not ask SEC or "

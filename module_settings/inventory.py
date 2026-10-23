@@ -12,7 +12,7 @@ import json
 import threading
 from datetime import datetime, timezone
 
-from RevenueChaser.core import automations, fiscal_year, rawstore
+from RevenueChaser.core import automations, datahealth, datasets, fiscal_year, rawstore
 from RevenueChaser.core.gics_map import canonical_sector
 from RevenueChaser.core.identity import refresh as identity_refresh
 from RevenueChaser.core.identity import types as identity_types
@@ -1332,6 +1332,98 @@ def _sec_files_row() -> dict:
     return row
 
 
+# ── The registry on each row (S5 of the Data Health plan, #124) ─────────────────────────────────
+# ``_collect`` keeps building the rows it always built. Below, ``_attach_registry`` adds what
+# ``core.datasets.REGISTRY`` knows about that dataset — source, writer, coverage, freshness — and
+# ``sort_key`` orders the table worst coverage first. A row's own counts, holes, action and note
+# are never touched or replaced here.
+
+# What a coverage with no definable population reads. Never "0%": a percentage of nothing is a lie.
+COVERAGE_NA = "n/a"
+
+
+def _coverage_record(spec: datasets.DatasetSpec, row: dict) -> dict:
+    """One dataset's coverage as a renderable record. Never raises.
+
+    ``label`` is ``n/a`` when there is no definable population (no ``expected``, zero ``expected``,
+    or no ``covered``), the counts and the rounded percentage when there is one, ``unknown`` when
+    the callable returned no ``Health``, ``error`` when it raised — recorded on this row's table,
+    so the page shows it in the row's own errors rather than failing the whole board.
+    """
+    empty = {"covered": None, "expected": None, "fraction": None, "newest": None, "problems": []}
+    coverage = spec.coverage
+    if coverage is None or isinstance(coverage, datasets.CoverageSpec):
+        # The two-query form has no population/presence evaluator here yet (#124): say n/a.
+        return dict(empty, label=COVERAGE_NA)
+    try:
+        health = coverage()
+    except Exception as exc:  # noqa: BLE001 - a summary failure must not break the page
+        # The summary that just failed is the one the row's own builder already reported: one
+        # entry for one cause, so the error list names each failure once.
+        table = (row.get("tables") or [None])[0]
+        seen = getattr(_CALL, "errors", None) or []
+        if not any(e.get("table") == table and e.get("error") == str(exc) for e in seen):
+            _record(table, "_coverage", exc)
+        return dict(empty, label="error", problems=[str(exc)[:120]])
+    if not isinstance(health, datahealth.Health):
+        return dict(empty, label="unknown")
+    ratio = health.coverage
+    newest = _fmt_date(health.newest)
+    return {
+        "covered": health.covered,
+        "expected": health.expected,
+        "fraction": ratio,
+        "label": (COVERAGE_NA if ratio is None
+                  else f"{health.covered:,} / {health.expected:,} ({ratio * 100:.0f}%)"),
+        "newest": None if newest == DASH else newest,
+        "problems": list(health.problems) + list(health.consistency_problems()),
+    }
+
+
+def _fresh_record(spec: datasets.DatasetSpec) -> str | None:
+    """The newest date of the spec's freshness pair(s), read by ``_max_date``; None when it has none."""
+    pairs = spec.freshness_pairs()
+    if not pairs:
+        return None
+    fresh = _max_date(*pairs)
+    return None if fresh == DASH else fresh
+
+
+def _attach_registry(rows: list[dict]) -> list[dict]:
+    """Add the registry's source, writer, coverage and freshness to each collected row (S5, #124).
+
+    A row whose key is not in ``datasets.REGISTRY`` keeps everything it carries and gains
+    ``source: None`` — the table renders a dash in the three registry cells. Nothing is invented.
+    """
+    for row in rows:
+        try:
+            spec = datasets.by_key(str(row.get("key") or ""))
+        except KeyError:
+            row["source"] = None
+            continue
+        row["source"] = spec.source.value
+        row["writer"] = spec.writer
+        row["writer_note"] = spec.writer_note
+        row["coverage"] = _coverage_record(spec, row)
+        row["fresh"] = _fresh_record(spec)
+    return rows
+
+
+def sort_key(row: dict) -> tuple:
+    """The table's default order: worst coverage first, a row with none after the known ones.
+
+    A row counts as known when its coverage has a ``fraction``; ``n/a``, ``unknown`` and ``error``
+    all have none and follow. Ties break case-insensitively by label, and ``sorted`` is stable, so
+    two rows alike in both keep the order ``_collect`` built them in.
+    """
+    coverage = row.get("coverage") or {}
+    fraction = coverage.get("fraction")
+    label = str(row.get("label") or row.get("key") or "").lower()
+    if fraction is None:
+        return (1, 0.0, label)
+    return (0, float(fraction), label)
+
+
 def _collect(now: datetime) -> dict:
     """Inventory of every dataset. Zero network, store only."""
     tickers = classification_universe()
@@ -1501,7 +1593,8 @@ def _collect(now: datetime) -> dict:
     tickers_list = _universe_tickers()
     board_cards = boards.board_cards()
     return {
-        "rows": rows,
+        # Worst coverage first: the rows that need a Fetch are at the top (#124).
+        "rows": sorted(_attach_registry(rows), key=sort_key),
         "tickers": tickers_list,
         "boards": board_cards,
         "identity": identity,

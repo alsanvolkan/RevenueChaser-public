@@ -35,6 +35,11 @@ def test_collect_reports_counts_last_dates_and_holes(rawstore_tmp_db):
     assert isinstance(payload["generated_at"], str)
     rows = _rows(payload)
 
+    # S5 (#124): the collected rows are ordered worst coverage first by ``sort_key``. The unit
+    # tests of the key live in test_inventory_registry_124; this pins that ``_collect`` applies it.
+    assert [r["key"] for r in payload["rows"]] == [
+        r["key"] for r in sorted(payload["rows"], key=inventory.sort_key)]
+
     universe = rows["universe"]
     assert universe["rows"] == 3
     assert universe["last_date"] == "—"
@@ -352,7 +357,7 @@ def test_collect_includes_board_cards(rawstore_tmp_db):
     _seed()
     cards = inventory.collect()["boards"]
     want = [t["key"] for t in dashboard.TABS
-            if t["type"] == "tab" and t["key"] not in ("module_settings", "logs")]
+            if t["type"] == "tab" and t["key"] not in ("module_settings", "logs", "runs")]
     assert [c["key"] for c in cards] == want
 
 

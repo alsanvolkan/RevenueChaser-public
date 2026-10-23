@@ -89,16 +89,24 @@ def test_the_drill_carries_the_identifiers_the_master_holds(rawstore_tmp_db):
     assert detail["ticker"] == "MU"
     assert detail["cik"] == "0000723125"
     assert detail["figi"] == "BBG000BLNNH6"
-    # The columns arrive in a later PR: until then the drill says n/a, and never raises.
-    assert detail["cusip"] == "n/a"
-    assert detail["isin"] == "n/a"
+    # The columns exist (#127) but nothing is applied for this ticker: no value, not n/a.
+    assert detail["cusip"] is None
+    assert detail["isin"] is None
+
+
+def test_the_identifiers_say_na_when_the_columns_are_not_in_this_store(rawstore_tmp_db, monkeypatch):
+    """An older store without the columns: n/a, never an exception."""
+    _seed_every_dataset()
+    monkeypatch.setattr(inventory, "_has_column",
+                        lambda table, column: False if column in ("cusip", "isin") else
+                        column in inventory._existing_columns(table))
+    detail = inventory.ticker_detail("MU")
+    assert detail["cusip"] == "n/a" and detail["isin"] == "n/a"
 
 
 def test_the_identifiers_show_as_soon_as_the_columns_exist(rawstore_tmp_db):
-    """CUSIP / ISIN are read through column presence, not assumed: add them and they show."""
+    """CUSIP / ISIN values written on the master show in the drill."""
     _seed_every_dataset()
-    rawstore.execute("ALTER TABLE security_master ADD COLUMN cusip TEXT")
-    rawstore.execute("ALTER TABLE security_master ADD COLUMN isin TEXT")
     rawstore.execute("UPDATE security_master SET cusip = ?, isin = ? WHERE ticker = ?",
                      ["594918104", "US5949181045", "MU"])
 

@@ -168,11 +168,12 @@ def test_the_swing_card_lists_its_editable_thresholds(rawstore_tmp_db, monkeypat
 
 
 def _data_board_keys() -> list[str]:
-    """Dashboard tabs that are data boards: ``TABS`` minus Settings and Logs."""
+    """Dashboard tabs that are data boards: ``TABS`` minus Settings, Logs and Runs (#26 PL5-b: read-only run log,
+    no data and no Fetch)."""
     from RevenueChaser.app import dashboard
 
     return [t["key"] for t in dashboard.TABS
-            if t["type"] == "tab" and t["key"] not in ("module_settings", "logs")]
+            if t["type"] == "tab" and t["key"] not in ("module_settings", "logs", "runs")]
 
 
 def test_every_data_board_has_a_board_inputs_entry():
