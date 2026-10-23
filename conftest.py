@@ -10,6 +10,7 @@ Testing a live API is out of scope here: write it as a standalone script under
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import tempfile
 from pathlib import Path
@@ -17,6 +18,13 @@ from pathlib import Path
 import pytest
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "core" / "tests" / "fixtures"
+
+# The scratch root this process is responsible for removing at session end, or None when the
+# root was inherited from a parent process (an xdist worker) and is not ours to touch.
+# Until this existed, one rc-pytest-* directory leaked per pytest process: 917 of them, and
+# pytest's own basetemp on top, had collected in the system temp dir by 2026-10-23.
+SCRATCH_ROOT: Path | None = None
+SCRATCH_PREFIX = "rc-pytest-"
 
 
 def _redirect_data_roots() -> None:
@@ -29,7 +37,7 @@ def _redirect_data_roots() -> None:
     # to happen here, when the root conftest is imported, and not in a fixture or in
     # pytest_configure: a package conftest named on the command line (e.g.
     # module_comovement/tests) imports core.config before pytest_configure runs.
-    _root = Path(tempfile.mkdtemp(prefix="rc-pytest-"))
+    _root = Path(tempfile.mkdtemp(prefix=SCRATCH_PREFIX))
     # Named exactly like the real roots so core/tests/test_store_layout.py's
     # "DATA_DIR is the .store folder" guard keeps asserting something.
     os.environ.setdefault("RC_STORE_DIR", str(_root / ".store"))
@@ -51,8 +59,49 @@ def _redirect_data_roots() -> None:
     # core/tests/test_rawstore_storage.py turns auto-ensure back on to test it.
     os.environ.setdefault("RC_STORE_AUTO_ENSURE", "0")
 
+    global SCRATCH_ROOT
+    in_use = Path(os.environ["RC_STORE_DIR"]).parent
+    if in_use != _root:
+        # An earlier import of this file already redirected the roots — pytest loads the rootdir
+        # conftest, and the package imports it as RevenueChaser.conftest as well — so every
+        # setdefault above was a no-op and the root just made is unused. Remove it here instead of
+        # leaking it, and keep the root the environment points at.
+        shutil.rmtree(_root, ignore_errors=True)
+    # Whoever created the root removes it, and only them. CI runs `pytest -n auto`, where the xdist
+    # controller creates the root and every worker inherits RC_STORE_DIR through its environment:
+    # without this, each worker would remove the shared root at its own session end and the first
+    # one to finish would pull the scratch out from under the workers still running.
+    owner = os.environ.get("RC_PYTEST_SCRATCH_OWNER")
+    if owner is None and in_use == _root:
+        # We made the root this run is using, so we own removing it, and any process we start can
+        # see that it does not. Claimed only when the root is ours: a root handed to us without this
+        # marker belongs to whoever prepared it.
+        os.environ["RC_PYTEST_SCRATCH_OWNER"] = owner = str(os.getpid())
+    owned = owner == str(os.getpid())
+    # None when the root was inherited, or when something outside the suite set RC_STORE_DIR:
+    # in neither case is that directory ours to remove.
+    SCRATCH_ROOT = in_use if owned and in_use.name.startswith(SCRATCH_PREFIX) else None
+
 
 _redirect_data_roots()
+
+
+def _remove_scratch_root(root: Path | str | None) -> None:
+    """Remove a scratch root. Never raises, and never touches a directory it did not name."""
+    if root is None:
+        return
+    root = Path(root)
+    # A wrong path here would delete real data, so the name is the gate, not the caller.
+    if not root.name.startswith(SCRATCH_PREFIX):
+        return
+    # ignore_errors: on Windows a subprocess the suite started may still hold a DuckDB file open,
+    # and scratch left behind is not worth failing a green run over. scripts/clean_test_scratch.py
+    # is the broom for whatever survives.
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    _remove_scratch_root(SCRATCH_ROOT)
 
 
 class NetworkAccessAttempted(RuntimeError):

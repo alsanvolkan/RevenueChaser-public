@@ -56,6 +56,18 @@ Code, comments, commit messages, issues and docs are written in **English**.
 - **Docs that state a value the code owns** (schema version, suite tiers, ports) are compared against the code by
   `core/tests/test_doc_constants.py`. A change to such a value updates the doc in the same commit.
 - **Windows-only code** (Task Scheduler, process names) is tested through fakes, because CI runs on Linux.
+- **Tests clean up their own scratch.** The root `conftest.py` redirects the store, cache, `edgar_docs`,
+  Discord-media and SPX-Gamma roots at one `rc-pytest-*` directory per process and removes it in
+  `pytest_sessionfinish`; `pytest.ini` sets `tmp_path_retention_policy = failed`, so a passing test's
+  `tmp_path` goes with it and a failing one's is kept to look inside. **Not `none`:** on Windows that also
+  removes the numbered basetemp root mid-session and every later `tmp_path` fails with `WinError 3`.
+  A test that needs its scratch to outlive the run takes an explicit path, never the session root. Only the
+  process that created a root removes it (`RC_PYTEST_SCRATCH_OWNER`), because under `pytest -n auto` every
+  xdist worker inherits the controller's root and the first to finish would otherwise delete it for the rest.
+  A killed run still leaves scratch behind: `./app.sh clean-scratch` reports it and `--apply` removes it,
+  leaving alone anything written to in the last two hours **in its top two levels** — deep enough for
+  `<root>/.store/raw.duckdb`, which is why the age is hours and not minutes. Measured 2026-10-23 before
+  this landed: 917 leaked `rc-pytest-*` directories and 2.1 GB under pytest's own basetemp.
 
 ## Data safety
 

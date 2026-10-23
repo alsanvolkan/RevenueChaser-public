@@ -63,10 +63,13 @@ jobs:
       - run: pip install -r RevenueChaser/requirements.txt
       - name: pytest (unit)
         working-directory: RevenueChaser
-        # -n auto: one worker per core. Each worker is its own process, so the root conftest's
-        # _redirect_data_roots() gives it its own temp .store/.cache and every test still gets a
-        # per-test DuckDB file (conftest.isolate_rawstore). --dist loadfile keeps a file's tests on
-        # one worker, which is what the few order-sensitive files assume.
+        # -n auto: one worker per core. The workers SHARE one temp .store/.cache: each inherits
+        # RC_STORE_DIR from the controller, so _redirect_data_roots()'s setdefault calls are no-ops
+        # in a worker. Isolation comes from the per-test DuckDB file (conftest.isolate_rawstore),
+        # not from the roots. Only the controller removes the shared root at the end
+        # (RC_PYTEST_SCRATCH_OWNER), or the first worker to finish would delete it for the rest.
+        # --dist loadfile keeps a file's tests on one worker, which the few order-sensitive files
+        # assume.
         run: python -m pytest -q -n auto --dist loadfile -p no:cacheprovider -rfE
 
   e2e:
