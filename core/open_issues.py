@@ -31,7 +31,7 @@ REGISTRY_PATH = Path(__file__).resolve().parent.parent / "docs" / "open_issues.j
 URL_PREFIX = "https://github.com/alsanvolkan/"
 
 # Not data boards (``core/tests/test_help_every_tab.py``): no report, so no issue panel.
-NOT_A_DATA_BOARD = frozenset({"logs"})
+NOT_A_DATA_BOARD = frozenset({"logs", "runs"})
 # Repository-wide entries are listed on the Ops board only.
 REPO_SCOPE_BOARD = "module_settings"
 
