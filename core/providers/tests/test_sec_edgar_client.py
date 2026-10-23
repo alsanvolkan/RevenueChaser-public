@@ -47,7 +47,10 @@ class TestThrottle:
     def test_interval_is_at_most_ten_per_second(self):
         assert se._THROTTLE_INTERVAL <= 0.10
 
-    def test_second_call_sleeps(self, _no_sleep):
+    def test_second_call_sleeps(self, _no_sleep, monkeypatch):
+        # The shared bucket absorbs a burst without sleeping. This test is the fallback:
+        # when that file cannot be used, the in-process interval still spaces the second call.
+        monkeypatch.setattr(se.sec_throttle, "pace", lambda: False)
         se._throttle_last[0] = 0.0
         se._throttle()
         se._throttle()

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import httpx
 
-from .. import rawstore
+from .. import rawstore, sec_throttle
 from ..config import to_float
 
 logger = logging.getLogger(__name__)
@@ -49,9 +49,12 @@ def _headers() -> dict:
 SEC_WWW_BASE = os.getenv("RC_SEC_WWW_BASE") or "https://www.sec.gov"
 SEC_DATA_BASE = os.getenv("RC_SEC_DATA_BASE") or "https://data.sec.gov"
 
-# SEC fair-use throttle: <=10 req/s. One process-wide bucket for BOTH hosts
-# (www.sec.gov and data.sec.gov share the limit), used by every caller through
-# ``get_json`` / ``get_text`` / ``get_bytes`` below.
+# SEC fair-use throttle. Both hosts share the limit (www.sec.gov and data.sec.gov).
+# Every caller goes through ``_throttle`` (``get_json`` / ``get_text`` / ``get_bytes``,
+# and the bulk download, which calls ``_throttle`` itself). That spends one token from
+# the cross-process bucket (``sec_throttle``, 8/s, burst 2). When the shared file cannot
+# be used, the in-process bucket below is the fallback — it never fails the request.
+# The in-process interval stays at 10/s, the fair-access ceiling, and only runs then (never on top of the shared bucket).
 _throttle_lock = threading.Lock()
 _throttle_last = [0.0]
 _THROTTLE_INTERVAL = 0.10
@@ -98,12 +101,21 @@ def _breaker_fail(immediate: bool = False) -> None:
             _breaker["open_until"] = _clock() + _BREAKER_COOLDOWN
 
 
-def _throttle() -> None:
+def _throttle_local() -> None:
+    """The in-process fallback: one bucket, this process only."""
     with _throttle_lock:
         wait = _THROTTLE_INTERVAL - (time.monotonic() - _throttle_last[0])
         if wait > 0:
             time.sleep(wait)
         _throttle_last[0] = time.monotonic()
+
+
+def _throttle() -> None:
+    """Pace one SEC request. Shared bucket when it can be taken, else the in-process fallback."""
+    if sec_throttle.pace():
+        _throttle_last[0] = time.monotonic()
+        return
+    _throttle_local()
 
 
 def _retry_delay(resp, attempt: int) -> float:
