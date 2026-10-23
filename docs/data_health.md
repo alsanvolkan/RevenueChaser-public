@@ -395,7 +395,8 @@ settings (runs on battery, wakes the PC for the backup, catches up a missed run)
 - **Run log.** A task that writes tables leaves one `job_runs` row per run (`trigger` `scheduled`,
   `registry_name`), `running` while its command runs and `done` or `error` after it (a chain-blocked step:
   `chain blocked: <why>`); what the command writes carries that row's `run_id` (#129 A1, see
-  `docs/data_architecture.md`). The backup records none.
+  `docs/data_architecture.md`). The backup records none. The **Runs** tab (`/view/runs`) is the reader of the
+  table, dashboard runs and scheduled ones together.
 - **Tests** use `FakeScheduler`; the e2e harness installs it so no test reaches the real Task Scheduler.
 
 ### Not this board

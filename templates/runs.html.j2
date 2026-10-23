@@ -1,0 +1,216 @@
+{# Runs tab (/view/runs): the read-only run log over job_runs. Rendered by app/runview.py with autoescape
+   on; the payload arrives as Markup from html_safe.script_json. Every stored value — a module name, a job
+   message, a params blob — is untrusted text and goes into the page through textContent only. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Runs</title>
+<link rel="icon" href="/static/icons/icon-192.png">
+<style>
+:root{--bg:#05111F;--panel:#12161e;--panel2:#1a1f2b;--border:#232a38;
+--text:#d7dce5;--muted:#8a93a6;--accent:#0EA5E9;--red:#e74c3c;--green:#2ecc71;--amber:#f0ad4e;}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5}
+.wrap{display:flex;flex-direction:column;height:100%;padding:20px 24px 12px}
+.topbar{border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:12px}
+.topbar h1{margin:0;font-size:22px;letter-spacing:-.4px}
+.topbar .sub{color:var(--muted);margin-top:2px;font-size:13px}
+.controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px}
+.chk{display:inline-flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;user-select:none}
+.chk input{margin:0;accent-color:var(--accent)}
+.fld{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.fld input{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;height:32px;padding:0 10px;font:inherit;font-size:13px;width:160px}
+.btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;height:32px;padding:0 14px;font:600 13px/1 inherit;cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+.btn[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.meta,.note{color:var(--muted);font-size:12.5px;line-height:1.5;margin:8px 0 0}
+.note{border-top:1px solid var(--border);padding-top:8px;margin-top:8px}
+.scroll{flex:1 1 auto;min-height:160px;overflow:auto;margin:8px 0 0;background:var(--panel);border:1px solid var(--border);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+thead th{position:sticky;top:0;background:var(--panel2);text-align:left;font-weight:600;color:var(--muted);
+  padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;z-index:1}
+tbody td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+tbody tr:last-child td{border-bottom:0}
+td.when,td.took{white-space:nowrap;font-variant-numeric:tabular-nums}
+td.job{font-weight:600}
+td.note-cell,td.params{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;
+  max-width:28ch;overflow-wrap:anywhere}
+td.dash{color:var(--muted)}
+.pill{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:1px 8px;font-size:12px;font-weight:600}
+.s-done{color:var(--green)}
+.s-error,.s-cancelled{color:var(--red)}
+.s-running,.s-queued{color:var(--amber)}
+.empty{padding:16px 12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <h1>Runs</h1>
+    <div class="sub">Every job this store recorded, newest first: the dashboard's own runs and the scheduled
+      tasks, as the <code>job_runs</code> table holds them. Read-only.</div>
+  </div>
+  <div class="controls">
+    <label class="chk" for="runs-problems"><input type="checkbox" id="runs-problems"> Problems only</label>
+    <span class="fld"><label for="runs-filter">Job</label><input type="text" id="runs-filter" placeholder="name contains…"></span>
+    <button type="button" class="btn" id="runs-pause" aria-pressed="false">Pause</button>
+  </div>
+  <div class="scroll">
+    <table>
+      <thead><tr>
+        <th scope="col">Started</th><th scope="col">Job</th><th scope="col">Trigger</th>
+        <th scope="col">Status</th><th scope="col">Took</th><th scope="col">Note</th><th scope="col">Params</th>
+      </tr></thead>
+      <tbody id="runs-body"><tr><td class="empty" colspan="7">Loading...</td></tr></tbody>
+    </table>
+  </div>
+  <p class="meta" id="runs-meta" aria-live="polite"></p>
+  <p class="note">A dash under Trigger means the row records none: only the scheduled tasks write that column
+    today, so those runs came from this dashboard — #83 fills it in. A run left on <em>running</em> may still be
+    going, or its end write was skipped and nothing reconciles the row yet (#82).</p>
+</div>
+<script>
+var INITIAL = {{ initial_json }};
+var POLL = "/api/runs";   // app/runview.POLL_PATH
+(function () {
+  var body = document.getElementById("runs-body"), meta = document.getElementById("runs-meta");
+  var problems = document.getElementById("runs-problems"), filter = document.getElementById("runs-filter");
+  var pause = document.getElementById("runs-pause");
+  var paused = false, busy = false, shown = null, last = null;
+
+  function stamp(epoch) {
+    if (epoch === null || epoch === undefined) return "—";
+    var d = new Date(epoch * 1000);
+    if (isNaN(d)) return "—";
+    var p = function (n) { return String(n).padStart(2, "0"); };
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " "
+         + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  function took(secs) {
+    if (secs === null || secs === undefined) return "";
+    var s = Math.round(secs);
+    if (s < 60) return s + "s";
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + "m " + (s % 60) + "s";
+    return Math.floor(m / 60) + "h " + (m % 60) + "m";
+  }
+
+  function text(value) {
+    if (value === null || value === undefined || value === "") return "";
+    if (typeof value === "object") { try { return JSON.stringify(value); } catch (e) { return String(value); } }
+    return String(value);
+  }
+
+  // A params blob or a traceback can be hundreds of characters; the cell shows the start and keeps the whole
+  // of it in the tooltip. Both go in as text (textContent, and title as a DOM property): never markup.
+  var CLIP = 64;
+
+  function cell(row, cls, value, clip) {
+    var td = document.createElement("td");
+    td.className = cls;
+    var s = text(value);
+    if (!s) { td.classList.add("dash"); s = "—"; }
+    if (clip && s.length > CLIP) { td.title = s; s = s.slice(0, CLIP) + "…"; }
+    td.textContent = s;               // a stored message is untrusted text: never markup
+    row.appendChild(td);
+    return td;
+  }
+
+  function line(r) {
+    var tr = document.createElement("tr");
+    cell(tr, "when", stamp(r.started_at === null || r.started_at === undefined ? r.queued_at : r.started_at));
+    cell(tr, "job", r.module);
+    cell(tr, "trigger", r.trigger);
+    var st = document.createElement("td");
+    var pill = document.createElement("span");
+    pill.className = "pill s-" + String(r.status || "").replace(/[^a-z]/gi, "");
+    pill.textContent = text(r.status) || "—";
+    st.appendChild(pill);
+    tr.appendChild(st);
+    cell(tr, "took", r.status === "running" ? "going" : took(r.duration_s));
+    cell(tr, "note-cell", r.error || r.message, true);
+    cell(tr, "params", r.params && Object.keys(r.params).length ? r.params : "", true);
+    return tr;
+  }
+
+  // What the meta line says. It names the filter the rows were read under, so "0 of 0 problem runs" can
+  // never be read as "no run ever failed" when only the newest page was looked at.
+  function metaText(d, paused) {
+    var kind = d.problems ? " problem runs" : " recorded runs";
+    if (d.query) kind += ' matching "' + d.query + '"';
+    return d.shown + " of " + (d.total || 0) + kind
+      + (d.shown < d.total ? " · the newest " + d.shown + " are read" : "")
+      + (paused ? " · paused" : "");
+  }
+
+  function draw() {
+    if (!last) return;
+    var rows = last.rows || [];
+    var key = JSON.stringify(rows.map(function (r) { return [r.run_id, r.status, r.finished_at]; }));
+    if (key !== shown) {                  // unchanged: keep the reader's scroll and selection
+      shown = key;
+      var frag = document.createDocumentFragment();
+      if (!rows.length) {
+        var tr = document.createElement("tr"), td = document.createElement("td");
+        td.className = "empty";
+        td.colSpan = 7;
+        td.textContent = (last.problems || last.query) ? "No run matches this filter."
+                                                       : "No run has been recorded yet.";
+        tr.appendChild(td);
+        frag.appendChild(tr);
+      }
+      rows.forEach(function (r) { frag.appendChild(line(r)); });
+      body.replaceChildren(frag);
+    }
+    meta.textContent = metaText(last, paused);
+  }
+
+  // A board iframe the shell is not showing still runs its timers: poll only while this one is on screen.
+  function onScreen() {
+    if (document.hidden) return false;
+    try { var f = window.frameElement; return !f || f.getClientRects().length > 0; } catch (e) { return true; }
+  }
+
+  function query() {
+    var p = new URLSearchParams();
+    if (problems.checked) p.set("problems", "1");
+    var q = filter.value.trim();
+    if (q) p.set("q", q);
+    var s = p.toString();
+    return s ? POLL + "?" + s : POLL;
+  }
+
+  function load(poll) {
+    if (busy) return;
+    busy = true;
+    fetch(query(), {cache: "no-store"})
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (d) { if (!(poll && paused)) { last = d; draw(); } })
+      .catch(function (e) { meta.textContent = "Could not read the run log: " + e.message; })
+      .then(function () { busy = false; });
+  }
+
+  problems.addEventListener("change", function () { shown = null; load(); });
+  var typing = null;
+  filter.addEventListener("input", function () {
+    clearTimeout(typing);
+    typing = setTimeout(function () { shown = null; load(); }, 250);   // one read per pause, not per key
+  });
+  pause.addEventListener("click", function () {
+    paused = !paused;
+    pause.textContent = paused ? "Resume" : "Pause";
+    pause.setAttribute("aria-pressed", paused ? "true" : "false");
+    if (!paused) load();
+  });
+  document.addEventListener("visibilitychange", function () { if (!paused && onScreen()) load(true); });
+  setInterval(function () { if (!paused && onScreen()) load(true); }, 5000);
+  if (INITIAL && INITIAL.rows) { last = INITIAL; draw(); } else { load(); }
+})();
+</script>
+</body>
+</html>
