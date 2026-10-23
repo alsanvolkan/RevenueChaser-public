@@ -284,7 +284,9 @@ def _ownership_number(info: dict, stored: dict | None) -> tuple:
 
     The Yahoo client swallows a failed ``.info`` to ``{}`` (#23/#169), so a name can arrive with no live number
     while ``ownership_snapshot`` already holds one. A name with neither has no number and no provenance to stamp.
-    The live value is passed through exactly as before: this changes where the number comes from, never its scale.
+    The scale cannot change: the stored column is the same Yahoo field this read used to take
+    (``core/ownership.py`` maps ``institutional_pct`` to ``heldPercentInstitutions`` and stores fractions as
+    served), so a stored number and a live one are the same kind of number.
     """
     if stored and stored.get("institutional_pct") is not None:
         return stored["institutional_pct"], {"source": stored.get("source"),
@@ -966,7 +968,9 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     # #34 D20: ONE store read for the whole scan, never one per card. The stored institutional share wins over the
     # live ``.info`` one, which the Yahoo client can swallow to ``{}`` (#23/#169); a name with no stored row keeps
     # today's number.
-    stored_ownership = ownership.latest_institutional(r["ticker"] for r in to_score)
+    # A list, not a generator: a caller that looks at the argument (a test spy, a future log line) must not
+    # be able to consume it before the reader sees it.
+    stored_ownership = ownership.latest_institutional([r["ticker"] for r in to_score])
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         # The store is read in bulk per batch (a fixed number of queries each), not once per ticker (#150 U13);
         # a batch bounds how many EDGAR and payload rows are in memory at once.

@@ -285,11 +285,20 @@ def test_inside_one_session_uw_wins_and_a_newer_session_still_beats_it(rawstore_
     assert out["NEWER"]["session_label"] == "2026-10-08"
 
 
-def test_the_session_comes_from_the_rows_run_stamp_not_the_session_column(rawstore_tmp_db):
-    """``session_of(run_at)`` decides: a Saturday run belongs to Friday's session, and the column is not read."""
+def test_the_session_is_the_rows_own_column_the_one_the_ranking_used(rawstore_tmp_db):
+    """The write already mapped ``run_at`` through ``session_of``, so the read takes that column and does not
+    re-derive a session: ranking and display then answer by the same rule, and a ``run_at`` the holiday table
+    cannot place (``session_for`` raises outside 2025-2028) cannot silently drop the date."""
     _seed("AAA", ownership.YFINANCE, 0.31, SATURDAY, session=date(2026, 10, 1))
     (row,) = ownership.latest_institutional(["AAA"]).values()
-    assert (row["session"], row["session_label"]) == (date(2026, 10, 9), "2026-10-09")
+    assert (row["session"], row["session_label"]) == (date(2026, 10, 1), "2026-10-01")
+
+
+def test_a_run_stamp_outside_the_holiday_table_still_reports_its_session(rawstore_tmp_db):
+    """The case the re-derivation lost: ``run_at`` in 1970, a real ``session_date`` on the row."""
+    _seed("AAA", ownership.YFINANCE, 0.31, 0.0, session=date(2026, 10, 8))
+    (row,) = ownership.latest_institutional(["AAA"]).values()
+    assert row["session_label"] == "2026-10-08"
 
 
 def test_a_stored_zero_is_a_value_not_a_missing_one(rawstore_tmp_db):

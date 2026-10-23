@@ -175,12 +175,20 @@ def test_the_store_is_read_once_per_scan_not_once_per_card(rawstore_tmp_db, monk
     _store("AAA", ownership.YFINANCE, 0.11)
     seen = []
     real = ownership.latest_institutional
-    monkeypatch.setattr(engine.ownership, "latest_institutional",
-                        lambda tickers: seen.append(list(tickers)) or real(tickers))
 
-    _scan(monkeypatch, ["AAA", "BBB"])
+    def spy(tickers):
+        # list() here must not consume what the reader is about to read: the call site passes a list, and this
+        # assertion is the one that catches a generator sneaking back in (#112 review).
+        seen.append(list(tickers))
+        return real(tickers)
+
+    monkeypatch.setattr(engine.ownership, "latest_institutional", spy)
+
+    cards = _cards(_scan(monkeypatch, ["AAA", "BBB"]))
 
     assert seen == [["AAA", "BBB"]]
+    assert cards["AAA"]["inst_ownership_pct"] == 0.11      # read once AND used: 0.11 stored over 0.62 live
+    assert cards["BBB"]["inst_ownership_pct"] == 0.62      # no stored row: the live number stands
 
 
 # ── the card face is unchanged in shape ─────────────────────────────────────

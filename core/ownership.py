@@ -149,25 +149,15 @@ def record(rows, *, run_id: str, run_at: float | None = None, fetched_at: float 
 READER_ORDER = (UW_INFO, YFINANCE)
 
 
-def _session_of_row(run_at) -> date | None:
-    """The session a stored row was written for, from its own ``run_at``; None when that stamp names none.
-
-    Always :func:`session_of`, never the clock: a reader that stamped today would date a two-week-old number as
-    fresh.
-    """
-    try:
-        return session_of(float(run_at))[0]
-    except (TypeError, ValueError, OverflowError):
-        return None
-
-
 def latest_institutional(tickers) -> dict[str, dict]:
     """``{ticker: {"institutional_pct", "source", "session", "session_label"}}``: the stored institutional share of
     each ticker that has a usable row.
 
     Usable means a non-NULL ``institutional_pct`` (a ``uw_info`` row stores shares only, so most of its rows are
-    not). The newest session wins; inside one session :data:`READER_ORDER` decides, UW first. ``session`` is that
-    row's session through :func:`session_of` and ``session_label`` its ISO text, for a provenance line.
+    not). The newest session wins; inside one session :data:`READER_ORDER` decides, UW first. ``session`` is the
+    row's own ``session_date`` — the column the write already mapped through :func:`session_of` — and
+    ``session_label`` its ISO text, for a provenance line. Ranking and display read that one column, so the number
+    shown can never be dated by a different rule than the one that picked it.
 
     One store read for the whole list (the scan asks for ~4,000 names at once). Read-only, and a missing,
     unreadable or locked table answers ``{}`` rather than raising: the board must keep scanning without the store.
@@ -177,8 +167,8 @@ def latest_institutional(tickers) -> dict[str, dict]:
         return {}
     try:
         rows = rawstore.query(
-            f"SELECT ticker, source, institutional_pct, run_at FROM ("
-            f"  SELECT ticker, source, institutional_pct, run_at,"
+            f"SELECT ticker, source, institutional_pct, session_date FROM ("
+            f"  SELECT ticker, source, institutional_pct, session_date,"
             f"         row_number() OVER (PARTITION BY ticker ORDER BY session_date DESC,"
             f"           CASE source WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END) AS pick"
             f"  FROM {TABLE} WHERE institutional_pct IS NOT NULL"
@@ -194,7 +184,8 @@ def latest_institutional(tickers) -> dict[str, dict]:
         pct = _num(r.get("institutional_pct"))
         if pct is None:      # the query already skips NULLs; a broken value is not a number to show either
             continue
-        session = _session_of_row(r.get("run_at"))
+        session = r.get("session_date")
+        session = session if isinstance(session, date) else None
         out[str(r["ticker"]).upper()] = {"institutional_pct": pct, "source": r["source"],
                                          "session": session,
                                          "session_label": session.isoformat() if session else None}
