@@ -891,6 +891,14 @@ def run_task(name: str, python: str | None = None, cwd: Path | str | None = None
            "error": None, "message": None, "counts": None}
 
     with open(log, "a", encoding="utf-8") as fh:
+        # A previous run whose end write was skipped is still ``running`` until something starts (#82).
+        try:
+            from RevenueChaser.app import jobs
+            jobs.reconcile_lost_runs()
+        except Exception as exc:  # noqa: BLE001 - bookkeeping, never a different exit code
+            fh.write(f"job_runs: could not reconcile ({str(exc)[:200]})\n")
+            fh.flush()
+
         def record(**fields) -> None:
             if not e.tables_written:
                 return

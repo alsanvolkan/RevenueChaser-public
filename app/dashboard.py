@@ -1584,6 +1584,11 @@ def main(port: int = 8000, open_browser: bool = True):
         logger.error("%s", exc)
         print(f"\n  {exc}\n", file=sys.stderr)
         raise SystemExit(2) from exc
+    # After the stale server is gone, so a row it left ``running`` can be closed (#82).
+    try:
+        jobs.reconcile_lost_runs()
+    except Exception:  # noqa: BLE001 - the run log must not stop the dashboard from starting
+        logger.warning("job_runs: could not reconcile stuck runs", exc_info=True)
     if open_browser:
         chrome = _find_chrome()
         if chrome:
