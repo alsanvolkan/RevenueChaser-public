@@ -31,6 +31,25 @@ BOARD = "module_settings"
 # Warn once ``security_master.updated_at`` is older than this many days (#345, #381).
 IDENTITY_MASTER_STALE_DAYS = 7
 
+# The two ways a coverage row has no number (S7, #124). A failed read is never a zero, and a
+# population the store holds no denominator for is said in words instead of guessed.
+COVERAGE_UNREADABLE = "unreadable"
+COVERAGE_UNMEASURED = "unmeasured"
+
+# The excluded security types in the board's own words. The groups themselves are
+# ``core.universe.TYPE_GROUPS`` (together exactly ``identity.types.EXCLUDED_TYPES``); only the
+# labels differ, because those are written for code.
+SECURITY_TYPE_WORDS = {
+    "funds_etfs": "Funds and exchange-traded funds",
+    "spacs": "Special purpose acquisition companies",
+    "other_securities": "Preferred shares, warrants and units",
+}
+
+# The tables ``module_sec_13f`` creates before it reads. With them all present its readers are
+# store-only (no table is created by asking for a number), so this page may ask it for the CUSIP
+# map's counts.
+SEC13F_TABLES = ("sec13f_holdings", "sec13f_submissions", "sec13f_cusip_names", "sec13f_ingested_zips")
+
 
 def _db_of(name: str) -> str:
     return (rawstore.MANIFEST.get(name) or {}).get("db", "raw")
@@ -47,12 +66,30 @@ def _begin_call() -> None:
     _CALL.tables = {}
     _CALL.columns = {}
     _CALL.errors = []
+    _CALL.summaries = {}
 
 
 def _end_call() -> None:
     _CALL.tables = None
     _CALL.columns = None
     _CALL.errors = None
+    _CALL.summaries = None
+
+
+def _summary(key: str, fn, *args):
+    """One health summary per collect, reused by every row that asks the same store question.
+
+    The dataset rows already ask ``prices.health_summary`` and ``quotes.health_summary``; the
+    identity section below needs the same two answers, and a second full sweep of either store
+    file would spend the page's 2.5 s budget on a question already answered. Outside
+    ``collect()`` there is no cache and this is the plain call.
+    """
+    cache = getattr(_CALL, "summaries", None)
+    if cache is None:
+        return fn(*args)
+    if key not in cache:
+        cache[key] = fn(*args)
+    return cache[key]
 
 
 def _record(table: str | None, where: str, exc: Exception) -> None:
@@ -118,6 +155,8 @@ QUERIED_COLUMNS: list[tuple[str, str]] = [
     ("vendor_financials", "ticker"), ("vendor_financials", "period_end"),
     ("ownership_snapshot", "ticker"), ("ownership_snapshot", "session_date"), ("ownership_snapshot", "source"),
     ("security_master", "cik"), ("security_master", "figi"),
+    # identity coverage (S7, #124)
+    ("security_master", "cusip"), ("security_master", "isin"),
 ]
 
 
@@ -333,7 +372,7 @@ def _price_bars_row(now: datetime) -> dict:
     }
     from RevenueChaser.core import prices
     try:
-        h = prices.health_summary(now)
+        h = _summary("prices", prices.health_summary, now)
     except Exception as exc:  # noqa: BLE001 - a summary failure must not break the page
         _record("price_bars_daily", "_price_bars_row", exc)
         default["note"] = "no bars yet (the attended fill has not run)"
@@ -467,7 +506,7 @@ def _quotes_row() -> dict:
         return default
     from RevenueChaser.core import quotes
     try:
-        h = quotes.health_summary()
+        h = _summary("quotes", quotes.health_summary)
     except Exception as exc:  # noqa: BLE001 - a summary failure must not break the page
         _record("quote_snapshot", "_quotes_row", exc)
         default["note"] = "quote summary unavailable"
@@ -1572,6 +1611,341 @@ def unclaimed_tables() -> list[dict]:
     return out
 
 
+# ── S7 (#124): identity coverage ──────────────────────────────────────────────
+# Three objects, counted over the same population (the names the boards screen):
+#
+# 1. the universe funnel — the SEC ticker and exchange file's present rows, down through the
+#    listed venues, the stored universe, the $300M floor and the excluded security types to
+#    ``universe.classification_universe()``. The steps are the rules the rest of the store already
+#    applies (``sec_files.latest``, ``universe_fetch.SEC_LIST_EXCHANGES``, ``DEFAULT_MC_MIN``,
+#    ``universe.TYPE_GROUPS``); this block only counts them, in one read per store file.
+# 2. the inputs each surviving name carries.
+# 3. the identifier matrix, each row naming its own denominator.
+#
+# A failed read is ``COVERAGE_UNREADABLE`` and the page says "could not be read" — never a zero.
+# ``COVERAGE_UNMEASURED`` is for a number the store holds no definition for ("not measured").
+
+
+def _coverage(key: str, label: str, denominator: str, *, covered: int | None,
+              expected: int | None, state: str = "", detail: str = "") -> dict:
+    """One row of the inputs or identifier table. ``covered is None`` means unknown, never zero."""
+    return {"key": key, "label": label, "covered": covered, "expected": expected,
+            "denominator": denominator, "state": state, "detail": detail}
+
+
+def _present_file_rows() -> list[dict] | None:
+    """The SEC ticker and exchange file's present rows (``sec_files.latest`` is the one reader).
+
+    ``None`` when the read failed; ``[]`` when nothing is stored yet (a fresh store, not a failure).
+    """
+    from RevenueChaser.core import sec_files
+    try:
+        return sec_files.latest("exchange")
+    except Exception as exc:  # noqa: BLE001 - a failed read is said, never counted as nothing
+        _record("sec_exchange_file", "identity_coverage", exc)
+        return None
+
+
+def _universe_caps() -> dict[str, float] | None:
+    """``ticker -> stored market cap`` from ``equity_universe``; ``None`` when it cannot be read."""
+    if not _table_exists("equity_universe"):
+        return {}
+    try:
+        rows = rawstore.query("SELECT ticker, market_cap FROM equity_universe")
+    except Exception as exc:  # noqa: BLE001
+        _record("equity_universe", "identity_coverage", exc)
+        return None
+    return {r["ticker"]: r.get("market_cap") for r in rows if r.get("ticker")}
+
+
+def _session_tickers(table: str, db: str, session) -> set[str] | None:
+    """Tickers with a row on ``session`` in ``table``; ``None`` when the read failed."""
+    try:
+        rows = rawstore.query(f"SELECT DISTINCT ticker FROM {table} WHERE session_date = ?",
+                              [session], db=db)
+    except Exception as exc:  # noqa: BLE001
+        _record(table, "identity_coverage", exc)
+        return None
+    return {r["ticker"] for r in rows if r.get("ticker")}
+
+
+def _spine_identifiers() -> dict[str, dict] | None:
+    """``ticker -> {cusip, isin, figi}`` from ``security_master``; ``None`` when the read failed.
+
+    A column this store does not carry yet reads as absent (the drill's ``n/a`` rule), never as an
+    error. One query, whatever subset of the three columns exists.
+    """
+    if not _table_exists("security_master"):
+        return {}
+    columns = [c for c in ("cusip", "isin", "figi") if _has_column("security_master", c)]
+    if not columns:
+        return {}
+    try:
+        rows = rawstore.query(f"SELECT ticker, {', '.join(columns)} FROM security_master")
+    except Exception as exc:  # noqa: BLE001
+        _record("security_master", "identity_coverage", exc)
+        return None
+    return {r["ticker"]: r for r in rows if r.get("ticker")}
+
+
+def _value(row: dict | None, column: str) -> str:
+    """One identifier of one ``security_master`` row, stripped; ``""`` for NULL or a missing column."""
+    return str((row or {}).get(column) or "").strip()
+
+
+def _covered_from_missing(kept: list[str], table: str) -> int | None:
+    """How many of ``kept`` have a row in ``table`` — the ``_missing`` pattern, one query.
+
+    A table this store does not carry stores nothing, so it covers none of them (0). A table that
+    is there but cannot be read is ``None``: the page says "could not be read", never 0.
+    """
+    if not _table_exists(table):
+        return 0
+    missing = _missing(kept, table)
+    return None if missing is None else len(kept) - missing
+
+
+def _universe_funnel(kept: set[str], present: list[dict] | None,
+                     caps: dict | None) -> tuple[list[dict], str]:
+    """``(steps, note)``: the funnel from the SEC file to the names the boards screen.
+
+    ``note`` holds the words to show instead when the funnel cannot be drawn (a read failed, or
+    the file is not stored yet): a funnel that does not add up is not a funnel.
+    """
+    from RevenueChaser.core import funnel as funnel_mod
+    from RevenueChaser.core import universe as spine
+    from RevenueChaser.core.universe_fetch import SEC_LIST_EXCHANGES
+
+    if present is None or caps is None:
+        return [], "The funnel could not be read from the store."
+    if not present:
+        return [], "The SEC ticker and exchange file is not stored yet, so there is nothing to count."
+
+    floor = float(_MC_FLOOR)
+    listed = {str(r["ticker"]).upper() for r in present
+              if str(r.get("exchange") or "").strip().casefold() in SEC_LIST_EXCHANGES}
+    in_universe = listed & set(caps)
+    below = {t for t in in_universe
+             if caps[t] is not None and float(caps[t]) < floor}
+    no_cap = {t for t in in_universe if caps[t] is None}
+    # The type rule is ``universe``'s own (``TYPE_GROUPS``, together ``EXCLUDED_TYPES``); untyped
+    # names stay, exactly as ``classification_universe`` keeps them.
+    types = spine._security_types()
+    by_group = {key: set() for key, _label, _members in spine.TYPE_GROUPS}
+    for ticker in in_universe - below - no_cap:
+        group = next((key for key, _label, members in spine.TYPE_GROUPS
+                      if types.get(ticker) in members), None)
+        if group:
+            by_group[group].add(ticker)
+    remaining = in_universe - below - no_cap - set().union(*by_group.values())
+
+    steps = [
+        funnel_mod.step("file", "Companies in the SEC ticker and exchange file", len(present), "start"),
+        funnel_mod.step("venues", "Not on Nasdaq, the New York Stock Exchange or Cboe",
+                        len(present) - len(listed), "drop", by_design=True),
+        # A listed name the stored universe does not hold is the universe being behind the SEC file
+        # (a new listing since the last Fetch), not a rule: the row says so.
+        funnel_mod.step("universe", "Not in the stored equity universe",
+                        len(listed) - len(in_universe), "drop", by_design=False),
+        funnel_mod.step("floor", f"Market cap below ${floor / 1e6:,.0f} million",
+                        len(below), "drop", by_design=True),
+        # A missing cap is not a rule: it is the store's own hole, and the row says so.
+        funnel_mod.step("no_cap", "No market cap stored", len(no_cap), "drop", by_design=False),
+    ]
+    steps += [funnel_mod.step(key, SECURITY_TYPE_WORDS.get(key, label), len(by_group[key]),
+                              "drop", by_design=True)
+              for key, label, _members in spine.TYPE_GROUPS]
+    # A kept name the file does not list is still screened: a note, outside the arithmetic.
+    unreached = kept - in_universe
+    if unreached:
+        steps.append(funnel_mod.step("unreached", "Names the boards screen that the SEC file does not list",
+                                     len(unreached), "note"))
+    steps.append(funnel_mod.step("kept", "Names the boards screen", len(remaining), "result"))
+    if funnel_mod.validate(steps):
+        return [], "The funnel does not add up on this store, so it is not shown."
+    return steps, ""
+
+
+def _cusip_map_counts() -> dict | None:
+    """The CUSIP map's numbers (#207, D19) as the section states them; ``None`` when unreadable.
+
+    * ``asked`` — CUSIPs ``identity_cusip`` holds an answer for (the map's whole population);
+    * ``mapped`` — of those, the ones whose newest answer names a ticker;
+    * ``empty`` — asked and answered with no ticker: the store's own "unmatched" count;
+    * ``never_asked`` — CUSIPs the 13F filings need a ticker for that the map has not asked about,
+      from the map step's own queue (``module_sec_13f.engine.map_candidates``);
+    * ``board_left_out`` — what the 13F board drops after its own filters (newest period, long
+      equity holdings of the active filings, ``engine.unmatched_summary``). The period's own CUSIP
+      total is not stored, so this count has no denominator to count against.
+
+    The map, its queue and the board's summary are three reads. Each carries its own state, so one
+    failing read leaves the other two answering, and the failed one says so instead of a zero.
+    """
+    from RevenueChaser.core import identity_cusip
+
+    out = {"asked": 0, "mapped": 0, "empty": 0,
+           "never_asked": 0, "never_asked_state": "",
+           "board_left_out": 0, "board_state": ""}
+    map_read = _table_exists(identity_cusip.TABLE)
+    if map_read:
+        try:
+            latest = identity_cusip.latest()
+        except Exception as exc:  # noqa: BLE001
+            _record(identity_cusip.TABLE, "identity_coverage", exc)
+            return None
+        out["asked"] = len(latest)
+        out["mapped"] = sum(1 for row in latest.values()
+                            if row.get("status") == identity_cusip.PRESENT and row.get("ticker"))
+        out["empty"] = out["asked"] - out["mapped"]
+    if _count("sec13f_holdings") and all(_table_exists(t) for t in SEC13F_TABLES):
+        from RevenueChaser.module_sec_13f import engine as sec_13f
+        if map_read:
+            try:
+                out["never_asked"] = len(sec_13f.map_candidates())
+            except Exception as exc:  # noqa: BLE001
+                _record("sec13f_holdings", "identity_coverage", exc)
+                out["never_asked"], out["never_asked_state"] = None, COVERAGE_UNREADABLE
+        else:
+            # The queue excludes the CUSIPs the map holds, so without its table the count has no
+            # definition here — said, never drawn as "nothing is waiting".
+            out["never_asked"], out["never_asked_state"] = None, COVERAGE_UNMEASURED
+        try:
+            summary = sec_13f.unmatched_summary(sec_13f.load_cusip_ticker())
+            out["board_left_out"] = int((summary or {}).get("cusips") or 0)
+        except Exception as exc:  # noqa: BLE001
+            _record("sec13f_holdings", "identity_coverage", exc)
+            out["board_left_out"], out["board_state"] = None, COVERAGE_UNREADABLE
+    return out
+
+
+def _count_text(n: int, word: str) -> str:
+    """``3 names`` / ``1 name``: a count with its word, thousands kept apart and the plural right."""
+    return f"{int(n):,} {word}" if int(n) == 1 else f"{int(n):,} {word}s"
+
+
+def identity_coverage(tickers: list[str], now: datetime | None = None) -> dict:
+    """S7 (#124): the universe funnel, the inputs the kept names carry, and identifier coverage.
+
+    ``tickers`` is ``classification_universe()`` — computed once by ``_collect`` and reused here, so
+    the tables count the population the boards screen rather than a second definition of it. A
+    stored universe that is ahead of the SEC file is named in the funnel as a note, never dropped.
+    Store only, one read per store file.
+    """
+    kept = sorted({str(t).upper() for t in (tickers or []) if str(t or "").strip()})
+    n_kept = len(kept)
+    denominator = f"{_count_text(n_kept, 'name')} the funnel keeps"
+
+    present = _present_file_rows()
+    funnel, funnel_note = _universe_funnel(set(kept), present, _universe_caps())
+
+    # ── the inputs ──
+    inputs = []
+    if present is None:
+        inputs.append(_coverage("cik", "SEC company number (CIK)", denominator, covered=None,
+                                expected=n_kept, state=COVERAGE_UNREADABLE))
+    else:
+        # The rule ``_universe_ciks`` counts: a present row whose CIK is numeric.
+        with_cik = {str(r["ticker"]).upper() for r in present
+                    if str(r.get("cik") or "").strip().isdigit()}
+        inputs.append(_coverage("cik", "SEC company number (CIK)", denominator,
+                                covered=sum(1 for t in kept if t in with_cik), expected=n_kept))
+
+    from RevenueChaser.core import prices, quotes
+    covered, state = None, COVERAGE_UNREADABLE
+    try:
+        newest = _summary("quotes", quotes.health_summary)["newest_session"]
+        if newest is None:
+            covered, state = 0, ""          # no quote row stored at all: a real zero
+        else:
+            have = _session_tickers("quote_snapshot", "raw", newest)
+            if have is not None:
+                covered, state = sum(1 for t in kept if t in have), ""
+    except Exception as exc:  # noqa: BLE001
+        _record("quote_snapshot", "identity_coverage", exc)
+    inputs.append(_coverage("quotes", "Quote and market cap, newest session", denominator,
+                            covered=covered, expected=n_kept, state=state))
+
+    covered, state = None, COVERAGE_UNREADABLE
+    try:
+        summary = _summary("prices", prices.health_summary, now)
+        if summary.get("calendar_error"):
+            covered, state = None, COVERAGE_UNMEASURED   # no complete session to count against
+        elif summary.get("newest_session") is None:
+            covered, state = 0, ""                        # no bar stored at all
+        else:
+            have = _session_tickers("price_bars_daily", "prices", summary["latest_complete"])
+            if have is not None:
+                covered, state = sum(1 for t in kept if t in have), ""
+    except Exception as exc:  # noqa: BLE001
+        _record("price_bars_daily", "identity_coverage", exc)
+    inputs.append(_coverage("bars", "Daily price bars, latest completed session", denominator,
+                            covered=covered, expected=n_kept, state=state))
+
+    spine = _spine_identifiers()
+    for key, label, column in (("cusip", "CUSIP", "cusip"), ("figi", "FIGI", "figi")):
+        if spine is None:
+            inputs.append(_coverage(key, label, denominator, covered=None, expected=n_kept,
+                                    state=COVERAGE_UNREADABLE))
+        else:
+            inputs.append(_coverage(key, label, denominator,
+                                    covered=sum(1 for t in kept if _value(spine.get(t), column)),
+                                    expected=n_kept))
+
+    for key, label, table in (("facts", "EDGAR company facts", "edgar_financials"),
+                              ("annual", "Annual report (10-K or 20-F)", "chain_filings"),
+                              ("ownership", "Ownership", "ownership_snapshot")):
+        covered = _covered_from_missing(kept, table)
+        inputs.append(_coverage(key, label, denominator, covered=covered, expected=n_kept,
+                                state="" if covered is not None else COVERAGE_UNREADABLE))
+
+    # ── the identifier matrix ──
+    identifiers = []
+    if spine is None:
+        identifiers.append(_coverage("isin", "ISIN", "names with a CUSIP", covered=None,
+                                     expected=None, state=COVERAGE_UNREADABLE))
+    else:
+        with_cusip = sum(1 for t in kept if _value(spine.get(t), "cusip"))
+        with_isin = sum(1 for t in kept if _value(spine.get(t), "isin"))
+        identifiers.append(_coverage(
+            "isin", "ISIN", f"{_count_text(with_cusip, 'name')} with a CUSIP", covered=with_isin,
+            expected=with_cusip, detail="Derived from the CUSIP; never fetched."))
+
+    cusips = _cusip_map_counts()
+    if cusips is None:
+        for key, label in (("cusip_mapped", "CUSIP mapped to a ticker"),
+                           ("cusip_empty", "CUSIP the store has no ticker for"),
+                           ("cusip_never_asked",
+                            "CUSIP the 13F filings hold that the store has never asked about")):
+            identifiers.append(_coverage(key, label, "CUSIPs the store has asked about",
+                                         covered=None, expected=None, state=COVERAGE_UNREADABLE))
+        identifiers.append(_coverage("sec13f_left_out", "CUSIP the 13F board leaves out of its totals",
+                                     "not measured", covered=None, expected=None,
+                                     state=COVERAGE_UNREADABLE))
+    else:
+        asked, waiting = cusips["asked"], cusips["never_asked"]
+        asked_text = f"{_count_text(asked, 'CUSIP')} the store has asked about"
+        identifiers.append(_coverage("cusip_mapped", "CUSIP mapped to a ticker", asked_text,
+                                     covered=cusips["mapped"], expected=asked))
+        identifiers.append(_coverage(
+            "cusip_empty", "CUSIP the store asked about and has no ticker for (the store's unmatched count)",
+            asked_text, covered=cusips["empty"], expected=asked))
+        # The waiting count is a second read: when it failed (or has no definition here) its
+        # denominator is not a number either, and the row says so instead of counting to zero.
+        need = asked + waiting if isinstance(waiting, int) else None
+        need_text = (f"{_count_text(need, 'CUSIP')} that need a ticker (asked plus waiting)"
+                     if need is not None else "CUSIPs that need a ticker (asked plus waiting)")
+        identifiers.append(_coverage(
+            "cusip_never_asked", "CUSIP the 13F filings hold that the store has never asked about",
+            need_text, covered=waiting, expected=need, state=cusips["never_asked_state"]))
+        identifiers.append(_coverage(
+            "sec13f_left_out", "CUSIP the 13F board leaves out of its totals", "not measured",
+            covered=cusips["board_left_out"], expected=None, state=cusips["board_state"],
+            detail="Newest 13F period only: stock holdings (not options), in filings still in force."))
+
+    return {"names_kept": n_kept, "funnel": funnel, "funnel_note": funnel_note,
+            "inputs": inputs, "identifiers": identifiers}
+
+
 def sort_key(row: dict) -> tuple:
     """The table's default order: worst coverage first, a row with none after the known ones.
 
@@ -1768,6 +2142,9 @@ def _collect(now: datetime) -> dict:
         # S6 (#124): the backstop for a MANIFEST table no dataset claims. Built before the errors
         # list, so a failed read here is reported like any other.
         "other_tables": unclaimed_tables(),
+        # S7 (#124): the funnel, the inputs and the identifiers, over the same population ``rows``
+        # above use (``tickers`` is ``classification_universe()``).
+        "identity_coverage": identity_coverage(tickers, now),
         "errors": list(getattr(_CALL, "errors", None) or []),
         "generated_at": now.isoformat(timespec="seconds"),
         "provider_health": _provider_health(),

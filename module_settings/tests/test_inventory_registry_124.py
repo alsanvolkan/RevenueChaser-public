@@ -481,3 +481,29 @@ def test_cftc_waits_on_a_decision_and_names_the_backfill_issue():
     assert row["gap_kind"] == "needs_decision"
     assert "#119" in row["next_step"]
     assert "fresh but shallow" in row["next_step"]
+
+
+# ── S7 of the Data Health plan (#124): identity coverage ─────────────────────
+def test_the_payload_carries_the_identity_coverage_over_the_classification_universe(rawstore_tmp_db):
+    """The section is built in ``_collect`` from the one universe the rest of the page counts.
+
+    The funnel's last step is that list's own length, so the section cannot drift to a second
+    population when a filter changes.
+    """
+    from RevenueChaser.core import universe
+    rawstore.write_rows("equity_universe", [
+        {"ticker": "AAPL", "market_cap": 3.0e9, "name": "Apple"},
+        {"ticker": "TINY", "market_cap": 1.0e6, "name": "Below The Floor"},
+    ])
+    rawstore.write_rows("sec_exchange_file", [
+        {"ticker": "AAPL", "cik": "0000320193", "name": "Apple", "exchange": "Nasdaq",
+         "status": "present", "run_at": 1.0},
+        {"ticker": "TINY", "cik": "0000000002", "name": "Below The Floor", "exchange": "NYSE",
+         "status": "present", "run_at": 1.0},
+    ])
+    cov = inventory.collect(now=_NOW)["identity_coverage"]
+    kept = universe.classification_universe()
+    assert sorted(kept) == ["AAPL"]
+    assert cov["names_kept"] == 1
+    assert cov["funnel"][-1]["kind"] == "result" and cov["funnel"][-1]["count"] == 1
+    assert cov["funnel"][0]["kind"] == "start" and cov["funnel"][0]["count"] == 2

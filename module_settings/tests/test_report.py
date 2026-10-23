@@ -2794,3 +2794,164 @@ def test_the_real_registry_diagram_stays_under_the_budget():
     svg = report._flow_svg(report.flow_graph(rows))
     assert len(svg.encode("utf-8")) < report.FLOW_MAX_BYTES, f"{len(svg)} bytes"
     assert '<details class="flow" open>' in _flow_section(rows)
+# ── S7 of the Data Health plan (#124): "Identity coverage" ───────────────────────────────────
+# Three objects in one card: the universe funnel (core.funnel's shared panel), the inputs the
+# surviving names carry, and the identifier matrix. Every number comes from
+# ``inventory.identity_coverage``; a row whose read failed says "could not be read", and a
+# denominator the store does not hold says "not measured" — never a zero.
+def _cov_row(key: str, label: str, **over) -> dict:
+    row = {"key": key, "label": label, "covered": 2, "expected": 2,
+           "denominator": "2 names the funnel keeps", "state": "", "detail": ""}
+    row.update(over)
+    return row
+
+
+def _identity_coverage() -> dict:
+    from RevenueChaser.core import funnel
+    return {
+        "names_kept": 2,
+        "funnel_note": "",
+        "funnel": [
+            funnel.step("file", "Companies in the SEC ticker and exchange file", 8, "start"),
+            funnel.step("venues", "Outside Nasdaq, New York Stock Exchange and Cboe", 3, "drop",
+                        by_design=True),
+            funnel.step("no_cap", "No market cap stored", 2, "drop", by_design=False),
+            funnel.step("kept", "Names the boards screen", 3, "result"),
+        ],
+        "inputs": [
+            _cov_row("cik", "SEC company number (CIK)"),
+            _cov_row("bars", "Daily price bars, latest completed session", covered=1,
+                          expected=None, state="unmeasured"),
+        ],
+        "identifiers": [
+            _cov_row("isin", "ISIN", covered=0, expected=2,
+                          denominator="2 names with a CUSIP",
+                          detail="Derived from the CUSIP; never fetched."),
+            _cov_row("sec13f_left_out", "CUSIP the 13F board leaves out of its totals",
+                          covered=1, expected=None, denominator="not measured"),
+        ],
+    }
+
+
+def _identity_section(html: str) -> str:
+    start = html.index('id="identity-coverage"')
+    return html[start:].split("</section>")[0]
+
+
+def _mini_tables(section: str) -> list[str]:
+    """The card's small tables, in the order they render."""
+    parts = section.split('<table class="inv mini">')[1:]
+    return [p.split("</table>")[0] for p in parts]
+
+
+def _mini_heads(table: str) -> list[str]:
+    import re
+    thead = re.search(r"<thead><tr>(.*?)</tr></thead>", table, re.S).group(1)
+    return [h.split("<")[0].strip() for h in re.findall(r"<th[^>]*>(.*?)</th>", thead, re.S)]
+
+
+def _first_cells(table: str) -> list[str]:
+    """The first body row's cells as plain text."""
+    import re
+    row = re.search(r"<tbody><tr>(.*?)</tr>", table, re.S).group(1)
+    return [re.sub(r"<[^>]+>", "", c).strip() for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)]
+
+
+def test_no_identity_coverage_section_without_a_payload():
+    for payload in (_payload(), dict(_payload(), identity_coverage=None),
+                    dict(_payload(), identity_coverage={})):
+        html = report.render_settings_dashboard(payload)
+        assert 'id="identity-coverage"' not in html, "no payload, no section"
+        assert "Identity coverage" not in html
+
+
+def test_the_identity_coverage_section_sits_after_the_dataset_table():
+    html = report.render_settings_dashboard(dict(_payload(), identity_coverage=_identity_coverage()))
+    assert html.index('id="inv-table"') < html.index('id="identity-coverage"')
+    section = _identity_section(html)
+    assert "Identity coverage" in section
+    for heading in ("Where names drop out of the universe", "How many names carry each input",
+                    "Identifier coverage"):
+        assert f">{heading}</h4>" in section, heading
+
+
+def test_the_funnel_is_the_shared_panel_with_every_drop_and_its_design_tag():
+    section = _identity_section(report.render_settings_dashboard(
+        dict(_payload(), identity_coverage=_identity_coverage())))
+    assert 'id="identity-funnel"' in section
+    assert "Where names drop out of the universe" in section
+    assert "Companies in the SEC ticker and exchange file" in section
+    assert "by design" in section, "a designed drop says so"
+    assert "needs a look" in section, "a missing market cap is not by design"
+    assert "Names the boards screen" in section
+
+
+def test_an_empty_funnel_says_why_in_words():
+    cov = dict(_identity_coverage(), funnel=[], funnel_note="could not be read")
+    section = _identity_section(report.render_settings_dashboard(
+        dict(_payload(), identity_coverage=cov)))
+    assert 'id="identity-funnel"' not in section
+    assert "could not be read" in section
+
+
+def test_the_input_table_names_covered_out_of_and_share():
+    section = _identity_section(report.render_settings_dashboard(
+        dict(_payload(), identity_coverage=_identity_coverage())))
+    inputs = _mini_tables(section)[0]
+    assert _mini_heads(inputs) == ["Input", "Names covered", "Out of", "Share"]
+    assert _first_cells(inputs) == ["SEC company number (CIK)", "2", "2 names the funnel keeps", "100%"]
+
+
+def test_a_row_with_no_denominator_says_not_measured_in_words():
+    section = _identity_section(report.render_settings_dashboard(
+        dict(_payload(), identity_coverage=_identity_coverage())))
+    inputs = _mini_tables(section)[0]
+    body = inputs.split("<tbody>")[1]
+    assert "Daily price bars, latest completed session" in body
+    assert "not measured" in body
+    assert ">0<" not in body, "a number with no definition is never drawn as a zero"
+
+
+def test_an_unreadable_row_says_could_not_be_read_in_words():
+    cov = _identity_coverage()
+    cov["inputs"] = [_cov_row("cik", "SEC company number (CIK)", covered=None,
+                                   state="unreadable")]
+    section = _identity_section(report.render_settings_dashboard(
+        dict(_payload(), identity_coverage=cov)))
+    inputs = _mini_tables(section)[0]
+    assert "could not be read" in inputs
+    assert ">0<" not in inputs
+
+
+def test_the_identifier_table_names_its_own_denominator_per_row():
+    section = _identity_section(report.render_settings_dashboard(
+        dict(_payload(), identity_coverage=_identity_coverage())))
+    ids = _mini_tables(section)[1]
+    assert _mini_heads(ids) == ["Identifier", "Count", "Out of", "Share"]
+    assert "2 names with a CUSIP" in ids, "the ISIN row counts against the names that have a CUSIP"
+    assert "Derived from the CUSIP; never fetched." in ids
+    # ISIN at zero is shown as a real count, with its zero share
+    cells = _first_cells(ids)
+    assert cells[0].startswith("ISIN") and "Derived from the CUSIP; never fetched." in cells[0]
+    assert cells[1:] == ["0", "2 names with a CUSIP", "0%"]
+
+
+def test_the_identifier_coverage_section_escapes_its_cells():
+    bad = "<img src=x onerror=__x(1)>"
+    cov = _identity_coverage()
+    cov["inputs"] = [_cov_row("cik", bad, denominator=bad, detail=bad)]
+    cov["identifiers"] = [_cov_row("isin", bad, denominator=bad, state="unmeasured")]
+    section = _identity_section(report.render_settings_dashboard(
+        dict(_payload(), identity_coverage=cov)))
+    assert "<img" not in section
+    assert section.count("&lt;img src=x onerror=__x(1)&gt;") >= 3
+
+
+def test_a_row_with_no_number_and_no_state_draws_a_dash_never_a_zero():
+    """A payload row that lost both its count and its state is a dash, not a zero: the page never guesses."""
+    cov = _identity_coverage()
+    cov["inputs"] = [_cov_row("cik", "SEC company number (CIK)", covered=None, expected=2)]
+    inputs = _mini_tables(_identity_section(report.render_settings_dashboard(
+        dict(_payload(), identity_coverage=cov))))[0]
+    assert _first_cells(inputs)[1] == "—"
+    assert ">0<" not in inputs
