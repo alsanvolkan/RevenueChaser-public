@@ -372,7 +372,7 @@ class TestEveryManifestDatasetHasARoundTripTest:
                     "relatedness_theme_etfs",
                     "oipd_chain", "oipd_meta",
                     "security_master", "identity_conflicts", "identity_source_cache",
-                    "identity_runs", "board_settings",
+                    "identity_runs", "board_settings", "store_schema",
                     "discord_channels", "discord_messages", "discord_export_runs",
                     "job_runs", "price_bars_daily", "catalyst_events",
                     "orphan_designations", "orphan_lookups", "forecast_ledger",

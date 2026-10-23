@@ -185,6 +185,14 @@ class RawStoreError(RuntimeError):
     pass
 
 
+class StoreSchemaMismatch(RawStoreError):
+    """A data write was refused because this file's schema stamp does not match this code (#26 PL7-b).
+
+    Off unless ``RC_STORE_SCHEMA_REFUSE=1``. Does not fire at import. The message names the file
+    (not a path), the stored version, the code version and the restore command.
+    """
+
+
 class StoreLockedError(RawStoreError):
     """The store is held by another process — the one failure with a real fix.
 
@@ -1021,6 +1029,17 @@ MANIFEST: dict[str, dict] = {
         "key": ["key"],
         "columns": ["key TEXT PRIMARY KEY", "value TEXT"],
         "kind": "json_payload",
+        "write": "upsert",
+        "sources": [],
+    },
+    # #26 PL7: this file's schema stamp (row key ``schema_version``). The same table is created in every
+    # store file by ``_apply_schema_stamp``; this entry is the column contract and the raw copy. Not
+    # ``store_meta``'s ticker-store ``schema_version`` (that value is ``"3"``). Additive: no version bump.
+    "store_schema": {
+        "history_mode": "latest_cache",
+        "key": ["key"],
+        "columns": ["key TEXT PRIMARY KEY", "value TEXT"],
+        "kind": "tabular",
         "write": "upsert",
         "sources": [],
     },
@@ -2920,6 +2939,132 @@ def _migrate_price_tables() -> list[str]:
     return done
 
 
+# ── per-file schema stamp (#26 PL7-a) ────────────────────────────────────────────────────────
+# A stamp in raw that describes edgar.duckdb cannot see a restore of one old file. The row lives in
+# the file it describes: ``store_schema`` key ``schema_version``. Written on ensure when absent or
+# older than ``_SCHEMA_VERSION``; a newer stamp is logged and left alone (never downgraded). An
+# existing file with no row is stamped current — an already-wrong file would be marked right;
+# ``schema_drift()`` is the backstop for a column or key the MANIFEST no longer matches. Additive:
+# no ``_SCHEMA_VERSION`` bump. Refusal of writes is PL7-b (``store_schema_refuse``), off by default.
+_SCHEMA_STAMP_TABLE = "store_schema"
+_SCHEMA_STAMP_KEY = "schema_version"
+_SCHEMA_FILES = ("raw", "edgar", "discord", "history", "prices")
+_STAMP_WRITES: dict[str, int] = {}
+_STAMP_WARNED: set[tuple] = set()
+
+
+def _stamp_rank(value: str) -> tuple:
+    """Numeric when the stamp is a plain integer (``"9"`` < ``"12"``); otherwise the text itself."""
+    text = str(value).strip()
+    try:
+        return (0, int(text))
+    except (TypeError, ValueError):
+        return (1, text)
+
+
+def _read_schema_stamp(conn) -> str | None:
+    """The stamp row on an open connection, or None when the table or the row is absent."""
+    try:
+        row = conn.execute(
+            f"SELECT value FROM {_SCHEMA_STAMP_TABLE} WHERE key = ?",
+            [_SCHEMA_STAMP_KEY]).fetchone()
+    except duckdb.CatalogException:
+        return None
+    if not row or row[0] is None:
+        return None
+    return str(row[0])
+
+
+def schema_stamp(db: str) -> str | None:
+    """The schema version stored in ``db``, or None if the file or the row is absent.
+
+    Does not create the file. ``history`` stays None until ``ensure_history`` (the file does not
+    exist until the first recorded run).
+    """
+    if db not in _SCHEMA_FILES:
+        raise RawStoreError(f"unknown store file {db!r}")
+    path = _db_path(db)
+    if not path.exists():
+        return None
+    with connect(read_only=True, db=db) as conn:
+        return _read_schema_stamp(conn)
+
+
+def store_schema_mismatch() -> list[dict]:
+    """Files whose stored schema stamp is present and not this code's version.
+
+    One dict per file: ``db``, ``file`` (the file name, never a path), ``stored``, ``code``. A
+    copy, in ``_SCHEMA_FILES`` order. A missing file, and a file with no stamp yet, are not listed
+    — the first ensure stamps an absent row. Empty when every existing stamp matches.
+    """
+    code = _SCHEMA_VERSION
+    out = []
+    for db in _SCHEMA_FILES:
+        path = _db_path(db)
+        if not path.exists():
+            continue
+        stored = schema_stamp(db)
+        if stored is None or _stamp_rank(stored) == _stamp_rank(code):
+            continue
+        out.append({"db": db, "file": path.name, "stored": stored, "code": code})
+    return out
+
+
+def _note_schema_mismatch(db: str, stored: str) -> None:
+    """Log one warning per (file, stored, code). ``RC_STORE_SCHEMA_OK=1`` suppresses it (PL7-b escape)."""
+    if os.getenv("RC_STORE_SCHEMA_OK", "0") == "1":
+        return
+    path = _db_path(db)
+    key = (str(path), stored, _SCHEMA_VERSION)
+    if key in _STAMP_WARNED:
+        return
+    _STAMP_WARNED.add(key)
+    logger.warning(
+        "rawstore schema stamp mismatch in %s: stored %s, this code is %s",
+        path.name, stored, _SCHEMA_VERSION)
+
+
+def _warn_schema_stamp(conn, db: str) -> None:
+    """Log when this file's stamp is present and differs. Never raises: a read stays a read."""
+    try:
+        stored = _read_schema_stamp(conn)
+    except Exception:  # noqa: BLE001 - a stamp check must never break a read
+        logger.warning("rawstore: schema stamp check of %s failed", db, exc_info=True)
+        return
+    if stored is None or _stamp_rank(stored) == _stamp_rank(_SCHEMA_VERSION):
+        return
+    _note_schema_mismatch(db, stored)
+
+
+def _apply_schema_stamp(conn, db: str) -> str:
+    """Write this file's stamp when it is absent or older than the code. Never downgrades.
+
+    Returns ``stamped``, ``upgraded``, ``unchanged`` or ``newer``. A newer stamp is logged and
+    left as stored. Called from the ensure path only (``_ensure_db_tables``), so a read with
+    ``RC_STORE_AUTO_ENSURE=0`` does not write one. ``_STAMP_WRITES`` counts real stamp writes,
+    not a current row re-read.
+    """
+    conn.execute(
+        f"CREATE TABLE IF NOT EXISTS {_SCHEMA_STAMP_TABLE} ("
+        "key TEXT PRIMARY KEY, value TEXT)")
+    stored = _read_schema_stamp(conn)
+    code = _SCHEMA_VERSION
+    if stored is not None and _stamp_rank(stored) == _stamp_rank(code):
+        return "unchanged"
+    if stored is not None and _stamp_rank(stored) > _stamp_rank(code):
+        _note_schema_mismatch(db, stored)
+        return "newer"
+    conn.execute(
+        f"INSERT INTO {_SCHEMA_STAMP_TABLE} (key, value) VALUES (?, ?) "
+        "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        [_SCHEMA_STAMP_KEY, code])
+    _STAMP_WRITES[db] = _STAMP_WRITES.get(db, 0) + 1
+    if stored is None:
+        return "stamped"
+    logger.info("rawstore: %s schema stamp %s upgraded to %s", _db_path(db).name, stored, code)
+    return "upgraded"
+
+
 def _ensure_db_tables(conn, db: str) -> None:
     """Reconcile every MANIFEST table of one file, with ONE catalog probe."""
     existing: dict[str, dict[str, str]] = {}
@@ -2934,6 +3079,7 @@ def _ensure_db_tables(conn, db: str) -> None:
             continue
         _reconcile_table(conn, name, existing.get(name, {}), live_pks)
         _TABLE_READY.add((path, name))
+    _apply_schema_stamp(conn, db)
 
 
 def ensure_all_tables() -> None:
@@ -3611,6 +3757,12 @@ def _bulk_insert(conn, target: str, spec_name: str, cols: list[str], rows: list[
         conn.unregister(view)
 
 
+def _guard_schema_write(db: str) -> None:
+    """PL7-b (#26). No-op unless ``RC_STORE_SCHEMA_REFUSE=1``. See ``store_schema_refuse``."""
+    from RevenueChaser.core.store_schema_refuse import refuse_schema_write
+    refuse_schema_write(db)
+
+
 def write_rows(name: str, rows: list[dict]) -> int:
     """Insert/upsert rows into a manifest table. Raises on failure.
 
@@ -3622,6 +3774,7 @@ def write_rows(name: str, rows: list[dict]) -> int:
     if not rows:
         return 0
     _auto_ensure(write=True)
+    _guard_schema_write(_db_of(name))
     rows = _json_rows(name, rows)
 
     def _op():
@@ -3656,6 +3809,7 @@ def update_columns(name: str, key_col: str, rows: list[dict],
         if c not in valid:
             raise RawStoreError(f"table {name} has no column {c!r}")
     _auto_ensure(write=True)
+    _guard_schema_write(_db_of(name))
     rows = _json_rows(name, rows)
     set_sql = ", ".join(f'"{c}" = ?' for c in columns)
     sql = f'UPDATE {name} SET {set_sql} WHERE "{key_col}" = ?'
@@ -3717,6 +3871,7 @@ def replace_all(name: str, rows: list[dict], *, allow_empty: bool = False) -> in
             f"empty table is the intent, or keep the stored rows when a run produced nothing")
     cols = _columns_of(spec)
     _auto_ensure(write=True)
+    _guard_schema_write(_db_of(name))
     rows = _json_rows(name, rows)
 
     def _op():
@@ -3791,6 +3946,7 @@ def transaction(db: str = "raw"):
     ``atomic(fn)`` for a block that should be retried.
     """
     _auto_ensure(write=True)
+    _guard_schema_write(db)
     with connect(db=db) as conn:
         with _tx(conn):
             yield _Tx(conn, db)
@@ -3804,6 +3960,7 @@ def atomic(fn, db: str = "raw"):
     back whole before the retry. Returns ``fn``'s result.
     """
     _auto_ensure(write=True)
+    _guard_schema_write(db)
 
     def _op():
         with connect(db=db) as conn:
@@ -3816,6 +3973,7 @@ def atomic(fn, db: str = "raw"):
 def execute(sql: str, params: list | None = None, db: str = "raw") -> None:
     """Run a single write statement (DELETE/UPDATE) against a store file."""
     _auto_ensure(write=True)
+    _guard_schema_write(db)
     with connect(db=db) as conn:
         _refuse_history_sql(conn, sql)
         tracked = _tracked_writes(conn, sql, db)
@@ -3834,8 +3992,12 @@ def query(sql: str, params: list | None = None, read_only: bool = True,
     if read_only and not _db_path(db).exists():
         return []
     _auto_ensure(write=not read_only)
+    if not read_only:
+        _guard_schema_write(db)
     try:
         with connect(read_only=read_only, db=db) as conn:
+            if read_only:
+                _warn_schema_stamp(conn, db)   # PL7-a: a mismatch warns; it does not refuse the read
             _refuse_history_sql(conn, sql)
             tracked = _tracked_writes(conn, sql, db)
             if not tracked:
@@ -3974,6 +4136,7 @@ def delete(name: str, key) -> None:
     if not isinstance(key, tuple):
         key = (key,)
     _auto_ensure(write=True)
+    _guard_schema_write(_db_of(name))
     where = " AND ".join(f'"{c}" = ?' for c in key_cols)
     with connect(db=_db_of(name)) as conn:
         with _tx(conn):
@@ -3990,6 +4153,7 @@ def clear(name: str) -> None:
     """
     _refuse_history(name, _check(name), "clear")
     _auto_ensure(write=True)
+    _guard_schema_write(_db_of(name))
     with connect(db=_db_of(name)) as conn:
         _ensure_table(conn, name)
         with _tx(conn):
@@ -4038,6 +4202,9 @@ def reset_db(include_edgar: bool = True) -> None:
     """
     targets = [Path(DB_PATH)] + (
         [edgar_db_path(), discord_db_path(), history_db_path(), prices_db_path()] if include_edgar else [])
+    for db in (["raw"] + (["edgar", "discord", "history", "prices"] if include_edgar else [])):
+        if _db_path(db).exists():
+            _guard_schema_write(db)   # PL7-b: do not delete a newer file while refusal is on
     for p in targets:
         if p.exists():
             p.unlink()
@@ -4062,6 +4229,7 @@ def compact(db: str = "raw") -> dict:
     src = _db_path(db)
     if not src.exists():
         raise RawStoreError(f"no store file at {src}")
+    _guard_schema_write(db)   # PL7-b: do not rewrite a newer file while refusal is on
     peers = _peer_pids(src)
     if peers:
         raise RawStoreError(f"store in use by RevenueChaser process(es) {peers}; "

@@ -412,6 +412,7 @@ POPULATION: dict[str, str] = {
     "sec13f_totals": f"{_HERE}::test_sec13f_totals_populated",
     "sec13f_ticker_names": f"{_HERE}::test_sec13f_ticker_names_populated",
     "store_meta": f"{_HERE}::test_store_meta_populated",
+    "store_schema": "core/tests/test_store_schema_stamp.py::test_ensure_stamps_each_file_that_ensure_opens_and_does_not_create_history",
     "run_registry": f"{_HERE}::test_run_registry_populated",
     "migration_manifest": f"{_HERE}::test_migration_manifest_populated",
     "swing_ohlc": f"{_HERE}::test_swing_ohlc_populated",
@@ -538,6 +539,8 @@ def test_manifest_tables_start_empty_in_an_isolated_db(rawstore_tmp_db):
     """Sanity for the autouse isolation fixture: no test may see another's rows,
     and none may see the developer's real .store/raw.duckdb."""
     for table in rawstore.MANIFEST:
+        if table == "store_schema":     # #26 PL7: every ensure stamps the file's own schema version
+            continue
         assert rawstore.count(table) == 0, f"{table} leaked state across tests"
 
 
