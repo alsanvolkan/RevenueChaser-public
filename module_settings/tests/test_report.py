@@ -299,7 +299,9 @@ def test_every_provider_the_registry_can_name_is_written_in_words():
 
     for source in datasets.Source:
         words = report._provider_name(source)
-        assert words and words != source.value and words[0].isupper(), (source, words)
+        assert words and words != source.value, (source, words)
+        assert words == report.source_words(source.value), (
+            "the board rows, the dataset table and the diagram read one provider-name list")
 
 
 def test_a_board_card_draws_the_datasets_coverage_bar_with_its_number():
@@ -2551,7 +2553,7 @@ def _flow_section(rows) -> str:
 
 def test_the_flow_graph_de_duplicates_nodes_and_counts_the_datasets_per_edge():
     graph = report.flow_graph(_flow_rows())
-    assert graph["providers"] == [{"name": "SEC", "count": 1},
+    assert graph["providers"] == [{"name": "SEC EDGAR filings", "count": 1},
                                   {"name": "Unusual Whales", "count": 4}]
     assert graph["jobs"] == [{"name": "RC-Daily-Bars", "count": 3},
                              {"name": "RC-ValueChain-Sync", "count": 1},
@@ -2562,7 +2564,7 @@ def test_the_flow_graph_de_duplicates_nodes_and_counts_the_datasets_per_edge():
     assert edges == {
         ("Unusual Whales", "RC-Daily-Bars", "raw"): 1,
         ("Unusual Whales", "RC-Daily-Bars", "prices"): 2,
-        ("SEC", "RC-ValueChain-Sync", "edgar"): 1,
+        ("SEC EDGAR filings", "RC-ValueChain-Sync", "edgar"): 1,
         ("Unusual Whales", "started by hand from the dashboard", "raw"): 1,
     }
     assert len(graph["edges"]) == 4, "five datasets, four edges: two share one"
@@ -2571,17 +2573,19 @@ def test_the_flow_graph_de_duplicates_nodes_and_counts_the_datasets_per_edge():
 def test_a_dataset_without_a_writer_joins_the_started_by_hand_node():
     graph = report.flow_graph([{"key": "x", "source": "sec", "writer": None, "db": "raw"}])
     assert [j["name"] for j in graph["jobs"]] == ["started by hand from the dashboard"]
-    assert graph["providers"] == [{"name": "SEC", "count": 1}]
+    assert graph["providers"] == [{"name": "SEC EDGAR filings", "count": 1}]
 
 
-@pytest.mark.parametrize("row", [
-    {"key": "x", "db": "raw"},                       # the registry does not know it: no source key
-    {"key": "x", "source": "", "db": "raw"},         # an empty source
-    {"key": "x", "source": "unknown", "db": "raw"},  # the registry's own "no single provider" value
+@pytest.mark.parametrize("row,words", [
+    # the registry does not know it: no source key, or an empty one
+    ({"key": "x", "db": "raw"}, "unknown provider"),
+    ({"key": "x", "source": "", "db": "raw"}, "unknown provider"),
+    # the registry's own "no single provider" value keeps the words the dataset table uses for it
+    ({"key": "x", "source": "unknown", "db": "raw"}, "more than one provider, or not known"),
 ])
-def test_a_dataset_without_a_provider_says_unknown_provider_in_words(row):
+def test_a_dataset_without_a_provider_says_unknown_provider_in_words(row, words):
     graph = report.flow_graph([row])
-    assert [p["name"] for p in graph["providers"]] == ["unknown provider"]
+    assert [p["name"] for p in graph["providers"]] == [words]
 
 
 def test_a_row_without_a_store_file_takes_the_registry_file_without_reading_the_store():
@@ -2738,7 +2742,7 @@ def test_two_flows_sharing_one_pair_draw_side_by_side_so_neither_colour_hides_th
                                {"key": "b", "source": "sec", "writer": "W", "db": "edgar"}])
     svg = report._flow_svg(graph)
     shared = [tag for tag in re.findall(r'<path class="flow-edge"[^>]*>', svg)
-              if 'data-a="provider:SEC"' in tag and 'data-b="job:W"' in tag]
+              if 'data-a="provider:SEC EDGAR filings"' in tag and 'data-b="job:W"' in tag]
     assert len(shared) == 2
     assert len({re.search(r' d="([^"]+)"', tag).group(1) for tag in shared}) == 2, (
         "the two lines are the same line, so one store file's colour is hidden")
@@ -2776,7 +2780,7 @@ def test_every_job_node_is_a_button_and_the_store_files_are_not():
     jobs = re.findall(r'<g class="flow-node" tabindex="0" role="button" data-job="([^"]+)"', svg)
     assert jobs == ["RC-Daily-Bars", "RC-ValueChain-Sync", "started by hand from the dashboard"]
     providers = re.findall(r'<g class="flow-node" tabindex="0" role="button" data-provider="([^"]+)"', svg)
-    assert providers == ["SEC", "Unusual Whales"]
+    assert providers == ["SEC EDGAR filings", "Unusual Whales"]
     assert 'data-provider="raw"' not in svg and 'data-job="raw"' not in svg
 
 

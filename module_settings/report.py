@@ -945,30 +945,20 @@ def _settings_form(card: dict) -> str:
         f'<span class="fetchmsg" id="msg-set-{board}"></span></div></div>')
 
 
-# G6a (#124): what each provider is called on the page. Proper names keep their spelling, and no
-# value is an abbreviation only we understand (this board's copy rule).
-PROVIDER_LABELS = {
-    "uw": "Unusual Whales",
-    "fmp": "Financial Modeling Prep",
-    "yfinance": "Yahoo Finance",
-    "sec": "SEC",
-    "finra/cftc": "FINRA / CFTC",
-    "cboe": "Cboe",
-    "fred": "Federal Reserve Economic Data (FRED)",
-    "openfigi": "OpenFIGI",
-    "derived": "Computed from our own data",
-    "manual": "Entered by hand",
-    "store": "Our own store",
-    "unknown": "Provider not recorded",
-}
-
-
 def _provider_name(source) -> str:
-    """The provider in words. A source the map does not know is named as unnamed, never as a wrong name."""
+    """The provider in words, from the page's one list of provider names (``SOURCE_WORDS``).
+
+    The dataset table, these board rows and the flow diagram all read that list, so one provider
+    cannot be called three things on one page. A source the list does not know is named as unnamed,
+    never as a wrong name.
+    """
     key = str(getattr(source, "value", source) or "").strip()
     if not key:
         return "Provider not recorded"
-    return PROVIDER_LABELS.get(key.lower()) or f"Provider not named in the dataset registry ({key})"
+    words = source_words(key.lower())
+    if words == key.lower():
+        return f"Provider not named in the dataset registry ({key})"
+    return words
 
 
 def _board_flows(card: dict, rows_by_key: dict) -> list[dict]:
@@ -1191,26 +1181,9 @@ DB_COLORS = {"raw": "#4f8cff", "edgar": "#e0a030", "discord": "#a070e0",
              "history": "#3cb89a", "prices": "#e06088"}
 FLOW_UNKNOWN_COLOR = "#8a93a6"
 
-# The registry's provider values, spelled out for a reader who does not know our code (the copy
-# rule, avo 2026-10-23): a proper name keeps its own spelling, a short enum value never reaches the
-# page. A value not listed here is shown as it stands, escaped.
-FLOW_PROVIDERS = {
-    "uw": "Unusual Whales",
-    "sec": "SEC",
-    "yfinance": "Yahoo Finance",
-    "finra/cftc": "FINRA and CFTC",
-    "cboe": "Cboe",
-    "fred": "Federal Reserve Economic Data (FRED)",
-    "openfigi": "OpenFIGI",
-    "fmp": "Financial Modeling Prep",
-    "derived": "derived data",
-    "manual": "entered by hand",
-    "store": "the store itself",
-    "unknown": FLOW_UNKNOWN_PROVIDER,
-}
 
-# The three columns: x, width, header, and the graph key it draws. The gaps hold the edges. The
-# provider column holds the longest spelled-out name ("Federal Reserve Economic Data (FRED)").
+# The three columns: x, width, header, and the graph key it draws. The gaps hold the edges. A name
+# longer than the column holds is cut at ``FLOW_TEXT_MAX`` and kept in full in its hover title.
 FLOW_COLUMNS = ((8, 260, "Provider", "providers"),
                 (308, 380, "Job that writes it", "jobs"),
                 (728, 180, "Store file", "stores"))
@@ -1225,9 +1198,13 @@ FLOW_TEXT_MAX = 42
 
 
 def _flow_provider(value) -> str:
-    """The provider's words: the registry's short value spelled out, else the value as it stands."""
+    """The provider's words, from the page's one list of provider names (``SOURCE_WORDS``).
+
+    A value that list does not know is drawn as it stands; a row with no provider at all becomes
+    the ``unknown provider`` node.
+    """
     name = str(value or "").strip()
-    return FLOW_PROVIDERS.get(name.lower(), name) or FLOW_UNKNOWN_PROVIDER
+    return source_words(name.lower()) if name else FLOW_UNKNOWN_PROVIDER
 
 
 def _flow_store_order(name: str) -> tuple:
