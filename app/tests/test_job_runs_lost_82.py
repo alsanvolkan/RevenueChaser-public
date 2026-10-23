@@ -64,7 +64,7 @@ def test_stale_dead_run_is_lost_live_and_young_stay_and_the_second_call_is_a_no_
 
     closed = rawstore.get("job_runs", stale)
     assert closed["status"] == "lost"
-    assert closed["finished_at"] == NOW
+    assert closed["finished_at"] is None      # the end time is unknown; none is invented
     assert "outcome unknown" in closed["message"] and "not recorded" in closed["message"]
     assert closed["error"] is None
     # a partial upsert would have wiped the columns the sweep does not own
@@ -164,12 +164,26 @@ def test_dashboard_start_reconciles(monkeypatch):
     assert seen == ["dash"]
 
 
-def test_scheduled_runner_start_reconciles(monkeypatch, tmp_path):
+def _run_scheduled(monkeypatch, tmp_path, tables):
     seen = []
     monkeypatch.setattr(jobs, "reconcile_lost_runs", lambda **k: seen.append("sched") or 0)
     monkeypatch.setattr(A.config, "OUTPUT_DIR", tmp_path)
     entry = A.AutomationEntry(name="RC-Writer-82", label="w", args=("-c", "pass"), time="23:00",
-                              description="d", tables_written=())
+                              description="d", tables_written=tables)
     monkeypatch.setattr(A, "_BY_NAME", {entry.name: entry})
     assert A.run_task(entry.name) == 0
-    assert seen == ["sched"]
+    return seen
+
+
+def test_scheduled_writer_start_reconciles(monkeypatch, tmp_path):
+    assert _run_scheduled(monkeypatch, tmp_path, ("some_table",)) == ["sched"]
+
+
+def test_scheduled_task_that_writes_no_table_does_not_touch_the_store(monkeypatch, tmp_path):
+    """A pure-reader task (backup, report) must not open the store just to sweep (review MUST)."""
+    assert _run_scheduled(monkeypatch, tmp_path, ()) == []
+
+
+def test_pid_alive_treats_an_out_of_range_pid_as_gone():
+    from RevenueChaser.core import procs
+    assert procs.pid_alive(2 ** 70) is False

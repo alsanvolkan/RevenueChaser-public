@@ -327,14 +327,13 @@ def _reconcile_lost_runs(now: float) -> int:
         closing.append({
             "run_id": row["run_id"],
             "status": LOST_STATUS,
-            "finished_at": now,
             "message": LOST_RUN_MESSAGE,
         })
     if not closing:
         return 0
     with rawstore.brief_wait():
         rawstore.update_columns("job_runs", "run_id", closing,
-                                ["status", "finished_at", "message"])
+                                ["status", "message"])
     logger.info("job_runs: closed %s stuck running row(s) as lost", len(closing))
     return len(closing)
 
@@ -429,7 +428,7 @@ def _record(job: dict) -> None:
         with rawstore.brief_wait():
             rawstore.write_rows("job_runs", [{
                 "run_id": job["id"], "job_id": job["id"], "module": job["module"], "lane": job["lane"],
-                "trigger": "manual", "source": "dashboard", "registry_name": job.get("module"),
+                "trigger": "manual", "source": "dashboard", "registry_name": None,
                 "pid": os.getpid(), "params": job["params"],
                 "queued_at": _epoch(job["queued_at"]), "started_at": _epoch(job["started_at"]),
                 "finished_at": _epoch(job["finished_at"]), "status": job["status"],

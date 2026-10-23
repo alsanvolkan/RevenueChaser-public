@@ -41,7 +41,7 @@ MAX_QUERY = 100
 POLL_PATH = "/api/runs"
 # What "Problems only" means: a run that ended badly. A `running` row is not a problem — it may still be
 # going, and whether an old one is stale is #82's judgement, not this reader's.
-PROBLEM_STATUSES = ("error", "cancelled")
+PROBLEM_STATUSES = ("error", "cancelled", "lost")
 # Read on every poll, so it holds what the page shows and no more (see the module docstring).
 COLUMNS = ("run_id", "module", "source", "trigger", "params",
            "queued_at", "started_at", "finished_at", "status", "error", "message")
