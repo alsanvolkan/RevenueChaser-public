@@ -275,6 +275,91 @@ def test_no_boards_no_section():
     assert "Board inputs" not in report.render_settings_dashboard(_payload())
 
 
+# ── G6a (#124): the board inputs in the Data Flow artifact's language ────────
+# One line per store table the board reads: provider → dataset → store file, with the dataset's
+# coverage beside it. The facts come from the registry and from the rows ``collect()`` already
+# built, so rendering asks the store nothing.
+def _boards_html(rows=None, **over):
+    """The Board inputs section alone, so a count cannot pick up the page's help text or legend."""
+    return report._boards_section([_card(**over)], rows)
+
+
+def test_a_board_card_shows_one_source_to_store_line_per_table():
+    html = _boards_html(tables=["oipd_chain", "oipd_meta"])
+    assert "What this board reads" in html
+    assert html.count('class="bflow-row"') == 2
+    assert html.count("Unusual Whales") == 2, "the provider is written in full, never as a code"
+    assert html.count("OIPD chain") == 2
+    assert html.count('class="db db-raw"') == 2
+
+
+def test_every_provider_the_registry_can_name_is_written_in_words():
+    """The copy rule: a source code such as ``finra/cftc`` never reaches the page."""
+    from RevenueChaser.core import datasets
+
+    for source in datasets.Source:
+        words = report._provider_name(source)
+        assert words and words != source.value and words[0].isupper(), (source, words)
+
+
+def test_a_board_card_draws_the_datasets_coverage_bar_with_its_number():
+    html = _with(boards=[_card(tables=["price_bars_daily"])],
+                 rows=[{"key": "price_bars",
+                        "coverage": {"fraction": 0.9, "label": "812 / 905 (90%)"}}])
+    assert 'class="covbar st-warn"' in html
+    assert "812 / 905 (90%)" in html, "the bar always carries its number"
+
+
+def test_a_coverage_with_no_population_draws_no_bar_on_the_board_card():
+    html = _with(boards=[_card(tables=["price_bars_daily"])],
+                 rows=[{"key": "price_bars", "coverage": {"fraction": None, "label": "n/a"}}])
+    flow = re.search(r'<li class="bflow-row">.*?price_bars_daily.*?</li>', html, re.S)
+    assert flow, "the table has no source to store line"
+    assert 'class="covbar' not in flow.group(0), "a percentage of nothing is not 0%"
+    assert "n/a" in flow.group(0)
+
+
+def test_a_table_no_dataset_claims_says_so_in_words():
+    html = _boards_html(tables=["telemetry_notes"])
+    assert "not claimed by any dataset" in html
+    assert 'class="db db-' not in html, "an unclaimed table has no store file to name"
+
+
+def test_a_table_two_datasets_claim_does_not_read_as_unclaimed(monkeypatch):
+    """A duplicate claim and no claim are different facts; the line must not confuse them."""
+    from RevenueChaser.core import datasets
+
+    monkeypatch.setitem(datasets._OWNERS, "shared_table", ("a", "b"))
+    html = _boards_html(tables=["shared_table"])
+    assert "claimed by more than one dataset" in html
+    assert "not claimed by any dataset" not in html
+
+
+def test_a_hostile_table_name_is_escaped_in_the_source_to_store_line():
+    html = _boards_html(tables=["<script>x</script>"])
+    assert "<script>x</script>" not in html and "&lt;script&gt;" in html
+
+
+def test_the_source_to_store_lines_sit_between_the_header_and_the_funnel():
+    html = _with(boards=[_card()])
+    assert html.index('class="bflow-row"') < html.index('class="funnel2"')
+
+
+def test_rendering_the_board_cards_asks_the_store_nothing(monkeypatch):
+    """The Refresh budget (#124): the cards are built from the payload, never from a new read."""
+    from RevenueChaser.core import rawstore
+
+    def boom(*args, **kwargs):
+        raise AssertionError("a render must not query the store")
+
+    for name in ("query", "get", "get_all", "count"):
+        monkeypatch.setattr(rawstore, name, boom)
+    html = _with(boards=[_card(tables=["price_bars_daily"])],
+                 rows=[{"key": "price_bars",
+                        "coverage": {"fraction": 1.0, "label": "905 / 905 (100%)"}}])
+    assert "Daily price bars" in html and "905 / 905 (100%)" in html
+
+
 def test_errors_are_shown_on_the_affected_row_and_escaped():
     html = _with(errors=[{"table": "equity_universe", "where": "_count",
                           "error": "disk <b>on</b> fire"}])

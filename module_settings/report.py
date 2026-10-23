@@ -158,6 +158,21 @@ details.fine>summary{cursor:pointer;color:var(--accent);font-size:12.5px;font-we
 .bcard table.mini{width:auto;min-width:300px;margin:0 0 6px}
 .bcard .tag{color:var(--muted);font-size:11.5px;margin-left:6px}
 .bcard ul.srcs{margin:4px 0 8px;padding-left:18px;color:var(--muted);font-size:12.5px}
+/* G6a (#124): the board inputs in the Data Flow artifact's language — provider → dataset → store
+   file, one line per store table the board reads, with the dataset's coverage beside it. */
+.bflow{margin:4px 0 10px;padding:0;list-style:none}
+.bflow-row{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;font-size:12.5px;
+  padding:4px 0;border-bottom:1px dashed var(--border)}
+.bflow-row:last-child{border-bottom:none}
+.bflow-row .arrow{color:var(--muted)}
+.bflow-row .prov{color:var(--muted)}
+.bflow-row .ds{color:var(--text);font-weight:600}
+.bflow-row .notclaimed{color:var(--muted)}
+/* The store file and the coverage sit at the right edge, so the bars of one card line up. */
+.bflow-row .tail{margin-left:auto;display:inline-flex;align-items:center;gap:12px}
+.bflow-row .nowrap{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.bflow-row .covbar{flex:0 0 64px}
+.bcard h4.bflow-cap{margin:10px 0 4px;font-size:11.5px;color:var(--muted);font-weight:600}
 .st-ok{color:var(--neon)}
 .st-warn{color:var(--amber)}
 .st-bad{color:var(--red)}
@@ -862,10 +877,88 @@ def _settings_form(card: dict) -> str:
         f'<span class="fetchmsg" id="msg-set-{board}"></span></div></div>')
 
 
-def _board_card(card: dict) -> str:
+# G6a (#124): what each provider is called on the page. Proper names keep their spelling, and no
+# value is an abbreviation only we understand (this board's copy rule).
+PROVIDER_LABELS = {
+    "uw": "Unusual Whales",
+    "fmp": "Financial Modeling Prep",
+    "yfinance": "Yahoo Finance",
+    "sec": "SEC",
+    "finra/cftc": "FINRA / CFTC",
+    "cboe": "Cboe",
+    "fred": "Federal Reserve Economic Data (FRED)",
+    "openfigi": "OpenFIGI",
+    "derived": "Computed from our own data",
+    "manual": "Entered by hand",
+    "store": "Our own store",
+    "unknown": "Provider not recorded",
+}
+
+
+def _provider_name(source) -> str:
+    """The provider in words. A source the map does not know is named as unnamed, never as a wrong name."""
+    key = str(getattr(source, "value", source) or "").strip()
+    if not key:
+        return "Provider not recorded"
+    return PROVIDER_LABELS.get(key.lower()) or f"Provider not named in the dataset registry ({key})"
+
+
+def _board_flows(card: dict, rows_by_key: dict) -> list[dict]:
+    """One line per store table the board reads: its dataset, provider, store file, coverage row.
+
+    The provider, the dataset label and the store file come from the registry index the dataset
+    table already read; the coverage record is the one ``collect()`` attached to that dataset's
+    own row. A render therefore reads the payload it was given and asks the store nothing (the
+    Refresh budget, #124). A table no dataset claims is kept, to be said in words.
+    """
+    flows = []
+    claimed_tables = datasets.tables_claimed()  # the index, read once, never the store
+    for table in card.get("tables") or []:
+        name = str(table)
+        try:
+            spec = datasets.dataset_of_table(name)
+        except KeyError:
+            # ``dataset_of_table`` refuses a table two datasets claim as well as an unknown one, and
+            # those are different facts: say which, so a line never makes a claim that is not true.
+            flows.append({"table": name, "claimed": False,
+                          "shared": name in claimed_tables})
+            continue
+        flows.append({"table": name, "claimed": True, "provider": _provider_name(spec.source),
+                      "dataset": spec.label, "db": spec.db, "row": rows_by_key.get(spec.key)})
+    return flows
+
+
+def _flow_row(flow: dict) -> str:
+    """One source → dataset → store line. Every string here is data, so every string is escaped."""
+    table = _html.escape(flow["table"])
+    if not flow.get("claimed"):
+        words = ("claimed by more than one dataset" if flow.get("shared")
+                 else "not claimed by any dataset")
+        return (f'<li class="bflow-row"><span class="muted">store table</span>'
+                f'<span class="tbl">{table}</span>'
+                f'<span class="arrow" aria-hidden="true">→</span>'
+                f'<span class="notclaimed">{words}</span></li>')
+    pill = _db_pill(flow.get("db"))
+    store = (f'<span class="muted">store file</span> {pill}' if pill
+             else '<span class="muted">no store file named</span>')
+    # The bar and its percentage are the coverage cell of the dataset's own table row, so the two
+    # pages cannot disagree; a dataset with no collected row claims no coverage here.
+    cell = _coverage_cell(flow["row"]) if flow.get("row") else ""
+    cov = (f'<span class="nowrap"><span class="muted">coverage</span> {cell}</span>'
+           if cell else "")
+    return (f'<li class="bflow-row"><span class="prov">{_html.escape(flow["provider"])}</span>'
+            f'<span class="arrow" aria-hidden="true">→</span>'
+            f'<span class="ds">{_html.escape(flow["dataset"])}</span>'
+            f'<span class="tbl">({table})</span>'
+            f'<span class="tail"><span class="nowrap">{store}</span>{cov}</span></li>')
+
+
+def _board_card(card: dict, rows_by_key: dict | None = None) -> str:
     label = _html.escape(str(card.get("label") or card.get("key") or ""))
     state = card.get("state")
-    tables = ", ".join(_html.escape(str(t)) for t in (card.get("tables") or []))
+    flows = _board_flows(card, rows_by_key or {})
+    reads = ('<h4 class="bflow-cap">What this board reads</h4><ul class="bflow">'
+             + "".join(_flow_row(f) for f in flows) + "</ul>") if flows else ""
     params = "".join(f"<li>{_html.escape(str(p))}</li>" for p in (card.get("params") or []))
     win = card.get("window") or {}
     win_txt = " · ".join(f"{_html.escape(k.replace('_', ' '))} {_html.escape(str(v))}"
@@ -891,7 +984,7 @@ def _board_card(card: dict) -> str:
     # The outer div keeps the id the Co-movement e2e parser keys on.
     body = (
         f"{asof}"
-        f'<div class="kv"><b>Reads</b> {tables}</div>'
+        f"{reads}"
         f'<div class="kv"><b>Price basis</b> {basis}</div>'
         + (f'<div class="kv"><b>Window</b> {win_txt}</div>' if win_txt else "")
         + (f'<ul class="params">{params}</ul>' if params else "")
@@ -902,10 +995,14 @@ def _board_card(card: dict) -> str:
         f'<div class="bbody">{body}</div></details></div>')
 
 
-def _boards_section(cards: list[dict]) -> str:
+def _boards_section(cards: list[dict], rows: list[dict] | None = None) -> str:
+    """The Board inputs cards. ``rows`` is the inventory's own list, keyed here once so each card
+    can show its datasets' coverage without a second read (G6a, #124)."""
     if not cards:
         return ""
-    return '<h2 class="sec">Board inputs</h2>' + "".join(_board_card(c) for c in cards)
+    by_key = {str(r.get("key") or ""): r for r in (rows or []) if isinstance(r, dict)}
+    return ('<h2 class="sec">Board inputs</h2>'
+            + "".join(_board_card(c, by_key) for c in cards))
 
 
 def _automations_section(rows: list[dict]) -> str:
@@ -1666,7 +1763,7 @@ def render_settings_dashboard(payload: dict) -> str:
     discord_html = _discord_card(payload.get("discord"))
     backups_html = _backups_card(payload.get("backups"))
     errors_html = _errors_list(payload.get("errors") or [])
-    boards_html = _boards_section(payload.get("boards") or [])
+    boards_html = _boards_section(payload.get("boards") or [], rows)
     automations = payload.get("automations") or []
     automations_html = _automations_section(automations)
     automations_js = (AUTOMATIONS_JS + AUTOMATIONS_BOOT) if automations else ""

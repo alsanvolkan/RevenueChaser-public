@@ -13,7 +13,7 @@ import pytest
 
 from RevenueChaser.core import datasets, rawstore
 from RevenueChaser.core.datahealth import Health
-from RevenueChaser.module_settings import inventory
+from RevenueChaser.module_settings import inventory, report
 
 
 def _spec(key: str, **over) -> datasets.DatasetSpec:
@@ -339,6 +339,22 @@ def test_a_two_query_coverage_spec_is_not_evaluated_and_reads_n_a(monkeypatch):
     assert out[0]["coverage"]["label"] == "n/a"
     assert out[0]["coverage"]["fraction"] is None
     assert errors == []
+
+
+# ── G6a (#124): the board card reads the coverage the inventory already attached ─────────────
+def test_a_board_card_draws_the_coverage_collect_already_attached(monkeypatch):
+    """The card's bar is the dataset row's own record — the card never reads the store itself."""
+    healthy = Health(covered=812, expected=905, newest=None, expected_as_of=None)
+    monkeypatch.setitem(datasets._BY_KEY, "price_bars",
+                        _spec("price_bars", coverage=lambda: healthy))
+    rows, errors = _attach([_row("price_bars")])
+    assert errors == []
+    card = {"key": "module_swing_potential", "label": "Swing", "tables": ["price_bars_daily"],
+            "price_basis": "", "params": [], "funnel_steps": [], "state": "ok", "error": None}
+    html = report._boards_section([card], rows)
+    assert 'class="covbar st-warn"' in html
+    assert "812 / 905 (90%)" in html
+    assert "Unusual Whales" in html and 'class="db db-prices"' in html
 
 
 # ── G5 (#124): the seconds the collect took, so the board can print them ─────────────────────
