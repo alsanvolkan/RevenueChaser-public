@@ -179,11 +179,16 @@ def corpus_miss_summary(tickers: list[str]) -> dict | None:
 def _stored_ciks() -> dict[str, str]:
     """The stored SEC ticker map, read only: the newest present row per ticker of ``sec_exchange_file``.
 
-    The file is pulled once a night by RC-Daily-Bars (#301 D21); ``sec_company_tickers`` is retired, so nothing
-    here may reach for it (nor for ``_cik_map``, which fetches when the store is empty).
+    The file is pulled once a night by RC-Daily-Bars (#301 D21). ``sec_company_tickers`` is **retired, not
+    unreadable**: nothing writes it any more, but a store that has it and not the new file still has a usable
+    map, so it is the second source — the same chain ``sec_edgar._cik_map`` uses. What this must never do is
+    reach the network, so unlike ``_cik_map`` there is no third step: no map is "unknown", not a fetch.
     """
-    from RevenueChaser.core import sec_files
-    return {r["ticker"]: r["cik"] for r in sec_files.latest("exchange") if r.get("cik")}
+    from RevenueChaser.core import rawstore, sec_files
+    rows = sec_files.latest("exchange")
+    if not rows:
+        rows = rawstore.query("SELECT ticker, cik FROM sec_company_tickers")
+    return {r["ticker"]: r["cik"] for r in rows if r.get("cik")}
 
 
 def fetch_corpus(tickers: list[str] | None = None, no_fetch: bool = False,
