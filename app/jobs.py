@@ -297,9 +297,9 @@ LOST_RUN_MESSAGE = (
 def reconcile_lost_runs(*, now: float | None = None) -> int:
     """Close ``job_runs`` rows left ``running`` after a skipped end write (#82).
 
-    A row is closed only when it is older than its module's deadline (the registered
-    ``deadline_s``, else the scheduled task's time limit, else ``GENEROUS_RUNNING_S``)
-    and its process is no longer that job. No pid: age alone. A pid that is alive is
+    A row whose pid names no process is closed at once. Otherwise it is closed only when it is
+    older than its module's deadline (the registered ``deadline_s``, else the scheduled task's
+    time limit, else ``GENEROUS_RUNNING_S``) and its process is no longer that job. No pid: age alone. A pid that is alive is
     left alone, unless a lock file naming it fails the start-time check
     (``job_lock._holder_live``): Windows reuses PIDs, and the row does not store a
     start mark of its own. A job running in this process is never touched. Status
@@ -310,8 +310,9 @@ def reconcile_lost_runs(*, now: float | None = None) -> int:
 
 
 def _reconcile_lost_runs(now: float) -> int:
-    rows = rawstore.query(
-        "SELECT run_id, module, pid, started_at, queued_at FROM job_runs WHERE status = 'running'")
+    with rawstore.brief_wait():     # a start at backup time must not freeze for the full retry budget
+        rows = rawstore.query(
+            "SELECT run_id, module, pid, started_at, queued_at FROM job_runs WHERE status = 'running'")
     if not rows:
         return 0
     with _LOCK:
@@ -320,10 +321,9 @@ def _reconcile_lost_runs(now: float) -> int:
     for row in rows:
         if row.get("run_id") in live:
             continue
-        if not _past_bound(row, now):
-            continue
-        if not _process_gone(row.get("pid")):
-            continue
+        if not _pid_dead(row.get("pid")):
+            if not _past_bound(row, now) or not _process_gone(row.get("pid")):
+                continue
         closing.append({
             "run_id": row["run_id"],
             "status": LOST_STATUS,
@@ -360,6 +360,21 @@ def _run_bound_s(module: str | None) -> float:
         if entry is not None:
             return float(entry.settings.time_limit_hours) * 3600
     return GENEROUS_RUNNING_S
+
+
+def _pid_dead(pid) -> bool:
+    """True only when the row names a pid and no process has it: nothing can still be that job, so age is moot.
+
+    An alive pid may be a reused one, and no pid proves nothing; both keep waiting for the age bound.
+    """
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    from RevenueChaser.core import procs
+    return not procs.pid_alive(pid)
 
 
 def _process_gone(pid) -> bool:
@@ -420,8 +435,8 @@ def _record(job: dict) -> None:
     that row later (#82). ``params`` and ``counts`` go in as dicts: ``write_rows`` encodes JSON columns itself.
 
     ``trigger`` is ``manual`` (a person started it; the scheduler writes ``scheduled``). ``source`` is
-    ``dashboard`` (the pid is its own column). ``registry_name`` is the name passed to ``register`` — the module
-    key, not a Task Scheduler entry; those stay on the scheduler's rows. ``counts`` is whatever the runner
+    ``dashboard`` (the pid is its own column). ``registry_name`` stays NULL here: it names a Task Scheduler
+    entry, which a dashboard job has none of; only the scheduled rows carry it. ``counts`` is whatever the runner
     returned, else NULL (#83).
     """
     try:

@@ -1487,8 +1487,9 @@ MANIFEST: dict[str, dict] = {
         "write": "upsert",
         "sources": [],
     },
-    # One row per job run (#124 PL5, schema v8). Manifest only: the writers and
-    # readers arrive with PL5 / the Automations panel (#130). Times are epoch DOUBLEs.
+    # One row per job run (#124 PL5, schema v8). Writers: ``app/jobs._record`` (dashboard, trigger
+    # ``manual``) and ``core/automations.run_task`` (scheduled); reader: the Runs tab (#130). A skipped end
+    # write is closed as ``lost`` by ``app.jobs.reconcile_lost_runs`` (#82). Times are epoch DOUBLEs.
     "job_runs": {
         "history_mode": "event",
         "key": ["run_id"],

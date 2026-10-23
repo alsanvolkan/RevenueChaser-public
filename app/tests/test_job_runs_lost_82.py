@@ -55,7 +55,7 @@ def test_stale_dead_run_is_lost_live_and_young_stay_and_the_second_call_is_a_no_
     _bound_module()
     stale = _insert(run_id="stale", pid=DEAD, started_at=NOW - 120)
     live = _insert(run_id="live", pid=os.getpid(), started_at=NOW - 120)
-    young = _insert(run_id="young", pid=DEAD, started_at=NOW - 10)
+    young = _insert(run_id="young", pid=None, started_at=NOW - 10)
     done = _insert(run_id="done", pid=DEAD, started_at=NOW - 500, status="done",
                    finished_at=NOW - 400, message="exit 0")
     queued = _insert(run_id="queued", pid=DEAD, started_at=None, queued_at=NOW - 500, status="queued")
@@ -83,16 +83,26 @@ def test_stale_dead_run_is_lost_live_and_young_stay_and_the_second_call_is_a_no_
     assert rawstore.get("job_runs", stale) == snapshot
 
 
+def test_a_row_whose_pid_names_no_process_is_lost_at_once_but_an_alive_one_waits(sync_jobs, monkeypatch):
+    _bound_module()
+    monkeypatch.setattr(procs, "pid_alive", lambda p: p in (OTHER, os.getpid()))
+    _insert(run_id="dead_young", pid=DEAD, started_at=NOW - 5)
+    _insert(run_id="alive_young", pid=OTHER, started_at=NOW - 5)
+    assert jobs.reconcile_lost_runs(now=NOW) == 1
+    assert rawstore.get("job_runs", "dead_young")["status"] == "lost"
+    assert rawstore.get("job_runs", "alive_young")["status"] == "running"
+
+
 def test_a_row_exactly_at_the_deadline_is_not_older_than_it(sync_jobs):
     _bound_module()
-    _insert(run_id="edge", pid=DEAD, started_at=NOW - 60)
+    _insert(run_id="edge", pid=None, started_at=NOW - 60)
     assert jobs.reconcile_lost_runs(now=NOW) == 0
     assert rawstore.get("job_runs", "edge")["status"] == "running"
 
 
 def test_no_deadline_uses_the_generous_bound_not_zero(sync_jobs):
-    _insert(run_id="five_h", module="no_such_module", pid=DEAD, started_at=NOW - 5 * 3600)
-    _insert(run_id="seven_h", module="no_such_module", pid=DEAD, started_at=NOW - 7 * 3600)
+    _insert(run_id="five_h", module="no_such_module", pid=None, started_at=NOW - 5 * 3600)
+    _insert(run_id="seven_h", module="no_such_module", pid=None, started_at=NOW - 7 * 3600)
     assert jobs.reconcile_lost_runs(now=NOW) == 1
     assert rawstore.get("job_runs", "five_h")["status"] == "running"
     assert rawstore.get("job_runs", "seven_h")["status"] == "lost"
@@ -103,8 +113,8 @@ def test_a_scheduled_name_uses_its_task_time_limit(sync_jobs, monkeypatch):
         name="RC-Test-Bound", label="t", args=("-c", "pass"), time="23:00", description="d",
         settings=A.TaskSettings(time_limit_hours=1))
     monkeypatch.setattr(A, "_BY_NAME", {entry.name: entry})
-    _insert(run_id="inside", module=entry.name, pid=DEAD, started_at=NOW - 1800)
-    _insert(run_id="past", module=entry.name, pid=DEAD, started_at=NOW - 7200)
+    _insert(run_id="inside", module=entry.name, pid=None, started_at=NOW - 1800)
+    _insert(run_id="past", module=entry.name, pid=None, started_at=NOW - 7200)
     assert jobs.reconcile_lost_runs(now=NOW) == 1
     assert rawstore.get("job_runs", "inside")["status"] == "running"
     assert rawstore.get("job_runs", "past")["status"] == "lost"

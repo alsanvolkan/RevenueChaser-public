@@ -256,9 +256,10 @@ def test_the_page_puts_every_stored_value_in_as_text(client):
 
 
 def test_the_page_says_why_a_trigger_can_be_missing(client):
-    """An honest page: it names the gap instead of filling the column in."""
+    """An honest page: a dash is an older row; a lost run is named as such."""
     html = client.get("/view/runs").get_data(as_text=True)
-    assert "#83" in html
+    assert "an older row that recorded none" in html
+    assert "<em>lost</em>" in html
 
 
 def test_every_control_is_labelled(client):
