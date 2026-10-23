@@ -1,11 +1,12 @@
-"""PL7-b (#26): refuse data writes when a store file's schema stamp is newer than this code, or missing.
+"""PL7-b (#26): refuse data writes when a store file's schema stamp is ahead of this code (newer, or unreadable).
 
 Off by default, so a mismatch cannot stop the dashboard from starting. Turn it on with
 ``RC_STORE_SCHEMA_REFUSE=1``. ``SCHEMA_REFUSE_WRITES`` is the default when that variable is unset.
 Escape: ``RC_STORE_SCHEMA_OK=1`` (a deliberate migration). Readers warn; they do not raise.
 An older stamp is not a refusal — the ensure path upgrades it (PL7-a).
 
-A caller's own ``connect()`` handle is outside this guard, same as the history-SQL guard.
+The same check runs before the ensure (``rawstore._refuse_ensure_if_ahead``), so an old checkout never
+renames, merges or ALTERs a newer file first. A caller's own ``connect()`` handle is outside this guard, same as the history-SQL guard.
 """
 from __future__ import annotations
 
@@ -27,32 +28,30 @@ def schema_refuse_writes() -> bool:
     return raw == "1"
 
 
-def refuse_schema_write(db: str) -> None:
-    """Raise ``StoreSchemaMismatch`` when this file must not be written. No-op when the switch is off.
+def message(db: str, stored: str, code: str) -> str:
+    """The refusal text for a file whose stamp is ahead of this code: file name, both versions, the restore."""
+    from RevenueChaser.core import rawstore
+    file = rawstore._db_path(db).name
+    what = (f"schema stamp {stored!r} is not a version number" if rawstore._stamp_unreadable(stored)
+            else f"schema stamp is {stored}")
+    return (f"{file} {what} but this code is {code}; refusing writes so this checkout cannot change a "
+            f"newer store. Restore a matching snapshot: "
+            f"python -m RevenueChaser.scripts.restore_store --latest {db}. "
+            f"Set {ESCAPE_ENV}=1 only for a deliberate migration.")
 
-    A file that does not exist yet is not a refusal: creating it is how a fresh store starts, and
-    the ensure path stamps it. A file that exists with no stamp, or with a stamp newer than this
-    code, is refused — the message names the file, both versions and the restore command.
+
+def refuse_schema_write(db: str) -> None:
+    """Raise ``StoreSchemaMismatch`` when this file's stamp is ahead of this code. No-op when the switch is off.
+
+    Ahead = newer than ``_SCHEMA_VERSION``, or not a version number (it cannot be compared, so it is not
+    trusted). A file with no stamp is NOT refused: the ensure stamps it current, and a refusal there would
+    only fire when the ensure failed for another reason (a lock), with a misleading message.
     """
     if not schema_refuse_writes():
         return
     from RevenueChaser.core import rawstore
-    path = rawstore._db_path(db)
-    if not path.exists():
-        return
-    stored = rawstore.schema_stamp(db)
+    stored = rawstore._cached_stamp(db)
     code = rawstore.schema_version()
-    if stored is not None and rawstore._stamp_rank(stored) <= rawstore._stamp_rank(code):
+    if stored is None or rawstore._stamp_rank(stored) <= rawstore._stamp_rank(code):
         return
-    restore = f"python -m RevenueChaser.scripts.restore_store --latest {db}"
-    file = path.name
-    if stored is None:
-        raise rawstore.StoreSchemaMismatch(
-            f"{file} has no schema stamp but this code is {code}; refusing writes. "
-            f"Restore a matching snapshot: {restore}. "
-            f"Set {ESCAPE_ENV}=1 only for a deliberate migration.")
-    raise rawstore.StoreSchemaMismatch(
-        f"{file} schema stamp is {stored} but this code is {code}; refusing writes "
-        f"so this checkout cannot change a newer store. "
-        f"Restore a matching snapshot: {restore}. "
-        f"Set {ESCAPE_ENV}=1 only for a deliberate migration.")
+    raise rawstore.StoreSchemaMismatch(message(db, stored, code))

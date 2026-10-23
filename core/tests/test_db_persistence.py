@@ -540,6 +540,8 @@ def test_manifest_tables_start_empty_in_an_isolated_db(rawstore_tmp_db):
     and none may see the developer's real .store/raw.duckdb."""
     for table in rawstore.MANIFEST:
         if table == "store_schema":     # #26 PL7: every ensure stamps the file's own schema version
+            assert rawstore.count(table) == 1
+            assert rawstore.get(table, "schema_version")["value"] == rawstore.schema_version()
             continue
         assert rawstore.count(table) == 0, f"{table} leaked state across tests"
 

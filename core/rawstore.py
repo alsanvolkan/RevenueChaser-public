@@ -40,6 +40,7 @@ import threading
 import time
 import zlib
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 import duckdb
@@ -2945,12 +2946,24 @@ def _migrate_price_tables() -> list[str]:
 # older than ``_SCHEMA_VERSION``; a newer stamp is logged and left alone (never downgraded). An
 # existing file with no row is stamped current — an already-wrong file would be marked right;
 # ``schema_drift()`` is the backstop for a column or key the MANIFEST no longer matches. Additive:
-# no ``_SCHEMA_VERSION`` bump. Refusal of writes is PL7-b (``store_schema_refuse``), off by default.
+# no ``_SCHEMA_VERSION`` bump. Refusal of writes is PL7-b (``store_schema_refuse``), off by default;
+# it covers a stamp AHEAD of the code (newer, or unreadable) only, and it is checked before the
+# ensure touches any file (``_refuse_ensure_if_ahead``), so an old checkout never reshapes a newer one.
 _SCHEMA_STAMP_TABLE = "store_schema"
 _SCHEMA_STAMP_KEY = "schema_version"
 _SCHEMA_FILES = ("raw", "edgar", "discord", "history", "prices")
-_STAMP_WRITES: dict[str, int] = {}
+_STAMP_WRITES: dict[str, int] = {}   # test hook: counts real stamp writes, not a metric
 _STAMP_WARNED: set[tuple] = set()
+_STAMP_SEEN: dict[str, tuple] = {}   # file path -> ((size, mtime_ns), stamp): a steady file costs one stat
+_STAMP_LOCK = threading.Lock()
+
+
+def _file_key(path: Path):
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_size, st.st_mtime_ns)
 
 
 def _stamp_rank(value: str) -> tuple:
@@ -2960,6 +2973,40 @@ def _stamp_rank(value: str) -> tuple:
         return (0, int(text))
     except (TypeError, ValueError):
         return (1, text)
+
+
+def _stamp_unreadable(value: str) -> bool:
+    """A stamp that is not a plain integer sorts as ahead of the code and is never repaired: say so."""
+    return _stamp_rank(value)[0] == 1
+
+
+def _cached_stamp(db: str) -> str | None:
+    """``schema_stamp`` keyed on the file's (size, mtime_ns): a swapped or restored file is re-read."""
+    path = _db_path(db)
+    key = _file_key(path)
+    if key is None:
+        return None
+    with _STAMP_LOCK:
+        hit = _STAMP_SEEN.get(str(path))
+    if hit and hit[0] == key:
+        return hit[1]
+    stamp = schema_stamp(db)
+    with _STAMP_LOCK:
+        _STAMP_SEEN[str(path)] = (key, stamp)
+    return stamp
+
+
+def _refuse_ensure_if_ahead(dbs) -> None:
+    """With refusal on, raise before the ensure reshapes a file whose stamp is ahead of this code."""
+    from RevenueChaser.core import store_schema_refuse
+    if not store_schema_refuse.schema_refuse_writes():
+        return
+    for db in dbs:
+        if not _db_path(db).exists():
+            continue
+        stored = schema_stamp(db)
+        if stored is not None and _stamp_rank(stored) > _stamp_rank(_SCHEMA_VERSION):
+            raise StoreSchemaMismatch(store_schema_refuse.message(db, stored, _SCHEMA_VERSION))
 
 
 def _read_schema_stamp(conn) -> str | None:
@@ -2993,7 +3040,8 @@ def schema_stamp(db: str) -> str | None:
 def store_schema_mismatch() -> list[dict]:
     """Files whose stored schema stamp is present and not this code's version.
 
-    One dict per file: ``db``, ``file`` (the file name, never a path), ``stored``, ``code``. A
+    One dict per file: ``db``, ``file`` (the file name, never a path), ``stored``, ``code``, ``kind``
+    (``older``, ``newer`` or ``unreadable`` for a stamp that is not an integer). A
     copy, in ``_SCHEMA_FILES`` order. A missing file, and a file with no stamp yet, are not listed
     — the first ensure stamps an absent row. Empty when every existing stamp matches.
     """
@@ -3006,7 +3054,9 @@ def store_schema_mismatch() -> list[dict]:
         stored = schema_stamp(db)
         if stored is None or _stamp_rank(stored) == _stamp_rank(code):
             continue
-        out.append({"db": db, "file": path.name, "stored": stored, "code": code})
+        kind = "unreadable" if _stamp_unreadable(stored) else (
+            "newer" if _stamp_rank(stored) > _stamp_rank(code) else "older")
+        out.append({"db": db, "file": path.name, "stored": stored, "code": code, "kind": kind})
     return out
 
 
@@ -3016,21 +3066,37 @@ def _note_schema_mismatch(db: str, stored: str) -> None:
         return
     path = _db_path(db)
     key = (str(path), stored, _SCHEMA_VERSION)
-    if key in _STAMP_WARNED:
-        return
-    _STAMP_WARNED.add(key)
+    with _STAMP_LOCK:
+        if key in _STAMP_WARNED:
+            return
+        _STAMP_WARNED.add(key)
     logger.warning(
-        "rawstore schema stamp mismatch in %s: stored %s, this code is %s",
-        path.name, stored, _SCHEMA_VERSION)
+        "rawstore schema stamp mismatch in %s: stored %s%s, this code is %s",
+        path.name, stored, " (not a version number)" if _stamp_unreadable(stored) else "", _SCHEMA_VERSION)
 
 
 def _warn_schema_stamp(conn, db: str) -> None:
-    """Log when this file's stamp is present and differs. Never raises: a read stays a read."""
+    """Log when this file's stamp is present and differs. Never raises: a read stays a read.
+
+    Skipped while the file's (size, mtime_ns) is what it was at the last check, so a steady file costs
+    a stat, not a query; a file swapped under a running process changes the key and is read again.
+    """
+    path = _db_path(db)
+    key = _file_key(path)
+    with _STAMP_LOCK:
+        if key is not None and _STAMP_SEEN.get(str(path), (None,))[0] == key:
+            return
     try:
         stored = _read_schema_stamp(conn)
     except Exception:  # noqa: BLE001 - a stamp check must never break a read
-        logger.warning("rawstore: schema stamp check of %s failed", db, exc_info=True)
+        with _STAMP_LOCK:
+            first = ("check-failed", db) not in _STAMP_WARNED
+            _STAMP_WARNED.add(("check-failed", db))
+        if first:
+            logger.warning("rawstore: schema stamp check of %s failed", db, exc_info=True)
         return
+    with _STAMP_LOCK:
+        _STAMP_SEEN[str(path)] = (key, stored)
     if stored is None or _stamp_rank(stored) == _stamp_rank(_SCHEMA_VERSION):
         return
     _note_schema_mismatch(db, stored)
@@ -3044,9 +3110,7 @@ def _apply_schema_stamp(conn, db: str) -> str:
     ``RC_STORE_AUTO_ENSURE=0`` does not write one. ``_STAMP_WRITES`` counts real stamp writes,
     not a current row re-read.
     """
-    conn.execute(
-        f"CREATE TABLE IF NOT EXISTS {_SCHEMA_STAMP_TABLE} ("
-        "key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute(_ddl(_SCHEMA_STAMP_TABLE))
     stored = _read_schema_stamp(conn)
     code = _SCHEMA_VERSION
     if stored is not None and _stamp_rank(stored) == _stamp_rank(code):
@@ -3058,10 +3122,19 @@ def _apply_schema_stamp(conn, db: str) -> str:
         f"INSERT INTO {_SCHEMA_STAMP_TABLE} (key, value) VALUES (?, ?) "
         "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
         [_SCHEMA_STAMP_KEY, code])
-    _STAMP_WRITES[db] = _STAMP_WRITES.get(db, 0) + 1
+    with _STAMP_LOCK:
+        _STAMP_WRITES[db] = _STAMP_WRITES.get(db, 0) + 1
+        _STAMP_SEEN.pop(str(_db_path(db)), None)
     if stored is None:
         return "stamped"
-    logger.info("rawstore: %s schema stamp %s upgraded to %s", _db_path(db).name, stored, code)
+    # An older stamp means an older file was restored (or a bump was never applied): keep the trace.
+    for key, value in (("upgraded_from", stored),
+                       ("upgraded_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))):
+        conn.execute(
+            f"INSERT INTO {_SCHEMA_STAMP_TABLE} (key, value) VALUES (?, ?) "
+            "ON CONFLICT (key) DO UPDATE SET value = excluded.value", [key, value])
+    logger.warning("rawstore: %s schema stamp %s upgraded to %s (an older file was restored, or a bump "
+                   "was not applied)", _db_path(db).name, stored, code)
     return "upgraded"
 
 
@@ -3090,6 +3163,7 @@ def ensure_all_tables() -> None:
     _LOCAL.ensuring = True  # the steps below call the public API themselves
     _LOCAL.drift_seen = seen = set()   # the drift this apply sees, for _persist_drift (#312)
     try:
+        _refuse_ensure_if_ahead(_SCHEMA_FILES)   # before any rename, merge, ALTER or move (PL7-b)
         with connect(db="raw") as conn:
             _apply_renames(conn)
             rekeyed = _apply_key_rebuilds(conn)
@@ -3626,6 +3700,7 @@ def ensure_history() -> None:
     path = _db_path("history")
     if str(path) in _HISTORY_READY and path.exists():
         return
+    _refuse_ensure_if_ahead(("history",))
     with connect(db="history") as conn:
         _ensure_db_tables(conn, "history")
         _apply_history_views(conn)

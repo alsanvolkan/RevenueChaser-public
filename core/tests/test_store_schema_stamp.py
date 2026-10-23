@@ -78,6 +78,17 @@ class TestStampOnEnsure:
         assert rawstore.schema_stamp("prices") == "12"
         assert rawstore.schema_stamp("discord") == "12"
 
+    def test_an_upgrade_keeps_the_old_value_and_warns(self, isolate_rawstore, caplog):
+        """A restored older file leaves a trace after the ensure upgrades it (review SHOULD-3)."""
+        rawstore.ensure_all_tables()
+        _set_stamp("prices", "11")
+        rawstore._TABLE_READY.clear()
+        with caplog.at_level("WARNING"):
+            rawstore.ensure_all_tables()
+        rows = {r["key"]: r["value"] for r in rawstore.query("SELECT key, value FROM store_schema", db="prices")}
+        assert rows["schema_version"] == "12" and rows["upgraded_from"] == "11" and rows["upgraded_at"]
+        assert any("upgraded" in r.getMessage() and r.levelname == "WARNING" for r in caplog.records)
+
     def test_a_current_stamp_is_not_rewritten(self, isolate_rawstore):
         rawstore.ensure_all_tables()
         before = dict(rawstore._STAMP_WRITES)
@@ -104,8 +115,8 @@ class TestMismatchReport:
         _set_stamp("edgar", "13")
         _set_stamp("prices", "11")
         assert rawstore.store_schema_mismatch() == [
-            {"db": "edgar", "file": "edgar.duckdb", "stored": "13", "code": "12"},
-            {"db": "prices", "file": "prices.duckdb", "stored": "11", "code": "12"},
+            {"db": "edgar", "file": "edgar.duckdb", "stored": "13", "code": "12", "kind": "newer"},
+            {"db": "prices", "file": "prices.duckdb", "stored": "11", "code": "12", "kind": "older"},
         ]
         rawstore._TABLE_READY.clear()
         with caplog.at_level("WARNING"):
@@ -113,8 +124,8 @@ class TestMismatchReport:
         assert rawstore.schema_stamp("edgar") == "13"
         assert rawstore.schema_stamp("prices") == "12"
         assert rawstore.store_schema_mismatch() == [
-            {"db": "edgar", "file": "edgar.duckdb", "stored": "13", "code": "12"}]
-        msgs = [r.getMessage() for r in caplog.records if "schema stamp" in r.getMessage()]
+            {"db": "edgar", "file": "edgar.duckdb", "stored": "13", "code": "12", "kind": "newer"}]
+        msgs = [r.getMessage() for r in caplog.records if "schema stamp mismatch" in r.getMessage()]
         assert len(msgs) == 1
         assert "edgar.duckdb" in msgs[0] and "13" in msgs[0] and "12" in msgs[0]
         assert str(rawstore.edgar_db_path()) not in msgs[0]
@@ -131,7 +142,7 @@ class TestMismatchReport:
             rawstore._TABLE_READY.clear()
             rawstore.ensure_all_tables()
         assert rawstore.store_schema_mismatch() == [
-            {"db": "edgar", "file": "edgar.duckdb", "stored": "13", "code": "12"}]
+            {"db": "edgar", "file": "edgar.duckdb", "stored": "13", "code": "12", "kind": "newer"}]
         assert len([r for r in caplog.records if "schema stamp" in r.getMessage()]) == 1
 
     def test_a_read_of_a_mismatched_stamp_warns_and_does_not_raise(self, isolate_rawstore, caplog):
