@@ -926,6 +926,20 @@ def test_automations_section_is_absent_without_rows():
     assert 'id="auto-body"' not in html
 
 
+def test_the_automations_section_says_a_line_opens():
+    """G10 (#124): a reader must know the long text is behind the line, not gone."""
+    p = _payload()
+    p["automations"] = _autos()
+    html = report.render_settings_dashboard(p)
+    assert "press a line to see" in html
+
+
+def test_an_empty_automations_list_says_so():
+    html = _render_rows([])
+    assert "No scheduled tasks are registered." in html
+    assert "<details" not in html
+
+
 def test_the_panel_uses_rcesc_and_never_the_drill_escaper():
     start = report.AUTOMATIONS_JS
     assert "rcEsc(" in start and "tcEsc" not in start
@@ -1002,6 +1016,170 @@ def test_error_state_is_red_and_offers_no_button():
     html = _render_rows([row])
     assert "st-bad" in html and "Scheduler error" in html
     assert "data-act" not in html
+
+
+# --- G10 (#124): one line per automation, the rest behind a click -------------------
+
+def _one_line(html: str) -> str:
+    """The closed line of the first automation: the whole ``<summary>`` element."""
+    start = html.index("<summary>")
+    return html[start:html.index("</summary>", start) + len("</summary>")]
+
+
+def _behind_the_click(html: str) -> str:
+    """Everything after the first automation's closed line: what opening it shows."""
+    return html[html.index("</summary>") + len("</summary>"):]
+
+
+def _live_row(**fields) -> dict:
+    """The Daily store backup row as the poll returns it: installed, last run ok, next run known."""
+    row = dict(_autos()[0], state="enabled", result_kind="ok", result_text="ok",
+               last_run="2026-10-23T04:00:05", next_run="2026-10-24T04:00:00",
+               missed_runs=0, last_success_age="8 h ago", log_tail=[])
+    row.update(fields)
+    return row
+
+
+def test_the_automation_line_carries_its_name_schedule_state_result_and_next_run():
+    line = _one_line(_render_rows([_live_row()]))
+    assert "Daily store backup" in line and "RC-Store-Backup" in line
+    assert "daily 04:00 (local)" in line
+    assert "Enabled" in line
+    assert "last result: ok" in line
+    assert "next run: 2026-10-24 04:00" in line
+
+
+def test_a_task_that_is_not_installed_shows_its_state_and_no_dash_result():
+    row = dict(_autos()[0], state="not_installed", result_kind="none", result_text="—",
+               last_run=None, next_run=None, missed_runs=0, last_success_age="never")
+    line = _one_line(_render_rows([row]))
+    assert "Not installed" in line
+    assert "last result" not in line and "next run" not in line
+
+
+def test_the_automation_line_leaves_the_long_text_behind_the_click():
+    auto = _autos()[0]
+    line = _one_line(_render_rows([_live_row()]))
+    assert auto["description"][:60] not in line
+    assert auto["command"] not in line
+    assert auto["settings"] not in line
+    assert auto["log_path"] not in line
+
+
+def test_the_line_shows_the_schedule_time_and_the_chain_condition_waits_behind_the_click():
+    auto = next(a for a in _autos() if a["name"] == "RC-Screeners-Daily")
+    row = dict(auto, state="enabled", result_kind="ok", result_text="ok",
+               last_run="2026-10-22T23:00:00", next_run="2026-10-23T23:00:00", missed_runs=0,
+               last_success_age="18 h ago", log_tail=[])
+    html = _render_rows([row])
+    line = _one_line(html)
+    assert "23:00 (local)" in line and "after RC-Daily-Bars" not in line
+    assert "weekly 23:00 (local)" in line and "Wednesday" not in line
+    opened = _behind_the_click(html)
+    assert "after RC-Daily-Bars" in opened and "Wednesday" in opened
+
+
+def test_the_expanded_part_keeps_the_description_command_and_run_conditions_word_for_word():
+    auto = _autos()[0]
+    opened = _behind_the_click(_render_rows([_live_row()]))
+    assert auto["description"] in opened
+    assert auto["command"] in opened
+    assert auto["settings"] in opened
+    assert auto["schedule"] in opened
+    assert "What it does" in opened and "Command" in opened and "Run conditions" in opened
+
+
+def test_every_automation_is_a_closed_details_row_with_its_own_id():
+    html = _render_rows(_autos())
+    for auto in _autos():
+        assert f'<details class="auto-item" id="auto-{auto["name"]}">' in html
+    assert html.count("<details") == html.count("</details>") == len(_autos())
+
+
+def test_the_line_opens_from_the_keyboard_without_a_click_handler():
+    line = _one_line(_render_rows([_live_row()]))
+    assert line.startswith("<summary>") and "onclick" not in line and "onkeydown" not in line
+
+
+def test_the_buttons_are_behind_the_click():
+    html = _render_rows([_live_row()])
+    assert "data-act" not in _one_line(html)
+    assert 'data-act="run"' in _behind_the_click(html)
+
+
+def test_the_daily_store_backup_keeps_its_off_machine_line_and_sizes_in_the_expanded_part():
+    row = _live_row(offmachine={"configured": True, "kind": "ok", "text": "OK, 8 h ago"},
+                    backup_size={"kind": "warn",
+                                 "text": "local 21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)"})
+    html = _render_rows([row])
+    opened = _behind_the_click(html)
+    assert "off-machine copy: OK, 8 h ago" in opened
+    assert "backup size: local 21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)" in opened
+    line = _one_line(html)
+    assert "off-machine copy" not in line and "backup size" not in line
+
+
+def test_the_expanded_part_keeps_the_store_tables_the_log_and_its_tail():
+    auto = next(a for a in _autos() if a["name"] == "RC-Daily-Bars")
+    row = dict(auto, state="enabled", result_kind="ok", result_text="ok",
+               last_run="2026-10-23T22:35:00", next_run="2026-10-24T22:35:00", missed_runs=0,
+               last_success_age="7 h ago",
+               log_tail=["=== 2026-10-23T22:35:00 exit 0", "wrote 3,582 rows"])
+    opened = _behind_the_click(_render_rows([row]))
+    for table in auto["tables_written"]:
+        assert table in opened
+    assert auto["log_path"] in opened and "wrote 3,582 rows" in opened
+    assert "Store tables it writes" in opened
+
+
+def test_the_automation_line_escapes_hostile_schedule_result_and_next_run():
+    bad = "<img src=x onerror=__x(1)>"
+    line = _one_line(_render_rows([_live_row(schedule=bad, result_text=bad, next_run=bad)]))
+    assert "<img" not in line and line.count("&lt;img") == 3
+
+
+def _auto_poll(open_ids: list, focused_id: str | None) -> dict:
+    """``autoRender`` against a fake DOM: which rows it left open, and whether it put focus back."""
+    import json
+    import shutil
+    import subprocess
+    import pytest
+    from RevenueChaser.core import html_safe
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    script = (html_safe.ESC_JS + report.AUTOMATIONS_JS
+              + "\nvar openIds = " + json.dumps(open_ids) + ";"
+              + "\nvar focusedId = " + json.dumps(focused_id) + ";"
+              + "\nvar focused = false;"
+              + "\nvar head = {focus: function(){ focused = true; }};"
+              + "\nvar made = {};"
+              + "\nvar body = {innerHTML: '', querySelectorAll: function(){"
+              + " return openIds.map(function(id){ return {id: id}; }); }};"
+              + "\nglobalThis.document = {"
+              + " activeElement: focusedId ? {closest: function(){ return {id: focusedId}; }} : null,"
+              + " getElementById: function(id){"
+              + " if(id === 'auto-body') return body;"
+              + " if(!made[id]) made[id] = {id: id, open: false,"
+              + " querySelector: function(){ return head; }};"
+              + " return made[id]; }};"
+              + "\nautoRender(" + json.dumps(_autos()) + ", true);"
+              + "\nconsole.log(JSON.stringify({rendered: body.innerHTML.length, focused: focused,"
+              + " open: openIds.map(function(id){ return made[id] ? made[id].open : null; })}));")
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                         encoding="utf-8", check=True)
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+def test_a_row_the_reader_opened_stays_open_across_a_poll():
+    """The panel re-renders on every poll while a task runs; the row being watched must not snap shut."""
+    seen = _auto_poll(open_ids=["auto-RC-Store-Backup"], focused_id=None)
+    assert seen["rendered"] > 0 and seen["open"] == [True]
+
+
+def test_the_focused_automation_keeps_focus_across_a_poll():
+    """A keyboard reader inside an opened row must not be dropped back to the page by the 5 s poll."""
+    seen = _auto_poll(open_ids=["auto-RC-Store-Backup"], focused_id="auto-RC-Store-Backup")
+    assert seen["open"] == [True] and seen["focused"] is True
 
 
 def _drill_rows(detail: dict) -> str:

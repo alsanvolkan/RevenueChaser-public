@@ -44,8 +44,8 @@ table.inv th,table.inv td{padding:7px 10px;border-bottom:1px solid var(--border)
 table.inv th{color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.03em}
 table.inv td.num{text-align:right;font-variant-numeric:tabular-nums}
 table.inv tr:last-child td{border-bottom:none}
-table.inv .tbl{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 table.inv .note{color:var(--muted);white-space:normal;max-width:320px}
+.tbl{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 table.inv .ok{color:var(--neon)}
 table.inv .warnv{color:var(--amber)}
 /* G2 (#124): the Coverage bar — 64px wide inside the cell, so the table gains no width; its colour is the
@@ -150,7 +150,25 @@ details.fine>summary{cursor:pointer;color:var(--accent);font-size:12.5px;font-we
 .auto-btn{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 9px;margin:1px 4px 1px 0;cursor:pointer;font-size:12px}
 .auto-btn:hover{border-color:var(--accent)}
 .auto-btn:disabled{opacity:.5;cursor:default}
-table.auto td{vertical-align:top}
+/* G10 (#124): one line per automation. The description, command, run conditions, store tables,
+   log and buttons sit behind the row's own ▸, so ten tasks read as ten lines. */
+.auto-list{font-size:12.5px}
+.auto-item{border-bottom:1px solid var(--border)}
+.auto-item:last-child{border-bottom:none}
+.auto-item>summary{display:grid;grid-template-columns:minmax(220px,1.5fr) minmax(160px,1.1fr) minmax(120px,max-content) minmax(150px,1fr) minmax(170px,1.1fr);gap:12px;align-items:baseline;padding:8px 10px;cursor:pointer;list-style:none}
+.auto-item>summary:hover{background:rgba(255,255,255,.03)}
+.auto-item>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.auto-item[open]>summary{background:rgba(14,165,233,.06);box-shadow:inset 2px 0 0 var(--accent)}
+.auto-item>summary::-webkit-details-marker{display:none}
+.auto-caret::before{content:"▸ "}
+.auto-item[open] .auto-caret::before{content:"▾ "}
+.auto-when,.auto-next{color:var(--muted);font-variant-numeric:tabular-nums}
+.auto-detail{border-top:1px dashed var(--border);padding:6px 10px 12px 26px}
+.auto-detail .aline{margin:3px 0;white-space:normal}
+.auto-detail .aline b{color:var(--text);font-weight:600;margin-right:6px}
+.auto-detail .auto-desc{max-width:none;margin:3px 0}
+.auto-detail .auto-log{max-width:none;margin:3px 0;overflow-wrap:anywhere}
+.auto-actions{margin:2px 0 10px}
 .auto-desc{color:var(--muted);font-size:12px;white-space:normal;max-width:340px}
 .auto-log{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;white-space:pre-wrap;max-width:380px}
 #auto-msg{color:var(--amber);margin:6px 0;min-height:1em}
@@ -357,6 +375,50 @@ var AUTO_BUTTONS = {not_installed:[['install','Install']],
   enabled:[['disable','Disable'],['run','Run now'],['remove','Remove']],
   disabled:[['enable','Enable'],['remove','Remove']]};
 var AUTO_CONFIRM = {install:'Install', remove:'Remove', run:'Run now'};
+// G10 (#124): the closed line carries the name, the schedule time, the state word, the last
+// result and the next run. Everything else — description, command, run conditions, store
+// tables, off-machine copy, sizes, log and buttons — is inside the row's own <details>.
+function autoWhen(r){
+  // The clock part of the schedule: the day list and ", after <task>" are conditions, and read in the detail.
+  var text = String(r.schedule == null ? '' : r.schedule).replace(/\s*,\s*after .*$/, '');
+  return text.replace(/^weekly\s+.*?\s(\d{1,2}:\d{2}\s+\(local\))$/, 'weekly $1');
+}
+function autoNext(r){
+  // Task Scheduler answers with an ISO stamp ("2026-10-24T04:00:00.0000000+02:00"); show date and time.
+  var text = String(r.next_run == null ? '' : r.next_run);
+  return text.indexOf('T') > 0 ? text.replace('T', ' ').slice(0, 16) : text;
+}
+function autoSummaryHtml(r, live, st, stText, rcls){
+  var result = live && r.result_text && r.result_text !== '—' ? 'last result: ' + rcEsc(r.result_text) : '';
+  var next = live && r.next_run ? 'next run: ' + rcEsc(autoNext(r)) : '';
+  return '<summary>' +
+    '<span class="auto-name"><span class="auto-caret" aria-hidden="true"></span><b>' + rcEsc(r.label) + '</b> ' +
+      '<span class="tbl">' + rcEsc(r.name) + '</span></span>' +
+    '<span class="auto-when">' + rcEsc(autoWhen(r)) + '</span>' +
+    '<span class="auto-state ' + st[1] + '">' + rcEsc(stText) + '</span>' +
+    '<span class="auto-res ' + rcls + '">' + result + '</span>' +
+    '<span class="auto-next">' + next + '</span>' +
+    '</summary>';
+}
+function autoDetailHtml(r, live, btns, tables, tail, off, size){
+  var lines = '<div class="aline"><b>What it does</b>' + rcEsc(r.description) + '</div>' +
+    '<div class="aline"><b>Command</b><span class="tbl">' + rcEsc(r.command) + '</span></div>' +
+    '<div class="aline"><b>Schedule</b>' + rcEsc(r.schedule) + '</div>' +
+    '<div class="aline"><b>Run conditions</b>' + rcEsc(r.settings) + '</div>';
+  if(r.offpeak_gated) lines += '<div class="aline"><b>Off-peak only</b>it defers itself outside the peak hours</div>';
+  if(tables) lines += '<div class="aline"><b>Store tables it writes</b><span class="tbl">' + tables + '</span></div>';
+  if(live){
+    lines += '<div class="aline"><b>Last run</b>' + rcEsc(r.last_run || 'not recorded') +
+      ' · next run ' + rcEsc(autoNext(r) || 'not known') +
+      ' · missed runs ' + rcEsc(r.missed_runs) +
+      ' · last success ' + rcEsc(r.last_success_age) + '</div>';
+  }
+  lines += off + size +
+    '<div class="aline"><b>Log file</b><div class="auto-log">' + rcEsc(r.log_path) +
+    (tail ? '\n' + tail : '') + '</div></div>';
+  return '<div class="auto-detail">' + (btns ? '<div class="auto-actions">' + btns + '</div>' : '') +
+    lines + '</div>';
+}
 function autoRowHtml(r){
   var live = r.state != null;
   var st = AUTO_STATE.hasOwnProperty(r.state) ? AUTO_STATE[r.state] : [r.state, ''];
@@ -377,32 +439,41 @@ function autoRowHtml(r){
   var size = r.backup_size ? '<div class="auto-desc ' +
     (AUTO_RESULT.hasOwnProperty(r.backup_size.kind) ? AUTO_RESULT[r.backup_size.kind] : '') + '">backup size: ' +
     rcEsc(r.backup_size.text) + '</div>' : '';
-  return '<tr>' +
-    '<td><b>' + rcEsc(r.label) + '</b> <span class="tbl">' + rcEsc(r.name) + '</span>' +
-      '<div class="auto-desc">' + rcEsc(r.description) + '</div>' +
-      '<div class="auto-desc">' + rcEsc(r.command) + '</div>' +
-      '<div class="auto-desc">' + rcEsc(r.settings) + '</div>' +
-      (tables ? '<div class="auto-desc">writes ' + tables + '</div>' : '') + off + size + '</td>' +
-    '<td>' + rcEsc(r.schedule) + (r.offpeak_gated ? '<div class="auto-desc">off-peak gated</div>' : '') + '</td>' +
-    '<td class="' + st[1] + '">' + rcEsc(stText) + '</td>' +
-    '<td class="' + rcls + '">' + (live ? rcEsc(r.result_text) : '—') +
-      (live ? '<div class="auto-desc">last run ' + rcEsc(r.last_run || '—') +
-       ' · next ' + rcEsc(r.next_run || '—') + ' · missed ' + rcEsc(r.missed_runs) +
-       ' · last success ' + rcEsc(r.last_success_age) + '</div>' : '') + '</td>' +
-    '<td><div class="auto-log">' + rcEsc(r.log_path) + (tail ? '\n' + tail : '') + '</div></td>' +
-    '<td>' + btns + '</td></tr>';
+  return '<details class="auto-item" id="auto-' + rcEsc(r.name) + '">' +
+    autoSummaryHtml(r, live, st, stText, rcls) +
+    autoDetailHtml(r, live, btns, tables, tail, off, size) +
+    '</details>';
 }
 function autoTableHtml(rows, available){
-  var head = '<div class="panel"><table class="inv auto"><thead><tr><th>Automation</th>' +
-    '<th>Schedule</th><th>State</th><th>Last result</th><th>Log</th><th>Action</th></tr></thead><tbody>';
   var note = available === false
     ? '<div class="auto-desc">Task Scheduler is not available on this host.</div>' : '';
-  return note + head + rows.map(autoRowHtml).join('') + '</tbody></table></div>';
+  var list = rows.length
+    ? '<div class="auto-list">' + rows.map(autoRowHtml).join('') + '</div>'
+    : '<div class="auto-desc">No scheduled tasks are registered.</div>';
+  return note + '<div class="panel">' + list + '</div>';
 }
 var autoTimer = null;
 function autoRender(rows, available){
   var body = document.getElementById('auto-body');
-  if(body) body.innerHTML = autoTableHtml(rows, available);
+  if(!body) return;
+  // The panel re-renders on every poll while a task runs: the row the reader opened stays open,
+  // and focus stays in that row instead of falling back to the page.
+  var open = [];
+  var was = body.querySelectorAll ? body.querySelectorAll('details[open]') : [];
+  Array.prototype.forEach.call(was, function(d){ if(d.id) open.push(d.id); });
+  var here = document.activeElement && document.activeElement.closest
+    ? document.activeElement.closest('details') : null;
+  var focusId = here && here.id ? here.id : '';
+  body.innerHTML = autoTableHtml(rows, available);
+  open.forEach(function(id){
+    var d = document.getElementById(id);
+    if(d) d.open = true;
+  });
+  if(focusId){
+    var row = document.getElementById(focusId);
+    var head = row && row.querySelector ? row.querySelector('summary') : null;
+    if(head && head.focus) head.focus();
+  }
 }
 function autoMsg(text){
   var m = document.getElementById('auto-msg');
@@ -831,7 +902,8 @@ def _automations_section(rows: list[dict]) -> str:
         '<h2 class="sec">Automations</h2>'
         '<div class="sub">Scheduled tasks RevenueChaser owns. Nothing is installed '
         "until you press <b>Install</b>; the state below is read live from Task Scheduler "
-        "(this page itself stays store-only).</div>"
+        "(this page itself stays store-only). Each task is one line; press a line to see "
+        "what it does, its command, its run conditions, its log and its buttons.</div>"
         '<div id="auto-msg"></div><div id="auto-body"></div>')
 
 
