@@ -56,7 +56,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 
-from RevenueChaser.core import prices, rawstore
+from RevenueChaser.core import job_control, prices, rawstore
 from RevenueChaser.core.config import OUTPUT_DIR
 # Sector classification lives in one place now (core.gics_map); re-exported here
 # because older import sites still read these names from this module.
@@ -187,6 +187,7 @@ def download_missing_zips(ownership_dir: Path = None) -> list[Path]:
     ownership_dir.mkdir(parents=True, exist_ok=True)
     downloaded = []
     for name, url in missing_zips(available_zips(), ownership_dir).items():
+        job_control.checkpoint(f"13F download {name}")  # between zips: a stop never starts the next download
         logger.info("Downloading 13F zip: %s", name)
         target = ownership_dir / name
         part = target.with_name(name + ".part")
@@ -545,6 +546,9 @@ def ingest_zips(zip_paths: Iterable[str | Path]) -> int:
     now = datetime.now().isoformat()
     for p in zip_paths:
         fname = Path(p).name
+        # Before any write of this zip (holdings chunks, then the submissions/marker transaction). A stop
+        # here leaves the previous zip complete and this one unstarted (#26 PL4).
+        job_control.checkpoint(f"13F zip {fname}")
         if fname in ingested:
             continue
         logger.info("Ingesting %s", fname)
