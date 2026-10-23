@@ -7,7 +7,7 @@ import os
 import pathlib
 import re
 import shutil
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import duckdb
 import pytest
@@ -1158,3 +1158,141 @@ def test_a_refused_offmachine_manifest_write_is_a_warning_not_a_failed_copy(raws
     assert "off-machine manifest WARNING" in text.err and " FAILED" not in text.err
     assert "off-machine copy OK" in text.out
     assert any(n.startswith("raw_") for n in _drive_files(mirror / bs.OFFMACHINE_SUBDIR))
+
+
+# ── G9 of the GUI brief (#124): the read-only cleanup dry run ─────────────────────────────────────────────────
+NOW = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+
+
+def _aged(folder: pathlib.Path, name: str, size: int = 100, days_old: int = 0) -> pathlib.Path:
+    """A stand-in backup file of ``size`` bytes, last modified ``days_old`` days before ``NOW`` (its age)."""
+    folder.mkdir(parents=True, exist_ok=True)
+    p = folder / name
+    p.write_bytes(b"x" * size)
+    when = (NOW - timedelta(days=days_old)).timestamp()
+    os.utime(p, (when, when))
+    return p
+
+
+def _tree(folder: pathlib.Path) -> dict[str, tuple[int, int]]:
+    """Everything a dry run must leave alone: every file's size and modified time."""
+    return {p.relative_to(folder).as_posix(): (p.stat().st_size, p.stat().st_mtime_ns)
+            for p in folder.rglob("*") if p.is_file()}
+
+
+def _local_folder(folder: pathlib.Path) -> None:
+    """The local backup folder with several prefixes, each holding more copies than its keep count."""
+    for n in range(7):                                            # raw: keep 5 -> 2 expired
+        _aged(folder, f"raw_2026090{n + 1}_000000_000000.duckdb", 1000 + n, 30 - n)
+    for n in range(3):                                            # edgar: keep 2 -> 1 expired
+        _aged(folder, f"edgar_2026090{n + 1}_000000_000000.duckdb", 200 + n, 20 - n)
+    for n in range(3):                                            # edgar_docs: keep 2 -> 1 expired
+        _aged(folder, f"edgar_docs_2026090{n + 1}_000000_000000.zip", 300 + n, 10 - n)
+    _aged(folder, "edgar_docs_20260920_000000_000000.partial.zip", 999, 40)   # never a backup (a killed zip)
+    _aged(folder, "discord_20260901_000000_000000.duckdb", 400, 5)            # one copy: nothing expired
+    for n in range(6):                                            # history: keep 5 -> 1 expired
+        _aged(folder, f"history_2026090{n + 1}_000000_000000.duckdb", 500 + n, 15 - n)
+    for n in range(3):                                            # prices: keep 2 -> 1 expired
+        _aged(folder, f"prices_2026090{n + 1}_000000_000000.duckdb", 600 + n, 8 - n)
+    weekly_base = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    for n in range(13):                                           # weekly: keep 12 -> 1 expired
+        stamp = (weekly_base + timedelta(days=7 * n)).strftime("%Y%m%d_%H%M%S_000000")
+        _aged(folder / bs.WEEKLY_DIRNAME, f"raw_{stamp}.duckdb", 700 + n, 60 - n)
+    _aged(folder / bs.MEDIA_MIRROR_DIRNAME / "900", "a.png", 10, 90)          # a mirror is never pruned
+    _aged(folder / bs.SPX_VERSIONS_DIRNAME, "brier.20260101T000000_000000Z.json", 20, 90)
+
+
+def test_the_dry_run_lists_exactly_the_files_the_rule_marks_expired_and_removes_nothing(tmp_path):
+    """G9: one record per expired file (name, size, age), plus the count and the total size; nothing deleted."""
+    out = tmp_path / "local"
+    _local_folder(out)
+    before = _tree(out)
+    found = bs.expired_backups(out, now=NOW)
+    assert _tree(out) == before, "the dry run must not delete, move or rewrite a single file"
+    assert found.state == "ok" and found.count == len(found.files) == 7
+    assert found.bytes == sum(f.size for f in found.files) == 1000 + 1001 + 200 + 300 + 500 + 600 + 700
+    assert {f.name for f in found.files} == {
+        "raw_20260901_000000_000000.duckdb", "raw_20260902_000000_000000.duckdb",   # 7 raw, keep 5
+        "edgar_20260901_000000_000000.duckdb",                                      # 3 edgar, keep 2
+        "edgar_docs_20260901_000000_000000.zip",                                    # 3 zips, keep 2
+        "history_20260901_000000_000000.duckdb",                                    # 6 history, keep 5
+        "prices_20260901_000000_000000.duckdb",                                     # 3 prices, keep 2
+        "weekly/raw_20260601_000000_000000.duckdb",                                 # 13 weekly, keep 12
+    }
+    oldest = next(f for f in found.files if f.name == "raw_20260901_000000_000000.duckdb")
+    assert oldest == bs.ExpiredBackup("raw_20260901_000000_000000.duckdb", 1000, 30)
+    assert "partial" not in " ".join(f.name for f in found.files)
+    assert not any(f.name.startswith((bs.MEDIA_MIRROR_DIRNAME, bs.SPX_VERSIONS_DIRNAME)) for f in found.files)
+
+
+def test_the_newest_copy_of_a_prefix_is_never_a_candidate_even_with_a_keep_count_of_zero(tmp_path):
+    """Invariant 1: the newest copy is excluded by construction, whatever the rule computes."""
+    only = _aged(tmp_path, "raw_20261001_000000_000000.duckdb")
+    older = _aged(tmp_path, "raw_20260101_000000_000000.duckdb", days_old=40)
+    assert bs.expired_selection([older, only], 0) == [older, only]     # the rule alone, unchanged
+    assert bs.expired_candidates([only], 0) == []                      # keep 0: still keeps one
+    assert bs.expired_candidates([only], 5) == []                      # fewer copies than the keep count
+    assert bs.expired_candidates([older, only], 0) == [older]          # the newest is never in the list
+    assert bs.expired_candidates([older, only], 1) == [older]
+    assert bs.expired_candidates([], 0) == []
+
+
+def test_the_scan_never_names_the_newest_copy_of_any_prefix(tmp_path):
+    """The same invariant end to end: a folder of single copies yields no candidate at all."""
+    out = tmp_path / "local"
+    newest = [
+        _aged(out, "raw_20261001_000000_000000.duckdb"),
+        _aged(out, "edgar_20261001_000000_000000.duckdb"),
+        _aged(out, "edgar_docs_20261001_000000_000000.zip"),
+        _aged(out, "discord_20261001_000000_000000.duckdb"),
+        _aged(out, "history_20261001_000000_000000.duckdb"),
+        _aged(out, "prices_20261001_000000_000000.duckdb"),
+        _aged(out / bs.WEEKLY_DIRNAME, "raw_20261001_000000_000000.duckdb"),
+    ]
+    found = bs.expired_backups(out, now=NOW)
+    assert found.state == "ok" and found.files == () and found.count == 0 and found.bytes == 0
+    assert not ({p.name for p in newest} & {f.name for f in found.files})
+
+
+def test_the_dry_run_never_reads_lists_or_returns_the_offmachine_copy(tmp_path, monkeypatch):
+    """Invariant 2: only the local backup folder is read; the off-machine copy is never walked or listed."""
+    from RevenueChaser.core import config
+
+    out = tmp_path / "local"
+    drive = tmp_path / "drive"
+    _local_folder(out)
+    _aged(drive / bs.OFFMACHINE_SUBDIR, "raw_20200101_000000_000000.duckdb", 7, 1000)
+    monkeypatch.setenv("RAW_STORE_BACKUP_DIR", str(out))
+    monkeypatch.setattr(config, "RAW_STORE_BACKUP_MIRROR", str(drive))
+
+    def guard(fn):
+        def guarded(p=".", *a, **k):
+            if not isinstance(p, int) and os.fspath(p).startswith(str(drive)):
+                raise AssertionError(f"the dry run touched the off-machine folder: {p}")
+            return fn(p, *a, **k)
+        return guarded
+
+    for name in ("scandir", "listdir", "walk", "stat", "lstat"):
+        monkeypatch.setattr(os, name, guard(getattr(os, name)))
+    found = bs.expired_backups(now=NOW)          # no argument: the local folder the job writes
+    monkeypatch.undo()
+    assert found.state == "ok" and found.count == 7
+    assert all(not f.name.startswith(bs.OFFMACHINE_SUBDIR) and "drive" not in f.name for f in found.files)
+
+
+def test_a_missing_local_folder_reads_unknown_not_an_empty_zero(tmp_path):
+    found = bs.expired_backups(tmp_path / "not-there", now=NOW)
+    assert found.state == "unknown" and found.count is None and found.bytes is None and found.files == ()
+    assert "missing" in (found.why or "")
+
+
+def test_an_unreadable_local_folder_reads_unknown_not_an_empty_zero(tmp_path, monkeypatch):
+    _local_folder(tmp_path)
+
+    def boom(folder, prefix):
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr(bs, "_snapshots", boom)
+    found = bs.expired_backups(tmp_path, now=NOW)
+    assert found.state == "unknown" and found.count is None and found.bytes is None
+    assert "access denied" in (found.why or "")

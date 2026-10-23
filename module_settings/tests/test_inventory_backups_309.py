@@ -129,3 +129,44 @@ def test_the_card_carries_the_offmachine_location_the_job_copies_to(backups, mon
     assert backups(_SIZES, _SCAN)["offmachine_path"] == str(tmp_path / "drive")
     monkeypatch.setattr(config, "RAW_STORE_BACKUP_MIRROR", "")
     assert backups(_SIZES, _SCAN)["offmachine_path"] is None
+
+
+# ── G9 of the GUI brief (#124): what the retention rule marks expired, read without deleting ─────────────
+def _aged(folder, name: str, size: int = 100, days_old: int = 0):
+    from datetime import timedelta
+    p = folder / name
+    p.write_bytes(b"x" * size)
+    when = (NOW - timedelta(days=days_old)).timestamp()
+    os.utime(p, (when, when))
+    return p
+
+
+def test_the_record_carries_the_expired_totals_the_read_only_scan_found(backups, tmp_path):
+    """G9: how many files the rule marks expired and how much space they take, from the local folder itself."""
+    out = tmp_path / "backups"
+    for n in range(3):                                   # prices: keep 2 -> the oldest is expired
+        _aged(out, f"prices_2026090{n + 1}_000000_000000.duckdb", 1000 + n, 9 - n)
+    for n in range(3):                                   # discord: keep 2 -> the oldest is expired
+        _aged(out, f"discord_2026090{n + 1}_000000_000000.duckdb", 500, 9 - n)
+    b = backups(_SIZES, _SCAN)
+    assert b["expired"]["state"] == "ok"
+    assert b["expired"]["count"] == 2 and b["expired"]["bytes"] == 1500
+
+
+def test_a_missing_backup_folder_reads_unknown_not_zero(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAW_STORE_BACKUP_DIR", str(tmp_path / "gone"))
+    monkeypatch.setattr(config, "RAW_STORE_BACKUP_MIRROR", "")
+    b = inventory._backups(NOW)
+    assert b["expired"]["state"] == "unknown" and b["expired"]["count"] is None and b["expired"]["bytes"] is None
+    assert "missing" in b["expired"]["why"]
+
+
+def test_a_failing_scan_is_recorded_and_reads_unknown_never_a_zero(rawstore_tmp_db, backups, monkeypatch):
+    def boom(*a, **k):
+        raise OSError("backup folder unreadable")
+
+    monkeypatch.setattr(bs, "expired_backups", boom)
+    payload = inventory.collect(NOW)
+    assert payload["backups"]["expired"]["state"] == "unknown"
+    assert payload["backups"]["expired"]["count"] is None and payload["backups"]["expired"]["bytes"] is None
+    assert any(e["where"] == "_backups" for e in payload["errors"])
