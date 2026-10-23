@@ -23,6 +23,8 @@ from RevenueChaser.module_settings import boards
 from RevenueChaser.core.universe import DEFAULT_MC_MIN, classification_universe
 
 DASH = "—"
+# The Settings banner reads this board's last recorded run (#80). Settings itself makes no provider call.
+BOARD = "module_settings"
 # Warn once ``security_master.updated_at`` is older than this many days (#345, #381).
 IDENTITY_MASTER_STALE_DAYS = 7
 
@@ -980,6 +982,17 @@ def _backups(now: datetime) -> dict:
             "local": local, "offmachine": off, "checkpoints": checkpoints, "scan": scan_out}
 
 
+def _provider_health() -> dict | None:
+    """The banner's health: ``history.last_run(BOARD)["provider_health"]``. Store-only; None when nothing is recorded."""
+    from RevenueChaser.core import history
+
+    try:
+        row = history.last_run(BOARD)
+    except Exception:  # noqa: BLE001 - a missing or locked history file never fails the inventory
+        return None
+    return (row or {}).get("provider_health")
+
+
 def collect(now: datetime | None = None) -> dict:
     """The Settings payload. ``now`` is the clock for the staleness windows (tests pin it)."""
     now = now or datetime.now(timezone.utc)
@@ -1330,4 +1343,5 @@ def _collect(now: datetime) -> dict:
         "backups": _backups(now),
         "errors": list(getattr(_CALL, "errors", None) or []),
         "generated_at": now.isoformat(timespec="seconds"),
+        "provider_health": _provider_health(),
     }

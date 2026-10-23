@@ -107,4 +107,5 @@ def record(payload: dict, *, rows: dict, run_id: str):
                  "tiers": payload.get("tiers"), "distorted_count": payload.get("distorted_count"),
                  "data_quality": payload.get("data_quality"), "edgar_extract_version": sec_edgar.EXTRACT_VERSION,
                  "edgar_versions": rows.get("edgar_versions"), "summary": summary},
-        payload=payload, partial=_partial(payload, rows, run_at))
+        payload=payload, partial=_partial(payload, rows, run_at),
+        provider_health=payload.get("provider_health"))

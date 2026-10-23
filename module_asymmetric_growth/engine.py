@@ -920,6 +920,9 @@ def stored_result() -> dict:
     except Exception as exc:  # noqa: BLE001 - a locked history file: the cards still show
         logger.warning("AG Refresh: the last Fetch's header could not be read: %s", exc)
         head = None
+    # The last Fetch's provider health (#80). The column is the history; this Refresh does not re-read Yahoo.
+    if head:
+        result["provider_health"] = head.get("provider_health")
     ctx = (head or {}).get("context") or {}
     if asof and ctx.get("asof") == asof:
         result.update(universe_total=ctx.get("universe_total"), universe_generated_at=ctx.get("universe_generated_at"),
@@ -948,6 +951,9 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     """
     from RevenueChaser.module_sec_13f import engine as sec_13f
 
+    # This Fetch's Yahoo reads only (Common K3). A Refresh never calls Yahoo, so it does not reset the counter.
+    if not no_fetch:
+        yfinance_client.reset_health()
     universe, u_stats = fetch_universe_stats(uw, refreshed_by="Asymmetric Growth",
                                              refresh=refresh_universe, no_fetch=no_fetch)
     # R5 D-2 (#88): the identity master's excluded types (CEF, ETF/ETP, SPAC, preferred, unit, warrant) never screen.
@@ -1039,6 +1045,9 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
         reason = "no_universe_stored" if no_fetch else "no_universe"
         result["no_data_reason"] = reason
         result["no_data_message"] = no_data_message(reason)
+    # The banner reads this key (#80). A Refresh has no live counter: ``stored_result`` copies the recorded one.
+    if not no_fetch:
+        result["provider_health"] = yfinance_client.health()
     return result
 
 

@@ -87,4 +87,5 @@ def record(payload: dict, *, rows: dict, run_id: str):
                  "universe_refreshed_by": payload.get("universe_refreshed_by"), "passing": payload.get("passing"),
                  "avg_quality": payload.get("avg_quality"), "data_quality": payload.get("data_quality"),
                  "summary": summary},
-        payload=payload, partial=_partial(payload, rows, run_at))
+        payload=payload, partial=_partial(payload, rows, run_at),
+        provider_health=payload.get("provider_health"))

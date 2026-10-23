@@ -146,6 +146,21 @@ def _settings_keys(eff: settings_mod.Effective | None = None) -> dict:
     }
 
 
+def _provider_health(fetch: dict | None) -> dict | None:
+    """The banner's health from this run's fetch report (#80).
+
+    Co-movement calls no provider itself (Daily Bars writes the closes). ``failed`` is the count the fetch
+    report already carries; a clean report (``failed`` 0, which a D01 coverage check is) leaves the banner empty.
+    """
+    failed = int((fetch or {}).get("failed") or 0)
+    if failed <= 0:
+        return None
+    calls = int((fetch or {}).get("requested") or failed)
+    return {"provider": "daily_bars", "calls": calls, "failed": failed, "auth_error": None,
+            "failures": [{"endpoint": "price_bars_daily", "error": f"{failed} failed"}],
+            "breaker_open": False, "skipped_calls": 0}
+
+
 def _empty_payload(tickers, fetch, dropped, n, cuts, horizon, benchmark,
                    prices_through=None, benchmark_status=None,
                    window_end=None, no_prices=None, n_factors=None,
@@ -159,6 +174,7 @@ def _empty_payload(tickers, fetch, dropped, n, cuts, horizon, benchmark,
         "prices_through": prices_through, "benchmark_status": benchmark_status,
         "window_end": window_end, "no_prices": no_prices, "n_factors": n_factors,
         "flat_prints": flat_prints or [], "oos": {},
+        "provider_health": _provider_health(fetch),
         **_settings_keys(eff),
     }
 
@@ -494,6 +510,7 @@ def _serve_stored(as_of: str, eff: settings_mod.Effective, *, tickers, fetch,
         "oos_note": (f"Not evaluated: a {eff.window}-session window is too short "
                      "for the out-of-sample persistence test.")
         if eff.short_window else None,
+        "provider_health": _provider_health(fetch),
     })
     return p
 
@@ -811,6 +828,7 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
         "oos_note": (f"Not evaluated: a {eff.window}-session window is too short "
                      "for the out-of-sample persistence test.")
         if eff.short_window else None,
+        "provider_health": _provider_health(fetch),
         **_settings_keys(eff),
     }
 
