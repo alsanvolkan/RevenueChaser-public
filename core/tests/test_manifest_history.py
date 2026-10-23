@@ -134,7 +134,8 @@ FORECAST_LEDGER = ("forecast_ledger",)
 # Added with prices.duckdb (#156, avo 2026-10-09), no schema bump: the price watermarks beside the bars.
 PRICES_DB = ("price_checks",)
 # Derived tables added after schema 11 without a bump (an additive MANIFEST table, #380 S0): rebuilt from the store.
-LATER_DERIVED_TABLES = ("forecast_outcomes",)
+# ``forecast_baselines`` is the same shape (#25 HR-1): the ledger and the bars are its inputs, it is never a fact.
+LATER_DERIVED_TABLES = ("forecast_outcomes", "forecast_baselines")
 
 
 def test_legacy_table_list_is_the_69_pre_g1_tables():

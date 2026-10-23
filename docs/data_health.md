@@ -327,6 +327,7 @@ Rows: `RC-Store-Backup` (daily 04:00, `scripts.backup_store --keep 5`), `RC-Rela
 `--run --cap 8`), `RC-ValueChain-Sync` (13:00, `--sync-filings`), `RC-Daily-Bars` (22:35,
 `scripts.daily_bars --nightly --sec-files`), `RC-Screeners-Daily` (weekdays 23:00, after `RC-Daily-Bars`, `app.universe_cli`),
 `RC-Forecast-Outcomes` (daily 23:45, after `RC-Daily-Bars`, `scripts.forecast_outcomes --nightly`; #380 S0),
+`RC-Forecast-Baselines` (daily 23:50, after `RC-Forecast-Outcomes`, `scripts.forecast_baselines --nightly`; #25 HR-1),
 `RC-Index-Lists` (Saturday 10:00, `scripts.index_lists --weekly`) and `RC-Earnings-Inputs` (Tuesday to Saturday
 01:30, after `RC-Daily-Bars`, `scripts.nightly_inputs earnings`; E0 #372). Each entry carries its schedule, the
 tables it writes, whether it is off-peak gated, a `log_path` under `.cache/logs/` and its Windows task
@@ -357,8 +358,11 @@ settings (runs on battery, wakes the PC for the backup, catches up a missed run)
   to under 12 h after its predecessor on the clock (a step due before it would be released by last night's run),
   whose predecessor runs daily (the predecessor's time is read as a daily one, so a step after a weekly task would be
   blocked on every other day), and waits a positive time shorter than its time limit (`check_chain`, run on import).
-  Two rows are chained. `RC-Forecast-Outcomes` (#380 S0) waits for `RC-Daily-Bars` every day, not before 23:45, and
+  Four rows are chained. `RC-Forecast-Outcomes` (#380 S0) waits for `RC-Daily-Bars` every day, not before 23:45, and
   recomputes the outcome rows of the frozen picks from the stored bars (no calls; it writes `forecast_outcomes` only).
+  `RC-Forecast-Baselines` (#25 HR-1) waits for that outcomes run, not before 23:50 — the same night's other writer of
+  `raw.duckdb` — and recomputes the baselines still open from the stored bars and the universe change history (no
+  calls; it writes `forecast_baselines` only).
   S2 `RC-Screeners-Daily` (#129) waits for S1 `RC-Daily-Bars`, Monday to Friday, not before
   23:00, and runs the universe refresh CLI (AG with the universe pull, Swing, Fundamentals, the #128 freeze; exit 3
   when another universe run holds the lock). It wakes the PC, runs on battery and catches up a missed run; its 4 h

@@ -7,7 +7,7 @@ its times. The names in use: ``"edgar_sync"`` (``module_value_chain/sync.py`` an
 (``core/index_registry.py``) and ``"index_levels"`` (``core/index_levels.py``); ``"identity"``
 (``core/identity/refresh.py``: the dashboard job and the ``python -m RevenueChaser.core.identity`` CLI alike),
 ``"sec_13f"`` (the three 13F jobs, ``app/runners.py``), ``"discord"`` (``module_discord/engine.py``: update and
-discover), ``"forecast_outcomes"`` (``scripts/forecast_outcomes.py``) and ``"nightly_inputs_<step>"``
+discover), ``"forecast_outcomes"`` (``scripts/forecast_outcomes.py``), ``"forecast_baselines"`` (``scripts/forecast_baselines.py``, #25) and ``"nightly_inputs_<step>"``
 (``scripts/nightly_inputs.py``, one per step, so two different steps still run together) — the last five added for
 #26 (PL6-a).
 

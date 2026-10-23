@@ -400,7 +400,9 @@ class TestEveryManifestDatasetHasARoundTripTest:
                     # #374: the RRG points of a live Rotation Fetch, filled by record_run (red on main 0a75e3b)
                     "rotation_snapshots_history",
                     # #380 S0: derived from forecast_ledger and the bars by core/outcomes.py
-                    "forecast_outcomes"}
+                    "forecast_outcomes",
+                    # #25 HR-1: derived from the universe snapshot and the bars by core/baselines.py
+                    "forecast_baselines"}
         # composite SQLite targets are covered through their source dataset
         composite_targets = {t for _rel, tables in m.COMPOSITE_SQLITE.values() for _src, t in tables}
         for ds in rawstore.MANIFEST:

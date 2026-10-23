@@ -31,7 +31,7 @@ def _cache(tmp_path, monkeypatch):
 def test_registry_names_are_stable_and_prefixed():
     assert [e.name for e in A.REGISTRY] == [
         "RC-Store-Backup", "RC-Relatedness-OffPeak", "RC-ValueChain-Sync", "RC-Daily-Bars", "RC-Screeners-Daily",
-        "RC-Forecast-Outcomes", "RC-Index-Lists", "RC-Earnings-Inputs", "RC-Open-Issues-Check"]
+        "RC-Forecast-Outcomes", "RC-Forecast-Baselines", "RC-Index-Lists", "RC-Earnings-Inputs", "RC-Open-Issues-Check"]
     assert all(e.name.startswith("RC-") for e in A.REGISTRY)
 
 
@@ -44,7 +44,8 @@ def test_the_index_lists_row_runs_weekly_on_saturday():
     assert set(e.tables_written) == {"index_constituents", "index_constituents_changes"}
     assert not e.default_install
     assert all(x.days == () and x.schedule == f"daily {x.time} (local)" for x in A.REGISTRY
-               if x.name not in (e.name, "RC-Screeners-Daily", "RC-Forecast-Outcomes", "RC-Earnings-Inputs"))
+               if x.name not in (e.name, "RC-Screeners-Daily", "RC-Forecast-Outcomes", "RC-Forecast-Baselines",
+                                 "RC-Earnings-Inputs"))
 
 
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
@@ -63,7 +64,7 @@ def test_the_screeners_row_is_chained_on_the_daily_bars():
     assert {"equity_universe", "forecast_ledger", "swing_ohlc", "job_runs"} <= set(e.tables_written)
     assert not A.entry("RC-Daily-Bars").days       # the chain needs a daily predecessor
     assert [x.name for x in A.REGISTRY if x.after] == ["RC-Screeners-Daily", "RC-Forecast-Outcomes",
-                                                       "RC-Earnings-Inputs"]
+                                                       "RC-Forecast-Baselines", "RC-Earnings-Inputs"]
 
 
 def test_the_daily_bars_row_first_stores_the_sec_files():
@@ -103,6 +104,20 @@ def test_the_forecast_outcomes_row_is_chained_daily_on_the_daily_bars():
     assert e.schedule == "daily 23:45 (local), after RC-Daily-Bars"
     assert e.tables_written == ("forecast_outcomes",)
     assert e.chain_wait_minutes == 120 and not e.default_install and not e.offpeak_gated
+
+
+def test_the_forecast_baselines_row_is_chained_on_the_outcomes_run():
+    """#25 HR-1: the baselines read the same stored bars and write raw.duckdb, so they wait for tonight's
+    RC-Forecast-Outcomes instead of running beside it, on their own 23:50 trigger, and write
+    ``forecast_baselines`` alone."""
+    e = A.entry("RC-Forecast-Baselines")
+    assert (e.after, e.time, e.days) == ("RC-Forecast-Outcomes", "23:50", ())
+    assert e.args == ("-m", "RevenueChaser.scripts.forecast_baselines", "--nightly")
+    assert e.schedule == "daily 23:50 (local), after RC-Forecast-Outcomes"
+    assert e.tables_written == ("forecast_baselines",)
+    assert e.chain_wait_minutes == 120 and not e.default_install and not e.offpeak_gated
+    names = [x.name for x in A.REGISTRY]
+    assert names.index("RC-Forecast-Outcomes") + 1 == names.index("RC-Forecast-Baselines")    # after it, never before
 
 
 def test_each_busy_capable_nightly_row_says_its_busy_exit_in_the_description():
