@@ -18,6 +18,10 @@ The code this document is the contract for:
 | `module_settings/report.py` | the page: summary tiles, filters, the table, the detail rows, the cards |
 | `module_settings/boards.py` | the Board inputs cards, built from each board's own last rendered payload |
 
+Sections 2 and 3 describe the board as it stands on `main` plus the three lanes still in review:
+the named freshness states and the gap wording, the Board inputs rows, the identity coverage card
+and the data-flow diagram, and the read-only expired-backup dry run.
+
 ---
 
 ## 1. The store inventory contract
@@ -164,6 +168,9 @@ the rendered order when pressed again.
   Board Options Exchange), FRED (Federal Reserve Economic Data), OpenFIGI, worked out by us from other
   datasets, entered by hand, the store's own bookkeeping, or "more than one provider, or not known".
   The machine value stays in the row's data attribute for the filters; only the visible text is words.
+  That list of provider names is the page's only one: this column, the Board inputs rows (3.5) and the
+  data-flow diagram (3.7) all read it, so one provider cannot be called three things on one page. A
+  source the list does not know is named as unnamed, never under a wrong name.
 - **Coverage** is a fill bar and the counts: green at 95 per cent and above, amber from 70, red below.
   The drawn width is clamped to 100 per cent while the label keeps the real counts, so a coverage above
   100 per cent draws a full bar and still says so. A record with no fraction draws **no bar** and reads
@@ -258,7 +265,7 @@ It is normally empty, and `core/tests/test_datasets.py` keeps it so.
 
 ---
 
-## 3. The cards below the table
+## 3. The sections below the table
 
 ### 3.1 Identity health
 
@@ -373,7 +380,7 @@ writes, whether it is off-peak gated, a log path under `.cache/logs/` and its Wi
 - **Tests** use a fake scheduler; the end-to-end harness installs it, so no test reaches the real
   Windows Task Scheduler.
 
-### 3.5 Board inputs and the funnel
+### 3.5 Board inputs
 
 A Board inputs card is built from that board's own last rendered payload in `.cache` and never
 recomputes the board, so the card and the board cannot disagree. The funnel shown is the one the
@@ -391,6 +398,81 @@ established type, the note *Unknown security type — kept* linking to Settings 
 persisted before that change has no type rows and no note. The counts come from `universe_counts()`,
 and the types are read with a separate query, never a join: a missing table answers with no rows, so
 a join would silently empty the universe.
+
+**What this board reads.** Each card lists one line per store table the board reads, in the same
+language as the diagram below: the provider, then the dataset that owns the table, then the store
+file pill and that dataset's coverage bar. The provider, the dataset's words and the store file come
+from the registry index the table above already read, and the coverage cell is the one the dataset's
+own table row shows, so the card and the table cannot disagree. The whole card is rendered from the
+payload it was given and asks the store nothing.
+
+A store table the registry does not place is said in words rather than left out: *not claimed by any
+dataset*, or *claimed by more than one dataset*. Those are different facts, and the line says which.
+
+### 3.6 Identity coverage
+
+A card directly under the inventory table: how far the stored identity data reaches, name by name.
+Every number comes from the store read, and there are two ways a cell can have no number. *Could not
+be read* means the read failed. *Not measured* means the store holds no definition for that
+denominator. A nought on this card is always a real nought.
+
+**Where names drop out of the universe** is a funnel over the rules the rest of the store already
+applies, counted here and nowhere else: the companies in the SEC ticker and exchange file, less the
+names not listed on Nasdaq, the New York Stock Exchange or Cboe, less the names the stored equity
+universe does not hold yet, less the names below the $300M floor, less the names with no market cap
+stored, less the three excluded security-type groups — funds and exchange-traded funds, special
+purpose acquisition companies, and preferred shares, warrants and units — leaving the names the
+boards screen.
+
+Two of those drops are **not** rules and the funnel says so: a listed name the stored universe does
+not hold is the universe being behind the SEC file after a new listing, and a missing market cap is
+the store's own hole. A name the boards screen that the SEC file does not list is a **note**, outside
+the arithmetic, never a drop. If a read failed, if the SEC file is not stored yet, or if the steps do
+not add up, the funnel is **not drawn** at all and the card says which of the three it was: a funnel
+that does not add up is not a funnel.
+
+**How many names carry each input** counts, over the names the funnel keeps: the SEC company number,
+a quote and market cap on the newest stored session, daily price bars on the latest completed
+session, a CUSIP, a FIGI, EDGAR company facts, an annual report (a 10-K or a 20-F), and ownership.
+
+**Identifier coverage** gives each row its own denominator rather than one shared total:
+
+| Row | Counted out of |
+|---|---|
+| ISIN | the names that have a CUSIP, because the ISIN is derived from the CUSIP and never fetched |
+| CUSIP mapped to a ticker | the CUSIPs the store has asked about |
+| CUSIP the store asked about and has no ticker for | the same, which is the store's own unmatched count |
+| CUSIP the filings hold that the store has never asked about | the CUSIPs that need a ticker, asked plus waiting |
+| CUSIP the 13F board leaves out of its totals | nothing — the period's own CUSIP total is not stored, so this row reads *not measured* |
+
+The three reads behind the CUSIP rows — the map, its waiting queue and the board's own summary —
+each carry their own state, so one failing read leaves the other two answering and the failed one
+says so instead of counting to nought. The two store summaries this card needs, prices and quotes,
+are the same two the dataset rows already asked, and each is asked **once** per page read: a second
+full sweep of either store file would spend the page's read budget on a question already answered.
+
+### 3.7 The data-flow diagram
+
+A section below Board inputs, titled *Where the data comes from and where it is stored*. Three
+columns of boxes — **Provider**, **Job that writes it**, **Store file** — with one curved line per
+route, drawn on the server from the rows the table above already collected. It therefore costs page
+weight and **no query at all**: no store read, and no second pass over the registry.
+
+- Boxes are de-duplicated by their words, and every line counts the datasets that take it, so
+  pointing at a line names the whole route and says how many datasets use it.
+- A dataset the registry gives no writer reads *started by hand from the dashboard*; one with no
+  single provider reads *unknown provider*; one whose store file neither the row nor the registry
+  names reads *no store file recorded*. None of the three is guessed.
+- A line's colour is its store file, in the same hues as the table's store-file pills, and a legend
+  under the diagram names all five. A grey line means the registry names no store file, or names one
+  outside the five. The colour is never the only signal: the hover title carries the words.
+- Provider and job boxes are real buttons, reachable by keyboard. Pressing one follows its lines and
+  dims the rest; pressing it again shows every line. Store-file boxes are not buttons, because
+  pressing one would select nothing a reader could act on.
+- Two routes that take the same pair of boxes are nudged apart, so a later colour cannot draw over
+  an earlier one and hide it.
+- With no routes there is no section at all rather than an empty frame. Past 60 kilobytes of drawing
+  the section starts collapsed, so the table above always paints first.
 
 ---
 
