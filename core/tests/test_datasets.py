@@ -6,6 +6,9 @@ Four locks, each able to fail on its own:
 - a writer is an ``automations.REGISTRY`` name, or absent with a reason;
 - a freshness pair names a real column of a real MANIFEST table;
 - no table is listed on two datasets.
+
+G11 (#124) adds two more: a dataset whose measured coverage is below 100% must carry a gap kind,
+and a dataset that declares coverage at all must carry one on a store where nothing can be measured.
 """
 from __future__ import annotations
 
@@ -136,3 +139,130 @@ def test_every_adapted_coverage_returns_a_health_on_an_empty_store(rawstore_tmp_
     for key in ADAPTED:
         got = datasets.by_key(key).coverage()
         assert isinstance(got, datahealth.Health), f"{key}: {got!r}"
+
+
+# ── G11 of the GUI redesign (#124): a measured hole carries its explanation ───────────────────
+# Two additive fields, ``gap_kind`` and ``next_step``. The rule they enforce: a dataset whose
+# measured coverage is below 100% must carry a ``gap_kind``, and ``fixable`` / ``in_build`` /
+# ``needs_decision`` must carry a ``next_step``. A ``ceiling`` carries its REASON in ``next_step``
+# (a fact about the source), so it needs one too.
+from RevenueChaser.core.datahealth import Health  # noqa: E402
+
+
+def _probe(**over) -> datasets.DatasetSpec:
+    """A hand-made spec for the rule's own test: every field the constructor needs, nothing else."""
+    fields = dict(key="probe", label="Probe", tables=("quote_snapshot",), db="raw",
+                  source=datasets.Source.store, writer="RC-Daily-Bars", freshness=None)
+    fields.update(over)
+    return datasets.DatasetSpec(**fields)
+
+
+def _gap_problems(spec: datasets.DatasetSpec, health: Health) -> list[str]:
+    """G11's CI rule: a measured coverage below 100% with no ``gap_kind`` is a defect.
+
+    ``None`` coverage is not a measurement (no population, or no summary), so the rule stays
+    silent there; ``MissingDeclaredCoverage`` below covers those over the real registry.
+    """
+    ratio = health.coverage
+    if ratio is not None and ratio < 1 and spec.gap_kind is None:
+        return [f"{spec.key}: coverage {ratio:.0%} is below 100% and gap_kind is None"]
+    return []
+
+
+def test_the_ci_rule_fires_on_a_measured_hole_with_no_gap_kind():
+    """Red first: a dataset below 100% coverage and no explanation fails the rule."""
+    assert _gap_problems(_probe(), Health(covered=9, expected=10, newest=None,
+                                          expected_as_of=None)), \
+        "a measured hole with no gap_kind must fail the rule"
+
+
+def test_the_rule_is_silent_when_the_hole_carries_its_kind():
+    spec = _probe(gap_kind=datasets.GapKind.fixable, next_step="Join the two counts.")
+    assert _gap_problems(spec, Health(covered=9, expected=10, newest=None,
+                                      expected_as_of=None)) == []
+
+
+def test_the_rule_is_silent_at_full_coverage_and_where_nothing_is_measured():
+    hole = Health(covered=10, expected=10, newest=None, expected_as_of=None)
+    no_population = Health(covered=5, expected=None, newest=None, expected_as_of=None)
+    no_summary = Health(covered=None, expected=None, newest=None, expected_as_of=None)
+    for health in (hole, no_population, no_summary):
+        assert _gap_problems(_probe(), health) == [], health
+
+
+def test_the_rule_reports_covered_above_expected_as_no_hole():
+    """More rows than the population is a consistency problem elsewhere, not a missing row."""
+    assert _gap_problems(_probe(), Health(covered=11, expected=10, newest=None,
+                                          expected_as_of=None)) == []
+
+
+def _spec_error(**over) -> str:
+    """The ValueError message a bad pair raises."""
+    import pytest
+
+    with pytest.raises(ValueError) as caught:
+        _probe(**over)
+    return str(caught.value)
+
+
+def test_a_gap_kind_outside_the_six_is_refused():
+    said = _spec_error(gap_kind="someday")
+    assert "gap_kind" in said and "someday" in said
+
+
+def test_a_gap_kind_written_as_a_bare_string_is_refused():
+    """The enum is the one home of the six kinds; a bare string would dodge the type."""
+    said = _spec_error(gap_kind="fixable", next_step="Fix it.")
+    assert "gap_kind" in said and "fixable" in said
+
+
+def test_fixable_in_build_and_needs_decision_all_require_a_next_step():
+    for kind in (datasets.GapKind.fixable, datasets.GapKind.in_build,
+                 datasets.GapKind.needs_decision):
+        said = _spec_error(gap_kind=kind)
+        assert "next_step" in said, (kind, said)
+
+
+def test_a_ceiling_needs_its_reason():
+    """The brief: a ceiling with no reason is a defect, not a state."""
+    said = _spec_error(gap_kind=datasets.GapKind.ceiling)
+    assert "next_step" in said and "reason" in said.lower()
+
+
+def test_a_self_healing_or_complete_dataset_needs_no_next_step():
+    for kind in (datasets.GapKind.self_heals, datasets.GapKind.none):
+        spec = _probe(gap_kind=kind)
+        assert spec.gap_kind is kind and spec.next_step is None
+
+
+def test_a_blank_next_step_is_refused():
+    said = _spec_error(gap_kind=datasets.GapKind.fixable, next_step="   ")
+    assert "next_step" in said
+
+
+def test_a_ceiling_carries_its_reason_in_next_step():
+    said = "OpenFIGI maps from a CUSIP, so a name with no CUSIP cannot get one on this route."
+    spec = _probe(gap_kind=datasets.GapKind.ceiling, next_step=said)
+    assert spec.next_step == said
+
+
+def test_every_dataset_that_declares_coverage_carries_a_gap_kind():
+    """On a test store we cannot measure completeness, so any declared coverage needs its kind.
+
+    A dataset with no coverage declares nothing and needs none: the rule above covers the
+    measured case; this covers the unmeasurable one.
+    """
+    missing = [spec.key for spec in datasets.REGISTRY
+               if spec.coverage is not None and spec.gap_kind is None]
+    assert not missing, (
+        "these datasets declare coverage but no gap_kind, so a hole has no explanation beside "
+        f"it: {missing}")
+
+
+def test_no_dataset_carries_a_gap_kind_without_the_step_its_kind_needs():
+    """The constructor enforces this; the registry test states it for the real rows."""
+    needs_step = {datasets.GapKind.fixable, datasets.GapKind.in_build,
+                  datasets.GapKind.needs_decision, datasets.GapKind.ceiling}
+    for spec in datasets.REGISTRY:
+        if spec.gap_kind in needs_step:
+            assert spec.next_step and spec.next_step.strip(), spec.key

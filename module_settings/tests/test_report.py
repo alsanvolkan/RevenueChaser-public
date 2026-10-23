@@ -1508,7 +1508,7 @@ def _s5_payload():
         writer_note="caps-only fill is POST /run/universe-stats",
         coverage={"covered": 812, "expected": 905, "fraction": 812 / 905,
                   "label": "812 / 905 (90%)", "newest": "2026-09-20", "problems": []},
-        fresh="2026-09-20")
+        fresh={"state": "date", "date": "2026-09-20", "text": "2026-09-20"})
     return p
 
 
@@ -1548,7 +1548,7 @@ def test_the_three_new_cells_carry_the_registry_facts():
     assert cells[1] == "Yahoo Finance"
     assert cells[2] == "812 / 905 (90%)"
     assert cells[3] == "2026-09-20"
-    assert cells[4] == "—" and cells[5] == "7,403"
+    assert cells[4] == "no date of its own" and cells[5] == "7,403"
     assert cells[6].startswith("1,710") and "null market cap" in cells[6]
 
 
@@ -1756,6 +1756,129 @@ def test_a_legend_under_the_table_explains_each_pill_once():
     assert "Store file" in legend
     for db in ("raw", "edgar", "discord", "history", "prices"):
         assert f'class="db db-{db}"' in legend, db
+
+
+# ── S5b / G3 of the GUI brief (#124): the Fresh cell's named states ─────────────────────────
+# The cells used to print a bare dash for four different situations. Each state now carries its
+# own words, and a failed query is red and says it is not an empty dataset.
+
+def _fresh_row(record, **over) -> dict:
+    """One dataset row carrying the Fresh record ``inventory._fresh_record`` builds."""
+    row = {"key": "quotes", "label": "Quotes", "tables": ["quote_snapshot"], "rows": 10,
+           "last_date": "2026-09-20", "holes": None, "hole_label": "", "fetch": None, "note": "",
+           "source": "uw", "coverage": {"fraction": 1.0, "label": "905 / 905 (100%)"},
+           "fresh": record}
+    row.update(over)
+    return row
+
+
+def _fresh_text(html: str, key: str = "quotes") -> str:
+    """The Fresh cell's text (the fourth cell) of one row."""
+    return _cells(_main_row(html, key))[3]
+
+
+def _last_date_text(html: str, key: str = "quotes") -> str:
+    """The Last data date cell's text (the fifth cell) of one row."""
+    return _cells(_main_row(html, key))[4]
+
+
+@pytest.mark.parametrize("state, text", [
+    ("date", "2026-09-20"),
+    ("no_time_column", "no time column - see the provenance rows"),
+    ("run_log", "taken from the run log, 2026-10-20"),
+    ("empty", "no date stored yet"),
+    ("retired", "retired - no freshness claim made"),
+    ("bookkeeping", "store bookkeeping - no freshness claim"),
+    ("failed", "query failed - this is not an empty dataset"),
+])
+def test_each_fresh_state_prints_its_own_words_and_never_a_dash(state, text):
+    html = report._table([_fresh_row({"state": state, "date": None, "text": text})])
+    assert _fresh_text(html) == text
+    assert _fresh_text(html) != "—", "the Fresh cell stopped printing a bare dash"
+
+
+def test_a_failed_freshness_query_is_called_out_in_colour():
+    html = report._table([_fresh_row({"state": "failed", "date": None,
+                                      "text": "query failed - this is not an empty dataset"})])
+    assert ('<span class="warnv">query failed - this is not an empty dataset</span>'
+            in _main_row(html, "quotes"))
+
+
+def test_a_failed_query_never_renders_like_a_table_that_holds_no_rows():
+    """The failure this slice exists for: the broken read and the empty table must not look alike."""
+    failed = report._table([_fresh_row({"state": "failed", "date": None,
+                                        "text": "query failed - this is not an empty dataset"})])
+    empty = report._table([_fresh_row({"state": "empty", "date": None,
+                                       "text": "no date stored yet"})])
+    assert _fresh_text(failed) != _fresh_text(empty)
+    assert 'class="warnv"' in _main_row(failed, "quotes"), "a failure is called out in colour"
+    assert 'class="warnv"' not in _main_row(empty, "quotes"), "an empty table is not a failure"
+
+
+@pytest.mark.parametrize("state, text", [
+    ("date", "2026-09-20"),
+    ("no_time_column", "no time column - see the provenance rows"),
+    ("empty", "no date stored yet"),
+    ("run_log", "taken from the run log, 2026-10-20"),
+    ("retired", "retired - no freshness claim made"),
+    ("bookkeeping", "store bookkeeping - no freshness claim"),
+])
+def test_a_failed_query_never_renders_like_any_other_state(state, text):
+    """A broken read is its own state, in colour: it must not borrow the words of any other."""
+    failed = report._table([_fresh_row({"state": "failed", "date": None,
+                                        "text": "query failed - this is not an empty dataset"})])
+    other = report._table([_fresh_row({"state": state, "date": None, "text": text})])
+    assert _fresh_text(failed) != _fresh_text(other)
+    assert 'class="warnv"' in _main_row(failed, "quotes")
+    assert 'class="warnv"' not in _main_row(other, "quotes")
+
+
+def test_the_fresh_words_are_escaped_and_no_state_name_becomes_a_class():
+    bad = "<img src=x onerror=__x(1)>"
+    html = report._table([_fresh_row({"state": bad, "date": None, "text": bad})])
+    row = _main_row(html, "quotes")
+    assert "<img" not in html
+    assert "&lt;img src=x onerror=__x(1)&gt;" in row
+    assert 'class="warnv"' not in row, "colour comes from the state name, never from the text"
+
+
+def test_a_row_with_no_fresh_record_keeps_the_dash():
+    """Only a row the registry does not know reaches the table without a record."""
+    html = report._table([_fresh_row(None)])
+    assert _fresh_text(html) == "—"
+
+
+def test_the_last_data_date_stops_printing_a_bare_dash():
+    """A row with no date of its own says so in words; the Freshness cell beside it says why."""
+    html = report._table([_fresh_row({"state": "no_time_column", "date": None,
+                                      "text": "no time column - see the provenance rows"},
+                                     last_date="—")])
+    assert _last_date_text(html) == "no date of its own"
+    assert _last_date_text(report._table([_fresh_row({"state": "date",
+                                                      "date": "2026-09-20",
+                                                      "text": "2026-09-20"})])) == "2026-09-20"
+
+
+def test_the_commitments_of_traders_reads_fresh_neither_stale_nor_failed():
+    """It is four weeks thin by design (the first write wins, it grows forward): a recent week is
+    fresh, and a small row count is not a failure."""
+    html = report._table([_fresh_row({"state": "date", "date": "2026-10-20", "text": "2026-10-20"},
+                                     key="cftc", label="E-mini Commitments of Traders",
+                                     tables=["cftc_cot"], rows=4, last_date="2026-10-20")])
+    row = _main_row(html, "cftc")
+    assert _fresh_text(html, "cftc") == "2026-10-20"
+    assert "stale" not in row.lower() and "failed" not in row.lower()
+    assert 'class="warnv"' not in row
+
+
+def test_the_run_log_caveat_sits_in_the_detail_row_beside_the_words():
+    """The registry's #82/#83 caveat is not retyped in the cell: it is shown where the notes are."""
+    html = report._table([_fresh_row({"state": "run_log", "date": "2026-10-20",
+                                      "text": "taken from the run log, 2026-10-20"},
+                                     fresh_note="from the run log; not trustworthy until #82 "
+                                                "and #83 are fixed")])
+    assert "not trustworthy until #82" in _detail_row(html, "quotes")
+    assert "not trustworthy until #82" not in _main_row(html, "quotes"), "the cell stays short"
 
 
 def _sec_entry(**over) -> dict:
@@ -2245,3 +2368,130 @@ def test_the_delete_control_is_disabled_in_the_markup_and_carries_no_route():
     assert card.count('id="backup-delete-expired"') == 1
     full = report.render_settings_dashboard(dict(_payload(), backups=b))
     assert full.count('id="backup-delete-expired"') == 1      # no script names it either
+# ── G11 of the GUI brief (#124): what is missing, and how it improves ───────────────────────
+def _detail_text(html: str, key: str) -> str:
+    import re
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", _detail_row(html, key))).strip()
+
+
+def test_what_is_missing_is_computed_from_the_coverage_counts():
+    """The number is measured, never written in the registry: expected minus covered."""
+    html = _cov_table({"covered": 812, "expected": 905, "fraction": 812 / 905,
+                       "label": "812 / 905 (90%)", "newest": None, "problems": []},
+                      gap_kind="needs_decision", next_step="Decide the population.")
+    detail = _detail_text(html, "quotes")
+    assert "What is missing" in detail
+    assert "93 of 905 names have no row" in detail
+
+
+def test_what_is_missing_at_full_coverage_is_zero_of_the_population():
+    html = _cov_table({"covered": 905, "expected": 905, "fraction": 1.0,
+                       "label": "905 / 905 (100%)", "newest": None, "problems": []},
+                      gap_kind="none")
+    detail = _detail_text(html, "quotes")
+    assert "0 of 905 names have no row" in detail
+
+
+def test_what_is_missing_says_no_population_is_defined_when_expected_is_none():
+    html = _cov_table({"covered": 6084, "expected": None, "fraction": None,
+                       "label": "n/a", "newest": None, "problems": []},
+                      gap_kind="fixable", next_step="Join the universe count.")
+    detail = _detail_text(html, "quotes")
+    assert "no population is defined" in detail
+    assert "names have no row" not in detail
+
+
+def test_what_is_missing_says_the_coverage_query_failed():
+    html = _cov_table({"label": "error", "fraction": None, "covered": None, "expected": None,
+                       "newest": None, "problems": ["the summary could not read the store"]},
+                      gap_kind="fixable", next_step="Fix the summary.")
+    detail = _detail_text(html, "quotes")
+    assert "the coverage query failed" in detail
+    assert "no population is defined" not in detail
+
+
+def test_a_retired_row_says_nothing_is_missing_by_design():
+    html = _cov_table({"label": "n/a", "fraction": None, "covered": None, "expected": None,
+                       "newest": None, "problems": []}, retired=True)
+    detail = _detail_text(html, "quotes")
+    assert "nothing, by design" in detail
+
+
+def test_how_it_improves_speaks_the_kind_and_carries_the_next_step():
+    html = _cov_table({"covered": 812, "expected": 905, "fraction": 812 / 905,
+                       "label": "812 / 905 (90%)", "newest": None, "problems": []},
+                      gap_kind="fixable", next_step="Re-run the join after the next pull.")
+    detail = _detail_text(html, "quotes")
+    assert "How it improves" in detail
+    assert "Can be fixed now. Re-run the join after the next pull." in detail
+
+
+def test_a_ceiling_states_its_reason_and_never_a_schedule():
+    reason = "OpenFIGI maps from a CUSIP, so a name with no CUSIP cannot get one on this route."
+    html = _cov_table({"label": "n/a", "fraction": None, "covered": None, "expected": None,
+                       "newest": None, "problems": []},
+                      gap_kind="ceiling", next_step=reason)
+    detail = _detail_text(html, "quotes")
+    assert f"Cannot be improved: {reason}" in detail
+
+
+def test_a_row_with_no_gap_kind_draws_no_chip_and_no_complete_claim():
+    """No kind means nothing is written down, not that the dataset is complete."""
+    html = _cov_table({"label": "n/a", "fraction": None, "covered": None, "expected": None,
+                       "newest": None, "problems": []})
+    assert 'class="gap ' not in _main_row(html, "quotes")
+    detail = _detail_text(html, "quotes")
+    assert "How it improves" in detail and "Complete" not in detail
+
+
+@pytest.mark.parametrize("kind, said", [
+    ("fixable", "Can be fixed now"),
+    ("in_build", "Being built"),
+    ("needs_decision", "Waiting for a decision from you"),
+    ("self_heals", "Fills in by itself over time"),
+    ("none", "Complete"),
+])
+def test_the_name_cell_carries_a_tag_chip_with_the_same_words(kind, said):
+    html = _cov_table({"fraction": None, "label": "n/a"}, gap_kind=kind)
+    main = _main_row(html, "quotes")
+    assert f'<span class="gap gap-{kind}">{said}</span>' in main
+    assert _cells(main)[0] == f"Quotes {said}", "the chip's words sit beside the name"
+
+
+def test_a_ceiling_chip_stays_short_while_the_detail_carries_the_reason():
+    reason = "The source maps from a CUSIP, so a name with no CUSIP cannot get one."
+    html = _cov_table({"fraction": None, "label": "n/a"}, gap_kind="ceiling", next_step=reason)
+    main = _main_row(html, "quotes")
+    assert '<span class="gap gap-ceiling">Cannot be improved</span>' in main
+    assert reason in _detail_text(html, "quotes")
+
+
+def test_a_hostile_next_step_is_escaped_and_a_hostile_kind_never_sets_the_class():
+    bad = "<img src=x onerror=__x(1)>"
+    html = _cov_table({"fraction": None, "label": "n/a"}, gap_kind="fixable", next_step=bad)
+    assert "<img" not in html
+    assert "&lt;img src=x onerror=__x(1)&gt;" in html
+    # A kind outside the six renders no chip and no claim: its class can never come from data.
+    html = _cov_table({"fraction": None, "label": "n/a"}, gap_kind=bad, next_step=bad)
+    assert "<img" not in html
+    assert "gap-" + bad not in html
+    assert 'class="gap ' not in _main_row(html, "quotes")
+
+
+def test_the_cftc_row_says_fresh_but_shallow_and_names_119_without_calling_it_a_failure():
+    """Read through the real registry and ``_attach_registry``, the way the board builds it."""
+    from RevenueChaser.module_settings import inventory
+    row = {"key": "cftc", "label": "CFTC E-mini Commitments of Traders",
+           "tables": ["cftc_cot"], "rows": 2, "last_date": "2026-10-13", "holes": 0,
+           "hole_label": "", "fetch": None, "note": ""}
+    inventory._begin_call()
+    try:
+        inventory._attach_registry([row])
+    finally:
+        inventory._end_call()
+    main = _main_row(report._table([row]), "cftc")
+    assert "Waiting for a decision from you" in main, "the chip carries the kind in words"
+    detail = _detail_text(report._table([row]), "cftc")
+    assert "#119" in detail
+    assert "fresh but shallow" in detail
+    assert "failure" not in detail.lower() and "failed" not in detail.lower()

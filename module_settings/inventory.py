@@ -2,9 +2,9 @@
 
 Reads the ``MANIFEST`` tables through ``core.rawstore`` (which routes each table
 to its DuckDB file: ``raw.duckdb``, ``edgar.duckdb``, ``history.duckdb`` or ``prices.duckdb``) and reports, per dataset,
-the row count, the newest data date, and the honest hole count. A table that is
-missing, empty, or has no date column shows ``—`` rather than a guess. See
-``docs/data_health.md`` §2.
+the row count, the newest data date, and the honest hole count. A table that is missing or empty
+shows ``—`` rather than a guess. The Freshness column is the one exception: it never prints a bare
+dash, but one of the named states the registry justifies (S5b, G3). See ``docs/data_health.md`` §2.
 """
 from __future__ import annotations
 
@@ -202,16 +202,25 @@ def _count_where(table: str, where: str) -> int | None:
         return None
 
 
-def _max_value(table: str, column: str):
+def _max_value_or_raise(table: str, column: str):
+    """Newest value of ``column`` in ``table``; ``None`` when the table is not in this store.
+
+    A failed query raises, so the caller can tell a broken read from a table with no rows
+    (``_max_value`` is the swallowing form the row builders use).
+    """
     if not _table_exists(table):
         return None
+    rows = rawstore.query(
+        f"SELECT MAX({column}) AS m FROM {table}", db=_db_of(table))
+    return rows[0].get("m") if rows else None
+
+
+def _max_value(table: str, column: str):
     try:
-        rows = rawstore.query(
-            f"SELECT MAX({column}) AS m FROM {table}", db=_db_of(table))
+        return _max_value_or_raise(table, column)
     except Exception as exc:  # noqa: BLE001
         _record(table, "_max_value", exc)
         return None
-    return rows[0].get("m") if rows else None
 
 
 def _fmt_date(value) -> str:
@@ -1402,21 +1411,124 @@ def _coverage_record(spec: datasets.DatasetSpec, row: dict) -> dict:
     }
 
 
-def _fresh_record(spec: datasets.DatasetSpec) -> str | None:
-    """The newest date of the spec's freshness pair(s), read by ``_max_date``; None when it has none."""
+# ── The Fresh cell's named states (S5b, G3, #124) ────────────────────────────────────────────────
+# The Fresh column printed a bare dash for four different situations, so "no time column", "the
+# query failed" and "this table holds no rows" looked identical. Each state now carries its own
+# words, and a failed query is a state of its own: it can never render as an empty dataset.
+FRESH_DATE = "date"
+FRESH_EMPTY = "empty"
+FRESH_NO_TIME_COLUMN = "no_time_column"
+FRESH_RUN_LOG = "run_log"
+FRESH_RETIRED = "retired"
+FRESH_BOOKKEEPING = "bookkeeping"
+FRESH_FAILED = "failed"
+
+NO_TIME_COLUMN_TEXT = "no time column - see the provenance rows"
+EMPTY_TEXT = "no date stored yet"
+RUN_LOG_TEXT = "taken from the run log"
+RETIRED_TEXT = "retired - no freshness claim made"
+BOOKKEEPING_TEXT = "store bookkeeping - no freshness claim"
+QUERY_FAILED_TEXT = "query failed - this is not an empty dataset"
+
+
+def _fresh(state: str, text: str, date: str | None = None) -> dict:
+    """One Fresh-cell record: the state, the date where there is one, and the words to print."""
+    return {"state": state, "date": date, "text": text}
+
+
+def _run_log_dates() -> dict[str, str]:
+    """The newest finished run per ``job_runs.registry_name``, read once for the whole table (S5b part 3).
+
+    ``registry_name`` is the task's ``automations.REGISTRY`` name, the same name a ``from_run_log``
+    dataset carries as its ``writer``, so ``_attach_registry`` serves every such dataset from one
+    query instead of one per dataset. An unreadable run log is recorded and reads as no run: the
+    words still stand and no date is invented.
+    """
+    dates: dict[str, str] = {}
+    if not _table_exists("job_runs"):
+        return dates
+    try:
+        rows = rawstore.query(
+            "SELECT registry_name, MAX(finished_at) AS at FROM job_runs "
+            "WHERE registry_name IS NOT NULL AND finished_at IS NOT NULL "
+            "GROUP BY registry_name", db=_db_of("job_runs"))
+    except Exception as exc:  # noqa: BLE001 - recorded (F4); the words stand without a date
+        _record("job_runs", "_run_log_dates", exc)
+        return dates
+    for r in rows:
+        found = _fmt_date(r.get("at"))
+        if found and found != DASH:
+            dates[str(r["registry_name"])] = found
+    return dates
+
+
+def _no_claim_state(spec: datasets.DatasetSpec) -> tuple[str, str]:
+    """Which "no claim" this dataset makes: retired, or the store's own bookkeeping (S5b part 4).
+
+    Read off the store's own ``MANIFEST`` retired flag: a dataset that lists a finished table reads
+    as retired, never as stale, and nothing has to be re-listed here.
+    """
+    retired = any((rawstore.MANIFEST.get(t) or {}).get("retired") for t in spec.tables)
+    return (FRESH_RETIRED, RETIRED_TEXT) if retired else (FRESH_BOOKKEEPING, BOOKKEEPING_TEXT)
+
+
+def _fresh_record(spec: datasets.DatasetSpec, run_dates: dict[str, str] | None = None) -> dict:
+    """The Fresh cell's record for one dataset: ``{state, date, text}`` (S5b, G3, #124).
+
+    Four kinds of table, four kinds of claim: a ``(table, column)`` pair whose read returned a
+    date; a dataset the registry names no time column for; a derived table whose freshness is the
+    run that wrote it; and a retired or bookkeeping table that makes no claim. A pair whose tables
+    hold no row reads ``empty``. A failed query is ``failed``: recorded, and never rendered like a
+    table that holds no rows.
+
+    ``run_dates`` is ``_run_log_dates()`` for this page, so every ``from_run_log`` dataset is served
+    by the one query the caller made. Read here when it is not supplied.
+    """
+    if spec.freshness == datasets.FROM_RUN_LOG:
+        dates = _run_log_dates() if run_dates is None else run_dates
+        date = dates.get(str(spec.writer)) if spec.writer else None
+        if date:
+            return _fresh(FRESH_RUN_LOG, f"{RUN_LOG_TEXT}, {date}", date)
+        return _fresh(FRESH_RUN_LOG, RUN_LOG_TEXT)
+    if spec.freshness == datasets.NO_CLAIM:
+        state, text = _no_claim_state(spec)
+        return _fresh(state, text)
     pairs = spec.freshness_pairs()
     if not pairs:
-        return None
-    fresh = _max_date(*pairs)
-    return None if fresh == DASH else fresh
+        return _fresh(FRESH_NO_TIME_COLUMN, NO_TIME_COLUMN_TEXT)
+    dates = []
+    for table, column in pairs:
+        try:
+            dates.append(_fmt_date(_max_value_or_raise(table, column)))
+        except Exception as exc:  # noqa: BLE001 - a failed read is its own state, not an empty table
+            _record(table, "_fresh", exc)
+            return _fresh(FRESH_FAILED, QUERY_FAILED_TEXT)
+    known = [d for d in dates if d and d != DASH]
+    if not known:
+        return _fresh(FRESH_EMPTY, EMPTY_TEXT)
+    date = max(known)
+    return _fresh(FRESH_DATE, date, date)
+
+
+def _retired_dataset(spec: datasets.DatasetSpec) -> bool:
+    """True when every table the dataset owns is MANIFEST ``retired`` (G11: "nothing, by design")."""
+    return all(bool((rawstore.MANIFEST.get(table) or {}).get("retired")) for table in spec.tables)
 
 
 def _attach_registry(rows: list[dict]) -> list[dict]:
-    """Add the registry's source, writer, coverage and freshness to each collected row (S5, #124).
+    """Add the registry's source, writer, coverage, freshness and gap to each collected row (S5, #124).
 
     A row whose key is not in ``datasets.REGISTRY`` keeps everything it carries and gains
     ``source: None`` — the table renders a dash in the three registry cells. Nothing is invented.
+
+    The run log is read at most once, and only when a row on this page dates itself by it.
+
+    G11 (#124) adds three facts of its own: ``gap_kind`` (the kind's name or None), ``next_step``
+    (the written sentence, or None) and ``retired`` (every owned table is MANIFEST retired, so the
+    detail row says "nothing, by design"). ``gap_kind`` is None when nothing is written down; the
+    renderer must not read that as complete.
     """
+    run_dates: dict[str, str] | None = None
     for row in rows:
         try:
             spec = datasets.by_key(str(row.get("key") or ""))
@@ -1429,7 +1541,14 @@ def _attach_registry(rows: list[dict]) -> list[dict]:
         row["writer"] = spec.writer
         row["writer_note"] = spec.writer_note
         row["coverage"] = _coverage_record(spec, row)
-        row["fresh"] = _fresh_record(spec)
+        if spec.freshness == datasets.FROM_RUN_LOG and run_dates is None:
+            run_dates = _run_log_dates()
+        row["fresh"] = _fresh_record(spec, run_dates)
+        # The registry's own caveat (the #82/#83 wording), shown in the detail row, never invented here.
+        row["fresh_note"] = spec.freshness_note
+        row["gap_kind"] = spec.gap_kind.value if spec.gap_kind is not None else None
+        row["next_step"] = spec.next_step
+        row["retired"] = _retired_dataset(spec)
     return rows
 
 
