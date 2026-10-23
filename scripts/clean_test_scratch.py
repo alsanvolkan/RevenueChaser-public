@@ -23,6 +23,8 @@ from pathlib import Path
 # conftest.py's own root, and pytest's basetemp parent (`pytest-of-<user>`).
 PREFIXES = ("rc-pytest-", "pytest-of-")
 DEFAULT_MIN_AGE_HOURS = 2.0
+# How many levels below each candidate the age check looks; see _newest_mtime.
+SCAN_DEPTH = 2
 
 
 def _dir_size(path: Path) -> int:
@@ -36,6 +38,34 @@ def _dir_size(path: Path) -> int:
     return total
 
 
+def _newest_mtime(path: Path, depth: int = SCAN_DEPTH) -> float | None:
+    """The newest mtime in the top ``depth`` levels of ``path``, or None if it cannot be read.
+
+    One level is not enough. Writing an existing file in place — which is what DuckDB does to
+    ``<root>/.store/raw.duckdb``, two levels down — changes that file's mtime and nothing above it,
+    so a running session would look untouched and be swept. Two levels covers the redirected roots
+    (``.store``, ``.cache``, ``edgar_docs``, ``discord_media``, ``spx_gamma``); a write deeper than
+    that is not seen, which is why the default age is hours and not minutes.
+    """
+    try:
+        newest = path.stat().st_mtime
+    except OSError:
+        return None
+    stack = [(path, 0)]
+    while stack:
+        here, level = stack.pop()
+        if level >= depth:
+            continue
+        try:
+            for child in here.iterdir():
+                newest = max(newest, child.stat().st_mtime)
+                if child.is_dir():
+                    stack.append((child, level + 1))
+        except OSError:
+            continue  # a directory vanishing mid-walk is normal here
+    return newest
+
+
 def stale_dirs(root: Path, min_age_hours: float, now: float | None = None) -> list[Path]:
     """The scratch directories under ``root`` that are old enough to remove, oldest first."""
     cutoff = (time.time() if now is None else now) - min_age_hours * 3600
@@ -43,10 +73,8 @@ def stale_dirs(root: Path, min_age_hours: float, now: float | None = None) -> li
     for p in sorted(root.iterdir() if root.is_dir() else []):
         if not p.is_dir() or not p.name.startswith(PREFIXES):
             continue
-        try:
-            # The directory's own mtime misses writes deeper in the tree, so take the newest of both.
-            newest = max([p.stat().st_mtime, *(c.stat().st_mtime for c in p.iterdir())], default=0.0)
-        except OSError:
+        newest = _newest_mtime(p)
+        if newest is None:
             continue
         if newest < cutoff:
             out.append(p)

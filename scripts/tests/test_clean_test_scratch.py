@@ -45,6 +45,19 @@ def test_a_recent_write_deep_in_an_old_tree_protects_it(tmp_path):
     assert mod.stale_dirs(tmp_path, min_age_hours=2) == []
 
 
+def test_a_write_to_an_existing_deep_file_protects_the_tree(tmp_path):
+    """The live layout is <root>/.store/raw.duckdb. Writing an existing file in place changes neither
+    the root's mtime nor .store's, so a one-level scan would call a running session stale."""
+    d = tmp_path / "rc-pytest-live"
+    (d / ".store").mkdir(parents=True)
+    db = d / ".store" / "raw.duckdb"
+    db.write_bytes(b"x")
+    _aged(d, 5)
+    with db.open("r+b") as fh:      # an in-place write, as DuckDB does
+        fh.write(b"y")
+    assert mod.stale_dirs(tmp_path, min_age_hours=2) == []
+
+
 def test_only_the_two_known_prefixes_are_touched(tmp_path):
     keep = []
     for name in ("important-data", "rc-bench-xyz", ".store", "rcpytest-nodash"):
@@ -59,7 +72,10 @@ def test_only_the_two_known_prefixes_are_touched(tmp_path):
         "pytest-of-avozp", "rc-pytest-a"]
 
 
-def test_a_file_that_merely_shares_the_prefix_is_not_a_directory(tmp_path):
+def test_a_file_that_merely_shares_the_prefix_is_never_named(tmp_path):
+    """Belt and braces: `is_dir()` rejects it, and if that check were dropped the walk's OSError path
+    would reject it too. So this pins the behaviour, not the `is_dir()` line — a mutation removing
+    that line survives, by design."""
     f = tmp_path / "rc-pytest-notadir"
     f.write_bytes(b"x")
     _aged(tmp_path, 5)

@@ -19,7 +19,8 @@ import pytest
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "core" / "tests" / "fixtures"
 
-# The scratch root _redirect_data_roots() makes below, so pytest_sessionfinish can remove it.
+# The scratch root this process is responsible for removing at session end, or None when the
+# root was inherited from a parent process (an xdist worker) and is not ours to touch.
 # Until this existed, one rc-pytest-* directory leaked per pytest process: 917 of them, and
 # pytest's own basetemp on top, had collected in the system temp dir by 2026-10-23.
 SCRATCH_ROOT: Path | None = None
@@ -66,8 +67,20 @@ def _redirect_data_roots() -> None:
         # setdefault above was a no-op and the root just made is unused. Remove it here instead of
         # leaking it, and keep the root the environment points at.
         shutil.rmtree(_root, ignore_errors=True)
-    # None when something outside the suite set RC_STORE_DIR: that directory is not ours to remove.
-    SCRATCH_ROOT = in_use if in_use.name.startswith(SCRATCH_PREFIX) else None
+    # Whoever created the root removes it, and only them. CI runs `pytest -n auto`, where the xdist
+    # controller creates the root and every worker inherits RC_STORE_DIR through its environment:
+    # without this, each worker would remove the shared root at its own session end and the first
+    # one to finish would pull the scratch out from under the workers still running.
+    owner = os.environ.get("RC_PYTEST_SCRATCH_OWNER")
+    if owner is None and in_use == _root:
+        # We made the root this run is using, so we own removing it, and any process we start can
+        # see that it does not. Claimed only when the root is ours: a root handed to us without this
+        # marker belongs to whoever prepared it.
+        os.environ["RC_PYTEST_SCRATCH_OWNER"] = owner = str(os.getpid())
+    owned = owner == str(os.getpid())
+    # None when the root was inherited, or when something outside the suite set RC_STORE_DIR:
+    # in neither case is that directory ours to remove.
+    SCRATCH_ROOT = in_use if owned and in_use.name.startswith(SCRATCH_PREFIX) else None
 
 
 _redirect_data_roots()

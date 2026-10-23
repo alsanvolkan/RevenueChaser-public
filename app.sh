@@ -67,7 +67,7 @@ ${B}Utility${RST}
                            flags: --purge (full cleanup) | --delete | --reset [--force] | --dataset {name,...}
                            see scripts/README.md
   clean                   remove __pycache__, .pytest_cache and stale test scratch
-  clean-scratch [--apply] test scratch a killed run left in the temp dir (report without --apply)
+  clean-scratch [--apply] test scratch a killed run left in the system temp dir (reports without --apply)
   help                    this message
 
 ${DIM}Interpreter: $PY${RST}
