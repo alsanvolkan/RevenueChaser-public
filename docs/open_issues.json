@@ -1,39 +1,7 @@
 {
-  "generated_at": "2026-10-22T20:45:38Z",
-  "generated_from": "b2393b8",
+  "generated_at": "2026-10-23T01:31:26Z",
+  "generated_from": "8499f11",
   "issues": [
-    {
-      "repo": "RevenueChaser-public",
-      "number": 10,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/10",
-      "title": "migrate_sec13f_v12: docstring shows a command the module cannot be run as, and --derive-only swallows a refusal",
-      "state": "open",
-      "labels": [],
-      "boards": [
-        "module_sec_13f"
-      ],
-      "scope": "board",
-      "kind": "bug",
-      "status": "in-flight",
-      "deferred_until": "",
-      "summary": "migrate_sec13f_v12's docstring shows a command that cannot import the module, and --derive-only exits 0 when the derive refuses, so a migration that did nothing reads as success.",
-      "detail": {
-        "whats_wrong": "Two follow-ups left over from the schema-12 13F migration review. Both are in\n`scripts/migrate_sec13f_v12.py` and neither changes what the migration does when it succeeds.\n\nThe module docstring documents the path form:\n\n- `scripts/migrate_sec13f_v12.py:13-14`\n  ```\n  python scripts/migrate_sec13f_v12.py --dry-run\n  python scripts/migrate_sec13f_v12.py\n  ```\n\nThe module imports the package absolutely:\n\n- `scripts/migrate_sec13f_v12.py:41-42` — `from RevenueChaser.core import rawstore` and\n  `from RevenueChaser.module_sec_13f import engine`\n\nRun by path, the script's own directory goes on `sys.path`, not the directory holding the `RevenueChaser`\npackage, so the import fails with `ModuleNotFoundError: No module named 'RevenueChaser'` before any check runs.\nThe code itself knows the right form and uses it everywhere it matters:\n\n- `scripts/migrate_sec13f_v12.py:30` — the […]",
-        "evidence": "scripts/migrate_sec13f_v12.py:13-14 documents the path form while :41-42 imports the package absolutely, so a path run dies with ModuleNotFoundError before any check runs; :30, :125-127 and :130-132 all use the correct -m form, so two of the three documented invocations in one docstring cannot work. Second defect: the --derive-only branch at :201-203 sits above the try at :204-211, so the DeriveRefused that recompute_totals documents (module_sec_13f/engine.py:1194-1204) surfaces as a traceback, a successful derive prints nothing at all, and the parent's message at :152-155 tells the operator to run it again when a retry must refuse identically.",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "Rewrite `:13-14` in the `python -m RevenueChaser.scripts.migrate_sec13f_v12` form, matching `:30`.\n\n- Move the `--derive-only` branch inside the `try`, or give it its own handler, so `DeriveRefused` prints\n  `refused: <reason>` and returns `EXIT_REFUSED` exactly as the run path does.\n- Print a one-line result on success (e.g. the number of totals rows written, from `recompute_totals`'s return\n  value), so the documented repeat command has visible output.\n- Distinguish a refused child from a crashed child in `derive_in_a_fresh_process`: give the refusal path its own\n  exit code, or have the parent say \"the derive refused; see its message above\" rather than \"run it again\",\n  while keeping the pasteable command for a genuine crash.",
-        "next_step": "The branch is pushed; it rides the next pull request. Verify in CI that the refusal path prints 'refused:' and exits EXIT_REFUSED with no traceback, and that a successful --derive-only prints its result line, then close."
-      },
-      "refs": [
-        {
-          "label": "branch area/ownership/10-migrate-derive-only",
-          "url": "https://github.com/alsanvolkan/revenuechaser-public/tree/area/ownership/10-migrate-derive-only"
-        }
-      ],
-      "issue_updated_at": "2026-10-22T10:01:32Z",
-      "reviewed_at": "2026-10-22"
-    },
     {
       "repo": "RevenueChaser-public",
       "number": 11,
@@ -77,39 +45,6 @@
     },
     {
       "repo": "RevenueChaser-public",
-      "number": 12,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/12",
-      "title": "Seam: ROTATION_ETFS is reference data living in a board module",
-      "state": "open",
-      "labels": [],
-      "boards": [
-        "module_sector_rotation",
-        "module_relatedness"
-      ],
-      "scope": "board",
-      "kind": "seam",
-      "status": "open",
-      "deferred_until": "",
-      "summary": "ROTATION_ETFS is reference data that lives inside the Sector Rotation board, and three other modules import it from there.",
-      "detail": {
-        "whats_wrong": "Area: `classification` / `platform-store` (the list is reference data; pick the owner when the move is planned).\nFrom the misplaced-seams table of `docs/system_map.md` (Structure A, `#24`). Listed there, filed here; **not reviewed** — do not build from this issue alone.\n\n`module_sector_rotation/universe.py:10` holds `ROTATION_ETFS` (50 symbols, each with `name` and `group`) and `:105` holds `MACRO_SERIES`. Both are reference data, and both are read from outside the Rotation board:\n\n| Reader | Line | Why it matters |\n|---|---|---|\n| `core/taxonomy.py` | `:12` (used `:18`) | `core/` imports a board module, so the import graph is no longer a tree |\n| `core/prices.py` | `:31` (used `:135`) | same, in the bars writer |\n| `module_relatedness/themes.py` | `:1038` | a `classification` module reading a `market` board's list |\n| `module_earnings_radar/report.py` | `:1578` | imported lazily […]",
-        "evidence": "Defined at module_sector_rotation/universe.py:10. Imported by app/runners.py:552 and :1095, by module_relatedness/themes.py:1038 and :1090, and by core/taxonomy.py:12 — which is the same seam #22 reports from the other end.",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "One move: `ROTATION_ETFS` and `MACRO_SERIES` to a reference module every area may import (the natural candidates are `core/` reference data beside `core/index_registry.py`, or a new `core/rotation_reference.py`), with `module_sector_rotation/universe.py` re-exporting them so the board's own 20-odd call sites and the tests that patch them keep working. No behaviour change, no store change: the test is that every reader resolves to the same object it does today.",
-        "next_step": "Review together with #22 and the area map (#24), then move the table to core/ in one pure-move commit with the importers updated."
-      },
-      "refs": [
-        {
-          "label": "umbrella #56",
-          "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/56"
-        }
-      ],
-      "issue_updated_at": "2026-10-22T13:01:40Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
       "number": 13,
       "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/13",
       "title": "Seam: Earnings Radar and Sector Rotation import each other (MACRO_SERIES / macro_weekly_closes)",
@@ -145,39 +80,6 @@
     },
     {
       "repo": "RevenueChaser-public",
-      "number": 14,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/14",
-      "title": "Seam: the CFTC COT parse is reached through two private SPX Gamma helpers",
-      "state": "open",
-      "labels": [],
-      "boards": [
-        "module_spx_gamma",
-        "module_earnings_radar"
-      ],
-      "scope": "board",
-      "kind": "seam",
-      "status": "in-flight",
-      "deferred_until": "",
-      "summary": "The CFTC COT parse is reached through two private SPX Gamma helpers, although the input that writes cftc_cot belongs to Earnings Radar.",
-      "detail": {
-        "whats_wrong": "Area: `earnings` / `market`.\nFrom the misplaced-seams table of `docs/system_map.md` (Structure A, `#24`). Listed there, filed here; **not reviewed** — do not build from this issue alone.\n\n`module_earnings_radar/inputs/cftc_cot.py:21` — `from RevenueChaser.module_spx_gamma.cftc import _map_row, _market_where`.\n\nBoth names are private by their underscore, and the importing module's own docstring says the parse is \"SPX Gamma's own\". So one area depends on two internal helpers of another area's module: a rename inside `module_spx_gamma/cftc.py` breaks the Earnings Radar input with nothing to warn either side.",
-        "evidence": "This is the clearest case in the tree of a dependency on a private name across an area boundary. The data itself — the CFTC Commitments of Traders rows — is provider-side reference data that two boards want, not one board's internal state.",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "Either:\n- **(a)** the COT parse becomes a provider-side reader both boards import (the natural home is beside the other provider readers), and both call sites move to it; or\n- **(b)** the two helpers get public names in `module_spx_gamma/cftc.py` and the cross-area dependency is accepted and documented as intentional.\n\n(a) is the smaller end state and (b) is the smaller change. The test either way: no underscore-prefixed name crosses an area boundary for this parse.",
-        "next_step": "The branch is pushed; review the move and let it ride the next pull request."
-      },
-      "refs": [
-        {
-          "label": "branch area/platform/14-cftc-provider",
-          "url": "https://github.com/alsanvolkan/revenuechaser-public/tree/area/platform/14-cftc-provider"
-        }
-      ],
-      "issue_updated_at": "2026-10-22T10:48:54Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
       "number": 16,
       "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/16",
       "title": "Seam: the Asymmetric Growth engine imports the SEC 13F engine",
@@ -204,39 +106,6 @@
       },
       "refs": [],
       "issue_updated_at": "2026-10-22T14:24:58Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 17,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/17",
-      "title": "Seam: core/models/ holds two single-board model modules",
-      "state": "open",
-      "labels": [],
-      "boards": [
-        "module_earnings_radar",
-        "module_sector_rotation"
-      ],
-      "scope": "board",
-      "kind": "seam",
-      "status": "open",
-      "deferred_until": "",
-      "summary": "core/models/ is the shared package, but events.py serves only Earnings Radar and rotation.py only Sector Rotation, so the path lies about what is shared.",
-      "detail": {
-        "whats_wrong": "Area: `platform-app` (the `core/` layout) with `earnings` and `market` as the owners.\nFrom the misplaced-seams table of `docs/system_map.md` (Structure A, `#24`). Listed there, filed here; **not reviewed** — do not build from this issue alone.\n\n`core/models/` is the shared package, but two of its modules serve exactly one board each:\n\n- `core/models/events.py` — imported by `module_earnings_radar/` only (`terminal.py` and `rules/rule1_drivers.py`, `rule3_financial.py`, `rule4_volatility.py`, `rule6_macro.py`, `rule7_accounting.py`, `rule8_sentiment.py`), plus three `app/` tests.\n- `core/models/rotation.py` — imported by `module_sector_rotation/` only.",
-        "evidence": "core/models/ holds exactly __init__.py, events.py and rotation.py. events.py is imported by module_earnings_radar/terminal.py and six of its rules modules plus three app/ tests; rotation.py only by module_sector_rotation/. core/gex_profile.py is genuinely shared by Earnings Radar and SPX Gamma and stays where it is.",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "Move each into its own board package (`module_earnings_radar/models.py` and `module_sector_rotation/models.py`, or an `events.py` beside the rules that use it), update the importers, and keep the dataclass or type definitions byte-identical so the change is a pure move. The three `app/` tests import `core.models.events` too, so they move with it.\n\nWorth doing as **one** change with the companion issue on the screeners' machinery in `core/` only if both are reviewed together; otherwise this one stands alone and is small.",
-        "next_step": "Review with #13, the other Earnings Radar / Sector Rotation seam, then one pure move with the dataclasses byte-identical."
-      },
-      "refs": [
-        {
-          "label": "umbrella #56",
-          "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/56"
-        }
-      ],
-      "issue_updated_at": "2026-10-22T13:01:41Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -272,7 +141,10 @@
       "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/23",
       "title": "Provider health survives a run only as prose: result_runs.warnings has no structured provider record, so nothing can be counted across runs",
       "state": "open",
-      "labels": [],
+      "labels": [
+        "area:data-health",
+        "parked"
+      ],
       "boards": [],
       "scope": "shared",
       "kind": "enhancement",
@@ -288,45 +160,7 @@
         "next_step": "Decide the structured record's shape, then write it beside the prose so the existing banner keeps working while the counts become possible."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T10:23:52Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 24,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/24",
-      "title": "Structure A: area map (docs/system_map.md, plans index by area, misplaced seams)",
-      "state": "open",
-      "labels": [
-        "documentation",
-        "area:quality",
-        "priority: high"
-      ],
-      "boards": [],
-      "scope": "repo",
-      "kind": "docs",
-      "status": "in-flight",
-      "deferred_until": "",
-      "summary": "The area map is missing: docs/system_map.md, the plans index by area, and the table of seams that sit in the wrong owner, which is where #12 to #18 and #22 came from.",
-      "detail": {
-        "whats_wrong": "Plan: `.hermes/plans_claude/2026-09-30_plan_restructure.md` §1. Documentation only, no GitHub or git side effects.\n- A1 `docs/system_map.md`: 12-area table (key, code, plans, issues), a mermaid dependency diagram (providers → store → spine → boards; data-health reads all), and \"where does X live\". Link it from the AGENTS.md top table.\n- A2 Re-index `.hermes/plans_claude/README.md` by area; add `settings-board-inputs` and this plan.\n- A3 Table of seams in the wrong owner (→ one sub-issue each under its area). Candidates: universe writer in `module_asymmetric_growth/engine.py`; `module_value_chain/sync.py`; `module_comovement/ohlc.py` vs the Swing OHLC path (both write `swing_ohlc`).",
-        "evidence": "",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "",
-        "next_step": "In the batch pull request #19. Merge it, then close A1-A3 as each lands."
-      },
-      "refs": [
-        {
-          "label": "branch area/quality/45-system-map",
-          "url": "https://github.com/alsanvolkan/revenuechaser-public/tree/area/quality/45-system-map"
-        },
-        {
-          "label": "batch PR #19",
-          "url": "https://github.com/alsanvolkan/revenuechaser-public/pull/19"
-        }
-      ],
-      "issue_updated_at": "2026-10-22T10:37:01Z",
+      "issue_updated_at": "2026-10-22T23:27:19Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -360,7 +194,7 @@
         "next_step": "Needs the freeze step first (#27 is its scheduled Fetch). Review the scope in the plan, then build the freeze before any scoring."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T10:37:58Z",
+      "issue_updated_at": "2026-10-23T00:51:55Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -389,39 +223,7 @@
         "next_step": "Pick one item at a time. The two job-lock bugs under it, #32 and #33, are already approved and are the cheapest start."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T18:08:37Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 27,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/27",
-      "title": "Hit-rate ledger 62a-2: weekday post-close scheduled Fetch of the three screeners",
-      "state": "open",
-      "labels": [
-        "enhancement",
-        "area:screeners"
-      ],
-      "boards": [
-        "module_asymmetric_growth",
-        "module_swing_potential",
-        "module_fundamentals"
-      ],
-      "scope": "board",
-      "kind": "enhancement",
-      "status": "open",
-      "deferred_until": "",
-      "summary": "The three screeners have no weekday post-close scheduled Fetch, so the hit-rate ledger (#25) would have nothing frozen to score.",
-      "detail": {
-        "whats_wrong": "Part of #25, and follows alsanvolkan/RevenueChaser#128 (62a, freeze on Fetch).\n\nDecided by the user on 2026-10-02 (#25 D3 = B): on top of manual Fetches, the three screeners are fetched on a schedule every US trading day after the close. That gives the ledger no gaps, and no freeze days picked by mood.\n\nThe measured starting point: the last Fetches were Swing and Fundamentals on 27 Sep and AG on 30 Sep. Fundamentals' latest payload is a fixture (0 candidates).",
-        "evidence": "",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "- **Task:** a Windows scheduled task `RC-Screeners-Daily`, added to `register_tasks.ps1` next to `RC-Store-Backup`. It runs Monday to Friday at **23:00 local** (CET/CEST). The US closes at 22:00 local, or 21:00 in the weeks when the two DST calendars differ.\n- **What it runs:** the existing one-stop universe job (`runners.run_universe_refresh`: the AG universe refresh, then Swing, then Fundamentals). It goes through the dashboard when it is up (`POST /run/universe`, which holds the DuckDB writer, as `CLAUDE.md` asks). Otherwise it runs as a CLI entry point.\n  - **Both paths lead to the same freeze hook** from alsanvolkan/RevenueChaser#128, which only runs on Fetch.\n- **US market holidays:** the job may run; the first-Fetch-of-the-day rule plus `freeze_date` (the last close the scan used) means a holiday run adds no new day.\n- **Log:** one line per run in the job record. A failed […]",
-        "next_step": "Depends on #25's freeze step. Keep it switchable and visible, as the issue's own scope says."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-22T10:38:02Z",
+      "issue_updated_at": "2026-10-22T22:40:52Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -431,15 +233,16 @@
       "title": "history.duckdb backup policy: weekly copies are never pruned, disk fills in about 6 months (Phase 3.7)",
       "state": "open",
       "labels": [
-        "area:platform-store"
+        "area:platform-store",
+        "parked"
       ],
       "boards": [
         "module_settings"
       ],
       "scope": "board",
       "kind": "bug",
-      "status": "needs-decision",
-      "deferred_until": "",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
       "summary": "history.duckdb grows about 6.5 GB a year and the weekly backup copies are never pruned, so the drive fills in roughly six months.",
       "detail": {
         "whats_wrong": "Parent: alsanvolkan/RevenueChaser#278 (result history); related: alsanvolkan/RevenueChaser#287 (history.duckdb), #30 (backup follow-ups), alsanvolkan/RevenueChaser#336 (backup_store edgar_docs dedupe).\n\nPhase 3.4 measurement M2 came out RED: history grows about 6.5 GB/yr (6.55 GB/yr) against raw at 603 MB. The weekly backup copies are never pruned (alsanvolkan/RevenueChaser#277), so the drive would be full in about 6 months (**inferred**, not measured). avo chose \"No limit\" for the run boards (Relatedness alone is 2.9 GB), so retention cannot come from trimming history; it has to come from the backup policy.\n\nFirst in Phase 3.7: File this before the other 3.7 items.\n\nSource: `data_sources/study/phase3/results/04_measurements/01_rule_outcomes.md` (Phase 3.4; the file is in the project files / PC checkout, not in this cloud clone, so the numbers below are quoted from the roadmap […]",
@@ -450,7 +253,7 @@
         "next_step": "Waiting on the owner: how many weekly copies are kept, whether history.duckdb gets its own cadence, and whether older copies are compressed or moved off the machine. Nothing can be built before those three answers."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T13:16:14Z",
+      "issue_updated_at": "2026-10-22T22:13:33Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -628,7 +431,7 @@
         "next_step": "S4 waits on two machine measurements; re-check them, then build."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T20:20:30Z",
+      "issue_updated_at": "2026-10-23T01:21:41Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -716,7 +519,7 @@
         "next_step": "Review the 12 against current main and pick the next slice."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T10:40:25Z",
+      "issue_updated_at": "2026-10-23T01:21:34Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -794,7 +597,7 @@
           "url": "https://github.com/alsanvolkan/revenuechaser-public/pull/19"
         }
       ],
-      "issue_updated_at": "2026-10-22T20:20:06Z",
+      "issue_updated_at": "2026-10-23T01:21:37Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -824,7 +627,7 @@
         "next_step": "Review the 4 against current main; #50's empty edgar_documents columns touch this board's reader."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T10:41:24Z",
+      "issue_updated_at": "2026-10-23T01:27:00Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -886,77 +689,6 @@
       },
       "refs": [],
       "issue_updated_at": "2026-10-22T19:52:54Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 51,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/51",
-      "title": "Theme naming: duplicate names get an alphabetical-first member label appended, e.g. 'Transportation and Logistics (Aax)', 'Media and Entertainment (Adidas)'",
-      "state": "open",
-      "labels": [
-        "area:classification"
-      ],
-      "boards": [],
-      "scope": "shared",
-      "kind": "bug",
-      "status": "in-flight",
-      "deferred_until": "",
-      "summary": "A duplicate theme name gets the alphabetically first unused tag appended, so every board's Theme filter can read 'Transportation and Logistics (Aax)'.",
-      "detail": {
-        "whats_wrong": "The live theme run `nmf-s1-2026-10-15-mbA500` (alsanvolkan/RevenueChaser#108 S1, switched on 2026-10-15) shows coarse labels like these:\n\n- Transportation and Logistics (Aax)\n- Media and Entertainment (Adidas)\n- Real Estate Investment Trusts (Acquirer)\n- Business Development Companies (Acquisitions)\n- Blank Check Companies (Acquirer)",
-        "evidence": "(`module_relatedness/naming.py:131-144`, `_disambiguate`): when DeepSeek's name is already used in the run, the code appends the first tag in `tags` that is not used yet. The tags arrive in alphabetical order, so that first tag is an arbitrary member or term (\"Aax\", \"Adidas\", \"Acquirer\"), not the most characteristic one.\n\nNaming runs bottom-up (fine, then medium, then coarse), so the coarse level, the one people see first, collides most often.\n\n- 3,014 names; 145 themes; all named after a raised cap.\n- Naming cost an estimated $1.125 in total (194 calls) at a deliberately high $1/M in and $4/M out.\n- Scripts: `scripts/research/108_s1_live_rebuild.py`, `108_s1_name_rest.py`. Outputs: `.cache/research/108/s1_*.json`.",
-        "example": "",
-        "tried_or_decided": "Built once and dropped from the batch pull request #19 because its fixture turned the e2e test test_board_relatedness red: the tie-break named healthcare on Linux and bank on Windows. The fix commit rides the next pull request.",
-        "direction": "Question 1, to review: pick the suffix from the most frequent or characteristic tags instead (e.g. the `_ordered_tags` doc-frequency order used by `_label`); or ask the model for a distinct name when a collision happens; or use the numbered fallback.\n\nQuestion 2, to review: in this run the medium level duplicates the fine level: 60 fine, 60 medium, 25 coarse. `build_shadow` asks for k_medium=70, which is more than the 60 fine themes, so each medium has one fine child. Naming then paid for 60 medium names that repeat the fine ones (inferred: this explains part of the 167 + 27 calls).\n- Skip the medium level when k_fine <= k_medium?\n- Copy the fine name instead of asking again?\n- Or pick k_medium relative to k_fine?",
-        "next_step": "Make the tie-break host-independent, re-run the e2e test, and answer the two review questions in the issue (suffix source, and whether the medium level is worth naming at all) with #20."
-      },
-      "refs": [
-        {
-          "label": "branch area/classification/433-theme-naming",
-          "url": "https://github.com/alsanvolkan/revenuechaser-public/tree/area/classification/433-theme-naming"
-        },
-        {
-          "label": "branch area/classification/433-theme-naming-fix",
-          "url": "https://github.com/alsanvolkan/revenuechaser-public/tree/area/classification/433-theme-naming-fix"
-        }
-      ],
-      "issue_updated_at": "2026-10-22T10:41:33Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 52,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/52",
-      "title": "EDGAR revenue concept gap: 339 filers with fresh annual records but no revenue value in the newest years (AKAM, BALL, ARMK...)",
-      "state": "open",
-      "labels": [
-        "area:providers"
-      ],
-      "boards": [
-        "module_financials",
-        "module_fundamentals"
-      ],
-      "scope": "board",
-      "kind": "bug",
-      "status": "needs-decision",
-      "deferred_until": "",
-      "summary": "341 US filers have a fresh annual record but no revenue value in their newest years, so 339 Asymmetric Growth cards read no_recent_revenue instead of a number.",
-      "detail": {
-        "whats_wrong": "Found while measuring AG W1 (#41, PR alsanvolkan/RevenueChaser#432 at f402dcc).\n\nOn the 2026-10-15 20:42Z backup copy (edgar_20261015_204206), **341 US filers have a newest annual record that ended within 470 days, but no `revenue` value in their newest years.** `edgar_financials` was fetched in 2026-10 for all of them. AG W1 now flags them `no_recent_revenue` (339 cards), and before f402dcc they were dropped as stale.\n\nReading (inferred, not verified against companyfacts): The \"2018 or earlier\" block lines up with the ASC 606 switch. `core/providers/sec_edgar.py:204` reads only `Revenues`, `RevenueFromContractWithCustomerExcludingAssessedTax` and `SalesRevenueNet`, and picks the concept series with the newest year (`sec_edgar.py:426-433`). A filer whose current revenue sits under another concept (e.g. `RevenueFromContractWithCustomerIncludingAssessedTax`, or a non-USD unit) keeps […]",
-        "evidence": "(equity_universe): Healthcare 112, Industrials 39, Financial Services 39, Technology 33, Consumer Cyclical 27, Unclassified 17, Basic Materials 16, Utilities 14, Communication Services 13, Real Estate 11, Energy 10, Consumer Defensive 10.",
-        "example": "(`edgar_financials.annual`, read-only):\n\n| last revenue year | names | e.g. |\n|---|---|---|\n| 2018 or earlier | 139 | AKAM, BALL, ARMK, AIR, ACEL, AMSC, ATEC, AWRE, BBSI |\n| 2019 | 29 | ACHV, CAL, DCI, EWBC, FUL |\n| 2020 | 24 | AMH, BFH, CNS, ENS |\n| 2021 | 20 | ARQ, ASIX, AVNW |\n| 2022 | 27 | ARKO, BHB, CGEM |\n| 2023 | 41 | ASB, ASUR, BESS |\n| 2024 | 54 | ABSI, ABVC, ASTS, BALY, BNC |\n| 2025 | 7 | ASTC, EVI, LHX, LITS, LPTH, LYTS, WOLF |",
-        "tried_or_decided": "the concepts these filers actually tag in their newest 10-K. That needs their companyfacts JSON, which needs SEC calls, and none were made. No local companyfacts copy covers these CIKs (`.cache/research/158/facts` has 0 of them).",
-        "direction": "",
-        "next_step": "Waiting on the owner: the re-extract needs about 372 SEC requests and a backup first, with rollback by restore_store --latest edgar. 196 of 372 gap CIKs are expected to gain a value. The card comes after the batch merge."
-      },
-      "refs": [
-        {
-          "label": "branch area/providers/435-revenue-concepts",
-          "url": "https://github.com/alsanvolkan/revenuechaser-public/tree/area/providers/435-revenue-concepts"
-        }
-      ],
-      "issue_updated_at": "2026-10-22T17:54:38Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -1365,35 +1097,6 @@
     },
     {
       "repo": "RevenueChaser-public",
-      "number": 74,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/74",
-      "title": "Open issues registry: nothing in CI checks that every open issue has an entry",
-      "state": "open",
-      "labels": [
-        "bug",
-        "area:quality",
-        "priority: low"
-      ],
-      "boards": [],
-      "scope": "repo",
-      "kind": "known-problem",
-      "status": "open",
-      "deferred_until": "",
-      "summary": "Nothing offline checks that every open issue has a registry entry, so an uncurated issue never reaches any board and CI stays green.",
-      "detail": {
-        "whats_wrong": "`docs/open_issues.json` is this panel's only source, and no test asserts that it covers every open issue of the repository. The panel commit removed `test_every_open_issue_is_mapped` and its `OPEN_ISSUES` fixture, replacing them with `test_every_issue_appears_once` and `test_every_board_named_is_a_real_dashboard_tab` — both of which duplicate tests that already existed.",
-        "evidence": "The replacements restate `test_no_duplicate_issue`, `test_every_board_key_is_a_real_board` and `test_a_board_scoped_entry_names_at_least_one_board`. The only honest coverage check compares the file against the GitHub API, which is `scripts/open_issues_sync.py --check`, and CI is offline by design (`conftest.py` blocks the network).",
-        "example": "Measured 2026-10-22: the REST list endpoint answered HTTP 200 with `[]` while the repo had 53 open issues, and `--write` deleted every entry. The suite stayed green throughout, because no test knows how many entries there should be.",
-        "tried_or_decided": "Found while reviewing PR #59. A checked-in list of issue numbers was considered and rejected: issues open and close several times a day, so the test would be edited to match rather than read.",
-        "direction": "Run `--check` on a schedule rather than in CI: a row in `core/automations.py` that runs it daily and surfaces a non-zero exit, so an uncurated issue shows as a failed automation instead of a silently missing panel row. A nightly Actions workflow would spend CI minutes on work the PC does for free.",
-        "next_step": "Add the daily `--check` row to the Automations panel. `--check` reports `registry is current` today, so there is no backlog to clear first."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-22T14:56:50Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
       "number": 76,
       "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/76",
       "title": "core/identity tests crash locally with a Windows access violation",
@@ -1402,13 +1105,14 @@
         "bug",
         "area:quality",
         "idea",
-        "priority: low"
+        "priority: low",
+        "parked"
       ],
       "boards": [],
       "scope": "repo",
       "kind": "bug",
-      "status": "open",
-      "deferred_until": "",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
       "summary": "python -m pytest core/identity aborts on Windows with an access violation after ~34 tests, so no builder can run that directory's tests locally.",
       "detail": {
         "whats_wrong": "`python -m pytest core/identity -q` dies on Windows with `Windows fatal exception: access violation` after roughly 34 tests have passed. The process is killed, so pytest prints no failure line and a wider run shows a cascade of `E` entries with no usable traceback.",
@@ -1419,7 +1123,7 @@
         "next_step": "Bisect `core/identity` per test file under `faulthandler` to name the test that kills the process."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T20:45:36Z",
+      "issue_updated_at": "2026-10-22T23:25:53Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -1431,15 +1135,16 @@
       "labels": [
         "bug",
         "area:ownership",
-        "priority: medium"
+        "priority: medium",
+        "parked"
       ],
       "boards": [
         "module_sec_13f"
       ],
       "scope": "board",
       "kind": "bug",
-      "status": "open",
-      "deferred_until": "",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
       "summary": "The 13F board's unmatched-CUSIP caveat is built only on the derive path, so a store-only Refresh drops it and shows partial totals as complete.",
       "detail": {
         "whats_wrong": "The caveat that says how much of the newest period is left out of the totals is produced only on the derive path (`app/runners.py:1005` calls `sec_13f.unmatched_note(...)`) and baked into the artifact the rebuild job writes. `module_sec_13f/report.py` never computes it at any revision, so a store-only Refresh (`GET /view/module_sec_13f?refresh=1`) re-renders without it while every number beside it stays the same.",
@@ -1450,7 +1155,7 @@
         "next_step": "Render the caveat in `module_sec_13f/report.py` from the stored unmatched totals, with a Refresh test that asserts the line survives."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T17:16:01Z",
+      "issue_updated_at": "2026-10-22T23:25:54Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -1463,7 +1168,8 @@
         "bug",
         "area:data-health",
         "idea",
-        "priority: low"
+        "priority: low",
+        "parked"
       ],
       "boards": [
         "module_comovement",
@@ -1474,8 +1180,8 @@
       ],
       "scope": "board",
       "kind": "bug",
-      "status": "open",
-      "deferred_until": "",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
       "summary": "Five boards render a provider-health banner from a payload key no writer sets, so the banner is always empty and a degraded provider stays invisible.",
       "detail": {
         "whats_wrong": "Co-movement, Fundamentals, Swing, Relatedness and Asymmetric Growth each call `provider_health_html(payload.get(\"provider_health\"))`. Nothing writes that key into the payload, so `.get()` returns `None` and the banner never fires. The boards look healthy whatever the providers did.",
@@ -1486,7 +1192,7 @@
         "next_step": "Re-derive the list of callers, then set the payload key at render time and add the missing banner test."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T17:40:42Z",
+      "issue_updated_at": "2026-10-22T23:25:56Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -1703,13 +1409,14 @@
       "state": "open",
       "labels": [
         "bug",
-        "area:platform-app"
+        "area:platform-app",
+        "parked"
       ],
       "boards": [],
       "scope": "repo",
       "kind": "bug",
-      "status": "open",
-      "deferred_until": "",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
       "summary": "job_lock.acquire with a positive wait dies with a Windows access violation inside pytest instead of waiting, so the waiting branch cannot be tested or used.",
       "detail": {
         "whats_wrong": "`core/job_lock.acquire(name, wait=N)` with `N > 0`, called while the lock is held, dies in its retry loop instead of returning: `Windows fatal exception: access violation` at `core/job_lock.py:305` (`os.close(fd)`), after which the test process hangs until it is killed. Reproduced with `wait=15` and `wait=30`.",
@@ -1720,8 +1427,459 @@
         "next_step": "Reproduce under `faulthandler` with the second-handle helper (`core/tests/lock_holders.py`) and confirm the descriptor hypothesis at `core/job_lock.py:305`."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T20:07:57Z",
+      "issue_updated_at": "2026-10-22T23:25:57Z",
       "reviewed_at": "2026-10-22"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 100,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/100",
+      "title": "yfinance reliability and dependence: 401/429 on the nightly runs, partial Earnings-Inputs",
+      "state": "open",
+      "labels": [
+        "area:providers",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "shared",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "yfinance is meant to be the fallback in the data-source order (Unusual Whales, IBKR, then yfinance), but the nightly jobs and several boards still depend on it for bulk reads, and Yahoo answers them",
+      "detail": {
+        "whats_wrong": "yfinance is meant to be the fallback in the data-source order (Unusual Whales, IBKR, then yfinance), but the nightly jobs and several boards still depend on it for bulk reads, and Yahoo answers them with 401 and 429 errors that the jobs turn into partial runs.",
+        "evidence": "- `RC-Screeners-Daily` (started 23:00 Amsterdam on 22 Oct): first `HTTP Error 401 ... User is unable to access this feature` at 23:26:56, first `Crumb fetch rate-limited (HTTP 429), continuing without crumb` at 23:27:49, first `401 Invalid Crumb` at 23:29:00; 127 lines of 401/429 in that night's log. Earlier nights show the same pattern: 15 lines on 15 Oct, 40 on 16 Oct, 22 on 19 and 20 Oct, 40 on 21 Oct (same log, `.cache/logs/RC-Screeners-Daily.log`). The errors are lines, not requests: the jobs do not log a per-minute request count.\n- `RC-Earnings-Inputs` on 21 Oct 23:30Z: `YFRateLimitError('Too Many Requests')` in D14 and the night's yfinance call cap `2000/2000` spent (calls: uw 200/200, fred 10/10, yfinance 2000/2000, cboe 14/20, cftc 2/5); exit 1 on four nights (18 to 21 Oct).\n- On 22 Oct the errors began at 23:26, before the only manual yfinance activity of the evening (one […]",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "1. Retry with back-off and crumb handling in `core/providers/yfinance.py` (one place), and a clear \"Yahoo refused\" status instead of a silent stale cache.\n2. Lower concurrency and a per-night request budget that shows up in the job result (today only D14 has a cap).\n3. UW or IBKR first for the bulk reads (short interest, quotes, bars), yfinance only for what neither serves.\n4. Cache what is slow-moving (statements, `.info`) and skip tickers whose stored row is fresh.\n5. Move the Earnings-Inputs start later or split D14 so a rate-limited sweep retries instead of exiting 1.",
+        "next_step": "After Sunday 25 Oct 2026: add retry with back-off and crumb handling in core/providers/yfinance.py, a per-night request budget shown in the job result, and decide which bulk reads go UW or IBKR first."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-22T21:51:59Z",
+      "reviewed_at": "2026-10-23"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 105,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/105",
+      "title": "EDGAR revenue gap remainder: the filers that could still gain a revenue year (utilities tag, IFRS taxonomy, period matching)",
+      "state": "open",
+      "labels": [
+        "area:providers",
+        "parked"
+      ],
+      "boards": [
+        "module_fundamentals",
+        "module_financials"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "Remaining EDGAR revenue gaps: six utilities (RegulatedAndUnregulatedOperatingRevenue) and three IFRS filers could gain a year; most other blank filers have no revenue tag.",
+      "detail": {
+        "whats_wrong": "After the #52 re-extract, 236 filers still have a fresh annual record and no revenue in the newest year. A read-only tag measurement (181 SEC requests, 22-23 Oct) shows 113 of them have no revenue-like tag at all, six utilities (DTE, SWX, TVC) use us-gaap:RegulatedAndUnregulatedOperatingRevenue, three IFRS filers (AEM, FORTY, NAAS) use ifrs-full:Revenue, and nine have us-gaap:Revenues but the year does not match.",
+        "evidence": "Report .cache/research/2026-10-23_52_gap_tags/gap_tags.md; a second re-extract pass the next day found 0 advances and 0 losses, so more re-extracting cannot help.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "After Sunday 25 Oct 2026: add RegulatedAndUnregulatedOperatingRevenue as an add-only concept (total, no double count), check whether the extractor reads the ifrs-full taxonomy, and look at the fiscal-year matching for the nine Revenues filers; one re-extract afterwards."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T01:27:04Z",
+      "reviewed_at": "2026-10-23"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 107,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/107",
+      "title": "LEAPS: raw exception text reaches the board notice and the recorded run, so a store error puts a filesystem path on the board",
+      "state": "open",
+      "labels": [
+        "bug",
+        "area:ownership",
+        "parked"
+      ],
+      "boards": [
+        "module_leaps"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "LEAPS puts the full exception text, including a file path, into the board notice and the recorded run when a store read fails; the same shape appears three more times.",
+      "detail": {
+        "whats_wrong": "module_leaps/scan.py:78 builds a warning with the exception's full str(); app/runners.py:384 shows it as the board notice and :388 stores it in the result history. A locked or unreadable DuckDB file puts an absolute host path on the board.",
+        "evidence": "Found in the review of PR #99. The full text is already in the logger.warning on the line above; the same pattern is at module_leaps/engine.py:525 and two more sites.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "**Recommended: put only `type(e).__name__` in the sentence that is shown or stored**, and leave the full text to the logger. The sentence's job is to tell the reader that baselines are missing and that a Quiet label there means missing history; the exception's class is enough to tell a lock from a corrupt file, and anything more belongs in the log.\n\n**Why `redact` is not the answer on its own.** The project does scrub persisted exception text elsewhere — `core/identity/refresh.py:206` and `:213` wrap it as `redact(f\"{type(exc).__name__}: {exc}\")[:500]` — but `redact` (`core/identity/sources/__init__.py:73`) removes **configured API key values and bearer tokens**, not file paths. It would not stop this leak. It also lives in an identity-sources package, which is the wrong home for a LEAPS caller; if a shared scrubber is wanted later it should move into `core/` and learn about paths. […]",
+        "next_step": "After Sunday 25 Oct 2026: keep only the exception type in user-facing sentences at all four sites, keep the full text in the log, add a test that no path reaches the notice."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T01:27:07Z",
+      "reviewed_at": "2026-10-23"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 109,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/109",
+      "title": "Seam: the vol-index and COT readers live in a board module, not core/",
+      "state": "open",
+      "labels": [
+        "area:quality",
+        "parked"
+      ],
+      "boards": [
+        "module_earnings_radar"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "The vol-index and COT readers live in module_earnings_radar although the Earnings board reads neither; SPX Gamma imports that module and a function-local import breaks a cycle.",
+      "detail": {
+        "whats_wrong": "module_earnings_radar/stored_inputs.py owns vol_index_rows (vol_index_daily) and cot_row (cftc_cot). module_spx_gamma/snapshot.py imports it at module level and vol_index_rows imports module_spx_gamma.vix.vix_term_mode inside the function to avoid a circular import.",
+        "evidence": "Logged while building #34 D28/D29 (PR #103); no board module imported another before that PR.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "Move both readers to `core/` beside the shared readers that already live there (`core/index_levels.py`, `core/earnings_dates.py`, `core/ownership.py`), which also removes the cycle: `vix_term_mode` would be imported top-level by the core reader, and both boards would import `core`. The precedent is the Seams work in #12 (`rotation_reference`), which moved a board-owned shared concept into `core` the same way.\n\nKeep the contract as it is while moving it: the 2-tuple `(payload, session|None)`, the `MAX_LAG` gate (`vol_index_daily` 3, `cftc_cot` 10) and the \"never raises, returns nothing stored\" rule. The tests in `module_earnings_radar/tests/test_stored_inputs_d28_d29.py` move with the code.",
+        "next_step": "After Sunday 25 Oct 2026: move both readers to core/ beside core/index_levels.py and core/earnings_dates.py, keep the (payload, session) contract, MAX_LAG gates and never-raise behaviour."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T01:27:10Z",
+      "reviewed_at": "2026-10-23"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 110,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/110",
+      "title": "The two forecast writer scripts duplicate one CLI/lock/report skeleton, so the next fix has to be made twice",
+      "state": "open",
+      "labels": [
+        "area:quality",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "scripts/forecast_outcomes.py and scripts/forecast_baselines.py duplicate one CLI, lock and report skeleton, so every later change has to be made twice.",
+      "detail": {
+        "whats_wrong": "Both scripts carry the same argparse mode group, job_lock.acquire(name, wait=0) with the busy branch, _write_report and exit-code convention; nothing in that skeleton is specific to either writer.",
+        "evidence": "Found in the review of PR #104 (HR-1): forecast_outcomes.py lines 25-65 and the new forecast_baselines.py are the same shape.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "Extract the skeleton once (a small helper that takes the writer callable, the lock name and the report path, and owns the parser, the lock, the refusal branch and the exit codes), then let both scripts be a few lines of configuration. No behaviour change: the test is that both CLIs keep their current flags, their current refusal text and their current exit codes.\n\nWorth doing **after** #104 lands, not during it — extracting a shared skeleton from one copy while the second is still in review would mean reviewing the same move twice.",
+        "next_step": "After Sunday 25 Oct 2026: extract one helper taking the writer callable, lock name and report path, make both scripts a few lines of configuration, test that both keep their flags and exit codes."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T01:27:24Z",
+      "reviewed_at": "2026-10-23"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 111,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/111",
+      "title": "Board artifact paths are shared by every test in a worker, so a Refresh test can read an earlier test's Fetch and pass for the wrong reason",
+      "state": "open",
+      "labels": [
+        "area:quality",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "The root `conftest.py` redirects the data roots away from the developer's real tree — `RC_STORE_DIR`, `RC_CACHE_DIR`, `RC_EDGAR_DOCS_DIR`, `RC_DISCORD_MEDIA_DIR`, `SPX_GAMMA_DATA_ROOT` at",
+      "detail": {
+        "whats_wrong": "The root `conftest.py` redirects the data roots away from the developer's real tree — `RC_STORE_DIR`, `RC_CACHE_DIR`, `RC_EDGAR_DOCS_DIR`, `RC_DISCORD_MEDIA_DIR`, `SPX_GAMMA_DATA_ROOT` at `conftest.py:22-45`. That part works, and its own comment records why it exists: before it, \"a route test hitting `?refresh=1` unlinked the developer's actual rendered boards and a runner test overwrote them\".\n\nBut that redirect points at **one `tempfile.mkdtemp` per worker process**, so it is shared by every test in that worker. Only the store got per-test isolation: `isolate_rawstore` (`conftest.py:130-131`) is autouse and explicitly \"Kept **per-test** (never per-session)\". **The board artifacts got the root, not the isolation.**\n\nSo a test that renders or saves a board payload leaves it in a directory the next test reads. A Refresh test that does not redirect the artifact constants itself reads […]",
+        "evidence": "Found in the review of PR #102: its first witness test passed for exactly this reason, from a leftover saved payload, and was only caught because the witness had to fail first. conftest.py:22-45 redirects the roots once per worker; only the store is isolated per test (conftest.py:130-131).",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "An **autouse fixture that points the per-board artifact constants at `tmp_path`** — the same move the conftest already made for the store, one level finer. It has to cover **both** copies of each pair, or the constants should become one (the module config owning them and `app/runners.py` re-exporting, which is the shape #12 just used for the rotation reference data).\n\nDoing it this way means a test that forgets to isolate gets isolation anyway, which is exactly the argument `isolate_rawstore`'s docstring already makes for the store.",
+        "next_step": "After Sunday 25 Oct 2026: give each test its own artifact root in conftest.py (tmp_path per test) so Refresh tests cannot read an earlier Fetch, then remove the per-test monkeypatch workarounds."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T01:27:28Z",
+      "reviewed_at": "2026-10-23"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 114,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/114",
+      "title": "`isinstance(x, date)` admits a datetime, so a session date can round-trip as \"2026-10-08T00:00:00\"",
+      "state": "open",
+      "labels": [
+        "area:quality",
+        "parked"
+      ],
+      "boards": [
+        "module_earnings_radar"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "isinstance(x, date) admits a datetime, so a session date can round-trip as '2026-10-08T00:00:00'; the idiom is in the shared calendar helper too.",
+      "detail": {
+        "whats_wrong": "datetime is a subclass of date, so isinstance(value, date) lets a datetime through and its isoformat() carries a time part. Not live today (DuckDB DATE columns return date), but the idiom is used at core/calendar.py:229 (to_session_date), core/index_levels.py:77-78 and in the new reader in core/ownership.py.",
+        "evidence": "Found in the review of PR #112; core/tests/test_ledger.py:121-122 already asserts type(x) is date, the exact-type form.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "Use the exact-type check, `type(value) is date`, wherever the intent is \"a plain session date and not a timestamp\" — or route the value through `core/calendar.to_session_date` and fix the check **inside** that helper, so there is one place that decides. The second is the better shape: it is already the designated helper, and callers stop re-implementing the test.\n\nA `datetime` that does arrive should become `value.date()` rather than `None`, where that is what the caller means — worth deciding per call site rather than globally, since `to_session_date` returning `None` for a timestamp may be the honest answer for a stored key.",
+        "next_step": "After Sunday 25 Oct 2026: use type(value) is date where a plain session date is meant, or route through core/calendar.to_session_date, with a test that a datetime is not accepted."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T01:27:34Z",
+      "reviewed_at": "2026-10-23"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 115,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/115",
+      "title": "After PR #85, three e2e boards will be seeded into the fallback CIK path instead of the production one",
+      "state": "open",
+      "labels": [
+        "area:quality",
+        "parked"
+      ],
+      "boards": [
+        "module_value_chain"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "After PR #85 three e2e boards are still seeded through sec_company_tickers, the fallback CIK path, while production prefers sec_exchange_file.",
+      "detail": {
+        "whats_wrong": "module_testing/e2e/test_board_settings.py:39, test_board_relatedness.py:89 and test_board_value_chain.py:192 seed the CIK map by writing sec_company_tickers; after #85 the production read prefers sec_exchange_file, so these boards would exercise the fallback.",
+        "evidence": "Found in the review of PR #85; sec_exchange_file is written only by core/sec_files.py and is the table the nightly fills.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "Move the three seeds to `sec_exchange_file`, so each board's e2e arranges the state production is in. If a test's point is specifically the fallback, it should say so and seed only the old table deliberately — but then it should be a second test, not the only one.",
+        "next_step": "After Sunday 25 Oct 2026: seed sec_exchange_file in those three fixtures, keep one test for the fallback branch."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T01:27:41Z",
+      "reviewed_at": "2026-10-23"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 116,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/116",
+      "title": "Shared price-hygiene gates (core/price_hygiene.py) + exclusion funnel on the screeners",
+      "state": "open",
+      "labels": [
+        "enhancement",
+        "area:screeners",
+        "parked"
+      ],
+      "boards": [
+        "module_swing_potential",
+        "module_fundamentals",
+        "module_asymmetric_growth"
+      ],
+      "scope": "board",
+      "kind": "enhancement",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "Shared price-hygiene gates (core/price_hygiene.py) and an exclusion funnel for the three screeners; today nothing stops a broken price series from being shown as a setup.",
+      "detail": {
+        "whats_wrong": "",
+        "evidence": "",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": ""
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T01:27:45Z",
+      "reviewed_at": "2026-10-23"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 117,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/117",
+      "title": "Co-movement is the only data board with no result-history table (History C)",
+      "state": "open",
+      "labels": [
+        "area:classification",
+        "parked"
+      ],
+      "boards": [
+        "module_comovement"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "Co-movement is the only data board with no result-history table, so its past runs cannot be read back.",
+      "detail": {
+        "whats_wrong": "The mirror list in core/rawstore.py:2102-2117 names the history tables of every other board; there is no module_comovement entry, so a Co-movement run leaves no per-run row beyond result_runs.",
+        "evidence": "Open line 'Result history (History C)' of the epic #40, verified on main 8499f11.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "A `_mirror_entry` of the board's own latest table (the Co-movement tables start at `core/rawstore.py:811`),\nnumbered per run like `relatedness_scores_history` and `value_chain_edges_history`, plus a `history.py` writer\nbeside `module_value_chain/history.py` and a row in `core/tests/test_manifest_history.py`'s list. It adds a\nhistory table, so it is a `_SCHEMA_VERSION` question: check whether the manifest treats a new history table as a\nbump before planning it.",
+        "next_step": "After Sunday 25 Oct 2026: add a _mirror_entry for the board's latest table (tables from core/rawstore.py:811), a history.py writer beside module_value_chain/history.py and a row in test_manifest_history.py; it adds a table, so it is its own gated PR."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T01:25:30Z",
+      "reviewed_at": "2026-10-23"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 118,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/118",
+      "title": "13F card: the ownership figures carry no source or session, while the Short% beside them does",
+      "state": "open",
+      "labels": [
+        "bug",
+        "area:ownership",
+        "parked"
+      ],
+      "boards": [
+        "module_sec_13f"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "`ownership_snapshot` stores `source` and `session_date` per row — the table is written per source and per session (`core/ownership.py:32`, schema `core/rawstore.py:1832`).",
+      "detail": {
+        "whats_wrong": "`ownership_snapshot` stores `source` and `session_date` per row — the table is written per source and per\nsession (`core/ownership.py:32`, schema `core/rawstore.py:1832`). The board's reader throws both away:\n\n- `module_sec_13f/enrich.py:53-71` `load_ownership` returns `{ticker: {\"shares_outstanding\": .., \"insider_pct\": ..}}`\n  and nothing else. The query does carry the session (`arg_max(.., session_date)`) and groups by\n  `(ticker, source)`, then the result keeps only the values, picking the best source by `_rank` silently.\n\nThe reader right beside it does the opposite, and that is the precedent:\n\n- `module_sec_13f/enrich.py:73-100` `load_short_interest` returns `short_pct_as_of` per ticker **and** the newest\n  session for the board legend; the card renders it (`module_sec_13f/report.py:404`, `:552`).\n\nSo on one card the Short% says when it is from and the shares-outstanding / […]",
+        "evidence": "module_sec_13f/enrich.py:53-71 load_ownership returns only shares_outstanding and insider_pct although ownership_snapshot stores source and session_date (core/ownership.py:32); load_short_interest at :73-100 returns its session and the card renders it (report.py:404, :552).",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "Return `shares_outstanding_source` / `shares_outstanding_as_of` (and the insider pair) from `load_ownership`\nexactly as `load_short_interest` returns its own, and put them on the card where the Short% as-of already sits.\nNo store change, no provider call.",
+        "next_step": "After Sunday 25 Oct 2026: return the source and session with the ownership figures and print them on the card and in the legend like the Short% as-of; a small reader and one legend line."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T01:25:41Z",
+      "reviewed_at": "2026-10-23"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 119,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/119",
+      "title": "cftc_cot never backfills: the nightly writer asks for 4 weeks and the first write wins, so the table only grows forward",
+      "state": "open",
+      "labels": [
+        "area:earnings",
+        "area:providers",
+        "parked"
+      ],
+      "boards": [
+        "module_earnings_radar"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "cftc_cot never backfills: the nightly writer asks for the newest 4 weekly reports and the first write wins, so the table only grows forward and holds 2 rows today.",
+      "detail": {
+        "whats_wrong": "module_earnings_radar/inputs/cftc_cot.py:30 WEEKS = 4 and :57-60 read only the newest four rows, the first write of (report_type, market, report_date) wins, so no history exists behind the board's reading.",
+        "evidence": "Measured 22 Oct 2026: cftc_cot has 2 rows (6 and 13 Oct); the reader allows 10 days of staleness (stored_inputs.py:39,43), so the board reads correctly but nothing can be compared across weeks.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "A one-off backfill: the same Socrata read with a larger `$limit` (or a `report_date` lower bound), mapped through\nthe same `core/providers/cftc.map_row`, written through the same writer so the first-write-wins key keeps every\nnight's row intact. Decide the depth first — how many years of E-mini TFF the board actually wants. Then the\nnightly writer stays exactly as it is.\n\nGate: fresh backup, idle `GET /api/jobs`, the CFTC call count reported (it is inside the nightly cap of 5 today),\nrollback `restore_store --latest raw`.",
+        "next_step": "After Sunday 25 Oct 2026: one-off backfill with a larger Socrata $limit through the same map_row and writer; it is a live-store write: backup first, named rollback restore_store --latest raw."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T01:25:51Z",
+      "reviewed_at": "2026-10-23"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 120,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/120",
+      "title": "Open-issues panel: a new issue lands in the registry with no boards, so it shows on no dashboard at all",
+      "state": "open",
+      "labels": [
+        "bug",
+        "area:data-health",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "A new issue lands in the registry with scope board and empty boards, which matches no dashboard, so it is invisible until someone fills the boards by hand.",
+      "detail": {
+        "whats_wrong": "A label is not what puts an issue on a board. The panel lists an entry under \"This board\" only when the entry's\nscope is `board` **and** the board's key is in its `boards` list:\n\n- `core/open_issues.py:238` — `if entry.scope == \"board\" and board_key in entry.boards`\n- `core/open_issues.py:7-11` — the three scopes: `board` (\"This board\"), `shared` (\"Affects every board\", on\n  every data board), `repo` (\"Repository-wide\", on Settings / Data health only)\n\nAnd `boards` is **curated by hand**, never derived from the `area:*` labels:\n\n- `scripts/open_issues_sync.py:8-9` — the curated keys \"are never overwritten\"\n- `scripts/open_issues_sync.py:238` — a newly synced issue is added with `\"boards\": []`, `scope: \"board\"`,\n  `status: \"open\"`\n\n`scope: \"board\"` with an empty `boards` list is the one combination that matches no board. So **every issue the\nsync adds is invisible on every panel […]",
+        "evidence": "core/open_issues.py:238 lists an entry under This board only when scope is board and the board key is in boards; scripts/open_issues_sync.py:238 adds new issues with boards [] and status open, and never overwrites curated keys.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "Two separate things, and only the second is a code change:\n\n1. **The data.** The registry-refresh PR runs `scripts/open_issues_sync.py --write`, drops the closed nine, adds\n   the fifteen with their `boards` filled, and fixes the five stale statuses. The board map to apply is\n   `/mnt/project-files/plans/2026-10-23_undecided_work/registry_map.txt`.\n2. **The gap that let it happen.** Either `open_issues_sync.py` seeds `boards` from the `area:*` labels on a new\n   entry (a mapping table, area → board keys, with the multi-board areas left for a human), or `--report-thin`\n   grows a check that names every `scope: \"board\"` entry with no boards, so the drift is reported instead of\n   silent. The second is smaller and cannot guess wrong.",
+        "next_step": "After Sunday 25 Oct 2026: make the sync derive boards from the area labels (or refuse to write an entry that matches no board) and add a test; until then every sync round needs the hand-filled boards of this registry refresh."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T01:30:33Z",
+      "reviewed_at": "2026-10-23"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 121,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/121",
+      "title": "Fundamentals: the non-USD count stays \"not measured yet\" until a re-extract rewrites the stored EDGAR meta",
+      "state": "open",
+      "labels": [
+        "area:providers",
+        "area:screeners",
+        "parked"
+      ],
+      "boards": [
+        "module_fundamentals"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "The code for #46's non-USD count is complete on `main` `8499f11`.",
+      "detail": {
+        "whats_wrong": "The code for #46's non-USD count is complete on `main` `8499f11`. What is missing is data.\n\n- The extraction writes the key: `core/providers/sec_edgar.py:1027` — `\"non_usd_units\": sorted(non_usd)`.\n- The pipeline counts it only when the stored meta row has it:\n  `module_fundamentals/pipeline.py:433` — `if non_usd_seen is not None and \"non_usd_units\" in (emeta or {})`,\n  `:442` — the units list, `:669` — `payload[\"data_quality\"][\"non_usd_units\"]`, and `:671`, which states the rule\n  outright: \"Only a run that measured something writes the key\".\n- The board prints whatever that gives: `module_fundamentals/report.py:176`.\n- The absent-key path is a tested case, not an accident: `module_fundamentals/tests/test_non_usd_count_46.py:45-51`\n  is \"a row as the extraction wrote it BEFORE #46: no `non_usd_units` key at all\".\n\nSo every filer whose EDGAR meta row was written before #46 has no […]",
+        "evidence": "Extraction writes the key at core/providers/sec_edgar.py:1027; the pipeline counts it only when the stored meta has it (module_fundamentals/pipeline.py:433, 669-671) and tests the absent-key case (test_non_usd_count_46.py:45-51), so rows written before #46 read 'not measured yet'.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "After Sunday 25 Oct 2026: a re-extract of the filers whose edgar_financials meta lacks non_usd_units (a live edgar write: backup, rollback restore_store --latest edgar, SEC calls capped), then check the Fundamentals summary."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T01:26:29Z",
+      "reviewed_at": "2026-10-23"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 122,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/122",
+      "title": "LEAPS: the DF94 fix was never proven on identical UW data old vs new (\"9 names to Quiet\")",
+      "state": "open",
+      "labels": [
+        "area:ownership",
+        "parked"
+      ],
+      "boards": [
+        "module_leaps"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "The DF94 fix (PR #99) was never proven on identical UW data, old code against new; the 'nine names into Quiet' claim has no number behind it.",
+      "detail": {
+        "whats_wrong": "The Refresh path is identical old vs new by construction (it replays stored labels); the effect of the near-term-event change on the live scan was never measured on the same UW payload.",
+        "evidence": "22-23 Oct 2026: scan_leaps_cached gives 353 identical labels under 603e181 and 649088d; the change lives in module_leaps/scan.py before classify and only a live scan exercises it.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "Score one recorded LEAPS run's stored footprints with both versions and diff the resulting classifications, so\nthe comparison uses one UW payload and makes zero new calls. If that is not possible from what the history\nholds, say so and the item is dropped rather than guessed — an unproven claim with a reason beats a number\nnobody measured.",
+        "next_step": "After Sunday 25 Oct 2026: score one captured UW payload with the old and the new scan code (or two live Fetches on the same day) and report which names change label; call counts via core/providers/unusual_whales.py health()."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T01:26:40Z",
+      "reviewed_at": "2026-10-23"
     }
   ]
 }
