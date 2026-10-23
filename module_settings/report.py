@@ -83,6 +83,11 @@ table.inv tr.detail .dline b{color:var(--text);font-weight:600;margin-right:6px}
 .fetch-btn:hover,.set-btn:hover{background:rgba(14,165,233,.22)}
 .fetch-btn:disabled,.set-btn:disabled{opacity:.55;cursor:default}
 .fetchmsg{color:var(--muted);font-size:11.5px;margin-left:8px}
+/* G5 (#124): the summary tiles above the table, counted from the rows already collected. */
+.stiles{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px}
+.stile{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:10px 16px;min-width:132px}
+.stile-n{font-size:22px;font-weight:700;letter-spacing:-.4px;font-variant-numeric:tabular-nums}
+.stile-l{color:var(--muted);font-size:12px}
 .empty{background:var(--panel);border:1px solid var(--border);border-radius:12px;color:var(--muted);font-size:13px;padding:24px;text-align:center}
 .frow{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
 .flbl{color:var(--muted);font-size:12px;font-weight:600}
@@ -552,6 +557,64 @@ def _fmt_holes(row: dict) -> str:
     return cell
 
 
+# G5 (#124): the coverage line under which a dataset is called out on the summary tiles.
+NEEDS_ATTENTION_BELOW = 0.70
+
+
+def _shows_dash(value) -> bool:
+    """True when the cell renders the dash: an empty value and the dash look the same on the table."""
+    text = str(value or "").strip()
+    return not text or text == DASH
+
+
+def _seconds_text(payload: dict) -> str:
+    """How long the collect took, in words; a payload that carries no measurement says so."""
+    timing = (payload or {}).get("timing")
+    seconds = timing.get("collect_seconds") if isinstance(timing, dict) else None
+    if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and seconds >= 0:
+        return f"{float(seconds):.2f} seconds"
+    return "not measured"
+
+
+def _tile(key: str, label: str, value: str, title: str = "") -> str:
+    """One summary tile: a number and the words it counts. A plain labelled div, no script."""
+    tid = f"tile-{key}"
+    tip = f' title="{_html.escape(title, quote=True)}"' if title else ""
+    return (f'<div class="stile" role="group" aria-labelledby="{tid}"{tip}>'
+            f'<div class="stile-n">{_html.escape(value)}</div>'
+            f'<div class="stile-l" id="{tid}">{_html.escape(label)}</div></div>')
+
+
+def _summary_tiles(rows: list[dict], payload: dict) -> str:
+    """The board's totals, counted from the rows already collected: no second query, no guess."""
+    rows = rows or []
+    errors = (payload or {}).get("errors") or []
+    attention = empty = no_time = 0
+    for row in rows:
+        coverage = row.get("coverage")
+        fraction = coverage.get("fraction") if isinstance(coverage, dict) else None
+        thin = (isinstance(fraction, (int, float)) and not isinstance(fraction, bool)
+                and fraction < NEEDS_ATTENTION_BELOW)
+        if thin or _row_error_records(row, errors):
+            attention += 1
+        count = row.get("rows")
+        if isinstance(count, (int, float)) and not isinstance(count, bool) and count == 0:
+            empty += 1
+        if _shows_dash(row.get("last_date")):
+            no_time += 1
+    return ('<div class="stiles" id="summary-tiles">'
+            + _tile("datasets", "Datasets", str(len(rows)),
+                    "Every dataset in the table below")
+            + _tile("needs-attention", "Needs attention", str(attention),
+                    "Datasets whose coverage is below 70%, or whose query failed")
+            + _tile("empty", "Empty", str(empty), "Datasets that store nothing yet")
+            + _tile("no-time-column", "No time column", str(no_time),
+                    "Datasets whose last data date is a dash")
+            + _tile("refresh-took", "Refresh took", _seconds_text(payload),
+                    "Seconds this page took to read the store")
+            + "</div>")
+
+
 def _button(spec: dict, row_id: str) -> str:
     """A Fetch button wired to the shared ``settingsFetch`` poller (JS above)."""
     route = _html.escape(str(spec.get("route") or ""))
@@ -587,16 +650,18 @@ def _master_age_html(row: dict) -> str:
     return f'<div id="identity-master-age">{safe}</div>'
 
 
+def _row_error_records(row: dict, errors: list[dict]) -> list[dict]:
+    """The payload's error records that name one of this row's tables."""
+    mine = set(row.get("tables") or [])
+    return [e for e in errors if e.get("table") in mine]
+
+
 def _row_errors(row: dict, errors: list[dict]) -> str:
     """Red notes for query failures on this row's tables (F4)."""
-    mine = set(row.get("tables") or [])
-    out = []
-    for e in errors:
-        if e.get("table") in mine:
-            where = _html.escape(str(e.get("where") or ""))
-            msg = _html.escape(str(e.get("error") or ""))
-            out.append(f'<div class="row-err">query failed ({where}): {msg}</div>')
-    return "".join(out)
+    return "".join(
+        f'<div class="row-err">query failed ({_html.escape(str(e.get("where") or ""))}): '
+        f'{_html.escape(str(e.get("error") or ""))}</div>'
+        for e in _row_error_records(row, errors))
 
 
 def _errors_list(errors: list[dict]) -> str:
@@ -1312,6 +1377,7 @@ def render_settings_dashboard(payload: dict) -> str:
   </div>
   {provider_health_html(payload.get("provider_health"))}
   {help_block}
+  {_summary_tiles(rows, payload)}
   {drill}
   {body}
   {identity_html}

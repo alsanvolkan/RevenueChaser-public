@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from datetime import datetime, timezone
 
 from RevenueChaser.core import automations, datahealth, datasets, fiscal_year, rawstore
@@ -1167,11 +1168,15 @@ def collect(now: datetime | None = None) -> dict:
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     _begin_call()
+    # G5 (#124): how long the read took, so the board can print it instead of guessing.
+    started = time.perf_counter()
     try:
         with rawstore.session(), datahealth.memo_scope():   # one open per store file, not one per query
-            return _collect(now)
+            result = _collect(now)
     finally:
         _end_call()
+    result["timing"] = {"collect_seconds": round(time.perf_counter() - started, 2)}
+    return result
 
 
 def _corpus_note(tickers: list[str]) -> str:

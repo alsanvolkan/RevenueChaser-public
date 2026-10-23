@@ -1790,3 +1790,94 @@ console.log(JSON.stringify(out));
         "a hidden dataset takes its detail row down and leaves it collapsed"
     assert got["cleared"] == {"shown": all_three, "count": "Showing 3 of 3 datasets",
                               "clear": False, "details": [True, True, True]}
+
+# ── G5 of the GUI redesign (#124): the summary tiles above the table ────────────────────────────
+def _tile_value(html: str, label: str) -> str:
+    """The number the summary tile labelled ``label`` shows; fails when the tile is absent."""
+    import re
+    found = re.search(r'<div class="stile-n">([^<]*)</div><div class="stile-l" id="[^"]*">'
+                      + re.escape(label) + "</div>", html)
+    assert found, f"no summary tile labelled {label}"
+    return found.group(1)
+
+
+def _tile_row(key: str, **over) -> dict:
+    """One row shaped the way ``inventory._collect`` builds it: healthy unless a field is replaced."""
+    row = {"key": key, "label": key, "tables": [f"{key}_table"], "rows": 10,
+           "last_date": "2026-09-18", "holes": None,
+           "coverage": {"fraction": 1.0, "label": "10 / 10 (100%)"}}
+    row.update(over)
+    return row
+
+
+def _tile_html(rows: list[dict], timing=None, errors=None) -> str:
+    payload = {"generated_at": "2026-09-25T20:00:00+00:00", "rows": rows}
+    if timing is not None:
+        payload["timing"] = timing
+    if errors is not None:
+        payload["errors"] = errors
+    return report.render_settings_dashboard(payload)
+
+
+def test_summary_tiles_count_the_rows_already_collected():
+    """G5 (#124): every number is a count over the payload's own rows — no second query, no guess."""
+    html = _tile_html([
+        _tile_row("healthy"),
+        _tile_row("empty", rows=0, coverage={"fraction": None, "label": "n/a"}),
+        _tile_row("thin", coverage={"fraction": 0.42, "label": "5 / 12 (42%)"}),
+        _tile_row("timeless", last_date="—"),
+        _tile_row("broken"),
+        _tile_row("unknown_count", rows=None),
+    ], errors=[{"table": "broken_table", "where": "_quotes_row", "error": "the read failed"}])
+    assert _tile_value(html, "Datasets") == "6"
+    assert _tile_value(html, "Needs attention") == "2", "the 42% row and the row with a failed query"
+    assert _tile_value(html, "Empty") == "1", "a row count of 0; an unknown count is not empty"
+    assert _tile_value(html, "No time column") == "1"
+
+
+def test_a_dataset_at_exactly_seventy_percent_does_not_need_attention():
+    """The line is 'below 70%': 0.70 is in, 0.69 is out."""
+    assert _tile_value(_tile_html([_tile_row("line", coverage={"fraction": 0.70,
+                                                               "label": "7 / 10 (70%)"})]),
+                       "Needs attention") == "0"
+    assert _tile_value(_tile_html([_tile_row("under", coverage={"fraction": 0.69,
+                                                                "label": "69 / 100 (69%)"})]),
+                       "Needs attention") == "1"
+
+
+def test_a_tile_with_nothing_to_count_shows_a_zero():
+    """G5 (#124): zero is written, never left blank — a blank tile reads as 'not measured'."""
+    html = _tile_html([_tile_row("healthy")])
+    assert _tile_value(html, "Needs attention") == "0"
+    assert _tile_value(html, "Empty") == "0"
+    assert _tile_value(html, "No time column") == "0"
+    empty = _tile_html([])
+    assert _tile_value(empty, "Datasets") == "0"
+    assert _tile_value(empty, "Needs attention") == "0"
+
+
+def test_refresh_took_shows_the_seconds_the_collect_measured():
+    assert _tile_value(_tile_html([_tile_row("healthy")],
+                                  timing={"collect_seconds": 1.39}), "Refresh took") == "1.39 seconds"
+
+
+def test_refresh_took_says_not_measured_when_the_payload_carries_no_timing():
+    """No timing is a fact about the payload, not a zero: it is said in words."""
+    for payload in ({}, {"timing": {}}, {"timing": {"collect_seconds": None}},
+                    {"timing": {"collect_seconds": "fast"}}):
+        row = _tile_row("healthy")
+        p = {"generated_at": "2026-09-25T20:00:00+00:00", "rows": [row], **payload}
+        assert _tile_value(report.render_settings_dashboard(p), "Refresh took") == "not measured"
+
+
+def test_the_summary_tiles_sit_above_the_table_with_their_labels_and_no_script():
+    """Placement and accessibility: after the help block, before the table, plain labelled divs."""
+    html = _tile_html([_tile_row("healthy")], timing={"collect_seconds": 1.0})
+    block = html[html.index('id="summary-tiles"'):html.index('id="inv-table"')]
+    assert html.index("What am I looking at?") < html.index('id="summary-tiles"'), "after the intro"
+    assert html.index('id="summary-tiles"') < html.index('id="inv-table"'), "before the table"
+    for label in ("Datasets", "Needs attention", "Empty", "No time column", "Refresh took"):
+        assert f">{label}</div>" in block, label
+    assert 'role="group"' in block and 'aria-labelledby="tile-datasets"' in block
+    assert 'aria-labelledby="tile-refresh-took"' in block
+    assert "<script" not in block.lower() and "onclick" not in block.lower()

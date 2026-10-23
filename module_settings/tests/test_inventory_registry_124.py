@@ -200,3 +200,23 @@ def test_a_two_query_coverage_spec_is_not_evaluated_and_reads_n_a(monkeypatch):
     assert out[0]["coverage"]["label"] == "n/a"
     assert out[0]["coverage"]["fraction"] is None
     assert errors == []
+
+
+# ── G5 (#124): the seconds the collect took, so the board can print them ─────────────────────
+def test_collect_reports_a_non_negative_number_of_seconds(rawstore_tmp_db):
+    seconds = inventory.collect()["timing"]["collect_seconds"]
+    assert isinstance(seconds, (int, float)) and not isinstance(seconds, bool)
+    assert seconds >= 0
+
+
+def test_collect_measures_the_clock_around_the_collect(monkeypatch, rawstore_tmp_db):
+    """The timing is the clock across ``_collect`` and nothing else: a fixed clock proves it."""
+    class _Clock:
+        def __init__(self):
+            self.values = [10.0, 12.5]       # 2.5 s pass while the collect runs, then time stops
+
+        def perf_counter(self):
+            return self.values.pop(0) if len(self.values) > 1 else self.values[0]
+
+    monkeypatch.setattr(inventory, "time", _Clock())
+    assert inventory.collect()["timing"] == {"collect_seconds": 2.5}
