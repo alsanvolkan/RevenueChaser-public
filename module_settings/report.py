@@ -315,6 +315,15 @@ function drillCap(cap){
   if(cap == null) return 'null — no cap stored (outside the $300M universe or not yet resolved)';
   return '$' + Number(cap).toLocaleString('en-US', {maximumFractionDigits: 0});
 }
+// A dataset's presence as one line: its count, the newest stored session/date, and the source
+// where the dataset carries one. null when the ticker has no row in it.
+function drillCount(presence, unit){
+  var got = presence || {};
+  var n = got[unit] || 0;
+  if(!n) return null;
+  var text = n + ' ' + (n === 1 ? unit.replace(/s$/, '') : unit) + ' · newest ' + (got.newest || '—');
+  return got.source ? text + ' · ' + got.source : text;
+}
 function drillFill(d){
   var p = d.presence || {};
   var d01 = p.price_bars_daily || {};
@@ -326,16 +335,22 @@ function drillFill(d){
   var sic = d.sic ? (d.sic + (d.sic_description ? ' — ' + d.sic_description : '')) : '—';
   return ''
     + drillRow('Name', d.name || '—')
+    + drillRow('CIK', d.cik || '—')
+    + drillRow('FIGI', d.figi || '—')
+    + drillRow('CUSIP', d.cusip || '—')
+    + drillRow('ISIN', d.isin || '—')
     + drillRow('Market cap', drillCap(d.market_cap))
     + drillRow('Price', d.price == null ? '—' : '$' + Number(d.price).toFixed(2))
     + drillRow('Sector', d.sector || '—')
     + drillRow('Industry', d.industry || '—')
-    + drillRow('CIK', d.cik || '—')
     + drillRow('SIC', sic)
     + drillRow('Last 10-K / 20-F', filing)
-    + drillRow('Companyfacts', p.edgar_financials ? 'present' : 'missing')
+    + drillRow('EDGAR facts', drillCount(p.edgar_financials, 'periods') || 'no facts stored')
     + drillRow('Daily price bars', d01.bars
         ? (d01.bars + ' bars · newest ' + (d01.newest || '—')) : 'no bars')
+    + drillRow('Quote', drillCount(p.quote_snapshot, 'rows') || 'no quote stored')
+    + drillRow('Vendor financials', drillCount(p.vendor_financials, 'rows') || 'no vendor statements stored')
+    + drillRow('Ownership', drillCount(p.ownership_snapshot, 'rows') || 'no ownership stored')
     + drillRow('Legacy OHLC cache (SPY fallback)', swing.bars
         ? (swing.bars + ' bars · newest ' + (swing.newest || '—')) : 'no bars')
     + drillRow('OIPD chain', p.oipd_meta ? 'present' : 'missing')

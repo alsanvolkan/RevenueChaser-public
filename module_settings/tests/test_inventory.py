@@ -194,7 +194,7 @@ def test_ticker_detail_reports_dataset_presence_from_the_store(rawstore_tmp_db):
     _seed_detail()
     presence = inventory.ticker_detail("MU")["presence"]
     assert presence["swing_ohlc"] == {"bars": 2, "newest": "2026-02-02"}
-    assert presence["edgar_financials"] is False
+    assert presence["edgar_financials"] == {"periods": 0, "newest": None}
     assert presence["oipd_meta"] is False
     assert presence["relatedness_profiles"] is False
 
