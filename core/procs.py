@@ -31,7 +31,7 @@ def pid_alive(pid: int | None) -> bool:
         return False
     except PermissionError:  # exists, owned by someone else
         return True
-    except OSError:
+    except (OSError, OverflowError, ValueError):  # a pid the platform cannot hold names no process
         return False
     return True
 
