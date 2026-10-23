@@ -2528,3 +2528,269 @@ def test_the_cftc_row_says_fresh_but_shallow_and_names_119_without_calling_it_a_
     assert "#119" in detail
     assert "fresh but shallow" in detail
     assert "failure" not in detail.lower() and "failed" not in detail.lower()
+# ── G6b of the GUI redesign (#124): the Data Flow diagram ─────────────────────────────────────
+# Provider → job → store file, built from the rows the table already collected. Pure: no store
+# read, no second pass over the registry, so the diagram costs page weight and never query time.
+def _flow_rows():
+    return [
+        {"key": "quotes", "label": "Quotes", "source": "uw", "writer": "RC-Daily-Bars", "db": "raw"},
+        {"key": "bars", "label": "Daily bars", "source": "uw", "writer": "RC-Daily-Bars", "db": "prices"},
+        {"key": "bars_again", "label": "Daily bars, second table", "source": "uw",
+         "writer": "RC-Daily-Bars", "db": "prices"},
+        {"key": "filings", "label": "10-K / 20-F corpus", "source": "sec",
+         "writer": "RC-ValueChain-Sync", "db": "edgar"},
+        {"key": "pins", "label": "LEAPS pins", "source": "uw", "writer": None,
+         "writer_note": "the user enters it", "db": "raw"},
+    ]
+
+
+def _flow_section(rows) -> str:
+    """The page's own section, through the renderer's function."""
+    return report._flow_section(rows)
+
+
+def test_the_flow_graph_de_duplicates_nodes_and_counts_the_datasets_per_edge():
+    graph = report.flow_graph(_flow_rows())
+    assert graph["providers"] == [{"name": "SEC", "count": 1},
+                                  {"name": "Unusual Whales", "count": 4}]
+    assert graph["jobs"] == [{"name": "RC-Daily-Bars", "count": 3},
+                             {"name": "RC-ValueChain-Sync", "count": 1},
+                             {"name": "started by hand from the dashboard", "count": 1}]
+    assert graph["stores"] == [{"name": "raw", "count": 2}, {"name": "edgar", "count": 1},
+                               {"name": "prices", "count": 2}]
+    edges = {(e["provider"], e["job"], e["store"]): e["count"] for e in graph["edges"]}
+    assert edges == {
+        ("Unusual Whales", "RC-Daily-Bars", "raw"): 1,
+        ("Unusual Whales", "RC-Daily-Bars", "prices"): 2,
+        ("SEC", "RC-ValueChain-Sync", "edgar"): 1,
+        ("Unusual Whales", "started by hand from the dashboard", "raw"): 1,
+    }
+    assert len(graph["edges"]) == 4, "five datasets, four edges: two share one"
+
+
+def test_a_dataset_without_a_writer_joins_the_started_by_hand_node():
+    graph = report.flow_graph([{"key": "x", "source": "sec", "writer": None, "db": "raw"}])
+    assert [j["name"] for j in graph["jobs"]] == ["started by hand from the dashboard"]
+    assert graph["providers"] == [{"name": "SEC", "count": 1}]
+
+
+@pytest.mark.parametrize("row", [
+    {"key": "x", "db": "raw"},                       # the registry does not know it: no source key
+    {"key": "x", "source": "", "db": "raw"},         # an empty source
+    {"key": "x", "source": "unknown", "db": "raw"},  # the registry's own "no single provider" value
+])
+def test_a_dataset_without_a_provider_says_unknown_provider_in_words(row):
+    graph = report.flow_graph([row])
+    assert [p["name"] for p in graph["providers"]] == ["unknown provider"]
+
+
+def test_a_row_without_a_store_file_takes_the_registry_file_without_reading_the_store():
+    from RevenueChaser.core import datasets
+    spec = next(s for s in datasets.REGISTRY if s.db == "history")
+    graph = report.flow_graph([{"key": spec.key, "source": spec.source.value, "writer": spec.writer}])
+    assert [s["name"] for s in graph["stores"]] == ["history"]
+
+
+def test_rendering_the_flow_twice_reads_no_store(monkeypatch):
+    from RevenueChaser.core import rawstore
+
+    def boom(*a, **k):
+        raise AssertionError("the flow diagram read the store")
+
+    monkeypatch.setattr(rawstore, "query", boom)
+    monkeypatch.setattr(rawstore, "get", boom)
+    monkeypatch.setattr(rawstore, "count", boom)
+    monkeypatch.setattr(rawstore, "get_all", boom)
+    rows = _flow_rows()
+    first, second = report._flow_section(rows), report._flow_section(rows)
+    assert first == second and 'id="flow-svg"' in first
+    html = report.render_settings_dashboard({"rows": rows})
+    assert html.count('id="flow-svg"') == 1, "one diagram, however many times the page is built"
+
+
+def test_the_highlight_javascript_is_on_the_page_guarded_and_short():
+    js = report.FLOW_JS
+    assert "document.getElementById('flow-svg')" in js, "it works on the diagram, nothing else"
+    assert re.search(r"if\s*\(\s*!svg[^)]*\)\s*return", js), "no diagram on the page: it does nothing"
+    assert ".innerHTML" not in js, "class toggles only: the diagram is server-rendered"
+    assert "closest('[data-node]')" in js
+    assert "'Enter'" in js and "preventDefault" in js, "Enter acts like a click"
+    lines = [ln for ln in js.strip().splitlines() if ln.strip()]
+    assert len(lines) <= 30, f"{len(lines)} lines of inline script is more than the budget"
+    html = report.render_settings_dashboard({"rows": _flow_rows()})
+    assert js.strip() in html, "the page carries it"
+
+
+def test_clicking_a_job_highlights_its_edges_and_clicking_again_clears_them(tmp_path):
+    """The real script, run under node against the rendered diagram read back as a small DOM."""
+    import json
+    import shutil
+    import subprocess
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    svg = report._flow_svg(report.flow_graph(_flow_rows()))
+    nodes = re.findall(r'data-node="([^"]+)"', svg)
+    edges = re.findall(r'data-a="([^"]*)" data-b="([^"]*)"', svg)
+    assert nodes and edges
+    harness = """
+var NODES = %s, EDGES = %s;
+function el(attrs){
+  var cls = {};
+  return {cls: cls,
+    getAttribute: function(k){ return k in attrs ? attrs[k] : null; },
+    setAttribute: function(k, v){ attrs[k] = v; },
+    classList: {toggle: function(n, on){ if(on){ cls[n] = 1; } else { delete cls[n]; } }}};
+}
+var nodeEls = NODES.map(function(id){
+  var attrs = {'data-node': id};
+  if(id.indexOf('job:') === 0){ attrs['data-job'] = id.slice(4); attrs['aria-pressed'] = 'false'; }
+  if(id.indexOf('provider:') === 0){ attrs['data-provider'] = id.slice(9); attrs['aria-pressed'] = 'false'; }
+  return el(attrs);
+});
+var edgeEls = EDGES.map(function(p){ return el({'data-a': p[0], 'data-b': p[1]}); });
+var handlers = {};
+var svg = {querySelectorAll: function(sel){
+    return sel === '.flow-edge' ? edgeEls : sel === '[data-node]' ? nodeEls : []; },
+  addEventListener: function(t, f){ handlers[t] = f; }};
+globalThis.document = {getElementById: function(id){ return id === 'flow-svg' ? svg : null; }};
+""" % (json.dumps(nodes), json.dumps(edges))
+    tail = """
+function state(){
+  var dim = [], on = [];
+  edgeEls.forEach(function(e, i){ if(e.cls['flow-dim']){ dim.push(i); } if(e.cls['flow-on']){ on.push(i); } });
+  return {on: on, dim: dim,
+    dimNodes: nodeEls.filter(function(n){ return n.cls['flow-dim']; }).length};
+}
+function press(id){
+  var node = nodeEls.filter(function(n){ return n.getAttribute('data-node') === id; })[0];
+  handlers.click({target: {closest: function(){ return node; }}});
+}
+var out = {};
+press('store:raw'); out.store = state();
+out.storePressed = nodeEls.filter(function(n){ return n.getAttribute('aria-pressed') === 'true'; }).length;
+press('job:RC-Daily-Bars'); out.job = state();
+out.jobPressed = nodeEls.filter(function(n){ return n.getAttribute('aria-pressed') === 'true'; })
+  .map(function(n){ return n.getAttribute('data-node'); });
+press('job:RC-Daily-Bars'); out.cleared = state();
+out.clearedPressed = nodeEls.filter(function(n){ return n.getAttribute('aria-pressed') === 'true'; }).length;
+press('provider:Unusual Whales'); out.provider = state();
+out.providerPressed = nodeEls.filter(function(n){ return n.getAttribute('aria-pressed') === 'true'; })
+  .map(function(n){ return n.getAttribute('data-node'); });
+console.log(JSON.stringify(out));
+"""
+    path = tmp_path / "flow.js"
+    path.write_text(harness + report.FLOW_JS + tail, encoding="utf-8")
+    out = subprocess.run(["node", str(path)], capture_output=True, text=True, encoding="utf-8")
+    assert out.returncode == 0, out.stderr[-2000:]
+    got = json.loads(out.stdout.strip().splitlines()[-1])
+    prices = next(i for i, (a, b) in enumerate(edges)
+                  if (a, b) == ("job:RC-Daily-Bars", "store:prices"))
+    filings = next(i for i, (a, b) in enumerate(edges)
+                   if (a, b) == ("job:RC-ValueChain-Sync", "store:edgar"))
+    assert got["store"]["dim"] == [] and got["store"]["dimNodes"] == 0, "a store file is not a button"
+    assert got["job"]["on"], "the job's own lines light up"
+    assert prices in got["job"]["on"] and filings not in got["job"]["on"]
+    assert filings in got["job"]["dim"]
+    assert len(got["job"]["dim"]) == len(edges) - len(got["job"]["on"])
+    assert got["job"]["dimNodes"] == len(nodes) - 4, (
+        "the job, the provider that feeds it and its two store files stay lit")
+    assert got["cleared"]["on"] == [] and got["cleared"]["dim"] == [] and got["cleared"]["dimNodes"] == 0
+    assert got["provider"]["dimNodes"] == len(nodes) - 3, (
+        "a provider's own lines light up, and the jobs at their far end stay lit")
+    assert got["storePressed"] == 0, "a store file is not a toggle"
+    assert got["jobPressed"] == ["job:RC-Daily-Bars"], "the pressed job says so to a screen reader"
+    assert got["clearedPressed"] == 0, "pressing it again clears the state"
+    assert got["providerPressed"] == ["provider:Unusual Whales"]
+
+
+def test_a_hostile_provider_or_job_name_is_escaped_in_text_and_in_an_attribute():
+    bad = """<img src=x onerror=__x(1)>"&'"""
+    section = report._flow_section([{"key": "x", "source": bad, "writer": bad, "db": "raw"}])
+    assert "<img" not in section
+    assert "&lt;img src=x onerror=__x(1)&gt;" in section
+    assert 'data-provider="' in section and 'data-job="' in section
+    assert bad not in section, "never raw, in text or inside a quoted attribute"
+
+
+def test_a_name_too_long_for_its_column_is_cut_and_its_hover_title_keeps_all_of_it():
+    """A layout guard, not a wording rule: the real providers and jobs all fit, so only a value
+    that could not fit is cut, and the node's own title still carries every word of it."""
+    long_name = "RC-" + "VeryLongTaskName" * 4
+    section = _flow_section([{"key": "x", "source": "sec", "writer": long_name, "db": "raw"}])
+    shown = long_name[:report.FLOW_TEXT_MAX - 1] + "…"
+    assert f">{shown}</text>" in section
+    assert f">{long_name}</text>" not in section, "the column cannot hold it"
+    assert f"<title>{long_name} — 1 dataset</title>" in section, "the whole name is still there"
+
+
+def test_each_edge_is_coloured_by_the_store_file_it_lands_in():
+    svg = report._flow_svg(report.flow_graph(_flow_rows()))
+    for colour in ("#4f8cff", "#e06088", "#e0a030"):          # raw, prices, edgar
+        assert f'stroke="{colour}"' in svg
+    assert 'stroke="#a070e0"' not in svg, "no dataset lands in discord here"
+
+
+def test_two_flows_sharing_one_pair_draw_side_by_side_so_neither_colour_hides_the_other():
+    """Two datasets from one provider, written by one job, landing in different store files take the
+    same provider-to-job box pair. Drawn on one exact line, the second file's colour would cover the
+    first and the picture would silently lose a flow."""
+    graph = report.flow_graph([{"key": "a", "source": "sec", "writer": "W", "db": "raw"},
+                               {"key": "b", "source": "sec", "writer": "W", "db": "edgar"}])
+    svg = report._flow_svg(graph)
+    shared = [tag for tag in re.findall(r'<path class="flow-edge"[^>]*>', svg)
+              if 'data-a="provider:SEC"' in tag and 'data-b="job:W"' in tag]
+    assert len(shared) == 2
+    assert len({re.search(r' d="([^"]+)"', tag).group(1) for tag in shared}) == 2, (
+        "the two lines are the same line, so one store file's colour is hidden")
+    assert any('stroke="#4f8cff"' in tag for tag in shared), "raw's line is still its own"
+    assert any('stroke="#e0a030"' in tag for tag in shared), "edgar's line is still its own"
+
+
+def test_a_store_file_outside_the_five_files_draws_in_muted_ink_and_says_so():
+    svg = report._flow_svg(report.flow_graph([{"key": "x", "source": "sec", "writer": "W"}]))
+    assert report.FLOW_NO_STORE in svg
+    assert 'stroke="#8a93a6"' in svg
+    section = _flow_section([{"key": "x", "source": "sec", "writer": "W"}])
+    assert "names no store file" in section, "the legend explains the grey line"
+
+
+def test_the_flow_legend_names_the_five_store_files():
+    section = _flow_section(_flow_rows())
+    legend = section[section.index('id="flow-legend"'):]
+    for db in ("raw", "edgar", "discord", "history", "prices"):
+        assert f'id="flow-store-{db}"' in legend, db
+        assert f"{db}.duckdb" in legend, db
+    assert "Line colour is the store file" in legend
+
+
+def test_the_diagram_is_an_open_details_titled_in_plain_words_after_board_inputs():
+    html = _with(rows=_flow_rows(), boards=[_card()])
+    assert '<details class="flow" open>' in html
+    summary = re.search(r'<details class="flow" open><summary>([^<]+)</summary>', html)
+    assert summary and summary.group(1) == "Where the data comes from and where it is stored"
+    assert html.index("Board inputs") < html.index('id="data-flow"'), "after the Board inputs section"
+
+
+def test_every_job_node_is_a_button_and_the_store_files_are_not():
+    svg = report._flow_svg(report.flow_graph(_flow_rows()))
+    jobs = re.findall(r'<g class="flow-node" tabindex="0" role="button" data-job="([^"]+)"', svg)
+    assert jobs == ["RC-Daily-Bars", "RC-ValueChain-Sync", "started by hand from the dashboard"]
+    providers = re.findall(r'<g class="flow-node" tabindex="0" role="button" data-provider="([^"]+)"', svg)
+    assert providers == ["SEC", "Unusual Whales"]
+    assert 'data-provider="raw"' not in svg and 'data-job="raw"' not in svg
+
+
+def test_the_diagram_collapses_past_the_page_weight_budget(monkeypatch):
+    monkeypatch.setattr(report, "FLOW_MAX_BYTES", 10)
+    section = _flow_section(_flow_rows())
+    assert '<details class="flow">' in section and " open>" not in section
+
+
+def test_the_real_registry_diagram_stays_under_the_budget():
+    """The ~60 datasets of the real registry, built from the registry alone (no store read)."""
+    from RevenueChaser.core import datasets
+    rows = [{"key": s.key, "source": s.source.value, "writer": s.writer, "db": s.db}
+            for s in datasets.REGISTRY]
+    svg = report._flow_svg(report.flow_graph(rows))
+    assert len(svg.encode("utf-8")) < report.FLOW_MAX_BYTES, f"{len(svg)} bytes"
+    assert '<details class="flow" open>' in _flow_section(rows)

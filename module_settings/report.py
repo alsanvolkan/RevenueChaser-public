@@ -4,8 +4,9 @@ An ops inventory, not an equity board: its own filters over the table (a find bo
 source / state chips, #124 G4 — not the equity filter kit), no Theme cascade; one ticker
 combobox (the filter kit's, #383 C1b) opens the stored-data drill. One row per dataset with its
 source, coverage, freshness, newest data date, row count and hole count, then a detail row
-(store table(s), writer, per-dataset Fetch, notes) opened from the dataset's name. Refresh
-re-reads the store with zero network; Fetch enqueues that dataset's async job. See
+(store table(s), writer, per-dataset Fetch, notes) opened from the dataset's name. Below the Board
+inputs, one server-rendered diagram draws every dataset's provider → job → store file (#124 G6b).
+Refresh re-reads the store with zero network; Fetch enqueues that dataset's async job. See
 ``docs/data_health.md`` §2.
 """
 from __future__ import annotations
@@ -75,6 +76,28 @@ table.inv .warnv{color:var(--amber)}
 .gap-ceiling{color:var(--red)}
 .gap-self_heals{color:var(--muted)}
 .gap-none{color:var(--neon)}
+/* G6b (#124): the Data Flow picture — provider → job → store file, rendered server-side from the
+   table's own rows. Page weight only: it reads no store and takes no second pass over the registry.
+   A line's colour is its store file (the pills' hues); the legend names the five, so colour is not
+   the only signal. Press a provider or a job to follow its lines, press it again to show all. */
+.flow{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:10px 16px;margin-bottom:14px;overflow-x:auto}
+.flow>summary{cursor:pointer;font-size:15px;font-weight:600;letter-spacing:-.2px}
+.flow .fnote{color:var(--muted);font-size:12.5px;margin:6px 0 10px;max-width:900px}
+.flowsvg{display:block;max-width:100%;height:auto;min-width:760px}
+.flowsvg text{fill:var(--text);font:11.5px/1.2 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.flowsvg .fh{fill:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.flowsvg .flow-node rect{fill:var(--panel2);stroke:var(--border)}
+.flowsvg .flow-node[data-job],.flowsvg .flow-node[data-provider]{cursor:pointer}
+.flowsvg .flow-node:hover rect{stroke:var(--accent)}
+.flowsvg .flow-node:focus-visible rect{stroke:var(--accent);stroke-width:2}
+/* A picked node dims the rest of the picture; the box under the keys stays at full ink, so Tab
+   never lands on a near-invisible control. */
+.flowsvg .flow-node:focus-visible{opacity:1}
+.flowsvg .flow-edge{fill:none;stroke-width:2;opacity:.75}
+.flowsvg .flow-edge.flow-on{opacity:1;stroke-width:3.5}
+.flowsvg .flow-dim{opacity:.15}
+.flowlegend{color:var(--muted);font-size:12px;display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin-top:10px}
+.flowlegend i{display:inline-block;width:18px;height:3px;border-radius:2px;vertical-align:middle;margin-right:5px}
 /* S5 (#124): one closed detail row per dataset; the store tables, writer, action and notes live
    there, and the cell wraps so the table gains no nowrap column. */
 table.inv tr[hidden]{display:none}
@@ -622,6 +645,43 @@ if(document.getElementById('ticker-combo') && typeof RCCombobox !== 'undefined')
 }
 """
 
+# G6b (#124): the Data Flow picture's one behaviour. Press a provider or a job node to follow its
+# lines and dim every other; press it again to clear. Class and aria-pressed toggles only — the
+# diagram itself is server-rendered, so nothing here puts a string into the page. Guarded: a page
+# with no diagram (an empty store) does nothing at all.
+FLOW_JS = r"""
+// G6b (#124): press a provider or a job to follow its lines; press it again to clear.
+(function(){
+  var svg = document.getElementById('flow-svg'), picked = '';
+  if(!svg || !svg.addEventListener) return;
+  function node(ev){ return ev.target && ev.target.closest ? ev.target.closest('[data-node]') : null; }
+  function paint(){
+    var edges = svg.querySelectorAll('.flow-edge'), nodes = svg.querySelectorAll('[data-node]'), keep = {}; keep[picked] = 1;
+    for(var i = 0; i < edges.length; i++){
+      var e = edges[i], a = e.getAttribute('data-a'), b = e.getAttribute('data-b');
+      var on = !!picked && (a === picked || b === picked);
+      if(on){ keep[a] = 1; keep[b] = 1; }
+      e.classList.toggle('flow-on', on); e.classList.toggle('flow-dim', !!picked && !on);
+    }
+    for(var j = 0; j < nodes.length; j++){
+      var id = nodes[j].getAttribute('data-node');
+      nodes[j].classList.toggle('flow-dim', !!picked && !keep[id]);
+      if(nodes[j].getAttribute('aria-pressed') !== null) nodes[j].setAttribute('aria-pressed', picked === id ? 'true' : 'false');
+    }
+  }
+  function pick(g){
+    var id = g.getAttribute('data-node');
+    if(!g.getAttribute('data-job') && !g.getAttribute('data-provider')) return;
+    picked = picked === id ? '' : id; paint();
+  }
+  svg.addEventListener('click', function(ev){ var g = node(ev); if(g) pick(g); });
+  svg.addEventListener('keydown', function(ev){
+    if(ev.key !== 'Enter' && ev.key !== ' ') return;
+    ev.preventDefault(); var g = node(ev); if(g) pick(g);
+  });
+})();
+"""
+
 
 def _friendly(ts) -> str:
     """'Thursday, September 25, 2026 EOD' from an ISO timestamp."""
@@ -1104,6 +1164,237 @@ SOURCE_WORDS = {
 def source_words(value) -> str:
     """The plain-words name of a registry source value; an unlisted value is shown as it is."""
     return SOURCE_WORDS.get(str(value), str(value))
+# ── G6b (#124): the Data Flow picture — provider → job → store file ─────────────────────────────
+# Built from the rows the inventory table already carries, so the diagram costs page weight and
+# never a query: no store read, no second pass over the registry (the Refresh budget is 2.5 s).
+FLOW_TITLE = "Where the data comes from and where it is stored"
+# A dataset the registry gives no writer: no scheduled task writes it, a person starts the Fetch.
+FLOW_BY_HAND = "started by hand from the dashboard"
+# A dataset the registry gives no single provider (its own ``unknown`` value, or none at all).
+FLOW_UNKNOWN_PROVIDER = "unknown provider"
+# A dataset whose store file neither the row nor the registry names. Said, never guessed.
+FLOW_NO_STORE = "no store file recorded"
+# Past this much SVG the <details> starts collapsed, so a much larger registry cannot cost the
+# first paint of the table above it (the brief's 60 KB line). Measured on the SVG alone.
+FLOW_MAX_BYTES = 60_000
+# The inks the edges and store nodes use: the .db-* pills' hues, so a colour means one file
+# everywhere on this board. A file outside the five (or none) draws in the page's muted ink.
+DB_COLORS = {"raw": "#4f8cff", "edgar": "#e0a030", "discord": "#a070e0",
+             "history": "#3cb89a", "prices": "#e06088"}
+FLOW_UNKNOWN_COLOR = "#8a93a6"
+
+# The registry's provider values, spelled out for a reader who does not know our code (the copy
+# rule, avo 2026-10-23): a proper name keeps its own spelling, a short enum value never reaches the
+# page. A value not listed here is shown as it stands, escaped.
+FLOW_PROVIDERS = {
+    "uw": "Unusual Whales",
+    "sec": "SEC",
+    "yfinance": "Yahoo Finance",
+    "finra/cftc": "FINRA and CFTC",
+    "cboe": "Cboe",
+    "fred": "Federal Reserve Economic Data (FRED)",
+    "openfigi": "OpenFIGI",
+    "fmp": "Financial Modeling Prep",
+    "derived": "derived data",
+    "manual": "entered by hand",
+    "store": "the store itself",
+    "unknown": FLOW_UNKNOWN_PROVIDER,
+}
+
+# The three columns: x, width, header, and the graph key it draws. The gaps hold the edges. The
+# provider column holds the longest spelled-out name ("Federal Reserve Economic Data (FRED)").
+FLOW_COLUMNS = ((8, 260, "Provider", "providers"),
+                (308, 380, "Job that writes it", "jobs"),
+                (728, 180, "Store file", "stores"))
+FLOW_PAD = 8
+FLOW_TOP = 46
+FLOW_ROW = 44
+FLOW_H = 30
+FLOW_W = 916
+# The longest node text the columns hold at 11.5px. Longer names are cut here (the full name stays
+# in the node's hover title), so two columns can never run into each other.
+FLOW_TEXT_MAX = 42
+
+
+def _flow_provider(value) -> str:
+    """The provider's words: the registry's short value spelled out, else the value as it stands."""
+    name = str(value or "").strip()
+    return FLOW_PROVIDERS.get(name.lower(), name) or FLOW_UNKNOWN_PROVIDER
+
+
+def _flow_store_order(name: str) -> tuple:
+    """The legend's own order for the five store files, then any other name by its spelling."""
+    return (DB_PILLS.index(name) if name in DB_PILLS else len(DB_PILLS), name.lower())
+
+
+def _flow_nodes(counts: dict[str, int], order) -> list[dict]:
+    return [{"name": name, "count": n} for name, n in sorted(counts.items(), key=lambda kv: order(kv[0]))]
+
+
+def flow_graph(rows: list[dict] | None) -> dict:
+    """The provider → job → store-file graph of the datasets already collected (G6b, #124).
+
+    Pure: it reads the rows and, for a row without its own store file, the registry's record — never
+    the store. Nodes are de-duplicated by their words and every edge counts the datasets that take
+    it, so one line can say how many datasets it carries. The provider name is the registry's
+    ``source`` spelled out, the job is its ``writer`` (``started by hand from the dashboard`` when
+    there is none), and the store file is the row's ``db``, else the registry's.
+    """
+    providers: dict[str, int] = {}
+    jobs: dict[str, int] = {}
+    stores: dict[str, int] = {}
+    edges: dict[tuple[str, str, str], int] = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        provider = _flow_provider(row.get("source"))
+        job = str(row.get("writer") or "").strip() or FLOW_BY_HAND
+        store = _db_of(row) or FLOW_NO_STORE
+        for counted, name in ((providers, provider), (jobs, job), (stores, store)):
+            counted[name] = counted.get(name, 0) + 1
+        edges[(provider, job, store)] = edges.get((provider, job, store), 0) + 1
+    return {
+        "providers": _flow_nodes(providers, str.lower),
+        "jobs": _flow_nodes(jobs, str.lower),
+        "stores": _flow_nodes(stores, _flow_store_order),
+        "edges": [{"provider": p, "job": j, "store": s, "count": n}
+                  for (p, j, s), n in sorted(
+                      edges.items(),
+                      key=lambda kv: (_flow_store_order(kv[0][2]), kv[0][0].lower(), kv[0][1].lower()))],
+    }
+
+
+def _flow_count(n: int) -> str:
+    """``1 dataset`` / ``4 datasets``: the unit is always named."""
+    return f"{n} dataset" if n == 1 else f"{n} datasets"
+
+
+def _flow_words(name: str) -> str:
+    """The node's text in full, cut only past what its column holds; the hover title keeps all of it."""
+    return name if len(name) <= FLOW_TEXT_MAX else name[:FLOW_TEXT_MAX - 1] + "…"
+
+
+def _flow_node(kind: str, name: str, x: int, y: int, width: int, count: int) -> str:
+    """One rounded rectangle. A provider or a job is a real button (keyboard reachable); a store
+    file is not, because pressing it would select nothing a reader could act on."""
+    node_id = _html.escape(f"{kind}:{name}", quote=True)
+    said = f"{name}.duckdb" if kind == "store" and name in DB_PILLS else name
+    title = _html.escape(f"{said} — {_flow_count(count)}")
+    if kind == "store":
+        # The border carries the file's hue. The palette lives in DB_COLORS, so it is written
+        # inline: an inline style outranks the stylesheet's default border, and the five colours
+        # keep one source.
+        return (f'<g class="flow-node" data-node="{node_id}"><title>{title}</title>'
+                f'<rect x="{x}" y="{y}" width="{width}" height="{FLOW_H}" rx="6"'
+                f' style="stroke:{DB_COLORS.get(name, FLOW_UNKNOWN_COLOR)}"/>'
+                f'<text x="{x + 10}" y="{y + 19}">{_html.escape(_flow_words(said))}</text></g>')
+    who = "Provider" if kind == "provider" else "Job"
+    label = _html.escape(f"{who} {name}: {_flow_count(count)}; press to follow its lines", quote=True)
+    attribute = "data-provider" if kind == "provider" else "data-job"
+    return (f'<g class="flow-node" tabindex="0" role="button"'
+            f' {attribute}="{_html.escape(name, quote=True)}" aria-pressed="false"'
+            f' data-node="{node_id}" aria-label="{label}">'
+            f"<title>{title}</title>"
+            f'<rect x="{x}" y="{y}" width="{width}" height="{FLOW_H}" rx="6"/>'
+            f'<text x="{x + 10}" y="{y + 19}">{_html.escape(_flow_words(said))}</text></g>')
+
+
+def _flow_curve(x1: int, y1: int, x2: int, y2: int) -> str:
+    """A cubic path from one column into the next: it leaves and arrives flat, so its ends read clean."""
+    mid = (x1 + x2) // 2
+    return f"M{x1},{y1} C{mid},{y1} {mid},{y2} {x2},{y2}"
+
+
+def _flow_svg(graph: dict) -> str:
+    """The diagram: three columns of rounded rectangles, one cubic line per edge.
+
+    A line's colour is the store file it lands in, and its hover title names the whole way —
+    provider, job, file and the number of datasets — so the colour is never the only signal.
+    """
+    depth = max([len(graph[key]) for key in ("providers", "jobs", "stores")] + [1])
+    height = FLOW_TOP + depth * FLOW_ROW + FLOW_PAD
+    px, pw, _, _ = FLOW_COLUMNS[0]
+    jx, jw, _, _ = FLOW_COLUMNS[1]
+    sx = FLOW_COLUMNS[2][0]
+    centre = {key: {node["name"]: FLOW_TOP + i * FLOW_ROW + FLOW_H // 2
+                    for i, node in enumerate(graph[key])}
+              for key in ("providers", "jobs", "stores")}
+    out = [f'<svg class="flowsvg" id="flow-svg" width="{FLOW_W}" height="{height}"'
+           f' viewBox="0 0 {FLOW_W} {height}" role="group" aria-labelledby="flow-svg-title">',
+           f'<title id="flow-svg-title">{FLOW_TITLE}</title>',
+           "<desc>Providers on the left write through the jobs in the middle into the store files "
+           "on the right. Each line is one provider, one job and one store file; pointing at a line "
+           "names it and says how many datasets take it. Press a provider or a job to follow its "
+           "lines; press it again to show every line.</desc>"]
+    for x, _width, header, _key in FLOW_COLUMNS:
+        out.append(f'<text class="fh" x="{x + 2}" y="22">{header}</text>')
+    segments = []
+    total: dict[tuple[str, str], int] = {}
+    for edge in graph["edges"]:
+        colour = DB_COLORS.get(edge["store"], FLOW_UNKNOWN_COLOR)
+        store = f"{edge['store']}.duckdb" if edge["store"] in DB_PILLS else edge["store"]
+        said = _html.escape(f"{edge['provider']} → {edge['job']} → {store} · "
+                            f"{_flow_count(edge['count'])}")
+        provider_y = centre["providers"][edge["provider"]]
+        job_y = centre["jobs"][edge["job"]]
+        store_y = centre["stores"][edge["store"]]
+        for start, start_y, end, end_y, x1, x2 in (
+                (f"provider:{edge['provider']}", provider_y, f"job:{edge['job']}", job_y, px + pw, jx),
+                (f"job:{edge['job']}", job_y, f"store:{edge['store']}", store_y, jx + jw, sx)):
+            segments.append((start, end, start_y, end_y, x1, x2, colour, said))
+            total[(start, end)] = total.get((start, end), 0) + 1
+    # Two flows that take the same pair of boxes would draw one exact line over the other, and the
+    # later colour would hide the earlier one. Each duplicate is nudged sideways, and the nudge
+    # shrinks as the bundle grows so every line stays inside the box it leaves and enters.
+    seen: dict[tuple[str, str], int] = {}
+    for start, end, start_y, end_y, x1, x2, colour, said in segments:
+        index = seen.get((start, end), 0)
+        seen[(start, end)] = index + 1
+        count = total[(start, end)]
+        if count > 1:
+            shift = (index - (count - 1) / 2) * min(5.0, 24 / (count - 1))
+            start_y, end_y = round(start_y + shift, 1), round(end_y + shift, 1)
+        out.append(f'<path class="flow-edge" {_attr("data-a", start)} {_attr("data-b", end)}'
+                   f' stroke="{colour}" d="{_flow_curve(x1, start_y, x2, end_y)}">'
+                   f"<title>{said}</title></path>")
+    for key, kind in (("providers", "provider"), ("jobs", "job"), ("stores", "store")):
+        x, width = next((c[0], c[1]) for c in FLOW_COLUMNS if c[3] == key)
+        out.extend(_flow_node(kind, node["name"], x, FLOW_TOP + i * FLOW_ROW, width, node["count"])
+                   for i, node in enumerate(graph[key]))
+    out.append("</svg>")
+    return "".join(out)
+
+
+def _flow_legend(store_names: list[str]) -> str:
+    """The five store files in the pills' own hues, so a line's colour is named once (G2's palette)."""
+    items = "".join(f'<span id="flow-store-{db}"><i style="background:{DB_COLORS[db]}"></i>'
+                    f"{db}.duckdb</span>" for db in DB_PILLS)
+    extra = ("" if all(name in DB_PILLS for name in store_names) else
+             f'<span id="flow-store-unknown"><i style="background:{FLOW_UNKNOWN_COLOR}"></i>'
+             "a grey line means the registry names no store file, or names one outside the five</span>")
+    return (f'<div class="flowlegend" id="flow-legend"><b>Line colour is the store file:</b>'
+            f"{items}{extra}</div>")
+
+
+def _flow_section(rows: list[dict] | None) -> str:
+    """The Data Flow picture, under Board inputs (G6b, #124).
+
+    Rendered from ``rows`` alone — the rows the table already collected — so it adds bytes to the
+    page and nothing to Refresh. No rows means no section at all rather than an empty frame; a
+    diagram past ``FLOW_MAX_BYTES`` starts collapsed, so the table above always paints first.
+    """
+    graph = flow_graph(rows)
+    if not graph["edges"]:
+        return ""
+    svg = _flow_svg(graph)
+    opened = " open" if len(svg.encode("utf-8")) <= FLOW_MAX_BYTES else ""
+    return (
+        f'<section id="data-flow"><details class="flow"{opened}>'
+        f"<summary>{FLOW_TITLE}</summary>"
+        '<div class="fnote">Every dataset in the table above, drawn as the provider it comes from, '
+        "the job that writes it, and the store file it lands in. Press a provider or a job to "
+        "follow its lines; press it again to show every line.</div>"
+        f"{svg}{_flow_legend([node['name'] for node in graph['stores']])}</details></section>")
 
 
 def _source_cells(row: dict) -> tuple[str, str, str]:
@@ -1764,6 +2055,7 @@ def render_settings_dashboard(payload: dict) -> str:
     backups_html = _backups_card(payload.get("backups"))
     errors_html = _errors_list(payload.get("errors") or [])
     boards_html = _boards_section(payload.get("boards") or [], rows)
+    flow_html = _flow_section(rows)
     automations = payload.get("automations") or []
     automations_html = _automations_section(automations)
     automations_js = (AUTOMATIONS_JS + AUTOMATIONS_BOOT) if automations else ""
@@ -1798,12 +2090,14 @@ def render_settings_dashboard(payload: dict) -> str:
   {backups_html}
   {automations_html}
   {boards_html}
+  {flow_html}
 </div>
 <script>{FILTERS_JS}</script>
 <script>
 var DATA = {data_json};
 var AUTOMATIONS = {script_json(automations)};
 {JS}
+{FLOW_JS}
 {DRILL_JS}
 {automations_js}
 </script>
