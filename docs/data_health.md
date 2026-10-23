@@ -163,10 +163,10 @@ the rendered order when pressed again.
 - **Dataset** is the dataset's words, as a button that opens its detail row (reachable by keyboard),
   then its store-file pill, then its gap tag, then a warning mark when one of its tables failed a query.
   One line under the table names every store-file pill, so a colour is explained once.
-- **Source** is the provider the registry names, written out: Unusual Whales, Financial Modeling Prep,
-  Yahoo Finance, SEC EDGAR filings, FINRA and the Commodity Futures Trading Commission, Cboe (Chicago
-  Board Options Exchange), FRED (Federal Reserve Economic Data), OpenFIGI, worked out by us from other
-  datasets, entered by hand, the store's own bookkeeping, or "more than one provider, or not known".
+- **Source** is the provider the registry names, written out: Unusual Whales, Yahoo Finance, SEC EDGAR
+  filings, FINRA and the Commodity Futures Trading Commission, Cboe (Chicago Board Options Exchange),
+  FRED (Federal Reserve Economic Data), OpenFIGI, worked out by us from other datasets, entered by
+  hand, the store's own bookkeeping, or "more than one provider, or not known".
   The machine value stays in the row's data attribute for the filters; only the visible text is words.
   That list of provider names is the page's only one: this column, the Board inputs rows (3.5) and the
   data-flow diagram (3.7) all read it, so one provider cannot be called three things on one page. A

@@ -527,7 +527,7 @@ def _quotes_row() -> dict:
     return default
 
 
-_HOLDINGS_PROVIDERS = (("uw", "UW"), ("fmp", "FMP"), ("yfinance", "yfinance"))
+_HOLDINGS_PROVIDERS = (("uw", "UW"), ("yfinance", "yfinance"))
 
 
 def _etf_holdings_row() -> dict:

@@ -224,7 +224,7 @@ different questions:
   `discord_guild` → `RC_DISCORD_GUILD_ID`); an unknown name fails `register`
   at import. Presence only: no request is made and no key value is read, logged
   or returned. A module with `requires=()` is not gated, and neither is an
-  optional provider (fred, fmp, openfigi, deepseek, the subscription gates) —
+  optional provider (fred, openfigi, deepseek, the subscription gates) —
   their absence degrades a board rather than breaking a job.
 - **validity** (`UWClient.verify()`) — one cheap authenticated probe, which
   catches a key that is set but expired. `requires_uw` still decides whether a

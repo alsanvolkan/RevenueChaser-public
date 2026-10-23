@@ -752,7 +752,7 @@ schema, reachable with path expressions like `payload.market_cap::DOUBLE`).
 | `sec13f_edgar_backfill` | `cik`, `period`, `accession`, `fetched_at` | — |
 | `sec13f_ticker_names` | `ticker` (rows as migrated; no writer or reader since #207 retired the name match) | `entry` (`{name, ticker, figi}`) |
 | `cusip_ticker` | `cusip` | `entry` (string `"RTX"` or `{ticker, …}` for rows written before #207; `{ticker, figi, share_class_figi, source, run_at}` from `identity_cusip`; `{ticker, source: "legacy"}` for a legacy entry the prefix fallback kept) |
-| `etf_holdings` | `ticker`, `provider` (`uw`/`fmp`/`yfinance`), `fetched_at DOUBLE` (#303) | `entry` (holdings list) |
+| `etf_holdings` | `ticker`, `provider` (`uw`/`yfinance`), `fetched_at DOUBLE` (#303) | `entry` (holdings list) |
 | `swing_ohlc` | `ticker`, `ts`, `open`/`high`/`low`/`close`/`volume DOUBLE`, `cached_at` | — |
 | `price_bars_daily` | `ticker`, `session_date DATE` (NY session date), `open`/`high`/`low`/`close`/`adj_close`/`volume DOUBLE`, `split_ratio DOUBLE` (always NULL from #156 on; splits are rows of `price_actions`), `adj_source`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE`. Key `(ticker, session_date)`; append (first write of a key wins; v10 key was `(ticker, date)`, rebuilt by the first v11 call with the rows kept) | — |
 | `catalyst_events` | `ticker`, `event_date DATE`, `date_precision`, `kind`, `title`, `source`, `source_event_id`, `source_url`, `confidence`, `nct_id`, `fetched_at DOUBLE`. Key `(source, source_event_id)` | — |

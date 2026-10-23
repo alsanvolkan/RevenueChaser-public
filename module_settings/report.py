@@ -1176,7 +1176,6 @@ def _db_legend() -> str:
 # machine key (``data-source``, the filter chips' ``data-value``); only the visible text is words.
 SOURCE_WORDS = {
     "uw": "Unusual Whales",
-    "fmp": "Financial Modeling Prep",
     "yfinance": "Yahoo Finance",
     "sec": "SEC EDGAR filings",
     "finra/cftc": "FINRA and the Commodity Futures Trading Commission",
