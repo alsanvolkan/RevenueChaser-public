@@ -276,17 +276,25 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
     ``rows_sink`` (a dict) receives the score and gate rows a Fetch persisted (``scores.persist``), for the result
     history; a Refresh persists nothing and leaves it empty.
     """
+    from RevenueChaser.core.providers import yfinance as yfp
+
     from . import scores
     # Without a sink the one-argument call stays as it was (stand-ins of ``scores.persist`` keep working);
     # each of prefilter / build_payload / persist resolves the effective settings (#384 SW-S4) once itself.
     persist = scores.persist if rows_sink is None else (lambda results: scores.persist(results, sink=rows_sink))
-    return screen_common.run_screen(
+    # This Fetch's Yahoo reads only (#80). A Refresh serves the stored payload, which already carries the key.
+    if not no_fetch:
+        yfp.reset_health()
+    payload = screen_common.run_screen(
         board="swing", refreshed_by="Swing Potential", cfg=config,
         load_universe=fetch_universe_stats, prefilter=prefilter,
         load_spy=lambda: screen_common.load_spy(lambda: load_ohlc("SPY", ttl_days=0.5, no_fetch=no_fetch)),
         compute_row=_compute_row, build_payload=build_payload, persist=persist,
         top_n=top_n, refresh_universe=refresh_universe, no_fetch=no_fetch,
         history_board="module_swing_potential", saved=config.SWING_JSON)
+    if not no_fetch:
+        payload["provider_health"] = yfp.health()
+    return payload
 
 
 def save_payload(payload: dict) -> str:

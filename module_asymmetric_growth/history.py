@@ -76,7 +76,7 @@ def record(result: dict, *, run_id: str):
                  "universe_refreshed_by": result.get("universe_refreshed_by"),
                  "universe_partial": bool(result.get("universe_partial")), "summary": summary},
         funnel=result.get("funnel_steps"), warnings=[{"score_error_types": errors}] if errors else None,
-        partial=_partial(result, run_at))
+        partial=_partial(result, run_at), provider_health=result.get("provider_health"))
 
 
 def recorded_sessions(limit: int = SESSIONS_SHOWN) -> list[dict]:

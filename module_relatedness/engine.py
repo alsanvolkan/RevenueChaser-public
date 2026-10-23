@@ -622,6 +622,33 @@ def _payload(profiles: dict[str, dict], thinking: dict[str, dict],
     }
 
 
+def _stored_provider_health() -> dict | None:
+    """The last Fetch's stored health, for a Refresh (no live provider call). None when nothing is recorded."""
+    from RevenueChaser.core import history
+
+    from . import history as rel_history
+
+    try:
+        row = history.last_run(rel_history.BOARD)
+    except Exception:  # noqa: BLE001 - a locked history file never fails the render
+        return None
+    return (row or {}).get("provider_health")
+
+
+def _stop_health(provider: str, reason: str | None, message: str | None) -> dict | None:
+    """The banner's health when this run stopped on a provider failure (#80).
+
+    A peak or allowance stop is a schedule, not a failed call, so it leaves the banner empty. ``auth`` carries
+    HTTP 401 so the banner names a rejected key."""
+    if reason not in ("auth", "transient", "request", "unusable"):
+        return None
+    name = provider or "deepseek"
+    return {"provider": name, "calls": 1, "failed": 1,
+            "auth_error": {"status": 401} if reason == "auth" else None,
+            "failures": [{"endpoint": name, "error": message or reason}],
+            "breaker_open": False, "skipped_calls": 0}
+
+
 class AlreadyRunning(RuntimeError):
     """A Fetch run holds the ``relatedness`` job lock."""
 
@@ -730,6 +757,12 @@ def _run(no_fetch: bool, tickers: list[str] | None, limit: int | None,
         payload["stopped_reason"] = stopped_reason
     if stopped_message:
         payload["error"] = stopped_message
+    # The banner reads this key (#80). A Refresh has no live provider call: the last Fetch's stored health.
+    health = _stop_health(provider, stopped_reason, stopped_message)
+    if health:
+        payload["provider_health"] = health
+    elif no_fetch:
+        payload["provider_health"] = _stored_provider_health()
     if not no_fetch:
         # Refresh is pure: relatedness_scores / run_registry change only on Fetch.
         store.save_scores(payload["peers"])

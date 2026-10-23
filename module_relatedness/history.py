@@ -72,7 +72,8 @@ def record(payload: dict, *, requested: int, run_id: str, run_at: float):
         BOARD, run_id=run_id, run_at=run_at, model_version=model_version(), rows={TABLE: rows},
         params=effective_config(),
         context=context,
-        payload=_without_catalog(payload), partial="; ".join(_problems(payload, rows)) or None)
+        payload=_without_catalog(payload), partial="; ".join(_problems(payload, rows)) or None,
+        provider_health=payload.get("provider_health"))
 
 
 def _without_catalog(payload: dict | None) -> dict | None:

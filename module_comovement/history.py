@@ -79,4 +79,5 @@ def record(payload: dict, *, run_id: str, as_ofs: dict[int, str] | None = None,
                  "n_factors": payload.get("n_factors"), "benchmark_status": payload.get("benchmark_status"),
                  "fetch": payload.get("fetch"),
                  "precompute": {str(k): v for k, v in (precompute or {}).items()}},
-        funnel=payload.get("funnel") or None, warnings=list(warnings or []) or None, partial=partial)
+        funnel=payload.get("funnel") or None, warnings=list(warnings or []) or None, partial=partial,
+        provider_health=payload.get("provider_health"))
