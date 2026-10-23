@@ -4,8 +4,9 @@ An ops inventory, not an equity board: its own filters over the table (a find bo
 source / state chips, #124 G4 — not the equity filter kit), no Theme cascade; one ticker
 combobox (the filter kit's, #383 C1b) opens the stored-data drill. One row per dataset with its
 source, coverage, freshness, newest data date, row count and hole count, then a detail row
-(store table(s), writer, per-dataset Fetch, notes) opened from the dataset's name. Refresh
-re-reads the store with zero network; Fetch enqueues that dataset's async job. See
+(store table(s), writer, per-dataset Fetch, notes) opened from the dataset's name. Below the Board
+inputs, one server-rendered diagram draws every dataset's provider → job → store file (#124 G6b).
+Refresh re-reads the store with zero network; Fetch enqueues that dataset's async job. See
 ``docs/data_health.md`` §2.
 """
 from __future__ import annotations
@@ -13,7 +14,7 @@ from __future__ import annotations
 import html as _html
 from datetime import datetime
 
-from RevenueChaser.core import automations, datasets
+from RevenueChaser.core import automations, datasets, funnel
 from RevenueChaser.core.html_safe import script_json
 from RevenueChaser.core.reporting_common import (
     FILTERS_CSS,
@@ -75,6 +76,28 @@ table.inv .warnv{color:var(--amber)}
 .gap-ceiling{color:var(--red)}
 .gap-self_heals{color:var(--muted)}
 .gap-none{color:var(--neon)}
+/* G6b (#124): the Data Flow picture — provider → job → store file, rendered server-side from the
+   table's own rows. Page weight only: it reads no store and takes no second pass over the registry.
+   A line's colour is its store file (the pills' hues); the legend names the five, so colour is not
+   the only signal. Press a provider or a job to follow its lines, press it again to show all. */
+.flow{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:10px 16px;margin-bottom:14px;overflow-x:auto}
+.flow>summary{cursor:pointer;font-size:15px;font-weight:600;letter-spacing:-.2px}
+.flow .fnote{color:var(--muted);font-size:12.5px;margin:6px 0 10px;max-width:900px}
+.flowsvg{display:block;max-width:100%;height:auto;min-width:760px}
+.flowsvg text{fill:var(--text);font:11.5px/1.2 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.flowsvg .fh{fill:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.flowsvg .flow-node rect{fill:var(--panel2);stroke:var(--border)}
+.flowsvg .flow-node[data-job],.flowsvg .flow-node[data-provider]{cursor:pointer}
+.flowsvg .flow-node:hover rect{stroke:var(--accent)}
+.flowsvg .flow-node:focus-visible rect{stroke:var(--accent);stroke-width:2}
+/* A picked node dims the rest of the picture; the box under the keys stays at full ink, so Tab
+   never lands on a near-invisible control. */
+.flowsvg .flow-node:focus-visible{opacity:1}
+.flowsvg .flow-edge{fill:none;stroke-width:2;opacity:.75}
+.flowsvg .flow-edge.flow-on{opacity:1;stroke-width:3.5}
+.flowsvg .flow-dim{opacity:.15}
+.flowlegend{color:var(--muted);font-size:12px;display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin-top:10px}
+.flowlegend i{display:inline-block;width:18px;height:3px;border-radius:2px;vertical-align:middle;margin-right:5px}
 /* S5 (#124): one closed detail row per dataset; the store tables, writer, action and notes live
    there, and the cell wraps so the table gains no nowrap column. */
 table.inv tr[hidden]{display:none}
@@ -158,6 +181,29 @@ details.fine>summary{cursor:pointer;color:var(--accent);font-size:12.5px;font-we
 .bcard table.mini{width:auto;min-width:300px;margin:0 0 6px}
 .bcard .tag{color:var(--muted);font-size:11.5px;margin-left:6px}
 .bcard ul.srcs{margin:4px 0 8px;padding-left:18px;color:var(--muted);font-size:12.5px}
+/* G6a (#124): the board inputs in the Data Flow artifact's language — provider → dataset → store
+   file, one line per store table the board reads, with the dataset's coverage beside it. */
+.bflow{margin:4px 0 10px;padding:0;list-style:none}
+.bflow-row{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;font-size:12.5px;
+  padding:4px 0;border-bottom:1px dashed var(--border)}
+.bflow-row:last-child{border-bottom:none}
+.bflow-row .arrow{color:var(--muted)}
+.bflow-row .prov{color:var(--muted)}
+.bflow-row .ds{color:var(--text);font-weight:600}
+.bflow-row .notclaimed{color:var(--muted)}
+/* The store file and the coverage sit at the right edge, so the bars of one card line up. */
+.bflow-row .tail{margin-left:auto;display:inline-flex;align-items:center;gap:12px}
+.bflow-row .nowrap{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.bflow-row .covbar{flex:0 0 64px}
+.bcard h4.bflow-cap{margin:10px 0 4px;font-size:11.5px;color:var(--muted);font-weight:600}
+/* S7 (#124): the universe funnel is ``core.funnel``'s shared panel, so its own classes are styled
+   here the way the board's tables are: a small bordered table inside a collapsible panel. */
+.bcard details.rules{border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin:2px 0 8px}
+.bcard details.rules>summary{cursor:pointer;color:var(--accent);font-size:12.5px;font-weight:600}
+.bcard details.rules table{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:6px}
+.bcard details.rules th,.bcard details.rules td{padding:4px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+.bcard details.rules td:nth-child(2){text-align:right;font-variant-numeric:tabular-nums}
+.bcard details.rules .note{color:var(--muted);white-space:normal}
 .st-ok{color:var(--neon)}
 .st-warn{color:var(--amber)}
 .st-bad{color:var(--red)}
@@ -607,6 +653,43 @@ if(document.getElementById('ticker-combo') && typeof RCCombobox !== 'undefined')
 }
 """
 
+# G6b (#124): the Data Flow picture's one behaviour. Press a provider or a job node to follow its
+# lines and dim every other; press it again to clear. Class and aria-pressed toggles only — the
+# diagram itself is server-rendered, so nothing here puts a string into the page. Guarded: a page
+# with no diagram (an empty store) does nothing at all.
+FLOW_JS = r"""
+// G6b (#124): press a provider or a job to follow its lines; press it again to clear.
+(function(){
+  var svg = document.getElementById('flow-svg'), picked = '';
+  if(!svg || !svg.addEventListener) return;
+  function node(ev){ return ev.target && ev.target.closest ? ev.target.closest('[data-node]') : null; }
+  function paint(){
+    var edges = svg.querySelectorAll('.flow-edge'), nodes = svg.querySelectorAll('[data-node]'), keep = {}; keep[picked] = 1;
+    for(var i = 0; i < edges.length; i++){
+      var e = edges[i], a = e.getAttribute('data-a'), b = e.getAttribute('data-b');
+      var on = !!picked && (a === picked || b === picked);
+      if(on){ keep[a] = 1; keep[b] = 1; }
+      e.classList.toggle('flow-on', on); e.classList.toggle('flow-dim', !!picked && !on);
+    }
+    for(var j = 0; j < nodes.length; j++){
+      var id = nodes[j].getAttribute('data-node');
+      nodes[j].classList.toggle('flow-dim', !!picked && !keep[id]);
+      if(nodes[j].getAttribute('aria-pressed') !== null) nodes[j].setAttribute('aria-pressed', picked === id ? 'true' : 'false');
+    }
+  }
+  function pick(g){
+    var id = g.getAttribute('data-node');
+    if(!g.getAttribute('data-job') && !g.getAttribute('data-provider')) return;
+    picked = picked === id ? '' : id; paint();
+  }
+  svg.addEventListener('click', function(ev){ var g = node(ev); if(g) pick(g); });
+  svg.addEventListener('keydown', function(ev){
+    if(ev.key !== 'Enter' && ev.key !== ' ') return;
+    ev.preventDefault(); var g = node(ev); if(g) pick(g);
+  });
+})();
+"""
+
 
 def _friendly(ts) -> str:
     """'Thursday, September 25, 2026 EOD' from an ISO timestamp."""
@@ -862,10 +945,78 @@ def _settings_form(card: dict) -> str:
         f'<span class="fetchmsg" id="msg-set-{board}"></span></div></div>')
 
 
-def _board_card(card: dict) -> str:
+def _provider_name(source) -> str:
+    """The provider in words, from the page's one list of provider names (``SOURCE_WORDS``).
+
+    The dataset table, these board rows and the flow diagram all read that list, so one provider
+    cannot be called three things on one page. A source the list does not know is named as unnamed,
+    never as a wrong name.
+    """
+    key = str(getattr(source, "value", source) or "").strip()
+    if not key:
+        return "Provider not recorded"
+    words = source_words(key.lower())
+    if words == key.lower():
+        return f"Provider not named in the dataset registry ({key})"
+    return words
+
+
+def _board_flows(card: dict, rows_by_key: dict) -> list[dict]:
+    """One line per store table the board reads: its dataset, provider, store file, coverage row.
+
+    The provider, the dataset label and the store file come from the registry index the dataset
+    table already read; the coverage record is the one ``collect()`` attached to that dataset's
+    own row. A render therefore reads the payload it was given and asks the store nothing (the
+    Refresh budget, #124). A table no dataset claims is kept, to be said in words.
+    """
+    flows = []
+    claimed_tables = datasets.tables_claimed()  # the index, read once, never the store
+    for table in card.get("tables") or []:
+        name = str(table)
+        try:
+            spec = datasets.dataset_of_table(name)
+        except KeyError:
+            # ``dataset_of_table`` refuses a table two datasets claim as well as an unknown one, and
+            # those are different facts: say which, so a line never makes a claim that is not true.
+            flows.append({"table": name, "claimed": False,
+                          "shared": name in claimed_tables})
+            continue
+        flows.append({"table": name, "claimed": True, "provider": _provider_name(spec.source),
+                      "dataset": spec.label, "db": spec.db, "row": rows_by_key.get(spec.key)})
+    return flows
+
+
+def _flow_row(flow: dict) -> str:
+    """One source → dataset → store line. Every string here is data, so every string is escaped."""
+    table = _html.escape(flow["table"])
+    if not flow.get("claimed"):
+        words = ("claimed by more than one dataset" if flow.get("shared")
+                 else "not claimed by any dataset")
+        return (f'<li class="bflow-row"><span class="muted">store table</span>'
+                f'<span class="tbl">{table}</span>'
+                f'<span class="arrow" aria-hidden="true">→</span>'
+                f'<span class="notclaimed">{words}</span></li>')
+    pill = _db_pill(flow.get("db"))
+    store = (f'<span class="muted">store file</span> {pill}' if pill
+             else '<span class="muted">no store file named</span>')
+    # The bar and its percentage are the coverage cell of the dataset's own table row, so the two
+    # pages cannot disagree; a dataset with no collected row claims no coverage here.
+    cell = _coverage_cell(flow["row"]) if flow.get("row") else ""
+    cov = (f'<span class="nowrap"><span class="muted">coverage</span> {cell}</span>'
+           if cell else "")
+    return (f'<li class="bflow-row"><span class="prov">{_html.escape(flow["provider"])}</span>'
+            f'<span class="arrow" aria-hidden="true">→</span>'
+            f'<span class="ds">{_html.escape(flow["dataset"])}</span>'
+            f'<span class="tbl">({table})</span>'
+            f'<span class="tail"><span class="nowrap">{store}</span>{cov}</span></li>')
+
+
+def _board_card(card: dict, rows_by_key: dict | None = None) -> str:
     label = _html.escape(str(card.get("label") or card.get("key") or ""))
     state = card.get("state")
-    tables = ", ".join(_html.escape(str(t)) for t in (card.get("tables") or []))
+    flows = _board_flows(card, rows_by_key or {})
+    reads = ('<h4 class="bflow-cap">What this board reads</h4><ul class="bflow">'
+             + "".join(_flow_row(f) for f in flows) + "</ul>") if flows else ""
     params = "".join(f"<li>{_html.escape(str(p))}</li>" for p in (card.get("params") or []))
     win = card.get("window") or {}
     win_txt = " · ".join(f"{_html.escape(k.replace('_', ' '))} {_html.escape(str(v))}"
@@ -891,7 +1042,7 @@ def _board_card(card: dict) -> str:
     # The outer div keeps the id the Co-movement e2e parser keys on.
     body = (
         f"{asof}"
-        f'<div class="kv"><b>Reads</b> {tables}</div>'
+        f"{reads}"
         f'<div class="kv"><b>Price basis</b> {basis}</div>'
         + (f'<div class="kv"><b>Window</b> {win_txt}</div>' if win_txt else "")
         + (f'<ul class="params">{params}</ul>' if params else "")
@@ -902,10 +1053,14 @@ def _board_card(card: dict) -> str:
         f'<div class="bbody">{body}</div></details></div>')
 
 
-def _boards_section(cards: list[dict]) -> str:
+def _boards_section(cards: list[dict], rows: list[dict] | None = None) -> str:
+    """The Board inputs cards. ``rows`` is the inventory's own list, keyed here once so each card
+    can show its datasets' coverage without a second read (G6a, #124)."""
     if not cards:
         return ""
-    return '<h2 class="sec">Board inputs</h2>' + "".join(_board_card(c) for c in cards)
+    by_key = {str(r.get("key") or ""): r for r in (rows or []) if isinstance(r, dict)}
+    return ('<h2 class="sec">Board inputs</h2>'
+            + "".join(_board_card(c, by_key) for c in cards))
 
 
 def _automations_section(rows: list[dict]) -> str:
@@ -1007,6 +1162,224 @@ SOURCE_WORDS = {
 def source_words(value) -> str:
     """The plain-words name of a registry source value; an unlisted value is shown as it is."""
     return SOURCE_WORDS.get(str(value), str(value))
+# ── G6b (#124): the Data Flow picture — provider → job → store file ─────────────────────────────
+# Built from the rows the inventory table already carries, so the diagram costs page weight and
+# never a query: no store read, no second pass over the registry (the Refresh budget is 2.5 s).
+FLOW_TITLE = "Where the data comes from and where it is stored"
+# A dataset the registry gives no writer: no scheduled task writes it, a person starts the Fetch.
+FLOW_BY_HAND = "started by hand from the dashboard"
+# A dataset the registry gives no single provider (its own ``unknown`` value, or none at all).
+FLOW_UNKNOWN_PROVIDER = "unknown provider"
+# A dataset whose store file neither the row nor the registry names. Said, never guessed.
+FLOW_NO_STORE = "no store file recorded"
+# Past this much SVG the <details> starts collapsed, so a much larger registry cannot cost the
+# first paint of the table above it (the brief's 60 KB line). Measured on the SVG alone.
+FLOW_MAX_BYTES = 60_000
+# The inks the edges and store nodes use: the .db-* pills' hues, so a colour means one file
+# everywhere on this board. A file outside the five (or none) draws in the page's muted ink.
+DB_COLORS = {"raw": "#4f8cff", "edgar": "#e0a030", "discord": "#a070e0",
+             "history": "#3cb89a", "prices": "#e06088"}
+FLOW_UNKNOWN_COLOR = "#8a93a6"
+
+
+# The three columns: x, width, header, and the graph key it draws. The gaps hold the edges. A name
+# longer than the column holds is cut at ``FLOW_TEXT_MAX`` and kept in full in its hover title.
+FLOW_COLUMNS = ((8, 260, "Provider", "providers"),
+                (308, 380, "Job that writes it", "jobs"),
+                (728, 180, "Store file", "stores"))
+FLOW_PAD = 8
+FLOW_TOP = 46
+FLOW_ROW = 44
+FLOW_H = 30
+FLOW_W = 916
+# The longest node text the columns hold at 11.5px. Longer names are cut here (the full name stays
+# in the node's hover title), so two columns can never run into each other.
+FLOW_TEXT_MAX = 42
+
+
+def _flow_provider(value) -> str:
+    """The provider's words, from the page's one list of provider names (``SOURCE_WORDS``).
+
+    A value that list does not know is drawn as it stands; a row with no provider at all becomes
+    the ``unknown provider`` node.
+    """
+    name = str(value or "").strip()
+    return source_words(name.lower()) if name else FLOW_UNKNOWN_PROVIDER
+
+
+def _flow_store_order(name: str) -> tuple:
+    """The legend's own order for the five store files, then any other name by its spelling."""
+    return (DB_PILLS.index(name) if name in DB_PILLS else len(DB_PILLS), name.lower())
+
+
+def _flow_nodes(counts: dict[str, int], order) -> list[dict]:
+    return [{"name": name, "count": n} for name, n in sorted(counts.items(), key=lambda kv: order(kv[0]))]
+
+
+def flow_graph(rows: list[dict] | None) -> dict:
+    """The provider → job → store-file graph of the datasets already collected (G6b, #124).
+
+    Pure: it reads the rows and, for a row without its own store file, the registry's record — never
+    the store. Nodes are de-duplicated by their words and every edge counts the datasets that take
+    it, so one line can say how many datasets it carries. The provider name is the registry's
+    ``source`` spelled out, the job is its ``writer`` (``started by hand from the dashboard`` when
+    there is none), and the store file is the row's ``db``, else the registry's.
+    """
+    providers: dict[str, int] = {}
+    jobs: dict[str, int] = {}
+    stores: dict[str, int] = {}
+    edges: dict[tuple[str, str, str], int] = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        provider = _flow_provider(row.get("source"))
+        job = str(row.get("writer") or "").strip() or FLOW_BY_HAND
+        store = _db_of(row) or FLOW_NO_STORE
+        for counted, name in ((providers, provider), (jobs, job), (stores, store)):
+            counted[name] = counted.get(name, 0) + 1
+        edges[(provider, job, store)] = edges.get((provider, job, store), 0) + 1
+    return {
+        "providers": _flow_nodes(providers, str.lower),
+        "jobs": _flow_nodes(jobs, str.lower),
+        "stores": _flow_nodes(stores, _flow_store_order),
+        "edges": [{"provider": p, "job": j, "store": s, "count": n}
+                  for (p, j, s), n in sorted(
+                      edges.items(),
+                      key=lambda kv: (_flow_store_order(kv[0][2]), kv[0][0].lower(), kv[0][1].lower()))],
+    }
+
+
+def _flow_count(n: int) -> str:
+    """``1 dataset`` / ``4 datasets``: the unit is always named."""
+    return f"{n} dataset" if n == 1 else f"{n} datasets"
+
+
+def _flow_words(name: str) -> str:
+    """The node's text in full, cut only past what its column holds; the hover title keeps all of it."""
+    return name if len(name) <= FLOW_TEXT_MAX else name[:FLOW_TEXT_MAX - 1] + "…"
+
+
+def _flow_node(kind: str, name: str, x: int, y: int, width: int, count: int) -> str:
+    """One rounded rectangle. A provider or a job is a real button (keyboard reachable); a store
+    file is not, because pressing it would select nothing a reader could act on."""
+    node_id = _html.escape(f"{kind}:{name}", quote=True)
+    said = f"{name}.duckdb" if kind == "store" and name in DB_PILLS else name
+    title = _html.escape(f"{said} — {_flow_count(count)}")
+    if kind == "store":
+        # The border carries the file's hue. The palette lives in DB_COLORS, so it is written
+        # inline: an inline style outranks the stylesheet's default border, and the five colours
+        # keep one source.
+        return (f'<g class="flow-node" data-node="{node_id}"><title>{title}</title>'
+                f'<rect x="{x}" y="{y}" width="{width}" height="{FLOW_H}" rx="6"'
+                f' style="stroke:{DB_COLORS.get(name, FLOW_UNKNOWN_COLOR)}"/>'
+                f'<text x="{x + 10}" y="{y + 19}">{_html.escape(_flow_words(said))}</text></g>')
+    who = "Provider" if kind == "provider" else "Job"
+    label = _html.escape(f"{who} {name}: {_flow_count(count)}; press to follow its lines", quote=True)
+    attribute = "data-provider" if kind == "provider" else "data-job"
+    return (f'<g class="flow-node" tabindex="0" role="button"'
+            f' {attribute}="{_html.escape(name, quote=True)}" aria-pressed="false"'
+            f' data-node="{node_id}" aria-label="{label}">'
+            f"<title>{title}</title>"
+            f'<rect x="{x}" y="{y}" width="{width}" height="{FLOW_H}" rx="6"/>'
+            f'<text x="{x + 10}" y="{y + 19}">{_html.escape(_flow_words(said))}</text></g>')
+
+
+def _flow_curve(x1: int, y1: int, x2: int, y2: int) -> str:
+    """A cubic path from one column into the next: it leaves and arrives flat, so its ends read clean."""
+    mid = (x1 + x2) // 2
+    return f"M{x1},{y1} C{mid},{y1} {mid},{y2} {x2},{y2}"
+
+
+def _flow_svg(graph: dict) -> str:
+    """The diagram: three columns of rounded rectangles, one cubic line per edge.
+
+    A line's colour is the store file it lands in, and its hover title names the whole way —
+    provider, job, file and the number of datasets — so the colour is never the only signal.
+    """
+    depth = max([len(graph[key]) for key in ("providers", "jobs", "stores")] + [1])
+    height = FLOW_TOP + depth * FLOW_ROW + FLOW_PAD
+    px, pw, _, _ = FLOW_COLUMNS[0]
+    jx, jw, _, _ = FLOW_COLUMNS[1]
+    sx = FLOW_COLUMNS[2][0]
+    centre = {key: {node["name"]: FLOW_TOP + i * FLOW_ROW + FLOW_H // 2
+                    for i, node in enumerate(graph[key])}
+              for key in ("providers", "jobs", "stores")}
+    out = [f'<svg class="flowsvg" id="flow-svg" width="{FLOW_W}" height="{height}"'
+           f' viewBox="0 0 {FLOW_W} {height}" role="group" aria-labelledby="flow-svg-title">',
+           f'<title id="flow-svg-title">{FLOW_TITLE}</title>',
+           "<desc>Providers on the left write through the jobs in the middle into the store files "
+           "on the right. Each line is one provider, one job and one store file; pointing at a line "
+           "names it and says how many datasets take it. Press a provider or a job to follow its "
+           "lines; press it again to show every line.</desc>"]
+    for x, _width, header, _key in FLOW_COLUMNS:
+        out.append(f'<text class="fh" x="{x + 2}" y="22">{header}</text>')
+    segments = []
+    total: dict[tuple[str, str], int] = {}
+    for edge in graph["edges"]:
+        colour = DB_COLORS.get(edge["store"], FLOW_UNKNOWN_COLOR)
+        store = f"{edge['store']}.duckdb" if edge["store"] in DB_PILLS else edge["store"]
+        said = _html.escape(f"{edge['provider']} → {edge['job']} → {store} · "
+                            f"{_flow_count(edge['count'])}")
+        provider_y = centre["providers"][edge["provider"]]
+        job_y = centre["jobs"][edge["job"]]
+        store_y = centre["stores"][edge["store"]]
+        for start, start_y, end, end_y, x1, x2 in (
+                (f"provider:{edge['provider']}", provider_y, f"job:{edge['job']}", job_y, px + pw, jx),
+                (f"job:{edge['job']}", job_y, f"store:{edge['store']}", store_y, jx + jw, sx)):
+            segments.append((start, end, start_y, end_y, x1, x2, colour, said))
+            total[(start, end)] = total.get((start, end), 0) + 1
+    # Two flows that take the same pair of boxes would draw one exact line over the other, and the
+    # later colour would hide the earlier one. Each duplicate is nudged sideways, and the nudge
+    # shrinks as the bundle grows so every line stays inside the box it leaves and enters.
+    seen: dict[tuple[str, str], int] = {}
+    for start, end, start_y, end_y, x1, x2, colour, said in segments:
+        index = seen.get((start, end), 0)
+        seen[(start, end)] = index + 1
+        count = total[(start, end)]
+        if count > 1:
+            shift = (index - (count - 1) / 2) * min(5.0, 24 / (count - 1))
+            start_y, end_y = round(start_y + shift, 1), round(end_y + shift, 1)
+        out.append(f'<path class="flow-edge" {_attr("data-a", start)} {_attr("data-b", end)}'
+                   f' stroke="{colour}" d="{_flow_curve(x1, start_y, x2, end_y)}">'
+                   f"<title>{said}</title></path>")
+    for key, kind in (("providers", "provider"), ("jobs", "job"), ("stores", "store")):
+        x, width = next((c[0], c[1]) for c in FLOW_COLUMNS if c[3] == key)
+        out.extend(_flow_node(kind, node["name"], x, FLOW_TOP + i * FLOW_ROW, width, node["count"])
+                   for i, node in enumerate(graph[key]))
+    out.append("</svg>")
+    return "".join(out)
+
+
+def _flow_legend(store_names: list[str]) -> str:
+    """The five store files in the pills' own hues, so a line's colour is named once (G2's palette)."""
+    items = "".join(f'<span id="flow-store-{db}"><i style="background:{DB_COLORS[db]}"></i>'
+                    f"{db}.duckdb</span>" for db in DB_PILLS)
+    extra = ("" if all(name in DB_PILLS for name in store_names) else
+             f'<span id="flow-store-unknown"><i style="background:{FLOW_UNKNOWN_COLOR}"></i>'
+             "a grey line means the registry names no store file, or names one outside the five</span>")
+    return (f'<div class="flowlegend" id="flow-legend"><b>Line colour is the store file:</b>'
+            f"{items}{extra}</div>")
+
+
+def _flow_section(rows: list[dict] | None) -> str:
+    """The Data Flow picture, under Board inputs (G6b, #124).
+
+    Rendered from ``rows`` alone — the rows the table already collected — so it adds bytes to the
+    page and nothing to Refresh. No rows means no section at all rather than an empty frame; a
+    diagram past ``FLOW_MAX_BYTES`` starts collapsed, so the table above always paints first.
+    """
+    graph = flow_graph(rows)
+    if not graph["edges"]:
+        return ""
+    svg = _flow_svg(graph)
+    opened = " open" if len(svg.encode("utf-8")) <= FLOW_MAX_BYTES else ""
+    return (
+        f'<section id="data-flow"><details class="flow"{opened}>'
+        f"<summary>{FLOW_TITLE}</summary>"
+        '<div class="fnote">Every dataset in the table above, drawn as the provider it comes from, '
+        "the job that writes it, and the store file it lands in. Press a provider or a job to "
+        "follow its lines; press it again to show every line.</div>"
+        f"{svg}{_flow_legend([node['name'] for node in graph['stores']])}</details></section>")
 
 
 def _source_cells(row: dict) -> tuple[str, str, str]:
@@ -1339,6 +1712,81 @@ def _other_tables_section(rows: list[dict] | None) -> str:
         '<div class="asof" id="other-tables-note">These store tables are not claimed by any dataset '
         "yet, so they carry no source and no coverage.</div>"
         f'{_mini_table(["Table", "Store file", "Rows", "Newest date"], body)}'
+        "</div></section>")
+
+
+# ── S7 of the Data Health plan (#124): "Identity coverage" ───────────────────────────────────
+# Three objects in one card, every number from ``inventory.identity_coverage``: the universe
+# funnel (``core.funnel``'s shared panel), the inputs the surviving names carry, and the identifier
+# matrix. A row whose read failed says "could not be read"; a number the store holds no denominator
+# for says "not measured" — a zero is only ever a real zero.
+_STATE_WORDS = {"unreadable": "could not be read", "unmeasured": "not measured"}
+_STATE_CLASSES = {"unreadable": "warnv", "unmeasured": "muted"}
+
+
+def _share_text(covered, expected) -> str:
+    """The share of a coverage row, as a whole percentage; ``—`` when there is nothing to divide."""
+    if not isinstance(covered, int) or not isinstance(expected, int) or expected <= 0:
+        return DASH
+    return f"{covered / expected:.0%}"
+
+
+def _covered_cell(row: dict) -> str:
+    """The covered (or count) cell: the number, or the words that say why there is none."""
+    state = str(row.get("state") or "")
+    if state:
+        words = _STATE_WORDS.get(state, state)
+        return f'<span class="{_STATE_CLASSES.get(state, "muted")}">{_html.escape(words)}</span>'
+    covered = row.get("covered")
+    return f"{int(covered):,}" if isinstance(covered, int) else DASH
+
+
+def _coverage_table(rows: list[dict], heads: tuple[str, str]) -> str:
+    """One coverage table: label (with its detail), the count, its denominator and the share."""
+    body = []
+    for row in rows:
+        label = _html.escape(str(row.get("label") or DASH))
+        detail = str(row.get("detail") or "").strip()
+        if detail:
+            label += f'<span class="hlabel">{_html.escape(detail)}</span>'
+        body.append(
+            f'<tr><td>{label}</td>'
+            f'<td class="num" id="cov-{_html.escape(str(row.get("key") or ""), quote=True)}">'
+            f'{_covered_cell(row)}</td>'
+            f'<td>{_html.escape(str(row.get("denominator") or DASH))}</td>'
+            f'<td class="num">{_html.escape(_share_text(row.get("covered"), row.get("expected")))}</td></tr>')
+    return _mini_table([*heads, "Out of", "Share"], body)
+
+
+def _identity_coverage_section(cov: dict | None) -> str:
+    """S7 (#124): the identity coverage card — the funnel, the inputs, the identifiers.
+
+    Nothing for a payload without the section, so a store that has not built it renders no heading.
+    """
+    if not cov:
+        return ""
+    kept = cov.get("names_kept")
+    kept_text = (f"the {int(kept):,} name{'s' if int(kept) != 1 else ''} the boards screen"
+                 if isinstance(kept, int) else "the names the boards screen")
+    funnel_html = funnel.funnel_panel_html(
+        cov.get("funnel"), panel_id="identity-funnel",
+        summary="Every drop from the SEC file to the names the boards screen")
+    if not funnel_html:
+        reason = str(cov.get("funnel_note") or "not measured")
+        funnel_html = f'<div class="asof" id="identity-funnel-note">{_html.escape(reason)}</div>'
+    return (
+        '<section id="identity-coverage"><div class="bcard" id="identity-coverage-card">'
+        "<h3>Identity coverage</h3>"
+        '<div class="asof" id="identity-coverage-note">How far the stored identity data reaches, '
+        "name by name. The funnel starts at the SEC ticker and exchange file and ends at "
+        f"{_html.escape(kept_text)}; the two tables below count each input and each identifier over "
+        "those names.</div>"
+        "<h4>Where names drop out of the universe</h4>"
+        f"{funnel_html}"
+        "<h4>How many names carry each input</h4>"
+        f"{_coverage_table(cov.get('inputs') or [], ('Input', 'Names covered'))}"
+        "<h4>Identifier coverage</h4>"
+        f"{_coverage_table(cov.get('identifiers') or [], ('Identifier', 'Count'))}"
         "</div></section>")
 
 
@@ -1693,11 +2141,13 @@ def render_settings_dashboard(payload: dict) -> str:
     )
 
     identity_html = _identity_card(payload.get("identity"))
+    identity_coverage_html = _identity_coverage_section(payload.get("identity_coverage"))
     other_tables_html = _other_tables_section(payload.get("other_tables"))
     discord_html = _discord_card(payload.get("discord"))
     backups_html = _backups_card(payload.get("backups"))
     errors_html = _errors_list(payload.get("errors") or [])
-    boards_html = _boards_section(payload.get("boards") or [])
+    boards_html = _boards_section(payload.get("boards") or [], rows)
+    flow_html = _flow_section(rows)
     automations = payload.get("automations") or []
     automations_html = _automations_section(automations)
     automations_js = (AUTOMATIONS_JS + AUTOMATIONS_BOOT) if automations else ""
@@ -1725,6 +2175,7 @@ def render_settings_dashboard(payload: dict) -> str:
   {_summary_tiles(rows, payload)}
   {drill}
   {body}
+  {identity_coverage_html}
   {other_tables_html}
   {identity_html}
   {discord_html}
@@ -1732,12 +2183,14 @@ def render_settings_dashboard(payload: dict) -> str:
   {backups_html}
   {automations_html}
   {boards_html}
+  {flow_html}
 </div>
 <script>{FILTERS_JS}</script>
 <script>
 var DATA = {data_json};
 var AUTOMATIONS = {script_json(automations)};
 {JS}
+{FLOW_JS}
 {DRILL_JS}
 {automations_js}
 </script>

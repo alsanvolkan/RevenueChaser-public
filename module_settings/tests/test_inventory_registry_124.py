@@ -13,7 +13,7 @@ import pytest
 
 from RevenueChaser.core import datasets, rawstore
 from RevenueChaser.core.datahealth import Health
-from RevenueChaser.module_settings import inventory
+from RevenueChaser.module_settings import inventory, report
 
 
 def _spec(key: str, **over) -> datasets.DatasetSpec:
@@ -341,6 +341,22 @@ def test_a_two_query_coverage_spec_is_not_evaluated_and_reads_n_a(monkeypatch):
     assert errors == []
 
 
+# ── G6a (#124): the board card reads the coverage the inventory already attached ─────────────
+def test_a_board_card_draws_the_coverage_collect_already_attached(monkeypatch):
+    """The card's bar is the dataset row's own record — the card never reads the store itself."""
+    healthy = Health(covered=812, expected=905, newest=None, expected_as_of=None)
+    monkeypatch.setitem(datasets._BY_KEY, "price_bars",
+                        _spec("price_bars", coverage=lambda: healthy))
+    rows, errors = _attach([_row("price_bars")])
+    assert errors == []
+    card = {"key": "module_swing_potential", "label": "Swing", "tables": ["price_bars_daily"],
+            "price_basis": "", "params": [], "funnel_steps": [], "state": "ok", "error": None}
+    html = report._boards_section([card], rows)
+    assert 'class="covbar st-warn"' in html
+    assert "812 / 905 (90%)" in html
+    assert "Unusual Whales" in html and 'class="db db-prices"' in html
+
+
 # ── G5 (#124): the seconds the collect took, so the board can print them ─────────────────────
 def test_collect_reports_a_non_negative_number_of_seconds(rawstore_tmp_db):
     seconds = inventory.collect()["timing"]["collect_seconds"]
@@ -465,3 +481,29 @@ def test_cftc_waits_on_a_decision_and_names_the_backfill_issue():
     assert row["gap_kind"] == "needs_decision"
     assert "#119" in row["next_step"]
     assert "fresh but shallow" in row["next_step"]
+
+
+# ── S7 of the Data Health plan (#124): identity coverage ─────────────────────
+def test_the_payload_carries_the_identity_coverage_over_the_classification_universe(rawstore_tmp_db):
+    """The section is built in ``_collect`` from the one universe the rest of the page counts.
+
+    The funnel's last step is that list's own length, so the section cannot drift to a second
+    population when a filter changes.
+    """
+    from RevenueChaser.core import universe
+    rawstore.write_rows("equity_universe", [
+        {"ticker": "AAPL", "market_cap": 3.0e9, "name": "Apple"},
+        {"ticker": "TINY", "market_cap": 1.0e6, "name": "Below The Floor"},
+    ])
+    rawstore.write_rows("sec_exchange_file", [
+        {"ticker": "AAPL", "cik": "0000320193", "name": "Apple", "exchange": "Nasdaq",
+         "status": "present", "run_at": 1.0},
+        {"ticker": "TINY", "cik": "0000000002", "name": "Below The Floor", "exchange": "NYSE",
+         "status": "present", "run_at": 1.0},
+    ])
+    cov = inventory.collect(now=_NOW)["identity_coverage"]
+    kept = universe.classification_universe()
+    assert sorted(kept) == ["AAPL"]
+    assert cov["names_kept"] == 1
+    assert cov["funnel"][-1]["kind"] == "result" and cov["funnel"][-1]["count"] == 1
+    assert cov["funnel"][0]["kind"] == "start" and cov["funnel"][0]["count"] == 2
