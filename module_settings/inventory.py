@@ -1420,6 +1420,39 @@ def _attach_registry(rows: list[dict]) -> list[dict]:
     return rows
 
 
+# ── "Other store tables" (S6 of the Data Health plan, #124) ─────────────────────────────────────
+# The backstop for a MANIFEST table no dataset claims. Normally empty: ``core.datasets`` claims
+# every table, and ``core/tests/test_datasets.py`` pins that. If a table ever escapes the
+# registry, this section says so in plain words instead of the table vanishing from the board.
+#
+# The column names this store writes a date or a timestamp into. An unclaimed table shows its
+# newest value only when it carries one of them; a table with none of them says "no time column"
+# rather than guessing at a date.
+TIME_COLUMNS: tuple[str, ...] = (
+    "run_at", "fetched_at", "checked_at", "generated_at", "updated_at", "started_at", "finished_at",
+    "last_seen", "session_date", "filed", "period_end", "period", "as_of", "ex_date", "ts",
+)
+
+
+def unclaimed_tables() -> list[dict]:
+    """Every MANIFEST table no dataset claims (S6, #124): store file, row count, newest date.
+
+    One entry per table, ordered by name, read per store file through the usual helpers. ``newest``
+    is ``None`` when the table carries no known time column. With nothing unclaimed this asks the
+    store nothing at all: an empty section must not cost a query.
+    """
+    names = datasets.unclaimed(rawstore.MANIFEST)
+    if not names:
+        return []
+    out = []
+    for table in sorted(names):
+        columns = [c for c in TIME_COLUMNS if c in _existing_columns(table)]
+        newest = _max_date(*[(table, c) for c in columns]) if columns else DASH
+        out.append({"table": table, "db": _db_of(table), "rows": _count(table),
+                    "newest": None if newest == DASH else newest})
+    return out
+
+
 def sort_key(row: dict) -> tuple:
     """The table's default order: worst coverage first, a row with none after the known ones.
 
@@ -1613,6 +1646,9 @@ def _collect(now: datetime) -> dict:
         "automations": automations.static_rows(),
         "discord": _discord_readiness(),
         "backups": _backups(now),
+        # S6 (#124): the backstop for a MANIFEST table no dataset claims. Built before the errors
+        # list, so a failed read here is reported like any other.
+        "other_tables": unclaimed_tables(),
         "errors": list(getattr(_CALL, "errors", None) or []),
         "generated_at": now.isoformat(timespec="seconds"),
         "provider_health": _provider_health(),

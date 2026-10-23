@@ -7,6 +7,7 @@ coverage first. Store only: the seeded store is a temp DuckDB, no provider is as
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timezone
 
 import pytest
 
@@ -220,3 +221,69 @@ def test_collect_measures_the_clock_around_the_collect(monkeypatch, rawstore_tmp
 
     monkeypatch.setattr(inventory, "time", _Clock())
     assert inventory.collect()["timing"] == {"collect_seconds": 2.5}
+
+# ── S6 of the Data Health plan (#124): "Other store tables" ─────────────────────────────────
+# The backstop for a MANIFEST table no dataset claims. Empty today (the registry claims every
+# table); a registry hole must be reported with the store file it lives in, its row count and its
+# newest date — and an empty set must cost the store no query at all.
+_NOW = datetime(2026, 9, 25, 20, 0, tzinfo=timezone.utc)
+
+
+def _leave_unclaimed(monkeypatch, *tables: str) -> None:
+    """Act as if the registry forgot ``tables`` (the real registry claims every one of them)."""
+    claimed = datasets.tables_claimed() - set(tables)
+    monkeypatch.setattr(datasets, "tables_claimed", lambda: claimed)
+
+
+def test_unclaimed_tables_asks_the_store_nothing_when_every_table_is_claimed(monkeypatch):
+    """Empty is the normal state, and it must not cost a query."""
+    def boom(*_args, **_kwargs):
+        raise AssertionError("unclaimed_tables read the store although no table is unclaimed")
+
+    assert datasets.unclaimed(rawstore.MANIFEST) == frozenset(), \
+        "core.datasets must keep claiming every MANIFEST table"
+    # The read helpers this function would use, not only rawstore.query: a failing query is caught
+    # and recorded inside them, so a swallowed raise there would let a read through unnoticed.
+    for name in ("_count", "_existing_columns", "_max_date"):
+        monkeypatch.setattr(inventory, name, boom)
+    monkeypatch.setattr(rawstore, "query", boom)
+    assert inventory.unclaimed_tables() == []
+
+
+def test_an_unclaimed_table_is_reported_with_its_store_file_rows_and_newest_date(rawstore_tmp_db,
+                                                                                monkeypatch):
+    rawstore.write_rows("chain_filings", [
+        {"ticker": "AAPL", "cik": "1", "form": "10-K", "filed": "2026-03-01"},
+        {"ticker": "MU", "cik": "2", "form": "10-K", "filed": "2026-01-15"},
+    ])
+    _leave_unclaimed(monkeypatch, "chain_filings")
+    assert inventory.unclaimed_tables() == [
+        {"table": "chain_filings", "db": "edgar", "rows": 2, "newest": "2026-03-01"}]
+
+
+def test_a_table_with_no_time_column_reports_no_newest_date(rawstore_tmp_db, monkeypatch):
+    """``watchlist`` carries only a ticker: there is no date to read, so none is invented."""
+    rawstore.write_rows("watchlist", [{"ticker": "AAPL"}, {"ticker": "MU"}])
+    _leave_unclaimed(monkeypatch, "watchlist")
+    assert inventory.unclaimed_tables() == [
+        {"table": "watchlist", "db": "raw", "rows": 2, "newest": None}]
+
+
+def test_several_unclaimed_tables_are_listed_by_name_and_an_empty_one_counts_zero(rawstore_tmp_db,
+                                                                                 monkeypatch):
+    rawstore.write_rows("watchlist", [{"ticker": "AAPL"}])
+    _leave_unclaimed(monkeypatch, "watchlist", "store_meta")
+    got = inventory.unclaimed_tables()
+    assert [r["table"] for r in got] == ["store_meta", "watchlist"]
+    assert got[0]["rows"] == 0 and got[0]["newest"] is None
+
+
+def test_the_payload_carries_the_other_tables_list(rawstore_tmp_db):
+    assert inventory.collect(now=_NOW)["other_tables"] == []
+
+
+def test_the_payload_carries_an_unclaimed_table(rawstore_tmp_db, monkeypatch):
+    rawstore.write_rows("watchlist", [{"ticker": "AAPL"}])
+    _leave_unclaimed(monkeypatch, "watchlist")
+    assert inventory.collect(now=_NOW)["other_tables"] == [
+        {"table": "watchlist", "db": "raw", "rows": 1, "newest": None}]

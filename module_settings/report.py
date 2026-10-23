@@ -1154,6 +1154,34 @@ def _table(rows: list[dict], errors: list[dict] | None = None) -> str:
         + _db_legend())
 
 
+def _other_tables_section(rows: list[dict] | None) -> str:
+    """S6 (#124): the store tables no dataset claims, with a row count and newest date only.
+
+    An empty list renders nothing at all — no heading, no empty table: the honest intermediate
+    state says nothing when there is nothing to say. The sentence states plainly that these
+    tables carry no source and no coverage, because the inventory table above cannot speak
+    for them.
+    """
+    if not rows:
+        return ""
+    body = []
+    for row in rows:
+        db = str(row.get("db") or "")
+        newest = row.get("newest")
+        body.append(
+            f'<tr><td>{_html.escape(str(row.get("table") or DASH))}</td>'
+            f'<td>{_html.escape(f"{db}.duckdb") if db else DASH}</td>'
+            f'<td class="num">{_fmt_rows(row.get("rows"))}</td>'
+            f'<td>{_html.escape(str(newest)) if newest else "no time column"}</td></tr>')
+    return (
+        '<section id="other-tables"><div class="bcard" id="other-store-tables">'
+        "<h3>Other store tables</h3>"
+        '<div class="asof" id="other-tables-note">These store tables are not claimed by any dataset '
+        "yet, so they carry no source and no coverage.</div>"
+        f'{_mini_table(["Table", "Store file", "Rows", "Newest date"], body)}'
+        "</div></section>")
+
+
 def _day(ts) -> str:
     """``2026-09-30`` from an ISO timestamp; ``—`` when empty. Plain text: the caller escapes it."""
     text = str(ts or "").strip()
@@ -1469,6 +1497,7 @@ def render_settings_dashboard(payload: dict) -> str:
     )
 
     identity_html = _identity_card(payload.get("identity"))
+    other_tables_html = _other_tables_section(payload.get("other_tables"))
     discord_html = _discord_card(payload.get("discord"))
     backups_html = _backups_card(payload.get("backups"))
     errors_html = _errors_list(payload.get("errors") or [])
@@ -1500,6 +1529,7 @@ def render_settings_dashboard(payload: dict) -> str:
   {_summary_tiles(rows, payload)}
   {drill}
   {body}
+  {other_tables_html}
   {identity_html}
   {discord_html}
   {errors_html}

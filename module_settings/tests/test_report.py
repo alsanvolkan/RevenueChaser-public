@@ -2137,3 +2137,45 @@ def test_the_summary_tiles_sit_above_the_table_with_their_labels_and_no_script()
     assert 'role="group"' in block and 'aria-labelledby="tile-datasets"' in block
     assert 'aria-labelledby="tile-refresh-took"' in block
     assert "<script" not in block.lower() and "onclick" not in block.lower()
+
+# ── S6 of the Data Health plan (#124): "Other store tables" ─────────────────────────────────
+# Every MANIFEST table no dataset claims, with its row count and newest date only. Normally
+# empty (S3 claims them all), so the section is the honest intermediate state and the backstop.
+_OTHER_SENTENCE = ("These store tables are not claimed by any dataset yet, so they carry no "
+                   "source and no coverage.")
+
+
+def _other_section(html: str) -> str:
+    start = html.index('id="other-tables"')
+    return html[start:].split("</section>")[0]
+
+
+def test_no_other_store_tables_section_when_nothing_is_unclaimed():
+    for payload in (_payload(), dict(_payload(), other_tables=[])):
+        html = report.render_settings_dashboard(payload)
+        assert "Other store tables" not in html, "an empty list renders no heading"
+        assert "not claimed by any dataset" not in html
+
+
+def test_the_other_store_tables_section_names_the_table_store_file_rows_and_newest_date():
+    p = dict(_payload(), other_tables=[
+        {"table": "chain_filings", "db": "edgar", "rows": 3278, "newest": "2026-03-01"},
+        {"table": "watchlist", "db": "raw", "rows": 2, "newest": None},
+    ])
+    html = report.render_settings_dashboard(p)
+    section = _other_section(html)
+    assert "Other store tables" in section
+    assert _OTHER_SENTENCE in section
+    assert _thead_cells(section) == ["Table", "Store file", "Rows", "Newest date"]
+    assert "chain_filings" in section and "edgar.duckdb" in section
+    assert "3,278" in section and "2026-03-01" in section
+    assert "watchlist" in section and "raw.duckdb" in section
+    assert "no time column" in section, "a table with no date column says so in plain words"
+
+
+def test_the_other_store_tables_section_escapes_its_cells():
+    bad = "<img src=x onerror=__x(1)>"
+    p = dict(_payload(), other_tables=[{"table": bad, "db": bad, "rows": 1, "newest": bad}])
+    section = _other_section(report.render_settings_dashboard(p))
+    assert "<img" not in section
+    assert section.count("&lt;img src=x onerror=__x(1)&gt;") == 3
