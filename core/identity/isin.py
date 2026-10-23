@@ -48,7 +48,7 @@ def luhn_ok(isin: str) -> bool:
         return False
     try:
         return luhn_digit(isin[:-1].upper()) == int(isin[-1])
-    except TypeError:
+    except (TypeError, ValueError):
         return False
 
 

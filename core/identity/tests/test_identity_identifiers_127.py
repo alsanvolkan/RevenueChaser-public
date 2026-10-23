@@ -200,3 +200,18 @@ def test_an_old_changes_table_gains_the_identifier_columns(rawstore_tmp_db):
     assert all(col in cols for col in ID_COLS)
     got = rawstore.query("SELECT cusip, cusip_source FROM security_master_changes WHERE ticker = 'AAPL'")
     assert got == [{"cusip": "037833100", "cusip_source": "openfigi_13f"}]
+
+
+def test_a_cusip_with_a_character_above_latin1_never_aborts_the_tie():
+    """The tie used chr(255 - ord(c)) once and raised on a character above U+00FF; a bad row stays in the append-only
+    identity_cusip, so every later identity run would have failed. The date is picked first, then the lowest CUSIP."""
+    weird = "03783310\u0416"
+    cmap = {
+        weird: {"ticker": "AAA", "valid_from": "2026-10-10"},
+        "037833100": {"ticker": "AAA", "valid_from": "2026-10-10"},
+        "594918104": {"ticker": "BBB", "valid_from": None},
+        "88160R101": {"ticker": "BBB", "valid_from": None},
+    }
+    out = ticker_identifiers(cmap)
+    assert out["AAA"]["cusip"] == "037833100"       # same date: the lowest CUSIP
+    assert out["BBB"]["cusip"] == "594918104"       # no dates at all: the lowest CUSIP

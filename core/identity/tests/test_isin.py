@@ -55,3 +55,9 @@ def test_blank_and_non_strings_are_none():
 
 def test_lowercase_is_accepted_when_the_cusip_is_otherwise_valid():
     assert from_cusip("02079k107") == "US02079K1079"
+
+
+def test_luhn_ok_is_false_for_characters_outside_the_alphabet_instead_of_raising():
+    """A body that is not A-Z/0-9 (a stray symbol or a non-Latin letter) is not an ISIN, and must not raise."""
+    for bad in ("US037833-1005", "US0378\u0416\u04161005", "US\u00e9378331005"):
+        assert luhn_ok(bad) is False
