@@ -71,7 +71,11 @@ def test_the_scratch_root_is_recorded_when_this_process_created_it():
     conftest = _live_conftest()
     if _inherited():
         assert conftest.SCRATCH_ROOT is None, "an inherited root must not be claimed for removal"
-        assert Path(os.environ["RC_STORE_DIR"]).parent.name.startswith("rc-pytest-")
+        if os.environ.get("RC_PYTEST_SCRATCH_OWNER"):
+            # Inherited from another conftest (an xdist worker), so it is one of ours.
+            assert Path(os.environ["RC_STORE_DIR"]).parent.name.startswith("rc-pytest-")
+        # No marker means a developer pointed RC_STORE_DIR at their own directory. It can be named
+        # anything; all that matters is that the conftest did not claim it above.
     else:
         assert conftest.SCRATCH_ROOT is not None, "the conftest must remember the root it created"
         assert Path(conftest.SCRATCH_ROOT).name.startswith("rc-pytest-")
