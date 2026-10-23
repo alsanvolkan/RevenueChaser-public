@@ -1003,6 +1003,33 @@ def _drill_rows(detail: dict) -> str:
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
+def test_the_drill_shows_d01_bars_when_the_legacy_cache_is_empty():
+    """The number the drill shows is D01, not swing_ohlc. Empty cache must not read 'no bars'."""
+    html = _drill_rows({
+        "name": "Nvidia",
+        "presence": {
+            "price_bars_daily": {"bars": 3, "newest": "2026-02-02"},
+            "swing_ohlc": {"bars": 0, "newest": None},
+        },
+    })
+    assert ('<span class="dlbl">Daily price bars</span>'
+            '<span class="dval">3 bars · newest 2026-02-02</span>' in html)
+    assert "Daily OHLC" not in html
+
+
+def test_the_drill_shows_zero_d01_and_the_legacy_count_under_its_label():
+    html = _drill_rows({
+        "name": "SPY",
+        "presence": {
+            "price_bars_daily": {"bars": 0, "newest": None},
+            "swing_ohlc": {"bars": 4, "newest": "2026-02-02"},
+        },
+    })
+    assert '<span class="dlbl">Daily price bars</span><span class="dval">no bars</span>' in html
+    assert ('<span class="dlbl">Legacy OHLC cache (SPY fallback)</span>'
+            '<span class="dval">4 bars · newest 2026-02-02</span>' in html)
+
+
 def test_the_drill_shows_the_sector_and_the_industry_text():
     """#266: Sector and Industry rows; the industry group and sub-industry rows are gone."""
     html = _drill_rows({"name": "Micron", "sector": "Technology", "industry": "Semiconductors",

@@ -315,6 +315,7 @@ function drillCap(cap){
 }
 function drillFill(d){
   var p = d.presence || {};
+  var d01 = p.price_bars_daily || {};
   var swing = p.swing_ohlc || {};
   var f = d.filing;
   var filing = f
@@ -331,7 +332,9 @@ function drillFill(d){
     + drillRow('SIC', sic)
     + drillRow('Last 10-K / 20-F', filing)
     + drillRow('Companyfacts', p.edgar_financials ? 'present' : 'missing')
-    + drillRow('Daily OHLC', swing.bars
+    + drillRow('Daily price bars', d01.bars
+        ? (d01.bars + ' bars · newest ' + (d01.newest || '—')) : 'no bars')
+    + drillRow('Legacy OHLC cache (SPY fallback)', swing.bars
         ? (swing.bars + ' bars · newest ' + (swing.newest || '—')) : 'no bars')
     + drillRow('OIPD chain', p.oipd_meta ? 'present' : 'missing')
     + drillRow('Relatedness profile', p.relatedness_profiles ? 'present' : 'missing');
