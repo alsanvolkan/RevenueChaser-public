@@ -33,16 +33,17 @@ PERIODIC = {"10-K", "10-Q", "10-K405", "10-KT", "20-F", "40-F", "6-K", "N-CSR", 
 _SHELL_ITEM = "5.06"     # 8-K item 5.06: change in shell company status
 
 
-def exchange_map(attempts: int | None = None) -> SourceResult:
+def exchange_map(attempts: int | None = None, headers_out: dict | None = None) -> SourceResult:
     """``company_tickers_exchange.json``: one row per listed ticker (ticker, cik, name, exchange).
 
     An empty or malformed body is an error, never an empty ok: the SEC map is never empty,
     so an empty one means the fetch failed quietly. ``attempts`` caps the requests (see
-    ``sec_edgar._request``); the nightly SEC-file step passes 1 (#301).
+    ``sec_edgar._request``); the nightly SEC-file step passes 1 (#301). ``headers_out`` receives the response
+    headers (the step reports the file's ``Last-Modified``).
     """
     try:
         body = sec_edgar.get_json(f"{sec_edgar.SEC_WWW_BASE}/files/company_tickers_exchange.json",
-                                  attempts=attempts)
+                                  attempts=attempts, headers_out=headers_out)
         fields, data = body["fields"], body["data"]
         idx = {name: fields.index(name) for name in ("cik", "name", "ticker", "exchange")}
         rows: dict[str, dict] = {}
@@ -58,14 +59,15 @@ def exchange_map(attempts: int | None = None) -> SourceResult:
         return fail(EXCHANGE_SOURCE, exc)
 
 
-def fund_map(attempts: int | None = None) -> SourceResult:
+def fund_map(attempts: int | None = None, headers_out: dict | None = None) -> SourceResult:
     """``company_tickers_mf.json`` (#301, D8): one row per fund share class (class_id, cik, series_id, symbol).
 
     Rows are keyed by classId; a row without one is dropped and a repeated one keeps its first row. An empty
-    symbol is ``None``. An empty or malformed body is an error, as for ``exchange_map``.
+    symbol is ``None``. An empty or malformed body is an error, as for ``exchange_map``; ``headers_out`` is too.
     """
     try:
-        body = sec_edgar.get_json(f"{sec_edgar.SEC_WWW_BASE}/files/company_tickers_mf.json", attempts=attempts)
+        body = sec_edgar.get_json(f"{sec_edgar.SEC_WWW_BASE}/files/company_tickers_mf.json", attempts=attempts,
+                                  headers_out=headers_out)
         fields, data = body["fields"], body["data"]
         idx = {name: fields.index(name) for name in ("cik", "seriesId", "classId", "symbol")}
         rows: dict[str, dict] = {}

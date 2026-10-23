@@ -1,6 +1,7 @@
 """Settings inventory: counts, last dates and holes, computed store-only."""
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timezone
 
 import pytest
@@ -121,8 +122,8 @@ def _seed_detail():
          "price": 110.0, "sector": "Technology", "industry": "Semiconductors"},
         {"ticker": "AAPL", "market_cap": 3.0e12, "name": "Apple Inc."},
     ])
-    rawstore.write_rows("sec_company_tickers", [
-        {"ticker": "MU", "cik": "0000723125", "name": "Micron Technology"},
+    rawstore.write_rows("sec_exchange_file", [
+        {"ticker": "MU", "cik": "0000723125", "name": "Micron Technology", "status": "present", "run_at": 1.0},
     ])
     rawstore.write_rows("sec_company_sic", [
         {"ticker": "MU", "cik": "0000723125", "sic": "3674",
@@ -861,7 +862,7 @@ def test_corpus_note_names_recorded_misses_and_no_cik(rawstore_tmp_db):
     _seed()
     # No CIK map stored: unknown, so the note stays empty (not "2 no CIK").
     assert _rows(inventory.collect())["corpus"]["note"] == ""
-    rawstore.write_rows("sec_company_tickers", [{"ticker": "MSFT", "cik": "7", "name": "Microsoft"}])
+    rawstore.write_rows("sec_exchange_file", [{"ticker": "MSFT", "cik": "7", "name": "Microsoft", "status": "present", "run_at": 1.0}])
     rawstore.write_rows("chain_meta", [{"key": "miss:MSFT", "value": json.dumps(
         {"reason": "form_40f", "cik": "7", "checked": datetime.now(timezone.utc).isoformat()})}])
     note = _rows(inventory.collect())["corpus"]["note"]
@@ -977,3 +978,44 @@ def test_index_levels_queries_are_pinned():
     pairs = {("index_levels_daily", "symbol"), ("index_levels_daily", "session_date"),
              ("index_levels_daily", "source")}
     assert pairs <= set(inventory.QUERIED_COLUMNS)
+
+def _sec_file_rows(run_at=1.0, n=4):
+    return [{"ticker": f"T{i}", "cik": str(i), "name": f"N{i}", "exchange": "Nasdaq", "valid_from": None,
+             "status": "present", "source": "sec_exchange", "fetched_at": run_at, "run_id": "seed",
+             "run_at": run_at} for i in range(n)]
+
+
+def _sec_receipt(markers, session, name="exchange", **data):
+    markers.mkdir(parents=True, exist_ok=True)
+    (markers / f"{session}_{name}").write_text(json.dumps({"session": session, **data}), encoding="utf-8")
+
+
+def test_sec_files_row_says_which_of_the_three_pull_outcomes_happened(rawstore_tmp_db, tmp_path, monkeypatch):
+    """avo 2026-10-22: the row must separate "pulled, unchanged", "never written" and "pull failed".
+
+    The tables append on change only, so "appended 0" cannot say which happened on its own (#301 review).
+    """
+    from RevenueChaser.core import sec_files
+    _seed()
+    markers = tmp_path / "sec_files"
+    monkeypatch.setattr(sec_files.config, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(sec_files, "MIN_MEMBERS", 3)
+    rawstore.write_rows("sec_exchange_file", _sec_file_rows())
+
+    # 1. rows stored, but no receipt left at all
+    note = _rows(inventory.collect())["sec_files"]["note"]
+    assert "no pull recorded yet" in note
+
+    # 2. a pull that read the file and found nothing new
+    _sec_receipt(markers, "2026-10-19", status="ok", file_rows=4, appended=0, absent=0,
+                 last_modified="Mon, 19 Oct 2026 20:30:00 GMT")
+    note = _rows(inventory.collect())["sec_files"]["note"]
+    assert "pulled 2026-10-19, unchanged" in note
+    assert "Last-Modified Mon, 19 Oct 2026 20:30:00 GMT" in note
+
+    # 3. a later night failed: the row says so, names the night, and keeps the last good file figures
+    _sec_receipt(markers, "2026-10-20", status="failed", error="SEC 500")
+    note = _rows(inventory.collect())["sec_files"]["note"]
+    assert "pull FAILED 2026-10-20 (SEC 500)" in note
+    assert "last good pull 2026-10-19" in note
+    assert "Last-Modified Mon, 19 Oct 2026 20:30:00 GMT" in note, "a failed night erased the file's figures"

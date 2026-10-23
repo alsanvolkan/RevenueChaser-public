@@ -364,7 +364,8 @@ def pull(monkeypatch, rawstore_tmp_db):
 
     def run(members, screen_quotes, fast=None, during_screen=None):
         rows = [{"ticker": t, "cik": str(i), "name": t, "exchange": "Nasdaq"} for i, t in enumerate(members)]
-        monkeypatch.setattr(sec, "exchange_map", lambda: SourceResult("sec_exchange", "ok", rows, None))
+        monkeypatch.setattr(sec, "exchange_map",
+                            lambda *a, **k: SourceResult("sec_exchange", "ok", rows, None))
 
         def screen(query, offset=None, size=None, **kw):
             if during_screen:

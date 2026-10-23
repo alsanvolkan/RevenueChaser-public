@@ -47,10 +47,12 @@ def http(monkeypatch):
     return router
 
 
-def _serve(http, exchange=EXCHANGE, funds=FUNDS, ex_status=200, mf_status=200):
+def _serve(http, exchange=EXCHANGE, funds=FUNDS, ex_status=200, mf_status=200, ex_headers=None, mf_headers=None):
     http.routes.clear()
-    http.add("company_tickers_exchange.json", {"fields": _EX_FIELDS, "data": exchange}, status=ex_status)
-    http.add("company_tickers_mf.json", {"fields": _MF_FIELDS, "data": funds}, status=mf_status)
+    http.add("company_tickers_exchange.json", {"fields": _EX_FIELDS, "data": exchange}, status=ex_status,
+             headers=ex_headers)
+    http.add("company_tickers_mf.json", {"fields": _MF_FIELDS, "data": funds}, status=mf_status,
+             headers=mf_headers)
 
 
 def _night(tmp_path, run_at, run_id="r"):
@@ -192,6 +194,142 @@ def test_the_summary_line_names_both_files(rawstore_tmp_db, tmp_path, http):
     line = sec_files.summary_line(_night(tmp_path, TUE))
     assert line.startswith("SEC files: ") and "exchange failed" in line and "mf ok 3 appended" in line
     assert "2 SEC requests" in line
+
+
+# ── the readers: the universe and identity jobs reuse the stored rows (#301 D21) ──────────────────────
+
+def test_the_stored_rows_are_the_newest_present_row_per_key(rawstore_tmp_db, tmp_path, http):
+    """``latest`` is what both readers get: one row per key, the newest, and never an 'absent' one."""
+    _serve(http)
+    _night(tmp_path, TUE)
+    _serve(http, exchange=[r if r[2] != "SMOL" else [2000, "Small Co", "SMOL", "NYSE"] for r in EXCHANGE]
+           + [[3000, "New Co", "NEW", "Nasdaq"]])
+    _night(tmp_path, WED)
+    _serve(http, exchange=[r for r in EXCHANGE if r[2] != "SMOL"] + [[3000, "New Co", "NEW", "Nasdaq"]])
+    _night(tmp_path, THU)
+
+    rows = {r["ticker"]: r for r in sec_files.latest("exchange")}
+    assert "SMOL" not in rows, "an 'absent' newest row hides the ticker"
+    assert rows["NEW"]["exchange"] == "Nasdaq"
+    assert set(rows) == {"AAPL", "BRK-B", "OTCX", "NEW"}
+    assert [r["ticker"] for r in sec_files.latest("exchange", keys=["AAPL", "SMOL"])] == ["AAPL"]
+
+
+def test_the_universe_reader_uses_the_stored_rows_and_makes_no_sec_call(rawstore_tmp_db, tmp_path, http,
+                                                                       monkeypatch):
+    from RevenueChaser.core import universe_fetch as uf
+
+    monkeypatch.setattr(uf, "MIN_FULL_UNIVERSE", 2)
+    _serve(http)
+    _night(tmp_path, TUE)
+    asked = len(http.calls)
+
+    def no_sec(*a, **k):  # pragma: no cover - the reader must not ask
+        raise AssertionError("the universe reader must not pull the SEC file")
+
+    from RevenueChaser.core.identity.sources import sec
+    monkeypatch.setattr(sec, "exchange_map", no_sec)
+
+    members, reason = uf._sec_member_list()
+
+    assert reason is None
+    assert {m["ticker"] for m in members} == {"AAPL", "BRK-B", "SMOL"}      # OTC is not a member
+    assert len(http.calls) == asked
+
+
+def test_the_universe_reader_falls_back_to_the_pull_when_nothing_is_stored(rawstore_tmp_db, http, monkeypatch):
+    """Nothing stored is a fresh install, a restored store, or any run before the first nightly — not a reason
+    to hand back an empty universe. The pull is the fallback, so membership still resolves (#301)."""
+    from RevenueChaser.core import universe_fetch as uf
+    monkeypatch.setattr(uf, "MIN_FULL_UNIVERSE", 3)
+    _serve(http)
+
+    members, reason = uf._sec_member_list()
+
+    assert reason is None, reason
+    # sec.exchange_map() normalises a dotted class ticker the same way on both paths, so BRK.B arrives as BRK-B
+    assert [m["ticker"] for m in members] == ["AAPL", "BRK-B", "SMOL"]
+
+
+def test_the_universe_reader_says_so_when_nothing_is_stored_and_the_pull_fails(rawstore_tmp_db, http, monkeypatch):
+    """The other half: with no stored rows AND no answer from SEC there is genuinely no member list, and the
+    caller must be told rather than shown an empty universe."""
+    from RevenueChaser.core import universe_fetch as uf
+    monkeypatch.setattr(uf, "MIN_FULL_UNIVERSE", 3)
+    _serve(http, ex_status=500)
+
+    members, reason = uf._sec_member_list()
+
+    assert members == [] and reason
+
+
+def test_the_identity_reader_uses_the_stored_rows_and_makes_no_sec_call(rawstore_tmp_db, tmp_path, http):
+    from RevenueChaser.core.identity import refresh
+
+    _serve(http)
+    _night(tmp_path, TUE)
+    asked = len(http.calls)
+
+    res = refresh._default_clients()["sec_exchange"]()
+
+    assert res.ok and len(http.calls) == asked
+    assert {r["ticker"] for r in res.rows} == {"AAPL", "BRK-B", "OTCX", "SMOL"}
+    assert {r["cik"] for r in res.rows} >= {"320193"}
+
+
+def test_the_identity_reader_is_an_error_not_an_empty_ok_when_nothing_is_stored(rawstore_tmp_db):
+    from RevenueChaser.core.identity import refresh
+
+    res = refresh._default_clients()["sec_exchange"]()
+    assert res.status == "error" and "stored" in res.error
+
+
+def test_health_summary_presents_the_store_against_the_file(rawstore_tmp_db, tmp_path, http, monkeypatch):
+    """Data Health: present rows vs the file, members vs the floor, rows appended and Last-Modified."""
+    monkeypatch.setattr(sec_files, "MIN_MEMBERS", 3)
+    _serve(http, ex_headers={"Last-Modified": "Sun, 12 Oct 2026 20:30:00 GMT"})
+    _night(tmp_path, TUE)
+
+    h = sec_files.health_summary(marker_dir=tmp_path / "markers")
+
+    ex = h["exchange"]
+    assert (ex["present"], ex["file_rows"], ex["members"], ex["floor"]) == (4, 4, 3, 3)
+    assert (ex["appended"], ex["absent"]) == (4, 0)
+    assert ex["last_modified"] == "Sun, 12 Oct 2026 20:30:00 GMT"
+    mf = h["mf"]
+    assert (mf["present"], mf["file_rows"], mf["floor"]) == (3, 3, sec_files.MIN_FUND_CLASSES)
+
+
+def test_health_summary_without_a_pull_still_reports_the_store(rawstore_tmp_db, tmp_path):
+    h = sec_files.health_summary(marker_dir=tmp_path / "markers")
+    assert h["exchange"]["present"] == 0 and h["exchange"]["file_rows"] is None
+    assert h["exchange"]["last_modified"] is None and h["exchange"]["floor"] == sec_files.MIN_MEMBERS
+
+
+def test_health_summary_separates_the_three_pull_outcomes(rawstore_tmp_db, tmp_path, http, monkeypatch):
+    """avo 2026-10-22: the row must tell "pulled, unchanged" from "never written" from "pull failed".
+
+    The tables append on change only, so a stale row and an unchanged file look identical without the pull's
+    own outcome: a nightly that never ran and one that ran and found nothing new both append zero.
+    """
+    markers = tmp_path / "markers"
+    monkeypatch.setattr(sec_files, "MIN_MEMBERS", 3)
+
+    # 1. nothing pulled yet
+    assert sec_files.health_summary(marker_dir=markers)["exchange"]["last_pull"] == "unknown"
+
+    # 2. a good pull
+    _serve(http)
+    _night(tmp_path, TUE)
+    ex = sec_files.health_summary(marker_dir=markers)["exchange"]
+    assert ex["last_pull"] == "ok" and ex["appended"] == 4 and ex["error"] is None
+
+    # 3. a failed pull leaves its own receipt, so the row stops claiming the good one
+    _serve(http, ex_status=500)
+    _night(tmp_path, WED)
+    ex = sec_files.health_summary(marker_dir=markers)["exchange"]
+    assert ex["last_pull"] == "failed" and ex["error"]
+    assert ex["present"] == 4, "a failed pull must not touch the stored rows"
 
 
 def test_old_markers_are_pruned_and_nothing_else(rawstore_tmp_db, tmp_path, http):

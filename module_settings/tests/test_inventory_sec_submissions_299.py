@@ -20,9 +20,10 @@ def _payload(acc, filed="2026-05-28"):
 
 def _seed_universe():
     rawstore.write_rows("equity_universe", [{"ticker": t, "market_cap": 1e9, "name": t} for t in ("A", "B", "C")])
-    rawstore.write_rows("sec_company_tickers", [{"ticker": "A", "cik": "1", "name": "A"},
-                                                {"ticker": "B", "cik": "0000000002", "name": "B"},
-                                                {"ticker": "C", "cik": "3", "name": "C"}])
+    rawstore.write_rows("sec_exchange_file", [
+        {"ticker": t, "cik": c, "name": t, "exchange": "Nasdaq", "valid_from": None, "status": "present",
+         "source": "sec_exchange", "fetched_at": 1.0, "run_id": "seed", "run_at": 1.0}
+        for t, c in (("A", "1"), ("B", "0000000002"), ("C", "3"))])
 
 
 def _store(answers, run_id, run_at=RUN):
@@ -74,6 +75,6 @@ def test_corpus_note_counts_documents_per_form(rawstore_tmp_db, tmp_path, monkey
 
 
 def test_the_new_queries_are_pinned():
-    pairs = {("sec_submissions", "filing_date"), ("sec_company_tickers", "cik"), ("edgar_documents", "form"),
+    pairs = {("sec_submissions", "filing_date"), ("sec_exchange_file", "cik"), ("edgar_documents", "form"),
              ("edgar_documents", "fetched_at"), ("source_checks", "run_id"), ("source_checks", "key")}
     assert pairs <= set(inventory.QUERIED_COLUMNS)

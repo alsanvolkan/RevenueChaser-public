@@ -85,8 +85,11 @@ def test_fetch_missing_is_resumable(rawstore_tmp_db, monkeypatch):
 
 
 def _seed_stored_tickers(rows):
-    rawstore.write_rows("sec_company_tickers",
-                        [{"ticker": t, "cik": c, "name": t + " Inc"} for t, c in rows.items()])
+    """The stored SEC exchange file (#301 D21): the no-fetch CIK map reads this, not the retired table."""
+    rawstore.write_rows("sec_exchange_file",
+                        [{"ticker": t, "cik": c, "name": t + " Inc", "exchange": "Nasdaq", "valid_from": None,
+                          "status": "present", "source": "sec_exchange", "fetched_at": 1.0, "run_id": "seed",
+                          "run_at": 1.0} for t, c in rows.items()])
 
 
 @pytest.fixture
@@ -133,9 +136,10 @@ def test_no_fetch_does_not_write_the_store(rawstore_tmp_db, offline):
     from RevenueChaser.core import rawstore as rs
     _seed_universe()
     _seed_stored_tickers({"AAPL": "320193"})
-    before = (rs.count("sec_company_sic"), rs.count("sec_company_tickers"))
+    before = (rs.count("sec_company_sic"), rs.count("sec_exchange_file"), rs.count("sec_company_tickers"))
     sr.fetch_missing(no_fetch=True)
-    assert (rs.count("sec_company_sic"), rs.count("sec_company_tickers")) == before
+    assert (rs.count("sec_company_sic"), rs.count("sec_exchange_file"),
+            rs.count("sec_company_tickers")) == before
 
 
 # --- P19: rows are flushed as the run goes, so an interrupt keeps what was fetched ----

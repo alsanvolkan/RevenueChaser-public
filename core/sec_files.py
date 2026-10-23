@@ -1,9 +1,11 @@
-"""SEC exchange and fund files (#301, D21 + D8): the one writer of ``sec_exchange_file`` and ``sec_mf_file`` (raw).
+"""SEC exchange and fund files (#301, D21 + D8): the one writer and reader of ``sec_exchange_file`` and
+``sec_mf_file`` (raw).
 
 A best-effort first step of the nightly daily-bars run (``scripts/daily_bars.py --nightly --sec-files``, task
 RC-Daily-Bars): one GET of ``company_tickers_exchange.json`` (``sec.exchange_map``) and one of
-``company_tickers_mf.json`` (``sec.fund_map``) per weekday night. Nothing else reads or writes here yet: the universe
-and identity jobs keep their own pulls, and ``sec_company_tickers`` stays (#301's retirement is a later change).
+``company_tickers_mf.json`` (``sec.fund_map``) per weekday night. Every other reader now reuses the stored rows
+through :func:`latest` (the universe and identity jobs, the CIK lookups), so the file is pulled once a night and
+nowhere else; ``sec_company_tickers`` is retired.
 
 - **At most 2 SEC requests a night.** Only on a New York weekday; each file is asked once per New York session (rule
   B: a run before the next open still belongs to the session that closed), with no retry (``attempts=1``). Before its
@@ -22,6 +24,7 @@ and identity jobs keep their own pulls, and ``sec_company_tickers`` stays (#301'
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -31,7 +34,7 @@ from pathlib import Path
 from typing import Callable
 
 from RevenueChaser.core import calendar, config, ledger, rawstore
-from RevenueChaser.core.identity.sources import sec
+from RevenueChaser.core.identity.sources import SourceResult, fail, now_iso, sec
 from RevenueChaser.core.universe_fetch import MIN_FULL_UNIVERSE, SEC_LIST_EXCHANGES
 
 PRESENT, ABSENT = "present", "absent"
@@ -75,18 +78,20 @@ def _session(run_at: float) -> date | None:
 
 # --- the request budget ---------------------------------------------------------------------------------------------
 
-def _reserve(marker_dir: Path, night: date, name: str, log) -> bool:
-    """Take the marker of file ``name`` for session ``night``; False when it was taken before (asked tonight).
+def _reserve(marker_dir: Path, night: date, name: str, log) -> Path | None:
+    """Take the marker of file ``name`` for session ``night``; None when it was taken before (asked tonight).
 
-    Raises ``OSError`` when the marker cannot be written: the caller then makes no request."""
+    The marker doubles as the night's receipt (see :func:`health_summary`). Raises ``OSError`` when it cannot be
+    written: the caller then makes no request."""
     marker_dir.mkdir(parents=True, exist_ok=True)
+    path = marker_dir / f"{night.isoformat()}_{name}"
     try:
-        fd = os.open(marker_dir / f"{night.isoformat()}_{name}", os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
-        return False
+        return None
     os.close(fd)
     _prune(marker_dir, night, log)
-    return True
+    return path
 
 
 def _prune(marker_dir: Path, night: date, log) -> None:
@@ -138,6 +143,41 @@ def record(name: str, rows: list[dict], *, run_id: str, run_at: float, fetched_a
     return rawstore.atomic(_write, db=rawstore._db_of(f.table))
 
 
+# --- reading the stored rows ----------------------------------------------------------------------------------------
+
+def latest(name: str, keys: list[str] | None = None) -> list[dict]:
+    """The newest row per key of one stored file, keeping the keys whose latest row is 'present'.
+
+    This is the one reader of the two tables: the universe job, the identity job and the CIK lookups all reuse
+    what the nightly step stored instead of pulling the file again. A key whose newest row is 'absent' is gone
+    from the file and is not returned. Rows carry the file's key and tracked columns, ordered by key.
+    """
+    f = FILES[name]
+    cols = ", ".join((f.key, *f.tracked))
+    where = ""
+    params: list = []
+    if keys:
+        where = f" WHERE {f.key} IN ({', '.join('?' for _ in keys)})"
+        params = list(keys)
+    rows = rawstore.query(
+        f"SELECT {cols}, status FROM (SELECT {cols}, status, ROW_NUMBER() OVER "
+        f"(PARTITION BY {f.key} ORDER BY run_at DESC) AS rn FROM {f.table}{where}) "
+        f"WHERE rn = 1 AND status = '{PRESENT}' ORDER BY {f.key}", params or None)
+    return [{c: r.get(c) for c in (f.key, *f.tracked)} for r in rows]
+
+
+def exchange_source() -> SourceResult:
+    """The identity job's ``sec_exchange`` source: the stored rows, never a pull of the file.
+
+    An empty store is an ``error``, like an empty file: the identity master would otherwise treat "nothing
+    stored yet" as "no company has a CIK".
+    """
+    rows = latest("exchange")
+    if not rows:
+        return fail(sec.EXCHANGE_SOURCE, "no SEC exchange file stored yet (the nightly RC-Daily-Bars step writes it)")
+    return SourceResult(sec.EXCHANGE_SOURCE, "ok", rows, None, now_iso())
+
+
 def _short(name: str, rows: list[dict]) -> tuple[dict, str | None]:
     """``(size fields, error)``: the error names the floor a short file missed."""
     if name == "exchange":
@@ -152,25 +192,114 @@ def _short(name: str, rows: list[dict]) -> tuple[dict, str | None]:
     return size, None
 
 
+def _header(headers: dict, name: str) -> str | None:
+    """One header by name, whatever the case: httpx lowercases what the server sent."""
+    if not headers:
+        return None
+    want = name.lower()
+    return next((v for k, v in headers.items() if k.lower() == want), None)
+
+
 def _one(name: str, night: date, *, run_id: str, run_at: float, marker_dir: Path, log) -> tuple[dict, int]:
     """``(result, requests)`` for one file. Never raises."""
     try:
-        if not _reserve(marker_dir, night, name, log):
+        marker = _reserve(marker_dir, night, name, log)
+        if marker is None:
             return {"status": "skipped", "reason": f"already asked for session {night.isoformat()}"}, 0
     except OSError as exc:
         return {"status": "failed", "error": f"marker not writable, no request made ({type(exc).__name__})"}, 0
+    def failed(error: str, **extra) -> tuple[dict, int]:
+        """A failed pull leaves a receipt too, so Data Health can tell it from a file that was never written
+        (avo 2026-10-22: the row must separate "pulled, unchanged", "never written" and "pull failed")."""
+        res = {"status": "failed", **extra, "error": error}
+        _write_receipt(marker, night, res)
+        return res, 1
+
     try:
-        got = getattr(sec, FILES[name].fetch)(attempts=1)
+        headers: dict = {}
+        got = getattr(sec, FILES[name].fetch)(attempts=1, headers_out=headers)
         fetched_at = time.time()
         if not got.ok:
-            return {"status": "failed", "error": got.error or "SEC file failed"}, 1
+            return failed(got.error or "SEC file failed")
         size, short = _short(name, got.rows)
         if short:
-            return {"status": "failed", **size, "error": short}, 1
-        return {"status": "ok", **size,
-                **record(name, got.rows, run_id=run_id, run_at=run_at, fetched_at=fetched_at)}, 1
+            return failed(short, **size)
+        out = record(name, got.rows, run_id=run_id, run_at=run_at, fetched_at=fetched_at)
+        _write_receipt(marker, night, {"status": "ok", **size, **out,
+                                       "last_modified": _header(headers, "Last-Modified")})
+        return {"status": "ok", **size, **out}, 1
     except Exception as exc:  # noqa: BLE001 - the step never raises
-        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:300]}, 1
+        return failed(f"{type(exc).__name__}: {exc}"[:300])
+
+
+# --- what the last good pull said (Data Health) ---------------------------------------------------------------------
+
+def _write_receipt(marker: Path, night: date, data: dict) -> None:
+    """Write the night's receipt into its marker: the file's own size and Last-Modified, and what was appended.
+
+    Bookkeeping only: a receipt that cannot be written never fails the pull (the rows are already stored)."""
+    try:
+        tmp = marker.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"session": night.isoformat(), **data}), encoding="utf-8")
+        tmp.replace(marker)
+    except OSError:
+        pass
+
+
+def _receipts(marker_dir: Path, name: str) -> list[dict]:
+    """Every readable receipt of file ``name``, newest session first."""
+    out = []
+    for f in sorted(marker_dir.glob(f"????-??-??_{name}"), reverse=True):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8") or "{}")
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("session"):
+            out.append(data)
+    return out
+
+
+def _receipt(marker_dir: Path, name: str) -> dict:
+    """The newest readable receipt of file ``name``; ``{}`` when none is left (pruned, or the cache was cleared)."""
+    rs = _receipts(marker_dir, name)
+    return rs[0] if rs else {}
+
+
+def _last_good(marker_dir: Path, name: str) -> dict:
+    """The newest receipt of a pull that actually read the file.
+
+    A failed night must not erase what the last good pull knew: ``file_rows`` and ``Last-Modified`` describe the
+    file itself, so they stay from the last successful read while the outcome below reports the failure.
+    """
+    return next((r for r in _receipts(marker_dir, name) if r.get("status") != "failed"), {})
+
+
+def health_summary(marker_dir: Path | None = None) -> dict:
+    """Read-only Data Health summary of both files, zero network (#301 D21 + D8).
+
+    Per file: ``present`` (keys whose newest stored row is 'present') against ``file_rows`` (what the last good
+    pull held), ``members`` against ``floor``, and the last pull's ``appended`` / ``absent`` / ``last_modified``
+    (the HTTP ``Last-Modified`` of the file). The store always answers; the pull's own figures come from its
+    receipt and are ``None`` when no receipt is left.
+    """
+    marker_dir = Path(marker_dir or (config.OUTPUT_DIR / "sec_files"))
+    out: dict = {}
+    for name, f in FILES.items():
+        rows = latest(name)
+        members = (len(rows) if name == "mf" else
+                   sum(1 for r in rows if str(r.get("exchange") or "").strip().casefold() in SEC_LIST_EXCHANGES))
+        receipt = _receipt(marker_dir, name)
+        good = _last_good(marker_dir, name)
+        out[name] = {"present": len(rows), "members": members,
+                     "floor": MIN_FUND_CLASSES if name == "mf" else MIN_MEMBERS,
+                     # the file's own figures survive a failed night; the outcome below reports the failure
+                     "file_rows": good.get("file_rows"), "last_modified": good.get("last_modified"),
+                     "appended": good.get("appended"), "absent": good.get("absent"),
+                     "good_session": good.get("session"), "session": receipt.get("session"),
+                     # the last pull's own outcome: "ok", "failed", or "unknown" when no receipt is left
+                     "last_pull": receipt.get("status") or ("unknown" if not receipt else "ok"),
+                     "error": receipt.get("error")}
+    return out
 
 
 def nightly(*, run_id: str | None = None, run_at: float | None = None, marker_dir: Path | None = None,
@@ -222,4 +351,5 @@ def summary_line(res: dict) -> str:
     return f"{head}; {'; '.join(parts)}; {res.get('requests', 0)} SEC requests"
 
 
-__all__ = ["FILES", "MIN_MEMBERS", "MIN_FUND_CLASSES", "nightly", "record", "summary_line"]
+__all__ = ["FILES", "MIN_MEMBERS", "MIN_FUND_CLASSES", "exchange_source", "health_summary", "latest", "nightly",
+           "record", "summary_line"]

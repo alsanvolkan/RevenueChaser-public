@@ -178,7 +178,7 @@ network.
 | `rotation_holdings` | Per-ETF holdings + RS rows for today | raw | same-day |
 | `tradewhisperer_*` | Legacy TradeWhisperer caches — board removed 2026-09-30; rows kept untouched, no longer in the MANIFEST | raw | — |
 | `equity_universe` | Shared US universe (members = the SEC exchange file's Nasdaq / NYSE / CBOE rows, with Yahoo market data joined on, #264) + provenance snapshot | raw | refreshed on scan |
-| `sec_company_tickers` | SEC CIK map (ticker → cik/name) | raw | until refetched |
+| `sec_company_tickers` | SEC CIK map (ticker → cik/name); **retired** (#301 D21): nothing writes it, and the readers use `sec_exchange_file` first — it stays as the CIK map's second source, ahead of a live `company_tickers.json` read | raw | frozen |
 | `sec_company_sic` | SIC per CIK — the fallback behind the SEC submissions code for the SIC sector step (#272) | raw | until refetched |
 | `comov_runs` / `comov_nodes` / `comov_members` / `comov_lag` | Co-movement board: dated return-cluster runs, clusters, members; groups formed a quarter earlier with their held-out-quarter test | raw | per Fetch run (latest as_of wins) |
 | `chain_filings` / `chain_mentions` / `chain_meta` | Value Chain board: latest 10-K/20-F Item 1/4 text + supplier/customer edges | edgar | per fetch (resumable by ticker) |
@@ -819,10 +819,11 @@ schema, reachable with path expressions like `payload.market_cap::DOUBLE`).
 
 `POST /run/identity` (long lane; the Settings **Fetch identity** button; from a shell add `-H "X-RC-Panel: cli"`) or `python -m RevenueChaser.core.identity --refresh
 [--limit N] [--sources a,b] [--yahoo-limit N]` runs `core/identity/refresh.py` over every `equity_universe` ticker.
-It writes `security_master`, `identity_conflicts`, `identity_source_cache` and `identity_runs`, plus two
-sanctioned outside writes: the SEC exchange map is fetched every run and new tickers / changed CIKs are
-**upserted** into `sec_company_tickers` (rows are never deleted), and — after a successful build (status `ok` or
-`partial`, never after an error) — the master's sector and industry (and UW's next earnings date) are applied to
+It writes `security_master`, `identity_conflicts`, `identity_source_cache` and `identity_runs`, plus one
+sanctioned outside write: the SEC exchange map is **not** fetched here any more — the nightly RC-Daily-Bars step
+pulls the file once a weekday night and this job reads the stored `sec_exchange_file` rows (#301 D21), so
+`sec_company_tickers` is retired and nothing writes it. After a successful build (status `ok` or
+`partial`, never after an error) the master's sector and industry (and UW's next earnings date) are applied to
 `equity_universe` (`core/identity/apply.py`, issues #86 and #265: those columns, with `industry_group` and
 `sub_industry` written NULL; tickers with no master row keep their stored values; the counts `applied` /
 `unchanged` / `not_in_master` are in the run record).

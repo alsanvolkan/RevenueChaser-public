@@ -472,24 +472,32 @@ def _backfill_caps(tickers: list[str] | None = None, chunk: int = 200,
 
 
 def _sec_member_list() -> tuple[list[dict], str | None]:
-    """The universe member list (#264): a FRESH ``sec.exchange_map()`` pull, never the identity cache.
+    """The universe member list (#264): the stored SEC exchange file rows, never a pull of the file (#301 D21).
 
-    Returns ``(members, None)``: the SEC rows on Nasdaq, NYSE or CBOE, in file order (OTC and no-exchange rows
-    are out). Returns ``([], reason)`` when the map failed, holds no such row or fewer than
-    ``MIN_FULL_UNIVERSE`` of them: SEC defines membership, so a short list would replace a stored universe
-    with just those few rows (the screener's own count is no guard for it).
+    The nightly RC-Daily-Bars step stores the change history of ``company_tickers_exchange.json``; this reads its
+    newest present row per ticker, so a universe run makes no SEC request of its own. Returns ``(members, None)``:
+    the rows on Nasdaq, NYSE or CBOE, ordered by ticker (OTC and no-exchange rows are out). Returns
+    ``([], reason)`` when nothing is stored, no such row is left or fewer than ``MIN_FULL_UNIVERSE`` are:
+    SEC defines membership, so a short list would replace a stored universe with just those few rows (the
+    screener's own count is no guard for it).
     """
+    from RevenueChaser.core import sec_files
     from RevenueChaser.core.identity.sources import sec
 
-    res = sec.exchange_map()
-    if not res.ok:
-        return [], res.error or "SEC ticker map failed"
-    members = [r for r in res.rows
+    rows = sec_files.latest("exchange")
+    if not rows:
+        # Nothing stored yet: a fresh install, a restored store, or any run before the first nightly. Falling
+        # back to the pull keeps the universe buildable instead of returning an empty member list (#301).
+        res = sec.exchange_map(attempts=1)        # one try: this runs inside the universe write lock
+        if not res.ok:
+            return [], res.error or "SEC ticker map failed"
+        rows = res.rows
+    members = [r for r in rows
                if str(r.get("exchange") or "").strip().casefold() in SEC_LIST_EXCHANGES]
     if not members:
-        return [], "SEC ticker map has no Nasdaq / NYSE / CBOE rows"
+        return [], "stored SEC exchange file has no Nasdaq / NYSE / CBOE rows"
     if len(members) < MIN_FULL_UNIVERSE:
-        return [], (f"SEC ticker map lists only {len(members)} Nasdaq / NYSE / CBOE rows "
+        return [], (f"stored SEC exchange file lists only {len(members)} Nasdaq / NYSE / CBOE rows "
                     f"(floor {MIN_FULL_UNIVERSE})")
     return members, None
 

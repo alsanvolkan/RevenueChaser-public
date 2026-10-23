@@ -507,7 +507,7 @@ visibility**, not another crawler.
 
 **The check, end to end** (already implemented — `sync_one`):
 
-1. ticker → CIK via `sec_company_tickers` (`sync.universe_ciks`).
+1. ticker → CIK via the stored `sec_exchange_file` rows (`sync.universe_ciks`; #301 D21).
 2. `GET {SEC_DATA_BASE}/submissions/CIK##########.json`
    (`edgar_text.submissions_url`).
 3. `pick_filing(payload)` — newest **10-K**, else newest **20-F**; a 10-K/A
