@@ -122,3 +122,10 @@ def test_the_card_never_touches_the_offmachine_folder(backups, monkeypatch, tmp_
 def test_collect_carries_the_card(rawstore_tmp_db, backups):
     backups(_SIZES, _SCAN)
     assert inventory.collect(NOW)["backups"]["local"]["bytes"] == 12_782_917_784
+
+
+def test_the_card_carries_the_offmachine_location_the_job_copies_to(backups, monkeypatch, tmp_path):
+    """G8 (#124): the job's own record of where the off-machine copy goes, read as text and never walked."""
+    assert backups(_SIZES, _SCAN)["offmachine_path"] == str(tmp_path / "drive")
+    monkeypatch.setattr(config, "RAW_STORE_BACKUP_MIRROR", "")
+    assert backups(_SIZES, _SCAN)["offmachine_path"] is None

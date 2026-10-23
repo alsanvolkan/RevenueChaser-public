@@ -1414,6 +1414,84 @@ def test_the_backups_card_escapes_its_text_and_never_takes_a_class_from_it():
     assert "<img" not in card and "&lt;img" in card
 
 
+# ── G8 of the GUI brief (#124): where the backups are, what is kept, the last self-check ──────────
+def _backup_line(card: str, ident: str) -> str:
+    """One summary line of the Backups card, from its id to the end of its div."""
+    return card[card.index(f'id="{ident}"'):].split("</div>")[0]
+
+
+def test_the_backups_card_shows_the_local_folder_path_in_full_and_in_monospace():
+    """avo 2026-10-23: "show where the backups are" — the whole path, not a shortened one."""
+    long_path = "D:/RevenueChaser backups/raw-store/2026-10-16-with-a-deliberately-long-folder-name"
+    card = _backups_card(dict(_BACKUPS, folder=long_path))
+    assert f'<code class="bpath" id="backup-folder">{long_path}</code>' in card
+    assert "font-family:ui-monospace" in report.CSS[report.CSS.index(".bpath"):].split("}")[0]
+
+
+def test_the_backups_card_says_unknown_in_words_when_the_record_carries_no_folder():
+    card = _backups_card(dict(_BACKUPS, folder=None))
+    assert 'id="backup-folder">unknown</code>' in card
+
+
+def test_the_backups_card_shows_the_offmachine_copy_location_the_record_names():
+    """The location is the job's own record of where it copies; the card never opens that folder."""
+    where = "G:/my-drive/revenuechaser-backups"
+    card = _backups_card(dict(_BACKUPS, offmachine_path=where))
+    assert f'<code class="bpath" id="backup-offmachine-path">{where}</code>' in card
+    assert 'id="backup-offmachine-path">unknown' in _backups_card(_BACKUPS)   # _BACKUPS carries no location
+
+
+def test_the_retention_rule_is_read_from_the_job_registry_description():
+    """The rule's numbers live in core/automations.py; the card reads them there instead of retyping them."""
+    line = _backup_line(_backups_card(_BACKUPS), "backup-retention")
+    assert ("keeps 5 daily raw and 5 daily history snapshots, the newest 12 weekly raw copies, "
+            "and 2 daily prices snapshots") in line
+
+
+def test_a_changed_registry_rule_reaches_the_card(monkeypatch):
+    """Mutation guard: edit the registry text and the card must follow it, not a copy of its own."""
+    from dataclasses import replace
+
+    from RevenueChaser.core import automations
+    real = automations.entry("RC-Store-Backup")
+    monkeypatch.setattr(report.automations, "entry",
+                        lambda name: replace(real, description="Backup; keeps 9 daily raw snapshots. Then a scan."))
+    line = _backup_line(_backups_card(_BACKUPS), "backup-retention")
+    assert "keeps 9 daily raw snapshots." in line and "12 weekly" not in line
+
+
+def test_a_rule_the_record_carries_wins_over_the_registry_text():
+    line = _backup_line(_backups_card(dict(_BACKUPS, retention="keeps 3 daily copies")), "backup-retention")
+    assert "keeps 3 daily copies" in line and "12 weekly" not in line
+
+
+def test_the_integrity_self_check_reads_as_one_sentence_with_its_numbers():
+    line = _backup_line(_backups_card(_BACKUPS), "backup-selfcheck")
+    assert "last checked 2026-10-16" in line
+    assert "next due 2026-10-17" in line
+    assert "3,382 files re-read against their hashes" in line
+
+
+def test_a_missing_self_check_says_never_and_invents_no_count():
+    line = _backup_line(_backups_card(dict(_BACKUPS, scan={"state": "unknown", "text": "unknown: no scan yet"})),
+                        "backup-selfcheck")
+    assert "last checked never" in line and "next due the next backup run" in line
+    assert "no files re-read yet" in line
+
+
+def test_the_backups_card_has_no_delete_control_and_says_nothing_is_deleted():
+    """G8 ships no delete: arming one is G9, a separate gated change with avo's typed words."""
+    card = _backups_card(_BACKUPS)
+    assert "<button" not in card and "<form" not in card
+    assert "Nothing on this page deletes or moves a backup file" in _backup_line(card, "backup-nodelete")
+
+
+def test_the_backups_card_escapes_the_paths_and_the_rule():
+    bad = "<img src=x onerror=__x(1)>"
+    card = _backups_card(dict(_BACKUPS, folder=bad, offmachine_path=bad, retention=bad))
+    assert "<img" not in card and card.count("&lt;img") >= 3
+
+
 def test_null_cap_text_does_not_claim_it_is_outside_the_universe():
     """DF99: a NULL cap also occurs before the caps backfill has resolved it."""
     html = report.render_settings_dashboard(_payload())

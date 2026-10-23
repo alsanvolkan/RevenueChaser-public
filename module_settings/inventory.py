@@ -1148,6 +1148,9 @@ def _backups(now: datetime) -> dict:
                         text=(f"OK, {_int_or_none(scan.get('checked')) or 0:,} files match the manifest" if ok
                               else f"{failed} file{'s do' if failed != 1 else ' does'} not match (see the backup log)"))
     return {"folder": facts.get("folder"), "recorded_at": sizes.get("recorded_at") or None,
+            # G8 (#124): the off-machine location the job itself copies to. A setting read as text; the folder is
+            # never listed, walked or stat-ed from this page.
+            "offmachine_path": str(config.RAW_STORE_BACKUP_MIRROR or "").strip() or None,
             "local": local, "offmachine": off, "checkpoints": checkpoints, "scan": scan_out}
 
 

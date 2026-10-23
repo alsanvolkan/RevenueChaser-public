@@ -13,7 +13,7 @@ from __future__ import annotations
 import html as _html
 from datetime import datetime
 
-from RevenueChaser.core import datasets
+from RevenueChaser.core import automations, datasets
 from RevenueChaser.core.html_safe import script_json
 from RevenueChaser.core.reporting_common import (
     FILTERS_CSS,
@@ -111,6 +111,10 @@ h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .bcard .asof{color:var(--muted);font-size:12.5px;margin-bottom:8px}
 .bcard .kv{color:var(--muted);font-size:12.5px;margin:2px 0}
 .bcard .kv b{color:var(--text);font-weight:600}
+/* G8 (#124): a folder path shown in full, in monospace; it wraps rather than being shortened. */
+.bpath{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--text);
+  background:var(--panel2);border:1px solid var(--border);border-radius:4px;padding:1px 6px;
+  white-space:pre-wrap;word-break:break-all}
 .bcard ul.params{margin:4px 0 8px;padding-left:18px;color:var(--text);font-size:12.5px}
 .bnote{color:var(--muted);font-size:13px;padding:6px 0}
 .frow2{display:flex;justify-content:space-between;align-items:center;gap:10px;border-bottom:1px dashed var(--border);padding:4px 0;font-size:12.5px}
@@ -1338,10 +1342,36 @@ def _gb(nbytes) -> str:
     return f"{nbytes / 1e9:.2f} GB" if isinstance(nbytes, (int, float)) else "—"
 
 
+def _retention_from_description(description: str) -> str:
+    """"keeps 5 daily raw and 5 daily history snapshots, ..." — the retention clause of the backup job's registry
+    description, cut out of the text itself so the numbers are read here and never retyped in the renderer."""
+    text = str(description or "")
+    start = text.find("keeps ")
+    if start < 0:
+        return ""
+    end = text.find(".", start)
+    return text[start:end + 1 if end >= 0 else len(text)].strip()
+
+
+def _retention_rule(b: dict) -> str:
+    """The retention rule in plain words: the record's own text when it carries one, else the registry
+    description of RC-Store-Backup (``core.automations``, the job's own entry), else "unknown"."""
+    rule = str(b.get("retention") or "").strip()
+    if rule:
+        return rule
+    try:
+        rule = _retention_from_description(automations.entry("RC-Store-Backup").description)
+    except Exception:  # noqa: BLE001 - a registry without the entry says so on the card, never fails the page
+        rule = ""
+    return rule or "unknown: the job's record names no retention rule"
+
+
 def _backups_card(b: dict | None) -> str:
-    """The Backups card (#309): both folder sizes, the checkpoints folder, the last integrity scan and when the sizes
-    were recorded. Store-free and folder-free: ``payload["backups"]`` comes from the backup job's own records
-    (``inventory._backups``). Without that key there is no card; a missing record reads "unknown"."""
+    """The Backups card (#309, G8): where the backups are (the local folder in full, and the off-machine
+    location the job's own record names), the retention rule, the last integrity self-check in words, and that
+    nothing here deletes. Store-free and folder-free: ``payload["backups"]`` comes from the backup job's own
+    records (``inventory._backups``); the card walks no folder and opens the off-machine copy never. Without
+    that key there is no card; a missing record reads "unknown"."""
     if not b:
         return ""
     esc = _html.escape
@@ -1352,6 +1382,14 @@ def _backups_card(b: dict | None) -> str:
 
     loc, off = b.get("local") or {}, b.get("offmachine") or {}
     cp, scan = b.get("checkpoints") or {}, b.get("scan") or {}
+    folder = str(b.get("folder") or "").strip() or "unknown"
+    offmachine_at = str(b.get("offmachine_path") or "").strip() or "unknown"
+    checked = scan.get("checked")
+    selfcheck = (f'last checked {scan.get("last_day") or "never"}, '
+                 f'next due {scan.get("next_due") or "the next backup run"}, '
+                 + (f"{_fmt_rows(checked)} files re-read against their hashes" if isinstance(checked, int)
+                    else "no files re-read yet" if not scan.get("last_day")
+                    else "the number of files re-read was not recorded"))
     split = ""
     if loc.get("duckdb_files") is not None or loc.get("docs_zip_files") is not None:
         split = (f'{esc(_gb(loc.get("duckdb_bytes")))} in {_fmt_rows(loc.get("duckdb_files"))} .duckdb files; '
@@ -1372,11 +1410,21 @@ def _backups_card(b: dict | None) -> str:
         f'{esc(str(scan.get("next_due") or "the next backup run"))}</td></tr>',
     ]
     recorded = b.get("recorded_at")
+    summary = (
+        f'<div class="kv">Local backup folder: <code class="bpath" id="backup-folder">{esc(folder)}</code></div>'
+        '<div class="kv">Off-machine copy location: '
+        f'<code class="bpath" id="backup-offmachine-path">{esc(offmachine_at)}</code></div>'
+        f'<div class="kv" id="backup-retention">How long backups are kept: {esc(_retention_rule(b))}</div>'
+        f'<div class="kv" id="backup-selfcheck">Integrity self-check: {esc(selfcheck)}</div>'
+        '<div class="kv" id="backup-nodelete">Nothing on this page deletes or moves a backup file: it reads the '
+        "backup job's own records and shows them.</div>"
+    )
     return ('<section id="backups"><div class="bcard" id="backups-card"><h3>Backups</h3>'
-            '<div class="asof" id="backups-note">Read from the nightly backup\'s own records in '
-            f'<b>{esc(str(b.get("folder") or "the backup folder"))}</b>; this page walks no folder and never reads '
-            "the off-machine (Drive) folder. The self-check re-reads the local folder against the hashes taken "
-            "when each file was copied, every 7 days by default.</div>"
+            '<div class="asof" id="backups-note">Read from the nightly backup job\'s own records in the local backup '
+            "folder (shown below); this page walks no folder and never reads the off-machine (Drive) folder. The "
+            "self-check re-reads the local folder against the hashes taken when each file was copied, every 7 days "
+            "by default.</div>"
+            f'{summary}'
             f'<div class="kv" id="backup-recorded">Sizes recorded {esc(str(recorded).replace("T", " ").replace("+00:00", " UTC") if recorded else "never")}</div>'
             f'{_mini_table(["Backup", "Size / result", "Files", "Detail"], rows)}</div></section>')
 
