@@ -442,9 +442,12 @@ function fitFrameWidth(f){
       // board does not re-trigger an inner HORIZONTAL scrollbar; the outer
       // .content scrollbar stays the single horizontal scroller.
       // The floor is the pane, not the CSS default width: a board narrower than the window
-      // still fills it (G1, #124); a wider board (Earnings ~2600px) keeps inner + 40.
+      // still fills it (G1, #124). Content wider than the pane gets the +40 once: scrollWidth never
+      // reads below the frame's own width, so adding it again on every fit would ratchet the frame wider.
       var pane = document.getElementById('content').clientWidth || 1280;
-      var target = Math.min(Math.max(inner + 40, pane, f.offsetWidth || 0), 8000);
+      var cur = f.offsetWidth || 0;
+      var target = inner <= pane ? pane : (inner > cur ? inner + 40 : cur);
+      target = Math.min(target, 8000);
       if(Math.abs(f.offsetWidth - target) > 4) f.style.width = target + 'px';
     }
   } catch(e){}

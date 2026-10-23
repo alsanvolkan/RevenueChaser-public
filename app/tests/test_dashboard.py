@@ -91,7 +91,7 @@ class TestDashboardRoutes:
     def test_every_board_is_floored_at_the_pane_width_not_the_default_frame_width(self):
         """G1 (#124): a board narrower than the window used to stop at the 1280px frame default."""
         body = strip_open_issues_data(self._client().get("/").get_data(as_text=True))
-        assert "Math.max(inner + 40, pane, f.offsetWidth || 0)" in body
+        assert "var target = inner <= pane ? pane : (inner > cur ? inner + 40 : cur);" in body
         assert "var pane = document.getElementById('content').clientWidth" in body
         assert "Math.max(inner + 40, f.offsetWidth || 1280)" not in body
 
