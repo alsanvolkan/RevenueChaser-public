@@ -976,12 +976,35 @@ def _db_legend() -> str:
             "— each pill names the .store/ DuckDB that dataset is written to.</div>")
 
 
+# Provider names spelled out for the reader (avo's copy rule, 23 Oct 2026). The registry value stays the
+# machine key (``data-source``, the filter chips' ``data-value``); only the visible text is words.
+SOURCE_WORDS = {
+    "uw": "Unusual Whales",
+    "fmp": "Financial Modeling Prep",
+    "yfinance": "Yahoo Finance",
+    "sec": "SEC EDGAR filings",
+    "finra/cftc": "FINRA and the Commodity Futures Trading Commission",
+    "cboe": "Cboe (Chicago Board Options Exchange)",
+    "fred": "FRED (Federal Reserve Economic Data)",
+    "openfigi": "OpenFIGI",
+    "derived": "worked out by us from other datasets",
+    "manual": "entered by hand",
+    "store": "the store's own bookkeeping",
+    "unknown": "more than one provider, or not known",
+}
+
+
+def source_words(value) -> str:
+    """The plain-words name of a registry source value; an unlisted value is shown as it is."""
+    return SOURCE_WORDS.get(str(value), str(value))
+
+
 def _source_cells(row: dict) -> tuple[str, str, str]:
     """Source, Coverage and Fresh. A row the registry does not know is a dash in all three."""
     if row.get("source") is None:
         return DASH, DASH, DASH
     fresh = row.get("fresh")
-    return (_html.escape(str(row.get("source"))), _coverage_cell(row),
+    return (_html.escape(source_words(row.get("source"))), _coverage_cell(row),
             _html.escape(str(fresh)) if fresh else DASH)
 
 
@@ -1043,10 +1066,12 @@ def _states_of(row: dict, errors: list[dict]) -> list[str]:
 
 
 def _filter_chip(kind: str, value: str) -> str:
-    """One filter chip: a real toggle button that carries its value as its text."""
+    """One filter chip: a real toggle button. ``data-value`` is the machine value the filter compares; the
+    visible text is the plain-words name for a source and the value itself for the other axes."""
     val = _html.escape(value, quote=True)
+    text = source_words(value) if kind == "source" else value
     return (f'<button type="button" class="fchip" data-chips="{kind}" data-value="{val}" '
-            f'aria-pressed="false">{_html.escape(value)}</button>')
+            f'aria-pressed="false">{_html.escape(text)}</button>')
 
 
 def _filter_group(label: str, kind: str, values: list[str]) -> str:
@@ -1147,7 +1172,7 @@ def _table(rows: list[dict], errors: list[dict] | None = None) -> str:
         "<th>Dataset</th>"
         '<th data-group="source">Source<button type="button" class="grp" aria-pressed="false" '
         'title="Group the rows by source">Group</button></th>'
-        "<th>Coverage</th><th>Fresh</th><th>Last data date</th><th>Rows</th><th>Holes</th>"
+        "<th>Coverage</th><th>Freshness</th><th>Last data date</th><th>Rows</th><th>Holes</th>"
         "</tr></thead><tbody>"
         + "".join(body)
         + "</tbody></table></div>"

@@ -37,7 +37,7 @@ def test_renders_the_inventory_table_headers_and_rows():
     """S5 (#124): the table leads with Source / Coverage / Fresh; the store tables, writer,
     action and notes moved into a detail row (asserted in the S5 tests below)."""
     html = report.render_settings_dashboard(_payload())
-    for header in ("Dataset", "Source", "Coverage", "Fresh", "Last data date", "Rows", "Holes"):
+    for header in ("Dataset", "Source", "Coverage", "Freshness", "Last data date", "Rows", "Holes"):
         assert header in html
     assert "Store table(s)" in html and "Action" in html and "Notes" in html
     assert "Equity universe" in html
@@ -1537,7 +1537,7 @@ def _cells(row: str) -> list[str]:
 
 def test_the_table_leads_with_source_coverage_and_fresh_then_the_old_columns():
     html = report.render_settings_dashboard(_s5_payload())
-    assert _thead_cells(html) == ["Dataset", "Source", "Coverage", "Fresh",
+    assert _thead_cells(html) == ["Dataset", "Source", "Coverage", "Freshness",
                                   "Last data date", "Rows", "Holes"]
 
 
@@ -1545,7 +1545,7 @@ def test_the_three_new_cells_carry_the_registry_facts():
     html = report.render_settings_dashboard(_s5_payload())
     cells = _cells(_main_row(html, "universe"))
     assert cells[0] == "Equity universe"
-    assert cells[1] == "yfinance"
+    assert cells[1] == "Yahoo Finance"
     assert cells[2] == "812 / 905 (90%)"
     assert cells[3] == "2026-09-20"
     assert cells[4] == "—" and cells[5] == "7,403"
@@ -1905,7 +1905,9 @@ def test_the_count_line_always_says_how_many_of_the_total_are_shown():
 def test_the_chip_groups_list_only_the_values_the_rows_carry():
     bar = _filter_bar(report.render_settings_dashboard(_g4_payload()))
     assert _chip_texts(bar, "db") == ["raw", "edgar"], "prices / history / discord are not here"
-    assert _chip_texts(bar, "source") == ["finra/cftc", "sec", "yfinance"]
+    assert _chip_texts(bar, "source") == ["FINRA and the Commodity Futures Trading Commission",
+                                          "SEC EDGAR filings", "Yahoo Finance"]
+    assert 'data-value="finra/cftc"' in bar and 'data-value="sec"' in bar, "the filter still compares the machine value"
     assert _chip_texts(bar, "state") == ["needs attention", "no time column", "no denominator"]
     assert bar.count('<button type="button" class="fchip"') == 8
     assert bar.count('aria-pressed="false"') == 8, "every chip is a toggle and none is on"
@@ -2179,3 +2181,15 @@ def test_the_other_store_tables_section_escapes_its_cells():
     section = _other_section(report.render_settings_dashboard(p))
     assert "<img" not in section
     assert section.count("&lt;img src=x onerror=__x(1)&gt;") == 3
+
+
+def test_every_registry_source_is_spelled_out_in_words():
+    """avo's copy rule: no 'uw' or 'sec' shorthand on the board. Every provider value the registry can carry has
+    plain words, and none of them is the raw short form."""
+    from RevenueChaser.core import datasets
+    for source in datasets.Source:
+        words = report.source_words(source.value)
+        assert source.value in report.SOURCE_WORDS, source.value
+        assert words != source.value or source.value == "openfigi"
+        assert len(words) > 3
+    assert report.source_words("something-new") == "something-new"
