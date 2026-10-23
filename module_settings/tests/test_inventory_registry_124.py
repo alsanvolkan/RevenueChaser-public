@@ -105,6 +105,14 @@ def test_attach_registry_carries_the_store_file_the_spec_names(monkeypatch):
         assert out[0]["db"] == db, key
 
 
+# ── S5b / G3 of the GUI brief (#124): one named state per kind of table ─────────────────────
+# ``_fresh_record`` returns ``{state, date, text}``. Every state carries words: the Fresh cell must
+# never print a bare dash, and a failed query must never read like a table that holds no rows.
+def _epoch(text: str) -> float:
+    """Epoch seconds of an ISO minute, the unit ``job_runs.started_at`` / ``finished_at`` hold."""
+    return datetime.fromisoformat(text).replace(tzinfo=timezone.utc).timestamp()
+
+
 def test_fresh_is_the_max_date_of_the_specs_freshness_pair(rawstore_tmp_db):
     rawstore.write_rows("chain_filings", [{"ticker": "AAPL", "cik": "1", "form": "10-K",
                                            "filed": "2026-01-15"}])
@@ -112,12 +120,142 @@ def test_fresh_is_the_max_date_of_the_specs_freshness_pair(rawstore_tmp_db):
                                              "filed": "2026-03-01"}])
     out, _errors = _attach([_row("corpus")])
     expected = inventory._max_date(("chain_filings", "filed"), ("edgar_documents", "filed"))
-    assert out[0]["fresh"] == expected == "2026-03-01"
+    assert expected == "2026-03-01"
+    assert out[0]["fresh"] == {"state": "date", "date": expected, "text": expected}
 
 
-def test_a_spec_with_no_freshness_pair_has_no_fresh_date(rawstore_tmp_db):
+def test_a_spec_with_no_freshness_pair_says_no_time_column_in_plain_words(rawstore_tmp_db):
     out, _errors = _attach([_row("universe")])       # freshness None (no fetch stamp)
-    assert out[0]["fresh"] is None
+    assert out[0]["fresh"] == {"state": "no_time_column", "date": None,
+                               "text": "no time column - see the provenance rows"}
+
+
+def test_a_pair_whose_tables_hold_no_rows_is_empty_and_not_a_failure(rawstore_tmp_db):
+    """Every table exists and holds no row: that is an empty dataset, not a broken read."""
+    out, errors = _attach([_row("corpus")])
+    assert out[0]["fresh"] == {"state": "empty", "date": None, "text": "no date stored yet"}
+    assert errors == [], "no failure happened, so none is reported"
+
+
+def _fail_on(*tables: str):
+    """``rawstore.query`` as it is, except a read naming one of ``tables`` raises."""
+    real = rawstore.query
+
+    def flaky(sql, *args, **kwargs):
+        if any(name in sql for name in tables):
+            raise RuntimeError("the freshness query failed")
+        return real(sql, *args, **kwargs)
+
+    return flaky
+
+
+def test_a_failed_freshness_query_is_its_own_state_and_is_recorded(rawstore_tmp_db, monkeypatch):
+    monkeypatch.setattr(rawstore, "query", _fail_on("MAX(filed)"))
+    out, errors = _attach([_row("corpus")])
+    assert out[0]["fresh"] == {"state": "failed", "date": None,
+                               "text": "query failed - this is not an empty dataset"}
+    assert [e["where"] for e in errors] == ["_fresh"]
+    assert errors[0]["table"] == "chain_filings", "the error names the table that could not be read"
+
+
+def test_a_failed_freshness_query_never_reads_like_an_empty_table(rawstore_tmp_db, monkeypatch):
+    """The one case this task exists for: a broken read must not look like a table with no rows."""
+    empty, _errors = _attach([_row("corpus")])
+    monkeypatch.setattr(rawstore, "query", _fail_on("MAX(filed)"))
+    failed, _errors = _attach([_row("corpus")])
+    assert failed[0]["fresh"]["state"] != empty[0]["fresh"]["state"]
+    assert failed[0]["fresh"]["text"] != empty[0]["fresh"]["text"]
+    assert failed[0]["fresh"]["state"] == "failed"
+
+
+def test_a_from_run_log_dataset_reads_the_newest_run_of_its_writer(rawstore_tmp_db):
+    """The newest ``job_runs`` row of the writing job is the dataset's freshness (S5b part 3)."""
+    rawstore.write_rows("job_runs", [
+        {"run_id": "a", "registry_name": "RC-Screeners-Daily", "status": "done",
+         "started_at": _epoch("2026-10-18T21:00:00"), "finished_at": _epoch("2026-10-18T21:20:00")},
+        {"run_id": "b", "registry_name": "RC-Screeners-Daily", "status": "done",
+         "started_at": _epoch("2026-10-20T21:00:00"), "finished_at": _epoch("2026-10-20T21:20:00")},
+        {"run_id": "c", "registry_name": "RC-Forecast-Outcomes", "status": "done",
+         "started_at": _epoch("2026-10-19T21:00:00"), "finished_at": _epoch("2026-10-19T21:20:00")},
+    ])
+    out, _errors = _attach([_row("ag_scores"), _row("forecast_outcomes")])
+    assert out[0]["fresh"] == {"state": "run_log", "date": "2026-10-20",
+                               "text": "taken from the run log, 2026-10-20"}
+    assert out[1]["fresh"] == {"state": "run_log", "date": "2026-10-19",
+                               "text": "taken from the run log, 2026-10-19"}
+
+
+def test_a_from_run_log_dataset_with_no_recorded_run_reads_the_words_only(rawstore_tmp_db):
+    out, _errors = _attach([_row("ag_scores")])
+    assert out[0]["fresh"] == {"state": "run_log", "date": None, "text": "taken from the run log"}
+
+
+def test_the_run_log_is_read_once_for_every_dataset_that_uses_it(rawstore_tmp_db, monkeypatch):
+    """One query for all of them: sixteen datasets must not cost sixteen run-log reads."""
+    rawstore.write_rows("job_runs", [{"run_id": "a", "registry_name": "RC-Screeners-Daily",
+                                      "status": "done", "finished_at": _epoch("2026-10-20T21:20:00")}])
+    real = rawstore.query
+    seen = []
+
+    def counting(sql, *args, **kwargs):
+        if "job_runs" in sql:
+            seen.append(sql)
+        return real(sql, *args, **kwargs)
+
+    monkeypatch.setattr(rawstore, "query", counting)
+    out, _errors = _attach([_row("ag_scores"), _row("swing_scores"), _row("fundamentals_scores")])
+    assert len(seen) == 1, seen
+    assert {row["fresh"]["date"] for row in out} == {"2026-10-20"}
+
+
+def test_a_retired_table_says_it_is_retired_and_makes_no_claim(rawstore_tmp_db):
+    out, _errors = _attach([_row("retired")])
+    assert out[0]["fresh"] == {"state": "retired", "date": None,
+                               "text": "retired - no freshness claim made"}
+
+
+def test_store_bookkeeping_says_it_makes_no_freshness_claim(rawstore_tmp_db):
+    out, _errors = _attach([_row("bookkeeping")])
+    assert out[0]["fresh"] == {"state": "bookkeeping", "date": None,
+                               "text": "store bookkeeping - no freshness claim"}
+
+
+def test_the_run_log_caveat_the_registry_carries_reaches_the_row(rawstore_tmp_db):
+    """``freshness_note`` is the registry's own #82/#83 caveat: the detail row shows it, not the cell."""
+    out, _errors = _attach([_row("ag_scores"), _row("corpus")])
+    assert out[0]["fresh_note"] == datasets.FROM_RUN_LOG_CAVEAT
+    assert out[1]["fresh_note"] is None
+
+
+def test_commitments_of_traders_reads_fresh_when_its_newest_week_is_recent(rawstore_tmp_db):
+    """Four weeks are thin by design — the first write wins and the table grows forward — so a
+    recent week is fresh: never a failure, never stale, and never a missing date."""
+    rawstore.write_rows("cftc_cot", [
+        {"report_type": "disaggregated", "market": "ES", "report_date": day,
+         "session_date": day, "fetched_at": _epoch(f"{day}T21:00:00")}
+        for day in ("2026-10-06", "2026-10-13", "2026-10-20")])
+    out, errors = _attach([_row("cftc")])
+    record = out[0]["fresh"]
+    assert record == {"state": "date", "date": "2026-10-20", "text": "2026-10-20"}
+    assert errors == []
+    assert "fail" not in record["text"].lower() and "stale" not in record["text"].lower()
+
+
+def test_every_attached_row_carries_a_fresh_record_with_a_state_a_date_and_words(rawstore_tmp_db):
+    """The shape every reader and every test may rely on: exactly these three keys, never a dash."""
+    rawstore.write_rows("chain_filings", [{"ticker": "AAPL", "cik": "1", "form": "10-K",
+                                           "filed": "2026-03-01"}])
+    out, _errors = _attach([_row(key) for key in
+                            ("corpus", "universe", "cftc", "ag_scores", "retired", "bookkeeping")])
+    states = set()
+    for row in out:
+        record = row["fresh"]
+        assert set(record) == {"state", "date", "text"}, row["key"]
+        assert isinstance(record["state"], str) and record["state"]
+        assert isinstance(record["text"], str) and record["text"].strip()
+        assert inventory.DASH not in record["text"], "the Fresh cell never prints a bare dash"
+        states.add(record["state"])
+    assert states == {"date", "no_time_column", "empty", "run_log", "retired", "bookkeeping"}
 
 
 # ── coverage ────────────────────────────────────────────────────────────────

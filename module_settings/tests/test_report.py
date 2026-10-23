@@ -1508,7 +1508,7 @@ def _s5_payload():
         writer_note="caps-only fill is POST /run/universe-stats",
         coverage={"covered": 812, "expected": 905, "fraction": 812 / 905,
                   "label": "812 / 905 (90%)", "newest": "2026-09-20", "problems": []},
-        fresh="2026-09-20")
+        fresh={"state": "date", "date": "2026-09-20", "text": "2026-09-20"})
     return p
 
 
@@ -1548,7 +1548,7 @@ def test_the_three_new_cells_carry_the_registry_facts():
     assert cells[1] == "Yahoo Finance"
     assert cells[2] == "812 / 905 (90%)"
     assert cells[3] == "2026-09-20"
-    assert cells[4] == "—" and cells[5] == "7,403"
+    assert cells[4] == "no date of its own" and cells[5] == "7,403"
     assert cells[6].startswith("1,710") and "null market cap" in cells[6]
 
 
@@ -1756,6 +1756,129 @@ def test_a_legend_under_the_table_explains_each_pill_once():
     assert "Store file" in legend
     for db in ("raw", "edgar", "discord", "history", "prices"):
         assert f'class="db db-{db}"' in legend, db
+
+
+# ── S5b / G3 of the GUI brief (#124): the Fresh cell's named states ─────────────────────────
+# The cells used to print a bare dash for four different situations. Each state now carries its
+# own words, and a failed query is red and says it is not an empty dataset.
+
+def _fresh_row(record, **over) -> dict:
+    """One dataset row carrying the Fresh record ``inventory._fresh_record`` builds."""
+    row = {"key": "quotes", "label": "Quotes", "tables": ["quote_snapshot"], "rows": 10,
+           "last_date": "2026-09-20", "holes": None, "hole_label": "", "fetch": None, "note": "",
+           "source": "uw", "coverage": {"fraction": 1.0, "label": "905 / 905 (100%)"},
+           "fresh": record}
+    row.update(over)
+    return row
+
+
+def _fresh_text(html: str, key: str = "quotes") -> str:
+    """The Fresh cell's text (the fourth cell) of one row."""
+    return _cells(_main_row(html, key))[3]
+
+
+def _last_date_text(html: str, key: str = "quotes") -> str:
+    """The Last data date cell's text (the fifth cell) of one row."""
+    return _cells(_main_row(html, key))[4]
+
+
+@pytest.mark.parametrize("state, text", [
+    ("date", "2026-09-20"),
+    ("no_time_column", "no time column - see the provenance rows"),
+    ("run_log", "taken from the run log, 2026-10-20"),
+    ("empty", "no date stored yet"),
+    ("retired", "retired - no freshness claim made"),
+    ("bookkeeping", "store bookkeeping - no freshness claim"),
+    ("failed", "query failed - this is not an empty dataset"),
+])
+def test_each_fresh_state_prints_its_own_words_and_never_a_dash(state, text):
+    html = report._table([_fresh_row({"state": state, "date": None, "text": text})])
+    assert _fresh_text(html) == text
+    assert _fresh_text(html) != "—", "the Fresh cell stopped printing a bare dash"
+
+
+def test_a_failed_freshness_query_is_called_out_in_colour():
+    html = report._table([_fresh_row({"state": "failed", "date": None,
+                                      "text": "query failed - this is not an empty dataset"})])
+    assert ('<span class="warnv">query failed - this is not an empty dataset</span>'
+            in _main_row(html, "quotes"))
+
+
+def test_a_failed_query_never_renders_like_a_table_that_holds_no_rows():
+    """The failure this slice exists for: the broken read and the empty table must not look alike."""
+    failed = report._table([_fresh_row({"state": "failed", "date": None,
+                                        "text": "query failed - this is not an empty dataset"})])
+    empty = report._table([_fresh_row({"state": "empty", "date": None,
+                                       "text": "no date stored yet"})])
+    assert _fresh_text(failed) != _fresh_text(empty)
+    assert 'class="warnv"' in _main_row(failed, "quotes"), "a failure is called out in colour"
+    assert 'class="warnv"' not in _main_row(empty, "quotes"), "an empty table is not a failure"
+
+
+@pytest.mark.parametrize("state, text", [
+    ("date", "2026-09-20"),
+    ("no_time_column", "no time column - see the provenance rows"),
+    ("empty", "no date stored yet"),
+    ("run_log", "taken from the run log, 2026-10-20"),
+    ("retired", "retired - no freshness claim made"),
+    ("bookkeeping", "store bookkeeping - no freshness claim"),
+])
+def test_a_failed_query_never_renders_like_any_other_state(state, text):
+    """A broken read is its own state, in colour: it must not borrow the words of any other."""
+    failed = report._table([_fresh_row({"state": "failed", "date": None,
+                                        "text": "query failed - this is not an empty dataset"})])
+    other = report._table([_fresh_row({"state": state, "date": None, "text": text})])
+    assert _fresh_text(failed) != _fresh_text(other)
+    assert 'class="warnv"' in _main_row(failed, "quotes")
+    assert 'class="warnv"' not in _main_row(other, "quotes")
+
+
+def test_the_fresh_words_are_escaped_and_no_state_name_becomes_a_class():
+    bad = "<img src=x onerror=__x(1)>"
+    html = report._table([_fresh_row({"state": bad, "date": None, "text": bad})])
+    row = _main_row(html, "quotes")
+    assert "<img" not in html
+    assert "&lt;img src=x onerror=__x(1)&gt;" in row
+    assert 'class="warnv"' not in row, "colour comes from the state name, never from the text"
+
+
+def test_a_row_with_no_fresh_record_keeps_the_dash():
+    """Only a row the registry does not know reaches the table without a record."""
+    html = report._table([_fresh_row(None)])
+    assert _fresh_text(html) == "—"
+
+
+def test_the_last_data_date_stops_printing_a_bare_dash():
+    """A row with no date of its own says so in words; the Freshness cell beside it says why."""
+    html = report._table([_fresh_row({"state": "no_time_column", "date": None,
+                                      "text": "no time column - see the provenance rows"},
+                                     last_date="—")])
+    assert _last_date_text(html) == "no date of its own"
+    assert _last_date_text(report._table([_fresh_row({"state": "date",
+                                                      "date": "2026-09-20",
+                                                      "text": "2026-09-20"})])) == "2026-09-20"
+
+
+def test_the_commitments_of_traders_reads_fresh_neither_stale_nor_failed():
+    """It is four weeks thin by design (the first write wins, it grows forward): a recent week is
+    fresh, and a small row count is not a failure."""
+    html = report._table([_fresh_row({"state": "date", "date": "2026-10-20", "text": "2026-10-20"},
+                                     key="cftc", label="E-mini Commitments of Traders",
+                                     tables=["cftc_cot"], rows=4, last_date="2026-10-20")])
+    row = _main_row(html, "cftc")
+    assert _fresh_text(html, "cftc") == "2026-10-20"
+    assert "stale" not in row.lower() and "failed" not in row.lower()
+    assert 'class="warnv"' not in row
+
+
+def test_the_run_log_caveat_sits_in_the_detail_row_beside_the_words():
+    """The registry's #82/#83 caveat is not retyped in the cell: it is shown where the notes are."""
+    html = report._table([_fresh_row({"state": "run_log", "date": "2026-10-20",
+                                      "text": "taken from the run log, 2026-10-20"},
+                                     fresh_note="from the run log; not trustworthy until #82 "
+                                                "and #83 are fixed")])
+    assert "not trustworthy until #82" in _detail_row(html, "quotes")
+    assert "not trustworthy until #82" not in _main_row(html, "quotes"), "the cell stays short"
 
 
 def _sec_entry(**over) -> dict:

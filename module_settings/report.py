@@ -1003,9 +1003,37 @@ def _source_cells(row: dict) -> tuple[str, str, str]:
     """Source, Coverage and Fresh. A row the registry does not know is a dash in all three."""
     if row.get("source") is None:
         return DASH, DASH, DASH
-    fresh = row.get("fresh")
-    return (_html.escape(source_words(row.get("source"))), _coverage_cell(row),
-            _html.escape(str(fresh)) if fresh else DASH)
+    return (_html.escape(source_words(row.get("source"))), _coverage_cell(row), _fresh_cell(row))
+
+
+# The Fresh record's failed state (``inventory._fresh_record``, S5b): matched as text, the way the
+# coverage cell matches "error", because that is what the row carries by the time it reaches here.
+FRESH_FAILED = "failed"
+
+
+def _fresh_cell(row: dict) -> str:
+    """The Freshness cell (S5b, G3, #124): what this dataset can claim, in plain words.
+
+    The record ``inventory._fresh_record`` attaches carries the words, so the cell says "no time
+    column - see the provenance rows", "taken from the run log, 2026-10-20", "retired - no
+    freshness claim made" and so on instead of a bare dash. A failed query is called out in colour
+    and says it is not an empty dataset: those two must never look alike. A bare date string is
+    still accepted, so a payload collected before this change renders as it always did; a row with
+    no record at all (the registry does not know it) keeps the dash. Colour comes from the state
+    name, never from the text.
+    """
+    record = row.get("fresh")
+    if isinstance(record, str):
+        return _html.escape(record) if record else DASH
+    if not isinstance(record, dict):
+        return DASH
+    text = str(record.get("text") or "").strip()
+    if not text:
+        return DASH
+    escaped = _html.escape(text)
+    if record.get("state") == FRESH_FAILED:
+        return f'<span class="warnv">{escaped}</span>'
+    return escaped
 
 
 def _writer_cell(row: dict) -> str:
@@ -1111,8 +1139,17 @@ def _filter_bar(rows: list[dict], errors: list[dict]) -> str:
           "</div>")
 
 
+def _fresh_note_html(row: dict) -> str:
+    """The registry's freshness caveat, when it carries one (the ``from_run_log`` #82/#83 note)."""
+    note = str(row.get("fresh_note") or "").strip()
+    if not note:
+        return ""
+    return f'<div class="dline"><b>Freshness note</b>{_html.escape(note)}</div>'
+
+
 def _detail_row(row: dict, row_id: str, errors: list[dict]) -> str:
-    """One dataset's store tables, writer, action and notes: closed until its name is pressed."""
+    """One dataset's store tables, writer, action, freshness note and notes: closed until its name
+    is pressed."""
     tables = ", ".join(_html.escape(str(t)) for t in (row.get("tables") or []))
     note = str(row.get("note") or "").strip()
     return (
@@ -1121,10 +1158,28 @@ def _detail_row(row: dict, row_id: str, errors: list[dict]) -> str:
         f'<div class="dline"><b>Store table(s)</b><span class="tbl">{tables or DASH}</span></div>'
         f'<div class="dline"><b>Writer</b>{_writer_cell(row)}</div>'
         f'<div class="dline"><b>Action</b>{_action_cell(row)}</div>'
+        f'{_fresh_note_html(row)}'
         f'<div class="dline"><b>Notes</b>{_html.escape(note) if note else DASH}'
         f'{_master_age_html(row)}</div>'
         f'{_row_errors(row, errors)}'
         "</td></tr>")
+
+
+# What the Last data date cell reads when the dataset's own table carries no date: the reason is
+# the Freshness cell's business, one column over (S5b, G3).
+NO_OWN_DATE = "no date of its own"
+
+
+def _last_date_cell(row: dict) -> str:
+    """The Last data date cell: the newest date this dataset's own table carries, or words.
+
+    A bare dash here read the same whether the table has no time column, holds no rows or could not
+    be read. The cell says what it knows instead, and the Freshness cell beside it says why.
+    """
+    date = str(row.get("last_date") or "").strip()
+    if _shows_dash(date):
+        return NO_OWN_DATE
+    return _html.escape(date)
 
 
 def _table(rows: list[dict], errors: list[dict] | None = None) -> str:
@@ -1160,7 +1215,7 @@ def _table(rows: list[dict], errors: list[dict] | None = None) -> str:
             f"<td>{source}</td>"
             f"<td>{coverage}</td>"
             f"<td>{fresh}</td>"
-            f'<td>{_html.escape(str(row.get("last_date") or DASH))}</td>'
+            f'<td>{_last_date_cell(row)}</td>'
             f'<td class="num">{_fmt_rows(row.get("rows"))}</td>'
             f'<td class="num">{_fmt_holes(row)}</td>'
             "</tr>")
@@ -1491,7 +1546,12 @@ def render_settings_dashboard(payload: dict) -> str:
         "This is an ops inventory of the local <b>.store/</b>: one row per dataset with its row count, "
         "newest data date and known holes. <b>Source</b> is the provider the registry names, <b>Coverage</b> "
         "is the stored rows against the population they should cover (<b>n/a</b> when there is no population "
-        "to count), and <b>Fresh</b> is the newest date the registry ages that dataset by. Press a dataset's "
+        "to count), and <b>Freshness</b> is what freshness the registry lets that dataset claim: its newest "
+        "date, or the words for the one thing it can say instead — <b>no time column</b> (the date lives in "
+        "a related table), <b>taken from the run log</b> (a worked-out table, dated by the job that wrote "
+        "it), <b>retired</b> or <b>store bookkeeping</b> (no claim is made), <b>no date stored yet</b> (the "
+        "table holds no rows), or <b>query failed</b> (a broken read, which is not an empty dataset). Press "
+        "a dataset's "
         "name to open its store tables, writer and <b>Fetch</b> action. <b>Refresh</b> re-reads the store "
         "with <b>no network</b> — it is instant and always safe. <b>Fetch</b> enqueues that "
         "dataset's job, hits a provider and can take minutes; the row reports back when it "
