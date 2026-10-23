@@ -925,7 +925,9 @@ def test_quotes_row_survives_a_failing_summary(rawstore_tmp_db, monkeypatch):
     monkeypatch.setattr(quotes, "health_summary", boom)
     payload = inventory.collect(now=FIXED)
     assert _rows(payload)["quotes"]["note"] == "quote summary unavailable"
-    assert payload["errors"][-1]["where"] == "_quotes_row"
+    # Searched, not read off the end: the Identity coverage section (#142) reads the same summary, so a
+    # broken read is recorded by every caller and "_quotes_row" is no longer the last entry.
+    assert any(e["where"] == "_quotes_row" for e in payload["errors"])
 
 
 def test_quotes_queries_are_pinned():

@@ -17,6 +17,11 @@ A freshness pair is a ``(table, column)`` ``_max_date`` can read. ``source`` is 
 Does not read the store. Seven datasets have an existing summary: their ``coverage`` is a zero-argument
 callable returning that module's ``Health``, imported and called when a reader asks for the row (S4).
 S5 switches the inventory reader to it.
+
+``gap_kind`` and ``next_step`` (G11) are the written half of coverage: the measurement says how many
+names are missing, these two say what would close the hole. ``gap_kind`` is one of ``GapKind``'s six
+values, and a kind that closes only through work (``fixable``, ``in_build``, ``needs_decision``) or
+through a fact about the source (``ceiling``, which carries its REASON) requires a ``next_step``.
 """
 from __future__ import annotations
 
@@ -105,6 +110,28 @@ class CoverageSpec:
             raise ValueError("CoverageSpec needs a population query and a presence query")
 
 
+class GapKind(str, Enum):
+    """What stands between a dataset and its full population (#124 G11).
+
+    ``fixable`` we can close now, ``in_build`` something already being built closes, ``needs_decision``
+    waits on a choice, ``ceiling`` cannot be closed on the route we use (its ``next_step`` says why, as
+    a fact about the source), ``self_heals`` fills in over time, ``none`` means there is no hole.
+    """
+
+    fixable = "fixable"
+    in_build = "in_build"
+    needs_decision = "needs_decision"
+    ceiling = "ceiling"
+    self_heals = "self_heals"
+    none = "none"
+
+
+# The kinds whose gap only closes through written words. ``ceiling`` is here because it must carry
+# its REASON (why the source cannot give us the rest), not a schedule.
+_GAP_KINDS_WITH_STEP = (
+    GapKind.fixable, GapKind.in_build, GapKind.needs_decision, GapKind.ceiling,
+)
+
 Freshness = tuple[str, str] | tuple[tuple[str, str], ...] | str | None
 
 
@@ -123,6 +150,8 @@ class DatasetSpec:
     freshness_note: str | None = None
     coverage: CoverageSpec | Callable[..., Health] | None = None
     coverage_note: str | None = None
+    gap_kind: GapKind | None = None
+    next_step: str | None = None
 
     def __post_init__(self) -> None:
         if not self.key or not self.label:
@@ -151,6 +180,18 @@ class DatasetSpec:
             isinstance(self.coverage, CoverageSpec) or callable(self.coverage)
         ):
             raise ValueError(f"{self.key}: coverage must be None, a CoverageSpec, or a callable")
+        if self.gap_kind is not None and not isinstance(self.gap_kind, GapKind):
+            raise ValueError(
+                f"{self.key}: gap_kind must be a GapKind or None, not {self.gap_kind!r}; "
+                f"one of {[kind.value for kind in GapKind]}")
+        if self.next_step is not None and not (
+            isinstance(self.next_step, str) and self.next_step.strip()
+        ):
+            raise ValueError(f"{self.key}: next_step must be None or non-empty text")
+        if self.gap_kind in _GAP_KINDS_WITH_STEP and not (self.next_step or "").strip():
+            needs = ("its reason, a fact about the source" if self.gap_kind is GapKind.ceiling
+                     else "a next_step that says what would close it")
+            raise ValueError(f"{self.key}: gap_kind {self.gap_kind.value!r} needs {needs} in next_step")
 
     def freshness_pairs(self) -> tuple[tuple[str, str], ...]:
         """``(table, column)`` pairs ``_max_date`` can read. Empty for None, from_run_log, no_claim."""
@@ -238,6 +279,10 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         freshness=("sec_submissions", "filing_date"),
         coverage=_summary_health("core.sec_submissions"),
         coverage_note="expected is None: the universe CIK count is the inventory's query, not the summary's",
+        gap_kind=GapKind.fixable,
+        next_step=("The summary counts the CIKs it has answered for but not the universe's CIKs, so "
+                   "there is no population. The inventory already counts the universe's CIKs; joining "
+                   "the two would give one."),
     ),
     DatasetSpec(
         key="sec_files", label="SEC exchange & fund files",
@@ -246,6 +291,10 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         freshness=(("sec_exchange_file", "run_at"), ("sec_mf_file", "run_at")),
         coverage=_summary_health("core.sec_files"),
         coverage_note="both files summed; expected is None until a good pull records file_rows",
+        gap_kind=GapKind.self_heals,
+        next_step=("The population comes from the last good pull's own row count, and each good pull "
+                   "tops the stored rows up to it; a store with no receipt yet shows no population until "
+                   "one is written."),
     ),
     DatasetSpec(
         key="companyfacts", label="Companyfacts",
@@ -266,6 +315,11 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         db="prices", source=Source.uw, writer="RC-Daily-Bars",
         freshness=("price_bars_daily", "session_date"),
         coverage=_summary_health("core.prices"),
+        gap_kind=GapKind.needs_decision,
+        next_step=("Most of the names with no bar are warrants, preferred shares and SPAC units, which "
+                   "the boards' universe drops by design (#87), so this population counts names no board "
+                   "scores. Deciding whether coverage should be measured on the boards' universe would "
+                   "close it."),
     ),
     DatasetSpec(
         key="index_levels", label="SPX daily levels",
@@ -273,6 +327,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         db="prices", source=Source.yfinance, writer="RC-Daily-Bars",
         freshness=("index_levels_daily", "session_date"),
         coverage=_summary_health("core.index_levels"),
+        gap_kind=GapKind.none,
     ),
     # source unknown: yfinance via the screeners Fetch and uw via the Earnings Fetch are both writers.
     DatasetSpec(
@@ -283,6 +338,10 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         writer_note="Earnings Fetch also appends UW statements (docs/data_architecture.md Stage 2)",
         coverage=_summary_health("core.vendor_data"),
         coverage_note="expected is None: the universe is not read by the summary",
+        gap_kind=GapKind.fixable,
+        next_step=("The summary counts the tickers with a valuation row but not the universe, so there is "
+                   "no population. Reading the universe count, as the quotes summary already does, would "
+                   "give one."),
     ),
     # Yahoo leads (inventory._quotes_row). UW rows are stored too.
     DatasetSpec(
@@ -291,6 +350,11 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         db="raw", source=Source.yfinance, writer="RC-Screeners-Daily",
         freshness=("quote_snapshot", "session_date"),
         coverage=_summary_health("core.quotes"),
+        gap_kind=GapKind.needs_decision,
+        next_step=("Most of the names with no quote are warrants, preferred shares and SPAC units, which "
+                   "the boards' universe drops by design (#87), and a rate-limited night misses more "
+                   "(#100). Deciding whether coverage should be measured on the boards' universe would "
+                   "close most of it."),
     ),
     # Lead source uw. sp600 is copied from the last accepted identity snapshot, not a UW call.
     DatasetSpec(
@@ -324,6 +388,9 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         writer_note="dashboard job POST /run/holdings; not an automations.REGISTRY entry",
         freshness=("etf_holdings", "fetched_at"),
         coverage=_summary_health("module_sector_rotation.etf_holdings"),
+        gap_kind=GapKind.ceiling,
+        next_step=("The gold, silver and oil funds GLD, SLV and USO hold metal or futures rather than "
+                   "company shares, so the holdings providers return no list for them."),
     ),
     DatasetSpec(
         key="relatedness", label="Relatedness profiles",
@@ -399,6 +466,10 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         tables=("cftc_cot",),
         db="raw", source=Source.finra_cftc, writer="RC-Earnings-Inputs",
         freshness=("cftc_cot", "session_date"),
+        gap_kind=GapKind.needs_decision,
+        next_step=("The Commitments of Traders table is fresh but shallow: the nightly writer asks for the "
+                   "newest few weeks and the first write per report wins, so it only grows forward. #119 "
+                   "asks how deep to backfill."),
     ),
     DatasetSpec(
         key="earnings_history", label="Earnings history",
@@ -496,6 +567,9 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         db="raw", source=Source.openfigi, writer=None,
         writer_note="13F map step core/identity_cusip.py, dashboard job sec13f_map; not a REGISTRY entry",
         freshness=("identity_cusip", "valid_from"),
+        gap_kind=GapKind.ceiling,
+        next_step=("OpenFIGI maps a CUSIP to a name, so a name with no CUSIP cannot get one on this route; "
+                   "the spine's CUSIP column has the same ceiling."),
     ),
     _runlog(
         "cusip_map", "CUSIP to ticker map", ("cusip_ticker",),
