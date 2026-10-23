@@ -2443,3 +2443,72 @@ def test_the_cftc_row_says_fresh_but_shallow_and_names_119_without_calling_it_a_
     assert "#119" in detail
     assert "fresh but shallow" in detail
     assert "failure" not in detail.lower() and "failed" not in detail.lower()
+
+
+# ── G7 of the GUI brief (#124): the drill below the table, and which boards can score the name ──
+def _drill_section(html: str) -> str:
+    """The drill's own block: its heading and search box, up to the closed detail panel."""
+    return html[html.index('id="ticker-drill"'):html.index('id="drill"')]
+
+
+def test_the_ticker_drill_sits_below_the_dataset_table_and_before_the_other_sections():
+    """avo 2026-10-23: keep the drill, move it below the table, make it carry everything."""
+    p = dict(_payload(), identity=_identity(),
+             other_tables=[{"table": "watchlist", "db": "raw", "rows": 2, "newest": None}])
+    html = report.render_settings_dashboard(p)
+    assert html.index('id="inv-table"') < html.index('id="ticker-drill"'), "below the dataset table"
+    assert html.index('id="ticker-drill"') < html.index('id="other-tables"'), "before the other sections"
+    assert html.index('id="ticker-drill"') < html.index('id="identity"')
+    assert 'id="drill"' in html, "the detail panel moved with its search box"
+
+
+def test_no_ticker_search_row_is_left_above_the_dataset_table():
+    html = report.render_settings_dashboard(_payload())
+    above = html[html.index("<body>"):html.index('id="inv-table"')]
+    assert 'id="ticker-combo"' not in above and 'class="frow drillpick"' not in above
+    assert "Ticker detail" not in above
+    block = _drill_section(html)
+    assert 'id="ticker-combo"' in block and 'id="ticker-combo-list"' in block, \
+        "the drill keeps its own search box"
+
+
+def test_the_drill_says_which_boards_can_score_the_name():
+    html = _drill_rows({"ticker": "MU", "presence": {}, "boards": [
+        {"key": "module_swing_potential", "label": "Swing", "state": "can", "missing": []},
+        {"key": "module_fundamentals", "label": "Fundamentals", "state": "cannot",
+         "missing": ["quote", "EDGAR facts"]},
+        {"key": "module_earnings_radar", "label": "Earnings Radar", "state": "not_checked",
+         "missing": []},
+    ]})
+    assert "Boards that can score this name" in html
+    assert ('<span class="dlbl">Swing</span>'
+            '<span class="dval">yes — every dataset it reads is stored</span>' in html)
+    assert ('<span class="dlbl">Fundamentals</span>'
+            '<span class="dval">no — missing quote, EDGAR facts</span>' in html)
+    assert ('<span class="dlbl">Earnings Radar</span>'
+            '<span class="dval">not checked for this board</span>' in html)
+    assert "not checked for this board" in html
+
+
+def test_the_board_list_says_what_it_measured_and_never_guesses():
+    """The note states the rule a reader can check: measured tables decide, the rest is unknown."""
+    html = _drill_rows({"ticker": "MU", "presence": {}, "boards": [
+        {"key": "module_earnings_radar", "label": "Earnings Radar", "state": "not_checked",
+         "missing": []}]})
+    note = html[html.index('class="dnote"'):].split("</div>")[0]
+    assert "A board can score the name when every store table it reads that this drill measures" in note
+    assert "not checked for this board" in note
+
+
+def test_a_drill_detail_without_the_board_list_renders_no_board_section():
+    """An older payload (or a failed build of the list) shows no claim at all."""
+    html = _drill_rows({"ticker": "MU", "presence": {}})
+    assert "Boards that can score this name" not in html
+
+
+def test_the_drill_escapes_a_hostile_ticker_and_a_hostile_board_label():
+    bad = "<img src=x onerror=__x(1)>"
+    html = _drill_rows({"ticker": bad, "presence": {},
+                        "boards": [{"key": "k", "label": bad, "state": "can", "missing": []}]})
+    assert "<img" not in html and html.count("&lt;img") == 2
+    assert '<span class="dlbl">Ticker</span><span class="dval">&lt;img' in html

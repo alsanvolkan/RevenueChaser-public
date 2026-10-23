@@ -2,11 +2,12 @@
 
 An ops inventory, not an equity board: its own filters over the table (a find box and store file /
 source / state chips, #124 G4 — not the equity filter kit), no Theme cascade; one ticker
-combobox (the filter kit's, #383 C1b) opens the stored-data drill. One row per dataset with its
-source, coverage, freshness, newest data date, row count and hole count, then a detail row
-(store table(s), writer, per-dataset Fetch, notes) opened from the dataset's name. Refresh
-re-reads the store with zero network; Fetch enqueues that dataset's async job. See
-``docs/data_health.md`` §2.
+combobox (the filter kit's, #383 C1b) opens the stored-data drill below the table (G7, #124),
+which carries the identifiers, the per-dataset presence and which boards can score the name.
+One row per dataset with its source, coverage, freshness, newest data date, row count and hole
+count, then a detail row (store table(s), writer, per-dataset Fetch, notes) opened from the
+dataset's name. Refresh re-reads the store with zero network; Fetch enqueues that dataset's
+async job. See ``docs/data_health.md`` §2.
 """
 from __future__ import annotations
 
@@ -104,8 +105,11 @@ table.inv tr.detail .dline b{color:var(--text);font-weight:600;margin-right:6px}
 select,input[type=text],input[type=number]{background:#10151f;border:1px solid #2a3345;color:var(--text);border-radius:6px;height:34px;padding:0 10px;font:500 13px/1 inherit}
 .drillpick .rcf-combo{width:300px}
 .drill{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
-.drill h2{margin:0 0 10px;font-size:15px;letter-spacing:-.2px}
 .drill-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 26px}
+/* G7 (#124): which boards can score the name — one row per board, across the whole grid. */
+.dgroup{grid-column:1/-1;margin-top:10px;border-top:1px solid var(--border);padding-top:8px}
+.dhead{font-size:12.5px;font-weight:600;margin-bottom:2px}
+.dnote{color:var(--muted);font-size:11.5px;padding:6px 0 0}
 .drow{display:flex;justify-content:space-between;gap:14px;border-bottom:1px solid var(--border);padding:5px 0;font-size:12.5px}
 .dlbl{color:var(--muted)}
 .dval{text-align:right;font-variant-numeric:tabular-nums}
@@ -558,6 +562,7 @@ function drillFill(d){
     : 'no stored 10-K / 20-F';
   var sic = d.sic ? (d.sic + (d.sic_description ? ' — ' + d.sic_description : '')) : '—';
   return ''
+    + drillRow('Ticker', d.ticker || '—')
     + drillRow('Name', d.name || '—')
     + drillRow('CIK', d.cik || '—')
     + drillRow('FIGI', d.figi || '—')
@@ -578,7 +583,33 @@ function drillFill(d){
     + drillRow('Legacy OHLC cache (SPY fallback)', swing.bars
         ? (swing.bars + ' bars · newest ' + (swing.newest || '—')) : 'no bars')
     + drillRow('OIPD chain', p.oipd_meta ? 'present' : 'missing')
-    + drillRow('Relatedness profile', p.relatedness_profiles ? 'present' : 'missing');
+    + drillRow('Relatedness profile', p.relatedness_profiles ? 'present' : 'missing')
+    + drillBoards(d.boards);
+}
+// Which boards can score this name (G7, #124). The server decides each board's state from the
+// store tables this drill already measured; this only prints it. A board that reads a table the
+// drill does not measure says so in words — it never claims one way or the other.
+var DRILL_BOARD_WORDS = {can: 'yes — every dataset it reads is stored',
+                         cannot: 'no — missing ',
+                         not_checked: 'not checked for this board'};
+function drillBoards(list){
+  if(!list || !list.length) return '';
+  var rows = '';
+  for(var i = 0; i < list.length; i++){
+    var b = list[i] || {};
+    var said;
+    if(b.state === 'can') said = DRILL_BOARD_WORDS.can;
+    else if(b.state === 'cannot') said = DRILL_BOARD_WORDS.cannot
+      + ((b.missing || []).join(', ') || 'a dataset this board reads');
+    else said = DRILL_BOARD_WORDS.not_checked;
+    rows += drillRow(b.label || '', said);
+  }
+  return '<div class="dgroup" id="drill-boards"><div class="dhead">Boards that can score this name</div>'
+    + rows
+    + '<div class="dnote">A board can score the name when every store table it reads that this '
+    + 'drill measures has a row for the name. A board that reads a store table this drill does not '
+    + 'measure says "not checked for this board": it may be able to score the name, and this drill '
+    + 'does not know.</div></div>';
 }
 function onDrillPick(ticker){
   var panel = document.getElementById('drill');
@@ -592,7 +623,7 @@ function onDrillPick(ticker){
     if(!r.ok) throw new Error('store read failed');
     return r.json();
   }).then(function(d){
-    body.innerHTML = drillRow('Ticker', d.ticker) + drillFill(d);
+    body.innerHTML = drillFill(d);
   }).catch(function(e){
     body.innerHTML = (e && e.message === 'unknown ticker')
       ? '<div class="dempty">No stored data for ' + rcEsc(ticker) + '.</div>'
@@ -1651,14 +1682,17 @@ def render_settings_dashboard(payload: dict) -> str:
                 "populated yet. Run a Fetch to load one.</div>")
 
     data_json = script_json(payload.get("tickers") or [])
+    # G7 (#124): avo kept the drill, below the dataset table, carrying everything. It keeps its
+    # own search box (the filter kit's combobox) and its ``id="drill"`` anchor.
     drill = (
-        '<div class="controls"><div class="frow drillpick"><span class="flbl" id="ticker-combo-label">Ticker</span>'
-        + combobox_html("ticker-combo", "ticker-combo-label", "Search ticker or name") + "</div></div>"
+        '<div id="ticker-drill">'
+        '<h2 class="sec">Ticker detail</h2>'
+        '<div class="frow drillpick"><span class="flbl" id="ticker-combo-label">Ticker</span>'
+        + combobox_html("ticker-combo", "ticker-combo-label", "Search ticker or name") + "</div>"
         '<div class="drill" id="drill" hidden>'
-        "<h2>Ticker detail</h2>"
         '<div class="drill-grid" id="drill-body">'
         '<div class="dempty">Pick a ticker to see its stored data.</div>'
-        "</div></div>"
+        "</div></div></div>"
     )
 
     identity_html = _identity_card(payload.get("identity"))
@@ -1692,8 +1726,8 @@ def render_settings_dashboard(payload: dict) -> str:
   {provider_health_html(payload.get("provider_health"))}
   {help_block}
   {_summary_tiles(rows, payload)}
-  {drill}
   {body}
+  {drill}
   {other_tables_html}
   {identity_html}
   {discord_html}

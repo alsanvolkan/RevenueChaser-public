@@ -1,14 +1,18 @@
-"""The per-ticker drill's dataset presence and identifiers (S10 of the Data Health plan, #126).
+"""The per-ticker drill's dataset presence, identifiers and board fit (S10 of the Data Health
+plan, #126; G7 of the GUI brief, #124).
 
 Five datasets decide whether a board can score a name: D01 bars, the quote, vendor
 statements, EDGAR facts and ownership. The drill reports each one's count and newest
-session/date, and the identifiers the identity spine holds. Store only, one query per
-table, and a table or column this store does not carry reads as absent — never an
+session/date, the identifiers the identity spine holds, and — since G7 — which registered
+boards can score this name from the tables the drill already measured. Store only, one query
+per table, and a table or column this store does not carry reads as absent — never an
 exception.
 """
 from __future__ import annotations
 
 from datetime import date
+
+import pytest
 
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_settings import inventory
@@ -155,3 +159,94 @@ def test_the_edgar_newest_period_is_the_newest_annual_record_not_its_position(ra
 
     assert inventory.ticker_detail("OUT")["presence"]["edgar_financials"] == {
         "periods": 2, "newest": "2026-08-27"}
+
+
+# ── G7 of the GUI brief (#124): which boards can score this name ────────────────────────────────
+# A board lists the store tables it reads (``module_settings.boards.BOARD_INPUTS``). A board can
+# score the name when it has a row in every table the board reads that this drill already
+# measures. A board reading a table the drill does not measure says "not checked", never a guess.
+
+def _boards_of(ticker: str) -> dict:
+    return {b["key"]: b for b in inventory.ticker_detail(ticker)["boards"]}
+
+
+def test_every_registered_board_answers_in_nav_order(rawstore_tmp_db):
+    from RevenueChaser.module_settings import boards
+
+    _seed_every_dataset()
+    got = inventory.ticker_detail("MU")["boards"]
+
+    assert [b["key"] for b in got] == [e["key"] for e in boards.BOARD_INPUTS]
+    assert [b["label"] for b in got] == [e["label"] for e in boards.BOARD_INPUTS]
+
+
+def test_a_board_whose_tables_are_all_measured_and_stored_can_score_the_name(rawstore_tmp_db):
+    _seed_every_dataset()
+    fit = _boards_of("MU")
+
+    # Swing reads equity_universe and price_bars_daily; Fundamentals adds the quote and EDGAR
+    # facts; Asymmetric Growth swaps the quote for ownership. MU has every one of them.
+    for key in ("module_swing_potential", "module_fundamentals", "module_asymmetric_growth"):
+        assert fit[key]["state"] == "can", key
+        assert fit[key]["missing"] == []
+
+
+def test_a_measured_table_with_no_row_makes_the_board_unable_and_names_what_is_missing(rawstore_tmp_db):
+    """Co-movement reads equity_universe and swing_ohlc; the seed has no swing_ohlc row."""
+    _seed_every_dataset()
+    fit = _boards_of("MU")
+
+    assert fit["module_comovement"]["state"] == "cannot"
+    assert fit["module_comovement"]["missing"] == ["legacy OHLC cache (SPY fallback)"]
+
+
+def test_a_name_with_only_d01_bars_cannot_be_scored_by_the_boards_this_drill_measures(rawstore_tmp_db):
+    rawstore.write_rows("price_bars_daily", _bars("NVDA", "2026-02-02"))
+    fit = _boards_of("NVDA")
+
+    assert fit["module_swing_potential"]["state"] == "cannot"
+    assert fit["module_swing_potential"]["missing"] == ["equity universe membership"]
+    assert fit["module_fundamentals"]["state"] == "cannot"
+    assert fit["module_fundamentals"]["missing"] == ["equity universe membership", "quote",
+                                                     "EDGAR facts"]
+    assert fit["module_asymmetric_growth"]["missing"] == ["equity universe membership",
+                                                          "EDGAR facts", "ownership"]
+
+
+def test_a_board_reading_a_table_the_drill_does_not_measure_says_not_checked(rawstore_tmp_db):
+    """Earnings Radar reads eight store tables; this drill measures one of them. Never a guess."""
+    _seed_every_dataset()
+    fit = _boards_of("MU")
+
+    assert fit["module_earnings_radar"]["state"] == "not_checked"
+    assert fit["module_earnings_radar"]["missing"] == []
+    assert fit["module_sec_13f"]["state"] == "not_checked"
+    assert fit["module_leaps"]["state"] == "not_checked"
+
+
+def test_a_board_that_reads_no_store_table_says_not_checked(rawstore_tmp_db):
+    _seed_every_dataset()
+    assert _boards_of("MU")["module_uw_interaction"]["state"] == "not_checked"
+
+
+def test_universe_membership_is_the_boards_own_cut_not_merely_a_row(rawstore_tmp_db):
+    """A row below the $300M floor is in ``equity_universe`` and outside the list boards scan."""
+    rawstore.write_rows("equity_universe", [{"ticker": "TINY", "market_cap": 1.0e6}])
+    rawstore.write_rows("price_bars_daily", _bars("TINY", "2026-02-02"))
+
+    fit = _boards_of("TINY")
+
+    assert fit["module_swing_potential"] == {
+        "key": "module_swing_potential", "label": "Swing", "state": "cannot",
+        "missing": ["equity universe membership"]}
+
+
+def test_the_board_list_costs_no_store_read(rawstore_tmp_db, monkeypatch):
+    """G7: one pass over the presence the drill already read — no query per board."""
+    _seed_every_dataset()
+    detail = inventory.ticker_detail("MU")
+
+    monkeypatch.setattr(rawstore, "query",
+                        lambda *a, **k: pytest.fail("the board list must not read the store"))
+
+    assert inventory._board_fit(detail["presence"]) == detail["boards"]
