@@ -1107,12 +1107,14 @@ def _int_or_none(value):
 
 
 def _backups(now: datetime) -> dict:
-    """The Backups card (#309, avo 2026-10-16): the backup job's own records only, a missing one is "unknown".
+    """The Backups card (#309, avo 2026-10-16): the backup job's own records, plus the read-only cleanup dry run.
 
     Reads ``<backup dir>/.backup_sizes.json`` (both folder sizes, written by the nightly run after the off-machine
-    copy) and ``.integrity_scan.json`` (the last read-only self-check of the local folder). No folder is walked and
-    the off-machine (Drive) folder is never touched: walking it took ~20 min (2026-10-16). A failure to read is
-    recorded (F4) and the card shows "unknown"; it never fails the page."""
+    copy) and ``.integrity_scan.json`` (the last read-only self-check of the local folder). Neither needs a folder
+    walk, and the off-machine (Drive) folder is never touched: walking it took ~20 min (2026-10-16). The one folder
+    read here is the LOCAL backup folder, listed read-only by ``backup_store.expired_backups`` (#124 G9) to say what
+    the retention rule marks expired; nothing is deleted from it. A failure to read is recorded (F4) and the card
+    shows "unknown"; it never fails the page."""
     from RevenueChaser.core import config
     from RevenueChaser.scripts import backup_store
     try:
@@ -1156,11 +1158,22 @@ def _backups(now: datetime) -> dict:
                         next_due=str(scan["next_due"]) if scan.get("next_due") else None,
                         text=(f"OK, {_int_or_none(scan.get('checked')) or 0:,} files match the manifest" if ok
                               else f"{failed} file{'s do' if failed != 1 else ' does'} not match (see the backup log)"))
+    # #124 G9: what the retention rule marks expired, from one read-only listing of the local folder. A scan that
+    # could not read it keeps the counts None, so the card reads "unknown" and never an empty-looking zero.
+    expired_out = {"state": "unknown", "count": None, "bytes": None,
+                   "why": "the local backup folder could not be read"}
+    try:
+        expired = backup_store.expired_backups()
+    except Exception as exc:  # noqa: BLE001 - recorded (F4), the card says unknown
+        _record(None, "_backups", exc)
+    else:
+        expired_out.update(state=expired.state, count=expired.count, bytes=expired.bytes, why=expired.why)
     return {"folder": facts.get("folder"), "recorded_at": sizes.get("recorded_at") or None,
             # G8 (#124): the off-machine location the job itself copies to. A setting read as text; the folder is
             # never listed, walked or stat-ed from this page.
             "offmachine_path": str(config.RAW_STORE_BACKUP_MIRROR or "").strip() or None,
-            "local": local, "offmachine": off, "checkpoints": checkpoints, "scan": scan_out}
+            "local": local, "offmachine": off, "checkpoints": checkpoints, "scan": scan_out,
+            "expired": expired_out}
 
 
 def _provider_health() -> dict | None:

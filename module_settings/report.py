@@ -1530,6 +1530,15 @@ def _gb(nbytes) -> str:
     return f"{nbytes / 1e9:.2f} GB" if isinstance(nbytes, (int, float)) else "—"
 
 
+def _size_text(nbytes) -> str:
+    """A size for a sentence: bytes below a megabyte, else GB with two decimals (the unit the card already uses)."""
+    if not isinstance(nbytes, (int, float)):
+        return "unknown"
+    if nbytes < 1_000_000:
+        return f"{int(nbytes):,} bytes"
+    return f"{nbytes / 1e9:.2f} GB"
+
+
 def _retention_from_description(description: str) -> str:
     """"keeps 5 daily raw and 5 daily history snapshots, ..." — the retention clause of the backup job's registry
     description, cut out of the text itself so the numbers are read here and never retyped in the renderer."""
@@ -1555,11 +1564,11 @@ def _retention_rule(b: dict) -> str:
 
 
 def _backups_card(b: dict | None) -> str:
-    """The Backups card (#309, G8): where the backups are (the local folder in full, and the off-machine
-    location the job's own record names), the retention rule, the last integrity self-check in words, and that
-    nothing here deletes. Store-free and folder-free: ``payload["backups"]`` comes from the backup job's own
-    records (``inventory._backups``); the card walks no folder and opens the off-machine copy never. Without
-    that key there is no card; a missing record reads "unknown"."""
+    """The Backups card (#309, G8, G9): where the backups are (the local folder in full, and the off-machine
+    location the job's own record names), the retention rule, the last integrity self-check in words, what that
+    rule marks expired (a read-only dry run of the LOCAL folder, ``inventory._backups``), and a delete control that
+    is disabled in the markup itself. Nothing here deletes: the local folder is listed read-only and the
+    off-machine copy is never opened. Without that key there is no card; a missing record reads "unknown"."""
     if not b:
         return ""
     esc = _html.escape
@@ -1570,6 +1579,7 @@ def _backups_card(b: dict | None) -> str:
 
     loc, off = b.get("local") or {}, b.get("offmachine") or {}
     cp, scan = b.get("checkpoints") or {}, b.get("scan") or {}
+    expired = b.get("expired") or {}
     folder = str(b.get("folder") or "").strip() or "unknown"
     offmachine_at = str(b.get("offmachine_path") or "").strip() or "unknown"
     checked = scan.get("checked")
@@ -1578,6 +1588,24 @@ def _backups_card(b: dict | None) -> str:
                  + (f"{_fmt_rows(checked)} files re-read against their hashes" if isinstance(checked, int)
                     else "no files re-read yet" if not scan.get("last_day")
                     else "the number of files re-read was not recorded"))
+    # G9 (#124): the totals of the dry run. A scan that could not read the folder carries no counts at all, so the
+    # line reads "unknown" and never a zero it did not measure.
+    exp_n, exp_b = expired.get("count"), expired.get("bytes")
+    if expired.get("state") == "ok" and isinstance(exp_n, int) and isinstance(exp_b, int):
+        expired_text = (f"The retention rule marks {exp_n:,} file{'' if exp_n == 1 else 's'} as expired, "
+                        f"{_size_text(exp_b)} in total. This is a dry run: nothing has been deleted.")
+    else:
+        why = str(expired.get("why") or "").strip()
+        expired_text = (f"unknown: {why}" if why else "unknown: the local backup folder could not be read")
+        expired_text += "; this page makes no claim about expired files."
+    delete_row = (
+        '<div class="kv" id="backup-delete-row">'
+        '<button type="button" class="set-btn" id="backup-delete-expired" disabled '
+        'title="Arming the delete is a separate change: it needs your typed confirmation, a fresh backup and no '
+        'job running.">Delete expired backups</button> '
+        '<span id="backup-delete-note">Disabled: this page only lists what the retention rule marks expired. '
+        "Arming a delete is a separate change and needs your typed confirmation.</span></div>"
+    )
     split = ""
     if loc.get("duckdb_files") is not None or loc.get("docs_zip_files") is not None:
         split = (f'{esc(_gb(loc.get("duckdb_bytes")))} in {_fmt_rows(loc.get("duckdb_files"))} .duckdb files; '
@@ -1604,12 +1632,15 @@ def _backups_card(b: dict | None) -> str:
         f'<code class="bpath" id="backup-offmachine-path">{esc(offmachine_at)}</code></div>'
         f'<div class="kv" id="backup-retention">How long backups are kept: {esc(_retention_rule(b))}</div>'
         f'<div class="kv" id="backup-selfcheck">Integrity self-check: {esc(selfcheck)}</div>'
+        f'<div class="kv" id="backup-expired">Expired backups, dry run: {esc(expired_text)}</div>'
+        f'{delete_row}'
         '<div class="kv" id="backup-nodelete">Nothing on this page deletes or moves a backup file: it reads the '
         "backup job's own records and shows them.</div>"
     )
     return ('<section id="backups"><div class="bcard" id="backups-card"><h3>Backups</h3>'
             '<div class="asof" id="backups-note">Read from the nightly backup job\'s own records in the local backup '
-            "folder (shown below); this page walks no folder and never reads the off-machine (Drive) folder. The "
+            "folder (shown below), plus one read-only listing of that local folder for the expired-backup dry run; "
+            "the off-machine (Drive) copy is never read, walked or listed. The "
             "self-check re-reads the local folder against the hashes taken when each file was copied, every 7 days "
             "by default.</div>"
             f'{summary}'

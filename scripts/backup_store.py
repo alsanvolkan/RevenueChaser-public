@@ -58,7 +58,8 @@ nothing ships a backup step. This module fixes that:
   and the steps after it still run; the exit code is 1 when any failed (or a damaged SPX file was held back), and
   only the off-machine copy is skipped.
 - Prunes old snapshots beyond the keep counts, only AFTER a verified write, so a
-  failure can never eat existing backups.
+  failure can never eat existing backups. The read-only dry run ``expired_backups`` lists what that same rule
+  marks expired (each file's name, size and age) and deletes nothing (#124 G9).
 - Records every file it writes locally (size + SHA-256, at copy time) in ``.backup_manifest.json`` and, as the last
   step every ``--scan-every-days`` (default 7) or with ``--scan-now``, re-reads the local folder against it
   (``integrity_scan``, #309 L1): read-only for the backups, ``integrity scan FAILED: <path>: <why>`` and exit 1 on a
@@ -119,6 +120,16 @@ WEEKLY_DIRNAME = "weekly"
 # #342 (owner's decision, 2026-10-21): the weekly copies are bounded. History's weekly copy is gone — it grows
 # ~6.55 GB/yr against raw's 603 MB — and the raw copies keep the newest KEEP_WEEKLY.
 KEEP_WEEKLY = 12
+
+# G9 (#124): the local folder's keep counts live here, once: the snapshot helpers default to them, the CLI defaults
+# to them and the read-only cleanup dry run reads the same numbers. The newest copy of every list is never a
+# candidate, whatever a keep count says (``expired_candidates``).
+KEEP_RAW = 5
+KEEP_EDGAR = 2
+KEEP_DOCS = 2
+KEEP_DISCORD = 2
+KEEP_HISTORY = 5
+KEEP_PRICES = 2
 
 # #275 (review M2): RAW_STORE_BACKUP_MIRROR may be an existing Google Drive folder that holds other files, so
 # the off-machine copy writes, prunes and cleans only inside this sub-folder of it.
@@ -339,22 +350,56 @@ def _verify(db_path: Path, backup_path: Path) -> None:
         raise _VerificationError(f"mismatch: {shown}{more}")
 
 
+def _snapshots(out: Path, prefix: str) -> list[Path]:
+    """The ``<prefix>_*.duckdb`` snapshots a prune bounds, oldest first (the newest copy is last)."""
+    return sorted(out.glob(f"{prefix}_*.duckdb"))
+
+
+def _archives(out: Path, prefix: str) -> list[Path]:
+    """The ``<prefix>_*.zip`` archives a prune bounds, oldest first; a half-written ``.partial`` zip is not one."""
+    return sorted(p for p in out.glob(f"{prefix}_*.zip") if ".partial" not in p.name)
+
+
+def expired_selection(snaps: list[Path], keep: int) -> list[Path]:
+    """What the retention rule marks expired: every copy but the newest ``keep`` (all of them at ``keep`` 0).
+
+    Pure and read-only. The prune deletes exactly this list and the dashboard's dry run lists it, so the rule has
+    one copy. At ``keep`` 0 the newest copy is still in it; ``expired_candidates`` is what the dry run offers.
+    """
+    ordered = sorted(snaps)
+    return ordered[:-keep] if keep > 0 else ordered
+
+
+def expired_candidates(snaps: list[Path], keep: int) -> list[Path]:
+    """What the dry run may offer: ``expired_selection`` without the newest copy, which is NEVER a candidate.
+
+    A folder of one copy, or a keep count of 0, still yields nothing: a restore reads the newest snapshot, so the
+    page can never offer to remove it, whatever the rule computes (#124 G9, the first invariant).
+    """
+    ordered = sorted(snaps)
+    if not ordered:
+        return []
+    newest = ordered[-1]
+    return [p for p in expired_selection(ordered, keep) if p != newest]
+
+
 def _prune(out: Path, prefix: str, keep: int, manifest: _Manifest | None = None) -> list[Path]:
     """Delete oldest ``<prefix>_*.duckdb`` snapshots beyond ``keep`` (keeps newest)."""
-    return _prune_sorted(sorted(out.glob(f"{prefix}_*.duckdb")), keep, manifest)
+    return _prune_sorted(_snapshots(out, prefix), keep, manifest)
 
 
 def _prune_sorted(snaps: list[Path], keep: int, manifest: _Manifest | None) -> list[Path]:
     """Delete all but the newest ``keep`` of ``snaps``; with ``manifest`` the removed ones leave it and a kept one it
     lacks (a copy from before #309) is noted with its size: the listing the prune made anyway, no extra walk."""
+    ordered = sorted(snaps)
+    expired = expired_selection(ordered, keep)
     removed = []
-    cut = snaps[:-keep] if keep > 0 else snaps
-    for p in cut:
+    for p in expired:
         p.unlink(missing_ok=True)
         removed.append(p)
     if manifest is not None:
         manifest.forget(removed)
-        for p in snaps[len(cut):]:
+        for p in ordered[len(expired):]:
             if manifest.key(p) not in manifest.files:
                 manifest.note(p, p.stat().st_size)
     return removed
@@ -370,8 +415,8 @@ def _prune_weekly(out: Path, keep: int = KEEP_WEEKLY) -> list[Path]:
     wdir = out / WEEKLY_DIRNAME
     if not wdir.is_dir():
         return []
-    snaps = sorted(wdir.glob("raw_*.duckdb"))
-    cut = snaps[:-keep] if keep > 0 else snaps
+    snaps = _snapshots(wdir, "raw")
+    cut = expired_selection(snaps, keep)
     if cut:
         _record_written(out, removed=cut)
     return _prune_sorted(snaps, keep, None)
@@ -442,8 +487,8 @@ def _snapshot_one(db_path: Path, out: Path, prefix: str, keep: int,
         # Hash and record the new file, then let the pruned ones leave the manifest, and only then delete them: a run
         # killed in between leaves a listed file that still exists, never a "missing" one (review C SHOULD-1).
         _record_written(out, dest)
-        snaps = sorted(out.glob(f"{prefix}_*.duckdb"))
-        _record_written(out, removed=snaps[:-keep] if keep > 0 else snaps)
+        snaps = _snapshots(out, prefix)
+        _record_written(out, removed=expired_selection(snaps, keep))
         _prune_sorted(snaps, keep, None)
         return dest
 
@@ -451,7 +496,7 @@ def _snapshot_one(db_path: Path, out: Path, prefix: str, keep: int,
 
 
 def snapshot(db_path: Path | None = None, out_dir: Path | None = None,
-             keep: int = 5, attempts: int = 3) -> Path:
+             keep: int = KEEP_RAW, attempts: int = 3) -> Path:
     """Write one verified snapshot of ``raw.duckdb``; return its path.
 
     ``db_path`` defaults to the configured store (tests pass a tmp DB). ``keep``
@@ -518,7 +563,7 @@ def keep_weekly(snap: Path, out_dir: Path | None = None, enabled: bool | None = 
 
 
 def snapshot_edgar(db_path: Path | None = None, out_dir: Path | None = None,
-                   keep: int = 2, attempts: int = 3) -> Path | None:
+                   keep: int = KEEP_EDGAR, attempts: int = 3) -> Path | None:
     """Verified snapshot of ``edgar.duckdb`` (the raw-document store).
 
     Returns None when the EDGAR store does not exist yet (nothing to back up).
@@ -531,7 +576,7 @@ def snapshot_edgar(db_path: Path | None = None, out_dir: Path | None = None,
 
 
 def snapshot_discord(db_path: Path | None = None, out_dir: Path | None = None,
-                     keep: int = 2, attempts: int = 3) -> Path | None:
+                     keep: int = KEEP_DISCORD, attempts: int = 3) -> Path | None:
     """Verified snapshot of ``discord.duckdb`` (the Discord archive, #72).
 
     Returns None when the Discord store does not exist yet (nothing to back up).
@@ -543,7 +588,7 @@ def snapshot_discord(db_path: Path | None = None, out_dir: Path | None = None,
 
 
 def snapshot_history(db_path: Path | None = None, out_dir: Path | None = None,
-                     keep: int = 5, attempts: int = 3) -> Path | None:
+                     keep: int = KEEP_HISTORY, attempts: int = 3) -> Path | None:
     """Verified snapshot of ``history.duckdb`` (result history, #287); the last ``keep`` nightly copies stay.
 
     Returns None when the history file does not exist yet (no writer has created it; nothing to back up).
@@ -555,7 +600,7 @@ def snapshot_history(db_path: Path | None = None, out_dir: Path | None = None,
 
 
 def snapshot_prices(db_path: Path | None = None, out_dir: Path | None = None,
-                    keep: int = 2, attempts: int = 3) -> Path | None:
+                    keep: int = KEEP_PRICES, attempts: int = 3) -> Path | None:
     """Verified snapshot of ``prices.duckdb`` (the daily price tables, #156); the last ``keep`` nightly copies stay.
 
     No weekly copy: the price tables are append-only (a bar, an action, a watermark key is never removed), so the
@@ -569,7 +614,69 @@ def snapshot_prices(db_path: Path | None = None, out_dir: Path | None = None,
 
 
 def _prune_archives(out: Path, prefix: str, keep: int, manifest: _Manifest | None = None) -> list[Path]:
-    return _prune_sorted(sorted(p for p in out.glob(f"{prefix}_*.zip") if ".partial" not in p.name), keep, manifest)
+    return _prune_sorted(_archives(out, prefix), keep, manifest)
+
+
+# ── G9 (#124): the read-only cleanup dry run ─────────────────────────────────────────────────────────────────────
+
+class ExpiredBackup(NamedTuple):
+    """One local backup file the retention rule marks as expired: its name (relative to the backup folder), its
+    size in bytes and its age in days, counted from its last modified time."""
+    name: str
+    size: int
+    age_days: int
+
+
+class ExpiredScan(NamedTuple):
+    """What ``expired_backups`` found. ``state`` "unknown" = the folder could not be read (``why`` says why) and the
+    counts are None: an unreadable folder must never look like an empty one, which reads as a zero."""
+    state: str
+    count: int | None = None
+    bytes: int | None = None
+    files: tuple[ExpiredBackup, ...] = ()
+    why: str | None = None
+
+
+def _local_retention_lists(out: Path) -> list[tuple[list[Path], int]]:
+    """Every local list the nightly prune bounds, with the keep count it uses: the same listing helpers the prune
+    calls, so the dry run and the prune can never see a different set of files.
+
+    Only the local backup folder: ``weekly/`` is local too, and the off-machine copy is never named here.
+    """
+    return [
+        (_snapshots(out, "raw"), KEEP_RAW),
+        (_snapshots(out, "edgar"), KEEP_EDGAR),
+        (_archives(out, "edgar_docs"), KEEP_DOCS),
+        (_snapshots(out, "discord"), KEEP_DISCORD),
+        (_snapshots(out, "history"), KEEP_HISTORY),
+        (_snapshots(out, "prices"), KEEP_PRICES),
+        (_snapshots(out / WEEKLY_DIRNAME, "raw"), KEEP_WEEKLY),
+    ]
+
+
+def expired_backups(out_dir: Path | None = None, now: datetime | None = None) -> ExpiredScan:
+    """The local backup files the retention rule marks expired — a READ-ONLY dry run (#124 G9).
+
+    Nothing is deleted, moved or rewritten, and no record file is written. Only the local backup folder is read:
+    the off-machine copy is never walked, never listed and can never appear here. Per list the newest copy is never
+    a candidate (``expired_candidates``), whatever the keep count says. A folder that is missing or cannot be read
+    returns ``state="unknown"`` with the counts None, so the card reads "unknown", never an empty-looking zero.
+    """
+    out = Path(out_dir or default_backup_dir())
+    now = now or _utcnow()
+    if not out.is_dir():
+        return ExpiredScan("unknown", why=f"the local backup folder {out} is missing")
+    found: list[ExpiredBackup] = []
+    try:
+        for snaps, keep in _local_retention_lists(out):
+            for p in expired_candidates(snaps, keep):
+                st = p.stat()
+                modified = datetime.fromtimestamp(st.st_mtime, timezone.utc)
+                found.append(ExpiredBackup(p.relative_to(out).as_posix(), st.st_size,
+                                           max((now - modified).days, 0)))
+    except OSError as exc:
+        return ExpiredScan("unknown", why=f"the local backup folder could not be read: {exc}")
+    return ExpiredScan("ok", len(found), sum(f.size for f in found), tuple(found))
 
 
 # #336: the fingerprint of the tree an archive was made from, kept in the zip's own comment (no extra file, so
@@ -617,7 +724,7 @@ def _archive_reusable(archive: Path, fingerprint: bytes, expected_docs: int) -> 
     return True if n == expected_docs else None
 
 
-def archive_edgar_docs(src: Path | None = None, out_dir: Path | None = None, keep: int = 2) -> DocsArchive | None:
+def archive_edgar_docs(src: Path | None = None, out_dir: Path | None = None, keep: int = KEEP_DOCS) -> DocsArchive | None:
     """Zip the ``edgar_docs/`` tree (the durable raw HTML) unless the newest archive already holds it; prune.
 
     Returns None when there is nothing to back up. The docs are files, not a DuckDB snapshot, so they need their
@@ -690,7 +797,7 @@ def _stamp_fingerprint(archive: Path, fingerprint: bytes) -> None:
 
 
 def snapshot_edgar_docs(src: Path | None = None, out_dir: Path | None = None,
-                        keep: int = 2) -> Path | None:
+                        keep: int = KEEP_DOCS) -> Path | None:
     """The path of the archive ``archive_edgar_docs`` ends with (new or reused), or None when there are no docs."""
     res = archive_edgar_docs(src, out_dir, keep)
     return res.path if res else None
@@ -1325,13 +1432,18 @@ def main(argv: list[str] | None = None) -> int:
                     "snapshots, the edgar_docs/ tree to a verified zip and the discord_media/ and "
                     "SPX Gamma data trees to incremental, verified mirrors.")
     ap.add_argument("--out", default=None, help="backup directory (default: platform dir / RAW_STORE_BACKUP_DIR)")
-    ap.add_argument("--keep", type=int, default=5, help="retain this many newest raw.duckdb snapshots (default 5)")
-    ap.add_argument("--keep-edgar", type=int, default=2, help="retain this many newest edgar.duckdb snapshots (default 2)")
-    ap.add_argument("--keep-docs", type=int, default=2, help="retain this many newest edgar_docs/ archives (default 2)")
-    ap.add_argument("--keep-discord", type=int, default=2, help="retain this many newest discord.duckdb snapshots (default 2)")
-    ap.add_argument("--keep-history", type=int, default=5, help="retain this many newest history.duckdb snapshots (default 5)")
-    ap.add_argument("--keep-prices", type=_positive_int, default=2,
-                    help="retain this many newest prices.duckdb snapshots (default 2; no weekly copy)")
+    ap.add_argument("--keep", type=int, default=KEEP_RAW,
+                    help=f"retain this many newest raw.duckdb snapshots (default {KEEP_RAW})")
+    ap.add_argument("--keep-edgar", type=int, default=KEEP_EDGAR,
+                    help=f"retain this many newest edgar.duckdb snapshots (default {KEEP_EDGAR})")
+    ap.add_argument("--keep-docs", type=int, default=KEEP_DOCS,
+                    help=f"retain this many newest edgar_docs/ archives (default {KEEP_DOCS})")
+    ap.add_argument("--keep-discord", type=int, default=KEEP_DISCORD,
+                    help=f"retain this many newest discord.duckdb snapshots (default {KEEP_DISCORD})")
+    ap.add_argument("--keep-history", type=int, default=KEEP_HISTORY,
+                    help=f"retain this many newest history.duckdb snapshots (default {KEEP_HISTORY})")
+    ap.add_argument("--keep-prices", type=_positive_int, default=KEEP_PRICES,
+                    help=f"retain this many newest prices.duckdb snapshots (default {KEEP_PRICES}; no weekly copy)")
     ap.add_argument("--keep-mirror", type=_positive_int, default=KEEP_MIRROR,
                     help=f"retain this many newest discord/history copies in RAW_STORE_BACKUP_MIRROR "
                          f"(default {KEEP_MIRROR})")

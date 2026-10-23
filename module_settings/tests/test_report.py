@@ -1479,10 +1479,10 @@ def test_a_missing_self_check_says_never_and_invents_no_count():
     assert "no files re-read yet" in line
 
 
-def test_the_backups_card_has_no_delete_control_and_says_nothing_is_deleted():
-    """G8 ships no delete: arming one is G9, a separate gated change with avo's typed words."""
+def test_the_backups_card_ships_no_enabled_delete_control_and_says_nothing_is_deleted():
+    """G9 adds a disabled dry-run control only: arming a delete is a separate gated change with avo's typed words."""
     card = _backups_card(_BACKUPS)
-    assert "<button" not in card and "<form" not in card
+    assert "<form" not in card and "/delete" not in card
     assert "Nothing on this page deletes or moves a backup file" in _backup_line(card, "backup-nodelete")
 
 
@@ -2443,3 +2443,55 @@ def test_the_cftc_row_says_fresh_but_shallow_and_names_119_without_calling_it_a_
     assert "#119" in detail
     assert "fresh but shallow" in detail
     assert "failure" not in detail.lower() and "failed" not in detail.lower()
+
+
+# ── G9 of the GUI brief (#124): the cleanup dry run's totals and the disabled delete control ──────────
+def test_the_backups_card_states_how_many_files_the_rule_marks_expired_and_their_total_size():
+    card = _backups_card(dict(_BACKUPS, expired={"state": "ok", "count": 12, "bytes": 6_400_000_000}))
+    line = _backup_line(card, "backup-expired")
+    assert "12 files" in line and "6.40 GB" in line
+    assert "dry run" in line and "nothing has been deleted" in line
+
+
+def test_one_expired_file_reads_in_the_singular_with_a_size_in_words():
+    line = _backup_line(_backups_card(dict(_BACKUPS, expired={"state": "ok", "count": 1, "bytes": 512})),
+                        "backup-expired")
+    assert "1 file " in line and "512 bytes" in line and "1 files" not in line
+
+
+def test_a_scan_that_could_not_read_the_folder_reads_unknown_not_zero():
+    card = _backups_card(dict(_BACKUPS, expired={"state": "unknown", "count": None, "bytes": None,
+                                                 "why": "the local backup folder is missing"}))
+    line = _backup_line(card, "backup-expired")
+    assert "unknown" in line and "missing" in line
+    assert "0 files" not in line and "0.00 GB" not in line and "0 bytes" not in line
+
+
+def test_a_record_without_the_expired_key_reads_unknown_never_a_zero():
+    line = _backup_line(_backups_card(_BACKUPS), "backup-expired")
+    assert "unknown" in line and "0 files" not in line
+
+
+def test_the_backups_note_says_the_local_folder_is_listed_read_only_and_the_offmachine_copy_is_not():
+    """G9 makes the old "walks no folder" sentence untrue: the local folder is now listed, read-only."""
+    line = _backup_line(_backups_card(_BACKUPS), "backups-note")
+    assert "read-only" in line and "off-machine (Drive) copy is never" in line
+    assert "walks no folder" not in line
+
+
+def test_the_delete_control_is_disabled_in_the_markup_and_carries_no_route():
+    import re
+
+    b = dict(_BACKUPS, expired={"state": "ok", "count": 12, "bytes": 6_400_000_000})
+    card = _backups_card(b)
+    tag = re.search(r'<button[^>]*id="backup-delete-expired"[^>]*>', card)
+    assert tag, "the card carries no delete control"
+    tag = tag.group(0)
+    assert re.search(r"\sdisabled(\s|>)", tag), tag
+    assert 'type="button"' in tag
+    assert "data-fetch" not in tag and "onclick" not in tag and "action=" not in tag
+    assert "Arming the delete is a separate change" in tag
+    assert "<form" not in card and "/delete" not in card and "data-delete" not in card
+    assert card.count('id="backup-delete-expired"') == 1
+    full = report.render_settings_dashboard(dict(_payload(), backups=b))
+    assert full.count('id="backup-delete-expired"') == 1      # no script names it either
