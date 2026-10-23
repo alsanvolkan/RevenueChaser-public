@@ -1,6 +1,7 @@
 """Settings / Data health board — self-contained dark-theme HTML renderer.
 
-An ops inventory, not an equity board: no filter bar, no Theme cascade; one ticker
+An ops inventory, not an equity board: its own filters over the table (a find box and store file /
+source / state chips, #124 G4 — not the equity filter kit), no Theme cascade; one ticker
 combobox (the filter kit's, #383 C1b) opens the stored-data drill. One row per dataset with its
 source, coverage, freshness, newest data date, row count and hole count, then a detail row
 (store table(s), writer, per-dataset Fetch, notes) opened from the dataset's name. Refresh
@@ -12,6 +13,7 @@ from __future__ import annotations
 import html as _html
 from datetime import datetime
 
+from RevenueChaser.core import datasets
 from RevenueChaser.core.html_safe import script_json
 from RevenueChaser.core.reporting_common import (
     FILTERS_CSS,
@@ -147,6 +149,22 @@ table.auto td{vertical-align:top}
 .auto-desc{color:var(--muted);font-size:12px;white-space:normal;max-width:340px}
 .auto-log{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;white-space:pre-wrap;max-width:380px}
 #auto-msg{color:var(--amber);margin:6px 0;min-height:1em}
+/* G4 (#124): the inventory filters above the table. Each chip carries its value as its text, so
+   colour is never the only signal; a pressed chip also shows a tick beside its word. */
+.filters{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:14px}
+.filters .frow{margin-bottom:8px}
+.filters .frow:last-child{margin-bottom:0}
+.fchips{display:flex;flex-wrap:wrap;gap:6px}
+.fchip{background:var(--panel2);border:1px solid var(--border);border-radius:99px;color:var(--text);
+  font:600 12px/1.2 inherit;padding:4px 10px;cursor:pointer}
+.fchip:hover{border-color:var(--accent)}
+.fchip[aria-pressed="true"]{background:rgba(14,165,233,.18);border-color:var(--accent);color:var(--accent)}
+.fchip[aria-pressed="true"]::before{content:"✓ "}
+.fcount{color:var(--text);font-size:12.5px;font-variant-numeric:tabular-nums}
+.fclear{background:none;border:1px solid var(--border);border-radius:6px;color:var(--muted);
+  font:600 12px/1.2 inherit;padding:4px 10px;cursor:pointer}
+.fclear:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.fclear:disabled{opacity:.55;cursor:default}
 """
 
 JS = JOB_JS + r"""
@@ -238,15 +256,20 @@ function settingsDetail(btn){
   btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   row.hidden = !open;
 }
-// Group the inventory rows by Source, or put them back in the rendered (worst coverage first)
-// order. A detail row always travels with the dataset row above it.
-function settingsGroupRows(body, on){
-  if(!body) return;
+// One pair per dataset — its detail row always travels with the row above it — for the group
+// toggle and the filters: the count line always says how many of the total are shown.
+function settingsRowPairs(body){
   var pairs = [], cur = null;
   Array.prototype.forEach.call(body.children, function(tr){
     if(tr.className.indexOf('detail') >= 0){ if(cur) cur.push(tr); return; }
     cur = [tr]; pairs.push(cur);
   });
+  return pairs;
+}
+// Group the inventory rows by Source, or put them back in the rendered (worst coverage first) order.
+function settingsGroupRows(body, on){
+  if(!body) return;
+  var pairs = settingsRowPairs(body);
   function key(pair){
     var order = String(pair[0].getAttribute('data-order') || 0);
     var source = on ? (pair[0].getAttribute('data-source') || '\uffff') : '';
@@ -255,6 +278,46 @@ function settingsGroupRows(body, on){
   pairs.sort(function(a, b){ var x = key(a), y = key(b); return x < y ? -1 : x > y ? 1 : 0; });
   pairs.forEach(function(pair){ pair.forEach(function(tr){ body.appendChild(tr); }); });
 }
+function settingsFilter(){
+  var body = document.querySelector('#inv-table tbody'); if(!body) return;
+  var box = document.getElementById('inv-find'), word = String((box && box.value) || '').trim();
+  var pick = {db: [], source: [], state: []}, named = [], shown = 0, pairs = settingsRowPairs(body);
+  document.querySelectorAll('#inv-filters button[aria-pressed="true"]').forEach(function(b){
+    pick[b.getAttribute('data-chips')].push(b.getAttribute('data-value')); });
+  pairs.forEach(function(pair){
+    var tr = pair[0], btn = tr.querySelector('.det-btn'), tbl = pair[1] && pair[1].querySelector('.tbl');
+    var find = ((btn ? btn.textContent : '') + ' ' + (tbl ? tbl.textContent : '')).toLowerCase();
+    var states = String(tr.getAttribute('data-state') || '').split('|');
+    var ok = (!word || find.indexOf(word.toLowerCase()) >= 0)
+      && (!pick.db.length || pick.db.indexOf(tr.getAttribute('data-db')) >= 0)
+      && (!pick.source.length || pick.source.indexOf(tr.getAttribute('data-source')) >= 0)
+      && (!pick.state.length || pick.state.some(function(s){ return states.indexOf(s) >= 0; }));
+    if(ok){ tr.hidden = false; shown += 1; return; }
+    if(btn) btn.setAttribute('aria-expanded', 'false');   // a hidden dataset's detail row goes
+    pair.forEach(function(el){ el.hidden = true; });      // down with it, and stays collapsed
+  });
+  if(word) named.push('search "' + word + '"');
+  ['db', 'source', 'state'].forEach(function(k){ if(pick[k].length)
+    named.push((k === 'db' ? 'store file' : k) + ' ' + pick[k].join(' or ')); });
+  document.getElementById('inv-count').textContent = 'Showing ' + shown + ' of ' + pairs.length +
+    ' datasets' + (named.length ? ' · filtered by ' + named.join(' · ') : '');
+  document.getElementById('inv-clear').disabled = !named.length;
+}
+function settingsFilterClear(){
+  document.getElementById('inv-find').value = '';
+  document.querySelectorAll('#inv-filters button[aria-pressed="true"]')
+    .forEach(function(b){ b.setAttribute('aria-pressed', 'false'); });
+  settingsFilter();
+}
+var invFind = document.getElementById('inv-find'), invClear = document.getElementById('inv-clear');
+if(invFind) invFind.addEventListener('input', settingsFilter);
+if(invClear) invClear.addEventListener('click', settingsFilterClear);
+document.querySelectorAll('#inv-filters button[aria-pressed]').forEach(function(b){
+  b.addEventListener('click', function(){
+    b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
+    settingsFilter();
+  });
+});
 var groupBtn = document.querySelector('[data-group="source"] button');
 if(groupBtn){
   groupBtn.addEventListener('click', function(){
@@ -791,6 +854,97 @@ def _writer_cell(row: dict) -> str:
     return out
 
 
+# G4 of the GUI brief (#124): the filters above the table. Every axis is a fact the row already
+# carries — its store file, its source, its state — so no filter changes what a number means.
+
+# A row whose coverage is below this is called out as needing attention.
+ATTENTION_FRACTION = 0.70
+# What a coverage with no definable population reads (``inventory.COVERAGE_NA``, S2 / ADR-2).
+# Matched as text because that is what a row carries by the time it reaches the table.
+COVERAGE_NA = "n/a"
+# The state chips, in the order they are offered. A row may answer more than one of them.
+STATE_CHIPS = ("needs attention", "no time column", "no denominator")
+
+
+def _attr(name: str, value) -> str:
+    """One escaped HTML attribute. Every ``data-*`` the filters read is written through here."""
+    return f'{name}="{_html.escape(str(value), quote=True)}"'
+
+
+def _db_of(row: dict) -> str:
+    """The store file a dataset lives in: the row's own ``db`` when ``_attach_registry`` set it (G2),
+    else the registry's, read without a query. Empty when the registry does not know the key."""
+    if row.get("db"):
+        return str(row["db"])
+    try:
+        return str(datasets.by_key(str(row.get("key") or "")).db)
+    except KeyError:
+        return ""
+
+
+def _states_of(row: dict, errors: list[dict]) -> list[str]:
+    """The state chips this row answers, in ``STATE_CHIPS`` order.
+
+    ``needs attention`` — its coverage is below 0.70, or one of its tables failed a query;
+    ``no time column`` — it has no last data date, so no freshness can be read from it;
+    ``no denominator`` — its coverage has no definable population (``n/a``), which is not 0%.
+    """
+    coverage = row.get("coverage") or {}
+    fraction = coverage.get("fraction")
+    states = []
+    if _row_errors(row, errors) or (isinstance(fraction, (int, float)) and fraction < ATTENTION_FRACTION):
+        states.append("needs attention")
+    if str(row.get("last_date") or "").strip() in ("", DASH):
+        states.append("no time column")
+    if str(coverage.get("label") or "").strip() == COVERAGE_NA:
+        states.append("no denominator")
+    return states
+
+
+def _filter_chip(kind: str, value: str) -> str:
+    """One filter chip: a real toggle button that carries its value as its text."""
+    val = _html.escape(value, quote=True)
+    return (f'<button type="button" class="fchip" data-chips="{kind}" data-value="{val}" '
+            f'aria-pressed="false">{_html.escape(value)}</button>')
+
+
+def _filter_group(label: str, kind: str, values: list[str]) -> str:
+    """One chip group. A group with no value present renders nothing rather than a dead chip."""
+    if not values:
+        return ""
+    lbl = _html.escape(label, quote=True)
+    return (f'<span class="flbl">{lbl}</span>'
+            f'<div class="fchips" role="group" aria-label="{lbl}">'
+            + "".join(_filter_chip(kind, v) for v in values) + "</div>")
+
+
+def _filter_bar(rows: list[dict], errors: list[dict]) -> str:
+    """The filter bar above the inventory table (G4, #124): a find box over the dataset and store
+    table names, one chip group per axis, the count line and Clear filters.
+
+    No filter is on by default, and the count line always says how many of the total are shown, so
+    a filter can never make a broken row look fixed by hiding it silently. The client half is
+    ``settingsFilter``; it reads the ``data-*`` facts ``_table`` puts on each row.
+    """
+    state_of = [_states_of(r, errors) for r in rows]
+    present = {_db_of(r) for r in rows}
+    dbs = [d for d in datasets.DBS if d in present]
+    sources = sorted({str(r.get("source")) for r in rows if r.get("source")}, key=str.lower)
+    states = [s for s in STATE_CHIPS if any(s in got for got in state_of)]
+    groups = (_filter_group("Store file", "db", dbs) + _filter_group("Source", "source", sources)
+              + _filter_group("State", "state", states))
+    shown = len(rows)  # no filter is on, so the count starts at every dataset shown
+    return (
+        '<div class="filters" id="inv-filters">'
+        '<div class="frow"><label class="flbl" for="inv-find">Find a dataset or store table</label>'
+        '<input id="inv-find" type="text" autocomplete="off"></div>'
+        + (f'<div class="frow">{groups}</div>' if groups else "")
+        + f'<div class="frow"><span class="fcount" id="inv-count" role="status">Showing {shown} of '
+          f'{shown} datasets</span>'
+          '<button type="button" class="fclear" id="inv-clear" disabled>Clear filters</button></div>'
+          "</div>")
+
+
 def _detail_row(row: dict, row_id: str, errors: list[dict]) -> str:
     """One dataset's store tables, writer, action and notes: closed until its name is pressed."""
     tables = ", ".join(_html.escape(str(t)) for t in (row.get("tables") or []))
@@ -814,6 +968,9 @@ def _table(rows: list[dict], errors: list[dict] | None = None) -> str:
     a button on its name (keyboard reachable). The detail cell wraps, so the table gains no nowrap
     column. ``data-order`` is the rendered (worst coverage first) position, which the group toggle
     uses to restore this order; ``data-source`` is what it groups by.
+
+    ``data-db`` / ``data-source`` / ``data-state`` are the facts the G4 filters read
+    (``_filter_bar``); ``data-state`` is a ``|``-separated list.
     """
     errors = errors or []
     body = []
@@ -827,8 +984,10 @@ def _table(rows: list[dict], errors: list[dict] | None = None) -> str:
         if pill:
             pill = " " + pill
         body.append(
-            f'<tr class="row" id="row-{rid}" data-order="{order}" '
-            f'data-source="{_html.escape(str(row.get("source") or ""), quote=True)}">'
+            f'<tr class="row" id="row-{rid}" data-order="{order}"'
+            f" {_attr('data-db', _db_of(row))}"
+            f" {_attr('data-source', row.get('source') or '')}"
+            f" {_attr('data-state', '|'.join(_states_of(row, errors)))}>"
             f'<td><button type="button" class="det-btn" aria-expanded="false" '
             f'aria-controls="det-{rid}">'
             f'{_html.escape(str(row.get("label") or row.get("key") or ""))}</button>{pill}{mark}</td>'
@@ -841,7 +1000,8 @@ def _table(rows: list[dict], errors: list[dict] | None = None) -> str:
             "</tr>")
         body.append(_detail_row(row, row_id, errors))
     return (
-        '<div class="panel"><table class="inv" id="inv-table">'
+        _filter_bar(rows, errors)
+        + '<div class="panel"><table class="inv" id="inv-table">'
         "<thead><tr>"
         "<th>Dataset</th>"
         '<th data-group="source">Source<button type="button" class="grp" aria-pressed="false" '

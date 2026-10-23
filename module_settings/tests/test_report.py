@@ -1371,6 +1371,7 @@ def test_the_detail_toggle_and_the_grouping_run_under_node(tmp_path):
     if shutil.which("node") is None:
         pytest.skip("node not on PATH")
     js = (function_source(report.JS, "settingsDetail")
+          + function_source(report.JS, "settingsRowPairs")
           + function_source(report.JS, "settingsGroupRows")
           + r"""
 var els = {det: {hidden: true}};
@@ -1528,3 +1529,264 @@ def test_the_sec_files_pull_tri_state_reaches_the_table_verbatim(
     html = report._table([row])
     assert said in row["note"], "the row builder still writes the sentence"
     assert said in html, "and the renderer shows it, not a reworded copy"
+
+# ── G4 of the GUI brief (#124): the filters above the table ──────────────────────────────────
+def _g4_payload():
+    """Five datasets, one per thing the filters can say.
+
+    ``universe`` (raw file, 90% coverage, a last data date) answers no state at all;
+    ``corpus`` (edgar file) has no denominator; ``quotes`` (raw file) is only 20% covered and
+    nothing else is wrong with it; ``cftc`` (raw file, 4% coverage) has no time column and a
+    failed query; ``mystery`` is a dataset ``core.datasets`` does not know.
+    """
+    p = _payload()
+    p["rows"] = [
+        {"key": "universe", "label": "Equity universe",
+         "tables": ["equity_universe", "equity_universe_changes"], "rows": 7403,
+         "last_date": "2026-09-20", "holes": 93, "hole_label": "null market cap",
+         "source": "yfinance",
+         "coverage": {"covered": 812, "expected": 905, "fraction": 812 / 905,
+                      "label": "812 / 905 (90%)", "newest": "2026-09-20", "problems": []},
+         "fetch": {"route": "/run/universe-stats", "label": "Fetch caps"}, "note": ""},
+        {"key": "corpus", "label": "10-K / 20-F corpus",
+         "tables": ["chain_filings", "edgar_documents"], "rows": 3278,
+         "last_date": "2026-09-18", "holes": 42, "hole_label": "no filing",
+         "source": "sec",
+         "coverage": {"covered": None, "expected": None, "fraction": None,
+                      "label": "n/a", "newest": None, "problems": []},
+         "fetch": {"route": "/run/edgar-sync", "label": "Fetch 10-K sync"}, "note": ""},
+        {"key": "quotes", "label": "Quotes and market cap", "tables": ["quote_snapshot"],
+         "rows": 180, "last_date": "2026-09-20", "holes": 0, "hole_label": "",
+         "source": "yfinance",
+         "coverage": {"covered": 181, "expected": 905, "fraction": 0.2,
+                      "label": "181 / 905 (20%)", "newest": "2026-09-20", "problems": []},
+         "fetch": {"route": "/run/screeners", "label": "Fetch screeners"}, "note": ""},
+        {"key": "cftc", "label": "CFTC E-mini COT", "tables": ["cftc_cot"], "rows": 2,
+         "last_date": "—", "holes": 0, "hole_label": "",
+         "source": "finra/cftc",
+         "coverage": {"covered": 2, "expected": 50, "fraction": 0.04,
+                      "label": "2 / 50 (4%)", "newest": None, "problems": []},
+         "fetch": {"route": "/run/earnings-inputs", "label": "Fetch inputs"}, "note": ""},
+        {"key": "mystery", "label": "Unregistered dataset", "tables": ["mystery_table"],
+         "rows": 1, "last_date": "—", "holes": 0, "hole_label": "",
+         "fetch": {"route": "/run/mystery", "label": "Fetch"}, "note": ""},
+    ]
+    p["errors"] = [{"table": "cftc_cot", "where": "count", "error": "the query failed"}]
+    return p
+
+
+def _filter_bar(html: str) -> str:
+    """The filter bar alone: everything between it and the table it filters."""
+    return html[html.index('id="inv-filters"'):html.index('id="inv-table"')]
+
+
+def _chip_texts(bar: str, kind: str) -> list:
+    import re
+    return re.findall(r'data-chips="%s"[^>]*>(.*?)</button>' % kind, bar, re.S)
+
+
+def test_every_dataset_row_carries_the_facts_the_filters_read():
+    html = report.render_settings_dashboard(_g4_payload())
+    row = _main_row(html, "universe")
+    assert 'data-db="raw"' in row, "the store file, from the registry"
+    assert 'data-source="yfinance"' in row
+    assert 'data-state=""' in row, "a healthy row answers no state chip"
+    assert "equity_universe" not in row, "the store tables stay in the detail row, where they are read"
+
+
+def test_a_row_below_seventy_percent_coverage_or_with_a_failed_query_needs_attention():
+    html = report.render_settings_dashboard(_g4_payload())
+    assert 'data-state="needs attention|no time column"' in _main_row(html, "cftc"), \
+        "4% coverage and a failed query, and it has no last data date"
+    assert 'data-state="needs attention"' in _main_row(html, "quotes"), \
+        "20% coverage is the whole of its problem"
+    assert 'data-state="no denominator"' in _main_row(html, "corpus")
+    assert 'data-state="no time column"' in _main_row(html, "mystery")
+
+
+def test_the_attention_line_is_seventy_percent_and_a_failed_query_also_counts():
+    """The threshold from both sides: 69% is called out, 70% is not, and a failed query is a
+    failure of its own even at full coverage."""
+    def row(fraction, label="905 / 905 (100%)", tables=()):
+        return {"coverage": {"fraction": fraction, "label": label}, "last_date": "2026-09-20",
+                "tables": list(tables)}
+    assert "needs attention" in report._states_of(row(0.69), [])
+    assert "needs attention" in report._states_of(row(0.0), [])
+    assert "needs attention" not in report._states_of(row(0.70), [])
+    assert "needs attention" not in report._states_of(row(1.0), [])
+    failed = [{"table": "quote_snapshot", "where": "count", "error": "the query failed"}]
+    assert "needs attention" in report._states_of(row(1.0, tables=["quote_snapshot"]), failed)
+    assert "needs attention" not in report._states_of(row(1.0, tables=["other"]), failed)
+    assert "no denominator" in report._states_of(row(None, "n/a"), [])
+    assert "no denominator" not in report._states_of(row("n/a", "error"), [])
+
+
+def test_a_dataset_the_registry_does_not_know_carries_no_store_file_and_no_source():
+    row = _main_row(report.render_settings_dashboard(_g4_payload()), "mystery")
+    assert 'data-db=""' in row and 'data-source=""' in row
+
+
+def test_the_filter_attributes_are_escaped():
+    bad = '<img src=x onerror=__x(1)>"'
+    p = _g4_payload()
+    p["rows"] = [dict(p["rows"][0], db=bad, source=bad, label=bad, tables=[bad])]
+    row = _main_row(report.render_settings_dashboard(p), "universe")
+    assert "<img" not in row
+    assert row.count("&lt;img src=x onerror=__x(1)&gt;") >= 3, "each of the three attributes"
+    assert 'data-db="&lt;img' in row and 'data-source="&lt;img' in row
+
+
+def test_the_count_line_always_says_how_many_of_the_total_are_shown():
+    html = report.render_settings_dashboard(_g4_payload())
+    bar = _filter_bar(html)
+    assert html.index('id="inv-filters"') < html.index('id="inv-table"'), "above the table"
+    assert 'class="flbl" for="inv-find">Find a dataset or store table<' in bar
+    assert 'Showing 5 of 5 datasets' in bar
+    assert 'id="inv-clear"' in bar and "Clear filters" in bar
+    assert 'aria-pressed="true"' not in bar, "no filter is on by default"
+
+
+def test_the_chip_groups_list_only_the_values_the_rows_carry():
+    bar = _filter_bar(report.render_settings_dashboard(_g4_payload()))
+    assert _chip_texts(bar, "db") == ["raw", "edgar"], "prices / history / discord are not here"
+    assert _chip_texts(bar, "source") == ["finra/cftc", "sec", "yfinance"]
+    assert _chip_texts(bar, "state") == ["needs attention", "no time column", "no denominator"]
+    assert bar.count('<button type="button" class="fchip"') == 8
+    assert bar.count('aria-pressed="false"') == 8, "every chip is a toggle and none is on"
+    assert 'role="group" aria-label="Store file"' in bar
+    assert 'role="group" aria-label="Source"' in bar
+    assert 'role="group" aria-label="State"' in bar
+
+
+def test_the_filters_run_under_node(tmp_path):
+    """``settingsFilter`` against a DOM stub: the find box, the chips, the count line and the
+    detail row that must collapse with its dataset. Nothing here is asserted from the source text."""
+    import json as _json
+    import shutil
+    import subprocess
+    import pytest
+    from RevenueChaser.core.tests.board_js import function_source
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    js = (function_source(report.JS, "settingsRowPairs")
+          + function_source(report.JS, "settingsFilter")
+          + function_source(report.JS, "settingsFilterClear")
+          + r"""
+function el(attrs, cls){
+  var o = {attrs: attrs || {}, hidden: false, className: cls || "", textContent: "",
+           disabled: false, querySelector: function(){ return null; }};
+  o.getAttribute = function(k){ return o.attrs[k] == null ? null : o.attrs[k]; };
+  o.setAttribute = function(k, v){ o.attrs[k] = String(v); };
+  return o;
+}
+function dataset(name, tables, db, source, state){
+  var tr = el({"data-db": db, "data-source": source, "data-state": state}, "row");
+  tr.button = el({"aria-expanded": "false"});
+  tr.button.textContent = name;
+  tr.querySelector = function(sel){ return sel === ".det-btn" ? tr.button : null; };
+  tr.detail = el({}, "detail");
+  tr.detail.hidden = true;
+  tr.tbl = el({});
+  tr.tbl.textContent = tables;
+  tr.detail.querySelector = function(sel){ return sel === ".tbl" ? tr.tbl : null; };
+  return tr;
+}
+var rows = [dataset("Equity universe", "equity_universe equity_universe_changes", "raw", "yfinance", ""),
+            dataset("10-K / 20-F corpus", "chain_filings edgar_documents", "edgar", "sec", "no denominator"),
+            dataset("CFTC E-mini COT", "cftc_cot", "raw", "finra/cftc",
+                    "needs attention|no time column")];
+var tbody = {children: []};
+rows.forEach(function(tr){ tbody.children.push(tr, tr.detail); });
+function chip(kind, value){
+  var b = el({"aria-pressed": "false", "data-chips": kind, "data-value": value});
+  return b;
+}
+var groups = {db: [chip("db", "raw"), chip("db", "edgar")],
+              source: [chip("source", "yfinance"), chip("source", "sec"), chip("source", "finra/cftc")],
+              state: [chip("state", "needs attention"), chip("state", "no time column"),
+                      chip("state", "no denominator")]};
+var box = el({}); box.value = "";
+var count = el({}); var clear = el({}); clear.disabled = true;
+globalThis.document = {
+  getElementById: function(id){
+    return id === "inv-find" ? box : id === "inv-count" ? count : id === "inv-clear" ? clear : null; },
+  querySelector: function(sel){ return sel === "#inv-table tbody" ? tbody : null; },
+  querySelectorAll: function(sel){
+    if(sel === '#inv-filters button[aria-pressed="true"]'){
+      var on = [];
+      Object.keys(groups).forEach(function(k){ groups[k].forEach(function(b){
+        if(b.attrs["aria-pressed"] === "true") on.push(b); }); });
+      return on;
+    }
+    return [];
+  }
+};
+function toggle(kind, value){
+  groups[kind].forEach(function(b){
+    if(b.attrs["data-value"] === value){
+      b.attrs["aria-pressed"] = b.attrs["aria-pressed"] === "true" ? "false" : "true";
+    }
+  });
+}
+function reset(){
+  Object.keys(groups).forEach(function(k){ groups[k].forEach(function(b){ b.attrs["aria-pressed"] = "false"; }); });
+  box.value = "";
+}
+function visible(){ return rows.filter(function(tr){ return !tr.hidden; })
+                                 .map(function(tr){ return tr.button.textContent; }); }
+function state(){ return {shown: visible(), count: count.textContent, clear: !clear.disabled,
+                         details: rows.map(function(tr){ return tr.detail.hidden; })}; }
+var out = {};
+settingsFilter();
+out.none = state();
+box.value = "COT";
+settingsFilter();
+out.byName = state();
+box.value = "chain_filings";
+settingsFilter();
+out.byTable = state();
+reset(); toggle("db", "raw"); toggle("source", "sec");
+settingsFilter();
+out.and = state();
+reset(); toggle("db", "raw");
+groups.db[1].attrs["aria-pressed"] = "true";       // two chips in one group: raw or edgar
+settingsFilter();
+out.or = state();
+reset(); toggle("state", "needs attention");
+settingsFilter();
+out.stateChip = state();
+reset(); toggle("state", "needs attention");
+rows[2].button.setAttribute("aria-expanded", "true");
+rows[2].detail.hidden = false;
+box.value = "universe";
+settingsFilter();
+out.collapsed = {details: rows.map(function(tr){ return tr.detail.hidden; }),
+                 expanded: rows[2].button.attrs["aria-expanded"]};
+toggle("db", "raw");                               // a filter is on, then Clear filters is pressed
+settingsFilterClear();
+out.cleared = state();
+console.log(JSON.stringify(out));
+""")
+    path = tmp_path / "settings_filters.js"
+    path.write_text(js, encoding="utf-8")
+    out = subprocess.run(["node", str(path)], capture_output=True, text=True, encoding="utf-8")
+    assert out.returncode == 0, out.stderr[-2000:]
+    got = _json.loads(out.stdout.strip().splitlines()[-1])
+
+    all_three = ["Equity universe", "10-K / 20-F corpus", "CFTC E-mini COT"]
+    assert got["none"] == {"shown": all_three, "count": "Showing 3 of 3 datasets",
+                           "clear": False, "details": [True, True, True]}
+    assert got["byName"]["shown"] == ["CFTC E-mini COT"], "the dataset name matches"
+    assert got["byName"]["count"] == 'Showing 1 of 3 datasets · filtered by search "COT"'
+    assert got["byName"]["clear"] is True
+    assert got["byTable"]["shown"] == ["10-K / 20-F corpus"], "a store table name matches"
+    assert got["and"]["shown"] == [], "raw AND sec is no row at all"
+    assert got["and"]["count"] == ("Showing 0 of 3 datasets · filtered by store file raw · "
+                                  "source sec")
+    assert got["or"]["shown"] == all_three, "two chips in one group widen the result"
+    assert got["stateChip"]["shown"] == ["CFTC E-mini COT"]
+    assert got["stateChip"]["count"] == "Showing 1 of 3 datasets · filtered by state needs attention"
+    assert got["collapsed"] == {"details": [True, True, True], "expanded": "false"}, \
+        "a hidden dataset takes its detail row down and leaves it collapsed"
+    assert got["cleared"] == {"shown": all_three, "count": "Showing 3 of 3 datasets",
+                              "clear": False, "details": [True, True, True]}
