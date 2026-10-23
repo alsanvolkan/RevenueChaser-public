@@ -279,9 +279,13 @@ def test_errors_do_not_leak_between_calls(rawstore_tmp_db, monkeypatch):
 
 
 def test_collect_includes_board_cards(rawstore_tmp_db):
+    from RevenueChaser.app import dashboard
+
     _seed()
     cards = inventory.collect()["boards"]
-    assert [c["key"] for c in cards] == ["module_comovement", "module_swing_potential"]   # #384 SW-S4
+    want = [t["key"] for t in dashboard.TABS
+            if t["type"] == "tab" and t["key"] not in ("module_settings", "logs")]
+    assert [c["key"] for c in cards] == want
 
 
 # ── every (table, column) the inventory queries exists in the MANIFEST ───────

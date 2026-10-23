@@ -65,6 +65,8 @@ select,input[type=text],input[type=number]{background:#10151f;border:1px solid #
 h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .bcard{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
 .bcard h3{margin:0 0 2px;font-size:15px}
+.bcard>details>summary{cursor:pointer}
+.bcard>details>summary h3{display:inline}
 .bcard .asof{color:var(--muted);font-size:12.5px;margin-bottom:8px}
 .bcard .kv{color:var(--muted);font-size:12.5px;margin:2px 0}
 .bcard .kv b{color:var(--text);font-weight:600}
@@ -583,14 +585,19 @@ def _board_card(card: dict) -> str:
     if card.get("funnel_steps") and state in ("ok", "invalid"):
         funnel = f'<div class="funnel2">{_funnel_rows(card)}</div>'
     basis = _html.escape(str(card.get("price_basis") or "—"))
-    return (
-        f'<div class="bcard" id="board-{_html.escape(str(card.get("key") or ""))}">'
-        f"<h3>{label}</h3>{asof}"
+    # Closed <details>: the card stays collapsed until the reader opens it (S9).
+    # The outer div keeps the id the Co-movement e2e parser keys on.
+    body = (
+        f"{asof}"
         f'<div class="kv"><b>Reads</b> {tables}</div>'
         f'<div class="kv"><b>Price basis</b> {basis}</div>'
         + (f'<div class="kv"><b>Window</b> {win_txt}</div>' if win_txt else "")
         + (f'<ul class="params">{params}</ul>' if params else "")
-        + note + funnel + _settings_form(card) + "</div>")
+        + note + funnel + _settings_form(card))
+    return (
+        f'<div class="bcard" id="board-{_html.escape(str(card.get("key") or ""))}">'
+        f'<details><summary><h3>{label}</h3></summary>'
+        f'<div class="bbody">{body}</div></details></div>')
 
 
 def _boards_section(cards: list[dict]) -> str:

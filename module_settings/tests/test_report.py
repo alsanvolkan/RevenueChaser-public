@@ -234,6 +234,20 @@ def test_board_inputs_card_renders_funnel_and_fetch_buttons():
     assert "Clustered" in html and "60" in html
 
 
+def test_board_cards_are_collapsed_by_default():
+    """S9: a board card is a closed <details>, not an always-open panel."""
+    html = _with(boards=[_card(settings=_settings_block())])
+    m = re.search(r'<div class="bcard" id="board-module_comovement">'
+                  r'<details(?![^>]*\bopen\b)>', html)
+    assert m, "board card is not collapsed by default"
+    assert "<summary>" in html
+    # The Co-movement e2e parser keys on this div and the frow2 rows inside it.
+    parsed = re.search(
+        r'<div class="bcard" id="board-module_comovement">(.*?)</div></div>'
+        r'(?=<div class="bcard"|\s*</div>|\s*<script)', html, re.S)
+    assert parsed and 'class="frow2' in parsed.group(1)
+
+
 def test_board_card_states():
     nr = _with(boards=[_card(state="not_rendered", funnel_steps=[], as_of=None)])
     assert ("Co-movement has not been rendered yet. "
