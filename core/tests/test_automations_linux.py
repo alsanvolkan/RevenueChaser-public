@@ -231,3 +231,12 @@ def test_the_default_unit_folder_follows_xdg_config_home(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
     assert A.LinuxScheduler(runner=FakeSystemctl()).unit_dir == tmp_path / "cfg" / "systemd" / "user"
 
+
+# --- #164: scripts ask the code for the task list -------------------------------------
+
+def test_names_prints_every_registry_name_one_per_line_without_the_scheduler(capsys):
+    f = A.FakeScheduler()
+    A.set_scheduler(f)
+    assert A.main(["names"]) == 0
+    assert capsys.readouterr().out.splitlines() == [e.name for e in A.REGISTRY]
+    assert f.calls == []

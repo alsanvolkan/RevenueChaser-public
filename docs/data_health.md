@@ -444,6 +444,9 @@ for Task Scheduler; the Linux backend maps the ones systemd has).
   counts are not mapped to systemd. A user timer runs only while that user's systemd instance runs, so
   a server that runs logged off needs `loginctl enable-linger <user>` once, by hand. Any other host
   reads every row as unavailable.
+- **Task names for scripts.** `python -m RevenueChaser.core.automations names` prints the registry
+  names one per line and never asks the scheduler, so a script that freezes or lists the tasks reads
+  them from the registry instead of keeping its own list (#164).
 - **Tests** use a fake scheduler; the end-to-end harness installs it, so no test reaches the real
   Windows Task Scheduler or systemd. The Linux backend is tested through a fake `systemctl` and a
   temporary unit folder.

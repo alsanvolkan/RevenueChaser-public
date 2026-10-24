@@ -1147,7 +1147,9 @@ def run_task(name: str, python: str | None = None, cwd: Path | str | None = None
 
 def main(argv: list[str] | None = None) -> int:
     """``run <name>`` is what a task executes; ``install|remove <name>`` and ``list`` are
-    the thin-caller entry points of the ``.ps1`` files (they act only on registry names)."""
+    the thin-caller entry points of the ``.ps1`` files (they act only on registry names).
+    ``names`` prints the registry names one per line and never asks the scheduler, so a script that
+    freezes or lists the tasks reads them from here instead of keeping its own copy (#164)."""
     args = list(sys.argv[1:] if argv is None else argv)
     try:
         if len(args) == 2 and args[0] == "run":
@@ -1155,6 +1157,9 @@ def main(argv: list[str] | None = None) -> int:
         if len(args) == 2 and args[0] in ("install", "remove"):
             row = apply(args[1], args[0])
             print(f"{args[0]}: {row['name']} -> {row['state']}")
+            return 0
+        if args == ["names"]:
+            print("\n".join(e.name for e in REGISTRY))
             return 0
         if args == ["list"]:
             for r in live_state()["rows"]:
@@ -1164,7 +1169,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     print("usage: python -m RevenueChaser.core.automations "
-          "run|install|remove <registry-name> | list", file=sys.stderr)
+          "run|install|remove <registry-name> | list | names", file=sys.stderr)
     return 2
 
 
