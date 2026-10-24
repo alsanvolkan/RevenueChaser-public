@@ -1296,3 +1296,26 @@ def test_an_unreadable_local_folder_reads_unknown_not_an_empty_zero(tmp_path, mo
     found = bs.expired_backups(tmp_path, now=NOW)
     assert found.state == "unknown" and found.count is None and found.bytes is None
     assert "access denied" in (found.why or "")
+
+
+def test_a_retired_prefix_keeps_its_newest_copy_and_lists_the_older_ones_as_expired(tmp_path):
+    """#153: nothing writes ``discord_media_*.zip`` since the mirror (#248), so no prune ever listed it and the
+    dry run read 0 for two 0.33 GB archives. A retired prefix has its own line: the newest copy stays, older ones
+    are expired, and the dry run still removes nothing."""
+    out = tmp_path / "local"
+    older = _aged(out, "discord_media_20261003_093446_209418.zip", 330, 21)
+    newest = _aged(out, "discord_media_20261003_094720_653120.zip", 331, 21)
+    _aged(out, "discord_media_20261003_100000_000000.partial.zip", 999, 21)            # a killed zip, never one
+    _aged(out / bs.MEDIA_MIRROR_DIRNAME / "900", "a.zip", 10, 90)                     # the mirror is never listed
+    before = _tree(out)
+    found = bs.expired_backups(out, now=NOW)
+    assert _tree(out) == before
+    assert found.state == "ok" and found.count == 1 and found.bytes == 330
+    assert found.files == (bs.ExpiredBackup(older.name, 330, 21),)
+    assert newest.name not in {f.name for f in found.files}
+
+
+def test_a_lone_retired_archive_is_never_offered(tmp_path):
+    out = tmp_path / "local"
+    _aged(out, "discord_media_20261003_094720_653120.zip", 331, 21)
+    assert bs.expired_backups(out, now=NOW).files == ()
