@@ -165,7 +165,7 @@ def _todo_picks(full: bool) -> list[dict]:
     return [{**r, "closed": tuple(r["closed"] or ())} for r in rows]
 
 
-def _newest_bar() -> date | None:
+def newest_bar() -> date | None:
     rows = rawstore.query("SELECT max(session_date) AS d FROM price_bars_daily", db=rawstore._db_of("price_bars_daily"))
     return rows[0]["d"] if rows else None
 
@@ -197,7 +197,7 @@ def run(*, now: datetime | None = None, run_id: str | None = None, full: bool = 
             if h not in p["closed"]:
                 todo.setdefault(str(p["subject"]), []).append((p, h))
     skipped = max(picks * len(HORIZONS) - sum(len(v) for v in todo.values()), 0)
-    if any(p["forecast_date"] < latest for v in todo.values() for p, _ in v) and _newest_bar() is None:
+    if any(p["forecast_date"] < latest for v in todo.values() for p, _ in v) and newest_bar() is None:
         raise RuntimeError("no daily bars in the price store: refusing to compute outcomes "
                            "(every final row would turn into no_bars)")
 

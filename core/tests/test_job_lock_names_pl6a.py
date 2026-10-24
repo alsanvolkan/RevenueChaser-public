@@ -25,7 +25,7 @@ NAMES = (
     "sec_13f",                 # app/runners.py: the three 13F jobs (#26, PL6-a)
     "discord",                 # module_discord/engine.py: update + discover (#26, PL6-a)
     "forecast_outcomes",       # scripts/forecast_outcomes.py (#26, PL6-a)
-    "forecast_baselines",     # scripts/forecast_baselines.py (#25 HR-1)
+    "forecast_baselines",      # scripts/forecast_baselines.py (#25 HR-1)
     "nightly_inputs_<step>",   # scripts/nightly_inputs.py, one per step (#26, PL6-a)
 )
 
