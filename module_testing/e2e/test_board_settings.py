@@ -389,31 +389,43 @@ _PANEL = {"X-RC-Panel": "automations"}
 
 
 class TestAutomationsPanel:
-    """#130: the Automations panel, against the fake scheduler the harness installs."""
+    """#130: the Automations panel, against the fake scheduler the harness installs.
+
+    What these tests own is that the panel and its route reflect **the registry**: every row rendered,
+    every row reported, and installing one row touching only that one. They therefore read the registry
+    rather than repeating it. The literal list of names lives in exactly one place, the unit test
+    ``core/tests/test_automations.py::test_registry_names_are_stable_and_prefixed``, so a new task is
+    reviewed once there instead of breaking a second copy here (#162 added the eleventh row and broke
+    two copies that counted ten).
+    """
 
     def test_rows_render_on_the_board(self, dashboard, seeded_settings):
+        from RevenueChaser.core import automations
+
         html = dashboard.view(_APP).text
         assert 'id="auto-body"' in html
-        for name in ("RC-Store-Backup", "RC-Relatedness-OffPeak", "RC-ValueChain-Sync", "RC-Daily-Bars",
-                     "RC-Screeners-Daily", "RC-Forecast-Outcomes", "RC-Forecast-Baselines", "RC-Index-Lists",
-                     "RC-Earnings-Inputs", "RC-Open-Issues-Check"):
-            assert name in html
+        for entry in automations.REGISTRY:
+            assert entry.name in html, f"{entry.name} is in the registry but not on the board"
 
     def test_the_route_reports_every_row_not_installed(self, dashboard, seeded_settings):
+        from RevenueChaser.core import automations
+
         d = dashboard.get("/api/automations").json()
         assert d["ok"] and d["available"]
-        assert [r["state"] for r in d["rows"]] == ["not_installed"] * 10
+        assert [r["name"] for r in d["rows"]] == [e.name for e in automations.REGISTRY]
+        assert [r["state"] for r in d["rows"]] == ["not_installed"] * len(automations.REGISTRY)
 
     def test_install_goes_to_the_fake_scheduler_not_the_real_one(self, dashboard, seeded_settings):
+        from RevenueChaser.core import automations
+
         r = dashboard.client.post("/api/automations/RC-Store-Backup/install", headers=_PANEL)
         assert r.status_code == 200, r.text
         assert r.json()["row"]["state"] == "enabled"
         rows = {x["name"]: x["state"] for x in dashboard.get("/api/automations").json()["rows"]}
-        assert rows == {"RC-Store-Backup": "enabled", "RC-Relatedness-OffPeak": "not_installed",
-                        "RC-ValueChain-Sync": "not_installed", "RC-Daily-Bars": "not_installed",
-                        "RC-Screeners-Daily": "not_installed", "RC-Forecast-Outcomes": "not_installed",
-                        "RC-Forecast-Baselines": "not_installed", "RC-Index-Lists": "not_installed", "RC-Earnings-Inputs": "not_installed",
-                        "RC-Open-Issues-Check": "not_installed"}
+        # Installing one row flips that row and no other: the point of the test, and what a hard-coded
+        # dict said only incidentally.
+        assert rows == {e.name: ("enabled" if e.name == "RC-Store-Backup" else "not_installed")
+                        for e in automations.REGISTRY}
         r = dashboard.client.post("/api/automations/RC-Store-Backup/remove", headers=_PANEL)
         assert r.json()["row"]["state"] == "not_installed"
 
