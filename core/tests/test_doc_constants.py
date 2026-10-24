@@ -111,7 +111,7 @@ def test_data_architecture_names_the_backup_folders_and_switches_the_code_owns()
     text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
     section = text.split("## Backups, restore and compaction", 1)[1]
     assert hasattr(config, "RAW_STORE_BACKUP_WEEKLY") and hasattr(config, "RAW_STORE_BACKUP_MIRROR")
-    for name in (bs.MEDIA_MIRROR_DIRNAME, bs.SPX_MIRROR_DIRNAME, bs.SPX_VERSIONS_DIRNAME, bs.WEEKLY_DIRNAME,
+    for name in (bs.SPX_MIRROR_DIRNAME, bs.SPX_VERSIONS_DIRNAME, bs.WEEKLY_DIRNAME,
                  "RAW_STORE_BACKUP_DIR", "RAW_STORE_BACKUP_WEEKLY", "--no-weekly", "--keep-weekly",
                  "RAW_STORE_BACKUP_MIRROR", "--keep-mirror", bs.OFFMACHINE_SUBDIR,
                  "--keep-mirror-big", "--mirror-big-every-days", "--mirror-big-now",

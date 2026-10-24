@@ -193,9 +193,9 @@ def test_the_shell_embeds_one_payload_with_the_boards_counts(shell):
 def test_the_embedded_block_is_under_the_size_budget():
     """The real registry in the real page: the JSON block stays under 400 KB (build brief §4).
 
-    ``for_board`` answers one board, so it repeats the shared and repo entries on all 16: sending them per board made
-    the block ~590 KB for a 118 KB registry. The payload ships those entries once and each board names them by key,
-    so this is the test that a per-board payload would fail.
+    ``for_board`` answers one board, so it repeats the shared and repo entries on every one: sending them per board
+    made the block ~590 KB for a 118 KB registry. The payload ships those entries once and each board names them by
+    key, so this is the test that a per-board payload would fail.
     """
     from RevenueChaser.app import dashboard
 
@@ -206,7 +206,7 @@ def test_the_embedded_block_is_under_the_size_budget():
     data = json.loads(block)
     assert set(data) == {"entries", "boards", "data_boards"} and data["entries"], \
         "the pages name entries from one map"
-    assert len(data["boards"]) >= 16
+    assert len(data["boards"]) >= 15
     # ``data_boards`` is the tabs that have a group at all, so the shell can tell one from Logs even when
     # the registry failed to load and ``boards`` is absent.
     assert set(data["data_boards"]) == set(data["boards"])

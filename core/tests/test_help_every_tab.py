@@ -21,7 +21,7 @@ def test_the_help_tabs_are_every_data_tab():
     from RevenueChaser.app import dashboard
     tabs = {t["key"] for t in dashboard.TABS if t["type"] == "tab"}
     assert tabs - NOT_A_DATA_TAB <= set(HELP_TABS)
-    assert len(HELP_TABS) == 16
+    assert len(HELP_TABS) == 15
 
 
 @pytest.mark.parametrize("key", HELP_TABS)
