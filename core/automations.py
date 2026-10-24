@@ -576,9 +576,14 @@ def _env_line(name: str, value: str) -> str:
 def _systemctl(args: list[str]) -> tuple[int, str, str]:
     """``systemctl --user <args>`` as ``(returncode, stdout, stderr)``. Any failure to run becomes an
     ``AutomationError``."""
+    env = dict(os.environ)
+    if not env.get("XDG_RUNTIME_DIR") and hasattr(os, "getuid"):
+        # A dashboard started outside a login session has no XDG_RUNTIME_DIR, and systemctl --user then cannot
+        # find the user's bus. The user manager's runtime folder is always this one.
+        env["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
     try:
         proc = subprocess.run(["systemctl", "--user", *args], capture_output=True, encoding="utf-8",
-                              errors="replace", timeout=60)
+                              errors="replace", timeout=60, env=env)
     except (OSError, subprocess.SubprocessError) as exc:
         raise AutomationError(f"could not run systemctl: {exc}") from None
     return proc.returncode, proc.stdout or "", proc.stderr or ""
@@ -744,10 +749,17 @@ class LinuxScheduler(Scheduler):
         self._exec("start", "--no-block", f"{entry(name).name}.service")
 
 
+# The Linux backend is opt-in: a server that already runs these jobs as system timers must not offer Install on every
+# row, which would add a second schedule beside the first (the paid RC-Relatedness-OffPeak among them).
+SCHEDULER_ENV = "RC_SCHEDULER"
+SCHEDULER_SYSTEMD_USER = "systemd-user"
+
+
 def _default_scheduler() -> Scheduler:
     if sys.platform == "win32":
         return WindowsScheduler()
-    if sys.platform.startswith("linux") and shutil.which("systemctl"):
+    if (sys.platform.startswith("linux") and os.environ.get(SCHEDULER_ENV, "").strip() == SCHEDULER_SYSTEMD_USER
+            and shutil.which("systemctl")):
         return LinuxScheduler()
     return UnavailableScheduler()
 

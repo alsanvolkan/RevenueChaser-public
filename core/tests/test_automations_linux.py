@@ -267,10 +267,42 @@ def test_a_failed_row_reads_red_on_the_panel(tmp_path):
 
 # --- which scheduler a host gets -----------------------------------------------------
 
-def test_linux_with_systemctl_gets_the_linux_scheduler(monkeypatch):
+@pytest.fixture
+def linux_host(monkeypatch):
     monkeypatch.setattr(A.sys, "platform", "linux")
     monkeypatch.setattr(A.shutil, "which", lambda name: "/usr/bin/systemctl" if name == "systemctl" else None)
+    monkeypatch.delenv("RC_SCHEDULER", raising=False)
+
+
+def test_linux_gets_the_systemd_backend_only_when_asked_for(linux_host, monkeypatch):
+    """Opt-in: a server that already runs these jobs as system timers must not be offered a second schedule."""
+    assert isinstance(A.get_scheduler(), A.UnavailableScheduler)
+    A.set_scheduler(None)
+    monkeypatch.setenv("RC_SCHEDULER", "systemd-user")
     assert isinstance(A.get_scheduler(), A.LinuxScheduler)
+
+
+def test_an_unknown_scheduler_choice_stays_unavailable(linux_host, monkeypatch):
+    monkeypatch.setenv("RC_SCHEDULER", "systemd")
+    assert isinstance(A.get_scheduler(), A.UnavailableScheduler)
+
+
+def test_systemctl_finds_the_user_bus_when_xdg_runtime_dir_is_missing(monkeypatch):
+    seen = {}
+
+    def run(cmd, **kw):
+        seen.update(cmd=cmd, env=kw.get("env"))
+        return A.subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(A.subprocess, "run", run)
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.setattr(A.os, "getuid", lambda: 1234, raising=False)
+    A._systemctl(["daemon-reload"])
+    assert seen["cmd"] == ["systemctl", "--user", "daemon-reload"]
+    assert seen["env"]["XDG_RUNTIME_DIR"] == "/run/user/1234"
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/77")
+    A._systemctl(["daemon-reload"])
+    assert seen["env"]["XDG_RUNTIME_DIR"] == "/run/user/77"
 
 
 def test_windows_is_unchanged(monkeypatch):
