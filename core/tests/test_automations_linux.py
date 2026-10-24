@@ -58,7 +58,9 @@ def test_install_writes_one_service_and_one_timer_and_enables_the_timer(tmp_path
     timer = _unit(tmp_path, "RC-Store-Backup", "timer")
     assert "OnCalendar=*-*-* 04:00:00" in timer
     assert "Unit=RC-Store-Backup.service" in timer
-    assert "Persistent=true" in timer and "WakeSystem=true" in timer
+    assert "Persistent=true" in timer
+    # A user timer cannot arm a wake alarm (no CAP_WAKE_ALARM): WakeSystem=true leaves it failed and never run.
+    assert "WakeSystem" not in timer
     assert "WantedBy=timers.target" in timer
     assert sc.calls == [["daemon-reload"], ["enable", "--now", "RC-Store-Backup.timer"]]
     assert sorted(p.name for p in (tmp_path / "units").iterdir()) == ["RC-Store-Backup.service",
@@ -74,7 +76,9 @@ def test_a_weekly_row_installs_its_days_and_a_row_that_does_not_wake_says_so(tmp
     assert "OnCalendar=Sat *-*-* 10:00:00" in _unit(tmp_path, "RC-Index-Lists", "timer")
     assert "OnCalendar=Mon,Tue,Wed,Thu,Fri *-*-* 23:00:00" in _unit(tmp_path, "RC-Screeners-Daily", "timer")
     vc = _unit(tmp_path, "RC-ValueChain-Sync", "timer")
-    assert "OnCalendar=*-*-* 13:00:00" in vc and "WakeSystem=false" in vc
+    assert "OnCalendar=*-*-* 13:00:00" in vc
+    for name in ("RC-Index-Lists", "RC-Screeners-Daily", "RC-ValueChain-Sync"):
+        assert "WakeSystem" not in _unit(tmp_path, name, "timer")
 
 
 def test_on_calendar_covers_every_registry_row():
@@ -148,7 +152,8 @@ def test_remove_leaves_other_unit_files_alone(tmp_path):
 
 # --- status -----------------------------------------------------------------------
 
-_TIMER_ON = {"ActiveState": "active", "NextElapseUSecRealtime": "@1792987200", "LastTriggerUSec": "@1792900800"}
+_TIMER_ON = {"ActiveState": "active", "Result": "success", "NextElapseUSecRealtime": "@1792987200",
+             "LastTriggerUSec": "@1792900800"}
 _SERVICE_OK = {"ActiveState": "inactive", "Result": "success", "ExecMainStatus": "0",
                "ExecMainStartTimestamp": "@1792900800"}
 
@@ -195,6 +200,21 @@ def test_status_maps_systemd_state_to_the_panel_codes(tmp_path, timer, service, 
     sc.out = _show(timer, service)
     st = s.status("RC-Store-Backup")
     assert (st.state, st.last_result) == (state, result)
+
+
+@pytest.mark.parametrize("timer", [
+    {**_TIMER_ON, "ActiveState": "failed", "Result": "resources"},
+    {**_TIMER_ON, "ActiveState": "inactive", "Result": "resources"},
+])
+def test_a_failed_timer_is_an_error_row_not_a_disabled_one(tmp_path, timer):
+    sc = FakeSystemctl()
+    s = _linux(tmp_path, sc)
+    s.install(A.entry("RC-Store-Backup"))
+    sc.out = _show(timer, _SERVICE_OK)
+    with pytest.raises(A.AutomationError, match="resources"):
+        s.status("RC-Store-Backup")
+    row = A.live_row(A.entry("RC-Store-Backup"), s)
+    assert row["state"] == "error" and "resources" in row["result_text"]
 
 
 def test_an_unreadable_show_answer_raises(tmp_path):

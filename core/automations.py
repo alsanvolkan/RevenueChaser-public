@@ -545,7 +545,7 @@ def parse_status(text: str) -> TaskStatus | None:
 
 _SYSTEMD_DAYS = {"Monday": "Mon", "Tuesday": "Tue", "Wednesday": "Wed", "Thursday": "Thu", "Friday": "Fri",
                  "Saturday": "Sat", "Sunday": "Sun"}
-_SHOW_TIMER = ("ActiveState", "NextElapseUSecRealtime", "LastTriggerUSec")
+_SHOW_TIMER = ("ActiveState", "Result", "NextElapseUSecRealtime", "LastTriggerUSec")
 _SHOW_SERVICE = ("ActiveState", "Result", "ExecMainStatus", "ExecMainStartTimestamp")
 
 
@@ -646,6 +646,10 @@ class LinuxScheduler(Scheduler):
                          "--property=" + ",".join(sorted(set(_SHOW_TIMER + _SHOW_SERVICE))),
                          timer.name, service.name)
         t, sv = parse_show(out)
+        if t.get("ActiveState") == "failed" or t.get("Result", "success") != "success":
+            # A failed timer never fires again until it is reset: an error row, never "disabled" (which it is not).
+            raise AutomationError(f"the timer failed ({t.get('Result') or t.get('ActiveState')}); "
+                                  f"systemctl --user status {timer.name}")
         started = _show_value(sv.get("ExecMainStartTimestamp"))
         triggered = _show_value(t.get("LastTriggerUSec"))
         if sv.get("ActiveState") in ("activating", "active", "reloading", "deactivating"):
@@ -685,7 +689,8 @@ class LinuxScheduler(Scheduler):
             f"OnCalendar={on_calendar(e)}",
             f"Unit={e.name}.service",
             f"Persistent={'true' if s.start_when_available else 'false'}",
-            f"WakeSystem={'true' if s.wake_to_run else 'false'}",
+            # No WakeSystem=: a user timer cannot arm a wake alarm (CAP_WAKE_ALARM), and asking for one leaves the
+            # timer failed and never run. ``wake_to_run`` is a Task Scheduler setting only.
             "",
             "[Install]",
             "WantedBy=timers.target",

@@ -436,10 +436,11 @@ for Task Scheduler; the Linux backend maps the ones systemd has).
   with `systemctl` it drives **systemd user timers** (#158): Install writes `<name>.service`
   (`Type=oneshot`, the same `automations run <name>` command, `TimeoutStartSec` from the time limit)
   and `<name>.timer` (`OnCalendar=` from the entry's time and days in local time, `Persistent=` from
-  "catches up a missed run", `WakeSystem=` from "wakes the PC") under `~/.config/systemd/user/`, then
+  "catches up a missed run"; no `WakeSystem=`, because a user timer cannot wake the machine and asking
+  for it leaves the timer failed) under `~/.config/systemd/user/`, then
   enables the timer. Enable and Disable switch the timer, Run now starts the service without waiting,
   Remove disables the timer and deletes both files. The row reads the timer's next run and the
-  service's last exit code from one `systemctl show`; after the user's systemd instance restarted the
+  service's last exit code from one `systemctl show`; a failed timer is an error row, not a disabled one; after the user's systemd instance restarted the
   exit code is gone and the result reads "—", while the last success still comes from the log. Restart
   counts are not mapped to systemd. A user timer runs only while that user's systemd instance runs, so
   a server that runs logged off needs `loginctl enable-linger <user>` once, by hand. Any other host
