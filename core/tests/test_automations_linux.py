@@ -355,3 +355,52 @@ def test_names_prints_every_registry_name_one_per_line_without_the_scheduler(cap
     assert A.main(["names"]) == 0
     assert capsys.readouterr().out.splitlines() == [e.name for e in A.REGISTRY]
     assert f.calls == []
+
+
+def test_a_relative_xdg_config_home_is_ignored(monkeypatch):
+    """The XDG spec: a relative value is invalid and is ignored, never resolved against the dashboard's cwd."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", "relative/cfg")
+    assert A.LinuxScheduler(runner=FakeSystemctl()).unit_dir == A.Path.home() / ".config" / "systemd" / "user"
+
+
+def test_a_value_ending_in_a_backslash_is_refused(tmp_path):
+    """A trailing backslash continues a unit-file line onto the next one."""
+    with pytest.raises(A.AutomationError):
+        _linux(tmp_path, FakeSystemctl(), workdir="/srv/rc\\").install(A.entry("RC-Store-Backup"))
+
+
+def test_an_unwritable_unit_folder_is_a_scheduler_error_not_a_crash(tmp_path):
+    """The routes catch AutomationError only: an OSError would make /api/automations a bare 500 for every row."""
+    (tmp_path / "units").write_text("a file where the folder should be", encoding="utf-8")
+    s = _linux(tmp_path, FakeSystemctl())
+    with pytest.raises(A.AutomationError):
+        s.install(A.entry("RC-Store-Backup"))
+    for call in (lambda: s.status("RC-Store-Backup"), lambda: s.remove("RC-Store-Backup")):
+        try:
+            call()
+        except A.AutomationError:
+            pass
+
+
+def test_a_failed_write_leaves_no_temp_file(tmp_path, monkeypatch):
+    s = _linux(tmp_path, FakeSystemctl())
+    real = A.Path.replace
+
+    def boom(self, target):
+        if str(self).endswith(".timer.tmp"):
+            raise OSError("disk full")
+        return real(self, target)
+
+    monkeypatch.setattr(A.Path, "replace", boom)
+    with pytest.raises(A.AutomationError, match="disk full"):
+        s.install(A.entry("RC-Store-Backup"))
+    assert list((tmp_path / "units").iterdir()) == []
+
+
+def test_an_unreadable_exit_status_is_a_scheduler_error(tmp_path):
+    sc = FakeSystemctl()
+    s = _linux(tmp_path, sc)
+    s.install(A.entry("RC-Store-Backup"))
+    sc.out = _show(_TIMER_ON, {**_SERVICE_OK, "ExecMainStatus": "n/a"})
+    with pytest.raises(A.AutomationError):
+        s.status("RC-Store-Backup")

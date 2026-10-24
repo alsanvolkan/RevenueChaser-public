@@ -433,18 +433,25 @@ for Task Scheduler; the Linux backend maps the ones systemd has).
   backup records none. The **Runs** tab (`/view/runs`) is the reader of that table, dashboard runs and
   scheduled ones together.
 - **Two scheduler backends.** On Windows the panel drives Task Scheduler through PowerShell. On Linux
-  with `systemctl` it drives **systemd user timers** (#158): Install writes `<name>.service`
-  (`Type=oneshot`, the same `automations run <name>` command, `TimeoutStartSec` from the time limit)
-  and `<name>.timer` (`OnCalendar=` from the entry's time and days in local time, `Persistent=` from
-  "catches up a missed run"; no `WakeSystem=`, because a user timer cannot wake the machine and asking
-  for it leaves the timer failed) under `~/.config/systemd/user/`, then
-  enables the timer. Enable and Disable switch the timer, Run now starts the service without waiting,
-  Remove disables the timer and deletes both files. The row reads the timer's next run and the
-  service's last exit code from one `systemctl show`; a failed timer is an error row, not a disabled one; after the user's systemd instance restarted the
-  exit code is gone and the result reads "—", while the last success still comes from the log. Restart
-  counts are not mapped to systemd. A user timer runs only while that user's systemd instance runs, so
-  a server that runs logged off needs `loginctl enable-linger <user>` once, by hand. Any other host
-  reads every row as unavailable.
+  it drives **systemd user timers** (#158), and only when `RC_SCHEDULER=systemd-user` is set: by
+  default Linux reads every row as unavailable, as before, so a server whose jobs already run as
+  system timers is never offered a second schedule. Whether a server opts in is the owner's decision.
+  Install writes `<name>.service` (`Type=oneshot`, the same `automations run <name>` command,
+  `TimeoutStartSec` from the time limit) and `<name>.timer` (`OnCalendar=` from the entry's time and
+  days in local time, `Persistent=` from "catches up a missed run") under
+  `~/.config/systemd/user/`, then enables the timer; a systemctl failure deletes both files again.
+  The service carries an allowlist of variables, never a copy of the environment (unit files are
+  world-readable and `.env` puts the keys there): the four data roots as the dashboard resolved them,
+  so a job writes the store and logs the panel reads, and `SPX_GAMMA_DATA_ROOT`, `RAW_STORE_BACKUP_*`
+  and `TZ` when set. Not mapped: "wakes the PC" (a user timer cannot arm a wake alarm, and asking for
+  one leaves it failed) and the restart counts (`Restart=on-failure` would re-run a chained step's
+  exit 5 and a busy lock's exit 3, and could repeat provider calls). Enable and Disable switch the
+  timer, Run now starts the service without waiting, Remove disables the timer and deletes both files
+  even when systemctl cannot be reached. The row reads the timer's next run and the service's last
+  exit code from one `systemctl show`; a failed timer is an error row; after the user's systemd
+  instance restarted the exit code is gone and the result reads "—", while the last success still
+  comes from the log. A user timer runs only while that user's systemd instance runs, so a server
+  that runs logged off needs `loginctl enable-linger <user>` once, by hand.
 - **Task names for scripts.** `python -m RevenueChaser.core.automations names` prints the registry
   names one per line and never asks the scheduler, so a script that freezes or lists the tasks reads
   them from the registry instead of keeping its own list (#164).

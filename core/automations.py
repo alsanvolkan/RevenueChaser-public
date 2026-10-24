@@ -590,7 +590,9 @@ def _systemctl(args: list[str]) -> tuple[int, str, str]:
 
 
 def _user_unit_dir() -> Path:
-    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    base = os.environ.get("XDG_CONFIG_HOME") or ""
+    if not Path(base).is_absolute():                 # the XDG spec: a relative value is invalid and ignored
+        base = str(Path.home() / ".config")
     return Path(base) / "systemd" / "user"
 
 
@@ -603,8 +605,8 @@ def on_calendar(e: AutomationEntry) -> str:
 def _unit_value(value: str) -> str:
     """A value for a unit file line: one line, with ``%`` doubled so systemd expands no specifier in it."""
     value = str(value)
-    if "\n" in value or "\r" in value:
-        raise AutomationError("a unit file value cannot hold a line break")
+    if "\n" in value or "\r" in value or value.endswith("\\"):
+        raise AutomationError("a unit file value cannot hold a line break or end in a backslash")
     return value.replace("%", "%%")
 
 
@@ -669,8 +671,11 @@ class LinuxScheduler(Scheduler):
     def status(self, name):
         name = entry(name).name
         service, timer = self._files(name)
-        if not (service.is_file() and timer.is_file()):
-            return None
+        try:
+            if not (service.is_file() and timer.is_file()):
+                return None
+        except OSError as exc:
+            raise AutomationError(f"the unit folder could not be read: {exc}") from None
         out = self._exec("show", "--timestamp=unix",
                          "--property=" + ",".join(sorted(set(_SHOW_TIMER + _SHOW_SERVICE))),
                          timer.name, service.name)
@@ -686,7 +691,10 @@ class LinuxScheduler(Scheduler):
         else:
             state = "ready" if t.get("ActiveState") == "active" else "disabled"
             if started:
-                code = int(sv.get("ExecMainStatus") or 0)
+                try:
+                    code = int(sv.get("ExecMainStatus") or 0)
+                except ValueError:
+                    raise AutomationError("unreadable scheduler answer") from None
                 result = code if code or sv.get("Result") == "success" else 1
             elif triggered:
                 result = None            # the user manager restarted since: the exit code is gone, the logs keep it
@@ -727,11 +735,21 @@ class LinuxScheduler(Scheduler):
             "",
         ])
         service, timer = self._files(e.name)
-        self.unit_dir.mkdir(parents=True, exist_ok=True)
-        for path, text in ((service, service_text), (timer, timer_text)):
-            tmp = path.with_name(path.name + ".tmp")
-            tmp.write_text(text, encoding="utf-8")
-            tmp.replace(path)
+        try:
+            self.unit_dir.mkdir(parents=True, exist_ok=True)
+            for path, text in ((service, service_text), (timer, timer_text)):
+                tmp = path.with_name(path.name + ".tmp")
+                try:
+                    tmp.write_text(text, encoding="utf-8")
+                    tmp.replace(path)
+                finally:
+                    tmp.unlink(missing_ok=True)
+        except OSError as exc:
+            try:
+                self._unlink(e.name)
+            except AutomationError:
+                pass
+            raise AutomationError(f"the unit files could not be written: {exc}") from None
         try:
             self._exec("daemon-reload")
             self._exec("enable", "--now", timer.name)
@@ -749,8 +767,11 @@ class LinuxScheduler(Scheduler):
         return None
 
     def _unlink(self, name: str) -> None:
-        for path in self._files(name):
-            path.unlink(missing_ok=True)
+        try:
+            for path in self._files(name):
+                path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise AutomationError(f"the unit files could not be removed: {exc}") from None
 
     def set_enabled(self, name, enabled):
         self._exec("enable" if enabled else "disable", "--now", f"{entry(name).name}.timer")
@@ -760,7 +781,10 @@ class LinuxScheduler(Scheduler):
         clean up what Install left; the first failure is still raised, so the panel says so."""
         name = entry(name).name
         failed = self._try("disable", "--now", f"{name}.timer")
-        self._unlink(name)
+        try:
+            self._unlink(name)
+        except AutomationError as exc:
+            failed = failed or exc
         reloaded = self._try("daemon-reload")
         failed = failed or reloaded
         if failed:
