@@ -88,6 +88,37 @@ def test_on_calendar_covers_every_registry_row():
         assert (spec.count(",") + 1 if e.days else 0) == len(e.days)
 
 
+def test_the_service_carries_the_resolved_data_roots_so_a_job_writes_where_the_panel_reads(tmp_path, monkeypatch):
+    """Without them a job run by systemd falls back to the checkout's own .store/.cache (config._root)."""
+    monkeypatch.setenv("TZ", "Europe/Amsterdam")
+    monkeypatch.setenv("RAW_STORE_BACKUP_DIR", "/srv/backups 1")
+    roots = {"RC_STORE_DIR": "DATA_DIR", "RC_CACHE_DIR": "OUTPUT_DIR", "RC_EDGAR_DOCS_DIR": "EDGAR_DOCS_DIR",
+             "RC_DISCORD_MEDIA_DIR": "DISCORD_MEDIA_DIR"}
+    for var, attr in roots.items():                  # the value this process resolved, set in .env or not at all
+        monkeypatch.delenv(var, raising=False)
+        monkeypatch.setattr(A.config, attr, tmp_path / "resolved" / attr)
+    _linux(tmp_path, FakeSystemctl()).install(A.entry("RC-Store-Backup"))
+    service = _unit(tmp_path, "RC-Store-Backup", "service")
+    for var, value in (*((v, tmp_path / "resolved" / a) for v, a in roots.items()),
+                       ("TZ", "Europe/Amsterdam"), ("RAW_STORE_BACKUP_DIR", "/srv/backups 1")):
+        assert f'Environment="{var}={value}"' in service, var
+
+
+def test_no_other_variable_reaches_a_unit_file(tmp_path, monkeypatch):
+    """Unit files are world-readable and ``.env`` loads keys into the environment: an allowlist, never a copy."""
+    for name in ("UNUSUAL_WHALES_API_KEY", "FRED_API_KEY", "DEEPSEEK_API_KEY", "GITHUB_TOKEN", "SOME_SECRET",
+                 "RC_PASSWORD"):
+        monkeypatch.setenv(name, "s3cr3t-value-" + name)
+    _linux(tmp_path, FakeSystemctl()).install(A.entry("RC-Store-Backup"))
+    for kind in ("service", "timer"):
+        text = _unit(tmp_path, "RC-Store-Backup", kind)
+        assert "s3cr3t-value" not in text
+    names = {line.split("=", 1)[1].strip('"').split("=", 1)[0]
+             for line in _unit(tmp_path, "RC-Store-Backup", "service").splitlines()
+             if line.startswith("Environment=")}
+    assert names <= set(A.UNIT_ENVIRONMENT)
+
+
 def test_install_quotes_paths_and_escapes_systemd_specifiers(tmp_path):
     sc = FakeSystemctl()
     _linux(tmp_path, sc, python='/opt/my "py"/100%/bin/python', workdir="/srv/rc 100%").install(
