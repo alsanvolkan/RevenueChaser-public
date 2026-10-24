@@ -14,7 +14,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from RevenueChaser.core import automations, datahealth, datasets, fiscal_year, rawstore
+from RevenueChaser.core import automations, datahealth, datasets, fiscal_year, ibkr_login, rawstore
 from RevenueChaser.core.gics_map import canonical_sector
 from RevenueChaser.core.identity import refresh as identity_refresh
 from RevenueChaser.core.identity import types as identity_types
@@ -1203,6 +1203,20 @@ def _discord_readiness() -> dict | None:
         return None
 
 
+def _ibkr_login_state(now: datetime) -> dict | None:
+    """The IBKR Gateway login STATE card's data (#162): the login check's own record, nothing else.
+
+    No socket and no store read. A probe here would make a Refresh contact the gateway, which is a
+    side effect the page must not have and, on a dead gateway, a timeout on every look. A failed read
+    is recorded (F4) and the card is left out: it must never look logged in or vanish without a trace.
+    """
+    try:
+        return ibkr_login.collect(now=now)
+    except Exception as exc:  # noqa: BLE001 - recorded (F4), the card is omitted
+        _record("ibkr", "_ibkr_login_state", exc)
+        return None
+
+
 def _gb_text(nbytes: int, limit_gb: float, env: str) -> tuple[str, str]:
     """``(state, text)``: "warn" when ABOVE ``limit_gb`` (GB = 10^9 bytes), else "ok"."""
     gb = nbytes / 1e9
@@ -2221,6 +2235,9 @@ def _collect(now: datetime) -> dict:
         # Fixed registry fields only: the live state is polled from /api/automations.
         "automations": automations.static_rows(),
         "discord": _discord_readiness(),
+        # #162: the IBKR Gateway login state, read from the login check's record. Never probed here.
+        # Named to pair with ``ibkr_login_url`` above it, the shortcut that opens the login screen.
+        "ibkr_login_state": _ibkr_login_state(now),
         "backups": _backups(now),
         "ibkr_login_url": _ibkr_login_url(),
         # S6 (#124): the backstop for a MANIFEST table no dataset claims. Built before the errors

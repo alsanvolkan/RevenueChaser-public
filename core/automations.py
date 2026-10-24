@@ -213,6 +213,17 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "main, git pull first (docs/open_issues.json is tracked, so --write on a stale clone sets "
                     "up a pull conflict), otherwise python -m RevenueChaser.scripts.open_issues_sync --write.",
         settings=TaskSettings(restart_count=0)),
+    AutomationEntry(
+        name="RC-IBKR-Login-Check", label="IBKR Gateway login check",
+        args=("-m", "RevenueChaser.scripts.ibkr_login_check"), time="09:15",
+        description="Looks at whether the IBKR Gateway is still logged in: one TCP connection to the "
+                    "configured host and port and the TWS API version handshake, and nothing else - no "
+                    "account, position, order or execution is ever asked for. Writes no table and no store "
+                    "file, only its own record under .cache/ibkr_login/, which the Data Health card reads "
+                    "(#162). It exits 0 whatever it finds: a session that expired on its weekly cycle is not "
+                    "a failed job. Off until RC_IBKR_LOGIN_CHECK is set, and then it contacts nothing but "
+                    "RC_IBKR_HOST:RC_IBKR_PORT (127.0.0.1:4001 by default).",
+        settings=TaskSettings(restart_count=0, time_limit_hours=1)),
 )
 _BY_NAME = {e.name: e for e in REGISTRY}
 

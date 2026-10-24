@@ -149,7 +149,12 @@ What that means for history today (details and cites per table in [data_flow.md]
   (the universe CLI `app/universe_cli.py`, #129 S2; not installed by default), RC-Forecast-Outcomes 23:45 after
   RC-Daily-Bars (`scripts/forecast_outcomes.py --nightly`, #380 S0; not installed by default), RC-Index-Lists Saturday 10:00,
   RC-Earnings-Inputs Tuesday to Saturday 01:30 after RC-Daily-Bars (`scripts/nightly_inputs.py earnings`, E0 #372; at
-  most 200 UW, 10 FRED and 2000 yfinance reads a night, no SEC call; not installed by default).
+  most 200 UW, 10 FRED and 2000 yfinance reads a night, no SEC call; not installed by default),
+  RC-IBKR-Login-Check 09:15 (`scripts/ibkr_login_check.py`, #162: one TCP connection to the configured host and
+  port plus the TWS API version handshake and nothing else — no account, position, order or execution is ever
+  asked for — writing **no table and no store file**, only its own record under `.cache/ibkr_login/state.json`,
+  which the Data Health "IBKR Gateway login" card reads; off until `RC_IBKR_LOGIN_CHECK` is set, exits 0 whatever
+  it finds, not installed by default).
 - **Nightly chain rule (#129, core/automations.py:197-225, :697-782, :784-871):** an entry with `after=<name>` keeps
   its own time as its not-before time (0 to under 12 h after the predecessor's) and, when it starts, waits up
   to `chain_wait_minutes` for the predecessor's run of tonight (the newest run in the predecessor's log that started

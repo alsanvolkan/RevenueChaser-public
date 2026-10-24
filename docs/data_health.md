@@ -168,8 +168,8 @@ the rendered order when pressed again.
   FRED (Federal Reserve Economic Data), OpenFIGI, worked out by us from other datasets, entered by
   hand, the store's own bookkeeping, or "more than one provider, or not known".
   The machine value stays in the row's data attribute for the filters; only the visible text is words.
-  That list of provider names is the page's only one: this column, the Board inputs rows (3.5) and the
-  data-flow diagram (3.7) all read it, so one provider cannot be called three things on one page. A
+  That list of provider names is the page's only one: this column, the Board inputs rows (3.6) and the
+  data-flow diagram (3.8) all read it, so one provider cannot be called three things on one page. A
   source the list does not know is named as unnamed, never under a wrong name.
 - **Coverage** is a fill bar and the counts: green at 95 per cent and above, amber from 70, red below.
   The drawn width is clamped to 100 per cent while the label keeps the real counts, so a coverage above
@@ -249,7 +249,8 @@ It is normally empty, and `core/tests/test_datasets.py` keeps it so.
 
 ### 2.7 The IBKR gateway shortcut
 
-Above the help block, one link that opens the IBKR gateway's own login screen in a new tab. The
+Above the help block, one link that opens the IBKR gateway's own login screen in a new tab. Whether
+that login is currently good is a different card, 3.3. The
 address is **not** in this repository: it is `RC_IBKR_LOGIN_URL`, read on every payload build, so an
 unset variable renders no card at all and no host is pinned in the code. Only an absolute `http` or
 `https` address with a host is accepted; anything else (a `javascript:` or `data:` value, a bare
@@ -315,7 +316,50 @@ id reaches the payload, the page or the error list. The one thing that starts th
 version read, run once per exporter file with every key and token removed from its environment and
 cached in the dashboard process, so a hang cannot cost a timeout on every Refresh.
 
-### 3.3 Backups
+### 3.3 IBKR Gateway login state
+
+The pair of the gateway shortcut in 2.7: that one is the link that logs you in, this one says whether
+that login is still good. Answers "is the gateway still logged in, and if not, since when?". Its
+session expires and is logged in again by hand, so the state alone is not enough: the card also says
+when it dropped and when it was last up.
+
+The two share a page, so they own separate id namespaces — the shortcut `ibkr-login` and
+`ibkr-login-*`, this card `ibkr-state*`. One id in two places is invalid HTML, and an assertion on it
+would pass against the wrong card; `test_the_two_ibkr_cards_share_a_page_without_sharing_an_id` keeps
+them apart. The shortcut keeps its place above the help block because it is one line; this card is
+several, so it sits with the other availability cards.
+
+**The card reads a record, not the gateway.** `core/ibkr_login.py` keeps the readings in
+`.cache/ibkr_login/state.json` (written `tmp` + `replace`), and the card reads that file and nothing
+else. A probe on every Refresh would be a side effect this page must not have, and on a dead gateway
+a timeout on every look. So the card's freshness is the job's, and a reading older than 90 minutes is
+called out — "no check has run" means the schedule is not running, which is itself the useful fact.
+
+**The probe is market-data safe.** `RC-IBKR-Login-Check` opens a TCP connection to the configured
+host and port, sends the TWS API version handshake, and reads the reply. That is all: no account,
+position, order or execution is ever asked for, and no request is sent past the handshake. No IBKR
+library is a dependency; the handshake is a few lines of `socket` and `struct`, its shape read off
+`ib_async` 2.1.0. Three readings, and the card's three states: the connection refused or timed out
+(**Login needed** — the gateway is not listening), the port open but the handshake silent (**Port
+open, the API is not answering**), and the handshake answered (**Logged in**, with the server version
+as the evidence). A reply that arrives but cannot be parsed still counts as answered with the version
+unknown: a framing mistake must never read as a false "down".
+
+**No store table, so no schema bump and no live-change gate.** The dashboard process holds the single
+DuckDB writer, and a probe meant to run every few minutes must never queue behind it or hold it. The
+file survives a restart, which is what is required; it does not survive a `.cache/` wipe, and the card
+then reads "no check has run yet" rather than inventing a history. An unreadable or malformed record
+reads **unknown**, never "down".
+
+**A weekly login expiry is not a failure.** The job exits 0 whatever it finds, so an expired session
+does not turn its scheduler row red for something nobody broke. The state is the output.
+
+**Off until it is switched on.** `RC_IBKR_LOGIN_CHECK` is empty by default: nothing is contacted,
+nothing is recorded, and the card says so and names the variable. `RC_IBKR_HOST` and `RC_IBKR_PORT`
+then default to `127.0.0.1` and `4001` — loopback, because the gateway's API port should not be
+reachable off its own machine.
+
+### 3.4 Backups
 
 Built from the backup job's own records in the local backup folder: both folder sizes, and the last
 read-only self-check of the local folder. The off-machine (Google Drive) copy is **never** read,
@@ -335,7 +379,7 @@ newest five raw snapshots, two EDGAR, two document archives, two Discord, five h
 and twelve weekly raw copies. The newest copy of every list is **never** offered as expired,
 whatever a keep count computes, because a restore reads the newest snapshot.
 
-### 3.4 Automations panel
+### 3.5 Automations panel
 
 `core/automations.py` is the one registry of the scheduled tasks RevenueChaser owns, and the one
 installer. Rows: `RC-Store-Backup` (daily 04:00, `scripts.backup_store --keep 5`),
@@ -390,7 +434,7 @@ writes, whether it is off-peak gated, a log path under `.cache/logs/` and its Wi
 - **Tests** use a fake scheduler; the end-to-end harness installs it, so no test reaches the real
   Windows Task Scheduler.
 
-### 3.5 Board inputs
+### 3.6 Board inputs
 
 A Board inputs card is built from that board's own last rendered payload in `.cache` and never
 recomputes the board, so the card and the board cannot disagree. The funnel shown is the one the
@@ -419,7 +463,7 @@ payload it was given and asks the store nothing.
 A store table the registry does not place is said in words rather than left out: *not claimed by any
 dataset*, or *claimed by more than one dataset*. Those are different facts, and the line says which.
 
-### 3.6 Identity coverage
+### 3.7 Identity coverage
 
 A card directly under the inventory table: how far the stored identity data reaches, name by name.
 Every number comes from the store read, and there are two ways a cell can have no number. *Could not
@@ -461,7 +505,7 @@ says so instead of counting to nought. The two store summaries this card needs, 
 are the same two the dataset rows already asked, and each is asked **once** per page read: a second
 full sweep of either store file would spend the page's read budget on a question already answered.
 
-### 3.7 The data-flow diagram
+### 3.8 The data-flow diagram
 
 A section below Board inputs, titled *Where the data comes from and where it is stored*. Three
 columns of boxes — **Provider**, **Job that writes it**, **Store file** — with one curved line per

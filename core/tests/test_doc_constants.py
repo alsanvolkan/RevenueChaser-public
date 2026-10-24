@@ -23,7 +23,8 @@ def test_data_architecture_names_the_current_schema_version():
 # provider variables (#169a); these tests compare it with the code that owns the names.
 _ENV_EXTRAS = ("RC_SEC_USER_AGENT", "RC_DCE_CLI", "RC_DISCORD_GUILD_ID",
                "RAW_STORE_BACKUP_WARN_GB", "RAW_STORE_BACKUP_MIRROR_WARN_GB",   # #309 part 3
-               "RC_ALLOWED_HOSTS", "RC_IBKR_LOGIN_URL")
+               "RC_ALLOWED_HOSTS", "RC_IBKR_LOGIN_URL",                         # #159 / the gateway shortcut
+               "RC_IBKR_LOGIN_CHECK", "RC_IBKR_HOST", "RC_IBKR_PORT")           # #162
 
 
 def _env_example_lines() -> list[str]:
@@ -169,7 +170,7 @@ def test_data_architecture_names_no_scheduled_job_or_history_the_code_does_not_h
                      "RC-Screeners-Daily": "23:00", "RC-Forecast-Outcomes": "23:45",
                      "RC-Forecast-Baselines": "23:50",
                      "RC-Index-Lists": "10:00", "RC-Earnings-Inputs": "01:30",
-                     "RC-Open-Issues-Check": "09:30"}
+                     "RC-Open-Issues-Check": "09:30", "RC-IBKR-Login-Check": "09:15"}
     for stamp in times.values():
         assert stamp in text, f"the registered time {stamp} is not in docs/data_architecture.md"
     ps1 = (_REPO / "register_tasks.ps1").read_text(encoding="utf-8")

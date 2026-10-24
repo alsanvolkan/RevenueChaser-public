@@ -2002,6 +2002,78 @@ def _discord_card(discord: dict | None) -> str:
             f'{_mini_table(["Check", "State", "Detail"], body)}</div></section>')
 
 
+# ── #162: the IBKR Gateway login STATE card ─────────────────────────────────────────────────────
+# The pair of the "IBKR gateway" shortcut: that one is a one-line link near the top that logs you in,
+# this one sits with the other availability cards and says whether that login is still good. The
+# shortcut keeps its documented place above the help block; this card is several lines, so it belongs
+# down here beside Discord readiness and Backups. The one availability fact whose history matters, because the
+# gateway's session expires and is logged in again by hand, so the card answers "still logged in?"
+# and "if not, since when?". Every value comes from ``core.ibkr_login.collect``, which reads the
+# login check's record and opens no socket, so this card costs the Refresh nothing. Every field goes
+# through ``esc``: ``checked_detail`` carries the probe's own words, and those carry the host out of
+# the environment.
+# Its ids are the ``ibkr-state-*`` namespace, deliberately clear of the shortcut's ``ibkr-login-*``:
+# the two cards share a page, and one id in two places is invalid HTML and an assertion that passes
+# on the wrong card.
+_IBKR_STATES = {"up": "st-ok", "down": "st-bad", "silent": "st-warn",
+                "unknown": "st-warn", "not set": "st-warn"}
+_IBKR_CHANGE_WORDS = {"up": "Logged in", "down": "Login needed",
+                      "silent": "Port open, the API is not answering"}
+
+
+def _ibkr_kv(key: str, label: str, value: str) -> str:
+    return f'<div class="kv" id="ibkr-state-{key}">{label}: {_html.escape(value)}</div>'
+
+
+def _ibkr_changes(changes: list[dict]) -> str:
+    """The recorded state changes, oldest first, so a weekly login cycle reads as a cycle."""
+    body = []
+    for c in changes:
+        word = _IBKR_CHANGE_WORDS.get(str(c.get("to")), str(c.get("to") or ""))
+        cls = _IBKR_STATES.get(str(c.get("to")), "st-warn")
+        body.append(f"<tr><td>{_html.escape(_friendly(c.get('at')))}</td>"
+                    f'<td class="{cls}">{_html.escape(word)}</td></tr>')
+    if not body:
+        return '<div class="kv" id="ibkr-state-changes">No change has been recorded yet.</div>'
+    return _mini_table(["When", "Changed to"], body)
+
+
+def _ibkr_state_card(ibkr: dict | None) -> str:
+    """The IBKR Gateway login state: the state, since when, the last login, and the recent changes.
+
+    Without the key (an older payload, or a read that failed and was recorded in the errors) there is
+    no card. The card is drawn even when the check is switched off, so the switch stays discoverable.
+    """
+    if not ibkr:
+        return ""
+    esc = _html.escape
+    state = str(ibkr.get("state") or "unknown")
+    cls = _IBKR_STATES.get(state, "st-warn")
+    lines = [f'<div class="kv" id="ibkr-state-text"><span class="{cls}">{esc(str(ibkr.get("text") or ""))}</span></div>']
+    if ibkr.get("for_text"):
+        lines.append(_ibkr_kv("for", "This state has held for", str(ibkr["for_text"])))
+    if ibkr.get("since"):
+        lines.append(_ibkr_kv("since", "Since", _friendly(ibkr.get("since"))))
+    if state != "up" and ibkr.get("last_up"):
+        lines.append(_ibkr_kv("last-up", "Last logged in", _friendly(ibkr.get("last_up"))))
+    if state == "up" and ibkr.get("server_version") is not None:
+        lines.append(_ibkr_kv("version", "API server version", str(ibkr["server_version"])))
+    if ibkr.get("checked_text"):
+        cls_checked = "st-warn" if ibkr.get("stale") else ""
+        lines.append(f'<div class="kv" id="ibkr-state-checked"><span class="{cls_checked}">'
+                     f'{esc(str(ibkr["checked_text"]))}</span></div>')
+    if ibkr.get("checked_detail"):
+        lines.append(f'<div class="kv note" id="ibkr-state-detail">{esc(str(ibkr["checked_detail"]))}</div>')
+    changes = _ibkr_changes(ibkr.get("changes") or []) if state not in ("not set",) else ""
+    return ('<section id="ibkr-state"><div class="bcard" id="ibkr-state-card">'
+            "<h3>IBKR Gateway login state</h3>"
+            '<div class="asof" id="ibkr-state-note">Read from the login check\'s own record, not from the gateway: '
+            "this page opens no connection. The check itself opens the port and sends the API version "
+            "handshake, and nothing else - no account, position, order or execution is ever asked for. "
+            f'The gateway it watches is {esc(str(ibkr.get("target") or "")) or "not configured"}.</div>'
+            + "".join(lines) + changes + "</div></section>")
+
+
 _BACKUP_STATES = {"ok": "st-ok", "warn": "st-warn", "bad": "st-bad", "unknown": "st-warn", "not set": "st-bad"}
 
 
@@ -2213,6 +2285,7 @@ def render_settings_dashboard(payload: dict) -> str:
     discord_html = _discord_card(payload.get("discord"))
     backups_html = _backups_card(payload.get("backups"))
     ibkr_login_html = _ibkr_login_card(payload.get("ibkr_login_url"))
+    ibkr_state_html = _ibkr_state_card(payload.get("ibkr_login_state"))
     errors_html = _errors_list(payload.get("errors") or [])
     boards_html = _boards_section(payload.get("boards") or [], rows)
     flow_html = _flow_section(rows)
@@ -2248,6 +2321,7 @@ def render_settings_dashboard(payload: dict) -> str:
   {other_tables_html}
   {identity_html}
   {discord_html}
+  {ibkr_state_html}
   {errors_html}
   {backups_html}
   {automations_html}

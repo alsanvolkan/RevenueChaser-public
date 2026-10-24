@@ -31,7 +31,8 @@ def _cache(tmp_path, monkeypatch):
 def test_registry_names_are_stable_and_prefixed():
     assert [e.name for e in A.REGISTRY] == [
         "RC-Store-Backup", "RC-Relatedness-OffPeak", "RC-ValueChain-Sync", "RC-Daily-Bars", "RC-Screeners-Daily",
-        "RC-Forecast-Outcomes", "RC-Forecast-Baselines", "RC-Index-Lists", "RC-Earnings-Inputs", "RC-Open-Issues-Check"]
+        "RC-Forecast-Outcomes", "RC-Forecast-Baselines", "RC-Index-Lists", "RC-Earnings-Inputs",
+        "RC-Open-Issues-Check", "RC-IBKR-Login-Check"]
     assert all(e.name.startswith("RC-") for e in A.REGISTRY)
 
 
@@ -864,3 +865,30 @@ def test_the_warn_thresholds_read_a_positive_number_or_keep_the_default(monkeypa
     else:
         monkeypatch.setenv("X_WARN_GB", raw)
     assert A.config._warn_gb("X_WARN_GB", 20.0) == want
+
+
+# ── #162: the IBKR Gateway login check ──────────────────────────────────────────────────────────
+
+def test_the_ibkr_login_check_writes_no_table():
+    """Like RC-Open-Issues-Check: it records only its own file under .cache/, so it can never queue
+    behind or hold the dashboard's single DuckDB writer."""
+    entry = A.entry("RC-IBKR-Login-Check")
+    assert entry.tables_written == ()
+    assert entry.offpeak_gated is False
+    assert entry.after is None, "it depends on no other run: it reports a state, it does not build data"
+
+
+def test_the_ibkr_login_check_runs_the_module_it_claims_to():
+    entry = A.entry("RC-IBKR-Login-Check")
+    assert entry.command == "python -m RevenueChaser.scripts.ibkr_login_check"
+
+
+def test_the_ibkr_login_check_description_says_what_it_never_asks_for():
+    """The one guard a reader of the Automations panel has against scope creep into account data."""
+    text = A.entry("RC-IBKR-Login-Check").description
+    for phrase in ("account", "position", "order", "execution", "RC_IBKR_LOGIN_CHECK"):
+        assert phrase in text, f"the description no longer names {phrase!r}"
+
+
+def test_the_ibkr_login_check_is_not_installed_by_default():
+    assert A.entry("RC-IBKR-Login-Check").default_install is False
