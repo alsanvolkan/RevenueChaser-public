@@ -732,18 +732,39 @@ class LinuxScheduler(Scheduler):
             tmp = path.with_name(path.name + ".tmp")
             tmp.write_text(text, encoding="utf-8")
             tmp.replace(path)
-        self._exec("daemon-reload")
-        self._exec("enable", "--now", timer.name)
+        try:
+            self._exec("daemon-reload")
+            self._exec("enable", "--now", timer.name)
+        except AutomationError:
+            # Roll back: a half-installed task reads as an error row, which the panel offers no button for.
+            self._unlink(e.name)
+            self._try("daemon-reload")
+            raise
+
+    def _try(self, *args: str) -> AutomationError | None:
+        try:
+            self._exec(*args)
+        except AutomationError as exc:
+            return exc
+        return None
+
+    def _unlink(self, name: str) -> None:
+        for path in self._files(name):
+            path.unlink(missing_ok=True)
 
     def set_enabled(self, name, enabled):
         self._exec("enable" if enabled else "disable", "--now", f"{entry(name).name}.timer")
 
     def remove(self, name):
+        """Disable, delete both files, reload. The files go even when systemctl fails (no bus), so Remove can always
+        clean up what Install left; the first failure is still raised, so the panel says so."""
         name = entry(name).name
-        self._exec("disable", "--now", f"{name}.timer")
-        for path in self._files(name):
-            path.unlink(missing_ok=True)
-        self._exec("daemon-reload")
+        failed = self._try("disable", "--now", f"{name}.timer")
+        self._unlink(name)
+        reloaded = self._try("daemon-reload")
+        failed = failed or reloaded
+        if failed:
+            raise failed
 
     def run(self, name):
         self._exec("start", "--no-block", f"{entry(name).name}.service")

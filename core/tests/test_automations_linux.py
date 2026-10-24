@@ -140,6 +140,38 @@ def test_a_failing_systemctl_call_raises_with_its_message(tmp_path):
         _linux(tmp_path, FakeSystemctl(rc=1, err="Failed to connect to bus")).install(A.entry("RC-Store-Backup"))
 
 
+class FailOn(FakeSystemctl):
+    """Fails the calls whose first word is in ``verbs``, like a missing bus or a refused unit."""
+
+    def __init__(self, *verbs):
+        super().__init__()
+        self.verbs = set(verbs)
+
+    def __call__(self, args):
+        self.calls.append(list(args))
+        return (1, "", "Failed to connect to bus") if args[0] in self.verbs else (0, "", "")
+
+
+@pytest.mark.parametrize("verb", ["daemon-reload", "enable"])
+def test_a_failed_install_leaves_no_unit_file_behind(tmp_path, verb):
+    """Otherwise the row reads "error", the panel draws no button for it and the half-installed unit stays."""
+    sc = FailOn(verb)
+    with pytest.raises(A.AutomationError, match="bus"):
+        _linux(tmp_path, sc).install(A.entry("RC-Store-Backup"))
+    assert list((tmp_path / "units").iterdir()) == []
+    assert sc.calls[-1] == ["daemon-reload"], "the rollback reloads so systemd forgets the units too"
+
+
+def test_remove_deletes_the_files_even_when_the_bus_is_down_and_still_reports_it(tmp_path):
+    s = _linux(tmp_path, FakeSystemctl())
+    s.install(A.entry("RC-Store-Backup"))
+    s._run = FailOn("disable", "daemon-reload")
+    with pytest.raises(A.AutomationError, match="bus"):
+        s.remove("RC-Store-Backup")
+    assert list((tmp_path / "units").iterdir()) == []
+    assert s.status("RC-Store-Backup") is None
+
+
 # --- the other four buttons ---------------------------------------------------------
 
 def test_enable_disable_run_and_remove_name_exactly_one_registry_unit(tmp_path):
