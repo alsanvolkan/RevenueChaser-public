@@ -369,8 +369,9 @@ def test_static_rows_never_touch_the_scheduler():
     assert "state" not in rows[0]
 
 
-def test_get_scheduler_is_unavailable_off_windows(monkeypatch):
+def test_get_scheduler_is_unavailable_without_task_scheduler_or_systemd(monkeypatch):
     monkeypatch.setattr(A.sys, "platform", "linux")
+    monkeypatch.setattr(A.shutil, "which", lambda name: None)
     assert A.get_scheduler().available is False
 
 

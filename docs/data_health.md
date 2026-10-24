@@ -390,7 +390,8 @@ installer. Rows: `RC-Store-Backup` (daily 04:00, `scripts.backup_store --keep 5`
 `RC-Forecast-Outcomes`, `scripts.forecast_baselines --nightly`), `RC-Index-Lists` (Saturday 10:00,
 `scripts.index_lists --weekly`) and `RC-Earnings-Inputs` (Tuesday to Saturday 01:30, after
 `RC-Daily-Bars`, `scripts.nightly_inputs earnings`). Each entry carries its schedule, the tables it
-writes, whether it is off-peak gated, a log path under `.cache/logs/` and its Windows task settings.
+writes, whether it is off-peak gated, a log path under `.cache/logs/` and its task settings (named
+for Task Scheduler; the Linux backend maps the ones systemd has).
 
 - **Nothing installs itself.** `default_install` only marks a row. Install, Enable, Disable, Remove
   and Run now are buttons on the panel, and Install, Remove and Run now ask for confirmation. The two
@@ -431,8 +432,21 @@ writes, whether it is off-peak gated, a log path under `.cache/logs/` and its Wi
   command runs and `done` or `error` after it; what the command writes carries that row's run id. The
   backup records none. The **Runs** tab (`/view/runs`) is the reader of that table, dashboard runs and
   scheduled ones together.
+- **Two scheduler backends.** On Windows the panel drives Task Scheduler through PowerShell. On Linux
+  with `systemctl` it drives **systemd user timers** (#158): Install writes `<name>.service`
+  (`Type=oneshot`, the same `automations run <name>` command, `TimeoutStartSec` from the time limit)
+  and `<name>.timer` (`OnCalendar=` from the entry's time and days in local time, `Persistent=` from
+  "catches up a missed run", `WakeSystem=` from "wakes the PC") under `~/.config/systemd/user/`, then
+  enables the timer. Enable and Disable switch the timer, Run now starts the service without waiting,
+  Remove disables the timer and deletes both files. The row reads the timer's next run and the
+  service's last exit code from one `systemctl show`; after the user's systemd instance restarted the
+  exit code is gone and the result reads "—", while the last success still comes from the log. Restart
+  counts are not mapped to systemd. A user timer runs only while that user's systemd instance runs, so
+  a server that runs logged off needs `loginctl enable-linger <user>` once, by hand. Any other host
+  reads every row as unavailable.
 - **Tests** use a fake scheduler; the end-to-end harness installs it, so no test reaches the real
-  Windows Task Scheduler.
+  Windows Task Scheduler or systemd. The Linux backend is tested through a fake `systemctl` and a
+  temporary unit folder.
 
 ### 3.6 Board inputs
 
@@ -651,7 +665,7 @@ Checked 2026-09-24. None of these replaces our own SEC client and filing picker.
 
 - Merging with Implied Probability, Relatedness or Value Chain.
 - Market-cap, sector or theme filters here. This tab's filters are the ones in 2.2.
-- Scheduling inside the application. Scheduled tasks are Windows Task Scheduler tasks, listed on the
+- Scheduling inside the application. Scheduled tasks are Task Scheduler tasks or systemd user timers, listed on the
   Automations panel.
 - Downloading 10-Q or 8-K filings into the corpus.
 - A one-click "refresh every dataset" button.

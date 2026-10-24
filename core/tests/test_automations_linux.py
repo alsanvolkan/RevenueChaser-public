@@ -1,0 +1,233 @@
+"""#158: the Automations panel on Linux, through systemd user timers.
+
+Every call goes through a fake ``systemctl`` runner and a temp unit folder, so the tests stay offline and run the
+same on any platform, the way ``WindowsScheduler``'s tests go through a fake PowerShell.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+import pytest
+
+from RevenueChaser.core import automations as A
+
+
+@pytest.fixture(autouse=True)
+def _cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(A.config, "OUTPUT_DIR", tmp_path)
+    A.set_scheduler(None)
+    yield
+    A.set_scheduler(None)
+
+
+class FakeSystemctl:
+    def __init__(self, out="", rc=0, err=""):
+        self.calls: list[list[str]] = []
+        self.out, self.rc, self.err = out, rc, err
+
+    def __call__(self, args):
+        self.calls.append(list(args))
+        return self.rc, self.out, self.err
+
+
+def _linux(tmp_path, sc, python="/srv/rc/.venv/bin/python", workdir="/srv/rc"):
+    return A.LinuxScheduler(runner=sc, python=python, workdir=workdir, unit_dir=tmp_path / "units")
+
+
+def _unit(tmp_path, name, kind):
+    return (tmp_path / "units" / f"{name}.{kind}").read_text(encoding="utf-8")
+
+
+def _show(timer: dict, service: dict) -> str:
+    """What ``systemctl show <timer> <service>`` prints: one block per unit, a blank line between them."""
+    block = lambda d: "\n".join(f"{k}={v}" for k, v in d.items())
+    return block(timer) + "\n\n" + block(service) + "\n"
+
+
+# --- install ----------------------------------------------------------------------
+
+def test_install_writes_one_service_and_one_timer_and_enables_the_timer(tmp_path):
+    sc = FakeSystemctl()
+    _linux(tmp_path, sc).install(A.entry("RC-Store-Backup"))
+    service = _unit(tmp_path, "RC-Store-Backup", "service")
+    assert "Type=oneshot" in service
+    assert 'ExecStart="/srv/rc/.venv/bin/python" "-m" "RevenueChaser.core.automations" "run" "RC-Store-Backup"' \
+        in service
+    assert "WorkingDirectory=/srv/rc" in service
+    assert "TimeoutStartSec=2h" in service
+    timer = _unit(tmp_path, "RC-Store-Backup", "timer")
+    assert "OnCalendar=*-*-* 04:00:00" in timer
+    assert "Unit=RC-Store-Backup.service" in timer
+    assert "Persistent=true" in timer and "WakeSystem=true" in timer
+    assert "WantedBy=timers.target" in timer
+    assert sc.calls == [["daemon-reload"], ["enable", "--now", "RC-Store-Backup.timer"]]
+    assert sorted(p.name for p in (tmp_path / "units").iterdir()) == ["RC-Store-Backup.service",
+                                                                       "RC-Store-Backup.timer"]
+
+
+def test_a_weekly_row_installs_its_days_and_a_row_that_does_not_wake_says_so(tmp_path):
+    sc = FakeSystemctl()
+    s = _linux(tmp_path, sc)
+    s.install(A.entry("RC-Index-Lists"))
+    s.install(A.entry("RC-Screeners-Daily"))
+    s.install(A.entry("RC-ValueChain-Sync"))
+    assert "OnCalendar=Sat *-*-* 10:00:00" in _unit(tmp_path, "RC-Index-Lists", "timer")
+    assert "OnCalendar=Mon,Tue,Wed,Thu,Fri *-*-* 23:00:00" in _unit(tmp_path, "RC-Screeners-Daily", "timer")
+    vc = _unit(tmp_path, "RC-ValueChain-Sync", "timer")
+    assert "OnCalendar=*-*-* 13:00:00" in vc and "WakeSystem=false" in vc
+
+
+def test_on_calendar_covers_every_registry_row():
+    for e in A.REGISTRY:
+        spec = A.on_calendar(e)
+        assert spec.endswith(f"*-*-* {e.time}:00")
+        assert (spec.count(",") + 1 if e.days else 0) == len(e.days)
+
+
+def test_install_quotes_paths_and_escapes_systemd_specifiers(tmp_path):
+    sc = FakeSystemctl()
+    _linux(tmp_path, sc, python='/opt/my "py"/100%/bin/python', workdir="/srv/rc 100%").install(
+        A.entry("RC-Store-Backup"))
+    service = _unit(tmp_path, "RC-Store-Backup", "service")
+    assert 'ExecStart="/opt/my \\"py\\"/100%%/bin/python" "-m"' in service
+    assert "WorkingDirectory=/srv/rc 100%%" in service
+
+
+def test_a_path_with_a_newline_is_refused_before_anything_is_written(tmp_path):
+    sc = FakeSystemctl()
+    with pytest.raises(A.AutomationError):
+        _linux(tmp_path, sc, workdir="/srv/rc\nExecStartPre=/bin/rm").install(A.entry("RC-Store-Backup"))
+    assert sc.calls == [] and not (tmp_path / "units").exists()
+
+
+def test_a_failing_systemctl_call_raises_with_its_message(tmp_path):
+    with pytest.raises(A.AutomationError, match="Failed to connect to bus"):
+        _linux(tmp_path, FakeSystemctl(rc=1, err="Failed to connect to bus")).install(A.entry("RC-Store-Backup"))
+
+
+# --- the other four buttons ---------------------------------------------------------
+
+def test_enable_disable_run_and_remove_name_exactly_one_registry_unit(tmp_path):
+    sc = FakeSystemctl()
+    s = _linux(tmp_path, sc)
+    s.install(A.entry("RC-Relatedness-OffPeak"))
+    sc.calls.clear()
+    s.set_enabled("RC-Relatedness-OffPeak", False)
+    s.set_enabled("RC-Relatedness-OffPeak", True)
+    s.run("RC-Relatedness-OffPeak")
+    s.remove("RC-Relatedness-OffPeak")
+    assert sc.calls == [
+        ["disable", "--now", "RC-Relatedness-OffPeak.timer"],
+        ["enable", "--now", "RC-Relatedness-OffPeak.timer"],
+        ["start", "--no-block", "RC-Relatedness-OffPeak.service"],
+        ["disable", "--now", "RC-Relatedness-OffPeak.timer"],
+        ["daemon-reload"],
+    ]
+    assert list((tmp_path / "units").iterdir()) == []
+
+
+def test_a_name_outside_the_registry_is_refused_without_a_call(tmp_path):
+    sc = FakeSystemctl()
+    s = _linux(tmp_path, sc)
+    for call in (lambda: s.status("Other"), lambda: s.remove("Other"), lambda: s.run("x; rm -rf ~"),
+                 lambda: s.set_enabled("Other", False)):
+        with pytest.raises(A.UnknownTask):
+            call()
+    assert sc.calls == []
+
+
+def test_remove_leaves_other_unit_files_alone(tmp_path):
+    units = tmp_path / "units"
+    units.mkdir()
+    (units / "someone-else.timer").write_text("[Timer]\n", encoding="utf-8")
+    s = _linux(tmp_path, FakeSystemctl())
+    s.install(A.entry("RC-Store-Backup"))
+    s.remove("RC-Store-Backup")
+    assert [p.name for p in units.iterdir()] == ["someone-else.timer"]
+
+
+# --- status -----------------------------------------------------------------------
+
+_TIMER_ON = {"ActiveState": "active", "NextElapseUSecRealtime": "@1792987200", "LastTriggerUSec": "@1792900800"}
+_SERVICE_OK = {"ActiveState": "inactive", "Result": "success", "ExecMainStatus": "0",
+               "ExecMainStartTimestamp": "@1792900800"}
+
+
+def _iso(ts: int) -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).astimezone().isoformat()
+
+
+def test_status_is_none_when_the_units_are_not_installed_and_calls_nothing(tmp_path):
+    sc = FakeSystemctl()
+    assert _linux(tmp_path, sc).status("RC-Store-Backup") is None
+    assert sc.calls == []
+
+
+def test_status_reads_one_show_call_for_both_units(tmp_path):
+    sc = FakeSystemctl()
+    s = _linux(tmp_path, sc)
+    s.install(A.entry("RC-Store-Backup"))
+    sc.calls.clear()
+    sc.out = _show(_TIMER_ON, _SERVICE_OK)
+    st = s.status("RC-Store-Backup")
+    assert len(sc.calls) == 1
+    call = sc.calls[0]
+    assert call[0] == "show" and "--timestamp=unix" in call
+    assert call[-2:] == ["RC-Store-Backup.timer", "RC-Store-Backup.service"]
+    assert st == A.TaskStatus(state="ready", last_run=_iso(1792900800), next_run=_iso(1792987200),
+                              last_result=A.RESULT_OK, missed_runs=0)
+
+
+@pytest.mark.parametrize("timer, service, state, result", [
+    ({**_TIMER_ON, "ActiveState": "inactive", "NextElapseUSecRealtime": ""}, _SERVICE_OK, "disabled", A.RESULT_OK),
+    (_TIMER_ON, {**_SERVICE_OK, "ActiveState": "activating"}, "running", A.RESULT_RUNNING),
+    (_TIMER_ON, {**_SERVICE_OK, "Result": "exit-code", "ExecMainStatus": "5"}, "ready", 5),
+    (_TIMER_ON, {**_SERVICE_OK, "Result": "timeout", "ExecMainStatus": "0"}, "ready", 1),
+    ({**_TIMER_ON, "LastTriggerUSec": "n/a"}, {**_SERVICE_OK, "ExecMainStartTimestamp": ""}, "ready",
+     A.RESULT_NOT_YET_RUN),
+    # The user manager restarted since the last run: the timer remembers it, the service does not.
+    (_TIMER_ON, {**_SERVICE_OK, "ExecMainStartTimestamp": ""}, "ready", None),
+])
+def test_status_maps_systemd_state_to_the_panel_codes(tmp_path, timer, service, state, result):
+    sc = FakeSystemctl()
+    s = _linux(tmp_path, sc)
+    s.install(A.entry("RC-Store-Backup"))
+    sc.out = _show(timer, service)
+    st = s.status("RC-Store-Backup")
+    assert (st.state, st.last_result) == (state, result)
+
+
+def test_an_unreadable_show_answer_raises(tmp_path):
+    s = _linux(tmp_path, FakeSystemctl())
+    s.install(A.entry("RC-Store-Backup"))
+    s._run = FakeSystemctl(out="garbage")
+    with pytest.raises(A.AutomationError):
+        s.status("RC-Store-Backup")
+
+
+def test_a_failed_row_reads_red_on_the_panel(tmp_path):
+    sc = FakeSystemctl()
+    s = _linux(tmp_path, sc)
+    s.install(A.entry("RC-Store-Backup"))
+    sc.out = _show(_TIMER_ON, {**_SERVICE_OK, "Result": "exit-code", "ExecMainStatus": "2"})
+    row = A.live_row(A.entry("RC-Store-Backup"), s)
+    assert row["state"] == "enabled" and row["result_kind"] == "red"
+
+
+# --- which scheduler a host gets -----------------------------------------------------
+
+def test_linux_with_systemctl_gets_the_linux_scheduler(monkeypatch):
+    monkeypatch.setattr(A.sys, "platform", "linux")
+    monkeypatch.setattr(A.shutil, "which", lambda name: "/usr/bin/systemctl" if name == "systemctl" else None)
+    assert isinstance(A.get_scheduler(), A.LinuxScheduler)
+
+
+def test_windows_is_unchanged(monkeypatch):
+    monkeypatch.setattr(A.sys, "platform", "win32")
+    assert isinstance(A.get_scheduler(), A.WindowsScheduler)
+
+
+def test_the_default_unit_folder_follows_xdg_config_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    assert A.LinuxScheduler(runner=FakeSystemctl()).unit_dir == tmp_path / "cfg" / "systemd" / "user"
+
