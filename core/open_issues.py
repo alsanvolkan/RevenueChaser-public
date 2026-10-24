@@ -328,4 +328,7 @@ def thin_reasons(entry: Entry | dict) -> list[str]:
         reasons.append("known-problem needs a non-empty direction")
     if e.kind == "epic" and not ((e.detail or {}).get("whats_wrong") or "").strip():
         reasons.append("epic needs a whats_wrong that says what is still open")
+    if e.scope == "board" and not e.boards:
+        # The sync adds a new issue as scope "board" with no boards, which matches no panel at all (#120).
+        reasons.append("board-scoped but names no board, so it shows on no dashboard")
     return reasons
