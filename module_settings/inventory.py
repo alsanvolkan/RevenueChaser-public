@@ -9,6 +9,7 @@ dash, but one of the named states the registry justifies (S5b, G3). See ``docs/d
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -527,7 +528,7 @@ def _quotes_row() -> dict:
     return default
 
 
-_HOLDINGS_PROVIDERS = (("uw", "UW"), ("fmp", "FMP"), ("yfinance", "yfinance"))
+_HOLDINGS_PROVIDERS = (("uw", "UW"), ("yfinance", "yfinance"))
 
 
 def _etf_holdings_row() -> dict:
@@ -563,6 +564,16 @@ def _etf_holdings_row() -> dict:
         parts.append(f"no holdings: {named}" + (f" and {len(h['missing']) - 8} more" if len(h["missing"]) > 8 else ""))
     row["note"] = "; ".join(parts)
     return row
+
+
+def _ibkr_login_url() -> str:
+    """``RC_IBKR_LOGIN_URL``: where the IBKR gateway's login screen is reachable, or "" when unset.
+
+    Read per payload build rather than at import, so setting the variable needs no restart, and
+    kept out of the code so no host is pinned here. The page validates it before linking to it
+    (``report._ibkr_login_href``); nothing here or there sends it a request.
+    """
+    return os.getenv("RC_IBKR_LOGIN_URL", "").strip()
 
 
 def _plural(n: int, word: str) -> str:
@@ -1192,8 +1203,8 @@ def _discord_readiness() -> dict | None:
         return None
 
 
-def _ibkr_login(now: datetime) -> dict | None:
-    """The IBKR Gateway login card's data (#162): the login check's own record, nothing else.
+def _ibkr_login_state(now: datetime) -> dict | None:
+    """The IBKR Gateway login STATE card's data (#162): the login check's own record, nothing else.
 
     No socket and no store read. A probe here would make a Refresh contact the gateway, which is a
     side effect the page must not have and, on a dead gateway, a timeout on every look. A failed read
@@ -1202,7 +1213,7 @@ def _ibkr_login(now: datetime) -> dict | None:
     try:
         return ibkr_login.collect(now=now)
     except Exception as exc:  # noqa: BLE001 - recorded (F4), the card is omitted
-        _record("ibkr", "_ibkr_login", exc)
+        _record("ibkr", "_ibkr_login_state", exc)
         return None
 
 
@@ -2225,8 +2236,10 @@ def _collect(now: datetime) -> dict:
         "automations": automations.static_rows(),
         "discord": _discord_readiness(),
         # #162: the IBKR Gateway login state, read from the login check's record. Never probed here.
-        "ibkr": _ibkr_login(now),
+        # Named to pair with ``ibkr_login_url`` above it, the shortcut that opens the login screen.
+        "ibkr_login_state": _ibkr_login_state(now),
         "backups": _backups(now),
+        "ibkr_login_url": _ibkr_login_url(),
         # S6 (#124): the backstop for a MANIFEST table no dataset claims. Built before the errors
         # list, so a failed read here is reported like any other.
         "other_tables": unclaimed_tables(),

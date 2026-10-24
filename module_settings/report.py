@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import html as _html
 from datetime import datetime
+from urllib.parse import urlsplit
 
 from RevenueChaser.core import automations, datasets, funnel
 from RevenueChaser.core.html_safe import script_json
@@ -1176,7 +1177,6 @@ def _db_legend() -> str:
 # machine key (``data-source``, the filter chips' ``data-value``); only the visible text is words.
 SOURCE_WORDS = {
     "uw": "Unusual Whales",
-    "fmp": "Financial Modeling Prep",
     "yfinance": "Yahoo Finance",
     "sec": "SEC EDGAR filings",
     "finra/cftc": "FINRA and the Commodity Futures Trading Commission",
@@ -2002,12 +2002,19 @@ def _discord_card(discord: dict | None) -> str:
             f'{_mini_table(["Check", "State", "Detail"], body)}</div></section>')
 
 
-# ── #162: the IBKR Gateway login card ───────────────────────────────────────────────────────────
-# The one availability fact whose history matters: the gateway's session expires and is logged in
-# again by hand, so the card answers "still logged in?" and "if not, since when?". Every value comes
-# from ``core.ibkr_login.collect``, which reads the login check's record and opens no socket, so
-# this card costs the Refresh nothing. Every field goes through ``esc``: ``checked_detail`` carries
-# the probe's own words, and those carry the host out of the environment.
+# ── #162: the IBKR Gateway login STATE card ─────────────────────────────────────────────────────
+# The pair of the "IBKR gateway" shortcut: that one is a one-line link near the top that logs you in,
+# this one sits with the other availability cards and says whether that login is still good. The
+# shortcut keeps its documented place above the help block; this card is several lines, so it belongs
+# down here beside Discord readiness and Backups. The one availability fact whose history matters, because the
+# gateway's session expires and is logged in again by hand, so the card answers "still logged in?"
+# and "if not, since when?". Every value comes from ``core.ibkr_login.collect``, which reads the
+# login check's record and opens no socket, so this card costs the Refresh nothing. Every field goes
+# through ``esc``: ``checked_detail`` carries the probe's own words, and those carry the host out of
+# the environment.
+# Its ids are the ``ibkr-state-*`` namespace, deliberately clear of the shortcut's ``ibkr-login-*``:
+# the two cards share a page, and one id in two places is invalid HTML and an assertion that passes
+# on the wrong card.
 _IBKR_STATES = {"up": "st-ok", "down": "st-bad", "silent": "st-warn",
                 "unknown": "st-warn", "not set": "st-warn"}
 _IBKR_CHANGE_WORDS = {"up": "Logged in", "down": "Login needed",
@@ -2015,7 +2022,7 @@ _IBKR_CHANGE_WORDS = {"up": "Logged in", "down": "Login needed",
 
 
 def _ibkr_kv(key: str, label: str, value: str) -> str:
-    return f'<div class="kv" id="ibkr-{key}">{label}: {_html.escape(value)}</div>'
+    return f'<div class="kv" id="ibkr-state-{key}">{label}: {_html.escape(value)}</div>'
 
 
 def _ibkr_changes(changes: list[dict]) -> str:
@@ -2027,12 +2034,12 @@ def _ibkr_changes(changes: list[dict]) -> str:
         body.append(f"<tr><td>{_html.escape(_friendly(c.get('at')))}</td>"
                     f'<td class="{cls}">{_html.escape(word)}</td></tr>')
     if not body:
-        return '<div class="kv" id="ibkr-changes">No change has been recorded yet.</div>'
+        return '<div class="kv" id="ibkr-state-changes">No change has been recorded yet.</div>'
     return _mini_table(["When", "Changed to"], body)
 
 
-def _ibkr_card(ibkr: dict | None) -> str:
-    """The IBKR Gateway login card: the state, since when, the last login, and the recent changes.
+def _ibkr_state_card(ibkr: dict | None) -> str:
+    """The IBKR Gateway login state: the state, since when, the last login, and the recent changes.
 
     Without the key (an older payload, or a read that failed and was recorded in the errors) there is
     no card. The card is drawn even when the check is switched off, so the switch stays discoverable.
@@ -2042,7 +2049,7 @@ def _ibkr_card(ibkr: dict | None) -> str:
     esc = _html.escape
     state = str(ibkr.get("state") or "unknown")
     cls = _IBKR_STATES.get(state, "st-warn")
-    lines = [f'<div class="kv" id="ibkr-state"><span class="{cls}">{esc(str(ibkr.get("text") or ""))}</span></div>']
+    lines = [f'<div class="kv" id="ibkr-state-text"><span class="{cls}">{esc(str(ibkr.get("text") or ""))}</span></div>']
     if ibkr.get("for_text"):
         lines.append(_ibkr_kv("for", "This state has held for", str(ibkr["for_text"])))
     if ibkr.get("since"):
@@ -2053,13 +2060,14 @@ def _ibkr_card(ibkr: dict | None) -> str:
         lines.append(_ibkr_kv("version", "API server version", str(ibkr["server_version"])))
     if ibkr.get("checked_text"):
         cls_checked = "st-warn" if ibkr.get("stale") else ""
-        lines.append(f'<div class="kv" id="ibkr-checked"><span class="{cls_checked}">'
+        lines.append(f'<div class="kv" id="ibkr-state-checked"><span class="{cls_checked}">'
                      f'{esc(str(ibkr["checked_text"]))}</span></div>')
     if ibkr.get("checked_detail"):
-        lines.append(f'<div class="kv note" id="ibkr-detail">{esc(str(ibkr["checked_detail"]))}</div>')
+        lines.append(f'<div class="kv note" id="ibkr-state-detail">{esc(str(ibkr["checked_detail"]))}</div>')
     changes = _ibkr_changes(ibkr.get("changes") or []) if state not in ("not set",) else ""
-    return ('<section id="ibkr"><div class="bcard" id="ibkr-login"><h3>IBKR Gateway login</h3>'
-            '<div class="asof" id="ibkr-note">Read from the login check\'s own record, not from the gateway: '
+    return ('<section id="ibkr-state"><div class="bcard" id="ibkr-state-card">'
+            "<h3>IBKR Gateway login state</h3>"
+            '<div class="asof" id="ibkr-state-note">Read from the login check\'s own record, not from the gateway: '
             "this page opens no connection. The check itself opens the port and sends the API version "
             "handshake, and nothing else - no account, position, order or execution is ever asked for. "
             f'The gateway it watches is {esc(str(ibkr.get("target") or "")) or "not configured"}.</div>'
@@ -2191,6 +2199,39 @@ def _backups_card(b: dict | None) -> str:
             f'{_mini_table(["Backup", "Size / result", "Files", "Detail"], rows)}</div></section>')
 
 
+def _ibkr_login_href(value) -> str | None:
+    """The gateway login address to link to, or ``None`` when there is nothing to show.
+
+    Only an absolute ``http``/``https`` address with a host counts. Anything else — a
+    ``javascript:`` or ``data:`` value, a bare path, a scheme with no host — is treated as not
+    configured, so a mistyped or hostile variable cannot become a live link on the page.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    parts = urlsplit(raw)
+    return raw if parts.scheme in ("http", "https") and parts.netloc else None
+
+
+def _ibkr_login_card(value) -> str:
+    """The "IBKR gateway" shortcut (avo, 23 Oct 2026): one link to the gateway's own login screen.
+
+    The address is never in the code: it is ``RC_IBKR_LOGIN_URL``, so an unset variable shows no
+    card at all and this repository pins no host. The page only writes the link; it makes no
+    request to it.
+    """
+    href = _ibkr_login_href(value)
+    if href is None:
+        return ""
+    esc = _html.escape
+    return ('<section id="ibkr-login"><div class="bcard" id="ibkr-login-card"><h3>IBKR gateway</h3>'
+            f'<div class="kv"><a class="set-btn" id="ibkr-login-link" href="{esc(href, quote=True)}" '
+            'target="_blank" rel="noopener noreferrer">Open the IBKR gateway login screen</a></div>'
+            '<div class="asof" id="ibkr-login-note">The address comes from <code>RC_IBKR_LOGIN_URL</code>. '
+            'This page makes no call to it and shows nothing when the variable is unset; only an absolute '
+            'http or https address is accepted.</div></div></section>')
+
+
 def render_settings_dashboard(payload: dict) -> str:
     payload = payload or {}
     rows = payload.get("rows") or []
@@ -2243,7 +2284,8 @@ def render_settings_dashboard(payload: dict) -> str:
     other_tables_html = _other_tables_section(payload.get("other_tables"))
     discord_html = _discord_card(payload.get("discord"))
     backups_html = _backups_card(payload.get("backups"))
-    ibkr_html = _ibkr_card(payload.get("ibkr"))
+    ibkr_login_html = _ibkr_login_card(payload.get("ibkr_login_url"))
+    ibkr_state_html = _ibkr_state_card(payload.get("ibkr_login_state"))
     errors_html = _errors_list(payload.get("errors") or [])
     boards_html = _boards_section(payload.get("boards") or [], rows)
     flow_html = _flow_section(rows)
@@ -2270,6 +2312,7 @@ def render_settings_dashboard(payload: dict) -> str:
     <div class="sync">Last sync: {_html.escape(_friendly(generated))}</div>
   </div>
   {provider_health_html(payload.get("provider_health"))}
+  {ibkr_login_html}
   {help_block}
   {_summary_tiles(rows, payload)}
   {body}
@@ -2278,7 +2321,7 @@ def render_settings_dashboard(payload: dict) -> str:
   {other_tables_html}
   {identity_html}
   {discord_html}
-  {ibkr_html}
+  {ibkr_state_html}
   {errors_html}
   {backups_html}
   {automations_html}

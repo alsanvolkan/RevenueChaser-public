@@ -85,7 +85,6 @@ class Source(str, Enum):
     """Provider of a dataset's rows. ``unknown`` is a refusal to pick one value, not a provider."""
 
     uw = "uw"
-    fmp = "fmp"
     yfinance = "yfinance"
     sec = "sec"
     finra_cftc = "finra/cftc"
@@ -380,7 +379,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         writer_note="dashboard job POST /run/module_oipd; not an automations.REGISTRY entry",
         freshness=("oipd_meta", "as_of"),
     ),
-    # UW, then FMP, then yfinance (module_sector_rotation/etf_holdings.py get_etf_holdings).
+    # UW, then yfinance (module_sector_rotation/etf_holdings.py get_etf_holdings).
     DatasetSpec(
         key="etf_holdings", label="Rotation ETF holdings",
         tables=("etf_holdings", "etf_holdings_changes"),

@@ -61,13 +61,13 @@ def test_uw_answer_is_tagged_uw(monkeypatch):
 
 def test_yfinance_fallback_is_tagged_yfinance(monkeypatch):
     monkeypatch.setattr(eh, "fetch_from_yfinance", lambda t: list(HOLD))
-    rows = eh.get_etf_holdings("SKYY", _UW([]), fmp_api_key="")
+    rows = eh.get_etf_holdings("SKYY", _UW([]))
     assert rows == HOLD and rows.provider == "yfinance"
 
 
 def test_no_answer_has_no_provider(monkeypatch):
     monkeypatch.setattr(eh, "fetch_from_yfinance", lambda t: [])
-    rows = eh.get_etf_holdings("SKYY", _UW([]), fmp_api_key="")
+    rows = eh.get_etf_holdings("SKYY", _UW([]))
     assert rows == [] and rows.provider is None
 
 
@@ -198,13 +198,6 @@ def test_health_summary_counts_the_newest_session_providers_and_rs(rawstore_tmp_
     assert h["providers"] == {"uw": len(SYNCED) - 3, "yfinance": 2}
     assert h["missing"] == ["AIQ"]
     assert h["themes"] == 23 and h["rs_stored"] == 1
-
-
-def test_fmp_answer_is_tagged_fmp(monkeypatch):
-    monkeypatch.setattr(eh, "fetch_from_fmp", lambda t, key: list(HOLD))
-    monkeypatch.setattr(eh, "fetch_from_yfinance", lambda t: pytest.fail("yfinance asked after FMP answered"))
-    rows = eh.get_etf_holdings("SKYY", _UW([]), fmp_api_key="k")
-    assert rows == HOLD and rows.provider == "fmp"
 
 
 def test_health_summary_counts_an_empty_list_as_missing(rawstore_tmp_db, monkeypatch):

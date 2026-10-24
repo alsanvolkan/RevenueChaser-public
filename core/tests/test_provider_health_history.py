@@ -75,7 +75,7 @@ def test_record_run_without_provider_health_stores_null(rawstore_tmp_db):
 
 
 def test_a_list_of_per_provider_dicts_round_trips_as_a_list(rawstore_tmp_db):
-    per_provider = [HEALTH, {**HEALTH, "provider": "fmp", "calls": 3, "failed": 0, "failures": []}]
+    per_provider = [HEALTH, {**HEALTH, "provider": "yfinance", "calls": 3, "failed": 0, "failures": []}]
     history.record_run("module_earnings_radar", run_id="ph1", run_at=COMPLETE, model_version="m", rows={},
                        provider_health=per_provider)
     assert _stored("module_earnings_radar", "ph1") == per_provider

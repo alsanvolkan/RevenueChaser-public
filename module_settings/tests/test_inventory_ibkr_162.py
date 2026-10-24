@@ -1,4 +1,8 @@
-"""#162: the "IBKR Gateway login" card of Settings / Data health.
+"""#162: the "IBKR Gateway login state" card of Settings / Data health.
+
+Its pair, the "IBKR gateway" shortcut that opens the login screen (``ibkr_login_url``), is a
+different card with its own tests; the two share a page, so this one's ids live in the
+``ibkr-state-*`` namespace and never in the shortcut's ``ibkr-login-*``.
 
 The card reads the login check's own record and **nothing else**: no socket from a Refresh, so the
 page keeps its budget and stays free of side effects.
@@ -45,7 +49,7 @@ def _record(path, state, at, version=None):
 def test_collect_carries_the_login_card(rawstore_tmp_db, on):
     _seed()
     _record(on, ibkr_login.UP, NOW - timedelta(days=3), version=178)
-    card = inventory.collect(now=NOW)["ibkr"]
+    card = inventory.collect(now=NOW)["ibkr_login_state"]
     assert card["state"] == ibkr_login.UP
     assert card["for_text"] == "3 days"
     assert card["server_version"] == 178
@@ -62,7 +66,7 @@ def test_collect_opens_no_socket_for_the_card(rawstore_tmp_db, on, monkeypatch):
 def test_collect_says_not_set_up_while_the_switch_is_off(rawstore_tmp_db, monkeypatch):
     monkeypatch.delenv("RC_IBKR_LOGIN_CHECK", raising=False)
     _seed()
-    card = inventory.collect(now=NOW)["ibkr"]
+    card = inventory.collect(now=NOW)["ibkr_login_state"]
     assert card["state"] == ibkr_login.NOT_SET
 
 
@@ -73,27 +77,27 @@ def test_a_failing_card_read_is_recorded_and_the_rest_of_the_payload_survives(ra
     monkeypatch.setattr(ibkr_login, "collect", boom)
     _seed()
     payload = inventory.collect(now=NOW)
-    assert payload["ibkr"] is None
-    assert {"table": "ibkr", "where": "_ibkr_login", "error": "login read exploded"} in payload["errors"]
+    assert payload["ibkr_login_state"] is None
+    assert {"table": "ibkr", "where": "_ibkr_login_state", "error": "login read exploded"} in payload["errors"]
     assert {r["key"] for r in payload["rows"]}, "the rest of the inventory is still built"
     html = report.render_settings_dashboard(payload)
-    assert "login read exploded" in html and 'id="ibkr-login"' not in html
+    assert "login read exploded" in html and 'id="ibkr-state-card"' not in html
 
 
 # ── the card's words ────────────────────────────────────────────────────────────────────────────
 
 def _html(path, state, at, now=NOW, version=None):
     _record(path, state, at, version=version)
-    return report._ibkr_card(ibkr_login.collect(now=now, path=path))
+    return report._ibkr_state_card(ibkr_login.collect(now=now, path=path))
 
 
 def test_the_card_says_logged_in_and_for_how_long(on):
     html = _html(on, ibkr_login.UP, NOW - timedelta(hours=5), version=178)
-    assert 'id="ibkr-login"' in html
+    assert 'id="ibkr-state-card"' in html
     assert "Logged in" in html
     # Its own line, not the "last checked" sentence, which carries a duration of its own.
-    assert 'id="ibkr-for">This state has held for: 5 hours' in html
-    assert 'id="ibkr-version">API server version: 178' in html
+    assert 'id="ibkr-state-for">This state has held for: 5 hours' in html
+    assert 'id="ibkr-state-version">API server version: 178' in html
 
 
 def test_the_card_says_login_needed_and_when_it_dropped_and_the_last_time_it_was_up(on):
@@ -108,7 +112,7 @@ def test_the_card_lists_the_recent_changes_oldest_first(on):
     _record(on, ibkr_login.UP, NOW - timedelta(days=9))
     _record(on, ibkr_login.DOWN, NOW - timedelta(days=2))
     _record(on, ibkr_login.UP, NOW - timedelta(days=1))
-    html = report._ibkr_card(ibkr_login.collect(now=NOW, path=on))
+    html = report._ibkr_state_card(ibkr_login.collect(now=NOW, path=on))
     assert html.index("Login needed</td>") < html.index("Logged in</td>"), \
         "the changes read oldest to newest"
 
@@ -120,7 +124,7 @@ def test_the_card_calls_out_a_reading_nothing_has_refreshed(on):
 
 def test_the_card_says_not_set_up_with_the_variable_to_set(monkeypatch, tmp_path):
     monkeypatch.delenv("RC_IBKR_LOGIN_CHECK", raising=False)
-    html = report._ibkr_card(ibkr_login.collect(now=NOW, path=tmp_path / "none.json"))
+    html = report._ibkr_state_card(ibkr_login.collect(now=NOW, path=tmp_path / "none.json"))
     assert "RC_IBKR_LOGIN_CHECK" in html
     assert "Logged in" not in html and "Login needed" not in html
 
@@ -133,7 +137,7 @@ def test_the_card_says_what_the_probe_never_asks_for(on):
 
 
 def test_no_card_at_all_when_the_payload_has_no_login_key(on):
-    assert report._ibkr_card(None) == ""
+    assert report._ibkr_state_card(None) == ""
 
 
 def test_the_card_escapes_what_it_is_given(on):
@@ -142,7 +146,7 @@ def test_the_card_escapes_what_it_is_given(on):
             "checked_text": "Last checked 1 minute ago.", "checked_detail": "<script>alert(1)</script>",
             "for_text": "1 minute", "since": NOW.isoformat(), "last_up": None, "last_down": None,
             "checked_at": NOW.isoformat(), "stale": False, "server_version": None, "changes": []}
-    html = report._ibkr_card(card)
+    html = report._ibkr_state_card(card)
     assert "<script>" not in html and "<img src=x>" not in html
     assert "&lt;script&gt;" in html
 
@@ -151,29 +155,51 @@ def test_the_rendered_page_carries_the_card(rawstore_tmp_db, on):
     _seed()
     _record(on, ibkr_login.UP, NOW - timedelta(hours=2), version=178)
     html = report.render_settings_dashboard(inventory.collect(now=NOW))
-    assert 'id="ibkr-login"' in html and "Logged in" in html
+    assert 'id="ibkr-state-card"' in html and "Logged in" in html
 
 
 def test_the_page_carries_no_card_when_the_switch_is_off_but_says_so(rawstore_tmp_db, monkeypatch):
     monkeypatch.delenv("RC_IBKR_LOGIN_CHECK", raising=False)
     _seed()
     html = report.render_settings_dashboard(inventory.collect(now=NOW))
-    assert 'id="ibkr-login"' in html, "the card itself stays, so the switch is discoverable"
+    assert 'id="ibkr-state-card"' in html, "the card itself stays, so the switch is discoverable"
     assert "RC_IBKR_LOGIN_CHECK" in html
 
 
 def test_a_drop_is_not_painted_like_a_healthy_state(on):
     """The colour is the first thing read on this page, so it must not say the opposite of the words."""
     down = _html(on, ibkr_login.DOWN, NOW - timedelta(hours=1))
-    down_state = down[down.index('id="ibkr-state"'):].split("</div>")[0]
+    down_state = down[down.index('id="ibkr-state-text"'):].split("</div>")[0]
     assert "st-bad" in down_state and "st-ok" not in down_state
 
     up = _html(on, ibkr_login.UP, NOW - timedelta(minutes=30))
-    up_state = up[up.index('id="ibkr-state"'):].split("</div>")[0]
+    up_state = up[up.index('id="ibkr-state-text"'):].split("</div>")[0]
     assert "st-ok" in up_state and "st-bad" not in up_state
 
 
 def test_a_silent_port_is_painted_as_a_warning_not_as_an_error_or_a_login(on):
     html = _html(on, ibkr_login.SILENT, NOW - timedelta(hours=1))
-    state = html[html.index('id="ibkr-state"'):].split("</div>")[0]
+    state = html[html.index('id="ibkr-state-text"'):].split("</div>")[0]
     assert "st-warn" in state and "st-ok" not in state
+
+
+def test_the_two_ibkr_cards_share_a_page_without_sharing_an_id(rawstore_tmp_db, on, monkeypatch):
+    """The shortcut (`ibkr_login_url`, the link that logs you in) and this card (the state of that
+    login) both render. One id in two places would be invalid HTML, and an assertion on it would
+    pass against the wrong card."""
+    import re
+
+    monkeypatch.setenv("RC_IBKR_LOGIN_URL", "https://gateway.example:5000/login")
+    _seed()
+    _record(on, ibkr_login.UP, NOW - timedelta(hours=2), version=178)
+    html = report.render_settings_dashboard(inventory.collect(now=NOW))
+
+    assert 'id="ibkr-login-card"' in html, "the shortcut card is gone"
+    assert 'id="ibkr-state-card"' in html, "the state card is gone"
+    ids = re.findall(r'id="(ibkr[a-z0-9-]*)"', html)
+    assert len(ids) == len(set(ids)), f"duplicate id on the page: {sorted(i for i in ids if ids.count(i) > 1)}"
+    # Two namespaces, no overlap: the shortcut owns ibkr-login / ibkr-login-*, this card ibkr-state*.
+    # Before the rename this card's own div was id="ibkr-login", which is the shortcut's <section> id.
+    for one in ids:
+        assert one == "ibkr-login" or one.startswith(("ibkr-login-", "ibkr-state")), one
+    assert {i for i in ids if i.startswith("ibkr-state")} and {i for i in ids if i.startswith("ibkr-login")}

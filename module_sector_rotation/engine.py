@@ -94,7 +94,7 @@ def holdings_with_rs(ticker: str, uw, max_holdings: int = 10,
                      spy_closes: Optional[list[float]] = None) -> list[dict]:
     """Top ETF holdings with SPY-relative strength, capped at `max_holdings`.
 
-    Resolves holdings via UW -> FMP -> yfinance, then computes SPY-relative RS.
+    Resolves holdings via UW -> yfinance, then computes SPY-relative RS.
     Returns {ticker, name, weight, close, rs_1w, rs_1m, rs_3m}. A job that does this for many
     ETFs fetches SPY once and passes it as ``spy_closes``.
     """

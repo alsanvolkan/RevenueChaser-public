@@ -40,13 +40,13 @@ class TestMissingMessage:
         assert "SPX Gamma" in credentials.missing_message("unusual_whales")
 
     def test_covers_the_other_providers(self):
-        fmp = credentials.missing_message("fmp")
-        assert "FMP_API_KEY" in fmp and "financialmodelingprep" in fmp
         fred = credentials.missing_message("fred")
         assert "FRED_API_KEY" in fred and "stlouisfed" in fred
+        openfigi = credentials.missing_message("openfigi")
+        assert "OPENFIGI_API_KEY" in openfigi and "openfigi.com" in openfigi
 
-    def test_fmp_message_names_etf_holdings_not_index_registry(self):
-        msg = credentials.missing_message("fmp")
+    def test_the_fred_message_names_the_boards_it_degrades(self):
+        msg = credentials.missing_message("fred")
         assert "Sector Rotation" in msg
         assert "Index membership" not in msg
 
