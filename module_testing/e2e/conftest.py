@@ -87,9 +87,8 @@ def e2e_env(provider_routes) -> dict[str, str]:
         "RC_DEEPSEEK_BASE": base,
         "DEEPSEEK_API_KEY": "e2e-test-token",
         "RC_DEEPSEEK_OFF_PEAK_ONLY": "0",
-        # FMP and FRED short-circuit when their key is absent; keep them absent
-        # so a missing fixture cannot silently reach the real internet.
-        "FMP_API_KEY": "",
+        # FRED short-circuits when its key is absent; keep it absent so a missing
+        # fixture cannot silently reach the real internet.
         "FRED_API_KEY": "",
         # core/config.py loads the developer's real .env into the dashboard subprocess, and the Settings
         # readiness card would start the real DiscordChatExporter with --version. A blank value counts as

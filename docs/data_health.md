@@ -163,10 +163,10 @@ the rendered order when pressed again.
 - **Dataset** is the dataset's words, as a button that opens its detail row (reachable by keyboard),
   then its store-file pill, then its gap tag, then a warning mark when one of its tables failed a query.
   One line under the table names every store-file pill, so a colour is explained once.
-- **Source** is the provider the registry names, written out: Unusual Whales, Financial Modeling Prep,
-  Yahoo Finance, SEC EDGAR filings, FINRA and the Commodity Futures Trading Commission, Cboe (Chicago
-  Board Options Exchange), FRED (Federal Reserve Economic Data), OpenFIGI, worked out by us from other
-  datasets, entered by hand, the store's own bookkeeping, or "more than one provider, or not known".
+- **Source** is the provider the registry names, written out: Unusual Whales, Yahoo Finance, SEC EDGAR
+  filings, FINRA and the Commodity Futures Trading Commission, Cboe (Chicago Board Options Exchange),
+  FRED (Federal Reserve Economic Data), OpenFIGI, worked out by us from other datasets, entered by
+  hand, the store's own bookkeeping, or "more than one provider, or not known".
   The machine value stays in the row's data attribute for the filters; only the visible text is words.
   That list of provider names is the page's only one: this column, the Board inputs rows (3.5) and the
   data-flow diagram (3.7) all read it, so one provider cannot be called three things on one page. A
@@ -247,7 +247,17 @@ read only from a known time column; a table with none reads `no time column` rat
 date. With nothing unclaimed the section renders **nothing at all**: no heading and no empty table.
 It is normally empty, and `core/tests/test_datasets.py` keeps it so.
 
-### 2.7 Fetch versus Refresh on this tab
+### 2.7 The IBKR gateway shortcut
+
+Above the help block, one link that opens the IBKR gateway's own login screen in a new tab. The
+address is **not** in this repository: it is `RC_IBKR_LOGIN_URL`, read on every payload build, so an
+unset variable renders no card at all and no host is pinned in the code. Only an absolute `http` or
+`https` address with a host is accepted; anything else (a `javascript:` or `data:` value, a bare
+path, a scheme with no host) counts as unset, so a mistyped variable cannot become a live link. The
+page writes the link and nothing more: it makes no request to that address, and the gateway's own
+login is what asks for credentials.
+
+### 2.8 Fetch versus Refresh on this tab
 
 - **Refresh** recomputes the inventory from `.store/` with zero network. The board is registered in
   `_STORE_REFRESHABLE` and `STORE_BACKED`.

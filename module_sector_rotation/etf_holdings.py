@@ -1,8 +1,7 @@
 """Multi-source ETF holdings retrieval with fallback chain.
 
 Primary: Unusual Whales API
-Secondary: Financial Modeling Prep (FMP) — only when FMP_API_KEY is set
-Tertiary: yfinance (free, no key) — funds_data.top_holdings
+Secondary: yfinance (free, no key) — funds_data.top_holdings
 
 All sources normalize to [{ticker, name, weight}] where weight is a percentage.
 """
@@ -11,7 +10,6 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from RevenueChaser.core.config import FMP_API_KEY
 from RevenueChaser.core import datahealth
 from RevenueChaser.core.datahealth import Health
 
@@ -39,35 +37,6 @@ def fetch_from_unusual_whales(ticker: str, uw) -> list[dict]:
         out.append({"ticker": str(t).strip().upper(),
                     "name": it.get("name") or "",
                     "weight": _norm_weight(it.get("weight"))})
-    return out
-
-
-def fetch_from_fmp(ticker: str, api_key: str) -> list[dict]:
-    """FMP /api/v3/etf-holder/{ticker} — constituent list."""
-    if not api_key:
-        return []
-    import httpx
-    try:
-        r = httpx.get(f"https://financialmodelingprep.com/api/v3/etf-holder/{ticker}",
-                      params={"apikey": api_key}, timeout=15, follow_redirects=True)
-        r.raise_for_status()
-        items = r.json()
-    except Exception as exc:
-        logger.debug(f"[fmp] {ticker}: {exc}")
-        return []
-    out = []
-    for it in items or []:
-        t = it.get("asset") or it.get("symbol", "")
-        if not t:
-            continue
-        # FMP weight may be absolute or percent; treat > 1 as basis-point-percent
-        w = _norm_weight(it.get("weightPercentage", it.get("weight", 0)))
-        if w > 100:
-            w = w / 100
-        out.append({"ticker": str(t).strip().upper(),
-                    "name": it.get("name") or "",
-                    "weight": w})
-    out.sort(key=lambda x: x["weight"], reverse=True)
     return out
 
 
@@ -100,17 +69,13 @@ class HoldingsList(list):
         self.provider = provider
 
 
-def get_etf_holdings(ticker: str, uw, fmp_api_key: Optional[str] = None) -> HoldingsList:
-    """Resolve top-10 holdings via UW -> FMP -> yfinance, capped at 10; ``.provider`` names the source."""
+def get_etf_holdings(ticker: str, uw) -> HoldingsList:
+    """Resolve top-10 holdings via UW -> yfinance, capped at 10; ``.provider`` names the source."""
     clean = ticker.strip().upper()
 
     holdings = fetch_from_unusual_whales(clean, uw)
     if holdings:
         return HoldingsList(holdings[:10], "uw")
-
-    holdings = fetch_from_fmp(clean, fmp_api_key or FMP_API_KEY)
-    if holdings:
-        return HoldingsList(holdings[:10], "fmp")
 
     holdings = fetch_from_yfinance(clean)
     return HoldingsList(holdings[:10], "yfinance" if holdings else None)

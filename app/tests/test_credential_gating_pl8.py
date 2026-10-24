@@ -17,7 +17,7 @@ from RevenueChaser.core.tests.panel_client import panel_test_client
 DUMMY_TOKEN = "pl8-dummy-discord-token-value"
 
 # The providers core/credentials.py marks optional: a missing key degrades a board, it does not break a job.
-OPTIONAL_PROVIDERS = ("fred", "fmp", "openfigi", "deepseek", "claude_subscription", "grok_subscription")
+OPTIONAL_PROVIDERS = ("fred", "openfigi", "deepseek", "claude_subscription", "grok_subscription")
 
 
 class _FakeUW:
@@ -38,7 +38,7 @@ def client():
 def no_credentials(monkeypatch):
     """Unset every credential these tests look at, whatever the developer's .env happens to hold."""
     for name in ("DISCORD_TOKEN", "RC_DCE_CLI", "RC_DISCORD_GUILD_ID", "UNUSUAL_WHALES_API_KEY",
-                 "FRED_API_KEY", "FMP_API_KEY", "OPENFIGI_API_KEY"):
+                 "FRED_API_KEY", "OPENFIGI_API_KEY"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -147,7 +147,7 @@ def test_a_module_with_no_declared_requirement_still_submits(client, no_credenti
 
 
 def test_optional_provider_keys_are_not_gated(client, no_credentials, monkeypatch):
-    """fred / fmp / openfigi missing degrades a board — adding a gate would refuse a job that works today."""
+    """fred / openfigi missing degrades a board — adding a gate would refuse a job that works today."""
     monkeypatch.setattr(dashboard, "_uw", lambda: _FakeUW())
     submitted = []
     monkeypatch.setattr(jobs, "submit", lambda module, params=None: submitted.append(module) or "job1")

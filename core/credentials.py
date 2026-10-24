@@ -38,13 +38,6 @@ PROVIDERS: dict[str, Provider] = {
         signup_url="https://unusualwhales.com/api",
         required_for="Earnings Radar, SPX Gamma, LEAPS, Sector Rotation",
     ),
-    "fmp": Provider(
-        slug="fmp",
-        label="Financial Modeling Prep",
-        env_var="FMP_API_KEY",
-        signup_url="https://site.financialmodelingprep.com/developer/docs",
-        required_for="Sector Rotation ETF holdings (secondary fallback after Unusual Whales)",
-    ),
     "fred": Provider(
         slug="fred",
         label="FRED",

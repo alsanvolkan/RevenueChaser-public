@@ -183,6 +183,14 @@ because a custom header forces a CORS preflight that the server never answers
 (#231). From a shell: `curl -X POST -H "X-RC-Panel: cli" http://127.0.0.1:8000/run/<job>`.
 The one stricter route is `POST /api/automations/<name>/<action>`: its header must be exactly
 `X-RC-Panel: automations`.
+The server answers only requests whose `Host` is a loopback name; anything else gets
+`403 {"ok": false, "error": "forbidden host"}`. `RC_ALLOWED_HOSTS` adds extra names,
+comma-separated and exact (`RC_ALLOWED_HOSTS=homesrv.tail1234.ts.net`): a wildcard entry is
+dropped, so one name cannot widen to a whole suffix, and unset or empty keeps the default of
+loopback only. A listed name counts as same-site for the `Origin` check too, so the pages served
+over it can write. It widens that check alone — the server still binds `127.0.0.1`, so reaching it
+by that name needs something that forwards the port.
+
 A board cached before this rule has the old script baked in: open it once with
 `?refresh=1` (Settings, Co-movement and LEAPS cache their page).
 
@@ -224,7 +232,7 @@ different questions:
   `discord_guild` → `RC_DISCORD_GUILD_ID`); an unknown name fails `register`
   at import. Presence only: no request is made and no key value is read, logged
   or returned. A module with `requires=()` is not gated, and neither is an
-  optional provider (fred, fmp, openfigi, deepseek, the subscription gates) —
+  optional provider (fred, openfigi, deepseek, the subscription gates) —
   their absence degrades a board rather than breaking a job.
 - **validity** (`UWClient.verify()`) — one cheap authenticated probe, which
   catches a key that is set but expired. `requires_uw` still decides whether a
