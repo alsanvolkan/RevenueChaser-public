@@ -164,7 +164,6 @@ hash. The pure logic is `RCFilters.core`, unit-tested under node (`core/tests/te
 | Financials | yes | Filters only pick the name, they do not slice statements. |
 | Sector Rotation | **no** stock bar | ETF RRG. Reuse the Theme widgets only to focus mapped ETF dots (`relatedness_theme_etfs` at the selected level). |
 | SPX Gamma, UW Interaction | **no** | Date-only / non-equity. |
-| Discord | **no** | Chat archive, no tickers. Left: channels grouped by server and category (follow checkbox, per-channel Update); right: filters (channel, text, dates) and the feed. |
 | Settings / Data health | **no** | Ops inventory, not an equity board; its ticker drill uses the kit's combobox (C1b). Plan: [`data_health.md`](data_health.md). |
 | Logs | **no** | The dashboard's own log files (`app/logview.py`), read-only: no Fetch, no Refresh, no data date. |
 | Runs | **no** | The run log over `job_runs` (`app/runview.py`), read-only: no Fetch, no Refresh, no data date. One row per job and per scheduled task, newest first, with the trigger as stored (a dash only on rows from before #83; a `running` row the server lost is closed as `lost`, #82). **Problems only** and the name box filter in SQL, not in the page, so the count beneath the table is of the matching runs in the table and not of the page that was read; the line says so when a read hits its limit. |

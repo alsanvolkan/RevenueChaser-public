@@ -58,7 +58,6 @@ def test_history_db_path_sits_beside_the_raw_store_and_follows_redirects(rawstor
 def test_the_other_db_paths_are_unchanged(rawstore_tmp_db):
     assert rawstore._db_path("raw") == Path(rawstore.DB_PATH)
     assert rawstore._db_path("edgar") == rawstore.edgar_db_path()
-    assert rawstore._db_path("discord") == rawstore.discord_db_path()
     assert rawstore._db_path("anything-else") == Path(rawstore.DB_PATH)
 
 
@@ -228,7 +227,7 @@ def test_a_store_without_history_backs_up_exactly_as_before(rawstore_tmp_db, tmp
     assert "history_" not in (text.out + text.err).replace(str(out), "")     # the tmp path carries the test name
     assert "history backup" not in text.out + text.err
     assert not list(out.rglob("history_*"))
-    assert sorted(p.name.split("_")[0] for p in out.glob("*.duckdb")) == ["discord", "edgar", "prices", "raw"]
+    assert sorted(p.name.split("_")[0] for p in out.glob("*.duckdb")) == ["edgar", "prices", "raw"]
     assert sorted(p.name.split("_")[0] for p in (out / "weekly").glob("*")) == ["raw"]
 
 
@@ -330,5 +329,5 @@ def test_restore_still_refuses_a_name_that_is_not_a_store_snapshot(rawstore_tmp_
 
 def test_the_backup_row_names_history_and_keeps_its_arguments():
     row = next(e for e in automations.REGISTRY if e.name == "RC-Store-Backup")
-    assert "(raw, edgar, discord, history, prices)" in row.description and "history snapshots" in row.description
+    assert "(raw, edgar, history, prices)" in row.description and "history snapshots" in row.description
     assert row.args == ("-m", "RevenueChaser.scripts.backup_store", "--keep", "5")

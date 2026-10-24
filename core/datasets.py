@@ -32,7 +32,7 @@ from importlib import import_module
 
 from RevenueChaser.core.datahealth import Health
 
-DBS = ("raw", "edgar", "prices", "history", "discord")
+DBS = ("raw", "edgar", "prices", "history")
 
 FROM_RUN_LOG = "from_run_log"
 NO_CLAIM = "no_claim"
@@ -551,14 +551,6 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         db="raw", source=Source.uw, writer=None,
         writer_note="dashboard job POST /run/module_leaps; not an automations.REGISTRY entry",
         freshness=("leaps_flow_prints", "session_date"),
-    ),
-    # source unknown: DiscordChatExporter archive. Not a provider in the enum.
-    DatasetSpec(
-        key="discord", label="Discord archive",
-        tables=("discord_channels", "discord_messages", "discord_export_runs"),
-        db="discord", source=Source.unknown, writer=None,
-        writer_note="dashboard job POST /run/module_discord (module_discord/store.py); not a REGISTRY entry",
-        freshness=("discord_export_runs", "finished_at"),
     ),
     DatasetSpec(
         key="identity_cusip", label="OpenFIGI CUSIP map",

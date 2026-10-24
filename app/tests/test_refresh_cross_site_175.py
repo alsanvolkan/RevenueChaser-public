@@ -3,7 +3,7 @@
 ``GET /view/<module>?refresh=1`` drops the cached board and rebuilds it from the store, and a
 GET carries no Origin and needs no ``X-RC-Panel`` header: an ``<img src=".../view/x?refresh=1">`` on
 any page the user visits would run it. The browser says where the request came from in
-``Sec-Fetch-Site``; ``/discord/media`` already refuses ``cross-site``. Refresh now refuses
+``Sec-Fetch-Site``. Refresh refuses
 ``cross-site`` and ``same-site`` (another localhost port is same-site, #231). ``same-origin`` (the
 shell's iframes) and ``none`` (the address bar) still work, and so does a client that sends no
 header at all (curl, the test client).

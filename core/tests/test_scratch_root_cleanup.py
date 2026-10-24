@@ -1,7 +1,7 @@
 """The root conftest must remove the scratch root it made, and only the root it owns.
 
 ``_redirect_data_roots()`` points RC_STORE_DIR, RC_CACHE_DIR, RC_EDGAR_DOCS_DIR,
-RC_DISCORD_MEDIA_DIR and SPX_GAMMA_DATA_ROOT at a ``tempfile.mkdtemp(prefix="rc-pytest-")`` root at
+and SPX_GAMMA_DATA_ROOT at a ``tempfile.mkdtemp(prefix="rc-pytest-")`` root at
 import time. Nothing used to remove it, so one directory leaked per pytest process.
 
 The module under test is reached by file path, never as ``import conftest``: this repo has eight
@@ -51,7 +51,7 @@ def _child(env: dict, code: str) -> subprocess.CompletedProcess:
 
 def _clean_env() -> dict:
     env = dict(os.environ)
-    for k in ("RC_STORE_DIR", "RC_CACHE_DIR", "RC_EDGAR_DOCS_DIR", "RC_DISCORD_MEDIA_DIR",
+    for k in ("RC_STORE_DIR", "RC_CACHE_DIR", "RC_EDGAR_DOCS_DIR",
               "SPX_GAMMA_DATA_ROOT", "RC_PYTEST_SCRATCH_OWNER"):
         env.pop(k, None)
     return env

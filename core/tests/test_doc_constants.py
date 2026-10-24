@@ -21,7 +21,7 @@ def test_data_architecture_names_the_current_schema_version():
 
 # ``.env.example`` is the one place a new user learns which variables exist. It listed 3 of the 8
 # provider variables (#169a); these tests compare it with the code that owns the names.
-_ENV_EXTRAS = ("RC_SEC_USER_AGENT", "RC_DCE_CLI", "RC_DISCORD_GUILD_ID",
+_ENV_EXTRAS = ("RC_SEC_USER_AGENT",
                "RAW_STORE_BACKUP_WARN_GB", "RAW_STORE_BACKUP_MIRROR_WARN_GB",   # #309 part 3
                "RC_ALLOWED_HOSTS", "RC_IBKR_LOGIN_URL",                         # #159 / the gateway shortcut
                "RC_IBKR_LOGIN_CHECK", "RC_IBKR_HOST", "RC_IBKR_PORT")           # #162
@@ -103,15 +103,6 @@ def test_the_stage_2_table_names_the_file_each_table_lives_in():
             if name in rawstore.MANIFEST and rawstore._db_of(name) != cells[-2]:
                 wrong[name] = (cells[-2], rawstore._db_of(name))
     assert not wrong, f"Stage 2 rows whose DB column is not the MANIFEST file (doc, code): {wrong}"
-
-
-def test_data_architecture_names_the_min_dce_version():
-    """The Discord store row states the DiscordChatExporter minimum; ``exporter.MIN_DCE_VERSION`` owns it (#242)."""
-    from RevenueChaser.module_discord import exporter
-    text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
-    m = re.search(r"DiscordChatExporter >= (\d+)\.(\d+)", text)
-    assert m, "docs/data_architecture.md no longer states the DiscordChatExporter minimum"
-    assert (int(m.group(1)), int(m.group(2))) == exporter.MIN_DCE_VERSION
 
 
 def test_data_architecture_names_the_backup_folders_and_switches_the_code_owns():

@@ -1036,37 +1036,6 @@
     },
     {
       "repo": "RevenueChaser-public",
-      "number": 70,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/70",
-      "title": "Dashboard: Discord",
-      "state": "open",
-      "labels": [
-        "area:community",
-        "epic",
-        "parked"
-      ],
-      "boards": [
-        "module_discord"
-      ],
-      "scope": "board",
-      "kind": "epic",
-      "status": "parked",
-      "deferred_until": "after Sunday 2026-10-25",
-      "summary": "All open Discord work in one epic: S1 and S2 are on main, what is open is acceptance, the schedule, the LLM extraction and two defects.",
-      "detail": {
-        "whats_wrong": "Not idea-level: S1 (the store and DiscordChatExporter wrapper) and S2 (the board) are built and on main. What is still open is S1's acceptance against a real trial export, S3 the opt-in daily schedule, S4 the corpus export and LLM call extraction, and two defects. S3 has nothing built at all — there is no Discord row in `core/automations.py`.",
-        "evidence": "S1 landed with deviations from its checklist: no `discord_settings` or `discord_attachments` tables, no trigger column, temp JSON in the system temp directory; a min-interval guard was added later on main. The acceptance trial — Turkish and emoji names, JSON keys against the fixture, media thumbnails, no token in detail — has not been run. S4 was parked by avo on 2026-10-03.",
-        "example": "DF55 (board behaviour, needs avo's before/after): the stored columns topic, channel kind, author_id, edited_ts, mentions and reference_id are never rendered (`module_discord/report.py:166-183`) — either render them or drop them from the store. DF53 (gated): updates export only after the newest stored id (`module_discord/engine.py:71-72,77-79`), so reaction counts and edits of older messages are never refreshed; the fix is a trailing overlap window.",
-        "tried_or_decided": "avo approved the consolidation on a decision card, 2026-10-09 18:56Z, option \"screeners separate\"; base main 4805fd4, plan `/mnt/project-files/plans/2026-10-09_issue_consolidation.md`. Folded issues are closed with a link here and their bodies remain the full spec. Reopened from #53 as its own issue on avo's decision, 2026-10-22; the original and its review history stay in the closed private issue linked from the body.",
-        "direction": "Take the open parts in their own order: S1's acceptance needs only avo's real trial export; S3 and S4 each need their own approval; DF55 is a board-behaviour change that needs avo's before/after; DF53 is gated because it changes a job that writes the store. The board's own run record lives in `module_discord/engine.py:91 store.record_run`, not in `core/history`.",
-        "next_step": "After Sunday 25 Oct: avo's real trial export, which is the only thing standing between S1 and acceptance; the remaining extras (multi-guild, no date limit, cp857, `<bdi>`, isdigit) are still undecided."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-22T14:42:46Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
       "number": 71,
       "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/71",
       "title": "Dashboard: News (X feed from Grok automations)",

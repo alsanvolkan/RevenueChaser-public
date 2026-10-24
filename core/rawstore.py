@@ -58,11 +58,6 @@ def edgar_db_path() -> Path:
     return Path(DB_PATH).parent / "edgar.duckdb"
 
 
-def discord_db_path() -> Path:
-    """The Discord archive file (#72), beside the raw store (follows ``DB_PATH`` redirects)."""
-    return Path(DB_PATH).parent / "discord.duckdb"
-
-
 def history_db_path() -> Path:
     """The result-history file (#287), beside the raw store (follows ``DB_PATH`` redirects).
 
@@ -83,7 +78,7 @@ def prices_db_path() -> Path:
 
 
 # Table -> database file. Default is "raw"; EDGAR-content tables declare
-# ``"db": "edgar"``, the Discord archive ``"db": "discord"``, (from #278) result history ``"db": "history"`` and
+# ``"db": "edgar"``, (from #278) result history ``"db": "history"`` and
 # (#156) the daily prices ``"db": "prices"`` in their MANIFEST entry. One writer per file, same
 # configuration, is fine (DuckDB allows concurrent connections in one process);
 # the split is by write pattern (hot structured vs write-once EDGAR), not per
@@ -96,8 +91,6 @@ def _db_of(name: str) -> str:
 def _db_path(db: str) -> Path:
     if db == "edgar":
         return edgar_db_path()
-    if db == "discord":
-        return discord_db_path()
     if db == "history":
         return history_db_path()
     if db == "prices":
@@ -455,7 +448,7 @@ def _connect_with_retry(delays: tuple[float, ...], path: Path | None = None) -> 
 def connect(read_only: bool = False, db: str = "raw"):
     """Open a connection for one operation; always closes. Retries on lock.
 
-    ``db`` selects the store file (``"raw"``, ``"edgar"``, ``"discord"``, ``"history"`` or ``"prices"``). ``read_only`` is
+    ``db`` selects the store file (``"raw"``, ``"edgar"``, ``"history"`` or ``"prices"``). ``read_only`` is
     ADVISORY: it only selects the retry budget, and every handle is opened
     read-write. DuckDB refuses a second connection to the same file with a
     *different* configuration in the same process::
@@ -1699,57 +1692,6 @@ MANIFEST: dict[str, dict] = {
         "write": "upsert",
         "sources": [],
     },
-    # ── Discord archive (#72 S1) — its own file, .store/discord.duckdb ──────────
-    # Third-party message text. Stored verbatim; escaping is the report's job.
-    # ``text_verbatim``: get/get_all never re-parse a TEXT cell that looks like a
-    # JSON object/array (a message ``{"a": 1}`` or a channel named ``[]``).
-    "discord_channels": {
-        "history_mode": "change_history",
-        "key": ["channel_id"],
-        "columns": [
-            "channel_id TEXT PRIMARY KEY", "guild_id TEXT", "guild_name TEXT",
-            "name TEXT", "category TEXT", "topic TEXT", "kind TEXT",
-            "enabled BOOLEAN", "discovered_at TEXT", "last_export_at TEXT",
-        ],
-        "kind": "tabular",
-        "write": "upsert",
-        "text_verbatim": True,
-        "db": "discord",
-        "sources": [],
-    },
-    "discord_messages": {
-        "history_mode": "event",
-        "key": ["message_id"],
-        "columns": [
-            "message_id TEXT PRIMARY KEY", "channel_id TEXT", "author_id TEXT",
-            "author_name TEXT", "is_bot BOOLEAN", "kind TEXT", "ts TEXT",
-            "edited_ts TEXT", "content TEXT", "is_pinned BOOLEAN",
-            "reply_to_id TEXT", "reference_id TEXT", "reference_kind TEXT",
-            "attachments JSON", "embeds JSON", "reactions JSON", "mentions JSON",
-            "raw BLOB",
-        ],
-        # The full DCE message object: what Discord may delete is not recoverable.
-        "compress": {"raw": "json"},
-        "kind": "tabular",
-        "write": "upsert",
-        "text_verbatim": True,
-        "db": "discord",
-        "sources": [],
-    },
-    "discord_export_runs": {
-        "history_mode": "event",
-        "key": ["run_id"],
-        "columns": [
-            "run_id TEXT PRIMARY KEY", "channel_id TEXT", "started_at TEXT",
-            "finished_at TEXT", "after_id TEXT", "message_count BIGINT",
-            "status TEXT", "detail TEXT",
-        ],
-        "kind": "tabular",
-        "write": "upsert",
-        "text_verbatim": True,
-        "db": "discord",
-        "sources": [],
-    },
     # G1 bump (#292, schema v10): 22 raw/edgar tables, manifest only, no writers yet
     "price_actions": {
         "key": ["ticker", "ex_date", "action"],
@@ -2969,7 +2911,7 @@ def _migrate_price_tables() -> list[str]:
 # ensure touches any file (``_refuse_ensure_if_ahead``), so an old checkout never reshapes a newer one.
 _SCHEMA_STAMP_TABLE = "store_schema"
 _SCHEMA_STAMP_KEY = "schema_version"
-_SCHEMA_FILES = ("raw", "edgar", "discord", "history", "prices")
+_SCHEMA_FILES = ("raw", "edgar", "history", "prices")
 _STAMP_WRITES: dict[str, int] = {}   # test hook: counts real stamp writes, not a metric
 _STAMP_WARNED: set[tuple] = set()
 _STAMP_SEEN: dict[str, tuple] = {}   # file path -> ((size, mtime_ns), stamp): a steady file costs one stat
@@ -3193,8 +3135,6 @@ def ensure_all_tables() -> None:
             _ensure_db_tables(conn, "edgar")
         _migrate_edgar_tables()
         _record_rekeys(rekeyed)
-        with connect(db="discord") as conn:   # tables only; no raw-file migrations apply
-            _ensure_db_tables(conn, "discord")
         with connect(db="prices") as conn:    # #156: made eagerly, so Data Health counts 0 rows, not "no table"
             _ensure_db_tables(conn, "prices")
         _migrate_price_tables()
@@ -4291,11 +4231,11 @@ def reset_db(include_edgar: bool = True) -> None:
     ``--reset`` must pass it: it points ``DB_PATH`` at ``raw.duckdb.new``, and
     ``edgar_db_path()`` — a sibling of ``DB_PATH`` — is then still the LIVE
     ``edgar.duckdb``, which this used to delete. The same flag guards the sibling
-    ``discord.duckdb``, ``history.duckdb`` and ``prices.duckdb``.
+    ``history.duckdb`` and ``prices.duckdb``.
     """
     targets = [Path(DB_PATH)] + (
-        [edgar_db_path(), discord_db_path(), history_db_path(), prices_db_path()] if include_edgar else [])
-    for db in (["raw"] + (["edgar", "discord", "history", "prices"] if include_edgar else [])):
+        [edgar_db_path(), history_db_path(), prices_db_path()] if include_edgar else [])
+    for db in (["raw"] + (["edgar", "history", "prices"] if include_edgar else [])):
         if _db_path(db).exists():
             _guard_schema_write(db)   # PL7-b: do not delete a newer file while refusal is on
     for p in targets:

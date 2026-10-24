@@ -79,7 +79,6 @@ no downloaded state worth re-deriving, so they keep a "click Fetch" empty state.
 | SPX Gamma | `/run/spxgamma` | `date` | bespoke view; see below |
 | Financials | `/run/quick` | `ticker` (required) | per-ticker: `?refresh=1&ticker=X` |
 | UW Interaction (lab) | `/run/uw` | `tool` (required) + tool params | **live-only** — board renders from its stored `.cache/uw_interaction/` payload |
-| Discord | `/run/module_discord` (`channel` optional), `/run/module_discord_discover` | none | **network via DCE only on these two jobs**; the board renders from `discord.duckdb` on every load, Refresh never calls DCE. The one other start of the exe is the Settings readiness card: `--version`, offline, once per exe file state ([`data_health.md`](data_health.md), Discord export readiness) |
 | Co-movement | `/run/module_comovement` | `no_fetch` | model-only; writes .cache only (runs persist on Fetch) |
 | Value Chain | `/run/module_value_chain` | `no_fetch` | model-only (reads `edgar.duckdb`) |
 | Relatedness | `/run/module_relatedness` | `no_fetch` | model-only (reads the filings in `edgar.duckdb` and the `relatedness_*` profiles in `raw.duckdb`). Fetch also downloads missing filings from SEC and calls DeepSeek off-peak for new profiles; only Fetch writes `relatedness_scores` and `run_registry` (`module_relatedness/engine.py:81-92`, `:449-466`) |
@@ -228,9 +227,9 @@ different questions:
   credentials it cannot run without, `jobs.register(..., requires=(...))`, and
   `_submit` answers `400` with `credentials.problem(name)`'s message **before**
   the job is queued. The names are the provider slugs plus the extra checks in
-  `credentials.EXTRA_CHECKS` (`discord_cli` → `RC_DCE_CLI`,
-  `discord_guild` → `RC_DISCORD_GUILD_ID`); an unknown name fails `register`
-  at import. Presence only: no request is made and no key value is read, logged
+  `credentials.EXTRA_CHECKS`, which is empty today — the Discord archive took the
+  only two with it when it became its own app, and the mechanism stays for the next
+  one; an unknown name fails `register` at import. Presence only: no request is made and no key value is read, logged
   or returned. A module with `requires=()` is not gated, and neither is an
   optional provider (fred, openfigi, deepseek, the subscription gates) —
   their absence degrades a board rather than breaking a job.

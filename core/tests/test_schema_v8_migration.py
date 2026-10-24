@@ -47,7 +47,7 @@ def _columns(path, table):
 
 @pytest.fixture
 def v7_store(isolate_rawstore):
-    """A populated v7 store (raw + edgar + discord files); yields the content to compare."""
+    """A populated v7 store (raw + edgar files); yields the content to compare."""
     mp = pytest.MonkeyPatch()
     try:  # undo even when a v8 name is missing, or the MANIFEST leaks into later tests
         for t in V8_RAW_TABLES:
@@ -107,12 +107,11 @@ def test_job_runs_exists_only_in_the_raw_file(v7_store):
     _migrate()
     assert "job_runs" in _snapshot(rawstore.DB_PATH)
     assert "job_runs" not in _snapshot(rawstore.edgar_db_path())
-    assert "job_runs" not in _snapshot(rawstore.discord_db_path())
 
 
 def test_a_second_ensure_changes_nothing(v7_store):
     _migrate()
-    files = (rawstore.DB_PATH, rawstore.edgar_db_path(), rawstore.discord_db_path())
+    files = (rawstore.DB_PATH, rawstore.edgar_db_path())
     before = [_snapshot(p) for p in files]
     counts = (rawstore.count("board_settings"), rawstore.count("edgar_financials"))
     _migrate()

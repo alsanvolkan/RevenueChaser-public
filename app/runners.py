@@ -2004,66 +2004,6 @@ def run_identity(uw=None, limit: int | None = None) -> None:
     raise JobMessage(identity_refresh.summary(identity_refresh.refresh(limit=limit)))
 
 
-def _discord_busy_message(r: dict) -> str:
-    """The sentence a Discord job ends with when ``engine`` reports another Discord job holds the lock (#26)."""
-    pid = r.get("holder_pid") or 0
-    who = f" (pid {pid})" if pid else ""
-    return (f"Discord: another Discord job{who} is running; nothing was written. "
-            "Try again when it finishes.")
-
-
-def run_discord_discover(uw=None) -> None:
-    """List the Discord guild's channels via the DCE CLI (new ones start disabled). Needs RC_DCE_CLI, DISCORD_TOKEN and RC_DISCORD_GUILD_ID; network."""
-    from RevenueChaser.module_discord import engine
-
-    r = engine.discover()
-    if r.get("busy"):                         # another Discord job holds the lock: not an error, nothing written
-        raise JobMessage(_discord_busy_message(r))
-    raise JobMessage(f"Discord: {r['channels']} channels found, {r['new']} new (disabled until you enable them).")
-
-
-DISCORD_MIN_INTERVAL_S = 15 * 60      # the epic's Fetch rule: one export per channel per 15 minutes
-
-
-def run_discord(uw=None, media: bool = False, channel_id: str | None = None, force: bool = False) -> None:
-    """Export enabled Discord channels (or just ``channel_id``) incrementally into ``.store/discord.duckdb`` (#72).
-
-    A channel exported (successfully or not) less than 15 minutes ago is skipped unless ``force``;
-    if every target is that recent the job ends with a ``JobMessage`` and runs no export. A cancel or a deadline
-    stops between channels, before the next export; the per-channel CLI timeout stays underneath it.
-    """
-    import time
-
-    from RevenueChaser.module_discord import engine, store
-
-    ids = [channel_id] if channel_id else None
-    skipped: list[str] = []
-    if not force:
-        targets = [channel_id] if channel_id else [c["channel_id"] for c in store.channels(enabled_only=True)]
-        last = store.last_export_started(targets)
-        cutoff = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - DISCORD_MIN_INTERVAL_S))
-        ready = [c for c in targets if last.get(c, "") < cutoff]
-        if targets and not ready:
-            who = "this channel was" if channel_id else "every followed channel was"
-            raise JobMessage(f"Discord: {who} exported less than 15 minutes ago "
-                             f"(last start {max(last.values())}). Wait, then Update again.")
-        if channel_id is None and ready and len(ready) < len(targets):
-            ids = ready
-            names = {c["channel_id"]: c.get("name") or c["channel_id"] for c in store.channels()}
-            skipped = [names.get(c, c) for c in targets if c not in ready]
-    r = engine.update(media=media, channel_ids=ids)
-    if r.get("busy"):                         # another Discord job holds the lock: not an error, nothing written
-        raise JobMessage(_discord_busy_message(r))
-    if not r["channels"] and not r["failed"]:
-        raise JobMessage("Discord: no enabled channels; run Discover and enable some first.")
-    text = f"Discord: {r['channels']} channels exported, {r['messages']} messages, {r['new']} new."
-    if skipped:
-        text += f" Skipped (exported less than 15 minutes ago): {', '.join(skipped)}."
-    if r["failed"]:
-        text += f" Failed: {', '.join(r['failed'])} (see the export runs for the reason)."
-    raise JobMessage(text)
-
-
 def run_settings(uw=None) -> Path:
     """Render the Settings / Data health board from the store — no network.
 

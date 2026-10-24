@@ -2,7 +2,7 @@
 
     python -m RevenueChaser.scripts.restore_store --list
     python -m RevenueChaser.scripts.restore_store raw_20260929_040000_123456.duckdb
-    python -m RevenueChaser.scripts.restore_store --latest raw      # or: edgar, discord, history, prices
+    python -m RevenueChaser.scripts.restore_store --latest raw      # or: edgar, history, prices
 
 - Refuses while any RevenueChaser process (dashboard, scheduled job) is using
   the store — stop them first.
@@ -12,10 +12,7 @@
   the next restore) and copies the snapshot in; if the copy fails the original
   is put back.
 - ``edgar_docs/`` archives are restored by hand: unzip the chosen
-  ``edgar_docs_<stamp>.zip`` over ``edgar_docs/`` (see docs/data_architecture.md);
-  ``discord_media/`` is restored by copying the ``discord_media_mirror/`` folder (next to the
-  snapshots, #248) back over it. Older ``discord_media_<stamp>.zip`` archives are unzipped over
-  ``discord_media/`` the same way.
+  ``edgar_docs_<stamp>.zip`` over ``edgar_docs/`` (see docs/data_architecture.md).
 - The SPX Gamma tree (#276) is restored by copying ``spx_gamma_mirror/`` back over ``module_spx_gamma/data``
   (or ``SPX_GAMMA_DATA_ROOT``); an earlier version of ``brier.json`` or ``spx_gamma_gex_history.json`` is in
   ``spx_gamma_versions/`` next to it. A weekly raw copy (#277) is restored with
@@ -36,8 +33,7 @@ from RevenueChaser.scripts.backup_store import (
     BackupError, _table_fingerprints, default_backup_dir)
 
 _TARGETS = {"raw": lambda: Path(rawstore.DB_PATH), "edgar": rawstore.edgar_db_path,
-            "discord": rawstore.discord_db_path, "history": rawstore.history_db_path,
-            "prices": rawstore.prices_db_path}
+            "history": rawstore.history_db_path, "prices": rawstore.prices_db_path}
 
 
 def snapshots(out: Path, kind: str | None = None) -> list[Path]:
@@ -48,7 +44,7 @@ def snapshots(out: Path, kind: str | None = None) -> list[Path]:
 def _kind_of(snapshot: Path) -> str:
     kind = snapshot.name.split("_", 1)[0]
     if kind not in _TARGETS:
-        raise BackupError(f"not a store snapshot: {snapshot.name} (expected raw_*, edgar_*, discord_*, history_* or prices_*)")
+        raise BackupError(f"not a store snapshot: {snapshot.name} (expected raw_*, edgar_*, history_* or prices_*)")
     return kind
 
 

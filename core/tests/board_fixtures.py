@@ -411,32 +411,6 @@ def _rotation_trail(tmp_path, monkeypatch):
     return rd._trail_html(date(2026, 8, 3), date(2026, 8, 14), ["2026-08-07", "2026-08-14"], series)
 
 
-def _discord(tmp_path, monkeypatch):
-    from RevenueChaser.module_discord import report
-    ch = {"channel_id": "10", "guild_id": "1", "guild_name": "Server", "name": "swing-setups",
-          "category": "Ideas", "enabled": True, "message_count": 3, "last_ts": "2026-10-01T11:00:00.000000Z"}
-    msg = {"message_id": "1001", "channel_id": "10", "channel_name": "swing-setups", "author_name": "Alpha",
-           "is_bot": True, "ts": "2026-10-01T10:00:00.000000Z", "ts_label": "2026-10-01 10:00",
-           "content": "text", "kind": "Reply", "is_pinned": True, "reply_to_id": "1000",
-           "reply_preview": {"author": "Beta", "text": "parent"}, "reference_kind": "Reply",
-           "attachments": [{"file_name": "a.png", "size_bytes": 5, "media_rel": "10/a.png", "is_image": True},
-                           {"file_name": "b.pdf", "size_bytes": 5, "media_rel": "10/b.pdf", "is_image": False}],
-           "embeds": [{"title": "t", "url": "https://example.com/x", "author": "a", "description": "d",
-                       "fields": [{"name": "n", "value": "v"}], "footer": "f"}],
-           "reactions": [{"emoji": "x", "count": 2}]}
-    p = {"as_of": "2026-10-02T08:00:00Z", "last_sync": "2026-10-02T07:55:00Z", "channels": [ch],
-         "filters": {"channel": "10", "q": "query", "date_from": "2026-09-01", "date_to": "2026-10-01"},
-         "messages": [msg], "total": 1, "page": 1, "pages": 1, "page_size": 200}
-    hp = hostile(p)
-    m = hp["messages"][0]
-    m["embeds"][0]["url"] = "https://example.com/?q=" + H("embed_url")
-    for a in m["attachments"]:
-        a["media_rel"] = "10/" + H("media_rel")
-    hp["filters"]["q"] = H("filter_q")
-    hp["provider_health"] = health("discord")
-    return report.render_discord_board(hp)
-
-
 def _logs(tmp_path, monkeypatch):
     from RevenueChaser.app import logview
     from RevenueChaser.core import config
@@ -484,7 +458,6 @@ BOARDS: dict[str, Board] = {
     "module_fundamentals": Board(_fundamentals),
     "module_sec_13f": Board(_sec_13f),
     "module_leaps": Board(_leaps),
-    "module_discord": Board(_discord),
     # Executes nothing, but "<!--<script>" in a name still breaks its script.
     "module_settings": Board(_settings),
     # Not a data board: the dashboard's own log files, whose request lines carry attacker-chosen paths.

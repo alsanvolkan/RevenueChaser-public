@@ -21,9 +21,6 @@ Per dataset: the source, the function that writes it, the DuckDB file and table,
   - Computed results (Value Chain edges; a concentration edge keeps the share its sentence states in share_pct, #387 D7) (1): `chain_mentions`
   - Run log (1): `chain_meta`
   - Declared in the G1 bump (#292, schema 10), no writer yet (1): `edgar_companyfacts`
-- **discord.duckdb** (.store/discord.duckdb (core/rawstore.py:60-62))
-  - From Discord (raw) (2): `discord_messages`, `discord_channels`
-  - Run log (1): `discord_export_runs`
 - **prices.duckdb** (.store/prices.duckdb (rawstore.prices_db_path; #156, made by the first store call))
   - From providers (raw): UW ohlc/1d, yfinance (core/prices.py) (2): `price_bars_daily`, `price_actions`
   - Watermarks, written in the chunk's transaction (1): `price_checks`
@@ -31,9 +28,9 @@ Per dataset: the source, the function that writes it, the DuckDB file and table,
 - **Files on disk** (outside DuckDB)
   - SPX Gamma raw days (2): `module_spx_gamma/data/raw/<date>/: UW GEX and greek files, flow_per_strike, vix_family, cftc_tff, ohlc_8wk`, `spx_gamma_gex_history.json: newest 10 days (every version kept by the nightly backup)`
   - Filing text (1): `edgar_docs/: 10-K, 20-F, 8-K HTML`
-  - Backup folder (4): `raw, edgar, discord snapshots, history snapshots once history.duckdb exists (#287), 2 prices snapshots (no weekly copy, #156), edgar_docs zip, weekly/ raw and history copies (never pruned)`, `discord_media_mirror/, spx_gamma_mirror/, spx_gamma_versions/`, `optional second copy: RAW_STORE_BACKUP_MIRROR/RevenueChaser-backup (big files weekly, no weekly/, #349)`, `the job's records (#309): .backup_manifest.json (size + SHA-256 per file at copy time), .offmachine_manifest.json, .integrity_scan.json (7-day read-only self-check), .backup_sizes.json`
+  - Backup folder (4): `raw, edgar snapshots, history snapshots once history.duckdb exists (#287), 2 prices snapshots (no weekly copy, #156), edgar_docs zip, weekly/ raw and history copies (never pruned)`, `spx_gamma_mirror/, spx_gamma_versions/`, `optional second copy: RAW_STORE_BACKUP_MIRROR/RevenueChaser-backup (big files weekly, no weekly/, #349)`, `the job's records (#309): .backup_manifest.json (size + SHA-256 per file at copy time), .offmachine_manifest.json, .integrity_scan.json (7-day read-only self-check), .backup_sizes.json`
   - Board pages (1): `.cache/*.html, *.json: rebuilt from the store on Refresh`
-- Backups: RC-Store-Backup backs up raw, edgar, discord and prices.duckdb (2 snapshots, no weekly copy, #156) (and history.duckdb once it exists) daily at 04:00 with --keep 5, mirrors the Discord media and SPX Gamma trees, keeps the first raw snapshot of each week and, when RAW_STORE_BACKUP_MIRROR is set, copies it off this machine, the big raw/edgar files at most once a week, prices last and once a week with 1 copy kept (#156), and the weekly copies not at all (#349; core/automations.py:118-123; scripts/backup_store.py offmachine_copy).
+- Backups: RC-Store-Backup backs up raw, edgar and prices.duckdb (2 snapshots, no weekly copy, #156) (and history.duckdb once it exists) daily at 04:00 with --keep 5, mirrors the SPX Gamma tree, keeps the first raw snapshot of each week and, when RAW_STORE_BACKUP_MIRROR is set, copies it off this machine, the big raw/edgar files at most once a week, prices last and once a week with 1 copy kept (#156), and the weekly copies not at all (#349; core/automations.py:118-123; scripts/backup_store.py offmachine_copy).
 
 ## Prices
 
@@ -164,14 +161,12 @@ Per dataset: the source, the function that writes it, the DuckDB file and table,
 
 | ID | Source | Writer (function, file:line) | File | Table | Key | Write | How long it stays |
 |---|---|---|---|---|---|---|---|
-| D34 Discord messages | DiscordChatExporter (R2:194-195) | save_export (module_discord/store.py:39-48) | discord.duckdb | discord_messages, discord_channels, discord_export_runs (:1502, :1516, :1535) | message_id | upsert | Every message stays. (store write scan) |
 | D35 LLM outputs (DeepSeek, Grok) | DeepSeek (core/providers/deepseek.py:305) | _cache_put (core/providers/deepseek.py:158) | raw.duckdb | llm_cache (:1028) | cache_key | upsert | Durable; every usable answer stays. A Relatedness reply that does not parse into a profile is not cached (validate hook, #118 PR C). (core/rawstore.py:1043) |
 |  | Grok (SuperGrok subscription; manual --provider grok, #388) (core/providers/grok.py:345) | _cache_put (core/providers/grok.py:172) | raw.duckdb | llm_cache (:1114) | cache_key | upsert | Durable, like DeepSeek's. model = the Grok model, response names provider grok; the key hash starts with the provider, so a Grok reply never replays as DeepSeek's or back. No off-peak gate: the SuperGrok allowance gate (core/subscription_usage) stops the run. (core/providers/grok.py:145-150) |
 |  | DeepSeek or Grok profile (module_relatedness/store.py:87) | Relatedness · _write (module_relatedness/store.py:88-93) | raw.duckdb | relatedness_profiles, relatedness_attributes (:1042, :1058) | ticker | upsert | Latest per ticker. An unusable reply is saved as status 'empty' with its attempt counted (stopped after 3, #118 PR C). Redone when the prompt version or its input (filing text, company name: the cache key's input_hash) changes (#388 D5). The writer is DeepSeek (default; also redone when its model, thinking or effort changes) or Grok (--run --provider grok, #388: model column = the Grok model, cache key provider grok; current at the current prompt version for both writers, so the nightly DeepSeek run does not redo it). (:1042) |
 | D36 Your inputs: watchlist, board settings | dashboard (LEAPS pin, POST with X-RC-Panel) (app/dashboard.py:1340-1348) | toggle_watchlist (one ticker, one transaction) (core/rawstore.py:3800-3814) | raw.duckdb | watchlist (+ watchlist_changes) (:875, :1846) | ticker | upsert | Current list in the table; every add and removal kept in watchlist_changes ('present'/'absent', source manual; #306). (core/rawstore.py:1846) |
 |  | Settings page (core/board_settings.py:252) | board_settings.save / reset (one transaction each, serialized by a lock) (core/board_settings.py:252-294) | raw.duckdb | board_settings (+ board_settings_changes) (:1510, :1847) | board + key | upsert | Overrides until reset; every save, drop and Reset kept in board_settings_changes (#306). Read by Co-movement (module_comovement/settings.py, issue #40) and by Swing for its screen and score thresholds (module_swing_potential/settings.py, #384 SW-S4), where the stored overrides also change the model version the forecast ledger stamps. A default is read from the board's config at call time and is never written; Reset deletes the rows. (core/rawstore.py:1847) |
 
-- **D34** read by Discord. Planned: Stays in discord.duckdb.
 - **D35** read by Relatedness. Planned: Stays.
 - **D36** read by LEAPS, Co-movement, Swing, every board. Planned: Built (#306): change history through the store capture of design C (schema 11); readers keep the live tables.
 

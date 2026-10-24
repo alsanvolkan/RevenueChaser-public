@@ -21,7 +21,8 @@ _spec.loader.exec_module(ddl292_frozen)
 
 HISTORY_MODES = {"event", "session_snapshot", "change_history", "latest_cache", "operational"}
 
-# The 69 tables that existed before G1, with the mode agreed in Part A (rows 1-69).
+# The tables that existed before G1, with the mode agreed in Part A: 66 of the original 69, since the three
+# discord_* tables left with the Discord archive in October 2026.
 LEGACY_MODES = {
     "event": (
         "edgar_financials",
@@ -48,8 +49,6 @@ LEGACY_MODES = {
         "job_runs",
         "price_bars_daily",
         "orphan_lookups",       # 06 §4 (schema 11): event, keyed (ticker, session_date)
-        "discord_messages",
-        "discord_export_runs",
     ),
     "session_snapshot": (
         "ticker_payload_cache",
@@ -72,7 +71,6 @@ LEGACY_MODES = {
         "identity_conflicts",
         "identity_source_cache",
         "board_settings",
-        "discord_channels",
         "catalyst_events",      # 06 §4 (schema 11): change_history; its writers upsert, the store records the change
         "orphan_designations",
         "etf_holdings",         # #303 (D25, design C): was session_snapshot; the store records each change
@@ -141,8 +139,8 @@ LATER_DERIVED_TABLES = ("forecast_outcomes", "forecast_baselines")
 SCHEMA_STAMP = ("store_schema",)
 
 
-def test_legacy_table_list_is_the_69_pre_g1_tables():
-    assert len(LEGACY) == 69
+def test_legacy_table_list_is_the_66_remaining_pre_g1_tables():
+    assert len(LEGACY) == 66
     assert len(V11) == 25
     assert set(LEGACY) | set(ddl292_frozen.ENTRIES) | set(V11) | set(LATER_CHANGE_TABLES) | set(PRICES_DB) \
         | set(LATER_HISTORY_TABLES) | set(LATER_DERIVED_TABLES) | set(SCHEMA_STAMP) == set(rawstore.MANIFEST)
@@ -163,7 +161,7 @@ def test_legacy_table_mode(name):
 
 def test_legacy_mode_tally():
     tally = {m: len(v) for m, v in LEGACY_MODES.items()}
-    assert tally == {"event": 26, "session_snapshot": 6, "change_history": 16, "latest_cache": 21}   # #303 moved one
+    assert tally == {"event": 24, "session_snapshot": 6, "change_history": 15, "latest_cache": 21}   # #303 moved one
 
 
 def test_only_the_history_tables_are_flagged_history():

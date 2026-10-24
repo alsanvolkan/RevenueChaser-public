@@ -63,7 +63,6 @@ table.inv .warnv{color:var(--amber)}
   padding:0 6px;font:600 10.5px/1.4 inherit;letter-spacing:0;text-transform:none;vertical-align:middle}
 .db-raw{color:#4f8cff}
 .db-edgar{color:#e0a030}
-.db-discord{color:#a070e0}
 .db-history{color:#3cb89a}
 .db-prices{color:#e06088}
 .dblegend{color:var(--muted);font-size:11.5px;margin:6px 2px 0}
@@ -1149,8 +1148,8 @@ def _coverage_cell(row: dict) -> str:
     return bar + out
 
 
-# The five store files a dataset can be written to: the Data Flow artifact's DB hues (G2).
-DB_PILLS = ("raw", "edgar", "discord", "history", "prices")
+# The four store files a dataset can be written to: the Data Flow artifact's DB hues (G2).
+DB_PILLS = ("raw", "edgar", "history", "prices")
 
 
 def _db_pill(db) -> str:
@@ -1207,8 +1206,8 @@ FLOW_NO_STORE = "no store file recorded"
 # first paint of the table above it (the brief's 60 KB line). Measured on the SVG alone.
 FLOW_MAX_BYTES = 60_000
 # The inks the edges and store nodes use: the .db-* pills' hues, so a colour means one file
-# everywhere on this board. A file outside the five (or none) draws in the page's muted ink.
-DB_COLORS = {"raw": "#4f8cff", "edgar": "#e0a030", "discord": "#a070e0",
+# everywhere on this board. A file outside the four (or none) draws in the page's muted ink.
+DB_COLORS = {"raw": "#4f8cff", "edgar": "#e0a030",
              "history": "#3cb89a", "prices": "#e06088"}
 FLOW_UNKNOWN_COLOR = "#8a93a6"
 
@@ -1968,45 +1967,11 @@ def _identity_card(identity: dict | None) -> str:
             + _identity_conflicts(identity.get("conflicts")) + _identity_stale(identity.get("stale")) + "</div></section>")
 
 
-_DISCORD_STATES = {"ok": ("st-ok", "ok"), "bad": ("st-bad", "fix"), "unknown": ("st-warn", "unknown"),
-                   "skipped": ("st-warn", "not checked")}
-
-
-def _discord_card(discord: dict | None) -> str:
-    """The Discord export readiness card (#242): one row per check, then a ready / not ready line.
-
-    Store-free: ``payload["discord"]`` comes from ``module_discord.readiness`` (environment and the CLI file).
-    Without that key (an older payload, or a check that failed and was recorded in the errors) there is no card.
-    It carries only whether the token and the server id are set, never their values.
-    """
-    if not discord:
-        return ""
-    body = []
-    for c in discord.get("checks") or []:
-        cls, word = _DISCORD_STATES.get(c.get("state"), ("st-warn", str(c.get("state") or "unknown")))
-        body.append(f'<tr id="discord-check-{_html.escape(str(c.get("key")))}">'
-                    f'<td>{_html.escape(str(c.get("label") or ""))}</td>'
-                    f'<td><span class="{cls}">{_html.escape(word)}</span></td>'
-                    f'<td class="note">{_html.escape(str(c.get("detail") or ""))}</td></tr>')
-    if discord.get("ready"):
-        summary = ('<span class="st-ok">Ready</span> to Discover and Update channels. Discord itself is not asked '
-                   "until you run one.")
-    else:
-        n = sum(1 for c in discord.get("checks") or [] if c.get("state") != "ok")
-        summary = (f'<span class="st-bad">Not ready</span>: {n} check{" needs" if n == 1 else "s need"} attention.')
-    return ('<section id="discord"><div class="bcard" id="discord-readiness"><h3>Discord export readiness</h3>'
-            '<div class="asof" id="discord-note">Reads the .env settings and the DiscordChatExporter file only, with '
-            "no network call. It cannot tell whether Discord accepts the token: only a Discover or Update, which "
-            "needs the network, can.</div>"
-            f'<div class="kv" id="discord-summary">{summary}</div>'
-            f'{_mini_table(["Check", "State", "Detail"], body)}</div></section>')
-
-
 # ── #162: the IBKR Gateway login STATE card ─────────────────────────────────────────────────────
 # The pair of the "IBKR gateway" shortcut: that one is a one-line link near the top that logs you in,
 # this one sits with the other availability cards and says whether that login is still good. The
 # shortcut keeps its documented place above the help block; this card is several lines, so it belongs
-# down here beside Discord readiness and Backups. The one availability fact whose history matters, because the
+# down here beside Backups. The one availability fact whose history matters, because the
 # gateway's session expires and is logged in again by hand, so the card answers "still logged in?"
 # and "if not, since when?". Every value comes from ``core.ibkr_login.collect``, which reads the
 # login check's record and opens no socket, so this card costs the Refresh nothing. Every field goes
@@ -2253,10 +2218,7 @@ def render_settings_dashboard(payload: dict) -> str:
         "finishes. The ticker drill shows <b>stored</b> data only — it does not ask SEC or "
         "Yahoo. The <b>Identity health</b> card below the table is store-only too; "
         "<b>Fetch identity</b> is what runs the network job, and a successful run also writes "
-        "the master's sector and industry into <b>equity_universe</b>, so it changes sectors on every board. "
-        "The <b>Discord export readiness</b> card reads the .env settings and the DiscordChatExporter file and "
-        "makes no network call. The token is read only to check that it is set and is never shown. The exe is "
-        "started once with <b>--version</b> to read its version, with no key or token in its environment."
+        "the master's sector and industry into <b>equity_universe</b>, so it changes sectors on every board."
     )
 
     if rows:
@@ -2282,7 +2244,6 @@ def render_settings_dashboard(payload: dict) -> str:
     identity_html = _identity_card(payload.get("identity"))
     identity_coverage_html = _identity_coverage_section(payload.get("identity_coverage"))
     other_tables_html = _other_tables_section(payload.get("other_tables"))
-    discord_html = _discord_card(payload.get("discord"))
     backups_html = _backups_card(payload.get("backups"))
     ibkr_login_html = _ibkr_login_card(payload.get("ibkr_login_url"))
     ibkr_state_html = _ibkr_state_card(payload.get("ibkr_login_state"))
@@ -2320,7 +2281,6 @@ def render_settings_dashboard(payload: dict) -> str:
   {identity_coverage_html}
   {other_tables_html}
   {identity_html}
-  {discord_html}
   {ibkr_state_html}
   {errors_html}
   {backups_html}

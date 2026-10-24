@@ -92,11 +92,6 @@ RAW_STORE_BACKUP_MIRROR_WARN_GB = _warn_gb("RAW_STORE_BACKUP_MIRROR_WARN_GB", BA
 EDGAR_DOCS_DIR = _root("RC_EDGAR_DOCS_DIR", BASE_DIR / "edgar_docs")
 EDGAR_DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Discord attachments downloaded by DiscordChatExporter (#72) — durable files like
-# edgar_docs/, so outside .store/ and .cache/. Created lazily by the exporter run,
-# not at import. The guild to archive is a plain id, not a secret.
-DISCORD_MEDIA_DIR = _root("RC_DISCORD_MEDIA_DIR", BASE_DIR / "discord_media")
-
 UW_API_KEY = os.getenv("UNUSUAL_WHALES_API_KEY", "")
 FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 

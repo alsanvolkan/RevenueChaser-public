@@ -29,14 +29,6 @@ class TestResolvers:
         assert provenance.data_as_of("module_swing_potential") == "2026-08-31"
         assert provenance.data_as_of("module_fundamentals") == "2026-08-28"
 
-    def test_discord_reports_the_newest_stored_message_day(self, rawstore_tmp_db):
-        from RevenueChaser.module_discord import loader, store
-        from RevenueChaser.module_discord.tests.conftest import FIXTURE
-        assert provenance.data_as_of("module_discord") is None
-        store.save_export(loader.load_export_file(FIXTURE))
-        newest = max(m["ts"] for m in store.messages("900000000000000010"))
-        assert provenance.data_as_of("module_discord") == newest[:10]
-
     def test_ticker_cache_epoch_becomes_a_day(self, rawstore_tmp_db):
         """Earnings' date is still the per-ticker payload fetch time; Asymmetric Growth's is D01's since #380 S4
         (``test_provenance_k7_383.py``)."""

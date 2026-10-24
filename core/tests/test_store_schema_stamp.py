@@ -50,7 +50,7 @@ class TestStampOnEnsure:
     def test_ensure_stamps_each_file_that_ensure_opens_and_does_not_create_history(self, isolate_rawstore):
         rawstore.ensure_all_tables()
         code = rawstore.schema_version()
-        for db in ("raw", "edgar", "discord", "prices"):
+        for db in ("raw", "edgar", "prices"):
             assert rawstore.schema_stamp(db) == code, db
         assert not rawstore.history_db_path().exists()
         assert rawstore.schema_stamp("history") is None
@@ -72,11 +72,11 @@ class TestStampOnEnsure:
     def test_an_older_stamp_is_upgraded_and_a_text_sorted_9_is_still_older(self, isolate_rawstore):
         rawstore.ensure_all_tables()
         _set_stamp("prices", "11")
-        _set_stamp("discord", "9")          # "9" > "12" as text; 9 < 12 as a version
+        _set_stamp("edgar", "9")            # "9" > "12" as text; 9 < 12 as a version
         rawstore._TABLE_READY.clear()
         rawstore.ensure_all_tables()
         assert rawstore.schema_stamp("prices") == "12"
-        assert rawstore.schema_stamp("discord") == "12"
+        assert rawstore.schema_stamp("edgar") == "12"
 
     def test_an_upgrade_keeps_the_old_value_and_warns(self, isolate_rawstore, caplog):
         """A restored older file leaves a trace after the ensure upgrades it (review SHOULD-3)."""
@@ -92,7 +92,7 @@ class TestStampOnEnsure:
     def test_a_current_stamp_is_not_rewritten(self, isolate_rawstore):
         rawstore.ensure_all_tables()
         before = dict(rawstore._STAMP_WRITES)
-        assert set(before) == {"raw", "edgar", "discord", "prices"}
+        assert set(before) == {"raw", "edgar", "prices"}
         assert all(n == 1 for n in before.values())
         with rawstore.connect() as conn:
             conn.execute("INSERT INTO store_schema (key, value) VALUES ('canary', 'keep')")

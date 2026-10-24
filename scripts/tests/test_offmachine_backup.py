@@ -35,21 +35,34 @@ def clock(monkeypatch):
 
 @pytest.fixture
 def world(rawstore_tmp_db, tmp_path, monkeypatch):
-    """A seeded store, a backup folder, a mirror folder, an SPX tree and a Discord media tree, all under tmp_path."""
+    """A seeded store with a history file, a backup folder, a mirror folder and an SPX tree, all under tmp_path."""
     out, mirror = tmp_path / "out", tmp_path / "drive"
     mirror.mkdir()
     spx = tmp_path / "spx"
-    media = tmp_path / "media"
     for rel, data in _FILES.items():
         _put(spx, rel, data)
-    _put(media, "900/a.png", b"A" * 10)
     docs = tmp_path / "docs"
     _put(docs, "320193/0000320193-24-000001.html.gz", b"gz-bytes")
     monkeypatch.setattr(spx_config, "DATA_ROOT", spx)
-    monkeypatch.setattr(config, "DISCORD_MEDIA_DIR", media)
     monkeypatch.setattr(config, "EDGAR_DOCS_DIR", docs)
     rawstore.write_rows("watchlist", [{"ticker": "NOK"}])
-    return {"out": out, "mirror": mirror, "dest": mirror / SUBDIR, "spx": spx, "media": media, "docs": docs}
+    _write_history()
+    return {"out": out, "mirror": mirror, "dest": mirror / SUBDIR, "spx": spx, "docs": docs}
+
+
+def _write_history(rows: int = 3) -> Path:
+    """``history.duckdb`` with one hand-made table: the small mirror kind, as in ``test_history_backup``."""
+    path = rawstore.history_db_path()
+    conn = duckdb.connect(str(path))
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS hist_probe (session_date TEXT, v BIGINT)")
+        conn.execute("DELETE FROM hist_probe")
+        for i in range(rows):
+            conn.execute("INSERT INTO hist_probe VALUES ('2026-09-28', ?)", [i])
+        conn.execute("CHECKPOINT")
+    finally:
+        conn.close()
+    return path
 
 
 def _put(root: Path, rel: str, data: bytes, age_s: int = 3600) -> Path:
@@ -85,14 +98,13 @@ def test_an_unset_key_is_a_no_op(world, monkeypatch, capsys):
 def test_the_newest_set_and_the_mirrors_reach_the_second_folder(world, monkeypatch, capsys, clock):
     assert _run(world, monkeypatch) == 0
     out, drive = world["out"], world["dest"]
-    for pattern in ("raw_*.duckdb", "edgar_*.duckdb", "discord_*.duckdb", "edgar_docs_*.zip"):
+    for pattern in ("raw_*.duckdb", "edgar_*.duckdb", "history_*.duckdb", "edgar_docs_*.zip"):
         assert _names(drive, pattern) == _names(out, pattern) and _names(drive, pattern), pattern
     raw = _names(out, "raw_*.duckdb")[-1]
     assert bs._table_fingerprints(drive / raw) == bs._table_fingerprints(out / raw)
     assert _names(out / "weekly", "raw_*.duckdb") and not (drive / "weekly").exists()     # #349: weekly stays local
     for rel, data in _FILES.items():
         assert (drive / "spx_gamma_mirror" / rel).read_bytes() == data
-    assert (drive / "discord_media_mirror" / "900" / "a.png").read_bytes() == b"A" * 10
     assert _names(drive / "spx_gamma_versions", "brier.*.json")
     assert not [p for p in drive.rglob("*") if p.is_file() and p.suffix in (".tmp", ".part")]
     line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("off-machine copy OK "))
@@ -166,7 +178,7 @@ def test_the_newest_n_copies_are_kept_per_kind(world, monkeypatch, clock):
         assert _run(world, monkeypatch, "--keep-mirror", "2", "--keep-mirror-big", "2") == 0
     drive, out = world["dest"], world["out"]
     assert _names(drive, "raw_*.duckdb") == _names(out, "raw_*.duckdb")[-2:]
-    assert len(_names(drive, "edgar_*.duckdb")) == 2 and len(_names(drive, "discord_*.duckdb")) == 2
+    assert len(_names(drive, "edgar_*.duckdb")) == 2 and len(_names(drive, "history_*.duckdb")) == 2
     assert len(_names(drive, "edgar_docs_*.zip")) == 2
 
 
@@ -174,7 +186,7 @@ def test_the_default_keeps_three_small_copies_and_sends_the_big_ones_once_in_fiv
     for i in range(5):
         clock(_day(2026, 9, 28) + timedelta(days=i))
         assert _run(world, monkeypatch) == 0
-    assert len(_names(world["dest"], "discord_*.duckdb")) == 3
+    assert len(_names(world["dest"], "history_*.duckdb")) == 3
     assert len(_names(world["dest"], "raw_*.duckdb")) == 1
 
 
@@ -233,7 +245,7 @@ def test_the_copy_is_skipped_after_a_local_failure(world, monkeypatch, capsys, c
     def boom(*a, **k):
         raise bs.BackupError("disk full")
 
-    monkeypatch.setattr(bs, "snapshot_discord", boom)
+    monkeypatch.setattr(bs, "snapshot_history", boom)
     assert _run(world, monkeypatch) == 1
     assert "off-machine" not in capsys.readouterr().out
     assert list(world["mirror"].iterdir()) == []               # "after a verified backup run"
@@ -247,8 +259,7 @@ def _made(world) -> dict[str, bool]:
         "weekly": bool(_names(out / "weekly", "raw_*.duckdb")),
         "edgar": bool(_names(out, "edgar_*.duckdb")),
         "edgar_docs": bool(_names(out, "edgar_docs_*.zip")),
-        "discord": bool(_names(out, "discord_*.duckdb")),
-        "media": (out / "discord_media_mirror" / "900" / "a.png").is_file(),
+        "history": bool(_names(out, "history_*.duckdb")),
         "spx": (out / "spx_gamma_mirror" / "brier.json").is_file(),
     }
 
@@ -259,8 +270,7 @@ _STEPS = {
     "weekly": ("keep_weekly", "weekly backup"),
     "edgar": ("snapshot_edgar", "edgar backup"),
     "edgar_docs": ("archive_edgar_docs", "edgar_docs backup"),
-    "discord": ("snapshot_discord", "discord backup"),
-    "media": ("mirror_discord_media", "discord_media backup"),
+    "history": ("snapshot_history", "history backup"),
     "spx": ("mirror_spx_gamma", "spx backup"),
 }
 
@@ -272,7 +282,7 @@ def _boom(*a, **k):
 @pytest.mark.parametrize("step", list(_STEPS))
 def test_every_other_step_still_runs_after_one_fails_and_the_run_is_red(world, monkeypatch, capsys, clock, step):
     """Review M1: the run used to return at the first failure, so one failed step (a busy edgar store, a full
-    disk for the weekly copy) also cost that night's SPX mirror and Discord media mirror."""
+    disk for the weekly copy) also cost that night's SPX mirror."""
     func, label = _STEPS[step]
     monkeypatch.setattr(bs, func, _boom)
     assert _run(world, monkeypatch) == 1
@@ -287,18 +297,18 @@ def test_every_other_step_still_runs_after_one_fails_and_the_run_is_red(world, m
 
 def test_two_failed_steps_are_both_reported_and_the_rest_still_runs(world, monkeypatch, capsys, clock):
     monkeypatch.setattr(bs, "snapshot_edgar", _boom)
-    monkeypatch.setattr(bs, "mirror_discord_media", _boom)
+    monkeypatch.setattr(bs, "mirror_spx_gamma", _boom)
     assert _run(world, monkeypatch) == 1
     err = capsys.readouterr().err
-    assert "edgar backup FAILED: disk full" in err and "discord_media backup FAILED: disk full" in err
-    assert _made(world) == {**{k: True for k in _STEPS}, "edgar": False, "media": False}
+    assert "edgar backup FAILED: disk full" in err and "spx backup FAILED: disk full" in err
+    assert _made(world) == {**{k: True for k in _STEPS}, "edgar": False, "spx": False}
 
 
 def test_a_night_with_a_failed_step_logs_the_skipped_copy_so_the_row_turns_red_that_night(
         world, monkeypatch, capsys, clock, tmp_path):
     """Review L3: with no line the Automations row kept showing the last good copy for up to 48 h."""
     from RevenueChaser.core import automations
-    monkeypatch.setattr(bs, "snapshot_discord", _boom)
+    monkeypatch.setattr(bs, "snapshot_history", _boom)
     assert _run(world, monkeypatch) == 1
     err = capsys.readouterr().err
     line = next(ln for ln in err.splitlines() if ln.startswith("off-machine copy FAILED "))
@@ -311,7 +321,7 @@ def test_a_night_with_a_failed_step_logs_the_skipped_copy_so_the_row_turns_red_t
 
 
 def test_no_skipped_line_when_no_folder_is_set(world, monkeypatch, capsys, clock):
-    monkeypatch.setattr(bs, "snapshot_discord", _boom)
+    monkeypatch.setattr(bs, "snapshot_history", _boom)
     assert _run(world, monkeypatch, mirror=False) == 1
     assert "off-machine" not in capsys.readouterr().err
 
@@ -467,7 +477,8 @@ _FOREIGN = {
     "notes.tmp": b"a file that only looks like a leftover",
     "weekly/raw_20250101_020000_000001.duckdb": b"his own weekly folder",
     "weekly/draft.tmp": b"another lookalike",
-    "discord_media_mirror/keep.me": b"his own folder with a familiar name",
+    # The mirror a pre-October-2026 run wrote for the Discord attachments: nothing prunes or deletes it now.
+    "discord_media_mirror/keep.me": b"a folder an earlier version of this job wrote",
 }
 
 
@@ -492,7 +503,7 @@ def test_everything_the_app_writes_goes_into_the_sub_folder(world, monkeypatch, 
     assert _run(world, monkeypatch) == 0
     drive = world["mirror"]
     assert [p.name for p in drive.iterdir()] == [SUBDIR]
-    assert _names(world["dest"], "raw_*.duckdb") and _names(world["dest"], "discord_*.duckdb")
+    assert _names(world["dest"], "raw_*.duckdb") and _names(world["dest"], "history_*.duckdb")
     line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("off-machine copy OK "))
     assert line.endswith(f"-> {world['dest']}")
 
@@ -567,8 +578,8 @@ def test_a_run_within_a_week_sends_the_small_files_but_no_big_file(world, monkey
     _nights(world, monkeypatch, clock, [1, 6])
     for p in _BIG:
         assert _names(world["dest"], p) == first[p], p
-    drive_discord = _names(world["dest"], "discord_*.duckdb")
-    assert len(drive_discord) == 3 and drive_discord[-1] == _names(world["out"], "discord_*.duckdb")[-1]
+    drive_history = _names(world["dest"], "history_*.duckdb")
+    assert len(drive_history) == 3 and drive_history[-1] == _names(world["out"], "history_*.duckdb")[-1]
     line = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("off-machine copy OK ")][-1]
     assert "big files skipped until 2026-10-05" in line and line.endswith(f"-> {world['dest']}")
 
@@ -594,7 +605,7 @@ def test_big_kinds_keep_two_and_small_kinds_keep_three(world, monkeypatch, clock
     for p in _BIG:
         assert len(_names(world["dest"], p)) == 2, p
     assert _names(world["dest"], "raw_*.duckdb")[-1] == _names(world["out"], "raw_*.duckdb")[-1]
-    assert len(_names(world["dest"], "discord_*.duckdb")) == 3
+    assert len(_names(world["dest"], "history_*.duckdb")) == 3
 
 
 def test_keep_mirror_big_sets_how_many_big_copies_stay(world, monkeypatch, clock):

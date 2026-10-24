@@ -1,9 +1,11 @@
 """PL8 (#26): every credential a module declares is checked when it is submitted, not inside the runner.
 
-A Discord Fetch with no ``DISCORD_TOKEN`` used to be accepted (202), queued on the long lane behind whatever ran
-there, and only then fail in ``module_discord/engine.py``. The route tests below are that regression; the rest pin
-the mechanism (``register(requires=...)`` / ``jobs.credential_problem``) and its limits: the check is presence
-only, it costs nothing, and it never gates an optional key whose absence merely degrades a board.
+A Fetch with a missing credential used to be accepted (202), queued on the long lane behind whatever ran there,
+and only then fail inside the runner. The tests below pin the mechanism (``register(requires=...)`` /
+``jobs.credential_problem``) and its limits: the check is presence only, it costs nothing, and it never gates an
+optional key whose absence merely degrades a board. The two modules that declared a requirement were the Discord
+archive's, which left for its own app in October 2026, so no module declares one today; the gate stays and is
+tested through modules these tests register themselves.
 """
 from __future__ import annotations
 
@@ -14,7 +16,7 @@ from RevenueChaser.core import credentials
 from RevenueChaser.core.tests.panel_client import panel_test_client
 
 # Never a real key: a recognisable string, only ever asserted absent from a message (see core/tests/test_credentials).
-DUMMY_TOKEN = "pl8-dummy-discord-token-value"
+DUMMY_TOKEN = "pl8-dummy-provider-key-value"
 
 # The providers core/credentials.py marks optional: a missing key degrades a board, it does not break a job.
 OPTIONAL_PROVIDERS = ("fred", "openfigi", "deepseek", "claude_subscription", "grok_subscription")
@@ -37,8 +39,7 @@ def client():
 @pytest.fixture
 def no_credentials(monkeypatch):
     """Unset every credential these tests look at, whatever the developer's .env happens to hold."""
-    for name in ("DISCORD_TOKEN", "RC_DCE_CLI", "RC_DISCORD_GUILD_ID", "UNUSUAL_WHALES_API_KEY",
-                 "FRED_API_KEY", "OPENFIGI_API_KEY"):
+    for name in ("UNUSUAL_WHALES_API_KEY", "FRED_API_KEY", "OPENFIGI_API_KEY"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -62,27 +63,25 @@ def test_a_module_without_requires_declares_nothing(monkeypatch):
 
 def test_credential_problem_reports_the_first_declared_problem(monkeypatch):
     monkeypatch.setattr(jobs, "_REQUIRES", dict(jobs._REQUIRES))
-    monkeypatch.setitem(jobs._REQUIRES, "pl8_multi", ("discord_cli", "discord", "discord_guild"))
-    for name in ("RC_DCE_CLI", "DISCORD_TOKEN", "RC_DISCORD_GUILD_ID"):
-        monkeypatch.delenv(name, raising=False)
-    assert jobs.credential_problem("pl8_multi") == credentials.problem("discord_cli")
-    assert jobs.credential_problem("pl8_multi").startswith("RC_DCE_CLI")
+    monkeypatch.setitem(credentials.EXTRA_CHECKS, "pl8_check", lambda: "PL8_CHECK is not set.")
+    monkeypatch.setitem(jobs._REQUIRES, "pl8_multi", ("pl8_check", "unusual_whales"))
+    monkeypatch.delenv("UNUSUAL_WHALES_API_KEY", raising=False)
+    assert jobs.credential_problem("pl8_multi") == credentials.problem("pl8_check")
+    assert jobs.credential_problem("pl8_multi").startswith("PL8_CHECK")
 
 
-def test_credential_problem_is_none_when_every_requirement_is_satisfied(monkeypatch, tmp_path):
+def test_credential_problem_is_none_when_every_requirement_is_satisfied(monkeypatch):
     monkeypatch.setattr(jobs, "_REQUIRES", dict(jobs._REQUIRES))
-    exe = tmp_path / "dce"
-    exe.write_text("")
-    monkeypatch.setenv("DISCORD_TOKEN", DUMMY_TOKEN)
-    monkeypatch.setenv("RC_DCE_CLI", str(exe))
-    monkeypatch.setenv("RC_DISCORD_GUILD_ID", "123456789012345678")
-    monkeypatch.setitem(jobs._REQUIRES, "pl8_multi", ("discord", "discord_cli", "discord_guild"))
+    monkeypatch.setitem(credentials.EXTRA_CHECKS, "pl8_check", lambda: None)
+    monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", DUMMY_TOKEN)
+    monkeypatch.setitem(jobs._REQUIRES, "pl8_multi", ("unusual_whales", "pl8_check"))
     assert jobs.credential_problem("pl8_multi") is None
 
 
-def test_the_discord_modules_declare_exactly_what_they_run():
-    assert jobs._REQUIRES["module_discord"] == ("discord", "discord_cli")
-    assert jobs._REQUIRES["module_discord_discover"] == ("discord", "discord_cli", "discord_guild")
+def test_no_module_declares_a_requirement_today():
+    """The Discord archive took the only two declarations with it; the gate stays, with nothing declared."""
+    assert jobs._REQUIRES, "every registered module has an entry, even an empty one"
+    assert {name for reqs in jobs._REQUIRES.values() for name in reqs} == set()
 
 
 def test_no_optional_provider_is_declared_as_a_requirement():
@@ -93,47 +92,29 @@ def test_no_optional_provider_is_declared_as_a_requirement():
 
 # ── the routes: a missing credential is refused at the button, with nothing queued ──
 
-def test_a_discord_fetch_without_a_token_is_refused_and_queues_nothing(client, no_credentials):
+def test_a_declared_requirement_is_refused_at_the_route_and_queues_nothing(
+        client, no_credentials, monkeypatch):
+    """The regression the gate was written for: a refused Fetch answers 400 and queues nothing."""
+    monkeypatch.setattr(jobs, "_REQUIRES", dict(jobs._REQUIRES))
+    monkeypatch.setitem(jobs._REQUIRES, "module_sec_13f", ("unusual_whales",))
     before = jobs.list_jobs()
-    r = client.post("/run/module_discord")
+    r = client.post("/run/module_sec_13f")
     assert r.status_code == 400
     body = r.get_json()
     assert body["ok"] is False
-    assert body["error"] == credentials.missing_message("discord")
-    assert "DISCORD_TOKEN" in body["error"]
+    assert body["error"] == credentials.missing_message("unusual_whales")
+    assert "UNUSUAL_WHALES_API_KEY" in body["error"]
     assert jobs.list_jobs() == before, "a refused Fetch must not be queued"
 
 
-def test_a_discord_fetch_without_the_cli_is_refused_and_queues_nothing(client, no_credentials, monkeypatch):
-    monkeypatch.setenv("DISCORD_TOKEN", DUMMY_TOKEN)
-    before = jobs.list_jobs()
-    r = client.post("/run/module_discord")
-    assert r.status_code == 400 and "RC_DCE_CLI" in r.get_json()["error"]
-    assert jobs.list_jobs() == before
-
-
-def test_discover_without_a_guild_id_is_refused_and_queues_nothing(client, no_credentials, monkeypatch, tmp_path):
-    exe = tmp_path / "dce"
-    exe.write_text("")
-    monkeypatch.setenv("DISCORD_TOKEN", DUMMY_TOKEN)
-    monkeypatch.setenv("RC_DCE_CLI", str(exe))
-    before = jobs.list_jobs()
-    r = client.post("/run/module_discord_discover")
-    assert r.status_code == 400 and "RC_DISCORD_GUILD_ID" in r.get_json()["error"]
-    assert jobs.list_jobs() == before
-
-
-def test_a_configured_discord_fetch_still_submits(client, no_credentials, monkeypatch, tmp_path):
-    exe = tmp_path / "dce"
-    exe.write_text("")
-    monkeypatch.setenv("DISCORD_TOKEN", DUMMY_TOKEN)
-    monkeypatch.setenv("RC_DCE_CLI", str(exe))
-    monkeypatch.setenv("RC_DISCORD_GUILD_ID", "123456789012345678")
+def test_a_satisfied_requirement_still_submits(client, no_credentials, monkeypatch):
+    monkeypatch.setattr(jobs, "_REQUIRES", dict(jobs._REQUIRES))
+    monkeypatch.setitem(jobs._REQUIRES, "module_sec_13f", ("unusual_whales",))
+    monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", DUMMY_TOKEN)
     submitted = []
     monkeypatch.setattr(jobs, "submit", lambda module, params=None: submitted.append(module) or "job1")
-    assert client.post("/run/module_discord").status_code == 202
-    assert client.post("/run/module_discord_discover").status_code == 202
-    assert submitted == ["module_discord", "module_discord_discover"]
+    assert client.post("/run/module_sec_13f").status_code == 202
+    assert submitted == ["module_sec_13f"]
 
 
 def test_a_module_with_no_declared_requirement_still_submits(client, no_credentials, monkeypatch):
@@ -162,7 +143,7 @@ def test_the_gate_runs_before_the_uw_probe(no_credentials, monkeypatch):
     """The presence check is free (it reads env vars); it must not wait on the HTTPS pool the probe builds."""
     monkeypatch.setattr(jobs, "_REQUIRES", dict(jobs._REQUIRES))
     monkeypatch.setitem(jobs._REQUIRES_UW, "pl8_order", True)
-    monkeypatch.setitem(jobs._REQUIRES, "pl8_order", ("discord",))
+    monkeypatch.setitem(jobs._REQUIRES, "pl8_order", ("unusual_whales",))
     probed = []
 
     def _probe():
@@ -172,5 +153,5 @@ def test_the_gate_runs_before_the_uw_probe(no_credentials, monkeypatch):
     monkeypatch.setattr(dashboard, "_uw", _probe)
     with dashboard.app.test_request_context("/run/pl8_order", method="POST"):
         response, status = dashboard._submit("pl8_order", {})
-    assert status == 400 and "DISCORD_TOKEN" in response.get_json()["error"]
+    assert status == 400 and "UNUSUAL_WHALES_API_KEY" in response.get_json()["error"]
     assert probed == [], "no UWClient may be built when a credential requirement is already unmet"

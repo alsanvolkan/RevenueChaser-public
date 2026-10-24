@@ -20,7 +20,6 @@ from RevenueChaser.core.identity import refresh as identity_refresh
 from RevenueChaser.core.identity import types as identity_types
 # a dedicated alias for the identity-health code, so it does not lean on the shared universe import below
 from RevenueChaser.core.universe import DEFAULT_MC_MIN as _MC_FLOOR
-from RevenueChaser.module_discord import readiness as discord_readiness
 from RevenueChaser.module_settings import boards
 from RevenueChaser.core.universe import DEFAULT_MC_MIN, classification_universe
 
@@ -1190,19 +1189,6 @@ def _identity_health(now: datetime) -> dict:
             "spdr": _spdr_state(runs)}
 
 
-def _discord_readiness() -> dict | None:
-    """The Discord export readiness card's data (#242): environment and the CLI file only, no store, no network.
-
-    The version probe starts the exe at most once per exe file state (``exporter.cli_version``). A failed check is
-    recorded (F4) and the card is left out: it must never look like "ready" or be dropped without a trace.
-    """
-    try:
-        return discord_readiness.collect()
-    except Exception as exc:  # noqa: BLE001 - recorded (F4), the card is omitted
-        _record("discord", "_discord_readiness", exc)
-        return None
-
-
 def _ibkr_login_state(now: datetime) -> dict | None:
     """The IBKR Gateway login STATE card's data (#162): the login check's own record, nothing else.
 
@@ -2234,7 +2220,6 @@ def _collect(now: datetime) -> dict:
         "identity": identity,
         # Fixed registry fields only: the live state is polled from /api/automations.
         "automations": automations.static_rows(),
-        "discord": _discord_readiness(),
         # #162: the IBKR Gateway login state, read from the login check's record. Never probed here.
         # Named to pair with ``ibkr_login_url`` above it, the shortcut that opens the login screen.
         "ibkr_login_state": _ibkr_login_state(now),

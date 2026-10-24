@@ -63,14 +63,14 @@ issue numbers are the one thing a table like this gets wrong:
 | #48 | Relatedness (parked) | `classification` |
 | #49 | Final pass: core + health ledger | `platform-app`, `platform-store`, `quality` |
 | #56 | Sector Rotation: redevelopment, umbrella (parked) | `market` |
-| #70 | Discord (parked) | `community` |
 
 Pass `--area <key>` to the helper so the label and the board field are both set.
 
 **Two gaps to know about,** from reading the board itself on 2026-10-23
 (`gh project field-list 1 --owner alsanvolkan`). Its Area field offers 12 options and has no `community`, so
 `--area community` creates and labels the issue and then exits on `unknown Area 'community'`, leaving
-the Area field unset — use `--label area:community` for Discord work, or add the board option first.
+the Area field unset — use `--label area:community`, or add the board option first. Since October 2026
+the Discord archive is its own repository, so that label is rarely needed here.
 And `spine` is a board Area option with no epic, so spine work has no parent to attach to.
 
 An umbrella issue holds its findings as a checklist. **Convert an item to a sub-issue only when work on

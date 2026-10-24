@@ -59,13 +59,6 @@ PROVIDERS: dict[str, Provider] = {
         signup_url="https://platform.deepseek.com/api_keys",
         required_for="Relatedness profile extraction and theme naming (optional; off-peak UTC only — see core/offpeak.py)",
     ),
-    "discord": Provider(
-        slug="discord",
-        label="Discord user token (DiscordChatExporter)",
-        env_var="DISCORD_TOKEN",
-        signup_url="https://github.com/Tyrrrz/DiscordChatExporter/blob/master/.docs/Token-and-IDs.md",
-        required_for="Discord archive (module_discord); also needs RC_DCE_CLI, the path to the DiscordChatExporter CLI",
-    ),
     "claude_subscription": Provider(
         slug="claude_subscription",
         label="Claude subscription",
@@ -136,36 +129,10 @@ def describe(slug: str, status: int | None = None, detail: str = "") -> str:
     return rejected_message(slug, status, detail)
 
 
-def dce_cli_problem() -> str | None:
-    """Why the DiscordChatExporter CLI cannot run, or ``None`` when ``RC_DCE_CLI`` is fine.
-
-    Only the path is checked; the executable is never started and the token is never read.
-    """
-    raw = (os.getenv("RC_DCE_CLI") or "").strip()
-    if not raw:
-        return ("RC_DCE_CLI is not set. Point it at the DiscordChatExporter CLI executable "
-                "in the .env file at the repo root, then restart the dashboard.")
-    if not os.path.isfile(raw):
-        return f"RC_DCE_CLI is set but is not a file: {raw}. Fix the path in .env and restart the dashboard."
-    return None
-
-
-def discord_guild_problem() -> str | None:
-    """Why Discord channel discovery cannot run, or ``None`` when ``RC_DISCORD_GUILD_ID`` is set.
-
-    Only whether the variable is set; the id itself is never returned.
-    """
-    if (os.getenv("RC_DISCORD_GUILD_ID") or "").strip():
-        return None
-    return "RC_DISCORD_GUILD_ID is not set. Put the server's id in .env, then restart the dashboard."
-
-
 # A requirement that is more than "an env var is non-empty": the check answers for itself, and its message is
-# the one a submit shows.
-EXTRA_CHECKS: dict[str, Callable[[], str | None]] = {
-    "discord_cli": dce_cli_problem,
-    "discord_guild": discord_guild_problem,
-}
+# the one a submit shows. Empty since the Discord archive became its own app, which took the only two with it;
+# the mechanism stays because ``jobs.register(..., requires=...)`` still accepts such a name.
+EXTRA_CHECKS: dict[str, Callable[[], str | None]] = {}
 
 
 def requirement_names() -> frozenset[str]:

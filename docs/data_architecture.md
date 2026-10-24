@@ -5,19 +5,22 @@ Companions: [`data_retrieval.md`](data_retrieval.md) for how data gets in and
 out (Fetch vs Refresh), [`e2e_testing.md`](e2e_testing.md) for how that is
 verified.
 
-The guiding principle: **four DuckDB files for all structured raw/derived data**
-(`raw.duckdb` + `edgar.duckdb` + `discord.duckdb` + `prices.duckdb`, the daily price tables of #156; a fifth,
+The guiding principle: **three DuckDB files for all structured raw/derived data**
+(`raw.duckdb` + `edgar.duckdb` + `prices.duckdb`, the daily price tables of #156; a fourth,
 `history.duckdb`, for result history, is
 backed up already; schema 11 declares its 17 result-history tables, and the first `core/history.record_run` creates the file), **clearable `.cache/` for
 regenerable outputs, and files only where files are intrinsically better**
-(immutable audit artifacts, downloaded binaries, the raw `edgar_docs/` HTML tree
-and the `discord_media/` attachment tree).
+(immutable audit artifacts, downloaded binaries and the raw `edgar_docs/` HTML tree).
+
+The Discord archive was a fourth store file until October 2026. It is now its own app
+(`discord-archive`), with its own database, schema version and backup, because nothing here ever
+read it for analysis.
 
 ## The two data folders — read this first (for future maintainers & AI)
 
 | Folder | Semantics | May you delete it? |
 |---|---|---|
-| **`.store/`** | **DURABLE.** Everything in `.store` is the source of truth. It holds exactly **four** DuckDB files today (a fifth, `history.duckdb`, appears with the first recorded board run, #278; see its row below) (plus tiny `.rc-proc-<pid>` presence markers and `*.lock` job locks, see Concurrency model): `.store/raw.duckdb` (structured raw + derived data, and the identity/GICS spine incl. `sec_company_*`), `.store/edgar.duckdb` (EDGAR **content**: `edgar_documents` metadata, `edgar_facts`, `edgar_financials`, `chain_*`), `.store/discord.duckdb` (the Discord archive: `discord_channels`, `discord_messages`, `discord_export_runs`) and `.store/prices.duckdb` (the daily price tables: `price_bars_daily`, `price_actions`, `price_checks`, and the SPX daily levels `index_levels_daily`). Raw 10-K/20-F HTML is the one file-based durable artifact, under `edgar_docs/{cik}/{accession}.html.gz`. They grow over time and CANNOT be regenerated from the app — losing them loses what only accumulates (the option-flow prints, one Rotation snapshot per date, one Co-movement run per as-of date, the Discord archive), the ingested 13F data and the raw filings. | **NO.** Treat like database files. Back them up (`scripts/backup_store.py` covers the DB files, the `edgar_docs/` tree as a zip, and the `discord_media/` and SPX Gamma trees as incremental mirrors); never `rm -rf`. |
+| **`.store/`** | **DURABLE.** Everything in `.store` is the source of truth. It holds exactly **three** DuckDB files today (a fourth, `history.duckdb`, appears with the first recorded board run, #278; see its row below) (plus tiny `.rc-proc-<pid>` presence markers and `*.lock` job locks, see Concurrency model): `.store/raw.duckdb` (structured raw + derived data, and the identity/GICS spine incl. `sec_company_*`), `.store/edgar.duckdb` (EDGAR **content**: `edgar_documents` metadata, `edgar_facts`, `edgar_financials`, `chain_*`) and `.store/prices.duckdb` (the daily price tables: `price_bars_daily`, `price_actions`, `price_checks`, and the SPX daily levels `index_levels_daily`). Raw 10-K/20-F HTML is the one file-based durable artifact, under `edgar_docs/{cik}/{accession}.html.gz`. They grow over time and CANNOT be regenerated from the app — losing them loses what only accumulates (the option-flow prints, one Rotation snapshot per date, one Co-movement run per as-of date), the ingested 13F data and the raw filings. | **NO.** Treat like database files. Back them up (`scripts/backup_store.py` covers the DB files, the `edgar_docs/` tree as a zip, and the SPX Gamma tree as an incremental mirror); never `rm -rf`. |
 | **`.cache/`** | **ARTIFACTS.** Fully regenerable outputs: `*_latest.html` dashboards, `*_latest.json` payloads, PNGs, timestamped archives, and downloaded SEC 13F source zips. | **YES.** Delete any time; re-running the relevant module regenerates everything. |
 
 Rule of thumb: if deleting it loses *history* or *ingested* data → it belongs in
@@ -30,10 +33,9 @@ Both roots are **relocatable by environment variable**, read once in
 
 | Env var | Overrides | Default |
 |---|---|---|
-| `RC_STORE_DIR` | `DATA_DIR` (and therefore `rawstore.DB_PATH` + the sibling `edgar.duckdb`, `discord.duckdb`, `history.duckdb` and `prices.duckdb`) | `<repo>/.store` |
+| `RC_STORE_DIR` | `DATA_DIR` (and therefore `rawstore.DB_PATH` + the sibling `edgar.duckdb`, `history.duckdb` and `prices.duckdb`) | `<repo>/.store` |
 | `RC_CACHE_DIR` | `OUTPUT_DIR` / `CACHE_ROOT` | `<repo>/.cache` |
 | `RC_EDGAR_DOCS_DIR` | `EDGAR_DOCS_DIR` (raw 10-K/20-F HTML tree) | `<repo>/edgar_docs` |
-| `RC_DISCORD_MEDIA_DIR` | `DISCORD_MEDIA_DIR` (Discord attachment tree) | `<repo>/discord_media` |
 
 They are read **at import**, and that is deliberate rather than incidental. Some
 twenty module-level constants derive from these roots — `app/runners.py`'s
@@ -134,9 +136,9 @@ columns (#272, the v9 bump), its four identifier columns (`cusip`, `cusip_source
 written to `migration_manifest`, and the bump is what makes the change a gated one (manual `.store` checkpoint, see
 below).
 
-Each store file carries its own schema stamp (#26 PL7-a): a `store_schema` row, key `schema_version`, equal to `_SCHEMA_VERSION`. The ensure path writes it when the row is absent or older than the code, and leaves a newer stamp as stored; an upgrade of an older stamp is a warning and keeps the old value in the same table (`upgraded_from`, `upgraded_at`), so a restored older file leaves a trace. `rawstore.store_schema_mismatch()` lists those (`db`, `file`, `stored`, `code`); a read logs a warning and does not raise. An existing file with no stamp is stamped with the current version on that first ensure — an already-wrong file would be marked current; `schema_drift()` remains the backstop for a retyped column, a changed key or an extra column. The table is additive (`CREATE TABLE` plus one row) in each of `raw`, `edgar`, `discord`, `prices` and, when that file exists, `history`. It does not bump `_SCHEMA_VERSION` and does not need a Drive checkpoint. `history.duckdb` is stamped by `ensure_history`, not created just to hold a stamp.
+Each store file carries its own schema stamp (#26 PL7-a): a `store_schema` row, key `schema_version`, equal to `_SCHEMA_VERSION`. The ensure path writes it when the row is absent or older than the code, and leaves a newer stamp as stored; an upgrade of an older stamp is a warning and keeps the old value in the same table (`upgraded_from`, `upgraded_at`), so a restored older file leaves a trace. `rawstore.store_schema_mismatch()` lists those (`db`, `file`, `stored`, `code`); a read logs a warning and does not raise. An existing file with no stamp is stamped with the current version on that first ensure — an already-wrong file would be marked current; `schema_drift()` remains the backstop for a retyped column, a changed key or an extra column. The table is additive (`CREATE TABLE` plus one row) in each of `raw`, `edgar`, `prices` and, when that file exists, `history`. It does not bump `_SCHEMA_VERSION` and does not need a Drive checkpoint. `history.duckdb` is stamped by `ensure_history`, not created just to hold a stamp.
 
-Refusing writes on a mismatch is off (#26 PL7-b). `SCHEMA_REFUSE_WRITES` in `core/store_schema_refuse.py` is `False`. Set `RC_STORE_SCHEMA_REFUSE=1` to refuse a data write when that file's stamp is ahead of this code: newer, or not a version number. A file with no stamp is not refused: the ensure stamps it current. The same check runs before the ensure, so an old checkout never renames, merges or ALTERs a newer file; the ensure then logs one warning and the writes are refused. A refused write is also a skipped `job_runs` row (the run log goes quiet while jobs fail), so read the Server log first. `store_schema_mismatch()` opens the files read-write, so run the gate check with the dashboard stopped or on the fresh backup copy. Readers still only warn. `RC_STORE_SCHEMA_OK=1` is the escape for a deliberate migration: writes are allowed and the warning is suppressed. The exception is `StoreSchemaMismatch`; it names the file, the stored version, the code version and `python -m RevenueChaser.scripts.restore_store --latest <raw|edgar|discord|history|prices>`. It does not run at import. Leave the switch off unless that refusal is intended.
+Refusing writes on a mismatch is off (#26 PL7-b). `SCHEMA_REFUSE_WRITES` in `core/store_schema_refuse.py` is `False`. Set `RC_STORE_SCHEMA_REFUSE=1` to refuse a data write when that file's stamp is ahead of this code: newer, or not a version number. A file with no stamp is not refused: the ensure stamps it current. The same check runs before the ensure, so an old checkout never renames, merges or ALTERs a newer file; the ensure then logs one warning and the writes are refused. A refused write is also a skipped `job_runs` row (the run log goes quiet while jobs fail), so read the Server log first. `store_schema_mismatch()` opens the files read-write, so run the gate check with the dashboard stopped or on the fresh backup copy. Readers still only warn. `RC_STORE_SCHEMA_OK=1` is the escape for a deliberate migration: writes are allowed and the warning is suppressed. The exception is `StoreSchemaMismatch`; it names the file, the stored version, the code version and `python -m RevenueChaser.scripts.restore_store --latest <raw|edgar|history|prices>`. It does not run at import. Leave the switch off unless that refusal is intended.
 
 ## Storage layout
 
@@ -145,9 +147,7 @@ Refusing writes on a mismatch is off (#26 PL7-b). `SCHEMA_REFUSE_WRITES` in `cor
 | `.store/raw.duckdb` | Structured raw + derived data (tables below) + the identity/GICS spine (`sec_company_*`) | No — durable source of truth (see `.store` semantics above) |
 | `.store/edgar.duckdb` | EDGAR **content**: `edgar_documents` (metadata only), `edgar_facts`, `edgar_financials`, `chain_filings`/`chain_mentions`/`chain_meta` | No — durable |
 | `.store/history.duckdb` | Result history (#287, 2.6-1; schema 11): `result_runs` (one header row per board run: session, run time, quality, model version, params, funnel, payload) and 16 run-keyed row tables (`ag_scores_history`, `earnings_cards_history`, …). Written only by `core/history.record_run`, in one transaction; a session board keeps one whole run per session (`session_snapshot`), a run board keeps every run. Read views `result_sessions` and `<table>_by_session`. Longer backup retention than `raw.duckdb` (5 nightly snapshots, and an off-machine copy; its weekly copy was dropped in #342 — it grew ~6.55 GB/yr against raw's 603 MB). **The file does not exist until the first recorded run** (`rawstore.ensure_history()`); `rawstore.history_db_path()` and `_db_path("history")` resolve it, and the nightly backup and `restore_store` skip it while it is missing. `forecast_ledger` stays in `raw.duckdb`. The 8 change tables live in `raw.duckdb` and ride its backups | No — durable |
-| `.store/discord.duckdb` | Discord archive (#72): `discord_channels`, `discord_messages`, `discord_export_runs`. Messages are untrusted third-party text, stored verbatim (`text_verbatim`: `get`/`get_all` never re-parse a TEXT cell that looks like JSON), with the full DiscordChatExporter message object kept compressed in `discord_messages.raw`. Needs DiscordChatExporter >= 2.45 (older versions fail on an empty `--after` window). No `_SCHEMA_VERSION` bump: raw and edgar are untouched | No — durable |
 | `.store/prices.duckdb` | Daily prices (#156, moved here before the fill, 2026-10-09): `price_bars_daily`, `price_actions` and their watermarks `price_checks` (the shape of `source_checks`, which stays in raw for the identity stamps), and the SPX daily levels `index_levels_daily` (D03, #293, moved here before its writer, 2026-10-10). One file, so a chunk's bars, actions and watermarks commit in one transaction (`rawstore.atomic(..., db="prices")`); about 2.4 GiB after the `period="max"` fill, kept out of raw's weekly copies. Made by the first store call; a store from before has the two tables (and the price rows of `source_checks`; from #293 also the empty `index_levels_daily`) moved over once by that call: copied, checked row by row (`EXCEPT`), then dropped from raw; each table is added to the `migration_manifest` row `price_tables_to_prices_db` in the transaction that removes it from raw. A conflicting row stops that table's move with a warning and overwrites nothing. Two processes starting together may both run the move: what the other one already moved is left alone and logged at INFO. No `_SCHEMA_VERSION` bump (the #72 precedent): an older checkout recreates the empty raw tables and ignores this file. Backup: 2 nightly snapshots, no weekly copy (append-only, so the newest holds every row); off this machine once a week, 1 copy | No — durable |
-| `discord_media/{channel_id}/…` | Attachments downloaded by DiscordChatExporter. Dir via `RC_DISCORD_MEDIA_DIR` | No — durable; backed up nightly as an incremental, verified mirror (`discord_media_mirror/` next to the DB snapshots). Re-downloadable only while the message still exists on Discord: CDN links expire and deleted messages cannot be fetched again |
 | `edgar_docs/{cik}/{accession}.html.gz` | Raw 10-K/20-F HTML (the durable raw-document record; keyed by CIK + accession). Dir via `RC_EDGAR_DOCS_DIR` | No — durable; backed up as a tree |
 | `.cache/sec_13f/*_form13f.zip` | Downloaded SEC 13F source archives (re-downloadable from SEC) | Yes — deletable after ingest (tracked in `ingested_zips`) |
 | `.cache/` | All regenerable outputs: `*_latest.json`, `*_latest.html` (flat and nested), PNGs, timestamped archives | Yes — delete anytime; re-run regenerates |
@@ -409,7 +409,7 @@ filing sync, listed in `core/automations.py`; `register_tasks.ps1` installs only
 the dashboard both touch the store files, and inside the dashboard the `app/jobs.py`
 worker thread writes while Flask request threads read. So:
 
-- **Files by write-pattern, not one per domain.** (`discord.duckdb`, #72, is
+- **Files by write-pattern, not one per domain.** (`prices.duckdb`, #156, is
   append-mostly third-party text with its own backup retention; it never joins
   raw tables. `prices.duckdb`, #156, is the append-only daily price history,
   large, with its own backup rule; its writer touches no other file.) `raw.duckdb` (structured
@@ -725,9 +725,6 @@ schema, reachable with path expressions like `payload.market_cap::DOUBLE`).
 | `equity_universe_provenance` | `key`, `generated_at`, `refreshed_by` | — |
 | `ticker_payload_cache` | `ticker`, `fetched_at DOUBLE`, `fetched_at_iso` (hoisted out of the payload) | `payload` (rest of the yfinance dict) |
 | `edgar_financials` (edgar DB) | `ticker`, `fetched_at DOUBLE` | `meta`; `annual`, `quarterly` are **zlib-compressed JSON** (`BLOB`, see `compress`) |
-| `discord_channels` (discord DB) | `channel_id`, `guild_id`, `guild_name`, `name`, `category`, `topic`, `kind`, `enabled BOOLEAN`, `discovered_at`, `last_export_at` | — |
-| `discord_messages` (discord DB) | `message_id`, `channel_id`, `author_id`, `author_name`, `is_bot BOOLEAN`, `kind`, `ts`, `edited_ts`, `content`, `is_pinned BOOLEAN`, `reply_to_id`, `reference_id`, `reference_kind` | `attachments`, `embeds`, `reactions`, `mentions`; `raw` is the **zlib-compressed JSON** DCE message object (`BLOB`) |
-| `discord_export_runs` (discord DB) | `run_id`, `channel_id`, `started_at`, `finished_at`, `after_id`, `message_count BIGINT`, `status`, `detail` | — |
 | `edgar_documents` (edgar DB) | `accession`, `cik`, `tickers`, `form`, `filed`, `fiscal_year`, `doc_url`, `path`, `sha256`, `bytes_raw`, `bytes_gzip`, `fetched_at`, `source`, `run_at` (#299; added to an existing store by `ALTER TABLE ADD COLUMN`, no bump) | — |
 | `chain_filings` (edgar DB) | `ticker`, `cik`, `form`, `filed`, `accession`, `primary_doc`, `quality`, `fetched_at` | `item_text` is **zlib-compressed text** (`BLOB`) |
 | `chain_mentions` / `chain_meta` (edgar DB) | `src`, `dst_name`, `dst_ticker`, `relation`, `snippet`, `filed`, `share_pct DOUBLE` (the share of the filer's sales or purchases a concentration sentence states; NULL on a keyword edge; #387 D7, added by ALTER at the first call) / `key`, `value`, `fetched_at DOUBLE` (#127; NULL on older rows is unknown, never 0; added by ALTER, no bump) | — |
@@ -935,7 +932,7 @@ Two separate things, deliberately not conflated:
   `register_tasks.ps1`). Per file: CHECKPOINT (through rawstore, so a busy store
   is waited out), copy, then verify every table's row count **and** content
   checksum (`sum(hash(row))`) against the live file; a busy store, a failed copy,
-  a mismatch or a copy that opens but cannot be read (a damaged data block) is retried (bounded). Retains 5 `raw_*`, 2 `edgar_*`, 2 `discord_*`, 5 `history_*` (`--keep-history`; only once
+  a mismatch or a copy that opens but cannot be read (a damaged data block) is retried (bounded). Retains 5 `raw_*`, 2 `edgar_*`, 5 `history_*` (`--keep-history`; only once
   `history.duckdb` exists, #287), 2 `prices_*` (`--keep-prices`, #156; no weekly copy, because the price tables
   are append-only and the newest snapshot holds every row: about 4.7 GiB locally at the expected 2.4 GiB file)
   snapshots and 2 `edgar_docs_*.zip` archives (verified: member CRCs + file count; an unchanged tree reuses the
@@ -954,18 +951,11 @@ Two separate things, deliberately not conflated:
   document is never reused: a new one is zipped and verified, then the damaged one is removed. An archive from before
   #336 has no fingerprint, so the first run after the change zips the tree once more. A file whose content changed
   with the same size and the same modified time is not seen. Restore is unchanged: unzip the chosen archive.
-- **Discord media (#248)** — `discord_media/` is not zipped; it is mirrored into
-  `discord_media_mirror/` in the same backup folder. A run reads only new or changed files
-  (a `stat` walk: same size and an mtime within 2 s means unchanged), copies each through
-  `discord_media_mirror/.tmp/` and verifies size and SHA-256 before replacing the mirror
-  file, and leaves a file modified in the last 10 minutes (still downloading) for the next
-  run. The mirror is **additive**: a file deleted from `discord_media/` stays in the mirror,
-  which is what keeps attachments of messages later deleted on Discord. The log line is
-  `discord_media mirror OK: <copied> copied, <unchanged> unchanged, <n> in flight, <total> files`.
-  The mirror sits on the same disk as the live tree, so on its own it protects against deletion and
-  corruption, not against losing the disk; the off-machine copy below copies it to a second folder.
-  Old `discord_media_*.zip` archives from earlier backups are not touched or pruned any more
-  and can be deleted by hand once a mirror run has succeeded.
+- **The Discord archive is no longer backed up here (October 2026)** — it became its own app and backs
+  itself up. `discord.duckdb` is not snapshotted and the attachment tree is not mirrored. The
+  `discord_*.duckdb` snapshots and the `discord_media_mirror/` folder an earlier run left in the backup
+  folder are **not** pruned, deleted or scanned by anything here; they stay until the owner removes them
+  by hand, after the new app has taken a verified backup of its own.
 - **Weekly raw copy (#277, bounded by #342)** — the first verified `raw_*` snapshot of each ISO week (by its UTC
   stamp) is also copied to `weekly/` in the same backup folder. The copy is written under a temporary name,
   fingerprinted against the snapshot (row count and content checksum per table) and only then renamed, so a failed
@@ -980,9 +970,10 @@ Two separate things, deliberately not conflated:
   does not touch them: deleting them is the owner's own step. Log line: `weekly backup OK: <path>`, printed only in
   the run that writes a week's copy.
 - **SPX Gamma tree (#276)** — `module_spx_gamma/data/` (or `SPX_GAMMA_DATA_ROOT`) is mirrored into
-  `spx_gamma_mirror/` in the same backup folder, by the rules of the `discord_media` mirror above: a `stat` walk,
-  each copy through `spx_gamma_mirror/.tmp/` and verified by size and SHA-256, a file modified in the last 10 minutes
-  waits for the next run, and nothing is ever deleted from the mirror. Two extra rules for this tree. A `.json` file
+  `spx_gamma_mirror/` in the same backup folder, incrementally: a `stat` walk decides what changed (same size and
+  an mtime within 2 s means unchanged), each copy goes through `spx_gamma_mirror/.tmp/` and is verified by size and
+  SHA-256 before it replaces the mirror file, a file modified in the last 10 minutes (still being written) waits for
+  the next run, and nothing is ever deleted from the mirror. Two extra rules for this tree. A `.json` file
   that no longer parses never replaces a mirror copy that does: the run keeps the good copy, prints
   `spx mirror WARNING: kept the previous copy of <n> file(s) whose source is not valid JSON: <names>` and exits 1
   after every other step has run; a repaired source replaces the copy on the next run. And every version of the two
@@ -990,14 +981,14 @@ Two separate things, deliberately not conflated:
   `<name>.<UTC mtime>.json` in `spx_gamma_versions/`, beside the mirror, that is never replaced or pruned and is
   checked against the verified mirror copy (SHA-256) before it gets its name. Log line:
   `spx mirror OK: <copied> copied, <unchanged> unchanged, <n> in flight, <total> files`. About 1.3 GB a year (the
-  review's estimate). Like the Discord mirror it sits on the same disk as the live tree; the off-machine copy below
-  copies it and `spx_gamma_versions/` too. #179 retires it when it moves the tree into DuckDB.
+  review's estimate). It sits on the same disk as the live tree, so on its own it protects against deletion and
+  corruption, not against losing the disk; the off-machine copy below copies it and `spx_gamma_versions/` too. #179 retires it when it moves the tree into DuckDB.
 - **Off-machine copy (#275, #349)** — set `RAW_STORE_BACKUP_MIRROR` (in `.env`; empty means off and the step does
   nothing) to a folder that is not on this machine's disk: a Google Drive for desktop folder or an external disk.
   After a nightly run in which every step above was verified, `backup_store` copies the newest snapshot of each kind
-  and the three mirror folders (`discord_media_mirror/`, `spx_gamma_mirror/`, `spx_gamma_versions/`) into the
+  and the two mirror folders (`spx_gamma_mirror/`, `spx_gamma_versions/`) into the
   sub-folder `RevenueChaser-backup` of that folder, so it may be an existing Drive folder: nothing outside the
-  sub-folder is written, pruned or deleted. The small kinds, `discord_*` and `history_*`, go every run and the newest
+  sub-folder is written, pruned or deleted. The small kind, `history_*`, goes every run and the newest
   `--keep-mirror` (default 3) stay. The big kinds, `raw_*` and `edgar_*` snapshots and `edgar_docs_*.zip` (about
   1.9 GB a set on 2026-10-08), go at most every 7 days: only when the newest copy of that kind there is at least
   `--mirror-big-every-days` calendar days old (default 7; `0` sends them every run), or there is none yet, or the run
@@ -1053,11 +1044,10 @@ Two separate things, deliberately not conflated:
   `RAW_STORE_BACKUP_MIRROR_WARN_GB` (default 320, 80% of the 400 GB Google quota) off-machine (GB = 10^9 bytes; set
   either in `.env`).
 - **Restore** — `python -m RevenueChaser.scripts.restore_store --list`, then
-  `... restore_store --latest raw` (or `edgar`, `discord`, `history`, `prices`, or a snapshot file name). Refuses
+  `... restore_store --latest raw` (or `edgar`, `history`, `prices`, or a snapshot file name). Refuses
   while a RevenueChaser process uses the store, verifies the snapshot, keeps the
   current file as `<name>.duckdb.pre-restore`. `edgar_docs/` is restored by
-  unzipping the chosen archive over the folder; `discord_media/` by copying `discord_media_mirror/`
-  back over it (an old `discord_media_*.zip` is unzipped the same way); the SPX tree by copying
+  unzipping the chosen archive over the folder; the SPX tree by copying
   `spx_gamma_mirror/` back over `module_spx_gamma/data` (stop the dashboard first; an earlier version of
   `brier.json` or the GEX history comes from `spx_gamma_versions/`). A weekly copy is restored with
   `... restore_store --from <backup dir>\weekly --latest raw`. From the off-machine folder use the same

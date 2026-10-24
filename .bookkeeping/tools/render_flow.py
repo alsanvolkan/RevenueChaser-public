@@ -16,13 +16,13 @@ from flow_data import (AREAS, AS_OF, CHART_J2S, CHART_JOBS, CHART_S2J, CHART_SOU
 
 TOKENS = """:root{
   --bg:#f4f6f8; --panel:#ffffff; --fg:#17202b; --muted:#5a6676; --line:#d5dce5;
-  --raw:#1f5fa6; --raw-bg:#e7f0fa; --edgar:#2b7a4b; --edgar-bg:#e5f4ea; --discord:#6a4bb0; --discord-bg:#efeafb;
+  --raw:#1f5fa6; --raw-bg:#e7f0fa; --edgar:#2b7a4b; --edgar-bg:#e5f4ea;
   --files:#9a5a12; --files-bg:#faf0e2; --none:#a8402f; --none-bg:#fbe9e6; --accent:#1f5fa6;
   --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#11161d; --panel:#18202a; --fg:#e4e9ef; --muted:#9aa6b4; --line:#2b3644;
-  --raw:#7fb2ec; --raw-bg:#17283c; --edgar:#7cc99a; --edgar-bg:#15291e; --discord:#b5a0ee; --discord-bg:#241d38;
+  --raw:#7fb2ec; --raw-bg:#17283c; --edgar:#7cc99a; --edgar-bg:#15291e;
   --files:#e2a865; --files-bg:#33240f; --none:#ee8f7f; --none-bg:#3a1c17; --accent:#7fb2ec; color-scheme:dark}}
 """
 
@@ -40,7 +40,7 @@ def curve(x1, y1, x2, y2, cls):
 def svg(standalone=False):
     height = max(700, jy(len(CHART_JOBS) - 1) + H + 20,
                  max(y0 + h for y0, h, *_ in CHART_STORES.values()) + 20)
-    head = f'<svg xmlns="http://www.w3.org/2000/svg" class="flowsvg" viewBox="0 0 1080 {height}" role="img" aria-label="Sources feed jobs, jobs write to raw.duckdb, edgar.duckdb, discord.duckdb or files">'
+    head = f'<svg xmlns="http://www.w3.org/2000/svg" class="flowsvg" viewBox="0 0 1080 {height}" role="img" aria-label="Sources feed jobs, jobs write to raw.duckdb, edgar.duckdb, prices.duckdb or files">'
     o = [head]
     if standalone:
         o.append("<style>" + TOKENS + CSS.replace(".flowsvg{width:100%;min-width:760px;height:auto;display:block}", "") + "</style>")
@@ -87,18 +87,18 @@ CSS = """
 .flowsvg path{fill:none;stroke-width:1.4;opacity:.75}
 .flowsvg .e-src{stroke:var(--muted);opacity:.35}
 .flowsvg .e-raw{stroke:var(--raw)} .flowsvg .e-edgar{stroke:var(--edgar)} .flowsvg .e-files{stroke:var(--files)}
-.flowsvg .e-discord{stroke:var(--discord)} .flowsvg .e-none{stroke:var(--none);stroke-dasharray:4 3}
+.flowsvg .e-none{stroke:var(--none);stroke-dasharray:4 3}
 .flowsvg .b-st{stroke-width:1.5}
 .flowsvg .s-raw{fill:var(--raw-bg);stroke:var(--raw)} .flowsvg .s-edgar{fill:var(--edgar-bg);stroke:var(--edgar)}
-.flowsvg .s-files{fill:var(--files-bg);stroke:var(--files)} .flowsvg .s-discord{fill:var(--discord-bg);stroke:var(--discord)}
+.flowsvg .s-files{fill:var(--files-bg);stroke:var(--files)}
 .flowsvg .s-none{fill:var(--none-bg);stroke:var(--none);stroke-dasharray:4 3}
 .flowsvg .c-raw{fill:var(--raw)} .flowsvg .c-edgar{fill:var(--edgar)} .flowsvg .c-files{fill:var(--files)}
-.flowsvg .c-discord{fill:var(--discord)} .flowsvg .c-none{fill:var(--none)}
+.flowsvg .c-none{fill:var(--none)}
 """
 
 
 E = html.escape
-DBLABEL = {"raw": "raw.duckdb", "edgar": "edgar.duckdb", "discord": "discord.duckdb", "prices": "prices.duckdb",
+DBLABEL = {"raw": "raw.duckdb", "edgar": "edgar.duckdb", "prices": "prices.duckdb",
            "files": "file on disk", "none": "not stored"}
 
 
@@ -146,17 +146,17 @@ def build_html():
 /* Layout: one column of areas; each dataset is a left-to-right pipeline that stacks on phones. */
 :root{
   --bg:#f4f6f8; --panel:#ffffff; --fg:#17202b; --muted:#5a6676; --line:#d5dce5;
-  --raw:#1f5fa6; --raw-bg:#e7f0fa; --edgar:#2b7a4b; --edgar-bg:#e5f4ea; --discord:#6a4bb0; --discord-bg:#efeafb;
+  --raw:#1f5fa6; --raw-bg:#e7f0fa; --edgar:#2b7a4b; --edgar-bg:#e5f4ea;
   --files:#9a5a12; --files-bg:#faf0e2; --none:#a8402f; --none-bg:#fbe9e6; --accent:#1f5fa6;
   --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#11161d; --panel:#18202a; --fg:#e4e9ef; --muted:#9aa6b4; --line:#2b3644;
-  --raw:#7fb2ec; --raw-bg:#17283c; --edgar:#7cc99a; --edgar-bg:#15291e; --discord:#b5a0ee; --discord-bg:#241d38;
+  --raw:#7fb2ec; --raw-bg:#17283c; --edgar:#7cc99a; --edgar-bg:#15291e;
   --files:#e2a865; --files-bg:#33240f; --none:#ee8f7f; --none-bg:#3a1c17; --accent:#7fb2ec; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#11161d; --panel:#18202a; --fg:#e4e9ef; --muted:#9aa6b4; --line:#2b3644;
-  --raw:#7fb2ec; --raw-bg:#17283c; --edgar:#7cc99a; --edgar-bg:#15291e; --discord:#b5a0ee; --discord-bg:#241d38;
+  --raw:#7fb2ec; --raw-bg:#17283c; --edgar:#7cc99a; --edgar-bg:#15291e;
   --files:#e2a865; --files-bg:#33240f; --none:#ee8f7f; --none-bg:#3a1c17; --accent:#7fb2ec; color-scheme:dark}
 body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:14px;line-height:1.5}
 .wrap{max-width:1180px;margin:0 auto;padding-inline:16px;padding-block:24px 48px;display:grid;gap:28px}
@@ -169,7 +169,7 @@ code{font-family:var(--mono);font-size:12.5px}
 .legend{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .db{display:inline-block;text-transform:none;letter-spacing:0;font-family:var(--mono);font-size:11.5px;font-weight:500;padding:1px 7px;border-radius:4px;border:1px solid currentColor;white-space:nowrap}
 .db-raw{color:var(--raw);background:var(--raw-bg)} .db-edgar{color:var(--edgar);background:var(--edgar-bg)}
-.db-discord{color:var(--discord);background:var(--discord-bg)} .db-files{color:var(--files);background:var(--files-bg)}
+.db-files{color:var(--files);background:var(--files-bg)}
 .db-none{color:var(--none);background:var(--none-bg)}
 .stores{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
 .store{background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--c);border-radius:6px;padding:14px;display:grid;gap:10px;align-content:start;min-width:0}
@@ -189,7 +189,7 @@ code{font-family:var(--mono);font-size:12.5px}
 .node .lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .node .v{overflow-wrap:anywhere}
 .node-store{border-width:1px 1px 1px 4px}
-.store-raw{border-left-color:var(--raw)} .store-edgar{border-left-color:var(--edgar)} .store-discord{border-left-color:var(--discord)}
+.store-raw{border-left-color:var(--raw)} .store-edgar{border-left-color:var(--edgar)}
 .store-files{border-left-color:var(--files)} .store-none{border-left-color:var(--none);border-style:dashed}
 .node-none{border-style:dashed;color:var(--muted)}
 .cite{font-family:var(--mono);font-size:11px;color:var(--muted);overflow-wrap:anywhere}
@@ -218,7 +218,7 @@ __SVGCSS__
   <h1>RevenueChaser Data Flow</h1>
   <p class="sub">Where each dataset is stored today: the DuckDB file and table, the function that writes it, its source, its key and write rule, and how long it stays. Source basis: __ASOF__. The last line of each card is the step 2.3 draft target. Grey text is the source of each fact: a file:line, a manifest line (<code>:NNNN</code> = core/rawstore.py) or a lineage row (R2, C2, O2).</p>
   <div class="legend"><span class="sub">Stored in:</span>""")
-    for k in ("raw", "edgar", "discord", "files", "none"):
+    for k in ("raw", "edgar", "files", "none"):
         out.append(chip(k))
     out.append("""</div>
 </header>
@@ -232,7 +232,7 @@ __SVGCSS__
 <section>
   <h2>What each store file holds</h2>
   <div class="stores">""")
-    colors = {"raw": "var(--raw)", "edgar": "var(--edgar)", "discord": "var(--discord)", "files": "var(--files)",
+    colors = {"raw": "var(--raw)", "edgar": "var(--edgar)", "files": "var(--files)",
               "history": "var(--files)", "prices": "var(--files)"}
     for key, name, path, groups in STORES:
         out.append(f'<div class="store" style="--c:{colors[key]}"><h3>{E(name)}</h3><div class="cite">{E(path)}</div>')
@@ -241,7 +241,7 @@ __SVGCSS__
             out.append(f'<div class="grp"><div class="gl">{E(gname)} · {len(items)}</div><div class="tags">{tags}</div></div>')
         out.append("</div>")
     out.append("""</div>
-  <p class="sub" style="margin-top:10px">Backups: the RC-Store-Backup task backs up raw.duckdb, edgar.duckdb, discord.duckdb and prices.duckdb (2 snapshots, no weekly copy, #156) (and history.duckdb once it exists) every day at 04:00 with --keep 5, mirrors the Discord media and SPX Gamma trees, keeps the first raw snapshot of each week and, when RAW_STORE_BACKUP_MIRROR is set, copies it off this machine, the big raw/edgar files at most once a week, prices last and once a week with 1 copy kept (#156), and the weekly copies not at all (#349; core/automations.py:118-123; scripts/backup_store.py offmachine_copy).</p>
+  <p class="sub" style="margin-top:10px">Backups: the RC-Store-Backup task backs up raw.duckdb, edgar.duckdb and prices.duckdb (2 snapshots, no weekly copy, #156) (and history.duckdb once it exists) every day at 04:00 with --keep 5, mirrors the SPX Gamma tree, keeps the first raw snapshot of each week and, when RAW_STORE_BACKUP_MIRROR is set, copies it off this machine, the big raw/edgar files at most once a week, prices last and once a week with 1 copy kept (#156), and the weekly copies not at all (#349; core/automations.py:118-123; scripts/backup_store.py offmachine_copy).</p>
 </section>""")
 
     for area, dss in AREAS:
@@ -288,7 +288,7 @@ def build_md():
         L.append(f"- **{name}** ({path})")
         for gname, items in groups:
             L.append(f"  - {gname} ({len(items)}): " + ", ".join(f"`{i}`" for i in items))
-    L.append("- Backups: RC-Store-Backup backs up raw, edgar, discord and prices.duckdb (2 snapshots, no weekly copy, #156) (and history.duckdb once it exists) daily at 04:00 with --keep 5, mirrors the Discord media and SPX Gamma trees, keeps the first raw snapshot of each week and, when RAW_STORE_BACKUP_MIRROR is set, copies it off this machine, the big raw/edgar files at most once a week, prices last and once a week with 1 copy kept (#156), and the weekly copies not at all (#349; core/automations.py:118-123; scripts/backup_store.py offmachine_copy).")
+    L.append("- Backups: RC-Store-Backup backs up raw, edgar and prices.duckdb (2 snapshots, no weekly copy, #156) (and history.duckdb once it exists) daily at 04:00 with --keep 5, mirrors the SPX Gamma tree, keeps the first raw snapshot of each week and, when RAW_STORE_BACKUP_MIRROR is set, copies it off this machine, the big raw/edgar files at most once a week, prices last and once a week with 1 copy kept (#156), and the weekly copies not at all (#349; core/automations.py:118-123; scripts/backup_store.py offmachine_copy).")
     L.append("")
     for area, dss in AREAS:
         L.append(f"## {area}"); L.append("")

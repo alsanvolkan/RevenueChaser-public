@@ -52,17 +52,16 @@ def _cancel_on_bind(monkeypatch):
 
 # ── registrations ─────────────────────────────────────────────────────────────
 
-def test_the_five_long_writers_are_cancellable_and_only_daily_bars_has_a_deadline():
+def test_the_four_long_writers_are_cancellable_and_only_daily_bars_has_a_deadline():
     assert jobs._CANCELLABLE["module_sec_13f"] is True
     assert jobs._CANCELLABLE["edgar_sync"] is True
     assert jobs._CANCELLABLE["identity"] is True
     assert jobs._CANCELLABLE["daily_bars"] is True
-    assert jobs._CANCELLABLE["module_discord"] is True
     assert jobs._DEADLINE["daily_bars"] == 9600
-    for module in ("module_sec_13f", "edgar_sync", "identity", "module_discord"):
+    for module in ("module_sec_13f", "edgar_sync", "identity"):
         assert jobs._DEADLINE[module] is None, module
     text = Path(_dashboard.__file__).read_text(encoding="utf-8")
-    assert text.count(_NO_DEADLINE) == 4
+    assert text.count(_NO_DEADLINE) == 3
 
 
 # ── 13F: between zips, before any holdings write ──────────────────────────────
@@ -400,51 +399,3 @@ def test_a_bars_run_inside_its_deadline_writes_the_session(sync_jobs, rawstore_t
     assert "deadline" not in (job["error"] or "")
     assert uw.requests == ["AAA"]
     assert rows_for("AAA", "2026-10-08")
-
-
-# ── Discord: between channels, before the channel export ─────────────────────
-
-_CHANNEL = "900000000000000010"
-
-
-def _quiet_discord(monkeypatch, tmp_path):
-    from RevenueChaser.module_discord import exporter, store
-    from RevenueChaser.module_discord.tests.test_engine import FakeCli
-    exe = tmp_path / "dce-fake"
-    exe.write_text("")
-    monkeypatch.setenv("RC_DCE_CLI", str(exe))
-    monkeypatch.setenv("DISCORD_TOKEN", "test-token-not-real")
-    store.upsert_discovered([{"channel_id": _CHANNEL, "guild_id": "g", "name": "ideas", "category": "y"}])
-    store.set_enabled([_CHANNEL], True)
-    cli = FakeCli()
-    monkeypatch.setattr(exporter, "run_cli", cli)
-    return cli
-
-
-def test_a_discord_deadline_at_the_first_channel_writes_nothing(sync_jobs, rawstore_tmp_db, monkeypatch, tmp_path):
-    cli = _quiet_discord(monkeypatch, tmp_path)
-    job = _run("module_discord", deadline_s=0, params={"channel_id": _CHANNEL, "force": True})
-    assert job["status"] == "error", job
-    assert "deadline" in job["error"] and f"Discord channel {_CHANNEL}" in job["error"]
-    assert cli.calls == []
-    assert rawstore.count("discord_messages") == 0
-    assert rawstore.count("discord_export_runs") == 0
-
-
-def test_a_discord_cancel_at_the_first_channel_writes_nothing(sync_jobs, rawstore_tmp_db, monkeypatch, tmp_path):
-    cli = _quiet_discord(monkeypatch, tmp_path)
-    _cancel_on_bind(monkeypatch)
-    job = _run("module_discord", deadline_s=3600, params={"channel_id": _CHANNEL, "force": True})
-    assert job["status"] == "cancelled", job
-    assert f"Discord channel {_CHANNEL}" in job["message"]
-    assert cli.calls == []
-    assert rawstore.count("discord_messages") == 0
-
-
-def test_a_discord_run_inside_its_deadline_stores_the_channel(sync_jobs, rawstore_tmp_db, monkeypatch, tmp_path):
-    cli = _quiet_discord(monkeypatch, tmp_path)
-    job = _run("module_discord", deadline_s=3600, params={"channel_id": _CHANNEL, "force": True})
-    assert job["status"] == "done", job
-    assert "deadline" not in (job["error"] or "")
-    assert any(c[0][0] == "export" for c in cli.calls)
-    assert rawstore.count("discord_messages") == 6

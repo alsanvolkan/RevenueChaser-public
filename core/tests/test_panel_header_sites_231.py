@@ -68,11 +68,11 @@ SOURCE_POSTS = {rel: post_calls(text) for rel, text in SOURCES.items() if _POST.
 
 
 def test_the_source_scan_sees_the_known_write_sites():
-    """10 fetch POSTs on e83aa26; a count that drops means the scan went blind."""
-    assert sum(len(v) for v in SOURCE_POSTS.values()) >= 10
+    """8 fetch POSTs once the Discord board left (10 before it, on e83aa26); a count that drops
+    means the scan went blind."""
+    assert sum(len(v) for v in SOURCE_POSTS.values()) >= 8
     assert {"templates/dashboard.html", "core/reporting_common.py", "module_settings/report.py",
-            "module_leaps/report.py", "module_uw_interaction/report.py",
-            "module_discord/report.py"} <= set(SOURCE_POSTS)
+            "module_leaps/report.py", "module_uw_interaction/report.py"} <= set(SOURCE_POSTS)
 
 
 @pytest.mark.parametrize("rel", sorted(SOURCE_POSTS))
@@ -96,7 +96,7 @@ def test_no_write_goes_around_fetch(rel):
 # ── the rendered pages ─────────────────────────────────────────────────────────
 
 # POST calls each page ships (JOB_JS is shared by the boards that carry a settings reset).
-EXPECTED_POSTS = {"module_discord": 2, "module_uw_interaction": 1, "module_leaps": 1,
+EXPECTED_POSTS = {"module_uw_interaction": 1, "module_leaps": 1,
                   "module_settings": 4}
 
 

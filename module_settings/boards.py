@@ -179,10 +179,6 @@ BOARD_INPUTS: list[dict] = [
            lambda: _json("financials", "financials_latest.json")),
     _board("module_uw_interaction", "UW Interaction (lab)", [],
            lambda: _json("uw_interaction", "uw_interaction_latest.json")),
-    # Rendered in memory (no cached payload). A missing file is ``not_rendered``.
-    _board("module_discord", "Discord",
-           ["discord_channels", "discord_messages", "discord_export_runs"],
-           lambda: _json("discord", "discord_latest.json")),
     _board("module_comovement", "Co-movement",
            ["equity_universe", "swing_ohlc"],
            lambda: comov_config.COMOVEMENT_JSON,

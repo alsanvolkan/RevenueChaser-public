@@ -1,5 +1,5 @@
 """#276 (review B3): the SPX Gamma data tree is mirrored by the nightly backup, incrementally and verified
-(the ``discord_media`` pattern, #248). Temp trees only: no test here reads or writes the real tree."""
+(the #248 mechanism). Temp trees only: no test here reads or writes the real tree."""
 from __future__ import annotations
 
 import os
@@ -47,7 +47,7 @@ def _counts(res):
 
 def test_the_unit_suite_never_points_at_the_real_spx_tree():
     """G1 (2026-09-30 SPX review): a test once wrote into the real ``brier.json``. The root conftest
-    redirects the tree, as it does ``.store`` and ``discord_media``, so a test that forgets to pass a
+    redirects the tree, as it does ``.store`` and ``edgar_docs``, so a test that forgets to pass a
     root still cannot reach the real one."""
     root = Path(spx_config.DATA_ROOT).resolve()
     assert root != _REAL_TREE.resolve()
@@ -131,11 +131,11 @@ def test_mirror_defaults_to_the_spx_module_data_root(tmp_path, monkeypatch):
     assert res.total == 5
 
 
-def test_spx_mirror_name_does_not_collide_with_a_snapshot_or_the_discord_mirror(rawstore_tmp_db, tmp_path):
+def test_spx_mirror_name_does_not_collide_with_a_snapshot(rawstore_tmp_db, tmp_path):
     from RevenueChaser.scripts import restore_store as rs
     out = tmp_path / "out"
     bs.mirror_spx_gamma(src=_tree(tmp_path), out_dir=out)
-    assert (out / _MIRROR).is_dir() and _MIRROR != bs.MEDIA_MIRROR_DIRNAME
+    assert (out / _MIRROR).is_dir()
     assert rs.snapshots(out) == []
 
 
@@ -273,15 +273,16 @@ def test_dated_copies_stay_when_the_source_is_lost(tmp_path):
     assert (out / _MIRROR / "brier.json").read_bytes() == _FILES["brier.json"]
 
 
-def test_the_json_guard_belongs_to_the_spx_tree_not_to_discord_attachments(tmp_path):
-    src = tmp_path / "media"
+def test_the_json_guard_belongs_to_the_spx_tree_not_to_every_mirror(tmp_path):
+    """``json_guard`` is an argument of ``_mirror_tree``, off by default: only the SPX tree passes it.
+    Another tree's ``.json`` file that stops being valid JSON is mirrored like any other file."""
+    src, dest = tmp_path / "other", tmp_path / "out" / "other_mirror"
     _put(src, "900/notes.json", b'{"valid": true}')
-    out = tmp_path / "out"
-    bs.mirror_discord_media(src=src, out_dir=out)
-    _put(src, "900/notes.json", b"this attachment is just text", age_s=1800)
-    res = bs.mirror_discord_media(src=src, out_dir=out)
+    assert bs._mirror_tree(src, dest, 600.0, "other mirror").copied == 1
+    _put(src, "900/notes.json", b"this file is just text", age_s=1800)
+    res = bs._mirror_tree(src, dest, 600.0, "other mirror")
     assert res.copied == 1 and res.rejected == ()
-    assert (out / bs.MEDIA_MIRROR_DIRNAME / "900" / "notes.json").read_bytes() == b"this attachment is just text"
+    assert (dest / "900" / "notes.json").read_bytes() == b"this file is just text"
 
 
 def test_main_keeps_going_after_a_rejected_file_and_exits_red(rawstore_tmp_db, tmp_path, capsys, monkeypatch):

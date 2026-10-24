@@ -690,15 +690,14 @@ def test_the_weekly_copy_and_the_docs_archive_are_recorded_and_a_pruned_archive_
     assert first.name not in m and m[second.name]["sha256"] == _sha(second)
 
 
-def test_the_mirrors_record_the_hash_of_each_copied_file(tmp_path):
+def test_the_mirror_records_the_hash_of_each_copied_file(tmp_path):
     out = tmp_path / "out"
-    _old_file(tmp_path / "media" / "900" / "a.png", b"A" * 64)
+    _old_file(tmp_path / "spx" / "900" / "a.png", b"A" * 64)
     _old_file(tmp_path / "spx" / "brier.json", b'{"records": []}')
-    bs.mirror_discord_media(src=tmp_path / "media", out_dir=out, settle_s=0)
     bs.mirror_spx_gamma(src=tmp_path / "spx", out_dir=out, settle_s=0)
     m = _manifest(out)
-    media = out / bs.MEDIA_MIRROR_DIRNAME / "900" / "a.png"
-    assert m[f"{bs.MEDIA_MIRROR_DIRNAME}/900/a.png"] == {"size": 64, "sha256": _sha(media)}
+    png = out / bs.SPX_MIRROR_DIRNAME / "900" / "a.png"
+    assert m[f"{bs.SPX_MIRROR_DIRNAME}/900/a.png"] == {"size": 64, "sha256": _sha(png)}
     assert m[f"{bs.SPX_MIRROR_DIRNAME}/brier.json"]["sha256"] == _sha(out / bs.SPX_MIRROR_DIRNAME / "brier.json")
     (dated,) = (out / bs.SPX_VERSIONS_DIRNAME).glob("brier.*.json")
     assert m[f"{bs.SPX_VERSIONS_DIRNAME}/{dated.name}"]["sha256"] == _sha(dated)
@@ -706,17 +705,17 @@ def test_the_mirrors_record_the_hash_of_each_copied_file(tmp_path):
 
 @pytest.fixture
 def backed_up(rawstore_tmp_db, tmp_path):
-    """A backup folder with a raw snapshot, its weekly copy, a docs archive and a media mirror, all recorded."""
+    """A backup folder with a raw snapshot, its weekly copy, a docs archive and the SPX mirror, all recorded."""
     _seed()
     _bulk_rows()
     docs, out = _docs_tree(tmp_path)
     snap = bs.snapshot(out_dir=out, keep=3)
     weekly = bs.keep_weekly(snap, out_dir=out, enabled=True)
     archive = bs.archive_edgar_docs(src=docs, out_dir=out, keep=2).path
-    _old_file(tmp_path / "media" / "900" / "a.png", b"A" * 64)
-    bs.mirror_discord_media(src=tmp_path / "media", out_dir=out, settle_s=0)
+    _old_file(tmp_path / "spx" / "900" / "a.png", b"A" * 64)
+    bs.mirror_spx_gamma(src=tmp_path / "spx", out_dir=out, settle_s=0)
     return {"out": out, "snap": snap, "weekly": weekly, "zip": archive,
-            "media": out / bs.MEDIA_MIRROR_DIRNAME / "900" / "a.png"}
+            "mirrored": out / bs.SPX_MIRROR_DIRNAME / "900" / "a.png"}
 
 
 def _failed(res) -> list[str]:
@@ -730,10 +729,10 @@ def test_the_scan_passes_an_intact_backup_folder(backed_up, clock):
 
 def test_the_scan_detects_a_flipped_byte_with_the_same_size_and_mtime(backed_up, clock):
     """The mirror's own ``stat`` check would call this file current; only the copy-time hash sees the change."""
-    f = backed_up["media"]
+    f = backed_up["mirrored"]
     _flip_byte_keeping_size_and_mtime(f)
     res = bs.integrity_scan(backed_up["out"], now=True)
-    assert _failed(res) == [f"{bs.MEDIA_MIRROR_DIRNAME}/900/a.png"]
+    assert _failed(res) == [f"{bs.SPX_MIRROR_DIRNAME}/900/a.png"]
     assert "SHA-256" in res.failures[0][1]
 
 
@@ -748,11 +747,11 @@ def test_the_scan_detects_a_corrupt_edgar_docs_zip(backed_up, clock):
 
 
 def test_the_scan_reports_a_size_change_and_a_missing_file(backed_up, clock):
-    with open(backed_up["media"], "ab") as fh:
+    with open(backed_up["mirrored"], "ab") as fh:
         fh.write(b"more")
     backed_up["snap"].unlink()
     res = bs.integrity_scan(backed_up["out"], now=True)
-    assert sorted(_failed(res)) == sorted([f"{bs.MEDIA_MIRROR_DIRNAME}/900/a.png", backed_up["snap"].name])
+    assert sorted(_failed(res)) == sorted([f"{bs.SPX_MIRROR_DIRNAME}/900/a.png", backed_up["snap"].name])
     assert dict(res.failures)[backed_up["snap"].name] == "missing"
 
 
@@ -794,7 +793,7 @@ def test_scan_now_forces_it(backed_up, clock):
 
 def test_a_failed_scan_is_due_again_the_next_night(backed_up, clock):
     out = backed_up["out"]
-    _flip_byte_keeping_size_and_mtime(backed_up["media"])
+    _flip_byte_keeping_size_and_mtime(backed_up["mirrored"])
     assert bs.integrity_scan(out).failures
     clock(_day(2026, 10, 2))
     assert bs.integrity_scan(out).ran                          # the row stays red until a scan passes
@@ -808,7 +807,7 @@ def _tree_state(out) -> dict:
 
 def test_the_scan_never_deletes_or_rewrites_a_backup_file(backed_up, clock):
     _corrupt_first_member(backed_up["zip"])
-    _flip_byte_keeping_size_and_mtime(backed_up["media"])
+    _flip_byte_keeping_size_and_mtime(backed_up["mirrored"])
     damage_data_block(backed_up["weekly"])
     before = _tree_state(backed_up["out"])
     assert len(bs.integrity_scan(backed_up["out"], now=True).failures) == 3
@@ -854,7 +853,7 @@ def _drive_files(dest) -> dict:
 
 def test_the_offmachine_manifest_holds_what_the_copy_wrote_and_kept(tmp_path, clock):
     docs, out = _docs_tree(tmp_path)
-    _old_file(tmp_path / "media" / "900" / "a.png", b"A" * 64)
+    _old_file(tmp_path / "spx" / "900" / "a.png", b"A" * 64)
     mirror = tmp_path / "drive"
     dest = mirror / bs.OFFMACHINE_SUBDIR
     dest.mkdir(parents=True)
@@ -863,7 +862,7 @@ def test_the_offmachine_manifest_holds_what_the_copy_wrote_and_kept(tmp_path, cl
         clock(_day(2026, 10, 1 + i))
         (docs / "320193" / f"20{i}.html.gz").write_bytes(b"n" * (10 + i))
         bs.archive_edgar_docs(src=docs, out_dir=out, keep=5)
-        bs.mirror_discord_media(src=tmp_path / "media", out_dir=out, settle_s=0)
+        bs.mirror_spx_gamma(src=tmp_path / "spx", out_dir=out, settle_s=0)
         bs.offmachine_copy(out, mirror, big_every_days=0, keep_big=2)
     files = json.loads((out / bs.OFFMACHINE_MANIFEST_NAME).read_text(encoding="utf-8"))["files"]
     assert {k: v["size"] for k, v in files.items()} == _drive_files(dest)
@@ -928,7 +927,7 @@ def test_the_run_logs_both_folder_sizes(rawstore_tmp_db, tmp_path, capsys, monke
 def _scan_twice_after(backed_up, clock, damage):
     out = backed_up["out"]
     assert bs.integrity_scan(out, now=True).failures == ()
-    _flip_byte_keeping_size_and_mtime(backed_up["media"])
+    _flip_byte_keeping_size_and_mtime(backed_up["mirrored"])
     damage(out / bs.MANIFEST_NAME)
     res = bs.integrity_scan(out, now=True)
     marker = json.loads((out / bs.SCAN_MARKER_NAME).read_text(encoding="utf-8"))
@@ -958,11 +957,11 @@ def test_the_first_scan_without_a_manifest_is_not_a_failure(backed_up, clock):
 
 def test_the_first_scan_hashes_noted_mirror_files_and_then_watches_them(tmp_path, clock):
     out = tmp_path / "out"
-    _old_file(tmp_path / "media" / "900" / "a.png", b"A" * 64)
-    bs.mirror_discord_media(src=tmp_path / "media", out_dir=out, settle_s=0)
+    _old_file(tmp_path / "spx" / "900" / "a.png", b"A" * 64)
+    bs.mirror_spx_gamma(src=tmp_path / "spx", out_dir=out, settle_s=0)
     (out / bs.MANIFEST_NAME).unlink()                    # a mirror made before #309
-    bs.mirror_discord_media(src=tmp_path / "media", out_dir=out, settle_s=0)
-    key, f = f"{bs.MEDIA_MIRROR_DIRNAME}/900/a.png", out / bs.MEDIA_MIRROR_DIRNAME / "900" / "a.png"
+    bs.mirror_spx_gamma(src=tmp_path / "spx", out_dir=out, settle_s=0)
+    key, f = f"{bs.SPX_MIRROR_DIRNAME}/900/a.png", out / bs.SPX_MIRROR_DIRNAME / "900" / "a.png"
     assert _manifest(out)[key] == {"size": 64, "sha256": None}
     res = bs.integrity_scan(out, now=True)
     assert res.failures == () and res.adopted == 1 and _manifest(out)[key]["sha256"] == _sha(f)
@@ -975,7 +974,7 @@ def test_the_scan_never_deletes_a_file_it_cannot_adopt(backed_up, clock):
     bad = out / "weekly" / "raw_20250113_020005_123456.duckdb"
     shutil.copy2(backed_up["snap"], bad)
     damage_data_block(bad)
-    junk = out / "discord_media_20250101_000000_000000.zip"
+    junk = out / "spx_gamma_mirror_20250101_000000_000000.zip"
     junk.write_bytes(b"not a zip")
     before = _tree_state(out)
     assert sorted(_failed(bs.integrity_scan(out, now=True))) == sorted([f"weekly/{bad.name}", junk.name])
@@ -1081,14 +1080,14 @@ def test_an_offmachine_failure_still_runs_the_scan_and_the_sizes(rawstore_tmp_db
 
 def test_a_new_offmachine_folder_starts_its_own_manifest(tmp_path, clock):
     docs, out = _docs_tree(tmp_path)
-    _old_file(tmp_path / "media" / "900" / "a.png", b"A" * 64)
+    _old_file(tmp_path / "spx" / "900" / "a.png", b"A" * 64)
     bs.archive_edgar_docs(src=docs, out_dir=out, keep=2)
-    bs.mirror_discord_media(src=tmp_path / "media", out_dir=out, settle_s=0)
+    bs.mirror_spx_gamma(src=tmp_path / "spx", out_dir=out, settle_s=0)
     old, new = tmp_path / "drive_old", tmp_path / "drive_new"
     old.mkdir()
     new.mkdir()
     bs.offmachine_copy(out, old, big_every_days=0)
-    shutil.rmtree(out / bs.MEDIA_MIRROR_DIRNAME)               # so the new folder gets no media
+    shutil.rmtree(out / bs.SPX_MIRROR_DIRNAME)               # so the new folder gets no media
     bs.offmachine_copy(out, new, big_every_days=0)             # RAW_STORE_BACKUP_MIRROR was changed
     files = json.loads((out / bs.OFFMACHINE_MANIFEST_NAME).read_text(encoding="utf-8"))["files"]
     assert {k: v["size"] for k, v in files.items()} == _drive_files(new / bs.OFFMACHINE_SUBDIR)
@@ -1135,14 +1134,15 @@ def test_a_refused_manifest_write_in_the_mirror_steps_is_a_warning_and_the_offma
     out, mirror = tmp_path / "out", tmp_path / "drive"
     mirror.mkdir()
     monkeypatch.setattr(config, "RAW_STORE_BACKUP_MIRROR", str(mirror))
-    _old_file(tmp_path / "media" / "900" / "a.png", b"A" * 64)
-    monkeypatch.setattr(config, "DISCORD_MEDIA_DIR", tmp_path / "media")
-    _lock_while(monkeypatch, bs.MANIFEST_NAME, "mirror_discord_media", "mirror_spx_gamma")
+    from RevenueChaser.module_spx_gamma import config as spx_config
+    _old_file(tmp_path / "spx" / "900" / "a.png", b"A" * 64)
+    monkeypatch.setattr(spx_config, "DATA_ROOT", tmp_path / "spx")
+    _lock_while(monkeypatch, bs.MANIFEST_NAME, "mirror_spx_gamma")
     assert bs.main(["--out", str(out)]) == 0
     text = capsys.readouterr()
     assert "backup manifest WARNING" in text.err and " FAILED" not in text.err
-    assert "discord_media mirror OK:" in text.out and "off-machine copy OK" in text.out
-    assert (out / bs.MEDIA_MIRROR_DIRNAME / "900" / "a.png").is_file()
+    assert "spx mirror OK:" in text.out and "off-machine copy OK" in text.out
+    assert (out / bs.SPX_MIRROR_DIRNAME / "900" / "a.png").is_file()
 
 
 def test_a_refused_offmachine_manifest_write_is_a_warning_not_a_failed_copy(rawstore_tmp_db, tmp_path, capsys,
@@ -1189,7 +1189,6 @@ def _local_folder(folder: pathlib.Path) -> None:
     for n in range(3):                                            # edgar_docs: keep 2 -> 1 expired
         _aged(folder, f"edgar_docs_2026090{n + 1}_000000_000000.zip", 300 + n, 10 - n)
     _aged(folder, "edgar_docs_20260920_000000_000000.partial.zip", 999, 40)   # never a backup (a killed zip)
-    _aged(folder, "discord_20260901_000000_000000.duckdb", 400, 5)            # one copy: nothing expired
     for n in range(6):                                            # history: keep 5 -> 1 expired
         _aged(folder, f"history_2026090{n + 1}_000000_000000.duckdb", 500 + n, 15 - n)
     for n in range(3):                                            # prices: keep 2 -> 1 expired
@@ -1198,7 +1197,7 @@ def _local_folder(folder: pathlib.Path) -> None:
     for n in range(13):                                           # weekly: keep 12 -> 1 expired
         stamp = (weekly_base + timedelta(days=7 * n)).strftime("%Y%m%d_%H%M%S_000000")
         _aged(folder / bs.WEEKLY_DIRNAME, f"raw_{stamp}.duckdb", 700 + n, 60 - n)
-    _aged(folder / bs.MEDIA_MIRROR_DIRNAME / "900", "a.png", 10, 90)          # a mirror is never pruned
+    _aged(folder / bs.SPX_MIRROR_DIRNAME / "900", "a.png", 10, 90)          # a mirror is never pruned
     _aged(folder / bs.SPX_VERSIONS_DIRNAME, "brier.20260101T000000_000000Z.json", 20, 90)
 
 
@@ -1222,7 +1221,7 @@ def test_the_dry_run_lists_exactly_the_files_the_rule_marks_expired_and_removes_
     oldest = next(f for f in found.files if f.name == "raw_20260901_000000_000000.duckdb")
     assert oldest == bs.ExpiredBackup("raw_20260901_000000_000000.duckdb", 1000, 30)
     assert "partial" not in " ".join(f.name for f in found.files)
-    assert not any(f.name.startswith((bs.MEDIA_MIRROR_DIRNAME, bs.SPX_VERSIONS_DIRNAME)) for f in found.files)
+    assert not any(f.name.startswith((bs.SPX_MIRROR_DIRNAME, bs.SPX_VERSIONS_DIRNAME)) for f in found.files)
 
 
 def test_the_newest_copy_of_a_prefix_is_never_a_candidate_even_with_a_keep_count_of_zero(tmp_path):
@@ -1244,7 +1243,6 @@ def test_the_scan_never_names_the_newest_copy_of_any_prefix(tmp_path):
         _aged(out, "raw_20261001_000000_000000.duckdb"),
         _aged(out, "edgar_20261001_000000_000000.duckdb"),
         _aged(out, "edgar_docs_20261001_000000_000000.zip"),
-        _aged(out, "discord_20261001_000000_000000.duckdb"),
         _aged(out, "history_20261001_000000_000000.duckdb"),
         _aged(out, "prices_20261001_000000_000000.duckdb"),
         _aged(out / bs.WEEKLY_DIRNAME, "raw_20261001_000000_000000.duckdb"),
