@@ -25,10 +25,11 @@ def page():
 
 
 def test_a_page_cannot_reach_an_outside_host(page):
-    # On an open network (CI) the resolver rule answers ERR_NAME_NOT_RESOLVED; a sandbox that blocks egress
-    # may refuse first with an error of its own. Either way the page must not load.
     result = page.send("Page.navigate", url="http://example.com/")
-    assert result.get("errorText"), f"Chrome reached an outside host: {result}"
+    if result.get("errorText") == "net::ERR_BLOCKED_BY_CLIENT":
+        # Some sandboxes refuse every outside host before name resolution; the rule cannot be seen from there.
+        pytest.skip("this environment blocks outside hosts before resolution; the check runs on an open network")
+    assert result.get("errorText") == "net::ERR_NAME_NOT_RESOLVED", f"the resolver rule did not apply: {result}"
 
 
 def test_the_loopback_dashboard_is_still_reachable(page, dashboard):
