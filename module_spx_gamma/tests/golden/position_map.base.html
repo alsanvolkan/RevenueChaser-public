@@ -244,7 +244,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 <script src="/static/vendor/plotly.min.js"></script>
 </head>
 <body>
-<div class="header">SPX &middot; Price yfinance ^GSPC &middot; Report date 2026-08-14 &middot; Sessions 2026-08-03 → 2026-08-14 &middot; Last sync: 14 Aug EOD &middot; Unusual Whales API</div>
+<div class="header">SPX &middot; Price yfinance ^GSPC &middot; Report date 2026-08-14 &middot; Sessions 2026-08-03 → 2026-08-14 &middot; Last sync: 14 Aug&nbsp;EOD &middot; Unusual Whales API</div>
 
 
 <div class="prediction-container">
@@ -307,7 +307,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 
 <style>
   .ib-panel{ margin:16px 0 20px; display:flex; flex-direction:column; gap:12px; }
-  .ib-hero{ display:flex; flex-wrap:wrap; align-items:center; gap:12px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:12px 16px; }
+  .ib-hero{ display:flex; flex-wrap:wrap; align-items:center; gap:12px; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px 16px; }
   .ib-signal{ padding:4px 8px; border-radius:999px; font-weight:700; font-size:13px; letter-spacing:.4px; }
   .ib-signal.ib-pin{ background:var(--blue-bg); color:var(--sky); border:1px solid var(--sky); }
   .ib-signal.ib-bearish{ background:var(--neg-bg); color:var(--red); border:1px solid var(--neg-line); }
@@ -320,7 +320,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   .ib-note{ font-size:12px; color:var(--muted); line-height:1.5; }
   .ib-legs{ overflow-x:auto; }
   @media (max-width:640px){ .ib-legs{ overflow:visible; } }
-  .ib-legs table{ width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--border); border-radius:10px; font-size:13px; }
+  .ib-legs table{ width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--border); border-radius:8px; font-size:13px; }
   .ib-legs th{ text-align:left; padding:8px 12px; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid var(--border); }
   .ib-legs td{ padding:8px 12px; border-bottom:1px solid var(--border); color:var(--bright); }
   .ib-legs tr:last-child td{ border-bottom:none; }
@@ -942,10 +942,20 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   tips.forEach(function(d){ d.addEventListener('toggle', function(){
     if(d.open) tips.forEach(function(o){ if(o !== d) o.open = false; });
   }); });
-  document.addEventListener('click', function(e){ tips.forEach(function(d){ if(d.open && !d.contains(e.target)) d.open = false; }); });
+  // A mouse hovers: the card opens its tooltip and closing follows the pointer, unless a click pinned it. A touch
+  // screen has no hover, so there a tap is the only way (and the native <details> toggle).
+  if(window.matchMedia && matchMedia('(hover: hover) and (pointer: fine)').matches){
+    tips.forEach(function(d){
+      var card = d.closest('.ag-gex'), s = d.querySelector('summary');
+      card.addEventListener('mouseenter', function(){ d.open = true; });
+      card.addEventListener('mouseleave', function(){ if(!d._pinned) d.open = false; });
+      s.addEventListener('click', function(e){ e.preventDefault(); d._pinned = !d._pinned; d.open = d._pinned; });
+    });
+  }
+  document.addEventListener('click', function(e){ tips.forEach(function(d){ if(d.open && !d.contains(e.target) && !d._pinned) d.open = false; }); });
   document.addEventListener('keydown', function(e){
     if(e.key !== 'Escape') return;
-    tips.forEach(function(d){ if(d.open){ d.open = false; var s = d.querySelector('summary'); if(s) s.focus(); } });
+    tips.forEach(function(d){ if(d.open){ d._pinned = false; d.open = false; var s = d.querySelector('summary'); if(s) s.focus(); } });
   });
 })();
 /* A Plotly figure reserves a 220-250 px right margin; on a phone that margin is the whole chart. Below 520 px the
@@ -956,9 +966,10 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     var narrow = gd.clientWidth < 520;
     if(gd._rcNarrow === narrow) return;
     if(!gd._rcOrig) gd._rcOrig = {r: gd.layout.margin.r, l: gd.layout.margin.l, h: gd._fullLayout.height,
+      title: (gd.layout.title && gd.layout.title.font && gd.layout.title.font.size) || 16,
       ann: (gd.layout.annotations || []).map(function(a){ return {x: a.x, xanchor: a.xanchor, xshift: a.xshift, xref: a.xref, fs: (a.font && a.font.size) || 11, text: a.text}; })};
     gd._rcNarrow = narrow;
-    var u = {'margin.r': narrow ? 16 : gd._rcOrig.r, 'margin.l': narrow ? Math.min(gd._rcOrig.l, 48) : gd._rcOrig.l};
+    var u = {'title.font.size': narrow ? Math.min(gd._rcOrig.title, 12) : gd._rcOrig.title, 'margin.r': narrow ? 16 : gd._rcOrig.r, 'margin.l': narrow ? Math.min(gd._rcOrig.l, 48) : gd._rcOrig.l};
     // The level labels sit in the right margin (xref paper, left-anchored): with the margin gone they move inside
     // the plot, right-aligned.
     (gd.layout.annotations || []).forEach(function(a, i){

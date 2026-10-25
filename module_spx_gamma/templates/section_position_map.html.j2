@@ -223,7 +223,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 <script src="/static/vendor/plotly.min.js"></script>
 </head>
 <body>
-<div class="header">{{ header.ticker }} &middot; Price {{ header.price_source }} &middot; Report date {{ header.report_date }} &middot; Sessions {{ header.sessions }} &middot; Last sync: {{ header.last_sync }} EOD &middot; {{ header.source }}</div>
+<div class="header">{{ header.ticker }} &middot; Price {{ header.price_source }} &middot; Report date {{ header.report_date }} &middot; Sessions {{ header.sessions }} &middot; Last sync: {{ header.last_sync }}&nbsp;EOD &middot; {{ header.source }}</div>
 {{ provider_banner }}{{ quality_banner }}{{ help_block }}
 
 {% if prediction and prediction.bias %}
@@ -269,7 +269,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 {% if iron_butterfly %}
 <style>
   .ib-panel{ margin:16px 0 20px; display:flex; flex-direction:column; gap:12px; }
-  .ib-hero{ display:flex; flex-wrap:wrap; align-items:center; gap:12px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:12px 16px; }
+  .ib-hero{ display:flex; flex-wrap:wrap; align-items:center; gap:12px; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px 16px; }
   .ib-signal{ padding:4px 8px; border-radius:999px; font-weight:700; font-size:13px; letter-spacing:.4px; }
   .ib-signal.ib-pin{ background:var(--blue-bg); color:var(--sky); border:1px solid var(--sky); }
   .ib-signal.ib-bearish{ background:var(--neg-bg); color:var(--red); border:1px solid var(--neg-line); }
@@ -282,7 +282,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   .ib-note{ font-size:12px; color:var(--muted); line-height:1.5; }
   .ib-legs{ overflow-x:auto; }
   @media (max-width:640px){ .ib-legs{ overflow:visible; } }
-  .ib-legs table{ width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--border); border-radius:10px; font-size:13px; }
+  .ib-legs table{ width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--border); border-radius:8px; font-size:13px; }
   .ib-legs th{ text-align:left; padding:8px 12px; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid var(--border); }
   .ib-legs td{ padding:8px 12px; border-bottom:1px solid var(--border); color:var(--bright); }
   .ib-legs tr:last-child td{ border-bottom:none; }
@@ -743,9 +743,10 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     var narrow = gd.clientWidth < 520;
     if(gd._rcNarrow === narrow) return;
     if(!gd._rcOrig) gd._rcOrig = {r: gd.layout.margin.r, l: gd.layout.margin.l, h: gd._fullLayout.height,
+      title: (gd.layout.title && gd.layout.title.font && gd.layout.title.font.size) || 16,
       ann: (gd.layout.annotations || []).map(function(a){ return {x: a.x, xanchor: a.xanchor, xshift: a.xshift, xref: a.xref, fs: (a.font && a.font.size) || 11, text: a.text}; })};
     gd._rcNarrow = narrow;
-    var u = {'margin.r': narrow ? 16 : gd._rcOrig.r, 'margin.l': narrow ? Math.min(gd._rcOrig.l, 48) : gd._rcOrig.l};
+    var u = {'title.font.size': narrow ? Math.min(gd._rcOrig.title, 12) : gd._rcOrig.title, 'margin.r': narrow ? 16 : gd._rcOrig.r, 'margin.l': narrow ? Math.min(gd._rcOrig.l, 48) : gd._rcOrig.l};
     // The level labels sit in the right margin (xref paper, left-anchored): with the margin gone they move inside
     // the plot, right-aligned.
     (gd.layout.annotations || []).forEach(function(a, i){

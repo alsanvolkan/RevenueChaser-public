@@ -447,3 +447,27 @@ def test_a_phone_tooltip_does_not_open_on_hover(board, browser):
     browser.eval("document.querySelector('details.tip').scrollIntoView({block: 'center'})")
     _move(browser, *browser.eval(CARD_POINTS)["card"])
     assert browser.eval(OPEN) is False
+
+
+# ── #195 review NITs ──
+def test_every_chart_title_fits_its_chart_on_a_phone(board, browser):
+    """The Liquidity title ('Liquidity Layer — Cumulative Net GEX (Dealer Flow)') was cut off at 390 px."""
+    _open(browser, board, PHONE)
+    browser.wait_for("Array.prototype.every.call(document.querySelectorAll('.js-plotly-plot'), function(g){"
+                     " return g._rcNarrow === true; })")
+    probe = """Array.prototype.map.call(document.querySelectorAll('.js-plotly-plot'), function(g){
+      var s = g.querySelector('.main-svg').getBoundingClientRect(), t = g.querySelector('.gtitle').getBoundingClientRect();
+      return t.left < s.left - 1 || t.right > s.right + 1; })"""
+    try:
+        browser.wait_for(f"{probe}.every(function(x){{ return !x; }})", timeout=8)
+    except RuntimeError:
+        pass
+    assert browser.eval(probe) == [False, False, False]
+
+
+def test_the_iron_butterfly_boxes_use_the_8_px_radius_of_the_other_boxes(board, browser):
+    _open(browser, board, DESKTOP)
+    radii = browser.eval("[getComputedStyle(document.querySelector('.ib-hero')).borderTopLeftRadius,"
+                         " getComputedStyle(document.querySelector('.ib-legs table')).borderTopLeftRadius,"
+                         " getComputedStyle(document.querySelector('.box')).borderTopLeftRadius]")
+    assert radii == ["8px", "8px", "8px"], radii
