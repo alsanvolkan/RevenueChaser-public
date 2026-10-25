@@ -191,6 +191,19 @@ def test_the_api_passes_the_filters_through(client):
     assert both["total"] == 0, "the two filters are ANDed"
 
 
+@pytest.mark.parametrize("query, on", [
+    ("", False), ("?problems=1", True), ("?problems", True), ("?problems=", True), ("?problems=yes", True),
+    ("?problems=0", False), ("?problems=false", False), ("?problems=FALSE", False), ("?problems=no", False),
+    ("?problems=off", False), ("?problems=%200%20", False),
+])
+def test_the_problems_flag_reads_an_off_value_as_off(client, query, on):
+    """#131 item 5: ``is not None`` made ``?problems=0`` a filter that was on."""
+    _write(_row("ok", status="done"), _row("bad", status="error"))
+    data = client.get("/api/runs" + query).get_json()
+    assert data["problems"] is on
+    assert data["total"] == (1 if on else 2)
+
+
 def test_the_api_takes_no_write(client):
     assert client.post("/api/runs").status_code in (403, 405)
 
