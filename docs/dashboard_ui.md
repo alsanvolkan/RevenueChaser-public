@@ -180,7 +180,7 @@ shell's buttons, inputs, nav items and nav headers are 44 px; a desktop mouse ke
 
 The palette is `core/reporting_common.THEME_TOKENS`, rendered once as `THEME_CSS`: dark by default (the shell's
 look before #184, value for value), light when the device prefers it, and the reader's choice over both. The
-☀/☾/◐ toggle cycles Auto → Light → Dark and stores the choice in `localStorage["rc-theme"]`
+top-bar toggle cycles Auto → Light → Dark and stores the choice in `localStorage["rc-theme"]`
 (`THEME_STORAGE_KEY`; every access in try/catch, so a private window still toggles, it just does not
 remember). `THEME_JS` runs in `<head>` so a light choice never flashes dark. The shell copies the choice onto
 each board iframe as `data-theme` on its `<html>`; a board follows it once it uses the shared tokens (one PR

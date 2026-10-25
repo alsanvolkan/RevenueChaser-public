@@ -171,12 +171,14 @@ button:disabled{opacity:.5;cursor:default}
    desktop and on the first line on a phone. */
 .nav-toggle,.tab-title,.scrim{display:none}
 .status{display:contents}
-.theme-toggle{order:1;width:36px;padding:0;font-size:15px}
+.theme-toggle{order:1;min-width:64px;padding:0 10px}
 @media (max-width: 900px){
   body{grid-template-columns:minmax(0,1fr)}
   .sidebar{position:fixed;inset:0 auto 0 0;width:min(300px,85vw);z-index:40;transform:translateX(-100%);
     visibility:hidden;transition:transform .2s ease,visibility .2s;box-shadow:4px 0 24px var(--shadow)}
   body.nav-open .sidebar{transform:none;visibility:visible}
+  .brand{padding:2px 14px 8px}
+  .brand .logo,.brand .logo img{width:96px;height:96px}
   body.nav-open .scrim{display:block;position:fixed;inset:0;background:var(--scrim);z-index:30}
   .nav-toggle{display:inline-flex;align-items:center;justify-content:center;width:44px;padding:0;font-size:18px}
   .tab-title{display:block;flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
@@ -185,7 +187,6 @@ button:disabled{opacity:.5;cursor:default}
   .topbar .ctl{flex-basis:100%}
   .status{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;flex-basis:100%;order:2}
   .topbar .sync{margin-left:0;font-size:12px}
-  .theme-toggle{width:44px}
   /* The page itself never scrolls sideways: a board wider than the pane scrolls inside its own frame. */
   .content{overflow-x:hidden}
   .frame{height:100%}
@@ -273,7 +274,7 @@ button:disabled{opacity:.5;cursor:default}
       <input type="text" id="quick-ticker" value="{{ quick_ticker }}" placeholder="Ticker" style="width:110px" />
     </div>
     <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Theme: follows the device. Change it"
-            title="Theme: follows the device">◐</button>
+            title="Theme: follows the device">Auto</button>
     <div class="status">
 <span class="hbadge hb-regime">Regime: —</span>
 <span class="hbadge hb-spx-gray" id="spx-status">SPX: —</span>
@@ -1361,7 +1362,7 @@ document.addEventListener('keydown', function(e){
 // The theme toggle: Auto (the device's scheme) -> Light -> Dark -> Auto. rcThemeSet (reporting_common.THEME_JS)
 // applies the choice and stores it if it can; THEME_NOW keeps it for this page when storage cannot.
 var THEME_NOW = rcThemeGet();
-var THEME_ICONS = {auto: '◐', light: '☀', dark: '☾'};
+var THEME_LABELS = {auto: 'Auto', light: 'Light', dark: 'Dark'};
 var THEME_WORDS = {auto: 'follows the device', light: 'light', dark: 'dark'};
 function themeNext(choice){
   return choice === 'light' ? 'dark' : (choice === 'dark' ? 'auto' : 'light');
@@ -1380,7 +1381,7 @@ function themeFrames(choice, list){
 function themeShow(){
   var b = document.getElementById('theme-toggle');
   if(!b) return;
-  b.textContent = THEME_ICONS[THEME_NOW];
+  b.textContent = THEME_LABELS[THEME_NOW];
   b.title = 'Theme: ' + THEME_WORDS[THEME_NOW];
   b.setAttribute('aria-label', 'Theme: ' + THEME_WORDS[THEME_NOW] + '. Change it');
 }
