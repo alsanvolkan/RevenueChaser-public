@@ -350,6 +350,18 @@ universe did, over the same windows (`outcomes.outcome` is reused, so the rules 
   90-day ones; `full` recomputes the date, after a bar backfill or a rule change). A night whose Daily Bars failed
   therefore leaves the rows open instead of freezing them on a short window.
 
+**The readability gate on top (#25 HR-2).** `core/hit_rate.py` is a read, not a table: `summary()` reads the ledger,
+the outcomes and the baselines at call time and writes nothing (no schema change). Per (family = `source`,
+`model_version` of the ledger — never pooled, so a selection-version bump restarts the count):
+- the same ticker frozen again within 90 days of the record kept is a duplicate, and the earliest record is kept;
+- a record is a kept pick whose 30-day outcome is `closed` with an MFE on the current outcomes `MODEL_VERSION`; open
+  windows are not records, and `split_check`, `no_bars` and a closed row without an MFE are the **dirty-record list**;
+- the gate is at least 30 records over at least 3 freeze dates; before it no rate is returned, and with no record at
+  all the state is "no closed window yet";
+- the headline is MFE ≥ 10 % within 30 days, beside the matched-volatility peers (the closed decile row of the freeze
+  date whose `[vol_lo, vol_hi)` holds the pick's own trailing vol, at least 21 names) and the universe row; the family
+  rate beside each baseline is recomputed on the records that baseline covers. Everything else is exploratory.
+
 The task RC-Forecast-Outcomes runs daily at 23:45, chained on RC-Daily-Bars (the bars it reads), after
 RC-Screeners-Daily (weekdays from 23:00), the other `raw.duckdb` writer of the night. The task RC-Forecast-Baselines
 runs daily at 23:50, chained on RC-Forecast-Outcomes (the same night's other `raw.duckdb` writer, so the two never
