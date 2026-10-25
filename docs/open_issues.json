@@ -1036,6 +1036,35 @@
     },
     {
       "repo": "RevenueChaser-public",
+      "number": 70,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/70",
+      "title": "Dashboard: Discord",
+      "state": "open",
+      "labels": [
+        "area:community",
+        "epic",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "epic",
+      "status": "parked",
+      "deferred_until": "after Sunday 2026-10-25",
+      "summary": "The Discord board left this repository (#174) and lives on as the discord-archive app; this epic is closed when that removal merges.",
+      "detail": {
+        "whats_wrong": "Nothing of this epic is open in this repository any more: the board, its two jobs, the store file and the credential checks were removed in #174 and continue as the separate discord-archive app. S1's acceptance, S3 the schedule, S4 the LLM extraction and the defects DF53 and DF55 now belong to that app.",
+        "evidence": "PR #181 removes `module_discord/`, `/run/module_discord`, `/run/module_discord_discover` and `discord.duckdb`; the board key `module_discord` is no longer a dashboard tab, so this entry is repo-scoped rather than board-scoped until the issue is closed.",
+        "example": "",
+        "tried_or_decided": "avo moved the Discord archive into its own app in October 2026. The entry stays in the registry while the issue is open on GitHub, so `scripts/open_issues_sync.py --check` does not report it as removed.",
+        "direction": "Close the issue as moved to the discord-archive app when the removal merges; the open items continue in that app's own tracker.",
+        "next_step": "When PR #181 merges: avo closes #70 and runs `python -m RevenueChaser.scripts.open_issues_sync --write`, which drops this entry."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-22T14:42:46Z",
+      "reviewed_at": "2026-10-25"
+    },
+    {
+      "repo": "RevenueChaser-public",
       "number": 71,
       "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/71",
       "title": "Dashboard: News (X feed from Grok automations)",
@@ -1562,9 +1591,9 @@
       "kind": "bug",
       "status": "parked",
       "deferred_until": "after Sunday 2026-10-25",
-      "summary": "The root `conftest.py` redirects the data roots away from the developer's real tree — `RC_STORE_DIR`, `RC_CACHE_DIR`, `RC_EDGAR_DOCS_DIR`, `RC_DISCORD_MEDIA_DIR`, `SPX_GAMMA_DATA_ROOT` at",
+      "summary": "The root `conftest.py` redirects the data roots away from the developer's real tree — `RC_STORE_DIR`, `RC_CACHE_DIR`, `RC_EDGAR_DOCS_DIR`, `SPX_GAMMA_DATA_ROOT` at",
       "detail": {
-        "whats_wrong": "The root `conftest.py` redirects the data roots away from the developer's real tree — `RC_STORE_DIR`, `RC_CACHE_DIR`, `RC_EDGAR_DOCS_DIR`, `RC_DISCORD_MEDIA_DIR`, `SPX_GAMMA_DATA_ROOT` at `conftest.py:22-45`. That part works, and its own comment records why it exists: before it, \"a route test hitting `?refresh=1` unlinked the developer's actual rendered boards and a runner test overwrote them\".\n\nBut that redirect points at **one `tempfile.mkdtemp` per worker process**, so it is shared by every test in that worker. Only the store got per-test isolation: `isolate_rawstore` (`conftest.py:130-131`) is autouse and explicitly \"Kept **per-test** (never per-session)\". **The board artifacts got the root, not the isolation.**\n\nSo a test that renders or saves a board payload leaves it in a directory the next test reads. A Refresh test that does not redirect the artifact constants itself reads […]",
+        "whats_wrong": "The root `conftest.py` redirects the data roots away from the developer's real tree — `RC_STORE_DIR`, `RC_CACHE_DIR`, `RC_EDGAR_DOCS_DIR`, `SPX_GAMMA_DATA_ROOT` at `conftest.py:22-45`. That part works, and its own comment records why it exists: before it, \"a route test hitting `?refresh=1` unlinked the developer's actual rendered boards and a runner test overwrote them\".\n\nBut that redirect points at **one `tempfile.mkdtemp` per worker process**, so it is shared by every test in that worker. Only the store got per-test isolation: `isolate_rawstore` (`conftest.py:130-131`) is autouse and explicitly \"Kept **per-test** (never per-session)\". **The board artifacts got the root, not the isolation.**\n\nSo a test that renders or saves a board payload leaves it in a directory the next test reads. A Refresh test that does not redirect the artifact constants itself reads […]",
         "evidence": "Found in the review of PR #102: its first witness test passed for exactly this reason, from a leftover saved payload, and was only caught because the witness had to fail first. conftest.py:22-45 redirects the roots once per worker; only the store is isolated per test (conftest.py:130-131).",
         "example": "",
         "tried_or_decided": "",
