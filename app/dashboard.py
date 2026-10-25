@@ -1171,8 +1171,10 @@ def api_settings_ticker(ticker: str):
     """Store-only per-ticker drill for the Settings board.
 
     Reads ``raw.duckdb`` / ``edgar.duckdb`` and nothing else: no job, no network,
-    no credentials. An unknown ticker is a plain 404 ``{"ok": false}``; one that is
-    not ticker-shaped is a 400; a failed store read is a 500 with ``error: "store read failed"``.
+    no credentials. An unknown ticker (no row anywhere, every read answering) is a plain 404
+    ``{"ok": false}``; one that is not ticker-shaped is a 400; a read that fails inside the drill
+    is a 200 whose ``errors`` name it (#143), never a 404; a drill that raises is a 500 with
+    ``error: "store read failed"``.
     """
     from RevenueChaser.module_settings import inventory
 

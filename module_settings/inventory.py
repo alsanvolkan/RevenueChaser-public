@@ -846,7 +846,8 @@ def _board_fit(presence: dict) -> list[dict]:
     names the measured tables without a row, in plain words; ``not_checked`` when the board reads
     a table this drill does not measure (or reads none), because the drill does not know;
     ``unreadable`` names the measured tables whose read failed (#143): a failed read is not a
-    missing row, so the board is neither "can" nor "cannot". Nav order. One pass over
+    missing row, so it is never "can" or "cannot" on its own; a board that also misses a readable
+    table still says ``cannot``, because that much is known. Nav order. One pass over
     ``presence``: no table is queried again here.
     """
     measured = {table: _rows_stored(presence.get(_PRESENCE_KEY.get(table, table)))
@@ -856,17 +857,24 @@ def _board_fit(presence: dict) -> list[dict]:
     out = []
     for entry in boards.BOARD_INPUTS:
         tables = list(entry.get("tables") or [])
-        # A failed read is said first, even on a board the drill cannot fully check: it is the fact.
+        all_measured = bool(tables) and all(table in measured for table in tables)
+        missing = [_DRILL_TABLE_LABELS[table] for table in tables
+                   if table in measured and table not in failed and not measured[table]]
         unreadable = [_DRILL_TABLE_LABELS[table] for table in tables if table in failed]
+        # A readable table with no row is known: the board cannot score the name, whatever else failed.
+        if all_measured and missing:
+            out.append({"key": entry.get("key"), "label": entry.get("label"),
+                        "state": "cannot", "missing": missing})
+            continue
+        # Otherwise a failed read is said, even on a board the drill cannot fully check: it is the fact.
         if unreadable:
             out.append({"key": entry.get("key"), "label": entry.get("label"),
                         "state": "unreadable", "missing": [], "unreadable": unreadable})
             continue
-        if not tables or any(table not in measured for table in tables):
+        if not all_measured:
             out.append({"key": entry.get("key"), "label": entry.get("label"),
                         "state": "not_checked", "missing": []})
             continue
-        missing = [_DRILL_TABLE_LABELS[table] for table in tables if not measured[table]]
         out.append({"key": entry.get("key"), "label": entry.get("label"),
                     "state": "cannot" if missing else "can", "missing": missing})
     return out

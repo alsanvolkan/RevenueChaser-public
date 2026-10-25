@@ -3101,3 +3101,18 @@ def test_a_failed_presence_read_shows_could_not_read_never_missing():
             in html)
     assert '<span class="dval">unknown — could not read daily price bars</span>' in html
     assert "missing" not in html.split('id="drill-boards"')[1].split("dnote")[0]
+
+def test_the_drill_names_the_reads_that_failed():
+    """``ticker_detail`` returns its errors; the drill prints which table could not be read and why."""
+    html = _drill_rows({
+        "name": "Micron",
+        "presence": {"price_bars_daily": {"bars": 0, "newest": None, "error": True}},
+        "errors": [{"table": "price_bars_daily", "where": "_d01_presence", "error": "locked <b>"}],
+    })
+    assert 'id="drill-errors"' in html
+    assert "price_bars_daily: locked &lt;b&gt;" in html
+
+
+def test_a_clean_drill_prints_no_error_note():
+    assert 'id="drill-errors"' not in _drill_rows({"name": "Micron", "presence": {}, "errors": []})
+

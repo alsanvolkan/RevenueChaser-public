@@ -634,7 +634,18 @@ function drillFill(d){
         ? (swing.bars + ' bars · newest ' + (swing.newest || '—')) : 'no bars')
     + drillRow('Implied Probability chain', drillHas(p.oipd_meta))
     + drillRow('Relatedness profile', drillHas(p.relatedness_profiles))
-    + drillBoards(d.boards);
+    + drillBoards(d.boards)
+    + drillErrors(d.errors);
+}
+// The reads that failed (#143): which table, and the store's own words. Nothing when every read answered.
+function drillErrors(list){
+  if(!list || !list.length) return '';
+  var rows = '';
+  for(var i = 0; i < list.length; i++){
+    var e = list[i] || {};
+    rows += '<div class="dnote">' + rcEsc((e.table || '—') + ': ' + (e.error || 'read failed')) + '</div>';
+  }
+  return '<div class="dgroup" id="drill-errors"><div class="dhead">Could not read</div>' + rows + '</div>';
 }
 // Which boards can score this name (G7, #124). The server decides each board's state from the
 // store tables this drill already measured; this only prints it. A board that reads a table the

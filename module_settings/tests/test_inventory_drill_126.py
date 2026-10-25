@@ -356,3 +356,15 @@ def test_a_failed_table_list_read_makes_a_row_check_unknown(rawstore_tmp_db, mon
 
     monkeypatch.setattr(rawstore, "query", query)
     assert inventory.ticker_detail("MU")["presence"]["oipd_meta"] is None
+
+
+def test_a_missing_readable_table_says_cannot_even_when_another_read_failed(rawstore_tmp_db, monkeypatch):
+    """No bar for the name is known; the failed quote read must not hide it behind "unknown"."""
+    _seed_every_dataset()
+    rawstore.execute("DELETE FROM price_bars_daily", db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw"))
+    from RevenueChaser.core import quotes
+    monkeypatch.setattr(quotes, "latest_caps", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("locked")))
+    fit = {b["key"]: b for b in inventory.ticker_detail("MU")["boards"]}
+
+    assert fit["module_fundamentals"]["state"] == "cannot"
+    assert fit["module_fundamentals"]["missing"] == ["daily price bars"]

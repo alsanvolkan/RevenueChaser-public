@@ -14,9 +14,10 @@ default ``raw``). ``writer`` is an ``automations.REGISTRY`` name, or None with `
 A freshness pair is a ``(table, column)`` ``_max_date`` can read. ``source`` is a provider named in
 ``core/providers`` or ``docs/data_architecture.md``; ``unknown`` means a single enum value would be a guess.
 
-Does not read the store. Seven datasets have an existing summary: their ``coverage`` is a zero-argument
-callable returning that module's ``Health``, imported and called when a reader asks for the row (S4).
-S5 switches the inventory reader to it.
+Does not read the store. Seven datasets have an existing summary: their ``coverage`` is a callable
+returning that module's ``Health``, imported and called when a reader asks for the row (S4). It takes an
+optional ``now``, passed on to a module whose ``health`` takes a clock (#150). S5 switches the inventory
+reader to it.
 
 ``gap_kind`` and ``next_step`` (G11) are the written half of coverage: the measurement says how many
 names are missing, these two say what would close the hole. ``gap_kind`` is one of ``GapKind``'s six
