@@ -5,9 +5,9 @@
 # Automations panel does the same with its Install button. Nothing installs unless you run
 # this or press that button.
 #
-# The backup snapshots every durable store file (raw, edgar and discord DuckDB), zips the
-# edgar_docs tree, mirrors the discord_media and SPX Gamma trees incrementally (only new or
-# changed files) and keeps the 5 newest raw snapshots, plus a copy of the first raw snapshot
+# The backup snapshots every durable store file (raw, edgar, history and prices DuckDB), zips
+# the edgar_docs tree, mirrors the SPX Gamma tree incrementally (only new or changed files)
+# and keeps the 5 newest raw snapshots, plus a copy of the first raw snapshot
 # of each ISO week (one per week, in weekly/; the newest 12 are kept).
 #
 # Usage:  powershell -ExecutionPolicy Bypass -File register_tasks.ps1 [-Remove]
