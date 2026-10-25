@@ -6,9 +6,10 @@ its times. The names in use: ``"edgar_sync"`` (``module_value_chain/sync.py`` an
 (``module_relatedness/engine.py``), ``"daily_bars"`` (``core/prices.py``), ``"index_lists"``
 (``core/index_registry.py``) and ``"index_levels"`` (``core/index_levels.py``); ``"identity"``
 (``core/identity/refresh.py``: the dashboard job and the ``python -m RevenueChaser.core.identity`` CLI alike),
-``"sec_13f"`` (the three 13F jobs, ``app/runners.py``), ``"forecast_outcomes"`` (``scripts/forecast_outcomes.py``), ``"forecast_baselines"`` (``scripts/forecast_baselines.py``, #25) and ``"nightly_inputs_<step>"``
-(``scripts/nightly_inputs.py``, one per step, so two different steps still run together) — ``identity``, ``sec_13f``,
-``forecast_outcomes`` and ``nightly_inputs_<step>`` added for #26 (PL6-a).
+``"sec_13f"`` (the three 13F jobs, ``app/runners.py``), ``"forecast_outcomes"`` (``scripts/forecast_outcomes.py``) and
+``"nightly_inputs_<step>"`` (``scripts/nightly_inputs.py``, one per step, so two different steps still run together)
+— ``identity``, ``sec_13f``, ``forecast_outcomes`` and ``nightly_inputs_<step>`` added for #26 (PL6-a) — and
+``"forecast_baselines"`` (``scripts/forecast_baselines.py``, #25 HR-1).
 
 ``"universe"`` (``core/universe_fetch.universe_write_lock``) is the universe writers, and the whole universe refresh
 job and its CLI (#244), with ``"universe_run"`` beside it while the refresh job runs, so a board Fetch can tell it
@@ -208,7 +209,8 @@ def _os_lock_is_taken(path: Path) -> bool:
 
 
 def _live_pid(path: Path) -> int | None:
-    """The PID of a live holder of ``path``; ``0`` when the OS lock is really held but the PID cannot be read; else None.
+    """The PID of a live holder of ``path``; ``0`` when the OS lock is really held but the PID cannot be read;
+    else None.
 
     Reads, and tries the OS lock; never steals or unlinks.
     """
@@ -251,7 +253,8 @@ def _break_if_unchanged(path: Path, seen: tuple[int | None, str, str]) -> None:
 def holders(directory: Path | None = None) -> list[tuple[str, int]]:
     """``(name, pid)`` of every live lock in the store dir. Checks only: never takes, truncates or removes a lock.
 
-    A lock this cannot be tried — permission denied, or any OS-lock error but ENOENT — is a holder (``_taken_error``).
+    A lock this cannot be tried — permission denied, or any OS-lock error but ENOENT — is a holder
+    (``_taken_error``).
     On the OS-lock path, a lock the kernel really holds whose owner text cannot be read is a holder too, with pid
     ``0``: the PID is what is unknown, not the holder (#365).
     """
