@@ -125,3 +125,39 @@ def test_the_runs_table_stays_a_table_on_a_desktop(browser, runs_page):
     assert len(tops) == 1, "the desktop keeps one line per run"
     assert m["scrollW"] <= m["vw"]
 
+
+# ── Settings → Automations, the same problem one tab over ─────────────────────
+
+AUTOMATIONS = r"""(function(){
+  var s = document.querySelector(".auto-item>summary"), panel = s.closest(".panel");
+  var btns = Array.prototype.map.call(document.querySelectorAll(".auto-btn"), function(b){
+    var r = b.getBoundingClientRect(); return [b.textContent, Math.round(r.width), Math.round(r.height)];
+  });
+  return {summaryW: s.scrollWidth, panelW: panel.clientWidth, panelScroll: panel.scrollWidth,
+          summaryH: s.getBoundingClientRect().height, buttons: btns};
+})()"""
+
+
+@pytest.fixture
+def settings_page(tmp_path, monkeypatch):
+    from RevenueChaser.core import rawstore
+    from RevenueChaser.core.tests.board_fixtures import BOARDS, no_comment_opener
+    monkeypatch.setattr(rawstore, "DB_PATH", tmp_path / "raw.duckdb")
+    rawstore.ensure_all_tables()
+    with no_comment_opener():
+        html = BOARDS["module_settings"].render(tmp_path, monkeypatch)
+    i = html.lower().index("<head>") + len("<head>")
+    path = tmp_path / "settings.html"
+    path.write_text(html[:i] + _HOOK + html[i:], encoding="utf-8")
+    return path.as_uri()
+
+
+def test_an_automation_row_fits_a_phone(browser, settings_page):
+    """Its one-line summary was a five-column grid ~880 px wide that scrolled sideways inside the panel."""
+    browser.emulate(*PHONE, scheme="dark")
+    browser.open(settings_page)
+    m = browser.eval(AUTOMATIONS)
+    assert m["panelScroll"] <= m["panelW"], f"the Automations panel scrolls sideways: {m}"
+    assert m["summaryH"] >= 44, "the row's summary is the touch target that opens it"
+    small = [b for b in m["buttons"] if b[2] < 44]
+    assert not small, f"automation buttons under 44 px: {small}"
