@@ -499,6 +499,13 @@ AREAS = [
      "raw", "forecast_ledger", ":1468", "source + forecast_date + subject + target_type + target_date", "append",
      "Kept, growing: nothing removes a row. One set of picks per source per session, written only by a Fetch after that session's close + 30 min, all or nothing, first write wins (core/ledger.py:267, :311-314). A refused day writes nothing and says why in the job's `notes` (shown by /api/jobs and the Server log, not as a popup). Since #286 the table carries the \"history\" flag: rawstore refuses a rewrite or delete and a duplicate key keeps the first row.",
      "core/ledger.py:22-24, :111, :350; app/jobs.py:261-273"),
+    ("SPX Gamma's three-class scenario probabilities of the Fetch day (S3b, #38: the first dated family)",
+     "module_spx_gamma/freeze.py freeze_scenarios",
+     "SPX Gamma Fetch (spxgamma job, build_day record=True) · ledger.freeze_dated, write_dated",
+     "module_spx_gamma/run.py build_day; core/ledger.py write_dated, freeze_dated",
+     "raw", "forecast_ledger", ":1626", "source + forecast_date + subject + target_type + target_date", "append",
+     "One row per Fetch day: source spx_gamma, subject SPX, target_type scenario_3class, probs = the three class probabilities, shown_price = spot; target_date = the last session of the forecast day's week (the next week's when the day is already that session). Same session rule as the picks (the latest complete session, outside 09:30-16:30 ET), first write of (source, day, target_type) wins; a Refresh never reaches it. A refusal or a store error is a job note, never a failed build. No forecast_outcomes row: the Brier score stays in module_spx_gamma/data/brier.json (avo, 2026-10-25).",
+     "module_spx_gamma/freeze.py; core/ledger.py write_dated"),
    ],
    planned="Stays in raw.duckdb (history.duckdb holds result history only, 2.6-1). The \"history\" flag is on (#286, after the first real freezes); the scorer (#62b, forecast_outcomes) reads it."),
   dict(id="#380 S0", name="Forecast outcomes: what happened after each pick", readers="none yet (the #62 hit-rate board)",
@@ -511,7 +518,7 @@ AREAS = [
      "Derived, recomputed: one row per pick and horizon (30 and 90 calendar days); reference = the open of the first session after the forecast date (missing or unusable: no reference, the row stays open), MFE/MAE on High/Low over the window, status open/closed/no_bars/split_check (an open, else a close, 2.5x the last usable close = a split with no action: flagged, not final). A closed row of the current model version is final and the nightly skips it (picks still to do selected in SQL); --full recomputes every row; no bar stored at all = refuse before any write. Never writes forecast_ledger.",
      "core/outcomes.py:1-32, :47-53"),
    ],
-   planned="Built (#380 S0, card 7/7; card O-1 default = the next session's open). The SPX pin writer adds its rows later with horizon_days = target_date - forecast_date; the #62 board reads the table."),
+   planned="Built (#380 S0, card 7/7; card O-1 default = the next session's open). The SPX scenario family (S3b, #38) writes no outcome row here: its Brier score stays in brier.json (avo, 2026-10-25); the #62 board reads the table."),
  ]),
 ]
 

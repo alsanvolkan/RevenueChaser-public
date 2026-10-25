@@ -170,7 +170,8 @@ Notes the diagram simplifies:
   `module_uw_interaction`, `module_settings` and `module_discord` has a `history.py` that calls it;
   Discord records its own export runs in its own store, and the other three record nothing.
 - **The forecast ledger.** `core/ledger.py` freezes each board's shown picks into
-  `raw.duckdb.forecast_ledger` (append-only, `"history": True`, #286); `core/outcomes.py` derives
+  `raw.duckdb.forecast_ledger` (append-only, `"history": True`, #286), and SPX Gamma's weekly scenario as a dated
+  row (`write_dated`, S3b #38; its Brier score stays in `brier.json`); `core/outcomes.py` derives
   `forecast_outcomes` from it and the `prices.duckdb` bars, and `core/baselines.py` derives
   `forecast_baselines` beside it (the same freeze dates, the universe change history and the same bars).
 - **Credentials and providers.** Provider base URLs are env-overridable and their key messages live in

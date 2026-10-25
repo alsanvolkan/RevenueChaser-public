@@ -87,11 +87,14 @@ def _load_for_update(p: Path) -> dict:
     return data
 
 
-def record_probs(asof_date: str, probs: dict[str, float], path: Path | None = None) -> dict:
+def record_probs(asof_date: str, probs: dict[str, float], path: Path | None = None,
+                 target_date: str | None = None, bands: dict | None = None) -> dict:
     """Append a probability record for an asof date (idempotent per date).
 
     A record that is already scored is kept as it is: its outcome and Brier were computed from
     its own probabilities, so replacing them would break the audit (SPX-4).
+    ``target_date`` (the session whose close scores it) and ``bands`` (the numeric class edges) are
+    kept on the record when given (S3b, #38), so a later Fetch can score it without the parsed day.
     """
     p = path or _default_path()
     clean = _validated_probs(probs)
@@ -107,6 +110,9 @@ def record_probs(asof_date: str, probs: dict[str, float], path: Path | None = No
         "outcome": None,
         "brier": None,
     })
+    if target_date is not None or bands is not None:
+        records[-1]["target_date"] = target_date
+        records[-1]["bands"] = None if bands is None else {k: list(v) for k, v in bands.items()}
     records.sort(key=lambda r: r["date"])
     data = {"records": records, "average": data.get("average"), "n": data.get("n", 0)}
     safe_json.write_json_atomic(p, data)

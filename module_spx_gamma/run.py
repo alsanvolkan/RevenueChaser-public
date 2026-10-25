@@ -9,6 +9,7 @@ from datetime import date
 from functools import partial
 from pathlib import Path
 
+from RevenueChaser.core import ledger
 from RevenueChaser.core.calendar import is_trading_day, today_ny
 from RevenueChaser.core.providers.unusual_whales import UWClient
 
@@ -18,6 +19,7 @@ from .brier import BRIER_FILENAME
 from .config import DATA_ROOT, HISTORY_FILENAME, TICKER, UW_API_TOKEN
 from . import safe_json
 from .brier import record_probs
+from . import freeze as spx_freeze
 from .normalize import normalize_snapshot
 from .render import render_html, render_markdown
 from .scenarios import build_scenarios
@@ -240,7 +242,8 @@ def build_day(raw: dict, requested_date: str, root: Path, ticker: str = TICKER,
     effective date, never the requested one (a fallback session is not the requested day, G3).
     ``update_latest=False`` leaves the ``latest.json`` pointer alone (rebuilding an older day).
     ``record=False`` leaves the Brier record alone: only a Fetch records the day's probabilities,
-    a Refresh never rewrites the audit file (SPX-4).
+    a Refresh never rewrites the audit file (SPX-4). Only ``record=True`` scores the records that are due
+    and freezes the day's scenario in ``forecast_ledger`` (S3b, #38; ``module_spx_gamma/freeze.py``).
     ``write_png=False`` skips the PNG export (a Refresh, #376): PNGs a Fetch wrote stay on disk and
     keep their report reference, but the manifest records no sha256 for a PNG this run did not write.
     """
@@ -284,6 +287,14 @@ def build_day(raw: dict, requested_date: str, root: Path, ticker: str = TICKER,
     env_fig = position_map.build_envelope_fig(snapshot)
     env_html, env_png, env_frag = export(env_fig, chart_dir, "cumulative_envelope")
 
+    # S3b (#38), Fetch only: score the records whose target close D03 now holds, before the report renders the
+    # scorecard. Best-effort, like the record below.
+    if record:
+        try:
+            spx_freeze.score_due(brier_path, root)
+        except Exception as exc:  # noqa: BLE001 — the scorecard is best-effort
+            logger.warning("spx brier scoring failed: %s", exc)
+
     report_dir = root / "reports" / asof_date
     report_dir.mkdir(parents=True, exist_ok=True)
     png_ref = str(png_path or kept_png) if (png_path or kept_png) else None
@@ -299,7 +310,7 @@ def build_day(raw: dict, requested_date: str, root: Path, ticker: str = TICKER,
         try:
             scenarios = build_scenarios(snapshot).get("scenarios", [])
             probs = {s["name"]: s["p"] for s in scenarios}
-            record_probs(asof_date, probs, path=brier_path)
+            record_probs(asof_date, probs, path=brier_path, **spx_freeze.record_fields(snapshot, asof_date))
         except safe_json.CorruptJsonError as exc:
             logger.error("spx brier not recorded (file kept aside): %s", exc)
         except Exception as exc:  # noqa: BLE001 — scorecard is best-effort
@@ -346,6 +357,15 @@ def build_day(raw: dict, requested_date: str, root: Path, ticker: str = TICKER,
         logger.error("spx history not recorded (file kept aside): %s", exc)
     except Exception as exc:  # noqa: BLE001 — history is best-effort
         logger.warning("spx history record failed: %s", exc)
+
+    # S3b (#38), Fetch only: freeze today's scenario in the forecast ledger. Best-effort: a failure is logged and
+    # noted on the job, never a failed build.
+    if record:
+        try:
+            spx_freeze.freeze_scenarios(snapshot, asof_date)
+        except Exception as exc:  # noqa: BLE001 — the board is built; the freeze says why it did not run
+            logger.error("spx scenario freeze failed: %s", exc)
+            ledger.add_note(f"{spx_freeze.LABEL} not frozen: {exc}.")
 
     return {
         "snapshot": snapshot,

@@ -31,6 +31,13 @@ append-only guarantee is this module's discipline (a test pins it).
 
 ``forecast_date`` and ``target_date`` are always ``datetime.date`` (``rawstore._dedupe`` keys on the
 Python value, so text, ``datetime`` and ``date`` would be three different keys).
+
+Dated forecasts (S3b, #38; avo's cards 2026-10-25): a board that forecasts one subject for a later session writes
+one row per (source, day, ``target_type``) through ``write_dated`` / ``freeze_dated``, with ``target_date`` after
+``forecast_date`` and the forecast itself in ``probs``. The first family is SPX Gamma's weekly three-class
+scenario (``module_spx_gamma/freeze.py``). The session rule is the picks' one: only the latest complete session,
+never inside the US session window, only a Fetch, first write of (source, day, target_type) wins. Its outcome is
+not in ``forecast_outcomes``: the SPX Brier score stays in ``brier.json`` (avo, 2026-10-25).
 """
 from __future__ import annotations
 
@@ -376,6 +383,76 @@ def write_picks(source: str, label: str, rows: list[dict], *, model_version: str
         rawstore.write_rows(TABLE, list(built.values()))
     return Outcome(source, label, frozen=len(built), forecast_date=forecast_date,
                    dropped=duplicates, dropped_why="duplicate ticker" if duplicates else "")
+
+
+# ── dated forecasts (S3b) ────────────────────────────────────────────────────
+
+def _dated_frozen(source: str, forecast_date: date, target_type: str) -> bool:
+    rows = rawstore.query(
+        f"SELECT 1 AS hit FROM {TABLE} WHERE source = ? AND forecast_date = ? AND target_type = ? LIMIT 1",
+        [source, forecast_date, target_type])
+    return bool(rows)
+
+
+def write_dated(source: str, label: str, row: dict, *, target_type: str, forecast_date: date,
+                target_date: date, model_version: str, run_id: str, frozen_at: float | None = None) -> Outcome:
+    """Append one dated forecast for ``source``; the first write of (source, day, ``target_type``) wins.
+
+    ``row`` carries ``subject``, ``probs`` (a dict, the JSON column) and optionally ``shown_price``, ``score`` and
+    ``bucket``; ``rank``, ``stop`` and ``target`` stay NULL (they belong to picks). Raises on a code error: a text
+    date, the ``pick`` type or none, or a ``target_date`` that is not after ``forecast_date``.
+    """
+    for name, value in (("forecast_date", forecast_date), ("target_date", target_date)):
+        if type(value) is not date:
+            raise TypeError(f"{name} must be a datetime.date, got {type(value).__name__}")
+    if not target_type or target_type == PICK:
+        raise ValueError(f"a dated forecast needs its own target_type, got {target_type!r}")
+    if target_date <= forecast_date:
+        raise ValueError(f"target_date {target_date} must be after forecast_date {forecast_date}")
+    subject = str(row.get("subject") or "").strip().upper()
+    if not subject:
+        return skipped(source, label, "there was no usable forecast", forecast_date)
+    probs = row.get("probs")
+    built = {
+        "source": source, "forecast_date": forecast_date, "subject": subject,
+        "target_type": target_type, "target_date": target_date,
+        "frozen_at": time.time() if frozen_at is None else float(frozen_at), "run_id": run_id,
+        "model_version": model_version, "rank": None, "score": _num(row.get("score")),
+        "bucket": _text(row.get("bucket")),
+        "probs": None if probs is None else dict(probs),      # rawstore serializes a JSON column once
+        "market_cap": None, "sector": None, "shown_price": _num(row.get("shown_price")),
+        "stop": None, "target": None,
+    }
+    with _LOCK:
+        if _dated_frozen(source, forecast_date, target_type):
+            return skipped(source, label, f"already frozen for {forecast_date}", forecast_date)
+        rawstore.write_rows(TABLE, [built])
+    return Outcome(source, label, frozen=1, forecast_date=forecast_date)
+
+
+def freeze_dated(source: str, label: str, row: dict, *, target_type: str, forecast_date: date,
+                 target_date: date, model_version: str, run_id: str | None = None, now=None,
+                 problem: str | None = None) -> Outcome:
+    """Apply the session rule to one dated forecast, write it when it passes, and note the outcome.
+
+    ``forecast_date`` must be the latest complete New York session at ``now`` and the run must be outside the US
+    session window (``session_gate``). ``problem`` is the caller's own reason to refuse (no bands, bad
+    probabilities). Never raises for a refusal; a code error propagates, as in ``freeze_board``.
+    """
+    session, why = session_gate(now)
+    if not why and forecast_date != session:
+        why = f"{forecast_date} is not the latest complete session ({session})"
+    if not why and problem:
+        why = problem
+    if why:
+        outcome = skipped(source, label, why, forecast_date)
+    else:
+        outcome = write_dated(source, label, row, target_type=target_type, forecast_date=forecast_date,
+                              target_date=target_date, model_version=model_version,
+                              run_id=run_id or new_run_id())
+    add_note(outcome.message)
+    logger.info("forecast ledger: %s", outcome.message)
+    return outcome
 
 
 # ── one board, the whole rule ────────────────────────────────────────────────

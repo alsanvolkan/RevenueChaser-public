@@ -151,7 +151,7 @@ Refusing writes on a mismatch is off (#26 PL7-b). `SCHEMA_REFUSE_WRITES` in `cor
 | `edgar_docs/{cik}/{accession}.html.gz` | Raw 10-K/20-F HTML (the durable raw-document record; keyed by CIK + accession). Dir via `RC_EDGAR_DOCS_DIR` | No — durable; backed up as a tree |
 | `.cache/sec_13f/*_form13f.zip` | Downloaded SEC 13F source archives (re-downloadable from SEC) | Yes — deletable after ingest (tracked in `ingested_zips`) |
 | `.cache/` | All regenerable outputs: `*_latest.json`, `*_latest.html` (flat and nested), PNGs, timestamped archives | Yes — delete anytime; re-run regenerates |
-| `module_spx_gamma/data/` (override `SPX_GAMMA_DATA_ROOT`) | SPX Gamma data tree: the UW GEX and greek files per date under `raw/<date>/`, `brier.json`, `spx_gamma_gex_history.json`, parsed files, charts and reports. Inside the repo (git-ignored `data/`), not under `.store/`. UW serves only recent days, so the raw day files cannot be fetched again | No — durable. Mirrored by the nightly backup (see Backups); #179 moves it into DuckDB later |
+| `module_spx_gamma/data/` (override `SPX_GAMMA_DATA_ROOT`) | SPX Gamma data tree: the UW GEX and greek files per date under `raw/<date>/`, `brier.json` (scenario probabilities and, since S3b, their Brier scores; the frozen probabilities also go to `forecast_ledger`), `spx_gamma_gex_history.json`, parsed files, charts and reports. Inside the repo (git-ignored `data/`), not under `.store/`. UW serves only recent days, so the raw day files cannot be fetched again | No — durable. Mirrored by the nightly backup (see Backups); #179 moves it into DuckDB later |
 
 ## Pipeline stages
 
@@ -222,7 +222,7 @@ Computed from raw caches and persisted in `raw.duckdb`.
 
 | Table / VIEW | Derived from | Notes |
 |---|---|---|
-| `forecast_ledger` | Frozen forecasts of every board (#128 / #62 D-3) | **append-only, first write wins** (nothing is ever updated; don't call `update_columns`/`replace_all`/`delete`/`clear` on it); `forecast_date` = the NY session of the newest complete bar used; `target_date` = the session the forecast resolves on (the forecast date for picks). Outcomes live in the derived `forecast_outcomes` table (62b-1, #380 S0) |
+| `forecast_ledger` | Frozen forecasts of every board (#128 / #62 D-3) | **append-only, first write wins** (nothing is ever updated; don't call `update_columns`/`replace_all`/`delete`/`clear` on it); `forecast_date` = the NY session of the newest complete bar used; `target_date` = the session the forecast resolves on (the forecast date for picks). Two families: `target_type` `pick` (the Swing, Fundamentals and AG boards) and `scenario_3class` (SPX Gamma, `source` `spx_gamma`, S3b #38: one dated row per Fetch day, see "Dated forecasts" below). Pick outcomes live in the derived `forecast_outcomes` table (62b-1, #380 S0); the SPX scenario's Brier score stays in `brier.json` |
 | `forecast_outcomes` | `forecast_ledger` picks + D01 bars (`price_bars_daily` / `price_actions`, nominal basis) | **derived, keyed upsert** (`latest_cache`): recomputed from the ledger and the bars, never a fact of its own. Writer `core/outcomes.py` (CLI `scripts/forecast_outcomes.py`, task RC-Forecast-Outcomes 23:45, after RC-Daily-Bars); one row per pick and horizon (30 and 90 calendar days). See "The forecast-outcomes writer" below |
 | `forecast_baselines` | the `equity_universe` snapshot of a freeze date (`equity_universe_changes`) + D01 bars (nominal outcomes, adjusted closes for the volatility) | **derived, keyed upsert** (`latest_cache`, #25 HR-1, added with no schema bump): what the same day's universe did, so a family's hit rate can be compared with something. Writer `core/baselines.py` (CLI `scripts/forecast_baselines.py`, task RC-Forecast-Baselines 23:50, after RC-Forecast-Outcomes); one row per freeze date, horizon (30 and 90) and basis (`universe`, `vol_decile_1` … `vol_decile_10`) |
 | `index_constituents` | UW screener (sp500), DIA holdings (dow), ticker-exchanges (nasdaq); sp600 from the last accepted S&P 1500 snapshot in `identity_source_cache` (#302) | replace per slug; written by `index_registry.refresh_lists` (job `index_lists`, task RC-Index-Lists Saturday 10:00, CLI `scripts/index_lists.py`); a list under its floor (`MIN_INDEX`: 400 / 25 / 1,000 / 480) is not written; the first sp600 fill needs the user's OK for that run; joins and leaves are in `index_constituents_changes`. sp600 shows as "S&P SmallCap 600" on the badge and in the filter once stored (#214); `fetch_index` never fills it (Common K1) |
@@ -355,6 +355,26 @@ RC-Screeners-Daily (weekdays from 23:00), the other `raw.duckdb` writer of the n
 runs daily at 23:50, chained on RC-Forecast-Outcomes (the same night's other `raw.duckdb` writer, so the two never
 overlap) and writes `forecast_baselines` alone; its `--full` is the attended first fill. A dated target (an SPX pin)
 gets one row with `horizon_days` = `target_date` - `forecast_date` from its own writer later; S0 writes picks only.
+The first dated family, SPX Gamma's scenario (S3b, below), writes no `forecast_outcomes` row: its score is a Brier score
+and stays in `brier.json` (avo, 2026-10-25).
+
+**Dated forecasts (S3b, #38).** A board that forecasts one subject for a later session writes one row per
+(source, day, `target_type`) through `ledger.write_dated` / `ledger.freeze_dated`, with `target_date` after
+`forecast_date` (`pick` is refused as a dated type) and the forecast in `probs`; `rank`, `stop`, `target`,
+`market_cap` and `sector` stay NULL. The session rule is the picks' one: the forecast day is the latest complete
+session, the run is outside 09:30–16:30 ET, only a Fetch reaches it, and the first write of (source, day,
+`target_type`) wins. A refusal is a job note. The first and only family is SPX Gamma (`module_spx_gamma/freeze.py`,
+avo's cards 2026-10-25):
+- `source` `spx_gamma`, `subject` `SPX`, `target_type` `scenario_3class`, `probs` = the Consolidation / Upside /
+  Downside probabilities, `shown_price` = spot;
+- `target_date` = the last session of the forecast day's week, or of the next week when the forecast day is already
+  that session (`week_target`; a Good Friday week ends on Thursday);
+- `model_version` = `spx-s3b-1+<hash of the probabilities and the band offsets>`, pinned by a golden test;
+- the SPX Fetch (`build_day(record=True)`) then scores every unscored `brier.json` record whose target close is stored:
+  the realized class is the `^GSPC` close of `index_levels_daily` (D03) on `target_date` against the record's
+  consolidation band (`scenarios.realized_class`). A new record carries its `target_date` and `bands`; an older one
+  gets its target from the same rule and its bands from `parsed/<date>/snapshot.json`, and stays unscored without it.
+  A Refresh neither freezes nor scores (SPX-4); the records already in `brier.json` are not copied into the ledger.
 
 **Daily-bar cache and the freeze.** To let a post-close Fetch meet the rule above, `load_ohlc`
 (`module_swing_potential/indicators.py`) treats a cached series as stale, besides its TTL, when its last bar is D or

@@ -54,7 +54,8 @@ Today raw and derived tables share `raw.duckdb`. Only `identity_source_cache` am
     hashed against the verified mirror copy before it gets its name (scripts/backup_store.py:99-100, :475). Only an SPX Fetch records
     the day's scenario probabilities in `brier.json`; a Refresh rebuilds the day without writing it, and a record that is
     already scored is never replaced (module_spx_gamma/run.py `build_day(record=...)`, module_spx_gamma/brier.py
-    `record_probs`; SPX-4, #376). A source file
+    `record_probs`; SPX-4, #376). Since S3b (#38) that Fetch also scores the records whose target close
+    `index_levels_daily` holds and freezes the day's scenario in `forecast_ledger` (`module_spx_gamma/freeze.py`). A source file
     that is not valid JSON never overwrites a good mirror copy: the run keeps the old copy, logs a warning and exits 1
     (scripts/backup_store.py:500-542);
   - **keeps the first verified raw snapshot of each ISO week** (#277) in `weekly/`, never pruned, outside the prune and
