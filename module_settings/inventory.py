@@ -930,6 +930,9 @@ def _ticker_detail(ticker: str) -> dict | None:
     edgar = _edgar_presence(t)
     ownership = _presence("ownership_snapshot", t, date_column="session_date", source_column="source")
     swing = _swing_presence(t)
+    # Read once: the unknown-name test below and the presence both use them (one failure, one entry).
+    oipd = _exists_row("oipd_meta", t)
+    related = _exists_row("relatedness_profiles", t)
 
     if not any(x is not None for x in (universe, master, sec, sic, filing)) \
             and not edgar["periods"] \
@@ -938,8 +941,8 @@ def _ticker_detail(ticker: str) -> dict | None:
             and not vendor["rows"] \
             and not ownership["rows"] \
             and swing["bars"] == 0 \
-            and not _exists_row("oipd_meta", t) \
-            and not _exists_row("relatedness_profiles", t) \
+            and not oipd \
+            and not related \
             and not getattr(_CALL, "errors", None):   # a failed read is not "absent" (#143)
         return None
 
@@ -955,8 +958,8 @@ def _ticker_detail(ticker: str) -> dict | None:
         "vendor_financials": vendor,
         "ownership_snapshot": ownership,
         "swing_ohlc": swing,
-        "oipd_meta": _exists_row("oipd_meta", t),
-        "relatedness_profiles": _exists_row("relatedness_profiles", t),
+        "oipd_meta": oipd,
+        "relatedness_profiles": related,
         # The latest stored annual filing, the row the drill shows as "Last 10-K / 20-F".
         "chain_filings": filing is not None,
         # One universe definition: the very list the boards read (cap floor and

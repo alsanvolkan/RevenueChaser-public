@@ -288,7 +288,7 @@ def test_a_failed_bars_read_is_unreadable_not_missing_and_the_board_says_so(raws
     assert fit["module_swing_potential"]["missing"] == []
     assert fit["module_swing_potential"]["unreadable"] == ["daily price bars"]
     assert any(e["table"] == "price_bars_daily" for e in detail["errors"])
-    # A board that does not read the bars is not dragged along.
+    # Every board that reads the bars says so; one that does not read them keeps its own state.
     assert fit["module_comovement"]["state"] == "unreadable"
     assert fit["module_sec_13f"]["state"] == "not_checked"
 
@@ -368,3 +368,13 @@ def test_a_missing_readable_table_says_cannot_even_when_another_read_failed(raws
 
     assert fit["module_fundamentals"]["state"] == "cannot"
     assert fit["module_fundamentals"]["missing"] == ["daily price bars"]
+
+
+def test_a_failed_row_check_is_recorded_once(rawstore_tmp_db, monkeypatch):
+    """A name in no other dataset reaches the row checks twice (the unknown-name test, then the
+    presence): one read, so one failure on the list."""
+    _seed_every_dataset()
+    _fail_reads_of(monkeypatch, "oipd_meta")
+    errors = inventory.ticker_detail("ZZZZ")["errors"]
+    assert [e["table"] for e in errors].count("oipd_meta") == 1
+

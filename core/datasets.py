@@ -227,7 +227,7 @@ def _summary_health(dotted: str) -> Callable[[], Health]:
         module = import_module(f"RevenueChaser.{dotted}")
         health = getattr(module, "health")
         if "now" in inspect.signature(health).parameters:
-            return health(now)
+            return health(now=now)
         return health()
 
     coverage.__name__ = f"{dotted}.health"

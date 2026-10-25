@@ -194,7 +194,7 @@ def _card(**over):
     card = {
         "key": "module_comovement", "label": "Co-movement",
         "tables": ["equity_universe", "swing_ohlc"],
-        "price_basis": "dividend-adjusted closes (yfinance auto_adjust); correct for returns",
+        "price_basis": "daily price bars, split- and dividend-adjusted closes; correct for returns",
         "params": ["Window 252 sessions", "Min observations 126"],
         "as_of": "2026-09-25T20:00:00+00:00",
         "window": {"window_start": "2025-09-25", "prices_through": "2026-09-25"},
@@ -2029,7 +2029,7 @@ def _g4_payload():
          "coverage": {"covered": 181, "expected": 905, "fraction": 0.2,
                       "label": "181 / 905 (20%)", "newest": "2026-09-20", "problems": []},
          "fetch": {"route": "/run/screeners", "label": "Fetch screeners"}, "note": ""},
-        {"key": "cftc", "label": "CFTC E-mini COT", "tables": ["cftc_cot"], "rows": 2,
+        {"key": "cftc", "label": "CFTC E-mini Commitments of Traders", "tables": ["cftc_cot"], "rows": 2,
          "last_date": "—", "holes": 0, "hole_label": "",
          "source": "finra/cftc",
          "coverage": {"covered": 2, "expected": 50, "fraction": 0.04,
@@ -2163,7 +2163,7 @@ function dataset(name, tables, db, source, state){
 }
 var rows = [dataset("Equity universe", "equity_universe equity_universe_changes", "raw", "yfinance", ""),
             dataset("10-K / 20-F corpus", "chain_filings edgar_documents", "edgar", "sec", "no denominator"),
-            dataset("CFTC E-mini COT", "cftc_cot", "raw", "finra/cftc",
+            dataset("CFTC E-mini Commitments of Traders", "cftc_cot", "raw", "finra/cftc",
                     "needs attention|no time column")];
 var tbody = {children: []};
 rows.forEach(function(tr){ tbody.children.push(tr, tr.detail); });
@@ -2243,10 +2243,10 @@ console.log(JSON.stringify(out));
     assert out.returncode == 0, out.stderr[-2000:]
     got = _json.loads(out.stdout.strip().splitlines()[-1])
 
-    all_three = ["Equity universe", "10-K / 20-F corpus", "CFTC E-mini COT"]
+    all_three = ["Equity universe", "10-K / 20-F corpus", "CFTC E-mini Commitments of Traders"]
     assert got["none"] == {"shown": all_three, "count": "Showing 3 of 3 datasets",
                            "clear": False, "details": [True, True, True]}
-    assert got["byName"]["shown"] == ["CFTC E-mini COT"], "the dataset name matches"
+    assert got["byName"]["shown"] == ["CFTC E-mini Commitments of Traders"], "the dataset name matches"
     assert got["byName"]["count"] == 'Showing 1 of 3 datasets · filtered by search "COT"'
     assert got["byName"]["clear"] is True
     assert got["byTable"]["shown"] == ["10-K / 20-F corpus"], "a store table name matches"
@@ -2254,7 +2254,7 @@ console.log(JSON.stringify(out));
     assert got["and"]["count"] == ("Showing 0 of 3 datasets · filtered by store file raw · "
                                   "source sec")
     assert got["or"]["shown"] == all_three, "two chips in one group widen the result"
-    assert got["stateChip"]["shown"] == ["CFTC E-mini COT"]
+    assert got["stateChip"]["shown"] == ["CFTC E-mini Commitments of Traders"]
     assert got["stateChip"]["count"] == "Showing 1 of 3 datasets · filtered by state needs attention"
     assert got["collapsed"] == {"details": [True, True, True], "expanded": "false"}, \
         "a hidden dataset takes its detail row down and leaves it collapsed"
@@ -3101,6 +3101,7 @@ def test_a_failed_presence_read_shows_could_not_read_never_missing():
             in html)
     assert '<span class="dval">unknown — could not read daily price bars</span>' in html
     assert "missing" not in html.split('id="drill-boards"')[1].split("dnote")[0]
+
 
 def test_the_drill_names_the_reads_that_failed():
     """``ticker_detail`` returns its errors; the drill prints which table could not be read and why."""
