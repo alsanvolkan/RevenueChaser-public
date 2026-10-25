@@ -380,3 +380,19 @@ def test_stops_after_a_run_of_days_rejected_with_another_4xx(tmp_path, monkeypat
     assert counts["stop_reason"] == "rejected_streak"
     assert counts["status"][str(status)] == hp.REJECTED_STREAK_STOP == 5
     assert len(uw.calls) == 1 + 5
+
+
+def test_a_failed_report_never_hides_the_runs_own_error(tmp_path, monkeypatch):
+    def broken(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(hp, "fetch_snapshot", broken)
+
+    real_write = hp.safe_json.write_json_atomic
+
+    def unwritable(path, obj):
+        if path.name.startswith("run_"):                # only the run's report fails
+            raise TypeError("not serializable")
+        return real_write(path, obj)
+    monkeypatch.setattr(hp.safe_json, "write_json_atomic", unwritable)
+    with pytest.raises(OSError, match="disk full"):
+        _pull(tmp_path, Recorder())

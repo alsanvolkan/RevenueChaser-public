@@ -305,7 +305,7 @@ def _finish(counts: dict, meter: _Meter, http, root: Path, start: str, end: str)
     counts["report_file"] = str(report.relative_to(root))
     try:
         safe_json.write_json_atomic(report, counts)
-    except OSError:
+    except Exception:  # noqa: BLE001 - in ``finally``: never hide the run's own error (#194 delta review)
         counts["report_file"] = None
         logger.warning("spx history pull: could not write %s", report, exc_info=True)
     logger.info("spx history pull %s..%s: %s written, %s already stored, %s without a stored close, %s failed; "
