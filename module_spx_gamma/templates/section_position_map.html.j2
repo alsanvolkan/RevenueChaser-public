@@ -196,7 +196,11 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     text-transform:uppercase; letter-spacing:.5px; }
   table.stack td[data-label=""]::before{ display:none; }
   table.stack td::before{ font-weight:400; }
-  .summary-card table.stack tr{ border:0; border-top:1px solid var(--border); border-radius:0; background:none; padding:0; margin:0; }
+  .ag-h-vol{ display:none; }          /* 'Intraday' labels the row of (VOL) values; under Spot it read as Spot's own */
+  .summary-card table.stack tr{ border:0; border-top:1px solid var(--border); border-radius:0; background:none; padding:8px 0; margin:0; }
+  .summary-card table.stack td:first-child{ display:block; text-align:left; color:var(--bright); font-weight:600; padding:0 0 4px; }
+  .summary-card table.stack td:first-child::before{ display:none; }
+  .ib-legs table.stack tr{ display:grid; grid-template-columns:1fr 1fr; column-gap:16px; }
   table.stack.plain tr{ border:0; background:none; padding:0; margin:0 0 8px; }
   table.stack.plain td{ display:block; text-align:left; border:0; padding:0; }
   table.stack.plain td:first-child{ color:var(--bright); font-weight:600; }
@@ -204,7 +208,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   .scenario-table tr.row-neutral{ border-left:4px solid var(--amber); }
   .scenario-table tr.row-bearish{ border-left:4px solid var(--red); }
   .scenario-table tr td:first-child{ border-left:0 !important; }
-  .summary-card td:first-child, .summary-card td:last-child{ text-align:right; }
+  .summary-card td:last-child{ text-align:right; }
 }
 @media print{
   body{ background:#fff; color:#111; }

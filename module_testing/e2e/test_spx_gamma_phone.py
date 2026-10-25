@@ -333,3 +333,32 @@ def test_the_iron_butterfly_legs_do_not_scroll_on_a_phone(board, browser):
     assert browser.eval(over) == "visible"
     _open(browser, board, DESKTOP)
     assert browser.eval(over) == "auto"
+
+
+# ── #195 review SHOULD 4: phone readability ──
+def test_intraday_is_not_a_label_under_spot_on_a_phone(board, browser):
+    """On a desktop 'Intraday' names the row of (VOL) values; stacked under Spot it read as Spot's own."""
+    shown = "getComputedStyle(document.querySelector('.ag-h-vol')).display"
+    _open(browser, board, PHONE)
+    assert browser.eval(shown) == "none"
+    _open(browser, board, DESKTOP)
+    assert browser.eval(shown) != "none"
+
+
+def test_a_stacked_summary_metric_is_a_heading_with_a_rule_between_metrics(board, browser):
+    _open(browser, board, PHONE)
+    got = browser.eval("""(function(){ var tr = document.querySelector('.summary-card table.stack tbody tr'),
+      td = tr.firstElementChild, s = getComputedStyle(tr);
+      return {label: getComputedStyle(td, '::before').display, rule: s.borderTopWidth, pad: s.paddingTop,
+              weight: getComputedStyle(td).fontWeight, cells: tr.children.length}; })()""")
+    assert got["label"] == "none", f"the metric name repeats a METRIC label: {got}"
+    assert got["rule"] != "0px" and got["pad"] != "0px", f"no separator between metrics: {got}"
+    assert int(got["weight"]) >= 600, got
+
+
+def test_an_iron_butterfly_leg_is_two_columns_on_a_phone(board, browser):
+    _open(browser, board, PHONE)
+    got = browser.eval("""(function(){ var tr = document.querySelector('.ib-legs table.stack tbody tr'), s = getComputedStyle(tr);
+      return [s.display, s.gridTemplateColumns.split(' ').length, Math.round(tr.getBoundingClientRect().height)]; })()""")
+    assert got[0] == "grid" and got[1] == 2, got
+    assert got[2] <= 150, f"a leg card is {got[2]} px tall"
