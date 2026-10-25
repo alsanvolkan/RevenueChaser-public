@@ -274,3 +274,35 @@ def test_the_tornado_labels_stay_inside_the_chart_on_a_phone(board, browser):
         pass
     out = browser.eval(probe)
     assert not out, f"tornado labels outside the chart: {out}"
+
+
+FIRST_THEME = """(function(){ new MutationObserver(function(_, o){
+  var t = document.documentElement.getAttribute('data-theme');
+  if(t && !window.__first){ window.__first = {theme: t, body: !!document.body}; o.disconnect(); }
+}).observe(document, {attributes: true, subtree: true}); })()"""
+
+
+def _stored_theme(browser, board, choice, scheme="dark"):
+    browser.emulate(*PHONE, scheme=scheme)
+    browser.open(f"{board.url}/view/{TAB}")
+    browser.eval(f"localStorage.setItem('rc-theme', {choice!r})")
+    browser.send("Page.addScriptToEvaluateOnNewDocument", source=FIRST_THEME)
+    browser.open(f"{board.url}/view/{TAB}")
+
+
+@pytest.mark.parametrize("choice", ["light", "auto"])
+def test_a_board_opened_directly_reads_the_stored_theme_before_it_paints(board, browser, choice):
+    """#195 review SHOULD 2: opened directly, the board ignored rc-theme and was always dark; in the shell it
+    painted dark first. The board's own head script applies the choice, before the body exists."""
+    _stored_theme(browser, board, choice, scheme="light")
+    first = browser.eval("window.__first")
+    assert first == {"theme": choice, "body": False}, first
+    bg = browser.eval("getComputedStyle(document.body).backgroundColor")
+    assert bg == "rgb(244, 246, 249)", bg
+
+
+def test_no_stored_theme_is_dark_on_a_light_device(board, browser):
+    browser.emulate(*PHONE, scheme="light")
+    browser.open(f"{board.url}/view/{TAB}")
+    assert browser.eval("document.documentElement.getAttribute('data-theme')") == "dark"
+    assert browser.eval("getComputedStyle(document.body).backgroundColor") == "rgb(5, 17, 31)"
