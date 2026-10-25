@@ -5,172 +5,212 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>SPX Critical Thresholds</title>
 <style>
-:root{ --bg:#05111f; --fg:#c5c6c8; --card:#0b1828; --border:rgba(197,198,200,.15); --muted:#8b949e; --amber:#fbbf24; --green:#34d399; --red:#f87171; --purple:#cc79a7; --teal:#64d8cb; --orange:#e69f00; }
+{{ theme_css }}
+/* The palette is core/reporting_common.THEME_CSS (dark by default; light under data-theme="light"/"auto", the
+   shell sets it on <html>). The names below are this board's own, built from those tokens. */
+:root{ --green:var(--pos); --red:var(--neg);
+  --pos-bg:color-mix(in srgb,var(--pos) 16%,transparent); --neg-bg:color-mix(in srgb,var(--neg) 16%,transparent);
+  --amber-bg:color-mix(in srgb,var(--amber) 16%,transparent); --flat-bg:color-mix(in srgb,var(--muted) 16%,transparent);
+  --pos-soft:color-mix(in srgb,var(--pos) 7%,transparent); --neg-soft:color-mix(in srgb,var(--neg) 7%,transparent);
+  --pos-line:color-mix(in srgb,var(--pos) 40%,transparent); --neg-line:color-mix(in srgb,var(--neg) 40%,transparent);
+  --amber-line:color-mix(in srgb,var(--amber) 40%,transparent); --blue-bg:color-mix(in srgb,var(--sky) 16%,transparent);
+  --shadow-tip:0 4px 12px rgba(0,0,0,.25);
+  /* the names the shared help box and notice (core/reporting_common) read, with their dark fallbacks otherwise */
+  --panel:var(--card); --accent:var(--sky); --text:var(--bright); --neon:var(--pos); }
+.rc-notice{ background:var(--card) !important; }
+/* Type scale: 11 / 12 / 13 / 15 / 19. Spacing: a 4 px grid. */
 *{ box-sizing:border-box; }
-body{ background:var(--bg); color:var(--fg); font-family:'Segoe UI',system-ui,sans-serif; font-size:14px; margin:0; padding:24px 30px; }
-.header{ color:var(--muted); font-size:12px; padding-bottom:10px; border-bottom:1px solid var(--border); margin-bottom:14px; }
-.at-glance{ font-size:15px; font-weight:600; color:#f0f0f0; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:10px 14px; margin:12px 0 18px; }
+body{ background:var(--bg); color:var(--fg); font-family:'Segoe UI',system-ui,sans-serif; font-size:13px; margin:0; padding:24px 32px; font-variant-numeric:tabular-nums; }
+:focus-visible{ outline:2px solid var(--sky); outline-offset:2px; }
+.header{ color:var(--muted); font-size:12px; padding-bottom:8px; border-bottom:1px solid var(--border); margin-bottom:16px; }
+.at-glance{ font-size:15px; font-weight:600; color:var(--bright); background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 16px; margin:12px 0 20px; }
 .at-glance .muted{ color:var(--muted); font-weight:400; }
-h2{ font-size:19px; margin:22px 0 10px; color:#f0f0f0; }
-h3{ font-size:15px; margin:16px 0 8px; color:#d8d8d8; }
-.chart{ margin:8px 0 16px; }
+h2{ font-size:19px; margin:24px 0 8px; color:var(--bright); }
+h3{ font-size:15px; margin:16px 0 8px; color:var(--bright); }
+.chart{ margin:8px 0 16px; max-width:100%; overflow:hidden; }
+.chart .plotly-graph-div{ max-width:100%; }
+.chart .plotly-graph-div[style*="height:100%"]{ height:min(700px,70vh) !important; }
 table{ border-collapse:collapse; width:100%; margin:8px 0 16px; font-size:13px; }
-th,td{ border:1px solid var(--border); padding:7px 9px; text-align:left; }
-th{ background:var(--card); color:#d8d8d8; font-weight:600; }
-.grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
-.summary-card{ border:1px solid var(--border); border-radius:8px; background:var(--card); padding:14px 16px; }
-.summary-card .head{ display:flex; align-items:center; gap:8px; margin-bottom:6px; }
-.summary-card .title{ font-weight:700; color:#f0f0f0; font-size:15px; }
+th,td{ border:1px solid var(--border); padding:8px; text-align:left; }
+th{ background:var(--card); color:var(--bright); font-weight:600; }
+.grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.summary-card{ border:1px solid var(--border); border-radius:8px; background:var(--card); padding:16px; }
+.summary-card .head{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.summary-card .title{ font-weight:700; color:var(--bright); font-size:15px; }
 .summary-card .tag{ color:var(--muted); font-size:11px; letter-spacing:1px; }
-.pill{ font-size:11px; font-weight:700; padding:2px 9px; border-radius:999px; margin-left:auto; }
-.pill.green{ background:rgba(52,211,153,.16); color:var(--green); }
-.pill.red{ background:rgba(248,113,113,.16); color:var(--red); }
-.pill.amber{ background:rgba(251,191,36,.16); color:var(--amber); }
-.summary-card .narrative{ color:#d8d8d8; margin:6px 0 10px; font-size:13px; }
+.pill{ font-size:11px; font-weight:700; padding:4px 8px; border-radius:999px; margin-left:auto; }
+.pill.green{ background:var(--pos-bg); color:var(--green); }
+.pill.red{ background:var(--neg-bg); color:var(--red); }
+.pill.amber{ background:var(--amber-bg); color:var(--amber); }
+.summary-card .narrative{ color:var(--fg); margin:8px 0 12px; font-size:13px; }
 .summary-card table{ margin:0; font-size:12px; }
 .summary-card td{ padding:4px 8px; border:0; border-bottom:1px solid var(--border); }
 .summary-card tr:last-child td{ border-bottom:0; }
-.summary-card td:first-child{ color:var(--muted); width:150px; }
+.summary-card td:first-child{ color:var(--muted); width:152px; }
 .summary-card td:nth-child(2){ text-align:right; font-weight:600; }
-.summary-card td:last-child{ color:var(--muted); text-align:right; width:130px; }
-pre{ background:#0b1828; border:1px solid var(--border); border-radius:6px; padding:12px; overflow-x:auto; font-size:12px; line-height:1.5; }
-.footer{ color:var(--muted); font-size:11px; border-top:1px solid var(--border); margin-top:28px; padding-top:10px; }
+.summary-card td:last-child{ color:var(--muted); text-align:right; width:128px; }
+pre{ background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px; overflow-x:auto; font-size:12px; line-height:1.5; }
+.footer{ color:var(--muted); font-size:11px; border-top:1px solid var(--border); margin-top:28px; padding-top:8px; }
 ul{ margin:8px 0 16px; padding-left:20px; }
-li{ margin-bottom:6px; }
+li{ margin-bottom:8px; }
+.note{ color:var(--muted); font-size:12px; }
 /* ── v2 components ── */
-.strip{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin:14px 0 18px; }
-.strip .kv{ background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 12px; }
-.strip .kv .k{ color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
-.strip .kv .v{ color:#f0f0f0; font-size:15px; font-weight:600; margin-top:2px; }
-.band-row{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:8px 0 16px; }
-.band{ border:1px solid var(--border); border-radius:8px; padding:12px 14px; }
-.band.green{ background:rgba(52,211,153,.07); border-color:rgba(52,211,153,.35); }
-.band.red{ background:rgba(248,113,113,.07); border-color:rgba(248,113,113,.35); }
-.band h3{ margin:0 0 6px; }
-.band .big{ font-size:16px; font-weight:700; color:#f0f0f0; }
-.chain{ display:flex; flex-wrap:wrap; gap:0; margin:10px 0 16px; align-items:stretch; }
-.chain .node{ background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 12px; min-width:150px; flex:1; }
-.chain .node .n-label{ font-weight:700; color:#f0f0f0; font-size:13px; }
-.chain .node .n-icon{ color:var(--sky,#56b4e9); font-size:11px; letter-spacing:1px; }
+.band-row{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:8px 0 16px; }
+.band{ border:1px solid var(--border); border-radius:8px; padding:12px 16px; }
+.band.green{ background:var(--pos-soft); border-color:var(--pos-line); }
+.band.red{ background:var(--neg-soft); border-color:var(--neg-line); }
+.band h3{ margin:0 0 8px; }
+.band .big{ font-size:15px; font-weight:700; color:var(--bright); }
+.band .sub{ font-weight:400; color:var(--muted); font-size:12px; }
+.chain{ display:flex; flex-wrap:wrap; gap:0; margin:12px 0 16px; align-items:stretch; }
+.chain .node{ background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 12px; min-width:152px; flex:1; }
+.chain .node .n-label{ font-weight:700; color:var(--bright); font-size:13px; }
+.chain .node .n-icon{ color:var(--sky); font-size:11px; letter-spacing:1px; }
 .chain .node p{ margin:4px 0 0; font-size:12px; color:var(--muted); }
-.chain .arrow{ align-self:center; color:var(--muted); font-size:18px; padding:0 6px; }
-.relation-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:8px 0 16px; }
-.relation-card{ border:1px solid var(--border); border-radius:8px; background:var(--card); padding:12px 14px; }
+.chain .arrow{ align-self:center; color:var(--muted); font-size:19px; padding:0 8px; }
+.relation-grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:8px 0 16px; }
+.relation-card{ border:1px solid var(--border); border-radius:8px; background:var(--card); padding:12px 16px; }
 .relation-card .r-head{ display:flex; align-items:center; gap:8px; margin-bottom:4px; }
-.relation-card .r-greek{ font-weight:700; color:#f0f0f0; font-size:14px; }
+.relation-card .r-greek{ font-weight:700; color:var(--bright); font-size:13px; }
 .relation-card .r-headline{ color:var(--green); font-size:12px; font-weight:600; }
-.relation-card p{ margin:6px 0; font-size:13px; color:#d8d8d8; }
-.relation-card .tr{ color:var(--muted); font-size:12.5px; border-top:1px dashed var(--border); padding-top:8px; margin-top:8px; }
+.relation-card p{ margin:8px 0; font-size:13px; color:var(--fg); }
+.relation-card .tr{ color:var(--muted); font-size:12px; border-top:1px dashed var(--border); padding-top:8px; margin-top:8px; }
 .relation-card table{ margin:8px 0 0; font-size:12px; }
-.relation-card td{ padding:3px 8px; border:0; border-bottom:1px solid var(--border); }
+.relation-card td{ padding:4px 8px; border:0; border-bottom:1px solid var(--border); }
 .relation-card tr:last-child td{ border-bottom:0; }
-.tr-glossary dt{ font-weight:700; color:#f0f0f0; margin-top:10px; font-size:13px; }
-.tr-glossary dd{ margin:2px 0 0; color:var(--muted); font-size:12.5px; }
-.tr-block{ border:1px solid var(--border); border-radius:8px; background:var(--card); padding:14px 18px; margin-top:26px; }
+.tr-glossary dt{ font-weight:700; color:var(--bright); margin-top:12px; font-size:13px; }
+.tr-glossary dd{ margin:4px 0 0; color:var(--muted); font-size:12px; }
+.tr-block{ border:1px solid var(--border); border-radius:8px; background:var(--card); padding:16px; margin-top:24px; }
 .tr-block h2{ margin-top:0; }
 .tr-block .note{ color:var(--muted); font-size:12px; }
+.tr-block .tr-name{ color:var(--bright); }
 .pos-neg{ font-weight:700; }
 .pos-neg.pos{ color:var(--green); }
 .pos-neg.neg{ color:var(--red); }
 /* ── boxing: consistent section container ── */
-.box{ background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px 18px; margin:16px 0; }
+.box{ background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; margin:16px 0; }
 .box h2{ margin:0 0 12px; }
-.box > table{ margin:0 0 6px; }
-.box > .box-note{ color:var(--muted); font-size:12px; margin-top:6px; }
+.box > table{ margin:0 0 8px; }
+.box > .box-note{ color:var(--muted); font-size:12px; margin-top:8px; }
 /* ── collapsible (details) ── */
-details.collapsible{ border:1px solid var(--border); border-radius:10px; background:var(--card); margin:16px 0; }
-details.collapsible > summary{ cursor:pointer; padding:14px 18px; font-size:16px; font-weight:700; color:#f0f0f0; list-style:none; user-select:none; display:flex; align-items:center; gap:8px; }
+details.collapsible{ border:1px solid var(--border); border-radius:8px; background:var(--card); margin:16px 0; }
+details.collapsible > summary{ cursor:pointer; padding:12px 16px; min-height:44px; font-size:15px; font-weight:700; color:var(--bright); list-style:none; user-select:none; display:flex; align-items:center; gap:8px; }
+details.collapsible > summary::-webkit-details-marker{ display:none; }
 details.collapsible > summary::before{ content:"▸"; color:var(--muted); transition:transform .15s ease; }
 details.collapsible[open] > summary::before{ transform:rotate(90deg); }
-details.collapsible > .box-inner{ padding:0 18px 16px; }
-details.collapsible > .box-inner > table{ margin:0 0 6px; }
-details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px; margin-top:6px; }
+details.collapsible > .box-inner{ padding:0 16px 16px; }
+details.collapsible > .box-inner > table{ margin:0 0 8px; }
+details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px; margin-top:8px; }
 /* summary delta pill */
-.delta{ font-size:12px; font-weight:600; margin-left:6px; }
+.delta{ font-size:12px; font-weight:600; margin-left:8px; }
 .delta.pos{ color:var(--green); }
 .delta.neg{ color:var(--red); }
 .delta.flat{ color:var(--muted); }
 /* ── At a Glance layered grid ── */
-.ag-box{ display:flex; flex-direction:column; gap:10px; }
+.ag-box{ display:flex; flex-direction:column; gap:8px; }
 .ag-label{ font-size:11px; letter-spacing:1px; text-transform:uppercase; color:var(--muted); font-weight:700; }
-.ag-label-vol{ opacity:.75; display:flex; align-items:center; gap:8px; }
-.ag-row{ display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; }
-.ag-row-vol .kv{ opacity:.8; }
-.ag-row-vol .kv .k{ font-size:10px; }
-.ag-row-vol .kv .v{ font-size:13px; }
-.ag-row-2{ grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); }
-.ag-row-3{ grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); }
-.ag-gex{ background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 12px; }
-.ag-gex .k{ color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.6px; }
-.ag-gex .v{ color:#f0f0f0; font-size:14px; font-weight:600; margin-top:2px; }
+.ag-row{ display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr)); gap:8px; }
+.ag-row-3{ grid-template-columns:repeat(auto-fit,minmax(192px,1fr)); }
+.ag-gex{ position:relative; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 12px; }
+.ag-gex .k{ color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+.ag-gex .v{ color:var(--bright); font-size:13px; font-weight:600; margin-top:4px; }
 .ag-gex .v.pos{ color:var(--green); }
 .ag-gex .v.neg{ color:var(--red); }
-.ag-note{ color:var(--muted); font-size:11.5px; margin-top:4px; }
+.ag-note{ color:var(--muted); font-size:12px; margin-top:4px; }
 /* ── custom subtle scrollbar ── */
-.overflow-x-auto{ overflow-x:auto; }.overflow-x-auto::-webkit-scrollbar{ height:6px; }
-.overflow-x-auto::-webkit-scrollbar-track{ background:rgba(15,23,42,.6); border-radius:4px; }
-.overflow-x-auto::-webkit-scrollbar-thumb{ background:rgba(51,65,85,.8); border-radius:4px; }
-.overflow-x-auto::-webkit-scrollbar-thumb:hover{ background:rgba(71,85,105,1); }
-/* ── unified 7-column grid ── */
-.ag-header{ display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:6px; gap:8px; }
-.ag-grid7{ display:grid; grid-template-columns:repeat(7,1fr); gap:6px; text-align:center; align-items:center; }
-.ag-h{ font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); font-weight:700; }
-.ag-h-vol{ color:var(--amber); opacity:.8; }
-.ag-v-big{ font-size:16px; font-weight:700; color:#f0f0f0; }
+.overflow-x-auto{ overflow-x:auto; }
+/* ── unified 7-column grid: each column is one cell (label, OI value, intraday value) ── */
+.ag-header{ display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:8px; gap:8px; }
+.ag-grid7{ display:grid; grid-template-columns:repeat(7,1fr); gap:8px; text-align:center; align-items:start; }
+.ag-cell{ display:flex; flex-direction:column; gap:4px; min-width:0; }
+.ag-h{ font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); font-weight:700; }
+.ag-h-vol{ color:var(--amber); }
+.ag-v-big{ font-size:15px; font-weight:700; color:var(--bright); }
 .ag-v{ font-size:13px; font-weight:600; color:var(--fg); }
 .ag-v-sm{ font-size:12px; color:var(--muted); }
-.ag-v-vol{ font-size:12px; font-weight:500; color:var(--amber); opacity:.85; }
-.ag-src{ font-size:9px; color:var(--muted); font-weight:400; }
-.ag-src-vol{ font-size:9px; color:rgba(251,191,36,.6); font-weight:400; }
+.ag-v-vol{ font-size:12px; font-weight:500; color:var(--amber); }
+.ag-src, .ag-src-vol{ font-size:11px; font-weight:400; }
+.ag-src{ color:var(--muted); }
+.ag-src-vol{ color:var(--amber); }
 /* ── 4 metric cards ── */
-.ag-cards4{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; padding-top:6px; }
-/* ── tooltip (pure CSS hover) ── */
-.ag-tip{ position:relative; cursor:help; }
-.ag-tip .tip-i{ font-size:10px; color:var(--muted); cursor:help; }
-.ag-tip .ag-tip-box{ display:none; position:absolute; bottom:calc(100% + 6px); left:0; z-index:30; background:var(--card);
-  border:1px solid var(--border); border-radius:6px; padding:6px 9px; font-size:11px; color:var(--fg);
-  width:220px; box-shadow:0 6px 20px rgba(0,0,0,.5); text-transform:none; letter-spacing:0; font-weight:400; }
-.ag-tip:hover .ag-tip-box{ display:block; }
-.chip{ display:inline-block; font-size:11px; font-weight:800; padding:2px 10px; border-radius:999px; letter-spacing:1px; }
-.chip-pos{ background:rgba(52,211,153,.16); color:var(--green); }
-.chip-neg{ background:rgba(248,113,113,.16); color:var(--red); }
-.flow-badge{ display:inline-block; font-size:10px; font-weight:800; padding:2px 9px; border-radius:999px; letter-spacing:.5px; }
-.flow-green{ background:rgba(52,211,153,.18); color:var(--green); }
-.flow-red{ background:rgba(248,113,113,.18); color:var(--red); }
-.flow-flat{ background:rgba(148,163,184,.16); color:var(--muted); }
+.ag-cards4{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; padding-top:8px; }
+/* ── tooltip: tap (or Enter / Space) to open, a <details> so it works without script ── */
+.tip{ display:inline-block; vertical-align:middle; }
+.tip > summary{ list-style:none; cursor:pointer; display:inline-flex; align-items:center; justify-content:center;
+  min-width:44px; min-height:44px; margin:-16px -8px -16px 0; color:var(--muted); font-size:13px; user-select:none; }
+.tip > summary::-webkit-details-marker{ display:none; }
+.ag-tip-box{ position:absolute; bottom:calc(100% + 4px); left:0; z-index:30; background:var(--card);
+  border:1px solid var(--border); border-radius:8px; padding:8px 12px; font-size:12px; color:var(--fg);
+  width:min(224px,calc(100vw - 48px)); box-shadow:var(--shadow-tip); text-transform:none; letter-spacing:0; font-weight:400; }
+.ag-cards4 .ag-gex:nth-child(even) .ag-tip-box{ left:auto; right:0; }
+.chip{ display:inline-block; font-size:11px; font-weight:800; padding:4px 8px; border-radius:999px; letter-spacing:1px; }
+.chip-pos{ background:var(--pos-bg); color:var(--green); }
+.chip-neg{ background:var(--neg-bg); color:var(--red); }
+.flow-badge{ display:inline-block; font-size:11px; font-weight:800; padding:4px 8px; border-radius:999px; letter-spacing:.5px; }
+.flow-green{ background:var(--pos-bg); color:var(--green); }
+.flow-red{ background:var(--neg-bg); color:var(--red); }
+.flow-flat{ background:var(--flat-bg); color:var(--muted); }
 /* ── predictive scenario & directional engine ── */
-.prediction-container{ margin:16px 0 18px; display:flex; flex-direction:column; gap:14px; }
-.prediction-hero{ display:flex; flex-wrap:wrap; align-items:center; gap:12px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px 18px; }
-.bias-badge{ font-size:13px; font-weight:800; letter-spacing:1px; padding:7px 14px; border-radius:999px; white-space:nowrap; }
-.bias-badge.bullish{ background:rgba(52,211,153,.16); color:var(--green); border:1px solid rgba(52,211,153,.45); }
-.bias-badge.bearish{ background:rgba(248,113,113,.16); color:var(--red); border:1px solid rgba(248,113,113,.45); }
-.bias-badge.neutral{ background:rgba(251,191,36,.16); color:var(--amber); border:1px solid rgba(251,191,36,.45); }
-.hero-metric{ display:flex; flex-direction:column; gap:2px; }
-.hero-metric span{ color:var(--muted); font-size:10px; letter-spacing:.8px; text-transform:uppercase; }
-.hero-metric strong{ color:#f0f0f0; font-size:17px; font-weight:700; }
-.hero-note{ color:var(--muted); font-size:11.5px; }
+.prediction-container{ margin:16px 0 20px; display:flex; flex-direction:column; gap:16px; }
+.prediction-hero{ display:flex; flex-wrap:wrap; align-items:center; gap:12px; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; }
+.bias-badge{ font-size:13px; font-weight:800; letter-spacing:1px; padding:8px 16px; border-radius:999px; }
+.bias-badge.bullish{ background:var(--pos-bg); color:var(--green); border:1px solid var(--pos-line); }
+.bias-badge.bearish{ background:var(--neg-bg); color:var(--red); border:1px solid var(--neg-line); }
+.bias-badge.neutral{ background:var(--amber-bg); color:var(--amber); border:1px solid var(--amber-line); }
+.hero-metric{ display:flex; flex-direction:column; gap:4px; }
+.hero-metric span{ color:var(--muted); font-size:11px; letter-spacing:.5px; text-transform:uppercase; }
+.hero-metric strong{ color:var(--bright); font-size:15px; font-weight:700; }
+.hero-note{ color:var(--muted); font-size:12px; }
 .scenario-table{ width:100%; border-collapse:collapse; font-size:13px; }
-.scenario-table th{ background:var(--card); color:#d8d8d8; font-weight:600; }
-.scenario-table th, .scenario-table td{ border:1px solid var(--border); padding:8px 10px; text-align:left; }
-.scenario-table tr.row-bullish td:first-child{ border-left:3px solid var(--green); }
-.scenario-table tr.row-neutral td:first-child{ border-left:3px solid var(--amber); }
-.scenario-table tr.row-bearish td:first-child{ border-left:3px solid var(--red); }
+.scenario-table th{ background:var(--card); color:var(--bright); font-weight:600; }
+.scenario-table th, .scenario-table td{ border:1px solid var(--border); padding:8px; text-align:left; }
+.scenario-table tr.row-bullish td:first-child{ border-left:4px solid var(--green); }
+.scenario-table tr.row-neutral td:first-child{ border-left:4px solid var(--amber); }
+.scenario-table tr.row-bearish td:first-child{ border-left:4px solid var(--red); }
 .row-bullish td:first-child{ color:var(--green); font-weight:700; }
 .row-neutral td:first-child{ color:var(--amber); font-weight:700; }
 .row-bearish td:first-child{ color:var(--red); font-weight:700; }
-.divergence-bar{ display:flex; flex-wrap:wrap; gap:10px 22px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:12px 16px; }
-.status-item{ font-size:12.5px; color:#d8d8d8; }
-.status-item strong{ color:#f0f0f0; }
+.divergence-bar{ display:flex; flex-wrap:wrap; gap:8px 24px; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px 16px; }
+.status-item{ font-size:12px; color:var(--fg); }
+.status-item strong{ color:var(--bright); }
 .text-green{ color:var(--green); font-weight:600; }
 .text-red{ color:var(--red); font-weight:600; }
 .text-amber{ color:var(--amber); font-weight:600; }
+/* ── tables that stack on a phone: each row becomes a block, each cell its own labelled line ── */
 @media (max-width:900px){ .grid,.relation-grid,.band-row{ grid-template-columns:1fr; } .chain{ flex-direction:column; } .chain .arrow{ transform:rotate(90deg); align-self:center; padding:4px 0; } }
+@media (max-width:640px){
+  body{ padding:16px; }
+  .ag-grid7{ grid-template-columns:repeat(2,1fr); }
+  .ag-dash{ display:none; }
+  .bias-badge{ white-space:normal; }
+  .modebar-container{ display:none !important; }
+  table.stack{ display:block; border:0; margin:8px 0 16px; }
+  table.stack thead{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+  table.stack tbody, table.stack tr{ display:block; }
+  table.stack tr{ border:1px solid var(--border); border-radius:8px; margin:0 0 8px; padding:4px 12px; background:var(--card); }
+  table.stack td{ display:flex; justify-content:space-between; align-items:baseline; gap:16px; border:0;
+    border-bottom:1px solid var(--border); padding:8px 0; text-align:right; width:auto !important; min-width:0; overflow-wrap:anywhere; }
+  table.stack td:last-child{ border-bottom:0; }
+  table.stack td::before{ content:attr(data-label); flex:0 0 40%; text-align:left; color:var(--muted); font-size:11px;
+    text-transform:uppercase; letter-spacing:.5px; }
+  table.stack td[data-label=""]::before{ display:none; }
+  table.stack td::before{ font-weight:400; }
+  .summary-card table.stack tr{ border:0; border-top:1px solid var(--border); border-radius:0; background:none; padding:0; margin:0; }
+  table.stack.plain tr{ border:0; background:none; padding:0; margin:0 0 8px; }
+  table.stack.plain td{ display:block; text-align:left; border:0; padding:0; }
+  table.stack.plain td:first-child{ color:var(--bright); font-weight:600; }
+  .scenario-table tr.row-bullish{ border-left:4px solid var(--green); }
+  .scenario-table tr.row-neutral{ border-left:4px solid var(--amber); }
+  .scenario-table tr.row-bearish{ border-left:4px solid var(--red); }
+  .scenario-table tr td:first-child{ border-left:0 !important; }
+  .summary-card td:first-child, .summary-card td:last-child{ text-align:right; }
+}
 @media print{
   body{ background:#fff; color:#111; }
   .header,.footer,.summary-card .tag,.summary-card td:first-child,.summary-card td:last-child{ color:#555; }
   h2,h3,.at-glance,.summary-card .title{ color:#111; }
-  th,.summary-card,.at-glance,.strip .kv,.band,.relation-card,.chain .node,.tr-block{ background:#f2f2f2; color:#111; }
-  th,td,.summary-card,pre,.at-glance,.strip .kv,.band,.relation-card,.chain .node,.tr-block{ border-color:#ccc; }
+  th,.summary-card,.at-glance,.band,.relation-card,.chain .node,.tr-block{ background:#f2f2f2; color:#111; }
+  th,td,.summary-card,pre,.at-glance,.band,.relation-card,.chain .node,.tr-block{ border-color:#ccc; }
 }
 </style>
 <script src="/static/vendor/plotly.min.js"></script>
@@ -191,12 +231,12 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 
   <!-- Scenario Matrix Table -->
   <div class="overflow-x-auto">
-  <table class="scenario-table">
+  <table class="scenario-table stack">
     <thead><tr><th>Scenario</th><th>Trigger Level</th><th>Dealer Hedging Action</th><th>Target Zone</th></tr></thead>
     <tbody>
     {% for s in prediction.scenarios %}
     <tr class="{{ s.class }}">
-      <td>{{ s.name }}</td><td>{{ s.trigger }}</td><td>{{ s.hedging }}</td><td>{{ s.target }}</td>
+      <td data-label="Scenario">{{ s.name }}</td><td data-label="Trigger Level">{{ s.trigger }}</td><td data-label="Dealer Hedging Action">{{ s.hedging }}</td><td data-label="Target Zone">{{ s.target }}</td>
     </tr>
     {% endfor %}
     </tbody>
@@ -221,29 +261,30 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 
 {% if iron_butterfly %}
 <style>
-  .ib-panel{ margin:16px 0 18px; display:flex; flex-direction:column; gap:12px; }
+  .ib-panel{ margin:16px 0 20px; display:flex; flex-direction:column; gap:12px; }
   .ib-hero{ display:flex; flex-wrap:wrap; align-items:center; gap:12px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:12px 16px; }
-  .ib-signal{ padding:4px 10px; border-radius:999px; font-weight:700; font-size:13px; letter-spacing:.4px; }
-  .ib-signal.ib-pin{ background:rgba(59,130,246,.15); color:#60a5fa; border:1px solid #2563eb55; }
-  .ib-signal.ib-bearish{ background:rgba(248,113,113,.12); color:#f87171; border:1px solid #ef444455; }
-  .ib-signal.ib-bullish{ background:rgba(52,211,153,.12); color:#34d399; border:1px solid #10b98155; }
+  .ib-signal{ padding:4px 8px; border-radius:999px; font-weight:700; font-size:13px; letter-spacing:.4px; }
+  .ib-signal.ib-pin{ background:var(--blue-bg); color:var(--sky); border:1px solid var(--sky); }
+  .ib-signal.ib-bearish{ background:var(--neg-bg); color:var(--red); border:1px solid var(--neg-line); }
+  .ib-signal.ib-bullish{ background:var(--pos-bg); color:var(--green); border:1px solid var(--pos-line); }
   .ib-metric{ display:flex; flex-direction:column; gap:2px; min-width:92px; }
-  .ib-metric span{ font-size:11px; color:#8b949e; text-transform:uppercase; letter-spacing:.5px; }
-  .ib-metric strong{ font-size:15px; color:#e6edf3; }
-  .ib-metric strong.credit{ color:#34d399; }
-  .ib-metric strong.risk{ color:#f87171; }
-  .ib-note{ font-size:12px; color:#8b949e; line-height:1.5; }
+  .ib-metric span{ font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+  .ib-metric strong{ font-size:15px; color:var(--bright); }
+  .ib-metric strong.credit{ color:var(--green); }
+  .ib-metric strong.risk{ color:var(--red); }
+  .ib-note{ font-size:12px; color:var(--muted); line-height:1.5; }
+  @media (max-width:640px){ .ib-legs{ overflow:visible; } }
   .ib-legs{ overflow-x:auto; }
   .ib-legs table{ width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--border); border-radius:10px; font-size:13px; }
-  .ib-legs th{ text-align:left; padding:8px 12px; color:#8b949e; font-size:11px; text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid var(--border); }
-  .ib-legs td{ padding:7px 12px; border-bottom:1px solid #1c2a3a; color:#e6edf3; }
+  .ib-legs th{ text-align:left; padding:8px 12px; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid var(--border); }
+  .ib-legs td{ padding:8px 12px; border-bottom:1px solid var(--border); color:var(--bright); }
   .ib-legs tr:last-child td{ border-bottom:none; }
-  .ib-legs .sell{ color:#f87171; } .ib-legs .buy{ color:#34d399; }
+  .ib-legs .sell{ color:var(--red); } .ib-legs .buy{ color:var(--green); }
 </style>
 <div class="ib-panel">
   <h2 style="margin:0">Iron Butterfly — Pin Harvest</h2>
   {% if historical.iron_butterfly %}
-  <div class="note" style="color:var(--muted);font-size:12px">n/a (historical): The option chain was fetched in a later session than this day.</div>
+  <div class="note">n/a (historical): The option chain was fetched in a later session than this day.</div>
   {% else -%}
   <div class="ib-hero">
     <span class="ib-signal ib-{{ 'pin' if iron_butterfly.signal.signal == 'PIN' else 'bearish' if iron_butterfly.signal.signal == 'BEARISH_BREAKOUT' else 'bullish' if iron_butterfly.signal.signal == 'BULLISH_ACCEL' else 'pin' }}">
@@ -262,17 +303,17 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     {{ iron_butterfly.signal.action }}{% if iron_butterfly.signal.target %} → target {{ iron_butterfly.signal.target | fmtnum }}{% endif %}.
   </div>
   <div class="ib-legs">
-    <table>
+    <table class="stack">
       <thead><tr><th>Action</th><th>Type</th><th>Strike</th><th>Mid</th><th>IV</th><th>Θ /day</th></tr></thead>
       <tbody>
         {% for leg in iron_butterfly.legs %}
         <tr>
-          <td class="{{ 'sell' if leg.action == 'SELL' else 'buy' }}">{{ leg.action }}</td>
-          <td>{{ leg.type }}</td>
-          <td>{{ leg.strike | fmtnum }}</td>
-          <td>{{ leg.mid | fmtnum('{:,.2f}') }}</td>
-          <td>{{ leg.iv | fmtnum('{:,.1%}') }}</td>
-          <td>{{ leg.theta | fmtnum('{:,.1f}') }}</td>
+          <td data-label="Action" class="{{ 'sell' if leg.action == 'SELL' else 'buy' }}">{{ leg.action }}</td>
+          <td data-label="Type">{{ leg.type }}</td>
+          <td data-label="Strike">{{ leg.strike | fmtnum }}</td>
+          <td data-label="Mid">{{ leg.mid | fmtnum('{:,.2f}') }}</td>
+          <td data-label="IV">{{ leg.iv | fmtnum('{:,.1%}') }}</td>
+          <td data-label="Θ /day">{{ leg.theta | fmtnum('{:,.1f}') }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -283,35 +324,27 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 {% endif %}
 
 <h2>At a Glance — Single Source of Truth</h2>
-<div class="overflow-x-auto pb-2">
-<div class="ag-box" style="min-width:900px">
+<div class="ag-box">
   <!-- Header + flow badge -->
   <div class="ag-header">
     <span class="ag-label">At a Glance — Single Source of Truth</span>
     <span class="flow-badge {{ 'flow-' + (flow_signal.tone if flow_signal else 'flat') }}">{{ (flow_signal.label if flow_signal else 'Wall Holding') }}</span>
   </div>
-  <!-- Unified 7-column grid: Row 1 OI + Row 1b Volume -->
+  <!-- Seven columns on a desktop, two on a phone; each column is one cell: label, OI value, intraday value -->
   <div class="ag-grid7">
-    <div class="ag-h">Spot</div><div class="ag-h">Call Wall</div><div class="ag-h">Put Wall</div>
-    <div class="ag-h">HVL / Flip</div><div class="ag-h">Magnet</div><div class="ag-h">Charm Pin</div><div class="ag-h">Vanna Pin</div>
-    <div class="ag-v-big">{{ header_strip.spot }}</div>
-    <div class="ag-v">{{ header_strip.call_wall }} <span class="ag-src">(OI)</span></div>
-    <div class="ag-v">{{ header_strip.put_support }} <span class="ag-src">(OI)</span></div>
-    <div class="ag-v">{{ header_strip.gamma_flip }} <span class="ag-src">(OI)</span></div>
-    <div class="ag-v">{{ header_strip.gamma_magnet }} <span class="ag-src">(OI)</span></div>
-    <div class="ag-v-sm">{{ header_strip.charm }}</div>
-    <div class="ag-v-sm">{{ header_strip.vanna }}</div>
-    <div class="ag-h ag-h-vol">Intraday</div>
-    <div class="ag-v-vol">{{ header_strip.call_wall_vol }} <span class="ag-src-vol">(VOL)</span></div>
-    <div class="ag-v-vol">{{ header_strip.put_wall_vol }} <span class="ag-src-vol">(VOL)</span></div>
-    <div class="ag-v-vol">{{ header_strip.gamma_flip_vol }} <span class="ag-src-vol">(VOL)</span></div>
-    <div class="ag-v-vol">—</div><div class="ag-v-vol">—</div><div class="ag-v-vol">—</div>
+    <div class="ag-cell"><div class="ag-h">Spot</div><div class="ag-v-big">{{ header_strip.spot }}</div><div class="ag-h ag-h-vol">Intraday</div></div>
+    <div class="ag-cell"><div class="ag-h">Call Wall</div><div class="ag-v">{{ header_strip.call_wall }} <span class="ag-src">(OI)</span></div><div class="ag-v-vol">{{ header_strip.call_wall_vol }} <span class="ag-src-vol">(VOL)</span></div></div>
+    <div class="ag-cell"><div class="ag-h">Put Wall</div><div class="ag-v">{{ header_strip.put_support }} <span class="ag-src">(OI)</span></div><div class="ag-v-vol">{{ header_strip.put_wall_vol }} <span class="ag-src-vol">(VOL)</span></div></div>
+    <div class="ag-cell"><div class="ag-h">HVL / Flip</div><div class="ag-v">{{ header_strip.gamma_flip }} <span class="ag-src">(OI)</span></div><div class="ag-v-vol">{{ header_strip.gamma_flip_vol }} <span class="ag-src-vol">(VOL)</span></div></div>
+    <div class="ag-cell"><div class="ag-h">Magnet</div><div class="ag-v">{{ header_strip.gamma_magnet }} <span class="ag-src">(OI)</span></div><div class="ag-v-vol ag-dash">—</div></div>
+    <div class="ag-cell"><div class="ag-h">Charm Pin</div><div class="ag-v-sm">{{ header_strip.charm }}</div><div class="ag-v-vol ag-dash">—</div></div>
+    <div class="ag-cell"><div class="ag-h">Vanna Pin</div><div class="ag-v-sm">{{ header_strip.vanna }}</div><div class="ag-v-vol ag-dash">—</div></div>
   </div>
   <!-- Row 2: 4 metric cards with tooltips -->
   <div class="ag-cards4">
-    <div class="ag-gex ag-tip"><div class="k">NET GEX (OI) <span class="tip-i">ⓘ</span><span class="ag-tip-box">Total Book = all-expiry OI-based net GEX (macro inventory).</span></div><div class="v {{ header_strip.net_gex_tone }}">{{ header_strip.net_gex }}</div></div>
+    <div class="ag-gex"><div class="k">NET GEX (OI) <details class="tip"><summary aria-label="What is NET GEX (OI)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Total Book = all-expiry OI-based net GEX (macro inventory).</div></details></div><div class="v {{ header_strip.net_gex_tone }}">{{ header_strip.net_gex }}</div></div>
     <div class="ag-gex"><div class="k">DAILY Δ (1D / 1W)</div><div class="v">{{ header_strip.net_gex_delta_1d }} / {{ header_strip.net_gex_delta_1w }}</div></div>
-    <div class="ag-gex ag-tip"><div class="k">MATRIX (≤45 DTE) <span class="tip-i">ⓘ</span><span class="ag-tip-box">Matrix = DTE≤45 filter stripping far-dated LEAPS noise.</span></div><div class="v {{ header_strip.matrix_gex_tone }}">{{ header_strip.matrix_gex }}</div></div>
+    <div class="ag-gex"><div class="k">MATRIX (≤45 DTE) <details class="tip"><summary aria-label="What is MATRIX (≤45 DTE)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Matrix = DTE≤45 filter stripping far-dated LEAPS noise.</div></details></div><div class="v {{ header_strip.matrix_gex_tone }}">{{ header_strip.matrix_gex }}</div></div>
     <div class="ag-gex"><div class="k">SOURCE CHIP</div><div><span class="chip {{ 'chip-pos' if header_strip.source_chip == 'POSITIVE' else ('chip-neg' if header_strip.source_chip == 'NEGATIVE' else '') }}">{{ header_strip.source_chip }}</span></div></div>
   </div>
   <div class="ag-note">Toplam kitap = all-expiry OI-based net GEX (macro depot). Matrix = DTE≤45 filter — active-trading gamma that strips far-dated/LEAPS noise; the gap comes from distant tenors.</div>
@@ -324,11 +357,9 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     <div class="ag-gex"><div class="k">Live Charm</div><div class="v">{{ header_strip.live_charm }}</div></div>
   </div>
 </div>
-</div>
 
 <h2>Summary</h2>
-<div class="overflow-x-auto pb-2">
-<div class="grid" style="min-width:1100px">
+<div class="grid">
 {% for card in summary %}
 <div class="box summary-card">
   <div class="head">
@@ -337,27 +368,26 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     <span class="pill {{ card.signal.tone }}">{{ card.signal.label }}</span>
   </div>
   <div class="narrative">{{ card.narrative }}</div>
-  <table>
+  <table class="stack">
     <thead><tr><th>Metric</th><th>Current</th><th>1D Δ / 1W Δ</th><th>Context</th></tr></thead>
     <tbody>
-    {% for label, value, note in card.rows %}<tr><td>{{ label }}</td><td>{{ value }}</td>
-      <td>{% if card.get('delta_1d') is not none or card.get('delta_1w') is not none %}<span class="delta {% if (card.delta_1d or 0) > 0 or (card.delta_1w or 0) > 0 %}pos{% elif (card.delta_1d or 0) < 0 or (card.delta_1w or 0) < 0 %}neg{% else %}flat{% endif %}">{{ '%+.1f'|format(card.delta_1d) if card.delta_1d is not none else '—' }} / {{ '%+.1f'|format(card.delta_1w) if card.delta_1w is not none else '—' }}</span>{% else %}—{% endif %}</td><td>{{ note }}</td></tr>
+    {% for label, value, note in card.rows %}<tr><td data-label="Metric">{{ label }}</td><td data-label="Current">{{ value }}</td>
+      <td data-label="1D Δ / 1W Δ">{% if card.get('delta_1d') is not none or card.get('delta_1w') is not none %}<span class="delta {% if (card.delta_1d or 0) > 0 or (card.delta_1w or 0) > 0 %}pos{% elif (card.delta_1d or 0) < 0 or (card.delta_1w or 0) < 0 %}neg{% else %}flat{% endif %}">{{ '%+.1f'|format(card.delta_1d) if card.delta_1d is not none else '—' }} / {{ '%+.1f'|format(card.delta_1w) if card.delta_1w is not none else '—' }}</span>{% else %}—{% endif %}</td><td data-label="Context">{{ note }}</td></tr>
     {% endfor %}
     </tbody>
   </table>
 </div>
 {% endfor %}
 </div>
-</div>
 
 <details class="collapsible">
 <summary>Gamma flip methods</summary>
 <div class="box-inner">
-<table>
+<table class="stack">
   <thead><tr><th>Method</th><th>Flip</th><th>Spot is</th><th>Note</th></tr></thead>
   <tbody>
   {% for m in flip_methods %}
-  <tr><td>{{ m.method }}</td><td>{{ m.value }}</td><td>{{ m.side }}</td><td>{{ m.note }}</td></tr>
+  <tr><td data-label="Method">{{ m.method }}</td><td data-label="Flip">{{ m.value }}</td><td data-label="Spot is">{{ m.side }}</td><td data-label="Note">{{ m.note }}</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -368,13 +398,13 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 <details class="collapsible">
 <summary>DTE Band Walls</summary>
 <div class="box-inner">
-<table>
+<table class="stack">
   <thead><tr><th>DTE Band</th><th>Put Wall</th><th>Put Wall Net GEX</th><th>Call Wall</th><th>Call Wall Net GEX</th></tr></thead>
   <tbody>
   {% for w in dte_band_walls %}
-  <tr><td>{{ w.band }}{% if w.band == '181-365' %} <b>(Put Wall standard)</b>{% endif %}</td>
-    <td>{{ w.put_wall }}</td><td>{{ w.put_wall_net }}</td>
-    <td>{{ w.call_wall }}</td><td>{{ w.call_wall_net }}</td></tr>
+  <tr><td data-label="DTE Band">{{ w.band }}{% if w.band == '181-365' %} <b>(Put Wall standard)</b>{% endif %}</td>
+    <td data-label="Put Wall">{{ w.put_wall }}</td><td data-label="Put Wall Net GEX">{{ w.put_wall_net }}</td>
+    <td data-label="Call Wall">{{ w.call_wall }}</td><td data-label="Call Wall Net GEX">{{ w.call_wall_net }}</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -394,12 +424,12 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 {% if envelope_html %}<div class="chart" style="margin:0 0 12px">{{ envelope_html }}</div>{% endif %}
 <div class="band-row" style="margin:0">
   <div class="band green">
-    <h3>Absorption Band <span style="font-weight:400;color:var(--muted);font-size:12px">(positive gamma — dealers trade against the move)</span></h3>
+    <h3>Absorption Band <span class="sub">(positive gamma — dealers trade against the move)</span></h3>
     <div class="big">{{ gex_envelope.absorption.range }}</div>
     <div>Net GEX {{ gex_envelope.absorption.net_gex }} &middot; ~{{ gex_envelope.absorption.per_25pt }}/25pt</div>
   </div>
   <div class="band red">
-    <h3>Air Gap <span style="font-weight:400;color:var(--muted);font-size:12px">(negative gamma — dealers trade with the move)</span></h3>
+    <h3>Air Gap <span class="sub">(negative gamma — dealers trade with the move)</span></h3>
     <div class="big">{{ gex_envelope.air_gap.range }}</div>
     <div>Net GEX {{ gex_envelope.air_gap.net_gex }} &middot; ~{{ gex_envelope.air_gap.per_25pt }}/25pt</div>
   </div>
@@ -413,10 +443,10 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   <span class="pos-neg {{ 'pos' if signal_matrix.tone == 'green' else 'neg' if signal_matrix.tone == 'red' else '' }}">{{ signal_matrix.stance }}</span>
   <span class="muted"> &middot; {{ signal_matrix.summary }}</span>
 </div>
-<table>
+<table class="stack">
   <thead><tr><th>Signal</th><th>Lean</th></tr></thead>
   <tbody>
-  {% for r in signal_matrix.rows %}<tr><td>{{ r.title }}</td><td><span class="pill {{ r.tone }}">{{ r.label }}</span></td></tr>
+  {% for r in signal_matrix.rows %}<tr><td data-label="Signal">{{ r.title }}</td><td data-label="Lean"><span class="pill {{ r.tone }}">{{ r.label }}</span></td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -437,7 +467,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   <div class="relation-card">
     <div class="r-head"><span class="r-greek">{{ r.greek }}</span><span class="r-headline">{{ r.headline }}</span></div>
     <p>{{ r.english }}</p>
-    {% if r.row %}<table><tbody>{% for label, value, note in r.row %}<tr><td>{{ label }}</td><td>{{ value }}</td><td>{{ note }}</td></tr>{% endfor %}</tbody></table>{% endif %}
+    {% if r.row %}<table class="stack plain"><tbody>{% for label, value, note in r.row %}<tr><td data-label="">{{ label }}</td><td data-label="">{{ value }}</td><td data-label="">{{ note }}</td></tr>{% endfor %}</tbody></table>{% endif %}
     <div class="tr">{{ r.turkish }}</div>
   </div>
   {% endfor %}
@@ -446,144 +476,144 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 <h2>Volatility Board</h2>
 <div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> whether implied vol is cheap or expensive, how the term structure slopes, and what the skew costs.</div>
 {% if iv_rank or vrp or realized_vol or skew or vix %}
-<table>
+<table class="stack">
   <thead><tr><th>Metric</th><th>Value</th><th>Meaning</th></tr></thead>
   <tbody>
-  {% if vix %}<tr><td>VIX family</td><td>
+  {% if vix %}<tr><td data-label="Metric">VIX family</td><td data-label="Value">
     {% if historical.vix %}n/a (historical){% else %}{% if vix.vix %}VIX {{ vix.vix|round(2) }}{% endif %}{% if vix.vix9d %} · 9D {{ vix.vix9d|round(2) }}{% endif %}{% if vix.vix3m %} · 3M {{ vix.vix3m|round(2) }}{% endif %}{% if vix.vix6m %} · 6M {{ vix.vix6m|round(2) }}{% endif %}{% if vix.vix1y %} · 1Y {{ vix.vix1y|round(2) }}{% endif %}{% if vix.vvix %} · VVIX {{ vix.vvix|round(2) }}{% endif %}{% endif %}
-    </td><td>Term structure is <b>{{ "n/a" if historical.vix else (vix.term_mode or "n/a") }}</b>{% if vix.term_mode == 'contango' %} — short-dated calm, longer-dated more expensive (normal).{% elif vix.term_mode == 'backwardation' %} — near-term stress priced in (early warning).{% endif %}</td></tr>{% endif %}
-  {% if iv_rank %}<tr><td>IV Rank (1Y)</td><td>{{ "n/a (historical)" if historical.iv_rank else (iv_rank.iv_rank_1y | fmtnum('{:,.1f}%')) }}</td><td>Where today's IV sits vs the past year; low = cheap options.</td></tr>{% endif %}
-  {% if skew %}<tr><td>Skew (Put Bias)</td><td>{% if historical.skew %}n/a (historical){% else %}{{ skew.put_bias_1m | fmtnum('{:.1%}') }} (1M) · {{ skew.put_bias_3m | fmtnum('{:.1%}') }} (3M){% endif %}</td><td>Cost of downside protection vs upside bets. <span style="color:var(--amber)">Derived/unverified</span> ({{ skew.note }})</td></tr>{% endif %}
-  {% if realized_vol %}<tr><td>Realized vs Implied</td><td>{% if historical.realized_vol %}n/a (historical){% else %}IV {{ realized_vol.implied_volatility | fmtnum('{:.1%}') }} · RV {{ realized_vol.realized_volatility | fmtnum('{:.1%}') }}{% endif %}</td><td>VRP posture: IV premium over realized = vol selling gets paid.</td></tr>{% endif %}
-  {% if vrp %}<tr><td>Variance Risk Premium</td><td>{% if historical.vrp %}n/a (historical){% else %}{{ vrp.risk_premium | fmtnum('{:.2%}') }} (rank {{ vrp.rank | fmtnum('{:,.2f}') }}){% endif %}</td><td>Compensation for holding short vol; higher = richer sellers.</td></tr>{% endif %}
+    </td><td data-label="Meaning">Term structure is <b>{{ "n/a" if historical.vix else (vix.term_mode or "n/a") }}</b>{% if vix.term_mode == 'contango' %} — short-dated calm, longer-dated more expensive (normal).{% elif vix.term_mode == 'backwardation' %} — near-term stress priced in (early warning).{% endif %}</td></tr>{% endif %}
+  {% if iv_rank %}<tr><td data-label="Metric">IV Rank (1Y)</td><td data-label="Value">{{ "n/a (historical)" if historical.iv_rank else (iv_rank.iv_rank_1y | fmtnum('{:,.1f}%')) }}</td><td data-label="Meaning">Where today's IV sits vs the past year; low = cheap options.</td></tr>{% endif %}
+  {% if skew %}<tr><td data-label="Metric">Skew (Put Bias)</td><td data-label="Value">{% if historical.skew %}n/a (historical){% else %}{{ skew.put_bias_1m | fmtnum('{:.1%}') }} (1M) · {{ skew.put_bias_3m | fmtnum('{:.1%}') }} (3M){% endif %}</td><td data-label="Meaning">Cost of downside protection vs upside bets. <span style="color:var(--amber)">Derived/unverified</span> ({{ skew.note }})</td></tr>{% endif %}
+  {% if realized_vol %}<tr><td data-label="Metric">Realized vs Implied</td><td data-label="Value">{% if historical.realized_vol %}n/a (historical){% else %}IV {{ realized_vol.implied_volatility | fmtnum('{:.1%}') }} · RV {{ realized_vol.realized_volatility | fmtnum('{:.1%}') }}{% endif %}</td><td data-label="Meaning">VRP posture: IV premium over realized = vol selling gets paid.</td></tr>{% endif %}
+  {% if vrp %}<tr><td data-label="Metric">Variance Risk Premium</td><td data-label="Value">{% if historical.vrp %}n/a (historical){% else %}{{ vrp.risk_premium | fmtnum('{:.2%}') }} (rank {{ vrp.rank | fmtnum('{:,.2f}') }}){% endif %}</td><td data-label="Meaning">Compensation for holding short vol; higher = richer sellers.</td></tr>{% endif %}
   </tbody>
 </table>
 {% else %}
-<div class="note" style="color:var(--muted);font-size:12px">Volatility data unavailable for this snapshot.</div>
+<div class="note">Volatility data unavailable for this snapshot.</div>
 {% endif %}
 
 <h3>Vol Term Structure</h3>
 {% if vol_term and historical.vol_term %}
-<div class="note" style="color:var(--muted);font-size:12px">n/a (historical): The term structure was fetched in a later session than this day.</div>
+<div class="note">n/a (historical): The term structure was fetched in a later session than this day.</div>
 {% elif vol_term %}
-<table>
+<table class="stack">
   <thead><tr><th>Expiry</th><th>DTE</th><th>IV</th><th>Implied move</th></tr></thead>
   <tbody>
-  {% for v in vol_term %}<tr><td>{{ v.expiry }}</td><td>{{ v.dte if v.dte is not none else "N/A" }}</td><td>{{ v.volatility }}</td><td>{{ v.implied_move_perc }}</td></tr>{% endfor %}
+  {% for v in vol_term %}<tr><td data-label="Expiry">{{ v.expiry }}</td><td data-label="DTE">{{ v.dte if v.dte is not none else "N/A" }}</td><td data-label="IV">{{ v.volatility }}</td><td data-label="Implied move">{{ v.implied_move_perc }}</td></tr>{% endfor %}
   </tbody>
 </table>
 {% else %}
-<div class="note" style="color:var(--muted);font-size:12px">Vol term structure unavailable.</div>
+<div class="note">Vol term structure unavailable.</div>
 {% endif %}
 
 <h2>Options Volume &amp; P/C</h2>
 {% if options_volume and historical.options_volume %}
-<div class="note" style="color:var(--muted);font-size:12px">n/a (historical): Options volume was fetched in a later session than this day.</div>
+<div class="note">n/a (historical): Options volume was fetched in a later session than this day.</div>
 {% elif options_volume %}
 <div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> whether options flow is protective (put-heavy) or directional, and how rich the premium is.</div>
-<table>
+<table class="stack">
   <thead><tr><th>Metric</th><th>Value</th></tr></thead>
   <tbody>
-    <tr><td>Put/Call Volume</td><td>{{ options_volume.pc_ratio|round(2) if options_volume.pc_ratio is not none else "N/A" }}</td></tr>
-    <tr><td>Call Volume / Put Volume</td><td>{{ options_volume.call_volume }} / {{ options_volume.put_volume }}</td></tr>
-    <tr><td>Net Call Premium</td><td>{{ options_volume.net_call_premium }}</td></tr>
-    <tr><td>Net Put Premium</td><td>{{ options_volume.net_put_premium }}</td></tr>
+    <tr><td data-label="Metric">Put/Call Volume</td><td data-label="Value">{{ options_volume.pc_ratio|round(2) if options_volume.pc_ratio is not none else "N/A" }}</td></tr>
+    <tr><td data-label="Metric">Call Volume / Put Volume</td><td data-label="Value">{{ options_volume.call_volume }} / {{ options_volume.put_volume }}</td></tr>
+    <tr><td data-label="Metric">Net Call Premium</td><td data-label="Value">{{ options_volume.net_call_premium }}</td></tr>
+    <tr><td data-label="Metric">Net Put Premium</td><td data-label="Value">{{ options_volume.net_put_premium }}</td></tr>
   </tbody>
 </table>
 {% else %}
-<div class="note" style="color:var(--muted);font-size:12px">Options volume data unavailable.</div>
+<div class="note">Options volume data unavailable.</div>
 {% endif %}
 
 <h2>Max Pain</h2>
 {% if max_pain and historical.max_pain %}
-<div class="note" style="color:var(--muted);font-size:12px">n/a (historical): Max pain was fetched in a later session than this day.</div>
+<div class="note">n/a (historical): Max pain was fetched in a later session than this day.</div>
 {% elif max_pain %}
 <div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> the strike where the most options expire worthless; a structural gravity center, NOT a directional signal.</div>
-<table>
+<table class="stack">
   <thead><tr><th>Expiry</th><th>Max Pain</th><th>% from Spot</th></tr></thead>
   <tbody>
-  {% for m in max_pain %}<tr><td>{{ m.expiry }}</td><td>{{ m.max_pain }}</td><td>{{ m.distance_pct }}</td></tr>{% endfor %}
+  {% for m in max_pain %}<tr><td data-label="Expiry">{{ m.expiry }}</td><td data-label="Max Pain">{{ m.max_pain }}</td><td data-label="% from Spot">{{ m.distance_pct }}</td></tr>{% endfor %}
   </tbody>
 </table>
 {% else %}
-<div class="note" style="color:var(--muted);font-size:12px">Max pain data unavailable.</div>
+<div class="note">Max pain data unavailable.</div>
 {% endif %}
 
 <h2>CFTC COT — E-mini S&amp;P 500 (TFF)</h2>
 {% if cftc and historical.cftc %}
-<div class="note" style="color:var(--muted);font-size:12px">n/a (historical): The CFTC report was fetched in a later session than this day.</div>
+<div class="note">n/a (historical): The CFTC report was fetched in a later session than this day.</div>
 {% elif cftc %}
 <div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> how big players (asset managers, leveraged funds, dealers) are positioned; weekly-delayed but regular.</div>
-<div class="note" style="color:var(--muted);font-size:12px">Report date {{ cftc.report_date or "n/a" }} · Open interest {{ cftc.open_interest or "n/a" }}</div>
-<table>
+<div class="note">Report date {{ cftc.report_date or "n/a" }} · Open interest {{ cftc.open_interest or "n/a" }}</div>
+<table class="stack">
   <thead><tr><th>Group</th><th>Long</th><th>Short</th><th>Net</th><th>Weekly Δ</th></tr></thead>
   <tbody>
   {% for c in cftc.rows %}
-  <tr><td>{{ c.group }}</td>
-    <td>{{ c.long|fmtnum('{:,.0f}') }}</td>
-    <td>{{ c.short|fmtnum('{:,.0f}') }}</td>
-    <td class="pos-neg {{ 'pos' if (c.net or 0) >= 0 else 'neg' }}">{{ c.net|fmtnum('{:+,.0f}') }}</td>
-    <td>{{ c.change|fmtnum('{:+,.0f}') }}</td></tr>
+  <tr><td data-label="Group">{{ c.group }}</td>
+    <td data-label="Long">{{ c.long|fmtnum('{:,.0f}') }}</td>
+    <td data-label="Short">{{ c.short|fmtnum('{:,.0f}') }}</td>
+    <td data-label="Net" class="pos-neg {{ 'pos' if (c.net or 0) >= 0 else 'neg' }}">{{ c.net|fmtnum('{:+,.0f}') }}</td>
+    <td data-label="Weekly Δ">{{ c.change|fmtnum('{:+,.0f}') }}</td></tr>
   {% endfor %}
   </tbody>
 </table>
 {% else %}
-<div class="note" style="color:var(--muted);font-size:12px">CFTC COT data unavailable.</div>
+<div class="note">CFTC COT data unavailable.</div>
 {% endif %}
 
 <h2>Scenario Set</h2>
-<table>
+<table class="stack">
   <thead><tr><th>Scenario</th><th>Range</th><th>P</th><th>R:R</th><th>Expectancy E</th><th>Trade</th></tr></thead>
   <tbody>
   {% for s in scenarios.scenarios %}
   <tr>
-    <td>{{ s.name }}</td><td>{{ s.range }}</td><td>{{ s.p }}</td>
-    <td>{{ s.rr if s.rr is not none else "n/a" }}</td>
-    <td>{{ s.expectancy if s.expectancy is not none else "n/a" }}</td>
-    <td>{{ s.trade }}</td>
+    <td data-label="Scenario">{{ s.name }}</td><td data-label="Range">{{ s.range }}</td><td data-label="P">{{ s.p }}</td>
+    <td data-label="R:R">{{ s.rr if s.rr is not none else "n/a" }}</td>
+    <td data-label="Expectancy E">{{ s.expectancy if s.expectancy is not none else "n/a" }}</td>
+    <td data-label="Trade">{{ s.trade }}</td>
   </tr>
   {% endfor %}
   </tbody>
 </table>
-<div class="note" style="color:var(--muted);font-size:12px">{{ scenarios.note }}</div>
+<div class="note">{{ scenarios.note }}</div>
 {% if flow_signal %}
 <div class="box" style="margin-top:14px">
   <div class="ag-label">Volume &amp; Flow Confluence Analysis</div>
-  <div class="at-glance" style="margin:8px 0 0"><span class="flow-badge {{ 'flow-' + flow_signal.tone }}">{{ flow_signal.label }}</span> <span style="color:#d8d8d8">{{ flow_signal.narrative }}</span></div>
+  <div class="at-glance" style="margin:8px 0 0"><span class="flow-badge {{ 'flow-' + flow_signal.tone }}">{{ flow_signal.label }}</span> <span style="color:var(--fg)">{{ flow_signal.narrative }}</span></div>
 </div>
 {% endif %}
 
 <h2>Level Migration vs Prior Snapshot</h2>
-<table>
+<table class="stack">
   <thead><tr><th>Level</th><th>This Week</th><th>Previous</th><th>Δ</th></tr></thead>
   <tbody>
   {% for m in migration %}
-  <tr><td>{{ m.level }}</td><td>{{ m.now | fmtnum }}</td>
-    <td>{{ m.prev | fmtnum }}</td>
-    <td>{{ m.delta | fmtnum('{:+,.1f}') }}</td></tr>
+  <tr><td data-label="Level">{{ m.level }}</td><td data-label="This Week">{{ m.now | fmtnum }}</td>
+    <td data-label="Previous">{{ m.prev | fmtnum }}</td>
+    <td data-label="Δ">{{ m.delta | fmtnum('{:+,.1f}') }}</td></tr>
   {% endfor %}
   </tbody>
 </table>
 
 <h2>Top-10 GEX Strikes</h2>
-<table>
+<table class="stack">
   <thead><tr><th>#</th><th>Strike</th><th>Net GEX</th><th>Gamma-Flip Side</th></tr></thead>
   <tbody>
   {% for t in top_gex %}
-  <tr><td>{{ loop.index }}</td><td>{{ t.strike|round|int }}</td>
-    <td class="pos-neg {{ 'pos' if t.net_gex >= 0 else 'neg' }}">{{ t.net_gex | fmtnum('{:+,.1f}') }}</td>
-    <td>{{ t.side }}</td></tr>
+  <tr><td data-label="#">{{ loop.index }}</td><td data-label="Strike">{{ t.strike|round|int }}</td>
+    <td data-label="Net GEX" class="pos-neg {{ 'pos' if t.net_gex >= 0 else 'neg' }}">{{ t.net_gex | fmtnum('{:+,.1f}') }}</td>
+    <td data-label="Gamma-Flip Side">{{ t.side }}</td></tr>
   {% endfor %}
   </tbody>
 </table>
 
 <h2>Expiry Distribution</h2>
-<table>
+<table class="stack">
   <thead><tr><th>Expiry</th><th>DTE</th><th>Band</th><th>Net GEX</th><th>Net DEX</th></tr></thead>
   <tbody>
   {% for e in summary_expiry %}
-  <tr><td>{{ e.expiry }}</td><td>{{ e.dte }}</td><td>{{ e.band }}</td>
-    <td>{{ e.net_gex }}</td><td>{{ e.net_dex }}</td></tr>
+  <tr><td data-label="Expiry">{{ e.expiry }}</td><td data-label="DTE">{{ e.dte }}</td><td data-label="Band">{{ e.band }}</td>
+    <td data-label="Net GEX">{{ e.net_gex }}</td><td data-label="Net DEX">{{ e.net_dex }}</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -597,13 +627,13 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   &middot; <span class="muted">Skill score:</span> {{ "%+.2f"|format(brier.skill_score) }}
   {%- endif %}
 </div>
-<div class="note" style="color:var(--muted);font-size:12px">{{ brier.verdict }}</div>
+<div class="note">{{ brier.verdict }}</div>
 
 <h2>Details</h2>
-<table>
+<table class="stack">
   <thead><tr><th>Level</th><th>Value</th><th>Reference Type</th><th>Method / Disclosure</th></tr></thead>
   <tbody>
-  {% for row in details %}<tr><td>{{ row.level }}</td><td>{{ row.value }}</td><td>{{ row.ref }}</td><td>{{ row.method }}</td></tr>
+  {% for row in details %}<tr><td data-label="Level">{{ row.level }}</td><td data-label="Value">{{ row.value }}</td><td data-label="Reference Type">{{ row.ref }}</td><td data-label="Method / Disclosure">{{ row.method }}</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -638,11 +668,40 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   <div class="note" style="margin-top:14px">Bu haftaki veriye göre greek ilişkileri:</div>
   {% for r in relations %}
   <div style="margin-top:10px">
-    <b style="color:#f0f0f0">{{ r.greek }}</b> — <span style="color:var(--muted)">{{ r.turkish }}</span>
+    <b class="tr-name">{{ r.greek }}</b> — <span style="color:var(--muted)">{{ r.turkish }}</span>
   </div>
   {% endfor %}
 </div>
 
 <div class="footer">{{ footer }}</div>
+<script>
+/* One tooltip open at a time; a tap elsewhere or Escape closes it. */
+(function(){
+  var tips = document.querySelectorAll('details.tip');
+  tips.forEach(function(d){ d.addEventListener('toggle', function(){
+    if(d.open) tips.forEach(function(o){ if(o !== d) o.open = false; });
+  }); });
+  document.addEventListener('click', function(e){ tips.forEach(function(d){ if(d.open && !d.contains(e.target)) d.open = false; }); });
+  document.addEventListener('keydown', function(e){
+    if(e.key !== 'Escape') return;
+    tips.forEach(function(d){ if(d.open){ d.open = false; var s = d.querySelector('summary'); if(s) s.focus(); } });
+  });
+})();
+/* A Plotly figure reserves a 220-250 px right margin; on a phone that margin is the whole chart. Below 520 px the
+   margin shrinks, and it comes back when the window grows. */
+(function(){
+  function adapt(gd){
+    if(!gd || !gd.layout || !window.Plotly) return;
+    var narrow = gd.clientWidth < 520;
+    if(gd._rcNarrow === narrow) return;
+    if(!gd._rcOrig) gd._rcOrig = {r: gd.layout.margin.r, l: gd.layout.margin.l};
+    gd._rcNarrow = narrow;
+    Plotly.relayout(gd, {'margin.r': narrow ? 16 : gd._rcOrig.r, 'margin.l': narrow ? Math.min(gd._rcOrig.l, 48) : gd._rcOrig.l});
+  }
+  function all(){ document.querySelectorAll('.js-plotly-plot').forEach(adapt); }
+  window.addEventListener('load', function(){ setTimeout(all, 50); });
+  window.addEventListener('resize', function(){ setTimeout(all, 150); });
+})();
+</script>
 </body>
 </html>

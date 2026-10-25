@@ -5,172 +5,215 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>SPX Critical Thresholds</title>
 <style>
-:root{ --bg:#05111f; --fg:#c5c6c8; --card:#0b1828; --border:rgba(197,198,200,.15); --muted:#8b949e; --amber:#fbbf24; --green:#34d399; --red:#f87171; --purple:#cc79a7; --teal:#64d8cb; --orange:#e69f00; }
+:root{--bg:#05111F;--fg:#C5C6C8;--bright:#F0F0F0;--card:#0B1828;--border:rgba(197,198,200,.15);--sidebar:#0B1828;--pos:#34D399;--neg:#F87171;--amber:#FBBF24;--sky:#0EA5E9;--muted:#9C9DA1;--input-bg:#101F33;--input-border:#2F434C;--hover:#18293a;--topbar:rgba(12,20,24,.8);--nav-fg:rgba(224,233,235,.75);--nav-on:#101F33;--hover-faint:rgba(255,255,255,.04);--frame-bg:#12131c;--overlay:rgba(5,17,31,.7);--scroll-thumb:#5b7a8c;--scroll-thumb-hover:#6f93a7;--scroll-track:#0b1620;--primary-bg:#E2E3E5;--primary-fg:#0A1420;--oi-bg:rgba(11,24,40,.55);--scrim:rgba(0,0,0,.55);--shadow:rgba(0,0,0,.6);--badge-blue:#38BDF8;--badge-gray:#94A3B8;--hover-soft:rgba(255,255,255,.06);--hover-day:rgba(255,255,255,.08);--gex-pos-bg:rgba(52,211,153,.35);--gex-pos-fg:#eafff5;--gex-neg-bg:rgba(248,113,113,.35);--gex-neg-fg:#ffd9d9;color-scheme:dark}
+@media (prefers-color-scheme: light){:root[data-theme="auto"]{--bg:#F4F6F9;--fg:#2A3340;--bright:#0B1220;--card:#FFFFFF;--border:rgba(15,23,42,.14);--sidebar:#FFFFFF;--pos:#047857;--neg:#B91C1C;--amber:#B45309;--sky:#0369A1;--muted:#5B6472;--input-bg:#FFFFFF;--input-border:#C3CCD8;--hover:#E8EDF3;--topbar:rgba(255,255,255,.85);--nav-fg:#3A4452;--nav-on:#E3EEF8;--hover-faint:rgba(15,23,42,.05);--frame-bg:#FFFFFF;--overlay:rgba(244,246,249,.75);--scroll-thumb:#9AA8B6;--scroll-thumb-hover:#7D8D9E;--scroll-track:#E6EBF0;--primary-bg:#0B1220;--primary-fg:#FFFFFF;--oi-bg:rgba(255,255,255,.7);--scrim:rgba(15,23,42,.35);--shadow:rgba(15,23,42,.18);--badge-blue:#0369A1;--badge-gray:#475569;--hover-soft:rgba(15,23,42,.06);--hover-day:rgba(15,23,42,.09);--gex-pos-bg:rgba(4,120,87,.16);--gex-pos-fg:#065F46;--gex-neg-bg:rgba(185,28,28,.14);--gex-neg-fg:#991B1B;color-scheme:light}}
+:root[data-theme="light"]{--bg:#F4F6F9;--fg:#2A3340;--bright:#0B1220;--card:#FFFFFF;--border:rgba(15,23,42,.14);--sidebar:#FFFFFF;--pos:#047857;--neg:#B91C1C;--amber:#B45309;--sky:#0369A1;--muted:#5B6472;--input-bg:#FFFFFF;--input-border:#C3CCD8;--hover:#E8EDF3;--topbar:rgba(255,255,255,.85);--nav-fg:#3A4452;--nav-on:#E3EEF8;--hover-faint:rgba(15,23,42,.05);--frame-bg:#FFFFFF;--overlay:rgba(244,246,249,.75);--scroll-thumb:#9AA8B6;--scroll-thumb-hover:#7D8D9E;--scroll-track:#E6EBF0;--primary-bg:#0B1220;--primary-fg:#FFFFFF;--oi-bg:rgba(255,255,255,.7);--scrim:rgba(15,23,42,.35);--shadow:rgba(15,23,42,.18);--badge-blue:#0369A1;--badge-gray:#475569;--hover-soft:rgba(15,23,42,.06);--hover-day:rgba(15,23,42,.09);--gex-pos-bg:rgba(4,120,87,.16);--gex-pos-fg:#065F46;--gex-neg-bg:rgba(185,28,28,.14);--gex-neg-fg:#991B1B;color-scheme:light}
+
+/* The palette is core/reporting_common.THEME_CSS (dark by default; light under data-theme="light"/"auto", the
+   shell sets it on <html>). The names below are this board's own, built from those tokens. */
+:root{ --green:var(--pos); --red:var(--neg);
+  --pos-bg:color-mix(in srgb,var(--pos) 16%,transparent); --neg-bg:color-mix(in srgb,var(--neg) 16%,transparent);
+  --amber-bg:color-mix(in srgb,var(--amber) 16%,transparent); --flat-bg:color-mix(in srgb,var(--muted) 16%,transparent);
+  --pos-soft:color-mix(in srgb,var(--pos) 7%,transparent); --neg-soft:color-mix(in srgb,var(--neg) 7%,transparent);
+  --pos-line:color-mix(in srgb,var(--pos) 40%,transparent); --neg-line:color-mix(in srgb,var(--neg) 40%,transparent);
+  --amber-line:color-mix(in srgb,var(--amber) 40%,transparent); --blue-bg:color-mix(in srgb,var(--sky) 16%,transparent);
+  --shadow-tip:0 4px 12px rgba(0,0,0,.25);
+  /* the names the shared help box and notice (core/reporting_common) read, with their dark fallbacks otherwise */
+  --panel:var(--card); --accent:var(--sky); --text:var(--bright); --neon:var(--pos); }
+.rc-notice{ background:var(--card) !important; }
+/* Type scale: 11 / 12 / 13 / 15 / 19. Spacing: a 4 px grid. */
 *{ box-sizing:border-box; }
-body{ background:var(--bg); color:var(--fg); font-family:'Segoe UI',system-ui,sans-serif; font-size:14px; margin:0; padding:24px 30px; }
-.header{ color:var(--muted); font-size:12px; padding-bottom:10px; border-bottom:1px solid var(--border); margin-bottom:14px; }
-.at-glance{ font-size:15px; font-weight:600; color:#f0f0f0; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:10px 14px; margin:12px 0 18px; }
+body{ background:var(--bg); color:var(--fg); font-family:'Segoe UI',system-ui,sans-serif; font-size:13px; margin:0; padding:24px 32px; font-variant-numeric:tabular-nums; }
+:focus-visible{ outline:2px solid var(--sky); outline-offset:2px; }
+.header{ color:var(--muted); font-size:12px; padding-bottom:8px; border-bottom:1px solid var(--border); margin-bottom:16px; }
+.at-glance{ font-size:15px; font-weight:600; color:var(--bright); background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 16px; margin:12px 0 20px; }
 .at-glance .muted{ color:var(--muted); font-weight:400; }
-h2{ font-size:19px; margin:22px 0 10px; color:#f0f0f0; }
-h3{ font-size:15px; margin:16px 0 8px; color:#d8d8d8; }
-.chart{ margin:8px 0 16px; }
+h2{ font-size:19px; margin:24px 0 8px; color:var(--bright); }
+h3{ font-size:15px; margin:16px 0 8px; color:var(--bright); }
+.chart{ margin:8px 0 16px; max-width:100%; overflow:hidden; }
+.chart .plotly-graph-div{ max-width:100%; }
+.chart .plotly-graph-div[style*="height:100%"]{ height:min(700px,70vh) !important; }
 table{ border-collapse:collapse; width:100%; margin:8px 0 16px; font-size:13px; }
-th,td{ border:1px solid var(--border); padding:7px 9px; text-align:left; }
-th{ background:var(--card); color:#d8d8d8; font-weight:600; }
-.grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
-.summary-card{ border:1px solid var(--border); border-radius:8px; background:var(--card); padding:14px 16px; }
-.summary-card .head{ display:flex; align-items:center; gap:8px; margin-bottom:6px; }
-.summary-card .title{ font-weight:700; color:#f0f0f0; font-size:15px; }
+th,td{ border:1px solid var(--border); padding:8px; text-align:left; }
+th{ background:var(--card); color:var(--bright); font-weight:600; }
+.grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.summary-card{ border:1px solid var(--border); border-radius:8px; background:var(--card); padding:16px; }
+.summary-card .head{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.summary-card .title{ font-weight:700; color:var(--bright); font-size:15px; }
 .summary-card .tag{ color:var(--muted); font-size:11px; letter-spacing:1px; }
-.pill{ font-size:11px; font-weight:700; padding:2px 9px; border-radius:999px; margin-left:auto; }
-.pill.green{ background:rgba(52,211,153,.16); color:var(--green); }
-.pill.red{ background:rgba(248,113,113,.16); color:var(--red); }
-.pill.amber{ background:rgba(251,191,36,.16); color:var(--amber); }
-.summary-card .narrative{ color:#d8d8d8; margin:6px 0 10px; font-size:13px; }
+.pill{ font-size:11px; font-weight:700; padding:4px 8px; border-radius:999px; margin-left:auto; }
+.pill.green{ background:var(--pos-bg); color:var(--green); }
+.pill.red{ background:var(--neg-bg); color:var(--red); }
+.pill.amber{ background:var(--amber-bg); color:var(--amber); }
+.summary-card .narrative{ color:var(--fg); margin:8px 0 12px; font-size:13px; }
 .summary-card table{ margin:0; font-size:12px; }
 .summary-card td{ padding:4px 8px; border:0; border-bottom:1px solid var(--border); }
 .summary-card tr:last-child td{ border-bottom:0; }
-.summary-card td:first-child{ color:var(--muted); width:150px; }
+.summary-card td:first-child{ color:var(--muted); width:152px; }
 .summary-card td:nth-child(2){ text-align:right; font-weight:600; }
-.summary-card td:last-child{ color:var(--muted); text-align:right; width:130px; }
-pre{ background:#0b1828; border:1px solid var(--border); border-radius:6px; padding:12px; overflow-x:auto; font-size:12px; line-height:1.5; }
-.footer{ color:var(--muted); font-size:11px; border-top:1px solid var(--border); margin-top:28px; padding-top:10px; }
+.summary-card td:last-child{ color:var(--muted); text-align:right; width:128px; }
+pre{ background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px; overflow-x:auto; font-size:12px; line-height:1.5; }
+.footer{ color:var(--muted); font-size:11px; border-top:1px solid var(--border); margin-top:28px; padding-top:8px; }
 ul{ margin:8px 0 16px; padding-left:20px; }
-li{ margin-bottom:6px; }
+li{ margin-bottom:8px; }
+.note{ color:var(--muted); font-size:12px; }
 /* ── v2 components ── */
-.strip{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin:14px 0 18px; }
-.strip .kv{ background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 12px; }
-.strip .kv .k{ color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
-.strip .kv .v{ color:#f0f0f0; font-size:15px; font-weight:600; margin-top:2px; }
-.band-row{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:8px 0 16px; }
-.band{ border:1px solid var(--border); border-radius:8px; padding:12px 14px; }
-.band.green{ background:rgba(52,211,153,.07); border-color:rgba(52,211,153,.35); }
-.band.red{ background:rgba(248,113,113,.07); border-color:rgba(248,113,113,.35); }
-.band h3{ margin:0 0 6px; }
-.band .big{ font-size:16px; font-weight:700; color:#f0f0f0; }
-.chain{ display:flex; flex-wrap:wrap; gap:0; margin:10px 0 16px; align-items:stretch; }
-.chain .node{ background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 12px; min-width:150px; flex:1; }
-.chain .node .n-label{ font-weight:700; color:#f0f0f0; font-size:13px; }
-.chain .node .n-icon{ color:var(--sky,#56b4e9); font-size:11px; letter-spacing:1px; }
+.band-row{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:8px 0 16px; }
+.band{ border:1px solid var(--border); border-radius:8px; padding:12px 16px; }
+.band.green{ background:var(--pos-soft); border-color:var(--pos-line); }
+.band.red{ background:var(--neg-soft); border-color:var(--neg-line); }
+.band h3{ margin:0 0 8px; }
+.band .big{ font-size:15px; font-weight:700; color:var(--bright); }
+.band .sub{ font-weight:400; color:var(--muted); font-size:12px; }
+.chain{ display:flex; flex-wrap:wrap; gap:0; margin:12px 0 16px; align-items:stretch; }
+.chain .node{ background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 12px; min-width:152px; flex:1; }
+.chain .node .n-label{ font-weight:700; color:var(--bright); font-size:13px; }
+.chain .node .n-icon{ color:var(--sky); font-size:11px; letter-spacing:1px; }
 .chain .node p{ margin:4px 0 0; font-size:12px; color:var(--muted); }
-.chain .arrow{ align-self:center; color:var(--muted); font-size:18px; padding:0 6px; }
-.relation-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:8px 0 16px; }
-.relation-card{ border:1px solid var(--border); border-radius:8px; background:var(--card); padding:12px 14px; }
+.chain .arrow{ align-self:center; color:var(--muted); font-size:19px; padding:0 8px; }
+.relation-grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:8px 0 16px; }
+.relation-card{ border:1px solid var(--border); border-radius:8px; background:var(--card); padding:12px 16px; }
 .relation-card .r-head{ display:flex; align-items:center; gap:8px; margin-bottom:4px; }
-.relation-card .r-greek{ font-weight:700; color:#f0f0f0; font-size:14px; }
+.relation-card .r-greek{ font-weight:700; color:var(--bright); font-size:13px; }
 .relation-card .r-headline{ color:var(--green); font-size:12px; font-weight:600; }
-.relation-card p{ margin:6px 0; font-size:13px; color:#d8d8d8; }
-.relation-card .tr{ color:var(--muted); font-size:12.5px; border-top:1px dashed var(--border); padding-top:8px; margin-top:8px; }
+.relation-card p{ margin:8px 0; font-size:13px; color:var(--fg); }
+.relation-card .tr{ color:var(--muted); font-size:12px; border-top:1px dashed var(--border); padding-top:8px; margin-top:8px; }
 .relation-card table{ margin:8px 0 0; font-size:12px; }
-.relation-card td{ padding:3px 8px; border:0; border-bottom:1px solid var(--border); }
+.relation-card td{ padding:4px 8px; border:0; border-bottom:1px solid var(--border); }
 .relation-card tr:last-child td{ border-bottom:0; }
-.tr-glossary dt{ font-weight:700; color:#f0f0f0; margin-top:10px; font-size:13px; }
-.tr-glossary dd{ margin:2px 0 0; color:var(--muted); font-size:12.5px; }
-.tr-block{ border:1px solid var(--border); border-radius:8px; background:var(--card); padding:14px 18px; margin-top:26px; }
+.tr-glossary dt{ font-weight:700; color:var(--bright); margin-top:12px; font-size:13px; }
+.tr-glossary dd{ margin:4px 0 0; color:var(--muted); font-size:12px; }
+.tr-block{ border:1px solid var(--border); border-radius:8px; background:var(--card); padding:16px; margin-top:24px; }
 .tr-block h2{ margin-top:0; }
 .tr-block .note{ color:var(--muted); font-size:12px; }
+.tr-block .tr-name{ color:var(--bright); }
 .pos-neg{ font-weight:700; }
 .pos-neg.pos{ color:var(--green); }
 .pos-neg.neg{ color:var(--red); }
 /* ── boxing: consistent section container ── */
-.box{ background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px 18px; margin:16px 0; }
+.box{ background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; margin:16px 0; }
 .box h2{ margin:0 0 12px; }
-.box > table{ margin:0 0 6px; }
-.box > .box-note{ color:var(--muted); font-size:12px; margin-top:6px; }
+.box > table{ margin:0 0 8px; }
+.box > .box-note{ color:var(--muted); font-size:12px; margin-top:8px; }
 /* ── collapsible (details) ── */
-details.collapsible{ border:1px solid var(--border); border-radius:10px; background:var(--card); margin:16px 0; }
-details.collapsible > summary{ cursor:pointer; padding:14px 18px; font-size:16px; font-weight:700; color:#f0f0f0; list-style:none; user-select:none; display:flex; align-items:center; gap:8px; }
+details.collapsible{ border:1px solid var(--border); border-radius:8px; background:var(--card); margin:16px 0; }
+details.collapsible > summary{ cursor:pointer; padding:12px 16px; min-height:44px; font-size:15px; font-weight:700; color:var(--bright); list-style:none; user-select:none; display:flex; align-items:center; gap:8px; }
+details.collapsible > summary::-webkit-details-marker{ display:none; }
 details.collapsible > summary::before{ content:"▸"; color:var(--muted); transition:transform .15s ease; }
 details.collapsible[open] > summary::before{ transform:rotate(90deg); }
-details.collapsible > .box-inner{ padding:0 18px 16px; }
-details.collapsible > .box-inner > table{ margin:0 0 6px; }
-details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px; margin-top:6px; }
+details.collapsible > .box-inner{ padding:0 16px 16px; }
+details.collapsible > .box-inner > table{ margin:0 0 8px; }
+details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px; margin-top:8px; }
 /* summary delta pill */
-.delta{ font-size:12px; font-weight:600; margin-left:6px; }
+.delta{ font-size:12px; font-weight:600; margin-left:8px; }
 .delta.pos{ color:var(--green); }
 .delta.neg{ color:var(--red); }
 .delta.flat{ color:var(--muted); }
 /* ── At a Glance layered grid ── */
-.ag-box{ display:flex; flex-direction:column; gap:10px; }
+.ag-box{ display:flex; flex-direction:column; gap:8px; }
 .ag-label{ font-size:11px; letter-spacing:1px; text-transform:uppercase; color:var(--muted); font-weight:700; }
-.ag-label-vol{ opacity:.75; display:flex; align-items:center; gap:8px; }
-.ag-row{ display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; }
-.ag-row-vol .kv{ opacity:.8; }
-.ag-row-vol .kv .k{ font-size:10px; }
-.ag-row-vol .kv .v{ font-size:13px; }
-.ag-row-2{ grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); }
-.ag-row-3{ grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); }
-.ag-gex{ background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 12px; }
-.ag-gex .k{ color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.6px; }
-.ag-gex .v{ color:#f0f0f0; font-size:14px; font-weight:600; margin-top:2px; }
+.ag-row{ display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr)); gap:8px; }
+.ag-row-3{ grid-template-columns:repeat(auto-fit,minmax(192px,1fr)); }
+.ag-gex{ position:relative; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 12px; }
+.ag-gex .k{ color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+.ag-gex .v{ color:var(--bright); font-size:13px; font-weight:600; margin-top:4px; }
 .ag-gex .v.pos{ color:var(--green); }
 .ag-gex .v.neg{ color:var(--red); }
-.ag-note{ color:var(--muted); font-size:11.5px; margin-top:4px; }
+.ag-note{ color:var(--muted); font-size:12px; margin-top:4px; }
 /* ── custom subtle scrollbar ── */
-.overflow-x-auto{ overflow-x:auto; }.overflow-x-auto::-webkit-scrollbar{ height:6px; }
-.overflow-x-auto::-webkit-scrollbar-track{ background:rgba(15,23,42,.6); border-radius:4px; }
-.overflow-x-auto::-webkit-scrollbar-thumb{ background:rgba(51,65,85,.8); border-radius:4px; }
-.overflow-x-auto::-webkit-scrollbar-thumb:hover{ background:rgba(71,85,105,1); }
-/* ── unified 7-column grid ── */
-.ag-header{ display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:6px; gap:8px; }
-.ag-grid7{ display:grid; grid-template-columns:repeat(7,1fr); gap:6px; text-align:center; align-items:center; }
-.ag-h{ font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); font-weight:700; }
-.ag-h-vol{ color:var(--amber); opacity:.8; }
-.ag-v-big{ font-size:16px; font-weight:700; color:#f0f0f0; }
+.overflow-x-auto{ overflow-x:auto; }
+/* ── unified 7-column grid: each column is one cell (label, OI value, intraday value) ── */
+.ag-header{ display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:8px; gap:8px; }
+.ag-grid7{ display:grid; grid-template-columns:repeat(7,1fr); gap:8px; text-align:center; align-items:start; }
+.ag-cell{ display:flex; flex-direction:column; gap:4px; min-width:0; }
+.ag-h{ font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); font-weight:700; }
+.ag-h-vol{ color:var(--amber); }
+.ag-v-big{ font-size:15px; font-weight:700; color:var(--bright); }
 .ag-v{ font-size:13px; font-weight:600; color:var(--fg); }
 .ag-v-sm{ font-size:12px; color:var(--muted); }
-.ag-v-vol{ font-size:12px; font-weight:500; color:var(--amber); opacity:.85; }
-.ag-src{ font-size:9px; color:var(--muted); font-weight:400; }
-.ag-src-vol{ font-size:9px; color:rgba(251,191,36,.6); font-weight:400; }
+.ag-v-vol{ font-size:12px; font-weight:500; color:var(--amber); }
+.ag-src, .ag-src-vol{ font-size:11px; font-weight:400; }
+.ag-src{ color:var(--muted); }
+.ag-src-vol{ color:var(--amber); }
 /* ── 4 metric cards ── */
-.ag-cards4{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; padding-top:6px; }
-/* ── tooltip (pure CSS hover) ── */
-.ag-tip{ position:relative; cursor:help; }
-.ag-tip .tip-i{ font-size:10px; color:var(--muted); cursor:help; }
-.ag-tip .ag-tip-box{ display:none; position:absolute; bottom:calc(100% + 6px); left:0; z-index:30; background:var(--card);
-  border:1px solid var(--border); border-radius:6px; padding:6px 9px; font-size:11px; color:var(--fg);
-  width:220px; box-shadow:0 6px 20px rgba(0,0,0,.5); text-transform:none; letter-spacing:0; font-weight:400; }
-.ag-tip:hover .ag-tip-box{ display:block; }
-.chip{ display:inline-block; font-size:11px; font-weight:800; padding:2px 10px; border-radius:999px; letter-spacing:1px; }
-.chip-pos{ background:rgba(52,211,153,.16); color:var(--green); }
-.chip-neg{ background:rgba(248,113,113,.16); color:var(--red); }
-.flow-badge{ display:inline-block; font-size:10px; font-weight:800; padding:2px 9px; border-radius:999px; letter-spacing:.5px; }
-.flow-green{ background:rgba(52,211,153,.18); color:var(--green); }
-.flow-red{ background:rgba(248,113,113,.18); color:var(--red); }
-.flow-flat{ background:rgba(148,163,184,.16); color:var(--muted); }
+.ag-cards4{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; padding-top:8px; }
+/* ── tooltip: tap (or Enter / Space) to open, a <details> so it works without script ── */
+.tip{ display:inline-block; vertical-align:middle; }
+.tip > summary{ list-style:none; cursor:pointer; display:inline-flex; align-items:center; justify-content:center;
+  min-width:44px; min-height:44px; margin:-16px -8px -16px 0; color:var(--muted); font-size:13px; user-select:none; }
+.tip > summary::-webkit-details-marker{ display:none; }
+.ag-tip-box{ position:absolute; bottom:calc(100% + 4px); left:0; z-index:30; background:var(--card);
+  border:1px solid var(--border); border-radius:8px; padding:8px 12px; font-size:12px; color:var(--fg);
+  width:min(224px,calc(100vw - 48px)); box-shadow:var(--shadow-tip); text-transform:none; letter-spacing:0; font-weight:400; }
+.ag-cards4 .ag-gex:nth-child(even) .ag-tip-box{ left:auto; right:0; }
+.chip{ display:inline-block; font-size:11px; font-weight:800; padding:4px 8px; border-radius:999px; letter-spacing:1px; }
+.chip-pos{ background:var(--pos-bg); color:var(--green); }
+.chip-neg{ background:var(--neg-bg); color:var(--red); }
+.flow-badge{ display:inline-block; font-size:11px; font-weight:800; padding:4px 8px; border-radius:999px; letter-spacing:.5px; }
+.flow-green{ background:var(--pos-bg); color:var(--green); }
+.flow-red{ background:var(--neg-bg); color:var(--red); }
+.flow-flat{ background:var(--flat-bg); color:var(--muted); }
 /* ── predictive scenario & directional engine ── */
-.prediction-container{ margin:16px 0 18px; display:flex; flex-direction:column; gap:14px; }
-.prediction-hero{ display:flex; flex-wrap:wrap; align-items:center; gap:12px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px 18px; }
-.bias-badge{ font-size:13px; font-weight:800; letter-spacing:1px; padding:7px 14px; border-radius:999px; white-space:nowrap; }
-.bias-badge.bullish{ background:rgba(52,211,153,.16); color:var(--green); border:1px solid rgba(52,211,153,.45); }
-.bias-badge.bearish{ background:rgba(248,113,113,.16); color:var(--red); border:1px solid rgba(248,113,113,.45); }
-.bias-badge.neutral{ background:rgba(251,191,36,.16); color:var(--amber); border:1px solid rgba(251,191,36,.45); }
-.hero-metric{ display:flex; flex-direction:column; gap:2px; }
-.hero-metric span{ color:var(--muted); font-size:10px; letter-spacing:.8px; text-transform:uppercase; }
-.hero-metric strong{ color:#f0f0f0; font-size:17px; font-weight:700; }
-.hero-note{ color:var(--muted); font-size:11.5px; }
+.prediction-container{ margin:16px 0 20px; display:flex; flex-direction:column; gap:16px; }
+.prediction-hero{ display:flex; flex-wrap:wrap; align-items:center; gap:12px; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; }
+.bias-badge{ font-size:13px; font-weight:800; letter-spacing:1px; padding:8px 16px; border-radius:999px; }
+.bias-badge.bullish{ background:var(--pos-bg); color:var(--green); border:1px solid var(--pos-line); }
+.bias-badge.bearish{ background:var(--neg-bg); color:var(--red); border:1px solid var(--neg-line); }
+.bias-badge.neutral{ background:var(--amber-bg); color:var(--amber); border:1px solid var(--amber-line); }
+.hero-metric{ display:flex; flex-direction:column; gap:4px; }
+.hero-metric span{ color:var(--muted); font-size:11px; letter-spacing:.5px; text-transform:uppercase; }
+.hero-metric strong{ color:var(--bright); font-size:15px; font-weight:700; }
+.hero-note{ color:var(--muted); font-size:12px; }
 .scenario-table{ width:100%; border-collapse:collapse; font-size:13px; }
-.scenario-table th{ background:var(--card); color:#d8d8d8; font-weight:600; }
-.scenario-table th, .scenario-table td{ border:1px solid var(--border); padding:8px 10px; text-align:left; }
-.scenario-table tr.row-bullish td:first-child{ border-left:3px solid var(--green); }
-.scenario-table tr.row-neutral td:first-child{ border-left:3px solid var(--amber); }
-.scenario-table tr.row-bearish td:first-child{ border-left:3px solid var(--red); }
+.scenario-table th{ background:var(--card); color:var(--bright); font-weight:600; }
+.scenario-table th, .scenario-table td{ border:1px solid var(--border); padding:8px; text-align:left; }
+.scenario-table tr.row-bullish td:first-child{ border-left:4px solid var(--green); }
+.scenario-table tr.row-neutral td:first-child{ border-left:4px solid var(--amber); }
+.scenario-table tr.row-bearish td:first-child{ border-left:4px solid var(--red); }
 .row-bullish td:first-child{ color:var(--green); font-weight:700; }
 .row-neutral td:first-child{ color:var(--amber); font-weight:700; }
 .row-bearish td:first-child{ color:var(--red); font-weight:700; }
-.divergence-bar{ display:flex; flex-wrap:wrap; gap:10px 22px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:12px 16px; }
-.status-item{ font-size:12.5px; color:#d8d8d8; }
-.status-item strong{ color:#f0f0f0; }
+.divergence-bar{ display:flex; flex-wrap:wrap; gap:8px 24px; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px 16px; }
+.status-item{ font-size:12px; color:var(--fg); }
+.status-item strong{ color:var(--bright); }
 .text-green{ color:var(--green); font-weight:600; }
 .text-red{ color:var(--red); font-weight:600; }
 .text-amber{ color:var(--amber); font-weight:600; }
+/* ── tables that stack on a phone: each row becomes a block, each cell its own labelled line ── */
 @media (max-width:900px){ .grid,.relation-grid,.band-row{ grid-template-columns:1fr; } .chain{ flex-direction:column; } .chain .arrow{ transform:rotate(90deg); align-self:center; padding:4px 0; } }
+@media (max-width:640px){
+  body{ padding:16px; }
+  .ag-grid7{ grid-template-columns:repeat(2,1fr); }
+  .ag-dash{ display:none; }
+  .bias-badge{ white-space:normal; }
+  .modebar-container{ display:none !important; }
+  table.stack{ display:block; border:0; margin:8px 0 16px; }
+  table.stack thead{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+  table.stack tbody, table.stack tr{ display:block; }
+  table.stack tr{ border:1px solid var(--border); border-radius:8px; margin:0 0 8px; padding:4px 12px; background:var(--card); }
+  table.stack td{ display:flex; justify-content:space-between; align-items:baseline; gap:16px; border:0;
+    border-bottom:1px solid var(--border); padding:8px 0; text-align:right; width:auto !important; min-width:0; overflow-wrap:anywhere; }
+  table.stack td:last-child{ border-bottom:0; }
+  table.stack td::before{ content:attr(data-label); flex:0 0 40%; text-align:left; color:var(--muted); font-size:11px;
+    text-transform:uppercase; letter-spacing:.5px; }
+  table.stack td[data-label=""]::before{ display:none; }
+  table.stack td::before{ font-weight:400; }
+  .summary-card table.stack tr{ border:0; border-top:1px solid var(--border); border-radius:0; background:none; padding:0; margin:0; }
+  table.stack.plain tr{ border:0; background:none; padding:0; margin:0 0 8px; }
+  table.stack.plain td{ display:block; text-align:left; border:0; padding:0; }
+  table.stack.plain td:first-child{ color:var(--bright); font-weight:600; }
+  .scenario-table tr.row-bullish{ border-left:4px solid var(--green); }
+  .scenario-table tr.row-neutral{ border-left:4px solid var(--amber); }
+  .scenario-table tr.row-bearish{ border-left:4px solid var(--red); }
+  .scenario-table tr td:first-child{ border-left:0 !important; }
+  .summary-card td:first-child, .summary-card td:last-child{ text-align:right; }
+}
 @media print{
   body{ background:#fff; color:#111; }
   .header,.footer,.summary-card .tag,.summary-card td:first-child,.summary-card td:last-child{ color:#555; }
   h2,h3,.at-glance,.summary-card .title{ color:#111; }
-  th,.summary-card,.at-glance,.strip .kv,.band,.relation-card,.chain .node,.tr-block{ background:#f2f2f2; color:#111; }
-  th,td,.summary-card,pre,.at-glance,.strip .kv,.band,.relation-card,.chain .node,.tr-block{ border-color:#ccc; }
+  th,.summary-card,.at-glance,.band,.relation-card,.chain .node,.tr-block{ background:#f2f2f2; color:#111; }
+  th,td,.summary-card,pre,.at-glance,.band,.relation-card,.chain .node,.tr-block{ border-color:#ccc; }
 }
 </style>
 <script src="/static/vendor/plotly.min.js"></script>
@@ -190,20 +233,20 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 
   <!-- Scenario Matrix Table -->
   <div class="overflow-x-auto">
-  <table class="scenario-table">
+  <table class="scenario-table stack">
     <thead><tr><th>Scenario</th><th>Trigger Level</th><th>Dealer Hedging Action</th><th>Target Zone</th></tr></thead>
     <tbody>
     
     <tr class="row-bullish">
-      <td>Bullish Acceleration</td><td>Spot holds &gt; 7,800</td><td>Short gamma forces dealer buying into strength</td><td>7,815</td>
+      <td data-label="Scenario">Bullish Acceleration</td><td data-label="Trigger Level">Spot holds &gt; 7,800</td><td data-label="Dealer Hedging Action">Short gamma forces dealer buying into strength</td><td data-label="Target Zone">7,815</td>
     </tr>
     
     <tr class="row-neutral">
-      <td>Consolidation</td><td>7,795 &lt; Spot &lt; 7,805</td><td>Positive gamma &amp; charm absorption dampens range</td><td>7,800 Pin</td>
+      <td data-label="Scenario">Consolidation</td><td data-label="Trigger Level">7,795 &lt; Spot &lt; 7,805</td><td data-label="Dealer Hedging Action">Positive gamma &amp; charm absorption dampens range</td><td data-label="Target Zone">7,800 Pin</td>
     </tr>
     
     <tr class="row-bearish">
-      <td>Bearish Breakdown</td><td>n/a</td><td>Flipped gamma accelerates the drop through the air pocket</td><td>7,650 (vanna floor)</td>
+      <td data-label="Scenario">Bearish Breakdown</td><td data-label="Trigger Level">n/a</td><td data-label="Dealer Hedging Action">Flipped gamma accelerates the drop through the air pocket</td><td data-label="Target Zone">7,650 (vanna floor)</td>
     </tr>
     
     </tbody>
@@ -238,24 +281,25 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 
 
 <style>
-  .ib-panel{ margin:16px 0 18px; display:flex; flex-direction:column; gap:12px; }
+  .ib-panel{ margin:16px 0 20px; display:flex; flex-direction:column; gap:12px; }
   .ib-hero{ display:flex; flex-wrap:wrap; align-items:center; gap:12px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:12px 16px; }
-  .ib-signal{ padding:4px 10px; border-radius:999px; font-weight:700; font-size:13px; letter-spacing:.4px; }
-  .ib-signal.ib-pin{ background:rgba(59,130,246,.15); color:#60a5fa; border:1px solid #2563eb55; }
-  .ib-signal.ib-bearish{ background:rgba(248,113,113,.12); color:#f87171; border:1px solid #ef444455; }
-  .ib-signal.ib-bullish{ background:rgba(52,211,153,.12); color:#34d399; border:1px solid #10b98155; }
+  .ib-signal{ padding:4px 8px; border-radius:999px; font-weight:700; font-size:13px; letter-spacing:.4px; }
+  .ib-signal.ib-pin{ background:var(--blue-bg); color:var(--sky); border:1px solid var(--sky); }
+  .ib-signal.ib-bearish{ background:var(--neg-bg); color:var(--red); border:1px solid var(--neg-line); }
+  .ib-signal.ib-bullish{ background:var(--pos-bg); color:var(--green); border:1px solid var(--pos-line); }
   .ib-metric{ display:flex; flex-direction:column; gap:2px; min-width:92px; }
-  .ib-metric span{ font-size:11px; color:#8b949e; text-transform:uppercase; letter-spacing:.5px; }
-  .ib-metric strong{ font-size:15px; color:#e6edf3; }
-  .ib-metric strong.credit{ color:#34d399; }
-  .ib-metric strong.risk{ color:#f87171; }
-  .ib-note{ font-size:12px; color:#8b949e; line-height:1.5; }
+  .ib-metric span{ font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+  .ib-metric strong{ font-size:15px; color:var(--bright); }
+  .ib-metric strong.credit{ color:var(--green); }
+  .ib-metric strong.risk{ color:var(--red); }
+  .ib-note{ font-size:12px; color:var(--muted); line-height:1.5; }
+  @media (max-width:640px){ .ib-legs{ overflow:visible; } }
   .ib-legs{ overflow-x:auto; }
   .ib-legs table{ width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--border); border-radius:10px; font-size:13px; }
-  .ib-legs th{ text-align:left; padding:8px 12px; color:#8b949e; font-size:11px; text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid var(--border); }
-  .ib-legs td{ padding:7px 12px; border-bottom:1px solid #1c2a3a; color:#e6edf3; }
+  .ib-legs th{ text-align:left; padding:8px 12px; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid var(--border); }
+  .ib-legs td{ padding:8px 12px; border-bottom:1px solid var(--border); color:var(--bright); }
   .ib-legs tr:last-child td{ border-bottom:none; }
-  .ib-legs .sell{ color:#f87171; } .ib-legs .buy{ color:#34d399; }
+  .ib-legs .sell{ color:var(--red); } .ib-legs .buy{ color:var(--green); }
 </style>
 <div class="ib-panel">
   <h2 style="margin:0">Iron Butterfly — Pin Harvest</h2>
@@ -276,44 +320,44 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     Cancel pin; long put / bear debit spread into the short-gamma breakdown → target 7,650.
   </div>
   <div class="ib-legs">
-    <table>
+    <table class="stack">
       <thead><tr><th>Action</th><th>Type</th><th>Strike</th><th>Mid</th><th>IV</th><th>Θ /day</th></tr></thead>
       <tbody>
         
         <tr>
-          <td class="buy">BUY</td>
-          <td>PUT</td>
-          <td>7,765</td>
-          <td>6.00</td>
-          <td>10.0%</td>
-          <td>-2.0</td>
+          <td data-label="Action" class="buy">BUY</td>
+          <td data-label="Type">PUT</td>
+          <td data-label="Strike">7,765</td>
+          <td data-label="Mid">6.00</td>
+          <td data-label="IV">10.0%</td>
+          <td data-label="Θ /day">-2.0</td>
         </tr>
         
         <tr>
-          <td class="sell">SELL</td>
-          <td>PUT</td>
-          <td>7,800</td>
-          <td>15.00</td>
-          <td>10.0%</td>
-          <td>-7.0</td>
+          <td data-label="Action" class="sell">SELL</td>
+          <td data-label="Type">PUT</td>
+          <td data-label="Strike">7,800</td>
+          <td data-label="Mid">15.00</td>
+          <td data-label="IV">10.0%</td>
+          <td data-label="Θ /day">-7.0</td>
         </tr>
         
         <tr>
-          <td class="sell">SELL</td>
-          <td>CALL</td>
-          <td>7,800</td>
-          <td>20.00</td>
-          <td>10.0%</td>
-          <td>-8.0</td>
+          <td data-label="Action" class="sell">SELL</td>
+          <td data-label="Type">CALL</td>
+          <td data-label="Strike">7,800</td>
+          <td data-label="Mid">20.00</td>
+          <td data-label="IV">10.0%</td>
+          <td data-label="Θ /day">-8.0</td>
         </tr>
         
         <tr>
-          <td class="buy">BUY</td>
-          <td>CALL</td>
-          <td>7,835</td>
-          <td>5.00</td>
-          <td>10.0%</td>
-          <td>-3.0</td>
+          <td data-label="Action" class="buy">BUY</td>
+          <td data-label="Type">CALL</td>
+          <td data-label="Strike">7,835</td>
+          <td data-label="Mid">5.00</td>
+          <td data-label="IV">10.0%</td>
+          <td data-label="Θ /day">-3.0</td>
         </tr>
         
       </tbody>
@@ -323,35 +367,27 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 
 
 <h2>At a Glance — Single Source of Truth</h2>
-<div class="overflow-x-auto pb-2">
-<div class="ag-box" style="min-width:900px">
+<div class="ag-box">
   <!-- Header + flow badge -->
   <div class="ag-header">
     <span class="ag-label">At a Glance — Single Source of Truth</span>
     <span class="flow-badge flow-flat">No flow data</span>
   </div>
-  <!-- Unified 7-column grid: Row 1 OI + Row 1b Volume -->
+  <!-- Seven columns on a desktop, two on a phone; each column is one cell: label, OI value, intraday value -->
   <div class="ag-grid7">
-    <div class="ag-h">Spot</div><div class="ag-h">Call Wall</div><div class="ag-h">Put Wall</div>
-    <div class="ag-h">HVL / Flip</div><div class="ag-h">Magnet</div><div class="ag-h">Charm Pin</div><div class="ag-h">Vanna Pin</div>
-    <div class="ag-v-big">7,784</div>
-    <div class="ag-v">7,900 <span class="ag-src">(OI)</span></div>
-    <div class="ag-v">7,500 <span class="ag-src">(OI)</span></div>
-    <div class="ag-v">7,821 <span class="ag-src">(OI)</span></div>
-    <div class="ag-v">7,900 <span class="ag-src">(OI)</span></div>
-    <div class="ag-v-sm">8,000 (-50)</div>
-    <div class="ag-v-sm">7,850 (+15.0M)</div>
-    <div class="ag-h ag-h-vol">Intraday</div>
-    <div class="ag-v-vol">7,715 <span class="ag-src-vol">(VOL)</span></div>
-    <div class="ag-v-vol">7,705 <span class="ag-src-vol">(VOL)</span></div>
-    <div class="ag-v-vol">7,692 <span class="ag-src-vol">(VOL)</span></div>
-    <div class="ag-v-vol">—</div><div class="ag-v-vol">—</div><div class="ag-v-vol">—</div>
+    <div class="ag-cell"><div class="ag-h">Spot</div><div class="ag-v-big">7,784</div><div class="ag-h ag-h-vol">Intraday</div></div>
+    <div class="ag-cell"><div class="ag-h">Call Wall</div><div class="ag-v">7,900 <span class="ag-src">(OI)</span></div><div class="ag-v-vol">7,715 <span class="ag-src-vol">(VOL)</span></div></div>
+    <div class="ag-cell"><div class="ag-h">Put Wall</div><div class="ag-v">7,500 <span class="ag-src">(OI)</span></div><div class="ag-v-vol">7,705 <span class="ag-src-vol">(VOL)</span></div></div>
+    <div class="ag-cell"><div class="ag-h">HVL / Flip</div><div class="ag-v">7,821 <span class="ag-src">(OI)</span></div><div class="ag-v-vol">7,692 <span class="ag-src-vol">(VOL)</span></div></div>
+    <div class="ag-cell"><div class="ag-h">Magnet</div><div class="ag-v">7,900 <span class="ag-src">(OI)</span></div><div class="ag-v-vol ag-dash">—</div></div>
+    <div class="ag-cell"><div class="ag-h">Charm Pin</div><div class="ag-v-sm">8,000 (-50)</div><div class="ag-v-vol ag-dash">—</div></div>
+    <div class="ag-cell"><div class="ag-h">Vanna Pin</div><div class="ag-v-sm">7,850 (+15.0M)</div><div class="ag-v-vol ag-dash">—</div></div>
   </div>
   <!-- Row 2: 4 metric cards with tooltips -->
   <div class="ag-cards4">
-    <div class="ag-gex ag-tip"><div class="k">NET GEX (OI) <span class="tip-i">ⓘ</span><span class="ag-tip-box">Total Book = all-expiry OI-based net GEX (macro inventory).</span></div><div class="v pos">+374</div></div>
+    <div class="ag-gex"><div class="k">NET GEX (OI) <details class="tip"><summary aria-label="What is NET GEX (OI)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Total Book = all-expiry OI-based net GEX (macro inventory).</div></details></div><div class="v pos">+374</div></div>
     <div class="ag-gex"><div class="k">DAILY Δ (1D / 1W)</div><div class="v">— / —</div></div>
-    <div class="ag-gex ag-tip"><div class="k">MATRIX (≤45 DTE) <span class="tip-i">ⓘ</span><span class="ag-tip-box">Matrix = DTE≤45 filter stripping far-dated LEAPS noise.</span></div><div class="v pos">+64.5K</div></div>
+    <div class="ag-gex"><div class="k">MATRIX (≤45 DTE) <details class="tip"><summary aria-label="What is MATRIX (≤45 DTE)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Matrix = DTE≤45 filter stripping far-dated LEAPS noise.</div></details></div><div class="v pos">+64.5K</div></div>
     <div class="ag-gex"><div class="k">SOURCE CHIP</div><div><span class="chip chip-neg">NEGATIVE</span></div></div>
   </div>
   <div class="ag-note">Toplam kitap = all-expiry OI-based net GEX (macro depot). Matrix = DTE≤45 filter — active-trading gamma that strips far-dated/LEAPS noise; the gap comes from distant tenors.</div>
@@ -364,11 +400,9 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     <div class="ag-gex"><div class="k">Live Charm</div><div class="v">-0.00B</div></div>
   </div>
 </div>
-</div>
 
 <h2>Summary</h2>
-<div class="overflow-x-auto pb-2">
-<div class="grid" style="min-width:1100px">
+<div class="grid">
 
 <div class="box summary-card">
   <div class="head">
@@ -377,15 +411,15 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     <span class="pill green">Bullish</span>
   </div>
   <div class="narrative">Net dealer Δ +$563.00M, bullish lean</div>
-  <table>
+  <table class="stack">
     <thead><tr><th>Metric</th><th>Current</th><th>1D Δ / 1W Δ</th><th>Context</th></tr></thead>
     <tbody>
-    <tr><td>Net DEX</td><td>+$563.00M</td>
-      <td>—</td><td>at spot +$180.00M</td></tr>
-    <tr><td>Above spot</td><td>+$393.00M</td>
-      <td>—</td><td>upper strikes</td></tr>
-    <tr><td>Below spot</td><td>+$170.00M</td>
-      <td>—</td><td>lower strikes</td></tr>
+    <tr><td data-label="Metric">Net DEX</td><td data-label="Current">+$563.00M</td>
+      <td data-label="1D Δ / 1W Δ">—</td><td data-label="Context">at spot +$180.00M</td></tr>
+    <tr><td data-label="Metric">Above spot</td><td data-label="Current">+$393.00M</td>
+      <td data-label="1D Δ / 1W Δ">—</td><td data-label="Context">upper strikes</td></tr>
+    <tr><td data-label="Metric">Below spot</td><td data-label="Current">+$170.00M</td>
+      <td data-label="1D Δ / 1W Δ">—</td><td data-label="Context">lower strikes</td></tr>
     
     </tbody>
   </table>
@@ -398,19 +432,19 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     <span class="pill red">Amplifying</span>
   </div>
   <div class="narrative">Short Γ → Amplifying regime. Largest level is the call wall at $7,900, dealers may sell into rallies as price approaches it.</div>
-  <table>
+  <table class="stack">
     <thead><tr><th>Metric</th><th>Current</th><th>1D Δ / 1W Δ</th><th>Context</th></tr></thead>
     <tbody>
-    <tr><td>Net dealer Γ</td><td>+$374</td>
-      <td>—</td><td>Short (spot below flip)</td></tr>
-    <tr><td>Γ vs prev close</td><td>+$32 (+9%)</td>
-      <td>—</td><td></td></tr>
-    <tr><td>Top wall</td><td>$7,900</td>
-      <td>—</td><td>+$198</td></tr>
-    <tr><td>Flip distance</td><td>+0.5%</td>
-      <td>—</td><td>at $7,820.63</td></tr>
-    <tr><td>0–1d rolls off</td><td>+$54.5K</td>
-      <td>—</td><td>by tomorrow</td></tr>
+    <tr><td data-label="Metric">Net dealer Γ</td><td data-label="Current">+$374</td>
+      <td data-label="1D Δ / 1W Δ">—</td><td data-label="Context">Short (spot below flip)</td></tr>
+    <tr><td data-label="Metric">Γ vs prev close</td><td data-label="Current">+$32 (+9%)</td>
+      <td data-label="1D Δ / 1W Δ">—</td><td data-label="Context"></td></tr>
+    <tr><td data-label="Metric">Top wall</td><td data-label="Current">$7,900</td>
+      <td data-label="1D Δ / 1W Δ">—</td><td data-label="Context">+$198</td></tr>
+    <tr><td data-label="Metric">Flip distance</td><td data-label="Current">+0.5%</td>
+      <td data-label="1D Δ / 1W Δ">—</td><td data-label="Context">at $7,820.63</td></tr>
+    <tr><td data-label="Metric">0–1d rolls off</td><td data-label="Current">+$54.5K</td>
+      <td data-label="1D Δ / 1W Δ">—</td><td data-label="Context">by tomorrow</td></tr>
     
     </tbody>
   </table>
@@ -423,15 +457,15 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     <span class="pill red">Long</span>
   </div>
   <div class="narrative">Long Vanna — IV spikes pressure stock lower via dealer selling.</div>
-  <table>
+  <table class="stack">
     <thead><tr><th>Metric</th><th>Current</th><th>1D Δ / 1W Δ</th><th>Context</th></tr></thead>
     <tbody>
-    <tr><td>Net Vanna</td><td>+$15.00M</td>
-      <td>—</td><td>Long</td></tr>
-    <tr><td>Top vol-sensitive strike</td><td>$7,650</td>
-      <td>—</td><td>+$30.00M</td></tr>
-    <tr><td>Δ from +1pt IV</td><td>+$45.00M</td>
-      <td>—</td><td></td></tr>
+    <tr><td data-label="Metric">Net Vanna</td><td data-label="Current">+$15.00M</td>
+      <td data-label="1D Δ / 1W Δ">—</td><td data-label="Context">Long</td></tr>
+    <tr><td data-label="Metric">Top vol-sensitive strike</td><td data-label="Current">$7,650</td>
+      <td data-label="1D Δ / 1W Δ">—</td><td data-label="Context">+$30.00M</td></tr>
+    <tr><td data-label="Metric">Δ from +1pt IV</td><td data-label="Current">+$45.00M</td>
+      <td data-label="1D Δ / 1W Δ">—</td><td data-label="Context"></td></tr>
     
     </tbody>
   </table>
@@ -444,35 +478,34 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     <span class="pill green">Agree</span>
   </div>
   <div class="narrative">Charm signals agree — sell-side lean.</div>
-  <table>
+  <table class="stack">
     <thead><tr><th>Metric</th><th>Current</th><th>1D Δ / 1W Δ</th><th>Context</th></tr></thead>
     <tbody>
-    <tr><td>Live charm</td><td>-$80</td>
-      <td>—</td><td>Sell pressure</td></tr>
-    <tr><td>Positioning</td><td>-$45.00M</td>
-      <td>—</td><td>Sell pressure · 100% imbalance</td></tr>
-    <tr><td>Where it matters</td><td>$8,000</td>
-      <td>—</td><td>+2.8% from spot · pin zone</td></tr>
+    <tr><td data-label="Metric">Live charm</td><td data-label="Current">-$80</td>
+      <td data-label="1D Δ / 1W Δ">—</td><td data-label="Context">Sell pressure</td></tr>
+    <tr><td data-label="Metric">Positioning</td><td data-label="Current">-$45.00M</td>
+      <td data-label="1D Δ / 1W Δ">—</td><td data-label="Context">Sell pressure · 100% imbalance</td></tr>
+    <tr><td data-label="Metric">Where it matters</td><td data-label="Current">$8,000</td>
+      <td data-label="1D Δ / 1W Δ">—</td><td data-label="Context">+2.8% from spot · pin zone</td></tr>
     
     </tbody>
   </table>
 </div>
 
 </div>
-</div>
 
 <details class="collapsible">
 <summary>Gamma flip methods</summary>
 <div class="box-inner">
-<table>
+<table class="stack">
   <thead><tr><th>Method</th><th>Flip</th><th>Spot is</th><th>Note</th></tr></thead>
   <tbody>
   
-  <tr><td>UW flip, open interest (decides the regime)</td><td>7,821</td><td>spot below (short gamma)</td><td>UW gex-levels source=oi</td></tr>
+  <tr><td data-label="Method">UW flip, open interest (decides the regime)</td><td data-label="Flip">7,821</td><td data-label="Spot is">spot below (short gamma)</td><td data-label="Note">UW gex-levels source=oi</td></tr>
   
-  <tr><td>UW flip, volume</td><td>7,692</td><td>spot above (long gamma)</td><td>UW gex-levels source=vol</td></tr>
+  <tr><td data-label="Method">UW flip, volume</td><td data-label="Flip">7,692</td><td data-label="Spot is">spot above (long gamma)</td><td data-label="Note">UW gex-levels source=vol</td></tr>
   
-  <tr><td>Local cumulative crossing, open interest book</td><td>N/A</td><td>—</td><td>interpolated zero of cumulative OI gamma across strikes, nearest to spot</td></tr>
+  <tr><td data-label="Method">Local cumulative crossing, open interest book</td><td data-label="Flip">N/A</td><td data-label="Spot is">—</td><td data-label="Note">interpolated zero of cumulative OI gamma across strikes, nearest to spot</td></tr>
   
   </tbody>
 </table>
@@ -483,33 +516,33 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 <details class="collapsible">
 <summary>DTE Band Walls</summary>
 <div class="box-inner">
-<table>
+<table class="stack">
   <thead><tr><th>DTE Band</th><th>Put Wall</th><th>Put Wall Net GEX</th><th>Call Wall</th><th>Call Wall Net GEX</th></tr></thead>
   <tbody>
   
-  <tr><td>0-30</td>
-    <td>7,750</td><td>-140</td>
-    <td>7,900</td><td>+10</td></tr>
+  <tr><td data-label="DTE Band">0-30</td>
+    <td data-label="Put Wall">7,750</td><td data-label="Put Wall Net GEX">-140</td>
+    <td data-label="Call Wall">7,900</td><td data-label="Call Wall Net GEX">+10</td></tr>
   
-  <tr><td>31-90</td>
-    <td>7,750</td><td>+28</td>
-    <td>7,900</td><td>+49</td></tr>
+  <tr><td data-label="DTE Band">31-90</td>
+    <td data-label="Put Wall">7,750</td><td data-label="Put Wall Net GEX">+28</td>
+    <td data-label="Call Wall">7,900</td><td data-label="Call Wall Net GEX">+49</td></tr>
   
-  <tr><td>91-180</td>
-    <td>7,700</td><td>+38</td>
-    <td>8,000</td><td>+19</td></tr>
+  <tr><td data-label="DTE Band">91-180</td>
+    <td data-label="Put Wall">7,700</td><td data-label="Put Wall Net GEX">+38</td>
+    <td data-label="Call Wall">8,000</td><td data-label="Call Wall Net GEX">+19</td></tr>
   
-  <tr><td>181-365 <b>(Put Wall standard)</b></td>
-    <td>7,500</td><td>+58</td>
-    <td>7,900</td><td>+9</td></tr>
+  <tr><td data-label="DTE Band">181-365 <b>(Put Wall standard)</b></td>
+    <td data-label="Put Wall">7,500</td><td data-label="Put Wall Net GEX">+58</td>
+    <td data-label="Call Wall">7,900</td><td data-label="Call Wall Net GEX">+9</td></tr>
   
-  <tr><td>365+</td>
-    <td>N/A</td><td>N/A</td>
-    <td>N/A</td><td>N/A</td></tr>
+  <tr><td data-label="DTE Band">365+</td>
+    <td data-label="Put Wall">N/A</td><td data-label="Put Wall Net GEX">N/A</td>
+    <td data-label="Call Wall">N/A</td><td data-label="Call Wall Net GEX">N/A</td></tr>
   
-  <tr><td>ALL</td>
-    <td>7,500</td><td>+58</td>
-    <td>7,900</td><td>+49</td></tr>
+  <tr><td data-label="DTE Band">ALL</td>
+    <td data-label="Put Wall">7,500</td><td data-label="Put Wall Net GEX">+58</td>
+    <td data-label="Call Wall">7,900</td><td data-label="Call Wall Net GEX">+49</td></tr>
   
   </tbody>
 </table>
@@ -529,12 +562,12 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 <div class="chart" style="margin:0 0 12px"><div id="env"><i>envelope</i></div></div>
 <div class="band-row" style="margin:0">
   <div class="band green">
-    <h3>Absorption Band <span style="font-weight:400;color:var(--muted);font-size:12px">(positive gamma — dealers trade against the move)</span></h3>
+    <h3>Absorption Band <span class="sub">(positive gamma — dealers trade against the move)</span></h3>
     <div class="big">7,800–8,000</div>
     <div>Net GEX +623 &middot; ~77.9/25pt</div>
   </div>
   <div class="band red">
-    <h3>Air Gap <span style="font-weight:400;color:var(--muted);font-size:12px">(negative gamma — dealers trade with the move)</span></h3>
+    <h3>Air Gap <span class="sub">(negative gamma — dealers trade with the move)</span></h3>
     <div class="big">7,700–7,750</div>
     <div>Net GEX -249 &middot; ~124.5/25pt</div>
   </div>
@@ -548,13 +581,13 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   <span class="pos-neg ">Divergence</span>
   <span class="muted"> &middot; 1/3 directional signals lean bullish, 2/3 lean bearish.</span>
 </div>
-<table>
+<table class="stack">
   <thead><tr><th>Signal</th><th>Lean</th></tr></thead>
   <tbody>
-  <tr><td>Delta</td><td><span class="pill green">Bullish</span></td></tr>
-  <tr><td>Gamma</td><td><span class="pill red">Amplifying</span></td></tr>
-  <tr><td>Vanna</td><td><span class="pill red">Long</span></td></tr>
-  <tr><td>Charm</td><td><span class="pill green">Agree</span></td></tr>
+  <tr><td data-label="Signal">Delta</td><td data-label="Lean"><span class="pill green">Bullish</span></td></tr>
+  <tr><td data-label="Signal">Gamma</td><td data-label="Lean"><span class="pill red">Amplifying</span></td></tr>
+  <tr><td data-label="Signal">Vanna</td><td data-label="Lean"><span class="pill red">Long</span></td></tr>
+  <tr><td data-label="Signal">Charm</td><td data-label="Lean"><span class="pill green">Agree</span></td></tr>
   
   </tbody>
 </table>
@@ -596,35 +629,35 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   <div class="relation-card">
     <div class="r-head"><span class="r-greek">Gamma</span><span class="r-headline">Negative gamma — amplifying regime</span></div>
     <p>Spot 7,784 sits below the gamma flip 7,821 (+0.5%). Dealers trade WITH the move: they sell into weakness and buy into strength, which accelerates moves.</p>
-    <table><tbody><tr><td>Net dealer Γ</td><td>+$374</td><td>Short</td></tr></tbody></table>
+    <table class="stack plain"><tbody><tr><td data-label="">Net dealer Γ</td><td data-label="">+$374</td><td data-label="">Short</td></tr></tbody></table>
     <div class="tr">Fiyat 7,784, gamma flip&#39;in (7,821, +0.5%) ALTINDA. Piyasa yapıcılar hareketle AYNI YÖNDE işlem yapar: düşerken satar, çıkarken alır; bu yüzden hareket hızlanır, kırılımlar uzar.</div>
   </div>
   
   <div class="relation-card">
     <div class="r-head"><span class="r-greek">Vanna</span><span class="r-headline">Long vanna — IV spikes pressure lower</span></div>
     <p>Net vanna is +$45.00M. If IV jumps, dealer delta RISES, so dealers SELL stock to re-hedge — an IV spike adds fuel to the downside.</p>
-    <table><tbody><tr><td>Net Vanna</td><td>+$45.00M</td><td>Long</td></tr></tbody></table>
+    <table class="stack plain"><tbody><tr><td data-label="">Net Vanna</td><td data-label="">+$45.00M</td><td data-label="">Long</td></tr></tbody></table>
     <div class="tr">Net vanna +$45.00M (pozitif). IV sıçrarsa dealer delta&#39;sı YÜKSELİR ve dealer dengelemek için STOK SATAR — vol sıçraması aşağı baskıyı büyütür.</div>
   </div>
   
   <div class="relation-card">
     <div class="r-head"><span class="r-greek">Charm</span><span class="r-headline">Negative charm — mechanical selling into the close</span></div>
     <p>Net charm is -$80. As expiry approaches, dealer delta builds; dealers mechanically SELL toward the close.</p>
-    <table><tbody><tr><td>Net Charm</td><td>-$80</td><td>Sell pressure</td></tr><tr><td>Charm Peak</td><td>$8,000</td><td>+2.8% from spot</td></tr></tbody></table>
+    <table class="stack plain"><tbody><tr><td data-label="">Net Charm</td><td data-label="">-$80</td><td data-label="">Sell pressure</td></tr><tr><td data-label="">Charm Peak</td><td data-label="">$8,000</td><td data-label="">+2.8% from spot</td></tr></tbody></table>
     <div class="tr">Net charm -$80 (negatif). Vade yaklaştıkça dealer delta&#39;sı birikir; dealer kapanışa doğru mekanik SATIŞ yapar.</div>
   </div>
   
   <div class="relation-card">
     <div class="r-head"><span class="r-greek">Delta</span><span class="r-headline">Net delta bullish lean</span></div>
     <p>Net dealer delta is +$563.00M — a bullish structural lean.</p>
-    <table><tbody><tr><td>Net DEX</td><td>+$563.00M</td><td>All strikes</td></tr></tbody></table>
+    <table class="stack plain"><tbody><tr><td data-label="">Net DEX</td><td data-label="">+$563.00M</td><td data-label="">All strikes</td></tr></tbody></table>
     <div class="tr">Net dealer delta +$563.00M — yukarı yönlü yapısal eğilim.</div>
   </div>
   
   <div class="relation-card">
     <div class="r-head"><span class="r-greek">Vomma</span><span class="r-headline">Vomma — vega&#39;s sensitivity to IV (2nd order)</span></div>
     <p>Vomma measures how vega itself changes as IV moves. When vega is large and Vomma is positive, an IV spike makes the book&#39;s vol exposure grow, which can force accelerated re-hedging. It is a second-order effect on top of Vanna.</p>
-    <table><tbody><tr><td>Order</td><td>2nd</td><td>above Vanna</td></tr></tbody></table>
+    <table class="stack plain"><tbody><tr><td data-label="">Order</td><td data-label="">2nd</td><td data-label="">above Vanna</td></tr></tbody></table>
     <div class="tr">Vomma, IV değişince vega&#39;nın kendisinin ne kadar değiştiğini ölçer (2. derece). Vega büyük ve Vomma pozitifken IV sıçraması vol pozisyonunu büyütür ve dengeleme hızlanır. Vanna&#39;nın üstüne binen ikinci derece bir etkidir.</div>
   </div>
   
@@ -633,135 +666,135 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 <h2>Volatility Board</h2>
 <div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> whether implied vol is cheap or expensive, how the term structure slopes, and what the skew costs.</div>
 
-<div class="note" style="color:var(--muted);font-size:12px">Volatility data unavailable for this snapshot.</div>
+<div class="note">Volatility data unavailable for this snapshot.</div>
 
 
 <h3>Vol Term Structure</h3>
 
-<div class="note" style="color:var(--muted);font-size:12px">Vol term structure unavailable.</div>
+<div class="note">Vol term structure unavailable.</div>
 
 
 <h2>Options Volume &amp; P/C</h2>
 
-<div class="note" style="color:var(--muted);font-size:12px">Options volume data unavailable.</div>
+<div class="note">Options volume data unavailable.</div>
 
 
 <h2>Max Pain</h2>
 
-<div class="note" style="color:var(--muted);font-size:12px">Max pain data unavailable.</div>
+<div class="note">Max pain data unavailable.</div>
 
 
 <h2>CFTC COT — E-mini S&amp;P 500 (TFF)</h2>
 
-<div class="note" style="color:var(--muted);font-size:12px">CFTC COT data unavailable.</div>
+<div class="note">CFTC COT data unavailable.</div>
 
 
 <h2>Scenario Set</h2>
-<table>
+<table class="stack">
   <thead><tr><th>Scenario</th><th>Range</th><th>P</th><th>R:R</th><th>Expectancy E</th><th>Trade</th></tr></thead>
   <tbody>
   
   <tr>
-    <td>Consolidation</td><td>7,821 – 7,920</td><td>0.45</td>
-    <td>n/a</td>
-    <td>n/a</td>
-    <td>Theta-weighted (directionless)</td>
+    <td data-label="Scenario">Consolidation</td><td data-label="Range">7,821 – 7,920</td><td data-label="P">0.45</td>
+    <td data-label="R:R">n/a</td>
+    <td data-label="Expectancy E">n/a</td>
+    <td data-label="Trade">Theta-weighted (directionless)</td>
   </tr>
   
   <tr>
-    <td>Upside</td><td>7,920 – 8,000</td><td>0.25</td>
-    <td>0.8050719533058276</td>
-    <td>-0.5487320116735431</td>
-    <td>Directional long</td>
+    <td data-label="Scenario">Upside</td><td data-label="Range">7,920 – 8,000</td><td data-label="P">0.25</td>
+    <td data-label="R:R">0.8050719533058276</td>
+    <td data-label="Expectancy E">-0.5487320116735431</td>
+    <td data-label="Trade">Directional long</td>
   </tr>
   
   <tr>
-    <td>Downside</td><td>7,731 – 7,821</td><td>0.3</td>
-    <td>0.9057059474690561</td>
-    <td>-0.42828821575928316</td>
-    <td>Directional short</td>
+    <td data-label="Scenario">Downside</td><td data-label="Range">7,731 – 7,821</td><td data-label="P">0.3</td>
+    <td data-label="R:R">0.9057059474690561</td>
+    <td data-label="Expectancy E">-0.42828821575928316</td>
+    <td data-label="Trade">Directional short</td>
   </tr>
   
   </tbody>
 </table>
-<div class="note" style="color:var(--muted);font-size:12px">Probabilities are heuristic, derived from the gamma regime and positioning; they are NOT calibrated forecasts. Bands derive from this week&#39;s levels only (gamma flip / call wall / put support), with the same intuitive offsets as the reference report. The Brier scorecard below tracks how honest these probabilities turn out to be.</div>
+<div class="note">Probabilities are heuristic, derived from the gamma regime and positioning; they are NOT calibrated forecasts. Bands derive from this week&#39;s levels only (gamma flip / call wall / put support), with the same intuitive offsets as the reference report. The Brier scorecard below tracks how honest these probabilities turn out to be.</div>
 
 <div class="box" style="margin-top:14px">
   <div class="ag-label">Volume &amp; Flow Confluence Analysis</div>
-  <div class="at-glance" style="margin:8px 0 0"><span class="flow-badge flow-flat">No flow data</span> <span style="color:#d8d8d8">No flow-per-strike data for this day.</span></div>
+  <div class="at-glance" style="margin:8px 0 0"><span class="flow-badge flow-flat">No flow data</span> <span style="color:var(--fg)">No flow-per-strike data for this day.</span></div>
 </div>
 
 
 <h2>Level Migration vs Prior Snapshot</h2>
-<table>
+<table class="stack">
   <thead><tr><th>Level</th><th>This Week</th><th>Previous</th><th>Δ</th></tr></thead>
   <tbody>
   
-  <tr><td>Net GEX</td><td>374</td>
-    <td>N/A</td>
-    <td>N/A</td></tr>
+  <tr><td data-label="Level">Net GEX</td><td data-label="This Week">374</td>
+    <td data-label="Previous">N/A</td>
+    <td data-label="Δ">N/A</td></tr>
   
-  <tr><td>Gamma Flip</td><td>7,821</td>
-    <td>N/A</td>
-    <td>N/A</td></tr>
+  <tr><td data-label="Level">Gamma Flip</td><td data-label="This Week">7,821</td>
+    <td data-label="Previous">N/A</td>
+    <td data-label="Δ">N/A</td></tr>
   
-  <tr><td>Call Wall</td><td>7,900</td>
-    <td>N/A</td>
-    <td>N/A</td></tr>
+  <tr><td data-label="Level">Call Wall</td><td data-label="This Week">7,900</td>
+    <td data-label="Previous">N/A</td>
+    <td data-label="Δ">N/A</td></tr>
   
-  <tr><td>Put Support</td><td>7,500</td>
-    <td>N/A</td>
-    <td>N/A</td></tr>
+  <tr><td data-label="Level">Put Support</td><td data-label="This Week">7,500</td>
+    <td data-label="Previous">N/A</td>
+    <td data-label="Δ">N/A</td></tr>
   
-  <tr><td>Gamma Magnet</td><td>7,900</td>
-    <td>N/A</td>
-    <td>N/A</td></tr>
+  <tr><td data-label="Level">Gamma Magnet</td><td data-label="This Week">7,900</td>
+    <td data-label="Previous">N/A</td>
+    <td data-label="Δ">N/A</td></tr>
   
   </tbody>
 </table>
 
 <h2>Top-10 GEX Strikes</h2>
-<table>
+<table class="stack">
   <thead><tr><th>#</th><th>Strike</th><th>Net GEX</th><th>Gamma-Flip Side</th></tr></thead>
   <tbody>
   
-  <tr><td>1</td><td>7700</td>
-    <td class="pos-neg neg">-299.0</td>
-    <td>below</td></tr>
+  <tr><td data-label="#">1</td><td data-label="Strike">7700</td>
+    <td data-label="Net GEX" class="pos-neg neg">-299.0</td>
+    <td data-label="Gamma-Flip Side">below</td></tr>
   
-  <tr><td>2</td><td>7800</td>
-    <td class="pos-neg pos">+250.0</td>
-    <td>below</td></tr>
+  <tr><td data-label="#">2</td><td data-label="Strike">7800</td>
+    <td data-label="Net GEX" class="pos-neg pos">+250.0</td>
+    <td data-label="Gamma-Flip Side">below</td></tr>
   
-  <tr><td>3</td><td>7900</td>
-    <td class="pos-neg pos">+198.0</td>
-    <td>above</td></tr>
+  <tr><td data-label="#">3</td><td data-label="Strike">7900</td>
+    <td data-label="Net GEX" class="pos-neg pos">+198.0</td>
+    <td data-label="Gamma-Flip Side">above</td></tr>
   
-  <tr><td>4</td><td>7850</td>
-    <td class="pos-neg pos">+130.0</td>
-    <td>above</td></tr>
+  <tr><td data-label="#">4</td><td data-label="Strike">7850</td>
+    <td data-label="Net GEX" class="pos-neg pos">+130.0</td>
+    <td data-label="Gamma-Flip Side">above</td></tr>
   
-  <tr><td>5</td><td>7750</td>
-    <td class="pos-neg pos">+50.0</td>
-    <td>below</td></tr>
+  <tr><td data-label="#">5</td><td data-label="Strike">7750</td>
+    <td data-label="Net GEX" class="pos-neg pos">+50.0</td>
+    <td data-label="Gamma-Flip Side">below</td></tr>
   
-  <tr><td>6</td><td>8000</td>
-    <td class="pos-neg pos">+45.0</td>
-    <td>above</td></tr>
+  <tr><td data-label="#">6</td><td data-label="Strike">8000</td>
+    <td data-label="Net GEX" class="pos-neg pos">+45.0</td>
+    <td data-label="Gamma-Flip Side">above</td></tr>
   
   </tbody>
 </table>
 
 <h2>Expiry Distribution</h2>
-<table>
+<table class="stack">
   <thead><tr><th>Expiry</th><th>DTE</th><th>Band</th><th>Net GEX</th><th>Net DEX</th></tr></thead>
   <tbody>
   
-  <tr><td>2026-08-14</td><td>0.0</td><td>0DTE</td>
-    <td>+54.5K</td><td>+8.3M</td></tr>
+  <tr><td data-label="Expiry">2026-08-14</td><td data-label="DTE">0.0</td><td data-label="Band">0DTE</td>
+    <td data-label="Net GEX">+54.5K</td><td data-label="Net DEX">+8.3M</td></tr>
   
-  <tr><td>2026-08-21</td><td>7.0</td><td>1–7D</td>
-    <td>+10.0K</td><td>+50.0M</td></tr>
+  <tr><td data-label="Expiry">2026-08-21</td><td data-label="DTE">7.0</td><td data-label="Band">1–7D</td>
+    <td data-label="Net GEX">+10.0K</td><td data-label="Net DEX">+50.0M</td></tr>
   
   </tbody>
 </table>
@@ -772,24 +805,24 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   &middot; <span class="muted">Avg Brier:</span> —
   &middot; <span class="muted">Equal-weight ref:</span> 
 </div>
-<div class="note" style="color:var(--muted);font-size:12px">No scored weeks yet</div>
+<div class="note">No scored weeks yet</div>
 
 <h2>Details</h2>
-<table>
+<table class="stack">
   <thead><tr><th>Level</th><th>Value</th><th>Reference Type</th><th>Method / Disclosure</th></tr></thead>
   <tbody>
-  <tr><td>Charm Peak</td><td>8,000 (-50)</td><td>Strike &amp; Signed Charm</td><td>Highest abs net Charm in Mode A (directionalized volume). Status: Charm Peak (distance 2.8%, dominance 1.67x)</td></tr>
-  <tr><td>Call Wall</td><td>7,900</td><td>Provider GEX Level</td><td>Largest positive net gamma above spot — a magnetic ceiling; dealers may sell into rallies as price approaches. Role: threshold (breakout risk).</td></tr>
-  <tr><td>Gamma Magnet</td><td>7,900</td><td>High-GEX Concentration</td><td>Provider gex-levels output: largest-magnitude net gamma concentration.</td></tr>
-  <tr><td>0DTE Gamma Concentration</td><td>7,700</td><td>Intraday Concentration</td><td>Active expiration 2026-08-14: maximum absolute call_gex + put_gex.</td></tr>
-  <tr><td>SPX Close / Spot</td><td>7,784</td><td>Market Reference</td><td>Verified candle close as of snapshot market date.</td></tr>
-  <tr><td>0DTE Put Concentration</td><td>7,700</td><td>Intraday Put Concentration</td><td>Active expiration 2026-08-14: most negative put_gex.</td></tr>
-  <tr><td>Gamma Flip</td><td>7,821</td><td>Regime Threshold</td><td>The volatility turning point — above = positive gamma (calm), below = negative gamma (wild).</td></tr>
-  <tr><td>Put Wall</td><td>7,500</td><td>Provider GEX Level</td><td>Largest positive net gamma below spot — a trampoline floor; dealers may buy into dips as price approaches. Role: threshold (breakout risk).</td></tr>
-  <tr><td>0DTE Cumulative GEX Crossing</td><td>7,825</td><td>Table-Only Proxy</td><td>Interpolated zero-crossing of cumulative same-day net GEX. Not a scenario flip.</td></tr>
-  <tr><td>Vanna Call Peak</td><td>7,850 (+15.0M)</td><td>Directionalized Volume</td><td>Highest call_vanna_vol within ±25% of the as-of spot (window scales with spot, re-derived per report date).</td></tr>
-  <tr><td>Vanna Put Peak</td><td>7,650 (+30.0M)</td><td>Directionalized Volume</td><td>Highest put_vanna_vol within ±25% of the as-of spot (window scales with spot, re-derived per report date).</td></tr>
-  <tr><td>One-Day Implied Range (1σ)</td><td>7,747 – 7,821</td><td>1-Day Implied Move</td><td>Spot × IV / √252 = ±37.3 pts. Normal 1σ approximation from 1-day IV.</td></tr>
+  <tr><td data-label="Level">Charm Peak</td><td data-label="Value">8,000 (-50)</td><td data-label="Reference Type">Strike &amp; Signed Charm</td><td data-label="Method / Disclosure">Highest abs net Charm in Mode A (directionalized volume). Status: Charm Peak (distance 2.8%, dominance 1.67x)</td></tr>
+  <tr><td data-label="Level">Call Wall</td><td data-label="Value">7,900</td><td data-label="Reference Type">Provider GEX Level</td><td data-label="Method / Disclosure">Largest positive net gamma above spot — a magnetic ceiling; dealers may sell into rallies as price approaches. Role: threshold (breakout risk).</td></tr>
+  <tr><td data-label="Level">Gamma Magnet</td><td data-label="Value">7,900</td><td data-label="Reference Type">High-GEX Concentration</td><td data-label="Method / Disclosure">Provider gex-levels output: largest-magnitude net gamma concentration.</td></tr>
+  <tr><td data-label="Level">0DTE Gamma Concentration</td><td data-label="Value">7,700</td><td data-label="Reference Type">Intraday Concentration</td><td data-label="Method / Disclosure">Active expiration 2026-08-14: maximum absolute call_gex + put_gex.</td></tr>
+  <tr><td data-label="Level">SPX Close / Spot</td><td data-label="Value">7,784</td><td data-label="Reference Type">Market Reference</td><td data-label="Method / Disclosure">Verified candle close as of snapshot market date.</td></tr>
+  <tr><td data-label="Level">0DTE Put Concentration</td><td data-label="Value">7,700</td><td data-label="Reference Type">Intraday Put Concentration</td><td data-label="Method / Disclosure">Active expiration 2026-08-14: most negative put_gex.</td></tr>
+  <tr><td data-label="Level">Gamma Flip</td><td data-label="Value">7,821</td><td data-label="Reference Type">Regime Threshold</td><td data-label="Method / Disclosure">The volatility turning point — above = positive gamma (calm), below = negative gamma (wild).</td></tr>
+  <tr><td data-label="Level">Put Wall</td><td data-label="Value">7,500</td><td data-label="Reference Type">Provider GEX Level</td><td data-label="Method / Disclosure">Largest positive net gamma below spot — a trampoline floor; dealers may buy into dips as price approaches. Role: threshold (breakout risk).</td></tr>
+  <tr><td data-label="Level">0DTE Cumulative GEX Crossing</td><td data-label="Value">7,825</td><td data-label="Reference Type">Table-Only Proxy</td><td data-label="Method / Disclosure">Interpolated zero-crossing of cumulative same-day net GEX. Not a scenario flip.</td></tr>
+  <tr><td data-label="Level">Vanna Call Peak</td><td data-label="Value">7,850 (+15.0M)</td><td data-label="Reference Type">Directionalized Volume</td><td data-label="Method / Disclosure">Highest call_vanna_vol within ±25% of the as-of spot (window scales with spot, re-derived per report date).</td></tr>
+  <tr><td data-label="Level">Vanna Put Peak</td><td data-label="Value">7,650 (+30.0M)</td><td data-label="Reference Type">Directionalized Volume</td><td data-label="Method / Disclosure">Highest put_vanna_vol within ±25% of the as-of spot (window scales with spot, re-derived per report date).</td></tr>
+  <tr><td data-label="Level">One-Day Implied Range (1σ)</td><td data-label="Value">7,747 – 7,821</td><td data-label="Reference Type">1-Day Implied Move</td><td data-label="Method / Disclosure">Spot × IV / √252 = ±37.3 pts. Normal 1σ approximation from 1-day IV.</td></tr>
   
   </tbody>
 </table>
@@ -824,27 +857,56 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   <div class="note" style="margin-top:14px">Bu haftaki veriye göre greek ilişkileri:</div>
   
   <div style="margin-top:10px">
-    <b style="color:#f0f0f0">Gamma</b> — <span style="color:var(--muted)">Fiyat 7,784, gamma flip&#39;in (7,821, +0.5%) ALTINDA. Piyasa yapıcılar hareketle AYNI YÖNDE işlem yapar: düşerken satar, çıkarken alır; bu yüzden hareket hızlanır, kırılımlar uzar.</span>
+    <b class="tr-name">Gamma</b> — <span style="color:var(--muted)">Fiyat 7,784, gamma flip&#39;in (7,821, +0.5%) ALTINDA. Piyasa yapıcılar hareketle AYNI YÖNDE işlem yapar: düşerken satar, çıkarken alır; bu yüzden hareket hızlanır, kırılımlar uzar.</span>
   </div>
   
   <div style="margin-top:10px">
-    <b style="color:#f0f0f0">Vanna</b> — <span style="color:var(--muted)">Net vanna +$45.00M (pozitif). IV sıçrarsa dealer delta&#39;sı YÜKSELİR ve dealer dengelemek için STOK SATAR — vol sıçraması aşağı baskıyı büyütür.</span>
+    <b class="tr-name">Vanna</b> — <span style="color:var(--muted)">Net vanna +$45.00M (pozitif). IV sıçrarsa dealer delta&#39;sı YÜKSELİR ve dealer dengelemek için STOK SATAR — vol sıçraması aşağı baskıyı büyütür.</span>
   </div>
   
   <div style="margin-top:10px">
-    <b style="color:#f0f0f0">Charm</b> — <span style="color:var(--muted)">Net charm -$80 (negatif). Vade yaklaştıkça dealer delta&#39;sı birikir; dealer kapanışa doğru mekanik SATIŞ yapar.</span>
+    <b class="tr-name">Charm</b> — <span style="color:var(--muted)">Net charm -$80 (negatif). Vade yaklaştıkça dealer delta&#39;sı birikir; dealer kapanışa doğru mekanik SATIŞ yapar.</span>
   </div>
   
   <div style="margin-top:10px">
-    <b style="color:#f0f0f0">Delta</b> — <span style="color:var(--muted)">Net dealer delta +$563.00M — yukarı yönlü yapısal eğilim.</span>
+    <b class="tr-name">Delta</b> — <span style="color:var(--muted)">Net dealer delta +$563.00M — yukarı yönlü yapısal eğilim.</span>
   </div>
   
   <div style="margin-top:10px">
-    <b style="color:#f0f0f0">Vomma</b> — <span style="color:var(--muted)">Vomma, IV değişince vega&#39;nın kendisinin ne kadar değiştiğini ölçer (2. derece). Vega büyük ve Vomma pozitifken IV sıçraması vol pozisyonunu büyütür ve dengeleme hızlanır. Vanna&#39;nın üstüne binen ikinci derece bir etkidir.</span>
+    <b class="tr-name">Vomma</b> — <span style="color:var(--muted)">Vomma, IV değişince vega&#39;nın kendisinin ne kadar değiştiğini ölçer (2. derece). Vega büyük ve Vomma pozitifken IV sıçraması vol pozisyonunu büyütür ve dengeleme hızlanır. Vanna&#39;nın üstüne binen ikinci derece bir etkidir.</span>
   </div>
   
 </div>
 
 <div class="footer">Source: Unusual Whales API — open-position-based option exposure model. Report date: 2026-08-14. These levels are provider-model outputs and strike aggregations, not guaranteed support/resistance, pin certainty, forecasts, or price targets. Long vanna: an IV rise raises dealer delta and forces stock selling to re-hedge — a drag during vol spikes. A flow effect, not a support guarantee.</div>
+<script>
+/* One tooltip open at a time; a tap elsewhere or Escape closes it. */
+(function(){
+  var tips = document.querySelectorAll('details.tip');
+  tips.forEach(function(d){ d.addEventListener('toggle', function(){
+    if(d.open) tips.forEach(function(o){ if(o !== d) o.open = false; });
+  }); });
+  document.addEventListener('click', function(e){ tips.forEach(function(d){ if(d.open && !d.contains(e.target)) d.open = false; }); });
+  document.addEventListener('keydown', function(e){
+    if(e.key !== 'Escape') return;
+    tips.forEach(function(d){ if(d.open){ d.open = false; var s = d.querySelector('summary'); if(s) s.focus(); } });
+  });
+})();
+/* A Plotly figure reserves a 220-250 px right margin; on a phone that margin is the whole chart. Below 520 px the
+   margin shrinks, and it comes back when the window grows. */
+(function(){
+  function adapt(gd){
+    if(!gd || !gd.layout || !window.Plotly) return;
+    var narrow = gd.clientWidth < 520;
+    if(gd._rcNarrow === narrow) return;
+    if(!gd._rcOrig) gd._rcOrig = {r: gd.layout.margin.r, l: gd.layout.margin.l};
+    gd._rcNarrow = narrow;
+    Plotly.relayout(gd, {'margin.r': narrow ? 16 : gd._rcOrig.r, 'margin.l': narrow ? Math.min(gd._rcOrig.l, 48) : gd._rcOrig.l});
+  }
+  function all(){ document.querySelectorAll('.js-plotly-plot').forEach(adapt); }
+  window.addEventListener('load', function(){ setTimeout(all, 50); });
+  window.addEventListener('resize', function(){ setTimeout(all, 150); });
+})();
+</script>
 </body>
 </html>

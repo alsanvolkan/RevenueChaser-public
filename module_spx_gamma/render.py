@@ -7,7 +7,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
 
-from RevenueChaser.core.reporting_common import help_html, notice_html, provider_health_html
+from RevenueChaser.core.reporting_common import THEME_CSS, help_html, notice_html, provider_health_html
 
 from .brier import scorecard
 from .config import BRIER_FILENAME, HISTORY_FILENAME
@@ -548,6 +548,8 @@ def render_html(snapshot: dict, chart_png: str | None = None, chart_html: str | 
     ctx["tornado_html"] = Markup(tornado_html) if tornado_html else tornado_html
     ctx["envelope_html"] = Markup(envelope_html) if envelope_html else envelope_html
     ctx["help_block"] = Markup(HELP)
+    # The shell's palette (dark; light under data-theme), the one place it is defined.
+    ctx["theme_css"] = Markup(THEME_CSS)
     # Escapes every provider string itself (Common K3); empty for a clean run.
     ctx["provider_banner"] = Markup(provider_health_html(snapshot.get("provider_health")))
     # The Fetch warnings and any non-ok quality flag (M-SPX-5); empty for a clean day.

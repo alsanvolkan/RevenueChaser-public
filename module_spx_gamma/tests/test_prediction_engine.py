@@ -254,7 +254,7 @@ def test_html_injects_prediction_banner(snapshot):
     assert "EXPECTED DIRECTION: BULLISH DRIFT" in html
     assert "Active Pin" in html and "Accel Trigger" in html and "Bounce Floor" in html
     # Scenario matrix rows
-    assert 'class="scenario-table"' in html
+    assert 'class="scenario-table stack"' in html
     assert "row-bullish" in html and "row-neutral" in html and "row-bearish" in html
     assert "Bullish Acceleration" in html and "Consolidation" in html and "Bearish Breakdown" in html
     # Divergence status items
@@ -262,8 +262,10 @@ def test_html_injects_prediction_banner(snapshot):
     assert "FORTIFYING" in html and "DECAYING" in html
     assert "OI:" in html and "Vol:" in html
     # CSS variables must survive so the iframe never breaks styling
-    assert "--green:#34d399" in html and "--red:#f87171" in html and "--amber:#fbbf24" in html
-    assert "--bg:#05111f" in html
+    # (the palette is the shell's: reporting_common.THEME_CSS, dark by default; the board's names alias it)
+    assert "--pos:#34D399" in html and "--neg:#F87171" in html and "--amber:#FBBF24" in html
+    assert "--green:var(--pos)" in html and "--red:var(--neg)" in html
+    assert "--bg:#05111F" in html
 
 
 def test_html_prediction_absent_degrades():

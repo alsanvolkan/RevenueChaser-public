@@ -101,7 +101,9 @@ def build(snapshot: dict, include_tornado: bool = True) -> go.Figure | None:
         plot_bgcolor=BG,
         font=dict(color=TEXT, size=12),
         title=dict(text=f"SPX Option Position Map — {asof}", font=dict(size=16)),
-        height=1180 if has_tornado else 700,
+        autosize=True,
+        # The page sizes the one-panel map from its container (min(700px, 70vh)); the tall variant keeps its own.
+        height=1180 if has_tornado else None,
         margin=dict(l=70, r=250, t=75, b=40),
         hoverlabel=dict(bgcolor="#111a2c"),
         annotations=[
@@ -338,6 +340,7 @@ def build_envelope_fig(snapshot: dict, window_pct: float = 0.05) -> go.Figure | 
         plot_bgcolor=BG,
         font=dict(color=TEXT, size=12),
         title=dict(text="Liquidity Layer — Cumulative Net GEX (Dealer Flow)", font=dict(size=15)),
+        autosize=True,
         height=460,
         margin=dict(l=60, r=40, t=60, b=40),
         hoverlabel=dict(bgcolor="#111a2c"),
