@@ -49,8 +49,9 @@ def _html():
 @pytest.mark.parametrize("title", COLLAPSED)
 def test_the_reference_sections_start_collapsed(title):
     html = _html().replace("&amp;", "&")
-    m = re.search(r'<details class="collapsible"(?P<open>[^>]*)>\s*<summary>' + re.escape(title) + r"</summary>", html)
-    assert m, f"{title} is not a <details>"
+    m = re.search(r'<details class="collapsible"(?P<open>[^>]*)>\s*<summary><h2[^>]*>' + re.escape(title)
+                  + r"</h2></summary>", html)
+    assert m, f"{title} is not a <details> whose summary holds its <h2> (heading navigation must still find it)"
     assert "open" not in m.group("open"), f"{title} starts open"
 
 
@@ -58,4 +59,4 @@ def test_the_reference_sections_start_collapsed(title):
 def test_the_working_sections_stay_open(title):
     html = _html().replace("&amp;", "&")
     assert f"<h2>{title}</h2>" in html, f"{title} lost its heading"
-    assert f"<summary>{title}</summary>" not in html
+    assert "<summary><h2" + f">{title}</h2></summary>" not in html

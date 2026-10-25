@@ -4,6 +4,25 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>SPX Critical Thresholds</title>
+<script>
+var RC_THEME_KEY = 'rc-theme';
+function rcThemeGet(){
+  var v = null;
+  try{ v = localStorage.getItem(RC_THEME_KEY); }catch(e){ v = null; }
+  return (v === 'light' || v === 'auto') ? v : 'dark';
+}
+function rcThemeApply(choice){
+  document.documentElement.setAttribute('data-theme', (choice === 'light' || choice === 'auto') ? choice : 'dark');
+}
+function rcThemeSet(choice){
+  if(choice !== 'light' && choice !== 'auto') choice = 'dark';
+  rcThemeApply(choice);
+  if(choice === 'dark'){ try{ localStorage.removeItem(RC_THEME_KEY); }catch(e){} }
+  else { try{ localStorage.setItem(RC_THEME_KEY, choice); }catch(e){} }
+  return choice;
+}
+rcThemeApply(rcThemeGet());
+</script>
 <style>
 :root{--bg:#05111F;--fg:#C5C6C8;--bright:#F0F0F0;--card:#0B1828;--border:rgba(197,198,200,.15);--sidebar:#0B1828;--pos:#34D399;--neg:#F87171;--amber:#FBBF24;--sky:#0EA5E9;--muted:#9C9DA1;--input-bg:#101F33;--input-border:#2F434C;--hover:#18293a;--topbar:rgba(12,20,24,.8);--nav-fg:rgba(224,233,235,.75);--nav-on:#101F33;--hover-faint:rgba(255,255,255,.04);--frame-bg:#12131c;--overlay:rgba(5,17,31,.7);--scroll-thumb:#5b7a8c;--scroll-thumb-hover:#6f93a7;--scroll-track:#0b1620;--primary-bg:#E2E3E5;--primary-fg:#0A1420;--oi-bg:rgba(11,24,40,.55);--scrim:rgba(0,0,0,.55);--shadow:rgba(0,0,0,.6);--badge-blue:#38BDF8;--badge-gray:#94A3B8;--hover-soft:rgba(255,255,255,.06);--hover-day:rgba(255,255,255,.08);--gex-pos-bg:rgba(52,211,153,.35);--gex-pos-fg:#eafff5;--gex-neg-bg:rgba(248,113,113,.35);--gex-neg-fg:#ffd9d9;color-scheme:dark}
 @media (prefers-color-scheme: light){:root[data-theme="auto"]{--bg:#F4F6F9;--fg:#2A3340;--bright:#0B1220;--card:#FFFFFF;--border:rgba(15,23,42,.14);--sidebar:#FFFFFF;--pos:#047857;--neg:#B91C1C;--amber:#B45309;--sky:#0369A1;--muted:#5B6472;--input-bg:#FFFFFF;--input-border:#C3CCD8;--hover:#E8EDF3;--topbar:rgba(255,255,255,.85);--nav-fg:#3A4452;--nav-on:#E3EEF8;--hover-faint:rgba(15,23,42,.05);--frame-bg:#FFFFFF;--overlay:rgba(244,246,249,.75);--scroll-thumb:#9AA8B6;--scroll-thumb-hover:#7D8D9E;--scroll-track:#E6EBF0;--primary-bg:#0B1220;--primary-fg:#FFFFFF;--oi-bg:rgba(255,255,255,.7);--scrim:rgba(15,23,42,.35);--shadow:rgba(15,23,42,.18);--badge-blue:#0369A1;--badge-gray:#475569;--hover-soft:rgba(15,23,42,.06);--hover-day:rgba(15,23,42,.09);--gex-pos-bg:rgba(4,120,87,.16);--gex-pos-fg:#065F46;--gex-neg-bg:rgba(185,28,28,.14);--gex-neg-fg:#991B1B;color-scheme:light}}
@@ -12,11 +31,11 @@
 /* The palette is core/reporting_common.THEME_CSS (dark by default; light under data-theme="light"/"auto", the
    shell sets it on <html>). The names below are this board's own, built from those tokens. */
 :root{ --green:var(--pos); --red:var(--neg);
-  --pos-bg:color-mix(in srgb,var(--pos) 16%,transparent); --neg-bg:color-mix(in srgb,var(--neg) 16%,transparent);
-  --amber-bg:color-mix(in srgb,var(--amber) 16%,transparent); --flat-bg:color-mix(in srgb,var(--muted) 16%,transparent);
+  --pos-bg:color-mix(in srgb,var(--pos) 8%,transparent); --neg-bg:color-mix(in srgb,var(--neg) 8%,transparent);
+  --amber-bg:color-mix(in srgb,var(--amber) 8%,transparent); --flat-bg:color-mix(in srgb,var(--muted) 8%,transparent);
   --pos-soft:color-mix(in srgb,var(--pos) 7%,transparent); --neg-soft:color-mix(in srgb,var(--neg) 7%,transparent);
   --pos-line:color-mix(in srgb,var(--pos) 40%,transparent); --neg-line:color-mix(in srgb,var(--neg) 40%,transparent);
-  --amber-line:color-mix(in srgb,var(--amber) 40%,transparent); --blue-bg:color-mix(in srgb,var(--sky) 16%,transparent);
+  --amber-line:color-mix(in srgb,var(--amber) 40%,transparent); --blue-bg:color-mix(in srgb,var(--sky) 8%,transparent);
   --shadow-tip:0 4px 12px rgba(0,0,0,.25);
   /* the names the shared help box and notice (core/reporting_common) read, with their dark fallbacks otherwise */
   --panel:var(--card); --accent:var(--sky); --text:var(--bright); --neon:var(--pos); }
@@ -32,7 +51,6 @@ h2{ font-size:19px; margin:24px 0 8px; color:var(--bright); }
 h3{ font-size:15px; margin:16px 0 8px; color:var(--bright); }
 .chart{ margin:8px 0 16px; max-width:100%; overflow:hidden; }
 .chart .plotly-graph-div{ max-width:100%; }
-.chart .plotly-graph-div[style*="height:100%"]{ height:min(700px,70vh) !important; }
 table{ border-collapse:collapse; width:100%; margin:8px 0 16px; font-size:13px; }
 th,td{ border:1px solid var(--border); padding:8px; text-align:left; }
 th{ background:var(--card); color:var(--bright); font-weight:600; }
@@ -100,6 +118,7 @@ details.collapsible > .box-inner.tr-block{ border:0; margin:0; border-radius:0; 
 details.collapsible{ border:1px solid var(--border); border-radius:8px; background:var(--card); margin:16px 0; }
 details.collapsible > summary{ cursor:pointer; padding:12px 16px; min-height:44px; font-size:15px; font-weight:700; color:var(--bright); list-style:none; user-select:none; display:flex; align-items:center; gap:8px; }
 details.collapsible > summary::-webkit-details-marker{ display:none; }
+details.collapsible > summary > h2{ margin:0; font-size:inherit; color:inherit; font-weight:inherit; }
 details.collapsible > summary::before{ content:"▸"; color:var(--muted); transition:transform .15s ease; }
 details.collapsible[open] > summary::before{ transform:rotate(90deg); }
 details.collapsible > .box-inner{ padding:0 16px 16px; }
@@ -139,10 +158,11 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 /* ── 4 metric cards ── */
 .ag-cards4{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; padding-top:8px; }
 /* ── tooltip: tap (or Enter / Space) to open, a <details> so it works without script ── */
-.tip{ display:inline-block; vertical-align:middle; }
-.tip > summary{ list-style:none; cursor:pointer; display:inline-flex; align-items:center; justify-content:center;
-  min-width:44px; min-height:44px; margin:-16px -8px -16px 0; color:var(--muted); font-size:13px; user-select:none; }
+.ag-gex.has-tip{ padding-right:56px; min-height:56px; }
+.tip > summary{ list-style:none; cursor:pointer; position:absolute; top:0; right:0; display:flex; align-items:center; justify-content:center;
+  width:44px; height:44px; color:var(--muted); font-size:13px; user-select:none; }
 .tip > summary::-webkit-details-marker{ display:none; }
+.tip > summary:focus-visible{ outline-offset:-4px; border-radius:8px; }
 .ag-tip-box{ position:absolute; bottom:calc(100% + 4px); left:0; z-index:30; background:var(--card);
   border:1px solid var(--border); border-radius:8px; padding:8px 12px; font-size:12px; color:var(--fg);
   width:min(224px,calc(100vw - 48px)); box-shadow:var(--shadow-tip); text-transform:none; letter-spacing:0; font-weight:400; }
@@ -199,7 +219,11 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     text-transform:uppercase; letter-spacing:.5px; }
   table.stack td[data-label=""]::before{ display:none; }
   table.stack td::before{ font-weight:400; }
-  .summary-card table.stack tr{ border:0; border-top:1px solid var(--border); border-radius:0; background:none; padding:0; margin:0; }
+  .ag-h-vol{ display:none; }          /* 'Intraday' labels the row of (VOL) values; under Spot it read as Spot's own */
+  .summary-card table.stack tr{ border:0; border-top:1px solid var(--border); border-radius:0; background:none; padding:8px 0; margin:0; }
+  .summary-card table.stack td:first-child{ display:block; text-align:left; color:var(--bright); font-weight:600; padding:0 0 4px; }
+  .summary-card table.stack td:first-child::before{ display:none; }
+  .ib-legs table.stack tr{ display:grid; grid-template-columns:1fr 1fr; column-gap:16px; }
   table.stack.plain tr{ border:0; background:none; padding:0; margin:0 0 8px; }
   table.stack.plain td{ display:block; text-align:left; border:0; padding:0; }
   table.stack.plain td:first-child{ color:var(--bright); font-weight:600; }
@@ -207,7 +231,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   .scenario-table tr.row-neutral{ border-left:4px solid var(--amber); }
   .scenario-table tr.row-bearish{ border-left:4px solid var(--red); }
   .scenario-table tr td:first-child{ border-left:0 !important; }
-  .summary-card td:first-child, .summary-card td:last-child{ text-align:right; }
+  .summary-card td:last-child{ text-align:right; }
 }
 @media print{
   body{ background:#fff; color:#111; }
@@ -294,8 +318,8 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   .ib-metric strong.credit{ color:var(--green); }
   .ib-metric strong.risk{ color:var(--red); }
   .ib-note{ font-size:12px; color:var(--muted); line-height:1.5; }
-  @media (max-width:640px){ .ib-legs{ overflow:visible; } }
   .ib-legs{ overflow-x:auto; }
+  @media (max-width:640px){ .ib-legs{ overflow:visible; } }
   .ib-legs table{ width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--border); border-radius:10px; font-size:13px; }
   .ib-legs th{ text-align:left; padding:8px 12px; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid var(--border); }
   .ib-legs td{ padding:8px 12px; border-bottom:1px solid var(--border); color:var(--bright); }
@@ -386,9 +410,9 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   </div>
   <!-- Row 2: 4 metric cards with tooltips -->
   <div class="ag-cards4">
-    <div class="ag-gex"><div class="k">NET GEX (OI) <details class="tip"><summary aria-label="What is NET GEX (OI)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Total Book = all-expiry OI-based net GEX (macro inventory).</div></details></div><div class="v pos">+374</div></div>
+    <div class="ag-gex has-tip"><div class="k">NET GEX (OI) <details class="tip"><summary aria-label="What is NET GEX (OI)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Total Book = all-expiry OI-based net GEX (macro inventory).</div></details></div><div class="v pos">+374</div></div>
     <div class="ag-gex"><div class="k">DAILY Δ (1D / 1W)</div><div class="v">— / —</div></div>
-    <div class="ag-gex"><div class="k">MATRIX (≤45 DTE) <details class="tip"><summary aria-label="What is MATRIX (≤45 DTE)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Matrix = DTE≤45 filter stripping far-dated LEAPS noise.</div></details></div><div class="v pos">+64.5K</div></div>
+    <div class="ag-gex has-tip"><div class="k">MATRIX (≤45 DTE) <details class="tip"><summary aria-label="What is MATRIX (≤45 DTE)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Matrix = DTE≤45 filter stripping far-dated LEAPS noise.</div></details></div><div class="v pos">+64.5K</div></div>
     <div class="ag-gex"><div class="k">SOURCE CHIP</div><div><span class="chip chip-neg">NEGATIVE</span></div></div>
   </div>
   <div class="ag-note">Toplam kitap = all-expiry OI-based net GEX (macro depot). Matrix = DTE≤45 filter — active-trading gamma that strips far-dated/LEAPS noise; the gap comes from distant tenors.</div>
@@ -496,7 +520,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 </div>
 
 <details class="collapsible">
-<summary>Gamma flip methods</summary>
+<summary><h2 class="sum-h">Gamma flip methods</h2></summary>
 <div class="box-inner">
 <table class="stack">
   <thead><tr><th>Method</th><th>Flip</th><th>Spot is</th><th>Note</th></tr></thead>
@@ -515,7 +539,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 </details>
 
 <details class="collapsible">
-<summary>DTE Band Walls</summary>
+<summary><h2 class="sum-h">DTE Band Walls</h2></summary>
 <div class="box-inner">
 <table class="stack">
   <thead><tr><th>DTE Band</th><th>Put Wall</th><th>Put Wall Net GEX</th><th>Call Wall</th><th>Call Wall Net GEX</th></tr></thead>
@@ -552,7 +576,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 </details>
 
 <h2>SPX Option Position Map</h2>
-<div class="box"><div class="chart"><div id="gex-chart"><b>chart &amp; more</b><script>var a = 1 < 2;</script></div></div>
+<div class="box"><div class="chart chart-map"><div id="gex-chart"><b>chart &amp; more</b><script>var a = 1 < 2;</script></div></div>
 </div>
 
 <h2>Net GEX Tornado — Strike Profile</h2>
@@ -594,7 +618,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 </table>
 
 <details class="collapsible">
-<summary>Greek Relations — How They Interact</summary>
+<summary><h2 class="sum-h">Greek Relations — How They Interact</h2></summary>
 <div class="box-inner">
 <div class="chain">
   
@@ -814,7 +838,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 <div class="note">No scored weeks yet</div>
 
 <details class="collapsible">
-<summary>Details</summary>
+<summary><h2 class="sum-h">Details</h2></summary>
 <div class="box-inner">
 <table class="stack">
   <thead><tr><th>Level</th><th>Value</th><th>Reference Type</th><th>Method / Disclosure</th></tr></thead>
@@ -839,7 +863,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 </details>
 
 <details class="collapsible">
-<summary>How to read this map (Gamma)</summary>
+<summary><h2 class="sum-h">How to read this map (Gamma)</h2></summary>
 <div class="box-inner">
 <ul>
   <li>Call Wall (7,900): magnetic ceiling — dealers may sell into rallies (take-profit zone).</li>
@@ -860,7 +884,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 </details>
 
 <details class="collapsible">
-<summary>Delta Map — Walkthrough</summary>
+<summary><h2 class="sum-h">Delta Map — Walkthrough</h2></summary>
 <div class="box-inner">
 <ul>
 <li>Spot trades at 7,784. Around and just below spot, net delta concentration is relatively thin, so price can churn through this tight zone without major dealer-hedge interference.</li><li>The delta Call Wall sits at 7,800 (net Δ +180,000,000), heavily call-dominated; dealers are net long delta here, so rallies toward it force mechanical selling — a heavy lid that caps upside unless buying volume overwhelms it.</li><li>Deep liquidity pockets sit at 7,750 and 7,700; these institutional levels mix large put and call positions into sizeable net positive delta bars, so a drop toward them triggers dealer buying to rebalance — strong structural cushions below spot.</li>
@@ -870,7 +894,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 </details>
 
 <details class="collapsible">
-<summary>Greek Sözlüğü &amp; İlişkiler — Türkçe</summary>
+<summary><h2 class="sum-h">Greek Sözlüğü &amp; İlişkiler — Türkçe</h2></summary>
 <div class="box-inner tr-block">
   <div class="note">Aşağıdaki tanımlar ve ilişkiler eğitim amaçlıdır; bu raporun İngilizce başlıklarıyla aynı veriden türetilmiştir. Teknik sözlük:</div>
   <dl class="tr-glossary">
@@ -903,6 +927,15 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 
 <div class="footer">Source: Unusual Whales API — open-position-based option exposure model. Report date: 2026-08-14. These levels are provider-model outputs and strike aggregations, not guaranteed support/resistance, pin certainty, forecasts, or price targets. Long vanna: an IV rise raises dealer delta and forces stock selling to re-hedge — a drag during vol spikes. A flow effect, not a support guarantee.</div>
 <script>
+/* A printout shows every section: the collapsed ones open for it and go back afterwards. */
+(function(){
+  var closed = [];
+  window.addEventListener('beforeprint', function(){
+    closed = Array.prototype.filter.call(document.querySelectorAll('details.collapsible'), function(d){ return !d.open; });
+    closed.forEach(function(d){ d.open = true; });
+  });
+  window.addEventListener('afterprint', function(){ closed.forEach(function(d){ d.open = false; }); closed = []; });
+})();
 /* One tooltip open at a time; a tap elsewhere or Escape closes it. */
 (function(){
   var tips = document.querySelectorAll('details.tip');
@@ -922,9 +955,45 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     if(!gd || !gd.layout || !window.Plotly) return;
     var narrow = gd.clientWidth < 520;
     if(gd._rcNarrow === narrow) return;
-    if(!gd._rcOrig) gd._rcOrig = {r: gd.layout.margin.r, l: gd.layout.margin.l};
+    if(!gd._rcOrig) gd._rcOrig = {r: gd.layout.margin.r, l: gd.layout.margin.l, h: gd._fullLayout.height,
+      ann: (gd.layout.annotations || []).map(function(a){ return {x: a.x, xanchor: a.xanchor, xshift: a.xshift, xref: a.xref, fs: (a.font && a.font.size) || 11, text: a.text}; })};
     gd._rcNarrow = narrow;
-    Plotly.relayout(gd, {'margin.r': narrow ? 16 : gd._rcOrig.r, 'margin.l': narrow ? Math.min(gd._rcOrig.l, 48) : gd._rcOrig.l});
+    var u = {'margin.r': narrow ? 16 : gd._rcOrig.r, 'margin.l': narrow ? Math.min(gd._rcOrig.l, 48) : gd._rcOrig.l};
+    // The level labels sit in the right margin (xref paper, left-anchored): with the margin gone they move inside
+    // the plot, right-aligned.
+    (gd.layout.annotations || []).forEach(function(a, i){
+      var o = gd._rcOrig.ann[i];
+      if(!o || o.xref !== 'paper' || typeof o.x !== 'number' || o.x < 1 || o.xanchor !== 'left') return;
+      u['annotations[' + i + '].x'] = narrow ? 1 : o.x;
+      u['annotations[' + i + '].xanchor'] = narrow ? 'right' : o.xanchor;
+      u['annotations[' + i + '].xshift'] = narrow ? -4 : (o.xshift || 0);
+    });
+    // Only the position map follows the screen's height, and only on a phone.
+    if(gd.closest('.chart-map')){
+      u.autosize = true;   // a height given to relayout would otherwise switch autosize off
+      u.height = narrow ? Math.min(gd._rcOrig.h, Math.round(window.innerHeight * 0.7)) : gd._rcOrig.h;
+      gd.style.height = u.height + 'px';
+      if(gd.parentNode.style.height) gd.parentNode.style.height = u.height + 'px';   // Plotly's own wrapper carries the height too
+    }
+    (gd.layout.annotations || []).forEach(function(a, i){
+      var o = gd._rcOrig.ann[i];
+      if(!o) return;
+      if(!narrow) u['annotations[' + i + '].font.size'] = o.fs;            // back to its own size when the window grows
+      // A footer made of spans separated by two spaces (the tornado's legend) takes one line per part on a phone.
+      if(typeof o.text === 'string' && /  <span/.test(o.text)) u['annotations[' + i + '].text'] = narrow ? o.text.replace(/  (?=<span)/g, '<br>') : o.text;
+    });
+    var done = Plotly.relayout(gd, u);
+    // A label wider than the chart (the tornado's footer) shrinks to fit.
+    if(narrow && done && done.then) done.then(function(){
+      var s = gd.querySelector('.main-svg').getBoundingClientRect(), v = {};
+      gd.querySelectorAll('g.annotation').forEach(function(g){
+        var i = +g.getAttribute('data-index'), r = g.getBoundingClientRect(), o = gd._rcOrig.ann[i];
+        if(!o || !r.width || (r.left >= s.left + 4 && r.right <= s.right - 4)) return;
+        var mid = (r.left + r.right) / 2, room = 2 * Math.min(mid - s.left, s.right - mid) - 8;     // centred text
+        v['annotations[' + i + '].font.size'] = Math.max(8, Math.floor(o.fs * Math.max(room, 40) / r.width));
+      });
+      if(Object.keys(v).length) Plotly.relayout(gd, v);
+    });
   }
   function all(){ document.querySelectorAll('.js-plotly-plot').forEach(adapt); }
   window.addEventListener('load', function(){ setTimeout(all, 50); });

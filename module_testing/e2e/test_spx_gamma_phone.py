@@ -387,3 +387,16 @@ def test_the_tooltip_target_sits_in_its_card_without_covering_the_value(board, b
                 break
         offset = browser.eval("getComputedStyle(document.activeElement).outlineOffset")
         assert offset.startswith("-"), f"the focus ring would cut the card border: {offset}"
+
+
+def test_collapsed_sections_open_for_print_and_close_again(board, browser):
+    """#195 review SHOULD 6: nothing opened the <details> for a printout, so Details, How to read, the
+    Walkthrough and the glossary were left out of it."""
+    _open(browser, board, PHONE)
+    state = "Array.prototype.map.call(document.querySelectorAll('details.collapsible'), function(d){ return d.open; })"
+    before = browser.eval(state)
+    assert not all(before) and any(not o for o in before)
+    browser.eval("window.dispatchEvent(new Event('beforeprint'))")
+    assert all(browser.eval(state)), "a section stays closed in the printout"
+    browser.eval("window.dispatchEvent(new Event('afterprint'))")
+    assert browser.eval(state) == before, "the sections the reader had open or closed are restored"
