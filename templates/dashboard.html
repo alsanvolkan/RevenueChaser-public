@@ -187,7 +187,7 @@ button:disabled{opacity:.5;cursor:default}
 /* Phone and small tablet (#184, docs/mocks/shell-phone.html). The menu button and the tab's name exist only
    here; the badges and sync times are one wrapping line of their own, and the theme toggle sits last on a
    desktop and on the first line on a phone. */
-.nav-toggle,.tab-title,.scrim{display:none}
+.nav-toggle,.tab-title,.scrim,.nav-close{display:none}
 .status{display:contents}
 /* The theme toggle lives in the sidebar: the desktop top bar has no room left at 1280 px, and on a phone it
    would cost the top bar a row of its own, so there it sits in the drawer beside the nav. */
@@ -202,6 +202,8 @@ button:disabled{opacity:.5;cursor:default}
   .brand .logo,.brand .logo img{width:96px;height:96px}
   body.nav-open .scrim{display:block;position:fixed;inset:0;background:var(--scrim);z-index:30}
   .nav-toggle{display:inline-flex;align-items:center;justify-content:center;width:44px;padding:0;font-size:18px}
+  /* The drawer's own close control: a touch screen reader cannot press Escape, and the scrim is no button. */
+  .nav-close{display:block;flex:none;align-self:flex-end;margin:0 12px 4px;height:44px;padding:0 14px}
   .tab-title{display:block;flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
     font-weight:700;font-size:15px;color:var(--bright)}
   .topbar{padding:8px 12px;gap:8px}
@@ -236,6 +238,7 @@ button:disabled{opacity:.5;cursor:default}
 </head>
 <body>
 <aside class="sidebar" id="sidebar">
+  <button id="nav-close" class="nav-close" type="button" aria-label="Close the board menu">✕ Close</button>
   <div class="brand"><div class="logo"><img src="/static/icons/icon-192.png" alt="RevenueChaser"></div><div class="tag">REVENUE CHASER</div></div>
   <nav class="nav">
     {% for g in nav_groups %}
@@ -1397,6 +1400,7 @@ document.getElementById('nav-toggle').addEventListener('click', function(){
   navSetOpen(!document.body.classList.contains('nav-open'));
 });
 document.getElementById('nav-scrim').addEventListener('click', function(){ navSetOpen(false); });
+document.getElementById('nav-close').addEventListener('click', function(){ navSetOpen(false); });
 document.addEventListener('keydown', function(e){
   if(e.key === 'Escape' && document.body.classList.contains('nav-open')) navSetOpen(false);
 });

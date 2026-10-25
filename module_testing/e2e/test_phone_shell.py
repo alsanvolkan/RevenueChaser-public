@@ -370,3 +370,21 @@ def test_an_open_calendar_is_placed_again_when_the_window_changes(dashboard, bro
     assert m["h"] > 0, "the pop-up closed"
     assert 0 <= m["top"] - m["btn"] <= 8, f"the pop-up is not under its button: {m}"
     assert m["bottom"] <= m["vh"], f"the pop-up runs off the bottom of the screen: {m}"
+
+
+def test_the_drawer_has_its_own_close_button(dashboard, browser):
+    """#190 delta review: a touch screen reader cannot press Escape, and the scrim is not a control; the
+    drawer needs a button of its own. A desktop, where the sidebar is a column, has none."""
+    _open(browser, dashboard, PHONE, "dark", "runs")
+    _click(browser, "#nav-toggle")
+    b = browser.eval("(function(){ var e = document.getElementById('nav-close'); if(!e) return null;"
+                     " var r = e.getBoundingClientRect(); return {w: r.width, h: r.height, l: r.left, t: r.top,"
+                     " label: e.getAttribute('aria-label')}; })()")
+    assert b, "no close button in the drawer"
+    assert b["w"] >= 44 and b["h"] >= 44 and b["l"] >= 0 and b["t"] >= 0, b
+    assert b["label"] == "Close the board menu"
+    m = _click(browser, "#nav-close")
+    assert m["expanded"] == "false" and browser.eval(FOCUS)["id"] == "nav-toggle"
+    browser.emulate(*DESKTOP, scheme="dark")
+    browser.open(f"{dashboard.url}/#runs", ready=FRAME_READY)
+    assert browser.eval("document.getElementById('nav-close').getBoundingClientRect().width") == 0
