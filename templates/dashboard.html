@@ -97,7 +97,10 @@ button:disabled{opacity:.5;cursor:default}
 .content::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:8px;border:3px solid var(--scroll-track)}
 .content::-webkit-scrollbar-thumb:hover{background:var(--scroll-thumb-hover)}
 .content::-webkit-scrollbar-corner{background:var(--scroll-track)}
-.frame{border:0;width:1280px;max-width:none;height:calc(100% - 16px);display:none;background:var(--frame-bg)}
+.frame{border:0;width:1280px;max-width:none;height:calc(100% - 16px);display:none;background:var(--frame-bg);
+  /* A board page that declares no colour scheme is "normal". If the frame said dark (the shell's :root does),
+     Chrome would paint that page's canvas white over the frame's own background. */
+  color-scheme:normal}
 .frame.on{display:block}
 #overlay{position:absolute;inset:0;background:var(--overlay);display:none;align-items:center;justify-content:center;z-index:10}
 #overlay.show{display:flex}

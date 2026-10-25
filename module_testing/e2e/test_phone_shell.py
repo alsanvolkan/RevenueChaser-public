@@ -153,3 +153,26 @@ def test_a_desktop_keeps_its_sidebar(dashboard, browser, scheme):
     assert m["sidebar"]["l"] == 0 and round(m["sidebar"]["w"]) == 240, "the sidebar is a column on a desktop"
     assert not m["toggleShown"], "no menu button on a desktop"
     assert m["docScroll"] <= m["vw"]
+
+
+def _pixel(browser, x: float, y: float) -> tuple[int, int, int]:
+    """The colour Chrome actually painted at (x, y) CSS px: a computed style cannot see a canvas default."""
+    import base64
+    import io
+
+    from PIL import Image
+    shot = browser.send("Page.captureScreenshot", format="png")
+    return Image.open(io.BytesIO(base64.b64decode(shot["data"]))).convert("RGB").getpixel((int(x), int(y)))
+
+
+@pytest.mark.parametrize("size", [PHONE, DESKTOP])
+@pytest.mark.parametrize("tab", ["module_financials", "module_spx_gamma"])
+def test_a_board_without_its_own_background_is_not_painted_white_in_dark(dashboard, browser, size, tab):
+    """#190 review: color-scheme:dark on the shell made Chrome paint a board page that declares no colour
+    scheme and no background white, inside a dark shell (an empty board renders such a page)."""
+    browser.emulate(*size, scheme="dark")
+    browser.open(f"{dashboard.url}/#{tab}", settle=1.0)
+    x, y = browser.eval("(function(){ var r = document.querySelector('.frame.on').getBoundingClientRect();"
+                        " return [r.left + r.width / 2, r.bottom - 40]; })()")
+    r, g, b = _pixel(browser, x, y)
+    assert 0.2126 * r + 0.7152 * g + 0.0722 * b < 80, f"{tab} frame painted {(r, g, b)} in dark"
