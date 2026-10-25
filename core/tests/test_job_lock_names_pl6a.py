@@ -59,6 +59,18 @@ def _constant_names() -> set[str]:
                                    path.read_text(encoding="utf-8"), re.MULTILINE)}
 
 
+_KEYWORD = re.compile(r'\block\s*=\s*"([a-z0-9_]+)"')
+
+
+def _keyword_names_in(text: str) -> set[str]:
+    return set(_KEYWORD.findall(text))
+
+
+def _keyword_names() -> set[str]:
+    """The names passed as a ``lock="..."`` keyword, e.g. a ``forecast_cli.WriterCli`` (#110)."""
+    return {name for path in _sources() for name in _keyword_names_in(path.read_text(encoding="utf-8"))}
+
+
 def _scanned_names() -> set[str]:
     """Every lock name the guard judges: the literals plus the constants.
 
@@ -66,7 +78,7 @@ def _scanned_names() -> set[str]:
     still passes. Both halves therefore live here, and the constant test below pins that this function really
     carries them — otherwise "simplifying" the guard back to literals would silently stop guarding five names.
     """
-    return _literal_names() | _constant_names()
+    return _literal_names() | _constant_names() | _keyword_names()
 
 
 def test_every_lock_name_in_the_sources_is_documented():
@@ -87,3 +99,29 @@ def test_a_lock_name_passed_as_a_constant_is_found():
     # And the mirror of it, so neither half of the union can be dropped: a literal-only name has to be judged too.
     assert "sec_13f" in literals and "sec_13f" not in constants, "app/runners.py passes this one as a literal"
     assert literals <= _scanned_names(), "the guard stopped scanning literal lock names"
+
+
+def test_a_lock_name_passed_as_a_keyword_is_found(tmp_path, monkeypatch):
+    """#110: ``forecast_cli.WriterCli(..., lock="x")`` hands the name to ``acquire`` through an attribute, which
+    neither the literal nor the constant scan sees, so a keyword spelling of the name is scanned too."""
+    import sys
+
+    src = tmp_path / "writer.py"
+    src.write_text('CLI = forecast_cli.WriterCli(prog="x", what="x", lock="sneaky_writer", run=f)\n',
+                   encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "_sources", lambda: [src])
+    assert "sneaky_writer" in _scanned_names(), "the guard does not see a lock passed as a keyword"
+
+
+def test_every_writer_cli_takes_a_documented_lock():
+    """The same promise at run time: every ``WriterCli`` a script defines names a lock in the docstring."""
+    import importlib
+
+    root = Path(job_lock.__file__).resolve().parents[1]
+    found = []
+    for path in sorted((root / "scripts").glob("*.py")):
+        if "WriterCli(" in path.read_text(encoding="utf-8") and path.stem != "forecast_cli":
+            mod = importlib.import_module(f"RevenueChaser.scripts.{path.stem}")
+            found.append(mod.CLI.lock)
+    assert found, "no WriterCli found: the scan is looking at the wrong tree"
+    assert set(found) <= set(NAMES), f"undocumented WriterCli lock(s): {sorted(set(found) - set(NAMES))}"
