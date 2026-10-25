@@ -37,12 +37,18 @@ class TestResolvers:
         newest = max(m["ts"] for m in store.messages("900000000000000010"))
         assert provenance.data_as_of("module_discord") == newest[:10]
 
-    def test_ticker_cache_epoch_becomes_a_day(self, rawstore_tmp_db):
-        """Earnings' date is still the per-ticker payload fetch time; Asymmetric Growth's is D01's since #380 S4
-        (``test_provenance_k7_383.py``)."""
+    def test_earnings_reports_the_session_of_its_stored_calendar(self, rawstore_tmp_db):
+        """DF13: the Earnings board reads ``earnings_calendar`` (the newest stored session), never the per-ticker
+        payload cache, so a newer cache fetch says nothing about its data. Asymmetric Growth's date is D01's since
+        #380 S4 (``test_provenance_k7_383.py``)."""
         rawstore.write_rows("ticker_payload_cache", [{
-            "ticker": "AAPL", "payload": {}, "fetched_at": 1788223354.41, "fetched_at_iso": ""}])
-        assert provenance.data_as_of("module_earnings_radar") == "2026-09-01"
+            "ticker": "AAPL", "payload": {}, "fetched_at": 1788223354.41, "fetched_at_iso": ""}])   # 2026-09-01
+        assert provenance.data_as_of("module_earnings_radar") is None
+        rawstore.write_rows("earnings_calendar", [
+            {"session_date": "2026-08-27", "earnings_date": "2026-09-03", "ticker": "AAPL", "report_session": "AMC"},
+            {"session_date": "2026-08-28", "earnings_date": "2026-09-03", "ticker": "AAPL", "report_session": "AMC"},
+        ])
+        assert provenance.data_as_of("module_earnings_radar") == "2026-08-28"
 
     def test_rotation_uses_the_newest_snapshot_date(self, rawstore_tmp_db):
         rawstore.write_rows("rotation_snapshots", [

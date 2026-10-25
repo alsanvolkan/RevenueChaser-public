@@ -81,9 +81,10 @@ def _scored_d01_day(scores: str):
     return resolve
 
 
-def _ticker_cache_day() -> str | None:
-    """When the per-ticker screener payloads were last fetched."""
-    return _max("SELECT max(fetched_at) AS v FROM ticker_payload_cache")
+def _earnings_day() -> str | None:
+    """The newest session of the stored earnings calendar, the table the Earnings board reads (DF13). It used to
+    read ``ticker_payload_cache``, which the board never references, so a cache fetch moved its date."""
+    return _max("SELECT max(session_date) AS v FROM earnings_calendar")
 
 
 def _rotation_day() -> str | None:
@@ -190,7 +191,7 @@ RESOLVERS = {
     "module_asymmetric_growth": _scored_d01_day("ticker_scores"),
     # Co-movement clusters its names' D01 closes (#379 D01 switch).
     "module_comovement": _comovement_day,
-    "module_earnings_radar": _ticker_cache_day,
+    "module_earnings_radar": _earnings_day,
     "module_sector_rotation": _rotation_day,
     "module_sec_13f": _sec13f_day,
     "module_leaps": _leaps_day,
