@@ -29,7 +29,7 @@ ROWS = [{"run_id": f"r{i}", "module": name, "source": None, "trigger": trig, "st
          else None,
          "message": None, "params": {"args": ["-m", "RevenueChaser.scripts.nightly_inputs", "earnings",
                                               "--max-uw-calls", "200", "--max-yf-calls", "2000"]}}
-        for i, (name, trig, status) in enumerate([("RC-Daily-Bars", "scheduled", "done"),
+        for i, (name, trig, status) in enumerate([("RC-Daily-Bars-" + "x" * 74, "scheduled", "done"),   # 88 chars
                                                   ("rotation", "manual", "error"),
                                                   ("module_leaps", None, "running")])]
 
@@ -71,7 +71,7 @@ def browser():
 @pytest.fixture(scope="module")
 def runs_page(tmp_path_factory):
     html = runview.render_page({"initial": {"rows": ROWS, "total": 3, "shown": 3, "limit": 200,
-                                            "problems": False, "query": ""}})
+                                            "problems": False, "query": "q" * 100}})   # one long, unbroken value
     i = html.lower().index("<head>") + len("<head>")
     path = tmp_path_factory.mktemp("runs") / "runs.html"
     path.write_text(html[:i] + _HOOK + html[i:], encoding="utf-8")

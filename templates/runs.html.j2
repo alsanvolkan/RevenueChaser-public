@@ -37,6 +37,7 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"
 .btn[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .meta,.note{color:var(--muted);font-size:12.5px;line-height:1.5;margin:8px 0 0}
+.meta{overflow-wrap:anywhere}   /* it quotes the name filter, which may be one long word */
 .note{border-top:1px solid var(--border);padding-top:8px;margin-top:8px}
 .scroll{flex:1 1 auto;min-height:160px;overflow:auto;margin:8px 0 0;background:var(--panel);border:1px solid var(--border);border-radius:12px}
 table{border-collapse:collapse;width:100%;font-size:13px}
@@ -45,7 +46,7 @@ thead th{position:sticky;top:0;background:var(--panel2);text-align:left;font-wei
 tbody td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top}
 tbody tr:last-child td{border-bottom:0}
 td.when,td.took{white-space:nowrap;font-variant-numeric:tabular-nums}
-td.job{font-weight:600}
+td.job{font-weight:600;overflow-wrap:anywhere}
 td.note-cell,td.params{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;
   max-width:28ch;overflow-wrap:anywhere}
 td.dash{color:var(--muted)}
