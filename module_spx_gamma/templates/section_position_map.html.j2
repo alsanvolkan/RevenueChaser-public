@@ -136,10 +136,11 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 /* ── 4 metric cards ── */
 .ag-cards4{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; padding-top:8px; }
 /* ── tooltip: tap (or Enter / Space) to open, a <details> so it works without script ── */
-.tip{ display:inline-block; vertical-align:middle; }
-.tip > summary{ list-style:none; cursor:pointer; display:inline-flex; align-items:center; justify-content:center;
-  min-width:44px; min-height:44px; margin:-16px -8px -16px 0; color:var(--muted); font-size:13px; user-select:none; }
+.ag-gex.has-tip{ padding-right:56px; min-height:56px; }
+.tip > summary{ list-style:none; cursor:pointer; position:absolute; top:0; right:0; display:flex; align-items:center; justify-content:center;
+  width:44px; height:44px; color:var(--muted); font-size:13px; user-select:none; }
 .tip > summary::-webkit-details-marker{ display:none; }
+.tip > summary:focus-visible{ outline-offset:-4px; border-radius:8px; }
 .ag-tip-box{ position:absolute; bottom:calc(100% + 4px); left:0; z-index:30; background:var(--card);
   border:1px solid var(--border); border-radius:8px; padding:8px 12px; font-size:12px; color:var(--fg);
   width:min(224px,calc(100vw - 48px)); box-shadow:var(--shadow-tip); text-transform:none; letter-spacing:0; font-weight:400; }
@@ -347,9 +348,9 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   </div>
   <!-- Row 2: 4 metric cards with tooltips -->
   <div class="ag-cards4">
-    <div class="ag-gex"><div class="k">NET GEX (OI) <details class="tip"><summary aria-label="What is NET GEX (OI)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Total Book = all-expiry OI-based net GEX (macro inventory).</div></details></div><div class="v {{ header_strip.net_gex_tone }}">{{ header_strip.net_gex }}</div></div>
+    <div class="ag-gex has-tip"><div class="k">NET GEX (OI) <details class="tip"><summary aria-label="What is NET GEX (OI)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Total Book = all-expiry OI-based net GEX (macro inventory).</div></details></div><div class="v {{ header_strip.net_gex_tone }}">{{ header_strip.net_gex }}</div></div>
     <div class="ag-gex"><div class="k">DAILY Δ (1D / 1W)</div><div class="v">{{ header_strip.net_gex_delta_1d }} / {{ header_strip.net_gex_delta_1w }}</div></div>
-    <div class="ag-gex"><div class="k">MATRIX (≤45 DTE) <details class="tip"><summary aria-label="What is MATRIX (≤45 DTE)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Matrix = DTE≤45 filter stripping far-dated LEAPS noise.</div></details></div><div class="v {{ header_strip.matrix_gex_tone }}">{{ header_strip.matrix_gex }}</div></div>
+    <div class="ag-gex has-tip"><div class="k">MATRIX (≤45 DTE) <details class="tip"><summary aria-label="What is MATRIX (≤45 DTE)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Matrix = DTE≤45 filter stripping far-dated LEAPS noise.</div></details></div><div class="v {{ header_strip.matrix_gex_tone }}">{{ header_strip.matrix_gex }}</div></div>
     <div class="ag-gex"><div class="k">SOURCE CHIP</div><div><span class="chip {{ 'chip-pos' if header_strip.source_chip == 'POSITIVE' else ('chip-neg' if header_strip.source_chip == 'NEGATIVE' else '') }}">{{ header_strip.source_chip }}</span></div></div>
   </div>
   <div class="ag-note">Toplam kitap = all-expiry OI-based net GEX (macro depot). Matrix = DTE≤45 filter — active-trading gamma that strips far-dated/LEAPS noise; the gap comes from distant tenors.</div>

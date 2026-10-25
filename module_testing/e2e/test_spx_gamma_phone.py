@@ -362,3 +362,28 @@ def test_an_iron_butterfly_leg_is_two_columns_on_a_phone(board, browser):
       return [s.display, s.gridTemplateColumns.split(' ').length, Math.round(tr.getBoundingClientRect().height)]; })()""")
     assert got[0] == "grid" and got[1] == 2, got
     assert got[2] <= 150, f"a leg card is {got[2]} px tall"
+
+
+def test_the_tooltip_target_sits_in_its_card_without_covering_the_value(board, browser):
+    """#195 review SHOULD 5: negative margins overlapped the value by 10 px, stuck out of the card, and the focus
+    ring cut the card's border."""
+    for size in (PHONE, DESKTOP):
+        _open(browser, board, size)
+        got = browser.eval("""(function(){ return Array.prototype.map.call(document.querySelectorAll('details.tip'), function(d){
+          var s = d.querySelector('summary').getBoundingClientRect(), card = d.closest('.ag-gex').getBoundingClientRect(),
+              v = d.closest('.ag-gex').querySelector('.v').getBoundingClientRect(),
+              text = document.createRange(); text.selectNodeContents(d.closest('.ag-gex').querySelector('.v'));
+              var t = text.getBoundingClientRect();
+          return {inside: s.left >= card.left && s.right <= card.right && s.top >= card.top && s.bottom <= card.bottom,
+                  overlap: s.left < t.right && s.right > t.left && s.top < t.bottom && s.bottom > t.top,
+                  w: s.width, h: s.height}; }); })()""")
+        assert len(got) == 2
+        for g in got:
+            assert g["inside"] and not g["overlap"] and g["w"] >= 44 and g["h"] >= 44, (size, g)
+        browser.eval("document.body.focus()")
+        for _ in range(60):                       # Tab to the first tooltip trigger, as a keyboard reader does
+            browser.press("Tab")
+            if browser.eval("document.activeElement.matches('details.tip > summary:focus-visible')"):
+                break
+        offset = browser.eval("getComputedStyle(document.activeElement).outlineOffset")
+        assert offset.startswith("-"), f"the focus ring would cut the card border: {offset}"
