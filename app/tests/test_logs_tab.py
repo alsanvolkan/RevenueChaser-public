@@ -229,3 +229,45 @@ def test_the_filter_is_installed_once():
     logview.quiet_polling()
     filters = [f for f in logging.getLogger("werkzeug").filters if isinstance(f, logview.SkipLogPolling)]
     assert len(filters) == 1
+
+
+# ── what the polling filter matches (#131 item 4) ─────────────────────────────
+
+def test_a_request_that_merely_mentions_a_poll_path_is_still_logged():
+    """The filter asked whether the path appeared anywhere in the line; it matches the request target now."""
+    werkzeug = logging.getLogger("werkzeug")
+    logview.quiet_polling()
+    assert werkzeug.filter(_record("/view/module_leaps?x=/api/logs")), "a real request vanished from the log"
+    assert werkzeug.filter(_record("/api/logsearch")), "a different path that shares the prefix"
+    assert not werkzeug.filter(_record("/api/logs")), "the poll itself, bare"
+    assert not werkzeug.filter(_record("/api/logs?src=server&tail=1000")), "the poll with its query"
+
+
+def test_a_write_to_a_poll_path_is_still_logged():
+    """Only the poll (a GET) is noise; any other method on the same path is something that happened."""
+    record = logging.LogRecord("werkzeug", logging.INFO, __file__, 1, '%s - - [x] "%s" %s -',
+                               ("127.0.0.1", "POST /api/logs HTTP/1.1", "405"), None)
+    logview.quiet_polling()
+    assert logging.getLogger("werkzeug").filter(record)
+
+
+def test_quiet_path_takes_only_a_bare_path_and_is_bounded(monkeypatch):
+    monkeypatch.setattr(logview, "POLL_PATHS", set(logview.POLL_PATHS))
+    logview.quiet_path("/api/runs")
+    logview.quiet_path("/api/runs")                       # registering twice is one entry
+    assert len(logview.POLL_PATHS) == len(set(logview.POLL_PATHS))
+    for bad in ("api/runs", "/api/runs?x=1", "/api/ runs", ""):
+        with pytest.raises(ValueError):
+            logview.quiet_path(bad)
+    with pytest.raises(ValueError, match="at most"):
+        for i in range(logview.MAX_POLL_PATHS + 1):
+            logview.quiet_path(f"/api/poll{i}")
+    assert len(logview.POLL_PATHS) == logview.MAX_POLL_PATHS
+
+
+def test_a_coloured_poll_line_is_still_recognised():
+    """werkzeug wraps a 304 / 4xx / 5xx request line in ANSI codes inside the quotes, even into a file."""
+    record = logging.LogRecord("werkzeug", logging.INFO, __file__, 1, '%s - - [x] "%s" %s -',
+                               ("127.0.0.1", "\x1b[36mGET /api/logs?src=server HTTP/1.1\x1b[0m", "304"), None)
+    logview.quiet_polling()
+    assert not logging.getLogger("werkzeug").filter(record)
