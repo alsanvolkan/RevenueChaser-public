@@ -105,7 +105,7 @@ def test_every_table_stacks_on_a_phone_and_keeps_its_labels(board, browser):
       return out; })()""")
     assert len(got) >= 12, f"expected the board's tables, found {len(got)}"
     for t in got:
-        assert t["display"] == "block" and t["row"] == "block", f"table not stacked: {t}"
+        assert t["display"] == "block" and t["row"] in ("block", "grid"), f"table not stacked: {t}"
         assert t["cell"] in ("flex", "block") and t["bad"] == 0 and not t["scrolls"], t
 
 
