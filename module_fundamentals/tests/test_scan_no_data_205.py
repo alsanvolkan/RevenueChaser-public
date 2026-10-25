@@ -74,7 +74,7 @@ def test_stale_cache_plus_failing_yfinance_still_scores_and_counts_stale(scan_en
     _seed_ohlc("SPY", _df(300))
     _age_all()
     payload = mod.run_scan()
-    assert payload["is_fixture"] is False
+    assert not payload.get("is_fixture")             # #49 A2: Swing payloads no longer carry the key
     assert not payload.get("no_data")
     assert payload["data_quality"]["stale_ohlc"] == 2
     assert payload["data_quality"]["spy_stale"] is True
@@ -87,7 +87,7 @@ def test_no_data_anywhere_is_an_explicit_empty_state_not_the_fixture(scan_env, m
     monkeypatch.setattr("RevenueChaser.module_fundamentals.scores.persist", lambda r: persisted.append(r))
     monkeypatch.setattr("RevenueChaser.module_swing_potential.scores.persist", lambda r: persisted.append(r))
     payload = mod.run_scan()
-    assert payload["is_fixture"] is False
+    assert not payload.get("is_fixture")             # #49 A2: Swing payloads no longer carry the key
     assert payload["no_data"] is True
     assert "3" in payload["no_data_message"]
     assert payload["data_quality"]["dropped"]["no_bars"] >= 1                 # no D01 bars at all

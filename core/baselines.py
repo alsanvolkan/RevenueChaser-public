@@ -47,7 +47,7 @@ Rules (HR-1 of #25; every number below is a constant, so a change is one edit pl
 - A decile's ``vol_lo``/``vol_hi`` are its boundaries (lo inclusive, hi exclusive, NULL at either end), which is what
   ``basis_of`` reads: a pick's own trailing vol lands in exactly one row.
 - The rows are ``open`` until the horizon's window has ended (``outcomes.window_end``) **and** the store holds a bar on
-  or after that end (``outcomes._newest_bar``), which is the rule ``core/outcomes.py`` closes a pick on; the run past
+  or after that end (``outcomes.newest_bar``), which is the rule ``core/outcomes.py`` closes a pick on; the run past
   both moments writes ``closed``, and the following nights recompute only the rows still open (a date whose 30-day
   window has ended keeps its 30-day rows and is recomputed for its 90-day ones); ``full`` recomputes every date (after
   a bar backfill, or a rule change). A close on the calendar alone would freeze a row on a night whose Daily Bars had
@@ -300,7 +300,7 @@ def _rows_for(day: date, members: list[Member], horizons: tuple[int, ...], lates
     """The eleven rows of one freeze date (the universe and its ten deciles) for the ``horizons`` still open.
 
     ``latest`` is the newest complete session (the clock) and ``newest`` the newest bar the store holds
-    (``outcomes._newest_bar``): a row closes only when both have passed its window end, so a night without Daily Bars
+    (``outcomes.newest_bar``): a row closes only when both have passed its window end, so a night without Daily Bars
     leaves it open instead of freezing it on the bars the store happens to have.
     """
     vols = [m.vol for m in members if m.vol is not None]
@@ -355,7 +355,7 @@ def run(*, now: datetime | None = None, run_id: str | None = None, full: bool = 
         res["no_snapshot"] = sum(1 for tickers in universes.values() if not tickers)
         wanted = sorted({t for tickers in universes.values() for t in tickers})
         members, bars_seen = _membership(wanted, universes, todo, latest)
-        newest = outcomes._newest_bar()          # the store's newest bar, not the clock (see _rows_for)
+        newest = outcomes.newest_bar()           # the store's newest bar, not the clock (see _rows_for)
         if wanted and not bars_seen and min(todo) < latest:
             raise RuntimeError("no daily bars in the price store: refusing to compute baselines "
                                "(every row would turn into n = 0)")

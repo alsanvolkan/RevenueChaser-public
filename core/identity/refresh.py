@@ -86,7 +86,6 @@ _TS = "%Y-%m-%dT%H:%M:%SZ"
 
 
 def _default_clients() -> dict[str, Callable]:
-    from .. import sec_files
     from .sources import fdic, nasdaq, openfigi, sec, sp1500, spdr, uw_sector, yahoo_sector
     # The exchange file is pulled once a night by RC-Daily-Bars (#301 D21); this job reuses its stored rows.
     return {"sec_exchange": sec_files.exchange_source, "sec_submissions": sec.submissions,

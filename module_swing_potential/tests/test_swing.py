@@ -138,7 +138,6 @@ def test_build_payload_shape():
     ]
     p = build_payload(rows, top_n=10)
     assert p["universe_total"] == 2
-    assert p["is_fixture"] is False
     assert p["selection_version"] == config.SELECTION_VERSION
     assert set(p["passing"].keys()) == {"minervini", "weinstein", "qullamaggie", "direction"}
     assert len(p["candidates"]) == 2

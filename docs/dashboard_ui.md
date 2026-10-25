@@ -255,7 +255,7 @@ each merge round. A newly added issue arrives `scope="board"` with no `boards`,
 which the registry tests reject on purpose: the run is not finished until a human
 has named its boards and filled its fields. `--check` fails when the file and GitHub disagree;
 `--report-thin` lists the entries whose summary or detail is too thin to resume
-from. A bad or missing registry renders a message inside the group — never a
+from, and every board-scoped entry that names no board, the state `--write` leaves a new issue in (#120). A bad or missing registry renders a message inside the group — never a
 failed page.
 
 Do not add the group to a board's `report.py`: a board's HTML is a cached

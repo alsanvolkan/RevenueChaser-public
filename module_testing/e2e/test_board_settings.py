@@ -36,8 +36,10 @@ def seeded_settings(dashboard, monkeypatch):
         {"ticker": "MU", "market_cap": None, "name": "Micron Technology"},
         {"ticker": "NOCAP", "market_cap": None, "name": "No Cap Co"},
     ])
-    rawstore.write_rows("sec_company_tickers", [
-        {"ticker": "AAPL", "cik": "0000320193", "name": "Apple Inc."},
+    # #115: the stored exchange file is the CIK map production reads (#301 D21); sec_company_tickers is the fallback.
+    rawstore.write_rows("sec_exchange_file", [
+        {"ticker": "AAPL", "cik": "0000320193", "name": "Apple Inc.", "exchange": "Nasdaq", "valid_from": None,
+         "status": "present", "source": "sec_exchange", "fetched_at": 1.0, "run_id": "seed", "run_at": 1.0},
     ])
     # The only universe name at/above the cap floor; the key feeds the corpus note.
     rawstore.write_rows("chain_meta", [{"key": "miss:AAPL", "value": json.dumps({

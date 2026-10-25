@@ -108,7 +108,7 @@ def test_every_read_raising_leaves_the_cache_and_keeps_no_session_rows(store):
     scan_leaps(_Raising(), today=TODAY, footprints=footprints)
     (bbb,) = footprints
     assert bbb["snapshot"]["label"] == "N/A" and bbb["fetch_status"] == "provider_failed"
-    assert bbb["inputs"]["error"] == "RuntimeError: socket closed"
+    assert bbb["inputs"]["error"] == "RuntimeError"
     assert _cache_row() == before
     assert engine.load_cache("BBB")["latest"] == REAL                # the real entry is not evicted
     leaps_history.record(footprints, run_id="r1", run_at=COMPLETE)

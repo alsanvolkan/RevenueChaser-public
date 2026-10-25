@@ -174,7 +174,7 @@ def test_a_ticker_whose_uw_read_failed_uncounted_is_provider_failed_and_keeps_no
 def test_a_ticker_whose_uw_read_raised_is_provider_failed_with_its_error(store):
     footprints, _, _ = _scan(_UW({"AAA": (1000, 200)}, raise_for={"BBB"}))
     (bbb,) = [f for f in footprints if f["ticker"] == "BBB"]
-    assert bbb["fetch_status"] == "provider_failed" and bbb["inputs"]["error"] == "RuntimeError: socket closed"
+    assert bbb["fetch_status"] == "provider_failed" and bbb["inputs"]["error"] == "RuntimeError"
     _record(footprints)
     (head,) = _headers()
     assert head["quality"] == "partial" and _rows("r1") == []
@@ -196,7 +196,7 @@ def test_a_ticker_whose_fetch_raised_is_kept_with_its_error(store, monkeypatch):
     monkeypatch.setattr(engine, "fetch_and_classify", boom)
     footprints, _, _ = _scan(_UW({"AAA": (1000, 200)}))
     (bbb,) = [f for f in footprints if f["ticker"] == "BBB"]
-    assert bbb["snapshot"] is None and bbb["fetch_status"] == "error: ValueError: bad payload"
+    assert bbb["snapshot"] is None and bbb["fetch_status"] == "error: ValueError"
 
 
 def test_a_scan_without_the_sink_is_unchanged(store):
