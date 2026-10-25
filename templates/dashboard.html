@@ -842,8 +842,10 @@ var ACTIVE_JOBS = [];  // last /api/jobs active list (poll keeps it current)
 // What the overlay says while a job covers this tab (#26 PL5-b). /api/jobs already serves the job's module,
 // its start and the phase its runner reached; the overlay used to show one fixed sentence whatever ran.
 // It names the first job and counts the rest (#131): a Rotation Fetch also queues Money flow onto this tab.
+// /api/jobs lists by queued_at, so the running job is looked for first and a waiting one named only if none runs.
 function overlayText(jobs){
-  var job = (jobs||[])[0];
+  jobs = jobs || [];
+  var job = jobs.filter(function(j){ return j.status === 'running'; })[0] || jobs[0];
   if(!job) return 'Running… this may take a few minutes';
   var more = jobs.length > 1 ? ' · +' + (jobs.length - 1) + ' more' : '';
   if(job.status === 'queued') return 'Queued behind another job…' + more;

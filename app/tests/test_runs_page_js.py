@@ -327,3 +327,17 @@ def test_an_answer_read_under_an_old_filter_is_not_drawn(client, tmp_path):
     """)
     assert sent == ["/api/runs", "/api/runs?problems=1"]
     assert drawn == [2], f"drew answers {drawn}: the first was read without the filter"
+
+
+def test_the_overlay_names_the_running_job_first(client, tmp_path):
+    """#189 review: /api/jobs lists by queued_at, so a job queued earlier but still waiting came first and the
+    overlay said "Queued…" while another job covering the tab was running."""
+    html = strip_open_issues_data(client.get("/").get_data(as_text=True))
+    script = next(s for s in inline_scripts(html) if "function overlayText" in s)
+    prelude = ('var _now = Date.parse("2026-10-23T10:00:00+00:00");'
+               "Date.now = function(){ return _now; };\n")
+    jobs = [{"status": "queued", "module": "money_flow"},
+            {"status": "running", "module": "rotation", "phase": None, "started_at": "2026-10-23T09:59:48+00:00"}]
+    tail = f"console.log(JSON.stringify(overlayText({json.dumps(jobs)})));"
+    assert _node(DOM_STUB + prelude + function_source(script, "overlayText") + "\n" + tail, tmp_path) == \
+        "Running rotation · 12s · +1 more"
