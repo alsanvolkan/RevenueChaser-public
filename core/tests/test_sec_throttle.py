@@ -152,16 +152,21 @@ def test_bucket_sits_beside_the_store_and_is_not_a_job_lock(isolate_rawstore):
 
 
 def test_burst_is_what_the_ceiling_leaves(monkeypatch, tmp_path):
-    """The first ``LIMIT - RATE`` takes do not wait; the next one waits one interval."""
+    """The first ``LIMIT - RATE`` takes do not wait; the next one waits one interval.
+
+    The clock stands still: on a slow runner the real one moved 29 ms between the sixth and the seventh take, and
+    the wait shrank by exactly that, which said nothing about the bucket.
+    """
     monkeypatch.setattr(sec_throttle, "bucket_path", lambda: tmp_path / ".sec_throttle.json")
     monkeypatch.setattr(sec_throttle, "RATE", 4)
     slept = []
     monkeypatch.setattr(sec_throttle.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setattr(sec_throttle.time, "monotonic", lambda: 1000.0)
     for _ in range(6):
         assert sec_throttle.pace() is True
     assert slept == []
     assert sec_throttle.pace() is True
-    assert slept and abs(slept[0] - 0.25) < 0.02
+    assert len(slept) == 1 and abs(slept[0] - 0.25) < 1e-9
 
 
 def test_two_processes_share_one_budget(tmp_path):

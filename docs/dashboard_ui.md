@@ -169,6 +169,25 @@ hash. The pure logic is `RCFilters.core`, unit-tested under node (`core/tests/te
 | Logs | **no** | The dashboard's own log files (`app/logview.py`), read-only: no Fetch, no Refresh, no data date. |
 | Runs | **no** | The run log over `job_runs` (`app/runview.py`), read-only: no Fetch, no Refresh, no data date. One row per job and per scheduled task, newest first, with the trigger as stored (a dash only on rows from before #83; a `running` row the server lost is closed as `lost`, #82). **Problems only** and the name box filter in SQL, not in the page, so the count beneath the table is of the matching runs in the table and not of the page that was read; the line says so when a read hits its limit. **Show** picks the newest 200 or the newest 1000 (`runview.DEFAULT_LIMIT` / `MAX_LIMIT`). On a phone (under 640 px) each run is a card, one cell per line, and the controls are 44 px; it follows the device's light or dark scheme. |
 
+### The shell on a phone, in light and dark (#184)
+
+Mock: `docs/mocks/shell-phone.html`. Under 900 px (`NARROW_QUERY` in `templates/dashboard.html`) the sidebar is
+a drawer behind the top bar's ☰ button (a tab, the scrim or Escape closes it), the tab's name shows in the top
+bar, and the badges and sync times wrap onto a line of their own. Every board frame is then exactly as wide as
+its pane (`fitFrameWidth` never grows it past the pane), so the page never scrolls sideways; a board wider than
+a phone scrolls inside its own frame until its own PR restacks it. On a narrow screen or a coarse pointer the
+shell's buttons, inputs, nav items and nav headers are 44 px; a desktop mouse keeps 32 / 38 / 40 px.
+
+The palette is `core/reporting_common.THEME_TOKENS`, rendered once as `THEME_CSS`. **Dark is the default on every
+device** (avo, 25 Oct 2026; the shell's look before #184, value for value): a first visit, and a browser whose
+storage is blocked, show dark. The "Theme:" button at the foot of the sidebar (inside the drawer on a phone)
+cycles Dark → Light → Auto, where Auto follows the device's `prefers-color-scheme`. Light and Auto are stored in
+`localStorage["rc-theme"]` (`THEME_STORAGE_KEY`; dark, the default, is stored as nothing; every access in
+try/catch, so a private window still toggles, it just does not remember). `THEME_JS` runs in `<head>` so a light
+choice never flashes dark. The shell copies the choice onto
+each board iframe as `data-theme` on its `<html>`; a board follows it once it uses the shared tokens (one PR
+per board); the Runs tab does with the #131 pull request.
+
 ### What am I looking at? — every dashboard
 
 Shared `help_html(body)` under the title, closed by default, same `.help`
@@ -236,7 +255,7 @@ each merge round. A newly added issue arrives `scope="board"` with no `boards`,
 which the registry tests reject on purpose: the run is not finished until a human
 has named its boards and filled its fields. `--check` fails when the file and GitHub disagree;
 `--report-thin` lists the entries whose summary or detail is too thin to resume
-from. A bad or missing registry renders a message inside the group — never a
+from, and every board-scoped entry that names no board, the state `--write` leaves a new issue in (#120). A bad or missing registry renders a message inside the group — never a
 failed page.
 
 Do not add the group to a board's `report.py`: a board's HTML is a cached

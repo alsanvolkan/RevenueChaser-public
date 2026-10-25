@@ -348,8 +348,9 @@ def fetch_and_classify(ticker: str, uw, today: Optional[date] = None, inputs: Op
             oi, flow, iv = (reads[k].data or [] for k in ("oi_per_expiry", "flow_per_expiry", "iv_rank"))
     except Exception as e:
         oi, flow, iv = [], [], []
+        logger.warning("leaps %s: a UW read raised: %s: %s", ticker, type(e).__name__, e)
         if inputs is not None:
-            inputs["error"] = f"{type(e).__name__}: {e}"
+            inputs["error"] = type(e).__name__          # stored: the class only, never a path (#107)
 
     if baselines is None:
         base_1d, base_q = _baselines_for(ticker, d)
@@ -524,7 +525,7 @@ def discover_flow_prints(uw, min_dte: int = MIN_DTE, min_premium: float = MIN_PR
             logger.warning("option-trades page %d failed: %s", page, exc)
             if page == 1 and warnings is not None:
                 # No page came back at all: without this the board's empty state reads like an empty tape (#377 L4).
-                warnings.append(f"The print scan's first page failed ({type(exc).__name__}: {exc}); "
+                warnings.append(f"The print scan's first page failed ({type(exc).__name__}); "
                                 "no far-dated prints were fetched, so this is not an empty tape.")
             capped = False
             break

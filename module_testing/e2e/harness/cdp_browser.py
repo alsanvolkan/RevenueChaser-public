@@ -7,7 +7,7 @@ a layout check needs and neither of which a command-line flag offers.
 
 No pip dependency: Chrome is found as ``$RC_CHROME`` or on ``PATH`` (the board HTML guard looks the same
 way), and the DevTools WebSocket is a few dozen lines over a loopback socket, which the e2e tier allows
-(root ``conftest.py``). Nothing here reaches past ``127.0.0.1``.
+(root ``conftest.py``). Chrome resolves no host but loopback, so nothing reaches past ``127.0.0.1``.
 """
 from __future__ import annotations
 
@@ -105,6 +105,9 @@ class Page:
         self._profile = tempfile.mkdtemp(prefix="rc-cdp-")
         args = [chrome, "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
                 "--hide-scrollbars", "--remote-debugging-port=0", f"--user-data-dir={self._profile}",
+                # Off the network, as the board HTML guard is: every host fails to resolve except loopback.
+                # The rule matches an IP literal too, so 127.0.0.1 (the e2e dashboard) is excluded by name.
+                "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1",
                 "about:blank"]
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             args.insert(1, "--no-sandbox")   # Chrome refuses to sandbox as root (a container)
@@ -166,14 +169,39 @@ class Page:
         self.send("Emulation.setEmulatedMedia",
                   features=[{"name": "prefers-color-scheme", "value": scheme}])
 
-    def open(self, url: str, settle: float = 0.3) -> None:
-        """Load ``url`` afresh. Via ``about:blank`` first: a URL that differs from the current one only by its
-        ``#fragment`` is a same-document navigation, which fires no load event and would not reload."""
+    def open(self, url: str, ready: str = "document.readyState === 'complete'") -> None:
+        """Load ``url`` afresh, then wait until ``ready`` (a JS expression) holds and no animation runs.
+
+        Via ``about:blank`` first: a URL that differs from the current one only by its ``#fragment`` is a
+        same-document navigation, which fires no load event and would not reload."""
         for target in ("about:blank", url):
             self._events.clear()
             self.send("Page.navigate", url=target)
             self._await_event("Page.loadEventFired")
-        time.sleep(settle)                         # let the page's own load handlers run
+        self.wait_for(ready)
+        self.settle()
+
+    def wait_for(self, expression: str, timeout: float = TIMEOUT) -> None:
+        """Poll until ``expression`` is truthy in the page: a condition, never a fixed sleep."""
+        deadline = time.monotonic() + timeout
+        while not self.eval(expression):
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"timed out after {timeout:.0f}s waiting for: {expression}")
+            time.sleep(0.05)
+
+    _KEYS = {"Enter": ("Enter", 13, "\r"), "Tab": ("Tab", 9, ""), "Escape": ("Escape", 27, ""),
+             " ": ("Space", 32, " ")}
+
+    def press(self, key: str, shift: bool = False) -> None:
+        """A real key press (down and up) to whatever has focus, as a keyboard user makes it."""
+        code, vk, text = self._KEYS[key]
+        base = {"key": key, "code": code, "windowsVirtualKeyCode": vk, "modifiers": 8 if shift else 0}
+        self.send("Input.dispatchKeyEvent", type="keyDown", text=text, **base)
+        self.send("Input.dispatchKeyEvent", type="keyUp", **base)
+
+    def settle(self) -> None:
+        """Wait until no CSS transition or animation is running (a drawer sliding in, say)."""
+        self.wait_for("document.getAnimations().every(function(a){ return a.playState !== 'running'; })")
 
     def eval(self, expression: str):
         """The value of ``expression`` in the page (a Promise is awaited), as JSON-able data."""

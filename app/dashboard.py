@@ -339,7 +339,12 @@ def index():
                            # block is already escaped JSON and Jinja would otherwise turn ``&`` into ``&amp;``.
                            open_issues_json=Markup(html_safe.script_json(issues)),
                            open_issues_error=issues_error,
-                           rc_esc_js=Markup(html_safe.ESC_JS))
+                           rc_esc_js=Markup(html_safe.ESC_JS),
+                           # The palette and the stored-theme script are reporting_common's, the one place
+                           # they are defined (#184); both are code constants, not data.
+                           theme_css=Markup(reporting_common.THEME_CSS),
+                           theme_js=Markup(reporting_common.THEME_JS),
+                           theme_bg={k: v["bg"] for k, v in reporting_common.THEME_TOKENS.items()})
 
 
 def _open_issues_for_shell() -> tuple[dict, str]:

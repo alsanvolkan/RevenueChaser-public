@@ -81,11 +81,14 @@ module_testing/e2e/
 ├── harness/
 │   ├── dashboard_entrypoint.py     # installs fakes, then dashboard.app.run()
 │   ├── dashboard_driver.py         # run_job / view / restart / table_count
+│   ├── cdp_browser.py              # headless Chrome over DevTools: exact viewport, colour scheme
 │   ├── mock_provider_server.py     # loopback HTTP server + request counter
 │   ├── yfinance_fake.py            # fake yf.Ticker / yf.screen + call counter
 │   └── provider_fixtures/          # hand-written JSON, one file per endpoint
 ├── test_board_<name>.py            # one per board
 ├── test_board_html_browser.py      # hostile fixtures in headless Chrome (ADR-X1)
+├── test_phone_shell.py             # the shell at 390 px and 1280 px, light and dark (#184)
+├── test_cdp_browser.py             # the DevTools harness stays off the network
 └── test_live_provider_fetch.py     # the --live tier
 ```
 
@@ -95,6 +98,17 @@ any payload ran script. It needs no dashboard; it finds Chrome as `$RC_CHROME`,
 `google-chrome`, `google-chrome-stable`, `chromium` or `chromium-browser`. With no
 browser it skips locally and fails under `CI=true`. A new board adds an entry to
 the registry, or `core/tests/test_board_html_guard.py` fails.
+
+`test_phone_shell.py` drives Chrome through `harness/cdp_browser.py`, a DevTools client over a loopback
+WebSocket with no pip dependency. `--window-size` cannot give a phone viewport (new headless Chrome clamps
+the window to 500 px), so the harness uses device-metrics emulation for an exact width and media emulation
+for `prefers-color-scheme`. Against a live dashboard it checks that at 390 px the page never scrolls sideways,
+the nav is reachable through the drawer, the shell's touch targets are at least 44 px, and light and dark both
+render: dark on a first visit whatever the device, light and Auto by the toggle (remembered across a reload);
+at 1280 px the sidebar stays a column.
+It finds Chrome the way the HTML guard does, and fails under `CI=true` without one. Chrome resolves no host
+but loopback (`--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1`: the rule matches
+an IP literal too, so the dashboard's `127.0.0.1` is excluded by name); `test_cdp_browser.py` holds both halves.
 
 ### The mock provider server
 
@@ -192,6 +206,7 @@ Be honest about what this tier does not reach.
   `isoWeekInfo`'s use of `toISOString()`; a server-side harness can only assert
   on the served source (`app/tests/test_earnings_calendar_ui.py` does). Catching
   the rendered behaviour needs a DOM test.
-- **Layout is not checked.** Assertions are on substrings, counts and structure.
+- **Layout is checked for the shell only.** `test_phone_shell.py` measures the shell around the boards;
+  each board's own layout inside its frame is not checked until its own phone PR adds a check.
 - **Editor and machine config is out of reach.** A DuckDB lock held by another
   process is covered by its *symptom*, not its cause.

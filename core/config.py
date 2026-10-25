@@ -97,6 +97,17 @@ EDGAR_DOCS_DIR.mkdir(parents=True, exist_ok=True)
 # not at import. The guild to archive is a plain id, not a secret.
 DISCORD_MEDIA_DIR = _root("RC_DISCORD_MEDIA_DIR", BASE_DIR / "discord_media")
 
+
+def resolved_roots() -> dict[str, Path]:
+    """Each root's override variable and the folder this process resolved it to, read at call time.
+
+    A process started without the variables (a systemd unit, #158) would fall back to the checkout's own folders,
+    so whoever starts one hands it these values. The one map of variable to root, kept beside ``_root``.
+    """
+    return {"RC_STORE_DIR": DATA_DIR, "RC_CACHE_DIR": OUTPUT_DIR, "RC_EDGAR_DOCS_DIR": EDGAR_DOCS_DIR,
+            "RC_DISCORD_MEDIA_DIR": DISCORD_MEDIA_DIR}
+
+
 UW_API_KEY = os.getenv("UNUSUAL_WHALES_API_KEY", "")
 FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 
