@@ -55,10 +55,14 @@ def test_the_palette_is_defined_once_and_comes_from_reporting_common(shell):
         assert css.count(value) == rc.THEME_CSS.count(value), f"{value} (--{name}) is hard-coded in the shell"
 
 
-def test_the_browser_bar_follows_the_scheme(shell):
-    for scheme in ("light", "dark"):
-        assert re.search(r'<meta name="theme-color" media="\(prefers-color-scheme: %s\)" content="%s">'
-                         % (scheme, re.escape(rc.THEME_TOKENS[scheme]["bg"])), shell), scheme
+def test_the_browser_bar_starts_dark(shell):
+    """Dark is the default on every device, so both theme-color metas are served dark; themeShow() moves them
+    to light or Auto when that is the stored choice. A light value served for the light media query flashed
+    the browser bar light on a light phone (#190 delta review)."""
+    metas = re.findall(r'<meta name="theme-color" media="\(prefers-color-scheme: (light|dark)\)" content="([^"]+)">',
+                       shell)
+    assert sorted(m[0] for m in metas) == ["dark", "light"]
+    assert {m[1] for m in metas} == {rc.THEME_TOKENS["dark"]["bg"]}, metas
 
 
 def test_the_stored_theme_is_applied_before_the_page_draws(shell):

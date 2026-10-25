@@ -7,9 +7,21 @@
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/static/icons/icon-192.png">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
-<meta name="theme-color" media="(prefers-color-scheme: light)" content="{{ theme_bg.light }}">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="{{ theme_bg.dark }}">
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="{{ theme_bg.dark }}">
-<script>{{ theme_js }}</script>
+<script>{{ theme_js }}
+// The browser bar, set here in <head> so it never flashes: both metas are served dark (the default); a stored
+// Light takes both, and Auto lets each follow its own media query.
+var THEME_BG = {{ theme_bg | tojson }};
+function themeMeta(choice){
+  document.querySelectorAll('meta[name="theme-color"]').forEach(function(m){
+    var scheme = choice === 'auto' ? ((m.getAttribute('media') || '').indexOf('light') >= 0 ? 'light' : 'dark')
+                                   : (choice === 'light' ? 'light' : 'dark');
+    m.setAttribute('content', THEME_BG[scheme]);
+  });
+}
+themeMeta(rcThemeGet());
+</script>
 <style>
 /* The palette: core/reporting_common.THEME_CSS, the one place it is defined (#184). Dark by default on every
    device; Light, or Auto (follow the device), when the reader chooses it (data-theme on <html>). */
@@ -1408,17 +1420,8 @@ function themeFrames(choice, list){
     }catch(e){}
   });
 }
-// The browser bar: each meta follows its media query on Auto, and both take the chosen scheme otherwise.
-var THEME_BG = {{ theme_bg | tojson }};
-function themeMeta(){
-  document.querySelectorAll('meta[name="theme-color"]').forEach(function(m){
-    var scheme = THEME_NOW === 'auto' ? ((m.getAttribute('media') || '').indexOf('light') >= 0 ? 'light' : 'dark')
-                                      : THEME_NOW;
-    m.setAttribute('content', THEME_BG[scheme]);
-  });
-}
 function themeShow(){
-  themeMeta();
+  themeMeta(THEME_NOW);
   document.querySelectorAll('.theme-toggle').forEach(function(b){
     b.textContent = 'Theme: ' + THEME_LABELS[THEME_NOW];
     b.title = 'Theme: ' + THEME_WORDS[THEME_NOW];
