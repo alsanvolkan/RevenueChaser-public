@@ -29,11 +29,18 @@ def _rgb(hex_value: str) -> str:
 
 DARK_BG, LIGHT_BG = _rgb(THEME_TOKENS["dark"]["bg"]), _rgb(THEME_TOKENS["light"]["bg"])
 
+# The active board frame has loaded its page (the shell fits the frame on that load).
+FRAME_READY = ("(function(){ var f = document.querySelector('.frame.on'); try {"
+               " return !!(f && f.getAttribute('src') && f.contentDocument.readyState === 'complete'"
+               " && f.contentDocument.location.href !== 'about:blank'); } catch (e) { return false; } })()")
+
 LAYOUT = r"""(function(){
   var vw = document.documentElement.clientWidth;
   function box(el){ var r = el.getBoundingClientRect(); return {l: r.left, r: r.right, t: r.top, w: r.width, h: r.height}; }
+  var vh = window.innerHeight;
   function shown(el){ var r = el.getBoundingClientRect(); var cs = getComputedStyle(el);
-    return r.width > 0 && r.height > 0 && cs.visibility !== "hidden" && r.right > 0 && r.left < vw; }
+    return r.width > 0 && r.height > 0 && cs.visibility !== "hidden" && r.right > 0 && r.left < vw
+           && r.bottom > 0 && r.top < vh; }
   var content = document.getElementById("content");
   var frame = document.querySelector(".frame.on");
   var small = [];
@@ -48,6 +55,9 @@ LAYOUT = r"""(function(){
   return {vw: vw, docScroll: document.documentElement.scrollWidth, bodyScroll: document.body.scrollWidth,
           contentScroll: content.scrollWidth, contentW: content.clientWidth,
           frameW: frame ? frame.getBoundingClientRect().width : null, wide: wide.slice(0, 8),
+          // How much of the screen's height the board frame actually gets.
+          frameShown: frame ? Math.max(0, Math.min(frame.getBoundingClientRect().bottom, vh)
+                                          - Math.max(frame.getBoundingClientRect().top, 0)) : 0, vh: vh,
           sidebar: box(document.getElementById("sidebar")), toggle: box(document.getElementById("nav-toggle")),
           toggleShown: shown(document.getElementById("nav-toggle")),
           expanded: document.getElementById("nav-toggle").getAttribute("aria-expanded"),
@@ -78,13 +88,13 @@ def browser(chrome):
 
 def _open(browser, dashboard, size, scheme, tab="runs"):
     browser.emulate(*size, scheme=scheme)
-    browser.open(f"{dashboard.url}/#{tab}", settle=1.0)
+    browser.open(f"{dashboard.url}/#{tab}", ready=FRAME_READY)
     return browser.eval(LAYOUT)
 
 
 def _click(browser, selector):
     browser.eval(f"document.querySelector({selector!r}).click()")
-    browser.eval("new Promise(function(r){ setTimeout(r, 400); })")   # the drawer's 0.2 s transition
+    browser.settle()                                           # the drawer's slide, however long it takes
     return browser.eval(LAYOUT)
 
 
@@ -97,12 +107,14 @@ def test_the_page_never_scrolls_sideways_on_a_phone(dashboard, browser, scheme, 
     assert m["contentScroll"] <= m["contentW"], "the board pane scrolls sideways"
     assert m["frameW"] is not None and m["frameW"] <= m["contentW"], f"the frame ({m['frameW']}) is wider than its pane"
     assert not m["wide"], f"elements reach past the right edge: {m['wide']}"
+    assert m["frameShown"] >= m["vh"] / 2, f"the board gets {m['frameShown']} of {m['vh']} px of the screen"
 
 
 @pytest.mark.parametrize("scheme", ["light", "dark"])
 def test_the_nav_is_reachable_through_the_drawer(dashboard, browser, scheme):
     m = _open(browser, dashboard, PHONE, scheme)
     assert m["sidebar"]["r"] <= 0, "the sidebar should start closed, off screen"
+    assert m["frameShown"] >= m["vh"] / 2, "the board, not the closed drawer, fills the screen"
     assert m["toggleShown"] and m["expanded"] == "false"
     m = _click(browser, "#nav-toggle")
     assert m["expanded"] == "true"
@@ -138,7 +150,7 @@ def test_the_toggle_overrides_the_device_and_is_remembered(dashboard, browser):
     frame_theme = browser.eval('document.querySelector(".frame.on").contentDocument.documentElement'
                                '.getAttribute("data-theme")')
     assert frame_theme == "light", "the board frame is told the choice"
-    browser.open(f"{dashboard.url}/#runs", settle=1.0)
+    browser.open(f"{dashboard.url}/#runs", ready=FRAME_READY)
     m = browser.eval(LAYOUT)
     assert m["theme"] == "light" and m["bg"] == LIGHT_BG, "the choice survives a reload"
     _click(browser, "#nav-toggle")
@@ -173,7 +185,7 @@ def test_a_board_without_its_own_background_is_not_painted_white_in_dark(dashboa
     """#190 review: color-scheme:dark on the shell made Chrome paint a board page that declares no colour
     scheme and no background white, inside a dark shell (an empty board renders such a page)."""
     browser.emulate(*size, scheme="dark")
-    browser.open(f"{dashboard.url}/#{tab}", settle=1.0)
+    browser.open(f"{dashboard.url}/#{tab}", ready=FRAME_READY)
     x, y = browser.eval("(function(){ var r = document.querySelector('.frame.on').getBoundingClientRect();"
                         " return [r.left + r.width / 2, r.bottom - 40]; })()")
     r, g, b = _pixel(browser, x, y)
@@ -205,7 +217,7 @@ def test_a_calendar_opens_on_screen_below_its_button_on_a_phone(dashboard, brows
 def test_the_theme_toggle_does_not_wrap_the_desktop_top_bar(dashboard, browser, tab):
     """#190 review: the toggle pushed the 1280 px top bar onto a second line (56 -> 93 px on Earnings)."""
     browser.emulate(*DESKTOP, scheme="dark")
-    browser.open(f"{dashboard.url}/#{tab}", settle=1.0)
+    browser.open(f"{dashboard.url}/#{tab}", ready=FRAME_READY)
     with_toggle, without = browser.eval("""(function(){
       var bar = document.querySelector('.topbar'), h = bar.getBoundingClientRect().height;
       bar.querySelectorAll('.theme-toggle').forEach(function(b){ b.remove(); });
@@ -216,7 +228,7 @@ def test_the_theme_toggle_does_not_wrap_the_desktop_top_bar(dashboard, browser, 
 
 def test_a_desktop_toggles_the_theme_from_the_sidebar(dashboard, browser):
     browser.emulate(*DESKTOP, scheme="dark")
-    browser.open(f"{dashboard.url}/#runs", settle=1.0)
+    browser.open(f"{dashboard.url}/#runs", ready=FRAME_READY)
     shown = browser.eval("(function(){ var r = document.getElementById('theme-toggle').getBoundingClientRect();"
                          " return r.width > 0 && r.bottom <= innerHeight; })()")
     assert shown, "the sidebar toggle is not on screen"

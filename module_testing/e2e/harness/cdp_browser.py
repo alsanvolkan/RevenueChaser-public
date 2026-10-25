@@ -166,14 +166,29 @@ class Page:
         self.send("Emulation.setEmulatedMedia",
                   features=[{"name": "prefers-color-scheme", "value": scheme}])
 
-    def open(self, url: str, settle: float = 0.3) -> None:
-        """Load ``url`` afresh. Via ``about:blank`` first: a URL that differs from the current one only by its
-        ``#fragment`` is a same-document navigation, which fires no load event and would not reload."""
+    def open(self, url: str, ready: str = "document.readyState === 'complete'") -> None:
+        """Load ``url`` afresh, then wait until ``ready`` (a JS expression) holds and no animation runs.
+
+        Via ``about:blank`` first: a URL that differs from the current one only by its ``#fragment`` is a
+        same-document navigation, which fires no load event and would not reload."""
         for target in ("about:blank", url):
             self._events.clear()
             self.send("Page.navigate", url=target)
             self._await_event("Page.loadEventFired")
-        time.sleep(settle)                         # let the page's own load handlers run
+        self.wait_for(ready)
+        self.settle()
+
+    def wait_for(self, expression: str, timeout: float = TIMEOUT) -> None:
+        """Poll until ``expression`` is truthy in the page: a condition, never a fixed sleep."""
+        deadline = time.monotonic() + timeout
+        while not self.eval(expression):
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"timed out after {timeout:.0f}s waiting for: {expression}")
+            time.sleep(0.05)
+
+    def settle(self) -> None:
+        """Wait until no CSS transition or animation is running (a drawer sliding in, say)."""
+        self.wait_for("document.getAnimations().every(function(a){ return a.playState !== 'running'; })")
 
     def eval(self, expression: str):
         """The value of ``expression`` in the page (a Promise is awaited), as JSON-able data."""
