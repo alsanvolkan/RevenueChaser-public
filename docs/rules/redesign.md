@@ -687,7 +687,7 @@ fade is call share, not ask/bid lean).
 
 R3 bearish + opex tag · R4 no vote / vol-edge 25 / OPTIONS closed · R5
 put-lean / package-risk / squeeze-none (no vote) · R6 β not invented · R7 +20 ·
-**R8 unavailable**. Confidence skips the 10% R8 weight.
+**R8 unavailable**. Confidence counts the 10% R8 weight as missing (it stays in the denominator).
 
 Trader: retail fade none (unavailable), not 0%, direction is not R5's lean.
 
