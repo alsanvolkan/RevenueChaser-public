@@ -25,34 +25,34 @@ from RevenueChaser.module_earnings_radar.models import TradeCard
 # ──────────────────────────────────────────────
 class TestQuadrantBadge:
     def test_leading(self):
-        result = _quadrant_badge("LEADING", 2.5)
+        result = _quadrant_badge("LEADING")
         assert "bd-L" in result
         assert "↑" in result
         assert "LEAD" in result
 
     def test_improving(self):
-        result = _quadrant_badge("IMPROVING", 0.8)
+        result = _quadrant_badge("IMPROVING")
         assert "bd-IM" in result
         assert "↑" in result
         assert "IMPROVI" in result
 
     def test_weakening(self):
-        result = _quadrant_badge("WEAKENING", -1.2)
+        result = _quadrant_badge("WEAKENING")
         assert "bd-W" in result
         assert "↓" in result
 
     def test_lagging(self):
-        result = _quadrant_badge("LAGGING", -2.0)
+        result = _quadrant_badge("LAGGING")
         assert "bd-LG" in result
         assert "↓" in result
 
     def test_empty_quadrant(self):
-        result = _quadrant_badge("", 0)
+        result = _quadrant_badge("")
         assert "bd-I" in result
         assert "N/A" in result
 
     def test_none_quadrant(self):
-        result = _quadrant_badge(None, 0)
+        result = _quadrant_badge(None)
         assert "bd-I" in result
         assert "N/A" in result
 

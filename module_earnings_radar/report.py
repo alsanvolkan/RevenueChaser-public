@@ -590,7 +590,10 @@ function renderDecision() {
   if (st) {
     var ctx = [];
     if (d.structure) ctx.push('<div class="struct-row"><b>Regime</b> <span>' + rcEsc(d.structure) + (d.structure_tip ? ' — ' + rcEsc(d.structure_tip) : '') + '</span></div>');
-    if (d.inst_flow_label) ctx.push('<div class="struct-row"><b>Flow</b> <span>' + rcEsc(d.inst_flow_label) + ' · ' + fmtMoney(d.inst_flow_net) + ' net'
+    // A failed flow request measured nothing: its label only, never a "$0 net" beside it.
+    if (d.flow_source === 'failed') ctx.push('<div class="struct-row"><b>Flow</b> <span class="tone-neutral">'
+        + rcEsc(d.inst_flow_label || 'Flow unavailable (provider failure)') + '</span></div>');
+    else if (d.inst_flow_label) ctx.push('<div class="struct-row"><b>Flow</b> <span>' + rcEsc(d.inst_flow_label) + ' · ' + fmtMoney(d.inst_flow_net) + ' net'
         + (d.inst_flow_prints ? ' · ' + d.inst_flow_prints + ' prints' : '')
         + (d.inst_flow_span != null ? ' · ' + d.inst_flow_span + 'h' : '') + '</span></div>');
     if (d.leaps && d.leaps !== 'N/A') {
@@ -1094,7 +1097,7 @@ def _badge(tone: str, label: str, extra: str = "", icon: str = "", title: str = 
     return f'<span class="{cls}"{tip}>{ic}{esc(label)}</span>'
 
 
-def _quadrant_badge(quadrant: str, score: float) -> str:
+def _quadrant_badge(quadrant: str) -> str:
     if not quadrant:
         return '<span class="badge bd-I tone-info">N/A</span>'
     lead = quadrant in ("LEADING", "IMPROVING")
@@ -1803,7 +1806,7 @@ def export_html(cards: list, calendar_events: list[dict] = None, nrc_results: di
                 "ticker": f'<span class="ticker">{th}</span>{_hard_block_icon(card)}{excl_tag}',
                 "name": name,
                 "sector": sect,
-                "rotation": _quadrant_badge(card.rotation_quadrant, card.rotation_score),
+                "rotation": _quadrant_badge(card.rotation_quadrant),
                 "cov": _conf_cell(card.confidence_score),
                 "bias": _bias_cell(bias_display, card.direction_score),
                 "action": (f'<span class="badge tone-{act_tone}" style="font-size:9px" title="{_action_tip(card)}">'
@@ -1927,6 +1930,7 @@ def export_html(cards: list, calendar_events: list[dict] = None, nrc_results: di
             "structure": c.gex_structure or "",
             "structure_tip": _gamma_regime_tip(c) if c.gex_structure else "",
             "inst_flow_label": c.inst_flow_label or "",
+            "flow_source": c.flow_source or "",
             "inst_flow_net": c.inst_flow_net or 0,
             "inst_flow_tone": c.inst_flow_tone or "",
             "inst_flow_prints": getattr(c, "inst_flow_prints", 0) or 0,
