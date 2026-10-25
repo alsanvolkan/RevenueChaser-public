@@ -257,3 +257,20 @@ def test_only_the_map_follows_the_screen_height_on_a_phone(board, browser):
                        " return Math.round(c.getBoundingClientRect().height - c.querySelector('.js-plotly-plot')"
                        ".getBoundingClientRect().height); })")
     assert all(extra <= 1 for extra in box), f"a chart box is taller than its chart: {box}"
+
+
+def test_the_tornado_labels_stay_inside_the_chart_on_a_phone(board, browser):
+    """#195 review SHOULD 1: the 16 px margin pushed the level labels past the chart's right edge."""
+    _open(browser, board, PHONE)
+    browser.wait_for(MAP_SHORT)
+    browser.wait_for("document.querySelectorAll('.chart')[1].querySelector('.js-plotly-plot')._rcNarrow === true")
+    probe = """(function(){ var c = document.querySelectorAll('.chart')[1], s = c.querySelector('.main-svg').getBoundingClientRect();
+      return Array.prototype.filter.call(c.querySelectorAll('g.annotation'), function(a){
+        var r = a.getBoundingClientRect(); return r.width > 0 && (r.right > s.right + 1 || r.left < s.left - 1); })
+        .map(function(a){ return a.textContent.slice(0, 24); }); })()"""
+    try:
+        browser.wait_for(f"{probe}.length === 0", timeout=8)         # the footer shrinks after the relayout
+    except RuntimeError:
+        pass
+    out = browser.eval(probe)
+    assert not out, f"tornado labels outside the chart: {out}"

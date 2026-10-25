@@ -716,9 +716,19 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     if(!gd || !gd.layout || !window.Plotly) return;
     var narrow = gd.clientWidth < 520;
     if(gd._rcNarrow === narrow) return;
-    if(!gd._rcOrig) gd._rcOrig = {r: gd.layout.margin.r, l: gd.layout.margin.l, h: gd._fullLayout.height};
+    if(!gd._rcOrig) gd._rcOrig = {r: gd.layout.margin.r, l: gd.layout.margin.l, h: gd._fullLayout.height,
+      ann: (gd.layout.annotations || []).map(function(a){ return {x: a.x, xanchor: a.xanchor, xshift: a.xshift, xref: a.xref, fs: (a.font && a.font.size) || 11, text: a.text}; })};
     gd._rcNarrow = narrow;
     var u = {'margin.r': narrow ? 16 : gd._rcOrig.r, 'margin.l': narrow ? Math.min(gd._rcOrig.l, 48) : gd._rcOrig.l};
+    // The level labels sit in the right margin (xref paper, left-anchored): with the margin gone they move inside
+    // the plot, right-aligned.
+    (gd.layout.annotations || []).forEach(function(a, i){
+      var o = gd._rcOrig.ann[i];
+      if(!o || o.xref !== 'paper' || typeof o.x !== 'number' || o.x < 1 || o.xanchor !== 'left') return;
+      u['annotations[' + i + '].x'] = narrow ? 1 : o.x;
+      u['annotations[' + i + '].xanchor'] = narrow ? 'right' : o.xanchor;
+      u['annotations[' + i + '].xshift'] = narrow ? -4 : (o.xshift || 0);
+    });
     // Only the position map follows the screen's height, and only on a phone.
     if(gd.closest('.chart-map')){
       u.autosize = true;   // a height given to relayout would otherwise switch autosize off
@@ -726,7 +736,25 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
       gd.style.height = u.height + 'px';
       if(gd.parentNode.style.height) gd.parentNode.style.height = u.height + 'px';   // Plotly's own wrapper carries the height too
     }
-    Plotly.relayout(gd, u);
+    (gd.layout.annotations || []).forEach(function(a, i){
+      var o = gd._rcOrig.ann[i];
+      if(!o) return;
+      if(!narrow) u['annotations[' + i + '].font.size'] = o.fs;            // back to its own size when the window grows
+      // A footer made of spans separated by two spaces (the tornado's legend) takes one line per part on a phone.
+      if(typeof o.text === 'string' && /  <span/.test(o.text)) u['annotations[' + i + '].text'] = narrow ? o.text.replace(/  (?=<span)/g, '<br>') : o.text;
+    });
+    var done = Plotly.relayout(gd, u);
+    // A label wider than the chart (the tornado's footer) shrinks to fit.
+    if(narrow && done && done.then) done.then(function(){
+      var s = gd.querySelector('.main-svg').getBoundingClientRect(), v = {};
+      gd.querySelectorAll('g.annotation').forEach(function(g){
+        var i = +g.getAttribute('data-index'), r = g.getBoundingClientRect(), o = gd._rcOrig.ann[i];
+        if(!o || !r.width || (r.left >= s.left + 4 && r.right <= s.right - 4)) return;
+        var mid = (r.left + r.right) / 2, room = 2 * Math.min(mid - s.left, s.right - mid) - 8;     // centred text
+        v['annotations[' + i + '].font.size'] = Math.max(8, Math.floor(o.fs * Math.max(room, 40) / r.width));
+      });
+      if(Object.keys(v).length) Plotly.relayout(gd, v);
+    });
   }
   function all(){ document.querySelectorAll('.js-plotly-plot').forEach(adapt); }
   window.addEventListener('load', function(){ setTimeout(all, 50); });
