@@ -191,13 +191,25 @@ def test_a_board_whose_tables_are_all_measured_and_stored_can_score_the_name(raw
         assert fit[key]["missing"] == []
 
 
-def test_a_measured_table_with_no_row_makes_the_board_unable_and_names_what_is_missing(rawstore_tmp_db):
-    """Co-movement reads equity_universe and swing_ohlc; the seed has no swing_ohlc row."""
+def test_co_movement_scores_a_name_with_daily_bars_and_no_legacy_cache_row(rawstore_tmp_db):
+    """Co-movement reads the daily price bars since #379 (``module_comovement/ohlc.py``), not
+    ``swing_ohlc``: the seed has bars and no legacy-cache row, and the board can score the name."""
     _seed_every_dataset()
+    assert rawstore.count("swing_ohlc") == 0
+    fit = _boards_of("MU")
+
+    assert fit["module_comovement"]["state"] == "can"
+    assert fit["module_comovement"]["missing"] == []
+
+
+def test_a_measured_table_with_no_row_makes_the_board_unable_and_names_what_is_missing(rawstore_tmp_db):
+    """A universe name with no daily bar: Co-movement cannot score it and names the bars."""
+    _seed_every_dataset()
+    rawstore.execute("DELETE FROM price_bars_daily", db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw"))
     fit = _boards_of("MU")
 
     assert fit["module_comovement"]["state"] == "cannot"
-    assert fit["module_comovement"]["missing"] == ["legacy OHLC cache (SPY fallback)"]
+    assert fit["module_comovement"]["missing"] == ["daily price bars"]
 
 
 def test_a_name_with_only_d01_bars_cannot_be_scored_by_the_boards_this_drill_measures(rawstore_tmp_db):

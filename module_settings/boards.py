@@ -184,10 +184,11 @@ BOARD_INPUTS: list[dict] = [
            ["discord_channels", "discord_messages", "discord_export_runs"],
            lambda: _json("discord", "discord_latest.json")),
     _board("module_comovement", "Co-movement",
-           ["equity_universe", "swing_ohlc"],
+           # The engine reads the daily price bars since #379 (module_comovement/ohlc.py), not swing_ohlc.
+           ["equity_universe", "price_bars_daily"],
            lambda: comov_config.COMOVEMENT_JSON,
            funnel="funnel_steps",
-           price_basis="dividend-adjusted closes (yfinance auto_adjust); correct for returns",
+           price_basis="daily price bars, split- and dividend-adjusted closes; correct for returns",
            params=_comovement_params, settings=_comovement_settings),
     _board("module_value_chain", "Value Chain",
            ["chain_filings", "chain_mentions", "chain_meta", "sec_company_tickers",
