@@ -60,9 +60,14 @@ def chain_rows(ticker: str, contracts: list[dict], meta: dict) -> list[dict]:
 
 def _persist(ticker: str, contracts: list[dict], meta: dict) -> None:
     rows = chain_rows(ticker, contracts, meta)
-    # write mode "replace" + group_by ticker: only this ticker's chain is swapped.
-    rawstore.write_rows("oipd_chain", rows)
-    rawstore.write_rows("oipd_meta", [meta])
+
+    def _write(tx) -> None:
+        # write mode "replace" + group_by ticker: only this ticker's chain is swapped.
+        tx.write_rows("oipd_chain", rows)
+        tx.write_rows("oipd_meta", [meta])
+
+    # One transaction (both tables live in raw.duckdb): a failure between them leaves neither written.
+    rawstore.atomic(_write)
 
 
 def _contracts_from_store(rows: list[dict]) -> list[dict]:
