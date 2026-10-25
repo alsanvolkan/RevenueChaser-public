@@ -196,3 +196,28 @@ def test_a_calendar_opens_on_screen_below_its_button_on_a_phone(dashboard, brows
     assert m["h"] > 0, "the pop-up did not open"
     assert m["top"] >= m["btn"], f"the pop-up covers its own button or sits above it: {m}"
     assert m["bottom"] <= m["vh"] and m["left"] >= 0 and m["right"] <= m["vw"], f"not fully on screen: {m}"
+
+
+@pytest.mark.parametrize("tab", ["module_earnings_radar", "module_swing_potential", "module_fundamentals",
+                                 "module_sec_13f", "module_sector_rotation"])
+def test_the_theme_toggle_does_not_wrap_the_desktop_top_bar(dashboard, browser, tab):
+    """#190 review: the toggle pushed the 1280 px top bar onto a second line (56 -> 93 px on Earnings)."""
+    browser.emulate(*DESKTOP, scheme="dark")
+    browser.open(f"{dashboard.url}/#{tab}", settle=1.0)
+    with_toggle, without = browser.eval("""(function(){
+      var bar = document.querySelector('.topbar'), h = bar.getBoundingClientRect().height;
+      bar.querySelectorAll('.theme-toggle').forEach(function(b){ b.remove(); });
+      return [h, bar.getBoundingClientRect().height];
+    })()""")
+    assert with_toggle == without, f"{tab}: the toggle grows the top bar from {without} to {with_toggle} px"
+
+
+def test_a_desktop_toggles_the_theme_from_the_sidebar(dashboard, browser):
+    browser.emulate(*DESKTOP, scheme="dark")
+    browser.open(f"{dashboard.url}/#runs", settle=1.0)
+    shown = browser.eval("(function(){ var r = document.getElementById('theme-toggle-side').getBoundingClientRect();"
+                         " return r.width > 0 && r.bottom <= innerHeight; })()")
+    assert shown, "the sidebar toggle is not on screen"
+    browser.eval("document.getElementById('theme-toggle-side').click()")
+    assert browser.eval("document.documentElement.getAttribute('data-theme')") == "light"
+    assert browser.eval("document.getElementById('theme-toggle-side').textContent") == "Theme: Light"

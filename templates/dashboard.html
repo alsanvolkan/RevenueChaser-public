@@ -176,12 +176,18 @@ button:disabled{opacity:.5;cursor:default}
    desktop and on the first line on a phone. */
 .nav-toggle,.tab-title,.scrim{display:none}
 .status{display:contents}
+/* One theme toggle per layout, sharing state: in the sidebar on a desktop (the top bar has no room left at
+   1280 px), in the top bar on a phone (the sidebar is a closed drawer there). */
 .theme-toggle{order:1;min-width:64px;padding:0 10px}
+.topbar .theme-toggle{display:none}
+.side-theme{display:block;width:100%;margin:0 0 10px;text-align:left}
 @media (max-width: 900px){
   body{grid-template-columns:minmax(0,1fr)}
   .sidebar{position:fixed;inset:0 auto 0 0;width:min(300px,85vw);z-index:40;transform:translateX(-100%);
     visibility:hidden;transition:transform .2s ease,visibility .2s;box-shadow:4px 0 24px var(--shadow)}
   body.nav-open .sidebar{transform:none;visibility:visible}
+  .topbar .theme-toggle{display:inline-block}
+  .side-theme{display:none}
   .brand{padding:2px 14px 8px}
   .brand .logo,.brand .logo img{width:96px;height:96px}
   body.nav-open .scrim{display:block;position:fixed;inset:0;background:var(--scrim);z-index:30}
@@ -228,7 +234,10 @@ button:disabled{opacity:.5;cursor:default}
     </div>
     {% endfor %}
   </nav>
-  <div class="side-foot">Local dashboard · iframe tabs<br>on-demand fetch per module</div>
+  <div class="side-foot">
+    <button id="theme-toggle-side" class="theme-toggle side-theme" type="button"
+            aria-label="Theme: follows the device. Change it" title="Theme: follows the device">Theme: Auto</button>
+    Local dashboard · iframe tabs<br>on-demand fetch per module</div>
 </aside>
 <div class="scrim" id="nav-scrim"></div>
 <div class="main">
@@ -1389,16 +1398,18 @@ function themeFrames(choice, list){
   });
 }
 function themeShow(){
-  var b = document.getElementById('theme-toggle');
-  if(!b) return;
-  b.textContent = THEME_LABELS[THEME_NOW];
-  b.title = 'Theme: ' + THEME_WORDS[THEME_NOW];
-  b.setAttribute('aria-label', 'Theme: ' + THEME_WORDS[THEME_NOW] + '. Change it');
+  document.querySelectorAll('.theme-toggle').forEach(function(b){
+    b.textContent = (b.classList.contains('side-theme') ? 'Theme: ' : '') + THEME_LABELS[THEME_NOW];
+    b.title = 'Theme: ' + THEME_WORDS[THEME_NOW];
+    b.setAttribute('aria-label', 'Theme: ' + THEME_WORDS[THEME_NOW] + '. Change it');
+  });
 }
-document.getElementById('theme-toggle').addEventListener('click', function(){
-  THEME_NOW = rcThemeSet(themeNext(THEME_NOW));
-  themeFrames(THEME_NOW);
-  themeShow();
+document.querySelectorAll('.theme-toggle').forEach(function(b){
+  b.addEventListener('click', function(){
+    THEME_NOW = rcThemeSet(themeNext(THEME_NOW));
+    themeFrames(THEME_NOW);
+    themeShow();
+  });
 });
 // Another window of the dashboard changed it.
 window.addEventListener('storage', function(e){
