@@ -211,16 +211,17 @@ def pull_history(uw, start: str, end: str, *, max_calls: int = DEFAULT_MAX_CALLS
                 if auth_streak >= AUTH_STREAK_STOP:
                     counts["stop_reason"] = "auth_streak"
                     break
-                continue
-            auth_streak = 0
-            if raw is not None:
-                counts["written"] += 1
-                counts["first_written"] = counts["first_written"] or day
-                counts["last_written"] = day
-                if len(counts["shapes"]["sessions"]) < shape_sessions:
-                    shapes = {name: _shape(raw.get(name)) for name in SHAPE_ENDPOINTS}
-                    counts["shapes"]["sessions"][day] = shapes
-                    logger.info("spx history %s: dated volatility answers %s", day, json.dumps(shapes))
+            else:
+                auth_streak = 0
+                if raw is not None:
+                    counts["written"] += 1
+                    counts["first_written"] = counts["first_written"] or day
+                    counts["last_written"] = day
+                    if len(counts["shapes"]["sessions"]) < shape_sessions:
+                        shapes = {name: _shape(raw.get(name)) for name in SHAPE_ENDPOINTS}
+                        counts["shapes"]["sessions"][day] = shapes
+                        logger.info("spx history %s: dated volatility answers %s", day, json.dumps(shapes))
+            # After a failed day too: that is where an outage opens the client's breaker (#194 review).
             if _breaker_open(uw):
                 counts["stop_reason"] = "breaker_open"
                 break

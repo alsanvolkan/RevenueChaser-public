@@ -192,13 +192,36 @@ def test_stops_after_a_run_of_rejected_days(tmp_path, monkeypatch):
     assert len(uw.calls) == 1 + 5
 
 
-def test_stops_when_the_client_breaker_opens(tmp_path):
-    class Broken(Recorder):
-        def health(self):
-            return {"breaker_open": True}
-    counts = _pull(tmp_path, Broken())
+def _real_client(monkeypatch, handler):
+    """A real ``UWClient`` (retries, breaker, accounting) over an in-memory transport."""
+    monkeypatch.setattr(unusual_whales, "BASE", "http://uw.test/api")
+    uw = unusual_whales.UWClient("test-key", sleep=lambda s: None)
+    uw._client = httpx.Client(transport=httpx.MockTransport(handler), headers=uw.headers)
+    return uw
+
+
+FEB = [f"2025-02-{d:02d}" for d in (3, 4, 5, 6, 7, 10, 11, 12, 13, 14)]
+
+
+def _feb_candles(asof=None, ticker=None):
+    return [{"date": d, "close": 5600.0} for d in FEB if d <= str(asof)]
+
+
+def test_stops_when_the_client_breaker_opens_on_failed_days(tmp_path, monkeypatch):
+    """The real path: every day fails (503), so the breaker opens on a failed day, not a written one."""
+    monkeypatch.setattr(snap, "stored_spx_candles", _feb_candles)
+    seen = []
+
+    def down(request):
+        seen.append(request.url.path)
+        return httpx.Response(503)
+    uw = _real_client(monkeypatch, down)
+    counts = _pull(tmp_path, uw, start=FEB[0], end=FEB[-1])
+    # iv-rank and four days each fail once after 3 attempts: the fifth final failure opens the breaker
     assert counts["stop_reason"] == "breaker_open"
-    assert counts["written"] == 1
+    assert counts["failed"] == unusual_whales.BREAKER_THRESHOLD - 1 and counts["written"] == 0
+    assert counts["calls"] == unusual_whales.BREAKER_THRESHOLD
+    assert counts["http_requests"] == len(seen) == unusual_whales.BREAKER_THRESHOLD * unusual_whales.MAX_ATTEMPTS
 
 
 @pytest.mark.parametrize("start,end", [("2025-03-12", "2025-03-10"), ("2025-03-10", "2025-03-15"),
