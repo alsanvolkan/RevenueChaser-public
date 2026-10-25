@@ -2699,12 +2699,13 @@ def test_two_flows_sharing_one_pair_draw_side_by_side_so_neither_colour_hides_th
     assert any('stroke="#e0a030"' in tag for tag in shared), "edgar's line is still its own"
 
 
-def test_a_store_file_outside_the_five_files_draws_in_muted_ink_and_says_so():
+def test_a_store_file_outside_the_four_files_draws_in_muted_ink_and_says_so():
     svg = report._flow_svg(report.flow_graph([{"key": "x", "source": "sec", "writer": "W"}]))
     assert report.FLOW_NO_STORE in svg
     assert 'stroke="#8a93a6"' in svg
     section = _flow_section([{"key": "x", "source": "sec", "writer": "W"}])
     assert "names no store file" in section, "the legend explains the grey line"
+    assert len(report.DB_PILLS) == 4 and "outside the four" in section, "the legend counts the files it lists"
 
 
 def test_the_flow_legend_names_the_four_store_files():

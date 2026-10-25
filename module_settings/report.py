@@ -79,7 +79,7 @@ table.inv .warnv{color:var(--amber)}
 .gap-none{color:var(--neon)}
 /* G6b (#124): the Data Flow picture — provider → job → store file, rendered server-side from the
    table's own rows. Page weight only: it reads no store and takes no second pass over the registry.
-   A line's colour is its store file (the pills' hues); the legend names the five, so colour is not
+   A line's colour is its store file (the pills' hues); the legend names the four, so colour is not
    the only signal. Press a provider or a job to follow its lines, press it again to show all. */
 .flow{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:10px 16px;margin-bottom:14px;overflow-x:auto}
 .flow>summary{cursor:pointer;font-size:15px;font-weight:600;letter-spacing:-.2px}
@@ -1238,7 +1238,7 @@ def _flow_provider(value) -> str:
 
 
 def _flow_store_order(name: str) -> tuple:
-    """The legend's own order for the five store files, then any other name by its spelling."""
+    """The legend's own order for the four store files, then any other name by its spelling."""
     return (DB_PILLS.index(name) if name in DB_PILLS else len(DB_PILLS), name.lower())
 
 
@@ -1297,7 +1297,7 @@ def _flow_node(kind: str, name: str, x: int, y: int, width: int, count: int) -> 
     title = _html.escape(f"{said} — {_flow_count(count)}")
     if kind == "store":
         # The border carries the file's hue. The palette lives in DB_COLORS, so it is written
-        # inline: an inline style outranks the stylesheet's default border, and the five colours
+        # inline: an inline style outranks the stylesheet's default border, and the four colours
         # keep one source.
         return (f'<g class="flow-node" data-node="{node_id}"><title>{title}</title>'
                 f'<rect x="{x}" y="{y}" width="{width}" height="{FLOW_H}" rx="6"'
@@ -1381,12 +1381,12 @@ def _flow_svg(graph: dict) -> str:
 
 
 def _flow_legend(store_names: list[str]) -> str:
-    """The five store files in the pills' own hues, so a line's colour is named once (G2's palette)."""
+    """The four store files in the pills' own hues, so a line's colour is named once (G2's palette)."""
     items = "".join(f'<span id="flow-store-{db}"><i style="background:{DB_COLORS[db]}"></i>'
                     f"{db}.duckdb</span>" for db in DB_PILLS)
     extra = ("" if all(name in DB_PILLS for name in store_names) else
              f'<span id="flow-store-unknown"><i style="background:{FLOW_UNKNOWN_COLOR}"></i>'
-             "a grey line means the registry names no store file, or names one outside the five</span>")
+             "a grey line means the registry names no store file, or names one outside the four</span>")
     return (f'<div class="flowlegend" id="flow-legend"><b>Line colour is the store file:</b>'
             f"{items}{extra}</div>")
 
