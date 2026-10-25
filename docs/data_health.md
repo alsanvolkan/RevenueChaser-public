@@ -376,8 +376,10 @@ or moves a backup file.
 
 The retention rule has one copy in the code, read by both the nightly prune and this dry run: the
 newest five raw snapshots, two EDGAR, two document archives, two Discord, five history, two prices,
-and twelve weekly raw copies. The newest copy of every list is **never** offered as expired,
-whatever a keep count computes, because a restore reads the newest snapshot.
+and twelve weekly raw copies. An archive prefix the job no longer writes (`discord_media_*.zip`,
+retired by the mirror) has its own line that keeps one copy (#153): the nightly prune never touches
+it, so without that line its old archives would never be listed. The newest copy of every list is
+**never** offered as expired, whatever a keep count computes, because a restore reads the newest snapshot.
 
 ### 3.5 Automations panel
 

@@ -965,7 +965,8 @@ Two separate things, deliberately not conflated:
   The mirror sits on the same disk as the live tree, so on its own it protects against deletion and
   corruption, not against losing the disk; the off-machine copy below copies it to a second folder.
   Old `discord_media_*.zip` archives from earlier backups are not touched or pruned any more
-  and can be deleted by hand once a mirror run has succeeded.
+  and can be deleted by hand once a mirror run has succeeded. The Data Health dry run lists all
+  but the newest of them as expired (`RETIRED_ARCHIVE_PREFIXES`, #153).
 - **Weekly raw copy (#277, bounded by #342)** — the first verified `raw_*` snapshot of each ISO week (by its UTC
   stamp) is also copied to `weekly/` in the same backup folder. The copy is written under a temporary name,
   fingerprinted against the snapshot (row count and content checksum per table) and only then renamed, so a failed
