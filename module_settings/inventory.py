@@ -70,6 +70,7 @@ def _begin_call() -> None:
     _CALL.errors = []
     _CALL.summaries = {}
     _CALL.max_values = {}
+    _CALL.failed_dbs = set()
 
 
 def _end_call() -> None:
@@ -78,6 +79,7 @@ def _end_call() -> None:
     _CALL.errors = None
     _CALL.summaries = None
     _CALL.max_values = None
+    _CALL.failed_dbs = None
 
 
 def _summary(key: str, fn, *args):
@@ -176,6 +178,9 @@ def _existing_tables(db: str) -> set[str]:
     except Exception as exc:  # noqa: BLE001 - recorded (F4), degrades to "no data"
         _record(f"db:{db}", "_existing_tables", exc)
         names = set()
+        failed = getattr(_CALL, "failed_dbs", None)
+        if failed is not None:   # the drill reads every table in this file as unknown, not absent (#143)
+            failed.add(db)
     if cache is not None:
         cache[db] = names
     return names
@@ -186,6 +191,21 @@ def _table_exists(name: str) -> bool:
     if name not in rawstore.MANIFEST:
         return False
     return name in _existing_tables(_db_of(name))
+
+
+def _file_unreadable(name: str) -> bool:
+    """Whether this call could not read the table list of ``name``'s store file (#143).
+
+    A locked or broken file fails on its table list first, so ``_table_exists`` is False for every
+    table in it; the drill must read those tables as unknown, never as absent.
+    """
+    return name in rawstore.MANIFEST and _db_of(name) in (getattr(_CALL, "failed_dbs", None) or ())
+
+
+def _absent(table: str, empty: dict) -> dict:
+    """The presence record of a table ``_table_exists`` did not find: absent, or unknown when its
+    file's table list could not be read."""
+    return dict(empty, error=True) if _file_unreadable(table) else empty
 
 
 def _existing_columns(table: str) -> set[str]:
@@ -640,7 +660,7 @@ def _exists_row(table: str, ticker: str) -> bool | None:
     ``None`` when the read failed (recorded): unknown, never "no row" (#143, the G3 rule).
     """
     if not _table_exists(table):
-        return False
+        return None if _file_unreadable(table) else False
     try:
         rows = rawstore.query(
             f"SELECT 1 FROM {table} WHERE ticker = ? LIMIT 1",
@@ -655,7 +675,7 @@ def _swing_presence(ticker: str) -> dict:
     """Bar count + newest ``ts`` for ``ticker`` in ``swing_ohlc`` (the SPY-fallback cache)."""
     empty = {"bars": 0, "newest": None}
     if not _table_exists("swing_ohlc"):
-        return empty
+        return _absent("swing_ohlc", empty)
     try:
         rows = rawstore.query(
             "SELECT COUNT(*) AS n, MAX(ts) AS newest FROM swing_ohlc WHERE ticker = ?",
@@ -678,7 +698,7 @@ def _d01_presence(ticker: str) -> dict:
     """
     empty = {"bars": 0, "newest": None}
     if not _table_exists("price_bars_daily"):
-        return empty
+        return _absent("price_bars_daily", empty)
     try:
         rows = rawstore.query(
             "SELECT COUNT(*) AS n, MAX(session_date) AS newest FROM price_bars_daily WHERE ticker = ?",
@@ -707,7 +727,7 @@ def _presence(table: str, ticker: str, *, date_column: str, count_key: str = "ro
     if source_column:
         empty["source"] = None
     if not _table_exists(table):
-        return empty
+        return _absent(table, empty)
     source = f", arg_max({source_column}, {date_column}) AS src" if source_column else ""
     try:
         rows = rawstore.query(
@@ -732,7 +752,7 @@ def _quote_presence(ticker: str) -> dict:
     """
     empty = {"rows": 0, "newest": None, "source": None}
     if not _table_exists("quote_snapshot"):
-        return empty
+        return _absent("quote_snapshot", empty)
     from RevenueChaser.core import quotes
     try:
         got = quotes.latest_caps([ticker]).get(ticker) or {}
@@ -756,7 +776,7 @@ def _edgar_presence(ticker: str) -> dict:
     """
     empty = {"periods": 0, "newest": None}
     if not _table_exists("edgar_financials"):
-        return empty
+        return _absent("edgar_financials", empty)
     try:
         row = rawstore.get("edgar_financials", ticker)
     except Exception as exc:  # noqa: BLE001
