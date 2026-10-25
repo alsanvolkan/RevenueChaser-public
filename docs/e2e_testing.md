@@ -88,6 +88,7 @@ module_testing/e2e/
 ├── test_board_<name>.py            # one per board
 ├── test_board_html_browser.py      # hostile fixtures in headless Chrome (ADR-X1)
 ├── test_phone_shell.py             # the shell at 390 px and 1280 px, light and dark (#184)
+├── test_cdp_browser.py             # the DevTools harness stays off the network
 └── test_live_provider_fetch.py     # the --live tier
 ```
 
@@ -104,7 +105,9 @@ the window to 500 px), so the harness uses device-metrics emulation for an exact
 for `prefers-color-scheme`. Against a live dashboard it checks that at 390 px the page never scrolls sideways,
 the nav is reachable through the drawer, the shell's touch targets are at least 44 px, and light and dark both
 render, by the device and by the toggle (remembered across a reload); at 1280 px the sidebar stays a column.
-It finds Chrome the way the HTML guard does, and fails under `CI=true` without one.
+It finds Chrome the way the HTML guard does, and fails under `CI=true` without one. Chrome resolves no host
+but loopback (`--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1`: the rule matches
+an IP literal too, so the dashboard's `127.0.0.1` is excluded by name); `test_cdp_browser.py` holds both halves.
 
 ### The mock provider server
 

@@ -7,7 +7,7 @@ a layout check needs and neither of which a command-line flag offers.
 
 No pip dependency: Chrome is found as ``$RC_CHROME`` or on ``PATH`` (the board HTML guard looks the same
 way), and the DevTools WebSocket is a few dozen lines over a loopback socket, which the e2e tier allows
-(root ``conftest.py``). Nothing here reaches past ``127.0.0.1``.
+(root ``conftest.py``). Chrome resolves no host but loopback, so nothing reaches past ``127.0.0.1``.
 """
 from __future__ import annotations
 
@@ -105,6 +105,9 @@ class Page:
         self._profile = tempfile.mkdtemp(prefix="rc-cdp-")
         args = [chrome, "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
                 "--hide-scrollbars", "--remote-debugging-port=0", f"--user-data-dir={self._profile}",
+                # Off the network, as the board HTML guard is: every host fails to resolve except loopback.
+                # The rule matches an IP literal too, so 127.0.0.1 (the e2e dashboard) is excluded by name.
+                "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1",
                 "about:blank"]
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             args.insert(1, "--no-sandbox")   # Chrome refuses to sandbox as root (a container)
