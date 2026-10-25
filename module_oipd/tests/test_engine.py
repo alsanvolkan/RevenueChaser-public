@@ -331,4 +331,7 @@ class TestDensityPayload:
         html = report.render_oipd_dashboard(payload)
         assert "e.density_flag" in html and "e.density_note" in html
         assert "statistics unreliable" in html and ".muted{" in html
+        # #49: the stat-tile row array is assigned via innerHTML, so the note must be escaped there too
+        assert "rcEsc(e.density_note)" in html
+        assert ",e.density_note," not in html
         assert "e.g_min<0" not in html, "the old label logic must not come back"
