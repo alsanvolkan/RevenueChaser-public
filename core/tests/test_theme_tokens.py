@@ -1,6 +1,6 @@
 """The shared theme tokens (#184): one palette per scheme, defined once in ``core/reporting_common``, used by the
-shell and offered to the boards. Automatic via ``prefers-color-scheme``, and a manual choice stored in
-``localStorage`` that wins over it."""
+shell and offered to the boards. Dark by default on every device (avo, 25 Oct 2026); Light, or Auto (follow
+the device's ``prefers-color-scheme``), when the reader chooses it, remembered in ``localStorage``."""
 from __future__ import annotations
 
 import json
@@ -53,14 +53,15 @@ def _block(css: str, selector: str) -> str:
     return m.group(1)
 
 
-def test_the_css_defaults_to_dark_follows_the_device_and_obeys_the_manual_choice():
+def test_the_css_is_dark_by_default_on_any_device_and_obeys_the_choice():
+    """avo, 25 Oct 2026: the default is dark. A light device shows light only when the reader chose Auto."""
     css = rc.THEME_CSS
     dark = _block(css, ":root")
     assert "--bg:#05111F" in dark and "color-scheme:dark" in dark
-    # Automatic: a light device gets light unless the manual choice says dark.
     m = re.search(r"@media\s*\(prefers-color-scheme:\s*light\)\s*\{(.*?)\}\s*\}", css, re.S)
     assert m, "no prefers-color-scheme: light block"
-    assert ':root:not([data-theme="dark"])' in m.group(1)
+    selector = m.group(1).split("{")[0].strip()
+    assert selector == ':root[data-theme="auto"]', f"a light device gets light without choosing it: {selector}"
     assert "--bg:" + rc.THEME_TOKENS["light"]["bg"] in m.group(1)
     # Manual: data-theme="light" forces light on a dark device.
     forced = _block(css, ':root[data-theme="light"]')
@@ -92,7 +93,8 @@ globalThis.addEventListener = function(){};
 """
 
 
-@pytest.mark.parametrize("stored, expected", [("light", "light"), ("dark", "dark"), (None, None), ("bogus", None)])
+@pytest.mark.parametrize("stored, expected", [("light", "light"), ("dark", "dark"), ("auto", "auto"),
+                                              (None, "dark"), ("bogus", "dark")])
 def test_the_page_applies_the_stored_choice(tmp_path, stored, expected):
     store = "{}" if stored is None else json.dumps({rc.THEME_STORAGE_KEY: stored})
     script = (_DOC + f"var _s = {store};\n"
@@ -102,26 +104,28 @@ def test_the_page_applies_the_stored_choice(tmp_path, stored, expected):
     assert _node(script, tmp_path) == expected
 
 
-def test_a_storage_that_throws_leaves_the_page_on_auto(tmp_path):
+def test_a_storage_that_throws_leaves_the_page_on_dark(tmp_path):
     """Private windows and blocked site data throw on every localStorage access."""
     script = (_DOC + "Object.defineProperty(globalThis, 'localStorage', {get: function(){ throw new Error('denied'); }});\n"
               + rc.THEME_JS + "\n"
               "var r = rcThemeSet('light');\n"
               "console.log(JSON.stringify([attrs['data-theme'] || null, rcThemeGet()]));")
     # The choice still applies to this page; it just is not remembered.
-    assert _node(script, tmp_path) == ["light", "auto"]
+    assert _node(script, tmp_path) == ["light", "dark"]
 
 
-def test_choosing_auto_forgets_the_manual_choice(tmp_path):
+def test_choosing_dark_forgets_the_stored_choice(tmp_path):
+    """Dark is the default, so it is stored as nothing; Light and Auto are remembered."""
     script = (_DOC + "var _s = {};\n"
               "globalThis.localStorage = {getItem: function(k){ return k in _s ? _s[k] : null; },"
               " setItem: function(k, v){ _s[k] = v; }, removeItem: function(k){ delete _s[k]; }};\n"
               + rc.THEME_JS + "\n"
               "var out = [];\n"
-              "rcThemeSet('dark'); out.push([attrs['data-theme'] || null, _s['rc-theme'] || null]);\n"
+              "rcThemeSet('light'); out.push([attrs['data-theme'] || null, _s['rc-theme'] || null]);\n"
               "rcThemeSet('auto'); out.push([attrs['data-theme'] || null, _s['rc-theme'] || null]);\n"
+              "rcThemeSet('dark'); out.push([attrs['data-theme'] || null, _s['rc-theme'] || null]);\n"
               "console.log(JSON.stringify(out));")
-    assert _node(script, tmp_path) == [["dark", "dark"], [None, None]]
+    assert _node(script, tmp_path) == [["light", "light"], ["auto", "auto"], ["dark", None]]
 
 
 def test_every_storage_access_is_guarded():

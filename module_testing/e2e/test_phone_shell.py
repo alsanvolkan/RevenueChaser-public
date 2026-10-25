@@ -135,16 +135,22 @@ def test_the_shells_touch_targets_are_44_px_on_a_phone(dashboard, browser, schem
         assert not m["small"], f"{tab}: touch targets under 44 px: {m['small']}"
 
 
-def test_light_and_dark_follow_the_device(dashboard, browser):
+def test_a_first_visit_is_dark_on_any_device(dashboard, browser):
+    """avo, 25 Oct 2026: the default is dark. A light phone shows light only once the reader chooses it."""
     assert _open(browser, dashboard, PHONE, "dark")["bg"] == DARK_BG, "the dark look must stay the shell's own"
-    assert _open(browser, dashboard, PHONE, "light")["bg"] == LIGHT_BG
+    m = _open(browser, dashboard, PHONE, "light")
+    assert m["bg"] == DARK_BG and m["theme"] == "dark", f"a light device got {m['bg']} on a first visit"
+    _click(browser, "#nav-toggle")
+    _click(browser, "#theme-toggle")                           # dark -> light
+    m = _click(browser, "#theme-toggle")                       # light -> auto: follows the light device
+    assert m["theme"] == "auto" and m["bg"] == LIGHT_BG
 
 
 def test_the_toggle_overrides_the_device_and_is_remembered(dashboard, browser):
     m = _open(browser, dashboard, PHONE, "dark")
-    assert m["theme"] is None and m["bg"] == DARK_BG
+    assert m["theme"] == "dark" and m["bg"] == DARK_BG
     _click(browser, "#nav-toggle")                             # on a phone the toggle is in the drawer
-    m = _click(browser, "#theme-toggle")                       # auto -> light
+    m = _click(browser, "#theme-toggle")                       # dark -> light
     assert m["theme"] == "light" and m["bg"] == LIGHT_BG
     assert browser.eval(f"localStorage.getItem({THEME_STORAGE_KEY!r})") == "light"
     frame_theme = browser.eval('document.querySelector(".frame.on").contentDocument.documentElement'
@@ -154,10 +160,11 @@ def test_the_toggle_overrides_the_device_and_is_remembered(dashboard, browser):
     m = browser.eval(LAYOUT)
     assert m["theme"] == "light" and m["bg"] == LIGHT_BG, "the choice survives a reload"
     _click(browser, "#nav-toggle")
-    m = _click(browser, "#theme-toggle")                       # light -> dark
+    m = _click(browser, "#theme-toggle")                       # light -> auto (the device says dark)
+    assert m["theme"] == "auto" and m["bg"] == DARK_BG
+    assert browser.eval(f"localStorage.getItem({THEME_STORAGE_KEY!r})") == "auto"
+    m = _click(browser, "#theme-toggle")                       # auto -> dark, the default: stored as nothing
     assert m["theme"] == "dark" and m["bg"] == DARK_BG
-    m = _click(browser, "#theme-toggle")                       # dark -> auto (the device says dark)
-    assert m["theme"] is None and m["bg"] == DARK_BG
     assert browser.eval(f"localStorage.getItem({THEME_STORAGE_KEY!r})") is None
 
 

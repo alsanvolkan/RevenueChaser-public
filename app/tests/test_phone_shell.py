@@ -132,11 +132,11 @@ def test_a_fill_width_board_tracks_the_pane_on_a_phone(shell, tmp_path):
     assert _fit(shell, tmp_path, narrow=True, pane=390, inner=900, tab="runs") == "390px"
 
 
-def test_the_theme_toggle_cycles_auto_light_dark(shell, tmp_path):
+def test_the_theme_toggle_cycles_dark_light_auto(shell, tmp_path):
     script = next(s for s in inline_scripts(shell) if "function themeNext" in s)
-    tail = "console.log(JSON.stringify(['auto', 'light', 'dark', 'bogus'].map(themeNext)));"
+    tail = "console.log(JSON.stringify(['dark', 'light', 'auto', 'bogus'].map(themeNext)));"
     assert _node(DOM_STUB + function_source(script, "themeNext") + "\n" + tail, tmp_path) == \
-        ["light", "dark", "auto", "light"]
+        ["light", "auto", "dark", "light"]
 
 
 def test_the_choice_reaches_the_board_frames(shell, tmp_path):
@@ -155,7 +155,7 @@ def test_the_choice_reaches_the_board_frames(shell, tmp_path):
       console.log(JSON.stringify([one, two]));
     """
     assert _node(DOM_STUB + "var frames;\n" + function_source(script, "themeFrames") + "\n" + tail, tmp_path) == \
-        [["light", "light"], [None, None]]
+        [["light", "light"], ["auto", "auto"]]
 
 
 def test_the_spx_calendar_colours_come_from_the_tokens(shell):

@@ -11,8 +11,8 @@
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="{{ theme_bg.dark }}">
 <script>{{ theme_js }}</script>
 <style>
-/* The palette: core/reporting_common.THEME_CSS, the one place it is defined (#184). Dark by default,
-   light when the device prefers it, and the reader's own choice (data-theme on <html>) over both. */
+/* The palette: core/reporting_common.THEME_CSS, the one place it is defined (#184). Dark by default on every
+   device; Light, or Auto (follow the device), when the reader chooses it (data-theme on <html>). */
 {{ theme_css }}
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%}
@@ -238,7 +238,7 @@ button:disabled{opacity:.5;cursor:default}
   </nav>
   <div class="side-foot">
     <button id="theme-toggle" class="theme-toggle" type="button"
-            aria-label="Theme: follows the device. Change it" title="Theme: follows the device">Theme: Auto</button>
+            aria-label="Theme: dark. Change it" title="Theme: dark">Theme: Dark</button>
     Local dashboard · iframe tabs<br>on-demand fetch per module</div>
 </aside>
 <div class="scrim" id="nav-scrim"></div>
@@ -1386,22 +1386,22 @@ document.addEventListener('keydown', function(e){
   if(e.key === 'Escape' && document.body.classList.contains('nav-open')) navSetOpen(false);
 });
 
-// The theme toggle: Auto (the device's scheme) -> Light -> Dark -> Auto. rcThemeSet (reporting_common.THEME_JS)
-// applies the choice and stores it if it can; THEME_NOW keeps it for this page when storage cannot.
+// The theme toggle: Dark (the default) -> Light -> Auto (the device's scheme) -> Dark. rcThemeSet
+// (reporting_common.THEME_JS) applies the choice and stores it if it can; THEME_NOW keeps it for this page
+// when storage cannot.
 var THEME_NOW = rcThemeGet();
 var THEME_LABELS = {auto: 'Auto', light: 'Light', dark: 'Dark'};
 var THEME_WORDS = {auto: 'follows the device', light: 'light', dark: 'dark'};
 function themeNext(choice){
-  return choice === 'light' ? 'dark' : (choice === 'dark' ? 'auto' : 'light');
+  return choice === 'light' ? 'auto' : (choice === 'auto' ? 'dark' : 'light');
 }
 // Boards are same-origin iframes: each one gets the choice as data-theme on its <html>, so a board on the
 // shared tokens follows the toggle. A frame that cannot be reached is left alone.
 function themeFrames(choice, list){
   (list || frames()).forEach(function(f){
     try{
-      var root = f.contentDocument.documentElement;
-      if(choice === 'light' || choice === 'dark') root.setAttribute('data-theme', choice);
-      else root.removeAttribute('data-theme');
+      f.contentDocument.documentElement.setAttribute('data-theme',
+        (choice === 'light' || choice === 'auto') ? choice : 'dark');
     }catch(e){}
   });
 }

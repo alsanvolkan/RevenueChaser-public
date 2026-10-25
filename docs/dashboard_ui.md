@@ -178,11 +178,13 @@ its pane (`fitFrameWidth` never grows it past the pane), so the page never scrol
 a phone scrolls inside its own frame until its own PR restacks it. On a narrow screen or a coarse pointer the
 shell's buttons, inputs, nav items and nav headers are 44 px; a desktop mouse keeps 32 / 38 / 40 px.
 
-The palette is `core/reporting_common.THEME_TOKENS`, rendered once as `THEME_CSS`: dark by default (the shell's
-look before #184, value for value), light when the device prefers it, and the reader's choice over both. The
-"Theme:" button at the foot of the sidebar (inside the drawer on a phone) cycles Auto → Light → Dark and stores the choice in `localStorage["rc-theme"]`
-(`THEME_STORAGE_KEY`; every access in try/catch, so a private window still toggles, it just does not
-remember). `THEME_JS` runs in `<head>` so a light choice never flashes dark. The shell copies the choice onto
+The palette is `core/reporting_common.THEME_TOKENS`, rendered once as `THEME_CSS`. **Dark is the default on every
+device** (avo, 25 Oct 2026; the shell's look before #184, value for value): a first visit, and a browser whose
+storage is blocked, show dark. The "Theme:" button at the foot of the sidebar (inside the drawer on a phone)
+cycles Dark → Light → Auto, where Auto follows the device's `prefers-color-scheme`. Light and Auto are stored in
+`localStorage["rc-theme"]` (`THEME_STORAGE_KEY`; dark, the default, is stored as nothing; every access in
+try/catch, so a private window still toggles, it just does not remember). `THEME_JS` runs in `<head>` so a light
+choice never flashes dark. The shell copies the choice onto
 each board iframe as `data-theme` on its `<html>`; a board follows it once it uses the shared tokens (one PR
 per board); the Runs tab does with the #131 pull request.
 

@@ -68,10 +68,11 @@ function boardSettingsReset(btn, out, board){
 
 # ── Theme tokens: one palette per scheme, defined here only (#184) ──
 # The shell (templates/dashboard.html) renders ``THEME_CSS`` and ``THEME_JS``; a board adopts them in its own PR
-# (one per board) by using these names instead of its own palette. Dark is the default and is the shell's look
-# before #184, value for value. Light applies when the device prefers it, unless the reader chose otherwise:
-# the choice is ``localStorage[THEME_STORAGE_KEY]`` ("light" / "dark"; absent = follow the device), set as
-# ``data-theme`` on ``<html>``. The shell copies that attribute onto every board iframe (same origin).
+# (one per board) by using these names instead of its own palette. Dark is the default on every device (avo,
+# 25 Oct 2026) and is the shell's look before #184, value for value. Light applies when the reader chooses
+# Light, or chooses Auto on a device that prefers light. The choice is ``localStorage[THEME_STORAGE_KEY]``
+# ("light" / "auto"; absent = dark), set as ``data-theme`` on ``<html>`` ("dark" / "light" / "auto"). The
+# shell copies that attribute onto every board iframe (same origin).
 THEME_STORAGE_KEY = "rc-theme"
 THEME_TOKENS = {
     "dark": {
@@ -112,29 +113,28 @@ def _theme_vars(scheme: str) -> str:
 # Bare CSS (no <style>), so a page puts it inside its own style block.
 THEME_CSS = (
     f":root{{{_theme_vars('dark')}}}\n"
-    f"@media (prefers-color-scheme: light){{:root:not([data-theme=\"dark\"]){{{_theme_vars('light')}}}}}\n"
+    f"@media (prefers-color-scheme: light){{:root[data-theme=\"auto\"]{{{_theme_vars('light')}}}}}\n"
     f":root[data-theme=\"light\"]{{{_theme_vars('light')}}}\n"
 )
 
 # Runs in <head>, before the page draws, so a light choice never flashes dark. ``rcThemeGet`` is the stored
-# choice ("auto" when none, or when storage is unavailable); ``rcThemeSet`` applies one and remembers it if
-# it can. Every storage access is in its own try/catch: a private window or blocked site data throws.
+# choice ("dark" when none, or when storage is unavailable); ``rcThemeSet`` applies one and remembers it if
+# it can (dark, the default, is remembered as nothing). Every storage access is in its own try/catch: a
+# private window or blocked site data throws.
 THEME_JS = """
 var RC_THEME_KEY = '""" + THEME_STORAGE_KEY + """';
 function rcThemeGet(){
   var v = null;
   try{ v = localStorage.getItem(RC_THEME_KEY); }catch(e){ v = null; }
-  return (v === 'light' || v === 'dark') ? v : 'auto';
+  return (v === 'light' || v === 'auto') ? v : 'dark';
 }
 function rcThemeApply(choice){
-  var root = document.documentElement;
-  if(choice === 'light' || choice === 'dark') root.setAttribute('data-theme', choice);
-  else root.removeAttribute('data-theme');
+  document.documentElement.setAttribute('data-theme', (choice === 'light' || choice === 'auto') ? choice : 'dark');
 }
 function rcThemeSet(choice){
-  if(choice !== 'light' && choice !== 'dark') choice = 'auto';
+  if(choice !== 'light' && choice !== 'auto') choice = 'dark';
   rcThemeApply(choice);
-  if(choice === 'auto'){ try{ localStorage.removeItem(RC_THEME_KEY); }catch(e){} }
+  if(choice === 'dark'){ try{ localStorage.removeItem(RC_THEME_KEY); }catch(e){} }
   else { try{ localStorage.setItem(RC_THEME_KEY, choice); }catch(e){} }
   return choice;
 }

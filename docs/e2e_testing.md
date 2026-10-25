@@ -104,7 +104,8 @@ WebSocket with no pip dependency. `--window-size` cannot give a phone viewport (
 the window to 500 px), so the harness uses device-metrics emulation for an exact width and media emulation
 for `prefers-color-scheme`. Against a live dashboard it checks that at 390 px the page never scrolls sideways,
 the nav is reachable through the drawer, the shell's touch targets are at least 44 px, and light and dark both
-render, by the device and by the toggle (remembered across a reload); at 1280 px the sidebar stays a column.
+render: dark on a first visit whatever the device, light and Auto by the toggle (remembered across a reload);
+at 1280 px the sidebar stays a column.
 It finds Chrome the way the HTML guard does, and fails under `CI=true` without one. Chrome resolves no host
 but loopback (`--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1`: the rule matches
 an IP literal too, so the dashboard's `127.0.0.1` is excluded by name); `test_cdp_browser.py` holds both halves.
