@@ -25,6 +25,7 @@ through a fact about the source (``ceiling``, which carries its REASON) requires
 """
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum
@@ -216,12 +217,17 @@ def _summary_health(dotted: str) -> Callable[[], Health]:
     """The ``Health`` of the module that owns this dataset's summary, read when the row is read (S4).
 
     A callable, not a call: the registry is imported by pages that never open this dataset, and these modules
-    read the store (and, for four of them, the calendar). One argument-free call per row is all a reader needs.
+    read the store (and, for four of them, the calendar). One argument-free call per row is all a reader needs;
+    a reader with a clock passes ``now``, which reaches the module's ``health`` when that takes one, so the
+    coverage and the row's own summary are one question at one time (#150).
     """
 
-    def coverage() -> Health:
+    def coverage(now=None) -> Health:
         module = import_module(f"RevenueChaser.{dotted}")
-        return getattr(module, "health")()
+        health = getattr(module, "health")
+        if "now" in inspect.signature(health).parameters:
+            return health(now)
+        return health()
 
     coverage.__name__ = f"{dotted}.health"
     coverage.__doc__ = f"The dataset's Health from ``{dotted}.health()``."

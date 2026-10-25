@@ -8,6 +8,7 @@ dash, but one of the named states the registry justifies (S5b, G3). See ``docs/d
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import threading
@@ -68,6 +69,7 @@ def _begin_call() -> None:
     _CALL.columns = {}
     _CALL.errors = []
     _CALL.summaries = {}
+    _CALL.max_values = {}
 
 
 def _end_call() -> None:
@@ -75,6 +77,7 @@ def _end_call() -> None:
     _CALL.columns = None
     _CALL.errors = None
     _CALL.summaries = None
+    _CALL.max_values = None
 
 
 def _summary(key: str, fn, *args):
@@ -246,13 +249,29 @@ def _max_value_or_raise(table: str, column: str):
     """Newest value of ``column`` in ``table``; ``None`` when the table is not in this store.
 
     A failed query raises, so the caller can tell a broken read from a table with no rows
-    (``_max_value`` is the swallowing form the row builders use).
+    (``_max_value`` is the swallowing form the row builders use). Inside one call the answer,
+    or the failure, is kept: the row's ``last_date`` and its Fresh cell are one read (#150).
     """
-    if not _table_exists(table):
-        return None
-    rows = rawstore.query(
-        f"SELECT MAX({column}) AS m FROM {table}", db=_db_of(table))
-    return rows[0].get("m") if rows else None
+    cache = getattr(_CALL, "max_values", None)
+    if cache is not None and (table, column) in cache:
+        value, exc = cache[(table, column)]
+        if exc is not None:
+            raise exc
+        return value
+    try:
+        if not _table_exists(table):
+            value = None
+        else:
+            rows = rawstore.query(
+                f"SELECT MAX({column}) AS m FROM {table}", db=_db_of(table))
+            value = rows[0].get("m") if rows else None
+    except Exception as exc:
+        if cache is not None:
+            cache[(table, column)] = (None, exc)
+        raise
+    if cache is not None:
+        cache[(table, column)] = (value, None)
+    return value
 
 
 def _max_value(table: str, column: str):
@@ -1492,11 +1511,19 @@ def _sec_files_row() -> dict:
 # ``sort_key`` orders the table worst coverage first. A row's own counts, holes, action and note
 # are never touched or replaced here.
 
+def _takes_now(fn) -> bool:
+    """True when ``fn`` accepts a ``now`` argument (the registry's summary callables do; a bare one may not)."""
+    try:
+        return "now" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 # What a coverage with no definable population reads. Never "0%": a percentage of nothing is a lie.
 COVERAGE_NA = "n/a"
 
 
-def _coverage_record(spec: datasets.DatasetSpec, row: dict) -> dict:
+def _coverage_record(spec: datasets.DatasetSpec, row: dict, now: datetime | None = None) -> dict:
     """One dataset's coverage as a renderable record. Never raises.
 
     ``label`` is ``n/a`` when there is no definable population (no ``expected``, zero ``expected``,
@@ -1510,7 +1537,7 @@ def _coverage_record(spec: datasets.DatasetSpec, row: dict) -> dict:
         # The two-query form has no population/presence evaluator here yet (#124): say n/a.
         return dict(empty, label=COVERAGE_NA)
     try:
-        health = coverage()
+        health = coverage(now=now) if _takes_now(coverage) else coverage()
     except Exception as exc:  # noqa: BLE001 - a summary failure must not break the page
         # The summary that just failed is the one the row's own builder already reported: one
         # entry for one cause, so the error list names each failure once.
@@ -1638,7 +1665,7 @@ def _retired_dataset(spec: datasets.DatasetSpec) -> bool:
     return all(bool((rawstore.MANIFEST.get(table) or {}).get("retired")) for table in spec.tables)
 
 
-def _attach_registry(rows: list[dict]) -> list[dict]:
+def _attach_registry(rows: list[dict], now: datetime | None = None) -> list[dict]:
     """Add the registry's source, writer, coverage, freshness and gap to each collected row (S5, #124).
 
     A row whose key is not in ``datasets.REGISTRY`` keeps everything it carries and gains
@@ -1650,6 +1677,9 @@ def _attach_registry(rows: list[dict]) -> list[dict]:
     (the written sentence, or None) and ``retired`` (every owned table is MANIFEST retired, so the
     detail row says "nothing, by design"). ``gap_kind`` is None when nothing is written down; the
     renderer must not read that as complete.
+
+    ``now`` is the collect's clock, handed to each coverage that takes one, so a dated summary is asked
+    the same question the row builder asked and is served from the same memo (#150).
     """
     run_dates: dict[str, str] | None = None
     for row in rows:
@@ -1663,7 +1693,7 @@ def _attach_registry(rows: list[dict]) -> list[dict]:
         row["source"] = spec.source.value
         row["writer"] = spec.writer
         row["writer_note"] = spec.writer_note
-        row["coverage"] = _coverage_record(spec, row)
+        row["coverage"] = _coverage_record(spec, row, now)
         if spec.freshness == datasets.FROM_RUN_LOG and run_dates is None:
             run_dates = _run_log_dates()
         row["fresh"] = _fresh_record(spec, run_dates)
@@ -2228,7 +2258,7 @@ def _collect(now: datetime) -> dict:
     board_cards = boards.board_cards()
     return {
         # Worst coverage first: the rows that need a Fetch are at the top (#124).
-        "rows": sorted(_attach_registry(rows), key=sort_key),
+        "rows": sorted(_attach_registry(rows, now), key=sort_key),
         "tickers": tickers_list,
         "boards": board_cards,
         "identity": identity,
