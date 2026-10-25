@@ -1306,7 +1306,7 @@ def test_a_retired_prefix_keeps_its_newest_copy_and_lists_the_older_ones_as_expi
     older = _aged(out, "discord_media_20261003_093446_209418.zip", 330, 21)
     newest = _aged(out, "discord_media_20261003_094720_653120.zip", 331, 21)
     _aged(out, "discord_media_20261003_100000_000000.partial.zip", 999, 21)            # a killed zip, never one
-    _aged(out / bs.MEDIA_MIRROR_DIRNAME / "900", "a.zip", 10, 90)                     # the mirror is never listed
+    _aged(out / "discord_media_mirror" / "900", "a.zip", 10, 90)                      # the mirror is never listed
     before = _tree(out)
     found = bs.expired_backups(out, now=NOW)
     assert _tree(out) == before
