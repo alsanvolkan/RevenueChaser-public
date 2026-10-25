@@ -13,7 +13,10 @@ Nothing is known about UW's rate limit beyond the 150,000 calls a day of the pla
 assuming: every run has a call cap (``max_calls``) and a pause between calls (``sleep_s``), and it returns what it
 sent and what came back (``counts``, stored in the run's ``job_runs`` row). It stops on the first of:
 
-* the cap: a session is started only when all of its calls fit under it, so no day is left half pulled;
+* the cap: ``max_calls`` bounds the logical calls and, when the client lets them be counted, the HTTP requests
+  (the client retries a 429/5xx up to ``MAX_ATTEMPTS`` times, and UW counts requests). A session is started only
+  when all of its calls fit; one cut short by the request count is not kept. The last call's own retries can pass
+  the cap by at most ``MAX_ATTEMPTS - 1`` requests;
 * ``RATE_LIMIT_STREAK_STOP`` final 429s in a row (the universe fetch's rule; the client's own breaker opens on
   five failures of any provider kind and stops the job too);
 * ``AUTH_STREAK_STOP`` sessions in a row rejected with 401/403 (a dead key, or a range past the lookback edge);
@@ -71,8 +74,9 @@ class _Meter:
     snapshot through its staging cleanup, never through a promote: the day in progress is not kept.
     """
 
-    def __init__(self, uw, max_calls: int, sleep_s: float, sleep):
+    def __init__(self, uw, max_calls: int, sleep_s: float, sleep, requests=None):
         self.uw = uw
+        self._requests = requests            # the HTTP request count, a one-item list (or None: not countable)
         self.max_calls = max_calls
         self.sleep_s = sleep_s
         self.sleep = sleep
@@ -81,8 +85,13 @@ class _Meter:
         self.statuses: list[int] = []        # the current session's, in order
         self._streak_429 = 0
 
+    @property
+    def used(self) -> int:
+        """What the cap is charged: the calls, or the HTTP requests when they are counted and more."""
+        return max(self.calls, self._requests[0] if self._requests else 0)
+
     def get_result(self, ep, params=None):
-        if self.calls >= self.max_calls:
+        if self.used >= self.max_calls:
             raise _Stop("max_calls")
         if self.calls and self.sleep_s:
             self.sleep(self.sleep_s)
@@ -174,8 +183,8 @@ def pull_history(uw, start: str, end: str, *, max_calls: int = DEFAULT_MAX_CALLS
     root = Path(data_root) if data_root else DATA_ROOT
     raw_root = root / "raw"
     raw_root.mkdir(parents=True, exist_ok=True)
-    meter = _Meter(uw, max_calls, sleep_s, sleep or time.sleep)
     http, remove_hook = _http_counter(uw)
+    meter = _Meter(uw, max_calls, sleep_s, sleep or time.sleep, requests=http)
     days = sessions_between(lo, hi)
     counts: dict = {"start": start, "end": end, "max_calls": max_calls, "sleep_s": sleep_s,
                     "calls_per_session": HISTORY_CALLS_PER_SESSION, "sessions": len(days), "written": 0,
@@ -193,7 +202,7 @@ def pull_history(uw, start: str, end: str, *, max_calls: int = DEFAULT_MAX_CALLS
             if _session_open():
                 counts["stop_reason"] = "session_open"
                 break
-            if meter.calls + HISTORY_CALLS_PER_SESSION > max_calls:
+            if meter.used + HISTORY_CALLS_PER_SESSION > max_calls:
                 counts["stop_reason"] = "max_calls"
                 break
             meter.statuses = []

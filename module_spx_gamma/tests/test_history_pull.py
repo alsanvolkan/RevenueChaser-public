@@ -251,3 +251,39 @@ def test_counts_http_requests_including_the_clients_retries(tmp_path, monkeypatc
     assert counts["http_requests"] == len(seen) == counts["calls"] + 2
     assert _days(tmp_path) == DAYS[:1]
     assert uw._client.event_hooks["request"] == [], "the counting hook is removed after the run"
+
+
+def test_max_calls_also_caps_the_http_requests_the_client_retries(tmp_path, monkeypatch):
+    """UW counts requests, and the client retries a 429 up to 3 times: the cap binds on requests (#194 review)."""
+    attempts: dict[str, int] = {}
+    sent = []
+
+    def throttled_max_pain(request):
+        sent.append(request.url.path)
+        key = f"{request.url.path}?{request.url.params.get('date')}"
+        if request.url.path.endswith("/max-pain"):
+            attempts[key] = attempts.get(key, 0) + 1
+            if attempts[key] <= 2:
+                return httpx.Response(429)
+        return httpx.Response(200, json=_ok(request.url.path.removeprefix("/api"), dict(request.url.params)))
+    uw = _real_client(monkeypatch, throttled_max_pain)
+    counts = _pull(tmp_path, uw, max_calls=30)
+    assert counts["http_requests"] == len(sent) <= 30
+    assert counts["stop_reason"] == "max_calls"
+    assert _days(tmp_path) == DAYS[:1]                      # the second day was cut short and not kept
+    assert not list((tmp_path / "raw").glob(".partial-*"))
+
+
+def test_a_day_that_no_longer_fits_the_request_count_is_not_started(tmp_path, monkeypatch):
+    """After day 1 the calls (14) leave room for a day under 28, the requests (16, two retried) do not."""
+    tries: dict[str, int] = {}
+
+    def two_retries_on_day_one(request):
+        key = f"{request.url.path}?{request.url.params.get('date')}"
+        tries[key] = tries.get(key, 0) + 1
+        if key.endswith(f"/max-pain?{DAYS[0]}") and tries[key] <= 2:
+            return httpx.Response(429)
+        return httpx.Response(200, json=_ok(request.url.path.removeprefix("/api"), dict(request.url.params)))
+    counts = _pull(tmp_path, _real_client(monkeypatch, two_retries_on_day_one), max_calls=28)
+    assert (counts["calls"], counts["http_requests"]) == (14, 16)
+    assert counts["stop_reason"] == "max_calls" and _days(tmp_path) == DAYS[:1]
