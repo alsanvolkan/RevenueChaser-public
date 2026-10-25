@@ -952,10 +952,20 @@ Two separate things, deliberately not conflated:
   #336 has no fingerprint, so the first run after the change zips the tree once more. A file whose content changed
   with the same size and the same modified time is not seen. Restore is unchanged: unzip the chosen archive.
 - **The Discord archive is no longer backed up here (October 2026)** — it became its own app and backs
-  itself up. `discord.duckdb` is not snapshotted and the attachment tree is not mirrored. The
-  `discord_*.duckdb` snapshots and the `discord_media_mirror/` folder an earlier run left in the backup
-  folder are **not** pruned, deleted or scanned by anything here; they stay until the owner removes them
-  by hand, after the new app has taken a verified backup of its own.
+  itself up. `discord.duckdb` is not snapshotted and the attachment tree is not mirrored. What earlier
+  runs left behind is **not** pruned or deleted by anything here; it stays until the owner removes it by
+  hand (#175), after the new app has taken a verified backup of its own:
+  - in the backup folder: the `discord_*.duckdb` snapshots and the `discord_media_mirror/` folder;
+  - in the off-machine folder (`<RAW_STORE_BACKUP_MIRROR>/RevenueChaser-backup`): the `discord_*.duckdb`
+    copies (up to 3) and its own `discord_media_mirror/`.
+
+  The local leftovers **are still scanned**: the integrity scan below walks every file of the backup
+  folder and re-hashes each one its manifest lists, these included (some two thousand attachment files). So
+  the night after they are deleted by hand, the scan reports every one of them as
+  `integrity scan FAILED: <path>: missing` and the run exits 1. That is expected and happens once: the
+  scan drops a missing file from the manifest when it reports it, and a scan that failed runs again the
+  next night, which then passes. The off-machine leftovers are never scanned, so removing them reports
+  nothing.
 - **Weekly raw copy (#277, bounded by #342)** — the first verified `raw_*` snapshot of each ISO week (by its UTC
   stamp) is also copied to `weekly/` in the same backup folder. The copy is written under a temporary name,
   fingerprinted against the snapshot (row count and content checksum per table) and only then renamed, so a failed

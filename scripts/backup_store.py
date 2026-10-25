@@ -19,7 +19,8 @@ nothing ships a backup step. This module fixes that:
   The Discord archive left this repository in October 2026 and backs itself up, so this run no longer
   touches ``discord.duckdb`` or the attachment tree. The ``discord_*.duckdb`` snapshots and the
   ``discord_media_mirror/`` folder an earlier run left behind are **not** pruned or deleted by anything
-  here: they stay as they are until the owner removes them by hand.
+  here: they stay as they are until the owner removes them by hand (#175). The integrity scan still reads
+  the local ones, so the night after that removal it reports each as missing, once (docs/data_architecture.md).
 - Acquires the store's write handle through ``rawstore`` (so a lock held by the
   dashboard or a scheduled job is waited out, every attempt), CHECKPOINTs so the
   WAL is flushed into the main file, then copies the file to

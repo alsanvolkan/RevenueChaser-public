@@ -799,6 +799,27 @@ def test_a_failed_scan_is_due_again_the_next_night(backed_up, clock):
     assert bs.integrity_scan(out).ran                          # the row stays red until a scan passes
 
 
+def test_retired_discord_leftovers_are_scanned_and_their_removal_is_red_for_one_night(backed_up, clock):
+    """What docs/data_architecture.md tells the owner for #175: the ``discord_*`` snapshot and media mirror an
+    earlier run left are still scanned, so removing them by hand is one night's ``missing`` failures, then green."""
+    out = backed_up["out"]
+    snap = out / "discord_20261001_020005_123456.duckdb"
+    shutil.copy2(backed_up["snap"], snap)
+    media = out / "discord_media_mirror" / "123" / "a.png"
+    _old_file(media, b"M" * 32)
+    first = bs.integrity_scan(out, now=True)
+    assert first.failures == () and first.adopted == 2
+    snap.unlink()
+    shutil.rmtree(out / "discord_media_mirror")
+    clock(_day(2026, 10, 2))
+    res = bs.integrity_scan(out, now=True)
+    assert sorted(res.failures) == [("discord_20261001_020005_123456.duckdb", "missing"),
+                                    ("discord_media_mirror/123/a.png", "missing")]
+    clock(_day(2026, 10, 3))
+    again = bs.integrity_scan(out)
+    assert again.ran and again.failures == ()
+
+
 def _tree_state(out) -> dict:
     skip = {bs.MANIFEST_NAME, bs.SCAN_MARKER_NAME}
     return {p.relative_to(out).as_posix(): (_sha(p), p.stat().st_mtime_ns)
