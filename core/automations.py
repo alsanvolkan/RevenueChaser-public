@@ -9,9 +9,10 @@ the scheduler; e2e installs ``FakeScheduler``).
 Two sides:
 
 - ``Scheduler``: the interface to the OS scheduler. ``WindowsScheduler`` drives the
-  PowerShell ``ScheduledTasks`` cmdlets, one registry task per call; ``FakeScheduler``
-  backs the tests and the e2e dashboard; ``UnavailableScheduler`` is the answer on a
-  host without Task Scheduler (a state, not an error).
+  PowerShell ``ScheduledTasks`` cmdlets, one registry task per call; ``LinuxScheduler``
+  drives systemd user timers, one ``.service`` and ``.timer`` pair per registry task (#158);
+  ``FakeScheduler`` backs the tests and the e2e dashboard; ``UnavailableScheduler`` is the
+  answer on a host with neither (a state, not an error).
 - ``run_task``: the command every task actually runs
   (``python -m RevenueChaser.core.automations run <name>``). It appends the job's
   output and exit code to the entry's ``log_path`` so a red row has a reason.
@@ -20,7 +21,9 @@ Registry names are stable: a task that writes tables records them as ``job_runs.
 """
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -533,6 +536,278 @@ def parse_status(text: str) -> TaskStatus | None:
         last_result=d.get("last_result"), missed_runs=int(d.get("missed") or 0))
 
 
+# --- Linux: systemd user timers (#158) ----------------------------------------------
+#
+# One ``<name>.service`` (Type=oneshot, runs ``automations run <name>``) and one ``<name>.timer`` per registry entry,
+# both under the user's systemd folder and both named by the exact registry name. ``run_task`` and the chain read the
+# logs, not the scheduler, so they behave the same under either scheduler. A user timer runs only while the user's
+# systemd instance does: on a server that runs logged off, ``loginctl enable-linger <user>`` once, by hand.
+
+_SYSTEMD_DAYS = {"Monday": "Mon", "Tuesday": "Tue", "Wednesday": "Wed", "Thursday": "Thu", "Friday": "Fri",
+                 "Saturday": "Sat", "Sunday": "Sun"}
+_SHOW_TIMER = ("ActiveState", "Result", "NextElapseUSecRealtime", "LastTriggerUSec")
+_SHOW_SERVICE = ("ActiveState", "Result", "ExecMainStatus", "ExecMainStartTimestamp")
+
+
+# The variables a unit file may carry, and nothing else: unit files are world-readable and ``.env`` loads the API
+# keys into the environment, so the environment is never copied. The data roots are written as this process resolved
+# them, so a job systemd starts reads and writes the store and logs the panel reads; without them it would fall back
+# to the checkout's own .store/.cache (``config._root``). The others are passed only when set.
+UNIT_ENVIRONMENT = ("RC_STORE_DIR", "RC_CACHE_DIR", "RC_EDGAR_DOCS_DIR", "RC_DISCORD_MEDIA_DIR", "SPX_GAMMA_DATA_ROOT",
+                    "RAW_STORE_BACKUP_DIR", "RAW_STORE_BACKUP_WEEKLY", "RAW_STORE_BACKUP_MIRROR", "TZ")
+
+
+def _unit_environment() -> list[tuple[str, str]]:
+    resolved = config.resolved_roots()
+    out = []
+    for name in UNIT_ENVIRONMENT:
+        value = resolved.get(name) or os.environ.get(name)
+        if value not in (None, ""):
+            out.append((name, str(value)))
+    return out
+
+
+def _env_line(name: str, value: str) -> str:
+    v = _unit_value(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'Environment="{name}={v}"'
+
+
+def _systemctl(args: list[str]) -> tuple[int, str, str]:
+    """``systemctl --user <args>`` as ``(returncode, stdout, stderr)``. Any failure to run becomes an
+    ``AutomationError``."""
+    env = dict(os.environ)
+    if not env.get("XDG_RUNTIME_DIR") and hasattr(os, "getuid"):
+        # A dashboard started outside a login session has no XDG_RUNTIME_DIR, and systemctl --user then cannot
+        # find the user's bus. The user manager's runtime folder is always this one.
+        env["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
+    try:
+        proc = subprocess.run(["systemctl", "--user", *args], capture_output=True, encoding="utf-8",
+                              errors="replace", timeout=60, env=env)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise AutomationError(f"could not run systemctl: {exc}") from None
+    return proc.returncode, proc.stdout or "", proc.stderr or ""
+
+
+def _user_unit_dir() -> Path:
+    base = os.environ.get("XDG_CONFIG_HOME") or ""
+    if not Path(base).is_absolute():                 # the XDG spec: a relative value is invalid and ignored
+        base = str(Path.home() / ".config")
+    return Path(base) / "systemd" / "user"
+
+
+def on_calendar(e: AutomationEntry) -> str:
+    """The entry's ``time`` and ``days`` as a systemd ``OnCalendar=`` spec, in local time like Task Scheduler's."""
+    days = ",".join(_SYSTEMD_DAYS[d] for d in e.days)
+    return f"{days + ' ' if days else ''}*-*-* {e.time}:00"
+
+
+def _unit_value(value: str) -> str:
+    """A value for a unit file line: one line, with ``%`` doubled so systemd expands no specifier in it."""
+    value = str(value)
+    if "\n" in value or "\r" in value or value.endswith("\\"):
+        raise AutomationError("a unit file value cannot hold a line break or end in a backslash")
+    return value.replace("%", "%%")
+
+
+def _exec_arg(value: str) -> str:
+    """One ``ExecStart=`` word: double-quoted, with ``\\``, ``"``, ``%`` and ``$`` escaped."""
+    v = _unit_value(value).replace("\\", "\\\\").replace('"', '\\"').replace("$", "$$")
+    return f'"{v}"'
+
+
+def _show_value(v: str | None) -> str | None:
+    """A ``systemctl show --timestamp=unix`` time as local ISO text; empty, ``n/a`` or 0 is ``None``."""
+    v = (v or "").strip()
+    if v.startswith("@"):
+        v = v[1:]
+    try:
+        ts = float(v)
+    except ValueError:
+        return None
+    if ts <= 0:
+        return None
+    if ts > 1e11:                    # a raw microsecond count, not seconds
+        ts /= 1e6
+    return datetime.fromtimestamp(ts, timezone.utc).astimezone().isoformat()
+
+
+def parse_show(text: str) -> tuple[dict[str, str], dict[str, str]]:
+    """``systemctl show <timer> <service>`` -> the two property blocks, in that order."""
+    blocks: list[dict[str, str]] = [{}]
+    for line in (text or "").splitlines():
+        if not line.strip():
+            if blocks[-1]:
+                blocks.append({})
+            continue
+        key, sep, value = line.partition("=")
+        if sep:
+            blocks[-1][key.strip()] = value.strip()
+    blocks = [b for b in blocks if b]
+    if len(blocks) != 2 or "ActiveState" not in blocks[0] or "Result" not in blocks[1]:
+        raise AutomationError("unreadable scheduler answer")
+    return blocks[0], blocks[1]
+
+
+class LinuxScheduler(Scheduler):
+    """systemd user timers, exact registry names only, one unit pair per entry."""
+
+    def __init__(self, runner: Callable[[list[str]], tuple[int, str, str]] = _systemctl,
+                 python: str | None = None, workdir: Path | str | None = None, unit_dir: Path | str | None = None):
+        self._run = runner
+        self._python = python or sys.executable
+        self._workdir = str(workdir or package_parent())
+        self.unit_dir = Path(unit_dir) if unit_dir else _user_unit_dir()
+
+    def _exec(self, *args: str) -> str:
+        rc, out, err = self._run(list(args))
+        if rc != 0:
+            raise AutomationError(((err or out or "").strip() or "scheduler call failed")[-400:])
+        return out
+
+    def _files(self, name: str) -> tuple[Path, Path]:
+        return self.unit_dir / f"{name}.service", self.unit_dir / f"{name}.timer"
+
+    def status(self, name):
+        name = entry(name).name
+        service, timer = self._files(name)
+        try:
+            if not (service.is_file() and timer.is_file()):
+                return None
+        except OSError as exc:
+            raise AutomationError(f"the unit folder could not be read: {exc}") from None
+        out = self._exec("show", "--timestamp=unix",
+                         "--property=" + ",".join(sorted(set(_SHOW_TIMER + _SHOW_SERVICE))),
+                         timer.name, service.name)
+        t, sv = parse_show(out)
+        if t.get("ActiveState") == "failed" or t.get("Result", "success") != "success":
+            # A failed timer never fires again until it is reset: an error row, never "disabled" (which it is not).
+            raise AutomationError(f"the timer failed ({t.get('Result') or t.get('ActiveState')}); "
+                                  f"systemctl --user status {timer.name}")
+        started = _show_value(sv.get("ExecMainStartTimestamp"))
+        triggered = _show_value(t.get("LastTriggerUSec"))
+        if sv.get("ActiveState") in ("activating", "active", "reloading", "deactivating"):
+            state, result = "running", RESULT_RUNNING
+        else:
+            state = "ready" if t.get("ActiveState") == "active" else "disabled"
+            if started:
+                try:
+                    code = int(sv.get("ExecMainStatus") or 0)
+                except ValueError:
+                    raise AutomationError("unreadable scheduler answer") from None
+                result = code if code or sv.get("Result") == "success" else 1
+            elif triggered:
+                result = None            # the user manager restarted since: the exit code is gone, the logs keep it
+            else:
+                result = RESULT_NOT_YET_RUN
+        return TaskStatus(state=state, last_run=started or triggered,
+                          next_run=_show_value(t.get("NextElapseUSecRealtime")), last_result=result)
+
+    def install(self, e):
+        e = entry(e.name)
+        s = e.settings
+        service_text = "\n".join([
+            "[Unit]",
+            f"Description={_unit_value(e.label)} (RevenueChaser {e.name})",
+            "",
+            "[Service]",
+            "Type=oneshot",
+            f"WorkingDirectory={_unit_value(self._workdir)}",
+            *(_env_line(k, v) for k, v in _unit_environment()),
+            "ExecStart=" + " ".join(_exec_arg(a) for a in
+                                    (self._python, "-m", "RevenueChaser.core.automations", "run", e.name)),
+            f"TimeoutStartSec={int(s.time_limit_hours)}h",
+            "",
+        ])
+        timer_text = "\n".join([
+            "[Unit]",
+            f"Description={_unit_value(e.schedule)} (RevenueChaser {e.name})",
+            "",
+            "[Timer]",
+            f"OnCalendar={on_calendar(e)}",
+            f"Unit={e.name}.service",
+            f"Persistent={'true' if s.start_when_available else 'false'}",
+            # No WakeSystem=: a user timer cannot arm a wake alarm (CAP_WAKE_ALARM), and asking for one leaves the
+            # timer failed and never run. ``wake_to_run`` is a Task Scheduler setting only.
+            "",
+            "[Install]",
+            "WantedBy=timers.target",
+            "",
+        ])
+        service, timer = self._files(e.name)
+        try:
+            self.unit_dir.mkdir(parents=True, exist_ok=True)
+            for path, text in ((service, service_text), (timer, timer_text)):
+                tmp = path.with_name(path.name + ".tmp")
+                try:
+                    tmp.write_text(text, encoding="utf-8")
+                    tmp.replace(path)
+                finally:
+                    tmp.unlink(missing_ok=True)
+        except OSError as exc:
+            try:
+                self._unlink(e.name)
+            except AutomationError:
+                pass
+            raise AutomationError(f"the unit files could not be written: {exc}") from None
+        try:
+            self._exec("daemon-reload")
+            self._exec("enable", "--now", timer.name)
+        except AutomationError:
+            # Roll back: a half-installed task reads as an error row, which the panel offers no button for.
+            self._unlink(e.name)
+            self._try("daemon-reload")
+            raise
+
+    def _try(self, *args: str) -> AutomationError | None:
+        try:
+            self._exec(*args)
+        except AutomationError as exc:
+            return exc
+        return None
+
+    def _unlink(self, name: str) -> None:
+        try:
+            for path in self._files(name):
+                path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise AutomationError(f"the unit files could not be removed: {exc}") from None
+
+    def set_enabled(self, name, enabled):
+        self._exec("enable" if enabled else "disable", "--now", f"{entry(name).name}.timer")
+
+    def remove(self, name):
+        """Disable, delete both files, reload. The files go even when systemctl fails (no bus), so Remove can always
+        clean up what Install left; the first failure is still raised, so the panel says so."""
+        name = entry(name).name
+        failed = self._try("disable", "--now", f"{name}.timer")
+        try:
+            self._unlink(name)
+        except AutomationError as exc:
+            failed = failed or exc
+        reloaded = self._try("daemon-reload")
+        failed = failed or reloaded
+        if failed:
+            raise failed
+
+    def run(self, name):
+        self._exec("start", "--no-block", f"{entry(name).name}.service")
+
+
+# The Linux backend is opt-in: a server that already runs these jobs as system timers must not offer Install on every
+# row, which would add a second schedule beside the first (the paid RC-Relatedness-OffPeak among them).
+SCHEDULER_ENV = "RC_SCHEDULER"
+SCHEDULER_SYSTEMD_USER = "systemd-user"
+
+
+def _default_scheduler() -> Scheduler:
+    if sys.platform == "win32":
+        return WindowsScheduler()
+    if (sys.platform.startswith("linux") and os.environ.get(SCHEDULER_ENV, "").strip() == SCHEDULER_SYSTEMD_USER
+            and shutil.which("systemctl")):
+        return LinuxScheduler()
+    return UnavailableScheduler()
+
+
 _scheduler: Scheduler | None = None
 _lock = threading.Lock()
 
@@ -541,7 +816,7 @@ def get_scheduler() -> Scheduler:
     global _scheduler
     with _lock:
         if _scheduler is None:
-            _scheduler = WindowsScheduler() if sys.platform == "win32" else UnavailableScheduler()
+            _scheduler = _default_scheduler()
         return _scheduler
 
 
@@ -958,7 +1233,9 @@ def run_task(name: str, python: str | None = None, cwd: Path | str | None = None
 
 def main(argv: list[str] | None = None) -> int:
     """``run <name>`` is what a task executes; ``install|remove <name>`` and ``list`` are
-    the thin-caller entry points of the ``.ps1`` files (they act only on registry names)."""
+    the thin-caller entry points of the ``.ps1`` files (they act only on registry names).
+    ``names`` prints the registry names one per line and never asks the scheduler, so a script that
+    freezes or lists the tasks reads them from here instead of keeping its own copy (#164)."""
     args = list(sys.argv[1:] if argv is None else argv)
     try:
         if len(args) == 2 and args[0] == "run":
@@ -966,6 +1243,9 @@ def main(argv: list[str] | None = None) -> int:
         if len(args) == 2 and args[0] in ("install", "remove"):
             row = apply(args[1], args[0])
             print(f"{args[0]}: {row['name']} -> {row['state']}")
+            return 0
+        if args == ["names"]:
+            print("\n".join(e.name for e in REGISTRY))
             return 0
         if args == ["list"]:
             for r in live_state()["rows"]:
@@ -975,7 +1255,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     print("usage: python -m RevenueChaser.core.automations "
-          "run|install|remove <registry-name> | list", file=sys.stderr)
+          "run|install|remove <registry-name> | list | names", file=sys.stderr)
     return 2
 
 
