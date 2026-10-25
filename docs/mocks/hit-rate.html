@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hit Rate mock</title>
+<!--
+  Static design mock of the Hit Rate board (#25). Not wired to anything: every number below is a made-up fixture.
+  It shows the three states the read side (core/hit_rate.py, HR-2) can return, on a phone (390 px) and a desktop
+  (1280 px), light and dark. Use the controls at the top; nothing here is the board itself, which waits for the
+  phone shell (PR #190) and avo's look at this page.
+-->
+<style>
+:root{
+  --bg:#F5F6F8; --card:#FFFFFF; --fg:#1E2630; --bright:#0B1220; --muted:#5A6472;
+  --border:rgba(15,23,42,.14); --track:#E3E7EC; --fill:#2563EB;
+  --pos:#0F7B55; --neg:#B42318; --amber:#8A5A00; --chip:#EEF1F5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#05111F; --card:#0B1828; --fg:#C5C6C8; --bright:#F0F0F0; --muted:#9C9DA1;
+    --border:rgba(197,198,200,.15); --track:#1B2B40; --fill:#0EA5E9;
+    --pos:#34D399; --neg:#F87171; --amber:#FBBF24; --chip:#101F33;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#05111F; --card:#0B1828; --fg:#C5C6C8; --bright:#F0F0F0; --muted:#9C9DA1;
+  --border:rgba(197,198,200,.15); --track:#1B2B40; --fill:#0EA5E9;
+  --pos:#34D399; --neg:#F87171; --amber:#FBBF24; --chip:#101F33;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.45 'Segoe UI',system-ui,sans-serif}
+.controls{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--border);
+  padding:8px 16px;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
+.controls .label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.seg button{min-height:44px;min-width:44px;padding:0 14px;background:var(--card);color:var(--fg);border:0;
+  border-right:1px solid var(--border);font:600 14px/1 inherit;cursor:pointer}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--fill);color:#fff}
+.frame{margin:0 auto;padding:16px;max-width:1280px;transition:max-width .2s}
+body[data-width="phone"] .frame{max-width:390px;border-left:1px dashed var(--border);border-right:1px dashed var(--border)}
+header.top{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 16px;align-items:baseline;margin-bottom:12px}
+h1{font-size:22px;color:var(--bright)}
+.sub{color:var(--muted);font-size:14px}
+.sync{color:var(--muted);font-size:13px}
+.cards{display:grid;grid-template-columns:1fr;gap:12px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;width:100%}
+.card h2{font-size:17px;color:var(--bright);display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline}
+.chip{font-size:12px;font-weight:600;background:var(--chip);border:1px solid var(--border);border-radius:999px;
+  padding:2px 10px;color:var(--fg)}
+.note{color:var(--muted);font-size:14px;margin-top:6px}
+.state{display:flex;gap:10px;align-items:flex-start;margin-top:12px;padding:12px;border-radius:10px;
+  border:1px solid var(--border)}
+.state .icon{font-size:18px;line-height:1.2}
+.state b{color:var(--bright)}
+.meters{display:grid;grid-template-columns:1fr;gap:12px;margin-top:14px}
+@media (min-width:720px){ body:not([data-width="phone"]) .meters{grid-template-columns:1fr 1fr} }
+.meter .row{display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px}
+.meter .row span:last-child{font-variant-numeric:tabular-nums;color:var(--bright);font-weight:600}
+.bar{height:8px;border-radius:4px;background:var(--track);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:4px;background:var(--fill)}
+.facts{display:grid;grid-template-columns:1fr;gap:0;margin-top:12px;border-top:1px solid var(--border)}
+.facts div{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px}
+.facts dt{color:var(--muted)}
+.facts dd{color:var(--bright);font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+.hero{margin-top:14px}
+.hero .big{font-size:44px;font-weight:700;color:var(--bright);line-height:1;font-variant-numeric:tabular-nums}
+.hero .what{color:var(--muted);font-size:14px;margin-top:6px}
+.hero .basis{margin-top:4px;font-size:14px;color:var(--fg)}
+.compare{display:grid;grid-template-columns:1fr;gap:12px;margin-top:14px}
+@media (min-width:720px){ body:not([data-width="phone"]) .compare{grid-template-columns:1fr 1fr} }
+.cmp{border:1px solid var(--border);border-radius:10px;padding:12px}
+.cmp h3{font-size:14px;color:var(--bright)}
+.cmp .tag{font-size:12px;color:var(--muted)}
+.cmp .gap{font-size:22px;font-weight:700;margin:6px 0 2px;font-variant-numeric:tabular-nums}
+.gap.neg{color:var(--neg)} .gap.pos{color:var(--pos)}
+.cmp .line{font-size:14px;color:var(--fg);font-variant-numeric:tabular-nums}
+.cmp .basis{font-size:13px;color:var(--muted);margin-top:4px}
+details{margin-top:14px;border:1px solid var(--border);border-radius:10px}
+summary{min-height:44px;display:flex;align-items:center;padding:0 12px;cursor:pointer;font-weight:600;color:var(--bright)}
+details .body{padding:0 12px 12px}
+.list{list-style:none}
+.list li{display:flex;flex-direction:column;gap:2px;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px}
+.list li:last-child{border-bottom:0}
+.list .t{font-weight:600;color:var(--bright)}
+.list .why{color:var(--muted)}
+@media (min-width:720px){ body:not([data-width="phone"]) .list li{flex-direction:row;justify-content:space-between} }
+.explore{font-size:12px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.06em}
+[data-show]{display:none}
+body[data-state="none"] [data-show~="none"],
+body[data-state="notmet"] [data-show~="notmet"],
+body[data-state="met"] [data-show~="met"]{display:block}
+footer{color:var(--muted);font-size:13px;margin:16px 0 32px}
+</style>
+</head>
+<body data-state="none" data-width="desktop">
+
+<div class="controls" role="toolbar" aria-label="Mock controls">
+  <span class="label">State</span>
+  <div class="seg" data-group="state">
+    <button aria-pressed="true" data-value="none">No closed window yet</button>
+    <button aria-pressed="false" data-value="notmet">Not enough yet</button>
+    <button aria-pressed="false" data-value="met">Readable</button>
+  </div>
+  <span class="label">Width</span>
+  <div class="seg" data-group="width">
+    <button aria-pressed="false" data-value="phone">Phone 390</button>
+    <button aria-pressed="true" data-value="desktop">Desktop 1280</button>
+  </div>
+  <span class="label">Theme</span>
+  <div class="seg" data-group="theme">
+    <button aria-pressed="false" data-value="light">Light</button>
+    <button aria-pressed="false" data-value="dark">Dark</button>
+  </div>
+</div>
+
+<main class="frame">
+  <header class="top">
+    <div>
+      <h1>Hit Rate</h1>
+      <p class="sub">Did the screeners' picks work? Each pick is frozen the evening it was shown and judged 30 days later.</p>
+    </div>
+    <p class="sync">Last sync: Sat 25 Oct EOD</p>
+  </header>
+
+  <section class="cards">
+
+    <!-- ── State 1: no closed window yet ─────────────────────────────── -->
+    <article class="card" data-show="none">
+      <h2>Swing Potential <span class="chip">Selection version 3</span></h2>
+      <div class="state" role="status">
+        <span class="icon" aria-hidden="true">⏳</span>
+        <div><b>No closed window yet.</b> A pick is judged once its 30 days are over. The first windows close
+          around <b>Wed 5 Nov</b>. Until then there is no rate to show, on purpose.</div>
+      </div>
+      <dl class="facts">
+        <div><dt>Picks frozen</dt><dd>214</dd></div>
+        <div><dt>Freeze dates</dt><dd>14</dd></div>
+        <div><dt>Windows still open</dt><dd>214</dd></div>
+        <div><dt>Judged so far</dt><dd>0</dd></div>
+      </dl>
+      <div class="meters">
+        <div class="meter"><div class="row"><span>Judged picks</span><span>0 of 30</span></div>
+          <div class="bar" role="img" aria-label="0 of 30 judged picks"><i style="width:0%"></i></div></div>
+        <div class="meter"><div class="row"><span>Freeze dates judged</span><span>0 of 3</span></div>
+          <div class="bar" role="img" aria-label="0 of 3 freeze dates"><i style="width:0%"></i></div></div>
+      </div>
+    </article>
+    <article class="card" data-show="none">
+      <h2>Asymmetric Growth <span class="chip">Selection version 2</span></h2>
+      <div class="state" role="status">
+        <span class="icon" aria-hidden="true">⏳</span>
+        <div><b>No closed window yet.</b> 96 picks over 9 freeze dates, all still inside their 30 days.</div>
+      </div>
+    </article>
+    <article class="card" data-show="none">
+      <h2>Fundamentals <span class="chip">Selection version 1</span></h2>
+      <div class="state" role="status">
+        <span class="icon" aria-hidden="true">⏳</span>
+        <div><b>No closed window yet.</b> 140 picks over 9 freeze dates, all still inside their 30 days.</div>
+      </div>
+    </article>
+
+    <!-- ── State 2: some windows closed, the gate is not met ────────── -->
+    <article class="card" data-show="notmet">
+      <h2>Swing Potential <span class="chip">Selection version 3</span></h2>
+      <div class="state" role="status">
+        <span class="icon" aria-hidden="true">🔒</span>
+        <div><b>Not enough to read yet:</b> 18 of 30 judged picks, 2 of 3 freeze dates. A rate on fewer picks or
+          fewer days would mostly show one market week, so it stays hidden until both are met.</div>
+      </div>
+      <div class="meters">
+        <div class="meter"><div class="row"><span>Judged picks</span><span>18 of 30</span></div>
+          <div class="bar" role="img" aria-label="18 of 30 judged picks"><i style="width:60%"></i></div></div>
+        <div class="meter"><div class="row"><span>Freeze dates judged</span><span>2 of 3</span></div>
+          <div class="bar" role="img" aria-label="2 of 3 freeze dates"><i style="width:66.7%"></i></div></div>
+      </div>
+      <dl class="facts">
+        <div><dt>Picks frozen</dt><dd>214 over 14 dates</dd></div>
+        <div><dt>Windows still open</dt><dd>191</dd></div>
+        <div><dt>Repeats left out</dt><dd>3</dd></div>
+        <div><dt>Picks that could not be measured</dt><dd>2</dd></div>
+      </dl>
+      <details>
+        <summary>Picks left out (5)</summary>
+        <div class="body">
+          <p class="note">A ticker picked again within 90 days counts once: the first pick is the one kept.</p>
+          <ul class="list">
+            <li><span class="t">ACME · frozen 2 Oct</span><span class="why">Repeat of the pick of 1 Oct</span></li>
+            <li><span class="t">ACME · frozen 3 Oct</span><span class="why">Repeat of the pick of 1 Oct</span></li>
+            <li><span class="t">BOLT · frozen 9 Oct</span><span class="why">Repeat of the pick of 6 Oct</span></li>
+            <li><span class="t">POAS · frozen 1 Oct</span><span class="why">Price series jumps like an unrecorded split; waits for a check</span></li>
+            <li><span class="t">QRSX · frozen 2 Oct</span><span class="why">No price bars after the freeze</span></li>
+          </ul>
+        </div>
+      </details>
+    </article>
+    <article class="card" data-show="notmet">
+      <h2>Swing Potential <span class="chip">Selection version 2 · retired</span></h2>
+      <div class="state" role="status">
+        <span class="icon" aria-hidden="true">🔒</span>
+        <div><b>Not enough to read:</b> 12 of 30 judged picks, 3 of 3 freeze dates. The selection changed after
+          these picks, so they are kept apart from version 3 and never added to it.</div>
+      </div>
+    </article>
+    <article class="card" data-show="notmet">
+      <h2>Asymmetric Growth <span class="chip">Selection version 2</span></h2>
+      <div class="state" role="status">
+        <span class="icon" aria-hidden="true">⏳</span>
+        <div><b>No closed window yet.</b> 96 picks over 9 freeze dates, all still inside their 30 days.</div>
+      </div>
+    </article>
+
+    <!-- ── State 3: the gate is met ──────────────────────────────────── -->
+    <article class="card" data-show="met">
+      <h2>Swing Potential <span class="chip">Selection version 3</span></h2>
+      <div class="hero">
+        <div class="big">41.3%</div>
+        <div class="what">of picks rose at least 10% at their daily high within 30 days of the freeze</div>
+        <div class="basis"><b>129 of 312</b> judged picks · <b>14</b> freeze dates</div>
+      </div>
+      <div class="compare">
+        <div class="cmp">
+          <h3>Against names that move like them</h3>
+          <div class="tag">The test fixed in advance: same day, same volatility tenth of the universe</div>
+          <div class="gap neg">▼ 6.5 points</div>
+          <div class="line">Picks 41.6% · peers 48.1%</div>
+          <div class="basis">On 298 picks over 14 freeze dates (14 had no peer group of 21 names or more)</div>
+        </div>
+        <div class="cmp">
+          <h3>Against the whole universe</h3>
+          <div class="tag">Same day, every stock in the universe that evening</div>
+          <div class="gap pos">▲ 0.4 points</div>
+          <div class="line">Picks 41.3% · universe 40.9%</div>
+          <div class="basis">On 312 picks over 14 freeze dates</div>
+        </div>
+      </div>
+      <p class="note">Read: the picks do about as well as the market, but worse than stocks that swing as much as they do.
+        The rise is measured from the next morning's open to the highest high.</p>
+      <details>
+        <summary>Picks left out (7)</summary>
+        <div class="body">
+          <ul class="list">
+            <li><span class="t">5 repeats</span><span class="why">Same ticker within 90 days; the first pick is kept</span></li>
+            <li><span class="t">POAS · frozen 1 Oct</span><span class="why">Price series jumps like an unrecorded split; waits for a check</span></li>
+            <li><span class="t">QRSX · frozen 2 Oct</span><span class="why">No price bars after the freeze</span></li>
+          </ul>
+        </div>
+      </details>
+      <details>
+        <summary><span><span class="explore">Exploratory</span>&nbsp; other cuts</span></summary>
+        <div class="body">
+          <p class="note">Not the test fixed in advance: each extra cut makes a lucky number more likely, so read these
+            as hints. Which cuts appear here (90 days, 20% and 5% rises, typical rise and drop) is still open.</p>
+        </div>
+      </details>
+    </article>
+    <article class="card" data-show="met">
+      <h2>Fundamentals <span class="chip">Selection version 1</span></h2>
+      <div class="state" role="status">
+        <span class="icon" aria-hidden="true">🔒</span>
+        <div><b>Not enough to read yet:</b> 26 of 30 judged picks; 5 freeze dates, so that part is met.</div>
+      </div>
+      <div class="meters">
+        <div class="meter"><div class="row"><span>Judged picks</span><span>26 of 30</span></div>
+          <div class="bar" role="img" aria-label="26 of 30 judged picks"><i style="width:86.7%"></i></div></div>
+        <div class="meter"><div class="row"><span>Freeze dates judged</span><span>5 (3 needed)</span></div>
+          <div class="bar" role="img" aria-label="5 freeze dates, 3 needed"><i style="width:100%"></i></div></div>
+      </div>
+    </article>
+
+  </section>
+  <footer>Design mock with made-up numbers. Every rate shows the number of judged picks and freeze dates behind it;
+    selection versions are never added together.</footer>
+</main>
+
+<script>
+(function () {
+  var root = document.documentElement, body = document.body;
+  function press(group, value) {
+    document.querySelectorAll('[data-group="' + group + '"] button').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.value === value));
+    });
+  }
+  var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  press('theme', dark ? 'dark' : 'light');
+  document.querySelectorAll('.seg button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var group = b.parentNode.dataset.group, value = b.dataset.value;
+      press(group, value);
+      if (group === 'theme') root.setAttribute('data-theme', value);
+      else body.setAttribute('data-' + group, value);
+    });
+  });
+})();
+</script>
+</body>
+</html>
