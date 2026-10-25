@@ -251,9 +251,11 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
   function load(poll) {
     if (busy) { if (!poll) pending = true; return; }
     busy = true;
-    fetch(query(), {cache: "no-store"})
+    var url = query();
+    fetch(url, {cache: "no-store"})
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      .then(function (d) { if (!(poll && paused)) { last = d; draw(); } })
+      // An answer read under a filter the reader has since changed is dropped: the pending read follows.
+      .then(function (d) { if (url === query() && !(poll && paused)) { last = d; draw(); } })
       .catch(function (e) { meta.textContent = "Could not read the run log: " + e.message; })
       .then(function () { busy = false; if (pending) { pending = false; load(); } });
   }

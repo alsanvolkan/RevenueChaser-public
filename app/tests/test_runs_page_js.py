@@ -256,11 +256,16 @@ def _load_harness(client, tmp_path, steps: str) -> list:
                "var meta = document.getElementById('runs-meta');\n"
                "var sent = [], held = [];\n"
                "fetch = function(url){ sent.push(url); return new Promise(function(res){ held.push(res); }); };\n"
-               "function answer(){ if (held.length) held.shift()({ok: true, json: function(){ return {rows: []}; }}); }\n"
-               "function draw(){}\n"
+               "var answered = 0, drawn = [];\n"
+               "function answer(){ if (!held.length) return; var n = ++answered;"
+               " held.shift()({ok: true, json: function(){ return {rows: [], n: n}; }}); }\n"
+               "var last = null;\n"
+               "function draw(){ drawn.push(last.n); }\n"
                "function tick(){ return new Promise(function(r){ setTimeout(r, 0); }); }\n")
     funcs = _default_limit(script) + "\n" + "\n".join(function_source(script, name) for name in ("query", "load"))
     body = f"(async function(){{ {steps} console.log(JSON.stringify(sent)); }})();"
+    if "DRAWN" in steps:
+        body = f"(async function(){{ {steps.replace('DRAWN', '')} console.log(JSON.stringify([sent, drawn])); }})();"
     return _node(DOM_STUB + prelude + state + "\n" + funcs + "\n" + body, tmp_path)
 
 
@@ -308,3 +313,17 @@ def test_the_overlay_counts_the_other_jobs_covering_the_tab(client, tmp_path):
         "Running rotation · 12s · +2 more",
         "Queued behind another job… · +1 more",
     ]
+
+
+
+def test_an_answer_read_under_an_old_filter_is_not_drawn(client, tmp_path):
+    """#189 review: the poll in flight when the reader ticked Problems only came back and was drawn, so the
+    unfiltered rows flashed up under a ticked box before the filtered read replaced them."""
+    sent, drawn = _load_harness(client, tmp_path, """DRAWN
+      load(true);
+      problems.checked = true; load();
+      answer(); await tick();
+      answer(); await tick();
+    """)
+    assert sent == ["/api/runs", "/api/runs?problems=1"]
+    assert drawn == [2], f"drew answers {drawn}: the first was read without the filter"
