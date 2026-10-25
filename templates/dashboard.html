@@ -197,7 +197,7 @@ button:disabled{opacity:.5;cursor:default}
   .rc-open-issues .body{padding:0 12px 12px}
   .rc-oi-dl{grid-template-columns:minmax(0,1fr)}
   .rc-oi-dl dd,.rc-oi-line,.rc-oi-head{min-width:0;overflow-wrap:anywhere}
-  .cal-popover{position:fixed;left:8px;right:8px;top:auto;max-width:none}
+  .cal-popover{position:fixed;left:8px;right:8px;max-width:none}   /* top and height: placeCal() */
 }
 /* A finger, not a mouse: 44 px touch targets (CLAUDE.md, the phone rule). A desktop mouse keeps 32/38/40. */
 @media (max-width: 900px), (pointer: coarse){
@@ -731,10 +731,22 @@ function updateRangeLabel(){
   }
 }
 
+// On a phone the pop-up is fixed to the screen's width, so it is placed under its own button with the height
+// that is left below it; a desktop keeps the stylesheet's placement under the button.
+function placeCal(p){
+  p.style.top = ''; p.style.maxHeight = '';
+  if(!isNarrow() || !p.classList.contains('open')) return;
+  var btn = p.parentElement && p.parentElement.querySelector('.dd-btn');
+  if(!btn) return;
+  var below = btn.getBoundingClientRect().bottom + 4;
+  p.style.top = below + 'px';
+  p.style.maxHeight = Math.max(120, window.innerHeight - below - 8) + 'px';
+}
 function toggleCal(id){
   var p = document.getElementById(id);
   if(!p) return;
   p.classList.toggle('open');
+  placeCal(p);
   if(id === 'earnings-cal-popover' && p.classList.contains('open')){
     var today = p.querySelector('.cal-day.today');
     if(today && today.scrollIntoView) today.scrollIntoView({block: 'center', inline: 'nearest'});

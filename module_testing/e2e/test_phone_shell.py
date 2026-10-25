@@ -176,3 +176,23 @@ def test_a_board_without_its_own_background_is_not_painted_white_in_dark(dashboa
                         " return [r.left + r.width / 2, r.bottom - 40]; })()")
     r, g, b = _pixel(browser, x, y)
     assert 0.2126 * r + 0.7152 * g + 0.0722 * b < 80, f"{tab} frame painted {(r, g, b)} in dark"
+
+
+@pytest.mark.parametrize("tab, button, popover", [
+    ("module_sector_rotation", "range-btn", "cal-popover"),
+    ("module_earnings_radar", "earnings-range-btn", "earnings-cal-popover"),
+    ("module_spx_gamma", "spxgamma-range-btn", "spxgamma-cal-popover"),
+])
+def test_a_calendar_opens_on_screen_below_its_button_on_a_phone(dashboard, browser, tab, button, popover):
+    """#190 review: position:fixed with top:auto left the pop-up's top edge 70-119 px above the screen."""
+    _open(browser, dashboard, PHONE, "dark", tab)
+    browser.eval(f"document.getElementById({button!r}).click()")
+    m = browser.eval(f"""(function(){{
+      var p = document.getElementById({popover!r}).getBoundingClientRect();
+      var b = document.getElementById({button!r}).getBoundingClientRect();
+      return {{top: p.top, bottom: p.bottom, left: p.left, right: p.right, h: p.height, btn: b.bottom,
+               vh: window.innerHeight, vw: document.documentElement.clientWidth}};
+    }})()""")
+    assert m["h"] > 0, "the pop-up did not open"
+    assert m["top"] >= m["btn"], f"the pop-up covers its own button or sits above it: {m}"
+    assert m["bottom"] <= m["vh"] and m["left"] >= 0 and m["right"] <= m["vw"], f"not fully on screen: {m}"
