@@ -29,6 +29,12 @@ GENERIC = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _pid_is_gone(monkeypatch):
+    """``_process_name`` would run a real ``ps -p <pid>``; PID 2832 can be alive on a runner (#196)."""
+    monkeypatch.setattr(rawstore, "_process_name", lambda pid: "")
+
+
 class TestHolderParsing:
     def test_the_pid_is_extracted(self):
         assert rawstore._lock_error(VSCODE).holder_pid == 2832
@@ -37,10 +43,15 @@ class TestHolderParsing:
         assert "Code Helper" in rawstore._lock_error(VSCODE).holder_path
 
     def test_the_name_falls_back_to_the_binary_when_the_pid_is_gone(self):
-        """PID 2832 is unlikely to exist here, so ``ps`` returns nothing."""
+        """With the PID gone, ``_process_name`` returns nothing (stubbed by the autouse fixture)."""
         err = rawstore._lock_error(VSCODE)
         assert err.holder_name  # never blank
         assert "Code Helper" in err.holder_name
+
+    def test_a_live_process_name_wins_over_the_binary(self, monkeypatch):
+        monkeypatch.setattr(rawstore, "_process_name", lambda pid: "live-name")
+        err = rawstore._lock_error(VSCODE)
+        assert err.holder_name == "live-name"
 
     def test_an_unparseable_message_still_produces_an_error(self):
         err = rawstore._lock_error("Conflicting lock is held somewhere unhelpful")
