@@ -134,3 +134,58 @@ def test_each_run_leaves_its_counts_on_disk(tmp_path, monkeypatch):
     assert len(reports) == 1
     assert json.loads(reports[0].read_text(encoding="utf-8")) == counts
     assert counts["report_file"] == str(reports[0].relative_to(tmp_path))
+
+
+# ── both directions with real worker threads (#194 review MUST): the Fetch and the pull never overlap ──
+@pytest.fixture
+def real_lanes(monkeypatch):
+    """The real queue and its worker threads, with blocking stand-ins for the two SPX runners."""
+    import threading
+
+    with jobs._LOCK:
+        jobs._JOBS.clear()
+    monkeypatch.setattr(jobs, "UWClient", lambda: _FakeUW())
+    started, release = threading.Event(), threading.Event()
+
+    def blocking(uw, **params):
+        started.set()
+        release.wait(10)
+    monkeypatch.setitem(jobs._RUNNERS, "spxgamma_history", blocking)
+    monkeypatch.setitem(jobs._RUNNERS, "spxgamma", blocking)
+    yield started
+    release.set()
+    for jid in [j["id"] for j in jobs.list_jobs()]:      # let the workers record the end before the store goes
+        _wait_done(jid)
+
+
+def _wait_done(jid):
+    import time
+    for _ in range(200):
+        if jobs.get(jid)["status"] in ("done", "error", "cancelled"):
+            return
+        time.sleep(0.05)
+
+
+def test_a_board_fetch_is_refused_while_the_pull_runs(real_lanes, monkeypatch):
+    from RevenueChaser.core.tests.panel_client import panel_test_client
+    from RevenueChaser.module_spx_gamma import run as spx_run
+    monkeypatch.setattr(nyse_calendar, "_now", lambda: SAT)
+    jid = jobs.submit("spxgamma_history", {"start": "2025-03-10", "end": "2025-03-12"})
+    assert real_lanes.wait(5)
+    assert jobs.get(jid)["status"] == "running" and jobs.get(jid)["lane"] == "long"
+    client = panel_test_client(dashboard.app)
+    r = client.post("/run/spxgamma", data={"date": "2025-03-14"})
+    assert r.status_code == 409 and r.get_json()["job_id"] == jid
+    monkeypatch.setattr(spx_run, "serves_from_disk", lambda day, root=None: True)     # a stored past day
+    r = client.post("/run/spxgamma", data={"date": "2025-03-12"})
+    assert r.status_code == 409 and r.get_json()["job_id"] == jid
+
+
+def test_the_pull_is_refused_while_a_board_fetch_runs(real_lanes, monkeypatch):
+    from RevenueChaser.core.tests.panel_client import panel_test_client
+    monkeypatch.setattr(nyse_calendar, "_now", lambda: SAT)
+    jid = jobs.submit("spxgamma", {"asof_date": "2025-03-14"})
+    assert real_lanes.wait(5)
+    assert jobs.get(jid)["status"] == "running" and jobs.get(jid)["lane"] == "short"
+    r = panel_test_client(dashboard.app).post("/run/spxgamma_history?start=2025-03-10&end=2025-03-12")
+    assert r.status_code == 409 and r.get_json()["job_id"] == jid

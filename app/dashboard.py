@@ -814,6 +814,11 @@ def run_spxgamma():
         date.fromisoformat(asof)
     except ValueError:
         return jsonify({"ok": False, "error": "bad date"}), 400
+    # Never beside the history pull (#194 review): it stages and promotes the same raw day folders. Only the
+    # pull blocks; a second board Fetch still queues behind the first, as before.
+    refused = _busy(("spxgamma_history",), "The SPX Gamma history pull is running; Fetch again when it finishes.")
+    if refused:
+        return refused
     from RevenueChaser.module_spx_gamma.run import serves_from_disk
 
     params = {"asof_date": asof}
