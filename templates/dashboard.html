@@ -165,8 +165,9 @@ button:disabled{opacity:.5;cursor:default}
 .cal-month.earn-month{cursor:pointer}
 .cal-month.earn-month:hover{color:var(--sky)}
 .cal-day.sel{background:rgba(14,165,233,.28)!important}
-.cal-gex-pos{background:var(--gex-pos-bg);color:var(--gex-pos-fg);font-weight:700}
-.cal-gex-neg{background:var(--gex-neg-bg);color:var(--gex-neg-fg);font-weight:700}
+/* As specific as `.cal-table td`, and later, so the sign's colours win over the plain text colour. */
+.cal-table td.cal-gex-pos{background:var(--gex-pos-bg);color:var(--gex-pos-fg);font-weight:700}
+.cal-table td.cal-gex-neg{background:var(--gex-neg-bg);color:var(--gex-neg-fg);font-weight:700}
 .cal-day.today{box-shadow:inset 0 0 0 1px var(--sky)}
 .cal-day.weekend{opacity:.35;cursor:default}
 .cal-day.out{opacity:.2;cursor:default}

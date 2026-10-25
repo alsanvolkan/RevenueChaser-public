@@ -163,8 +163,8 @@ def test_the_spx_calendar_colours_come_from_the_tokens(shell):
     assert "td.style.color" not in script and "td.style.background" not in script, "hard-coded day colours"
     assert "cal-gex-pos" in script and "cal-gex-neg" in script
     css = _style(shell)
-    assert re.search(r"\.cal-gex-pos\{[^}]*var\(--gex-pos-fg\)", css)
-    assert re.search(r"\.cal-gex-neg\{[^}]*var\(--gex-neg-fg\)", css)
+    assert re.search(r"\.cal-table td\.cal-gex-pos\{[^}]*var\(--gex-pos-fg\)", css)
+    assert re.search(r"\.cal-table td\.cal-gex-neg\{[^}]*var\(--gex-neg-fg\)", css)
 
 
 def test_the_calendar_hover_tints_are_tokens(shell):

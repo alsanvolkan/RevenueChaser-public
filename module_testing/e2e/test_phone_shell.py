@@ -325,3 +325,23 @@ def test_a_board_gets_the_choice_again_when_its_tab_is_shown(dashboard, browser)
     browser.eval("showTab('module_settings'); showTab('runs')")
     assert browser.eval("document.querySelector('.frame.on').contentDocument.documentElement"
                         ".getAttribute('data-theme')") == "light"
+
+
+@pytest.mark.parametrize("choice", ["dark", "light"])
+def test_the_spx_calendar_day_colours_reach_the_page(dashboard, browser, choice):
+    """#190 delta review: `.cal-table td{color:var(--fg)}` outranked `.cal-gex-pos/neg`, so both signs showed the
+    plain text colour and the --gex-*-fg tokens never reached the screen. The empty store has no days, so a
+    rendered day cell is given each class and its computed colour read back."""
+    _open(browser, dashboard, PHONE, "dark", "module_spx_gamma")
+    browser.eval(f"rcThemeSet({choice!r}); THEME_NOW = {choice!r}; themeShow();")
+    browser.eval("document.getElementById('spxgamma-range-btn').click()")
+    browser.wait_for("!!document.querySelector('#spxgamma-cal-body table.cal-table td')")
+    got = browser.eval("""(function(){
+      var td = document.querySelector('#spxgamma-cal-body table.cal-table td'), out = {};
+      ['pos', 'neg'].forEach(function(s){
+        td.className = 'cal-gex-' + s; out[s] = [getComputedStyle(td).color, getComputedStyle(td).backgroundColor];
+      });
+      return out; })()""")
+    tokens = THEME_TOKENS[choice]
+    for sign in ("pos", "neg"):
+        assert got[sign][0] == _rgb(tokens[f"gex-{sign}-fg"]), f"{choice} {sign}: text is {got[sign][0]}"
