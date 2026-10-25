@@ -210,3 +210,18 @@ def test_the_route_refuses_an_end_after_the_newest_fetch_day(client, tmp_path):
 def test_the_route_queues_iso_dates(client):
     client.post("/run/spxgamma_history?start=20250310&end=2025-W11-3", headers=CLI)
     assert client.submitted == [("spxgamma_history", {"start": "2025-03-10", "end": "2025-03-12"})]
+
+
+def test_the_runs_row_gets_compact_counts(sync_jobs, monkeypatch):
+    """The answer shapes and the failure list stay in the run file; the store row stays small (#194 nit)."""
+    big = {"calls": 400, "status": {"200": 400}, "failed": 30, "report_file": "history_pull/run_x.json",
+           "failures": [{"day": f"2025-01-{d:02d}", "statuses": [422], "error": "x" * 200} for d in range(1, 21)],
+           "shapes": {"sessions": {f"2025-02-{d:02d}": {"interpolated_iv": {"keys": ["k"] * 20}}
+                                   for d in range(1, 21)}, "iv_rank": {"rows": 500}}}
+    monkeypatch.setattr(hp, "pull_history", lambda uw, start, end, **kw: {"counts": big})
+    jid = jobs.submit("spxgamma_history", {"start": "2025-03-10", "end": "2025-03-12"})
+    jobs.execute(jid)
+    counts = rawstore.get("job_runs", jid)["counts"]
+    assert "shapes" not in counts and len(counts["failures"]) == hp.ROW_FAILURES == 3
+    assert counts["calls"] == 400 and counts["failed"] == 30 and counts["report_file"] == "history_pull/run_x.json"
+    assert len(json.dumps(counts)) < 2000

@@ -60,6 +60,18 @@ _MAX_FAILURE_RECORDS = 20
 _AUTH = (401, 403)
 
 
+ROW_FAILURES = 3                 # failure records kept in the job_runs row (the run file keeps all of them)
+
+
+def row_counts(counts: dict) -> dict:
+    """The counts for the run's ``job_runs`` row: everything but the answer shapes, and only the first
+    ``ROW_FAILURES`` failure records. The run's file (``report_file``) has the full set (#194 review)."""
+    row = {k: v for k, v in counts.items() if k != "shapes"}
+    if isinstance(row.get("failures"), list):
+        row["failures"] = row["failures"][:ROW_FAILURES]
+    return row
+
+
 class HistoryPullRefused(RuntimeError):
     """The pull did not start (the US session is open, or its clock cannot tell)."""
 
