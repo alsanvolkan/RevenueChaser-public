@@ -411,3 +411,11 @@ def test_a_429_between_rejected_days_resets_the_rejected_streak(tmp_path, monkey
     counts = _pull(tmp_path, Recorder(gex), start=FEB[0], end=FEB[-1])
     assert counts["stop_reason"] == "rejected_streak"
     assert counts["failed"] == 8                       # 2 + the 429 day + 5: the 429 restarted the count
+
+
+def test_a_run_past_its_deadline_says_so_in_its_counts(tmp_path):
+    from RevenueChaser.core import job_control
+    with job_control.bound(job_control.StopToken(0)), pytest.raises(job_control.JobDeadline):
+        _pull(tmp_path, Recorder())
+    [report] = _reports(tmp_path)
+    assert report["stop_reason"] == "deadline"
