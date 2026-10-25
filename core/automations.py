@@ -553,8 +553,8 @@ _SHOW_SERVICE = ("ActiveState", "Result", "ExecMainStatus", "ExecMainStartTimest
 # keys into the environment, so the environment is never copied. The data roots are written as this process resolved
 # them, so a job systemd starts reads and writes the store and logs the panel reads; without them it would fall back
 # to the checkout's own .store/.cache (``config._root``). The others are passed only when set.
-UNIT_ENVIRONMENT = ("RC_STORE_DIR", "RC_CACHE_DIR", "RC_EDGAR_DOCS_DIR", "RC_DISCORD_MEDIA_DIR", "SPX_GAMMA_DATA_ROOT",
-                    "RAW_STORE_BACKUP_DIR", "RAW_STORE_BACKUP_WEEKLY", "RAW_STORE_BACKUP_MIRROR", "TZ")
+UNIT_ENVIRONMENT = ("RC_STORE_DIR", "RC_CACHE_DIR", "RC_EDGAR_DOCS_DIR", "SPX_GAMMA_DATA_ROOT", "RAW_STORE_BACKUP_DIR",
+                    "RAW_STORE_BACKUP_WEEKLY", "RAW_STORE_BACKUP_MIRROR", "TZ")
 
 
 def _unit_environment() -> list[tuple[str, str]]:

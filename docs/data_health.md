@@ -429,7 +429,7 @@ for Task Scheduler; the Linux backend maps the ones systemd has).
   days in local time, `Persistent=` from "catches up a missed run") under
   `~/.config/systemd/user/`, then enables the timer; a systemctl failure deletes both files again.
   The service carries an allowlist of variables, never a copy of the environment (unit files are
-  world-readable and `.env` puts the keys there): the four data roots as the dashboard resolved them,
+  world-readable and `.env` puts the keys there): the three data roots as the dashboard resolved them,
   so a job writes the store and logs the panel reads, and `SPX_GAMMA_DATA_ROOT`, `RAW_STORE_BACKUP_*`
   and `TZ` when set. Not mapped: "wakes the PC" (a user timer cannot arm a wake alarm, and asking for
   one leaves it failed) and the restart counts (`Restart=on-failure` would re-run a chained step's
