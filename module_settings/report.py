@@ -619,7 +619,7 @@ function drillFill(d){
     + drillRow('Price', d.price == null ? '—' : '$' + Number(d.price).toFixed(2))
     + drillRow('Sector', d.sector || '—')
     + drillRow('Industry', d.industry || '—')
-    + drillRow('SIC', sic)
+    + drillRow('SEC industry code', sic)
     + drillRow('Last 10-K / 20-F', filing)
     + drillRow('EDGAR facts', drillCount(p.edgar_financials, 'periods') || 'no facts stored')
     + drillRow('Daily price bars', d01.bars
@@ -627,9 +627,9 @@ function drillFill(d){
     + drillRow('Quote', drillCount(p.quote_snapshot, 'rows') || 'no quote stored')
     + drillRow('Vendor financials', drillCount(p.vendor_financials, 'rows') || 'no vendor statements stored')
     + drillRow('Ownership', drillCount(p.ownership_snapshot, 'rows') || 'no ownership stored')
-    + drillRow('Legacy OHLC cache (SPY fallback)', swing.bars
+    + drillRow('Legacy daily open/high/low/close cache (SPY fallback)', swing.bars
         ? (swing.bars + ' bars · newest ' + (swing.newest || '—')) : 'no bars')
-    + drillRow('OIPD chain', p.oipd_meta ? 'present' : 'missing')
+    + drillRow('Implied Probability chain', p.oipd_meta ? 'present' : 'missing')
     + drillRow('Relatedness profile', p.relatedness_profiles ? 'present' : 'missing')
     + drillBoards(d.boards);
 }
@@ -1891,12 +1891,17 @@ def _mini_table(heads: list[str], body: list[str]) -> str:
     return f'<table class="inv mini"><thead><tr>{ths}</tr></thead><tbody>{"".join(body)}</tbody></table>'
 
 
+# The page's words for a stored bucket name that is one of our short forms (#155); the payload keeps the key.
+_BUCKET_WORDS = {"SIC": "SEC industry code"}
+
+
 def _identity_mix(section_id: str, title: str, head: str, key: str, rows: list[dict], floor_label: str) -> str:
     """A small ``<head> / All / >=floor`` table; a row flagged ``excluded`` carries a muted tag."""
     body = []
     for r in rows:
         tag = '<span class="tag">(excluded)</span>' if r.get("excluded") else ""
-        body.append(f'<tr><td>{_html.escape(str(r.get(key) or "—"))}{tag}</td>'
+        name = str(r.get(key) or "—")
+        body.append(f'<tr><td>{_html.escape(_BUCKET_WORDS.get(name, name))}{tag}</td>'
                     f'<td class="num">{_fmt_rows(r.get("all"))}</td><td class="num">{_fmt_rows(r.get("floor"))}</td></tr>')
     return (f'<div id="{section_id}"><h4>{_html.escape(title)}</h4>'
             f'{_mini_table([head, "All", floor_label], body)}</div>')
@@ -1954,7 +1959,7 @@ def _identity_card(identity: dict | None) -> str:
     # Since R3 (#86) the job is a live universe writer: say so where the button's effect is read.
     head = ('<section id="identity"><div class="bcard" id="identity-health"><h3>Identity health</h3>'
             '<div class="asof" id="identity-writes">A successful Fetch identity also writes the master\'s sector and '
-            "industry, and UW\'s next earnings date, into <b>equity_universe</b>, which every board reads.</div>")
+            "industry, and Unusual Whales\' next earnings date, into <b>equity_universe</b>, which every board reads.</div>")
     if not identity.get("last_run") and not identity.get("type_mix"):
         return (head + '<div class="bnote" id="identity-empty">No identity run yet. '
                 "Use Fetch identity in the table above.</div></div></section>")

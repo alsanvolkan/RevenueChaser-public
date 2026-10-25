@@ -142,8 +142,8 @@ REGISTRY: tuple[AutomationEntry, ...] = (
     AutomationEntry(
         name="RC-Daily-Bars", label="Daily price bars",
         args=("-m", "RevenueChaser.scripts.daily_bars", "--nightly", "--sec-files", "--index-levels"), time="22:35",
-        description="Writes each scope ticker's bars up to the latest complete New York session (UW ohlc/1d, "
-                    "yfinance fallback), yfinance adj_close, dividends and splits; no calls when current. First, "
+        description="Writes each scope ticker's bars up to the latest complete New York session (Unusual Whales "
+                    "daily bars, yfinance fallback), yfinance adj_close, dividends and splits; no calls when current. First, "
                     "best effort, on weekdays: the SEC exchange and fund files (#301, at most 2 SEC requests a "
                     "night). Last, best effort: the ^GSPC daily levels (D03, #293; at most 1 yfinance request a "
                     "night, none when current or before the attended one-time fill). Neither step's failure "
@@ -184,7 +184,7 @@ REGISTRY: tuple[AutomationEntry, ...] = (
     AutomationEntry(
         name="RC-Index-Lists", label="Index lists (weekly)",
         args=("-m", "RevenueChaser.scripts.index_lists", "--weekly"), time="10:00", days=("Saturday",),
-        description="Writes the S&P 500, Dow and Nasdaq member lists (3 UW requests) and the SmallCap 600 list "
+        description="Writes the S&P 500, Dow and Nasdaq member lists (3 Unusual Whales requests) and the SmallCap 600 list "
                     "from the last accepted S&P 1500 snapshot; a list under its floor is kept as it was, and the "
                     "change history records each join and leave.",
         tables_written=("index_constituents", "index_constituents_changes")),
@@ -194,10 +194,10 @@ REGISTRY: tuple[AutomationEntry, ...] = (
               "--max-yf-calls", "2000", "--max-cboe-calls", "20", "--max-cftc-calls", "5"),
         time="01:30", days=_TUE_SAT, after="RC-Daily-Bars",
         description="The Earnings board's nightly inputs (E0, #372), after tonight's daily bars run exited 0: the "
-                    "UW earnings calendar of the next four weeks, the economic calendar, 8 FRED series, short "
-                    "interest of the calendar and 13F tickers (UW, then yfinance), yfinance analyst estimates, the "
+                    "Unusual Whales earnings calendar of the next four weeks, the economic calendar, 8 FRED series, short "
+                    "interest of the calendar and 13F tickers (Unusual Whales, then yfinance), yfinance analyst estimates, the "
                     "Cboe vol indices (VIX family, VVIX, OVX) with MOVE from yfinance, and the weekly CFTC "
-                    "E-mini S&P 500 TFF row. At most 200 UW, 10 FRED, 2000 yfinance, 20 Cboe and 5 CFTC read calls "
+                    "E-mini S&P 500 TFF row. At most 200 Unusual Whales, 10 FRED, 2000 yfinance, 20 Cboe and 5 CFTC read calls "
                     "a night, no SEC call; one sweep failing leaves the others. 01:30 Tuesday to Saturday keys each "
                     "run to the US session just closed; a run inside the US session writes nothing. A busy step "
                     "lock exits 3, and nothing was written.",

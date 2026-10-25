@@ -289,7 +289,7 @@ def test_a_board_card_shows_one_source_to_store_line_per_table():
     assert "What this board reads" in html
     assert html.count('class="bflow-row"') == 2
     assert html.count("Unusual Whales") == 2, "the provider is written in full, never as a code"
-    assert html.count("OIPD chain") == 2
+    assert html.count("Implied Probability chain") == 2
     assert html.count('class="db db-raw"') == 2
 
 
@@ -776,8 +776,10 @@ def test_the_sector_source_mix_table():
     src = html[html.index('id="identity-sources"'):html.index('id="identity-conflicts"')]
     assert "Sector source mix" in src and "GICS" not in src
     assert "<th>Bucket</th>" in src and "<th>All</th>" in src and "<th>≥$300M</th>" in src
-    for bucket in ("official", "provider", "SIC", "type rule", "unclassified"):
+    # The stored "SIC" bucket reads in plain words on the page (#155).
+    for bucket in ("official", "provider", "SEC industry code", "type rule", "unclassified"):
         assert bucket in src
+    assert "<td>SIC" not in src
     assert "1,501" in src and "5,100" in src and "1,200" in src and "325" in src
 
 
@@ -1309,7 +1311,7 @@ def test_the_drill_shows_zero_d01_and_the_legacy_count_under_its_label():
         },
     })
     assert '<span class="dlbl">Daily price bars</span><span class="dval">no bars</span>' in html
-    assert ('<span class="dlbl">Legacy OHLC cache (SPY fallback)</span>'
+    assert ('<span class="dlbl">Legacy daily open/high/low/close cache (SPY fallback)</span>'
             '<span class="dval">4 bars · newest 2026-02-02</span>' in html)
 
 

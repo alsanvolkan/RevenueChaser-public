@@ -410,7 +410,7 @@ def _price_bars_row(now: datetime) -> dict:
     check_txt = _fmt_date(check) if check is not None else DASH
     default["note"] = (
         f"newest {h.get('newest_session') or DASH} vs latest complete "
-        f"{h.get('latest_complete') or DASH}; UW {int(share.get('uw', 0))} / "
+        f"{h.get('latest_complete') or DASH}; Unusual Whales {int(share.get('uw', 0))} / "
         f"yfinance {int(share.get('yfinance', 0))}; {int(h.get('actions_last_5', 0))} actions in the "
         f"last 5 sessions; last check {check_txt}")
     return default
@@ -471,7 +471,7 @@ def _index_levels_row(now: datetime) -> dict:
 # The eight fields G2-29 measured per source (phase2/06_interface.md §6); the note lists their fill.
 _VENDOR_FILL_FIELDS = ("revenue", "gross_profit", "operating_income", "ebitda", "net_income", "interest_expense",
                        "total_assets", "operating_cash_flow")
-_VENDOR_SOURCE_LABELS = {"uw": "UW", "yfinance": "yfinance"}
+_VENDOR_SOURCE_LABELS = {"uw": "Unusual Whales", "yfinance": "yfinance"}
 
 
 def _vendor_row(now: datetime) -> dict:
@@ -537,7 +537,7 @@ def _quotes_row() -> dict:
         return default
     rows = h["rows"]
     note = (f"newest {h['newest_session']}: yfinance {rows.get(quotes.SOURCE_YAHOO, 0)} / "
-            f"UW {rows.get(quotes.SOURCE_UW, 0)} of {h['universe']} universe; {h['gaps']} caps more than "
+            f"Unusual Whales {rows.get(quotes.SOURCE_UW, 0)} of {h['universe']} universe; {h['gaps']} caps more than "
             f"{quotes.CAP_GAP_PCT}% apart")
     if h["gap_examples"]:
         note += f" ({', '.join(h['gap_examples'])})"
@@ -547,7 +547,7 @@ def _quotes_row() -> dict:
     return default
 
 
-_HOLDINGS_PROVIDERS = (("uw", "UW"), ("yfinance", "yfinance"))
+_HOLDINGS_PROVIDERS = (("uw", "Unusual Whales"), ("yfinance", "yfinance"))
 
 
 def _etf_holdings_row() -> dict:
@@ -577,7 +577,7 @@ def _etf_holdings_row() -> dict:
                        if p in h["providers"])
     parts = [f"{h['in_newest']} of {h['expected']} ETFs on session {h['newest_session'] or DASH}",
              share or "no provider recorded",
-             f"RS stored {h['rs_stored']} of {h['themes']} theme ETFs"]
+             f"relative strength stored {h['rs_stored']} of {h['themes']} theme ETFs"]
     if h["missing"]:
         named = ", ".join(h["missing"][:8])
         parts.append(f"no holdings: {named}" + (f" and {len(h['missing']) - 8} more" if len(h["missing"]) > 8 else ""))
@@ -792,7 +792,7 @@ _DRILL_TABLE_LABELS = {
     "vendor_financials": "vendor financials",
     "edgar_financials": "EDGAR facts",
     "ownership_snapshot": "ownership",
-    "swing_ohlc": "legacy OHLC cache (SPY fallback)",
+    "swing_ohlc": "legacy daily open/high/low/close cache (SPY fallback)",
     "oipd_meta": "Implied Probability chain",
     "relatedness_profiles": "Relatedness profile",
 }
@@ -1430,7 +1430,7 @@ def _sec_submissions_row() -> dict:
         "tables": ["sec_submissions", "sec_submissions_cik"],
         "rows": _count("sec_submissions"),
         "last_date": _max_date(("sec_submissions", "filing_date")),
-        "holes": None, "hole_label": "universe CIKs not refreshed in the last run (failed or new)",
+        "holes": None, "hole_label": "universe companies not refreshed in the last run (failed or new)",
         "fetch": {"route": "/run/edgar-sync", "label": "Fetch 10-K sync"},
         "note": "no submissions yet (the daily EDGAR sync stores them)",
     }
@@ -1447,10 +1447,10 @@ def _sec_submissions_row() -> dict:
     if universe is not None:
         refreshed = len(universe & h["last_run_checked"])
         row["holes"] = len(universe - h["last_run_checked"])
-        parts.append(f"last run {_fmt_date(h['last_run_at'])}: {refreshed:,} of {len(universe):,} universe CIKs "
+        parts.append(f"last run {_fmt_date(h['last_run_at'])}: {refreshed:,} of {len(universe):,} universe companies "
                      f"refreshed")
     else:
-        parts.append(f"last run {_fmt_date(h['last_run_at'])}: {h['last_run_ciks']:,} CIKs refreshed")
+        parts.append(f"last run {_fmt_date(h['last_run_at'])}: {h['last_run_ciks']:,} companies refreshed")
     parts.append(f"{h['ciks']:,} CIKs with filings; newest filing {_fmt_date(h['newest_filing_date'])}, "
                  f"newest fetched {_fmt_date(h['newest_fetched_at'])}")
     row["note"] = "; ".join(parts)
@@ -2183,7 +2183,7 @@ def _collect(now: datetime) -> dict:
         },
         {
             "key": "ohlc",
-            "label": "Legacy OHLC cache (SPY fallback)",
+            "label": "Legacy daily open/high/low/close cache (SPY fallback)",
             "tables": ["swing_ohlc"],
             "rows": _count("swing_ohlc"),
             "last_date": _max_date(("swing_ohlc", "ts")),
@@ -2220,7 +2220,7 @@ def _collect(now: datetime) -> dict:
         },
         {
             "key": "oipd",
-            "label": "OIPD chain",
+            "label": "Implied Probability chain",
             "tables": ["oipd_chain", "oipd_meta"],
             "rows": _sum_counts(["oipd_chain", "oipd_meta"]),
             "last_date": _max_date(("oipd_meta", "as_of")),
@@ -2250,7 +2250,7 @@ def _collect(now: datetime) -> dict:
             "holes": None,
             "hole_label": "",
             "fetch": None,
-            "note": "history.duckdb (#287): one header row per recorded board run",
+            "note": "history.duckdb (alsanvolkan/RevenueChaser#287): one header row per recorded board run",
         },
         _inputs_row(),
     ]
