@@ -221,3 +221,17 @@ def test_a_desktop_toggles_the_theme_from_the_sidebar(dashboard, browser):
     browser.eval("document.getElementById('theme-toggle-side').click()")
     assert browser.eval("document.documentElement.getAttribute('data-theme')") == "light"
     assert browser.eval("document.getElementById('theme-toggle-side').textContent") == "Theme: Light"
+
+
+def test_the_summaries_keep_their_arrow_on_a_phone(dashboard, browser):
+    """#190 review: the 44 px rule made "What am I looking at?", "Recorded sessions" and "Open issues" lose
+    their open/closed arrow on a phone or a touch screen."""
+    _open(browser, dashboard, PHONE, "dark", "module_settings")
+    shell = browser.eval("Array.prototype.map.call(document.querySelectorAll('details > summary'),"
+                         " function(s){ return getComputedStyle(s).display; })")
+    board = browser.eval("Array.prototype.map.call(document.querySelector('.frame.on').contentDocument"
+                         ".querySelectorAll('details.help > summary'), function(s){"
+                         " var r = s.getBoundingClientRect(); return [getComputedStyle(s).display, r.height]; })")
+    assert shell and all(d == "list-item" for d in shell), f"shell summaries: {shell}"
+    assert board and all(d == "list-item" for d, _ in board), f"board help summary: {board}"
+    assert all(h >= 44 for _, h in board), f"the help summary is under 44 px: {board}"

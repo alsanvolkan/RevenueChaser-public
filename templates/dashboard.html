@@ -215,7 +215,8 @@ button:disabled{opacity:.5;cursor:default}
   input[type=date],input[type=text]{height:44px;font-size:16px}
   .chk{min-height:44px}
   .chk input{width:20px;height:20px}
-  .rc-open-issues>summary{min-height:44px;display:flex;align-items:center}
+  /* Padding, not display:flex, which would drop the summary's open/closed arrow. */
+  .rc-open-issues>summary{min-height:44px;padding-top:12px;padding-bottom:12px;box-sizing:border-box}
 }
 </style>
 </head>

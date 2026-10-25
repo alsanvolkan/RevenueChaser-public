@@ -140,8 +140,9 @@ rcThemeApply(rcThemeGet());
 """
 
 # The shared panels' summaries: 9 px padding is a 34 px target, so a phone or a touch screen gets 44 px.
+# Padding, not display:flex: a <summary> draws its open/closed arrow only while it is display:list-item.
 _SUMMARY_TOUCH = """@media (max-width: 900px), (pointer: coarse){
-%s summary{min-height:44px;display:flex;align-items:center}
+%s summary{min-height:44px;padding-top:12px;padding-bottom:12px;box-sizing:border-box}
 }"""
 
 # ── "What am I looking at?" help box (every tab) ──

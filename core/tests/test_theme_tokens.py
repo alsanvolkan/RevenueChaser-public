@@ -177,3 +177,10 @@ def test_the_dark_spx_calendar_keeps_its_colours():
     dark = rc.THEME_TOKENS["dark"]
     assert (dark["gex-pos-bg"], dark["gex-pos-fg"]) == ("rgba(52,211,153,.35)", "#eafff5")
     assert (dark["gex-neg-bg"], dark["gex-neg-fg"]) == ("rgba(248,113,113,.35)", "#ffd9d9")
+
+
+def test_the_touch_sized_summaries_keep_their_arrow():
+    """#190 review: display:flex on a <summary> drops its disclosure triangle (it lives on display:list-item)."""
+    for css in (rc.HELP_CSS, rc.HISTORY_CSS):
+        touch = css[css.index("@media (max-width: 900px), (pointer: coarse)"):]
+        assert "display:flex" not in touch
