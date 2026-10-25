@@ -19,6 +19,7 @@ import shutil
 import signal as _signal
 import subprocess
 import sys
+import threading
 import webbrowser
 from datetime import date, timedelta
 from pathlib import Path
@@ -814,25 +815,31 @@ def run_spxgamma():
         date.fromisoformat(asof)
     except ValueError:
         return jsonify({"ok": False, "error": "bad date"}), 400
-    # Never beside the history pull (#194 review): it stages and promotes the same raw day folders. Only the
-    # pull blocks; a second board Fetch still queues behind the first, as before.
-    refused = _busy(("spxgamma_history",), "The SPX Gamma history pull is running; Fetch again when it finishes.")
-    if refused:
-        return refused
     from RevenueChaser.module_spx_gamma.run import serves_from_disk
 
     params = {"asof_date": asof}
     # A stored past day is served from disk and never refetched (#179 D5); only an explicit
     # force field refetches it. Its job needs no UW client, so no auth probe is sent either.
+    module = "spxgamma"
     if (request.form.get("force") or "").strip().lower() in ("1", "true"):
         params["force"] = True
     elif serves_from_disk(asof):
-        return _submit("spxgamma_stored", params)
-    return _submit("spxgamma", params)
+        module = "spxgamma_stored"
+    # Never beside the history pull (#194 review): it stages and promotes the same raw day folders. Only the
+    # pull blocks; a second board Fetch still queues behind the first, as before. The check and the submit are
+    # one step under _SPX_SUBMIT_LOCK, or a pull posted during this Fetch's key probe would be let in as well.
+    with _SPX_SUBMIT_LOCK:
+        refused = _busy(("spxgamma_history",), "The SPX Gamma history pull is running; Fetch again when it finishes.")
+        if refused:
+            return refused
+        return _submit(module, params)
 
 
 # The SPX jobs that write raw/<date>/: one at a time from the queue.
 _SPX_JOBS = ("spxgamma", "spxgamma_stored", "spxgamma_history")
+# Held from an SPX route's busy check to its submit (which includes the UW key probe): the two SPX routes'
+# check-then-submit never interleave, so a Fetch and a pull posted together cannot both be queued.
+_SPX_SUBMIT_LOCK = threading.Lock()
 _SPX_HISTORY_MAX_CALLS = 150_000     # UW's daily budget: no single run may be allowed more
 _SPX_HISTORY_MAX_SLEEP_S = 60.0
 
@@ -879,10 +886,11 @@ def run_spxgamma_history():
     if in_session:
         return jsonify({"ok": False, "error": "the US session is open; the history pull runs outside session "
                                               "hours (09:30-16:30 New York)"}), 409
-    refused = _busy(_SPX_JOBS, "An SPX Gamma job is already queued or running.")
-    if refused:
-        return refused
-    return _submit("spxgamma_history", params)
+    with _SPX_SUBMIT_LOCK:                # the check and the submit are one step (see run_spxgamma)
+        refused = _busy(_SPX_JOBS, "An SPX Gamma job is already queued or running.")
+        if refused:
+            return refused
+        return _submit("spxgamma_history", params)
 
 
 @app.route("/run/quick", methods=["POST"])

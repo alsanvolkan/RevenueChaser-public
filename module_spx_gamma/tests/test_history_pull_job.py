@@ -261,3 +261,40 @@ def test_the_route_refuses_when_the_session_clock_cannot_tell(client, monkeypatc
     monkeypatch.setattr(nyse_calendar, "in_us_session_window", unknown)
     r = client.post("/run/spxgamma_history?start=2025-03-10&end=2025-03-13", headers=CLI)
     assert r.status_code == 409 and client.submitted == []
+
+
+def test_a_fetch_and_a_pull_posted_at_once_never_both_queue(monkeypatch):
+    """The 409 check and the submit are one step: a slow key probe between them let both in (#194 delta review)."""
+    import queue
+    import threading
+    import time as _time
+    from RevenueChaser.core.tests.panel_client import panel_test_client
+
+    monkeypatch.setattr(nyse_calendar, "_now", lambda: SAT)
+    monkeypatch.setattr(jobs, "_JOB_QUEUE", queue.Queue())
+    monkeypatch.setattr(jobs, "_LONG_QUEUE", queue.Queue())
+    monkeypatch.setattr(jobs, "_JOBS", {})
+    monkeypatch.setattr(jobs, "_SEQ", {})
+    monkeypatch.setattr(jobs, "_ensure_worker", lambda: None)          # queued is enough to count as busy
+    monkeypatch.setattr(jobs, "_ensure_long_worker", lambda: None)
+
+    class _SlowProbe:
+        def verify(self):
+            _time.sleep(0.5)                                             # a real HTTPS probe takes this long
+            return True, None
+    monkeypatch.setattr(dashboard, "_uw", lambda: _SlowProbe())
+    go = threading.Barrier(2, timeout=5)
+    codes: dict[str, int] = {}
+
+    def post(name, url, data=None):
+        client = panel_test_client(dashboard.app)
+        go.wait()
+        codes[name] = client.post(url, data=data).status_code
+    threads = [threading.Thread(target=post, args=("fetch", "/run/spxgamma", {"date": "2025-03-14"})),
+               threading.Thread(target=post, args=("pull", "/run/spxgamma_history?start=2025-03-10&end=2025-03-12"))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert sorted(codes.values()) == [202, 409], codes
+    assert len(jobs.list_jobs()) == 1
