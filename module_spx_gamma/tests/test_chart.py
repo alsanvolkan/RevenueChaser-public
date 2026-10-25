@@ -88,3 +88,22 @@ def test_the_one_panel_map_is_700_px_tall(snapshot):
     """#195 review MUST 1: height=None shrank the PNG export (700x500) and the shell's desktop map."""
     fig = position_map.build(snapshot, include_tornado=False)
     assert fig.layout.height == 700 and fig.layout.autosize is True
+
+
+def test_the_export_passes_the_responsive_config_to_plotly(tmp_path, snapshot):
+    """#195 review SHOULD 3: the real export path (run._export_chart) names responsive itself.
+
+    Plotly 6's default also happens to be responsive, so the output cannot tell; the call can.
+    """
+    from RevenueChaser.module_spx_gamma.run import _export_chart
+    fig = position_map.build(snapshot, include_tornado=False)
+    seen = {}
+    real = fig.to_html
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    fig.__dict__["to_html"] = spy
+    _export_chart(fig, tmp_path, "position_map", png=False)
+    assert (seen.get("config") or {}).get("responsive") is True

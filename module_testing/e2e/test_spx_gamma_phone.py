@@ -306,3 +306,30 @@ def test_no_stored_theme_is_dark_on_a_light_device(board, browser):
     browser.open(f"{board.url}/view/{TAB}")
     assert browser.eval("document.documentElement.getAttribute('data-theme')") == "dark"
     assert browser.eval("getComputedStyle(document.body).backgroundColor") == "rgb(5, 17, 31)"
+
+
+# ── #195 review SHOULD 3: tests that guarded nothing, now pinned to the rule they name ──
+def test_the_boards_own_focus_rule_draws_the_ring(board, browser):
+    """The browser's default outline (style auto) is not this board's :focus-visible rule."""
+    _open(browser, board, PHONE)
+    browser.eval("document.body.focus()")
+    browser.press("Tab")
+    ring = browser.eval("(function(){ var a = document.activeElement, s = getComputedStyle(a);"
+                        " return [a.tagName, s.outlineStyle, s.outlineWidth, a.matches(':focus-visible')]; })()")
+    assert ring[3] is True and ring[1] == "solid" and ring[2] == "2px", ring
+
+
+def test_the_at_a_glance_grid_is_two_columns_on_a_phone_and_seven_on_a_desktop(board, browser):
+    cols = "getComputedStyle(document.querySelector('.ag-grid7')).gridTemplateColumns.split(' ').length"
+    _open(browser, board, PHONE)
+    assert browser.eval(cols) == 2
+    _open(browser, board, DESKTOP)
+    assert browser.eval(cols) == 7
+
+
+def test_the_iron_butterfly_legs_do_not_scroll_on_a_phone(board, browser):
+    over = "getComputedStyle(document.querySelector('.ib-legs')).overflowX"
+    _open(browser, board, PHONE)
+    assert browser.eval(over) == "visible"
+    _open(browser, board, DESKTOP)
+    assert browser.eval(over) == "auto"
