@@ -17,6 +17,15 @@ CLI = {"X-RC-Panel": "cli"}
 _REAL_SESSION_WINDOW = nyse_calendar.in_us_session_window       # read at import, before any fixture patches it
 
 
+@pytest.fixture(autouse=True)
+def _a_fetch_day(tmp_path, monkeypatch):
+    """The board's newest Fetch is the Friday: every range below ends before it."""
+    monkeypatch.setattr(hp, "DATA_ROOT", tmp_path)
+    folder = tmp_path / "raw" / "2025-03-14"
+    folder.mkdir(parents=True)
+    (folder / "manifest.json").write_text('{"origin": "fetch"}', encoding="utf-8")
+
+
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(nyse_calendar, "_now", lambda: SAT)
@@ -189,3 +198,10 @@ def test_the_pull_is_refused_while_a_board_fetch_runs(real_lanes, monkeypatch):
     assert jobs.get(jid)["status"] == "running" and jobs.get(jid)["lane"] == "short"
     r = panel_test_client(dashboard.app).post("/run/spxgamma_history?start=2025-03-10&end=2025-03-12")
     assert r.status_code == 409 and r.get_json()["job_id"] == jid
+
+
+def test_the_route_refuses_an_end_after_the_newest_fetch_day(client, tmp_path):
+    (tmp_path / "raw" / "2025-03-14").rename(tmp_path / "raw" / "2025-03-12")
+    r = client.post("/run/spxgamma_history?start=2025-03-10&end=2025-03-13", headers=CLI)
+    assert r.status_code == 400 and "newest Fetch" in r.get_json()["error"]
+    assert client.post("/run/spxgamma_history?start=2025-03-10&end=2025-03-12", headers=CLI).status_code == 202

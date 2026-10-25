@@ -40,7 +40,7 @@ from RevenueChaser.core import job_control
 from . import safe_json
 from .config import DATA_ROOT, TICKER
 from .run import _is_session
-from .snapshot import HISTORY_CALLS_PER_SESSION, NoStoredClose, SnapshotError, fetch_snapshot
+from .snapshot import HISTORY_CALLS_PER_SESSION, HISTORY_ORIGIN, NoStoredClose, SnapshotError, fetch_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -157,13 +157,41 @@ def sessions_between(start: date, end: date) -> list[str]:
     return out
 
 
-def check_range(start: str, end: str) -> tuple[date, date]:
-    """The range as dates; ``ValueError`` unless ``start <= end < today`` (New York): only past sessions."""
+def newest_fetch_day(root=None) -> str | None:
+    """The newest raw day a board Fetch wrote (it has a manifest whose ``origin`` is not the pull's), or None."""
+    raw_root = (Path(root) if root else DATA_ROOT) / "raw"
+    if not raw_root.exists():
+        return None
+    for day in sorted((d for d in raw_root.iterdir() if d.is_dir() and not d.name.startswith(".")),
+                      key=lambda d: d.name, reverse=True):
+        try:
+            manifest = json.loads((day / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(manifest, dict) and manifest.get("origin") != HISTORY_ORIGIN:
+            return day.name
+    return None
+
+
+def check_range(start: str, end: str, root=None) -> tuple[date, date]:
+    """The range as dates; ``ValueError`` unless ``start <= end < today`` (New York) and ``end`` is not after the
+    board's newest Fetch day.
+
+    The last rule keeps the board on a Fetch day: Refresh rebuilds the newest stored day and moves
+    ``latest.json`` to it, and a history day has no chain, iv-rank or options volume (#194 review). A day up to the
+    newest Fetch day is fine (that day itself is stored, so it costs nothing).
+    """
     lo, hi = date.fromisoformat(start), date.fromisoformat(end)
     if lo > hi:
         raise ValueError(f"start {start} is after end {end}")
     if hi >= nyse_calendar.today_ny():
         raise ValueError(f"end {end} is not a past day; the pull fetches past sessions only")
+    newest = newest_fetch_day(root)
+    if newest is None:
+        raise ValueError("no board Fetch day is stored; Fetch the board once before the history pull")
+    if hi.isoformat() > newest:
+        raise ValueError(f"end {end} is after the board's newest Fetch day {newest}; a history day there would "
+                         f"become the day Refresh shows")
     return lo, hi
 
 
@@ -175,7 +203,7 @@ def pull_history(uw, start: str, end: str, *, max_calls: int = DEFAULT_MAX_CALLS
     ``uw`` is the job's ``UWClient``. Raises ``ValueError`` for a bad range and :class:`HistoryPullRefused`
     inside the US session, both before any request.
     """
-    lo, hi = check_range(start, end)
+    lo, hi = check_range(start, end, data_root)
     if max_calls <= 0:
         raise ValueError("max_calls must be positive")
     if _session_open():

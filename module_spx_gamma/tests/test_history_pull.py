@@ -62,6 +62,20 @@ def _offline(monkeypatch):
     monkeypatch.setattr(nyse_calendar, "_now", lambda: NOW)
 
 
+FETCH_DAY = "2025-03-14"        # the board's newest Fetch: the pull may not reach past it
+
+
+@pytest.fixture(autouse=True)
+def _a_fetch_day(tmp_path):
+    _store_day(tmp_path, FETCH_DAY, "fetch")
+
+
+def _store_day(root, day, origin):
+    folder = root / "raw" / day
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "manifest.json").write_text(json.dumps({"origin": origin}), encoding="utf-8")
+
+
 def _pull(tmp_path, uw, start=DAYS[0], end=NO_CLOSE, **kw):
     kw.setdefault("sleep", lambda s: None)
     return hp.pull_history(uw, start, end, data_root=tmp_path, **kw)["counts"]
@@ -69,7 +83,8 @@ def _pull(tmp_path, uw, start=DAYS[0], end=NO_CLOSE, **kw):
 
 def _days(tmp_path):
     raw = tmp_path / "raw"
-    return sorted(d.name for d in raw.iterdir() if (d / "manifest.json").exists()) if raw.exists() else []
+    return sorted(d.name for d in raw.iterdir()
+                  if (d / "manifest.json").exists() and d.name != FETCH_DAY) if raw.exists() else []
 
 
 def test_pulls_each_session_once_and_counts_every_call(tmp_path):
@@ -319,3 +334,23 @@ def test_an_unexpected_error_still_leaves_its_counts(tmp_path, monkeypatch):
         _pull(tmp_path, Recorder())
     [report] = _reports(tmp_path)
     assert report["stop_reason"] == "error: OSError: disk full" and report["calls"] == 1
+
+
+def test_refuses_an_end_after_the_newest_fetch_day(tmp_path):
+    """A history day newer than the board's newest Fetch would become the day Refresh rebuilds (#194 review)."""
+    import shutil
+    shutil.rmtree(tmp_path / "raw" / FETCH_DAY)
+    _store_day(tmp_path, DAYS[1], "fetch")
+    _store_day(tmp_path, DAYS[2], hp.HISTORY_ORIGIN)       # a history day is not a Fetch day
+    uw = Recorder()
+    with pytest.raises(ValueError, match="newest Fetch"):
+        _pull(tmp_path, uw, end=DAYS[2])
+    assert uw.calls == []
+    assert _pull(tmp_path, uw, end=DAYS[1])["written"] == 1     # up to that day is fine (it is stored already)
+
+
+def test_refuses_when_no_fetch_day_is_stored(tmp_path):
+    import shutil
+    shutil.rmtree(tmp_path / "raw" / FETCH_DAY)
+    with pytest.raises(ValueError, match="no board Fetch"):
+        _pull(tmp_path, Recorder())
