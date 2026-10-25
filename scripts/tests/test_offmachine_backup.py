@@ -499,6 +499,31 @@ def test_an_existing_drive_folder_keeps_every_file_that_is_not_ours(world, monke
     assert len(_names(world["dest"], "raw_*.duckdb")) == 1     # the pruning did run, inside the sub-folder
 
 
+def test_the_retired_discord_leftovers_are_never_pruned_in_either_folder(world, monkeypatch, capsys, clock):
+    """#174/#175: the ``discord_*`` snapshots and ``discord_media_mirror/`` an earlier run wrote, in the backup
+    folder and in the off-machine sub-folder, stay until the owner deletes them by hand: no prune touches them."""
+    assert _run(world, monkeypatch) == 0
+    out, dest = world["out"], world["dest"]
+    (raw_snap,) = _names(out, "raw_*.duckdb")
+    leftovers = {}
+    for folder, count in ((out, 4), (dest, 3)):                # more than any --keep below, so a prune would bite
+        for i in range(count):
+            p = folder / f"discord_2025010{i + 1}_020000_000001.duckdb"
+            shutil.copy2(out / raw_snap, p)                   # a real DuckDB file, so the local scan adopts it
+            leftovers[p] = p.read_bytes()
+        media = folder / "discord_media_mirror" / "900" / "a.png"
+        media.parent.mkdir(parents=True)
+        media.write_bytes(b"an attachment an earlier version of this job mirrored")
+        leftovers[media] = media.read_bytes()
+    for day in range(1, 5):
+        clock(_day(2026, 9, 28) + timedelta(days=day))
+        assert _run(world, monkeypatch, "--keep", "1", "--keep-mirror", "1", "--keep-mirror-big", "1",
+                    "--mirror-big-every-days", "0", "--scan-every-days", "0") == 0, capsys.readouterr().err
+    for p, data in leftovers.items():
+        assert p.is_file() and p.read_bytes() == data, f"{p} was changed or deleted"
+    assert len(_names(out, "raw_*.duckdb")) == 1 and len(_names(dest, "raw_*.duckdb")) == 1  # the prunes did run
+
+
 def test_everything_the_app_writes_goes_into_the_sub_folder(world, monkeypatch, capsys, clock):
     assert _run(world, monkeypatch) == 0
     drive = world["mirror"]
