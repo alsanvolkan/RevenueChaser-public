@@ -102,8 +102,8 @@ def build(snapshot: dict, include_tornado: bool = True) -> go.Figure | None:
         font=dict(color=TEXT, size=12),
         title=dict(text=f"SPX Option Position Map — {asof}", font=dict(size=16)),
         autosize=True,
-        # The page sizes the one-panel map from its container (min(700px, 70vh)); the tall variant keeps its own.
-        height=1180 if has_tornado else None,
+        # 700 px; a phone's page script shortens it to 70% of the screen (section_position_map.html.j2).
+        height=1180 if has_tornado else 700,
         margin=dict(l=70, r=250, t=75, b=40),
         hoverlabel=dict(bgcolor="#111a2c"),
         annotations=[

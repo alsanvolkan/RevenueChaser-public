@@ -29,7 +29,6 @@ h2{ font-size:19px; margin:24px 0 8px; color:var(--bright); }
 h3{ font-size:15px; margin:16px 0 8px; color:var(--bright); }
 .chart{ margin:8px 0 16px; max-width:100%; overflow:hidden; }
 .chart .plotly-graph-div{ max-width:100%; }
-.chart .plotly-graph-div[style*="height:100%"]{ height:min(700px,70vh) !important; }
 table{ border-collapse:collapse; width:100%; margin:8px 0 16px; font-size:13px; }
 th,td{ border:1px solid var(--border); padding:8px; text-align:left; }
 th{ background:var(--card); color:var(--bright); font-weight:600; }
@@ -414,7 +413,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 </details>
 
 <h2>SPX Option Position Map</h2>
-<div class="box">{% if chart_html %}<div class="chart">{{ chart_html }}</div>
+<div class="box">{% if chart_html %}<div class="chart chart-map">{{ chart_html }}</div>
 {% elif chart_image %}<div class="chart"><img src="{{ chart_image }}" alt="SPX Option Position Map"></div>{% endif %}</div>
 
 <h2>Net GEX Tornado — Strike Profile</h2>
@@ -717,9 +716,17 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     if(!gd || !gd.layout || !window.Plotly) return;
     var narrow = gd.clientWidth < 520;
     if(gd._rcNarrow === narrow) return;
-    if(!gd._rcOrig) gd._rcOrig = {r: gd.layout.margin.r, l: gd.layout.margin.l};
+    if(!gd._rcOrig) gd._rcOrig = {r: gd.layout.margin.r, l: gd.layout.margin.l, h: gd._fullLayout.height};
     gd._rcNarrow = narrow;
-    Plotly.relayout(gd, {'margin.r': narrow ? 16 : gd._rcOrig.r, 'margin.l': narrow ? Math.min(gd._rcOrig.l, 48) : gd._rcOrig.l});
+    var u = {'margin.r': narrow ? 16 : gd._rcOrig.r, 'margin.l': narrow ? Math.min(gd._rcOrig.l, 48) : gd._rcOrig.l};
+    // Only the position map follows the screen's height, and only on a phone.
+    if(gd.closest('.chart-map')){
+      u.autosize = true;   // a height given to relayout would otherwise switch autosize off
+      u.height = narrow ? Math.min(gd._rcOrig.h, Math.round(window.innerHeight * 0.7)) : gd._rcOrig.h;
+      gd.style.height = u.height + 'px';
+      if(gd.parentNode.style.height) gd.parentNode.style.height = u.height + 'px';   // Plotly's own wrapper carries the height too
+    }
+    Plotly.relayout(gd, u);
   }
   function all(){ document.querySelectorAll('.js-plotly-plot').forEach(adapt); }
   window.addEventListener('load', function(){ setTimeout(all, 50); });

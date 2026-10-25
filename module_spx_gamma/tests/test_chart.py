@@ -82,3 +82,9 @@ def test_put_wall_uses_181_365_band(snapshot):
     fig = position_map.build(snapshot)
     texts = [a.text for a in fig.layout.annotations if a.text]
     assert any("Put Wall" in t and "7,500" in t for t in texts)
+
+
+def test_the_one_panel_map_is_700_px_tall(snapshot):
+    """#195 review MUST 1: height=None shrank the PNG export (700x500) and the shell's desktop map."""
+    fig = position_map.build(snapshot, include_tornado=False)
+    assert fig.layout.height == 700 and fig.layout.autosize is True

@@ -19,6 +19,7 @@ from RevenueChaser.core.reporting_common import THEME_TOKENS
 
 from .harness.cdp_browser import Page, find_chrome
 
+MAP_SHORT = "document.querySelector('.chart-map .main-svg').getBoundingClientRect().height <= 0.7 * innerHeight + 1"
 PHONE = (390, 844)
 DESKTOP = (1280, 800)
 TAB = "module_spx_gamma"
@@ -48,13 +49,16 @@ def board(dashboard, tmp_path, monkeypatch):
     from RevenueChaser.module_spx_gamma.charts import position_map
     from RevenueChaser.module_spx_gamma.charts.tornado import build_tornado_fig
     from RevenueChaser.module_spx_gamma.render import render_html
+    from RevenueChaser.module_spx_gamma.run import _export_chart as export
     from RevenueChaser.module_spx_gamma.tests.conftest import make_snapshot
 
     snap = make_snapshot()
 
     def frag(fig):
-        return fig.to_html(full_html=False, include_plotlyjs=False, config={"responsive": True}) if fig else None
+        # The real export path (run._export_chart), so a change to its to_html config is seen here.
+        return export(fig, Path(tmp_path) / "charts", "c", png=False)[2]
 
+    (Path(tmp_path) / "charts").mkdir(exist_ok=True)
     html = render_html(snap, chart_html=frag(position_map.build(snap, include_tornado=False)),
                        tornado_html=frag(build_tornado_fig(snap)),
                        envelope_html=frag(position_map.build_envelope_fig(snap)))
@@ -197,6 +201,8 @@ def test_a_focused_summary_shows_a_focus_ring(board, browser):
 @pytest.mark.parametrize("size", [PHONE, DESKTOP])
 def test_the_charts_fit_their_container(board, browser, size):
     _open(browser, board, size)
+    if size == PHONE:
+        browser.wait_for(MAP_SHORT)
     got = browser.eval("""(function(){ return Array.prototype.map.call(document.querySelectorAll('.chart'), function(c){
       var g = c.querySelector('.js-plotly-plot'); var s = g.querySelector('.main-svg').getBoundingClientRect();
       var plot = g.layout.margin; return {box: c.getBoundingClientRect().width, svg: s.width, graph: g.getBoundingClientRect().width,
@@ -206,7 +212,7 @@ def test_the_charts_fit_their_container(board, browser, size):
         assert c["svg"] <= c["box"] + 1 and c["graph"] <= c["box"] + 1, c
         assert c["auto"] is True, c
     if size == PHONE:
-        browser.wait_for("document.querySelector('.js-plotly-plot').layout.margin.r <= 16")
+        browser.wait_for(MAP_SHORT)
         got[0]["mr"] = browser.eval("document.querySelector('.js-plotly-plot').layout.margin.r")
         assert all(c["mr"] <= 16 for c in got[:1]), f"the position map keeps its desktop margin: {got[0]}"
         assert got[0]["h"] <= 0.7 * got[0]["vh"] + 1, got[0]
@@ -216,3 +222,32 @@ def test_a_chart_gets_its_margin_back_when_the_window_grows(board, browser):
     _open(browser, board, PHONE)
     browser.emulate(*DESKTOP, scheme="dark")
     browser.wait_for("document.querySelector('.js-plotly-plot').layout.margin.r > 100")
+
+
+
+# ── PR #195 review: the map's height, inside the shell and on a phone ──
+FRAME_READY = ("(function(){ var f = document.querySelector('.frame.on'); try {"
+               " return !!(f && f.getAttribute('src') && f.contentDocument.readyState === 'complete'"
+               " && f.contentDocument.location.href !== 'about:blank'"
+               " && f.contentDocument.querySelectorAll('.js-plotly-plot .main-svg').length >= 3); } catch (e) { return false; } })()")
+FRAME_CHARTS = ("Array.prototype.map.call(document.querySelector('.frame.on').contentDocument.querySelectorAll('.chart'),"
+                " function(c){ return Math.round(c.querySelector('.js-plotly-plot').getBoundingClientRect().height); })")
+
+
+def test_the_position_map_is_700_px_tall_on_a_desktop_inside_the_shell(board, browser):
+    """#195 review MUST 1: min(700px, 70vh) made the map 486 px in the shell at 1280x800."""
+    browser.emulate(*DESKTOP, scheme="dark")
+    browser.open(f"{board.url}/#{TAB}", ready=FRAME_READY)
+    assert browser.eval(FRAME_CHARTS) == [700, 460, 460]
+
+
+def test_only_the_map_follows_the_screen_height_on_a_phone(board, browser):
+    _open(browser, board, PHONE)
+    browser.wait_for(MAP_SHORT)
+    heights = browser.eval("Array.prototype.map.call(document.querySelectorAll('.chart'), function(c){"
+                           " return Math.round(c.querySelector('.js-plotly-plot').getBoundingClientRect().height); })")
+    assert heights[0] <= 0.7 * PHONE[1] + 1 and heights[1:] == [460, 460], heights
+    box = browser.eval("Array.prototype.map.call(document.querySelectorAll('.chart'), function(c){"
+                       " return Math.round(c.getBoundingClientRect().height - c.querySelector('.js-plotly-plot')"
+                       ".getBoundingClientRect().height); })")
+    assert all(extra <= 1 for extra in box), f"a chart box is taller than its chart: {box}"
