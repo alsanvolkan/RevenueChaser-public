@@ -81,7 +81,7 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
   var body = document.getElementById("runs-body"), meta = document.getElementById("runs-meta");
   var problems = document.getElementById("runs-problems"), filter = document.getElementById("runs-filter");
   var pause = document.getElementById("runs-pause");
-  var paused = false, busy = false, shown = null, last = null;
+  var paused = false, busy = false, pending = false, shown = null, last = null;
 
   function stamp(epoch) {
     if (epoch === null || epoch === undefined) return "—";
@@ -186,14 +186,17 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
     return s ? POLL + "?" + s : POLL;
   }
 
+  // A read already in flight does not drop a reader's change: it is remembered and sent once that read ends
+  // (one extra request at most, however many changes came meanwhile). A timer poll that finds a read in
+  // flight is simply skipped; the next tick comes round anyway.
   function load(poll) {
-    if (busy) return;
+    if (busy) { if (!poll) pending = true; return; }
     busy = true;
     fetch(query(), {cache: "no-store"})
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
       .then(function (d) { if (!(poll && paused)) { last = d; draw(); } })
       .catch(function (e) { meta.textContent = "Could not read the run log: " + e.message; })
-      .then(function () { busy = false; });
+      .then(function () { busy = false; if (pending) { pending = false; load(); } });
   }
 
   problems.addEventListener("change", function () { shown = null; load(); });

@@ -209,3 +209,54 @@ def test_the_overlay_sentence_for_every_state(client, tmp_path):
         "Running spxgamma · 2s · stopping at the next safe point",
         "Running daily_bars",
     ]
+
+
+# ── a filter change while a poll is in flight (#131 item 1) ───────────────────
+
+def _load_harness(client, tmp_path, steps: str) -> list:
+    """Drive ``load()`` against a fetch whose answers the test releases one at a time."""
+    script = _page_js(client)
+    # The page's state line (``var paused = ..., busy = ...``) is taken as it stands, so a new flag the
+    # function needs is declared where the page declares it and not only here.
+    state = next(ln for ln in script.splitlines() if ln.strip().startswith("var paused"))
+    prelude = ("globalThis.URLSearchParams = require('url').URLSearchParams;\n"
+               'var POLL = "/api/runs";\n'
+               "var problems = document.getElementById('runs-problems');\n"
+               "var filter = document.getElementById('runs-filter');\n"
+               "var limit = document.getElementById('runs-limit');\n"
+               "var meta = document.getElementById('runs-meta');\n"
+               "var sent = [], held = [];\n"
+               "fetch = function(url){ sent.push(url); return new Promise(function(res){ held.push(res); }); };\n"
+               "function answer(){ if (held.length) held.shift()({ok: true, json: function(){ return {rows: []}; }}); }\n"
+               "function draw(){}\n"
+               "function tick(){ return new Promise(function(r){ setTimeout(r, 0); }); }\n")
+    funcs = "\n".join(function_source(script, name) for name in ("query", "load"))
+    body = f"(async function(){{ {steps} console.log(JSON.stringify(sent)); }})();"
+    return _node(DOM_STUB + prelude + state + "\n" + funcs + "\n" + body, tmp_path)
+
+
+def test_a_filter_change_during_a_poll_is_sent_when_the_poll_ends(client, tmp_path):
+    """``if (busy) return;`` dropped the click: the table sat unfiltered until the next 5 s poll."""
+    sent = _load_harness(client, tmp_path, """
+      load(true);                                   // the timer's poll is in flight
+      problems.checked = true; load();              // the reader ticks Problems only meanwhile
+      answer(); await tick();
+    """)
+    assert sent == ["/api/runs", "/api/runs?problems=1"], "the filter change was lost behind a poll"
+
+
+def test_a_poll_during_a_poll_is_not_queued(client, tmp_path):
+    """Only a reader's change is remembered; a timer tick that finds a read in flight is simply skipped."""
+    sent = _load_harness(client, tmp_path, """
+      load(true); load(true); answer(); await tick();
+    """)
+    assert sent == ["/api/runs"]
+
+
+def test_many_changes_during_a_poll_send_one_read(client, tmp_path):
+    sent = _load_harness(client, tmp_path, """
+      load(true);
+      problems.checked = true; load(); filter.value = "daily"; load(); load();
+      answer(); await tick(); answer(); await tick();
+    """)
+    assert sent == ["/api/runs", "/api/runs?problems=1&q=daily"], "one extra request at most"
