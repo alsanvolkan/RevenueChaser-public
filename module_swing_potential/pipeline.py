@@ -237,7 +237,6 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
         "universe_partial": bool(run_stats.get("universe_partial")),
         "passing": passing,
         "avg_quality": avg_quality,
-        "is_fixture": False,
         "no_data": False,
         "data_quality": {"stale_ohlc": run_stats.get("stale_ohlc", 0),
                          "stale_info": run_stats.get("stale_info", 0),
