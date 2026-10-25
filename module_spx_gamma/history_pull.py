@@ -204,6 +204,7 @@ def pull_history(uw, start: str, end: str, *, max_calls: int = DEFAULT_MAX_CALLS
     inside the US session, both before any request.
     """
     lo, hi = check_range(start, end, data_root)
+    start, end = lo.isoformat(), hi.isoformat()     # fromisoformat also takes 20251024 or 2025-W43-5
     if max_calls <= 0:
         raise ValueError("max_calls must be positive")
     if _session_open():

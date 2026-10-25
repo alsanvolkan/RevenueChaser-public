@@ -354,3 +354,13 @@ def test_refuses_when_no_fetch_day_is_stored(tmp_path):
     shutil.rmtree(tmp_path / "raw" / FETCH_DAY)
     with pytest.raises(ValueError, match="no board Fetch"):
         _pull(tmp_path, Recorder())
+
+
+def test_dates_are_sent_and_stored_in_iso_form(tmp_path):
+    """date.fromisoformat also takes 20250312 and 2025-W11-3; UW and the file names get YYYY-MM-DD (#194 nit)."""
+    uw = Recorder()
+    counts = _pull(tmp_path, uw, start="2025-W11-1", end="20250313")
+    assert uw.calls[0] == ("/stock/SPX/iv-rank", {"date": NO_CLOSE, "timespan": "2y"})
+    assert (counts["start"], counts["end"]) == (DAYS[0], NO_CLOSE)
+    assert counts["iv_rank_file"].endswith(f"iv_rank_{NO_CLOSE}_2y.json")
+    assert NO_CLOSE in counts["report_file"]

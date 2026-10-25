@@ -852,10 +852,10 @@ def run_spxgamma_history():
     start = (request.values.get("start") or "").strip()
     end = (request.values.get("end") or "").strip()
     try:
-        check_range(start, end)
+        lo, hi = check_range(start, end)
     except ValueError as exc:
         return jsonify({"ok": False, "error": f"bad range: {exc}"}), 400
-    params: dict = {"start": start, "end": end}
+    params: dict = {"start": lo.isoformat(), "end": hi.isoformat()}
     raw = (request.values.get("max_calls") or "").strip()
     if raw:
         try:

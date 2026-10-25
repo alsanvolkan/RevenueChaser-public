@@ -205,3 +205,8 @@ def test_the_route_refuses_an_end_after_the_newest_fetch_day(client, tmp_path):
     r = client.post("/run/spxgamma_history?start=2025-03-10&end=2025-03-13", headers=CLI)
     assert r.status_code == 400 and "newest Fetch" in r.get_json()["error"]
     assert client.post("/run/spxgamma_history?start=2025-03-10&end=2025-03-12", headers=CLI).status_code == 202
+
+
+def test_the_route_queues_iso_dates(client):
+    client.post("/run/spxgamma_history?start=20250310&end=2025-W11-3", headers=CLI)
+    assert client.submitted == [("spxgamma_history", {"start": "2025-03-10", "end": "2025-03-12"})]
