@@ -8,9 +8,18 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Runs</title>
 <link rel="icon" href="/static/icons/icon-192.png">
+{%- set columns = ["Started", "Job", "Trigger", "Status", "Took", "Note", "Params"] %}
 <style>
+/* Dark is the dashboard's own look and the default. Light follows the device unless the shell set
+   data-theme on this document (its manual toggle); data-theme="light" forces light. */
 :root{--bg:#05111F;--panel:#12161e;--panel2:#1a1f2b;--border:#232a38;
---text:#d7dce5;--muted:#8a93a6;--accent:#0EA5E9;--red:#e74c3c;--green:#2ecc71;--amber:#f0ad4e;}
+--text:#d7dce5;--muted:#8a93a6;--accent:#0EA5E9;--red:#e74c3c;--green:#2ecc71;--amber:#f0ad4e;color-scheme:dark}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){--bg:#f5f7fa;--panel:#ffffff;--panel2:#eef1f5;--border:#d5dbe3;
+    --text:#1b2330;--muted:#5b6575;--accent:#0369a1;--red:#c0392b;--green:#1e8449;--amber:#a15c00;color-scheme:light}
+}
+:root[data-theme="light"]{--bg:#f5f7fa;--panel:#ffffff;--panel2:#eef1f5;--border:#d5dbe3;
+  --text:#1b2330;--muted:#5b6575;--accent:#0369a1;--red:#c0392b;--green:#1e8449;--amber:#a15c00;color-scheme:light}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5}
@@ -45,6 +54,36 @@ td.dash{color:var(--muted)}
 .s-error,.s-cancelled{color:var(--red)}
 .s-running,.s-queued{color:var(--amber)}
 .empty{padding:16px 12px;color:var(--muted)}
+/* A finger, not a mouse: every control is at least 44 px tall (the owner's phone rule, CLAUDE.md). */
+@media (max-width: 640px), (pointer: coarse){
+  .chk{min-height:44px}
+  .chk input{width:22px;height:22px}
+  .fld input,.fld select,.btn{height:44px;font-size:16px}
+  .btn{min-width:88px}
+}
+/* A phone: one card per run, each cell on its own line under its column's name, nothing sideways.
+   The page scrolls instead of the table box, so the cards use the whole height. */
+@media (max-width: 640px){
+  html,body{height:auto}
+  .wrap{height:auto;padding:12px 16px}
+  .controls{flex-direction:column;align-items:stretch;gap:8px}
+  .fld{width:100%}
+  .fld label{min-width:3.5em}
+  .fld input,.fld select{flex:1 1 auto;width:auto;min-width:0}
+  .scroll{overflow:visible;background:none;border:0;border-radius:0;min-height:0}
+  table,tbody,tr,td{display:block;width:100%}
+  thead{display:none}   /* each cell carries its column's name instead (below), which a reader announces */
+  tbody tr{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:6px 12px;margin:0 0 8px}
+  tbody td{display:grid;grid-template-columns:5.5em minmax(0,1fr);gap:8px;padding:4px 0;border:0;max-width:none}
+  tbody tr:last-child td{border:0}
+  tbody td.note-cell,tbody td.params{max-width:none}
+  tbody td .pill{justify-self:start}
+  {%- for name in columns %}
+  tbody td:nth-child({{ loop.index }})::before{content:"{{ name }}";color:var(--muted);font:500 12px/1.6 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  {%- endfor %}
+  tbody td.empty{display:block}
+  tbody td.empty::before{content:none}
+}
 </style>
 </head>
 <body>
@@ -65,10 +104,9 @@ td.dash{color:var(--muted)}
   <div class="scroll">
     <table>
       <thead><tr>
-        <th scope="col">Started</th><th scope="col">Job</th><th scope="col">Trigger</th>
-        <th scope="col">Status</th><th scope="col">Took</th><th scope="col">Note</th><th scope="col">Params</th>
+        {%- for name in columns %}<th scope="col">{{ name }}</th>{% endfor -%}
       </tr></thead>
-      <tbody id="runs-body"><tr><td class="empty" colspan="7">Loading...</td></tr></tbody>
+      <tbody id="runs-body"><tr><td class="empty" colspan="{{ columns | length }}">Loading...</td></tr></tbody>
     </table>
   </div>
   <p class="meta" id="runs-meta" aria-live="polite"></p>
