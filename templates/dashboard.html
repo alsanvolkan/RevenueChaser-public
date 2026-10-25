@@ -7,13 +7,13 @@
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/static/icons/icon-192.png">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
-<meta name="theme-color" content="#05111F">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="{{ theme_bg.light }}">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="{{ theme_bg.dark }}">
+<script>{{ theme_js }}</script>
 <style>
-:root{
-  --bg:#05111F; --fg:#C5C6C8; --bright:#F0F0F0; --card:#0B1828;
-  --border:rgba(197,198,200,.15); --sidebar:#0B1828;
-  --pos:#34D399; --neg:#F87171; --amber:#FBBF24; --sky:#0EA5E9; --muted:#9C9DA1;
-}
+/* The palette: core/reporting_common.THEME_CSS, the one place it is defined (#184). Dark by default,
+   light when the device prefers it, and the reader's own choice (data-theme on <html>) over both. */
+{{ theme_css }}
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%}
 body{background:var(--bg);color:var(--fg);font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;
@@ -26,11 +26,11 @@ body{background:var(--bg);color:var(--fg);font-family:'Segoe UI',system-ui,sans-
 .brand .tag{margin-top:10px;font-size:11px;letter-spacing:3px;color:var(--muted);font-weight:700;text-align:center}
 /* Nav scrolls when the groups overflow the viewport (Testing etc. stay reachable). */
 .nav{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:4px;padding:0 12px 4px;
-  overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:#5b7a8c #0b1620}
+  overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) var(--scroll-track)}
 .nav::-webkit-scrollbar{width:8px}
 .nav::-webkit-scrollbar-track{background:transparent}
-.nav::-webkit-scrollbar-thumb{background:#5b7a8c;border-radius:4px}
-.nav::-webkit-scrollbar-thumb:hover{background:#6f93a7}
+.nav::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:4px}
+.nav::-webkit-scrollbar-thumb:hover{background:var(--scroll-thumb-hover)}
 .nav-group{margin-top:2px}
 .nav-header{display:flex;align-items:center;gap:6px;width:100%;background:none;border:0;text-align:left;
   font:inherit;font-size:10px;letter-spacing:2px;color:var(--muted);font-weight:700;text-transform:uppercase;
@@ -41,16 +41,17 @@ body{background:var(--bg);color:var(--fg);font-family:'Segoe UI',system-ui,sans-
 .nav-group.collapsed .nav-header .caret{transform:rotate(0deg)}
 .nav-group.collapsed .nav-items{display:none}
 .nav-item{display:flex;align-items:center;gap:10px;height:38px;padding:0 12px;border-radius:6px;
-  color:rgba(224,233,235,.75);cursor:pointer;user-select:none;font-weight:500}
+  color:var(--nav-fg);cursor:pointer;user-select:none;font-weight:500}
 .nav-item.sub{padding-left:24px;font-weight:400;font-size:13px}
-.nav-item:hover{background:rgba(255,255,255,.04)}
-.nav-item.on{background:#101F33;color:var(--fg)}
+.nav-item:hover{background:var(--hover-faint)}
+.nav-item.on{background:var(--nav-on);color:var(--fg)}
 .nav-item .job-badge{margin-left:auto;font-size:10px;color:var(--amber);font-weight:600}
 :focus-visible{outline:2px solid var(--sky);outline-offset:2px}
 .cnt,.count,.stat .v,.big,.pct,.nav-item .job-badge{font-variant-numeric:tabular-nums}
 @media (prefers-reduced-motion: reduce){
   .nav-header .caret{transition:none}
   .spin{animation:none}
+  .sidebar{transition:none}
 }
 .side-foot{flex:none;margin-top:auto;padding:14px 12px 2px;border-top:1px solid var(--border);font-size:11px;color:var(--muted)}
 /* Short screens: shrink the brand so more nav groups are visible before scrolling. */
@@ -65,44 +66,44 @@ body{background:var(--bg);color:var(--fg);font-family:'Segoe UI',system-ui,sans-
 /* main */
 .main{display:flex;flex-direction:column;min-width:0}
 .topbar{min-height:56px;flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:8px 20px;
-  border-bottom:1px solid var(--border);background:rgba(12,20,24,.8)}
+  border-bottom:1px solid var(--border);background:var(--topbar)}
 .topbar .sync{color:var(--muted);font-size:13px;margin-left:auto}
 .topbar .sync b{color:var(--fg);font-weight:500}
 .hbadge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap}
-.hb-regime{background:rgba(52,211,153,.12);color:#34D399}
-.hb-regime-off{background:rgba(248,113,113,.12);color:#F87171}
-.hb-spx-red{background:rgba(248,113,113,.14);color:#F87171}
-.hb-spx-green{background:rgba(52,211,153,.14);color:#34D399}
-.hb-spx-blue{background:rgba(56,189,248,.14);color:#38BDF8}
-.hb-spx-gray{background:rgba(148,163,184,.14);color:#94A3B8}
-.hb-us{background:rgba(14,165,233,.12);color:#0EA5E9}
+.hb-regime{background:rgba(52,211,153,.12);color:var(--pos)}
+.hb-regime-off{background:rgba(248,113,113,.12);color:var(--neg)}
+.hb-spx-red{background:rgba(248,113,113,.14);color:var(--neg)}
+.hb-spx-green{background:rgba(52,211,153,.14);color:var(--pos)}
+.hb-spx-blue{background:rgba(56,189,248,.14);color:var(--badge-blue)}
+.hb-spx-gray{background:rgba(148,163,184,.14);color:var(--badge-gray)}
+.hb-us{background:rgba(14,165,233,.12);color:var(--sky)}
 .ctl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 #range-label{white-space:nowrap;flex:0 0 auto}
 .chk{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--fg);cursor:pointer;user-select:none}
 .chk input{margin:0;accent-color:var(--sky)}
-input[type=date]{background:#101F33;border:1px solid #2F434C;color:var(--fg);border-radius:6px;height:32px;padding:0 8px;font:500 13px/1 var(--sans,inherit)}
-input[type=text]{background:#101F33;border:1px solid #2F434C;color:var(--fg);border-radius:6px;height:32px;padding:0 8px;font:500 13px/1 var(--sans,inherit);text-transform:uppercase}
-button{background:#101F33;color:var(--fg);border:1px solid #2F434C;border-radius:6px;height:32px;padding:0 14px;cursor:pointer;font-weight:600;font-size:13px}
-button:hover{background:#18293a}
-button.primary{background:var(--primary,#E2E3E5);color:#0A1420}
+input[type=date]{background:var(--input-bg);border:1px solid var(--input-border);color:var(--fg);border-radius:6px;height:32px;padding:0 8px;font:500 13px/1 var(--sans,inherit)}
+input[type=text]{background:var(--input-bg);border:1px solid var(--input-border);color:var(--fg);border-radius:6px;height:32px;padding:0 8px;font:500 13px/1 var(--sans,inherit);text-transform:uppercase}
+button{background:var(--input-bg);color:var(--fg);border:1px solid var(--input-border);border-radius:6px;height:32px;padding:0 14px;cursor:pointer;font-weight:600;font-size:13px}
+button:hover{background:var(--hover)}
+button.primary{background:var(--primary,var(--primary-bg));color:var(--primary-fg)}
 button:disabled{opacity:.5;cursor:default}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--muted);border-top-color:transparent;border-radius:50%;animation:r .7s linear infinite;vertical-align:-2px}
 @keyframes r{to{transform:rotate(360deg)}}
 .content{flex:1;overflow-x:auto;overflow-y:hidden;position:relative;min-width:0}
 /* Persistent, chunky horizontal scrollbar at the page level. */
-.content{scrollbar-width:auto;scrollbar-color:#5b7a8c #0b1620}
+.content{scrollbar-width:auto;scrollbar-color:var(--scroll-thumb) var(--scroll-track)}
 .content::-webkit-scrollbar{height:16px;width:16px}
-.content::-webkit-scrollbar-track{background:#0b1620}
-.content::-webkit-scrollbar-thumb{background:#5b7a8c;border-radius:8px;border:3px solid #0b1620}
-.content::-webkit-scrollbar-thumb:hover{background:#6f93a7}
-.content::-webkit-scrollbar-corner{background:#0b1620}
-.frame{border:0;width:1280px;max-width:none;height:calc(100% - 16px);display:none;background:#12131c}
+.content::-webkit-scrollbar-track{background:var(--scroll-track)}
+.content::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:8px;border:3px solid var(--scroll-track)}
+.content::-webkit-scrollbar-thumb:hover{background:var(--scroll-thumb-hover)}
+.content::-webkit-scrollbar-corner{background:var(--scroll-track)}
+.frame{border:0;width:1280px;max-width:none;height:calc(100% - 16px);display:none;background:var(--frame-bg)}
 .frame.on{display:block}
-#overlay{position:absolute;inset:0;background:rgba(5,17,31,.7);display:none;align-items:center;justify-content:center;z-index:10}
+#overlay{position:absolute;inset:0;background:var(--overlay);display:none;align-items:center;justify-content:center;z-index:10}
 #overlay.show{display:flex}
 #overlay .msg{background:var(--card);border:1px solid var(--border);border-radius:9px;padding:16px 24px;color:var(--bright);font-size:14px}
 /* Open issues (#383): parent chrome, one collapsed line above the board iframe. */
-.rc-open-issues{flex:none;background:rgba(11,24,40,.55);border-bottom:1px solid var(--border);
+.rc-open-issues{flex:none;background:var(--oi-bg);border-bottom:1px solid var(--border);
   color:var(--muted);font-size:12.5px}
 .rc-open-issues[hidden]{display:none}
 .rc-open-issues>summary{cursor:pointer;padding:8px 20px;font-weight:600;color:var(--sky);line-height:1.4;
@@ -139,7 +140,7 @@ button:disabled{opacity:.5;cursor:default}
 .rc-oi-links a{color:var(--sky)}
 /* week range calendar */
 .range-dd{position:relative;display:flex;align-items:center;gap:8px}
-.cal-popover{position:absolute;top:40px;left:0;z-index:100;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px;display:none;max-height:60vh;overflow-y:auto;box-shadow:0 8px 30px rgba(0,0,0,.6)}
+.cal-popover{position:absolute;top:40px;left:0;z-index:100;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px;display:none;max-height:60vh;overflow-y:auto;box-shadow:0 8px 30px var(--shadow)}
 .cal-popover.open{display:block}
 .cal-month{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin:10px 0 4px;padding-left:4px}
 .cal-table{width:100%;border-collapse:collapse;font-size:12px}
@@ -165,10 +166,49 @@ button:disabled{opacity:.5;cursor:default}
 .cal-day.weekend{opacity:.35;cursor:default}
 .cal-day.out{opacity:.2;cursor:default}
 .cal-day:not(.weekend):not(.out):hover{background:rgba(255,255,255,.08)}
+/* Phone and small tablet (#184, docs/mocks/shell-phone.html). The menu button and the tab's name exist only
+   here; the badges and sync times are one wrapping line of their own, and the theme toggle sits last on a
+   desktop and on the first line on a phone. */
+.nav-toggle,.tab-title,.scrim{display:none}
+.status{display:contents}
+.theme-toggle{order:1;width:36px;padding:0;font-size:15px}
+@media (max-width: 900px){
+  body{grid-template-columns:minmax(0,1fr)}
+  .sidebar{position:fixed;inset:0 auto 0 0;width:min(300px,85vw);z-index:40;transform:translateX(-100%);
+    visibility:hidden;transition:transform .2s ease,visibility .2s;box-shadow:4px 0 24px var(--shadow)}
+  body.nav-open .sidebar{transform:none;visibility:visible}
+  body.nav-open .scrim{display:block;position:fixed;inset:0;background:var(--scrim);z-index:30}
+  .nav-toggle{display:inline-flex;align-items:center;justify-content:center;width:44px;padding:0;font-size:18px}
+  .tab-title{display:block;flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-weight:700;font-size:15px;color:var(--bright)}
+  .topbar{padding:8px 12px;gap:8px}
+  .topbar .ctl{flex-basis:100%}
+  .status{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;flex-basis:100%;order:2}
+  .topbar .sync{margin-left:0;font-size:12px}
+  .theme-toggle{width:44px}
+  /* The page itself never scrolls sideways: a board wider than the pane scrolls inside its own frame. */
+  .content{overflow-x:hidden}
+  .frame{height:100%}
+  .rc-open-issues>summary{padding:8px 12px}
+  .rc-open-issues .body{padding:0 12px 12px}
+  .rc-oi-dl{grid-template-columns:minmax(0,1fr)}
+  .rc-oi-dl dd,.rc-oi-line,.rc-oi-head{min-width:0;overflow-wrap:anywhere}
+  .cal-popover{position:fixed;left:8px;right:8px;top:auto;max-width:none}
+}
+/* A finger, not a mouse: 44 px touch targets (CLAUDE.md, the phone rule). A desktop mouse keeps 32/38/40. */
+@media (max-width: 900px), (pointer: coarse){
+  .nav-item{height:44px}
+  .nav-header{min-height:44px}
+  button{height:44px;font-size:14px}
+  input[type=date],input[type=text]{height:44px;font-size:16px}
+  .chk{min-height:44px}
+  .chk input{width:20px;height:20px}
+  .rc-open-issues>summary{min-height:44px;display:flex;align-items:center}
+}
 </style>
 </head>
 <body>
-<aside class="sidebar">
+<aside class="sidebar" id="sidebar">
   <div class="brand"><div class="logo"><img src="/static/icons/icon-192.png" alt="RevenueChaser"></div><div class="tag">REVENUE CHASER</div></div>
   <nav class="nav">
     {% for g in nav_groups %}
@@ -184,8 +224,12 @@ button:disabled{opacity:.5;cursor:default}
   </nav>
   <div class="side-foot">Local dashboard · iframe tabs<br>on-demand fetch per module</div>
 </aside>
+<div class="scrim" id="nav-scrim"></div>
 <div class="main">
   <header class="topbar">
+    <button id="nav-toggle" class="nav-toggle" type="button" aria-controls="sidebar" aria-expanded="false"
+            aria-label="Open the board menu">☰</button>
+    <span class="tab-title" id="tab-title"></span>
     <button id="btn-refresh" title="Re-render this tab from the store (.store/raw.duckdb) — no network calls">Refresh Tab</button>
     <button id="btn-fetch" style="display:none" title="Fetch fresh data over the network, cache it, then re-render">Fetch</button>
     <button id="btn-refresh-universe" style="display:none" title="Fetch the shared ticker universe over the network, then run the scan">Fetch Universe</button>
@@ -228,12 +272,16 @@ button:disabled{opacity:.5;cursor:default}
     <div class="ctl" id="quick-ctl" style="display:none">
       <input type="text" id="quick-ticker" value="{{ quick_ticker }}" placeholder="Ticker" style="width:110px" />
     </div>
+    <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Theme: follows the device. Change it"
+            title="Theme: follows the device">◐</button>
+    <div class="status">
 <span class="hbadge hb-regime">Regime: —</span>
 <span class="hbadge hb-spx-gray" id="spx-status">SPX: —</span>
 <span class="hbadge hb-us">US-listed only</span>
     <div class="sync">Universe: <b id="universe-label">—</b></div>
     <div class="sync">Data: <b id="data-label">—</b></div>
     <div class="sync">Last run: <b id="sync-label">—</b></div>
+    </div>
   </header>
   <details class="rc-open-issues" id="rc-open-issues" hidden>
     <summary id="rc-open-issues-summary">Open issues</summary>
@@ -421,6 +469,12 @@ var POLL_TIMER = null;
 
 function frames(){ return document.querySelectorAll('.frame'); }
 
+// The width under which the sidebar is a drawer and no frame is grown past its pane (the CSS breakpoint).
+var NARROW_QUERY = '(max-width: 900px)';
+function isNarrow(){
+  try{ return !!(window.matchMedia && window.matchMedia(NARROW_QUERY).matches); }catch(e){ return false; }
+}
+
 // Grow each iframe to its content's natural width so wide boards (Earnings
 // ~2600px) render un-squashed and the OUTER .content scrollbar provides the
 // horizontal scroll (always visible, page level). Fluid boards (FILL_WIDTH)
@@ -448,24 +502,30 @@ function fitFrameWidth(f){
       var cur = f.offsetWidth || 0;
       var target = inner <= pane ? pane : (inner > cur ? inner + 40 : cur);
       target = Math.min(target, 8000);
+      // A phone: the frame is the pane, whatever the board's natural width, so the page never scrolls
+      // sideways; a board wider than that scrolls inside its own frame until its own PR restacks it (#184).
+      if(isNarrow()) target = pane;
       if(Math.abs(f.offsetWidth - target) > 4) f.style.width = target + 'px';
     }
   } catch(e){}
 }
 function hookFrameFit(f){
-  f.addEventListener('load', function(){ fitFrameWidth(f); });
+  f.addEventListener('load', function(){ fitFrameWidth(f); themeFrames(THEME_NOW, [f]); });
   setTimeout(function(){ fitFrameWidth(f); }, 300);
 }
 
 // Re-fit the active FILL_WIDTH board when the pane changes size (window
 // maximize/restore, devtools, sidebar drag) so it keeps spanning the width.
 var FIT_DEBOUNCE = null;
+var FIT_WAS_NARROW = false;
 function refitActiveFrames(){
   if(FIT_DEBOUNCE) clearTimeout(FIT_DEBOUNCE);
   FIT_DEBOUNCE = setTimeout(function(){
+    // A fill-width board tracks the pane; on a phone (or across the breakpoint) every board does.
     frames().forEach(function(f){
-      if(FILL_WIDTH[f.getAttribute('data-tab')] && f.classList.contains('on')) fitFrameWidth(f);
+      if(f.classList.contains('on') && (FILL_WIDTH[f.getAttribute('data-tab')] || isNarrow() || FIT_WAS_NARROW)) fitFrameWidth(f);
     });
+    FIT_WAS_NARROW = isNarrow();
   }, 120);
 }
 if('ResizeObserver' in window){
@@ -479,6 +539,10 @@ function showTab(key){
   try{ if(location.hash.slice(1) !== key) history.replaceState(null, '', '#' + key); }catch(e){}
   if(typeof navOpenGroup === 'function') navOpenGroup(key);
   document.querySelectorAll('.nav-item').forEach(function(n){ n.classList.toggle('on', n.getAttribute('data-tab')===key); });
+  var tabItem = document.querySelector('.nav-item[data-tab="' + key + '"]');
+  var tabTitle = document.getElementById('tab-title');
+  if(tabTitle) tabTitle.textContent = tabItem ? tabItem.textContent.trim() : '';
+  navSetOpen(false);
   frames().forEach(function(f){
     var on = f.getAttribute('data-tab')===key;
     f.classList.toggle('on', on);
@@ -1268,6 +1332,72 @@ document.querySelectorAll('.nav-header').forEach(function(h){
   });
 });
 navApply();
+
+// The drawer (under 900 px): the menu button opens it, and a tab, the scrim or Escape closes it.
+function navSetOpen(open){
+  var was = document.body.classList.contains('nav-open');
+  document.body.classList.toggle('nav-open', !!open);
+  var t = document.getElementById('nav-toggle');
+  if(t){
+    t.setAttribute('aria-expanded', open ? 'true' : 'false');
+    t.setAttribute('aria-label', open ? 'Close the board menu' : 'Open the board menu');
+  }
+  if(open && !was){
+    var first = document.querySelector('.nav-item.on') || document.querySelector('.nav-item');
+    if(first) try{ first.focus(); }catch(e){}
+  }
+}
+document.getElementById('nav-toggle').addEventListener('click', function(){
+  navSetOpen(!document.body.classList.contains('nav-open'));
+});
+document.getElementById('nav-scrim').addEventListener('click', function(){ navSetOpen(false); });
+document.addEventListener('keydown', function(e){
+  if(e.key === 'Escape' && document.body.classList.contains('nav-open')){
+    navSetOpen(false);
+    document.getElementById('nav-toggle').focus();
+  }
+});
+
+// The theme toggle: Auto (the device's scheme) -> Light -> Dark -> Auto. rcThemeSet (reporting_common.THEME_JS)
+// applies the choice and stores it if it can; THEME_NOW keeps it for this page when storage cannot.
+var THEME_NOW = rcThemeGet();
+var THEME_ICONS = {auto: '◐', light: '☀', dark: '☾'};
+var THEME_WORDS = {auto: 'follows the device', light: 'light', dark: 'dark'};
+function themeNext(choice){
+  return choice === 'light' ? 'dark' : (choice === 'dark' ? 'auto' : 'light');
+}
+// Boards are same-origin iframes: each one gets the choice as data-theme on its <html>, so a board on the
+// shared tokens follows the toggle. A frame that cannot be reached is left alone.
+function themeFrames(choice, list){
+  (list || frames()).forEach(function(f){
+    try{
+      var root = f.contentDocument.documentElement;
+      if(choice === 'light' || choice === 'dark') root.setAttribute('data-theme', choice);
+      else root.removeAttribute('data-theme');
+    }catch(e){}
+  });
+}
+function themeShow(){
+  var b = document.getElementById('theme-toggle');
+  if(!b) return;
+  b.textContent = THEME_ICONS[THEME_NOW];
+  b.title = 'Theme: ' + THEME_WORDS[THEME_NOW];
+  b.setAttribute('aria-label', 'Theme: ' + THEME_WORDS[THEME_NOW] + '. Change it');
+}
+document.getElementById('theme-toggle').addEventListener('click', function(){
+  THEME_NOW = rcThemeSet(themeNext(THEME_NOW));
+  themeFrames(THEME_NOW);
+  themeShow();
+});
+// Another window of the dashboard changed it.
+window.addEventListener('storage', function(e){
+  if(e.key !== RC_THEME_KEY) return;
+  THEME_NOW = rcThemeGet();
+  rcThemeApply(THEME_NOW);
+  themeFrames(THEME_NOW);
+  themeShow();
+});
+themeShow();
 
 document.querySelectorAll('.nav-item').forEach(function(n){
   n.addEventListener('click', function(){ showTab(n.getAttribute('data-tab')); });
