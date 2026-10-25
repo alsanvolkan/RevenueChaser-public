@@ -20,7 +20,7 @@ sent and what came back (``counts``, stored in the run's ``job_runs`` row). It s
 * the US session opening: the job never runs inside it, and refuses to start in it.
 
 A day that already has its manifest costs no request and is never replaced; a day with a transient failure is not
-kept, so a later run pulls it again.
+kept, so a later run pulls it again. Each run also writes its counts to ``history_pull/run_<start>_<end>_<utc>.json``.
 """
 from __future__ import annotations
 
@@ -231,6 +231,10 @@ def pull_history(uw, start: str, end: str, *, max_calls: int = DEFAULT_MAX_CALLS
     counts["calls"] = meter.calls
     counts["status"] = dict(meter.status)
     counts["http_requests"] = http[0] if http else None
+    # The dashboard holds the store while it runs, so the counts are also a file the owner can open.
+    report = root / "history_pull" / f"run_{start}_{end}_{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.json"
+    counts["report_file"] = str(report.relative_to(root))
+    safe_json.write_json_atomic(report, counts)
     logger.info("spx history pull %s..%s: %s written, %s already stored, %s without a stored close, %s failed; "
                 "%s calls (%s), stop: %s", start, end, counts["written"], counts["skipped_existing"],
                 counts["skipped_no_close"], counts["failed"], counts["calls"], counts["status"],

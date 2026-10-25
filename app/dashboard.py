@@ -210,6 +210,9 @@ jobs.register("moneyflow", runners.run_money_flow_latest, ["module_sector_rotati
 jobs.register("holdings", runners.run_etf_holdings_sync, ["module_sector_rotation"], lane="long")
 jobs.register("spxgamma", runners.run_spxgamma, ["module_spx_gamma"])
 jobs.register("spxgamma_stored", runners.run_spxgamma_stored, ["module_spx_gamma"], requires_uw=False)  # #179 D5
+# The 2-year history pull (D1): past raw days only, so no board reloads. Checkpoints between sessions.
+# no deadline: fewer than 5 recorded runs (25 Oct); set from job_runs when measured
+jobs.register("spxgamma_history", runners.run_spxgamma_history, [], lane="long", cancellable=True)
 jobs.register("quick", runners.run_quick, ["module_financials"], requires_uw=False)
 # The single-board Fetches are refused while a universe run holds the universe lock (#244), and a universe run is
 # refused while one of them runs (#356).
@@ -821,6 +824,60 @@ def run_spxgamma():
     elif serves_from_disk(asof):
         return _submit("spxgamma_stored", params)
     return _submit("spxgamma", params)
+
+
+# The SPX jobs that write raw/<date>/: one at a time from the queue.
+_SPX_JOBS = ("spxgamma", "spxgamma_stored", "spxgamma_history")
+_SPX_HISTORY_MAX_CALLS = 150_000     # UW's daily budget: no single run may be allowed more
+_SPX_HISTORY_MAX_SLEEP_S = 60.0
+
+
+@app.route("/run/spxgamma_history", methods=["POST"])
+def run_spxgamma_history():
+    """Queue the SPX Gamma history pull (D1): ``start`` and ``end`` (ISO, past days), optional ``max_calls`` and
+    ``sleep`` (seconds between calls). Fields come from the form or the query string, so a shell can run
+    ``curl -X POST -H "X-RC-Panel: cli" "http://127.0.0.1:8000/run/spxgamma_history?start=...&end=..."``.
+
+    400 on a bad field; 409 inside the US session (the pull runs outside it) or while an SPX job is queued or
+    running. The module's own guards repeat the range and session checks when the job starts.
+    """
+    from RevenueChaser.core import calendar as nyse_calendar
+    from RevenueChaser.module_spx_gamma.history_pull import check_range
+
+    start = (request.values.get("start") or "").strip()
+    end = (request.values.get("end") or "").strip()
+    try:
+        check_range(start, end)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": f"bad range: {exc}"}), 400
+    params: dict = {"start": start, "end": end}
+    raw = (request.values.get("max_calls") or "").strip()
+    if raw:
+        try:
+            params["max_calls"] = int(raw)
+        except ValueError:
+            return jsonify({"ok": False, "error": "bad max_calls"}), 400
+        if not 0 < params["max_calls"] <= _SPX_HISTORY_MAX_CALLS:
+            return jsonify({"ok": False, "error": f"max_calls must be 1-{_SPX_HISTORY_MAX_CALLS}"}), 400
+    raw = (request.values.get("sleep") or "").strip()
+    if raw:
+        try:
+            params["sleep_s"] = float(raw)
+        except ValueError:
+            return jsonify({"ok": False, "error": "bad sleep"}), 400
+        if not 0 <= params["sleep_s"] <= _SPX_HISTORY_MAX_SLEEP_S:
+            return jsonify({"ok": False, "error": f"sleep must be 0-{_SPX_HISTORY_MAX_SLEEP_S:g} seconds"}), 400
+    try:
+        in_session = nyse_calendar.in_us_session_window()
+    except ValueError:
+        in_session = True                 # the clock cannot tell: do not start
+    if in_session:
+        return jsonify({"ok": False, "error": "the US session is open; the history pull runs outside session "
+                                              "hours (09:30-16:30 New York)"}), 409
+    refused = _busy(_SPX_JOBS, "An SPX Gamma job is already queued or running.")
+    if refused:
+        return refused
+    return _submit("spxgamma_history", params)
 
 
 @app.route("/run/quick", methods=["POST"])
