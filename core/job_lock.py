@@ -7,8 +7,8 @@ its times. The names in use: ``"edgar_sync"`` (``module_value_chain/sync.py`` an
 (``core/index_registry.py``) and ``"index_levels"`` (``core/index_levels.py``); ``"identity"``
 (``core/identity/refresh.py``: the dashboard job and the ``python -m RevenueChaser.core.identity`` CLI alike),
 ``"sec_13f"`` (the three 13F jobs, ``app/runners.py``), ``"forecast_outcomes"`` (``scripts/forecast_outcomes.py``), ``"forecast_baselines"`` (``scripts/forecast_baselines.py``, #25) and ``"nightly_inputs_<step>"``
-(``scripts/nightly_inputs.py``, one per step, so two different steps still run together) — the last five added for
-#26 (PL6-a).
+(``scripts/nightly_inputs.py``, one per step, so two different steps still run together) — ``identity``, ``sec_13f``,
+``forecast_outcomes`` and ``nightly_inputs_<step>`` added for #26 (PL6-a).
 
 ``"universe"`` (``core/universe_fetch.universe_write_lock``) is the universe writers, and the whole universe refresh
 job and its CLI (#244), with ``"universe_run"`` beside it while the refresh job runs, so a board Fetch can tell it

@@ -1,7 +1,7 @@
 """PL6-a (#26): the ``job_lock`` docstring lists every lock name in use, so the list cannot rot again.
 
 #26's body rotted exactly this way: it described a single ``"edgar"`` lock that no longer existed. The module
-docstring is the one place that says which names exist and who takes them, so it is asserted here — the fourteen
+docstring is the one place that says which names exist and who takes them, so it is asserted here — the thirteen
 names by contract, plus every name the sources hand to ``acquire()``, whether it is a literal or a module-level
 constant. A new lock name that is not in the docstring fails this test.
 """

@@ -26,7 +26,7 @@ from pathlib import Path
 from flask import Flask, Response, g, jsonify, render_template, request, send_from_directory
 from markupsafe import Markup
 
-from RevenueChaser.core import config, html_safe, open_issues, rawstore, reporting_common, templating
+from RevenueChaser.core import html_safe, open_issues, rawstore, reporting_common, templating
 from RevenueChaser.core.calendar import today_ny
 from RevenueChaser.core.providers.unusual_whales import UWClient
 from RevenueChaser.core.rawstore import StoreLockedError
