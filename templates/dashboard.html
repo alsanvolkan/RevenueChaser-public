@@ -165,6 +165,8 @@ button:disabled{opacity:.5;cursor:default}
 .cal-month.earn-month{cursor:pointer}
 .cal-month.earn-month:hover{color:var(--sky)}
 .cal-day.sel{background:rgba(14,165,233,.28)!important}
+.cal-gex-pos{background:var(--gex-pos-bg);color:var(--gex-pos-fg);font-weight:700}
+.cal-gex-neg{background:var(--gex-neg-bg);color:var(--gex-neg-fg);font-weight:700}
 .cal-day.today{box-shadow:inset 0 0 0 1px var(--sky)}
 .cal-day.weekend{opacity:.35;cursor:default}
 .cal-day.out{opacity:.2;cursor:default}
@@ -1100,15 +1102,8 @@ function renderSpxgammaCalendar(){
       var rec = SPXG_CAL[iso];
       if(rec){
         var chip = (rec.source_chip || '').toUpperCase();
-        if(chip==='POSITIVE' || (rec.net_gex_oi||0) > 0){
-          td.style.background='rgba(52,211,153,.35)';
-          td.style.color='#eafff5';
-          td.style.fontWeight='700';
-        } else {
-          td.style.background='rgba(248,113,113,.35)';
-          td.style.color='#ffd9d9';
-          td.style.fontWeight='700';
-        }
+        // Colours from the theme tokens (--gex-*), readable in light and dark.
+        td.classList.add(chip==='POSITIVE' || (rec.net_gex_oi||0) > 0 ? 'cal-gex-pos' : 'cal-gex-neg');
         td.title = iso + ' · Net GEX ' + (rec.net_gex_oi!=null ? Math.round(rec.net_gex_oi) : 'n/a') + ' · ' + (rec.regime||'');
       }
       td.style.cursor='pointer';

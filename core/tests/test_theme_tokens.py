@@ -138,3 +138,42 @@ def test_the_shared_summaries_are_touch_sized_on_a_phone():
         m = re.search(r"@media\s*\(max-width:\s*900px\),\s*\(pointer:\s*coarse\)\s*\{(.*?)\}\s*</style>", css, re.S)
         assert m, "no phone / touch rule"
         assert "min-height:44px" in m.group(1)
+
+
+def _rgba(value: str) -> tuple[float, float, float, float]:
+    if value.startswith("#"):
+        v = value.lstrip("#")
+        return (*(int(v[i:i + 2], 16) for i in (0, 2, 4)), 1.0)
+    parts = [p.strip() for p in value[value.index("(") + 1:value.index(")")].split(",")]
+    return (float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3]) if len(parts) > 3 else 1.0)
+
+
+def _over(top: str, under: str) -> tuple[float, float, float]:
+    r, g, b, a = _rgba(top)
+    R, G, B, _ = _rgba(under)
+    return (r * a + R * (1 - a), g * a + G * (1 - a), b * a + B * (1 - a))
+
+
+def _contrast(fg, bg) -> float:
+    def lum(c):
+        def ch(x):
+            x /= 255
+            return x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4
+        return 0.2126 * ch(c[0]) + 0.7152 * ch(c[1]) + 0.0722 * ch(c[2])
+    hi, lo = sorted((lum(fg), lum(bg)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+@pytest.mark.parametrize("sign", ["pos", "neg"])
+def test_the_spx_calendar_days_are_readable(scheme, sign):
+    """#190 review: #eafff5 / #ffd9d9 on a 35 % green / red tint over a white card was 1.22:1 and 1.09:1."""
+    t = rc.THEME_TOKENS[scheme]
+    cell = _over(t[f"gex-{sign}-bg"], t["card"])
+    assert _contrast(_rgba(t[f"gex-{sign}-fg"])[:3], cell) >= 4.5, (scheme, sign)
+
+
+def test_the_dark_spx_calendar_keeps_its_colours():
+    dark = rc.THEME_TOKENS["dark"]
+    assert (dark["gex-pos-bg"], dark["gex-pos-fg"]) == ("rgba(52,211,153,.35)", "#eafff5")
+    assert (dark["gex-neg-bg"], dark["gex-neg-fg"]) == ("rgba(248,113,113,.35)", "#ffd9d9")

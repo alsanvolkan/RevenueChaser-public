@@ -156,3 +156,12 @@ def test_the_choice_reaches_the_board_frames(shell, tmp_path):
     """
     assert _node(DOM_STUB + "var frames;\n" + function_source(script, "themeFrames") + "\n" + tail, tmp_path) == \
         [["light", "light"], [None, None]]
+
+
+def test_the_spx_calendar_colours_come_from_the_tokens(shell):
+    script = next(s for s in inline_scripts(shell) if "SPXG_CAL" in s)
+    assert "td.style.color" not in script and "td.style.background" not in script, "hard-coded day colours"
+    assert "cal-gex-pos" in script and "cal-gex-neg" in script
+    css = _style(shell)
+    assert re.search(r"\.cal-gex-pos\{[^}]*var\(--gex-pos-fg\)", css)
+    assert re.search(r"\.cal-gex-neg\{[^}]*var\(--gex-neg-fg\)", css)

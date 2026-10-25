@@ -84,6 +84,8 @@ THEME_TOKENS = {
         "scroll-thumb-hover": "#6f93a7", "scroll-track": "#0b1620", "primary-bg": "#E2E3E5",
         "primary-fg": "#0A1420", "oi-bg": "rgba(11,24,40,.55)", "scrim": "rgba(0,0,0,.55)",
         "shadow": "rgba(0,0,0,.6)", "badge-blue": "#38BDF8", "badge-gray": "#94A3B8",
+        "gex-pos-bg": "rgba(52,211,153,.35)", "gex-pos-fg": "#eafff5",
+        "gex-neg-bg": "rgba(248,113,113,.35)", "gex-neg-fg": "#ffd9d9",
     },
     "light": {
         "bg": "#F4F6F9", "fg": "#2A3340", "bright": "#0B1220", "card": "#FFFFFF",
@@ -95,6 +97,8 @@ THEME_TOKENS = {
         "scroll-thumb-hover": "#7D8D9E", "scroll-track": "#E6EBF0", "primary-bg": "#0B1220",
         "primary-fg": "#FFFFFF", "oi-bg": "rgba(255,255,255,.7)", "scrim": "rgba(15,23,42,.35)",
         "shadow": "rgba(15,23,42,.18)", "badge-blue": "#0369A1", "badge-gray": "#475569",
+        "gex-pos-bg": "rgba(4,120,87,.16)", "gex-pos-fg": "#065F46",
+        "gex-neg-bg": "rgba(185,28,28,.14)", "gex-neg-fg": "#991B1B",
     },
 }
 
