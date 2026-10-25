@@ -542,6 +542,8 @@ function refitActiveFrames(){
       if(f.classList.contains('on') && (FILL_WIDTH[f.getAttribute('data-tab')] || isNarrow() || FIT_WAS_NARROW)) fitFrameWidth(f);
     });
     FIT_WAS_NARROW = isNarrow();
+    // An open calendar is placed again: a phone turned sideways, or a window grown past the breakpoint.
+    document.querySelectorAll('.cal-popover.open').forEach(placeCal);
     // A drawer left open while the window grew past the breakpoint would keep the page inert.
     if(!FIT_WAS_NARROW && document.body.classList.contains('nav-open')) navSetOpen(false);
   }, 120);

@@ -345,3 +345,28 @@ def test_the_spx_calendar_day_colours_reach_the_page(dashboard, browser, choice)
     tokens = THEME_TOKENS[choice]
     for sign in ("pos", "neg"):
         assert got[sign][0] == _rgb(tokens[f"gex-{sign}-fg"]), f"{choice} {sign}: text is {got[sign][0]}"
+
+
+CAL_BOX = """(function(){
+  var p = document.getElementById('cal-popover').getBoundingClientRect();
+  var b = document.getElementById('range-btn').getBoundingClientRect();
+  return {top: p.top, bottom: p.bottom, h: p.height, btn: b.bottom, vh: window.innerHeight};
+})()"""
+
+
+@pytest.mark.parametrize("then", [DESKTOP, (844, 390)], ids=["grown-to-desktop", "phone-rotated"])
+def test_an_open_calendar_is_placed_again_when_the_window_changes(dashboard, browser, then):
+    """#190 delta review: placeCal ran only on open. Grown to 1280 px the pop-up kept top:158px, 126 px below its
+    button; a phone turned sideways kept a max-height taller than the screen."""
+    _open(browser, dashboard, PHONE, "dark", "module_sector_rotation")
+    browser.eval("document.getElementById('range-btn').click()")
+    browser.emulate(*then, scheme="dark")
+    placed = f"(function(){{ var m = {CAL_BOX.strip()}; return m.top - m.btn >= 0 && m.top - m.btn <= 8 && m.bottom <= m.vh; }})()"
+    try:
+        browser.wait_for(placed, timeout=5)           # the shell re-fits on a debounced resize
+    except RuntimeError:
+        pass                                          # the assertions below say what is wrong
+    m = browser.eval(CAL_BOX)
+    assert m["h"] > 0, "the pop-up closed"
+    assert 0 <= m["top"] - m["btn"] <= 8, f"the pop-up is not under its button: {m}"
+    assert m["bottom"] <= m["vh"], f"the pop-up runs off the bottom of the screen: {m}"
