@@ -225,3 +225,12 @@ def test_the_runs_row_gets_compact_counts(sync_jobs, monkeypatch):
     assert "shapes" not in counts and len(counts["failures"]) == hp.ROW_FAILURES == 3
     assert counts["calls"] == 400 and counts["failed"] == 30 and counts["report_file"] == "history_pull/run_x.json"
     assert len(json.dumps(counts)) < 2000
+
+
+def test_the_route_refuses_when_the_session_clock_cannot_tell(client, monkeypatch):
+    """Past the holiday table the session window raises: that is not "closed", so the pull does not start."""
+    def unknown(now=None):
+        raise ValueError("no holiday table for 2029")
+    monkeypatch.setattr(nyse_calendar, "in_us_session_window", unknown)
+    r = client.post("/run/spxgamma_history?start=2025-03-10&end=2025-03-13", headers=CLI)
+    assert r.status_code == 409 and client.submitted == []
