@@ -47,7 +47,9 @@ POLL_PATHS = {POLL_PATH}
 MAX_POLL_PATHS = 16
 # werkzeug's request line quotes the request: ``"GET /api/runs?problems=1 HTTP/1.1"``. The filter reads the
 # target out of it, so a request whose own query merely mentions a poll path is still logged (#131).
-_REQUEST_TARGET = re.compile(r'"GET (/[^\s?"]*)[^\s"]* HTTP/')
+# Possessive quantifiers: a path ending in a quote would otherwise backtrack quadratically (a 64 KB path took
+# 15 s, holding the GIL), and any web page can make the browser request such a path.
+_REQUEST_TARGET = re.compile(r'"GET (/[^\s?"]*+)[^\s"]*+ HTTP/')
 _BARE_PATH = re.compile(r"/[^\s?#]*")
 # werkzeug colours its request lines (304, 404, 5xx) even when stderr is a file; the tab shows plain text.
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")

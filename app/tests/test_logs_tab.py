@@ -271,3 +271,15 @@ def test_a_coloured_poll_line_is_still_recognised():
                                ("127.0.0.1", "\x1b[36mGET /api/logs?src=server HTTP/1.1\x1b[0m", "304"), None)
     logview.quiet_polling()
     assert not logging.getLogger("werkzeug").filter(record)
+
+
+def test_a_long_request_line_is_filtered_in_linear_time():
+    """A path ending in a quote made the target regex backtrack quadratically (#189 review): 64 KB took 15 s
+    under the GIL, stalling every thread. Any web page can make the browser request such a path."""
+    import time
+    record = logging.LogRecord("werkzeug", logging.INFO, __file__, 1, '%s - - [x] "%s" %s -',
+                               ("127.0.0.1", "GET /" + "a" * 60_000 + '" HTTP/1.1', "404"), None)
+    logview.quiet_polling()
+    started = time.perf_counter()
+    assert logging.getLogger("werkzeug").filter(record), "not a poll: it is logged"
+    assert time.perf_counter() - started < 0.5
