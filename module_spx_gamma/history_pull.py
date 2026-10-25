@@ -19,7 +19,10 @@ sent and what came back (``counts``, stored in the run's ``job_runs`` row). It s
   the cap by at most ``MAX_ATTEMPTS - 1`` requests;
 * ``RATE_LIMIT_STREAK_STOP`` final 429s in a row (the universe fetch's rule; the client's own breaker opens on
   five failures of any provider kind and stops the job too);
-* ``AUTH_STREAK_STOP`` sessions in a row rejected with 401/403 (a dead key, or a range past the lookback edge);
+* ``REJECTED_STREAK_STOP`` sessions in a row whose first call (gex-levels) is rejected with a 4xx other than 429:
+  ``auth_streak`` for 401/403 (a dead key, or a range past the lookback edge), ``rejected_streak`` for the rest (a
+  date UW will not serve, e.g. 422). Each such day costs one call. So a ``start`` before the lookback edge stops the
+  run after five sessions: probe the edge first and start inside it;
 * the US session opening: the job never runs inside it, and refuses to start in it.
 
 A day that already has its manifest costs no request and is never replaced; a day with a transient failure is not
@@ -47,7 +50,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_CALLS = 500          # a first run measures; raise it once the counts are known
 DEFAULT_SLEEP_S = 0.5            # pause between two calls (no published rate limit to derive it from)
 RATE_LIMIT_STREAK_STOP = 5       # = core.universe_fetch._RATE_LIMIT_STREAK_STOP
-AUTH_STREAK_STOP = 5
+REJECTED_STREAK_STOP = 5
 SHAPE_SESSIONS = 20              # sessions whose dated volatility answers are described in the counts
 IV_RANK_TIMESPAN = "2y"
 # The endpoints whose ``date`` behaviour is not known (the value on that day, or a series ending there): their
@@ -222,7 +225,7 @@ def pull_history(uw, start: str, end: str, *, max_calls: int = DEFAULT_MAX_CALLS
                     "iv_rank_file": None, "shapes": {"sessions": {}}}
     try:
         _iv_rank_series(meter, root, ticker, end, counts)
-        auth_streak = 0
+        rejected_streak = 0
         for day in days:
             job_control.checkpoint(f"session {day}")
             if (raw_root / day / "manifest.json").exists():
@@ -245,12 +248,14 @@ def pull_history(uw, start: str, end: str, *, max_calls: int = DEFAULT_MAX_CALLS
                 counts["failed"] += 1
                 if len(counts["failures"]) < _MAX_FAILURE_RECORDS:
                     counts["failures"].append({"day": day, "statuses": meter.statuses, "error": str(exc)[:200]})
-                auth_streak = auth_streak + 1 if meter.statuses[:1] and meter.statuses[0] in _AUTH else 0
-                if auth_streak >= AUTH_STREAK_STOP:
-                    counts["stop_reason"] = "auth_streak"
+                first = meter.statuses[0] if meter.statuses else None
+                rejected = first is not None and 400 <= first < 500 and first != 429
+                rejected_streak = rejected_streak + 1 if rejected else 0
+                if rejected_streak >= REJECTED_STREAK_STOP:
+                    counts["stop_reason"] = "auth_streak" if first in _AUTH else "rejected_streak"
                     break
             else:
-                auth_streak = 0
+                rejected_streak = 0
                 if raw is not None:
                     counts["written"] += 1
                     counts["first_written"] = counts["first_written"] or day

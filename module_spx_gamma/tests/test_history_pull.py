@@ -202,7 +202,7 @@ def test_stops_after_a_run_of_rejected_days(tmp_path, monkeypatch):
     uw = Recorder(rejected)
     counts = _pull(tmp_path, uw, start=days[0], end=days[-1])
     assert counts["stop_reason"] == "auth_streak"
-    assert counts["status"]["403"] == hp.AUTH_STREAK_STOP == 5
+    assert counts["status"]["403"] == hp.REJECTED_STREAK_STOP == 5
     assert counts["failed"] == 5 and counts["failures"][0]["day"] == days[0]
     assert len(uw.calls) == 1 + 5
 
@@ -364,3 +364,19 @@ def test_dates_are_sent_and_stored_in_iso_form(tmp_path):
     assert (counts["start"], counts["end"]) == (DAYS[0], NO_CLOSE)
     assert counts["iv_rank_file"].endswith(f"iv_rank_{NO_CLOSE}_2y.json")
     assert NO_CLOSE in counts["report_file"]
+
+
+@pytest.mark.parametrize("status", [404, 422])
+def test_stops_after_a_run_of_days_rejected_with_another_4xx(tmp_path, monkeypatch, status):
+    """A date UW answers 422 (or 404) for costs one call per day; five in a row stop the run (#194 nit)."""
+    monkeypatch.setattr(snap, "stored_spx_candles", _feb_candles)
+
+    def rejected(path, params):
+        if path.endswith("/gex-levels"):
+            raise UWApiError(path, status, f"HTTP {status}")
+        return _ok(path, params)
+    uw = Recorder(rejected)
+    counts = _pull(tmp_path, uw, start=FEB[0], end=FEB[-1])
+    assert counts["stop_reason"] == "rejected_streak"
+    assert counts["status"][str(status)] == hp.REJECTED_STREAK_STOP == 5
+    assert len(uw.calls) == 1 + 5
