@@ -167,9 +167,12 @@ class Page:
                   features=[{"name": "prefers-color-scheme", "value": scheme}])
 
     def open(self, url: str, settle: float = 0.3) -> None:
-        self._events.clear()
-        self.send("Page.navigate", url=url)
-        self._await_event("Page.loadEventFired")
+        """Load ``url`` afresh. Via ``about:blank`` first: a URL that differs from the current one only by its
+        ``#fragment`` is a same-document navigation, which fires no load event and would not reload."""
+        for target in ("about:blank", url):
+            self._events.clear()
+            self.send("Page.navigate", url=target)
+            self._await_event("Page.loadEventFired")
         time.sleep(settle)                         # let the page's own load handlers run
 
     def eval(self, expression: str):
