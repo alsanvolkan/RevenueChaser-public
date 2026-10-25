@@ -396,3 +396,18 @@ def test_a_failed_report_never_hides_the_runs_own_error(tmp_path, monkeypatch):
     monkeypatch.setattr(hp.safe_json, "write_json_atomic", unwritable)
     with pytest.raises(OSError, match="disk full"):
         _pull(tmp_path, Recorder())
+
+
+def test_a_429_between_rejected_days_resets_the_rejected_streak(tmp_path, monkeypatch):
+    """A 429 is throttling, not a rejected date: it ends a 4xx streak instead of extending it (#194 delta nit)."""
+    monkeypatch.setattr(snap, "stored_spx_candles", _feb_candles)
+    pattern = iter([422, 422, 429, 422, 422, 422, 422, 422, 422, 422])
+
+    def gex(path, params):
+        if path.endswith("/gex-levels"):
+            status = next(pattern)
+            raise UWApiError(path, status, f"HTTP {status}")
+        return _ok(path, params)
+    counts = _pull(tmp_path, Recorder(gex), start=FEB[0], end=FEB[-1])
+    assert counts["stop_reason"] == "rejected_streak"
+    assert counts["failed"] == 8                       # 2 + the 429 day + 5: the 429 restarted the count
