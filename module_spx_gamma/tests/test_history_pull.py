@@ -287,3 +287,35 @@ def test_a_day_that_no_longer_fits_the_request_count_is_not_started(tmp_path, mo
     counts = _pull(tmp_path, _real_client(monkeypatch, two_retries_on_day_one), max_calls=28)
     assert (counts["calls"], counts["http_requests"]) == (14, 16)
     assert counts["stop_reason"] == "max_calls" and _days(tmp_path) == DAYS[:1]
+
+
+def _reports(tmp_path):
+    return [json.loads(p.read_text(encoding="utf-8")) for p in (tmp_path / "history_pull").glob("run_*.json")]
+
+
+def test_a_cancelled_run_still_leaves_its_counts(tmp_path):
+    from RevenueChaser.core import job_control
+    token = job_control.StopToken(None)
+    uw = Recorder()
+    real = uw.get_result
+
+    def cancel_after_day_one(ep, params=None):
+        if len(uw.calls) == snap.HISTORY_CALLS_PER_SESSION:     # day 1's last call is being made
+            token.cancel()                      # seen at the next session's checkpoint
+        return real(ep, params)
+    uw.get_result = cancel_after_day_one
+    with job_control.bound(token), pytest.raises(job_control.JobCancelled):
+        _pull(tmp_path, uw)
+    [report] = _reports(tmp_path)
+    assert report["stop_reason"] == "cancelled" and report["written"] == 1
+    assert report["calls"] == 1 + snap.HISTORY_CALLS_PER_SESSION
+
+
+def test_an_unexpected_error_still_leaves_its_counts(tmp_path, monkeypatch):
+    def broken(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(hp, "fetch_snapshot", broken)
+    with pytest.raises(OSError):
+        _pull(tmp_path, Recorder())
+    [report] = _reports(tmp_path)
+    assert report["stop_reason"] == "error: OSError: disk full" and report["calls"] == 1

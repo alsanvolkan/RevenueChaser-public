@@ -236,20 +236,36 @@ def pull_history(uw, start: str, end: str, *, max_calls: int = DEFAULT_MAX_CALLS
                 break
     except _Stop as stop:
         counts["stop_reason"] = stop.reason
+    except job_control.JobStopped as exc:
+        counts["stop_reason"] = "cancelled" if isinstance(exc, job_control.JobCancelled) else "deadline"
+        raise
+    except Exception as exc:
+        counts["stop_reason"] = f"error: {type(exc).__name__}: {exc}"[:200]
+        raise
     finally:
+        # Also on a cancel or an error: the calls already sent are what the owner needs to know (#194 review).
         remove_hook()
+        _finish(counts, meter, http, root, start, end)
+    return {"counts": counts}
+
+
+def _finish(counts: dict, meter: _Meter, http, root: Path, start: str, end: str) -> None:
+    """Close the counts, write the run's report file and log the summary; never raises (it runs in ``finally``)."""
     counts["calls"] = meter.calls
     counts["status"] = dict(meter.status)
     counts["http_requests"] = http[0] if http else None
     # The dashboard holds the store while it runs, so the counts are also a file the owner can open.
     report = root / "history_pull" / f"run_{start}_{end}_{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.json"
     counts["report_file"] = str(report.relative_to(root))
-    safe_json.write_json_atomic(report, counts)
+    try:
+        safe_json.write_json_atomic(report, counts)
+    except OSError:
+        counts["report_file"] = None
+        logger.warning("spx history pull: could not write %s", report, exc_info=True)
     logger.info("spx history pull %s..%s: %s written, %s already stored, %s without a stored close, %s failed; "
                 "%s calls (%s), stop: %s", start, end, counts["written"], counts["skipped_existing"],
                 counts["skipped_no_close"], counts["failed"], counts["calls"], counts["status"],
                 counts["stop_reason"] or "end of range")
-    return {"counts": counts}
 
 
 def _iv_rank_series(meter: _Meter, root: Path, ticker: str, end: str, counts: dict) -> None:
