@@ -719,10 +719,20 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   tips.forEach(function(d){ d.addEventListener('toggle', function(){
     if(d.open) tips.forEach(function(o){ if(o !== d) o.open = false; });
   }); });
-  document.addEventListener('click', function(e){ tips.forEach(function(d){ if(d.open && !d.contains(e.target)) d.open = false; }); });
+  // A mouse hovers: the card opens its tooltip and closing follows the pointer, unless a click pinned it. A touch
+  // screen has no hover, so there a tap is the only way (and the native <details> toggle).
+  if(window.matchMedia && matchMedia('(hover: hover) and (pointer: fine)').matches){
+    tips.forEach(function(d){
+      var card = d.closest('.ag-gex'), s = d.querySelector('summary');
+      card.addEventListener('mouseenter', function(){ d.open = true; });
+      card.addEventListener('mouseleave', function(){ if(!d._pinned) d.open = false; });
+      s.addEventListener('click', function(e){ e.preventDefault(); d._pinned = !d._pinned; d.open = d._pinned; });
+    });
+  }
+  document.addEventListener('click', function(e){ tips.forEach(function(d){ if(d.open && !d.contains(e.target) && !d._pinned) d.open = false; }); });
   document.addEventListener('keydown', function(e){
     if(e.key !== 'Escape') return;
-    tips.forEach(function(d){ if(d.open){ d.open = false; var s = d.querySelector('summary'); if(s) s.focus(); } });
+    tips.forEach(function(d){ if(d.open){ d._pinned = false; d.open = false; var s = d.querySelector('summary'); if(s) s.focus(); } });
   });
 })();
 /* A Plotly figure reserves a 220-250 px right margin; on a phone that margin is the whole chart. Below 520 px the

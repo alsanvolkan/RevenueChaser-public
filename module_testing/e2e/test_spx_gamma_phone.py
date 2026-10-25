@@ -400,3 +400,50 @@ def test_collapsed_sections_open_for_print_and_close_again(board, browser):
     assert all(browser.eval(state)), "a section stays closed in the printout"
     browser.eval("window.dispatchEvent(new Event('afterprint'))")
     assert browser.eval(state) == before, "the sections the reader had open or closed are restored"
+
+
+def _move(browser, x, y):
+    browser.send("Input.dispatchMouseEvent", type="mouseMoved", x=x, y=y)
+
+
+def _click_at(browser, x, y):
+    for typ in ("mousePressed", "mouseReleased"):
+        browser.send("Input.dispatchMouseEvent", type=typ, x=x, y=y, button="left", clickCount=1)
+
+
+CARD_POINTS = """(function(){ var d = document.querySelector('details.tip'), c = d.closest('.ag-gex').getBoundingClientRect(),
+  s = d.querySelector('summary').getBoundingClientRect();
+  return {card: [c.left + 8, c.top + 8], tip: [s.left + s.width / 2, s.top + s.height / 2]}; })()"""
+OPEN = "document.querySelector('details.tip').open"
+FINE_POINTER = """(function(){ var real = window.matchMedia.bind(window);
+  window.matchMedia = function(q){ var r = real(q);
+    return /hover: hover/.test(q) ? {matches: true, media: q, addEventListener: function(){}, removeEventListener: function(){}} : r; }; })()"""
+
+
+def test_a_tooltip_opens_on_hover_with_a_mouse_and_a_click_pins_it(board, browser):
+    """#195 review SHOULD 7: the desktop hover tooltip was gone (click only). A fine pointer hovers; a click pins."""
+    # Headless Chrome reports no hover or fine pointer and CDP cannot emulate one, so the board's capability query
+    # is answered "yes" before the page runs; what is tested is the board's hover handling.
+    browser.emulate(*DESKTOP, scheme="dark")
+    browser.send("Page.addScriptToEvaluateOnNewDocument", source=FINE_POINTER)
+    browser.open(f"{board.url}/view/{TAB}")
+    browser.wait_for("document.querySelectorAll('.js-plotly-plot .main-svg').length >= 3")
+    browser.eval("document.querySelector('details.tip').scrollIntoView({block: 'center'})")
+    pts = browser.eval(CARD_POINTS)
+    _move(browser, *pts["card"])
+    assert browser.eval(OPEN) is True, "hovering the card did not open its tooltip"
+    _move(browser, 4, 4)
+    assert browser.eval(OPEN) is False, "leaving the card did not close it"
+    _move(browser, *pts["card"])
+    _click_at(browser, *pts["tip"])
+    _move(browser, 4, 4)
+    assert browser.eval(OPEN) is True, "a click should pin the tooltip open"
+    _click_at(browser, *pts["tip"])
+    assert browser.eval(OPEN) is False, "a second click unpins it"
+
+
+def test_a_phone_tooltip_does_not_open_on_hover(board, browser):
+    _open(browser, board, PHONE)
+    browser.eval("document.querySelector('details.tip').scrollIntoView({block: 'center'})")
+    _move(browser, *browser.eval(CARD_POINTS)["card"])
+    assert browser.eval(OPEN) is False
