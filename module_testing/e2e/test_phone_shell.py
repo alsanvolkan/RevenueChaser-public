@@ -131,6 +131,7 @@ def test_light_and_dark_follow_the_device(dashboard, browser):
 def test_the_toggle_overrides_the_device_and_is_remembered(dashboard, browser):
     m = _open(browser, dashboard, PHONE, "dark")
     assert m["theme"] is None and m["bg"] == DARK_BG
+    _click(browser, "#nav-toggle")                             # on a phone the toggle is in the drawer
     m = _click(browser, "#theme-toggle")                       # auto -> light
     assert m["theme"] == "light" and m["bg"] == LIGHT_BG
     assert browser.eval(f"localStorage.getItem({THEME_STORAGE_KEY!r})") == "light"
@@ -140,6 +141,7 @@ def test_the_toggle_overrides_the_device_and_is_remembered(dashboard, browser):
     browser.open(f"{dashboard.url}/#runs", settle=1.0)
     m = browser.eval(LAYOUT)
     assert m["theme"] == "light" and m["bg"] == LIGHT_BG, "the choice survives a reload"
+    _click(browser, "#nav-toggle")
     m = _click(browser, "#theme-toggle")                       # light -> dark
     assert m["theme"] == "dark" and m["bg"] == DARK_BG
     m = _click(browser, "#theme-toggle")                       # dark -> auto (the device says dark)
@@ -215,12 +217,12 @@ def test_the_theme_toggle_does_not_wrap_the_desktop_top_bar(dashboard, browser, 
 def test_a_desktop_toggles_the_theme_from_the_sidebar(dashboard, browser):
     browser.emulate(*DESKTOP, scheme="dark")
     browser.open(f"{dashboard.url}/#runs", settle=1.0)
-    shown = browser.eval("(function(){ var r = document.getElementById('theme-toggle-side').getBoundingClientRect();"
+    shown = browser.eval("(function(){ var r = document.getElementById('theme-toggle').getBoundingClientRect();"
                          " return r.width > 0 && r.bottom <= innerHeight; })()")
     assert shown, "the sidebar toggle is not on screen"
-    browser.eval("document.getElementById('theme-toggle-side').click()")
+    browser.eval("document.getElementById('theme-toggle').click()")
     assert browser.eval("document.documentElement.getAttribute('data-theme')") == "light"
-    assert browser.eval("document.getElementById('theme-toggle-side').textContent") == "Theme: Light"
+    assert browser.eval("document.getElementById('theme-toggle').textContent") == "Theme: Light"
 
 
 def test_the_summaries_keep_their_arrow_on_a_phone(dashboard, browser):
@@ -235,3 +237,12 @@ def test_the_summaries_keep_their_arrow_on_a_phone(dashboard, browser):
     assert shell and all(d == "list-item" for d in shell), f"shell summaries: {shell}"
     assert board and all(d == "list-item" for d, _ in board), f"board help summary: {board}"
     assert all(h >= 44 for _, h in board), f"the help summary is under 44 px: {board}"
+
+
+@pytest.mark.parametrize("tab", ["runs", "module_earnings_radar", "module_sector_rotation", "module_spx_gamma",
+                                 "module_sec_13f", "module_financials"])
+def test_the_phone_top_bar_leaves_the_board_most_of_the_screen(dashboard, browser, tab):
+    """#190 review: the top bar took 262 px of 844 on Earnings and 314 on Sector Rotation."""
+    _open(browser, dashboard, PHONE, "dark", tab)
+    h = browser.eval("document.querySelector('.topbar').getBoundingClientRect().height")
+    assert h <= PHONE[1] / 4, f"{tab}: the top bar is {h} px of {PHONE[1]}"

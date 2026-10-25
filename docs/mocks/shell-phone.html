@@ -92,7 +92,7 @@ figcaption{font-size:12.5px;font-weight:600}
     <li>On a phone or a touch screen every shell control is <b>44 px</b>: buttons, inputs, nav items, nav headers.
       A mouse on a desktop keeps today's 32 / 38 / 40 px.</li>
     <li>The badges and sync times move to a second, wrapping status line on a phone; on a desktop they stay in the top bar.</li>
-    <li><b>Theme:</b> automatic from the device (<code>prefers-color-scheme</code>), and a toggle (Auto → Light → Dark, labelled with the current choice)
+    <li><b>Theme:</b> automatic from the device (<code>prefers-color-scheme</code>), and a "Theme: Auto / Light / Dark" button at the foot of the sidebar (in the drawer on a phone, so it costs the top bar no row)
       stored in <code>localStorage</code>. Dark is today's palette, value for value.</li>
   </ul>
 </div>
@@ -104,13 +104,15 @@ figcaption{font-size:12.5px;font-weight:600}
       <div class="shell">
         <aside class="side">
           <div class="nh">Boards</div><div class="ni on">Earnings Radar</div><div class="ni">Sector Rotation</div>
+        
+          <span class="btn" style="margin-top:12px">Theme: Dark</span>
         </aside>
         <div class="main">
           <div class="top">
             <span class="btn icon" aria-label="Menu">☰</span>
             <span class="title">Earnings Radar</span>
             <span class="btn push">Refresh Tab</span>
-            <span class="btn">Dark</span>
+            
           </div>
         </div>
         <div class="status"><span class="badge">Regime: on</span><span class="badge sky">US-listed only</span>
@@ -131,11 +133,13 @@ figcaption{font-size:12.5px;font-weight:600}
           <div class="nh">Earnings ▾</div><div class="ni on">Earnings Radar</div><div class="ni">Implied Probability</div>
           <div class="nh">Flows ▾</div><div class="ni">Sector Rotation</div><div class="ni">SEC 13F</div>
           <div class="nh">Ops ▾</div><div class="ni">Settings</div><div class="ni">Runs</div><div class="ni">Logs</div>
+        
+          <span class="btn" style="margin-top:12px">Theme: Dark</span>
         </aside>
         <div class="scrim"></div>
         <div class="main">
           <div class="top"><span class="btn icon">☰</span><span class="title">Earnings Radar</span>
-            <span class="btn push">Refresh Tab</span><span class="btn">Dark</span></div>
+            <span class="btn push">Refresh Tab</span></div>
         </div>
         <div class="status"><span class="badge">Regime: on</span></div>
         <div class="board"><h2>Earnings Radar</h2></div>
@@ -150,7 +154,7 @@ figcaption{font-size:12.5px;font-weight:600}
         <aside class="side"></aside>
         <div class="main">
           <div class="top"><span class="btn icon">☰</span><span class="title">Earnings Radar</span>
-            <span class="btn push">Refresh Tab</span><span class="btn">Light</span></div>
+            <span class="btn push">Refresh Tab</span></div>
         </div>
         <div class="status"><span class="badge">Regime: on</span><span class="badge sky">US-listed only</span>
           <span class="sync">Data: <b>Fri 24 Oct</b></span><span class="sync">Last run: <b>18:02</b></span></div>
@@ -170,6 +174,8 @@ figcaption{font-size:12.5px;font-weight:600}
           <div class="nh">Earnings ▾</div><div class="ni on">Earnings Radar</div><div class="ni">Implied Probability</div>
           <div class="nh">Flows ▾</div><div class="ni">Sector Rotation</div><div class="ni">SEC 13F</div>
           <div class="nh">Ops ▾</div><div class="ni">Settings</div><div class="ni">Runs</div><div class="ni">Logs</div>
+        
+          <span class="btn" style="margin-top:12px">Theme: Light</span>
         </aside>
         <div class="scrim"></div>
         <div class="main"><div class="top"><span class="btn icon">☰</span><span class="title">Earnings Radar</span></div></div>
@@ -182,19 +188,21 @@ figcaption{font-size:12.5px;font-weight:600}
 
 <div class="row">
   <figure>
-    <figcaption>1280 px · dark (today's look, plus the theme toggle) — shown at half size</figcaption>
+    <figcaption>1280 px · dark (today's look; the theme button sits at the sidebar's foot) — shown at half size</figcaption>
     <div class="desk-wrap"><div class="desk t-dark">
       <div class="shell">
         <aside class="side">
           <div class="brand"><div class="logo"></div><div class="tag">REVENUE CHASER</div></div>
           <div class="nh">Earnings</div><div class="ni on">Earnings Radar</div><div class="ni">Implied Probability</div>
           <div class="nh">Flows</div><div class="ni">Sector Rotation</div><div class="ni">SEC 13F</div>
+        
+          <span class="btn" style="margin-top:12px">Theme: Dark</span>
         </aside>
         <div class="main">
           <div class="top"><span class="btn">Refresh Tab</span><span class="btn">Load Earnings Today</span>
             <span class="badge">Regime: on</span><span class="badge sky">US-listed only</span>
             <span class="sync push">Data: <b>Fri 24 Oct</b></span><span class="sync">Last run: <b>18:02</b></span>
-            <span class="btn">Dark</span></div>
+            </div>
           <div class="board"><h2>Earnings Radar</h2><p>Board at its own width, as today.</p>
             <div class="card"><div class="k">Reporting this week</div><div class="v">142</div></div></div>
         </div>
@@ -209,12 +217,14 @@ figcaption{font-size:12.5px;font-weight:600}
           <div class="brand"><div class="logo"></div><div class="tag">REVENUE CHASER</div></div>
           <div class="nh">Earnings</div><div class="ni on">Earnings Radar</div><div class="ni">Implied Probability</div>
           <div class="nh">Flows</div><div class="ni">Sector Rotation</div><div class="ni">SEC 13F</div>
+        
+          <span class="btn" style="margin-top:12px">Theme: Light</span>
         </aside>
         <div class="main">
           <div class="top"><span class="btn">Refresh Tab</span><span class="btn">Load Earnings Today</span>
             <span class="badge">Regime: on</span><span class="badge sky">US-listed only</span>
             <span class="sync push">Data: <b>Fri 24 Oct</b></span><span class="sync">Last run: <b>18:02</b></span>
-            <span class="btn">Light</span></div>
+            </div>
           <div class="board"><h2>Earnings Radar</h2><p>Board at its own width, as today.</p>
             <div class="card"><div class="k">Reporting this week</div><div class="v">142</div></div></div>
         </div>
