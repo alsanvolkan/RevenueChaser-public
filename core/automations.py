@@ -558,8 +558,7 @@ UNIT_ENVIRONMENT = ("RC_STORE_DIR", "RC_CACHE_DIR", "RC_EDGAR_DOCS_DIR", "RC_DIS
 
 
 def _unit_environment() -> list[tuple[str, str]]:
-    resolved = {"RC_STORE_DIR": config.DATA_DIR, "RC_CACHE_DIR": config.OUTPUT_DIR,
-                "RC_EDGAR_DOCS_DIR": config.EDGAR_DOCS_DIR, "RC_DISCORD_MEDIA_DIR": config.DISCORD_MEDIA_DIR}
+    resolved = config.resolved_roots()
     out = []
     for name in UNIT_ENVIRONMENT:
         value = resolved.get(name) or os.environ.get(name)
