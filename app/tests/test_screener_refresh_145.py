@@ -26,16 +26,11 @@ BOARDS = [
 
 
 @pytest.fixture
-def out(tmp_path, monkeypatch):
-    """Every artifact the runners write lands in a temp folder."""
-    folder = tmp_path / "out"
-    monkeypatch.setattr(runners, "OUTPUT_DIR", folder)
-    monkeypatch.setattr(runners, "SWING_LATEST", folder / "swing_potential_latest.html")
-    monkeypatch.setattr(runners, "FUNDAMENTALS_LATEST", folder / "fundamentals_latest.html")
-    monkeypatch.setattr(runners, "ASYMMETRIC_GROWTH_LATEST", folder / "asymmetric_growth_latest.html")
-    monkeypatch.setattr(scfg, "SWING_JSON", tmp_path / "swing.json")
-    monkeypatch.setattr(fcfg, "FUNDAMENTALS_JSON", tmp_path / "fundamentals.json")
-    return folder
+def out(isolate_board_artifacts, monkeypatch):
+    """Every artifact the runners write lands in this test's folder: the root conftest already points both copies
+    of each board path there (#111), so only the runners' own OUTPUT_DIR is set here."""
+    monkeypatch.setattr(runners, "OUTPUT_DIR", isolate_board_artifacts)
+    return isolate_board_artifacts
 
 
 def _empty(mod, reason):

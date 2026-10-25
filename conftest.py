@@ -195,6 +195,43 @@ def isolate_rawstore(tmp_path):
         mp.undo()
 
 
+# #111: six boards keep the same ``<PREFIX>_LATEST`` / ``<PREFIX>_JSON`` pair twice, in ``app/runners.py`` and in
+# their own config, and different code reads each copy, so both copies are redirected together.
+BOARD_ARTIFACT_PAIRS = (("FUNDAMENTALS", "module_fundamentals"), ("SWING", "module_swing_potential"),
+                        ("COMOVEMENT", "module_comovement"), ("VALUE_CHAIN", "module_value_chain"),
+                        ("RELATEDNESS", "module_relatedness"), ("OIPD", "module_oipd"))
+
+
+@pytest.fixture(autouse=True)
+def isolate_board_artifacts():
+    """Point both copies of the six boards' artifact paths at a folder of this test's own.
+
+    Autouse for the reason ``isolate_rawstore`` is: the data-root redirect is one folder per process, so a payload
+    one test saved was what the next test's Refresh read, and a Refresh test could pass on that leftover (#111). The
+    folder sits inside the cache root and keeps each path's place below it, so code that takes a path relative to
+    ``OUTPUT_DIR`` and the store-layout guard both still hold. A test that sets its own path still wins: its
+    ``monkeypatch`` runs after this. The folder is removed when the test ends.
+    """
+    import importlib
+    import uuid
+
+    from RevenueChaser.core import config
+    root = Path(config.OUTPUT_DIR)
+    dest = root / "per-test" / uuid.uuid4().hex
+    runners = importlib.import_module("RevenueChaser.app.runners")
+    mp = pytest.MonkeyPatch()
+    for prefix, module in BOARD_ARTIFACT_PAIRS:
+        cfg = importlib.import_module(f"RevenueChaser.{module}.config")
+        for attr in (f"{prefix}_LATEST", f"{prefix}_JSON"):
+            for mod in (runners, cfg):
+                mp.setattr(mod, attr, dest / Path(getattr(mod, attr)).relative_to(root))
+    try:
+        yield dest
+    finally:
+        mp.undo()
+        shutil.rmtree(dest, ignore_errors=True)
+
+
 @pytest.fixture(autouse=True)
 def isolate_uw_verify_cache(monkeypatch):
     """The UW client trusts a verified key for 60 s process-wide; never across tests."""
