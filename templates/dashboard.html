@@ -151,7 +151,7 @@ button:disabled{opacity:.5;cursor:default}
 .cal-table .wk-col{text-align:left;padding-left:6px;color:var(--sky);font-weight:700;font-size:11px}
 .cal-table td{text-align:center;padding:3px 4px;border-radius:4px;cursor:pointer;color:var(--fg)}
 .cal-week-row{cursor:pointer}
-.cal-week-row:hover td{background:rgba(255,255,255,.06)}
+.cal-week-row:hover td{background:var(--hover-soft)}
 .cal-week-row.hover td{background:rgba(14,165,233,.14)}
 .cal-week-row .wk-col{background:transparent!important}
 .cal-week-row.in-range td{background:rgba(14,165,233,.22)}
@@ -170,7 +170,7 @@ button:disabled{opacity:.5;cursor:default}
 .cal-day.today{box-shadow:inset 0 0 0 1px var(--sky)}
 .cal-day.weekend{opacity:.35;cursor:default}
 .cal-day.out{opacity:.2;cursor:default}
-.cal-day:not(.weekend):not(.out):hover{background:rgba(255,255,255,.08)}
+.cal-day:not(.weekend):not(.out):hover{background:var(--hover-day)}
 /* Phone and small tablet (#184, docs/mocks/shell-phone.html). The menu button and the tab's name exist only
    here; the badges and sync times are one wrapping line of their own, and the theme toggle sits last on a
    desktop and on the first line on a phone. */
@@ -541,6 +541,8 @@ function refitActiveFrames(){
       if(f.classList.contains('on') && (FILL_WIDTH[f.getAttribute('data-tab')] || isNarrow() || FIT_WAS_NARROW)) fitFrameWidth(f);
     });
     FIT_WAS_NARROW = isNarrow();
+    // A drawer left open while the window grew past the breakpoint would keep the page inert.
+    if(!FIT_WAS_NARROW && document.body.classList.contains('nav-open')) navSetOpen(false);
   }, 120);
 }
 if('ResizeObserver' in window){
@@ -565,7 +567,7 @@ function showTab(key){
       f.setAttribute('src', f.getAttribute('data-src'));
       hookFrameFit(f);
     }
-    if(on) fitFrameWidth(f);
+    if(on){ fitFrameWidth(f); themeFrames(THEME_NOW, [f]); }
   });
   document.getElementById('earnings-ctl').style.display = (key==='module_earnings_radar') ? 'flex' : 'none';
   document.getElementById('rotation-ctl').style.display = (key==='module_sector_rotation') ? 'flex' : 'none';
@@ -1403,7 +1405,17 @@ function themeFrames(choice, list){
     }catch(e){}
   });
 }
+// The browser bar: each meta follows its media query on Auto, and both take the chosen scheme otherwise.
+var THEME_BG = {{ theme_bg | tojson }};
+function themeMeta(){
+  document.querySelectorAll('meta[name="theme-color"]').forEach(function(m){
+    var scheme = THEME_NOW === 'auto' ? ((m.getAttribute('media') || '').indexOf('light') >= 0 ? 'light' : 'dark')
+                                      : THEME_NOW;
+    m.setAttribute('content', THEME_BG[scheme]);
+  });
+}
 function themeShow(){
+  themeMeta();
   document.querySelectorAll('.theme-toggle').forEach(function(b){
     b.textContent = 'Theme: ' + THEME_LABELS[THEME_NOW];
     b.title = 'Theme: ' + THEME_WORDS[THEME_NOW];

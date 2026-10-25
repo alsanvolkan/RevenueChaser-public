@@ -165,3 +165,11 @@ def test_the_spx_calendar_colours_come_from_the_tokens(shell):
     css = _style(shell)
     assert re.search(r"\.cal-gex-pos\{[^}]*var\(--gex-pos-fg\)", css)
     assert re.search(r"\.cal-gex-neg\{[^}]*var\(--gex-neg-fg\)", css)
+
+
+def test_the_calendar_hover_tints_are_tokens(shell):
+    """White-alpha hover tints vanish on a light card; the dark values are kept as tokens."""
+    css = _style(shell).replace(rc.THEME_CSS, "")
+    assert "rgba(255,255,255,.06)" not in css and "rgba(255,255,255,.08)" not in css
+    assert rc.THEME_TOKENS["dark"]["hover-soft"] == "rgba(255,255,255,.06)"
+    assert rc.THEME_TOKENS["dark"]["hover-day"] == "rgba(255,255,255,.08)"

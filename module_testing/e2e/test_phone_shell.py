@@ -290,3 +290,31 @@ def test_the_drawer_works_from_the_keyboard(dashboard, browser):
     browser.settle()
     assert browser.eval(LAYOUT)["expanded"] == "false"
     assert browser.eval(FOCUS)["id"] == "nav-toggle", "Escape returns focus to the menu button"
+
+
+def test_the_browser_bar_follows_the_manual_choice(dashboard, browser):
+    _open(browser, dashboard, PHONE, "dark", "runs")
+    _click(browser, "#nav-toggle")
+    _click(browser, "#theme-toggle")                           # auto -> light, on a dark device
+    metas = browser.eval("Array.prototype.map.call(document.querySelectorAll('meta[name=theme-color]'),"
+                         " function(m){ return m.content; })")
+    assert metas and set(metas) == {THEME_TOKENS["light"]["bg"]}, metas
+
+
+def test_an_open_drawer_closes_when_the_window_grows_past_the_breakpoint(dashboard, browser):
+    _open(browser, dashboard, PHONE, "dark", "runs")
+    _click(browser, "#nav-toggle")
+    browser.emulate(*DESKTOP, scheme="dark")
+    browser.wait_for("!document.body.classList.contains('nav-open')", timeout=5)
+    assert browser.eval("document.querySelector('.main').inert") is False
+
+
+def test_a_board_gets_the_choice_again_when_its_tab_is_shown(dashboard, browser):
+    """A board that re-rendered its document since it loaded (the shell only marked it on load) is marked
+    again when its tab comes back."""
+    _open(browser, dashboard, DESKTOP, "dark", "runs")
+    browser.eval("document.getElementById('theme-toggle').click()")          # light
+    browser.eval("document.querySelector('.frame.on').contentDocument.documentElement.removeAttribute('data-theme')")
+    browser.eval("showTab('module_settings'); showTab('runs')")
+    assert browser.eval("document.querySelector('.frame.on').contentDocument.documentElement"
+                        ".getAttribute('data-theme')") == "light"
