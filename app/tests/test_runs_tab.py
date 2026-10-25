@@ -328,3 +328,18 @@ def test_the_page_offers_the_server_side_page_sizes_beside_pause(client):
     assert html.index('id="runs-limit"') < html.index('id="runs-pause"'), "it sits beside Pause"
     script = html.split("<script>")[-1]
     assert 'limit.addEventListener("change"' in script, "a new size is read at once, not at the next poll"
+
+
+def test_the_page_size_control_is_not_restored_by_the_browser(client):
+    """A reload must show the newest 200 the URL reads, not a size Firefox restored into the select."""
+    html = client.get("/view/runs").get_data(as_text=True)
+    select = re.search(r'<select\b[^>]*\bid="runs-limit"[^>]*>', html).group(0)
+    assert 'autocomplete="off"' in select
+
+
+def test_the_empty_row_spans_the_header_it_sits_under():
+    """The column count comes from the one Jinja list the header is built from, not a literal."""
+    from pathlib import Path
+    source = (Path(dashboard.__file__).resolve().parent.parent / "templates" / "runs.html.j2").read_text(
+        encoding="utf-8")
+    assert not re.search(r"colSpan\s*=\s*\d", source), "a hard-coded column count"

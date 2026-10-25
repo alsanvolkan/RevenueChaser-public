@@ -74,7 +74,7 @@ td.dash{color:var(--muted)}
   .fld input,.fld select{flex:1 1 auto;width:auto;min-width:0}
   .scroll{overflow:visible;background:none;border:0;border-radius:0;min-height:0}
   table,tbody,tr,td{display:block;width:100%}
-  thead{display:none}   /* each cell carries its column's name instead (below), which a reader announces */
+  thead{display:none}   /* each cell shows its column's name instead (below); many screen readers read it out too */
   tbody tr{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:6px 12px;margin:0 0 8px}
   tbody td{display:grid;grid-template-columns:5.5em minmax(0,1fr);gap:8px;padding:4px 0;border:0;max-width:none}
   tbody tr:last-child td{border:0}
@@ -100,7 +100,7 @@ td.dash{color:var(--muted)}
   <div class="controls">
     <label class="chk" for="runs-problems"><input type="checkbox" id="runs-problems"> Problems only</label>
     <span class="fld"><label for="runs-filter">Job</label><input type="text" id="runs-filter" placeholder="name contains…"></span>
-    <span class="fld"><label for="runs-limit">Show</label><select id="runs-limit">
+    <span class="fld"><label for="runs-limit">Show</label><select id="runs-limit" autocomplete="off">
       {%- for n in limits %}<option value="{{ n }}"{% if loop.first %} selected{% endif %}>newest {{ n }}</option>{% endfor -%}
     </select></span>
     <button type="button" class="btn" id="runs-pause" aria-pressed="false">Pause</button>
@@ -127,6 +127,7 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
   var problems = document.getElementById("runs-problems"), filter = document.getElementById("runs-filter");
   var pause = document.getElementById("runs-pause"), limit = document.getElementById("runs-limit");
   var DEFAULT_LIMIT = "{{ limits[0] }}";   // app/runview.DEFAULT_LIMIT: the page the URL omits
+  var COLUMNS = {{ columns | length }};      // the header's own column count
   var paused = false, busy = false, pending = false, shown = null, last = null;
 
   function stamp(epoch) {
@@ -218,7 +219,7 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
       if (!rows.length) {
         var tr = document.createElement("tr"), td = document.createElement("td");
         td.className = "empty";
-        td.colSpan = 7;
+        td.colSpan = COLUMNS;
         td.textContent = (last.problems || last.query) ? "No run matches this filter."
                                                        : "No run has been recorded yet.";
         tr.appendChild(td);

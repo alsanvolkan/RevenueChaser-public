@@ -254,8 +254,9 @@ def test_a_write_to_a_poll_path_is_still_logged():
 def test_quiet_path_takes_only_a_bare_path_and_is_bounded(monkeypatch):
     monkeypatch.setattr(logview, "POLL_PATHS", set(logview.POLL_PATHS))
     logview.quiet_path("/api/runs")
+    size = len(logview.POLL_PATHS)
     logview.quiet_path("/api/runs")                       # registering twice is one entry
-    assert len(logview.POLL_PATHS) == len(set(logview.POLL_PATHS))
+    assert len(logview.POLL_PATHS) == size
     for bad in ("api/runs", "/api/runs?x=1", "/api/ runs", ""):
         with pytest.raises(ValueError):
             logview.quiet_path(bad)

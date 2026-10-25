@@ -1315,7 +1315,7 @@ _OFF_VALUES = frozenset({"0", "false", "no", "off"})
 
 def _query_flag(name: str) -> bool:
     """A query-string switch: absent is off, ``0`` / ``false`` / ``no`` / ``off`` are off, anything else
-    (a bare ``?name`` included) is on. No other route had such a helper (#131)."""
+    is on, a bare ``?name`` and an empty ``?name=`` included. No other route had such a helper (#131)."""
     value = request.args.get(name)
     return value is not None and value.strip().lower() not in _OFF_VALUES
 
