@@ -54,10 +54,23 @@ def _fetch(tmp_path, uw, **kw):
                                vix_fetcher=_no_live("vix"), cftc_fetcher=_no_live("cftc"), **kw)
 
 
+# Live sources history mode asked (each fake records instead of raising: the snapshot's own ``except Exception``
+# around VIX and COT would swallow an AssertionError, #194 review).
+LIVE_ASKED: list[str] = []
+
+
 def _no_live(what):
-    def boom(*a, **k):
-        raise AssertionError(f"history mode asked the live {what} source")
-    return boom
+    def record(*a, **k):
+        LIVE_ASKED.append(what)
+        return {"tickers": {"^VIX": 20.0}} if what == "vix" else {"report_date": "2025-03-11"}
+    return record
+
+
+@pytest.fixture(autouse=True)
+def _live_asked():
+    LIVE_ASKED.clear()
+    yield
+    assert LIVE_ASKED == [], f"history mode asked live sources: {LIVE_ASKED}"
 
 
 @pytest.fixture(autouse=True)
@@ -262,3 +275,12 @@ def test_two_threads_staging_the_same_day_never_mix_their_files(tmp_path):
     on_disk = {p.name for p in day_dir.glob("*.json")} - {"manifest.json"}
     assert on_disk == set(manifest["files"]), f"files outside the manifest: {sorted(on_disk - set(manifest['files']))}"
     assert not list(tmp_path.glob(".partial-*"))
+
+
+def test_history_mode_asks_no_live_vix_or_cot_and_writes_neither(tmp_path, uw):
+    _fetch(tmp_path, uw)
+    assert LIVE_ASKED == []
+    manifest = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
+    assert "vix_family.json" not in manifest["files"] and "cftc_tff.json" not in manifest["files"]
+    assert any(w.startswith("vix_family failed: ") for w in manifest["warnings"])
+    assert any(w.startswith("cftc_tff failed: ") for w in manifest["warnings"])
