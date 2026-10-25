@@ -82,6 +82,7 @@ li{ margin-bottom:8px; }
 .tr-glossary dd{ margin:4px 0 0; color:var(--muted); font-size:12px; }
 .tr-block{ border:1px solid var(--border); border-radius:8px; background:var(--card); padding:16px; margin-top:24px; }
 .tr-block h2{ margin-top:0; }
+details.collapsible > .box-inner.tr-block{ border:0; margin:0; border-radius:0; padding:0 16px 16px; background:none; }
 .tr-block .note{ color:var(--muted); font-size:12px; }
 .tr-block .tr-name{ color:var(--bright); }
 .pos-neg{ font-weight:700; }
@@ -216,7 +217,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 <script src="/static/vendor/plotly.min.js"></script>
 </head>
 <body>
-<div class="header">{{ header.ticker }} &middot; Price {{ header.price_source }} &middot; Report date {{ header.report_date }} &middot; Sessions {{ header.sessions }} &middot; Data retrieved {{ header.retrieved_at }} from {{ header.source }}</div>
+<div class="header">{{ header.ticker }} &middot; Price {{ header.price_source }} &middot; Report date {{ header.report_date }} &middot; Sessions {{ header.sessions }} &middot; Last sync: {{ header.last_sync }} EOD &middot; {{ header.source }}</div>
 {{ provider_banner }}{{ quality_banner }}{{ help_block }}
 
 {% if prediction and prediction.bias %}
@@ -451,7 +452,9 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   </tbody>
 </table>
 
-<h2>Greek Relations — How They Interact</h2>
+<details class="collapsible">
+<summary>Greek Relations — How They Interact</summary>
+<div class="box-inner">
 <div class="chain">
   {% for s in chain %}
   <div class="node">
@@ -472,6 +475,9 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   </div>
   {% endfor %}
 </div>
+
+</div>
+</details>
 
 <h2>Volatility Board</h2>
 <div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> whether implied vol is cheap or expensive, how the term structure slopes, and what the skew costs.</div>
@@ -629,7 +635,9 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 </div>
 <div class="note">{{ brier.verdict }}</div>
 
-<h2>Details</h2>
+<details class="collapsible">
+<summary>Details</summary>
+<div class="box-inner">
 <table class="stack">
   <thead><tr><th>Level</th><th>Value</th><th>Reference Type</th><th>Method / Disclosure</th></tr></thead>
   <tbody>
@@ -638,7 +646,12 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   </tbody>
 </table>
 
-<h2>How to read this map (Gamma)</h2>
+</div>
+</details>
+
+<details class="collapsible">
+<summary>How to read this map (Gamma)</summary>
+<div class="box-inner">
 <ul>
   <li>Call Wall ({{ how_to_read.call_wall }}): magnetic ceiling — dealers may sell into rallies (take-profit zone).</li>
   <li>Put Wall ({{ how_to_read.put_wall }}): trampoline floor — dealers may buy into dips (bounce zone).</li>
@@ -654,13 +667,22 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   <li>Crossing above the flip -> Safety zone: expect steady, grinding upward movement with low volatility.</li>
 </ul>
 
-<h2>Delta Map — Walkthrough</h2>
+</div>
+</details>
+
+<details class="collapsible">
+<summary>Delta Map — Walkthrough</summary>
+<div class="box-inner">
 <ul>
 {% for p in walkthrough %}<li>{{ p }}</li>{% endfor %}
 </ul>
 
-<div class="tr-block">
-  <h2>Greek Sözlüğü &amp; İlişkiler — Türkçe</h2>
+</div>
+</details>
+
+<details class="collapsible">
+<summary>Greek Sözlüğü &amp; İlişkiler — Türkçe</summary>
+<div class="box-inner tr-block">
   <div class="note">Aşağıdaki tanımlar ve ilişkiler eğitim amaçlıdır; bu raporun İngilizce başlıklarıyla aynı veriden türetilmiştir. Teknik sözlük:</div>
   <dl class="tr-glossary">
     {% for g in glossary_tr %}<dt>{{ g.greek }}</dt><dd>{{ g.def }}</dd>{% endfor %}
@@ -672,6 +694,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   </div>
   {% endfor %}
 </div>
+</details>
 
 <div class="footer">{{ footer }}</div>
 <script>

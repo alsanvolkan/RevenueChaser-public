@@ -85,6 +85,7 @@ li{ margin-bottom:8px; }
 .tr-glossary dd{ margin:4px 0 0; color:var(--muted); font-size:12px; }
 .tr-block{ border:1px solid var(--border); border-radius:8px; background:var(--card); padding:16px; margin-top:24px; }
 .tr-block h2{ margin-top:0; }
+details.collapsible > .box-inner.tr-block{ border:0; margin:0; border-radius:0; padding:0 16px 16px; background:none; }
 .tr-block .note{ color:var(--muted); font-size:12px; }
 .tr-block .tr-name{ color:var(--bright); }
 .pos-neg{ font-weight:700; }
@@ -219,7 +220,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 <script src="/static/vendor/plotly.min.js"></script>
 </head>
 <body>
-<div class="header">SPX &middot; Price yfinance ^GSPC &middot; Report date 2026-08-14 &middot; Sessions 2026-08-03 → 2026-08-14 &middot; Data retrieved 2026-08-14T21:00:00Z from Unusual Whales API</div>
+<div class="header">SPX &middot; Price yfinance ^GSPC &middot; Report date 2026-08-14 &middot; Sessions 2026-08-03 → 2026-08-14 &middot; Last sync: 14 Aug EOD &middot; Unusual Whales API</div>
 
 
 <div class="prediction-container">
@@ -592,7 +593,9 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   </tbody>
 </table>
 
-<h2>Greek Relations — How They Interact</h2>
+<details class="collapsible">
+<summary>Greek Relations — How They Interact</summary>
+<div class="box-inner">
 <div class="chain">
   
   <div class="node">
@@ -662,6 +665,9 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   </div>
   
 </div>
+
+</div>
+</details>
 
 <h2>Volatility Board</h2>
 <div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> whether implied vol is cheap or expensive, how the term structure slopes, and what the skew costs.</div>
@@ -807,7 +813,9 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 </div>
 <div class="note">No scored weeks yet</div>
 
-<h2>Details</h2>
+<details class="collapsible">
+<summary>Details</summary>
+<div class="box-inner">
 <table class="stack">
   <thead><tr><th>Level</th><th>Value</th><th>Reference Type</th><th>Method / Disclosure</th></tr></thead>
   <tbody>
@@ -827,7 +835,12 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   </tbody>
 </table>
 
-<h2>How to read this map (Gamma)</h2>
+</div>
+</details>
+
+<details class="collapsible">
+<summary>How to read this map (Gamma)</summary>
+<div class="box-inner">
 <ul>
   <li>Call Wall (7,900): magnetic ceiling — dealers may sell into rallies (take-profit zone).</li>
   <li>Put Wall (7,500): trampoline floor — dealers may buy into dips (bounce zone).</li>
@@ -843,13 +856,22 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   <li>Crossing above the flip -> Safety zone: expect steady, grinding upward movement with low volatility.</li>
 </ul>
 
-<h2>Delta Map — Walkthrough</h2>
+</div>
+</details>
+
+<details class="collapsible">
+<summary>Delta Map — Walkthrough</summary>
+<div class="box-inner">
 <ul>
 <li>Spot trades at 7,784. Around and just below spot, net delta concentration is relatively thin, so price can churn through this tight zone without major dealer-hedge interference.</li><li>The delta Call Wall sits at 7,800 (net Δ +180,000,000), heavily call-dominated; dealers are net long delta here, so rallies toward it force mechanical selling — a heavy lid that caps upside unless buying volume overwhelms it.</li><li>Deep liquidity pockets sit at 7,750 and 7,700; these institutional levels mix large put and call positions into sizeable net positive delta bars, so a drop toward them triggers dealer buying to rebalance — strong structural cushions below spot.</li>
 </ul>
 
-<div class="tr-block">
-  <h2>Greek Sözlüğü &amp; İlişkiler — Türkçe</h2>
+</div>
+</details>
+
+<details class="collapsible">
+<summary>Greek Sözlüğü &amp; İlişkiler — Türkçe</summary>
+<div class="box-inner tr-block">
   <div class="note">Aşağıdaki tanımlar ve ilişkiler eğitim amaçlıdır; bu raporun İngilizce başlıklarıyla aynı veriden türetilmiştir. Teknik sözlük:</div>
   <dl class="tr-glossary">
     <dt>Gamma (Γ)</dt><dd>Spot fiyat 1 puan oynayınca delta&#39;nın (dealer pozisyonunun) ne kadar değiştiği. Pozitif gamma: dealer hareketi söndürür. Negatif gamma: dealer hareketi büyütür.</dd><dt>Vanna</dt><dd>IV (volatilite) değişince delta&#39;nın ne kadar değiştiği. Negatif net vanna: IV yükselirse dealer alıcı olur → düşüş yastıklanır. Pozitif: IV yükselirse dealer satıcı olur → baskı artar.</dd><dt>Charm</dt><dd>Vade yaklaştıkça delta&#39;nın kendiliğinden erimesi. Pozitif charm: kapanışa doğru mekanik alış baskısı (pin etkisi). Negatif charm: mekanik satış baskısı.</dd><dt>Vomma</dt><dd>IV değişince vega&#39;nın ne kadar değiştiği (2. derece). IV sıçrarsa vol pozisyonunun büyüyüp dengelemeyi hızlandırıp hızlandırmayacağını gösterir.</dd><dt>HVL / Gamma Flip</dt><dd>Kümülatif net GEX&#39;in işaret değiştirdiği fiyat. Üstünde pozitif gamma (sakin), altında negatif gamma (hızlı).</dd><dt>Net GEX</dt><dd>Tüm strike&#39;lardaki net gamma maruziyeti. + milyon dolar = söndürücü kütle, − = hızlandırıcı.</dd><dt>Absorpsiyon bandı</dt><dd>Kümülatif Net GEX&#39;in pozitif olduğu bölge; dealer harekete karşı işlem yapar, fiyat orada zor ilerler.</dd><dt>Hava boşluğu (air gap)</dt><dd>Kümülatif Net GEX&#39;in negatif olduğu bölge; dealer hareketle aynı yönde işlem yapar, fiyat orada hızlı akar.</dd><dt>Max Pain</dt><dd>En çok opsiyonun değersiz bittiği strike; yapısal &#39;çekim&#39; seviyesi, yön sinyali değildir. Spot&#39;tan uzaklığıyla okunur.</dd><dt>IV Rank</dt><dd>Bugünkü IV&#39;nin son 1 yıldaki konumu (%). Düşük = opsiyonlar ucuz, yüksek = pahalı.</dd><dt>Variance Risk Premium (VRP)</dt><dd>Örtük oynaklığın (IV) gerçekleşen oynaklığın (RV) üzerindeki payı; kısa vol pozisyonunun ne kadar kazandırdığı. Yüksek = vol satıcısı zengin.</dd><dt>Put/Call oranı (P/C)</dt><dd>Put hacminin call hacmine oranı. &gt;1 put-ağır akış (koruma veya yönlü aşağı bahis); tek başına yön okunmaz, premium ve Net GEX ile birlikte yorumlanır.</dd><dt>Contango / Backwardation</dt><dd>Vade yapısının yönü. Contango (kısa vade sakin, uzak vade pahalı) normaldir; backwardation (yakın vade daha pahalı) yakın stresin erken göstergesidir.</dd><dt>CFTC COT (TFF)</dt><dd>Haftalık yayınlanan büyük oyuncu pozisyonları (asset manager, leveraged funds, dealer). Gecikmeli ama düzenli; yön ölçmek için kullanılır.</dd>
@@ -877,6 +899,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   </div>
   
 </div>
+</details>
 
 <div class="footer">Source: Unusual Whales API — open-position-based option exposure model. Report date: 2026-08-14. These levels are provider-model outputs and strike aggregations, not guaranteed support/resistance, pin certainty, forecasts, or price targets. Long vanna: an IV rise raises dealer delta and forces stock selling to re-hedge — a drag during vol spikes. A flow effect, not a support guarantee.</div>
 <script>

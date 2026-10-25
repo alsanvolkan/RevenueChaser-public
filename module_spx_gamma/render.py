@@ -315,6 +315,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "report_date": asof,
         "sessions": f"{first} → {last}",
         "retrieved_at": snapshot.get("api_snapshot_time", ""),
+        "last_sync": _last_sync(snapshot.get("api_snapshot_time"), asof),
         "source": "Unusual Whales API",
     }
 
@@ -519,6 +520,26 @@ def _flip_methods(snapshot: dict) -> list[dict]:
     return [{"method": name, "value": fmt_level(flips.get(key)),
              "side": side_text.get(sides.get(key), "—"), "note": note}
             for name, key, note in rows]
+
+
+def _last_sync(stamp, fallback) -> str:
+    """'23 Oct' from the fetch stamp (UTC), as the New York day it fell on (AGENTS.md section 6: no raw timestamp).
+
+    A stored day without a stamp, or with one that does not parse, shows the report date instead.
+    """
+    from datetime import date, datetime, timezone
+    from zoneinfo import ZoneInfo
+    try:
+        dt = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        day = dt.astimezone(ZoneInfo("America/New_York")).date()
+    except (ValueError, TypeError):
+        try:
+            day = date.fromisoformat(str(fallback)[:10])
+        except ValueError:
+            return str(fallback or "—")
+    return f"{day.day} {day:%b}"
 
 
 def render_markdown(snapshot: dict, chart_png: str | None = None, prev_snapshot: dict | None = None,
