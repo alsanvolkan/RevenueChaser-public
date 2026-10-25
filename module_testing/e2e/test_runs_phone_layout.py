@@ -37,9 +37,9 @@ ROWS = [{"run_id": f"r{i}", "module": name, "source": None, "trigger": trig, "st
 MEASURE = r"""(function(){
   var vw = document.documentElement.clientWidth;
   function box(el){ var r = el.getBoundingClientRect(); return {w: r.width, h: r.height, l: r.left, t: r.top}; }
-  var row = document.querySelector("#runs-body tr");
+  var row = document.querySelector("#runs-body tr:nth-child(2)");   // the error row: every cell filled
   var cells = Array.prototype.map.call(row.children, function(td){
-    return {box: box(td), label: getComputedStyle(td, "::before").content};
+    return {box: box(td), label: getComputedStyle(td, "::before").content, shown: td.innerText};
   });
   var heads = Array.prototype.map.call(document.querySelectorAll("thead th"), function(th){ return th.textContent; });
   var wide = Array.prototype.filter.call(document.querySelectorAll("body *"), function(el){
@@ -161,3 +161,19 @@ def test_an_automation_row_fits_a_phone(browser, settings_page):
     assert m["summaryH"] >= 44, "the row's summary is the touch target that opens it"
     small = [b for b in m["buttons"] if b[2] < 44]
     assert not small, f"automation buttons under 44 px: {small}"
+
+
+ERROR = ROWS[1]["error"]
+
+
+def test_a_phone_shows_the_whole_note_and_params(browser, runs_page):
+    """A touch screen never shows a ``title`` tooltip, so the clipped cell was all a phone could read."""
+    m = _measure(browser, runs_page, PHONE, "dark")
+    note, params = m["cells"][5]["shown"], m["cells"][6]["shown"]
+    assert ERROR in note, f"the phone shows only {note!r}"
+    assert "--max-yf-calls" in params and "2000" in params, f"the phone shows only {params!r}"
+
+
+def test_a_desktop_still_clips_the_long_cells(browser, runs_page):
+    m = _measure(browser, runs_page, DESKTOP, "dark")
+    assert m["cells"][5]["shown"].endswith("…") and ERROR not in m["cells"][5]["shown"]

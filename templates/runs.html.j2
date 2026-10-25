@@ -54,6 +54,7 @@ td.dash{color:var(--muted)}
 .s-error,.s-cancelled{color:var(--red)}
 .s-running,.s-queued{color:var(--amber)}
 .empty{padding:16px 12px;color:var(--muted)}
+.clip-full{display:none}
 /* A finger, not a mouse: every control is at least 44 px tall (the owner's phone rule, CLAUDE.md). */
 @media (max-width: 640px), (pointer: coarse){
   .chk{min-height:44px}
@@ -78,6 +79,8 @@ td.dash{color:var(--muted)}
   tbody tr:last-child td{border:0}
   tbody td.note-cell,tbody td.params{max-width:none}
   tbody td .pill{justify-self:start}
+  tbody td .clip-short{display:none}
+  tbody td .clip-full{display:block;min-width:0}
   {%- for name in columns %}
   tbody td:nth-child({{ loop.index }})::before{content:"{{ name }}";color:var(--muted);font:500 12px/1.6 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
   {%- endfor %}
@@ -158,7 +161,20 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
     td.className = cls;
     var s = text(value);
     if (!s) { td.classList.add("dash"); s = "—"; }
-    if (clip && s.length > CLIP) { td.title = s; s = s.slice(0, CLIP) + "…"; }
+    if (clip && s.length > CLIP) {
+      // Clipped on a desktop with the whole value in the tooltip; a phone has no tooltip, so it shows the
+      // whole value instead (CSS picks the span). Both are text nodes: never markup.
+      td.title = s;
+      var short = document.createElement("span"), full = document.createElement("span");
+      short.className = "clip-short";
+      short.textContent = s.slice(0, CLIP) + "…";
+      full.className = "clip-full";
+      full.textContent = s;
+      td.appendChild(short);
+      td.appendChild(full);
+      row.appendChild(td);
+      return td;
+    }
     td.textContent = s;               // a stored message is untrusted text: never markup
     row.appendChild(td);
     return td;
