@@ -258,3 +258,35 @@ def test_the_phone_top_bar_leaves_the_board_most_of_the_screen(dashboard, browse
     _open(browser, dashboard, PHONE, "dark", tab)
     h = browser.eval("document.querySelector('.topbar').getBoundingClientRect().height")
     assert h <= PHONE[1] / 4, f"{tab}: the top bar is {h} px of {PHONE[1]}"
+
+
+FOCUS = ("(function(){ var a = document.activeElement; return {tag: a.tagName, id: a.id,"
+         " tab: a.getAttribute('data-tab'), inSidebar: !!a.closest('#sidebar'), inMain: !!a.closest('.main')}; })()")
+
+
+def test_the_drawer_works_from_the_keyboard(dashboard, browser):
+    """#190 review: focus stayed on the menu button when the drawer opened, Tab went on into the board behind
+    the scrim, and choosing a tab dropped focus to <body>."""
+    _open(browser, dashboard, PHONE, "dark", "runs")
+    browser.eval("document.getElementById('nav-toggle').focus()")
+    browser.press("Enter")
+    browser.settle()
+    f = browser.eval(FOCUS)
+    assert f["inSidebar"] and f["tab"] == "runs", f"opening the drawer left focus on {f}"
+    for _ in range(40):                       # well past every control in the drawer
+        browser.press("Tab")
+        f = browser.eval(FOCUS)
+        assert not f["inMain"] and f["tag"] != "IFRAME", f"Tab reached the page behind the drawer: {f}"
+    browser.eval("document.querySelector('.nav-item[data-tab=\"module_settings\"]').focus()")
+    browser.press("Enter")
+    browser.settle()
+    m = browser.eval(LAYOUT)
+    f = browser.eval(FOCUS)
+    assert m["active"] == "module_settings" and m["expanded"] == "false"
+    assert f["id"] == "nav-toggle", f"choosing a tab left focus on {f}"
+    browser.press("Enter")                    # focus is on the menu button: open again
+    browser.settle()
+    browser.press("Escape")
+    browser.settle()
+    assert browser.eval(LAYOUT)["expanded"] == "false"
+    assert browser.eval(FOCUS)["id"] == "nav-toggle", "Escape returns focus to the menu button"

@@ -189,6 +189,16 @@ class Page:
                 raise RuntimeError(f"timed out after {timeout:.0f}s waiting for: {expression}")
             time.sleep(0.05)
 
+    _KEYS = {"Enter": ("Enter", 13, "\r"), "Tab": ("Tab", 9, ""), "Escape": ("Escape", 27, ""),
+             " ": ("Space", 32, " ")}
+
+    def press(self, key: str, shift: bool = False) -> None:
+        """A real key press (down and up) to whatever has focus, as a keyboard user makes it."""
+        code, vk, text = self._KEYS[key]
+        base = {"key": key, "code": code, "windowsVirtualKeyCode": vk, "modifiers": 8 if shift else 0}
+        self.send("Input.dispatchKeyEvent", type="keyDown", text=text, **base)
+        self.send("Input.dispatchKeyEvent", type="keyUp", **base)
+
     def settle(self) -> None:
         """Wait until no CSS transition or animation is running (a drawer sliding in, say)."""
         self.wait_for("document.getAnimations().every(function(a){ return a.playState !== 'running'; })")

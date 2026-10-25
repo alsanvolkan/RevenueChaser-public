@@ -182,8 +182,9 @@ button:disabled{opacity:.5;cursor:default}
 @media (max-width: 900px){
   body{grid-template-columns:minmax(0,1fr)}
   .sidebar{position:fixed;inset:0 auto 0 0;width:min(300px,85vw);z-index:40;transform:translateX(-100%);
-    visibility:hidden;transition:transform .2s ease,visibility .2s;box-shadow:4px 0 24px var(--shadow)}
-  body.nav-open .sidebar{transform:none;visibility:visible}
+    visibility:hidden;transition:transform .2s ease,visibility 0s linear .2s;box-shadow:4px 0 24px var(--shadow)}
+  /* Visible at once when opening (so focus can move in), hidden only after the slide when closing. */
+  body.nav-open .sidebar{transform:none;visibility:visible;transition:transform .2s ease,visibility 0s}
   .brand{padding:2px 14px 8px}
   .brand .logo,.brand .logo img{width:96px;height:96px}
   body.nav-open .scrim{display:block;position:fixed;inset:0;background:var(--scrim);z-index:30}
@@ -1353,17 +1354,26 @@ document.querySelectorAll('.nav-header').forEach(function(h){
 navApply();
 
 // The drawer (under 900 px): the menu button opens it, and a tab, the scrim or Escape closes it.
+// While it is open the page behind is inert, so Tab stays in the drawer; closing it hands focus back to the
+// menu button, so a keyboard user never lands on <body>.
 function navSetOpen(open){
   var was = document.body.classList.contains('nav-open');
-  document.body.classList.toggle('nav-open', !!open);
+  open = !!open;
+  document.body.classList.toggle('nav-open', open);
+  var main = document.querySelector('.main');
+  if(main) main.inert = open;
   var t = document.getElementById('nav-toggle');
   if(t){
     t.setAttribute('aria-expanded', open ? 'true' : 'false');
     t.setAttribute('aria-label', open ? 'Close the board menu' : 'Open the board menu');
   }
   if(open && !was){
+    var side = document.getElementById('sidebar');
+    void side.offsetWidth;   // apply the open style now, so the item below is focusable
     var first = document.querySelector('.nav-item.on') || document.querySelector('.nav-item');
     if(first) try{ first.focus(); }catch(e){}
+  } else if(!open && was && t){
+    try{ t.focus(); }catch(e){}
   }
 }
 document.getElementById('nav-toggle').addEventListener('click', function(){
@@ -1371,10 +1381,7 @@ document.getElementById('nav-toggle').addEventListener('click', function(){
 });
 document.getElementById('nav-scrim').addEventListener('click', function(){ navSetOpen(false); });
 document.addEventListener('keydown', function(e){
-  if(e.key === 'Escape' && document.body.classList.contains('nav-open')){
-    navSetOpen(false);
-    document.getElementById('nav-toggle').focus();
-  }
+  if(e.key === 'Escape' && document.body.classList.contains('nav-open')) navSetOpen(false);
 });
 
 // The theme toggle: Auto (the device's scheme) -> Light -> Dark -> Auto. rcThemeSet (reporting_common.THEME_JS)
