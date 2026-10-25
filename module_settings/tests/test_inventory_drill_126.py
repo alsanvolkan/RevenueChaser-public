@@ -262,3 +262,59 @@ def test_the_board_list_costs_no_store_read(rawstore_tmp_db, monkeypatch):
                         lambda *a, **k: pytest.fail("the board list must not read the store"))
 
     assert inventory._board_fit(detail["presence"]) == detail["boards"]
+
+# ── #143: a failed presence query reads "could not read", never "missing" (the G3 rule) ─────────
+
+def _fail_reads_of(monkeypatch, *tables):
+    """Every per-name read of ``tables`` raises, as a locked or broken store file would."""
+    real = rawstore.query
+
+    def query(sql, *a, **k):
+        if any(f"FROM {t} WHERE ticker" in sql for t in tables):
+            raise RuntimeError("locked")
+        return real(sql, *a, **k)
+
+    monkeypatch.setattr(rawstore, "query", query)
+
+
+def test_a_failed_bars_read_is_unreadable_not_missing_and_the_board_says_so(rawstore_tmp_db, monkeypatch):
+    _seed_every_dataset()
+    _fail_reads_of(monkeypatch, "price_bars_daily")
+    detail = inventory.ticker_detail("MU")
+    fit = {b["key"]: b for b in detail["boards"]}
+
+    assert detail["presence"]["price_bars_daily"]["error"] is True
+    assert fit["module_swing_potential"]["state"] == "unreadable"
+    assert fit["module_swing_potential"]["missing"] == []
+    assert fit["module_swing_potential"]["unreadable"] == ["daily price bars"]
+    assert any(e["table"] == "price_bars_daily" for e in detail["errors"])
+    # A board that does not read the bars is not dragged along.
+    assert fit["module_comovement"]["state"] == "unreadable"
+    assert fit["module_sec_13f"]["state"] == "not_checked"
+
+
+def test_a_failed_row_check_is_unknown_not_absent(rawstore_tmp_db, monkeypatch):
+    _seed_every_dataset()
+    rawstore.write_rows("oipd_meta", [{"ticker": "MU", "as_of": "2026-10-20"}])
+    _fail_reads_of(monkeypatch, "oipd_meta")
+    detail = inventory.ticker_detail("MU")
+
+    assert detail["presence"]["oipd_meta"] is None
+    fit = {b["key"]: b for b in detail["boards"]}
+    assert fit["module_oipd"]["state"] == "unreadable"
+    assert fit["module_oipd"]["unreadable"] == ["Implied Probability chain"]
+
+
+def test_a_name_whose_reads_all_failed_is_not_reported_unknown(rawstore_tmp_db, monkeypatch):
+    """Failed reads are not "absent from every dataset": the route must not answer 404."""
+    rawstore.write_rows("price_bars_daily", _bars("NVDA", "2026-02-02"))
+    _fail_reads_of(monkeypatch, "price_bars_daily")
+    detail = inventory.ticker_detail("NVDA")
+
+    assert detail is not None
+    assert detail["presence"]["price_bars_daily"]["error"] is True
+
+
+def test_a_clean_drill_reports_no_errors(rawstore_tmp_db):
+    _seed_every_dataset()
+    assert inventory.ticker_detail("MU")["errors"] == []

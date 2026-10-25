@@ -3082,3 +3082,22 @@ def test_the_drill_escapes_a_hostile_ticker_and_a_hostile_board_label():
                         "boards": [{"key": "k", "label": bad, "state": "can", "missing": []}]})
     assert "<img" not in html and html.count("&lt;img") == 2
     assert '<span class="dlbl">Ticker</span><span class="dval">&lt;img' in html
+
+def test_a_failed_presence_read_shows_could_not_read_never_missing():
+    """#143: the drill prints a failed read as such, for a row and for a board (the G3 rule)."""
+    html = _drill_rows({
+        "name": "Micron",
+        "presence": {
+            "price_bars_daily": {"bars": 0, "newest": None, "error": True},
+            "quote_snapshot": {"rows": 0, "newest": None, "source": None, "error": True},
+            "oipd_meta": None,
+        },
+        "boards": [{"key": "module_swing_potential", "label": "Swing", "state": "unreadable",
+                    "missing": [], "unreadable": ["daily price bars"]}],
+    })
+    assert ('<span class="dlbl">Daily price bars</span><span class="dval">could not read</span>' in html)
+    assert '<span class="dlbl">Quote</span><span class="dval">could not read</span>' in html
+    assert ('<span class="dlbl">Implied Probability chain</span><span class="dval">could not read</span>'
+            in html)
+    assert '<span class="dval">unknown — could not read daily price bars</span>' in html
+    assert "missing" not in html.split('id="drill-boards"')[1].split("dnote")[0]

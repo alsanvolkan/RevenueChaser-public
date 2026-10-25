@@ -634,8 +634,11 @@ def _provenance() -> dict[str, str]:
     return out
 
 
-def _exists_row(table: str, ticker: str) -> bool:
-    """Whether ``table`` has a row for ``ticker`` (cross-file safe, no network)."""
+def _exists_row(table: str, ticker: str) -> bool | None:
+    """Whether ``table`` has a row for ``ticker`` (cross-file safe, no network).
+
+    ``None`` when the read failed (recorded): unknown, never "no row" (#143, the G3 rule).
+    """
     if not _table_exists(table):
         return False
     try:
@@ -645,7 +648,7 @@ def _exists_row(table: str, ticker: str) -> bool:
         return bool(rows)
     except Exception as exc:  # noqa: BLE001
         _record(table, "_exists_row", exc)
-        return False
+        return None
 
 
 def _swing_presence(ticker: str) -> dict:
@@ -659,7 +662,7 @@ def _swing_presence(ticker: str) -> dict:
             [ticker], db=_db_of("swing_ohlc"))
     except Exception as exc:  # noqa: BLE001
         _record("swing_ohlc", "_swing_presence", exc)
-        return empty
+        return dict(empty, error=True)
     row = rows[0] if rows else {}
     return {"bars": int(row.get("n") or 0), "newest": row.get("newest")}
 
@@ -682,7 +685,7 @@ def _d01_presence(ticker: str) -> dict:
             [ticker], db=_db_of("price_bars_daily"))
     except Exception as exc:  # noqa: BLE001
         _record("price_bars_daily", "_d01_presence", exc)
-        return empty
+        return dict(empty, error=True)
     row = rows[0] if rows else {}
     newest = row.get("newest")
     if newest is not None:
@@ -697,8 +700,8 @@ def _presence(table: str, ticker: str, *, date_column: str, count_key: str = "ro
 
     The same shape as :func:`_d01_presence` — the count under ``count_key``, ``newest`` as
     ``YYYY-MM-DD`` — plus the newest row's ``source_column`` when asked. A table this store does
-    not carry, or a failed query, reads as no rows (recorded, never raised): a board's absence
-    must not break the drill.
+    not carry reads as no rows; a failed query is recorded and carries ``error: True``, so it reads
+    "could not read", never as no rows (#143). Neither raises: a board's absence must not break the drill.
     """
     empty = {count_key: 0, "newest": None}
     if source_column:
@@ -712,7 +715,7 @@ def _presence(table: str, ticker: str, *, date_column: str, count_key: str = "ro
             [ticker], db=_db_of(table))
     except Exception as exc:  # noqa: BLE001
         _record(table, "_presence", exc)
-        return empty
+        return dict(empty, error=True)
     row = rows[0] if rows else {}
     newest = _fmt_date(row.get("newest"))
     out = {count_key: int(row.get("n") or 0), "newest": None if newest == DASH else newest}
@@ -735,7 +738,7 @@ def _quote_presence(ticker: str) -> dict:
         got = quotes.latest_caps([ticker]).get(ticker) or {}
     except Exception as exc:  # noqa: BLE001
         _record("quote_snapshot", "_quote_presence", exc)
-        return empty
+        return dict(empty, error=True)
     if not got:
         return empty
     newest = _fmt_date(got.get("session_date"))
@@ -758,7 +761,7 @@ def _edgar_presence(ticker: str) -> dict:
         row = rawstore.get("edgar_financials", ticker)
     except Exception as exc:  # noqa: BLE001
         _record("edgar_financials", "_edgar_presence", exc)
-        return empty
+        return dict(empty, error=True)
     if not row:
         return empty
     annual = [r for r in (row.get("annual") or []) if isinstance(r, dict)]
@@ -807,19 +810,38 @@ def _rows_stored(record) -> bool:
     return any(int(record.get(key) or 0) for key in ("bars", "rows", "periods"))
 
 
+def _unreadable(presence: dict, key: str) -> bool:
+    """Whether the drill's read of ``key`` failed: a record flagged ``error`` or a row check that
+    answered ``None`` (#143). A key the presence does not carry is not a failure."""
+    if key not in presence:
+        return False
+    record = presence[key]
+    return record is None or (isinstance(record, dict) and bool(record.get("error")))
+
+
 def _board_fit(presence: dict) -> list[dict]:
     """One entry per registered board: can it score this name, from the presence the drill read.
 
     ``can`` when every table the board reads is measured by this drill and has a row; ``cannot``
     names the measured tables without a row, in plain words; ``not_checked`` when the board reads
-    a table this drill does not measure (or reads none), because the drill does not know. Nav
-    order. One pass over ``presence``: no table is queried again here.
+    a table this drill does not measure (or reads none), because the drill does not know;
+    ``unreadable`` names the measured tables whose read failed (#143): a failed read is not a
+    missing row, so the board is neither "can" nor "cannot". Nav order. One pass over
+    ``presence``: no table is queried again here.
     """
     measured = {table: _rows_stored(presence.get(_PRESENCE_KEY.get(table, table)))
                 for table in _DRILL_TABLE_LABELS}
+    failed = {table for table in _DRILL_TABLE_LABELS
+              if _unreadable(presence, _PRESENCE_KEY.get(table, table))}
     out = []
     for entry in boards.BOARD_INPUTS:
         tables = list(entry.get("tables") or [])
+        # A failed read is said first, even on a board the drill cannot fully check: it is the fact.
+        unreadable = [_DRILL_TABLE_LABELS[table] for table in tables if table in failed]
+        if unreadable:
+            out.append({"key": entry.get("key"), "label": entry.get("label"),
+                        "state": "unreadable", "missing": [], "unreadable": unreadable})
+            continue
         if not tables or any(table not in measured for table in tables):
             out.append({"key": entry.get("key"), "label": entry.get("label"),
                         "state": "not_checked", "missing": []})
@@ -889,7 +911,8 @@ def _ticker_detail(ticker: str) -> dict | None:
             and not ownership["rows"] \
             and swing["bars"] == 0 \
             and not _exists_row("oipd_meta", t) \
-            and not _exists_row("relatedness_profiles", t):
+            and not _exists_row("relatedness_profiles", t) \
+            and not getattr(_CALL, "errors", None):   # a failed read is not "absent" (#143)
         return None
 
     # The identity spine's CIK is the current one; the older tables stay the fallback.
@@ -932,6 +955,8 @@ def _ticker_detail(ticker: str) -> dict | None:
         "presence": presence,
         # Which boards can score this name, from the presence just read — no query per board.
         "boards": _board_fit(presence),
+        # The reads that failed (F4, #143), so a "could not read" names its table and its error.
+        "errors": list(getattr(_CALL, "errors", None) or []),
     }
 
 
