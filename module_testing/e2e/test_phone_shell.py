@@ -302,7 +302,7 @@ def test_the_drawer_works_from_the_keyboard(dashboard, browser):
 def test_the_browser_bar_follows_the_manual_choice(dashboard, browser):
     _open(browser, dashboard, PHONE, "dark", "runs")
     _click(browser, "#nav-toggle")
-    _click(browser, "#theme-toggle")                           # auto -> light, on a dark device
+    _click(browser, "#theme-toggle")                           # dark -> light, on a dark device
     metas = browser.eval("Array.prototype.map.call(document.querySelectorAll('meta[name=theme-color]'),"
                          " function(m){ return m.content; })")
     assert metas and set(metas) == {THEME_TOKENS["light"]["bg"]}, metas
