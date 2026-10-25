@@ -148,23 +148,50 @@ def test_each_run_leaves_its_counts_on_disk(tmp_path, monkeypatch):
 # ── both directions with real worker threads (#194 review MUST): the Fetch and the pull never overlap ──
 @pytest.fixture
 def real_lanes(monkeypatch):
-    """The real queue and its worker threads, with blocking stand-ins for the two SPX runners."""
+    """Jobs submitted to the real registry and run by ``jobs.execute`` on real threads, with blocking stand-ins
+    for the two SPX runners.
+
+    The module's queues, worker flags and registry are swapped for fresh ones (the ``long_lane`` pattern of
+    app/tests/test_job_deadline_cancel_243.py), and no ``rc-jobs`` worker is started: a worker left on the real
+    queues takes a later test file's jobs as well (#194 delta review M1). Each job runs on a thread this fixture
+    owns and joins, so nothing outlives the test.
+    """
+    import queue
     import threading
 
-    with jobs._LOCK:
-        jobs._JOBS.clear()
+    workers_before = {t for t in threading.enumerate() if t.name.startswith("rc-jobs")}
+    monkeypatch.setattr(jobs, "_JOB_QUEUE", queue.Queue())
+    monkeypatch.setattr(jobs, "_LONG_QUEUE", queue.Queue())
+    monkeypatch.setattr(jobs, "_WORKER_STARTED", False)
+    monkeypatch.setattr(jobs, "_LONG_STARTED", False)
+    monkeypatch.setattr(jobs, "_JOBS", {})
+    monkeypatch.setattr(jobs, "_SEQ", {})
+    monkeypatch.setattr(jobs, "_ensure_worker", lambda: None)
+    monkeypatch.setattr(jobs, "_ensure_long_worker", lambda: None)
     monkeypatch.setattr(jobs, "UWClient", lambda: _FakeUW())
     started, release = threading.Event(), threading.Event()
+    threads: list[threading.Thread] = []
 
     def blocking(uw, **params):
         started.set()
         release.wait(10)
     monkeypatch.setitem(jobs._RUNNERS, "spxgamma_history", blocking)
     monkeypatch.setitem(jobs._RUNNERS, "spxgamma", blocking)
-    yield started
+
+    def run(module, params):
+        jid = jobs.submit(module, params)
+        t = threading.Thread(target=jobs.execute, args=(jid,), name=f"test-lane-{module}", daemon=True)
+        t.start()
+        threads.append(t)
+        return jid
+    run.started = started
+    yield run
     release.set()
-    for jid in [j["id"] for j in jobs.list_jobs()]:      # let the workers record the end before the store goes
-        _wait_done(jid)
+    for t in threads:                                    # the end is recorded before the store goes
+        t.join(10)
+    assert not [t for t in threads if t.is_alive()], "a job thread outlived the test"
+    left = {t for t in threading.enumerate() if t.name.startswith("rc-jobs") and t.is_alive()} - workers_before
+    assert not left, f"worker threads left alive: {sorted(t.name for t in left)}"
 
 
 def _wait_done(jid):
@@ -179,8 +206,8 @@ def test_a_board_fetch_is_refused_while_the_pull_runs(real_lanes, monkeypatch):
     from RevenueChaser.core.tests.panel_client import panel_test_client
     from RevenueChaser.module_spx_gamma import run as spx_run
     monkeypatch.setattr(nyse_calendar, "_now", lambda: SAT)
-    jid = jobs.submit("spxgamma_history", {"start": "2025-03-10", "end": "2025-03-12"})
-    assert real_lanes.wait(5)
+    jid = real_lanes("spxgamma_history", {"start": "2025-03-10", "end": "2025-03-12"})
+    assert real_lanes.started.wait(5)
     assert jobs.get(jid)["status"] == "running" and jobs.get(jid)["lane"] == "long"
     client = panel_test_client(dashboard.app)
     r = client.post("/run/spxgamma", data={"date": "2025-03-14"})
@@ -193,8 +220,8 @@ def test_a_board_fetch_is_refused_while_the_pull_runs(real_lanes, monkeypatch):
 def test_the_pull_is_refused_while_a_board_fetch_runs(real_lanes, monkeypatch):
     from RevenueChaser.core.tests.panel_client import panel_test_client
     monkeypatch.setattr(nyse_calendar, "_now", lambda: SAT)
-    jid = jobs.submit("spxgamma", {"asof_date": "2025-03-14"})
-    assert real_lanes.wait(5)
+    jid = real_lanes("spxgamma", {"asof_date": "2025-03-14"})
+    assert real_lanes.started.wait(5)
     assert jobs.get(jid)["status"] == "running" and jobs.get(jid)["lane"] == "short"
     r = panel_test_client(dashboard.app).post("/run/spxgamma_history?start=2025-03-10&end=2025-03-12")
     assert r.status_code == 409 and r.get_json()["job_id"] == jid
