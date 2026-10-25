@@ -127,8 +127,14 @@ def test_the_board_follows_the_theme_in_both_device_schemes(board, browser, sche
 
 
 CONTRAST = """(function(){
-  function parse(c){ var m = c.match(/rgba?\\(([^)]+)\\)/); if(!m) return null;
-    var p = m[1].split(/[ ,\\/]+/).filter(Boolean).map(Number); return {r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1}; }
+  // Chromium reports a color-mix() colour as color(srgb 0.2 0.8 0.6 / 0.16), not rgb(): read both, and say so
+  // when a colour is neither, instead of skipping it (#195 review MUST 2).
+  var unparsed = [];
+  function parse(c){ var m = c.match(/^rgba?\(([^)]+)\)/), k = 1;
+    if(!m){ m = c.match(/^color\(srgb ([^)]+)\)/); k = 255; }
+    if(!m){ if(c !== 'transparent') unparsed.push(c); return null; }
+    var p = m[1].split(/[ ,\/]+/).filter(Boolean).map(Number);
+    return {r: p[0] * k, g: p[1] * k, b: p[2] * k, a: p.length > 3 ? p[3] : 1}; }
   function over(top, base){ var a = top.a; return {r: top.r * a + base.r * (1 - a), g: top.g * a + base.g * (1 - a),
     b: top.b * a + base.b * (1 - a), a: 1}; }
   function lum(c){ function f(v){ v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); }
@@ -146,7 +152,7 @@ CONTRAST = """(function(){
     var fg = parse(getComputedStyle(e).color), bg = bgOf(e); if(!fg) return;
     fg = over(fg, bg); var l1 = lum(fg), l2 = lum(bg), ratio = (Math.max(l1, l2) + .05) / (Math.min(l1, l2) + .05);
     if(ratio < 4.5) worst.push(e.tagName + '.' + e.className + ' ' + ratio.toFixed(2) + ' ' + e.textContent.trim().slice(0, 24)); });
-  return worst; })()"""
+  return worst.concat(unparsed.map(function(c){ return 'unparsed colour ' + c; })); })()"""
 
 
 @pytest.mark.parametrize("theme", ["dark", "light"])
