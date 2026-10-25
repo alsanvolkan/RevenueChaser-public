@@ -3,8 +3,8 @@
 Where each part of the app lives, and how data moves from a provider to a board.
 Companions: [`data_architecture.md`](data_architecture.md) for the storage rules
 (what is durable and what is regenerable), [`data_retrieval.md`](data_retrieval.md)
-for Fetch vs Refresh. Source basis: the current worktree; the stores are the five
-DuckDB files of `docs/data_architecture.md` §Storage layout (the fifth,
+for Fetch vs Refresh. Source basis: the current worktree; the stores are the four
+DuckDB files of `docs/data_architecture.md` §Storage layout (the fourth,
 `history.duckdb`, appears with the first recorded run, `core/history.py`).
 
 ## The area map
@@ -19,7 +19,7 @@ stored fact.
 
 | `area:*` key | What it holds | Directories and main modules | Epic |
 |---|---|---|---|
-| `platform-store` | The durable store, its writers, migrations and backups | `.store/` (five DuckDB files), `edgar_docs/`, `core/rawstore.py`, `core/config.py`, `core/prices.py`, `core/quotes.py`, `core/history.py`, `core/automations.py`, `scripts/backup_store.py`, `scripts/restore_store.py`, `scripts/compact_store.py`, `scripts/daily_bars.py`, `scripts/migrate_rawdata_to_duckdb.py` | #49 |
+| `platform-store` | The durable store, its writers, migrations and backups | `.store/` (four DuckDB files), `edgar_docs/`, `core/rawstore.py`, `core/config.py`, `core/prices.py`, `core/quotes.py`, `core/history.py`, `core/automations.py`, `scripts/backup_store.py`, `scripts/restore_store.py`, `scripts/compact_store.py`, `scripts/daily_bars.py`, `scripts/migrate_rawdata_to_duckdb.py` | #49 |
 | `platform-app` | The dashboard process: tabs, routes, the job queue, Fetch vs Refresh, logs, the launcher | `app/` (`dashboard.py`, `jobs.py`, `runners.py`, `logview.py`, `launcher.py`), `templates/` (the shell, the logs page, and the empty / error / locked pages), `app/static/`, `core/job_control.py`, `core/job_lock.py`, `launch.pyw`, `run_dashboard.bat`, `start.ps1`, `stop.ps1`, `app.sh` | #50 |
 | `providers` | Network clients, and the credential and cost gates in front of them | `core/providers/`, `core/credentials.py`, `core/offpeak.py`, `core/subscription_usage.py`, `scripts/cloud_llm_call.py`, `.env.example`, `docs/openapi.yaml` (the UW endpoint contract) | #51 |
 | `classification` | Which sector, industry, theme and index a ticker carries, and the three boards built on that cut | `module_comovement/`, `module_relatedness/`, `module_value_chain/`, `core/universe.py`, `core/universe_fetch.py`, `core/gics_map.py`, `core/taxonomy.py`, `core/index_registry.py` | #55 |

@@ -171,8 +171,8 @@ hash. The pure logic is `RCFilters.core`, unit-tested under node (`core/tests/te
 ### What am I looking at? — every dashboard
 
 Shared `help_html(body)` under the title, closed by default, same `.help`
-chrome. Every data tab has it (#383 C3): the 16 boards of the fixture registry
-except Logs and Runs (neither is a data board). `core/tests/test_help_every_tab.py` holds
+chrome. Every data tab has it (#383 C3): every tab but Logs and
+Runs (neither is a data board), 15 boards. `core/tests/test_help_every_tab.py` holds
 that: each tab renders the one shared box, no board-local `.help` fork, and a body
 that says what Fetch and Refresh do there. `HELP_CSS` falls back to the standard
 dark tokens, so a board without them (Earnings Radar, SPX Gamma, LEAPS) still
@@ -221,7 +221,7 @@ load, no board re-render). The block ships **each entry once**, under `entries`
 keyed `"<repo>#<number>"`, and a board keeps only its section keys
 (`board` / `shared` / `repo`) plus `generated_at`, `stale_days` and
 `dropped_links` (`open_issues.panel_payload`): the shared entries would otherwise
-be repeated on all 16 boards, which took the block to ~590 KB; the deduped block
+be repeated on every data board (16 when measured, 15 now), which took the block to ~590 KB; the deduped block
 is ~107 KB for a ~111 KB registry. **Nothing calls GitHub and nothing reads the store at
 render time**, so the group is current on every page load. Every string and link
 is escaped in the shell (`html_safe.script_json` for the block, `rcEsc` for the
