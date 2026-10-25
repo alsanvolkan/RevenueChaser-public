@@ -332,3 +332,11 @@ def test_corpus_miss_summary_is_none_when_the_store_cannot_be_read(monkeypatch):
     monkeypatch.setattr(rawstore, "get_all", boom)
     monkeypatch.setattr(rawstore, "query", boom)
     assert engine.corpus_miss_summary(["AAA"]) is None
+
+
+def test_corpus_miss_summary_falls_back_to_the_retired_ticker_map(rawstore_tmp_db):
+    """#115: a store that has ``sec_company_tickers`` and not the exchange file still has a usable map, so
+    ``no_cik`` is a count, not the "not loaded yet" ``None``."""
+    rawstore.write_rows("sec_company_tickers", [{"ticker": "AAA", "cik": "1", "name": "AAA"}])
+    out = engine.corpus_miss_summary(["AAA", "NOCIK"])
+    assert out["no_cik"] == 1
