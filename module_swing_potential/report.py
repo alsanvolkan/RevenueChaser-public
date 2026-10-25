@@ -225,7 +225,6 @@ def _render(payload: dict, inline: bool) -> tuple[str, dict | None]:
     payload = payload or {}
     candidates = payload.get("candidates") or []
     passing = payload.get("passing") or {}
-    is_fixture = bool(payload.get("is_fixture"))
     avg_quality = payload.get("avg_quality")
     summary = payload.get("summary") or {}
     if not summary:
@@ -260,7 +259,6 @@ def _render(payload: dict, inline: bool) -> tuple[str, dict | None]:
     meta = script_json(filters_meta("swing", earnings_mode="filter",
                                     themes=_theme_catalog()))
 
-    fixture_tag = '<span class="tag" style="color:var(--amber);font-weight:700">[DEMO/FIXTURE]</span>' if is_fixture else ""
 
     # The grid starts with a placeholder the client replaces; only the empty / no-data message is server-side (DF111).
     if payload.get("no_data"):
@@ -507,7 +505,7 @@ function start(){
 <div class="wrap">
   <div class="topbar">
     <div>
-      <h1>Swing Screener {fixture_tag}</h1>
+      <h1>Swing Screener</h1>
       <div class="sub">Minervini · Weinstein · Qullamaggie — swing momentum setups (LONG). A 1–3 month horizon; momentum is not a probability.</div>
       {universe_prov}
     </div>

@@ -16,6 +16,8 @@ with rules_passed/bucket instead of multiplier/tiers; both tables gain the addit
 Data Health S11 (#80, #124) re-captured it: the Swing and Fundamentals Fetch payloads gain the additive
 ``provider_health`` key (the provider-health banner); compared with the old golden with that key removed, nothing
 else differed.
+#49 A2 removed the Swing payload's dead ``is_fixture`` key (``demo_payload`` was its only setter); only that key left
+the golden, edited by hand.
 To re-capture on another commit, run this file with ``RC_PARITY_CAPTURE=<path>`` (it writes the snapshot there
 instead of comparing).
 """

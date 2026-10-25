@@ -217,7 +217,6 @@ def _render(payload: dict, inline: bool) -> tuple[str, dict | None]:
     payload = payload or {}
     candidates = payload.get("candidates") or []
     passing = payload.get("passing") or {}
-    is_fixture = bool(payload.get("is_fixture"))
     distorted_count = payload.get("distorted_count") or 0
     # #386 F2/F3: rows stored before v6 (a Refresh of an old Fetch) carry no rule toggles and no new keys.
     from . import config as _config
@@ -252,7 +251,6 @@ def _render(payload: dict, inline: bool) -> tuple[str, dict | None]:
     meta = script_json(filters_meta("fundamentals", earnings_mode="filter",
                                     themes=_theme_catalog()))
 
-    fixture_tag = '<span class="tag" style="color:var(--amber);font-weight:700">[DEMO/FIXTURE]</span>' if is_fixture else ""
 
     # The grid starts with a placeholder the client replaces; only the empty / no-data message is server-side (DF111).
     if payload.get("no_data"):
@@ -468,7 +466,7 @@ function start(){
 <div class="wrap">
   <div class="topbar">
     <div>
-      <h1>Fundamental Analysis {fixture_tag}</h1>
+      <h1>Fundamental Analysis</h1>
       <div class="sub">Rule of 40 · Quality · Momentum — quality-growth scan</div>
       {universe_prov}
     </div>

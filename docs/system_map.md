@@ -60,7 +60,7 @@ writers are `data_architecture.md`'s subject; this is only "who reaches for the 
 |---|---|
 | `core/rawstore.py`, `core/config.py` | Every area: the schema manifest, the data roots and the test redirects |
 | `core/history.py` | Every board module that has a `history.py` (see the note under the diagram) |
-| `core/ledger.py` | The freeze, called from `module_asymmetric_growth/`, `module_swing_potential/`, `module_fundamentals/`, `module_comovement/engine.py`, `module_value_chain/engine.py`, `module_financials/run.py`, the jobs in `app/` (`jobs.py`, `runners.py`, `universe_cli.py`), `core/provenance.py` and `scripts/forecast_outcomes.py` |
+| `core/ledger.py` | The freeze, called from `module_asymmetric_growth/`, `module_swing_potential/`, `module_fundamentals/`, `module_comovement/engine.py`, `module_value_chain/engine.py`, `module_financials/run.py`, the jobs in `app/` (`jobs.py`, `runners.py`, `universe_cli.py`), `core/provenance.py` and `scripts/forecast_cli.py` (the shared skeleton of the two forecast tasks) |
 | `core/outcomes.py` | `scripts/forecast_outcomes.py` (the `RC-Forecast-Outcomes` task) |
 | `core/baselines.py` | `scripts/forecast_baselines.py` (the `RC-Forecast-Baselines` task); its outcomes come from `core/outcomes.py` |
 | `core/prices.py` | The daily bars the Asymmetric Growth engine, `module_comovement/`, Sector Rotation's money flow, SEC 13F's enrich step, Settings and the Earnings inputs read; `scripts/daily_bars.py` writes them |

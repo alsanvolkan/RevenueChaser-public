@@ -34,15 +34,11 @@ ANNUAL = [{"fiscal_year": 2022 + i, "revenue": 100.0 * (i + 1), "gross_profit": 
 
 
 @pytest.fixture
-def out(tmp_path, monkeypatch):
-    folder = tmp_path / "out"
-    monkeypatch.setattr(runners, "OUTPUT_DIR", folder)
-    monkeypatch.setattr(runners, "SWING_LATEST", folder / "swing_potential_latest.html")
-    monkeypatch.setattr(runners, "FUNDAMENTALS_LATEST", folder / "fundamentals_latest.html")
-    monkeypatch.setattr(runners, "ASYMMETRIC_GROWTH_LATEST", folder / "asymmetric_growth_latest.html")
-    monkeypatch.setattr(scfg, "SWING_JSON", tmp_path / "swing.json")
-    monkeypatch.setattr(fcfg, "FUNDAMENTALS_JSON", tmp_path / "fundamentals.json")
-    return folder
+def out(isolate_board_artifacts, monkeypatch):
+    """Every artifact the runners write lands in this test's folder: the root conftest already points both copies
+    of each board path there (#111), so only the runners' own OUTPUT_DIR is set here."""
+    monkeypatch.setattr(runners, "OUTPUT_DIR", isolate_board_artifacts)
+    return isolate_board_artifacts
 
 
 def _html(path) -> str:
@@ -274,6 +270,7 @@ def test_a_header_without_payload_falls_back_to_the_saved_board(rawstore_tmp_db,
     when = datetime(2026, 10, 6, 22, 0, tzinfo=timezone.utc).timestamp()
     history.record_run(board, run_id="old", run_at=when, model_version="m")          # a header from before K4
     shown = mod.build_payload([], run_stats={"regime": "RISK-OFF"})
+    getattr(cfg, saved).parent.mkdir(parents=True, exist_ok=True)
     getattr(cfg, saved).write_text(json.dumps(shown), encoding="utf-8")
     assert mod.run_scan(no_fetch=True) == shown
     getattr(cfg, saved).unlink()

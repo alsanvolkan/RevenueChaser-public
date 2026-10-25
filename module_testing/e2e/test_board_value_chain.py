@@ -189,8 +189,9 @@ class TestRecordedMisses:
         extra = {"MISSX": "9001", "PENDX": "9002"}
         rawstore.write_rows("equity_universe", [
             {"ticker": t, "market_cap": 1e12, "name": t} for t in (*config.SEED, *extra)])
-        rawstore.write_rows("sec_company_tickers", [
-            {"ticker": t, "cik": c, "name": t} for t, c in extra.items()])
+        rawstore.write_rows("sec_exchange_file", [     # #115: the CIK map production reads (#301 D21)
+            {"ticker": t, "cik": c, "name": t, "exchange": "Nasdaq", "valid_from": None, "status": "present",
+             "source": "sec_exchange", "fetched_at": 1.0, "run_id": "seed", "run_at": 1.0} for t, c in extra.items()])
         rawstore.write_rows("chain_meta", [{"key": "miss:MISSX", "value": json.dumps({
             "reason": "no_filing", "note": "no 10-K / 20-F", "cik": "9001",
             "checked": datetime.now(timezone.utc).isoformat()})}])

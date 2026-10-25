@@ -75,7 +75,8 @@ def _history_baselines(tickers, today: date, warnings: list | None = None) -> di
     except Exception as e:  # noqa: BLE001 - a missing baseline, never a failed run
         logger.warning(f"LEAPS recorded baselines not read: {e}")
         if warnings is not None:
-            warnings.append(f"The recorded session baselines could not be read ({type(e).__name__}: {e}), so no "
+            # The class only: a store error names the file it could not open, a host path (#107); the log has it all.
+            warnings.append(f"The recorded session baselines could not be read ({type(e).__name__}), so no "
                             "growth is shown: a Quiet label here is missing history, not a flat footprint.")
         return {}
 
@@ -258,7 +259,7 @@ def scan_leaps(uw: UWClient, today: date | None = None, warnings: list | None = 
             logger.warning(f"leaps {t}: {e}")
             if footprints is not None:
                 footprints.append({"ticker": t, "name": name_map.get(t, ""), "snapshot": None, "inputs": inputs,
-                                   "fetch_status": f"error: {type(e).__name__}: {e}"})
+                                   "fetch_status": f"error: {type(e).__name__}"})
             continue
         _merge_radar(snap, candidates.get(t))
         snap.setdefault("name", name_map.get(t, ""))

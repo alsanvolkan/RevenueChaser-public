@@ -39,6 +39,14 @@ def _write_output(module: str, content: str, suffix: str, ext: str = "html") -> 
     from RevenueChaser.core.reporting_common import write_artifact
     return write_artifact(stable, content)
 
+def _write_to(path: Path, content: str) -> Path:
+    """Write one regenerable artifact at ``path``: the board's own constant, so the writer and every reader of it
+    name one file (#111: a second spelling built from OUTPUT_DIR drifted from the constant a test redirected)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    from RevenueChaser.core.reporting_common import write_artifact
+    return write_artifact(path, content)
+
+
 def _write_board(path: Path, html: str, data) -> Path:
     """Write a board's HTML and its K10 payload file (``reporting_common.write_board``); ``data=None`` drops one."""
     from RevenueChaser.core.reporting_common import write_board
@@ -1687,10 +1695,8 @@ def run_comovement(uw=None, no_fetch: bool = False,
     run = None if no_fetch else _freeze_run_id()       # a store-only run stores nothing, so it has no id
     payload = engine.run(no_fetch=no_fetch, horizon=horizon, benchmark=benchmark,
                          window=window, **({} if no_fetch else {"run_id": run}))
-    _write_output("comovement", json.dumps(payload, ensure_ascii=False, default=str),
-                  "latest", ext="json")
-    _write_output("comovement", report.render_comovement_dashboard(payload),
-                  "latest", ext="html")
+    _write_to(COMOVEMENT_JSON, json.dumps(payload, ensure_ascii=False, default=str))
+    _write_to(COMOVEMENT_LATEST, report.render_comovement_dashboard(payload))
     if no_fetch:
         return COMOVEMENT_LATEST
     as_ofs: dict[int, str] = {}
@@ -1748,10 +1754,8 @@ def run_value_chain(uw=None, no_fetch: bool = False) -> Path:
 
     # One id per Fetch (jobs.py:97): its result history header (#387). A Refresh records nothing.
     payload = engine.run(no_fetch=no_fetch, run_id=None if no_fetch else _freeze_run_id())
-    _write_output("value_chain", json.dumps(payload, ensure_ascii=False, default=str),
-                  "latest", ext="json")
-    _write_output("value_chain", report.render_value_chain_dashboard(payload),
-                  "latest", ext="html")
+    _write_to(VALUE_CHAIN_JSON, json.dumps(payload, ensure_ascii=False, default=str))
+    _write_to(VALUE_CHAIN_LATEST, report.render_value_chain_dashboard(payload))
     fetch = payload.get("fetch") or {}
     if not no_fetch and not fetch.get("fetched"):
         # A Fetch that wrote nothing says why instead of looking like a silent no-op.
@@ -1884,10 +1888,8 @@ def run_relatedness(uw=None, no_fetch: bool = False) -> Path:
         payload = engine.run(no_fetch=no_fetch, run_id=None if no_fetch else _freeze_run_id())
     except engine.AlreadyRunning as exc:
         raise JobMessage(str(exc)) from exc
-    _write_output("relatedness", json.dumps(payload, ensure_ascii=False, default=str),
-                  "latest", ext="json")
-    _write_output("relatedness", report.render_relatedness_dashboard(payload),
-                  "latest", ext="html")
+    _write_to(RELATEDNESS_JSON, json.dumps(payload, ensure_ascii=False, default=str))
+    _write_to(RELATEDNESS_LATEST, report.render_relatedness_dashboard(payload))
     # A Fetch that stopped early (peak, missing key, auth, the worker-pool stop)
     # or left work pending is not a silent success: say what is done and what waits.
     # A Refresh is a GET that writes nothing and must never raise (C-F6), so the
@@ -1954,9 +1956,8 @@ def run_oipd_cached(uw=None, ticker: str | None = None) -> Path:
 def _render_oipd(payload: dict) -> Path:
     from RevenueChaser.module_oipd import report
 
-    _write_output("oipd", json.dumps(payload, ensure_ascii=False, default=str),
-                  "latest", ext="json")
-    _write_output("oipd", report.render_oipd_dashboard(payload), "latest", ext="html")
+    _write_to(OIPD_JSON, json.dumps(payload, ensure_ascii=False, default=str))
+    _write_to(OIPD_LATEST, report.render_oipd_dashboard(payload))
     return OIPD_LATEST
 
 
