@@ -955,7 +955,8 @@ Two separate things, deliberately not conflated:
   itself up. `discord.duckdb` is not snapshotted and the attachment tree is not mirrored. What earlier
   runs left behind is **not** pruned or deleted by anything here; it stays until the owner removes it by
   hand (#175), after the new app has taken a verified backup of its own:
-  - in the backup folder: the `discord_*.duckdb` snapshots and the `discord_media_mirror/` folder;
+  - in the backup folder: the `discord_*.duckdb` snapshots, the `discord_media_mirror/` folder and any
+    `discord_media_*.zip` archive from before that mirror (#248);
   - in the off-machine folder (`<RAW_STORE_BACKUP_MIRROR>/RevenueChaser-backup`): the `discord_*.duckdb`
     copies (up to 3) and its own `discord_media_mirror/`.
 
