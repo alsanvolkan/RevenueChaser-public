@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import shutil
+import uuid
 from datetime import date, datetime, timezone
 
 from RevenueChaser.core import calendar as nyse_calendar
@@ -235,7 +236,9 @@ def fetch_snapshot(
     root = data_root or RAW_ROOT
     if not overwrite and (root / asof_date / "manifest.json").exists():
         return None
-    staging = root / f".partial-{os.getpid()}-{asof_date}"
+    # One staging folder per call: a board Fetch's backfill and the history pull can stage the same day in one
+    # process at once, and a shared name let each delete the other's files (#194 review).
+    staging = root / f".partial-{os.getpid()}-{uuid.uuid4().hex[:12]}-{asof_date}"
     try:
         return _fetch_snapshot_staged(
             uw, asof_date, staging, root, ticker=ticker, mode=mode,

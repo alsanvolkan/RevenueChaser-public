@@ -219,3 +219,46 @@ def test_the_fetch_path_keeps_its_endpoints_and_live_files():
     assert "date" not in snap.BASE_ENDPOINTS["interpolated_iv"][1]
     assert {"interpolated_iv.json", "max_pain.json", "iv_rank.json", "options_volume.json", "option_chain.json",
             "vol_term_structure.json", "variance_risk_premium.json", "realized_vol.json"} <= snap.LIVE_FILES
+
+
+def test_two_threads_staging_the_same_day_never_mix_their_files(tmp_path):
+    """A board Fetch's backfill and the pull can stage one day at once in one process (review MUST, #194).
+
+    Both threads stop at a barrier inside their first request, so both staging folders exist at the same time.
+    Whichever promotes, the day on disk must hold exactly the files its own manifest lists.
+    """
+    import threading
+
+    barrier = threading.Barrier(2, timeout=5)
+    seen_first: set[str] = set()
+    lock = threading.Lock()
+
+    def handler(path, params):
+        name = threading.current_thread().name
+        with lock:
+            first = name not in seen_first
+            seen_first.add(name)
+        if first:
+            barrier.wait()
+        if path.endswith("/option-contracts"):
+            return {"data": [{"option_symbol": "SPXW", "nbbo_bid": "1"}]}
+        return _handler()(path, params)
+
+    errors: list[BaseException] = []
+
+    def run(**kw):
+        try:
+            snap.fetch_snapshot(FakeUW(handler), DAY, data_root=tmp_path, candle_fetcher=_rows,
+                                vix_fetcher=lambda: {"tickers": {}}, cftc_fetcher=lambda: {}, **kw)
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            errors.append(exc)
+
+    fetch = threading.Thread(target=run, name="fetch", kwargs={"fetch_all_expiries": True, "overwrite": False})
+    pull = threading.Thread(target=run, name="pull", kwargs={"history_only": True, "overwrite": False})
+    fetch.start(); pull.start(); fetch.join(10); pull.join(10)
+    assert errors == []
+    day_dir = tmp_path / DAY
+    manifest = json.loads((day_dir / "manifest.json").read_text(encoding="utf-8"))
+    on_disk = {p.name for p in day_dir.glob("*.json")} - {"manifest.json"}
+    assert on_disk == set(manifest["files"]), f"files outside the manifest: {sorted(on_disk - set(manifest['files']))}"
+    assert not list(tmp_path.glob(".partial-*"))
