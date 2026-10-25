@@ -118,8 +118,10 @@ def test_a_long_value_is_clipped_in_the_cell_and_whole_in_the_tooltip(client, tm
     cells = _row_cells(client, tmp_path, dict(ROW, params={"args": args}))
     params = cells[6]
     assert params["text"].endswith("…") and len(params["text"]) == 65
-    assert params["title"] == json.dumps({"args": args}, separators=(",", ":")).replace('","', '", "') \
-        or params["title"].startswith('{"args"'), "the tooltip carries the whole value"
+    # The tooltip is the browser's JSON.stringify of the value, which for this ASCII-only blob is exactly
+    # json.dumps with compact separators: the whole value, last argument included (#131 item 6).
+    assert params["title"].startswith('{"args"') and "--max-yf-calls" in params["title"]
+    assert params["title"] == json.dumps({"args": args}, separators=(",", ":")), "the tooltip carries the whole value"
     assert len(params["title"]) > len(params["text"])
 
 
