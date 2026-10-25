@@ -300,3 +300,18 @@ def test_the_overlay_names_the_running_job_instead_of_a_fixed_sentence():
     body = html.split("function overlayText")[1].split("\n}")[0]
     assert "phase" in body, "the phase /api/jobs already serves is rendered"
     assert "elapsed" in body or "started_at" in body, "a long run says how long it has been going"
+
+
+def test_the_page_offers_the_server_side_page_sizes_beside_pause(client):
+    """#131 item 2: the newest DEFAULT_LIMIT was all the page could reach; the control offers both sizes the
+    server accepts, and takes them from runview so the page and the route cannot disagree."""
+    html = client.get("/view/runs").get_data(as_text=True)
+    m = re.search(r'<select\b[^>]*\bid="runs-limit"[^>]*>(.*?)</select>', html, re.S)
+    assert m, "no page-size control"
+    values = re.findall(r'<option\b[^>]*\bvalue="(\d+)"', m.group(1))
+    assert values == [str(runview.DEFAULT_LIMIT), str(runview.MAX_LIMIT)]
+    assert re.search(r'<option\b[^>]*value="%d"[^>]*\bselected' % runview.DEFAULT_LIMIT, m.group(1))
+    assert 'for="runs-limit"' in html, "the control has a label"
+    assert html.index('id="runs-limit"') < html.index('id="runs-pause"'), "it sits beside Pause"
+    script = html.split("<script>")[-1]
+    assert 'limit.addEventListener("change"' in script, "a new size is read at once, not at the next poll"

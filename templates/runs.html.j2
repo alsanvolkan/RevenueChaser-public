@@ -22,7 +22,7 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"
 .chk{display:inline-flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;user-select:none}
 .chk input{margin:0;accent-color:var(--accent)}
 .fld{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
-.fld input{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;height:32px;padding:0 10px;font:inherit;font-size:13px;width:160px}
+.fld input,.fld select{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;height:32px;padding:0 10px;font:inherit;font-size:13px;width:160px}
 .btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;height:32px;padding:0 14px;font:600 13px/1 inherit;cursor:pointer}
 .btn:hover{border-color:var(--accent)}
 .btn[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
@@ -57,6 +57,9 @@ td.dash{color:var(--muted)}
   <div class="controls">
     <label class="chk" for="runs-problems"><input type="checkbox" id="runs-problems"> Problems only</label>
     <span class="fld"><label for="runs-filter">Job</label><input type="text" id="runs-filter" placeholder="name contains…"></span>
+    <span class="fld"><label for="runs-limit">Show</label><select id="runs-limit">
+      {%- for n in limits %}<option value="{{ n }}"{% if loop.first %} selected{% endif %}>newest {{ n }}</option>{% endfor -%}
+    </select></span>
     <button type="button" class="btn" id="runs-pause" aria-pressed="false">Pause</button>
   </div>
   <div class="scroll">
@@ -80,7 +83,8 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
 (function () {
   var body = document.getElementById("runs-body"), meta = document.getElementById("runs-meta");
   var problems = document.getElementById("runs-problems"), filter = document.getElementById("runs-filter");
-  var pause = document.getElementById("runs-pause");
+  var pause = document.getElementById("runs-pause"), limit = document.getElementById("runs-limit");
+  var DEFAULT_LIMIT = "{{ limits[0] }}";   // app/runview.DEFAULT_LIMIT: the page the URL omits
   var paused = false, busy = false, pending = false, shown = null, last = null;
 
   function stamp(epoch) {
@@ -182,6 +186,7 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
     if (problems.checked) p.set("problems", "1");
     var q = filter.value.trim();
     if (q) p.set("q", q);
+    if (limit.value && limit.value !== DEFAULT_LIMIT) p.set("limit", limit.value);
     var s = p.toString();
     return s ? POLL + "?" + s : POLL;
   }
@@ -200,6 +205,7 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
   }
 
   problems.addEventListener("change", function () { shown = null; load(); });
+  limit.addEventListener("change", function () { shown = null; load(); });
   var typing = null;
   filter.addEventListener("input", function () {
     clearTimeout(typing);

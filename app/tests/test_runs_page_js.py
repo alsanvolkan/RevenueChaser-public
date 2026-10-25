@@ -59,6 +59,11 @@ def _page_js(client) -> str:
     return next(s for s in inline_scripts(html) if "function line" in s)
 
 
+def _default_limit(script: str) -> str:
+    """The page's own ``var DEFAULT_LIMIT`` line, as rendered from ``runview``."""
+    return next(ln for ln in script.splitlines() if ln.strip().startswith("var DEFAULT_LIMIT"))
+
+
 def _row_cells(client, tmp_path, row: dict) -> list[dict]:
     """The cells ``line(row)`` builds, as ``{cls, text, title, pill}`` in column order."""
     script = _page_js(client)
@@ -167,10 +172,32 @@ def test_the_page_asks_the_server_for_the_filter(client, tmp_path):
     urls = _node(DOM_STUB + "globalThis.URLSearchParams = require('url').URLSearchParams;\n"
                  + 'var POLL = "/api/runs";\n'
                  + "var problems = document.getElementById('runs-problems');"
-                 + "var filter = document.getElementById('runs-filter');\n"
-                 + function_source(script, "query") + "\n" + tail, tmp_path)
+                 + "var filter = document.getElementById('runs-filter');"
+                 + "var limit = document.getElementById('runs-limit');\n"
+                 + _default_limit(script) + "\n" + function_source(script, "query") + "\n" + tail, tmp_path)
     assert urls == ["/api/runs", "/api/runs?problems=1", "/api/runs?problems=1&q=daily"]
     assert runview.POLL_PATH == "/api/runs"
+
+
+def test_the_page_can_ask_for_more_than_the_newest_page(client, tmp_path):
+    """#131 item 2: the server takes ``limit`` up to MAX_LIMIT; the page's control is what sends it."""
+    script = _page_js(client)
+    tail = (f"""
+      var out = [];
+      limit.value = "{runview.DEFAULT_LIMIT}"; out.push(query());
+      limit.value = "{runview.MAX_LIMIT}"; out.push(query());
+      problems.checked = true; out.push(query());
+      console.log(JSON.stringify(out));
+    """)
+    urls = _node(DOM_STUB + "globalThis.URLSearchParams = require('url').URLSearchParams;\n"
+                 + 'var POLL = "/api/runs";\n'
+                 + "var problems = document.getElementById('runs-problems');"
+                 + "var filter = document.getElementById('runs-filter');"
+                 + "var limit = document.getElementById('runs-limit');\n"
+                 + _default_limit(script) + "\n" + function_source(script, "query") + "\n" + tail, tmp_path)
+    # The default page is the URL it always was, so a poll on the default view did not change.
+    assert urls == ["/api/runs", f"/api/runs?limit={runview.MAX_LIMIT}",
+                    f"/api/runs?problems=1&limit={runview.MAX_LIMIT}"]
 
 
 # ── the overlay, the half of this slice the user sees ─────────────────────────
@@ -230,7 +257,7 @@ def _load_harness(client, tmp_path, steps: str) -> list:
                "function answer(){ if (held.length) held.shift()({ok: true, json: function(){ return {rows: []}; }}); }\n"
                "function draw(){}\n"
                "function tick(){ return new Promise(function(r){ setTimeout(r, 0); }); }\n")
-    funcs = "\n".join(function_source(script, name) for name in ("query", "load"))
+    funcs = _default_limit(script) + "\n" + "\n".join(function_source(script, name) for name in ("query", "load"))
     body = f"(async function(){{ {steps} console.log(JSON.stringify(sent)); }})();"
     return _node(DOM_STUB + prelude + state + "\n" + funcs + "\n" + body, tmp_path)
 
