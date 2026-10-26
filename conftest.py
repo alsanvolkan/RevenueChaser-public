@@ -294,6 +294,10 @@ def _reset_cik_map():
 
 # The module-level inputs ``ensure_all_tables`` builds a store from. A test that changes one of them before its store
 # is made gets the apply run on its own file, never a template built from the unchanged ones.
+# NOT covered: the apply's code (``_ddl``, ``_reconcile_table``, ``_apply_views``, ``_sync_tracked`` and the other
+# helpers), the stamp constants (``_SCHEMA_FILES``, ``_SCHEMA_STAMP_TABLE``, ``_SCHEMA_STAMP_KEY``,
+# ``_REBUILD_RUN_ID``) and the environment (``RC_STORE_SCHEMA_OK``, ``RC_STORE_SCHEMA_REFUSE``). A test that patches
+# one of those before its store exists must carry ``@pytest.mark.rawstore_schema_from_scratch``.
 _SCHEMA_INPUTS = ("_SCHEMA_VERSION", "MANIFEST", "CHANGES", "_RENAMES", "_MERGES", "_VIEWS", "_KEY_REBUILDS",
                   "_PRICE_MOVES", "_EDGAR_TABLES")
 SCHEMA_FROM_SCRATCH = "rawstore_schema_from_scratch"
