@@ -213,6 +213,9 @@ class TestRefreshIsOfflineAndFaithful:
         r = dashboard.view("module_comovement", refresh=True)
         assert r.status_code == 200
         assert "Co-movement" in r.text
+        # The empty-state page also says "Co-movement": only the rebuilt artifact and its clusters prove the rebuild.
+        assert dashboard.artifact("comovement_latest.html").exists(), "Refresh did not rebuild the artifact"
+        assert "A1" in r.text and "B1" in r.text
 
     @SHARED
     def test_refresh_makes_no_network_calls(self, fetched, provider_routes):
