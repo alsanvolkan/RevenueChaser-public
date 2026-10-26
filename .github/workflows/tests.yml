@@ -89,6 +89,9 @@ jobs:
         working-directory: RevenueChaser
         env:
           RC_E2E: "1"
-        # No -n here on purpose: every e2e test starts a real dashboard subprocess and a mock-provider
-        # server, and this tier is the short one. Parallelising it buys minutes and risks flakes.
-        run: python -m pytest module_testing/e2e -q -m e2e -p no:cacheprovider -rfE
+        # -n 4: each e2e test boots its own dashboard subprocess, so the tier is wall-clock bound on
+        # waiting, not CPU. Workers share nothing: every dashboard gets its test's own tmp_path for
+        # .store/.cache and every side root (conftest.dashboard), binds port 0 itself and reports the
+        # port back (harness/dashboard_driver.py), and each worker runs its own mock-provider server.
+        # module_testing/e2e/test_harness_parallel.py holds those two rules.
+        run: python -m pytest module_testing/e2e -q -m e2e -n 4 -p no:cacheprovider -rfE
