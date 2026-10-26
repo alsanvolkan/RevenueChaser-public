@@ -1244,6 +1244,21 @@ def run_spxgamma_stored(uw, asof_date: str) -> Path:
     return spx_data_root / "latest.json"
 
 
+def run_spxgamma_history(uw, start: str, end: str, max_calls: int | None = None,
+                         sleep_s: float | None = None) -> dict:
+    """Pull past SPX Gamma sessions in ``[start, end]`` into the raw day folders (D1, the 2-year history pull).
+
+    Only raw days are written (``origin: history_pull``); the board, ``latest.json``, the GEX history and the Brier
+    record are untouched. The returned ``counts`` (without the answer shapes, a few failures) go into the run's
+    ``job_runs`` row; the run's file under ``history_pull/`` has them all.
+    """
+    from RevenueChaser.module_spx_gamma import history_pull
+
+    options = {k: v for k, v in (("max_calls", max_calls), ("sleep_s", sleep_s)) if v is not None}
+    result = history_pull.pull_history(uw, start, end, **options)
+    return {"counts": history_pull.row_counts(result["counts"])}
+
+
 def run_spxgamma_cached() -> Path | None:
     """Refresh for SPX Gamma: rebuild the newest stored day from disk, zero network.
 
