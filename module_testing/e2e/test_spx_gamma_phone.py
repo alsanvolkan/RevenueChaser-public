@@ -126,7 +126,7 @@ def test_the_board_follows_the_theme_in_both_device_schemes(board, browser, sche
     assert bg == "rgb({}, {}, {})".format(*(int(v[i:i + 2], 16) for i in (0, 2, 4))), f"{theme}/{scheme}: {bg}"
 
 
-CONTRAST = """(function(){
+CONTRAST = r"""(function(){
   // Chromium reports a color-mix() colour as color(srgb 0.2 0.8 0.6 / 0.16), not rgb(): read both, and say so
   // when a colour is neither, instead of skipping it (#195 review MUST 2).
   var unparsed = [];
@@ -471,3 +471,15 @@ def test_the_iron_butterfly_boxes_use_the_8_px_radius_of_the_other_boxes(board, 
                          " getComputedStyle(document.querySelector('.ib-legs table')).borderTopLeftRadius,"
                          " getComputedStyle(document.querySelector('.box')).borderTopLeftRadius]")
     assert radii == ["8px", "8px", "8px"], radii
+
+
+def test_the_hidden_header_cells_of_a_stacked_table_stay_on_screen_with_a_wide_font(board, browser):
+    """CI (wider fonts) put a TH of a stacked table's hidden header row past 390 px: the cell kept its content
+    width. A wide header font reproduces it on any machine."""
+    _open(browser, board, PHONE)
+    browser.eval("(function(){ var s = document.createElement('style'); s.textContent ="
+                 " 'th{font-size:16px !important; white-space:nowrap !important}'; document.head.appendChild(s); })()")
+    out = browser.eval("""(function(){ var vw = document.documentElement.clientWidth;
+      return Array.prototype.filter.call(document.querySelectorAll('table.stack th'), function(e){
+        return e.getBoundingClientRect().right > vw + 0.5; }).map(function(e){ return e.textContent.trim(); }); })()""")
+    assert not out, f"header cells past the right edge: {out}"

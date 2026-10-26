@@ -189,6 +189,8 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   .modebar-container{ display:none !important; }
   table.stack{ display:block; border:0; margin:8px 0 16px; }
   table.stack thead{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+  /* the hidden header cells keep no content width (a wide font made the last one reach past the screen) */
+  table.stack thead tr, table.stack th{ display:block; width:1px; height:1px; padding:0; border:0; overflow:hidden; }
   table.stack tbody, table.stack tr{ display:block; }
   table.stack tr{ border:1px solid var(--border); border-radius:8px; margin:0 0 8px; padding:4px 12px; background:var(--card); }
   table.stack td{ display:flex; justify-content:space-between; align-items:baseline; gap:16px; border:0;
