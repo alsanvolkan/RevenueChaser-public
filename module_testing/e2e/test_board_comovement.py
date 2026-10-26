@@ -114,7 +114,9 @@ def _fetched_once(tmp_path_factory, mock_provider):
 @pytest.fixture
 def fetched(_fetched_once):
     """The seeded store after ONE default Fetch, shared by the read-only tests of this module."""
-    return _fetched_once
+    f = _fetched_once
+    assert f.result.ok, f"comovement fetch failed: {f.result}\n{f.dashboard.logs()}"
+    return f
 
 
 class TestFetch:
