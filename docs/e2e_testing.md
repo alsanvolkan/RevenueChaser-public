@@ -71,9 +71,11 @@ Two consequences:
 `./app.sh serve` with no env set resolves to the repo-local `.store`/`.cache`
 exactly as before.
 
-### Parallel runs (`-n 4`)
+### Parallel runs (`-n 4 --dist loadgroup`)
 
-CI runs this tier as `pytest -n 4`; locally `./app.sh test-e2e -n 4` does the same. xdist workers inherit the
+CI runs this tier as `pytest -n 4 --dist loadgroup`; locally `./app.sh test-e2e -n 4 --dist loadgroup` does the
+same. Without `--dist loadgroup` xdist ignores the `xdist_group` marks below and every worker runs a shared Fetch
+again (386 s against about 315 s, measured in the #203 review). xdist workers inherit the
 controller's environment, so the root `conftest.py`'s redirect is **one folder per run**, shared by every
 worker. The tier is safe in parallel because nothing a dashboard writes comes from that shared folder:
 
