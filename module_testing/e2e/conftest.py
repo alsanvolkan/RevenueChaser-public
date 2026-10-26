@@ -129,6 +129,11 @@ def dashboard(e2e_dirs, e2e_env, tmp_path):
     env = dict(e2e_env)
     env["SPX_GAMMA_DATA_ROOT"] = str(tmp_path / "spx_gamma")
     env["RC_PATREON_DATA_DIR"] = str(tmp_path / "patreon")
+    # Every other root the subprocess writes to: inherited, it would be the root conftest's one folder per
+    # RUN, which all xdist workers share (and the backup dir would be the host's real platform default).
+    env["RC_EDGAR_DOCS_DIR"] = str(tmp_path / "edgar_docs")
+    env["RC_DISCORD_MEDIA_DIR"] = str(tmp_path / "discord_media")
+    env["RAW_STORE_BACKUP_DIR"] = str(tmp_path / "backups")
     (tmp_path / "patreon").mkdir(exist_ok=True)
     dash = Dashboard(store_dir=store, cache_dir=cache, env=env,
                      log_path=tmp_path / "dashboard.log")

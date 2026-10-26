@@ -71,6 +71,22 @@ Two consequences:
 `./app.sh serve` with no env set resolves to the repo-local `.store`/`.cache`
 exactly as before.
 
+### Parallel runs (`-n 4`)
+
+CI runs this tier as `pytest -n 4`; locally `./app.sh test-e2e -n 4` does the same. xdist workers inherit the
+controller's environment, so the root `conftest.py`'s redirect is **one folder per run**, shared by every
+worker. The tier is safe in parallel because nothing a dashboard writes comes from that shared folder:
+
+- the `dashboard` fixture points `.store`, `.cache` and every side root (`RC_EDGAR_DOCS_DIR`,
+  `RC_DISCORD_MEDIA_DIR`, `RAW_STORE_BACKUP_DIR`, `SPX_GAMMA_DATA_ROOT`, `RC_PATREON_DATA_DIR`) at the test's
+  own `tmp_path`;
+- the dashboard subprocess binds port 0 and writes the port it got to `$RC_E2E_PORT_FILE`. A port picked in
+  the test process and released would be free only until another worker bound it;
+- the mock-provider server is session-scoped, which under xdist means one per worker, also on port 0.
+
+`test_harness_parallel.py` holds the first two rules. A new folder the dashboard writes to gets its own
+variable in that fixture and in that test.
+
 ---
 
 ## Layout
@@ -79,7 +95,7 @@ exactly as before.
 module_testing/e2e/
 ├── conftest.py                     # temp dirs, mock server, dashboard fixtures
 ├── harness/
-│   ├── dashboard_entrypoint.py     # installs fakes, then dashboard.app.run()
+│   ├── dashboard_entrypoint.py     # installs fakes, then serves dashboard.app on port 0
 │   ├── dashboard_driver.py         # run_job / view / restart / table_count
 │   ├── cdp_browser.py              # headless Chrome over DevTools: exact viewport, colour scheme
 │   ├── mock_provider_server.py     # loopback HTTP server + request counter
