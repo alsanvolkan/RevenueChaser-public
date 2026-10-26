@@ -77,6 +77,20 @@ def test_a_manifest_in_another_order_still_gets_the_copy(ensure_calls, reordered
     assert "price_actions" in _tables("prices")
 
 
+@pytest.fixture
+def written_first():
+    """A store written before ``rawstore_tmp_db`` runs, as ``core/identity/tests/test_identity_lock_pl6a.py``'s
+    autouse ``universe`` fixture does: a copy over it would throw the row away."""
+    rawstore.write_rows("watchlist", [{"ticker": "FIRST"}])
+
+
+def test_a_store_written_before_the_fixture_keeps_its_rows_and_gets_the_apply(ensure_calls, written_first,
+                                                                              rawstore_tmp_db, tmp_path):
+    assert ensure_calls == [tmp_path / "raw.duckdb"]
+    assert rawstore.load_watchlist() == {"FIRST"}
+    assert "store_schema" in _tables("raw")
+
+
 # The two tests below run in file order on one worker (--dist loadfile): the first changes its store in every way
 # it can, the second must see a store exactly as the apply makes it, and the template must be untouched.
 def test_a_test_that_changes_its_store_a(rawstore_tmp_db, rawstore_template):
