@@ -68,6 +68,7 @@ def test_identity_runs_columns():
     assert "JSON" in decl["sources"] and "JSON" in decl["counts"]
 
 
+@pytest.mark.rawstore_schema_from_scratch
 def test_tables_are_created_and_roundtrip(rawstore_tmp_db):
     rawstore.ensure_all_tables()
     rawstore.write_rows("identity_source_cache", [

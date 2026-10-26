@@ -166,6 +166,28 @@ isolated via the `rawstore_tmp_db` fixture to `tmp_path/raw.duckdb` **and**
 `tmp_path/edgar.duckdb` (the two store files live side by side) — never the real
 `.store/`.
 
+**The store a test gets is a copy.** `rawstore_tmp_db` used to run `ensure_all_tables()` on every
+test's empty file, about 1 s each and over half of the unit tier's time. Now the session-scoped
+`rawstore_template` runs that same apply once per pytest process (one per xdist worker, in that
+process's own basetemp), and `rawstore_tmp_db` copies its files into the test's `tmp_path`
+(`shutil.copyfile`, a few ms). Only the template is shared, and no test opens it, so every test
+still starts from its own fresh store. The apply runs on the test's own file instead when:
+
+- the test is marked `@pytest.mark.rawstore_schema_from_scratch` — use it for a test of the schema
+  apply, the schema stamp or a migration (renames, rebuilds, change-capture sync, a fresh store's
+  table layout), so it exercises the real apply and not a copy of its result;
+- a schema input (`MANIFEST`, `CHANGES`, `_RENAMES`, `_MERGES`, `_VIEWS`, `_KEY_REBUILDS`,
+  `_PRICE_MOVES`, `_EDGAR_TABLES`, `_SCHEMA_VERSION`) differs from the one the template was built from, e.g. a
+  fixture patched `MANIFEST` before the store was made;
+- a store file already exists in the test's directory, or `DB_PATH` is not named `raw.duckdb`.
+
+The template is built by the apply itself, never from a copy of its DDL, so a schema change reaches
+it with the code. `core/tests/test_rawstore_template_fixture.py` pins: the copy (own file, no apply),
+that a test's changes reach neither the next test nor the template, the marker, each fallback (a
+patched `MANIFEST`, an existing store file, another raw file name), that `MANIFEST` key order is not
+a change, and that a change to any one schema input moves the fingerprint. It does not pin that the
+copy matches a fresh apply byte for byte; the unit tier passing on the copies is that evidence.
+
 ---
 
 ## Where shared fixtures come from

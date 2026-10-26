@@ -371,6 +371,7 @@ class TestHoldersV12:
         assert totals["A"]["2026-03-31"]["shares"] == 150.0
 
 
+@pytest.mark.rawstore_schema_from_scratch
 class TestMigrationV12:
     """brief.md §3 tests 15-18: the one-time v12 reset (``scripts/migrate_sec13f_v12.py``)."""
 

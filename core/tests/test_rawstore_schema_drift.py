@@ -109,6 +109,7 @@ class TestRecordedDrift:
         got = {(d["table"], d["kind"]) for d in rawstore.schema_drift()}
         assert got == {("board_settings", "type"), ("board_settings", "key")}
 
+    @pytest.mark.rawstore_schema_from_scratch
     def test_recording_writes_nothing_to_the_store(self, rawstore_tmp_db, monkeypatch):
         rawstore.execute("DROP TABLE board_settings")
         _live("CREATE TABLE board_settings (" + _BOARD_SETTINGS.format(value="TEXT", pk="board") + ")")
@@ -270,16 +271,19 @@ def _key_mismatches() -> list[str]:
     return out
 
 
+@pytest.mark.rawstore_schema_from_scratch
 def test_a_fresh_store_has_the_keys_the_manifest_declares(rawstore_tmp_db):
     assert _key_mismatches() == []
 
 
+@pytest.mark.rawstore_schema_from_scratch
 def test_the_key_check_fails_when_a_declared_key_differs(rawstore_tmp_db, monkeypatch):
     spec = rawstore.MANIFEST["board_settings"]
     monkeypatch.setitem(rawstore.MANIFEST, "board_settings", {**spec, "key": ["board"]})
     assert _key_mismatches() == ["board_settings: PRIMARY KEY ['board', 'key'] != declared key ['board']"]
 
 
+@pytest.mark.rawstore_schema_from_scratch
 def test_a_table_without_a_primary_key_must_be_listed(rawstore_tmp_db, monkeypatch):
     spec = rawstore.MANIFEST["board_settings"]
     monkeypatch.setitem(rawstore.MANIFEST, "board_settings", {
