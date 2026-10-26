@@ -13,10 +13,19 @@ the contract in docs/data_retrieval.md:
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 import pytest
+
+from .harness.dashboard_driver import Dashboard, JobResult
+from .harness.shared import clear_cache_dir, shared_dashboard, store_of
+
+# The tests that only read what one default Fetch left behind share it (``fetched``); this mark keeps them on one
+# worker under ``--dist loadgroup``. A test that switches the window, restarts, saves settings or watches the
+# Fetch's own provider calls keeps its own dashboard (``seeded_comovement``).
+SHARED = pytest.mark.xdist_group("e2e-comovement-shared-fetch")
 
 
 def _returns(n=200, seed=7):
@@ -57,6 +66,12 @@ def seeded_comovement(dashboard, monkeypatch):
     import RevenueChaser.core.rawstore as rawstore
 
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+    _seed()
+    return dashboard
+
+
+def _seed() -> None:
+    import RevenueChaser.core.rawstore as rawstore
     ret = _returns()
     tickers = list(ret.columns)
 
@@ -80,24 +95,45 @@ def seeded_comovement(dashboard, monkeypatch):
                          "low": p, "close": float(p), "volume": 1.0, "cached_at": now})
     from RevenueChaser.module_comovement.tests.d01_bars import write_bars
     write_bars(rows)
-    return dashboard
+
+
+@dataclass
+class Fetched:
+    dashboard: Dashboard
+    result: JobResult
+
+
+@pytest.fixture(scope="module")
+def _fetched_once(tmp_path_factory, mock_provider):
+    with shared_dashboard(tmp_path_factory, mock_provider, "comovement-shared") as dash:
+        with store_of(dash):
+            _seed()
+        yield Fetched(dashboard=dash, result=dash.run_job("/run/module_comovement"))
+
+
+@pytest.fixture
+def fetched(_fetched_once):
+    """The seeded store after ONE default Fetch, shared by the read-only tests of this module."""
+    return _fetched_once
 
 
 class TestFetch:
-    def test_fetch_persists_a_run(self, dashboard, seeded_comovement):
-        result = dashboard.run_job("/run/module_comovement")
+    @SHARED
+    def test_fetch_persists_a_run(self, fetched):
+        dashboard, result = fetched.dashboard, fetched.result
         assert result.ok, f"comovement fetch failed: {result}\n{dashboard.logs()}"
         # the Fetch's own run (1y, reused by the precompute) + the 6m precompute (#95)
         assert dashboard.table_count("comov_runs") == 2
         assert dashboard.table_count("comov_members") > 0
 
-    def test_a_fetch_records_one_header_naming_its_runs(self, dashboard, seeded_comovement):
+    @SHARED
+    def test_a_fetch_records_one_header_naming_its_runs(self, fetched):
         """#379 D2: both runs carry the Fetch's id, and history holds one header-only run with that id."""
         import json
 
         import duckdb
 
-        result = dashboard.run_job("/run/module_comovement")
+        dashboard, result = fetched.dashboard, fetched.result
         assert result.ok, f"comovement fetch failed: {result}\n{dashboard.logs()}"
         raw = duckdb.connect(str(dashboard.store_dir / "raw.duckdb"), read_only=True)
         try:
@@ -138,15 +174,15 @@ class TestFetch:
         assert board["window"] == 126 and board["as_of"] == stored[0][0]
         assert dashboard.table_count("comov_runs") == 2      # served, not re-stored
 
-    def test_the_board_renders_clusters(self, dashboard, seeded_comovement):
-        dashboard.run_job("/run/module_comovement")
-        html = dashboard.view("module_comovement").text
+    @SHARED
+    def test_the_board_renders_clusters(self, fetched):
+        html = fetched.dashboard.view("module_comovement").text
         assert "Co-movement" in html
         assert "A1" in html and "B1" in html
 
-    def test_the_board_names_each_group_by_its_industry(self, dashboard, seeded_comovement):
-        dashboard.run_job("/run/module_comovement")
-        html = dashboard.view("module_comovement").text
+    @SHARED
+    def test_the_board_names_each_group_by_its_industry(self, fetched):
+        html = fetched.dashboard.view("module_comovement").text
         # At the broad cut the four banks are one group, named after their shared industry text (#266).
         # (The four semiconductor names are not a group on this seed, and the finer cuts leave single names.)
         assert '"cluster_label": "Banks - Diversified 100%, ×4.0", "cluster_n": 4' in html
@@ -168,18 +204,20 @@ class TestFetch:
 
 
 class TestRefreshIsOfflineAndFaithful:
-    def test_refresh_rebuilds_a_deleted_artifact(self, dashboard, seeded_comovement, clear_cache):
-        dashboard.run_job("/run/module_comovement")
-        clear_cache()
+    # The three shared tests empty the cache and Refresh rebuilds it, so a later shared test finds it whole again.
+    @SHARED
+    def test_refresh_rebuilds_a_deleted_artifact(self, fetched):
+        dashboard = fetched.dashboard
+        clear_cache_dir(dashboard.cache_dir)
         assert not dashboard.artifact("comovement_latest.html").exists()
         r = dashboard.view("module_comovement", refresh=True)
         assert r.status_code == 200
         assert "Co-movement" in r.text
 
-    def test_refresh_makes_no_network_calls(self, dashboard, seeded_comovement,
-                                            provider_routes, clear_cache):
-        dashboard.run_job("/run/module_comovement")
-        clear_cache()
+    @SHARED
+    def test_refresh_makes_no_network_calls(self, fetched, provider_routes):
+        dashboard = fetched.dashboard
+        clear_cache_dir(dashboard.cache_dir)
         before = provider_routes.request_count
         r = dashboard.view("module_comovement", refresh=True)
         assert r.status_code == 200
@@ -195,10 +233,11 @@ class TestRefreshIsOfflineAndFaithful:
         assert r.status_code == 200
         assert "Co-movement" in r.text
 
-    def test_refresh_does_not_write_the_store(self, dashboard, seeded_comovement, clear_cache):
-        dashboard.run_job("/run/module_comovement")
+    @SHARED
+    def test_refresh_does_not_write_the_store(self, fetched):
+        dashboard = fetched.dashboard
         before = dashboard.table_count("comov_runs")
-        clear_cache()
+        clear_cache_dir(dashboard.cache_dir)
         r = dashboard.view("module_comovement", refresh=True)
         assert r.status_code == 200
         assert dashboard.table_count("comov_runs") == before, (

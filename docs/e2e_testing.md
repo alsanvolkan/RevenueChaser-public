@@ -87,6 +87,22 @@ worker. The tier is safe in parallel because nothing a dashboard writes comes fr
 `test_harness_parallel.py` holds the first two rules. A new folder the dashboard writes to gets its own
 variable in that fixture and in that test.
 
+### One Fetch for the read-only tests (`harness/shared.py`)
+
+Most of the tier's time is a dashboard boot plus a Fetch per test. Where several tests only read what one
+default Fetch leaves behind, they share both: a module-scoped fixture builds the dashboard with
+`shared_dashboard`, seeds it, runs the Fetch once, and the tests read the result. `test_identity.py` (one identity
+run), `test_board_sector_rotation.py` and `test_board_comovement.py` do this. The rules:
+
+- **Only read.** A test that changes the routes, the store, the settings, restarts the dashboard or runs the job
+  again keeps its own function-scoped `dashboard`. A shared test may empty the cache only when its Refresh
+  rebuilds it before the test ends.
+- **One `xdist_group` per shared Fetch.** CI runs `-n 4 --dist loadgroup`, so the group's tests land on one worker
+  and the Fetch runs once; without the mark each worker would run it again.
+- **Every assertion stays.** A test that asserted on the job result reads it from the fixture
+  (`identity_run.result`, `fetched.result`); a test that counted provider requests during the Fetch reads the
+  requests the fixture kept (`fetched.requests`).
+
 ---
 
 ## Layout
@@ -97,6 +113,7 @@ module_testing/e2e/
 ├── harness/
 │   ├── dashboard_entrypoint.py     # installs fakes, then serves dashboard.app on port 0
 │   ├── dashboard_driver.py         # run_job / view / restart / table_count
+│   ├── shared.py                   # one dashboard + one Fetch shared by read-only tests
 │   ├── cdp_browser.py              # headless Chrome over DevTools: exact viewport, colour scheme
 │   ├── mock_provider_server.py     # loopback HTTP server + request counter
 │   ├── yfinance_fake.py            # fake yf.Ticker / yf.screen + call counter

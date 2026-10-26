@@ -20,10 +20,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 
 import pytest
 
+from .harness.dashboard_driver import Dashboard, JobResult
 from .harness.mock_provider_server import route_spdr
+from .harness.shared import clear_cache_dir, shared_dashboard, store_of
+
+# The tests that only read what one default identity run leaves behind share that run (``identity_run``); they
+# carry this mark so ``--dist loadgroup`` keeps them on one worker. A test that changes the routes, the store or
+# runs the job again keeps its own dashboard (``seeded``).
+SHARED = pytest.mark.xdist_group("e2e-identity-shared-run")
 
 _UNIVERSE = [("AAPL", "Apple Inc.", 3.0e12), ("PDI", "PIMCO Dynamic Income Fund", 2.0e9),
              ("ARCC", "Ares Capital Corporation", 1.2e10), ("OZK", "Bank OZK", 6.0e9),
@@ -117,6 +125,12 @@ def seeded(dashboard, provider_routes, monkeypatch):
     import RevenueChaser.core.rawstore as rawstore
 
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+    _seed(provider_routes)
+    return dashboard
+
+
+def _seed(mock) -> None:
+    import RevenueChaser.core.rawstore as rawstore
     rawstore.write_rows("equity_universe", [{"ticker": t, "name": n, "market_cap": c} for t, n, c in _UNIVERSE])
     rawstore.write_rows("index_constituents", [{"slug": "sp500", "ticker": "AAPL"}])      # the SPDR check's members
     # #301 D21: the nightly step stores the exchange file and the identity run reads those rows, so the
@@ -125,8 +139,32 @@ def seeded(dashboard, provider_routes, monkeypatch):
         {"ticker": t, "cik": str(c), "name": t + " Inc", "exchange": "Nasdaq", "valid_from": None,
          "status": "present", "source": "sec_exchange", "fetched_at": 1.0, "run_id": "seed", "run_at": 1.0}
         for t, c in _CIK.items()])
-    install(provider_routes)
-    return dashboard
+    install(mock)
+
+
+@dataclass
+class IdentityRun:
+    dashboard: Dashboard
+    result: JobResult           # the one default POST /run/identity
+    universe_before: str        # _universe_hash() just before it
+
+
+@pytest.fixture(scope="module")
+def _identity_run_once(tmp_path_factory, mock_provider):
+    with shared_dashboard(tmp_path_factory, mock_provider, "identity-shared") as dash:
+        with store_of(dash):
+            _seed(mock_provider)
+            before = _universe_hash()
+        yield IdentityRun(dashboard=dash, result=dash.run_job("/run/identity"), universe_before=before)
+
+
+@pytest.fixture
+def identity_run(_identity_run_once, monkeypatch):
+    """The seeded store after ONE default identity run, shared by the read-only tests of this module."""
+    import RevenueChaser.core.rawstore as rawstore
+    # Re-pointed per test: a ``seeded`` test in between moves DB_PATH to its own store and back.
+    monkeypatch.setattr(rawstore, "DB_PATH", _identity_run_once.dashboard.store_dir / "raw.duckdb")
+    return _identity_run_once
 
 
 def _q(sql: str) -> list[dict]:
@@ -154,10 +192,10 @@ def _json(v):
 
 
 class TestIdentityRun:
-    def test_fills_the_master_and_applies_its_sector_and_industry_to_the_universe(self, seeded):
-        before = _universe_hash()
-        result = seeded.run_job("/run/identity")
-        assert result.ok, f"identity failed: {result}\n{seeded.logs()}"
+    @SHARED
+    def test_fills_the_master_and_applies_its_sector_and_industry_to_the_universe(self, identity_run):
+        before, result = identity_run.universe_before, identity_run.result
+        assert result.ok, f"identity failed: {result}\n{identity_run.dashboard.logs()}"
         assert "8 tickers" in result.message and "sources ok 7/7" in result.message, result.message
 
         m = _master()
@@ -260,8 +298,9 @@ class TestIdentityRun:
         assert _master()["AAPL"]["cik"] == "320193", (
             "last run's cached rows must carry the CIK through an empty file")
 
-    def test_a_list_name_takes_the_lists_sector_and_keeps_uws_industry(self, seeded):
-        assert seeded.run_job("/run/identity").ok
+    @SHARED
+    def test_a_list_name_takes_the_lists_sector_and_keeps_uws_industry(self, identity_run):
+        assert identity_run.result.ok
         ozk = _master()["OZK"]
         # UW says Financial Services / Banks - Regional; the S&P 400 page says Industrials
         assert (ozk["sector"], ozk["sector_source"]) == ("Industrials", "sp1500")
@@ -271,8 +310,9 @@ class TestIdentityRun:
         # a name that is not on any list keeps UW's sector
         assert (_master()["ARCC"]["sector"], _master()["ARCC"]["sector_source"]) == ("Financial Services", "provider_uw")
 
-    def test_the_sic_sector_decides_for_a_name_no_other_source_has(self, seeded):
-        assert seeded.run_job("/run/identity").ok
+    @SHARED
+    def test_the_sic_sector_decides_for_a_name_no_other_source_has(self, identity_run):
+        assert identity_run.result.ok
         m = _master()
         # LAZR: no list row, no UW row, SIC 3571 (computer hardware); ABCD: SIC 6770 (blank check)
         assert (m["LAZR"]["sector"], m["LAZR"]["sector_source"]) == ("Technology", "sic_explicit")
@@ -331,16 +371,18 @@ class TestSettingsRefreshAfterIdentity:
             f"refresh reached the network: {[q.path for q in provider_routes.requests()[before:]]}")
         assert seeded.yf_calls() == before_yf
 
-    def test_the_settings_card_and_the_fetch_identity_button_render_after_a_run(
-            self, seeded, provider_routes, clear_cache):
-        assert seeded.run_job("/run/identity").ok
-        clear_cache()
-        before, before_yf = provider_routes.request_count, seeded.yf_calls()
-        r = seeded.view("module_settings", refresh=True)
+    @SHARED
+    def test_the_settings_card_and_the_fetch_identity_button_render_after_a_run(self, identity_run, provider_routes):
+        # Clears the shared cache: no shared test reads a rendered artifact, they all read the store.
+        dash = identity_run.dashboard
+        assert identity_run.result.ok
+        clear_cache_dir(dash.cache_dir)
+        before, before_yf = provider_routes.request_count, dash.yf_calls()
+        r = dash.view("module_settings", refresh=True)
         assert r.status_code == 200
         assert provider_routes.request_count == before, (
             f"refresh reached the network: {[q.path for q in provider_routes.requests()[before:]]}")
-        assert seeded.yf_calls() == before_yf
+        assert dash.yf_calls() == before_yf
         html = r.text
         assert 'id="identity-health"' in html, "the Identity health card is missing from the Settings board"
         assert '<section id="identity">' in html, "the card must be reachable at #identity"
@@ -349,9 +391,10 @@ class TestSettingsRefreshAfterIdentity:
             "the Fetch identity button is missing from the inventory table")
         assert "SPDR check: 1/1 agree" in html
 
-    def test_the_button_route_runs_the_identity_job(self, seeded):
-        result = seeded.run_job("/run/identity")       # exactly what the Fetch identity button posts
-        assert result.ok, f"{result}\n{seeded.logs()}"
+    @SHARED
+    def test_the_button_route_runs_the_identity_job(self, identity_run):
+        result = identity_run.result       # POST /run/identity: exactly what the Fetch identity button posts
+        assert result.ok, f"{result}\n{identity_run.dashboard.logs()}"
         assert len(_q("SELECT * FROM identity_runs")) == 1
 
     def test_first_load_with_no_identity_run_shows_the_empty_state_and_the_button(self, seeded):
@@ -361,9 +404,10 @@ class TestSettingsRefreshAfterIdentity:
 
 
 class TestSpdrCheck:
-    def test_the_run_counts_carry_the_check(self, seeded):
-        result = seeded.run_job("/run/identity")
-        assert result.ok, f"{result}\n{seeded.logs()}"
+    @SHARED
+    def test_the_run_counts_carry_the_check(self, identity_run):
+        result = identity_run.result
+        assert result.ok, f"{result}\n{identity_run.dashboard.logs()}"
         counts = _json(_q("SELECT counts FROM identity_runs")[0]["counts"])
         assert counts["spdr_checked"] == 1 and counts["spdr_agree"] == 1, counts
         assert not _q("SELECT * FROM identity_conflicts WHERE kind = 'spdr'")
