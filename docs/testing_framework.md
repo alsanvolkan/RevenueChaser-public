@@ -182,7 +182,11 @@ still starts from its own fresh store. The apply runs on the test's own file ins
 - a store file already exists in the test's directory, or `DB_PATH` is not named `raw.duckdb`.
 
 The template is built by the apply itself, never from a copy of its DDL, so a schema change reaches
-it with the code. `core/tests/test_rawstore_template_fixture.py` pins all of the above.
+it with the code. `core/tests/test_rawstore_template_fixture.py` pins: the copy (own file, no apply),
+that a test's changes reach neither the next test nor the template, the marker, each fallback (a
+patched `MANIFEST`, an existing store file, another raw file name), that `MANIFEST` key order is not
+a change, and that a change to any one schema input moves the fingerprint. It does not pin that the
+copy matches a fresh apply byte for byte; the unit tier passing on the copies is that evidence.
 
 ---
 

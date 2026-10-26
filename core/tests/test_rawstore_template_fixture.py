@@ -91,6 +91,36 @@ def test_a_store_written_before_the_fixture_keeps_its_rows_and_gets_the_apply(en
     assert "store_schema" in _tables("raw")
 
 
+@pytest.fixture
+def other_name(monkeypatch, tmp_path):
+    """A raw file not named ``raw.duckdb``: the template's raw file cannot simply be copied to it."""
+    monkeypatch.setattr(rawstore, "DB_PATH", tmp_path / "other.duckdb")
+
+
+def test_a_raw_file_with_another_name_gets_the_apply(ensure_calls, other_name, rawstore_tmp_db, tmp_path):
+    assert ensure_calls == [tmp_path / "other.duckdb"]
+    assert "watchlist" in _tables("raw")
+    assert not (tmp_path / "raw.duckdb").exists()
+
+
+def _changed(value):
+    if isinstance(value, dict):
+        return {**value, "fingerprint_probe": None}
+    if isinstance(value, (list, tuple)):
+        return type(value)([*value, "fingerprint_probe"])
+    return value + "-probe"
+
+
+@pytest.mark.parametrize("name", ["_SCHEMA_VERSION", "MANIFEST", "CHANGES", "_RENAMES", "_MERGES", "_VIEWS",
+                                  "_KEY_REBUILDS", "_PRICE_MOVES", "_EDGAR_TABLES"])
+def test_a_change_to_any_schema_input_moves_the_fingerprint(name, monkeypatch):
+    """Each input the copy is checked against; a change to one sends the test to the apply (see the MANIFEST test)."""
+    from RevenueChaser.conftest import _schema_fingerprint
+    before = _schema_fingerprint()
+    monkeypatch.setattr(rawstore, name, _changed(getattr(rawstore, name)))
+    assert _schema_fingerprint() != before
+
+
 # The two tests below run in file order on one worker (--dist loadfile): the first changes its store in every way
 # it can, the second must see a store exactly as the apply makes it, and the template must be untouched.
 def test_a_test_that_changes_its_store_a(rawstore_tmp_db, rawstore_template):
