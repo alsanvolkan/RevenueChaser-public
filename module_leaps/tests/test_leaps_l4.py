@@ -27,7 +27,8 @@ def test_a_failing_first_page_warns(rawstore_tmp_db):
     notes = []
     discover_flow_prints(_FailingFirstPage(), today=TODAY, warnings=notes)
     assert len(notes) == 1
-    assert "first page" in notes[0].lower() and "gateway timeout" in notes[0]
+    # #107: the class only; the provider's text ("gateway timeout") stays in the log.
+    assert "first page" in notes[0].lower() and "RuntimeError" in notes[0] and "gateway timeout" not in notes[0]
     assert "not an empty tape" in notes[0].lower()
 
 
@@ -55,7 +56,7 @@ class _OkEmptyResult:
 def test_a_failed_first_page_result_warns(rawstore_tmp_db):
     notes = []
     discover_flow_prints(_FailedResultFirstPage(), today=TODAY, warnings=notes)
-    assert len(notes) == 1 and "bad gateway" in notes[0]
+    assert len(notes) == 1 and "RuntimeError" in notes[0] and "bad gateway" not in notes[0]      # #107
 
 
 def test_an_ok_empty_first_page_result_does_not_warn(rawstore_tmp_db):

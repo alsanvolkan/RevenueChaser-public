@@ -86,8 +86,10 @@ def _seed_universe(rawstore, tickers):
     rawstore.write_rows("equity_universe", [
         {"ticker": t, "name": t + " Inc", "market_cap": 1e10,
          "sector": "Technology", "industry": "Semiconductors"} for t in tickers])
-    rawstore.write_rows("sec_company_tickers", [
-        {"ticker": t, "cik": str(1000 + i), "name": t} for i, t in enumerate(tickers)])
+    rawstore.write_rows("sec_exchange_file", [     # #115: the CIK map production reads (#301 D21)
+        {"ticker": t, "cik": str(1000 + i), "name": t, "exchange": "Nasdaq", "valid_from": None, "status": "present",
+         "source": "sec_exchange", "fetched_at": 1.0, "run_id": "seed", "run_at": 1.0}
+        for i, t in enumerate(tickers)])
     rawstore.write_rows("chain_filings", [{
         "ticker": t, "cik": "1000", "form": "10-K", "filed": "2026-02-01",
         "accession": "acc-" + t, "primary_doc": "http://x", "item_text": _TEXT,

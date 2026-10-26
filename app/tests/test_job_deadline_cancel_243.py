@@ -180,7 +180,7 @@ _DASHBOARD_JOBS = set(jobs._RUNNERS)
 def test_dashboard_marks_the_checkpointed_jobs_cancellable():
     assert _DASHBOARD_CANCELLABLE == {
         "universe", "module_asymmetric_growth", "swing", "module_fundamentals",
-        "module_sec_13f", "edgar_sync", "identity", "daily_bars",
+        "module_sec_13f", "edgar_sync", "identity", "daily_bars", "spxgamma_history",
     }
     assert {"module_sec_13f", "edgar_sync", "identity", "holdings", "daily_bars"} <= _DASHBOARD_JOBS
 

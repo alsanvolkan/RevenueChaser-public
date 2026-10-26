@@ -66,6 +66,87 @@ function boardSettingsReset(btn, out, board){
 }
 """
 
+# ── Theme tokens: one palette per scheme, defined here only (#184) ──
+# The shell (templates/dashboard.html) renders ``THEME_CSS`` and ``THEME_JS``; a board adopts them in its own PR
+# (one per board) by using these names instead of its own palette. Dark is the default on every device (avo,
+# 25 Oct 2026) and is the shell's look before #184, value for value. Light applies when the reader chooses
+# Light, or chooses Auto on a device that prefers light. The choice is ``localStorage[THEME_STORAGE_KEY]``
+# ("light" / "auto"; absent = dark), set as ``data-theme`` on ``<html>`` ("dark" / "light" / "auto"). The
+# shell copies that attribute onto every board iframe (same origin).
+THEME_STORAGE_KEY = "rc-theme"
+THEME_TOKENS = {
+    "dark": {
+        "bg": "#05111F", "fg": "#C5C6C8", "bright": "#F0F0F0", "card": "#0B1828",
+        "border": "rgba(197,198,200,.15)", "sidebar": "#0B1828", "pos": "#34D399", "neg": "#F87171",
+        "amber": "#FBBF24", "sky": "#0EA5E9", "muted": "#9C9DA1",
+        "input-bg": "#101F33", "input-border": "#2F434C", "hover": "#18293a", "topbar": "rgba(12,20,24,.8)",
+        "nav-fg": "rgba(224,233,235,.75)", "nav-on": "#101F33", "hover-faint": "rgba(255,255,255,.04)",
+        "frame-bg": "#12131c", "overlay": "rgba(5,17,31,.7)", "scroll-thumb": "#5b7a8c",
+        "scroll-thumb-hover": "#6f93a7", "scroll-track": "#0b1620", "primary-bg": "#E2E3E5",
+        "primary-fg": "#0A1420", "oi-bg": "rgba(11,24,40,.55)", "scrim": "rgba(0,0,0,.55)",
+        "shadow": "rgba(0,0,0,.6)", "badge-blue": "#38BDF8", "badge-gray": "#94A3B8",
+        "hover-soft": "rgba(255,255,255,.06)", "hover-day": "rgba(255,255,255,.08)",
+        "gex-pos-bg": "rgba(52,211,153,.35)", "gex-pos-fg": "#eafff5",
+        "gex-neg-bg": "rgba(248,113,113,.35)", "gex-neg-fg": "#ffd9d9",
+    },
+    "light": {
+        "bg": "#F4F6F9", "fg": "#2A3340", "bright": "#0B1220", "card": "#FFFFFF",
+        "border": "rgba(15,23,42,.14)", "sidebar": "#FFFFFF", "pos": "#047857", "neg": "#B91C1C",
+        "amber": "#B45309", "sky": "#0369A1", "muted": "#5B6472",
+        "input-bg": "#FFFFFF", "input-border": "#C3CCD8", "hover": "#E8EDF3", "topbar": "rgba(255,255,255,.85)",
+        "nav-fg": "#3A4452", "nav-on": "#E3EEF8", "hover-faint": "rgba(15,23,42,.05)",
+        "frame-bg": "#FFFFFF", "overlay": "rgba(244,246,249,.75)", "scroll-thumb": "#9AA8B6",
+        "scroll-thumb-hover": "#7D8D9E", "scroll-track": "#E6EBF0", "primary-bg": "#0B1220",
+        "primary-fg": "#FFFFFF", "oi-bg": "rgba(255,255,255,.7)", "scrim": "rgba(15,23,42,.35)",
+        "shadow": "rgba(15,23,42,.18)", "badge-blue": "#0369A1", "badge-gray": "#475569",
+        "hover-soft": "rgba(15,23,42,.06)", "hover-day": "rgba(15,23,42,.09)",
+        "gex-pos-bg": "rgba(4,120,87,.16)", "gex-pos-fg": "#065F46",
+        "gex-neg-bg": "rgba(185,28,28,.14)", "gex-neg-fg": "#991B1B",
+    },
+}
+
+
+def _theme_vars(scheme: str) -> str:
+    return ";".join(f"--{k}:{v}" for k, v in THEME_TOKENS[scheme].items()) + f";color-scheme:{scheme}"
+
+
+# Bare CSS (no <style>), so a page puts it inside its own style block.
+THEME_CSS = (
+    f":root{{{_theme_vars('dark')}}}\n"
+    f"@media (prefers-color-scheme: light){{:root[data-theme=\"auto\"]{{{_theme_vars('light')}}}}}\n"
+    f":root[data-theme=\"light\"]{{{_theme_vars('light')}}}\n"
+)
+
+# Runs in <head>, before the page draws, so a light choice never flashes dark. ``rcThemeGet`` is the stored
+# choice ("dark" when none, or when storage is unavailable); ``rcThemeSet`` applies one and remembers it if
+# it can (dark, the default, is remembered as nothing). Every storage access is in its own try/catch: a
+# private window or blocked site data throws.
+THEME_JS = """
+var RC_THEME_KEY = '""" + THEME_STORAGE_KEY + """';
+function rcThemeGet(){
+  var v = null;
+  try{ v = localStorage.getItem(RC_THEME_KEY); }catch(e){ v = null; }
+  return (v === 'light' || v === 'auto') ? v : 'dark';
+}
+function rcThemeApply(choice){
+  document.documentElement.setAttribute('data-theme', (choice === 'light' || choice === 'auto') ? choice : 'dark');
+}
+function rcThemeSet(choice){
+  if(choice !== 'light' && choice !== 'auto') choice = 'dark';
+  rcThemeApply(choice);
+  if(choice === 'dark'){ try{ localStorage.removeItem(RC_THEME_KEY); }catch(e){} }
+  else { try{ localStorage.setItem(RC_THEME_KEY, choice); }catch(e){} }
+  return choice;
+}
+rcThemeApply(rcThemeGet());
+"""
+
+# The shared panels' summaries: 9 px padding is a 34 px target, so a phone or a touch screen gets 44 px.
+# Padding, not display:flex: a <summary> draws its open/closed arrow only while it is display:list-item.
+_SUMMARY_TOUCH = """@media (max-width: 900px), (pointer: coarse){
+%s summary{min-height:44px;padding-top:12px;padding-bottom:12px;box-sizing:border-box}
+}"""
+
 # ── "What am I looking at?" help box (every tab) ──
 # ``help_html`` wraps a one-paragraph explanation in the shared collapsible
 # chrome, so every board renders the same help affordance. ``body`` is trusted
@@ -78,6 +159,7 @@ HELP_CSS = """<style>
 .help .body{padding:0 14px 12px;line-height:1.7}
 .help b{color:var(--text,#d7dce5)}
 .help code{color:var(--neon,#00e6a8)}
+""" + _SUMMARY_TOUCH % ".help" + """
 </style>"""
 
 # ── Shared filter bar (ADR-2; .hermes/plans_claude/2026-09-30_plan_filters_ux.md) ──
@@ -146,6 +228,7 @@ __all__ = [
     "filters_meta",
     "JOB_JS",
     "HELP_CSS", "help_html",
+    "THEME_TOKENS", "THEME_CSS", "THEME_JS", "THEME_STORAGE_KEY",
     "universe_provenance_html",
     "provider_health_html",
     "notice_html",
@@ -170,6 +253,7 @@ HISTORY_CSS = """<style>
 .rc-history table{border-collapse:collapse;width:100%;font-size:12px}
 .rc-history th,.rc-history td{text-align:left;padding:4px 8px;border-top:1px solid var(--border,#232a38);vertical-align:top}
 .rc-history th{color:var(--text,#d7dce5);font-weight:600}
+""" + _SUMMARY_TOUCH % ".rc-history" + """
 </style>"""
 _HISTORY_NOTES = 2          # recorded warnings shown per row; the rest are counted
 

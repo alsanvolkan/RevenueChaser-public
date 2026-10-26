@@ -128,6 +128,11 @@ KEEP_EDGAR = 2
 KEEP_DOCS = 2
 KEEP_HISTORY = 5
 KEEP_PRICES = 2
+# #153: an archive prefix the job no longer writes. Nothing prunes it, so without its own line the dry run never lists
+# it (two 0.33 GB discord_media zips from 3 Oct 2026, retired by the #248 mirror). Its newest copy stays; the nightly
+# prune still leaves every one of them alone, because a delete is armed separately.
+RETIRED_ARCHIVE_PREFIXES = ("discord_media",)
+KEEP_RETIRED = 1
 
 # #275 (review M2): RAW_STORE_BACKUP_MIRROR may be an existing Google Drive folder that holds other files, so
 # the off-machine copy writes, prunes and cleans only inside this sub-folder of it.
@@ -625,7 +630,8 @@ class ExpiredScan(NamedTuple):
 
 def _local_retention_lists(out: Path) -> list[tuple[list[Path], int]]:
     """Every local list the nightly prune bounds, with the keep count it uses: the same listing helpers the prune
-    calls, so the dry run and the prune can never see a different set of files.
+    calls, so the dry run and the prune can never see a different set of files. Then one line per retired archive
+    prefix (#153), which the dry run lists and the prune does not touch.
 
     Only the local backup folder: ``weekly/`` is local too, and the off-machine copy is never named here.
     """
@@ -636,7 +642,7 @@ def _local_retention_lists(out: Path) -> list[tuple[list[Path], int]]:
         (_snapshots(out, "history"), KEEP_HISTORY),
         (_snapshots(out, "prices"), KEEP_PRICES),
         (_snapshots(out / WEEKLY_DIRNAME, "raw"), KEEP_WEEKLY),
-    ]
+    ] + [(_archives(out, prefix), KEEP_RETIRED) for prefix in RETIRED_ARCHIVE_PREFIXES]
 
 
 def expired_backups(out_dir: Path | None = None, now: datetime | None = None) -> ExpiredScan:

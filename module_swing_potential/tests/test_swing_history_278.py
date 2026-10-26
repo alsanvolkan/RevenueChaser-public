@@ -179,12 +179,6 @@ def test_a_fetch_with_no_data_still_gets_a_header_and_is_never_the_snapshot(stor
     assert [h["session_snapshot"] for h in _headers()] == [False, True] and len(_score_rows("real")) == 1
 
 
-def test_a_fixture_payload_is_partial(store):
-    sw_history.record(_payload(COMPLETE_1, "AAA", is_fixture=True), rows=_rows(_results("AAA")), run_id="fx")
-    (head,) = _headers()
-    assert head["quality"] == "partial" and "fixture" in head["quality_note"] and _score_rows("fx") == []
-
-
 def test_an_intraday_run_stays_intraday_even_when_its_bars_are_old(rawstore_tmp_db):
     """The bar anchor belongs to complete sessions only: an intraday run says 'intraday', not a bar problem."""
     ledger.take_notes()

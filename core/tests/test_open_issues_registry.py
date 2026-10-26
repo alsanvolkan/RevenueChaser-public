@@ -79,6 +79,7 @@ def test_the_density_bar(registry):
     ({"kind": "known-problem", "detail": {"whats_wrong": "w", "evidence": "e", "next_step": "n"}},
      "non-empty direction"),
     ({"kind": "epic", "detail": {}}, "epic needs a whats_wrong"),
+    ({"scope": "board", "boards": []}, "names no board"),          # #120: the sync's default for a new issue
 ])
 def test_the_density_bar_catches_each_violation(registry, patch, expected):
     """The bar is code, not prose: each rule has to fail on an entry that breaks it."""
