@@ -322,10 +322,12 @@ def _schema_fingerprint() -> str:
 class RawstoreTemplate:
     """The store files ``ensure_all_tables`` makes on an empty directory, made once per pytest process.
 
-    Built by the apply itself (no copy of its DDL), so a schema change reaches the template with the code. The
-    directory name carries the schema version and a hash of ``core/rawstore.py``, and every copy first compares the
-    schema inputs (``_SCHEMA_INPUTS``) with the ones the template was built from. It lives in this process's own
-    pytest basetemp (one per xdist worker), so it never outlives the session and no worker shares it.
+    Built by the apply itself (no copy of its DDL), so a schema change reaches the template with the code, and every
+    copy first compares the schema inputs (``_SCHEMA_INPUTS``) with the ones the template was built from. It is built
+    fresh in each session and never reused across sessions, which is what keeps it from going stale; the directory
+    name (schema version and a hash of ``core/rawstore.py``) only labels it and guards nothing. It lives in this
+    process's own pytest basetemp (one per xdist worker), so no worker shares it; a passing run removes it with the
+    basetemp, a failing run keeps it there (``tmp_path_retention_policy = failed``).
     """
 
     def __init__(self, root: Path):
