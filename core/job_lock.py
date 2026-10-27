@@ -9,7 +9,8 @@ its times. The names in use: ``"edgar_sync"`` (``module_value_chain/sync.py`` an
 ``"sec_13f"`` (the three 13F jobs, ``app/runners.py``), ``"forecast_outcomes"`` (``scripts/forecast_outcomes.py``) and
 ``"nightly_inputs_<step>"`` (``scripts/nightly_inputs.py``, one per step, so two different steps still run together)
 — ``identity``, ``sec_13f``, ``forecast_outcomes`` and ``nightly_inputs_<step>`` added for #26 (PL6-a) — and
-``"forecast_baselines"`` (``scripts/forecast_baselines.py``, #25 HR-1).
+``"forecast_baselines"`` (``scripts/forecast_baselines.py``, #25 HR-1). ``"rcdata_build"`` is the market-store builder
+(``python -m RevenueChaser.rcdata.build``, #206), held for its whole run so a second builder is refused.
 
 ``"universe"`` (``core/universe_fetch.universe_write_lock``) is the universe writers, and the whole universe refresh
 job and its CLI (#244), with ``"universe_run"`` beside it while the refresh job runs, so a board Fetch can tell it
