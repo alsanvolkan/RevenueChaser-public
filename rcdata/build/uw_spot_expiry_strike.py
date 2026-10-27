@@ -1,9 +1,9 @@
 """``uw/spot_expiry_strike``: SPX spot exposures by expiry and strike from Unusual Whales, one call per session.
 
 ``GET /stock/SPX/spot-exposures/expiry-strike?expirations[]=<session>&expirations[]=<next session>`` (``expirations[]``
-is required; UW serves this from 16 Jan 2025). The daily run asks the two nearest expiries after the close
-(``observed`` true); the backfill adds ``date=<session>`` and the same two expiries of that session (``observed``
-false). One call answers about 391 rows (26 Oct 2026: 155 at 0 DTE, 236 at 1 DTE, strikes 4,800 to 9,200), under the
+is required; UW serves this from 16 Jan 2025). Every call passes ``date=<session>`` and that session's two
+nearest expiries; a row whose ``time`` is not on the session's New York date is refused. The daily run between the
+close and the next open is ``observed``; the backfill and any other run are not. One call answers about 391 rows (26 Oct 2026: 155 at 0 DTE, 236 at 1 DTE, strikes 4,800 to 9,200), under the
 500-row page, so one session is one call.
 
 Raw: ``raw/uw/spot_expiry_strike/<YYYY-MM-DD>/SPX.json.gz`` (UW's body with the request and its provenance).
@@ -78,15 +78,18 @@ class UWSpotExpiryStrike:
         if raw.exists():
             return raw
         expiries = [session, calendar.next_trading_day(session)]
-        params: dict = {"expirations[]": [e.isoformat() for e in expiries], "limit": PAGE_LIMIT}
-        if not observed:
-            params["date"] = session.isoformat()
+        # Every call names its session (B1): without date=, UW answers its newest snapshot, which during the next
+        # session is that session's intraday one.
+        params: dict = {"expirations[]": [e.isoformat() for e in expiries], "date": session.isoformat(),
+                        "limit": PAGE_LIMIT}
         res = ctx.uw_client().get_result(ENDPOINT, params)
         if res.status != "ok":
             raise base.SourceError(f"UW {ENDPOINT} {session}: {res.error}")
         rows = res.data.get("data", []) if isinstance(res.data, dict) else res.data
         if not isinstance(rows, list) or not rows:
             raise base.SourceError(f"UW {ENDPOINT} {session}: no rows")
+        if not any(isinstance(r, dict) and snapshot_day(r.get("time")) in (session, None) for r in rows):
+            raise base.SourceError(f"UW {ENDPOINT}: every row is stamped on a day not on {session}")
         if len(rows) >= PAGE_LIMIT:
             ctx.issue("possibly_truncated", session.isoformat(), f"{len(rows)} rows = the page limit")
         return base.write_raw_json(raw, {
@@ -94,9 +97,10 @@ class UWSpotExpiryStrike:
             "observed": observed, "fetched_at": time_now(), "run_id": ctx.run_id, "body": res.data})
 
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
-        """The daily run: the current snapshot (``observed``) for the latest complete session; a rerun of an older
-        session asks UW for that day (``date=``), like the backfill, and is not observed."""
-        return [self._fetch_session(ctx, as_of, observed=as_of == calendar.latest_complete_session())]
+        """The daily run. ``observed`` only for the latest complete session taken between its close (plus the
+        settle margin) and the next open; a run inside the next session, or for an older day, is not observed."""
+        observed = as_of == calendar.latest_complete_session() and not calendar.in_us_session_window()
+        return [self._fetch_session(ctx, as_of, observed=observed)]
 
     # ── type ──
     def to_parquet(self, ctx: base.RunContext, raw: Path) -> list[Path]:
@@ -113,6 +117,9 @@ class UWSpotExpiryStrike:
                 strike = float(item["strike"])
             except (KeyError, TypeError, ValueError):
                 ctx.issue("bad_row", session.isoformat(), f"row without a usable expiry/strike: {sorted(item)[:6]}")
+                continue
+            if snapshot_day(item.get("time")) not in (session, None):
+                ctx.issue("wrong_session", f"{session} {expiry} {strike}", f"row stamped {item.get('time')}")
                 continue
             key = (expiry, strike)
             if key in seen:
@@ -178,6 +185,17 @@ class UWSpotExpiryStrike:
         return {"dataset": NAME, "result": "changed" if added or removed else "unchanged",
                 "source_as_of": as_of.isoformat(), "rows": rows, "added": added, "removed": removed,
                 "coverage": round(days / expected, 4) if expected else None}
+
+
+def snapshot_day(stamp) -> date | None:
+    """The New York date of a UW ``time`` stamp (UTC when it carries no offset); None when there is none."""
+    if not stamp:
+        return None
+    try:
+        t = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).astimezone(calendar.NY).date()
 
 
 def time_now() -> float:

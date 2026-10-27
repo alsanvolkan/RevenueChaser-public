@@ -37,7 +37,7 @@ def test_one_call_per_daily_run_with_the_two_nearest_expiries(http_mock):
     assert len(reqs) == 1
     query = parse_qs(reqs[0].url.query.decode())
     assert query["expirations[]"] == ["2026-10-26", "2026-10-27"]
-    assert "date" not in query, "the daily run asks for the current snapshot"
+    assert query["date"] == ["2026-10-26"], "every call names its session (B1)"
     assert reqs[0].headers["authorization"].startswith("Bearer ")
 
 
@@ -121,3 +121,35 @@ def test_the_response_observer_changes_no_result(http_mock):
         assert (a.status, a.data, a.error) == (b.status, b.data, b.error) == (c.status, c.data, c.error)
     assert plain.health() == observed.health() == broken.health()
     assert seen == [("/stock/AAPL/info", 200, "150000"), ("/stock/NOPE/info", 404, None)]
+
+
+def test_a_run_during_the_next_session_asks_for_the_closed_day_by_date(http_mock, monkeypatch):
+    """B1: at 10:30 New York on Tue 27 Oct the latest complete session is the 26th; without date= UW would answer
+    the 27th's intraday snapshot and it would be saved as the 26th, for good (the raw file is the resume marker)."""
+    monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 27, 14, 30, tzinfo=timezone.utc))
+    http_mock.add("expiry-strike", uw_fixture.body(date(2026, 10, 26)), headers=UW_HEADERS)
+    row = base.run_request({"dataset": uw.NAME, "params": {}})
+    assert row["result"] == "changed" and row["source_as_of"] == "2026-10-26"
+    query = parse_qs(http_mock.calls("expiry-strike")[0].url.query.decode())
+    assert query["date"] == ["2026-10-26"] and query["expirations[]"] == ["2026-10-26", "2026-10-27"]
+    rows = read.spx_expiry_strike(date(2026, 10, 26))
+    assert len(rows) == 391 and {r["observed"] for r in rows} == {False}, "inside the next session it is not observed"
+
+
+def test_an_answer_stamped_on_another_day_is_refused_and_leaves_no_raw_file(http_mock, monkeypatch):
+    monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 27, 14, 30, tzinfo=timezone.utc))
+    http_mock.add("expiry-strike", uw_fixture.body(date(2026, 10, 27)), headers=UW_HEADERS)   # the 27th's rows
+    row = base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-26"}})
+    assert row["result"] == "failed" and "not on 2026-10-26" in row["note"]
+    assert not uw.raw_path(date(2026, 10, 26)).exists(), "a wrong answer must not become the resume marker"
+
+
+def test_rows_of_another_day_inside_a_good_answer_are_dropped_with_an_issue(http_mock):
+    body = uw_fixture.body()
+    body["data"][0]["time"] = "2026-10-27T14:00:00Z"
+    http_mock.add("expiry-strike", body, headers=UW_HEADERS)
+    row = _daily()
+    assert row["rows"] == 390
+    with ops.connect() as con:
+        kinds = [r[0] for r in con.execute("SELECT kind FROM build_issues")]
+    assert kinds == ["wrong_session"]
