@@ -109,3 +109,31 @@ def test_no_copy_dir_skips_the_raw_copy_with_a_warning(backup_dir, caplog):
     _raw("uw/spot_expiry_strike/2026-10-26/SPX.json.gz", 1)
     assert backup.run_backup()["raw_copy"] is None
     assert "RC_MARKET_RAW_COPY_DIR" in caplog.text
+
+
+def test_s3_a_write_landing_during_the_ops_backup_does_not_fail_it(backup_dir, monkeypatch):
+    """The counts and the online backup are one read transaction: a write landing between them is in neither."""
+    ops.enqueue("market_series", None, by="test")
+    real = backup._online_backup
+
+    def write_then_copy(source, target):
+        ops.enqueue("market_series", None, by="a writer racing the backup")
+        real(source, target)
+    monkeypatch.setattr(backup, "_online_backup", write_then_copy)
+    summary = backup.run_backup()
+    assert summary["ops"] is not None
+    import sqlite3
+    con = sqlite3.connect(summary["ops"])
+    assert con.execute("SELECT count(*) FROM build_requests").fetchone()[0] == 1
+    con.close()
+
+
+def test_s3_a_failed_ops_backup_does_not_block_the_market_copy(backup_dir, monkeypatch):
+    _serve(4)
+    ops.ensure()
+
+    def broken(out, manifest):
+        raise backup.BackupFailed("ops: simulated")
+    monkeypatch.setattr(backup, "_backup_ops", broken)
+    assert backup.main(["backup"]) == 1
+    assert len(list((backup_dir / "market").glob("market_*.duckdb"))) == 1

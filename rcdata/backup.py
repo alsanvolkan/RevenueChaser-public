@@ -109,6 +109,10 @@ def _prune(out: Path, pattern: str, manifest: _Manifest) -> None:
         old.unlink(missing_ok=True)
 
 
+def _online_backup(source: sqlite3.Connection, target: sqlite3.Connection) -> None:
+    source.backup(target)
+
+
 def _backup_ops(out: Path, manifest: _Manifest) -> Path | None:
     src = ops.ops_path()
     if not src.exists():
@@ -116,16 +120,22 @@ def _backup_ops(out: Path, manifest: _Manifest) -> Path | None:
     dest = out / f"ops_{_stamp()}.sqlite"
     tmp = dest.with_name(dest.name + ".tmp")
     with ops.connect(src) as source:
-        target = sqlite3.connect(str(tmp))
+        # One read transaction: the counts and the copy see the same snapshot, so a write that lands in between
+        # (the dashboard enqueuing, the builder counting calls) is in neither and cannot fail the check.
+        source.execute("BEGIN")
         try:
-            source.backup(target)
-            # A copy is one self-contained file: no -wal/-shm beside it, whatever the source's mode.
-            target.execute("PRAGMA journal_mode = DELETE")
+            want = {r[0]: source.execute(f'SELECT count(*) FROM "{r[0]}"').fetchone()[0]
+                    for r in source.execute("SELECT name FROM sqlite_master WHERE type = 'table' "
+                                            "AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()}
+            target = sqlite3.connect(str(tmp))
+            try:
+                _online_backup(source, target)
+                # A copy is one self-contained file: no -wal/-shm beside it, whatever the source's mode.
+                target.execute("PRAGMA journal_mode = DELETE")
+            finally:
+                target.close()
         finally:
-            target.close()
-        want = {r[0]: source.execute(f'SELECT count(*) FROM "{r[0]}"').fetchone()[0]
-                for r in source.execute("SELECT name FROM sqlite_master WHERE type = 'table' "
-                                        "AND name NOT LIKE 'sqlite_%' ORDER BY name")}
+            source.execute("COMMIT")
     try:
         got = _sqlite_counts(tmp)
         if got != want:
@@ -209,10 +219,20 @@ def run_backup() -> dict:
     for stale in out.glob("*.tmp"):                     # a run that was killed mid-copy
         stale.unlink(missing_ok=True)
     manifest = _Manifest(out)
-    summary: dict = {"ops": _backup_ops(out, manifest)}
-    for kind in serving.KINDS:
-        summary[kind] = _backup_kind(kind, out, manifest)
+    summary: dict = {}
+    failed: list[str] = []
+    # Each file on its own: a failed (or raced) ops copy must not cost the serving files theirs, and the other way.
+    for name, step in [("ops", lambda: _backup_ops(out, manifest))] + [
+            (kind, lambda kind=kind: _backup_kind(kind, out, manifest)) for kind in serving.KINDS]:
+        try:
+            summary[name] = step()
+        except Exception as e:  # noqa: BLE001 - reported below, after every other file had its turn
+            logger.error("backup of %s failed: %s", name, e)
+            failed.append(f"{name}: {e}")
+            summary[name] = None
     summary["raw_copy"] = _copy_recent_raw()
+    if failed:
+        raise BackupFailed("; ".join(failed))
     return summary
 
 
