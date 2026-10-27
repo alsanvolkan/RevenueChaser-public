@@ -13,7 +13,8 @@ The tables and what writes them:
 - ``build_issues``: a row the builder could not use, with its key, until someone resolves it.
 - ``job_runs2``: one row per builder run.
 - ``read_log``: reads per day, process and table; counted in memory and flushed once a minute.
-- ``uw_remaining``: UW's rate headers, sampled once a run.
+- ``uw_remaining``: UW's rate headers, sampled once a run: the daily count UW reports, what is left of our own cap
+  (computed), the per-minute window, and the token limit as sent (not a daily cap).
 - ``provider_calls_daily``: calls per provider and New York day; the day cap (``caps``) reads it.
 - ``watchlist_option`` / ``watchlist_stock`` and their ``*_changes`` history; ``dataset_schedule``. Tables and
   helpers only here; the routes and the cards come later (PR 2, PR 4).
@@ -44,8 +45,13 @@ CHECK_RESULTS = ("changed", "unchanged", "failed", "skipped")
 WATCH_KINDS = ("option", "stock")
 # The UW response headers sampled into uw_remaining: only UW's own, never a cookie or anything else the answer had.
 UW_HEADER_PREFIX = "x-uw-"
-UW_LIMIT_HEADER = "x-uw-token-req-limit"
-UW_REMAINING_HEADER = "x-uw-req-per-minute-remaining"
+# What a live answer carries (27 Oct 2026): x-uw-daily-req-count is today's count; the per-minute pair is a rate
+# window; x-uw-token-req-limit (100,000,000) is NOT the daily cap. The day's remaining is computed from our own cap
+# (rcdata/caps.py) and labelled as such.
+UW_DAILY_COUNT_HEADER = "x-uw-daily-req-count"
+UW_MINUTE_REMAINING_HEADER = "x-uw-req-per-minute-remaining"
+UW_MINUTE_RESET_HEADER = "x-uw-req-per-minute-reset"
+UW_TOKEN_LIMIT_HEADER = "x-uw-token-req-limit"
 READ_LOG_FLUSH_S = 60.0
 
 _DDL = {
@@ -69,8 +75,9 @@ _DDL = {
         day TEXT NOT NULL, process TEXT NOT NULL, table_name TEXT NOT NULL, reads INTEGER NOT NULL,
         PRIMARY KEY (day, process, table_name))""",
     "uw_remaining": """CREATE TABLE IF NOT EXISTS uw_remaining (
-        sampled_at REAL PRIMARY KEY, run_id TEXT, token_req_limit INTEGER, req_per_minute_remaining INTEGER,
-        raw_headers TEXT)""",
+        sampled_at REAL PRIMARY KEY, run_id TEXT, daily_req_count INTEGER, daily_cap INTEGER,
+        daily_remaining_computed INTEGER, per_minute_remaining INTEGER, per_minute_reset_ms INTEGER,
+        token_req_limit INTEGER, raw_headers TEXT)""",
     "provider_calls_daily": """CREATE TABLE IF NOT EXISTS provider_calls_daily (
         provider TEXT NOT NULL, ny_day TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0,
         failures INTEGER NOT NULL DEFAULT 0, http_429 INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (provider, ny_day))""",
@@ -357,10 +364,15 @@ def sample_uw_headers(headers, run_id: str | None = None) -> bool:
             if str(k).lower().startswith(UW_HEADER_PREFIX)}
     if not kept:
         return False
+    from . import caps                              # caps reads ops: imported here, not at module level
+    count, cap = _int(kept.get(UW_DAILY_COUNT_HEADER)), caps.cap_for("uw")
+    left = cap - count if (cap is not None and count is not None) else None
     with _open() as con:
-        con.execute("INSERT OR REPLACE INTO uw_remaining VALUES (?, ?, ?, ?, ?)",
-                    (time.time(), run_id, _int(kept.get(UW_LIMIT_HEADER)), _int(kept.get(UW_REMAINING_HEADER)),
-                     _json(kept)))
+        con.execute("INSERT OR REPLACE INTO uw_remaining (sampled_at, run_id, daily_req_count, daily_cap, "
+                    "daily_remaining_computed, per_minute_remaining, per_minute_reset_ms, token_req_limit, "
+                    "raw_headers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (time.time(), run_id, count, cap, left, _int(kept.get(UW_MINUTE_REMAINING_HEADER)),
+                     _int(kept.get(UW_MINUTE_RESET_HEADER)), _int(kept.get(UW_TOKEN_LIMIT_HEADER)), _json(kept)))
     return True
 
 

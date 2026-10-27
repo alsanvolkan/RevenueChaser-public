@@ -14,7 +14,8 @@ from RevenueChaser.rcdata.build import base, uw_spot_expiry_strike as uw
 
 from . import uw_fixture
 
-UW_HEADERS = {"x-uw-token-req-limit": "150000", "x-uw-req-per-minute-remaining": "119",
+UW_HEADERS = {"x-uw-daily-req-count": "355", "x-uw-req-per-minute-remaining": "1000000",
+              "x-uw-req-per-minute-reset": "60000", "x-uw-token-req-limit": "100000000",
               "content-type": "application/json"}
 
 
@@ -74,10 +75,10 @@ def test_uw_remaining_and_the_call_counter_are_written(http_mock):
     http_mock.add("expiry-strike", uw_fixture.body(), headers=UW_HEADERS)
     _daily()
     with ops.connect() as con:
-        sample = con.execute("SELECT token_req_limit, req_per_minute_remaining FROM uw_remaining").fetchall()
+        sample = con.execute("SELECT daily_req_count, daily_remaining_computed FROM uw_remaining").fetchall()
         calls = con.execute("SELECT provider, calls, failures, http_429 FROM provider_calls_daily").fetchall()
         run = con.execute("SELECT dataset, status FROM job_runs2").fetchall()
-    assert [tuple(s) for s in sample] == [(150000, 119)]
+    assert [tuple(s) for s in sample] == [(355, 150_000 - 355)]
     assert [tuple(c) for c in calls] == [("uw", 1, 0, 0)]
     assert [tuple(r) for r in run] == [(uw.NAME, "ok")]
 
@@ -120,7 +121,7 @@ def test_the_response_observer_changes_no_result(http_mock):
         a, b, c = plain.get_result(ep), observed.get_result(ep), broken.get_result(ep)
         assert (a.status, a.data, a.error) == (b.status, b.data, b.error) == (c.status, c.data, c.error)
     assert plain.health() == observed.health() == broken.health()
-    assert seen == [("/stock/AAPL/info", 200, "150000"), ("/stock/NOPE/info", 404, None)]
+    assert seen == [("/stock/AAPL/info", 200, "100000000"), ("/stock/NOPE/info", 404, None)]
 
 
 def test_a_run_during_the_next_session_asks_for_the_closed_day_by_date(http_mock, monkeypatch):
@@ -204,3 +205,21 @@ def test_f3_an_implausibly_small_epoch_reads_as_no_stamp():
     for stamp in (0, "0", "20261026", 20261026, 999_999_999):
         assert uw.snapshot_day(stamp) is None, stamp
     assert uw.snapshot_day(1_000_000_000) == date(2001, 9, 8)
+
+
+def test_g3_an_answer_that_fills_the_page_fails_and_is_not_kept_as_a_partial_day(http_mock):
+    """The live answer for two expiries was 488 rows against UW's maximum limit of 500 (docs/openapi.yaml): a day
+    with more strikes would be cut at 500 without a sign. A full page fails the run, with a build issue, before
+    a raw file is written."""
+    body = uw_fixture.body()
+    rows = body["data"]
+    extra = [dict(rows[-1], strike=str(9200 + 5 * (k + 1))) for k in range(uw.PAGE_LIMIT - len(rows))]
+    body["data"] = rows + extra
+    assert len(body["data"]) == uw.PAGE_LIMIT
+    http_mock.add("expiry-strike", body, headers=UW_HEADERS)
+    row = _daily()
+    assert row["result"] == "failed" and "page limit" in row["note"]
+    assert not uw.raw_path(date(2026, 10, 26)).exists()
+    with ops.connect() as con:
+        assert [r[0] for r in con.execute("SELECT kind FROM build_issues")] == ["truncated"]
+    assert parse_qs(http_mock.calls("expiry-strike")[0].url.query.decode())["limit"] == ["500"]

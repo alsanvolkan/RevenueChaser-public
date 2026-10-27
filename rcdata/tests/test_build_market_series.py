@@ -227,3 +227,30 @@ def test_a_date_past_the_calendar_table_has_no_session_date_and_one_issue(tmp_pa
     with ops.connect() as con:
         issues = con.execute("SELECT kind, key FROM build_issues").fetchall()
     assert [tuple(i) for i in issues] == [("outside_calendar", "fed")]
+
+
+def test_g1_the_tff_query_asks_for_futures_only_and_the_disaggregated_one_needs_no_filter(sources):
+    _run()
+    tff = [r for r in sources.calls("udgc-27he")]
+    disagg = [r for r in sources.calls("72hh-3qpy")]
+    from urllib.parse import parse_qs
+    assert tff and all("futonly_or_combined='FutOnly'" in parse_qs(r.url.query.decode())["$where"][0] for r in tff)
+    assert disagg and all("futonly_or_combined" not in parse_qs(r.url.query.decode())["$where"][0] for r in disagg)
+
+
+def test_g1_a_combined_row_beside_the_futures_only_one_yields_one_series_row():
+    """The live TFF answer for 13874A on 2026-10-20 held a FutOnly and a Combined row (open interest 1935470 and
+    2814190); both gave the same series id, and the build failed on the key."""
+    import json
+    row = {"report_date_as_yyyy_mm_dd": "2026-10-20T00:00:00.000", "cftc_contract_market_code": "13874A"}
+    doc = json.dumps({"tff": [{**row, "futonly_or_combined": "FutOnly", "open_interest_all": "1935470"},
+                              {**row, "futonly_or_combined": "Combined", "open_interest_all": "2814190"}],
+                      "disagg": []})
+    rows = [r for r in cftc.parse(doc, {}) if r["series_id"] == "cftc:tff:13874A:open_interest_all"]
+    assert [r["value"] for r in rows] == [1935470.0]
+
+
+def test_g4_spx_and_ovx_are_one_column_files_like_vvix():
+    for sym in ("SPX", "OVX"):
+        rows = cboe.parse(f"DATE,{sym}\n10/27/2026,6812.34\n", {"symbol": sym})
+        assert [(r["series_id"], r["value"], r["close"]) for r in rows] == [(sym, 6812.34, None)]

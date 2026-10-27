@@ -927,6 +927,9 @@ file and leaves the live file byte-identical (test T3, `rcdata/tests/test_servin
 file read-only on every request (`rcdata.serving.open_read`) and never writes one; serving files are never
 compacted, they are rebuilt. Pages only enqueue requests; the builder takes them in order.
 
+CFTC COT rows are futures-only: the TFF dataset's `Combined` rows (futures and options) are filtered out; taking
+them instead is a later choice.
+
 **Raw and Parquet.** A raw file that exists is never fetched again: it is the resume marker. Raw files and Parquet
 partitions are written to `<name>.tmp` and renamed, so a file under its real name is whole (zstd Parquet, row groups
 of 100k rows). The SPX slice is one call per session: `raw/uw/spot_expiry_strike/<date>/SPX.json.gz`, Parquet
@@ -945,7 +948,7 @@ ops schema version `1`, and a file stamped newer is refused):
 | `build_issues` | A row the builder could not use, with its key, until resolved |
 | `job_runs2` | One row per builder run |
 | `read_log` | Reads per day, process and table (counted in memory, written once a minute) |
-| `uw_remaining` | UW's `x-uw-*` rate headers, sampled once a run |
+| `uw_remaining` | UW's `x-uw-*` rate headers, sampled once a run: `x-uw-daily-req-count` as `daily_req_count`, `daily_remaining_computed` = our cap (`rcdata/caps.py`) minus it, the per-minute window, and `x-uw-token-req-limit` as sent (it is not the daily cap) |
 | `provider_calls_daily` | Calls, failures and 429s per provider and New York day |
 | `watchlist_option`, `watchlist_stock`, `watchlist_option_changes`, `watchlist_stock_changes` | The two watch lists and their history (no UI yet) |
 | `dataset_schedule` | Cadence and pause state per dataset (Pause / Resume on Settings, PR 2) |
@@ -980,6 +983,21 @@ a lock after that runs beside it (both write different files, so nothing breaks;
 from starting in a busy moment). DuckDB keeps a database instance per path inside a process, so a reader that holds
 a connection open across overlapping requests can keep reading the build it opened while a newer one is swapped
 in; `open_read` opens and closes per call so each request sees the file live at its start.
+
+**What is due.** `run` without `--dataset` first queues every due dataset (`rcdata/build/due.py`, requested by
+`schedule`), then drains the queue. The request goes in through `ops.enqueue_once`, whose check and insert are one
+`BEGIN IMMEDIATE`, so a dataset with a request already queued or running gets no second one and two overlapping
+passes queue it once. A paused dataset is not queued, and `dataset_schedule.next_due`, while later than today in New
+York, holds a dataset until that day. Otherwise a dataset never built, or whose last check failed or was skipped,
+is due. With cadence `daily` (the default, and what an unknown cadence reads as) it is due once its own
+`default_as_of()` reaches the last check's `next_check_due`: the SPX slice after the next session is complete, the
+market series (as-of today) on the first pass of each trading day. `weekly` and `monthly` are due 7 and 30 days after
+the last check. A check with no `next_check_due` (past the calendar's table) is due once the as-of is newer. A
+loop run (`run` without `--once`) does this once, at start. A due-step error (a due check that raised, `ops.sqlite`
+locked while queueing) is printed, the queue is still drained, and the pass exits 1. A second `--once` started while
+one runs exits 3 on the `rcdata_build` lock before its due step. A failed or skipped check is retried every hourly
+pass with no backoff: for the SPX slice at worst about 24 runs a day, each one UW call plus its retries. Only
+`due.py` reads a pause on main; `base` runs a request already queued until PR #222 adds its own pause skip.
 
 **Backup.** `python -m RevenueChaser.rcdata backup` writes under `<RAW_STORE_BACKUP_DIR>/market/` and refuses an empty
 `RAW_STORE_BACKUP_DIR` (exit 2, nothing written): `ops.sqlite` through SQLite's online backup API, each serving file
