@@ -102,15 +102,22 @@ def test_calls_today_sums_per_new_york_day(monkeypatch):
     assert rows == [("uw", "2026-10-26", 3, 1, 1), ("uw", "2026-10-27", 5, 0, 0)]
 
 
-def test_sample_uw_headers_keeps_the_two_counts_and_only_the_uw_headers():
-    ops.sample_uw_headers({"x-uw-token-req-limit": "150000", "x-uw-req-per-minute-remaining": "118",
-                           "x-uw-daily-req-count": "42", "set-cookie": "secret"}, run_id="r1")
+# The headers of a live UW answer (27 Oct 2026, G2): the daily count is x-uw-daily-req-count; x-uw-token-req-limit is
+# not the daily cap, and the per-minute pair is a rate window.
+LIVE_UW_HEADERS = {"x-uw-daily-req-count": "355", "x-uw-req-per-minute-remaining": "1000000",
+                   "x-uw-req-per-minute-reset": "60000", "x-uw-token-req-limit": "100000000"}
+
+
+def test_sample_uw_headers_reads_the_daily_count_and_computes_what_is_left_under_our_cap():
+    from RevenueChaser.rcdata import caps
+    ops.sample_uw_headers({**LIVE_UW_HEADERS, "set-cookie": "secret"}, run_id="r1")
     with ops.connect() as con:
         row = con.execute("SELECT * FROM uw_remaining").fetchone()
-    assert row["token_req_limit"] == 150000 and row["req_per_minute_remaining"] == 118 and row["run_id"] == "r1"
-    raw = json.loads(row["raw_headers"])
-    assert raw == {"x-uw-token-req-limit": "150000", "x-uw-req-per-minute-remaining": "118",
-                   "x-uw-daily-req-count": "42"}
+    assert row["run_id"] == "r1" and row["daily_req_count"] == 355
+    assert row["daily_cap"] == caps.DAY_CAPS["uw"] and row["daily_remaining_computed"] == caps.DAY_CAPS["uw"] - 355
+    assert row["per_minute_remaining"] == 1_000_000 and row["per_minute_reset_ms"] == 60_000
+    assert row["token_req_limit"] == 100_000_000           # kept as sent, never read as the daily cap
+    assert json.loads(row["raw_headers"]) == LIVE_UW_HEADERS
     ops.sample_uw_headers({}, run_id="r2")      # nothing to sample: no row
     with ops.connect() as con:
         assert con.execute("SELECT count(*) FROM uw_remaining").fetchone()[0] == 1

@@ -14,7 +14,8 @@ from RevenueChaser.rcdata.build import base, uw_spot_expiry_strike as uw
 
 from . import uw_fixture
 
-UW_HEADERS = {"x-uw-token-req-limit": "150000", "x-uw-req-per-minute-remaining": "119",
+UW_HEADERS = {"x-uw-daily-req-count": "355", "x-uw-req-per-minute-remaining": "1000000",
+              "x-uw-req-per-minute-reset": "60000", "x-uw-token-req-limit": "100000000",
               "content-type": "application/json"}
 
 
@@ -74,10 +75,10 @@ def test_uw_remaining_and_the_call_counter_are_written(http_mock):
     http_mock.add("expiry-strike", uw_fixture.body(), headers=UW_HEADERS)
     _daily()
     with ops.connect() as con:
-        sample = con.execute("SELECT token_req_limit, req_per_minute_remaining FROM uw_remaining").fetchall()
+        sample = con.execute("SELECT daily_req_count, daily_remaining_computed FROM uw_remaining").fetchall()
         calls = con.execute("SELECT provider, calls, failures, http_429 FROM provider_calls_daily").fetchall()
         run = con.execute("SELECT dataset, status FROM job_runs2").fetchall()
-    assert [tuple(s) for s in sample] == [(150000, 119)]
+    assert [tuple(s) for s in sample] == [(355, 150_000 - 355)]
     assert [tuple(c) for c in calls] == [("uw", 1, 0, 0)]
     assert [tuple(r) for r in run] == [(uw.NAME, "ok")]
 
@@ -120,7 +121,7 @@ def test_the_response_observer_changes_no_result(http_mock):
         a, b, c = plain.get_result(ep), observed.get_result(ep), broken.get_result(ep)
         assert (a.status, a.data, a.error) == (b.status, b.data, b.error) == (c.status, c.data, c.error)
     assert plain.health() == observed.health() == broken.health()
-    assert seen == [("/stock/AAPL/info", 200, "150000"), ("/stock/NOPE/info", 404, None)]
+    assert seen == [("/stock/AAPL/info", 200, "100000000"), ("/stock/NOPE/info", 404, None)]
 
 
 def test_a_run_during_the_next_session_asks_for_the_closed_day_by_date(http_mock, monkeypatch):

@@ -946,7 +946,7 @@ ops schema version `1`, and a file stamped newer is refused):
 | `build_issues` | A row the builder could not use, with its key, until resolved |
 | `job_runs2` | One row per builder run |
 | `read_log` | Reads per day, process and table (counted in memory, written once a minute) |
-| `uw_remaining` | UW's `x-uw-*` rate headers, sampled once a run |
+| `uw_remaining` | UW's `x-uw-*` rate headers, sampled once a run: `x-uw-daily-req-count` as `daily_req_count`, `daily_remaining_computed` = our cap (`rcdata/caps.py`) minus it, the per-minute window, and `x-uw-token-req-limit` as sent (it is not the daily cap) |
 | `provider_calls_daily` | Calls, failures and 429s per provider and New York day |
 | `watchlist_option`, `watchlist_stock`, `watchlist_option_changes`, `watchlist_stock_changes` | The two watch lists and their history (no UI yet) |
 | `dataset_schedule` | Cadence and pause state per dataset (no routes yet) |
