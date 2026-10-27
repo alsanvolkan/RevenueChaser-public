@@ -248,3 +248,9 @@ def test_g1_a_combined_row_beside_the_futures_only_one_yields_one_series_row():
                       "disagg": []})
     rows = [r for r in cftc.parse(doc, {}) if r["series_id"] == "cftc:tff:13874A:open_interest_all"]
     assert [r["value"] for r in rows] == [1935470.0]
+
+
+def test_g4_spx_and_ovx_are_one_column_files_like_vvix():
+    for sym in ("SPX", "OVX"):
+        rows = cboe.parse(f"DATE,{sym}\n10/27/2026,6812.34\n", {"symbol": sym})
+        assert [(r["series_id"], r["value"], r["close"]) for r in rows] == [(sym, 6812.34, None)]

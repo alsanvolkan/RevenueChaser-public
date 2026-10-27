@@ -1,8 +1,9 @@
 """Cboe index history files (keyless CSV, the whole history in one file per symbol), fetched once per as-of date.
 
 ``SPX`` from 1975, ``VIX`` 1990, ``VVIX`` 2006, ``VIX9D`` 2011 and the rest from each file's start: a daily fetch is
-already the backfill. A file with OPEN/HIGH/LOW/CLOSE gives those and ``value`` = CLOSE; a one-column file (VVIX's
-``DATE,VVIX``) gives ``value`` only. Series id = the symbol. ``RC_CBOE_BASE`` is the same seam
+already the backfill. ``VIX``, ``VIX9D``, ``VIX3M``, ``VIX6M`` and ``VIX1Y`` have OPEN/HIGH/LOW/CLOSE, which give
+those and ``value`` = CLOSE; ``SPX``, ``VVIX`` and ``OVX`` are one-column files (``DATE,SPX`` and so on), which give
+``value`` only (checked against the live files, 27 Oct 2026). Series id = the symbol. ``RC_CBOE_BASE`` is the same seam
 ``module_earnings_radar/inputs/vol_index.py`` reads, with the same default.
 """
 from __future__ import annotations
