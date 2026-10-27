@@ -970,6 +970,16 @@ from starting in a busy moment). DuckDB keeps a database instance per path insid
 a connection open across overlapping requests can keep reading the build it opened while a newer one is swapped
 in; `open_read` opens and closes per call so each request sees the file live at its start.
 
+**What is due.** `run` without `--dataset` first queues every due dataset (`rcdata/build/due.py`, requested by
+`schedule`), then drains the queue. The request goes in through `ops.enqueue_once`, whose check and insert are one
+`BEGIN IMMEDIATE`, so a dataset with a request already queued or running gets no second one and two overlapping
+passes queue it once. A paused dataset is not queued, and `dataset_schedule.next_due`, while later than today in New
+York, holds a dataset until that day. Otherwise a dataset never built, or whose last check failed or was skipped,
+is due. With cadence `daily` (the default, and what an unknown cadence reads as) it is due once its own
+`default_as_of()` reaches the last check's `next_check_due`: the SPX slice after the next session is complete, the
+market series (as-of today) on the first pass of each trading day. `weekly` and `monthly` are due 7 and 30 days after
+the last check. A loop run (`run` without `--once`) does this once, at start.
+
 **Backup.** `python -m RevenueChaser.rcdata backup` writes under `<RAW_STORE_BACKUP_DIR>/market/` and refuses an empty
 `RAW_STORE_BACKUP_DIR` (exit 2, nothing written): `ops.sqlite` through SQLite's online backup API, each serving file
 copied and verified by row count and `sum(hash(row))` per table before its rename, the sha256 of every copy in
