@@ -173,3 +173,11 @@ def test_run_once_queues_and_runs_what_is_due_and_skips_the_paused(clock, ran, c
 def test_run_once_with_a_dataset_queues_nothing_else(clock, ran):
     assert cli.main(["run", "--once", "--dataset", MS]) == 0
     assert [r["dataset"] for r in ran] == [MS] and [r["dataset"] for r in _queue()] == [MS]
+
+
+def test_a_due_step_error_fails_the_pass_after_the_queue_is_drained(clock, ran, monkeypatch, capsys):
+    monkeypatch.setattr(DATASETS[UW], "default_as_of", lambda: (_ for _ in ()).throw(ValueError("past the table")))
+    _checked(UW, as_of="2026-10-26")
+    assert cli.main(["run", "--once"]) == 1
+    assert [r["dataset"] for r in ran] == [MS]             # the queue is still drained
+    assert f"{UW}: due check failed: ValueError: past the table" in capsys.readouterr().err

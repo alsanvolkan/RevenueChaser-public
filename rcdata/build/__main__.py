@@ -10,7 +10,7 @@
 
 It refuses to start while a job lock is held in the store directory or another builder runs (exit 3), and prints
 one line per dataset run: the ``dataset_check`` fields. Exit 0 when every run it made ended ok or skipped, 1 when
-one failed.
+one failed or a dataset's due step failed (its due check raised, or ops.sqlite stayed locked while queueing it).
 """
 from __future__ import annotations
 
@@ -127,10 +127,13 @@ def main(argv: list[str] | None = None) -> int:
             params = {**({"as_of": args.as_of} if args.as_of else {}),
                       **({"allow_shrink": True} if args.allow_shrink else {})}
             ops.enqueue(args.dataset, params or None, by="cli")
+        due_failed = 0
         if not args.dataset:
-            for name, why, _, _ in due.enqueue_due():
+            for name, why, _, error in due.enqueue_due():
                 print(f"{name}: {why}", file=sys.stderr, flush=True)
-        return _run_queue(args.dataset, args.once)
+                due_failed = due_failed or int(error)
+        # A due step that failed still drains the queue, then fails the pass, so an hourly error is not an exit 0.
+        return max(_run_queue(args.dataset, args.once), due_failed)
 
 
 if __name__ == "__main__":
