@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -29,7 +30,14 @@ POLL_S = 30.0
 def _run_queue(dataset: str | None, once: bool) -> int:
     worst = 0
     while True:
-        req = ops.next_request(dataset)
+        try:
+            req = ops.next_request(dataset)
+        except sqlite3.OperationalError as e:
+            # ops.sqlite held past busy_timeout (a long backup, a stuck writer): wait and ask again, never die.
+            print(f"ops.sqlite busy: {e}; retrying", file=sys.stderr, flush=True)
+            worst = 1
+            time.sleep(POLL_S)
+            continue
         if req is None:
             if once:
                 return worst
@@ -69,6 +77,10 @@ def main(argv: list[str] | None = None) -> int:
             print("builder not started: another builder holds the lock", file=sys.stderr)
             return 3
         rawstore._register_presence(Path(config.MARKET_DIR) / ops.FILE_NAME)
+        orphans = ops.fail_orphans()
+        if any(orphans):
+            print(f"failed {orphans[0]} request(s) and {orphans[1]} run(s) a dead builder left running",
+                  file=sys.stderr, flush=True)
         if args.cmd == "backfill":
             params = {"mode": "backfill", "from": args.start, **({"to": args.end} if args.end else {})}
             rid = ops.enqueue(args.dataset, params, by="cli")

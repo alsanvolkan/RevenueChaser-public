@@ -218,6 +218,21 @@ def finish_request(request_id: int, status: str, note: str | None = None) -> Non
                     (status, time.time(), note, request_id))
 
 
+def fail_orphans() -> tuple[int, int]:
+    """Fail every request and run still marked running by another process: ``(requests, runs)`` failed.
+
+    Called by the builder at start, while it holds the ``rcdata_build`` lock: no other builder can be running then,
+    so a ``running`` row is one a builder left when it died.
+    """
+    now, note = time.time(), f"builder died: found running by the builder started as pid {os.getpid()}"
+    with _open() as con, _tx(con):
+        reqs = con.execute("UPDATE build_requests SET status = 'failed', ended_at = ?, note = ? "
+                           "WHERE status = 'running'", (now, note)).rowcount
+        runs = con.execute("UPDATE job_runs2 SET status = 'failed', finished_at = ?, error = ? "
+                           "WHERE status = 'running' AND pid IS NOT ?", (now, note, os.getpid())).rowcount
+    return reqs, runs
+
+
 # ── Checks, issues, runs ───────────────────────────────────────────────────────────────────────────────────────
 
 CHECK_FIELDS = ("dataset", "checked_on", "result", "source_as_of", "rows", "added", "removed", "coverage", "calls",
