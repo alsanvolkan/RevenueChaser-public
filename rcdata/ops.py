@@ -180,6 +180,30 @@ def enqueue(dataset: str, params: dict | None = None, *, by: str) -> int:
         return int(cur.lastrowid)
 
 
+def enqueue_once(dataset: str, params: dict | None = None, *, by: str) -> int | None:
+    """Queue one build of ``dataset`` unless one is already queued or running; the request id, or None.
+
+    The check and the insert are one ``BEGIN IMMEDIATE`` transaction, so two clicks cannot both get through.
+    """
+    with _open() as con, _tx(con):
+        busy = con.execute("SELECT count(*) FROM build_requests WHERE dataset = ? AND status IN ('queued','running')",
+                           (dataset,)).fetchone()[0]
+        if busy:
+            return None
+        cur = con.execute("INSERT INTO build_requests (dataset, requested_at, requested_by, params, status) "
+                          "VALUES (?, ?, ?, ?, 'queued')", (dataset, time.time(), by, _json(params)))
+        return int(cur.lastrowid)
+
+
+def queue_view(finished: int = 20) -> dict:
+    """``{"active": queued and running rows, oldest first; "finished": the newest ``finished`` others}``."""
+    with _open() as con:
+        active = con.execute("SELECT * FROM build_requests WHERE status IN ('queued','running') ORDER BY id").fetchall()
+        done = con.execute("SELECT * FROM build_requests WHERE status NOT IN ('queued','running') "
+                           "ORDER BY id DESC LIMIT ?", (int(finished),)).fetchall()
+    return {"active": [_request(r) for r in active], "finished": [_request(r) for r in done]}
+
+
 def _request(row: sqlite3.Row | None) -> dict | None:
     if row is None:
         return None
