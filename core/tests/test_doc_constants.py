@@ -25,7 +25,8 @@ _ENV_EXTRAS = ("RC_SEC_USER_AGENT",
                "RAW_STORE_BACKUP_WARN_GB", "RAW_STORE_BACKUP_MIRROR_WARN_GB",   # #309 part 3
                "RC_ALLOWED_HOSTS", "RC_IBKR_LOGIN_URL",                         # #159 / the gateway shortcut
                "RC_IBKR_LOGIN_CHECK", "RC_IBKR_HOST", "RC_IBKR_PORT",           # #162
-               "RC_SCHEDULER")                                                  # #158
+               "RC_SCHEDULER",                                                  # #158
+               "RC_HTTP_CONTACT")                                               # #206, the builder's User-Agent
 
 
 def _env_example_lines() -> list[str]:

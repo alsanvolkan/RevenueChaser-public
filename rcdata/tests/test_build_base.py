@@ -70,3 +70,22 @@ def test_session_date_is_empty_outside_the_calendar_table():
     from datetime import date
     assert base.session_date_of(date(2026, 10, 25)) == date(2026, 10, 23)    # a Sunday -> Friday
     assert base.session_date_of(date(1990, 1, 2)) is None
+
+
+def test_the_user_agent_carries_the_contact_from_rc_http_contact(http_mock, monkeypatch):
+    http_mock.add("ua.test", b"ok")
+    monkeypatch.setenv("RC_HTTP_CONTACT", "builder-contact@example.invalid")
+    ctx = base.RunContext(run_id="r", dataset="d", sleep=lambda s: None)
+    base.http_get(ctx, "bls", "https://ua.test/x")
+    assert "builder-contact@example.invalid" in http_mock.requests[-1].headers["user-agent"]
+    monkeypatch.setenv("RC_HTTP_CONTACT", "")
+    assert "RC_HTTP_CONTACT" in base.user_agent()
+
+
+def test_a_403_says_what_to_set(http_mock, monkeypatch):
+    monkeypatch.setenv("RC_HTTP_CONTACT", "")
+    http_mock.add("bls.test", b"Access Denied", status=403)
+    ctx = base.RunContext(run_id="r", dataset="d", sleep=lambda s: None)
+    with pytest.raises(base.SourceError, match=r"HTTP 403 \(refused: set RC_HTTP_CONTACT"):
+        base.http_get(ctx, "bls", "https://bls.test/schedule/news_release/bls.ics")
+    assert ctx.calls["bls"] == [1, 1, 0]

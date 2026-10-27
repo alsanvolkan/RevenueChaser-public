@@ -953,6 +953,9 @@ nothing; inside a run every call checks its provider's cap first (one capped pro
 is a source failure and the others go on), and the counter is written every 25 calls and on a kill. Only the
 builder's calls are counted: the dashboard's own UW client is not yet.
 
+The keyless sources send one User-Agent with the contact from `RC_HTTP_CONTACT` (BLS refuses a client without
+one; a 403 names the variable in the source's failure note).
+
 **Running it.** `python -m RevenueChaser.rcdata.build run [--once] [--dataset X [--as-of D]]` and
 `python -m RevenueChaser.rcdata.build backfill <dataset> --from <date>`. It refuses to start (exit 3) while a job
 lock is held in the store directory or another builder runs.

@@ -43,7 +43,9 @@ logger = logging.getLogger(__name__)
 HTTP_ATTEMPTS = 3
 HTTP_BACKOFF_S = 2.0
 HTTP_TIMEOUT_S = 60.0
-USER_AGENT = "RevenueChaser market-data builder (+https://github.com/alsanvolkan/RevenueChaser-public)"
+USER_AGENT = "RevenueChaser market-data builder"
+# A contact for the User-Agent (BLS refuses clients without one): from the environment, never written in the code.
+CONTACT_ENV = "RC_HTTP_CONTACT"
 # The builder's own job-lock name: a second builder is refused while one runs.
 BUILDER_LOCK = "rcdata_build"
 PARQUET_COMPRESSION = "zstd"
@@ -63,6 +65,12 @@ class CapReached(SourceError):
 
 class NotIdle(RuntimeError):
     """Another job holds a job lock, or another builder runs: this run does not start."""
+
+
+def user_agent() -> str:
+    """The one User-Agent of the builder's keyless requests, with ``RC_HTTP_CONTACT`` when it is set."""
+    contact = (os.getenv(CONTACT_ENV) or "").strip()
+    return f"{USER_AGENT} ({contact})" if contact else f"{USER_AGENT} (no contact: set {CONTACT_ENV})"
 
 
 def raw_root() -> Path:
@@ -128,7 +136,7 @@ class RunContext:
     def http(self) -> httpx.Client:
         if self._http is None:
             self._http = httpx.Client(timeout=HTTP_TIMEOUT_S, follow_redirects=True,
-                                      headers={"User-Agent": USER_AGENT})
+                                      headers={"User-Agent": user_agent()})
         return self._http
 
     def uw_client(self):
@@ -178,6 +186,9 @@ def http_get(ctx: RunContext, provider: str, url: str, params: dict | None = Non
             if r.status_code < 400:
                 return r
             last = f"HTTP {r.status_code}"
+            if r.status_code == 403:
+                last += (f" (refused: set {CONTACT_ENV} to a contact for the User-Agent)"
+                         if not (os.getenv(CONTACT_ENV) or "").strip() else " (refused although a contact is set)")
             if not (r.status_code == 429 or r.status_code >= 500):
                 break
         if attempt < HTTP_ATTEMPTS:
