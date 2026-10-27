@@ -113,6 +113,9 @@ def test_a_paused_dataset_is_skipped_by_one_builder_pass_and_runs_again_after_re
     from RevenueChaser.rcdata.build import DATASETS
     from RevenueChaser.rcdata.build import __main__ as cli
     assert client.post("/api/build/schedule/market_series/pause").status_code == 200
+    # `run --once` also queues every never-built dataset (#223's due step): the other one is paused too, so this
+    # pass sends no call at all.
+    assert client.post("/api/build/schedule/uw/spot_expiry_strike/pause").status_code == 200
     assert client.post("/api/build/request/market_series").status_code == 202
     fetched = []
     monkeypatch.setattr(DATASETS["market_series"], "fetch", lambda ctx, as_of: fetched.append(as_of) or [])
