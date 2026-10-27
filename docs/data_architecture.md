@@ -978,7 +978,12 @@ York, holds a dataset until that day. Otherwise a dataset never built, or whose 
 is due. With cadence `daily` (the default, and what an unknown cadence reads as) it is due once its own
 `default_as_of()` reaches the last check's `next_check_due`: the SPX slice after the next session is complete, the
 market series (as-of today) on the first pass of each trading day. `weekly` and `monthly` are due 7 and 30 days after
-the last check. A loop run (`run` without `--once`) does this once, at start.
+the last check. A check with no `next_check_due` (past the calendar's table) is due once the as-of is newer. A
+loop run (`run` without `--once`) does this once, at start. A due-step error (a due check that raised, `ops.sqlite`
+locked while queueing) is printed, the queue is still drained, and the pass exits 1. A second `--once` started while
+one runs exits 3 on the `rcdata_build` lock before its due step. A failed or skipped check is retried every hourly
+pass with no backoff: for the SPX slice at worst about 24 runs a day, each one UW call plus its retries. Only
+`due.py` reads a pause on main; `base` runs a request already queued until PR #222 adds its own pause skip.
 
 **Backup.** `python -m RevenueChaser.rcdata backup` writes under `<RAW_STORE_BACKUP_DIR>/market/` and refuses an empty
 `RAW_STORE_BACKUP_DIR` (exit 2, nothing written): `ops.sqlite` through SQLite's online backup API, each serving file
