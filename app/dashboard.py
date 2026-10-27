@@ -1401,7 +1401,8 @@ def _query_flag(name: str) -> bool:
 def api_runs():
     """The Runs tab's poll: the newest ``job_runs`` rows (#26 PL5-b). Read-only, and lenient on a store
     that holds no rows yet. ``problems`` and ``q`` filter in SQL, so the count the page shows is the count
-    of matching runs in the table and not of the page it happens to have read."""
+    of matching runs in the table and not of the page it happens to have read.
+    An empty ``?problems=`` counts as on, as a bare ``?problems`` does (intended; ``_query_flag``)."""
     return jsonify(runview.read(request.args.get("limit", runview.DEFAULT_LIMIT),
                                 problems=_query_flag("problems"),
                                 query=request.args.get("q")))

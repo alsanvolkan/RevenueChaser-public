@@ -78,9 +78,12 @@ def runs_page(tmp_path_factory):
     return path.as_uri()
 
 
-def _measure(browser, url, size, scheme):
+def _measure(browser, url, size, scheme, theme=None):
+    """``scheme`` is the device's; ``theme`` is the shell's choice, copied onto the page as data-theme."""
     browser.emulate(*size, scheme=scheme)
     browser.open(url)
+    if theme is not None:
+        browser.eval(f"document.documentElement.setAttribute('data-theme', {theme!r})")
     return browser.eval(MEASURE)
 
 
@@ -91,7 +94,7 @@ def _luma(rgb: str) -> float:
 
 @pytest.mark.parametrize("scheme", ["light", "dark"])
 def test_the_runs_table_stacks_on_a_phone(browser, runs_page, scheme):
-    m = _measure(browser, runs_page, PHONE, scheme)
+    m = _measure(browser, runs_page, PHONE, scheme, theme=scheme)
     assert m["vw"] == PHONE[0]
     assert m["scrollW"] <= m["vw"], f"the page scrolls sideways ({m['scrollW']} > {m['vw']}): {m['wide']}"
     assert not m["wide"], f"elements reach past the right edge: {m['wide']}"
@@ -104,18 +107,36 @@ def test_the_runs_table_stacks_on_a_phone(browser, runs_page, scheme):
 
 @pytest.mark.parametrize("scheme", ["light", "dark"])
 def test_the_runs_controls_are_touch_sized_on_a_phone(browser, runs_page, scheme):
-    m = _measure(browser, runs_page, PHONE, scheme)
+    m = _measure(browser, runs_page, PHONE, scheme, theme=scheme)
     small = {k: (round(b["w"]), round(b["h"])) for k, b in m["targets"].items() if b["h"] < 44 or b["w"] < 44}
     assert not small, f"touch targets under 44 px: {small}"
 
 
 def test_the_runs_tab_has_a_light_and_a_dark_scheme(browser, runs_page):
-    dark = _measure(browser, runs_page, PHONE, "dark")
-    light = _measure(browser, runs_page, PHONE, "light")
+    dark = _measure(browser, runs_page, PHONE, "dark", theme="dark")
+    light = _measure(browser, runs_page, PHONE, "light", theme="light")
     assert dark["bg"] == DARK_BG, "the dark look must stay the dashboard's own"
     assert _luma(light["bg"]) > 200, f"light scheme background is {light['bg']}"
     assert _luma(light["fg"]) < 100, f"light scheme text is {light['fg']}"
     assert _luma(dark["fg"]) > 150
+
+
+# Dark is the default on every device (docs/dashboard_ui.md, avo 25 Oct 2026): no data-theme is dark even on a
+# light device; light shows only when chosen ("light"), or under "auto" on a light device.
+@pytest.mark.parametrize("scheme, theme, want", [
+    ("light", None, "dark"),
+    ("dark", None, "dark"),
+    ("light", "dark", "dark"),
+    ("dark", "light", "light"),
+    ("light", "auto", "light"),
+    ("dark", "auto", "dark"),
+])
+def test_the_runs_tab_is_dark_unless_light_is_chosen(browser, runs_page, scheme, theme, want):
+    m = _measure(browser, runs_page, PHONE, scheme, theme=theme)
+    if want == "dark":
+        assert m["bg"] == DARK_BG, f"device {scheme}, data-theme {theme!r}: background {m['bg']}, not dark"
+    else:
+        assert _luma(m["bg"]) > 200, f"device {scheme}, data-theme {theme!r}: background {m['bg']}, not light"
 
 
 def test_the_runs_table_stays_a_table_on_a_desktop(browser, runs_page):

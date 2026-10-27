@@ -378,3 +378,34 @@ def test_a_failed_row_check_is_recorded_once(rawstore_tmp_db, monkeypatch):
     errors = inventory.ticker_detail("ZZZZ")["errors"]
     assert [e["table"] for e in errors].count("oipd_meta") == 1
 
+
+
+def test_a_failed_read_of_a_table_the_unknown_name_check_does_not_read_keeps_the_404(rawstore_tmp_db, monkeypatch):
+    """#205 review: any recorded failure blocked the 404, so a failure elsewhere in the call turned a name in no
+    dataset into an empty drill. Only a failed read of a table the check itself reads makes the name unknown."""
+    _seed_every_dataset()
+    real = inventory._sec_file_row
+
+    def sec_file_row(ticker):
+        inventory._record("index_constituents", "_index_floor", RuntimeError("locked"))
+        return real(ticker)
+
+    monkeypatch.setattr(inventory, "_sec_file_row", sec_file_row)
+    assert inventory.ticker_detail("ZZZZ") is None
+    assert inventory.ticker_detail("MU") is not None
+
+
+def test_a_failed_table_list_of_a_file_the_check_reads_makes_an_unknown_name_unknown(rawstore_tmp_db, monkeypatch):
+    """The other half of the rule: a file whose table list failed reads every one of its tables as missing, so a
+    name in no other dataset is unknown, not a 404."""
+    _seed_every_dataset()
+    raw_db = rawstore.MANIFEST["oipd_meta"].get("db", "raw")
+    real = rawstore.query
+
+    def query(sql, *a, **k):
+        if "information_schema.tables" in sql and k.get("db", "raw") == raw_db:
+            raise RuntimeError("locked")
+        return real(sql, *a, **k)
+
+    monkeypatch.setattr(rawstore, "query", query)
+    assert inventory.ticker_detail("ZZZZ") is not None

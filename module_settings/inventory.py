@@ -98,13 +98,20 @@ def _summary(key: str, fn, *args):
     return cache[key]
 
 
+class _RepeatedReadError(RuntimeError):
+    """A read this call already failed, served again from its cache: the first catcher recorded it."""
+
+
 def _record(table: str | None, where: str, exc: Exception) -> None:
     """Remember a caught query failure for this call (F4).
 
     A failed query must not look like "no data": ``collect()`` returns these as
     ``payload["errors"]`` and the board shows them. A *missing table* is not a
-    failure and never comes through here.
+    failure and never comes through here, and neither is a cached failure served
+    again (``_RepeatedReadError``): one failed read is one entry.
     """
+    if isinstance(exc, _RepeatedReadError):
+        return
     errors = getattr(_CALL, "errors", None)
     if errors is not None:
         errors.append({"table": table, "where": where, "error": str(exc)})
@@ -270,13 +277,14 @@ def _max_value_or_raise(table: str, column: str):
 
     A failed query raises, so the caller can tell a broken read from a table with no rows
     (``_max_value`` is the swallowing form the row builders use). Inside one call the answer,
-    or the failure, is kept: the row's ``last_date`` and its Fresh cell are one read (#150).
+    or the failure, is kept: the row's ``last_date`` and its Fresh cell are one read (#150). A kept
+    failure is raised as a new ``_RepeatedReadError`` caused by the first, so it is recorded once.
     """
     cache = getattr(_CALL, "max_values", None)
     if cache is not None and (table, column) in cache:
         value, exc = cache[(table, column)]
         if exc is not None:
-            raise exc
+            raise _RepeatedReadError(str(exc)) from exc
         return value
     try:
         if not _table_exists(table):
@@ -891,6 +899,19 @@ def _universe_tickers() -> list[dict]:
             for r in rows if r.get("ticker")]
 
 
+# The tables the drill's unknown-name check reads: only a failed read of one of these (or of its file's table list)
+# makes a name in no dataset unknown rather than absent.
+_UNKNOWN_NAME_TABLES = ("equity_universe", "security_master", "sec_exchange_file", "sec_company_sic", "chain_filings",
+                        "edgar_financials", "price_bars_daily", "quote_snapshot", "vendor_financials",
+                        "ownership_snapshot", "swing_ohlc", "oipd_meta", "relatedness_profiles")
+
+
+def _read_failed(tables) -> bool:
+    """Whether this call recorded a failed read of one of ``tables``, or of the table list of a file holding one."""
+    names = set(tables) | {f"db:{_db_of(t)}" for t in tables}
+    return any(e.get("table") in names for e in getattr(_CALL, "errors", None) or ())
+
+
 def ticker_detail(ticker: str) -> dict | None:
     _begin_call()
     try:
@@ -943,7 +964,7 @@ def _ticker_detail(ticker: str) -> dict | None:
             and swing["bars"] == 0 \
             and not oipd \
             and not related \
-            and not getattr(_CALL, "errors", None):   # a failed read is not "absent" (#143)
+            and not _read_failed(_UNKNOWN_NAME_TABLES):   # a failed read of one of them is not "absent" (#143)
         return None
 
     # The identity spine's CIK is the current one; the older tables stay the fallback.

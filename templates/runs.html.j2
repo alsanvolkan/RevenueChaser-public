@@ -10,12 +10,13 @@
 <link rel="icon" href="/static/icons/icon-192.png">
 {%- set columns = ["Started", "Job", "Trigger", "Status", "Took", "Note", "Params"] %}
 <style>
-/* Dark is the dashboard's own look and the default. Light follows the device unless the shell set
-   data-theme on this document (its manual toggle); data-theme="light" forces light. */
+/* Dark is the dashboard's own look and the default on every device: no data-theme is dark. The shell copies
+   its choice onto this document; data-theme="light" is light, and "auto" follows the device (mirrors
+   core/reporting_common.THEME_CSS). */
 :root{--bg:#05111F;--panel:#12161e;--panel2:#1a1f2b;--border:#232a38;
 --text:#d7dce5;--muted:#8a93a6;--accent:#0EA5E9;--red:#e74c3c;--green:#2ecc71;--amber:#f0ad4e;color-scheme:dark}
 @media (prefers-color-scheme: light){
-  :root:not([data-theme="dark"]){--bg:#f5f7fa;--panel:#ffffff;--panel2:#eef1f5;--border:#d5dbe3;
+  :root[data-theme="auto"]{--bg:#f5f7fa;--panel:#ffffff;--panel2:#eef1f5;--border:#d5dbe3;
     --text:#1b2330;--muted:#5b6575;--accent:#0369a1;--red:#c0392b;--green:#1e8449;--amber:#a15c00;color-scheme:light}
 }
 :root[data-theme="light"]{--bg:#f5f7fa;--panel:#ffffff;--panel2:#eef1f5;--border:#d5dbe3;
@@ -256,9 +257,10 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
     var url = query();
     fetch(url, {cache: "no-store"})
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      // An answer read under a filter the reader has since changed is dropped: the pending read follows.
+      // An answer read under a filter the reader has since changed is dropped, and so is its failure: the
+      // pending read follows.
       .then(function (d) { if (url === query() && !(poll && paused)) { last = d; draw(); } })
-      .catch(function (e) { meta.textContent = "Could not read the run log: " + e.message; })
+      .catch(function (e) { if (url === query()) meta.textContent = "Could not read the run log: " + e.message; })
       .then(function () { busy = false; if (pending) { pending = false; load(); } });
   }
 

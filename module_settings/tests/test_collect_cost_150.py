@@ -11,6 +11,8 @@ from __future__ import annotations
 import sys
 from collections import Counter
 
+import pytest
+
 from RevenueChaser.core import datahealth, rawstore
 from RevenueChaser.module_settings import inventory
 from RevenueChaser.module_settings.tests.test_identity_coverage_124 import FIXED, _seed
@@ -117,3 +119,46 @@ def test_the_collect_clock_reaches_the_registry_coverage(rawstore_tmp_db, monkey
     monkeypatch.setattr(prices, "health_summary", datahealth.scoped(counted))
     inventory.collect(now=FIXED)
     assert seen == [FIXED]
+
+
+def test_a_failed_newest_date_read_is_recorded_once(rawstore_tmp_db, monkeypatch):
+    """#205 review: the row's date and the Fresh cell both caught the one cached failure and each recorded it, so
+    the board listed one broken read twice."""
+    _seed()
+    real = rawstore.query
+
+    def query(sql, *a, **k):
+        if sql == "SELECT MAX(session_date) AS m FROM quote_snapshot":
+            raise RuntimeError("locked")
+        return real(sql, *a, **k)
+
+    monkeypatch.setattr(rawstore, "query", query)
+    # The two catchers of the cached read; quotes.health_summary is a read of its own and records its own failure.
+    errors = [e for e in inventory.collect(now=FIXED)["errors"]
+              if e["table"] == "quote_snapshot" and e["where"] in ("_max_value", "_fresh")]
+    assert len(errors) == 1, errors
+
+
+def test_the_date_cache_raises_a_fresh_error_wrapping_the_first(rawstore_tmp_db, monkeypatch):
+    """Re-raising the stored exception object grows its traceback on every hit; a new error keeps the first as its
+    cause."""
+    real = rawstore.query
+
+    def query(sql, *a, **k):
+        if sql.startswith("SELECT MAX(session_date) AS m FROM quote_snapshot"):
+            raise RuntimeError("locked")
+        return real(sql, *a, **k)
+
+    monkeypatch.setattr(rawstore, "query", query)
+    monkeypatch.setattr(inventory, "_table_exists", lambda name: True)
+    inventory._begin_call()
+    try:
+        with pytest.raises(RuntimeError) as first:
+            inventory._max_value_or_raise("quote_snapshot", "session_date")
+        with pytest.raises(Exception) as again:
+            inventory._max_value_or_raise("quote_snapshot", "session_date")
+    finally:
+        inventory._end_call()
+    assert again.value is not first.value
+    assert again.value.__cause__ is first.value
+    assert str(again.value) == "locked"

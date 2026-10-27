@@ -259,12 +259,16 @@ def _load_harness(client, tmp_path, steps: str) -> list:
                "var answered = 0, drawn = [];\n"
                "function answer(){ if (!held.length) return; var n = ++answered;"
                " held.shift()({ok: true, json: function(){ return {rows: [], n: n}; }}); }\n"
+               "function fail(){ if (!held.length) return; ++answered; held.shift()({ok: false, status: 500}); }\n"
                "var last = null;\n"
                "function draw(){ drawn.push(last.n); }\n"
                "function tick(){ return new Promise(function(r){ setTimeout(r, 0); }); }\n")
     funcs = _default_limit(script) + "\n" + "\n".join(function_source(script, name) for name in ("query", "load"))
     body = f"(async function(){{ {steps} console.log(JSON.stringify(sent)); }})();"
-    if "DRAWN" in steps:
+    if "META" in steps:
+        body = (f"(async function(){{ {steps.replace('META', '')} "
+                "console.log(JSON.stringify([sent, drawn, meta.textContent || ''])); })();")
+    elif "DRAWN" in steps:
         body = f"(async function(){{ {steps.replace('DRAWN', '')} console.log(JSON.stringify([sent, drawn])); }})();"
     return _node(DOM_STUB + prelude + state + "\n" + funcs + "\n" + body, tmp_path)
 
@@ -341,3 +345,25 @@ def test_the_overlay_names_the_running_job_first(client, tmp_path):
     tail = f"console.log(JSON.stringify(overlayText({json.dumps(jobs)})));"
     assert _node(DOM_STUB + prelude + function_source(script, "overlayText") + "\n" + tail, tmp_path) == \
         "Running rotation · 12s · +1 more"
+
+
+def test_a_failed_read_under_an_old_filter_does_not_report_an_error(client, tmp_path):
+    """#205 review: the stale-answer check guarded only the success path, so a poll read under the old filter
+    that failed wrote "Could not read the run log" over the line while the filtered read was on its way."""
+    sent, drawn, meta = _load_harness(client, tmp_path, """META
+      meta.textContent = "";
+      load(true);
+      problems.checked = true; load();
+      fail(); await tick();
+    """)
+    assert sent == ["/api/runs", "/api/runs?problems=1"]
+    assert "Could not read" not in meta, f"a superseded read reported {meta!r}"
+
+
+def test_a_failed_read_under_the_current_filter_still_reports_it(client, tmp_path):
+    sent, drawn, meta = _load_harness(client, tmp_path, """META
+      meta.textContent = "";
+      problems.checked = true; load();
+      fail(); await tick();
+    """)
+    assert meta == "Could not read the run log: HTTP 500"
