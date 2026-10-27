@@ -218,19 +218,54 @@ def finish_request(request_id: int, status: str, note: str | None = None) -> Non
                     (status, time.time(), note, request_id))
 
 
-def fail_orphans() -> tuple[int, int]:
-    """Fail every request and run still marked running by another process: ``(requests, runs)`` failed.
+def _builder_alive(pid: int | None) -> bool:
+    """True while ``pid`` is a live builder: its ``.rc-proc-<pid>`` marker is in the market dir and names this very
+    process (``core/procs.pid_alive`` plus its start time, so a reused pid does not read as the builder)."""
+    if not pid or pid == os.getpid():
+        return False
+    from ..core import rawstore
+    return pid in rawstore._peer_pids(Path(config.MARKET_DIR) / FILE_NAME)
 
-    Called by the builder at start, while it holds the ``rcdata_build`` lock: no other builder can be running then,
-    so a ``running`` row is one a builder left when it died.
+
+def fail_orphans() -> tuple[int, int]:
+    """Reclaim every request and run a dead builder left running: ``(requests, runs)`` failed.
+
+    Called by the builder at start, while it holds the ``rcdata_build`` lock. A request's pid is its run's (the
+    ``job_runs2`` row of the same dataset that started first at or after the request was taken). A request or run
+    whose builder is still alive is left alone; any other becomes ``failed`` with the note ``lost: pid <n> gone``
+    (``lost: pid unknown`` when the builder died before its run row), and each reclaimed request gets a ``failed``
+    ``dataset_check`` row with that note, so the dataset's card shows the lost run.
     """
-    now, note = time.time(), f"builder died: found running by the builder started as pid {os.getpid()}"
+    me = os.getpid()
+    now, tail = time.time(), f"builder died; found running by the builder started as pid {me}"
     with _open() as con, _tx(con):
-        reqs = con.execute("UPDATE build_requests SET status = 'failed', ended_at = ?, note = ? "
-                           "WHERE status = 'running'", (now, note)).rowcount
-        runs = con.execute("UPDATE job_runs2 SET status = 'failed', finished_at = ?, error = ? "
-                           "WHERE status = 'running' AND pid IS NOT ?", (now, note, os.getpid())).rowcount
-    return reqs, runs
+        runs = [dict(r) for r in con.execute("SELECT run_id, dataset, pid, started_at FROM job_runs2 "
+                                             "WHERE status = 'running' AND pid IS NOT ? ORDER BY started_at",
+                                             (me,))]
+        alive = {r["run_id"]: _builder_alive(r["pid"]) for r in runs}
+        n_reqs = 0
+        for req in con.execute("SELECT id, dataset, started_at FROM build_requests WHERE status = 'running' "
+                               "ORDER BY id").fetchall():
+            run = next((r for r in runs if r["dataset"] == req["dataset"]
+                        and (r["started_at"] or 0) >= (req["started_at"] or 0)), None)
+            if run is not None and alive[run["run_id"]]:
+                continue
+            note = (f"lost: pid {run['pid']} gone" if run is not None else "lost: pid unknown (no run row)")
+            note += f" ({tail})"
+            con.execute("UPDATE build_requests SET status = 'failed', ended_at = ?, note = ? WHERE id = ?",
+                        (now, note, req["id"]))
+            con.execute("INSERT INTO dataset_check (dataset, checked_on, result, run_id, note) "
+                        "VALUES (?, ?, 'failed', ?, ?)",
+                        (req["dataset"], _today(), run["run_id"] if run else None, note))
+            n_reqs += 1
+        n_runs = 0
+        for run in runs:
+            if alive[run["run_id"]]:
+                continue
+            con.execute("UPDATE job_runs2 SET status = 'failed', finished_at = ?, error = ? WHERE run_id = ?",
+                        (now, f"lost: pid {run['pid']} gone ({tail})", run["run_id"]))
+            n_runs += 1
+    return n_reqs, n_runs
 
 
 # ── Checks, issues, runs ───────────────────────────────────────────────────────────────────────────────────────

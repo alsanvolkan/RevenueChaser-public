@@ -1281,6 +1281,14 @@ def api_jobs():
     return jsonify({"jobs": jobs.list_jobs()})
 
 
+@app.route("/api/idle")
+def api_idle():
+    """``{"idle": bool, "reasons": [...]}`` from ``jobs.idle()``: no dashboard job, no job lock held by anyone, no
+    other process's live marker in either store dir. ``stop.ps1`` and the deploy gate read this (F8 A)."""
+    ok, reasons = jobs.idle()
+    return jsonify({"idle": ok, "reasons": reasons})
+
+
 @app.route("/api/logs")
 def api_logs():
     """The Logs tab's poll: the tail of one of the dashboard's own log files, named by a source key."""
