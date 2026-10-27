@@ -69,3 +69,15 @@ def test_n2_a_database_error_at_the_end_of_a_run_is_failed_not_killed(monkeypatc
         base.run_request({"dataset": "nope", "params": {}})
     with ops.connect() as con:
         assert con.execute("SELECT status FROM job_runs2").fetchone()[0] == "failed"
+
+
+def test_n3_allow_shrink_reaches_the_request(monkeypatch):
+    from RevenueChaser.rcdata.build import base
+    seen = []
+    monkeypatch.setattr(base, "run_request", lambda req: (seen.append(req), ops.latest_check("x") or {
+        "dataset": req["dataset"], "result": "changed", "source_as_of": None, "rows": 0, "added": 0,
+        "removed": 0, "calls": 0, "note": None})[1])
+    assert cli.main(["run", "--once", "--dataset", "market_series", "--allow-shrink"]) == 0
+    assert seen[0]["params"] == {"allow_shrink": True}
+    assert cli.main(["backfill", "market_series", "--from", "2026-10-01", "--allow-shrink"]) == 0
+    assert seen[1]["params"]["allow_shrink"] is True

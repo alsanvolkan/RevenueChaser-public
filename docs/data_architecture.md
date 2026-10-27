@@ -917,7 +917,8 @@ stays as `<kind>.prev.duckdb`.
 **The swap rule.** A kind is built as a new file `<kind>.<build_id>.duckdb`, from Parquet only (no network), and
 checked before it replaces anything: its `serving_schema_version` row, the row count of every table, the run's
 `dataset_check` row (a `failed` one refuses the swap), and the live file: every live table must be in the build, and
-none may empty or lose more than 1% of its rows unless the request says `"allow_shrink": true`. A build also refuses
+none may empty or lose more than 1% of its rows unless the request says `"allow_shrink": true` (the CLI's
+`--allow-shrink`). A build also refuses
 a missing Parquet root (the raw disk not mounted). Then the live file is hard-linked to `<kind>.prev.duckdb` and
 `os.replace` moves the new file over the live name, so the live name is never missing. Any failure deletes the new
 file and leaves the live file byte-identical (test T3, `rcdata/tests/test_serving.py`). The dashboard opens a serving

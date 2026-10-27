@@ -1,10 +1,10 @@
 """``python -m RevenueChaser.rcdata.build`` — the builder CLI.
 
-    run [--once] [--dataset X [--as-of YYYY-MM-DD]]
+    run [--once] [--dataset X [--as-of YYYY-MM-DD] [--allow-shrink]]
                                         take queued requests in order (FIFO) and run each; with --dataset, a dataset
                                         with nothing queued (or any, with --as-of) is queued first (by "cli");
                                         --once stops when the queue is empty
-    backfill <dataset> --from YYYY-MM-DD [--to YYYY-MM-DD]
+    backfill <dataset> --from YYYY-MM-DD [--to YYYY-MM-DD] [--allow-shrink]
                                         queue one backfill request and run it now
 
 It refuses to start while a job lock is held in the store directory or another builder runs (exit 3), and prints
@@ -73,10 +73,14 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--once", action="store_true")
     run.add_argument("--dataset", choices=sorted(DATASETS))
     run.add_argument("--as-of", dest="as_of", help="with --dataset: the as-of date to queue (default: today's)")
+    shrink_help = ("let this build swap in a table smaller than the live one (a source removed on purpose); "
+                   "without it a table that empties or loses more than 1%% of its rows refuses the swap")
+    run.add_argument("--allow-shrink", action="store_true", help="with --dataset: " + shrink_help)
     bf = sub.add_parser("backfill")
     bf.add_argument("dataset", choices=sorted(DATASETS))
     bf.add_argument("--from", dest="start", required=True)
     bf.add_argument("--to", dest="end")
+    bf.add_argument("--allow-shrink", action="store_true", help=shrink_help)
     args = p.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -105,7 +109,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"failed {orphans[0]} request(s) and {orphans[1]} run(s) a dead builder left running",
                   file=sys.stderr, flush=True)
         if args.cmd == "backfill":
-            params = {"mode": "backfill", "from": args.start, **({"to": args.end} if args.end else {})}
+            params = {"mode": "backfill", "from": args.start, **({"to": args.end} if args.end else {}),
+                      **({"allow_shrink": True} if args.allow_shrink else {})}
             rid = ops.enqueue(args.dataset, params, by="cli")
             req = ops.next_request(args.dataset)
             while req is not None and req["id"] != rid:      # an older request of this dataset goes first
@@ -114,8 +119,10 @@ def main(argv: list[str] | None = None) -> int:
             row = base.run_request(req)
             print(base.format_check(row), flush=True)
             return 1 if row["result"] == "failed" else 0
-        if args.dataset and (args.as_of or not ops.queued(args.dataset)):
-            ops.enqueue(args.dataset, {"as_of": args.as_of} if args.as_of else None, by="cli")
+        if args.dataset and (args.as_of or args.allow_shrink or not ops.queued(args.dataset)):
+            params = {**({"as_of": args.as_of} if args.as_of else {}),
+                      **({"allow_shrink": True} if args.allow_shrink else {})}
+            ops.enqueue(args.dataset, params or None, by="cli")
         return _run_queue(args.dataset, args.once)
 
 
