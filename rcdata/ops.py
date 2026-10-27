@@ -203,6 +203,13 @@ def next_request(dataset: str | None = None) -> dict | None:
         return _request(con.execute("SELECT * FROM build_requests WHERE id = ?", (row[0],)).fetchone())
 
 
+def queued(dataset: str) -> bool:
+    """True while ``dataset`` has a request waiting."""
+    with _open() as con:
+        return con.execute("SELECT count(*) FROM build_requests WHERE status = 'queued' AND dataset = ?",
+                           (dataset,)).fetchone()[0] > 0
+
+
 def finish_request(request_id: int, status: str, note: str | None = None) -> None:
     if status not in REQUEST_STATUSES:
         raise ValueError(f"unknown request status {status!r}")
