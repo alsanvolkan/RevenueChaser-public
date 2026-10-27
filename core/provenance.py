@@ -186,11 +186,6 @@ def _quick_financials_day() -> str | None:
         return None
 
 
-def _discord_day() -> str | None:
-    """Newest message stored in the Discord archive."""
-    return _max("SELECT max(ts) AS v FROM discord_messages", db="discord")
-
-
 # module key (as used by app/dashboard.py's tabs) -> resolver.
 # A board absent from this map, or mapped to None, shows no data date — say so
 # explicitly rather than leaving a stale value on screen.
@@ -209,8 +204,6 @@ RESOLVERS = {
     "module_spx_gamma": _spx_gamma_day,
     "module_financials": _quick_financials_day,
     "module_value_chain": _chain_day,
-    # Discord archive: the newest stored message.
-    "module_discord": _discord_day,
     # Relatedness profiles are derived from the same 10-K/20-F corpus.
     "module_relatedness": _chain_day,
     # Implied Probability reads its own cached UW option chain.

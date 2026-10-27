@@ -164,7 +164,6 @@ hash. The pure logic is `RCFilters.core`, unit-tested under node (`core/tests/te
 | Financials | yes | Filters only pick the name, they do not slice statements. |
 | Sector Rotation | **no** stock bar | ETF RRG. Reuse the Theme widgets only to focus mapped ETF dots (`relatedness_theme_etfs` at the selected level). |
 | SPX Gamma, UW Interaction | **no** | Date-only / non-equity. |
-| Discord | **no** | Chat archive, no tickers. Left: channels grouped by server and category (follow checkbox, per-channel Update); right: filters (channel, text, dates) and the feed. |
 | Settings / Data health | **no** | Ops inventory, not an equity board; its ticker drill uses the kit's combobox (C1b). Plan: [`data_health.md`](data_health.md). |
 | Logs | **no** | The dashboard's own log files (`app/logview.py`), read-only: no Fetch, no Refresh, no data date. |
 | Runs | **no** | The run log over `job_runs` (`app/runview.py`), read-only: no Fetch, no Refresh, no data date. One row per job and per scheduled task, newest first, with the trigger as stored (a dash only on rows from before #83; a `running` row the server lost is closed as `lost`, #82). **Problems only** and the name box filter in SQL, not in the page, so the count beneath the table is of the matching runs in the table and not of the page that was read; the line says so when a read hits its limit. **Show** picks the newest 200 or the newest 1000 (`runview.DEFAULT_LIMIT` / `MAX_LIMIT`). On a phone (under 640 px) each run is a card, one cell per line, and the controls are 44 px; it is dark unless the shell's Theme choice is Light, or Auto on a light device. |
@@ -191,8 +190,8 @@ per board); the Runs tab does with the #131 pull request.
 ### What am I looking at? — every dashboard
 
 Shared `help_html(body)` under the title, closed by default, same `.help`
-chrome. Every data tab has it (#383 C3): the 16 boards of the fixture registry
-except Logs and Runs (neither is a data board). `core/tests/test_help_every_tab.py` holds
+chrome. Every data tab has it (#383 C3): every tab but Logs and
+Runs (neither is a data board), 15 boards. `core/tests/test_help_every_tab.py` holds
 that: each tab renders the one shared box, no board-local `.help` fork, and a body
 that says what Fetch and Refresh do there. `HELP_CSS` falls back to the standard
 dark tokens, so a board without them (Earnings Radar, SPX Gamma, LEAPS) still
@@ -241,7 +240,7 @@ load, no board re-render). The block ships **each entry once**, under `entries`
 keyed `"<repo>#<number>"`, and a board keeps only its section keys
 (`board` / `shared` / `repo`) plus `generated_at`, `stale_days` and
 `dropped_links` (`open_issues.panel_payload`): the shared entries would otherwise
-be repeated on all 16 boards, which took the block to ~590 KB; the deduped block
+be repeated on every data board (16 when measured, 15 now), which took the block to ~590 KB; the deduped block
 is ~107 KB for a ~111 KB registry. **Nothing calls GitHub and nothing reads the store at
 render time**, so the group is current on every page load. Every string and link
 is escaped in the shell (`html_safe.script_json` for the block, `rcEsc` for the

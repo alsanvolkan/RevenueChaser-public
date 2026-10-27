@@ -1,7 +1,7 @@
 """PL6-a (#26): the ``job_lock`` docstring lists every lock name in use, so the list cannot rot again.
 
 #26's body rotted exactly this way: it described a single ``"edgar"`` lock that no longer existed. The module
-docstring is the one place that says which names exist and who takes them, so it is asserted here — the fourteen
+docstring is the one place that says which names exist and who takes them, so it is asserted here — the thirteen
 names by contract, plus every name the sources hand to ``acquire()``, whether it is a literal or a module-level
 constant. A new lock name that is not in the docstring fails this test.
 """
@@ -23,7 +23,6 @@ NAMES = (
     "index_levels",            # core/index_levels.py
     "identity",                # core/identity/refresh.py: the dashboard job and its CLI (#26, PL6-a)
     "sec_13f",                 # app/runners.py: the three 13F jobs (#26, PL6-a)
-    "discord",                 # module_discord/engine.py: update + discover (#26, PL6-a)
     "forecast_outcomes",       # scripts/forecast_outcomes.py (#26, PL6-a)
     "forecast_baselines",      # scripts/forecast_baselines.py (#25 HR-1)
     "nightly_inputs_<step>",   # scripts/nightly_inputs.py, one per step (#26, PL6-a)
@@ -91,7 +90,7 @@ def test_every_lock_name_in_the_sources_is_documented():
 def test_a_lock_name_passed_as_a_constant_is_found():
     """A name only a constant carries — no literal anywhere — still has to reach the scan, or the guard misses it."""
     literals, constants = _literal_names(), _constant_names()
-    assert {"identity", "discord", "universe", "universe_run", "index_levels"} <= constants
+    assert {"identity", "universe", "universe_run", "index_levels"} <= constants
     assert "universe_run" not in literals, "core/universe_fetch._RUN_LOCK_NAME is the only source of this name"
     assert constants <= set(NAMES)
     # What the guard actually judges has to contain them: this is the assertion that keeps the union in place.

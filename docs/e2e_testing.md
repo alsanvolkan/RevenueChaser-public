@@ -80,7 +80,7 @@ controller's environment, so the root `conftest.py`'s redirect is **one folder p
 worker. The tier is safe in parallel because nothing a dashboard writes comes from that shared folder:
 
 - the `dashboard` fixture points `.store`, `.cache` and every side root (`RC_EDGAR_DOCS_DIR`,
-  `RC_DISCORD_MEDIA_DIR`, `RAW_STORE_BACKUP_DIR`, `SPX_GAMMA_DATA_ROOT`, `RC_PATREON_DATA_DIR`) at the test's
+  `RAW_STORE_BACKUP_DIR`, `SPX_GAMMA_DATA_ROOT`, `RC_PATREON_DATA_DIR`) at the test's
   own `tmp_path`;
 - the dashboard subprocess binds port 0 and writes the port it got to `$RC_E2E_PORT_FILE`. A port picked in
   the test process and released would be free only until another worker bound it;

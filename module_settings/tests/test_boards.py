@@ -182,7 +182,7 @@ def test_every_data_board_has_a_board_inputs_entry():
     want = _data_board_keys()
     got = [e["key"] for e in boards.BOARD_INPUTS]
     assert got == want
-    assert len(got) == 15
+    assert len(got) == 14
 
 
 # Boards whose rendered payload emits ``funnel_steps`` (core.funnel). The rest

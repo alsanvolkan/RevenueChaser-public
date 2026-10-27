@@ -478,7 +478,7 @@ var STORE_BACKED = ['module_sec_13f','module_sector_rotation',
                     'module_swing_potential','module_fundamentals','module_asymmetric_growth',
                     'module_leaps','module_financials',
                     'module_comovement','module_value_chain','module_relatedness',
-                    'module_oipd','module_settings','module_discord','module_spx_gamma'];
+                    'module_oipd','module_settings','module_spx_gamma'];
 var RUN_URLS = {
   module_earnings_radar: '/run/earnings',
   module_leaps: '/run/module_leaps',
@@ -492,8 +492,7 @@ var RUN_URLS = {
   module_fundamentals: '/run/module_fundamentals',
   module_comovement: '/run/module_comovement',
   module_value_chain: '/run/module_value_chain',
-  module_oipd: '/run/module_oipd',
-  module_discord: '/run/module_discord'
+  module_oipd: '/run/module_oipd'
 };
 var POLLING = false;
 var POLL_TIMER = null;
@@ -600,7 +599,7 @@ function showTab(key){
   // so there is nothing to refresh.
   if(rfBtn) rfBtn.style.display = (key==='module_earnings_radar' || key==='logs' || key==='runs') ? 'none' : 'inline-block';
   var ftBtn = document.getElementById('btn-fetch');
-  if(ftBtn) ftBtn.style.display = (key==='module_leaps' || key==='module_sec_13f' || key==='module_financials' || key==='module_oipd' || key==='module_comovement' || key==='module_discord') ? 'inline-block' : 'none';
+  if(ftBtn) ftBtn.style.display = (key==='module_leaps' || key==='module_sec_13f' || key==='module_financials' || key==='module_oipd' || key==='module_comovement') ? 'inline-block' : 'none';
   var ruBtn = document.getElementById('btn-refresh-universe');
   if(ruBtn) ruBtn.style.display = (UNIVERSE_TABS.indexOf(key) >= 0) ? 'inline-block' : 'none';
   checkDataAsOf(key);

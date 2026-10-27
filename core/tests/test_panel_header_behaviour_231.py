@@ -54,13 +54,6 @@ CASES = {
     "module_leaps": (
         "togglePin(_btn({'data-ticker': 'AAPL'}));",
         ["/api/watchlist/toggle/AAPL"]),
-    "module_discord": (
-        """
-        runJob(_btn({}, {run: '/run/discord', channel: '123'}));
-        var box = _el('cb'); box.dataset.channel = '123'; box.checked = true;
-        follow(box);
-        """,
-        ["/run/discord", "/api/discord/follow"]),
     "module_uw_interaction": (
         """
         document.getElementById('uw-tool').value = 'flow_alerts';

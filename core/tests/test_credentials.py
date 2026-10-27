@@ -11,7 +11,7 @@ import pytest
 from RevenueChaser.core import credentials
 
 # Never a real key: a recognisable string whose only job is to be asserted ABSENT from every message (PL8, #26).
-_DUMMY_DISCORD_TOKEN = "pl8-dummy-discord-token-value"
+_DUMMY_KEY = "pl8-dummy-provider-key-value"
 
 
 class TestProviderRegistry:
@@ -92,74 +92,27 @@ class TestDescribe:
         assert credentials.key_for("unusual_whales") == "later-set"
 
 
-class TestDiscordProvider:
-    """#72 S1: the DiscordChatExporter user token, plus the CLI path check. Values are never read."""
-
-    def test_registered_with_the_token_variable(self):
-        p = credentials.get("discord")
-        assert p.env_var == "DISCORD_TOKEN" and p.signup_url.startswith("https://")
-
-    def test_missing_message_names_the_variable(self, monkeypatch):
-        monkeypatch.delenv("DISCORD_TOKEN", raising=False)
-        assert "DISCORD_TOKEN" in credentials.describe("discord")
-
-    def test_cli_problem_when_the_variable_is_unset(self, monkeypatch):
-        monkeypatch.delenv("RC_DCE_CLI", raising=False)
-        assert "RC_DCE_CLI" in credentials.dce_cli_problem()
-
-    def test_cli_problem_when_the_path_is_not_a_file(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("RC_DCE_CLI", str(tmp_path / "missing"))
-        assert "RC_DCE_CLI" in credentials.dce_cli_problem()
-
-    def test_no_cli_problem_for_an_existing_file(self, monkeypatch, tmp_path):
-        exe = tmp_path / "dce"
-        exe.write_text("")
-        monkeypatch.setenv("RC_DCE_CLI", str(exe))
-        assert credentials.dce_cli_problem() is None
-
-    def test_guild_problem_when_the_variable_is_unset(self, monkeypatch):
-        monkeypatch.delenv("RC_DISCORD_GUILD_ID", raising=False)
-        # The same sentence jobs.credential_problem refuses /run/module_discord_discover with (PL8, #26).
-        assert credentials.discord_guild_problem() == (
-            "RC_DISCORD_GUILD_ID is not set. Put the server's id in .env, then restart the dashboard.")
-
-    def test_guild_problem_when_the_variable_is_only_whitespace(self, monkeypatch):
-        monkeypatch.setenv("RC_DISCORD_GUILD_ID", "   ")
-        assert credentials.discord_guild_problem() is not None
-
-    def test_no_guild_problem_when_the_variable_is_set(self, monkeypatch):
-        monkeypatch.setenv("RC_DISCORD_GUILD_ID", "123456789012345678")
-        assert credentials.discord_guild_problem() is None
-
-
 class TestProblem:
     """PL8 (#26): one resolver for every requirement a module can declare at submit time."""
 
     def test_a_provider_slug_is_missing_until_its_key_is_set(self, monkeypatch):
-        monkeypatch.delenv("DISCORD_TOKEN", raising=False)
-        assert credentials.problem("discord") == credentials.missing_message("discord")
-        monkeypatch.setenv("DISCORD_TOKEN", _DUMMY_DISCORD_TOKEN)
-        assert credentials.problem("discord") is None
+        monkeypatch.delenv("FRED_API_KEY", raising=False)
+        assert credentials.problem("fred") == credentials.missing_message("fred")
+        monkeypatch.setenv("FRED_API_KEY", _DUMMY_KEY)
+        assert credentials.problem("fred") is None
 
     def test_a_whitespace_only_provider_key_counts_as_missing(self, monkeypatch):
         monkeypatch.setenv("FRED_API_KEY", "   ")
         assert credentials.problem("fred") == credentials.missing_message("fred")
 
-    def test_the_cli_check_reports_unset_a_bad_path_and_a_real_file(self, monkeypatch, tmp_path):
-        monkeypatch.delenv("RC_DCE_CLI", raising=False)
-        assert "RC_DCE_CLI" in credentials.problem("discord_cli")
-        monkeypatch.setenv("RC_DCE_CLI", str(tmp_path / "missing"))
-        assert "RC_DCE_CLI" in credentials.problem("discord_cli")
-        exe = tmp_path / "dce"
-        exe.write_text("")
-        monkeypatch.setenv("RC_DCE_CLI", str(exe))
-        assert credentials.problem("discord_cli") is None
-
-    def test_the_guild_check_is_presence_only(self, monkeypatch):
-        monkeypatch.delenv("RC_DISCORD_GUILD_ID", raising=False)
-        assert credentials.problem("discord_guild") == credentials.discord_guild_problem()
-        monkeypatch.setenv("RC_DISCORD_GUILD_ID", "123456789012345678")
-        assert credentials.problem("discord_guild") is None
+    def test_an_extra_check_answers_through_its_own_callable(self, monkeypatch):
+        """``EXTRA_CHECKS`` is empty since the Discord archive became its own app; the mechanism stays, so
+        a registered check still answers through ``problem`` and still counts as a requirement name."""
+        monkeypatch.setitem(credentials.EXTRA_CHECKS, "demo_check", lambda: "DEMO is not set.")
+        assert credentials.problem("demo_check") == "DEMO is not set."
+        assert "demo_check" in credentials.requirement_names()
+        monkeypatch.setitem(credentials.EXTRA_CHECKS, "demo_check", lambda: None)
+        assert credentials.problem("demo_check") is None
 
     def test_an_unknown_name_raises(self):
         with pytest.raises(KeyError):
@@ -168,7 +121,7 @@ class TestProblem:
     def test_requirement_names_covers_every_provider_and_every_extra_check(self):
         names = credentials.requirement_names()
         assert names == frozenset(credentials.PROVIDERS) | frozenset(credentials.EXTRA_CHECKS)
-        assert {"discord", "discord_cli", "discord_guild"} <= names
+        assert {"unusual_whales", "fred"} <= names
         assert isinstance(names, frozenset)
 
     def test_no_message_ever_returns_a_key_value(self, monkeypatch):
@@ -177,11 +130,9 @@ class TestProblem:
         One provider is not enough — the promise is about ``problem()`` as a whole, so each key gets a distinct
         sentinel and every message is checked against all of them.
         """
-        sentinels = {slug: f"{_DUMMY_DISCORD_TOKEN}-{slug}" for slug in credentials.PROVIDERS}
+        sentinels = {slug: f"{_DUMMY_KEY}-{slug}" for slug in credentials.PROVIDERS}
         for slug, value in sentinels.items():
             monkeypatch.setenv(credentials.PROVIDERS[slug].env_var, value)
-        monkeypatch.delenv("RC_DCE_CLI", raising=False)
-        monkeypatch.delenv("RC_DISCORD_GUILD_ID", raising=False)
         for name in credentials.requirement_names():
             message = credentials.problem(name) or ""
             for slug, value in sentinels.items():

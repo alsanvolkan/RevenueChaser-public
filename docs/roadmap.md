@@ -14,7 +14,8 @@ stale local file. The former `future_ideas/` docs were migrated there.
   Only `Approved to build` may go `In Progress`.
 - **Area (single-select), 12 options:** `platform-store`, `platform-app`, `providers`, `spine`,
   `data-health`, `shared-ui`, `classification`, `screeners`, `market`, `earnings`, `ownership`,
-  `quality`. There is no `community` option; Discord work carries the `area:community` label only.
+  `quality`. There is no `community` option; the `area:community` label is the only marker for that
+  work, and since October 2026 it belongs to the `discord-archive` repository, not this one.
   Read from the board on 2026-10-23 with `gh project field-list 1 --owner alsanvolkan`; that command
   is the current answer if the options change.
 

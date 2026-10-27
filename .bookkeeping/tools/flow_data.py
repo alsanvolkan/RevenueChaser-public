@@ -33,7 +33,7 @@ MODES = {
 }
 
 # flow: (source, source_cite, writer, writer_cite, db, table, table_cite, key, mode, kept, kept_cite)
-# db in raw | edgar | discord | prices | files | none
+# db in raw | edgar | prices | files | none
 AREAS = [
  ("Prices", [
   dict(id="D01", name="Daily price bars", readers="Swing, Fundamentals (price_bars_daily since #383 R3; swing_ohlc only for the SPY fallback); Asymmetric Growth (momentum from nominal bars since #380 S4); Co-movement, Relatedness peer market (price_bars_daily since #379); Rotation RRG, backfill, theme holdings RS and Money Flow (price_bars_daily since #374 M-ROT-2/3); the holdings job's RS, 13F; Earnings reaction window (price_bars_daily since #372 E5e)",
@@ -456,12 +456,6 @@ AREAS = [
    planned="credit_report_weekly, crypto_derivatives_daily; economic_calendar is written (E0 D37, #307) and read by R6 since #372 E5d."),
  ]),
  ("Other", [
-  dict(id="D34", name="Discord messages", readers="Discord",
-   flows=[("DiscordChatExporter", "R2:194-195",
-     "save_export", "module_discord/store.py:39-48",
-     "discord", "discord_messages, discord_channels, discord_export_runs", ":1502, :1516, :1535", "message_id", "upsert",
-     "Every message stays.", "store write scan")],
-   planned="Stays in discord.duckdb."),
   dict(id="D35", name="LLM outputs (DeepSeek, Grok)", readers="Relatedness",
    flows=[("DeepSeek", "core/providers/deepseek.py:305",
      "_cache_put", "core/providers/deepseek.py:158",
@@ -557,10 +551,6 @@ STORES = [
    ("Run log", ["chain_meta"]),
    ("Declared in the G1 bump (#292, schema 10), no writer yet", ["edgar_companyfacts"]),
  ]),
- ("discord", "discord.duckdb", ".store/discord.duckdb (core/rawstore.py:60-62)", [
-   ("From Discord (raw)", ["discord_messages", "discord_channels"]),
-   ("Run log", ["discord_export_runs"]),
- ]),
  ("prices", "prices.duckdb", ".store/prices.duckdb (rawstore.prices_db_path; #156, made by the first store call)", [
    ("From providers (raw): UW ohlc/1d, yfinance (core/prices.py)", ["price_bars_daily", "price_actions"]),
    ("Watermarks, written in the chunk's transaction", ["price_checks"]),
@@ -571,8 +561,8 @@ STORES = [
    ("SPX Gamma raw days", ["module_spx_gamma/data/raw/<date>/: UW GEX and greek files, flow_per_strike, vix_family, cftc_tff, ohlc_8wk",
      "spx_gamma_gex_history.json: newest 10 days (every version kept by the nightly backup)"]),
    ("Filing text", ["edgar_docs/: 10-K, 20-F, 8-K HTML"]),
-   ("Backup folder", ["raw, edgar, discord snapshots, history snapshots once history.duckdb exists (#287), 2 prices snapshots (no weekly copy, #156), edgar_docs zip, weekly/ raw and history copies (never pruned)",
-     "discord_media_mirror/, spx_gamma_mirror/, spx_gamma_versions/",
+   ("Backup folder", ["raw, edgar snapshots, history snapshots once history.duckdb exists (#287), 2 prices snapshots (no weekly copy, #156), edgar_docs zip, weekly/ raw and history copies (never pruned)",
+     "spx_gamma_mirror/, spx_gamma_versions/",
      "optional second copy: RAW_STORE_BACKUP_MIRROR/RevenueChaser-backup (big files weekly, no weekly/, #349)",
      "the job's records (#309): .backup_manifest.json (size + SHA-256 per file at copy time), .offmachine_manifest.json, .integrity_scan.json (7-day read-only self-check), .backup_sizes.json"]),
    ("Board pages", [".cache/*.html, *.json: rebuilt from the store on Refresh"]),
@@ -581,13 +571,13 @@ STORES = [
 
 # ── Overview chart (data_flow.svg): sources -> jobs that write -> store ──────────────────────
 CHART_SOURCES = [("YF", "Yahoo / yfinance"), ("SEC", "SEC / EDGAR"), ("ID", "OpenFIGI, Nasdaq, FDIC"),
-                 ("UW", "Unusual Whales"), ("CF", "CFTC"), ("DS", "DeepSeek, Grok"), ("DC", "Discord"),
+                 ("UW", "Unusual Whales"), ("CF", "CFTC"), ("DS", "DeepSeek, Grok"),
                  ("FR", "FRED"), ("YOU", "You (settings, watchlist)")]
 CHART_JOBS = [("UNI", "Universe job"), ("IDJ", "Identity job"), ("PC", "Provider cache (AG, Financials)"),
               ("BARS", "Swing, Fundamentals SPY fallback"), ("ROT", "Rotation + ETF sync"),
               ("IDX", "Index registry (CLI)"), ("LEAPS", "LEAPS"), ("OIPD", "OIPD"), ("F13", "13F"),
               ("SET", "Settings page"), ("REL", "Relatedness"), ("FIN", "SEC statements fetch"),
-              ("VC", "Value Chain"), ("SPX", "SPX Gamma"), ("DX", "Discord export"), ("ER", "Earnings"),
+              ("VC", "Value Chain"), ("SPX", "SPX Gamma"), ("ER", "Earnings"),
               ("EI", "Earnings inputs (nightly)"), ("SF", "SEC files (daily bars task)")]
 # store key -> (top y, height, title, lines)
 CHART_STORES = {
@@ -598,13 +588,12 @@ CHART_STORES = {
             "9 declared, empty (4 G1 …)"]),
     "edgar": (455, 100, "edgar.duckdb", ["9 tables (1 G1, empty)", "edgar_financials · edgar_facts", "edgar_documents · chain_* · sec_*"]),
     "files": (565, 40, "Files on disk", ["SPX day folders · edgar_docs HTML"]),
-    "discord": (615, 30, "discord.duckdb", []),
-    "none": (655, 30, "Not stored (HTML report only)", []),
+    "none": (615, 30, "Not stored (HTML report only)", []),
 }
 CHART_S2J = {"YF": ["UNI", "BARS", "PC", "IDJ", "ROT", "SPX", "F13", "EI"], "SEC": ["UNI", "IDJ", "FIN", "VC", "F13", "SF"],
              "UW": ["LEAPS", "OIPD", "ROT", "IDX", "SPX", "IDJ", "ER", "EI"], "ID": ["IDJ"], "CF": ["SPX"], "DS": ["REL"],
-             "DC": ["DX"], "FR": ["EI"], "YOU": ["SET"]}
+             "FR": ["EI"], "YOU": ["SET"]}
 CHART_J2S = {"UNI": ["raw"], "IDJ": ["raw"], "PC": ["raw"], "BARS": ["raw"], "ROT": ["raw"], "IDX": ["raw"],
              "LEAPS": ["raw"], "OIPD": ["raw"], "F13": ["raw"], "SET": ["raw"], "REL": ["raw", "edgar"],
-             "FIN": ["edgar"], "VC": ["edgar", "files"], "SPX": ["files"], "DX": ["discord"], "ER": ["raw", "none"],
+             "FIN": ["edgar"], "VC": ["edgar", "files"], "SPX": ["files"], "ER": ["raw", "none"],
              "EI": ["raw"], "SF": ["raw"]}

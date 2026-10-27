@@ -16,7 +16,7 @@ varyemez.jpg
 rawData/*
 .vscode/settings.json
 
-# Local tooling downloaded into the tree (the DiscordChatExporter CLI that RC_DCE_CLI points at)
+# Local tooling downloaded into the tree (for example a downloaded command-line tool)
 .tools/
 
 # Owner-only notes: a clone of the private repo RevenueChaser-private (CLAUDE.md "Owner's private notes")

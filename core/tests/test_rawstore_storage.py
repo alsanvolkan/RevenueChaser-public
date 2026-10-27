@@ -436,17 +436,25 @@ class TestDoubleEncodedJsonColumn:
             "ticker": "BBB", "annual": [], "quarterly": [], "meta": "[not json"}])
         assert rawstore.get("edgar_financials", "BBB")["meta"] == "[not json"
 
-    def test_text_verbatim_tables_are_never_reparsed(self, rawstore_tmp_db):
-        spec_tables = [n for n, s in rawstore.MANIFEST.items() if s.get("text_verbatim")]
-        assert spec_tables, "manifest lost its text_verbatim tables"
-        name = spec_tables[0]
+    def test_text_verbatim_tables_are_never_reparsed(self, rawstore_tmp_db, monkeypatch):
+        """``text_verbatim`` marks a table of third-party text, whose TEXT cell is never re-parsed.
+
+        The Discord archive's three tables were the only ones carrying it and left with the archive in
+        October 2026. The flag stays, so the next table of third-party text is covered the moment it is
+        declared, and this test sets it on a real spec to keep the behaviour pinned meanwhile.
+        """
+        assert not [n for n, s in rawstore.MANIFEST.items() if s.get("text_verbatim")], \
+            "a text_verbatim table is back in the manifest: pin it by name here instead of setting the flag"
+        name = "edgar_documents"
         spec = rawstore.MANIFEST[name]
         col = next(c for c in rawstore._columns_of(spec)
                    if rawstore._col_type(name, c).split("(", 1)[0] == "TEXT"
                    and c not in spec["key"])
         row = {c: None for c in rawstore._columns_of(spec)}
-        text = json.dumps(json.dumps({"a": 1}))
+        text = json.dumps({"a": 1})                 # third-party text that happens to parse as JSON
         row[col] = text
+        assert rawstore._decode_row(name, dict(row))[col] == {"a": 1}, "without the flag the cell is decoded"
+        monkeypatch.setitem(rawstore.MANIFEST, name, {**spec, "text_verbatim": True})
         assert rawstore._decode_row(name, dict(row))[col] == text
 
 
@@ -468,13 +476,16 @@ class TestDoubleDecodeNarrowness:
         assert self._cell("edgar_financials", "meta", json.dumps("123")) == "123"
         assert self._cell("edgar_financials", "meta", json.dumps("true")) == "true"
 
-    def test_text_verbatim_json_column_is_decoded_only_once(self):
-        name = next(n for n, s in rawstore.MANIFEST.items() if s.get("text_verbatim")
-                    and any(rawstore._col_type(n, c).split("(", 1)[0] == "JSON"
-                            for c in rawstore._columns_of(s)))
-        col = next(c for c in rawstore._columns_of(rawstore.MANIFEST[name])
-                   if rawstore._col_type(name, c).split("(", 1)[0] == "JSON")
+    def test_text_verbatim_json_column_is_decoded_only_once(self, monkeypatch):
+        """The #202 second decode is skipped on a ``text_verbatim`` table, JSON column and all.
+
+        No table carries the flag since the Discord archive left (October 2026), so the test sets it
+        on a real spec; see ``TestDoubleEncodedJsonColumn.test_text_verbatim_tables_are_never_reparsed``.
+        """
+        name, col = "edgar_financials", "meta"
         inner = json.dumps({"a": 1})
+        assert self._cell(name, col, json.dumps(inner)) == {"a": 1}, "without the flag it decodes twice"
+        monkeypatch.setitem(rawstore.MANIFEST, name, {**rawstore.MANIFEST[name], "text_verbatim": True})
         assert self._cell(name, col, json.dumps(inner)) == inner
 
 

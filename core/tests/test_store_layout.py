@@ -32,7 +32,7 @@ _DATA_DIR_ALLOWED = {"core/config.py", "core/rawstore.py", "core/edgar_store.py"
 
 _MODULE_DIRS = ["app", "core", "main.py", "module_asymmetric_growth", "module_earnings_radar",
                 "module_financials", "module_fundamentals",
-                "module_discord", "module_leaps", "module_sec_13f", "module_sector_rotation",
+                "module_leaps", "module_sec_13f", "module_sector_rotation",
                 "module_swing_potential", "scripts"]
 
 
@@ -90,13 +90,15 @@ def test_edgar_docs_dir_is_separate_from_the_store():
 
 
 # The durable DuckDB files plus the sidecars DuckDB/the migration create
-# beside them: raw.duckdb (structured data), edgar.duckdb (raw EDGAR documents),
-# discord.duckdb (the Discord archive, #72) and prices.duckdb (the daily price tables, #156).
+# beside them: raw.duckdb (structured data), edgar.duckdb (raw EDGAR documents)
+# and prices.duckdb (the daily price tables, #156). discord.duckdb is a RETIRED file: the Discord
+# archive left with #174, but the old file stays in .store/ until avo deletes it by hand after the
+# new app holds a verified copy (#175), so it must not fail this check meanwhile.
 _ALLOWED_IN_STORE = {
     "raw.duckdb", "raw.duckdb.wal", "raw.duckdb.tmp", "raw.duckdb.new",
     "edgar.duckdb", "edgar.duckdb.wal", "edgar.duckdb.tmp", "edgar.duckdb.new",
-    "discord.duckdb", "discord.duckdb.wal", "discord.duckdb.tmp", "discord.duckdb.new",
     "prices.duckdb", "prices.duckdb.wal",
+    "discord.duckdb", "discord.duckdb.wal",   # retired, see above
 }
 
 
@@ -122,17 +124,10 @@ def test_the_real_store_dir_contains_nothing_but_the_database():
         f"belong in {config.OUTPUT_DIR}; delete these (they are not durable data).")
 
 
-def test_the_suite_never_points_at_the_developers_real_discord_media():
-    """conftest must redirect RC_DISCORD_MEDIA_DIR like the edgar docs dir: backup tests zip it."""
-    assert config.DISCORD_MEDIA_DIR != config.BASE_DIR / "discord_media"
-    assert config.DISCORD_MEDIA_DIR.parent == config.EDGAR_DOCS_DIR.parent
-
-
-def test_discord_media_dir_is_separate_from_the_store():
-    """Downloaded Discord attachments are durable files, outside .store/ and .cache/ (#72)."""
-    assert config.DISCORD_MEDIA_DIR.name == "discord_media"
-    assert config.DATA_DIR not in config.DISCORD_MEDIA_DIR.parents
-    assert config.OUTPUT_DIR not in config.DISCORD_MEDIA_DIR.parents
+def test_the_suite_never_points_at_the_developers_real_edgar_docs():
+    """conftest must redirect RC_EDGAR_DOCS_DIR away from the real tree: backup tests zip it."""
+    assert config.EDGAR_DOCS_DIR != config.BASE_DIR / "edgar_docs"
+    assert config.EDGAR_DOCS_DIR.parent == config.DATA_DIR.parent
 
 
 # Every rendered board: the renderer's own return value must land under .cache/,
@@ -217,7 +212,7 @@ def test_no_module_writes_a_raw_file_where_the_store_should_be_used():
 def test_data_roots_are_redirected_even_when_a_conftest_imports_core_config_first():
     """Order bug: a package conftest passed on the command line (module_comovement's imports
     ``RevenueChaser.core.config``) was imported before the root conftest's ``pytest_configure``
-    set the RC_* roots, so ``config`` froze on the developer's real ``discord_media`` / ``.store``.
+    set the RC_* roots, so ``config`` froze on the developer's real ``edgar_docs`` / ``.store``.
     The redirect must happen when the root conftest is imported, not in ``pytest_configure``."""
     import subprocess
     import sys
@@ -226,6 +221,6 @@ def test_data_roots_are_redirected_even_when_a_conftest_imports_core_config_firs
     env = {k: v for k, v in os.environ.items() if not k.startswith("RC_")}
     r = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "module_comovement",
-         "core/tests/test_store_layout.py", "-k", "the_suite_never_points_at_the_developers_real_discord_media"],
+         "core/tests/test_store_layout.py", "-k", "the_suite_never_points_at_the_developers_real_edgar_docs"],
         cwd=root, env=env, capture_output=True, text=True, timeout=300)
     assert r.returncode == 0, r.stdout[-1500:] + r.stderr[-500:]

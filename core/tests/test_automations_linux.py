@@ -92,8 +92,7 @@ def test_the_service_carries_the_resolved_data_roots_so_a_job_writes_where_the_p
     """Without them a job run by systemd falls back to the checkout's own .store/.cache (config._root)."""
     monkeypatch.setenv("TZ", "Europe/Amsterdam")
     monkeypatch.setenv("RAW_STORE_BACKUP_DIR", "/srv/backups 1")
-    roots = {"RC_STORE_DIR": "DATA_DIR", "RC_CACHE_DIR": "OUTPUT_DIR", "RC_EDGAR_DOCS_DIR": "EDGAR_DOCS_DIR",
-             "RC_DISCORD_MEDIA_DIR": "DISCORD_MEDIA_DIR"}
+    roots = {"RC_STORE_DIR": "DATA_DIR", "RC_CACHE_DIR": "OUTPUT_DIR", "RC_EDGAR_DOCS_DIR": "EDGAR_DOCS_DIR"}
     for var, attr in roots.items():                  # the value this process resolved, set in .env or not at all
         monkeypatch.delenv(var, raising=False)
         monkeypatch.setattr(A.config, attr, tmp_path / "resolved" / attr)
@@ -102,6 +101,15 @@ def test_the_service_carries_the_resolved_data_roots_so_a_job_writes_where_the_p
     for var, value in (*((v, tmp_path / "resolved" / a) for v, a in roots.items()),
                        ("TZ", "Europe/Amsterdam"), ("RAW_STORE_BACKUP_DIR", "/srv/backups 1")):
         assert f'Environment="{var}={value}"' in service, var
+
+
+def test_the_retired_discord_root_never_reaches_a_unit_file(tmp_path, monkeypatch):
+    """The Discord archive left with #174: its media root is not a data root here, even when still set in .env."""
+    monkeypatch.setenv("RC_DISCORD_MEDIA_DIR", "/srv/discord_media")
+    assert "RC_DISCORD_MEDIA_DIR" not in A.UNIT_ENVIRONMENT
+    assert set(A.config.resolved_roots()) == {"RC_STORE_DIR", "RC_CACHE_DIR", "RC_EDGAR_DOCS_DIR"}
+    _linux(tmp_path, FakeSystemctl()).install(A.entry("RC-Store-Backup"))
+    assert "DISCORD" not in _unit(tmp_path, "RC-Store-Backup", "service")
 
 
 def test_no_other_variable_reaches_a_unit_file(tmp_path, monkeypatch):

@@ -27,7 +27,7 @@ from pathlib import Path
 from flask import Flask, Response, g, jsonify, render_template, request, send_from_directory
 from markupsafe import Markup
 
-from RevenueChaser.core import config, html_safe, open_issues, rawstore, reporting_common, templating
+from RevenueChaser.core import html_safe, open_issues, rawstore, reporting_common, templating
 from RevenueChaser.core.calendar import today_ny
 from RevenueChaser.core.providers.unusual_whales import UWClient
 from RevenueChaser.core.rawstore import StoreLockedError
@@ -251,12 +251,6 @@ jobs.register("daily_bars", runners.run_daily_bars, ["module_settings"], lane="l
 # Index lists (#302): three UW requests plus the SmallCap 600 list from the identity cache.
 jobs.register("index_lists", runners.run_index_lists, ["module_settings"], lane="long")
 jobs.register("module_oipd", runners.run_oipd, ["module_oipd"], requires_uw=True)
-jobs.register("module_discord", runners.run_discord, ["module_discord"], requires_uw=False, lane="long",
-              cancellable=True,
-              requires=("discord", "discord_cli"))   # update() needs the token and the CLI, not the guild id
-# no deadline: fewer than 5 recorded runs (23 Oct); set from job_runs when measured
-jobs.register("module_discord_discover", runners.run_discord_discover, ["module_discord"], requires_uw=False,
-              lane="long", requires=("discord", "discord_cli", "discord_guild"))   # discover() also reads the id
 
 # Which store-only job a board's Save / Reset queues (``api_settings_board``, #40 / #384 SW-S4).
 SETTINGS_JOBS = {"module_comovement": "comovement_recompute", "module_swing_potential": "settings_refresh"}
@@ -268,7 +262,6 @@ TABS = [
     {"type": "tab", "key": "module_oipd", "label": "Implied Probability", "url": "/view/module_oipd", "sub": True},
     {"type": "tab", "key": "module_financials", "label": "Financials", "url": "/view/module_financials", "sub": True},
     {"type": "tab", "key": "module_uw_interaction", "label": "UW Interaction (lab)", "url": "/view/module_uw_interaction", "sub": True},
-    {"type": "tab", "key": "module_discord", "label": "Discord", "url": "/view/module_discord", "sub": True},
     {"type": "header", "label": "Classification"},
     {"type": "tab", "key": "module_comovement", "label": "Co-movement", "url": "/view/module_comovement", "sub": True},
     {"type": "tab", "key": "module_value_chain", "label": "Value Chain", "url": "/view/module_value_chain", "sub": True},
@@ -395,8 +388,6 @@ def view(mod: str):
         return _view_spxgamma()
     if mod == "module_uw_interaction":
         return _view_uw_interaction()
-    if mod == "module_discord":
-        return _view_discord()
     if mod == "logs":
         return logview.render_page(logview.page_payload())
     if mod == "runs":
@@ -526,7 +517,6 @@ _MODEL_ONLY_RENDERERS = {
 _STORE_REFRESHABLE = frozenset(_MODEL_ONLY_RENDERERS) | {
     "module_sec_13f",
     "module_sector_rotation",
-    "module_discord",          # rendered in memory by _view_discord, no cached file
 }
 
 
@@ -557,24 +547,6 @@ def _universe_loading_view(mod: str) -> str:
     return templating.render(
         "empty_board.html.j2", title=_TAB_LABELS.get(mod, mod), message=no_data_message("universe_loading"),
         hint="", stamp=datetime.now(timezone.utc).isoformat(timespec="seconds"))
-
-
-def _view_discord():
-    """The Discord board is filtered per request, so it is rendered from the store on every load.
-
-    Store only (``discord.duckdb``): a plain load and Refresh behave the same and never reach DCE or Discord.
-    """
-    from RevenueChaser.module_discord import board, report
-
-    try:
-        payload = board.build_payload(
-            request.args.get("channel") or None, request.args.get("q") or "",
-            request.args.get("date_from") or "", request.args.get("date_to") or "",
-            request.args.get("page", type=int) or 1)
-    except board.BoardInputError as exc:
-        return str(exc), 400, {"Content-Type": "text/plain; charset=utf-8"}
-    # Rendered in memory (no cached file), so concurrent filtered views can never be served each other's page.
-    return report.render_discord_board(payload)
 
 
 def _view_spxgamma() -> str:
@@ -964,73 +936,6 @@ def _busy(modules: tuple[str, ...], label: str):
     if active:
         return jsonify({"ok": False, "error": label, "job_id": active}), 409
     return None
-
-
-def _discord_busy():
-    """A 409 while a Discord job is already queued or running (repeated clicks must not queue repeated exports)."""
-    return _busy(("module_discord", "module_discord_discover"), "A Discord job is already queued or running.")
-
-
-@app.route("/run/module_discord", methods=["POST"])
-def run_module_discord():
-    channel = (request.form.get("channel") or "").strip()
-    if channel and not channel.isdigit():
-        return jsonify({"ok": False, "error": "bad channel"}), 400
-    refused = _discord_busy()      # credentials are the submit gate's job (#26, jobs.credential_problem)
-    if refused:
-        return refused
-    if channel:
-        from RevenueChaser.module_discord import store as discord_store
-        if channel not in {c["channel_id"] for c in discord_store.channels()}:
-            return jsonify({"ok": False, "error": "unknown channel"}), 404
-    # "Download attachments" is the epic's decision: images and files land under DISCORD_MEDIA_DIR.
-    return _submit("module_discord", {"media": True, **({"channel_id": channel} if channel else {})})
-
-
-@app.route("/run/module_discord_discover", methods=["POST"])
-def run_module_discord_discover():
-    refused = _discord_busy()
-    if refused:
-        return refused
-    return _submit("module_discord_discover", {})
-
-
-@app.route("/api/discord/follow", methods=["POST"])
-def discord_follow():
-    from RevenueChaser.module_discord import store as discord_store
-
-    body = request.get_json(silent=True)
-    if not isinstance(body, dict):
-        return jsonify({"ok": False, "error": "expected a JSON object"}), 400
-    channel_id, enabled = body.get("channel_id"), body.get("enabled")
-    if not isinstance(channel_id, str) or not channel_id.isdigit() or not isinstance(enabled, bool):
-        return jsonify({"ok": False, "error": "need channel_id (digits) and enabled (true/false)"}), 400
-    if channel_id not in {c["channel_id"] for c in discord_store.channels()}:
-        return jsonify({"ok": False, "error": "unknown channel"}), 404
-    discord_store.set_enabled([channel_id], enabled)
-    return jsonify({"ok": True, "channel_id": channel_id, "enabled": enabled})
-
-
-@app.route("/discord/media/<path:rel>")
-def discord_media(rel: str):
-    """Serve a downloaded Discord attachment from inside DISCORD_MEDIA_DIR only (404 for anything else).
-
-    Images show inline; every other type is forced to download so a hostile .html/.svg never runs on this origin.
-    """
-    from RevenueChaser.module_discord import board
-
-    # A cross-site GET (a page the user visits) must not reach the disk at all, and a URL path with a
-    # backslash, colon or drive is refused by pure string checks BEFORE any filesystem call: on Windows
-    # resolve() on a UNC path opens an SMB connection to that host.
-    if (request.headers.get("Sec-Fetch-Site") or "").lower() == "cross-site":
-        return "Not found", 404
-    safe = board.media_rel(rel) if board.url_rel_is_safe(rel) else None
-    if safe is None:
-        return "Not found", 404
-    resp = send_from_directory(config.DISCORD_MEDIA_DIR, safe, as_attachment=not board.is_image(safe))
-    resp.headers["X-Content-Type-Options"] = "nosniff"
-    resp.headers["Content-Security-Policy"] = "sandbox"
-    return resp
 
 
 @app.route("/run/module_value_chain", methods=["POST"])

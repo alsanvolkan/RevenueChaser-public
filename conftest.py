@@ -43,8 +43,6 @@ def _redirect_data_roots() -> None:
     os.environ.setdefault("RC_STORE_DIR", str(_root / ".store"))
     os.environ.setdefault("RC_CACHE_DIR", str(_root / ".cache"))
     os.environ.setdefault("RC_EDGAR_DOCS_DIR", str(_root / "edgar_docs"))
-    # Backup tests zip this tree; without the redirect they would archive the developer's real one.
-    os.environ.setdefault("RC_DISCORD_MEDIA_DIR", str(_root / "discord_media"))
     # Same for the SPX Gamma tree (UW day files, brier.json): the backup mirrors it (#276), and an
     # unredirected test once wrote into the real brier.json (G1). Tests that pass their own root still win.
     os.environ.setdefault("SPX_GAMMA_DATA_ROOT", str(_root / "spx_gamma"))
@@ -256,21 +254,6 @@ def isolate_yf_session(monkeypatch):
     """The yfinance 401 reset (#402) keeps process-wide "seen" and "reset" times; one test must not arm the next."""
     from RevenueChaser.core.providers import yf_session
     monkeypatch.setattr(yf_session, "_STATE", {"seen": float("-inf"), "reset": float("-inf")})
-
-
-@pytest.fixture(autouse=True)
-def isolate_discord_env(monkeypatch):
-    """Never start (or read the credentials of) a developer's real Discord setup from a test.
-
-    ``core/config.py`` runs ``load_dotenv()``, so a developer's ``.env`` puts a real ``RC_DCE_CLI``,
-    ``DISCORD_TOKEN`` and ``RC_DISCORD_GUILD_ID`` into every test process, and ``inventory.collect()`` (the
-    Settings readiness card) would run the real exe with ``--version``. A test that needs them sets its own.
-    The version probe's per-file cache is process-wide, so every test starts with an empty one.
-    """
-    from RevenueChaser.module_discord import exporter
-    for name in ("RC_DCE_CLI", "DISCORD_TOKEN", "RC_DISCORD_GUILD_ID"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(exporter, "_VERSION_CACHE", {})
 
 
 @pytest.fixture(autouse=True)

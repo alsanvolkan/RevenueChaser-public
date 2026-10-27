@@ -179,10 +179,6 @@ BOARD_INPUTS: list[dict] = [
            lambda: _json("financials", "financials_latest.json")),
     _board("module_uw_interaction", "Unusual Whales Interaction (lab)", [],
            lambda: _json("uw_interaction", "uw_interaction_latest.json")),
-    # Rendered in memory (no cached payload). A missing file is ``not_rendered``.
-    _board("module_discord", "Discord",
-           ["discord_channels", "discord_messages", "discord_export_runs"],
-           lambda: _json("discord", "discord_latest.json")),
     _board("module_comovement", "Co-movement",
            # The engine reads the daily price bars since #379 (module_comovement/ohlc.py), not swing_ohlc.
            ["equity_universe", "price_bars_daily"],

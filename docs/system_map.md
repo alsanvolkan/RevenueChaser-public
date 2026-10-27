@@ -3,8 +3,8 @@
 Where each part of the app lives, and how data moves from a provider to a board.
 Companions: [`data_architecture.md`](data_architecture.md) for the storage rules
 (what is durable and what is regenerable), [`data_retrieval.md`](data_retrieval.md)
-for Fetch vs Refresh. Source basis: the current worktree; the stores are the five
-DuckDB files of `docs/data_architecture.md` §Storage layout (the fifth,
+for Fetch vs Refresh. Source basis: the current worktree; the stores are the four
+DuckDB files of `docs/data_architecture.md` §Storage layout (the fourth,
 `history.duckdb`, appears with the first recorded run, `core/history.py`).
 
 ## The area map
@@ -19,7 +19,7 @@ stored fact.
 
 | `area:*` key | What it holds | Directories and main modules | Epic |
 |---|---|---|---|
-| `platform-store` | The durable store, its writers, migrations and backups | `.store/` (five DuckDB files), `edgar_docs/`, `core/rawstore.py`, `core/config.py`, `core/prices.py`, `core/quotes.py`, `core/history.py`, `core/automations.py`, `scripts/backup_store.py`, `scripts/restore_store.py`, `scripts/compact_store.py`, `scripts/daily_bars.py`, `scripts/migrate_rawdata_to_duckdb.py` | #49 |
+| `platform-store` | The durable store, its writers, migrations and backups | `.store/` (four DuckDB files), `edgar_docs/`, `core/rawstore.py`, `core/config.py`, `core/prices.py`, `core/quotes.py`, `core/history.py`, `core/automations.py`, `scripts/backup_store.py`, `scripts/restore_store.py`, `scripts/compact_store.py`, `scripts/daily_bars.py`, `scripts/migrate_rawdata_to_duckdb.py` | #49 |
 | `platform-app` | The dashboard process: tabs, routes, the job queue, Fetch vs Refresh, logs, the launcher | `app/` (`dashboard.py`, `jobs.py`, `runners.py`, `logview.py`, `launcher.py`), `templates/` (the shell, the logs page, and the empty / error / locked pages), `app/static/`, `core/job_control.py`, `core/job_lock.py`, `launch.pyw`, `run_dashboard.bat`, `start.ps1`, `stop.ps1`, `app.sh` | #50 |
 | `providers` | Network clients, and the credential and cost gates in front of them | `core/providers/`, `core/credentials.py`, `core/offpeak.py`, `core/subscription_usage.py`, `scripts/cloud_llm_call.py`, `.env.example`, `docs/openapi.yaml` (the UW endpoint contract) | #51 |
 | `classification` | Which sector, industry, theme and index a ticker carries, and the three boards built on that cut | `module_comovement/`, `module_relatedness/`, `module_value_chain/`, `core/universe.py`, `core/universe_fetch.py`, `core/gics_map.py`, `core/taxonomy.py`, `core/index_registry.py` | #55 |
@@ -30,7 +30,6 @@ stored fact.
 | `data-health` | The Settings board: coverage, refetch, 10-K freshness, per-board settings | `module_settings/`, `core/board_settings.py`, `docs/data_health.md` | #53 |
 | `shared-ui` | The filter kit and the HTML trust boundary every board renders through | `core/reporting_common.py`, `core/html_safe.py`, `core/templating.py`, `core/provenance.py`, `core/funnel.py`, `core/static/`, `docs/dashboard_ui.md` | #54 |
 | `quality` | The unit and e2e tiers, their harnesses, and the guards CI runs | `module_testing/` (`e2e/`, `e2e/harness/`), the `tests/` directory beside each package, `core/tests/`, `conftest.py`, `pytest.ini`, `.github/workflows/tests.yml`, `scripts/private_check.py` | #60 |
-| `community` | The Discord archive and its board | `module_discord/`, `discord_media/`, `.store/discord.duckdb` | #79 |
 | — *(no key)* | The identity spine: every ticker's security type, name and classification sources | `core/identity/` (incl. `sources/`), `core/sic_registry.py`, `core/identity_cusip.py`, `core/company_profile.py`, `scripts/index_lists.py` | #52 |
 
 Two rows the label list does not settle:
@@ -76,7 +75,7 @@ writers are `data_architecture.md`'s subject; this is only "who reaches for the 
 
 Providers are reached only by the async jobs behind `POST /run/<module>` (one worker drains the queue; a
 Refresh re-reads `.store/` with no network). Each job writes its rows to a store file, and the boards
-render from the store. Files on the side (`edgar_docs/`, `discord_media/`, the SPX Gamma tree) hold the
+render from the store. Files on the side (`edgar_docs/`, the SPX Gamma tree) hold the
 artifacts that are files intrinsically; `.cache/` holds the regenerable board output.
 
 ```mermaid
@@ -87,7 +86,6 @@ flowchart LR
         SEC["SEC EDGAR<br/>(filings, companyfacts, 13F zips)"]
         FRED["FRED"]
         OF["OpenFIGI"]
-        DCE["DiscordChatExporter"]
         DS["DeepSeek (LLM)"]
     end
 
@@ -98,7 +96,6 @@ flowchart LR
         ERN["Earnings Radar · Financials"]
         OWN["SEC 13F · LEAPS · EDGAR sync"]
         COM["Co-movement · Relatedness · Value Chain"]
-        DBC["Discord sync"]
         BAR["Daily bars RC-Daily-Bars"]
         OUT["Forecast outcomes RC-Forecast-Outcomes"]
         BAS["Forecast baselines RC-Forecast-Baselines"]
@@ -110,17 +107,15 @@ flowchart LR
         EDGAR[("edgar.duckdb")]
         PRICES[("prices.duckdb")]
         HIST[("history.duckdb")]
-        DISCORD[("discord.duckdb")]
     end
 
     subgraph files["Files on disk (durable)"]
         EDOCS["edgar_docs/ 10-K · 20-F HTML"]
-        DMEDIA["discord_media/"]
         SPXTREE["module_spx_gamma/data/"]
     end
 
     subgraph boards["Boards (.cache/, rendered from the store)"]
-        B_RESEARCH["Earnings Radar · SPX Gamma · Implied Probability · Financials · UW Interaction · Discord"]
+        B_RESEARCH["Earnings Radar · SPX Gamma · Implied Probability · Financials · UW Interaction"]
         B_CLASS["Co-movement · Value Chain · Relatedness"]
         B_SCREEN["Sector Rotation · Asymmetric Growth · Swing Potential · Fundamentals"]
         B_OWN["SEC 13F · LEAPS"]
@@ -132,7 +127,6 @@ flowchart LR
     SEC --> OWN & UNI & COM
     FRED --> ERN
     OF --> UNI
-    DCE --> DBC
 
     UNI --> RAW
     MKT --> RAW & SPXTREE & HIST
@@ -140,7 +134,6 @@ flowchart LR
     ERN --> RAW & EDGAR
     OWN --> RAW & EDGAR & EDOCS & HIST
     COM --> RAW & EDGAR & EDOCS & HIST
-    DBC --> DISCORD & DMEDIA
     BAR --> PRICES
     OUT --> RAW
     BAS --> RAW
@@ -151,12 +144,10 @@ flowchart LR
     PRICES --> OUT
     PRICES --> BAS
     HIST --> B_RESEARCH & B_CLASS & B_SCREEN & B_OWN
-    DISCORD --> B_RESEARCH
     EDOCS --> B_CLASS
-    DMEDIA --> B_RESEARCH
     SPXTREE --> B_RESEARCH
 
-    BAK -.-> RAW & EDGAR & PRICES & HIST & DISCORD
+    BAK -.-> RAW & EDGAR & PRICES & HIST
 ```
 
 Notes the diagram simplifies:
@@ -167,8 +158,8 @@ Notes the diagram simplifies:
 - **Result history.** `core/history.record_run` writes one header row and its run-keyed rows to
   `history.duckdb` per run; the "Recorded sessions" block reads them (`core/reporting_common.py`).
   The file appears with the first recorded run. Every board module except `module_spx_gamma`,
-  `module_uw_interaction`, `module_settings` and `module_discord` has a `history.py` that calls it;
-  Discord records its own export runs in its own store, and the other three record nothing.
+  `module_uw_interaction` and `module_settings` has a `history.py` that calls it; those three record
+  nothing.
 - **The forecast ledger.** `core/ledger.py` freezes each board's shown picks into
   `raw.duckdb.forecast_ledger` (append-only, `"history": True`, #286); `core/outcomes.py` derives
   `forecast_outcomes` from it and the `prices.duckdb` bars, and `core/baselines.py` derives
@@ -236,8 +227,8 @@ Line numbers are this worktree's.
   `score_ticker`. Cross-board *computation*, not just a data read — **worth an issue**
   as the clearest case of one board computing another's score.
 - `module_settings/boards.py:15–18` imports Co-movement's and Swing's `config`/`settings`;
-  `module_settings/inventory.py:21` imports Discord's `readiness`, `:397` Sector
-  Rotation's `etf_holdings`, `:938` Value Chain's `engine`. Settings is the board that
+  `module_settings/inventory.py:590` imports Sector Rotation's `etf_holdings`, `:1414` Value
+  Chain's `engine`. Settings is the board that
   has to know every other board, so this one is structural rather than accidental —
   **not worth its own issue**, but it is why `module_settings` changes so often.
 
@@ -298,8 +289,6 @@ in §Where the shared code lives instead. `core/screen_common.py` likewise moved
   SEC 13F ↔ LEAPS, Swing ↔ Fundamentals.
 - `main.py` at the root is the legacy Earnings Radar CLI that `./app.sh menu` and
   `./app.sh radar` run; it imports earnings and rotation the way the dashboard does.
-- `conftest.py:184` imports `module_discord.exporter` to switch its CLI off in tests —
-  the test harness, not a board.
 - `docs/`, `.github/`, `.claude/` and `templates/` hold no code that belongs to another
   area except the dealer-hedge template and `app/universe_cli.py`, both noted above.
 

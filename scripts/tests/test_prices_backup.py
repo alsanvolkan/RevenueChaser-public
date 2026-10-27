@@ -125,7 +125,7 @@ def test_a_failed_prices_backup_is_logged_and_the_rest_of_the_night_still_runs(
     assert bs.main(["--out", str(out)]) == 1
     err = capsys.readouterr().err
     assert "prices backup FAILED: disk full" in err and "skipped, 1 backup step(s) failed" in err
-    assert _names(out, "raw_*.duckdb") and _names(out, "discord_*.duckdb")
+    assert _names(out, "raw_*.duckdb") and _names(out, "edgar_*.duckdb")
     assert list(mirror.iterdir()) == []
 
 
@@ -191,13 +191,11 @@ def _aged(root: Path, rel: str, data: bytes) -> None:
 def test_a_failed_prices_upload_comes_last_and_costs_no_other_off_machine_copy(
         rawstore_tmp_db, tmp_path, clock, monkeypatch, capsys):
     """Review F1: after the fill the prices snapshot is ~2.4 GiB. A failed upload of it (Drive quota, a timeout) must
-    not cost that night's copies of the SPX and Discord mirrors, which cannot be fetched again; prices can."""
+    not cost that night's copy of the SPX mirror, which cannot be fetched again; prices can."""
     _bars()
-    spx, media = tmp_path / "spx", tmp_path / "media"
+    spx = tmp_path / "spx"
     _aged(spx, "brier.json", b'{"records": []}')
-    _aged(media, "900/a.png", b"A" * 10)
     monkeypatch.setattr(spx_config, "DATA_ROOT", spx)
-    monkeypatch.setattr(config, "DISCORD_MEDIA_DIR", media)
     out, mirror = tmp_path / "out", tmp_path / "drive"
     mirror.mkdir()
     monkeypatch.setattr(config, "RAW_STORE_BACKUP_MIRROR", str(mirror))
@@ -214,8 +212,7 @@ def test_a_failed_prices_upload_comes_last_and_costs_no_other_off_machine_copy(
     assert "off-machine copy FAILED" in err and "Drive quota exceeded" in err
     drive = mirror / SUBDIR
     assert (drive / "spx_gamma_mirror" / "brier.json").read_bytes() == b'{"records": []}'
-    assert (drive / "discord_media_mirror" / "900" / "a.png").read_bytes() == b"A" * 10
-    for pattern in ("raw_*.duckdb", "edgar_*.duckdb", "discord_*.duckdb"):
+    for pattern in ("raw_*.duckdb", "edgar_*.duckdb"):
         assert _names(drive, pattern) == _names(out, pattern)[-1:] and _names(drive, pattern), pattern
     assert _names(drive, "prices_*") == []
 
@@ -252,6 +249,6 @@ def test_restore_latest_prices_and_list(rawstore_tmp_db, tmp_path, capsys):
 
 def test_the_backup_row_names_prices_and_its_rule_and_keeps_its_arguments():
     row = next(e for e in automations.REGISTRY if e.name == "RC-Store-Backup")
-    assert "(raw, edgar, discord, history, prices)" in row.description
+    assert "(raw, edgar, history, prices)" in row.description
     assert "2 daily prices snapshots" in row.description
     assert row.args == ("-m", "RevenueChaser.scripts.backup_store", "--keep", "5")

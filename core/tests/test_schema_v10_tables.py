@@ -106,7 +106,7 @@ def test_table_is_created_only_in_its_declared_file(rawstore_tmp_db, name):
     expect = _file_of(name)
     assert rawstore._db_of(name) == expect
     files = {"raw": _tables(rawstore.DB_PATH), "edgar": _tables(rawstore.edgar_db_path()),
-             "discord": _tables(rawstore.discord_db_path()), "prices": _tables(rawstore.prices_db_path())}
+             "prices": _tables(rawstore.prices_db_path())}
     assert [db for db, tables in files.items() if name in tables] == [expect]
 
 
@@ -212,7 +212,7 @@ def test_v9_store_gains_the_22_tables_and_keeps_every_row(v9_store):
     _forget_reconciliation()
     rawstore.ensure_all_tables()
     files = {"raw": _tables(rawstore.DB_PATH), "edgar": _tables(rawstore.edgar_db_path()),
-             "discord": _tables(rawstore.discord_db_path()), "prices": _tables(rawstore.prices_db_path())}
+             "prices": _tables(rawstore.prices_db_path())}
     assert len(V10_TABLES) == 22
     for name in V10_TABLES:
         assert [db for db, tables in files.items() if name in tables] == [_file_of(name)], name
@@ -224,7 +224,7 @@ def test_v9_store_gains_the_22_tables_and_keeps_every_row(v9_store):
     assert edgar["annual"] == _ANNUAL and edgar["meta"] == _META
     assert rawstore.get("job_runs", "r9")["status"] == "done"
 
-    files = (rawstore.DB_PATH, rawstore.edgar_db_path(), rawstore.discord_db_path(), rawstore.prices_db_path())
+    files = (rawstore.DB_PATH, rawstore.edgar_db_path(), rawstore.prices_db_path())
     before = [_snapshot(p) for p in files]
     counts = {t: rawstore.count(t) for t in rawstore.MANIFEST}
     _forget_reconciliation()

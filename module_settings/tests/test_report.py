@@ -891,109 +891,6 @@ def test_the_card_is_reachable_at_the_identity_anchor_and_comes_after_the_table(
     assert '<section id="identity">' in empty and "</section>" in empty, "the empty state is reachable too"
 
 
-# ── Discord export readiness card (#242) ─────────────────────────────────────
-def _discord(**over):
-    d = {"ready": True, "min_version": "2.45", "checks": [
-        {"key": "cli", "label": "DCE CLI path (RC_DCE_CLI)", "state": "ok",
-         "detail": "C:\\tools\\DiscordChatExporter\\DiscordChatExporter.Cli.exe"},
-        {"key": "version", "label": "DCE version", "state": "ok", "detail": "2.48.0 (needs 2.45 or newer)"},
-        {"key": "token", "label": "Discord token (DISCORD_TOKEN)", "state": "ok",
-         "detail": "DISCORD_TOKEN is set. Its value is never shown."},
-        {"key": "guild", "label": "Server id (RC_DISCORD_GUILD_ID)", "state": "ok",
-         "detail": "RC_DISCORD_GUILD_ID is set."},
-    ]}
-    d.update(over)
-    return d
-
-
-def _not_ready():
-    checks = _discord()["checks"]
-    checks[0] = dict(checks[0], state="bad", detail="RC_DCE_CLI is not set. Point it at the CLI.")
-    checks[1] = dict(checks[1], state="skipped", detail="Needs the CLI path above first.")
-    checks[2] = dict(checks[2], state="unknown", detail="Could not read it.")
-    return _discord(ready=False, checks=checks)
-
-
-def test_the_discord_card_renders_every_check_with_its_id_state_and_detail():
-    html = _with(discord=_discord())
-    card = html[html.index('id="discord-readiness"'):]
-    for key in ("cli", "version", "token", "guild"):
-        assert f'id="discord-check-{key}"' in card, key
-    assert "DCE CLI path (RC_DCE_CLI)" in card and "2.48.0 (needs 2.45 or newer)" in card
-    assert card.count('class="st-ok">ok</span>') == 4
-
-
-def test_the_discord_card_colours_each_state_by_its_meaning():
-    card = _with(discord=_not_ready())
-    card = card[card.index('id="discord-readiness"'):]
-    row = lambda key: card[card.index(f'id="discord-check-{key}"'):].split("</tr>")[0]   # noqa: E731
-    assert 'class="st-bad">fix</span>' in row("cli")
-    assert 'class="st-warn">not checked</span>' in row("version")
-    assert 'class="st-warn">unknown</span>' in row("token")
-    assert 'class="st-ok">ok</span>' in row("guild")
-
-
-def test_the_discord_summary_says_ready_only_when_ready():
-    ready = _with(discord=_discord())
-    assert 'id="discord-summary"' in ready
-    summary = ready[ready.index('id="discord-summary"'):].split("</div>")[0]
-    assert "Ready" in summary and "Not ready" not in summary
-    broken = _with(discord=_not_ready())
-    summary = broken[broken.index('id="discord-summary"'):].split("</div>")[0]
-    assert "Not ready" in summary and "3 checks need attention" in summary
-
-
-def test_the_discord_summary_uses_the_singular_for_one_check():
-    d = _discord(ready=False)
-    d["checks"][2] = dict(d["checks"][2], state="bad", detail="DISCORD_TOKEN is missing.")
-    html = _with(discord=d)
-    summary = html[html.index('id="discord-summary"'):].split("</div>")[0]
-    assert "1 check needs attention" in summary
-
-
-def test_the_discord_card_says_it_cannot_verify_the_token_and_reads_no_network():
-    html = _with(discord=_discord())
-    note = html[html.index('id="discord-note"'):].split("</div>")[0]
-    assert "token" in note and "network" in note
-
-
-def test_the_discord_card_escapes_every_data_derived_string():
-    d = _discord()
-    d["checks"][0] = dict(d["checks"][0], label="<i>lbl</i>", detail='<script>alert(1)</script> & "x"')
-    html = _with(discord=d)
-    assert "<script>alert(1)</script>" not in html and "<i>lbl</i>" not in html
-    assert "&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;x&quot;" in html
-
-
-def test_no_discord_card_without_the_payload_key_or_when_it_is_none():
-    assert "discord-readiness" not in report.render_settings_dashboard(_payload())
-    assert "discord-readiness" not in _with(discord=None)
-
-
-def test_the_discord_card_sits_after_the_identity_card_and_before_the_errors_and_boards():
-    html = _with(rows=_payload()["rows"], identity=_identity(), discord=_discord(), boards=[_card()],
-                 errors=[{"table": "equity_universe", "where": "_count", "error": "x"}])
-    assert (html.index('class="panel"') < html.index('id="identity-health"') < html.index('id="discord-readiness"')
-            < html.index('id="errors"') < html.index("Board inputs"))
-    assert '<section id="discord"><div class="bcard" id="discord-readiness">' in html
-    assert html.count('id="discord"') == 1
-
-
-def test_the_discord_card_shows_without_the_identity_card():
-    html = _with(discord=_discord())
-    assert 'id="identity-health"' not in html and 'id="discord-readiness"' in html
-
-
-def test_the_help_text_mentions_the_discord_card():
-    html = _with(discord=_discord())
-    help_ = html[html.index('class="help"'):html.index("</details>", html.index('class="help"'))]
-    assert "Discord" in help_ and "--version" in help_
-    # the card does read the token, to see that it is set: the text must say so, and that it is never shown
-    assert "token is read only to check that it is set" in help_ and "never shown" in help_
-    assert "never the token" not in help_
-    assert "no key or token" in help_, "the version probe starts without keys or tokens in its environment"
-
-
 # --- Automations panel (#130) ------------------------------------------------------
 
 def _autos():
@@ -1816,7 +1713,7 @@ def test_the_bar_colour_follows_the_coverage_band(fraction, band):
     assert f'<span class="covbar {band}"' in html
 
 
-@pytest.mark.parametrize("db", ["raw", "edgar", "discord", "history", "prices"])
+@pytest.mark.parametrize("db", ["raw", "edgar", "history", "prices"])
 def test_each_store_file_gets_a_pill_whose_text_names_it(db):
     html = _cov_table({"fraction": None, "label": "n/a"}, db=db)
     pill = f'<span class="db db-{db}" title="stored in {db}.duckdb under .store/">{db}</span>'
@@ -1843,7 +1740,7 @@ def test_a_legend_under_the_table_explains_each_pill_once():
     assert html.index("</tbody></table>") < html.index('id="db-legend"'), "under the table"
     legend = html[html.index('id="db-legend"'):]
     assert "Store file" in legend
-    for db in ("raw", "edgar", "discord", "history", "prices"):
+    for db in ("raw", "edgar", "history", "prices"):
         assert f'class="db db-{db}"' in legend, db
 
 
@@ -2116,7 +2013,7 @@ def test_the_count_line_always_says_how_many_of_the_total_are_shown():
 
 def test_the_chip_groups_list_only_the_values_the_rows_carry():
     bar = _filter_bar(report.render_settings_dashboard(_g4_payload()))
-    assert _chip_texts(bar, "db") == ["raw", "edgar"], "prices / history / discord are not here"
+    assert _chip_texts(bar, "db") == ["raw", "edgar"], "prices and history are not here"
     assert _chip_texts(bar, "source") == ["FINRA and the Commodity Futures Trading Commission",
                                           "SEC EDGAR filings", "Yahoo Finance"]
     assert 'data-value="finra/cftc"' in bar and 'data-value="sec"' in bar, "the filter still compares the machine value"
@@ -2785,7 +2682,7 @@ def test_each_edge_is_coloured_by_the_store_file_it_lands_in():
     svg = report._flow_svg(report.flow_graph(_flow_rows()))
     for colour in ("#4f8cff", "#e06088", "#e0a030"):          # raw, prices, edgar
         assert f'stroke="{colour}"' in svg
-    assert 'stroke="#a070e0"' not in svg, "no dataset lands in discord here"
+    assert 'stroke="#3cb89a"' not in svg, "no dataset lands in history here"
 
 
 def test_two_flows_sharing_one_pair_draw_side_by_side_so_neither_colour_hides_the_other():
@@ -2804,18 +2701,19 @@ def test_two_flows_sharing_one_pair_draw_side_by_side_so_neither_colour_hides_th
     assert any('stroke="#e0a030"' in tag for tag in shared), "edgar's line is still its own"
 
 
-def test_a_store_file_outside_the_five_files_draws_in_muted_ink_and_says_so():
+def test_a_store_file_outside_the_four_files_draws_in_muted_ink_and_says_so():
     svg = report._flow_svg(report.flow_graph([{"key": "x", "source": "sec", "writer": "W"}]))
     assert report.FLOW_NO_STORE in svg
     assert 'stroke="#8a93a6"' in svg
     section = _flow_section([{"key": "x", "source": "sec", "writer": "W"}])
     assert "names no store file" in section, "the legend explains the grey line"
+    assert len(report.DB_PILLS) == 4 and "outside the four" in section, "the legend counts the files it lists"
 
 
-def test_the_flow_legend_names_the_five_store_files():
+def test_the_flow_legend_names_the_four_store_files():
     section = _flow_section(_flow_rows())
     legend = section[section.index('id="flow-legend"'):]
-    for db in ("raw", "edgar", "discord", "history", "prices"):
+    for db in ("raw", "edgar", "history", "prices"):
         assert f'id="flow-store-{db}"' in legend, db
         assert f"{db}.duckdb" in legend, db
     assert "Line colour is the store file" in legend

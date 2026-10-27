@@ -36,9 +36,9 @@ def test_an_unmarked_test_gets_its_own_copy_and_runs_no_apply(ensure_calls, raws
     assert ensure_calls == []
     assert rawstore_tmp_db == tmp_path / "raw.duckdb" == rawstore.DB_PATH
     assert rawstore_template.dir not in rawstore_tmp_db.parents and rawstore_tmp_db.parent != rawstore_template.dir
-    for path in (rawstore_tmp_db, rawstore.edgar_db_path(), rawstore.discord_db_path(), rawstore.prices_db_path()):
+    for path in (rawstore_tmp_db, rawstore.edgar_db_path(), rawstore.prices_db_path()):
         assert path.is_file()
-    for db in ("raw", "edgar", "discord", "prices"):   # every MANIFEST table, in its own file, as the apply makes it
+    for db in ("raw", "edgar", "prices"):   # every MANIFEST table, in its own file, as the apply makes it
         assert {n for n in rawstore.MANIFEST if rawstore._db_of(n) == db} <= _tables(db)
     assert rawstore.get("store_schema", "schema_version")["value"] == rawstore.schema_version()
     assert not rawstore.history_db_path().exists()       # the apply does not make the history file; nor does the copy

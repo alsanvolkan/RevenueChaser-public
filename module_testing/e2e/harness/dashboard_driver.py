@@ -225,7 +225,7 @@ class Dashboard:
         import duckdb
         try:
             from RevenueChaser.core import rawstore
-            name = rawstore.MANIFEST.get(table, {}).get("db", "raw")    # edgar, discord, history, prices (#156)
+            name = rawstore.MANIFEST.get(table, {}).get("db", "raw")    # edgar, history, prices (#156)
         except Exception:  # noqa: BLE001
             name = "raw"
         db = self.store_dir / f"{name}.duckdb"

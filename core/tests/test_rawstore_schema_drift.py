@@ -254,7 +254,7 @@ _NO_PRIMARY_KEY = {
 def _key_mismatches() -> list[str]:
     live: dict[str, list[str]] = {}
     rawstore.ensure_history()           # the history file exists only after the first recorded run
-    for db in ("raw", "edgar", "discord", "history", "prices"):
+    for db in ("raw", "edgar", "history", "prices"):
         with rawstore.connect(read_only=True, db=db) as conn:
             for table, cols in conn.execute(
                     "SELECT table_name, constraint_column_names FROM duckdb_constraints() "

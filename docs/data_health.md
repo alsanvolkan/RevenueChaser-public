@@ -104,7 +104,7 @@ Honesty rules the read keeps:
 - rows are sorted worst coverage first (`sort_key`); a row whose coverage has no fraction — `n/a`,
   `unknown`, `error` — follows the measured ones, and ties break by label.
 
-The payload keys: `rows`, `tickers`, `boards`, `identity`, `automations`, `discord`, `backups`,
+The payload keys: `rows`, `tickers`, `boards`, `identity`, `automations`, `backups`,
 `other_tables`, `errors`, `generated_at`, `provider_health`, `timing`.
 
 ---
@@ -145,7 +145,7 @@ The board **does** have a filter panel of its own. Every axis is a fact the row 
 no filter can change what a number means:
 
 - a find box over the dataset names and the store table names;
-- **Store file** chips, one per store file present: `raw`, `edgar`, `prices`, `history`, `discord`;
+- **Store file** chips, one per store file present: `raw`, `edgar`, `prices`, `history`;
 - **Source** chips, one per source present, spelled out in words;
 - **State** chips: *needs attention* (coverage under 70 per cent, or a failed query), *no time column*
   (no last data date, so no freshness can be read from this dataset), *no denominator* (the coverage has
@@ -169,8 +169,8 @@ the rendered order when pressed again.
   FRED (Federal Reserve Economic Data), OpenFIGI, worked out by us from other datasets, entered by
   hand, the store's own bookkeeping, or "more than one provider, or not known".
   The machine value stays in the row's data attribute for the filters; only the visible text is words.
-  That list of provider names is the page's only one: this column, the Board inputs rows (3.6) and the
-  data-flow diagram (3.8) all read it, so one provider cannot be called three things on one page. A
+  That list of provider names is the page's only one: this column, the Board inputs rows (3.5) and the
+  data-flow diagram (3.7) all read it, so one provider cannot be called three things on one page. A
   source the list does not know is named as unnamed, never under a wrong name.
 - **Coverage** is a fill bar and the counts: green at 95 per cent and above, amber from 70, red below.
   The drawn width is clamped to 100 per cent while the label keeps the real counts, so a coverage above
@@ -251,7 +251,7 @@ It is normally empty, and `core/tests/test_datasets.py` keeps it so.
 ### 2.7 The IBKR gateway shortcut
 
 Above the help block, one link that opens the IBKR gateway's own login screen in a new tab. Whether
-that login is currently good is a different card, 3.3. The
+that login is currently good is a different card, 3.2. The
 address is **not** in this repository: it is `RC_IBKR_LOGIN_URL`, read on every payload build, so an
 unset variable renders no card at all and no host is pinned in the code. Only an absolute `http` or
 `https` address with a host is accepted; anything else (a `javascript:` or `data:` value, a bare
@@ -311,19 +311,7 @@ counted in "sources ok n of m", and a failed check writes no conflicts and leave
 Each run also refreshes the oldest quarter of the cached SEC submissions rows that are at least
 seven days old, so a universe fetched in one day does not expire together.
 
-### 3.2 Discord export readiness
-
-Answers "can I run Discover and Update yet?" before the first export, from the environment and the
-exporter file only: no network call and no store table. Four checks, in the order they are fixed:
-the exporter path, its version against the minimum, the Discord token, and the server id. The summary
-says **Ready** only when all four pass.
-
-Values are never shown. The token is read only to check that it is set, and neither it nor the server
-id reaches the payload, the page or the error list. The one thing that starts the program is the
-version read, run once per exporter file with every key and token removed from its environment and
-cached in the dashboard process, so a hang cannot cost a timeout on every Refresh.
-
-### 3.3 IBKR Gateway login state
+### 3.2 IBKR Gateway login state
 
 The pair of the gateway shortcut in 2.7: that one is the link that logs you in, this one says whether
 that login is still good. Answers "is the gateway still logged in, and if not, since when?". Its
@@ -366,7 +354,7 @@ nothing is recorded, and the card says so and names the variable. `RC_IBKR_HOST`
 then default to `127.0.0.1` and `4001` — loopback, because the gateway's API port should not be
 reachable off its own machine.
 
-### 3.4 Backups
+### 3.3 Backups
 
 Built from the backup job's own records in the local backup folder: both folder sizes, and the last
 read-only self-check of the local folder. The off-machine (Google Drive) copy is **never** read,
@@ -382,13 +370,13 @@ arming a delete is a separate change that needs a typed confirmation. Nothing on
 or moves a backup file.
 
 The retention rule has one copy in the code, read by both the nightly prune and this dry run: the
-newest five raw snapshots, two EDGAR, two document archives, two Discord, five history, two prices,
+newest five raw snapshots, two EDGAR, two document archives, five history, two prices,
 and twelve weekly raw copies. An archive prefix the job no longer writes (`discord_media_*.zip`,
 retired by the mirror) has its own line that keeps one copy (#153): the nightly prune never touches
 it, so without that line its old archives would never be listed. The newest copy of every list is
 **never** offered as expired, whatever a keep count computes, because a restore reads the newest snapshot.
 
-### 3.5 Automations panel
+### 3.4 Automations panel
 
 `core/automations.py` is the one registry of the scheduled tasks RevenueChaser owns, and the one
 installer. Rows: `RC-Store-Backup` (daily 04:00, `scripts.backup_store --keep 5`),
@@ -450,7 +438,7 @@ for Task Scheduler; the Linux backend maps the ones systemd has).
   days in local time, `Persistent=` from "catches up a missed run") under
   `~/.config/systemd/user/`, then enables the timer; a systemctl failure deletes both files again.
   The service carries an allowlist of variables, never a copy of the environment (unit files are
-  world-readable and `.env` puts the keys there): the four data roots as the dashboard resolved them,
+  world-readable and `.env` puts the keys there): the three data roots as the dashboard resolved them,
   so a job writes the store and logs the panel reads, and `SPX_GAMMA_DATA_ROOT`, `RAW_STORE_BACKUP_*`
   and `TZ` when set. Not mapped: "wakes the PC" (a user timer cannot arm a wake alarm, and asking for
   one leaves it failed) and the restart counts (`Restart=on-failure` would re-run a chained step's
@@ -468,7 +456,7 @@ for Task Scheduler; the Linux backend maps the ones systemd has).
   Windows Task Scheduler or systemd. The Linux backend is tested through a fake `systemctl` and a
   temporary unit folder.
 
-### 3.6 Board inputs
+### 3.5 Board inputs
 
 A Board inputs card is built from that board's own last rendered payload in `.cache` and never
 recomputes the board, so the card and the board cannot disagree. The funnel shown is the one the
@@ -497,7 +485,7 @@ payload it was given and asks the store nothing.
 A store table the registry does not place is said in words rather than left out: *not claimed by any
 dataset*, or *claimed by more than one dataset*. Those are different facts, and the line says which.
 
-### 3.7 Identity coverage
+### 3.6 Identity coverage
 
 A card directly under the inventory table: how far the stored identity data reaches, name by name.
 Every number comes from the store read, and there are two ways a cell can have no number. *Could not
@@ -539,7 +527,7 @@ says so instead of counting to nought. The two store summaries this card needs, 
 are the same two the dataset rows already asked, and each is asked **once** per page read: a second
 full sweep of either store file would spend the page's read budget on a question already answered.
 
-### 3.8 The data-flow diagram
+### 3.7 The data-flow diagram
 
 A section below Board inputs, titled *Where the data comes from and where it is stored*. Three
 columns of boxes — **Provider**, **Job that writes it**, **Store file** — with one curved line per

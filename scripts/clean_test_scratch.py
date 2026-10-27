@@ -44,7 +44,7 @@ def _newest_mtime(path: Path, depth: int = SCAN_DEPTH) -> float | None:
     One level is not enough. Writing an existing file in place — which is what DuckDB does to
     ``<root>/.store/raw.duckdb``, two levels down — changes that file's mtime and nothing above it,
     so a running session would look untouched and be swept. Two levels covers the redirected roots
-    (``.store``, ``.cache``, ``edgar_docs``, ``discord_media``, ``spx_gamma``); a write deeper than
+    (``.store``, ``.cache``, ``edgar_docs``, ``spx_gamma``); a write deeper than
     that is not seen, which is why the default age is hours and not minutes.
     """
     try:

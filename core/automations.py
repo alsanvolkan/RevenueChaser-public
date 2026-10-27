@@ -124,7 +124,7 @@ REGISTRY: tuple[AutomationEntry, ...] = (
     AutomationEntry(
         name="RC-Store-Backup", label="Daily store backup",
         args=("-m", "RevenueChaser.scripts.backup_store", "--keep", "5"), time="04:00",
-        description="Verified daily backup of the durable .store/ (raw, edgar, discord, history, prices) and the SPX Gamma tree; keeps 5 daily raw and 5 daily history snapshots, the newest 12 weekly raw copies, and 2 daily prices snapshots. Every 7 days it re-reads the backup folder against the hashes taken at copy time.",
+        description="Verified daily backup of the durable .store/ (raw, edgar, history, prices) and the SPX Gamma tree; keeps 5 daily raw and 5 daily history snapshots, the newest 12 weekly raw copies, and 2 daily prices snapshots. Every 7 days it re-reads the backup folder against the hashes taken at copy time.",
         default_install=True,
         settings=TaskSettings(wake_to_run=True, time_limit_hours=2), offmachine=True),
     AutomationEntry(
@@ -553,8 +553,8 @@ _SHOW_SERVICE = ("ActiveState", "Result", "ExecMainStatus", "ExecMainStartTimest
 # keys into the environment, so the environment is never copied. The data roots are written as this process resolved
 # them, so a job systemd starts reads and writes the store and logs the panel reads; without them it would fall back
 # to the checkout's own .store/.cache (``config._root``). The others are passed only when set.
-UNIT_ENVIRONMENT = ("RC_STORE_DIR", "RC_CACHE_DIR", "RC_EDGAR_DOCS_DIR", "RC_DISCORD_MEDIA_DIR", "SPX_GAMMA_DATA_ROOT",
-                    "RAW_STORE_BACKUP_DIR", "RAW_STORE_BACKUP_WEEKLY", "RAW_STORE_BACKUP_MIRROR", "TZ")
+UNIT_ENVIRONMENT = ("RC_STORE_DIR", "RC_CACHE_DIR", "RC_EDGAR_DOCS_DIR", "SPX_GAMMA_DATA_ROOT", "RAW_STORE_BACKUP_DIR",
+                    "RAW_STORE_BACKUP_WEEKLY", "RAW_STORE_BACKUP_MIRROR", "TZ")
 
 
 def _unit_environment() -> list[tuple[str, str]]:

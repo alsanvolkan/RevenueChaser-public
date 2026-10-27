@@ -50,12 +50,6 @@ def provider_env(base: str) -> dict[str, str]:
         # FRED short-circuits when its key is absent; keep it absent so a missing
         # fixture cannot silently reach the real internet.
         "FRED_API_KEY": "",
-        # core/config.py loads the developer's real .env into the dashboard subprocess, and the Settings
-        # readiness card would start the real DiscordChatExporter with --version. A blank value counts as
-        # set for load_dotenv, so the real ones never come through; the Discord tests set their own.
-        "RC_DCE_CLI": "",
-        "DISCORD_TOKEN": "",
-        "RC_DISCORD_GUILD_ID": "",
     }
 
 
@@ -69,7 +63,6 @@ def running_dashboard(root: Path, store: Path, cache: Path, base_env: dict[str, 
     # Every other root the subprocess writes to: inherited, it would be the root conftest's one folder per
     # RUN, which all xdist workers share (and the backup dir would be the host's real platform default).
     env["RC_EDGAR_DOCS_DIR"] = str(root / "edgar_docs")
-    env["RC_DISCORD_MEDIA_DIR"] = str(root / "discord_media")
     env["RAW_STORE_BACKUP_DIR"] = str(root / "backups")
     (root / "patreon").mkdir(exist_ok=True)
     dash = Dashboard(store_dir=store, cache_dir=cache, env=env,

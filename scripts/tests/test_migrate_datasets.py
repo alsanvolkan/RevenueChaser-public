@@ -373,7 +373,6 @@ class TestEveryManifestDatasetHasARoundTripTest:
                     "oipd_chain", "oipd_meta",
                     "security_master", "identity_conflicts", "identity_source_cache",
                     "identity_runs", "board_settings", "store_schema",
-                    "discord_channels", "discord_messages", "discord_export_runs",
                     "job_runs", "price_bars_daily", "catalyst_events",
                     "orphan_designations", "orphan_lookups", "forecast_ledger",
                     # the 22 G1 tables of #292 (schema 10): no legacy source, filled only by their writers

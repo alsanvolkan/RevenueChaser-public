@@ -349,7 +349,7 @@ def open_issues_payload(board_keys) -> dict:
     ``showTab`` with no page load (``templates/dashboard.html``). No HTML here — the shell owns the markup. The
     registry is loaded **once** per call and every entry is shipped **once**, under ``entries``; each board names the
     entries it shows by key (``core.open_issues.panel_payload``), because the shared entries would otherwise be
-    repeated on all 16 boards.
+    repeated on all 15 data boards.
 
     Raises ``open_issues.RegistryError`` when the registry is missing or malformed; the caller renders that as a
     message inside the group, never as a failed page (the ``recorded_sessions_html`` convention).

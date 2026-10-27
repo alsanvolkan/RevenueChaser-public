@@ -99,7 +99,7 @@ def test_attach_registry_carries_the_writer_note_a_spec_without_a_writer_has(mon
 def test_attach_registry_carries_the_store_file_the_spec_names(monkeypatch):
     """G2 (#124): ``DatasetSpec.db`` is the store file, so the table can pill every dataset."""
     for key, db in (("universe", "raw"), ("corpus", "edgar"), ("price_bars", "prices"),
-                    ("result_history", "history"), ("discord", "discord")):
+                    ("result_history", "history")):
         monkeypatch.setitem(datasets._BY_KEY, key, _spec(key, coverage=None))
         out, _errors = _attach([_row(key)])
         assert out[0]["db"] == db, key

@@ -5,17 +5,22 @@ they grow over time and CANNOT be regenerated from the app, yet (post-migration)
 nothing ships a backup step. This module fixes that:
 
   python -m RevenueChaser.scripts.backup_store [--out DIR] [--keep N] [--keep-edgar N]
-      [--keep-docs N] [--keep-discord N] [--keep-history N] [--keep-prices N] [--keep-weekly N] [--no-weekly]
+      [--keep-docs N] [--keep-history N] [--keep-prices N] [--keep-weekly N] [--no-weekly]
       [--keep-mirror N] [--keep-mirror-big N] [--mirror-big-every-days N] [--mirror-big-now]
 
 - Backs up ``raw.duckdb`` (structured data, ``--keep``), ``edgar.duckdb`` (raw
-  10-K/20-F documents, ``--keep-edgar``) and ``discord.duckdb`` (the Discord archive,
-  ``--keep-discord``) and ``history.duckdb`` (result history, #287, ``--keep-history``, default 5, no weekly copy
+  10-K/20-F documents, ``--keep-edgar``) and ``history.duckdb`` (result history, #287, ``--keep-history``, default 5, no weekly copy
   since #342; skipped while the file does not exist) and ``prices.duckdb`` (the daily price tables, #156,
   ``--keep-prices``, default 2 and no weekly copy: the tables are append-only, so the newest snapshot holds every
   row an older one held), plus the ``edgar_docs/`` tree (a verified zip, ``--keep-docs``; an unchanged tree keeps the
   newest zip instead of zipping again, #336)
-  and the ``discord_media/`` and SPX Gamma ``data/`` trees (incremental mirrors, see below).
+  and the SPX Gamma ``data/`` tree (an incremental mirror, see below).
+
+  The Discord archive left this repository in October 2026 and backs itself up, so this run no longer
+  touches ``discord.duckdb`` or the attachment tree. The ``discord_*.duckdb`` snapshots and the
+  ``discord_media_mirror/`` folder an earlier run left behind are **not** pruned or deleted by anything
+  here: they stay as they are until the owner removes them by hand (#175). The integrity scan still reads
+  the local ones, so the night after that removal it reports each as missing, once (docs/data_architecture.md).
 - Acquires the store's write handle through ``rawstore`` (so a lock held by the
   dashboard or a scheduled job is waited out, every attempt), CHECKPOINTs so the
   WAL is flushed into the main file, then copies the file to
@@ -26,16 +31,13 @@ nothing ships a backup step. This module fixes that:
   against the live store. A torn or raced copy is discarded and retried
   (bounded), never retained; a copy that opens but cannot be read (a damaged data block) counts as a
   mismatch. ``edgar_docs/`` archives are verified too (CRC of every member + member count).
-- Mirrors ``discord_media/`` (Discord attachments) into ``<backup dir>/discord_media_mirror/``
-  instead of zipping it (#248). Only new or changed files are read (a ``stat`` walk
-  decides), each copy goes through ``discord_media_mirror/.tmp/`` and is verified by size
-  and SHA-256 before it replaces the mirror file, a file still being written
-  (modified in the last ``MEDIA_SETTLE_SECONDS``) waits for the next run, and a file
-  that vanished from the source stays in the mirror: that is what protects the
-  attachments of messages deleted on Discord, whose links cannot be fetched again.
 - Mirrors the SPX Gamma data tree (``module_spx_gamma/data``: the UW day files, ``brier.json``, the GEX
   history) into ``<backup dir>/spx_gamma_mirror/`` the same way (#276). UW serves only recent days, so the
-  tree cannot be fetched again; the mirror is additive too.
+  tree cannot be fetched again; the mirror is additive too. Only new or changed files are read (a ``stat``
+  walk decides), each copy goes through the mirror's own ``.tmp/`` and is verified by size and SHA-256
+  before it replaces the mirror file, a file still being written (modified in the last
+  ``MEDIA_SETTLE_SECONDS``) waits for the next run, and a file that vanished from the source stays in
+  the mirror.
 - Keeps the first verified ``raw.duckdb`` snapshot of every ISO week in ``<backup dir>/weekly/``, the newest
   ``KEEP_WEEKLY`` (12) of them (#277 a stopgap from before the change history, which has landed; #342 bounds the
   copies and dropped history's, which the owner deleted by hand). ``--no-weekly`` or
@@ -44,7 +46,7 @@ nothing ships a backup step. This module fixes that:
 - With ``RAW_STORE_BACKUP_MIRROR`` set, copies the newest snapshot of each kind and the three mirror folders
   into ``<that folder>/RevenueChaser-backup`` (it may be an existing Drive folder: nothing outside the sub-folder
   is written, pruned or deleted) after everything above was verified (#275), writing each file under a temporary
-  name, fingerprinting it there again and only then renaming it. The small kinds (discord, history) go every run
+  name, fingerprinting it there again and only then renaming it. The small kind (history) goes every run
   and the newest ``--keep-mirror`` stay; the big kinds (raw, edgar, the edgar_docs zip) go only when the newest
   copy there is ``--mirror-big-every-days`` (default 7) days old, or with ``--mirror-big-now``, and the newest
   ``--keep-mirror-big`` stay (#349: Drive keeps every pruned copy in its trash, inside the quota, for 30 days).
@@ -71,9 +73,9 @@ Usage notes:
 
 - A snapshot is a plain DuckDB file: restore with
   ``python -m RevenueChaser.scripts.restore_store`` (lists snapshots, verifies,
-  keeps the current file aside) — see docs/data_architecture.md, Backups. ``discord_media/``
-  is restored by copying ``discord_media_mirror/`` back over it, the SPX Gamma tree by copying
-  ``spx_gamma_mirror/`` back over ``module_spx_gamma/data`` (or ``SPX_GAMMA_DATA_ROOT``); a weekly copy
+  keeps the current file aside) — see docs/data_architecture.md, Backups. The SPX Gamma tree is
+  restored by copying ``spx_gamma_mirror/`` back over ``module_spx_gamma/data``
+  (or ``SPX_GAMMA_DATA_ROOT``); a weekly copy
   by ``restore_store --from <backup dir>/weekly --latest raw``.
 - ``--out`` defaults to ``%LOCALAPPDATA%\\RevenueChaser\\backups`` on Windows and
   ``~/.local/share/RevenueChaser/backups`` elsewhere; override with
@@ -101,9 +103,6 @@ import duckdb
 from RevenueChaser.core import config, rawstore
 
 
-# #248: the Discord attachment tree is mirrored, not zipped. Name chosen so that restore's
-# ``discord_*.duckdb`` snapshot glob never matches it.
-MEDIA_MIRROR_DIRNAME = "discord_media_mirror"
 MEDIA_SETTLE_SECONDS = 600          # a file modified more recently than this may still be downloading
 _MEDIA_TMP_DIRNAME = ".tmp"
 _MEDIA_MTIME_TOLERANCE_NS = 2 * 10**9   # NTFS/FAT round mtimes (FAT to 2 s); copy2 keeps the mtime
@@ -127,7 +126,6 @@ KEEP_WEEKLY = 12
 KEEP_RAW = 5
 KEEP_EDGAR = 2
 KEEP_DOCS = 2
-KEEP_DISCORD = 2
 KEEP_HISTORY = 5
 KEEP_PRICES = 2
 # #153: an archive prefix the job no longer writes. Nothing prunes it, so without its own line the dry run never lists
@@ -142,12 +140,12 @@ OFFMACHINE_SUBDIR = "RevenueChaser-backup"
 # #349: a Drive for desktop folder moves every pruned copy into the Drive trash, which counts toward the Google quota
 # for 30 days, so a daily 1.9 GB set held about 60 GB of the account. The big kinds go there once a week instead.
 MIRROR_BIG_KINDS = ("raw_*.duckdb", "edgar_*.duckdb", "edgar_docs_*.zip")
-MIRROR_SMALL_KINDS = ("discord_*.duckdb", "history_*.duckdb")
+MIRROR_SMALL_KINDS = ("history_*.duckdb",)
 KEEP_MIRROR = 3
 KEEP_MIRROR_BIG = 2
 MIRROR_BIG_EVERY_DAYS = 7
 # #156 (review 2026-10-09): the prices snapshot (~2.4 GiB once filled) goes LAST, after the mirror folders, so a failed
-# upload of the biggest file (Drive quota, a timeout) costs no other copy: the SPX and Discord mirrors cannot be
+# upload of the biggest file (Drive quota, a timeout) costs no other copy: the SPX mirror cannot be
 # fetched again, the prices can (F1). It goes once every MIRROR_PRICES_EVERY_DAYS and KEEP_MIRROR_PRICES copy stays
 # there (avo's card, 12:06Z 2026-10-09: "Haftada bir", keep 1), whatever --mirror-big-every-days and --keep-mirror-big
 # say; --mirror-big-now sends it too.
@@ -580,18 +578,6 @@ def snapshot_edgar(db_path: Path | None = None, out_dir: Path | None = None,
     return _snapshot_one(db, out_dir or default_backup_dir(), "edgar", keep, attempts)
 
 
-def snapshot_discord(db_path: Path | None = None, out_dir: Path | None = None,
-                     keep: int = KEEP_DISCORD, attempts: int = 3) -> Path | None:
-    """Verified snapshot of ``discord.duckdb`` (the Discord archive, #72).
-
-    Returns None when the Discord store does not exist yet (nothing to back up).
-    """
-    db = db_path or rawstore.discord_db_path()
-    if not Path(db).is_file():
-        return None
-    return _snapshot_one(db, out_dir or default_backup_dir(), "discord", keep, attempts)
-
-
 def snapshot_history(db_path: Path | None = None, out_dir: Path | None = None,
                      keep: int = KEEP_HISTORY, attempts: int = 3) -> Path | None:
     """Verified snapshot of ``history.duckdb`` (result history, #287); the last ``keep`` nightly copies stay.
@@ -653,7 +639,6 @@ def _local_retention_lists(out: Path) -> list[tuple[list[Path], int]]:
         (_snapshots(out, "raw"), KEEP_RAW),
         (_snapshots(out, "edgar"), KEEP_EDGAR),
         (_archives(out, "edgar_docs"), KEEP_DOCS),
-        (_snapshots(out, "discord"), KEEP_DISCORD),
         (_snapshots(out, "history"), KEEP_HISTORY),
         (_snapshots(out, "prices"), KEEP_PRICES),
         (_snapshots(out / WEEKLY_DIRNAME, "raw"), KEEP_WEEKLY),
@@ -886,7 +871,7 @@ def _keep_dated_copy(tmp: Path, versions_dir: Path, name: str, st: os.stat_resul
 
 
 def _mirror_one(src_file: Path, final: Path, tmp_dir: Path, st: os.stat_result, n: int,
-                what: str = "discord_media", json_guard: bool = False,
+                what: str = "mirror", json_guard: bool = False,
                 versions_dir: Path | None = None, manifest: _Manifest | None = None) -> str:
     """Copy ``src_file`` to ``final`` through ``tmp_dir``, verified; return what happened.
 
@@ -979,22 +964,6 @@ def _mirror_tree(d: Path, dest: Path, settle_s: float, what: str, json_guard: bo
     return MirrorResult(copied, unchanged, skipped, total, dest, tuple(rejected))
 
 
-def mirror_discord_media(src: Path | None = None, out_dir: Path | None = None,
-                         settle_s: float = MEDIA_SETTLE_SECONDS) -> MirrorResult | None:
-    """Mirror the ``discord_media/`` tree into ``<backup dir>/discord_media_mirror/`` (#248).
-
-    Additive and incremental: a file is "unchanged" when the mirror holds a copy of the same
-    size and an mtime within 2 s (``stat`` only, no file is read), so a nightly run reads
-    only new or changed files. A file modified within ``settle_s`` seconds may still be
-    downloading and is skipped (counted in ``skipped``; the next run picks it up). Files
-    that disappeared from the source stay in the mirror. Returns None when there is no
-    media to back up (nothing is created then).
-    """
-    out = out_dir or default_backup_dir()
-    return _mirror_into(out, lambda m: _mirror_tree(Path(src or config.DISCORD_MEDIA_DIR), out / MEDIA_MIRROR_DIRNAME,
-                                                    settle_s, "discord_media", manifest=m))
-
-
 def _mirror_into(out: Path, run) -> MirrorResult | None:
     """Run one local mirror with the backup folder's manifest, saved even when a file fails half-way (#309)."""
     m = _local_manifest(out)
@@ -1009,7 +978,10 @@ def mirror_spx_gamma(src: Path | None = None, out_dir: Path | None = None,
                      settle_s: float = MEDIA_SETTLE_SECONDS) -> MirrorResult | None:
     """Mirror the SPX Gamma data tree into ``<backup dir>/spx_gamma_mirror/`` (#276, review B3).
 
-    Same rules as ``mirror_discord_media``: new or changed files only, each verified by size and
+    Additive and incremental: a file is "unchanged" when the mirror holds a copy of the same size and
+    an mtime within 2 s (``stat`` only, no file is read), so a nightly run reads only new or changed
+    files, and one modified within ``settle_s`` seconds may still be downloading and is skipped. Each
+    copy is verified by size and
     SHA-256 before it replaces the mirror copy, nothing ever deleted from the mirror. ``src`` defaults
     to the SPX module's data root (``module_spx_gamma/data``, or ``SPX_GAMMA_DATA_ROOT``). Returns None
     when the tree does not exist or is empty.
@@ -1126,11 +1098,11 @@ def offmachine_copy(out_dir: Path, mirror: str | Path, keep: int = KEEP_MIRROR, 
     """Copy the newest backup set into ``<mirror>/OFFMACHINE_SUBDIR`` and prune it (#275, #349).
 
     Per kind the newest local file is copied unless the folder already has it. The small kinds
-    (``discord_*``, ``history_*`` snapshots) go every run and the newest ``keep`` stay. The big kinds (``raw_*``,
+    (``history_*`` snapshots) go every run and the newest ``keep`` stay. The big kinds (``raw_*``,
     ``edgar_*`` snapshots, ``edgar_docs_*.zip``) go only when the newest copy of that kind there is at least
     ``big_every_days`` days old (or there is none, or ``big_now``) and the newest ``keep_big`` stay. The local
     ``weekly/`` copies stay on this machine; ``weekly/`` copies an older version sent are left alone. The
-    ``discord_media_mirror``, ``spx_gamma_mirror`` and ``spx_gamma_versions`` folders are mirrored
+    ``spx_gamma_mirror`` and ``spx_gamma_versions`` folders are mirrored
     incrementally with the rules of the local mirrors (the SPX JSON guard included). The ``prices_*`` snapshot
     goes last, once every ``MIRROR_PRICES_EVERY_DAYS`` (or ``big_now``), and the newest ``KEEP_MIRROR_PRICES`` stay
     (#156). Pruning follows the
@@ -1170,10 +1142,9 @@ def offmachine_copy(out_dir: Path, mirror: str | Path, keep: int = KEEP_MIRROR, 
         for kind in ("raw", "edgar"):
             _prune(dest, kind, keep_big, om)
         _prune_archives(dest, "edgar_docs", keep_big, om)
-        for kind in ("discord", "history"):
-            _prune(dest, kind, keep, om)
+        _prune(dest, "history", keep, om)
         rejected: list[str] = []
-        for name, guard in ((MEDIA_MIRROR_DIRNAME, False), (SPX_MIRROR_DIRNAME, True), (SPX_VERSIONS_DIRNAME, False)):
+        for name, guard in ((SPX_MIRROR_DIRNAME, True), (SPX_VERSIONS_DIRNAME, False)):
             res = _mirror_tree(out / name, dest / name, 0, name, json_guard=guard, manifest=om)
             if res is not None:
                 copied += res.copied
@@ -1434,9 +1405,9 @@ def _days(text: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
-        description="Back up .store/raw.duckdb, edgar.duckdb, discord.duckdb, history.duckdb and prices.duckdb to verified "
-                    "snapshots, the edgar_docs/ tree to a verified zip and the discord_media/ and "
-                    "SPX Gamma data trees to incremental, verified mirrors.")
+        description="Back up .store/raw.duckdb, edgar.duckdb, history.duckdb and prices.duckdb to verified "
+                    "snapshots, the edgar_docs/ tree to a verified zip and the SPX Gamma data tree to an "
+                    "incremental, verified mirror.")
     ap.add_argument("--out", default=None, help="backup directory (default: platform dir / RAW_STORE_BACKUP_DIR)")
     ap.add_argument("--keep", type=int, default=KEEP_RAW,
                     help=f"retain this many newest raw.duckdb snapshots (default {KEEP_RAW})")
@@ -1444,14 +1415,12 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"retain this many newest edgar.duckdb snapshots (default {KEEP_EDGAR})")
     ap.add_argument("--keep-docs", type=int, default=KEEP_DOCS,
                     help=f"retain this many newest edgar_docs/ archives (default {KEEP_DOCS})")
-    ap.add_argument("--keep-discord", type=int, default=KEEP_DISCORD,
-                    help=f"retain this many newest discord.duckdb snapshots (default {KEEP_DISCORD})")
     ap.add_argument("--keep-history", type=int, default=KEEP_HISTORY,
                     help=f"retain this many newest history.duckdb snapshots (default {KEEP_HISTORY})")
     ap.add_argument("--keep-prices", type=_positive_int, default=KEEP_PRICES,
                     help=f"retain this many newest prices.duckdb snapshots (default {KEEP_PRICES}; no weekly copy)")
     ap.add_argument("--keep-mirror", type=_positive_int, default=KEEP_MIRROR,
-                    help=f"retain this many newest discord/history copies in RAW_STORE_BACKUP_MIRROR "
+                    help=f"retain this many newest history copies in RAW_STORE_BACKUP_MIRROR "
                          f"(default {KEEP_MIRROR})")
     ap.add_argument("--keep-mirror-big", type=_positive_int, default=KEEP_MIRROR_BIG,
                     help=f"retain this many newest raw/edgar/edgar_docs copies there (default {KEEP_MIRROR_BIG}; "
@@ -1510,8 +1479,7 @@ def main(argv: list[str] | None = None) -> int:
             step("weekly prune", lambda: _prune_weekly(out or default_backup_dir(), args.keep_weekly))
 
     for label, run in (("edgar backup", lambda: snapshot_edgar(out_dir=out, keep=args.keep_edgar)),
-                       ("edgar_docs backup", lambda: archive_edgar_docs(out_dir=out, keep=args.keep_docs)),
-                       ("discord backup", lambda: snapshot_discord(out_dir=out, keep=args.keep_discord))):
+                       ("edgar_docs backup", lambda: archive_edgar_docs(out_dir=out, keep=args.keep_docs))):
         snap = step(label, run)
         if isinstance(snap, DocsArchive):   # #336: an unchanged tree keeps the newest archive
             print(f"backup OK: {snap.path}" + (" (unchanged, kept)" if snap.reused else ""))
@@ -1525,11 +1493,6 @@ def main(argv: list[str] | None = None) -> int:
     prices = step("prices backup", lambda: snapshot_prices(out_dir=out, keep=args.keep_prices))
     if prices is not None:                  # no weekly copy: the price tables are append-only (#156)
         print(f"backup OK: {prices}")
-
-    media = step("discord_media backup", lambda: mirror_discord_media(out_dir=out))
-    if media is not None:
-        print(f"discord_media mirror OK: {media.copied} copied, {media.unchanged} unchanged, "
-              f"{media.skipped} in flight, {media.total} files -> {media.dest}")
 
     spx = step("spx backup", lambda: mirror_spx_gamma(out_dir=out))
     if spx is not None:

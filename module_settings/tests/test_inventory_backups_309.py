@@ -146,8 +146,8 @@ def test_the_record_carries_the_expired_totals_the_read_only_scan_found(backups,
     out = tmp_path / "backups"
     for n in range(3):                                   # prices: keep 2 -> the oldest is expired
         _aged(out, f"prices_2026090{n + 1}_000000_000000.duckdb", 1000 + n, 9 - n)
-    for n in range(3):                                   # discord: keep 2 -> the oldest is expired
-        _aged(out, f"discord_2026090{n + 1}_000000_000000.duckdb", 500, 9 - n)
+    for n in range(3):                                   # edgar: keep 2 -> the oldest is expired
+        _aged(out, f"edgar_2026090{n + 1}_000000_000000.duckdb", 500, 9 - n)
     b = backups(_SIZES, _SCAN)
     assert b["expired"]["state"] == "ok"
     assert b["expired"]["count"] == 2 and b["expired"]["bytes"] == 1500
