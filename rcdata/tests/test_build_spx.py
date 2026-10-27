@@ -183,3 +183,16 @@ def test_n4_an_answer_stamped_with_bare_dates_is_accepted(http_mock):
         r["time"] = "2026-10-26"
     http_mock.add("expiry-strike", body, headers=UW_HEADERS)
     assert _daily()["rows"] == 391
+
+
+def test_f1_non_finite_or_out_of_range_epochs_read_as_no_stamp():
+    for stamp in ("nan", "NaN", float("nan"), "inf", float("-inf"), 1e20, "1e20"):
+        assert uw.snapshot_day(stamp) is None, stamp
+
+
+def test_f1_a_nan_stamp_does_not_crash_the_run_or_cost_a_call_per_rerun(http_mock):
+    body = uw_fixture.body()
+    body["data"][0]["time"] = float("nan")             # json reads a bare NaN as a float
+    http_mock.add("expiry-strike", body, headers=UW_HEADERS)
+    row = _daily()
+    assert row["result"] == "changed" and row["rows"] == 391    # a row without a readable stamp is kept unchecked

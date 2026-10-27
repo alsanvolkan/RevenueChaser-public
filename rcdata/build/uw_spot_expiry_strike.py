@@ -14,6 +14,7 @@ the Monday, is 1 DTE.
 """
 from __future__ import annotations
 
+import math
 import os
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -236,9 +237,14 @@ def snapshot_day(stamp) -> date | None:
             except ValueError:
                 return None
             return (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).astimezone(calendar.NY).date()
+    if not math.isfinite(epoch):                       # "nan", "inf": no stamp, never an exception (F1)
+        return None
     if epoch > 1e11:                                   # milliseconds
         epoch /= 1000.0
-    return datetime.fromtimestamp(epoch, tz=timezone.utc).astimezone(calendar.NY).date()
+    try:
+        return datetime.fromtimestamp(epoch, tz=timezone.utc).astimezone(calendar.NY).date()
+    except (ValueError, OverflowError, OSError):       # out of the platform's range (1e20 is OSError errno 75)
+        return None
 
 
 def time_now() -> float:
