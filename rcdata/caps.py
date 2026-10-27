@@ -1,0 +1,26 @@
+"""Provider day caps: the builder refuses to start a dataset whose provider has reached its cap for the New York day.
+
+The counter is ``ops.provider_calls_daily`` (every HTTP request the builder sends, retries included). Numbers are
+avo's of 27 Oct 2026, to be tuned; a provider not listed has no cap.
+"""
+from __future__ import annotations
+
+from . import ops
+
+DAY_CAPS: dict[str, int] = {
+    "uw": 150_000,
+    "sec": 40_000,
+    "fred": 10_000,
+    "alpaca": 20_000,
+}
+
+
+def cap_for(provider: str) -> int | None:
+    return DAY_CAPS.get(provider)
+
+
+def at_cap(provider: str) -> tuple[bool, int, int | None]:
+    """``(refused, calls today, cap)``; ``refused`` is True once today's calls reached the cap."""
+    cap = cap_for(provider)
+    used = ops.calls_today(provider)
+    return (cap is not None and used >= cap), used, cap

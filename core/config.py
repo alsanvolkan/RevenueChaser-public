@@ -29,7 +29,7 @@ load_dotenv(BASE_DIR / ".env")
 # import. Used by the end-to-end harness to run a module against a throwaway
 # store/cache; unset in normal use, where the repo-local defaults apply.
 # (Same pattern as SPX_GAMMA_DATA_ROOT in module_spx_gamma/config.py.)
-def _root(env_var: str, default: Path) -> Path:
+def _root(env_var: str, default: Path | None) -> Path | None:
     override = (os.getenv(env_var) or "").strip()
     return Path(override).expanduser().resolve() if override else default
 # Durable raw data lives in one top-level folder (.store/) — the single DuckDB
@@ -91,6 +91,16 @@ RAW_STORE_BACKUP_MIRROR_WARN_GB = _warn_gb("RAW_STORE_BACKUP_MIRROR_WARN_GB", BA
 # See docs/classification_design.md Phase 4 and docs/data_architecture.md.
 EDGAR_DOCS_DIR = _root("RC_EDGAR_DOCS_DIR", BASE_DIR / "edgar_docs")
 EDGAR_DOCS_DIR.mkdir(parents=True, exist_ok=True)
+
+# The market store (#206, docs/data_architecture.md "The market store"): the builder's serving DuckDB files and
+# ops.sqlite on the SSD, its raw downloads and Parquet on the HDD. The server sets both in its paths file; the
+# repo-local defaults keep a checkout, the tests and the cloud off any server path. Not created at import: rcdata
+# makes each folder when it first writes there.
+MARKET_DIR = _root("RC_MARKET_DIR", BASE_DIR / ".market")
+MARKET_RAW_DIR = _root("RC_MARKET_RAW_DIR", BASE_DIR / ".market_raw")
+# Where the backup copies the newest raw days when they do not fit on the SSD (D3). Empty = off: the step logs a
+# warning and copies nothing, so there is no default folder.
+MARKET_RAW_COPY_DIR = _root("RC_MARKET_RAW_COPY_DIR", None)
 
 
 def resolved_roots() -> dict[str, Path]:

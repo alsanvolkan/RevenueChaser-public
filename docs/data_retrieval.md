@@ -259,9 +259,13 @@ whole app at a local server:
 | `RC_UW_BASE_ROOT` | Unusual Whales for `module_spx_gamma` (no `/api` suffix) |
 | `RC_SEC_WWW_BASE` / `RC_SEC_DATA_BASE` | SEC EDGAR + 13F archives |
 | `RC_FORM13F_INDEX_URL` | SEC Form 13F data-set page (zip links are resolved from it) |
-| `RC_FRED_BASE` | FRED series |
-| `RC_CBOE_BASE` | Cboe daily-price index files (`module_earnings_radar/inputs/vol_index.py`) |
-| `RC_CFTC_BASE` | CFTC Traders in Financial Futures |
+| `RC_FRED_BASE` | FRED series (also the market store's FRED source) |
+| `RC_CBOE_BASE` | Cboe daily-price index files (`module_earnings_radar/inputs/vol_index.py`, `rcdata/build/sources/cboe.py`) |
+| `RC_CFTC_BASE` | CFTC Traders in Financial Futures (also the market store's CFTC source, `rcdata/build/sources/cftc.py`) |
+| `RC_CFTC_DISAGG_BASE` | CFTC Disaggregated futures (`rcdata/build/sources/cftc.py`); default: `RC_CFTC_BASE`'s host, dataset `72hh-3qpy` |
+| `RC_TREASURY_BASE` | US Treasury daily par yield curve CSV (`rcdata/build/sources/treasury.py`) |
+| `RC_FED_BASE` | Federal Reserve site, the FOMC calendar page (`rcdata/build/sources/fed.py`) |
+| `RC_BLS_BASE` | BLS site, the release calendar `.ics` (`rcdata/build/sources/bls.py`) |
 | `RC_FDA_OOPD_BASE` | FDA Office of Orphan Products Development (OOPD) search |
 | `RC_DEEPSEEK_BASE` | DeepSeek chat API (`core/providers/deepseek.py`; read at call time) |
 | `RC_GROK_BASE` | SuperGrok chat API, the Relatedness Grok writer (`core/providers/grok.py`, #388; read at call time). Default the Grok CLI chat proxy `https://cli-chat-proxy.grok.com/v1`. Only https on `grok.com` / `*.grok.com` or a loopback mock is accepted, so the subscription token never goes elsewhere (`api.x.ai`, the metered developer API, is refused); the model is `RC_GROK_MODEL` |

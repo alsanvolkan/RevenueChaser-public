@@ -123,6 +123,10 @@ class UWClient:
         self._breaker_open = False
         self._skipped = 0
         self._health_lock = threading.Lock()
+        # Optional observer of every HTTP answer (``on_response(ep, response)``), for the market-store builder's
+        # rate-header sampling and call counting (#206). None by default; it never changes what a call returns,
+        # and an observer that raises is ignored.
+        self.on_response: Optional[Callable[[str, Any], None]] = None
 
     @property
     def active(self) -> bool:
@@ -211,6 +215,11 @@ class UWClient:
                 return self._failed_result(ep, None, type(e).__name__, attempts,
                                            trips_breaker=isinstance(e, httpx.TransportError))
 
+            if self.on_response is not None:
+                try:
+                    self.on_response(ep, r)
+                except Exception:  # noqa: BLE001 - an observer must never change the call's outcome
+                    logger.debug("UW on_response observer failed", exc_info=True)
             status = r.status_code
             if status < 400:
                 try:
