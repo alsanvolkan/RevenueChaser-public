@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from RevenueChaser.core import config, rawstore
 
 DISCORD_TABLES = ("discord_channels", "discord_messages", "discord_export_runs")
@@ -30,12 +32,14 @@ def test_discord_tables_declare_the_discord_file():
         assert rawstore._db_of(t) == "discord"
 
 
+@pytest.mark.rawstore_schema_from_scratch
 def test_ensure_all_tables_creates_the_discord_file_with_only_its_tables(rawstore_tmp_db):
     assert rawstore.discord_db_path().is_file()
     assert set(DISCORD_TABLES) <= _tables("discord")
     assert not (_tables("discord") & {"edgar_documents", "watchlist"})
 
 
+@pytest.mark.rawstore_schema_from_scratch
 def test_discord_tables_are_not_created_in_raw_or_edgar(rawstore_tmp_db):
     assert not (set(DISCORD_TABLES) & _tables("raw"))
     assert not (set(DISCORD_TABLES) & _tables("edgar"))
@@ -73,8 +77,6 @@ def test_media_dir_is_a_separate_durable_tree():
 
 
 # ── text columns hold third-party text verbatim ──────────────────────────────
-
-import pytest  # noqa: E402
 
 
 @pytest.mark.parametrize("text", ['{"a": 1}', "[1, 2, 3]", "[]", "{}", "123", "null", "true", '"quoted"'])

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import shutil
+import uuid
 from datetime import date, datetime, timezone
 
 from RevenueChaser.core import calendar as nyse_calendar
@@ -25,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 class SnapshotError(RuntimeError):
     pass
+
+
+class NoStoredClose(SnapshotError):
+    """History mode: the store holds no ^GSPC close for the day, so no request was sent (a holiday, or a gap)."""
 
 
 class UWApiError(RuntimeError):
@@ -129,6 +134,23 @@ LIVE_FILES = frozenset(
     | {"option_chain.json", "vix_family.json", "cftc_tff.json"}
 )
 
+# History mode (the 2-year pull, D1 25 Oct 2026): only the calls that take a ``date`` (docs/openapi.yaml, the
+# "Optional Market Date" parameter). The Fetch's table above is left as it is, so the board's Fetch requests and
+# its LIVE_FILES do not change; here the five volatility endpoints that accept ``date`` are asked for the day.
+# iv-rank is left out (the pull asks it once, as a series), options-volume takes no date at all.
+HISTORY_ENDPOINTS = {
+    name: (tmpl, {**params, "date": None})
+    for name, (tmpl, params) in BASE_ENDPOINTS.items()
+    if name in ("gex_levels", "gex_levels_vol", "expiry_exposure", "strike_exposure", "interpolated_iv",
+                "max_pain", "vol_term_structure", "variance_risk_premium", "realized_vol")
+}
+# The endpoints above, flow-per-strike, the two spot-exposure halves and the 0DTE strike-expiry.
+HISTORY_CALLS_PER_SESSION = len(HISTORY_ENDPOINTS) + 4
+HISTORY_ORIGIN = "history_pull"
+# A failure that may pass (throttled, server error, no response): a history day with such a hole is not kept,
+# because a day that has its manifest is never pulled again.
+_TRANSIENT = frozenset({0, 429})
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -155,6 +177,15 @@ def _previous_est_trading_day(asof: str) -> str:
         return d.isoformat()
 
 
+def _stored_close(candle_fetcher, ticker: str, day: str) -> float:
+    """The stored close of ``day`` itself (history mode's spot); :class:`NoStoredClose` when the store lacks it."""
+    symbol = "^GSPC" if ticker == "SPX" else ticker
+    for row in candle_fetcher(day, ticker=symbol):
+        if row.get("date") == day and row.get("close") is not None:
+            return float(row["close"])
+    raise NoStoredClose(f"no stored {symbol} close for {day} in {index_levels.TABLE}; nothing was requested")
+
+
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -171,6 +202,7 @@ def fetch_snapshot(
     vix_fetcher=None,
     cftc_fetcher=None,
     candle_fetcher=None,
+    history_only: bool = False,
 ) -> dict | None:
     """Fetch one date's raw snapshot, replacing the cached copy only on success.
 
@@ -191,18 +223,29 @@ def fetch_snapshot(
     clicking through the date picker with a dead API key wiped the stored GEX
     history and left empty directories behind — which in turn broke the
     "do we have a snapshot for this day?" checks that test for the directory.
+
+    ``history_only=True`` (the history pull, ``module_spx_gamma.history_pull``) fetches a past session with dated
+    calls only (``HISTORY_ENDPOINTS``, flow-per-strike, the spot-exposure halves, the 0DTE strike-expiry): spot is
+    that day's stored ``index_levels_daily`` close (no stored close: :class:`NoStoredClose` before any request),
+    VIX and COT come from the store or are left out, and there is no option chain, previous-day call, all-expiry
+    ladder or previous-session fallback. A day with a transient failure (429, 5xx, no response) is not kept, and
+    a day that completed meanwhile is never replaced. Its manifest says ``origin: history_pull``.
     """
+    if history_only and fetch_all_expiries:
+        raise ValueError("history mode never fetches the all-expiry ladder")
     root = data_root or RAW_ROOT
     if not overwrite and (root / asof_date / "manifest.json").exists():
         return None
-    staging = root / f".partial-{os.getpid()}-{asof_date}"
+    # One staging folder per call: a board Fetch's backfill and the history pull can stage the same day in one
+    # process at once, and a shared name let each delete the other's files (#194 review).
+    staging = root / f".partial-{os.getpid()}-{uuid.uuid4().hex[:12]}-{asof_date}"
     try:
         return _fetch_snapshot_staged(
             uw, asof_date, staging, root, ticker=ticker, mode=mode,
             fetch_candles=fetch_candles, fetch_all_expiries=fetch_all_expiries,
             vix_fetcher=vix_fetcher or fetch_vix_family,
             cftc_fetcher=cftc_fetcher or fetch_cftc_tff,
-            candle_fetcher=candle_fetcher or stored_spx_candles)
+            candle_fetcher=candle_fetcher or stored_spx_candles, history_only=history_only)
     finally:
         # Promotion renames the staging dir away; anything left is a failed run.
         if staging.exists():
@@ -221,7 +264,9 @@ def _fetch_snapshot_staged(
     vix_fetcher=fetch_vix_family,
     cftc_fetcher=fetch_cftc_tff,
     candle_fetcher=stored_spx_candles,
+    history_only: bool = False,
 ) -> dict:
+    history_close = _stored_close(candle_fetcher, ticker, asof_date) if history_only else None
     if raw_dir.exists():
         shutil.rmtree(raw_dir)
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -277,12 +322,12 @@ def _fetch_snapshot_staged(
         return payload
 
     # 1. Base endpoints (gex_levels mandatory)
-    for name, (tmpl, base_params) in BASE_ENDPOINTS.items():
+    for name, (tmpl, base_params) in (HISTORY_ENDPOINTS if history_only else BASE_ENDPOINTS).items():
         path = tmpl.format(t=ticker)
         params = {k: (asof_date if v is None else v) for k, v in base_params.items()}
         tried = [asof_date]
         payload = _call(name, path, params, _FILENAMES[name])
-        if name in MANDATORY and payload is None:
+        if name in MANDATORY and payload is None and not history_only:
             # Retry once with the previous EST trading day: UW rejects a date
             # that is still "in the future" in America/New_York (early-morning /
             # pre-settlement runs), returning 422. Fall back so a stale-but-valid
@@ -329,6 +374,8 @@ def _fetch_snapshot_staged(
         vix, vix_session = stored_inputs.vol_index_rows(asof_day) if asof_day else ({}, None)
         if vix:
             input_sources["vix"] = {"source": "store", "session": vix_session.isoformat()}
+        elif history_only:
+            raise LookupError("not stored for this session (history mode asks no live source)")
         else:
             vix = vix_fetcher()
             input_sources["vix"] = {"source": "live"}
@@ -343,6 +390,8 @@ def _fetch_snapshot_staged(
         cftc, cot_session = stored_inputs.cot_row(asof_day) if asof_day else ({}, None)
         if cftc:
             input_sources["cftc"] = {"source": "store", "session": cot_session.isoformat()}
+        elif history_only:
+            raise LookupError("not stored for this session (history mode asks no live source)")
         else:
             cftc = cftc_fetcher()
             input_sources["cftc"] = {"source": "live"}
@@ -385,7 +434,11 @@ def _fetch_snapshot_staged(
     # It sets the +/-25% strike window below and the board's current_level, so a day-old spot moves which
     # strikes are fetched. The 8-week window above still costs no request.
     spot = candles[-1]["close"] if candles and candles[-1].get("close") is not None else None
-    if fetch_candles:
+    if history_only:
+        # A past day's strike window is set from that day's close, never from today's level.
+        spot = history_close
+        raw["spot"] = {"source": f"index_levels_daily (close of {asof_date})", "value": spot}
+    elif fetch_candles:
         live, live_error = live_spot(("^GSPC" if ticker == "SPX" else ticker))
         if live is not None:
             spot_source = "yfinance (live)"
@@ -464,20 +517,25 @@ def _fetch_snapshot_staged(
     #     on an empty payload it retries the API-default live chain. Best-effort:
     #     the panel degrades to None when this is unavailable.
     raw["option_chain"] = {}
-    _oc = _call("option_chain", f"/stock/{ticker}/option-contracts",
-                {"expiry": report_date}, "option_chain.json")
-    if _oc is None or not (_oc.get("data") or []):
-        warnings.append("option_chain: empty for report expiry; retrying live chain")
+    if history_only:
+        _oc = None                 # a chain is live whatever date is asked (LIVE_FILES): never in a past day
+    else:
         _oc = _call("option_chain", f"/stock/{ticker}/option-contracts",
-                    {}, "option_chain.json")
+                    {"expiry": report_date}, "option_chain.json")
+        if _oc is None or not (_oc.get("data") or []):
+            warnings.append("option_chain: empty for report expiry; retrying live chain")
+            _oc = _call("option_chain", f"/stock/{ticker}/option-contracts",
+                        {}, "option_chain.json")
     if _oc is not None and (_oc.get("data") or []):
         raw["option_chain"] = _oc
-    else:
+    elif not history_only:
         warnings.append("option_chain: no chain available (panel degraded)")
 
     # 5. Previous-session strike exposure (for gamma vs prev close)
     prev_date = candles[-2]["date"] if len(candles) >= 2 else None
-    if prev_date:
+    if history_only:
+        pass                       # the previous session is a day of its own in the pull
+    elif prev_date:
         path = f"/stock/{ticker}/greek-exposure/strike"
         params = {"date": prev_date}
         filename = "greek_exposure_strike_prev.json"
@@ -487,13 +545,21 @@ def _fetch_snapshot_staged(
     else:
         warnings.append("strike_exposure_prev skipped: no prior session candle")
 
+    if history_only:
+        transient = [r["name"] for r in requests
+                     if r["status"] is None or r["status"] in _TRANSIENT or r["status"] >= 500]
+        if transient:
+            raise SnapshotError(f"{asof_date} not kept: transient failure on {', '.join(transient)} "
+                                f"(a later run pulls the day again)")
+
     def _rows(payload) -> int | None:
         data = payload.get("data") if isinstance(payload, dict) else None
         return len(data) if isinstance(data, list) else None
 
     files: dict[str, dict] = {}
+    live_files = frozenset() if history_only else LIVE_FILES   # history mode asks nothing undated
     for fn, payload in sorted(written.items()):
-        files[fn] = {"as_of": fn not in LIVE_FILES, "rows": _rows(payload),
+        files[fn] = {"as_of": fn not in live_files, "rows": _rows(payload),
                      "limit_hit": fn in limit_hits}
     for fn, sides in limit_hits.items():
         files[fn]["limit_hit_sides"] = sides
@@ -527,6 +593,8 @@ def _fetch_snapshot_staged(
         "files": files,
         "warnings": warnings,
     }
+    if history_only:
+        manifest["origin"] = HISTORY_ORIGIN
     raw["_meta"] = {"requested_date": report_date, "effective_date": asof_date,
                     "api_snapshot_time": manifest["api_snapshot_time"]}
     (raw_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -545,6 +613,10 @@ def _fetch_snapshot_staged(
         # (today's live IV, chain and VIX), or the stored session is rebuilt from mixed inputs (M4).
         from .raw_day import load_raw_day
         return load_raw_day(final)
+    if history_only and (final / "manifest.json").exists():
+        # A Fetch completed this day while the pull was staging it: a complete day is never replaced.
+        logger.warning("spx history pull: raw/%s completed meanwhile; kept it and discarded the pull", asof_date)
+        return None
     if final.exists():
         shutil.rmtree(final)
     raw_dir.replace(final)

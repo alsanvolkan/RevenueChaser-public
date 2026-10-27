@@ -136,6 +136,7 @@ FROZEN_DDL = {
 }
 
 
+@pytest.mark.rawstore_schema_from_scratch
 @pytest.mark.parametrize("name", sorted(WRITERLESS))
 def test_the_flag_changes_no_ddl(name, rawstore_tmp_db):
     """A fresh store still creates the table, with the same columns and types, as it did without the flag."""

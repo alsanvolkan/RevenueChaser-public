@@ -43,6 +43,7 @@ def store(rawstore_tmp_db):
     return rawstore_tmp_db
 
 
+@pytest.mark.rawstore_schema_from_scratch
 def test_the_manifest_puts_18_tables_in_the_history_file_and_none_in_raw(store):
     names = [n for n, s in rawstore.MANIFEST.items() if s.get("db") == "history"]
     assert len(names) == 18 and "result_runs" in names

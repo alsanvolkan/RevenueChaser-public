@@ -8,7 +8,6 @@ nothing" bugs actually live.
 from __future__ import annotations
 
 import os
-import socket
 import subprocess
 import sys
 import time
@@ -26,12 +25,6 @@ JOB_TIMEOUT = 180.0
 
 class DashboardStartupError(RuntimeError):
     pass
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 @dataclass
@@ -62,7 +55,10 @@ class Dashboard:
         self.env = env
         self.log_path = log_path
         self.yf_log_path = log_path.parent / "yf_calls.log"
-        self.port = _free_port()
+        # The subprocess binds port 0 and writes the port it got here: a port picked in this process and
+        # released would be free only until another xdist worker's dashboard or mock server took it.
+        self.port_path = log_path.with_name(log_path.stem + ".port")
+        self.port: int | None = None
         self._proc: subprocess.Popen | None = None
         self._log = None
         self._client: httpx.Client | None = None
@@ -80,17 +76,16 @@ class Dashboard:
                # the real dashboard under test must behave like production.
                "RC_STORE_AUTO_ENSURE": "1",
                "RC_E2E_YF_LOG": str(self.yf_log_path),
+               "RC_E2E_PORT_FILE": str(self.port_path),
                "PYTHONUNBUFFERED": "1"}
+        self.port_path.unlink(missing_ok=True)     # a restart must not read the last process's port
+        self.port = None
         self._log = self.log_path.open("w", encoding="utf-8")
         self._proc = subprocess.Popen(
-            [sys.executable, "-m", ENTRYPOINT, str(self.port)],
+            [sys.executable, "-m", ENTRYPOINT, "0"],
             cwd=str(REPO_PARENT), env=env,
             stdout=self._log, stderr=subprocess.STDOUT,
         )
-        # The dashboard refuses a write without X-RC-Panel (#231); the pages send it, so
-        # does the harness. A test about the missing header builds a bare httpx client.
-        self._client = httpx.Client(base_url=self.url, timeout=JOB_TIMEOUT,
-                                    headers={"X-RC-Panel": "e2e"})
         self._await_ready()
         return self
 
@@ -100,6 +95,16 @@ class Dashboard:
             if self._proc.poll() is not None:
                 raise DashboardStartupError(
                     f"dashboard exited with {self._proc.returncode}\n{self.logs()}")
+            if self._client is None:
+                try:
+                    self.port = int(self.port_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    time.sleep(0.05)
+                    continue
+                # The dashboard refuses a write without X-RC-Panel (#231); the pages send it, so
+                # does the harness. A test about the missing header builds a bare httpx client.
+                self._client = httpx.Client(base_url=self.url, timeout=JOB_TIMEOUT,
+                                            headers={"X-RC-Panel": "e2e"})
             try:
                 if self._client.get("/", timeout=2.0).status_code == 200:
                     return
@@ -130,7 +135,6 @@ class Dashboard:
         nothing in memory carries over, only what reached ``.store``/``.cache``.
         """
         self.stop()
-        self.port = _free_port()
         return self.start()
 
     def logs(self) -> str:

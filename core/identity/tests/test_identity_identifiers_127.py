@@ -185,6 +185,7 @@ def test_opening_an_old_store_adds_the_columns_without_a_bump(old_master):
     assert rawstore.schema_version() == "12"
 
 
+@pytest.mark.rawstore_schema_from_scratch
 def test_an_old_changes_table_gains_the_identifier_columns(rawstore_tmp_db):
     """DuckDB will not DROP a middle column an index follows, so the old table is recreated without them."""
     rawstore.ensure_all_tables()
