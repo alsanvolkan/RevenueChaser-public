@@ -7,7 +7,9 @@ A dataset is due (``is_due``) when nothing holds it and its last run is old enou
 - never built (no ``dataset_check`` row), or a last check that ``failed`` or was ``skipped`` (a day cap, a pause): due;
 - ``daily`` (the default, and what an unknown cadence reads as): due once the dataset's own ``default_as_of()`` has
   reached the last check's ``next_check_due`` (the next session after the as-of it ran for), so the SPX slice waits
-  for the next complete session and the market series (as-of: today) run on the first pass of each trading day;
+  for the next complete session and the market series (as-of: today) run on the first pass of each trading day.
+  A check with no ``next_check_due`` (past the calendar's table) is due once the as-of is newer than the one it ran
+  for, so a calendar run out does not make a dataset due every hour;
 - ``weekly`` / ``monthly``: due 7 / 30 days after the last check's ``checked_on``.
 
 The request goes in through ``ops.enqueue_once`` (check and insert in one ``BEGIN IMMEDIATE``), so a dataset that
@@ -43,9 +45,16 @@ def is_due(ds) -> tuple[bool, str]:
     cadence = schedule.get("cadence") if schedule.get("cadence") in CADENCES else DEFAULT_CADENCE
     if cadence == "daily":
         nxt = check.get("next_check_due")
-        if not nxt:
-            return True, "the last check names no next day"
         as_of = ds.default_as_of().isoformat()
+        if not nxt:
+            # No next session (past the calendar's table, base.next_due): once per newer as-of, never every hour.
+            ran = check.get("source_as_of")
+            if not ran:
+                return True, "the last check names no as-of"
+            ran = str(ran)[:10]
+            if as_of > ran:
+                return True, f"no next session known; as-of {as_of} is newer"
+            return False, f"no next session known; ran for {ran}"
         return (True, f"next check {nxt} reached") if as_of >= nxt else (False, f"next check {nxt}")
     age = (calendar.today_ny() - date.fromisoformat(str(check["checked_on"])[:10])).days
     if age >= CYCLE_DAYS[cadence]:

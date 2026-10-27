@@ -86,6 +86,16 @@ def test_a_failed_or_skipped_last_check_is_due_again(clock):
     assert due.is_due(DATASETS[UW]) == (True, "the last check was skipped")
 
 
+def test_a_check_with_no_next_day_is_due_again_once_the_as_of_moves_on(clock):
+    # base.next_due() is None past core/calendar.py's table (2028): the series must not then run every hour.
+    ops.record_check(MS, "changed", source_as_of="2026-10-27", next_check_due=None)
+    assert due.is_due(DATASETS[MS]) == (False, "no next session known; ran for 2026-10-27")
+    clock(WED_MORNING)
+    assert due.is_due(DATASETS[MS]) == (True, "no next session known; as-of 2026-10-28 is newer")
+    ops.record_check(UW, "changed", source_as_of=None, next_check_due=None)
+    assert due.is_due(DATASETS[UW]) == (True, "the last check names no as-of")
+
+
 @pytest.mark.parametrize("cadence, days, expect", [("weekly", 6, False), ("weekly", 7, True),
                                                    ("monthly", 29, False), ("monthly", 30, True)])
 def test_weekly_and_monthly_count_days_since_the_last_check(clock, cadence, days, expect):
