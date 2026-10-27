@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
                       **({"allow_shrink": True} if args.allow_shrink else {})}
             ops.enqueue(args.dataset, params or None, by="cli")
         if not args.dataset:
-            for name, why, _ in due.enqueue_due():
+            for name, why, _, _ in due.enqueue_due():
                 print(f"{name}: {why}", file=sys.stderr, flush=True)
         return _run_queue(args.dataset, args.once)
 

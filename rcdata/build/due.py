@@ -19,6 +19,7 @@ already has a request queued or running gets no second one, whoever queued the f
 """
 from __future__ import annotations
 
+import sqlite3
 from datetime import date
 
 from ...core import calendar
@@ -64,11 +65,11 @@ def is_due(ds) -> tuple[bool, str]:
     return False, f"{cadence}: last checked {age} days ago"
 
 
-def enqueue_due(datasets: dict | None = None) -> list[tuple[str, str, int | None]]:
-    """Queue every due dataset once; ``(name, why, request id or None)`` per dataset, in name order.
+def enqueue_due(datasets: dict | None = None) -> list[tuple[str, str, int | None, bool]]:
+    """Queue every due dataset once; ``(name, why, request id or None, error)`` per dataset, in name order.
 
-    None: not due, already queued or running, or its due check raised (``why`` says which); one dataset's error does
-    not stop the others.
+    No id: not due, already queued or running, or an error (``why`` says which). ``error`` is True when the due check
+    raised or ``ops.sqlite`` stayed locked past its busy timeout; one dataset's error does not stop the others.
     """
     if datasets is None:
         from . import DATASETS as datasets
@@ -77,12 +78,17 @@ def enqueue_due(datasets: dict | None = None) -> list[tuple[str, str, int | None
         try:
             due, why = is_due(datasets[name])
         except Exception as e:  # noqa: BLE001 - a calendar past its table for one dataset must not stop the rest
-            out.append((name, f"due check failed: {type(e).__name__}: {e}"[:300], None))
+            out.append((name, f"due check failed: {type(e).__name__}: {e}"[:300], None, True))
             continue
         if not due:
-            out.append((name, f"not due ({why})", None))
+            out.append((name, f"not due ({why})", None, False))
             continue
-        rid = ops.enqueue_once(name, None, by=REQUESTED_BY)
+        try:
+            rid = ops.enqueue_once(name, None, by=REQUESTED_BY)
+        except sqlite3.OperationalError as e:
+            # ops.sqlite held past busy_timeout (as in _run_queue): this dataset waits for the next pass.
+            out.append((name, f"due ({why}), not queued: ops.sqlite busy: {e}"[:300], None, True))
+            continue
         out.append((name, f"due ({why}), " + (f"queued as request {rid}" if rid else "already queued or running"),
-                    rid))
+                    rid, False))
     return out

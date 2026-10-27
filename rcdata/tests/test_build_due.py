@@ -42,7 +42,7 @@ def _checked(dataset: str, result: str = "changed", *, as_of: str | None = None,
 
 def test_a_dataset_never_built_is_due_and_queued_by_the_schedule(clock):
     out = due.enqueue_due()
-    assert {name for name, _, rid in out if rid} == set(DATASETS)
+    assert {name for name, _, rid, _ in out if rid} == set(DATASETS)
     rows = _queue()
     assert sorted(r["dataset"] for r in rows) == sorted(DATASETS)
     assert all(r["requested_by"] == "schedule" and r["params"] is None and r["status"] == "queued" for r in rows)
@@ -51,7 +51,7 @@ def test_a_dataset_never_built_is_due_and_queued_by_the_schedule(clock):
 def test_two_overlapping_passes_queue_each_due_dataset_once(clock):
     due.enqueue_due()
     second = due.enqueue_due()
-    assert all(rid is None for _, _, rid in second)
+    assert all(rid is None and not error for _, _, rid, error in second)
     assert len(_queue()) == len(DATASETS)
 
 
@@ -123,8 +123,24 @@ def test_the_schedule_next_due_holds_a_dataset_until_that_day(clock):
 def test_one_dataset_whose_due_check_raises_does_not_stop_the_others(clock, monkeypatch):
     monkeypatch.setattr(DATASETS[UW], "default_as_of", lambda: (_ for _ in ()).throw(ValueError("past the table")))
     _checked(UW, as_of="2026-10-26")
-    out = {name: (reason, rid) for name, reason, rid in due.enqueue_due()}
-    assert out[UW][1] is None and "past the table" in out[UW][0]
+    out = {name: (reason, rid, error) for name, reason, rid, error in due.enqueue_due()}
+    assert out[UW][1] is None and "past the table" in out[UW][0] and out[UW][2] is True
+    assert out[MS][2] is False
+    assert [r["dataset"] for r in _queue()] == [MS]
+
+
+def test_a_locked_ops_file_while_queueing_one_dataset_does_not_stop_the_others(clock, monkeypatch):
+    import sqlite3
+    real = ops.enqueue_once
+
+    def locked_for_uw(name, params=None, *, by):
+        if name == UW:
+            raise sqlite3.OperationalError("database is locked")
+        return real(name, params, by=by)
+    monkeypatch.setattr(ops, "enqueue_once", locked_for_uw)
+    out = {name: (reason, rid, error) for name, reason, rid, error in due.enqueue_due()}
+    assert out[UW] == ("due (never built), not queued: ops.sqlite busy: database is locked", None, True)
+    assert out[MS][1] is not None and out[MS][2] is False
     assert [r["dataset"] for r in _queue()] == [MS]
 
 
