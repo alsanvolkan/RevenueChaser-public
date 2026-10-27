@@ -153,3 +153,46 @@ def test_the_section_is_one_column_on_a_phone_with_44px_targets_and_no_sideways_
     assert len({c["w"] for c in m["cards"]}) == 1, "the cards are not full width"
     assert m["buttons"] >= 6 and not m["small"], f"targets under 44 px: {m['small']}"
     assert m["bg"] == _rgb(THEME_TOKENS[scheme]["bg"]), "the section does not follow the shell's tokens"
+
+
+def _card_js(ds: str) -> str:
+    return f"document.querySelector('#newdata .nd-dataset[data-dataset=\"{ds}\"]')"
+
+
+def _backfill_click(browser, ds: str, day: str) -> str:
+    card = _card_js(ds)
+    browser.eval(f"{card}.querySelector('input.nd-date').value = {day!r}")
+    browser.eval(f"{card}.querySelector('button[data-nd-act=\"backfill\"]').click()")
+    return browser.eval(f"{card}.querySelector('[data-nd-msg]').textContent")
+
+
+def test_a_backfill_without_an_estimate_or_over_1000_calls_waits_for_a_second_click(dashboard, browser, market,
+                                                                                    provider_routes):
+    """Review should-fix 1: the confirm step is the page's only brake on a large backfill (the route queues any)."""
+    before = len(provider_routes.requests())
+    _open_board(browser, dashboard)
+    # The market series have no call estimate: the page asks first and queues nothing.
+    msg = _backfill_click(browser, "market_series", "2026-01-05")
+    assert "not estimated" in msg and _requests(market) == []
+    # Over 1,000 calls: the SPX slice made to miss 1,500 sessions from the chosen day on.
+    browser.eval("ND.datasets['uw/spot_expiry_strike'].missing = "
+                 "Array.from({length: 1500}, function(_, i){ return '2026-01-' + String(10 + (i % 18)); })")
+    msg = _backfill_click(browser, "uw/spot_expiry_strike", "2026-01-05")
+    assert "about 1,500 calls" in msg and _requests(market) == []
+    # The second click queues exactly the one backfill that was asked for.
+    browser.eval(f"{_card_js('market_series')}.querySelector('button[data-nd-act=\"backfill-confirm\"]').click()")
+    browser.wait_for("document.getElementById('nd-queue-active').textContent.indexOf('market_series') >= 0")
+    rows = _requests(market)
+    assert [(r["dataset"], r["params"]) for r in rows] == [
+        ("market_series", '{"from": "2026-01-05", "mode": "backfill"}')]
+    assert len(provider_routes.requests()) == before
+
+
+def test_a_small_estimated_backfill_is_queued_on_the_first_click(dashboard, browser, market):
+    _open_board(browser, dashboard)
+    browser.eval("ND.datasets['uw/spot_expiry_strike'].missing = ['2026-10-20', '2026-10-21']")
+    _backfill_click(browser, "uw/spot_expiry_strike", "2026-10-20")
+    browser.wait_for("document.getElementById('nd-queue-active').textContent.indexOf('spot_expiry_strike') >= 0")
+    msg = browser.eval(f"{_card_js('uw/spot_expiry_strike')}.querySelector('[data-nd-msg]').textContent")
+    assert "about 2 calls" in msg
+    assert [r["dataset"] for r in _requests(market)] == ["uw/spot_expiry_strike"]
