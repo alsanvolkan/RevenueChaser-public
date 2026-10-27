@@ -38,3 +38,7 @@ rawData/*
 *.pem
 *.p12
 *.pfx
+
+# The market store (#206): repo-local default roots of RC_MARKET_DIR / RC_MARKET_RAW_DIR.
+.market/
+.market_raw/
