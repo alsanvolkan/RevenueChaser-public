@@ -925,6 +925,9 @@ file and leaves the live file byte-identical (test T3, `rcdata/tests/test_servin
 file read-only on every request (`rcdata.serving.open_read`) and never writes one; serving files are never
 compacted, they are rebuilt. Pages only enqueue requests; the builder takes them in order.
 
+CFTC COT rows are futures-only: the TFF dataset's `Combined` rows (futures and options) are filtered out; taking
+them instead is a later choice.
+
 **Raw and Parquet.** A raw file that exists is never fetched again: it is the resume marker. Raw files and Parquet
 partitions are written to `<name>.tmp` and renamed, so a file under its real name is whole (zstd Parquet, row groups
 of 100k rows). The SPX slice is one call per session: `raw/uw/spot_expiry_strike/<date>/SPX.json.gz`, Parquet

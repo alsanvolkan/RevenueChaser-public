@@ -1,5 +1,7 @@
 """CFTC Commitments of Traders: Traders in Financial Futures and Disaggregated, from CFTC's Socrata API (keyless).
 
+Futures only: the TFF dataset (``udgc-27he``) holds a ``FutOnly`` and a ``Combined`` row per contract and date, and
+the query keeps ``FutOnly`` (Combined is a later choice); the Disaggregated dataset (``72hh-3qpy``) is futures-only.
 Rows are keyed on the **contract code** (``cftc_contract_market_code``), never the market name: CFTC renamed the
 markets on 8 Feb 2022 and the code stayed. Series id ``cftc:<report>:<contract_code>:<field>`` for every position and
 open-interest field of the row (``*positions*`` and ``open_interest*``, not the percentages or the changes).
@@ -25,6 +27,7 @@ FIRST_REPORT = date(2006, 6, 13)
 SOCRATA_LIMIT = 50_000
 DATE_FIELD = "report_date_as_yyyy_mm_dd"
 CODE_FIELD = "cftc_contract_market_code"
+KIND_FIELD, KIND = "futonly_or_combined", "FutOnly"
 # The contracts kept, by report (avo to tune): equity index, rates and VIX futures in TFF; crude and gold in
 # Disaggregated.
 CONTRACTS = {
@@ -49,8 +52,13 @@ def _folder() -> Path:
 
 def _query(ctx, report: str, start: date, end: date) -> list[dict]:
     codes = ", ".join(f"'{c}'" for c in CONTRACTS[report])
-    params = {"$where": f"{CODE_FIELD} in ({codes}) AND {DATE_FIELD} between "
-                        f"'{start.isoformat()}T00:00:00' and '{end.isoformat()}T23:59:59'",
+    where = (f"{CODE_FIELD} in ({codes}) AND {DATE_FIELD} between "
+             f"'{start.isoformat()}T00:00:00' and '{end.isoformat()}T23:59:59'")
+    if report == "tff":
+        # udgc-27he ("TFF_All") holds a FutOnly and a Combined row per contract and date; the futures-only one is
+        # kept (Combined is a later choice for avo). 72hh-3qpy is futures-only already.
+        where += f" AND {KIND_FIELD}='{KIND}'"
+    params = {"$where": where,
               "$order": f"{DATE_FIELD}, {CODE_FIELD}", "$limit": str(SOCRATA_LIMIT)}
     body = base.http_get(ctx, SOURCE, _base(report), params).json()
     if not isinstance(body, list):
@@ -118,7 +126,7 @@ def parse(text: str, meta: dict) -> list[dict]:
                 day = date.fromisoformat(str(item.get(DATE_FIELD))[:10])
             except ValueError:
                 continue
-            if not code:
+            if not code or item.get(KIND_FIELD, KIND) != KIND:     # a Combined row the query let through
                 continue
             for name, cell in item.items():
                 value = to_float(cell) if _kept_field(name) else None
