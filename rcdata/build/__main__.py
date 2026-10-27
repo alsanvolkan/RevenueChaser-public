@@ -82,6 +82,9 @@ def main(argv: list[str] | None = None) -> int:
     bf.add_argument("--to", dest="end")
     bf.add_argument("--allow-shrink", action="store_true", help=shrink_help)
     args = p.parse_args(argv)
+    if args.cmd == "run" and not args.dataset and (args.as_of or args.allow_shrink):
+        # They only shape the request queued for --dataset; without it they would be dropped silently (F5).
+        p.error("--as-of and --allow-shrink need --dataset")
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     # httpx logs every request URL at INFO, query string included, and FRED's key is in the query.

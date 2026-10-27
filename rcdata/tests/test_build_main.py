@@ -81,3 +81,12 @@ def test_n3_allow_shrink_reaches_the_request(monkeypatch):
     assert seen[0]["params"] == {"allow_shrink": True}
     assert cli.main(["backfill", "market_series", "--from", "2026-10-01", "--allow-shrink"]) == 0
     assert seen[1]["params"]["allow_shrink"] is True
+
+
+def test_f5_allow_shrink_or_as_of_without_a_dataset_is_an_error(capsys):
+    import pytest
+    for argv in (["run", "--once", "--allow-shrink"], ["run", "--once", "--as-of", "2026-10-27"]):
+        with pytest.raises(SystemExit) as e:
+            cli.main(argv)
+        assert e.value.code == 2
+        assert "--dataset" in capsys.readouterr().err

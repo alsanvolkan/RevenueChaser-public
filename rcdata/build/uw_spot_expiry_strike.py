@@ -14,6 +14,7 @@ the Monday, is 1 DTE.
 """
 from __future__ import annotations
 
+import math
 import os
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -31,6 +32,8 @@ ENDPOINT = f"/stock/{TICKER}/spot-exposures/expiry-strike"
 PAGE_LIMIT = 500
 FIRST_SESSION = date(2025, 1, 16)
 REJECTED_SUFFIX = ".rejected"
+# An epoch below this (9 Sep 2001) is not a UW snapshot time: 0, or a date written without dashes read as seconds.
+MIN_EPOCH = 1e9
 
 # Every numeric field UW documents for this answer (docs/openapi.yaml, "Spot greek exposures by strike"): the four
 # greeks, each for calls and puts, by open interest, volume, bid and ask; and ``price``, the spot of the snapshot.
@@ -142,7 +145,8 @@ class UWSpotExpiryStrike:
         if not rows:
             # An empty partition would mark the session done for good (S6), and so would the raw file, which is the
             # fetch's resume marker (N1): it is set aside as .rejected, kept for a look, and the next run asks again.
-            rejected = raw.with_name(raw.name + REJECTED_SUFFIX)
+            # The run id in the name: a second rejection of the same day keeps the first one's file (F2).
+            rejected = raw.with_name(f"{raw.name}.{ctx.run_id}{REJECTED_SUFFIX}")
             os.replace(raw, rejected)
             raise base.SourceError(f"UW {session}: no usable row in {raw.name} ({len(items)} rows answered); "
                                    f"set aside as {rejected.name}")
@@ -236,9 +240,16 @@ def snapshot_day(stamp) -> date | None:
             except ValueError:
                 return None
             return (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).astimezone(calendar.NY).date()
+    if not math.isfinite(epoch):                       # "nan", "inf": no stamp, never an exception (F1)
+        return None
+    if epoch < MIN_EPOCH:                              # 0 or "20261026" is not a snapshot time (F3)
+        return None
     if epoch > 1e11:                                   # milliseconds
         epoch /= 1000.0
-    return datetime.fromtimestamp(epoch, tz=timezone.utc).astimezone(calendar.NY).date()
+    try:
+        return datetime.fromtimestamp(epoch, tz=timezone.utc).astimezone(calendar.NY).date()
+    except (ValueError, OverflowError, OSError):       # out of the platform's range (1e20 is OSError errno 75)
+        return None
 
 
 def time_now() -> float:
