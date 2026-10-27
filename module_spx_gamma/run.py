@@ -185,7 +185,7 @@ def _export_chart(fig, chart_dir: Path, name: str, png: bool = True):
         return None, None, None
     html_path = chart_dir / f"{name}.html"
     fig.write_html(str(html_path), include_plotlyjs=False, full_html=True)
-    fragment = fig.to_html(full_html=False, include_plotlyjs=False)
+    fragment = fig.to_html(full_html=False, include_plotlyjs=False, config={"responsive": True})
     png_path = None
     if not png:
         return html_path, None, fragment

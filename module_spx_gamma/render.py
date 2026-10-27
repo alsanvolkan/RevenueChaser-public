@@ -7,7 +7,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
 
-from RevenueChaser.core.reporting_common import help_html, notice_html, provider_health_html
+from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html, notice_html, provider_health_html
 
 from .brier import scorecard
 from .config import BRIER_FILENAME, HISTORY_FILENAME
@@ -315,6 +315,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "report_date": asof,
         "sessions": f"{first} → {last}",
         "retrieved_at": snapshot.get("api_snapshot_time", ""),
+        "last_sync": _last_sync(snapshot.get("api_snapshot_time"), asof),
         "source": "Unusual Whales API",
     }
 
@@ -521,6 +522,26 @@ def _flip_methods(snapshot: dict) -> list[dict]:
             for name, key, note in rows]
 
 
+def _last_sync(stamp, fallback) -> str:
+    """'23 Oct' from the fetch stamp (UTC), as the New York day it fell on (AGENTS.md section 6: no raw timestamp).
+
+    A stored day without a stamp, or with one that does not parse, shows the report date instead.
+    """
+    from datetime import date, datetime, timezone
+    from zoneinfo import ZoneInfo
+    try:
+        dt = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        day = dt.astimezone(ZoneInfo("America/New_York")).date()
+    except (ValueError, TypeError):
+        try:
+            day = date.fromisoformat(str(fallback)[:10])
+        except ValueError:
+            return str(fallback or "—")
+    return f"{day.day} {day:%b}"
+
+
 def render_markdown(snapshot: dict, chart_png: str | None = None, prev_snapshot: dict | None = None,
                     data_root=None) -> str:
     ctx = build_context(snapshot, prev_snapshot, data_root=data_root)
@@ -548,6 +569,9 @@ def render_html(snapshot: dict, chart_png: str | None = None, chart_html: str | 
     ctx["tornado_html"] = Markup(tornado_html) if tornado_html else tornado_html
     ctx["envelope_html"] = Markup(envelope_html) if envelope_html else envelope_html
     ctx["help_block"] = Markup(HELP)
+    # The shell's palette (dark; light under data-theme), the one place it is defined.
+    ctx["theme_css"] = Markup(THEME_CSS)
+    ctx["theme_js"] = Markup(THEME_JS)        # applies the reader's stored choice before the page paints
     # Escapes every provider string itself (Common K3); empty for a clean run.
     ctx["provider_banner"] = Markup(provider_health_html(snapshot.get("provider_health")))
     # The Fetch warnings and any non-ok quality flag (M-SPX-5); empty for a clean day.
