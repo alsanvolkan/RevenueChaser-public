@@ -59,6 +59,11 @@ def _page_js(client) -> str:
     return next(s for s in inline_scripts(html) if "function line" in s)
 
 
+def _default_limit(script: str) -> str:
+    """The page's own ``var DEFAULT_LIMIT`` line, as rendered from ``runview``."""
+    return next(ln for ln in script.splitlines() if ln.strip().startswith("var DEFAULT_LIMIT"))
+
+
 def _row_cells(client, tmp_path, row: dict) -> list[dict]:
     """The cells ``line(row)`` builds, as ``{cls, text, title, pill}`` in column order."""
     script = _page_js(client)
@@ -113,8 +118,10 @@ def test_a_long_value_is_clipped_in_the_cell_and_whole_in_the_tooltip(client, tm
     cells = _row_cells(client, tmp_path, dict(ROW, params={"args": args}))
     params = cells[6]
     assert params["text"].endswith("…") and len(params["text"]) == 65
-    assert params["title"] == json.dumps({"args": args}, separators=(",", ":")).replace('","', '", "') \
-        or params["title"].startswith('{"args"'), "the tooltip carries the whole value"
+    # The tooltip is the browser's JSON.stringify of the value, which for this ASCII-only blob is exactly
+    # json.dumps with compact separators: the whole value, last argument included (#131 item 6).
+    assert params["title"].startswith('{"args"') and "--max-yf-calls" in params["title"]
+    assert params["title"] == json.dumps({"args": args}, separators=(",", ":")), "the tooltip carries the whole value"
     assert len(params["title"]) > len(params["text"])
 
 
@@ -167,10 +174,32 @@ def test_the_page_asks_the_server_for_the_filter(client, tmp_path):
     urls = _node(DOM_STUB + "globalThis.URLSearchParams = require('url').URLSearchParams;\n"
                  + 'var POLL = "/api/runs";\n'
                  + "var problems = document.getElementById('runs-problems');"
-                 + "var filter = document.getElementById('runs-filter');\n"
-                 + function_source(script, "query") + "\n" + tail, tmp_path)
+                 + "var filter = document.getElementById('runs-filter');"
+                 + "var limit = document.getElementById('runs-limit');\n"
+                 + _default_limit(script) + "\n" + function_source(script, "query") + "\n" + tail, tmp_path)
     assert urls == ["/api/runs", "/api/runs?problems=1", "/api/runs?problems=1&q=daily"]
     assert runview.POLL_PATH == "/api/runs"
+
+
+def test_the_page_can_ask_for_more_than_the_newest_page(client, tmp_path):
+    """#131 item 2: the server takes ``limit`` up to MAX_LIMIT; the page's control is what sends it."""
+    script = _page_js(client)
+    tail = (f"""
+      var out = [];
+      limit.value = "{runview.DEFAULT_LIMIT}"; out.push(query());
+      limit.value = "{runview.MAX_LIMIT}"; out.push(query());
+      problems.checked = true; out.push(query());
+      console.log(JSON.stringify(out));
+    """)
+    urls = _node(DOM_STUB + "globalThis.URLSearchParams = require('url').URLSearchParams;\n"
+                 + 'var POLL = "/api/runs";\n'
+                 + "var problems = document.getElementById('runs-problems');"
+                 + "var filter = document.getElementById('runs-filter');"
+                 + "var limit = document.getElementById('runs-limit');\n"
+                 + _default_limit(script) + "\n" + function_source(script, "query") + "\n" + tail, tmp_path)
+    # The default page is the URL it always was, so a poll on the default view did not change.
+    assert urls == ["/api/runs", f"/api/runs?limit={runview.MAX_LIMIT}",
+                    f"/api/runs?problems=1&limit={runview.MAX_LIMIT}"]
 
 
 # ── the overlay, the half of this slice the user sees ─────────────────────────
@@ -209,3 +238,106 @@ def test_the_overlay_sentence_for_every_state(client, tmp_path):
         "Running spxgamma · 2s · stopping at the next safe point",
         "Running daily_bars",
     ]
+
+
+# ── a filter change while a poll is in flight (#131 item 1) ───────────────────
+
+def _load_harness(client, tmp_path, steps: str) -> list:
+    """Drive ``load()`` against a fetch whose answers the test releases one at a time."""
+    script = _page_js(client)
+    # The page's state line (``var paused = ..., busy = ...``) is taken as it stands, so a new flag the
+    # function needs is declared where the page declares it and not only here.
+    state = next(ln for ln in script.splitlines() if ln.strip().startswith("var paused"))
+    prelude = ("globalThis.URLSearchParams = require('url').URLSearchParams;\n"
+               'var POLL = "/api/runs";\n'
+               "var problems = document.getElementById('runs-problems');\n"
+               "var filter = document.getElementById('runs-filter');\n"
+               "var limit = document.getElementById('runs-limit');\n"
+               "var meta = document.getElementById('runs-meta');\n"
+               "var sent = [], held = [];\n"
+               "fetch = function(url){ sent.push(url); return new Promise(function(res){ held.push(res); }); };\n"
+               "var answered = 0, drawn = [];\n"
+               "function answer(){ if (!held.length) return; var n = ++answered;"
+               " held.shift()({ok: true, json: function(){ return {rows: [], n: n}; }}); }\n"
+               "var last = null;\n"
+               "function draw(){ drawn.push(last.n); }\n"
+               "function tick(){ return new Promise(function(r){ setTimeout(r, 0); }); }\n")
+    funcs = _default_limit(script) + "\n" + "\n".join(function_source(script, name) for name in ("query", "load"))
+    body = f"(async function(){{ {steps} console.log(JSON.stringify(sent)); }})();"
+    if "DRAWN" in steps:
+        body = f"(async function(){{ {steps.replace('DRAWN', '')} console.log(JSON.stringify([sent, drawn])); }})();"
+    return _node(DOM_STUB + prelude + state + "\n" + funcs + "\n" + body, tmp_path)
+
+
+def test_a_filter_change_during_a_poll_is_sent_when_the_poll_ends(client, tmp_path):
+    """``if (busy) return;`` dropped the click: the table sat unfiltered until the next 5 s poll."""
+    sent = _load_harness(client, tmp_path, """
+      load(true);                                   // the timer's poll is in flight
+      problems.checked = true; load();              // the reader ticks Problems only meanwhile
+      answer(); await tick();
+    """)
+    assert sent == ["/api/runs", "/api/runs?problems=1"], "the filter change was lost behind a poll"
+
+
+def test_a_poll_during_a_poll_is_not_queued(client, tmp_path):
+    """Only a reader's change is remembered; a timer tick that finds a read in flight is simply skipped."""
+    sent = _load_harness(client, tmp_path, """
+      load(true); load(true); answer(); await tick();
+    """)
+    assert sent == ["/api/runs"]
+
+
+def test_many_changes_during_a_poll_send_one_read(client, tmp_path):
+    sent = _load_harness(client, tmp_path, """
+      load(true);
+      problems.checked = true; load(); filter.value = "daily"; load(); load();
+      answer(); await tick(); answer(); await tick();
+    """)
+    assert sent == ["/api/runs", "/api/runs?problems=1&q=daily"], "one extra request at most"
+
+
+def test_the_overlay_counts_the_other_jobs_covering_the_tab(client, tmp_path):
+    """#131 item 3: a Rotation Fetch also queues Money flow; the overlay named only the first job."""
+    html = strip_open_issues_data(client.get("/").get_data(as_text=True))
+    script = next(s for s in inline_scripts(html) if "function overlayText" in s)
+    prelude = ('var _now = Date.parse("2026-10-23T10:00:00+00:00");'
+               "Date.now = function(){ return _now; };\n")
+    running = {"status": "running", "module": "rotation", "phase": None,
+               "started_at": "2026-10-23T09:59:48+00:00"}
+    queued = {"status": "queued", "module": "money_flow"}
+    lists = [[running], [running, queued], [running, queued, dict(queued, module="other")], [queued, queued]]
+    tail = f"console.log(JSON.stringify({json.dumps(lists)}.map(overlayText)));"
+    assert _node(DOM_STUB + prelude + function_source(script, "overlayText") + "\n" + tail, tmp_path) == [
+        "Running rotation · 12s",
+        "Running rotation · 12s · +1 more",
+        "Running rotation · 12s · +2 more",
+        "Queued behind another job… · +1 more",
+    ]
+
+
+
+def test_an_answer_read_under_an_old_filter_is_not_drawn(client, tmp_path):
+    """#189 review: the poll in flight when the reader ticked Problems only came back and was drawn, so the
+    unfiltered rows flashed up under a ticked box before the filtered read replaced them."""
+    sent, drawn = _load_harness(client, tmp_path, """DRAWN
+      load(true);
+      problems.checked = true; load();
+      answer(); await tick();
+      answer(); await tick();
+    """)
+    assert sent == ["/api/runs", "/api/runs?problems=1"]
+    assert drawn == [2], f"drew answers {drawn}: the first was read without the filter"
+
+
+def test_the_overlay_names_the_running_job_first(client, tmp_path):
+    """#189 review: /api/jobs lists by queued_at, so a job queued earlier but still waiting came first and the
+    overlay said "Queued…" while another job covering the tab was running."""
+    html = strip_open_issues_data(client.get("/").get_data(as_text=True))
+    script = next(s for s in inline_scripts(html) if "function overlayText" in s)
+    prelude = ('var _now = Date.parse("2026-10-23T10:00:00+00:00");'
+               "Date.now = function(){ return _now; };\n")
+    jobs = [{"status": "queued", "module": "money_flow"},
+            {"status": "running", "module": "rotation", "phase": None, "started_at": "2026-10-23T09:59:48+00:00"}]
+    tail = f"console.log(JSON.stringify(overlayText({json.dumps(jobs)})));"
+    assert _node(DOM_STUB + prelude + function_source(script, "overlayText") + "\n" + tail, tmp_path) == \
+        "Running rotation · 12s · +1 more"

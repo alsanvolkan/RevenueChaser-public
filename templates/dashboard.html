@@ -952,16 +952,20 @@ var ACTIVE_JOBS = [];  // last /api/jobs active list (poll keeps it current)
 
 // What the overlay says while a job covers this tab (#26 PL5-b). /api/jobs already serves the job's module,
 // its start and the phase its runner reached; the overlay used to show one fixed sentence whatever ran.
+// It names the first job and counts the rest (#131): a Rotation Fetch also queues Money flow onto this tab.
+// /api/jobs lists by queued_at, so the running job is looked for first and a waiting one named only if none runs.
 function overlayText(jobs){
-  var job = (jobs||[])[0];
+  jobs = jobs || [];
+  var job = jobs.filter(function(j){ return j.status === 'running'; })[0] || jobs[0];
   if(!job) return 'Running… this may take a few minutes';
-  if(job.status === 'queued') return 'Queued behind another job…';
+  var more = jobs.length > 1 ? ' · +' + (jobs.length - 1) + ' more' : '';
+  if(job.status === 'queued') return 'Queued behind another job…' + more;
   var what = job.phase && job.phase !== job.module ? job.module + ' · ' + job.phase : (job.module || 'a job');
   var elapsed = job.started_at ? Math.round((Date.now() - new Date(job.started_at).getTime())/1000) : null;
   var since = (elapsed === null || isNaN(elapsed) || elapsed < 0) ? ''
             : (elapsed < 90 ? ' · ' + elapsed + 's'
                             : ' · ' + Math.floor(elapsed/60) + 'm ' + (elapsed % 60) + 's');
-  return 'Running ' + what + since + (job.cancel_requested ? ' · stopping at the next safe point' : '');
+  return 'Running ' + what + since + (job.cancel_requested ? ' · stopping at the next safe point' : '') + more;
 }
 function syncOverlay(){
   var jobs = jobsForTab(ACTIVE_JOBS, ACTIVE);

@@ -1385,13 +1385,23 @@ def api_logs():
     return jsonify(data)
 
 
+_OFF_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+def _query_flag(name: str) -> bool:
+    """A query-string switch: absent is off, ``0`` / ``false`` / ``no`` / ``off`` are off, anything else
+    is on, a bare ``?name`` and an empty ``?name=`` included. No other route had such a helper (#131)."""
+    value = request.args.get(name)
+    return value is not None and value.strip().lower() not in _OFF_VALUES
+
+
 @app.route("/api/runs")
 def api_runs():
     """The Runs tab's poll: the newest ``job_runs`` rows (#26 PL5-b). Read-only, and lenient on a store
     that holds no rows yet. ``problems`` and ``q`` filter in SQL, so the count the page shows is the count
     of matching runs in the table and not of the page it happens to have read."""
     return jsonify(runview.read(request.args.get("limit", runview.DEFAULT_LIMIT),
-                                problems=request.args.get("problems") is not None,
+                                problems=_query_flag("problems"),
                                 query=request.args.get("q")))
 
 

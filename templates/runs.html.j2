@@ -8,9 +8,18 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Runs</title>
 <link rel="icon" href="/static/icons/icon-192.png">
+{%- set columns = ["Started", "Job", "Trigger", "Status", "Took", "Note", "Params"] %}
 <style>
+/* Dark is the dashboard's own look and the default. Light follows the device unless the shell set
+   data-theme on this document (its manual toggle); data-theme="light" forces light. */
 :root{--bg:#05111F;--panel:#12161e;--panel2:#1a1f2b;--border:#232a38;
---text:#d7dce5;--muted:#8a93a6;--accent:#0EA5E9;--red:#e74c3c;--green:#2ecc71;--amber:#f0ad4e;}
+--text:#d7dce5;--muted:#8a93a6;--accent:#0EA5E9;--red:#e74c3c;--green:#2ecc71;--amber:#f0ad4e;color-scheme:dark}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){--bg:#f5f7fa;--panel:#ffffff;--panel2:#eef1f5;--border:#d5dbe3;
+    --text:#1b2330;--muted:#5b6575;--accent:#0369a1;--red:#c0392b;--green:#1e8449;--amber:#a15c00;color-scheme:light}
+}
+:root[data-theme="light"]{--bg:#f5f7fa;--panel:#ffffff;--panel2:#eef1f5;--border:#d5dbe3;
+  --text:#1b2330;--muted:#5b6575;--accent:#0369a1;--red:#c0392b;--green:#1e8449;--amber:#a15c00;color-scheme:light}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5}
@@ -22,12 +31,13 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"
 .chk{display:inline-flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;user-select:none}
 .chk input{margin:0;accent-color:var(--accent)}
 .fld{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
-.fld input{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;height:32px;padding:0 10px;font:inherit;font-size:13px;width:160px}
+.fld input,.fld select{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;height:32px;padding:0 10px;font:inherit;font-size:13px;width:160px}
 .btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;height:32px;padding:0 14px;font:600 13px/1 inherit;cursor:pointer}
 .btn:hover{border-color:var(--accent)}
 .btn[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .meta,.note{color:var(--muted);font-size:12.5px;line-height:1.5;margin:8px 0 0}
+.meta{overflow-wrap:anywhere}   /* it quotes the name filter, which may be one long word */
 .note{border-top:1px solid var(--border);padding-top:8px;margin-top:8px}
 .scroll{flex:1 1 auto;min-height:160px;overflow:auto;margin:8px 0 0;background:var(--panel);border:1px solid var(--border);border-radius:12px}
 table{border-collapse:collapse;width:100%;font-size:13px}
@@ -36,7 +46,7 @@ thead th{position:sticky;top:0;background:var(--panel2);text-align:left;font-wei
 tbody td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top}
 tbody tr:last-child td{border-bottom:0}
 td.when,td.took{white-space:nowrap;font-variant-numeric:tabular-nums}
-td.job{font-weight:600}
+td.job{font-weight:600;overflow-wrap:anywhere}
 td.note-cell,td.params{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;
   max-width:28ch;overflow-wrap:anywhere}
 td.dash{color:var(--muted)}
@@ -45,6 +55,39 @@ td.dash{color:var(--muted)}
 .s-error,.s-cancelled{color:var(--red)}
 .s-running,.s-queued{color:var(--amber)}
 .empty{padding:16px 12px;color:var(--muted)}
+.clip-full{display:none}
+/* A finger, not a mouse: every control is at least 44 px tall (the owner's phone rule, CLAUDE.md). */
+@media (max-width: 640px), (pointer: coarse){
+  .chk{min-height:44px}
+  .chk input{width:22px;height:22px}
+  .fld input,.fld select,.btn{height:44px;font-size:16px}
+  .btn{min-width:88px}
+}
+/* A phone: one card per run, each cell on its own line under its column's name, nothing sideways.
+   The page scrolls instead of the table box, so the cards use the whole height. */
+@media (max-width: 640px){
+  html,body{height:auto}
+  .wrap{height:auto;padding:12px 16px}
+  .controls{flex-direction:column;align-items:stretch;gap:8px}
+  .fld{width:100%}
+  .fld label{min-width:3.5em}
+  .fld input,.fld select{flex:1 1 auto;width:auto;min-width:0}
+  .scroll{overflow:visible;background:none;border:0;border-radius:0;min-height:0}
+  table,tbody,tr,td{display:block;width:100%}
+  thead{display:none}   /* each cell shows its column's name instead (below); many screen readers read it out too */
+  tbody tr{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:6px 12px;margin:0 0 8px}
+  tbody td{display:grid;grid-template-columns:5.5em minmax(0,1fr);gap:8px;padding:4px 0;border:0;max-width:none}
+  tbody tr:last-child td{border:0}
+  tbody td.note-cell,tbody td.params{max-width:none}
+  tbody td .pill{justify-self:start}
+  tbody td .clip-short{display:none}
+  tbody td .clip-full{display:block;min-width:0}
+  {%- for name in columns %}
+  tbody td:nth-child({{ loop.index }})::before{content:"{{ name }}";color:var(--muted);font:500 12px/1.6 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  {%- endfor %}
+  tbody td.empty{display:block}
+  tbody td.empty::before{content:none}
+}
 </style>
 </head>
 <body>
@@ -57,15 +100,17 @@ td.dash{color:var(--muted)}
   <div class="controls">
     <label class="chk" for="runs-problems"><input type="checkbox" id="runs-problems"> Problems only</label>
     <span class="fld"><label for="runs-filter">Job</label><input type="text" id="runs-filter" placeholder="name contains…"></span>
+    <span class="fld"><label for="runs-limit">Show</label><select id="runs-limit" autocomplete="off">
+      {%- for n in limits %}<option value="{{ n }}"{% if loop.first %} selected{% endif %}>newest {{ n }}</option>{% endfor -%}
+    </select></span>
     <button type="button" class="btn" id="runs-pause" aria-pressed="false">Pause</button>
   </div>
   <div class="scroll">
     <table>
       <thead><tr>
-        <th scope="col">Started</th><th scope="col">Job</th><th scope="col">Trigger</th>
-        <th scope="col">Status</th><th scope="col">Took</th><th scope="col">Note</th><th scope="col">Params</th>
+        {%- for name in columns %}<th scope="col">{{ name }}</th>{% endfor -%}
       </tr></thead>
-      <tbody id="runs-body"><tr><td class="empty" colspan="7">Loading...</td></tr></tbody>
+      <tbody id="runs-body"><tr><td class="empty" colspan="{{ columns | length }}">Loading...</td></tr></tbody>
     </table>
   </div>
   <p class="meta" id="runs-meta" aria-live="polite"></p>
@@ -80,8 +125,10 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
 (function () {
   var body = document.getElementById("runs-body"), meta = document.getElementById("runs-meta");
   var problems = document.getElementById("runs-problems"), filter = document.getElementById("runs-filter");
-  var pause = document.getElementById("runs-pause");
-  var paused = false, busy = false, shown = null, last = null;
+  var pause = document.getElementById("runs-pause"), limit = document.getElementById("runs-limit");
+  var DEFAULT_LIMIT = "{{ limits[0] }}";   // app/runview.DEFAULT_LIMIT: the page the URL omits
+  var COLUMNS = {{ columns | length }};      // the header's own column count
+  var paused = false, busy = false, pending = false, shown = null, last = null;
 
   function stamp(epoch) {
     if (epoch === null || epoch === undefined) return "—";
@@ -116,7 +163,20 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
     td.className = cls;
     var s = text(value);
     if (!s) { td.classList.add("dash"); s = "—"; }
-    if (clip && s.length > CLIP) { td.title = s; s = s.slice(0, CLIP) + "…"; }
+    if (clip && s.length > CLIP) {
+      // Clipped on a desktop with the whole value in the tooltip; a phone has no tooltip, so it shows the
+      // whole value instead (CSS picks the span). Both are text nodes: never markup.
+      td.title = s;
+      var short = document.createElement("span"), full = document.createElement("span");
+      short.className = "clip-short";
+      short.textContent = s.slice(0, CLIP) + "…";
+      full.className = "clip-full";
+      full.textContent = s;
+      td.appendChild(short);
+      td.appendChild(full);
+      row.appendChild(td);
+      return td;
+    }
     td.textContent = s;               // a stored message is untrusted text: never markup
     row.appendChild(td);
     return td;
@@ -159,7 +219,7 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
       if (!rows.length) {
         var tr = document.createElement("tr"), td = document.createElement("td");
         td.className = "empty";
-        td.colSpan = 7;
+        td.colSpan = COLUMNS;
         td.textContent = (last.problems || last.query) ? "No run matches this filter."
                                                        : "No run has been recorded yet.";
         tr.appendChild(td);
@@ -182,21 +242,28 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
     if (problems.checked) p.set("problems", "1");
     var q = filter.value.trim();
     if (q) p.set("q", q);
+    if (limit.value && limit.value !== DEFAULT_LIMIT) p.set("limit", limit.value);
     var s = p.toString();
     return s ? POLL + "?" + s : POLL;
   }
 
+  // A read already in flight does not drop a reader's change: it is remembered and sent once that read ends
+  // (one extra request at most, however many changes came meanwhile). A timer poll that finds a read in
+  // flight is simply skipped; the next tick comes round anyway.
   function load(poll) {
-    if (busy) return;
+    if (busy) { if (!poll) pending = true; return; }
     busy = true;
-    fetch(query(), {cache: "no-store"})
+    var url = query();
+    fetch(url, {cache: "no-store"})
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      .then(function (d) { if (!(poll && paused)) { last = d; draw(); } })
+      // An answer read under a filter the reader has since changed is dropped: the pending read follows.
+      .then(function (d) { if (url === query() && !(poll && paused)) { last = d; draw(); } })
       .catch(function (e) { meta.textContent = "Could not read the run log: " + e.message; })
-      .then(function () { busy = false; });
+      .then(function () { busy = false; if (pending) { pending = false; load(); } });
   }
 
   problems.addEventListener("change", function () { shown = null; load(); });
+  limit.addEventListener("change", function () { shown = null; load(); });
   var typing = null;
   filter.addEventListener("input", function () {
     clearTimeout(typing);

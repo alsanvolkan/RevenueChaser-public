@@ -42,6 +42,15 @@ POLL_PATH = "/api/logs"
 # Request lines this tab must not show. Its own poll, plus any other tab that polls and would otherwise fill
 # the log it shows — the Runs tab registers itself with ``quiet_path`` (#26 PL5-b).
 POLL_PATHS = {POLL_PATH}
+# One entry per polling tab, registered at import: a cap far above that turns a caller registering paths in a
+# loop into an error instead of a filter that grows for the life of the process (#131).
+MAX_POLL_PATHS = 16
+# werkzeug's request line quotes the request: ``"GET /api/runs?problems=1 HTTP/1.1"``. The filter reads the
+# target out of it, so a request whose own query merely mentions a poll path is still logged (#131).
+# Possessive quantifiers: a path ending in a quote would otherwise backtrack quadratically (a 64 KB path took
+# 15 s, holding the GIL), and any web page can make the browser request such a path.
+_REQUEST_TARGET = re.compile(r'"GET (/[^\s?"]*+)[^\s"]*+ HTTP/')
+_BARE_PATH = re.compile(r"/[^\s?#]*")
 # werkzeug colours its request lines (304, 404, 5xx) even when stderr is a file; the tab shows plain text.
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
@@ -127,9 +136,10 @@ class SkipLogPolling(logging.Filter):
             message = record.getMessage()
         except Exception:  # noqa: BLE001 - a malformed record is not ours to judge
             return True
-        # Over a snapshot: a tab registering its path (``quiet_path``) while a request is being logged would
-        # otherwise raise "set changed size during iteration" out of the logging call.
-        return not any(path in message for path in tuple(POLL_PATHS))
+        # Only a GET is a poll; another method on the same path is something that happened. The path is
+        # compared whole, so ``/api/logsearch`` is not ``/api/logs``.
+        m = _REQUEST_TARGET.search(_ANSI.sub("", message))
+        return not (m and m.group(1) in POLL_PATHS)
 
 
 def quiet_polling(logger_name: str = "werkzeug") -> None:
@@ -139,5 +149,13 @@ def quiet_polling(logger_name: str = "werkzeug") -> None:
 
 
 def quiet_path(path: str) -> None:
-    """Keep another polling tab's own requests out of the log as well (one filter serves them all)."""
+    """Keep another polling tab's own requests out of the log as well (one filter serves them all).
+
+    ``path`` is a bare path (``/api/runs``, no query); registering one twice is a no-op, and past
+    ``MAX_POLL_PATHS`` distinct paths it is a ``ValueError``.
+    """
+    if not isinstance(path, str) or not _BARE_PATH.fullmatch(path):
+        raise ValueError(f"not a bare request path: {path!r}")
+    if path not in POLL_PATHS and len(POLL_PATHS) >= MAX_POLL_PATHS:
+        raise ValueError(f"at most {MAX_POLL_PATHS} polling paths are kept out of the log")
     POLL_PATHS.add(path)

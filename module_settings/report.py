@@ -237,6 +237,15 @@ details.fine>summary{cursor:pointer;color:var(--accent);font-size:12.5px;font-we
 .auto-desc{color:var(--muted);font-size:12px;white-space:normal;max-width:340px}
 .auto-log{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;white-space:pre-wrap;max-width:380px}
 #auto-msg{color:var(--amber);margin:6px 0;min-height:1em}
+/* A phone: the summary's five columns stack instead of scrolling sideways, and the row and its buttons
+   are 44 px touch targets (the owner's phone rule, CLAUDE.md). */
+@media (max-width: 640px){
+  .auto-item>summary{grid-template-columns:minmax(0,1fr);gap:2px;min-height:44px;align-items:start}
+  .auto-detail{padding-left:10px}
+}
+@media (max-width: 640px), (pointer: coarse){
+  .auto-btn{min-height:44px;padding:0 14px;font-size:14px;margin:2px 6px 2px 0}
+}
 /* G4 (#124): the inventory filters above the table. Each chip carries its value as its text, so
    colour is never the only signal; a pressed chip also shows a tick beside its word. */
 .filters{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:14px}
