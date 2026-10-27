@@ -68,7 +68,11 @@ def new_build_id() -> str:
 
 
 def open_read(kind: str) -> duckdb.DuckDBPyConnection:
-    """A read-only connection to the live ``kind`` file, resolved now. The caller closes it (``with`` works)."""
+    """A read-only connection to the live ``kind`` file, resolved now. The caller closes it (``with`` works).
+
+    DuckDB caches one database instance per path in a process (S7): a connection kept open across a swap goes on
+    reading the build it opened. Open and close per request, as ``read`` does.
+    """
     path = live_path(kind)
     if not path.exists():
         raise ServingFileMissing(f"no {kind} serving file at {path} yet")

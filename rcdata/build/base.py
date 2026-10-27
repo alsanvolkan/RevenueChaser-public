@@ -369,6 +369,9 @@ def compare_with_live(con: duckdb.DuckDBPyConnection, kind: str, table: str, col
 def idle_problem() -> str | None:
     """Why the builder must not start now, or None: a job lock held in the store dir, or another live builder.
 
+    Checked once, at start (S5): a job that takes a lock later runs beside the builder, which writes only its own
+    files.
+
     The job locks are read with ``job_lock.holders()`` (checks only, never takes one); another builder shows as its
     ``rcdata_build`` lock and as a live ``.rc-proc-<pid>`` marker in the market dir.
     """

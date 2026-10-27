@@ -960,6 +960,12 @@ one; a 403 names the variable in the source's failure note).
 `python -m RevenueChaser.rcdata.build backfill <dataset> --from <date>`. It refuses to start (exit 3) while a job
 lock is held in the store directory or another builder runs.
 
+**Known limits.** The idle gate is checked when the builder starts, not again before each request: a job that takes
+a lock after that runs beside it (both write different files, so nothing breaks; the gate keeps a live store write
+from starting in a busy moment). DuckDB keeps a database instance per path inside a process, so a reader that holds
+a connection open across overlapping requests can keep reading the build it opened while a newer one is swapped
+in; `open_read` opens and closes per call so each request sees the file live at its start.
+
 **Backup.** `python -m RevenueChaser.rcdata backup` writes under `<RAW_STORE_BACKUP_DIR>/market/` and refuses an empty
 `RAW_STORE_BACKUP_DIR` (exit 2, nothing written): `ops.sqlite` through SQLite's online backup API, each serving file
 copied and verified by row count and `sum(hash(row))` per table before its rename, the sha256 of every copy in
