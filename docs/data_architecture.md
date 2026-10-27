@@ -948,7 +948,7 @@ ops schema version `1`, and a file stamped newer is refused):
 | `uw_remaining` | UW's `x-uw-*` rate headers, sampled once a run |
 | `provider_calls_daily` | Calls, failures and 429s per provider and New York day |
 | `watchlist_option`, `watchlist_stock`, `watchlist_option_changes`, `watchlist_stock_changes` | The two watch lists and their history (no UI yet) |
-| `dataset_schedule` | Cadence and pause state per dataset (no routes yet) |
+| `dataset_schedule` | Cadence and pause state per dataset (Pause / Resume on Settings, PR 2) |
 
 **Day caps** (`rcdata/caps.py`, avo's numbers, to be tuned): uw 150,000, sec 40,000, fred 10,000, alpaca 20,000;
 a dataset whose providers have all reached their cap for the New York day gets a `skipped` check row and sends
@@ -962,6 +962,18 @@ one; a 403 names the variable in the source's failure note).
 **Running it.** `python -m RevenueChaser.rcdata.build run [--once] [--dataset X [--as-of D]]` and
 `python -m RevenueChaser.rcdata.build backfill <dataset> --from <date>`. It refuses to start (exit 3) while a job
 lock is held in the store directory or another builder runs.
+
+**The builder as a service (PR 2).** Scheduled jobs run hourly unless avo says otherwise. The registry row
+RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :07, with a 50 min limit, as the
+systemd unit pair `life-rc-builder.service` / `.timer`. RC-Build-Backup runs `rcdata backup` daily at 04:30, with a
+30 min limit, as `life-rc-builder-backup`. Each pass takes the queued requests in order: Fetch and Backfill from
+Settings, and the CLI's. It skips a paused dataset (`dataset_schedule.paused_at`, a `skipped: paused` check row,
+no call). At start it fails a request a dead builder left running, with `lost: pid <n> gone` and a `failed` check
+row. A request whose builder is still alive (a live `.rc-proc` marker of its pid in the market dir) is left
+alone. Neither row writes an old `job_runs` row: the builder records its own `job_runs2` rows. PR 1's builder
+does not yet enqueue a dataset on its own when `dataset_schedule` says it is due. Until that lands, a pass runs
+only what was requested. The page and the routes only enqueue and read (`docs/data_retrieval.md`, "The
+market-store builder's routes").
 
 **Known limits.** The idle gate is checked when the builder starts, not again before each request: a job that takes
 a lock after that runs beside it (both write different files, so nothing breaks; the gate keeps a live store write

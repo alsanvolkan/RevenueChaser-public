@@ -232,3 +232,18 @@ def test_data_architecture_names_the_builder_units_and_their_times():
         assert f"{e.settings.limit_minutes} min limit" in text
     assert automations.entry("RC-Build").unit == automations.BUILDER_UNIT == "life-rc-builder"
     assert automations.entry("RC-Build-Backup").unit == automations.BUILDER_BACKUP_UNIT == "life-rc-builder-backup"
+
+
+def test_data_health_states_the_new_section_limits_the_code_owns():
+    """PR 2: the cycle lengths, the backup warning, the backfill confirm threshold and the handle rule."""
+    from RevenueChaser.module_settings import newdata, report
+    text = (_REPO / "docs" / "data_health.md").read_text(encoding="utf-8")
+    section = text[text.index('### 2.0 The "New data system" section'):text.index("### 2.1 The summary tiles")]
+    assert f"for {newdata.CYCLE_DAYS['weekly']} days" in section
+    assert f"monthly one for {newdata.CYCLE_DAYS['monthly']}" in section
+    assert f"past {newdata.BACKUP_WARN_DAYS} days" in section
+    assert f"over {report.ND_BACKFILL_CONFIRM_OVER:,}" in section
+    assert f"over {newdata.RETIREMENT_DAYS} days" in section
+    assert f"SPX expiry-strike {newdata.COVERAGE_TARGET['uw/spot_expiry_strike']:.0%}" in section
+    assert "`rcdata.serving.open_read(kind)`" in section and "No connection is cached" in section
+    assert f"`{newdata.RETENTION_ENV}`" in section and f"`{newdata.RETENTION_ROW}`" in section
