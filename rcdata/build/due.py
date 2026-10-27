@@ -2,9 +2,11 @@
 
 A dataset is due (``is_due``) when nothing holds it and its last run is old enough:
 
-- a pause in ``dataset_schedule`` holds it (the request it would make is not queued; ``base`` skips one queued anyway);
+- a pause in ``dataset_schedule`` holds it: its request is not queued. This is the only pause check on main: ``base``
+  runs any request already queued (a Fetch, the CLI's), paused or not, until PR #222 adds its own pause skip there;
 - so does ``dataset_schedule.next_due`` while it is later than today in New York (a hold until that day);
-- never built (no ``dataset_check`` row), or a last check that ``failed`` or was ``skipped`` (a day cap, a pause): due;
+- never built (no ``dataset_check`` row), or a last check that ``failed`` or was ``skipped`` (the day cap writes one;
+  so will PR #222's pause skip): due;
 - ``daily`` (the default, and what an unknown cadence reads as): due once the dataset's own ``default_as_of()`` has
   reached the last check's ``next_check_due`` (the next session after the as-of it ran for), so the SPX slice waits
   for the next complete session and the market series (as-of: today) run on the first pass of each trading day.
