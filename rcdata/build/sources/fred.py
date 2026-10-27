@@ -39,6 +39,8 @@ def fetch(ctx, as_of: date) -> list[Path]:
             pacer.wait()
             try:
                 r = base.http_get(ctx, SOURCE, BASE, {"series_id": series, "api_key": key, "file_type": "json"})
+            except base.CapReached:
+                raise
             except base.SourceError as e:
                 ctx.issue("fetch_failed", f"fred:{series}", str(e)[:300])
                 failed += 1

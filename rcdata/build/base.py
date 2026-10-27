@@ -48,10 +48,17 @@ USER_AGENT = "RevenueChaser market-data builder (+https://github.com/alsanvolkan
 BUILDER_LOCK = "rcdata_build"
 PARQUET_COMPRESSION = "zstd"
 PARQUET_ROW_GROUP = 100_000
+# The call counter is written to ops.sqlite every this many calls of a provider (and at the end of the run, and on
+# a kill), so a run killed mid-way still leaves its calls counted against the day cap (S1).
+COUNT_FLUSH_EVERY = 25
 
 
 class SourceError(RuntimeError):
     """A provider answer the dataset cannot use (an HTTP failure after retries, an empty or malformed body)."""
+
+
+class CapReached(SourceError):
+    """A provider reached its day cap during the run: nothing more is sent to it today."""
 
 
 class NotIdle(RuntimeError):
@@ -81,14 +88,34 @@ class RunContext:
     notes: list[str] = field(default_factory=list)
     uw_sampled: bool = False
     allow_shrink: bool = False                                      # a request's explicit "allow_shrink": true
+    _pending: dict[str, list[int]] = field(default_factory=dict)    # counted, not yet written to ops.sqlite
     _http: httpx.Client | None = None
     _uw: Any = None
 
     def count(self, provider: str, calls: int = 0, failures: int = 0, http_429: int = 0) -> None:
-        c = self.calls.setdefault(provider, [0, 0, 0])
-        c[0] += calls
-        c[1] += failures
-        c[2] += http_429
+        for book in (self.calls, self._pending):
+            c = book.setdefault(provider, [0, 0, 0])
+            c[0] += calls
+            c[1] += failures
+            c[2] += http_429
+        if self._pending[provider][0] >= COUNT_FLUSH_EVERY:
+            self.flush_counts(provider)
+
+    def flush_counts(self, provider: str | None = None) -> None:
+        """Write the pending counts (of ``provider``, or all) to ``provider_calls_daily``."""
+        for name in [provider] if provider else sorted(self._pending):
+            calls, failures, http_429 = self._pending.pop(name, [0, 0, 0])
+            if calls or failures or http_429:
+                ops.count_calls(name, calls, failures=failures, http_429=http_429)
+
+    def check_cap(self, provider: str) -> None:
+        """Raise ``CapReached`` when today's calls of ``provider``, written and pending, reached its cap."""
+        cap = caps.cap_for(provider)
+        if cap is None:
+            return
+        used = ops.calls_today(provider) + self._pending.get(provider, [0])[0]
+        if used >= cap:
+            raise CapReached(f"day cap reached: {provider} {used}/{cap}")
 
     def total_calls(self) -> int:
         return sum(c[0] for c in self.calls.values())
@@ -140,6 +167,7 @@ def http_get(ctx: RunContext, provider: str, url: str, params: dict | None = Non
     """
     last = ""
     for attempt in range(1, HTTP_ATTEMPTS + 1):
+        ctx.check_cap(provider)
         try:
             r = ctx.http.get(url, params=params, headers=headers)
         except httpx.HTTPError as e:
@@ -343,11 +371,15 @@ def idle_problem() -> str | None:
 
 
 def cap_problem(ds: Dataset) -> str | None:
+    """Why the whole dataset is skipped: every one of its providers is at its day cap. One capped provider of
+    several (FRED among the market series) is refused call by call instead (``RunContext.check_cap``)."""
+    refused = []
     for provider in ds.providers:
-        refused, used, cap = caps.at_cap(provider)
-        if refused:
-            return f"day cap reached: {provider} {used}/{cap}"
-    return None
+        at, used, cap = caps.at_cap(provider)
+        if not at:
+            return None
+        refused.append(f"{provider} {used}/{cap}")
+    return "day cap reached: " + ", ".join(refused) if refused else None
 
 
 # ── One request ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -392,6 +424,18 @@ def run_request(req: dict, *, trigger: str = "queue", sleep: Callable[[float], A
     ctx = RunContext(run_id=run_id, dataset=req["dataset"], trigger=trigger, sleep=sleep, clock=clock,
                      allow_shrink=params.get("allow_shrink") is True)
     ops.start_run(run_id, req["dataset"], trigger, params)
+    try:
+        return _run(ctx, ds, req, params)
+    except BaseException as e:
+        # A kill (SIGTERM as KeyboardInterrupt/SystemExit): no check row, but the calls already sent are counted.
+        ops.finish_run(run_id, "killed", f"{type(e).__name__}: {e}"[:500])
+        raise
+    finally:
+        ctx.close()
+        ctx.flush_counts()
+
+
+def _run(ctx: RunContext, ds, req: dict, params: dict) -> dict:
     status, error, check = "failed", None, None
     try:
         if ds is None:
@@ -415,7 +459,7 @@ def run_request(req: dict, *, trigger: str = "queue", sleep: Callable[[float], A
         check = build_kind(ctx, ds)
         status = "ok"
     except Exception as e:  # noqa: BLE001 - every failure becomes a failed check row, never a half-swapped file
-        logger.exception("%s run %s failed", req["dataset"], run_id)
+        logger.exception("%s run %s failed", req["dataset"], ctx.run_id)
         error = f"{type(e).__name__}: {e}"[:500]
         check = {"result": "failed", "note": error}
     return _finish(ctx, req, check, status, error)
@@ -423,9 +467,7 @@ def run_request(req: dict, *, trigger: str = "queue", sleep: Callable[[float], A
 
 def _finish(ctx: RunContext, req: dict, check: dict, status: str, error: str | None) -> dict:
     ctx.close()
-    for provider, (calls, failures, http_429) in sorted(ctx.calls.items()):
-        if calls or failures or http_429:
-            ops.count_calls(provider, calls, failures=failures, http_429=http_429)
+    ctx.flush_counts()
     notes = "; ".join([n for n in [check.get("note"), *ctx.notes] if n]) or None
     row = {k: check.get(k) for k in ops.CHECK_FIELDS if k not in ("dataset", "checked_on", "run_id", "note")}
     row["calls"] = ctx.total_calls()

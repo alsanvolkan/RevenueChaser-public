@@ -82,6 +82,7 @@ class UWSpotExpiryStrike:
         # session is that session's intraday one.
         params: dict = {"expirations[]": [e.isoformat() for e in expiries], "date": session.isoformat(),
                         "limit": PAGE_LIMIT}
+        ctx.check_cap("uw")
         res = ctx.uw_client().get_result(ENDPOINT, params)
         if res.status != "ok":
             raise base.SourceError(f"UW {ENDPOINT} {session}: {res.error}")
@@ -156,6 +157,9 @@ class UWSpotExpiryStrike:
                 continue
             try:
                 raw = self._fetch_session(ctx, session, observed=False)
+            except base.CapReached as e:
+                ctx.notes.append(f"backfill stopped at {session}: {e}")      # what it has is built and kept
+                break
             except base.SourceError as e:
                 if "breaker_open" in str(e):
                     raise

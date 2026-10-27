@@ -29,6 +29,8 @@ def fetch(ctx, as_of: date) -> list[Path]:
             url = f"{BASE}/{sym}_History.csv"
             try:
                 r = base.http_get(ctx, SOURCE, url)
+            except base.CapReached:
+                raise
             except base.SourceError as e:
                 ctx.issue("fetch_failed", f"cboe:{sym}", str(e)[:300])
                 failed += 1

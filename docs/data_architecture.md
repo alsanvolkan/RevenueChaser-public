@@ -948,7 +948,10 @@ ops schema version `1`, and a file stamped newer is refused):
 | `dataset_schedule` | Cadence and pause state per dataset (no routes yet) |
 
 **Day caps** (`rcdata/caps.py`, avo's numbers, to be tuned): uw 150,000, sec 40,000, fred 10,000, alpaca 20,000;
-a dataset whose provider reached its cap for the New York day gets a `skipped` check row and sends nothing.
+a dataset whose providers have all reached their cap for the New York day gets a `skipped` check row and sends
+nothing; inside a run every call checks its provider's cap first (one capped provider, FRED among the market series,
+is a source failure and the others go on), and the counter is written every 25 calls and on a kill. Only the
+builder's calls are counted: the dashboard's own UW client is not yet.
 
 **Running it.** `python -m RevenueChaser.rcdata.build run [--once] [--dataset X [--as-of D]]` and
 `python -m RevenueChaser.rcdata.build backfill <dataset> --from <date>`. It refuses to start (exit 3) while a job
