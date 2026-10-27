@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import signal
 import sqlite3
 import sys
 import time
@@ -43,10 +44,26 @@ def _run_queue(dataset: str | None, once: bool) -> int:
                 return worst
             time.sleep(POLL_S)
             continue
-        row = base.run_request(req)
+        try:
+            row = base.run_request(req)
+        except sqlite3.OperationalError as e:
+            # The run could not write its rows (ops.sqlite locked past busy_timeout): the request is failed when the
+            # file lets us, and the loop goes on with the next one.
+            print(f"{req['dataset']}: ops.sqlite busy during the run: {e}", file=sys.stderr, flush=True)
+            worst = 1
+            try:
+                ops.finish_request(req["id"], "failed", note=f"ops.sqlite busy: {e}"[:300])
+            except sqlite3.OperationalError:
+                pass                     # still running in the file; the next builder start fails it (S2)
+            time.sleep(POLL_S)
+            continue
         print(base.format_check(row), flush=True)
         if row["result"] == "failed":
             worst = 1
+
+
+def _terminate(signum, frame) -> None:
+    raise SystemExit(128 + signum)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -67,6 +84,9 @@ def main(argv: list[str] | None = None) -> int:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
+    # systemd stops the unit with SIGTERM: as SystemExit it unwinds through the run's finally, which writes the call
+    # counter, instead of ending the process where it stands.
+    signal.signal(signal.SIGTERM, _terminate)
     problem = base.idle_problem()
     if problem:
         print(f"builder not started: {problem}", file=sys.stderr)

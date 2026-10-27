@@ -32,13 +32,20 @@ def _route(path: str) -> bytes | None:
     return None
 
 
+SLOW: set[str] = set()          # path prefixes the mock answers only after a long wait
+
+
 @pytest.fixture
 def mock_server():
     seen: list[str] = []
+    SLOW.clear()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             seen.append(self.path)
+            if any(self.path.startswith(p) for p in SLOW):
+                import time
+                time.sleep(20)
             body = _route(self.path.split("?")[0])
             self.send_response(200 if body is not None else 404)
             self.end_headers()
@@ -133,3 +140,31 @@ def test_the_backup_cli_writes_a_verified_copy_and_refuses_an_empty_folder(cli_e
     empty = {**cli_env, "RAW_STORE_BACKUP_DIR": ""}
     r = _run(empty, "RevenueChaser.rcdata", "backup")
     assert r.returncode == 2 and "RAW_STORE_BACKUP_DIR" in r.stderr
+
+
+def test_n2_a_sigterm_mid_run_still_counts_the_calls_sent(cli_env, mock_server, tmp_path):
+    """systemd stops a unit with SIGTERM: the builder turns it into SystemExit, so the run's finally writes the
+    call counter and the run is marked killed."""
+    import signal
+    import time
+    _, seen = mock_server
+    SLOW.add("/bls/")                                  # the last source: everything before it has been called
+    p = subprocess.Popen([sys.executable, "-m", "RevenueChaser.rcdata.build", "run", "--once", "--dataset",
+                          "market_series", "--as-of", "2026-10-27"], cwd=REPO.parent, env=cli_env,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.monotonic() + 120
+        while not any(path.startswith("/bls/") for path in seen):
+            assert p.poll() is None and time.monotonic() < deadline, "the builder ended before reaching BLS"
+            time.sleep(0.1)
+        p.send_signal(signal.SIGTERM)
+        p.wait(timeout=60)
+    finally:
+        if p.poll() is None:
+            p.kill()
+    ops = sqlite3.connect(tmp_path / "market" / "ops.sqlite")
+    calls = dict(ops.execute("SELECT provider, calls FROM provider_calls_daily").fetchall())
+    status = ops.execute("SELECT status FROM job_runs2").fetchall()
+    ops.close()
+    assert calls.get("cboe") == 8 and calls.get("fred") == 13 and calls.get("bls") == 1, calls
+    assert status == [("killed",)]

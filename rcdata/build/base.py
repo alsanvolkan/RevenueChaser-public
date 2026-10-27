@@ -23,6 +23,7 @@ import gzip
 import json
 import logging
 import os
+import sqlite3
 import time
 import uuid
 from collections import deque
@@ -176,13 +177,14 @@ def http_get(ctx: RunContext, provider: str, url: str, params: dict | None = Non
     last = ""
     for attempt in range(1, HTTP_ATTEMPTS + 1):
         ctx.check_cap(provider)
+        ctx.count(provider, calls=1)        # counted when sent: a request cut off by a kill was still made
         try:
             r = ctx.http.get(url, params=params, headers=headers)
         except httpx.HTTPError as e:
-            ctx.count(provider, calls=1)
             last = type(e).__name__
         else:
-            ctx.count(provider, calls=1, http_429=int(r.status_code == 429))
+            if r.status_code == 429:
+                ctx.count(provider, http_429=1)
             if r.status_code < 400:
                 return r
             last = f"HTTP {r.status_code}"
@@ -441,8 +443,14 @@ def run_request(req: dict, *, trigger: str = "queue", sleep: Callable[[float], A
     try:
         return _run(ctx, ds, req, params)
     except BaseException as e:
-        # A kill (SIGTERM as KeyboardInterrupt/SystemExit): no check row, but the calls already sent are counted.
-        ops.finish_run(run_id, "killed", f"{type(e).__name__}: {e}"[:500])
+        # A kill (SIGTERM, which the CLI turns into SystemExit, or Ctrl-C) is "killed"; anything else that got past
+        # _run (a locked ops.sqlite while writing the check row) is "failed". No check row either way, but the
+        # calls already sent are counted by the finally below.
+        status = "killed" if isinstance(e, (KeyboardInterrupt, SystemExit)) else "failed"
+        try:
+            ops.finish_run(run_id, status, f"{type(e).__name__}: {e}"[:500])
+        except sqlite3.Error:
+            logger.warning("could not mark run %s %s", run_id, status, exc_info=True)
         raise
     finally:
         ctx.close()

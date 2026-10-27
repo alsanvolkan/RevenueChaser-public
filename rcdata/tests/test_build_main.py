@@ -49,3 +49,23 @@ def test_s4_build_files_a_dead_builder_left_are_swept_at_start():
     stale[0].write_bytes(b"x")
     assert cli.main(["run", "--once"]) == 0
     assert not stale[0].exists() and (d / "market.duckdb").exists()
+
+
+def test_n2_an_operational_error_inside_a_run_does_not_end_the_loop(monkeypatch):
+    ops.enqueue("market_series", None, by="test")
+    from RevenueChaser.rcdata.build import base
+    monkeypatch.setattr(base, "run_request", lambda req: (_ for _ in ()).throw(sqlite3.OperationalError("locked")))
+    monkeypatch.setattr(cli, "POLL_S", 0)
+    assert cli._run_queue(None, once=True) == 1
+    with ops.connect() as con:
+        assert con.execute("SELECT status FROM build_requests").fetchone()[0] == "failed"
+
+
+def test_n2_a_database_error_at_the_end_of_a_run_is_failed_not_killed(monkeypatch):
+    import pytest
+    from RevenueChaser.rcdata.build import base
+    monkeypatch.setattr(ops, "record_check", lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("locked")))
+    with pytest.raises(sqlite3.OperationalError):
+        base.run_request({"dataset": "nope", "params": {}})
+    with ops.connect() as con:
+        assert con.execute("SELECT status FROM job_runs2").fetchone()[0] == "failed"
