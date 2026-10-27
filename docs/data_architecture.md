@@ -969,13 +969,11 @@ lock is held in the store directory or another builder runs.
 **The builder as a service (PR 2).** Scheduled jobs run hourly unless avo says otherwise. The registry row
 RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :07, with a 50 min limit, as the
 systemd unit pair `life-rc-builder.service` / `.timer`. RC-Build-Backup runs `rcdata backup` daily at 04:30, with a
-30 min limit, as `life-rc-builder-backup`. Each pass takes the queued requests in order: Fetch and Backfill from
-Settings, and the CLI's. It skips a paused dataset (`dataset_schedule.paused_at`, a `skipped: paused` check row,
+30 min limit, as `life-rc-builder-backup`. Each pass first queues what is due (below), then takes the queued
+requests in order: those, Fetch and Backfill from Settings, and the CLI's. It skips a paused dataset (`dataset_schedule.paused_at`, a `skipped: paused` check row,
 no call). At start it fails a request a dead builder left running, with `lost: pid <n> gone` and a `failed` check
 row. A request whose builder is still alive (a live `.rc-proc` marker of its pid in the market dir) is left
-alone. Neither row writes an old `job_runs` row: the builder records its own `job_runs2` rows. PR 1's builder
-does not yet enqueue a dataset on its own when `dataset_schedule` says it is due. Until that lands, a pass runs
-only what was requested. The page and the routes only enqueue and read (`docs/data_retrieval.md`, "The
+alone. Neither row writes an old `job_runs` row: the builder records its own `job_runs2` rows. The page and the routes only enqueue and read (`docs/data_retrieval.md`, "The
 market-store builder's routes").
 
 **Known limits.** The idle gate is checked when the builder starts, not again before each request: a job that takes
@@ -996,8 +994,9 @@ the last check. A check with no `next_check_due` (past the calendar's table) is 
 loop run (`run` without `--once`) does this once, at start. A due-step error (a due check that raised, `ops.sqlite`
 locked while queueing) is printed, the queue is still drained, and the pass exits 1. A second `--once` started while
 one runs exits 3 on the `rcdata_build` lock before its due step. A failed or skipped check is retried every hourly
-pass with no backoff: for the SPX slice at worst about 24 runs a day, each one UW call plus its retries. Only
-`due.py` reads a pause on main; `base` runs a request already queued until PR #222 adds its own pause skip.
+pass with no backoff: for the SPX slice at worst about 24 runs a day, each one UW call plus its retries. A pause
+holds a dataset twice: `due.py` does not queue it, and `base.run_request` skips a request of it that was queued
+anyway (PR #222).
 
 **Backup.** `python -m RevenueChaser.rcdata backup` writes under `<RAW_STORE_BACKUP_DIR>/market/` and refuses an empty
 `RAW_STORE_BACKUP_DIR` (exit 2, nothing written): `ops.sqlite` through SQLite's online backup API, each serving file
