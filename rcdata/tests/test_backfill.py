@@ -120,7 +120,7 @@ def test_n1_one_unusable_answer_is_quarantined_and_the_backfill_goes_on(http_moc
     row = _backfill()
     assert row["result"] == "changed" and row["rows"] == 391 * 4
     raw = uw.raw_path(DAYS[2])
-    assert not raw.exists() and raw.with_name(raw.name + ".rejected").exists()
+    assert not raw.exists() and len(list(raw.parent.glob(raw.name + ".*.rejected"))) == 1
     from RevenueChaser.rcdata import ops
     with ops.connect() as con:
         kinds = [r[0] for r in con.execute("SELECT kind FROM build_issues WHERE key = '2026-10-21' ORDER BY id")]
@@ -143,3 +143,15 @@ def test_n1_a_daily_run_with_an_unusable_answer_fetches_again_next_time(http_moc
     http_mock.add("expiry-strike", uw_fixture.body(DAYS[2]))
     assert base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-21"}})["result"] == "changed"
     assert len(http_mock.calls("expiry-strike")) == 2
+
+
+def test_f2_a_second_rejection_of_the_same_day_keeps_the_first(http_mock):
+    body = uw_fixture.body(DAYS[2])
+    for r in body["data"]:
+        del r["strike"]
+    http_mock.routes.clear()
+    http_mock.add("expiry-strike", body)
+    for _ in range(2):
+        assert base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-21"}})["result"] == "failed"
+    raw = uw.raw_path(DAYS[2])
+    assert len(list(raw.parent.glob(raw.name + ".*.rejected"))) == 2

@@ -145,7 +145,8 @@ class UWSpotExpiryStrike:
         if not rows:
             # An empty partition would mark the session done for good (S6), and so would the raw file, which is the
             # fetch's resume marker (N1): it is set aside as .rejected, kept for a look, and the next run asks again.
-            rejected = raw.with_name(raw.name + REJECTED_SUFFIX)
+            # The run id in the name: a second rejection of the same day keeps the first one's file (F2).
+            rejected = raw.with_name(f"{raw.name}.{ctx.run_id}{REJECTED_SUFFIX}")
             os.replace(raw, rejected)
             raise base.SourceError(f"UW {session}: no usable row in {raw.name} ({len(items)} rows answered); "
                                    f"set aside as {rejected.name}")
