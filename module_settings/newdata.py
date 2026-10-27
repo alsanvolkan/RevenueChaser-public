@@ -25,7 +25,7 @@ from pathlib import Path
 from RevenueChaser.core import calendar, config
 from RevenueChaser.rcdata import caps, ops, serving
 
-LABELS = {"uw/spot_expiry_strike": "SPX expiry-strike (UW)", "market_series": "Market series"}
+LABELS = {"uw/spot_expiry_strike": "SPX expiry-strike (Unusual Whales)", "market_series": "Market series"}
 # Default cadence per dataset; a ``dataset_schedule.cadence`` of daily / weekly / monthly overrides it.
 CADENCE = {"uw/spot_expiry_strike": "daily", "market_series": "daily"}
 CYCLE_DAYS = {"weekly": 8, "monthly": 35}
