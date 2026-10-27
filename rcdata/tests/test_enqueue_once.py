@@ -27,15 +27,19 @@ def test_enqueue_once_queues_a_dataset_only_while_none_is_queued_or_running():
 def test_enqueue_once_lets_one_of_many_racing_writers_through():
     ops.ensure()
     n = 8
-    gate, got = threading.Barrier(n), []
+    gate, got, errors = threading.Barrier(n), [], []
 
     def one():
         gate.wait()
-        got.append(ops.enqueue_once(MS, None, by="schedule"))
+        try:
+            got.append(ops.enqueue_once(MS, None, by="schedule"))
+        except Exception as e:  # noqa: BLE001 - a thread's exception is lost unless kept: a plain BEGIN loses here
+            errors.append(e)
     threads = [threading.Thread(target=one) for _ in range(n)]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
-    assert sum(r is not None for r in got) == 1
+    assert errors == []                              # every writer waited its turn (busy_timeout), none failed
+    assert len(got) == n and sum(r is not None for r in got) == 1
     assert len(_queue()) == 1
