@@ -4,4 +4,6 @@
 """
 from __future__ import annotations
 
-DATASETS: dict = {}
+from . import market_series, uw_spot_expiry_strike
+
+DATASETS = {d.name: d for d in (uw_spot_expiry_strike.DATASET, market_series.DATASET)}
