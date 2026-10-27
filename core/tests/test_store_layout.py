@@ -224,3 +224,69 @@ def test_data_roots_are_redirected_even_when_a_conftest_imports_core_config_firs
          "core/tests/test_store_layout.py", "-k", "the_suite_never_points_at_the_developers_real_edgar_docs"],
         cwd=root, env=env, capture_output=True, text=True, timeout=300)
     assert r.returncode == 0, r.stdout[-1500:] + r.stderr[-500:]
+
+
+# ── The market store roots (#206, PR 1 of the new data system) ──────────────────────────────────────────────────
+# Serving files and ops.sqlite on the SSD (RC_MARKET_DIR), raw files and Parquet on the HDD (RC_MARKET_RAW_DIR), and
+# the D3 copy target (RC_MARKET_RAW_COPY_DIR, empty = off). The server sets the first two in its paths file.
+_MARKET_ROOTS = {"MARKET_DIR": "RC_MARKET_DIR", "MARKET_RAW_DIR": "RC_MARKET_RAW_DIR"}
+
+
+def _config_assignments() -> dict[str, ast.expr]:
+    tree = ast.parse((ROOT / "core" / "config.py").read_text(encoding="utf-8"))
+    return {t.id: node.value for node in tree.body if isinstance(node, ast.Assign)
+            for t in node.targets if isinstance(t, ast.Name)}
+
+
+def test_the_market_roots_come_from_their_env_var_through_root():
+    """Each market root is ``_root("RC_…", default)``: a constant built from BASE_DIR alone would ignore the server's
+    paths file and write into the checkout."""
+    values = _config_assignments()
+    for name, env_var in _MARKET_ROOTS.items():
+        value = values.get(name)
+        assert isinstance(value, ast.Call) and getattr(value.func, "id", None) == "_root", f"{name} is not _root(...)"
+        assert isinstance(value.args[0], ast.Constant) and value.args[0].value == env_var, name
+    copy_dir = ast.unparse(values["MARKET_RAW_COPY_DIR"])
+    assert "RC_MARKET_RAW_COPY_DIR" in copy_dir and "BASE_DIR" not in copy_dir
+
+
+def test_no_market_path_constant_derives_from_base_dir_outside_root():
+    """No module-level constant in core/config.py other than the ``_root`` defaults names BASE_DIR for a market path."""
+    offenders = []
+    for name, value in _config_assignments().items():
+        if not name.startswith("MARKET"):
+            continue
+        for call in [n for n in ast.walk(value) if isinstance(n, ast.Call)]:
+            if getattr(call.func, "id", None) == "_root":
+                call.args[1:] = []          # the default is the one place BASE_DIR may appear
+        if "BASE_DIR" in ast.unparse(value):
+            offenders.append(name)
+    assert not offenders, offenders
+
+
+def test_the_market_roots_redirect_under_their_env_vars(tmp_path):
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if not k.startswith("RC_MARKET")}
+    env.update({"RC_MARKET_DIR": str(tmp_path / "ssd"), "RC_MARKET_RAW_DIR": str(tmp_path / "hdd"),
+                "RC_MARKET_RAW_COPY_DIR": str(tmp_path / "offbox")})
+    code = ("from RevenueChaser.core import config as c; "
+            "print(c.MARKET_DIR); print(c.MARKET_RAW_DIR); print(c.MARKET_RAW_COPY_DIR)")
+    r = subprocess.run([sys.executable, "-c", code], cwd=ROOT.parent, env=env, capture_output=True, text=True,
+                       timeout=120)
+    assert r.returncode == 0, r.stderr[-1500:]
+    assert r.stdout.split() == [str(tmp_path / "ssd"), str(tmp_path / "hdd"), str(tmp_path / "offbox")]
+    env["RC_MARKET_RAW_COPY_DIR"] = ""
+    r = subprocess.run([sys.executable, "-c", code], cwd=ROOT.parent, env=env, capture_output=True, text=True,
+                       timeout=120)
+    assert r.stdout.split()[2] == "None", "an empty RC_MARKET_RAW_COPY_DIR must mean off, not a folder"
+
+
+def test_the_suite_never_points_at_the_repo_local_market_roots():
+    """conftest redirects both market roots to the per-process scratch, like RC_STORE_DIR."""
+    assert config.MARKET_DIR != config.BASE_DIR / ".market"
+    assert config.MARKET_RAW_DIR != config.BASE_DIR / ".market_raw"
+    assert config.MARKET_DIR.parent == config.DATA_DIR.parent
+    assert config.MARKET_RAW_DIR.parent == config.DATA_DIR.parent
+    assert config.MARKET_RAW_COPY_DIR is None

@@ -46,6 +46,10 @@ def _redirect_data_roots() -> None:
     # Same for the SPX Gamma tree (UW day files, brier.json): the backup mirrors it (#276), and an
     # unredirected test once wrote into the real brier.json (G1). Tests that pass their own root still win.
     os.environ.setdefault("SPX_GAMMA_DATA_ROOT", str(_root / "spx_gamma"))
+    # The market store's SSD and HDD roots (#206). The off-box copy target is forced off, like the backup mirror.
+    os.environ.setdefault("RC_MARKET_DIR", str(_root / "market"))
+    os.environ.setdefault("RC_MARKET_RAW_DIR", str(_root / "market_raw"))
+    os.environ["RC_MARKET_RAW_COPY_DIR"] = ""
     # The backup switches are forced, not defaulted: a real off-machine folder in .env or the shell would receive a
     # copy of every test store (#275), and RAW_STORE_BACKUP_WEEKLY=0 would break the weekly-copy tests (#277).
     os.environ["RAW_STORE_BACKUP_MIRROR"] = ""
