@@ -191,6 +191,19 @@ def test_the_api_passes_the_filters_through(client):
     assert both["total"] == 0, "the two filters are ANDed"
 
 
+@pytest.mark.parametrize("query, on", [
+    ("", False), ("?problems=1", True), ("?problems", True), ("?problems=", True), ("?problems=yes", True),
+    ("?problems=0", False), ("?problems=false", False), ("?problems=FALSE", False), ("?problems=no", False),
+    ("?problems=off", False), ("?problems=%200%20", False),
+])
+def test_the_problems_flag_reads_an_off_value_as_off(client, query, on):
+    """#131 item 5: ``is not None`` made ``?problems=0`` a filter that was on."""
+    _write(_row("ok", status="done"), _row("bad", status="error"))
+    data = client.get("/api/runs" + query).get_json()
+    assert data["problems"] is on
+    assert data["total"] == (1 if on else 2)
+
+
 def test_the_api_takes_no_write(client):
     assert client.post("/api/runs").status_code in (403, 405)
 
@@ -300,3 +313,33 @@ def test_the_overlay_names_the_running_job_instead_of_a_fixed_sentence():
     body = html.split("function overlayText")[1].split("\n}")[0]
     assert "phase" in body, "the phase /api/jobs already serves is rendered"
     assert "elapsed" in body or "started_at" in body, "a long run says how long it has been going"
+
+
+def test_the_page_offers_the_server_side_page_sizes_beside_pause(client):
+    """#131 item 2: the newest DEFAULT_LIMIT was all the page could reach; the control offers both sizes the
+    server accepts, and takes them from runview so the page and the route cannot disagree."""
+    html = client.get("/view/runs").get_data(as_text=True)
+    m = re.search(r'<select\b[^>]*\bid="runs-limit"[^>]*>(.*?)</select>', html, re.S)
+    assert m, "no page-size control"
+    values = re.findall(r'<option\b[^>]*\bvalue="(\d+)"', m.group(1))
+    assert values == [str(runview.DEFAULT_LIMIT), str(runview.MAX_LIMIT)]
+    assert re.search(r'<option\b[^>]*value="%d"[^>]*\bselected' % runview.DEFAULT_LIMIT, m.group(1))
+    assert 'for="runs-limit"' in html, "the control has a label"
+    assert html.index('id="runs-limit"') < html.index('id="runs-pause"'), "it sits beside Pause"
+    script = html.split("<script>")[-1]
+    assert 'limit.addEventListener("change"' in script, "a new size is read at once, not at the next poll"
+
+
+def test_the_page_size_control_is_not_restored_by_the_browser(client):
+    """A reload must show the newest 200 the URL reads, not a size Firefox restored into the select."""
+    html = client.get("/view/runs").get_data(as_text=True)
+    select = re.search(r'<select\b[^>]*\bid="runs-limit"[^>]*>', html).group(0)
+    assert 'autocomplete="off"' in select
+
+
+def test_the_empty_row_spans_the_header_it_sits_under():
+    """The column count comes from the one Jinja list the header is built from, not a literal."""
+    from pathlib import Path
+    source = (Path(dashboard.__file__).resolve().parent.parent / "templates" / "runs.html.j2").read_text(
+        encoding="utf-8")
+    assert not re.search(r"colSpan\s*=\s*\d", source), "a hard-coded column count"

@@ -14,9 +14,10 @@ default ``raw``). ``writer`` is an ``automations.REGISTRY`` name, or None with `
 A freshness pair is a ``(table, column)`` ``_max_date`` can read. ``source`` is a provider named in
 ``core/providers`` or ``docs/data_architecture.md``; ``unknown`` means a single enum value would be a guess.
 
-Does not read the store. Seven datasets have an existing summary: their ``coverage`` is a zero-argument
-callable returning that module's ``Health``, imported and called when a reader asks for the row (S4).
-S5 switches the inventory reader to it.
+Does not read the store. Seven datasets have an existing summary: their ``coverage`` is a callable
+returning that module's ``Health``, imported and called when a reader asks for the row (S4). It takes an
+optional ``now``, passed on to a module whose ``health`` takes a clock (#150). S5 switches the inventory
+reader to it.
 
 ``gap_kind`` and ``next_step`` (G11) are the written half of coverage: the measurement says how many
 names are missing, these two say what would close the hole. ``gap_kind`` is one of ``GapKind``'s six
@@ -25,6 +26,7 @@ through a fact about the source (``ceiling``, which carries its REASON) requires
 """
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum
@@ -216,12 +218,17 @@ def _summary_health(dotted: str) -> Callable[[], Health]:
     """The ``Health`` of the module that owns this dataset's summary, read when the row is read (S4).
 
     A callable, not a call: the registry is imported by pages that never open this dataset, and these modules
-    read the store (and, for four of them, the calendar). One argument-free call per row is all a reader needs.
+    read the store (and, for four of them, the calendar). One argument-free call per row is all a reader needs;
+    a reader with a clock passes ``now``, which reaches the module's ``health`` when that takes one, so the
+    coverage and the row's own summary are one question at one time (#150).
     """
 
-    def coverage() -> Health:
+    def coverage(now=None) -> Health:
         module = import_module(f"RevenueChaser.{dotted}")
-        return getattr(module, "health")()
+        health = getattr(module, "health")
+        if "now" in inspect.signature(health).parameters:
+            return health(now=now)
+        return health()
 
     coverage.__name__ = f"{dotted}.health"
     coverage.__doc__ = f"The dataset's Health from ``{dotted}.health()``."
@@ -302,7 +309,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         freshness=("edgar_financials", "fetched_at"),
     ),
     DatasetSpec(
-        key="ohlc", label="Legacy OHLC cache (SPY fallback)",
+        key="ohlc", label="Legacy daily open/high/low/close cache (SPY fallback)",
         tables=("swing_ohlc",),
         db="raw", source=Source.yfinance, writer="RC-Screeners-Daily",
         freshness=("swing_ohlc", "ts"),
@@ -316,9 +323,9 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         coverage=_summary_health("core.prices"),
         gap_kind=GapKind.needs_decision,
         next_step=("Most of the names with no bar are warrants, preferred shares and SPAC units, which "
-                   "the boards' universe drops by design (#87), so this population counts names no board "
-                   "scores. Deciding whether coverage should be measured on the boards' universe would "
-                   "close it."),
+                   "the boards' universe drops by design (alsanvolkan/RevenueChaser#87), so this "
+                   "population counts names no board scores. Deciding whether coverage should be "
+                   "measured on the boards' universe would close it."),
     ),
     DatasetSpec(
         key="index_levels", label="SPX daily levels",
@@ -334,7 +341,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         tables=("vendor_financials", "vendor_valuation"),
         db="raw", source=Source.unknown, writer="RC-Screeners-Daily",
         freshness=(("vendor_financials", "fetched_at"), ("vendor_valuation", "session_date")),
-        writer_note="Earnings Fetch also appends UW statements (docs/data_architecture.md Stage 2)",
+        writer_note="Earnings Fetch also appends Unusual Whales statements (docs/data_architecture.md Stage 2)",
         coverage=_summary_health("core.vendor_data"),
         coverage_note="expected is None: the universe is not read by the summary",
         gap_kind=GapKind.fixable,
@@ -351,9 +358,9 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         coverage=_summary_health("core.quotes"),
         gap_kind=GapKind.needs_decision,
         next_step=("Most of the names with no quote are warrants, preferred shares and SPAC units, which "
-                   "the boards' universe drops by design (#87), and a rate-limited night misses more "
-                   "(#100). Deciding whether coverage should be measured on the boards' universe would "
-                   "close most of it."),
+                   "the boards' universe drops by design (alsanvolkan/RevenueChaser#87), and a "
+                   "rate-limited night misses more (#100). Deciding whether coverage should be "
+                   "measured on the boards' universe would close most of it."),
     ),
     # Lead source uw. sp600 is copied from the last accepted identity snapshot, not a UW call.
     DatasetSpec(
@@ -373,7 +380,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         freshness=("sec13f_submissions", "period"),
     ),
     DatasetSpec(
-        key="oipd", label="OIPD chain",
+        key="oipd", label="Implied Probability chain",
         tables=("oipd_chain", "oipd_meta"),
         db="raw", source=Source.uw, writer=None,
         writer_note="dashboard job POST /run/module_oipd; not an automations.REGISTRY entry",
@@ -454,14 +461,14 @@ REGISTRY: tuple[DatasetSpec, ...] = (
     ),
     # Cboe for the VIX family; MOVE is yfinance (docs/data_architecture.md vol_index_daily).
     DatasetSpec(
-        key="vol_index", label="Vol indices",
+        key="vol_index", label="Volatility indices",
         tables=("vol_index_daily",),
         db="raw", source=Source.cboe, writer="RC-Earnings-Inputs",
         freshness=("vol_index_daily", "session_date"),
     ),
     # Reader ages by session_date (stored_inputs.cot_row, MAX_LAG). report_date is the report's own date.
     DatasetSpec(
-        key="cftc", label="CFTC E-mini COT",
+        key="cftc", label="CFTC E-mini Commitments of Traders",
         tables=("cftc_cot",),
         db="raw", source=Source.finra_cftc, writer="RC-Earnings-Inputs",
         freshness=("cftc_cot", "session_date"),
@@ -538,7 +545,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         freshness=(("rotation_snapshots", "as_of_date"), ("rotation_holdings", "date")),
     ),
     DatasetSpec(
-        key="themes", label="NMF themes",
+        key="themes", label="Fitted themes",
         tables=("relatedness_themes", "relatedness_theme_tags", "relatedness_theme_members",
                 "relatedness_theme_etfs", "theme_runs", "ticker_themes"),
         db="raw", source=Source.derived, writer=None,
@@ -576,7 +583,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         "rebuilt by the 13F derive (engine.recompute_totals); not a REGISTRY entry",
     ),
     DatasetSpec(
-        key="sec_sic", label="SEC SIC cache",
+        key="sec_sic", label="SEC industry code cache",
         tables=("sec_company_sic",),
         db="raw", source=Source.sec, writer=None,
         writer_note="CLI core.edgar_bulk and core/sic_registry.py; not an automations.REGISTRY entry",
@@ -593,7 +600,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         key="edgar_companyfacts", label="EDGAR companyfacts (planned)",
         tables=("edgar_companyfacts",),
         db="edgar", source=Source.sec, writer=None,
-        writer_note="planned (#289): MANIFEST only, no writer yet",
+        writer_note="planned (alsanvolkan/RevenueChaser#289): MANIFEST only, no writer yet",
         freshness=("edgar_companyfacts", "fetched_at"),
     ),
     # source unknown: biotech catalysts; the writer is not in the tree and no enum value names the provider.
@@ -601,7 +608,8 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         key="catalysts", label="Catalyst events (planned)",
         tables=("catalyst_events", "catalyst_events_changes"),
         db="raw", source=Source.unknown, writer=None,
-        writer_note="planned (#289, #186-#192): writer not in the tree",
+        writer_note=("planned (alsanvolkan/RevenueChaser#289, alsanvolkan/RevenueChaser#186 to "
+                     "alsanvolkan/RevenueChaser#192): writer not in the tree"),
         freshness=("catalyst_events", "fetched_at"),
     ),
     # source unknown: FDA OOPD is not in the provider enum.
@@ -609,14 +617,15 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         key="orphan", label="FDA orphan designations (planned)",
         tables=("orphan_designations", "orphan_lookups", "orphan_designations_changes"),
         db="raw", source=Source.unknown, writer=None,
-        writer_note="planned (#289, #190): OOPD writer not in the tree",
+        writer_note=("planned (alsanvolkan/RevenueChaser#289, alsanvolkan/RevenueChaser#190): OOPD writer not in "
+                     "the tree"),
         freshness=(("orphan_designations", "fetched_at"), ("orphan_lookups", "session_date")),
     ),
     DatasetSpec(
         key="sec13f_filers", label="13F filers (planned)",
         tables=("sec13f_filers",),
         db="raw", source=Source.sec, writer=None,
-        writer_note="planned (#289): MANIFEST only, no writer yet",
+        writer_note="planned (alsanvolkan/RevenueChaser#289): MANIFEST only, no writer yet",
         freshness=("sec13f_filers", "fetched_at"),
     ),
     DatasetSpec(
@@ -631,12 +640,13 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         key="sec13f_enrichment", label="13F enrichment (writer retired)",
         tables=("sec13f_enrichment",),
         db="raw", source=Source.unknown, writer=None,
-        writer_note="writer retired (#300); not flagged MANIFEST retired; no reader since #375",
+        writer_note=("writer retired (alsanvolkan/RevenueChaser#300); not flagged MANIFEST retired; no reader since "
+                     "alsanvolkan/RevenueChaser#375"),
         freshness=None,
     ),
     # source unknown: DeepSeek and Grok are not in the provider enum.
     DatasetSpec(
-        key="llm_cache", label="LLM prompt cache",
+        key="llm_cache", label="Language-model prompt cache",
         tables=("llm_cache",),
         db="raw", source=Source.unknown, writer="RC-Relatedness-OffPeak",
         freshness=("llm_cache", "fetched_at"),

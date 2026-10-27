@@ -235,7 +235,7 @@ def test_ohlc_dataset_row_is_labelled_as_the_legacy_cache(rawstore_tmp_db):
     _seed()
     rows = _rows(inventory.collect())
     assert rows["ohlc"]["key"] == "ohlc"
-    assert rows["ohlc"]["label"] == "Legacy OHLC cache (SPY fallback)"
+    assert rows["ohlc"]["label"] == "Legacy daily open/high/low/close cache (SPY fallback)"
     assert rows["ohlc"]["tables"] == ["swing_ohlc"]
     assert rows["price_bars"]["label"] == "Daily price bars"
     assert "Daily OHLC" not in {r["label"] for r in rows.values()}
@@ -862,7 +862,7 @@ def test_price_bars_row_on_a_seeded_store(rawstore_tmp_db):
     row = _rows(inventory.collect(now=FIXED))["price_bars"]
     assert row["rows"] == 2 and row["last_date"] == "2026-09-30"
     assert "newest 2026-09-30" in row["note"]
-    assert "UW 1 / yfinance 1" in row["note"]
+    assert "Unusual Whales 1 / yfinance 1" in row["note"]
     assert "1 actions in the last 5 sessions" in row["note"]
     assert row["holes"] == len(prices.bar_scope()) - 2
 
@@ -912,7 +912,7 @@ def test_quotes_row_on_a_seeded_store(rawstore_tmp_db):
     row = _rows(inventory.collect(now=FIXED))["quotes"]
     assert row["rows"] == 4 and row["last_date"] == "2026-09-30"
     assert row["holes"] == 1, "NVDA has no Yahoo row in the newest session (MSFT has no UW row: not a hole)"
-    assert row["note"] == ("newest 2026-09-30: yfinance 2 / UW 1 of 3 universe; 1 caps more than 5% apart "
+    assert row["note"] == ("newest 2026-09-30: yfinance 2 / Unusual Whales 1 of 3 universe; 1 caps more than 5% apart "
                            f"(AAPL); last Yahoo rate-limit stop {FIXED.date().isoformat()}")
 
 
@@ -995,7 +995,7 @@ def test_vendor_row_on_a_seeded_store(rawstore_tmp_db):
     assert "valuation 1 tickers on 2026-10-08" in row["note"]
     assert "newest statement change: 3 rows on 2026-10-08" in row["note"]
     assert "last run" not in row["note"]
-    assert "UW revenue 100%" in row["note"]
+    assert "Unusual Whales revenue 100%" in row["note"]
 
 
 def test_vendor_queries_are_pinned():

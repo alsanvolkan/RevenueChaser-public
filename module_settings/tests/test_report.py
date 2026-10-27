@@ -194,7 +194,7 @@ def _card(**over):
     card = {
         "key": "module_comovement", "label": "Co-movement",
         "tables": ["equity_universe", "swing_ohlc"],
-        "price_basis": "dividend-adjusted closes (yfinance auto_adjust); correct for returns",
+        "price_basis": "daily price bars, split- and dividend-adjusted closes; correct for returns",
         "params": ["Window 252 sessions", "Min observations 126"],
         "as_of": "2026-09-25T20:00:00+00:00",
         "window": {"window_start": "2025-09-25", "prices_through": "2026-09-25"},
@@ -289,7 +289,7 @@ def test_a_board_card_shows_one_source_to_store_line_per_table():
     assert "What this board reads" in html
     assert html.count('class="bflow-row"') == 2
     assert html.count("Unusual Whales") == 2, "the provider is written in full, never as a code"
-    assert html.count("OIPD chain") == 2
+    assert html.count("Implied Probability chain") == 2
     assert html.count('class="db db-raw"') == 2
 
 
@@ -776,8 +776,10 @@ def test_the_sector_source_mix_table():
     src = html[html.index('id="identity-sources"'):html.index('id="identity-conflicts"')]
     assert "Sector source mix" in src and "GICS" not in src
     assert "<th>Bucket</th>" in src and "<th>All</th>" in src and "<th>≥$300M</th>" in src
-    for bucket in ("official", "provider", "SIC", "type rule", "unclassified"):
+    # The stored "SIC" bucket reads in plain words on the page (#155).
+    for bucket in ("official", "provider", "SEC industry code", "type rule", "unclassified"):
         assert bucket in src
+    assert "<td>SIC" not in src
     assert "1,501" in src and "5,100" in src and "1,200" in src and "325" in src
 
 
@@ -1309,7 +1311,7 @@ def test_the_drill_shows_zero_d01_and_the_legacy_count_under_its_label():
         },
     })
     assert '<span class="dlbl">Daily price bars</span><span class="dval">no bars</span>' in html
-    assert ('<span class="dlbl">Legacy OHLC cache (SPY fallback)</span>'
+    assert ('<span class="dlbl">Legacy daily open/high/low/close cache (SPY fallback)</span>'
             '<span class="dval">4 bars · newest 2026-02-02</span>' in html)
 
 
@@ -2027,7 +2029,7 @@ def _g4_payload():
          "coverage": {"covered": 181, "expected": 905, "fraction": 0.2,
                       "label": "181 / 905 (20%)", "newest": "2026-09-20", "problems": []},
          "fetch": {"route": "/run/screeners", "label": "Fetch screeners"}, "note": ""},
-        {"key": "cftc", "label": "CFTC E-mini COT", "tables": ["cftc_cot"], "rows": 2,
+        {"key": "cftc", "label": "CFTC E-mini Commitments of Traders", "tables": ["cftc_cot"], "rows": 2,
          "last_date": "—", "holes": 0, "hole_label": "",
          "source": "finra/cftc",
          "coverage": {"covered": 2, "expected": 50, "fraction": 0.04,
@@ -2161,7 +2163,7 @@ function dataset(name, tables, db, source, state){
 }
 var rows = [dataset("Equity universe", "equity_universe equity_universe_changes", "raw", "yfinance", ""),
             dataset("10-K / 20-F corpus", "chain_filings edgar_documents", "edgar", "sec", "no denominator"),
-            dataset("CFTC E-mini COT", "cftc_cot", "raw", "finra/cftc",
+            dataset("CFTC E-mini Commitments of Traders", "cftc_cot", "raw", "finra/cftc",
                     "needs attention|no time column")];
 var tbody = {children: []};
 rows.forEach(function(tr){ tbody.children.push(tr, tr.detail); });
@@ -2241,10 +2243,10 @@ console.log(JSON.stringify(out));
     assert out.returncode == 0, out.stderr[-2000:]
     got = _json.loads(out.stdout.strip().splitlines()[-1])
 
-    all_three = ["Equity universe", "10-K / 20-F corpus", "CFTC E-mini COT"]
+    all_three = ["Equity universe", "10-K / 20-F corpus", "CFTC E-mini Commitments of Traders"]
     assert got["none"] == {"shown": all_three, "count": "Showing 3 of 3 datasets",
                            "clear": False, "details": [True, True, True]}
-    assert got["byName"]["shown"] == ["CFTC E-mini COT"], "the dataset name matches"
+    assert got["byName"]["shown"] == ["CFTC E-mini Commitments of Traders"], "the dataset name matches"
     assert got["byName"]["count"] == 'Showing 1 of 3 datasets · filtered by search "COT"'
     assert got["byName"]["clear"] is True
     assert got["byTable"]["shown"] == ["10-K / 20-F corpus"], "a store table name matches"
@@ -2252,7 +2254,7 @@ console.log(JSON.stringify(out));
     assert got["and"]["count"] == ("Showing 0 of 3 datasets · filtered by store file raw · "
                                   "source sec")
     assert got["or"]["shown"] == all_three, "two chips in one group widen the result"
-    assert got["stateChip"]["shown"] == ["CFTC E-mini COT"]
+    assert got["stateChip"]["shown"] == ["CFTC E-mini Commitments of Traders"]
     assert got["stateChip"]["count"] == "Showing 1 of 3 datasets · filtered by state needs attention"
     assert got["collapsed"] == {"details": [True, True, True], "expanded": "false"}, \
         "a hidden dataset takes its detail row down and leaves it collapsed"
@@ -3080,3 +3082,38 @@ def test_the_drill_escapes_a_hostile_ticker_and_a_hostile_board_label():
                         "boards": [{"key": "k", "label": bad, "state": "can", "missing": []}]})
     assert "<img" not in html and html.count("&lt;img") == 2
     assert '<span class="dlbl">Ticker</span><span class="dval">&lt;img' in html
+
+def test_a_failed_presence_read_shows_could_not_read_never_missing():
+    """#143: the drill prints a failed read as such, for a row and for a board (the G3 rule)."""
+    html = _drill_rows({
+        "name": "Micron",
+        "presence": {
+            "price_bars_daily": {"bars": 0, "newest": None, "error": True},
+            "quote_snapshot": {"rows": 0, "newest": None, "source": None, "error": True},
+            "oipd_meta": None,
+        },
+        "boards": [{"key": "module_swing_potential", "label": "Swing", "state": "unreadable",
+                    "missing": [], "unreadable": ["daily price bars"]}],
+    })
+    assert ('<span class="dlbl">Daily price bars</span><span class="dval">could not read</span>' in html)
+    assert '<span class="dlbl">Quote</span><span class="dval">could not read</span>' in html
+    assert ('<span class="dlbl">Implied Probability chain</span><span class="dval">could not read</span>'
+            in html)
+    assert '<span class="dval">unknown — could not read daily price bars</span>' in html
+    assert "missing" not in html.split('id="drill-boards"')[1].split("dnote")[0]
+
+
+def test_the_drill_names_the_reads_that_failed():
+    """``ticker_detail`` returns its errors; the drill prints which table could not be read and why."""
+    html = _drill_rows({
+        "name": "Micron",
+        "presence": {"price_bars_daily": {"bars": 0, "newest": None, "error": True}},
+        "errors": [{"table": "price_bars_daily", "where": "_d01_presence", "error": "locked <b>"}],
+    })
+    assert 'id="drill-errors"' in html
+    assert "price_bars_daily: locked &lt;b&gt;" in html
+
+
+def test_a_clean_drill_prints_no_error_note():
+    assert 'id="drill-errors"' not in _drill_rows({"name": "Micron", "presence": {}, "errors": []})
+

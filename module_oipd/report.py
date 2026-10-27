@@ -157,7 +157,7 @@ function kpis(e){
     ['P(up 10%)',pct(e.p_up10),'vs spot',(bad?'neu':'pos')+m],
     ['P(down 10%)',pct(e.p_down10),'vs spot',(bad?'neu':'neg')+m],
     ['ATM IV',pct(e.atm_iv),'at the forward','neu'+m],
-    ['Skew g-min',num(e.density_g_min_shown,3),e.density_note,bad?'neg':'pos']
+    ['Skew g-min',num(e.density_g_min_shown,3),rcEsc(e.density_note),bad?'neg':'pos']
   ].map(function(r){
     return '<div class="kpi"><div class="v '+r[3]+'">'+r[1]+'</div>'+
            '<div class="l">'+r[0]+'</div><div class="l" style="color:var(--muted);font-weight:400">'+r[2]+'</div></div>';

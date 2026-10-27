@@ -123,5 +123,6 @@ def page_payload() -> dict:
 def render_page(payload: dict) -> str:
     # script_json output is the one trusted fragment: Markup keeps autoescape from turning its quotes into
     # entities, which an inline <script> would not decode. Every value in it reaches the page as textContent.
-    return templating.render("runs.html.j2",
+    # The page-size control offers what ``clamp_limit`` accepts: the default page first, then the cap.
+    return templating.render("runs.html.j2", limits=(DEFAULT_LIMIT, MAX_LIMIT),
                              initial_json=Markup(script_json(payload.get("initial") or {})))

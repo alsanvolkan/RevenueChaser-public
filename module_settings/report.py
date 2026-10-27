@@ -237,6 +237,15 @@ details.fine>summary{cursor:pointer;color:var(--accent);font-size:12.5px;font-we
 .auto-desc{color:var(--muted);font-size:12px;white-space:normal;max-width:340px}
 .auto-log{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;white-space:pre-wrap;max-width:380px}
 #auto-msg{color:var(--amber);margin:6px 0;min-height:1em}
+/* A phone: the summary's five columns stack instead of scrolling sideways, and the row and its buttons
+   are 44 px touch targets (the owner's phone rule, CLAUDE.md). */
+@media (max-width: 640px){
+  .auto-item>summary{grid-template-columns:minmax(0,1fr);gap:2px;min-height:44px;align-items:start}
+  .auto-detail{padding-left:10px}
+}
+@media (max-width: 640px), (pointer: coarse){
+  .auto-btn{min-height:44px;padding:0 14px;font-size:14px;margin:2px 6px 2px 0}
+}
 /* G4 (#124): the inventory filters above the table. Each chip carries its value as its text, so
    colour is never the only signal; a pressed chip also shows a tick beside its word. */
 .filters{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:14px}
@@ -594,11 +603,14 @@ function drillCap(cap){
 // where the dataset carries one. null when the ticker has no row in it.
 function drillCount(presence, unit){
   var got = presence || {};
+  if(got.error) return 'could not read';
   var n = got[unit] || 0;
   if(!n) return null;
   var text = n + ' ' + (n === 1 ? unit.replace(/s$/, '') : unit) + ' · newest ' + (got.newest || '—');
   return got.source ? text + ' · ' + got.source : text;
 }
+// A row check: null means the read failed (#143), which is not a missing row.
+function drillHas(v){ return v === null ? 'could not read' : (v ? 'present' : 'missing'); }
 function drillFill(d){
   var p = d.presence || {};
   var d01 = p.price_bars_daily || {};
@@ -619,26 +631,38 @@ function drillFill(d){
     + drillRow('Price', d.price == null ? '—' : '$' + Number(d.price).toFixed(2))
     + drillRow('Sector', d.sector || '—')
     + drillRow('Industry', d.industry || '—')
-    + drillRow('SIC', sic)
+    + drillRow('SEC industry code', sic)
     + drillRow('Last 10-K / 20-F', filing)
     + drillRow('EDGAR facts', drillCount(p.edgar_financials, 'periods') || 'no facts stored')
-    + drillRow('Daily price bars', d01.bars
+    + drillRow('Daily price bars', d01.error ? 'could not read' : d01.bars
         ? (d01.bars + ' bars · newest ' + (d01.newest || '—')) : 'no bars')
     + drillRow('Quote', drillCount(p.quote_snapshot, 'rows') || 'no quote stored')
     + drillRow('Vendor financials', drillCount(p.vendor_financials, 'rows') || 'no vendor statements stored')
     + drillRow('Ownership', drillCount(p.ownership_snapshot, 'rows') || 'no ownership stored')
-    + drillRow('Legacy OHLC cache (SPY fallback)', swing.bars
+    + drillRow('Legacy daily open/high/low/close cache (SPY fallback)', swing.error ? 'could not read' : swing.bars
         ? (swing.bars + ' bars · newest ' + (swing.newest || '—')) : 'no bars')
-    + drillRow('OIPD chain', p.oipd_meta ? 'present' : 'missing')
-    + drillRow('Relatedness profile', p.relatedness_profiles ? 'present' : 'missing')
-    + drillBoards(d.boards);
+    + drillRow('Implied Probability chain', drillHas(p.oipd_meta))
+    + drillRow('Relatedness profile', drillHas(p.relatedness_profiles))
+    + drillBoards(d.boards)
+    + drillErrors(d.errors);
+}
+// The reads that failed (#143): which table, and the store's own words. Nothing when every read answered.
+function drillErrors(list){
+  if(!list || !list.length) return '';
+  var rows = '';
+  for(var i = 0; i < list.length; i++){
+    var e = list[i] || {};
+    rows += '<div class="dnote">' + rcEsc((e.table || '—') + ': ' + (e.error || 'read failed')) + '</div>';
+  }
+  return '<div class="dgroup" id="drill-errors"><div class="dhead">Could not read</div>' + rows + '</div>';
 }
 // Which boards can score this name (G7, #124). The server decides each board's state from the
 // store tables this drill already measured; this only prints it. A board that reads a table the
 // drill does not measure says so in words — it never claims one way or the other.
 var DRILL_BOARD_WORDS = {can: 'yes — every dataset it reads is stored',
                          cannot: 'no — missing ',
-                         not_checked: 'not checked for this board'};
+                         not_checked: 'not checked for this board',
+                         unreadable: 'unknown — could not read '};
 function drillBoards(list){
   if(!list || !list.length) return '';
   var rows = '';
@@ -648,6 +672,8 @@ function drillBoards(list){
     if(b.state === 'can') said = DRILL_BOARD_WORDS.can;
     else if(b.state === 'cannot') said = DRILL_BOARD_WORDS.cannot
       + ((b.missing || []).join(', ') || 'a dataset this board reads');
+    else if(b.state === 'unreadable') said = DRILL_BOARD_WORDS.unreadable
+      + ((b.unreadable || []).join(', ') || 'a dataset this board reads');
     else said = DRILL_BOARD_WORDS.not_checked;
     rows += drillRow(b.label || '', said);
   }
@@ -656,7 +682,8 @@ function drillBoards(list){
     + '<div class="dnote">A board can score the name when every store table it reads that this '
     + 'drill measures has a row for the name. A board that reads a store table this drill does not '
     + 'measure says "not checked for this board": it may be able to score the name, and this drill '
-    + 'does not know.</div></div>';
+    + 'does not know. A board whose read failed says "could not read": the store did not answer, '
+    + 'which is not the same as no row.</div></div>';
 }
 function onDrillPick(ticker){
   var panel = document.getElementById('drill');
@@ -1891,12 +1918,17 @@ def _mini_table(heads: list[str], body: list[str]) -> str:
     return f'<table class="inv mini"><thead><tr>{ths}</tr></thead><tbody>{"".join(body)}</tbody></table>'
 
 
+# The page's words for a stored bucket name that is one of our short forms (#155); the payload keeps the key.
+_BUCKET_WORDS = {"SIC": "SEC industry code"}
+
+
 def _identity_mix(section_id: str, title: str, head: str, key: str, rows: list[dict], floor_label: str) -> str:
     """A small ``<head> / All / >=floor`` table; a row flagged ``excluded`` carries a muted tag."""
     body = []
     for r in rows:
         tag = '<span class="tag">(excluded)</span>' if r.get("excluded") else ""
-        body.append(f'<tr><td>{_html.escape(str(r.get(key) or "—"))}{tag}</td>'
+        name = str(r.get(key) or "—")
+        body.append(f'<tr><td>{_html.escape(_BUCKET_WORDS.get(name, name))}{tag}</td>'
                     f'<td class="num">{_fmt_rows(r.get("all"))}</td><td class="num">{_fmt_rows(r.get("floor"))}</td></tr>')
     return (f'<div id="{section_id}"><h4>{_html.escape(title)}</h4>'
             f'{_mini_table([head, "All", floor_label], body)}</div>')
@@ -1954,7 +1986,7 @@ def _identity_card(identity: dict | None) -> str:
     # Since R3 (#86) the job is a live universe writer: say so where the button's effect is read.
     head = ('<section id="identity"><div class="bcard" id="identity-health"><h3>Identity health</h3>'
             '<div class="asof" id="identity-writes">A successful Fetch identity also writes the master\'s sector and '
-            "industry, and UW\'s next earnings date, into <b>equity_universe</b>, which every board reads.</div>")
+            "industry, and Unusual Whales\' next earnings date, into <b>equity_universe</b>, which every board reads.</div>")
     if not identity.get("last_run") and not identity.get("type_mix"):
         return (head + '<div class="bnote" id="identity-empty">No identity run yet. '
                 "Use Fetch identity in the table above.</div></div></section>")

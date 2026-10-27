@@ -52,7 +52,7 @@ def _payload(when=COMPLETE_1, *tickers, **kw):
          "universe_generated_at": when.isoformat(), "universe_refreshed_by": "Fundamentals",
          "universe_partial": False, "passing": {"rule_of_40": 1, "quality": 1, "momentum": 1},
          "tiers": {"triple": 1, "dual": 0, "ro40": 0, "single_other": 0}, "distorted_count": 0,
-         "is_fixture": False, "no_data": False,
+         "no_data": False,
          "data_quality": {"stale_ohlc": 0, "spy_stale": False, "dropped": {}},
          "summary": {"filtered_universe": 400, "hygiene": 100, "data_short": 5, "no_edgar": 2, "top_n": len(tickers)},
          "candidates": [{"ticker": t, "multiplier": 3, "ro40": 50.0} for t in tickers]}
@@ -202,12 +202,6 @@ def test_a_fetch_with_no_data_still_gets_a_header_and_is_never_the_snapshot(stor
     assert head["quality_note"].startswith("rows not kept (0 given)") and "No universe stored." in head["quality_note"]
     fu_history.record(_payload(COMPLETE_2, "AAA"), rows=_rows(_results("AAA")), run_id="real")
     assert [h["session_snapshot"] for h in _headers()] == [False, True] and len(_score_rows("real")) == 1
-
-
-def test_a_fixture_payload_is_partial(store):
-    fu_history.record(_payload(COMPLETE_1, "AAA", is_fixture=True), rows=_rows(_results("AAA")), run_id="fx")
-    (head,) = _headers()
-    assert head["quality"] == "partial" and "fixture" in head["quality_note"] and _score_rows("fx") == []
 
 
 def test_an_intraday_run_stays_intraday_even_when_its_bars_are_old(rawstore_tmp_db):

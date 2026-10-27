@@ -81,9 +81,20 @@ def _scored_d01_day(scores: str):
     return resolve
 
 
-def _ticker_cache_day() -> str | None:
-    """When the per-ticker screener payloads were last fetched."""
-    return _max("SELECT max(fetched_at) AS v FROM ticker_payload_cache")
+def _earnings_day() -> str | None:
+    """The calendar session the last Earnings Fetch read, from that run's record (#205 review, option A).
+
+    The board shows the last Fetch's cards, so a newer ``earnings_calendar`` session that a later nightly sweep
+    stored says nothing about them. The record's ``context.inputs.calendar.session`` is the stored session the
+    Fetch used (E5a, #372); a Fetch that asked UW for every pair read none, and is dated by its own run. No
+    recorded Fetch: no date (a stored calendar alone is not on the board, nor is ``ticker_payload_cache``, DF13).
+    """
+    from RevenueChaser.core import history
+    run = history.last_run("module_earnings_radar")
+    if not run:
+        return None
+    calendar_read = ((run.get("context") or {}).get("inputs") or {}).get("calendar") or {}
+    return _day(calendar_read.get("session")) or _day(run.get("session_date")) or session_of(run.get("run_at"))
 
 
 def _rotation_day() -> str | None:
@@ -190,7 +201,8 @@ RESOLVERS = {
     "module_asymmetric_growth": _scored_d01_day("ticker_scores"),
     # Co-movement clusters its names' D01 closes (#379 D01 switch).
     "module_comovement": _comovement_day,
-    "module_earnings_radar": _ticker_cache_day,
+    # Earnings Radar: the calendar session its last Fetch read (that run's record), not the newest stored one.
+    "module_earnings_radar": _earnings_day,
     "module_sector_rotation": _rotation_day,
     "module_sec_13f": _sec13f_day,
     "module_leaps": _leaps_day,
