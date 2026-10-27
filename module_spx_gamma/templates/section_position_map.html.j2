@@ -236,7 +236,8 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     {% if prediction.active_pin is not none %}<div class="hero-metric"><span>Active Pin</span><strong>{{ prediction.active_pin | fmtnum }}{% if prediction.pin_flag == 'EXPIRING_PIN_FLIP' %}&nbsp;⚑{% endif %}</strong></div>{% endif %}
     {% if prediction.upside_trigger is not none %}<div class="hero-metric"><span>Accel Trigger</span><strong>&gt; {{ prediction.upside_trigger | fmtnum }}</strong></div>{% endif %}
     {% if prediction.downside_floor is not none %}<div class="hero-metric"><span>Bounce Floor</span><strong>{{ prediction.downside_floor | fmtnum }}</strong></div>{% endif %}
-  </div>
+  </div>{% if pin_line %}
+  <div class="note pin-source">{{ pin_line }}</div>{% endif %}
 
   <!-- Scenario Matrix Table -->
   <div class="overflow-x-auto">

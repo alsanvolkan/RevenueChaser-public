@@ -227,6 +227,29 @@ def data_quality_notice(snapshot: dict, data_root=None) -> str | None:
     return " ".join(parts) or None
 
 
+def _billions(value) -> str:
+    return f"${value / 1e9:,.2f}B" if value is not None else "n/a"
+
+
+def pin_source_line(snapshot: dict) -> str | None:
+    """The line under the pin naming the 0-1 DTE basis of its $10B test and the snapshot it came from (review S4).
+
+    The all-expiry number is shown beside it as context only (A2). None for a snapshot built without the market
+    store (no ``zero_one_dte`` meta), which renders as it always did.
+    """
+    meta = snapshot.get("zero_one_dte")
+    if not isinstance(meta, dict):
+        return None
+    if not meta.get("stored"):
+        return f"{meta.get('label')}: the pin's $10B test is not run and the pin flag is not raised."
+    pred = snapshot.get("prediction") or {}
+    magnet = pred.get("pin_magnet")
+    if magnet is None:
+        return f"No 0-1 DTE magnet within the pin window. {meta.get('label')}."
+    return (f"Pin size at {magnet:,.0f}: {_billions(pred.get('pin_dollars'))} 0-1 DTE OI gamma (flag at $10B); "
+            f"all-expiry {_billions(pred.get('pin_dollars_all_expiry'))}, context only. {meta.get('label')}.")
+
+
 def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=None) -> dict:
     levels = snapshot.get("levels", {})
     prev_levels = (prev_snapshot or {}).get("levels", {}) or {}
@@ -459,6 +482,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "migration": level_migration(snapshot, prev_snapshot),
         "summary_expiry": _expiry_summary(snapshot),
         "prediction": snapshot.get("prediction") or {},
+        "pin_line": pin_source_line(snapshot),
         "iron_butterfly": snapshot.get("iron_butterfly"),
         # ── v3 external panels ──
         "max_pain": _max_pain_rows(snapshot),
