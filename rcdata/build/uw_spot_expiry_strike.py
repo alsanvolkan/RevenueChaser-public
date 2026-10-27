@@ -32,6 +32,8 @@ ENDPOINT = f"/stock/{TICKER}/spot-exposures/expiry-strike"
 PAGE_LIMIT = 500
 FIRST_SESSION = date(2025, 1, 16)
 REJECTED_SUFFIX = ".rejected"
+# An epoch below this (9 Sep 2001) is not a UW snapshot time: 0, or a date written without dashes read as seconds.
+MIN_EPOCH = 1e9
 
 # Every numeric field UW documents for this answer (docs/openapi.yaml, "Spot greek exposures by strike"): the four
 # greeks, each for calls and puts, by open interest, volume, bid and ask; and ``price``, the spot of the snapshot.
@@ -238,6 +240,8 @@ def snapshot_day(stamp) -> date | None:
                 return None
             return (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).astimezone(calendar.NY).date()
     if not math.isfinite(epoch):                       # "nan", "inf": no stamp, never an exception (F1)
+        return None
+    if epoch < MIN_EPOCH:                              # 0 or "20261026" is not a snapshot time (F3)
         return None
     if epoch > 1e11:                                   # milliseconds
         epoch /= 1000.0
