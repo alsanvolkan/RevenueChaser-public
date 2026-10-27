@@ -134,6 +134,9 @@ class UWSpotExpiryStrike:
                    "fetched_at": doc["fetched_at"], "run_id": doc["run_id"], "observed": bool(doc["observed"])}
             row.update({f: to_float(item.get(f)) for f in NUMERIC_FIELDS})
             rows.append(row)
+        if not rows:
+            # An empty partition would mark the session done for good (S6); the raw file stays for a look.
+            raise base.SourceError(f"UW {session}: no usable row in {raw.name} ({len(items)} rows answered)")
         if extras:
             ctx.issue("unknown_field", session.isoformat(), "numeric fields without a column: " + ", ".join(sorted(extras)))
         con = duckdb.connect()

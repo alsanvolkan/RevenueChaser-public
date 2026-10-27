@@ -153,3 +153,13 @@ def test_rows_of_another_day_inside_a_good_answer_are_dropped_with_an_issue(http
     with ops.connect() as con:
         kinds = [r[0] for r in con.execute("SELECT kind FROM build_issues")]
     assert kinds == ["wrong_session"]
+
+
+def test_s6_an_answer_with_no_usable_row_fails_instead_of_marking_the_day_done(http_mock):
+    body = uw_fixture.body()
+    for r in body["data"]:
+        del r["strike"]
+    http_mock.add("expiry-strike", body, headers=UW_HEADERS)
+    row = _daily()
+    assert row["result"] == "failed" and "no usable row" in row["note"]
+    assert not uw.partition_path(date(2026, 10, 26)).exists()
