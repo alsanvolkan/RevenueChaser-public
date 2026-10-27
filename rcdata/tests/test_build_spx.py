@@ -205,3 +205,21 @@ def test_f3_an_implausibly_small_epoch_reads_as_no_stamp():
     for stamp in (0, "0", "20261026", 20261026, 999_999_999):
         assert uw.snapshot_day(stamp) is None, stamp
     assert uw.snapshot_day(1_000_000_000) == date(2001, 9, 8)
+
+
+def test_g3_an_answer_that_fills_the_page_fails_and_is_not_kept_as_a_partial_day(http_mock):
+    """The live answer for two expiries was 488 rows against UW's maximum limit of 500 (docs/openapi.yaml): a day
+    with more strikes would be cut at 500 without a sign. A full page fails the run, with a build issue, before
+    a raw file is written."""
+    body = uw_fixture.body()
+    rows = body["data"]
+    extra = [dict(rows[-1], strike=str(9200 + 5 * (k + 1))) for k in range(uw.PAGE_LIMIT - len(rows))]
+    body["data"] = rows + extra
+    assert len(body["data"]) == uw.PAGE_LIMIT
+    http_mock.add("expiry-strike", body, headers=UW_HEADERS)
+    row = _daily()
+    assert row["result"] == "failed" and "page limit" in row["note"]
+    assert not uw.raw_path(date(2026, 10, 26)).exists()
+    with ops.connect() as con:
+        assert [r[0] for r in con.execute("SELECT kind FROM build_issues")] == ["truncated"]
+    assert parse_qs(http_mock.calls("expiry-strike")[0].url.query.decode())["limit"] == ["500"]

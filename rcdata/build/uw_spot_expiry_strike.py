@@ -3,8 +3,9 @@
 ``GET /stock/SPX/spot-exposures/expiry-strike?expirations[]=<session>&expirations[]=<next session>`` (``expirations[]``
 is required; UW serves this from 16 Jan 2025). Every call passes ``date=<session>`` and that session's two
 nearest expiries; a row whose ``time`` is not on the session's New York date is refused. The daily run between the
-close and the next open is ``observed``; the backfill and any other run are not. One call answers about 391 rows (26 Oct 2026: 155 at 0 DTE, 236 at 1 DTE, strikes 4,800 to 9,200), under the
-500-row page, so one session is one call.
+close and the next open is ``observed``; the backfill and any other run are not. One call answers one row per strike
+and expiry: 488 on the live check of 27 Oct 2026 (241 and 247), under UW's maximum page of 500, so one session is
+one call; an answer that fills the page fails rather than keep a cut day.
 
 Raw: ``raw/uw/spot_expiry_strike/<YYYY-MM-DD>/SPX.json.gz`` (UW's body with the request and its provenance).
 Parquet: ``parquet/uw/spot_expiry_strike/date=<YYYY-MM-DD>/part-0.parquet``. Serving: ``spx_gamma_expiry_strike``.
@@ -29,7 +30,7 @@ NAME = "uw/spot_expiry_strike"
 TABLE = "spx_gamma_expiry_strike"
 TICKER = "SPX"
 ENDPOINT = f"/stock/{TICKER}/spot-exposures/expiry-strike"
-PAGE_LIMIT = 500
+PAGE_LIMIT = 500        # UW's documented maximum for this endpoint (docs/openapi.yaml, "Default 500 Max 500 Min 1")
 FIRST_SESSION = date(2025, 1, 16)
 REJECTED_SUFFIX = ".rejected"
 # An epoch below this (9 Sep 2001) is not a UW snapshot time: 0, or a date written without dashes read as seconds.
@@ -97,7 +98,10 @@ class UWSpotExpiryStrike:
         if not any(isinstance(r, dict) and snapshot_day(r.get("time")) in (session, None) for r in rows):
             raise base.SourceError(f"UW {ENDPOINT}: every row is stamped on a day not on {session}")
         if len(rows) >= PAGE_LIMIT:
-            ctx.issue("possibly_truncated", session.isoformat(), f"{len(rows)} rows = the page limit")
+            # A full page may be a cut day (G3): fail before the raw file (the resume marker) is written, so no
+            # partial day is ever kept. UW documents ``page`` for the rest; paging is the fix if a day needs it.
+            ctx.issue("truncated", session.isoformat(), f"{len(rows)} rows = the page limit {PAGE_LIMIT}")
+            raise base.SourceError(f"UW {ENDPOINT} {session}: {len(rows)} rows fill the page limit {PAGE_LIMIT}")
         return base.write_raw_json(raw, {
             "request": {"endpoint": ENDPOINT, "params": params}, "session_date": session.isoformat(),
             "observed": observed, "fetched_at": time_now(), "run_id": ctx.run_id, "body": res.data})
