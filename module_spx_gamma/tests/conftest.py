@@ -6,6 +6,9 @@ import pytest
 from RevenueChaser.core.providers.result import ProviderResult
 from RevenueChaser.module_spx_gamma.normalize import normalize_snapshot
 from RevenueChaser.module_spx_gamma.snapshot import UWApiError
+# Every test gets its own market roots (ops.sqlite and market.duckdb), as rcdata's own tests do: a serving file or
+# a queued request one test left must never be the next test's input. Imported, not copied (PR 3).
+from RevenueChaser.rcdata.tests.conftest import market_roots  # noqa: F401
 
 
 class FakeUW:
@@ -204,6 +207,14 @@ def make_raw() -> dict:
 
 def make_snapshot() -> dict:
     return normalize_snapshot(make_raw(), "2026-08-14")
+
+
+@pytest.fixture
+def rcdata_market():
+    """The default fixture ``market.duckdb`` (five SPX sessions, the VIX family, SPX closes, four COT reports)."""
+    from RevenueChaser.module_spx_gamma.tests import rcdata_fixture
+    rcdata_fixture.serve()
+    return rcdata_fixture
 
 
 @pytest.fixture
