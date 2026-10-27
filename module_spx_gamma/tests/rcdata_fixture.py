@@ -108,7 +108,8 @@ def serve(*, spx: dict[date, list[dict]] | None = None, symbols=VIX_SYMBOLS + ("
           cot_reports=COT_REPORTS, series_end: date = LAST, check: str | None = "changed") -> None:
     """Build and swap in a ``market`` serving file. ``spx=None`` is the default five sessions; ``{}`` none."""
     spx = {s: default_rows(s) for s in SESSIONS} if spx is None else spx
-    ctx = base.RunContext(run_id=RUN_ID, dataset=uw.NAME, trigger="test")
+    # allow_shrink: a test may serve again with fewer rows for a session it already served.
+    ctx = base.RunContext(run_id=RUN_ID, dataset=uw.NAME, trigger="test", allow_shrink=True)
     _write_spx(ctx, spx)
     ctx.dataset = ms.NAME
     _write_series(ctx, symbols, cot_reports, series_end)
