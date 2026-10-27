@@ -94,4 +94,7 @@ jobs:
         # .store/.cache and every side root (conftest.dashboard), binds port 0 itself and reports the
         # port back (harness/dashboard_driver.py), and each worker runs its own mock-provider server.
         # module_testing/e2e/test_harness_parallel.py holds those two rules.
-        run: python -m pytest module_testing/e2e -q -m e2e -n 4 -p no:cacheprovider -rfE
+        # --dist loadgroup: tests that share one dashboard and one Fetch (harness/shared.py) carry one
+        # xdist_group, so they land on one worker and the Fetch runs once; every other test is spread
+        # as with the default --dist load.
+        run: python -m pytest module_testing/e2e -q -m e2e -n 4 --dist loadgroup -p no:cacheprovider -rfE
