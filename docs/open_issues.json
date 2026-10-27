@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-10-23T01:31:26Z",
-  "generated_from": "8499f11",
+  "generated_at": "2026-10-27T12:12:36Z",
+  "generated_from": "05170e1",
   "issues": [
     {
       "repo": "RevenueChaser-public",
@@ -40,7 +40,7 @@
           "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/34"
         }
       ],
-      "issue_updated_at": "2026-10-22T14:05:25Z",
+      "issue_updated_at": "2026-10-23T07:43:52Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -199,35 +199,6 @@
     },
     {
       "repo": "RevenueChaser-public",
-      "number": 26,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/26",
-      "title": "Platform: job deadline/cancel, progress + run log, writer locks, schema check, per-provider credential gating (PL4-PL8)",
-      "state": "open",
-      "labels": [
-        "enhancement",
-        "area:platform-app",
-        "priority: medium"
-      ],
-      "boards": [],
-      "scope": "shared",
-      "kind": "enhancement",
-      "status": "open",
-      "deferred_until": "",
-      "summary": "Platform items PL4-PL8 are all open: job deadline and cancel, progress and run log, writer locks, the schema check, and per-provider credential gating.",
-      "detail": {
-        "whats_wrong": "Created by the 2026-10-01 backlog review. It absorbs alsanvolkan/RevenueChaser#41 (F6/F7) and the follow-up slices PL4–PL8 that `plan_platform.md` lists but no issue tracked. alsanvolkan/RevenueChaser#22 (B1–B19) is done except B10, which moves to alsanvolkan/RevenueChaser#27 (screeners) and alsanvolkan/RevenueChaser#118 (Relatedness).\n\n- **PL4: job deadline and cancel.** A long job has no deadline; cancel only works before the job starts (`app/jobs.py:103`).\n- **PL5: job progress and run log.** Today the UI shows a fixed \"Running…\" (`templates/dashboard.html:207`; alsanvolkan/RevenueChaser#41 F7). There is no per-run log.\n- **PL6: locks around writers.**\n  - `core/job_lock.py` describes one `\"edgar\"` lock, but only `module_value_chain/sync.py:71` takes it (alsanvolkan/RevenueChaser#41 F6).\n  - The SEC throttle is per process (`core/providers/sec_edgar.py:43-58`).\n  - The identity […]",
-        "evidence": "",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "",
-        "next_step": "Pick one item at a time. The two job-lock bugs under it, #32 and #33, are already approved and are the cheapest start."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-22T22:40:52Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
       "number": 31,
       "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/31",
       "title": "history.duckdb backup policy: weekly copies are never pruned, disk fills in about 6 months (Phase 3.7)",
@@ -258,31 +229,31 @@
     },
     {
       "repo": "RevenueChaser-public",
-      "number": 34,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/34",
-      "title": "Inputs: every dashboard data request (D01-D37)",
+      "number": 33,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/33",
+      "title": "Job lock: two breakers of one stale lock can both hold it (check-then-unlink race)",
       "state": "open",
       "labels": [
-        "area:providers",
-        "epic"
+        "area:platform-app",
+        "parked"
       ],
       "boards": [],
-      "scope": "shared",
-      "kind": "epic",
+      "scope": "repo",
+      "kind": "bug",
       "status": "open",
       "deferred_until": "",
-      "summary": "The inputs epic: 72 of the 73 D01-D37 dataset rows are still open, and these are the rows every board's data comes from.",
+      "summary": "Two breakers of one stale job lock can both end up holding it (check-then-unlink race in core/job_lock.py).",
       "detail": {
-        "whats_wrong": "72 of 73 tracked items in this epic are still open. The first still-open ones: **D01** `price_bars_daily` · alsanvolkan/RevenueChaser#156, alsanvolkan/RevenueChaser#360, alsanvolkan/RevenueChaser#280 · on main: writer + job (PR alsanvolkan… | **D02** `price_bars_weekly` · none · no issue. Read by: Rotation, Earnings rotation column. Open phase 2 decision: keep weekly or derive from D01. Default: deri… | **D03** `index_levels_daily` · alsanvolkan/RevenueChaser#293 · file decided (avo 2026-10-10): prices.duckdb beside D01; the move is gated PR alsanvolkan/Revenue…",
-        "evidence": "",
+        "whats_wrong": "core/job_lock.py _break_if_unchanged compares the lock file and then unlinks it. Two acquirers finding the same stale lock at the same instant can both hold it: D breaks the stale lock and creates its own, then E unlinks D's live lock and takes it.",
+        "evidence": "The review's probe_break_race.py printed 'both hold the lock' on the head and on main. Needs two acquirers right after a crash; a reused-PID lock now goes through this break path (alsanvolkan/RevenueChaser#355).",
         "example": "",
-        "tried_or_decided": "Approved items keep their original approval. The comment below lists each one with its approval link and base commit (CLAUDE.md, Cloud sessions).",
-        "direction": "- **D05** `options_chain_snapshot` · none · no writer issue (oipd_chain today). Read by: OIPD, SPX. oipd_chain_history mirror is declared; no raw snapshot writer.\n- **D06** `options_exposure_snapshot` · alsanvolkan/RevenueChaser#179 · decision recorded, table not scoped. Read by: SPX, Earnings. Files today.\n- **D07** `options_ticker_daily` · none · no writer issue (leaps_cache). Read by: Earnings, LEAPS, SPX, biotech alsanvolkan/RevenueChaser#192.\n- **D08** `options_expiry_oi_flow` · alsanvolkan/RevenueChaser#209 · not built. Read by: LEAPS, Earnings. alsanvolkan/RevenueChaser#209 writes leaps_footprint_history.\n- **D09** `options_prints` · alsanvolkan/RevenueChaser#295 · branch @0abb0d8. Read by: Earnings, LEAPS.\n- **D10** `short_interest` · alsanvolkan/RevenueChaser#296 · approved, no branch. Read by: Earnings R5, 13F Short%. Needs the #27 chain.",
-        "next_step": "Not built as one piece. Each board's own epic names the input rows it waits on; take rows through those."
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Complete fix is an OS file lock (the N1 issue). Source: Opus review of alsanvolkan/RevenueChaser#355/#356 (N2). Parked."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T13:52:29Z",
-      "reviewed_at": "2026-10-22"
+      "issue_updated_at": "2026-10-25T00:34:50Z",
+      "reviewed_at": "2026-10-27"
     },
     {
       "repo": "RevenueChaser-public",
@@ -311,7 +282,7 @@
         "next_step": "Review the 6 open items against current main and pick the next slice."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T10:39:23Z",
+      "issue_updated_at": "2026-10-26T22:54:42Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -341,37 +312,7 @@
         "next_step": "SPX-7 needs vol_index_daily to have rows, so #6 and #7 come first."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T10:40:12Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 39,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/39",
-      "title": "Dashboard: LEAPS",
-      "state": "open",
-      "labels": [
-        "area:ownership",
-        "epic"
-      ],
-      "boards": [
-        "module_leaps"
-      ],
-      "scope": "board",
-      "kind": "epic",
-      "status": "open",
-      "deferred_until": "",
-      "summary": "LEAPS's own epic: 5 items still open, with L3 specified and waiting on a measurement.",
-      "detail": {
-        "whats_wrong": "5 of 5 tracked items in this epic are still open. The first still-open ones: alsanvolkan/RevenueChaser#209 Ownership O-4: LEAPS observations table, classify at render, matched-expiry OI | DF93: A watchlist name labelled Quiet vanishes from the board (only Accumulating/Distributing are kept) (`module_leaps/scan.py:60,117-118`). Fix: Keep Quiet wat… | DF94: near_term_event is never set for watchlist rows, so the 'Quiet because of earnings' rule is never reached for them (`module_leaps/engine.py:174-175,560`).…",
-        "evidence": "- D09 prints alsanvolkan/RevenueChaser#295 (branch @0abb0d8)\n- D07/D08 from leaps_cache (no writer issue)\n- D36 watchlist alsanvolkan/RevenueChaser#306\n\nalsanvolkan/RevenueChaser#295 stamps source and dates on prints; alsanvolkan/RevenueChaser#306 gives the watchlist a change history.",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "",
-        "next_step": "Re-check L3's blocking measurement on the machine, read-only, then build it."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-22T20:19:45Z",
+      "issue_updated_at": "2026-10-25T00:34:56Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -401,7 +342,7 @@
         "next_step": "Review the 4 against current main; the board's redesign plan is in docs/dashboard_ui.md section 8b."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T10:40:16Z",
+      "issue_updated_at": "2026-10-25T00:34:57Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -431,7 +372,7 @@
         "next_step": "S4 waits on two machine measurements; re-check them, then build."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-23T01:21:41Z",
+      "issue_updated_at": "2026-10-25T00:34:58Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -489,7 +430,7 @@
         "next_step": "Take items that unblock several boards first; this issue is the area owner for #21."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T10:40:23Z",
+      "issue_updated_at": "2026-10-25T00:35:03Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -519,7 +460,7 @@
         "next_step": "Review the 12 against current main and pick the next slice."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-23T01:21:34Z",
+      "issue_updated_at": "2026-10-26T22:54:58Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -558,76 +499,7 @@
           "url": "https://github.com/alsanvolkan/revenuechaser-public/tree/area/market/385-fin-wave-fix"
         }
       ],
-      "issue_updated_at": "2026-10-22T10:40:27Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 46,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/46",
-      "title": "Dashboard: Fundamentals",
-      "state": "open",
-      "labels": [
-        "area:screeners",
-        "epic"
-      ],
-      "boards": [
-        "module_fundamentals"
-      ],
-      "scope": "board",
-      "kind": "epic",
-      "status": "in-flight",
-      "deferred_until": "",
-      "summary": "Fundamentals' own epic: 1 item still open; the F5 lane is in the batch pull request #19.",
-      "detail": {
-        "whats_wrong": "1 of 1 tracked items in this epic are still open. The first still-open ones: alsanvolkan/RevenueChaser#64 Fundamentals data-health gates: stale annual, financials exclusion, Ro40 barrier, IFRS/no…",
-        "evidence": "- D11 EDGAR (alsanvolkan/RevenueChaser#159, alsanvolkan/RevenueChaser#161, alsanvolkan/RevenueChaser#239, alsanvolkan/RevenueChaser#246)\n- D12 vendor fields alsanvolkan/RevenueChaser#297\n- D15 sec_submissions alsanvolkan/RevenueChaser#299 (corporate-event flag of alsanvolkan/RevenueChaser#64)\n- D01 bars via the shared scan (alsanvolkan/RevenueChaser#147)\n- D04 quote_snapshot alsanvolkan/RevenueChaser#294\n- D24 index lists alsanvolkan/RevenueChaser#302\n- D26 earnings date alsanvolkan/RevenueChaser#304\n\nEDGAR live re-extractions (alsanvolkan/RevenueChaser#239, alsanvolkan/RevenueChaser#246) and alsanvolkan/RevenueChaser#161's refresh window change Fundamentals values. alsanvolkan/RevenueChaser#64's corporate-event flag waits for the D15 writer (alsanvolkan/RevenueChaser#299).",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "",
-        "next_step": "Merge #19, then close F5 and re-read the remaining item."
-      },
-      "refs": [
-        {
-          "label": "branch area/screeners/386-f5",
-          "url": "https://github.com/alsanvolkan/revenuechaser-public/tree/area/screeners/386-f5"
-        },
-        {
-          "label": "batch PR #19",
-          "url": "https://github.com/alsanvolkan/revenuechaser-public/pull/19"
-        }
-      ],
-      "issue_updated_at": "2026-10-23T01:21:37Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 47,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/47",
-      "title": "Dashboard: Value Chain",
-      "state": "open",
-      "labels": [
-        "area:classification",
-        "epic"
-      ],
-      "boards": [
-        "module_value_chain"
-      ],
-      "scope": "board",
-      "kind": "epic",
-      "status": "open",
-      "deferred_until": "",
-      "summary": "Value Chain's own epic: 4 items still open, on the board whose EDGAR document reader is where #50's two empty legacy columns sit.",
-      "detail": {
-        "whats_wrong": "4 of 4 tracked items in this epic are still open. The first still-open ones: alsanvolkan/RevenueChaser#33 Value Chain rebuild: evidence tiers, full 10-K + iXBRL, entity resolver, honest precision | alsanvolkan/RevenueChaser#185 Value Chain: re-slice stored 10-K documents with the alsanvolkan/RevenueChaser#116 patterns (dry run, then backed-… | DF57: Concentration share_pct is computed but dropped when edges are built (`module_value_chain/engine.py:240-242`; `module_value_chain/concentration.py:56`). F…",
-        "evidence": "- D15/D16 sec_submissions + documents alsanvolkan/RevenueChaser#299 (merged, PR alsanvolkan/RevenueChaser#370)\n- D11 EDGAR\n- D35 LLM cache\n\nalsanvolkan/RevenueChaser#299 stores SEC submissions and documents append-only; Value Chain then reads them instead of chain_meta. Raw 10-K on Fetch waits for alsanvolkan/RevenueChaser#299 (excluded from alsanvolkan/RevenueChaser#193).",
-        "example": "",
-        "tried_or_decided": "alsanvolkan/RevenueChaser#33 (see their notes above).\n\nApproved items keep their original approval. The comment below lists each one with its approval link and base commit, so a cloud builder can read the approval on this issue (CLAUDE.md, Cloud sessions).",
-        "direction": "",
-        "next_step": "Review the 4 against current main; #50's empty edgar_documents columns touch this board's reader."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-23T01:27:00Z",
+      "issue_updated_at": "2026-10-25T00:35:01Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -688,7 +560,7 @@
         "next_step": "This is the last epic by construction. Take rows only when the board epics are down to their gated items."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-22T19:52:54Z",
+      "issue_updated_at": "2026-10-25T00:35:05Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -1036,35 +908,6 @@
     },
     {
       "repo": "RevenueChaser-public",
-      "number": 70,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/70",
-      "title": "Dashboard: Discord",
-      "state": "open",
-      "labels": [
-        "area:community",
-        "epic",
-        "parked"
-      ],
-      "boards": [],
-      "scope": "repo",
-      "kind": "epic",
-      "status": "parked",
-      "deferred_until": "after Sunday 2026-10-25",
-      "summary": "The Discord board left this repository (#174) and lives on as the discord-archive app; this epic is closed when that removal merges.",
-      "detail": {
-        "whats_wrong": "Nothing of this epic is open in this repository any more: the board, its two jobs, the store file and the credential checks were removed in #174 and continue as the separate discord-archive app. S1's acceptance, S3 the schedule, S4 the LLM extraction and the defects DF53 and DF55 now belong to that app.",
-        "evidence": "PR #181 removes `module_discord/`, `/run/module_discord`, `/run/module_discord_discover` and the code that used `discord.duckdb` (the old file itself stays in `.store/` until avo removes it by hand); the board key `module_discord` is no longer a dashboard tab, so this entry is repo-scoped rather than board-scoped until the issue is closed.",
-        "example": "",
-        "tried_or_decided": "avo moved the Discord archive into its own app in October 2026. The entry stays in the registry while the issue is open on GitHub, so `scripts/open_issues_sync.py --check` does not report it as removed.",
-        "direction": "Close the issue as moved to the discord-archive app when the removal merges; the open items continue in that app's own tracker.",
-        "next_step": "When PR #181 merges: avo closes #70 and runs `python -m RevenueChaser.scripts.open_issues_sync --write`, which drops this entry."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-22T14:42:46Z",
-      "reviewed_at": "2026-10-25"
-    },
-    {
-      "repo": "RevenueChaser-public",
       "number": 71,
       "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/71",
       "title": "Dashboard: News (X feed from Grok automations)",
@@ -1154,99 +997,6 @@
       },
       "refs": [],
       "issue_updated_at": "2026-10-22T23:25:54Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 80,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/80",
-      "title": "provider_health_html banners are dead: nothing sets payload[\"provider_health\"]",
-      "state": "open",
-      "labels": [
-        "bug",
-        "area:data-health",
-        "idea",
-        "priority: low",
-        "parked"
-      ],
-      "boards": [
-        "module_comovement",
-        "module_fundamentals",
-        "module_swing_potential",
-        "module_relatedness",
-        "module_asymmetric_growth"
-      ],
-      "scope": "board",
-      "kind": "bug",
-      "status": "parked",
-      "deferred_until": "after Sunday 2026-10-25",
-      "summary": "Five boards render a provider-health banner from a payload key no writer sets, so the banner is always empty and a degraded provider stays invisible.",
-      "detail": {
-        "whats_wrong": "Co-movement, Fundamentals, Swing, Relatedness and Asymmetric Growth each call `provider_health_html(payload.get(\"provider_health\"))`. Nothing writes that key into the payload, so `.get()` returns `None` and the banner never fires. The boards look healthy whatever the providers did.",
-        "evidence": "Found while reviewing PH-1 (#23), which adds a `provider_health` JSON column to `result_runs`. The bug is pre-existing on `main`, not introduced by PH-1: PH-1 stores the same dict as a column, and these five call sites read a payload key no writer sets. A silent banner is worse than none, because the per-board health line exists so a degraded provider is visible without opening the history.",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "1. Confirm the set by grepping `provider_health_html(` and checking each caller's payload writer for the key; the count above comes from the review and is worth re-deriving.\n2. Decide the source now that PH-1 exists. `history.last_run(board)[\"provider_health\"]` needs no new plumbing but is one run behind the board being rendered, so setting the payload key at render time from the run's own `ProviderHealth` is probably right, with the stored column staying the history.\n3. Either way the regression test is a board rendered from a run whose health has a failure, with the banner asserted non-empty: none of the five has one today, which is why this survived.",
-        "next_step": "Re-derive the list of callers, then set the payload key at render time and add the missing banner test."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-22T23:25:56Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 82,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/82",
-      "title": "Run log: a job_runs row can stay \"running\" for ever when the end write is skipped",
-      "state": "open",
-      "labels": [
-        "area:platform-app",
-        "parked"
-      ],
-      "boards": [],
-      "scope": "repo",
-      "kind": "known-problem",
-      "status": "parked",
-      "deferred_until": "after Sunday 2026-10-25",
-      "summary": "A dashboard job whose end write loses the store keeps a job_runs row saying \"running\" for ever, and nothing reconciles it after a restart.",
-      "detail": {
-        "whats_wrong": "`app/jobs._record` (`app/jobs.py:258-276`) is the only writer of a dashboard job's `job_runs` row and upserts it twice, at start and at end. The end write is wrapped in `rawstore.brief_wait()`, so a job whose end write loses the store to another process keeps a row that says `running` with `finished_at` NULL. Nothing reconciles it: the in-memory registry is cleared on restart (`:16-17`), there is no sweeper, and `pid` (`:270`) is recorded but never checked again. The scheduled writer has the same shape (`core/automations.py:839-841`).",
-        "evidence": "A 13F ingest holds `raw.duckdb` in chunks (`module_sec_13f/engine.py:530`). A universe job finishing while a chunk holds the file exceeds `brief_wait`, its end write is skipped and logged as `job_runs: could not record job <id>`, and the run log shows that run as `running` even after a restart. Nothing reads `job_runs` yet, so it is invisible today; it stops being invisible the moment PL5-b adds the reader the table was built for (#282 J4), and a run log that lies about what is running is worse than no run log.",
-        "example": "A 13F ingest holds `raw.duckdb` in chunks (`module_sec_13f/engine.py:530`). The universe job finishes while one of\nthose chunks holds the file; its end write exceeds `brief_wait`, is skipped and logged as\n`job_runs: could not record job <id>`. The run log now shows that universe run as `running`. The dashboard is\nrestarted that evening. The row still says `running`, and the first reader of the table (PL5-b, or Data Health)\nwill show a run that has been going for days.",
-        "tried_or_decided": "",
-        "direction": "1. A sweep at startup, the cheapest fix: on the dashboard's first store call, mark every `running` row whose `pid` is not alive as `error` with a message saying the dashboard restarted while it ran. `core/procs.pid_alive` exists and `core/job_lock` already makes that judgement; a reused PID needs the start-time check in `core/job_lock._holder_live` (`core/job_lock.py:152-164`), or accept the looser answer and say so.\n2. A fallback log file for the skipped write, as the 2026-10-02 review of #124 suggested: append the end record under `.cache/logs/` when the store write is skipped and replay it on the next successful write.",
-        "next_step": "Build it with the rest of PL5-b, starting with the startup sweep and a test that a stale `running` row from a dead pid becomes `error`."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-22T17:55:48Z",
-      "reviewed_at": "2026-10-22"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 83,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/83",
-      "title": "Run log: the dashboard writer leaves job_runs.trigger, source, registry_name and counts NULL",
-      "state": "open",
-      "labels": [
-        "area:platform-app",
-        "parked"
-      ],
-      "boards": [],
-      "scope": "repo",
-      "kind": "known-problem",
-      "status": "parked",
-      "deferred_until": "after Sunday 2026-10-25",
-      "summary": "The dashboard writer leaves job_runs.trigger, source, registry_name and counts NULL, so the column meant to say where a run came from is empty for every human-started run.",
-      "detail": {
-        "whats_wrong": "`job_runs` declares sixteen columns (`core/rawstore.py:1491-1503`) and the two writers fill different subsets. The scheduler (`core/automations.py:829-841`, #129 A1) sets `trigger` to `\"scheduled\"` and fills `registry_name`; the dashboard (`app/jobs.py:268-274`) leaves `trigger`, `source`, `registry_name` and `counts` NULL. The 2026-10-02 review of #124 asked for a source column to tell a CLI run from a dashboard run; the columns arrived with #282 and the dashboard writer never filled them.",
-        "evidence": "Read last night's run log and two `daily_bars` rows come back: one from `RC-Daily-Bars` with `trigger = \"scheduled\"` and `registry_name = \"RC-Daily-Bars\"`, and one from a Fetch someone pressed with `trigger = NULL`. \"NULL means a person pressed it\" is a rule nobody can see in the data, and a hand-run CLI would be indistinguishable from the second. `counts` is the same gap from the other side: a job that wrote 4,251 rows reports it only in the prose of `message`, so the log cannot be grouped or summed.",
-        "example": "Read the run log for last night and you get two `daily_bars` rows: one from `RC-Daily-Bars` with\n`trigger = \"scheduled\"`, `registry_name = \"RC-Daily-Bars\"`, and one from a Fetch someone pressed afterwards with\n`trigger = NULL`. \"NULL means a person pressed it\" is a rule nobody can see in the data, and a third writer\n(a hand-run CLI) would be indistinguishable from the second.\n\n`counts` is the same kind of gap from the other side: a job that wrote 4,251 rows reports that only in the prose of\n`message`, so the run log cannot be grouped or summed by anything.",
-        "tried_or_decided": "",
-        "direction": "1. `app/jobs._record` sets `trigger = \"dashboard\"` and `source` to the pid or the lane; pick one and write it in the column comment. One dict literal, one test.\n2. `registry_name` stays NULL for a dashboard job, which is correct because there is no registry entry; say so in the MANIFEST comment so the next reader does not read it as an omission.\n3. `counts` wants a decision rather than a value: either a runner returns a small dict the job queue stores, or the column stays out of the reader's concern until some runner has something to put in it. Stating \"unused for now\" is the honest cheap answer; a half-filled `counts` is worse than an empty one.",
-        "next_step": "Fill `trigger` and `source` in `app/jobs._record` with the rest of PL5-b, and record the `counts` decision on the issue."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-22T17:56:08Z",
       "reviewed_at": "2026-10-22"
     },
     {
@@ -1489,37 +1239,6 @@
     },
     {
       "repo": "RevenueChaser-public",
-      "number": 107,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/107",
-      "title": "LEAPS: raw exception text reaches the board notice and the recorded run, so a store error puts a filesystem path on the board",
-      "state": "open",
-      "labels": [
-        "bug",
-        "area:ownership",
-        "parked"
-      ],
-      "boards": [
-        "module_leaps"
-      ],
-      "scope": "board",
-      "kind": "bug",
-      "status": "parked",
-      "deferred_until": "after Sunday 2026-10-25",
-      "summary": "LEAPS puts the full exception text, including a file path, into the board notice and the recorded run when a store read fails; the same shape appears three more times.",
-      "detail": {
-        "whats_wrong": "module_leaps/scan.py:78 builds a warning with the exception's full str(); app/runners.py:384 shows it as the board notice and :388 stores it in the result history. A locked or unreadable DuckDB file puts an absolute host path on the board.",
-        "evidence": "Found in the review of PR #99. The full text is already in the logger.warning on the line above; the same pattern is at module_leaps/engine.py:525 and two more sites.",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "**Recommended: put only `type(e).__name__` in the sentence that is shown or stored**, and leave the full text to the logger. The sentence's job is to tell the reader that baselines are missing and that a Quiet label there means missing history; the exception's class is enough to tell a lock from a corrupt file, and anything more belongs in the log.\n\n**Why `redact` is not the answer on its own.** The project does scrub persisted exception text elsewhere — `core/identity/refresh.py:206` and `:213` wrap it as `redact(f\"{type(exc).__name__}: {exc}\")[:500]` — but `redact` (`core/identity/sources/__init__.py:73`) removes **configured API key values and bearer tokens**, not file paths. It would not stop this leak. It also lives in an identity-sources package, which is the wrong home for a LEAPS caller; if a shared scrubber is wanted later it should move into `core/` and learn about paths. […]",
-        "next_step": "After Sunday 25 Oct 2026: keep only the exception type in user-facing sentences at all four sites, keep the full text in the log, add a test that no path reaches the notice."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-23T01:27:07Z",
-      "reviewed_at": "2026-10-23"
-    },
-    {
-      "repo": "RevenueChaser-public",
       "number": 109,
       "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/109",
       "title": "Seam: the vol-index and COT readers live in a board module, not core/",
@@ -1546,122 +1265,6 @@
       },
       "refs": [],
       "issue_updated_at": "2026-10-23T01:27:10Z",
-      "reviewed_at": "2026-10-23"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 110,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/110",
-      "title": "The two forecast writer scripts duplicate one CLI/lock/report skeleton, so the next fix has to be made twice",
-      "state": "open",
-      "labels": [
-        "area:quality",
-        "parked"
-      ],
-      "boards": [],
-      "scope": "repo",
-      "kind": "bug",
-      "status": "parked",
-      "deferred_until": "after Sunday 2026-10-25",
-      "summary": "scripts/forecast_outcomes.py and scripts/forecast_baselines.py duplicate one CLI, lock and report skeleton, so every later change has to be made twice.",
-      "detail": {
-        "whats_wrong": "Both scripts carry the same argparse mode group, job_lock.acquire(name, wait=0) with the busy branch, _write_report and exit-code convention; nothing in that skeleton is specific to either writer.",
-        "evidence": "Found in the review of PR #104 (HR-1): forecast_outcomes.py lines 25-65 and the new forecast_baselines.py are the same shape.",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "Extract the skeleton once (a small helper that takes the writer callable, the lock name and the report path, and owns the parser, the lock, the refusal branch and the exit codes), then let both scripts be a few lines of configuration. No behaviour change: the test is that both CLIs keep their current flags, their current refusal text and their current exit codes.\n\nWorth doing **after** #104 lands, not during it — extracting a shared skeleton from one copy while the second is still in review would mean reviewing the same move twice.",
-        "next_step": "After Sunday 25 Oct 2026: extract one helper taking the writer callable, lock name and report path, make both scripts a few lines of configuration, test that both keep their flags and exit codes."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-23T01:27:24Z",
-      "reviewed_at": "2026-10-23"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 111,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/111",
-      "title": "Board artifact paths are shared by every test in a worker, so a Refresh test can read an earlier test's Fetch and pass for the wrong reason",
-      "state": "open",
-      "labels": [
-        "area:quality",
-        "parked"
-      ],
-      "boards": [],
-      "scope": "repo",
-      "kind": "bug",
-      "status": "parked",
-      "deferred_until": "after Sunday 2026-10-25",
-      "summary": "The root `conftest.py` redirects the data roots away from the developer's real tree — `RC_STORE_DIR`, `RC_CACHE_DIR`, `RC_EDGAR_DOCS_DIR`, `SPX_GAMMA_DATA_ROOT` at",
-      "detail": {
-        "whats_wrong": "The root `conftest.py` redirects the data roots away from the developer's real tree — `RC_STORE_DIR`, `RC_CACHE_DIR`, `RC_EDGAR_DOCS_DIR`, `SPX_GAMMA_DATA_ROOT` at `conftest.py:22-45`. That part works, and its own comment records why it exists: before it, \"a route test hitting `?refresh=1` unlinked the developer's actual rendered boards and a runner test overwrote them\".\n\nBut that redirect points at **one `tempfile.mkdtemp` per worker process**, so it is shared by every test in that worker. Only the store got per-test isolation: `isolate_rawstore` (`conftest.py:130-131`) is autouse and explicitly \"Kept **per-test** (never per-session)\". **The board artifacts got the root, not the isolation.**\n\nSo a test that renders or saves a board payload leaves it in a directory the next test reads. A Refresh test that does not redirect the artifact constants itself reads […]",
-        "evidence": "Found in the review of PR #102: its first witness test passed for exactly this reason, from a leftover saved payload, and was only caught because the witness had to fail first. conftest.py:22-45 redirects the roots once per worker; only the store is isolated per test (conftest.py:130-131).",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "An **autouse fixture that points the per-board artifact constants at `tmp_path`** — the same move the conftest already made for the store, one level finer. It has to cover **both** copies of each pair, or the constants should become one (the module config owning them and `app/runners.py` re-exporting, which is the shape #12 just used for the rotation reference data).\n\nDoing it this way means a test that forgets to isolate gets isolation anyway, which is exactly the argument `isolate_rawstore`'s docstring already makes for the store.",
-        "next_step": "After Sunday 25 Oct 2026: give each test its own artifact root in conftest.py (tmp_path per test) so Refresh tests cannot read an earlier Fetch, then remove the per-test monkeypatch workarounds."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-23T01:27:28Z",
-      "reviewed_at": "2026-10-23"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 114,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/114",
-      "title": "`isinstance(x, date)` admits a datetime, so a session date can round-trip as \"2026-10-08T00:00:00\"",
-      "state": "open",
-      "labels": [
-        "area:quality",
-        "parked"
-      ],
-      "boards": [
-        "module_earnings_radar"
-      ],
-      "scope": "board",
-      "kind": "bug",
-      "status": "parked",
-      "deferred_until": "after Sunday 2026-10-25",
-      "summary": "isinstance(x, date) admits a datetime, so a session date can round-trip as '2026-10-08T00:00:00'; the idiom is in the shared calendar helper too.",
-      "detail": {
-        "whats_wrong": "datetime is a subclass of date, so isinstance(value, date) lets a datetime through and its isoformat() carries a time part. Not live today (DuckDB DATE columns return date), but the idiom is used at core/calendar.py:229 (to_session_date), core/index_levels.py:77-78 and in the new reader in core/ownership.py.",
-        "evidence": "Found in the review of PR #112; core/tests/test_ledger.py:121-122 already asserts type(x) is date, the exact-type form.",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "Use the exact-type check, `type(value) is date`, wherever the intent is \"a plain session date and not a timestamp\" — or route the value through `core/calendar.to_session_date` and fix the check **inside** that helper, so there is one place that decides. The second is the better shape: it is already the designated helper, and callers stop re-implementing the test.\n\nA `datetime` that does arrive should become `value.date()` rather than `None`, where that is what the caller means — worth deciding per call site rather than globally, since `to_session_date` returning `None` for a timestamp may be the honest answer for a stored key.",
-        "next_step": "After Sunday 25 Oct 2026: use type(value) is date where a plain session date is meant, or route through core/calendar.to_session_date, with a test that a datetime is not accepted."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-23T01:27:34Z",
-      "reviewed_at": "2026-10-23"
-    },
-    {
-      "repo": "RevenueChaser-public",
-      "number": 115,
-      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/115",
-      "title": "After PR #85, three e2e boards will be seeded into the fallback CIK path instead of the production one",
-      "state": "open",
-      "labels": [
-        "area:quality",
-        "parked"
-      ],
-      "boards": [
-        "module_value_chain"
-      ],
-      "scope": "board",
-      "kind": "bug",
-      "status": "parked",
-      "deferred_until": "after Sunday 2026-10-25",
-      "summary": "After PR #85 three e2e boards are still seeded through sec_company_tickers, the fallback CIK path, while production prefers sec_exchange_file.",
-      "detail": {
-        "whats_wrong": "module_testing/e2e/test_board_settings.py:39, test_board_relatedness.py:89 and test_board_value_chain.py:192 seed the CIK map by writing sec_company_tickers; after #85 the production read prefers sec_exchange_file, so these boards would exercise the fallback.",
-        "evidence": "Found in the review of PR #85; sec_exchange_file is written only by core/sec_files.py and is the table the nightly fills.",
-        "example": "",
-        "tried_or_decided": "",
-        "direction": "Move the three seeds to `sec_exchange_file`, so each board's e2e arranges the state production is in. If a test's point is specifically the fallback, it should say so and seed only the old table deliberately — but then it should be a second test, not the only one.",
-        "next_step": "After Sunday 25 Oct 2026: seed sec_exchange_file in those three fixtures, keep one test for the fallback branch."
-      },
-      "refs": [],
-      "issue_updated_at": "2026-10-23T01:27:41Z",
       "reviewed_at": "2026-10-23"
     },
     {
@@ -1786,7 +1389,7 @@
         "next_step": "After Sunday 25 Oct 2026: one-off backfill with a larger Socrata $limit through the same map_row and writer; it is a live-store write: backup first, named rollback restore_store --latest raw."
       },
       "refs": [],
-      "issue_updated_at": "2026-10-23T01:25:51Z",
+      "issue_updated_at": "2026-10-23T15:12:46Z",
       "reviewed_at": "2026-10-23"
     },
     {
@@ -1878,6 +1481,1262 @@
       "refs": [],
       "issue_updated_at": "2026-10-23T01:26:40Z",
       "reviewed_at": "2026-10-23"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 124,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/124",
+      "title": "Data health: dataset registry + typed health contract (source, writer, coverage, freshness per dataset)",
+      "state": "open",
+      "labels": [
+        "enhancement",
+        "area:data-health"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "enhancement",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Data health lists 22 hand-written dataset rows with no source or writer; add a dataset registry and a typed health contract.",
+      "detail": {
+        "whats_wrong": "The board holds a hand-written list of 22 dataset rows naming 33 store tables and shows neither source nor writer of any; completeness survives only as a free-text note. 64 of the 94 base MANIFEST tables are on no row. Fix: core/datasets.py (registry) and core/datahealth.py (typed health contract).",
+        "evidence": "cftc_cot holds 2 rows and is invisible because no board row names the table (see #119); vol_index_daily was recorded at 0 rows while healthy at 42,632. Seven coverage computations return seven ad-hoc dicts (core/prices.py:808, core/quotes.py:453, and five more).",
+        "example": "`cftc_cot` holds 2 rows (PC measurement, 2026-10-23 09:15 Amsterdam) — exactly the defect #119 logs — and it is invisible, because no board row names the table. Conversely project memory recorded `vol_index_daily` at 0 rows while it is healthy at 42,632: a PC measurement was needed to settle a question the board exists to answer at a glance.",
+        "tried_or_decided": "",
+        "direction": "ADR-1 and ADR-2 of the review, both chosen by avo on 2026-10-23:\n\n1.",
+        "next_step": "Build core/datasets.py and core/datahealth.py per ADR-1 and ADR-2, chosen by avo on 2026-10-23."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T07:51:46Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 125,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/125",
+      "title": "Data health: Identity coverage section — universe funnel, input coverage, identifier matrix",
+      "state": "open",
+      "labels": [
+        "enhancement",
+        "area:classification",
+        "area:data-health"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "enhancement",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Nothing measures identifier coverage; add an Identity coverage section with universe funnel, input coverage and identifier matrix.",
+      "detail": {
+        "whats_wrong": "security_master holds ticker, cik and figi and has no cusip or isin column (core/rawstore.py:1419-1442); the Identity card measures classification, never identifier fill. The three identifier tables disagree on how many securities exist: 7,689 vs 8,109 vs 10,443.",
+        "evidence": "Live store, read-only, 2026-10-23: 4,999 of 7,689 universe tickers (65.0%) have a CUSIP; 6,946 of 8,109 security_master rows have a FIGI (85.7%); 18,024 of 30,939 newest-period 13F CUSIPs unmapped (58.3%); ISIN count 0.",
+        "example": "The one identifier join that exists, `_universe_ciks` (`module_settings/inventory.py:1055-1069`), computes the universe's CIKs through the newest present `sec_exchange_file` rows and is used only as the denominator of \"universe CIKs the submissions sweep refreshed\" (`:1093-1096`) — the set is computed and thrown away. Meanwhile the 13F totals drop 18,024 of 30,939 distinct CUSIPs of the newest period (2026-06-30), and the diagnosis of *why* (#11: 99.7% of the dropped value was asked of OpenFIGI and came back empty, 0.3% was never asked) needed a one-off measurement because the board holds no identifier coverage.",
+        "tried_or_decided": "",
+        "direction": "Three objects, and the first design point is that avo's question is really",
+        "next_step": "Add the board section with numbers; every matrix row names its own denominator. avo called it the board's final goal."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T07:51:48Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 126,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/126",
+      "title": "Data health: drill reads a near-retired price cache; 13 of 15 boards have no card",
+      "state": "open",
+      "labels": [
+        "bug",
+        "area:data-health"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Data health drill reads a near-retired price cache (swing_ohlc) and 13 of 15 data boards have no input card.",
+      "detail": {
+        "whats_wrong": "_swing_presence counts bars from swing_ohlc (module_settings/inventory.py:534-548), a cache only the SPY fallback still writes, so a ticker with two years of D01 bars can read 'no bars'. BOARD_INPUTS has 2 entries against 15 data boards.",
+        "evidence": "Asymmetric Growth and Fundamentals already emit funnels (module_asymmetric_growth/engine.py:1030, core/screen_common.py:510) that are shown nowhere on Settings. D01 price_bars_daily holds 28,026,740 rows (PC, 2026-10-23).",
+        "example": "`_swing_presence` counts a ticker's bars as `SELECT COUNT(*), MAX(ts) FROM swing_ohlc WHERE ticker = ?` (`module_settings/inventory.py:534-548`) and that is what the drill returns as `presence.swing_ohlc` (`:617`). The \"Daily OHLC\" inventory row (`:1248-1256`) counts the same table with `holes = _missing(tickers, \"swing_ohlc\")` under the label \"no bars\". But `docs/data_architecture.md`'s Stage 2 row for `swing_ohlc` states: *\"one writer `module_swing_potential/ohlc_cache.write` (C8), which only the Swing/Fundamentals SPY fallback still calls: Co-movement and the Relatedness peer market read D01 since #379.\"* D01 is `price_bars_daily` — 28,026,740 rows on the live store (PC, 2026-10-23) — and the board reports it on a *separate* row (`_price_bars_row`, `:1322`) under a label a reader cannot tell apart.\n\nThis is exactly the question avo asked of this board — *kaç tanesinin candle […]",
+        "tried_or_decided": "",
+        "direction": "1.",
+        "next_step": "Drill price basis from D01 and give each of the 15 boards an inputs card, following the core/provenance.RESOLVERS shape."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T07:51:49Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 128,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/128",
+      "title": "Research: a CUSIP/ISIN source that covers the universe — starting with the FIGI column the 13F ingest discards",
+      "state": "open",
+      "labels": [
+        "area:ownership",
+        "area:providers",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Research: a universe-wide CUSIP/ISIN source; first item is the FIGI column the SEC 13F ingest drops. Parked, no spend proposed.",
+      "detail": {
+        "whats_wrong": "Every CUSIP held comes from a SEC 13F filing, so 2,690 of 7,689 universe names have none. OpenFIGI maps from a CUSIP, never to one (core/providers/openfigi.py:111-123 carries no CUSIP field).",
+        "evidence": "Live store 2026-10-23: 4,999 of 7,689 tickers have a CUSIP; no ISIN at all. Newest 13F period: 18,024 of 30,939 CUSIPs unmapped; no letter-first CUSIP has ever matched (Linde G54950103, Seagate G7997R103: 'No identifier found').",
+        "example": "Measured on the live store 2026-10-23 (read-only):",
+        "tried_or_decided": "",
+        "direction": "Three candidates, in the order they should be tried:\n\n**1. The SEC 13F file's own FIGI column — free, and already in our hands.** `sec13f_holdings` has no `figi` column (`core/rawstore.py:1344-1351`) and nothing in `module_sec_13f/` reads or stores one, while the file",
+        "next_step": "Candidate 1, free: read the FIGI column of the 13F INFOTABLE.tsv, which sec13f_holdings does not store (core/rawstore.py:1344-1351). Deferred until avo wants it."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T07:43:18Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 136,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/136",
+      "title": "Run log: job_runs.counts is NULL for every run (scheduled and dashboard)",
+      "state": "open",
+      "labels": [
+        "area:platform-app",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "job_runs.counts is NULL in all 66 live run rows, so the Runs tab cannot show how much a run did.",
+      "detail": {
+        "whats_wrong": "Scheduled writer (core/automations.py) and dashboard writer (app/jobs.py) both leave counts NULL: runners return a Path or raise JobMessage, and a scheduled CLI step prints its result as JSON on stdout without handing it back.",
+        "evidence": "Live store, 23 Oct 2026: 66 of 66 rows NULL. RC-Forecast-Outcomes printed {rows: 93714, written: 93714, ...} but its job_runs row has counts NULL.",
+        "example": "`RC-Forecast-Outcomes` prints `{\"rows\": 93714, \"written\": 93714, \"status\": {\"open\": 93382, ...}}` (23 Oct run) and the `job_runs` row for that run has `counts` NULL, so the Runs tab cannot show how much a run did.",
+        "tried_or_decided": "",
+        "direction": "1. Scheduled steps: have the automation runner parse the last JSON line of the step's stdout (the CLIs already print one result object, with `--report` as the file form) and store it as `counts`.\n2. Dashboard jobs: let a runner return `(path, counts)` or set `counts` through a small helper; start with the long writers (13F, EDGAR sync, identity, daily bars).\n3. Tests: a row read back with a counts object for one scheduled step and one dashboard job.",
+        "next_step": "Parse the last JSON stdout line of a scheduled step into counts; let dashboard runners return (path, counts); test one scheduled step and one dashboard job."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T11:11:07Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 140,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/140",
+      "title": "Data Health G3 + S5b: four named freshness states instead of a bare dash",
+      "state": "open",
+      "labels": [
+        "area:data-health",
+        "parked"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Data health Fresh and Last data date cells print a bare dash for four different situations; name the four freshness states.",
+      "detail": {
+        "whats_wrong": "The Fresh and Last data date cells print a bare dash for four different situations, and a failed freshness query looks like an empty dataset.",
+        "evidence": "cftc_cot (2 rows) stayed invisible for exactly this reason (#119). The registry already carries the kind per dataset: a (table, column) pair, from_run_log, no_claim, or None.",
+        "example": "Today `cftc_cot` (2 rows) stayed invisible for exactly this reason (#119). The registry already carries the kind per dataset: a (table, column) pair, `from_run_log`, `no_claim`, or None.",
+        "tried_or_decided": "",
+        "direction": "Render the four states in words: the date; \"no time column, see the provenance rows\"; \"taken from the run log\" (with the latest run date from one query); \"retired / bookkeeping, no freshness claim\"; and \"query failed, this is not an empty dataset\" in the bad colour. `inventory._fresh_record` returns {state, date, text} instead of swallowing the failure. Commitments of Traders renders as fresh but thin, never as a failure. Tests: one per state, plus failed-query-differs-from-empty.\n\nBrief: `plans/2026-10-23_gui_redesign/brief.md` in the project library (Settings / Data health GUI redesign, approved by avo 23 Oct 2026). Plan: `plans/2026-10-23_data_health_board/plan.md`. Parent: #124. Parked on avo's word of 23 Oct 2026 15:59 (merge first, then clean-up, no further builds tonight); build jobs for G3, G11, S7, G7, G6a, G6b were drafted at `.cache/jobs22oct/JOB_dh_<step>.md` in the […]",
+        "next_step": "Render the date, 'no time column', 'taken from the run log', 'retired / bookkeeping', and 'query failed'; _fresh_record returns {state, date, text}. Tests: one per state. Parent #124; parked."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T16:01:15Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 141,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/141",
+      "title": "Data Health G11: what is missing and how each dataset improves (gap_kind, next_step)",
+      "state": "open",
+      "labels": [
+        "area:data-health",
+        "parked"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Data health G11: show what is missing in each dataset and how it improves (gap_kind, next_step fields).",
+      "detail": {
+        "whats_wrong": "A hole on the board has no explanation beside it, and nothing stops a dataset below 100% from shipping without one.",
+        "evidence": "CUSIP coverage is about 65 percent and OpenFIGI maps from a CUSIP, so that route cannot improve it, but the page says nothing. The Commitments of Traders table is thin by design (4 weeks, #119).",
+        "example": "CUSIP coverage is about 65 percent: OpenFIGI maps from a CUSIP, so that cannot be improved on that route, but the page says nothing. The Commitments of Traders table is thin by design (4 weeks, grows forward, #119).",
+        "tried_or_decided": "",
+        "direction": "Add two additive `DatasetSpec` fields: `gap_kind` (fixable, in_build, needs_decision, ceiling, self_heals, none) and `next_step` (plain words, cites only issue numbers that exist). CI rule: a dataset that declares a coverage must carry a gap_kind; fixable, in_build, needs_decision and ceiling require text (a ceiling carries its reason, a fact about the source). The detail row shows \"What is missing\" (computed from the coverage record, no number in prose) and \"How it improves\", plus a tag chip.\n\nBrief: `plans/2026-10-23_gui_redesign/brief.md` in the project library (Settings / Data health GUI redesign, approved by avo 23 Oct 2026). Plan: `plans/2026-10-23_data_health_board/plan.md`. Parent: #124. Parked on avo's word of 23 Oct 2026 15:59 (merge first, then clean-up, no further builds tonight); build jobs for G3, G11, S7, G7, G6a, G6b were drafted at […]",
+        "next_step": "Add DatasetSpec fields gap_kind and next_step; CI rule that a dataset declaring coverage carries a gap_kind and the required text; detail row shows 'What is missing' and 'How it improves'. Parent #124; parked."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T16:01:17Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 142,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/142",
+      "title": "Data Health S7: Identity coverage section (universe funnel, input coverage, identifier matrix)",
+      "state": "open",
+      "labels": [
+        "area:data-health",
+        "parked"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Data health S7: add an Identity coverage section (universe funnel, input coverage, identifier matrix).",
+      "detail": {
+        "whats_wrong": "There is no single place that shows how the universe narrows, which inputs each surviving name has, and how complete the identifiers are.",
+        "evidence": "CUSIP and ISIN now exist (#127, 5,294 applied on 23 Oct); the matrix would show them with their own denominators and the 13F unmatched count under both definitions.",
+        "example": "CUSIP and ISIN now exist (#127, 5,294 applied on 23 Oct): the matrix would show them with their own denominators, and the 13F unmatched count under both definitions.",
+        "tried_or_decided": "",
+        "direction": "Three objects: the universe funnel through `core.funnel`; the input coverage table reusing the existing health summaries and `_universe_ciks` (no new SQL for a defined population; one query per store file plus a Python set intersection, no ATTACH); the identifier matrix, each row naming its denominator, ISIN shown at its real count. CI test: the funnel result equals `len(universe.classification_universe())`. Keep the Refresh under 2.5 s.\n\nBrief: `plans/2026-10-23_gui_redesign/brief.md` in the project library (Settings / Data health GUI redesign, approved by avo 23 Oct 2026). Plan: `plans/2026-10-23_data_health_board/plan.md`. Parent: #124. Parked on avo's word of 23 Oct 2026 15:59 (merge first, then clean-up, no further builds tonight); build jobs for G3, G11, S7, G7, G6a, G6b were drafted at `.cache/jobs22oct/JOB_dh_<step>.md` in the build checkout and stopped before any commit.",
+        "next_step": "Build the funnel via core.funnel, the input coverage table, and the identifier matrix. CI test: funnel equals len(universe.classification_universe()); keep Refresh under 2.5 s. Parent #124; parked."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T16:01:18Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 143,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/143",
+      "title": "Data Health G7: per-name drill below the table, with identifiers, presence and which boards can score the name",
+      "state": "open",
+      "labels": [
+        "area:data-health",
+        "parked"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Data health G7: move the per-name drill below the table and add identifiers, presence and which boards can score the name.",
+      "detail": {
+        "whats_wrong": "The ticker box sits above the dataset table and answers only part of what avo needs for one name.",
+        "evidence": "Example target: MU with identifiers (CIK, FIGI, CUSIP, ISIN), presence in bars, quote, vendor financials, EDGAR facts, ownership, and the boards that can score it.",
+        "example": "MU: identifiers (CIK, FIGI, CUSIP, ISIN), presence in bars, quote, vendor financials, EDGAR facts, ownership, and which boards can score it.",
+        "tried_or_decided": "",
+        "direction": "Keep the drill (avo's decision), move it below the table, remove the old box above it, and add \"boards that can score this name\" from `BOARD_INPUTS`, using the presence data the drill already computes, with \"not checked for this board\" where the drill does not measure the board's tables.\n\nBrief: `plans/2026-10-23_gui_redesign/brief.md` in the project library (Settings / Data health GUI redesign, approved by avo 23 Oct 2026). Plan: `plans/2026-10-23_data_health_board/plan.md`. Parent: #124. Parked on avo's word of 23 Oct 2026 15:59 (merge first, then clean-up, no further builds tonight); build jobs for G3, G11, S7, G7, G6a, G6b were drafted at `.cache/jobs22oct/JOB_dh_<step>.md` in the build checkout and stopped before any commit.",
+        "next_step": "Keep the drill, move it below the table, remove the old box, add 'boards that can score this name' from BOARD_INPUTS. Parent #124; parked."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T19:58:43Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 144,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/144",
+      "title": "Data Health G6a: board inputs as source, dataset and store rows with fill bars",
+      "state": "open",
+      "labels": [
+        "area:data-health",
+        "parked"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Data health G6a: show each board's inputs as source, dataset and store rows with fill bars instead of text only.",
+      "detail": {
+        "whats_wrong": "The Board inputs cards are text only and do not show where each input comes from or how complete it is.",
+        "evidence": "Earnings Radar example: its eight tables, each with provider, dataset, store file pill and coverage bar.",
+        "example": "Earnings Radar: its eight tables, each with provider, dataset, store file pill and coverage bar.",
+        "tried_or_decided": "",
+        "direction": "For each of the 15 board cards, one row per store table from the registry claim (provider, dataset label, store pill, coverage bar), built from rows `collect()` already holds: no new query, no second registry pass. A table no dataset claims says so in words.\n\nBrief: `plans/2026-10-23_gui_redesign/brief.md` in the project library (Settings / Data health GUI redesign, approved by avo 23 Oct 2026). Plan: `plans/2026-10-23_data_health_board/plan.md`. Parent: #124. Parked on avo's word of 23 Oct 2026 15:59 (merge first, then clean-up, no further builds tonight); build jobs for G3, G11, S7, G7, G6a, G6b were drafted at `.cache/jobs22oct/JOB_dh_<step>.md` in the build checkout and stopped before any commit.",
+        "next_step": "For each of the 15 board cards add one row per store table from the registry claim, built from rows collect() already holds, no new query. Parent #124; parked."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T16:01:22Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 145,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/145",
+      "title": "Data Health G6b: provider to job to store flow diagram",
+      "state": "open",
+      "labels": [
+        "area:data-health",
+        "parked"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Data health G6b: add a provider to job to store flow diagram.",
+      "detail": {
+        "whats_wrong": "There is no picture of which provider feeds which job and which store file.",
+        "evidence": "Target: providers left, jobs middle, store files right, edges coloured by target file, click a node to highlight its edges.",
+        "example": "A diagram in the Data Flow artifact's language: providers on the left, jobs in the middle, store files on the right, edges coloured by the target file, click a node to highlight its edges.",
+        "tried_or_decided": "",
+        "direction": "A pure `flow_graph(rows)` over the registry rows already collected, rendered as server-side SVG with a few lines of click-to-highlight script; page weight only, no query. If it costs more than the 2.5 s Refresh budget it moves behind a collapsed section.\n\nBrief: `plans/2026-10-23_gui_redesign/brief.md` in the project library (Settings / Data health GUI redesign, approved by avo 23 Oct 2026). Plan: `plans/2026-10-23_data_health_board/plan.md`. Parent: #124. Parked on avo's word of 23 Oct 2026 15:59 (merge first, then clean-up, no further builds tonight); build jobs for G3, G11, S7, G7, G6a, G6b were drafted at `.cache/jobs22oct/JOB_dh_<step>.md` in the build checkout and stopped before any commit.",
+        "next_step": "Pure flow_graph(rows) over the already collected registry rows, rendered as server-side SVG; moves behind a collapsed section if it exceeds the 2.5 s Refresh budget. Parent #124; parked."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T16:01:23Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 146,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/146",
+      "title": "Data Health S12: docs rewritten as the built contract",
+      "state": "open",
+      "labels": [
+        "area:data-health",
+        "parked"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Data health S12: rewrite docs/data_health.md as the built contract and generate the Stage 2 and 3 tables from core/datasets.py.",
+      "detail": {
+        "whats_wrong": "docs/data_health.md still describes the board before the registry, Health type, bars, filters and tiles, and says there is no filter panel.",
+        "evidence": "docs/data_health.md:229 says 'Filter panel: no'; docs/data_architecture.md Stage 2 and 3 are hand-written.",
+        "example": "`docs/data_health.md:229` says \"Filter panel: no\"; `docs/data_architecture.md` Stage 2 and 3 are hand-written.",
+        "tried_or_decided": "",
+        "direction": "Generate the Stage 2 and 3 dataset tables from `core/datasets.py`, rewrite `docs/data_health.md` as the contract (Health, registry, freshness rule: a table the reader ages row by row carries its own timestamp, a table the board only reports on takes freshness from the run that wrote it). Add any newly test-read Markdown file to the `paths` list in `tests.yml`.\n\nBrief: `plans/2026-10-23_gui_redesign/brief.md` in the project library (Settings / Data health GUI redesign, approved by avo 23 Oct 2026). Plan: `plans/2026-10-23_data_health_board/plan.md`. Parent: #124. Parked on avo's word of 23 Oct 2026 15:59 (merge first, then clean-up, no further builds tonight); build jobs for G3, G11, S7, G7, G6a, G6b were drafted at `.cache/jobs22oct/JOB_dh_<step>.md` in the build checkout and stopped before any commit.",
+        "next_step": "Generate the Stage 2 and 3 tables from core/datasets.py, rewrite the doc as the contract, add any newly test-read Markdown to the paths list in tests.yml. Parent #124; parked."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T16:01:25Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 149,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/149",
+      "title": "Bridge start dies silently when a Claude Code self-update leaves no claude.exe",
+      "state": "open",
+      "labels": [
+        "bug",
+        "area:platform-app",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Bridge start dies silently when a Claude Code self-update leaves no claude.exe; the window reports 'started' anyway.",
+      "detail": {
+        "whats_wrong": "scripts/pc/bridge_common.ps1 checks $script:ClaudeExe only with Test-Path in Start-ProjectBridge. After a failed self-update the bundle holds only claude.exe.old.* files; the bridge window stays open with -NoExit, bridge.ps1 prints 'started' and exits 0, and the claude shim on PATH breaks too.",
+        "evidence": "2026-10-23: bin/ held only claude.exe.old.1792146501060 and claude.exe.old.1792780247442; no remote-control process existed while the watchdog log said 'started'. Recovered by copying the npm global claude.exe (v2.1.309).",
+        "example": "The bundle's `bin/` directory held only:\n\n- `claude.exe.old.1792146501060` (update attempt of 16 Oct)\n- `claude.exe.old.1792780247442` (update attempt of 23 Oct)\n\n`claude.exe` itself was gone, both backups 242 MB and byte-identical in size. A bridge started from the shortcut\nreported `started bridge window (powershell pid ...)` and exit code 0, while no `claude.exe ... remote-control`\nprocess ever existed. Running the path by hand gave:\n\n```\n& : The term '...\\@anthropic-ai\\claude-code\\bin\\claude.exe' is not recognized as the name of a cmdlet,\nfunction, script file, or operable program.\n```\n\nRecovered by copying the working binary from the npm global install\n(`%APPDATA%\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe`, v2.1.309) to the path the bundle expects.\nBoth `.old` backups were left in place.",
+        "tried_or_decided": "",
+        "direction": "- In `Start-ProjectBridge`, when `$script:ClaudeExe` is missing, do not throw blind: look for a usable\n  `claude.exe` (npm global install first, then the newest `claude.exe.old.*` sibling), restore it, and log which\n  source was used. Fail loudly only when nothing usable is found.\n- Make the \"started\" signal mean the bridge actually came up: after launching the window, confirm a\n  `claude.exe ... remote-control` process with the expected `--name` appears within a few seconds, and have\n  `bridge.ps1` exit non-zero and say so when it does not. Today the reported pid is the wrapper window, so a\n  dead bridge reports success.\n- Consider checking `--version` of the resolved binary once at start, so a truncated or partly written\n  executable is caught rather than executed.\n\nParked: not built now, waits until after Sunday 25 Oct 2026.",
+        "next_step": "When the exe is missing, look for the npm global install then the newest claude.exe.old.* sibling, restore it and log the source; fail loudly otherwise; make 'started' mean the bridge came up. Parked."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-25T00:35:07Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 150,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/150",
+      "title": "Settings / Data health Refresh takes over 3 s, target is 2.5 s",
+      "state": "open",
+      "labels": [
+        "area:data-health",
+        "priority: low",
+        "parked"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Settings / Data health Refresh takes over 3 s against the 2.5 s target; cause not yet profiled.",
+      "detail": {
+        "whats_wrong": "A Refresh rebuilds the whole inventory from the store (19 datasets) and takes a little over 3 seconds; the board itself is correct.",
+        "evidence": "Live dashboard after 1ef16e8 (PR #148): 3.33 s and 3.33 s wall time, 3.09 s and 3.19 s on the board's own tile; HTTP 200 with identical row counts; the 575 KB page accounts for about 0.2 s.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "1. First measure, do not guess: time the inventory build per dataset inside `module_settings/inventory.py` and see whether the total is a few slow datasets or an even spread.\n2. If it is a few datasets, look at their per-dataset queries, in particular any that scan a table to find the newest date instead of reading a maximum off an index.\n3. If it is an even spread, the per-dataset work is the target: one query per dataset per fact is the likely shape, and those can be collapsed.\n4. Only then consider caching, and only for parts that a Refresh is explicitly meant to recompute, so a Refresh keeps meaning what it says.",
+        "next_step": "Measure per-dataset time in module_settings/inventory.py first, then collapse per-dataset queries; cache only parts a Refresh is not meant to recompute. Not a rollback trigger. Parked."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T21:52:16Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 151,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/151",
+      "title": "Delegation always refuses: the privacy scan cannot start because a bare python does not resolve",
+      "state": "open",
+      "labels": [
+        "bug",
+        "area:quality",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Delegation always refuses: privacy scan cannot start because a bare 'python' resolves to the Windows Store alias.",
+      "detail": {
+        "whats_wrong": "delegate.config.json sets privateCheck.python to the bare name python, which on the PC resolves to the Windows Store app-execution alias and exits non-zero. The guard is fail-closed, so nothing leaked, but every delegation refuses and the message hides the cause.",
+        "evidence": "2026-10-23 about 20:57: two Data Health build jobs exited with 'private scan could not run: Python was not found'. python -m RevenueChaser.scripts.backup_store fails from a plain shell the same way.",
+        "example": "On 23 Oct 2026 at about 20:57, two build jobs for the Data Health board were sent with `node delegate.mjs run bulk --task-file ... --dir ...`. Both exited immediately with:\n\n```\nREFUSED: private material in the task or in the files it names (nothing was sent). Remove it or keep this work with Claude:\n  private scan could not run: Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.\n```\n\nNeither task file contained anything private: a search for the owner's user name, GitHub login and mail address over both files returned nothing.",
+        "tried_or_decided": "",
+        "direction": "1. Point `privateCheck.python` at a real interpreter path instead of the bare name, so the guard does not depend on what `PATH` happens to resolve.\n2. Separate the two outcomes in `delegate.mjs`: \"the scan ran and found private material\" and \"the scan could not run\" are both refusals, which is right, but they need different words, because the first asks the author to change the task and the second asks someone to fix the toolchain.\n3. Consider having the guard reject a bare interpreter name at startup rather than at first use, so the failure surfaces once, clearly, instead of on every delegation.",
+        "next_step": "Point privateCheck.python at a real interpreter path instead of the bare name. Workaround used: venv Scripts folder prepended to PATH for that command. Parked."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T19:03:35Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 155,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/155",
+      "title": "Data Health: two dataset labels still use short forms the copy rule bans (OIPD, OHLC)",
+      "state": "open",
+      "labels": [
+        "area:data-health",
+        "parked"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Two Data health dataset labels (OIPD chain, Legacy OHLC cache) still use short forms the copy rule bans.",
+      "detail": {
+        "whats_wrong": "module_settings/inventory.py labels 'OIPD chain' and 'Legacy OHLC cache (SPY fallback)'; the same strings appear in the ticker drill (module_settings/report.py drillFill) and in G7's messages. G7 already writes 'Implied Probability chain' for oipd_meta.",
+        "evidence": "avo's copy rule for this board (23 Oct 2026, permanent): every label spelled out in plain words, no cryptic short forms.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "One copy pass: 'Implied Probability chain' and a spelled-out OHLC label; update the registry, the drill rows, docs/data_health.md, module_settings/tests/test_inventory.py and test_report.py together."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T19:58:25Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 157,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/157",
+      "title": "Backups: decide the keep counts, the only way to free space in the backup folder",
+      "state": "open",
+      "labels": [
+        "area:data-health",
+        "parked"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Backups: all 17.41 GB is held by the keep counts themselves (0 files expired); only avo lowering them frees space.",
+      "detail": {
+        "whats_wrong": "The G9 dry run (#147) found 0 expired files; the local backup folder only gets smaller if the keep counts come down, which is avo's decision. The weekly raw list will grow to about 6.8 GB at keep 12.",
+        "evidence": "23 Oct 2026: raw 5 copies 8.47 GB, prices 2 copies 3.26 GB, edgar_docs 2.02 GB, edgar 1.88 GB, weekly/raw 1.11 GB, history 0.65 GB, discord 0.02 GB. Raw 5 to 3 frees about 3.4 GB; prices 2 to 1 about 1.6 GB.",
+        "example": "Measured read-only with `backup_store.expired_backups` and the per-list keeps, 23 Oct 2026:\n\n| list | copies | keep | size | expired |\n|---|---|---|---|---|\n| raw | 5 | 5 | 8.47 GB | 0 |\n| prices | 2 | 2 | 3.26 GB | 0 |\n| edgar_docs | 2 | 2 | 2.02 GB | 0 |\n| edgar | 2 | 2 | 1.88 GB | 0 |\n| weekly/raw | 2 | 12 | 1.11 GB | 0 |\n| history | 5 | 5 | 0.65 GB | 0 |\n| discord | 2 | 2 | 0.02 GB | 0 |\n| total | | | 17.41 GB | 0 |\n\nRough effect of lowering a keep count, at today's file sizes: raw 5 → 3 frees about 3.4 GB, raw 5 → 4 about 1.7 GB, prices 2 → 1 about 1.6 GB, edgar_docs 2 → 1 about 1.0 GB, edgar 2 → 1 about 0.9 GB. The weekly copies grow by one raw snapshot a week up to keep 12, so that list alone will reach about 6.8 GB at today's raw size.",
+        "tried_or_decided": "",
+        "direction": "A decision card for avo with the real numbers: which keep counts change, what each one frees, and what each one costs in recovery depth (how far back a restore can go). The restore reads the newest snapshot, so the floor is 1 per kind; the question is how many older days are worth keeping, especially for `prices` and `edgar_docs`, which are the big ones that are also the most regenerable.\n\nOnce decided, the change itself is small (the keep counts now live in one table in `scripts/backup_store.py`: `KEEP_RAW`, `KEEP_EDGAR`, `KEEP_DOCS`, `KEEP_DISCORD`, `KEEP_HISTORY`, `KEEP_PRICES`, plus `KEEP_WEEKLY`), but the first nightly run after it would prune real backup files, so it needs a fresh backup, an idle jobs list and a named rollback.\n\nRelated: #147 (the dry run that measured this), #153 (retired `discord_media` zips no rule covers), parent #124. Parked with the rest of the clean-up […]",
+        "next_step": "A decision card for avo: which keep counts change, what each frees and what it costs in restore depth. The change itself is small (constants in scripts/backup_store.py)."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T23:05:44Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 161,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/161",
+      "title": "Store layout: consider one DuckDB file per dataset, and what it does to the backups",
+      "state": "open",
+      "labels": [
+        "area:data-health",
+        "parked"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Idea: one DuckDB file per dataset instead of five files split by write pattern, and what that does to the backups. Recorded only.",
+      "detail": {
+        "whats_wrong": "Owner's idea (23 Oct 2026): one DuckDB per dataset; after such a restructure the existing backup set must be re-examined and, in his estimate, deleted. Today there are 51 DatasetSpec rows (core/datasets.py) against 5 store files (core/rawstore.py:53-83).",
+        "evidence": "24 of about 105 MANIFEST tables declare a non-default file (core/rawstore.py:85-93); module_settings/inventory.py:54 _db_of is the reader side. The current split is a written decision in docs/data_architecture.md.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "Do it as a decision, then a measurement, then a staged migration — not as one change:\n\n1. Decide the unit first: the 51 `DatasetSpec` rows, or a coarser grouping (for example one file per board plus the four existing special cases). Write the chosen boundary into `docs/data_architecture.md` as a replacement for the \"write-pattern, not per domain\" paragraph.\n2. Measure before moving anything: the nightly backup time and size per candidate file, the open-and-lock cost of N files in one job, and the list of queries that would cross a file boundary.\n3. Migrate per dataset, each step reusing the existing one-time-move pattern (copy, `EXCEPT` compare, drop, `migration_manifest` row) with its own rollback, each one its own PR under the live-change gate.\n4. Only then settle the backup side: per-dataset keep counts, which datasets get weekly and off-machine copies, and what happens to the […]",
+        "next_step": "Answer the questions the issue lists before any design. No implementation, no file split, nothing deleted on the back of this issue."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-23T23:05:35Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 164,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/164",
+      "title": "Hand-counted copies of the automations registry drift from it; one just broke CI",
+      "state": "open",
+      "labels": [
+        "bug",
+        "area:platform-app",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Hand-counted copies of the automations registry drift from it; the e2e tier went red when the registry reached eleven rows.",
+      "detail": {
+        "whats_wrong": "module_testing/e2e/test_board_settings.py::TestAutomationsPanel counted the registry by hand in three places (ten names, ['not_installed'] * 10, a ten-entry dict). The scripts that name 'eight' count installed tasks, not registry rows.",
+        "evidence": "The eleventh row (RC-IBKR-Login-Check) turned the e2e tier red on ead7627; fixed inside this repository in e6c4c24 (PR #163) by deriving all three from automations.REGISTRY. Registry has eleven rows on e6c4c24.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "Have the scripts ask the code which tasks exist instead of repeating a list. `core/automations.py` is already\nthe single registry and `automations.static_rows()` exposes it; the scripts are PowerShell, so the smallest\nversion is a short command in this repository that prints the task names one per line, which each script\nreads. The same move closes the identical gap in the systemd timer list under #158.",
+        "next_step": "Parked for the scripts outside this repository: stop hand-counting the registry there. The in-repo copy is already fixed."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-24T00:26:23Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 165,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/165",
+      "title": "Health tab: buttons for the scheduled jobs (enable, disable, run, stop) and the IBKR login screen",
+      "state": "open",
+      "labels": [
+        "area:platform-app",
+        "parked"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Idea: buttons on the Health tab for enable, disable, run, stop of scheduled jobs and the IBKR login screen. Recorded only.",
+      "detail": {
+        "whats_wrong": "Owner's idea (23 Oct 2026): the by-hand actions of that evening (scheduled updates on/off, backup schedule on/off, IBKR Gateway login screen start/stop, run out of band) should be buttons. 'Stop' is not modelled: there is no Scheduler.stop and nothing cancels a run in flight.",
+        "evidence": "core/automations.py:35 ACTIONS = install, enable, disable, remove, run, applied by apply() (:742). POST /api/automations/<name>/<action> (app/dashboard.py:1127) drives the Windows panel; on Linux it refuses.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "Staged, smallest useful piece first:\n\n1. **#158 first, read-only.** A Linux backend whose `status` works and whose four mutating methods still\n   refuse. The panel then shows the server's rows with their real next run and last result. Nothing can be\n   pressed yet, and the value — seeing the schedule at all — arrives on its own.\n2. **Put the wrapper in a repository.** The privileged wrapper and the IBKR login helper become reviewed files\n   in the ops repository alongside their allow-list entry, so they can be read and tested. The verb table lives\n   there: registry name -> unit -> allowed verbs.\n3. **Enable / disable only.** Wire those two buttons through the wrapper, with the audit row from question 5\n   and the auth decision from question 3. They are reversible by one press, which makes them the right first\n   pair.\n4. **Run now.** Already modelled (`run`) and already logged […]",
+        "next_step": "Answer the issue's questions first. No implementation on the back of this issue."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-24T00:12:22Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 166,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/166",
+      "title": "Health tab: keep a record of what each Fetch spends at the providers (calls, quota, cost)",
+      "state": "open",
+      "labels": [
+        "area:data-health",
+        "parked"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Idea: keep a record of what each Fetch spends at the providers (calls, quota, cost) and show it on Settings / Data health. Recorded only.",
+      "detail": {
+        "whats_wrong": "A Fetch spends provider quota or money, but the spend is visible only as a banner on the board that ran, for that one run, and only for providers that are counted. Nothing adds it up, so account-level limits are not measurable anywhere in the app.",
+        "evidence": "result_runs already has a provider_health JSON column (core/rawstore.py:2130-2139) written by core/history.py:67 record_run; about a dozen call sites pass it (app/runners.py:359, 384, 529, 585, 733, 1034 and module history.py files).",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "1. **Read first, store later.** A read-only card on Settings / Data health that aggregates\n   `result_runs.provider_health` by provider for today and the last seven days, next to the run that produced\n   each figure. No schema change, no new write, so no gate — and it immediately shows whether the data is good\n   enough.\n2. **Fix the two honesty gaps that card will expose:** count EDGAR calls with a `ProviderHealth` like the other\n   providers (missing item 3), and decide and document the retry question (item 4) so the number on the page\n   means one thing.\n3. **Only then decide on a table**, if the per-run aggregate turns out to be too slow or too lossy — and if so,\n   as its own PR with the `_SCHEMA_VERSION` bump and its rollback.\n4. **Cost for the paid providers** as a later slice, on top of the existing off-peak and allowance gates.\n5. **A cap gate is out of scope here.** […]",
+        "next_step": "Read the persisted provider_health into a spend view on Settings / Data health. Owner's idea of 24 Oct 2026; no implementation on the back of this issue."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-24T00:47:51Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 167,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/167",
+      "title": "SEC 13F board is slow to open: 14,656 rows x 26 columns built into the DOM on every load",
+      "state": "open",
+      "labels": [
+        "area:ownership",
+        "area:shared-ui",
+        "parked"
+      ],
+      "boards": [
+        "module_sec_13f"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "SEC 13F board opens slowly: 14,656 rows x 26 columns (about 380,000 td cells) are built into the DOM on every load.",
+      "detail": {
+        "whats_wrong": "Opening the board is slow (reported 2026-10-24). ncols = 2 + n + (n - 1) + 13 (module_sec_13f/report.py:510) gives 26 columns, so about 380,000 td elements. Plotly is loaded in head without defer or async (module_sec_13f/report.py:570) though only used on row click.",
+        "evidence": "Rows 14,656 measured on the live dashboard 2026-10-22 (#77). Nothing is timed yet: the numbers are element counts derived from code review; stage 0 settles which cause dominates.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "**Stage 1 — cheap, no change to what the board shows.**\n- Load Plotly only on the first chart open (inject the script in `openChart`, or `defer` it).\n- Debounce the search input (~150 ms).\n- Sort the payload array instead of the DOM: keep the parsed `[text, val, cls]` rows in JS, sort those,\n  rebuild the rows from the sorted array. Kills the `querySelector`-per-row cost in cause 4.\n\n**Stage 2 — the real one: stop putting 14,656 rows in the DOM.**\nRender only a window: either pagination (N rows per page, under the current sort and filter) or\nvirtualised scrolling. The payload is already the data, so sort and filter become array operations and\nthe DOM is a projection of the first N. This is the change that makes the board open fast and keeps it\nfast as the universe grows.\n\n**Stage 3 — only if stage 0 blames the transfer.**\nLet the payload be cached: the artifact is rewritten on every […]",
+        "next_step": "Stage 0: measure. Stage 1 (small): defer Plotly. Stage 2 rewrites how the table is filled. Size M. Parked until after Sunday 25 Oct 2026."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-24T01:15:39Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 169,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/169",
+      "title": "Discord: new app scaffold — store, loader, exporter, engine",
+      "state": "open",
+      "labels": [
+        "area:community"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Discord new app, part 1: port loader, exporter, store and engine out of module_discord without RevenueChaser dependencies.",
+      "detail": {
+        "whats_wrong": "The data half of the new app: loader.py (140 lines) and exporter.py (177) move unchanged; store.py (213) is rewritten on plain DuckDB with three CREATE TABLE statements and zlib for the raw blob; engine.py (137) swaps core.job_control and core.job_lock for the app's own job runner.",
+        "evidence": "The exporter keeps three properties: token via environment never argv, UTF-8 decode with errors=replace, minimum version 2.45. Both protections survive: one Discord job at a time, one export per channel per 15 minutes.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Build the scaffold; pin DuckDB to the version the server already runs so the existing archive stays readable."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-24T02:20:45Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 170,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/170",
+      "title": "Discord: the app's own web board on its own port",
+      "state": "open",
+      "labels": [
+        "area:community"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Discord new app, part 2: its own web board served on its own loopback port with a stdlib ThreadingHTTPServer.",
+      "detail": {
+        "whats_wrong": "The web half: same board as today, no Flask; request guard copied from the Twitter bookmark manager (loopback Host, JSON POST from loopback Origin, refuse Sec-Fetch-Site: cross-site). board.py (136) moves unchanged; report.py (256) drops core.reporting_common.",
+        "evidence": "core/html_safe.py (65 lines) must be ported verbatim: message bodies, names, embed text and file names are untrusted, and only http(s) URLs are linked.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Acceptance: board renders from the store and never reaches the exporter or Discord; a test proves markup in a message body is escaped and one proves a non-http(s) URL is not linked."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-24T02:20:54Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 171,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/171",
+      "title": "Discord: job runner, verified backup and retention in the new app",
+      "state": "open",
+      "labels": [
+        "area:community"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Discord new app, part 3: job runner, verified backup and retention; the backup must run once before the RevenueChaser removal merges.",
+      "detail": {
+        "whats_wrong": "Replaces the dashboard's job machinery: one job at a time as a subprocess, presets Discover and Update, state in a JSON file. The archive leaves scripts/backup_store.py with the removal, so the app needs a verified snapshot with retention and an additive verified mirror of the attachment tree.",
+        "evidence": "Attachments cannot be downloaded again (expiring links, deleted messages), so the mirror must never delete to match the source. Two protections carried over, each with a test: one Discord job at a time, one export per channel per 15 minutes.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Acceptance: both protections proven by tests seen red first; one real backup run and a restore into a scratch copy reporting the same row counts."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-24T02:21:07Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 172,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/172",
+      "title": "Discord: server install — service, nightly timer, board tile",
+      "state": "open",
+      "labels": [
+        "area:community"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Discord new app, part 4: server install with service, nightly timer and board tile, without losing a night's export.",
+      "detail": {
+        "whats_wrong": "Server side: a service for the web page, a nightly timer at the current archive hour, one job-registry row and one board tile, a reverse proxy entry; the RevenueChaser Discord job row and its two unit files come out in the same change.",
+        "evidence": "The nightly export passed its first automatic run on 2026-10-24. The handover is atomic: the old timer stays until the new app has exported successfully; rollback is re-enabling the RevenueChaser timer.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Acceptance: web page answers on its port and the tile shows the job; one manual run exits 0 and writes rows; one scheduled nightly run exits 0."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-24T02:21:15Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 173,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/173",
+      "title": "Discord: migrate the archive and the attachment tree",
+      "state": "open",
+      "labels": [
+        "area:community"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Discord new app, part 5: migrate the archive and attachment tree by verified copy, never move.",
+      "detail": {
+        "whats_wrong": "The archive is a self-contained DuckDB file with only Discord tables, so this is a verified copy: record the three row counts, oldest and newest timestamp, followed channels (10 of 40 on 2026-10-24), attachment file count and bytes, and the SHA-256 first.",
+        "evidence": "Dashboard stopped for the copy (single DuckDB writer). Verify SHA-256 equality, row counts, attachment count and size, and a dry-run checksum of the tree. Rollback trigger: empty board, a row count below step 1, or the nightly export erroring two nights running.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Steps 1-7 of the issue; leave the old file and tree in place, unread, until the owner says to delete them."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-24T02:21:26Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 175,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/175",
+      "title": "Discord: delete the old store file and attachment tree",
+      "state": "open",
+      "labels": [
+        "area:community"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Discord new app, last step: delete the old store file and attachment tree, only on the owner's word.",
+      "detail": {
+        "whats_wrong": "The RevenueChaser copies of the Discord archive and attachment tree, left by the migration so rollback stays free. The only step that cannot be undone; no session deletes this.",
+        "evidence": "An attachment cannot be downloaded again (expiring links, deleted messages), so the tree is kept twice for a week on purpose.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Not before: a week of successful nightly exports, one new-app backup restored into a scratch copy and read, and the removal merged with the dashboard checked. Then the owner says delete."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-24T02:21:49Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 183,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/183",
+      "title": "Inputs not yet in the dataset registry: D05-D09, D16, D17, D30, D31",
+      "state": "open",
+      "labels": [
+        "area:providers",
+        "parked"
+      ],
+      "boards": [
+        "module_settings"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Inputs D05-D09, D16, D17, D30, D31 were not found in the MANIFEST or dataset registry under those names (split out of #34).",
+      "detail": {
+        "whats_wrong": "These nine input ids were not found in the MANIFEST / dataset registry under those names on 25 Oct 2026: D05, D06, D07, D08, D09, D16, D17, D30, D31.",
+        "evidence": "Data Health review plan plans/2026-10-25-review-data-health.md in the coordinator repo, origin/main 3d6ad16.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "For each id decide whether it is registered under another name (record the mapping), still planned (add a planned row) or retired (say so). No code is proposed."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-25T00:34:14Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 191,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/191",
+      "title": "Linux scheduler (#178 follow-ups): rollback over an installed task, failed-timer row has no way out, TZ in OnCalendar, keys under systemd",
+      "state": "open",
+      "labels": [
+        "area:platform-app",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "Linux scheduler follow-ups from the Opus review of PR #178: rollback over an installed task, failed-timer row, OnCalendar TZ, keys under systemd.",
+      "detail": {
+        "whats_wrong": "Six items: reinstall over an installed task can delete a working install on rollback; a dangling timers.target.wants symlink after rollback; error rows get no buttons; OnCalendar has no zone suffix when TZ is set; unknown RC_SCHEDULER values are silently ignored; provider keys are absent under systemd.",
+        "evidence": "Review of PR #178 at head 62b0183 (merged as 0c5b5bd); reproduced: install, then reinstall with a failing enable leaves no files. The backend is opt-in (RC_SCHEDULER=systemd-user), so nothing on homesrv changes unless avo sets it.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Refuse install when status() is not None; offer Remove on error rows; append the zone to OnCalendar; add a path-only EnvironmentFile= line (decide before homesrv opts in). Re-check line numbers first."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-25T05:30:05Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 196,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/196",
+      "title": "store-lock tests assume PID 2832 is dead on the runner",
+      "state": "open",
+      "labels": [
+        "area:quality"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "store-lock tests assume PID 2832 is dead on the runner; a live process with that PID breaks them.",
+      "detail": {
+        "whats_wrong": "core/tests/test_store_locked.py (lines 39-43 and 55-57) parse a VS Code lock message with hard-coded PID 2832 and expect the binary-name fallback 'Code Helper', but core/rawstore.py _process_name() (lines 248-260) really runs ps -p 2832.",
+        "evidence": "CI run 40144072861 (PR #181) failed with assert 'Code Helper' in 'u16:1-iou_exit' and '... u16:1-flush-8:0 (PID 2832)'.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Test-only fix: autouse fixture stubbing rawstore._process_name to return '', plus one explicit test that a live name wins over the binary name. Related #49."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-25T20:35:47Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 201,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/201",
+      "title": "CI: run the e2e tier with -n 4, and share one identity run / one fetch per board in e2e",
+      "state": "open",
+      "labels": [
+        "area:quality"
+      ],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "CI: run the e2e tier with -n 4 and share one identity run and one fetch per board across e2e tests (two draft PRs, approved 2026-10-26).",
+      "detail": {
+        "whats_wrong": "e2e runs one test at a time and each test boots its own dashboard; test_identity.py alone takes about 330 s because each of its 17 tests runs the identity job again.",
+        "evidence": "One local run: -n 4 took the browser-free part from 1,135 s to 349 s. avo approved 2026-10-26: parallel e2e on PRs after the trial, combine e2e tests; not running only affected tests.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "PR A area/ci/e2e-parallel: a port per dashboard, every side root under tmp_path, CI -n 4, five-run trial. PR B area/ci/e2e-shared-identity: shared identity run and one fetch per board, mutation checks."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-26T02:21:31Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 206,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/206",
+      "title": "F1: Serving store read path across processes (separate builder, build-then-swap)",
+      "state": "open",
+      "labels": [],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "F1: serving store read path across processes; a separate builder writes a new file per kind and swaps it in, the dashboard reads read-only.",
+      "detail": {
+        "whats_wrong": "The dashboard and the writer share one store read path (core/rawstore.py:455-469, :110-114; app/dashboard.py:52-74). Severity High, verified.",
+        "evidence": "Decided D1 option A: a separate builder process writes a new file per kind, validates and swaps it in; the dashboard opens serving files read-only; a request queue in ops.sqlite.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Build plan PR 1 and PR 2 (DataPlan/review/architecture/build-plan.md). Acceptance: a failed build leaves the live serving file byte-identical (test T3); no 503 during a build."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-27T11:48:41Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 207,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/207",
+      "title": "F2: Day-one-only raw data has one copy for up to 35 days",
+      "state": "open",
+      "labels": [],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "F2: day-one-only raw data has a single copy for up to 35 days.",
+      "detail": {
+        "whats_wrong": "Raw data that exists only on day one has one copy for up to 35 days. Severity Medium, verified, area ops.",
+        "evidence": "Plan decision 27 Oct 'Backups'; lsblk shows a single HDD.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Decided D3: nightly copy of the newest 35 days of market/raw/ to the SSD when it is under 20 GB, otherwise off the box. Build plan PR 1 (backup command)."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-27T11:48:43Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 208,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/208",
+      "title": "F3: Job timers and nightly backup disabled on homesrv",
+      "state": "open",
+      "labels": [],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "F3: job timers and the nightly backup were disabled on homesrv.",
+      "detail": {
+        "whats_wrong": "The life-rc-*.timer units and the nightly backup were not enabled on homesrv. Severity High, verified state.",
+        "evidence": "systemctl is-enabled life-rc-*.timer; backups folder listing.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Decided D0: the backup timer was enabled on 27 Oct 07:31; the data timers stay off until the builder replaces them. Close this issue when the first builder timer runs."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-27T11:48:44Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 209,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/209",
+      "title": "F4: Retired and legacy tables still have live readers",
+      "state": "open",
+      "labels": [],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "F4: retired and legacy tables (sec_company_tickers, swing_ohlc, ticker_payload_cache) still have live readers.",
+      "detail": {
+        "whats_wrong": "After the purge (D5) the tables no longer exist, but the fallback reader code paths remain and would create empty tables on first write. Severity High, verified.",
+        "evidence": "core/providers/sec_edgar.py:388-391 and module_value_chain/engine.py:189-192; core/ledger.py:149-157, :281 and core/screen_common.py:135-150; module_financials/run.py:69,92 and app/runners.py:1383; module_settings/inventory.py:632-646, :2154-2161 and boards.py:187.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Decided A: remove the fallback readers and the retired tables from MANIFEST, add CI test T2 (a retired table has no reader). Acceptance: T2 green with an empty allowlist. Build plan PR 10, 15, 21."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-27T11:48:47Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 210,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/210",
+      "title": "F5: Daily options raw volume (measure one week, then fix the retention rule)",
+      "state": "open",
+      "labels": [],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "F5: daily options raw volume; measure one week for SPX plus the option watch list, then fix the raw JSON retention rule.",
+      "detail": {
+        "whats_wrong": "The raw volume of daily options data is unknown, so the storage rule cannot be decided. Severity High, inferred.",
+        "evidence": "Plan lines 1030 and 1256; df.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Decided D2: scope = SPX plus the option watch list. Measure one week of raw size, record the per-name figure in the plan, then decide retention. Build plan PR 18 records first-week raw size per name in dataset_check."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-27T11:48:49Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 211,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/211",
+      "title": "F6: No provider call ledger (header count plus per-provider daily counter)",
+      "state": "open",
+      "labels": [],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "F6: no provider call ledger; sample UW headers and keep a per-provider daily call counter in ops.sqlite, shown on Settings.",
+      "detail": {
+        "whats_wrong": "There is no provider call ledger, so day caps cannot be enforced. Severity Medium, verified.",
+        "evidence": "core/ledger.py:1-30, core/providers/unusual_whales.py:118,191, core/nightly_inputs.py:57-76,152, core/prices.py:37.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Decided B (changed later on 27 Oct): sample UW remaining from headers into ops.sqlite.uw_remaining and keep provider_calls_daily (calls, failures, 429s) per New York day. Acceptance: a run that would cross a provider's day cap is refused before the first call and shows on Settings."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-27T11:48:51Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 212,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/212",
+      "title": "F7: Settings clicks write the store with no idle or backup gate",
+      "state": "open",
+      "labels": [],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "F7: Settings clicks write the store with no idle or backup gate; the page should only enqueue build requests.",
+      "detail": {
+        "whats_wrong": "Settings routes write the store directly with no idle or backup gate. Severity Medium, verified, area data-health.",
+        "evidence": "app/dashboard.py:885-896, :971-992, :1031-1089, :1097-1135; module_settings/report.py:442,560.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Decided A: the page only enqueues build requests and the builder checks idle and budget. The old routes write into the old store, which is now empty; A lands with the new Settings page (D9). Build plan PR 2 and PR 21."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-27T11:48:53Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 213,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/213",
+      "title": "F8: /api/jobs cannot see systemd writers (idle gate must test job locks)",
+      "state": "open",
+      "labels": [],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "F8: /api/jobs cannot see systemd writers; the idle gate must test every job lock and the .rc-proc-* markers.",
+      "detail": {
+        "whats_wrong": "/api/jobs does not see jobs started by systemd timers, so an idle check based on it can pass while a timer job writes. Severity Medium, verified.",
+        "evidence": "app/dashboard.py:1302-1304; core/automations.py:1219; core/job_lock.py:96-135; stop.ps1:27-40.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Decided A: the idle gate also tests every job_lock name and the .rc-proc-* markers. Acceptance: a deploy gate refuses while a timer job holds a lock. Build plan PR 2."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-27T11:48:55Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 214,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/214",
+      "title": "F9: restore_store ignores a leftover .wal",
+      "state": "open",
+      "labels": [],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "F9: restore_store ignores a leftover .wal file next to the store file it restores over.",
+      "detail": {
+        "whats_wrong": "scripts/restore_store.py does not handle a leftover <name>.duckdb.wal. Severity Medium, latent, area ops.",
+        "evidence": "scripts/restore_store.py:55-74 (no WAL handling).",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Decided A: refuse when <name>.duckdb.wal exists and name it (test T1). Build plan PR 21."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-27T11:48:56Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 215,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/215",
+      "title": "F10: compact_store skips prices and history",
+      "state": "open",
+      "labels": [],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "F10: compact_store skips prices and history; decided to leave it, the new serving files are rebuilt, never compacted.",
+      "detail": {
+        "whats_wrong": "scripts/compact_store.py does not cover prices and history. Severity Low, verified.",
+        "evidence": "scripts/compact_store.py:24-32. After the purge the old files are gone, so B is nearly free.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Decided B: no compaction of the old files; the new serving files are rebuilt, never compacted. Not chosen: A, add the two kinds."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-27T11:48:57Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 216,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/216",
+      "title": "F11: A second store root for the serving files (RC_MARKET_DIR)",
+      "state": "open",
+      "labels": [],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "F11: a second store root for the serving files, RC_MARKET_DIR in core/config.py.",
+      "detail": {
+        "whats_wrong": "The serving files have no store root of their own. Severity Low, verified, area config.",
+        "evidence": "core/config.py:40; core/tests/test_store_layout.py.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Decided D8: the plan's path (/srv/life/data/apps/revenuechaser/market/), a new RC_MARKET_DIR in core/config.py, layout test extended. Build plan PR 1."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-27T11:48:59Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 217,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/217",
+      "title": "F12: Boards embed SQL; plan renames touch every board (rcdata library)",
+      "state": "open",
+      "labels": [],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "F12: boards embed SQL, so plan renames touch every board; introduce an rcdata read library with provenance.",
+      "detail": {
+        "whats_wrong": "Boards embed SQL, so a rename in the plan touches every board. Severity Medium, verified.",
+        "evidence": "121 rawstore.query calls in module_*/app, 91 in core; module_sec_13f/engine.py has 10 conn.execute.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Decided D4: an rcdata library with a read API that carries provenance, SQL views under the old names as the bridge, and a strangler migration (Co-movement first). Build plan PR 1 (skeleton) and PRs 6-17 (boards)."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-27T11:49:01Z",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 218,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/218",
+      "title": "F13: Cross-file writes are not atomic (raw then history)",
+      "state": "open",
+      "labels": [],
+      "boards": [],
+      "scope": "repo",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "F13: cross-file writes are not atomic (raw then history); accepted risk, no code change planned.",
+      "detail": {
+        "whats_wrong": "A run writes raw then history across two files, so the two can disagree after a crash. Severity Low, verified.",
+        "evidence": "core/history.py:13-15.",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Decided B: accept as is (documented; the Runs tab shows a run without history). Not chosen: A, write the history header first."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-27T11:49:02Z",
+      "reviewed_at": "2026-10-27"
     }
   ]
 }
