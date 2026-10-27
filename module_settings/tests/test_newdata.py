@@ -77,6 +77,17 @@ def test_a_skip_after_a_good_run_keeps_the_good_runs_status_and_shows_the_skip()
     assert card["status"] == "fresh" and card["last_note"].startswith("skipped: paused")
 
 
+def test_a_built_dataset_keeps_its_status_after_many_skipped_checks():
+    """Review should-fix 2: 25 ``skipped: paused`` rows after one good run (a Fetch every pass while paused) are
+    more than the 20 newest the card lists; the status still comes from the good run, never "never built"."""
+    _check(coverage=1.0, rows=7)
+    for _ in range(25):
+        _check(result="skipped", as_of=None, on="2026-10-28", note="skipped: paused by settings at x")
+    card = _card(newdata.collect(NOW), "uw/spot_expiry_strike")
+    assert card["status"] == "fresh", card["status_reason"]
+    assert card["rows"] == 7 and card["last_note"].startswith("skipped: paused")
+
+
 @pytest.mark.parametrize("cadence,age,want", [
     ("weekly", 8, "fresh"), ("weekly", 9, "late"), ("weekly", 16, "late"), ("weekly", 17, "stale"),
     ("monthly", 35, "fresh"), ("monthly", 36, "late"), ("monthly", 71, "stale"),

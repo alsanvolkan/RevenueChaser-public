@@ -529,6 +529,13 @@ def recent_checks(dataset: str, limit: int = 20) -> list[dict]:
     return _select("SELECT * FROM dataset_check WHERE dataset = ? ORDER BY id DESC LIMIT ?", (dataset, int(limit)))
 
 
+def latest_unskipped_check(dataset: str) -> dict | None:
+    """The newest ``dataset_check`` row of ``dataset`` that is not ``skipped``, however many skips came after it."""
+    rows = _select("SELECT * FROM dataset_check WHERE dataset = ? AND result != 'skipped' ORDER BY id DESC LIMIT 1",
+                   (dataset,))
+    return rows[0] if rows else None
+
+
 def open_issues(dataset: str, limit: int = 20) -> tuple[int, list[dict]]:
     """``(count, newest rows)`` of the unresolved ``build_issues`` of ``dataset``."""
     n = _select("SELECT count(*) AS n FROM build_issues WHERE dataset = ? AND resolved_on IS NULL", (dataset,))

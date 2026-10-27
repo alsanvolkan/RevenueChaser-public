@@ -99,15 +99,16 @@ def _missed(cadence: str, check: dict, now: datetime) -> int:
     return 0 if age <= limit else 1 if age <= 2 * limit else 2
 
 
-def status_of(dataset: str, checks: list[dict], cadence: str, now: datetime) -> tuple[str, str, dict | None]:
-    """``(status, reason, the check it is read from)`` from the newest-first ``checks`` of ``dataset``."""
-    if not checks:
+def status_of(dataset: str, last: dict | None, base: dict | None, cadence: str,
+              now: datetime) -> tuple[str, str, dict | None]:
+    """``(status, reason, the check it is read from)`` from ``dataset``'s newest check ``last`` and its newest check
+    that is not ``skipped``, ``base`` (read on its own, so any number of skips after a run cannot hide it)."""
+    if last is None:
         return "never", "no check yet: never built", None
-    if checks[0]["result"] == "failed":
-        return "stale", "the last check failed", checks[0]
-    base = next((c for c in checks if c["result"] != "skipped"), None)
+    if last["result"] == "failed":
+        return "stale", "the last check failed", last
     if base is None:
-        return "never", "only skipped checks so far", checks[0]
+        return "never", "only skipped checks so far", last
     missed = _missed(cadence, base, now)
     unit = "session" if cadence == "daily" else f"{cadence} cycle"
     if missed >= 2:
@@ -323,11 +324,11 @@ def _retirement(now: datetime) -> list[dict]:
 # ── The section ───────────────────────────────────────────────────────────────────────────────────────────────
 
 def _card(dataset: str, ds, facts: dict, now: datetime) -> dict:
-    checks = ops.recent_checks(dataset)
+    newest = ops.recent_checks(dataset, limit=1)
+    last = newest[0] if newest else None
     schedule = ops.read_schedule(dataset)
     cadence = _cadence(dataset, schedule)
-    status, reason, base = status_of(dataset, checks, cadence, now)
-    last = checks[0] if checks else None
+    status, reason, base = status_of(dataset, last, ops.latest_unskipped_check(dataset), cadence, now)
     n_issues, issues = ops.open_issues(dataset, limit=10)
     missed = _missed(cadence, base, now) if base else None
     table_facts = [facts[t] for t in ds.tables if t in facts]
