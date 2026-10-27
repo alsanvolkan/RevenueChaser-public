@@ -5,7 +5,9 @@ Nothing here makes a request: the UW client gets a fake transport, and the sweep
 from __future__ import annotations
 
 import json
+import os
 from datetime import date, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -215,6 +217,44 @@ def test_an_unreadable_call_ledger_starts_the_night_at_zero(lines, tmp_path):
     res = _run((_spend(2),), lines, caps={"uw": 3, "fred": 0, "yfinance": 0}, tmp_path=tmp_path)
     assert res["sweeps"]["A"]["taken"] == 2
     assert json.loads((tmp_path / "test_calls.json").read_text(encoding="utf-8"))["spent"]["uw"] == 2
+
+
+def _ledger_files(tmp_path):
+    return sorted(f.name for f in tmp_path.iterdir())
+
+
+def _interrupt_the_write(monkeypatch):
+    """Every way a ledger write can land: a plain write_text dies half way, and so does the final rename."""
+    real_write_text = Path.write_text
+
+    def half_write(self, data, *a, **kw):
+        real_write_text(self, data[: len(data) // 2], *a, **kw)
+        raise OSError("disk full")
+
+    def no_replace(src, dst):
+        raise OSError("interrupted before the rename")
+
+    monkeypatch.setattr(Path, "write_text", half_write)
+    monkeypatch.setattr(os, "replace", no_replace)
+
+
+def test_an_interrupted_ledger_write_leaves_the_previous_ledger_intact(lines, tmp_path, monkeypatch):
+    caps = {"uw": 10, "fred": 0, "yfinance": 0}
+    _run((_spend(2),), lines, caps=caps, tmp_path=tmp_path)
+    ledger_file = tmp_path / "test_calls.json"
+    before = ledger_file.read_text(encoding="utf-8")
+    _interrupt_the_write(monkeypatch)
+    _run((_spend(2),), lines, caps=caps, tmp_path=tmp_path)
+    monkeypatch.undo()
+    assert ledger_file.read_text(encoding="utf-8") == before
+    assert json.loads(before)["spent"]["uw"] == 2
+    assert any("call ledger not saved" in ln for ln in lines)
+    assert _ledger_files(tmp_path) == ["test_calls.json"]
+
+
+def test_a_saved_ledger_leaves_no_temp_file_behind(lines, tmp_path):
+    _run((_spend(1),), lines, caps={"uw": 3, "fred": 0, "yfinance": 0}, tmp_path=tmp_path)
+    assert _ledger_files(tmp_path) == ["test_calls.json"]
 
 
 def test_a_cap_for_an_unknown_provider_is_refused(lines, tmp_path):

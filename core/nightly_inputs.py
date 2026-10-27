@@ -38,6 +38,7 @@ from typing import Callable
 from RevenueChaser.core import calendar, config, ledger, rawstore
 from RevenueChaser.core.providers.result import ProviderResult
 from RevenueChaser.core.providers.unusual_whales import UWClient
+from RevenueChaser.core.reporting_common import write_artifact
 
 PROVIDERS = ("uw", "fred", "yfinance", "cboe", "cftc")
 STATUSES = ("ok", "partial", "skipped", "failed")
@@ -165,9 +166,9 @@ def _spent_before(path: Path, session: date) -> dict[str, int]:
 
 def _save_spent(path: Path, session: date, budgets: dict[str, CallBudget], log) -> None:
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
         spent = {p: b.before + b.used for p, b in budgets.items()}
-        path.write_text(json.dumps({"session_date": session.isoformat(), "spent": spent}), encoding="utf-8")
+        # atomic: a torn ledger reads back as {} and the next run would forget what this one spent
+        write_artifact(path, json.dumps({"session_date": session.isoformat(), "spent": spent}))
     except OSError as exc:   # bookkeeping: never a reason to fail the run
         log(f"call ledger not saved ({exc})")
 
