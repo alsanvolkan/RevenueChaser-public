@@ -487,3 +487,86 @@ def schedule_get(dataset: str) -> dict | None:
     with _open() as con:
         row = con.execute("SELECT * FROM dataset_schedule WHERE dataset = ?", (dataset,)).fetchone()
     return dict(row) if row else None
+
+
+# ── Read helpers for the Settings page (PR 2) ──────────────────────────────────────────────────────────────────
+#
+# The page only reads (F7 A): these never create ops.sqlite or a table. No file yet, or a table an older file does
+# not have, reads as no rows. Each call opens its own connection and closes it before it returns.
+
+def _select(sql: str, args: tuple = ()) -> list[dict]:
+    path = ops_path()
+    if not path.exists():
+        return []
+    with connect(path) as con:
+        try:
+            return [dict(r) for r in con.execute(sql, args)]
+        except sqlite3.OperationalError as e:
+            if "no such table" in str(e):
+                return []
+            raise
+
+
+def schema_version() -> int | None:
+    rows = _select("SELECT max(version) AS v FROM ops_schema")
+    return rows[0]["v"] if rows else None
+
+
+def recent_checks(dataset: str, limit: int = 20) -> list[dict]:
+    """The newest ``limit`` ``dataset_check`` rows of ``dataset``, newest first."""
+    return _select("SELECT * FROM dataset_check WHERE dataset = ? ORDER BY id DESC LIMIT ?", (dataset, int(limit)))
+
+
+def open_issues(dataset: str, limit: int = 20) -> tuple[int, list[dict]]:
+    """``(count, newest rows)`` of the unresolved ``build_issues`` of ``dataset``."""
+    n = _select("SELECT count(*) AS n FROM build_issues WHERE dataset = ? AND resolved_on IS NULL", (dataset,))
+    rows = _select("SELECT * FROM build_issues WHERE dataset = ? AND resolved_on IS NULL ORDER BY id DESC LIMIT ?",
+                   (dataset, int(limit)))
+    return (n[0]["n"] if n else 0), rows
+
+
+def read_queue(finished: int = 20) -> dict:
+    """``queue_view`` for a reader: the same rows, without creating the file."""
+    active = _select("SELECT * FROM build_requests WHERE status IN ('queued','running') ORDER BY id")
+    done = _select("SELECT * FROM build_requests WHERE status NOT IN ('queued','running') ORDER BY id DESC LIMIT ?",
+                   (int(finished),))
+    return {"active": [_request(r) for r in active], "finished": [_request(r) for r in done]}
+
+
+def read_schedule(dataset: str) -> dict | None:
+    rows = _select("SELECT * FROM dataset_schedule WHERE dataset = ?", (dataset,))
+    return rows[0] if rows else None
+
+
+def calls_by_day(first_day: str, last_day: str) -> list[dict]:
+    """``provider_calls_daily`` rows with ``first_day <= ny_day <= last_day``."""
+    return _select("SELECT * FROM provider_calls_daily WHERE ny_day BETWEEN ? AND ? ORDER BY provider, ny_day",
+                   (first_day, last_day))
+
+
+def latest_uw_sample() -> dict | None:
+    rows = _select("SELECT sampled_at, run_id, token_req_limit, req_per_minute_remaining FROM uw_remaining "
+                   "ORDER BY sampled_at DESC LIMIT 1")
+    return rows[0] if rows else None
+
+
+def reads_since(first_day: str, tables) -> dict[str, int]:
+    """Reads of each of ``tables`` in ``read_log`` since ``first_day`` (every process together)."""
+    names = list(tables)
+    if not names:
+        return {}
+    rows = _select(f"SELECT table_name, sum(reads) AS n FROM read_log WHERE day >= ? AND table_name IN "
+                   f"({', '.join('?' * len(names))}) GROUP BY table_name", (first_day, *names))
+    got = {r["table_name"]: int(r["n"]) for r in rows}
+    return {t: got.get(t, 0) for t in names}
+
+
+def last_builder_run() -> dict | None:
+    rows = _select("SELECT run_id, dataset, trigger, pid, started_at, finished_at, status, error FROM job_runs2 "
+                   "ORDER BY started_at DESC LIMIT 1")
+    return rows[0] if rows else None
+
+
+def watch_count(kind: str) -> int:
+    rows = _select(f"SELECT count(*) AS n FROM watchlist_{_watch_kind(kind)}")
+    return rows[0]["n"] if rows else 0
