@@ -1,9 +1,10 @@
 """``python -m RevenueChaser.rcdata.build`` — the builder CLI.
 
     run [--once] [--dataset X [--as-of YYYY-MM-DD] [--allow-shrink]]
-                                        take queued requests in order (FIFO) and run each; with --dataset, a dataset
-                                        with nothing queued (or any, with --as-of) is queued first (by "cli");
-                                        --once stops when the queue is empty
+                                        take queued requests in order (FIFO) and run each; without --dataset, every
+                                        dataset that is due (``due.py``) is queued first (by "schedule", once);
+                                        with --dataset, a dataset with nothing queued (or any, with --as-of) is
+                                        queued first (by "cli"); --once stops when the queue is empty
     backfill <dataset> --from YYYY-MM-DD [--to YYYY-MM-DD] [--allow-shrink]
                                         queue one backfill request and run it now
 
@@ -23,7 +24,7 @@ from pathlib import Path
 
 from ...core import config, job_lock, rawstore
 from .. import ops, serving
-from . import DATASETS, base
+from . import DATASETS, base, due
 
 POLL_S = 30.0
 
@@ -126,6 +127,9 @@ def main(argv: list[str] | None = None) -> int:
             params = {**({"as_of": args.as_of} if args.as_of else {}),
                       **({"allow_shrink": True} if args.allow_shrink else {})}
             ops.enqueue(args.dataset, params or None, by="cli")
+        if not args.dataset:
+            for name, why, _ in due.enqueue_due():
+                print(f"{name}: {why}", file=sys.stderr, flush=True)
         return _run_queue(args.dataset, args.once)
 
 
