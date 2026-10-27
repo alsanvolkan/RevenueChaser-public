@@ -34,3 +34,18 @@ def test_s2_the_run_loop_outlives_a_locked_ops_file(monkeypatch):
     monkeypatch.setattr(cli, "POLL_S", 0)
     assert cli._run_queue(None, once=True) == 1
     assert len(calls) == 2
+
+
+def test_s4_build_files_a_dead_builder_left_are_swept_at_start():
+    from RevenueChaser.core import config
+    d = config.MARKET_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    keep = [d / "market.duckdb", d / "market.prev.duckdb", d / "ops.sqlite", d / "notes.txt"]
+    stale = [d / "market.20261027T101010Z-deadbeef.duckdb", d / "market.20261027T101010Z-deadbeef.duckdb.wal"]
+    for p in keep + stale:
+        p.write_bytes(b"x")
+    assert serving.sweep_builds("market") == sorted(stale)
+    assert all(p.exists() for p in keep) and not any(p.exists() for p in stale)
+    stale[0].write_bytes(b"x")
+    assert cli.main(["run", "--once"]) == 0
+    assert not stale[0].exists() and (d / "market.duckdb").exists()

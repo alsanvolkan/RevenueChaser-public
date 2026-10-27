@@ -148,6 +148,21 @@ def _verify(kind: str, path: Path, expected_counts: dict[str, int], checks: list
         con.close()
 
 
+def sweep_builds(kind: str) -> list[Path]:
+    """Remove the build files of ``kind`` a killed builder left (``<kind>.<build_id>.duckdb`` and its ``.wal``);
+    never the live or the ``prev`` file. Called by the builder at start, while it holds the ``rcdata_build`` lock,
+    so no build of its own is in progress. Returns what it removed."""
+    keep = {live_path(kind).name, prev_path(kind).name}
+    removed = []
+    for p in sorted(Path(config.MARKET_DIR).glob(f"{_kind(kind)}.*.duckdb*")):
+        stem = p.name[:-4] if p.name.endswith(".wal") else p.name
+        if stem in keep or not stem.endswith(".duckdb"):
+            continue
+        p.unlink(missing_ok=True)
+        removed.append(p)
+    return removed
+
+
 def _counts(path: Path) -> dict[str, int]:
     con = duckdb.connect(str(path), read_only=True)
     try:

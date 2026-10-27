@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 from ...core import config, job_lock, rawstore
-from .. import ops
+from .. import ops, serving
 from . import DATASETS, base
 
 POLL_S = 30.0
@@ -77,6 +77,9 @@ def main(argv: list[str] | None = None) -> int:
             print("builder not started: another builder holds the lock", file=sys.stderr)
             return 3
         rawstore._register_presence(Path(config.MARKET_DIR) / ops.FILE_NAME)
+        for kind in serving.KINDS:
+            for stale in serving.sweep_builds(kind):
+                print(f"removed the stale build file {stale.name}", file=sys.stderr, flush=True)
         orphans = ops.fail_orphans()
         if any(orphans):
             print(f"failed {orphans[0]} request(s) and {orphans[1]} run(s) a dead builder left running",
