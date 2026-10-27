@@ -2513,9 +2513,9 @@ function ndQueue(){
 function ndPost(btn, url, body, done){
   var card = ndCard(btn);
   btn.disabled = true;
-  var opts = {method: 'POST', headers: {'X-RC-Panel': 'settings'}};
-  if(body){ opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
-  fetch(url, opts).then(function(r){
+  fetch(url, {method: 'POST', headers: body ? {'X-RC-Panel': 'settings', 'Content-Type': 'application/json'}
+                                           : {'X-RC-Panel': 'settings'},
+              body: body ? JSON.stringify(body) : undefined}).then(function(r){
     return r.json().then(function(d){ return {status: r.status, d: d || {}}; });
   }).then(function(res){
     btn.disabled = false;
