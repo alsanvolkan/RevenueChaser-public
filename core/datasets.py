@@ -40,7 +40,7 @@ FROM_RUN_LOG = "from_run_log"
 NO_CLAIM = "no_claim"
 # Derived rows say this until the run log is trustworthy. S5b part 3.
 FROM_RUN_LOG_CAVEAT = (
-    "from the run log; not trustworthy until #82 and #83 are fixed (run_registry / result_runs)"
+    "from the run log; not trustworthy until alsanvolkan/RevenueChaser-public#82 and alsanvolkan/RevenueChaser-public#83 are fixed (run_registry / result_runs)"
 )
 
 # history.duckdb: the header plus every ``*_history`` mirror. 18 tables. S5b part 3.
@@ -655,7 +655,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         key="bookkeeping", label="Store bookkeeping",
         tables=_BOOKKEEPING,
         db="raw", source=Source.store, writer=None,
-        writer_note=("store_meta, migration_manifest, store_schema (one stamp per store file, #26 PL7), "
+        writer_note=("store_meta, migration_manifest, store_schema (one stamp per store file, alsanvolkan/RevenueChaser-public#26 PL7), "
                      "run_registry and job_runs are the store's own pins and job log; no freshness claim"),
         freshness=NO_CLAIM,
     ),
