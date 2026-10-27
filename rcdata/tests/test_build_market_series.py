@@ -148,6 +148,14 @@ def test_one_source_down_is_an_issue_and_its_old_rows_stay_served(sources, http_
     assert len(read.market_series(["VIX"])) == before
 
 
+def test_a_new_as_of_with_the_same_values_is_unchanged(sources):
+    first = _run()
+    later = base.run_request({"dataset": ms.NAME, "params": {"as_of": "2026-10-28"}}, sleep=lambda s: None)
+    # Every source fetches again for a new as-of date, except CFTC: it already holds the newest report.
+    assert later["calls"] == first["calls"] - 2
+    assert later["result"] == "unchanged" and later["added"] == later["removed"] == 0
+
+
 def test_a_run_that_raises_writes_a_failed_check_and_leaves_the_live_file(sources, monkeypatch):
     _run()
     live = serving.live_path("market").read_bytes()

@@ -7,7 +7,8 @@ A dataset (``Dataset``) has four steps:
   exists is never fetched again: it is the resume marker. Raw files are written to ``<name>.tmp`` and renamed, so a
   file under its real name is always whole.
 - ``to_parquet(ctx, raw)`` types a raw file into its Parquet partition under ``<MARKET_RAW_DIR>/parquet/...``, also
-  through ``.tmp`` and a rename (``write_parquet``), so a partition that exists is complete.
+  through ``.tmp`` and a rename (``write_parquet``), so a partition that exists is complete; ``to_parquet_all`` does
+  a run's raw files together, so a partition several of them touch is written once.
 - ``build(ctx, con)`` creates the dataset's tables in the new serving file from its Parquet (no network).
 - ``check(ctx, con)`` compares the new tables with the live file and returns the ``dataset_check`` row.
 
@@ -292,6 +293,7 @@ class Dataset(Protocol):
     def default_as_of(self) -> date: ...
     def fetch(self, ctx: RunContext, as_of: date) -> list[Path]: ...
     def to_parquet(self, ctx: RunContext, raw: Path) -> list[Path]: ...
+    def to_parquet_all(self, ctx: RunContext, raws: list[Path]) -> list[Path]: ...
     def backfill(self, ctx: RunContext, start: date, end: date) -> None: ...
     def build(self, ctx: RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]: ...
     def check(self, ctx: RunContext, con: duckdb.DuckDBPyConnection) -> dict: ...
@@ -403,8 +405,7 @@ def run_request(req: dict, *, trigger: str = "queue", sleep: Callable[[float], A
             ds.backfill(ctx, start, end)
         elif mode == "daily":
             ctx.as_of = _parse_day(params["as_of"]) if params.get("as_of") else ds.default_as_of()
-            for raw in ds.fetch(ctx, ctx.as_of):
-                ds.to_parquet(ctx, raw)
+            ds.to_parquet_all(ctx, ds.fetch(ctx, ctx.as_of))
         else:
             raise ValueError(f"unknown mode {mode!r}")
         check = build_kind(ctx, ds)

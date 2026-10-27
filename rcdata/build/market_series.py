@@ -15,6 +15,7 @@ served. All sources failing is a failed run.
 """
 from __future__ import annotations
 
+import time
 from datetime import date
 from pathlib import Path
 
@@ -31,7 +32,8 @@ SCHEMA = [("series_id", "TEXT"), ("obs_date", "DATE"), ("source", "TEXT"), ("val
           ("open", "DOUBLE"), ("high", "DOUBLE"), ("low", "DOUBLE"), ("close", "DOUBLE"), ("frequency", "TEXT"),
           ("session_date", "DATE"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
 KEY = ["series_id", "obs_date", "source"]
-COMPARE = [c for c, _ in SCHEMA if c not in ("fetched_at", "run_id")]
+# What makes a row "changed": its data, not when or by which run it was fetched (every fetch restamps those).
+COMPARE = [c for c, _ in SCHEMA if c not in ("fetched_at", "run_id", "source_as_of")]
 META_SUFFIX = ".meta.json"
 
 
@@ -41,7 +43,7 @@ def meta_path(raw: Path) -> Path:
 
 def save_raw(ctx: base.RunContext, path: Path, content: bytes, as_of: date, url: str, **extra) -> Path:
     """Write one raw file and its metadata sidecar (the sidecar first: the raw file is the marker)."""
-    base.write_raw_json(meta_path(path), {"as_of": as_of.isoformat(), "fetched_at": base.time.time(),
+    base.write_raw_json(meta_path(path), {"as_of": as_of.isoformat(), "fetched_at": time.time(),
                                           "run_id": ctx.run_id, "url": url, **extra})
     return base.write_raw(path, content)
 
@@ -94,25 +96,32 @@ class MarketSeries:
         return self._each_source(ctx, lambda src: src.fetch(ctx, as_of))
 
     def backfill(self, ctx: base.RunContext, start: date, end: date) -> None:
-        for raw in self._each_source(ctx, lambda src: src.backfill(ctx, start, end)):
-            self.to_parquet(ctx, raw)
+        self.to_parquet_all(ctx, self._each_source(ctx, lambda src: src.backfill(ctx, start, end)))
 
-    def to_parquet(self, ctx: base.RunContext, raw: Path) -> list[Path]:
+    def _typed_rows(self, ctx: base.RunContext, raw: Path):
         src = _source_of(raw)
         meta = base.read_raw_json(meta_path(raw))
         rows = src.parse(base.read_raw(raw).decode("utf-8", errors="replace"), meta)
         if not rows:
             ctx.issue("no_rows", raw.relative_to(base.raw_root()).as_posix(), "the raw file parsed to no rows")
-            return []
         as_of = date.fromisoformat(meta["as_of"])
         for r in rows:
             r.update(source=src.SOURCE, source_as_of=as_of, fetched_at=meta["fetched_at"], run_id=meta["run_id"])
-        _session_dates(rows)
-        by_year: dict[int, list[dict]] = {}
-        for r in rows:
-            by_year.setdefault(r["obs_date"].year, []).append(r)
-        return [base.upsert_partition(part, SCHEMA, KEY, partition_path(src, year))
-                for year, part in sorted(by_year.items())]
+        return src, rows
+
+    def to_parquet(self, ctx: base.RunContext, raw: Path) -> list[Path]:
+        return self.to_parquet_all(ctx, [raw])
+
+    def to_parquet_all(self, ctx: base.RunContext, raws: list[Path]) -> list[Path]:
+        """Type every raw file of a run, then write each touched (source, year) partition once."""
+        groups: dict[tuple[str, int], tuple[object, list[dict]]] = {}
+        for raw in raws:
+            src, rows = self._typed_rows(ctx, raw)
+            _session_dates(rows)
+            for r in rows:
+                groups.setdefault((src.SOURCE, r["obs_date"].year), (src, []))[1].append(r)
+        return [base.upsert_partition(rows, SCHEMA, KEY, partition_path(src, year))
+                for (_, year), (src, rows) in sorted(groups.items(), key=lambda kv: kv[0])]
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         cols = ", ".join(f'"{c}" {t}' for c, t in SCHEMA)

@@ -43,7 +43,8 @@ SCHEMA = ([("session_date", "DATE"), ("expiry", "DATE"), ("strike", "DOUBLE"), (
           + [("snapshot_time", "TEXT"), ("source", "TEXT"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"),
              ("run_id", "TEXT"), ("observed", "BOOLEAN")])
 KEY = ("session_date", "expiry", "strike")
-COMPARE = [c for c, _ in SCHEMA if c not in ("fetched_at", "run_id")]
+# What makes a row "changed": its data, not when or by which run it was fetched.
+COMPARE = [c for c, _ in SCHEMA if c not in ("fetched_at", "run_id", "source_as_of")]
 
 
 def raw_path(session: date) -> Path:
@@ -93,7 +94,9 @@ class UWSpotExpiryStrike:
             "observed": observed, "fetched_at": time_now(), "run_id": ctx.run_id, "body": res.data})
 
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
-        return [self._fetch_session(ctx, as_of, observed=True)]
+        """The daily run: the current snapshot (``observed``) for the latest complete session; a rerun of an older
+        session asks UW for that day (``date=``), like the backfill, and is not observed."""
+        return [self._fetch_session(ctx, as_of, observed=as_of == calendar.latest_complete_session())]
 
     # ── type ──
     def to_parquet(self, ctx: base.RunContext, raw: Path) -> list[Path]:
@@ -131,6 +134,9 @@ class UWSpotExpiryStrike:
             return [base.write_parquet(con, "SELECT * FROM day ORDER BY expiry, strike", partition_path(session))]
         finally:
             con.close()
+
+    def to_parquet_all(self, ctx: base.RunContext, raws: list[Path]) -> list[Path]:
+        return [part for raw in raws for part in self.to_parquet(ctx, raw)]
 
     # ── backfill ──
     def backfill(self, ctx: base.RunContext, start: date, end: date) -> None:

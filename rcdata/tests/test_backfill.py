@@ -54,10 +54,12 @@ def test_an_existing_partition_is_skipped(http_mock):
     assert row["rows"] == 391 * len(DAYS)
 
 
-def test_a_daily_row_is_never_overwritten_by_the_backfill(http_mock):
+def test_a_daily_row_is_never_overwritten_by_the_backfill(http_mock, monkeypatch):
     http_mock.routes.insert(0, ("expiry-strike?expirations", uw_fixture.body(date(2026, 10, 23)), 200, {}))
+    monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 23, 21, 0, tzinfo=timezone.utc))
     base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-23"}})
     http_mock.routes.pop(0)
+    monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 26, 21, 0, tzinfo=timezone.utc))
     _backfill()
     assert {r["observed"] for r in read.spx_expiry_strike(date(2026, 10, 23))} == {True}
     assert {r["observed"] for r in read.spx_expiry_strike(date(2026, 10, 22))} == {False}
@@ -88,6 +90,12 @@ def test_a_run_interrupted_mid_write_after_day_n_resumes_at_n_plus_1(http_mock, 
     assert _asked(http_mock) == [d.isoformat() for d in DAYS[3:]]
     assert row["result"] == "changed" and row["rows"] == 391 * len(DAYS)
     assert len(read.spx_expiry_strike(DAYS[2])) == 391
+
+
+def test_a_rerun_of_an_older_session_asks_for_that_day(http_mock):
+    base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-22"}})
+    assert _asked(http_mock) == ["2026-10-22"]
+    assert {r["observed"] for r in read.spx_expiry_strike(date(2026, 10, 22))} == {False}
 
 
 def test_the_backfill_never_asks_before_uw_serves_the_data(http_mock):
