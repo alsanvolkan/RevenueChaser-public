@@ -159,6 +159,7 @@ def test_index_constituents_keeps_accepting_repeats_and_null_keys(store):
 
 
 # ── the first call seeds and syncs; a failing table never holds the others back (F8, F10) ────────────────────────
+@pytest.mark.rawstore_schema_from_scratch
 def test_a_write_outside_the_api_is_recorded_by_the_next_first_call(store):
     rawstore.write_rows("watchlist", [{"ticker": "A"}])
     with rawstore.connect() as conn:
@@ -172,6 +173,7 @@ def test_a_write_outside_the_api_is_recorded_by_the_next_first_call(store):
     assert rawstore.sync_changes() == {t: 0 for t in rawstore.CHANGES}   # a second sync has nothing to add
 
 
+@pytest.mark.rawstore_schema_from_scratch
 def test_the_first_call_after_the_bump_seeds_every_change_table_from_its_live_table(store):
     with rawstore.connect() as conn:
         conn.execute("DROP TABLE watchlist_changes")
@@ -185,6 +187,7 @@ def test_the_first_call_after_the_bump_seeds_every_change_table_from_its_live_ta
     assert {r["run_id"] for r in rawstore.query("SELECT run_id FROM watchlist_changes")} == {"store-sync"}
 
 
+@pytest.mark.rawstore_schema_from_scratch
 def test_one_table_that_cannot_sync_leaves_the_others_synced_and_the_call_raises(store, monkeypatch):
     with rawstore.connect() as conn:
         conn.execute("INSERT INTO watchlist VALUES ('BYPASS')")
@@ -205,6 +208,7 @@ def test_one_table_that_cannot_sync_leaves_the_others_synced_and_the_call_raises
     assert edgar.exists()                                            # the other files were still made
 
 
+@pytest.mark.rawstore_schema_from_scratch
 def test_a_store_holding_repeated_keys_still_syncs(store):
     with rawstore.connect() as conn:
         conn.execute("INSERT INTO index_constituents VALUES ('r1000','X'), ('r1000','X'), ('r1000', NULL)")
@@ -278,6 +282,7 @@ def test_a_temp_table_of_the_same_name_never_stands_in_for_the_live_one(store):
     assert _latest("watchlist")[("A",)] == "absent" and _agrees("watchlist")
 
 
+@pytest.mark.rawstore_schema_from_scratch
 def test_a_change_table_created_in_work_that_rolls_back_does_not_break_later_writes(store):
     with rawstore.connect() as conn:
         conn.execute("DROP TABLE watchlist_changes")

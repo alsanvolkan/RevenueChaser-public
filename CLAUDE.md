@@ -45,7 +45,9 @@ Code, comments, commit messages, issues and docs are written in **English**.
 - `conftest.py` also redirects **both data roots** (`RC_STORE_DIR`, `RC_CACHE_DIR` and the other artifact roots) to a
   per-process temp directory, and the autouse `isolate_rawstore` fixture gives **every** test its own
   `raw.duckdb`. Never make that fixture session-scoped: a shared DuckDB file would serialise on the single-writer
-  lock.
+  lock. `rawstore_tmp_db` fills that file by **copying** a per-process template that `ensure_all_tables` built once
+  (`rawstore_template`, never opened by a test), not by running the ~1 s apply per test. A test of the schema apply
+  or a migration itself is marked `@pytest.mark.rawstore_schema_from_scratch` and gets the apply on its own file.
 - CI (`.github/workflows/tests.yml`) runs both tiers on every pull request into `main` and on `main`. The unit tier
   runs under `pytest -n auto --dist loadfile`, because a single pytest process is single-core bound.
 - **TDD:** watch each new test fail before implementing it, and run the tests of the modules you touched before

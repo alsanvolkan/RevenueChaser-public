@@ -152,6 +152,7 @@ def test_a_row_without_breadth_renders_an_empty_cell():
     assert dict(zip(payload["cols"], payload["rows"][0][3]))["breadth"] == ["—", None, "zero"]
 
 
+@pytest.mark.rawstore_schema_from_scratch
 def test_the_two_additive_columns_reach_a_table_created_before_them(store):
     """Test 7: the gate's own safety net. A store made before this change has neither column; the first write
     must ALTER them in (``_reconcile_table``), not fail with a Binder Error."""

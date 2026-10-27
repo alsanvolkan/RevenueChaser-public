@@ -2,6 +2,9 @@
 
     python -m RevenueChaser.module_testing.e2e.harness.dashboard_entrypoint <port>
 
+Port ``0`` lets the OS pick; the port bound is then written to ``$RC_E2E_PORT_FILE``. The harness always
+asks for 0: a port picked ahead of time in the test process is free only until another xdist worker binds it.
+
 Four things must happen here, in this order, which is the whole reason this file
 exists rather than the test importing the app directly:
 
@@ -55,11 +58,22 @@ def main() -> None:
         calendar._now = lambda: fixed
         print(f"[e2e] clock fixed at {fixed.isoformat()}", flush=True)
 
+    from werkzeug.serving import make_server
+
     from RevenueChaser.app import dashboard
     from RevenueChaser.core.config import DATA_DIR, OUTPUT_DIR
+    # What app.run(debug=False, use_reloader=False, threaded=True) does, minus the banner, with the socket
+    # bound here so the port is known before the first request.
+    server = make_server("127.0.0.1", port, dashboard.app, threaded=True)
+    port = server.socket.getsockname()[1]
     print(f"[e2e] store={DATA_DIR} cache={OUTPUT_DIR} port={port}", flush=True)
-    dashboard.app.run(host="127.0.0.1", port=port, debug=False,
-                      use_reloader=False, threaded=True)
+    port_file = os.environ.get("RC_E2E_PORT_FILE")
+    if port_file:
+        tmp = f"{port_file}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(str(port))
+        os.replace(tmp, port_file)      # the harness never reads a half-written number
+    server.serve_forever()
 
 
 if __name__ == "__main__":
