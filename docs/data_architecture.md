@@ -611,8 +611,10 @@ worker thread writes while Flask request threads read. So:
   chained on a store writer) and daily 09:15 (the IBKR Gateway login check RC-IBKR-Login-Check, #162:
   `scripts/ibkr_login_check.py`, one TCP connection and the TWS API version handshake, which writes no table and
   no store file, only its own record under `.cache/ibkr_login/`, and exits 0 whatever it finds — a session that
-  expired on its weekly cycle is not a failed job), `core/automations.py`: the Relatedness and Value Chain rows
-  are 30 min apart.
+  expired on its weekly cycle is not a failed job), plus the market-store builder RC-Build hourly at :07 (one
+  `rcdata.build run --once` pass over the request queue, unit `life-rc-builder`, 50 min limit) and its backup
+  RC-Build-Backup daily 04:30 (`rcdata backup`, unit `life-rc-builder-backup`, 30 min limit), PR 2;
+  `core/automations.py`: the Relatedness and Value Chain rows are 30 min apart.
 
 ### Full-refresh vs. incremental tables
 The JSON files these tables replaced were rewritten wholesale, so the tables
