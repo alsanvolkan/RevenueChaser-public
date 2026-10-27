@@ -188,7 +188,11 @@ class UWSpotExpiryStrike:
         rows = int(con.execute(f"SELECT count(*) FROM {TABLE}").fetchone()[0])
         days = int(con.execute(f"SELECT count(DISTINCT session_date) FROM {TABLE}").fetchone()[0])
         as_of = ctx.as_of or self.default_as_of()
-        expected = sum(1 for _ in base.iter_sessions(FIRST_SESSION, as_of))
+        try:
+            expected = sum(1 for _ in base.iter_sessions(FIRST_SESSION, as_of))
+        except ValueError as e:                     # an as-of past the calendar's table: no coverage, no failure
+            ctx.issue("outside_calendar", NAME, str(e)[:300])
+            expected = 0
         return {"dataset": NAME, "result": "changed" if added or removed else "unchanged",
                 "source_as_of": as_of.isoformat(), "rows": rows, "added": added, "removed": removed,
                 "coverage": round(days / expected, 4) if expected else None}

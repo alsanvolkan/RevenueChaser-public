@@ -60,13 +60,21 @@ def partition_path(src, year: int) -> Path:
     return base.parquet_root() / src.SOURCE / src.DATASET_DIR / f"year={year}" / "part-0.parquet"
 
 
-def _session_dates(rows: list[dict]) -> None:
+def _session_dates(ctx: base.RunContext, source: str, rows: list[dict]) -> None:
+    """Set each row's session date. Before the calendar's table is expected (rule C); a date after it (a meeting
+    already announced for a year the table does not cover yet) is reported once, and its rows keep no session."""
     cache: dict[date, date | None] = {}
+    last_year = max(calendar.MARKET_HOLIDAYS)
+    ahead = 0
     for r in rows:
         d = r["obs_date"]
         if d not in cache:
             cache[d] = base.session_date_of(d)
         r["session_date"] = cache[d]
+        ahead += d.year > last_year
+    if ahead:
+        ctx.issue("outside_calendar", source,
+                  f"{ahead} rows after {last_year}, the last year of core/calendar.py's table: no session date")
 
 
 class MarketSeries:
@@ -117,7 +125,7 @@ class MarketSeries:
         groups: dict[tuple[str, int], tuple[object, list[dict]]] = {}
         for raw in raws:
             src, rows = self._typed_rows(ctx, raw)
-            _session_dates(rows)
+            _session_dates(ctx, src.SOURCE, rows)
             for r in rows:
                 groups.setdefault((src.SOURCE, r["obs_date"].year), (src, []))[1].append(r)
         return [base.upsert_partition(rows, SCHEMA, KEY, partition_path(src, year))

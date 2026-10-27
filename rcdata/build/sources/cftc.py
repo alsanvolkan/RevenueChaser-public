@@ -71,7 +71,7 @@ def _write_by_report_date(ctx, rows: dict[str, list[dict]], as_of: date) -> list
     out = []
     for day in sorted(by_day):
         out.append(save_raw(ctx, _folder() / f"{day}.json.gz", json.dumps(by_day[day], sort_keys=True).encode(),
-                            as_of, TFF_BASE))
+                            as_of, TFF_BASE, urls=[TFF_BASE, DISAGG_BASE]))
     return out
 
 

@@ -203,3 +203,27 @@ def test_b2_a_build_refuses_a_missing_parquet_root(monkeypatch, tmp_path):
     with pytest.raises(base.SourceError, match="Parquet root"):
         base.build_kind(ctx, ms.DATASET)
     assert not serving.live_path("market").exists()
+
+
+def test_the_cftc_sidecar_names_both_report_urls(sources):
+    _run()
+    metas = [base.read_raw_json(p) for p in (base.raw_root() / "cftc").rglob("*.meta.json")]
+    assert metas and all(m["urls"] == [cftc.TFF_BASE, cftc.DISAGG_BASE] for m in metas)
+
+
+def test_a_date_past_the_calendar_table_has_no_session_date_and_one_issue(tmp_path):
+    from RevenueChaser.core.calendar import MARKET_HOLIDAYS
+    last = max(MARKET_HOLIDAYS)
+    html = (f'<h4>{last + 1} FOMC Meetings</h4><div class="fomc-meeting__month"><strong>January</strong></div>'
+            '<div class="fomc-meeting__date">26-27</div>')
+    ctx = base.RunContext(run_id="r", dataset=ms.NAME)
+    raw = base.raw_root() / "fed" / "fomc" / "2026-10-27.htm"
+    ms.save_raw(ctx, raw, html.encode(), date(2026, 10, 27), "https://fed.test")
+    ms.DATASET.to_parquet_all(ctx, [raw])
+    import duckdb
+    part = ms.partition_path(fed, last + 1)
+    got = duckdb.connect().execute(f"SELECT DISTINCT session_date FROM read_parquet({base.sql_path(part)})").fetchall()
+    assert got == [(None,)]
+    with ops.connect() as con:
+        issues = con.execute("SELECT kind, key FROM build_issues").fetchall()
+    assert [tuple(i) for i in issues] == [("outside_calendar", "fed")]
