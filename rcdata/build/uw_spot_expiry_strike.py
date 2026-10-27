@@ -14,6 +14,7 @@ the Monday, is 1 DTE.
 """
 from __future__ import annotations
 
+import os
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -29,6 +30,7 @@ TICKER = "SPX"
 ENDPOINT = f"/stock/{TICKER}/spot-exposures/expiry-strike"
 PAGE_LIMIT = 500
 FIRST_SESSION = date(2025, 1, 16)
+REJECTED_SUFFIX = ".rejected"
 
 # Every numeric field UW documents for this answer (docs/openapi.yaml, "Spot greek exposures by strike"): the four
 # greeks, each for calls and puts, by open interest, volume, bid and ask; and ``price``, the spot of the snapshot.
@@ -109,7 +111,7 @@ class UWSpotExpiryStrike:
         session = date.fromisoformat(doc["session_date"])
         body = doc["body"]
         items = body.get("data", []) if isinstance(body, dict) else body
-        rows, seen, extras = [], set(), set()
+        rows, seen, extras, bad = [], set(), set(), []
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -117,7 +119,7 @@ class UWSpotExpiryStrike:
                 expiry = date.fromisoformat(str(item["expiry"])[:10])
                 strike = float(item["strike"])
             except (KeyError, TypeError, ValueError):
-                ctx.issue("bad_row", session.isoformat(), f"row without a usable expiry/strike: {sorted(item)[:6]}")
+                bad.append(sorted(item)[:6])
                 continue
             if snapshot_day(item.get("time")) not in (session, None):
                 ctx.issue("wrong_session", f"{session} {expiry} {strike}", f"row stamped {item.get('time')}")
@@ -134,9 +136,16 @@ class UWSpotExpiryStrike:
                    "fetched_at": doc["fetched_at"], "run_id": doc["run_id"], "observed": bool(doc["observed"])}
             row.update({f: to_float(item.get(f)) for f in NUMERIC_FIELDS})
             rows.append(row)
+        if bad:                                     # one issue per answer, not one per row
+            ctx.issue("bad_row", session.isoformat(),
+                      f"{len(bad)} rows without a usable expiry/strike; first one's fields: {bad[0]}")
         if not rows:
-            # An empty partition would mark the session done for good (S6); the raw file stays for a look.
-            raise base.SourceError(f"UW {session}: no usable row in {raw.name} ({len(items)} rows answered)")
+            # An empty partition would mark the session done for good (S6), and so would the raw file, which is the
+            # fetch's resume marker (N1): it is set aside as .rejected, kept for a look, and the next run asks again.
+            rejected = raw.with_name(raw.name + REJECTED_SUFFIX)
+            os.replace(raw, rejected)
+            raise base.SourceError(f"UW {session}: no usable row in {raw.name} ({len(items)} rows answered); "
+                                   f"set aside as {rejected.name}")
         if extras:
             ctx.issue("unknown_field", session.isoformat(), "numeric fields without a column: " + ", ".join(sorted(extras)))
         con = duckdb.connect()
@@ -168,7 +177,11 @@ class UWSpotExpiryStrike:
                     raise
                 ctx.issue("fetch_failed", session.isoformat(), str(e)[:300])
                 continue
-            self.to_parquet(ctx, raw)
+            try:
+                self.to_parquet(ctx, raw)
+            except base.SourceError as e:
+                ctx.issue("type_failed", session.isoformat(), str(e)[:300])
+                continue
             done += 1
         ctx.notes.append(f"backfill {start}..{end}: {done} typed, {skipped} already there")
 

@@ -101,3 +101,45 @@ def test_a_rerun_of_an_older_session_asks_for_that_day(http_mock):
 def test_the_backfill_never_asks_before_uw_serves_the_data(http_mock):
     _backfill("2025-01-10", "2025-01-17")
     assert _asked(http_mock) == ["2025-01-16", "2025-01-17"]
+
+
+def test_n1_one_unusable_answer_is_quarantined_and_the_backfill_goes_on(http_mock):
+    """Review N1: the 21st answered without ``strike``. The day is set aside (its raw file renamed .rejected, a
+    type_failed issue), the 22nd and 23rd still land, and a later run asks for the 21st again."""
+    bad = {"2026-10-21"}
+
+    def answer(request):
+        day = parse_qs(request.url.query.decode())["date"][0]
+        body = uw_fixture.body(date.fromisoformat(day))
+        if day in bad:
+            for r in body["data"]:
+                del r["strike"]
+        return 200, body, {}
+    http_mock.routes.clear()
+    http_mock.add("expiry-strike", answer)
+    row = _backfill()
+    assert row["result"] == "changed" and row["rows"] == 391 * 4
+    raw = uw.raw_path(DAYS[2])
+    assert not raw.exists() and raw.with_name(raw.name + ".rejected").exists()
+    from RevenueChaser.rcdata import ops
+    with ops.connect() as con:
+        kinds = [r[0] for r in con.execute("SELECT kind FROM build_issues WHERE key = '2026-10-21' ORDER BY id")]
+    assert kinds == ["bad_row", "type_failed"], "one issue for the rows, one for the day"
+
+    bad.clear()
+    http_mock.requests.clear()
+    row = _backfill()
+    assert _asked(http_mock) == ["2026-10-21"] and row["rows"] == 391 * 5
+
+
+def test_n1_a_daily_run_with_an_unusable_answer_fetches_again_next_time(http_mock):
+    body = uw_fixture.body(DAYS[2])
+    for r in body["data"]:
+        del r["strike"]
+    http_mock.routes.clear()
+    http_mock.add("expiry-strike", body)
+    assert base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-21"}})["result"] == "failed"
+    http_mock.routes.clear()
+    http_mock.add("expiry-strike", uw_fixture.body(DAYS[2]))
+    assert base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-21"}})["result"] == "changed"
+    assert len(http_mock.calls("expiry-strike")) == 2
