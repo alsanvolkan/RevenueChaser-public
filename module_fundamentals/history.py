@@ -68,8 +68,6 @@ def _edgar_problem(versions: dict) -> str | None:
 
 def _partial(payload: dict, rows: dict, run_at: float) -> str | None:
     """Why this run is not a whole, correct session snapshot (None when it is)."""
-    if payload.get("is_fixture"):
-        return "the payload is fixture data"
     if payload.get("no_data"):
         return payload.get("no_data_message") or "the run reported no data"
     if not rows.get("scores"):

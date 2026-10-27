@@ -684,7 +684,6 @@
     }
    ],
    "generated_at": "<ts>",
-   "is_fixture": false,
    "no_data": false,
    "passing": {
     "momentum": 3,

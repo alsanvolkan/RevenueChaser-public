@@ -631,7 +631,6 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
         "passing": passing,
         "selection_version": config.SELECTION_VERSION,
         "distorted_count": distorted_count,
-        "is_fixture": False,
         "no_data": False,
         "data_quality": {"stale_ohlc": run_stats.get("stale_ohlc", 0),
                          "stale_info": run_stats.get("stale_info", 0),
