@@ -91,11 +91,14 @@ def test_edgar_docs_dir_is_separate_from_the_store():
 
 # The durable DuckDB files plus the sidecars DuckDB/the migration create
 # beside them: raw.duckdb (structured data), edgar.duckdb (raw EDGAR documents)
-# and prices.duckdb (the daily price tables, #156).
+# and prices.duckdb (the daily price tables, #156). discord.duckdb is a RETIRED file: the Discord
+# archive left with #174, but the old file stays in .store/ until avo deletes it by hand after the
+# new app holds a verified copy (#175), so it must not fail this check meanwhile.
 _ALLOWED_IN_STORE = {
     "raw.duckdb", "raw.duckdb.wal", "raw.duckdb.tmp", "raw.duckdb.new",
     "edgar.duckdb", "edgar.duckdb.wal", "edgar.duckdb.tmp", "edgar.duckdb.new",
     "prices.duckdb", "prices.duckdb.wal",
+    "discord.duckdb", "discord.duckdb.wal",   # retired, see above
 }
 
 

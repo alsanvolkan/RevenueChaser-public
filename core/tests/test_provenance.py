@@ -29,12 +29,42 @@ class TestResolvers:
         assert provenance.data_as_of("module_swing_potential") == "2026-08-31"
         assert provenance.data_as_of("module_fundamentals") == "2026-08-28"
 
-    def test_ticker_cache_epoch_becomes_a_day(self, rawstore_tmp_db):
-        """Earnings' date is still the per-ticker payload fetch time; Asymmetric Growth's is D01's since #380 S4
-        (``test_provenance_k7_383.py``)."""
+    # An Earnings Fetch run Thursday 27 Aug 2026 after the close (18:00 New York).
+    EARNINGS_RUN_AT = 1787868000.0
+
+    @staticmethod
+    def _record_earnings_fetch(run_at: float, calendar_session: str | None) -> None:
+        """A finished Earnings Fetch, through the writer the runner calls (``input_sources`` as the runner fills it)."""
+        from RevenueChaser.module_earnings_radar import history as er_history
+        er_history.record([], {}, run_id=f"er-{run_at}", run_at=run_at, reason="no cards",
+                          input_sources={"calendar": {"stored": 4 if calendar_session else 0,
+                                                      "live": 0 if calendar_session else 4,
+                                                      "session": calendar_session}})
+
+    def test_earnings_reports_the_calendar_session_its_last_fetch_used(self, rawstore_tmp_db):
+        """#205 review, option A: the cards on the board are the last Fetch's, so their date is the calendar session
+        that Fetch read, not the newest ``earnings_calendar`` session a later nightly sweep stored."""
+        rawstore.write_rows("earnings_calendar", [
+            {"session_date": "2026-08-26", "earnings_date": "2026-09-03", "ticker": "AAPL", "report_session": "AMC"},
+            {"session_date": "2026-08-28", "earnings_date": "2026-09-03", "ticker": "AAPL", "report_session": "AMC"},
+        ])
+        self._record_earnings_fetch(self.EARNINGS_RUN_AT, "2026-08-26")
+        assert provenance.data_as_of("module_earnings_radar") == "2026-08-26"
+
+    def test_earnings_has_no_date_before_a_fetch(self, rawstore_tmp_db):
+        """A stored calendar with no Fetch is not on the board; neither is a per-ticker payload cache (DF13)."""
         rawstore.write_rows("ticker_payload_cache", [{
-            "ticker": "AAPL", "payload": {}, "fetched_at": 1788223354.41, "fetched_at_iso": ""}])
-        assert provenance.data_as_of("module_earnings_radar") == "2026-09-01"
+            "ticker": "AAPL", "payload": {}, "fetched_at": 1788223354.41, "fetched_at_iso": ""}])   # 2026-09-01
+        rawstore.write_rows("earnings_calendar", [
+            {"session_date": "2026-08-28", "earnings_date": "2026-09-03", "ticker": "AAPL", "report_session": "AMC"}])
+        assert provenance.data_as_of("module_earnings_radar") is None
+
+    def test_earnings_read_live_is_dated_by_its_run(self, rawstore_tmp_db):
+        """A Fetch that asked UW for every calendar pair read no stored session: its record dates it by its run."""
+        rawstore.write_rows("earnings_calendar", [
+            {"session_date": "2026-08-28", "earnings_date": "2026-09-03", "ticker": "AAPL", "report_session": "AMC"}])
+        self._record_earnings_fetch(self.EARNINGS_RUN_AT, None)
+        assert provenance.data_as_of("module_earnings_radar") == "2026-08-27"
 
     def test_rotation_uses_the_newest_snapshot_date(self, rawstore_tmp_db):
         rawstore.write_rows("rotation_snapshots", [

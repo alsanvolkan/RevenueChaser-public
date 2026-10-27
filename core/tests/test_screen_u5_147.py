@@ -130,7 +130,7 @@ def test_a_fetch_still_persists_the_tickers_that_scored(scenario, monkeypatch, m
 def test_when_every_ticker_raises_the_board_says_why(scenario, monkeypatch, mod, name, render):
     _poison(monkeypatch, mod, *scn.UNIVERSE)
     payload = mod.run_scan()
-    assert payload["no_data"] is True and payload["is_fixture"] is False
+    assert payload["no_data"] is True and "is_fixture" not in payload
     assert payload["no_data_reason"] == "no_scorable_tickers"
     assert payload["data_quality"]["dropped"]["compute_error"] >= 1
     assert DROP_LABELS["compute_error"] in payload["no_data_message"]

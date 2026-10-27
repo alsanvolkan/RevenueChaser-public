@@ -1,6 +1,6 @@
 """The root conftest must remove the scratch root it made, and only the root it owns.
 
-``_redirect_data_roots()`` points RC_STORE_DIR, RC_CACHE_DIR, RC_EDGAR_DOCS_DIR,
+``_redirect_data_roots()`` points RC_STORE_DIR, RC_CACHE_DIR, RC_EDGAR_DOCS_DIR
 and SPX_GAMMA_DATA_ROOT at a ``tempfile.mkdtemp(prefix="rc-pytest-")`` root at
 import time. Nothing used to remove it, so one directory leaked per pytest process.
 

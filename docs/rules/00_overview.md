@@ -13,7 +13,7 @@
 
 ## Architecture
 
-RevenueChaser scores every earnings event across **8 independent rules**, then combines them into a weighted composite direction score and confidence level. Rules that can't access data (unavailable endpoints, missing fundamentals) are excluded from the composite — only available rules contribute.
+RevenueChaser scores every earnings event across **8 independent rules**, then combines them into a weighted composite direction score and confidence level. Rules that can't access data (unavailable endpoints, missing fundamentals) are excluded from the composite — only available rules contribute to the direction score. The confidence score still divides by the weight of ALL direction rules, so a missing rule lowers it.
 
 ```
 Calendar → Ticker → Per-Rule Scoring → Composite → Direction + Confidence + Action
@@ -42,10 +42,11 @@ Calendar → Ticker → Per-Rule Scoring → Composite → Direction + Confidenc
 
 ```
 direction_score = Σ(weight_i × score_i) / Σ(weight_i)    [available rules only]
-confidence_score = 100 × Σ(weight_i × coverage_i) / Σ(all_weights) × (1 − disagreement_penalty)
+confidence_score = 100 × Σ(weight_i × coverage_i) / Σ(all direction weights) × (1 − disagreement_penalty)
+                   [numerator: available rules only; denominator: every rule with weight > 0 (0.65), available or not]
 ```
 
-- **disagreement penalty**: 0.20 when available rules disagree on direction sign
+- **disagreement penalty**: 0.20 when R3 and R7 land on opposite signs (no other pair counts)
 - **Capped**: direction ∈ [-100, 100], confidence ∈ [0, 100]
 
 ## Action Ladder

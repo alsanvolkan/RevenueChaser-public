@@ -289,7 +289,7 @@ def test_an_old_payload_renders_no_toggles_and_the_notice():
 def test_an_old_payload_with_candidates_that_lack_the_new_keys_does_not_crash():
     row = {"ticker": "OLD", "name": "Old", "price": 10.0, "market_cap": 1e9, "sector": "Technology",
            "industry": "Software", "themes": [], "period": "FY2023", "gates": {}}
-    payload = {"candidates": [row], "passing": {}, "summary": {}, "universe_total": 1, "is_fixture": False}
+    payload = {"candidates": [row], "passing": {}, "summary": {}, "universe_total": 1}
     html = render_fundamental_dashboard(payload)
     assert "Scored before v6" in html and "Fundamental Analysis" in html
 

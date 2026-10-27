@@ -1053,7 +1053,7 @@
       "summary": "The Discord board left this repository (#174) and lives on as the discord-archive app; this epic is closed when that removal merges.",
       "detail": {
         "whats_wrong": "Nothing of this epic is open in this repository any more: the board, its two jobs, the store file and the credential checks were removed in #174 and continue as the separate discord-archive app. S1's acceptance, S3 the schedule, S4 the LLM extraction and the defects DF53 and DF55 now belong to that app.",
-        "evidence": "PR #181 removes `module_discord/`, `/run/module_discord`, `/run/module_discord_discover` and `discord.duckdb`; the board key `module_discord` is no longer a dashboard tab, so this entry is repo-scoped rather than board-scoped until the issue is closed.",
+        "evidence": "PR #181 removes `module_discord/`, `/run/module_discord`, `/run/module_discord_discover` and the code that used `discord.duckdb` (the old file itself stays in `.store/` until avo removes it by hand); the board key `module_discord` is no longer a dashboard tab, so this entry is repo-scoped rather than board-scoped until the issue is closed.",
         "example": "",
         "tried_or_decided": "avo moved the Discord archive into its own app in October 2026. The entry stays in the registry while the issue is open on GitHub, so `scripts/open_issues_sync.py --check` does not report it as removed.",
         "direction": "Close the issue as moved to the discord-archive app when the removal merges; the open items continue in that app's own tracker.",

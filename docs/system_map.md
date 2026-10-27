@@ -227,7 +227,7 @@ Line numbers are this worktree's.
   `score_ticker`. Cross-board *computation*, not just a data read — **worth an issue**
   as the clearest case of one board computing another's score.
 - `module_settings/boards.py:15–18` imports Co-movement's and Swing's `config`/`settings`;
-  `module_settings/inventory.py:397` imports Sector Rotation's `etf_holdings`, `:938` Value
+  `module_settings/inventory.py:590` imports Sector Rotation's `etf_holdings`, `:1414` Value
   Chain's `engine`. Settings is the board that
   has to know every other board, so this one is structural rather than accidental —
   **not worth its own issue**, but it is why `module_settings` changes so often.

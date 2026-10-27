@@ -191,13 +191,25 @@ def test_a_board_whose_tables_are_all_measured_and_stored_can_score_the_name(raw
         assert fit[key]["missing"] == []
 
 
-def test_a_measured_table_with_no_row_makes_the_board_unable_and_names_what_is_missing(rawstore_tmp_db):
-    """Co-movement reads equity_universe and swing_ohlc; the seed has no swing_ohlc row."""
+def test_co_movement_scores_a_name_with_daily_bars_and_no_legacy_cache_row(rawstore_tmp_db):
+    """Co-movement reads the daily price bars since #379 (``module_comovement/ohlc.py``), not
+    ``swing_ohlc``: the seed has bars and no legacy-cache row, and the board can score the name."""
     _seed_every_dataset()
+    assert rawstore.count("swing_ohlc") == 0
+    fit = _boards_of("MU")
+
+    assert fit["module_comovement"]["state"] == "can"
+    assert fit["module_comovement"]["missing"] == []
+
+
+def test_a_measured_table_with_no_row_makes_the_board_unable_and_names_what_is_missing(rawstore_tmp_db):
+    """A universe name with no daily bar: Co-movement cannot score it and names the bars."""
+    _seed_every_dataset()
+    rawstore.execute("DELETE FROM price_bars_daily", db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw"))
     fit = _boards_of("MU")
 
     assert fit["module_comovement"]["state"] == "cannot"
-    assert fit["module_comovement"]["missing"] == ["legacy OHLC cache (SPY fallback)"]
+    assert fit["module_comovement"]["missing"] == ["daily price bars"]
 
 
 def test_a_name_with_only_d01_bars_cannot_be_scored_by_the_boards_this_drill_measures(rawstore_tmp_db):
@@ -250,3 +262,150 @@ def test_the_board_list_costs_no_store_read(rawstore_tmp_db, monkeypatch):
                         lambda *a, **k: pytest.fail("the board list must not read the store"))
 
     assert inventory._board_fit(detail["presence"]) == detail["boards"]
+
+# ── #143: a failed presence query reads "could not read", never "missing" (the G3 rule) ─────────
+
+def _fail_reads_of(monkeypatch, *tables):
+    """Every per-name read of ``tables`` raises, as a locked or broken store file would."""
+    real = rawstore.query
+
+    def query(sql, *a, **k):
+        if any(f"FROM {t} WHERE ticker" in sql for t in tables):
+            raise RuntimeError("locked")
+        return real(sql, *a, **k)
+
+    monkeypatch.setattr(rawstore, "query", query)
+
+
+def test_a_failed_bars_read_is_unreadable_not_missing_and_the_board_says_so(rawstore_tmp_db, monkeypatch):
+    _seed_every_dataset()
+    _fail_reads_of(monkeypatch, "price_bars_daily")
+    detail = inventory.ticker_detail("MU")
+    fit = {b["key"]: b for b in detail["boards"]}
+
+    assert detail["presence"]["price_bars_daily"]["error"] is True
+    assert fit["module_swing_potential"]["state"] == "unreadable"
+    assert fit["module_swing_potential"]["missing"] == []
+    assert fit["module_swing_potential"]["unreadable"] == ["daily price bars"]
+    assert any(e["table"] == "price_bars_daily" for e in detail["errors"])
+    # Every board that reads the bars says so; one that does not read them keeps its own state.
+    assert fit["module_comovement"]["state"] == "unreadable"
+    assert fit["module_sec_13f"]["state"] == "not_checked"
+
+
+def test_a_failed_row_check_is_unknown_not_absent(rawstore_tmp_db, monkeypatch):
+    _seed_every_dataset()
+    rawstore.write_rows("oipd_meta", [{"ticker": "MU", "as_of": "2026-10-20"}])
+    _fail_reads_of(monkeypatch, "oipd_meta")
+    detail = inventory.ticker_detail("MU")
+
+    assert detail["presence"]["oipd_meta"] is None
+    fit = {b["key"]: b for b in detail["boards"]}
+    assert fit["module_oipd"]["state"] == "unreadable"
+    assert fit["module_oipd"]["unreadable"] == ["Implied Probability chain"]
+
+
+def test_a_name_whose_reads_all_failed_is_not_reported_unknown(rawstore_tmp_db, monkeypatch):
+    """Failed reads are not "absent from every dataset": the route must not answer 404."""
+    rawstore.write_rows("price_bars_daily", _bars("NVDA", "2026-02-02"))
+    _fail_reads_of(monkeypatch, "price_bars_daily")
+    detail = inventory.ticker_detail("NVDA")
+
+    assert detail is not None
+    assert detail["presence"]["price_bars_daily"]["error"] is True
+
+
+def test_a_clean_drill_reports_no_errors(rawstore_tmp_db):
+    _seed_every_dataset()
+    assert inventory.ticker_detail("MU")["errors"] == []
+
+
+def test_a_failed_table_list_read_makes_that_files_tables_unreadable_not_absent(rawstore_tmp_db, monkeypatch):
+    """A locked store file fails on its table list first: every table in it is unknown, not empty."""
+    _seed_every_dataset()
+    prices_db = rawstore.MANIFEST["price_bars_daily"].get("db", "raw")
+    real = rawstore.query
+
+    def query(sql, *a, **k):
+        if "information_schema.tables" in sql and k.get("db") == prices_db:
+            raise RuntimeError("locked")
+        return real(sql, *a, **k)
+
+    monkeypatch.setattr(rawstore, "query", query)
+    detail = inventory.ticker_detail("MU")
+    fit = {b["key"]: b for b in detail["boards"]}
+
+    assert detail["presence"]["price_bars_daily"]["error"] is True
+    assert fit["module_swing_potential"]["state"] == "unreadable"
+    assert fit["module_swing_potential"]["unreadable"] == ["daily price bars"]
+    assert any(e["table"] == f"db:{prices_db}" for e in detail["errors"])
+    # Tables in the other files still answer.
+    assert detail["presence"]["quote_snapshot"]["rows"] == 1
+    assert "error" not in detail["presence"]["quote_snapshot"]
+
+
+def test_a_failed_table_list_read_makes_a_row_check_unknown(rawstore_tmp_db, monkeypatch):
+    _seed_every_dataset()
+    raw_db = rawstore.MANIFEST["oipd_meta"].get("db", "raw")
+    real = rawstore.query
+
+    def query(sql, *a, **k):
+        if "information_schema.tables" in sql and k.get("db", "raw") == raw_db:
+            raise RuntimeError("locked")
+        return real(sql, *a, **k)
+
+    monkeypatch.setattr(rawstore, "query", query)
+    assert inventory.ticker_detail("MU")["presence"]["oipd_meta"] is None
+
+
+def test_a_missing_readable_table_says_cannot_even_when_another_read_failed(rawstore_tmp_db, monkeypatch):
+    """No bar for the name is known; the failed quote read must not hide it behind "unknown"."""
+    _seed_every_dataset()
+    rawstore.execute("DELETE FROM price_bars_daily", db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw"))
+    from RevenueChaser.core import quotes
+    monkeypatch.setattr(quotes, "latest_caps", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("locked")))
+    fit = {b["key"]: b for b in inventory.ticker_detail("MU")["boards"]}
+
+    assert fit["module_fundamentals"]["state"] == "cannot"
+    assert fit["module_fundamentals"]["missing"] == ["daily price bars"]
+
+
+def test_a_failed_row_check_is_recorded_once(rawstore_tmp_db, monkeypatch):
+    """A name in no other dataset reaches the row checks twice (the unknown-name test, then the
+    presence): one read, so one failure on the list."""
+    _seed_every_dataset()
+    _fail_reads_of(monkeypatch, "oipd_meta")
+    errors = inventory.ticker_detail("ZZZZ")["errors"]
+    assert [e["table"] for e in errors].count("oipd_meta") == 1
+
+
+
+def test_a_failed_read_of_a_table_the_unknown_name_check_does_not_read_keeps_the_404(rawstore_tmp_db, monkeypatch):
+    """#205 review: any recorded failure blocked the 404, so a failure elsewhere in the call turned a name in no
+    dataset into an empty drill. Only a failed read of a table the check itself reads makes the name unknown."""
+    _seed_every_dataset()
+    real = inventory._sec_file_row
+
+    def sec_file_row(ticker):
+        inventory._record("index_constituents", "_index_floor", RuntimeError("locked"))
+        return real(ticker)
+
+    monkeypatch.setattr(inventory, "_sec_file_row", sec_file_row)
+    assert inventory.ticker_detail("ZZZZ") is None
+    assert inventory.ticker_detail("MU") is not None
+
+
+def test_a_failed_table_list_of_a_file_the_check_reads_makes_an_unknown_name_unknown(rawstore_tmp_db, monkeypatch):
+    """The other half of the rule: a file whose table list failed reads every one of its tables as missing, so a
+    name in no other dataset is unknown, not a 404."""
+    _seed_every_dataset()
+    raw_db = rawstore.MANIFEST["oipd_meta"].get("db", "raw")
+    real = rawstore.query
+
+    def query(sql, *a, **k):
+        if "information_schema.tables" in sql and k.get("db", "raw") == raw_db:
+            raise RuntimeError("locked")
+        return real(sql, *a, **k)
+
+    monkeypatch.setattr(rawstore, "query", query)
+    assert inventory.ticker_detail("ZZZZ") is not None

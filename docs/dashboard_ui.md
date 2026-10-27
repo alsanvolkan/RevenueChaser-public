@@ -166,7 +166,7 @@ hash. The pure logic is `RCFilters.core`, unit-tested under node (`core/tests/te
 | SPX Gamma, UW Interaction | **no** | Date-only / non-equity. |
 | Settings / Data health | **no** | Ops inventory, not an equity board; its ticker drill uses the kit's combobox (C1b). Plan: [`data_health.md`](data_health.md). |
 | Logs | **no** | The dashboard's own log files (`app/logview.py`), read-only: no Fetch, no Refresh, no data date. |
-| Runs | **no** | The run log over `job_runs` (`app/runview.py`), read-only: no Fetch, no Refresh, no data date. One row per job and per scheduled task, newest first, with the trigger as stored (a dash only on rows from before #83; a `running` row the server lost is closed as `lost`, #82). **Problems only** and the name box filter in SQL, not in the page, so the count beneath the table is of the matching runs in the table and not of the page that was read; the line says so when a read hits its limit. |
+| Runs | **no** | The run log over `job_runs` (`app/runview.py`), read-only: no Fetch, no Refresh, no data date. One row per job and per scheduled task, newest first, with the trigger as stored (a dash only on rows from before #83; a `running` row the server lost is closed as `lost`, #82). **Problems only** and the name box filter in SQL, not in the page, so the count beneath the table is of the matching runs in the table and not of the page that was read; the line says so when a read hits its limit. **Show** picks the newest 200 or the newest 1000 (`runview.DEFAULT_LIMIT` / `MAX_LIMIT`). On a phone (under 640 px) each run is a card, one cell per line, and the controls are 44 px; it is dark unless the shell's Theme choice is Light, or Auto on a light device. |
 
 ### The shell on a phone, in light and dark (#184)
 

@@ -960,6 +960,9 @@ Two separate things, deliberately not conflated:
   - in the off-machine folder (`<RAW_STORE_BACKUP_MIRROR>/RevenueChaser-backup`): the `discord_*.duckdb`
     copies (up to 3) and its own `discord_media_mirror/`.
 
+  - in the store folder: the old `.store/discord.duckdb` (and its `.wal`). It stays, allowed by
+    `core/tests/test_store_layout.py` as a retired file, until the owner removes it by hand.
+
   The local leftovers **are still scanned**: the integrity scan below walks every file of the backup
   folder and re-hashes each one its manifest lists, these included (some two thousand attachment files). So
   the night after they are deleted by hand, the scan reports every one of them as

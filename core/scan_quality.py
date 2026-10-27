@@ -78,7 +78,6 @@ def no_data_payload(base: dict, reason: str, drops: dict[str, int] | None = None
                     shortlisted: int = 0) -> dict:
     """``base`` is a build_payload result; mark it as an explicit empty state."""
     out = dict(base)
-    out["is_fixture"] = False
     out["no_data"] = True
     out["no_data_reason"] = reason
     out["no_data_message"] = no_data_message(reason, drops, shortlisted)

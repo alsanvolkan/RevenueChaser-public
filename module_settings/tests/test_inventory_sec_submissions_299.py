@@ -48,7 +48,7 @@ def test_the_last_run_against_the_universe_ciks(rawstore_tmp_db):
     assert row["rows"] == 3 and row["last_date"] == "2026-06-02"
     assert row["holes"] == 1
     assert row["note"].startswith("last run 20")
-    assert "2 of 3 universe CIKs refreshed" in row["note"]
+    assert "2 of 3 universe companies refreshed" in row["note"]
     assert "3 CIKs with filings; newest filing 2026-06-02" in row["note"]
 
 

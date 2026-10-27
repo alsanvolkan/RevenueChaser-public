@@ -18,6 +18,7 @@ Data Health S11 (#80, #124) re-captured it: the Swing and Fundamentals Fetch pay
 else differed.
 #49 A2 removed the Swing payload's dead ``is_fixture`` key (``demo_payload`` was its only setter); only that key left
 the golden, edited by hand.
+#49 finished it for Fundamentals (and ``no_data_payload``): its ``is_fixture: false`` left the golden the same way.
 To re-capture on another commit, run this file with ``RC_PARITY_CAPTURE=<path>`` (it writes the snapshot there
 instead of comparing).
 """

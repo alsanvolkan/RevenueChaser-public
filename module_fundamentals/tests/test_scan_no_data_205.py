@@ -102,7 +102,7 @@ def test_no_data_anywhere_is_an_explicit_empty_state_not_the_fixture(scan_env, m
 def test_empty_universe_says_so(rawstore_tmp_db, monkeypatch, mod, render):
     monkeypatch.setattr(mod, "fetch_universe_stats", lambda **kw: ([], {}))
     payload = mod.run_scan()
-    assert payload["no_data"] is True and payload["is_fixture"] is False
+    assert payload["no_data"] is True and "is_fixture" not in payload
     assert payload["no_data_reason"] == "no_universe"
     assert "universe" in payload["no_data_message"]
 
@@ -133,9 +133,15 @@ def test_no_universe_warning_has_no_literal_format_marker(rawstore_tmp_db, monke
 def test_the_page_script_keeps_the_server_side_no_data_message_DF111(render, count, tmp_path):
     """DF111 under node: with no candidates render() leaves the server's no-data message alone."""
     from RevenueChaser.core.tests.board_js import run_board_js
-    html = render({"is_fixture": False, "no_data": True, "no_data_message": "No universe stored.",
+    html = render({"no_data": True, "no_data_message": "No universe stored.",
                    "no_data_reason": "", "candidates": [], "data_quality": {"spy_stale": False}})
     assert "No universe stored." in html
     out = run_board_js(html, 'console.log(JSON.stringify({g: (_els["grid"]||{innerHTML:""}).innerHTML, '
                              'c: (_els["count"]||{textContent:"(untouched)"}).textContent}))', tmp_path)
     assert out == {"g": "", "c": count}
+
+
+@pytest.mark.parametrize("mod,render", MODS)
+def test_a_built_payload_carries_no_is_fixture_key(mod, render):
+    """#49: the last producers of the dead ``is_fixture`` key are gone (readers over saved JSON remain)."""
+    assert "is_fixture" not in mod.build_payload([], run_stats={})

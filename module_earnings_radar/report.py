@@ -590,7 +590,10 @@ function renderDecision() {
   if (st) {
     var ctx = [];
     if (d.structure) ctx.push('<div class="struct-row"><b>Regime</b> <span>' + rcEsc(d.structure) + (d.structure_tip ? ' — ' + rcEsc(d.structure_tip) : '') + '</span></div>');
-    if (d.inst_flow_label) ctx.push('<div class="struct-row"><b>Flow</b> <span>' + rcEsc(d.inst_flow_label) + ' · ' + fmtMoney(d.inst_flow_net) + ' net'
+    // A failed flow request measured nothing: its label only, never a "$0 net" beside it.
+    if (d.flow_source === 'failed') ctx.push('<div class="struct-row"><b>Flow</b> <span class="tone-neutral">'
+        + rcEsc(d.inst_flow_label || 'Flow unavailable (provider failure)') + '</span></div>');
+    else if (d.inst_flow_label) ctx.push('<div class="struct-row"><b>Flow</b> <span>' + rcEsc(d.inst_flow_label) + ' · ' + fmtMoney(d.inst_flow_net) + ' net'
         + (d.inst_flow_prints ? ' · ' + d.inst_flow_prints + ' prints' : '')
         + (d.inst_flow_span != null ? ' · ' + d.inst_flow_span + 'h' : '') + '</span></div>');
     if (d.leaps && d.leaps !== 'N/A') {
@@ -1094,7 +1097,7 @@ def _badge(tone: str, label: str, extra: str = "", icon: str = "", title: str = 
     return f'<span class="{cls}"{tip}>{ic}{esc(label)}</span>'
 
 
-def _quadrant_badge(quadrant: str, score: float) -> str:
+def _quadrant_badge(quadrant: str) -> str:
     if not quadrant:
         return '<span class="badge bd-I tone-info">N/A</span>'
     lead = quadrant in ("LEADING", "IMPROVING")
@@ -1115,8 +1118,9 @@ def _conf_cell(confidence: float) -> str:
         c = "#d2991d"
     else:
         c = "#f85149"
-    tip = ("Coverage = how much of the decision-relevant data fired (weighted) × "
-           "(1 − disagreement). NOT a hit rate. −20% only when R3 and R7 oppose.")
+    tip = ("Coverage = the weight of the direction rules that returned data (each × its own coverage) ÷ the weight of "
+           "ALL four direction rules, × (1 − disagreement). A missing rule counts as 0 and lowers it. "
+           "NOT a hit rate. −20% only when R3 and R7 oppose.")
     pct = max(0.0, min(100.0, confidence))
     return (f'<span class="num" style="display:inline-block;min-width:34px">'
             f'<span style="font-size:10px;font-weight:600;color:{c}" title="{tip}">{confidence:.0f}%</span>'
@@ -1330,7 +1334,7 @@ def _action_tip(card) -> str:
         return (f"|dir| ≥ 18 but R4 vol-edge {v:.0f} < 50 "
                 "(small EM / long gamma / no edge) -> shares or defined risk.")
     if a == "WATCH_LOW_COVERAGE":
-        return "Weighted rule coverage (R2/R3/R7) < 50%. Coverage is not a hit rate."
+        return "Weighted rule coverage (R2/R3/R7/R8, a missing rule counts as 0) < 50%. Coverage is not a hit rate."
     if a == "WATCH":
         return "Composite direction |dir| < 12 (R2/R3/R7) — no edge."
     if a == "DIRECTIONAL_WATCH":
@@ -1624,13 +1628,16 @@ def _methodology_tables(filter_stats: dict = None) -> str:
     for rule, wt, what, src in rule_rows:
         h += f'<tr><td style="color:#c9d1d9;font-weight:600">{rule}</td><td>{wt}</td><td style="color:#8b949e">{what}</td><td style="color:#8b949e;font-size:10px">{src}</td></tr>'
     h += '</table>'
-    h += '<p style="color:#8b949e;font-size:10px;margin-top:4px">Direction comes from R2/R3/R7 and the R8 retail-call momentum; R5 is a tag (never a vote), R4/R6 vehicle/veto. Unavailable rules drop their weight — no 0 fill.</p>'
+    h += '<p style="color:#8b949e;font-size:10px;margin-top:4px">Direction comes from R2/R3/R7 and the R8 retail-call momentum; R5 is a tag (never a vote), R4/R6 vehicle/veto. Unavailable rules drop out of the direction score (no 0 fill), but they still count against Coverage %.</p>'
 
     h += '<h3 style="color:#58a6ff;font-size:13px;margin:20px 0 8px">What Is Coverage %?</h3>'
     h += '<div style="font-size:11px;color:#8b949e;line-height:1.6">'
     h += (f'<b>Coverage = 100 × (Σ weight × rule coverage) / (Σ all direction weights '
-          f'({_DIRECTION_WEIGHT_SUM:.2f})) × (1 − disagreement)</b><br><br>')
-    h += 'This is <b>not a hit rate</b>. An 80 does not mean “right 80% of the time.” It means most direction rules returned data and did not disagree on sign.<br>'
+          f'({_DIRECTION_WEIGHT_SUM:.2f})) × (1 − disagreement)</b><br>')
+    h += ('The sum on top runs over the rules that returned data; the denominator is always all four direction rules '
+          '(R2, R3, R7, R8), whether or not they returned data. Example: with R8 missing and R2, R3, R7 fully '
+          'covered, Coverage = 0.55 / 0.65 = 84.6%, not 100%.<br><br>')
+    h += 'This is <b>not a hit rate</b>. An 80 does not mean “right 80% of the time.” It means most of the direction weight returned data and R3 and R7 did not disagree on sign.<br>'
     h += '· <b>Disagreement penalty:</b> −20% only when R3 (GAAP quality) and R7 (cash vs NI) land on opposite signs.<br>'
     h += '· <span style="color:#3fb950">≥50%</span> — enough rules fired to act on coverage grounds.<br>'
     h += '· <span style="color:#d2991d">25–49%</span> — thin coverage or mixed signs → WATCH_LOW_COVERAGE.<br>'
@@ -1803,7 +1810,7 @@ def export_html(cards: list, calendar_events: list[dict] = None, nrc_results: di
                 "ticker": f'<span class="ticker">{th}</span>{_hard_block_icon(card)}{excl_tag}',
                 "name": name,
                 "sector": sect,
-                "rotation": _quadrant_badge(card.rotation_quadrant, card.rotation_score),
+                "rotation": _quadrant_badge(card.rotation_quadrant),
                 "cov": _conf_cell(card.confidence_score),
                 "bias": _bias_cell(bias_display, card.direction_score),
                 "action": (f'<span class="badge tone-{act_tone}" style="font-size:9px" title="{_action_tip(card)}">'
@@ -1927,6 +1934,7 @@ def export_html(cards: list, calendar_events: list[dict] = None, nrc_results: di
             "structure": c.gex_structure or "",
             "structure_tip": _gamma_regime_tip(c) if c.gex_structure else "",
             "inst_flow_label": c.inst_flow_label or "",
+            "flow_source": c.flow_source or "",
             "inst_flow_net": c.inst_flow_net or 0,
             "inst_flow_tone": c.inst_flow_tone or "",
             "inst_flow_prints": getattr(c, "inst_flow_prints", 0) or 0,

@@ -76,7 +76,7 @@ def seeded(rawstore_tmp_db, monkeypatch):
 def test_refresh_with_no_stored_universe_makes_no_screener_call(rawstore_tmp_db, yf_calls, mod, render, scores, cfg):
     payload = mod.run_scan(no_fetch=True)
     assert yf_calls == []
-    assert payload["no_data"] is True and payload["is_fixture"] is False
+    assert payload["no_data"] is True and "is_fixture" not in payload
     assert payload["no_data_reason"] == "no_universe_stored"
     assert "No stored universe yet" in payload["no_data_message"]
     assert "Fetch Universe" in payload["no_data_message"]

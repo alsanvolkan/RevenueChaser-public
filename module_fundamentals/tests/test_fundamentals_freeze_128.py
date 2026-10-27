@@ -23,7 +23,7 @@ def _cand(ticker, ro40, multiplier=2, **kw):
 
 
 def _payload(candidates, **kw):
-    p = {"is_fixture": False, "no_data": False, "data_quality": {"spy_stale": False},
+    p = {"no_data": False, "data_quality": {"spy_stale": False},
          "candidates": candidates}
     p.update(kw)
     return p

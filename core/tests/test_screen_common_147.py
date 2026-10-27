@@ -147,7 +147,7 @@ class Board:
     def build_payload(self, results, top_n=None, run_stats=None):
         self.payload_calls.append({"results": results, "top_n": top_n, "run_stats": run_stats})
         return {"results": sorted(r["ticker"] for r in results), "run_stats": run_stats, "top_n": top_n,
-                "no_data": False, "is_fixture": False}
+                "no_data": False}
 
     def run(self, **kw):
         args = dict(board="test", refreshed_by="Test Board", cfg=self.cfg, load_universe=self.load_universe,
@@ -177,7 +177,7 @@ def test_the_universe_is_loaded_with_the_callers_flags(board):
 def test_an_empty_universe_is_an_explicit_empty_state_and_does_nothing_else(monkeypatch, no_fetch, reason):
     b = Board(monkeypatch, rows=[])
     payload = b.run(no_fetch=no_fetch)
-    assert payload["no_data"] is True and payload["is_fixture"] is False
+    assert payload["no_data"] is True and "is_fixture" not in payload
     assert payload["no_data_reason"] == reason
     assert b.payload_calls == [{"results": [], "top_n": None, "run_stats": {}}]
     assert b.compute_calls == [] and b.persisted == [] and b.spy_loads == 0

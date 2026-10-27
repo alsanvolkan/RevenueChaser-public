@@ -459,6 +459,8 @@ def _write_atomic(path, data: bytes) -> Path:
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, path)
     except BaseException:
         try:

@@ -1151,8 +1151,10 @@ def api_settings_ticker(ticker: str):
     """Store-only per-ticker drill for the Settings board.
 
     Reads ``raw.duckdb`` / ``edgar.duckdb`` and nothing else: no job, no network,
-    no credentials. An unknown ticker is a plain 404 ``{"ok": false}``; one that is
-    not ticker-shaped is a 400; a failed store read is a 500 with ``error: "store read failed"``.
+    no credentials. An unknown ticker (no row anywhere, every read answering) is a plain 404
+    ``{"ok": false}``; one that is not ticker-shaped is a 400; a read that fails inside the drill
+    is a 200 whose ``errors`` name it (#143), never a 404; a drill that raises is a 500 with
+    ``error: "store read failed"``.
     """
     from RevenueChaser.module_settings import inventory
 
@@ -1290,13 +1292,24 @@ def api_logs():
     return jsonify(data)
 
 
+_OFF_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+def _query_flag(name: str) -> bool:
+    """A query-string switch: absent is off, ``0`` / ``false`` / ``no`` / ``off`` are off, anything else
+    is on, a bare ``?name`` and an empty ``?name=`` included. No other route had such a helper (#131)."""
+    value = request.args.get(name)
+    return value is not None and value.strip().lower() not in _OFF_VALUES
+
+
 @app.route("/api/runs")
 def api_runs():
     """The Runs tab's poll: the newest ``job_runs`` rows (#26 PL5-b). Read-only, and lenient on a store
     that holds no rows yet. ``problems`` and ``q`` filter in SQL, so the count the page shows is the count
-    of matching runs in the table and not of the page it happens to have read."""
+    of matching runs in the table and not of the page it happens to have read.
+    An empty ``?problems=`` counts as on, as a bare ``?problems`` does (intended; ``_query_flag``)."""
     return jsonify(runview.read(request.args.get("limit", runview.DEFAULT_LIMIT),
-                                problems=request.args.get("problems") is not None,
+                                problems=_query_flag("problems"),
                                 query=request.args.get("q")))
 
 
