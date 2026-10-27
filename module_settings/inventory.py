@@ -8,6 +8,7 @@ dash, but one of the named states the registry justifies (S5b, G3). See ``docs/d
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import threading
@@ -68,6 +69,8 @@ def _begin_call() -> None:
     _CALL.columns = {}
     _CALL.errors = []
     _CALL.summaries = {}
+    _CALL.max_values = {}
+    _CALL.failed_dbs = set()
 
 
 def _end_call() -> None:
@@ -75,6 +78,8 @@ def _end_call() -> None:
     _CALL.columns = None
     _CALL.errors = None
     _CALL.summaries = None
+    _CALL.max_values = None
+    _CALL.failed_dbs = None
 
 
 def _summary(key: str, fn, *args):
@@ -173,6 +178,9 @@ def _existing_tables(db: str) -> set[str]:
     except Exception as exc:  # noqa: BLE001 - recorded (F4), degrades to "no data"
         _record(f"db:{db}", "_existing_tables", exc)
         names = set()
+        failed = getattr(_CALL, "failed_dbs", None)
+        if failed is not None:   # the drill reads every table in this file as unknown, not absent (#143)
+            failed.add(db)
     if cache is not None:
         cache[db] = names
     return names
@@ -183,6 +191,21 @@ def _table_exists(name: str) -> bool:
     if name not in rawstore.MANIFEST:
         return False
     return name in _existing_tables(_db_of(name))
+
+
+def _file_unreadable(name: str) -> bool:
+    """Whether this call could not read the table list of ``name``'s store file (#143).
+
+    A locked or broken file fails on its table list first, so ``_table_exists`` is False for every
+    table in it; the drill must read those tables as unknown, never as absent.
+    """
+    return name in rawstore.MANIFEST and _db_of(name) in (getattr(_CALL, "failed_dbs", None) or ())
+
+
+def _absent(table: str, empty: dict) -> dict:
+    """The presence record of a table ``_table_exists`` did not find: absent, or unknown when its
+    file's table list could not be read."""
+    return dict(empty, error=True) if _file_unreadable(table) else empty
 
 
 def _existing_columns(table: str) -> set[str]:
@@ -246,13 +269,29 @@ def _max_value_or_raise(table: str, column: str):
     """Newest value of ``column`` in ``table``; ``None`` when the table is not in this store.
 
     A failed query raises, so the caller can tell a broken read from a table with no rows
-    (``_max_value`` is the swallowing form the row builders use).
+    (``_max_value`` is the swallowing form the row builders use). Inside one call the answer,
+    or the failure, is kept: the row's ``last_date`` and its Fresh cell are one read (#150).
     """
-    if not _table_exists(table):
-        return None
-    rows = rawstore.query(
-        f"SELECT MAX({column}) AS m FROM {table}", db=_db_of(table))
-    return rows[0].get("m") if rows else None
+    cache = getattr(_CALL, "max_values", None)
+    if cache is not None and (table, column) in cache:
+        value, exc = cache[(table, column)]
+        if exc is not None:
+            raise exc
+        return value
+    try:
+        if not _table_exists(table):
+            value = None
+        else:
+            rows = rawstore.query(
+                f"SELECT MAX({column}) AS m FROM {table}", db=_db_of(table))
+            value = rows[0].get("m") if rows else None
+    except Exception as exc:
+        if cache is not None:
+            cache[(table, column)] = (None, exc)
+        raise
+    if cache is not None:
+        cache[(table, column)] = (value, None)
+    return value
 
 
 def _max_value(table: str, column: str):
@@ -391,7 +430,7 @@ def _price_bars_row(now: datetime) -> dict:
     check_txt = _fmt_date(check) if check is not None else DASH
     default["note"] = (
         f"newest {h.get('newest_session') or DASH} vs latest complete "
-        f"{h.get('latest_complete') or DASH}; UW {int(share.get('uw', 0))} / "
+        f"{h.get('latest_complete') or DASH}; Unusual Whales {int(share.get('uw', 0))} / "
         f"yfinance {int(share.get('yfinance', 0))}; {int(h.get('actions_last_5', 0))} actions in the "
         f"last 5 sessions; last check {check_txt}")
     return default
@@ -452,7 +491,7 @@ def _index_levels_row(now: datetime) -> dict:
 # The eight fields G2-29 measured per source (phase2/06_interface.md §6); the note lists their fill.
 _VENDOR_FILL_FIELDS = ("revenue", "gross_profit", "operating_income", "ebitda", "net_income", "interest_expense",
                        "total_assets", "operating_cash_flow")
-_VENDOR_SOURCE_LABELS = {"uw": "UW", "yfinance": "yfinance"}
+_VENDOR_SOURCE_LABELS = {"uw": "Unusual Whales", "yfinance": "yfinance"}
 
 
 def _vendor_row(now: datetime) -> dict:
@@ -518,7 +557,7 @@ def _quotes_row() -> dict:
         return default
     rows = h["rows"]
     note = (f"newest {h['newest_session']}: yfinance {rows.get(quotes.SOURCE_YAHOO, 0)} / "
-            f"UW {rows.get(quotes.SOURCE_UW, 0)} of {h['universe']} universe; {h['gaps']} caps more than "
+            f"Unusual Whales {rows.get(quotes.SOURCE_UW, 0)} of {h['universe']} universe; {h['gaps']} caps more than "
             f"{quotes.CAP_GAP_PCT}% apart")
     if h["gap_examples"]:
         note += f" ({', '.join(h['gap_examples'])})"
@@ -528,7 +567,7 @@ def _quotes_row() -> dict:
     return default
 
 
-_HOLDINGS_PROVIDERS = (("uw", "UW"), ("yfinance", "yfinance"))
+_HOLDINGS_PROVIDERS = (("uw", "Unusual Whales"), ("yfinance", "yfinance"))
 
 
 def _etf_holdings_row() -> dict:
@@ -558,7 +597,7 @@ def _etf_holdings_row() -> dict:
                        if p in h["providers"])
     parts = [f"{h['in_newest']} of {h['expected']} ETFs on session {h['newest_session'] or DASH}",
              share or "no provider recorded",
-             f"RS stored {h['rs_stored']} of {h['themes']} theme ETFs"]
+             f"relative strength stored {h['rs_stored']} of {h['themes']} theme ETFs"]
     if h["missing"]:
         named = ", ".join(h["missing"][:8])
         parts.append(f"no holdings: {named}" + (f" and {len(h['missing']) - 8} more" if len(h["missing"]) > 8 else ""))
@@ -615,10 +654,13 @@ def _provenance() -> dict[str, str]:
     return out
 
 
-def _exists_row(table: str, ticker: str) -> bool:
-    """Whether ``table`` has a row for ``ticker`` (cross-file safe, no network)."""
+def _exists_row(table: str, ticker: str) -> bool | None:
+    """Whether ``table`` has a row for ``ticker`` (cross-file safe, no network).
+
+    ``None`` when the read failed (recorded): unknown, never "no row" (#143, the G3 rule).
+    """
     if not _table_exists(table):
-        return False
+        return None if _file_unreadable(table) else False
     try:
         rows = rawstore.query(
             f"SELECT 1 FROM {table} WHERE ticker = ? LIMIT 1",
@@ -626,21 +668,21 @@ def _exists_row(table: str, ticker: str) -> bool:
         return bool(rows)
     except Exception as exc:  # noqa: BLE001
         _record(table, "_exists_row", exc)
-        return False
+        return None
 
 
 def _swing_presence(ticker: str) -> dict:
     """Bar count + newest ``ts`` for ``ticker`` in ``swing_ohlc`` (the SPY-fallback cache)."""
     empty = {"bars": 0, "newest": None}
     if not _table_exists("swing_ohlc"):
-        return empty
+        return _absent("swing_ohlc", empty)
     try:
         rows = rawstore.query(
             "SELECT COUNT(*) AS n, MAX(ts) AS newest FROM swing_ohlc WHERE ticker = ?",
             [ticker], db=_db_of("swing_ohlc"))
     except Exception as exc:  # noqa: BLE001
         _record("swing_ohlc", "_swing_presence", exc)
-        return empty
+        return dict(empty, error=True)
     row = rows[0] if rows else {}
     return {"bars": int(row.get("n") or 0), "newest": row.get("newest")}
 
@@ -656,14 +698,14 @@ def _d01_presence(ticker: str) -> dict:
     """
     empty = {"bars": 0, "newest": None}
     if not _table_exists("price_bars_daily"):
-        return empty
+        return _absent("price_bars_daily", empty)
     try:
         rows = rawstore.query(
             "SELECT COUNT(*) AS n, MAX(session_date) AS newest FROM price_bars_daily WHERE ticker = ?",
             [ticker], db=_db_of("price_bars_daily"))
     except Exception as exc:  # noqa: BLE001
         _record("price_bars_daily", "_d01_presence", exc)
-        return empty
+        return dict(empty, error=True)
     row = rows[0] if rows else {}
     newest = row.get("newest")
     if newest is not None:
@@ -678,14 +720,14 @@ def _presence(table: str, ticker: str, *, date_column: str, count_key: str = "ro
 
     The same shape as :func:`_d01_presence` — the count under ``count_key``, ``newest`` as
     ``YYYY-MM-DD`` — plus the newest row's ``source_column`` when asked. A table this store does
-    not carry, or a failed query, reads as no rows (recorded, never raised): a board's absence
-    must not break the drill.
+    not carry reads as no rows; a failed query is recorded and carries ``error: True``, so it reads
+    "could not read", never as no rows (#143). Neither raises: a board's absence must not break the drill.
     """
     empty = {count_key: 0, "newest": None}
     if source_column:
         empty["source"] = None
     if not _table_exists(table):
-        return empty
+        return _absent(table, empty)
     source = f", arg_max({source_column}, {date_column}) AS src" if source_column else ""
     try:
         rows = rawstore.query(
@@ -693,7 +735,7 @@ def _presence(table: str, ticker: str, *, date_column: str, count_key: str = "ro
             [ticker], db=_db_of(table))
     except Exception as exc:  # noqa: BLE001
         _record(table, "_presence", exc)
-        return empty
+        return dict(empty, error=True)
     row = rows[0] if rows else {}
     newest = _fmt_date(row.get("newest"))
     out = {count_key: int(row.get("n") or 0), "newest": None if newest == DASH else newest}
@@ -710,13 +752,13 @@ def _quote_presence(ticker: str) -> dict:
     """
     empty = {"rows": 0, "newest": None, "source": None}
     if not _table_exists("quote_snapshot"):
-        return empty
+        return _absent("quote_snapshot", empty)
     from RevenueChaser.core import quotes
     try:
         got = quotes.latest_caps([ticker]).get(ticker) or {}
     except Exception as exc:  # noqa: BLE001
         _record("quote_snapshot", "_quote_presence", exc)
-        return empty
+        return dict(empty, error=True)
     if not got:
         return empty
     newest = _fmt_date(got.get("session_date"))
@@ -734,12 +776,12 @@ def _edgar_presence(ticker: str) -> dict:
     """
     empty = {"periods": 0, "newest": None}
     if not _table_exists("edgar_financials"):
-        return empty
+        return _absent("edgar_financials", empty)
     try:
         row = rawstore.get("edgar_financials", ticker)
     except Exception as exc:  # noqa: BLE001
         _record("edgar_financials", "_edgar_presence", exc)
-        return empty
+        return dict(empty, error=True)
     if not row:
         return empty
     annual = [r for r in (row.get("annual") or []) if isinstance(r, dict)]
@@ -773,7 +815,7 @@ _DRILL_TABLE_LABELS = {
     "vendor_financials": "vendor financials",
     "edgar_financials": "EDGAR facts",
     "ownership_snapshot": "ownership",
-    "swing_ohlc": "legacy OHLC cache (SPY fallback)",
+    "swing_ohlc": "legacy daily open/high/low/close cache (SPY fallback)",
     "oipd_meta": "Implied Probability chain",
     "relatedness_profiles": "Relatedness profile",
 }
@@ -788,24 +830,51 @@ def _rows_stored(record) -> bool:
     return any(int(record.get(key) or 0) for key in ("bars", "rows", "periods"))
 
 
+def _unreadable(presence: dict, key: str) -> bool:
+    """Whether the drill's read of ``key`` failed: a record flagged ``error`` or a row check that
+    answered ``None`` (#143). A key the presence does not carry is not a failure."""
+    if key not in presence:
+        return False
+    record = presence[key]
+    return record is None or (isinstance(record, dict) and bool(record.get("error")))
+
+
 def _board_fit(presence: dict) -> list[dict]:
     """One entry per registered board: can it score this name, from the presence the drill read.
 
     ``can`` when every table the board reads is measured by this drill and has a row; ``cannot``
     names the measured tables without a row, in plain words; ``not_checked`` when the board reads
-    a table this drill does not measure (or reads none), because the drill does not know. Nav
-    order. One pass over ``presence``: no table is queried again here.
+    a table this drill does not measure (or reads none), because the drill does not know;
+    ``unreadable`` names the measured tables whose read failed (#143): a failed read is not a
+    missing row, so it is never "can" or "cannot" on its own; a board that also misses a readable
+    table still says ``cannot``, because that much is known. Nav order. One pass over
+    ``presence``: no table is queried again here.
     """
     measured = {table: _rows_stored(presence.get(_PRESENCE_KEY.get(table, table)))
                 for table in _DRILL_TABLE_LABELS}
+    failed = {table for table in _DRILL_TABLE_LABELS
+              if _unreadable(presence, _PRESENCE_KEY.get(table, table))}
     out = []
     for entry in boards.BOARD_INPUTS:
         tables = list(entry.get("tables") or [])
-        if not tables or any(table not in measured for table in tables):
+        all_measured = bool(tables) and all(table in measured for table in tables)
+        missing = [_DRILL_TABLE_LABELS[table] for table in tables
+                   if table in measured and table not in failed and not measured[table]]
+        unreadable = [_DRILL_TABLE_LABELS[table] for table in tables if table in failed]
+        # A readable table with no row is known: the board cannot score the name, whatever else failed.
+        if all_measured and missing:
+            out.append({"key": entry.get("key"), "label": entry.get("label"),
+                        "state": "cannot", "missing": missing})
+            continue
+        # Otherwise a failed read is said, even on a board the drill cannot fully check: it is the fact.
+        if unreadable:
+            out.append({"key": entry.get("key"), "label": entry.get("label"),
+                        "state": "unreadable", "missing": [], "unreadable": unreadable})
+            continue
+        if not all_measured:
             out.append({"key": entry.get("key"), "label": entry.get("label"),
                         "state": "not_checked", "missing": []})
             continue
-        missing = [_DRILL_TABLE_LABELS[table] for table in tables if not measured[table]]
         out.append({"key": entry.get("key"), "label": entry.get("label"),
                     "state": "cannot" if missing else "can", "missing": missing})
     return out
@@ -861,6 +930,9 @@ def _ticker_detail(ticker: str) -> dict | None:
     edgar = _edgar_presence(t)
     ownership = _presence("ownership_snapshot", t, date_column="session_date", source_column="source")
     swing = _swing_presence(t)
+    # Read once: the unknown-name test below and the presence both use them (one failure, one entry).
+    oipd = _exists_row("oipd_meta", t)
+    related = _exists_row("relatedness_profiles", t)
 
     if not any(x is not None for x in (universe, master, sec, sic, filing)) \
             and not edgar["periods"] \
@@ -869,8 +941,9 @@ def _ticker_detail(ticker: str) -> dict | None:
             and not vendor["rows"] \
             and not ownership["rows"] \
             and swing["bars"] == 0 \
-            and not _exists_row("oipd_meta", t) \
-            and not _exists_row("relatedness_profiles", t):
+            and not oipd \
+            and not related \
+            and not getattr(_CALL, "errors", None):   # a failed read is not "absent" (#143)
         return None
 
     # The identity spine's CIK is the current one; the older tables stay the fallback.
@@ -885,8 +958,8 @@ def _ticker_detail(ticker: str) -> dict | None:
         "vendor_financials": vendor,
         "ownership_snapshot": ownership,
         "swing_ohlc": swing,
-        "oipd_meta": _exists_row("oipd_meta", t),
-        "relatedness_profiles": _exists_row("relatedness_profiles", t),
+        "oipd_meta": oipd,
+        "relatedness_profiles": related,
         # The latest stored annual filing, the row the drill shows as "Last 10-K / 20-F".
         "chain_filings": filing is not None,
         # One universe definition: the very list the boards read (cap floor and
@@ -913,6 +986,8 @@ def _ticker_detail(ticker: str) -> dict | None:
         "presence": presence,
         # Which boards can score this name, from the presence just read — no query per board.
         "boards": _board_fit(presence),
+        # The reads that failed (F4, #143), so a "could not read" names its table and its error.
+        "errors": list(getattr(_CALL, "errors", None) or []),
     }
 
 
@@ -1411,7 +1486,7 @@ def _sec_submissions_row() -> dict:
         "tables": ["sec_submissions", "sec_submissions_cik"],
         "rows": _count("sec_submissions"),
         "last_date": _max_date(("sec_submissions", "filing_date")),
-        "holes": None, "hole_label": "universe CIKs not refreshed in the last run (failed or new)",
+        "holes": None, "hole_label": "universe companies not refreshed in the last run (failed or new)",
         "fetch": {"route": "/run/edgar-sync", "label": "Fetch 10-K sync"},
         "note": "no submissions yet (the daily EDGAR sync stores them)",
     }
@@ -1428,10 +1503,10 @@ def _sec_submissions_row() -> dict:
     if universe is not None:
         refreshed = len(universe & h["last_run_checked"])
         row["holes"] = len(universe - h["last_run_checked"])
-        parts.append(f"last run {_fmt_date(h['last_run_at'])}: {refreshed:,} of {len(universe):,} universe CIKs "
+        parts.append(f"last run {_fmt_date(h['last_run_at'])}: {refreshed:,} of {len(universe):,} universe companies "
                      f"refreshed")
     else:
-        parts.append(f"last run {_fmt_date(h['last_run_at'])}: {h['last_run_ciks']:,} CIKs refreshed")
+        parts.append(f"last run {_fmt_date(h['last_run_at'])}: {h['last_run_ciks']:,} companies refreshed")
     parts.append(f"{h['ciks']:,} CIKs with filings; newest filing {_fmt_date(h['newest_filing_date'])}, "
                  f"newest fetched {_fmt_date(h['newest_fetched_at'])}")
     row["note"] = "; ".join(parts)
@@ -1492,11 +1567,19 @@ def _sec_files_row() -> dict:
 # ``sort_key`` orders the table worst coverage first. A row's own counts, holes, action and note
 # are never touched or replaced here.
 
+def _takes_now(fn) -> bool:
+    """True when ``fn`` accepts a ``now`` argument (the registry's summary callables do; a bare one may not)."""
+    try:
+        return "now" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 # What a coverage with no definable population reads. Never "0%": a percentage of nothing is a lie.
 COVERAGE_NA = "n/a"
 
 
-def _coverage_record(spec: datasets.DatasetSpec, row: dict) -> dict:
+def _coverage_record(spec: datasets.DatasetSpec, row: dict, now: datetime | None = None) -> dict:
     """One dataset's coverage as a renderable record. Never raises.
 
     ``label`` is ``n/a`` when there is no definable population (no ``expected``, zero ``expected``,
@@ -1510,7 +1593,7 @@ def _coverage_record(spec: datasets.DatasetSpec, row: dict) -> dict:
         # The two-query form has no population/presence evaluator here yet (#124): say n/a.
         return dict(empty, label=COVERAGE_NA)
     try:
-        health = coverage()
+        health = coverage(now=now) if _takes_now(coverage) else coverage()
     except Exception as exc:  # noqa: BLE001 - a summary failure must not break the page
         # The summary that just failed is the one the row's own builder already reported: one
         # entry for one cause, so the error list names each failure once.
@@ -1638,7 +1721,7 @@ def _retired_dataset(spec: datasets.DatasetSpec) -> bool:
     return all(bool((rawstore.MANIFEST.get(table) or {}).get("retired")) for table in spec.tables)
 
 
-def _attach_registry(rows: list[dict]) -> list[dict]:
+def _attach_registry(rows: list[dict], now: datetime | None = None) -> list[dict]:
     """Add the registry's source, writer, coverage, freshness and gap to each collected row (S5, #124).
 
     A row whose key is not in ``datasets.REGISTRY`` keeps everything it carries and gains
@@ -1650,6 +1733,9 @@ def _attach_registry(rows: list[dict]) -> list[dict]:
     (the written sentence, or None) and ``retired`` (every owned table is MANIFEST retired, so the
     detail row says "nothing, by design"). ``gap_kind`` is None when nothing is written down; the
     renderer must not read that as complete.
+
+    ``now`` is the collect's clock, handed to each coverage that takes one, so a dated summary is asked
+    the same question the row builder asked and is served from the same memo (#150).
     """
     run_dates: dict[str, str] | None = None
     for row in rows:
@@ -1663,7 +1749,7 @@ def _attach_registry(rows: list[dict]) -> list[dict]:
         row["source"] = spec.source.value
         row["writer"] = spec.writer
         row["writer_note"] = spec.writer_note
-        row["coverage"] = _coverage_record(spec, row)
+        row["coverage"] = _coverage_record(spec, row, now)
         if spec.freshness == datasets.FROM_RUN_LOG and run_dates is None:
             run_dates = _run_log_dates()
         row["fresh"] = _fresh_record(spec, run_dates)
@@ -2153,7 +2239,7 @@ def _collect(now: datetime) -> dict:
         },
         {
             "key": "ohlc",
-            "label": "Legacy OHLC cache (SPY fallback)",
+            "label": "Legacy daily open/high/low/close cache (SPY fallback)",
             "tables": ["swing_ohlc"],
             "rows": _count("swing_ohlc"),
             "last_date": _max_date(("swing_ohlc", "ts")),
@@ -2190,7 +2276,7 @@ def _collect(now: datetime) -> dict:
         },
         {
             "key": "oipd",
-            "label": "OIPD chain",
+            "label": "Implied Probability chain",
             "tables": ["oipd_chain", "oipd_meta"],
             "rows": _sum_counts(["oipd_chain", "oipd_meta"]),
             "last_date": _max_date(("oipd_meta", "as_of")),
@@ -2220,7 +2306,7 @@ def _collect(now: datetime) -> dict:
             "holes": None,
             "hole_label": "",
             "fetch": None,
-            "note": "history.duckdb (#287): one header row per recorded board run",
+            "note": "history.duckdb (alsanvolkan/RevenueChaser#287): one header row per recorded board run",
         },
         _inputs_row(),
     ]
@@ -2228,7 +2314,7 @@ def _collect(now: datetime) -> dict:
     board_cards = boards.board_cards()
     return {
         # Worst coverage first: the rows that need a Fetch are at the top (#124).
-        "rows": sorted(_attach_registry(rows), key=sort_key),
+        "rows": sorted(_attach_registry(rows, now), key=sort_key),
         "tickers": tickers_list,
         "boards": board_cards,
         "identity": identity,

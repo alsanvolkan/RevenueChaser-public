@@ -47,8 +47,9 @@ def test_ok_card(payload_file):
     c = _card()
     assert c["state"] == "ok" and c["error"] is None
     assert c["key"] == "module_comovement" and c["label"] == "Co-movement"
-    assert c["tables"] == ["equity_universe", "swing_ohlc"]
-    assert "dividend-adjusted" in c["price_basis"]
+    # #126: the engine reads the daily price bars since #379, not the legacy swing_ohlc cache.
+    assert c["tables"] == ["equity_universe", "price_bars_daily"]
+    assert "dividend-adjusted" in c["price_basis"] and "yfinance" not in c["price_basis"]
     assert c["as_of"] == "2026-09-25T20:00:00+00:00"
     assert c["window"]["window_start"] == "2025-09-25"
     assert c["window"]["prices_through"] == "2026-09-25"

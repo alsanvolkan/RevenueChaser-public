@@ -81,9 +81,10 @@ The rules that keep an unmeasurable dataset from looking like an empty one:
   there is no newest date, else the whole calendar days from it to `expected_as_of`, or to today when
   no as-of was given. An as-of that cannot be read does **not** fall back to today; it reads `unknown`.
 
-Seven datasets already have a summary in their own module. Their `coverage` is a zero-argument
-callable that imports that module and returns its `Health`, called only when a reader asks for the
-row, so importing the registry opens no store. `memo_scope()` makes the second ask within one page
+Seven datasets already have a summary in their own module. Their `coverage` is a callable that
+imports that module and returns its `Health`, called only when a reader asks for the row, so
+importing the registry opens no store. It takes an optional `now`, the page's own clock, passed on
+to a module whose `health` takes one, so the row and its coverage ask one question (#150). `memo_scope()` makes the second ask within one page
 read free, without a cache that outlives the read.
 
 ### 1.4 The read
@@ -267,8 +268,14 @@ login is what asks for credentials.
 - Every write through the dashboard needs the panel header (`X-RC-Panel`), and
   `POST /api/automations/<name>/<action>` needs exactly `X-RC-Panel: automations`. Without it the
   dashboard answers `403 panel header required` and starts nothing.
-- Per-ticker drill `GET /api/settings/ticker/<t>` — store-only, 404 on an unknown ticker, 500
-  `store read failed` on a failed store read, the shared ticker combobox, and a null market cap
+- Per-ticker drill `GET /api/settings/ticker/<t>` — store-only, 404 on an unknown ticker (no row in
+  any dataset the drill reads, with every read answering), 500 `store read failed` when the drill
+  itself raises. A read that fails inside the drill is recorded, never read as "no row" (#143): the
+  answer is a 200 with `errors` (table and message, printed under "Could not read"), the row reads
+  "could not read", and a board that reads the table says "unknown — could not read …" (state
+  `unreadable`) unless a readable table it needs already has no row, which stays "no — missing …".
+  A store file whose table list cannot be read counts as a failed read for every table in it. The
+  drill also has the shared ticker combobox, and a null market cap
   rendered as "no cap stored (outside the $300M universe or not yet resolved)". It shows **stored**
   data only: it asks neither SEC nor Yahoo. Price coverage in the drill is the daily bar count and
   newest session from `price_bars_daily`; `swing_ohlc` appears as the legacy cache and is not the

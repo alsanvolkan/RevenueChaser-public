@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import copy
 import functools
+import inspect
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -38,14 +39,24 @@ def memo_scope():
 
 
 def scoped(fn):
-    """Memoise ``fn`` while a :func:`memo_scope` is open; outside one it is the plain function."""
+    """Memoise ``fn`` while a :func:`memo_scope` is open; outside one it is the plain function.
+
+    The key is the bound arguments with their defaults applied, so ``f()``, ``f(None)`` and
+    ``f(now=None)`` are one question (#150: the rows asked ``f(now)``, the coverage ``f()``).
+    """
+    signature = inspect.signature(fn)
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         cache = getattr(_MEMO, "cache", None)
         if cache is None:
             return fn(*args, **kwargs)
-        key = (fn.__module__, fn.__qualname__, repr(args), repr(sorted(kwargs.items())))
+        try:
+            bound = signature.bind(*args, **kwargs)
+        except TypeError:
+            return fn(*args, **kwargs)  # let the call itself raise the argument error
+        bound.apply_defaults()
+        key = (fn.__module__, fn.__qualname__, repr(sorted(bound.arguments.items())))
         if key not in cache:
             cache[key] = fn(*args, **kwargs)
         return copy.deepcopy(cache[key])

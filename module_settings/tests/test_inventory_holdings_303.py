@@ -34,8 +34,8 @@ def test_holdings_row_on_a_seeded_store(rawstore_tmp_db):
     assert row["rows"] == 3 and row["last_date"] == "2026-10-09"
     assert row["holes"] == 31
     assert "2 of 34 ETFs on session 2026-10-09" in row["note"]
-    assert "UW 2 / yfinance 1" in row["note"]
-    assert "RS stored 1 of 23 theme ETFs" in row["note"]
+    assert "Unusual Whales 2 / yfinance 1" in row["note"]
+    assert "relative strength stored 1 of 23 theme ETFs" in row["note"]
     assert "no holdings: AIQ" in row["note"]                             # an ETF with no row is named
 
 
