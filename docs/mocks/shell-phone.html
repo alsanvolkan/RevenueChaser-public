@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<!-- Design mock for #184: the dashboard shell on a phone and on a desktop, in light and dark.
+     Static: no script, no data. Open it in a browser; each frame is drawn at its real CSS width
+     (the desktop frames are scaled to half size to fit beside the phones). The token values here are
+     the ones core/reporting_common.THEME_TOKENS ships. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shell on a phone: design mock (#184)</title>
+<style>
+/* ── the two palettes (dark = today's shell, unchanged) ───────────────────── */
+.t-dark{--bg:#05111F;--fg:#C5C6C8;--bright:#F0F0F0;--card:#0B1828;--border:rgba(197,198,200,.15);
+  --sidebar:#0B1828;--pos:#34D399;--neg:#F87171;--amber:#FBBF24;--sky:#0EA5E9;--muted:#9C9DA1;
+  --input-bg:#101F33;--input-border:#2F434C;--hover:#18293a;--topbar:rgba(12,20,24,.8);
+  --nav-fg:rgba(224,233,235,.75);--nav-on:#101F33;--frame-bg:#12131c;--overlay:rgba(5,17,31,.7);
+  --scrim:rgba(0,0,0,.55);--board-panel:#12161e;--board-border:#232a38}
+.t-light{--bg:#F4F6F9;--fg:#2A3340;--bright:#0B1220;--card:#FFFFFF;--border:rgba(15,23,42,.14);
+  --sidebar:#FFFFFF;--pos:#047857;--neg:#B91C1C;--amber:#B45309;--sky:#0369A1;--muted:#5B6472;
+  --input-bg:#FFFFFF;--input-border:#C3CCD8;--hover:#E8EDF3;--topbar:rgba(255,255,255,.85);
+  --nav-fg:#3A4452;--nav-on:#E3EEF8;--frame-bg:#FFFFFF;--overlay:rgba(244,246,249,.75);
+  --scrim:rgba(15,23,42,.35);--board-panel:#FFFFFF;--board-border:#D5DBE3}
+
+/* ── the page that holds the frames ──────────────────────────────────────── */
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#d9dee5;color:#1b2330;font:14px/1.5 "Segoe UI",system-ui,sans-serif;padding:24px}
+@media (prefers-color-scheme: dark){body{background:#0d1117;color:#c9d1d9}}
+h1{font-size:20px;margin-bottom:4px}
+.lede{max-width:72ch;margin-bottom:20px}
+.lede li{margin-left:18px}
+.row{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start;margin-bottom:32px}
+figure{display:flex;flex-direction:column;gap:6px}
+figcaption{font-size:12.5px;font-weight:600}
+
+/* ── a device ────────────────────────────────────────────────────────────── */
+.phone{width:390px;height:780px;border-radius:28px;border:10px solid #111;overflow:hidden;position:relative}
+.desk-wrap{width:640px;height:400px;overflow:hidden;border:6px solid #111;border-radius:10px}
+.desk{width:1280px;height:800px;transform:scale(.5);transform-origin:0 0;position:relative}
+
+/* ── the shell, as #184 builds it ────────────────────────────────────────── */
+.shell{height:100%;background:var(--bg);color:var(--fg);display:grid;grid-template-columns:240px 1fr;font-size:14px}
+.phone .shell{grid-template-columns:1fr;grid-template-rows:auto auto 1fr}
+.side{background:var(--sidebar);border-right:1px solid var(--border);padding:14px 12px;display:flex;flex-direction:column;gap:4px}
+.brand{display:flex;flex-direction:column;align-items:center;padding:4px 0 14px}
+.logo{width:120px;height:120px;border-radius:12px;background:linear-gradient(135deg,#0EA5E9,#34D399)}
+.tag{margin-top:8px;font-size:11px;letter-spacing:3px;color:var(--muted);font-weight:700}
+.nh{font-size:10px;letter-spacing:2px;color:var(--muted);font-weight:700;text-transform:uppercase;padding:10px 12px;min-height:40px;display:flex;align-items:center}
+.ni{height:38px;display:flex;align-items:center;padding:0 12px;border-radius:6px;color:var(--nav-fg);font-weight:500}
+.ni.on{background:var(--nav-on);color:var(--fg)}
+.main{display:flex;flex-direction:column;min-width:0}
+.top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:8px 20px;background:var(--topbar);border-bottom:1px solid var(--border);min-height:56px}
+.btn{background:var(--input-bg);color:var(--fg);border:1px solid var(--input-border);border-radius:6px;height:32px;padding:0 14px;font:600 13px/1 inherit;display:inline-flex;align-items:center;gap:6px}
+.btn.icon{width:32px;padding:0;justify-content:center}
+.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700;background:rgba(52,211,153,.12);color:var(--pos)}
+.badge.sky{background:rgba(14,165,233,.12);color:var(--sky)}
+.sync{color:var(--muted);font-size:13px}
+.sync b{color:var(--fg);font-weight:500}
+.push{margin-left:auto}
+.board{flex:1;background:var(--frame-bg);padding:18px 20px;overflow:hidden}
+.board h2{color:var(--bright);font-size:20px}
+.board p{color:var(--muted);font-size:13px;margin:2px 0 12px}
+.card{background:var(--board-panel);border:1px solid var(--board-border);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+.card .k{color:var(--muted);font-size:12px}
+.card .v{color:var(--bright);font-size:20px;font-weight:700}
+
+/* phone: 44 px targets, the drawer, the status row */
+.phone .btn{height:44px;font-size:14px}
+.phone .btn.icon{width:44px}
+.phone .nh{min-height:44px}
+.phone .ni{height:44px}
+.phone .top{padding:8px 12px;gap:8px}
+.phone .status{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;padding:6px 12px;border-bottom:1px solid var(--border);font-size:12px}
+.phone .status .sync{font-size:12px}
+.phone .side{position:absolute;inset:0 auto 0 0;width:300px;z-index:3;box-shadow:4px 0 24px rgba(0,0,0,.35);transform:translateX(-100%)}
+.phone.open .side{transform:none}
+.scrim{display:none}
+.phone.open .scrim{display:block;position:absolute;inset:0;background:var(--scrim);z-index:2}
+.title{font-weight:700;color:var(--bright);font-size:15px}
+.note{font-size:12px;max-width:390px}
+.note b{font-weight:700}
+</style>
+</head>
+<body>
+<h1>The shell on a phone, in light and dark</h1>
+<div class="lede">
+  <p>Design mock for #184 (shell only: every board keeps its own layout inside its iframe until its own PR).
+    What changes, and what does not:</p>
+  <ul>
+    <li><b>Under 900 px</b> the 240 px sidebar becomes a drawer. A ☰ button opens it; a tab, the scrim or Escape closes it.</li>
+    <li>The board iframe is as wide as the pane and never grown past it, so the <b>page</b> never scrolls sideways.
+      A board wider than a phone scrolls inside its own frame until its PR restacks it.</li>
+    <li>On a phone or a touch screen every shell control is <b>44 px</b>: buttons, inputs, nav items, nav headers.
+      A mouse on a desktop keeps today's 32 / 38 / 40 px.</li>
+    <li>The badges and sync times move to a second, wrapping status line on a phone; on a desktop they stay in the top bar.</li>
+    <li><b>Theme:</b> dark by default on every device (avo, 25 Oct 2026); a "Theme: Dark / Light / Auto" button at the foot of the sidebar (in the drawer on a phone, so it costs the top bar no row) chooses Light, or Auto to follow the device (<code>prefers-color-scheme</code>)
+      stored in <code>localStorage</code>. Dark is today's palette, value for value.</li>
+  </ul>
+</div>
+
+<div class="row">
+  <figure>
+    <figcaption>390 px · dark · drawer closed</figcaption>
+    <div class="phone t-dark">
+      <div class="shell">
+        <aside class="side">
+          <div class="nh">Boards</div><div class="ni on">Earnings Radar</div><div class="ni">Sector Rotation</div>
+        
+          <span class="btn" style="margin-top:12px">Theme: Dark</span>
+        </aside>
+        <div class="main">
+          <div class="top">
+            <span class="btn icon" aria-label="Menu">☰</span>
+            <span class="title">Earnings Radar</span>
+            <span class="btn push">Refresh Tab</span>
+            
+          </div>
+        </div>
+        <div class="status"><span class="badge">Regime: on</span><span class="badge sky">US-listed only</span>
+          <span class="sync">Data: <b>Fri 24 Oct</b></span><span class="sync">Last run: <b>18:02</b></span></div>
+        <div class="board"><h2>Earnings Radar</h2><p>Board content, full pane width.</p>
+          <div class="card"><div class="k">Reporting this week</div><div class="v">142</div></div>
+          <div class="card"><div class="k">Beats</div><div class="v">61%</div></div></div>
+      </div>
+    </div>
+  </figure>
+
+  <figure>
+    <figcaption>390 px · dark · drawer open</figcaption>
+    <div class="phone t-dark open">
+      <div class="shell">
+        <aside class="side">
+          <div class="brand"><div class="logo"></div><div class="tag">REVENUE CHASER</div></div>
+          <div class="nh">Earnings ▾</div><div class="ni on">Earnings Radar</div><div class="ni">Implied Probability</div>
+          <div class="nh">Flows ▾</div><div class="ni">Sector Rotation</div><div class="ni">SEC 13F</div>
+          <div class="nh">Ops ▾</div><div class="ni">Settings</div><div class="ni">Runs</div><div class="ni">Logs</div>
+        
+          <span class="btn" style="margin-top:12px">Theme: Dark</span>
+        </aside>
+        <div class="scrim"></div>
+        <div class="main">
+          <div class="top"><span class="btn icon">☰</span><span class="title">Earnings Radar</span>
+            <span class="btn push">Refresh Tab</span></div>
+        </div>
+        <div class="status"><span class="badge">Regime: on</span></div>
+        <div class="board"><h2>Earnings Radar</h2></div>
+      </div>
+    </div>
+  </figure>
+
+  <figure>
+    <figcaption>390 px · light · drawer closed</figcaption>
+    <div class="phone t-light">
+      <div class="shell">
+        <aside class="side"></aside>
+        <div class="main">
+          <div class="top"><span class="btn icon">☰</span><span class="title">Earnings Radar</span>
+            <span class="btn push">Refresh Tab</span></div>
+        </div>
+        <div class="status"><span class="badge">Regime: on</span><span class="badge sky">US-listed only</span>
+          <span class="sync">Data: <b>Fri 24 Oct</b></span><span class="sync">Last run: <b>18:02</b></span></div>
+        <div class="board"><h2>Earnings Radar</h2><p>Drawn here with the shared tokens; a board that has not
+          adopted them yet keeps its own palette inside the frame until its PR.</p>
+          <div class="card"><div class="k">Reporting this week</div><div class="v">142</div></div></div>
+      </div>
+    </div>
+  </figure>
+
+  <figure>
+    <figcaption>390 px · light · drawer open</figcaption>
+    <div class="phone t-light open">
+      <div class="shell">
+        <aside class="side">
+          <div class="brand"><div class="logo"></div><div class="tag">REVENUE CHASER</div></div>
+          <div class="nh">Earnings ▾</div><div class="ni on">Earnings Radar</div><div class="ni">Implied Probability</div>
+          <div class="nh">Flows ▾</div><div class="ni">Sector Rotation</div><div class="ni">SEC 13F</div>
+          <div class="nh">Ops ▾</div><div class="ni">Settings</div><div class="ni">Runs</div><div class="ni">Logs</div>
+        
+          <span class="btn" style="margin-top:12px">Theme: Light</span>
+        </aside>
+        <div class="scrim"></div>
+        <div class="main"><div class="top"><span class="btn icon">☰</span><span class="title">Earnings Radar</span></div></div>
+        <div class="status"></div>
+        <div class="board"></div>
+      </div>
+    </div>
+  </figure>
+</div>
+
+<div class="row">
+  <figure>
+    <figcaption>1280 px · dark (today's look; the theme button sits at the sidebar's foot) — shown at half size</figcaption>
+    <div class="desk-wrap"><div class="desk t-dark">
+      <div class="shell">
+        <aside class="side">
+          <div class="brand"><div class="logo"></div><div class="tag">REVENUE CHASER</div></div>
+          <div class="nh">Earnings</div><div class="ni on">Earnings Radar</div><div class="ni">Implied Probability</div>
+          <div class="nh">Flows</div><div class="ni">Sector Rotation</div><div class="ni">SEC 13F</div>
+        
+          <span class="btn" style="margin-top:12px">Theme: Dark</span>
+        </aside>
+        <div class="main">
+          <div class="top"><span class="btn">Refresh Tab</span><span class="btn">Load Earnings Today</span>
+            <span class="badge">Regime: on</span><span class="badge sky">US-listed only</span>
+            <span class="sync push">Data: <b>Fri 24 Oct</b></span><span class="sync">Last run: <b>18:02</b></span>
+            </div>
+          <div class="board"><h2>Earnings Radar</h2><p>Board at its own width, as today.</p>
+            <div class="card"><div class="k">Reporting this week</div><div class="v">142</div></div></div>
+        </div>
+      </div>
+    </div></div>
+  </figure>
+  <figure>
+    <figcaption>1280 px · light — shown at half size</figcaption>
+    <div class="desk-wrap"><div class="desk t-light">
+      <div class="shell">
+        <aside class="side">
+          <div class="brand"><div class="logo"></div><div class="tag">REVENUE CHASER</div></div>
+          <div class="nh">Earnings</div><div class="ni on">Earnings Radar</div><div class="ni">Implied Probability</div>
+          <div class="nh">Flows</div><div class="ni">Sector Rotation</div><div class="ni">SEC 13F</div>
+        
+          <span class="btn" style="margin-top:12px">Theme: Light</span>
+        </aside>
+        <div class="main">
+          <div class="top"><span class="btn">Refresh Tab</span><span class="btn">Load Earnings Today</span>
+            <span class="badge">Regime: on</span><span class="badge sky">US-listed only</span>
+            <span class="sync push">Data: <b>Fri 24 Oct</b></span><span class="sync">Last run: <b>18:02</b></span>
+            </div>
+          <div class="board"><h2>Earnings Radar</h2><p>Board at its own width, as today.</p>
+            <div class="card"><div class="k">Reporting this week</div><div class="v">142</div></div></div>
+        </div>
+      </div>
+    </div></div>
+  </figure>
+</div>
+<p class="note"><b>Not in this PR:</b> restacking the boards themselves. Each board that is wider than a phone keeps
+  scrolling inside its own frame until its own PR; the PR for #184 lists them with their measured natural width.</p>
+</body>
+</html>

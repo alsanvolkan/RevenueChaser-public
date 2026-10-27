@@ -19,6 +19,7 @@ import shutil
 import signal as _signal
 import subprocess
 import sys
+import threading
 import webbrowser
 from datetime import date, timedelta
 from pathlib import Path
@@ -210,6 +211,9 @@ jobs.register("moneyflow", runners.run_money_flow_latest, ["module_sector_rotati
 jobs.register("holdings", runners.run_etf_holdings_sync, ["module_sector_rotation"], lane="long")
 jobs.register("spxgamma", runners.run_spxgamma, ["module_spx_gamma"])
 jobs.register("spxgamma_stored", runners.run_spxgamma_stored, ["module_spx_gamma"], requires_uw=False)  # #179 D5
+# The 2-year history pull (D1): past raw days only, so no board reloads. Checkpoints between sessions.
+# no deadline: fewer than 5 recorded runs (25 Oct); set from job_runs when measured
+jobs.register("spxgamma_history", runners.run_spxgamma_history, [], lane="long", cancellable=True)
 jobs.register("quick", runners.run_quick, ["module_financials"], requires_uw=False)
 # The single-board Fetches are refused while a universe run holds the universe lock (#244), and a universe run is
 # refused while one of them runs (#356).
@@ -339,7 +343,12 @@ def index():
                            # block is already escaped JSON and Jinja would otherwise turn ``&`` into ``&amp;``.
                            open_issues_json=Markup(html_safe.script_json(issues)),
                            open_issues_error=issues_error,
-                           rc_esc_js=Markup(html_safe.ESC_JS))
+                           rc_esc_js=Markup(html_safe.ESC_JS),
+                           # The palette and the stored-theme script are reporting_common's, the one place
+                           # they are defined (#184); both are code constants, not data.
+                           theme_css=Markup(reporting_common.THEME_CSS),
+                           theme_js=Markup(reporting_common.THEME_JS),
+                           theme_bg={k: v["bg"] for k, v in reporting_common.THEME_TOKENS.items()})
 
 
 def _open_issues_for_shell() -> tuple[dict, str]:
@@ -811,11 +820,77 @@ def run_spxgamma():
     params = {"asof_date": asof}
     # A stored past day is served from disk and never refetched (#179 D5); only an explicit
     # force field refetches it. Its job needs no UW client, so no auth probe is sent either.
+    module = "spxgamma"
     if (request.form.get("force") or "").strip().lower() in ("1", "true"):
         params["force"] = True
     elif serves_from_disk(asof):
-        return _submit("spxgamma_stored", params)
-    return _submit("spxgamma", params)
+        module = "spxgamma_stored"
+    # Never beside the history pull (#194 review): it stages and promotes the same raw day folders. Only the
+    # pull blocks; a second board Fetch still queues behind the first, as before. The check and the submit are
+    # one step under _SPX_SUBMIT_LOCK, or a pull posted during this Fetch's key probe would be let in as well.
+    with _SPX_SUBMIT_LOCK:
+        refused = _busy(("spxgamma_history",), "The SPX Gamma history pull is running; Fetch again when it finishes.")
+        if refused:
+            return refused
+        return _submit(module, params)
+
+
+# The SPX jobs that write raw/<date>/: one at a time from the queue.
+_SPX_JOBS = ("spxgamma", "spxgamma_stored", "spxgamma_history")
+# Held from an SPX route's busy check to its submit (which includes the UW key probe): the two SPX routes'
+# check-then-submit never interleave, so a Fetch and a pull posted together cannot both be queued.
+_SPX_SUBMIT_LOCK = threading.Lock()
+_SPX_HISTORY_MAX_CALLS = 150_000     # UW's daily budget: no single run may be allowed more
+_SPX_HISTORY_MAX_SLEEP_S = 60.0
+
+
+@app.route("/run/spxgamma_history", methods=["POST"])
+def run_spxgamma_history():
+    """Queue the SPX Gamma history pull (D1): ``start`` and ``end`` (ISO, past days), optional ``max_calls`` and
+    ``sleep`` (seconds between calls). Fields come from the form or the query string, so a shell can run
+    ``curl -X POST -H "X-RC-Panel: cli" "http://127.0.0.1:8000/run/spxgamma_history?start=...&end=..."``.
+
+    400 on a bad field; 409 inside the US session (the pull runs outside it) or while an SPX job is queued or
+    running. The module's own guards repeat the range and session checks when the job starts.
+    """
+    from RevenueChaser.core import calendar as nyse_calendar
+    from RevenueChaser.module_spx_gamma.history_pull import check_range
+
+    start = (request.values.get("start") or "").strip()
+    end = (request.values.get("end") or "").strip()
+    try:
+        lo, hi = check_range(start, end)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": f"bad range: {exc}"}), 400
+    params: dict = {"start": lo.isoformat(), "end": hi.isoformat()}
+    raw = (request.values.get("max_calls") or "").strip()
+    if raw:
+        try:
+            params["max_calls"] = int(raw)
+        except ValueError:
+            return jsonify({"ok": False, "error": "bad max_calls"}), 400
+        if not 0 < params["max_calls"] <= _SPX_HISTORY_MAX_CALLS:
+            return jsonify({"ok": False, "error": f"max_calls must be 1-{_SPX_HISTORY_MAX_CALLS}"}), 400
+    raw = (request.values.get("sleep") or "").strip()
+    if raw:
+        try:
+            params["sleep_s"] = float(raw)
+        except ValueError:
+            return jsonify({"ok": False, "error": "bad sleep"}), 400
+        if not 0 <= params["sleep_s"] <= _SPX_HISTORY_MAX_SLEEP_S:
+            return jsonify({"ok": False, "error": f"sleep must be 0-{_SPX_HISTORY_MAX_SLEEP_S:g} seconds"}), 400
+    try:
+        in_session = nyse_calendar.in_us_session_window()
+    except ValueError:
+        in_session = True                 # the clock cannot tell: do not start
+    if in_session:
+        return jsonify({"ok": False, "error": "the US session is open; the history pull runs outside session "
+                                              "hours (09:30-16:30 New York)"}), 409
+    with _SPX_SUBMIT_LOCK:                # the check and the submit are one step (see run_spxgamma)
+        refused = _busy(_SPX_JOBS, "An SPX Gamma job is already queued or running.")
+        if refused:
+            return refused
+        return _submit("spxgamma_history", params)
 
 
 @app.route("/run/quick", methods=["POST"])

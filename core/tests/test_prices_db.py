@@ -127,6 +127,7 @@ def test_price_checks_has_the_shape_of_source_checks():
         assert m["price_checks"][field] == m["source_checks"][field], field
 
 
+@pytest.mark.rawstore_schema_from_scratch
 def test_a_fresh_store_makes_prices_duckdb_with_exactly_the_four_tables(rawstore_tmp_db):
     prices = rawstore.prices_db_path()
     assert prices.is_file()

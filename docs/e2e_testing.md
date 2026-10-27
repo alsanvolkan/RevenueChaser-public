@@ -71,6 +71,40 @@ Two consequences:
 `./app.sh serve` with no env set resolves to the repo-local `.store`/`.cache`
 exactly as before.
 
+### Parallel runs (`-n 4 --dist loadgroup`)
+
+CI runs this tier as `pytest -n 4 --dist loadgroup`; locally `./app.sh test-e2e -n 4 --dist loadgroup` does the
+same. Without `--dist loadgroup` xdist ignores the `xdist_group` marks below and every worker runs a shared Fetch
+again (386 s against about 315 s, measured in the #203 review). xdist workers inherit the
+controller's environment, so the root `conftest.py`'s redirect is **one folder per run**, shared by every
+worker. The tier is safe in parallel because nothing a dashboard writes comes from that shared folder:
+
+- the `dashboard` fixture points `.store`, `.cache` and every side root (`RC_EDGAR_DOCS_DIR`,
+  `RC_DISCORD_MEDIA_DIR`, `RAW_STORE_BACKUP_DIR`, `SPX_GAMMA_DATA_ROOT`, `RC_PATREON_DATA_DIR`) at the test's
+  own `tmp_path`;
+- the dashboard subprocess binds port 0 and writes the port it got to `$RC_E2E_PORT_FILE`. A port picked in
+  the test process and released would be free only until another worker bound it;
+- the mock-provider server is session-scoped, which under xdist means one per worker, also on port 0.
+
+`test_harness_parallel.py` holds the first two rules. A new folder the dashboard writes to gets its own
+variable in that fixture and in that test.
+
+### One Fetch for the read-only tests (`harness/shared.py`)
+
+Most of the tier's time is a dashboard boot plus a Fetch per test. Where several tests only read what one
+default Fetch leaves behind, they share both: a module-scoped fixture builds the dashboard with
+`shared_dashboard`, seeds it, runs the Fetch once, and the tests read the result. `test_identity.py` (one identity
+run), `test_board_sector_rotation.py` and `test_board_comovement.py` do this. The rules:
+
+- **Only read.** A test that changes the routes, the store, the settings, restarts the dashboard or runs the job
+  again keeps its own function-scoped `dashboard`. A shared test may empty the cache only when its Refresh
+  rebuilds it before the test ends.
+- **One `xdist_group` per shared Fetch.** CI runs `-n 4 --dist loadgroup`, so the group's tests land on one worker
+  and the Fetch runs once; without the mark each worker would run it again.
+- **Every assertion stays.** A test that asserted on the job result reads it from the fixture
+  (`identity_run.result`, `fetched.result`); a test that counted provider requests during the Fetch reads the
+  requests the fixture kept (`fetched.requests`).
+
 ---
 
 ## Layout
@@ -79,13 +113,17 @@ exactly as before.
 module_testing/e2e/
 ├── conftest.py                     # temp dirs, mock server, dashboard fixtures
 ├── harness/
-│   ├── dashboard_entrypoint.py     # installs fakes, then dashboard.app.run()
+│   ├── dashboard_entrypoint.py     # installs fakes, then serves dashboard.app on port 0
 │   ├── dashboard_driver.py         # run_job / view / restart / table_count
+│   ├── shared.py                   # one dashboard + one Fetch shared by read-only tests
+│   ├── cdp_browser.py              # headless Chrome over DevTools: exact viewport, colour scheme
 │   ├── mock_provider_server.py     # loopback HTTP server + request counter
 │   ├── yfinance_fake.py            # fake yf.Ticker / yf.screen + call counter
 │   └── provider_fixtures/          # hand-written JSON, one file per endpoint
 ├── test_board_<name>.py            # one per board
 ├── test_board_html_browser.py      # hostile fixtures in headless Chrome (ADR-X1)
+├── test_phone_shell.py             # the shell at 390 px and 1280 px, light and dark (#184)
+├── test_cdp_browser.py             # the DevTools harness stays off the network
 └── test_live_provider_fetch.py     # the --live tier
 ```
 
@@ -95,6 +133,17 @@ any payload ran script. It needs no dashboard; it finds Chrome as `$RC_CHROME`,
 `google-chrome`, `google-chrome-stable`, `chromium` or `chromium-browser`. With no
 browser it skips locally and fails under `CI=true`. A new board adds an entry to
 the registry, or `core/tests/test_board_html_guard.py` fails.
+
+`test_phone_shell.py` drives Chrome through `harness/cdp_browser.py`, a DevTools client over a loopback
+WebSocket with no pip dependency. `--window-size` cannot give a phone viewport (new headless Chrome clamps
+the window to 500 px), so the harness uses device-metrics emulation for an exact width and media emulation
+for `prefers-color-scheme`. Against a live dashboard it checks that at 390 px the page never scrolls sideways,
+the nav is reachable through the drawer, the shell's touch targets are at least 44 px, and light and dark both
+render: dark on a first visit whatever the device, light and Auto by the toggle (remembered across a reload);
+at 1280 px the sidebar stays a column.
+It finds Chrome the way the HTML guard does, and fails under `CI=true` without one. Chrome resolves no host
+but loopback (`--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1`: the rule matches
+an IP literal too, so the dashboard's `127.0.0.1` is excluded by name); `test_cdp_browser.py` holds both halves.
 
 ### The mock provider server
 
@@ -192,6 +241,7 @@ Be honest about what this tier does not reach.
   `isoWeekInfo`'s use of `toISOString()`; a server-side harness can only assert
   on the served source (`app/tests/test_earnings_calendar_ui.py` does). Catching
   the rendered behaviour needs a DOM test.
-- **Layout is not checked.** Assertions are on substrings, counts and structure.
+- **Layout is checked for the shell only.** `test_phone_shell.py` measures the shell around the boards;
+  each board's own layout inside its frame is not checked until its own phone PR adds a check.
 - **Editor and machine config is out of reach.** A DuckDB lock held by another
   process is covered by its *symptom*, not its cause.

@@ -1,4 +1,4 @@
-SPX · Price yfinance ^GSPC · Report date 2026-08-14 · Sessions 2026-08-03 → 2026-08-14 · Data retrieved 2026-08-14T21:00:00Z from Unusual Whales API
+SPX · Price yfinance ^GSPC · Report date 2026-08-14 · Sessions 2026-08-03 → 2026-08-14 · Last sync: 14 Aug EOD · Unusual Whales API
 
 ## At a Glance — Single Source of Truth
 

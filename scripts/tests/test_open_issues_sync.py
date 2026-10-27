@@ -169,6 +169,16 @@ def test_report_thin_names_every_thin_entry(tmp_path, capsys):
     assert f"{PUB}#12" not in out
 
 
+def test_report_thin_names_a_freshly_synced_entry_until_its_boards_are_named(tmp_path, capsys):
+    """#120: ``--write`` adds a new issue as scope "board" with no boards, which shows on no panel."""
+    path = _registry(tmp_path, [])
+    assert sync.main(["--write", "--registry", str(path)], fetch=_fetch({PUB: [_api(11, "public eleven")]}),
+                     head_sha="abc1234") == 0
+    capsys.readouterr()
+    assert sync.main(["--report-thin", "--registry", str(path)]) == 1
+    assert "names no board" in capsys.readouterr().out
+
+
 def test_report_thin_is_zero_when_every_entry_passes(tmp_path):
     path = _registry(tmp_path, [_entry(11)])
     assert sync.main(["--report-thin", "--registry", str(path)]) == 0
