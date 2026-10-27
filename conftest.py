@@ -275,11 +275,99 @@ def _reset_cik_map():
     sec_edgar.reset_cik_map()
 
 
-@pytest.fixture
-def rawstore_tmp_db(isolate_rawstore):
-    """The isolated DB path, with every manifest table created."""
+# The module-level inputs ``ensure_all_tables`` builds a store from. A test that changes one of them before its store
+# is made gets the apply run on its own file, never a template built from the unchanged ones.
+# NOT covered: the apply's code (``_ddl``, ``_reconcile_table``, ``_apply_views``, ``_sync_tracked`` and the other
+# helpers), the stamp constants (``_SCHEMA_FILES``, ``_SCHEMA_STAMP_TABLE``, ``_SCHEMA_STAMP_KEY``,
+# ``_REBUILD_RUN_ID``) and the environment (``RC_STORE_SCHEMA_OK``, ``RC_STORE_SCHEMA_REFUSE``). A test that patches
+# one of those before its store exists must carry ``@pytest.mark.rawstore_schema_from_scratch``.
+_SCHEMA_INPUTS = ("_SCHEMA_VERSION", "MANIFEST", "CHANGES", "_RENAMES", "_MERGES", "_VIEWS", "_KEY_REBUILDS",
+                  "_PRICE_MOVES", "_EDGAR_TABLES")
+SCHEMA_FROM_SCRATCH = "rawstore_schema_from_scratch"
+
+
+def _canonical(value):
+    # Key order is not schema: monkeypatch.delitem's undo puts a MANIFEST entry back at the end.
+    if isinstance(value, dict):
+        return tuple(sorted((k, _canonical(v)) for k, v in value.items()))
+    if isinstance(value, (list, tuple)):
+        return tuple(_canonical(v) for v in value)
+    return value
+
+
+def _schema_fingerprint() -> str:
+    import hashlib
     from RevenueChaser.core import rawstore
-    rawstore.ensure_all_tables()
+    inputs = [_canonical(getattr(rawstore, n, None)) for n in _SCHEMA_INPUTS]
+    return hashlib.sha256(repr(inputs).encode()).hexdigest()
+
+
+class RawstoreTemplate:
+    """The store files ``ensure_all_tables`` makes on an empty directory, made once per pytest process.
+
+    Built by the apply itself (no copy of its DDL), so a schema change reaches the template with the code, and every
+    copy first compares the schema inputs (``_SCHEMA_INPUTS``) with the ones the template was built from. It is built
+    fresh in each session and never reused across sessions, which is what keeps it from going stale; the directory
+    name (schema version and a hash of ``core/rawstore.py``) only labels it and guards nothing. It lives in this
+    process's own pytest basetemp (one per xdist worker), so no worker shares it; a passing run removes it with the
+    basetemp, a failing run keeps it there (``tmp_path_retention_policy = failed``).
+    """
+
+    def __init__(self, root: Path):
+        import hashlib
+        from RevenueChaser.core import rawstore
+        code = hashlib.sha256(Path(rawstore.__file__).read_bytes()).hexdigest()[:12]
+        self.dir = root / f"v{rawstore._SCHEMA_VERSION}-{code}"
+        self.dir.mkdir(parents=True)
+        self.fingerprint = _schema_fingerprint()
+        mp = pytest.MonkeyPatch()
+        mp.setattr(rawstore, "DB_PATH", self.dir / "raw.duckdb")
+        try:
+            rawstore.ensure_all_tables()
+        finally:
+            mp.undo()
+        # What the apply leaves in this process besides the files: the per-(file, table) memo and the "applied" mark.
+        self.ready = {(Path(p).name, t) for p, t in rawstore._TABLE_READY if Path(p).parent == self.dir}
+        self.files = {p.name: (p.stat().st_size, p.stat().st_mtime_ns) for p in self.dir.iterdir()
+                      if p.is_file() and not p.name.startswith(rawstore._PRESENCE_PREFIX)}
+
+    def copy_to(self, raw_path: Path) -> bool:
+        """Give ``raw_path``'s directory its own copy of the template; False when it has to be built from scratch."""
+        from RevenueChaser.core import rawstore
+        dest = raw_path.parent
+        if (raw_path.name != "raw.duckdb" or _schema_fingerprint() != self.fingerprint
+                or any((dest / name).exists() for name in self.files)):
+            return False
+        for name in self.files:
+            shutil.copyfile(self.dir / name, dest / name)
+        rawstore._TABLE_READY.update((str(dest / name), table) for name, table in self.ready)
+        rawstore._ENSURED[str(raw_path)] = 0.0
+        return True
+
+    def unchanged(self) -> bool:
+        """True while the template's files are exactly as the build left them."""
+        return {name: ((self.dir / name).stat().st_size, (self.dir / name).stat().st_mtime_ns)
+                for name in self.files} == self.files
+
+
+@pytest.fixture(scope="session")
+def rawstore_template(tmp_path_factory):
+    """The per-process template ``rawstore_tmp_db`` copies. Never open it: a test gets its own copy."""
+    return RawstoreTemplate(tmp_path_factory.mktemp("rawstore-template"))
+
+
+@pytest.fixture
+def rawstore_tmp_db(isolate_rawstore, rawstore_template, request):
+    """The isolated DB path, with every manifest table created.
+
+    The files are a copy of ``rawstore_template`` (~2 ms instead of ~1 s for the apply), made in this test's own
+    ``tmp_path``: only the template is shared, and no test opens it, so every test still gets a fresh store. The apply
+    runs on the test's own file instead when the test is marked ``rawstore_schema_from_scratch`` (it tests the apply or
+    a migration itself), when a schema input differs from the template's, or when a store file is already there.
+    """
+    from RevenueChaser.core import rawstore
+    if request.node.get_closest_marker(SCHEMA_FROM_SCRATCH) or not rawstore_template.copy_to(Path(rawstore.DB_PATH)):
+        rawstore.ensure_all_tables()
     return isolate_rawstore
 
 

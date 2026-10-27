@@ -209,6 +209,7 @@ def test_purge_refuses_when_the_source_dir_is_gone(rawstore_tmp_db, tmp_path, mo
     assert "does not exist" in capsys.readouterr().out
 
 
+@pytest.mark.rawstore_schema_from_scratch
 def test_failed_reset_restores_the_real_db_path(rawstore_tmp_db, tmp_path, monkeypatch):
     """A crashed ``--reset`` must leave ``rawstore.DB_PATH`` pointing at the real
     store, not at the temp file it just deleted."""

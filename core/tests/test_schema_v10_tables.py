@@ -100,6 +100,7 @@ def _non_key_double(spec: dict) -> str:
     raise AssertionError(f"{spec} has no non-key DOUBLE column")
 
 
+@pytest.mark.rawstore_schema_from_scratch
 @pytest.mark.parametrize("name", V10_TABLES)
 def test_table_is_created_only_in_its_declared_file(rawstore_tmp_db, name):
     expect = _file_of(name)

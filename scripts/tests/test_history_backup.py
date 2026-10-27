@@ -69,6 +69,7 @@ def test_reset_db_removes_history_only_on_a_full_reset(rawstore_tmp_db):
     assert not hist.exists()
 
 
+@pytest.mark.rawstore_schema_from_scratch
 def test_every_history_file_table_is_an_append_only_history_table(rawstore_tmp_db):
     """Schema 11 (history redesign C): the 18 result-history tables live in ``history.duckdb`` and nowhere else, each
     flagged ``history`` (append-only); the file is made by the first recorded run, not by the first store call. The

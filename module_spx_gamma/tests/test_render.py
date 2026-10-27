@@ -103,8 +103,8 @@ def test_flip_diagram_and_crossing():
 
 def test_header_shows_provenance():
     md = render.render_markdown(make_snapshot())
-    assert "Data retrieved " in md
-    assert "from Unusual Whales API" in md
+    assert "Last sync: " in md and "Data retrieved" not in md
+    assert "Unusual Whales API" in md
     assert "Price yfinance ^GSPC" in md
     # duplicated fields are no longer in the header line
     assert "Regime Long Gamma — Dampening" not in md

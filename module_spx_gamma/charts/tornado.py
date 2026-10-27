@@ -219,6 +219,7 @@ def build_tornado_fig(snapshot: dict, height: int = 460) -> go.Figure | None:
             text=f"Strike-Based Signed Net GEX — {snapshot.get('asof_date', '')}",
             font=dict(size=14),
         ),
+        autosize=True,
         height=height,
         margin=dict(l=60, r=220, t=top_margin, b=bottom_margin),
         xaxis=dict(

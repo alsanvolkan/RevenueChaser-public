@@ -116,6 +116,7 @@ class TestCompressedColumns:
 
 
 # ── the manifest is applied on a process's first store call ──────────────────
+@pytest.mark.rawstore_schema_from_scratch
 class TestAutoEnsure:
     @pytest.fixture
     def auto(self, monkeypatch):

@@ -11,10 +11,10 @@ import socket
 from pathlib import Path
 
 from .harness import dashboard_driver
-from .harness.dashboard_driver import Dashboard
+from .harness.shared import running_dashboard
 
 # Every folder the dashboard subprocess writes to outside .store/.cache.
-SIDE_ROOTS = ("RC_EDGAR_DOCS_DIR", "RC_DISCORD_MEDIA_DIR", "RAW_STORE_BACKUP_DIR", "SPX_GAMMA_DATA_ROOT",
+SIDE_ROOTS = ("RC_EDGAR_DOCS_DIR", "RAW_STORE_BACKUP_DIR", "SPX_GAMMA_DATA_ROOT",
               "RC_PATREON_DATA_DIR")
 
 
@@ -33,13 +33,10 @@ def test_a_port_taken_before_the_dashboard_binds_it_cannot_break_startup(e2e_dir
         taken = busy.getsockname()[1]
         # The race, made deterministic: whatever port the harness might pick ahead of time is already bound.
         monkeypatch.setattr(dashboard_driver, "_free_port", lambda: taken, raising=False)
-        dash = Dashboard(store_dir=store, cache_dir=cache, env=dict(e2e_env), log_path=tmp_path / "dashboard.log")
-        try:
-            dash.start()
+        # running_dashboard, like the fixture: every side root under tmp_path, never the run-wide one.
+        with running_dashboard(tmp_path, store, cache, e2e_env) as dash:
             assert dash.port != taken
             assert dash.get("/").status_code == 200
             dash.restart()
             assert dash.port != taken
             assert dash.get("/").status_code == 200
-        finally:
-            dash.stop()
