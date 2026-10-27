@@ -163,3 +163,23 @@ def test_s6_an_answer_with_no_usable_row_fails_instead_of_marking_the_day_done(h
     row = _daily()
     assert row["result"] == "failed" and "no usable row" in row["note"]
     assert not uw.partition_path(date(2026, 10, 26)).exists()
+
+
+def test_n4_snapshot_day_reads_a_date_only_stamp_as_that_date_and_an_epoch_in_new_york():
+    assert uw.snapshot_day("2026-10-26") == date(2026, 10, 26)            # not midnight UTC = the 25th in New York
+    t = datetime(2026, 10, 26, 20, 15, tzinfo=timezone.utc).timestamp()
+    assert uw.snapshot_day(t) == date(2026, 10, 26)
+    assert uw.snapshot_day(int(t)) == date(2026, 10, 26)
+    assert uw.snapshot_day(str(int(t))) == date(2026, 10, 26)
+    assert uw.snapshot_day(t * 1000) == date(2026, 10, 26)                 # milliseconds
+    assert uw.snapshot_day(datetime(2026, 10, 27, 3, 0, tzinfo=timezone.utc).timestamp()) == date(2026, 10, 26)
+    assert uw.snapshot_day("2026-10-26T20:15:00Z") == date(2026, 10, 26)   # the fixture's form
+    assert uw.snapshot_day(None) is None and uw.snapshot_day("soon") is None
+
+
+def test_n4_an_answer_stamped_with_bare_dates_is_accepted(http_mock):
+    body = uw_fixture.body()
+    for r in body["data"]:
+        r["time"] = "2026-10-26"
+    http_mock.add("expiry-strike", body, headers=UW_HEADERS)
+    assert _daily()["rows"] == 391

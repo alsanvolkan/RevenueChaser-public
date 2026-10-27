@@ -212,14 +212,33 @@ class UWSpotExpiryStrike:
 
 
 def snapshot_day(stamp) -> date | None:
-    """The New York date of a UW ``time`` stamp (UTC when it carries no offset); None when there is none."""
-    if not stamp:
+    """The New York date of a UW ``time`` stamp; None when there is none or it cannot be read.
+
+    An ISO time with an offset (``…Z``) is converted to New York; one without an offset is taken as UTC. A bare date
+    (``2026-10-26``) is that calendar date, never midnight UTC (which is the day before in New York). Epoch seconds or
+    milliseconds, as a number or a numeric string, are converted to New York.
+    """
+    if stamp is None or stamp == "" or isinstance(stamp, bool):
         return None
-    try:
-        t = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).astimezone(calendar.NY).date()
+    epoch = stamp if isinstance(stamp, (int, float)) else None
+    if epoch is None:
+        text = str(stamp).strip()
+        try:
+            epoch = float(text)
+        except ValueError:
+            if len(text) == 10:
+                try:
+                    return date.fromisoformat(text)
+                except ValueError:
+                    return None
+            try:
+                t = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            return (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).astimezone(calendar.NY).date()
+    if epoch > 1e11:                                   # milliseconds
+        epoch /= 1000.0
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).astimezone(calendar.NY).date()
 
 
 def time_now() -> float:
