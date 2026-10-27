@@ -80,6 +80,7 @@ class RunContext:
     calls: dict[str, list[int]] = field(default_factory=dict)       # provider -> [calls, failures, http_429]
     notes: list[str] = field(default_factory=list)
     uw_sampled: bool = False
+    allow_shrink: bool = False                                      # a request's explicit "allow_shrink": true
     _http: httpx.Client | None = None
     _uw: Any = None
 
@@ -362,12 +363,14 @@ def kind_datasets(kind: str) -> list[Dataset]:
 
 def build_kind(ctx: RunContext, ds: Dataset) -> dict:
     """Build ``ds``'s serving kind from Parquet (every dataset of the kind), check it, swap it in; the check row."""
+    if not parquet_root().is_dir():
+        raise SourceError(f"the Parquet root {parquet_root()} is missing (RC_MARKET_RAW_DIR unset or not mounted?)")
     with serving.build(ds.kind) as b:
         counts: dict[str, int] = {}
         for d in kind_datasets(ds.kind):
             counts.update(d.build(ctx, b.con))
         check = ds.check(ctx, b.con)
-        b.swap(counts, checks=[check])
+        b.swap(counts, checks=[check], allow_shrink=ctx.allow_shrink)
     return check
 
 
@@ -386,7 +389,8 @@ def run_request(req: dict, *, trigger: str = "queue", sleep: Callable[[float], A
     ds = DATASETS.get(req["dataset"])
     params = req.get("params") or {}
     run_id = new_run_id()
-    ctx = RunContext(run_id=run_id, dataset=req["dataset"], trigger=trigger, sleep=sleep, clock=clock)
+    ctx = RunContext(run_id=run_id, dataset=req["dataset"], trigger=trigger, sleep=sleep, clock=clock,
+                     allow_shrink=params.get("allow_shrink") is True)
     ops.start_run(run_id, req["dataset"], trigger, params)
     status, error, check = "failed", None, None
     try:

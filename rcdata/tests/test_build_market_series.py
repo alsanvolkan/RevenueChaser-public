@@ -176,3 +176,30 @@ def test_both_datasets_share_the_market_file(sources, http_mock):
         counts = dict(con.execute("SELECT table_name, estimated_size FROM duckdb_tables()").fetchall())
     assert set(counts) >= {"market_series", "spx_gamma_expiry_strike", "serving_schema_version"}
     assert read.market_series(["VIX"]) and len(read.spx_expiry_strike("2026-10-26")) == 391
+
+
+def test_b2_an_empty_raw_root_never_swaps_in_an_empty_spx_table(sources, http_mock, monkeypatch, tmp_path):
+    """The reviewer's case: the HDD is not mounted (or RC_MARKET_RAW_DIR unset), so a market_series run builds the
+    market kind from an empty Parquet tree and would swap in spx_gamma_expiry_strike with 0 rows."""
+    from RevenueChaser.core import config
+    from RevenueChaser.rcdata.build import uw_spot_expiry_strike as uw
+
+    from . import uw_fixture
+    _run()
+    http_mock.add("expiry-strike", uw_fixture.body())
+    base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-26"}})
+    live = serving.live_path("market").read_bytes()
+    monkeypatch.setattr(config, "MARKET_RAW_DIR", tmp_path / "unmounted")
+    row = base.run_request({"dataset": ms.NAME, "params": {"as_of": "2026-10-28"}}, sleep=lambda s: None)
+    assert row["result"] == "failed" and "spx_gamma_expiry_strike" in row["note"]
+    assert serving.live_path("market").read_bytes() == live
+    assert len(read.spx_expiry_strike("2026-10-26")) == 391
+
+
+def test_b2_a_build_refuses_a_missing_parquet_root(monkeypatch, tmp_path):
+    from RevenueChaser.core import config
+    monkeypatch.setattr(config, "MARKET_RAW_DIR", tmp_path / "nowhere")
+    ctx = base.RunContext(run_id="r", dataset=ms.NAME)
+    with pytest.raises(base.SourceError, match="Parquet root"):
+        base.build_kind(ctx, ms.DATASET)
+    assert not serving.live_path("market").exists()

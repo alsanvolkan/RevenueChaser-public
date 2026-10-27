@@ -32,6 +32,9 @@ from ..core import config
 SERVING_SCHEMA_VERSION = {"market": 1}
 KINDS = tuple(SERVING_SCHEMA_VERSION)
 VERSION_TABLE = "serving_schema_version"
+# A table may lose at most this share of its live rows in one build without an explicit allow_shrink. The datasets
+# only ever add or replace rows, so any real shrink is a build from a partial or missing Parquet tree.
+MAX_SHRINK = 0.01
 
 
 class SwapRefused(RuntimeError):
@@ -92,16 +95,22 @@ class BuildFile:
             self.con.close()
             self.con = None
 
-    def swap(self, expected_counts: dict[str, int], checks: Iterable[dict] = ()) -> Path:
+    def swap(self, expected_counts: dict[str, int], checks: Iterable[dict] = (), *,
+             allow_shrink: bool = False) -> Path:
         """Check this build and move it over the live file; :class:`SwapRefused` (file deleted) when a check fails.
 
         ``expected_counts`` maps every table the build must hold to its row count; ``checks`` are the build's
-        ``dataset_check`` rows, and one whose result is ``failed`` refuses the swap.
+        ``dataset_check`` rows, and one whose result is ``failed`` refuses the swap. Every table of the live file
+        must be in the build and may not empty or shrink by more than ``MAX_SHRINK`` (B2: the expected counts come
+        from the build itself, so only the live file can show a build made from a missing Parquet tree), unless
+        ``allow_shrink`` (a request's explicit ``"allow_shrink": true``).
         """
         self.con.execute("CHECKPOINT")
         self.close()
         try:
             _verify(self.kind, self.path, expected_counts, list(checks))
+            if not allow_shrink:
+                _verify_against_live(self.kind, self.path)
         except Exception as e:
             _remove(self.path)
             raise SwapRefused(f"{self.kind} build {self.build_id} refused: {e}") from e
@@ -137,6 +146,31 @@ def _verify(kind: str, path: Path, expected_counts: dict[str, int], checks: list
                 raise ValueError(f"{table} has {got} rows, expected {want}")
     finally:
         con.close()
+
+
+def _counts(path: Path) -> dict[str, int]:
+    con = duckdb.connect(str(path), read_only=True)
+    try:
+        names = [r[0] for r in con.execute("SELECT table_name FROM duckdb_tables() WHERE database_name = "
+                                           "current_database()").fetchall() if r[0] != VERSION_TABLE]
+        return {n: int(con.execute(f'SELECT count(*) FROM "{n}"').fetchone()[0]) for n in names}
+    finally:
+        con.close()
+
+
+def _verify_against_live(kind: str, path: Path) -> None:
+    live = live_path(kind)
+    if not live.exists():
+        return
+    old, new = _counts(live), _counts(path)
+    for table, before in sorted(old.items()):
+        if table not in new:
+            raise ValueError(f"table {table} of the live file is missing from the build")
+        after = new[table]
+        if before > 0 and after == 0:
+            raise ValueError(f"{table} empties: {before} rows live, 0 in the build")
+        if after < before * (1 - MAX_SHRINK):
+            raise ValueError(f"{table} shrinks from {before} to {after} rows (more than {MAX_SHRINK:.0%})")
 
 
 @contextmanager

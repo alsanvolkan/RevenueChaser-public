@@ -107,3 +107,36 @@ def test_build_paths_and_unknown_kinds():
     assert serving.build_path("market", "b1") == Path(config.MARKET_DIR) / "market.b1.duckdb"
     with pytest.raises(ValueError):
         serving.live_path("nope")
+
+
+def _build_t(rows: int, **swap_kw) -> None:
+    with serving.build("market") as b:
+        b.con.execute(f"CREATE TABLE t AS SELECT range AS i FROM range({rows})")
+        b.swap({"t": rows}, **swap_kw)
+
+
+@pytest.mark.parametrize("rows", [0, 9])
+def test_b2_a_table_that_empties_or_shrinks_against_the_live_file_is_refused(rows):
+    """B2: the expected counts come from the build itself, so they cannot catch a build from a missing Parquet
+    tree; the live file is the reference."""
+    _build_t(10)
+    before = _sha(serving.live_path("market"))
+    with pytest.raises(serving.SwapRefused, match="shrinks|empties"):
+        _build_t(rows)
+    assert _sha(serving.live_path("market")) == before and _leftovers() == []
+
+
+def test_b2_a_table_the_live_file_has_must_be_in_the_build():
+    _build_t(10)
+    with pytest.raises(serving.SwapRefused, match="missing"):
+        with serving.build("market") as b:
+            b.con.execute("CREATE TABLE other (i INTEGER)")
+            b.swap({"other": 0})
+
+
+def test_b2_a_shrink_is_allowed_only_when_asked_for():
+    _build_t(10)
+    _build_t(0, allow_shrink=True)
+    with serving.open_read("market") as con:
+        assert con.execute("SELECT count(*) FROM t").fetchone()[0] == 0
+    _build_t(11)                                   # growing is always fine
