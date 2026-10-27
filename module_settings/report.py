@@ -2410,8 +2410,9 @@ def _nd_spend(sp: dict) -> str:
             text += f" · failed {_nd(p.get('failures_today'))}, 429 {_nd(p.get('http_429_today'))}"
         rows.append(_nd_row(str(p.get("provider") or ""), text) + _nd_bar(today, cap))
     uw = sp.get("uw_remaining")
-    uw_text = (f"limit {_nd(uw.get('token_req_limit'))} · per-minute remaining "
-               f"{_nd(uw.get('req_per_minute_remaining'))} · sampled {_nd(uw.get('sampled_at'))}"
+    uw_text = (f"today {_nd(uw.get('daily_req_count'))} of our cap {_nd(uw.get('daily_cap'))} · "
+               f"{_nd(uw.get('daily_remaining_computed'))} left (computed) · per-minute remaining "
+               f"{_nd(uw.get('per_minute_remaining'))} · sampled {_nd(uw.get('sampled_at'))}"
                if uw else "no Unusual Whales answer sampled yet")
     return ('<div class="nd-card" id="nd-spend"><h3>Spend</h3>'
             f'<div class="nd-sub">Calls per provider and New York day {_nd(sp.get("day"))}, week from '

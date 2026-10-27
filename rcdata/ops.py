@@ -557,7 +557,8 @@ def calls_by_day(first_day: str, last_day: str) -> list[dict]:
 
 
 def latest_uw_sample() -> dict | None:
-    rows = _select("SELECT sampled_at, run_id, token_req_limit, req_per_minute_remaining FROM uw_remaining "
+    rows = _select("SELECT sampled_at, run_id, daily_req_count, daily_cap, daily_remaining_computed, "
+                   "per_minute_remaining, token_req_limit FROM uw_remaining "
                    "ORDER BY sampled_at DESC LIMIT 1")
     return rows[0] if rows else None
 

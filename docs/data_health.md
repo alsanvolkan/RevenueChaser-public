@@ -170,7 +170,8 @@ PR 12 bring the data) and the schedule state.
 
 **Page-level cards:** the queue (queued and running requests, then the last 20 finished), spend (F6: calls per
 provider for the New York day and the week from Monday, from `provider_calls_daily`, against the day caps of
-`rcdata/caps.py`, and UW's newest `x-uw-*` sample from `uw_remaining`), market-store backups (the newest
+`rcdata/caps.py`, and UW's newest `x-uw-*` sample from `uw_remaining`: its daily count, what is left of our own cap
+(computed) and the per-minute window), market-store backups (the newest
 `ops` and `market` copies in the manifest, the 35-day raw copy dated by its newest copied file, the portable SSD
 from a `dataset_check` row of dataset `backup/portable` or "not recorded"; each warns past 35 days or when
 missing), the raw option retention warning (on until `RC_RAW_RETENTION_DAYS` or a `dataset_schedule` row

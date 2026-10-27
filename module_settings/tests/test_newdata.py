@@ -147,15 +147,18 @@ def test_spend_is_today_and_this_week_per_provider_against_the_caps():
     with ops.connect() as con:
         con.execute("INSERT INTO provider_calls_daily (provider, ny_day, calls) VALUES ('uw', '2026-10-26', 300), "
                     "('uw', '2026-10-25', 999), ('fred', '2026-10-27', 4)")
-    ops.sample_uw_headers({"x-uw-token-req-limit": "20000", "x-uw-req-per-minute-remaining": "118"})
+    ops.sample_uw_headers({"x-uw-daily-req-count": "1300", "x-uw-req-per-minute-remaining": "118",
+                           "x-uw-token-req-limit": "100000000"})
     spend = newdata.collect(NOW)["spend"]
     uw = next(p for p in spend["providers"] if p["provider"] == "uw")
     assert (uw["today"], uw["week"], uw["cap"]) == (1200, 1500, caps.DAY_CAPS["uw"])     # the week starts Monday
     fred = next(p for p in spend["providers"] if p["provider"] == "fred")
     assert (fred["today"], fred["week"]) == (0, 4)
     assert {p["provider"] for p in spend["providers"]} >= set(caps.DAY_CAPS)
-    assert spend["uw_remaining"]["token_req_limit"] == 20000
-    assert spend["uw_remaining"]["req_per_minute_remaining"] == 118
+    uw_sample = spend["uw_remaining"]
+    assert (uw_sample["daily_req_count"], uw_sample["daily_cap"]) == (1300, caps.DAY_CAPS["uw"])
+    assert uw_sample["daily_remaining_computed"] == caps.DAY_CAPS["uw"] - 1300
+    assert uw_sample["per_minute_remaining"] == 118
 
 
 def _manifest(roots, files: dict):
