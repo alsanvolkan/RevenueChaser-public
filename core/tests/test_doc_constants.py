@@ -188,3 +188,32 @@ def test_ci_paths_list_every_markdown_file_a_unit_test_reads():
     wf = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
     for doc in ("docs/data_architecture.md", "docs/data_health.md"):
         assert wf.count(f'- "{doc}"') == 2, doc
+
+
+def _market_store_section() -> str:
+    text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
+    return text.split("## The market store (`market/`)", 1)[1].split("\n## ", 1)[0]
+
+
+def test_the_market_store_section_states_the_versions_and_kinds_the_code_owns():
+    """#206: the ops schema version, each serving kind and its serving schema version, as rcdata has them."""
+    from RevenueChaser.rcdata import ops, serving
+    section = _market_store_section()
+    assert f"ops schema version `{ops.OPS_SCHEMA_VERSION}`" in section
+    for kind, version in serving.SERVING_SCHEMA_VERSION.items():
+        assert f"`{kind}` (serving schema version `{version}`)" in section, kind
+    kinds = re.search(r"Serving kinds: (.+)\.", section)
+    assert kinds and set(re.findall(r"`([a-z_]+)`", kinds.group(1))) == set(serving.KINDS)
+
+
+def test_the_market_store_section_names_every_ops_table_root_and_cap():
+    from RevenueChaser.rcdata import backup, caps, ops
+    section = _market_store_section()
+    for table in ops.TABLES:
+        assert f"`{table}`" in section, table
+    for name in ("RC_MARKET_DIR", "RC_MARKET_RAW_DIR", "RC_MARKET_RAW_COPY_DIR", "RAW_STORE_BACKUP_DIR",
+                 backup.MANIFEST_NAME):
+        assert name in section, name
+    for provider, cap in caps.DAY_CAPS.items():
+        assert f"{provider} {cap:,}" in section, provider
+    assert f"newest {backup.KEEP}" in section and f"{backup.RAW_COPY_DAYS} days" in section

@@ -33,7 +33,7 @@ _DATA_DIR_ALLOWED = {"core/config.py", "core/rawstore.py", "core/edgar_store.py"
 _MODULE_DIRS = ["app", "core", "main.py", "module_asymmetric_growth", "module_earnings_radar",
                 "module_financials", "module_fundamentals",
                 "module_leaps", "module_sec_13f", "module_sector_rotation",
-                "module_swing_potential", "scripts"]
+                "module_swing_potential", "rcdata", "scripts"]
 
 
 def _source_files():

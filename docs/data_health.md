@@ -677,6 +677,9 @@ Checked 2026-09-24. None of these replaces our own SEC client and filing picker.
   Automations panel.
 - Downloading 10-Q or 8-K filings into the corpus.
 - A one-click "refresh every dataset" button.
+- The market store's datasets (`uw/spot_expiry_strike`, `market_series`; see "The market store" in
+  [`data_architecture.md`](data_architecture.md)). Their `dataset_check` rows live in `ops.sqlite` and reach this
+  page in PR 2 of the new data system (#206).
 - Deleting or moving a backup file from the page.
 
 ---
