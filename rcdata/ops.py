@@ -187,6 +187,21 @@ def enqueue(dataset: str, params: dict | None = None, *, by: str) -> int:
         return int(cur.lastrowid)
 
 
+def enqueue_once(dataset: str, params: dict | None = None, *, by: str) -> int | None:
+    """Queue one build of ``dataset`` unless one is already queued or running; the request id, or None.
+
+    The check and the insert are one ``BEGIN IMMEDIATE`` transaction, so two clicks cannot both get through.
+    """
+    with _open() as con, _tx(con):
+        busy = con.execute("SELECT count(*) FROM build_requests WHERE dataset = ? AND status IN ('queued','running')",
+                           (dataset,)).fetchone()[0]
+        if busy:
+            return None
+        cur = con.execute("INSERT INTO build_requests (dataset, requested_at, requested_by, params, status) "
+                          "VALUES (?, ?, ?, ?, 'queued')", (dataset, time.time(), by, _json(params)))
+        return int(cur.lastrowid)
+
+
 def _request(row: sqlite3.Row | None) -> dict | None:
     if row is None:
         return None

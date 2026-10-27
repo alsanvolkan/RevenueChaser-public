@@ -5,7 +5,14 @@ from __future__ import annotations
 import sqlite3
 
 from RevenueChaser.rcdata import ops, serving
+from RevenueChaser.rcdata.build import DATASETS
 from RevenueChaser.rcdata.build import __main__ as cli
+
+
+def _nothing_due() -> None:
+    """Pause every dataset, so ``run --once`` queues nothing of its own (``due.py``) and sends no call."""
+    for name in DATASETS:
+        ops.schedule_pause(name, by="test")
 
 
 def test_s2_requests_and_runs_left_running_by_a_dead_builder_are_failed_at_start():
@@ -14,6 +21,7 @@ def test_s2_requests_and_runs_left_running_by_a_dead_builder_are_failed_at_start
     ops.start_run("dead-run", "market_series", "queue")     # ... and died mid-run
     with ops.connect() as con:                              # as another process
         con.execute("UPDATE job_runs2 SET pid = 999999 WHERE run_id = 'dead-run'")
+    _nothing_due()
     assert cli.main(["run", "--once"]) == 0
     with ops.connect() as con:
         req = con.execute("SELECT status, note FROM build_requests WHERE id = ?", (rid,)).fetchone()
@@ -47,6 +55,7 @@ def test_s4_build_files_a_dead_builder_left_are_swept_at_start():
     assert serving.sweep_builds("market") == sorted(stale)
     assert all(p.exists() for p in keep) and not any(p.exists() for p in stale)
     stale[0].write_bytes(b"x")
+    _nothing_due()
     assert cli.main(["run", "--once"]) == 0
     assert not stale[0].exists() and (d / "market.duckdb").exists()
 

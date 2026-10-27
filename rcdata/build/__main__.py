@@ -1,15 +1,16 @@
 """``python -m RevenueChaser.rcdata.build`` — the builder CLI.
 
     run [--once] [--dataset X [--as-of YYYY-MM-DD] [--allow-shrink]]
-                                        take queued requests in order (FIFO) and run each; with --dataset, a dataset
-                                        with nothing queued (or any, with --as-of) is queued first (by "cli");
-                                        --once stops when the queue is empty
+                                        take queued requests in order (FIFO) and run each; without --dataset, every
+                                        dataset that is due (``due.py``) is queued first (by "schedule", once);
+                                        with --dataset, a dataset with nothing queued (or any, with --as-of) is
+                                        queued first (by "cli"); --once stops when the queue is empty
     backfill <dataset> --from YYYY-MM-DD [--to YYYY-MM-DD] [--allow-shrink]
                                         queue one backfill request and run it now
 
 It refuses to start while a job lock is held in the store directory or another builder runs (exit 3), and prints
 one line per dataset run: the ``dataset_check`` fields. Exit 0 when every run it made ended ok or skipped, 1 when
-one failed.
+one failed or a dataset's due step failed (its due check raised, or ops.sqlite stayed locked while queueing it).
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ from pathlib import Path
 
 from ...core import config, job_lock, rawstore
 from .. import ops, serving
-from . import DATASETS, base
+from . import DATASETS, base, due
 
 POLL_S = 30.0
 
@@ -126,7 +127,13 @@ def main(argv: list[str] | None = None) -> int:
             params = {**({"as_of": args.as_of} if args.as_of else {}),
                       **({"allow_shrink": True} if args.allow_shrink else {})}
             ops.enqueue(args.dataset, params or None, by="cli")
-        return _run_queue(args.dataset, args.once)
+        due_failed = 0
+        if not args.dataset:
+            for name, why, _, error in due.enqueue_due():
+                print(f"{name}: {why}", file=sys.stderr, flush=True)
+                due_failed = due_failed or int(error)
+        # A due step that failed still drains the queue, then fails the pass, so an hourly error is not an exit 0.
+        return max(_run_queue(args.dataset, args.once), due_failed)
 
 
 if __name__ == "__main__":
