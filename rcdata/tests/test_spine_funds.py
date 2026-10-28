@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from RevenueChaser.rcdata import ops
+from RevenueChaser.rcdata import caps, ops
 from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.spine import funds
 
@@ -30,19 +30,41 @@ def test_ssga_drops_the_cash_line_and_reads_the_cusip():
     assert rows[0]["cusip"] == "594918104" and rows[0]["weight"] == 1.0
 
 
-def test_ishares_keeps_equity_lines_only_and_stops_at_the_disclaimer():
+def test_ishares_keeps_stock_lines_only_and_reads_the_market_weight():
+    """A swap and a warrant are filed under Asset Class Equity: only ``Type`` EQUITY is a holding of the stock."""
     rows = funds.parse_ishares(fx.ishares_csv(fx.SP400, drop_dash=True))
     assert [r["ticker_raw"] for r in rows] == ["HEI", "HEIA"] and rows[0]["cusip"] is None
+    assert rows[0]["weight"] == 1.0
+
+
+def test_an_ishares_file_without_the_type_column_is_a_source_error():
+    old = b'Ticker,Name,Sector,Asset Class,Market Value,Weight (%)\nMSFT,"MICROSOFT",IT,Equity,"1.00",1.00\n'
+    with pytest.raises(base.SourceError, match="Type"):
+        funds.parse_ishares(old)
+
+
+def test_the_ishares_file_is_the_product_pages_latest_holdings_csv():
+    """The old ``1467271812596.ajax?fileType=csv`` link answers the HTML product page since Oct 2026."""
+    url = next(f for f in funds.FILES if f.fund == "IVV").url()
+    assert url == "https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/latest-holdings.csv"
+
+
+def test_the_vanguard_file_is_the_daily_creation_basket():
+    """The old ``profile/api/<ticker>/portfolio-holding/stock`` answers 404 since Oct 2026."""
+    urls = {f.fund: f.url() for f in funds.FILES if f.provider == "vanguard"}
+    assert urls == {"VOO": "https://etfportal.vanguard.com/extrapi/v2/us/standard/01S990737/CRRD/holdings.json",
+                    "IVOO": "https://etfportal.vanguard.com/extrapi/v2/us/standard/00S991588/CRRD/holdings.json",
+                    "VIOO": "https://etfportal.vanguard.com/extrapi/v2/us/standard/00S991612/CRRD/holdings.json"}
 
 
 def test_vanguard_and_nasdaq():
     rows = funds.parse_vanguard(fx.vanguard_json(fx.SP500, cusip_only=("FDX",)))
-    assert len(rows) == 5 and rows[2] == {"ticker_raw": "-", "cusip": "31428X106", "name": "FEDEX CORP", "weight": 1.0}
+    assert len(rows) == 5 and rows[2] == {"ticker_raw": "", "cusip": "31428X106", "name": "FEDEX CORP", "weight": 1.0}
     assert [r["ticker_raw"] for r in funds.parse_nasdaq(fx.nasdaq_json(["MSFT", "NVDA"]))] == ["MSFT", "NVDA"]
 
 
 @pytest.mark.parametrize("parse, body", [(funds.parse_ssga, None), (funds.parse_ishares, b"Name,Weight\n"),
-                                         (funds.parse_vanguard, b'{"fund": {}}'), (funds.parse_nasdaq, b"{}")])
+                                         (funds.parse_vanguard, b'{"fund": {"entity": []}}'), (funds.parse_nasdaq, b"{}")])
 def test_a_file_of_another_shape_is_a_source_error(parse, body):
     if body is None:
         from openpyxl import Workbook
@@ -55,6 +77,24 @@ def test_a_file_of_another_shape_is_a_source_error(parse, body):
         parse(body)
 
 
+def test_invesco_keeps_stock_and_adr_lines_and_reads_the_cusip():
+    rows = funds.parse_invesco(fx.invesco_json([("MSFT", "594918104", "MICROSOFT CORP")], adr=True))
+    assert rows == [{"ticker_raw": "MSFT", "cusip": "594918104", "name": "MICROSOFT CORP", "weight": 1.0},
+                    {"ticker_raw": "PDD", "cusip": "722304102", "name": "PDD Holdings Inc", "weight": 1.0},
+                    {"ticker_raw": "ASML", "cusip": "N07059210", "name": "ASML Holding NV", "weight": 1.0}]
+    with pytest.raises(base.SourceError):
+        funds.parse_invesco(b'{"cusip": "QQQ"}')
+
+
+def test_ndx_is_voted_by_the_nasdaq_list_and_invescos_qqq():
+    """The Nasdaq list API times out on homesrv (28 Oct 2026); QQQ tracks the Nasdaq-100 and answers the same 101."""
+    ndx = {(f.provider, f.fund, f.url()) for f in funds.FILES if f.index_slug == "ndx"}
+    assert ndx == {("nasdaq", "NDX", "https://api.nasdaq.com/api/quote/list-type/nasdaq100"),
+                   ("invesco", "QQQ", "https://dng-api.invesco.com/cache/v1/accounts/en_US/shareclasses/QQQ/holdings/"
+                                      "fund?idType=ticker&productType=ETF")}
+    assert caps.cap_for("invesco") == 50
+
+
 def test_tickers_are_written_the_sec_way():
     assert funds.norm_ticker("BRK.B") == "BRK-B" and funds.norm_ticker("BRK/B") == "BRK-B"
     assert funds.norm_ticker("CASH_USD") is None and funds.norm_ticker("-") is None
@@ -62,10 +102,10 @@ def test_tickers_are_written_the_sec_way():
 
 def test_one_request_per_file_a_failed_file_is_an_issue_and_the_others_count(env):
     row = base.run_request({"dataset": funds.NAME, "params": {"as_of": "2026-10-27"}})
-    assert row["result"] == "changed" and row["calls"] == 10            # the three SmallCap files 404: no retry
+    assert row["result"] == "changed" and row["calls"] == 11            # the three SmallCap files 404: no retry
     n, issues = ops.open_issues(funds.NAME)
     assert n == 3 and {i["key"] for i in issues} == {"ssga-SPSM.xlsx", "ishares-IJR.csv", "vanguard-VIOO.json"}
-    assert row["coverage"] == 0.7 and "failed files" in row["note"]
+    assert row["coverage"] == round(8 / 11, 4) and "failed files" in row["note"]
     assert row["calls"] == len(env.calls())
 
 
@@ -80,5 +120,5 @@ def test_a_day_already_fetched_is_not_fetched_again(env):
     env.requests.clear()
     base.run_request({"dataset": funds.NAME, "params": {"as_of": "2026-10-27"}})
     assert {str(r.url).split("/")[2] for r in env.requests} <= {"www.ssga.com", "www.ishares.com",
-                                                                 "investor.vanguard.com"}
+                                                                 "etfportal.vanguard.com"}
     assert len(env.requests) == 3                          # only the three that failed are asked again

@@ -986,7 +986,7 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 
 **Day caps** (`rcdata/caps.py`, avo's numbers, to be tuned): uw 150,000, sec 40,000, fred 10,000, alpaca 20,000;
 the spine's (PR 5, working numbers avo has not set): wrds 50 (queries), openfigi 1,000 (requests), ssga 50,
-ishares 50, vanguard 50, nasdaq 50 (one request per fund file);
+ishares 50, vanguard 50, nasdaq 50, invesco 50 (one request per fund file);
 a dataset whose providers have all reached their cap for the New York day gets a `skipped` check row and sends
 nothing; inside a run every call checks its provider's cap first (one capped provider, FRED among the market series,
 is a source failure and the others go on), and the counter is written every 25 calls, at the end, and on SIGTERM (systemd's stop, turned into a clean exit) or Ctrl-C; a keyless call is counted when it is sent, a UW call when its answer arrives (the UW client's observer), so a UW request cut off by a stop is not counted. Only the
@@ -1049,8 +1049,8 @@ the old identity tables there are untouched (D5: they are empty since 27 Oct).
 | `wrds/sec_idhist` | monthly, attended | `comp.company`, `comp.security`, `comp.sec_idhist`; between snapshots only the new listed CIKs | `stg_wrds_company`, `stg_wrds_security`, `stg_wrds_idhist` |
 | `wrds/co_hgic` | monthly, attended | `comp.co_hgic` | `stg_wrds_hgic` |
 | `wrds/idxcst_his` | monthly, attended | `comp.idxcst_his` for the S&P 500, 400 and 600 index keys | `stg_wrds_idx` |
-| `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet, under 25 requests a minute | `stg_figi` |
-| `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR, Vanguard VOO/IVOO/VIOO, Nasdaq's nasdaq100 list | `stg_fund_lines`, `stg_fund_files` |
+| `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet (a CINS, a letter first, asked as `ID_CINS`), under 25 requests a minute | `stg_figi` |
+| `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR (`latest-holdings.csv`), Vanguard VOO/IVOO/VIOO (daily creation basket), Nasdaq's nasdaq100 list and Invesco QQQ (both vote `ndx`) | `stg_fund_lines`, `stg_fund_files` |
 | `spine/security` | daily | none: builds the served tables from the staging tables | the four tables below |
 
 The sources load their Parquet into TEMP tables of the build connection (never stored in the file); the kind's
@@ -1085,11 +1085,14 @@ steps, and a first attempt that failed is not retried every hour.
 | `gics_history` | Compustat's GICS periods of the linked companies |
 | `index_membership` | the fund-file members (source `funds/index_holdings`) and Compustat's constituents (source `wrds/idxcst_his`, the check) |
 
-**Tier rule v1** (`rcdata/build/spine/tier.py`): A = listed on Nasdaq, NYSE or Cboe and not an excluded type
+**Tier rule v2** (`rcdata/build/spine/tier.py`): A = listed on Nasdaq, NYSE or Cboe and not an excluded type
 (`core.identity.types.EXCLUDED_TYPES`; an untyped name stays); B = listed, excluded type; C = OTC; D = no exchange.
-The type comes from `core.identity.types.classify_type` over OpenFIGI's types and the name (no SEC submissions);
-a name those leave untyped takes Compustat's `tpci` of its linked security (`0` common, `F` ADR, `%` ETF; others
-type nothing).
+So Tier A is not every listed name: listed is A and B. The type comes from `core.identity.types.classify_type` over
+OpenFIGI's types and the name (no SEC submissions); a name those leave untyped takes, in order, its ticker's type (a
+warrant, unit or right: `-WT`, `-UN`, `-RI`, or a Nasdaq fifth letter W, U, R; a right is typed warrant), Compustat's
+`tpci` of its linked security (`0` common, `F` ADR, `%` ETF; others type nothing), then `etp` from its SEC name (ETF
+or ETN, a commodity, currency or crypto pool, a pool sponsor's trust, a bank that issues ETNs) or from a Cboe listing;
+those two never type the issuers' or Cboe's own shares (JPM, DB, BMO, CBOE). v2 (2026-10-28) types 288 of the 480 Tier A names the first live build left with no Compustat link.
 
 **The link.** CIK -> Compustat companies -> the security whose `tic` is the SEC ticker (`BRK.B` -> `BRK-B`), else
 the only active US security of a CIK with one SEC ticker; otherwise no link and no CUSIP.

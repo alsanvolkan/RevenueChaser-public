@@ -326,9 +326,10 @@ whole app at a local server:
 | `RC_WIKIPEDIA_BASE` | Wikipedia S&P 1500 constituent lists (identity refresh; a sector source for the list's own names, #272) |
 | `RC_SPDR_BASE` | SPDR index-ETF holdings files (identity refresh) |
 | `RC_SSGA_BASE` | SSGA daily ETF holdings workbooks: SPY, MDY, SPSM, the spine's index membership (`rcdata/build/spine/funds.py`, read at call time) |
-| `RC_ISHARES_BASE` | iShares holdings CSVs: IVV, IJH, IJR (`rcdata/build/spine/funds.py`) |
-| `RC_VANGUARD_BASE` | Vanguard portfolio-holding API: VOO, IVOO, VIOO (`rcdata/build/spine/funds.py`) |
+| `RC_ISHARES_BASE` | iShares `latest-holdings.csv` files: IVV, IJH, IJR (`rcdata/build/spine/funds.py`) |
+| `RC_VANGUARD_BASE` | Vanguard's daily creation baskets (PCF, `etfportal.vanguard.com`): VOO, IVOO, VIOO (`rcdata/build/spine/funds.py`) |
 | `RC_NASDAQ_API_BASE` | Nasdaq's list API, the Nasdaq-100 members (`rcdata/build/spine/funds.py`) |
+| `RC_INVESCO_API_BASE` | Invesco's fund holdings API: QQQ, the second Nasdaq-100 file (`rcdata/build/spine/funds.py`) |
 
 `RC_FDA_USER_AGENT` overrides the `User-Agent` header sent to FDA OOPD
 (`core/providers/fda_orphan.py`); default `"RevenueChaser research"`.

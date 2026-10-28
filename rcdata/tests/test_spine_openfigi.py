@@ -1,6 +1,7 @@
 """``openfigi/map``: only the CUSIPs not mapped yet are asked, at most 100 a request and under 25 requests a minute,
 the key only in its header, no key asks nothing, an 'absent' answer is asked again after 90 days, and a day's
-batches already on disk are not asked again."""
+batches already on disk are not asked again. A CINS is asked as ``ID_CINS``; one the map asked as ``ID_CUSIP`` before
+that is asked again."""
 from __future__ import annotations
 
 import json
@@ -69,6 +70,72 @@ def test_an_absent_answer_is_asked_again_after_90_days(env):
     assert _jobs(env) == []
     _run("2027-01-26")
     assert _jobs(env) == [["62944T105"]]                    # NVR's, the one 'absent'
+
+
+def _map_row(cusip: str) -> tuple:
+    return of._query(f"SELECT status, figi FROM read_parquet({base.sql_path(of.partition())}) "
+                     f"WHERE cusip = '{cusip}'")[0]
+
+
+def test_a_cins_is_asked_as_id_cins_and_gets_its_figi(env):
+    _run()
+    (req,) = env.calls("figi.test")
+    asked = {j["idValue"]: j["idType"] for j in json.loads(req.content)}
+    assert asked.pop("G29183103") == "ID_CINS" and set(asked.values()) == {"ID_CUSIP"}       # Eaton: a CINS
+    assert _map_row("G29183103") == ("present", "BBG000BJ3PD2")
+    (raw,) = (of.raw_dir() / "2026-10-27").glob("batch-*.json.gz")
+    body = base.read_raw_json(raw)
+    assert dict(zip(body["cusips"], body["id_types"]))["G29183103"] == "ID_CINS"
+
+
+def test_a_cins_the_map_asked_as_id_cusip_is_asked_again_inside_the_90_days(env, monkeypatch):
+    own = of.id_type
+    monkeypatch.setattr(of, "id_type", lambda code: of.ID_CUSIP)          # how the map asked until 2026-10-28
+    _run()
+    assert _map_row("G29183103") == ("absent", None)
+    monkeypatch.setattr(of, "id_type", own)
+    env.requests.clear()
+    _run("2026-11-03")                                                     # a week on: an ID_CUSIP 'absent' is no answer
+    assert _jobs(env) == [["G29183103"]]
+    assert _map_row("G29183103") == ("present", "BBG000BJ3PD2")
+    env.requests.clear()
+    _run("2026-11-10")
+    assert _jobs(env) == []
+
+
+def test_a_cins_in_a_days_batch_written_before_the_id_types_is_asked_again_that_day(env):
+    raw = of.raw_dir() / "2026-10-27" / "batch-00000.json.gz"
+    base.write_raw_json(of._meta(raw), {"as_of": "2026-10-27", "fetched_at": 1.0, "run_id": "r0", "jobs": 2})
+    base.write_raw_json(raw, {"cusips": ["G29183103", "594918104"],
+                              "answers": [{"warning": "No identifier found."}, {"data": [fx.FIGI["594918104"]]}]})
+    _run()
+    (jobs,) = _jobs(env)
+    assert "G29183103" in jobs and "594918104" not in jobs
+    assert _map_row("G29183103") == ("present", "BBG000BJ3PD2")           # the newer answer wins the CUSIP
+
+
+def test_an_absent_cins_asked_as_id_cins_waits_the_90_days(env, monkeypatch):
+    monkeypatch.delitem(fx.FIGI, "G29183103")                              # OpenFIGI does not know it, even as a CINS
+    _run()
+    env.requests.clear()
+    _run("2027-01-24")
+    assert _jobs(env) == []
+    _run("2027-01-26")
+    assert sorted(_jobs(env)[0]) == ["62944T105", "G29183103"]
+
+
+def test_an_absent_cusip_waits_the_90_days_without_its_raw_batches(env):
+    _run()
+    for raw in (of.raw_dir() / "2026-10-27").glob("batch-*"):
+        raw.unlink()
+    env.requests.clear()
+    _run("2026-11-03")
+    assert _jobs(env) == []                                                # only a CINS needs its batch to say how it was asked
+
+
+def test_the_id_type_of_a_code():
+    assert of.id_type("G29183103") == of.ID_CINS and of.id_type("594918104") == of.ID_CUSIP
+    assert of.id_type("00206R102") == of.ID_CUSIP                          # a letter inside a CUSIP is no CINS
 
 
 def test_no_key_fails_and_asks_nothing(env, monkeypatch):

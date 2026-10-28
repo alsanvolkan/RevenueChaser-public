@@ -77,6 +77,7 @@ def test_identifiers_and_gics_of_the_ten_names(built):
     assert _sec("HEI-A")["cusip"] == "422806208" and _sec("HEI")["cusip"] == "422806109"
     etn = _sec("ETN")
     assert etn["cusip"] == "G29183103" and etn["isin"] is None          # a CINS: no US ISIN is derived
+    assert etn["figi"] == "BBG000BJ3PD2"                                # asked as ID_CINS
     assert _sec("NVR")["figi"] is None and _sec("NVR")["cusip"] == "62944T105"
     assert _sec("TM")["sector"] == "Consumer Cyclical"
     assert _sec("WFC-PC")["cusip"] is None
@@ -107,7 +108,7 @@ def test_membership_from_the_fund_files_matched_by_cusip_ticker_and_squashed_tic
     rows = _q("SELECT index_slug, ticker, valid_from, valid_to, files_held, files_counted FROM index_membership "
               "WHERE source = ? ORDER BY index_slug, ticker", funds.NAME)
     assert rows == [
-        ("ndx", "MSFT", date(2026, 10, 27), None, 1, 1),
+        ("ndx", "MSFT", date(2026, 10, 27), None, 2, 2),      # the Nasdaq list and QQQ
         ("sp400", "HEI", date(2026, 10, 27), None, 3, 3),
         ("sp400", "HEI-A", date(2026, 10, 27), None, 3, 3),      # iShares' HEIA, squashed back to HEI-A
         ("sp500", "ETN", date(2026, 10, 27), None, 3, 3),
@@ -143,7 +144,7 @@ def test_a_day_without_a_counting_file_is_no_absence(built):
 
 def test_files_that_disagree_vote_and_are_an_issue(built):
     _funds_answer(built, sp500=[h for h in fx.SP500 if h[0] != "NVR"])
-    built.routes.insert(0, ("fileName=IVV_holdings", lambda r: (200, fx.ishares_csv(fx.SP500), {}), 200, {}))
+    built.routes.insert(0, (fx.ISHARES_ROUTE["IVV"], lambda r: (200, fx.ishares_csv(fx.SP500), {}), 200, {}))
     run_all("2026-10-28", names=(funds.NAME,))
     assert _q("SELECT valid_to, files_held, files_counted FROM index_membership WHERE source = ? "
               "AND index_slug = 'sp500' AND ticker = 'NVR'", funds.NAME) == [(date(2026, 10, 28), 3, 3)]
@@ -307,7 +308,7 @@ def test_a_rename_the_fund_files_lag_is_not_matched_to_the_old_tickers_next_owne
     base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-10"}})
     _funds_answer(built)
     no_cusip = [(t, None, n) if t == "ETN" else (t, c, n) for t, c, n in fx.SP500]
-    built.routes.insert(0, ("fileName=IVV_holdings", lambda r: (200, fx.ishares_csv(no_cusip), {}), 200, {}))
+    built.routes.insert(0, (fx.ISHARES_ROUTE["IVV"], lambda r: (200, fx.ishares_csv(no_cusip), {}), 200, {}))
     run_all("2026-11-03", names=(funds.NAME,))
     assert _q("SELECT count(*) FROM index_membership WHERE source = ? AND ticker = 'ETN' AND cik = '8888888'",
               funds.NAME) == [(0,)]
@@ -410,6 +411,98 @@ def test_compustat_tpci_types_a_name_nothing_else_typed():
     # OpenFIGI and the name rules come first: tpci only fills a gap.
     assert tier.security_type("TM", "TOYOTA", {"security_type": "ADR"}, tpci="0")[0] == "adr"
     assert tier.security_type("WFC-PC", "WELLS FARGO", None, tpci="0")[0] == "preferred"
+
+
+@pytest.mark.parametrize("ticker, exchange, want, source", [
+    ("AMPX-WT", "NYSE", "warrant", "ticker_rule(-WT)"), ("NE-WTA", "NYSE", "warrant", "ticker_rule(-WT)"),
+    ("BCSS-UN", "NYSE", "unit", "ticker_rule(-UN)"), ("CELG-RI", "NYSE", "warrant", "ticker_rule(-RI: right)"),
+    ("DAICW", "Nasdaq", "warrant", "ticker_rule(Nasdaq fifth letter W)"),
+    ("ATIIU", "Nasdaq", "unit", "ticker_rule(Nasdaq fifth letter U)"),
+    ("AESPR", "Nasdaq", "warrant", "ticker_rule(Nasdaq fifth letter R: right)")])
+def test_a_warrant_unit_or_right_is_typed_by_its_ticker(ticker, exchange, want, source):
+    """The 2026-10-28 spine left these untyped in Tier A (no CUSIP, so no OpenFIGI answer): the listing's own
+    symbol says what it is."""
+    assert tier.security_type(ticker, "SOME CO", None, exchange=exchange) == (want, source)
+    assert tier.tier(exchange, want) == "B"
+
+
+@pytest.mark.parametrize("ticker, exchange", [
+    ("ABCDW", "NYSE"), ("ABCDU", None), ("CHRW", "Nasdaq"), ("GOOGL", "Nasdaq"), ("FWONK", "Nasdaq"),
+    ("MSGK-WI", "NYSE"), ("BRK-B", "NYSE"), ("ABCD-U", "NYSE"), ("ABCDEW", "Nasdaq")])
+def test_a_ticker_rule_needs_its_exact_form(ticker, exchange):
+    """The fifth letter is a Nasdaq convention only, and only of a five-letter symbol; other suffixes type nothing."""
+    assert tier.security_type(ticker, "SOME CO", None, exchange=exchange) == ("unknown", "none")
+
+
+def test_the_ticker_rules_never_retype_a_typed_name_and_come_before_tpci():
+    # PSNYW, "Class C-1 ADS (ADW)" at Nasdaq Trader (2026-10-28), is a depositary warrant: OpenFIGI's type stands.
+    assert tier.security_type("PSNYW", "POLESTAR", {"security_type": "ADR"}, exchange="Nasdaq")[0] == "adr"
+    # Compustat writes tpci 0 for PLCIU, a unit (the 2026-10-28 spine): the symbol is the more specific word.
+    assert tier.security_type("PLCIU", "PELICAN ACQUISITION II CORP", None, tpci="0", exchange="Nasdaq") == (
+        "unit", "ticker_rule(Nasdaq fifth letter U)")
+
+
+@pytest.mark.parametrize("name, source", [
+    ("SPDR DOW JONES INDUSTRIAL AVERAGE ETF TRUST", "name_rule(ETF/ETN)"),
+    ("Grayscale Bitcoin Trust ETF", "name_rule(ETF/ETN)"),
+    ("Ark 21Shares Bitcoin ETF", "name_rule(ETF/ETN)"),
+    ("United States Oil Fund, LP", "name_rule(commodity, currency or crypto pool)"),
+    ("Invesco CurrencyShares Euro Trust", "name_rule(commodity, currency or crypto pool)"),
+    ("Teucrium Commodity Trust", "name_rule(commodity, currency or crypto pool)"),
+    ("Sprott Physical Gold Trust", "name_rule(commodity, currency or crypto pool)"),
+    ("Morgan Stanley Bitcoin Trust", "name_rule(commodity, currency or crypto pool)"),
+    ("COTWO ADVISORS PHYSICAL EUROPEAN CARBON ALLOWANCE TRUST", "name_rule(commodity, currency or crypto pool)"),
+    ("ProShares Trust II", "name_rule(pool sponsor)"), ("Invesco DB Energy Fund", "name_rule(pool sponsor)"),
+    ("VS Trust", "name_rule(pool sponsor)"),
+    ("BANK OF MONTREAL /CAN/", "name_rule(ETN issuer)"), ("BARCLAYS BANK PLC", "name_rule(ETN issuer)"),
+    ("UBS AG", "name_rule(ETN issuer)"), ("CREDIT SUISSE AG", "name_rule(ETN issuer)"),
+    ("DEUTSCHE BANK AKTIENGESELLSCHAFT", "name_rule(ETN issuer)"), ("JPMORGAN CHASE & CO", "name_rule(ETN issuer)")])
+def test_an_untyped_exchange_traded_product_is_typed_by_its_sec_name(name, source):
+    """The SEC file names the filer: the fund or trust itself, or the bank whose notes (ETNs) the ticker is."""
+    assert tier.security_type("XTKR", name, None, exchange="NYSE") == ("etp", source)
+
+
+@pytest.mark.parametrize("name", [
+    "NORTH EUROPEAN OIL ROYALTY TRUST", "Gold Royalty Corp.", "REDWOOD TRUST INC", "NORTHERN TRUST CORP",
+    "ASA Gold & Precious Metals Ltd", "Uranium Royalty Corp.", "BANK OF MONTREAL HOLDINGS INC", "OIL-DRI CORP",
+    "BITCOIN DEPOT INC.", "Elme Communities", "NETFLIX INC", "UBS AGRICULTURE CORP",
+    "CORTS TRUST FOR JPMORGAN CHASE & CO"])
+def test_the_product_name_rules_leave_operating_names_alone(name):
+    """ETF inside a word (NETFLIX) is no ETF; an issuer's name is matched whole, not as the start or the end of
+    another (a CORTS trust over a bank's bonds is no ETN)."""
+    assert tier.security_type("XTKR", name, None, exchange="NYSE") == ("unknown", "none")
+
+
+@pytest.mark.parametrize("ticker, name, exchange", [
+    ("JPM", "JPMORGAN CHASE & CO", "NYSE"), ("DB", "DEUTSCHE BANK AKTIENGESELLSCHAFT", "NYSE"),
+    ("BMO", "BANK OF MONTREAL /CAN/", "NYSE"), ("CBOE", "Cboe Global Markets, Inc.", "CBOE")])
+def test_an_etn_issuers_and_cboes_own_shares_stay_in_tier_a_with_no_figi_and_no_tpci(ticker, name, exchange):
+    """OpenFIGI and Compustat's tpci type these first in a normal build; with neither (an empty WRDS source, a failed
+    link) the bank's own shares and Cboe's are still not one of their products (review should-fix 1, #238)."""
+    assert tier.security_type(ticker, name, None, None, exchange=exchange) == ("unknown", "none")
+    assert tier.tier(exchange, "unknown") == "A"
+
+
+def test_the_name_and_venue_rules_come_after_tpci_and_a_cboe_listing_is_a_product():
+    # A royalty trust Compustat types common is not a product, whatever the commodity in its name.
+    assert tier.security_type("MVO", "MV OIL TRUST", None, tpci="0", exchange="NYSE")[0] == "common"
+    # Cboe lists products: 1,673 of its 1,679 symbols are ETFs, three more are ETNs (Nasdaq Trader, 2026-10-28).
+    assert tier.security_type("TAWN", "BANK OF MONTREAL /CAN/", None, exchange="CBOE")[0] == "etp"
+    assert tier.security_type("XYZ", "SOME TRUST", None, exchange="CBOE") == ("etp", "venue_rule(Cboe)")
+    # Cboe Global Markets itself is listed there: OpenFIGI or tpci type it first.
+    assert tier.security_type("CBOE", "Cboe Global Markets, Inc.", {"security_type": "Common Stock"},
+                              exchange="CBOE")[0] == "common"
+    assert tier.security_type("CBOE", "Cboe Global Markets, Inc.", None, tpci="0", exchange="CBOE")[0] == "common"
+
+
+def test_the_spine_gives_the_type_rules_the_exchange(built, monkeypatch):
+    extra = [[3000003, "SOME CO", "SOMEW", "Nasdaq"], [3000004, "BANK OF MONTREAL /CAN/", "FNGU", "NYSE"],
+             [3000005, "SOME TRUST", "XETP", "CBOE"], [3000006, "SOME CO", "SOME-UN", "NYSE"]]
+    monkeypatch.setitem(fx.SEC_FILE, "data", fx.SEC_FILE["data"] + extra)
+    run_all("2026-10-28", names=(sec_tickers.NAME, security.NAME))
+    got = {t: (_sec(t)["security_type"], _sec(t)["tier"]) for t in ("SOMEW", "FNGU", "XETP", "SOME-UN")}
+    assert got == {"SOMEW": ("warrant", "B"), "FNGU": ("etp", "B"), "XETP": ("etp", "B"), "SOME-UN": ("unit", "B")}
+    assert _sec("MSFT")["tier_rule"] == tier.VERSION == 2
 
 
 def test_the_spine_uses_tpci_for_a_name_openfigi_did_not_answer(built, monkeypatch):

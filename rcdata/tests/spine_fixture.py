@@ -210,14 +210,20 @@ FIGI = {
 
 
 def figi_answer(request):
-    """The mapping endpoint: one entry per job, ``data`` for a known CUSIP, the documented warning otherwise."""
+    """The mapping endpoint: one entry per job, ``data`` for a known code asked with its own id type, the documented
+    warning otherwise. A CINS (a letter first) is found only as ``ID_CINS``: asked as ``ID_CUSIP``, OpenFIGI found
+    none of the 2,092 CINS the first live map held (homesrv, 2026-10-28); here a CUSIP is found only as ``ID_CUSIP``."""
     jobs = json.loads(request.content)
-    out = [{"data": [FIGI[j["idValue"]]]} if j["idValue"] in FIGI else {"warning": "No identifier found."}
-           for j in jobs]
+
+    def found(job) -> bool:
+        own = "ID_CINS" if job["idValue"][:1].isalpha() else "ID_CUSIP"
+        return job["idValue"] in FIGI and job.get("idType") == own
+    out = [{"data": [FIGI[j["idValue"]]]} if found(j) else {"warning": "No identifier found."} for j in jobs]
     return 200, json.dumps(out).encode(), {"content-type": "application/json"}
 
 
 # ── Fund files ───────────────────────────────────────────────────────────────────────────────────────────────
+# The iShares, Vanguard and Invesco shapes follow the real files of 28 Oct 2026 (#237); the values are the tests'.
 
 # (ticker as the file writes it, CUSIP or None, name)
 SP500 = [("MSFT", "594918104", "MICROSOFT CORP"), ("ETN", "G29183103", "EATON CORP PLC"),
@@ -245,30 +251,44 @@ def ssga_xlsx(holdings) -> bytes:
     return buf.getvalue()
 
 
+# A fund file's request, by the part of its URL that names the fund (the http mock matches a substring).
+ISHARES_ROUTE = {"IVV": "products/239726/", "IJH": "products/239763/", "IJR": "products/239774/"}
+VANGUARD_ROUTE = {"VOO": "standard/01S990737/", "IVOO": "standard/00S991588/", "VIOO": "standard/00S991612/"}
+
+
 def ishares_csv(holdings, drop_dash=False) -> bytes:
-    """iShares' holdings CSV: nine preamble lines, the header, equity and cash lines, a blank line, a disclaimer.
-    ``drop_dash`` writes class tickers without the dot (iShares' ``BRKB`` style)."""
+    """iShares' ``latest-holdings.csv`` (format of Oct 2026): eight preamble lines and a blank one, the header, the
+    lines (every value quoted), a blank line. ``Type`` tells a stock from a swap or a warrant, both of which iShares
+    files under ``Asset Class`` Equity; the weight is ``Market Weight``. ``drop_dash`` writes class tickers without
+    the dot (iShares' ``BRKB`` style)."""
     lines = ['iShares Core S&P 500 ETF', 'Fund Holdings as of,"Oct 27, 2026"', 'Inception Date,"May 15, 2000"',
-             'Shares Outstanding,"1,000,000.00"', 'Stock,"-"', 'Bond,"-"', 'Cash,"-"', 'Other,"-"', '\xa0',
-             'Ticker,Name,Sector,Asset Class,Market Value,Weight (%),Notional Value,Quantity,Price,Location,'
-             'Exchange,Currency,FX Rate,Market Currency,Accrual Date']
+             'Shares Outstanding,"1,000,000.00"', 'Stock,"-"', 'Bond,"-"', 'Cash,"-"', 'Other,"-"', '',
+             'Ticker,Name,Type,Sector,Asset Class,Market Value,Notional Value,Quantity,Price,Location,Exchange,'
+             'Currency,FX Rate,Market Currency,Accrual Date,Market Weight,Notional Weight']
+
+    def line(t, name, kind, sector, asset_class, weight):
+        return (f'"{t}","{name}","{kind}","{sector}","{asset_class}","1,000.00","1,000.00","10.00","100.00",'
+                f'"United States","NASDAQ","USD","1.00","USD","-","{weight}","{weight}"')
     for t, _cusip, name in holdings:
         t = t.replace(".", "") if drop_dash else t
-        lines.append(f'{t},"{name}",Information Technology,Equity,"1,000.00",1.00,"1,000.00","10.00",100.00,'
-                     'United States,NASDAQ,USD,1.00,USD,-')
-    lines.append('USD,"USD CASH",Cash and/or Derivatives,Cash,"10.00",0.01,"10.00","10.00",1.00,United States,-,'
-                 'USD,1.00,USD,-')
-    lines += ["", '"The content contained herein is owned or licensed by BlackRock"']
+        lines.append(line(t, name, "EQUITY", "Information Technology", "Equity", "1.00"))
+    lines.append(line("ZSWP", "SWAPPED CORP", "SWAP", "Financials", "Equity", "-"))
+    lines.append(line("SKYD WS", "SKYDANCE EQUITY WARRANTS", "WARRANT", "Communication", "Equity", "-"))
+    lines.append(line("USD", "USD CASH", "CASH", "Cash and/or Derivatives", "Cash", "0.01"))
+    lines.append("")
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 def vanguard_json(holdings, cusip_only=()) -> bytes:
-    """Vanguard's portfolio-holding answer; a name in ``cusip_only`` is written with ``-`` for its ticker, so only
-    its CUSIP can match it."""
-    entity = [{"ticker": "-" if t in cusip_only else t, "shortName": name, "cusip": cusip, "percentWeight": "1.00"}
-              for t, cusip, name in holdings]
-    entity.append({"ticker": "", "shortName": "CASH", "cusip": None, "percentWeight": "0.01"})
-    return json.dumps({"size": len(entity), "fund": {"entity": entity}}).encode()
+    """Vanguard's daily creation basket (PCF) of ``etfportal.vanguard.com/extrapi/v2/us/standard/<basket>/CRRD/
+    holdings.json``; a name in ``cusip_only`` is written with an empty ticker (as the real file writes two IVOO lines),
+    so only its CUSIP can match it. A futures line shows the non-equity lines are dropped."""
+    holding = [{"assetType": "EQUITY", "ticker": "" if t in cusip_only else t, "cusip": cusip, "shrtName": name,
+                "weighting": 1.0, "cashInLieu": "N"} for t, cusip, name in holdings]
+    holding.append({"assetType": "FUTURE", "ticker": "ESZ6", "cusip": None, "shrtName": "S&P500 EMINI FUT",
+                    "weighting": 0.03, "cashInLieu": "N"})
+    return json.dumps({"basketId": "01S990737", "portId": "0968", "trdDateStr": "10/27/2026 00:00:00",
+                       "equityHldgCnt": len(holdings), "holding": holding}).encode()
 
 
 def nasdaq_json(symbols) -> bytes:
@@ -277,14 +297,40 @@ def nasdaq_json(symbols) -> bytes:
                        "message": None, "status": {"rCode": 200}}).encode()
 
 
+def invesco_json(holdings, adr=False) -> bytes:
+    """Invesco's QQQ holdings answer (``dng-api.invesco.com/cache/v1/accounts/en_US/shareclasses/QQQ/holdings/fund``):
+    common stock and ADR lines are holdings; the index future, the currency and the cash lines are not. ``adr`` adds
+    PDD's ADR line (type ``ADR``, as ARM's and PDD's in the real file) and ASML's (``DRNY``)."""
+    rows = [{"ticker": t, "issuerName": name, "cusip": cusip, "percentageOfTotalNetAssets": 1.0,
+             "securityTypeCode": "COM", "securityTypeName": "Common Stock"} for t, cusip, name in holdings]
+    if adr:
+        rows.append({"ticker": "PDD", "issuerName": "PDD Holdings Inc", "cusip": "722304102",
+                     "percentageOfTotalNetAssets": 1.0, "securityTypeCode": "ADR",
+                     "securityTypeName": "American Depository Receipt"})
+        rows.append({"ticker": "ASML", "issuerName": "ASML Holding NV", "cusip": "N07059210",
+                     "percentageOfTotalNetAssets": 1.0, "securityTypeCode": "DRNY",
+                     "securityTypeName": "American Depository Receipt - NY"})
+    rows += [{"ticker": "NQZ6", "issuerName": "NASDAQ 100 E-MINI", "cusip": None, "percentageOfTotalNetAssets": 0.1,
+              "securityTypeCode": "IFUT", "securityTypeName": "Index Future"},
+             {"ticker": "USD", "issuerName": "US Dollar", "cusip": None, "percentageOfTotalNetAssets": 0.1,
+              "securityTypeCode": "CURR", "securityTypeName": "Currency"},
+             {"ticker": None, "issuerName": "Synthetic Cash", "cusip": None, "percentageOfTotalNetAssets": 0.0,
+              "securityTypeCode": "SYN", "securityTypeName": "Synthetic Cash"}]
+    return json.dumps({"cusip": "QQQ", "effectiveDate": "2026-10-27", "totalNumberOfHoldings": len(rows),
+                       "holdings": rows}).encode()
+
+
 def add_fund_routes(http_mock, sp500=SP500, sp400=SP400, ndx=("MSFT",), fail=()) -> None:
-    """Answer every fund file of ``funds.FILES``: S&P 500 and 400 from the lists above, the SmallCap 600 files 404."""
+    """Answer every fund file of ``funds.FILES``: S&P 500 and 400 from the lists above, the SmallCap 600 files 404;
+    the Nasdaq list and QQQ both hold ``ndx``."""
     def maybe(name, body):
         return (500, b"down", {}) if name in fail else (200, body, {})
     http_mock.add("holdings-daily-us-en-spy", lambda r: maybe("SPY", ssga_xlsx(sp500)))
     http_mock.add("holdings-daily-us-en-mdy", lambda r: maybe("MDY", ssga_xlsx(sp400)))
-    http_mock.add("fileName=IVV_holdings", lambda r: maybe("IVV", ishares_csv(sp500)))
-    http_mock.add("fileName=IJH_holdings", lambda r: maybe("IJH", ishares_csv(sp400, drop_dash=True)))
-    http_mock.add("/VOO/portfolio-holding", lambda r: maybe("VOO", vanguard_json(sp500, cusip_only=("FDX",))))
-    http_mock.add("/IVOO/portfolio-holding", lambda r: maybe("IVOO", vanguard_json(sp400)))
+    http_mock.add(ISHARES_ROUTE["IVV"], lambda r: maybe("IVV", ishares_csv(sp500)))
+    http_mock.add(ISHARES_ROUTE["IJH"], lambda r: maybe("IJH", ishares_csv(sp400, drop_dash=True)))
+    http_mock.add(VANGUARD_ROUTE["VOO"], lambda r: maybe("VOO", vanguard_json(sp500, cusip_only=("FDX",))))
+    http_mock.add(VANGUARD_ROUTE["IVOO"], lambda r: maybe("IVOO", vanguard_json(sp400)))
     http_mock.add("list-type/nasdaq100", lambda r: maybe("NDX", nasdaq_json(ndx)))
+    http_mock.add("shareclasses/QQQ/holdings", lambda r: maybe("QQQ", invesco_json(
+        [h for h in sp500 + sp400 + [("NVDA", "67066G104", "NVIDIA CORP")] if h[0] in ndx])))
