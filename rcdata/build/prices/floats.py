@@ -3,7 +3,10 @@
 **``yfinance/float``** asks Yahoo (the ``yfinance`` library, one ``Ticker.get_info`` per name) for ``SLICE`` Tier A
 names a run: the names never asked first (by ticker), then the longest ago. The lookups are ``INTERVAL_S`` apart; a
 401 or a 429 (Yahoo's refusal, or its rate limit) stops the run's lookups at once, and what was read before it is
-kept: the next run goes on from there. Raw: ``raw/yfinance/float/<as_of>/batch-<n>.json.gz``, ``BATCH`` names a file;
+kept: the next run goes on from there. ``yfinance`` (1.7.0, measured 28 Oct 2026) raises nothing for a refusal: it logs
+the 401 or 429 on its ``yfinance`` logger and answers an empty info, so ``_lookup`` listens to that logger and raises
+the refusal it logged when the answer is empty; an empty answer with no refusal logged is that name's error row
+(``EMPTY_ANSWER``). Raw: ``raw/yfinance/float/<as_of>/batch-<n>.json.gz``, ``BATCH`` names a file;
 a name a file of the day holds is not asked again that day. Parquet: ``parquet/yfinance/float/date=<as_of>/
 part-0.parquet`` keyed on the ticker. ``_lookup`` is the one function that talks to Yahoo (the tests replace it).
 
@@ -13,6 +16,7 @@ Parquet: ``parquet/uw/total_float/date=<as_of>/part-0.parquet`` keyed on the tic
 """
 from __future__ import annotations
 
+import logging
 import re
 from datetime import date
 from pathlib import Path
@@ -30,6 +34,7 @@ BATCH = 50
 INTERVAL_S = 1.5
 FIELDS = ("floatShares", "sharesOutstanding", "impliedSharesOutstanding", "quoteType", "currency", "exchange")
 STOP = re.compile(r"\b(401|429)\b|rate.?limit|too many requests|unauthori[sz]ed|invalid crumb", re.I)
+EMPTY_ANSWER = "empty answer: Yahoo returned none of the fields"
 YAHOO_SCHEMA = [("ticker", "TEXT"), ("cik", "TEXT"), ("security_id", "TEXT"), ("float_shares", "DOUBLE"),
                 ("shares_outstanding", "DOUBLE"), ("implied_shares", "DOUBLE"), ("quote_type", "TEXT"),
                 ("currency", "TEXT"), ("error", "TEXT"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"),
@@ -38,11 +43,36 @@ UW_SCHEMA = [("ticker", "TEXT"), ("cik", "TEXT"), ("security_id", "TEXT"), ("tot
              ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
 
 
+class _Logged(logging.Handler):
+    """The ``yfinance`` logger's messages during one lookup."""
+
+    def __init__(self):
+        super().__init__(logging.WARNING)
+        self.messages: list[str] = []
+
+    def emit(self, record):
+        self.messages.append(record.getMessage())
+
+
+class YahooRefused(RuntimeError):
+    """Yahoo refused a lookup (a 401 or 429 the library only logged)."""
+
+
 def _lookup(ticker: str) -> dict:
-    """Yahoo's fields of ``FIELDS`` for one ticker (the SEC file's form, which is Yahoo's: ``BRK-B``)."""
+    """Yahoo's fields of ``FIELDS`` for one ticker (the SEC file's form, which is Yahoo's: ``BRK-B``). An empty
+    answer after a logged 401 or 429 raises ``YahooRefused`` with the logged text (the run's stop rule reads it)."""
     import yfinance as yf
-    info = yf.Ticker(ticker).get_info() or {}
-    return {k: info.get(k) for k in FIELDS}
+    log, seen = logging.getLogger("yfinance"), _Logged()
+    log.addHandler(seen)
+    try:
+        info = yf.Ticker(ticker).get_info() or {}
+    finally:
+        log.removeHandler(seen)
+    out = {k: info.get(k) for k in FIELDS}
+    refused = [m for m in seen.messages if STOP.search(m) and "continuing without crumb" not in m]
+    if refused and all(v is None for v in out.values()):
+        raise YahooRefused(refused[-1][:300])
+    return out
 
 
 def _num(value) -> float | None:
@@ -111,6 +141,9 @@ class YahooFloat:
             entry = {"cik": n.get("cik"), "security_id": n["security_id"]}
             try:
                 entry.update(_lookup(n["ticker"]))
+                if all(entry.get(k) is None for k in FIELDS):
+                    ctx.count("yfinance", failures=1)
+                    entry["error"] = EMPTY_ANSWER
             except Exception as e:  # noqa: BLE001 - one name's failure is that name's row, a refusal stops the run
                 text = f"{type(e).__name__}: {e}"
                 if STOP.search(text) or type(e).__name__ == "YFRateLimitError":

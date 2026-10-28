@@ -213,6 +213,46 @@ def test_yahoo_float_asks_the_never_asked_first(monkeypatch):
     assert asked == ["FLG", "GAPX"]                                        # by ticker among the never asked
 
 
+class FakeYahoo:
+    """``yfinance`` as it answered this cloud host on 28 Oct 2026 (1.7.0): a refused lookup is no exception; the
+    library logs the 401 on its ``yfinance`` logger and ``get_info`` returns ``{'trailingPegRatio': None}``."""
+
+    def __init__(self, refuse=(), empty=()):
+        self.refuse, self.empty, self.asked = set(refuse), set(empty), []
+
+    def Ticker(self, ticker):
+        import logging
+        fake = self
+
+        class _T:
+            def get_info(self):
+                fake.asked.append(ticker)
+                if ticker in fake.refuse:
+                    log = logging.getLogger("yfinance")
+                    log.warning("Crumb fetch rate-limited (HTTP 429), continuing without crumb")
+                    log.error('HTTP Error 401: Unauthorized{"finance":{"result":null,"error":{"code":"Unauthorized",'
+                              '"description":"Invalid Crumb"}}}')
+                    return {"trailingPegRatio": None}
+                if ticker in fake.empty:
+                    return {"trailingPegRatio": None}
+                return {"floatShares": 7.0, "sharesOutstanding": 9.0, "quoteType": "EQUITY", "currency": "USD"}
+        return _T()
+
+
+def test_a_401_yahoo_only_logs_stops_the_run_and_an_empty_answer_is_an_error_row(monkeypatch):
+    import sys
+    fake = FakeYahoo(refuse={"FLG"}, empty={"BRK-B"})
+    monkeypatch.setitem(sys.modules, "yfinance", fake)
+    ctx = _ctx(floats.YAHOO)
+    out = floats.YAHOO_FLOAT.to_parquet_all(ctx, floats.YAHOO_FLOAT.fetch(ctx, TUE))
+    assert fake.asked == ["AAPL", "BRK-B", "FLG"]                         # stopped at the 401: GAPX never asked
+    rows = {r["ticker"]: r for p in out for r in stage.read_rows(p)}
+    assert rows["AAPL"]["float_shares"] == 7.0 and rows["AAPL"]["error"] is None
+    assert rows["BRK-B"]["float_shares"] is None and rows["BRK-B"]["error"] == floats.EMPTY_ANSWER
+    assert "FLG" not in rows and any("yfinance stopped at FLG" in n and "401" in n for n in ctx.notes)
+    assert ctx.calls["yfinance"][:2] == [3, 2]                            # three asked, two failed
+
+
 # ── Unusual Whales total_float ───────────────────────────────────────────────────────────────────────────────
 
 def test_uw_total_float_one_request_per_hundred(http_mock):
