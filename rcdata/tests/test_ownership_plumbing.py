@@ -14,3 +14,11 @@ def test_ownership_is_a_serving_kind_of_version_1():
 def test_the_ownership_providers_have_a_day_cap():
     for provider in ("sec", "finra", "nasdaqtrader", "nyse", "ibkr"):
         assert caps.cap_for(provider), provider
+
+
+def test_the_ownership_datasets_build_in_order_and_start_by_hand():
+    from RevenueChaser.rcdata.build import DATASETS
+    names = [n for n, d in DATASETS.items() if d.kind == "ownership"]
+    assert names == ["finra/short_interest", "regsho/threshold", "ibkr/shortable", "sec/ftd", "sec/13f",
+                     "sec/form4", "sec/13dg", "ownership/serve"]
+    assert all(DATASETS[n].starts_by_hand for n in names)

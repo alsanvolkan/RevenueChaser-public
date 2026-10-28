@@ -134,6 +134,26 @@ def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
     return row, holdings
 
 
+def recent_cusips(periods: int = 2) -> set[str]:
+    """The long-equity CUSIPs (``SH``, no put or call) the 13F holdings hold in the newest ``periods`` report periods,
+    from Parquet: what the spine's OpenFIGI map asks besides its own (``openfigi_map.wanted_cusips``), so the
+    OpenFIGI fallback of ``ownership/serve`` has an answer for a CUSIP no other source names."""
+    files = DATASET.holding_files()
+    if not files:
+        return set()
+    con = duckdb.connect()
+    try:
+        rows = con.execute(f"""
+            WITH h AS (SELECT period, upper(cusip) AS cusip FROM {common.files_sql(files)}
+                       WHERE upper(sh_type) = 'SH' AND coalesce(trim(put_call), '') = '' AND cusip IS NOT NULL
+                         AND period IS NOT NULL)
+            SELECT DISTINCT cusip FROM h
+            WHERE period IN (SELECT DISTINCT period FROM h ORDER BY period DESC LIMIT {int(periods)})""").fetchall()
+    finally:
+        con.close()
+    return {r[0] for r in rows}
+
+
 class Sec13f(edgar.Feed):
     name = NAME
     forms = FORMS
