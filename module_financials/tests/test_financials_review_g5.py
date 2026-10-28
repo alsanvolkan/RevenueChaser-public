@@ -253,3 +253,14 @@ def test_the_help_box_does_not_claim_sec_edgar(financials):
     """Nothing on the Financials Fetch path reads EDGAR (module_financials, app/runners.run_quick): Yahoo only."""
     html = _html(financials, {})
     assert "EDGAR" not in html and "from <b>Yahoo</b> into the store" in html
+
+
+# ── N6: the stored comps are dated by the run that fetched the peers ────────────
+def test_the_stored_comps_are_dated_by_their_run_not_the_cached_target_payload(rawstore_tmp_db):
+    """A Fetch reads the target's payload through the cache (it can be a day old) but fetches every peer's .info
+    live: the multiples are the run's, so the Refresh's "as of" is the run's session."""
+    comps = _comps((3, 3, 3))
+    fin_history.record({"financials": {"ticker": "TEST", "fetched_at_iso": "2026-10-05T21:30:00+00:00"},
+                        "modules": {"comps": comps}, "quick_remarks": None, "warnings": []},
+                       ticker="TEST", run_id="r1", run_at=TUESDAY_LATE, modules=["comps"])
+    assert fin_history.last_report("TEST")["as_of"] == "2026-10-06"

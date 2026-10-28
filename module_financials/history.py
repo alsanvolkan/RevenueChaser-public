@@ -158,7 +158,9 @@ def last_quick_remarks(ticker: str) -> dict | None:
 
 def last_report(ticker: str) -> dict | None:
     """The newest recorded Fetch's report for ``ticker`` that has comps, decoded: ``modules`` (comps included),
-    ``warnings``, ``quick_remarks``, ``sector``, ``run_id`` and ``as_of`` (the date its data was fetched).
+    ``warnings``, ``quick_remarks``, ``sector``, ``run_id`` and ``as_of``: the session of the run, when the comps'
+    peers were fetched. The target's payload can be older (the Fetch reads it through the cache), but every peer's
+    ``.info`` is fetched live by the run, so its multiples are the run's (Financials review N6).
 
     A run whose comps step errored must not hide the comps an older run did compute (FIN-4, #385), so the rows are
     walked newest first and the first with usable comps wins (:func:`has_comps`); when no stored run has any, the
@@ -190,5 +192,5 @@ def last_report(ticker: str) -> dict | None:
             report = decoded
             break
     report = report or newest
-    report["as_of"] = _as_of(report.get("data_fetched_at"), report.get("run_at"))
+    report["as_of"] = _as_of(None, report.get("run_at"))
     return report
