@@ -216,7 +216,8 @@ def test_a_rename_the_weekly_sec_file_does_not_hold_yet_keeps_the_member(built):
 
 def test_a_name_matched_ahead_takes_its_cik_from_the_snapshot_it_matched(built):
     """Delta-2 SF1 (c): NEWCO is held on 28 Oct only; the SEC file has it from 3 Nov. The period's CIK is that of
-    the snapshot the line matched (3 Nov), the only one that names it."""
+    the snapshot the line matched (3 Nov), the only one that names it. Not a red-first test: the code before SF1 gave
+    the same CIK (its "next snapshot" fallback). It guards ``msnap``: the CIK from the day's own snapshot is red."""
     _sec_answer(built, fx.SEC_FILE["data"] + [[4000001, "NEWCO INC", "NEWCO", "NYSE"]])
     base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-03"}})
     _funds_answer(built, sp500=fx.SP500 + [("NEWCO", None, "NEWCO INC")])
