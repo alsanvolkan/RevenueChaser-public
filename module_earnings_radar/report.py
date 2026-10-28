@@ -595,7 +595,9 @@ function renderDecision() {
     // A failed flow request measured nothing: its label only, never a "$0 net" beside it.
     if (d.flow_source === 'failed') ctx.push('<div class="struct-row"><b>Flow</b> <span class="tone-neutral">'
         + rcEsc(d.inst_flow_label || 'Flow unavailable (provider failure)') + '</span></div>');
-    else if (d.inst_flow_label) ctx.push('<div class="struct-row"><b>Flow</b> <span>' + rcEsc(d.inst_flow_label) + ' · ' + fmtMoney(d.inst_flow_net) + ' net'
+    // A zero net says nothing the label does not (no lean, no side served, no institutional print): label only.
+    else if (d.inst_flow_label) ctx.push('<div class="struct-row"><b>Flow</b> <span>' + rcEsc(d.inst_flow_label)
+        + (d.inst_flow_net ? ' · ' + fmtMoney(d.inst_flow_net) + ' net' : '')
         + (d.inst_flow_prints ? ' · ' + d.inst_flow_prints + ' prints' : '')
         + (d.inst_flow_span != null ? ' · ' + d.inst_flow_span + 'h' : '') + '</span></div>');
     if (d.leaps && d.leaps !== 'N/A') {

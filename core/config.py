@@ -158,8 +158,11 @@ MIN_EXPECTED_MOVE_PCT = 1.5
 MAX_EXPECTED_MOVE_PCT = 25.0
 WATCHLIST_BYPASS = True
 FLOW_SWEEP_BLOCK_MIN = 25_000
-# Inst. Flow column: below this |net| premium, do not label buying/selling.
+# Inst. Flow column: below this |net| lean premium the lean is Thin, and a package at or above it is material
+# (package-risk). docs/rules/redesign.md R5.
 INST_FLOW_MIN_NET = 25_000
+# R5 institutional print: size >= 10 AND premium at or above this (redesign.md R5 "Institutional gate"; review S4).
+INST_PRINT_MIN_PREMIUM = 10_000
 
 # ── R4 GEX profile ──
 # Phase 2 enrichment: pull strike-level spot exposures (Directionalized Volume)

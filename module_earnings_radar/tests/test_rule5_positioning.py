@@ -1,6 +1,7 @@
 """Tests for R5 positioning scoring (flow asymmetry + peer-relative squeeze).
 
-Pin: institutional imbalance scales with total premium; retail-call euphoria is
+Pin: the institutional lean (bullish minus bearish print-side premium, review S4) scales with the sided premium
+and is Thin under $25k; retail-call euphoria is
 NOT scored here (it lives in R8); unavailable is None when no signal exists;
 peer Z-scores renormalize over present metrics; <2 in-sector peers never mark
 the rule available; the absolute short-interest fallback scores only when it
@@ -19,17 +20,22 @@ from RevenueChaser.core.config import RULE_WEIGHTS
 
 
 class TestRule5Positioning:
-    def test_institutional_bullish_flow(self):
-        r = r5_score(institutional_net_delta=100.0)
+    def test_institutional_bullish_lean(self):
+        r = r5_score(institutional_net_delta=100_000.0)
         assert r.available
         assert r.score == 20.0
-        assert "institutional bullish flow" in r.reasons
+        assert "institutional bullish lean" in r.reasons
         assert r.coverage == pytest.approx(0.5)
 
-    def test_institutional_bearish_flow(self):
-        r = r5_score(institutional_net_delta=-100.0)
+    def test_institutional_bearish_lean(self):
+        r = r5_score(institutional_net_delta=-100_000.0)
         assert r.score == -20.0
-        assert "institutional bearish flow" in r.reasons
+        assert "institutional bearish lean" in r.reasons
+
+    def test_a_thin_lean_is_present_and_scores_nothing(self):
+        r = r5_score(institutional_net_delta=24_999.0)
+        assert r.available and r.score == 0.0 and r.coverage == pytest.approx(0.5)
+        assert r.reasons == ["thin institutional lean"]
 
     def test_no_signal_unavailable_not_zero(self):
         """No flow, no short interest, no peer stats -> unavailable (None, never 0)."""
@@ -51,19 +57,19 @@ class TestRule5Positioning:
 
 class TestInstitutionalFlowScale:
     def test_scaled_by_imbalance(self):
-        # net = 100, total = 1000 -> imbalance 0.1 -> +2.0
-        r = r5_score(institutional_net_delta=100.0,
-                     institutional_call_premium=900.0, institutional_put_premium=100.0)
+        # net = 100k, sided total = 1m -> imbalance 0.1 -> +2.0
+        r = r5_score(institutional_net_delta=100_000.0,
+                     institutional_call_premium=550_000.0, institutional_put_premium=450_000.0)
         assert r.score == 2.0
         assert r.raw_metrics["inst_flow_imbalance"] == pytest.approx(0.1)
 
     def test_full_call_imbalance(self):
-        r = r5_score(institutional_net_delta=1000.0,
-                     institutional_call_premium=1000.0, institutional_put_premium=0.0)
+        r = r5_score(institutional_net_delta=100_000.0,
+                     institutional_call_premium=100_000.0, institutional_put_premium=0.0)
         assert r.score == 20.0
 
     def test_fallback_flat_when_no_premiums(self):
-        r = r5_score(institutional_net_delta=100.0)
+        r = r5_score(institutional_net_delta=100_000.0)
         assert r.score == 20.0
 
     def test_zero_net_flow_is_not_a_signal(self):
@@ -164,7 +170,7 @@ class TestSqueezeZScoreBuckets:
 
     def test_combined_flow_and_squeeze_full_coverage(self):
         r = r5_score(short_interest_pct_float=9, days_to_cover=2, borrow_fee=2, utilization=30,
-                     sector="Widgets", institutional_net_delta=100.0)
+                     sector="Widgets", institutional_net_delta=100_000.0)
         assert r.score == pytest.approx(60.0)  # +40 squeeze + 20 flow
         assert r.coverage == 1.0
 

@@ -686,9 +686,12 @@ class EarningsPipeline:
             borrow_fee=shorts.get("borrow_fee"),
             utilization=shorts.get("utilization"),
             sector=sector,
-            institutional_net_delta=flow.get("inst_net"),
-            institutional_call_premium=flow.get("inst_call"),
-            institutional_put_premium=flow.get("inst_put"),
+            institutional_net_delta=flow.get("inst_lean_net"),
+            institutional_call_premium=flow.get("inst_bull_side"),
+            institutional_put_premium=flow.get("inst_bear_side"),
+            ticker=ticker,
+            institutional_side_served=flow.get("side_served"),
+            institutional_package_premium=flow.get("inst_package"),
         )
         beta, beta_t = r6_beta(ohlc, self._dgs10_cache or {})
         # rate_event_overlap: FOMC/CPI within the print's ±1 trading day, from the stored economic calendar
@@ -736,12 +739,9 @@ class EarningsPipeline:
                 parts.append("favorable rotation")
             elif rotation_quadrant == "LAGGING":
                 parts.append("lagging rotation")
-            inst_net = flow.get("inst_net")
-            if inst_net and abs(inst_net) >= INST_FLOW_MIN_NET:
-                if inst_net > 0:
-                    parts.append("institutional call flow")
-                else:
-                    parts.append("institutional put flow")
+            flow_part = _trade_flow_part(flow, trade_read)
+            if flow_part:
+                parts.append(flow_part)
             if trade_read == "BULLISH":
                 trade_reason = "Bullish — " + (" · ".join(parts) or "directional edge")
             elif trade_read == "BEARISH":
@@ -1330,41 +1330,60 @@ def _flow_window(prints: list) -> tuple[int, float | None]:
     return n, round(span, 1)
 
 
-def _institutional_flow_comment(flow: dict, failed: bool = False):
-    """Deterministic institutional flow read. Returns (label, net, tone).
+def _trade_flow_part(flow: dict, trade_read: str):
+    """The trade reason's flow part: the institutional lean, only when the read is already on its side (R5 is a
+    tag, "tape on the same side", never a vote; docs/rules/redesign.md R5). None otherwise."""
+    _, _, tone = _institutional_flow_comment(flow)
+    if (tone, trade_read) == ("bull", "BULLISH"):
+        return "institutional bullish lean"
+    if (tone, trade_read) == ("bear", "BEARISH"):
+        return "institutional bearish lean"
+    return None
 
-    ``failed`` says the flow request itself failed: "no flow" would be a claim about the market.
+
+def _institutional_flow_comment(flow: dict, failed: bool = False):
+    """Deterministic institutional lean read. Returns (label, net, tone).
+
+    The lean is read from the print side (``aggregate_flow``; docs/rules/redesign.md R5, review S4): net = bullish
+    side premium (ask-side calls + bid-side puts) minus bearish (bid-side calls + ask-side puts), mid dropped. No
+    print side served is no lean, never a call-minus-put guess. A package at or above ``INST_FLOW_MIN_NET`` is left
+    out of the net and marked "(package risk)". ``failed`` says the flow request itself failed: "no flow" would be a
+    claim about the market.
     """
     if failed:
         return "Flow unavailable (provider failure)", 0.0, "neutral"
-    inst_call = float(flow.get("inst_call", 0) or 0)
-    inst_put = float(flow.get("inst_put", 0) or 0)
-    inst_net = inst_call - inst_put
-    total = inst_call + inst_put
+    bull = float(flow.get("inst_bull_side", 0) or 0)
+    bear = float(flow.get("inst_bear_side", 0) or 0)
+    outside = float(flow.get("inst_mid", 0) or 0) + float(flow.get("inst_no_side", 0) or 0)
+    package = float(flow.get("inst_package", 0) or 0)
     sweep = float(flow.get("sweep", 0) or 0)
     block = float(flow.get("block", 0) or 0)
+    risk = " (package risk)" if package >= INST_FLOW_MIN_NET else ""
 
-    if total == 0:
-        return "No institutional flow", 0.0, "neutral"
+    if bull + bear + outside == 0:
+        return ("Package flow only" + risk, 0.0, "neutral") if package else ("No institutional flow", 0.0, "neutral")
+    if not flow.get("side_served"):
+        return "Lean unavailable (no print side)" + risk, 0.0, "neutral"
 
+    inst_net = bull - bear
     if abs(inst_net) < INST_FLOW_MIN_NET:
-        return "Thin flow", inst_net, "neutral"
+        return "Thin flow" + risk, inst_net, "neutral"
 
-    imbalance = abs(inst_net) / total
+    imbalance = abs(inst_net) / (bull + bear)
 
     if imbalance < 0.15:
-        label, tone = "Mixed institutional flow", "neutral"
+        label, tone = "Mixed institutional lean", "neutral"
     elif inst_net > 0:
-        label, tone = "Institutional buying", "bull"
+        label, tone = "Institutional bullish lean", "bull"
     else:
-        label, tone = "Institutional selling", "bear"
+        label, tone = "Institutional bearish lean", "bear"
 
     if sweep > 0 and imbalance >= 0.15:
-        label = label.replace("Institutional", "Inst.") + " sweep"
+        label = label.replace("Institutional", "Inst.") + " · sweep"
     elif block > 0 and imbalance >= 0.15:
-        label = label.replace("Institutional", "Inst.") + " block"
+        label = label.replace("Institutional", "Inst.") + " · block"
 
-    return label, inst_net, tone
+    return label + risk, inst_net, tone
 
 
 def _gex_structure_label(spot, gex: dict, gex_profile: dict = None) -> str:
