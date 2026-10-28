@@ -1652,7 +1652,8 @@ def _end_empty_fetch(payload: dict, no_fetch: bool) -> None:
 def run_swing(uw, refresh_universe: bool = False, no_fetch: bool = False) -> Path:
     """Run the Swing Screener (broad US scan, Minervini/Weinstein/Qullamaggie).
 
-    yfinance-only (``uw`` is unused; options flow is manual-review). Writes the
+    Reads the store's daily bars (filled nightly from UW with a yfinance fallback); yfinance is called only for
+    company info and the SPY fallback, and ``uw`` is unused here (options flow is manual-review). Writes the
     structured JSON payload, the HTML board and its rows file (K10, #383 R3).
     ``refresh_universe=True`` re-fetches the shared ticker universe first;
     ``no_fetch=True`` (model-only) runs purely from cached per-ticker data.

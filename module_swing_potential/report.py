@@ -244,6 +244,7 @@ def _render(payload: dict, inline: bool) -> tuple[str, dict | None]:
     universe_prov = universe_provenance_html(
         payload.get("universe_generated_at"), payload.get("universe_refreshed_by"),
         partial=bool(payload.get("universe_partial")))
+    names_from = "identity spine" if _universe.universe_source() == _universe.SPINE else "old universe store"
 
     # The rows the shared filter bar reads (#383 C1c): a copy of each candidate plus the store's
     # ``gics`` + ``theme_ids``. A store read only, so a Refresh stays network-free; the stored payload is never mutated.
@@ -536,7 +537,7 @@ function start(){
         <tr><th>Screener</th><th>Criteria</th><th>Scoring</th></tr>
         <tr><td><b>Minervini Trend</b></td>
           <td>Price above 150 &amp; 200-day MA · 150&gt;200-day MA · 200-day MA rising · 50&gt;150-day MA · price above 50-day MA · ≥25% above 52-week low · within 25% of 52-week high · RS rating ≥ 70</td>
-          <td>8/8 required</td></tr>
+          <td>7/7 price rules required; RS rating ≥ 70 ranks, does not decide</td></tr>
         <tr><td><b>Weinstein Stage</b></td>
           <td>Price above 30-week MA · 30-week MA rising · overhead breakout (≥98% of 52w high) · volume ≥1.5× average · 3-month RS &gt; SPY</td>
           <td>5/5 required</td></tr>
@@ -569,7 +570,7 @@ function start(){
   <div class="grid" id="grid">{cards}</div>
 
   <footer>
-    <span>Sources: Yahoo Finance (universe + OHLCV) · Unusual Whales (flow — manual only). For information only, not financial advice.</span>
+    <span>Sources: {names_from} (names) · daily bars (Unusual Whales, yfinance fallback) · Yahoo Finance (company info, market caps) · Unusual Whales (flow — manual only). For information only, not financial advice.</span>
     <span id="flow-flag">Flow not scanned</span>
   </footer>
 </div>
