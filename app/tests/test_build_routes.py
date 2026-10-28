@@ -110,8 +110,11 @@ def test_an_unknown_schedule_action_is_404(client):
 
 
 def test_a_paused_dataset_is_skipped_by_one_builder_pass_and_runs_again_after_resume(client, monkeypatch):
+    from RevenueChaser.rcdata import build
     from RevenueChaser.rcdata.build import DATASETS
     from RevenueChaser.rcdata.build import __main__ as cli
+    # The two market datasets only: the spine's (PR 5) would be queued as never built and call their providers.
+    monkeypatch.setattr(build, "DATASETS", {k: DATASETS[k] for k in ("market_series", "uw/spot_expiry_strike")})
     assert client.post("/api/build/schedule/market_series/pause").status_code == 200
     # `run --once` also queues every never-built dataset (#223's due step): the other one is paused too, so this
     # pass sends no call at all.
@@ -140,3 +143,17 @@ def test_the_routes_never_open_a_duckdb_file(client, monkeypatch):
     client.get("/api/build/queue")
     client.post("/api/build/schedule/market_series/pause")
     assert [a for a in opened if a and "market" in str(a[0])] == []
+
+
+def test_an_attended_dataset_is_refused_with_the_command_to_run_instead(client):
+    """PR 5: the WRDS datasets need a person at a terminal (login and Duo): a page cannot queue them."""
+    r = client.post("/api/build/request/wrds/sec_idhist")
+    assert r.status_code == 409 and "CLI" in r.get_json()["error"]
+    assert not ops.ops_path().exists() or _rows() == []        # nothing queued (the route did not even open ops)
+
+
+def test_the_panel_header_cannot_claim_to_be_the_cli(client):
+    """Review nit: `requested_by` "cli" is what lets an attended dataset run; a header must not produce it."""
+    r = client.post("/api/build/request/market_series", headers={"X-RC-Panel": "CLI "})
+    assert r.status_code == 202
+    assert _rows()[-1]["requested_by"] == "panel:cli"

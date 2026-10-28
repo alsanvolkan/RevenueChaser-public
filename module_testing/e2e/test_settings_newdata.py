@@ -100,10 +100,11 @@ def test_a_fetch_click_enqueues_one_row_and_the_queue_shows_it(dashboard, browse
 
 
 def test_a_paused_dataset_is_skipped_by_one_builder_pass_and_the_page_shows_it(dashboard, market, e2e_env):
-    assert dashboard.client.post("/api/build/schedule/market_series/pause").status_code == 200
-    # `run --once` also queues every never-built dataset (#223's due step): pause the other one too, so the pass
-    # sends no call (the scratch roots have no provider behind them).
-    assert dashboard.client.post("/api/build/schedule/uw/spot_expiry_strike/pause").status_code == 200
+    from RevenueChaser.rcdata.build import DATASETS
+    # `run --once` also queues every never-built dataset (#223's due step), and this subprocess is outside the root
+    # conftest's network block: pause every dataset (the spine's of PR 5 too), so the pass sends no call at all.
+    for name in DATASETS:
+        assert dashboard.client.post(f"/api/build/schedule/{name}/pause").status_code == 200, name
     assert dashboard.client.post("/api/build/request/market_series").status_code == 202
     env = {**os.environ, **e2e_env, **market, "RC_STORE_DIR": str(dashboard.store_dir),
            "RC_CACHE_DIR": str(dashboard.cache_dir), "RC_STORE_AUTO_ENSURE": "0"}

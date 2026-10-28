@@ -367,6 +367,35 @@ def record_issue(dataset: str, kind: str, key: str | None, detail: str | None, r
         return int(cur.lastrowid)
 
 
+def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[int, int]:
+    """Make the open ``build_issues`` of ``dataset`` and ``kinds`` the rows ``found`` (``(kind, key, detail)``).
+
+    A found row that is already open stays as it is (its first ``found_on`` and ``run_id``); a new one is added;
+    an open row of those kinds that is no longer found gets ``resolved_on`` today. Rows of other kinds or datasets
+    are not touched. One transaction. Returns ``(added, resolved)``.
+    """
+    kinds = sorted(set(kinds))
+    want = {(k, key): detail for k, key, detail in found}
+    stray = sorted({k for k, _ in want} - set(kinds))
+    if stray:
+        raise ValueError(f"found rows of kinds outside {kinds}: {stray}")
+    if not kinds:
+        return 0, 0
+    today = _today()
+    with _open() as con, _tx(con):
+        marks = ", ".join("?" * len(kinds))
+        open_rows = con.execute(f"SELECT id, kind, key FROM build_issues WHERE dataset = ? AND resolved_on IS NULL "
+                                f"AND kind IN ({marks})", (dataset, *kinds)).fetchall()
+        have = {(r["kind"], r["key"]): r["id"] for r in open_rows}
+        gone = [i for k, i in have.items() if k not in want]
+        con.executemany("UPDATE build_issues SET resolved_on = ? WHERE id = ?", [(today, i) for i in gone])
+        new = [(dataset, today, k, key, detail, run_id) for (k, key), detail in sorted(want.items())
+               if (k, key) not in have]
+        con.executemany("INSERT INTO build_issues (dataset, found_on, kind, key, detail, run_id) "
+                        "VALUES (?, ?, ?, ?, ?, ?)", new)
+    return len(new), len(gone)
+
+
 def start_run(run_id: str, dataset: str, trigger: str, params: dict | None = None) -> None:
     import socket
     with _open() as con:
@@ -606,6 +635,18 @@ def open_issues(dataset: str, limit: int = 20) -> tuple[int, list[dict]]:
     rows = _select("SELECT * FROM build_issues WHERE dataset = ? AND resolved_on IS NULL ORDER BY id DESC LIMIT ?",
                    (dataset, int(limit)))
     return (n[0]["n"] if n else 0), rows
+
+
+def ever_built(dataset: str) -> bool:
+    """True once ``dataset`` has a ``changed`` or ``unchanged`` check (it has built at least once)."""
+    return bool(_select("SELECT 1 AS one FROM dataset_check WHERE dataset = ? AND result IN ('changed', 'unchanged') "
+                        "LIMIT 1", (dataset,)))
+
+
+def open_issue_kinds(dataset: str) -> list[dict]:
+    """``[{kind, count}]`` of the unresolved ``build_issues`` of ``dataset``, the most first."""
+    return _select("SELECT kind, count(*) AS count FROM build_issues WHERE dataset = ? AND resolved_on IS NULL "
+                   "GROUP BY kind ORDER BY count(*) DESC, kind", (dataset,))
 
 
 def read_queue(finished: int = 20) -> dict:

@@ -25,14 +25,28 @@ from pathlib import Path
 from RevenueChaser.core import calendar, config
 from RevenueChaser.rcdata import caps, ops, serving
 
-LABELS = {"uw/spot_expiry_strike": "SPX expiry-strike (Unusual Whales)", "market_series": "Market series"}
-# Default cadence per dataset; a ``dataset_schedule.cadence`` of daily / weekly / monthly overrides it.
+LABELS = {"uw/spot_expiry_strike": "SPX expiry-strike (Unusual Whales)", "market_series": "Market series",
+          "sec/company_tickers_exchange": "SEC ticker and exchange file",
+          "wrds/sec_idhist": "Compustat securities and identifier history (WRDS)",
+          "wrds/co_hgic": "Compustat GICS history (WRDS)",
+          "wrds/idxcst_his": "Compustat index constituents (WRDS, the membership check)",
+          "openfigi/map": "OpenFIGI map of the CUSIPs", "funds/index_holdings": "Index membership (ETF holdings files)",
+          "spine/security": "Identity spine (security, tiers, history)"}
+# Default cadence per dataset (the dataset's own ``cadence`` when it has one); a ``dataset_schedule.cadence`` of
+# daily / weekly / monthly overrides it.
 CADENCE = {"uw/spot_expiry_strike": "daily", "market_series": "daily"}
 CYCLE_DAYS = {"weekly": 8, "monthly": 35}
 # Coverage targets: alarm limits as proposed, to be re-checked after two weeks of real data (decision 1, 27 Oct).
-COVERAGE_TARGET: dict[str, float | None] = {"uw/spot_expiry_strike": 0.95, "market_series": None}
+# spine/security's coverage is the share of Tier A with a CUSIP (the plan's target, >= 98%).
+COVERAGE_TARGET: dict[str, float | None] = {"uw/spot_expiry_strike": 0.95, "market_series": None,
+                                            "spine/security": 0.98}
 # The newest-date column of each serving table.
-DATE_COLUMN = {"spx_gamma_expiry_strike": "session_date", "market_series": "obs_date"}
+DATE_COLUMN = {"spx_gamma_expiry_strike": "session_date", "market_series": "obs_date", "security": "source_as_of",
+               "security_history": "valid_from", "gics_history": "valid_from", "index_membership": "valid_from"}
+# The identity funnel (PR 5, D9): the indexes it counts, and the dataset whose build issues it lists.
+SPINE_INDEXES = ("sp500", "sp400", "sp600", "ndx")
+SPINE_ISSUES = "spine/security"
+ATTENDED_COMMAND = "python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist wrds/co_hgic wrds/idxcst_his"
 # Old .store tables a new dataset replaces: their reads in read_log are the retirement count (read for 14 days).
 RETIRING = {"macro_series": "market_series", "vol_index_daily": "market_series", "cftc_cot": "market_series",
             "economic_calendar": "market_series"}
@@ -71,7 +85,10 @@ def _iso_utc(epoch) -> str | None:
 
 def _cadence(dataset: str, schedule: dict | None) -> str:
     c = (schedule or {}).get("cadence")
-    return c if c in ("daily", "weekly", "monthly") else CADENCE.get(dataset, "daily")
+    if c in ("daily", "weekly", "monthly"):
+        return c
+    own = getattr(_datasets().get(dataset), "cadence", None)
+    return own if own in ("daily", "weekly", "monthly") else CADENCE.get(dataset, "daily")
 
 
 def _missed(cadence: str, check: dict, now: datetime) -> int:
@@ -124,11 +141,25 @@ def status_of(dataset: str, last: dict | None, base: dict | None, cadence: str,
     return "unchanged", "within its cycle; the last run changed nothing", base
 
 
-def _checks_list(dataset: str, check: dict | None, last: dict | None, missed: int | None, issues: int) -> list[dict]:
-    """The dataset's questions, one row each: ``{label, ok (True / False / None = not measured), detail}``."""
+def _held(dataset: str, ds) -> str | None:
+    """Why the schedule never queues ``dataset`` now (``rcdata/build/due.py``), or None: an attended dataset runs only
+    from the CLI; a dataset that starts by hand waits for its first build (delta S6)."""
+    from RevenueChaser.rcdata.build import due
+    if getattr(ds, "attended", False):
+        return due.ATTENDED_WHY
+    if getattr(ds, "starts_by_hand", False) and not ops.ever_built(dataset):
+        return due.BY_HAND_WHY
+    return None
+
+
+def _checks_list(dataset: str, check: dict | None, last: dict | None, missed: int | None, issues: int,
+                 held: str | None = None) -> list[dict]:
+    """The dataset's questions, one row each: ``{label, ok (True / False / None = not measured), detail}``.
+    ``held`` (``_held``) replaces the next-check date when the schedule does not queue the dataset."""
     if last is None:
-        return [{"label": "Last run", "ok": None, "detail": "never run"},
-                {"label": "Open build issues", "ok": issues == 0, "detail": str(issues)}]
+        return ([{"label": "Last run", "ok": None, "detail": "never run"}]
+                + ([{"label": "Next check due", "ok": None, "detail": held}] if held else [])
+                + [{"label": "Open build issues", "ok": issues == 0, "detail": str(issues)}])
     c = check or last
     target = COVERAGE_TARGET.get(dataset)
     cov = c.get("coverage")
@@ -143,7 +174,7 @@ def _checks_list(dataset: str, check: dict | None, last: dict | None, missed: in
          "detail": "—" if removed is None else str(removed)},
         {"label": "Rows added", "ok": None, "detail": "—" if c.get("added") is None else str(c["added"])},
         {"label": "Calls", "ok": None, "detail": "—" if c.get("calls") is None else str(c["calls"])},
-        {"label": "Next check due", "ok": None, "detail": c.get("next_check_due") or "—"},
+        {"label": "Next check due", "ok": None, "detail": held or c.get("next_check_due") or "—"},
         {"label": "Open build issues", "ok": issues == 0, "detail": str(issues)},
     ]
     return out
@@ -190,10 +221,12 @@ BACKFILL = {"uw/spot_expiry_strike": _backfill_sessions, "market_series": _backf
 
 # ── The serving file: one read-only handle per call ───────────────────────────────────────────────────────────
 
-def _serving_facts() -> tuple[dict[str, dict], dict[str, str | None]]:
-    """``({table: {rows, newest}}, {kind: last swap})``, from one ``open_read`` per kind, closed before return."""
+def _serving_facts() -> tuple[dict[str, dict], dict[str, str | None], dict | None]:
+    """``({table: {rows, newest}}, {kind: last swap}, the spine's funnel counts or None)``, from one ``open_read`` per
+    kind, closed before return."""
     tables: dict[str, dict] = {}
     swaps: dict[str, str | None] = {}
+    funnel: dict | None = None
     for kind in serving.KINDS:
         swaps[kind] = None
         try:
@@ -210,9 +243,65 @@ def _serving_facts() -> tuple[dict[str, dict], dict[str, str | None]]:
                     continue
                 rows, newest = con.execute(f'SELECT count(*), max("{col}") FROM "{table}"').fetchone()
                 tables[table] = {"rows": int(rows), "newest": newest.isoformat() if newest else None}
+            if kind == "spine" and {"security", "index_membership"} <= names:
+                funnel = _spine_counts(con)
         finally:
             con.close()
-    return tables, swaps
+    return tables, swaps, funnel
+
+
+def _spine_counts(con) -> dict:
+    """The identity funnel's counts from the spine's ``security`` and ``index_membership`` (one handle, the caller's)."""
+    members = ("SELECT ticker FROM index_membership WHERE source = 'funds/index_holdings' AND valid_to IS NULL "
+               f"AND index_slug IN ({', '.join(repr(s) for s in SPINE_INDEXES)})")
+    row = con.execute(
+        "SELECT count(*), count(*) FILTER (WHERE tier IN ('A', 'B')), count(*) FILTER (WHERE tier = 'A'), "
+        "count(*) FILTER (WHERE tier = 'A' AND cusip IS NOT NULL), "
+        "count(*) FILTER (WHERE tier = 'A' AND figi IS NOT NULL), "
+        "count(*) FILTER (WHERE tier = 'A' AND gsubind IS NOT NULL), "
+        f"count(*) FILTER (WHERE tier = 'A' AND ticker IN ({members})), count(*) FILTER (WHERE tier = 'C'), "
+        "count(*) FILTER (WHERE tier = 'D'), count(*) FILTER (WHERE tier = 'B'), max(source_as_of) FROM security"
+    ).fetchone()
+    per_index = dict(con.execute(
+        "SELECT index_slug, count(DISTINCT ticker) FROM index_membership WHERE source = 'funds/index_holdings' "
+        "AND valid_to IS NULL AND ticker IS NOT NULL GROUP BY index_slug").fetchall())
+    keys = ("sec", "listed", "tier_a", "cusip", "figi", "gics", "index", "otc", "no_exchange", "excluded_type")
+    out = dict(zip(keys, (int(v or 0) for v in row[:10])))
+    out["as_of"] = row[10].isoformat() if row[10] else None
+    out["indexes"] = {s: int(per_index.get(s, 0)) for s in SPINE_INDEXES}
+    return out
+
+
+def _universe_source() -> dict:
+    """Which universe the boards read (``core.universe.source_state``): the flag and its fallback, if any."""
+    from RevenueChaser.core import universe
+    return universe.source_state()
+
+
+def _identity(counts: dict | None) -> dict:
+    """The identity funnel card (PR 5, D9): the nested steps SEC file -> listed -> Tier A, then four rows each out of
+    Tier A, the drops between, the members per index, and ``spine/security``'s open build issues by kind."""
+    n_issues, newest = ops.open_issues(SPINE_ISSUES, limit=10)
+    kinds = ops.open_issue_kinds(SPINE_ISSUES)
+    issues = {"issues_open": n_issues, "issue_kinds": kinds,
+              "issues": [{"kind": i["kind"], "key": i["key"], "detail": i["detail"], "found_on": i["found_on"]}
+                         for i in newest]}
+    if counts is None:
+        return {"steps": [], "drops": [], "indexes": {}, "as_of": None, "note": "the spine has not been built yet",
+                **issues}
+    c = counts
+    steps = [{"key": "sec", "label": "In the SEC ticker and exchange file", "count": c["sec"], "out_of": None},
+             {"key": "listed", "label": "Listed on Nasdaq, NYSE or Cboe", "count": c["listed"], "out_of": c["sec"]},
+             {"key": "tier_a", "label": "Tier A (not a fund, SPAC, preferred, warrant or unit)", "count": c["tier_a"],
+              "out_of": c["listed"]}]
+    for key, label in (("cusip", "With a CUSIP"), ("figi", "With a FIGI"), ("gics", "With a GICS classification"),
+                       ("index", "In the S&P 500, 400, 600 or Nasdaq-100")):
+        steps.append({"key": key, "label": label, "count": c[key], "out_of": c["tier_a"]})
+    drops = [{"key": "otc", "label": "Over the counter (Tier C)", "count": c["otc"]},
+             {"key": "no_exchange", "label": "No exchange in the file (Tier D)", "count": c["no_exchange"]},
+             {"key": "excluded_type", "label": "Listed, but an excluded security type (Tier B)",
+              "count": c["excluded_type"]}]
+    return {"steps": steps, "drops": drops, "indexes": c["indexes"], "as_of": c["as_of"], "note": None, **issues}
 
 
 # ── Page-level blocks ─────────────────────────────────────────────────────────────────────────────────────────
@@ -335,21 +424,24 @@ def _card(dataset: str, ds, facts: dict, now: datetime) -> dict:
     table_facts = [facts[t] for t in ds.tables if t in facts]
     c = base or last or {}
     backfill = BACKFILL.get(dataset)
+    held = _held(dataset, ds)
     return {
         "dataset": dataset, "label": LABELS.get(dataset, dataset), "status": status, "status_reason": reason,
         "cadence": cadence, "checked_on": c.get("checked_on"), "source_as_of": c.get("source_as_of"),
-        "next_check_due": c.get("next_check_due"), "rows": c.get("rows"), "added": c.get("added"),
+        "next_check_due": held or c.get("next_check_due"), "rows": c.get("rows"), "added": c.get("added"),
         "removed": c.get("removed"), "calls": c.get("calls"), "coverage": c.get("coverage"),
         "coverage_target": COVERAGE_TARGET.get(dataset), "last_note": last.get("note") if last else None,
         "last_result": last["result"] if last else None,
         "table_rows": sum(f["rows"] for f in table_facts) if table_facts else None,
         "newest": max((f["newest"] for f in table_facts if f["newest"]), default=None),
-        "checks": _checks_list(dataset, base, last, missed, n_issues),
+        "checks": _checks_list(dataset, base, last, missed, n_issues, held),
         "issues": [{"kind": i["kind"], "key": i["key"], "detail": i["detail"], "found_on": i["found_on"]}
                    for i in issues],
         "issues_open": n_issues,
         "backfill": backfill(now) if backfill else None,
         "wrds": {"text": "no WRDS run yet"},
+        "attended": bool(getattr(ds, "attended", False)),
+        "attended_command": ATTENDED_COMMAND if getattr(ds, "attended", False) else None,
         "schedule": {"paused": bool(schedule and schedule.get("paused_at") is not None),
                      "paused_by": (schedule or {}).get("paused_by"),
                      "paused_at": _iso_utc((schedule or {}).get("paused_at"))},
@@ -374,7 +466,7 @@ def _watchlists() -> dict:
 def collect(now: datetime | None = None) -> dict:
     """Everything the section shows, read now. ``now`` is the clock (aware; default ``calendar``'s seam)."""
     now = _now(now)
-    facts, swaps = _serving_facts()
+    facts, swaps, spine_counts = _serving_facts()
     cards = [_card(name, ds, facts, now) for name, ds in _datasets().items()]
     cards.sort(key=lambda c: (STATUS_ORDER.index(c["status"]), c["dataset"]))
     last_run = ops.last_builder_run()
@@ -384,6 +476,7 @@ def collect(now: datetime | None = None) -> dict:
     return {
         "verified": {"builder_last_run": last_run, "swaps": swaps, "ops_schema": ops.schema_version()},
         "datasets": cards,
+        "identity": {**_identity(spine_counts), "universe_source": _universe_source()},
         "queue": ops.read_queue(finished=20),
         "spend": _spend(now),
         "backups": _backups(now),

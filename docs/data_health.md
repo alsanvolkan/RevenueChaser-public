@@ -168,6 +168,21 @@ with a partition out of the sessions expected since 16 Jan 2025, the missing one
 series: partitions per source and year), the WRDS difference slot (decision 3: "no WRDS run yet" until PR 7 and
 PR 12 bring the data) and the schedule state.
 
+**The spine (PR 5).** Seven more dataset cards, one per spine dataset (`docs/data_architecture.md`, "The identity
+spine"), each with its own cadence (the SEC file and OpenFIGI weekly, WRDS monthly, the fund files and
+`spine/security` daily); `spine/security`'s coverage is the share of Tier A with a CUSIP, target 98%. The three WRDS
+cards are attended: they show the CLI command and Pause / Resume, and no Fetch or Backfill (a person logs in and
+confirms Duo on the server).
+
+**The identity card** (D9) is the first card of the section. It replaces the hand-built Identity coverage card of
+the old page (3.6), which is no longer shown. From the same read-only spine handle as the cards: the SEC file's
+rows, then the listed ones, then Tier A, then with a CUSIP, with a FIGI, with a GICS classification and in the
+S&P 500, 400, 600 or Nasdaq-100, each of those four out of Tier A; the drops (Tier B, C, D); the members per index;
+and the open `build_issues` of `spine/security` by kind with the newest ten. Before the first spine build it says
+so instead of drawing zeros. Its first row, "Boards read", says which universe the boards read: the old store, the
+spine (`RC_UNIVERSE_SOURCE=spine`), or the old store because the spine was asked for but is missing or its last build
+failed (in amber, with the reason).
+
 **Page-level cards:** the queue (queued and running requests, then the last 20 finished), spend (F6: calls per
 provider for the New York day and the week from Monday, from `provider_calls_daily`, against the day caps of
 `rcdata/caps.py`, and UW's newest `x-uw-*` sample from `uw_remaining`: its daily count, what is left of our own cap
@@ -566,6 +581,9 @@ A store table the registry does not place is said in words rather than left out:
 dataset*, or *claimed by more than one dataset*. Those are different facts, and the line says which.
 
 ### 3.6 Identity coverage
+
+**Not shown since PR 5:** the identity card of the "New data system" section (2.0) replaced it (D9). The payload
+still carries the section until the old inventory goes. What follows describes it as it was.
 
 A card directly under the inventory table: how far the stored identity data reaches, name by name.
 Every number comes from the store read, and there are two ways a cell can have no number. *Could not

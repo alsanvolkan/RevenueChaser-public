@@ -102,7 +102,9 @@ def test_weekly_and_monthly_boundaries(cadence, age, want):
 def test_cards_come_worst_first():
     _check("uw/spot_expiry_strike", result="changed", coverage=1.0)
     _check("market_series", result="failed")
-    assert [c["dataset"] for c in newdata.collect(NOW)["datasets"]] == ["market_series", "uw/spot_expiry_strike"]
+    order = [c["dataset"] for c in newdata.collect(NOW)["datasets"]]
+    assert order.index("market_series") == 0                         # stale first
+    assert order.index("uw/spot_expiry_strike") == len(order) - 1    # fresh last, after the never-built spine ones
 
 
 # ── the checks inside the card ────────────────────────────────────────────────────────────────────────────────
@@ -329,7 +331,7 @@ def test_every_call_opens_its_own_handle_and_sees_a_swapped_file(handles):
 def test_no_serving_file_yet_is_no_rows_not_an_error(handles):
     card = _card(newdata.collect(NOW), "uw/spot_expiry_strike")
     assert card["table_rows"] is None and handles["opened"] == 0
-    assert newdata.collect(NOW)["verified"]["swaps"] == {"market": None}
+    assert newdata.collect(NOW)["verified"]["swaps"] == {"market": None, "spine": None}
 
 
 def test_the_collect_never_creates_ops_sqlite_or_a_serving_file():

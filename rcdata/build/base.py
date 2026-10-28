@@ -97,6 +97,7 @@ class RunContext:
     notes: list[str] = field(default_factory=list)
     uw_sampled: bool = False
     allow_shrink: bool = False                                      # a request's explicit "allow_shrink": true
+    pending: dict[str, Any] = field(default_factory=dict)          # a build's results for its after_swap step
     _pending: dict[str, list[int]] = field(default_factory=dict)    # counted, not yet written to ops.sqlite
     _http: httpx.Client | None = None
     _uw: Any = None
@@ -195,6 +196,40 @@ def http_get(ctx: RunContext, provider: str, url: str, params: dict | None = Non
                 break
         if attempt < HTTP_ATTEMPTS:
             ctx.sleep(HTTP_BACKOFF_S * 2 ** (attempt - 1))
+    ctx.count(provider, failures=1)
+    raise SourceError(f"{provider} {url}: {last}")
+
+
+def http_post(ctx: RunContext, provider: str, url: str, json: Any = None, headers: dict | None = None,
+              pacer: "Pacer | None" = None) -> httpx.Response:
+    """POST ``json`` with the same retry ladder and counting as ``http_get``; ``pacer`` waits before every attempt.
+
+    A 429 is retried after OpenFIGI's ``ratelimit-reset`` seconds when the answer names them, else the ladder's
+    backoff. ``headers`` may hold a key: neither they nor the body are ever logged. Raises ``SourceError``.
+    """
+    last = ""
+    for attempt in range(1, HTTP_ATTEMPTS + 1):
+        ctx.check_cap(provider)
+        if pacer is not None:
+            pacer.wait()
+        ctx.count(provider, calls=1)
+        wait = HTTP_BACKOFF_S * 2 ** (attempt - 1)
+        try:
+            r = ctx.http.post(url, json=json, headers=headers)
+        except httpx.HTTPError as e:
+            last = type(e).__name__
+        else:
+            if r.status_code < 400:
+                return r
+            last = f"HTTP {r.status_code}"
+            if r.status_code == 429:
+                ctx.count(provider, http_429=1)
+                reset = str(r.headers.get("ratelimit-reset") or "").strip()
+                wait = float(reset) + 1 if reset.replace(".", "", 1).isdigit() else wait
+            elif r.status_code < 500:
+                break
+        if attempt < HTTP_ATTEMPTS:
+            ctx.sleep(wait)
     ctx.count(provider, failures=1)
     raise SourceError(f"{provider} {url}: {last}")
 
@@ -336,9 +371,22 @@ class Dataset(Protocol):
     def fetch(self, ctx: RunContext, as_of: date) -> list[Path]: ...
     def to_parquet(self, ctx: RunContext, raw: Path) -> list[Path]: ...
     def to_parquet_all(self, ctx: RunContext, raws: list[Path]) -> list[Path]: ...
-    def backfill(self, ctx: RunContext, start: date, end: date) -> None: ...
+    def backfill(self, ctx: RunContext, start: date | None, end: date) -> None: ...
     def build(self, ctx: RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]: ...
     def check(self, ctx: RunContext, con: duckdb.DuckDBPyConnection) -> dict: ...
+
+    # Optional (PR 5), read with getattr so the market datasets need none of them:
+    #   attended: bool              a person must be there (WRDS login and Duo): never due, and a request runs only
+    #                               when the CLI queued it (``requested_by`` "cli")
+    #   backfill_needs_from: bool   default True; False lets ``backfill`` start at the source's beginning (None)
+    #   after_swap(ctx)             runs once the kind's new file is live (the spine's build-issue sync)
+
+
+ATTENDED_BY = "cli"
+
+
+def attended(ds) -> bool:
+    return bool(getattr(ds, "attended", False))
 
 
 def compare_with_live(con: duckdb.DuckDBPyConnection, kind: str, table: str, columns: list[str]) -> tuple[int, int]:
@@ -429,6 +477,10 @@ def build_kind(ctx: RunContext, ds: Dataset) -> dict:
             counts.update(d.build(ctx, b.con))
         check = ds.check(ctx, b.con)
         b.swap(counts, checks=[check], allow_shrink=ctx.allow_shrink)
+    for d in kind_datasets(ds.kind):
+        step = getattr(d, "after_swap", None)
+        if step is not None:
+            step(ctx)
     return check
 
 
@@ -475,6 +527,10 @@ def _run(ctx: RunContext, ds, req: dict, params: dict) -> dict:
         paused = paused_problem(ds)
         if paused:
             return _finish(ctx, req, {"result": "skipped", "note": paused}, "skipped", None)
+        if attended(ds) and req.get("requested_by") != ATTENDED_BY:
+            note = (f"skipped: attended dataset: run it from the CLI on the server (a person logs in); "
+                    f"requested by {req.get('requested_by') or '?'}")
+            return _finish(ctx, req, {"result": "skipped", "note": note}, "skipped", None)
         refused = cap_problem(ds)
         if refused:
             check = {"result": "skipped", "note": refused}
@@ -482,7 +538,12 @@ def _run(ctx: RunContext, ds, req: dict, params: dict) -> dict:
             return _finish(ctx, req, check, status, None)
         mode = params.get("mode", "daily")
         if mode == "backfill":
-            start = _parse_day(params["from"])
+            if params.get("from"):
+                start = _parse_day(params["from"])
+            elif getattr(ds, "backfill_needs_from", True):
+                raise ValueError(f"a backfill of {ds.name} needs a first day (--from)")
+            else:
+                start = None
             end = _parse_day(params["to"]) if params.get("to") else ds.default_as_of()
             ctx.as_of = end
             ds.backfill(ctx, start, end)

@@ -923,7 +923,8 @@ renders at once with what is stored.
 | `RC_MARKET_RAW_DIR` | `MARKET_RAW_DIR` | `raw/<source>/<dataset>/...` and `parquet/<source>/<dataset>/<partition>/` (the HDD) |
 | `RC_MARKET_RAW_COPY_DIR` | `MARKET_RAW_COPY_DIR` | Where the backup copies the newest raw days; empty = off |
 
-**Files.** Serving kinds: `market`. Each kind is one file, `<MARKET_DIR>/<kind>.duckdb`; today one,
+**Files.** Serving kinds: `market`, `spine`. Each kind is one file, `<MARKET_DIR>/<kind>.duckdb`. The identity
+spine, `spine` (serving schema version `1`), is described under "The identity spine" below. The market data,
 `market` (serving schema version `1`): `serving_schema_version` (one row: kind, version, build time, build id),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
 `source`, `source_as_of`, `fetched_at`, `run_id`, `observed`) and `market_series` (key series id, observation date,
@@ -984,6 +985,8 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 | `dataset_schedule` | Cadence and pause state per dataset (Pause / Resume on Settings, PR 2) |
 
 **Day caps** (`rcdata/caps.py`, avo's numbers, to be tuned): uw 150,000, sec 40,000, fred 10,000, alpaca 20,000;
+the spine's (PR 5, working numbers avo has not set): wrds 50 (queries), openfigi 1,000 (requests), ssga 50,
+ishares 50, vanguard 50, nasdaq 50 (one request per fund file);
 a dataset whose providers have all reached their cap for the New York day gets a `skipped` check row and sends
 nothing; inside a run every call checks its provider's cap first (one capped provider, FRED among the market series,
 is a source failure and the others go on), and the counter is written every 25 calls, at the end, and on SIGTERM (systemd's stop, turned into a clean exit) or Ctrl-C; a keyless call is counted when it is sent, a UW call when its answer arrives (the UW client's observer), so a UW request cut off by a stop is not counted. Only the
@@ -1033,6 +1036,93 @@ anyway (PR #222).
 copied and verified by row count and `sum(hash(row))` per table before its rename, the sha256 of every copy in
 `.manifest.json`, the newest 5 kept per kind. Then the raw files of the last 35 days go to `RC_MARKET_RAW_COPY_DIR`
 (rsync-like) when they total under 20 GB; over that, or with no folder set, a warning and no copy.
+
+### The identity spine (`spine.duckdb`, PR 5)
+
+The second serving kind: who each SEC-file security is, its tier, CIK-CUSIP link, FIGI, GICS and index membership.
+Built by the same builder, swapped the same way, read only through `rcdata.read`. Nothing here writes `raw.duckdb`;
+the old identity tables there are untouched (D5: they are empty since 27 Oct).
+
+| Dataset | Cadence | Source | Stages |
+|---|---|---|---|
+| `sec/company_tickers_exchange` | weekly | `www.sec.gov/files/company_tickers_exchange.json`, `If-Modified-Since` from the last copy (a 304 writes nothing) | `stg_sec`, `stg_sec_all` |
+| `wrds/sec_idhist` | monthly, attended | `comp.company`, `comp.security`, `comp.sec_idhist`; between snapshots only the new listed CIKs | `stg_wrds_company`, `stg_wrds_security`, `stg_wrds_idhist` |
+| `wrds/co_hgic` | monthly, attended | `comp.co_hgic` | `stg_wrds_hgic` |
+| `wrds/idxcst_his` | monthly, attended | `comp.idxcst_his` for the S&P 500, 400 and 600 index keys | `stg_wrds_idx` |
+| `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet, under 25 requests a minute | `stg_figi` |
+| `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR, Vanguard VOO/IVOO/VIOO, Nasdaq's nasdaq100 list | `stg_fund_lines`, `stg_fund_files` |
+| `spine/security` | daily | none: builds the served tables from the staging tables | the four tables below |
+
+The sources load their Parquet into TEMP tables of the build connection (never stored in the file); the kind's
+datasets build in `DATASETS` order, so `spine/security` builds last. Raw and Parquet follow the market store's
+rules (`raw/<source>/<dataset>/...`, `parquet/<source>/<dataset>/...`; a raw file that exists is the resume marker).
+
+**Attended (WRDS).** The three WRDS datasets need a person, and run in their own interpreter: `wrds` is not in the
+builder's venv (on the server it has a venv of its own, because its pandas has no wheel for the builder's Python).
+`rcdata/build/spine/wrds_worker.py` runs under `RC_WRDS_PYTHON` (that venv's python, set in the server's env file;
+no default), one subprocess per builder process, so one WRDS connection: the login is that venv's
+`wrds.Connection` (the user from `WRDS_USERNAME`, which is required, the password from that user's `~/.pgpass`; WRDS may ask
+for a Duo push). The worker streams each answer in chunks to `<table>.jsonl.gz`; the builder types it in DuckDB.
+The datasets are never due, a request a page or the schedule queued is skipped (`skipped: attended ...`), the
+route answers 409, and the CLI runs them: `python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist
+wrds/co_hgic wrds/idxcst_his openfigi/map` starts one worker for the whole process. Run it in a foreground terminal:
+the worker reads a WRDS prompt from `/dev/tty`, and a background job that reads its terminal is stopped (SIGTTIN).
+A failed login, or no
+interpreter at `RC_WRDS_PYTHON`, fails the run and keeps the last snapshot served. `requested_by` `cli` is the CLI's
+own mark: a panel header that says `cli` is recorded as `panel:cli`.
+
+**Starts by hand.** Every spine dataset is not due until it has built once (a `changed` or `unchanged` check, from
+the CLI or a Fetch), so the first hourly builder pass after a deploy calls no spine source before the attended
+steps, and a first attempt that failed is not retried every hour.
+
+**Served tables** (`spine` serving schema version `1`). Periods are `valid_from` inclusive, `valid_to` exclusive
+(Compustat's inclusive ends are moved one day on), `valid_to` NULL while current.
+
+| Table | Rows |
+|---|---|
+| `security` | one per ticker of the newest SEC file: CIK, name, exchange, `tier` and `tier_rule`, `security_type` and its source, the Compustat link (`gvkey`, `iid`, `link_source`), `cusip`, `isin` (derived), the FIGI fields, the current GICS codes, the bridge `sector` / `industry`, each with its source, and the SEC file's provenance |
+| `security_history` | the SEC file's `cik`, `name`, `exchange` per ticker over the stored snapshots; Compustat's identifier history of the linked securities |
+| `gics_history` | Compustat's GICS periods of the linked companies |
+| `index_membership` | the fund-file members (source `funds/index_holdings`) and Compustat's constituents (source `wrds/idxcst_his`, the check) |
+
+**Tier rule v1** (`rcdata/build/spine/tier.py`): A = listed on Nasdaq, NYSE or Cboe and not an excluded type
+(`core.identity.types.EXCLUDED_TYPES`; an untyped name stays); B = listed, excluded type; C = OTC; D = no exchange.
+The type comes from `core.identity.types.classify_type` over OpenFIGI's types and the name (no SEC submissions);
+a name those leave untyped takes Compustat's `tpci` of its linked security (`0` common, `F` ADR, `%` ETF; others
+type nothing).
+
+**The link.** CIK -> Compustat companies -> the security whose `tic` is the SEC ticker (`BRK.B` -> `BRK-B`), else
+the only active US security of a CIK with one SEC ticker; otherwise no link and no CUSIP.
+
+**Membership** (working choice): a fund file counts on a day when it parsed and holds at least its index's floor;
+a name is a member when more than half of the counting files hold it. Each day's lines are matched against that
+day's SEC snapshot (the newest on or before it), by CUSIP, then by ticker, then by the ticker without its class
+dash; a ticker match is refused when the line's CUSIP is known (Compustat) to belong to another security. A line
+the day's snapshot does not match is looked for in the snapshots of the next 21 days (the weekly file's lag and one
+missed week), but only by a ticker the SEC
+file had not held by that day (a new joiner, a rename the files write first) or held under the same CIK (a name the
+file dropped and took back): a later row of a ticker under another CIK is its next owner. A member that later leaves the SEC file keeps its periods,
+and a period's CIK is that of the snapshot its last day's lines matched. Compustat constituents get a ticker only through the link (never Compustat's current `tic` alone).
+
+**Build issues** live in `ops.sqlite` `build_issues` (D6), dataset `spine/security`, synced after each swap
+(`ops.sync_issues`: found again stays open, gone is resolved). Kinds: `source_never_run`, `tier_a_no_wrds_link`,
+`tier_a_no_cusip`, `tier_a_no_figi`, `tier_a_no_gics`, `figi_ticker_differs`, `cusip_shared`, `cik_many_gvkeys`,
+`index_key_empty`, `fund_file_short`, `member_not_in_sec`, `member_not_tier_a`, `membership_files_disagree`, `membership_wrds_differs`.
+A rule needing a source that has never run is not applied; that source is one `source_never_run` row.
+`index_key_empty`: an index key with no `comp.idxcst_his` rows in a run that answered rows for another.
+A WRDS raw value its schema cannot type (a DATE or INTEGER column) is typed to null and recorded as a `value_untyped` issue of that WRDS dataset, keyed `<table>.<column>`, with the row count; it is a one-off row of its run, not synced.
+
+**The bridge (D4).** Views in `spine.duckdb` under the old names, with the old columns in the old order:
+`equity_universe` (the listed rows, Tier A and B), `security_master`, `index_constituents` (current fund-file
+members, plus `nasdaq` = listed on Nasdaq; no `dow`) and `index_tickers`. Market cap, price, quote and SIC are
+NULL: the spine holds no market data.
+
+**Reading it.** `rcdata.read.universe(tiers=("A",))`, `rcdata.read.identity(tickers)`,
+`rcdata.read.membership(index, on, source)`. `core/universe.py` reads them when `RC_UNIVERSE_SOURCE=spine`
+(market cap, price and quote still from the old `equity_universe` by ticker; a spine name left untyped takes
+`security_master`'s type); the default stays the old store until PR 6. With the variable set but no spine file, or
+a last `spine/security` build that failed, the old store is read, a warning is logged, and the Settings Identity card
+says so ("Boards read"). The variable is read from the process environment: changing it needs a restart.
 
 ## Migration
 Two separate things, deliberately not conflated:
