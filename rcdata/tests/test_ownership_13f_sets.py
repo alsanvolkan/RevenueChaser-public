@@ -193,7 +193,9 @@ def test_a_set_the_sec_publishes_again_reopens_the_days_it_filled(feed, http_moc
     _backfill("2026-06-01", "2026-08-31")
     assert _served(f"SELECT count(*) FROM {sec13f.TABLE} WHERE filed = '2026-07-31'") == [(1,)]
     http_mock.requests.clear()
-    _backfill("2026-06-01", "2026-08-31")                       # unchanged: asked, 304, nothing typed again
+    row = _backfill("2026-06-01", "2026-08-31")                 # unchanged: asked, 304, nothing typed again
+    assert row["result"] != "failed", row["note"]
+    assert "reopened" not in row["note"], row["note"]
     asked = http_mock.calls("_form13f.zip")
     assert [c.headers.get("if-modified-since") for c in asked] == ["Mon, 10 Aug 2026 09:00:00 GMT"]
     current[0] = "Mon, 14 Sep 2026 16:43:16 GMT"
