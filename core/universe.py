@@ -20,14 +20,15 @@ The types are read with a separate query, never a JOIN: `rawstore.query` answers
 `[]` for a missing table, so a JOIN against an absent `security_master` would
 silently empty the universe. `_security_types` is the one seam for them.
 
-**The source** (build plan PR 5): ``RC_UNIVERSE_SOURCE`` unset (or anything but ``spine``) reads ``raw.duckdb`` as
-above. ``RC_UNIVERSE_SOURCE=spine`` reads the identity spine through ``rcdata.read``: the members are the spine's
-listed names (Tier A and B, the old membership rule), with the spine's name, sector, industry and security type, and
-the same two-part rule applied to them; only the market fields (``market_cap``, ``price``, ``quote``) still come
-from the old ``equity_universe``, by ticker, because the spine holds no market data until PR 6. The index badges of
-``filter_fields`` come from the spine's current membership, under the labels the filter already has (the filter is
-unchanged). The default stays the old store until PR 6. With the variable set but no spine file, or a last
-``spine/security`` build that failed, the old store is read and a warning is logged (``source_state``).
+**The source** (build plan PR 5; the default since PR 6): ``RC_UNIVERSE_SOURCE`` unset (or empty, or ``spine``) reads
+the identity spine through ``rcdata.read``: the members are the spine's listed names (Tier A and B, the old
+membership rule), with the spine's name, sector, industry and security type, and the same two-part rule applied to
+them; only the market fields (``market_cap``, ``price``, ``quote``) still come from the old ``equity_universe``, by
+ticker, because the spine holds no market data yet. The index badges of ``filter_fields`` come from the spine's
+current membership (``index_registry``). Any other value (``store`` by convention) reads ``raw.duckdb`` as above:
+the escape hatch, kept until the old path is retired (plan PR 21). With the spine asked for, by default or by the
+variable, but no spine file, or a last ``spine/security`` build that failed, the old store is read and a warning is
+logged (``source_state``).
 """
 from __future__ import annotations
 
@@ -52,6 +53,7 @@ DEFAULT_MC_MIN = 300_000_000.0
 # The source switch (PR 5): read at call time, so a test or a restart with the variable set changes it.
 SOURCE_ENV = "RC_UNIVERSE_SOURCE"
 SPINE = "spine"
+STORE = "store"          # the value that selects the old store (any value but ``spine`` does)
 logger = logging.getLogger(__name__)
 
 UNIVERSE_META_KEY = "__meta__"
@@ -67,15 +69,18 @@ TYPE_GROUPS = (
 )
 
 
-_FALLBACK_LOGGED: set[str] = set()
+_FALLBACK_LOGGED: set[tuple[str, str]] = set()   # (how the spine was asked for, why not), logged once
 
 
 def source_state() -> dict:
-    """``{requested, effective, reason}`` of the universe source: ``RC_UNIVERSE_SOURCE=spine`` is honoured only while
-    the spine is there and ``spine/security``'s newest check that is not a skip built it (changed or unchanged);
-    otherwise the old store is read and ``reason`` says why (review should-fix 7). Read at call time."""
-    if (os.getenv(SOURCE_ENV) or "").strip().lower() != SPINE:
-        return {"requested": "store", "effective": "store", "reason": None}
+    """``{requested, effective, reason, variable}`` of the universe source, read at call time. ``variable`` is
+    ``RC_UNIVERSE_SOURCE`` as set (None when unset or empty). Unset or ``spine`` asks for the spine; any other value
+    asks for the old store. The spine is honoured only while it is there and ``spine/security``'s newest check that is
+    not a skip built it (changed or unchanged); otherwise the old store is read and ``reason`` says why (review
+    should-fix 7)."""
+    variable = (os.getenv(SOURCE_ENV) or "").strip() or None
+    if variable is not None and variable.lower() != SPINE:
+        return {"requested": STORE, "effective": STORE, "reason": None, "variable": variable}
     from ..rcdata import ops, serving
     reason = None
     if not serving.live_path(SPINE).exists():
@@ -86,14 +91,17 @@ def source_state() -> dict:
             reason = "spine/security has not built yet"
         elif last["result"] not in ("changed", "unchanged"):
             reason = f"spine/security's last check {last['result']}"
-    if reason and reason not in _FALLBACK_LOGGED:
-        _FALLBACK_LOGGED.add(reason)
-        logger.warning("%s=%s is set, but the universe falls back to the old store: %s", SOURCE_ENV, SPINE, reason)
-    return {"requested": SPINE, "effective": "store" if reason else SPINE, "reason": reason}
+    asked = (f"{SOURCE_ENV}={SPINE} is set" if variable
+             else f"The universe reads the spine by default ({SOURCE_ENV} unset)")
+    if reason and (asked, reason) not in _FALLBACK_LOGGED:
+        _FALLBACK_LOGGED.add((asked, reason))
+        logger.warning("%s, but the universe falls back to the old store: %s", asked, reason)
+    return {"requested": SPINE, "effective": STORE if reason else SPINE, "reason": reason, "variable": variable}
 
 
 def universe_source() -> str:
-    """``"spine"`` when ``RC_UNIVERSE_SOURCE=spine`` and the spine is built, else ``"store"`` (``source_state``)."""
+    """``"spine"`` when the spine is asked for (``RC_UNIVERSE_SOURCE`` unset or ``spine``) and built, else ``"store"``
+    (``source_state``)."""
     return source_state()["effective"]
 
 
@@ -496,4 +504,5 @@ def filter_fields(tickers: list[str] | None = None) -> dict[str, dict]:
 
 __all__ = ["classification_universe", "classification_universe_rows", "spine_gics", "gics_of",
            "DEFAULT_MC_MIN", "TYPE_GROUPS", "excluded_tickers", "filter_fields", "theme_catalog",
-           "current_theme_run", "universe_counts", "universe_source", "spine_provenance", "SOURCE_ENV"]
+           "current_theme_run", "universe_counts", "universe_source", "spine_provenance", "SOURCE_ENV", "SPINE",
+           "STORE"]
