@@ -190,12 +190,16 @@ def squash(tickers) -> dict[str, str | None]:
     return out
 
 
-def match_holding(line: dict, by_cusip: dict[str, str], cusip_of: dict[str, str], tickers: set[str],
-                  squashed: dict[str, str | None]) -> str | None:
+def match_holding(line: dict, by_cusip: dict[str, str], cusip_owners: dict[str, set[tuple[str, str]]],
+                  link_of: dict[str, tuple[str, str]], tickers: set[str], squashed: dict[str, str | None]) -> str | None:
     """The SEC ticker of one holdings line: by CUSIP; else its own ticker when ``tickers`` (the SEC tickers of the
-    line's day) holds it, or its ticker without the class dash (iShares writes ``BRKB``) when exactly one of them
-    squashes to it (``squash(tickers)``). A line whose CUSIP is not the matched ticker's known CUSIP is no match (a
-    line written before the ticker was reused, should-fix 4a)."""
+    snapshot) holds it, or its ticker without the class dash (iShares writes ``BRKB``) when exactly one of them
+    squashes to it (``squash(tickers)``).
+
+    A ticker match is refused when the line's CUSIP is known (``cusip_owners``: Compustat's current and historical
+    CUSIPs, by security) to belong to another security than the one the ticker is linked to (``link_of``): a line
+    written before the ticker was reused (should-fix 4a). The ticker's own earlier CUSIP, or a CUSIP nobody knows,
+    does not break the match (delta S2)."""
     cusip = line.get("cusip")
     if cusip and cusip in by_cusip:
         return by_cusip[cusip]
@@ -203,7 +207,8 @@ def match_holding(line: dict, by_cusip: dict[str, str], cusip_of: dict[str, str]
     if not t:
         return None
     hit = t if t in tickers else squashed.get(t.replace("-", ""))
-    if hit and cusip and cusip_of.get(hit) and cusip_of[hit] != cusip:
+    owners = cusip_owners.get(cusip) if cusip else None
+    if hit and owners and hit in link_of and link_of[hit] not in owners:
         return None
     return hit
 
@@ -425,7 +430,14 @@ class SpineSecurity:
         # A member's CIK: the newest SEC snapshot that held its ticker (an acquired member keeps its own).
         cik = {t: c for t, c in con.execute("SELECT ticker, arg_max(cik, source_as_of) FROM stg_sec_all "
                                             "GROUP BY ticker").fetchall()}
-        cusip_of = {r["ticker"]: r["cusip"] for r in rows if r["cusip"]}
+        link_of = {t: gi for gi, t in linked.items()}
+        # Every CUSIP Compustat knows, current or past, with the securities it named (delta S2).
+        cusip_owners: dict[str, set[tuple[str, str]]] = defaultdict(set)
+        for g, i, c in con.execute(
+                "SELECT gvkey, iid, upper(cusip) FROM stg_wrds_security WHERE cusip IS NOT NULL UNION "
+                "SELECT gvkey, iid, upper(itemvalue) FROM stg_wrds_idhist WHERE upper(item) = 'CUSIP' "
+                "AND itemvalue IS NOT NULL").fetchall():
+            cusip_owners[c].add((g, i))
         files = _rows(con, "SELECT * FROM stg_fund_files")
         latest = max((f["as_of"] for f in files), default=None)
         for f in files:
@@ -456,7 +468,7 @@ class SpineSecurity:
             # The day's snapshot first; the SEC file is weekly, so a name the files already write under its new
             # ticker (a new joiner, a rename) is looked for in the snapshots after it, oldest first (delta S1).
             for d in snaps[snaps.index(snap):]:
-                hit = match_holding(line, by_cusip[d], cusip_of, on_snap[d], squashed[d])
+                hit = match_holding(line, by_cusip[d], cusip_owners, link_of, on_snap[d], squashed[d])
                 if hit:
                     break
             mapping.append({"snap": snap, "tk": tk, "cu": cu, "sec_ticker": hit})

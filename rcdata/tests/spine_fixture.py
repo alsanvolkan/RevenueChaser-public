@@ -97,6 +97,9 @@ NEW_SECURITY = [{"gvkey": "040001", "iid": "01", "tic": "VYLR", "cusip": "92921V
                  "secstat": "A", "tpci": "0", "dldtei": None}]
 IDHIST = [
     {"gvkey": "012141", "iid": "01", "item": "TIC", "itemvalue": "MSFT", "efffrom": "1986-03-13", "effthru": None},
+    # MSFT's CUSIP before a (made-up) change: a fund file still writing it is MSFT, not a conflict.
+    {"gvkey": "012141", "iid": "01", "item": "CUSIP", "itemvalue": "594918100", "efffrom": "1986-03-13",
+     "effthru": "2001-12-31"},
     {"gvkey": "005567", "iid": "02", "item": "TIC", "itemvalue": "HEI.A", "efffrom": "1998-04-01", "effthru": None},
     {"gvkey": "005567", "iid": "02", "item": "CUSIP", "itemvalue": "422806208", "efffrom": "1998-04-01",
      "effthru": None},
