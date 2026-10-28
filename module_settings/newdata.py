@@ -141,11 +141,25 @@ def status_of(dataset: str, last: dict | None, base: dict | None, cadence: str,
     return "unchanged", "within its cycle; the last run changed nothing", base
 
 
-def _checks_list(dataset: str, check: dict | None, last: dict | None, missed: int | None, issues: int) -> list[dict]:
-    """The dataset's questions, one row each: ``{label, ok (True / False / None = not measured), detail}``."""
+def _held(dataset: str, ds) -> str | None:
+    """Why the schedule never queues ``dataset`` now (``rcdata/build/due.py``), or None: an attended dataset runs only
+    from the CLI; a dataset that starts by hand waits for its first build (delta S6)."""
+    from RevenueChaser.rcdata.build import due
+    if getattr(ds, "attended", False):
+        return due.ATTENDED_WHY
+    if getattr(ds, "starts_by_hand", False) and not ops.ever_built(dataset):
+        return due.BY_HAND_WHY
+    return None
+
+
+def _checks_list(dataset: str, check: dict | None, last: dict | None, missed: int | None, issues: int,
+                 held: str | None = None) -> list[dict]:
+    """The dataset's questions, one row each: ``{label, ok (True / False / None = not measured), detail}``.
+    ``held`` (``_held``) replaces the next-check date when the schedule does not queue the dataset."""
     if last is None:
-        return [{"label": "Last run", "ok": None, "detail": "never run"},
-                {"label": "Open build issues", "ok": issues == 0, "detail": str(issues)}]
+        return ([{"label": "Last run", "ok": None, "detail": "never run"}]
+                + ([{"label": "Next check due", "ok": None, "detail": held}] if held else [])
+                + [{"label": "Open build issues", "ok": issues == 0, "detail": str(issues)}])
     c = check or last
     target = COVERAGE_TARGET.get(dataset)
     cov = c.get("coverage")
@@ -160,7 +174,7 @@ def _checks_list(dataset: str, check: dict | None, last: dict | None, missed: in
          "detail": "—" if removed is None else str(removed)},
         {"label": "Rows added", "ok": None, "detail": "—" if c.get("added") is None else str(c["added"])},
         {"label": "Calls", "ok": None, "detail": "—" if c.get("calls") is None else str(c["calls"])},
-        {"label": "Next check due", "ok": None, "detail": c.get("next_check_due") or "—"},
+        {"label": "Next check due", "ok": None, "detail": held or c.get("next_check_due") or "—"},
         {"label": "Open build issues", "ok": issues == 0, "detail": str(issues)},
     ]
     return out
@@ -409,16 +423,17 @@ def _card(dataset: str, ds, facts: dict, now: datetime) -> dict:
     table_facts = [facts[t] for t in ds.tables if t in facts]
     c = base or last or {}
     backfill = BACKFILL.get(dataset)
+    held = _held(dataset, ds)
     return {
         "dataset": dataset, "label": LABELS.get(dataset, dataset), "status": status, "status_reason": reason,
         "cadence": cadence, "checked_on": c.get("checked_on"), "source_as_of": c.get("source_as_of"),
-        "next_check_due": c.get("next_check_due"), "rows": c.get("rows"), "added": c.get("added"),
+        "next_check_due": held or c.get("next_check_due"), "rows": c.get("rows"), "added": c.get("added"),
         "removed": c.get("removed"), "calls": c.get("calls"), "coverage": c.get("coverage"),
         "coverage_target": COVERAGE_TARGET.get(dataset), "last_note": last.get("note") if last else None,
         "last_result": last["result"] if last else None,
         "table_rows": sum(f["rows"] for f in table_facts) if table_facts else None,
         "newest": max((f["newest"] for f in table_facts if f["newest"]), default=None),
-        "checks": _checks_list(dataset, base, last, missed, n_issues),
+        "checks": _checks_list(dataset, base, last, missed, n_issues, held),
         "issues": [{"kind": i["kind"], "key": i["key"], "detail": i["detail"], "found_on": i["found_on"]}
                    for i in issues],
         "issues_open": n_issues,

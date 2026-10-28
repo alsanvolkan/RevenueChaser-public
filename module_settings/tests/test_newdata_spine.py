@@ -106,3 +106,17 @@ def test_the_identity_card_says_which_universe_the_boards_read(monkeypatch):
     html = report.render_settings_dashboard({"newdata": newdata.collect(NOW), "rows": []})
     card = html[html.index('id="nd-identity"'):]
     assert "Boards read" in card and "spine requested, falling back: no spine.duckdb yet" in card
+
+
+def test_a_never_built_spine_card_says_it_starts_by_hand():
+    """Delta S6: until its first build, a starts-by-hand dataset is never due; its card says so (and the attended
+    ones say they run from the CLI), instead of an unexplained "Next check due"."""
+    from RevenueChaser.rcdata.build import due
+    data = newdata.collect(NOW)
+    assert _card(data, "funds/index_holdings")["next_check_due"] == due.BY_HAND_WHY
+    assert _card(data, "wrds/co_hgic")["next_check_due"] == due.ATTENDED_WHY
+    checks = {c["label"]: c for c in _card(data, "funds/index_holdings")["checks"]}
+    assert checks["Next check due"]["detail"] == due.BY_HAND_WHY
+    assert _card(data, "market_series")["next_check_due"] is None          # the market datasets are unchanged
+    ops.record_check("funds/index_holdings", "changed", source_as_of="2026-10-27", next_check_due="2026-10-28")
+    assert _card(newdata.collect(NOW), "funds/index_holdings")["next_check_due"] == "2026-10-28"
