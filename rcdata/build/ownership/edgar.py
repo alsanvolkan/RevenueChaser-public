@@ -234,6 +234,11 @@ class Feed:
         base.write_raw_json(path, {"start": start.isoformat()})
         return start
 
+    def first_day(self) -> date | None:
+        """The walk's first day (``start.json``), None before any run; read only."""
+        path = self.raw_dir() / START
+        return date.fromisoformat(base.read_raw_json(path)["start"]) if path.exists() else None
+
     def move_start(self, day: date) -> None:
         path = self.raw_dir() / START
         if not path.exists() or date.fromisoformat(base.read_raw_json(path)["start"]) > day:

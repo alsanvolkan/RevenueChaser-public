@@ -6,7 +6,9 @@ tests that need tickers named without running the whole spine.
 """
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 
 import duckdb
 
@@ -282,6 +284,75 @@ def f13_filing(accession, cik, filed, holdings, period="09-30-2026", form="13F-H
     return submission(accession, form, filed, [("FILER", cik, name)], docs, period=f"{y}-{m}-{d}")
 
 
+SETS_PAGE_PATH = "/data-research/sec-markets-data/form-13f-data-sets"
+SET_COLUMNS = {
+    "SUBMISSION": ("ACCESSION_NUMBER", "FILING_DATE", "SUBMISSIONTYPE", "CIK", "PERIODOFREPORT"),
+    "COVERPAGE": ("ACCESSION_NUMBER", "REPORTCALENDARORQUARTER", "ISAMENDMENT", "AMENDMENTNO", "AMENDMENTTYPE",
+                  "CONFDENIEDEXPIRED", "DATEDENIEDEXPIRED", "DATEREPORTED", "REASONFORNONCONFIDENTIALITY",
+                  "FILINGMANAGER_NAME", "FILINGMANAGER_STREET1", "FILINGMANAGER_STREET2", "FILINGMANAGER_CITY",
+                  "FILINGMANAGER_STATEORCOUNTRY", "FILINGMANAGER_ZIPCODE", "REPORTTYPE", "FORM13FFILENUMBER",
+                  "CRDNUMBER", "SECFILENUMBER", "PROVIDEINFOFORINSTRUCTION5", "ADDITIONALINFORMATION"),
+    "SUMMARYPAGE": ("ACCESSION_NUMBER", "OTHERINCLUDEDMANAGERSCOUNT", "TABLEENTRYTOTAL", "TABLEVALUETOTAL",
+                    "ISCONFIDENTIALOMITTED"),
+    "INFOTABLE": ("ACCESSION_NUMBER", "INFOTABLE_SK", "NAMEOFISSUER", "TITLEOFCLASS", "CUSIP", "FIGI", "VALUE",
+                  "SSHPRNAMT", "SSHPRNAMTTYPE", "PUTCALL", "INVESTMENTDISCRETION", "OTHERMANAGER", "VOTING_AUTH_SOLE",
+                  "VOTING_AUTH_SHARED", "VOTING_AUTH_NONE"),
+}
+
+
+def sets_page(hrefs: list[str]) -> bytes:
+    return ("<html><body><table>" + "".join(f'<tr><td><a href="{h}">{h.rsplit("/", 1)[1]}</a></td></tr>'
+                                            for h in hrefs) + "</table></body></html>").encode()
+
+
+def set_filing(accession, cik, filed, holdings, period="30-JUN-2026", form="13F-HR", name=None, amendment_type="",
+               amendment_no="", is_amendment="", confidential="N", report_type="13F HOLDINGS REPORT",
+               entries=None) -> dict:
+    """One filing of a data set: dates ``DD-MON-YYYY``, the CIK zero-padded, ``ISAMENDMENT`` blank by default (as on
+    half the real rows)."""
+    return {"accession": accession, "cik": f"{cik:010d}", "filed": filed, "form": form, "period": period,
+            "name": name or f"MANAGER {cik}", "amendment_type": amendment_type, "amendment_no": amendment_no,
+            "is_amendment": is_amendment, "confidential": confidential, "report_type": report_type,
+            "holdings": holdings, "entries": len(holdings) if entries is None else entries}
+
+
+def f13_set(filings: list[dict], folder: str | None = None, sk_from: int = 133_648_900) -> bytes:
+    """A Form 13F data-set zip in the SEC's layout (the columns of 01jun2026-31aug2026_form13f.zip), its members in
+    ``folder`` when given (one real set nests them), plus a member that is not read."""
+    rows = {t: [] for t in SET_COLUMNS}
+    sk = sk_from
+    for f in filings:
+        rows["SUBMISSION"].append({"ACCESSION_NUMBER": f["accession"], "FILING_DATE": f["filed"],
+                                   "SUBMISSIONTYPE": f["form"], "CIK": f["cik"], "PERIODOFREPORT": f["period"]})
+        rows["COVERPAGE"].append({"ACCESSION_NUMBER": f["accession"], "REPORTCALENDARORQUARTER": f["period"],
+                                  "ISAMENDMENT": f["is_amendment"], "AMENDMENTNO": f["amendment_no"],
+                                  "AMENDMENTTYPE": f["amendment_type"], "FILINGMANAGER_NAME": f["name"],
+                                  "REPORTTYPE": f["report_type"]})
+        if not f["form"].startswith("13F-NT"):
+            rows["SUMMARYPAGE"].append({"ACCESSION_NUMBER": f["accession"], "OTHERINCLUDEDMANAGERSCOUNT": "0",
+                                        "TABLEENTRYTOTAL": str(f["entries"]),
+                                        "TABLEVALUETOTAL": str(sum(h["value"] for h in f["holdings"])),
+                                        "ISCONFIDENTIALOMITTED": f["confidential"]})
+        # The SEC's own row order is not the filing's: the key orders it.
+        for h in reversed(f["holdings"]):
+            sk -= 1
+            rows["INFOTABLE"].append({"ACCESSION_NUMBER": f["accession"], "INFOTABLE_SK": str(sk),
+                                      "NAMEOFISSUER": h["issuer"], "TITLEOFCLASS": 'COM "A"', "CUSIP": h["cusip"],
+                                      "FIGI": h["figi"] or "", "VALUE": str(h["value"]), "SSHPRNAMT": str(h["shares"]),
+                                      "SSHPRNAMTTYPE": h["sh_type"], "PUTCALL": h["put_call"] or "",
+                                      "INVESTMENTDISCRETION": "SOLE", "OTHERMANAGER": "",
+                                      "VOTING_AUTH_SOLE": str(h["shares"]), "VOTING_AUTH_SHARED": "0",
+                                      "VOTING_AUTH_NONE": "0"})
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for table, cols in SET_COLUMNS.items():
+            body = "\t".join(cols) + "\n" + "".join("\t".join(r.get(c, "") for c in cols) + "\n"
+                                                   for r in rows[table])
+            z.writestr(f"{folder}/{table}.tsv" if folder else f"{table}.tsv", body)
+        z.writestr("FORM13F_metadata.json", "{}")
+    return out.getvalue()
+
+
 class Edgar:
     """The daily indexes by day and the submissions by accession; anything else answers 404."""
 
@@ -302,6 +373,9 @@ class Edgar:
     def install(self, http_mock) -> None:
         http_mock.add("/Archives/edgar/daily-index/", self.index)
         http_mock.add("/Archives/edgar/data/", self.filing)
+        # The 13F data-set page, linking one old set that covers no day a test asks (a test of the sets routes its
+        # own page first).
+        http_mock.add(SETS_PAGE_PATH, sets_page(["/files/structureddata/data/form-13f-data-sets/2013q1_form13f.zip"]))
 
     def add_day(self, day: str, entries: list[tuple]) -> None:
         """``entries``: ``(index row, submission bytes or None)``; the same accession may be listed twice."""

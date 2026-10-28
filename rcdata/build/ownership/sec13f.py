@@ -25,14 +25,15 @@ day>/`` and ``parquet/sec/13f/holdings/day=<index day>/``, each day written whol
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import duckdb
 
+from ....core import calendar
 from .. import base
 from ..spine.stage import partitions
-from . import common, edgar
+from . import common, edgar, sec13f_sets
 
 NAME = "sec/13f"
 TABLE = "sec13f_filings"
@@ -44,13 +45,15 @@ FILINGS = [("accession", "TEXT"), ("cik", "TEXT"), ("filer_name", "TEXT"), ("for
            ("amendment_type", "TEXT"), ("report_type", "TEXT"), ("other_managers", "INTEGER"),
            ("entry_total", "INTEGER"), ("value_total", "DOUBLE"), ("holdings", "INTEGER"),
            ("value_scale", "INTEGER"), ("confidential_omitted", "BOOLEAN"), ("status", "TEXT"), ("detail", "TEXT"),
-           ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
+           ("origin", "TEXT"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
 HOLDINGS = [("accession", "TEXT"), ("cik", "TEXT"), ("period", "DATE"), ("filed", "DATE"), ("line", "INTEGER"),
             ("name_of_issuer", "TEXT"), ("title_of_class", "TEXT"), ("cusip", "TEXT"), ("figi", "TEXT"),
             ("value", "DOUBLE"), ("value_usd", "DOUBLE"), ("shares", "DOUBLE"), ("sh_type", "TEXT"),
             ("put_call", "TEXT"), ("discretion", "TEXT"), ("other_manager", "TEXT"), ("vote_sole", "BIGINT"),
             ("vote_shared", "BIGINT"), ("vote_none", "BIGINT")]
 SERVED = FILINGS + [("source", "TEXT")]
+ORIGIN = "edgar"
+SETS_SCHEMA = {"forms": FORMS, "filings": FILINGS, "holdings": HOLDINGS, "dollars_from": DOLLARS_FROM}
 
 
 def _mdy(value) -> date | None:
@@ -77,8 +80,8 @@ def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
            "filed": filed, "index_day": index_day, "is_amendment": form.endswith("/A"), "amendment_no": None,
            "amendment_type": None, "report_type": None, "other_managers": None, "entry_total": None,
            "value_total": None, "holdings": 0, "value_scale": 1000 if filed < DOLLARS_FROM else 1,
-           "confidential_omitted": None, "status": "unparsed", "detail": None, "fetched_at": entry.get("fetched_at"),
-           "run_id": entry.get("run_id")}
+           "confidential_omitted": None, "status": "unparsed", "detail": None, "origin": ORIGIN,
+           "fetched_at": entry.get("fetched_at"), "run_id": entry.get("run_id")}
     docs = sub["docs"]
     primary = next((d for d in docs if d["xml"] and "edgarSubmission" in d["xml"][:2000]), None)
     table = next((d for d in docs if d["xml"] and d["type"] == "INFORMATION TABLE"), None)
@@ -166,6 +169,14 @@ class Sec13f(edgar.Feed):
     sub = "13f"
     tables = (TABLE,)
     budget_s = BUDGET_S
+
+    def backfill(self, ctx: base.RunContext, start: date | None, end: date) -> None:
+        """The SEC's data sets fill the days they cover (``sec13f_sets``: the first fill), then the forms walk takes
+        the range's days no set covers (after the newest set)."""
+        first = start or end
+        self.move_start(first)
+        sec13f_sets.fill(ctx, self, first, min(end, calendar.today_ny() - timedelta(days=1)), SETS_SCHEMA)
+        super().backfill(ctx, first, end)
 
     def type_day(self, ctx: base.RunContext, day: date) -> list[Path]:
         filings = self.filings_of(day)
