@@ -174,3 +174,125 @@ class Ftd:
 
     def install(self, http_mock) -> None:
         http_mock.add("/files/data/fails-deliver-data/cnsfails", self.answer)
+
+
+# ── EDGAR: the daily index and full submissions (the SEC's documented shapes; sec.gov refused the cloud) ──────────
+
+INDEX_HEADER = "CIK|Company Name|Form Type|Date Filed|File Name"
+
+
+def daily_index(rows) -> bytes:
+    """``master.<YYYYMMDD>.idx``: the preamble, the header, a rule, then ``CIK|Company|Form|YYYYMMDD|File Name``."""
+    head = ["Description:           Daily Index of EDGAR Dissemination Feed by Company Name",
+            "Last Data Received:    October 27, 2026", "Comments:              webmaster@sec.gov",
+            "Anonymous FTP:         ftp://ftp.sec.gov/edgar/", "", "", "", "", INDEX_HEADER, "-" * 80]
+    return ("\n".join(head + ["|".join(str(c) for c in r) for r in rows]) + "\n").encode("latin-1")
+
+
+def idx_row(cik: int, name: str, form: str, day: str, accession: str) -> tuple:
+    return (cik, name, form, day.replace("-", ""), f"edgar/data/{cik}/{accession}.txt")
+
+
+def submission(accession: str, form: str, filed: str, roles: list[tuple[str, int, str]], docs: list[tuple],
+               period: str | None = None) -> bytes:
+    """A full submission ``.txt``: the SGML header (``roles``: ``(role, cik, name)``, e.g. ``FILER``) and one
+    ``<DOCUMENT>`` per ``(type, filename, xml)``."""
+    ymd = filed.replace("-", "")
+    head = [f"<SEC-DOCUMENT>{accession}.txt : {ymd}", f"<SEC-HEADER>{accession}.hdr.sgml : {ymd}",
+            f"<ACCEPTANCE-DATETIME>{ymd}160512", f"ACCESSION NUMBER:\t\t{accession}",
+            f"CONFORMED SUBMISSION TYPE:\t{form}", f"PUBLIC DOCUMENT COUNT:\t\t{len(docs)}"]
+    if period:
+        head.append(f"CONFORMED PERIOD OF REPORT:\t{period.replace('-', '')}")
+    head += [f"FILED AS OF DATE:\t\t{ymd}", f"DATE AS OF CHANGE:\t\t{ymd}", ""]
+    for role, cik, name in roles:
+        data = "OWNER DATA" if role == "REPORTING-OWNER" else "COMPANY DATA"
+        head += [f"{role}:", "", f"\t{data}:\t", f"\t\tCOMPANY CONFORMED NAME:\t\t\t{name}",
+                 f"\t\tCENTRAL INDEX KEY:\t\t\t{cik:010d}", ""]
+    head.append("</SEC-HEADER>")
+    body = [f"<DOCUMENT>\n<TYPE>{t}\n<SEQUENCE>{i}\n<FILENAME>{f}\n<TEXT>\n<XML>\n{x}\n</XML>\n</TEXT>\n</DOCUMENT>"
+            if x is not None else f"<DOCUMENT>\n<TYPE>{t}\n<SEQUENCE>{i}\n<FILENAME>{f}\n<TEXT>\nplain text\n"
+                                  f"</TEXT>\n</DOCUMENT>"
+            for i, (t, f, x) in enumerate(docs, 1)]
+    return ("\n".join(head + body + ["</SEC-DOCUMENT>", ""])).encode()
+
+
+def f13_primary(period="09-30-2026", report_type="13F HOLDINGS REPORT", amendment_type=None, amendment_no=None,
+                name="SOME CAPITAL LLC", entries=0, value_total=0) -> str:
+    amend = ""
+    if amendment_type:
+        amend = (f"<isAmendment>true</isAmendment><amendmentNo>{amendment_no or 1}</amendmentNo>"
+                 f"<amendmentInfo><amendmentType>{amendment_type}</amendmentType></amendmentInfo>")
+    else:
+        amend = "<isAmendment>false</isAmendment>"
+    return ('<?xml version="1.0" encoding="UTF-8"?>'
+            '<edgarSubmission xmlns="http://www.sec.gov/edgar/thirteenffiler" '
+            'xmlns:com="http://www.sec.gov/edgar/common">'
+            '<headerData><submissionType>13F-HR</submissionType></headerData>'
+            f'<formData><coverPage><reportCalendarOrQuarter>{period}</reportCalendarOrQuarter>{amend}'
+            f'<filingManager><name>{name}</name></filingManager><reportType>{report_type}</reportType></coverPage>'
+            f'<summaryPage><otherIncludedManagersCount>0</otherIncludedManagersCount>'
+            f'<tableEntryTotal>{entries}</tableEntryTotal><tableValueTotal>{value_total}</tableValueTotal>'
+            '</summaryPage></formData></edgarSubmission>')
+
+
+def f13_holding(issuer, cusip, value, shares, sh_type="SH", put_call=None, figi=None) -> dict:
+    return {"issuer": issuer, "cusip": cusip, "value": value, "shares": shares, "sh_type": sh_type,
+            "put_call": put_call, "figi": figi}
+
+
+def f13_infotable(holdings) -> str:
+    rows = []
+    for h in holdings:
+        rows.append(
+            "<ns1:infoTable>"
+            f"<ns1:nameOfIssuer>{h['issuer']}</ns1:nameOfIssuer><ns1:titleOfClass>COM</ns1:titleOfClass>"
+            f"<ns1:cusip>{h['cusip']}</ns1:cusip>" + (f"<ns1:figi>{h['figi']}</ns1:figi>" if h["figi"] else "") +
+            f"<ns1:value>{h['value']}</ns1:value><ns1:shrsOrPrnAmt><ns1:sshPrnamt>{h['shares']}</ns1:sshPrnamt>"
+            f"<ns1:sshPrnamtType>{h['sh_type']}</ns1:sshPrnamtType></ns1:shrsOrPrnAmt>"
+            + (f"<ns1:putCall>{h['put_call']}</ns1:putCall>" if h["put_call"] else "") +
+            "<ns1:investmentDiscretion>SOLE</ns1:investmentDiscretion><ns1:votingAuthority><ns1:Sole>"
+            f"{h['shares']}</ns1:Sole><ns1:Shared>0</ns1:Shared><ns1:None>0</ns1:None></ns1:votingAuthority>"
+            "</ns1:infoTable>")
+    return ('<?xml version="1.0" encoding="UTF-8"?><ns1:informationTable '
+            'xmlns:ns1="http://www.sec.gov/edgar/document/thirteenf/informationtable">' + "".join(rows) +
+            "</ns1:informationTable>")
+
+
+def f13_filing(accession, cik, filed, holdings, period="09-30-2026", form="13F-HR", amendment_type=None,
+               amendment_no=None, report_type="13F HOLDINGS REPORT", name=None) -> bytes:
+    name = name or f"MANAGER {cik}"
+    docs = [(form, "primary_doc.xml", f13_primary(period, report_type, amendment_type, amendment_no, name,
+                                                  len(holdings), sum(h["value"] for h in holdings)))]
+    if holdings is not None and report_type != "13F NOTICE":
+        docs.append(("INFORMATION TABLE", "infotable.xml", f13_infotable(holdings)))
+    m, d, y = period.split("-")
+    return submission(accession, form, filed, [("FILER", cik, name)], docs, period=f"{y}-{m}-{d}")
+
+
+class Edgar:
+    """The daily indexes by day and the submissions by accession; anything else answers 404."""
+
+    def __init__(self):
+        self.indexes: dict[str, bytes] = {}
+        self.filings: dict[str, bytes] = {}
+
+    def index(self, request):
+        day = str(request.url).rsplit("master.", 1)[1][:8]
+        body = self.indexes.get(day)
+        return (200, body, {}) if body is not None else (404, b"Not Found", {})
+
+    def filing(self, request):
+        acc = str(request.url).rsplit("/", 1)[1][:-len(".txt")]
+        body = self.filings.get(acc)
+        return (200, body, {}) if body is not None else (404, b"Not Found", {})
+
+    def install(self, http_mock) -> None:
+        http_mock.add("/Archives/edgar/daily-index/", self.index)
+        http_mock.add("/Archives/edgar/data/", self.filing)
+
+    def add_day(self, day: str, entries: list[tuple]) -> None:
+        """``entries``: ``(index row, submission bytes or None)``; the same accession may be listed twice."""
+        self.indexes[day.replace("-", "")] = daily_index([r for r, _ in entries])
+        for r, body in entries:
+            if body is not None:
+                self.filings[r[4].rsplit("/", 1)[1][:-4]] = body
