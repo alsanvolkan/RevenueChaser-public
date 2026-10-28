@@ -254,11 +254,13 @@
   <div class="grid2">
     <div class="panel">
       <h3>Percentiles</h3>
+      {# Each row says how many peers it rests on: a median of 2 is not a median of 8 (review N3). #}
+      {% macro pct_row(label, m) %}<div class="kv"><span class="k">{{ label }} (25/50/75 of {{ m.count or 0 }} peer{{ "" if m.count == 1 else "s" }})</span><span>{{ m.p25|num }} / {{ m.p50|num }} / {{ m.p75|num }}</span></div>{% endmacro %}
       {% if not comps.pe_only %}
-      <div class="kv"><span class="k">EV/EBITDA (25/50/75)</span><span>{{ comps.multiples.ev_ebitda.p25|num }} / {{ comps.multiples.ev_ebitda.p50|num }} / {{ comps.multiples.ev_ebitda.p75|num }}</span></div>
-      <div class="kv"><span class="k">EV/Revenue (25/50/75)</span><span>{{ comps.multiples.ev_revenue.p25|num }} / {{ comps.multiples.ev_revenue.p50|num }} / {{ comps.multiples.ev_revenue.p75|num }}</span></div>
+      {{ pct_row("EV/EBITDA", comps.multiples.ev_ebitda) }}
+      {{ pct_row("EV/Revenue", comps.multiples.ev_revenue) }}
       {% endif %}
-      <div class="kv"><span class="k">P/E (25/50/75)</span><span>{{ comps.multiples.pe.p25|num }} / {{ comps.multiples.pe.p50|num }} / {{ comps.multiples.pe.p75|num }}</span></div>
+      {{ pct_row("P/E", comps.multiples.pe) }}
     </div>
     <div class="panel">
       <h3>Implied Value</h3>

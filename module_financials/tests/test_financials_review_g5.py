@@ -228,3 +228,21 @@ def test_the_historical_fcff_needs_a_known_change_in_working_capital(financials)
     assert rows[1]["fcff"] == pytest.approx(225 * (1 - 50 / 240) - 12.5)
     gap = run_dcf(_drop(financials, *NWC_LINES))["historical_fcff"]
     assert gap[2]["dnwc"] is None and gap[2]["fcff"] is None and gap[2]["nopat"] is not None
+
+
+# ── N3: each percentile row says how many peers it rests on ─────────────────────
+def _comps(counts):
+    def _q(n):
+        return {"p25": 9.0, "p50": 10.0, "p75": 11.0, "count": n} if n else \
+            {"p25": None, "p50": None, "p75": None, "count": 0}
+    return {"ticker": "TEST", "warnings": [], "pe_only": False, "peers": [],
+            "multiples": {k: _q(n) for k, n in zip(("ev_ebitda", "ev_revenue", "pe"), counts)},
+            "implied": dict.fromkeys(("ev_ebitda", "ev_revenue", "equity_pe", "per_share_ev_ebitda",
+                                      "per_share_ev_revenue", "per_share_pe", "net_debt"))}
+
+
+def test_the_percentile_rows_carry_their_peer_count(financials):
+    html = _html(financials, {"comps": _comps((5, 1, 0))})
+    assert "EV/EBITDA (25/50/75 of 5 peers)" in html
+    assert "EV/Revenue (25/50/75 of 1 peer)" in html
+    assert "P/E (25/50/75 of 0 peers)" in html
