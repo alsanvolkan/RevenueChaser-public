@@ -496,22 +496,43 @@ def open_issues_payload(board_keys) -> dict:
 def universe_provenance_html(generated_at, refreshed_by, partial: bool = False) -> str:
     """Shared-universe provenance line for a report header.
 
-    Shows which board last refreshed the shared universe cache and when, so every
-    board that reuses that data can display the same attribution. ``partial`` adds
-    "partial fetch": the last Yahoo pull did not complete, so the universe was
-    upserted and names it missed were kept (#146). Empty when no provenance is
-    recorded (legacy payload / first run).
+    **On the identity spine** (``universe.spine_provenance``, build plan PR 6) the line names the spine, the sources it
+    is built from, the day of the SEC file and the day of its last build (or check). The names no longer come from the
+    shared universe cache, so ``refreshed_by`` / ``generated_at`` describe only what that cache still feeds, the market
+    caps, and ``partial`` says those caps are partly stale (the last Yahoo pull did not complete, #146).
+
+    **On the old store** it shows which board last refreshed the shared universe cache and when, so every board that
+    reuses that data can display the same attribution; ``partial`` adds "partial fetch": the universe was upserted and
+    names the pull missed were kept. Empty when no provenance is recorded (legacy payload / first run).
     """
+    from .universe import spine_provenance
+
+    ts = ""
+    if refreshed_by:
+        try:
+            dt = datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
+            ts = dt.strftime("%b %d, %Y %H:%M") + " UTC"
+        except (ValueError, TypeError):
+            ts = str(generated_at or "")
+    spine = spine_provenance()
+    if spine is not None:
+        built = "built" if spine.get("result") == "changed" else "checked"
+        parts = ['Universe: <b style="color:var(--text)">identity spine</b> '
+                 "(SEC company tickers, OpenFIGI, Compustat, index fund files)"]
+        if spine.get("source_as_of"):
+            parts.append("SEC file of " + html.escape(str(spine["source_as_of"])))
+        if spine.get("checked_on"):
+            parts.append(f"{built} " + html.escape(str(spine["checked_on"])))
+        if refreshed_by:
+            parts.append('market caps refreshed by <b style="color:var(--text)">' + html.escape(refreshed_by) + "</b>"
+                         + ((" " + html.escape(ts)) if ts else ""))
+        if partial:
+            parts.append('<b style="color:var(--amber,#f1c40f)">market caps partly stale</b>')
+        return '<div style="color:var(--muted);font-size:11px;margin-top:3px">' + " · ".join(parts) + "</div>"
     flag = (' · <b style="color:var(--amber,#f1c40f)">partial fetch</b>' if partial else "")
     if not refreshed_by:
         return ('<div style="color:var(--muted);font-size:11px;margin-top:3px">Universe' + flag + '</div>'
                 if partial else "")
-    ts = ""
-    try:
-        dt = datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
-        ts = dt.strftime("%b %d, %Y %H:%M") + " UTC"
-    except (ValueError, TypeError):
-        ts = str(generated_at or "")
     return (
         '<div style="color:var(--muted);font-size:11px;margin-top:3px">'
         'Universe refreshed by <b style="color:var(--text)">' + html.escape(refreshed_by) + '</b>'

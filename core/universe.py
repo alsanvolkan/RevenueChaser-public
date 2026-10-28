@@ -101,6 +101,17 @@ def _spine() -> bool:
     return universe_source() == SPINE
 
 
+def spine_provenance() -> dict | None:
+    """The spine build the boards read: ``{checked_on, result, source_as_of, rows}`` of ``spine/security``'s newest
+    check that is not a skip (``result`` ``changed``: built that day; ``unchanged``: checked, nothing new), or None
+    while the boards read the old store. ``source_as_of`` is the SEC file's day."""
+    if not _spine():
+        return None
+    from ..rcdata import ops
+    last = ops.latest_unskipped_check("spine/security") or {}
+    return {k: last.get(k) for k in ("checked_on", "result", "source_as_of", "rows")}
+
+
 def _spine_universe() -> list[dict]:
     """The spine's listed names as ``equity_universe`` rows: identity from ``rcdata.read``, market fields from the
     old ``equity_universe`` by ticker (NULL where it has none). No spine file yet: no rows."""
@@ -485,4 +496,4 @@ def filter_fields(tickers: list[str] | None = None) -> dict[str, dict]:
 
 __all__ = ["classification_universe", "classification_universe_rows", "spine_gics", "gics_of",
            "DEFAULT_MC_MIN", "TYPE_GROUPS", "excluded_tickers", "filter_fields", "theme_catalog",
-           "current_theme_run", "universe_counts", "universe_source", "SOURCE_ENV"]
+           "current_theme_run", "universe_counts", "universe_source", "spine_provenance", "SOURCE_ENV"]
