@@ -33,6 +33,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 import pandas as pd
@@ -57,13 +58,15 @@ class Prefiltered:
 
     ``quote_session`` is the newest session of the quotes it read; ``older_quotes`` counts the names whose quote is
     from an earlier session (U9: the board says which session its prefilter saw). ``no_volume`` lists the kept names
-    with no average volume anywhere in D04, which the dollar-volume rule could not test (S4, #434 review).
+    with no average volume anywhere in D04, which the dollar-volume rule could not test (S4, #434 review). ``cfg`` is
+    the thresholds it dropped on, so the funnel names those and not the board's defaults (Swing review finding 1).
     """
     kept: list[dict]
     drops: dict[str, list[str]] = field(default_factory=dict)
     quote_session: date | None = None
     older_quotes: int = 0
     no_volume: list[str] = field(default_factory=list)
+    cfg: Any = None
 
     @property
     def dropped(self) -> int:
@@ -106,7 +109,8 @@ def prefilter(rows: list[dict], cfg: Any, quotes: dict[str, dict] | None = None)
             continue
         drops.setdefault(reason, []).append(r.get("ticker"))
     newest = max(sessions) if sessions else None
-    return Prefiltered(kept, drops, newest, sum(1 for d in sessions if d < newest) if newest else 0, no_volume)
+    return Prefiltered(kept, drops, newest, sum(1 for d in sessions if d < newest) if newest else 0, no_volume,
+                       SimpleNamespace(MIN_PRICE=cfg.MIN_PRICE, MIN_DOLLAR_VOLUME=cfg.MIN_DOLLAR_VOLUME))
 
 
 def spy_summary(spy_df) -> dict:
@@ -346,7 +350,7 @@ def funnel_steps(*, universe: int, excluded_types: int, prefiltered: Prefiltered
         steps.append(step("excluded_types", "Excluded security types (ETF, CEF, SPAC, preferred, unit, warrant)",
                           excluded_types, "drop", by_design=True))
     by_reason = {**prefiltered.drops, **dropped}
-    known = _drop_steps(cfg)
+    known = _drop_steps(getattr(prefiltered, "cfg", None) or cfg)
     listed = {key for key, _, _ in known}
     extra = [(k, DROP_LABELS.get(k, k).capitalize(), False) for k in sorted(by_reason) if k not in listed]
     for key, label, by_design in (*known, *extra):
