@@ -38,6 +38,21 @@ ROTATION = tuple(t for t, info in ROTATION_ETFS.items() if (info or {}).get("gro
 SPINE_COLUMNS = ("ticker", "cik", "tier", "gvkey", "iid", "composite_figi", "exchange", "security_type", "name")
 
 
+class Spacer:
+    """At least ``interval`` seconds between two calls on the run's clock: ``wait()`` before each call. The SEC's
+    fair access and Yahoo's pacing are a spacing, not a count per minute (``base.Pacer`` would allow a burst)."""
+
+    def __init__(self, interval: float, clock, sleep):
+        self.interval, self._clock, self._sleep, self._last = interval, clock, sleep, None
+
+    def wait(self) -> None:
+        now = self._clock()
+        if self._last is not None and now - self._last < self.interval:
+            self._sleep(self.interval - (now - self._last))
+            now = self._clock()
+        self._last = now
+
+
 def security_id(gvkey=None, iid=None, composite_figi=None, cik=None, ticker=None) -> str:
     """The prices store's key of one security, from the strongest identifier the spine has for it."""
     if gvkey and iid:
