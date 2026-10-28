@@ -879,13 +879,16 @@ class UWClient:
 
         Missing fields map to ``None`` (never a 0 fill) so a missing metric is
         honestly absent, not silently neutral. ``si_float`` arrives as a decimal
-        fraction (``'0.017'``) and is converted to a percentage.
+        fraction (``'0.017'``) and is converted to a percentage. There is no
+        utilization: the short screener serves none, and redesign.md R5 says never
+        invent one (the old short_interest / (short_interest + shares available)
+        proxy is gone, Earnings Radar review, #256).
 
         A static method (E5c, #372) so the Earnings reader can parse a stored row with the very same mapping it
         would have applied to the live answer; ``self._parse_short_row(row)`` is unchanged.
         """
         if not row:
-            return {"si_pct": None, "borrow_fee": None, "utilization": None, "days_to_cover": None}
+            return {"si_pct": None, "borrow_fee": None, "days_to_cover": None}
 
         def _f(v):
             try:
@@ -898,15 +901,9 @@ class UWClient:
         si = _f(row.get("si_float"))
         if si is not None:
             si = si * 100 if abs(si) < 1 else si
-        shares = _f(row.get("short_interest"))
-        avail = _f(row.get("short_shares_available"))
-        util = None
-        if shares is not None and avail is not None and shares + avail > 0:
-            util = 100.0 * shares / (shares + avail)
         return {
             "si_pct": si,
             "borrow_fee": _f(row.get("fee_rate")),
-            "utilization": util,
             "days_to_cover": _f(row.get("days_to_cover")),
         }
 

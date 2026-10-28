@@ -701,7 +701,6 @@ class EarningsPipeline:
             short_interest_pct_float=shorts.get("si_pct"),
             days_to_cover=shorts.get("days_to_cover"),
             borrow_fee=shorts.get("borrow_fee"),
-            utilization=shorts.get("utilization"),
             sector=sector,
             institutional_net_delta=flow.get("inst_lean_net"),
             institutional_call_premium=flow.get("inst_bull_side"),

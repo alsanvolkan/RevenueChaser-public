@@ -9,7 +9,7 @@ the rule is unavailable (never a zero fill):
    = size >= 10 AND premium >= $10k (``aggregate_flow``). The net is scaled by the sided premium (a one-sided
    but small imbalance scores less than a clean sweep); a net under ``INST_FLOW_MIN_NET`` is Thin (present, no
    lean); no side served is no lean; a material multi-leg package is left out and tagged ``package-risk``.
-2. **Squeeze potential** — short interest / borrow / utilization / days-to-cover
+2. **Squeeze potential** — short interest / borrow / days-to-cover (no utilization: UW serves none, review #256)
    as peer-relative Z-scores *within the ticker's sector* (the Morningstar name the spine stores; borrow
    fees are never compared across sectors). The name itself is left out of its own peer group (review N4).
    When fewer than two other in-sector peers exist for short interest, an absolute short-interest fallback
@@ -34,8 +34,10 @@ PEER_STATS = {}
 # The ticker of each value in PEER_STATS, in the same order, so a name's Z leaves its own value out (review N4).
 PEER_OWNERS = {}
 
-# Squeeze metric weights (renormalized over whatever is present).
-_SQ_WEIGHTS = {"si": 0.4, "borrow": 0.3, "util": 0.2, "dtc": 0.1}
+# Squeeze metric weights (renormalized over whatever is present). No utilization: UW's short screener serves no such
+# field and redesign.md R5 says never invent one (review Part B, #256). Default chosen, change if avo prefers: the
+# alternative is a utilization field UW really serves, should one appear.
+_SQ_WEIGHTS = {"si": 0.4, "borrow": 0.3, "dtc": 0.1}
 
 
 def reset_peer_stats() -> None:
@@ -47,15 +49,14 @@ def register_peer_stats(ticker: str, sector: str, stats: dict) -> None:
     """Record a peer's squeeze metrics for its sector (used for Z-scoring).
 
     ``stats`` uses the same keys as the scorer's squeeze arguments:
-    ``si_pct`` / ``borrow_fee`` / ``utilization`` / ``days_to_cover``.
+    ``si_pct`` / ``borrow_fee`` / ``days_to_cover``.
     """
     if sector not in PEER_STATS:
-        PEER_STATS[sector] = {"si": [], "borrow": [], "util": [], "dtc": []}
-        PEER_OWNERS[sector] = {"si": [], "borrow": [], "util": [], "dtc": []}
+        PEER_STATS[sector] = {"si": [], "borrow": [], "dtc": []}
+        PEER_OWNERS[sector] = {"si": [], "borrow": [], "dtc": []}
     mapping = {
         "si_pct": "si",
         "borrow_fee": "borrow",
-        "utilization": "util",
         "days_to_cover": "dtc",
     }
     for src, dst in mapping.items():
@@ -87,7 +88,6 @@ def score(
     short_interest_pct_float: Optional[float] = None,
     days_to_cover: Optional[float] = None,
     borrow_fee: Optional[float] = None,
-    utilization: Optional[float] = None,
     sector: str = "",
     institutional_net_delta: Optional[float] = None,
     institutional_call_premium: Optional[float] = None,
@@ -150,7 +150,6 @@ def score(
     if sector and sector in PEER_STATS:
         z_by_metric["si"] = _z_peer(short_interest_pct_float, _peers(sector, "si", ticker))
         z_by_metric["borrow"] = _z_peer(borrow_fee, _peers(sector, "borrow", ticker))
-        z_by_metric["util"] = _z_peer(utilization, _peers(sector, "util", ticker))
         z_by_metric["dtc"] = _z_peer(days_to_cover, _peers(sector, "dtc", ticker))
         for metric, z in z_by_metric.items():
             if z is not None:
