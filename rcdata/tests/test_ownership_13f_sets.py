@@ -5,7 +5,9 @@ holdings in ``INFOTABLE_SK`` order); the days written and marked done, so the fo
 the newest set; a day the walk finished is not written again; an answer that is not a zip is not kept."""
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 from datetime import date
 
 import duckdb
@@ -239,3 +241,27 @@ def test_a_short_backfill_reads_the_forms_and_never_the_sets(feed, http_mock):
                                                                                         "20260729"]
     assert _served(f"SELECT accession, origin FROM {sec13f.TABLE}") == [("0001000007-26-000099", "edgar")]
     assert "a backfill of 3 weekdays reads the forms; the data sets fill a range of 20 weekdays or more" in row["note"]
+
+
+def _with_repeated_rows(zip_bytes: bytes, members: tuple[str, ...]) -> bytes:
+    """The zip with each member's first data row written twice, as a malformed set might."""
+    src, out = zipfile.ZipFile(io.BytesIO(zip_bytes)), io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for name in src.namelist():
+            body = src.read(name).decode()
+            if name.rsplit("/", 1)[-1].split(".")[0] in members:
+                lines = body.splitlines(keepends=True)
+                body = "".join(lines[:2] + lines[1:])
+            z.writestr(name, body)
+    return out.getvalue()
+
+
+def test_a_cover_or_summary_row_written_twice_does_not_count_a_filing_twice(feed, http_mock):
+    """Review N4: COVERPAGE and SUMMARYPAGE are joined on the accession; a repeated row must not fan the filing and
+    its holdings out."""
+    one = ox.f13_set([ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026",
+                                    [ox.f13_holding("MICROSOFT CORP", "594918104", 400_000, 1000)])])
+    http_mock.routes.insert(0, (HREFS[0], _with_repeated_rows(one, ("COVERPAGE", "SUMMARYPAGE")), 200, {}))
+    _backfill("2026-06-01", "2026-08-31")
+    assert _served(f"SELECT accession, holdings FROM {sec13f.TABLE}") == [("0001000001-26-000101", 1)]
+    assert len(_holdings("0001000001-26-000101")) == 1
