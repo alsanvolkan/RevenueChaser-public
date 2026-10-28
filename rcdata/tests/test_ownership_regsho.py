@@ -95,3 +95,17 @@ def test_the_read_api_gives_the_newest_list_or_a_days(src):
         ("nasdaq", "AAPD", None), ("nasdaq", "GME", "GME"), ("nyse", "BRK-B", "BRK-B")]
     assert {r["list_date"] for r in rows} == {date(2026, 10, 27)} and {r["source"] for r in rows} == {regsho.NAME}
     assert read.threshold_list(on=date(2026, 10, 26)) == []
+
+
+def test_a_redirect_to_the_same_file_is_the_file_not_an_absent_day(src, http_mock):
+    """Review S4: only a redirect away from the file (Nasdaq's not-found page) means no file. A redirect to the same
+    file elsewhere (http to https, a CDN host) is read, and an older day is never marked absent for it."""
+    def moved(request):
+        return 302, b"", {"location": str(request.url).replace("https://nyse.test", "https://cdn.nyse.test")}
+    http_mock.routes.insert(0, ("https://nyse.test/api/regulatory/threshold-securities/download", moved, 302, {}))
+    src.nyse[("20-Oct-2026", "NYSE")] = ox.nyse_list(["BRK.B|BERKSHIRE HATHAWAY INC|N|Y||"])
+    _run("2026-10-27", mode="backfill", **{"from": "2026-10-20", "to": "2026-10-27"})
+    assert regsho.raw_path("nyse", date(2026, 10, 20)).exists()
+    assert not regsho.none_path("nyse", date(2026, 10, 20)).exists()
+    assert _served("SELECT market, symbol FROM regsho_threshold WHERE list_date = '2026-10-20'") == [("nyse", "BRK-B")]
+    assert regsho.none_path("nasdaq", date(2026, 10, 20)).exists()            # Nasdaq's not-found page: absent

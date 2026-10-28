@@ -3,7 +3,7 @@
 - Nasdaq: ``GET <RC_REGSHO_NASDAQ_BASE>/nasdaqth<YYYYMMDD>.txt``, header ``Symbol|Security Name|Market Category|Reg
   SHO Threshold Flag|Rule 3210|Filler``, one row per security, a last line with the file's time stamp
   (``20261027230025``); a day with no file is redirected to Nasdaq's not-found page (``Trader.aspx?id=http404``),
-  read as a 404.
+  read as a 404 (a redirect to the same file elsewhere is the file: ``not_found``).
 - NYSE: ``GET <RC_NYSE_BASE>/api/regulatory/threshold-securities/download?selectedDate=27-Oct-2026&market=<m>`` for
   ``NYSE``, ``NYSE American`` and ``NYSE Arca``, header ``Symbol|Security Name|Market Category|Reg SHO Threshold
   Flag|Filler|Filler``. A market with no threshold security answers the header alone. NYSE National, NYSE Texas and
@@ -29,6 +29,7 @@ from datetime import date
 from pathlib import Path
 
 import duckdb
+import httpx
 
 from ....core import calendar
 from .. import base
@@ -109,6 +110,13 @@ def parse(market: str, body: bytes) -> tuple[list[dict], str | None]:
     return rows, stamp
 
 
+def not_found(r: httpx.Response, url: str) -> bool:
+    """A 404, or a redirect away from the file asked: Nasdaq answers a day with no file by a redirect to its
+    not-found page (``Trader.aspx?id=http404``, seen 2026-10-28), never a 404. A redirect to the same file elsewhere
+    (http to https, another host) is the file (review S4)."""
+    return r.status_code == 404 or (bool(r.history) and r.url.path != httpx.URL(url).path)
+
+
 def done(market: str, day: date) -> bool:
     return raw_path(market, day).exists() or none_path(market, day).exists()
 
@@ -136,8 +144,7 @@ class RegShoThreshold:
         pacer.wait()
         r = base.http_get(ctx, provider, url, params=params, accept=(404,))
         recent = day > common.session_before(as_of, RECENT_SESSIONS)
-        # Nasdaq answers a day with no file by a redirect to its not-found page, never a 404 (seen 2026-10-28).
-        if r.status_code == 404 or r.history:
+        if not_found(r, url):
             if not recent:
                 base.write_raw_json(none_path(market, day), {"status": 404, "url": url, "run_id": ctx.run_id})
             return None
