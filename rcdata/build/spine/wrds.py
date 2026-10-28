@@ -248,6 +248,7 @@ class WrdsDataset:
     cadence = "monthly"
     attended = True
     backfill_needs_from = False
+    starts_by_hand = True             # not due until a first CLI run or Fetch built it (review should-fix 2)
 
     def __init__(self, name: str):
         self.name = name

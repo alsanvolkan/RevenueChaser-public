@@ -254,6 +254,7 @@ class SpineSecurity:
     tables = TABLES
     cadence = "daily"
     backfill_needs_from = False
+    starts_by_hand = True             # not due until a first CLI run or Fetch built it (review should-fix 2)
 
     def default_as_of(self) -> date:
         return calendar.today_ny()

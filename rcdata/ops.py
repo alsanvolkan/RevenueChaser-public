@@ -573,6 +573,12 @@ def open_issues(dataset: str, limit: int = 20) -> tuple[int, list[dict]]:
     return (n[0]["n"] if n else 0), rows
 
 
+def ever_built(dataset: str) -> bool:
+    """True once ``dataset`` has a ``changed`` or ``unchanged`` check (it has built at least once)."""
+    return bool(_select("SELECT 1 AS one FROM dataset_check WHERE dataset = ? AND result IN ('changed', 'unchanged') "
+                        "LIMIT 1", (dataset,)))
+
+
 def open_issue_kinds(dataset: str) -> list[dict]:
     """``[{kind, count}]`` of the unresolved ``build_issues`` of ``dataset``, the most first."""
     return _select("SELECT kind, count(*) AS count FROM build_issues WHERE dataset = ? AND resolved_on IS NULL "
