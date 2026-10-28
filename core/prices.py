@@ -43,6 +43,8 @@ FAR_DAYS = 30                  # a ticker whose start is older goes in its own d
 MAX_NEW_FILL = 50              # new tickers given a period="max" fill per nightly run
 FILL_RETRY_DAYS = 7            # a ticker whose fill returned no rows is retried after this
 BENCHMARKS = ("SPY", "DIA", "QQQ")
+BAR_TIERS = ("A", "B", "C")    # the spine tiers the nightly asks, in order (rcdata/build/spine/tier.py):
+                               # A and B listed, C over the counter; D has no exchange to trade on
 REFERENCE_INDEX = "^GSPC"      # dates only; never stored here (#293 stores index levels)
 CALENDAR_START = date(2025, 1, 1)
 CHECK_ACTIONS = ("price_actions", "yfinance")        # price_checks (dataset, source); key = ticker
@@ -130,21 +132,25 @@ def bar_scope() -> list[str]:
     """The tickers the nightly keeps bars for (R8): the universe, the benchmarks and the
     sector/theme rotation ETFs, upper-cased, de-duplicated, benchmarks first.
 
-    The universe is the boards' (``core.universe``): while they read the identity spine, its Tier A names, the
-    names a board can screen (#262; the prices store asks the same, ``rcdata.build.prices.scope``); on the old
-    store, its ``equity_universe``. The nightly's UW cap (``UW_NIGHTLY_CAP``) bounds the calls either way."""
+    The universe is the boards' (``core.universe``): while they read the identity spine, its names of
+    ``BAR_TIERS`` in tier order, Tier A (the names a board can screen; the prices store asks those,
+    ``rcdata.build.prices.scope``) before the rotation ETFs and Tiers B and C after them (#262); on the old store,
+    its ``equity_universe``. The run spends its UW cap (``UW_NIGHTLY_CAP``) and its new-name fills
+    (``MAX_NEW_FILL``) in this order, so the caps leave out Tier B and C first: a name past the UW cap still gets
+    Yahoo's bar, and a name the night's fills miss is filled on a later night."""
     from RevenueChaser.core import universe as universe_mod
-    if universe_mod.universe_source() == universe_mod.SPINE:
-        from RevenueChaser.rcdata import read
-        rows = read.universe(tiers=("A",))
-    else:
-        try:
-            rows = rawstore.query("SELECT ticker FROM equity_universe")
-        except Exception:  # noqa: BLE001 - a missing table is "no universe", not a crash
-            rows = []
-    universe = [str(r["ticker"]).strip().upper() for r in rows if r.get("ticker")]
     etfs = [str(t).strip().upper() for t, info in ROTATION_ETFS.items()
             if (info or {}).get("group") not in ("yield", "commodity")]
+    if universe_mod.universe_source() == universe_mod.SPINE:
+        from RevenueChaser.rcdata import read
+        rows = read.universe(tiers=BAR_TIERS)                       # by ticker
+        tier = {t: [r["ticker"] for r in rows if r["tier"] == t] for t in BAR_TIERS}
+        return _norm([*BENCHMARKS, *tier["A"], *etfs, *(x for t in BAR_TIERS[1:] for x in tier[t])])
+    try:
+        rows = rawstore.query("SELECT ticker FROM equity_universe")
+    except Exception:  # noqa: BLE001 - a missing table is "no universe", not a crash
+        rows = []
+    universe = [str(r["ticker"]).strip().upper() for r in rows if r.get("ticker")]
     return _norm([*BENCHMARKS, *universe, *etfs])
 
 
@@ -1336,7 +1342,7 @@ def _per_ticker(scope: list[str]) -> dict:
 
 __all__ = [
     "UW_NIGHTLY_CAP", "UW_MAX_DAYS", "CHUNK", "OVERLAP_SESSIONS", "ACTIONS_LOOKBACK_DAYS",
-    "FAR_DAYS", "MAX_NEW_FILL", "FILL_RETRY_DAYS", "BENCHMARKS", "REFERENCE_INDEX",
+    "FAR_DAYS", "MAX_NEW_FILL", "FILL_RETRY_DAYS", "BENCHMARKS", "BAR_TIERS", "REFERENCE_INDEX",
     "CALENDAR_START", "CHECK_ACTIONS", "CHECK_FILL", "YF_KW",
     "bar_scope", "ensure_daily_bars", "fill_history", "daily_bars", "health_summary", "health",
     "summary_line", "run_ok", "sessions_behind", "uw_days", "rows_from_uw", "rows_from_yf",
