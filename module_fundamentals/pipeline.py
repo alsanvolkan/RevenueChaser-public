@@ -323,8 +323,6 @@ def _quality_metrics(annual: list[dict]) -> dict:
     if i is None:
         return out
     a = annual[i]
-    rev = _to_float(a.get("revenue"))
-    gp = _to_float(a.get("gross_profit"))
     ebit = _to_float(a.get("ebit"))
     dep = _to_float(a.get("depreciation"))
     debt = _to_float(a.get("total_debt"))
@@ -334,8 +332,8 @@ def _quality_metrics(annual: list[dict]) -> dict:
     out["net_income"] = _to_float(a.get("net_income"))
     out["total_equity"] = eq
 
-    if rev and gp is not None:
-        out["gross_margin"] = gp / rev
+    # Review N4: the C18 comparability rule every board uses (revenue <= 0 or gross profit > revenue is unknown).
+    out["gross_margin"] = fiscal_year.gross_margin(a)[0]
 
     ebitda = (ebit + dep) if (ebit is not None and dep is not None) else ebit
     liquid, _basis = liquid_assets(a)  # cash + short-term investments of this record (#187)
