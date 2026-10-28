@@ -18,7 +18,7 @@ LABEL = "Swing"
 # A settings override (#384 SW-S4) replaces its key here, so a saved value versions the ledger rows it produced.
 _HASHED = (
     "MIN_PRICE", "MIN_DOLLAR_VOLUME",
-    "RS_MIN", "ABOVE_52W_LOW", "WITHIN_52W_HIGH", "VOL_CONFIRM", "BREAKOUT_HIGH_PCT", "MOVE_MIN",
+    "RS_MIN", "ABOVE_52W_LOW", "WITHIN_52W_HIGH", "VOL_CONFIRM", "VOL_WINDOW", "BREAKOUT_HIGH_PCT", "MOVE_MIN",
     "ADR_MIN", "W_12_1", "W_PROX", "W_CONS", "CONSISTENCY_LOOKBACK", "STOP_ATR", "TARGET_R",
     "ATR_PERIOD", "Q_WEIGHTS", "Q_RULE_TOTALS",
 )
@@ -37,7 +37,7 @@ def effective_config(payload: dict | None = None) -> dict:
     """Config's thresholds with only a user's overrides on top (#384 SW-S4): the payload's, else the store's.
 
     The overrides are applied to config's own values rather than read as the effective settings, so an
-    unconfigured board hashes exactly the dict it always did (``4+ab881cb0``). A store read that fails is
+    unconfigured board hashes exactly config's dict (``5+4e8b18b7``). A store read that fails is
     no overrides, never an exception: the ledger still names a model.
     """
     cfg = {name: getattr(config, name) for name in _HASHED}

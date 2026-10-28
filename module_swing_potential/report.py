@@ -251,7 +251,9 @@ def _render(payload: dict, inline: bool) -> tuple[str, dict | None]:
     funnel_html = funnel_mod.funnel_panel_html(funnel_mod.from_dict(payload.get("funnel_steps")),
                                                panel_id="swing-funnel")
     # The stored payload's scoring version decides the method toggles (#384 SW-S1): a Fetch before v4 has none.
-    current_version = payload.get("selection_version") == config.SELECTION_VERSION
+    version = str(payload.get("selection_version") or "")
+    current_version = version == config.SELECTION_VERSION
+    methods_on = version.isdigit() and int(version) >= 4        # the method toggles exist since v4 (#384 SW-S1)
     run = _run_settings(payload)
     universe_prov = universe_provenance_html(
         payload.get("universe_generated_at"), payload.get("universe_refreshed_by"),
@@ -482,7 +484,7 @@ function start(){
     JS = fill(JS, {"__MOD__": script_json(MODULE),
                    "__BOOT__": script_json(boot),
                    "__GATE_SPEC__": script_json(_gate_spec(run)),
-                   "__METHODS_ON__": script_json(current_version),
+                   "__METHODS_ON__": script_json(methods_on),
                    "__META__": meta})
 
     help_block = help_html(
@@ -492,7 +494,7 @@ function start(){
         "part of the score. Prices and company data come from <b>Yahoo</b>. <b>Fetch</b> runs the scan "
         "and stores the scores. <b>Refresh</b> shows the last Fetch's stored result with no network "
         "call and no re-scoring.")
-    if current_version:
+    if methods_on:
         methods_controls = (
             '<div class="frow methods" id="method-toggles">'
             '<span class="flbl">Methods</span>'
@@ -500,7 +502,11 @@ function start(){
             '<label><input type="checkbox" data-method="weinstein" onchange="setMethod(this)"> Weinstein</label>'
             '<label><input type="checkbox" data-method="qullamaggie" onchange="setMethod(this)"> Qullamaggie</label>'
             '</div>')
-        notice_html = ""
+        notice_html = "" if current_version else (
+            '<div class="notice" id="old-version">'
+            + _html.escape(f"Scored with v{version}; v{config.SELECTION_VERSION} reads Weinstein's volume as the best "
+                           f"of the last {config.VOL_WINDOW} sessions against the 20 before them. Run a Fetch to "
+                           "rescore.") + '</div>')
     else:
         methods_controls = ""
         notice_html = ('<div class="notice" id="old-version">'
@@ -550,7 +556,7 @@ function start(){
           <td>Price above 150 &amp; 200-day MA · 150&gt;200-day MA · 200-day MA rising · 50&gt;150-day MA · price above 50-day MA · ≥{_num((config.ABOVE_52W_LOW - 1) * 100)}% above 52-week low · within {_num((1 - config.WITHIN_52W_HIGH) * 100)}% of 52-week high · RS rating ≥ {_num(run.rs_min)}</td>
           <td>8/8 required</td></tr>
         <tr><td><b>Weinstein Stage</b></td>
-          <td>Price above 30-week MA · 30-week MA rising · overhead breakout (≥{_num(run.breakout_high_pct * 100)}% of 52w high) · volume ≥{_num(run.vol_confirm)}× average · 3-month RS &gt; SPY</td>
+          <td>Price above 30-week MA · 30-week MA rising · overhead breakout (≥{_num(run.breakout_high_pct * 100)}% of 52w high) · volume ≥{_num(run.vol_confirm)}× average on one of the last {config.VOL_WINDOW} sessions (against the 20 before them) · 3-month RS &gt; SPY</td>
           <td>5/5 required</td></tr>
         <tr><td><b>Qullamaggie</b></td>
           <td>Preceding move ≥{_num(run.move_min * 100)}% (1–3 mo) · price above 10 &amp; 20-day EMA · 10&gt;20-day EMA · EMAs rising · ADR ≥{_num(run.adr_min * 100)}%</td>

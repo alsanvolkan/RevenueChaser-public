@@ -105,7 +105,8 @@ def evaluate_weinstein(ind: dict, eff=None) -> dict:
         _rule("overhead_breakout", "Above overhead resistance (near 52w high)", "pct_high",
               tri.rule((g("within_52w_high_pct"),), lambda v: v >= e.breakout_high_pct),
               g("within_52w_high_pct"), f"≥ {_pct(e.breakout_high_pct)}% of the high"),
-        _rule("volume_confirmation", f"Volume at least {e.vol_confirm:g}× average", "ratio",
+        _rule("volume_confirmation", f"Volume at least {e.vol_confirm:g}× average in the last "
+              f"{config.VOL_WINDOW} sessions", "ratio",
               tri.rule((g("vol_ratio"),), lambda v: v >= e.vol_confirm),
               g("vol_ratio"), f"≥ {e.vol_confirm:g}× 20-day avg"),
         _rule("rs_3m_gt_spy", "3-month relative strength above SPY", "diff_pct",
