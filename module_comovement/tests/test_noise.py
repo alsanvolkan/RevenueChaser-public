@@ -208,3 +208,17 @@ def test_a_fetch_at_five_days_gives_the_null_the_daily_returns_under_its_matrix(
     assert seen["daily"].shape == (seen["rows"] + 4, len(seen["cols"]))
     assert list(seen["daily"].columns) == seen["cols"]
     assert any(c["baseline_r"] is not None for items in p["clusters"].values() for c in items)
+
+
+def test_the_null_mean_skips_unmeasured_pairs_as_the_real_mean_does():
+    """Fable review of Co-movement (28 Oct 2026), N1: a pair with too little overlap has no r. A real group's
+    mean drops it (``cluster.mean_intra_corr``); the null counted it as r = 0, so it read lower than a real group of
+    the same names would, and the bar it set was too easy."""
+    names = ["A", "B", "C"]
+    corr = pd.DataFrame([[1.0, 0.6, 0.6], [0.6, 1.0, np.nan], [0.6, np.nan, 1.0]], index=names, columns=names)
+
+    def fn(ret, cuts):
+        return None, names, corr, {3: {1: names}}
+
+    null = noise.selected_group_null(_noise_returns(n=3), (3,), fn, n_perm=1)
+    assert null[3] == pytest.approx(cluster.mean_intra_corr(corr, names)) == pytest.approx(0.6)

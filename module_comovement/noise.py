@@ -124,8 +124,8 @@ def selected_group_null(ret: pd.DataFrame, cuts, cluster_fn,
         if res is None:
             continue
         corr = res[2]
-        a = np.where(np.isnan(corr.to_numpy(dtype=float)), 0.0,
-                     corr.to_numpy(dtype=float))
+        # An unmeasured pair (NaN) is skipped, as ``cluster.mean_intra_corr`` skips it for a real group (N1).
+        a = corr.to_numpy(dtype=float)
         pos = {t: i for i, t in enumerate(corr.columns)}
         for per in res[3].values():
             for mem in per.values():
@@ -134,8 +134,10 @@ def selected_group_null(ret: pd.DataFrame, cuts, cluster_fn,
                     continue
                 idx = [pos[t] for t in mem]
                 iu = np.triu_indices(len(idx), 1)
-                samples.setdefault(g, []).append(
-                    float(a[np.ix_(idx, idx)][iu].mean()))
+                vals = a[np.ix_(idx, idx)][iu]
+                vals = vals[~np.isnan(vals)]
+                if vals.size:
+                    samples.setdefault(g, []).append(float(vals.mean()))
     return {g: float(np.quantile(v, q)) for g, v in sorted(samples.items())}
 
 
