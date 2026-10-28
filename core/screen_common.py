@@ -38,7 +38,7 @@ from typing import Any, Callable
 
 import pandas as pd
 
-from RevenueChaser.core import calendar, earnings_dates, funnel, job_control, ledger
+from RevenueChaser.core import calendar, earnings_dates, fiscal_year, funnel, job_control, ledger
 from RevenueChaser.core import universe as _universe
 from RevenueChaser.core.config import to_float
 from RevenueChaser.core.gics_map import UNCLASSIFIED
@@ -315,16 +315,27 @@ def stored_payload(*, board: str, refreshed_by: str, build_payload: Callable[...
 # The funnel's typed drops after the excluded types (C16, #383 R3), in the order a name can leave: the prefilter's on
 # D04, then the scorer's on D01 and EDGAR. ``(key, label, by design)``: a by-design drop is a board rule; the rest are
 # data gaps that need a look. A scorer reason not listed here still gets its own step (``DROP_LABELS``' text).
-def _drop_steps(cfg: Any) -> tuple[tuple[str, str, bool], ...]:
+def _drop_steps(cfg: Any, floors: Any = None) -> tuple[tuple[str, str, bool], ...]:
+    """``floors`` (the thresholds the prefilter used, Swing review 1) names the price and volume floors; ``cfg`` (the
+    board's config) the rest. Fundamentals' sector and stale-annual gates are board rules (review N3); its Rule of 40
+    barrier stays a data gap, because the code drops an implausible figure as a data problem, not as a pick rule."""
+    floors = floors or cfg
+    sectors = ", ".join(getattr(cfg, "EXCLUDED_SECTORS", None) or ())
+    barrier = getattr(cfg, "RO40_BARRIER", None)
     return (
         ("no_quote", "No stored quote (D04) to prefilter on", False),
-        ("low_price", f"Price under ${cfg.MIN_PRICE:,.2f}", True),
-        ("low_dollar_volume", f"Average daily dollar volume under ${cfg.MIN_DOLLAR_VOLUME:,.0f}", True),
+        ("low_price", f"Price under ${floors.MIN_PRICE:,.2f}", True),
+        ("low_dollar_volume", f"Average daily dollar volume under ${floors.MIN_DOLLAR_VOLUME:,.0f}", True),
         ("no_bars", "No stored daily price bars (D01)", False),
         ("stale_bars", "No D01 bar of the latest stored session (a halt or a Daily Bars gap)", False),
         ("short_bars", "Fewer than 252 stored daily bars", True),
         ("no_price", "No usable price", False),
+        ("sector_excluded", f"Excluded sector ({sectors})" if sectors else "Excluded sector", True),
+        ("edgar_fetch_failed", "EDGAR request failed", False),
         ("no_edgar_annual", "No EDGAR annual data", False),
+        ("stale_annual", f"Latest annual report ended more than {fiscal_year.STALE_DAYS} days ago", True),
+        ("ro40_barrier", (f"Rule of 40 above {barrier:g}: an implausible figure, check the filing" if barrier
+                          else "Implausible Rule of 40: check the filing"), False),
         ("compute_error", "Scoring errors (see the log)", False),
     )
 
@@ -350,7 +361,7 @@ def funnel_steps(*, universe: int, excluded_types: int, prefiltered: Prefiltered
         steps.append(step("excluded_types", "Excluded security types (ETF, CEF, SPAC, preferred, unit, warrant)",
                           excluded_types, "drop", by_design=True))
     by_reason = {**prefiltered.drops, **dropped}
-    known = _drop_steps(getattr(prefiltered, "cfg", None) or cfg)
+    known = _drop_steps(cfg, getattr(prefiltered, "cfg", None))
     listed = {key for key, _, _ in known}
     extra = [(k, DROP_LABELS.get(k, k).capitalize(), False) for k in sorted(by_reason) if k not in listed]
     for key, label, by_design in (*known, *extra):
