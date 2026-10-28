@@ -19,6 +19,16 @@ per session. ``uw_calls_a_session`` is the planning figure; the real count is th
 earnings-set name ``EARNINGS_CALLS``; the screener one call per 100 reporting names; the calendar one call per day
 and report session (premarket, afterhours) plus one per extra 100 names. The planning numbers below are assumptions
 until the first week of real runs replaces them (dataset_check notes and the ``names`` rows).
+
+**Paging is part of the count, and SPX is where it shows.** A chain page holds 500 contracts, so an expiry with more
+takes a second page, and one with more than 1,000 a third. The first real run (2026-10-28, the sample in PR 250)
+matched the model to the call once the extra pages were counted: AAPL 23 expiries, 57 calls; NVDA 25 expiries, 61
+calls; both with no extra page. SPX took 64 calls for 20 expiries: 51 without extra pages, plus 13, because its
+expiries hold 446 to 1,016 contracts each. That is 207 UW calls for the run: 182 for the three list names and 25 for
+the screener. So a name's count is ``list_name_calls(expiries, extra_pages)``, never ``11 + 2 x expiries`` alone,
+and ``SPX_CALLS`` stays a planning ceiling. UW's ``SPX`` breakdown listed 20 expiries, the first 2026-11-20 (the
+third Friday of November), so this chain holds no weekly or daily SPX expiry; the 0-1 DTE grid the SPX Gamma board
+reads comes from ``uw/spot_expiry_strike``, not from this chain.
 """
 from __future__ import annotations
 
