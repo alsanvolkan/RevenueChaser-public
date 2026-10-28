@@ -62,7 +62,9 @@ TAX_RATE = 0.21
 # (tests/test_fundamentals_freeze_128.py) fails when a threshold changes without this bump.
 # 6: data-health gates (edgar_fetch_failed, stale_annual, sector_excluded, ro40_barrier) and the F2 scoring basis
 #    (#386)
-SELECTION_VERSION = "6"
+# 7: a net-cash firm passes the leverage rule when EBITDA <= 0 (review N1); gross margin follows the C18
+#    comparability rule (review N4)
+SELECTION_VERSION = "7"
 
 # ── Options flow (constitutional bypass) ──
 MANUAL_FLOW_ONLY = True

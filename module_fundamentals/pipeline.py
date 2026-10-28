@@ -317,7 +317,7 @@ def _ttm_metrics(quarterly: list[dict], annual: list[dict]) -> dict:
 
 
 def _quality_metrics(annual: list[dict]) -> dict:
-    out = {"gross_margin": None, "roic": None, "net_debt_ebitda": None,
+    out = {"gross_margin": None, "roic": None, "net_debt_ebitda": None, "net_cash": None,
            "net_income": None, "total_equity": None}
     i = fiscal_year.anchor(annual)          # #386 F2: Quality reads the anchor year, not annual[-1]
     if i is None:
@@ -339,8 +339,11 @@ def _quality_metrics(annual: list[dict]) -> dict:
 
     ebitda = (ebit + dep) if (ebit is not None and dep is not None) else ebit
     liquid, _basis = liquid_assets(a)  # cash + short-term investments of this record (#187)
-    if ebitda is not None and ebitda > 0 and debt is not None and liquid is not None:
-        out["net_debt_ebitda"] = (debt - liquid) / ebitda
+    if debt is not None and liquid is not None:
+        # Review N1: more cash than debt is no leverage, whatever the EBITDA; the ratio itself needs EBITDA > 0.
+        out["net_cash"] = debt - liquid <= 0
+        if ebitda is not None and ebitda > 0:
+            out["net_debt_ebitda"] = (debt - liquid) / ebitda
 
     if ebit is not None and debt is not None and eq is not None and cash is not None:
         nopat = ebit * (1 - config.TAX_RATE)
@@ -495,6 +498,7 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         "gross_margin": qual["gross_margin"],
         "roic": qual["roic"],
         "net_debt_ebitda": qual["net_debt_ebitda"],
+        "net_cash": qual.get("net_cash"),
         "pe": pe,
         "pb": pb,
         "dist_52w_pct": ind.get("within_52w_high_pct"),

@@ -61,6 +61,15 @@ def evaluate_rule_of_40(m: dict) -> dict:
     }
 
 
+def _leverage_rule(nde, net_cash) -> dict:
+    """Net Debt / EBITDA < 3×. Review N1: a firm with more cash than debt passes even when EBITDA ≤ 0 leaves the
+    ratio undefined (shown as "Net cash"); net debt with EBITDA ≤ 0 stays unknown."""
+    if nde is None and net_cash is True:
+        return _rule("net_debt_ebitda", "Net Debt / EBITDA < 3×", "text", True, "Net cash", "< 3.0×")
+    return _rule("net_debt_ebitda", "Net Debt / EBITDA < 3×", "ratio",
+                 tri.rule((nde,), lambda n: n < config.ND_EBITDA_MAX), nde, "< 3.0×")
+
+
 def evaluate_quality(m: dict) -> dict:
     """Quality (x/3): growth≥20% or ROIC≥15% · gross margin≥30% · ND/EBITDA<3×."""
     growth = m.get("rev_growth_ttm")
@@ -76,8 +85,7 @@ def evaluate_quality(m: dict) -> dict:
               tri.either(growth_ok, roic_ok), growth if growth_ok else roic, "≥20% / ≥15%"),
         _rule("gross_margin", "Gross margin ≥30%", "pct",
               tri.rule((gm,), lambda g: g >= config.GM_MIN), gm, "≥ 30%"),
-        _rule("net_debt_ebitda", "Net Debt / EBITDA < 3×", "ratio",
-              tri.rule((nde,), lambda n: n < config.ND_EBITDA_MAX), nde, "< 3.0×"),
+        _leverage_rule(nde, m.get("net_cash")),
     ]
     return _counted("Quality", rules)
 
