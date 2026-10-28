@@ -34,6 +34,12 @@ DEFAULT_REVENUE_GROWTH = [0.08, 0.07, 0.06, 0.05, 0.04]
 DEFAULT_EBITDA_MARGIN = 0.30
 DEFAULT_CAPEX_PCT_REV = 0.05
 DEFAULT_DNWC_PCT_REV = 0.00
+# The working-capital days and the WACC debt weight a model takes when the statements give none. The board labels
+# each as assumed (Financials review S1), never as a measured number.
+DEFAULT_DSO = 45.0
+DEFAULT_DIO = 60.0
+DEFAULT_DPO = 45.0
+DEFAULT_DEBT_WEIGHT = 0.15
 
 # ── Comps peers (FIN-3): k comes from a measurement, never a guess ──
 # A leave-one-out run over 3,365 names: k = 8 was the best of 3/5/8/12 on EV/EBITDA, EV/Revenue and P/E.

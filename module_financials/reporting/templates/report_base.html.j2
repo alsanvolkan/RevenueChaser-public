@@ -114,18 +114,20 @@
       <div class="kv"><span class="k">Beta</span><span>{{ dcf.wacc.beta|num }}</span></div>
       <div class="kv"><span class="k">Cost of Equity (Ke)</span><span>{{ dcf.wacc.cost_of_equity|pct }}</span></div>
       <div class="kv"><span class="k">Cost of Debt (Kd, after tax)</span><span>{{ dcf.wacc.cost_of_debt_after_tax|pct }}</span></div>
-      <div class="kv"><span class="k">Equity Weight</span><span>{{ dcf.wacc.equity_weight|pct }}</span></div>
-      <div class="kv"><span class="k">Debt Weight</span><span>{{ dcf.wacc.debt_weight|pct }}</span></div>
+      {% set weights_default = dcf.wacc.weights_source == "default" %}
+      <div class="kv"><span class="k">Equity Weight</span><span>{{ dcf.wacc.equity_weight|pct_or_default(weights_default) }}</span></div>
+      <div class="kv"><span class="k">Debt Weight</span><span>{{ dcf.wacc.debt_weight|pct_or_default(weights_default) }}</span></div>
       <div class="kv"><span class="k">Tax Rate</span><span>{{ dcf.assumptions|tax_rate }}</span></div>
       <div class="kv"><span class="k" style="font-weight:600">WACC</span><span style="font-weight:600">{{ dcf.wacc.wacc|pct }}</span></div>
     </div>
     <div class="panel">
       <h3>Base Year ({{ dcf.base_year.fiscal_year }})</h3>
       <div class="kv"><span class="k">Revenue</span><span>{{ dcf.base_year.revenue|usd }}</span></div>
-      <div class="kv"><span class="k">EBITDA Margin</span><span>{{ dcf.base_year.ebitda_margin|pct }}</span></div>
-      <div class="kv"><span class="k">D&amp;A / Revenue</span><span>{{ dcf.base_year.dep_pct_rev|pct }}</span></div>
-      <div class="kv"><span class="k">Capex / Revenue</span><span>{{ dcf.base_year.capex_pct_rev|pct }}</span></div>
-      <div class="kv"><span class="k">NWC / Revenue</span><span>{{ dcf.base_year.nwc_pct_rev|pct }}</span></div>
+      {% set base_defaults = dcf.base_year.defaults or [] %}
+      <div class="kv"><span class="k">EBITDA Margin</span><span>{{ dcf.base_year.ebitda_margin|pct_or_default("ebitda_margin" in base_defaults) }}</span></div>
+      <div class="kv"><span class="k">D&amp;A / Revenue</span><span>{{ dcf.base_year.dep_pct_rev|pct_or_default("dep_pct_rev" in base_defaults) }}</span></div>
+      <div class="kv"><span class="k">Capex / Revenue</span><span>{{ dcf.base_year.capex_pct_rev|pct_or_default("capex_pct_rev" in base_defaults) }}</span></div>
+      <div class="kv"><span class="k">NWC / Revenue</span><span>{{ dcf.base_year.nwc_pct_rev|pct_or_default("nwc_pct_rev" in base_defaults) }}</span></div>
     </div>
   </div>
 

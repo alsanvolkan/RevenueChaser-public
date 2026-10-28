@@ -89,6 +89,11 @@ def _fmt_tax_rate(assumptions: dict | None) -> str:
     return f"default {rate} (no sector rate)" if a.get("tax_rate_source") == "default" else rate
 
 
+def _fmt_pct_or_default(v, is_default=False) -> str:
+    """A rate, ``default 30.0%`` when the statements did not give it and the model took a default (review S1)."""
+    return f"default {_fmt_pct(v)}" if is_default else _fmt_pct(v)
+
+
 _ENV.filters["usd"] = _fmt_usd
 _ENV.filters["num"] = _fmt_num
 _ENV.filters["pct"] = _fmt_pct
@@ -96,6 +101,7 @@ _ENV.filters["price"] = _fmt_price
 _ENV.filters["day"] = _fmt_day
 _ENV.filters["friendly_day"] = _fmt_friendly_day
 _ENV.filters["tax_rate"] = _fmt_tax_rate
+_ENV.filters["pct_or_default"] = _fmt_pct_or_default
 # The watch-list pair (PR 4): ``watch_buttons_html`` escapes the ticker and gives nothing for one the dashboard
 # refuses, so its output is markup the template takes as it is.
 _ENV.globals["watch_pair"] = lambda ticker: Markup(watch_buttons_html(ticker))

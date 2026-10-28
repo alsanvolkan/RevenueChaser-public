@@ -19,6 +19,15 @@ MEASURED_TAX_RATE_BAND = (0.0, 0.60)
 DNA_ASSUMED_ZERO = "D&A: assumed 0 (not reported)"
 
 
+def assumed(what: str, value: str, why: str = "not reported") -> str:
+    """The warning for any other base-year input a model fills with a default, in the D&A line's words.
+
+    Financials review S1: a missing EBITDA, capex, working-capital line or WACC mix took a constant that the board
+    then showed as if the statements had reported it. The model still runs on the constant; the board says so.
+    """
+    return f"{what}: assumed {value} ({why})"
+
+
 def pick(assumptions: dict, key: str, default):
     """The user's value for ``key`` when given (0 included), else ``default``."""
     v = to_float(assumptions.get(key))

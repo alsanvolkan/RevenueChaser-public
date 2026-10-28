@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from ..config import (
     DEFAULT_BETA,
+    DEFAULT_CAPEX_PCT_REV,
     DEFAULT_COST_OF_DEBT,
+    DEFAULT_DEBT_WEIGHT,
     DEFAULT_EBITDA_MARGIN,
     DEFAULT_EXIT_MULTIPLE,
     DEFAULT_REVENUE_GROWTH,
@@ -19,7 +21,7 @@ from ..config import (
 )
 from RevenueChaser.core.providers.validator import validate_annual
 
-from ._inputs import (DNA_ASSUMED_ZERO, effective_tax_rate as _effective_tax_rate, first_known,
+from ._inputs import (DNA_ASSUMED_ZERO, assumed, effective_tax_rate as _effective_tax_rate, first_known,
                       net_debt as _net_debt, pick)
 
 
@@ -71,15 +73,17 @@ def _wacc(financials: dict, beta: float | None, rf: float, erp: float,
     # One fiscal year: the debt of the latest year only, never an older year's (#173 M15).
     d = to_float(annual[-1].get("total_debt")) if annual else None
     if debt_weight is not None:
-        wd, we = debt_weight, 1 - debt_weight
+        wd, we, source = debt_weight, 1 - debt_weight, "assumption"
     elif e is not None and d is not None and (e + d) > 0:
-        we, wd = e / (e + d), d / (e + d)
+        we, wd, source = e / (e + d), d / (e + d), "market"
     else:
-        we, wd = 0.85, 0.15  # varsayılan D/E karışımı
+        # No market mix: the default one, which the board labels (review S1).
+        wd, source = DEFAULT_DEBT_WEIGHT, "default"
+        we = 1 - wd
     wacc = we * ke + wd * kd_after
     return {
         "beta": b, "cost_of_equity": ke, "cost_of_debt_after_tax": kd_after,
-        "equity_weight": we, "debt_weight": wd, "wacc": wacc,
+        "equity_weight": we, "debt_weight": wd, "weights_source": source, "wacc": wacc,
     }
 
 
@@ -113,16 +117,28 @@ def run_dcf(financials: dict, assumptions: dict | None = None) -> dict:
     # No sector band carries a tax_rate, so that default is DEFAULT_TAX_RATE for every sector (see _inputs).
     tax_rate, tax_rate_source = _effective_tax_rate(a, latest, financials.get("sector"))
 
+    # The base-year rows the statements did not give: the model runs on a default, the board labels it (review S1).
+    defaults: list[str] = []
     margin0 = (ebitda0 / rev0) if ebitda0 is not None else DEFAULT_EBITDA_MARGIN
+    if ebitda0 is None:
+        defaults.append("ebitda_margin")
+        if to_float(a.get("ebitda_margin")) is None:
+            warnings.append(assumed("EBITDA margin", f"{DEFAULT_EBITDA_MARGIN:.1%}"))
     ebitda_margin = pick(a, "ebitda_margin", margin0)
     dep_pct = (dep0 / rev0) if dep0 is not None else 0.0
     if dep0 is None:
         # EBIT = EBITDA and FCFF adds nothing back: the board must say so (FIN-2 / DF41).
+        defaults.append("dep_pct_rev")
         warnings.append(DNA_ASSUMED_ZERO)
     capex_pct = to_float(a.get("capex_pct_rev"))
     if capex_pct is None:
         hist_capex = to_float(latest.get("capex"))
-        capex_pct = (hist_capex / rev0) if hist_capex is not None else 0.05
+        if hist_capex is not None:
+            capex_pct = hist_capex / rev0
+        else:
+            capex_pct = DEFAULT_CAPEX_PCT_REV
+            defaults.append("capex_pct_rev")
+            warnings.append(assumed("Capex", f"{DEFAULT_CAPEX_PCT_REV:.1%} of revenue"))
 
     # NWC/revenue oranı: tarihsel ortalama (varsayım yoksa)
     nwc_pct = to_float(a.get("nwc_pct_rev"))
@@ -134,6 +150,9 @@ def run_dcf(financials: dict, assumptions: dict | None = None) -> dict:
             if nw is not None and r:
                 ratios.append(nw / r)
         nwc_pct = sum(ratios) / len(ratios) if ratios else 0.0
+        if not ratios:
+            defaults.append("nwc_pct_rev")
+            warnings.append(assumed("NWC", f"{nwc_pct:.1%} of revenue", "no working-capital lines reported"))
 
     rf = pick(a, "risk_free", RISK_FREE_RATE)
     erp = pick(a, "equity_risk_premium", EQUITY_RISK_PREMIUM)
@@ -144,6 +163,9 @@ def run_dcf(financials: dict, assumptions: dict | None = None) -> dict:
     exit_multiple = pick(a, "exit_multiple", DEFAULT_EXIT_MULTIPLE)
 
     wacc_info = _wacc(financials, beta, rf, erp, cost_of_debt, tax_rate, debt_weight)
+    if wacc_info["weights_source"] == "default":
+        warnings.append(assumed("WACC weights", f"{wacc_info['equity_weight']:.0%} equity / "
+                                f"{wacc_info['debt_weight']:.0%} debt", "market cap or total debt missing"))
     wacc_override = to_float(a.get("wacc_override"))
     wacc = wacc_override if wacc_override is not None else wacc_info["wacc"]
     wacc_info["wacc"] = wacc
@@ -234,6 +256,7 @@ def run_dcf(financials: dict, assumptions: dict | None = None) -> dict:
             "dep_pct_rev": dep_pct,
             "capex_pct_rev": capex_pct,
             "nwc_pct_rev": nwc_pct,
+            "defaults": defaults,
         },
         "assumptions": {
             "revenue_growth": growth,
