@@ -13,16 +13,20 @@ import duckdb
 from RevenueChaser.rcdata import serving
 
 SPINE_TICKERS = ("MSFT", "BF-A", "BF-B", "BRK-B", "AAPL", "GME")
+# The issuers' real SEC CIKs (BF-A and BF-B share one, as do a company's share classes).
+SPINE_CIKS = {"MSFT": "789019", "BF-A": "14693", "BF-B": "14693", "BRK-B": "1067983", "AAPL": "320193",
+              "GME": "1326380"}
 
 
-def make_spine(tickers=SPINE_TICKERS) -> None:
+def make_spine(tickers=SPINE_TICKERS, ciks=SPINE_CIKS) -> None:
     """A live ``spine.duckdb`` whose ``security`` table holds ``tickers`` (the columns the ownership build reads)."""
     path = serving.live_path("spine")
     path.parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(str(path))
     try:
         con.execute("CREATE TABLE security (ticker TEXT, cik TEXT, gvkey TEXT, iid TEXT, cusip TEXT, tier TEXT)")
-        con.executemany("INSERT INTO security VALUES (?, NULL, NULL, NULL, NULL, 'A')", [[t] for t in tickers])
+        con.executemany("INSERT INTO security VALUES (?, ?, NULL, NULL, NULL, 'A')",
+                        [[t, (ciks or {}).get(t)] for t in tickers])
     finally:
         con.close()
 
@@ -296,3 +300,54 @@ class Edgar:
         for r, body in entries:
             if body is not None:
                 self.filings[r[4].rsplit("/", 1)[1][:-4]] = body
+
+
+# ── Form 4 (the ownershipDocument schema as the SEC documents it) ──────────────────────────────────────────────
+
+def f4_transaction(code, shares, price, ad="D", after=None, date_="2026-10-23", title="Common Stock",
+                   derivative=False, exercise=None, underlying=None, expires=None, price_footnote=False) -> str:
+    price_xml = ('<transactionPricePerShare><footnoteId id="F1"/></transactionPricePerShare>' if price_footnote
+                 else f"<transactionPricePerShare><value>{price}</value></transactionPricePerShare>")
+    tag = "derivativeTransaction" if derivative else "nonDerivativeTransaction"
+    extra = ""
+    if derivative:
+        extra = (f"<conversionOrExercisePrice><value>{exercise}</value></conversionOrExercisePrice>"
+                 f"<expirationDate><value>{expires}</value></expirationDate>"
+                 "<underlyingSecurity><underlyingSecurityTitle><value>Common Stock</value></underlyingSecurityTitle>"
+                 f"<underlyingSecurityShares><value>{underlying}</value></underlyingSecurityShares>"
+                 "</underlyingSecurity>")
+    return (f"<{tag}><securityTitle><value>{title}</value></securityTitle>{extra}"
+            f"<transactionDate><value>{date_}</value></transactionDate>"
+            f"<transactionCoding><transactionFormType>4</transactionFormType><transactionCode>{code}"
+            "</transactionCode><equitySwapInvolved>0</equitySwapInvolved></transactionCoding>"
+            f"<transactionAmounts><transactionShares><value>{shares}</value></transactionShares>{price_xml}"
+            f"<transactionAcquiredDisposedCode><value>{ad}</value></transactionAcquiredDisposedCode>"
+            "</transactionAmounts>"
+            f"<postTransactionAmounts><sharesOwnedFollowingTransaction><value>{after}</value>"
+            "</sharesOwnedFollowingTransaction></postTransactionAmounts>"
+            "<ownershipNature><directOrIndirectOwnership><value>D</value></directOrIndirectOwnership>"
+            f"</ownershipNature></{tag}>")
+
+
+def f4_document(issuer_cik, issuer_name, symbol, owners, non_derivative=(), derivative=(), form="4") -> str:
+    owner_xml = "".join(
+        f"<reportingOwner><reportingOwnerId><rptOwnerCik>{cik:010d}</rptOwnerCik><rptOwnerName>{name}</rptOwnerName>"
+        f"</reportingOwnerId><reportingOwnerRelationship><isDirector>{int('dir' in rel)}</isDirector>"
+        f"<isOfficer>{int('off' in rel)}</isOfficer>" + (f"<officerTitle>{rel['off']}</officerTitle>" if 'off' in rel
+                                                         else "") +
+        f"<isTenPercentOwner>{int('ten' in rel)}</isTenPercentOwner><isOther>0</isOther>"
+        "</reportingOwnerRelationship></reportingOwner>" for cik, name, rel in owners)
+    return ('<?xml version="1.0"?><ownershipDocument><schemaVersion>X0508</schemaVersion>'
+            f"<documentType>{form}</documentType><periodOfReport>2026-10-23</periodOfReport>"
+            f"<issuer><issuerCik>{issuer_cik:010d}</issuerCik><issuerName>{issuer_name}</issuerName>"
+            f"<issuerTradingSymbol>{symbol}</issuerTradingSymbol></issuer>{owner_xml}<aff10b5One>1</aff10b5One>"
+            f"<nonDerivativeTable>{''.join(non_derivative)}</nonDerivativeTable>"
+            f"<derivativeTable>{''.join(derivative)}</derivativeTable></ownershipDocument>")
+
+
+def f4_filing(accession, filed, issuer_cik, issuer_name, symbol, owners, non_derivative=(), derivative=(),
+              form="4") -> bytes:
+    roles = [("ISSUER", issuer_cik, issuer_name)] + [("REPORTING-OWNER", c, n) for c, n, _ in owners]
+    return submission(accession, form, filed, roles,
+                      [(form, "form4.xml", f4_document(issuer_cik, issuer_name, symbol, owners, non_derivative,
+                                                       derivative, form))], period=filed)

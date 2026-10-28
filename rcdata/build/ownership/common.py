@@ -135,3 +135,58 @@ def session_before(d: date, n: int = 1) -> date:
         while not is_session(d):
             d -= timedelta(days=1)
     return d
+
+
+# ── Issuers named by CIK and symbol (Form 4, Schedule 13D/G) ───────────────────────────────────────────────────
+
+ISSUER_CIK = "spine:cik"
+
+
+def spine_ciks() -> dict[str, str | None] | None:
+    """``{ticker: cik}`` of the live spine's ``security`` table; None when there is no spine file yet."""
+    try:
+        con = serving.open_read(SPINE)
+    except serving.ServingFileMissing:
+        return None
+    try:
+        return {t: c for t, c in con.execute("SELECT ticker, cik FROM security").fetchall()}
+    finally:
+        con.close()
+
+
+def issuer_tickers(pairs: Iterable[tuple[str | None, str | None]], spine: dict[str, str | None] | None
+                   ) -> dict[tuple, tuple[str | None, str | None]]:
+    """``{(issuer cik, symbol): (ticker, ticker_source)}``: the symbol's ticker (exact or squashed) when the spine's
+    CIK for it is the issuer's (or the filing names no CIK), else the issuer CIK's one ticker in the spine, else
+    none. A symbol that belongs to another issuer is never taken: filers mistype symbols, CIKs they do not."""
+    if not spine:
+        return {p: (None, None) for p in pairs}
+    by_cik: dict[str, list[str]] = {}
+    for t, c in spine.items():
+        if c:
+            by_cik.setdefault(c, []).append(t)
+    pairs = list(pairs)
+    named = symbol_tickers({s for _, s in pairs if s}, set(spine))
+    out = {}
+    for cik, symbol in pairs:
+        hit, src = named.get(symbol, (None, None)) if symbol else (None, None)
+        if hit and (cik is None or spine.get(hit) == cik):
+            out[(cik, symbol)] = (hit, src)
+        elif cik and len(by_cik.get(cik, [])) == 1:
+            out[(cik, symbol)] = (by_cik[cik][0], ISSUER_CIK)
+        else:
+            out[(cik, symbol)] = (None, None)
+    return out
+
+
+def issuer_map(con: duckdb.DuckDBPyConnection, pairs_sql: str, notes: list[str], label: str) -> None:
+    """``_issuer_map(issuer_cik, symbol, ticker, ticker_source)`` (TEMP) for the distinct pairs ``pairs_sql``
+    selects (columns ``issuer_cik``, ``symbol``); join it with ``IS NOT DISTINCT FROM``."""
+    pairs = [tuple(r) for r in con.execute(f"SELECT DISTINCT issuer_cik, symbol FROM ({pairs_sql})").fetchall()]
+    spine = spine_ciks()
+    if spine is None and pairs:
+        notes.append(f"{label}: no spine file yet, so no issuer is named a ticker")
+    named = issuer_tickers(pairs, spine)
+    temp_rows(con, "_issuer_map", [("issuer_cik", "TEXT"), ("symbol", "TEXT"), ("ticker", "TEXT"),
+                                   ("ticker_source", "TEXT")],
+              [{"issuer_cik": c, "symbol": s, "ticker": t, "ticker_source": src} for (c, s), (t, src) in named.items()])
