@@ -192,7 +192,7 @@ network.
 | `sec13f_enrichment` | 13F enrichment (price/short/insider); writer retired (#300), no reader since #375 F2 (the board reads `ownership_snapshot` and D01); the rows stay | raw | none |
 | `sec13f_edgar_backfill` | Retired: the EDGAR backfill is gone and nothing reads it; no writer either, apart from the legacy import `scripts/migrate_rawdata_to_duckdb.py`, so the entry is flagged MANIFEST `"retired": true` (#289) and scheduled to leave the manifest at the next bump (the table leaves the manifest in the 8→9 bump) | raw | none |
 | `etf_holdings` | Rotation ETF holdings, latest per ETF (top 10, the provider that answered, the fetch time); written by the holdings job, read by the Rotation Fetch (#303, D25); its history is `etf_holdings_changes` | raw | manual (Fetch holdings) |
-| `watchlist` | Watchlist tickers. Writer: the LEAPS pin's `POST /api/watchlist/toggle/<t>` through `rawstore.toggle_watchlist`, which adds or removes that one ticker in one transaction (#306); every add and removal is kept in `watchlist_changes` | raw | manual |
+| `watchlist` | The pre-PR 4 watchlist, unwritten since PR 4 (purged 27 Oct, D5): `rawstore.toggle_watchlist`, `load_watchlist` and `save_watchlist` now go to the stock watch list in `ops.sqlite` (`watchlist_stock`). Kept in the manifest, with `watchlist_changes`, until its retirement | raw | manual |
 | `price_actions` | Key `(ticker, ex_date, action)`. `ticker`, `ex_date DATE`, `action`, `value DOUBLE`, `session_date DATE`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE`; writer `core/prices.py` (#156): yfinance dividends (amount), splits (ratio, 4.0 = 4-for-1) and capital gains (amount); first write wins | prices | none |
 | `index_levels_daily` | D03 (#293, M-SPX-0 #376): writer `core/index_levels.py` (yfinance `^GSPC`, `auto_adjust=False`, symbol `^GSPC`, source `yfinance`), two entry points under one lock: the best-effort last step of RC-Daily-Bars (`scripts/daily_bars.py --nightly --index-levels`; at most 1 yfinance request a night, none when the latest complete session is stored or before the fill, a per-session marker under `.cache/index_levels/`, no retry; its failure never changes the exit code) and the attended one-time `period="max"` fill (`scripts/daily_bars.py --index-fill --confirm`, one request, needs SPY's D01 fill). Append, the first write of a key wins; complete sessions only: from 2025 a calendar trading day up to the latest complete session, before 2025 a date of SPY's stored D01 bars or any `^GSPC` date before SPY's first (rule C). SPX Gamma read its 8-week candle window from it until PR 3 and no longer reads it (it reads Cboe's `SPX` closes from the market store's `market_series`, `module_spx_gamma/store_reads.py`, and still makes no candle request of its own, D03); the Settings / Data health board reports newest session vs latest complete, row count and source. In prices.duckdb beside `price_bars_daily` since #293 (avo 2026-10-10; a store from before has the empty raw table moved over by the first call). Key `(symbol, session_date)`. `symbol`, `session_date DATE`, `open DOUBLE`, `high DOUBLE`, `low DOUBLE`, `close DOUBLE`, `volume DOUBLE`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | prices | none |
 | `quote_snapshot` | G1 (#292); writers `core/quotes.py` (#294): one row per ticker per complete New York session per source, append (first write of a key wins), a row only with a positive cap, nothing written inside the session or by a run that crosses a session boundary. `yfinance` rows from the universe pull (Phase A screener quotes, Phase B `fast_info` fills), `uw` rows from the universe job (UW screener, batches of 100, when a UW key verifies). Boards still read `equity_universe` (#279 D6). Key `(ticker, session_date, source)`. `ticker`, `session_date DATE`, `source`, `market_cap DOUBLE`, `price DOUBLE`, `shares_outstanding DOUBLE`, `week_52_high DOUBLE`, `week_52_low DOUBLE`, `payload BLOB`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
@@ -513,8 +513,8 @@ worker thread writes while Flask request threads read. So:
   delete every row and write none, which is what a degraded run (no peers, no
   edges, a fetch that returned nothing) produces by accident. It raises
   `RawStoreError` unless the caller passes `allow_empty=True` (keyword only):
-  `save_watchlist` does, because removing the last ticker is the user's
-  choice, and so does the legacy migration. A writer whose run produced nothing
+  the legacy migration does (`save_watchlist` did, until PR 4 moved it to the
+  stock watch list in `ops.sqlite`). A writer whose run produced nothing
   keeps the stored rows and logs why: Relatedness `save_scores` and Value Chain
   `build_edges` do (the latter returns what the store holds).
 - **History tables refuse rewrites (#286).** A MANIFEST entry with
@@ -623,7 +623,7 @@ that mirror a complete snapshot use `replace_all` (an empty batch needs
 payload is **removed**, not left behind: `sec13f_totals`, `ticker_scores`,
 `fundamentals_scores`/`_gates`,
 `swing_scores`/`_gates`. `watchlist` is no longer one of them: the dashboard
-adds or removes one ticker per click (`rawstore.toggle_watchlist`, #306). Per-ticker caches (`ticker_payload_cache`,
+adds or removes one ticker per click, on the stock watch list in `ops.sqlite` since PR 4 (`rawstore.toggle_watchlist`). Per-ticker caches (`ticker_payload_cache`,
 `edgar_financials`, `swing_info`, `leaps_cache`) stay incremental upserts, and
 `index_constituents` / `swing_ohlc` / `rotation_snapshots` / `oipd_chain` /
 `relatedness_theme_etfs` / `comov_nodes` / `comov_members` (per `as_of` run) /
@@ -807,7 +807,7 @@ schema, reachable with path expressions like `payload.market_cap::DOUBLE`).
 | `identity_source_cache` | `source`, `ticker`, `fetched_at`, `status`, `security_type`, `security_type2`, `sector`, `industry`, `sub_industry`, `cik`, `sic`, `is_etf BOOLEAN`, `forms` (comma-joined), `shell_closed BOOLEAN` (key `(source, ticker)`; last GOOD answer per source — a failed or skipped source never overwrites it, `core/identity/cache.py`) | `payload` (rest of the source row) |
 | `identity_runs` | `run_id`, `started_at`, `finished_at`, `status` | `sources` (per-source status/counts/error), `counts` |
 | `board_settings` | `board`, `key`, `value DOUBLE`, `updated_at` (key `(board, key)`; only user overrides — defaults are read from the board's config, and a Save is one transaction and a Reset deletes the board's rows in one statement, serialized by a lock; every save, drop and Reset is kept in `board_settings_changes`, a Reset as one change (#306); `core/board_settings.py`, issue #40; read by Co-movement (`module_comovement/settings.py`) and by Swing for its screen/score thresholds (`module_swing_potential/settings.py`, #384 SW-S4), whose stored overrides also feed the forecast ledger's model version) | — |
-| `watchlist` | `ticker` (one row per pinned ticker; `rawstore.toggle_watchlist` writes one ticker per click, #306) | — |
+| `watchlist` | `ticker` (one row per pinned ticker until PR 4; unwritten since, the stock watch list in `ops.sqlite` replaced it) | — |
 | `migration_manifest` | `dataset`, `migrated_at`, `schema_version`, `source_count`, `source_bytes`, `source_hash`, `verify` | — |
 | `store_meta` | `key`, `value` | — |
 | `store_schema` | `key`, `value` (one row, key `schema_version`, this code's `_SCHEMA_VERSION`; the same table is created in every store file on ensure, #26 PL7, no schema bump — not `store_meta`'s ticker-store `schema_version`) | — |
