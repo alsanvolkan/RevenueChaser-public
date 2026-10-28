@@ -116,6 +116,13 @@ def strike_rows(session: date, ticker: str, set_name: str, spot, exposure, prov:
             for k, v in sorted(by_strike.items())]
 
 
+def expiry_of(item: dict) -> date | None:
+    """A UW row's expiry: ``expiry``, else ``expires``. ``expiry-breakdown`` sends ``expires`` (the first real sample,
+    2026-10-28), though ``docs/openapi.yaml`` names it ``expiry``; read by its spec name only, it gave no expiry, so
+    no chain was asked for."""
+    return t.to_day(item.get("expiry") or item.get("expires"))
+
+
 def expiry_rows(session: date, ticker: str, set_name: str, prov: dict, *, breakdown=None, exposure=None, flow=None,
                 term=None) -> list[dict]:
     """One row per expiry: the chain's size (``breakdown``), greek exposure, the day's flow and the term structure."""
@@ -123,7 +130,7 @@ def expiry_rows(session: date, ticker: str, set_name: str, prov: dict, *, breakd
 
     def add(body, fields: dict):
         for item in _session_rows(body, session):
-            expiry = t.to_day(item.get("expiry"))
+            expiry = expiry_of(item)
             if expiry is not None:
                 by_expiry.setdefault(expiry, {}).update({k: f(item) for k, f in fields.items()})
 

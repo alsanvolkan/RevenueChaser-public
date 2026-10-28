@@ -77,8 +77,8 @@ class UWOptionList:
         before = calls_so_far(ctx)
         day = session.isoformat()
         breakdown = uw.get(ctx, uw.stock(ticker, "expiry-breakdown"), {"date": day}, "expiry_breakdown", errors)
-        expiries = sorted({e for e in (tables.to_day(r.get("expiry")) for r in uw.rows_of(breakdown)
-                                       if isinstance(r, dict)) if e is not None and e >= session})
+        expiries = sorted({e for e in (rows.expiry_of(r) for r in uw.rows_of(breakdown) if isinstance(r, dict))
+                           if e is not None and e >= session})
         chain = {}
         for e in expiries:
             chain[e.isoformat()] = {

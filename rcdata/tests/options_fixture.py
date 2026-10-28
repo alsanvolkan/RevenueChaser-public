@@ -80,7 +80,8 @@ class UWOptions:
             return {"data": rows[page * limit:(page + 1) * limit]}
         ticker, ep = parts[2], "/".join(parts[3:])
         if ep == "expiry-breakdown":
-            return {"data": [{"expiry": e.isoformat(), "chains": len(self.strikes) * 2, "open_interest": 1000,
+            # ``expires``, not the spec's ``expiry``: what UW sent in the first real sample (2026-10-28).
+            return {"data": [{"expires": e.isoformat(), "chains": len(self.strikes) * 2, "open_interest": 1000,
                               "volume": 200} for e in self.expiries]}
         if ep == "option-contracts":
             rows = self._contracts(ticker, date.fromisoformat(q["expiry"][0]))
