@@ -528,17 +528,28 @@ class OwnershipServe:
     @staticmethod
     def _issues(con: duckdb.DuckDBPyConnection, as_of: date) -> list[tuple[str, str, str]]:
         found = []
+        # The owners named are the other securities that refused it: for the current CUSIP those holding it in a
+        # refused period, for OpenFIGI's ticker every holder Compustat gives (that refusal carries no period).
         for cusip, ticker, periods, value, owners, gvkey, iid, current in con.execute(f"""
-                SELECT m.cusip, any_value(m.candidate_ticker), count(DISTINCT m.period), sum(m.value),
-                       (SELECT string_agg(DISTINCT o.gvkey || '/' || coalesce(o.iid, '?'), ', ' ORDER BY 1)
-                        FROM _owners o WHERE o.cusip = m.cusip),
-                       any_value(s.gvkey), any_value(s.iid), bool_or(b.refused)
-                FROM sec13f_cusip_map m LEFT JOIN _sp_security s ON s.ticker = m.candidate_ticker
-                LEFT JOIN _m_cur b ON b.cusip = m.cusip AND b.period = m.period
-                WHERE m.map_source = '{REFUSED}' GROUP BY m.cusip ORDER BY m.cusip""").fetchall():
+                WITH r AS (SELECT m.cusip, m.period, m.value, m.candidate_ticker, s.gvkey, s.iid,
+                                  coalesce(b.refused, false) AS cur
+                           FROM sec13f_cusip_map m LEFT JOIN _sp_security s ON s.ticker = m.candidate_ticker
+                           LEFT JOIN _m_cur b ON b.cusip = m.cusip AND b.period = m.period
+                           WHERE m.map_source = '{REFUSED}'),
+                     w AS (SELECT r.cusip, string_agg(DISTINCT o.gvkey || '/' || coalesce(o.iid, '?'), ', '
+                                                      ORDER BY 1) AS owners
+                           FROM r JOIN _owners o ON o.cusip = r.cusip
+                            AND NOT (o.gvkey = r.gvkey AND o.iid IS NOT DISTINCT FROM r.iid)
+                            AND (NOT r.cur OR ((o.efffrom IS NULL OR o.efffrom <= r.period)
+                                               AND (o.effthru IS NULL OR r.period <= o.effthru)))
+                           GROUP BY r.cusip)
+                SELECT r.cusip, any_value(r.candidate_ticker), count(DISTINCT r.period), sum(r.value),
+                       any_value(w.owners), any_value(r.gvkey), any_value(r.iid), bool_or(r.cur)
+                FROM r LEFT JOIN w ON w.cusip = r.cusip GROUP BY r.cusip ORDER BY r.cusip""").fetchall():
             names = "the spine's current CUSIP names" if current else "OpenFIGI names"
+            when = " in those periods" if current else ""
             found.append(("cusip_owner_differs", cusip,
-                          f"{names} {ticker} ({gvkey}/{iid}); Compustat gives the CUSIP to {owners} in the period: "
+                          f"{names} {ticker} ({gvkey}/{iid}); Compustat gives the CUSIP to {owners}{when}: "
                           f"{periods} period(s), ${value or 0:,.0f} kept unnamed"))
         for cusip, period, issuer, value, holders in con.execute(f"""
                 SELECT cusip, period, issuer_name, value, holders FROM sec13f_cusip_map

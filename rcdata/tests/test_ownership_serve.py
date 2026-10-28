@@ -182,13 +182,15 @@ def test_the_largest_unmapped_cusips_are_those_of_the_newest_complete_quarter(st
 def test_a_current_cusip_compustat_gave_another_security_in_the_period_is_refused_there_only(store):
     """Review S1 (#236 on the current-CUSIP branch): Compustat's dated history gives MSFT's CUSIP to the old Vaylor
     security from January to July 2026. The spine's current CUSIP names MSFT; for 30 Jun 2026 that is refused, kept
-    unnamed and one issue, and 30 Sep 2026 (after the other security's dates) stays MSFT's."""
+    unnamed and one issue, and 30 Sep 2026 (after the other security's dates) stays MSFT's. The issue names the
+    security that held the CUSIP in the refused period, not one that held it years before (delta review D3)."""
     folder = wrds.parquet_dir(wrds.SEC_IDHIST.name) / "delta=9999-12-31"
     folder.mkdir(parents=True)
     con = duckdb.connect()
     try:
         con.execute(f"COPY (SELECT '123456' AS gvkey, '01' AS iid, 'CUSIP' AS item, '594918104' AS itemvalue, "
-                    f"DATE '2026-01-01' AS efffrom, DATE '2026-07-31' AS effthru) "
+                    f"DATE '2026-01-01' AS efffrom, DATE '2026-07-31' AS effthru "
+                    f"UNION ALL SELECT '654321', '01', 'CUSIP', '594918104', DATE '2010-01-01', DATE '2012-12-31') "
                     f"TO {base.sql_path(folder / 'sec_idhist.parquet')} (FORMAT parquet)")
     finally:
         con.close()
@@ -197,8 +199,8 @@ def test_a_current_cusip_compustat_gave_another_security_in_the_period_is_refuse
                    "WHERE cusip = '594918104' ORDER BY period") == [(Q2, None, "refused", "MSFT"),
                                                                     (Q3, "MSFT", "spine/security", None)]
     detail = _issues()[("cusip_owner_differs", "594918104")]
-    assert "the spine's current CUSIP names MSFT (012141/01)" in detail and "123456/01" in detail
-    assert "1 period(s), $520,000 kept unnamed" in detail
+    assert "the spine's current CUSIP names MSFT (012141/01)" in detail
+    assert "Compustat gives the CUSIP to 123456/01 in those periods: 1 period(s), $520,000 kept unnamed" in detail
     assert _served("SELECT period FROM sec13f_ticker_period WHERE ticker = 'MSFT' ORDER BY period") == [
         (date(2001, 9, 30),), (Q3,)]
 
