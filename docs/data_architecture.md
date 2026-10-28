@@ -1208,7 +1208,8 @@ this layer does not have is NULL) and `estimate_snapshots` (`session_date` the d
 is one row per company and quarter with a column per field.
 
 **Build issues** live in `ops.sqlite` `build_issues`, dataset `fundamentals/tables`, synced after each swap. Kinds:
-`source_never_run`, `statement_older_than_120_days`, `no_statement`, `no_us_gaap_facts`. A source dataset records its
+`source_never_run`, `statement_older_than_120_days`, `annual_statement_older_than_400_days` (an annual-only filer,
+also one that moved to IFRS and whose last us-gaap statement is years old), `no_statement`, `no_us_gaap_facts`. A source dataset records its
 own row-level problems (`missing_key`, `fetch_failed`) under its name.
 
 **Reading it.** `rcdata.read.statements(cik, period_type, n, fields)`, `rcdata.read.earnings_events(cik, start, end)`,

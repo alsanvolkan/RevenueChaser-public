@@ -126,6 +126,9 @@ ISSUE_KINDS: dict[str, str] = {
     "source_never_run": "a source this build needs has no data yet (key: the dataset)",
     "statement_older_than_120_days": ("a Tier A quarterly filer whose newest statement was filed more than 120 days "
                                       "before the build's as-of"),
+    "annual_statement_older_than_400_days": ("a Tier A annual-only filer (20-F, 40-F) whose newest statement was "
+                                             "filed more than 400 days before the build's as-of; also a filer that "
+                                             "moved to IFRS, whose last us-gaap statement is years old (TM: 2020)"),
     "no_statement": "a Tier A company with no SEC statement fact (not read yet, or no XBRL facts at the SEC)",
     "no_us_gaap_facts": "a Tier A company whose XBRL facts hold no us-gaap taxonomy (an IFRS filer; not read yet)",
 }
@@ -428,6 +431,10 @@ def _issues(con: duckdb.DuckDBPyConnection, as_of: date) -> list[tuple[str, str,
         elif quarterly and (as_of - newest).days > companyfacts.STALE_DAYS:
             found.append(("statement_older_than_120_days", cik,
                           f"newest statement filed {newest} ({(as_of - newest).days} days before {as_of})"))
+        elif not quarterly and (as_of - newest).days > companyfacts.ANNUAL_STALE_DAYS:
+            found.append(("annual_statement_older_than_400_days", cik,
+                          f"newest statement filed {newest} ({(as_of - newest).days} days before {as_of}); "
+                          "an annual-only filer"))
     return found
 
 
