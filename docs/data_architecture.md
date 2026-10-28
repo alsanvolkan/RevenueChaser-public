@@ -908,7 +908,7 @@ snapshot kept to the expiries from the day on, decision A3; that is the day's 0 
 SF2) for the $10B pin and $200M squeeze tests (review S4; a day without the slice has neither a pin flag nor a squeeze
 trigger, avo 28 Oct 2026); the
 VIX family (`VIX`, `VIX9D`, `VIX3M`, `VIX6M`, `VIX1Y`, `VVIX`: the newest observation on or before the day, inside
-3 sessions); the E-mini TFF report (`cftc:tff:13874A:*`: the newest report released, Tuesday + 3 days, on or before
+3 sessions); the E-mini TFF report (`cftc:tff:13874A:*`: the newest report released, Tuesday + 3 days (an approximation of CFTC's schedule: a holiday week or a shutdown moves the release later, so a past day's render may count a report released a little early), on or before
 the day, inside 10 sessions; the weekly change is this report minus the previous one, decision A5); and Cboe's
 `SPX` closes for the 8-week window (one column: no open, high, low or volume, decision A6). Its Fetch queues
 `uw/spot_expiry_strike` and `market_series` with `requested_by` `spx_gamma` (`ops.enqueue_once`) and renders at once

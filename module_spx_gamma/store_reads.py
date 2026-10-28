@@ -13,7 +13,8 @@ call: there is no live fallback any more.
 - ``vix_family``: the Cboe closes of the VIX family on the newest observation on or before the day, within
   ``MAX_LAG`` sessions, keyed with the caret the board's payload always used (``^VIX`` ...).
 - ``cot_tff``: the CFTC TFF row of the E-mini S&P 500 (``13874A``, futures only): the newest report released on or
-  before the day (a Tuesday report is released on the Friday, ``RELEASE_DAYS``), within ``MAX_LAG`` sessions. The
+  before the day (a Tuesday report counts as released on the Friday, ``RELEASE_DAYS``: an approximation of CFTC's
+  schedule, which holiday weeks move), within ``MAX_LAG`` sessions. The
   weekly change is this report's long minus the previous report's (decision A5): the builder keeps no ``change_*``.
   It is None (``change_gap``) when the two newest reports are not exactly a week apart (review SF4).
 - ``spx_candles``: the SPX closes of the 8-week window. Cboe's SPX file has one column, so a row has a close and no
@@ -37,7 +38,9 @@ SERIES_SOURCE = "rcdata:market_series"
 CANDLE_SOURCE = f"{SERIES_SOURCE} SPX (cboe)"
 # Sessions an observation may lag the board's day by (the limits the old stored readers had, stored_inputs.MAX_LAG).
 MAX_LAG = {"vix": 3, "cot": 10}
-# A TFF report holds Tuesday's positions and is published on the Friday after it.
+# A TFF report holds Tuesday's positions and is usually published on the Friday after it. An approximation (review
+# SF5): a holiday week moves the release to the next business day and the 2025 shutdown delayed it by weeks, so a
+# past day's render can count a report as released a little early. CFTC's own schedule is a parked follow-up.
 RELEASE_DAYS = 3
 WEEK_DAYS = 7
 VIX_SERIES = {"VIX": "^VIX", "VIX9D": "^VIX9D", "VIX3M": "^VIX3M", "VIX6M": "^VIX6M", "VIX1Y": "^VIX1Y",
@@ -215,7 +218,8 @@ def cot_tff(day) -> dict:
                           "change": (long - prev_long) if long is not None and prev_long is not None else None}
     row = meta[released[-1]]
     return {"stored": True, "label": f"CFTC TFF report of {payload['report_date']}, released "
-                                     f"{payload['release_date']} ({SERIES_SOURCE}, {row.get('source')}, "
+                                     f"~{payload['release_date']} (report + {RELEASE_DAYS} days; holiday weeks can "
+                                     f"differ) ({SERIES_SOURCE}, {row.get('source')}, "
                                      f"status {row.get('status')})",
             "payload": payload, "obs_date": payload["report_date"], "status": row.get("status"),
             "source": SERIES_SOURCE, "source_as_of": _iso(row.get("source_as_of"))}

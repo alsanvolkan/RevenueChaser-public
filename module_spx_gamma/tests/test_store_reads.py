@@ -226,3 +226,9 @@ def test_the_weekly_change_is_none_across_a_missing_report_and_the_board_says_ga
 def test_a_weekly_change_of_consecutive_reports_has_no_gap(rcdata_market):
     cot = store_reads.cot_tff(fx.LAST)["payload"]
     assert cot["change_gap"] is False and cot["asset_manager"]["change"] == 10_000.0
+
+
+def test_the_cot_release_date_is_called_an_approximation(rcdata_market):
+    """Review SF5: report + 3 days is not CFTC's schedule (holiday weeks, the 2025 shutdown); the board says so."""
+    label = store_reads.cot_tff(fx.LAST)["label"]
+    assert "released ~2026-10-23 (report + 3 days; holiday weeks can differ)" in label
