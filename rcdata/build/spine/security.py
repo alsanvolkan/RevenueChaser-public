@@ -312,8 +312,9 @@ class SpineSecurity:
         for r in sec:
             tickers_of_cik[r["cik"]] += 1
         figi = {r["cusip"]: r for r in _rows(con, "SELECT * FROM stg_figi")}
+        # The current GICS row of each company only; the periods are written in SQL below (should-fix 5).
         hgic: dict[str, list[dict]] = defaultdict(list)
-        for g in _rows(con, "SELECT * FROM stg_wrds_hgic ORDER BY gvkey, indfrom"):
+        for g in _rows(con, "SELECT * FROM stg_wrds_hgic WHERE indthru IS NULL ORDER BY gvkey, indfrom"):
             hgic[g["gvkey"]].append(g)
 
         rows, linked = [], {}
@@ -361,21 +362,34 @@ class SpineSecurity:
         counts = {"security": _create(con, "security", rows)}
 
         history = sec_history(_rows(con, "SELECT ticker, cik, name, exchange, source_as_of FROM stg_sec_all"))
-        gvkeys = {g for g, _ in linked}
-        for h in _rows(con, "SELECT * FROM stg_wrds_idhist ORDER BY gvkey, iid, item, efffrom"):
-            if h["gvkey"] not in gvkeys:
-                continue
-            history.append({"ticker": linked.get((h["gvkey"], h["iid"])), "cik": cik_of_gvkey.get(h["gvkey"]),
-                            "gvkey": h["gvkey"], "iid": h["iid"], "field": str(h["item"] or "").lower(),
-                            "value": h["itemvalue"], "valid_from": h["efffrom"], "valid_to": _next_day(h["effthru"]),
-                            "source": SEC_IDHIST.name})
-        counts["security_history"] = _create(con, "security_history", history)
+        _create(con, "security_history", history)
+        # Compustat's history of the linked companies, filtered and written in SQL: comp.sec_idhist holds millions
+        # of rows and this runs on every spine build (should-fix 5). Exclusive ends: Compustat's inclusive end + 1.
+        base.rows_table(con, "_linked", [("gvkey", "TEXT"), ("iid", "TEXT"), ("ticker", "TEXT")],
+                        [{"gvkey": g, "iid": i, "ticker": t} for (g, i), t in linked.items()])
+        base.rows_table(con, "_gvkey_cik", [("gvkey", "TEXT"), ("cik", "TEXT")],
+                        [{"gvkey": g, "cik": c} for g, c in cik_of_gvkey.items()])
+        con.execute(f"""INSERT INTO security_history
+            SELECT l.ticker, c.cik, h.gvkey, h.iid, lower(h.item), h.itemvalue, h.efffrom, h.effthru + 1,
+                   '{SEC_IDHIST.name}'
+            FROM stg_wrds_idhist h
+            JOIN (SELECT DISTINCT gvkey FROM _linked) g ON g.gvkey = h.gvkey
+            LEFT JOIN _linked l ON l.gvkey = h.gvkey AND l.iid = h.iid
+            LEFT JOIN _gvkey_cik c ON c.gvkey = h.gvkey
+            ORDER BY h.gvkey, h.iid, h.item, h.efffrom""")
+        counts["security_history"] = stage.count(con, "security_history")
 
-        gics = [{"gvkey": g["gvkey"], "cik": cik_of_gvkey.get(g["gvkey"]), "gsector": g["gsector"],
-                 "ggroup": g["ggroup"], "gind": g["gind"], "gsubind": g["gsubind"], "valid_from": g["indfrom"],
-                 "valid_to": _next_day(g["indthru"]), "source": CO_HGIC.name, "source_as_of": g["source_as_of"]}
-                for gv in sorted(gvkeys) for g in hgic.get(gv, [])]
-        counts["gics_history"] = _create(con, "gics_history", gics)
+        _create(con, "gics_history", [])
+        con.execute(f"""INSERT INTO gics_history
+            SELECT h.gvkey, c.cik, h.gsector, h.ggroup, h.gind, h.gsubind, h.indfrom, h.indthru + 1,
+                   '{CO_HGIC.name}', h.source_as_of
+            FROM stg_wrds_hgic h
+            JOIN (SELECT DISTINCT gvkey FROM _linked) g ON g.gvkey = h.gvkey
+            LEFT JOIN _gvkey_cik c ON c.gvkey = h.gvkey
+            ORDER BY h.gvkey, h.indfrom""")
+        counts["gics_history"] = stage.count(con, "gics_history")
+        for tmp in ("_linked", "_gvkey_cik"):
+            con.execute(f"DROP TABLE {tmp}")
 
         members, member_issues = self._membership(con, rows, linked)
         found += member_issues
@@ -457,6 +471,7 @@ class SpineSecurity:
                     found.append(("membership_files_disagree", key, f"held by {d['held']} of {d['files']} files"))
         out = [{**m, "cik": cik.get(m["ticker"]), "source": FUNDS}
                for m in _rows(con, "SELECT * FROM _fund_periods ORDER BY index_slug, ticker, valid_from")]
+        con.execute("DROP TABLE _fund_map")              # base.rows_table makes a real table: not for the file
         slug_of = {v: k for k, v in INDEX_GVKEYX.items()}
         wrds = _rows(con, "SELECT * FROM stg_wrds_idx ORDER BY gvkeyx, gvkey, iid, valid_from")
         for w in wrds:

@@ -90,6 +90,18 @@ def test_history_tables(built):
         "SELECT ticker, field, value, valid_from, valid_to FROM security_history WHERE source = ?", sec_tickers.NAME)
 
 
+def test_the_compustat_history_never_passes_through_python_rows(built, monkeypatch):
+    """Should-fix 5: comp.sec_idhist (1-3 M rows) and comp.co_hgic are filtered and written in SQL on every build;
+    no query of the build reads them into Python dicts."""
+    seen = []
+    real = security._rows
+    monkeypatch.setattr(security, "_rows", lambda con, sql: seen.append(sql) or real(con, sql))
+    run_all("2026-10-28", names=(security.NAME,))
+    assert seen and not [q for q in seen if "stg_wrds_idhist" in q or ("stg_wrds_hgic" in q and "indthru IS NULL"
+                                                                        not in q)]
+    assert ("HEI-A", "tic", "HEI.A") in _q("SELECT ticker, field, value FROM security_history WHERE gvkey = '005567'")
+
+
 def test_membership_from_the_fund_files_matched_by_cusip_ticker_and_squashed_ticker(built):
     rows = _q("SELECT index_slug, ticker, valid_from, valid_to, files_held, files_counted FROM index_membership "
               "WHERE source = ? ORDER BY index_slug, ticker", funds.NAME)
