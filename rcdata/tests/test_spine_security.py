@@ -296,18 +296,23 @@ def test_a_member_the_sec_file_drops_for_a_week_keeps_one_period(built):
 
 
 def test_a_rename_the_fund_files_lag_is_not_matched_to_the_old_tickers_next_owner(built):
-    """Delta-2 SF1, the other direction: the SEC file writes ETN as ETNX from 3 Nov, a fund file still writes ETN
-    without a CUSIP that day, and on 10 Nov the ticker ETN belongs to another CIK. The line is no match for the new
-    ETN; the files that carry the CUSIP keep the member as ETNX."""
+    """Delta-2 SF1, the other direction: the SEC file writes ETN as ETNX from 3 Nov, iShares still writes ETN
+    without a CUSIP that day, and on 10 Nov the ticker ETN belongs to another CIK. iShares' line is no match for the
+    new ETN; SSGA and Vanguard carry the CUSIP and keep the member as ETNX, under Eaton's CIK (delta-3 nit 2)."""
     renamed = [[c, n, "ETNX" if t == "ETN" else t, e] for c, n, t, e in fx.SEC_FILE["data"]]
     _sec_answer(built, renamed)
     base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-03"}})
     _sec_answer(built, renamed + [[8888888, "NEW ETN HOLDER INC", "ETN", "NYSE"]])
     base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-10"}})
-    _funds_answer(built, sp500=[(t, None, n) if t == "ETN" else (t, c, n) for t, c, n in fx.SP500])
+    _funds_answer(built)
+    no_cusip = [(t, None, n) if t == "ETN" else (t, c, n) for t, c, n in fx.SP500]
+    built.routes.insert(0, ("fileName=IVV_holdings", lambda r: (200, fx.ishares_csv(no_cusip), {}), 200, {}))
     run_all("2026-11-03", names=(funds.NAME,))
     assert _q("SELECT count(*) FROM index_membership WHERE source = ? AND ticker = 'ETN' AND cik = '8888888'",
               funds.NAME) == [(0,)]
+    assert _q("SELECT cik, valid_from, valid_to, files_held FROM index_membership WHERE source = ? "
+              "AND index_slug = 'sp500' AND ticker = 'ETNX'", funds.NAME) == [("1551182", date(2026, 11, 3), None, 2)]
+    assert ("member_not_in_sec", "sp500:ETN") in _issues()          # iShares' line: no match, not the new ETN
 
 
 def test_wrds_constituents_are_kept_with_exclusive_ends(built):
