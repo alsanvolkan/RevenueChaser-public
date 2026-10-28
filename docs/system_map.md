@@ -186,7 +186,6 @@ no `plans/` tree and no `.hermes/` here (work orders live in the private reposit
 | [`classification_design.md`](classification_design.md) | `classification` | The classification data-model work order (see the note below) |
 | [`glossary.md`](glossary.md) | `platform-store`, `classification` | Old → new dataset and field names, kept in step with `rawstore._RENAMES` |
 | [`llm_offpeak.md`](llm_offpeak.md) | `providers`, `classification` | The DeepSeek off-peak gate and its USD cap; Relatedness is its only caller |
-| [`validation_thinking_vs_nonthinking_50.md`](validation_thinking_vs_nonthinking_50.md) | `classification`, `providers` | One measurement: the thinking flag's effect on the Relatedness profile writer |
 | [`rules/00_overview.md`](rules/00_overview.md), [`rules/r2`–`r8`](rules/r2_guidance.md), [`rules/redesign.md`](rules/redesign.md) | `earnings` | The intended rule design (explicitly not a description of what runs) and the rule change log |
 | [`openapi.yaml`](openapi.yaml) (not Markdown) | `providers` | The Unusual Whales endpoint contract |
 | `system_map.md` | all | This file |
