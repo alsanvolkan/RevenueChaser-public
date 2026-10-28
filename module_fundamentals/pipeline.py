@@ -434,6 +434,8 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         if not no_fetch:
             _EDGAR_HEALTH.call(error=str(exc) or type(exc).__name__, endpoint=f"{ticker}.companyfacts")
         return _drop("edgar_fetch_failed")     # the call failed: a data gap, not "EDGAR has nothing" (#386 F1)
+    if not no_fetch and (emeta or {}).get("downloaded"):
+        _EDGAR_HEALTH.call(endpoint=f"{ticker}.companyfacts")     # review N5: a download that worked is a call too
     # #46: whether this row was extracted since the currency measure landed at all. An absent key is "not
     # measured", and a stored row is never re-extracted (``sec_edgar._stored_fundamentals``), so only a
     # re-extraction fills it.
