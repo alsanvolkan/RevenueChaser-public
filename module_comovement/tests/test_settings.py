@@ -454,3 +454,10 @@ def test_route_reset_some_keys(client):
     bs.save(B, {"WINSOR_K": 6.5, "MIN_OBS": 100})
     r = client.post("/api/settings/board/module_comovement", json={"reset": ["WINSOR_K"]})
     assert r.status_code == 202 and r.get_json()["values"]["overridden"] == ["MIN_OBS"]
+
+
+def test_config_hash_carries_the_engine_method(rawstore_tmp_db, monkeypatch):
+    """A stored run, null or lagged test of an older method never matches (Co-movement review, 28 Oct 2026)."""
+    before = _hash()
+    monkeypatch.setattr(engine.config, "METHOD", engine.config.METHOD + 1)
+    assert _hash() != before

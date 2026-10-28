@@ -481,8 +481,9 @@ together **more than the market**, up or down.
    universe), replacing the inverted "≈N independent bets".
 4c. **Out-of-sample persistence** (`persistence.py`, Fetch-only, `comov_lag`):
    groups are also formed on the window ending `OOS_HOLDOUT` = 63 sessions ago
-   and tested on that quarter only (mean r vs random names in the held-out
-   matrix — valid there, the quarter chose nothing). Each current group is
+   and tested on that quarter only (mean r of the residuals, winsorised like the
+   formation window's, vs random names in the held-out matrix — valid there,
+   the quarter chose nothing). Each current group is
    matched to its best lagged group by Jaccard: ≥ `PERSIST_MIN_JACCARD` (0.5)
    → badge "held / did not hold out-of-sample · N% same names as a quarter
    ago", else "new this quarter". A line under the note gives, for the current

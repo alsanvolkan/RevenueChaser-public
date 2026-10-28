@@ -74,8 +74,9 @@ def config_hash(window: int, linkage: str, cuts,
     """Identity of everything that changes a run's numbers.
 
     window, linkage, cuts, horizon, benchmark, MIN_OBS, OOS_HOLDOUT, WINSOR_K,
-    MIN_PERIODS, BENCH_STALE_SESSIONS and the market-cap floor: a stored null or
-    lagged test is reused only under exactly these inputs. An input left ``None``
+    MIN_PERIODS, BENCH_STALE_SESSIONS, the market-cap floor and the engine's
+    method (``config.METHOD``): a stored null or lagged test is reused only under
+    exactly these inputs. An input left ``None``
     is resolved by ``settings.effective(window)`` (what a run at ``window``
     would use).
     """
@@ -87,7 +88,7 @@ def config_hash(window: int, linkage: str, cuts,
         pick(min_obs, eff.min_obs), pick(oos_holdout, eff.oos_holdout),
         f"{float(pick(winsor_k, eff.winsor_k)):g}", pick(min_periods, eff.min_periods),
         pick(bench_stale_sessions, eff.bench_stale_sessions),
-        f"{float(pick(floor, eff.floor)):g}"))
+        f"{float(pick(floor, eff.floor)):g}", f"method={config.METHOD}"))
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 

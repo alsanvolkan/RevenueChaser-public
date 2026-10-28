@@ -8,8 +8,8 @@ market has ~20 real factors. The harder question is whether a group is a
 1. **Form** groups on a full window that ends ``OOS_HOLDOUT`` sessions ago
    (same returns, benchmark, winsorisation, linkage and cuts as the board).
 2. **Test** each of those lagged groups on the held-out last quarter only: its
-   mean pairwise r there, against random names of the same size in the same
-   held-out matrix. Random names are a valid null *here* because the held-out
+   mean pairwise r there (on residuals winsorised like the formation window's),
+   against random names of the same size in the same held-out matrix. Random names are a valid null *here* because the held-out
    data played no part in choosing the group.
 3. **Match** each current group to its best lagged group by Jaccard overlap:
    ``>= PERSIST_MIN_JACCARD`` → the same group a quarter ago (held or not);
@@ -107,7 +107,9 @@ def lagged_test(prices: pd.DataFrame, cuts, horizon: int,
 
     test_ret, _ = returns_mod.log_returns(prices, window=holdout,
                                           min_obs=oos_min_obs, horizon=horizon)
-    test = _residual(test_ret, bench_ticker, apply_bench)
+    # Winsorised like the formation window (S10), so one shared print in the held-out quarter cannot make a group
+    # that broke up read as held (Co-movement review S3).
+    test = returns_mod.winsorize_mad(_residual(test_ret, bench_ticker, apply_bench), eff.winsor_k)
     corr = test.corr(min_periods=oos_min_obs)
     a = np.where(np.isnan(corr.to_numpy(dtype=float)), 0.0, corr.to_numpy(dtype=float))
     pos = {t: i for i, t in enumerate(corr.columns)}

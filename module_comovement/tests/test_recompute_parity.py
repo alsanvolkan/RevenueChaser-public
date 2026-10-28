@@ -29,6 +29,11 @@ funnel steps carry ``fix`` = null instead of "Fetch prices". Compared key by key
 Data Health S11 (#80, #124) regenerated it once more: every payload gains the additive ``provider_health`` key for
 the provider-health banner. Compared with the old golden with ``provider_health`` removed: no key differed (floats
 within the 1e-9 tolerance). Then ``json.dumps(payloads())`` was written.
+
+The Fable review of 28 Oct 2026, S3 (the held-out quarter read on winsorised residuals) regenerated it once more.
+Compared key by key with the old golden: the four ``config_hash`` values (the hash now carries ``config.METHOD``)
+and, in the persisted case only, three ``oos_r`` and two ``oos_base`` values moved (by under 2e-4); no ``held``
+verdict, member, label or other number changed. Then ``json.dumps(payloads())`` was written.
 """
 from __future__ import annotations
 

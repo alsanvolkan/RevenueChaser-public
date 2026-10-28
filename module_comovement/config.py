@@ -73,6 +73,11 @@ PRECOMPUTE_WINDOWS = (126, 252)   # 6m, 1y
 # (2026-10-17 03:30 Amsterdam); the merge gate checks before the restart that no stored run is newer, since a run the
 # older build stored after this time would be served until the next D01 write.
 ENGINE_EPOCH = "2026-10-17T01:30:00+00:00"
+# The engine's method, part of ``engine.config_hash``: bump it when a change alters a run's numbers at the same
+# inputs. A stored run, null or lagged test of an older method then never matches, so it is neither served nor
+# reused, with no race against a run the older build stores before the restart (unlike ``ENGINE_EPOCH``).
+# 2: the Fable review of 28 Oct 2026 (held-out test winsorised, S3; h>1 null and factor count, S1; null mean, N1).
+METHOD = 2
 
 # ── Clustering ──────────────────────────────────────────────────────────────
 # Ward (review 2026-10-01 §1): average linkage chained a quarter to half of the
