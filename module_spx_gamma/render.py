@@ -9,6 +9,7 @@ from markupsafe import Markup
 
 from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html, notice_html, provider_health_html
 
+from . import expected_move
 from .brier import scorecard
 from .config import BRIER_FILENAME, HISTORY_FILENAME
 from .flow_signals import evaluate_flow_signal
@@ -172,15 +173,16 @@ _PANEL_FILES = {
     "options_volume": "options_volume.json",
     "max_pain": "max_pain.json",
     "vol_term": "vol_term_structure.json",
-    "skew": "interpolated_iv.json",
-    "iron_butterfly": "option_chain.json",
+    "skew": expected_move.IV_FILE,
+    # the chain, and the IV its wing width is sized from (review S1)
+    "iron_butterfly": ("option_chain.json", expected_move.IV_FILE),
 }
 
 
 def _historical_panels(snapshot: dict) -> dict[str, bool]:
-    """Panel -> True when its live file was fetched in a later session than the day shown."""
+    """Panel -> True when a live file it reads was fetched in a later session than the day shown."""
     live = set(snapshot.get("historical_live_files") or [])
-    return {panel: fn in live for panel, fn in _PANEL_FILES.items()}
+    return {panel: bool(live & ({fn} if isinstance(fn, str) else set(fn))) for panel, fn in _PANEL_FILES.items()}
 
 
 def store_labels(snapshot: dict) -> dict[str, str]:
@@ -286,7 +288,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
     prev_levels = (prev_snapshot or {}).get("levels", {}) or {}
     charm = snapshot.get("charm_qualification", {})
     vanna = snapshot.get("vanna_peaks") or {}
-    em = snapshot.get("expected_move")
+    em = expected_move.shown(snapshot)      # None from a later session's IV (review S1)
     current = snapshot.get("current_level")
     asof = snapshot.get("asof_date", "")
     first = snapshot.get("first_session_date", "")
@@ -321,8 +323,9 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
             delta_map["expected_move"] = _d(em.get("lower"), (prev_snapshot or {}).get("expected_move", {}).get("lower"))
 
     role = _role(regime)
-    em_value = f"{fmt_level(em['lower'])} – {fmt_level(em['upper'])}" if em else "N/A"
-    em_pts = f"±{em['points']:,.1f}" if em else "N/A"
+    em_none = "n/a (historical)" if expected_move.historical(snapshot) else "N/A"
+    em_value = f"{fmt_level(em['lower'])} – {fmt_level(em['upper'])}" if em else em_none
+    em_pts = f"±{em['points']:,.1f}" if em else em_none
 
     charm_label = charm.get("label") or "Charm Peak"
     charm_dist = charm.get("distance_pct_from_spot")
