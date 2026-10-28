@@ -137,3 +137,60 @@ def test_read_watchlists_returns_both_lists_by_ticker_and_counts_its_reads():
     with ops.connect() as con:
         n = dict(con.execute("SELECT table_name, reads FROM read_log").fetchall())
     assert n == {"watchlist_option": 2, "watchlist_stock": 1}
+
+
+# ── The lossless rollback (review should-fix 1): stamp the file down, the v1 code runs on it ──────────────────────
+# v1's ensure(), statement for statement: CREATE TABLE IF NOT EXISTS of every table (the watch-list history in its
+# v1 shape), its two indexes, then the stamp check. Written out here so the test keeps describing PR 1's code.
+def _v1_ensure(path):
+    v1_ddl = {**{k: v for k, v in ops._DDL.items() if not k.endswith("_changes")},
+              **{f"watchlist_{k}_changes": f"""CREATE TABLE IF NOT EXISTS watchlist_{k}_changes (
+        ticker TEXT NOT NULL, action TEXT NOT NULL CHECK (action IN ('add','remove')), at REAL NOT NULL, by TEXT)"""
+                 for k in ("option", "stock")}}
+    con = sqlite3.connect(str(path), isolation_level=None)
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        for ddl in v1_ddl.values():
+            con.execute(ddl)
+        con.execute("CREATE INDEX IF NOT EXISTS build_requests_status ON build_requests (status, id)")
+        con.execute("CREATE INDEX IF NOT EXISTS dataset_check_dataset ON dataset_check (dataset, id)")
+        found = con.execute("SELECT max(version) FROM ops_schema").fetchone()[0]
+        if found is not None and found > 1:
+            raise ops.OpsSchemaTooNew(f"ops schema {found}")
+        if found is None:
+            con.execute("INSERT INTO ops_schema (version, applied_at) VALUES (1, 0)")
+        con.execute("COMMIT")
+        return {k: con.execute(f"SELECT count(*) FROM watchlist_{k}").fetchone()[0] for k in ("option", "stock")}
+    finally:
+        con.close()
+
+
+def _stamp_down(path):
+    with ops.connect(path) as con:
+        con.execute("DELETE FROM ops_schema WHERE version = 2")
+
+
+def test_v1_code_refuses_the_v2_file_until_it_is_stamped_down_and_then_runs_on_it():
+    path = ops.ops_path()
+    ops.watch_add("stock", "MSFT", by="leaps", note="pinned")
+    ops.count_calls("uw", 7)
+    with pytest.raises(ops.OpsSchemaTooNew):
+        _v1_ensure(path)                                  # revert alone is not enough
+    _stamp_down(path)
+    assert _v1_ensure(path) == {"option": 0, "stock": 1}  # v1's only watch-list read: count(*)
+    assert ops.calls_today("uw") == 7                     # the day-cap counter survives the rollback
+
+
+def test_redeploying_v2_after_a_stamp_down_keeps_the_history_its_ids_and_notes():
+    path = ops.ops_path()
+    ops.watch_add("stock", "MSFT", by="leaps", note="pinned")
+    ops.watch_remove("stock", "MSFT", by="settings")
+    _stamp_down(path)
+    _v1_ensure(path)
+    ops._ENSURED.discard(str(path))
+    ops.ensure(path)                                      # the next deploy finds stamp 1 and upgrades again
+    with ops.connect(path) as con:
+        hist = [tuple(r) for r in con.execute("SELECT id, ticker, action, by, note FROM watchlist_stock_changes "
+                                               "ORDER BY id")]
+        assert [r[0] for r in con.execute("SELECT version FROM ops_schema ORDER BY version")] == [1, 2]
+    assert hist == [(1, "MSFT", "add", "leaps", "pinned"), (2, "MSFT", "remove", "settings", None)]

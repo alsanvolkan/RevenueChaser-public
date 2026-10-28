@@ -954,7 +954,8 @@ the newest fetch winning a key.
 
 **`ops.sqlite`** (SQLite WAL, `busy_timeout` 5000 ms on every open; `rcdata/ops.py` owns every statement;
 ops schema version `2`; `ensure` upgrades an older file in place, in one transaction, and refuses a file stamped
-newer):
+newer. Rolling back to version 1 code is `DELETE FROM ops_schema WHERE version = 2` with every ops process stopped:
+version 1 runs on the version 2 tables, and the next upgrade leaves a history table that already has `id` alone):
 
 | Table | Holds |
 |---|---|

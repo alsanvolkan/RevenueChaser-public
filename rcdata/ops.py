@@ -147,10 +147,15 @@ _ENSURE_LOCK = threading.Lock()
 
 def _upgrade_to_2(con: sqlite3.Connection) -> None:
     """v1 -> v2: each ``watchlist_*_changes`` gets ``id INTEGER PRIMARY KEY`` and ``note``; its rows are copied in
-    the order they were written. The list tables themselves are unchanged."""
+    the order they were written. The list tables themselves are unchanged.
+
+    A table that already has ``id`` is left as it is: a v2 file stamped back down to 1 (the rollback) keeps its v2
+    tables, and the next deploy must not copy them again, which would drop their notes."""
     for k in WATCH_KINDS:
         name = f"watchlist_{k}_changes"
         if not con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone():
+            continue
+        if "id" in {r[1] for r in con.execute(f"PRAGMA table_info({name})")}:
             continue
         con.execute(f"ALTER TABLE {name} RENAME TO {name}_v1")
         con.execute(_DDL[name])
