@@ -362,7 +362,7 @@ OPTIONS_ALWAYS = ("SPX",)
 
 def _watchlists() -> dict:
     """Both watch lists for their cards: ``{kind: {count, rows: [{ticker, added_on, added_by, note}]}}`` (one read
-    through ``rcdata.read``, which never creates ops.sqlite)."""
+    through ``rcdata.read``: the read itself never creates ops.sqlite; the read log's minute flush may)."""
     from RevenueChaser.rcdata import read
     lists = read.watchlists()
     return {k: {"count": len(rows), "rows": [{"ticker": r["ticker"], "added_on": _iso_utc(r["added_at"]),

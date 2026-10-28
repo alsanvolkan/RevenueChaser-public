@@ -1613,7 +1613,7 @@ def api_watchlist_remove(kind: str, ticker: str):
 @app.route("/api/watchlists")
 def api_watchlists():
     """Both watch lists' tickers, ``{ok, option: [...], stock: [...]}``: what a board's button pair shows as pressed.
-    A read: it never creates ``ops.sqlite``."""
+    The read itself never creates ``ops.sqlite`` (the read log's minute flush may, as for every rcdata read)."""
     from RevenueChaser.rcdata import read
     lists = read.watchlists()
     return jsonify({"ok": True, **{k: [r["ticker"] for r in rows] for k, rows in lists.items()}})

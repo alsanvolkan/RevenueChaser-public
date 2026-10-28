@@ -237,7 +237,7 @@ WATCHLIST_CSS = """<style>
 </style>"""
 
 WATCHLIST_JS = ESC_JS + r"""
-var RC_WATCH = {board: 'board', lists: {option: {}, stock: {}}, loaded: false};
+var RC_WATCH = {board: 'board', lists: {option: {}, stock: {}}, loaded: false, toggled: {}};
 var RC_WATCH_RE = /^""" + WATCH_TICKER_PATTERN + r"""$/;
 var RC_WATCH_LABELS = """ + json.dumps({k: list(v) for k, v in WATCH_LABELS.items()}) + r""";
 function rcWatchTicker(t){ t = String(t == null ? '' : t).trim().toUpperCase(); return RC_WATCH_RE.test(t) ? t : ''; }
@@ -271,8 +271,15 @@ function rcWatchInit(board){
     .then(function(d){
       if(!d || !d.ok) return;
       ['option', 'stock'].forEach(function(list){
-        RC_WATCH.lists[list] = {};
-        (d[list] || []).forEach(function(t){ RC_WATCH.lists[list][String(t)] = true; });
+        // A toggle that answered before this read is newer than it: keep the toggle's state for that pair.
+        var mine = RC_WATCH.lists[list], next = {};
+        (d[list] || []).forEach(function(t){ next[String(t)] = true; });
+        Object.keys(RC_WATCH.toggled).forEach(function(key){
+          var at = key.indexOf(':'), t = key.slice(at + 1);
+          if(key.slice(0, at) !== list) return;
+          if(mine[t]) next[t] = true; else delete next[t];
+        });
+        RC_WATCH.lists[list] = next;
       });
       RC_WATCH.loaded = true;
       rcWatchSync(document);
@@ -293,6 +300,7 @@ function rcWatchToggle(btn){
         return;
       }
       btn.removeAttribute('data-rc-watch-error');
+      RC_WATCH.toggled[list + ':' + t] = true;
       if(res.d.on) RC_WATCH.lists[list][t] = true; else delete RC_WATCH.lists[list][t];
       rcWatchSync(document);
     }).catch(function(e){

@@ -200,7 +200,8 @@ with its history row. No provider call, no DuckDB file.
 - **`POST /api/watchlist/toggle/<ticker>`**: the pre-PR 4 route, now the stock list; answers `{ok, ticker,
   in_watchlist}` as before. `rawstore.toggle_watchlist`, `load_watchlist` and `save_watchlist` are the stock list too.
 - **`GET /api/watchlists`**: `{ok, option: [tickers], stock: [tickers]}`, what the board buttons show as pressed.
-  A read never creates `ops.sqlite`.
+  The read itself never creates `ops.sqlite`; the read log it counts into is flushed to it once a minute, which
+  may, as for every `rcdata.read` call.
 
 ### Known deviation (fixed 2026-09-30)
 

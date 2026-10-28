@@ -234,17 +234,17 @@ class TestConcurrentWritesToTheSameRow:
         assert rawstore.count("store_meta") == 30
 
     def test_concurrent_watchlist_toggles(self, rawstore_tmp_db):
-        """Whole-list read-modify-write from several threads raises nothing (``save_watchlist``, the stock watch list
-        in ops.sqlite since PR 4; the dashboard's pin goes through ``toggle_watchlist``, its races are in
-        test_inputs_history_306.py)."""
+        """Whole-list read-modify-write of a DuckDB table from several threads raises nothing (``replace_all`` on the
+        store's ``watchlist`` table; the watch lists themselves are in ops.sqlite since PR 4, and their whole-list
+        race is in rcdata/tests/test_ops_watchlists.py)."""
         errors: list[Exception] = []
 
         def toggle(ticker):
             try:
                 for _ in range(10):
-                    wl = rawstore.load_watchlist()
+                    wl = _stored_watchlist()
                     wl.add(ticker)
-                    rawstore.save_watchlist(wl)
+                    rawstore.replace_all("watchlist", [{"ticker": t} for t in sorted(wl)], allow_empty=True)
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
 

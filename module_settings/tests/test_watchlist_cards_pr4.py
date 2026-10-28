@@ -105,12 +105,13 @@ var counts = [new El(), new El()];
 var ul = new El();
 var card = new El({}, null);
 card.match = function(s){ return s === '.nd-watch'; };
-card.querySelector = function(){ return msg; };
+var queued = new El();
+card.querySelector = function(sel){ return sel.indexOf('queued') >= 0 ? queued : msg; };
 card.querySelectorAll = function(){ return ul.kids; };
 var msg = new El();
 ul.parentNode = card;
-var li = new El({}, ul); li.match = function(s){ return s === 'li'; }; ul.kids.push(li);
-var li2 = new El({}, ul); li2.match = function(s){ return s === 'li'; }; ul.kids.push(li2);
+var li = new El({'data-ticker': 'NVDA'}, ul); li.match = function(s){ return s === 'li'; }; ul.kids.push(li);
+var li2 = new El({'data-ticker': 'AMD'}, ul); li2.match = function(s){ return s === 'li'; }; ul.kids.push(li2);
 var btn = new El({'data-list': 'option', 'data-ticker': 'NVDA'}, li);
 var bad = new El({'data-list': 'option', 'data-ticker': '"><img src=x>'}, li2);
 var document = {querySelectorAll: function(){ return counts; }, addEventListener: function(){},
@@ -131,7 +132,8 @@ def test_remove_posts_the_remove_route_with_the_settings_header_and_drops_the_ro
       ndWatchRemove(bad);
       ndWatchRemove(btn);
       setTimeout(function(){ console.log(JSON.stringify({calls: calls, left: ul.kids.length,
-        counts: counts.map(function(c){ return c.textContent; }), msg: msg.innerHTML})); }, 20);
+        counts: counts.map(function(c){ return c.textContent; }), msg: msg.innerHTML,
+        queued: queued.textContent})); }, 20);
     """)
     out = subprocess.run(["node", "-e", js], capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert out.returncode == 0, out.stderr[-2000:]
@@ -139,3 +141,11 @@ def test_remove_posts_the_remove_route_with_the_settings_header_and_drops_the_ro
     assert [c["url"] for c in got["calls"]] == ["/api/watchlist/option/remove/NVDA"]     # the hostile one sent nothing
     assert got["calls"][0]["opts"] == {"method": "POST", "headers": {"X-RC-Panel": "settings"}}
     assert got["left"] == 1 and got["counts"] == ["1", "1"] and got["msg"] == "NVDA removed."
+    # review nit 6: the queued line follows the list, in the words the server renders
+    assert got["queued"] == "SPX and 1 name from this list: AMD · the options build comes later (build-plan step 11)"
+
+
+def test_the_queued_line_is_one_span_the_remove_can_rewrite():
+    opt = _card(_page(newdata_fixture()), "option")
+    assert ('<span data-nd-queued>SPX and 1 name from this list: NVDA · the options build comes later '
+            '(build-plan step 11)</span>') in opt

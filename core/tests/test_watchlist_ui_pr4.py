@@ -149,3 +149,28 @@ def test_a_refused_toggle_leaves_the_state_and_says_why():
         e: b.a['data-rc-watch-error'], d: b.disabled})); }, 20);
     """)
     assert got == {"p": "false", "t": "Not changed: panel header required", "e": "1", "d": False}
+
+
+def test_a_late_lists_read_does_not_undo_a_toggle_that_landed_first():
+    """Review nit 5: the load-time read answers after a click's toggle: the toggled pair keeps the toggle's state."""
+    got = _node(r"""
+      var b = new Btn({'data-rc-watch': 'option', 'data-ticker': 'NVDA', 'aria-pressed': 'false'});
+      var c = new Btn({'data-rc-watch': 'stock', 'data-ticker': 'MSFT', 'aria-pressed': 'false'});
+      BUTTONS = [b, c];
+      var release;
+      var slow = new Promise(function(res){ release = res; });
+      ANSWERS['/api/watchlist/option/toggle/NVDA'] = {ok: true, list: 'option', ticker: 'NVDA', on: true};
+      var realFetch = fetch;
+      fetch = function(url, opts){
+        if(url === '/api/watchlists'){ calls.push({url: url}); return slow.then(function(){
+          return {status: 200, json: function(){ return Promise.resolve({ok: true, option: [], stock: ['MSFT']}); }}; }); }
+        return realFetch(url, opts);
+      };
+      var init = rcWatchInit('leaps');
+      click(b);
+      setTimeout(function(){
+        release();
+        init.then(function(){ console.log(JSON.stringify({nvda: b.a['aria-pressed'], msft: c.a['aria-pressed']})); });
+      }, 20);
+    """)
+    assert got == {"nvda": "true", "msft": "true"}

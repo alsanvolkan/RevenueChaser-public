@@ -194,3 +194,28 @@ def test_redeploying_v2_after_a_stamp_down_keeps_the_history_its_ids_and_notes()
                                                "ORDER BY id")]
         assert [r[0] for r in con.execute("SELECT version FROM ops_schema ORDER BY version")] == [1, 2]
     assert hist == [(1, "MSFT", "add", "leaps", "pinned"), (2, "MSFT", "remove", "settings", None)]
+
+
+def test_concurrent_whole_list_replaces_raise_nothing_and_the_history_replays_to_the_list():
+    """``rawstore.save_watchlist`` (``watch_replace``) from several threads at once: each is one BEGIN IMMEDIATE."""
+    import threading
+    errors: list[Exception] = []
+
+    def add(ticker):
+        try:
+            for _ in range(10):
+                ops.watch_replace("stock", set(ops.watch_list("stock")) | {ticker}, by="t")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=add, args=(t,)) for t in ("AAPL", "MSFT", "NVDA")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    assert not errors, errors[:2]
+    with ops.connect() as con:
+        state = {}
+        for t, action in con.execute("SELECT ticker, action FROM watchlist_stock_changes ORDER BY id"):
+            state[t] = action == "add"
+    assert {t for t, on in state.items() if on} == set(ops.watch_list("stock"))

@@ -69,7 +69,8 @@ def spx_expiry_strike(session_date, min_dte: int = 0, max_dte: int = 1) -> list[
 def watchlists() -> dict[str, list[dict]]:
     """The two watch lists (D2) from ``ops.sqlite``: ``{"option": rows, "stock": rows}``, each by ticker, a row
     ``{ticker, added_at, added_by, note}``. Operational state, not market data: no provenance and no ``status``. No
-    ops file yet reads as two empty lists, and the read never creates it."""
+    ops file yet reads as two empty lists. The read itself never creates it; the read log it counts into is
+    written to ops.sqlite once a minute (``ops.ReadLog``), and that flush does, as for every read here."""
     out = {}
     for kind in ops.WATCH_KINDS:
         ops.read_log.bump(f"watchlist_{kind}")

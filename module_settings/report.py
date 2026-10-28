@@ -2471,6 +2471,7 @@ def _nd_retirement(rows: list[dict]) -> str:
 
 
 ND_WATCH_TITLES = {"option": "Option watch list", "stock": "Stock watch list"}
+ND_OPTIONS_LATER = "the options build comes later (build-plan step 11)"
 ND_WATCH_SUBS = {
     "option": "The names the options build covers besides SPX (D2). Press <b>Opt</b> next to a ticker on any board "
               "to add one.",
@@ -2496,9 +2497,9 @@ def _nd_watch_card(kind: str, wl: dict, ob: dict) -> str:
         names = ob.get("queued") or []
         always = " + ".join(_nd(a) for a in ob.get("always") or [])
         queued = _nd_row("Names queued for the next options build",
-                         f"{always} and {len(names)} name{'' if len(names) == 1 else 's'} from this list"
-                         + (f": {', '.join(_nd(n) for n in names)}" if names else "")
-                         + " · the options build comes later (build-plan step 11)")
+                         f"<span data-nd-queued>{always} and {len(names)} name{'' if len(names) == 1 else 's'} "
+                         "from this list" + (f": {', '.join(_nd(n) for n in names)}" if names else "")
+                         + f" · {ND_OPTIONS_LATER}</span>")
     return (f'<div class="nd-card nd-watch" id="nd-watch-{esc(kind)}" data-list="{esc(kind)}">'
             f'<h3>{esc(ND_WATCH_TITLES[kind])} <span class="nd-chip" data-nd-watch-count="{esc(kind)}">'
             f'{len(rows)}</span></h3>'
@@ -2552,8 +2553,10 @@ def _nd_client(nd: dict | None) -> dict:
     for c in (nd or {}).get("datasets") or []:
         bf = c.get("backfill") or {}
         out[str(c.get("dataset"))] = {"missing": bf.get("missing"), "calls_per_partition": bf.get("calls_per_partition")}
+    ob = (nd or {}).get("options_build") or {}
     return {"datasets": out, "confirm_over": ND_BACKFILL_CONFIRM_OVER, "next_pass": ND_NEXT_PASS,
-            "ticker_pattern": WATCH_TICKER_PATTERN}
+            "ticker_pattern": WATCH_TICKER_PATTERN, "options_always": ob.get("always") or [],
+            "options_later": ND_OPTIONS_LATER}
 
 
 ND_JS = r"""
@@ -2637,9 +2640,15 @@ function ndWatchRemove(btn){
       '</span>'); return; }
     var li = btn.closest('li');
     if(li && li.parentNode) li.parentNode.removeChild(li);
-    var left = card ? card.querySelectorAll('li.nd-watch-item').length : 0;
+    var items = card ? card.querySelectorAll('li.nd-watch-item') : [], left = items.length;
     document.querySelectorAll('[data-nd-watch-count="' + list + '"]').forEach(function(el){
       el.textContent = String(left); });
+    var q = list === 'option' && card ? card.querySelector('[data-nd-queued]') : null;
+    if(q){
+      var names = Array.prototype.map.call(items, function(i){ return i.getAttribute('data-ticker'); });
+      q.textContent = (ND.options_always || []).join(' + ') + ' and ' + left + (left === 1 ? ' name' : ' names') +
+        ' from this list' + (left ? ': ' + names.join(', ') : '') + ' · ' + ND.options_later;
+    }
     say(rcEsc(t) + (res.d.removed ? ' removed.' : ' was no longer on the list.'));
   }).catch(function(e){ btn.disabled = false; say('<span class="nd-bad">' + rcEsc(String(e)) + '</span>'); });
 }
