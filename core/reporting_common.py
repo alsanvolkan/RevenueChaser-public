@@ -505,7 +505,7 @@ def universe_provenance_html(generated_at, refreshed_by, partial: bool = False) 
     reuses that data can display the same attribution; ``partial`` adds "partial fetch": the universe was upserted and
     names the pull missed were kept. Empty when no provenance is recorded (legacy payload / first run).
     """
-    from .universe import spine_provenance
+    from .universe import has_market_caps, spine_provenance
 
     ts = ""
     if refreshed_by:
@@ -522,7 +522,11 @@ def universe_provenance_html(generated_at, refreshed_by, partial: bool = False) 
             parts.append("SEC file of " + html.escape(str(spine["source_as_of"])))
         if spine.get("built_at"):
             parts.append("built " + html.escape(str(spine["built_at"])))
-        if refreshed_by:
+        if not has_market_caps():
+            # Opus review N5: no cap stored (until G2 brings market data), so every screened board is empty; the
+            # header says why instead of a "refreshed by" that refreshed nothing.
+            parts.append('<b style="color:var(--amber,#f1c40f)">market caps: none loaded yet</b>')
+        elif refreshed_by:
             parts.append('market caps refreshed by <b style="color:var(--text)">' + html.escape(refreshed_by) + "</b>"
                          + ((" " + html.escape(ts)) if ts else ""))
         if partial:

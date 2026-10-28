@@ -312,6 +312,11 @@ def has_universe() -> bool:
     return bool(rawstore.query(f"SELECT 1 FROM {_UNIVERSE_TABLE} LIMIT 1"))
 
 
+def has_market_caps() -> bool:
+    """Whether any market cap is stored (the old cache still feeds the caps under the spine, until G2)."""
+    return bool(rawstore.query(f"SELECT 1 FROM {_UNIVERSE_TABLE} WHERE market_cap IS NOT NULL LIMIT 1"))
+
+
 def load_cached_universe() -> list[dict]:
     rows = _spine_universe() if _spine() else rawstore.query("SELECT * FROM equity_universe")
     out = []
