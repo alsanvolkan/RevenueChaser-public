@@ -210,10 +210,15 @@ FIGI = {
 
 
 def figi_answer(request):
-    """The mapping endpoint: one entry per job, ``data`` for a known CUSIP, the documented warning otherwise."""
+    """The mapping endpoint: one entry per job, ``data`` for a known code asked with its own id type, the documented
+    warning otherwise. A CINS (a letter first) is found only as ``ID_CINS``: asked as ``ID_CUSIP``, OpenFIGI found
+    none of the 2,092 CINS the first live map held (homesrv, 2026-10-28); here a CUSIP is found only as ``ID_CUSIP``."""
     jobs = json.loads(request.content)
-    out = [{"data": [FIGI[j["idValue"]]]} if j["idValue"] in FIGI else {"warning": "No identifier found."}
-           for j in jobs]
+
+    def found(job) -> bool:
+        own = "ID_CINS" if job["idValue"][:1].isalpha() else "ID_CUSIP"
+        return job["idValue"] in FIGI and job.get("idType") == own
+    out = [{"data": [FIGI[j["idValue"]]]} if found(j) else {"warning": "No identifier found."} for j in jobs]
     return 200, json.dumps(out).encode(), {"content-type": "application/json"}
 
 

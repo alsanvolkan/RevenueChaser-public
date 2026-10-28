@@ -1,7 +1,8 @@
 """``openfigi/map``: a FIGI for every CUSIP the spine holds, asking only the new ones (weekly).
 
 ``POST <RC_OPENFIGI_BASE>/v3/mapping`` with up to 100 jobs ``{"idType": "ID_CUSIP", "idValue": <cusip>,
-"exchCode": "US"}`` (the US composite listing, as ``core/providers/openfigi.py`` asks), the key in the
+"exchCode": "US"}`` (the US composite listing, as ``core/providers/openfigi.py`` asks; a CINS is asked as ``ID_CINS``,
+``id_type``), the key in the
 ``X-OPENFIGI-APIKEY`` header (``OPENFIGI_API_KEY``, through ``core.credentials``; never logged). Requests are paced
 under 25 a minute (the plan's rule, well inside OpenFIGI's keyed limit), at most ``MAX_REQUESTS`` a run. No key: the
 run fails and asks nothing.
@@ -9,9 +10,12 @@ run fails and asks nothing.
 Which CUSIPs: the CUSIPs of the active Compustat securities (``secstat`` A) whose CIK is in the newest SEC file,
 and the CUSIPs the fund files hold, less those already in the map: a 'present' answer is kept, an 'absent' one is
 asked again after ``ABSENT_RETRY_DAYS``. A CUSIP whose job answered an ``error`` stays unasked and is asked on the next run.
+An 'absent' answer counts only when its code was asked with its own id type (``_asked_right``): the map asked every code
+as ``ID_CUSIP`` until 2026-10-28, and OpenFIGI found none of the 2,092 CINS asked that way, so those are asked again.
 
-Raw: ``raw/openfigi/map/<as-of>/batch-<n>.json.gz`` (the CUSIPs asked and OpenFIGI's answer, one file per request)
-with a ``.meta.json`` sidecar. A run on the same day skips the CUSIPs of the batch files already there (resumable).
+Raw: ``raw/openfigi/map/<as-of>/batch-<n>.json.gz`` (the CUSIPs asked, their id types and OpenFIGI's answer, one file
+per request; a batch written before the id types were recorded asked ``ID_CUSIP``) with a ``.meta.json`` sidecar. A
+run on the same day skips the codes the batch files already there asked with their own id type (resumable).
 Parquet: ``parquet/openfigi/map/part-0.parquet``, merged by CUSIP, the newest answer winning. Staging: ``stg_figi``.
 """
 from __future__ import annotations
@@ -34,6 +38,7 @@ JOBS_PER_REQUEST = 100
 MAX_REQUESTS = 400
 ABSENT_RETRY_DAYS = 90
 PRESENT, ABSENT = "present", "absent"
+ID_CUSIP, ID_CINS = "ID_CUSIP", "ID_CINS"
 SCHEMA = [("cusip", "TEXT"), ("status", "TEXT"), ("ticker", "TEXT"), ("figi", "TEXT"), ("composite_figi", "TEXT"),
           ("share_class_figi", "TEXT"), ("exch_code", "TEXT"), ("name", "TEXT"), ("security_type", "TEXT"),
           ("security_type2", "TEXT"), ("market_sector", "TEXT"), ("security_description", "TEXT"),
@@ -56,6 +61,14 @@ def _meta(raw: Path) -> Path:
 def valid_cusip(c) -> bool:
     text = str(c or "").strip().upper()
     return len(text) == 9 and text.isalnum()
+
+
+def id_type(code: str) -> str:
+    """OpenFIGI's ``idType`` for a code: ``ID_CINS`` for a CINS (the CUSIP of an issuer outside the US and Canada, a
+    letter first: ``G0450A105``), else ``ID_CUSIP``. ``ID_CINS`` is OpenFIGI's own id type (its API documentation and
+    ``/v3/mapping/values/idType``, read 2026-10-28); asked as ``ID_CUSIP``, OpenFIGI found none of the 2,092 CINS the
+    first live map held (homesrv, 2026-10-28: "No identifier found" for every one)."""
+    return ID_CINS if str(code or "")[:1].isalpha() else ID_CUSIP
 
 
 def _query(sql: str) -> list[tuple]:
@@ -87,20 +100,35 @@ def wanted_cusips() -> list[str]:
     return sorted(c for c in out if valid_cusip(c))
 
 
+def _asked_right(batches) -> set[str]:
+    """The codes the batch files ``batches`` asked with their own id type (``id_type``); a batch without ``id_types``
+    was written before they were recorded and asked every code as ``ID_CUSIP``."""
+    out: set[str] = set()
+    for raw in batches:
+        body = base.read_raw_json(raw)
+        asked = body.get("id_types") or [ID_CUSIP] * len(body["cusips"])
+        out |= {c for c, t in zip(body["cusips"], asked) if t == id_type(c)}
+    return out
+
+
 def _mapped(as_of: date) -> set[str]:
-    """CUSIPs the map answers for: every 'present' one, and an 'absent' one answered inside the retry window."""
+    """CUSIPs the map answers for: every 'present' one, and an 'absent' one answered inside the retry window when its
+    code was asked with its own id type (a CINS the map asked as ``ID_CUSIP`` is asked again)."""
     if not partition().exists():
         return set()
     floor = as_of - timedelta(days=ABSENT_RETRY_DAYS)
     rows = _query(f"SELECT cusip, status, source_as_of FROM read_parquet({base.sql_path(partition())})")
-    return {c for c, st, on in rows if st == PRESENT or (on is not None and on > floor)}
+    recent = {c for c, st, on in rows if st != PRESENT and on is not None and on > floor}
+    cins = {c for c in recent if id_type(c) == ID_CINS}
+    right = _asked_right(raw_dir().glob("*/batch-*.json.gz")) if cins else set()
+    return {c for c, st, _on in rows if st == PRESENT} | (recent - cins) | (cins & right)
 
 
 def _asked_today(as_of: date) -> set[str]:
     folder = raw_dir() / as_of.isoformat()
     if not folder.is_dir():
         return set()
-    return {c for raw in folder.glob("batch-*.json.gz") for c in base.read_raw_json(raw)["cusips"]}
+    return _asked_right(folder.glob("batch-*.json.gz"))
 
 
 def answer(cusip: str, entry: dict) -> dict | None:
@@ -148,7 +176,8 @@ class OpenFigiMap:
                 ctx.notes.append(f"stopped at {MAX_REQUESTS} requests; {len(todo) - i} CUSIPs left for the next run")
                 break
             chunk = todo[i:i + JOBS_PER_REQUEST]
-            jobs = [{"idType": "ID_CUSIP", "idValue": c, "exchCode": "US"} for c in chunk]
+            types = [id_type(c) for c in chunk]
+            jobs = [{"idType": t, "idValue": c, "exchCode": "US"} for c, t in zip(chunk, types)]
             r = base.http_post(ctx, PROVIDER, url, json=jobs, headers=headers, pacer=pacer)
             sent += 1
             try:
@@ -161,7 +190,7 @@ class OpenFigiMap:
             n += 1
             base.write_raw_json(_meta(raw), {"as_of": as_of.isoformat(), "fetched_at": time.time(),
                                              "run_id": ctx.run_id, "url": url, "jobs": len(chunk)})
-            base.write_raw_json(raw, {"cusips": chunk, "answers": body})
+            base.write_raw_json(raw, {"cusips": chunk, "id_types": types, "answers": body})
         ctx.notes.append(f"{len(todo)} CUSIPs to map, {sent} requests")
         return sorted(folder.glob("batch-*.json.gz")) if folder.is_dir() else []
 

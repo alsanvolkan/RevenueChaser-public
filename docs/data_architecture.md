@@ -1049,7 +1049,7 @@ the old identity tables there are untouched (D5: they are empty since 27 Oct).
 | `wrds/sec_idhist` | monthly, attended | `comp.company`, `comp.security`, `comp.sec_idhist`; between snapshots only the new listed CIKs | `stg_wrds_company`, `stg_wrds_security`, `stg_wrds_idhist` |
 | `wrds/co_hgic` | monthly, attended | `comp.co_hgic` | `stg_wrds_hgic` |
 | `wrds/idxcst_his` | monthly, attended | `comp.idxcst_his` for the S&P 500, 400 and 600 index keys | `stg_wrds_idx` |
-| `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet, under 25 requests a minute | `stg_figi` |
+| `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet (a CINS, a letter first, asked as `ID_CINS`), under 25 requests a minute | `stg_figi` |
 | `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR, Vanguard VOO/IVOO/VIOO, Nasdaq's nasdaq100 list | `stg_fund_lines`, `stg_fund_files` |
 | `spine/security` | daily | none: builds the served tables from the staging tables | the four tables below |
 

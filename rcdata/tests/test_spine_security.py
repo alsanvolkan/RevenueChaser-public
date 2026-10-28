@@ -77,6 +77,7 @@ def test_identifiers_and_gics_of_the_ten_names(built):
     assert _sec("HEI-A")["cusip"] == "422806208" and _sec("HEI")["cusip"] == "422806109"
     etn = _sec("ETN")
     assert etn["cusip"] == "G29183103" and etn["isin"] is None          # a CINS: no US ISIN is derived
+    assert etn["figi"] == "BBG000BJ3PD2"                                # asked as ID_CINS
     assert _sec("NVR")["figi"] is None and _sec("NVR")["cusip"] == "62944T105"
     assert _sec("TM")["sector"] == "Consumer Cyclical"
     assert _sec("WFC-PC")["cusip"] is None
