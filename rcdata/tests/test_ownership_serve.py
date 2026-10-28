@@ -366,10 +366,10 @@ def test_short_interest_joins_the_newest_settled_short_interest_to_each_session(
         ("BRK-B", oct28, oct15, 9_000_000.0, 2.5, 0.25, 3.1, 3_500_000.0),
         ("GME", oct28, None, None, None, 16.0, -12.5, 150_000.0),
         ("MSFT", oct15, oct15, 50_000_000.0, 1.5, None, None, None)]
-    finra_rows = read.short_interest(["brk-b", "MSFT"])
+    finra_rows = read.finra_short_interest(["brk-b", "MSFT"])
     assert [(r["ticker"], r["settlement_date"], r["current_short"]) for r in finra_rows] == [
         ("BRK-B", oct15, 9_000_000), ("MSFT", oct15, 50_000_000)]
-    assert read.short_interest(["MSFT"], end=date(2026, 10, 14)) == []
+    assert read.finra_short_interest(["MSFT"], end=date(2026, 10, 14)) == []
     assert [(r["ticker"], r["available"]) for r in read.shortable(["GME", "AAPL"])] == [("AAPL", 10_000_000),
                                                                                         ("GME", 150_000)]
     assert {r["session_date"] for r in read.shortable()} == {oct28}
@@ -402,6 +402,6 @@ def test_the_read_api_gives_13f_holders_with_a_complete_flag(store, monkeypatch)
 
 
 def test_nothing_built_yet_is_no_rows_from_any_ownership_reader():
-    assert read.holders_13f() == [] and read.periods_13f() == [] and read.short_interest(["MSFT"]) == []
+    assert read.holders_13f() == [] and read.periods_13f() == [] and read.finra_short_interest(["MSFT"]) == []
     assert read.shortable() == [] and read.threshold_list() == [] and read.fails_to_deliver(["MSFT"]) == []
     assert read.insider_transactions(["MSFT"]) == [] and read.beneficial_ownership(["MSFT"]) == []

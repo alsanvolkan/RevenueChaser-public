@@ -2,7 +2,7 @@
 
 Three serving kinds: ``market`` (``market_series``, ``spx_expiry_strike``), since PR 5 the identity ``spine``
 (``universe``, ``identity``, ``membership``) and, since PR 16, ``ownership`` (``holders_13f``, ``periods_13f``,
-``short_interest``, ``shortable``, ``threshold_list``, ``fails_to_deliver``, ``insider_transactions``,
+``finra_short_interest``, ``shortable``, ``threshold_list``, ``fails_to_deliver``, ``insider_transactions``,
 ``beneficial_ownership``).
 
 Every row comes back with its provenance (``session_date``, ``source``, ``fetched_at``, ``source_as_of``, ``run_id``)
@@ -201,9 +201,9 @@ def periods_13f() -> list[dict]:
     return _completed(_rows("sec13f_periods", "SELECT * FROM sec13f_periods ORDER BY period", []))
 
 
-def short_interest(tickers: Iterable[str], start=None, end=None) -> list[dict]:
+def finra_short_interest(tickers: Iterable[str], start=None, end=None) -> list[dict]:
     """FINRA's consolidated short interest of ``tickers`` by settlement date (``start <= settlement_date <= end``),
-    by ticker and date."""
+    by ticker and date: the ``finra_short_interest`` table, not the ``short_interest`` bridge view (review N3)."""
     wanted = _tickers(tickers)
     if not wanted:
         return []

@@ -1198,7 +1198,7 @@ NULL).
 `cik|period`, with the median ratio and the names it rests on).
 
 **Reading it.** `rcdata.read.holders_13f(tickers, periods)`, `periods_13f()` (both with `complete`),
-`short_interest(tickers, start, end)`, `shortable(tickers, session)`, `threshold_list(on)`,
+`finra_short_interest(tickers, start, end)`, `shortable(tickers, session)`, `threshold_list(on)`,
 `fails_to_deliver(tickers, start, end)`, `insider_transactions(tickers, start, end)` and
 `beneficial_ownership(tickers, start, end)` (each with the dataset's last check as `status` and a filing's own as
 `parse_status`).
