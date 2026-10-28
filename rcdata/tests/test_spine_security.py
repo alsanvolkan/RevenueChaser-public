@@ -205,8 +205,9 @@ def test_the_type_comes_from_the_identity_rules():
     assert tier.security_type("SPY", "SPDR", {"security_type": "ETP"})[0] == "etp"
 
 
-def test_periods_and_the_vote():
-    d = [date(2026, 10, i) for i in (1, 2, 3, 4)]
-    assert security.periods({d[0]: True, d[1]: False, d[2]: True, d[3]: True}) == [(d[0], d[1]), (d[2], None)]
-    assert security.is_member(2, 3) and not security.is_member(1, 2) and security.is_member(1, 1)
-    assert not security.is_member(0, 0)
+def test_the_match_of_a_holding_line():
+    by_cusip, tickers = {"31428X106": "FDX"}, {"FDX", "BRK-B", "HEI-A"}
+    squashed = {"FDX": "FDX", "BRKB": "BRK-B", "HEIA": "HEI-A"}
+    assert security.match_holding({"ticker": None, "cusip": "31428X106"}, by_cusip, tickers, squashed) == "FDX"
+    assert security.match_holding({"ticker": "BRKB", "cusip": None}, by_cusip, tickers, squashed) == "BRK-B"
+    assert security.match_holding({"ticker": "NOPE", "cusip": None}, by_cusip, tickers, squashed) is None

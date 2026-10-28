@@ -178,20 +178,6 @@ def sec_history(snapshots: list[dict], fields=("cik", "name", "exchange")) -> li
     return out
 
 
-def periods(days_present: dict[date, bool]) -> list[tuple[date, date | None]]:
-    """``[(valid_from, valid_to)]`` from ``{day: present}`` over the days a source was read (valid_to exclusive)."""
-    out, start = [], None
-    for d in sorted(days_present):
-        if days_present[d] and start is None:
-            start = d
-        elif not days_present[d] and start is not None:
-            out.append((start, d))
-            start = None
-    if start is not None:
-        out.append((start, None))
-    return out
-
-
 # ── The vote of the fund files ────────────────────────────────────────────────────────────────────────────────
 
 def match_holding(line: dict, by_cusip: dict[str, str], sec_tickers: set[str],
@@ -209,31 +195,42 @@ def match_holding(line: dict, by_cusip: dict[str, str], sec_tickers: set[str],
     return squashed.get(t.replace("-", ""))
 
 
-def vote(lines: list[dict], counted: dict[tuple[date, str], set[tuple[str, str]]]) -> dict:
-    """``{(index, ticker): {day: (held, counted)}}`` over the days each index had a counting file.
-
-    ``lines`` carry ``as_of``, ``index_slug``, ``provider``, ``fund`` and the matched ``sec_ticker``; ``counted`` maps
-    ``(day, index)`` to the ``(provider, fund)`` files that count that day.
-    """
-    held: dict[tuple[date, str, str], set[tuple[str, str]]] = defaultdict(set)
-    for ln in lines:
-        f = (ln["provider"], ln["fund"])
-        if ln.get("sec_ticker") and f in counted.get((ln["as_of"], ln["index_slug"]), set()):
-            held[(ln["as_of"], ln["index_slug"], ln["sec_ticker"])].add(f)
-    names_of: dict[str, set[str]] = defaultdict(set)
-    for (_, idx, t) in held:
-        names_of[idx].add(t)
-    out: dict[tuple[str, str], dict[date, tuple[int, int]]] = {}
-    for (day, idx), files in counted.items():
-        if not files:
-            continue
-        for t in names_of[idx]:
-            out.setdefault((idx, t), {})[day] = (len(held.get((day, idx, t), ())), len(files))
-    return out
-
-
-def is_member(held: int, files: int) -> bool:
-    return files > 0 and held * 2 > files
+# The vote, in SQL over the whole fund-file history (it grows by about 6,000 lines a day): ``_fund_map`` names the
+# SEC ticker of each distinct (ticker, CUSIP) a file wrote; a name is a member of an index on a day when more than
+# half of that day's counting files hold it; the periods are the runs of member days ("gaps and islands"), each
+# ending on the index's next day with a counting file, so a day with no counting file is no absence.
+VOTE_SQL = """
+CREATE OR REPLACE TEMP TABLE _fund_days AS
+    SELECT as_of, index_slug, count(*) AS files FROM stg_fund_files WHERE counted GROUP BY ALL;
+CREATE OR REPLACE TEMP TABLE _fund_held AS
+    SELECT l.as_of, l.index_slug, m.sec_ticker AS ticker, count(DISTINCT l.provider || '/' || l.fund) AS held
+    FROM stg_fund_lines l
+    JOIN _fund_map m ON m.tk = coalesce(l.ticker, '') AND m.cu = coalesce(l.cusip, '')
+    JOIN stg_fund_files f ON f.as_of = l.as_of AND f.index_slug = l.index_slug AND f.provider = l.provider
+                         AND f.fund = l.fund AND f.counted
+    WHERE m.sec_ticker IS NOT NULL GROUP BY ALL;
+CREATE OR REPLACE TEMP TABLE _fund_dense AS
+    SELECT d.as_of, d.index_slug, n.ticker, d.files, coalesce(h.held, 0) AS held,
+           coalesce(h.held, 0) * 2 > d.files AS member
+    FROM _fund_days d
+    JOIN (SELECT DISTINCT index_slug, ticker FROM _fund_held) n USING (index_slug)
+    LEFT JOIN _fund_held h ON h.as_of = d.as_of AND h.index_slug = d.index_slug AND h.ticker = n.ticker;
+CREATE OR REPLACE TEMP TABLE _fund_periods AS
+    WITH runs AS (
+        SELECT *, row_number() OVER (PARTITION BY index_slug, ticker ORDER BY as_of)
+                  - row_number() OVER (PARTITION BY index_slug, ticker, member ORDER BY as_of) AS grp
+        FROM _fund_dense),
+    islands AS (
+        SELECT index_slug, ticker, min(as_of) AS valid_from, max(as_of) AS last_day
+        FROM runs WHERE member GROUP BY index_slug, ticker, grp)
+    SELECT i.index_slug, i.ticker, i.valid_from,
+           (SELECT min(d.as_of) FROM _fund_days d WHERE d.index_slug = i.index_slug AND d.as_of > i.last_day)
+               AS valid_to,
+           x.held AS files_held, x.files AS files_counted,
+           (SELECT max(d.as_of) FROM _fund_days d WHERE d.index_slug = i.index_slug) AS source_as_of
+    FROM islands i
+    JOIN _fund_dense x ON x.index_slug = i.index_slug AND x.ticker = i.ticker AND x.as_of = i.last_day;
+"""
 
 
 # ── The build ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -400,37 +397,37 @@ class SpineSecurity:
         for t in sec_tickers:
             k = t.replace("-", "")
             squashed[k] = None if k in squashed and squashed[k] != t else t
-        lines = _rows(con, "SELECT * FROM stg_fund_lines WHERE ticker IS NOT NULL OR cusip IS NOT NULL")
-        counted: dict[tuple[date, str], set[tuple[str, str]]] = defaultdict(set)
         files = _rows(con, "SELECT * FROM stg_fund_files")
-        for f in files:
-            if f["counted"]:
-                counted[(f["as_of"], f["index_slug"])].add((f["provider"], f["fund"]))
         latest = max((f["as_of"] for f in files), default=None)
         for f in files:
             if f["as_of"] == latest and not f["counted"]:
                 found.append(("fund_file_short", f"{f['index_slug']}:{f['provider']}-{f['fund']}",
                               f"{f['lines']} stock lines on {f['as_of']}, under the floor: not counted"))
-        for ln in lines:
-            ln["sec_ticker"] = match_holding(ln, by_cusip, sec_tickers, squashed)
-            if ln["as_of"] == latest and ln["sec_ticker"] is None and \
-                    (ln["provider"], ln["fund"]) in counted.get((latest, ln["index_slug"]), set()):
+        # Match each distinct (ticker, CUSIP) the files wrote once, in Python; the vote runs in SQL (VOTE_SQL).
+        pairs = con.execute("SELECT DISTINCT coalesce(ticker, ''), coalesce(cusip, '') FROM stg_fund_lines "
+                            "WHERE ticker IS NOT NULL OR cusip IS NOT NULL").fetchall()
+        mapping = [{"tk": tk, "cu": cu, "sec_ticker": match_holding({"ticker": tk or None, "cusip": cu or None},
+                                                                    by_cusip, sec_tickers, squashed)}
+                   for tk, cu in pairs]
+        base.rows_table(con, "_fund_map", [("tk", "TEXT"), ("cu", "TEXT"), ("sec_ticker", "TEXT")], mapping)
+        con.execute(VOTE_SQL)
+        if latest is not None:
+            for ln in _rows(con, "SELECT DISTINCT l.index_slug, l.provider, l.fund, l.ticker, l.cusip, l.name "
+                                 "FROM stg_fund_lines l JOIN _fund_map m ON m.tk = coalesce(l.ticker, '') "
+                                 "AND m.cu = coalesce(l.cusip, '') JOIN stg_fund_files f ON f.as_of = l.as_of "
+                                 "AND f.index_slug = l.index_slug AND f.provider = l.provider AND f.fund = l.fund "
+                                 f"AND f.counted WHERE m.sec_ticker IS NULL AND l.as_of = DATE '{latest}'"):
                 found.append(("member_not_in_sec", f"{ln['index_slug']}:{ln.get('ticker') or ln.get('cusip')}",
                               f"{ln['provider']} {ln['fund']} holds {ln.get('name') or '?'}"))
-        out = []
-        voted = vote(lines, counted)
-        for (idx, t), days in sorted(voted.items()):
-            for start, end in periods({d: is_member(*days[d]) for d in days}):
-                held, files = days[max(d for d in days if d >= start and (end is None or d < end))]
-                out.append({"index_slug": idx, "ticker": t, "cik": cik.get(t), "valid_from": start, "valid_to": end,
-                            "source": FUNDS, "files_held": held, "files_counted": files,
-                            "source_as_of": max(days)})
-            if latest in days:
-                held, files = days[latest]
-                if is_member(held, files) and tier.get(t) != "A":
-                    found.append(("member_not_tier_a", f"{idx}:{t}", f"tier {tier.get(t)}"))
-                if 0 < held < files:
-                    found.append(("membership_files_disagree", f"{idx}:{t}", f"held by {held} of {files} files"))
+            for d in _rows(con, f"SELECT index_slug, ticker, held, files, member FROM _fund_dense "
+                                f"WHERE as_of = DATE '{latest}'"):
+                key = f"{d['index_slug']}:{d['ticker']}"
+                if d["member"] and tier.get(d["ticker"]) != "A":
+                    found.append(("member_not_tier_a", key, f"tier {tier.get(d['ticker'])}"))
+                if 0 < d["held"] < d["files"]:
+                    found.append(("membership_files_disagree", key, f"held by {d['held']} of {d['files']} files"))
+        out = [{**m, "cik": cik.get(m["ticker"]), "source": FUNDS}
+               for m in _rows(con, "SELECT * FROM _fund_periods ORDER BY index_slug, ticker, valid_from")]
         slug_of = {v: k for k, v in INDEX_GVKEYX.items()}
         wrds = _rows(con, "SELECT * FROM stg_wrds_idx ORDER BY gvkeyx, gvkey, iid, valid_from")
         for w in wrds:
