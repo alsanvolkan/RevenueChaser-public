@@ -167,16 +167,10 @@ def compute_indicators(df: pd.DataFrame, spy_df: pd.DataFrame | None = None,
     ind["above_52w_low_pct"] = (price / low) if (price and low) else None
     ind["within_52w_high_pct"] = (price / high) if (price and high) else None
 
-    # The breakout's volume (Fable review of Swing, 28 Oct 2026, finding 3): the best session of the last
-    # VOL_WINDOW against the average of the 20 sessions before that window, so a breakout day followed by a quiet
-    # day still confirms and a spike never sits in its own average.
-    from RevenueChaser.module_swing_potential import config
     vol = df["Volume"]
-    window = config.VOL_WINDOW
-    base = vol.iloc[-(window + 20):-window] if len(vol) > window else vol.iloc[0:0]
-    ind["vol_20d"] = _to_float(base.mean()) if len(base) else None
-    best = _to_float(vol.tail(window).max())
-    ind["vol_ratio"] = (best / ind["vol_20d"]) if (best and ind["vol_20d"]) else None
+    ind["vol_20d"] = _to_float(vol.tail(20).mean())
+    last_vol = _to_float(vol.iloc[-1])
+    ind["vol_ratio"] = (last_vol / ind["vol_20d"]) if (last_vol and ind["vol_20d"]) else None
 
     ind["move_max_1_3m"] = _max_move_1_3m(rclose)
     mom_12 = _ret(rclose, 252)

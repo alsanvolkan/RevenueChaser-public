@@ -185,26 +185,15 @@ def _summary_html(s: dict) -> str:
     )
 
 
-def _run_settings(payload: dict) -> swing_settings.Effective:
-    """The thresholds the payload was scored with (Fable review of Swing, 28 Oct 2026, finding 2); a payload from
-    before it kept them falls back to the settings now."""
-    return swing_settings.from_payload(payload.get("settings")) or swing_settings.effective()
-
-
-def _num(x: float) -> str:
-    return f"{x:g}"
-
-
-def _gate_spec(e: swing_settings.Effective | None = None) -> dict:
+def _gate_spec() -> dict:
     """The static gate text, per rule id, once (#384 SW-S2).
 
     Built from the screeners with an empty indicator set: ``label`` / ``threshold`` / ``unit`` are static, only
     ``actual`` / ``passed`` vary per candidate. The report embeds this as ``GATE_SPEC`` so a candidate's ``gates``
-    carries no repeated text. The threshold text follows the settings the payload was scored with (``e``; #384
-    SW-S4), so a saved override is named on the card rather than the default it replaced, and a save after the
-    Fetch does not rename a rule the candidates were picked with.
+    carries no repeated text. The threshold text follows the effective settings (#384 SW-S4), so a saved
+    override is named on the card rather than the default it replaced.
     """
-    e = e or swing_settings.effective()
+    e = swing_settings.effective()
     gates = (evaluate_minervini({}, None, eff=e), evaluate_weinstein({}, eff=e),
              evaluate_qullamaggie({}, eff=e), evaluate_direction({}))
     names = {"minervini": "Minervini Trend", "weinstein": "Weinstein Stage",
@@ -251,10 +240,7 @@ def _render(payload: dict, inline: bool) -> tuple[str, dict | None]:
     funnel_html = funnel_mod.funnel_panel_html(funnel_mod.from_dict(payload.get("funnel_steps")),
                                                panel_id="swing-funnel")
     # The stored payload's scoring version decides the method toggles (#384 SW-S1): a Fetch before v4 has none.
-    version = str(payload.get("selection_version") or "")
-    current_version = version == config.SELECTION_VERSION
-    methods_on = version.isdigit() and int(version) >= 4        # the method toggles exist since v4 (#384 SW-S1)
-    run = _run_settings(payload)
+    current_version = payload.get("selection_version") == config.SELECTION_VERSION
     universe_prov = universe_provenance_html(
         payload.get("universe_generated_at"), payload.get("universe_refreshed_by"),
         partial=bool(payload.get("universe_partial")))
@@ -483,8 +469,8 @@ function start(){
 
     JS = fill(JS, {"__MOD__": script_json(MODULE),
                    "__BOOT__": script_json(boot),
-                   "__GATE_SPEC__": script_json(_gate_spec(run)),
-                   "__METHODS_ON__": script_json(methods_on),
+                   "__GATE_SPEC__": script_json(_gate_spec()),
+                   "__METHODS_ON__": script_json(current_version),
                    "__META__": meta})
 
     help_block = help_html(
@@ -494,7 +480,7 @@ function start(){
         "part of the score. Prices and company data come from <b>Yahoo</b>. <b>Fetch</b> runs the scan "
         "and stores the scores. <b>Refresh</b> shows the last Fetch's stored result with no network "
         "call and no re-scoring.")
-    if methods_on:
+    if current_version:
         methods_controls = (
             '<div class="frow methods" id="method-toggles">'
             '<span class="flbl">Methods</span>'
@@ -502,11 +488,7 @@ function start(){
             '<label><input type="checkbox" data-method="weinstein" onchange="setMethod(this)"> Weinstein</label>'
             '<label><input type="checkbox" data-method="qullamaggie" onchange="setMethod(this)"> Qullamaggie</label>'
             '</div>')
-        notice_html = "" if current_version else (
-            '<div class="notice" id="old-version">'
-            + _html.escape(f"Scored with v{version}; v{config.SELECTION_VERSION} reads Weinstein's volume as the best "
-                           f"of the last {config.VOL_WINDOW} sessions against the 20 before them. Run a Fetch to "
-                           "rescore.") + '</div>')
+        notice_html = ""
     else:
         methods_controls = ""
         notice_html = ('<div class="notice" id="old-version">'
@@ -553,22 +535,22 @@ function start(){
       <table>
         <tr><th>Screener</th><th>Criteria</th><th>Scoring</th></tr>
         <tr><td><b>Minervini Trend</b></td>
-          <td>Price above 150 &amp; 200-day MA · 150&gt;200-day MA · 200-day MA rising · 50&gt;150-day MA · price above 50-day MA · ≥{_num((config.ABOVE_52W_LOW - 1) * 100)}% above 52-week low · within {_num((1 - config.WITHIN_52W_HIGH) * 100)}% of 52-week high · RS rating ≥ {_num(run.rs_min)}</td>
+          <td>Price above 150 &amp; 200-day MA · 150&gt;200-day MA · 200-day MA rising · 50&gt;150-day MA · price above 50-day MA · ≥25% above 52-week low · within 25% of 52-week high · RS rating ≥ 70</td>
           <td>8/8 required</td></tr>
         <tr><td><b>Weinstein Stage</b></td>
-          <td>Price above 30-week MA · 30-week MA rising · overhead breakout (≥{_num(run.breakout_high_pct * 100)}% of 52w high) · volume ≥{_num(run.vol_confirm)}× average on one of the last {config.VOL_WINDOW} sessions (against the 20 before them) · 3-month RS &gt; SPY</td>
+          <td>Price above 30-week MA · 30-week MA rising · overhead breakout (≥98% of 52w high) · volume ≥1.5× average · 3-month RS &gt; SPY</td>
           <td>5/5 required</td></tr>
         <tr><td><b>Qullamaggie</b></td>
-          <td>Preceding move ≥{_num(run.move_min * 100)}% (1–3 mo) · price above 10 &amp; 20-day EMA · 10&gt;20-day EMA · EMAs rising · ADR ≥{_num(run.adr_min * 100)}%</td>
+          <td>Preceding move ≥25% (1–3 mo) · price above 10 &amp; 20-day EMA · 10&gt;20-day EMA · EMAs rising · ADR ≥3%</td>
           <td>5 of 6 required</td></tr>
         <tr><td><b>Quality</b></td>
-          <td>Quality = 40 × Minervini rules passed/8 + 30 × Weinstein/5 + 30 × Qullamaggie/6; momentum ({_num(config.W_12_1)} JT 12-1 : {_num(run.w_prox)} 52-week proximity : {_num(run.w_cons)} consistency, weights over their sum) breaks ties</td>
+          <td>Quality = 40 × Minervini rules passed/8 + 30 × Weinstein/5 + 30 × Qullamaggie/6; momentum (50% JT 12-1 + 25% 52-week proximity + 25% consistency) breaks ties</td>
           <td>0–100; ranks the board</td></tr>
         <tr><td><b>Direction</b></td>
           <td>Direction (required): 50-day MA ≥ 200-day MA and 3-month return ≥ 0</td>
           <td>Every card must pass</td></tr>
         <tr><td><b>Levels</b></td>
-          <td>Entry = current price · Stop = entry − {_num(run.stop_atr)}×ATR({config.ATR_PERIOD}) · Target = entry + {_num(run.target_r)}×risk (R:R {run.target_r:.1f})</td>
+          <td>Entry = current price · Stop = entry − 2×ATR(14) · Target = entry + 2×risk (R:R 2.0)</td>
           <td>Stop/Entry/Target on bar</td></tr>
       </table>
     </div>

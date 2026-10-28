@@ -77,14 +77,13 @@ def test_rank_is_the_one_based_position_in_candidates():
 # config.py fails this test until ``SELECTION_VERSION`` is bumped and this block is updated with it.
 GOLDEN_CONFIG = {
     "MIN_PRICE": 5.0, "MIN_DOLLAR_VOLUME": 250000, "RS_MIN": 70, "ABOVE_52W_LOW": 1.25, "WITHIN_52W_HIGH": 0.75, "VOL_CONFIRM": 1.5,
-    "VOL_WINDOW": 5,
     "BREAKOUT_HIGH_PCT": 0.98, "MOVE_MIN": 0.25, "ADR_MIN": 0.03, "W_12_1": 0.5, "W_PROX": 0.25,
     "W_CONS": 0.25, "CONSISTENCY_LOOKBACK": 126, "STOP_ATR": 2.0, "TARGET_R": 2.0, "ATR_PERIOD": 14,
     "Q_WEIGHTS": {"minervini": 40, "weinstein": 30, "qullamaggie": 30},
     "Q_RULE_TOTALS": {"minervini": 8, "weinstein": 5, "qullamaggie": 6},
 }
-GOLDEN_VERSION = "5"
-GOLDEN_MODEL_VERSION = "5+4e8b18b7"
+GOLDEN_VERSION = "4"
+GOLDEN_MODEL_VERSION = "4+ab881cb0"
 
 
 def test_the_effective_config_is_the_golden_config():

@@ -18,38 +18,28 @@ LABEL = "Swing"
 # A settings override (#384 SW-S4) replaces its key here, so a saved value versions the ledger rows it produced.
 _HASHED = (
     "MIN_PRICE", "MIN_DOLLAR_VOLUME",
-    "RS_MIN", "ABOVE_52W_LOW", "WITHIN_52W_HIGH", "VOL_CONFIRM", "VOL_WINDOW", "BREAKOUT_HIGH_PCT", "MOVE_MIN",
+    "RS_MIN", "ABOVE_52W_LOW", "WITHIN_52W_HIGH", "VOL_CONFIRM", "BREAKOUT_HIGH_PCT", "MOVE_MIN",
     "ADR_MIN", "W_12_1", "W_PROX", "W_CONS", "CONSISTENCY_LOOKBACK", "STOP_ATR", "TARGET_R",
     "ATR_PERIOD", "Q_WEIGHTS", "Q_RULE_TOTALS",
 )
 
 
-def _overrides(payload: dict | None) -> dict:
-    """The overrides a payload was scored with (Fable review of Swing, 28 Oct 2026, finding 2), else the store's now
-    (a payload from before it kept its settings)."""
-    settings = (payload or {}).get("settings")
-    if isinstance(settings, dict) and isinstance(settings.get("overrides"), dict):
-        return settings["overrides"]
-    return swing_settings.stored_overrides()
-
-
-def effective_config(payload: dict | None = None) -> dict:
-    """Config's thresholds with only a user's overrides on top (#384 SW-S4): the payload's, else the store's.
+def effective_config() -> dict:
+    """Config's thresholds with only a user's stored overrides on top (#384 SW-S4).
 
     The overrides are applied to config's own values rather than read as the effective settings, so an
-    unconfigured board hashes exactly config's dict (``5+4e8b18b7``). A store read that fails is
+    unconfigured board hashes exactly the dict it always did (``4+ab881cb0``). A store read that fails is
     no overrides, never an exception: the ledger still names a model.
     """
     cfg = {name: getattr(config, name) for name in _HASHED}
-    for name, value in _overrides(payload).items():
+    for name, value in swing_settings.stored_overrides().items():
         if name in cfg:
             cfg[name] = value
     return cfg
 
 
-def model_version(payload: dict | None = None) -> str:
-    """The ledger's model of a payload (its own settings), or of the store's settings now when none is given."""
-    return ledger.model_version(config.SELECTION_VERSION, effective_config(payload))
+def model_version() -> str:
+    return ledger.model_version(config.SELECTION_VERSION, effective_config())
 
 
 def picks(candidates: list[dict]) -> list[dict]:
@@ -74,6 +64,6 @@ def freeze_payload(payload: dict, *, run_id: str | None = None, now=None) -> led
     each frozen candidate's own last cached bar: a halted name must not carry an old price under D.
     """
     return ledger.freeze_board(
-        SOURCE, LABEL, payload, rows_key="candidates", to_rows=picks, model_version=model_version(payload),
+        SOURCE, LABEL, payload, rows_key="candidates", to_rows=picks, model_version=model_version(),
         run_id=run_id, now=now, anchor=ledger.spy_anchor_problem,
         bar_gaps=ledger.ohlc_gaps)

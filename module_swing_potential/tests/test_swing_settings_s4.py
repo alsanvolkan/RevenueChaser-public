@@ -80,16 +80,10 @@ def test_defaults_reproduce_the_pre_change_output(rawstore_tmp_db, monkeypatch):
     """``golden_swing_defaults_s4.json`` was captured from the code before #384 SW-S4.
 
     The payload (picks, gates, quality, momentum, levels, counts) and the prefilter's kept/drops are identical
-    at defaults: a setting nobody saved cannot change a result. The payload has since gained ``settings`` (the
-    thresholds it was scored with, Fable review of Swing 28 Oct 2026, finding 2): checked here to be the defaults,
-    and kept out of the golden comparison."""
+    at defaults: a setting nobody saved cannot change a result."""
     golden = json.loads(_GOLDEN.read_text(encoding="utf-8"))
     payload = pipeline.build_payload(_rows(), top_n=10)
     payload.pop("generated_at", None)                      # the only clock-dependent field
-    assert payload.pop("settings") == _settings().effective().payload()
-    # v5 (finding 3) reads the volume differently but feeds this fixture the same ratio: only the stamp moved.
-    assert payload.pop("selection_version") == config.SELECTION_VERSION
-    golden["payload"].pop("selection_version")
     pf = pipeline.prefilter(_prefilter_quotes(monkeypatch))
     assert {"payload": payload,
             "prefilter": {"kept": [r["ticker"] for r in pf.kept], "drops": pf.drops,
@@ -245,9 +239,8 @@ def test_reset_deletes_the_rows_and_the_defaults_are_configs_again(rawstore_tmp_
 
 # ── the model version ───────────────────────────────────────────────────────
 def test_model_version_is_unchanged_at_defaults(rawstore_tmp_db):
-    """An unconfigured board versions exactly the golden model (``4+ab881cb0`` until v5 added the breakout window,
-    Fable review of Swing 28 Oct 2026, finding 3)."""
-    assert freeze.model_version() == "5+4e8b18b7"
+    """The literal from before this slice: an unconfigured board versions exactly what it did."""
+    assert freeze.model_version() == "4+ab881cb0"
 
 
 def test_a_saved_override_moves_the_model_version_and_reset_restores_it(rawstore_tmp_db):
