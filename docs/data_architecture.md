@@ -1022,6 +1022,70 @@ copied and verified by row count and `sum(hash(row))` per table before its renam
 `.manifest.json`, the newest 5 kept per kind. Then the raw files of the last 35 days go to `RC_MARKET_RAW_COPY_DIR`
 (rsync-like) when they total under 20 GB; over that, or with no folder set, a warning and no copy.
 
+### The identity spine (`spine.duckdb`, PR 5)
+
+The second serving kind: who each SEC-file security is, its tier, CIK-CUSIP link, FIGI, GICS and index membership.
+Built by the same builder, swapped the same way, read only through `rcdata.read`. Nothing here writes `raw.duckdb`;
+the old identity tables there are untouched (D5: they are empty since 27 Oct).
+
+| Dataset | Cadence | Source | Stages |
+|---|---|---|---|
+| `sec/company_tickers_exchange` | weekly | `www.sec.gov/files/company_tickers_exchange.json`, `If-Modified-Since` from the last copy (a 304 writes nothing) | `stg_sec`, `stg_sec_all` |
+| `wrds/sec_idhist` | monthly, attended | `comp.company`, `comp.security`, `comp.sec_idhist`; between snapshots only the new listed CIKs | `stg_wrds_company`, `stg_wrds_security`, `stg_wrds_idhist` |
+| `wrds/co_hgic` | monthly, attended | `comp.co_hgic` | `stg_wrds_hgic` |
+| `wrds/idxcst_his` | monthly, attended | `comp.idxcst_his` for the S&P 500, 400 and 600 index keys | `stg_wrds_idx` |
+| `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet, under 25 requests a minute | `stg_figi` |
+| `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR, Vanguard VOO/IVOO/VIOO, Nasdaq's nasdaq100 list | `stg_fund_lines`, `stg_fund_files` |
+| `spine/security` | daily | none: builds the served tables from the staging tables | the four tables below |
+
+The sources load their Parquet into TEMP tables of the build connection (never stored in the file); the kind's
+datasets build in `DATASETS` order, so `spine/security` builds last. Raw and Parquet follow the market store's
+rules (`raw/<source>/<dataset>/...`, `parquet/<source>/<dataset>/...`; a raw file that exists is the resume marker).
+
+**Attended (WRDS).** The three WRDS datasets need a person: the login is `WRDS_USERNAME` with the password in that
+user's `~/.pgpass`, then a Duo push. They are never due, a request a page or the schedule queued is skipped (`skipped:
+attended ...`), the route answers 409, and the CLI runs them: `python -m RevenueChaser.rcdata.build backfill
+wrds/sec_idhist wrds/co_hgic wrds/idxcst_his openfigi/map` opens one WRDS connection for the whole process. A failed
+login fails the run and keeps the last snapshot served. The `wrds` package is imported only then (a server
+dependency, not in `requirements.txt`).
+
+**Served tables** (`spine` serving schema version `1`). Periods are `valid_from` inclusive, `valid_to` exclusive
+(Compustat's inclusive ends are moved one day on), `valid_to` NULL while current.
+
+| Table | Rows |
+|---|---|
+| `security` | one per ticker of the newest SEC file: CIK, name, exchange, `tier` and `tier_rule`, `security_type` and its source, the Compustat link (`gvkey`, `iid`, `link_source`), `cusip`, `isin` (derived), the FIGI fields, the current GICS codes, the bridge `sector` / `industry`, each with its source, and the SEC file's provenance |
+| `security_history` | the SEC file's `cik`, `name`, `exchange` per ticker over the stored snapshots; Compustat's identifier history of the linked securities |
+| `gics_history` | Compustat's GICS periods of the linked companies |
+| `index_membership` | the fund-file members (source `funds/index_holdings`) and Compustat's constituents (source `wrds/idxcst_his`, the check) |
+
+**Tier rule v1** (`rcdata/build/spine/tier.py`): A = listed on Nasdaq, NYSE or Cboe and not an excluded type
+(`core.identity.types.EXCLUDED_TYPES`; an untyped name stays); B = listed, excluded type; C = OTC; D = no exchange.
+The type comes from `core.identity.types.classify_type` over OpenFIGI's types and the name (no SEC submissions).
+
+**The link.** CIK -> Compustat companies -> the security whose `tic` is the SEC ticker (`BRK.B` -> `BRK-B`), else
+the only active US security of a CIK with one SEC ticker; otherwise no link and no CUSIP.
+
+**Membership** (working choice): a fund file counts on a day when it parsed and holds at least its index's floor;
+a name is a member when more than half of the counting files hold it, matched to the SEC file by CUSIP, then by
+ticker, then by the ticker without its class dash.
+
+**Build issues** live in `ops.sqlite` `build_issues` (D6), dataset `spine/security`, synced after each swap
+(`ops.sync_issues`: found again stays open, gone is resolved). Kinds: `source_never_run`, `tier_a_no_wrds_link`,
+`tier_a_no_cusip`, `tier_a_no_figi`, `tier_a_no_gics`, `figi_ticker_differs`, `cusip_shared`, `cik_many_gvkeys`,
+`fund_file_short`, `member_not_in_sec`, `member_not_tier_a`, `membership_files_disagree`, `membership_wrds_differs`.
+A rule needing a source that has never run is not applied; that source is one `source_never_run` row.
+
+**The bridge (D4).** Views in `spine.duckdb` under the old names, with the old columns in the old order:
+`equity_universe` (the listed rows, Tier A and B), `security_master`, `index_constituents` (current fund-file
+members, plus `nasdaq` = listed on Nasdaq; no `dow`) and `index_tickers`. Market cap, price, quote and SIC are
+NULL: the spine holds no market data.
+
+**Reading it.** `rcdata.read.universe(tiers=("A",))`, `rcdata.read.identity(tickers)`,
+`rcdata.read.membership(index, on, source)`. `core/universe.py` reads them when `RC_UNIVERSE_SOURCE=spine`
+(market cap, price and quote still from the old `equity_universe` by ticker); the default stays the old store
+until PR 6.
+
 ## Migration
 Two separate things, deliberately not conflated:
 
