@@ -1140,7 +1140,7 @@ name, and the earnings set of the evening. Built by the same builder, swapped th
 
 | Table | Key | Holds |
 |---|---|---|
-| `option_eod` | session date, option symbol | The chain at the close: every contract of SPX and the list names, its quotes, IV, greeks, open interest and its change, volume by side, charm and vanna; the last 30 sessions (the Parquet keeps every one) |
+| `option_eod` | session date, option symbol | The chain at the close: every contract of SPX and the list names, its quotes, IV, greeks, open interest and its change, volume by side, charm and vanna; the last 30 sessions (the Parquet keeps every one). `cross_volume` is a spec field UW has not sent yet (NULL on all 19,774 rows of the first real run, 2026-10-28) |
 | `option_strike` | session date, ticker, set, strike | Spot exposures by strike (the four greeks for calls and puts by OI, volume, bid and ask) and the greek exposure by strike |
 | `option_expiry` | session date, ticker, set, expiry | Contracts, open interest and volume per expiry, greek exposure by expiry, the day's flow per expiry, the IV term structure |
 | `option_daily` | session date, ticker | The GEX levels, the day's option volume and premium, IV rank, and the chain's size |

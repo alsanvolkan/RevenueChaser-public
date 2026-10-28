@@ -35,7 +35,8 @@ PROVENANCE = [("source", "TEXT"), ("source_as_of", "DATE"), ("fetched_at", "DOUB
               ("observed", "BOOLEAN")]
 
 # ── The UW fields each table keeps, under UW's own names (docs/openapi.yaml) ──
-# /stock/{t}/option-contracts: one row per contract.
+# /stock/{t}/option-contracts: one row per contract. ``cross_volume`` is in the spec ("Option Contract Cross Volume")
+# but UW sent no value on any of the 19,774 contracts of the first real run (2026-10-28); kept, NULL, until it does.
 CONTRACT_DOUBLES = ("nbbo_bid", "nbbo_ask", "last_price", "high_price", "low_price", "avg_price", "total_premium",
                     "implied_volatility", "delta", "gamma", "theta", "vega", "rho")
 CONTRACT_COUNTS = ("open_interest", "prev_oi", "volume", "ask_volume", "bid_volume", "mid_volume", "no_side_volume",
