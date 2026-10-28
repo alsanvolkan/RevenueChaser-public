@@ -123,3 +123,21 @@ def test_an_untyped_spine_name_takes_the_old_masters_type(monkeypatch):
         {**r, "security_type": "unknown"} if r["ticker"] == "VYLR" else r for r in real(tickers)])
     assert "VYLR" in universe.excluded_tickers()
     assert "VYLR" not in universe.classification_universe(0)
+
+
+@pytest.mark.usefixtures("spine")
+def test_the_masters_specific_type_wins_over_a_tpci_guess(monkeypatch):
+    """Delta S4: tpci (fix 6) types NVR "common"; the identity master knows better (here: a closed-end fund), so the
+    master's type that is not "common" wins over a type whose only source is tpci. OpenFIGI's type still wins."""
+    from RevenueChaser.rcdata import read
+    real = read.identity
+    monkeypatch.setattr(read, "identity", lambda tickers=None: [
+        {**r, "security_type": "common", "type_source": "compustat_tpci(0)"} if r["ticker"] in ("NVR", "FDX")
+        else r for r in real(tickers)])
+    rawstore.write_rows("security_master", [{"ticker": "NVR", "security_type": "cef"},
+                                            {"ticker": "FDX", "security_type": "common"},
+                                            {"ticker": "MSFT", "security_type": "etp"}])
+    excluded = universe.excluded_tickers()
+    assert "NVR" in excluded                               # the master's cef over the tpci guess
+    assert "FDX" not in excluded                           # the master's common changes nothing
+    assert "MSFT" not in excluded                          # OpenFIGI's type is not overruled by the master

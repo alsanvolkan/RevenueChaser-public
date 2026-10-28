@@ -133,14 +133,20 @@ def _security_types() -> dict[str, str]:
     """
     if _spine():
         from ..rcdata import read
-        spine = {r["ticker"]: r["security_type"] for r in read.identity() if r.get("ticker")}
+        rows = [r for r in read.identity() if r.get("ticker")]
+        spine = {r["ticker"]: r["security_type"] for r in rows}
         # A spine name left untyped (no OpenFIGI answer, no Compustat link) takes the identity master's type, so the
-        # flag does not let through an ETF the old path excluded (review should-fix 6).
-        untyped = [t for t, ty in spine.items() if ty in (None, "unknown", "other")]
-        if untyped:
+        # flag does not let through an ETF the old path excluded (review should-fix 6). A type whose only source is
+        # Compustat's tpci is a guess: the master's type wins over it unless the master says "common" (delta S4).
+        weak = [r["ticker"] for r in rows if r["security_type"] in (None, "unknown", "other")
+                or str(r.get("type_source") or "").startswith("compustat_tpci")]
+        if weak:
             master = {r["ticker"]: r["security_type"] for r in rawstore.query(
                 "SELECT ticker, security_type FROM security_master") if r.get("security_type")}
-            spine.update({t: master[t] for t in untyped if t in master})
+            for t in weak:
+                m = master.get(t)
+                if m and (spine[t] in (None, "unknown", "other") or m != "common"):
+                    spine[t] = m
         return spine
     rows = rawstore.query("SELECT ticker, security_type FROM security_master")
     return {r["ticker"]: r["security_type"] for r in rows if r.get("ticker")}
