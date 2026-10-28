@@ -59,6 +59,13 @@ PROVIDERS: dict[str, Provider] = {
         signup_url="https://platform.deepseek.com/api_keys",
         required_for="Relatedness profile extraction and theme naming (optional; off-peak UTC only — see core/offpeak.py)",
     ),
+    "alphavantage": Provider(
+        slug="alphavantage",
+        label="Alpha Vantage",
+        env_var="ALPHAVANTAGE_API_KEY",
+        signup_url="https://www.alphavantage.co/support/#api-key",
+        required_for="the fundamentals layer's earnings calendar (optional; the SEC 8-K item 2.02 still dates reports)",
+    ),
     "claude_subscription": Provider(
         slug="claude_subscription",
         label="Claude subscription",

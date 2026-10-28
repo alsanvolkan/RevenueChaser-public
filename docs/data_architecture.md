@@ -923,8 +923,9 @@ renders at once with what is stored.
 | `RC_MARKET_RAW_DIR` | `MARKET_RAW_DIR` | `raw/<source>/<dataset>/...` and `parquet/<source>/<dataset>/<partition>/` (the HDD) |
 | `RC_MARKET_RAW_COPY_DIR` | `MARKET_RAW_COPY_DIR` | Where the backup copies the newest raw days; empty = off |
 
-**Files.** Serving kinds: `market`, `spine`. Each kind is one file, `<MARKET_DIR>/<kind>.duckdb`. The identity
-spine, `spine` (serving schema version `1`), is described under "The identity spine" below. The market data,
+**Files.** Serving kinds: `market`, `spine`, `fundamentals`. Each kind is one file, `<MARKET_DIR>/<kind>.duckdb`. The
+identity spine, `spine` (serving schema version `1`), is described under "The identity spine" below, and the
+fundamentals layer, `fundamentals` (serving schema version `1`), under "Fundamentals" after it. The market data,
 `market` (serving schema version `1`): `serving_schema_version` (one row: kind, version, build time, build id),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
 `source`, `source_as_of`, `fetched_at`, `run_id`, `observed`) and `market_series` (key series id, observation date,
@@ -986,7 +987,8 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 
 **Day caps** (`rcdata/caps.py`, avo's numbers, to be tuned): uw 150,000, sec 40,000, fred 10,000, alpaca 20,000;
 the spine's (PR 5, working numbers avo has not set): wrds 50 (queries), openfigi 1,000 (requests), ssga 50,
-ishares 50, vanguard 50, nasdaq 50, invesco 50 (one request per fund file);
+ishares 50, vanguard 50, nasdaq 50, invesco 50 (one request per fund file); the fundamentals layer's (PR 12,
+working numbers): alphavantage 25 (its free tier), yfinance 2,000 (one request per ticker);
 a dataset whose providers have all reached their cap for the New York day gets a `skipped` check row and sends
 nothing; inside a run every call checks its provider's cap first (one capped provider, FRED among the market series,
 is a source failure and the others go on), and the counter is written every 25 calls, at the end, and on SIGTERM (systemd's stop, turned into a clean exit) or Ctrl-C; a keyless call is counted when it is sent, a UW call when its answer arrives (the UW client's observer), so a UW request cut off by a stop is not counted. Only the
