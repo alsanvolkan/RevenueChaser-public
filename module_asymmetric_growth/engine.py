@@ -951,7 +951,7 @@ def stored_result() -> dict:
               "universe_refreshed_by": None, "universe_partial": False, "funnel_steps": None, "summary": {},
               "cards": cards, "thresholds": THRESHOLDS}
     if not cards:
-        stored = bool(rawstore.query("SELECT 1 FROM equity_universe LIMIT 1"))
+        stored = _spine.has_universe()        # the universe the boards read (Opus review M1), not the old table
         reason = "no_scan_stored" if stored else "no_universe_stored"
         result.update(universe_total=0, no_data_reason=reason, no_data_message=no_data_message(reason))
         return result

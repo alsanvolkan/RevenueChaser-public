@@ -302,6 +302,16 @@ def load_universe_meta() -> dict:
             "refreshed_by": row.get("refreshed_by") or ""}
 
 
+def has_universe() -> bool:
+    """Whether the universe the boards read holds any name: the spine's listed names (Tier A/B) on the spine, else a
+    row of the old ``equity_universe``. Opus review M1 (PR 6): the "Loading universe…" gate and AG's no-card Refresh
+    asked the old table directly, which is empty under the spine."""
+    if _spine():
+        from ..rcdata import read
+        return bool(read.universe(tiers=("A", "B")))
+    return bool(rawstore.query(f"SELECT 1 FROM {_UNIVERSE_TABLE} LIMIT 1"))
+
+
 def load_cached_universe() -> list[dict]:
     rows = _spine_universe() if _spine() else rawstore.query("SELECT * FROM equity_universe")
     out = []
