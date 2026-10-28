@@ -14,16 +14,21 @@ from RevenueChaser.rcdata.build.spine import wrds
 
 STUB = '''
 import datetime, json, os, pandas as pd
-LOG = os.environ["STUB_LOG"]
+LOG = os.environ["RC_WRDS_STUB_LOG"]
 
 class Connection:
     def __init__(self, wrds_username=None):
+        print("Loading library list...", flush=True)       # what the real wrds.Connection prints on stdout
         with open(LOG, "a") as fh:
-            fh.write(json.dumps({"login": wrds_username}) + "\\n")
+            fh.write(json.dumps({"login": wrds_username, "figi_key": "OPENFIGI_API_KEY" in os.environ}) + "\\n")
         if wrds_username == "refused":
-            raise RuntimeError("PAM authentication failed")
+            raise RuntimeError("PAM authentication failed for user refused at wrds-pgdata.wharton.upenn.edu")
+        if wrds_username == "asks":
+            input("Enter your WRDS username: ")             # a prompt: there is no person on this stdin
+        print("Done", flush=True)
 
     def raw_sql(self, sql, chunksize=None, return_iter=False):
+        print("running", sql, flush=True)
         if "boom" in sql:
             raise ValueError("relation comp.boom does not exist")
         frames = [pd.DataFrame({"GVKEY": ["001", "002"], "efffrom": [pd.Timestamp("2020-01-02"), pd.NaT],
@@ -44,8 +49,10 @@ def stub(tmp_path, monkeypatch):
     (pkg / "__init__.py").write_text(STUB, encoding="utf-8")
     log = tmp_path / "logins.jsonl"
     monkeypatch.setenv("PYTHONPATH", str(tmp_path / "stub"))
-    monkeypatch.setenv("STUB_LOG", str(log))
+    monkeypatch.setenv("RC_WRDS_STUB_LOG", str(log))
     monkeypatch.setenv(wrds.PYTHON_ENV, sys.executable)
+    monkeypatch.setenv("RC_WRDS_NO_TTY", "1")              # a developer's terminal must never become the prompt
+    monkeypatch.setenv("OPENFIGI_API_KEY", "must-not-reach-the-worker")
     return tmp_path, log
 
 
@@ -71,7 +78,7 @@ def test_one_login_for_several_queries_and_chunks_streamed_whole(stub, monkeypat
                          {"gvkey": "002", "efffrom": None, "exchg": None},
                          {"gvkey": "003", "efffrom": "2021-03-04", "exchg": "14"}]
     assert not (tmp / "c.jsonl.gz").exists() and not list(tmp.glob("*.tmp"))
-    assert log.read_text().splitlines() == ['{"login": "avo"}']
+    assert log.read_text().splitlines() == ['{"login": "avo", "figi_key": false}']   # one login, no foreign keys
     import duckdb
     rows = duckdb.connect().execute(wrds.raw_rows(a, [("gvkey", "TEXT"), ("efffrom", "DATE"),
                                                       ("exchg", "INTEGER")])).fetchall()
@@ -83,13 +90,47 @@ def test_a_failed_login_is_answered_and_the_worker_ends(stub, monkeypatch):
     monkeypatch.setenv("WRDS_USERNAME", "refused")
     w = wrds.Worker()
     try:
-        with pytest.raises(wrds.LoginFailed, match="PAM authentication failed"):
+        with pytest.raises(wrds.LoginFailed, match="PAM authentication failed") as e:
             w.query("SELECT 1", tmp / "a.jsonl.gz")
         with pytest.raises(wrds.LoginFailed, match="gone|ended"):
             w.query("SELECT 1", tmp / "b.jsonl.gz")
     finally:
         w.close()
     assert w.proc.returncode == 2
+    assert "wharton" not in str(e.value) and "refused" not in str(e.value).split(":", 1)[1]   # no user, no host
+
+
+def test_a_prompt_with_no_person_is_a_failed_login_not_a_hang(stub, monkeypatch):
+    tmp, _ = stub
+    monkeypatch.setenv("WRDS_USERNAME", "asks")
+    w = wrds.Worker()
+    try:
+        with pytest.raises(wrds.LoginFailed, match="EOFError"):
+            w.query("SELECT 1", tmp / "a.jsonl.gz")
+    finally:
+        w.close()
+
+
+def test_a_line_out_of_protocol_kills_the_worker_and_is_a_failed_login(stub, monkeypatch, tmp_path):
+    """Whatever reaches the protocol pipe that is not an answer ends the worker: never read past it."""
+    monkeypatch.setenv("WRDS_USERNAME", "avo")
+    w = wrds.Worker()
+    import io
+    w.proc.stdout = io.StringIO("Loading library list...\n{\"ok\": true, \"rows\": 1}\n")
+    try:
+        with pytest.raises(wrds.LoginFailed, match="out of protocol"):
+            w.query("SELECT 1", tmp_path / "a.jsonl.gz")
+        with pytest.raises(wrds.LoginFailed):
+            w.query("SELECT 1", tmp_path / "b.jsonl.gz")
+    finally:
+        w.close()
+
+
+def test_no_user_name_is_a_failed_login_before_the_worker_starts(monkeypatch):
+    monkeypatch.delenv("WRDS_USERNAME", raising=False)
+    monkeypatch.setenv(wrds.PYTHON_ENV, sys.executable)
+    with pytest.raises(wrds.LoginFailed, match="WRDS_USERNAME"):
+        wrds.Worker()
 
 
 def test_the_worker_does_not_import_the_revenuechaser_package():

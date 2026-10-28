@@ -9,10 +9,12 @@ builder's Python 3.14). The builder (``spine/wrds.py``) starts this file once pe
     answer    {"ok": true, "rows": <n>}
               {"ok": false, "login": true|false, "error": "<type: message>"}
 
-The first request opens the one WRDS connection (``wrds.Connection``; the user from ``WRDS_USERNAME`` when set, the
-password from that user's ``~/.pgpass``; WRDS may ask for a Duo push, which the person confirms). A failed login is
+The first request opens the one WRDS connection (``wrds.Connection``; the user from ``WRDS_USERNAME``, which picks
+the line of that user's ``~/.pgpass``; WRDS may ask for a Duo push, which the person confirms). A failed login is
 answered with ``login: true`` and the worker exits; a failed query is answered and the worker waits for the next.
-End of stdin closes the connection.
+End of stdin closes the connection. ``wrds`` prints to stdout and may prompt with ``input()``: the protocol runs on
+private copies of the original stdin and stdout, stdout itself goes to stderr, and stdin is the terminal or
+``/dev/null`` (``_isolate_streams``). An error sent back is capped and carries no user or host name.
 
 Each answer is streamed in chunks (``raw_sql(..., chunksize=CHUNK, return_iter=True)`` where the installed ``wrds``
 has them, else one frame) to gzip JSON lines, every value a string or null (dates as ``YYYY-MM-DD``, whole floats
@@ -25,6 +27,7 @@ import gzip
 import json
 import math
 import os
+import re
 import sys
 from datetime import date, datetime
 
@@ -76,20 +79,58 @@ def _write(con, sql: str, out: str) -> int:
     return rows
 
 
+_PROTO = None                      # the protocol pipe (a copy of the original stdout), set by main()
+_HOST = re.compile(r"[\w.-]+\.(?:upenn\.edu|wrds\.\w+)", re.I)
+
+
 def _say(answer: dict) -> None:
-    sys.stdout.write(json.dumps(answer) + "\n")
+    _PROTO.write(json.dumps(answer) + "\n")
+    _PROTO.flush()
+
+
+def _error(e: BaseException) -> str:
+    """A driver error for the answer: capped, without the user name or a host name."""
+    text = f"{type(e).__name__}: {e}"[:300]
+    user = (os.getenv("WRDS_USERNAME") or "").strip()
+    if user:
+        text = text.replace(user, "<user>")
+    return _HOST.sub("<host>", text)
+
+
+def _isolate_streams():
+    """Keep ``wrds`` off the protocol: it prints ("Loading library list...", "Done") and may ``input()`` a prompt.
+
+    The protocol keeps private copies of fds 0 and 1; fd 1 becomes stderr (whatever ``wrds`` prints reaches the person
+    at the terminal, never the builder's parser) and fd 0 becomes the terminal when there is one, else ``/dev/null``
+    (a prompt with no person is an EOFError, a failed login, never a hang). ``RC_WRDS_NO_TTY=1`` forces ``/dev/null``.
+    """
+    proto_in = os.fdopen(os.dup(0), "r", encoding="utf-8")
+    proto_out = os.fdopen(os.dup(1), "w", encoding="utf-8")
     sys.stdout.flush()
+    os.dup2(2, 1)
+    tty = None
+    if (os.getenv("RC_WRDS_NO_TTY") or "").strip() != "1":
+        try:
+            tty = os.open("/dev/tty", os.O_RDWR)
+        except OSError:
+            tty = None
+    fd = tty if tty is not None else os.open(os.devnull, os.O_RDONLY)
+    os.dup2(fd, 0)
+    os.close(fd)
+    sys.stdin = open(0, "r", encoding="utf-8", closefd=False)
+    return proto_in, proto_out
 
 
 def _connect():
     import wrds  # noqa: PLC0415 - only here: the import itself is part of the login
-    user = (os.getenv("WRDS_USERNAME") or "").strip()
-    return wrds.Connection(wrds_username=user) if user else wrds.Connection()
+    return wrds.Connection(wrds_username=(os.getenv("WRDS_USERNAME") or "").strip())
 
 
 def main() -> int:
+    global _PROTO
+    proto_in, _PROTO = _isolate_streams()
     con = None
-    for line in sys.stdin:
+    for line in proto_in:
         if not line.strip():
             continue
         req = json.loads(line)
@@ -97,12 +138,12 @@ def main() -> int:
             try:
                 con = _connect()
             except BaseException as e:  # noqa: BLE001 - every login failure ends the worker the same way
-                _say({"ok": False, "login": True, "error": f"{type(e).__name__}: {str(e)[:300]}"})
+                _say({"ok": False, "login": True, "error": _error(e)})
                 return 2
         try:
             _say({"ok": True, "rows": _write(con, req["sql"], req["out"])})
         except Exception as e:  # noqa: BLE001 - a failed query is answered; the connection stays
-            _say({"ok": False, "login": False, "error": f"{type(e).__name__}: {str(e)[:300]}"})
+            _say({"ok": False, "login": False, "error": _error(e)})
     if con is not None:
         try:
             con.close()

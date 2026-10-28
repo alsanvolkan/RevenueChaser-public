@@ -12,10 +12,12 @@ process, started
 on the first query (``session``): one connection, at most one Duo push, for every WRDS dataset of one CLI call. The
 login is that venv's ``wrds.Connection`` (the user from ``WRDS_USERNAME`` when set; the password from that user's
 ``~/.pgpass``). The three datasets are ``attended``: never due, and run only from the CLI (``python -m
-RevenueChaser.rcdata.build backfill wrds/sec_idhist wrds/co_hgic wrds/idxcst_his``). A failed login, or a worker that
-cannot start (no interpreter at ``RC_WRDS_PYTHON``), is a failed run: the last Parquet snapshot stays served and
-nothing retries (the memory rule: ask avo). The worker streams each answer in chunks to the raw file, and the
-builder types it in DuckDB, so no table is held whole in memory on either side.
+RevenueChaser.rcdata.build backfill wrds/sec_idhist wrds/co_hgic wrds/idxcst_his``). ``WRDS_USERNAME`` is required:
+it picks the line of the user's ``~/.pgpass``. A failed login, a worker that cannot start (no interpreter at
+``RC_WRDS_PYTHON``), or a worker that answers out of protocol is a failed run: the last Parquet snapshot stays served
+and nothing retries (the memory rule: ask avo). The worker asks ``wrds`` for chunks and writes each answer as it
+comes, and the builder types the raw file in DuckDB; whether the installed ``wrds`` really streams (rather than
+reading the whole answer before the first chunk) is not verified, so watch ``free -h`` during the first run.
 
 **What is asked.** A full snapshot once a month: every row of the tables above (``comp.idxcst_his`` only for the
 index keys in ``INDEX_GVKEYX``). Between snapshots, a run asks only the new names: the CIKs of the newest SEC file's
@@ -110,13 +112,26 @@ class Worker:
         if not Path(python).exists():
             raise LoginFailed(f"no WRDS interpreter at {python}: set {PYTHON_ENV} to the python of the venv that "
                               "has wrds")
+        if not (os.getenv(USER_ENV) or "").strip():
+            raise LoginFailed(f"no WRDS user: set {USER_ENV} (it picks the ~/.pgpass line; the password stays there)")
+        self.dead = False
         try:
             self.proc = subprocess.Popen([python, "-P", str(WORKER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                         text=True, encoding="utf-8")
+                                         text=True, encoding="utf-8", env=worker_env())
         except OSError as e:
             raise LoginFailed(f"the WRDS worker did not start: {type(e).__name__}: {e}") from e
 
+    def _kill(self, why: str) -> LoginFailed:
+        self.dead = True
+        try:
+            self.proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+        return LoginFailed(why)
+
     def query(self, sql: str, out: Path) -> int:
+        if self.dead:
+            raise LoginFailed("the WRDS worker was stopped after an answer out of protocol")
         try:
             self.proc.stdin.write(json.dumps({"sql": sql, "out": str(out)}) + "\n")
             self.proc.stdin.flush()
@@ -125,7 +140,13 @@ class Worker:
             raise LoginFailed(f"the WRDS worker is gone: {type(e).__name__}") from e
         if not line:
             raise LoginFailed(f"the WRDS worker ended (exit {self.proc.poll()}) without an answer")
-        answer = json.loads(line)
+        try:
+            answer = json.loads(line)
+            if not isinstance(answer, dict):
+                raise ValueError("not an object")
+        except ValueError:
+            # Never read past a line that is not an answer: the next one could belong to another query.
+            raise self._kill(f"the WRDS worker answered out of protocol ({line.strip()[:60]!r}); it was stopped")
         if answer.get("ok"):
             return int(answer["rows"])
         if answer.get("login"):
@@ -135,9 +156,23 @@ class Worker:
     def close(self) -> None:
         try:
             self.proc.stdin.close()
+        except OSError:                                  # the worker is already gone: nothing to flush
+            pass
+        try:
             self.proc.wait(timeout=60)
         except Exception:  # noqa: BLE001 - a worker that will not stop is killed
             self.proc.kill()
+            self.proc.wait()
+
+
+# What the worker's environment keeps: the process basics, the WRDS user, PostgreSQL's own variables, the worker's own
+# RC_WRDS_* switches and PYTHONPATH. No other key of the builder (OpenFIGI, DeepSeek, ...) reaches a third-party venv.
+_WORKER_ENV = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "TZ", "TMPDIR", "PYTHONPATH", USER_ENV)
+
+
+def worker_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items()
+            if k in _WORKER_ENV or k.startswith(("PG", "LC_", "RC_WRDS_"))}
 
 
 _factory: Callable[[], Any] = Worker            # the seam the tests replace
