@@ -15,7 +15,7 @@ filing is active for a period (the amendment walk) are decided where the totals 
 **Value.** Filings made before 2023-01-03 report ``value`` in thousands of dollars, later ones in dollars (the SEC's
 rule change of that day); ``value_usd`` is the value in dollars (``value_scale`` 1,000 or 1). A filer that still
 reports thousands after the change is not detected here but where the totals are built (``ownership/serve``,
-private #208).
+alsanvolkan/RevenueChaser#208).
 
 Keys: a filing by ``accession``; its rows by ``(cik, period)`` (the report period, quarter end) and ``filed`` (the
 filed date), so a quarter's holdings and its amendments stay apart. Parquet: ``parquet/sec/13f/filings/day=<index
