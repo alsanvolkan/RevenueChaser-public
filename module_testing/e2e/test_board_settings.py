@@ -415,9 +415,7 @@ class TestAutomationsPanel:
         d = dashboard.get("/api/automations").json()
         assert d["ok"] and d["available"]
         assert [r["name"] for r in d["rows"]] == [e.name for e in automations.REGISTRY]
-        # A retired row (PR 5) that is not installed reads "retired".
-        assert [r["state"] for r in d["rows"]] == ["retired" if e.retired_by else "not_installed"
-                                                   for e in automations.REGISTRY]
+        assert [r["state"] for r in d["rows"]] == ["not_installed"] * len(automations.REGISTRY)
 
     def test_install_goes_to_the_fake_scheduler_not_the_real_one(self, dashboard, seeded_settings):
         from RevenueChaser.core import automations
@@ -428,8 +426,8 @@ class TestAutomationsPanel:
         rows = {x["name"]: x["state"] for x in dashboard.get("/api/automations").json()["rows"]}
         # Installing one row flips that row and no other: the point of the test, and what a hard-coded
         # dict said only incidentally.
-        assert rows == {e.name: ("enabled" if e.name == "RC-Store-Backup" else "retired" if e.retired_by
-                                 else "not_installed") for e in automations.REGISTRY}
+        assert rows == {e.name: ("enabled" if e.name == "RC-Store-Backup" else "not_installed")
+                        for e in automations.REGISTRY}
         r = dashboard.client.post("/api/automations/RC-Store-Backup/remove", headers=_PANEL)
         assert r.json()["row"]["state"] == "not_installed"
 

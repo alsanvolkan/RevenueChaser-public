@@ -436,13 +436,11 @@ document.querySelectorAll('.set-reset').forEach(function(b){
 AUTOMATIONS_JS = r"""
 var AUTO_STATE = {not_installed:['Not installed',''], disabled:['Disabled','st-warn'],
   enabled:['Enabled','st-ok'], running:['Running','st-warn'],
-  unavailable:['Scheduler unavailable','st-warn'], error:['Scheduler error','st-bad'],
-  retired:['Retired',''], retired_enabled:['Retired, still enabled','st-bad']};
+  unavailable:['Scheduler unavailable','st-warn'], error:['Scheduler error','st-bad']};
 var AUTO_RESULT = {ok:'st-ok', neutral:'', running:'st-warn', red:'st-bad', none:'', warn:'st-warn'};
 var AUTO_BUTTONS = {not_installed:[['install','Install']],
   enabled:[['disable','Disable'],['run','Run now'],['remove','Remove']],
-  disabled:[['enable','Enable'],['remove','Remove']],
-  retired_enabled:[['disable','Disable']]};
+  disabled:[['enable','Enable'],['remove','Remove']]};
 var AUTO_CONFIRM = {install:'Install', remove:'Remove', run:'Run now'};
 // G10 (#124): the closed line carries the name, the schedule time, the state word, the last
 // result and the next run. Everything else — description, command, run conditions, store
@@ -476,7 +474,6 @@ function autoDetailHtml(r, live, btns, tables, tail, off, size){
     '<div class="aline"><b>Run conditions</b>' + rcEsc(r.settings) + '</div>';
   if(r.offpeak_gated) lines += '<div class="aline"><b>Off-peak only</b>it defers itself outside the peak hours</div>';
   if(tables) lines += '<div class="aline"><b>Store tables it writes</b><span class="tbl">' + tables + '</span></div>';
-  if(r.retired_by) lines += '<div class="aline"><b>Retired</b>' + rcEsc(r.retired_by) + '; it stays disabled</div>';
   if(live){
     lines += '<div class="aline"><b>Last run</b>' + rcEsc(r.last_run || 'not recorded') +
       ' · next run ' + rcEsc(autoNext(r) || 'not known') +

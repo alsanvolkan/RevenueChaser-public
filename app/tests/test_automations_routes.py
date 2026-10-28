@@ -40,8 +40,7 @@ def test_get_lists_registry_rows_with_live_state(client, fake):
     d = client.get("/api/automations").get_json()
     assert d["ok"] and d["available"]
     assert [r["name"] for r in d["rows"]] == [e.name for e in A.REGISTRY]
-    assert {r["state"] for r in d["rows"] if not r["retired_by"]} == {"not_installed"}
-    assert {r["state"] for r in d["rows"] if r["retired_by"]} == {"retired"}       # PR 5
+    assert {r["state"] for r in d["rows"]} == {"not_installed"}
     assert fake.mutations == []
 
 

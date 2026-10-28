@@ -103,7 +103,6 @@ class AutomationEntry:
     chain_wait_minutes: int = 120  # how long a chained task waits for that run before it gives up
     hourly: bool = False           # every hour at ``time``'s minute (its hour is ignored); never chained, no ``days``
     unit_name: str | None = None   # the systemd unit (and nothing else) under another name than ``name``
-    retired_by: str | None = None  # what now builds its data (PR 5): the row reads "retired", no install/enable/run
 
     @property
     def unit(self) -> str:
@@ -212,9 +211,7 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         description="Writes the S&P 500, Dow and Nasdaq member lists (3 Unusual Whales requests) and the SmallCap 600 list "
                     "from the last accepted S&P 1500 snapshot; a list under its floor is kept as it was, and the "
                     "change history records each join and leave.",
-        tables_written=("index_constituents", "index_constituents_changes"),
-        retired_by="the market-store builder: funds/index_holdings and spine/security build the index membership "
-                   "in spine.duckdb (PR 5)"),
+        tables_written=("index_constituents", "index_constituents_changes")),
     AutomationEntry(
         name="RC-Earnings-Inputs", label="Earnings inputs (nightly)",
         args=("-m", INPUTS_CLI, "earnings", "--max-uw-calls", "200", "--max-fred-calls", "10",
@@ -355,11 +352,6 @@ class UnknownAction(AutomationError):
 
 
 class SchedulerUnavailable(AutomationError):
-    http_status = 409
-
-
-class RetiredTask(AutomationError):
-    """Install, Enable or Run of a retired row (``retired_by``): it stays disabled (PR 5)."""
     http_status = 409
 
 
@@ -893,7 +885,6 @@ def static_row(e: AutomationEntry) -> dict:
         "tables_written": list(e.tables_written), "offpeak_gated": e.offpeak_gated,
         "default_install": e.default_install, "settings": e.settings.summary(),
         "log_path": str(e.log_path), "description": e.description, "after": e.after,
-        "retired_by": e.retired_by,
     }
 
 
@@ -1065,8 +1056,6 @@ def live_row(e: AutomationEntry, sched: Scheduler, now: datetime | None = None) 
         state = "running"
     else:
         state = "enabled"
-    if e.retired_by and state in ("not_installed", "disabled", "enabled", "running"):
-        state = "retired_enabled" if state in ("enabled", "running") else "retired"
     kind, text = map_result(st.last_result if st else None)
     ok_at = last_success(e.log_path)
     if ok_at is None and st and st.last_result == RESULT_OK:
@@ -1091,8 +1080,6 @@ def apply(name: str, action: str, sched: Scheduler | None = None) -> dict:
     e = entry(name)
     if action not in ACTIONS:
         raise UnknownAction("unknown action")
-    if e.retired_by and action in ("install", "enable", "run"):
-        raise RetiredTask(f"{e.name} is retired: {e.retired_by}")
     sched = sched or get_scheduler()
     if not sched.available:
         raise SchedulerUnavailable("Task Scheduler is not available on this host")
