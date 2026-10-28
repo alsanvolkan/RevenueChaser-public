@@ -26,7 +26,8 @@ _ENV_EXTRAS = ("RC_SEC_USER_AGENT",
                "RC_ALLOWED_HOSTS", "RC_IBKR_LOGIN_URL",                         # #159 / the gateway shortcut
                "RC_IBKR_LOGIN_CHECK", "RC_IBKR_HOST", "RC_IBKR_PORT",           # #162
                "RC_SCHEDULER",                                                  # #158
-               "RC_HTTP_CONTACT")                                               # #206, the builder's User-Agent
+               "RC_HTTP_CONTACT",                                               # #206, the builder's User-Agent
+               "WRDS_USERNAME", "RC_UNIVERSE_SOURCE", "RC_WRDS_PYTHON")         # PR 5, the spine
 
 
 def _env_example_lines() -> list[str]:
@@ -292,3 +293,23 @@ def test_data_architecture_states_the_spx_gamma_store_reads_the_code_owns():
     assert f"`requested_by` `{runners.SPX_REQUESTED_BY}`" in section
     for name in runners.SPX_BUILDER_DATASETS:
         assert f"`{name}`" in section
+
+
+def test_the_spine_section_states_what_the_code_owns():
+    """PR 5: the spine's datasets, tables, views, tier rule version, issue kinds and the flag, as the code has them."""
+    from RevenueChaser.core import universe
+    from RevenueChaser.rcdata.build import DATASETS
+    from RevenueChaser.rcdata.build.spine import KIND, security, tier, views
+    text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
+    section = text[text.index("### The identity spine (`spine.duckdb`, PR 5)"):text.index("## Migration")]
+    for name, ds in DATASETS.items():
+        if ds.kind == KIND:
+            assert f"| `{name}` |" in section, name
+    for table in security.TABLES:
+        assert f"| `{table}` |" in section, table
+    for view in views.VIEWS:
+        assert f"`{view}`" in section, view
+    for kind in security.ISSUE_KINDS:
+        assert f"`{kind}`" in section, kind
+    assert f"**Tier rule v{tier.VERSION}**" in section
+    assert f"`{universe.SOURCE_ENV}={universe.SPINE}`" in section

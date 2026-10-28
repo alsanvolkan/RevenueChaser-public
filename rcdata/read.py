@@ -1,5 +1,8 @@
 """The read API of the market store (D4): the only place a board gets market data, and the only SQL it runs.
 
+Two serving kinds: ``market`` (``market_series``, ``spx_expiry_strike``) and, since PR 5, the identity ``spine``
+(``universe``, ``identity``, ``membership``).
+
 Every row comes back with its provenance (``session_date``, ``source``, ``fetched_at``, ``source_as_of``, ``run_id``)
 and ``status``, the newest ``dataset_check`` result of its dataset (``never_checked`` before the first). Each call
 opens the live serving file read-only and closes it again (``serving.open_read``), and counts one read of its table
@@ -13,7 +16,10 @@ from typing import Iterable
 from . import ops, serving
 
 NEVER_CHECKED = "never_checked"
-DATASET_OF_TABLE = {"market_series": "market_series", "spx_gamma_expiry_strike": "uw/spot_expiry_strike"}
+DATASET_OF_TABLE = {"market_series": "market_series", "spx_gamma_expiry_strike": "uw/spot_expiry_strike",
+                    "security": "spine/security", "index_membership": "funds/index_holdings"}
+KIND_OF_TABLE = {"market_series": "market", "spx_gamma_expiry_strike": "market", "security": "spine",
+                 "index_membership": "spine"}
 
 
 def dataset_status(dataset: str) -> str:
@@ -24,7 +30,7 @@ def dataset_status(dataset: str) -> str:
 def _rows(table: str, sql: str, params: list) -> list[dict]:
     ops.read_log.bump(table)
     try:
-        con = serving.open_read("market")
+        con = serving.open_read(KIND_OF_TABLE[table])
     except serving.ServingFileMissing:
         return []
     try:
@@ -82,6 +88,53 @@ def watched(kind: str) -> set[str]:
     """The tickers of one watch list (``option`` or ``stock``), for a board that only asks "is it on the list"."""
     ops.read_log.bump(f"watchlist_{kind}")
     return {r["ticker"] for r in ops.watch_rows(kind)}
+
+
+# ── The identity spine (PR 5) ─────────────────────────────────────────────────────────────────────────────────
+
+def universe(tiers: Iterable[str] = ("A",)) -> list[dict]:
+    """The ``security`` rows of ``tiers`` (Tier A by default: the names the boards screen), by ticker.
+
+    Provenance: ``source`` / ``source_as_of`` / ``fetched_at`` / ``run_id`` of the SEC file the row came from, and each
+    identifier's own ``*_source``; ``status`` is ``spine/security``'s newest check.
+    """
+    tiers = [str(t) for t in tiers]
+    if not tiers:
+        return []
+    sql = f"SELECT * FROM security WHERE tier IN ({', '.join('?' * len(tiers))}) ORDER BY ticker"
+    return _rows("security", sql, tiers)
+
+
+def identity(tickers: Iterable[str] | None = None) -> list[dict]:
+    """The ``security`` rows of ``tickers`` (upper-cased; any tier), or of every ticker when None, by ticker."""
+    if tickers is None:
+        return _rows("security", "SELECT * FROM security ORDER BY ticker", [])
+    wanted = sorted({str(t).strip().upper() for t in tickers if str(t or "").strip()})
+    if not wanted:
+        return []
+    return _rows("security", f"SELECT * FROM security WHERE ticker IN ({', '.join('?' * len(wanted))}) "
+                             "ORDER BY ticker", wanted)
+
+
+def membership(index: str | None = None, on=None, source: str = "funds/index_holdings") -> list[dict]:
+    """``index_membership`` rows of ``index`` (every index when None) from ``source`` that hold on day ``on``
+    (``valid_from <= on < valid_to``), or the current ones (``valid_to`` NULL) when ``on`` is None.
+
+    ``source`` is the fund files (the membership) by default; ``"wrds/idxcst_his"`` is Compustat's history, the
+    check, which also covers days before the first fund file. A row whose ticker the spine could not name is left
+    out. ``status`` is the fund files' newest check.
+    """
+    sql = "SELECT * FROM index_membership WHERE source = ? AND ticker IS NOT NULL"
+    params: list = [source]
+    if index is not None:
+        sql += " AND index_slug = ?"
+        params.append(str(index))
+    if on is None:
+        sql += " AND valid_to IS NULL"
+    else:
+        sql += " AND valid_from <= ? AND (valid_to IS NULL OR valid_to > ?)"
+        params += [_day(on), _day(on)]
+    return _rows("index_membership", sql + " ORDER BY index_slug, ticker", params)
 
 
 def as_frame(rows: list[dict]):

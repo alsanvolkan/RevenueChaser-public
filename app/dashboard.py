@@ -1295,7 +1295,10 @@ def _build_dataset(name: str):
 
 
 def _requested_by() -> str:
-    return (request.headers.get(_PANEL_HEADER) or "").strip()[:_REQUESTED_BY_MAX] or "panel"
+    """The panel header's value, or "panel". "cli" is the builder CLI's own mark (an attended dataset runs only for
+    it), so a header that says it is recorded as "panel:cli"."""
+    by = (request.headers.get(_PANEL_HEADER) or "").strip()[:_REQUESTED_BY_MAX] or "panel"
+    return "panel:cli" if by.lower() == "cli" else by
 
 
 @app.route("/api/build/request/<path:dataset>", methods=["POST"])
@@ -1305,8 +1308,13 @@ def api_build_request(dataset: str):
     running."""
     from RevenueChaser.rcdata import ops
 
-    if _build_dataset(dataset) is None:
+    ds = _build_dataset(dataset)
+    if ds is None:
         return jsonify({"ok": False, "error": f"unknown dataset {dataset!r}"}), 400
+    if getattr(ds, "attended", False):
+        # WRDS (PR 5): a person logs in and confirms Duo, so only the CLI on the server queues it.
+        return jsonify({"ok": False, "error": f"{dataset} is attended: run it from the CLI on the server "
+                                              "(python -m RevenueChaser.rcdata.build backfill ...)"}), 409
     body = request.get_json(silent=True) if request.is_json else None
     raw = (body or {}).get("backfill_from") if isinstance(body, dict) else None
     if raw is None:

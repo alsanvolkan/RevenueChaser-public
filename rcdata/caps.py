@@ -12,6 +12,14 @@ DAY_CAPS: dict[str, int] = {
     "sec": 40_000,
     "fred": 10_000,
     "alpaca": 20_000,
+    # The spine's providers (PR 5; working numbers, not avo's yet): WRDS queries, OpenFIGI requests (each up to 100
+    # CUSIPs), and the fund-file hosts (one request per file and run).
+    "wrds": 50,
+    "openfigi": 1_000,
+    "ssga": 50,
+    "ishares": 50,
+    "vanguard": 50,
+    "nasdaq": 50,
 }
 
 

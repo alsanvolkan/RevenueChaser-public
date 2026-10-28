@@ -5,8 +5,12 @@
                                         dataset that is due (``due.py``) is queued first (by "schedule", once);
                                         with --dataset, a dataset with nothing queued (or any, with --as-of) is
                                         queued first (by "cli"); --once stops when the queue is empty
-    backfill <dataset> --from YYYY-MM-DD [--to YYYY-MM-DD] [--allow-shrink]
-                                        queue one backfill request and run it now
+    backfill <dataset> [<dataset> ...] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-shrink]
+                                        queue one backfill request per dataset and run them now, in the order given,
+                                        in this one process (so the WRDS datasets share one login); names may be
+                                        separated by commas too; --from is required by a dataset that has no start
+                                        of its own (the market datasets); the spine's start at their source's
+                                        beginning
 
 It refuses to start while a job lock is held in the store directory or another builder runs (exit 3), and prints
 one line per dataset run: the ``dataset_check`` fields. Exit 0 when every run it made ended ok or skipped, 1 when
@@ -78,14 +82,22 @@ def main(argv: list[str] | None = None) -> int:
                    "without it a table that empties or loses more than 1%% of its rows refuses the swap")
     run.add_argument("--allow-shrink", action="store_true", help="with --dataset: " + shrink_help)
     bf = sub.add_parser("backfill")
-    bf.add_argument("dataset", choices=sorted(DATASETS))
-    bf.add_argument("--from", dest="start", required=True)
+    bf.add_argument("datasets", nargs="+", metavar="dataset")
+    bf.add_argument("--from", dest="start")
     bf.add_argument("--to", dest="end")
     bf.add_argument("--allow-shrink", action="store_true", help=shrink_help)
     args = p.parse_args(argv)
     if args.cmd == "run" and not args.dataset and (args.as_of or args.allow_shrink):
         # They only shape the request queued for --dataset; without it they would be dropped silently (F5).
         p.error("--as-of and --allow-shrink need --dataset")
+    if args.cmd == "backfill":
+        args.datasets = [n.strip() for a in args.datasets for n in a.split(",") if n.strip()]
+        unknown = [n for n in args.datasets if n not in DATASETS]
+        if unknown or not args.datasets:
+            p.error(f"unknown dataset(s) {unknown}; known: {', '.join(sorted(DATASETS))}")
+        need = [n for n in args.datasets if getattr(DATASETS[n], "backfill_needs_from", True)]
+        if need and not args.start:
+            p.error(f"--from is required for {', '.join(need)}")
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     # httpx logs every request URL at INFO, query string included, and FRED's key is in the query.
@@ -113,16 +125,20 @@ def main(argv: list[str] | None = None) -> int:
             print(f"failed {orphans[0]} request(s) and {orphans[1]} run(s) a dead builder left running",
                   file=sys.stderr, flush=True)
         if args.cmd == "backfill":
-            params = {"mode": "backfill", "from": args.start, **({"to": args.end} if args.end else {}),
+            params = {"mode": "backfill", **({"from": args.start} if args.start else {}),
+                      **({"to": args.end} if args.end else {}),
                       **({"allow_shrink": True} if args.allow_shrink else {})}
-            rid = ops.enqueue(args.dataset, params, by="cli")
-            req = ops.next_request(args.dataset)
-            while req is not None and req["id"] != rid:      # an older request of this dataset goes first
-                print(base.format_check(base.run_request(req)), flush=True)
-                req = ops.next_request(args.dataset)
-            row = base.run_request(req)
-            print(base.format_check(row), flush=True)
-            return 1 if row["result"] == "failed" else 0
+            worst = 0
+            for name in args.datasets:
+                rid = ops.enqueue(name, params, by="cli")
+                req = ops.next_request(name)
+                while req is not None and req["id"] != rid:      # an older request of this dataset goes first
+                    print(base.format_check(base.run_request(req)), flush=True)
+                    req = ops.next_request(name)
+                row = base.run_request(req)
+                print(base.format_check(row), flush=True)
+                worst = max(worst, int(row["result"] == "failed"))
+            return worst
         if args.dataset and (args.as_of or args.allow_shrink or not ops.queued(args.dataset)):
             params = {**({"as_of": args.as_of} if args.as_of else {}),
                       **({"allow_shrink": True} if args.allow_shrink else {})}

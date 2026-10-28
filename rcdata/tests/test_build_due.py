@@ -19,6 +19,15 @@ TUE_EVENING = datetime(2026, 10, 27, 22, 0, tzinfo=timezone.utc)
 WED_MORNING = datetime(2026, 10, 28, 15, 0, tzinfo=timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def market_only(monkeypatch):
+    """These tests are about the two market datasets' due rule; the spine's datasets (PR 5) are left out."""
+    from RevenueChaser.rcdata import build
+    only = {k: v for k, v in build.DATASETS.items() if k in (MS, UW)}
+    monkeypatch.setattr(build, "DATASETS", only)
+    monkeypatch.setitem(globals(), "DATASETS", only)
+
+
 @pytest.fixture
 def clock(monkeypatch):
     def set_to(when: datetime) -> None:

@@ -177,7 +177,8 @@ routes only enqueue and read `ops.sqlite`. Each call opens its own SQLite connec
 - **`POST /api/build/request/<dataset>`**: queues one build (`requested_by` = the `X-RC-Panel` value). With
   `backfill_from=YYYY-MM-DD` (JSON body or query string) it is a backfill request. 202 `{ok, id, dataset}`;
   400 for a dataset the builder does not know or a date that is not a past `YYYY-MM-DD`; 409 while one of that
-  dataset is queued or running; 403 without the panel header.
+  dataset is queued or running, and for an attended dataset (the spine's WRDS ones, PR 5: only the CLI on the
+  server queues them); 403 without the panel header.
 - **`GET /api/build/queue`**: `{ok, active, finished}`. `active` holds the queued and running requests, oldest
   first; `finished` the last 20 others, newest first.
 - **`POST /api/build/schedule/<dataset>/<pause|resume>`**: sets or clears `dataset_schedule.paused_at` /
@@ -307,7 +308,7 @@ whole app at a local server:
 |---|---|
 | `RC_UW_BASE` | Unusual Whales (`core/providers/unusual_whales.py`, `core/index_registry.py`) |
 | `RC_UW_BASE_ROOT` | Unusual Whales for `module_spx_gamma` (no `/api` suffix) |
-| `RC_SEC_WWW_BASE` / `RC_SEC_DATA_BASE` | SEC EDGAR + 13F archives |
+| `RC_SEC_WWW_BASE` / `RC_SEC_DATA_BASE` | SEC EDGAR + 13F archives; the spine's `sec/company_tickers_exchange` |
 | `RC_FORM13F_INDEX_URL` | SEC Form 13F data-set page (zip links are resolved from it) |
 | `RC_FRED_BASE` | FRED series (also the market store's FRED source) |
 | `RC_CBOE_BASE` | Cboe daily-price index files (`module_earnings_radar/inputs/vol_index.py`, `rcdata/build/sources/cboe.py`) |
@@ -319,11 +320,15 @@ whole app at a local server:
 | `RC_FDA_OOPD_BASE` | FDA Office of Orphan Products Development (OOPD) search |
 | `RC_DEEPSEEK_BASE` | DeepSeek chat API (`core/providers/deepseek.py`; read at call time) |
 | `RC_GROK_BASE` | SuperGrok chat API, the Relatedness Grok writer (`core/providers/grok.py`, #388; read at call time). Default the Grok CLI chat proxy `https://cli-chat-proxy.grok.com/v1`. Only https on `grok.com` / `*.grok.com` or a loopback mock is accepted, so the subscription token never goes elsewhere (`api.x.ai`, the metered developer API, is refused); the model is `RC_GROK_MODEL` |
-| `RC_OPENFIGI_BASE` | OpenFIGI mapping API (identity refresh; the 13F CUSIP map, `core/providers/openfigi.py`, read at call time) |
+| `RC_OPENFIGI_BASE` | OpenFIGI mapping API (identity refresh; the 13F CUSIP map, `core/providers/openfigi.py`, read at call time; the spine's `openfigi/map`) |
 | `RC_NASDAQTRADER_BASE` | Nasdaq Trader symbol directory (identity refresh) |
 | `RC_FDIC_BASE` | FDIC institution list (identity refresh) |
 | `RC_WIKIPEDIA_BASE` | Wikipedia S&P 1500 constituent lists (identity refresh; a sector source for the list's own names, #272) |
 | `RC_SPDR_BASE` | SPDR index-ETF holdings files (identity refresh) |
+| `RC_SSGA_BASE` | SSGA daily ETF holdings workbooks: SPY, MDY, SPSM, the spine's index membership (`rcdata/build/spine/funds.py`, read at call time) |
+| `RC_ISHARES_BASE` | iShares holdings CSVs: IVV, IJH, IJR (`rcdata/build/spine/funds.py`) |
+| `RC_VANGUARD_BASE` | Vanguard portfolio-holding API: VOO, IVOO, VIOO (`rcdata/build/spine/funds.py`) |
+| `RC_NASDAQ_API_BASE` | Nasdaq's list API, the Nasdaq-100 members (`rcdata/build/spine/funds.py`) |
 
 `RC_FDA_USER_AGENT` overrides the `User-Agent` header sent to FDA OOPD
 (`core/providers/fda_orphan.py`); default `"RevenueChaser research"`.
