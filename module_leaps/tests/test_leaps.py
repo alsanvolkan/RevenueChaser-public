@@ -531,3 +531,18 @@ class TestLeapsRunners:
         store_prints([_print("z1", executed="2026-10-01T14:00:00Z")], today=date(2026, 10, 2))
         _w, unwatched = scan_leaps_cached(today=date(2026, 10, 2))
         assert unwatched[0]["name"] == "Zed Corp"
+
+
+def test_a_locked_store_is_not_swallowed_by_the_cached_scan(rawstore_tmp_db, monkeypatch):
+    """PR 4: the watch list moved to ops.sqlite, so the stored prints are the cached scan's first store read. A lock
+    there must reach the dashboard (503, "locked by another process"), not become an empty board."""
+    import pytest
+
+    from RevenueChaser.core import rawstore as rs
+    from RevenueChaser.module_leaps import engine, scan
+
+    def locked(**kw):
+        raise rs.StoreLockedError("raw.duckdb", 1, "duckdb", "/x", "Conflicting lock is held")
+    monkeypatch.setattr(engine, "load_recent_prints", locked)
+    with pytest.raises(rs.StoreLockedError):
+        scan.scan_leaps_cached()

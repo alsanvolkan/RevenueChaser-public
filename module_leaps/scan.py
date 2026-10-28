@@ -165,6 +165,10 @@ def scan_leaps_cached(today: date | None = None,
 
     try:
         rows = leaps.load_recent_prints(today=today)
+    except rawstore.StoreLockedError:
+        # The board's first store read since the watch list moved to ops.sqlite (PR 4): a lock must reach the
+        # dashboard (503, naming the holder), never pass for an empty board.
+        raise
     except Exception as e:  # pragma: no cover - defensive
         logger.warning(f"cached flow-print read failed: {e}")
         rows = []
