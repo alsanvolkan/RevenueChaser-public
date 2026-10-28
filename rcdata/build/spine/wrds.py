@@ -12,7 +12,8 @@ process, started
 on the first query (``session``): one connection, at most one Duo push, for every WRDS dataset of one CLI call. The
 login is that venv's ``wrds.Connection`` (the user from ``WRDS_USERNAME``, required; the password from that user's
 ``~/.pgpass``). The three datasets are ``attended``: never due, and run only from the CLI (``python -m
-RevenueChaser.rcdata.build backfill wrds/sec_idhist wrds/co_hgic wrds/idxcst_his``). ``WRDS_USERNAME`` is required:
+RevenueChaser.rcdata.build backfill wrds/sec_idhist wrds/co_hgic wrds/idxcst_his``, in a foreground terminal: a
+background job that reads ``/dev/tty`` for a prompt is stopped by SIGTTIN). ``WRDS_USERNAME`` is required:
 it picks the line of the user's ``~/.pgpass``. A failed login, a worker that cannot start (no interpreter at
 ``RC_WRDS_PYTHON``), or a worker that answers out of protocol is a failed run: the last Parquet snapshot stays served
 and nothing retries (the memory rule: ask avo). The worker asks ``wrds`` for chunks and writes each answer as it

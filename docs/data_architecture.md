@@ -1052,7 +1052,9 @@ no default), one subprocess per builder process, so one WRDS connection: the log
 for a Duo push). The worker streams each answer in chunks to `<table>.jsonl.gz`; the builder types it in DuckDB.
 The datasets are never due, a request a page or the schedule queued is skipped (`skipped: attended ...`), the
 route answers 409, and the CLI runs them: `python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist
-wrds/co_hgic wrds/idxcst_his openfigi/map` starts one worker for the whole process. A failed login, or no
+wrds/co_hgic wrds/idxcst_his openfigi/map` starts one worker for the whole process. Run it in a foreground terminal:
+the worker reads a WRDS prompt from `/dev/tty`, and a background job that reads its terminal is stopped (SIGTTIN).
+A failed login, or no
 interpreter at `RC_WRDS_PYTHON`, fails the run and keeps the last snapshot served. `requested_by` `cli` is the CLI's
 own mark: a panel header that says `cli` is recorded as `panel:cli`.
 
