@@ -31,6 +31,9 @@ WITH_PAIR = {
     "module_earnings_radar_detail": "earnings_radar",
     "module_oipd": "oipd",
     "module_financials": "financials",
+    "module_comovement": "comovement",
+    "module_value_chain": "value_chain",
+    "module_relatedness": "relatedness",
 }
 # board key -> why it has no pair (deliberately left in PR 4)
 WITHOUT_PAIR = {
@@ -40,10 +43,6 @@ WITHOUT_PAIR = {
     "runs": "not a data board",
     "module_sector_rotation_trail": "a chart of the same funds' trails; the board's own table carries their pair",
     "module_uw_interaction": "a lab: raw columns of whatever UW tool was run, not a board of names",
-    # The board groups that get the pair in the later commits of this PR; each commit moves its boards up.
-    **{k: "pending in this PR" for k in (
-        "module_comovement", "module_value_chain", "module_relatedness",
-        )},
 }
 
 _SERVER_BUTTON = re.compile(r'data-rc-watch="(?:option|stock)" data-ticker="([^"]*)"')
@@ -86,6 +85,9 @@ CLIENT_CALL = {
     "module_swing_potential": "rcWatchRow(c.ticker)",
     "module_fundamentals": "rcWatchRow(c.ticker)",
     "module_earnings_radar": "rcWatchButtons(ticker)",          # in the drawer header, not the table
+    "module_comovement": "rcWatchRow(r.ticker)",                # the found name's line, not each chip
+    "module_value_chain": "rcWatchRow(FOCAL)",                  # the focal company
+    "module_relatedness": "rcWatchRow(p.peer)",                 # each peer; the focal one in the panel title
 }
 
 

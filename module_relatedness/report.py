@@ -23,6 +23,7 @@ from RevenueChaser.core.reporting_common import (
     help_html,
     provider_health_html,
     recorded_sessions_html,
+    watchlist_html,
 )
 
 CSS = """
@@ -206,6 +207,7 @@ function peerRow(p){
   return '<div class="peer">' +
     '<div class="peer-head"><span class="tk">' + rcEsc(p.peer) + '</span>' +
     (name ? '<span class="peer-name"> — ' + rcEsc(name) + '</span>' : '') + staleBadge(p.peer) + '</div>' +
+    rcWatchRow(p.peer) +
     '<div class="pct">' + Number(p.score||0).toFixed(2) + ' · p' + p.percentile + '</div>' +
     fmtMove(p) + fmtCluster(p) +
     '<div class="tags">' + tags(p.shared) + '</div>' +
@@ -226,7 +228,7 @@ function render(){
   }
   var c = BY[FOCAL] || {};
   panel.innerHTML = "Most related to " + rcEsc(FOCAL) +
-    (c.name ? ' <span class="nm">— ' + rcEsc(c.name) + '</span>' : "") + staleBadge(FOCAL);
+    (c.name ? ' <span class="nm">— ' + rcEsc(c.name) + '</span>' : "") + staleBadge(FOCAL) + rcWatchButtons(FOCAL);
   meta.textContent =
     (c.sector || "") + (c.industry ? " · " + c.industry : "") +
     (c.theme_coarse ? " · " + c.theme_coarse : "");
@@ -283,6 +285,7 @@ function init(){
   {body}
 </div>
 <script>{FILTERS_JS}</script>
+{watchlist_html("relatedness")}
 <script>{JS}
 init();
 </script>
