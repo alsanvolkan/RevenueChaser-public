@@ -2,21 +2,27 @@
 
 **Not run against the real source.** Built against Compustat's documented tables (``comp.company``,
 ``comp.security``, ``comp.sec_idhist``, ``comp.co_hgic``, ``comp.idxcst_his``); the tests answer with recorded-shape
-rows from a fake connection, never WRDS. The first real run is the attended homesrv backfill.
+rows from a fake worker, and run the real worker against a stub ``wrds`` package, never WRDS. The first real run is
+the attended homesrv backfill.
 
-**Attended, one connection.** WRDS logs in with ``WRDS_USERNAME`` (the password from the user's ``~/.pgpass``) and a
-Duo push the person confirms, so the three datasets are ``attended``: never due, and run only from the CLI
-(``python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist wrds/co_hgic wrds/idxcst_his``). The connection is
-opened once per builder process, on the first query, and every dataset of the run uses it (``session``); a failed
-login is a failed run, the last Parquet snapshot stays served, and nothing retries (the memory rule: ask avo). The
-``wrds`` package is imported only then, so it is a server-only dependency (not in ``requirements.txt``).
+**Attended, one connection, in its own interpreter.** ``wrds`` is not in the builder's venv: on the server it lives in a venv
+of its own (its pandas has no wheel for the builder's Python 3.14). So the queries run in ``wrds_worker.py`` under
+``RC_WRDS_PYTHON`` (that venv's python; no default, it is set in the server's env file), one subprocess per builder
+process, started
+on the first query (``session``): one connection, at most one Duo push, for every WRDS dataset of one CLI call. The
+login is that venv's ``wrds.Connection`` (the user from ``WRDS_USERNAME`` when set; the password from that user's
+``~/.pgpass``). The three datasets are ``attended``: never due, and run only from the CLI (``python -m
+RevenueChaser.rcdata.build backfill wrds/sec_idhist wrds/co_hgic wrds/idxcst_his``). A failed login, or a worker that
+cannot start (no interpreter at ``RC_WRDS_PYTHON``), is a failed run: the last Parquet snapshot stays served and
+nothing retries (the memory rule: ask avo). The worker streams each answer in chunks to the raw file, and the
+builder types it in DuckDB, so no table is held whole in memory on either side.
 
 **What is asked.** A full snapshot once a month: every row of the tables above (``comp.idxcst_his`` only for the
 index keys in ``INDEX_GVKEYX``). Between snapshots, a run asks only the new names: the CIKs of the newest SEC file's
 listed rows that the stored ``comp.company`` rows do not hold, and their securities and identifier history (one
 query each, by CIK and then by gvkey). Every query counts as one ``wrds`` call.
 
-Raw: ``raw/wrds/<dataset>/<as-of>/<table>.json.gz`` (a full snapshot) and ``.../<as-of>/new-<table>.json.gz`` (the
+Raw: ``raw/wrds/<dataset>/<as-of>/<table>.jsonl.gz`` (a full snapshot) and ``.../<as-of>/new-<table>.jsonl.gz`` (the
 new-name rows), each with a ``.meta.json`` sidecar (the query, the row count, the run). A raw file that exists is not
 asked again (resumable). Parquet: ``parquet/wrds/<dataset>/snapshot=<as-of>/<table>.parquet`` and
 ``.../delta=<as-of>/<table>.parquet``; the build reads the newest snapshot and every delta after it, a delta row
@@ -26,10 +32,12 @@ Staging: ``stg_wrds_company``, ``stg_wrds_security``, ``stg_wrds_idhist``, ``stg
 """
 from __future__ import annotations
 
+import atexit
+import json
 import os
 import re
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -44,7 +52,8 @@ USER_ENV = "WRDS_USERNAME"
 SNAPSHOT_DAYS = 30
 META_SUFFIX = ".meta.json"
 # Compustat's index keys (``comp.idxcst_his.gvkeyx``) of the S&P 500, MidCap 400 and SmallCap 600. Not verified
-# against WRDS from here: the homesrv run checks them (an unknown key answers no rows, a build issue).
+# against WRDS from here: a key with no rows in a run that answered rows for another is an ``index_key_empty`` build
+# issue (spine/security), and no rows at all is a failed run (an empty snapshot).
 INDEX_GVKEYX = {"sp500": "000003", "sp400": "024248", "sp600": "030824"}
 _DIGITS = re.compile(r"^\d{1,10}$")
 _GVKEY = re.compile(r"^\d{6}$")
@@ -77,33 +86,66 @@ STAGING = {"company": "stg_wrds_company", "security": "stg_wrds_security", "sec_
            "co_hgic": "stg_wrds_hgic", "idxcst_his": "stg_wrds_idx"}
 
 
-# ── The one connection ────────────────────────────────────────────────────────────────────────────────────────
+# ── The one connection: a worker subprocess under the interpreter that has ``wrds`` ──────────────────────────
 
 class LoginFailed(base.SourceError):
-    """The WRDS login (or its Duo confirmation) did not succeed: nothing was asked; the last snapshot stays."""
+    """The WRDS login (or its Duo confirmation) did not succeed, or the worker could not start: nothing was asked;
+    the last snapshot stays."""
 
 
-def _connect() -> Any:
-    """A real WRDS connection (``wrds.Connection``): the password from ``~/.pgpass``, then Duo. Server only."""
-    user = (os.getenv(USER_ENV) or "").strip()
-    if not user:
-        raise LoginFailed(f"no WRDS user: set {USER_ENV} (the password goes in ~/.pgpass, never here)")
-    try:
-        import wrds  # noqa: PLC0415 - a server-only dependency, imported only by an attended run
-    except ImportError as e:
-        raise LoginFailed("the wrds package is not installed in this venv (pip install wrds, on the server)") from e
-    try:
-        return wrds.Connection(wrds_username=user)
-    except Exception as e:  # noqa: BLE001 - any login failure is the same outcome: stop, keep the snapshot
-        raise LoginFailed(f"WRDS login failed: {type(e).__name__}") from e
+PYTHON_ENV = "RC_WRDS_PYTHON"          # the python of the venv that has wrds; no default (a server path)
+WORKER = Path(__file__).with_name("wrds_worker.py")
 
 
-_factory: Callable[[], Any] = _connect          # the seam the tests replace
+class Worker:
+    """The ``wrds_worker.py`` subprocess (``<RC_WRDS_PYTHON> -P wrds_worker.py``): one per builder process, so one
+    WRDS connection and at most one Duo push. Its stderr is the builder's, so WRDS's own messages reach the person
+    at the terminal. ``query`` sends one request and waits for its one answer line."""
+
+    def __init__(self, python: str | None = None):
+        import subprocess
+        python = python or (os.getenv(PYTHON_ENV) or "").strip()
+        if not python:
+            raise LoginFailed(f"no WRDS interpreter: set {PYTHON_ENV} to the python of the venv that has wrds")
+        if not Path(python).exists():
+            raise LoginFailed(f"no WRDS interpreter at {python}: set {PYTHON_ENV} to the python of the venv that "
+                              "has wrds")
+        try:
+            self.proc = subprocess.Popen([python, "-P", str(WORKER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                         text=True, encoding="utf-8")
+        except OSError as e:
+            raise LoginFailed(f"the WRDS worker did not start: {type(e).__name__}: {e}") from e
+
+    def query(self, sql: str, out: Path) -> int:
+        try:
+            self.proc.stdin.write(json.dumps({"sql": sql, "out": str(out)}) + "\n")
+            self.proc.stdin.flush()
+            line = self.proc.stdout.readline()
+        except (BrokenPipeError, OSError) as e:
+            raise LoginFailed(f"the WRDS worker is gone: {type(e).__name__}") from e
+        if not line:
+            raise LoginFailed(f"the WRDS worker ended (exit {self.proc.poll()}) without an answer")
+        answer = json.loads(line)
+        if answer.get("ok"):
+            return int(answer["rows"])
+        if answer.get("login"):
+            raise LoginFailed(f"WRDS login failed: {answer.get('error')}")
+        raise base.SourceError(f"wrds query failed: {answer.get('error')}")
+
+    def close(self) -> None:
+        try:
+            self.proc.stdin.close()
+            self.proc.wait(timeout=60)
+        except Exception:  # noqa: BLE001 - a worker that will not stop is killed
+            self.proc.kill()
+
+
+_factory: Callable[[], Any] = Worker            # the seam the tests replace
 _session: Any = None
 
 
 def session(ctx: base.RunContext) -> Any:
-    """The process's one WRDS connection, opened on first use (one login, one Duo push per builder process)."""
+    """The process's one WRDS worker, started on the first query (one login, one Duo push per builder process)."""
     global _session
     if _session is None:
         ctx.check_cap(PROVIDER)
@@ -112,7 +154,7 @@ def session(ctx: base.RunContext) -> Any:
 
 
 def reset() -> None:
-    """Close and forget the connection (end of a process; the tests)."""
+    """Stop and forget the worker (end of a process; the tests)."""
     global _session
     if _session is not None:
         try:
@@ -122,36 +164,21 @@ def reset() -> None:
     _session = None
 
 
-def _records(result) -> list[dict]:
-    """A query result (a pandas DataFrame from ``wrds``, or a list of dicts from a fake) as JSON-ready dicts."""
-    rows = result.to_dict("records") if hasattr(result, "to_dict") else list(result or [])
-    out = []
-    for r in rows:
-        clean = {}
-        for k, v in r.items():
-            if v is None or (isinstance(v, float) and v != v):
-                v = None
-            elif isinstance(v, (datetime, date)):
-                v = v.isoformat()[:10]
-            elif hasattr(v, "isoformat"):                    # pandas Timestamp
-                v = v.isoformat()[:10]
-            elif hasattr(v, "item"):                         # numpy scalars
-                v = v.item()
-            clean[str(k).lower()] = v
-        out.append(clean)
-    return out
+atexit.register(reset)
 
 
-def query(ctx: base.RunContext, sql: str) -> list[dict]:
-    """One query on the shared connection, counted as one ``wrds`` call; a failure is a ``SourceError``."""
-    con = session(ctx)
+def query(ctx: base.RunContext, sql: str, out: Path) -> int:
+    """One query on the shared worker, its answer streamed to ``out`` (gzip JSON lines); counted as one ``wrds``
+    call. A failed query is a ``SourceError``, a failed login a ``LoginFailed``."""
+    worker = session(ctx)
     ctx.check_cap(PROVIDER)
     ctx.count(PROVIDER, calls=1)
+    out.parent.mkdir(parents=True, exist_ok=True)
     try:
-        return _records(con.raw_sql(sql))
-    except Exception as e:  # noqa: BLE001
+        return worker.query(sql, out)
+    except base.SourceError:
         ctx.count(PROVIDER, failures=1)
-        raise base.SourceError(f"wrds query failed: {type(e).__name__}: {str(e)[:200]}") from e
+        raise
 
 
 # ── Files ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -168,10 +195,34 @@ def _meta(raw: Path) -> Path:
     return raw.with_name(raw.name + META_SUFFIX)
 
 
-def _save(ctx: base.RunContext, raw: Path, sql: str, rows: list[dict], as_of: date) -> Path:
-    base.write_raw_json(_meta(raw), {"as_of": as_of.isoformat(), "fetched_at": time.time(), "run_id": ctx.run_id,
-                                     "query": sql, "rows": len(rows)})
-    return base.write_raw_json(raw, rows)
+RAW_SUFFIX = ".jsonl.gz"
+
+
+def _ask(ctx: base.RunContext, raw: Path, sql: str, as_of: date) -> Path:
+    """Ask ``sql`` into the raw file ``raw`` (the worker writes it whole or not at all); its sidecar says what was
+    asked and how many rows came back. A raw file that exists is the resume marker: it is not asked again."""
+    if raw.exists():
+        return raw
+    meta = {"as_of": as_of.isoformat(), "fetched_at": time.time(), "run_id": ctx.run_id, "query": sql, "rows": None}
+    base.write_raw_json(_meta(raw), meta)
+    meta["rows"] = query(ctx, sql, raw)
+    base.write_raw_json(_meta(raw), meta)
+    return raw
+
+
+def raw_rows(raw: Path, schema: list[tuple[str, str]]) -> str:
+    """A SELECT of the raw file's rows typed to ``schema`` (every value arrives as text or null)."""
+    cols = "{" + ", ".join(f"'{c}': 'VARCHAR'" for c, _ in schema) + "}"
+    typed = []
+    for c, t in schema:
+        if t == "DATE":
+            typed.append(f'TRY_CAST("{c}" AS DATE) AS "{c}"')
+        elif t == "INTEGER":
+            typed.append(f'TRY_CAST(TRY_CAST("{c}" AS DOUBLE) AS INTEGER) AS "{c}"')
+        else:
+            typed.append(f'"{c}"')
+    return (f"SELECT {', '.join(typed)} FROM read_json({base.sql_path(raw)}, format = 'newline_delimited', "
+            f"columns = {cols})")
 
 
 def _snapshots(dataset: str) -> list[str]:
@@ -263,17 +314,15 @@ class WrdsDataset:
 
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
         folder = raw_dir(self.name) / as_of.isoformat()
-        if self._snapshot_due(as_of) or any((folder / f"{t}.json.gz").exists() for t in self.own):
+        if self._snapshot_due(as_of) or any((folder / f"{t}{RAW_SUFFIX}").exists() for t in self.own):
             return self._full(ctx, as_of)
         return self._new_names(ctx, as_of)
 
     def _full(self, ctx: base.RunContext, as_of: date) -> list[Path]:
         out = []
         for table in self.own:
-            raw = raw_dir(self.name) / as_of.isoformat() / f"{table}.json.gz"
-            if not raw.exists():
-                _save(ctx, raw, TABLES[table]["sql"], query(ctx, TABLES[table]["sql"]), as_of)
-            out.append(raw)
+            out.append(_ask(ctx, raw_dir(self.name) / as_of.isoformat() / f"{table}{RAW_SUFFIX}",
+                            TABLES[table]["sql"], as_of))
         return out
 
     def _new_names(self, ctx: base.RunContext, as_of: date) -> list[Path]:
@@ -287,21 +336,21 @@ class WrdsDataset:
             return []
         padded = [c.zfill(10) for c in new]
         out = []
-        raw = folder / "new-company.json.gz"
-        if not raw.exists():
-            sql = f"SELECT gvkey, conm, cik FROM comp.company WHERE cik IN ({_in_list(padded)})"
-            _save(ctx, raw, sql, query(ctx, sql), as_of)
+        raw = _ask(ctx, folder / f"new-company{RAW_SUFFIX}",
+                   f"SELECT gvkey, conm, cik FROM comp.company WHERE cik IN ({_in_list(padded)})", as_of)
         out.append(raw)
-        gvkeys = sorted({str(r["gvkey"]) for r in base.read_raw_json(raw) if _GVKEY.match(str(r.get("gvkey") or ""))})
+        con = duckdb.connect()
+        try:
+            found = con.execute(f"SELECT DISTINCT gvkey FROM ({raw_rows(raw, COMPANY)})").fetchall()
+        finally:
+            con.close()
+        gvkeys = sorted({str(r[0]) for r in found if _GVKEY.match(str(r[0] or ""))})
         ctx.notes.append(f"new names: {len(new)} CIKs asked, {len(gvkeys)} found")
         if not gvkeys:
             return out
         for table in ("security", "sec_idhist"):
-            raw = folder / f"new-{table}.json.gz"
-            if not raw.exists():
-                sql = f"{TABLES[table]['sql']} WHERE gvkey IN ({_in_list(gvkeys)})"
-                _save(ctx, raw, sql, query(ctx, sql), as_of)
-            out.append(raw)
+            out.append(_ask(ctx, folder / f"new-{table}{RAW_SUFFIX}",
+                            f"{TABLES[table]['sql']} WHERE gvkey IN ({_in_list(gvkeys)})", as_of))
         return out
 
     def backfill(self, ctx: base.RunContext, start: date | None, end: date) -> None:
@@ -315,25 +364,25 @@ class WrdsDataset:
         out = []
         for raw in raws:
             meta = base.read_raw_json(_meta(raw))
-            table = raw.name[: -len(".json.gz")]
+            table = raw.name[: -len(RAW_SUFFIX)]
             delta = table.startswith("new-")
             table = table[4:] if delta else table
             spec = TABLES[table]
-            schema = spec["schema"] + PROVENANCE
             as_of = date.fromisoformat(meta["as_of"])
-            rows = base.read_raw_json(raw)
-            if not rows and not delta:
-                raise base.SourceError(f"wrds {table}: the snapshot came back empty")
-            for r in rows:
-                r.update(source_as_of=as_of, fetched_at=meta["fetched_at"], run_id=meta["run_id"])
             folder = f"{'delta' if delta else 'snapshot'}={as_of.isoformat()}"
             final = parquet_dir(self.name) / folder / f"{table}.parquet"
             con = duckdb.connect()
             try:
-                base.rows_table(con, "rows", schema, rows)
+                # Typed in DuckDB straight from the raw file (no Python row per record).
+                rows = int(con.execute(f"SELECT count(*) FROM ({raw_rows(raw, spec['schema'])})").fetchone()[0])
+                if not rows and not delta:
+                    raise base.SourceError(f"wrds {table}: the snapshot came back empty")
                 keys = ", ".join(spec["key"])
-                out.append(base.write_parquet(con, f"SELECT * FROM rows QUALIFY row_number() OVER (PARTITION BY {keys} "
-                                                   f"ORDER BY fetched_at DESC) = 1 ORDER BY {keys}", final))
+                select = (f"SELECT *, DATE '{as_of.isoformat()}' AS source_as_of, "
+                          f"CAST({float(meta['fetched_at'])} AS DOUBLE) AS fetched_at, "
+                          f"'{meta['run_id']}' AS run_id FROM ({raw_rows(raw, spec['schema'])}) "
+                          f"QUALIFY row_number() OVER (PARTITION BY {keys} ORDER BY {keys}) = 1 ORDER BY {keys}")
+                out.append(base.write_parquet(con, select, final))
             finally:
                 con.close()
         return out

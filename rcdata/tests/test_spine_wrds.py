@@ -99,24 +99,31 @@ def test_a_failed_login_fails_the_run_and_keeps_the_served_snapshot(fake, monkey
     assert len(wrds._snapshots(wrds.SEC_IDHIST.name)) == 1
 
 
-def test_no_user_name_is_a_failed_login_naming_the_variable(monkeypatch):
-    monkeypatch.delenv(wrds.USER_ENV, raising=False)
-    with pytest.raises(wrds.LoginFailed, match="WRDS_USERNAME"):
-        wrds._connect()
+def test_no_wrds_interpreter_is_a_failed_login_naming_the_variable(monkeypatch, tmp_path):
+    monkeypatch.delenv(wrds.PYTHON_ENV, raising=False)
+    with pytest.raises(wrds.LoginFailed, match="RC_WRDS_PYTHON"):
+        wrds.Worker()
+    monkeypatch.setenv(wrds.PYTHON_ENV, str(tmp_path / "no-such-python"))
+    with pytest.raises(wrds.LoginFailed, match="RC_WRDS_PYTHON"):
+        wrds.Worker()
 
 
 def test_a_raw_file_that_exists_is_not_asked_again(fake):
     conn, _ = fake
     _run(sec_tickers.NAME)
-    folder = wrds.raw_dir(wrds.SEC_IDHIST.name) / "2026-10-27"
-    ctx = base.RunContext(run_id="r", dataset=wrds.SEC_IDHIST.name)
-    wrds._save(ctx, folder / "company.json.gz", "SELECT ...", fx.COMPANY, date(2026, 10, 27))
+    raw = wrds.raw_dir(wrds.SEC_IDHIST.name) / "2026-10-27" / f"company{wrds.RAW_SUFFIX}"
+    base.write_raw_json(wrds._meta(raw), {"as_of": "2026-10-27", "fetched_at": 1.0, "run_id": "r0",
+                                          "query": "SELECT ...", "rows": len(fx.COMPANY)})
+    fx.write_jsonl(raw, fx.COMPANY)
     _run(wrds.SEC_IDHIST.name, mode="backfill")
     assert [q.split(" FROM ")[1].split()[0] for q in conn.queries] == ["comp.security", "comp.sec_idhist"]
 
 
-def test_cik_and_dates_are_normalised():
+def test_cik_is_normalised_and_text_values_are_typed_by_the_schema(tmp_path):
     assert wrds.norm_cik("0000789019") == "789019" and wrds.norm_cik(None) is None
-    import pandas as pd
-    rows = wrds._records(pd.DataFrame([{"GVKEY": "001", "efffrom": pd.Timestamp("2020-01-02"), "x": float("nan")}]))
-    assert rows == [{"gvkey": "001", "efffrom": "2020-01-02", "x": None}]
+    raw = tmp_path / f"security{wrds.RAW_SUFFIX}"
+    fx.write_jsonl(raw, [{"gvkey": "001", "iid": "01", "tic": "X", "cusip": None, "exchg": "11.0",
+                          "excntry": "USA", "secstat": "A", "tpci": "0", "dldtei": "2020-01-02"}])
+    import duckdb
+    row = duckdb.connect().execute(wrds.raw_rows(raw, wrds.SECURITY)).fetchone()
+    assert row == ("001", "01", "X", None, 11, "USA", "A", "0", date(2020, 1, 2))

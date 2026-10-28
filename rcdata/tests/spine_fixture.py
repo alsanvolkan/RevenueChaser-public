@@ -162,8 +162,25 @@ class FakeWrds:
             rows = [r for r in rows if r["gvkey"] in want]
         return [dict(r) for r in rows]
 
+    def query(self, sql: str, out) -> int:
+        """The worker's side (``wrds.Worker.query``): the answer as gzip JSON lines of text values, as
+        ``wrds_worker.py`` writes them."""
+        rows = self.raw_sql(sql)
+        write_jsonl(out, rows)
+        return len(rows)
+
     def close(self):
         self.closed = True
+
+
+def write_jsonl(path, rows) -> None:
+    import gzip
+    import pathlib
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with gzip.open(path, "wt", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(json.dumps({k: (None if v is None else str(v)) for k, v in r.items()}) + "\n")
 
 
 def without_new(rows: list[dict], new: list[dict]) -> list[dict]:
