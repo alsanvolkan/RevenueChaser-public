@@ -8,7 +8,8 @@ call: there is no live fallback any more.
 - ``zero_one_dte_dollars``: dollar OI gamma per strike, ``call_gamma_oi + put_gamma_oi`` summed over the expiries 0
   and 1 DTE of ``spx_gamma_expiry_strike``, for the pin and squeeze tests (review S4). A day the builder has not
   stored yet because its session is not closed reads the previous session's snapshot, kept to the expiries on or
-  after the day (decision A3).
+  after the day (decision A3): that is the day's 0 DTE expiry only, so it is labelled "0 DTE only (previous-session
+  snapshot, ...)" and the tests run on that smaller, conservative sum (review SF2).
 - ``vix_family``: the Cboe closes of the VIX family on the newest observation on or before the day, within
   ``MAX_LAG`` sessions, keyed with the caret the board's payload always used (``^VIX`` ...).
 - ``cot_tff``: the CFTC TFF row of the E-mini S&P 500 (``13874A``, futures only): the newest report released on or
@@ -132,8 +133,13 @@ def zero_one_dte_dollars(day) -> dict:
         dollars[strike] = dollars.get(strike, 0.0) + (c or 0.0) + (p or 0.0)
     first = rows[0]
     snapshot_time = first.get("snapshot_time")
-    label = (f"0-1 DTE from the {session.isoformat()} {snapshot_time or 'unknown-time'} snapshot "
-             f"({SPX_SOURCE}, status {first.get('status')})")
+    stamp = f"{session.isoformat()} {snapshot_time or 'unknown-time'}"
+    if fallback:
+        # review SF2: the builder stores a session's own expiry and the next one, so the previous session's snapshot
+        # holds the day's 0 DTE expiry only (never its 1 DTE one): a partial sum, said as such.
+        label = f"0 DTE only (previous-session snapshot, {stamp}) ({SPX_SOURCE}, status {first.get('status')})"
+    else:
+        label = f"0-1 DTE from the {stamp} snapshot ({SPX_SOURCE}, status {first.get('status')})"
     return {"stored": True, "label": label, "dollars": dollars, "session": session.isoformat(),
             "snapshot_time": snapshot_time, "fallback": fallback, "status": first.get("status"),
             "source": SPX_SOURCE, "source_as_of": _iso(first.get("source_as_of")),

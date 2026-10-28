@@ -903,7 +903,9 @@ old table names, the routes and the Settings cards come in later PRs.
 `rcdata.read` only, no SQL of its own, no kept connection; a missing day is a "not stored" marker, never an
 exception or a provider call): the 0-1 DTE dollar OI gamma per strike (`call_gamma_oi + put_gamma_oi` over the
 expiries 0 and 1 DTE of `spx_gamma_expiry_strike`; a day whose session has not closed reads the previous session's
-snapshot kept to the expiries from the day on, decision A3) for the $10B pin and $200M squeeze tests (review S4; a day without the slice has neither a pin flag nor a squeeze
+snapshot kept to the expiries from the day on, decision A3; that is the day's 0 DTE expiry only, labelled "0 DTE only
+(previous-session snapshot, <date> <time>)" on the pin line and in the banner, a smaller and conservative sum, review
+SF2) for the $10B pin and $200M squeeze tests (review S4; a day without the slice has neither a pin flag nor a squeeze
 trigger, avo 28 Oct 2026); the
 VIX family (`VIX`, `VIX9D`, `VIX3M`, `VIX6M`, `VIX1Y`, `VVIX`: the newest observation on or before the day, inside
 3 sessions); the E-mini TFF report (`cftc:tff:13874A:*`: the newest report released, Tuesday + 3 days, on or before

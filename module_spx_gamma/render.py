@@ -240,6 +240,10 @@ def data_quality_notice(snapshot: dict, data_root=None) -> str | None:
     not_stored = list(store_notes(snapshot).values())
     if not_stored:
         parts.append("Not stored (no live fallback): " + "; ".join(not_stored) + ".")
+    zero_one = (snapshot.get("store_inputs") or {}).get("zero_one_dte") or {}
+    if zero_one.get("stored") and zero_one.get("fallback"):
+        # review SF2: the previous session's snapshot holds the day's 0 DTE expiry only
+        parts.append(f"Partial: {zero_one.get('label')}; the pin and squeeze tests use that smaller sum.")
     return " ".join(parts) or None
 
 

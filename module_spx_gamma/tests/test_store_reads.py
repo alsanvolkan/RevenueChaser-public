@@ -58,7 +58,9 @@ def test_a_day_not_yet_closed_uses_the_previous_session_and_keeps_expiries_from_
     assert out["stored"] is True and out["fallback"] is True
     assert out["session"] == "2026-10-26" and out["expiries"] == ["2026-10-27"]
     assert len(out["dollars"]) == 239
-    assert out["label"].startswith("0-1 DTE from the 2026-10-26 ")
+    # review SF2: the previous session's snapshot holds the day's 0 DTE expiry only, and says so
+    assert out["label"].startswith("0 DTE only (previous-session snapshot, 2026-10-26 2026-10-26T20:15:00Z)")
+    assert "0-1 DTE" not in out["label"]
 
 
 def test_no_serving_file_is_not_stored():
@@ -177,3 +179,15 @@ def test_read_day_hands_build_day_the_raw_keys(rcdata_market):
     assert set(day["store_inputs"]) == {"vix", "cftc", "candles", "zero_one_dte"}
     for meta in day["store_inputs"].values():
         assert meta["stored"] is True and meta["status"] == "changed" and meta["source_as_of"]
+
+
+def test_the_banner_names_a_0_dte_only_previous_session_slice(rcdata_market):
+    """Review SF2: the pin line and the data-quality banner both say the slice is partial (0 DTE only)."""
+    from RevenueChaser.module_spx_gamma import render
+    from RevenueChaser.module_spx_gamma.normalize import normalize_snapshot
+    from .conftest import make_raw
+    raw = {**make_raw(), **store_reads.read_day(date(2026, 10, 27))}
+    snap = normalize_snapshot(raw, "2026-10-27")
+    notice = render.data_quality_notice(snap) or ""
+    assert "0 DTE only (previous-session snapshot, 2026-10-26" in notice
+    assert "0 DTE only (previous-session snapshot, 2026-10-26" in (render.pin_source_line(snap) or "")
