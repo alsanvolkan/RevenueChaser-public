@@ -2356,11 +2356,13 @@ def _nd_identity(f: dict | None) -> str:
     newest = "".join(f'<li>{_nd(i.get("kind"))} · {_nd(i.get("key"))}: {_nd(i.get("detail"))}'
                      f' <span class="nd-k">({_nd(i.get("found_on"))})</span></li>' for i in f.get("issues") or [])
     us = f.get("universe_source") or {}
+    asked = (f'RC_UNIVERSE_SOURCE={_nd(us.get("variable"))}' if us.get("variable")
+             else "the default, RC_UNIVERSE_SOURCE unset")
     if us.get("requested") == "spine":
-        source = ("the spine (RC_UNIVERSE_SOURCE=spine)" if us.get("effective") == "spine"
-                  else f'the old store: spine requested, falling back: {_nd(us.get("reason"))}')
+        source = (f"the spine ({asked})" if us.get("effective") == "spine"
+                  else f'the old store: spine requested ({asked}), falling back: {_nd(us.get("reason"))}')
     else:
-        source = "the old store (RC_UNIVERSE_SOURCE unset)"
+        source = f"the old store ({asked})"
     source_row = _nd_row("Boards read", source if us.get("effective") == "spine" or not us.get("reason")
                          else f'<span class="nd-warn">{source}</span>')
     return ('<div class="nd-card" id="nd-identity"><h3>Identity</h3>'

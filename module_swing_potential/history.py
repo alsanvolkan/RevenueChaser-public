@@ -77,8 +77,9 @@ def record(payload: dict, *, rows: dict, run_id: str):
     run_at = _run_at(payload)
     summary = payload.get("summary") or {}
     return history.record_run(
-        BOARD, run_id=run_id, run_at=run_at, model_version=freeze.model_version(),
-        rows={SCORES: rows.get("scores") or [], GATES: rows.get("gates") or []}, params=freeze.effective_config(),
+        BOARD, run_id=run_id, run_at=run_at, model_version=freeze.model_version(payload),
+        rows={SCORES: rows.get("scores") or [], GATES: rows.get("gates") or []},
+        params=freeze.effective_config(payload),
         context={"generated_at": payload.get("generated_at"), "data_as_of": payload.get("data_as_of"),
                  "regime": payload.get("regime"), "universe_total": payload.get("universe_total"),
                  "universe_generated_at": payload.get("universe_generated_at"),

@@ -11,7 +11,9 @@ changes no ``ledger.model_version``.
 **Unknown is not false.** A ticker with no CIK, no filings or no qualifying item is absent from the result, never a
 positive "no event" answer; a board that cannot see itself in the store says nothing. The caller that wants the
 blind spot counted asks for it: ``stats["no_submissions"]`` is the number of candidates whose CIK has no filing row
-at all, of any form, and ``stats["no_cik"]`` the number the store cannot map to a CIK in the first place.
+at all, of any form, ``stats["no_cik"]`` the number the store cannot map to a CIK in the first place, and
+``stats["stale_submissions"]`` (review F2) the number whose rows the daily sync last checked more than
+``config.CORPORATE_EVENT_CHECK_MAX_AGE_DAYS`` ago, or never (its ``source_checks`` watermark).
 
 **Bounded reads.** Production passes no ``top_n``, so the candidate list is unbounded and grows with the screen
 (``pipeline.build_payload``). Every store read therefore walks its keys in slices of ``CHUNK``: the statement and its
@@ -26,7 +28,7 @@ Read-only store reads, no write and no network call; a missing table read answer
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from RevenueChaser.core import rawstore, sec_submissions
 
@@ -79,6 +81,7 @@ def corporate_events(tickers, *, today=None, stats: dict | None = None) -> dict[
     if stats is not None:
         stats["no_submissions"] = 0
         stats["no_cik"] = 0
+        stats["stale_submissions"] = 0
     today = _today() if today is None else today
     if not isinstance(today, date):
         today = date.fromisoformat(str(today)[:10])
@@ -91,6 +94,7 @@ def corporate_events(tickers, *, today=None, stats: dict | None = None) -> dict[
     by_cik = {}
     rows = []
     stored: set[str] = set()
+    checked: dict[str, float] = {}
     # One handle per store file for all of it (#386 F5 review): no outer session exists in a job worker or the
     # scheduled CLI Fetch, and a per-statement connect would open the 500 MB file once per slice.
     with rawstore.session():
@@ -119,11 +123,27 @@ def corporate_events(tickers, *, today=None, stats: dict | None = None) -> dict[
                     cik = _norm_cik(row.get("cik"))
                     if cik:
                         stored.add(cik)
+            # Review F2: the sync's own watermark per CIK (``source_checks``, written in raw by
+            # ``sec_submissions.record``). Rows that stopped being refreshed cannot show a recent 8-K.
+            for chunk in _slices(sorted(stored)):
+                for row in rawstore.query(
+                        f"SELECT key, max(checked_at) AS at FROM {sec_submissions.CHECKS} WHERE dataset = ? "
+                        f"AND source = ? AND key IN ({_placeholders(len(chunk))}) GROUP BY key",
+                        [sec_submissions.SOURCE, sec_submissions.SOURCE, *chunk]):
+                    cik = _norm_cik(row.get("key"))
+                    if cik and row.get("at") is not None:
+                        checked[cik] = max(checked.get(cik, 0.0), float(row["at"]))
     if stats is not None:
         # Two blind spots, counted apart: no CIK at all, and a CIK the filings do not mention. A candidate of the
         # first kind was counted nowhere before, so a card that says nothing read as a clean one (#386 F5 review).
         stats["no_cik"] = sum(1 for ticker in wanted if ticker not in cik_of)
         stats["no_submissions"] = sum(len(names) for cik, names in by_cik.items() if cik not in stored)
+        # Review F2: a CIK with rows whose newest check is older than the line, or that was never checked.
+        line = today - timedelta(days=config.CORPORATE_EVENT_CHECK_MAX_AGE_DAYS)
+        stats["stale_submissions"] = sum(
+            len(names) for cik, names in by_cik.items()
+            if cik in stored and (cik not in checked
+                                  or datetime.fromtimestamp(checked[cik], timezone.utc).date() < line))
 
     wanted_items = set(config.CORPORATE_EVENT_ITEMS)
     found: dict[str, dict] = {}

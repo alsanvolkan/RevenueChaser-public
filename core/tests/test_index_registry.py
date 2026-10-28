@@ -2,6 +2,7 @@
 import pytest
 
 from RevenueChaser.core import index_registry as ir
+from RevenueChaser.core import index_lists as il
 from RevenueChaser.core import rawstore
 
 
@@ -32,13 +33,13 @@ def test_annotate_cards_sets_index():
 
 
 def test_save_and_load_index(rawstore_tmp_db):
-    ir.save_index("sp500", {"AAPL", "MSFT"})
+    il.save_index("sp500", {"AAPL", "MSFT"})
     assert ir.load_index("sp500") == {"AAPL", "MSFT"}
     assert ir.load_index("dow") is None
 
 
 def test_fetch_index_uses_cache(rawstore_tmp_db):
-    ir.save_index("sp500", {"AAPL"})
+    il.save_index("sp500", {"AAPL"})
     # cache-first: never calls the fetcher
     called = {"n": 0}
 
@@ -47,9 +48,9 @@ def test_fetch_index_uses_cache(rawstore_tmp_db):
         return {"MSFT"}
 
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(ir, "_FETCHERS", {"sp500": fake})
+    monkeypatch.setattr(il, "_FETCHERS", {"sp500": fake})
     try:
-        assert ir.fetch_index("sp500") == {"AAPL"}
+        assert il.fetch_index("sp500") == {"AAPL"}
         assert called["n"] == 0
     finally:
         monkeypatch.undo()
@@ -61,11 +62,11 @@ def test_build_registry_merges_index_and_meta(rawstore_tmp_db):
         {"ticker": "MSFT", "name": "Microsoft", "sector": "Information Technology"},
     ])
     # seed the membership cache directly (the tiny sets are below the fetch floor)
-    ir.save_index("sp500", {"AAPL", "MSFT"})
-    ir.save_index("dow", {"AAPL"})
-    ir.save_index("nasdaq", {"MSFT"})
+    il.save_index("sp500", {"AAPL", "MSFT"})
+    il.save_index("dow", {"AAPL"})
+    il.save_index("nasdaq", {"MSFT"})
 
-    reg = ir.build_registry(refresh=False)
+    reg = il.build_registry(refresh=False)
     assert reg["AAPL"]["index"] == ["S&P 500", "Dow Jones"]
     assert reg["MSFT"]["index"] == ["S&P 500", "Nasdaq Composite"]
     assert reg["AAPL"]["name"] == "Apple"
@@ -81,17 +82,17 @@ def test_build_registry_drops_tickers_that_left_every_index(rawstore_tmp_db):
     """Regression: as a JSON file the registry was rewritten wholesale, but the
     table write was a per-row upsert — so a delisted/removed ticker kept its row
     and ``index_for`` badged it forever. Membership is now the source of truth."""
-    ir.save_index("sp500", {"AAPL", "OLDCO"})
+    il.save_index("sp500", {"AAPL", "OLDCO"})
     mp = pytest.MonkeyPatch()
-    mp.setattr(ir, "_FETCHERS", {
+    mp.setattr(il, "_FETCHERS", {
         "sp500": lambda: set(), "dow": lambda: set(), "nasdaq": lambda: set()})
     try:
-        first = ir.build_registry(refresh=False)
+        first = il.build_registry(refresh=False)
         assert {"AAPL", "OLDCO"} <= set(first)
 
         # OLDCO is removed from the index on the next refresh
-        ir.save_index("sp500", {"AAPL"})
-        second = ir.build_registry(refresh=False)
+        il.save_index("sp500", {"AAPL"})
+        second = il.build_registry(refresh=False)
     finally:
         mp.undo()
 
@@ -102,8 +103,8 @@ def test_build_registry_drops_tickers_that_left_every_index(rawstore_tmp_db):
 
 
 def test_save_index_replaces_the_slug_without_touching_others(rawstore_tmp_db):
-    ir.save_index("sp500", {"AAPL", "MSFT"})
-    ir.save_index("dow", {"AAPL"})
-    ir.save_index("sp500", {"NVDA"})
+    il.save_index("sp500", {"AAPL", "MSFT"})
+    il.save_index("dow", {"AAPL"})
+    il.save_index("sp500", {"NVDA"})
     assert ir.load_index("sp500") == {"NVDA"}
     assert ir.load_index("dow") == {"AAPL"}
