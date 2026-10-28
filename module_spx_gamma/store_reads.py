@@ -122,8 +122,11 @@ def zero_one_dte_dollars(day) -> dict:
     except Exception as exc:  # noqa: BLE001 - a store problem is "not stored", never a failed board
         return _missing("0-1 DTE", d, _failed(exc), source=SPX_SOURCE, dollars={}, fallback=False)
     if not rows:
-        return _missing("0-1 DTE", d, source=SPX_SOURCE, dollars={}, fallback=False,
-                        status=read.dataset_status(read.DATASET_OF_TABLE["spx_gamma_expiry_strike"]))
+        try:
+            status, note = read.dataset_status(read.DATASET_OF_TABLE["spx_gamma_expiry_strike"]), None
+        except Exception as exc:  # noqa: BLE001 - review SF3: a broken ops.sqlite is a note, never a failed board
+            status, note = None, f"status unknown, {_failed(exc)}"
+        return _missing("0-1 DTE", d, note, source=SPX_SOURCE, dollars={}, fallback=False, status=status)
     dollars: dict[float, float] = {}
     for r in rows:
         c, p = r.get("call_gamma_oi"), r.get("put_gamma_oi")

@@ -191,3 +191,18 @@ def test_the_banner_names_a_0_dte_only_previous_session_slice(rcdata_market):
     notice = render.data_quality_notice(snap) or ""
     assert "0 DTE only (previous-session snapshot, 2026-10-26" in notice
     assert "0 DTE only (previous-session snapshot, 2026-10-26" in (render.pin_source_line(snap) or "")
+
+
+def test_a_broken_ops_file_on_the_not_stored_path_is_a_marker_not_an_exception(monkeypatch):
+    """Review SF3: no market.duckdb yet, then the status read of ops.sqlite fails (locked, stamped newer, corrupt).
+    read_day must still return markers: build_day, and the fetch manifest after the paid UW calls, call it."""
+    import sqlite3
+
+    def locked(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(read, "spx_expiry_strike", lambda *a, **k: [])
+    monkeypatch.setattr(read, "dataset_status", locked)
+    day = store_reads.read_day(fx.LAST)
+    zod = day["zero_one_dte"]
+    assert zod["stored"] is False and zod["label"].startswith("0-1 DTE not stored for 2026-10-26")
+    assert "status unknown" in zod["label"] and "database is locked" in zod["label"]
