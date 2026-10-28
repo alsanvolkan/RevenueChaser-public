@@ -313,3 +313,33 @@ def test_the_spine_section_states_what_the_code_owns():
         assert f"`{kind}`" in section, kind
     assert f"**Tier rule v{tier.VERSION}**" in section
     assert f"`{universe.SOURCE_ENV}={universe.SPINE}`" in section
+
+
+def test_the_prices_section_states_what_the_code_owns():
+    """PR 7 (G2): the prices store's datasets, tables, views, issue kinds and the numbers its rules use."""
+    from RevenueChaser.module_settings import newdata
+    from RevenueChaser.rcdata import caps
+    from RevenueChaser.rcdata.build import DATASETS
+    from RevenueChaser.rcdata.build.prices import KIND, actions, bars, floats, serving, wrds_history
+    text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
+    section = text[text.index("### The prices store (`prices.duckdb` in `RC_MARKET_DIR`, PR 7)"):text.index("## Migration")]
+    for name, ds in DATASETS.items():
+        if ds.kind == KIND:
+            assert f"| `{name}` |" in section, name
+    for table in serving.TABLES:
+        assert f"| `{table}` |" in section, table
+    for view in ("price_bars_daily", "price_actions", "index_levels_daily"):
+        assert f"`{view}`" in section, view
+    for kind in serving.ISSUE_KINDS:
+        assert f"`{kind}`" in section, kind
+    assert f"the last {bars.WINDOW} complete sessions" in section and f"{bars.CHUNK} symbols a request" in section
+    assert f"last {actions.LOOKBACK.days} days" in section
+    assert f"{floats.SLICE} Tier A names a run, {floats.INTERVAL_S} s apart" in section
+    assert f"{serving.GAP_FACTOR} times" in section and f"at most {serving.CLOSE_BEFORE_DAYS} days" in section
+    assert f"over {serving.FLOAT_OVER} times" in section and f"{serving.FLOAT_DISAGREE:.0%} apart" in section
+    assert f"`comp.secd` from {wrds_history.START_YEAR}" in section
+    assert f"`crsp.dsf_v2` per year to {wrds_history.CRSP_LAST_YEAR}" in section
+    assert f"({caps.DAY_CAPS['wrds']} queries" in section
+    words = {1: "one", 2: "two", 3: "three"}
+    assert f"the last {words[wrds_history.REFRESH_YEARS]} years again" in " ".join(section.split())
+    assert f"{newdata.COVERAGE_TARGET['alpaca/bars']:.0%}" in section

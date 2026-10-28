@@ -219,6 +219,75 @@ def _backfill_years(now: datetime) -> dict:
 BACKFILL = {"uw/spot_expiry_strike": _backfill_sessions, "market_series": _backfill_years}
 
 
+# ── The prices store (PR 7, G2) ───────────────────────────────────────────────────────────────────────────────
+
+LABELS.update({"alpaca/bars": "Daily bars (Alpaca)", "alpaca/corporate_actions": "Corporate actions (Alpaca)",
+               "sec/cover_shares": "Shares per class (SEC filing covers)", "yfinance/float": "Float (Yahoo)",
+               "uw/total_float": "Float check (Unusual Whales)",
+               "wrds/prices": "Price history and actions (WRDS: Compustat, CRSP)",
+               "prices/serving": "Prices store (bars, actions, factors, shares, market cap)"})
+# The plan's acceptance: Tier A sessions complete >= 99% (sized against the real Tier A, 5,655 names on 28 Oct).
+COVERAGE_TARGET.update({"alpaca/bars": 0.99})
+DATE_COLUMN.update({"price_bar_daily": "session_date", "corporate_action": "ex_date", "adj_factor": "valid_to",
+                    "shares_class": "as_of", "security_symbol": "valid_from", "market_cap_daily": "session_date",
+                    "price_revision": "session_date", "wrds_price_diff": "as_of"})
+# An attended dataset's own command, where it is not the spine's.
+ATTENDED_COMMANDS = {"wrds/prices": "python -m RevenueChaser.rcdata.build backfill wrds/prices"}
+# The rows of the WRDS difference report (``wrds_price_diff``), as the card words them.
+WRDS_REPORT_LABELS = {"crsp_vs_compustat": "CRSP vs Compustat closes", "compustat_vs_alpaca": "Compustat vs Alpaca closes",
+                      "crsp_vs_alpaca": "CRSP vs Alpaca closes", "compustat_returns": "Compustat returns vs the store's",
+                      "crsp_returns": "CRSP returns vs the store's"}
+
+
+def _backfill_dates(*parts: str):
+    """A dataset kept in ``date=`` partitions: how many there are and the newest (no expected count)."""
+    def view(now: datetime) -> dict:
+        from RevenueChaser.rcdata.build import base
+        folder = base.parquet_root().joinpath(*parts)
+        days = sorted(d.name[5:] for d in folder.iterdir()
+                      if d.name.startswith("date=") and (d / "part-0.parquet").is_file()) if folder.is_dir() else []
+        return {"done": len(days), "expected": None, "last_partition": days[-1] if days else None, "missing": None,
+                "resumable": True, "calls_per_partition": None, "from_earliest": None}
+    return view
+
+
+def _backfill_wrds_prices(now: datetime) -> dict:
+    """The WRDS history's year partitions (``wrds_history``): one query each, newest year first."""
+    from RevenueChaser.rcdata.build.prices import wrds_history as wh
+    today = calendar._as_ny(now).date()
+    plan = [(t, y) for t in wh.YEARLY for y in wh.years(t, today)]
+    have = [(t, y) for t, y in plan if wh.partition_path(t, y).is_file()]
+    newest = max(have, key=lambda p: (p[1], -wh.YEARLY.index(p[0])), default=None)
+    return {"done": len(have), "expected": len(plan), "last_partition": f"{newest[0]} {newest[1]}" if newest else None,
+            "missing": [f"{t} {y}" for t, y in plan if (t, y) not in have], "resumable": len(have) < len(plan),
+            "calls_per_partition": 1, "from_earliest": f"{wh.START_YEAR}-01-01"}
+
+
+BACKFILL.update({"alpaca/bars": _backfill_dates("alpaca", "bars"), "wrds/prices": _backfill_wrds_prices})
+
+
+def _wrds_slot(dataset: str, facts: dict) -> dict:
+    """The card's "WRDS difference" line: the monthly report of ``wrds/prices`` (read with the serving facts), or
+    "no WRDS run yet"."""
+    report = (facts.get("wrds_price_diff") or {}).get("report") if dataset == "wrds/prices" else None
+    as_of = max((r["as_of"] for r in report or [] if r.get("as_of")), default=None)
+    if not report or as_of is None:
+        return {"text": "no WRDS run yet"}
+    parts = []
+    for r in sorted(report, key=lambda r: list(WRDS_REPORT_LABELS).index(r["comparison"])
+                    if r["comparison"] in WRDS_REPORT_LABELS else 99):
+        label = WRDS_REPORT_LABELS.get(r["comparison"], r["comparison"])
+        returns = r["comparison"].endswith("_returns")
+        differs, worst = (r.get("return_differs"), r.get("max_return_diff")) if returns else \
+            (r.get("close_differs"), r.get("max_close_diff"))
+        if not r.get("sessions"):
+            parts.append(f"{label}: no common session")
+            continue
+        parts.append(f"{label}: {r['sessions']:,} sessions, {differs or 0:,} over 1 bp"
+                     + (f" (max {worst:.3%})" if differs and worst is not None else ""))
+    return {"text": f"as of {as_of}: " + "; ".join(parts), "rows": report}
+
+
 # ── The serving file: one read-only handle per call ───────────────────────────────────────────────────────────
 
 def _serving_facts() -> tuple[dict[str, dict], dict[str, str | None], dict | None]:
@@ -245,6 +314,12 @@ def _serving_facts() -> tuple[dict[str, dict], dict[str, str | None], dict | Non
                 tables[table] = {"rows": int(rows), "newest": newest.isoformat() if newest else None}
             if kind == "spine" and {"security", "index_membership"} <= names:
                 funnel = _spine_counts(con)
+            if kind == "prices" and "wrds_price_diff" in names:
+                cur = con.execute("SELECT * FROM wrds_price_diff")
+                cols = [d[0] for d in cur.description]
+                tables["wrds_price_diff"]["report"] = [
+                    {k: (v.isoformat() if isinstance(v, date) else v) for k, v in zip(cols, r)}
+                    for r in cur.fetchall()]
         finally:
             con.close()
     return tables, swaps, funnel
@@ -439,9 +514,9 @@ def _card(dataset: str, ds, facts: dict, now: datetime) -> dict:
                    for i in issues],
         "issues_open": n_issues,
         "backfill": backfill(now) if backfill else None,
-        "wrds": {"text": "no WRDS run yet"},
+        "wrds": _wrds_slot(dataset, facts),
         "attended": bool(getattr(ds, "attended", False)),
-        "attended_command": ATTENDED_COMMAND if getattr(ds, "attended", False) else None,
+        "attended_command": ATTENDED_COMMANDS.get(dataset, ATTENDED_COMMAND) if getattr(ds, "attended", False) else None,
         "schedule": {"paused": bool(schedule and schedule.get("paused_at") is not None),
                      "paused_by": (schedule or {}).get("paused_by"),
                      "paused_at": _iso_utc((schedule or {}).get("paused_at"))},

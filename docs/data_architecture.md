@@ -1129,6 +1129,78 @@ NULL: the spine holds no market data.
 a last `spine/security` build that failed, the old store is read, a warning is logged, and the Settings Identity card
 says so ("Boards read"). The variable is read from the process environment: changing it needs a restart.
 
+### The prices store (`prices.duckdb` in `RC_MARKET_DIR`, PR 7)
+
+The third serving kind: daily bars, corporate actions, the adjustment factors, shares per class, float and market cap,
+keyed on the security. Not the old `.store/prices.duckdb` (#156, `RC_STORE_DIR`), which the boards still read until
+they move (G3); the two files share a name and nothing else. Built by the same builder, swapped the same way, read
+only through `rcdata.read`.
+
+| Dataset | Cadence | Source | Stages |
+|---|---|---|---|
+| `alpaca/bars` | daily | Alpaca `/v2/stocks/bars`, `timeframe=1Day`, feed `sip`, `adjustment` `raw` and `all`, 100 symbols a request, the last 5 complete sessions re-read (the `all` window one session earlier) | `stg_alpaca_bars`, `stg_alpaca_bar_revisions` |
+| `alpaca/corporate_actions` | daily | Alpaca `/v1/corporate-actions`, every symbol, processed in the last 14 days | `stg_alpaca_actions` |
+| `sec/cover_shares` | daily | The SEC daily master index (10-K, 10-Q, 20-F, 40-F and their -T forms of the last 7 days), each filer's submissions file, the filing's inline-XBRL instance: `dei:EntityCommonStockSharesOutstanding` per class member | `stg_sec_cover` |
+| `yfinance/float` | daily | Yahoo `floatShares` (`yfinance` `get_info`), 400 Tier A names a run, 1.5 s apart, stopped by a 401 or 429 | `stg_yahoo_float` |
+| `uw/total_float` | daily | Unusual Whales `/short_screener` `total_float`, every Tier A name (the client's batching) | `stg_uw_float` |
+| `wrds/prices` | monthly, attended | Compustat `comp.secd` from 1984 on the US exchanges and `comp.sec_divid` per year, CRSP `crsp.dsf_v2` per year to 2025, `comp.sec_split` and the CRSP link `crsp.ccmxpf_lnkhist` whole | `stg_wrds_secd`, `stg_wrds_dsf`, `stg_wrds_divid`, `stg_wrds_split`, `stg_wrds_link`, `stg_wrds_revisions` |
+| `prices/serving` | daily | none: builds the served tables from the staging tables | the tables below |
+
+**The universe.** The bars ask the live spine's Tier A (5,655 names on 28 Oct 2026, not the plan's ~7,691), the
+benchmarks (SPY, DIA, QQQ), the rotation ETFs and the stock watch list. The acceptance "Tier A sessions complete
+>= 99%" is the bars dataset's coverage: Tier A names with a bar on the asked session over the Tier A names asked,
+against that real count.
+
+**The security id** (`rcdata/build/prices/__init__.py`, `security_id`): `<gvkey>:<iid>` when the spine links the name
+to Compustat, else `figi:<composite FIGI>`, else `cik:<CIK>:<TICKER>`, else `sym:<TICKER>`; a WRDS bar with no spine
+row keeps `<gvkey>:<iid>` (a CRSP one with no link `permno:<PERMNO>`). A source row stores its provider's facts and the
+id of its fetch day; the build resolves each row against the live spine on (ticker, CIK), so a spine change re-keys
+the history at the next build without a refetch.
+
+**Bars.** A bar is keyed on the New York session date (`core/calendar.py`; Alpaca stamps a daily bar at midnight New
+York, in UTC), and only a complete session is stored (16:30 New York or later). A row that is no session, outside the
+calendar's years, outside the asked window or fetched before its session was complete is a run issue, not a row. The
+re-read keeps every changed open, high, low, close or volume of a stored bar as a revision (`price_revision`). Bars
+are stored **nominal**; the factors are applied on read.
+
+**Served tables** (`prices` serving schema version `1`). Periods are `valid_from` inclusive, `valid_to` exclusive.
+
+| Table | Rows |
+|---|---|
+| `price_bar_daily` | one nominal bar per security and session (key `security_id`, `session_date`): Alpaca's, then WRDS's where Alpaca has none (CRSP where it links to the Compustat security, else Compustat; only USD rows), and the S&P 500 level from the market store's Cboe Parquet (`index:SPX`); `shares_outstanding` is a WRDS bar's own (`cshoc`; CRSP `shrout` in thousands) |
+| `corporate_action` | Alpaca's actions of the store's securities (resolved to the security that traded under the action's symbol nearest its date, else the spine's ticker) and Compustat's splits and dividends where Alpaca has none of that kind that day; `ratio` new over old shares, `amount` per share, `applied` and `not_applied_why` |
+| `adj_factor` | per security, the periods between two ex-dates and their `split_factor` (the product of `1 / ratio` of every later split and stock dividend) and `tr_factor` (that, times `1 - amount / close before the ex-date` of every later cash dividend, the close at most 7 days before) |
+| `shares_class` | `outstanding` per class from the SEC covers (an unlisted class keyed `class:<CIK>:<member>`), `float` from Yahoo and from UW |
+| `security_symbol` | the symbols a security traded under and when |
+| `market_cap_daily` | close times shares per security and session (the bar's own shares, else a WRDS source's of that session, else the newest cover on or before it moved over the splits between); `issuer_market_cap` sums the issuer's listed classes |
+| `price_revision` | the values a later read replaced: Alpaca's re-read and the monthly WRDS refresh, with `revised_at` and `revised_by` |
+| `wrds_price_diff` | the WRDS difference report, one row per comparison: CRSP against Compustat and each against Alpaca on the closes of the sessions both have, and each WRDS source's own day return (Compustat's `prccd / ajexdi * trfd` over the previous session's, CRSP's `dlyret`) against the store's on consecutive sessions; a difference over 1 bp counts; on the `wrds/prices` Settings card |
+
+**The bridge (D4).** Views under the old `.store/prices.duckdb` names with the old columns: `price_bars_daily`
+(split-adjusted OHLC, `adj_close` total-return adjusted, both to today, `fetched_at` the build time so the old reader
+applies no split a second time), `price_actions` (splits and dividends, the amount in today's share basis) and
+`index_levels_daily` (`^GSPC`).
+
+**Build issues** (dataset `prices/serving`, synced after each swap): `source_never_run`, `tier_a_no_bar`,
+`tier_a_no_shares`, `price_gap_no_action` (the split-adjusted close moved by 1.9 times or more, either way, within 7
+days, with no split), `adjustment_differs` (the store's total-return day return more than 1 bp from Alpaca's own),
+`dividend_not_applied`, `action_not_applied` (a spin-off, unit split or rights distribution), `cover_class_unmapped`,
+`float_above_outstanding` (over 1.05 times), `float_sources_disagree` (Yahoo and UW more than 25% apart). Run issues of
+the sources: `not_a_session`, `symbol_refused`, `action_undated`, `no_inline_xbrl`, `submissions_missing`,
+`filing_not_in_submissions`, `instance_unreadable`, `wrds_column_empty` (a WRDS answer with rows and none of a
+column the store needs: the column names are the documented ones, not read from WRDS before the first run).
+
+**Attended (WRDS).** `wrds/prices` runs on the spine's WRDS worker (`RC_WRDS_PYTHON`, `WRDS_USERNAME`) from the CLI
+only: `python -m RevenueChaser.rcdata.build backfill wrds/prices`. One query per table and year; a backfill asks the
+two snapshot tables, then the years newest first, skips a year partition that exists with no query, and stops at
+the WRDS day cap (50 queries, a working number) serving the years it has: the whole history is about 130 queries,
+so three attended sessions at that cap, or one if avo raises it for that run. The monthly run asks the last two
+years again and keeps every bar value it replaces as a revision. The long history run is Phase 8, after PR 21.
+
+**Reading it.** `rcdata.read.security_ids(tickers)`, `rcdata.read.bars(security_ids, start, end, basis)` (`nominal`,
+`split`: today's share basis, `total_return`: the cash dividends taken out too; each row says its basis and factors),
+`rcdata.read.actions(...)`, `rcdata.read.shares(..., measure)`, `rcdata.read.market_cap(...)`.
+
 ## Migration
 Two separate things, deliberately not conflated:
 
