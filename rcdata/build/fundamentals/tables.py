@@ -13,7 +13,7 @@ import duckdb
 from ....core import calendar
 from ... import ops
 from .. import base
-from . import (KIND, common, companyfacts, earnings, estimates, facts, filings, uw_financials,
+from . import (KIND, common, companyfacts, earnings, estimates, facts, filings, fsds, uw_financials,
                wrds_fund)
 
 NAME = "fundamentals/tables"
@@ -114,6 +114,7 @@ STAGED: dict[str, list[tuple[str, str]]] = {
     uw_financials.STAGING: facts.FACT,
     **{d.revision_staging: wrds_fund.REVISION for d in wrds_fund.DATASETS if d.revisions},
     estimates.STAGING: estimates.schema(),
+    fsds.STAGING: fsds.SCHEMA,
     filings.STAGING["segments"]: filings.SEGMENT,
     filings.STAGING["customers"]: filings.CUSTOMER,
     **{wrds_fund.SEGMENTS.STAGING[p]: schema + wrds_fund.PROVENANCE
