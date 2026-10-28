@@ -923,8 +923,9 @@ renders at once with what is stored.
 | `RC_MARKET_RAW_DIR` | `MARKET_RAW_DIR` | `raw/<source>/<dataset>/...` and `parquet/<source>/<dataset>/<partition>/` (the HDD) |
 | `RC_MARKET_RAW_COPY_DIR` | `MARKET_RAW_COPY_DIR` | Where the backup copies the newest raw days; empty = off |
 
-**Files.** Serving kinds: `market`, `spine`. Each kind is one file, `<MARKET_DIR>/<kind>.duckdb`. The identity
-spine, `spine` (serving schema version `1`), is described under "The identity spine" below. The market data,
+**Files.** Serving kinds: `market`, `spine`, `options`. Each kind is one file, `<MARKET_DIR>/<kind>.duckdb`. The
+identity spine, `spine` (serving schema version `1`), is described under "The identity spine" below, and the options
+data, `options` (serving schema version `1`), under "The options data". The market data,
 `market` (serving schema version `1`): `serving_schema_version` (one row: kind, version, build time, build id),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
 `source`, `source_as_of`, `fetched_at`, `run_id`, `observed`) and `market_series` (key series id, observation date,
@@ -936,7 +937,9 @@ stays as `<kind>.prev.duckdb`.
 checked before it replaces anything: its `serving_schema_version` row, the row count of every table, the run's
 `dataset_check` row (a `failed` one refuses the swap), and the live file: every live table must be in the build, and
 none may empty or lose more than 1% of its rows unless the request says `"allow_shrink": true` (the CLI's
-`--allow-shrink`). A build also refuses
+`--allow-shrink`). A table that serves only its newest sessions (`option_eod`) names its first kept session in the
+build file's `serving_window` table, and is compared on the rows inside that window: a session leaving it is not a
+loss, a session inside it that lost rows is. A build also refuses
 a missing Parquet root (the raw disk not mounted). Then the live file is hard-linked to `<kind>.prev.duckdb` and
 `os.replace` moves the new file over the live name, so the live name is never missing. Any failure deletes the new
 file and leaves the live file byte-identical (test T3, `rcdata/tests/test_serving.py`). The dashboard opens a serving
@@ -1126,6 +1129,25 @@ NULL: the spine holds no market data.
 `security_master`'s type); the default stays the old store until PR 6. With the variable set but no spine file, or
 a last `spine/security` build that failed, the old store is read, a warning is logged, and the Settings Identity card
 says so ("Boards read"). The variable is read from the process environment: changing it needs a restart.
+
+### The options data (`options.duckdb`, G8)
+
+The third serving kind (build plan PR 18): SPX and the option watch list (D2), the screener set of every reporting
+name, and the earnings set of the evening. Built by the same builder, swapped the same way, read only through
+`rcdata.read`. The tables (`rcdata/build/options/tables.py`; every one carries the provenance `source`,
+`source_as_of`, `fetched_at`, `run_id`, `observed`, and the per-strike, per-expiry and print tables a `set_name`,
+`list` or `earnings`, that is part of their key):
+
+| Table | Key | Holds |
+|---|---|---|
+| `option_eod` | session date, option symbol | The chain at the close: every contract of SPX and the list names, its quotes, IV, greeks, open interest and its change, volume by side, charm and vanna; the last 30 sessions (the Parquet keeps every one) |
+| `option_strike` | session date, ticker, set, strike | Spot exposures by strike (the four greeks for calls and puts by OI, volume, bid and ask) and the greek exposure by strike |
+| `option_expiry` | session date, ticker, set, expiry | Contracts, open interest and volume per expiry, greek exposure by expiry, the day's flow per expiry, the IV term structure |
+| `option_daily` | session date, ticker | The GEX levels, the day's option volume and premium, IV rank, and the chain's size |
+| `option_print` | session date, ticker, set, print id | The last 50 prints of the session, with `tags`, `nbbo_bid`/`nbbo_ask`, the side volumes, `multi_vol`, `upstream_condition_detail` and `report_flags` |
+| `iv_daily` | session date, ticker, source, days | Implied volatility per tenor: UW's interpolated IV (observed by the daily run) and IBKR's 30-day IV year (backfilled, `observed` false) |
+| `option_screener_daily` | session date, ticker | Every name reporting in the next 28 days, its report date and session, its screener row (or `screened` false), and whether it passes the Earnings Radar gates |
+| `er_options` | session date, ticker | The earnings set: one row per name fetched on the evening before its report, with the report date it was fetched for |
 
 ## Migration
 Two separate things, deliberately not conflated:

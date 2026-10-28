@@ -331,7 +331,10 @@ def test_every_call_opens_its_own_handle_and_sees_a_swapped_file(handles):
 def test_no_serving_file_yet_is_no_rows_not_an_error(handles):
     card = _card(newdata.collect(NOW), "uw/spot_expiry_strike")
     assert card["table_rows"] is None and handles["opened"] == 0
-    assert newdata.collect(NOW)["verified"]["swaps"] == {"market": None, "spine": None}
+    from RevenueChaser.rcdata import serving
+    # Every serving kind, each without a swap yet (the kinds come from rcdata, so a new one needs no edit here).
+    assert newdata.collect(NOW)["verified"]["swaps"] == {kind: None for kind in serving.KINDS}
+    assert {"market", "spine", "options"} <= set(serving.KINDS)
 
 
 def test_the_collect_never_creates_ops_sqlite_or_a_serving_file():
