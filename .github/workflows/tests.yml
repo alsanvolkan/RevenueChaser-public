@@ -9,8 +9,8 @@ name: tests
 # A push to a work branch or to a `batch/*` branch runs nothing until that PR to `main` exists.
 # Docs-only changes skip CI too. The filter lists every path that may run tests, then drops
 # Markdown, .hermes/ and .claude/, then adds back the Markdown files a unit test reads
-# (core/tests/test_doc_constants.py: docs/data_architecture.md and docs/data_health.md; docs/data_health.md also
-# core/tests/test_automation_chain.py) and the workflow files. Order matters: a later pattern
+# (the list is _MARKDOWN_READ_BY_TESTS in core/tests/test_doc_constants.py, which fails when this file leaves one
+# out) and the workflow files. Order matters: a later pattern
 # overrides an earlier one. Any other file, code or data, runs CI. A skipped run leaves no check
 # on the PR: that is expected for a docs-only PR, not a missing CI.
 on:
@@ -23,6 +23,10 @@ on:
       - "!.claude/**"
       - "docs/data_architecture.md"
       - "docs/data_health.md"
+      - "docs/data_retrieval.md"
+      - "docs/rules/00_overview.md"
+      - "docs/rules/redesign.md"
+      - "module_spx_gamma/tests/golden/position_map.base.md"
       - ".github/**"
   push:
     branches: [main]
@@ -33,6 +37,10 @@ on:
       - "!.claude/**"
       - "docs/data_architecture.md"
       - "docs/data_health.md"
+      - "docs/data_retrieval.md"
+      - "docs/rules/00_overview.md"
+      - "docs/rules/redesign.md"
+      - "module_spx_gamma/tests/golden/position_map.base.md"
       - ".github/**"
   workflow_dispatch:
 
