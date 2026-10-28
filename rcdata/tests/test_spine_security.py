@@ -214,6 +214,28 @@ def test_a_rename_the_weekly_sec_file_does_not_hold_yet_keeps_the_member(built):
     assert rows == [("HEI-A", date(2026, 10, 27), date(2026, 10, 28)), ("HEIAB", date(2026, 10, 28), None)]
 
 
+def test_a_name_matched_ahead_takes_its_cik_from_the_snapshot_it_matched(built):
+    """Delta-2 SF1 (c): NEWCO is held on 28 Oct only; the SEC file has it from 3 Nov. The period's CIK is that of
+    the snapshot the line matched (3 Nov), the only one that names it."""
+    _sec_answer(built, fx.SEC_FILE["data"] + [[4000001, "NEWCO INC", "NEWCO", "NYSE"]])
+    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-03"}})
+    _funds_answer(built, sp500=fx.SP500 + [("NEWCO", None, "NEWCO INC")])
+    run_all("2026-10-28", names=(funds.NAME,))
+    assert _q("SELECT valid_from, valid_to, cik FROM index_membership WHERE source = ? AND index_slug = 'sp500' "
+              "AND ticker = 'NEWCO'", funds.NAME) == [(date(2026, 10, 28), None, "4000001")]
+
+
+def test_a_line_is_not_looked_for_more_than_two_weeks_ahead(built):
+    """Delta-2 SF1 (a): NEWCO reaches the SEC file on 17 Nov, 20 days after the files wrote it on 28 Oct: no
+    match that far ahead."""
+    _sec_answer(built, fx.SEC_FILE["data"] + [[4000001, "NEWCO INC", "NEWCO", "NYSE"]])
+    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-17"}})
+    _funds_answer(built, sp500=fx.SP500 + [("NEWCO", None, "NEWCO INC")])
+    run_all("2026-10-28", names=(funds.NAME,))
+    assert _q("SELECT count(*) FROM index_membership WHERE source = ? AND ticker = 'NEWCO'", funds.NAME) == [(0,)]
+    assert ("member_not_in_sec", "sp500:NEWCO") in _issues()
+
+
 def test_a_past_members_cik_is_its_own_not_the_reused_tickers_new_owner(built):
     """Delta S3: NVR leaves on 3 Nov (acquired); on 10 Nov the ticker NVR belongs to another CIK. NVR's S&P 500
     period keeps NVR Inc's CIK."""
@@ -227,6 +249,37 @@ def test_a_past_members_cik_is_its_own_not_the_reused_tickers_new_owner(built):
     assert _q("SELECT cik, valid_from, valid_to FROM index_membership WHERE source = ? AND index_slug = 'sp500' "
               "AND ticker = 'NVR'", funds.NAME) == [("906163", date(2026, 10, 27), date(2026, 11, 3))]
     assert _q("SELECT cik FROM security WHERE ticker = 'NVR'") == [("7777777",)]
+
+
+def test_a_member_still_held_after_it_left_the_sec_file_is_not_matched_to_the_tickers_next_owner(built):
+    """Delta-2 SF1: NVR leaves the SEC file on 3 Nov, the fund files still hold it that day, and on 10 Nov the
+    ticker NVR belongs to another CIK. The 3 Nov line is not matched ahead to the new owner: NVR's period keeps NVR
+    Inc's CIK and ends on 3 Nov, and the line is an unmatched member, not a current one."""
+    without_nvr = [r for r in fx.SEC_FILE["data"] if r[2] != "NVR"]
+    _sec_answer(built, without_nvr)
+    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-03", "allow_shrink": True}})
+    _sec_answer(built, without_nvr + [[7777777, "NEW NVR HOLDER INC", "NVR", "NYSE"]])
+    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-10"}})
+    _funds_answer(built, sp500=fx.SP500)
+    run_all("2026-11-03", names=(funds.NAME,))
+    assert _q("SELECT cik, valid_from, valid_to FROM index_membership WHERE source = ? AND index_slug = 'sp500' "
+              "AND ticker = 'NVR'", funds.NAME) == [("906163", date(2026, 10, 27), date(2026, 11, 3))]
+    assert ("member_not_in_sec", "sp500:NVR") in _issues()
+
+
+def test_a_rename_the_fund_files_lag_is_not_matched_to_the_old_tickers_next_owner(built):
+    """Delta-2 SF1, the other direction: the SEC file writes ETN as ETNX from 3 Nov, a fund file still writes ETN
+    without a CUSIP that day, and on 10 Nov the ticker ETN belongs to another CIK. The line is no match for the new
+    ETN; the files that carry the CUSIP keep the member as ETNX."""
+    renamed = [[c, n, "ETNX" if t == "ETN" else t, e] for c, n, t, e in fx.SEC_FILE["data"]]
+    _sec_answer(built, renamed)
+    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-03"}})
+    _sec_answer(built, renamed + [[8888888, "NEW ETN HOLDER INC", "ETN", "NYSE"]])
+    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-10"}})
+    _funds_answer(built, sp500=[(t, None, n) if t == "ETN" else (t, c, n) for t, c, n in fx.SP500])
+    run_all("2026-11-03", names=(funds.NAME,))
+    assert _q("SELECT count(*) FROM index_membership WHERE source = ? AND ticker = 'ETN' AND cik = '8888888'",
+              funds.NAME) == [(0,)]
 
 
 def test_wrds_constituents_are_kept_with_exclusive_ends(built):

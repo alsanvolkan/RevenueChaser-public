@@ -51,6 +51,9 @@ NAME = "spine/security"
 TABLES = ("security", "security_history", "gics_history", "index_membership")
 # Compustat ``exchg`` codes of the US exchanges the SEC file's listed rows trade on: NYSE, AMEX, Nasdaq.
 US_EXCHG = (11, 12, 14)
+# How far ahead of a fund day's SEC snapshot a line is looked for (delta S1): the weekly file's lag, with room for one
+# missed week. Only for a ticker the SEC file has not held yet (delta-2 SF1).
+LOOKAHEAD = timedelta(days=14)
 
 SECURITY = [
     ("ticker", "TEXT PRIMARY KEY"), ("cik", "TEXT"), ("name", "TEXT"), ("exchange", "TEXT"),
@@ -216,7 +219,8 @@ def match_holding(line: dict, by_cusip: dict[str, str], cusip_owners: dict[str, 
 # The vote, in SQL over the whole fund-file history (it grows by about 6,000 lines a day): ``_fund_snap`` gives each
 # fund day the SEC snapshot of that day (the newest on or before it, else the first), and ``_fund_map`` names the SEC
 # ticker of each distinct (snapshot, ticker, CUSIP) the files wrote, matched against that snapshot's tickers (then
-# the later ones, for a name the weekly file does not hold yet), so a member that later left the SEC file keeps its
+# the next two weeks', for a ticker the weekly file has not held yet) and the snapshot it matched (``msnap``, whose
+# row gives the CIK), so a member that later left the SEC file keeps its
 # past (should-fix 4b); a name is a member of an index on a day when more than
 # half of that day's counting files hold it; the periods are the runs of member days ("gaps and islands"), each
 # ending on the index's next day with a counting file, so a day with no counting file is no absence.
@@ -224,7 +228,8 @@ VOTE_SQL = """
 CREATE OR REPLACE TEMP TABLE _fund_days AS
     SELECT as_of, index_slug, count(*) AS files FROM stg_fund_files WHERE counted GROUP BY ALL;
 CREATE OR REPLACE TEMP TABLE _fund_held AS
-    SELECT l.as_of, l.index_slug, m.sec_ticker AS ticker, count(DISTINCT l.provider || '/' || l.fund) AS held
+    SELECT l.as_of, l.index_slug, m.sec_ticker AS ticker, count(DISTINCT l.provider || '/' || l.fund) AS held,
+           min(m.msnap) AS msnap
     FROM stg_fund_lines l
     JOIN _fund_snap s ON s.as_of = l.as_of
     JOIN _fund_map m ON m.snap = s.snap AND m.tk = coalesce(l.ticker, '') AND m.cu = coalesce(l.cusip, '')
@@ -249,18 +254,13 @@ CREATE OR REPLACE TEMP TABLE _fund_periods AS
            (SELECT min(d.as_of) FROM _fund_days d WHERE d.index_slug = i.index_slug AND d.as_of > i.last_day)
                AS valid_to,
            x.held AS files_held, x.files AS files_counted,
-           -- The member's CIK as of its period's last day (delta S3): the snapshot that day matched against, else
-           -- the next one that holds the ticker (a name matched ahead of the weekly file), else the newest before.
-           coalesce(
-               (SELECT s.cik FROM stg_sec_all s WHERE s.ticker = i.ticker
-                    AND s.source_as_of = (SELECT f.snap FROM _fund_snap f WHERE f.as_of = i.last_day)),
-               (SELECT min_by(s.cik, s.source_as_of) FROM stg_sec_all s
-                    WHERE s.ticker = i.ticker AND s.source_as_of > i.last_day),
-               (SELECT max_by(s.cik, s.source_as_of) FROM stg_sec_all s
-                    WHERE s.ticker = i.ticker AND s.source_as_of <= i.last_day)) AS cik,
+           -- The member's CIK as of its period's last day (delta S3): that of the SEC snapshot its lines matched
+           -- that day (``msnap``, the day's own or one ahead of it), so never a later owner of the ticker (delta-2).
+           (SELECT s.cik FROM stg_sec_all s WHERE s.ticker = i.ticker AND s.source_as_of = h.msnap) AS cik,
            (SELECT max(d.as_of) FROM _fund_days d WHERE d.index_slug = i.index_slug) AS source_as_of
     FROM islands i
-    JOIN _fund_dense x ON x.index_slug = i.index_slug AND x.ticker = i.ticker AND x.as_of = i.last_day;
+    JOIN _fund_dense x ON x.index_slug = i.index_slug AND x.ticker = i.ticker AND x.as_of = i.last_day
+    JOIN _fund_held h ON h.index_slug = i.index_slug AND h.ticker = i.ticker AND h.as_of = i.last_day;
 """
 
 
@@ -464,22 +464,32 @@ class SpineSecurity:
         # Each snapshot's CUSIP map, built once (not once per distinct line).
         by_cusip = {d: {c: t for c, t in by_cusip_all.items() if t in ts} for d, ts in on_snap.items()}
         snaps = sorted(on_snap)
+        first_seen: dict[str, date] = {}
+        for d in snaps:
+            for t in on_snap[d]:
+                first_seen.setdefault(t, d)
         mapping = []
         for snap, tk, cu in con.execute(
                 "SELECT DISTINCT s.snap, coalesce(l.ticker, ''), coalesce(l.cusip, '') FROM stg_fund_lines l "
                 "JOIN _fund_snap s USING (as_of) WHERE (l.ticker IS NOT NULL OR l.cusip IS NOT NULL) "
                 "AND s.snap IS NOT NULL").fetchall():
             line = {"ticker": tk or None, "cusip": cu or None}
-            hit = None
-            # The day's snapshot first; the SEC file is weekly, so a name the files already write under its new
-            # ticker (a new joiner, a rename) is looked for in the snapshots after it, oldest first (delta S1).
-            for d in snaps[snaps.index(snap):]:
-                hit = match_holding(line, by_cusip[d], cusip_owners, link_of, on_snap[d], squashed[d])
-                if hit:
-                    break
-            mapping.append({"snap": snap, "tk": tk, "cu": cu, "sec_ticker": hit})
-        base.rows_table(con, "_fund_map", [("snap", "DATE"), ("tk", "TEXT"), ("cu", "TEXT"), ("sec_ticker", "TEXT")],
-                        mapping)
+            hit, msnap = match_holding(line, by_cusip[snap], cusip_owners, link_of, on_snap[snap], squashed[snap]), snap
+            # The SEC file is weekly, so a name the files already write under its new ticker (a new joiner, a rename)
+            # is looked for in the snapshots up to LOOKAHEAD after the day's, oldest first (delta S1). Only a ticker
+            # the SEC file had not held by the day's snapshot: one it held and no longer does has left the file, and
+            # a later snapshot's row of it is the ticker's next owner (delta-2 SF1).
+            if hit is None:
+                for d in snaps[snaps.index(snap) + 1:]:
+                    if d > snap + LOOKAHEAD:
+                        break
+                    ahead = match_holding(line, by_cusip[d], cusip_owners, link_of, on_snap[d], squashed[d])
+                    if ahead and first_seen[ahead] > snap:
+                        hit, msnap = ahead, d
+                        break
+            mapping.append({"snap": snap, "tk": tk, "cu": cu, "sec_ticker": hit, "msnap": msnap if hit else None})
+        base.rows_table(con, "_fund_map", [("snap", "DATE"), ("tk", "TEXT"), ("cu", "TEXT"), ("sec_ticker", "TEXT"),
+                                           ("msnap", "DATE")], mapping)
         con.execute(VOTE_SQL)
         if latest is not None:
             for ln in _rows(con, "SELECT DISTINCT l.index_slug, l.provider, l.fund, l.ticker, l.cusip, l.name "

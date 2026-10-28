@@ -1082,8 +1082,11 @@ the only active US security of a CIK with one SEC ticker; otherwise no link and 
 **Membership** (working choice): a fund file counts on a day when it parsed and holds at least its index's floor;
 a name is a member when more than half of the counting files hold it. Each day's lines are matched against that
 day's SEC snapshot (the newest on or before it), by CUSIP, then by ticker, then by the ticker without its class
-dash; a line whose CUSIP is not the ticker's known CUSIP is no match. A member that later leaves the SEC file keeps
-its periods. Compustat constituents get a ticker only through the link (never Compustat's current `tic` alone).
+dash; a ticker match is refused when the line's CUSIP is known (Compustat) to belong to another security. A line
+the day's snapshot does not match is looked for in the snapshots of the next 14 days, but only by a ticker the SEC
+file had not held by that day (a new joiner, a rename the files write first): a ticker it held and no longer holds
+has left the file, and a later row of it is its next owner. A member that later leaves the SEC file keeps its periods,
+and a period's CIK is that of the snapshot its last day's lines matched. Compustat constituents get a ticker only through the link (never Compustat's current `tic` alone).
 
 **Build issues** live in `ops.sqlite` `build_issues` (D6), dataset `spine/security`, synced after each swap
 (`ops.sync_issues`: found again stays open, gone is resolved). Kinds: `source_never_run`, `tier_a_no_wrds_link`,
