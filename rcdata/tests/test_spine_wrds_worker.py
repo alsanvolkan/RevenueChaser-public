@@ -136,3 +136,11 @@ def test_no_user_name_is_a_failed_login_before_the_worker_starts(monkeypatch):
 def test_the_worker_does_not_import_the_revenuechaser_package():
     text = wrds.WORKER.read_text(encoding="utf-8")
     assert "RevenueChaser" not in text.split('"""', 2)[2] and "import wrds" in text
+
+
+def test_an_error_masks_the_user_name_as_a_word_not_inside_other_words(monkeypatch):
+    """Delta-2 N4: user "ab" is masked where it stands alone, not inside "table" or "abc"."""
+    from RevenueChaser.rcdata.build.spine import wrds_worker
+    monkeypatch.setenv("WRDS_USERNAME", "ab")
+    text = wrds_worker._error(RuntimeError('role "ab" cannot read table abc; user ab'))
+    assert text == 'RuntimeError: role "<user>" cannot read table abc; user <user>'

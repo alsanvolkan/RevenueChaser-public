@@ -93,7 +93,7 @@ def _error(e: BaseException) -> str:
     text = f"{type(e).__name__}: {e}"[:300]
     user = (os.getenv("WRDS_USERNAME") or "").strip()
     if user:
-        text = text.replace(user, "<user>")
+        text = re.sub(rf"(?<![\w.-]){re.escape(user)}(?![\w-])", "<user>", text)   # the name as a word, not inside one
     return _HOST.sub("<host>", text)
 
 
