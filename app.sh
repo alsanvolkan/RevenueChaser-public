@@ -65,7 +65,7 @@ ${B}Utility${RST}
   deps                    reinstall requirements into .venv
   migrate-raw-data [flags] one-time import of rawData files + SQLite DBs into raw.duckdb
                            flags: --purge (full cleanup) | --delete | --reset [--force] | --dataset {name,...}
-                           see scripts/README.md
+                           guide: private notes scripts/migrate-guide-rawdata-to-duckdb.md
   clean                   remove __pycache__, .pytest_cache and stale test scratch
   clean-scratch [--apply] test scratch a killed run left in the system temp dir (reports without --apply)
   help                    this message
