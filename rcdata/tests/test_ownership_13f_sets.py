@@ -5,6 +5,7 @@ holdings in ``INFOTABLE_SK`` order); the days written and marked done, so the fo
 the newest set; a day the walk finished is not written again; an answer that is not a zip is not kept."""
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import duckdb
@@ -13,7 +14,7 @@ import pytest
 from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.rcdata import serving
 from RevenueChaser.rcdata.build import base
-from RevenueChaser.rcdata.build.ownership import common, sec, sec13f, sec13f_sets
+from RevenueChaser.rcdata.build.ownership import common, edgar, sec, sec13f, sec13f_sets
 
 from . import ownership_fixture as ox
 
@@ -67,9 +68,9 @@ def feed(monkeypatch, http_mock):
     return e
 
 
-def _backfill(start: str, end: str) -> dict:
-    return base.run_request({"dataset": sec13f.NAME, "params": {"mode": "backfill", "from": start, "to": end}},
-                            sleep=lambda s: None)
+def _backfill(start: str, end: str, **params) -> dict:
+    return base.run_request({"dataset": sec13f.NAME, "params": {"mode": "backfill", "from": start, "to": end,
+                                                                **params}}, sleep=lambda s: None)
 
 
 def _served(sql: str, *args) -> list[tuple]:
@@ -101,7 +102,10 @@ def test_the_sets_fill_their_days_and_the_forms_walk_reads_only_the_days_after_t
     asked = [str(c.url) for c in http_mock.calls("_form13f.zip")]
     assert sorted(u.rsplit("/", 1)[1] for u in asked) == [SUMMER, SPRING]          # not 2013q1
     assert f"https://sec.test{HREFS[0]}" in asked                   # resolved against the page, its own folder
-    assert [str(c.url).rsplit(".", 2)[1] for c in http_mock.calls("/daily-index/")] == ["20260902", "20260901"]
+    # The walk reads the days after the newest set, and the spring set's days after its newest filing (15 May).
+    assert [str(c.url).rsplit(".", 2)[1] for c in http_mock.calls("/daily-index/")] == [
+        "20260902", "20260901", "20260529", "20260528", "20260527", "20260526", "20260525", "20260522", "20260521",
+        "20260520", "20260519", "20260518"]
     spring, summer = f"set:{SPRING}", f"set:{SUMMER}"
     assert _served(f"SELECT accession, cik, form, period, filed, is_amendment, amendment_type, amendment_no, "
                    f"confidential_omitted, status, holdings, detail, origin, filer_name FROM {sec13f.TABLE} "
@@ -128,7 +132,7 @@ def test_the_sets_fill_their_days_and_the_forms_walk_reads_only_the_days_after_t
     assert f"13F data set {SUMMER}: 4 days written, 2026-06-01 to 2026-08-31" in row["note"]
 
 
-def test_a_set_is_downloaded_once_and_a_day_the_walk_finished_is_not_written_again(feed, http_mock):
+def test_a_set_is_downloaded_once_asked_again_only_if_modified_and_a_walked_day_is_kept(feed, http_mock):
     feed.add_day("2026-07-31", [(ox.idx_row(1000007, "MANAGER 1000007", "13F-HR", "2026-07-31", "0001000007-26-000099"),
                                  ox.f13_filing("0001000007-26-000099", 1000007, "2026-07-31",
                                                [ox.f13_holding("NVR INC", "62944T105", 1_000, 1)], "06-30-2026"))])
@@ -137,7 +141,10 @@ def test_a_set_is_downloaded_once_and_a_day_the_walk_finished_is_not_written_aga
     _backfill("2026-06-01", "2026-08-31")
     http_mock.requests.clear()
     _backfill("2026-06-01", "2026-08-31")
-    assert not http_mock.calls("_form13f.zip") and len(http_mock.calls(ox.SETS_PAGE_PATH)) == 1
+    # The kept summer set is asked whether it changed (the spring one carried no Last-Modified to ask with).
+    assert [c.headers.get("if-modified-since") for c in http_mock.calls("_form13f.zip")] == [
+        "Mon, 14 Sep 2026 16:43:16 GMT"]
+    assert len(http_mock.calls(ox.SETS_PAGE_PATH)) == 1
     assert _served(f"SELECT accession, origin FROM {sec13f.TABLE} WHERE filed = '2026-07-31'") == [
         ("0001000007-26-000099", "edgar")]
     assert sec13f_sets.raw_path(SUMMER).exists() and sec13f_sets.raw_path(SPRING).exists() is False
@@ -148,3 +155,50 @@ def test_an_answer_that_is_not_a_zip_is_refused_and_not_kept(feed, http_mock):
     row = _backfill("2026-06-01", "2026-08-31")
     assert row["result"] == "failed" and "is not a zip" in row["note"]
     assert not sec13f_sets.raw_path(SUMMER).exists()
+
+
+def _early_summer() -> bytes:
+    """The summer set as it might be published while its window is still open: nothing filed after 5 August."""
+    return ox.f13_set([ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026",
+                                     [ox.f13_holding("MICROSOFT CORP", "594918104", 400_000, 1000)]),
+                       ox.set_filing("0001000008-26-000110", 1000008, "05-AUG-2026",
+                                     [ox.f13_holding("NVR INC", "62944T105", 100_000, 20)])])
+
+
+def test_a_set_marks_done_only_the_days_up_to_its_newest_filing(feed, http_mock):
+    http_mock.routes.insert(0, (HREFS[0], _early_summer(), 200, {"last-modified": "Mon, 10 Aug 2026 09:00:00 GMT"}))
+    row = _backfill("2026-06-01", "2026-09-02")
+    assert row["result"] == "changed", row["note"]
+    origin = [json.loads((sec13f.DATASET.day_dir(date(2026, 8, d)) / edgar.DONE).read_text()).get("origin")
+              for d in (5, 6)]
+    assert origin == [f"set:{SUMMER}", None]                    # 6 August is the walk's, not the set's
+    walked = {str(c.url).rsplit(".", 2)[1] for c in http_mock.calls("/daily-index/")}
+    assert {"20260806", "20260831", "20260901"} <= walked and "20260805" not in walked
+    assert "13F data set 01jun2026-31aug2026_form13f.zip: its newest filing is 2026-08-05; 18 later days left " \
+           "to the forms walk" in row["note"]
+
+
+def test_a_set_the_sec_publishes_again_reopens_the_days_it_filled(feed, http_mock):
+    versions = {"Mon, 10 Aug 2026 09:00:00 GMT": _early_summer(), "Mon, 14 Sep 2026 16:43:16 GMT": _summer()}
+    current = ["Mon, 10 Aug 2026 09:00:00 GMT"]
+
+    def answer(request):
+        if request.headers.get("if-modified-since") == current[0]:
+            return 304, b"", {"last-modified": current[0]}
+        return 200, versions[current[0]], {"last-modified": current[0]}
+
+    http_mock.routes.insert(0, (HREFS[0], answer, 200, {}))
+    _backfill("2026-06-01", "2026-08-31")
+    assert _served(f"SELECT count(*) FROM {sec13f.TABLE} WHERE filed = '2026-07-31'") == [(1,)]
+    http_mock.requests.clear()
+    _backfill("2026-06-01", "2026-08-31")                       # unchanged: asked, 304, nothing typed again
+    asked = http_mock.calls("_form13f.zip")
+    assert [c.headers.get("if-modified-since") for c in asked] == ["Mon, 10 Aug 2026 09:00:00 GMT"]
+    current[0] = "Mon, 14 Sep 2026 16:43:16 GMT"
+    row = _backfill("2026-06-01", "2026-08-31", allow_shrink=True)        # the second version drops NVR's filing
+    assert "13F data set 01jun2026-31aug2026_form13f.zip: changed since it was read, 48 days reopened" in row["note"]
+    # The days the first version filled are typed again (000102 is new, 000110 is gone); the days after its newest
+    # filing were the walk's (the mock index has none of them) and stay the walk's.
+    assert _served(f"SELECT accession FROM {sec13f.TABLE} WHERE filed BETWEEN '2026-07-31' AND '2026-08-31' "
+                   "ORDER BY accession") == [("0001000001-26-000101",), ("0001000001-26-000102",)]
+    assert sec13f.DATASET.is_done(date(2026, 8, 31))

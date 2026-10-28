@@ -20,13 +20,15 @@ memory. Each 13F-HR and 13F-HR/A becomes the row the EDGAR path writes (``sec13f
   EDGAR path does not fetch one.
 
 The rows go to the EDGAR walk's own day partitions (``filings/day=<filed>``, ``holdings/day=<filed>``), and every
-weekday of the window inside the requested range is marked done for that walk (a day with no 13F in the set has none),
-so the walk reads the forms only after the newest set's last day. A day the walk already finished is not written
-again.
+weekday of the window inside the requested range, up to the set's newest filing, is marked done for that walk (a day
+with no 13F in the set has none), so the walk reads the forms only after it. A set the SEC publishes while its window
+is still open thus leaves its later days to the walk instead of hiding them. A day the walk already finished is not
+written again.
 
-Raw: ``raw/sec/13f_sets/<zip>`` as downloaded (it is the resume marker: a set is downloaded once) with a
-``.meta.json`` sidecar (URL, ``Last-Modified``, run). Each download is one paced SEC request (``sec.Pacer``), about
-100 MB.
+Raw: ``raw/sec/13f_sets/<zip>`` as downloaded with a ``.meta.json`` sidecar (URL, ``Last-Modified``, run). Each
+download is one paced SEC request (``sec.Pacer``), about 100 MB. A backfill asks again for a set it holds with
+``If-Modified-Since`` (the SEC answers 304, no body): a set published again replaces the kept one and the days it had
+filled are reopened and typed again; the days the walk finished stay the walk's.
 """
 from __future__ import annotations
 
@@ -110,18 +112,34 @@ def listed(ctx: base.RunContext, pacer: sec.Pacer) -> dict[str, tuple[date, date
     return out
 
 
-def download(ctx: base.RunContext, pacer: sec.Pacer, name: str, url: str) -> Path:
-    """The set's zip under ``raw/sec/13f_sets/`` (kept: a set is downloaded once); an answer that is not a zip is
+def download(ctx: base.RunContext, pacer: sec.Pacer, name: str, url: str) -> tuple[Path, bool]:
+    """``(the set's zip under raw/sec/13f_sets/, whether it replaced a kept one)``. A kept set is asked again with
+    ``If-Modified-Since`` its ``Last-Modified`` (one without one is kept as it is); an answer that is not a zip is
     refused and not kept."""
     path = raw_path(name)
-    if path.exists():
-        return path
-    r = sec.get(ctx, pacer, url)
+    kept = path.exists()
+    seen = (base.read_raw_json(_meta(path)) if _meta(path).exists() else {}).get("last_modified") if kept else None
+    if kept and not seen:
+        return path, False
+    r = sec.get(ctx, pacer, url, headers={"If-Modified-Since": seen} if seen else None)
+    if kept and (r.status_code == 304 or r.headers.get("last-modified") == seen):
+        return path, False
     if not zipfile.is_zipfile(BytesIO(r.content)):
         raise base.SourceError(f"13F data set {name}: the answer is not a zip ({len(r.content)} bytes)")
     base.write_raw_json(_meta(path), {"url": url, "last_modified": r.headers.get("last-modified"),
                                       "fetched_at": time.time(), "run_id": ctx.run_id, "bytes": len(r.content)})
-    return base.write_raw(path, r.content)
+    return base.write_raw(path, r.content), kept
+
+
+def _reopen(feed: edgar.Feed, name: str, first: date, last: date) -> int:
+    """Take back the done marks ``name`` wrote from ``first`` to ``last`` (not the walk's): the days typed again."""
+    n = 0
+    for k in range((last - first).days + 1):
+        mark = feed.day_dir(first + timedelta(days=k)) / edgar.DONE
+        if mark.exists() and json.loads(mark.read_text(encoding="utf-8")).get("origin") == ORIGIN + name:
+            mark.unlink()
+            n += 1
+    return n
 
 
 def _member(z: zipfile.ZipFile, table: str) -> str:
@@ -216,7 +234,11 @@ def fill(ctx: base.RunContext, feed: edgar.Feed, start: date, end: date, schema:
         lo, hi = max(first, start), min(last, end)
         if lo > hi:
             continue
-        written = _fill_one(ctx, feed, download(ctx, pacer, name, url), name, lo, hi, schema)
+        path, replaced = download(ctx, pacer, name, url)
+        if replaced:
+            ctx.notes.append(f"13F data set {name}: changed since it was read, "
+                             f"{_reopen(feed, name, first, last)} days reopened")
+        written = _fill_one(ctx, feed, path, name, lo, hi, schema)
         ctx.notes.append(f"13F data set {name}: {written} days written, {lo} to {hi}")
         covered = hi if covered is None else max(covered, hi)
     return covered
@@ -234,6 +256,14 @@ def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str,
         con = duckdb.connect(str(Path(tmp) / "set.duckdb"))
         try:
             _load(con, zip_path, Path(tmp))
+            newest = con.execute(f"SELECT max({_day('FILING_DATE')}) FROM z_submission").fetchone()[0]
+            later = [d for d in todo if newest is None or d > newest]
+            if later:
+                ctx.notes.append(f"13F data set {name}: its newest filing is {newest}; {len(later)} later days left "
+                                 "to the forms walk")
+                todo = [d for d in todo if d not in later]
+            if not todo:
+                return 0
             _typed(con, name, todo[0], todo[-1], schema["forms"], schema["dollars_from"],
                    fetched_at or zip_path.stat().st_mtime, ctx.run_id)
             filed = {r[0] for r in con.execute("SELECT DISTINCT filed FROM filings").fetchall()}

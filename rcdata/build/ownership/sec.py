@@ -51,7 +51,8 @@ class Pacer:
         self._last = self._clock()
 
 
-def get(ctx: base.RunContext, pacer: Pacer, url: str, accept: tuple[int, ...] = ()) -> httpx.Response:
+def get(ctx: base.RunContext, pacer: Pacer, url: str, accept: tuple[int, ...] = (),
+        headers: dict | None = None) -> httpx.Response:
     """One paced SEC GET through ``base.http_get`` (its retry ladder; its backoff keeps a retry apart too)."""
     pacer.wait()
-    return base.http_get(ctx, PROVIDER, url, accept=accept)
+    return base.http_get(ctx, PROVIDER, url, headers=headers, accept=accept)

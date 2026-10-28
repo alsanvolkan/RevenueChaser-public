@@ -1154,8 +1154,10 @@ deploy calls no source before the server thread's first runs (after a backup).
 **The 13F first fill** (avo, 28 Oct 2026): `python -m RevenueChaser.rcdata.build backfill sec/13f --from
 2025-01-01`. The backfill reads the SEC's Form 13F data-set page (`RC_FORM13F_INDEX_URL`), downloads each set whose
 filing window meets the range (one zip of about 100 MB per three months, kept under `raw/sec/13f_sets/`, downloaded
-once), and types its 13F-HR and 13F-HR/A into the same day partitions the EDGAR walk writes, marking those days
-done; the walk then reads the forms only for the days after the newest set (the hourly runs, 15 minutes each). On
+once and asked again on a later backfill with `If-Modified-Since`), and types its 13F-HR and 13F-HR/A into the same
+day partitions the EDGAR walk writes, marking those days done up to the set's newest filing; the walk then reads the
+forms only for the days after it (the hourly runs, 15 minutes each). A set the SEC publishes again reopens the days
+it had filled; the days the walk finished stay the walk's. On
 real data (28 Oct 2026) a set took about 30 seconds: 01jun2026-31aug2026 holds 9,900 13F-HR and 13F-HR/A with 3.8
 million holdings. Filings from 2025-01-01 make Q4 2024 the first quarter served, so Q1 2025 has its flows. SEC
 requests are paced at 4.5 a second and share `core/sec_throttle.py`'s bucket with every other SEC caller.
