@@ -568,7 +568,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     <td data-label="Long">{{ c.long|fmtnum('{:,.0f}') }}</td>
     <td data-label="Short">{{ c.short|fmtnum('{:,.0f}') }}</td>
     <td data-label="Net" class="pos-neg {{ 'pos' if (c.net or 0) >= 0 else 'neg' }}">{{ c.net|fmtnum('{:+,.0f}') }}</td>
-    <td data-label="Weekly Δ">{{ c.change|fmtnum('{:+,.0f}') }}</td></tr>
+    <td data-label="Weekly Δ">{% if cftc.change_gap and c.change is none %}n/a (gap){% else %}{{ c.change|fmtnum('{:+,.0f}') }}{% endif %}</td></tr>
   {% endfor %}
   </tbody>
 </table>

@@ -206,3 +206,23 @@ def test_a_broken_ops_file_on_the_not_stored_path_is_a_marker_not_an_exception(m
     zod = day["zero_one_dte"]
     assert zod["stored"] is False and zod["label"].startswith("0-1 DTE not stored for 2026-10-26")
     assert "status unknown" in zod["label"] and "database is locked" in zod["label"]
+
+
+def test_the_weekly_change_is_none_across_a_missing_report_and_the_board_says_gap():
+    """Review SF4: with the 6 Oct report missing, 13 Oct minus 29 Sep is two weeks, not a weekly change."""
+    from RevenueChaser.module_spx_gamma import render
+    from RevenueChaser.module_spx_gamma.normalize import normalize_snapshot
+    from .conftest import make_raw
+    fx.serve(spx={}, cot_reports=(date(2026, 9, 29), date(2026, 10, 13)))
+    out = store_reads.cot_tff(date(2026, 10, 19))
+    cot = out["payload"]
+    assert cot["report_date"] == "2026-10-13" and cot["change_gap"] is True
+    assert all(cot[g]["change"] is None for g in ("asset_manager", "leveraged_funds", "dealer"))
+    snap = normalize_snapshot({**make_raw(), "cftc": cot}, "2026-10-19")
+    table = render.render_html(snap).split("CFTC COT")[1].split("</table>")[0]
+    assert table.count("n/a (gap)") == 3
+
+
+def test_a_weekly_change_of_consecutive_reports_has_no_gap(rcdata_market):
+    cot = store_reads.cot_tff(fx.LAST)["payload"]
+    assert cot["change_gap"] is False and cot["asset_manager"]["change"] == 10_000.0

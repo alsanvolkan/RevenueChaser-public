@@ -15,6 +15,7 @@ call: there is no live fallback any more.
 - ``cot_tff``: the CFTC TFF row of the E-mini S&P 500 (``13874A``, futures only): the newest report released on or
   before the day (a Tuesday report is released on the Friday, ``RELEASE_DAYS``), within ``MAX_LAG`` sessions. The
   weekly change is this report's long minus the previous report's (decision A5): the builder keeps no ``change_*``.
+  It is None (``change_gap``) when the two newest reports are not exactly a week apart (review SF4).
 - ``spx_candles``: the SPX closes of the 8-week window. Cboe's SPX file has one column, so a row has a close and no
   open, high, low or volume (decision A6).
 """
@@ -38,6 +39,7 @@ CANDLE_SOURCE = f"{SERIES_SOURCE} SPX (cboe)"
 MAX_LAG = {"vix": 3, "cot": 10}
 # A TFF report holds Tuesday's positions and is published on the Friday after it.
 RELEASE_DAYS = 3
+WEEK_DAYS = 7
 VIX_SERIES = {"VIX": "^VIX", "VIX9D": "^VIX9D", "VIX3M": "^VIX3M", "VIX6M": "^VIX6M", "VIX1Y": "^VIX1Y",
               "VVIX": "^VVIX"}
 COT_PREFIX = "cftc:tff:13874A:"
@@ -197,10 +199,14 @@ def cot_tff(day) -> dict:
     released = sorted(obs for obs in reports if obs + timedelta(days=RELEASE_DAYS) <= d)
     if not released or not _within(released[-1], d, "cot"):
         return _missing("CFTC COT", d, source=SERIES_SOURCE, payload=None, status=rows[0]["status"] if rows else None)
-    now, prev = reports[released[-1]], (reports[released[-2]] if len(released) > 1 else {})
+    now = reports[released[-1]]
+    # review SF4: a weekly change only between reports exactly a week apart; across a missing report it is None
+    # and the board says "n/a (gap)".
+    gap = len(released) > 1 and (released[-1] - released[-2]).days != WEEK_DAYS
+    prev = reports[released[-2]] if len(released) > 1 and not gap else {}
     payload: dict = {"report_date": released[-1].isoformat(),
                      "release_date": (released[-1] + timedelta(days=RELEASE_DAYS)).isoformat(),
-                     "open_interest": now.get(COT_OPEN_INTEREST)}
+                     "open_interest": now.get(COT_OPEN_INTEREST), "change_gap": gap}
     for group, (longs, shorts) in COT_GROUPS.items():
         long, short = _cot_report(now, longs), _cot_report(now, shorts)
         prev_long = _cot_report(prev, longs)

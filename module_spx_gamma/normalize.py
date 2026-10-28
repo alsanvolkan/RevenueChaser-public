@@ -369,6 +369,8 @@ def normalize_cftc(cftc_payload: dict | None) -> dict | None:
         "report_date": _report_day(cftc_payload.get("report_date")),
         "open_interest": cftc_payload.get("open_interest"),
         "rows": rows,
+        # the market store's COT (PR 3): no weekly change across a missing report (review SF4)
+        **({"change_gap": True} if cftc_payload.get("change_gap") else {}),
     }
 
 
