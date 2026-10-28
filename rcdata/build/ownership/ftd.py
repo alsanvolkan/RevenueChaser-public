@@ -2,8 +2,8 @@
 
 ``GET <RC_SEC_WWW_BASE>/files/data/fails-deliver-data/cnsfails<YYYYMM><a|b>.zip``: half ``a`` holds the settlement
 days 1 to 15, half ``b`` the 16th to the month's end. The zip holds one pipe-delimited text file, ``SETTLEMENT
-DATE|CUSIP|SYMBOL|QUANTITY (FAILS)|DESCRIPTION|PRICE`` (the SEC's documented layout; sec.gov refused the cloud, so the
-first live run on the server checks it), then trailer lines (``Trailer record count ...``). A half the SEC has not
+DATE|CUSIP|SYMBOL|QUANTITY (FAILS)|DESCRIPTION|PRICE`` (checked on 2026-10-28 against ``cnsfails202609b``: 66,693
+rows), then trailer lines (``Trailer record count ...``). A half the SEC has not
 published yet answers 404.
 
 A run asks the halves after the newest one stored, oldest first, and stops at the first 404 (a later half is never

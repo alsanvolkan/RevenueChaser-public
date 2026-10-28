@@ -21,8 +21,8 @@ first run, moved back by a backfill) to the day before its as-of, newest first, 
 (``budget_s``) and asks to be due again the same day (``next_check_due`` = its as-of); a backfill has no budget. A
 filing's raw file is its resume marker, so a stopped run loses nothing.
 
-Not verified against sec.gov from the cloud (it refused every request there): the shapes follow the SEC's
-documentation, and the first live run on the server checks them.
+Checked against sec.gov on 2026-10-28: the index of 2026-10-27 and that day's 13F (202 filings), Form 4 (134, a run
+stopped at its budget) and Schedule 13D/G (248) filings, every one typed.
 """
 from __future__ import annotations
 

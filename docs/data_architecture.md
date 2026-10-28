@@ -1130,6 +1130,80 @@ NULL: the spine holds no market data.
 a last `spine/security` build that failed, the old store is read, a warning is logged, and the Settings Identity card
 says so ("Boards read"). The variable is read from the process environment: changing it needs a restart.
 
+### The ownership store (`ownership.duckdb`, PR 16)
+
+The third serving kind: who is short a name, who fails to deliver it, who holds it at quarter end and who trades it
+from inside. Built by the same builder, swapped the same way, read only through `rcdata.read`; it reads the spine and
+never writes it. Nothing here writes `raw.duckdb`: the old 13F, short and insider tables stay until the boards move
+(G9) and the old writers retire (G10).
+
+| Dataset | Cadence | Source | Served table |
+|---|---|---|---|
+| `finra/short_interest` | daily | FINRA's consolidated short interest API (keyless), one settlement date at a time, pages of 5,000 rows checked against `record-total` | `finra_short_interest` |
+| `regsho/threshold` | daily | Nasdaq's `nasdaqth<day>.txt` and NYSE's threshold download (NYSE, NYSE American, NYSE Arca); a day with no list is a 404 or, at Nasdaq, a redirect to its not-found page | `regsho_threshold` |
+| `ibkr/shortable` | daily | IBKR's public short-stock file (`usa.txt`, FTP, no account): borrow fee, rebate, shares available | `ibkr_shortable` |
+| `sec/ftd` | daily | The SEC's fails-to-deliver halves (`cnsfails<YYYYMM><a/b>.zip`) | `sec_ftd` |
+| `sec/13f` | daily | The SEC's Form 13F data sets (the first fill), then 13F-HR and 13F-HR/A through the EDGAR daily index | `sec13f_filings` (holdings stay in Parquet) |
+| `sec/form4` | daily | Form 4 and 4/A through the EDGAR daily index | `insider_transactions` |
+| `sec/13dg` | daily | Schedules 13D and 13G, old (`SC 13G`) and new (`SCHEDULE 13G`, XML since 2024-12-18) names | `beneficial_ownership` |
+| `ownership/serve` | daily | none: derives the 13F totals from the 13F tables and the spine | the four 13F tables below |
+
+**Starts by hand.** Every ownership dataset is not due until it has built once, so the first hourly pass after a
+deploy calls no source before the server thread's first runs (after a backup).
+
+**The 13F first fill** (avo, 28 Oct 2026): `python -m RevenueChaser.rcdata.build backfill sec/13f --from
+2025-01-01`. The backfill reads the SEC's Form 13F data-set page (`RC_FORM13F_INDEX_URL`), downloads each set whose
+filing window meets the range (one zip of about 100 MB per three months, kept under `raw/sec/13f_sets/`, downloaded
+once), and types its 13F-HR and 13F-HR/A into the same day partitions the EDGAR walk writes, marking those days
+done; the walk then reads the forms only for the days after the newest set (the hourly runs, 15 minutes each). On
+real data (28 Oct 2026) a set took about 30 seconds: 01jun2026-31aug2026 holds 9,900 13F-HR and 13F-HR/A with 3.8
+million holdings. Filings from 2025-01-01 make Q4 2024 the first quarter served, so Q1 2025 has its flows. SEC
+requests are paced at 4.5 a second and share `core/sec_throttle.py`'s bucket with every other SEC caller.
+
+**The 13F totals** (`ownership/serve`; the rules in `rcdata/build/ownership/serve.py`): per filer and report period
+the amendment walk (`NEW HOLDINGS` adds, any other amendment replaces); long equity only; each CUSIP named through the
+spine's dated Compustat history, then its current CUSIP, then its OpenFIGI map behind the reused-ticker guard
+(#236); VALUE off by 1,000 found from the 13F's own consensus prices and rescaled both ways (private #208); flows
+and `breadth_chg` against the calendar quarter before; a quarter whose filing deadline passed before the store's
+first 13F day is not served; `filing_deadline` (period end + 45 days, rolled past weekends and Washington's
+Birthday) says when a quarter is complete; `exited_confidential` and `exited_no_filing` count the exits that may not
+be sales.
+
+**Served tables** (`ownership` serving schema version `1`):
+
+| Table | Rows |
+|---|---|
+| `finra_short_interest` | one per settlement date and symbol: short interest, the previous one, average daily volume, days to cover, the spine ticker |
+| `regsho_threshold` | one per list day, market and symbol |
+| `ibkr_shortable` | one per snapshot session and symbol: fee, rebate, shares available (`available_capped` above 10,000,000) |
+| `sec_ftd` | one per settlement date, CUSIP and symbol as the SEC wrote them |
+| `sec13f_filings` | one per 13F-HR and 13F-HR/A: period, filed, amendment and its type, `confidential_omitted`, `value_scale`, `origin` (`edgar` or `set:<zip>`), status |
+| `insider_transactions` | one per Form 4 transaction (or one `unparsed` / `no_transaction` row per filing) |
+| `beneficial_ownership` | one per Schedule 13D/G reporting person (or one `header_only` / `unparsed` row per filing) |
+| `sec13f_cusip_map` | one per CUSIP and period: its ticker and `map_source`, or the refused `candidate_ticker` |
+| `sec13f_filer_period` | one per filer and period: names, value, `median_ratio`, `value_factor`, `confidential_omitted` |
+| `sec13f_ticker_period` | one per ticker and period: shares, value, holders, top-10 %, HHI, new / exited holders, buy / sell flow, breadth and its change, `prev_period`, `filing_deadline` |
+| `sec13f_periods` | one per period: filers, value, value mapped, `coverage`, unmapped CUSIPs, refused value, rescaled filers |
+
+**The bridge (D4).** Views under the old `raw.duckdb` names: `sec13f_totals` (ticker, `entry` JSON keyed by period
+with the old metric keys) and `short_interest` (one row per ticker and session: the newest FINRA short interest
+settled on or before it and that session's IBKR fee, rebate and shares available; `si_float` and `total_float` are
+NULL).
+
+**Build issues** (`ownership/serve`): `spine_missing`, `cusip_owner_differs`, `cusip_unmapped_large`,
+`filings_unparsed`.
+
+**Reading it.** `rcdata.read.holders_13f(tickers, periods)`, `periods_13f()` (both with `complete`),
+`short_interest(tickers, start, end)`, `shortable(tickers, session)`, `threshold_list(on)`,
+`fails_to_deliver(tickers, start, end)`, `insider_transactions(tickers, start, end)` and
+`beneficial_ownership(tickers, start, end)` (each with the dataset's last check as `status` and a filing's own as
+`parse_status`).
+
+**Known limits.** The IBKR file is not reachable from the cloud (no FTP egress): its format is checked by the first
+server run. Cboe's threshold list is a JavaScript page and is not read. FINRA's later revisions of a settlement date
+are not fetched again. A quarter's flows across a stock split compare unadjusted shares (G2). A store built before
+the served-quarter rule shrinks once on its next derive (`allow_shrink`).
+
 ## Migration
 Two separate things, deliberately not conflated:
 

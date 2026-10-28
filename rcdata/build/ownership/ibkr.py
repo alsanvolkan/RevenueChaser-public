@@ -8,7 +8,8 @@ The file (``usa.txt``): ``#BOF|2026.10.28|09:45:02``, a header ``#SYM|CUR|NAME|C
 (``FIGI`` after it in newer files), one row per security (``AVAILABLE`` may read ``>10000000``, served as 10,000,000
 with ``available_capped``; a rate may read ``NA``), and ``#EOF|<rows>``. It is parsed by the header's names; a file
 without ``#BOF``, the three columns it needs, or an ``#EOF`` whose count matches is refused and not kept. Not read from
-the cloud (no FTP egress there): the first live run on the server checks the format.
+the cloud (no FTP egress there: the download timed out on 2026-10-28): the first live run on the server checks the
+format.
 
 One download a run, each attempt counted against ``ibkr`` (``base.HTTP_ATTEMPTS`` attempts on an FTP error). The
 session of a snapshot is the one its download time belongs to (``calendar.session_for``: before 09:30 New York, the

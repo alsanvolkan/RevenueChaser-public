@@ -32,6 +32,11 @@ LABELS = {"uw/spot_expiry_strike": "SPX expiry-strike (Unusual Whales)", "market
           "wrds/idxcst_his": "Compustat index constituents (WRDS, the membership check)",
           "openfigi/map": "OpenFIGI map of the CUSIPs", "funds/index_holdings": "Index membership (ETF holdings files)",
           "spine/security": "Identity spine (security, tiers, history)"}
+# The ownership store (PR 16).
+LABELS.update({"finra/short_interest": "Short interest (FINRA)", "regsho/threshold": "Reg SHO threshold lists",
+               "ibkr/shortable": "Borrow fee and shares available (IBKR file)", "sec/ftd": "Fails to deliver (SEC)",
+               "sec/13f": "13F holdings (SEC data sets, then forms)", "sec/form4": "Insider transactions (Form 4)",
+               "sec/13dg": "5% owners (Schedules 13D and 13G)", "ownership/serve": "13F totals per ticker and quarter"})
 # Default cadence per dataset (the dataset's own ``cadence`` when it has one); a ``dataset_schedule.cadence`` of
 # daily / weekly / monthly overrides it.
 CADENCE = {"uw/spot_expiry_strike": "daily", "market_series": "daily"}
@@ -43,6 +48,10 @@ COVERAGE_TARGET: dict[str, float | None] = {"uw/spot_expiry_strike": 0.95, "mark
 # The newest-date column of each serving table.
 DATE_COLUMN = {"spx_gamma_expiry_strike": "session_date", "market_series": "obs_date", "security": "source_as_of",
                "security_history": "valid_from", "gics_history": "valid_from", "index_membership": "valid_from"}
+DATE_COLUMN.update({"finra_short_interest": "settlement_date", "regsho_threshold": "list_date",
+                    "ibkr_shortable": "session_date", "sec_ftd": "settlement_date", "sec13f_filings": "filed",
+                    "insider_transactions": "filed", "beneficial_ownership": "filed", "sec13f_cusip_map": "period",
+                    "sec13f_filer_period": "period", "sec13f_ticker_period": "period", "sec13f_periods": "period"})
 # The identity funnel (PR 5, D9): the indexes it counts, and the dataset whose build issues it lists.
 SPINE_INDEXES = ("sp500", "sp400", "sp600", "ndx")
 SPINE_ISSUES = "spine/security"
