@@ -61,7 +61,7 @@ def test_an_empty_list_of_a_recent_day_is_asked_again_and_kept_once_the_day_is_o
     assert not regsho.raw_path("nyse_american", date(2026, 10, 30)).exists()
 
 
-def test_a_404_of_an_older_day_is_marked_absent_and_not_asked_again(src, http_mock):
+def test_a_day_nasdaq_has_no_file_for_is_marked_absent_once_older_and_not_asked_again(src, http_mock):
     row = base.run_request({"dataset": regsho.NAME, "params": {"mode": "backfill", "from": "2026-10-26",
                                                                "to": "2026-10-30"}})
     assert row["result"] == "changed"

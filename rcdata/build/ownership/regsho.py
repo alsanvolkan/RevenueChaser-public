@@ -2,7 +2,8 @@
 
 - Nasdaq: ``GET <RC_REGSHO_NASDAQ_BASE>/nasdaqth<YYYYMMDD>.txt``, header ``Symbol|Security Name|Market Category|Reg
   SHO Threshold Flag|Rule 3210|Filler``, one row per security, a last line with the file's time stamp
-  (``20261027230025``); a day with no file answers 404.
+  (``20261027230025``); a day with no file is redirected to Nasdaq's not-found page (``Trader.aspx?id=http404``),
+  read as a 404.
 - NYSE: ``GET <RC_NYSE_BASE>/api/regulatory/threshold-securities/download?selectedDate=27-Oct-2026&market=<m>`` for
   ``NYSE``, ``NYSE American`` and ``NYSE Arca``, header ``Symbol|Security Name|Market Category|Reg SHO Threshold
   Flag|Filler|Filler``. A market with no threshold security answers the header alone. NYSE National, NYSE Texas and
@@ -135,7 +136,8 @@ class RegShoThreshold:
         pacer.wait()
         r = base.http_get(ctx, provider, url, params=params, accept=(404,))
         recent = day > common.session_before(as_of, RECENT_SESSIONS)
-        if r.status_code == 404:
+        # Nasdaq answers a day with no file by a redirect to its not-found page, never a 404 (seen 2026-10-28).
+        if r.status_code == 404 or r.history:
             if not recent:
                 base.write_raw_json(none_path(market, day), {"status": 404, "url": url, "run_id": ctx.run_id})
             return None

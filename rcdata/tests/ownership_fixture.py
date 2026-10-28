@@ -80,7 +80,8 @@ def nyse_list(rows, stamp="20261027220001") -> bytes:
 
 class RegSho:
     """Nasdaq's daily file by name, NYSE's download by ``selectedDate`` and ``market``; a day or market not set
-    answers 404 (Nasdaq) or the header alone (NYSE, as it does for a market with no threshold security)."""
+    answers as the real sites did on 2026-10-28: Nasdaq a 302 to its not-found page (``Trader.aspx?id=http404``, an
+    HTML page answered 200), NYSE the header alone (as for a market with no threshold security)."""
 
     def __init__(self):
         self.nasdaq: dict[str, bytes] = {}
@@ -90,7 +91,9 @@ class RegSho:
         name = str(request.url).rsplit("/", 1)[1]
         day = name[len("nasdaqth"):-len(".txt")]
         body = self.nasdaq.get(day)
-        return (200, body, {}) if body is not None else (404, b"<html>Not Found</html>", {})
+        if body is not None:
+            return 200, body, {}
+        return 302, b"", {"location": "https://regsho.test/Trader.aspx?id=http404"}
 
     def nyse_answer(self, request):
         key = (request.url.params["selectedDate"], request.url.params["market"])
@@ -98,6 +101,8 @@ class RegSho:
 
     def install(self, http_mock) -> None:
         http_mock.add("/regsho/nasdaqth", self.nasdaq_answer)
+        http_mock.add("regsho.test/Trader.aspx", b"<!DOCTYPE html><html><title>Page Not Found</title></html>",
+                      headers={"content-type": "text/html; charset=utf-8"})
         http_mock.add("nyse.test/api/regulatory/threshold-securities/download", self.nyse_answer)
 
 
