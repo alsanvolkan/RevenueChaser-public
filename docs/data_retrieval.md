@@ -333,6 +333,7 @@ whole app at a local server:
 | `RC_FINRA_API_BASE` | FINRA's keyless API, consolidated short interest (`rcdata/build/ownership/finra.py`, read at call time); default `https://api.finra.org` |
 | `RC_REGSHO_NASDAQ_BASE` | Nasdaq Trader's Reg SHO threshold files (`rcdata/build/ownership/regsho.py`, read at call time); default `https://www.nasdaqtrader.com/dynamic/symdir/regsho` |
 | `RC_NYSE_BASE` | NYSE's site, the Reg SHO threshold downloads of NYSE, NYSE American and NYSE Arca (`rcdata/build/ownership/regsho.py`, read at call time); default `https://www.nyse.com` |
+| `RC_IBKR_SHORT_FTP_HOST` | IBKR's public short-stock FTP server (`rcdata/build/ownership/ibkr.py`, read at call time; the public `shortstock` login, no account); default `ftp3.interactivebrokers.com` |
 
 `RC_FDA_USER_AGENT` overrides the `User-Agent` header sent to FDA OOPD
 (`core/providers/fda_orphan.py`); default `"RevenueChaser research"`.

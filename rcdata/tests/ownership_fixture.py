@@ -93,3 +93,52 @@ class RegSho:
     def install(self, http_mock) -> None:
         http_mock.add("/regsho/nasdaqth", self.nasdaq_answer)
         http_mock.add("nyse.test/api/regulatory/threshold-securities/download", self.nyse_answer)
+
+
+# ── IBKR's public short-stock file (format as IBKR documents it; not read from the cloud) ───────────────────────
+
+IBKR_HEADER = "#SYM|CUR|NAME|CON|ISIN|REBATERATE|FEERATE|AVAILABLE|FIGI|"
+IBKR_ROWS = ["AAPL|USD|APPLE INC|265598|US0378331005|3.3383|0.25|>10000000|BBG000B9XRY4|",
+             "BRK B|USD|BERKSHIRE HATHAWAY INC-CL B|72063691|US0846707026|3.1|0.25|3500000|BBG000DWG505|",
+             "GME|USD|GAMESTOP CORP-CLASS A|36285627|US36467W1099|-12.5|16.0|150000|BBG000BB5BF6|",
+             "NOAV|USD|NOTHING AVAILABLE CO|99|US0000000001|NA|NA|0||"]
+
+
+def ibkr_file(rows=IBKR_ROWS, header=IBKR_HEADER, eof=True) -> bytes:
+    lines = ["#BOF|2026.10.28|09:45:02", header, *rows] + ([f"#EOF|{len(rows)}"] if eof else [])
+    return ("\n".join(lines) + "\n").encode()
+
+
+class FakeFtp:
+    """``ftplib.FTP`` as the dataset uses it: ``login``, ``retrbinary`` and ``quit``; records every session.
+    ``fail`` errors are raised by the next sessions' ``retrbinary``, one each, before the file is answered."""
+
+    sessions: list = []
+
+    def __init__(self, body: bytes, fail=()):
+        self.body, self.fail = body, list(fail)
+
+    def __call__(self, host, timeout=None):
+        outer = self
+
+        class Session:
+            def __init__(self):
+                self.host, self.login_args, self.commands = host, None, []
+                outer.sessions.append(self)
+
+            def login(self, user="", passwd=""):
+                self.login_args = (user, passwd)
+
+            def retrbinary(self, cmd, callback, blocksize=8192):
+                self.commands.append(cmd)
+                if outer.fail:
+                    raise outer.fail.pop(0)
+                callback(outer.body)
+
+            def quit(self):
+                pass
+
+            def close(self):
+                pass
+
+        return Session()
