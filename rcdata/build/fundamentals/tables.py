@@ -52,12 +52,29 @@ REVISION = [("cik", "TEXT"), ("gvkey", "TEXT NOT NULL"), ("source", "TEXT NOT NU
             ("item", "TEXT NOT NULL"), ("old_value", "DOUBLE"), ("new_value", "DOUBLE"), ("old_as_of", "DATE NOT NULL"),
             ("new_as_of", "DATE NOT NULL"), ("run_id", "TEXT")]
 
+# Revenue by segment, product or country: the annual report's inline XBRL (``sec/filings``, its newest year) and
+# Compustat's segments (``wrds/segments``). ``document_date`` is the date of the document a value came from (the
+# SEC filing date; Compustat's ``srcdate``).
+SEGMENT_REVENUE = [("cik", "TEXT NOT NULL"), ("period_end", "DATE NOT NULL"), ("period_start", "DATE"),
+                   ("axis", "TEXT NOT NULL"), ("segment", "TEXT"), ("member", "TEXT"), ("concept", "TEXT"),
+                   ("value", "DOUBLE NOT NULL"), ("unit", "TEXT"), ("accession", "TEXT"), ("form", "TEXT"),
+                   ("document_date", "DATE"), ("source", "TEXT NOT NULL"), ("source_as_of", "DATE"),
+                   ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
+# A major customer's share: the annual report's ConcentrationRiskPercentage1, or Compustat's customer sales over the
+# SEC's revenue of that year (``share`` NULL when there is none to divide by, or the ratio is above 1).
+CUSTOMER_SHARE = [("cik", "TEXT NOT NULL"), ("period_end", "DATE NOT NULL"), ("customer", "TEXT"),
+                  ("member", "TEXT"), ("benchmark", "TEXT"), ("share", "DOUBLE"), ("sales", "DOUBLE"),
+                  ("customer_type", "TEXT"), ("accession", "TEXT"), ("form", "TEXT"), ("document_date", "DATE"),
+                  ("source", "TEXT NOT NULL"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
+
 SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "fundamental_company": COMPANY,
     "fundamental_fact": FACT,
     "filing_item": FILING_ITEM,
     "earnings_event": EARNINGS_EVENT,
     "fundamental_revision": REVISION,
+    "segment_revenue": SEGMENT_REVENUE,
+    "customer_share": CUSTOMER_SHARE,
 }
 TABLE_CHECKS: dict[str, list[str]] = {
     # Every row is annual or quarterly, and a non-preliminary row carries its accession and filed date.
@@ -66,6 +83,8 @@ TABLE_CHECKS: dict[str, list[str]] = {
     # A document's text is never labelled ok at the cap (filings.CAPPED).
     "filing_item": ["CHECK (kind IN ('item', 'document'))",
                     f"CHECK (quality IS NULL OR quality <> 'ok' OR chars < {filings.max_text_chars()})"],
+    "segment_revenue": ["CHECK (axis IN ('business', 'product', 'geographic'))"],
+    "customer_share": ["CHECK (share IS NULL OR (share >= 0 AND share <= 1))"],
 }
 TABLES = tuple(SCHEMAS)
 VIEWS = ("fundamental_quarter", "edgar_financials", "sec_submissions", "earnings_calendar")
@@ -79,6 +98,10 @@ STAGED: dict[str, list[tuple[str, str]]] = {
     earnings.STAGING: earnings.SCHEMA,
     uw_financials.STAGING: facts.FACT,
     **{d.revision_staging: wrds_fund.REVISION for d in wrds_fund.DATASETS if d.revisions},
+    filings.STAGING["segments"]: filings.SEGMENT,
+    filings.STAGING["customers"]: filings.CUSTOMER,
+    **{wrds_fund.SEGMENTS.STAGING[p]: schema + wrds_fund.PROVENANCE
+       for p, (schema, _, _) in wrds_fund.SEGMENTS.PARTS.items()},
 }
 
 # The named problems, one kind each; ``key`` is the CIK unless the kind says otherwise.
@@ -180,9 +203,55 @@ def _revisions(con: duckdb.DuckDBPyConnection) -> int:
         INSERT INTO fundamental_revision
         SELECT c.cik, r.gvkey, r.source, r.datadate, r.item, r.old_value, r.new_value, r.old_as_of, r.new_as_of,
                r.run_id
-        FROM ({union}) r LEFT JOIN (SELECT DISTINCT gvkey, cik FROM fundamental_company WHERE gvkey IS NOT NULL) c
-          ON c.gvkey = r.gvkey""")
+        FROM ({union}) r LEFT JOIN {_links()} c ON c.gvkey = r.gvkey""")
     return common.count(con, "fundamental_revision")
+
+
+def _segments(con: duckdb.DuckDBPyConnection) -> int:
+    """``segment_revenue``: the annual report's segments and Compustat's (business and geographic)."""
+    create(con, "segment_revenue")
+    seg = wrds_fund.SEGMENTS
+    axis = " ".join(f"WHEN '{t}' THEN '{a}'" for t, a in sorted(wrds_fund.SEGMENT_TYPES.items()))
+    con.execute(f"""
+        INSERT INTO segment_revenue
+        SELECT cik, period_end, period_start, axis, segment, member, concept, value, unit, accession, form,
+               filing_date, '{filings.NAME}', source_as_of, fetched_at, run_id
+        FROM {filings.STAGING['segments']} WHERE period_end IS NOT NULL AND value IS NOT NULL
+        UNION ALL
+        SELECT c.cik, w.datadate, NULL, CASE w.stype {axis} END, w.snms, w.stype || ' ' || w.sid, 'sales',
+               w.sales * {wrds_fund.MILLION}, 'USD', NULL, NULL, w.srcdate, '{seg.name}', w.source_as_of,
+               w.fetched_at, w.run_id
+        FROM {seg.STAGING['wrds_segmerged']} w JOIN {_links()} c ON c.gvkey = w.gvkey
+        WHERE w.datadate IS NOT NULL AND w.sales IS NOT NULL AND w.stype IN
+              ({", ".join(f"'{t}'" for t in sorted(wrds_fund.SEGMENT_TYPES))})""")
+    return common.count(con, "segment_revenue")
+
+
+def _customers(con: duckdb.DuckDBPyConnection) -> int:
+    """``customer_share``: the annual report's major customers, and Compustat's customers over the SEC's revenue."""
+    create(con, "customer_share")
+    seg = wrds_fund.SEGMENTS
+    con.execute(f"""
+        INSERT INTO customer_share
+        SELECT cik, period_end, customer, member, benchmark, share, NULL, NULL, accession, form, filing_date,
+               '{filings.NAME}', source_as_of, fetched_at, run_id
+        FROM {filings.STAGING['customers']} WHERE period_end IS NOT NULL
+        UNION ALL
+        SELECT c.cik, w.datadate, w.cnms, NULL, 'revenue',
+               CASE WHEN r.value > 0 AND w.salecs * {wrds_fund.MILLION} / r.value BETWEEN 0 AND 1
+                    THEN w.salecs * {wrds_fund.MILLION} / r.value END,
+               w.salecs * {wrds_fund.MILLION}, w.ctype, NULL, NULL, w.srcdate, '{seg.name}', w.source_as_of,
+               w.fetched_at, w.run_id
+        FROM {seg.STAGING['seg_customer']} w JOIN {_links()} c ON c.gvkey = w.gvkey
+        LEFT JOIN (SELECT cik, period_end, value FROM fundamental_fact
+                   WHERE field = 'revenue' AND period_type = '{facts.ANNUAL}' AND NOT preliminary) r
+          ON r.cik = c.cik AND abs(date_diff('day', r.period_end, w.datadate)) <= {wrds_fund.PERIOD_DAYS}
+        WHERE w.datadate IS NOT NULL""")
+    return common.count(con, "customer_share")
+
+
+def _links() -> str:
+    return "(SELECT DISTINCT gvkey, cik FROM fundamental_company WHERE gvkey IS NOT NULL)"
 
 
 def _companies(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rows: list[dict]) -> int:
@@ -327,6 +396,8 @@ class FundamentalsTables:
         counts["fundamental_company"] = _companies(ctx, con, common.universe())
         counts["earnings_event"] = _earnings(con)
         counts["fundamental_revision"] = _revisions(con)
+        counts["segment_revenue"] = _segments(con)
+        counts["customer_share"] = _customers(con)
         _views(con)
         _submission_view(con)
         _calendar_view(con)

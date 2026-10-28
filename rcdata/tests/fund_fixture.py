@@ -183,6 +183,60 @@ def proxy(chars: int = 5_000) -> str:
     return "<html><body><p>" + ("Executive compensation and the board. " * (chars // 38 + 1))[:chars] + "</p></body></html>"
 
 
+def _ctx(cid: str, start: str | None, end: str, dims: dict | None = None) -> str:
+    seg = "".join(f'<xbrldi:explicitMember dimension="{a}">{m}</xbrldi:explicitMember>' for a, m in (dims or {}).items())
+    period = (f"<xbrli:startDate>{start}</xbrli:startDate><xbrli:endDate>{end}</xbrli:endDate>" if start else
+              f"<xbrli:instant>{end}</xbrli:instant>")
+    return (f'<xbrli:context id="{cid}"><xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0000789019'
+            f'</xbrli:identifier>{f"<xbrli:segment>{seg}</xbrli:segment>" if seg else ""}</xbrli:entity>'
+            f"<xbrli:period>{period}</xbrli:period></xbrli:context>")
+
+
+def _ix(name: str, ctx: str, value: str, unit: str = "usd", scale: str = "6", sign: str = "") -> str:
+    sign_attr = f' sign="{sign}"' if sign else ""
+    return (f'<ix:nonFraction name="{name}" contextRef="{ctx}" unitRef="{unit}" decimals="-6" scale="{scale}"'
+            f'{sign_attr} format="ixt:num-dot-decimal"><span>{value}</span></ix:nonFraction>')
+
+
+SEGMENT_AXIS = "us-gaap:StatementBusinessSegmentsAxis"
+CUSTOMER_DIMS = {"us-gaap:ConcentrationRiskByBenchmarkAxis": "us-gaap:RevenueFromContractWithCustomerMember",
+                 "us-gaap:ConcentrationRiskByTypeAxis": "us-gaap:CustomerConcentrationRiskMember",
+                 "srt:MajorCustomersAxis": "msft:CustomerAMember"}
+
+
+def ixbrl_10k() -> str:
+    """MSFT's 10-K for FY2025 as inline XBRL: revenue by business segment (two, and the year before), by product,
+    by country, one two-dimension context (not a segment), and Customer A's share of revenue (12%, 11% a year
+    before). Values in millions (``scale`` 6), chosen for the tests."""
+    fy25, fy24 = ("2024-07-01", "2025-06-30"), ("2023-07-01", "2024-06-30")
+    rev = "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"
+    contexts = "".join([
+        _ctx("c-fy25", *fy25),
+        _ctx("c-cloud25", *fy25, {SEGMENT_AXIS: "msft:IntelligentCloudMember"}),
+        _ctx("c-pc25", *fy25, {SEGMENT_AXIS: "msft:MorePersonalComputingMember"}),
+        _ctx("c-cloud24", *fy24, {SEGMENT_AXIS: "msft:IntelligentCloudMember"}),
+        _ctx("c-xbox25", *fy25, {"srt:ProductOrServiceAxis": "msft:XboxContentAndServicesMember"}),
+        _ctx("c-us25", *fy25, {"srt:StatementGeographicalAxis": "country:US"}),
+        _ctx("c-two25", *fy25, {SEGMENT_AXIS: "msft:IntelligentCloudMember", "srt:StatementGeographicalAxis":
+                                "country:US"}),
+        _ctx("c-cust25", *fy25, CUSTOMER_DIMS),
+        _ctx("c-cust24", *fy24, CUSTOMER_DIMS),
+    ])
+    units = ('<xbrli:unit id="usd"><xbrli:measure>iso4217:USD</xbrli:measure></xbrli:unit>'
+             '<xbrli:unit id="pure"><xbrli:measure>xbrli:pure</xbrli:measure></xbrli:unit>')
+    facts = "".join([
+        _ix(rev, "c-fy25", "281,724"), _ix(rev, "c-cloud24", "87,907"),      # the year before comes first
+        _ix("us-gaap:Revenues", "c-cloud25", "106,000"), _ix(rev, "c-cloud25", "106,265"),
+        _ix(rev, "c-pc25", "51,500"), _ix(rev, "c-xbox25", "23,455"),
+        _ix(rev, "c-us25", "144,546"), _ix(rev, "c-two25", "1"),
+        _ix("us-gaap:ConcentrationRiskPercentage1", "c-cust25", "12", unit="pure", scale="-2"),
+        _ix("us-gaap:ConcentrationRiskPercentage1", "c-cust24", "11", unit="pure", scale="-2"),
+    ])
+    return ('<html><body><div style="display:none"><ix:header><ix:resources>' + contexts + units +
+            "</ix:resources></ix:header></div>" + ten_k(5_000)[len("<html><body>"):-len("</body></html>")] +
+            "<p>Item 8. Financial Statements</p><table><tr><td>" + facts + "</td></tr></table></body></html>")
+
+
 def filing_routes(http_mock, lists: dict, documents: dict | None = None) -> None:
     """Answer the submissions URLs (``lists`` {cik: body}) and the archive documents (``documents`` {file: html})."""
     for cik, body in lists.items():
@@ -225,6 +279,24 @@ FIRM_RATIO_ROWS = [
 ]
 
 
+# Compustat's segments: MSFT's FY2025 business segment from two source filings (the newer one wins), a
+# geographic one, and a state segment (not asked for, so not kept); Customer A's sales.
+SEGMERGED_ROWS = [
+    {"gvkey": "012141", "datadate": "2025-06-30", "srcdate": "2025-07-30", "stype": "BUSSEG", "sid": "1",
+     "snms": "Intelligent Cloud", "sales": "0.106265"},
+    {"gvkey": "012141", "datadate": "2025-06-30", "srcdate": "2024-07-30", "stype": "BUSSEG", "sid": "1",
+     "snms": "Intelligent Cloud", "sales": "0.1"},
+    {"gvkey": "012141", "datadate": "2025-06-30", "srcdate": "2025-07-30", "stype": "GEOSEG", "sid": "2",
+     "snms": "United States", "sales": "0.144546"},
+    {"gvkey": "012141", "datadate": "2025-06-30", "srcdate": "2025-07-30", "stype": "STSEG", "sid": "9",
+     "snms": "Washington", "sales": "0.001"},
+]
+SEG_CUSTOMER_ROWS = [
+    {"gvkey": "012141", "datadate": "2025-06-30", "srcdate": "2025-07-30", "cnms": "Customer A", "ctype": "COMPANY",
+     "salecs": "0.03372", "stype": "BUSSEG", "sid": "1"},
+]
+
+
 class FakeFundWrds:
     """A WRDS worker that answers ``comp.fundq``, ``comp.funda`` and ``wrds_finratio.firm_ratio`` from the rows
     above, filtered by the query's gvkey list, and records every query."""
@@ -238,8 +310,9 @@ class FakeFundWrds:
 
         from .spine_fixture import write_jsonl
         self.queries.append(sql)
-        table = re.search(r"FROM (?:comp|wrds_finratio)\.(\w+)", sql).group(1)
-        rows = {"fundq": fundq_rows(self.month), "funda": FUNDA_ROWS, "firm_ratio": FIRM_RATIO_ROWS}[table]
+        table = re.search(r"FROM \w+\.(\w+)", sql).group(1)
+        rows = {"fundq": fundq_rows(self.month), "funda": FUNDA_ROWS, "firm_ratio": FIRM_RATIO_ROWS,
+                "wrds_segmerged": SEGMERGED_ROWS, "seg_customer": SEG_CUSTOMER_ROWS}[table]
         gvkeys = re.search(r"gvkey IN \(([^)]*)\)", sql)
         if gvkeys:
             want = set(re.findall(r"'(\d+)'", gvkeys.group(1)))

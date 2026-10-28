@@ -49,6 +49,10 @@ MONEY_TOLERANCE = 0.005
 EPS_TOLERANCE = 0.01
 DEBT_TOLERANCE = 0.02
 MILLION = 1_000_000.0
+SEGMENT_LIBRARY = "comp_segments_hist_daily"
+SEGMENT_YEARS = 5
+# Compustat's segment types: business and operating segments are one axis here, geographic the other.
+SEGMENT_TYPES = {"BUSSEG": "business", "OPSEG": "business", "GEOSEG": "geographic"}
 _GVKEY = re.compile(r"^\d{6}$")
 
 REVISION = [("source", "TEXT"), ("gvkey", "TEXT"), ("datadate", "DATE"), ("item", "TEXT"), ("old_value", "DOUBLE"),
@@ -274,6 +278,108 @@ class FirmRatio(WrdsFund):
                 "(each one's newest WRDS quarter)")
 
 
+class WrdsSegments(WrdsFund):
+    """``wrds/segments``: Compustat's segment sales (``wrds_segmerged``: business, operating and geographic
+    segments) and major customers (``seg_customer``), ``SEGMENT_YEARS`` of fiscal years; per segment and year the
+    newest source filing's row (``srcdate``). Served as rows of ``segment_revenue`` and ``customer_share``
+    (``source`` ``wrds/segments``) beside the annual report's own (``sec/filings``). The library name
+    (``SEGMENT_LIBRARY``) is not verified against WRDS."""
+
+    PARTS = {
+        "wrds_segmerged": ([("gvkey", "TEXT"), ("datadate", "DATE"), ("srcdate", "DATE"), ("stype", "TEXT"),
+                            ("sid", "TEXT"), ("snms", "TEXT"), ("sales", "DOUBLE")],
+                           ["gvkey", "datadate", "stype", "sid"],
+                           "stype IN (" + ", ".join(f"'{t}'" for t in sorted(SEGMENT_TYPES)) + ")"),
+        "seg_customer": ([("gvkey", "TEXT"), ("datadate", "DATE"), ("srcdate", "DATE"), ("cnms", "TEXT"),
+                          ("ctype", "TEXT"), ("salecs", "DOUBLE"), ("stype", "TEXT"), ("sid", "TEXT")],
+                         ["gvkey", "datadate", "cnms", "stype", "sid"], None),
+    }
+    STAGING = {"wrds_segmerged": "stg_wrds_segments", "seg_customer": "stg_wrds_customers"}
+
+    def __init__(self):
+        super().__init__("wrds_segmerged", SEGMENT_LIBRARY, [], [], [], "datadate", SEGMENT_YEARS, revisions=False)
+        self.name = "wrds/segments"
+        self.staging = self.STAGING["wrds_segmerged"]
+
+    def raw_path(self, as_of: date, part: str = "wrds_segmerged") -> Path:
+        return common.raw_dir(self.name) / as_of.isoformat() / f"{part}{wrds_session.RAW_SUFFIX}"
+
+    def snapshot_file(self, as_of: str, part: str = "wrds_segmerged") -> Path:
+        return common.parquet_dir(self.name) / f"snapshot={as_of}" / f"{part}.parquet"
+
+    def snapshots(self) -> list[str]:
+        folder = common.parquet_dir(self.name)
+        if not folder.is_dir():
+            return []
+        return sorted(d.name.split("=", 1)[1] for d in folder.iterdir()
+                      if d.name.startswith("snapshot=") and all((d / f"{p}.parquet").is_file() for p in self.PARTS))
+
+    def _full(self, ctx: base.RunContext, as_of: date) -> list[Path]:
+        gvkeys = sorted({str(r["gvkey"]) for r in common.universe() if _GVKEY.match(str(r.get("gvkey") or ""))})
+        if not gvkeys:
+            ctx.notes.append("no Tier A company has a Compustat link yet (wrds/sec_idhist): nothing asked")
+            return []
+        out = []
+        for part, (schema, _, extra) in self.PARTS.items():
+            where = [f"gvkey IN ({', '.join(repr(g) for g in gvkeys)})",
+                     f"datadate >= DATE '{_years_before(as_of, self.years).isoformat()}'"] + ([extra] if extra else [])
+            sql = (f"SELECT {', '.join(c for c, _ in schema)} FROM {self.library}.{part} "
+                   f"WHERE {' AND '.join(where)}")
+            out.append(wrds_session._ask(ctx, self.raw_path(as_of, part), sql, as_of))
+        return out
+
+    def to_parquet_all(self, ctx: base.RunContext, raws: list[Path]) -> list[Path]:
+        out = []
+        for raw in raws:
+            part = raw.name[: -len(wrds_session.RAW_SUFFIX)]
+            schema, key, _ = self.PARTS[part]
+            meta = base.read_raw_json(common.meta_path(raw))
+            as_of = meta["as_of"]
+            con = duckdb.connect()
+            try:
+                keep = (" WHERE stype IN (" + ", ".join(f"'{t}'" for t in sorted(SEGMENT_TYPES)) + ")"
+                        if part == "wrds_segmerged" else "")
+                rows = f"SELECT * FROM ({wrds_session.raw_rows(raw, schema)}){keep}"
+                if part == "wrds_segmerged" and not con.execute(f"SELECT count(*) FROM ({rows})").fetchone()[0]:
+                    raise base.SourceError("wrds segments: the snapshot came back empty")
+                for col, n in wrds_session.untyped(con, raw, schema).items():
+                    ctx.issue("value_untyped", f"{part}.{col}", f"{n} row(s) nulled")
+                every = ", ".join(f'"{c}" NULLS LAST' for c, _ in schema)
+                select = (f"SELECT *, DATE '{as_of}' AS source_as_of, CAST({float(meta['fetched_at'])} AS DOUBLE) "
+                          f"AS fetched_at, '{meta['run_id']}' AS run_id FROM ({rows}) "
+                          f"QUALIFY row_number() OVER (PARTITION BY {', '.join(key)} "
+                          f"ORDER BY srcdate DESC NULLS LAST, {every}) = 1 ORDER BY {', '.join(key)}")
+                out.append(base.write_parquet(con, select, self.snapshot_file(as_of, part)))
+            finally:
+                con.close()
+            ctx.pending.setdefault(self.name, []).append(as_of)
+        return out
+
+    def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
+        snaps = self.snapshots()
+        for part, (schema, _, _) in self.PARTS.items():
+            common.stage_glob(con, self.STAGING[part], schema + PROVENANCE, common.parquet_dir(self.name),
+                              f"snapshot={snaps[-1]}/{part}.parquet" if snaps else "snapshot=none/none")
+        return {}
+
+    def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
+        cols = ["cik", "axis", "member", "period_end", "value"]
+        where = f"source = '{self.name}'"
+        added, removed = common.compare_live(con, f"SELECT {', '.join(cols)} FROM segment_revenue WHERE {where}",
+                                             "segment_revenue", cols, where=where)
+        return {**super().check(ctx, con), "added": added, "removed": removed,
+                "result": "changed" if (ctx.pending.get(self.name) or added or removed) else "unchanged"}
+
+    def note(self, con: duckdb.DuckDBPyConnection) -> str:
+        tier_a = con.execute("SELECT count(DISTINCT cik) FROM fundamental_company").fetchone()[0]
+        companies, rows = con.execute(f"SELECT count(DISTINCT cik), count(*) FROM segment_revenue "
+                                      f"WHERE source = '{self.name}'").fetchone()
+        customers, shared = con.execute(f"SELECT count(*), count(share) FROM customer_share "
+                                        f"WHERE source = '{self.name}'").fetchone()
+        return (f"{companies} of {tier_a} Tier A companies with segments ({rows} segment-years); {customers} "
+                f"customer rows, {shared} with a share of the SEC's revenue")
+
+
 FUNDQ = WrdsFund("fundq", "comp",
                  [("gvkey", "TEXT"), ("datadate", "DATE"), ("fyearq", "INTEGER"), ("fqtr", "INTEGER"),
                   ("fyr", "INTEGER"), ("rdq", "DATE")],
@@ -286,4 +392,5 @@ FUNDA = WrdsFund("funda", "comp",
 FIRM_RATIO = FirmRatio("firm_ratio", "wrds_finratio",
                        [("gvkey", "TEXT"), ("public_date", "DATE"), ("qdate", "DATE")], ["debt_at"],
                        ["gvkey", "public_date"], "public_date", RATIO_YEARS, revisions=False)
-DATASETS = (FUNDQ, FUNDA, FIRM_RATIO)
+SEGMENTS = WrdsSegments()
+DATASETS = (FUNDQ, FUNDA, FIRM_RATIO, SEGMENTS)

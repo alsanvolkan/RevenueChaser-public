@@ -20,9 +20,11 @@ filing list yet, and its two documents, resumable.
 
 Raw: ``raw/sec/filings/submissions/<cik>/<as-of>.json.gz`` (with a ``.meta.json``: the accessions it holds) and
 ``raw/sec/filings/documents/<cik>/<accession>.html.gz``. Parquet: ``parquet/sec/filings/cik=<cik>/filings.parquet``
-(one row per filing and 8-K item) and ``.../documents.parquet`` (the texts), each replaced whole from the newest list.
+(one row per filing and 8-K item), ``.../documents.parquet`` (the texts), and ``.../segments.parquet`` /
+``.../customers.parquet`` (the annual report's inline XBRL, ``ixbrl.py``: revenue by segment, product and country,
+and major customers' shares), each replaced whole from the newest list.
 
-Staging: ``stg_sec_filings``, ``stg_sec_documents``.
+Staging: ``stg_sec_filings``, ``stg_sec_documents``, ``stg_sec_segments``, ``stg_sec_customers``.
 """
 from __future__ import annotations
 
@@ -34,14 +36,15 @@ import duckdb
 
 from ....core import calendar
 from .. import base
-from . import KIND, common, sec_index
+from . import KIND, common, ixbrl, sec_index
 
 NAME = "sec/filings"
 NEW_PER_RUN = 300
 ANNUAL_FORMS = ("10-K", "20-F", "40-F")             # newest by filing date; a 10-K first on one day
 PROXY_FORMS = ("DEF 14A",)
 CAPPED = "capped"
-STAGING = {"filings": "stg_sec_filings", "documents": "stg_sec_documents"}
+STAGING = {"filings": "stg_sec_filings", "documents": "stg_sec_documents", "segments": "stg_sec_segments",
+           "customers": "stg_sec_customers"}
 
 FILING = [("cik", "TEXT"), ("accession", "TEXT"), ("form", "TEXT"), ("filing_date", "DATE"), ("report_date", "DATE"),
           ("primary_document", "TEXT"), ("item", "TEXT"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"),
@@ -50,6 +53,13 @@ DOCUMENT = [("cik", "TEXT"), ("accession", "TEXT"), ("form", "TEXT"), ("filing_d
             ("report_date", "DATE"), ("primary_document", "TEXT"), ("item", "TEXT"), ("text", "TEXT"),
             ("chars", "INTEGER"), ("quality", "TEXT"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"),
             ("run_id", "TEXT")]
+# The annual report's inline XBRL (``ixbrl.py``): revenue by segment, product and country, and major customers.
+_FILED = [("cik", "TEXT"), ("accession", "TEXT"), ("form", "TEXT"), ("filing_date", "DATE")]
+_STAMPS = [("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
+SEGMENT = _FILED + [("axis", "TEXT"), ("member", "TEXT"), ("segment", "TEXT"), ("concept", "TEXT"),
+                    ("value", "DOUBLE"), ("unit", "TEXT"), ("period_start", "DATE"), ("period_end", "DATE")] + _STAMPS
+CUSTOMER = _FILED + [("customer", "TEXT"), ("member", "TEXT"), ("benchmark", "TEXT"), ("share", "DOUBLE"),
+                     ("period_start", "DATE"), ("period_end", "DATE")] + _STAMPS
 
 
 def max_text_chars() -> int:
@@ -241,7 +251,7 @@ class Filings:
             for r in rows:
                 items = [i.strip() for i in str(r.get("items") or "").split(",") if i.strip()] or [None]
                 filing_rows += [{**r, "item": i, **stamps} for i in items]
-            doc_rows = self._documents(cik, rows)
+            doc_rows, segment_rows, customer_rows = self._documents(cik, rows)
             folder = common.parquet_dir(NAME) / f"cik={cik}"
             con = duckdb.connect()
             try:
@@ -251,13 +261,20 @@ class Filings:
                 base.rows_table(con, "documents", DOCUMENT, doc_rows)
                 out.append(base.write_parquet(con, "SELECT * FROM documents ORDER BY accession",
                                               folder / "documents.parquet"))
+                base.rows_table(con, "segments", SEGMENT, segment_rows)
+                out.append(base.write_parquet(con, "SELECT * FROM segments ORDER BY axis, member",
+                                              folder / "segments.parquet"))
+                base.rows_table(con, "customers", CUSTOMER, customer_rows)
+                out.append(base.write_parquet(con, "SELECT * FROM customers ORDER BY customer, benchmark",
+                                              folder / "customers.parquet"))
             finally:
                 con.close()
         return out
 
     @staticmethod
-    def _documents(cik: str, rows: list[dict]) -> list[dict]:
-        out = []
+    def _documents(cik: str, rows: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
+        """The document rows, and the annual report's segment and customer rows (its inline XBRL)."""
+        out, segments, customers = [], [], []
         for forms, item in ((ANNUAL_FORMS, "business"), (PROXY_FORMS, "proxy")):
             f = pick(rows, forms)
             if f is None:
@@ -271,16 +288,24 @@ class Filings:
             if not path.exists():
                 continue
             meta = base.read_raw_json(common.meta_path(path))
-            text, quality = slice_text(base.read_raw(path).decode("utf-8", "replace"), f["form"])
-            out.append({**base_row, "item": item, "text": text, "chars": len(text), "quality": quality,
-                        "source_as_of": date.fromisoformat(meta["as_of"]),
-                        "fetched_at": float(meta["fetched_at"]), "run_id": meta["run_id"]})
-        return out
+            html = base.read_raw(path).decode("utf-8", "replace")
+            text, quality = slice_text(html, f["form"])
+            stamps = {"source_as_of": date.fromisoformat(meta["as_of"]), "fetched_at": float(meta["fetched_at"]),
+                      "run_id": meta["run_id"]}
+            out.append({**base_row, "item": item, "text": text, "chars": len(text), "quality": quality, **stamps})
+            if item == "business":
+                filed = {k: base_row[k] for k in ("cik", "accession", "form", "filing_date")}
+                found_segments, found_customers = ixbrl.parse(html)
+                segments += [{**filed, **r, "segment": r["label"], **stamps} for r in found_segments]
+                customers += [{**filed, **r, **stamps} for r in found_customers]
+        return out, segments, customers
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         folder = common.parquet_dir(NAME)
         common.stage_glob(con, STAGING["filings"], FILING, folder, "cik=*/filings.parquet")
         common.stage_glob(con, STAGING["documents"], DOCUMENT, folder, "cik=*/documents.parquet")
+        common.stage_glob(con, STAGING["segments"], SEGMENT, folder, "cik=*/segments.parquet")
+        common.stage_glob(con, STAGING["customers"], CUSTOMER, folder, "cik=*/customers.parquet")
         return {}
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
