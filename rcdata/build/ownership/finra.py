@@ -192,6 +192,8 @@ class FinraShortInterest:
         out, repeats = [], 0
         for raw in raws:
             rows, rep = parse(base.read_raw_json(raw))
+            if not rows:                    # fetch_date refuses an empty answer: only a damaged file gets here
+                raise base.SourceError(f"finra {raw.name}: no row with a symbol")
             repeats += rep
             final = parquet_dir() / f"date={rows[0]['settlement_date'].isoformat()}" / "part-0.parquet"
             con = duckdb.connect()

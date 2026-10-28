@@ -99,3 +99,11 @@ def test_with_no_spine_no_symbol_is_named(src):
     row = _run()
     assert row["result"] == "changed" and "no spine file yet" in row["note"]
     assert _served("SELECT count(*) FROM finra_short_interest WHERE ticker IS NOT NULL") == [(0,)]
+
+
+def test_a_stored_date_with_no_symbol_is_a_source_error_not_an_index_error(src):
+    """Review N1: a raw file whose rows all lack a symbol (a corrupted file on disk) fails as a source error."""
+    raw = base.write_raw_json(finra.raw_path(date(2026, 10, 15)), {
+        "settlement_date": "2026-10-15", "pages": [[{**ox.finra_row("MSFT", "2026-10-15", 1_000), "symbolCode": ""}]]})
+    with pytest.raises(base.SourceError, match="no row with a symbol"):
+        finra.DATASET.to_parquet_all(base.RunContext(run_id="t", dataset=finra.NAME), [raw])
