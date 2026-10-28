@@ -135,6 +135,27 @@ def has_comps(report: dict | None) -> bool:
     return isinstance(comps, dict) and bool(comps) and not comps.get("error")
 
 
+def last_quick_remarks(ticker: str) -> dict | None:
+    """The Quick Remarks the newest recorded Fetch of ``ticker`` scored, dated, or ``None`` when none did.
+
+    A Refresh fetches nothing, so without this it showed an empty card although the last Fetch had scored the name
+    (Financials review S5). A newer run that scored nothing does not hide an older score. The remarks keep their own
+    ``as_of`` when they carry one; an older row without it is dated by its run (:func:`_as_of`). Read-only, bounded
+    like :func:`last_report`.
+    """
+    rows = rawstore.query(
+        "SELECT h.quick_remarks, h.data_fetched_at, r.run_at "
+        f"FROM {TABLE} h JOIN result_runs r ON r.board = ? AND r.run_id = h.run_id "
+        "WHERE h.ticker = ? ORDER BY r.run_at DESC, h.run_id DESC LIMIT 20",
+        [BOARD, (ticker or "").strip().upper()], db="history")
+    for row in rows:
+        remarks = rawstore._decode_row(TABLE, row).get("quick_remarks")
+        if isinstance(remarks, dict) and remarks.get("score") is not None:
+            return {**remarks, "as_of": remarks.get("as_of") or _as_of(row.get("data_fetched_at"), row.get("run_at")),
+                    "as_of_note": "the last stored Fetch"}
+    return None
+
+
 def last_report(ticker: str) -> dict | None:
     """The newest recorded Fetch's report for ``ticker`` that has comps, decoded: ``modules`` (comps included),
     ``warnings``, ``quick_remarks``, ``sector``, ``run_id`` and ``as_of`` (the date its data was fetched).

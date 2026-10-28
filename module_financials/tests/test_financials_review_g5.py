@@ -4,18 +4,24 @@ S1: a base-year input the statements do not give is a default, and the board say
 measured number (the #173 convention: missing is unknown, never a silent number).
 S4: the header's "Last sync" and the comps' "as of" name the same New York session (core/calendar rule B), and a
 fetch inside the session says "intraday", not "EOD".
+S5: Quick Remarks say when they were scored, and a Refresh shows what the last Fetch scored instead of an empty card.
 """
 from __future__ import annotations
 
 import copy
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 
+import RevenueChaser.core.ticker_store as ts
+from RevenueChaser.module_asymmetric_growth import engine as agh
 from RevenueChaser.module_financials import history as fin_history
+from RevenueChaser.module_financials.engines import quick_remarks_engine as qr
 from RevenueChaser.module_financials.engines.dcf_engine import run_dcf
 from RevenueChaser.module_financials.engines.three_statement_engine import run_three_statement
 from RevenueChaser.module_financials.reporting.html_builder import build_report_html
+from RevenueChaser.module_financials.reporting.quick_remarks_html import (render_quick_remarks_html,
+                                                                       render_quick_remarks_section)
 
 NWC_LINES = ("receivables", "inventory", "payables", "current_assets", "current_liabilities")
 
@@ -155,3 +161,59 @@ def test_the_header_and_the_comps_name_the_same_new_york_session(financials, sta
 def test_an_intraday_fetch_is_not_called_end_of_day(financials):
     financials["_fetched_at_iso"] = "2026-10-06T15:00:00+00:00"
     assert "EOD" not in _html(financials, {})
+
+
+# ── S5: Quick Remarks are dated; a Refresh shows what the last Fetch scored ─────
+SCAN_ASOF = "2026-10-06T21:00:00+00:00"                                    # 17:00 ET Tuesday
+TUESDAY_LATE = datetime(2026, 10, 7, 2, 0, tzinfo=timezone.utc).timestamp()   # 22:00 ET Tuesday
+
+
+def _record_remarks(remarks, *, run_id, run_at=TUESDAY_LATE, fetched="2026-10-06T21:30:00+00:00"):
+    fin_history.record({"financials": {"ticker": "TEST", "fetched_at_iso": fetched}, "modules": {},
+                        "quick_remarks": remarks, "warnings": []}, ticker="TEST", run_id=run_id, run_at=run_at,
+                       modules=[])
+
+
+def test_a_scan_card_carries_the_scans_session(monkeypatch):
+    monkeypatch.setattr(ts, "get", lambda t: {"name": "Test", "total_points": 6, "signals": []})
+    monkeypatch.setattr(ts, "asof", lambda: SCAN_ASOF)
+    res = qr.run_quick_remarks("TEST", no_fetch=True)
+    assert (res["score"], res["as_of"], res["as_of_note"]) == (6, "2026-10-06", "the last Asymmetric Growth Fetch")
+
+
+def test_a_score_this_fetch_built_carries_the_payloads_session(monkeypatch):
+    monkeypatch.setattr(ts, "get", lambda t: None)
+    monkeypatch.setattr(qr, "fetch_technical", lambda t: {})
+    monkeypatch.setattr(agh, "score_ticker", lambda t, f, tech, meta=None: {"total_points": 5, "signals": []})
+    res = qr.run_quick_remarks("TEST", financials={"_fetched_at_iso": "2026-10-07T02:00:00+00:00"})
+    assert (res["score"], res["as_of"], res["as_of_note"]) == (5, "2026-10-06", "this Fetch")
+
+
+def test_a_refresh_shows_the_remarks_the_last_fetch_scored(rawstore_tmp_db, monkeypatch):
+    monkeypatch.setattr(ts, "get", lambda t: None)
+    _record_remarks({"ticker": "TEST", "source": "yfinance", "score": 5, "max": 9, "signals": []}, run_id="r1")
+    res = qr.run_quick_remarks("TEST", no_fetch=True)
+    assert (res["score"], res["as_of"], res["as_of_note"]) == (5, "2026-10-06", "the last stored Fetch")
+
+
+def test_a_refresh_skips_a_newer_fetch_that_scored_nothing(rawstore_tmp_db, monkeypatch):
+    monkeypatch.setattr(ts, "get", lambda t: None)
+    _record_remarks({"ticker": "TEST", "source": "yfinance", "score": 4, "max": 9, "signals": [],
+                     "as_of": "2026-10-05", "as_of_note": "this Fetch"}, run_id="old", run_at=TUESDAY_LATE - 86400)
+    _record_remarks({"ticker": "TEST", "source": "yfinance", "score": None}, run_id="new")
+    res = qr.run_quick_remarks("TEST", no_fetch=True)
+    assert (res["score"], res["as_of"], res["as_of_note"]) == (4, "2026-10-05", "the last stored Fetch")
+
+
+def test_a_refresh_with_nothing_stored_is_an_undated_empty_card(rawstore_tmp_db, monkeypatch):
+    monkeypatch.setattr(ts, "get", lambda t: None)
+    res = qr.run_quick_remarks("TEST", no_fetch=True)
+    assert res["score"] is None and res["as_of"] is None
+
+
+@pytest.mark.parametrize("render", [render_quick_remarks_section, render_quick_remarks_html])
+def test_the_section_says_when_it_was_scored(render):
+    html = render({"ticker": "TEST", "score": 6, "max": 9, "signals": [],
+                   "as_of": "2026-10-06", "as_of_note": "the last Asymmetric Growth Fetch"})
+    assert "Scored: 2026-10-06 (the last Asymmetric Growth Fetch)" in html
+    assert "Scored: N/A" in render({"ticker": "TEST", "score": None, "signals": []})
