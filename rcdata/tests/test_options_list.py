@@ -9,7 +9,7 @@ from RevenueChaser.core import calendar
 from RevenueChaser.core.providers import unusual_whales
 from RevenueChaser.rcdata import ops, serving
 from RevenueChaser.rcdata.build import base
-from RevenueChaser.rcdata.build.options import tables, uw_list
+from RevenueChaser.rcdata.build.options import rows as option_rows, tables, uw_list
 
 from .options_fixture import SESSION, UWOptions
 
@@ -109,11 +109,34 @@ def test_iv_daily_holds_uw_s_tenors_observed(uw_opts):
 
 def test_prints_keep_the_newest_50_of_the_session_with_their_side_and_tags(uw_opts):
     _daily()
-    rows = _query("SELECT print_id, executed_at, tags, nbbo_bid, ask_vol, multi_vol, upstream_condition_detail "
-                  "FROM option_print ORDER BY executed_at DESC")
+    rows = _query("SELECT print_id, executed_at, tags, nbbo_bid, ask_vol, multi_vol, upstream_condition_detail, "
+                  "side, package FROM option_print ORDER BY executed_at DESC")
     assert len(rows) == 50 and rows[0][0] == "SPX-p59" and rows[-1][0] == "SPX-p10"
     assert rows[0][2] == ["ask_side", "bullish"] and rows[0][3] == 1.10 and rows[0][4] == 10
+    assert rows[0][7:] == ("ask", False)
     assert all(not r[0].endswith("-old") for r in rows), "a print of another session is left out"
+
+
+def test_a_print_s_side_is_uw_s_tag_else_its_price_against_the_quote():
+    """Earnings Radar review S4: a lean is read from the print's side (ask-call, bid-put), so each print carries
+    one; no side tag and no usable quote is no side, never a guess."""
+    side = option_rows.print_side
+    quote = {"nbbo_bid": "1.10", "nbbo_ask": "1.20"}
+    assert side({"tags": ["bid_side", "bearish"], "price": "1.20", **quote}) == "bid", "UW's own tag wins"
+    assert side({"tags": ["bullish"], "price": "1.20", **quote}) == "ask"
+    assert side({"price": "1.10", **quote}) == "bid"
+    assert side({"price": "1.15", **quote}) == "mid"
+    assert side({"price": "1.15"}) is None
+    assert side({"price": "1.15", "nbbo_bid": "1.20", "nbbo_ask": "1.20"}) is None, "a locked quote has no side"
+
+
+def test_a_multi_leg_or_stock_tied_print_is_marked_a_package():
+    """Earnings Radar review S4: a package leg is not a directional print. The OPRA trade condition says so."""
+    package = option_rows.is_package
+    assert package({"upstream_condition_detail": "mlft"}) is True
+    assert package({"upstream_condition_detail": "TLET"}) is True
+    assert package({"upstream_condition_detail": "auto"}) is False
+    assert package({"upstream_condition_detail": ""}) is None and package({}) is None
 
 
 def test_outside_the_observed_window_no_call_is_sent(uw_opts, monkeypatch):

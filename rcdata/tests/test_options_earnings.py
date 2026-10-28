@@ -17,8 +17,9 @@ from .options_fixture import SESSION, UWOptions
 AFTER_CLOSE = datetime(2026, 10, 26, 21, 0, tzinfo=timezone.utc)
 NEXT = calendar.next_trading_day(SESSION)
 LATER = calendar.next_trading_day(calendar.next_trading_day(NEXT))
-LIQUID = {"call_volume": 400, "put_volume": 200, "total_open_interest": 5000}
-THIN = {"call_volume": 10, "put_volume": 5, "total_open_interest": 30}
+LIQUID = {"call_volume": 400, "put_volume": 200, "total_open_interest": 5000, "call_premium": 80_000,
+          "put_premium": 40_000}
+THIN = {"call_volume": 10, "put_volume": 5, "total_open_interest": 30, "call_premium": 900, "put_premium": 400}
 ER_PARTS = ("spot-exposures/strike", "gex-levels", "volatility/term-structure", "options-volume", "flow-recent")
 
 

@@ -17,7 +17,8 @@ from .options_fixture import SESSION, UWOptions
 AFTER_CLOSE = datetime(2026, 10, 26, 21, 0, tzinfo=timezone.utc)       # 17:00 New York, Monday 26 Oct 2026
 REPORT_DAYS = list(base.iter_sessions(SESSION + timedelta(days=1), SESSION + timedelta(days=28)))
 NEXT = calendar.next_trading_day(SESSION)
-LIQUID = {"call_volume": 400, "put_volume": 200, "total_open_interest": 5000, "close": 50, "er_time": "premarket"}
+LIQUID = {"call_volume": 400, "put_volume": 200, "total_open_interest": 5000, "call_premium": 80_000,
+          "put_premium": 40_000, "close": 50, "er_time": "premarket"}
 
 
 @pytest.fixture(autouse=True)
@@ -85,19 +86,25 @@ def test_a_calendar_session_with_more_than_100_names_is_paged(uw_opts):
     assert _query("SELECT count(*) FROM option_screener_daily")[0][0] == 150
 
 
-def test_the_gates_are_the_earnings_radar_s(uw_opts):
-    """Option volume >= 500, total open interest >= 200, dollar option volume (volume x 100) >= 50k
-    (core/config.py; module_earnings_radar/pipeline.py preselect)."""
+def test_the_gates_are_the_earnings_radar_s_with_the_real_premium(uw_opts):
+    """Option volume >= 500, total open interest >= 200, dollar option volume >= 50k (core/config.py). The dollar
+    volume is the premium UW served (call + put premium), not volume x 100: Earnings Radar review N3 found that
+    estimate makes the third gate the first one again."""
     assert (config.MIN_OPTION_VOLUME, config.MIN_TOTAL_OI, config.MIN_DOLLAR_OPTION_VOLUME) == (500, 200, 50_000)
-    cases = {"PASS": (300, 200, 200), "LOWVOL": (299, 200, 5000), "LOWOI": (400, 200, 199), "EDGE": (500, 0, 200)}
+    cases = {"PASS": (300, 200, 200, 30_000, 20_000), "LOWVOL": (299, 200, 5000, 90_000, 90_000),
+             "LOWOI": (400, 200, 199, 90_000, 90_000), "CHEAP": (4000, 1000, 9000, 30_000, 19_999),
+             "NOPREMIUM": (4000, 1000, 9000, None, None)}
     uw_opts.calendar[(REPORT_DAYS[1], "premarket")] = list(cases)
-    for t, (calls, puts, oi) in cases.items():
+    for t, (calls, puts, oi, call_premium, put_premium) in cases.items():
         uw_opts.screener[t] = {"call_volume": calls, "put_volume": puts, "total_open_interest": oi}
+        if call_premium is not None:
+            uw_opts.screener[t].update(call_premium=call_premium, put_premium=put_premium)
     _daily()
     got = {t: (vol, dollar, ok) for t, vol, dollar, ok in _query(
         "SELECT ticker, option_volume, dollar_option_volume, passes_gates FROM option_screener_daily")}
-    assert got == {"PASS": (500, 50_000.0, True), "LOWVOL": (499, 49_900.0, False), "LOWOI": (600, 60_000.0, False),
-                   "EDGE": (500, 50_000.0, True)}
+    assert got == {"PASS": (500, 50_000.0, True), "LOWVOL": (499, 180_000.0, False),
+                   "LOWOI": (600, 180_000.0, False), "CHEAP": (5000, 49_999.0, False),
+                   "NOPREMIUM": (5000, None, False)}
 
 
 def test_a_second_run_of_the_evening_asks_nothing_again(uw_opts):

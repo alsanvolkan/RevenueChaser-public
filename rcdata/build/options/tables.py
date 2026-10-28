@@ -136,7 +136,8 @@ OPTION_PRINT = Table(
      ("option_type", "TEXT")]
     + _doubles(PRINT_DOUBLES) + _counts(PRINT_COUNTS)
     + [("exchange", "TEXT"), ("tags", "VARCHAR[]"), ("report_flags", "VARCHAR[]"),
-       ("upstream_condition_detail", "TEXT"), ("canceled", "BOOLEAN")] + PROVENANCE,
+       ("upstream_condition_detail", "TEXT"), ("canceled", "BOOLEAN"), ("side", "TEXT"), ("package", "BOOLEAN")]
+    + PROVENANCE,
     ("session_date", "ticker", "set_name", "print_id"), (LIST_SOURCE, SCREENER_SOURCE))
 
 # One row per name, session, source and tenor: UW's interpolated IV (days 1 to 365, observed by the daily run) and

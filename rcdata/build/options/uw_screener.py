@@ -98,9 +98,17 @@ def batches(names) -> list[list[str]]:
     return [tickers[i:i + SCREENER_BATCH] for i in range(0, len(tickers), SCREENER_BATCH)]
 
 
-def passes_gates(option_volume: int, total_oi: int, dollar_volume: float) -> bool:
+def passes_gates(option_volume: int, total_oi: int, dollar_volume: float | None) -> bool:
+    """Earnings Radar's gates (``core/config.py``). A name whose premium UW did not serve fails the dollar gate."""
     return (option_volume >= config.MIN_OPTION_VOLUME and total_oi >= config.MIN_TOTAL_OI
-            and dollar_volume >= config.MIN_DOLLAR_OPTION_VOLUME)
+            and dollar_volume is not None and dollar_volume >= config.MIN_DOLLAR_OPTION_VOLUME)
+
+
+def premium(item: dict) -> float | None:
+    """The day's option premium of a screener row: call plus put premium, None when either is missing. Not volume x
+    100: that estimate makes the dollar gate the volume gate again (Earnings Radar review N3)."""
+    calls, puts = tables.to_float(item.get("call_premium")), tables.to_float(item.get("put_premium"))
+    return None if calls is None or puts is None else calls + puts
 
 
 def screener_rows(session: date) -> list[dict] | None:
@@ -123,7 +131,7 @@ def screener_rows(session: date) -> list[dict] | None:
         item, doc = found.get(ticker, ({}, None))
         volume = int((tables.to_float(item.get("call_volume")) or 0) + (tables.to_float(item.get("put_volume")) or 0))
         oi = tables.to_int(item.get("total_open_interest")) or 0
-        dollar = float(volume * 100)                # the radar's estimate: $100 a contract
+        dollar = premium(item)
         out.append({"session_date": session, "ticker": ticker, "report_date": day, "report_session": rs,
                     "screened": doc is not None, "passes_gates": doc is not None and passes_gates(volume, oi, dollar),
                     "option_volume": volume if doc is not None else None,

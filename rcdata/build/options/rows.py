@@ -21,6 +21,13 @@ from .uw import rows_of
 # An OCC option symbol: root, expiry YYMMDD, C or P, strike times 1,000 in eight digits (``AAPL261120C00200000``).
 OCC = re.compile(r"^(?P<root>[A-Z0-9.]+?)(?P<ymd>\d{6})(?P<cp>[CP])(?P<k>\d{8})$")
 PRINTS_KEPT = 50        # the plan's "last 50 prints" per name and session
+# UW's side tags of a print (``tags`` of ``flow-recent``, ``docs/openapi.yaml`` "Option Trade").
+SIDE_TAGS = {"ask_side": "ask", "bid_side": "bid", "mid_side": "mid"}
+# OPRA trade conditions of a package (``upstream_condition_detail``, lower case): multi-leg (``ml*``, ``mesl``),
+# tied to stock (``tl*``, ``tasl``) and the older spread, straddle, buy-write and combo codes. Any other code is a
+# single-leg print.
+PACKAGE_CODES = frozenset({"mlet", "mlat", "mlct", "mlft", "mesl", "tlet", "tlat", "tlct", "tlft", "tasl",
+                           "sprd", "stdl", "bwrt", "cmbo"})
 
 Issue = Callable[[str, str, str], None]
 
@@ -192,6 +199,25 @@ def _texts(value) -> list[str]:
     return [str(value)]
 
 
+def print_side(item: dict) -> str | None:
+    """``ask``, ``bid`` or ``mid``: UW's side tag when the print has one, else its price against the NBBO (at or
+    above the ask, at or under the bid, between). None without a tag and without a quote with bid under ask."""
+    for tag in _texts(item.get("tags")):
+        if tag.lower() in SIDE_TAGS:
+            return SIDE_TAGS[tag.lower()]
+    price, bid, ask = (t.to_float(item.get(k)) for k in ("price", "nbbo_bid", "nbbo_ask"))
+    if price is None or bid is None or ask is None or not 0 <= bid < ask:
+        return None
+    return "ask" if price >= ask else "bid" if price <= bid else "mid"
+
+
+def is_package(item: dict) -> bool | None:
+    """True when the print's trade condition is a package's (``PACKAGE_CODES``), False for any other condition, None
+    when the print has none."""
+    code = str(item.get("upstream_condition_detail") or "").strip().lower()
+    return None if not code else code in PACKAGE_CODES
+
+
 def print_rows(session: date, ticker: str, set_name: str, body, prov: dict, keep: int = PRINTS_KEPT) -> list[dict]:
     """The newest ``keep`` prints executed on the session (New York date), newest first."""
     prints = []
@@ -219,8 +245,8 @@ def print_rows(session: date, ticker: str, set_name: str, body, prov: dict, keep
                     "option_type": option_type, "exchange": item.get("exchange"),
                     "tags": _texts(item.get("tags")), "report_flags": _texts(item.get("report_flags")),
                     "upstream_condition_detail": item.get("upstream_condition_detail"),
-                    "canceled": t.to_bool(item.get("canceled")),
-                    **t.numbers(item, t.PRINT_DOUBLES, t.PRINT_COUNTS), **prov})
+                    "canceled": t.to_bool(item.get("canceled")), "side": print_side(item),
+                    "package": is_package(item), **t.numbers(item, t.PRINT_DOUBLES, t.PRINT_COUNTS), **prov})
         if len(out) >= keep:
             break
     return out
