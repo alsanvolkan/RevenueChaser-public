@@ -227,7 +227,8 @@ BOARD_ARTIFACT_PAIRS = (("FUNDAMENTALS", "module_fundamentals"), ("SWING", "modu
 
 @pytest.fixture(autouse=True)
 def isolate_board_artifacts():
-    """Point both copies of the six boards' artifact paths, and Asymmetric Growth's, at a folder of this test's own.
+    """Point both copies of the six boards' artifact paths, and Asymmetric Growth's and SEC 13F's, at a folder of
+    this test's own.
 
     Autouse for the reason ``isolate_rawstore`` is: the data-root redirect is one folder per process, so a payload
     one test saved was what the next test's Refresh read, and a Refresh test could pass on that leftover (#111). The
@@ -253,6 +254,13 @@ def isolate_board_artifacts():
     # under ``-n 4``, 28 Oct 2026).
     for attr in ("ASYMMETRIC_GROWTH_LATEST", "ASYMMETRIC_GROWTH_JSON"):
         mp.setattr(runners, attr, dest / Path(getattr(runners, attr)).relative_to(root))
+    # The 13F board the same way: nine test files write it through ``runners.run_sec_13f_latest``, whose page the
+    # 13F report writes under its own ``OUTPUT_DIR``; one of them read another worker's page under ``-n 4``
+    # (``test_an_outage_keeps_stored_names_and_shows_the_health_banner``, 28 Oct 2026).
+    sec13f_report = importlib.import_module("RevenueChaser.module_sec_13f.report")
+    mp.setattr(runners, "SEC_13F_LATEST", dest / Path(runners.SEC_13F_LATEST).relative_to(root))
+    mp.setattr(sec13f_report, "OUTPUT_DIR", dest / Path(sec13f_report.OUTPUT_DIR).relative_to(root))
+    dest.mkdir(parents=True, exist_ok=True)     # the 13F page sits at its top, where a test may write it directly
     try:
         yield dest
     finally:
