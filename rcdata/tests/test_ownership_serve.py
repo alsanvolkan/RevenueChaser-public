@@ -225,6 +225,38 @@ def test_a_filer_still_reporting_thousands_is_rescaled_once_its_prices_agree(mon
     assert "1 filer-quarters reported VALUE in thousands after 2023: rescaled" in row["note"]
 
 
+# ── An exit that may not be a sale ──────────────────────────────────────────────────────────────────────────
+
+def test_an_exit_whose_filer_omitted_holdings_in_confidence_or_did_not_file_is_counted_apart(monkeypatch, http_mock):
+    """ownership_review.md: a position missing for confidential treatment must not read as sold."""
+    monkeypatch.setattr(sec, "_shared_pace", lambda: True)
+    monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
+    ox.make_spine()
+    e = ox.Edgar()
+    e.add_day("2026-08-14", [_f(f"000300000{i}-26-00000{i}", 3000000 + i, "2026-08-14",
+                                [_h("MICROSOFT CORP", "594918104", 40_000, 100)], period="06-30-2026")
+                             for i in range(1, 4)])
+    e.add_day("2026-10-27", [
+        _f("0003000001-26-000011", 3000001, "2026-10-27", [_h("MICROSOFT CORP", "594918104", 40_000, 100)],
+           confidential=False),
+        # 3000002 asked for confidential treatment and left MSFT out; 3000003 has not filed the quarter.
+        _f("0003000002-26-000012", 3000002, "2026-10-27", [_h("APPLE INC", "037833100", 23_000, 100)],
+           confidential=True)])
+    e.install(http_mock)
+    _thirteen_f(as_of="2026-10-28")
+    _thirteen_f(mode="backfill", **{"from": "2026-08-14", "to": "2026-08-14"})
+    _serve()
+    assert _served(f"SELECT cik, period, confidential_omitted FROM {sec13f.TABLE} ORDER BY period, cik") == [
+        ("3000001", Q2, None), ("3000002", Q2, None), ("3000003", Q2, None),
+        ("3000001", Q3, False), ("3000002", Q3, True)]
+    assert _served("SELECT cik, confidential_omitted FROM sec13f_filer_period WHERE period = ? ORDER BY cik",
+                   Q3) == [("3000001", False), ("3000002", True)]
+    assert _served("SELECT holders, exited_holders, exited_confidential, exited_no_filing, sell_flow "
+                   "FROM sec13f_ticker_period WHERE ticker = 'MSFT' AND period = ?", Q3) == [(1, 2, 1, 1, 200.0)]
+    assert _served("SELECT exited_holders, exited_confidential, exited_no_filing FROM sec13f_ticker_period "
+                   "WHERE ticker = 'MSFT' AND period = ?", Q2) == [(None, None, None)]
+
+
 # ── The short_interest bridge ────────────────────────────────────────────────────────────────────────────────
 
 def test_short_interest_joins_the_newest_settled_short_interest_to_each_session(monkeypatch, http_mock):

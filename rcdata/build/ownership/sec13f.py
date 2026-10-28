@@ -1,10 +1,11 @@
 """``sec/13f``: Form 13F-HR and 13F-HR/A as they arrive, through the EDGAR daily index (``edgar.Feed``).
 
 Each filing's full submission holds its cover page (``primary_doc.xml``: the report period, whether it amends and
-how, ``RESTATEMENT`` or ``NEW HOLDINGS``, the report type, the summary's entry and value totals) and, unless it is a
-notice, its information table (one ``infoTable`` per holding: issuer, class, CUSIP, FIGI when the filer gives one,
-value, shares or principal and its type, put or call, discretion, voting authority). Tags are read by their local
-names (filers' namespace prefixes vary).
+how, ``RESTATEMENT`` or ``NEW HOLDINGS``, the report type, the summary's entry and value totals and whether it left
+holdings out under confidential treatment, ``confidential_omitted``) and, unless it is a notice, its information
+table (one ``infoTable`` per holding: issuer, class, CUSIP, FIGI when the filer gives one, value, shares or principal
+and its type, put or call, discretion, voting authority). Tags are read by their local names (filers' namespace
+prefixes vary).
 
 A filing is ``ok`` (its holdings typed), ``notice`` (a 13F notice: another manager reports its holdings) or
 ``unparsed`` (no cover page XML, no period, or a document that does not parse; ``detail`` says which). Every holding
@@ -13,7 +14,8 @@ filing is active for a period (the amendment walk) are decided where the totals 
 
 **Value.** Filings made before 2023-01-03 report ``value`` in thousands of dollars, later ones in dollars (the SEC's
 rule change of that day); ``value_usd`` is the value in dollars (``value_scale`` 1,000 or 1). A filer that still
-reports thousands after the change is not detected here (a known limit, private #208).
+reports thousands after the change is not detected here but where the totals are built (``ownership/serve``,
+private #208).
 
 Keys: a filing by ``accession``; its rows by ``(cik, period)`` (the report period, quarter end) and ``filed`` (the
 filed date), so a quarter's holdings and its amendments stay apart. Parquet: ``parquet/sec/13f/filings/day=<index
@@ -40,8 +42,9 @@ DOLLARS_FROM = date(2023, 1, 3)          # the SEC's rule: value in dollars, not
 FILINGS = [("accession", "TEXT"), ("cik", "TEXT"), ("filer_name", "TEXT"), ("form", "TEXT"), ("period", "DATE"),
            ("filed", "DATE"), ("index_day", "DATE"), ("is_amendment", "BOOLEAN"), ("amendment_no", "INTEGER"),
            ("amendment_type", "TEXT"), ("report_type", "TEXT"), ("other_managers", "INTEGER"),
-           ("entry_total", "INTEGER"), ("value_total", "DOUBLE"), ("holdings", "INTEGER"), ("value_scale", "INTEGER"),
-           ("status", "TEXT"), ("detail", "TEXT"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
+           ("entry_total", "INTEGER"), ("value_total", "DOUBLE"), ("holdings", "INTEGER"),
+           ("value_scale", "INTEGER"), ("confidential_omitted", "BOOLEAN"), ("status", "TEXT"), ("detail", "TEXT"),
+           ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
 HOLDINGS = [("accession", "TEXT"), ("cik", "TEXT"), ("period", "DATE"), ("filed", "DATE"), ("line", "INTEGER"),
             ("name_of_issuer", "TEXT"), ("title_of_class", "TEXT"), ("cusip", "TEXT"), ("figi", "TEXT"),
             ("value", "DOUBLE"), ("value_usd", "DOUBLE"), ("shares", "DOUBLE"), ("sh_type", "TEXT"),
@@ -74,7 +77,8 @@ def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
            "filed": filed, "index_day": index_day, "is_amendment": form.endswith("/A"), "amendment_no": None,
            "amendment_type": None, "report_type": None, "other_managers": None, "entry_total": None,
            "value_total": None, "holdings": 0, "value_scale": 1000 if filed < DOLLARS_FROM else 1,
-           "status": "unparsed", "detail": None, "fetched_at": entry.get("fetched_at"), "run_id": entry.get("run_id")}
+           "confidential_omitted": None, "status": "unparsed", "detail": None, "fetched_at": entry.get("fetched_at"),
+           "run_id": entry.get("run_id")}
     docs = sub["docs"]
     primary = next((d for d in docs if d["xml"] and "edgarSubmission" in d["xml"][:2000]), None)
     table = next((d for d in docs if d["xml"] and d["type"] == "INFORMATION TABLE"), None)
@@ -98,6 +102,8 @@ def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
     row["other_managers"] = edgar.integer(edgar.text(summary, "otherincludedmanagerscount"))
     row["entry_total"] = edgar.integer(edgar.text(summary, "tableentrytotal"))
     row["value_total"] = edgar.number(edgar.text(summary, "tablevaluetotal"))
+    omitted = (edgar.text(summary, "isconfidentialomitted") or "").lower()
+    row["confidential_omitted"] = {"true": True, "false": False}.get(omitted)
     if row["period"] is None:
         row["detail"] = "no report period"
         return row, []

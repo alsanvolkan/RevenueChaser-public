@@ -27,7 +27,11 @@
   filer counts when it has a long-equity row). Against the **calendar quarter before** (``prev_period``), not the
   name's own last stored quarter (module_sec_13f.md: a gap in a name's filings widened the step): new and exited
   holders, buy and sell flow (shares) and ``breadth_chg`` (percentage points). When the store holds no filer for that
-  quarter they are unknown (NULL), never 0.
+  quarter they are unknown (NULL), never 0. An exit need not be a sale (ownership_review.md), so two counts say how
+  many may not be: ``exited_confidential``, the filer's report for the quarter left holdings out under confidential
+  treatment (``isConfidentialOmitted``; a later ``NEW HOLDINGS`` amendment adds them back), and ``exited_no_filing``,
+  the filer has no holdings report for the quarter (not filed yet, a notice that another manager reports them, or no
+  longer filing).
 - *Completeness*: ``filing_deadline`` is the period end plus 45 days, rolled past weekends and Washington's Birthday
   (``filing_deadline``); a quarter is complete once its deadline has passed. ``filed_through`` is its newest filing.
 
@@ -73,10 +77,12 @@ SP500, FUNDS = "sp500", "funds/index_holdings"
 MAP = [("cusip", "TEXT"), ("period", "DATE"), ("ticker", "TEXT"), ("map_source", "TEXT"),
        ("candidate_ticker", "TEXT"), ("issuer_name", "TEXT"), ("value", "DOUBLE"), ("holders", "INTEGER")]
 FILER = [("cik", "TEXT"), ("period", "DATE"), ("filer_name", "TEXT"), ("filings", "INTEGER"), ("cusips", "INTEGER"),
-         ("value", "DOUBLE"), ("names", "INTEGER"), ("median_ratio", "DOUBLE"), ("value_factor", "INTEGER")]
+         ("value", "DOUBLE"), ("names", "INTEGER"), ("median_ratio", "DOUBLE"), ("value_factor", "INTEGER"),
+         ("confidential_omitted", "BOOLEAN")]
 TICKER = [("ticker", "TEXT"), ("period", "DATE"), ("shares", "DOUBLE"), ("value", "DOUBLE"), ("holders", "INTEGER"),
           ("top10_pct", "DOUBLE"), ("hhi", "DOUBLE"), ("new_holders", "INTEGER"), ("exited_holders", "INTEGER"),
-          ("buy_flow", "DOUBLE"), ("sell_flow", "DOUBLE"), ("breadth", "DOUBLE"), ("breadth_chg", "DOUBLE"),
+          ("exited_confidential", "INTEGER"), ("exited_no_filing", "INTEGER"), ("buy_flow", "DOUBLE"),
+          ("sell_flow", "DOUBLE"), ("breadth", "DOUBLE"), ("breadth_chg", "DOUBLE"),
           ("prev_period", "DATE"), ("filers", "INTEGER"), ("cusips", "INTEGER"), ("filing_deadline", "DATE"),
           ("filed_through", "DATE"), ("source", "TEXT")]
 PERIODS = [("period", "DATE"), ("filers", "INTEGER"), ("filings_active", "INTEGER"), ("value_total", "DOUBLE"),
@@ -218,7 +224,8 @@ def _figi(con: duckdb.DuckDBPyConnection) -> None:
                     f"AND ticker IS NOT NULL")
 
 
-TEMPS = ("_sp_security", "_sp_hist", "_sp_sp500", "_owners", "_figi", "_active", "_long", "_px", "_ratio", "_held",
+TEMPS = ("_sp_security", "_sp_hist", "_sp_sp500", "_owners", "_figi", "_active", "_conf", "_long", "_px", "_ratio",
+         "_held",
          "_cp", "_m_hist", "_m_cur", "_m_figi", "_filers", "_filed", "_deadline", "_tot", "_pos", "_shape", "_pairs",
          "_flow")
 
@@ -309,6 +316,10 @@ class OwnershipServe:
                            f"amendment_type FROM {sec13f.TABLE} WHERE status = 'ok' AND cik IS NOT NULL "
                            f"AND period IS NOT NULL ORDER BY cik, period, filed, 5, is_amendment, accession").fetchall()
         common.temp_rows(con, "_active", [("accession", "TEXT")], [{"accession": a} for a in active_accessions(rows)])
+        # A filer's holdings report for the period, and whether it left holdings out under confidential treatment.
+        con.execute(f"""CREATE OR REPLACE TEMP TABLE _conf AS
+            SELECT f.cik, f.period, bool_or(f.confidential_omitted) AS omitted
+            FROM {sec13f.TABLE} f JOIN _active a ON a.accession = f.accession GROUP BY ALL""")
         long_cols = [("accession", "TEXT"), ("cik", "TEXT"), ("period", "DATE"), ("cusip", "TEXT"),
                      ("name_of_issuer", "TEXT"), ("shares", "DOUBLE"), ("value_usd", "DOUBLE"),
                      ("value_scale", "INTEGER"), ("filer_name", "TEXT")]
@@ -333,12 +344,14 @@ class OwnershipServe:
         common.create_table(con, "sec13f_filer_period", FILER, f"""
             SELECT l.cik, l.period, max(l.filer_name) AS filer_name, count(DISTINCT l.accession) AS filings,
                    count(DISTINCT l.cusip) AS cusips, sum(l.value_usd) * coalesce(x.factor, 1) AS value, x.names,
-                   round(x.ratio, 6) AS median_ratio, coalesce(x.factor, 1) AS value_factor
+                   round(x.ratio, 6) AS median_ratio, coalesce(x.factor, 1) AS value_factor,
+                   c.omitted AS confidential_omitted
             FROM _long l
             LEFT JOIN (SELECT cik, period, names, ratio,
                               CASE WHEN names >= {MIN_NAMES} AND ratio > {lo!r} AND ratio < {hi!r} THEN 1000
                                    ELSE 1 END AS factor FROM _ratio) x ON x.cik = l.cik AND x.period = l.period
-            GROUP BY l.cik, l.period, x.factor, x.names, x.ratio ORDER BY l.period, l.cik""")
+            LEFT JOIN _conf c ON c.cik = l.cik AND c.period = l.period
+            GROUP BY l.cik, l.period, x.factor, x.names, x.ratio, c.omitted ORDER BY l.period, l.cik""")
         con.execute("""CREATE OR REPLACE TEMP TABLE _held AS
             SELECT l.cik, l.period, l.cusip, sum(l.shares) AS shares, sum(l.value_usd * p.value_factor) AS value,
                    min(l.name_of_issuer) AS issuer_name
@@ -406,24 +419,30 @@ class OwnershipServe:
         # Each filer's position against its position in the calendar quarter before (FULL JOIN: new and exited).
         con.execute("""CREATE OR REPLACE TEMP TABLE _pairs AS
             SELECT coalesce(a.ticker, b.ticker) AS ticker, coalesce(a.period, b.next_period) AS period,
-                   a.shares AS now_s, b.shares AS prev_s
+                   coalesce(a.cik, b.cik) AS cik, a.shares AS now_s, b.shares AS prev_s
             FROM _pos a
             FULL OUTER JOIN (SELECT ticker, cik, shares,
                                     CAST(date_trunc('quarter', period) + INTERVAL 6 MONTH - INTERVAL 1 DAY AS DATE)
                                         AS next_period FROM _pos) b
               ON a.ticker = b.ticker AND a.cik = b.cik AND a.period = b.next_period""")
+        # An exit may not be a sale: the filer left holdings out under confidential treatment, or has no holdings
+        # report for the quarter (not filed yet, a notice that another manager reports them, or no longer filing).
         con.execute("""CREATE OR REPLACE TEMP TABLE _flow AS
-            SELECT ticker, period, count(*) FILTER (WHERE prev_s IS NULL) AS new_holders,
-                   count(*) FILTER (WHERE now_s IS NULL) AS exited_holders,
-                   sum(greatest(coalesce(now_s, 0) - coalesce(prev_s, 0), 0)) AS buy,
-                   sum(greatest(coalesce(prev_s, 0) - coalesce(now_s, 0), 0)) AS sell
-            FROM _pairs GROUP BY ALL""")
+            SELECT p.ticker, p.period, count(*) FILTER (WHERE p.prev_s IS NULL) AS new_holders,
+                   count(*) FILTER (WHERE p.now_s IS NULL) AS exited_holders,
+                   count(*) FILTER (WHERE p.now_s IS NULL AND c.omitted) AS exited_confidential,
+                   count(*) FILTER (WHERE p.now_s IS NULL AND c.cik IS NULL) AS exited_no_filing,
+                   sum(greatest(coalesce(p.now_s, 0) - coalesce(p.prev_s, 0), 0)) AS buy,
+                   sum(greatest(coalesce(p.prev_s, 0) - coalesce(p.now_s, 0), 0)) AS sell
+            FROM _pairs p LEFT JOIN _conf c ON c.cik = p.cik AND c.period = p.period GROUP BY ALL""")
         return common.create_table(con, "sec13f_ticker_period", TICKER, f"""
             SELECT t.ticker, t.period, t.shares, t.value, t.holders,
                    CASE WHEN t.shares > 0 THEN round(s.top10 / t.shares * 100, 2) END AS top10_pct,
                    CASE WHEN t.shares > 0 THEN round(s.h * 10000, 1) END AS hhi,
                    CASE WHEN pf.filers IS NOT NULL THEN fl.new_holders END AS new_holders,
                    CASE WHEN pf.filers IS NOT NULL THEN fl.exited_holders END AS exited_holders,
+                   CASE WHEN pf.filers IS NOT NULL THEN fl.exited_confidential END AS exited_confidential,
+                   CASE WHEN pf.filers IS NOT NULL THEN fl.exited_no_filing END AS exited_no_filing,
                    CASE WHEN pf.filers IS NOT NULL THEN round(fl.buy, 1) END AS buy_flow,
                    CASE WHEN pf.filers IS NOT NULL THEN round(fl.sell, 1) END AS sell_flow,
                    round(t.holders * 100.0 / f.filers, 4) AS breadth,

@@ -223,7 +223,7 @@ def submission(accession: str, form: str, filed: str, roles: list[tuple[str, int
 
 
 def f13_primary(period="09-30-2026", report_type="13F HOLDINGS REPORT", amendment_type=None, amendment_no=None,
-                name="SOME CAPITAL LLC", entries=0, value_total=0) -> str:
+                name="SOME CAPITAL LLC", entries=0, value_total=0, confidential=None) -> str:
     amend = ""
     if amendment_type:
         amend = (f"<isAmendment>true</isAmendment><amendmentNo>{amendment_no or 1}</amendmentNo>"
@@ -238,7 +238,9 @@ def f13_primary(period="09-30-2026", report_type="13F HOLDINGS REPORT", amendmen
             f'<filingManager><name>{name}</name></filingManager><reportType>{report_type}</reportType></coverPage>'
             f'<summaryPage><otherIncludedManagersCount>0</otherIncludedManagersCount>'
             f'<tableEntryTotal>{entries}</tableEntryTotal><tableValueTotal>{value_total}</tableValueTotal>'
-            '</summaryPage></formData></edgarSubmission>')
+            + ("" if confidential is None
+               else f"<isConfidentialOmitted>{str(confidential).lower()}</isConfidentialOmitted>")
+            + '</summaryPage></formData></edgarSubmission>')
 
 
 def f13_holding(issuer, cusip, value, shares, sh_type="SH", put_call=None, figi=None) -> dict:
@@ -265,10 +267,10 @@ def f13_infotable(holdings) -> str:
 
 
 def f13_filing(accession, cik, filed, holdings, period="09-30-2026", form="13F-HR", amendment_type=None,
-               amendment_no=None, report_type="13F HOLDINGS REPORT", name=None) -> bytes:
+               amendment_no=None, report_type="13F HOLDINGS REPORT", name=None, confidential=None) -> bytes:
     name = name or f"MANAGER {cik}"
     docs = [(form, "primary_doc.xml", f13_primary(period, report_type, amendment_type, amendment_no, name,
-                                                  len(holdings), sum(h["value"] for h in holdings)))]
+                                                  len(holdings), sum(h["value"] for h in holdings), confidential))]
     if holdings is not None and report_type != "13F NOTICE":
         docs.append(("INFORMATION TABLE", "infotable.xml", f13_infotable(holdings)))
     m, d, y = period.split("-")
