@@ -246,3 +246,10 @@ def test_the_percentile_rows_carry_their_peer_count(financials):
     assert "EV/EBITDA (25/50/75 of 5 peers)" in html
     assert "EV/Revenue (25/50/75 of 1 peer)" in html
     assert "P/E (25/50/75 of 0 peers)" in html
+
+
+# ── N5: the help box names only the source a Fetch reads ───────────────────────
+def test_the_help_box_does_not_claim_sec_edgar(financials):
+    """Nothing on the Financials Fetch path reads EDGAR (module_financials, app/runners.run_quick): Yahoo only."""
+    html = _html(financials, {})
+    assert "EDGAR" not in html and "from <b>Yahoo</b> into the store" in html

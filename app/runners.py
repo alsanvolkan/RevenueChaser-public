@@ -1349,7 +1349,7 @@ def _copy_quick_artifact(html: str) -> bool:
 def run_quick(uw, ticker: str) -> Path:
     """Run Fin Research for one ticker — Quick Remarks (ticker_scores) + Fin Model (DCF/3-stmt/comps/credit/sensitivity).
 
-    yfinance / SEC EDGAR only (``uw`` ignored, no Unusual Whales key required).
+    yfinance only (``uw`` ignored, no Unusual Whales key required); nothing on this path reads SEC EDGAR.
     Fetches fresh raw data into .store, then recomputes the report into .cache.
     """
     from RevenueChaser.module_financials.run import run as fm_run
