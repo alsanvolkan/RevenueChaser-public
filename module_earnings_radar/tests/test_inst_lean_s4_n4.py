@@ -39,8 +39,8 @@ def test_the_lean_is_read_from_the_print_side():
     agg = _agg([
         _print("call", 50_000, tags=["ask_side"]),             # bought calls: bullish
         _print("call", 40_000, tags=["bid_side"]),             # sold calls: bearish
-        _print("put", 30_000, price="1.10"),                   # at the ask: bought puts, bearish
-        _print("put", 20_000, price="1.00"),                   # at the bid: sold puts, bullish
+        _print("put", 30_000, price="1.08"),                   # no tag, nearer the ask: bought puts, bearish
+        _print("put", 20_000, price="1.00"),                   # no tag, at the bid: sold puts, bullish
         _print("call", 100_000, tags=["mid_side"]),            # mid: dropped
         _print("call", 50_000, size=5, tags=["ask_side"]),     # a small lot: retail, never in the lean
         _print("call", INST_PRINT_MIN_PREMIUM - 1, tags=["ask_side"]),   # under the $10k print floor

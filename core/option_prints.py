@@ -2,23 +2,35 @@
 (``rcdata/build/options/rows.py``, ``option_print.side`` / ``package``) and the Earnings Radar lean
 (``core/providers/unusual_whales.py`` ``aggregate_flow``, R5) read.
 
-Side: UW's side tag when the print has one (``tags``, ``docs/openapi.yaml`` "Option Trade"), else its price
-against the NBBO: at or above the ask is ``ask``, at or under the bid ``bid``, between ``mid``. None without a tag and
-without a quote whose bid is under its ask. Package: the print's OPRA trade condition (``upstream_condition_detail``)
-is a multi-leg (``ml*``, ``mesl``), stock-tied (``tl*``, ``tasl``) or older spread, straddle, buy-write or combo code.
+Side: UW's side tag (``tags``, ``docs/openapi.yaml`` "Option Trade") when the print has one, else the side of its
+NBBO's midpoint the price is on: above the midpoint ``ask``, below it ``bid``, on it ``mid``. None without a tag and
+without a quote whose bid is under its ask. **Default chosen, change if avo prefers.** The first real sample
+(2026-10-28, SPX, AAPL and NVDA, 300 prints, every one tagged) found this nearer-side rule agreeing with UW's tag on
+235 of the 241 prints with a quote, and the strict rule (at or above the ask ``ask``, at or under the bid ``bid``,
+anything inside the spread ``mid``) on only 123 of the 300, so the strict rule is not the fallback. The alternatives
+are UW's tag only (a print without one has no side) and the strict rule. The 59 prints without a quote were all
+``exht``, so for those the tag is the only side. The print's ``price``, ``nbbo_bid`` and ``nbbo_ask`` stay stored, so
+another rule can be read from them at any time.
+
+Package: the print's OPRA trade condition (``upstream_condition_detail``) is a multi-leg (``ml*``, ``mesl``),
+stock-tied (``tl*``, ``tasl``) or older spread, straddle, buy-write or combo code.
 """
 from __future__ import annotations
+
+from decimal import Decimal, InvalidOperation
 
 SIDE_TAGS = {"ask_side": "ask", "bid_side": "bid", "mid_side": "mid"}
 PACKAGE_CODES = frozenset({"mlet", "mlat", "mlct", "mlft", "mesl", "tlet", "tlat", "tlct", "tlft", "tasl",
                            "sprd", "stdl", "bwrt", "cmbo"})
 
 
-def _float(value) -> float | None:
+def _decimal(value) -> Decimal | None:
+    """Exact, so a price on the midpoint of 1.10 and 1.20 is on it (in floats 1.10 + 1.20 is 2.3000000000000003)."""
     try:
-        return None if value in (None, "") else float(value)
-    except (TypeError, ValueError):
+        d = None if value in (None, "") else Decimal(str(value))
+    except (InvalidOperation, ValueError):
         return None
+    return d if d is not None and d.is_finite() else None
 
 
 def _texts(value) -> list[str]:
@@ -34,10 +46,11 @@ def print_side(item: dict) -> str | None:
     for tag in _texts(item.get("tags")):
         if tag.lower() in SIDE_TAGS:
             return SIDE_TAGS[tag.lower()]
-    price, bid, ask = (_float(item.get(k)) for k in ("price", "nbbo_bid", "nbbo_ask"))
+    price, bid, ask = (_decimal(item.get(k)) for k in ("price", "nbbo_bid", "nbbo_ask"))
     if price is None or bid is None or ask is None or not 0 <= bid < ask:
         return None
-    return "ask" if price >= ask else "bid" if price <= bid else "mid"
+    twice_price, spread_sum = 2 * price, bid + ask
+    return "ask" if twice_price > spread_sum else "bid" if twice_price < spread_sum else "mid"
 
 
 def is_package(item: dict) -> bool | None:

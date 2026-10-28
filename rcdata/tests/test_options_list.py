@@ -117,16 +117,19 @@ def test_prints_keep_the_newest_50_of_the_session_with_their_side_and_tags(uw_op
     assert all(not r[0].endswith("-old") for r in rows), "a print of another session is left out"
 
 
-def test_a_print_s_side_is_uw_s_tag_else_its_price_against_the_quote():
+def test_a_print_s_side_is_uw_s_tag_else_the_nearer_side_of_its_quote():
     """Earnings Radar review S4: a lean is read from the print's side (ask-call, bid-put), so each print carries
-    one; no side tag and no usable quote is no side, never a guess."""
+    one. UW's tag wins; without one, the side of the quote's midpoint the price is on. The first real sample (300
+    tagged prints) found that nearer-side rule agreeing with the tag on 235 of the 241 with a quote, and the strict
+    rule (inside the spread is mid) on only 123 of 300. No tag and no usable quote is no side, never a guess."""
     side = option_rows.print_side
     quote = {"nbbo_bid": "1.10", "nbbo_ask": "1.20"}
     assert side({"tags": ["bid_side", "bearish"], "price": "1.20", **quote}) == "bid", "UW's own tag wins"
-    assert side({"tags": ["bullish"], "price": "1.20", **quote}) == "ask"
-    assert side({"price": "1.10", **quote}) == "bid"
-    assert side({"price": "1.15", **quote}) == "mid"
-    assert side({"price": "1.15"}) is None
+    assert side({"tags": "ASK_SIDE"}) == "ask" and side({"tags": ["mid_side"], "price": "1.20", **quote}) == "mid"
+    assert side({"tags": ["bullish"], "price": "1.18", **quote}) == "ask", "inside the spread, nearer the ask"
+    assert side({"price": "1.12", **quote}) == "bid" and side({"price": 1.15, **quote}) == "mid"
+    assert side({"price": "1.25", **quote}) == "ask" and side({"price": "1.05", **quote}) == "bid"
+    assert side({"price": "1.15"}) is None and side({}) is None
     assert side({"price": "1.15", "nbbo_bid": "1.20", "nbbo_ask": "1.20"}) is None, "a locked quote has no side"
 
 
