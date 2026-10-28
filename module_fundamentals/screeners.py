@@ -51,6 +51,10 @@ def evaluate_rule_of_40(m: dict) -> dict:
     # value is shown, but the rule is unknown and never decides (the gate cannot pass on it).
     passed = (None if basis and "EBITDA" in basis
               else tri.rule((ro40,), lambda r: r >= config.RO40_MIN))
+    if ro40 is not None and ro40 > config.RO40_BARRIER:
+        # Review N2: above the barrier the figure is a data problem: shown, unknown, never a pass (#386 F1).
+        passed = None
+        label += f" (above {config.RO40_BARRIER:g}: a data problem)"
     rules = [_rule("ro40", label, "pts", passed, ro40, "≥ 40")]
     return {
         "name": "Rule of 40",
@@ -107,9 +111,12 @@ def evaluate_momentum(m: dict) -> dict:
 
 
 def is_distorted(m: dict) -> bool:
-    """[DISTORTED] guardrail: absurd growth or a micro revenue base."""
+    """[DISTORTED] guardrail: absurd growth, a micro revenue base, or a Rule of 40 above the barrier (review N2)."""
     growth = m.get("rev_growth_ttm")
     rev = m.get("ttm_revenue")
+    ro40 = m.get("ro40")
+    if ro40 is not None and ro40 > config.RO40_BARRIER:
+        return True
     if growth is not None and abs(growth) > config.DISTORTED_GROWTH:
         return True
     if rev is not None and rev < config.DISTORTED_REV_MIN:

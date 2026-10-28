@@ -474,9 +474,9 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         return _drop("no_price")
 
     ttm = _ttm_metrics(quarterly, annual)
-    # #386 F1: an absurd Rule of 40 is a data problem, not a pick.
-    if ttm["ro40"] is not None and ttm["ro40"] > config.RO40_BARRIER:
-        return _drop("ro40_barrier")
+    # #386 F1: an absurd Rule of 40 is a data problem, not a pick. Review N2 (default chosen, avo may prefer the
+    # old drop): the name is no longer dropped, so Quality and Momentum still read it; the screener makes that Rule
+    # of 40 unknown and the card DISTORTED (screeners.evaluate_rule_of_40, is_distorted).
     qual = _quality_metrics(annual)
     market_cap = _to_float(row.get("market_cap")) or _to_float(info.get("marketCap"))
 

@@ -39,7 +39,8 @@ DISTORTED_REV_MIN = 10_000_000       # TTM revenue base < $10M
 # A spine sector that is not comparable on a quality-growth scan (card 4 (b), Common C17): the Financials and
 # Real Estate business models (balance-sheet driven) leave the universe before any EDGAR read.
 EXCLUDED_SECTORS = ["Financial Services", "Real Estate"]
-# A Rule of 40 above this is a data problem, not a pick (#386 F1).
+# A Rule of 40 above this is a data problem, not a pick (#386 F1): since review N2 the rule is unknown and the card
+# DISTORTED, the name is no longer dropped (Quality and Momentum still read it).
 RO40_BARRIER = 150.0
 
 # ── Corporate-event flag (#386 F5) ──
@@ -66,7 +67,8 @@ TAX_RATE = 0.21
 # 6: data-health gates (edgar_fetch_failed, stale_annual, sector_excluded, ro40_barrier) and the F2 scoring basis
 #    (#386)
 # 7: a net-cash firm passes the leverage rule when EBITDA <= 0 (review N1); gross margin follows the C18
-#    comparability rule (review N4)
+#    comparability rule (review N4); a Rule of 40 above the barrier is unknown and DISTORTED, no longer a dropped
+#    name (review N2, default chosen)
 SELECTION_VERSION = "7"
 
 # ── Options flow (constitutional bypass) ──
