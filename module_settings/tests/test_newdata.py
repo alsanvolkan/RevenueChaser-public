@@ -135,6 +135,9 @@ def test_backfill_progress_from_the_parquet_folder(roots):
     assert bf["done"] == 3 and bf["expected"] == expected
     assert bf["last_partition"] == "2026-10-28" and bf["resumable"] is True
     assert bf["missing"][0] == "2025-01-21" and len(bf["missing"]) == expected - 3
+    # A session that fills UW's page of 500 is paged: the days a first backfill leaves missing are mostly those, two
+    # calls each (21 Mar 2025: 575 rows; 15 Oct 2026: 683), so the estimate is two calls a session, not one.
+    assert bf["calls_per_partition"] == spx.CALLS_PER_SESSION_ESTIMATE == 2
 
 
 def calendar_sessions(start, end):

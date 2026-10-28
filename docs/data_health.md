@@ -209,7 +209,7 @@ yet.
 | Button | What it does |
 |---|---|
 | Fetch | `POST /api/build/request/<dataset>`: one queued request; the builder runs it at its next pass |
-| Backfill | the same with `backfill_from` (a date field). The page first shows the expected calls (SPX: one per missing session from that date) and asks for a second click when they are over 1,000, or when the dataset has no estimate |
+| Backfill | the same with `backfill_from` (a date field). The page first shows the expected calls (SPX: two per missing session from that date, `CALLS_PER_SESSION_ESTIMATE`: an ordinary session is one call and one that fills UW's page of 500 two or three, and the sessions a first backfill leaves missing are mostly the paged ones) and asks for a second click when they are over 1,000, or when the dataset has no estimate |
 | Pause / Resume | `POST /api/build/schedule/<dataset>/pause` or `/resume`; the builder skips a paused dataset with a `skipped: paused` check row and sends no call |
 
 **What the page never does:** it writes no data file and no `.store/` table, opens no serving file read-write,

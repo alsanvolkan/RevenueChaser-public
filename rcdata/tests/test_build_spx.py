@@ -207,10 +207,10 @@ def test_f3_an_implausibly_small_epoch_reads_as_no_stamp():
     assert uw.snapshot_day(1_000_000_000) == date(2001, 9, 8)
 
 
-def test_g3_an_answer_that_fills_the_page_fails_and_is_not_kept_as_a_partial_day(http_mock):
-    """The live answer for two expiries was 488 rows against UW's maximum limit of 500 (docs/openapi.yaml): a day
-    with more strikes would be cut at 500 without a sign. A full page fails the run, with a build issue, before
-    a raw file is written."""
+def test_g3_an_answer_that_never_ends_fails_at_the_page_ceiling_and_is_not_kept(http_mock):
+    """The live answer for two expiries was 488 rows against UW's maximum limit of 500 (docs/openapi.yaml); a fuller
+    day is paged (``test_build_spx_paging.py``). An answer that fills every page, here one that ignores ``page``,
+    fails at the ceiling with a build issue, before a raw file is written."""
     body = uw_fixture.body()
     rows = body["data"]
     extra = [dict(rows[-1], strike=str(9200 + 5 * (k + 1))) for k in range(uw.PAGE_LIMIT - len(rows))]
@@ -218,7 +218,8 @@ def test_g3_an_answer_that_fills_the_page_fails_and_is_not_kept_as_a_partial_day
     assert len(body["data"]) == uw.PAGE_LIMIT
     http_mock.add("expiry-strike", body, headers=UW_HEADERS)
     row = _daily()
-    assert row["result"] == "failed" and "page limit" in row["note"]
+    assert row["result"] == "failed" and "page ceiling" in row["note"]
+    assert len(http_mock.calls("expiry-strike")) == uw.MAX_PAGES
     assert not uw.raw_path(date(2026, 10, 26)).exists()
     with ops.connect() as con:
         assert [r[0] for r in con.execute("SELECT kind FROM build_issues")] == ["truncated"]

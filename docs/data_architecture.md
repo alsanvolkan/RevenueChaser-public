@@ -948,8 +948,21 @@ them instead is a later choice.
 
 **Raw and Parquet.** A raw file that exists is never fetched again: it is the resume marker. Raw files and Parquet
 partitions are written to `<name>.tmp` and renamed, so a file under its real name is whole (zstd Parquet, row groups
-of 100k rows). The SPX slice is one call per session: `raw/uw/spot_expiry_strike/<date>/SPX.json.gz`, Parquet
-`parquet/uw/spot_expiry_strike/date=<date>/`. The market series keep one raw file per fetch with a `.meta.json`
+of 100k rows). The SPX slice is one raw file per session: `raw/uw/spot_expiry_strike/<date>/SPX.json.gz`, Parquet
+`parquet/uw/spot_expiry_strike/date=<date>/`. An ordinary session is one call (UW's page is at most 500 rows); a
+session that fills the page (OPEX and most Thursdays and Fridays: 575 rows on 21 Mar 2025, 683 on 15 Oct 2026) is
+paged with `page=1, 2, ...` (0-based, the same `limit`, `date` and `expirations[]`) until a page is shorter than
+500, an empty one after a page of exactly 500. Every page is a call against the day cap. The day is written only
+when every page arrived, each a `data` list with a row on the session: a failed page, a later page without a
+`data` list or stamped wholly on another day fails the day (the client's retry ladder, nothing more), and 20 full
+pages (`MAX_PAGES`) fail it with a `truncated` build issue, so no partial day is kept. A key (expiry, strike) on two
+pages fails the day too, with a `duplicate_key` issue: pages are offsets into an ordered set, so a repeat means the
+answer moved while paging and a row may also have been skipped; the next run asks again. A repeat inside one page
+goes, as on a one-page day, to `to_parquet`'s per-key `duplicate_key` issue (the first row kept). A day that keeps
+failing is asked again by every run (the hourly one and each backfill pass), at up to 20 calls a run at the
+ceiling, until it is fixed. A one-page day's raw file holds UW's body as sent; a paged day's holds
+`{"data": <the rows of every page, in order>}`, with each page's row count in `request.pages`. The market series
+keep one raw file per fetch with a `.meta.json`
 sidecar (as-of date, fetch time, run id, URL without its query) and Parquet per source and year, merged by key with
 the newest fetch winning a key.
 

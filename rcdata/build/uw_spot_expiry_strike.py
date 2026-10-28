@@ -4,10 +4,14 @@
 is required; UW serves this from 16 Jan 2025). Every call passes ``date=<session>`` and that session's two
 nearest expiries; a row whose ``time`` is not on the session's New York date is refused. The daily run between the
 close and the next open is ``observed``; the backfill and any other run are not. One call answers one row per strike
-and expiry: 488 on the live check of 27 Oct 2026 (241 and 247), under UW's maximum page of 500, so one session is
-one call; an answer that fills the page fails rather than keep a cut day.
+and expiry: 488 on the live check of 27 Oct 2026 (241 and 247), under UW's maximum page of 500, so an ordinary
+session is one call. A busier one (OPEX, most Thursdays and Fridays: 575 rows on 21 Mar 2025, 683 on 15 Oct 2026)
+fills the page and is asked for ``page=1, 2, ...`` (0-based, same ``limit``) until a page is shorter than 500; the
+day is kept only when every page arrived, and fails at ``MAX_PAGES`` full pages rather than loop.
 
-Raw: ``raw/uw/spot_expiry_strike/<YYYY-MM-DD>/SPX.json.gz`` (UW's body with the request and its provenance).
+Raw: ``raw/uw/spot_expiry_strike/<YYYY-MM-DD>/SPX.json.gz`` (UW's body with the request and its provenance). A
+one-page day keeps UW's body as sent; a paged day keeps ``{"data": <every page's rows, in order>}`` and the row count
+of each page in ``request.pages``. A key repeated across pages fails the day (the answer moved while paging). Either way one file per day, written once all its pages arrived.
 Parquet: ``parquet/uw/spot_expiry_strike/date=<YYYY-MM-DD>/part-0.parquet``. Serving: ``spx_gamma_expiry_strike``.
 
 ``dte`` counts NYSE sessions from the session to the expiry (``core/calendar.py``), so a Friday's next expiry,
@@ -31,6 +35,12 @@ TABLE = "spx_gamma_expiry_strike"
 TICKER = "SPX"
 ENDPOINT = f"/stock/{TICKER}/spot-exposures/expiry-strike"
 PAGE_LIMIT = 500        # UW's documented maximum for this endpoint (docs/openapi.yaml, "Default 500 Max 500 Min 1")
+# Pages per session before the day fails instead of asking on: the busiest day seen live was two pages (683 rows on
+# 15 Oct 2026), so 20 pages (10,000 rows) is far past any real day and only stops an answer that never ends.
+MAX_PAGES = 20
+# The backfill's call estimate per missing session (Settings). An ordinary day is one call and a paged one two or
+# three; the days a first backfill leaves missing are the paged ones (168 of 447 on homesrv, 28 Oct 2026), so two.
+CALLS_PER_SESSION_ESTIMATE = 2
 FIRST_SESSION = date(2025, 1, 16)
 REJECTED_SUFFIX = ".rejected"
 # An epoch below this (9 Sep 2001) is not a UW snapshot time: 0, or a date written without dashes read as seconds.
@@ -88,23 +98,54 @@ class UWSpotExpiryStrike:
         # session is that session's intraday one.
         params: dict = {"expirations[]": [e.isoformat() for e in expiries], "date": session.isoformat(),
                         "limit": PAGE_LIMIT}
-        ctx.check_cap("uw")
-        res = ctx.uw_client().get_result(ENDPOINT, params)
-        if res.status != "ok":
-            raise base.SourceError(f"UW {ENDPOINT} {session}: {res.error}")
-        rows = res.data.get("data", []) if isinstance(res.data, dict) else res.data
+        body = self._get_page(ctx, session, params, 0)
+        rows = body.get("data", []) if isinstance(body, dict) else body
         if not isinstance(rows, list) or not rows:
             raise base.SourceError(f"UW {ENDPOINT} {session}: no rows")
         if not any(isinstance(r, dict) and snapshot_day(r.get("time")) in (session, None) for r in rows):
             raise base.SourceError(f"UW {ENDPOINT}: every row is stamped on a day not on {session}")
+        request: dict = {"endpoint": ENDPOINT, "params": params}
         if len(rows) >= PAGE_LIMIT:
-            # A full page may be a cut day (G3): fail before the raw file (the resume marker) is written, so no
-            # partial day is ever kept. UW documents ``page`` for the rest; paging is the fix if a day needs it.
-            ctx.issue("truncated", session.isoformat(), f"{len(rows)} rows = the page limit {PAGE_LIMIT}")
-            raise base.SourceError(f"UW {ENDPOINT} {session}: {len(rows)} rows fill the page limit {PAGE_LIMIT}")
+            # A full page may be a cut day (G3): ask the next pages until one is shorter than the limit (an empty
+            # one after a page of exactly 500). Only a day whose every page arrived, each a list of rows on this
+            # session and none repeating an earlier page's key, is written; the raw file is the resume marker, so a
+            # failed page, a moved answer or the ceiling leaves no partial day.
+            sizes, pages = [len(rows)], [rows]
+            while sizes[-1] >= PAGE_LIMIT:
+                if len(sizes) >= MAX_PAGES:
+                    ctx.issue("truncated", session.isoformat(),
+                              f"{MAX_PAGES} full pages of {PAGE_LIMIT} rows: the page ceiling, day not stored")
+                    raise base.SourceError(f"UW {ENDPOINT} {session}: {MAX_PAGES} full pages of {PAGE_LIMIT} "
+                                           f"rows reach the page ceiling {MAX_PAGES}; day not stored")
+                n = len(sizes)
+                page = self._get_page(ctx, session, params, n)
+                # Only a ``data`` list (or a bare list) is a page: a 200 carrying ``{}`` or a message, read as an
+                # empty page, would end the day early and store its first pages as the whole day.
+                more = page.get("data") if isinstance(page, dict) else page
+                if not isinstance(more, list):
+                    raise base.SourceError(f"UW {ENDPOINT} {session} page {n}: no list of rows in the answer")
+                if more and not any(isinstance(r, dict) and snapshot_day(r.get("time")) in (session, None)
+                                    for r in more):
+                    raise base.SourceError(f"UW {ENDPOINT} {session} page {n}: every row is stamped on a day "
+                                           f"not on {session}")
+                sizes.append(len(more))
+                pages.append(more)
+            _check_pages_disjoint(ctx, session, pages)
+            request["pages"] = sizes
+            body = {"data": [r for page in pages for r in page]}
         return base.write_raw_json(raw, {
-            "request": {"endpoint": ENDPOINT, "params": params}, "session_date": session.isoformat(),
-            "observed": observed, "fetched_at": time_now(), "run_id": ctx.run_id, "body": res.data})
+            "request": request, "session_date": session.isoformat(),
+            "observed": observed, "fetched_at": time_now(), "run_id": ctx.run_id, "body": body})
+
+    def _get_page(self, ctx: base.RunContext, session: date, params: dict, page: int):
+        """One page of the session's answer; page 0 is sent without ``page``, as before paging. Every page is a
+        call against the day cap, and a failed page fails the day (the client's own retry ladder, nothing more)."""
+        ctx.check_cap("uw")
+        res = ctx.uw_client().get_result(ENDPOINT, dict(params, page=page) if page else params)
+        if res.status != "ok":
+            where = f" page {page}" if page else ""
+            raise base.SourceError(f"UW {ENDPOINT} {session}{where}: {res.error}")
+        return res.data
 
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
         """The daily run. ``observed`` only for the latest complete session taken between its close (plus the
@@ -254,6 +295,29 @@ def snapshot_day(stamp) -> date | None:
         return datetime.fromtimestamp(epoch, tz=timezone.utc).astimezone(calendar.NY).date()
     except (ValueError, OverflowError, OSError):       # out of the platform's range (1e20 is OSError errno 75)
         return None
+
+
+def _check_pages_disjoint(ctx: base.RunContext, session: date, pages: list[list]) -> None:
+    """Fail the day when a key (expiry, strike) of one page is on an earlier page. Pages are offsets into an ordered
+    set (``page × limit``); a repeat means the set moved between calls, and the same move the other way skips a row
+    without a sign, so the day may be short and is not kept: the next run asks again. A repeat inside one page is
+    left to ``to_parquet``, which keeps the first row of a key with an issue, as on a one-page day."""
+    earlier: set = set()
+    repeated = 0
+    for page in pages:
+        keys = set()
+        for row in page:
+            try:
+                keys.add((str(row["expiry"])[:10], float(row["strike"])))
+            except (KeyError, TypeError, ValueError):
+                continue                        # to_parquet reports a row without a usable key (bad_row)
+        repeated += len(keys & earlier)
+        earlier |= keys
+    if repeated:
+        ctx.issue("duplicate_key", session.isoformat(),
+                  f"{repeated} rows repeated across pages: the answer moved while paging, day not stored")
+        raise base.SourceError(f"UW {ENDPOINT} {session}: {repeated} rows repeated across pages; the answer moved "
+                               f"while paging and the day may be short, so it is not stored")
 
 
 def time_now() -> float:
