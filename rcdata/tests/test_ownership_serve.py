@@ -250,6 +250,15 @@ def test_a_filers_value_off_by_1000_is_rescaled_once_its_prices_agree(monkeypatc
         ("2000005", 6, 1000.0), ("2000007", 6, 0.001)]
     assert _served("SELECT value FROM sec13f_ticker_period WHERE ticker = 'MSFT'") == [(40_000.0 * 6 + 40.0,)]
     assert "2 filer-quarters' VALUE off by a factor of 1,000 against the 13F's own prices: rescaled" in row["note"]
+    # Review S2: the largest money change the store makes is on the issues board, one row per filer and quarter.
+    issues = _issues()
+    assert issues[("value_rescaled", "2000005|2026-09-30")] == (
+        "MANAGER 2000005, 2026-09-30: VALUE read in thousands (median ratio 0.001 to the 13F's own prices over 6 "
+        "names): $122 read as $122,300")
+    assert issues[("value_rescaled", "2000007|2026-09-30")] == (
+        "MANAGER 2000007, 2026-09-30: VALUE read as 1,000 times too high (median ratio 1000 to the 13F's own prices "
+        "over 6 names): $122,300,000 read as $122,300")
+    assert not any(k == "value_rescaled" and key.startswith("2000006") for k, key in issues)
 
 
 def test_a_quarter_whose_deadline_passed_before_the_first_13f_day_is_not_served(monkeypatch, http_mock):

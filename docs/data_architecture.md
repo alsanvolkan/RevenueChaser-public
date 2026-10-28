@@ -1193,7 +1193,8 @@ settled on or before it and that session's IBKR fee, rebate and shares available
 NULL).
 
 **Build issues** (`ownership/serve`): `spine_missing`, `cusip_owner_differs`, `cusip_unmapped_large`,
-`filings_unparsed`.
+`filings_unparsed`, `value_rescaled` (the 50 filer-quarters whose VALUE rescale moved the most dollars, keyed
+`cik|period`, with the median ratio and the names it rests on).
 
 **Reading it.** `rcdata.read.holders_13f(tickers, periods)`, `periods_13f()` (both with `complete`),
 `short_interest(tickers, start, end)`, `shortable(tickers, session)`, `threshold_list(on)`,

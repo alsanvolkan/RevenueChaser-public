@@ -58,8 +58,9 @@ IBKR borrow fee, rebate and shares available. ``si_float`` and ``total_float`` h
 from the live file otherwise, so a FINRA or IBKR run does not read millions of holdings again.
 
 **Build issues** (``ISSUE_KINDS``), written once the file is live: ``spine_missing``, ``cusip_owner_differs``,
-``cusip_unmapped_large`` (the newest period's ``UNMAPPED_TOP`` largest CUSIPs no source names) and
-``filings_unparsed`` (per index day).
+``cusip_unmapped_large`` (the newest period's ``UNMAPPED_TOP`` largest CUSIPs no source names),
+``filings_unparsed`` (per index day) and ``value_rescaled`` (the ``RESCALED_TOP`` filer-quarters whose rescale moved
+the most dollars, keyed ``cik|period``, with the median ratio and the names it rests on).
 """
 from __future__ import annotations
 
@@ -81,6 +82,7 @@ MIN_NAMES = 5
 SCALE_BAND = (1.0 / 3000.0, 1.0 / 300.0)
 DEADLINE_DAYS = 45
 UNMAPPED_TOP = 50
+RESCALED_TOP = 50
 SP500, FUNDS = "sp500", "funds/index_holdings"
 
 MAP = [("cusip", "TEXT"), ("period", "DATE"), ("ticker", "TEXT"), ("map_source", "TEXT"),
@@ -110,6 +112,7 @@ ISSUE_KINDS = {
                            "give the CUSIP to in that period (a reused ticker or CUSIP)",
     "cusip_unmapped_large": "one of the newest period's largest long-equity CUSIPs no spine source names",
     "filings_unparsed": "13F filings of an index day whose documents did not parse",
+    "value_rescaled": "one of the largest filer-quarters whose VALUE was off by a factor of 1,000 and was rescaled",
 }
 
 VIEWS = {
@@ -543,6 +546,14 @@ class OwnershipServe:
             found.append(("cusip_unmapped_large", cusip,
                           f"{period}: {issuer or '?'}, ${value or 0:,.0f} held by {holders} filer(s); "
                           f"no spine source names it"))
+        for cik, period, name, factor, ratio, names, value in con.execute(f"""
+                SELECT cik, period, filer_name, value_factor, median_ratio, names, value FROM sec13f_filer_period
+                WHERE value_factor <> 1 ORDER BY abs(value - value / value_factor) DESC, cik, period
+                LIMIT {RESCALED_TOP}""").fetchall():
+            how = "read in thousands" if factor > 1 else "read as 1,000 times too high"
+            found.append(("value_rescaled", f"{cik}|{period}",
+                          f"{name or cik}, {period}: VALUE {how} (median ratio {ratio:g} to the 13F's own prices over "
+                          f"{names} names): ${value / factor:,.0f} read as ${value:,.0f}"))
         for day, n, acc, why in con.execute(f"""
                 SELECT index_day, count(*), min(accession), any_value(detail) FROM {sec13f.TABLE}
                 WHERE status = 'unparsed' GROUP BY index_day ORDER BY index_day""").fetchall():
