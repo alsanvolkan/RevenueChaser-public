@@ -58,14 +58,18 @@ def parquet_root() -> None:
     base.parquet_root().mkdir(parents=True, exist_ok=True)
 
 
-def run(name: str, as_of: str | None = None, **params) -> dict:
-    """One CLI request of dataset ``name`` (attended ones run too), daily unless ``params`` say otherwise."""
+def run(name: str, as_of: str | None = None, *, sleep=None, clock=None, **params) -> dict:
+    """One CLI request of dataset ``name`` (attended ones run too), daily unless ``params`` say otherwise; no real
+    sleep unless ``sleep`` is given."""
+    import time
+
     from RevenueChaser.rcdata.build import base
     parquet_root()
     p = dict(params)
     if as_of:
         p.setdefault("as_of", as_of)
-    return base.run_request({"dataset": name, "requested_by": "cli", "params": p}, sleep=lambda s: None)
+    return base.run_request({"dataset": name, "requested_by": "cli", "params": p},
+                            sleep=sleep or (lambda s: None), clock=clock or time.monotonic)
 
 
 def q(sql: str, *params) -> list[tuple]:
@@ -75,3 +79,72 @@ def q(sql: str, *params) -> list[tuple]:
         return con.execute(sql, list(params)).fetchall()
     finally:
         con.close()
+
+
+# ── The SEC: company facts and the daily index ────────────────────────────────────────────────────────────────
+
+def _fact(val, end, accn, filed, form, fp, fy, start=None):
+    f = {"val": val, "end": end, "accn": accn, "filed": filed, "form": form, "fp": fp, "fy": fy}
+    if start:
+        f["start"] = start
+    return f
+
+
+# MSFT (fiscal year to 30 June): FY2025 from the 10-K, Q1 FY2026 (to 30 Sep 2025) from the 10-Q, Q1 FY2027 (to 30
+# Sep 2026) from the 10-Q filed 2026-10-27 when ``with_new_quarter``. Values in USD, chosen for the tests.
+K25, Q26, Q27 = "0000950170-25-100001", "0000950170-25-130001", "0000950170-26-130001"
+
+
+def msft_facts(with_new_quarter: bool = False) -> dict:
+    def series(fy_val, q_val, q27_val=None, instant=False):
+        fy_start, q_start, q27_start = (None, None, None) if instant else ("2024-07-01", "2025-07-01", "2026-07-01")
+        out = [_fact(fy_val, "2025-06-30", K25, "2025-07-30", "10-K", "FY", 2025, fy_start),
+               _fact(q_val, "2025-09-30", Q26, "2025-10-29", "10-Q", "Q1", 2026, q_start)]
+        if with_new_quarter and q27_val is not None:
+            out.append(_fact(q27_val, "2026-09-30", Q27, "2026-10-27", "10-Q", "Q1", 2027, q27_start))
+        return out
+
+    gaap = {
+        "Revenues": {"units": {"USD": series(281_000, 77_000, 80_000)}},
+        "CostOfRevenue": {"units": {"USD": series(87_000, 24_000, 25_000)}},
+        "NetIncomeLoss": {"units": {"USD": series(101_000, 27_000, 28_000)}},
+        "LongTermDebtNoncurrent": {"units": {"USD": series(40_000, 39_000, 38_000, instant=True)}},
+        "LongTermDebtCurrent": {"units": {"USD": series(3_000, 2_500, 2_000, instant=True)}},
+        "ShortTermBorrowings": {"units": {"USD": series(500, 400, 300, instant=True)}},
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": series(30_000, 28_000, 27_000, instant=True)}},
+        "ShortTermInvestments": {"units": {"USD": series(64_000, 60_000, 59_000, instant=True)}},
+        "EarningsPerShareDiluted": {"units": {"USD/shares": series(13.64, 3.65, 3.80)}},
+    }
+    return {"cik": 789019, "entityName": "MICROSOFT CORPORATION", "facts": {"us-gaap": gaap}}
+
+
+# HEI (fiscal year to 31 October): one 10-K a year ago and quarters long past, so its newest statement is old.
+def hei_facts() -> dict:
+    gaap = {"Revenues": {"units": {"USD": [
+        _fact(3_900, "2024-10-31", "0000046619-24-000050", "2024-12-20", "10-K", "FY", 2024, "2023-11-01"),
+        _fact(1_000, "2025-04-30", "0000046619-25-000020", "2025-05-28", "10-Q", "Q2", 2025, "2025-02-01")]}}}
+    return {"cik": 46619, "entityName": "HEICO CORP", "facts": {"us-gaap": gaap}}
+
+
+# TM files IFRS facts only (a 20-F filer): no us-gaap taxonomy.
+def tm_facts() -> dict:
+    return {"cik": 1094517, "entityName": "TOYOTA MOTOR CORP", "facts": {"ifrs-full": {"Revenue": {"units": {
+        "JPY": [_fact(48e12, "2025-03-31", "0001193125-25-150000", "2025-06-25", "20-F", "FY", 2025, "2024-04-01")]}}}}}
+
+
+def daily_index(rows: list[tuple[str, str, str, str, str]]) -> str:
+    """A ``master.<YYYYMMDD>.idx`` body: ``rows`` of (cik, company, form, YYYYMMDD, accession)."""
+    head = ("Description:           Daily Index of EDGAR Dissemination Feed by Company Name\n"
+            "Last Data Received:    October 27, 2026\n\n"
+            "CIK|Company Name|Form Type|Date Filed|Filename\n"
+            "--------------------------------------------------------------------------------\n")
+    return head + "".join(f"{c}|{n}|{f}|{d}|edgar/data/{c}/{a}.txt\n" for c, n, f, d, a in rows)
+
+
+def sec_routes(http_mock, facts_by_cik: dict, indexes: dict | None = None) -> None:
+    """Answer the companyfacts and daily-index URLs: ``facts_by_cik`` {cik: body or callable}, ``indexes``
+    {YYYYMMDD: body}. Anything else at the SEC answers 404 (the mock's default)."""
+    for day, body in (indexes or {}).items():
+        http_mock.add(f"master.{day}.idx", body)
+    for cik, body in facts_by_cik.items():
+        http_mock.add(f"companyfacts/CIK{int(cik):010d}.json", body)

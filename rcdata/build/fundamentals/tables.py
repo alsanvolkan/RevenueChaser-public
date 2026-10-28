@@ -2,7 +2,7 @@
 tables, and the build-issue rules (``ISSUE_KINDS``), whose rows go to ``ops.sqlite`` once the new file is live.
 
 ``build_kind`` builds every dataset of the kind in ``DATASETS`` order, so the sources' staging tables exist when this
-one builds; it is registered last.
+one builds; it is registered last. A source not in the registry (a test's) gets empty staging tables here.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import duckdb
 from ....core import calendar
 from ... import ops
 from .. import base
-from . import KIND, common
+from . import KIND, common, companyfacts, facts
 
 NAME = "fundamentals/tables"
 
@@ -21,18 +21,40 @@ COMPANY = [
     ("ticker", "TEXT PRIMARY KEY"), ("cik", "TEXT NOT NULL"), ("gvkey", "TEXT"), ("name", "TEXT"),
     ("exchange", "TEXT"), ("gsector", "TEXT"), ("ggroup", "TEXT"), ("gind", "TEXT"), ("gsubind", "TEXT"),
     ("sector", "TEXT"), ("industry", "TEXT"), ("spine_as_of", "DATE"),
+    # From the SEC facts: the filer's name and kind, the newest re-read, and its newest statement (filed, period).
+    ("entity_name", "TEXT"), ("is_us", "BOOLEAN"), ("non_usd_units", "TEXT"), ("us_gaap", "BOOLEAN"),
+    ("facts_as_of", "DATE"), ("facts_fetched_at", "DOUBLE"), ("newest_filed", "DATE"), ("newest_period_end", "DATE"),
     ("source", "TEXT"), ("run_id", "TEXT"),
 ]
+FACT = [(c, "TEXT NOT NULL" if c in ("cik", "field", "period_type", "source") else
+         "DATE NOT NULL" if c == "period_end" else "DOUBLE NOT NULL" if c == "value" else
+         "BOOLEAN NOT NULL" if c in ("derived", "preliminary") else t) for c, t in facts.FACT]
 
 SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "fundamental_company": COMPANY,
+    "fundamental_fact": FACT,
 }
-TABLE_CHECKS: dict[str, list[str]] = {}
+TABLE_CHECKS: dict[str, list[str]] = {
+    # Every row is annual or quarterly, and a non-preliminary row carries its accession and filed date.
+    "fundamental_fact": ["CHECK (period_type IN ('annual', 'quarterly'))",
+                         "CHECK (preliminary OR (accn IS NOT NULL AND filed IS NOT NULL))"],
+}
 TABLES = tuple(SCHEMAS)
+VIEWS = ("fundamental_quarter", "edgar_financials")
+
+# The sources' staging tables, created empty here when a source is not registered (a test's registry).
+STAGED: dict[str, list[tuple[str, str]]] = {
+    companyfacts.STAGING["facts"]: facts.FACT,
+    companyfacts.STAGING["company"]: facts.COMPANY,
+}
 
 # The named problems, one kind each; ``key`` is the CIK unless the kind says otherwise.
 ISSUE_KINDS: dict[str, str] = {
     "source_never_run": "a source this build needs has no data yet (key: the dataset)",
+    "statement_older_than_120_days": ("a Tier A quarterly filer whose newest statement was filed more than 120 days "
+                                      "before the build's as-of"),
+    "no_statement": "a Tier A company with no SEC statement fact (not read yet, or no XBRL facts at the SEC)",
+    "no_us_gaap_facts": "a Tier A company whose XBRL facts hold no us-gaap taxonomy (an IFRS filer; not read yet)",
 }
 
 
@@ -55,13 +77,110 @@ def load(con: duckdb.DuckDBPyConnection, table: str, rows: list[dict]) -> int:
     return common.count(con, table)
 
 
+def _names(table: str) -> str:
+    return ", ".join(f'"{c}"' for c, _ in SCHEMAS[table])
+
+
+def _ensure_staging(con: duckdb.DuckDBPyConnection) -> None:
+    for name, schema in STAGED.items():
+        cols = ", ".join(f'"{c}" {t}' for c, t in schema)
+        con.execute(f"CREATE TEMP TABLE IF NOT EXISTS {name} ({cols})")
+
+
+# ── The served tables ─────────────────────────────────────────────────────────────────────────────────────────
+
+def _facts(con: duckdb.DuckDBPyConnection) -> int:
+    """``fundamental_fact``: the SEC facts, one row per (company, field, period type, period end)."""
+    create(con, "fundamental_fact")
+    names = _names("fundamental_fact")
+    con.execute(f"""INSERT INTO fundamental_fact SELECT {names} FROM {companyfacts.STAGING['facts']}
+                    QUALIFY row_number() OVER (PARTITION BY cik, field, period_type, period_end
+                                               ORDER BY filed DESC, accn DESC) = 1""")
+    return common.count(con, "fundamental_fact")
+
+
 def _companies(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rows: list[dict]) -> int:
-    out = [{"ticker": r["ticker"], "cik": common.norm_cik(r["cik"]), "gvkey": r.get("gvkey"), "name": r.get("name"),
-            "exchange": r.get("exchange"), "gsector": r.get("gsector"), "ggroup": r.get("ggroup"),
-            "gind": r.get("gind"), "gsubind": r.get("gsubind"), "sector": r.get("sector"),
-            "industry": r.get("industry"), "spine_as_of": r.get("source_as_of"), "source": "spine/security",
-            "run_id": ctx.run_id} for r in rows]
-    return load(con, "fundamental_company", out)
+    spine = [{"ticker": r["ticker"], "cik": common.norm_cik(r["cik"]), "gvkey": r.get("gvkey"), "name": r.get("name"),
+              "exchange": r.get("exchange"), "gsector": r.get("gsector"), "ggroup": r.get("ggroup"),
+              "gind": r.get("gind"), "gsubind": r.get("gsubind"), "sector": r.get("sector"),
+              "industry": r.get("industry"), "spine_as_of": r.get("source_as_of")} for r in rows]
+    base.rows_table(con, "_spine", [(c, t) for c, t in _plain("fundamental_company")][:12], spine)
+    create(con, "fundamental_company")
+    con.execute(f"""
+        INSERT INTO fundamental_company
+        SELECT s.*, c.entity_name, c.is_us, c.non_usd_units, c.us_gaap, c.facts_as_of, c.fetched_at,
+               n.newest_filed, n.newest_period_end, 'spine/security', '{ctx.run_id}'
+        FROM _spine s
+        LEFT JOIN (SELECT * FROM {companyfacts.STAGING['company']}
+                   QUALIFY row_number() OVER (PARTITION BY cik ORDER BY facts_as_of DESC) = 1) c ON c.cik = s.cik
+        LEFT JOIN (SELECT cik, max(filed) AS newest_filed, max(period_end) AS newest_period_end
+                   FROM fundamental_fact WHERE NOT preliminary GROUP BY cik) n ON n.cik = s.cik""")
+    con.execute("DROP TABLE _spine")
+    return common.count(con, "fundamental_company")
+
+
+# ── The views (the old ``raw.duckdb`` shapes, D4) ─────────────────────────────────────────────────────────────
+
+def _views(con: duckdb.DuckDBPyConnection) -> None:
+    pivot = ", ".join(f"max(value) FILTER (WHERE field = '{f}') AS \"{f}\"" for f in facts.FIELDS)
+    # One row per company and quarter, a column per field; ``filed`` the newest filing a value came from.
+    con.execute(f"""
+        CREATE VIEW fundamental_quarter AS
+        SELECT cik, period_end, min(period_start) AS period_start, {pivot},
+               max(filed) AS filed, bool_or(preliminary) AS preliminary,
+               string_agg(DISTINCT source, ',' ORDER BY source) AS source
+        FROM fundamental_fact WHERE period_type = 'quarterly' GROUP BY cik, period_end""")
+    # The old ``edgar_financials`` row per ticker: ``annual`` / ``quarterly`` as JSON lists of records (oldest
+    # first) shaped as sec_edgar.extract_* writes them (a key per field, ``period_ends`` / ``filed`` / ``accn``
+    # maps; ``fiscal_year`` or ``period``), and ``meta``. A field with no value has no key (the old rows held
+    # None); ``total_debt`` is the three-term sum.
+    def records(period_type: str, key: str, key_json: str) -> str:
+        return f"""
+            SELECT cik, {key} AS k, json_merge_patch(
+                json_object({key_json}), json_group_object(field, value),
+                json_object('period_ends', json_group_object(field, CAST(period_end AS VARCHAR)),
+                            'filed', json_group_object(field, CAST(filed AS VARCHAR)),
+                            'accn', json_group_object(field, accn))) AS rec
+            FROM fundamental_fact WHERE period_type = '{period_type}' GROUP BY cik, {key}"""
+    con.execute(f"""
+        CREATE VIEW edgar_financials AS
+        WITH a AS ({records('annual', 'fiscal_year', "'fiscal_year', CAST(fiscal_year AS VARCHAR)")}),
+             q AS ({records('quarterly', 'period_end', "'period', CAST(period_end AS VARCHAR)")}),
+             al AS (SELECT cik, to_json(list(rec ORDER BY k)) AS annual FROM a GROUP BY cik),
+             ql AS (SELECT cik, to_json(list(rec ORDER BY k)) AS quarterly FROM q GROUP BY cik)
+        SELECT c.ticker, coalesce(al.annual, '[]'::JSON) AS annual, coalesce(ql.quarterly, '[]'::JSON) AS quarterly,
+               json_object('source', 'sec_edgar', 'entity_name', coalesce(c.entity_name, c.name, ''),
+                           'is_us', coalesce(c.is_us, true), 'available', al.cik IS NOT NULL OR ql.cik IS NOT NULL,
+                           'extract_version', {_extract_version()},
+                           'non_usd_units', coalesce(string_split(c.non_usd_units, ','), [])) AS meta,
+               c.facts_fetched_at AS fetched_at
+        FROM fundamental_company c LEFT JOIN al ON al.cik = c.cik LEFT JOIN ql ON ql.cik = c.cik""")
+
+
+def _extract_version() -> int:
+    from ....core.providers import sec_edgar
+    return int(sec_edgar.EXTRACT_VERSION)
+
+
+# ── Build issues ──────────────────────────────────────────────────────────────────────────────────────────────
+
+def _issues(con: duckdb.DuckDBPyConnection, as_of: date) -> list[tuple[str, str, str]]:
+    found = []
+    for cik, newest, quarterly, us_gaap, read in con.execute("""
+            SELECT c.cik, max(f.filed), bool_or(f.period_type = 'quarterly'), any_value(c.us_gaap),
+                   any_value(c.facts_as_of)
+            FROM (SELECT DISTINCT cik, us_gaap, facts_as_of FROM fundamental_company) c
+            LEFT JOIN fundamental_fact f ON f.cik = c.cik AND NOT f.preliminary
+            GROUP BY c.cik ORDER BY c.cik""").fetchall():
+        if newest is None:
+            if us_gaap is False:
+                found.append(("no_us_gaap_facts", cik, f"facts read {read}: no us-gaap taxonomy"))
+            else:
+                found.append(("no_statement", cik, "no facts read yet" if read is None else f"facts read {read}"))
+        elif quarterly and (as_of - newest).days > companyfacts.STALE_DAYS:
+            found.append(("statement_older_than_120_days", cik,
+                          f"newest statement filed {newest} ({(as_of - newest).days} days before {as_of})"))
+    return found
 
 
 class FundamentalsTables:
@@ -89,8 +208,13 @@ class FundamentalsTables:
         return []
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
-        found: list[tuple[str, str, str]] = []
-        counts = {"fundamental_company": _companies(ctx, con, common.universe())}
+        _ensure_staging(con)
+        counts = {"fundamental_fact": _facts(con)}
+        counts["fundamental_company"] = _companies(ctx, con, common.universe())
+        _views(con)
+        found = _issues(con, ctx.as_of or self.default_as_of())
+        found += [("source_never_run", name, "no Parquet yet") for name, table in
+                  ((companyfacts.NAME, companyfacts.STAGING["facts"]),) if not common.count(con, table)]
         ctx.pending[NAME] = found
         return counts
 
@@ -98,6 +222,9 @@ class FundamentalsTables:
         cols = ["ticker", "cik", "gvkey", "gsubind"]
         added, removed = common.compare_live(con, f"SELECT {', '.join(cols)} FROM fundamental_company",
                                              "fundamental_company", cols)
+        n_issues = len(ctx.pending.get(NAME, []))
+        ctx.notes.append(f"{common.count(con, 'fundamental_company')} Tier A tickers, "
+                         f"{common.count(con, 'fundamental_fact')} facts; {n_issues} build issues found")
         return {"dataset": NAME, "result": "changed" if added or removed else "unchanged",
                 "source_as_of": (ctx.as_of or self.default_as_of()).isoformat(),
                 "rows": common.count(con, "fundamental_company"), "added": added, "removed": removed}
