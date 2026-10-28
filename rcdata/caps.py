@@ -21,6 +21,8 @@ DAY_CAPS: dict[str, int] = {
     "vanguard": 50,
     "nasdaq": 50,
     "invesco": 50,
+    # The prices store's (PR 7; working numbers, not avo's yet): yfinance float lookups, paced 1.5 s apart.
+    "yfinance": 3_000,
 }
 
 
