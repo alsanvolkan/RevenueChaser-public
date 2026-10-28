@@ -46,8 +46,7 @@ DATE_COLUMN = {"spx_gamma_expiry_strike": "session_date", "market_series": "obs_
 # The identity funnel (PR 5, D9): the indexes it counts, and the dataset whose build issues it lists.
 SPINE_INDEXES = ("sp500", "sp400", "sp600", "ndx")
 SPINE_ISSUES = "spine/security"
-ATTENDED_COMMAND = ("python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist wrds/co_hgic wrds/idxcst_his "
-                    "(on the server, attended: WRDS login and Duo)")
+ATTENDED_COMMAND = "python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist wrds/co_hgic wrds/idxcst_his"
 # Old .store tables a new dataset replaces: their reads in read_log are the retirement count (read for 14 days).
 RETIRING = {"macro_series": "market_series", "vol_index_daily": "market_series", "cftc_cot": "market_series",
             "economic_calendar": "market_series"}

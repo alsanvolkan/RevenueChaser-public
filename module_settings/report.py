@@ -2287,14 +2287,14 @@ def _nd_dataset_card(c: dict) -> str:
     sched = c.get("schedule") or {}
     paused = bool(sched.get("paused"))
     sched_text = (f"paused by {_nd(sched.get('paused_by'))} at {_nd(sched.get('paused_at'))}" if paused
-                  else "running on its schedule")
+                  else "never queued by the schedule (attended)" if c.get("attended") else "running on its schedule")
     dsa = esc(ds)
     earliest = bf.get("from_earliest")
     pause = (f'<button type="button" class="nd-btn" data-nd-act="{"resume" if paused else "pause"}" '
              f'data-dataset="{dsa}">{"Resume" if paused else "Pause"}</button>')
     if c.get("attended"):
         # WRDS: a person logs in and confirms Duo, so the page offers no Fetch or Backfill (PR 5).
-        actions = (f'<div class="nd-k">Attended: runs only from a terminal on the server, '
+        actions = (f'<div class="nd-k">Attended (WRDS login and Duo): runs only from a terminal on the server: '
                    f'<code>{_nd(c.get("attended_command"))}</code></div>'
                    f'<div class="nd-actions">{pause}</div>')
     else:

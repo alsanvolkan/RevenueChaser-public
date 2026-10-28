@@ -94,3 +94,4 @@ def test_an_attended_card_has_no_fetch_or_backfill_button():
     wrds = wrds[:wrds.index('<div class="nd-card', 10)]
     assert 'data-nd-act="fetch"' not in wrds and 'data-nd-act="backfill"' not in wrds
     assert "python -m RevenueChaser.rcdata.build backfill" in wrds and 'data-nd-act="pause"' in wrds
+    assert "never queued by the schedule (attended)" in wrds
