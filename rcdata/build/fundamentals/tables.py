@@ -355,7 +355,7 @@ def _views(con: duckdb.DuckDBPyConnection) -> None:
     # The old ``edgar_financials`` row per ticker: ``annual`` / ``quarterly`` as JSON lists of records (oldest
     # first) shaped as sec_edgar.extract_* writes them (a key per field, ``period_ends`` / ``filed`` / ``accn``
     # maps; ``fiscal_year`` or ``period``), and ``meta``. A field with no value has no key (the old rows held
-    # None); ``total_debt`` is the three-term sum. The SEC's rows only: a preliminary row has no accession.
+    # None); ``total_debt`` is ``facts``'s sum of the filer's debt lines. The SEC's rows only: a preliminary row has no accession.
     def records(period_type: str, key: str, key_json: str) -> str:
         return f"""
             SELECT cik, {key} AS k, json_merge_patch(

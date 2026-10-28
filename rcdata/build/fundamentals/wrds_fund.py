@@ -10,7 +10,7 @@ that changed for a period both hold (a restatement, or a correction at Compustat
 ``fundamental_revision``; a new period is not a revision; (2) **the agreement notes**: revenue, net income and
 diluted EPS against the SEC's facts of the same period (Compustat's millions times a million, within 0.5%; EPS
 within a cent; period ends within 7 days, for the 52/53-week years); (3) **the debt check**: WRDS's ``debt_at``
-(total debt over total assets) of each company's newest quarter against the SEC's three-term total debt over total
+(total debt over total assets) of each company's newest quarter against the SEC's total debt over total
 assets, within 0.02. ``debt_at`` sums long-term debt and debt in current liabilities, so a company with short-term
 borrowings outside those differs by design; the note counts, it does not fail.
 

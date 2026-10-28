@@ -1,5 +1,5 @@
 """``sec/companyfacts`` and ``fundamental_fact`` (build plan PR 12): every fact with its accession, filed date and
-period type, total debt from three terms, the re-read on the filing day (#43 C14), and the 120-day check."""
+period type, total debt from the filer's debt lines, the re-read on the filing day (#43 C14), and the 120-day check."""
 from __future__ import annotations
 
 from datetime import date
@@ -48,6 +48,47 @@ def test_total_debt_sums_long_term_debt_its_current_portion_and_short_term_borro
     quarter = rows[("total_debt", "quarterly", date(2025, 9, 30))]
     assert quarter["value"] == 39_000 + 2_500 + 400
     assert (quarter["accn"], quarter["filed"], quarter["form"]) == (fx.Q26, date(2025, 10, 29), "10-Q")
+
+
+def _balance_sheet(**tags):
+    """One FY2025 10-K whose balance sheet carries ``tags`` (USD), and a revenue line so the year is a record."""
+    accn, filed, end = "0000000001-26-000001", "2026-02-01", "2025-12-31"
+    gaap = {"Revenues": {"units": {"USD": [fx._fact(1_000, end, accn, filed, "10-K", "FY", 2025, "2025-01-01")]}}}
+    for tag, val in tags.items():
+        gaap[tag] = {"units": {"USD": [fx._fact(val, end, accn, filed, "10-K", "FY", 2025)]}}
+    return {"cik": 1, "entityName": "X", "facts": {"us-gaap": gaap}}
+
+
+@pytest.mark.parametrize("tags, total", [
+    # The balance sheets of the real-data check of 2026-10-28 (PR 249), values in USD millions or thousands.
+    ({"LongTermDebtNoncurrent": 78_328, "LongTermDebtCurrent": 12_350, "CommercialPaper": 7_979}, 98_657),  # AAPL
+    ({"LongTermNotesPayable": 122_342, "DebtCurrent": 7_199}, 129_541),                                       # ORCL
+    ({"LongTermDebtAndCapitalLeaseObligations": 2_164_587, "LongTermDebtCurrent": 3_358,
+      "LineOfCredit": 960_000}, 2_167_945),                                    # HEI: the revolver is inside the total
+    ({"LongTermDebtNoncurrent": 7_469, "LongTermDebtCurrent": 999, "DebtCurrent": 999}, 8_468),            # NVDA
+    ({"LongTermDebt": 400_000, "LongTermDebtCurrent": 50_000, "ShortTermBorrowings": 64_776}, 464_776),  # one line
+    ({"LongTermDebtNoncurrent": 100, "ShortTermBorrowings": 30, "CommercialPaper": 20}, 130),   # paper inside STB
+    ({"LongTermDebtNoncurrent": 100, "DebtCurrent": 45, "LongTermDebtCurrent": 10, "ShortTermBorrowings": 30}, 145),
+    ({"LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities": 460_523,
+      "ShortTermBorrowings": 72_430}, 532_953),                                                                   # JPM
+    ({"ShortTermBorrowings": 64_776}, None),           # JPM before: a current line alone is not the whole, so unknown
+    ({"NotesPayableCurrent": 7_625, "LongTermDebtCurrent": 500}, None),     # ORCL's 10-Q: no long-term line tagged
+])
+def test_total_debt_reads_the_debt_lines_the_filer_uses(tags, total):
+    rows = _by_key(facts.fact_rows(_balance_sheet(**tags), "1")[0])
+    row = rows.get(("total_debt", "annual", date(2025, 12, 31)))
+    assert (row and row["value"]) == total
+
+
+def test_commercial_paper_filed_later_still_gives_a_whole_annual_row():
+    # A later filing (a 10-K/A) restated the paper line only; the total takes its provenance and stays annual.
+    sheet = _balance_sheet(LongTermDebtNoncurrent=78_328, LongTermDebtCurrent=12_350)
+    sheet["facts"]["us-gaap"]["CommercialPaper"] = {"units": {"USD": [
+        fx._fact(7_979, "2025-12-31", "0000000001-26-000009", "2026-03-01", "10-K/A", "FY", 2025)]}}
+    row = _by_key(facts.fact_rows(sheet, "1")[0])[("total_debt", "annual", date(2025, 12, 31))]
+    assert (row["value"], row["period_type"], row["fiscal_year"], row["unit"]) == (98_657, "annual", 2025, "USD")
+    assert (row["accn"], row["filed"], row["form"], row["derived"]) == (
+        "0000000001-26-000009", date(2026, 3, 1), "10-K/A", True)
 
 
 def test_values_the_extraction_keeps_no_provenance_for_get_it_here():

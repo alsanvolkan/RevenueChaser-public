@@ -1153,7 +1153,11 @@ cache, which the boards still read until their move (G6).
 **Every value carries its filing.** A served fact has its accession, filed date and form; a value the SEC
 extraction (`core/providers/sec_edgar.py`, so a value here is the value the boards read today) keeps no provenance
 for gets the newest fact of its concepts on the period end, and a value still without one is not served. Total debt
-is the sum of three balance-sheet lines (long-term debt, its current part, short-term borrowings; #239), and EPS
+is a long-term line plus a current line, each debt line of the balance sheet read once, whichever tags the filer
+uses (`LongTermDebtNoncurrent`, `LongTermDebtAndCapitalLeaseObligations` or `LongTermNotesPayable`; then `DebtCurrent`,
+else the current portion plus `ShortTermBorrowings` or `CommercialPaper`; a long-term line that includes its current
+portion plus the short-term line; no total without a long-term line; #239, measured on the real-data check of
+2026-10-28 in PR 249), and EPS
 (basic and diluted) is read too. An accession the SEC's XBRL API does not hold yet after the re-read is asked again
 by the next day's run (the run's note says `pending`), so a statement reaches the served table on its filing day or
 the day after, never months late (the Fundamentals review's F3).

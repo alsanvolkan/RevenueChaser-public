@@ -13,7 +13,7 @@ to ``MAX_PER_RUN``, against the ``uw`` cap; the company's shortest ticker (HEI, 
 What is kept of the answer: the **quarterly** rows of the three statements (``report_type`` read on each row before
 any date is used, the Earnings Radar review's S3: an annual and a fourth-quarter row share a date), in USD, the
 fields of ``FIELD_MAP``. No ``total_debt``: UW's ``short_term_debt`` may hold the current portion of long-term debt
-already, so the three-term sum is the SEC's only; no EPS (UW's reported EPS may be an adjusted one).
+already, so total debt is the SEC's only; no EPS (UW's reported EPS may be an adjusted one).
 
 **Served only until the SEC has the quarter.** ``fundamentals/tables`` serves a preliminary row only for a period
 ending more than ``MARGIN_DAYS`` after the company's newest SEC quarter (a margin for the 52/53-week years, whose SEC
