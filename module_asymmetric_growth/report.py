@@ -560,6 +560,8 @@ function instTable(c) {{
     }}
     return '<div class="foot">Institutional: N/A</div>';
   }}
+  // The 13F quarter read and the one QoQ compares to (AG review SF-3); none compared when it was not stored.
+  var q13 = (c.period_ends || {{}}).inst_13f || [];
   var netH = (c.inst_new||0) - (c.inst_exited||0);
   var netF = (c.inst_buy_flow||0) - (c.inst_sell_flow||0);
   var dir, cls;
@@ -570,12 +572,14 @@ function instTable(c) {{
     ? ((c.inst_shares_delta_pct >= 0 ? '+' : '') + (c.inst_shares_delta_pct * 100).toFixed(1) + '%')
     : 'N/A';
   return '<div class="inst">'
-    + '<div class="ih">Institutional <span class="' + cls + '">' + dir + '</span></div>'
+    + '<div class="ih">Institutional' + (q13[0] ? ' (13F ' + rcEsc(q13[0]) + ')' : '')
+    + ' <span class="' + cls + '">' + dir + '</span></div>'
     + '<table>'
     + '<tr><td class="k">Holders</td><td class="v">' + c.inst_holders + '</td></tr>'
     + '<tr><td class="k">New / Exited</td><td class="v">+' + (c.inst_new||0) + ' / -' + (c.inst_exited||0) + '</td></tr>'
     + '<tr><td class="k">Buy / Sell (shares)</td><td class="v">' + shares(c.inst_buy_flow) + ' / ' + shares(c.inst_sell_flow) + '</td></tr>'
-    + '<tr><td class="k">Shares QoQ</td><td class="v">' + qoq + '</td></tr>'
+    + '<tr><td class="k">Shares QoQ' + (q13[1] ? ' (vs ' + rcEsc(q13[1]) + ')' : '')
+    + '</td><td class="v">' + qoq + '</td></tr>'
     + '</table></div>';
 }}
 

@@ -761,11 +761,23 @@ def _funnel_steps(universe_total: int, excluded_types: int, drops: _Drops, score
     return steps
 
 
+def _quarter(period) -> tuple[int, int] | None:
+    """``(year, quarter)`` of a 13F period key (an ISO quarter end), else None."""
+    try:
+        d = date.fromisoformat(str(period)[:10])
+    except ValueError:
+        return None
+    return d.year, (d.month - 1) // 3 + 1
+
+
 def _institutional(ticker: str, totals: dict) -> dict:
-    """13F kurumsal sahiplik (en son dönem + QoQ hisse değişimi)."""
+    """13F institutional ownership: the newest stored quarter, and its share change against the quarter right
+    before it. ``inst_quarter`` / ``inst_prev_quarter`` name them (``2026 Q1``); when the quarter before is not
+    stored, there is no QoQ change rather than one over two quarters (AG review SF-3, PR 6)."""
     out = {"inst_holders": None, "inst_new": None, "inst_exited": None,
            "inst_buy_flow": None, "inst_sell_flow": None,
-           "inst_shares": None, "inst_shares_delta_pct": None}
+           "inst_shares": None, "inst_shares_delta_pct": None,
+           "inst_quarter": None, "inst_prev_quarter": None}
     periods = totals.get(ticker)
     if not periods:
         return out
@@ -781,12 +793,16 @@ def _institutional(ticker: str, totals: dict) -> dict:
     out["inst_buy_flow"] = p.get("buy_flow")
     out["inst_sell_flow"] = p.get("sell_flow")
     out["inst_shares"] = p.get("shares")
-    if len(sorted_periods) >= 2:
-        prev = periods[sorted_periods[-2]]
-        prev_shares = prev.get("shares")
-        cur = p.get("shares")
-        if prev_shares is not None and cur is not None and prev_shares:
-            out["inst_shares_delta_pct"] = (cur - prev_shares) / prev_shares
+    q = _quarter(latest)
+    out["inst_quarter"] = f"{q[0]} Q{q[1]}" if q else None
+    if len(sorted_periods) >= 2 and q:
+        pq = _quarter(sorted_periods[-2])
+        if pq and pq[0] * 4 + pq[1] == q[0] * 4 + q[1] - 1:          # the quarter right before, not two back
+            out["inst_prev_quarter"] = f"{pq[0]} Q{pq[1]}"
+            prev_shares = periods[sorted_periods[-2]].get("shares")
+            cur = p.get("shares")
+            if prev_shares is not None and cur is not None and prev_shares:
+                out["inst_shares_delta_pct"] = (cur - prev_shares) / prev_shares
     return out
 
 
@@ -1016,7 +1032,11 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     from RevenueChaser.module_asymmetric_growth import freeze
     version = freeze.model_version()        # the rows say which rules scored them (old-rows view, #380 S2)
     for c in cards:
-        c.update(_institutional(c["ticker"], totals))
+        inst = _institutional(c["ticker"], totals)
+        # The 13F quarters the card read are period ends it read: they ride in ``period_ends`` (a JSON column of
+        # ``ticker_scores``), so a Refresh shows them too (AG review SF-3).
+        c.setdefault("period_ends", {})["inst_13f"] = [inst.pop("inst_quarter"), inst.pop("inst_prev_quarter")]
+        c.update(inst)
         c["model_version"] = version
 
     _sort_cards(cards)
