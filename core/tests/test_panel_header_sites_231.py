@@ -71,8 +71,10 @@ def test_the_source_scan_sees_the_known_write_sites():
     """8 fetch POSTs once the Discord board left (10 before it, on e83aa26); a count that drops
     means the scan went blind."""
     assert sum(len(v) for v in SOURCE_POSTS.values()) >= 8
+    # module_leaps/report.py left the list in PR 4: its pin is the shared watch-list pair, whose POST is in
+    # core/reporting_common.py (WATCHLIST_JS).
     assert {"templates/dashboard.html", "core/reporting_common.py", "module_settings/report.py",
-            "module_leaps/report.py", "module_uw_interaction/report.py"} <= set(SOURCE_POSTS)
+            "module_uw_interaction/report.py"} <= set(SOURCE_POSTS)
 
 
 @pytest.mark.parametrize("rel", sorted(SOURCE_POSTS))

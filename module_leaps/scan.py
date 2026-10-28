@@ -1,7 +1,7 @@
 """LEAPS accumulation scan (live UW + store-only), owned by the LEAPS module.
 
 Relocated from the former ``module_testing.forwards_testing.forward_collector``
-when the forward-test subsystem was removed. The universe is the watchlist;
+when the forward-test subsystem was removed. The universe is the stock watch list;
 ``scan_leaps`` fetches from Unusual Whales, ``scan_leaps_cached`` reads only
 ``.store/raw.duckdb`` (no network).
 """
@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 def _leaps_tickers() -> set:
-    """Watchlist tickers — the LEAPS scan universe."""
-    return {t for t in (rawstore.load_watchlist() or set()) if t}
+    """The stock watch list's tickers (ops.sqlite, through ``rcdata.read``; PR 4) — the LEAPS scan universe."""
+    from RevenueChaser.rcdata import read
+    return {t for t in (read.watched("stock") or set()) if t}
 
 
 def _sec13f_names() -> dict:

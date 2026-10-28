@@ -28,6 +28,7 @@ function _el(id){
     getAttribute: function(k){ return k in attrs ? attrs[k] : null; },
     removeAttribute: function(k){ delete attrs[k]; },
     appendChild: function(){}, addEventListener: function(){},
+    insertAdjacentHTML: function(where, h){ el.innerHTML += h; },
     querySelector: function(){ return _el(""); },
     querySelectorAll: function(){ return []; }, focus: function(){},
     closest: function(){ return null; }, contains: function(){ return false; }};

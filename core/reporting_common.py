@@ -308,15 +308,17 @@ document.addEventListener('click', function(ev){
 """
 
 
-def watch_buttons_html(ticker) -> str:
-    """The button pair for one ticker, rendered on the server (both start unpressed; ``rcWatchInit`` marks them)."""
+def watch_buttons_html(ticker, on=()) -> str:
+    """The button pair for one ticker, rendered on the server. ``on`` names the lists the board already knows the
+    ticker is on (LEAPS knows its stock list); ``rcWatchInit`` re-marks every pair from the live lists anyway."""
     t = str(ticker if ticker is not None else "").strip().upper()
     if not _WATCH_TICKER_RE.fullmatch(t):
         return ""
     e = html.escape(t, quote=True)
     buttons = "".join(
-        f'<button type="button" data-rc-watch="{lst}" data-ticker="{e}" aria-pressed="false" '
-        f'aria-label="{e} on the {name}" title="Add {e} to the {name}">{label}</button>'
+        f'<button type="button" data-rc-watch="{lst}" data-ticker="{e}" '
+        f'aria-pressed="{"true" if lst in on else "false"}" aria-label="{e} on the {name}" '
+        f'title="{"Remove" if lst in on else "Add"} {e} {"from" if lst in on else "to"} the {name}">{label}</button>'
         for lst, (label, name) in WATCH_LABELS.items())
     return f'<span class="rc-watch">{buttons}</span>'
 

@@ -13,7 +13,7 @@ Inputs:
 """
 from RevenueChaser.core.reporting_common import (FILTERS_CSS, FILTERS_JS, PAYLOAD_JS, filters_bar_html,
                                                  filters_meta, help_html, notice_html, provider_health_html,
-                                                 recorded_sessions_html, write_board)
+                                                 recorded_sessions_html, watchlist_html, write_board)
 import math
 from datetime import datetime
 from pathlib import Path
@@ -189,6 +189,8 @@ function build(p){
       spN.textContent = r[1];
       tdT.appendChild(spN);
     }
+    // The shared watch-list pair (PR 4): rcWatchButtons escapes, and gives nothing for a ticker the dashboard refuses.
+    tdT.insertAdjacentHTML('beforeend', rcWatchButtons(r[0]));
     tr.appendChild(tdT);
     var tdS = document.createElement('td');
     tdS.className = 'left';
@@ -595,7 +597,7 @@ before it; as of quarter-end, filed up to 45 days later.
 <div id="chart"></div>
 </div></div>
 <footer>RevenueChaser — SEC 13F · SEC EDGAR bulk data · {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</footer>
-{payload_js}{meta_js}<script>{FILTERS_JS}</script>{js}</body></html>"""
+{payload_js}{meta_js}<script>{FILTERS_JS}</script>{watchlist_html("sec_13f")}{js}</body></html>"""
 
 
 def _pct(cur, prev):

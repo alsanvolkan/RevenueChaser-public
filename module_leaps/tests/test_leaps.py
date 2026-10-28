@@ -1,5 +1,6 @@
 """Tests for the LEAPS accumulation engine (far-dated OI, growth, classifier)."""
 import json
+import re
 from datetime import date
 
 from RevenueChaser.module_leaps.engine import (
@@ -325,8 +326,10 @@ class TestEscaping:
                 "frequency": 4, "net_notional": 1.0, "ask_share": 0.5, "near_term_event": False}
         html = ld.render_leaps_dashboard([snap], [dict(snap)]).read_text(encoding="utf-8")
         assert "<img" not in html
-        # Only the page's own two script blocks survive (board script + filter-kit script, KL #377).
-        assert html.count("<script") == 2 and html.count("</script>") == 2
+        # Only the page's own three script blocks survive (board script, filter-kit script (KL #377), the
+        # watch-list pair (PR 4)); the hostile ticker gets no button pair.
+        assert html.count("<script") == 3 and html.count("</script>") == 3
+        assert not re.search(r"data-rc-watch=\"(option|stock)\"", html)
         assert 'data-ticker="&quot;&gt;&lt;img' in html
 
 
