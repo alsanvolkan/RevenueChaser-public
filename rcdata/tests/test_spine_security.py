@@ -428,7 +428,7 @@ def test_a_warrant_unit_or_right_is_typed_by_its_ticker(ticker, exchange, want, 
 
 @pytest.mark.parametrize("ticker, exchange", [
     ("ABCDW", "NYSE"), ("ABCDU", None), ("CHRW", "Nasdaq"), ("GOOGL", "Nasdaq"), ("FWONK", "Nasdaq"),
-    ("MSGK-WI", "NYSE"), ("BRK-B", "NYSE"), ("ABCD-U", "NYSE")])
+    ("MSGK-WI", "NYSE"), ("BRK-B", "NYSE"), ("ABCD-U", "NYSE"), ("ABCDEW", "Nasdaq")])
 def test_a_ticker_rule_needs_its_exact_form(ticker, exchange):
     """The fifth letter is a Nasdaq convention only, and only of a five-letter symbol; other suffixes type nothing."""
     assert tier.security_type(ticker, "SOME CO", None, exchange=exchange) == ("unknown", "none")
@@ -465,9 +465,11 @@ def test_an_untyped_exchange_traded_product_is_typed_by_its_sec_name(name, sourc
 @pytest.mark.parametrize("name", [
     "NORTH EUROPEAN OIL ROYALTY TRUST", "Gold Royalty Corp.", "REDWOOD TRUST INC", "NORTHERN TRUST CORP",
     "ASA Gold & Precious Metals Ltd", "Uranium Royalty Corp.", "BANK OF MONTREAL HOLDINGS INC", "OIL-DRI CORP",
-    "BITCOIN DEPOT INC.", "Elme Communities", "NETFLIX INC", "UBS AGRICULTURE CORP"])
+    "BITCOIN DEPOT INC.", "Elme Communities", "NETFLIX INC", "UBS AGRICULTURE CORP",
+    "CORTS TRUST FOR JPMORGAN CHASE & CO"])
 def test_the_product_name_rules_leave_operating_names_alone(name):
-    """ETF inside a word (NETFLIX) is no ETF; an issuer's name is matched whole, not as the start of another."""
+    """ETF inside a word (NETFLIX) is no ETF; an issuer's name is matched whole, not as the start or the end of
+    another (a CORTS trust over a bank's bonds is no ETN)."""
     assert tier.security_type("XTKR", name, None, exchange="NYSE") == ("unknown", "none")
 
 

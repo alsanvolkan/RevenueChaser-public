@@ -300,10 +300,13 @@ def nasdaq_json(symbols) -> bytes:
 def invesco_json(holdings, adr=False) -> bytes:
     """Invesco's QQQ holdings answer (``dng-api.invesco.com/cache/v1/accounts/en_US/shareclasses/QQQ/holdings/fund``):
     common stock and ADR lines are holdings; the index future, the currency and the cash lines are not. ``adr`` adds
-    ASML's ADR line."""
+    PDD's ADR line (type ``ADR``, as ARM's and PDD's in the real file) and ASML's (``DRNY``)."""
     rows = [{"ticker": t, "issuerName": name, "cusip": cusip, "percentageOfTotalNetAssets": 1.0,
              "securityTypeCode": "COM", "securityTypeName": "Common Stock"} for t, cusip, name in holdings]
     if adr:
+        rows.append({"ticker": "PDD", "issuerName": "PDD Holdings Inc", "cusip": "722304102",
+                     "percentageOfTotalNetAssets": 1.0, "securityTypeCode": "ADR",
+                     "securityTypeName": "American Depository Receipt"})
         rows.append({"ticker": "ASML", "issuerName": "ASML Holding NV", "cusip": "N07059210",
                      "percentageOfTotalNetAssets": 1.0, "securityTypeCode": "DRNY",
                      "securityTypeName": "American Depository Receipt - NY"})

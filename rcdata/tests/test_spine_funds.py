@@ -80,6 +80,7 @@ def test_a_file_of_another_shape_is_a_source_error(parse, body):
 def test_invesco_keeps_stock_and_adr_lines_and_reads_the_cusip():
     rows = funds.parse_invesco(fx.invesco_json([("MSFT", "594918104", "MICROSOFT CORP")], adr=True))
     assert rows == [{"ticker_raw": "MSFT", "cusip": "594918104", "name": "MICROSOFT CORP", "weight": 1.0},
+                    {"ticker_raw": "PDD", "cusip": "722304102", "name": "PDD Holdings Inc", "weight": 1.0},
                     {"ticker_raw": "ASML", "cusip": "N07059210", "name": "ASML Holding NV", "weight": 1.0}]
     with pytest.raises(base.SourceError):
         funds.parse_invesco(b'{"cusip": "QQQ"}')
