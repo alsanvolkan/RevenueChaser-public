@@ -1,4 +1,4 @@
-"""Tier rule v1: which SEC-file names the boards screen (Tier A) and why the others are not.
+"""Tier rule v2: which SEC-file names the boards screen (Tier A) and why the others are not.
 
 The rule is the one ``equity_universe`` and ``core/universe.py`` already apply, written once for the spine:
 
@@ -14,16 +14,31 @@ So:
 - **C**: over the counter (``OTC``);
 - **D**: no exchange in the SEC file (or one outside these).
 
+Tier A is therefore not every listed name: the plan's "A 7,691 exchange-listed" (2026-10-26) is A and B together.
+
 The $300M market-cap floor is not a tier: it needs market data, which the spine does not hold (``core/universe.py``
 applies it at read time). The type comes from ``core.identity.types.classify_type`` over the spine's own inputs
 (OpenFIGI's security types and the SEC name; no SEC submissions), so a preferred share written ``WFC-PC`` is typed by
-the ticker rule even before OpenFIGI answered; a name those leave untyped takes Compustat's ``tpci`` (``TPCI_TYPES``).
+the ticker rule even before OpenFIGI answered. A name those leave untyped is typed, in this order, by:
+
+1. the ticker (v2): a warrant, unit or right is written ``-WT`` / ``-UN`` / ``-RI`` (NYSE) or with a fifth letter
+   W / U / R (Nasdaq) in the SEC file;
+2. Compustat's ``tpci`` of the linked security (``TPCI_TYPES``);
+3. the SEC name (v2): an ETF or ETN, a commodity, currency or crypto pool, a pool sponsor's trust, or a bank that
+   issues ETNs (``ETP_NAMES``);
+4. the venue (v2): an untyped Cboe listing is an exchange-traded product.
+
+v2 (2026-10-28): the first live spine left 480 Tier A names with no Compustat link, and so no CUSIP and no OpenFIGI
+answer, mostly ETFs, ETNs, commodity trusts, warrants, units and rights. Rules 1, 3 and 4 type 288 of them, and every
+one of those Nasdaq Trader's symbol files also list (2026-10-28) is the same kind in its security name there.
 """
 from __future__ import annotations
 
+import re
+
 from ....core.identity.types import EXCLUDED_TYPES, classify_type
 
-VERSION = 1
+VERSION = 2
 LISTED = ("Nasdaq", "NYSE", "CBOE")
 OTC = "OTC"
 TIERS = ("A", "B", "C", "D")
@@ -51,13 +66,74 @@ def tier(exchange: str | None, security_type: str | None) -> str:
 TPCI_TYPES = {"0": "common", "F": "adr", "%": "etp"}
 UNTYPED = ("unknown", "other", None)
 
+# 1. The ticker. The SEC file writes an NYSE warrant ``AMPX-WT`` (a series ``NE-WTA``), a unit ``BCSS-UN`` and a right
+# ``CELG-RI``. A Nasdaq one is a fifth letter: of Nasdaq Trader's five-letter symbols (nasdaqlisted.txt, 2026-10-28)
+# 357 of 358 ending W are warrants (PSNYW is an ADS, typed by OpenFIGI first), 247 of 247 ending U units and 104 of
+# 104 ending R rights; other fifth letters mix notes, preferreds and share classes (GOOGL, FWONK), so they type
+# nothing. A right (a SPAC's right to a fraction of a share, a contingent value right) is typed warrant: a claim on
+# shares, not a share, with no type of its own in ``EXCLUDED_TYPES``; the source says right.
+TICKER_SUFFIXES = ((re.compile(r"-WT[A-Z]?$"), "warrant", "-WT"), (re.compile(r"-UN$"), "unit", "-UN"),
+                   (re.compile(r"-RI$"), "warrant", "-RI: right"))
+NASDAQ_FIFTH = {"W": ("warrant", "W"), "U": ("unit", "U"), "R": ("warrant", "R: right")}
 
-def security_type(ticker: str, name: str | None, figi: dict | None, tpci: str | None = None) -> tuple[str, str]:
-    """``(type, source)`` from the spine's inputs, through the identity master's one rule set; Compustat's ``tpci``
-    fills a name those leave untyped."""
+# 3. The SEC name of a product: the fund or trust itself, or for an ETN the bank that issued the note (the SEC file
+# lists BMO's MicroSectors ETNs under BANK OF MONTREAL /CAN/). A royalty trust is an operating type, whatever the
+# commodity in its name. Measured on the 5,800 operating-company symbols of Nasdaq Trader's files (2026-10-28): these
+# patterns match none but BMO itself (typed by OpenFIGI first) and a misspelt royalty trust.
+_ASSETS = (r"gold|silver|platinum|palladium|precious metals?|base metals|commodit(?:y|ies)|oil|natural gas|gasoline|"
+           r"agricultur\w*|bitcoin|ethereum|ether|solana|xrp|litecoin|dogecoin|crypto|currencyshares|dollar index|"
+           r"carbon allowance")
+ETP_NAMES = (
+    (re.compile(r"\bET[FN]s?\b|\bexchange[- ]traded\b", re.I), "ETF/ETN"),
+    (re.compile(rf"\b(?:{_ASSETS})\b.*\b(?:trust|fund)\b|\b(?:trust|fund)\b.*\b(?:{_ASSETS})\b", re.I),
+     "commodity, currency or crypto pool"),
+    (re.compile(r"\bproshares trust\b|\binvesco db\b|^vs trust$", re.I), "pool sponsor"),
+    (re.compile(r"^(?:bank of montreal /can/|barclays bank plc|ubs ag|credit suisse ag|"
+                r"deutsche bank aktiengesellschaft|jpmorgan chase & co)$", re.I), "ETN issuer"),
+)
+ROYALTY = re.compile(r"\broyalty\b", re.I)
+
+# 4. The venue: Cboe lists products. Of its 1,679 symbols in Nasdaq Trader's otherlisted.txt (2026-10-28), 1,673 are
+# ETFs, three ETNs (ATMP, VXX, VXZ), two test issues and one a company (Cboe Global Markets, typed by OpenFIGI first).
+PRODUCT_VENUES = ("CBOE",)
+
+
+def ticker_type(ticker: str, exchange: str | None) -> tuple[str, str] | None:
+    """``(type, source)`` a warrant's, unit's or right's ticker says, else ``None``."""
+    t = (ticker or "").strip().upper()
+    for pattern, typ, label in TICKER_SUFFIXES:
+        if pattern.search(t):
+            return typ, f"ticker_rule({label})"
+    if (exchange or "").strip().upper() == "NASDAQ" and len(t) == 5 and t.isalpha() and t[-1] in NASDAQ_FIFTH:
+        typ, label = NASDAQ_FIFTH[t[-1]]
+        return typ, f"ticker_rule(Nasdaq fifth letter {label})"
+    return None
+
+
+def product_type(name: str | None, exchange: str | None) -> tuple[str, str] | None:
+    """``("etp", source)`` when the SEC name or the venue says exchange-traded product, else ``None``."""
+    text = (name or "").strip()
+    if text and not ROYALTY.search(text):
+        for pattern, label in ETP_NAMES:
+            if pattern.search(text):
+                return "etp", f"name_rule({label})"
+    if (exchange or "").strip().upper() in PRODUCT_VENUES:
+        return "etp", "venue_rule(Cboe)"
+    return None
+
+
+def security_type(ticker: str, name: str | None, figi: dict | None, tpci: str | None = None,
+                  exchange: str | None = None) -> tuple[str, str]:
+    """``(type, source)`` from the spine's inputs, through the identity master's one rule set; a name those leave
+    untyped takes its ticker's type, Compustat's ``tpci``, then its SEC name's or its venue's (the module doc)."""
     inputs = {"name": name, "openfigi": figi or {}, "sec": None, "nasdaq": {}, "uw": {}, "fdic": {}}
     typ, src = classify_type(ticker, inputs)
+    if typ not in UNTYPED:
+        return typ, src
+    by_ticker = ticker_type(ticker, exchange)
+    if by_ticker:
+        return by_ticker
     code = str(tpci).strip() if tpci is not None else ""
-    if typ in UNTYPED and code in TPCI_TYPES:
+    if code in TPCI_TYPES:
         return TPCI_TYPES[code], f"compustat_tpci({code})"
-    return typ, src
+    return product_type(name, exchange) or (typ, src)

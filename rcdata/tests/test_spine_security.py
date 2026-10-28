@@ -412,6 +412,86 @@ def test_compustat_tpci_types_a_name_nothing_else_typed():
     assert tier.security_type("WFC-PC", "WELLS FARGO", None, tpci="0")[0] == "preferred"
 
 
+@pytest.mark.parametrize("ticker, exchange, want, source", [
+    ("AMPX-WT", "NYSE", "warrant", "ticker_rule(-WT)"), ("NE-WTA", "NYSE", "warrant", "ticker_rule(-WT)"),
+    ("BCSS-UN", "NYSE", "unit", "ticker_rule(-UN)"), ("CELG-RI", "NYSE", "warrant", "ticker_rule(-RI: right)"),
+    ("DAICW", "Nasdaq", "warrant", "ticker_rule(Nasdaq fifth letter W)"),
+    ("ATIIU", "Nasdaq", "unit", "ticker_rule(Nasdaq fifth letter U)"),
+    ("AESPR", "Nasdaq", "warrant", "ticker_rule(Nasdaq fifth letter R: right)")])
+def test_a_warrant_unit_or_right_is_typed_by_its_ticker(ticker, exchange, want, source):
+    """The 2026-10-28 spine left these untyped in Tier A (no CUSIP, so no OpenFIGI answer): the listing's own
+    symbol says what it is."""
+    assert tier.security_type(ticker, "SOME CO", None, exchange=exchange) == (want, source)
+    assert tier.tier(exchange, want) == "B"
+
+
+@pytest.mark.parametrize("ticker, exchange", [
+    ("ABCDW", "NYSE"), ("ABCDU", None), ("CHRW", "Nasdaq"), ("GOOGL", "Nasdaq"), ("FWONK", "Nasdaq"),
+    ("MSGK-WI", "NYSE"), ("BRK-B", "NYSE"), ("ABCD-U", "NYSE")])
+def test_a_ticker_rule_needs_its_exact_form(ticker, exchange):
+    """The fifth letter is a Nasdaq convention only, and only of a five-letter symbol; other suffixes type nothing."""
+    assert tier.security_type(ticker, "SOME CO", None, exchange=exchange) == ("unknown", "none")
+
+
+def test_the_ticker_rules_never_retype_a_typed_name_and_come_before_tpci():
+    # PSNYW is an ADS (Nasdaq Trader, 2026-10-28): OpenFIGI's type stands.
+    assert tier.security_type("PSNYW", "POLESTAR", {"security_type": "ADR"}, exchange="Nasdaq")[0] == "adr"
+    # Compustat writes tpci 0 for PLCIU, a unit (the 2026-10-28 spine): the symbol is the more specific word.
+    assert tier.security_type("PLCIU", "PELICAN ACQUISITION II CORP", None, tpci="0", exchange="Nasdaq") == (
+        "unit", "ticker_rule(Nasdaq fifth letter U)")
+
+
+@pytest.mark.parametrize("name, source", [
+    ("SPDR DOW JONES INDUSTRIAL AVERAGE ETF TRUST", "name_rule(ETF/ETN)"),
+    ("Grayscale Bitcoin Trust ETF", "name_rule(ETF/ETN)"),
+    ("Ark 21Shares Bitcoin ETF", "name_rule(ETF/ETN)"),
+    ("United States Oil Fund, LP", "name_rule(commodity, currency or crypto pool)"),
+    ("Invesco CurrencyShares Euro Trust", "name_rule(commodity, currency or crypto pool)"),
+    ("Teucrium Commodity Trust", "name_rule(commodity, currency or crypto pool)"),
+    ("Sprott Physical Gold Trust", "name_rule(commodity, currency or crypto pool)"),
+    ("Morgan Stanley Bitcoin Trust", "name_rule(commodity, currency or crypto pool)"),
+    ("COTWO ADVISORS PHYSICAL EUROPEAN CARBON ALLOWANCE TRUST", "name_rule(commodity, currency or crypto pool)"),
+    ("ProShares Trust II", "name_rule(pool sponsor)"), ("Invesco DB Energy Fund", "name_rule(pool sponsor)"),
+    ("VS Trust", "name_rule(pool sponsor)"),
+    ("BANK OF MONTREAL /CAN/", "name_rule(ETN issuer)"), ("BARCLAYS BANK PLC", "name_rule(ETN issuer)"),
+    ("UBS AG", "name_rule(ETN issuer)"), ("CREDIT SUISSE AG", "name_rule(ETN issuer)"),
+    ("DEUTSCHE BANK AKTIENGESELLSCHAFT", "name_rule(ETN issuer)"), ("JPMORGAN CHASE & CO", "name_rule(ETN issuer)")])
+def test_an_untyped_exchange_traded_product_is_typed_by_its_sec_name(name, source):
+    """The SEC file names the filer: the fund or trust itself, or the bank whose notes (ETNs) the ticker is."""
+    assert tier.security_type("XTKR", name, None, exchange="NYSE") == ("etp", source)
+
+
+@pytest.mark.parametrize("name", [
+    "NORTH EUROPEAN OIL ROYALTY TRUST", "Gold Royalty Corp.", "REDWOOD TRUST INC", "NORTHERN TRUST CORP",
+    "ASA Gold & Precious Metals Ltd", "Uranium Royalty Corp.", "BANK OF MONTREAL HOLDINGS INC", "OIL-DRI CORP",
+    "BITCOIN DEPOT INC.", "Elme Communities", "NETFLIX INC", "UBS AGRICULTURE CORP"])
+def test_the_product_name_rules_leave_operating_names_alone(name):
+    """ETF inside a word (NETFLIX) is no ETF; an issuer's name is matched whole, not as the start of another."""
+    assert tier.security_type("XTKR", name, None, exchange="NYSE") == ("unknown", "none")
+
+
+def test_the_name_and_venue_rules_come_after_tpci_and_a_cboe_listing_is_a_product():
+    # A royalty trust Compustat types common is not a product, whatever the commodity in its name.
+    assert tier.security_type("MVO", "MV OIL TRUST", None, tpci="0", exchange="NYSE")[0] == "common"
+    # Cboe lists products: 1,673 of its 1,679 symbols are ETFs, three more are ETNs (Nasdaq Trader, 2026-10-28).
+    assert tier.security_type("TAWN", "BANK OF MONTREAL /CAN/", None, exchange="CBOE")[0] == "etp"
+    assert tier.security_type("XYZ", "SOME TRUST", None, exchange="CBOE") == ("etp", "venue_rule(Cboe)")
+    # Cboe Global Markets itself is listed there: OpenFIGI or tpci type it first.
+    assert tier.security_type("CBOE", "Cboe Global Markets, Inc.", {"security_type": "Common Stock"},
+                              exchange="CBOE")[0] == "common"
+    assert tier.security_type("CBOE", "Cboe Global Markets, Inc.", None, tpci="0", exchange="CBOE")[0] == "common"
+
+
+def test_the_spine_gives_the_type_rules_the_exchange(built, monkeypatch):
+    extra = [[3000003, "SOME CO", "SOMEW", "Nasdaq"], [3000004, "BANK OF MONTREAL /CAN/", "FNGU", "NYSE"],
+             [3000005, "SOME TRUST", "XETP", "CBOE"], [3000006, "SOME CO", "SOME-UN", "NYSE"]]
+    monkeypatch.setitem(fx.SEC_FILE, "data", fx.SEC_FILE["data"] + extra)
+    run_all("2026-10-28", names=(sec_tickers.NAME, security.NAME))
+    got = {t: (_sec(t)["security_type"], _sec(t)["tier"]) for t in ("SOMEW", "FNGU", "XETP", "SOME-UN")}
+    assert got == {"SOMEW": ("warrant", "B"), "FNGU": ("etp", "B"), "XETP": ("etp", "B"), "SOME-UN": ("unit", "B")}
+    assert _sec("MSFT")["tier_rule"] == tier.VERSION == 2
+
+
 def test_the_spine_uses_tpci_for_a_name_openfigi_did_not_answer(built, monkeypatch):
     monkeypatch.delitem(fx.FIGI, "78462F103")                # SPY: OpenFIGI has no answer for it
     for f in openfigi_map.partition().parent.glob("*.parquet"):

@@ -1085,11 +1085,14 @@ steps, and a first attempt that failed is not retried every hour.
 | `gics_history` | Compustat's GICS periods of the linked companies |
 | `index_membership` | the fund-file members (source `funds/index_holdings`) and Compustat's constituents (source `wrds/idxcst_his`, the check) |
 
-**Tier rule v1** (`rcdata/build/spine/tier.py`): A = listed on Nasdaq, NYSE or Cboe and not an excluded type
+**Tier rule v2** (`rcdata/build/spine/tier.py`): A = listed on Nasdaq, NYSE or Cboe and not an excluded type
 (`core.identity.types.EXCLUDED_TYPES`; an untyped name stays); B = listed, excluded type; C = OTC; D = no exchange.
-The type comes from `core.identity.types.classify_type` over OpenFIGI's types and the name (no SEC submissions);
-a name those leave untyped takes Compustat's `tpci` of its linked security (`0` common, `F` ADR, `%` ETF; others
-type nothing).
+So Tier A is not every listed name: listed is A and B. The type comes from `core.identity.types.classify_type` over
+OpenFIGI's types and the name (no SEC submissions); a name those leave untyped takes, in order, its ticker's type (a
+warrant, unit or right: `-WT`, `-UN`, `-RI`, or a Nasdaq fifth letter W, U, R; a right is typed warrant), Compustat's
+`tpci` of its linked security (`0` common, `F` ADR, `%` ETF; others type nothing), then `etp` from its SEC name (ETF
+or ETN, a commodity, currency or crypto pool, a pool sponsor's trust, a bank that issues ETNs) or from a Cboe listing.
+v2 (2026-10-28) types 288 of the 480 Tier A names the first live build left with no Compustat link.
 
 **The link.** CIK -> Compustat companies -> the security whose `tic` is the SEC ticker (`BRK.B` -> `BRK-B`), else
 the only active US security of a CIK with one SEC ticker; otherwise no link and no CUSIP.
