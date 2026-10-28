@@ -486,7 +486,7 @@ class EarningsPipeline:
 
             opt_vol = int(float(scr.get("call_volume", 0) or 0) + float(scr.get("put_volume", 0) or 0))
             oi = int(float(scr.get("total_open_interest", 0) or 0))
-            dollar_opt_vol = opt_vol * 100  # rough estimate: $100 per contract
+            dollar_opt_vol = option_premium(scr)   # None when the screener served no premium: fails $Vol
 
             em = _expected_move_pct(cal)
 
@@ -495,7 +495,8 @@ class EarningsPipeline:
             reasons = []
             if opt_vol < MIN_OPTION_VOLUME: passed = False; reasons.append("OptVol"); stats["opt_vol"] += 1
             if oi < MIN_TOTAL_OI: passed = False; reasons.append("OI"); stats["oi"] += 1
-            if dollar_opt_vol < MIN_DOLLAR_OPTION_VOLUME: passed = False; reasons.append("$Vol"); stats["dollar_vol"] += 1
+            if dollar_opt_vol is None or dollar_opt_vol < MIN_DOLLAR_OPTION_VOLUME:
+                passed = False; reasons.append("$Vol"); stats["dollar_vol"] += 1
             if em < MIN_EXPECTED_MOVE_PCT: passed = False; reasons.append("EM<1.5%"); stats["em_low"] += 1
             if em > MAX_EXPECTED_MOVE_PCT: passed = False; reasons.append("EM>25%"); stats["em_high"] += 1
             
@@ -1002,6 +1003,19 @@ class EarningsPipeline:
             raw_packet_json=raw_packet_json,
             flow_source="failed" if flow_failed else ("flow_recent" if flow_recent_raw else "none"),
         )
+
+
+def option_premium(scr: dict) -> float | None:
+    """The day's call plus put premium of a screener row, None when either is missing. The $Vol gate reads it
+    (Fable review N3: volume x 100 made $Vol the OptVol gate again); the options data's earnings set reads the same
+    rule (``rcdata/build/options/uw_screener.premium``)."""
+    try:
+        calls, puts = scr.get("call_premium"), scr.get("put_premium")
+        if calls in (None, "") or puts in (None, ""):
+            return None
+        return float(calls) + float(puts)
+    except (TypeError, ValueError):
+        return None
 
 
 def _expected_move_pct(*sources: dict) -> float:

@@ -1590,7 +1590,7 @@ def _methodology_tables(filter_stats: dict = None) -> str:
     rows = [
         ("OptVol", f"≥ {MIN_OPTION_VOLUME:,} contracts", "Dead options", "Ensures at least minimal option activity — removes stocks nobody is trading options on. Earnings plays need option liquidity."),
         ("OI (Open Interest)", "≥ 200", "No options chain", "Even a thin chain has 200+ OI. Without it, there is no options market to trade the earnings reaction."),
-        ("$Vol (= OptVol × 100)", "≥ $50K", "Penny options / dead tickers", "Contracts × $100, a rough dollar volume; with the default gates it adds nothing to OptVol."),
+        ("$Vol (call + put premium)", "≥ $50K", "Penny options / dead tickers", "The day's call plus put premium as the UW screener served it; a name without it fails this gate."),
         ("Exp. Move Min", "≥ 1.5%", "Dull / no-reaction stocks", "If the market expects less than 1.5% move, there is no edge to capture. The stock is too stable."),
         ("Exp. Move Max", "≤ 25%", "Binary / biotech events", "Above 25% expected move, directional signals break down. These are lottery-ticket events, not systematic trades."),
         ("Watchlist ★", "Always pass", "Your selected tickers", "Tick from watchlist_tickers.json always get scored regardless of filters."),
@@ -1896,7 +1896,7 @@ def export_html(cards: list, calendar_events: list[dict] = None, nrc_results: di
             more = f" · +{len(excluded) - EXCLUDED_LIST_MAX} more" if len(excluded) > EXCLUDED_LIST_MAX else ""
             filter_html += f'<br><span style="color:#8b949e"><b>Not scored:</b> {shown}{more}</span>'
         filter_html += '<br>'
-        filter_html += f'<span style="color:#484f58">Gates: OptVol≥{MIN_OPTION_VOLUME:,} contracts · OI≥{MIN_TOTAL_OI:,} · $Vol≥${MIN_DOLLAR_OPTION_VOLUME // 1000}K (= OptVol×100) · Exp.Move 1.5%-25% · Max 500 scored/day</span>'
+        filter_html += f'<span style="color:#484f58">Gates: OptVol≥{MIN_OPTION_VOLUME:,} contracts · OI≥{MIN_TOTAL_OI:,} · $Vol≥${MIN_DOLLAR_OPTION_VOLUME // 1000}K (call + put premium) · Exp.Move 1.5%-25% · Max 500 scored/day</span>'
         filter_html += '</div>'
 
     detail_data = {}

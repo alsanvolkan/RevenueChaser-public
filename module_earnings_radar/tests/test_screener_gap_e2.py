@@ -15,7 +15,8 @@ from RevenueChaser.module_earnings_radar.tests.test_pipeline_score import _FakeU
 HEALTHY = {"calls": 1, "failed": 0, "failures": [], "auth_error": None, "breaker_open": False,
            "skipped_calls": 0}
 COMPLETE = datetime(2026, 10, 6, 22, 0, tzinfo=timezone.utc).timestamp()
-_STRONG = {"close": "50", "call_volume": "5000", "put_volume": "5000", "total_open_interest": "50000"}
+_STRONG = {"close": "50", "call_volume": "5000", "put_volume": "5000", "total_open_interest": "50000",
+           "call_premium": "400000", "put_premium": "300000"}
 
 
 class _ScreenerUW(_FakeUW):

@@ -152,7 +152,7 @@ MAX_DEEP_CHECKS_PER_DAY = 500
 EARNINGS_SCORE_WORKERS = 4
 MIN_OPTION_VOLUME = 500
 MIN_TOTAL_OI = 200
-# compared with OptVol × 100 (pipeline.preselect), so 50,000 equals MIN_OPTION_VOLUME 500.
+# compared with the day's call plus put premium the screener serves (pipeline.option_premium; Fable review N3).
 MIN_DOLLAR_OPTION_VOLUME = 50_000
 MIN_EXPECTED_MOVE_PCT = 1.5
 MAX_EXPECTED_MOVE_PCT = 25.0

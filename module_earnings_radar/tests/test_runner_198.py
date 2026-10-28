@@ -57,11 +57,13 @@ class _CountingUW(_FakeUW):
 
 
 def _strong():
-    return {"close": "50", "call_volume": "5000", "put_volume": "5000", "total_open_interest": "50000"}
+    return {"close": "50", "call_volume": "5000", "put_volume": "5000", "total_open_interest": "50000",
+            "call_premium": "400000", "put_premium": "300000"}
 
 
 def _weak():
-    return {"close": "50", "call_volume": "5000", "put_volume": "5000", "total_open_interest": "10"}
+    return {"close": "50", "call_volume": "5000", "put_volume": "5000", "total_open_interest": "10",
+            "call_premium": "400000", "put_premium": "300000"}
 
 
 def _run(tickers, screener, uw=None, watchlist=None, em=0.05):

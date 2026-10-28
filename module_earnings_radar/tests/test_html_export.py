@@ -440,7 +440,8 @@ class TestPreselect:
 
     def test_passed_and_excluded_outcomes(self):
         screener = {
-            "AAA": {"call_volume": 1000, "put_volume": 1000, "total_open_interest": 1000},
+            "AAA": {"call_volume": 1000, "put_volume": 1000, "total_open_interest": 1000,
+                    "call_premium": 90_000, "put_premium": 60_000},
             "BBB": {"call_volume": 1, "put_volume": 1, "total_open_interest": 10},
         }
         cal_meta = {
