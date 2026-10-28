@@ -34,6 +34,11 @@ The Fable review of 28 Oct 2026, S3 (the held-out quarter read on winsorised res
 Compared key by key with the old golden: the four ``config_hash`` values (the hash now carries ``config.METHOD``)
 and, in the persisted case only, three ``oos_r`` and two ``oos_base`` values moved (by under 2e-4); no ``held``
 verdict, member, label or other number changed. Then ``json.dumps(payloads())`` was written.
+
+S1 of the same review (h > 1: the null from shuffled daily returns summed over h sessions, the factor count on every
+h-th row) regenerated it again. Compared key by key: only ``w252_h5``'s ``n_factors`` moved, 10 -> 6 (the fixture
+has eight blocks; 125-odd overlapping rows read as independent had counted more than there are). The 5-day case is
+store-only, so its null is the stored one and no verdict moved. Then ``json.dumps(payloads())`` was written.
 """
 from __future__ import annotations
 

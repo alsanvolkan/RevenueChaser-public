@@ -478,7 +478,11 @@ together **more than the market**, up or down.
    config hash, else groups stay unjudged and visible). The old random-names
    baseline passed 100% of pure-noise groups. The subtitle's count is
    `n_factors`: eigenvalues above the Marchenko–Pastur edge (≈20 on the live
-   universe), replacing the inverted "≈N independent bets".
+   universe), replacing the inverted "≈N independent bets". At a 3/5/10-day
+   horizon the returns overlap, so the null shuffles the *daily* returns and
+   sums them over h sessions like the board's own, and the edge reads every
+   h-th row (non-overlapping); a row-by-row shuffle let every pure-noise 10-day
+   group pass (Fable review of 28 Oct 2026, S1).
 4c. **Out-of-sample persistence** (`persistence.py`, Fetch-only, `comov_lag`):
    groups are also formed on the window ending `OOS_HOLDOUT` = 63 sessions ago
    and tested on that quarter only (mean r of the residuals, winsorised like the

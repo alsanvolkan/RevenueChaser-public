@@ -604,6 +604,17 @@ def _window_prices(price_tickers, tickers, bench_ticker, eff, horizon):
     return prices, last, first, _flat(whole, tickers), cut is not None
 
 
+def _daily_under(prices, ret, horizon: int):
+    """The daily log returns under ``ret``'s ``horizon``-session ones (``horizon - 1`` rows more, same columns),
+    which the h > 1 null shuffles and sums (Co-movement review S1); ``None`` at 1 day or when they do not line up."""
+    if int(horizon) <= 1 or ret is None or ret.empty:
+        return None
+    p = prices.loc[:ret.index[-1], [c for c in ret.columns if c in prices.columns]].tail(len(ret) + int(horizon))
+    if p.shape[1] != ret.shape[1] or len(p) != len(ret) + int(horizon) or not p.index[int(horizon):].equals(ret.index):
+        return None
+    return np.log(p / p.shift(1)).iloc[1:].replace([np.inf, -np.inf], np.nan)
+
+
 def run(no_fetch: bool = False, tickers: list[str] | None = None,
         cuts: tuple[int, ...] | None = None, horizon: int | None = None,
         benchmark: str | None = None, persist: bool | None = None,
@@ -706,7 +717,7 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
         universe_ret = returns_mod.residualize(universe_ret, market)
     # The honest counterweight to 250 groups: how many common moves the window
     # holds beyond noise (eigenvalues above the Marchenko–Pastur edge).
-    n_factors = noise.factors_above_noise(universe_ret)
+    n_factors = noise.factors_above_noise(universe_ret, horizon=horizon)
     # S10: the hierarchy is built on the winsorised matrix (one print must not
     # decide a group), while ``universe_ret`` stays raw for the direction line.
     clustered_ret = returns_mod.winsorize_mad(universe_ret, eff.winsor_k)
@@ -741,7 +752,9 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
     # run, groups are not judged and carry no persistence verdict.
     if persisting:
         null = noise.selected_group_null(clustered_ret, cuts, cluster_fn,
-                                         n_perm=noise.NULL_PERMS)
+                                         n_perm=noise.NULL_PERMS, horizon=horizon,
+                                         daily=_daily_under(prices, clustered_ret, horizon),
+                                         winsor_k=eff.winsor_k)
         # Out-of-sample persistence: one extra clustering on the window ending
         # a quarter ago, tested on that quarter only (persistence.py). A short
         # window has no room for it: skipped, and the payload says why.
