@@ -1,24 +1,26 @@
 """``funds/index_holdings``: index membership from the ETF holdings files and Nasdaq's list API (daily).
 
-**Not run against the real sources.** Each parser is built against the provider's published file format; the tests
-use small files of that shape. The first real fetch is a homesrv step, and a format that has moved is a
-``source_failed`` build issue for that file (the others go on), never a guess.
+**Checked against the real files of 28 Oct 2026** (homesrv's first fetch, and the files a cloud thread read for #237):
+SSGA parsed there; the iShares link, the Vanguard API and the formats had moved and are read as of that day. The
+tests use small files of those shapes. A format that moves again is a ``source_failed`` build issue for that file (the
+others go on), never a guess.
 
 | Index | Files |
 |---|---|
-| ``sp500`` | SSGA SPY (xlsx), iShares IVV (csv), Vanguard VOO (json) |
+| ``sp500`` | SSGA SPY (xlsx), iShares IVV (``latest-holdings.csv``), Vanguard VOO (daily creation basket, json) |
 | ``sp400`` | SSGA MDY, iShares IJH, Vanguard IVOO |
 | ``sp600`` | SSGA SPSM, iShares IJR, Vanguard VIOO |
-| ``ndx`` | Nasdaq ``/api/quote/list-type/nasdaq100`` (json) |
+| ``ndx`` | Nasdaq ``/api/quote/list-type/nasdaq100`` (json), Invesco QQQ (json) |
 
-One request per file, every file each run (10 a run), each under its provider's day cap. Base URLs:
-``RC_SSGA_BASE``, ``RC_ISHARES_BASE``, ``RC_VANGUARD_BASE``, ``RC_NASDAQ_API_BASE``.
+One request per file, every file each run (11 a run), each under its provider's day cap. Base URLs:
+``RC_SSGA_BASE``, ``RC_ISHARES_BASE``, ``RC_VANGUARD_BASE``, ``RC_NASDAQ_API_BASE``, ``RC_INVESCO_API_BASE``.
 
 **The membership rule (working choice).** On each day, a file counts when it parsed and holds at least its index's
 floor (``FLOOR``: about 80% of the index); a short file is a ``fund_file_short`` build issue and does not count. A
-ticker is a member of the index that day when more than half of the counting files hold it (one file of one: the
-Nasdaq list). Cash, futures and other non-equity lines are dropped by each parser. Tickers are written as the SEC file
-writes them (``BRK.B`` and ``BRK/B`` -> ``BRK-B``); ``spine/security`` matches them to the SEC file, by CUSIP first.
+ticker is a member of the index that day when more than half of the counting files hold it (for ``ndx``: both the
+Nasdaq list and QQQ, or the one that counts when the other failed). Cash, futures and other non-equity lines are
+dropped by each parser. Tickers are written as the SEC file writes them (``BRK.B`` and ``BRK/B`` -> ``BRK-B``);
+``spine/security`` matches them to the SEC file, by CUSIP first.
 
 Raw: ``raw/funds/index_holdings/<as-of>/<provider>-<fund>.<ext>`` (+ ``.meta.json``). Parquet:
 ``parquet/funds/index_holdings/date=<as-of>/part-0.parquet`` (every holding line kept, with its file). Staging:
@@ -53,9 +55,13 @@ FILE_SCHEMA = [("as_of", "DATE"), ("index_slug", "TEXT"), ("provider", "TEXT"), 
                ("lines", "INTEGER"), ("counted", "BOOLEAN")]
 META_SUFFIX = ".meta.json"
 _TICKER = re.compile(r"^[A-Z][A-Z0-9]{0,5}(-[A-Z0-9]{1,3})?$")
-# iShares' product pages, by fund: (product id, page slug). The CSV is the page's holdings download.
+# iShares' product pages, by fund: (product id, page slug). The CSV is the page's ``latest-holdings.csv`` download
+# (the page's own slug is now ``ishares-core-s-p-500-etf``; the old one still answers the same file).
 ISHARES_PRODUCTS = {"IVV": ("239726", "ishares-core-sp-500-etf"), "IJH": ("239763", "ishares-core-sp-midcap-etf"),
                     "IJR": ("239774", "ishares-core-sp-smallcap-etf")}
+# Vanguard's daily creation basket (PCF), by fund: the basket id. The profile page's ``<portId>-AdditionalFundData``
+# answer (VOO 0968, IVOO 3342, VIOO 3345) names it under ``holdingDetails.portfolioCompositionFile`` if it changes.
+VANGUARD_BASKETS = {"VOO": "01S990737", "IVOO": "00S991588", "VIOO": "00S991612"}
 
 
 def norm_ticker(raw) -> str | None:
@@ -103,8 +109,9 @@ def parse_ssga(data: bytes) -> list[dict]:
 
 
 def parse_ishares(data: bytes) -> list[dict]:
-    """iShares' holdings CSV: preamble lines (fund name, ``Fund Holdings as of``), a header line starting
-    ``Ticker,Name,Sector,Asset Class,...``, the lines, then a blank line and a disclaimer. Equity lines only."""
+    """iShares' ``latest-holdings.csv`` (format of Oct 2026): preamble lines (fund name, ``Fund Holdings as of``), a
+    header line starting ``Ticker,Name,Type,...``, the lines, then a blank line. ``Type`` EQUITY lines only: swaps and
+    warrants are filed under ``Asset Class`` Equity too. The weight is ``Market Weight``."""
     text = data.decode("utf-8-sig", errors="replace")
     lines = text.splitlines()
     start = next((i for i, line in enumerate(lines) if line.startswith("Ticker,")), None)
@@ -115,25 +122,29 @@ def parse_ishares(data: bytes) -> list[dict]:
         if not line.strip() or line.startswith("\xa0"):
             break
         body.append(line)
+    reader = csv.DictReader(io.StringIO("\n".join(body)))
+    if "Type" not in (reader.fieldnames or ()):
+        raise base.SourceError("ishares: no Type column")
     out = []
-    for r in csv.DictReader(io.StringIO("\n".join(body))):
-        if (r.get("Asset Class") or "").strip() != "Equity":
+    for r in reader:
+        if (r.get("Type") or "").strip() != "EQUITY":
             continue
         out.append({"ticker_raw": r.get("Ticker"), "cusip": _cusip(r.get("CUSIP")), "name": r.get("Name"),
-                    "weight": _weight(r.get("Weight (%)"))})
+                    "weight": _weight(r.get("Market Weight"))})
     return out
 
 
 def parse_vanguard(data: bytes) -> list[dict]:
-    """Vanguard's portfolio-holding API: ``{"fund": {"entity": [{"ticker", "shortName", "cusip",
-    "percentWeight", ...}]}}``. Lines without a ticker (cash, futures) are dropped."""
+    """Vanguard's daily creation basket (PCF): ``{"portId", "trdDateStr", "holding": [{"assetType", "ticker",
+    "cusip", "shrtName", "weighting", ...}]}``. EQUITY lines only; a line with an empty ticker keeps its CUSIP."""
     body = json.loads(data)
     try:
-        entities = body["fund"]["entity"]
+        holding = body["holding"]
     except (KeyError, TypeError) as e:
-        raise base.SourceError("vanguard: no fund.entity list") from e
-    return [{"ticker_raw": e.get("ticker"), "cusip": _cusip(e.get("cusip")), "name": e.get("shortName"),
-             "weight": _weight(e.get("percentWeight"))} for e in entities or [] if (e or {}).get("ticker")]
+        raise base.SourceError("vanguard: no holding list") from e
+    return [{"ticker_raw": h.get("ticker"), "cusip": _cusip(h.get("cusip")), "name": h.get("shrtName"),
+             "weight": _weight(h.get("weighting"))}
+            for h in holding or [] if (h or {}).get("assetType") == "EQUITY" and (h.get("ticker") or h.get("cusip"))]
 
 
 def parse_nasdaq(data: bytes) -> list[dict]:
@@ -145,6 +156,23 @@ def parse_nasdaq(data: bytes) -> list[dict]:
         raise base.SourceError("nasdaq: no data.data.rows list") from e
     return [{"ticker_raw": r.get("symbol"), "cusip": None, "name": r.get("companyName"), "weight": None}
             for r in rows or [] if (r or {}).get("symbol")]
+
+
+# Invesco's security types that are a holding of the stock: common stock and the ADRs (ASML, ARM, PDD in Oct 2026).
+INVESCO_EQUITY_TYPES = ("COM", "ADR", "DRNY")
+
+
+def parse_invesco(data: bytes) -> list[dict]:
+    """Invesco's fund holdings API (QQQ): ``{"effectiveDate", "holdings": [{"ticker", "issuerName", "cusip",
+    "percentageOfTotalNetAssets", "securityTypeCode", ...}]}``. Stock and ADR lines only (no future, currency, cash)."""
+    body = json.loads(data)
+    try:
+        holdings = body["holdings"]
+    except (KeyError, TypeError) as e:
+        raise base.SourceError("invesco: no holdings list") from e
+    return [{"ticker_raw": h.get("ticker"), "cusip": _cusip(h.get("cusip")), "name": h.get("issuerName"),
+             "weight": _weight(h.get("percentageOfTotalNetAssets"))}
+            for h in holdings or [] if (h or {}).get("securityTypeCode") in INVESCO_EQUITY_TYPES]
 
 
 # ── The files ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -168,11 +196,13 @@ class FundFile:
         if self.provider == "ishares":
             pid, slug = ISHARES_PRODUCTS[self.fund]
             return (_base("RC_ISHARES_BASE", "https://www.ishares.com")
-                    + f"/us/products/{pid}/{slug}/1467271812596.ajax"
-                    f"?fileType=csv&fileName={self.fund}_holdings&dataType=fund")
+                    + f"/us/products/{pid}/{slug}/latest-holdings.csv")
         if self.provider == "vanguard":
-            return (_base("RC_VANGUARD_BASE", "https://investor.vanguard.com")
-                    + f"/investment-products/etfs/profile/api/{self.fund}/portfolio-holding/stock")
+            return (_base("RC_VANGUARD_BASE", "https://etfportal.vanguard.com")
+                    + f"/extrapi/v2/us/standard/{VANGUARD_BASKETS[self.fund]}/CRRD/holdings.json")
+        if self.provider == "invesco":
+            return (_base("RC_INVESCO_API_BASE", "https://dng-api.invesco.com")
+                    + f"/cache/v1/accounts/en_US/shareclasses/{self.fund}/holdings/fund?idType=ticker&productType=ETF")
         return _base("RC_NASDAQ_API_BASE", "https://api.nasdaq.com") + "/api/quote/list-type/nasdaq100"
 
     def raw_name(self) -> str:
@@ -190,6 +220,7 @@ FILES = (
     FundFile("sp600", "ishares", "IJR", "csv", parse_ishares),
     FundFile("sp600", "vanguard", "VIOO", "json", parse_vanguard),
     FundFile("ndx", "nasdaq", "NDX", "json", parse_nasdaq),
+    FundFile("ndx", "invesco", "QQQ", "json", parse_invesco),
 )
 PROVIDERS = tuple(dict.fromkeys(f.provider for f in FILES))
 _BY_RAW = {f.raw_name(): f for f in FILES}

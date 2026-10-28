@@ -986,7 +986,7 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 
 **Day caps** (`rcdata/caps.py`, avo's numbers, to be tuned): uw 150,000, sec 40,000, fred 10,000, alpaca 20,000;
 the spine's (PR 5, working numbers avo has not set): wrds 50 (queries), openfigi 1,000 (requests), ssga 50,
-ishares 50, vanguard 50, nasdaq 50 (one request per fund file);
+ishares 50, vanguard 50, nasdaq 50, invesco 50 (one request per fund file);
 a dataset whose providers have all reached their cap for the New York day gets a `skipped` check row and sends
 nothing; inside a run every call checks its provider's cap first (one capped provider, FRED among the market series,
 is a source failure and the others go on), and the counter is written every 25 calls, at the end, and on SIGTERM (systemd's stop, turned into a clean exit) or Ctrl-C; a keyless call is counted when it is sent, a UW call when its answer arrives (the UW client's observer), so a UW request cut off by a stop is not counted. Only the
@@ -1050,7 +1050,7 @@ the old identity tables there are untouched (D5: they are empty since 27 Oct).
 | `wrds/co_hgic` | monthly, attended | `comp.co_hgic` | `stg_wrds_hgic` |
 | `wrds/idxcst_his` | monthly, attended | `comp.idxcst_his` for the S&P 500, 400 and 600 index keys | `stg_wrds_idx` |
 | `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet (a CINS, a letter first, asked as `ID_CINS`), under 25 requests a minute | `stg_figi` |
-| `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR, Vanguard VOO/IVOO/VIOO, Nasdaq's nasdaq100 list | `stg_fund_lines`, `stg_fund_files` |
+| `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR (`latest-holdings.csv`), Vanguard VOO/IVOO/VIOO (daily creation basket), Nasdaq's nasdaq100 list and Invesco QQQ (both vote `ndx`) | `stg_fund_lines`, `stg_fund_files` |
 | `spine/security` | daily | none: builds the served tables from the staging tables | the four tables below |
 
 The sources load their Parquet into TEMP tables of the build connection (never stored in the file); the kind's
