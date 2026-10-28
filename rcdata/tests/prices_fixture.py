@@ -8,7 +8,7 @@ issuers' real ones as far as known here; the gvkeys and iids are illustrative.
 |---|---|
 | AAPL | the plain case: Tier A, linked to Compustat, a quarterly dividend |
 | BRK-B | a share class: Alpaca writes ``BRK.B`` |
-| FLG | Flagstar's 1-for-3 reverse split of 2025-07-01: a price gap that an action explains |
+| FLG | a 1-for-3 reverse split (Flagstar's of July 2024, moved into the calendar's years): a gap an action explains |
 | GAPX | a price gap with no action (the ``price_gap_no_action`` issue) |
 | SPY | a benchmark ETF, Tier B (asked as a benchmark, not as Tier A) |
 """
