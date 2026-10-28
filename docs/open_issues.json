@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-10-27T12:12:36Z",
-  "generated_from": "05170e1",
+  "generated_at": "2026-10-28T18:09:08Z",
+  "generated_from": "783b599",
   "issues": [
     {
       "repo": "RevenueChaser-public",
@@ -2737,6 +2737,146 @@
       "refs": [],
       "issue_updated_at": "2026-10-27T11:49:02Z",
       "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 227,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/227",
+      "title": "CFTC release schedule instead of +3 days, so a past day's render never sees an unreleased COT report",
+      "state": "open",
+      "labels": [
+        "area:spx_gamma",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "",
+      "detail": {
+        "whats_wrong": "",
+        "evidence": "",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": ""
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-28T00:58:08Z",
+      "reviewed_at": "2026-10-28"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 228,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/228",
+      "title": "SPX Gamma store reads: five small follow-ups from the PR 3 delta review",
+      "state": "open",
+      "labels": [
+        "area:spx_gamma",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "",
+      "detail": {
+        "whats_wrong": "",
+        "evidence": "",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": ""
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-28T01:20:48Z",
+      "reviewed_at": "2026-10-28"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 236,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/236",
+      "title": "Spine membership: the 4a CUSIP guard can unmatch an old member's past once its ticker's new owner is linked",
+      "state": "open",
+      "labels": [
+        "area:platform-store",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "",
+      "detail": {
+        "whats_wrong": "",
+        "evidence": "",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": ""
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-28T10:33:36Z",
+      "reviewed_at": "2026-10-28"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 239,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/239",
+      "title": "13F CUSIP map asks OpenFIGI for a CINS as ID_CUSIP, so foreign issuers get no ticker",
+      "state": "open",
+      "labels": [
+        "parked",
+        "area:data-layer"
+      ],
+      "boards": [],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "",
+      "detail": {
+        "whats_wrong": "",
+        "evidence": "",
+        "example": "The spine's first live `openfigi/map` (homesrv, 2026-10-28) asked 2,092 CINS as `ID_CUSIP` and OpenFIGI found none of them (homesrv spine research, 28 Oct). The 13F map asks the same way, so a 13F holding with a CINS stays without a ticker.",
+        "tried_or_decided": "",
+        "direction": "Pick the id type per code as `rcdata/build/spine/openfigi_map.py` does since #238 (`id_type()`), and ask again the CINS the map stored as absent after an `ID_CUSIP` question. Its own PR, because it changes a job the dashboard runs.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01LHJCJbpPnbAGx3wyKUpCvr",
+        "next_step": ""
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-28T14:13:17Z",
+      "reviewed_at": "2026-10-28"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 240,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/240",
+      "title": "Spine Tier A after tier rule v2: notes, SPAC shares and structured products still count as Tier A",
+      "state": "open",
+      "labels": [
+        "parked",
+        "area:data-layer"
+      ],
+      "boards": [],
+      "scope": "board",
+      "kind": "bug",
+      "status": "open",
+      "deferred_until": "",
+      "summary": "",
+      "detail": {
+        "whats_wrong": "",
+        "evidence": "",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "- SPAC shares: Compustat's SIC 6770 (blank checks), which the spine does not read today.\n- Notes and structured trusts: a debt / structured-product type, or Nasdaq Trader's symbol files (security name, ETF flag) as a spine input.\n- Absent CUSIPs: a ticker + `US` fallback question, as the homesrv research suggested.\n- Each moves names out of Tier A, so the boards' numbers move with it: avo's look before it lands.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01LHJCJbpPnbAGx3wyKUpCvr",
+        "next_step": ""
+      },
+      "refs": [],
+      "issue_updated_at": "2026-10-28T14:13:25Z",
+      "reviewed_at": "2026-10-28"
     }
   ]
 }
