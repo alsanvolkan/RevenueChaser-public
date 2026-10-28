@@ -22,11 +22,12 @@ call: there is no live fallback any more.
 """
 from __future__ import annotations
 
+import functools
 import logging
 from datetime import date, timedelta
 
 from RevenueChaser.core import calendar
-from RevenueChaser.rcdata import read
+from RevenueChaser.rcdata import ops, read
 
 from .candles import window_lag, window_start
 from .vix import vix_term_mode
@@ -111,8 +112,48 @@ def _not_closed(day: date) -> bool:
         return False
 
 
+# ── the status the board shows ──
+
+def _board_status(dataset: str) -> tuple[str, str | None]:
+    """``(status, skip note)``: the newest check that is not ``skipped`` (``ops.latest_unskipped_check``, as the
+    Settings card reads it), so a Fetch while the dataset is paused or day-capped does not make a built dataset read
+    "skipped" (review SF6b); a newer skip is named in the note."""
+    last = ops.latest_check(dataset)
+    if last is None:
+        return read.NEVER_CHECKED, None
+    if last.get("result") != "skipped":
+        return last["result"], None
+    base = ops.latest_unskipped_check(dataset)
+    note = f"last run skipped ({last.get('note')})" if last.get("note") else "last run skipped"
+    return (base["result"] if base else read.NEVER_CHECKED), note
+
+
+def _with_board_status(dataset: str):
+    """Re-stamp a reader's ``status`` (and the status in its label) with :func:`_board_status`; a failure to read
+    it leaves the reader's own status (review SF3: never an exception out of a reader)."""
+    def wrap(reader):
+        @functools.wraps(reader)
+        def inner(day) -> dict:
+            out = reader(day)
+            try:
+                status, skip = _board_status(dataset)
+            except Exception as exc:  # noqa: BLE001
+                _failed(exc)
+                return out
+            old = out.get("status")
+            if old is not None and f"status {old})" in out["label"]:
+                out["label"] = out["label"].replace(f"status {old})", f"status {status})")
+            out["status"] = status
+            if skip:
+                out["label"] = f"{out['label']}; {skip}"
+            return out
+        return inner
+    return wrap
+
+
 # ── 0-1 DTE dollar gamma ──
 
+@_with_board_status("uw/spot_expiry_strike")
 def zero_one_dte_dollars(day) -> dict:
     """``{strike: dollars}`` of 0-1 DTE OI gamma for the board's ``day``, with the snapshot it came from."""
     d = _day(day)
@@ -156,6 +197,7 @@ def zero_one_dte_dollars(day) -> dict:
 
 # ── VIX family ──
 
+@_with_board_status("market_series")
 def vix_family(day) -> dict:
     """The VIX family closes as ``{"tickers": {"^VIX": ...}, "term_mode": ...}`` (the old payload) in ``payload``."""
     d = _day(day)
@@ -185,6 +227,7 @@ def _cot_report(by_field: dict[str, float], fields: tuple[str, ...]) -> float | 
     return next((by_field[f] for f in fields if by_field.get(f) is not None), None)
 
 
+@_with_board_status("market_series")
 def cot_tff(day) -> dict:
     """The E-mini TFF row in the shape ``normalize.normalize_cftc`` reads, in ``payload``."""
     d = _day(day)
@@ -227,6 +270,7 @@ def cot_tff(day) -> dict:
 
 # ── SPX candles ──
 
+@_with_board_status("market_series")
 def spx_candles(day) -> dict:
     """The SPX closes from the 8-week window's start through ``day`` in ``rows`` (oldest first)."""
     d = _day(day)

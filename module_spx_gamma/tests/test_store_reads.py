@@ -232,3 +232,25 @@ def test_the_cot_release_date_is_called_an_approximation(rcdata_market):
     """Review SF5: report + 3 days is not CFTC's schedule (holiday weeks, the 2025 shutdown); the board says so."""
     label = store_reads.cot_tff(fx.LAST)["label"]
     assert "released ~2026-10-23 (report + 3 days; holiday weeks can differ)" in label
+
+
+def test_a_skipped_run_after_a_build_keeps_the_built_status_and_says_skipped(rcdata_market):
+    """Review SF6b: a Fetch while a dataset is paused (or day-capped) leaves a 'skipped' check row; the board keeps
+    the status of the last real build (ops.latest_unskipped_check, as the Settings card does) and notes the skip."""
+    from RevenueChaser.rcdata import ops
+    ops.record_check("uw/spot_expiry_strike", "skipped", note="paused by avo")
+    ops.record_check("market_series", "skipped", note="day cap reached")
+    zod = store_reads.zero_one_dte_dollars(fx.LAST)
+    assert zod["status"] == "changed" and "status changed" in zod["label"]
+    assert "last run skipped (paused by avo)" in zod["label"]
+    vix = store_reads.vix_family(fx.LAST)
+    assert vix["status"] == "changed" and "last run skipped (day cap reached)" in vix["label"]
+
+
+def test_only_skipped_checks_read_as_never_built(rcdata_market):
+    from RevenueChaser.rcdata import ops
+    with ops.connect() as con:
+        con.execute("DELETE FROM dataset_check WHERE dataset = 'uw/spot_expiry_strike'")
+    ops.record_check("uw/spot_expiry_strike", "skipped", note="paused by avo")
+    zod = store_reads.zero_one_dte_dollars(fx.LAST)
+    assert zod["status"] == read.NEVER_CHECKED and "last run skipped (paused by avo)" in zod["label"]
