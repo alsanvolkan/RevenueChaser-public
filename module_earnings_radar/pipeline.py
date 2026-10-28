@@ -33,7 +33,7 @@ READER_OHLC_SESSIONS = 60
 
 
 def yield_beta_tstat(stock_by_date: dict[str, float], yield_by_date: dict[str, float],
-                     beta: float | None) -> float | None:
+                     beta: float | None, exclude: frozenset | set = frozenset()) -> float | None:
     """The OLS t-stat of R6's yield beta, over the same return pairs as ``rule6_macro.yield_beta``.
 
     ``rule6_macro.score`` skips the NO_TRADE veto when ``|t| < 2`` (the noise gate, ``docs/rules/redesign.md``): a
@@ -45,6 +45,8 @@ def yield_beta_tstat(stock_by_date: dict[str, float], yield_by_date: dict[str, f
     dates = sorted(set(stock_by_date) & set(yield_by_date))
     r, dy = [], []
     for a, b in zip(dates, dates[1:]):
+        if b in exclude:
+            continue
         p0, p1 = stock_by_date[a], stock_by_date[b]
         y0, y1 = yield_by_date[a], yield_by_date[b]
         if p0 in (None, 0) or p1 is None or y0 is None or y1 is None:
@@ -62,10 +64,12 @@ def yield_beta_tstat(stock_by_date: dict[str, float], yield_by_date: dict[str, f
     return beta / ((sse / (n - 2)) / sxx) ** 0.5
 
 
-def r6_beta(bars: list, yield_by_date: dict[str, float]) -> tuple[float | None, float | None]:
+def r6_beta(bars: list, yield_by_date: dict[str, float],
+            gap_sessions: frozenset | set = frozenset()) -> tuple[float | None, float | None]:
     """``(beta, t)``: R6's yield beta and its t-stat from the reader's bar slice (the last 60 sessions).
 
-    The one place the card's R6 inputs are formed, so the E5 card script counts what the board does.
+    The one place the card's R6 inputs are formed, so the E5 card script counts what the board does. The return
+    ending on each of ``gap_sessions`` (``_gap_sessions``) is left out of both (review N1).
     """
     stock_by_date = {}
     for c in bars or []:
@@ -75,8 +79,21 @@ def r6_beta(bars: list, yield_by_date: dict[str, float]) -> tuple[float | None, 
                 stock_by_date[d] = float(c["close"])
             except (TypeError, ValueError):
                 continue
-    beta = rule6_macro.yield_beta(stock_by_date, yield_by_date or {})
-    return beta, yield_beta_tstat(stock_by_date, yield_by_date or {}, beta)
+    beta = rule6_macro.yield_beta(stock_by_date, yield_by_date or {}, exclude=gap_sessions)
+    return beta, yield_beta_tstat(stock_by_date, yield_by_date or {}, beta, gap_sessions)
+
+
+def _gap_sessions(hist: list, bars: list) -> set[str]:
+    """The reaction session (core/reaction_anchor) of every reported print in ``hist`` that falls in ``bars``:
+    the earnings-gap days R6's beta drops (docs/rules/redesign.md R6, review N1)."""
+    out = set()
+    for h in hist or []:
+        if h.get("actual_eps") is None or not h.get("report_date"):
+            continue
+        anchor = reaction_anchor(bars, str(h["report_date"])[:10], h.get("report_time"))
+        if anchor:
+            out.add(anchor[0])
+    return out
 
 
 def _agh_context(ticker: str) -> dict:
@@ -693,7 +710,7 @@ class EarningsPipeline:
             institutional_side_served=flow.get("side_served"),
             institutional_package_premium=flow.get("inst_package"),
         )
-        beta, beta_t = r6_beta(ohlc, self._dgs10_cache or {})
+        beta, beta_t = r6_beta(ohlc, self._dgs10_cache or {}, _gap_sessions(hist, ohlc))
         # rate_event_overlap: FOMC/CPI within the print's ±1 trading day, from the stored economic calendar
         # (E5d, #372). None — the store does not span the window — keeps the old behaviour: an extreme duration
         # is a badge, never a veto (design doc). A noisy beta (|t| < 2) is a badge too.
