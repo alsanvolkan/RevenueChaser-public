@@ -2084,6 +2084,22 @@
    },
    "regime": "RISK-ON",
    "selection_version": "5",
+   "settings": {
+    "adr_min": 0.03,
+    "breakout_high_pct": 0.98,
+    "custom": false,
+    "min_dollar_volume": 250000.0,
+    "min_price": 5.0,
+    "move_min": 0.25,
+    "overridden": [],
+    "overrides": {},
+    "rs_min": 70.0,
+    "stop_atr": 2.0,
+    "target_r": 2.0,
+    "vol_confirm": 1.5,
+    "w_cons": 0.25,
+    "w_prox": 0.25
+   },
    "summary": {
     "avg_quality": 82.75,
     "data_short": 2,

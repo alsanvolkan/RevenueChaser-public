@@ -192,7 +192,6 @@ def snapshot() -> dict:
     out: dict = {}
     for name, mod in (("swing", sp), ("fundamentals", fp)):
         fetch = _norm(mod.run_scan())
-        fetch.pop("settings", None)             # Swing's run thresholds (review finding 2, PR 6): new, not a result
         health = fetch.get("provider_health")
         if health and health.get("failures"):   # the worker pool reports failures in completion order
             health["failures"] = sorted(health["failures"], key=lambda f: str(f.get("endpoint")))
