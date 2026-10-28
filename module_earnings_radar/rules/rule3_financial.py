@@ -165,6 +165,7 @@ def _universal_om(history: list[dict], cluster: str) -> Tuple[Optional[dict], li
         reasons.append(f"op. margin {om*100:.1f}% vs YoY {om_yoy*100:.1f}% ({om_delta_pts:.1f} pts)")
     else:
         reasons.append("op. margin stable vs YoY")
+    info["vote"] = vote
 
     # Tags (never flip the vote).
     if vote == "bear":
@@ -258,7 +259,8 @@ def score(ticker: str, cluster: str, fundamentals_history: list[dict],
             pct_score = min(pct_score, -30.0)
         elif om_info["om_pts"] <= -OM_MAG_DOWN_MILD and pct_score > -15:
             pct_score = min(pct_score, -15.0)
-        elif om_info["om_pts"] >= OM_MAG_UP_BULL and pct_score < 15:
+        elif om_info["vote"] == "bull" and pct_score < 15:
+            # the vote's own test: OM up YoY AND the last-4 median above the prior-4 (redesign.md R3; review S2)
             pct_score = max(pct_score, 15.0)
 
     # Red flag matching — use exact set intersection
@@ -268,7 +270,8 @@ def score(ticker: str, cluster: str, fundamentals_history: list[dict],
         reasons.append("RED FLAGS: " + "; ".join(matched))
         pct_score -= len(matched) * 10
 
-    coverage = signals_avail / max(signals_total, 1)
+    # A scorer that counts more signals than its denominator never reads above full coverage (review S1).
+    coverage = min(1.0, signals_avail / max(signals_total, 1))
 
     # Minimum coverage gate
     if signals_avail < 2:
@@ -463,7 +466,9 @@ def _score_marketplace(latest: dict, history: list[dict]) -> Tuple[float, list, 
 
 
 def _score_energy(latest: dict, history: list[dict]) -> Tuple[float, list, list, int, int]:
-    s, r, f, a, t = 0.0, [], [], 0, 3
+    # five signals: revenue growth, GM, GM elasticity, OM, cash conversion (review S1: OM was scored uncounted
+    # over a denominator of three, so coverage read 1.33)
+    s, r, f, a, t = 0.0, [], [], 0, 5
     prior = _yoy_prior(history)
     rev = _get(latest, "revenue")
     prev_rev = _get(prior, "revenue")
@@ -490,6 +495,7 @@ def _score_energy(latest: dict, history: list[dict]) -> Tuple[float, list, list,
         elif elasticity > 0.5: s += 10; r.append(f"GM elasticity {elasticity:.1f}")
 
     if om is not None:
+        a += 1
         if om > 0.20: s += 10; r.append(f"strong operating margin {om:.0%}")
         elif om < 0.05: f.append("thin_operating_margin"); s -= 10
 

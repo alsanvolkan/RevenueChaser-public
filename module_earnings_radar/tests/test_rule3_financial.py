@@ -242,9 +242,8 @@ def test_score_energy_bullish_signals():
     s, r, f, a, t = _score_energy(latest, [latest, prev])
     assert f == []
     assert s == pytest.approx(15 + 15 + 10 + 10 + 15)
-    # The operating-margin branch scores but (unlike the others) never increments the
-    # `a` (signals-available) counter, so a can exceed the fixed t=3 for this scorer.
-    assert a == 4 and t == 3
+    # Every scored branch counts, the OM one included (review S1: a was 4 over a fixed t of 3).
+    assert a == 5 and t == 5
 
 
 def test_score_energy_bearish_red_flags():
@@ -258,7 +257,7 @@ def test_score_energy_bearish_red_flags():
         "thin_operating_margin",
     }
     assert s == pytest.approx(-15 - 10 - 15 - 10)
-    assert a == 4 and t == 3
+    assert a == 5 and t == 5
 
 
 # --- negative_operating_margin flag (score()-level supplement) -----------------
