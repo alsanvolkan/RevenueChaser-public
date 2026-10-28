@@ -166,7 +166,11 @@ def _cik(cik) -> str:
 def statements(cik, period_type: str = "quarterly", n: int = 8, fields: Iterable[str] | None = None) -> list[dict]:
     """``fundamental_fact`` rows of company ``cik``: its ``n`` newest period ends of ``period_type`` (``annual`` or
     ``quarterly``), one row per field (``fields`` only, when given), newest first. Every SEC row carries its
-    accession, filed date and form; a ``preliminary`` row (UW's, ahead of the 10-Q) has none."""
+    accession, filed date and form; a ``preliminary`` row (UW's, ahead of the 10-Q) has none.
+
+    The ``n`` period ends are the company's, counted over every field, before ``fields`` narrows the rows: a field
+    missing on some of those ends gets fewer than ``n`` rows, and its older values are not reached for (so the
+    rows of several fields line up on the same ends)."""
     sql = "SELECT * FROM fundamental_fact WHERE cik = ? AND period_type = ?"
     params: list = [_cik(cik), str(period_type)]
     wanted = [str(f) for f in fields or []]

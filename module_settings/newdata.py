@@ -170,10 +170,10 @@ def attended_command(kind: str) -> str:
 def _wrds_difference(dataset: str) -> dict:
     """The WRDS difference slot: a check dataset's newest report (a run that read WRDS, not a skip or a failure)."""
     if dataset not in WRDS_DIFFERENCE:
-        return NO_WRDS
+        return dict(NO_WRDS)                     # a copy: a caller that edits its card must not edit the constant
     report = next((c for c in ops.recent_checks(dataset, limit=24)
                    if c["result"] in ("changed", "unchanged") and c.get("note")), None)
-    return {"text": report["note"], "as_of": report.get("source_as_of")} if report else NO_WRDS
+    return {"text": report["note"], "as_of": report.get("source_as_of")} if report else dict(NO_WRDS)
 
 
 def _held(dataset: str, ds) -> str | None:

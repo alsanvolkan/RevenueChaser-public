@@ -127,6 +127,19 @@ def test_an_ifrs_filer_has_no_rows_and_says_so():
     assert rows == [] and company["us_gaap"] is False and company["is_us"] is True
 
 
+def test_a_fallback_provenance_is_the_fact_of_the_same_span():
+    # The Opus review's N5: an annual fact, a quarterly fact and an instant fact can end on one day (a fiscal year's
+    # last day). The provenance of a value the extraction keeps none for is the fact of its own span; a span the
+    # facts do not hold falls back to the newest fact ending that day, as before.
+    def f(accn, filed, start=None):
+        return fx._fact(1.0, "2025-06-30", accn, filed, "10-K", "FY", 2025, start)
+    index = facts._Index({"facts": {"us-gaap": {"X": {"units": {"USD": [
+        f("q-1", "2025-07-30", "2025-04-01"), f("i-1", "2025-07-31"), f("k-1", "2025-08-01", "2024-07-01")]}}}}})
+    assert index.newest(["X"], "2025-06-30", "2025-04-01") == ("2025-07-30", "q-1")     # the quarter
+    assert index.newest(["X"], "2025-06-30") == ("2025-07-31", "i-1")                   # an instant
+    assert index.newest(["X"], "2025-06-30", "2025-01-01") == ("2025-08-01", "k-1")     # no such span: the newest
+
+
 def test_the_served_table_refuses_a_fact_without_its_accession_or_period_type():
     con = duckdb.connect()
     tables.create(con, "fundamental_fact")

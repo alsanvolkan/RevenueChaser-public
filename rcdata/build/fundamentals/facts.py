@@ -71,13 +71,16 @@ def _day(text) -> date | None:
 
 
 class _Index:
-    """What the facts say about every accession and fact end: the form of an accession, per ``(concept, end)`` the
-    newest ``(filed, accn)``, and the USD value that newest filing gave."""
+    """What the facts say about every accession and fact span: the form of an accession, per ``(concept, start,
+    end)`` the newest ``(filed, accn)`` and the USD value that newest filing gave (``start`` is ``""`` for an
+    instant), and per ``(concept, end)`` the newest of any span ending that day. A quarter, its fiscal year and the
+    balance sheet can all end on one day, so a lookup asks for its own span first (the Opus review's N5)."""
 
     def __init__(self, facts: dict):
         self.form: dict[str, str] = {}
         self.at_end: dict[tuple[str, str], tuple[str, str]] = {}
-        self.usd_at_end: dict[tuple[str, str], float] = {}
+        self.at_span: dict[tuple[str, str, str], tuple[str, str]] = {}
+        self.usd_at_span: dict[tuple[str, str, str], float] = {}
         for taxonomy in (facts.get("facts") or {}).values():
             for concept, body in (taxonomy or {}).items():
                 for unit, units in ((body or {}).get("units") or {}).items():
@@ -85,17 +88,25 @@ class _Index:
                         accn, filed, end = f.get("accn"), f.get("filed") or "", f.get("end") or ""
                         if accn and f.get("form"):
                             self.form.setdefault(accn, f["form"])
-                        if accn and filed and end:
-                            cur = self.at_end.get((concept, end))
-                            if cur is None or (filed, accn) > cur:
-                                self.at_end[(concept, end)] = (filed, accn)
-                                if unit == "USD" and isinstance(f.get("val"), (int, float)):
-                                    self.usd_at_end[(concept, end)] = float(f["val"])
-                                else:
-                                    self.usd_at_end.pop((concept, end), None)
+                        if not (accn and filed and end):
+                            continue
+                        if (filed, accn) > self.at_end.get((concept, end), ("", "")):
+                            self.at_end[(concept, end)] = (filed, accn)
+                        span = (concept, f.get("start") or "", end)
+                        if (filed, accn) > self.at_span.get(span, ("", "")):
+                            self.at_span[span] = (filed, accn)
+                            if unit == "USD" and isinstance(f.get("val"), (int, float)):
+                                self.usd_at_span[span] = float(f["val"])
+                            else:
+                                self.usd_at_span.pop(span, None)
 
-    def newest(self, concepts, end: str | None) -> tuple[str, str] | None:
-        found = [self.at_end[(c, end)] for c in concepts if end and (c, end) in self.at_end]
+    def newest(self, concepts, end: str | None, start: str | None = None) -> tuple[str, str] | None:
+        """The newest ``(filed, accn)`` of ``concepts`` over ``start`` (None: an instant) to ``end``; when the facts
+        hold no such span, the newest of any span ending on ``end``."""
+        if not end:
+            return None
+        found = [self.at_span[(c, start or "", end)] for c in concepts if (c, start or "", end) in self.at_span]
+        found = found or [self.at_end[(c, end)] for c in concepts if (c, end) in self.at_end]
         return max(found) if found else None
 
 
@@ -130,7 +141,7 @@ def _rows_of(facts: dict, rec: dict, period_type: str, index: _Index, counts: di
             p = _newer(prov.get("revenue"), prov.get("cost_of_revenue"))
             derived.add(field)
         else:
-            p = index.newest(concepts, end)
+            p = index.newest(concepts, end, starts.get(field))
         prov[field] = p
         if p is None or end is None:
             counts["no_provenance"] = counts.get("no_provenance", 0) + 1
@@ -175,7 +186,7 @@ def _debt_lines(out: dict[str, dict], index: _Index, balance_end: str | None) ->
 
 def _tagged(index: _Index, concept: str, end: str | None) -> dict | None:
     """A tag the extraction does not collect, on ``end``, as a row (its USD value and newest filing)."""
-    value, p = index.usd_at_end.get((concept, end or "")), index.at_end.get((concept, end or ""))
+    value, p = index.usd_at_span.get((concept, "", end or "")), index.at_span.get((concept, "", end or ""))
     if value is None or p is None:
         return None
     return {"field": concept, "value": value, "period_end": _day(end), "accn": p[1], "filed": _day(p[0]),
@@ -197,7 +208,7 @@ def _eps_rows(facts: dict, index: _Index) -> list[dict]:
                 value, end = fact
                 info = getattr(fact, "info", {}) or {}
                 p = (info["filed"], info["accn"]) if info.get("filed") and info.get("accn") else \
-                    index.newest(concepts, end)
+                    index.newest(concepts, end, info.get("start"))
                 if p is None:
                     continue
                 out.append({"field": field, "period_type": period_type,

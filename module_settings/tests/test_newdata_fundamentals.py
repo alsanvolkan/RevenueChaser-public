@@ -58,3 +58,11 @@ def test_the_wrds_difference_slot_is_the_newest_monthly_report():
     html = report.render_settings_dashboard({"newdata": data, "rows": []})
     card = html[html.index('data-dataset="wrds/fundq" data-status'):]
     assert "3 revision(s) in the snapshot of 2026-10-27" in card[:card.index('<div class="nd-card', 10)]
+
+
+def test_editing_one_cards_wrds_slot_leaves_the_others():
+    # The Opus review's N3: the "no WRDS run yet" slot was one module-level dict shared by every card.
+    data = newdata.collect(NOW)
+    _card(data, "wrds/funda")["wrds"]["text"] = "edited"
+    assert _card(data, "sec/companyfacts")["wrds"] == {"text": "no WRDS run yet"}
+    assert newdata.NO_WRDS == {"text": "no WRDS run yet"}

@@ -39,6 +39,11 @@ def _stored_risk_free() -> dict | None:
 
     The DCF's risk-free rate was the 4% constant although the store holds the real yield (Financials review S2).
     Read-only and zero network, so a Refresh reads it too; without it the DCF takes its default and says so.
+
+    The query is the Earnings Radar's (``module_earnings_radar.stored_inputs.dgs10_map``), but the window is looser
+    on purpose (the Opus review's N1): that one pairs daily yields with returns for a beta, so a series three
+    sessions behind is already wrong there. Here one level is read, a ten-year yield moves a few basis points in two
+    weeks, and the fallback is a flat 4%, which is further off than a two-week-old yield; the date is shown.
     """
     from RevenueChaser.core import calendar as market_calendar, rawstore
     try:
