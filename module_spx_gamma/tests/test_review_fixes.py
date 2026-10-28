@@ -121,6 +121,7 @@ def test_run_spxgamma_defaults_to_the_new_york_date(monkeypatch):
     monkeypatch.setattr(dashboard, "_submit", lambda module, params: seen.update(module=module, **params) or ("ok", 200))
     dashboard.app.config["TESTING"] = True
     dashboard.app.test_client().post("/run/spxgamma", headers={"X-RC-Panel": "cli"})
+    seen.pop("builder_request")                    # what the Fetch queued for the builder (PR 3)
     assert seen == {"module": "spxgamma", "asof_date": "2026-08-14"}
 
 

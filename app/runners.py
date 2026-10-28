@@ -1214,22 +1214,23 @@ def spxgamma_view_report() -> Path | None:
     return _SPX_VIEW
 
 
-def run_spxgamma(uw, asof_date: str, force: bool = False) -> Path:
+def run_spxgamma(uw, asof_date: str, force: bool = False, builder_request: dict | None = None) -> Path:
     """Run the SPX Option Position Map (Unusual Whales) for one as-of date.
 
     The module uses the job's own ``uw`` client, so its calls count in the job's provider health.
     A stored past day is rebuilt from disk with no network; ``force`` refetches it (#179 D5).
+    ``builder_request`` is what the route queued for the builder (PR 3); the board says so.
     """
     global _SPX_VIEW
     from RevenueChaser.module_spx_gamma.run import run as spx_run
     from RevenueChaser.module_spx_gamma.config import DATA_ROOT as spx_data_root
 
-    out = spx_run(asof_date, uw=uw, force=force)
+    out = spx_run(asof_date, uw=uw, force=force, builder_request=builder_request)
     _SPX_VIEW = (out or {}).get("paths", {}).get("report_html")
     return spx_data_root / "latest.json"
 
 
-def run_spxgamma_stored(uw, asof_date: str) -> Path:
+def run_spxgamma_stored(uw, asof_date: str, builder_request: dict | None = None) -> Path:
     """Rebuild a stored past SPX day from disk (#179 D5): no UW client, so no auth probe either.
 
     Registered with ``requires_uw=False``; the route sends a date here only when
@@ -1239,7 +1240,7 @@ def run_spxgamma_stored(uw, asof_date: str) -> Path:
     from RevenueChaser.module_spx_gamma.run import refresh
     from RevenueChaser.module_spx_gamma.config import DATA_ROOT as spx_data_root
 
-    out = refresh(asof_date)
+    out = refresh(asof_date, builder_request=builder_request)
     _SPX_VIEW = out["paths"]["report_html"]
     return spx_data_root / "latest.json"
 

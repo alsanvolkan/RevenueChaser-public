@@ -266,6 +266,16 @@ def pin_source_line(snapshot: dict) -> str | None:
             f"all-expiry {_billions(pred.get('pin_dollars_all_expiry'))}, context only. {meta.get('label')}.")
 
 
+def builder_line(snapshot: dict) -> str | None:
+    """The one line a Fetch adds after asking the builder for the board's datasets (PR 3, A4); None otherwise."""
+    req = snapshot.get("builder_request")
+    if not isinstance(req, dict):
+        return None
+    asked = "; ".join(f"{name} {state}" for name, state in sorted((req.get("datasets") or {}).items()))
+    return (f"Market store: builder requested at {req.get('requested_at')} ({asked}); the builder runs hourly at "
+            f":07, and this board shows what is stored now.")
+
+
 def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=None) -> dict:
     levels = snapshot.get("levels", {})
     prev_levels = (prev_snapshot or {}).get("levels", {}) or {}
@@ -503,6 +513,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "pin_line": pin_source_line(snapshot),
         "store_notes": store_notes(snapshot),
         "store_labels": store_labels(snapshot),
+        "builder_line": builder_line(snapshot),
         "iron_butterfly": snapshot.get("iron_butterfly"),
         # ── v3 external panels ──
         "max_pain": _max_pain_rows(snapshot),

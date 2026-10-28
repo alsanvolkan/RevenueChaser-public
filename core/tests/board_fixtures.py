@@ -339,6 +339,7 @@ def _spx_gamma(tmp_path, monkeypatch):
                           "candles": {"stored": False, "label": H("spx_candles_label")},
                           "zero_one_dte": {"stored": False, "label": H("spx_zod_label")}}
     hs["candle_source"] = H("spx_candle_source")
+    hs["builder_request"] = {"requested_at": H("spx_builder_at"), "datasets": {H("spx_builder_ds"): H("spx_state")}}
     return render.render_html(hs)
 
 

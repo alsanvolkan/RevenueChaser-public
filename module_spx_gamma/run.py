@@ -245,7 +245,7 @@ def with_store_inputs(raw: dict, day: str) -> dict:
 
 def build_day(raw: dict, requested_date: str, root: Path, ticker: str = TICKER,
               mode: str = "open_interest", update_latest: bool = True, record: bool = True,
-              write_png: bool = True) -> dict:
+              write_png: bool = True, builder_request: dict | None = None) -> dict:
     """Everything after the fetch: one raw day -> snapshot, charts, report, latest.json, history.
 
     Pure of the network, so Refresh runs it on a stored day. The day is filed under the raw day's
@@ -255,6 +255,7 @@ def build_day(raw: dict, requested_date: str, root: Path, ticker: str = TICKER,
     a Refresh never rewrites the audit file (SPX-4).
     ``write_png=False`` skips the PNG export (a Refresh, #376): PNGs a Fetch wrote stay on disk and
     keep their report reference, but the manifest records no sha256 for a PNG this run did not write.
+    ``builder_request`` is what a Fetch queued for the builder (PR 3, A4); the board says so in one line.
     """
     asof_date = (raw.get("_meta") or {}).get("effective_date") or requested_date
     history_path = root / HISTORY_FILENAME
@@ -262,6 +263,7 @@ def build_day(raw: dict, requested_date: str, root: Path, ticker: str = TICKER,
 
     snapshot = normalize_snapshot(with_store_inputs(raw, asof_date), asof_date, ticker=ticker, mode=mode)
     snapshot["historical_live_files"] = _historical_live_files(root / "raw" / asof_date)
+    snapshot["builder_request"] = builder_request
 
     parsed_dir = root / "parsed" / asof_date
     parsed_dir.mkdir(parents=True, exist_ok=True)
@@ -385,7 +387,8 @@ def serves_from_disk(asof_date: str, data_root=None) -> bool:
 
 
 def run(asof_date: str, data_root=None, token: str | None = None, mode: str = "open_interest",
-        ticker: str = TICKER, fetch_all_expiries: bool = True, uw=None, force: bool = False) -> dict:
+        ticker: str = TICKER, fetch_all_expiries: bool = True, uw=None, force: bool = False,
+        builder_request: dict | None = None) -> dict:
     """Run the full pipeline for one asof date; returns paths + snapshot.
 
     ``uw`` is the job's ``UWClient`` (the dashboard passes it, so its call accounting and breaker
@@ -398,7 +401,7 @@ def run(asof_date: str, data_root=None, token: str | None = None, mode: str = "o
     """
     root = Path(data_root) if data_root else DATA_ROOT
     if not force and serves_from_disk(asof_date, root):
-        return refresh(asof_date, data_root=root, ticker=ticker, mode=mode)
+        return refresh(asof_date, data_root=root, ticker=ticker, mode=mode, builder_request=builder_request)
     if uw is None:
         tok = token if token is not None else UW_API_TOKEN
         if not tok:
@@ -413,7 +416,7 @@ def run(asof_date: str, data_root=None, token: str | None = None, mode: str = "o
     effective = (raw.get("_meta") or {}).get("effective_date") or asof_date
     newest = latest_stored_day(root)
     result = build_day(raw, asof_date, root, ticker=ticker, mode=mode,
-                       update_latest=newest is None or effective >= newest)
+                       update_latest=newest is None or effective >= newest, builder_request=builder_request)
 
     # Backfill of missing recent GEX history days (idempotent, ~2 weeks) comes last: it is
     # many UW calls and the requested report must not wait for, or fail on, them.
@@ -435,7 +438,7 @@ def latest_stored_day(root: Path) -> str | None:
 
 
 def refresh(day: str | None = None, data_root=None, ticker: str = TICKER,
-            mode: str = "open_interest") -> dict | None:
+            mode: str = "open_interest", builder_request: dict | None = None) -> dict | None:
     """Rebuild a stored day's snapshot, charts and report from disk with no network.
 
     ``day`` defaults to the newest stored raw day. Returns the same dict as :func:`run`, or None
@@ -447,4 +450,5 @@ def refresh(day: str | None = None, data_root=None, ticker: str = TICKER,
         return None
     raw = load_raw_day(root / "raw" / day)
     return build_day(raw, day, root, ticker=ticker, mode=mode,
-                     update_latest=(day == latest_stored_day(root)), record=False, write_png=False)
+                     update_latest=(day == latest_stored_day(root)), record=False, write_png=False,
+                     builder_request=builder_request)

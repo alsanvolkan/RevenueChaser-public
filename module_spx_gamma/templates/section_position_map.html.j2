@@ -226,7 +226,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 </head>
 <body>
 <div class="header">{{ header.ticker }} &middot; Price {{ header.price_source }} &middot; Report date {{ header.report_date }} &middot; Sessions {{ header.sessions }} &middot; Last sync: {{ header.last_sync }}&nbsp;EOD &middot; {{ header.source }}</div>
-{{ provider_banner }}{{ quality_banner }}{{ help_block }}
+{{ provider_banner }}{{ quality_banner }}{% if builder_line %}<div class="note store-source">{{ builder_line }}</div>{% endif %}{{ help_block }}
 
 {% if prediction and prediction.bias %}
 <div class="prediction-container">

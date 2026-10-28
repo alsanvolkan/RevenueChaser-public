@@ -146,7 +146,9 @@ def test_the_route_sends_a_stored_past_day_to_the_no_uw_job(board, two_days, mon
     from RevenueChaser.app import dashboard
 
     seen = []
-    monkeypatch.setattr(dashboard, "_submit", lambda module, params: seen.append((module, params)) or ("ok", 200))
+    # builder_request (what the Fetch queued for the builder, PR 3) is set aside: this test is about the job.
+    monkeypatch.setattr(dashboard, "_submit", lambda module, params: seen.append(
+        (module, {k: v for k, v in params.items() if k != "builder_request"})) or ("ok", 200))
     (two_days / "raw" / OLD / "manifest.json").rename(two_days / "raw" / OLD / "manifest.bak")
     board.post("/run/spxgamma", data={"date": OLD}, headers={"X-RC-Panel": "cli"})       # no complete day
     (two_days / "raw" / OLD / "manifest.bak").rename(two_days / "raw" / OLD / "manifest.json")
