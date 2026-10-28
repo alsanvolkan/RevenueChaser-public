@@ -92,6 +92,20 @@ def test_a_company_that_filed_has_its_list_read_again_and_its_new_report_fetched
     assert fx.q("SELECT submissions_as_of FROM fundamental_company WHERE ticker = 'MSFT'") == [(date(2026, 10, 28),)]
 
 
+def test_a_filing_made_during_an_outage_longer_than_the_lookback_is_still_listed(sec):
+    # The Opus review's S1, for the filing list: read on 1 Sep, an 8-K filed on 13 Oct, the next run on 28 Oct.
+    _msft(sec)
+    fx.run(filings.NAME, mode="backfill", to="2026-09-01")
+    eight_k = ("0000950170-26-100002", "8-K", "2026-10-13", "2026-10-13", "msft-8k.htm", "2.02")
+    sec.routes.clear()
+    _msft(sec, rows=[eight_k] + fx.MSFT_FILINGS)
+    fx.sec_routes(sec, {}, {"20261013": fx.daily_index([("789019", "MICROSOFT CORP", "8-K", "20261013", eight_k[0])])})
+    check = fx.run(filings.NAME, "2026-10-28")
+    assert check["result"] == "changed", check["note"]
+    assert fx.q(f"SELECT item FROM filing_item WHERE accession = '{eight_k[0]}'") == [("2.02",)]
+    assert fx.q("SELECT submissions_as_of FROM fundamental_company WHERE ticker = 'MSFT'") == [(date(2026, 10, 28),)]
+
+
 def test_a_40f_filer_is_a_named_miss(sec):
     fx.filing_routes(sec, {"1094517": fx.submissions(1094517, [
         ("0001193125-25-150000", "40-F", "2025-06-25", "2025-03-31", "tm-40f.htm", "")])})

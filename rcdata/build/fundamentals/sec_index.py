@@ -9,6 +9,13 @@ Raw: ``raw/sec/daily_index/<date>.idx.gz`` with a ``.meta.json`` sidecar, shared
 first to need a day fetches it; a raw file that exists is not fetched again). A 404 for a day before yesterday writes
 ``<date>.absent.json`` (no index will come: a holiday), so it is not asked again; a 404 for yesterday or today writes
 nothing (the index may not be published yet). Weekends are never asked.
+
+**The scan window.** A run reads the last ``LOOKBACK_DAYS`` days, or further back when it has to: a dataset that
+reads the index writes ``raw/<dataset>/_scanned.json`` (the last day a run of it read whole) at the end of each run,
+and the next run starts the day after it (``lookback``). Without that file (a dataset only backfilled so far), the
+start is the day after the oldest newest read the caller names. So a builder that was down for three weeks still
+reads the filings of those three weeks (the Opus review's S1), up to ``MAX_LOOKBACK_DAYS`` back; a filing older than
+that is not read, and the company's statements show as stale in the check.
 """
 from __future__ import annotations
 
@@ -16,12 +23,15 @@ import re
 import time
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Callable
 
 from .. import base
 from . import common
 
 DATASET_DIR = "sec/daily_index"
 LOOKBACK_DAYS = 7
+MAX_LOOKBACK_DAYS = 120
+SCANNED = "_scanned.json"
 _FILE = re.compile(r"(\d{10}-\d{2}-\d{6})\.txt$")
 
 
@@ -42,6 +52,29 @@ def days(as_of: date, lookback: int = LOOKBACK_DAYS) -> list[date]:
     """The weekdays from ``as_of - lookback`` to ``as_of``, oldest first."""
     out = [as_of - timedelta(days=n) for n in range(lookback, -1, -1)]
     return [d for d in out if d.weekday() < 5]
+
+
+def lookback(ctx: base.RunContext, dataset: str, as_of: date, since: Callable[[], date | None]) -> int:
+    """How many days before ``as_of`` a run of ``dataset`` reads: back to the day after its last whole scan
+    (``_scanned.json``; ``since()`` when it has none), never fewer than ``LOOKBACK_DAYS`` nor more than
+    ``MAX_LOOKBACK_DAYS``. A widened or capped window is said in the run's note."""
+    path = common.raw_dir(dataset) / SCANNED
+    last = date.fromisoformat(base.read_raw_json(path)["through"]) if path.exists() else since()
+    gap = (as_of - last).days - 1 if last else 0
+    if gap <= LOOKBACK_DAYS:
+        return LOOKBACK_DAYS
+    if gap > MAX_LOOKBACK_DAYS:
+        ctx.notes.append(f"daily index read for {MAX_LOOKBACK_DAYS} days only (last whole scan {last}): a filing "
+                         f"before {as_of - timedelta(days=MAX_LOOKBACK_DAYS)} is not read")
+        return MAX_LOOKBACK_DAYS
+    ctx.notes.append(f"daily index read for {gap} days (last whole scan {last})")
+    return gap
+
+
+def mark_scanned(ctx: base.RunContext, dataset: str, through: date) -> None:
+    """Record that a run of ``dataset`` read every filing through ``through`` (its next run starts the day after)."""
+    base.write_raw_json(common.raw_dir(dataset) / SCANNED, {"through": through.isoformat(), "run_id": ctx.run_id,
+                                                            "written_at": time.time()})
 
 
 def fetch_day(ctx: base.RunContext, day: date, as_of: date) -> Path | None:

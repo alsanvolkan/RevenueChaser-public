@@ -1153,6 +1153,11 @@ cache, which the boards still read until their move (G6).
 | `wrds/segments` | monthly, attended | `comp_segments_hist_daily.wrds_segmerged` and `seg_customer`, five years, the newest source date per key | `stg_wrds_segments`, `stg_wrds_customers` |
 | `fundamentals/tables` | daily | none: builds the served tables, the views, the peer groups and the build issues from the staging tables | the tables below |
 
+**A builder that was down still reads what was filed meanwhile.** `sec/companyfacts` and `sec/filings` read the
+SEC daily index of the last 7 days, or back to the day after their last whole run when that is longer ago (the run
+writes `raw/sec/<name>/_scanned.json` at its end; without one, the day after the oldest newest read), at most 120
+days back. A widened or capped window is said in the run's note.
+
 **Every value carries its filing.** A served fact has its accession, filed date and form; a value the SEC
 extraction (`core/providers/sec_edgar.py`, so a value here is the value the boards read today) keeps no provenance
 for gets the newest fact of its concepts on the period end, and a value still without one is not served. Total debt

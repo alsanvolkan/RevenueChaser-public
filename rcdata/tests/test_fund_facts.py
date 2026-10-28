@@ -3,13 +3,14 @@ period type, total debt from the filer's debt lines, the re-read on the filing d
 from __future__ import annotations
 
 from datetime import date
+from types import SimpleNamespace
 
 import duckdb
 import pytest
 
 from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.rcdata import ops
-from RevenueChaser.rcdata.build.fundamentals import companyfacts, facts, tables
+from RevenueChaser.rcdata.build.fundamentals import companyfacts, facts, sec_index, tables
 
 from . import fund_fixture as fx
 
@@ -188,6 +189,46 @@ def test_a_statement_filed_yesterday_is_read_again_today(sec):
     fx.run(companyfacts.NAME, "2026-10-29")
     again = [str(r.url).rsplit("master.", 1)[1][:8] for r in sec.calls("daily-index")][len(days):]
     assert again == ["20261028", "20261029"]          # a past holiday's 404 is not asked again; the last two are
+
+
+@pytest.mark.parametrize("last, days, note", [
+    ("2026-10-27", 7, None),                                              # yesterday's run: the 7-day floor
+    ("2026-09-01", 56, "daily index read for 56 days (last whole scan 2026-09-01)"),
+    ("2026-03-01", 120, "daily index read for 120 days only (last whole scan 2026-03-01): a filing before "
+                        "2026-06-30 is not read"),
+])
+def test_the_index_is_read_from_the_day_after_the_last_whole_scan(last, days, note):
+    ctx = SimpleNamespace(notes=[], run_id="test")
+    sec_index.mark_scanned(ctx, "sec/scan_test", date.fromisoformat(last))
+    assert sec_index.lookback(ctx, "sec/scan_test", date(2026, 10, 28), lambda: date(2020, 1, 1)) == days
+    assert ctx.notes == ([note] if note else [])
+
+
+def test_without_a_scan_mark_the_index_is_read_from_the_oldest_newest_read():
+    ctx = SimpleNamespace(notes=[], run_id="test")
+    assert sec_index.lookback(ctx, "sec/no_mark", date(2026, 10, 28), lambda: date(2026, 10, 1)) == 26
+    assert sec_index.lookback(ctx, "sec/no_mark", date(2026, 10, 28), lambda: None) == sec_index.LOOKBACK_DAYS
+
+
+def test_a_filing_made_during_an_outage_longer_than_the_lookback_is_still_read(sec):
+    # The Opus review's S1: the facts were read on 1 Sep, the builder stopped, MSFT filed on 13 Oct, and the next
+    # run is 28 Oct (15 days later, past the 7-day lookback). That run still reads the 13 Oct index.
+    _answers(sec)
+    fx.run(companyfacts.NAME, mode="backfill", to="2026-09-01")
+    sec.routes.clear()
+    _answers(sec, msft=fx.msft_facts(with_new_quarter=True))
+    fx.sec_routes(sec, {}, {"20261013": fx.daily_index([("789019", "MICROSOFT CORP", "10-Q", "20261013", fx.Q27)])})
+    check = fx.run(companyfacts.NAME, "2026-10-28")
+    assert check["result"] == "changed", check["note"]
+    assert "daily index read for 56 days (last whole scan 2026-09-01)" in check["note"]
+    assert fx.q("SELECT accn FROM fundamental_fact WHERE cik = '789019' AND field = 'revenue' "
+                "AND period_type = 'quarterly' AND period_end = DATE '2026-09-30'") == [(fx.Q27,)]
+    days = [str(r.url).rsplit("master.", 1)[1][:8] for r in sec.calls("daily-index")]
+    assert days[0] == "20260902" and days[-1] == "20261028"              # from the day after the last read
+    assert "daily index read for" not in fx.run(companyfacts.NAME, "2026-10-29")["note"]
+    again = [str(r.url).rsplit("master.", 1)[1][:8] for r in sec.calls("daily-index")][len(days):]
+    assert again == ["20261027", "20261028", "20261029"]   # the scan is recorded: the 7-day window again (the 27th
+    #                                                        answered 404 as yesterday, so it is asked again)
 
 
 def test_an_accession_not_in_the_xbrl_api_yet_is_asked_again_the_next_day(sec):

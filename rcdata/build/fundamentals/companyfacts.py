@@ -2,12 +2,14 @@
 
 The old store read a company's facts once and never again (``edgar_financials`` has no expiry, the root of the
 Fundamentals review's F3). Here the trigger is the SEC daily index (``sec_index.py``): a run reads the indexes of the
-last ``sec_index.LOOKBACK_DAYS`` days and re-reads ``GET <RC_SEC_DATA_BASE>/api/xbrl/companyfacts/CIK<10 digits>.json``
-for every Tier A company that filed a statement form (``facts.STATEMENT_FORMS``) whose accession its newest stored
-facts do not hold yet. The SEC's XBRL API can lag a filing by hours: an accession still missing after the re-read is
-``pending`` (the run's note) and asked again by the next day's run, while the filing is inside the lookback. A Tier A
-company with no stored facts at all is read too, up to ``NEW_PER_RUN`` a run (a new name; the first fill is the
-backfill). Requests are spaced under 5 a second (``common.SEC_INTERVAL_S``) and counted against the ``sec`` cap.
+last ``sec_index.LOOKBACK_DAYS`` days, or back to the day after its last whole run when that is longer ago (a builder
+that was down still reads what was filed meanwhile: ``sec_index.lookback``), and re-reads
+``GET <RC_SEC_DATA_BASE>/api/xbrl/companyfacts/CIK<10 digits>.json`` for every Tier A company that filed a statement
+form (``facts.STATEMENT_FORMS``) whose accession its newest stored facts do not hold yet. The SEC's XBRL API can lag a
+filing by hours: an accession still missing after the re-read is ``pending`` (the run's note) and asked again by the
+next day's run, while the filing is inside the last ``sec_index.LOOKBACK_DAYS`` days. A Tier A company with no stored
+facts at all is read too, up to ``NEW_PER_RUN`` a run (a new name; the first fill is the backfill). Requests are
+spaced under 5 a second (``common.SEC_INTERVAL_S``) and counted against the ``sec`` cap.
 
 Backfill (``backfill sec/companyfacts``, no ``--from``): every Tier A company with no stored facts, resumable (a
 company read is not read again).
@@ -51,6 +53,11 @@ def cik_dir(cik: str) -> Path:
 def _raws(cik: str) -> list[Path]:
     folder = cik_dir(cik)
     return sorted(folder.glob("*.json.gz")) if folder.is_dir() else []
+
+
+def _newest_read(cik: str) -> date | None:
+    raws = _raws(cik)
+    return date.fromisoformat(raws[-1].name.split(".", 1)[0]) if raws else None
 
 
 def _absent_since(cik: str) -> date | None:
@@ -118,7 +125,9 @@ class CompanyFacts:
             return []
         tier_a = set(companies)
         wanted: dict[str, set[str]] = {}
-        for f in sec_index.filings(ctx, as_of, forms=set(facts.STATEMENT_FORMS), ciks=tier_a):
+        days = sec_index.lookback(ctx, NAME, as_of, lambda: min(filter(None, map(_newest_read, companies)),
+                                                                default=None))
+        for f in sec_index.filings(ctx, as_of, forms=set(facts.STATEMENT_FORMS), ciks=tier_a, lookback=days):
             wanted.setdefault(f["cik"], set()).add(f["accession"])
         due = {cik: accs - _held(cik) for cik, accs in wanted.items()}
         due = {cik: accs for cik, accs in due.items() if accs}
@@ -139,6 +148,7 @@ class CompanyFacts:
         if pending:
             ctx.notes.append(f"{len(pending)} accession(s) not in the XBRL API yet, asked again next run: "
                              + ", ".join(pending[:5]))
+        sec_index.mark_scanned(ctx, NAME, as_of)
         return out
 
     @staticmethod

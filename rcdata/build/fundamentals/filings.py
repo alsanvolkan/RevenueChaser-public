@@ -2,7 +2,8 @@
 
 **The filing list.** ``GET <RC_SEC_DATA_BASE>/submissions/CIK<10 digits>.json`` (``filings.recent``: accession, form,
 filing and report dates, primary document, 8-K items), re-read when the SEC daily index (``sec_index.py``) shows the
-company filed anything the stored list does not hold, and for a Tier A company never read, up to ``NEW_PER_RUN`` a
+company filed anything the stored list does not hold (the index read back to the day after the last whole run when
+that is longer ago than a week, ``sec_index.lookback``), and for a Tier A company never read, up to ``NEW_PER_RUN`` a
 run. The day each list was read is served (``fundamental_company.submissions_as_of``), so "no 8-K event" can be told
 from "not read lately" (the Fundamentals review's F2).
 
@@ -91,6 +92,11 @@ def _doc_path(cik: str, accession: str) -> Path:
 def _subs_raws(cik: str) -> list[Path]:
     folder = _subs_dir(cik)
     return sorted(folder.glob("*.json.gz")) if folder.is_dir() else []
+
+
+def _newest_list(cik: str) -> date | None:
+    raws = _subs_raws(cik)
+    return date.fromisoformat(raws[-1].name.split(".", 1)[0]) if raws else None
 
 
 def _held(cik: str) -> set[str]:
@@ -204,7 +210,9 @@ class Filings:
             ctx.notes.append("no Tier A companies yet (no spine file)")
             return []
         filed: dict[str, set[str]] = {}
-        for f in sec_index.filings(ctx, as_of, ciks=set(companies)):
+        days = sec_index.lookback(ctx, NAME, as_of, lambda: min(filter(None, map(_newest_list, companies)),
+                                                                default=None))
+        for f in sec_index.filings(ctx, as_of, ciks=set(companies), lookback=days):
             filed.setdefault(f["cik"], set()).add(f["accession"])
         due = sorted((c for c, accs in filed.items() if accs - _held(c)), key=int)
         new = [c for c in companies if c not in due and not _subs_raws(c)]
@@ -216,6 +224,7 @@ class Filings:
                 docs += read_documents(ctx, cik, raw, as_of)
         ctx.notes.append(f"{len(due)} filing lists re-read, {min(len(new), NEW_PER_RUN)} new, {docs} documents"
                          + (f"; {len(new) - NEW_PER_RUN} new left for the next run" if len(new) > NEW_PER_RUN else ""))
+        sec_index.mark_scanned(ctx, NAME, as_of)
         return out
 
     def backfill(self, ctx: base.RunContext, start: date | None, end: date) -> None:
