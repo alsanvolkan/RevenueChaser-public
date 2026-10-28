@@ -1072,12 +1072,26 @@ def _flow_row(flow: dict) -> str:
             f'<span class="tail"><span class="nowrap">{store}</span>{cov}</span></li>')
 
 
+# The ops.sqlite tables a board reads (PR 4): not store tables, so no dataset claims them.
+OPS_TABLE_LABELS = {"watchlist_stock": "Stock watch list", "watchlist_option": "Option watch list"}
+
+
+def _ops_flow_row(table: str) -> str:
+    t = _html.escape(str(table))
+    return (f'<li class="bflow-row"><span class="prov">You (Opt / Stk)</span>'
+            f'<span class="arrow" aria-hidden="true">→</span>'
+            f'<span class="ds">{_html.escape(OPS_TABLE_LABELS.get(str(table), str(table)))}</span>'
+            f'<span class="tbl">({t})</span>'
+            f'<span class="tail"><span class="muted">ops.sqlite</span></span></li>')
+
+
 def _board_card(card: dict, rows_by_key: dict | None = None) -> str:
     label = _html.escape(str(card.get("label") or card.get("key") or ""))
     state = card.get("state")
     flows = _board_flows(card, rows_by_key or {})
+    ops_rows = "".join(_ops_flow_row(t) for t in card.get("ops_tables") or [])
     reads = ('<h4 class="bflow-cap">What this board reads</h4><ul class="bflow">'
-             + "".join(_flow_row(f) for f in flows) + "</ul>") if flows else ""
+             + "".join(_flow_row(f) for f in flows) + ops_rows + "</ul>") if flows or ops_rows else ""
     params = "".join(f"<li>{_html.escape(str(p))}</li>" for p in (card.get("params") or []))
     win = card.get("window") or {}
     win_txt = " · ".join(f"{_html.escape(k.replace('_', ' '))} {_html.escape(str(v))}"

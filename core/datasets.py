@@ -413,12 +413,15 @@ REGISTRY: tuple[DatasetSpec, ...] = (
                      "owns every history table"),
         freshness=FROM_RUN_LOG, freshness_note=FROM_RUN_LOG_CAVEAT,
     ),
+    # The two watch lists moved to ops.sqlite in PR 4 (rcdata.ops, not a store file here): the raw watchlist tables
+    # stay claimed while the manifest has them, unwritten, until their retirement (PR 21).
     DatasetSpec(
         key="inputs", label="Your inputs (watchlist, board settings)",
         tables=("watchlist", "board_settings", "watchlist_changes", "board_settings_changes"),
         db="raw", source=Source.manual, writer=None,
-        writer_note="the user enters it (LEAPS pin, board settings save); nothing fetches it",
-        freshness=(("watchlist_changes", "run_at"), ("board_settings_changes", "run_at")),
+        writer_note=("the user enters it (board settings save); nothing fetches it. The watch lists are in "
+                     "ops.sqlite since PR 4; watchlist and watchlist_changes here are unwritten"),
+        freshness=("board_settings_changes", "run_at"),
     ),
 
     # --- extended: base tables the 19 rows do not own ---

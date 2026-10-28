@@ -279,3 +279,22 @@ def test_the_swing_params_are_read_from_the_effective_settings_at_call_time(
     board_settings.save("module_swing_potential", {"VOL_CONFIRM": 2.5})
     assert "2.5× the 20-day average" in " | ".join(_card("module_swing_potential")["params"])
 
+
+
+# ── PR 4: the stock watch list is read from ops.sqlite, not the raw store ──
+
+def test_leaps_and_earnings_name_the_stock_watch_list_in_ops_not_the_store_table():
+    leaps, er = _entry("module_leaps"), _entry("module_earnings_radar")
+    assert "watchlist" not in leaps["tables"] and "watchlist" not in er["tables"]
+    assert leaps["ops_tables"] == ["watchlist_stock"] and er["ops_tables"] == ["watchlist_stock"]
+    assert boards._card(leaps)["ops_tables"] == ["watchlist_stock"]
+    assert all(e.get("ops_tables", []) == [] for e in boards.BOARD_INPUTS
+               if e["key"] not in ("module_leaps", "module_earnings_radar"))
+
+
+def test_the_board_card_says_it_reads_the_stock_watch_list_from_ops_sqlite():
+    from RevenueChaser.module_settings import report
+    html = report._board_card(boards._card(_entry("module_leaps")))
+    assert ('<span class="ds">Stock watch list</span><span class="tbl">(watchlist_stock)</span>' in html
+            and "ops.sqlite" in html)
+    assert "not claimed by any dataset" not in html

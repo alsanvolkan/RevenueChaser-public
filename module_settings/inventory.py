@@ -162,7 +162,7 @@ QUERIED_COLUMNS: list[tuple[str, str]] = [
     ("result_runs", "session_date"),
     ("identity_source_cache", "source"), ("identity_source_cache", "ticker"),
     ("identity_source_cache", "fetched_at"), ("identity_source_cache", "status"),
-    ("watchlist_changes", "run_at"), ("board_settings_changes", "run_at"),
+    ("board_settings_changes", "run_at"),
     # the drill's scoring datasets and identifiers (S10, #126)
     ("vendor_financials", "ticker"), ("vendor_financials", "period_end"),
     ("ownership_snapshot", "ticker"), ("ownership_snapshot", "session_date"), ("ownership_snapshot", "source"),
@@ -627,19 +627,26 @@ def _plural(n: int, word: str) -> str:
 
 
 def _inputs_row() -> dict:
-    """The "Your inputs" row (#306, D36): the present watchlist and settings rows (the live tables) and the newest
-    change of either, a removal included (``<table>_changes``). Nothing here can be fetched: the user enters it."""
-    watched, overrides = _count("watchlist"), _count("board_settings")
-    last = _max_date(("watchlist_changes", "run_at"), ("board_settings_changes", "run_at"))
+    """The "Your inputs" row (#306, D36): the two watch lists (ops.sqlite since PR 4, read without creating it) and
+    the present board-settings rows, and the newest change of any of them, a removal included. Nothing here can be
+    fetched: the user enters it."""
+    from RevenueChaser.rcdata import ops
+
+    lists = {k: ops.watch_count(k) for k in ops.WATCH_KINDS}
+    overrides = _count("board_settings")
+    watch_last = _fmt_date(ops.watch_last_change())
+    dates = [d for d in (_max_date(("board_settings_changes", "run_at")), watch_last) if d != DASH]
+    last = max(dates) if dates else DASH
+    watched = sum(lists.values())
     row = {
         "key": "inputs", "label": "Your inputs (watchlist, board settings)",
-        "tables": ["watchlist", "board_settings"],
-        "rows": None if watched is None and overrides is None else (watched or 0) + (overrides or 0),
+        "tables": ["board_settings"],
+        "rows": watched + (overrides or 0),
         "last_date": last, "holes": None, "hole_label": "", "fetch": None,
-        "note": "no inputs yet (pin a ticker on LEAPS or save a board setting)",
+        "note": "no inputs yet (press Opt or Stk next to a ticker on any board, or save a board setting)",
     }
     if last != DASH or watched or overrides:
-        row["note"] = (f"watchlist {_plural(watched or 0, 'ticker')}, "
+        row["note"] = (f"watch lists: {lists['option']} option, {lists['stock']} stock (ops.sqlite); "
                        f"{_plural(overrides or 0, 'setting override')}; last change {last}")
     return row
 

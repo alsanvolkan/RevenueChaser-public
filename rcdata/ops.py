@@ -646,6 +646,18 @@ def last_builder_run() -> dict | None:
     return rows[0] if rows else None
 
 
+def watch_count(kind: str) -> int:
+    rows = _select(f"SELECT count(*) AS n FROM watchlist_{_watch_kind(kind)}")
+    return rows[0]["n"] if rows else 0
+
+
+def watch_last_change() -> float | None:
+    """The newest add or remove on either watch list (epoch seconds), or None; never creates the file."""
+    rows = _select(" UNION ALL ".join(f"SELECT max(at) AS at FROM watchlist_{k}_changes" for k in WATCH_KINDS))
+    stamps = [r["at"] for r in rows if r["at"] is not None]
+    return max(stamps) if stamps else None
+
+
 def watch_rows(kind: str) -> list[dict]:
     """The rows of one watch list, by ticker: ``ticker``, ``added_at`` (epoch seconds), ``added_by``, ``note``."""
     return _select(f"SELECT ticker, added_at, added_by, note FROM watchlist_{_watch_kind(kind)} ORDER BY ticker")
