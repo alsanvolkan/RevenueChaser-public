@@ -18,7 +18,8 @@ LABEL = "Swing"
 # A settings override (#384 SW-S4) replaces its key here, so a saved value versions the ledger rows it produced.
 _HASHED = (
     "MIN_PRICE", "MIN_DOLLAR_VOLUME",
-    "RS_MIN", "ABOVE_52W_LOW", "WITHIN_52W_HIGH", "VOL_CONFIRM", "BREAKOUT_HIGH_PCT", "MOVE_MIN",
+    "RS_MIN", "ABOVE_52W_LOW", "WITHIN_52W_HIGH", "VOL_CONFIRM", "VOL_WINDOW", "VOL_AVG_DAYS", "BREAKOUT_HIGH_PCT",
+    "MOVE_MIN",
     "ADR_MIN", "W_12_1", "W_PROX", "W_CONS", "CONSISTENCY_LOOKBACK", "STOP_ATR", "TARGET_R",
     "ATR_PERIOD", "Q_WEIGHTS", "Q_RULE_TOTALS",
 )

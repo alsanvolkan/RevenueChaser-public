@@ -85,6 +85,8 @@ def test_defaults_reproduce_the_pre_change_output(rawstore_tmp_db, monkeypatch):
     payload = pipeline.build_payload(_rows(), top_n=10)
     payload.pop("generated_at", None)                      # the only clock-dependent field
     payload.pop("settings")                                # the run's thresholds (finding 2), not a result
+    assert payload.pop("selection_version") == config.SELECTION_VERSION
+    golden["payload"].pop("selection_version")             # the model's version moved (5, PR 6), not its output here
     pf = pipeline.prefilter(_prefilter_quotes(monkeypatch))
     assert {"payload": payload,
             "prefilter": {"kept": [r["ticker"] for r in pf.kept], "drops": pf.drops,
@@ -175,7 +177,7 @@ def test_the_gate_text_names_the_threshold_that_is_used(rawstore_tmp_db):
     rs = next(r for r in screeners.evaluate_minervini(_ind(), 75.0, eff=e)["rules"] if r["id"] == "rs_ge_70")
     assert rs["threshold"] == "≥ 80" and rs["label"] == "RS Rating at least 80"
     rules = {r["id"]: r for r in screeners.evaluate_weinstein(_ind(), eff=e)["rules"]}
-    assert rules["volume_confirmation"]["threshold"] == "≥ 2.5× 20-day avg"
+    assert rules["volume_confirmation"]["threshold"] == "≥ 2.5× 20-day avg, best of 5 days"
     q = {r["id"]: r for r in screeners.evaluate_qullamaggie(_ind(), eff=e)["rules"]}
     assert q["large_move"]["threshold"] == "≥ 40%"
     assert q["adr_ge_3"]["threshold"] == "≥ 5%"
@@ -240,8 +242,9 @@ def test_reset_deletes_the_rows_and_the_defaults_are_configs_again(rawstore_tmp_
 
 # ── the model version ───────────────────────────────────────────────────────
 def test_model_version_is_unchanged_at_defaults(rawstore_tmp_db):
-    """The literal from before this slice: an unconfigured board versions exactly what it did."""
-    assert freeze.model_version() == "4+ab881cb0"
+    """The literal from before this slice: an unconfigured board versions exactly what it did (the version, 5
+    since the Weinstein volume window of PR 6, moved with the model; the settings slice still moves nothing)."""
+    assert freeze.model_version() == "5+c94564a9"
 
 
 def test_a_saved_override_moves_the_model_version_and_reset_restores_it(rawstore_tmp_db):

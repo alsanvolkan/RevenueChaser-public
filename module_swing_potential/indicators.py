@@ -12,6 +12,7 @@ import pandas as pd
 
 from RevenueChaser.core.info_fallback import has_fields, refetch_or_keep
 from RevenueChaser.core.providers import yf_session  # at import: its 401 watcher sees the first .info read (#402)
+from RevenueChaser.module_swing_potential import config
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,22 @@ def _max_move_1_3m(close: pd.Series) -> float | None:
     return best if best > -1.0 else None
 
 
+def _breakout_volume(vol: pd.Series) -> float | None:
+    """Weinstein's volume confirmation (Swing review finding 3, PR 6): the best of the last ``VOL_WINDOW`` sessions'
+    volume, each over the mean of the ``VOL_AVG_DAYS`` sessions before it (itself excluded, so a spike does not
+    inflate its own average). None without enough bars, or when no session of the window has both numbers."""
+    vol = pd.to_numeric(vol, errors="coerce")
+    if len(vol) < config.VOL_WINDOW + config.VOL_AVG_DAYS:
+        return None
+    ratios = []
+    for i in range(len(vol) - config.VOL_WINDOW, len(vol)):
+        day = _to_float(vol.iloc[i])
+        avg = _to_float(vol.iloc[i - config.VOL_AVG_DAYS:i].mean())
+        if day is not None and avg:
+            ratios.append(day / avg)
+    return max(ratios) if ratios else None
+
+
 def compute_indicators(df: pd.DataFrame, spy_df: pd.DataFrame | None = None,
                        returns_df: pd.DataFrame | None = None) -> dict:
     """Compute all raw indicator values for one ticker (plus optional SPY benchmark).
@@ -169,8 +186,7 @@ def compute_indicators(df: pd.DataFrame, spy_df: pd.DataFrame | None = None,
 
     vol = df["Volume"]
     ind["vol_20d"] = _to_float(vol.tail(20).mean())
-    last_vol = _to_float(vol.iloc[-1])
-    ind["vol_ratio"] = (last_vol / ind["vol_20d"]) if (last_vol and ind["vol_20d"]) else None
+    ind["vol_ratio"] = _breakout_volume(vol)
 
     ind["move_max_1_3m"] = _max_move_1_3m(rclose)
     mom_12 = _ret(rclose, 252)

@@ -257,7 +257,8 @@ def _render(payload: dict, inline: bool) -> tuple[str, dict | None]:
     funnel_html = funnel_mod.funnel_panel_html(funnel_mod.from_dict(payload.get("funnel_steps")),
                                                panel_id="swing-funnel")
     # The stored payload's scoring version decides the method toggles (#384 SW-S1): a Fetch before v4 has none.
-    current_version = payload.get("selection_version") == config.SELECTION_VERSION
+    version = str(payload.get("selection_version") or "")
+    current_version = version.isdigit() and int(version) >= 4   # v5 (review 3) changed the volume rule, not the toggles
     run = _run_settings(payload)
     universe_prov = universe_provenance_html(
         payload.get("universe_generated_at"), payload.get("universe_refreshed_by"),
@@ -557,7 +558,7 @@ function start(){
           <td>Price above 150 &amp; 200-day MA · 150&gt;200-day MA · 200-day MA rising · 50&gt;150-day MA · price above 50-day MA · ≥{_pct(config.ABOVE_52W_LOW - 1)} above 52-week low · within {_pct(1 - config.WITHIN_52W_HIGH)} of 52-week high · RS rating ≥ {run.rs_min:g}</td>
           <td>7/7 price rules required; RS rating ≥ {run.rs_min:g} ranks, does not decide</td></tr>
         <tr><td><b>Weinstein Stage</b></td>
-          <td>Price above 30-week MA · 30-week MA rising · overhead breakout (≥{_pct(run.breakout_high_pct)} of 52w high) · volume ≥{run.vol_confirm:g}× average · 3-month RS &gt; SPY</td>
+          <td>Price above 30-week MA · 30-week MA rising · overhead breakout (≥{_pct(run.breakout_high_pct)} of 52w high) · volume ≥{run.vol_confirm:g}× average on one of the last {config.VOL_WINDOW} sessions · 3-month RS &gt; SPY</td>
           <td>5/5 required</td></tr>
         <tr><td><b>Qullamaggie</b></td>
           <td>Preceding move ≥{_pct(run.move_min)} (1–3 mo) · price above 10 &amp; 20-day EMA · 10&gt;20-day EMA · EMAs rising · ADR ≥{_pct(run.adr_min)}</td>
