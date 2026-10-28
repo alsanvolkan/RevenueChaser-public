@@ -40,3 +40,10 @@ def test_a_positive_ebitda_keeps_the_ratio():
 def test_missing_debt_or_cash_is_not_net_cash():
     q = _quality_metrics(_year(ebit=-80.0, debt=None, cash=300.0))
     assert q["net_cash"] is None and _rule(q)["passed"] is None
+
+
+def test_net_cash_with_no_ebitda_figure_stays_unknown():
+    """Opus review S5: the rule passes on net cash only when EBITDA is known and ≤ 0, as the finding and the PR say.
+    A firm whose EBIT is not reported has no EBITDA at all; that is a missing input, not a loss year."""
+    q = _quality_metrics(_year(ebit=None, debt=100.0, cash=300.0))
+    assert q["net_cash"] is None and _rule(q)["passed"] is None

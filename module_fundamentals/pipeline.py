@@ -337,10 +337,11 @@ def _quality_metrics(annual: list[dict]) -> dict:
 
     ebitda = (ebit + dep) if (ebit is not None and dep is not None) else ebit
     liquid, _basis = liquid_assets(a)  # cash + short-term investments of this record (#187)
-    if debt is not None and liquid is not None:
-        # Review N1: more cash than debt is no leverage, whatever the EBITDA; the ratio itself needs EBITDA > 0.
+    if debt is not None and liquid is not None and ebitda is not None:
+        # Review N1: more cash than debt is no leverage in a loss year (EBITDA known and <= 0); the ratio itself
+        # needs EBITDA > 0. No EBITDA figure at all is a missing input and stays unknown (Opus review S5).
         out["net_cash"] = debt - liquid <= 0
-        if ebitda is not None and ebitda > 0:
+        if ebitda > 0:
             out["net_debt_ebitda"] = (debt - liquid) / ebitda
 
     if ebit is not None and debt is not None and eq is not None and cash is not None:
