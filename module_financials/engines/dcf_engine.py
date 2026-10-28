@@ -258,9 +258,10 @@ def run_dcf(financials: dict, assumptions: dict | None = None) -> dict:
         return pv_tv / ev if pv_tv is not None and ev is not None and ev > 0 else None
 
     implied_exit_multiple = gordon_tv / last_ebitda if gordon_tv is not None and last_ebitda > 0 else None
-    # The Gordon growth that gives the exit value: TV = FCFF (1 + g) / (WACC - g)  =>  g = (TV WACC - FCFF) / (TV + FCFF)
+    # The Gordon growth giving the exit value: TV = FCFF (1 + g) / (WACC - g), so g = (TV WACC - FCFF) / (TV + FCFF),
+    # below the WACC exactly when the last FCFF is above zero; otherwise no Gordon growth gives that value (unknown).
     implied_growth = ((exit_tv * wacc - last_fcff) / (exit_tv + last_fcff)
-                      if exit_tv > 0 and exit_tv + last_fcff > 0 else None)
+                      if exit_tv > 0 and last_fcff > 0 else None)
 
     # One fiscal year, and missing is unknown: debt and cash come from the latest year only, and
     # without both there is no net debt, so no equity value or per-share value (#173 M15).

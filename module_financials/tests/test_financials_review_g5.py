@@ -301,6 +301,15 @@ def test_the_dcf_says_the_terminal_share_and_the_implied_multiple_and_growth(fin
         assert row in html
 
 
+def test_a_negative_last_free_cash_flow_implies_no_growth(financials):
+    """The Opus review's S3: with the last FCFF below zero the formula gives a growth above the WACC (35% here, from
+    a 90% capex), which no Gordon model admits. Unknown, not an impossible number."""
+    res = run_dcf(financials, {"capex_pct_rev": 0.9})
+    tv, last = res["terminal_value"], res["projection"][-1]
+    assert last["fcff"] < 0 < tv["exit_multiple"]
+    assert tv["implied_growth"] is None
+
+
 def test_no_gordon_value_means_no_implied_multiple(financials):
     tv = run_dcf(financials, {"terminal_growth": 0.5})["terminal_value"]
     assert tv["gordon"] is None and tv["implied_exit_multiple"] is None and tv["share_of_ev_gordon"] is None
