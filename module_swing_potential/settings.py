@@ -7,9 +7,16 @@ a user saved lives in ``board_settings``, and *Reset* deletes it.
 
 A store that cannot be read (a locked file, a pre-#40 store) is the defaults, never an exception: the board
 still scans.
+
+One Fetch scores with one read (Fable review of Swing, 28 Oct 2026, finding 2): ``run_scan`` resolves the settings
+once and pins them for the run (``pinned``), so the prefilter, the gates, the stored rows and the payload agree even
+when a value is saved mid-Fetch; the payload keeps them (``Effective.payload``), and the card and the forecast
+ledger read them back from there (``from_payload``) rather than from the store at render or freeze time.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -37,6 +44,7 @@ class Effective:
     target_r: float
     custom: bool
     overridden: tuple = ()
+    overrides: tuple = ()          # (config name, stored value) of each override, as read: the ledger hashes these
 
     def prefilter_cfg(self) -> SimpleNamespace:
         """The ``cfg`` ``core.screen_common.prefilter`` reads (it knows only these two names)."""
@@ -50,8 +58,32 @@ class Effective:
             "breakout_high_pct": self.breakout_high_pct, "move_min": self.move_min,
             "adr_min": self.adr_min, "w_prox": self.w_prox, "w_cons": self.w_cons,
             "stop_atr": self.stop_atr, "target_r": self.target_r,
-            "custom": self.custom, "overridden": list(self.overridden),
+            "custom": self.custom, "overridden": list(self.overridden), "overrides": dict(self.overrides),
         }
+
+
+_FIELDS = ("min_price", "min_dollar_volume", "rs_min", "vol_confirm", "breakout_high_pct", "move_min", "adr_min",
+           "w_prox", "w_cons", "stop_atr", "target_r")
+_RUN: ContextVar[Effective | None] = ContextVar("swing_run_settings", default=None)
+
+
+@contextmanager
+def pinned(e: Effective):
+    """``effective()`` and ``stored_overrides()`` answer ``e`` inside the block: one Fetch, one read of the store."""
+    token = _RUN.set(e)
+    try:
+        yield e
+    finally:
+        _RUN.reset(token)
+
+
+def from_payload(settings: dict | None) -> Effective | None:
+    """The ``Effective`` a payload's ``settings`` recorded, or ``None`` for a payload from before it kept them."""
+    if not isinstance(settings, dict) or any(settings.get(f) is None for f in _FIELDS):
+        return None
+    overrides = settings.get("overrides") or {}
+    return Effective(**{f: float(settings[f]) for f in _FIELDS}, custom=bool(settings.get("custom")),
+                     overridden=tuple(settings.get("overridden") or ()), overrides=tuple(overrides.items()))
 
 
 def _stored() -> dict:
@@ -72,7 +104,11 @@ def _num(values: dict, key: str, default) -> float:
 
 
 def effective() -> Effective:
-    """Resolve the thresholds for one run, from the store overlaid on the config defaults."""
+    """Resolve the thresholds for one run, from the store overlaid on the config defaults (the pinned run's, inside
+    ``pinned``)."""
+    run = _RUN.get()
+    if run is not None:
+        return run
     vals = _stored()
     v = vals.get("values") or {}
     return Effective(
@@ -89,11 +125,15 @@ def effective() -> Effective:
         target_r=_num(v, "TARGET_R", config.TARGET_R),
         custom=bool(vals.get("overridden")),
         overridden=tuple(vals.get("overridden") or ()),
+        overrides=tuple((k, v[k]) for k in vals.get("overridden") or () if k in v),
     )
 
 
 def stored_overrides() -> dict:
     """Only the keys a user overrode (never a default): what the forecast ledger's model version hashes."""
+    run = _RUN.get()
+    if run is not None:
+        return dict(run.overrides)
     vals = _stored()
     v = vals.get("values") or {}
     return {k: v[k] for k in vals.get("overridden") or () if k in v}

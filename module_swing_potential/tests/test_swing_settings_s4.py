@@ -80,10 +80,13 @@ def test_defaults_reproduce_the_pre_change_output(rawstore_tmp_db, monkeypatch):
     """``golden_swing_defaults_s4.json`` was captured from the code before #384 SW-S4.
 
     The payload (picks, gates, quality, momentum, levels, counts) and the prefilter's kept/drops are identical
-    at defaults: a setting nobody saved cannot change a result."""
+    at defaults: a setting nobody saved cannot change a result. The payload has since gained ``settings`` (the
+    thresholds it was scored with, Fable review of Swing 28 Oct 2026, finding 2): checked here to be the defaults,
+    and kept out of the golden comparison."""
     golden = json.loads(_GOLDEN.read_text(encoding="utf-8"))
     payload = pipeline.build_payload(_rows(), top_n=10)
     payload.pop("generated_at", None)                      # the only clock-dependent field
+    assert payload.pop("settings") == _settings().effective().payload()
     pf = pipeline.prefilter(_prefilter_quotes(monkeypatch))
     assert {"payload": payload,
             "prefilter": {"kept": [r["ticker"] for r in pf.kept], "drops": pf.drops,

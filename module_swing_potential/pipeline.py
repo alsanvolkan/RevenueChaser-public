@@ -230,6 +230,7 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
         "generated_at": _now(),
         "data_as_of": run_stats.get("data_as_of"),
         "selection_version": config.SELECTION_VERSION,
+        "settings": e.payload(),          # the thresholds it was scored with: the card and the ledger read these
         "regime": regime,
         "universe_total": run_stats.get("raw_universe", len(results)),
         "universe_generated_at": run_stats.get("universe_generated_at"),
@@ -279,21 +280,22 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
 
     from . import scores
     # Without a sink the one-argument call stays as it was (stand-ins of ``scores.persist`` keep working);
-    # each of prefilter / build_payload / persist resolves the effective settings (#384 SW-S4) once itself.
+    # prefilter / build_payload / persist each ask for the effective settings (#384 SW-S4) and get the run's one read.
     persist = scores.persist if rows_sink is None else (lambda results: scores.persist(results, sink=rows_sink))
     # This Fetch's Yahoo reads only (#80). A Refresh serves the stored payload, which already carries the key.
     if not no_fetch:
         yfp.reset_health()
     # The funnel names the floors the prefilter drops on: the effective settings, not config's defaults (Fable
-    # review of Swing, 28 Oct 2026, finding 1).
+    # review of Swing, 28 Oct 2026, finding 1). One read for the whole Fetch, pinned while it runs (finding 2).
     e = swing_settings.effective()
-    payload = screen_common.run_screen(
-        board="swing", refreshed_by="Swing Potential", cfg=e.prefilter_cfg(),
-        load_universe=fetch_universe_stats, prefilter=prefilter,
-        load_spy=lambda: screen_common.load_spy(lambda: load_ohlc("SPY", ttl_days=0.5, no_fetch=no_fetch)),
-        compute_row=_compute_row, build_payload=build_payload, persist=persist,
-        top_n=top_n, refresh_universe=refresh_universe, no_fetch=no_fetch,
-        history_board="module_swing_potential", saved=config.SWING_JSON)
+    with swing_settings.pinned(e):
+        payload = screen_common.run_screen(
+            board="swing", refreshed_by="Swing Potential", cfg=e.prefilter_cfg(),
+            load_universe=fetch_universe_stats, prefilter=prefilter,
+            load_spy=lambda: screen_common.load_spy(lambda: load_ohlc("SPY", ttl_days=0.5, no_fetch=no_fetch)),
+            compute_row=_compute_row, build_payload=build_payload, persist=persist,
+            top_n=top_n, refresh_universe=refresh_universe, no_fetch=no_fetch,
+            history_board="module_swing_potential", saved=config.SWING_JSON)
     if not no_fetch:
         payload["provider_health"] = yfp.health()
     return payload
