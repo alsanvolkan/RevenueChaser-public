@@ -497,7 +497,7 @@ def universe_provenance_html(generated_at, refreshed_by, partial: bool = False) 
     """Shared-universe provenance line for a report header.
 
     **On the identity spine** (``universe.spine_provenance``, build plan PR 6) the line names the spine, the sources it
-    is built from, the day of the SEC file and the day of its last build (or check). The names no longer come from the
+    is built from, the day of the SEC file and when the live spine file was built. The names no longer come from the
     shared universe cache, so ``refreshed_by`` / ``generated_at`` describe only what that cache still feeds, the market
     caps, and ``partial`` says those caps are partly stale (the last Yahoo pull did not complete, #146).
 
@@ -516,13 +516,12 @@ def universe_provenance_html(generated_at, refreshed_by, partial: bool = False) 
             ts = str(generated_at or "")
     spine = spine_provenance()
     if spine is not None:
-        built = "built" if spine.get("result") == "changed" else "checked"
         parts = ['Universe: <b style="color:var(--text)">identity spine</b> '
                  "(SEC company tickers, OpenFIGI, Compustat, index fund files)"]
         if spine.get("source_as_of"):
             parts.append("SEC file of " + html.escape(str(spine["source_as_of"])))
-        if spine.get("checked_on"):
-            parts.append(f"{built} " + html.escape(str(spine["checked_on"])))
+        if spine.get("built_at"):
+            parts.append("built " + html.escape(str(spine["built_at"])))
         if refreshed_by:
             parts.append('market caps refreshed by <b style="color:var(--text)">' + html.escape(refreshed_by) + "</b>"
                          + ((" " + html.escape(ts)) if ts else ""))

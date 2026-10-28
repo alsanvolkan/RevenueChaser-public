@@ -110,14 +110,32 @@ def _spine() -> bool:
 
 
 def spine_provenance() -> dict | None:
-    """The spine build the boards read: ``{checked_on, result, source_as_of, rows}`` of ``spine/security``'s newest
-    check that is not a skip (``result`` ``changed``: built that day; ``unchanged``: checked, nothing new), or None
-    while the boards read the old store. ``source_as_of`` is the SEC file's day."""
+    """The spine the boards read: ``{built_at, source_as_of}``, or None while the boards read the old store.
+
+    ``built_at`` is when the live ``spine.duckdb`` was built (its swap, ``YYYY-MM-DD HH:MM UTC``), from the file itself:
+    any dataset of the kind rebuilds the whole file, so ``spine/security``'s own check can read "unchanged" for the
+    build that made it (real-data check, PR 6). ``source_as_of`` is the day of the SEC file in it. A value the file
+    does not hold is None."""
     if not _spine():
         return None
-    from ..rcdata import ops
-    last = ops.latest_unskipped_check("spine/security") or {}
-    return {k: last.get(k) for k in ("checked_on", "result", "source_as_of", "rows")}
+    import duckdb
+    from datetime import datetime, timezone
+    from ..rcdata import serving
+    built = as_of = None
+    try:
+        con = serving.open_read(SPINE)
+    except serving.ServingFileMissing:
+        return {"built_at": None, "source_as_of": None}
+    try:
+        built = con.execute(f"SELECT max(built_at) FROM {serving.VERSION_TABLE}").fetchone()[0]
+        as_of = con.execute("SELECT max(source_as_of) FROM security").fetchone()[0]
+    except duckdb.Error:  # a file without the table: say less, never fail a board header
+        pass
+    finally:
+        con.close()
+    return {"built_at": (datetime.fromtimestamp(built, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                         if built is not None else None),
+            "source_as_of": as_of.isoformat() if as_of is not None else None}
 
 
 def _spine_universe() -> list[dict]:
