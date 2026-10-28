@@ -95,3 +95,14 @@ def test_an_attended_card_has_no_fetch_or_backfill_button():
     assert 'data-nd-act="fetch"' not in wrds and 'data-nd-act="backfill"' not in wrds
     assert "python -m RevenueChaser.rcdata.build backfill" in wrds and 'data-nd-act="pause"' in wrds
     assert "never queued by the schedule (attended)" in wrds
+
+
+def test_the_identity_card_says_which_universe_the_boards_read(monkeypatch):
+    """Should-fix 7: the flag's state and its fallback are on the card."""
+    from RevenueChaser.core import universe
+    monkeypatch.setenv(universe.SOURCE_ENV, "spine")
+    funnel = newdata.collect(NOW)["identity"]
+    assert funnel["universe_source"] == {"requested": "spine", "effective": "store", "reason": "no spine.duckdb yet"}
+    html = report.render_settings_dashboard({"newdata": newdata.collect(NOW), "rows": []})
+    card = html[html.index('id="nd-identity"'):]
+    assert "Boards read" in card and "spine requested, falling back: no spine.duckdb yet" in card

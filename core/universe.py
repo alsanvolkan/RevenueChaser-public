@@ -26,11 +26,13 @@ listed names (Tier A and B, the old membership rule), with the spine's name, sec
 the same two-part rule applied to them; only the market fields (``market_cap``, ``price``, ``quote``) still come
 from the old ``equity_universe``, by ticker, because the spine holds no market data until PR 6. The index badges of
 ``filter_fields`` come from the spine's current membership, under the labels the filter already has (the filter is
-unchanged). The default stays the old store until PR 6.
+unchanged). The default stays the old store until PR 6. With the variable set but no spine file, or a last
+``spine/security`` build that failed, the old store is read and a warning is logged (``source_state``).
 """
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from typing import TYPE_CHECKING
@@ -50,6 +52,7 @@ DEFAULT_MC_MIN = 300_000_000.0
 # The source switch (PR 5): read at call time, so a test or a restart with the variable set changes it.
 SOURCE_ENV = "RC_UNIVERSE_SOURCE"
 SPINE = "spine"
+logger = logging.getLogger(__name__)
 
 UNIVERSE_META_KEY = "__meta__"
 
@@ -64,9 +67,34 @@ TYPE_GROUPS = (
 )
 
 
+_FALLBACK_LOGGED: set[str] = set()
+
+
+def source_state() -> dict:
+    """``{requested, effective, reason}`` of the universe source: ``RC_UNIVERSE_SOURCE=spine`` is honoured only while
+    the spine is there and ``spine/security``'s newest check that is not a skip built it (changed or unchanged);
+    otherwise the old store is read and ``reason`` says why (review should-fix 7). Read at call time."""
+    if (os.getenv(SOURCE_ENV) or "").strip().lower() != SPINE:
+        return {"requested": "store", "effective": "store", "reason": None}
+    from ..rcdata import ops, serving
+    reason = None
+    if not serving.live_path(SPINE).exists():
+        reason = "no spine.duckdb yet"
+    else:
+        last = ops.latest_unskipped_check("spine/security")
+        if last is None:
+            reason = "spine/security has not built yet"
+        elif last["result"] not in ("changed", "unchanged"):
+            reason = f"spine/security's last check {last['result']}"
+    if reason and reason not in _FALLBACK_LOGGED:
+        _FALLBACK_LOGGED.add(reason)
+        logger.warning("%s=%s is set, but the universe falls back to the old store: %s", SOURCE_ENV, SPINE, reason)
+    return {"requested": SPINE, "effective": "store" if reason else SPINE, "reason": reason}
+
+
 def universe_source() -> str:
-    """``"spine"`` when ``RC_UNIVERSE_SOURCE`` says so, else ``"store"`` (the old ``raw.duckdb`` path)."""
-    return SPINE if (os.getenv(SOURCE_ENV) or "").strip().lower() == SPINE else "store"
+    """``"spine"`` when ``RC_UNIVERSE_SOURCE=spine`` and the spine is built, else ``"store"`` (``source_state``)."""
+    return source_state()["effective"]
 
 
 def _spine() -> bool:

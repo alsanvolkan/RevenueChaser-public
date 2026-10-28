@@ -257,6 +257,12 @@ def _spine_counts(con) -> dict:
     return out
 
 
+def _universe_source() -> dict:
+    """Which universe the boards read (``core.universe.source_state``): the flag and its fallback, if any."""
+    from RevenueChaser.core import universe
+    return universe.source_state()
+
+
 def _identity(counts: dict | None) -> dict:
     """The identity funnel card (PR 5, D9): the nested steps SEC file -> listed -> Tier A, then four rows each out of
     Tier A, the drops between, the members per index, and ``spine/security``'s open build issues by kind."""
@@ -439,7 +445,7 @@ def collect(now: datetime | None = None) -> dict:
     return {
         "verified": {"builder_last_run": last_run, "swaps": swaps, "ops_schema": ops.schema_version()},
         "datasets": cards,
-        "identity": _identity(spine_counts),
+        "identity": {**_identity(spine_counts), "universe_source": _universe_source()},
         "queue": ops.read_queue(finished=20),
         "spend": _spend(now),
         "backups": _backups(now),

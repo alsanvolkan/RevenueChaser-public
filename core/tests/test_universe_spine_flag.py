@@ -78,16 +78,38 @@ def test_filter_fields_take_the_index_badges_from_the_spine_membership():
     assert fields["NOPE"]["sector"] == "Unclassified"
 
 
-def test_no_spine_file_yet_is_an_empty_universe_not_an_error(monkeypatch, old_store):
+def test_the_flag_without_a_spine_falls_back_to_the_store_and_says_so(monkeypatch, old_store, caplog):
+    """Should-fix 7: setting the flag a step early must not empty every screener."""
     monkeypatch.setenv(universe.SOURCE_ENV, "spine")
-    assert universe.classification_universe(0) == [] and universe.universe_counts()["scanned_total"] == 0
+    with caplog.at_level("WARNING"):
+        assert universe.universe_source() == "store"
+    assert "OLDONLY" in universe.classification_universe(0)
+    state = universe.source_state()
+    assert state == {"requested": "spine", "effective": "store", "reason": "no spine.duckdb yet"}
+    assert any("RC_UNIVERSE_SOURCE=spine" in r.getMessage() and "falls back" in r.getMessage() for r in caplog.records)
+
+
+def test_the_flag_with_a_failed_spine_build_falls_back_to_the_store(monkeypatch, built, old_store):
+    from RevenueChaser.rcdata import ops
+    monkeypatch.setenv(universe.SOURCE_ENV, "spine")
+    assert universe.universe_source() == "spine"
+    ops.record_check("spine/security", "failed", note="boom")
+    assert universe.universe_source() == "store" and "OLDONLY" in universe.classification_universe(0)
+    assert universe.source_state()["reason"] == "spine/security's last check failed"
+    ops.record_check("spine/security", "skipped", note="paused")          # a skip after the failure changes nothing
+    assert universe.universe_source() == "store"
+
+
+def test_unset_says_the_store_was_asked_for(monkeypatch):
+    monkeypatch.delenv(universe.SOURCE_ENV, raising=False)
+    assert universe.source_state() == {"requested": "store", "effective": "store", "reason": None}
 
 
 def test_an_unknown_value_is_the_old_store(monkeypatch):
     monkeypatch.setenv(universe.SOURCE_ENV, "Spine ")
-    assert universe.universe_source() == "spine"
+    assert universe.source_state()["requested"] == "spine"
     monkeypatch.setenv(universe.SOURCE_ENV, "wrds")
-    assert universe.universe_source() == "store"
+    assert universe.source_state() == {"requested": "store", "effective": "store", "reason": None}
 
 
 @pytest.mark.usefixtures("spine")

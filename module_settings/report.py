@@ -2337,9 +2337,18 @@ def _nd_identity(f: dict | None) -> str:
     kinds = "".join(_nd_row(str(k.get("kind") or ""), _nd(k.get("count"))) for k in f.get("issue_kinds") or [])
     newest = "".join(f'<li>{_nd(i.get("kind"))} · {_nd(i.get("key"))}: {_nd(i.get("detail"))}'
                      f' <span class="nd-k">({_nd(i.get("found_on"))})</span></li>' for i in f.get("issues") or [])
+    us = f.get("universe_source") or {}
+    if us.get("requested") == "spine":
+        source = ("the spine (RC_UNIVERSE_SOURCE=spine)" if us.get("effective") == "spine"
+                  else f'the old store: spine requested, falling back: {_nd(us.get("reason"))}')
+    else:
+        source = "the old store (RC_UNIVERSE_SOURCE unset)"
+    source_row = _nd_row("Boards read", source if us.get("effective") == "spine" or not us.get("reason")
+                         else f'<span class="nd-warn">{source}</span>')
     return ('<div class="nd-card" id="nd-identity"><h3>Identity</h3>'
             f'<div class="nd-sub">From the SEC file to the names the boards screen, and how many of them carry each '
-            f'identifier. Spine as of {_nd(f.get("as_of"))}.</div>{body}'
+            f'identifier. Spine as of {_nd(f.get("as_of"))}.</div>'
+            f'<div class="nd-rows">{source_row}</div>{body}'
             + (f'<details><summary>Where the others drop out</summary><div class="nd-rows">{drops}</div></details>'
                if drops else "")
             + (f'<details><summary>Members per index</summary><div class="nd-rows">{idx}</div></details>'
