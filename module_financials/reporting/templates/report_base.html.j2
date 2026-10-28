@@ -166,6 +166,9 @@
       <div class="kv"><span class="k">EV (Gordon)</span><span>{{ dcf.valuation.ev_gordon|usd }}</span></div>
       <div class="kv"><span class="k">EV (Exit)</span><span>{{ dcf.valuation.ev_exit|usd }}</span></div>
       <div class="kv"><span class="k">Net Debt</span><span>{{ dcf.valuation.net_debt|usd }}</span></div>
+      <div class="kv"><span class="k">Terminal share of EV (Gordon / Exit)</span><span>{{ dcf.terminal_value.share_of_ev_gordon|pct }} / {{ dcf.terminal_value.share_of_ev_exit|pct }}</span></div>
+      <div class="kv"><span class="k">Exit multiple Gordon implies</span><span>{% if dcf.terminal_value.implied_exit_multiple is not none %}{{ dcf.terminal_value.implied_exit_multiple|num(1) }}x{% else %}N/A{% endif %}</span></div>
+      <div class="kv"><span class="k">Growth the exit multiple implies</span><span>{{ dcf.terminal_value.implied_growth|pct }}</span></div>
     </div>
     <div class="panel">
       <div class="kv"><span class="k">Equity (Gordon)</span><span>{{ dcf.valuation.equity_gordon|usd }}</span></div>

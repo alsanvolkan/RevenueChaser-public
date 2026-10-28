@@ -224,6 +224,17 @@ def run_dcf(financials: dict, assumptions: dict | None = None) -> dict:
     ev_gordon = pv_fcff_sum + pv_gordon if pv_gordon is not None else None
     ev_exit = pv_fcff_sum + pv_exit
 
+    # How much of each value is the terminal value, and what each method implies of the other (review N2): a value
+    # that is mostly terminal, or a Gordon value that implies a 30x exit, has to be visible. No ratio on a
+    # non-positive base (EV, EBITDA, or the exit value plus the last FCFF).
+    def _share(pv_tv, ev):
+        return pv_tv / ev if pv_tv is not None and ev is not None and ev > 0 else None
+
+    implied_exit_multiple = gordon_tv / last_ebitda if gordon_tv is not None and last_ebitda > 0 else None
+    # The Gordon growth that gives the exit value: TV = FCFF (1 + g) / (WACC - g)  =>  g = (TV WACC - FCFF) / (TV + FCFF)
+    implied_growth = ((exit_tv * wacc - last_fcff) / (exit_tv + last_fcff)
+                      if exit_tv > 0 and exit_tv + last_fcff > 0 else None)
+
     # One fiscal year, and missing is unknown: debt and cash come from the latest year only, and
     # without both there is no net debt, so no equity value or per-share value (#173 M15).
     total_debt = to_float(latest.get("total_debt"))
@@ -277,6 +288,10 @@ def run_dcf(financials: dict, assumptions: dict | None = None) -> dict:
             "exit_multiple": exit_tv,
             "pv_gordon": pv_gordon,
             "pv_exit": pv_exit,
+            "share_of_ev_gordon": _share(pv_gordon, ev_gordon),
+            "share_of_ev_exit": _share(pv_exit, ev_exit),
+            "implied_exit_multiple": implied_exit_multiple,
+            "implied_growth": implied_growth,
         },
         "valuation": {
             "pv_fcff": pv_fcff_sum,

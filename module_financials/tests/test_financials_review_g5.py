@@ -278,3 +278,29 @@ def test_a_sector_band_no_model_reads_does_not_move_the_model_version(monkeypatc
     assert fin_history.model_version() == before
     bands["Technology"]["tax_rate"] = 0.15
     assert fin_history.model_version() != before
+
+
+# ── N2: how much of the value is the terminal value, and what each method implies of the other ─
+def test_the_dcf_says_the_terminal_share_and_the_implied_multiple_and_growth(financials):
+    res = run_dcf(financials)
+    tv, v, last = res["terminal_value"], res["valuation"], res["projection"][-1]
+    wacc = res["wacc"]["wacc"]
+    assert tv["share_of_ev_gordon"] == pytest.approx(tv["pv_gordon"] / v["ev_gordon"])
+    assert tv["share_of_ev_exit"] == pytest.approx(tv["pv_exit"] / v["ev_exit"])
+    assert tv["implied_exit_multiple"] == pytest.approx(tv["gordon"] / last["ebitda"])
+    g = tv["implied_growth"]                                                  # the Gordon growth that gives the exit TV
+    assert last["fcff"] * (1 + g) / (wacc - g) == pytest.approx(tv["exit_multiple"])
+    html = _html(financials, {"dcf": res})
+    for row in ("Terminal share of EV (Gordon / Exit)", "Exit multiple Gordon implies", "Growth the exit multiple implies"):
+        assert row in html
+
+
+def test_no_gordon_value_means_no_implied_multiple(financials):
+    tv = run_dcf(financials, {"terminal_growth": 0.5})["terminal_value"]
+    assert tv["gordon"] is None and tv["implied_exit_multiple"] is None and tv["share_of_ev_gordon"] is None
+    assert tv["share_of_ev_exit"] is not None
+
+
+def test_a_non_positive_ebitda_or_ev_has_no_ratio(financials):
+    tv = run_dcf(financials, {"ebitda_margin": -0.1})["terminal_value"]
+    assert tv["implied_exit_multiple"] is None and tv["share_of_ev_exit"] is None
