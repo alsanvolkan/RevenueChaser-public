@@ -174,6 +174,36 @@ def test_an_acquired_member_keeps_its_history_after_it_leaves_the_sec_file(built
     assert _q("SELECT count(*) FROM security WHERE ticker = 'NVR'") == [(0,)]
 
 
+def _sec_answer(http_mock, data) -> None:
+    http_mock.routes[:] = [r for r in http_mock.routes if r[0] != "company_tickers_exchange.json"]
+    http_mock.add("company_tickers_exchange.json", dict(fx.SEC_FILE, data=data))
+
+
+def test_a_new_joiner_the_weekly_sec_file_does_not_hold_yet_is_matched_by_the_next_one(built):
+    """Delta S1: the fund files hold NEWCO on 28 Oct; the SEC file has it only from 3 Nov. Its period starts 28 Oct."""
+    _sec_answer(built, fx.SEC_FILE["data"] + [[4000001, "NEWCO INC", "NEWCO", "NYSE"]])
+    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-03"}})
+    _funds_answer(built, sp500=fx.SP500 + [("NEWCO", None, "NEWCO INC")])
+    run_all("2026-10-28", names=(funds.NAME,))
+    run_all("2026-11-03", names=(funds.NAME,))
+    assert _q("SELECT valid_from, valid_to, cik FROM index_membership WHERE source = ? AND index_slug = 'sp500' "
+              "AND ticker = 'NEWCO'", funds.NAME) == [(date(2026, 10, 28), None, "4000001")]
+    assert ("member_not_in_sec", "sp500:NEWCO") not in _issues()
+
+
+def test_a_rename_the_weekly_sec_file_does_not_hold_yet_keeps_the_member(built):
+    """Delta S1: HEI-A becomes HEIAB; the files write HEIAB from 28 Oct, the SEC file from 3 Nov."""
+    renamed = [[c, n, "HEIAB" if t == "HEI.A" else t, e] for c, n, t, e in fx.SEC_FILE["data"]]
+    _sec_answer(built, renamed)
+    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-03"}})
+    _funds_answer(built, sp400=[("HEI", "422806109", "HEICO CORP"), ("HEIAB", None, "HEICO CORP CLASS A")])
+    run_all("2026-10-28", names=(funds.NAME,))
+    run_all("2026-11-03", names=(funds.NAME,))
+    rows = _q("SELECT ticker, valid_from, valid_to FROM index_membership WHERE source = ? AND index_slug = 'sp400' "
+              "AND ticker IN ('HEI-A', 'HEIAB') ORDER BY valid_from", funds.NAME)
+    assert rows == [("HEI-A", date(2026, 10, 27), date(2026, 10, 28)), ("HEIAB", date(2026, 10, 28), None)]
+
+
 def test_wrds_constituents_are_kept_with_exclusive_ends(built):
     assert _q("SELECT ticker, valid_from, valid_to FROM index_membership WHERE source = ? AND index_slug = 'sp400' "
               "ORDER BY ticker", wrds.IDXCST_HIS.name) == [

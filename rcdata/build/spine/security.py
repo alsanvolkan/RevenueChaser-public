@@ -210,8 +210,9 @@ def match_holding(line: dict, by_cusip: dict[str, str], cusip_of: dict[str, str]
 
 # The vote, in SQL over the whole fund-file history (it grows by about 6,000 lines a day): ``_fund_snap`` gives each
 # fund day the SEC snapshot of that day (the newest on or before it, else the first), and ``_fund_map`` names the SEC
-# ticker of each distinct (snapshot, ticker, CUSIP) the files wrote, matched against that snapshot's tickers, so a
-# member that later left the SEC file keeps its past (should-fix 4b); a name is a member of an index on a day when more than
+# ticker of each distinct (snapshot, ticker, CUSIP) the files wrote, matched against that snapshot's tickers (then
+# the later ones, for a name the weekly file does not hold yet), so a member that later left the SEC file keeps its
+# past (should-fix 4b); a name is a member of an index on a day when more than
 # half of that day's counting files hold it; the periods are the runs of member days ("gaps and islands"), each
 # ending on the index's next day with a counting file, so a day with no counting file is no absence.
 VOTE_SQL = """
@@ -444,14 +445,21 @@ class SpineSecurity:
         by_cusip_all = {r["cusip"]: r["ticker"] for r in rows if r["cusip"]}
         # Each snapshot's CUSIP map, built once (not once per distinct line).
         by_cusip = {d: {c: t for c, t in by_cusip_all.items() if t in ts} for d, ts in on_snap.items()}
+        snaps = sorted(on_snap)
         mapping = []
         for snap, tk, cu in con.execute(
                 "SELECT DISTINCT s.snap, coalesce(l.ticker, ''), coalesce(l.cusip, '') FROM stg_fund_lines l "
                 "JOIN _fund_snap s USING (as_of) WHERE (l.ticker IS NOT NULL OR l.cusip IS NOT NULL) "
                 "AND s.snap IS NOT NULL").fetchall():
-            mapping.append({"snap": snap, "tk": tk, "cu": cu,
-                            "sec_ticker": match_holding({"ticker": tk or None, "cusip": cu or None}, by_cusip[snap],
-                                                        cusip_of, on_snap[snap], squashed[snap])})
+            line = {"ticker": tk or None, "cusip": cu or None}
+            hit = None
+            # The day's snapshot first; the SEC file is weekly, so a name the files already write under its new
+            # ticker (a new joiner, a rename) is looked for in the snapshots after it, oldest first (delta S1).
+            for d in snaps[snaps.index(snap):]:
+                hit = match_holding(line, by_cusip[d], cusip_of, on_snap[d], squashed[d])
+                if hit:
+                    break
+            mapping.append({"snap": snap, "tk": tk, "cu": cu, "sec_ticker": hit})
         base.rows_table(con, "_fund_map", [("snap", "DATE"), ("tk", "TEXT"), ("cu", "TEXT"), ("sec_ticker", "TEXT")],
                         mapping)
         con.execute(VOTE_SQL)
