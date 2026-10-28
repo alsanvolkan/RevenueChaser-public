@@ -137,6 +137,113 @@ def membership(index: str | None = None, on=None, source: str = "funds/index_hol
     return _rows("index_membership", sql + " ORDER BY index_slug, ticker", params)
 
 
+# ── The prices store (PR 7, G2) ───────────────────────────────────────────────────────────────────────────────
+# ``prices.duckdb``, keyed on the security id (``gvkey:iid``, ``figi:...``, ``cik:...:TICKER``, ``sym:TICKER``;
+# ``security_ids`` maps tickers to it). Bars are stored nominal; ``bars`` applies ``adj_factor`` on read. ``status``
+# is the newest check of the daily source each table follows.
+
+DATASET_OF_TABLE.update({"price_bar_daily": "alpaca/bars", "security_symbol": "alpaca/bars",
+                         "market_cap_daily": "alpaca/bars", "corporate_action": "alpaca/corporate_actions",
+                         "shares_class": "sec/cover_shares"})
+KIND_OF_TABLE.update({t: "prices" for t in ("price_bar_daily", "security_symbol", "market_cap_daily",
+                                            "corporate_action", "shares_class")})
+BASES = ("nominal", "split", "total_return")
+# The factor period of a bar: ``valid_from <= session_date < valid_to``, open at both ends (no row: factor 1).
+_PERIOD = ("a.security_id = b.security_id AND b.session_date >= coalesce(a.valid_from, DATE '0001-01-01') "
+           "AND (a.valid_to IS NULL OR b.session_date < a.valid_to)")
+
+
+def _ids(security_ids: Iterable[str]) -> list[str]:
+    return sorted({str(s) for s in security_ids if str(s or "").strip()})
+
+
+def _bounded(sql: str, params: list, column: str, start, end) -> str:
+    if start is not None:
+        sql += f" AND {column} >= ?"
+        params.append(_day(start))
+    if end is not None:
+        sql += f" AND {column} <= ?"
+        params.append(_day(end))
+    return sql
+
+
+def security_ids(tickers: Iterable[str]) -> dict[str, str]:
+    """``{ticker: security_id}`` for the tickers (upper-cased, the SEC form ``BRK-B``) a security trades under now;
+    of two securities whose newest symbol is the ticker (a delisted one kept its last), the one with the newer bar."""
+    wanted = sorted({str(t).strip().upper() for t in tickers if str(t or "").strip()})
+    if not wanted:
+        return {}
+    sql = (f"SELECT s.symbol, s.security_id FROM security_symbol s LEFT JOIN (SELECT security_id, "
+           "max(session_date) AS last FROM price_bar_daily GROUP BY ALL) b USING (security_id) "
+           f"WHERE s.valid_to IS NULL AND s.symbol IN ({', '.join('?' * len(wanted))}) "
+           "QUALIFY row_number() OVER (PARTITION BY s.symbol ORDER BY b.last DESC NULLS LAST, s.security_id) = 1")
+    return {r["symbol"]: r["security_id"] for r in _rows("security_symbol", sql, wanted)}
+
+
+def bars(security_ids: Iterable[str], start=None, end=None, basis: str = "nominal") -> list[dict]:
+    """Daily bars of ``security_ids`` with ``start <= session_date <= end`` (either bound optional), by security and
+    session, on one ``basis``: ``nominal`` (as traded), ``split`` (open, high, low, close and vwap times the bar's
+    ``split_factor``, volume and shares divided by it: today's share basis) or ``total_return`` (the prices times
+    ``tr_factor``, which also takes out every cash dividend after the bar; volume and shares as ``split``). Each row
+    carries ``basis``, ``split_factor`` and ``tr_factor``."""
+    if basis not in BASES:
+        raise ValueError(f"unknown basis {basis!r}: one of {', '.join(BASES)}")
+    ids = _ids(security_ids)
+    if not ids:
+        return []
+    price = {"nominal": "1.0", "split": "coalesce(a.split_factor, 1)", "total_return": "coalesce(a.tr_factor, 1)"}[basis]
+    shares = "1.0" if basis == "nominal" else "coalesce(a.split_factor, 1)"
+    sql = (f"SELECT b.security_id, b.session_date, b.symbol, b.cik, b.open * {price} AS open, b.high * {price} AS high, "
+           f"b.low * {price} AS low, b.close * {price} AS close, b.volume / {shares} AS volume, "
+           f"b.vwap * {price} AS vwap, b.trade_count, b.shares_outstanding / {shares} AS shares_outstanding, "
+           f"'{basis}' AS basis, coalesce(a.split_factor, 1) AS split_factor, coalesce(a.tr_factor, 1) AS tr_factor, "
+           "b.source, b.source_as_of, b.fetched_at, b.run_id "
+           f"FROM price_bar_daily b LEFT JOIN adj_factor a ON {_PERIOD} "
+           f"WHERE b.security_id IN ({', '.join('?' * len(ids))})")
+    params: list = list(ids)
+    sql = _bounded(sql, params, "b.session_date", start, end)
+    return _rows("price_bar_daily", sql + " ORDER BY b.security_id, b.session_date", params)
+
+
+def actions(security_ids: Iterable[str], start=None, end=None) -> list[dict]:
+    """``corporate_action`` rows of ``security_ids`` with ``start <= ex_date <= end``, by security, ex-date and action;
+    ``applied`` says whether the factors use it (``not_applied_why`` when not)."""
+    ids = _ids(security_ids)
+    if not ids:
+        return []
+    params: list = list(ids)
+    sql = _bounded(f"SELECT * FROM corporate_action WHERE security_id IN ({', '.join('?' * len(ids))})", params,
+                   "ex_date", start, end)
+    return _rows("corporate_action", sql + " ORDER BY security_id, ex_date, action, source_id", params)
+
+
+def shares(security_ids: Iterable[str], measure: str | None = None, start=None, end=None) -> list[dict]:
+    """``shares_class`` rows of ``security_ids`` (``measure`` ``outstanding`` or ``float``, both when None) with
+    ``start <= as_of <= end``, by security, measure, day and source. The counts are as reported on their day."""
+    ids = _ids(security_ids)
+    if not ids:
+        return []
+    params: list = list(ids)
+    sql = f"SELECT * FROM shares_class WHERE security_id IN ({', '.join('?' * len(ids))})"
+    if measure is not None:
+        sql += " AND measure = ?"
+        params.append(str(measure))
+    sql = _bounded(sql, params, "as_of", start, end)
+    return _rows("shares_class", sql + " ORDER BY security_id, measure, as_of, source", params)
+
+
+def market_cap(security_ids: Iterable[str], start=None, end=None) -> list[dict]:
+    """``market_cap_daily`` rows of ``security_ids`` with ``start <= session_date <= end``, by security and session:
+    the nominal close times the shares of that day, and the issuer's sum over its listed classes."""
+    ids = _ids(security_ids)
+    if not ids:
+        return []
+    params: list = list(ids)
+    sql = _bounded(f"SELECT * FROM market_cap_daily WHERE security_id IN ({', '.join('?' * len(ids))})", params,
+                   "session_date", start, end)
+    return _rows("market_cap_daily", sql + " ORDER BY security_id, session_date", params)
+
+
 def as_frame(rows: list[dict]):
     """The rows as a pandas DataFrame (the one helper; pandas is imported only here)."""
     import pandas as pd
