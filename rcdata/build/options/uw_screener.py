@@ -10,9 +10,13 @@ on more than one day takes its first report.
 100 a call (the plan: 1,727 of 1,834 calendar names). Raw: ``raw/uw/screener/<S>/part-NN.json.gz``, one per batch.
 It waits until every calendar file of S is there, so the batches of a session never change. ``option_screener_daily``:
 one row per calendar name and session, with its report date and session, its screener row (``screened`` false when
-UW has none), the option volume, the dollar option volume (volume x 100, the radar's own estimate) and
-``passes_gates``: the Earnings Radar gates of ``core/config.py`` (option volume >= 500, total open interest >= 200,
-dollar option volume >= 50k; ``module_earnings_radar/pipeline.py`` ``preselect``).
+UW has none), the option volume, the dollar option volume (the day's call plus put premium as UW served it,
+``premium``) and ``passes_gates``: the Earnings Radar gates of ``core/config.py`` (option volume >= 500, total open
+interest >= 200, dollar option volume >= 50k; ``module_earnings_radar/pipeline.py`` ``preselect``). The dollar gate
+reads the real premium, not the radar's old volume x 100 estimate, which made it the volume gate a second time (500
+contracts x 100 is 50,000; Earnings Radar review N3). So it is the stricter count: in the first real sample
+(2026-10-28, 310 screened names) 121 pass, against 125 under volume x 100. The 4 left out trade 500 or more
+contracts with under $50k of premium, or with no premium served, which fails the gate too.
 
 **The earnings set** (``names.earnings_set``): every screener-set name that reports on the next session, passes
 the gates on S and is not in the list set (SPX and the option watch list, which have their full chain), once, on
