@@ -605,7 +605,9 @@ def test_one_failing_row_does_not_fail_the_others():
             return super().status(name)
 
     rows = A.live_state(Mixed(), NOW)["rows"]
-    assert [r["state"] for r in rows] == ["not_installed", "error"] + ["not_installed"] * (len(A.REGISTRY) - 2)
+    # A retired row (PR 5) that is not installed reads "retired".
+    idle = ["retired" if e.retired_by else "not_installed" for e in A.REGISTRY]
+    assert [r["state"] for r in rows] == ["not_installed", "error"] + idle[2:]
     assert "boom" in rows[1]["result_text"]
 
 
