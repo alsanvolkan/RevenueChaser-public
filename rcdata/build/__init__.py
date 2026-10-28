@@ -17,6 +17,7 @@ DATASETS = {d.name: d for d in (uw_spot_expiry_strike.DATASET, market_series.DAT
 # file last (``base.build_kind`` builds a kind's datasets in this order).
 from .fundamentals import companyfacts as fundamentals_companyfacts  # noqa: E402
 from .fundamentals import earnings as fundamentals_earnings  # noqa: E402
+from .fundamentals import estimates as fundamentals_estimates  # noqa: E402
 from .fundamentals import filings as fundamentals_filings  # noqa: E402
 from .fundamentals import tables as fundamentals_tables  # noqa: E402
 from .fundamentals import uw_financials as fundamentals_uw_financials  # noqa: E402
@@ -24,4 +25,5 @@ from .fundamentals import wrds_fund as fundamentals_wrds  # noqa: E402
 
 DATASETS.update({d.name: d for d in (fundamentals_companyfacts.DATASET, fundamentals_filings.DATASET,
                                      fundamentals_earnings.DATASET, fundamentals_uw_financials.DATASET,
-                                     *fundamentals_wrds.DATASETS, fundamentals_tables.DATASET)})
+                                     fundamentals_estimates.DATASET, *fundamentals_wrds.DATASETS,
+                                     fundamentals_tables.DATASET)})

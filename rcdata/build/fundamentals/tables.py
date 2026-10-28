@@ -13,7 +13,8 @@ import duckdb
 from ....core import calendar
 from ... import ops
 from .. import base
-from . import KIND, common, companyfacts, earnings, facts, filings, uw_financials, wrds_fund
+from . import (KIND, common, companyfacts, earnings, estimates, facts, filings, uw_financials,
+               wrds_fund)
 
 NAME = "fundamentals/tables"
 
@@ -67,6 +68,10 @@ CUSTOMER_SHARE = [("cik", "TEXT NOT NULL"), ("period_end", "DATE NOT NULL"), ("c
                   ("customer_type", "TEXT"), ("accession", "TEXT"), ("form", "TEXT"), ("document_date", "DATE"),
                   ("source", "TEXT NOT NULL"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
 
+# The newest analyst estimates per company, ticker and period (``estimates.py``; the snapshots stay in Parquet).
+ESTIMATE = [(c, "TEXT NOT NULL" if c in ("cik", "ticker", "period") else t) for c, t in estimates.schema()] + [
+    ("source", "TEXT NOT NULL")]
+
 SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "fundamental_company": COMPANY,
     "fundamental_fact": FACT,
@@ -75,6 +80,7 @@ SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "fundamental_revision": REVISION,
     "segment_revenue": SEGMENT_REVENUE,
     "customer_share": CUSTOMER_SHARE,
+    "estimate_latest": ESTIMATE,
 }
 TABLE_CHECKS: dict[str, list[str]] = {
     # Every row is annual or quarterly, and a non-preliminary row carries its accession and filed date.
@@ -87,7 +93,7 @@ TABLE_CHECKS: dict[str, list[str]] = {
     "customer_share": ["CHECK (share IS NULL OR (share >= 0 AND share <= 1))"],
 }
 TABLES = tuple(SCHEMAS)
-VIEWS = ("fundamental_quarter", "edgar_financials", "sec_submissions", "earnings_calendar")
+VIEWS = ("fundamental_quarter", "edgar_financials", "sec_submissions", "earnings_calendar", "estimate_snapshots")
 
 # The sources' staging tables, created empty here when a source is not registered (a test's registry).
 STAGED: dict[str, list[tuple[str, str]]] = {
@@ -98,6 +104,7 @@ STAGED: dict[str, list[tuple[str, str]]] = {
     earnings.STAGING: earnings.SCHEMA,
     uw_financials.STAGING: facts.FACT,
     **{d.revision_staging: wrds_fund.REVISION for d in wrds_fund.DATASETS if d.revisions},
+    estimates.STAGING: estimates.schema(),
     filings.STAGING["segments"]: filings.SEGMENT,
     filings.STAGING["customers"]: filings.CUSTOMER,
     **{wrds_fund.SEGMENTS.STAGING[p]: schema + wrds_fund.PROVENANCE
@@ -250,6 +257,27 @@ def _customers(con: duckdb.DuckDBPyConnection) -> int:
     return common.count(con, "customer_share")
 
 
+def _estimates(con: duckdb.DuckDBPyConnection) -> int:
+    """``estimate_latest``: each company, ticker and period's newest estimates."""
+    create(con, "estimate_latest")
+    names = ", ".join(f'"{c}"' for c, _ in estimates.schema())
+    con.execute(f"""
+        INSERT INTO estimate_latest SELECT {names}, '{estimates.NAME}' FROM {estimates.STAGING}
+        WHERE cik IS NOT NULL AND ticker IS NOT NULL AND period IS NOT NULL
+        QUALIFY row_number() OVER (PARTITION BY cik, ticker, period ORDER BY source_as_of DESC, fetched_at DESC) = 1""")
+    return common.count(con, "estimate_latest")
+
+
+def _estimate_view(con: duckdb.DuckDBPyConnection) -> None:
+    # The old ``estimate_snapshots`` shape (Earnings Radar's D14), one row per ticker and period: the newest.
+    values = ", ".join(f'"{c}"' for c in estimates.value_columns())
+    con.execute(f"""
+        CREATE VIEW estimate_snapshots AS
+        SELECT ticker, source_as_of AS session_date, period, {values}, CAST(payload AS JSON) AS payload,
+               'yfinance' AS source, fetched_at, run_id, NULL::DOUBLE AS run_at
+        FROM estimate_latest""")
+
+
 def _links() -> str:
     return "(SELECT DISTINCT gvkey, cik FROM fundamental_company WHERE gvkey IS NOT NULL)"
 
@@ -398,9 +426,11 @@ class FundamentalsTables:
         counts["fundamental_revision"] = _revisions(con)
         counts["segment_revenue"] = _segments(con)
         counts["customer_share"] = _customers(con)
+        counts["estimate_latest"] = _estimates(con)
         _views(con)
         _submission_view(con)
         _calendar_view(con)
+        _estimate_view(con)
         found = _issues(con, ctx.as_of or self.default_as_of())
         found += [("source_never_run", name, "no Parquet yet") for name, table in
                   ((companyfacts.NAME, companyfacts.STAGING["facts"]),
