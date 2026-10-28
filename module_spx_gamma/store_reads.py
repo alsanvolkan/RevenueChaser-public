@@ -25,13 +25,14 @@ from datetime import date, timedelta
 from RevenueChaser.core import calendar
 from RevenueChaser.rcdata import read
 
-from .candles import window_start
+from .candles import window_lag, window_start
 from .vix import vix_term_mode
 
 logger = logging.getLogger(__name__)
 
 SPX_SOURCE = "rcdata:spx_gamma_expiry_strike"
 SERIES_SOURCE = "rcdata:market_series"
+CANDLE_SOURCE = f"{SERIES_SOURCE} SPX (cboe)"
 # Sessions an observation may lag the board's day by (the limits the old stored readers had, stored_inputs.MAX_LAG).
 MAX_LAG = {"vix": 3, "cot": 10}
 # A TFF report holds Tuesday's positions and is published on the Friday after it.
@@ -236,11 +237,19 @@ def read_day(day) -> dict:
     """The raw-dict keys the store now fills for ``day``: ``vix``, ``cftc``, ``ohlc``, ``zero_one_dte`` and
     ``store_inputs`` (per input: stored or not, its label, source, ``source_as_of`` and status)."""
     vix, cot, candles, zod = vix_family(day), cot_tff(day), spx_candles(day), zero_one_dte_dollars(day)
+    candle_source = candles["label"]
+    if candles["stored"]:
+        candle_source = CANDLE_SOURCE
+        try:
+            expected, last = window_lag(candles["rows"], _day(day))
+        except ValueError:
+            expected = last = None
+        if expected:
+            candle_source = f"{CANDLE_SOURCE}, stale to {last}"
     return {
         "vix": vix.get("payload"),
         "cftc": cot.get("payload"),
-        "ohlc": {"source": f"{SERIES_SOURCE} SPX (cboe)" if candles["stored"] else "not stored",
-                 "data": candles["rows"]},
+        "ohlc": {"source": candle_source, "data": candles["rows"]},
         "zero_one_dte": zod,
         "store_inputs": {"vix": _meta(vix), "cftc": _meta(cot), "candles": _meta(candles),
                          "zero_one_dte": _meta(zod)},

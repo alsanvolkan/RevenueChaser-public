@@ -331,6 +331,14 @@ def _spx_gamma(tmp_path, monkeypatch):
     if isinstance(hs.get("header"), dict):
         hs["header"]["ticker"] = H("spx_header_ticker")
     hs["provider_health"] = health("spx")
+    # The market-store labels of PR 3: the pin line, the "not stored" notes, the panels' source lines and the
+    # candle source in the header.
+    hs["zero_one_dte"] = {"stored": False, "label": H("spx_zero_one_dte_label")}
+    hs["store_inputs"] = {"vix": {"stored": True, "label": H("spx_vix_label")},
+                          "cftc": {"stored": False, "label": H("spx_cftc_label")},
+                          "candles": {"stored": False, "label": H("spx_candles_label")},
+                          "zero_one_dte": {"stored": False, "label": H("spx_zod_label")}}
+    hs["candle_source"] = H("spx_candle_source")
     return render.render_html(hs)
 
 

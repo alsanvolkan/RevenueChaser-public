@@ -10,16 +10,15 @@ import uuid
 from datetime import date, datetime, timezone
 
 from RevenueChaser.core import calendar as nyse_calendar
-from RevenueChaser.core import credentials, index_levels
-from RevenueChaser.core.providers.cftc import fetch_cftc_tff
-# The nightly D28/D29 sweeps store the VIX family and the COT in the same shape this board used to fetch live. The
-# tables belong to the Earnings inputs step, so its reader is the one reader of them (see stored_inputs' docstring).
-from RevenueChaser.module_earnings_radar import stored_inputs
+from RevenueChaser.core import credentials
 
-from .candles import live_spot, price_window_sessions, stored_spx_candles, window_lag
+# The VIX family, the CFTC COT and the SPX closes come from the market store, read by store_reads (D4, PR 3). The
+# snapshot asks no live source for them and writes none of them into the raw day: run.build_day reads them for the
+# day it renders, so a Fetch and a Refresh render the same.
+from . import store_reads
+from .candles import live_spot, price_window_sessions, window_lag
 from .config import RAW_ROOT, SPOT_EXPOSURE_WINDOW_PCT, TICKER
 from .expiry_table import normalize_expiry_rows
-from .vix import fetch_vix_family, vix_term_mode
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,7 @@ class SnapshotError(RuntimeError):
 
 
 class NoStoredClose(SnapshotError):
-    """History mode: the store holds no ^GSPC close for the day, so no request was sent (a holiday, or a gap)."""
+    """History mode: the store holds no SPX close for the day, so no request was sent (a holiday, or a gap)."""
 
 
 class UWApiError(RuntimeError):
@@ -128,10 +127,11 @@ _FILENAMES = {
 
 # Files that carry the CURRENT value whatever date was asked for (no ``date`` param),
 # so a backfilled day holds today's number in them. Everything else is as-of the day.
-# VIX and CFTC stay live until their store writers land (#176 comment 2026-10-04).
+# The VIX family and the CFTC COT are no files of the day any more: they are read from the market store for the day
+# rendered (PR 3), so they are never a later session's value.
 LIVE_FILES = frozenset(
     {_FILENAMES[n] for n, (_t, p) in BASE_ENDPOINTS.items() if "date" not in p}
-    | {"option_chain.json", "vix_family.json", "cftc_tff.json"}
+    | {"option_chain.json"}
 )
 
 # History mode (the 2-year pull, D1 25 Oct 2026): only the calls that take a ``date`` (docs/openapi.yaml, the
@@ -177,13 +177,18 @@ def _previous_est_trading_day(asof: str) -> str:
         return d.isoformat()
 
 
+def stored_spx_candles(asof, ticker: str = TICKER) -> list[dict]:
+    """The SPX closes of the 8-week window through ``asof`` from the market store (``store_reads.spx_candles``,
+    Cboe's ``SPX`` series in ``market_series``); no network. Nothing stored is an empty list."""
+    return store_reads.spx_candles(asof)["rows"]
+
+
 def _stored_close(candle_fetcher, ticker: str, day: str) -> float:
     """The stored close of ``day`` itself (history mode's spot); :class:`NoStoredClose` when the store lacks it."""
-    symbol = "^GSPC" if ticker == "SPX" else ticker
-    for row in candle_fetcher(day, ticker=symbol):
+    for row in candle_fetcher(day, ticker=ticker):
         if row.get("date") == day and row.get("close") is not None:
             return float(row["close"])
-    raise NoStoredClose(f"no stored {symbol} close for {day} in {index_levels.TABLE}; nothing was requested")
+    raise NoStoredClose(f"no stored {ticker} close for {day} in {store_reads.SERIES_SOURCE}; nothing was requested")
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -199,19 +204,18 @@ def fetch_snapshot(
     fetch_candles: bool = True,
     fetch_all_expiries: bool = False,
     overwrite: bool = True,
-    vix_fetcher=None,
-    cftc_fetcher=None,
     candle_fetcher=None,
     history_only: bool = False,
 ) -> dict | None:
     """Fetch one date's raw snapshot, replacing the cached copy only on success.
 
     ``uw`` is a ``core.providers.unusual_whales.UWClient`` (the job's own, so its call
-    accounting and breaker see these calls). VIX and CFTC come from ``vix_fetcher()`` and
-    ``cftc_fetcher()``, which default to the module's live fetch. Candles come from
-    ``candle_fetcher(asof, ticker=...)``, which defaults to the stored ``index_levels_daily``
-    rows (``module_spx_gamma.candles.stored_spx_candles``) — the snapshot makes no candle
-    request of its own (D03). Each can be faked offline.
+    accounting and breaker see these calls). Candles come from ``candle_fetcher(asof, ticker=...)``,
+    which defaults to the SPX closes of the market store (:func:`stored_spx_candles`) — the
+    snapshot makes no candle request of its own (D03) — and can be faked offline. They set the
+    spot and the previous session; the window the board draws is read again at render time.
+    The VIX family and the CFTC COT are not fetched at all: run.build_day reads them from the
+    market store for the day it renders (PR 3), and no live source is asked for them.
 
     ``overwrite=False`` (the backfill) never touches a day that already has its
     manifest: nothing is fetched and ``None`` comes back. The returned raw dict
@@ -226,9 +230,8 @@ def fetch_snapshot(
 
     ``history_only=True`` (the history pull, ``module_spx_gamma.history_pull``) fetches a past session with dated
     calls only (``HISTORY_ENDPOINTS``, flow-per-strike, the spot-exposure halves, the 0DTE strike-expiry): spot is
-    that day's stored ``index_levels_daily`` close (no stored close: :class:`NoStoredClose` before any request),
-    VIX and COT come from the store or are left out, and there is no option chain, previous-day call, all-expiry
-    ladder or previous-session fallback. A day with a transient failure (429, 5xx, no response) is not kept, and
+    that day's stored SPX close (no stored close: :class:`NoStoredClose` before any request), and there is no
+    option chain, previous-day call, all-expiry ladder or previous-session fallback. A day with a transient failure (429, 5xx, no response) is not kept, and
     a day that completed meanwhile is never replaced. Its manifest says ``origin: history_pull``.
     """
     if history_only and fetch_all_expiries:
@@ -243,8 +246,6 @@ def fetch_snapshot(
         return _fetch_snapshot_staged(
             uw, asof_date, staging, root, ticker=ticker, mode=mode,
             fetch_candles=fetch_candles, fetch_all_expiries=fetch_all_expiries,
-            vix_fetcher=vix_fetcher or fetch_vix_family,
-            cftc_fetcher=cftc_fetcher or fetch_cftc_tff,
             candle_fetcher=candle_fetcher or stored_spx_candles, history_only=history_only)
     finally:
         # Promotion renames the staging dir away; anything left is a failed run.
@@ -261,8 +262,6 @@ def _fetch_snapshot_staged(
     mode: str = "open_interest",
     fetch_candles: bool = True,
     fetch_all_expiries: bool = False,
-    vix_fetcher=fetch_vix_family,
-    cftc_fetcher=fetch_cftc_tff,
     candle_fetcher=stored_spx_candles,
     history_only: bool = False,
 ) -> dict:
@@ -293,9 +292,6 @@ def _fetch_snapshot_staged(
     # filename -> payload actually written, for the manifest's per-file table.
     written: dict[str, object] = {}
     limit_hits: dict[str, list[str]] = {}
-
-    # per external input that is not a UW endpoint: read from the nightly store, or asked live (the manifest says so).
-    input_sources: dict[str, dict] = {}
 
     def _request(name: str, path: str, params: dict) -> dict | None:
         try:
@@ -361,70 +357,27 @@ def _fetch_snapshot_staged(
                          "params": {"date": asof_date}, "status": exc.status})
         warnings.append(f"flow_per_strike failed: {exc.message}")
 
-    # 1b. VIX family: the nightly D28 sweep's stored closes when the store has that session (no request at all),
-    #     else yfinance (UW term-structure endpoint is a paid add-on). The readers are anchored on this snapshot's
-    #     own session, so a re-render of an older day reads that day's stored closes rather than today's.
-    try:
-        asof_day = date.fromisoformat(asof_date)
-    except (TypeError, ValueError):
-        # No session to anchor on: the readers would default to the newest stored session, i.e. today's closes
-        # stamped onto a day that is not today. Go live instead (review #103 S-1).
-        asof_day = None
-    try:
-        vix, vix_session = stored_inputs.vol_index_rows(asof_day) if asof_day else ({}, None)
-        if vix:
-            input_sources["vix"] = {"source": "store", "session": vix_session.isoformat()}
-        elif history_only:
-            raise LookupError("not stored for this session (history mode asks no live source)")
-        else:
-            vix = vix_fetcher()
-            input_sources["vix"] = {"source": "live"}
-        vix["term_mode"] = vix_term_mode(vix.get("tickers", {}))
-        raw["vix"] = vix
-        _persist("vix_family.json", vix, default=str)
-    except Exception as exc:  # noqa: BLE001 — VIX degrades gracefully
-        warnings.append(f"vix_family failed: {exc}")
-
-    # 1c. CFTC COT (TFF) — the nightly D29 row when it is stored, else the public Socrata read; best-effort
-    try:
-        cftc, cot_session = stored_inputs.cot_row(asof_day) if asof_day else ({}, None)
-        if cftc:
-            input_sources["cftc"] = {"source": "store", "session": cot_session.isoformat()}
-        elif history_only:
-            raise LookupError("not stored for this session (history mode asks no live source)")
-        else:
-            cftc = cftc_fetcher()
-            input_sources["cftc"] = {"source": "live"}
-        if cftc:
-            raw["cftc"] = cftc
-            _persist("cftc_tff.json", cftc, default=str)
-        else:
-            warnings.append("cftc_tff: no row returned")
-    except Exception as exc:  # noqa: BLE001 — COT degrades gracefully
-        warnings.append(f"cftc_tff failed: {exc}")
-
-    # 2. Candles: the stored ^GSPC levels (D03), never a live fetch (UW index OHLC is permission-denied, G2-06).
+    # 2. Candles: the SPX closes of the market store (D03, PR 3), never a live fetch (UW index OHLC is
+    #    permission-denied, G2-06). They set the spot and the previous session below; they are not written into the
+    #    raw day, because run.build_day reads the window again for the day it renders.
     candles = []
     if fetch_candles:
         try:
-            symbol = "^GSPC" if ticker == "SPX" else ticker
-            candles = price_window_sessions(candle_fetcher(asof_date, ticker=symbol), asof_date)
-            candle_source = f"{index_levels.TABLE} ({symbol})"
+            candles = price_window_sessions(candle_fetcher(asof_date, ticker=ticker), asof_date)
+            candle_source = store_reads.CANDLE_SOURCE
             if not candles:
-                warnings.append(f"no stored index levels for {symbol} on {asof_date} (the daily bars "
-                                f"--index-levels step has not written this window yet)")
+                warnings.append(f"SPX closes not stored for {asof_date} in {store_reads.SERIES_SOURCE} (the "
+                                f"builder's market_series has not stored this window yet)")
             else:
                 expected, last = window_lag(candles, asof_date)
                 if expected:
-                    warnings.append(f"stored index levels for {symbol} end {last}, before the last complete "
-                                    f"session {expected} (the daily bars --index-levels step is behind)")
-                    candle_source = f"{index_levels.TABLE} ({symbol}, stale to {last})"
+                    warnings.append(f"stored SPX closes end {last}, before the last complete session {expected} "
+                                    f"(the builder's market_series is behind)")
+                    candle_source = f"{store_reads.CANDLE_SOURCE}, stale to {last}"
         except Exception as exc:  # noqa: BLE001 — candles degrade gracefully
-            warnings.append(f"ohlc/index_levels failed: {exc}")
+            warnings.append(f"SPX closes read failed: {exc}")
             candle_source = "unavailable"
-        ohlc = {"source": candle_source, "data": candles}
-        raw["ohlc"] = ohlc
-        _persist("ohlc_8wk.json", ohlc, default=str)
+        raw["ohlc"] = {"source": candle_source, "data": candles}
 
     # 3. Spot exposures by strike (charm/vanna), wide +/-25% window around spot.
     #    One call returns at most SPOT_EXPOSURE_LIMIT rows from the low end of the
@@ -437,14 +390,14 @@ def _fetch_snapshot_staged(
     if history_only:
         # A past day's strike window is set from that day's close, never from today's level.
         spot = history_close
-        raw["spot"] = {"source": f"index_levels_daily (close of {asof_date})", "value": spot}
+        raw["spot"] = {"source": f"{store_reads.CANDLE_SOURCE} (close of {asof_date})", "value": spot}
     elif fetch_candles:
         live, live_error = live_spot(("^GSPC" if ticker == "SPX" else ticker))
         if live is not None:
             spot_source = "yfinance (live)"
             spot = live
         else:
-            spot_source = "index_levels_daily (last complete close)"
+            spot_source = f"{store_reads.CANDLE_SOURCE} (last complete close)"
             if live_error:                     # a failed live read is never silent
                 warnings.append(f"live spot unavailable ({live_error}); using the last complete close "
                                 f"{spot if spot is not None else 'none'}")
@@ -588,7 +541,9 @@ def _fetch_snapshot_staged(
         "methodology_version": "1.0",
         "source": "Unusual Whales API",
         "requests": requests,
-        "input_sources": input_sources,
+        # The market-store inputs of the day as the store held them at this Fetch (PR 3): per input its source,
+        # source_as_of, status, or "not stored". The render reads them again (run.build_day).
+        "input_sources": store_reads.read_day(asof_date)["store_inputs"],
         "sha256": hashes,
         "files": files,
         "warnings": warnings,

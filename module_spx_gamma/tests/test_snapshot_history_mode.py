@@ -50,8 +50,7 @@ def _handler(failures=None):
 
 
 def _fetch(tmp_path, uw, **kw):
-    return snap.fetch_snapshot(uw, DAY, data_root=tmp_path, history_only=True, candle_fetcher=_rows,
-                               vix_fetcher=_no_live("vix"), cftc_fetcher=_no_live("cftc"), **kw)
+    return snap.fetch_snapshot(uw, DAY, data_root=tmp_path, history_only=True, candle_fetcher=_rows, **kw)
 
 
 # Live sources history mode asked (each fake records instead of raising: the snapshot's own ``except Exception``
@@ -71,13 +70,6 @@ def _live_asked():
     LIVE_ASKED.clear()
     yield
     assert LIVE_ASKED == [], f"history mode asked live sources: {LIVE_ASKED}"
-
-
-@pytest.fixture(autouse=True)
-def _no_stored_inputs(monkeypatch):
-    """No VIX / COT stored for the day: history mode must then leave them out, never go live."""
-    monkeypatch.setattr(snap.stored_inputs, "vol_index_rows", lambda day=None: ({}, None))
-    monkeypatch.setattr(snap.stored_inputs, "cot_row", lambda day=None: ({}, None))
 
 
 @pytest.fixture
@@ -130,7 +122,7 @@ def test_history_mode_spot_is_the_stored_close_and_live_spot_is_never_called(tmp
     monkeypatch.setattr(snap, "live_spot", _no_live("spot"))
     raw = _fetch(tmp_path, uw)
     assert raw["spot"]["value"] == CLOSE
-    assert "index_levels_daily" in raw["spot"]["source"]
+    assert raw["spot"]["source"].startswith("rcdata:market_series SPX")
     manifest = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["spot"]["value"] == CLOSE
     assert manifest["spot_exposure_search_bounds"] == [int(CLOSE * 0.75), int(CLOSE * 1.25)]
@@ -144,8 +136,7 @@ def test_history_mode_writes_no_live_file_and_marks_its_origin(tmp_path, uw):
     # The Fetch's LIVE_FILES less the five volatility files, which history mode asks WITH the day's date.
     dated_here = {snap._FILENAMES[n] for n in snap.HISTORY_ENDPOINTS}
     undated = snap.LIVE_FILES - dated_here
-    assert undated == {"option_chain.json", "iv_rank.json", "options_volume.json", "vix_family.json",
-                       "cftc_tff.json"}
+    assert undated == {"option_chain.json", "iv_rank.json", "options_volume.json"}
     assert not on_disk & undated, f"live files written into a past day: {sorted(on_disk & undated)}"
     assert not any(n.startswith("strike_expiry_") for n in on_disk), "history mode fetched the all-expiry ladder"
     assert "greek_exposure_strike_prev.json" not in on_disk
@@ -261,8 +252,7 @@ def test_two_threads_staging_the_same_day_never_mix_their_files(tmp_path):
 
     def run(**kw):
         try:
-            snap.fetch_snapshot(FakeUW(handler), DAY, data_root=tmp_path, candle_fetcher=_rows,
-                                vix_fetcher=lambda: {"tickers": {}}, cftc_fetcher=lambda: {}, **kw)
+            snap.fetch_snapshot(FakeUW(handler), DAY, data_root=tmp_path, candle_fetcher=_rows, **kw)
         except BaseException as exc:  # noqa: BLE001 - reported below
             errors.append(exc)
 
@@ -282,5 +272,6 @@ def test_history_mode_asks_no_live_vix_or_cot_and_writes_neither(tmp_path, uw):
     assert LIVE_ASKED == []
     manifest = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
     assert "vix_family.json" not in manifest["files"] and "cftc_tff.json" not in manifest["files"]
-    assert any(w.startswith("vix_family failed: ") for w in manifest["warnings"])
-    assert any(w.startswith("cftc_tff failed: ") for w in manifest["warnings"])
+    assert not (tmp_path / DAY / "vix_family.json").exists() and not (tmp_path / DAY / "cftc_tff.json").exists()
+    # PR 3: neither is fetched by any mode; the render reads them from the market store for the day
+    assert set(manifest["input_sources"]) == {"vix", "cftc", "candles", "zero_one_dte"}

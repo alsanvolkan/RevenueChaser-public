@@ -163,16 +163,15 @@ def level_migration(snapshot: dict, prev_snapshot: dict | None) -> list[dict]:
     return rows
 
 
-# The live raw file behind each panel (snapshot.LIVE_FILES); see run._historical_live_files.
+# The live raw file behind each panel (snapshot.LIVE_FILES); see run._historical_live_files. The VIX and CFTC panels
+# have none since PR 3: they read the market store for the day shown.
 _PANEL_FILES = {
-    "vix": "vix_family.json",
     "iv_rank": "iv_rank.json",
     "vrp": "variance_risk_premium.json",
     "realized_vol": "realized_vol.json",
     "options_volume": "options_volume.json",
     "max_pain": "max_pain.json",
     "vol_term": "vol_term_structure.json",
-    "cftc": "cftc_tff.json",
     "skew": "interpolated_iv.json",
     "iron_butterfly": "option_chain.json",
 }
@@ -182,6 +181,20 @@ def _historical_panels(snapshot: dict) -> dict[str, bool]:
     """Panel -> True when its live file was fetched in a later session than the day shown."""
     live = set(snapshot.get("historical_live_files") or [])
     return {panel: fn in live for panel, fn in _PANEL_FILES.items()}
+
+
+def store_labels(snapshot: dict) -> dict[str, str]:
+    """Market-store input -> the line naming where it came from (its date, source and status), or "<input> not
+    stored for <day>" (PR 3). Empty for a snapshot built without the store."""
+    inputs = snapshot.get("store_inputs") or {}
+    return {k: str(v.get("label")) for k, v in sorted(inputs.items()) if isinstance(v, dict) and v.get("label")}
+
+
+def store_notes(snapshot: dict) -> dict[str, str]:
+    """Market-store input -> its "not stored for <day>" label, for each input the store did not hold (PR 3)."""
+    inputs = snapshot.get("store_inputs") or {}
+    return {k: str(v.get("label")) for k, v in sorted(inputs.items())
+            if isinstance(v, dict) and v.get("stored") is False}
 
 
 # Quality flags (normalize.normalize_snapshot) -> the phrase the banner names them by.
@@ -224,6 +237,9 @@ def data_quality_notice(snapshot: dict, data_root=None) -> str | None:
         parts.append("Fetch warnings: " + "; ".join(warnings) + ".")
     if missing:
         parts.append("Data unavailable: " + ", ".join(missing) + ".")
+    not_stored = list(store_notes(snapshot).values())
+    if not_stored:
+        parts.append("Not stored (no live fallback): " + "; ".join(not_stored) + ".")
     return " ".join(parts) or None
 
 
@@ -299,7 +315,9 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
     charm_mode = "directionalized volume" if charm.get("mode") == "directionalized_volume" else "open interest"
     charm_disclosure = f"Highest abs net Charm in Mode A ({charm_mode}). Status: {charm_label}"
     if charm_dom is not None:
-        charm_disclosure += f" (distance {charm_dist * 100:.1f}%, dominance {charm_dom:.2f}x)"
+        # No spot (the SPX closes not stored and no live level, PR 3) leaves the distance unknown.
+        dist_text = f"{charm_dist * 100:.1f}%" if charm_dist is not None else "n/a"
+        charm_disclosure += f" (distance {dist_text}, dominance {charm_dom:.2f}x)"
     else:
         charm_disclosure += " (no runner-up)"
 
@@ -483,6 +501,8 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "summary_expiry": _expiry_summary(snapshot),
         "prediction": snapshot.get("prediction") or {},
         "pin_line": pin_source_line(snapshot),
+        "store_notes": store_notes(snapshot),
+        "store_labels": store_labels(snapshot),
         "iron_butterfly": snapshot.get("iron_butterfly"),
         # ── v3 external panels ──
         "max_pain": _max_pain_rows(snapshot),

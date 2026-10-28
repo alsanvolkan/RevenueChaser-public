@@ -24,7 +24,6 @@ def _candles(day):
 def _store(root, day):
     """One complete stored raw day (with its manifest), fetched from a fake client."""
     snap.fetch_snapshot(FakeUW(_handler, prefix=""), day, data_root=root / "raw",
-                        vix_fetcher=lambda: dict(VIX), cftc_fetcher=lambda: dict(CFTC),
                         candle_fetcher=_candles(day))
     assert (root / "raw" / day / "manifest.json").exists()
 
@@ -45,8 +44,7 @@ class _Calls:
 
         def _fetch(uw, asof, **kw):
             self.fetches.append(asof)
-            return functools.partial(snap.fetch_snapshot, vix_fetcher=lambda: dict(VIX),
-                                     cftc_fetcher=lambda: dict(CFTC),
+            return functools.partial(snap.fetch_snapshot,
                                      candle_fetcher=_candles(asof))(uw, asof, **kw)
 
         def _backfill(*a, **k):

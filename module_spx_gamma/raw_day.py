@@ -8,7 +8,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-# file stem -> key in the raw dict
+# file stem -> key in the raw dict. The VIX family, the CFTC COT and the 8-week window are not files of the day
+# any more (PR 3): run.build_day reads them from the market store, and an older day's copies of them are ignored.
 FILE_KEYS = {
     "gex_levels": "gex_levels",
     "gex_levels_vol": "gex_levels_vol",
@@ -24,9 +25,6 @@ FILE_KEYS = {
     "variance_risk_premium": "variance_risk_premium",
     "realized_vol": "realized_vol",
     "option_chain": "option_chain",
-    "ohlc_8wk": "ohlc",
-    "vix_family": "vix",
-    "cftc_tff": "cftc",
     "flow_per_strike": "flow_per_strike",
 }
 ZERO_DTE_STEM = "zero_dte_strike_expiry"

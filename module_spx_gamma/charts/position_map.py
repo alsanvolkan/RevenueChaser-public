@@ -81,6 +81,9 @@ def build(snapshot: dict, include_tornado: bool = True) -> go.Figure | None:
     highs = [c["high"] for c in candles]
     lows = [c["low"] for c in candles]
     closes = [c["close"] for c in candles]
+    # Cboe's SPX file, the market store's window since PR 3, has one column: a close and no open/high/low. Such a
+    # window is drawn as a close line, since a candlestick without its OHLC draws nothing.
+    has_ohlc = any(v is not None for v in opens + highs + lows)
 
     tornado_rows_data = tornado_rows(snapshot) if include_tornado else []
     has_tornado = include_tornado and bool(tornado_rows_data)
@@ -113,7 +116,8 @@ def build(snapshot: dict, include_tornado: bool = True) -> go.Figure | None:
                 showarrow=False, font=dict(size=12, color=TEXT),
             ),
             dict(
-                text="Candles: yfinance (^GSPC). Option levels: Unusual Whales API.",
+                text=("Candles: yfinance (^GSPC)" if has_ohlc else "Closes: Cboe SPX (market store)")
+                + ". Option levels: Unusual Whales API.",
                 xref="paper", yref="paper", x=0, y=-0.02,
                 showarrow=False, font=dict(size=9, color="#64748b"),
             ),
@@ -130,7 +134,7 @@ def build(snapshot: dict, include_tornado: bool = True) -> go.Figure | None:
                            levels.get("zero_dte_put_concentration"),
                            em["lower"] if em else None,
                            em["upper"] if em else None] if v is not None]
-    anchors += [v for v in highs + lows if v is not None]
+    anchors += [v for v in (highs + lows if has_ohlc else closes) if v is not None]
 
     charm_strike = charm.get("strike")
     charm_in_chart = (
@@ -185,12 +189,16 @@ def build(snapshot: dict, include_tornado: bool = True) -> go.Figure | None:
             row=1, col=1,
         )
 
-    fig.add_trace(go.Candlestick(
-        x=dates, open=opens, high=highs, low=lows, close=closes,
-        name="SPX",
-        increasing_line_color=UP, increasing_fillcolor=UP,
-        decreasing_line_color=DOWN, decreasing_fillcolor=DOWN,
-    ), row=1, col=1)
+    if has_ohlc:
+        fig.add_trace(go.Candlestick(
+            x=dates, open=opens, high=highs, low=lows, close=closes,
+            name="SPX",
+            increasing_line_color=UP, increasing_fillcolor=UP,
+            decreasing_line_color=DOWN, decreasing_fillcolor=DOWN,
+        ), row=1, col=1)
+    else:
+        fig.add_trace(go.Scatter(x=dates, y=closes, mode="lines+markers", name="SPX close",
+                                 line=dict(color=UP, width=1.6), marker=dict(size=4)), row=1, col=1)
 
     entries = []
     if current is not None:

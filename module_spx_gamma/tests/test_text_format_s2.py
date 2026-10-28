@@ -73,11 +73,13 @@ def test_missing_realized_vol_prints_na_instead_of_failing():
 
 
 # ── SPX-7 B: live files inside a backfilled day are labelled historical ────
-def test_live_vix_in_a_backfilled_day_shows_the_historical_label():
+def test_vix_in_a_backfilled_day_is_the_days_own_stored_value():
+    """PR 3: the VIX family is read from the market store for the day shown, so it is never a later session's
+    value; an older raw day whose manifest still lists vix_family.json as live does not hide it."""
     html = _html(vix={"vix": 15.5, "vix3m": 17.0, "term_mode": "contango"},
                  historical_live_files=["vix_family.json"])
     row = html.split("VIX family</td>")[1].split("</tr>")[0]
-    assert "n/a (historical)" in row and "15.5" not in row
+    assert "n/a (historical)" not in row and "15.5" in row
 
 
 def test_live_skew_in_a_backfilled_day_shows_the_historical_label():
@@ -107,9 +109,11 @@ def test_refresh_of_a_backfilled_day_marks_its_live_files(tmp_path, monkeypatch)
     _no_network(monkeypatch)
     spx_run.refresh(DAY, data_root=tmp_path)
     snap = json.loads((tmp_path / "parsed" / DAY / "snapshot.json").read_text(encoding="utf-8"))
-    assert "vix_family.json" in snap["historical_live_files"]
+    assert "option_chain.json" in snap["historical_live_files"]
+    assert "vix_family.json" not in snap["historical_live_files"], "not a file of the day since PR 3"
     assert "gex_levels.json" not in snap["historical_live_files"]
-    assert "n/a (historical)" in (tmp_path / "reports" / DAY / "section.html").read_text(encoding="utf-8")
+    # the panel the day's live chain feeds is the one marked (the VIX panel was, before PR 3 read VIX from the store)
+    assert render._historical_panels(snap)["iron_butterfly"] is True
 
 
 def test_a_day_fetched_in_its_own_session_is_not_historical(tmp_path):

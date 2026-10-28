@@ -318,7 +318,7 @@ def _sha_map(root):
     return json.loads((root / "latest.json").read_text(encoding="utf-8"))["sha256"]
 
 
-def test_refresh_writes_no_png(tmp_path, monkeypatch):
+def test_refresh_writes_no_png(tmp_path, monkeypatch, stored_make_raw_window):
     _stored_day(tmp_path, monkeypatch)
     calls = _PngCalls(monkeypatch)
     spx_run.refresh(DAY, data_root=tmp_path)
@@ -327,7 +327,7 @@ def test_refresh_writes_no_png(tmp_path, monkeypatch):
     assert (tmp_path / "charts" / DAY / "position_map.html").exists()
 
 
-def test_fetch_build_still_writes_the_pngs(tmp_path, monkeypatch):
+def test_fetch_build_still_writes_the_pngs(tmp_path, monkeypatch, stored_make_raw_window):
     raw = _stored_day(tmp_path, monkeypatch)
     calls = _PngCalls(monkeypatch)
     spx_run.build_day(raw, DAY, tmp_path)               # record=True: the Fetch path
@@ -336,7 +336,7 @@ def test_fetch_build_still_writes_the_pngs(tmp_path, monkeypatch):
     assert "position_map.png" in _sha_map(tmp_path)
 
 
-def test_refresh_records_no_sha256_for_a_png_it_did_not_write(tmp_path, monkeypatch):
+def test_refresh_records_no_sha256_for_a_png_it_did_not_write(tmp_path, monkeypatch, stored_make_raw_window):
     raw = _stored_day(tmp_path, monkeypatch)
     _PngCalls(monkeypatch)
     spx_run.build_day(raw, DAY, tmp_path)               # Fetch: png on disk and in the map
@@ -353,7 +353,7 @@ def test_refresh_records_no_sha256_for_a_png_it_did_not_write(tmp_path, monkeypa
         assert spx_run._sha256(p) == digest
 
 
-def test_refresh_keeps_the_report_image_reference(tmp_path, monkeypatch):
+def test_refresh_keeps_the_report_image_reference(tmp_path, monkeypatch, stored_make_raw_window):
     raw = _stored_day(tmp_path, monkeypatch)
     _PngCalls(monkeypatch)
     spx_run.build_day(raw, DAY, tmp_path)

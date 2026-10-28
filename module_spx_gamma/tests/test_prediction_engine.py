@@ -275,7 +275,7 @@ def test_html_prediction_absent_degrades():
     assert 'class="prediction-container"' not in html
     assert "EXPECTED DIRECTION" not in html
 
-def test_prediction_cache_written_without_api_duplication(tmp_path, monkeypatch):
+def test_prediction_cache_written_without_api_duplication(tmp_path, monkeypatch, stored_make_raw_window):
     """A cached prediction is written once alongside the snapshot; re-serving it
     (Refresh Tab) never invokes the UW client again."""
     from RevenueChaser.module_spx_gamma import run as spx_run

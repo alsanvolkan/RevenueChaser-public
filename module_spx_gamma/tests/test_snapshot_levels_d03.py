@@ -1,8 +1,9 @@
-"""D03: the SPX snapshot reads the stored ``index_levels_daily`` levels and never fetches candles itself.
+"""D03: the SPX snapshot reads the stored SPX closes and never fetches candles itself.
 
-The store is the single source of the 8-week candle window (``core/index_levels.py`` writes it from yfinance
-``^GSPC`` once a night). A snapshot run must therefore reach no provider for candles: the socket guard in the root
-``conftest.py`` would turn such a call into a ``NetworkAccessAttempted`` warning and an empty window.
+The market store is the single source of the 8-week candle window (Cboe's ``SPX`` series in ``market_series``, which
+the builder writes; PR 3 moved it there from ``index_levels_daily``). A snapshot run must therefore reach no provider
+for candles: the socket guard in the root ``conftest.py`` would turn such a call into a ``NetworkAccessAttempted``
+warning and an empty window.
 """
 from __future__ import annotations
 
@@ -11,9 +12,9 @@ import json
 import pytest
 from datetime import date
 
-from RevenueChaser.core import rawstore
 from RevenueChaser.module_spx_gamma import snapshot as snap
 
+from . import rcdata_fixture
 from .conftest import as_uw
 
 DAY = "2026-08-14"
@@ -38,42 +39,35 @@ class _FakeClient:
 
 
 def _seed_levels(dates=CANDLE_DATES) -> None:
-    rawstore.write_rows("index_levels_daily", [
-        {"symbol": "^GSPC", "session_date": date.fromisoformat(d), "open": 7740.0 + i, "high": 7755.0 + i,
-         "low": 7725.0 + i, "close": 7748.0 + i, "volume": 1_000_000 + i, "source": "yfinance",
-         "fetched_at": 1.0, "run_id": "seed", "run_at": 1.0}
-        for i, d in enumerate(dates)])
+    rcdata_fixture.serve(spx={}, symbols=("SPX",), cot_reports=(), series_end=date(2026, 8, 14),
+                         closes={d: 7748.0 + i for i, d in enumerate(dates)})
 
 
 def _fetch(tmp_path, **kw):
-    kw.setdefault("vix_fetcher", lambda: {"tickers": {}, "vix": 15.5})
-    kw.setdefault("cftc_fetcher", lambda: None)
     return snap.fetch_snapshot(as_uw(_FakeClient()), DAY, data_root=tmp_path, **kw)
 
 
-def test_the_snapshot_builds_its_candle_window_from_the_stored_levels(tmp_path, rawstore_tmp_db):
+def test_the_snapshot_builds_its_candle_window_from_the_stored_levels(tmp_path):
     _seed_levels()
     raw = _fetch(tmp_path)
-    ohlc = json.loads((tmp_path / DAY / "ohlc_8wk.json").read_text(encoding="utf-8"))
+    ohlc = raw["ohlc"]
     assert [c["date"] for c in ohlc["data"]] == CANDLE_DATES
-    assert ohlc["source"].startswith("index_levels_daily")
+    assert ohlc["source"].startswith("rcdata:market_series")
     assert "yfinance" not in ohlc["source"]
     assert ohlc["data"][-1]["close"] == 7757.0
-    assert raw["ohlc"] == ohlc
+    assert not (tmp_path / DAY / "ohlc_8wk.json").exists(), "the window is read again at render time (PR 3)"
 
 
-def test_the_snapshot_spot_comes_from_the_newest_stored_level(tmp_path, rawstore_tmp_db):
+def test_the_snapshot_spot_comes_from_the_newest_stored_level(tmp_path):
     """With the market closed there is no live spot, so the strike window rests on the newest stored close."""
     _seed_levels()
     client = _FakeClient()
-    snap.fetch_snapshot(as_uw(client), DAY, data_root=tmp_path, vix_fetcher=lambda: {"tickers": {}, "vix": 15.5},
-                        cftc_fetcher=lambda: None)
+    snap.fetch_snapshot(as_uw(client), DAY, data_root=tmp_path)
     spot = [c for c in client.calls if c[0].endswith("/spot-exposures/strike")]
     assert spot and spot[0][1]["min_strike"] == int(7757.0 * 0.75)
 
 
-def test_an_empty_store_warns_and_writes_an_empty_window_rather_than_reaching_out(tmp_path, rawstore_tmp_db,
-                                                                                  monkeypatch):
+def test_an_empty_store_warns_and_writes_an_empty_window_rather_than_reaching_out(tmp_path, monkeypatch):
     """#293 review N-6: nothing asserted that the snapshot reaches no provider for candles. The whole point of
     reading the store is that an empty window costs no request, so count yfinance.Ticker constructions."""
     import yfinance
@@ -90,14 +84,14 @@ def test_an_empty_store_warns_and_writes_an_empty_window_rather_than_reaching_ou
     raw = _fetch(tmp_path)
     man = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
     assert raw["ohlc"]["data"] == []
-    assert any("index levels" in w for w in man["warnings"])
+    assert any(w.startswith("SPX closes not stored") for w in man["warnings"])
     assert built == [], f"the snapshot built yfinance.Ticker for {built} with the market closed"
     assert man["uw_ohlc_attempted"] is False   # no UW index-OHLC request either (#293 review N-3)
 
 
 def test_a_window_that_ends_before_the_last_complete_session_warns(monkeypatch):
     """#293 review MUST: the only guard was "no rows at all". A window that merely ends early — the nightly
-    --index-levels step missed a session — passed silently with a healthy source label, which is the default
+    --index-levels step (now the builder's market_series) missed a session — passed silently with a healthy source label, which is the default
     same-day Fetch path. It must say so."""
     from RevenueChaser.core import calendar as nyse_calendar
     from RevenueChaser.module_spx_gamma import candles
@@ -123,12 +117,13 @@ def test_the_window_is_sorted_whatever_order_the_store_returns(monkeypatch):
     """#293 review S-1: spot is candles[-1]["close"] and price_window_sessions does not re-sort, so order is
     load-bearing. Base sorted explicitly; after the switch it rested on an ORDER BY in another module, which a
     test seeding ascending rows could not catch."""
-    from RevenueChaser.core import index_levels
-    from RevenueChaser.module_spx_gamma import candles
+    from RevenueChaser.rcdata import read
 
-    shuffled = [{"date": d, "close": float(i)} for i, d in enumerate(reversed(CANDLE_DATES))]
-    monkeypatch.setattr(index_levels, "levels_between", lambda *a, **k: list(shuffled))
-    out = candles.stored_spx_candles(DAY)
+    shuffled = [{"series_id": "SPX", "obs_date": date.fromisoformat(d), "value": float(i), "close": None,
+                 "open": None, "high": None, "low": None, "status": "changed"}
+                for i, d in enumerate(reversed(CANDLE_DATES))]
+    monkeypatch.setattr(read, "market_series", lambda *a, **k: list(shuffled))
+    out = snap.stored_spx_candles(DAY)
     assert [r["date"] for r in out] == sorted(CANDLE_DATES)
     assert out[-1]["date"] == max(CANDLE_DATES), "spot would read the wrong session"
 
@@ -179,7 +174,6 @@ def test_normalize_and_a_reload_both_keep_the_recorded_live_spot(tmp_path):
     # the same day written out and read back must still answer with the live level
     day = tmp_path / "2026-08-14"
     day.mkdir()
-    (day / "ohlc_8wk.json").write_text(_json.dumps(raw["ohlc"]), encoding="utf-8")
     (day / "manifest.json").write_text(_json.dumps({
         "asof_date": "2026-08-14", "effective_date": "2026-08-14", "spot": raw["spot"]}), encoding="utf-8")
     reloaded = raw_day.load_raw_day(day)
@@ -247,8 +241,7 @@ def test_an_open_session_spends_exactly_one_request_on_spot(tmp_path, rawstore_t
     monkeypatch.setattr(snap, "live_spot", lambda *a, **k: (reads.append(1), (8000.0, None))[1])
 
     client = _FakeClient()
-    snap.fetch_snapshot(as_uw(client), DAY, data_root=tmp_path, vix_fetcher=lambda: {"tickers": {}, "vix": 15.5},
-                        cftc_fetcher=lambda: None)
+    snap.fetch_snapshot(as_uw(client), DAY, data_root=tmp_path)
 
     assert len(reads) == 1, "spot must cost exactly one live read per snapshot"
     spot_calls = [c for c in client.calls if c[0].endswith("/spot-exposures/strike")]

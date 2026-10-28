@@ -57,8 +57,6 @@ class Recorder(FakeUW):
 @pytest.fixture(autouse=True)
 def _offline(monkeypatch):
     monkeypatch.setattr(snap, "stored_spx_candles", _candles)
-    monkeypatch.setattr(snap.stored_inputs, "vol_index_rows", lambda day=None: ({}, None))
-    monkeypatch.setattr(snap.stored_inputs, "cot_row", lambda day=None: ({}, None))
     monkeypatch.setattr(nyse_calendar, "_now", lambda: NOW)
 
 

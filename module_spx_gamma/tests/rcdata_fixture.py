@@ -49,6 +49,11 @@ def _sessions(start: date, end: date) -> list[date]:
     return list(base.iter_sessions(start, end))
 
 
+def spx_csv(closes: dict[str, float]) -> str:
+    """Cboe's one-column SPX file holding exactly ``closes`` (ISO day -> close)."""
+    return "\n".join(["DATE,SPX"] + [f"{date.fromisoformat(d):%m/%d/%Y},{v:.2f}" for d, v in sorted(closes.items())]) + "\n"
+
+
 def cboe_csv(symbol: str, end: date = LAST) -> str:
     """A Cboe history file: OPEN/HIGH/LOW/CLOSE for the VIX family, one value column for SPX and VVIX."""
     days = _sessions(SERIES_START, end)
@@ -88,11 +93,12 @@ def _write_spx(ctx, spx: dict[date, list[dict]]) -> None:
         uw.DATASET.to_parquet(ctx, raw)
 
 
-def _write_series(ctx, symbols, cot_reports, end: date) -> None:
+def _write_series(ctx, symbols, cot_reports, end: date, closes: dict[str, float] | None = None) -> None:
     raws = []
     for sym in symbols:
         path = base.raw_root() / "cboe" / "index" / end.isoformat() / f"{sym}_History.csv"
-        raws.append(ms.save_raw(ctx, path, cboe_csv(sym, end).encode(), end, "https://cboe.test", symbol=sym))
+        text = spx_csv(closes) if sym == "SPX" and closes is not None else cboe_csv(sym, end)
+        raws.append(ms.save_raw(ctx, path, text.encode(), end, "https://cboe.test", symbol=sym))
     for k, report in enumerate(cot_reports):
         path = base.raw_root() / "cftc" / "cot" / f"{report.isoformat()}.json.gz"
         doc = json.dumps({"tff": [cot_item(report, k)], "disagg": []}).encode()
@@ -105,14 +111,16 @@ VIX_SYMBOLS = ("VIX", "VIX9D", "VIX3M", "VIX6M", "VIX1Y", "VVIX")
 
 
 def serve(*, spx: dict[date, list[dict]] | None = None, symbols=VIX_SYMBOLS + ("SPX",),
-          cot_reports=COT_REPORTS, series_end: date = LAST, check: str | None = "changed") -> None:
-    """Build and swap in a ``market`` serving file. ``spx=None`` is the default five sessions; ``{}`` none."""
+          cot_reports=COT_REPORTS, series_end: date = LAST, check: str | None = "changed",
+          closes: dict[str, float] | None = None) -> None:
+    """Build and swap in a ``market`` serving file. ``spx=None`` is the default five sessions; ``{}`` none.
+    ``closes`` (ISO day -> close) replaces the default SPX series."""
     spx = {s: default_rows(s) for s in SESSIONS} if spx is None else spx
     # allow_shrink: a test may serve again with fewer rows for a session it already served.
     ctx = base.RunContext(run_id=RUN_ID, dataset=uw.NAME, trigger="test", allow_shrink=True)
     _write_spx(ctx, spx)
     ctx.dataset = ms.NAME
-    _write_series(ctx, symbols, cot_reports, series_end)
+    _write_series(ctx, symbols, cot_reports, series_end, closes)
     base.parquet_root().mkdir(parents=True, exist_ok=True)
     base.build_kind(ctx, uw.DATASET)
     if check:

@@ -36,8 +36,8 @@ def _handler(path, params):
 
 def _fetch(tmp_path, handler=_handler, **kw):
     uw = FakeUW(handler, prefix="")
-    raw = snap.fetch_snapshot(uw, DAY, data_root=tmp_path, vix_fetcher=lambda: dict(VIX),
-                              cftc_fetcher=lambda: dict(CFTC), candle_fetcher=lambda *a, **k: list(CANDLES), **kw)
+    raw = snap.fetch_snapshot(uw, DAY, data_root=tmp_path,
+                              candle_fetcher=lambda *a, **k: list(CANDLES), **kw)
     return uw, raw
 
 
@@ -96,12 +96,12 @@ def test_a_mandatory_failure_still_names_the_status(tmp_path):
 
 
 # ── injected inputs ─────────────────────────────────────────────────────────
-def test_vix_cftc_and_candles_are_injected(tmp_path):
+def test_candles_are_injected_and_vix_and_cot_are_not_fetched(tmp_path):
+    """PR 3: the snapshot asks no source for the VIX family or the COT; run.build_day reads them from the store."""
     _, raw = _fetch(tmp_path)
-    assert raw["vix"]["vix"] == 15.5 and "term_mode" in raw["vix"]
-    assert raw["cftc"]["report_date"] == "2026-08-11"
+    assert "vix" not in raw and "cftc" not in raw
     assert raw["ohlc"]["data"] == CANDLES
-    assert raw["ohlc"]["source"].startswith("index_levels_daily")
+    assert raw["ohlc"]["source"].startswith("rcdata:market_series")
 
 
 def test_an_injected_fetcher_failing_is_a_warning_not_an_abort(tmp_path):
@@ -109,21 +109,16 @@ def test_an_injected_fetcher_failing_is_a_warning_not_an_abort(tmp_path):
         raise RuntimeError("offline")
 
     uw = FakeUW(_handler, prefix="")
-    raw = snap.fetch_snapshot(uw, DAY, data_root=tmp_path, vix_fetcher=boom, cftc_fetcher=boom,
-                              candle_fetcher=boom)
+    raw = snap.fetch_snapshot(uw, DAY, data_root=tmp_path, candle_fetcher=boom)
     man = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
-    assert "vix" not in raw and "cftc" not in raw
-    assert any(w.startswith("vix_family failed") for w in man["warnings"])
-    assert any(w.startswith("cftc_tff failed") for w in man["warnings"])
+    assert any(w.startswith("SPX closes read failed") for w in man["warnings"])
     assert raw["ohlc"]["source"] == "unavailable"
 
 
 def test_defaults_still_resolve_the_module_functions(tmp_path, monkeypatch):
     monkeypatch.setattr(snap, "stored_spx_candles", lambda asof=None, ticker=None: list(CANDLES))
-    monkeypatch.setattr(snap, "fetch_vix_family", lambda: dict(VIX))
-    monkeypatch.setattr(snap, "fetch_cftc_tff", lambda: None)
     raw = snap.fetch_snapshot(FakeUW(_handler, prefix=""), DAY, data_root=tmp_path)
-    assert raw["vix"]["vix"] == 15.5
+    assert raw["ohlc"]["data"] == CANDLES
 
 
 # ── one normalize, deterministic ────────────────────────────────────────────
@@ -143,7 +138,10 @@ def test_load_raw_day_round_trips_the_fetch(tmp_path):
     loaded = raw_day.load_raw_day(tmp_path / DAY)
     assert loaded["_meta"]["effective_date"] == DAY
     assert loaded["_meta"]["api_snapshot_time"]
-    assert normalize_snapshot(loaded, DAY) == normalize_snapshot(raw, DAY)
+    # The render reads the window, VIX and COT from the market store for the day (PR 3), so the two dicts it is
+    # handed are the same once the store's inputs are added to each.
+    assert (normalize_snapshot(spx_run.with_store_inputs(loaded, DAY), DAY)
+            == normalize_snapshot(spx_run.with_store_inputs(raw, DAY), DAY))
 
 
 def test_load_raw_day_keys_the_zero_dte_file_by_its_expiry(tmp_path):
@@ -166,8 +164,6 @@ def _no_network(monkeypatch):
     monkeypatch.setattr(httpx, "get", boom)
     monkeypatch.setattr(httpx.Client, "send", boom)
     monkeypatch.setattr(snap, "stored_spx_candles", boom)
-    monkeypatch.setattr(snap, "fetch_vix_family", boom)
-    monkeypatch.setattr(snap, "fetch_cftc_tff", boom)
     monkeypatch.setattr(spx_run, "UWClient", boom)
 
 

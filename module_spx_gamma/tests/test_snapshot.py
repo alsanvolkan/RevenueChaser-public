@@ -69,7 +69,7 @@ def test_manifest_has_sha256(tmp_path, monkeypatch):
     manifest = json.loads((tmp_path / "2026-08-14" / "manifest.json").read_text(encoding="utf-8"))
     assert "sha256" in manifest
     assert "gex_levels.json" in manifest["sha256"]
-    assert manifest["candle_source"] == "index_levels_daily (^GSPC)"
+    assert manifest["candle_source"] == "rcdata:market_series SPX (cboe)"
     assert manifest["spot_exposure_mode"] == "open_interest"
 
 

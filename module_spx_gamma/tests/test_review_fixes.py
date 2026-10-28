@@ -39,8 +39,8 @@ def test_a_fallback_fetch_hands_back_the_stored_day(tmp_path):
         return with_iv(0.2)(path, params)
 
     uw = FakeUW(fallback, prefix="")
-    raw = snap.fetch_snapshot(uw, "2026-08-17", data_root=tmp_path, vix_fetcher=lambda: dict(VIX),
-                              cftc_fetcher=lambda: dict(CFTC), candle_fetcher=lambda *a, **k: list(CANDLES))
+    raw = snap.fetch_snapshot(uw, "2026-08-17", data_root=tmp_path,
+                              candle_fetcher=lambda *a, **k: list(CANDLES))
     assert raw["_meta"]["effective_date"] == DAY
     assert raw["interpolated_iv"]["data"][0]["volatility"] == 0.1          # the stored IV, not today's 0.2
     stored = json.loads((tmp_path / DAY / "interpolated_iv.json").read_text(encoding="utf-8"))
@@ -96,11 +96,12 @@ def test_render_passes_the_day_to_the_deltas(monkeypatch):
 
 
 # ── L2-1: VIX and CFTC are marked live in the manifest ─────────────────────
-def test_vix_and_cftc_are_live_files(tmp_path):
+def test_vix_and_cftc_are_no_files_of_the_day(tmp_path):
+    """PR 3: the VIX family and the COT are read from the market store for the day rendered, never written into
+    the raw day, so they can no longer be a later session's live value."""
     _fetch(tmp_path)
     files = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))["files"]
-    assert files["vix_family.json"]["as_of"] is False
-    assert files["cftc_tff.json"]["as_of"] is False
+    assert "vix_family.json" not in files and "cftc_tff.json" not in files
     assert files["gex_levels.json"]["as_of"] is True
 
 
@@ -129,8 +130,7 @@ def test_refresh_of_an_older_day_keeps_latest_on_the_newest(tmp_path, monkeypatc
         d = tmp_path / "raw" / day
         # one stored day per date: reuse the fetch with the day's own candle
         uw = FakeUW(_handler, prefix="")
-        snap.fetch_snapshot(uw, day, data_root=tmp_path / "raw", vix_fetcher=lambda: dict(VIX),
-                            cftc_fetcher=lambda: dict(CFTC),
+        snap.fetch_snapshot(uw, day, data_root=tmp_path / "raw",
                             candle_fetcher=lambda *a, _d=day, **k: [{**CANDLES[0], "date": _d}])
     _no_network(monkeypatch)
     spx_run.refresh(DAY, data_root=tmp_path)

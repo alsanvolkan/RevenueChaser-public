@@ -23,6 +23,7 @@ from .render import render_html, render_markdown
 from .scenarios import build_scenarios
 from .raw_day import load_raw_day
 from .snapshot import fetch_snapshot
+from . import store_reads
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,8 @@ def _backfill_history(root: Path, uw, ticker: str,
                 # disk, no network.
                 raw = load_raw_day(root / "raw" / day)
             effective = (raw.get("_meta") or {}).get("effective_date") or day
-            snap = normalize_snapshot(raw, effective, ticker=ticker, mode="open_interest")
+            snap = normalize_snapshot(with_store_inputs(raw, effective), effective, ticker=ticker,
+                                      mode="open_interest")
             _record_history(snap, effective, history_path)
             time.sleep(0.2)
         except Exception as exc:  # noqa: BLE001 — best effort per day
@@ -231,6 +233,16 @@ def _historical_live_files(day_dir: Path) -> list[str]:
     return sorted(fn for fn, meta in files.items() if isinstance(meta, dict) and meta.get("as_of") is False)
 
 
+def with_store_inputs(raw: dict, day: str) -> dict:
+    """``raw`` with the inputs the market store holds for ``day`` (PR 3): the VIX family, the CFTC COT, the SPX
+    closes of the window and the 0-1 DTE dollar gamma, each with its "not stored" marker (``store_reads.read_day``).
+
+    Read at render time for the day rendered, so a Fetch and a later Refresh show the same thing; a raw day of an
+    older Fetch that still holds vix_family.json, cftc_tff.json or ohlc_8wk.json is overridden by the store.
+    """
+    return {**raw, **store_reads.read_day(day)}
+
+
 def build_day(raw: dict, requested_date: str, root: Path, ticker: str = TICKER,
               mode: str = "open_interest", update_latest: bool = True, record: bool = True,
               write_png: bool = True) -> dict:
@@ -248,7 +260,7 @@ def build_day(raw: dict, requested_date: str, root: Path, ticker: str = TICKER,
     history_path = root / HISTORY_FILENAME
     brier_path = root / BRIER_FILENAME
 
-    snapshot = normalize_snapshot(raw, asof_date, ticker=ticker, mode=mode)
+    snapshot = normalize_snapshot(with_store_inputs(raw, asof_date), asof_date, ticker=ticker, mode=mode)
     snapshot["historical_live_files"] = _historical_live_files(root / "raw" / asof_date)
 
     parsed_dir = root / "parsed" / asof_date
@@ -334,6 +346,8 @@ def build_day(raw: dict, requested_date: str, root: Path, ticker: str = TICKER,
         "call_wall_vol": (snapshot.get("levels") or {}).get("call_wall_vol"),
         "report_html": str(report_dir / "section.html"),
         "methodology_version": "1.0",
+        # The market-store inputs this render read (PR 3): source, source_as_of and status, or "not stored".
+        "input_sources": snapshot.get("store_inputs"),
         "sha256": hashes,
     }
     if update_latest:
