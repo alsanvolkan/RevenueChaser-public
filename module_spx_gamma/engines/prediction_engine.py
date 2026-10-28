@@ -148,12 +148,13 @@ def directional_score(snapshot: dict) -> dict:
 
 def _dollar_gamma_at(snapshot: dict, strike: float) -> float | None:
     """0-1 DTE dollar OI gamma at a strike: ``call_gamma_oi + put_gamma_oi`` summed over the 0 and 1 DTE expiries of
-    ``spx_gamma_expiry_strike`` (``store_reads.zero_one_dte_dollars``, review S4). None when the slice is not stored
-    or has no row at the strike; never the all-expiry number."""
+    ``spx_gamma_expiry_strike`` (``store_reads.zero_one_dte_dollars``, review S4). None when the slice is not stored;
+    0.0 for a strike a stored slice has no row for (no 0-1 DTE OI gamma there, review SF1); never the all-expiry
+    number."""
     dollars = snapshot.get("zero_one_dte_dollars")
     if not dollars:
         return None
-    return dollars.get(strike)
+    return dollars.get(strike, 0.0)
 
 
 def _all_expiry_dollars_at(snapshot: dict, strike: float) -> float | None:
@@ -253,13 +254,12 @@ def scenario_extraction(snapshot: dict) -> dict:
     pin_distance_pct = (abs(anchor - spot) / spot) if anchor is not None and spot else None
 
     # 2. Upside acceleration zone: lowest strike above spot with negative GEX
-    #    (magnitude > $200M in dollar terms; fall back to grid per-unit net GEX),
-    #    bounded to the ATM window.
+    #    and a 0-1 DTE dollar magnitude > $200M, bounded to the ATM window.
     upside_trigger = None
     upside_net_gex = None
     upside_all_expiry = None
-    # avo, 28 Oct 2026: a day whose 0-1 DTE slice is not stored has no squeeze trigger at all; the per-unit
-    # fallback below is only for a strike the stored slice has no row for.
+    # avo, 28 Oct 2026: a day whose 0-1 DTE slice is not stored has no squeeze trigger at all; a strike a stored
+    # slice has no row for holds $0 and never fires (review SF1). There is no per-unit fallback any more.
     slice_stored = bool(snapshot.get("zero_one_dte_dollars"))
     above = [r for r in atm_rows if r.get("strike") > spot] if slice_stored else []
     for r in sorted(above, key=lambda x: x["strike"]):
@@ -267,10 +267,9 @@ def scenario_extraction(snapshot: dict) -> dict:
         if (r["net_gamma"] or 0.0) >= 0:
             continue
         dollars = _dollar_gamma_at(snapshot, strike)
-        mag = abs(dollars) if dollars is not None else None
-        if mag is None or mag > UPSIDE_TRIGGER_MIN_MAGNITUDE:
+        if abs(dollars) > UPSIDE_TRIGGER_MIN_MAGNITUDE:
             upside_trigger = strike
-            upside_net_gex = dollars if dollars is not None else r["net_gamma"]
+            upside_net_gex = dollars
             upside_all_expiry = _all_expiry_dollars_at(snapshot, strike)
             break
 

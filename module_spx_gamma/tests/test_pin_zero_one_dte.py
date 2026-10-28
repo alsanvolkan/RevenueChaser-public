@@ -147,3 +147,17 @@ def test_a_missing_slice_says_not_stored_on_the_board_and_in_the_banner(after_mo
     html = render.render_html(snap)
     assert "Accel Trigger" not in html
     assert "0-1 DTE not stored for 2026-08-14" in (render.data_quality_notice(snap) or "")
+
+
+# ── review SF1: a strike a stored slice has no row for holds $0 of 0-1 DTE gamma ──
+
+def test_a_strike_missing_from_a_stored_slice_does_not_fire_the_squeeze():
+    """Stored slice, no row at 6820: that strike has no 0-1 DTE OI gamma, so it is below $200M and fires nothing.
+    The old per-unit fallback (fire, sized by the grid's net GEX) applies to nothing any more."""
+    scen = scenario_extraction(_snapshot(zero_one={MAGNET: 1e9}))
+    assert scen["upside_trigger"] is None and scen["upside_trigger_net_gex"] is None
+
+
+def test_a_magnet_missing_from_a_stored_slice_reads_zero_dollars_and_no_flag():
+    scen = scenario_extraction(_snapshot(zero_one={6790.0: 20e9}, all_expiry={MAGNET: 50e9}))
+    assert scen["pin_magnet"] == MAGNET and scen["pin_dollars"] == 0.0 and scen["pin_flag"] is None

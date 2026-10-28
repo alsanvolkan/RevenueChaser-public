@@ -37,15 +37,13 @@ def _trigger(scen: dict) -> str:
     strike = scen.get("upside_trigger")
     if strike is None:
         return "-"
-    dollars = scen.get("upside_trigger_net_gex") if scen.get("_dollars_known") else None
-    return f"{_level(strike)} ({_billions(dollars)})"
+    return f"{_level(strike)} ({_billions(scen.get('upside_trigger_net_gex'))})"
 
 
 def _scenarios(snapshot: dict, dollars: dict | None) -> dict:
-    scen = scenario_extraction({**snapshot, "zero_one_dte_dollars": dollars})
-    strike = scen.get("upside_trigger")
-    scen["_dollars_known"] = bool(dollars) and strike is not None and dollars.get(strike) is not None
-    return scen
+    """The scenario rules run on ``dollars`` as the per-strike size: both sides use today's rules (a strike with no
+    row holds $0), so the old side is the all-expiry basis under today's rules, not a replay of the pre-PR code."""
+    return scenario_extraction({**snapshot, "zero_one_dte_dollars": dollars})
 
 
 def _file(day_dir: Path, name: str):

@@ -59,7 +59,8 @@ def test_one_line_per_day_with_both_bases(stored_day, capsys):
     assert line.startswith(f"{DAY} magnet=6,750")
     assert "0-1DTE=$4.00B" in line and "all-expiry=$12.00B" in line
     assert "pin new=- old=ACTIVE_PIN" in line
-    assert "squeeze new=6,760 ($-0.30B) old=6,760 (n/a)" in line
+    # the all-expiry rows have nothing at 6760: $0 on that basis, so no trigger there (review SF1, today's rules)
+    assert "squeeze new=6,760 ($-0.30B) old=-" in line
     assert "vix new=" in line and "@2026-10-26" in line and "cot new=2026-10-20" in line
     assert "spx new=6,749.00@2026-10-26" in line
     assert lines[1] == "2026-10-23 no complete raw day (manifest.json missing)"
