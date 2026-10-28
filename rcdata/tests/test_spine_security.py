@@ -435,7 +435,7 @@ def test_a_ticker_rule_needs_its_exact_form(ticker, exchange):
 
 
 def test_the_ticker_rules_never_retype_a_typed_name_and_come_before_tpci():
-    # PSNYW is an ADS (Nasdaq Trader, 2026-10-28): OpenFIGI's type stands.
+    # PSNYW, "Class C-1 ADS (ADW)" at Nasdaq Trader (2026-10-28), is a depositary warrant: OpenFIGI's type stands.
     assert tier.security_type("PSNYW", "POLESTAR", {"security_type": "ADR"}, exchange="Nasdaq")[0] == "adr"
     # Compustat writes tpci 0 for PLCIU, a unit (the 2026-10-28 spine): the symbol is the more specific word.
     assert tier.security_type("PLCIU", "PELICAN ACQUISITION II CORP", None, tpci="0", exchange="Nasdaq") == (

@@ -69,11 +69,11 @@ TPCI_TYPES = {"0": "common", "F": "adr", "%": "etp"}
 UNTYPED = ("unknown", "other", None)
 
 # 1. The ticker. The SEC file writes an NYSE warrant ``AMPX-WT`` (a series ``NE-WTA``), a unit ``BCSS-UN`` and a right
-# ``CELG-RI``. A Nasdaq one is a fifth letter: of Nasdaq Trader's five-letter symbols (nasdaqlisted.txt, 2026-10-28)
-# 357 of 358 ending W are warrants (PSNYW is an ADS, typed by OpenFIGI first), 247 of 247 ending U units and 104 of
-# 104 ending R rights; other fifth letters mix notes, preferreds and share classes (GOOGL, FWONK), so they type
-# nothing. A right (a SPAC's right to a fraction of a share, a contingent value right) is typed warrant: a claim on
-# shares, not a share, with no type of its own in ``EXCLUDED_TYPES``; the source says right.
+# ``CELG-RI``. A Nasdaq one is a fifth letter: of Nasdaq Trader's five-letter symbols (nasdaqlisted.txt, 2026-10-28) all
+# 358 ending W are warrants (PSNYW's name says "ADS (ADW)", a depositary warrant; OpenFIGI types it first), 247 of 247
+# ending U units and 104 of 104 ending R rights; other fifth letters mix notes, preferreds and share classes (GOOGL,
+# FWONK), so they type nothing. A right (a SPAC's right to a fraction of a share, a contingent value right) is typed
+# warrant: a claim on shares, not a share, with no type of its own in ``EXCLUDED_TYPES``; the source says right.
 TICKER_SUFFIXES = ((re.compile(r"-WT[A-Z]?$"), "warrant", "-WT"), (re.compile(r"-UN$"), "unit", "-UN"),
                    (re.compile(r"-RI$"), "warrant", "-RI: right"))
 NASDAQ_FIFTH = {"W": ("warrant", "W"), "U": ("unit", "U"), "R": ("warrant", "R: right")}

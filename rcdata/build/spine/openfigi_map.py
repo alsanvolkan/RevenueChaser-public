@@ -1,11 +1,10 @@
 """``openfigi/map``: a FIGI for every CUSIP the spine holds, asking only the new ones (weekly).
 
-``POST <RC_OPENFIGI_BASE>/v3/mapping`` with up to 100 jobs ``{"idType": "ID_CUSIP", "idValue": <cusip>,
-"exchCode": "US"}`` (the US composite listing, as ``core/providers/openfigi.py`` asks; a CINS is asked as ``ID_CINS``,
-``id_type``), the key in the
-``X-OPENFIGI-APIKEY`` header (``OPENFIGI_API_KEY``, through ``core.credentials``; never logged). Requests are paced
-under 25 a minute (the plan's rule, well inside OpenFIGI's keyed limit), at most ``MAX_REQUESTS`` a run. No key: the
-run fails and asks nothing.
+``POST <RC_OPENFIGI_BASE>/v3/mapping`` with up to 100 jobs ``{"idType": "ID_CUSIP", "idValue": <cusip>, "exchCode":
+"US"}`` (the US composite listing, as ``core/providers/openfigi.py`` asks; a CINS is asked as ``ID_CINS``, ``id_type``),
+the key in the ``X-OPENFIGI-APIKEY`` header (``OPENFIGI_API_KEY``, through ``core.credentials``; never logged). Requests
+are paced under 25 a minute (the plan's rule, well inside OpenFIGI's keyed limit), at most ``MAX_REQUESTS`` a run. No
+key: the run fails and asks nothing.
 
 Which CUSIPs: the CUSIPs of the active Compustat securities (``secstat`` A) whose CIK is in the newest SEC file,
 and the CUSIPs the fund files hold, less those already in the map: a 'present' answer is kept, an 'absent' one is
@@ -64,8 +63,9 @@ def valid_cusip(c) -> bool:
 
 
 def id_type(code: str) -> str:
-    """OpenFIGI's ``idType`` for a code: ``ID_CINS`` for a CINS (the CUSIP of an issuer outside the US and Canada, a
-    letter first: ``G0450A105``), else ``ID_CUSIP``. ``ID_CINS`` is OpenFIGI's own id type (its API documentation and
+    """OpenFIGI's ``idType`` for a code: ``ID_CINS`` for a CINS (a CUSIP International Numbering System code, a letter
+    first: ``G0450A105``; the letter is a country or region, ``C`` Canada and ``U`` a US issuer's offshore issue among
+    them), else ``ID_CUSIP``. ``ID_CINS`` is OpenFIGI's own id type (its API documentation and
     ``/v3/mapping/values/idType``, read 2026-10-28); asked as ``ID_CUSIP``, OpenFIGI found none of the 2,092 CINS the
     first live map held (homesrv, 2026-10-28: "No identifier found" for every one)."""
     return ID_CINS if str(code or "")[:1].isalpha() else ID_CUSIP
