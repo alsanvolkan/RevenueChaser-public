@@ -217,3 +217,14 @@ def test_the_section_says_when_it_was_scored(render):
                    "as_of": "2026-10-06", "as_of_note": "the last Asymmetric Growth Fetch"})
     assert "Scored: 2026-10-06 (the last Asymmetric Growth Fetch)" in html
     assert "Scored: N/A" in render({"ticker": "TEST", "score": None, "signals": []})
+
+
+# ── N1: an unknown ΔNWC leaves the historical FCFF unknown, not ΔNWC = 0 ─────────
+def test_the_historical_fcff_needs_a_known_change_in_working_capital(financials):
+    rows = run_dcf(financials)["historical_fcff"]
+    assert rows[0]["dnwc"] is None and rows[0]["fcff"] is None              # no prior year to difference against
+    # 2022: NOPAT 225 x (1 - the model's 50/240 rate) + D&A 45 - capex 45 - ΔNWC (112.5 - 100)
+    assert rows[1]["dnwc"] == pytest.approx(12.5)
+    assert rows[1]["fcff"] == pytest.approx(225 * (1 - 50 / 240) - 12.5)
+    gap = run_dcf(_drop(financials, *NWC_LINES))["historical_fcff"]
+    assert gap[2]["dnwc"] is None and gap[2]["fcff"] is None and gap[2]["nopat"] is not None

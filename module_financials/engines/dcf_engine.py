@@ -40,7 +40,10 @@ def _nwc(rec: dict) -> float | None:
 
 
 def _historical_fcff(annual: list[dict], tax_rate: float) -> list[dict]:
-    """Geçmiş yıl FCF hesaplama (kronolojik)."""
+    """Geçmiş yıl FCF hesaplama (kronolojik).
+
+    A year whose ΔNWC is unknown (the first year, or a year without working-capital lines) has an unknown FCFF:
+    it was ``dnwc or 0.0``, a silent zero (Financials review N1, the #173 convention)."""
     rows = []
     prev_nwc = None
     for rec in annual:
@@ -55,7 +58,7 @@ def _historical_fcff(annual: list[dict], tax_rate: float) -> list[dict]:
             continue
         nopat = ebit * (1 - tax_rate)
         dnwc = (nwc - prev_nwc) if (nwc is not None and prev_nwc is not None) else None
-        fcff = nopat + dep - capex - (dnwc or 0.0)
+        fcff = None if dnwc is None else nopat + dep - capex - dnwc
         rows.append({"fiscal_year": rec.get("fiscal_year"), "fcff": fcff,
                      "ebit": ebit, "nopat": nopat, "dna": dep, "capex": capex, "dnwc": dnwc})
         prev_nwc = nwc
