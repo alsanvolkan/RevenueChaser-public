@@ -165,12 +165,16 @@ class Worker:
             self.proc.wait()
 
 
-# What the worker's environment keeps: the process basics, the WRDS user, PostgreSQL's own variables, the worker's own
-# RC_WRDS_* switches and PYTHONPATH. No other key of the builder (OpenFIGI, DeepSeek, ...) reaches a third-party venv.
-_WORKER_ENV = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "TZ", "TMPDIR", "PYTHONPATH", USER_ENV)
+# What the worker's environment keeps: the process basics, the TLS certificate and library paths, the WRDS user,
+# PostgreSQL's own variables, the worker's own RC_WRDS_* switches and PYTHONPATH. No other key of the builder
+# (OpenFIGI, DeepSeek, ...) reaches a third-party venv.
+_WORKER_ENV = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "TZ", "TMPDIR", "PYTHONPATH", "SSL_CERT_FILE", "SSL_CERT_DIR",
+               "LD_LIBRARY_PATH", USER_ENV)
 
 
 def worker_env() -> dict[str, str]:
+    """The worker's environment. Server only (Linux): a Windows worker would also need SYSTEMROOT, APPDATA and
+    USERPROFILE, which are not kept."""
     return {k: v for k, v in os.environ.items()
             if k in _WORKER_ENV or k.startswith(("PG", "LC_", "RC_WRDS_"))}
 

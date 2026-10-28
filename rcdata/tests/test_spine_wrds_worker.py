@@ -144,3 +144,14 @@ def test_an_error_masks_the_user_name_as_a_word_not_inside_other_words(monkeypat
     monkeypatch.setenv("WRDS_USERNAME", "ab")
     text = wrds_worker._error(RuntimeError('role "ab" cannot read table abc; user ab'))
     assert text == 'RuntimeError: role "<user>" cannot read table abc; user <user>'
+
+
+def test_the_worker_env_keeps_the_tls_and_library_paths_and_drops_other_keys(monkeypatch):
+    """Delta-2 N2: the server's PostgreSQL TLS may need SSL_CERT_FILE / SSL_CERT_DIR / LD_LIBRARY_PATH; no other
+    key of the builder reaches the third-party venv."""
+    for k, v in {"SSL_CERT_FILE": "/etc/ssl/c.pem", "SSL_CERT_DIR": "/etc/ssl/certs", "LD_LIBRARY_PATH": "/opt/lib",
+                 "OPENFIGI_API_KEY": "k", "PGSSLMODE": "require"}.items():
+        monkeypatch.setenv(k, v)
+    env = wrds.worker_env()
+    assert {"SSL_CERT_FILE", "SSL_CERT_DIR", "LD_LIBRARY_PATH", "PGSSLMODE"} <= set(env)
+    assert "OPENFIGI_API_KEY" not in env
