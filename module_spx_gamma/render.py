@@ -257,7 +257,8 @@ def pin_source_line(snapshot: dict) -> str | None:
     if not isinstance(meta, dict):
         return None
     if not meta.get("stored"):
-        return f"{meta.get('label')}: the pin's $10B test is not run and the pin flag is not raised."
+        return (f"{meta.get('label')}: the pin's $10B and the squeeze's $200M tests are not run, so there is no "
+                f"pin flag and no squeeze trigger.")
     pred = snapshot.get("prediction") or {}
     magnet = pred.get("pin_magnet")
     if magnet is None:

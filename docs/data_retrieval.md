@@ -164,7 +164,8 @@ button silently degrades to a plain iframe reload.
   never waits on the builder. There is no live fallback any more: no yfinance VIX,
   no Socrata COT, no candle fetch; an input the store does not hold for the day
   shows "<input> not stored for <day>" on its panel and in the data-quality banner,
-  and a missing 0-1 DTE slice raises no pin flag. The live spot during an open
+  and a missing 0-1 DTE slice raises no pin flag and no squeeze trigger (avo,
+  28 Oct 2026). The live spot during an open
   session (one yfinance request, decision A7) is unchanged.
 
 ### The market-store builder's routes (PR 2)

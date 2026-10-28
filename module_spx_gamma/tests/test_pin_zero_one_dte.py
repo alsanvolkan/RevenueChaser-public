@@ -126,3 +126,24 @@ def test_a_snapshot_built_without_the_store_has_no_pin_line():
     """The goldens' snapshot (no store attach) renders as before."""
     html = render.render_html(normalize_snapshot(make_raw(), "2026-08-14"))
     assert "0-1 DTE" not in html.split("<body>", 1)[1].split("Scenario Matrix", 1)[0]
+
+
+# ── avo's decision (28 Oct 2026, option 2): no 0-1 DTE slice stored -> no squeeze trigger and no pin flag ──
+
+def test_a_missing_slice_raises_no_squeeze_trigger_either():
+    """The old first-negative-strike rule (fire on the per-unit grid when no dollar size is known) is not applied
+    to a day whose slice is not stored: without the 0-1 DTE dollars there is no trigger at all."""
+    scen = scenario_extraction(_snapshot(zero_one=None, all_expiry={TRIGGER: -900e6}))
+    assert scen["upside_trigger"] is None and scen["upside_trigger_net_gex"] is None
+    assert scen["pin_flag"] is None
+    pred = generate_prediction_matrix(_snapshot(zero_one=None))
+    assert pred["upside_trigger"] is None
+
+
+def test_a_missing_slice_says_not_stored_on_the_board_and_in_the_banner(after_monday_close):
+    missing = store_reads.zero_one_dte_dollars("2026-08-14")
+    snap = normalize_snapshot(_raw_on("2026-08-14", missing), "2026-08-14")
+    assert snap["prediction"]["upside_trigger"] is None
+    html = render.render_html(snap)
+    assert "Accel Trigger" not in html
+    assert "0-1 DTE not stored for 2026-08-14" in (render.data_quality_notice(snap) or "")

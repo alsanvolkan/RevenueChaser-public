@@ -258,7 +258,10 @@ def scenario_extraction(snapshot: dict) -> dict:
     upside_trigger = None
     upside_net_gex = None
     upside_all_expiry = None
-    above = [r for r in atm_rows if r.get("strike") > spot]
+    # avo, 28 Oct 2026: a day whose 0-1 DTE slice is not stored has no squeeze trigger at all; the per-unit
+    # fallback below is only for a strike the stored slice has no row for.
+    slice_stored = bool(snapshot.get("zero_one_dte_dollars"))
+    above = [r for r in atm_rows if r.get("strike") > spot] if slice_stored else []
     for r in sorted(above, key=lambda x: x["strike"]):
         strike = r["strike"]
         if (r["net_gamma"] or 0.0) >= 0:

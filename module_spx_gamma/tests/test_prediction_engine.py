@@ -17,6 +17,9 @@ from .conftest import make_raw, make_snapshot
 def _long_gamma_raw() -> dict:
     raw = make_raw()
     raw["gex_levels"]["data"]["gamma_flip"] = "7700"
+    # A stored 0-1 DTE slice (PR 3): without one there is no squeeze trigger (avo, 28 Oct 2026). It has no row at
+    # 7800, so the trigger there keeps its per-unit size, as before.
+    raw["zero_one_dte"] = {"stored": True, "dollars": {7850.0: 1.0e9}, "label": "0-1 DTE fixture slice"}
     return raw
 
 
