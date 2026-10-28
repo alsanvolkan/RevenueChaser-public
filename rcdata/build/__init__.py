@@ -12,3 +12,8 @@ from .spine import funds, openfigi_map, sec_tickers, security, wrds
 DATASETS = {d.name: d for d in (uw_spot_expiry_strike.DATASET, market_series.DATASET, sec_tickers.DATASET,
                                 wrds.SEC_IDHIST, wrds.CO_HGIC, wrds.IDXCST_HIS, openfigi_map.DATASET, funds.DATASET,
                                 security.DATASET)}
+
+# The options data (G8, serving kind ``options``), in a block of its own.
+from .options import uw_list as _options_uw_list  # noqa: E402
+
+DATASETS.update({d.name: d for d in (_options_uw_list.DATASET,)})

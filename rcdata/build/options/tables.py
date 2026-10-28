@@ -171,6 +171,16 @@ TABLES: dict[str, Table] = {t.name: t for t in (OPTION_EOD, OPTION_STRIKE, OPTIO
 # What makes a row "changed" in a check: its data, not when or by which run it was fetched.
 NOT_COMPARED = ("fetched_at", "run_id", "source_as_of")
 
+# Not served: the names a UW dataset has typed for a session, one row each, written after the name's table rows.
+# It is the dataset's coverage (names done against names expected), the size of each name's raw file (the plan's
+# F5 measure), and the marker of a raw file that is typed: a raw file without its row here (a run killed between
+# its fetch and its typing) is typed by the next run.
+NAMES = Table(
+    "names",
+    [("session_date", "DATE"), ("ticker", "TEXT"), ("set_name", "TEXT"), ("raw_bytes", "BIGINT"), ("calls", "INTEGER"),
+     ("errors", "TEXT"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")],
+    ("session_date", "ticker", "set_name"), ())
+
 
 # ── Parquet ────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -197,6 +207,20 @@ def upsert(source: str, table: Table, rows: list[dict]) -> list[Path]:
         by_day.setdefault(r["session_date"], []).append(r)
     return [base.upsert_partition(day_rows, table.schema, list(table.key), partition_path(source, table.name, d))
             for d, day_rows in sorted(by_day.items())]
+
+
+def names_done(source: str, session: date) -> dict[str, dict]:
+    """The ``NAMES`` rows of ``source`` for ``session``, by ticker."""
+    part = partition_path(source, NAMES.name, session)
+    if not part.exists():
+        return {}
+    con = duckdb.connect()
+    try:
+        cur = con.execute(f"SELECT * FROM read_parquet({base.sql_path(part)})")
+        cols = [d[0] for d in cur.description]
+        return {r["ticker"]: r for r in (dict(zip(cols, row)) for row in cur.fetchall())}
+    finally:
+        con.close()
 
 
 # ── Building the served tables ─────────────────────────────────────────────────────────────────────────────────
