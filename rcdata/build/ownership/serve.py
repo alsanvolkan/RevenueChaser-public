@@ -58,7 +58,8 @@ IBKR borrow fee, rebate and shares available. ``si_float`` and ``total_float`` h
 from the live file otherwise, so a FINRA or IBKR run does not read millions of holdings again.
 
 **Build issues** (``ISSUE_KINDS``), written once the file is live: ``spine_missing``, ``cusip_owner_differs``,
-``cusip_unmapped_large`` (the newest period's ``UNMAPPED_TOP`` largest CUSIPs no source names),
+``cusip_unmapped_large`` (the ``UNMAPPED_TOP`` largest CUSIPs no source names, of the newest complete quarter, as
+the plan's counts are, else the newest),
 ``filings_unparsed`` (per index day) and ``value_rescaled`` (the ``RESCALED_TOP`` filer-quarters whose rescale moved
 the most dollars, keyed ``cik|period``, with the median ratio and the names it rests on).
 """
@@ -110,7 +111,7 @@ ISSUE_KINDS = {
     "spine_missing": "no live spine.duckdb: no CUSIP is named a ticker",
     "cusip_owner_differs": "the spine's current CUSIP or OpenFIGI names a ticker whose security Compustat does not "
                            "give the CUSIP to in that period (a reused ticker or CUSIP)",
-    "cusip_unmapped_large": "one of the newest period's largest long-equity CUSIPs no spine source names",
+    "cusip_unmapped_large": "one of the newest complete quarter's largest long-equity CUSIPs no spine source names",
     "filings_unparsed": "13F filings of an index day whose documents did not parse",
     "value_rescaled": "one of the largest filer-quarters whose VALUE was off by a factor of 1,000 and was rescaled",
 }
@@ -318,7 +319,7 @@ class OwnershipServe:
             counts["sec13f_cusip_map"] = self._map(con)
             counts["sec13f_ticker_period"] = self._metrics(con)
             counts["sec13f_periods"] = self._periods(con)
-            found += self._issues(con)
+            found += self._issues(con, ctx.as_of or self.default_as_of())
             summary["rescaled"] = common.count(con, "sec13f_filer_period", "value_factor <> 1")
             if left_out:
                 summary["left_out"] = left_out
@@ -525,7 +526,7 @@ class OwnershipServe:
             ORDER BY f.period""")
 
     @staticmethod
-    def _issues(con: duckdb.DuckDBPyConnection) -> list[tuple[str, str, str]]:
+    def _issues(con: duckdb.DuckDBPyConnection, as_of: date) -> list[tuple[str, str, str]]:
         found = []
         for cusip, ticker, periods, value, owners, gvkey, iid, current in con.execute(f"""
                 SELECT m.cusip, any_value(m.candidate_ticker), count(DISTINCT m.period), sum(m.value),
@@ -541,8 +542,9 @@ class OwnershipServe:
                           f"{periods} period(s), ${value or 0:,.0f} kept unnamed"))
         for cusip, period, issuer, value, holders in con.execute(f"""
                 SELECT cusip, period, issuer_name, value, holders FROM sec13f_cusip_map
-                WHERE period = (SELECT max(period) FROM sec13f_cusip_map) AND map_source IS NULL
-                ORDER BY value DESC NULLS LAST, cusip LIMIT {UNMAPPED_TOP}""").fetchall():
+                WHERE period = (SELECT coalesce(max(period) FILTER (WHERE filing_deadline < ?), max(period))
+                                FROM sec13f_periods) AND map_source IS NULL
+                ORDER BY value DESC NULLS LAST, cusip LIMIT {UNMAPPED_TOP}""", [as_of]).fetchall():
             found.append(("cusip_unmapped_large", cusip,
                           f"{period}: {issuer or '?'}, ${value or 0:,.0f} held by {holders} filer(s); "
                           f"no spine source names it"))

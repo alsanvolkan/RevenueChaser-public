@@ -167,8 +167,16 @@ def test_an_old_companys_cusip_openfigi_gives_a_reused_ticker_is_refused_and_an_
     assert not _served("SELECT * FROM sec13f_ticker_period WHERE ticker = 'VYLR'")
     detail = _issues()[("cusip_owner_differs", OLD_VYLR)]
     assert "VYLR" in detail and "123456/01" in detail and "040001/01" in detail
-    assert ("cusip_unmapped_large", NOBODY) in _issues()
-    assert ("cusip_unmapped_large", OLD_VYLR) not in _issues()
+
+
+def test_the_largest_unmapped_cusips_are_those_of_the_newest_complete_quarter(store):
+    """Review N2: on 28 Oct 2026 the 30 Sep quarter is still filling (deadline 16 Nov); the list describes 30 Jun,
+    where every CUSIP is named, as the plan's counts do. Once the deadline has passed it describes 30 Sep."""
+    assert not [key for kind, key in _issues() if kind == "cusip_unmapped_large"]
+    _serve("2026-11-17")
+    issues = _issues()
+    assert issues[("cusip_unmapped_large", NOBODY)].startswith("2026-09-30: NOBODY KNOWS INC")
+    assert ("cusip_unmapped_large", OLD_VYLR) not in issues                   # refused, not unmapped
 
 
 def test_a_current_cusip_compustat_gave_another_security_in_the_period_is_refused_there_only(store):
