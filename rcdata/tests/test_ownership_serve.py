@@ -123,6 +123,22 @@ def test_the_recent_cusips_read_only_the_holdings_filed_after_the_older_of_the_t
     assert sorted(read_days) == ["day=2026-08-14", "day=2026-10-27"]          # not 2001-11-14
 
 
+def test_the_recent_cusips_keep_a_report_filed_on_the_older_periods_own_end_day(store):
+    """Delta review D5: the partition cut keeps the older period's end day itself; a holding filed that day is
+    still one of the period's CUSIPs for OpenFIGI to name."""
+    holdings = sec13f.DATASET.parquet_dir() / "holdings"
+    (holdings / "day=2026-06-30").mkdir()
+    con = duckdb.connect()
+    try:
+        con.execute(f"COPY (SELECT * REPLACE ('99999X101' AS cusip) "
+                    f"FROM read_parquet({base.sql_path(holdings / 'day=2026-08-14' / 'part-0.parquet')}) "
+                    f"WHERE period = DATE '{Q2}' LIMIT 1) "
+                    f"TO {base.sql_path(holdings / 'day=2026-06-30' / 'part-0.parquet')} (FORMAT parquet)")
+    finally:
+        con.close()
+    assert "99999X101" in sec13f.recent_cusips()
+
+
 def test_the_amendment_rule_long_equity_only_and_share_classes_apart(store):
     assert store["result"] == "changed"
     assert _served("SELECT ticker, shares, value, holders, cusips FROM sec13f_ticker_period WHERE period = ? "
