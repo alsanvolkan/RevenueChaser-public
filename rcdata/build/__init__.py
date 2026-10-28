@@ -16,8 +16,9 @@ DATASETS = {d.name: d for d in (uw_spot_expiry_strike.DATASET, market_series.DAT
 # ── Fundamentals (build plan PR 12): the sources stage their Parquet, ``fundamentals/tables`` builds the served
 # file last (``base.build_kind`` builds a kind's datasets in this order).
 from .fundamentals import companyfacts as fundamentals_companyfacts  # noqa: E402
+from .fundamentals import earnings as fundamentals_earnings  # noqa: E402
 from .fundamentals import filings as fundamentals_filings  # noqa: E402
 from .fundamentals import tables as fundamentals_tables  # noqa: E402
 
 DATASETS.update({d.name: d for d in (fundamentals_companyfacts.DATASET, fundamentals_filings.DATASET,
-                                     fundamentals_tables.DATASET)})
+                                     fundamentals_earnings.DATASET, fundamentals_tables.DATASET)})

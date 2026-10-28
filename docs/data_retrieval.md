@@ -308,7 +308,8 @@ whole app at a local server:
 |---|---|
 | `RC_UW_BASE` | Unusual Whales (`core/providers/unusual_whales.py`, `core/index_registry.py`) |
 | `RC_UW_BASE_ROOT` | Unusual Whales for `module_spx_gamma` (no `/api` suffix) |
-| `RC_SEC_WWW_BASE` / `RC_SEC_DATA_BASE` | SEC EDGAR + 13F archives; the spine's `sec/company_tickers_exchange` |
+| `RC_SEC_WWW_BASE` / `RC_SEC_DATA_BASE` | SEC EDGAR + 13F archives; the spine's `sec/company_tickers_exchange`; the fundamentals layer's SEC datasets (`rcdata/build/fundamentals/`) |
+| `RC_ALPHAVANTAGE_BASE` | Alpha Vantage, the fundamentals layer's `alphavantage/earnings_calendar` (`rcdata/build/fundamentals/earnings.py`; read at call time) |
 | `RC_FORM13F_INDEX_URL` | SEC Form 13F data-set page (zip links are resolved from it) |
 | `RC_FRED_BASE` | FRED series (also the market store's FRED source) |
 | `RC_CBOE_BASE` | Cboe daily-price index files (`module_earnings_radar/inputs/vol_index.py`, `rcdata/build/sources/cboe.py`) |

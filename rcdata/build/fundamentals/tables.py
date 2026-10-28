@@ -13,7 +13,7 @@ import duckdb
 from ....core import calendar
 from ... import ops
 from .. import base
-from . import KIND, common, companyfacts, facts, filings
+from . import KIND, common, companyfacts, earnings, facts, filings
 
 NAME = "fundamentals/tables"
 
@@ -39,10 +39,18 @@ FILING_ITEM = [("cik", "TEXT NOT NULL"), ("accession", "TEXT NOT NULL"), ("form"
                ("text", "TEXT"), ("chars", "INTEGER"), ("quality", "TEXT"), ("source", "TEXT NOT NULL"),
                ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
 
+# One row per report: a coming one from a calendar (``confirmed`` false), or one that happened (an 8-K with item 2.02,
+# ``confirmed`` true, its accession kept).
+EARNINGS_EVENT = [("cik", "TEXT NOT NULL"), ("ticker", "TEXT"), ("report_date", "DATE NOT NULL"),
+                  ("report_time", "TEXT"), ("fiscal_period_end", "DATE"), ("eps_estimate", "DOUBLE"),
+                  ("currency", "TEXT"), ("confirmed", "BOOLEAN NOT NULL"), ("accession", "TEXT"),
+                  ("source", "TEXT NOT NULL"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
+
 SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "fundamental_company": COMPANY,
     "fundamental_fact": FACT,
     "filing_item": FILING_ITEM,
+    "earnings_event": EARNINGS_EVENT,
 }
 TABLE_CHECKS: dict[str, list[str]] = {
     # Every row is annual or quarterly, and a non-preliminary row carries its accession and filed date.
@@ -53,7 +61,7 @@ TABLE_CHECKS: dict[str, list[str]] = {
                     f"CHECK (quality IS NULL OR quality <> 'ok' OR chars < {filings.max_text_chars()})"],
 }
 TABLES = tuple(SCHEMAS)
-VIEWS = ("fundamental_quarter", "edgar_financials", "sec_submissions")
+VIEWS = ("fundamental_quarter", "edgar_financials", "sec_submissions", "earnings_calendar")
 
 # The sources' staging tables, created empty here when a source is not registered (a test's registry).
 STAGED: dict[str, list[tuple[str, str]]] = {
@@ -61,6 +69,7 @@ STAGED: dict[str, list[tuple[str, str]]] = {
     companyfacts.STAGING["company"]: facts.COMPANY,
     filings.STAGING["filings"]: filings.FILING,
     filings.STAGING["documents"]: filings.DOCUMENT,
+    earnings.STAGING: earnings.SCHEMA,
 }
 
 # The named problems, one kind each; ``key`` is the CIK unless the kind says otherwise.
@@ -125,6 +134,25 @@ def _filing_items(con: duckdb.DuckDBPyConnection) -> int:
         SELECT cik, accession, form, filing_date, report_date, primary_document, 'document', item, text, chars,
                quality, '{filings.NAME}', source_as_of, fetched_at, run_id FROM {filings.STAGING['documents']}""")
     return common.count(con, "filing_item")
+
+
+EARNINGS_8K_ITEM = "2.02"
+
+
+def _earnings(con: duckdb.DuckDBPyConnection) -> int:
+    """``earnings_event``: Alpha Vantage's coming reports of the Tier A tickers, and the 8-K item 2.02 reports."""
+    create(con, "earnings_event")
+    con.execute(f"""
+        INSERT INTO earnings_event
+        SELECT c.cik, a.symbol, a.report_date, a.time_of_day, a.fiscal_date_ending, a.estimate, a.currency, false,
+               NULL, '{earnings.NAME}', a.source_as_of, a.fetched_at, a.run_id
+        FROM {earnings.STAGING} a JOIN (SELECT DISTINCT ticker, cik FROM fundamental_company) c ON c.ticker = a.symbol
+        UNION ALL
+        SELECT DISTINCT f.cik, NULL, f.filing_date, NULL, NULL, NULL, NULL, true, f.accession, '{filings.NAME}',
+               f.source_as_of, f.fetched_at, f.run_id
+        FROM {filings.STAGING['filings']} f
+        WHERE f.form = '8-K' AND f.item = '{EARNINGS_8K_ITEM}' AND f.filing_date IS NOT NULL""")
+    return common.count(con, "earnings_event")
 
 
 def _companies(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rows: list[dict]) -> int:
@@ -198,6 +226,21 @@ def _submission_view(con: duckdb.DuckDBPyConnection) -> None:
         FROM filing_item WHERE kind = 'item' GROUP BY cik, accession""")
 
 
+def _calendar_view(con: duckdb.DuckDBPyConnection) -> None:
+    # The old ``earnings_calendar`` shape, one row per ticker and report; what this layer does not have is NULL.
+    con.execute("""
+        CREATE VIEW earnings_calendar AS
+        SELECT e.source_as_of AS session_date, e.report_date AS earnings_date, c.ticker,
+               CASE lower(e.report_time) WHEN 'pre-market' THEN 'premarket' WHEN 'post-market' THEN 'afterhours'
+                    ELSE e.report_time END AS report_session,
+               c.sector, c.name AS full_name, NULL::DOUBLE AS marketcap, NULL::DOUBLE AS expected_move_perc,
+               e.eps_estimate AS street_mean_est, NULL::DOUBLE AS pre_earnings_close,
+               NULL::DOUBLE AS post_earnings_close, e.report_time, NULL::JSON AS item, e.source, e.fetched_at,
+               e.run_id, NULL::DOUBLE AS run_at, e.confirmed, e.accession, e.fiscal_period_end
+        FROM earnings_event e JOIN fundamental_company c ON c.cik = e.cik
+        WHERE e.ticker IS NULL OR e.ticker = c.ticker""")
+
+
 def _extract_version() -> int:
     from ....core.providers import sec_edgar
     return int(sec_edgar.EXTRACT_VERSION)
@@ -252,8 +295,10 @@ class FundamentalsTables:
         _ensure_staging(con)
         counts = {"fundamental_fact": _facts(con), "filing_item": _filing_items(con)}
         counts["fundamental_company"] = _companies(ctx, con, common.universe())
+        counts["earnings_event"] = _earnings(con)
         _views(con)
         _submission_view(con)
+        _calendar_view(con)
         found = _issues(con, ctx.as_of or self.default_as_of())
         found += [("source_never_run", name, "no Parquet yet") for name, table in
                   ((companyfacts.NAME, companyfacts.STAGING["facts"]),
