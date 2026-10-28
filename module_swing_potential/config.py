@@ -21,7 +21,8 @@ MIN_PRICE = 5.0
 MIN_DOLLAR_VOLUME = 250_000          # avg daily $ volume (price × avg volume)
 
 # ── Gate thresholds ──
-RS_MIN = 70                          # RS rating (0-100 percentile vs SPY)
+RS_MIN = 70                          # RS rating: 0-100 percentile, among the names scanned, of the 12-month
+#                                      return vs SPY; ranks only (a quality point), never decides (#65)
 ABOVE_52W_LOW = 1.25                 # price ≥ 25% above 52-week low
 WITHIN_52W_HIGH = 0.75               # price within 25% of 52-week high
 VOL_CONFIRM = 1.5                    # breakout volume ≥ 1.5× 20-day avg

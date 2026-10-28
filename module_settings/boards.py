@@ -97,8 +97,8 @@ def _swing_params() -> list[str]:
     return [
         f"Minimum price ${e.min_price:g}",
         f"Minimum dollar volume ${e.min_dollar_volume:,.0f} a day",
-        f"Relative strength rating floor {e.rs_min:g}",
-        f"Breakout volume {e.vol_confirm:g}× the 20-day average",
+        f"Relative strength rating {e.rs_min:g} (ranks only, a percentile among the scanned names)",
+        f"Breakout volume {e.vol_confirm:g}× the 20-day average on one of the last {swing_config.VOL_WINDOW} sessions",
         f"Overhead breakout at {round(e.breakout_high_pct * 100, 2):g}% of the 52-week high",
         f"Preceding move {round(e.move_min * 100, 2):g}% over 1–3 months",
         f"Average daily range {round(e.adr_min * 100, 2):g}%",

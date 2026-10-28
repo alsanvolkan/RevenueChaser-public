@@ -555,7 +555,7 @@ function start(){
       <table>
         <tr><th>Screener</th><th>Criteria</th><th>Scoring</th></tr>
         <tr><td><b>Minervini Trend</b></td>
-          <td>Price above 150 &amp; 200-day MA · 150&gt;200-day MA · 200-day MA rising · 50&gt;150-day MA · price above 50-day MA · ≥{_pct(config.ABOVE_52W_LOW - 1)} above 52-week low · within {_pct(1 - config.WITHIN_52W_HIGH)} of 52-week high · RS rating ≥ {run.rs_min:g}</td>
+          <td>Price above 150 &amp; 200-day MA · 150&gt;200-day MA · 200-day MA rising · 50&gt;150-day MA · price above 50-day MA · ≥{_pct(config.ABOVE_52W_LOW - 1)} above 52-week low · within {_pct(1 - config.WITHIN_52W_HIGH)} of 52-week high · RS rating ≥ {run.rs_min:g} (a percentile, among the names scanned, of the 12-month return vs SPY)</td>
           <td>7/7 price rules required; RS rating ≥ {run.rs_min:g} ranks, does not decide</td></tr>
         <tr><td><b>Weinstein Stage</b></td>
           <td>Price above 30-week MA · 30-week MA rising · overhead breakout (≥{_pct(run.breakout_high_pct)} of 52w high) · volume ≥{run.vol_confirm:g}× average on one of the last {config.VOL_WINDOW} sessions · 3-month RS &gt; SPY</td>
@@ -567,7 +567,7 @@ function start(){
           <td>Quality = 40 × Minervini rules passed/8 + 30 × Weinstein/5 + 30 × Qullamaggie/6; momentum ({_weights(run)}) breaks ties</td>
           <td>0–100; ranks the board</td></tr>
         <tr><td><b>Direction</b></td>
-          <td>Direction (required): 50-day MA ≥ 200-day MA and 3-month return ≥ 0</td>
+          <td>Direction (required): 50-day MA ≥ 200-day MA and 3-month return ≥ 0; for a Minervini pass the first half is already implied (50 &gt; 150 &gt; 200-day MA), so there only the 3-month return adds a test</td>
           <td>Every card must pass</td></tr>
         <tr><td><b>Levels</b></td>
           <td>Entry = current price · Stop = entry − {run.stop_atr:g}×ATR({config.ATR_PERIOD}) · Target = entry + {run.target_r:g}×risk (R:R {run.target_r:.1f})</td>
