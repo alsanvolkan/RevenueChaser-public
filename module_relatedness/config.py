@@ -19,7 +19,7 @@ THINKING_SAMPLE = 20          # first N companies also profiled in thinking mode
 MAX_INPUT_CHARS = 12_000      # cost control: first chars of Item 1/4
 
 # Profile mode: thinking-high only (see docs/plan_rest.md Phase 6 and
-# docs/validation_thinking_vs_nonthinking_50.md). Thinking costs more tokens
+# the private notes validation/validation_thinking_vs_nonthinking_50.md). Thinking costs more tokens
 # (reasoning counts against max_tokens) but produces richer, more stable peers.
 THINKING = True
 REASONING_EFFORT = "high"

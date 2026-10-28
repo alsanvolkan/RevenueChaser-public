@@ -11,7 +11,7 @@ to ``edgar.duckdb`` (MANIFEST ``"db": "edgar"``):
   wins, a later one is a no-op (#299, D16: a filed document does not change).
 - ``get_document(accession)`` returns metadata + the decompressed ``content``.
 
-See docs/classification_design.md Phase 4 and docs/data_architecture.md.
+See docs/data_architecture.md (the EDGAR store; the Phase 4 history is in the private notes).
 """
 from __future__ import annotations
 

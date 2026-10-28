@@ -88,7 +88,7 @@ RAW_STORE_BACKUP_MIRROR_WARN_GB = _warn_gb("RAW_STORE_BACKUP_MIRROR_WARN_GB", BA
 # Raw EDGAR 10-K/20-F HTML — the one file-based DURABLE artifact, keyed
 # {cik}/{accession}.html.gz. Deliberately NOT under .store/ (that stays
 # DuckDB-only) and NOT .cache/ (it is the durable raw record, not regenerable).
-# See docs/classification_design.md Phase 4 and docs/data_architecture.md.
+# See docs/data_architecture.md (the EDGAR store; the Phase 4 history is in the private notes).
 EDGAR_DOCS_DIR = _root("RC_EDGAR_DOCS_DIR", BASE_DIR / "edgar_docs")
 EDGAR_DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
