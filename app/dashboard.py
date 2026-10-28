@@ -537,7 +537,8 @@ def _universe_loading(mod: str) -> bool:
     """
     if mod not in _UNIVERSE_BOARDS or not jobs.has_active(_UNIVERSE_JOBS):
         return False
-    return not rawstore.query("SELECT 1 FROM equity_universe LIMIT 1")
+    from RevenueChaser.core import universe
+    return not universe.has_universe()          # the universe the boards read (Opus review M1), not the old table
 
 
 def _universe_loading_view(mod: str) -> str:

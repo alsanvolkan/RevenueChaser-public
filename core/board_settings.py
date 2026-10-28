@@ -135,7 +135,7 @@ def _swing_specs() -> dict[str, Setting]:
                                      label="Minimum daily dollar volume ($)"),
         "RS_MIN": Setting("RS_MIN", "float", default("RS_MIN"),
                           lo=cfg.RS_MIN_LO, hi=cfg.RS_MIN_HI,
-                          label="Relative strength rating floor (0-100)"),
+                          label="Relative strength rating, ranks only: percentile among the scanned names (0-100)"),
         "VOL_CONFIRM": Setting("VOL_CONFIRM", "float", default("VOL_CONFIRM"),
                                lo=cfg.VOL_CONFIRM_LO, hi=cfg.VOL_CONFIRM_HI,
                                label="Breakout volume vs 20-day average (x)"),

@@ -225,7 +225,7 @@ Computed from raw caches and persisted in `raw.duckdb`.
 | `forecast_ledger` | Frozen forecasts of every board (#128 / #62 D-3) | **append-only, first write wins** (nothing is ever updated; don't call `update_columns`/`replace_all`/`delete`/`clear` on it); `forecast_date` = the NY session of the newest complete bar used; `target_date` = the session the forecast resolves on (the forecast date for picks). Outcomes live in the derived `forecast_outcomes` table (62b-1, #380 S0) |
 | `forecast_outcomes` | `forecast_ledger` picks + D01 bars (`price_bars_daily` / `price_actions`, nominal basis) | **derived, keyed upsert** (`latest_cache`): recomputed from the ledger and the bars, never a fact of its own. Writer `core/outcomes.py` (CLI `scripts/forecast_outcomes.py`, task RC-Forecast-Outcomes 23:45, after RC-Daily-Bars); one row per pick and horizon (30 and 90 calendar days). See "The forecast-outcomes writer" below |
 | `forecast_baselines` | the `equity_universe` snapshot of a freeze date (`equity_universe_changes`) + D01 bars (nominal outcomes, adjusted closes for the volatility) | **derived, keyed upsert** (`latest_cache`, #25 HR-1, added with no schema bump): what the same day's universe did, so a family's hit rate can be compared with something. Writer `core/baselines.py` (CLI `scripts/forecast_baselines.py`, task RC-Forecast-Baselines 23:50, after RC-Forecast-Outcomes); one row per freeze date, horizon (30 and 90) and basis (`universe`, `vol_decile_1` … `vol_decile_10`) |
-| `index_constituents` | UW screener (sp500), DIA holdings (dow), ticker-exchanges (nasdaq); sp600 from the last accepted S&P 1500 snapshot in `identity_source_cache` (#302) | replace per slug; written by `index_registry.refresh_lists` (job `index_lists`, task RC-Index-Lists Saturday 10:00, CLI `scripts/index_lists.py`); a list under its floor (`MIN_INDEX`: 400 / 25 / 1,000 / 480) is not written; the first sp600 fill needs the user's OK for that run; joins and leaves are in `index_constituents_changes`. sp600 shows as "S&P SmallCap 600" on the badge and in the filter once stored (#214); `fetch_index` never fills it (Common K1) |
+| `index_constituents` | UW screener (sp500), DIA holdings (dow), ticker-exchanges (nasdaq); sp600 from the last accepted S&P 1500 snapshot in `identity_source_cache` (#302) | replace per slug; written by `index_lists.refresh_lists` (job `index_lists`, task RC-Index-Lists Saturday 10:00, CLI `scripts/index_lists.py`); a list under its floor (`MIN_INDEX`: 400 / 25 / 1,000 / 480) is not written; the first sp600 fill needs the user's OK for that run; joins and leaves are in `index_constituents_changes`. sp600 shows as "S&P SmallCap 600" on the badge and in the filter once stored (#214); `fetch_index` never fills it (Common K1). Read only on the old universe path (`RC_UNIVERSE_SOURCE=store`) since PR 6: by default the boards' index badges come from the spine |
 | `index_tickers` (VIEW) | `index_constituents` ⨝ `equity_universe` | adds `name`/`sector`; replaces the old `ticker_registry` |
 | `ticker_scores` | Asymmetric Growth cards (ex-SQLite `tickers.db`) | single writer = market-cap scan; others read-only |
 | `fundamentals_scores` / `fundamentals_gates` | Fundamentals scan | typed gates `(ticker, gate, rule_id, passed, actual, unit)` |
@@ -1122,12 +1122,15 @@ A WRDS raw value its schema cannot type (a DATE or INTEGER column) is typed to n
 members, plus `nasdaq` = listed on Nasdaq; no `dow`) and `index_tickers`. Market cap, price, quote and SIC are
 NULL: the spine holds no market data.
 
-**Reading it.** `rcdata.read.universe(tiers=("A",))`, `rcdata.read.identity(tickers)`,
-`rcdata.read.membership(index, on, source)`. `core/universe.py` reads them when `RC_UNIVERSE_SOURCE=spine`
-(market cap, price and quote still from the old `equity_universe` by ticker; a spine name left untyped takes
-`security_master`'s type); the default stays the old store until PR 6. With the variable set but no spine file, or
-a last `spine/security` build that failed, the old store is read, a warning is logged, and the Settings Identity card
-says so ("Boards read"). The variable is read from the process environment: changing it needs a restart.
+**Reading it.** `rcdata.read.universe(tiers=("A",))`, `rcdata.read.identity(tickers)`, `rcdata.read.membership(index,
+on, source)`. Since PR 6 `core/universe.py` and `core/index_registry.py` read them by default, `RC_UNIVERSE_SOURCE`
+unset or `RC_UNIVERSE_SOURCE=spine` (market cap, price and quote still from the old `equity_universe` by ticker; a
+spine name left untyped takes `security_master`'s type; the index badges and the filter's index list from the current
+fund-file members, `nasdaq` from the listed names on Nasdaq, no Dow Jones). Any other value
+(`RC_UNIVERSE_SOURCE=store` by convention) reads the old store: the rollback, kept until PR 21. With the spine asked
+for but no spine file, or a last `spine/security` build that failed, the old store is read, a warning is logged, and
+the Settings Identity card says so ("Boards read"). The variable is read from the process environment: changing it
+needs a restart.
 
 ### The prices store (`prices.duckdb` in `RC_MARKET_DIR`, PR 7)
 

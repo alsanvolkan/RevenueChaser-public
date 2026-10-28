@@ -165,8 +165,8 @@ def test_fewer_bars_than_a_window_make_only_that_input_unknown():
     assert mean["sma50"] is None and mean["above_sma50"] is None
     assert engine.technical_from_bars(rows[-9:], SESSION)["vol_10d"] is None
     empty = engine.technical_from_bars([], SESSION)
-    assert set(empty) == {"price", "high_52w", "dist_52w_pct", "sma50", "above_sma50",
-                          "vol_10d", "vol_90d", "vol_ratio"}
+    assert set(empty) == {"price", "bar_date", "high_52w", "dist_52w_pct", "sma50", "above_sma50",
+                          "vol_10d", "vol_90d", "vol_ratio"}                # bar_date: the card's session (PR 6)
     assert all(v is None for v in empty.values())
 
 

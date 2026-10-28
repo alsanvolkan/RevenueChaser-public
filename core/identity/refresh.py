@@ -28,9 +28,10 @@ Fetch plan (per run):
 * SIC: no fetch of its own. The raw SIC group on the master (``sic``, ``sic_description``, ``sic_group2``) and the
   SIC sector fallback read the SEC submissions cache, then ``sec_company_sic``.
 * SPDR: a *check*, every run. The 11 Select Sector fund holdings are compared with the master sector (just
-  built) of each S&P 500 member (``index_constituents`` slug ``sp500``) and a mismatch becomes a ``spdr``
-  conflict (``counts.spdr_checked`` / ``spdr_agree``). SPDR never sets a value, is never cached, is not in
-  "sources ok n/m", and a failed check leaves the run ``ok``.
+  built) of each S&P 500 member of the stored list (``index_lists.stored_index("sp500")``, ``index_constituents``
+  slug ``sp500``; never the spine the boards read, Opus review S2 of PR 6) and a mismatch becomes a ``spdr``
+  conflict (``counts.spdr_checked`` / ``spdr_agree``; ``spdr_members`` 0 = no stored list, so not checked).
+  SPDR never sets a value, is never cached, is not in "sources ok n/m", and a failed check leaves the run ``ok``.
 
 The S&P snapshot goes through ``sp1500.diff_gate`` against the last accepted snapshot: a rejected snapshot is not
 cached (the previous one keeps being used), a ``source`` conflict is recorded and the source is marked ``gated``. On
@@ -49,7 +50,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Callable
 
-from .. import index_registry, job_control, job_lock, rawstore, sec_files
+from .. import index_lists, job_control, job_lock, rawstore, sec_files
 from . import apply as universe_apply
 from . import cache, gics, master
 from . import types as T
@@ -527,10 +528,12 @@ def _gate(res: SourceResult):
 
 
 def _spdr_check(res: SourceResult, master_rows: list[dict]) -> tuple[list[dict], dict]:
-    """``(conflicts, counts)`` of the SPDR check: each S&P 500 member (``index_constituents`` slug ``sp500``, UW's
-    spelling normalised) that a fund holds and the master has is compared with the master sector. Flag only."""
+    """``(conflicts, counts)`` of the SPDR check: each S&P 500 member of the stored list
+    (``index_lists.stored_index("sp500")``, its spelling normalised; the old path's own list, whatever
+    ``RC_UNIVERSE_SOURCE`` says) that a fund holds and the master has is compared with the master sector. Flag only.
+    ``spdr_members`` is the list's size: 0 means nothing was checked, never "checked and clean"."""
     hold = _rows_of(res)
-    members = {norm_ticker(t) for t in index_registry.load_index("sp500") or ()}
+    members = {norm_ticker(t) for t in index_lists.stored_index("sp500") or ()}
     sector = {r["ticker"]: r.get("sector") for r in master_rows}
     checked = sorted(t for t in members if t in hold and t in sector)
     mismatch = [t for t in checked if sector[t] != hold[t].get("sector")]
@@ -540,7 +543,8 @@ def _spdr_check(res: SourceResult, master_rows: list[dict]) -> tuple[list[dict],
         conflicts.append({
             "ticker": t, "kind": "spdr", "field": "sector", "side_a": sector[t], "side_b": hold[t].get("sector"),
             "note": f"SPDR {fund} holdings" if fund else "SPDR holdings"})
-    return conflicts, {"spdr_checked": len(checked), "spdr_agree": len(checked) - len(mismatch)}
+    return conflicts, {"spdr_checked": len(checked), "spdr_agree": len(checked) - len(mismatch),
+                       "spdr_members": len(members)}
 
 
 def _write_conflicts(conflicts: list[dict], now: str) -> None:
@@ -573,6 +577,8 @@ def summary(rec: dict) -> str:
              f"Yahoo {bs.get('provider_yf', 0):,} / SIC {bs.get('sic_explicit', 0):,} "
              f"/ unclassified {c.get('unclassified', 0):,}",
              f"{c.get('conflicts', 0):,} conflicts"]
+    if c.get("spdr_members") == 0:          # Opus review S2: a check with no list to read is not a clean check
+        parts.append("SPDR not checked (no stored S&P 500 list)")
     if "applied" in c:
         parts.append(f"universe {c['applied']:,} updated / {c.get('not_in_master', 0):,} without a master row")
     sel = [g for g in _SUMMARY_GROUPS if any(rec["sources"][s]["selected"] for s in g)]

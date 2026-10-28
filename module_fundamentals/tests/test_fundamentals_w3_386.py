@@ -132,11 +132,22 @@ def test_a_normal_sector_does_not_drop(monkeypatch):
     assert row is not None and "sector_excluded" not in drops
 
 
-def test_a_rule_of_40_above_the_barrier_is_dropped(monkeypatch):
+def test_a_rule_of_40_above_the_barrier_is_kept_unknown_and_distorted(monkeypatch):
+    """Review N2 (default chosen, change if avo prefers): the barrier no longer drops the whole name. Its Rule of 40
+    is a data problem, so that rule is unknown and the card is DISTORTED; Quality and Momentum still read it."""
+    from RevenueChaser.module_fundamentals.screeners import evaluate_rule_of_40, is_distorted
     # growth 0.30, FCF margin (160 - 2.7) / 130 = 1.21 -> Rule of 40 = 151.0
     annual = _annual_pair(rev0=100.0, rev1=130.0, ocf1=160.0, capex1=2.7)
     row, drops = _compute(monkeypatch, annual)
-    assert row is None and drops == ["ro40_barrier"]
+    assert row is not None and drops == []
+    m = row["metrics"]
+    assert m["ro40"] == pytest.approx(151.0, abs=0.1)
+    gate = evaluate_rule_of_40(m)
+    assert gate["rules"][0]["passed"] is None and gate["passed"] is False
+    assert "above 150" in gate["rules"][0]["label"]
+    # DISTORTED on the barrier alone (this fixture's revenue base is micro too, so test it on a real-sized one).
+    assert is_distorted({"ro40": 151.0, "rev_growth_ttm": 0.30, "ttm_revenue": 2e9})
+    assert not is_distorted({"ro40": 149.0, "rev_growth_ttm": 0.30, "ttm_revenue": 2e9})
 
 
 def test_a_rule_of_40_under_the_barrier_is_kept(monkeypatch):

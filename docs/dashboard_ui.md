@@ -131,8 +131,12 @@ market_cap, gics:[sector, industry], theme_ids:[id], earnings_date}`. `theme_ids
 pinned theme run (`core.universe.current_theme_run`, the one lookup); an empty list is unthemed.
 
 **Index list.** The labels are `index_registry.LABELS`: S&P 500, Dow Jones, S&P SmallCap 600 and Nasdaq
-Composite (shown as "Nasdaq-listed"). The S&P SmallCap 600 is listed only once `index_constituents` holds its
-rows; its first fill is a weekly-step run the user names (`refresh_lists(first_fill=["sp600"])`), never a board.
+Composite (shown as "Nasdaq-listed"), in that order. On the identity spine (the default since PR 6) a label is listed
+only while some name carries it: the spine's current fund-file members, `nasdaq` from the listed names on Nasdaq.
+No source the spine reads has the Dow Jones, so it is not offered there. On the old store
+(`RC_UNIVERSE_SOURCE=store`) the S&P SmallCap 600 is listed only once `index_constituents` holds its rows (its first
+fill is a weekly-step run the user names, `index_lists.refresh_lists(first_fill=["sp600"])`, never a board) and the
+other labels always are.
 
 State lives in localStorage (`rc.filters.v1`, shared by every board unless the user unlinks it) and in the URL
 hash. The pure logic is `RCFilters.core`, unit-tested under node (`core/tests/test_rc_filters.py`).

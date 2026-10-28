@@ -39,7 +39,8 @@ DISTORTED_REV_MIN = 10_000_000       # TTM revenue base < $10M
 # A spine sector that is not comparable on a quality-growth scan (card 4 (b), Common C17): the Financials and
 # Real Estate business models (balance-sheet driven) leave the universe before any EDGAR read.
 EXCLUDED_SECTORS = ["Financial Services", "Real Estate"]
-# A Rule of 40 above this is a data problem, not a pick (#386 F1).
+# A Rule of 40 above this is a data problem, not a pick (#386 F1): since review N2 the rule is unknown and the card
+# DISTORTED, the name is no longer dropped (Quality and Momentum still read it).
 RO40_BARRIER = 150.0
 
 # ── Corporate-event flag (#386 F5) ──
@@ -52,6 +53,9 @@ RO40_BARRIER = 150.0
 #   5.03 amendments to articles of incorporation or bylaws / change in fiscal year
 CORPORATE_EVENT_ITEMS = ["1.02", "2.01", "2.06", "3.01", "4.01", "4.02", "5.01", "5.03"]
 CORPORATE_EVENT_WINDOW_DAYS = 365
+# Review F2: a filer whose 8-K list the daily sync last checked longer ago than this (or never) is a blind spot,
+# counted on the board, not a clean "no event". Display only, like the flag (not in freeze._HASHED).
+CORPORATE_EVENT_CHECK_MAX_AGE_DAYS = 7
 
 # ── ROIC ──
 TAX_RATE = 0.21
@@ -62,7 +66,10 @@ TAX_RATE = 0.21
 # (tests/test_fundamentals_freeze_128.py) fails when a threshold changes without this bump.
 # 6: data-health gates (edgar_fetch_failed, stale_annual, sector_excluded, ro40_barrier) and the F2 scoring basis
 #    (#386)
-SELECTION_VERSION = "6"
+# 7: a net-cash firm passes the leverage rule when EBITDA <= 0 (review N1); gross margin follows the C18
+#    comparability rule (review N4); a Rule of 40 above the barrier is unknown and DISTORTED, no longer a dropped
+#    name (review N2, default chosen)
+SELECTION_VERSION = "7"
 
 # ── Options flow (constitutional bypass) ──
 MANUAL_FLOW_ONLY = True

@@ -1,6 +1,6 @@
-"""``core/universe.py`` behind ``RC_UNIVERSE_SOURCE`` (build plan PR 5): the default reads ``raw.duckdb`` as before;
-``spine`` reads membership, names, classification and types through ``rcdata.read`` and only the market fields
-(cap, price, quote) from the old ``equity_universe``, until PR 6 brings market data to the spine."""
+"""``core/universe.py`` and ``RC_UNIVERSE_SOURCE`` (build plan PR 5, default flipped in PR 6): unset reads the identity
+spine, membership, names, classification and types through ``rcdata.read`` and only the market fields (cap, price,
+quote) from the old ``equity_universe``; any other value (``store``) reads ``raw.duckdb`` as before."""
 from __future__ import annotations
 
 import pytest
@@ -24,8 +24,17 @@ def old_store():
                                             {"ticker": "OLDONLY", "security_type": "common"}])
 
 
-def test_the_default_is_the_old_store(monkeypatch, built, old_store):
+def test_the_default_is_the_spine(monkeypatch, built, old_store):
     monkeypatch.delenv(universe.SOURCE_ENV, raising=False)
+    assert universe.source_state() == {"requested": "spine", "effective": "spine", "reason": None, "variable": None}
+    names = universe.classification_universe(0)
+    assert names[:3] == ["MSFT", "TM", "WFC"] and "OLDONLY" not in names
+    monkeypatch.setenv(universe.SOURCE_ENV, "  ")                          # empty is unset
+    assert universe.universe_source() == "spine"
+
+
+def test_the_old_value_is_the_old_store(monkeypatch, built, old_store):
+    monkeypatch.setenv(universe.SOURCE_ENV, universe.STORE)
     assert universe.universe_source() == "store"
     names = universe.classification_universe(0)
     assert names[0] == "MSFT" and "OLDONLY" in names and "SPY" not in names
@@ -80,12 +89,13 @@ def test_filter_fields_take_the_index_badges_from_the_spine_membership():
 
 def test_the_flag_without_a_spine_falls_back_to_the_store_and_says_so(monkeypatch, old_store, caplog):
     """Should-fix 7: setting the flag a step early must not empty every screener."""
+    monkeypatch.setattr(universe, "_FALLBACK_LOGGED", set())          # once per process: start clean
     monkeypatch.setenv(universe.SOURCE_ENV, "spine")
     with caplog.at_level("WARNING"):
         assert universe.universe_source() == "store"
     assert "OLDONLY" in universe.classification_universe(0)
     state = universe.source_state()
-    assert state == {"requested": "spine", "effective": "store", "reason": "no spine.duckdb yet"}
+    assert state == {"requested": "spine", "effective": "store", "reason": "no spine.duckdb yet", "variable": "spine"}
     assert any("RC_UNIVERSE_SOURCE=spine" in r.getMessage() and "falls back" in r.getMessage() for r in caplog.records)
 
 
@@ -100,16 +110,21 @@ def test_the_flag_with_a_failed_spine_build_falls_back_to_the_store(monkeypatch,
     assert universe.universe_source() == "store"
 
 
-def test_unset_says_the_store_was_asked_for(monkeypatch):
+def test_unset_without_a_spine_falls_back_and_says_the_default_asked(monkeypatch, old_store, caplog):
+    monkeypatch.setattr(universe, "_FALLBACK_LOGGED", set())          # once per process: start clean
     monkeypatch.delenv(universe.SOURCE_ENV, raising=False)
-    assert universe.source_state() == {"requested": "store", "effective": "store", "reason": None}
+    with caplog.at_level("WARNING"):
+        assert universe.source_state() == {"requested": "spine", "effective": "store",
+                                           "reason": "no spine.duckdb yet", "variable": None}
+    assert "OLDONLY" in universe.classification_universe(0)
+    assert any("by default" in r.getMessage() and "falls back" in r.getMessage() for r in caplog.records)
 
 
 def test_an_unknown_value_is_the_old_store(monkeypatch):
     monkeypatch.setenv(universe.SOURCE_ENV, "Spine ")
     assert universe.source_state()["requested"] == "spine"
     monkeypatch.setenv(universe.SOURCE_ENV, "wrds")
-    assert universe.source_state() == {"requested": "store", "effective": "store", "reason": None}
+    assert universe.source_state() == {"requested": "store", "effective": "store", "reason": None, "variable": "wrds"}
 
 
 @pytest.mark.usefixtures("spine")

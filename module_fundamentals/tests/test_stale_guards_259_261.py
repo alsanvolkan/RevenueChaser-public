@@ -25,13 +25,13 @@ def test_the_stale_marker_is_stripped_and_counted(monkeypatch):
     frame.attrs["short_refetch_refused"] = True
     _patch_row_inputs(monkeypatch, {"marketCap": 2e9, "_stale": True}, frame)
     row = pipeline._compute_row({"ticker": "AAA"}, None, spine={})
-    assert row["info_stale"] is True and row["short_refetch_refused"] is True
+    assert row["info_stale"] is True and "short_refetch_refused" not in row    # D01 bars are never refused (PR 6)
     assert "'_stale'" not in repr(row)                   # the marker key never reaches a card field
     quality = pipeline.build_payload([row], run_stats={})["data_quality"]
-    assert quality["stale_info"] == 1 and quality["short_refetch_refused"] == 1
+    assert quality["stale_info"] == 1 and quality["short_refetch_refused"] == 0
 
 
 def test_a_fresh_row_counts_nothing(monkeypatch):
     _patch_row_inputs(monkeypatch, {"marketCap": 2e9}, pd.DataFrame({"Close": [1.0]}))
     row = pipeline._compute_row({"ticker": "AAA"}, None, spine={})
-    assert row["info_stale"] is False and row["short_refetch_refused"] is False
+    assert row["info_stale"] is False and "short_refetch_refused" not in row
