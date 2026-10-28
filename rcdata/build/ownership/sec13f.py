@@ -179,17 +179,16 @@ class Sec13f(edgar.Feed):
         super().backfill(ctx, first, end)
 
     def type_day(self, ctx: base.RunContext, day: date) -> list[Path]:
-        filings = self.filings_of(day)
-        if not filings:
-            return []
         con = duckdb.connect()
         try:
             rows = edgar.Appender(con, "filings", FILINGS)
             held = edgar.Appender(con, "holdings", HOLDINGS)
-            for _acc, entry, text in filings:
+            for _acc, entry, text in self.filings_of(day):
                 filing, holdings = parse(text, entry, day)
                 rows.add([filing])
                 held.add(holdings)
+            if not rows.total:
+                return []
             rows.flush()
             held.flush()
             return [self.write_day(con, "filings", "filings", day, "accession"),

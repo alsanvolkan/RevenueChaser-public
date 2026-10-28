@@ -179,3 +179,16 @@ def test_the_index_parse_refuses_an_answer_that_is_not_the_index():
     rows = edgar.parse_index(ox.daily_index([ox.idx_row(5, "X", "13F-HR/A", "2026-10-27", "0000000005-26-000001")]))
     assert rows == [{"cik": "5", "company": "X", "form": "13F-HR/A", "filed": date(2026, 10, 27),
                      "path": "edgar/data/5/0000000005-26-000001.txt", "accession": "0000000005-26-000001"}]
+
+
+def test_a_days_filings_are_read_one_at_a_time_not_held_at_once(feed, monkeypatch):
+    """A deadline day holds up to 5,400 full submissions: the typing reads one, types it and lets it go."""
+    _run()
+    reads = []
+    real = base.read_raw
+    monkeypatch.setattr(base, "read_raw", lambda path: reads.append(path.name) or real(path))
+    filings = sec13f.DATASET.filings_of(date(2026, 10, 27))
+    first = next(iter(filings))
+    assert first[0] == "0001000001-26-000001" and len(reads) == 1
+    assert [acc for acc, _e, _t in filings] == ["0001000002-26-000007", "0001000004-26-000003",
+                                                "0001000005-26-000004"]

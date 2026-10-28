@@ -30,6 +30,7 @@ import json
 import re
 import time
 import xml.etree.ElementTree as ET
+from collections.abc import Iterator
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -303,15 +304,15 @@ class Feed:
                 out[rec["accession"]] = rec
         return out
 
-    def filings_of(self, day: date) -> list[tuple[str, dict, str]]:
-        """``(accession, manifest entry, submission text)`` of every filing fetched for ``day``, by accession."""
+    def filings_of(self, day: date) -> Iterator[tuple[str, dict, str]]:
+        """``(accession, manifest entry, submission text)`` of every filing fetched for ``day``, by accession, read one
+        at a time: a deadline day's 5,400 full submissions never sit in Python at once (``Appender`` does the same
+        for their rows)."""
         man = self.manifest(day)
-        out = []
         for path in sorted(self.day_dir(day).glob("*.txt.gz")):
             acc = path.name[:-len(".txt.gz")]
             entry = man.get(acc) or {"accession": acc, "fetched_at": path.stat().st_mtime, "run_id": None}
-            out.append((acc, entry, base.read_raw(path).decode("utf-8", errors="replace")))
-        return out
+            yield acc, entry, base.read_raw(path).decode("utf-8", errors="replace")
 
     # The dataset steps
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
@@ -366,6 +367,11 @@ class Appender:
         self.count = 0
         cols = ", ".join(f'"{c}" {t}' for c, t in schema)
         con.execute(f"CREATE OR REPLACE TABLE {table} ({cols})")
+
+    @property
+    def total(self) -> int:
+        """The rows added so far, flushed or not."""
+        return self.count + len(self.rows)
 
     def add(self, rows: list[dict]) -> None:
         self.rows += rows
