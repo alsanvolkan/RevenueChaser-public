@@ -20,6 +20,7 @@ DAY_CAPS: dict[str, int] = {
     "ishares": 50,
     "vanguard": 50,
     "nasdaq": 50,
+    "invesco": 50,
 }
 
 

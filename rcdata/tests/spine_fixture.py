@@ -291,8 +291,29 @@ def nasdaq_json(symbols) -> bytes:
                        "message": None, "status": {"rCode": 200}}).encode()
 
 
+def invesco_json(holdings, adr=False) -> bytes:
+    """Invesco's QQQ holdings answer (``dng-api.invesco.com/cache/v1/accounts/en_US/shareclasses/QQQ/holdings/fund``):
+    common stock and ADR lines are holdings; the index future, the currency and the cash lines are not. ``adr`` adds
+    ASML's ADR line."""
+    rows = [{"ticker": t, "issuerName": name, "cusip": cusip, "percentageOfTotalNetAssets": 1.0,
+             "securityTypeCode": "COM", "securityTypeName": "Common Stock"} for t, cusip, name in holdings]
+    if adr:
+        rows.append({"ticker": "ASML", "issuerName": "ASML Holding NV", "cusip": "N07059210",
+                     "percentageOfTotalNetAssets": 1.0, "securityTypeCode": "DRNY",
+                     "securityTypeName": "American Depository Receipt - NY"})
+    rows += [{"ticker": "NQZ6", "issuerName": "NASDAQ 100 E-MINI", "cusip": None, "percentageOfTotalNetAssets": 0.1,
+              "securityTypeCode": "IFUT", "securityTypeName": "Index Future"},
+             {"ticker": "USD", "issuerName": "US Dollar", "cusip": None, "percentageOfTotalNetAssets": 0.1,
+              "securityTypeCode": "CURR", "securityTypeName": "Currency"},
+             {"ticker": None, "issuerName": "Synthetic Cash", "cusip": None, "percentageOfTotalNetAssets": 0.0,
+              "securityTypeCode": "SYN", "securityTypeName": "Synthetic Cash"}]
+    return json.dumps({"cusip": "QQQ", "effectiveDate": "2026-10-27", "totalNumberOfHoldings": len(rows),
+                       "holdings": rows}).encode()
+
+
 def add_fund_routes(http_mock, sp500=SP500, sp400=SP400, ndx=("MSFT",), fail=()) -> None:
-    """Answer every fund file of ``funds.FILES``: S&P 500 and 400 from the lists above, the SmallCap 600 files 404."""
+    """Answer every fund file of ``funds.FILES``: S&P 500 and 400 from the lists above, the SmallCap 600 files 404;
+    the Nasdaq list and QQQ both hold ``ndx``."""
     def maybe(name, body):
         return (500, b"down", {}) if name in fail else (200, body, {})
     http_mock.add("holdings-daily-us-en-spy", lambda r: maybe("SPY", ssga_xlsx(sp500)))
@@ -302,3 +323,5 @@ def add_fund_routes(http_mock, sp500=SP500, sp400=SP400, ndx=("MSFT",), fail=())
     http_mock.add(VANGUARD_ROUTE["VOO"], lambda r: maybe("VOO", vanguard_json(sp500, cusip_only=("FDX",))))
     http_mock.add(VANGUARD_ROUTE["IVOO"], lambda r: maybe("IVOO", vanguard_json(sp400)))
     http_mock.add("list-type/nasdaq100", lambda r: maybe("NDX", nasdaq_json(ndx)))
+    http_mock.add("shareclasses/QQQ/holdings", lambda r: maybe("QQQ", invesco_json(
+        [h for h in sp500 + sp400 + [("NVDA", "67066G104", "NVIDIA CORP")] if h[0] in ndx])))

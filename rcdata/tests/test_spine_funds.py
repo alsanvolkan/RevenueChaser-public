@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from RevenueChaser.rcdata import ops
+from RevenueChaser.rcdata import caps, ops
 from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.spine import funds
 
@@ -77,6 +77,23 @@ def test_a_file_of_another_shape_is_a_source_error(parse, body):
         parse(body)
 
 
+def test_invesco_keeps_stock_and_adr_lines_and_reads_the_cusip():
+    rows = funds.parse_invesco(fx.invesco_json([("MSFT", "594918104", "MICROSOFT CORP")], adr=True))
+    assert rows == [{"ticker_raw": "MSFT", "cusip": "594918104", "name": "MICROSOFT CORP", "weight": 1.0},
+                    {"ticker_raw": "ASML", "cusip": "N07059210", "name": "ASML Holding NV", "weight": 1.0}]
+    with pytest.raises(base.SourceError):
+        funds.parse_invesco(b'{"cusip": "QQQ"}')
+
+
+def test_ndx_is_voted_by_the_nasdaq_list_and_invescos_qqq():
+    """The Nasdaq list API times out on homesrv (28 Oct 2026); QQQ tracks the Nasdaq-100 and answers the same 101."""
+    ndx = {(f.provider, f.fund, f.url()) for f in funds.FILES if f.index_slug == "ndx"}
+    assert ndx == {("nasdaq", "NDX", "https://api.nasdaq.com/api/quote/list-type/nasdaq100"),
+                   ("invesco", "QQQ", "https://dng-api.invesco.com/cache/v1/accounts/en_US/shareclasses/QQQ/holdings/"
+                                      "fund?idType=ticker&productType=ETF")}
+    assert caps.cap_for("invesco") == 50
+
+
 def test_tickers_are_written_the_sec_way():
     assert funds.norm_ticker("BRK.B") == "BRK-B" and funds.norm_ticker("BRK/B") == "BRK-B"
     assert funds.norm_ticker("CASH_USD") is None and funds.norm_ticker("-") is None
@@ -84,10 +101,10 @@ def test_tickers_are_written_the_sec_way():
 
 def test_one_request_per_file_a_failed_file_is_an_issue_and_the_others_count(env):
     row = base.run_request({"dataset": funds.NAME, "params": {"as_of": "2026-10-27"}})
-    assert row["result"] == "changed" and row["calls"] == 10            # the three SmallCap files 404: no retry
+    assert row["result"] == "changed" and row["calls"] == 11            # the three SmallCap files 404: no retry
     n, issues = ops.open_issues(funds.NAME)
     assert n == 3 and {i["key"] for i in issues} == {"ssga-SPSM.xlsx", "ishares-IJR.csv", "vanguard-VIOO.json"}
-    assert row["coverage"] == 0.7 and "failed files" in row["note"]
+    assert row["coverage"] == round(8 / 11, 4) and "failed files" in row["note"]
     assert row["calls"] == len(env.calls())
 
 

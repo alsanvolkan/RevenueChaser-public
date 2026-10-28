@@ -9,16 +9,17 @@ use small files of that shape. The first real fetch is a homesrv step, and a for
 | ``sp500`` | SSGA SPY (xlsx), iShares IVV (csv), Vanguard VOO (json) |
 | ``sp400`` | SSGA MDY, iShares IJH, Vanguard IVOO |
 | ``sp600`` | SSGA SPSM, iShares IJR, Vanguard VIOO |
-| ``ndx`` | Nasdaq ``/api/quote/list-type/nasdaq100`` (json) |
+| ``ndx`` | Nasdaq ``/api/quote/list-type/nasdaq100`` (json), Invesco QQQ (json) |
 
-One request per file, every file each run (10 a run), each under its provider's day cap. Base URLs:
-``RC_SSGA_BASE``, ``RC_ISHARES_BASE``, ``RC_VANGUARD_BASE``, ``RC_NASDAQ_API_BASE``.
+One request per file, every file each run (11 a run), each under its provider's day cap. Base URLs:
+``RC_SSGA_BASE``, ``RC_ISHARES_BASE``, ``RC_VANGUARD_BASE``, ``RC_NASDAQ_API_BASE``, ``RC_INVESCO_API_BASE``.
 
 **The membership rule (working choice).** On each day, a file counts when it parsed and holds at least its index's
 floor (``FLOOR``: about 80% of the index); a short file is a ``fund_file_short`` build issue and does not count. A
-ticker is a member of the index that day when more than half of the counting files hold it (one file of one: the
-Nasdaq list). Cash, futures and other non-equity lines are dropped by each parser. Tickers are written as the SEC file
-writes them (``BRK.B`` and ``BRK/B`` -> ``BRK-B``); ``spine/security`` matches them to the SEC file, by CUSIP first.
+ticker is a member of the index that day when more than half of the counting files hold it (for ``ndx``: both the
+Nasdaq list and QQQ, or the one that counts when the other failed). Cash, futures and other non-equity lines are
+dropped by each parser. Tickers are written as the SEC file writes them (``BRK.B`` and ``BRK/B`` -> ``BRK-B``);
+``spine/security`` matches them to the SEC file, by CUSIP first.
 
 Raw: ``raw/funds/index_holdings/<as-of>/<provider>-<fund>.<ext>`` (+ ``.meta.json``). Parquet:
 ``parquet/funds/index_holdings/date=<as-of>/part-0.parquet`` (every holding line kept, with its file). Staging:
@@ -156,6 +157,23 @@ def parse_nasdaq(data: bytes) -> list[dict]:
             for r in rows or [] if (r or {}).get("symbol")]
 
 
+# Invesco's security types that are a holding of the stock: common stock and the ADRs (ASML, ARM, PDD in Oct 2026).
+INVESCO_EQUITY_TYPES = ("COM", "ADR", "DRNY")
+
+
+def parse_invesco(data: bytes) -> list[dict]:
+    """Invesco's fund holdings API (QQQ): ``{"effectiveDate", "holdings": [{"ticker", "issuerName", "cusip",
+    "percentageOfTotalNetAssets", "securityTypeCode", ...}]}``. Stock and ADR lines only (no future, currency, cash)."""
+    body = json.loads(data)
+    try:
+        holdings = body["holdings"]
+    except (KeyError, TypeError) as e:
+        raise base.SourceError("invesco: no holdings list") from e
+    return [{"ticker_raw": h.get("ticker"), "cusip": _cusip(h.get("cusip")), "name": h.get("issuerName"),
+             "weight": _weight(h.get("percentageOfTotalNetAssets"))}
+            for h in holdings or [] if (h or {}).get("securityTypeCode") in INVESCO_EQUITY_TYPES]
+
+
 # ── The files ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 def _base(env: str, default: str) -> str:
@@ -181,6 +199,9 @@ class FundFile:
         if self.provider == "vanguard":
             return (_base("RC_VANGUARD_BASE", "https://etfportal.vanguard.com")
                     + f"/extrapi/v2/us/standard/{VANGUARD_BASKETS[self.fund]}/CRRD/holdings.json")
+        if self.provider == "invesco":
+            return (_base("RC_INVESCO_API_BASE", "https://dng-api.invesco.com")
+                    + f"/cache/v1/accounts/en_US/shareclasses/{self.fund}/holdings/fund?idType=ticker&productType=ETF")
         return _base("RC_NASDAQ_API_BASE", "https://api.nasdaq.com") + "/api/quote/list-type/nasdaq100"
 
     def raw_name(self) -> str:
@@ -198,6 +219,7 @@ FILES = (
     FundFile("sp600", "ishares", "IJR", "csv", parse_ishares),
     FundFile("sp600", "vanguard", "VIOO", "json", parse_vanguard),
     FundFile("ndx", "nasdaq", "NDX", "json", parse_nasdaq),
+    FundFile("ndx", "invesco", "QQQ", "json", parse_invesco),
 )
 PROVIDERS = tuple(dict.fromkeys(f.provider for f in FILES))
 _BY_RAW = {f.raw_name(): f for f in FILES}
