@@ -264,3 +264,17 @@ def test_the_stored_comps_are_dated_by_their_run_not_the_cached_target_payload(r
                         "modules": {"comps": comps}, "quick_remarks": None, "warnings": []},
                        ticker="TEST", run_id="r1", run_at=TUESDAY_LATE, modules=["comps"])
     assert fin_history.last_report("TEST")["as_of"] == "2026-10-06"
+
+
+# ── N7: the model version hashes only the part of the sector bands a model reads ──
+def test_a_sector_band_no_model_reads_does_not_move_the_model_version(monkeypatch):
+    """No engine reads wacc_range / growth_range / ebitda_margin_range / exit_multiple_range (#49); the one key a
+    model can read is a band's tax_rate (_inputs.default_tax_rate). Only that is hashed."""
+    from RevenueChaser.module_financials import config
+    bands = copy.deepcopy(config.load_sector_defaults())
+    before = fin_history.model_version()
+    bands["Technology"]["wacc_range"] = [0.01, 0.02]
+    monkeypatch.setattr(config, "load_sector_defaults", lambda: bands)
+    assert fin_history.model_version() == before
+    bands["Technology"]["tax_rate"] = 0.15
+    assert fin_history.model_version() != before

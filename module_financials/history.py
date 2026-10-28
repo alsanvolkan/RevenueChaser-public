@@ -41,7 +41,11 @@ def effective_config() -> dict:
         "DEFAULT_DNWC_PCT_REV": config.DEFAULT_DNWC_PCT_REV, "PEER_K": config.PEER_K,
         "DEFAULT_DSO": config.DEFAULT_DSO, "DEFAULT_DIO": config.DEFAULT_DIO, "DEFAULT_DPO": config.DEFAULT_DPO,
         "DEFAULT_DEBT_WEIGHT": config.DEFAULT_DEBT_WEIGHT,
-        "SECTOR_DEFAULTS": config.load_sector_defaults(),
+        # Only the part of the sector bands a model reads: a band's tax_rate (``_inputs.default_tax_rate``). The
+        # wacc / growth / margin / exit-multiple ranges are read by no engine (#49), so editing them must not start
+        # a new model version (Financials review N7).
+        "SECTOR_TAX_RATES": {sector: band["tax_rate"] for sector, band in config.load_sector_defaults().items()
+                             if isinstance(band, dict) and "tax_rate" in band},
         "MEASURED_TAX_RATE_BAND": list(_inputs.MEASURED_TAX_RATE_BAND),
         "DEBT_EBITDA_SAFE": credit.DEBT_EBITDA_SAFE, "DEBT_EBITDA_STRESSED": credit.DEBT_EBITDA_STRESSED,
         "INTEREST_COVERAGE_SAFE": credit.INTEREST_COVERAGE_SAFE,
