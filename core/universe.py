@@ -124,7 +124,7 @@ def spine_provenance() -> dict | None:
     built = as_of = None
     try:
         con = serving.open_read(SPINE)
-    except serving.ServingFileMissing:
+    except (serving.ServingFileMissing, duckdb.Error):  # no file, or one DuckDB cannot open: never fail a header
         return {"built_at": None, "source_as_of": None}
     try:
         built = con.execute(f"SELECT max(built_at) FROM {serving.VERSION_TABLE}").fetchone()[0]

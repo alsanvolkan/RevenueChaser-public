@@ -46,7 +46,7 @@ def _spine_members(listed: list[dict] | None = None) -> dict[str, set[str]]:
         out.setdefault(m["index_slug"], set()).add(str(m["ticker"]).upper())
     nasdaq = _listed_on_nasdaq(spine_reads.universe(("A", "B")) if listed is None else listed)
     if nasdaq:
-        out[NASDAQ] = nasdaq
+        out.setdefault(NASDAQ, set()).update(nasdaq)    # adds to a fund-file ``nasdaq``, never replaces it (review N1)
     return out
 
 
