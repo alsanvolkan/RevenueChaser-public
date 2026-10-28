@@ -105,7 +105,15 @@ def _security_types() -> dict[str, str]:
     """
     if _spine():
         from ..rcdata import read
-        return {r["ticker"]: r["security_type"] for r in read.identity() if r.get("ticker")}
+        spine = {r["ticker"]: r["security_type"] for r in read.identity() if r.get("ticker")}
+        # A spine name left untyped (no OpenFIGI answer, no Compustat link) takes the identity master's type, so the
+        # flag does not let through an ETF the old path excluded (review should-fix 6).
+        untyped = [t for t, ty in spine.items() if ty in (None, "unknown", "other")]
+        if untyped:
+            master = {r["ticker"]: r["security_type"] for r in rawstore.query(
+                "SELECT ticker, security_type FROM security_master") if r.get("security_type")}
+            spine.update({t: master[t] for t in untyped if t in master})
+        return spine
     rows = rawstore.query("SELECT ticker, security_type FROM security_master")
     return {r["ticker"]: r["security_type"] for r in rows if r.get("ticker")}
 

@@ -17,7 +17,7 @@ So:
 The $300M market-cap floor is not a tier: it needs market data, which the spine does not hold (``core/universe.py``
 applies it at read time). The type comes from ``core.identity.types.classify_type`` over the spine's own inputs
 (OpenFIGI's security types and the SEC name; no SEC submissions), so a preferred share written ``WFC-PC`` is typed by
-the ticker rule even before OpenFIGI answered.
+the ticker rule even before OpenFIGI answered; a name those leave untyped takes Compustat's ``tpci`` (``TPCI_TYPES``).
 """
 from __future__ import annotations
 
@@ -45,7 +45,19 @@ def tier(exchange: str | None, security_type: str | None) -> str:
     return "D"
 
 
-def security_type(ticker: str, name: str | None, figi: dict | None) -> tuple[str, str]:
-    """``(type, source)`` from the spine's inputs, through the identity master's one rule set."""
+# Compustat's issue type code (``comp.security.tpci``) of the linked security, used only when OpenFIGI and the name
+# rules leave a name untyped (review should-fix 6). Only the codes read with confidence are mapped; not verified
+# against WRDS from here, so an unexpected code types nothing.
+TPCI_TYPES = {"0": "common", "F": "adr", "%": "etp"}
+UNTYPED = ("unknown", "other", None)
+
+
+def security_type(ticker: str, name: str | None, figi: dict | None, tpci: str | None = None) -> tuple[str, str]:
+    """``(type, source)`` from the spine's inputs, through the identity master's one rule set; Compustat's ``tpci``
+    fills a name those leave untyped."""
     inputs = {"name": name, "openfigi": figi or {}, "sec": None, "nasdaq": {}, "uw": {}, "fdic": {}}
-    return classify_type(ticker, inputs)
+    typ, src = classify_type(ticker, inputs)
+    code = str(tpci).strip() if tpci is not None else ""
+    if typ in UNTYPED and code in TPCI_TYPES:
+        return TPCI_TYPES[code], f"compustat_tpci({code})"
+    return typ, src

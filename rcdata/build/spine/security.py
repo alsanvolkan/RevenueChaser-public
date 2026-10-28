@@ -326,7 +326,7 @@ class SpineSecurity:
             cusip = str(cusip).strip().upper() if cusip else None
             f = figi.get(cusip) if cusip else None
             f_ok = f if f and f.get("status") == PRESENT else None
-            typ, typ_src = tier_rule.security_type(r["ticker"], r["name"], f_ok)
+            typ, typ_src = tier_rule.security_type(r["ticker"], r["name"], f_ok, (sec_row or {}).get("tpci"))
             current = [g for g in hgic.get((sec_row or {}).get("gvkey"), []) if g.get("indthru") is None]
             g = current[-1] if current else None
             sector, industry = sector_names(g and g.get("gsector"), g and g.get("ggroup"))

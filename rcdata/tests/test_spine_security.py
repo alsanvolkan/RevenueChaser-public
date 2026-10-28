@@ -60,12 +60,13 @@ def test_the_ten_names_tier_and_link(built):
     want = {"MSFT": ("A", "common", "012141", "01", "tic"), "HEI": ("A", "common", "005567", "01", "tic"),
             "HEI-A": ("A", "common", "005567", "02", "tic"), "ETN": ("A", "common", "016478", "01", "tic"),
             "TM": ("A", "adr", "010581", "90", "tic"), "CNA": ("A", "common", "002968", "01", "tic"),
-            "FDX": ("A", "common", "004598", "01", "tic"), "NVR": ("A", "unknown", "025648", "01", "tic"),
+            "FDX": ("A", "common", "004598", "01", "tic"), "NVR": ("A", "common", "025648", "01", "tic"),
             "WFC-PC": ("B", "preferred", None, None, None), "VYLR": ("A", "common", "040001", "01", "tic")}
     for t, (tr, typ, gvkey, iid, how) in want.items():
         s = _sec(t)
         assert (s["tier"], s["security_type"], s["gvkey"], s["iid"], s["link_source"]) == (tr, typ, gvkey, iid, how), t
     assert {_sec(t)["tier"] for t in ("SPY",)} == {"B"} and _sec("OTCX")["tier"] == "C" and _sec("NOEX")["tier"] == "D"
+    assert _sec("NVR")["type_source"] == "compustat_tpci(0)"       # OpenFIGI had no answer for NVR
 
 
 def test_identifiers_and_gics_of_the_ten_names(built):
@@ -249,6 +250,31 @@ def test_the_type_comes_from_the_identity_rules():
     assert tier.security_type("TM", "TOYOTA", {"security_type": "ADR"})[0] == "adr"
     assert tier.security_type("XYZ", "ACME ACQUISITION CORP", None)[0] == "spac"      # the name rule
     assert tier.security_type("SPY", "SPDR", {"security_type": "ETP"})[0] == "etp"
+
+
+def test_compustat_tpci_types_a_name_nothing_else_typed():
+    """Should-fix 6: an ETF row OpenFIGI has not answered for (and no name rule types) is not Tier A."""
+    assert tier.security_type("XETF", "SOME TRUST", None, tpci="%") == ("etp", "compustat_tpci(%)")
+    assert tier.tier("NYSE", tier.security_type("XETF", "SOME TRUST", None, tpci="%")[0]) == "B"
+    assert tier.security_type("XADR", "SOME PLC", None, tpci="F")[0] == "adr"
+    assert tier.security_type("XYZ", "PLAIN CO", None, tpci="0")[0] == "common"
+    assert tier.security_type("XYZ", "PLAIN CO", None, tpci="?")[0] == "unknown"           # an unmapped code
+    # OpenFIGI and the name rules come first: tpci only fills a gap.
+    assert tier.security_type("TM", "TOYOTA", {"security_type": "ADR"}, tpci="0")[0] == "adr"
+    assert tier.security_type("WFC-PC", "WELLS FARGO", None, tpci="0")[0] == "preferred"
+
+
+def test_the_spine_uses_tpci_for_a_name_openfigi_did_not_answer(built, monkeypatch):
+    monkeypatch.delitem(fx.FIGI, "78462F103")                # SPY: OpenFIGI has no answer for it
+    for f in openfigi_map.partition().parent.glob("*.parquet"):
+        f.unlink()
+    for d in openfigi_map.raw_dir().glob("*"):
+        for f in d.iterdir():
+            f.unlink()
+    run_all("2026-10-28", names=(openfigi_map.NAME, security.NAME))
+    spy = _sec("SPY")
+    assert (spy["figi"], spy["security_type"], spy["type_source"], spy["tier"]) == (None, "etp", "compustat_tpci(%)",
+                                                                                      "B")
 
 
 def test_the_match_of_a_holding_line():

@@ -88,3 +88,16 @@ def test_an_unknown_value_is_the_old_store(monkeypatch):
     assert universe.universe_source() == "spine"
     monkeypatch.setenv(universe.SOURCE_ENV, "wrds")
     assert universe.universe_source() == "store"
+
+
+@pytest.mark.usefixtures("spine")
+def test_an_untyped_spine_name_takes_the_old_masters_type(monkeypatch):
+    """Should-fix 6: a spine name with no type (no OpenFIGI answer, no Compustat link) falls back to the identity
+    master's type, so an ETF the old path excluded is not let through by the flag."""
+    rawstore.write_rows("security_master", [{"ticker": "VYLR", "security_type": "etp"}])
+    from RevenueChaser.rcdata import read
+    real = read.identity
+    monkeypatch.setattr(read, "identity", lambda tickers=None: [
+        {**r, "security_type": "unknown"} if r["ticker"] == "VYLR" else r for r in real(tickers)])
+    assert "VYLR" in universe.excluded_tickers()
+    assert "VYLR" not in universe.classification_universe(0)
