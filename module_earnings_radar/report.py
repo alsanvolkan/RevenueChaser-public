@@ -2,7 +2,7 @@
 from RevenueChaser.core import universe
 from RevenueChaser.core.reporting_common import (FILTERS_CSS, FILTERS_JS, filters_bar_html, filters_meta, help_html,
                                                  notice_html, provider_health_html, recorded_sessions_html,
-                                                 write_artifact)
+                                                 watchlist_html, write_artifact)
 from datetime import date, datetime, timezone
 from pathlib import Path
 import json
@@ -515,7 +515,9 @@ function buildDrawer(ticker) {
   var priceEl = row ? row.querySelector('td.sticky-price') : null;
   var price = priceEl ? priceEl.textContent : '';
   var sess = row ? (row.getAttribute('data-am-pm') || '') : '';
-  return '<div class="drawer-header"><div><h3 class="drawer-title">' + rcEsc(ticker) + '</h3>'
+  // The watch-list pair sits here, in the drawer, not in the table's 50 px sticky ticker column (PR 4).
+  var pair = (typeof rcWatchButtons === 'function') ? rcWatchButtons(ticker) : '';
+  return '<div class="drawer-header"><div><h3 class="drawer-title">' + rcEsc(ticker) + '</h3>' + pair
     + '<div class="drawer-sub">' + rcEsc(name) + ' · ' + rcEsc(price) + ' · ' + rcEsc(sess) + '</div></div>'
     + '<button class="drawer-close" onclick="closeDetail()">✕</button></div>'
     + '<div class="drawer-toolbar"><span class="dp-label">History:</span>'
@@ -2033,6 +2035,7 @@ def export_html(cards: list, calendar_events: list[dict] = None, nrc_results: di
 {decision_script}
 {colwidths_script}
 {views_js}
+{watchlist_html("earnings_radar")}
 {DETAIL_JS}
 {kit_js}</body></html>"""
 

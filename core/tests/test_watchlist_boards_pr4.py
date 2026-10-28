@@ -27,6 +27,10 @@ WITH_PAIR = {
     "module_swing_potential": "swing_potential",
     "module_fundamentals": "fundamentals",
     "module_sector_rotation": "sector_rotation",
+    "module_earnings_radar": "earnings_radar",
+    "module_earnings_radar_detail": "earnings_radar",
+    "module_oipd": "oipd",
+    "module_financials": "financials",
 }
 # board key -> why it has no pair (deliberately left in PR 4)
 WITHOUT_PAIR = {
@@ -35,10 +39,10 @@ WITHOUT_PAIR = {
     "logs": "not a data board",
     "runs": "not a data board",
     "module_sector_rotation_trail": "a chart of the same funds' trails; the board's own table carries their pair",
+    "module_uw_interaction": "a lab: raw columns of whatever UW tool was run, not a board of names",
     # The board groups that get the pair in the later commits of this PR; each commit moves its boards up.
     **{k: "pending in this PR" for k in (
-        "module_earnings_radar", "module_earnings_radar_detail", "module_oipd", "module_financials",
-        "module_uw_interaction", "module_comovement", "module_value_chain", "module_relatedness",
+        "module_comovement", "module_value_chain", "module_relatedness",
         )},
 }
 
@@ -81,6 +85,7 @@ CLIENT_CALL = {
     "module_asymmetric_growth": "rcWatchRow(c.ticker)",
     "module_swing_potential": "rcWatchRow(c.ticker)",
     "module_fundamentals": "rcWatchRow(c.ticker)",
+    "module_earnings_radar": "rcWatchButtons(ticker)",          # in the drawer header, not the table
 }
 
 
@@ -94,3 +99,24 @@ def test_a_good_server_rendered_ticker_gets_its_pair(key, tmp_path, monkeypatch,
 def test_a_client_rendered_board_calls_the_pair_where_it_renders_the_ticker(key, tmp_path, monkeypatch,
                                                                              rawstore_tmp_db):
     assert CLIENT_CALL[key] in BOARDS[key].render(tmp_path, monkeypatch)
+
+
+def test_implied_probability_shows_the_pair_for_its_focal_ticker():
+    from RevenueChaser.module_oipd.report import render_oipd_dashboard
+    page = render_oipd_dashboard({"ticker": "AAPL", "asof": "2026-09-01", "spot": 100.0, "n_contracts": 10,
+                                  "horizon_days": 30, "risk_free": 0.04, "error": None, "warnings": [],
+                                  "expiries": []})
+    assert _SERVER_BUTTON.findall(page) == ["AAPL", "AAPL"]
+    assert 'rcWatchInit("oipd");' in page
+
+
+def test_financials_shows_the_pair_for_the_company_and_each_peer():
+    from RevenueChaser.module_financials.reporting.html_builder import build_report_html
+    fin = {"ticker": "TEST", "sector": "Technology", "current_price": 100.0, "currency": "USD", "info": {}}
+    comps = {"pe_only": True, "peers": [{"ticker": "PEER", "pe": 10.0}, {"ticker": "<b>x</b>", "pe": 11.0}],
+             "multiples": {"pe": {"p25": 9.0, "p50": 10.0, "p75": 11.0}},
+             "implied": {"equity_pe": 1.0e9, "per_share_pe": 50.0}}
+    page = build_report_html({"ticker": "TEST", "financials": fin, "modules": {"comps": comps}, "warnings": []})
+    tickers = _SERVER_BUTTON.findall(page)
+    assert "TEST" in tickers and "PEER" in tickers and len(tickers) == 4    # the hostile peer gets none
+    assert "&lt;b&gt;x&lt;/b&gt;" in page and 'rcWatchInit("financials");' in page
