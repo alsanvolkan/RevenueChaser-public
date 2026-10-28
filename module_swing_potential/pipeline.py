@@ -284,8 +284,11 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
     # This Fetch's Yahoo reads only (#80). A Refresh serves the stored payload, which already carries the key.
     if not no_fetch:
         yfp.reset_health()
+    # The funnel names the floors the prefilter drops on: the effective settings, not config's defaults (Fable
+    # review of Swing, 28 Oct 2026, finding 1).
+    e = swing_settings.effective()
     payload = screen_common.run_screen(
-        board="swing", refreshed_by="Swing Potential", cfg=config,
+        board="swing", refreshed_by="Swing Potential", cfg=e.prefilter_cfg(),
         load_universe=fetch_universe_stats, prefilter=prefilter,
         load_spy=lambda: screen_common.load_spy(lambda: load_ohlc("SPY", ttl_days=0.5, no_fetch=no_fetch)),
         compute_row=_compute_row, build_payload=build_payload, persist=persist,
