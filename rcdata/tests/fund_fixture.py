@@ -180,11 +180,13 @@ def ten_k(body_chars: int = 5_000, stop: bool = True) -> str:
 
 
 def proxy(chars: int = 5_000) -> str:
-    return "<html><body><p>" + ("Executive compensation and the board. " * (chars // 38 + 1))[:chars] + "</p></body></html>"
+    words = ("Executive compensation and the board. " * (chars // 38 + 1))[:chars]
+    return "<html><body><p>" + words + "</p></body></html>"
 
 
 def _ctx(cid: str, start: str | None, end: str, dims: dict | None = None) -> str:
-    seg = "".join(f'<xbrldi:explicitMember dimension="{a}">{m}</xbrldi:explicitMember>' for a, m in (dims or {}).items())
+    seg = "".join(f'<xbrldi:explicitMember dimension="{a}">{m}</xbrldi:explicitMember>'
+                  for a, m in (dims or {}).items())
     period = (f"<xbrli:startDate>{start}</xbrli:startDate><xbrli:endDate>{end}</xbrli:endDate>" if start else
               f"<xbrli:instant>{end}</xbrli:instant>")
     return (f'<xbrli:context id="{cid}"><xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0000789019'

@@ -72,6 +72,14 @@ CUSTOMER_SHARE = [("cik", "TEXT NOT NULL"), ("period_end", "DATE NOT NULL"), ("c
 ESTIMATE = [(c, "TEXT NOT NULL" if c in ("cik", "ticker", "period") else t) for c, t in estimates.schema()] + [
     ("source", "TEXT NOT NULL")]
 
+# Each company's ``PEER_K`` nearest companies on the GICS ladder (``PEER_LEVELS``, narrowest first), the closest
+# newest annual revenue first within a rung (a company without one last); ``level`` the narrowest level they share.
+PEER_GROUP = [("cik", "TEXT NOT NULL"), ("ticker", "TEXT NOT NULL"), ("peer_cik", "TEXT NOT NULL"),
+              ("peer_ticker", "TEXT NOT NULL"), ("rank", "INTEGER NOT NULL"), ("level", "TEXT NOT NULL"),
+              ("revenue", "DOUBLE"), ("peer_revenue", "DOUBLE"), ("run_id", "TEXT")]
+PEER_K = 10
+PEER_LEVELS = ("gsubind", "gind", "ggroup", "gsector")
+
 SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "fundamental_company": COMPANY,
     "fundamental_fact": FACT,
@@ -81,6 +89,7 @@ SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "segment_revenue": SEGMENT_REVENUE,
     "customer_share": CUSTOMER_SHARE,
     "estimate_latest": ESTIMATE,
+    "peer_group": PEER_GROUP,
 }
 TABLE_CHECKS: dict[str, list[str]] = {
     # Every row is annual or quarterly, and a non-preliminary row carries its accession and filed date.
@@ -278,6 +287,33 @@ def _estimate_view(con: duckdb.DuckDBPyConnection) -> None:
         FROM estimate_latest""")
 
 
+def _peers(con: duckdb.DuckDBPyConnection, k: int = PEER_K, run_id: str | None = None) -> int:
+    """``peer_group`` from ``fundamental_company`` (GICS, one ticker per company: its shortest) and the newest
+    annual SEC revenue in ``fundamental_fact``."""
+    create(con, "peer_group")
+    level = " ".join(f"WHEN a.{c} = b.{c} THEN {i}" for i, c in enumerate(PEER_LEVELS))
+    names = "CASE r.lvl " + " ".join(f"WHEN {i} THEN '{c}'" for i, c in enumerate(PEER_LEVELS)) + " END"
+    con.execute(f"""
+        WITH co AS (SELECT cik, list(ticker ORDER BY length(ticker), ticker)[1] AS ticker,
+                           any_value(gsector) AS gsector, any_value(ggroup) AS ggroup, any_value(gind) AS gind,
+                           any_value(gsubind) AS gsubind
+                    FROM fundamental_company WHERE gsector IS NOT NULL GROUP BY cik),
+             rev AS (SELECT cik, value FROM fundamental_fact
+                     WHERE field = 'revenue' AND period_type = '{facts.ANNUAL}' AND NOT preliminary
+                     QUALIFY row_number() OVER (PARTITION BY cik ORDER BY fiscal_year DESC, period_end DESC) = 1),
+             c AS (SELECT co.*, rev.value AS revenue FROM co LEFT JOIN rev ON rev.cik = co.cik),
+             pairs AS (SELECT a.cik, a.ticker, b.cik AS peer_cik, b.ticker AS peer_ticker, a.revenue,
+                              b.revenue AS peer_revenue, CASE {level} END AS lvl,
+                              CASE WHEN a.revenue > 0 AND b.revenue > 0 THEN abs(ln(b.revenue / a.revenue)) END AS dist
+                       FROM c a JOIN c b ON a.gsector = b.gsector AND a.cik <> b.cik),
+             r AS (SELECT *, row_number() OVER (PARTITION BY cik ORDER BY lvl, dist NULLS LAST, peer_ticker) AS rank
+                   FROM pairs)
+        INSERT INTO peer_group
+        SELECT cik, ticker, peer_cik, peer_ticker, rank, {names}, revenue, peer_revenue, ?
+        FROM r WHERE rank <= {int(k)}""", [run_id])
+    return common.count(con, "peer_group")
+
+
 def _links() -> str:
     return "(SELECT DISTINCT gvkey, cik FROM fundamental_company WHERE gvkey IS NOT NULL)"
 
@@ -427,6 +463,7 @@ class FundamentalsTables:
         counts["segment_revenue"] = _segments(con)
         counts["customer_share"] = _customers(con)
         counts["estimate_latest"] = _estimates(con)
+        counts["peer_group"] = _peers(con, run_id=ctx.run_id)
         _views(con)
         _submission_view(con)
         _calendar_view(con)
