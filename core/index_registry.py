@@ -40,11 +40,11 @@ def _spine() -> bool:
 
 def _spine_members(listed: list[dict] | None = None) -> dict[str, set[str]]:
     """``{slug: tickers}`` on the spine: each index's current members, and ``nasdaq`` from the listed names."""
-    from ..rcdata import read
+    from . import spine_reads
     out: dict[str, set[str]] = {}
-    for m in read.membership():
+    for m in spine_reads.membership():
         out.setdefault(m["index_slug"], set()).add(str(m["ticker"]).upper())
-    nasdaq = _listed_on_nasdaq(read.universe(tiers=("A", "B")) if listed is None else listed)
+    nasdaq = _listed_on_nasdaq(spine_reads.universe(("A", "B")) if listed is None else listed)
     if nasdaq:
         out[NASDAQ] = nasdaq
     return out
@@ -62,11 +62,11 @@ def load_index(slug: str) -> set[str] | None:
     if not _spine():
         from .index_lists import stored_index
         return stored_index(slug)
-    from ..rcdata import read
+    from . import spine_reads
     if slug == NASDAQ:
-        tickers = _listed_on_nasdaq(read.universe(tiers=("A", "B")))
+        tickers = _listed_on_nasdaq(spine_reads.universe(("A", "B")))
     else:
-        tickers = {str(m["ticker"]).upper() for m in read.membership(index=slug)}
+        tickers = {str(m["ticker"]).upper() for m in spine_reads.membership(slug)}
     return tickers or None
 
 
@@ -86,8 +86,8 @@ def load_registry() -> dict | None:
     if not _spine():
         from .index_lists import stored_registry
         return stored_registry()
-    from ..rcdata import read
-    listed = read.universe(tiers=("A", "B"))
+    from . import spine_reads
+    listed = spine_reads.universe(("A", "B"))
     by = {str(r["ticker"]).upper(): r for r in listed}
     members = _spine_members(listed)
     out: dict[str, dict] = {}

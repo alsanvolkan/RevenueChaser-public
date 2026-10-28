@@ -141,8 +141,8 @@ def spine_provenance() -> dict | None:
 def _spine_universe() -> list[dict]:
     """The spine's listed names as ``equity_universe`` rows: identity from ``rcdata.read``, market fields from the
     old ``equity_universe`` by ticker (NULL where it has none). No spine file yet: no rows."""
-    from ..rcdata import read
-    ids = read.universe(tiers=("A", "B"))
+    from . import spine_reads
+    ids = spine_reads.universe(("A", "B"))
     if not ids:
         return []
     market = {r["ticker"]: r for r in rawstore.query(
@@ -169,8 +169,8 @@ def _security_types() -> dict[str, str]:
     decision below derives from this one function. On the spine, the spine's types.
     """
     if _spine():
-        from ..rcdata import read
-        rows = [r for r in read.identity() if r.get("ticker")]
+        from . import spine_reads
+        rows = [r for r in spine_reads.identity_all() if r.get("ticker")]
         spine = {r["ticker"]: r["security_type"] for r in rows}
         # A spine name left untyped (no OpenFIGI answer, no Compustat link) takes the identity master's type, so the
         # flag does not let through an ETF the old path excluded (review should-fix 6). A type whose only source is
@@ -307,8 +307,8 @@ def has_universe() -> bool:
     row of the old ``equity_universe``. Opus review M1 (PR 6): the "Loading universe…" gate and AG's no-card Refresh
     asked the old table directly, which is empty under the spine."""
     if _spine():
-        from ..rcdata import read
-        return bool(read.universe(tiers=("A", "B")))
+        from . import spine_reads
+        return bool(spine_reads.universe(("A", "B")))
     return bool(rawstore.query(f"SELECT 1 FROM {_UNIVERSE_TABLE} LIMIT 1"))
 
 
@@ -454,8 +454,9 @@ def spine_gics(tickers: list[str] | None = None) -> dict[str, GicsPath]:
         params = wanted
     if _spine():
         from ..rcdata import read
+        from . import spine_reads
         listed = ("A", "B")
-        found = read.identity(params) if tickers is not None else read.universe(tiers=listed)
+        found = read.identity(params) if tickers is not None else spine_reads.universe(listed)
         rows = [r for r in found if r.get("tier") in listed]
     else:
         rows = rawstore.query(sql, params)
