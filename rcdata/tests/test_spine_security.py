@@ -214,6 +214,21 @@ def test_a_rename_the_weekly_sec_file_does_not_hold_yet_keeps_the_member(built):
     assert rows == [("HEI-A", date(2026, 10, 27), date(2026, 10, 28)), ("HEIAB", date(2026, 10, 28), None)]
 
 
+def test_a_past_members_cik_is_its_own_not_the_reused_tickers_new_owner(built):
+    """Delta S3: NVR leaves on 3 Nov (acquired); on 10 Nov the ticker NVR belongs to another CIK. NVR's S&P 500
+    period keeps NVR Inc's CIK."""
+    without_nvr = [r for r in fx.SEC_FILE["data"] if r[2] != "NVR"]
+    _sec_answer(built, without_nvr)
+    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-03", "allow_shrink": True}})
+    _sec_answer(built, without_nvr + [[7777777, "NEW NVR HOLDER INC", "NVR", "NYSE"]])
+    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-10"}})
+    _funds_answer(built, sp500=[h for h in fx.SP500 if h[0] != "NVR"])
+    run_all("2026-11-03", names=(funds.NAME,))
+    assert _q("SELECT cik, valid_from, valid_to FROM index_membership WHERE source = ? AND index_slug = 'sp500' "
+              "AND ticker = 'NVR'", funds.NAME) == [("906163", date(2026, 10, 27), date(2026, 11, 3))]
+    assert _q("SELECT cik FROM security WHERE ticker = 'NVR'") == [("7777777",)]
+
+
 def test_wrds_constituents_are_kept_with_exclusive_ends(built):
     assert _q("SELECT ticker, valid_from, valid_to FROM index_membership WHERE source = ? AND index_slug = 'sp400' "
               "ORDER BY ticker", wrds.IDXCST_HIS.name) == [

@@ -249,6 +249,15 @@ CREATE OR REPLACE TEMP TABLE _fund_periods AS
            (SELECT min(d.as_of) FROM _fund_days d WHERE d.index_slug = i.index_slug AND d.as_of > i.last_day)
                AS valid_to,
            x.held AS files_held, x.files AS files_counted,
+           -- The member's CIK as of its period's last day (delta S3): the snapshot that day matched against, else
+           -- the next one that holds the ticker (a name matched ahead of the weekly file), else the newest before.
+           coalesce(
+               (SELECT s.cik FROM stg_sec_all s WHERE s.ticker = i.ticker
+                    AND s.source_as_of = (SELECT f.snap FROM _fund_snap f WHERE f.as_of = i.last_day)),
+               (SELECT min_by(s.cik, s.source_as_of) FROM stg_sec_all s
+                    WHERE s.ticker = i.ticker AND s.source_as_of > i.last_day),
+               (SELECT max_by(s.cik, s.source_as_of) FROM stg_sec_all s
+                    WHERE s.ticker = i.ticker AND s.source_as_of <= i.last_day)) AS cik,
            (SELECT max(d.as_of) FROM _fund_days d WHERE d.index_slug = i.index_slug) AS source_as_of
     FROM islands i
     JOIN _fund_dense x ON x.index_slug = i.index_slug AND x.ticker = i.ticker AND x.as_of = i.last_day;
@@ -427,9 +436,6 @@ class SpineSecurity:
     def _membership(con, rows: list[dict], linked: dict) -> tuple[list[dict], list[tuple]]:
         found: list[tuple[str, str, str]] = []
         tier = {r["ticker"]: r["tier"] for r in rows}
-        # A member's CIK: the newest SEC snapshot that held its ticker (an acquired member keeps its own).
-        cik = {t: c for t, c in con.execute("SELECT ticker, arg_max(cik, source_as_of) FROM stg_sec_all "
-                                            "GROUP BY ticker").fetchall()}
         link_of = {t: gi for gi, t in linked.items()}
         # Every CUSIP Compustat knows, current or past, with the securities it named (delta S2).
         cusip_owners: dict[str, set[tuple[str, str]]] = defaultdict(set)
@@ -491,16 +497,18 @@ class SpineSecurity:
                     found.append(("member_not_tier_a", key, f"tier {tier.get(d['ticker'])}"))
                 if 0 < d["held"] < d["files"]:
                     found.append(("membership_files_disagree", key, f"held by {d['held']} of {d['files']} files"))
-        out = [{**m, "cik": cik.get(m["ticker"]), "source": FUNDS}
+        out = [{**m, "source": FUNDS}
                for m in _rows(con, "SELECT * FROM _fund_periods ORDER BY index_slug, ticker, valid_from")]
         con.execute("DROP TABLE _fund_map")              # base.rows_table makes a real table: not for the file
+        # A Compustat constituent's ticker comes only from the link, so it is a current SEC row: its CIK is that row's.
+        cik_now = {r["ticker"]: r["cik"] for r in rows}
         slug_of = {v: k for k, v in INDEX_GVKEYX.items()}
         wrds = _rows(con, "SELECT * FROM stg_wrds_idx ORDER BY gvkeyx, gvkey, iid, valid_from")
         for w in wrds:
             # Only a security the link step tied to an SEC ticker gets one. Compustat's current tic of an unlinked
             # security is not used: a delisted member's tic may belong to another company today (should-fix 3).
             ticker = linked.get((w["gvkey"], w["iid"]))
-            out.append({"index_slug": slug_of.get(w["gvkeyx"], w["gvkeyx"]), "ticker": ticker, "cik": cik.get(ticker),
+            out.append({"index_slug": slug_of.get(w["gvkeyx"], w["gvkeyx"]), "ticker": ticker, "cik": cik_now.get(ticker),
                         "gvkey": w["gvkey"], "iid": w["iid"], "valid_from": w["valid_from"],
                         "valid_to": _next_day(w["thru"]), "source": IDXCST_HIS.name,
                         "source_as_of": w["source_as_of"]})
