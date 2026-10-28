@@ -153,6 +153,24 @@ button silently degrades to a plain iframe reload.
   refresh path and always serves the latest report from its own tree
   (`SPX_GAMMA_DATA_ROOT`).
 
+### The market-store builder's routes (PR 2)
+
+The builder (`python -m RevenueChaser.rcdata.build`) is the only process that writes the market store. These
+routes only enqueue and read `ops.sqlite`. Each call opens its own SQLite connection and no DuckDB file.
+
+- **`POST /api/build/request/<dataset>`**: queues one build (`requested_by` = the `X-RC-Panel` value). With
+  `backfill_from=YYYY-MM-DD` (JSON body or query string) it is a backfill request. 202 `{ok, id, dataset}`;
+  400 for a dataset the builder does not know or a date that is not a past `YYYY-MM-DD`; 409 while one of that
+  dataset is queued or running; 403 without the panel header.
+- **`GET /api/build/queue`**: `{ok, active, finished}`. `active` holds the queued and running requests, oldest
+  first; `finished` the last 20 others, newest first.
+- **`POST /api/build/schedule/<dataset>/<pause|resume>`**: sets or clears `dataset_schedule.paused_at` /
+  `paused_by`; 404 for another action.
+- **`GET /api/idle`** (loopback, no header): `{idle, reasons}` from `app/jobs.py` `idle()`. It is false while a
+  dashboard job is queued or running, while any `core/job_lock` name is held by any process, or while another
+  process's live `.rc-proc-<pid>` marker sits in the store dir or the market dir (F8 A). `stop.ps1` reads it, and
+  so does the deploy gate.
+
 ### Known deviation (fixed 2026-09-30)
 
 `module_sec_13f` used to refresh by unlinking the artifact and returning HTML

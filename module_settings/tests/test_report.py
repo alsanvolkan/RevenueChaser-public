@@ -883,7 +883,9 @@ def test_the_card_is_reachable_at_the_identity_anchor_and_comes_after_the_table(
     assert '<section id="identity"><div class="bcard" id="identity-health">' in html
     assert html.count('id="identity"') == 1, "the anchor must be unique"
     assert html.index('class="panel"') < html.index('id="identity"') < html.index('id="identity-health"')
-    assert html.index('id="identity-stale"') < html.index("</section>"), "the section wraps every card section"
+    # The first </section> after the anchor (PR 2's "New data system" section closes earlier, above the table).
+    assert html.index('id="identity-stale"') < html.index("</section>", html.index('id="identity"')), \
+        "the section wraps every card section"
     empty = _with(identity=_identity(last_run=None, type_mix=[], source_mix=[], stale=[],
                                      conflicts={"as_of": None, "by_kind": [], "top": [],
                                                 "older": {"count": 0, "since": None}},

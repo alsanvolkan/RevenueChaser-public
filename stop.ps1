@@ -1,11 +1,12 @@
 # Revenue Chaser - stop the dashboard that start.ps1 runs hidden on 127.0.0.1:8000.
-# Refuses while a job is queued or running, because stopping the server would cut it off (and drop the
-# queue): wait until it finishes, or pass -Force. Never stops processes by name; only the port-8000
+# Refuses unless the dashboard says idle (GET /api/idle): no job queued or running, no job lock held by any
+# process, no other process's live marker in either store dir. Stopping the server would cut a job off (and drop
+# the queue): wait until it finishes, or pass -Force. Never stops processes by name; only the port-8000
 # listener whose command line runs RevenueChaser.app.dashboard.
 # PowerShell 5.1 compatible, ASCII only.
 # Usage: powershell -NoProfile -ExecutionPolicy Bypass -File stop.ps1 [-Force]
 # Exit codes (start.ps1 reads them): 0 stopped, or not running; 1 not stopped (another program holds the
-# port, the dashboard did not answer, or it did not stop); 2 not stopped because a job is queued or running.
+# port, the dashboard did not answer, or it did not stop); 2 not stopped because the dashboard is not idle.
 
 param([switch]$Force)
 
@@ -26,16 +27,15 @@ if (-not ($cmd -and $cmd -match 'RevenueChaser\.app\.dashboard')) {
 
 if (-not $Force) {
     try {
-        $state = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/jobs" -TimeoutSec 5 -ErrorAction Stop
+        $state = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/idle" -TimeoutSec 5 -ErrorAction Stop
     } catch {
         # Fail closed: without an answer we cannot tell whether a job would be cut off.
-        Write-Host "Could not ask the dashboard whether a job is running ($($_.Exception.Message)). Run stop.ps1 -Force to stop it anyway."
+        Write-Host "Could not ask the dashboard whether it is idle ($($_.Exception.Message)). Run stop.ps1 -Force to stop it anyway."
         exit 1
     }
-    $active = @($state.jobs | Where-Object { $_.status -eq "running" -or $_.status -eq "queued" })
-    if ($active.Count -gt 0) {
-        $names = ($active | ForEach-Object { "$($_.module) ($($_.status))" }) -join ", "
-        Write-Host "A job is queued or running: $names. Wait until it finishes, or run stop.ps1 -Force."
+    if ($state.idle -ne $true) {
+        $why = (@($state.reasons) | ForEach-Object { "$_" }) -join "; "
+        Write-Host "Not idle (a job queued or running, or a store writer at work): $why. Wait until it finishes, or run stop.ps1 -Force."
         exit 2
     }
 }

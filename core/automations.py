@@ -68,6 +68,11 @@ class TaskSettings:
     time_limit_hours: int = 4
     restart_count: int = 2
     restart_minutes: int = 5
+    time_limit_minutes: int | None = None  # set: the limit in minutes instead of ``time_limit_hours``
+
+    @property
+    def limit_minutes(self) -> int:
+        return self.time_limit_minutes if self.time_limit_minutes is not None else self.time_limit_hours * 60
 
     def summary(self) -> str:
         parts = ["runs on battery" if self.allow_on_battery else "AC power only"]
@@ -76,7 +81,8 @@ class TaskSettings:
         if self.start_when_available:
             parts.append("catches up a missed run")
         parts.append("only when logged on" if self.run_only_when_logged_on else "logged on or not")
-        parts.append(f"{self.time_limit_hours} h limit")
+        parts.append(f"{self.time_limit_minutes} min limit" if self.time_limit_minutes is not None
+                     else f"{self.time_limit_hours} h limit")
         return ", ".join(parts)
 
 
@@ -95,9 +101,18 @@ class AutomationEntry:
     days: tuple[str, ...] = ()     # weekly on these days (Task Scheduler names, e.g. "Saturday"); empty = daily
     after: str | None = None       # the nightly chain (#129): run only once this registry task's run of tonight exited 0
     chain_wait_minutes: int = 120  # how long a chained task waits for that run before it gives up
+    hourly: bool = False           # every hour at ``time``'s minute (its hour is ignored); never chained, no ``days``
+    unit_name: str | None = None   # the systemd unit (and nothing else) under another name than ``name``
+
+    @property
+    def unit(self) -> str:
+        """The systemd unit name of the row's ``.service`` / ``.timer`` pair."""
+        return self.unit_name or self.name
 
     @property
     def schedule(self) -> str:
+        if self.hourly:
+            return f"hourly at :{self.time[-2:]} (local)"
         if self.days:
             text = f"weekly {', '.join(self.days)} {self.time} (local)"
         else:
@@ -119,6 +134,12 @@ _TUE_SAT = ("Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
 INPUTS_CLI = "RevenueChaser.scripts.nightly_inputs"
 INPUTS_PREDECESSOR = "RC-Daily-Bars"
 INPUTS_CAP_FLAGS = ("--max-uw-calls", "--max-fred-calls", "--max-yf-calls")
+
+# The market-store builder (#206, PR 2): one pass over the request queue every hour; the builder decides per dataset
+# from ``ops.dataset_schedule`` whether anything is due (avo's rule: scheduled jobs run hourly). It writes only the
+# market store and records its own ``ops.job_runs2`` rows, so ``tables_written`` is empty: no old ``job_runs`` row.
+BUILDER_UNIT = "life-rc-builder"
+BUILDER_BACKUP_UNIT = "life-rc-builder-backup"
 
 REGISTRY: tuple[AutomationEntry, ...] = (
     AutomationEntry(
@@ -227,6 +248,23 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "a failed job. Off until RC_IBKR_LOGIN_CHECK is set, and then it contacts nothing but "
                     "RC_IBKR_HOST:RC_IBKR_PORT (127.0.0.1:4001 by default).",
         settings=TaskSettings(restart_count=0, time_limit_hours=1)),
+    AutomationEntry(
+        name="RC-Build", label="Market-store builder (hourly)",
+        args=("-m", "RevenueChaser.rcdata.build", "run", "--once"), time="00:07", hourly=True,
+        unit_name=BUILDER_UNIT,
+        description="One pass of the market-store builder (rcdata): takes the queued build requests in order (Fetch, "
+                    "Backfill from the Settings page, and the datasets the schedule makes due), builds each serving "
+                    "file as a new file and swaps it in. It does not start while a job lock is held or another "
+                    "builder runs (exit 3); a request a dead builder left running is failed at start. Writes only "
+                    "the market store and ops.sqlite, with its own job_runs2 row per run.",
+        settings=TaskSettings(restart_count=0, time_limit_minutes=50)),
+    AutomationEntry(
+        name="RC-Build-Backup", label="Market-store backup",
+        args=("-m", "RevenueChaser.rcdata", "backup"), time="04:30", unit_name=BUILDER_BACKUP_UNIT,
+        description="Verified backup of the market store: ops.sqlite through SQLite's online backup and each "
+                    "serving file, checked row by row against the source, into RAW_STORE_BACKUP_DIR/market/ (the "
+                    "newest 5 kept), then the 35-day raw copy. Writes no table.",
+        settings=TaskSettings(restart_count=0, time_limit_minutes=30)),
 )
 _BY_NAME = {e.name: e for e in REGISTRY}
 
@@ -243,6 +281,8 @@ def check_chain(entries: tuple[AutomationEntry, ...]) -> None:
     time shorter than its own time limit."""
     seen: dict[str, AutomationEntry] = {}
     for e in entries:
+        if e.hourly and (e.after is not None or e.days):
+            raise ValueError(f"{e.name} runs hourly; an hourly row is neither chained nor weekly")
         if e.after is not None:
             if e.after == e.name:
                 raise ValueError(f"{e.name} is chained on itself")
@@ -250,6 +290,8 @@ def check_chain(entries: tuple[AutomationEntry, ...]) -> None:
                 known = any(x.name == e.after for x in entries)
                 raise ValueError(f"{e.name} is chained on {e.after}, which is "
                                  + ("not an earlier entry" if known else "unknown"))
+            if seen[e.after].hourly:
+                raise ValueError(f"{e.name} is chained on {e.after}, which runs hourly; a predecessor must run daily")
             if seen[e.after].days:
                 raise ValueError(f"{e.name} is chained on {e.after}, which runs weekly "
                                  f"({', '.join(seen[e.after].days)}); a predecessor must run daily")
@@ -259,7 +301,7 @@ def check_chain(entries: tuple[AutomationEntry, ...]) -> None:
                                  f"{seen[e.after].time} on the clock")
             if e.chain_wait_minutes <= 0:
                 raise ValueError(f"{e.name} must wait a positive number of minutes")
-            if e.chain_wait_minutes >= e.settings.time_limit_hours * 60:
+            if e.chain_wait_minutes >= e.settings.limit_minutes:
                 raise ValueError(f"{e.name} waits {e.chain_wait_minutes} min, not less than its time limit")
         seen[e.name] = e
 
@@ -485,10 +527,14 @@ class WindowsScheduler(Scheduler):
             f"$a = New-ScheduledTaskAction -Execute {_ps_quote(self._python)}"
             f" -Argument {_ps_quote(' '.join(('-m', 'RevenueChaser.core.automations', 'run', e.name)))}"
             f" -WorkingDirectory {_ps_quote(self._workdir)}",
-            (f"$tr = New-ScheduledTaskTrigger -Weekly -DaysOfWeek {','.join(e.days)} -At {_ps_quote(e.time)}"
+            (f"$tr = New-ScheduledTaskTrigger -Once -At {_ps_quote(e.time)}"
+             " -RepetitionInterval (New-TimeSpan -Hours 1)" if e.hourly else
+             f"$tr = New-ScheduledTaskTrigger -Weekly -DaysOfWeek {','.join(e.days)} -At {_ps_quote(e.time)}"
              if e.days else f"$tr = New-ScheduledTaskTrigger -Daily -At {_ps_quote(e.time)}"),
             f"$s = New-ScheduledTaskSettingsSet {' '.join(flags)}"
-            f" -ExecutionTimeLimit (New-TimeSpan -Hours {int(s.time_limit_hours)})"
+            + (f" -ExecutionTimeLimit (New-TimeSpan -Minutes {int(s.time_limit_minutes)})"
+               if s.time_limit_minutes is not None else
+               f" -ExecutionTimeLimit (New-TimeSpan -Hours {int(s.time_limit_hours)})")
             + (f" -RestartCount {int(s.restart_count)}"
                f" -RestartInterval (New-TimeSpan -Minutes {int(s.restart_minutes)})" if s.restart_count else ""),
             "$p = New-ScheduledTaskPrincipal"
@@ -597,6 +643,8 @@ def _user_unit_dir() -> Path:
 
 def on_calendar(e: AutomationEntry) -> str:
     """The entry's ``time`` and ``days`` as a systemd ``OnCalendar=`` spec, in local time like Task Scheduler's."""
+    if e.hourly:
+        return f"*-*-* *:{e.time[-2:]}:00"
     days = ",".join(_SYSTEMD_DAYS[d] for d in e.days)
     return f"{days + ' ' if days else ''}*-*-* {e.time}:00"
 
@@ -665,7 +713,8 @@ class LinuxScheduler(Scheduler):
         return out
 
     def _files(self, name: str) -> tuple[Path, Path]:
-        return self.unit_dir / f"{name}.service", self.unit_dir / f"{name}.timer"
+        unit = entry(name).unit
+        return self.unit_dir / f"{unit}.service", self.unit_dir / f"{unit}.timer"
 
     def status(self, name):
         name = entry(name).name
@@ -715,7 +764,8 @@ class LinuxScheduler(Scheduler):
             *(_env_line(k, v) for k, v in _unit_environment()),
             "ExecStart=" + " ".join(_exec_arg(a) for a in
                                     (self._python, "-m", "RevenueChaser.core.automations", "run", e.name)),
-            f"TimeoutStartSec={int(s.time_limit_hours)}h",
+            (f"TimeoutStartSec={int(s.time_limit_minutes)}min" if s.time_limit_minutes is not None
+             else f"TimeoutStartSec={int(s.time_limit_hours)}h"),
             "",
         ])
         timer_text = "\n".join([
@@ -724,7 +774,7 @@ class LinuxScheduler(Scheduler):
             "",
             "[Timer]",
             f"OnCalendar={on_calendar(e)}",
-            f"Unit={e.name}.service",
+            f"Unit={e.unit}.service",
             f"Persistent={'true' if s.start_when_available else 'false'}",
             # No WakeSystem=: a user timer cannot arm a wake alarm (CAP_WAKE_ALARM), and asking for one leaves the
             # timer failed and never run. ``wake_to_run`` is a Task Scheduler setting only.
@@ -773,13 +823,13 @@ class LinuxScheduler(Scheduler):
             raise AutomationError(f"the unit files could not be removed: {exc}") from None
 
     def set_enabled(self, name, enabled):
-        self._exec("enable" if enabled else "disable", "--now", f"{entry(name).name}.timer")
+        self._exec("enable" if enabled else "disable", "--now", f"{entry(name).unit}.timer")
 
     def remove(self, name):
         """Disable, delete both files, reload. The files go even when systemctl fails (no bus), so Remove can always
         clean up what Install left; the first failure is still raised, so the panel says so."""
         name = entry(name).name
-        failed = self._try("disable", "--now", f"{name}.timer")
+        failed = self._try("disable", "--now", f"{entry(name).unit}.timer")
         try:
             self._unlink(name)
         except AutomationError as exc:
@@ -790,7 +840,7 @@ class LinuxScheduler(Scheduler):
             raise failed
 
     def run(self, name):
-        self._exec("start", "--no-block", f"{entry(name).name}.service")
+        self._exec("start", "--no-block", f"{entry(name).unit}.service")
 
 
 # The Linux backend is opt-in: a server that already runs these jobs as system timers must not offer Install on every

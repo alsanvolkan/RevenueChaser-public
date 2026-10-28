@@ -219,10 +219,11 @@ def test_stop_ps1_stops_only_the_dashboard_listener():
     assert "-Name" not in text and "Get-Process" not in text, "never by process name"
 
 
-def test_stop_ps1_refuses_while_a_job_runs_and_fails_closed():
+def test_stop_ps1_refuses_unless_idle_and_fails_closed():
+    """It asks ``/api/idle`` (PR 2, F8 A), which also sees job locks and store markers, not ``/api/jobs`` alone."""
     text = _read("stop.ps1")
-    assert "/api/jobs" in text
-    assert '"running"' in text and '"queued"' in text
+    assert "/api/idle" in text and "/api/jobs" not in text
+    assert "$state.idle -ne $true" in text, "anything but an explicit idle refuses"
     check = text.split("if (-not $Force)", 1)[1]
     catch = check.split("catch", 1)[1].split("}", 1)[0]
     assert "exit 1" in catch, "no answer means it cannot tell, so it does not stop"

@@ -84,6 +84,9 @@ def test_a_weekly_row_installs_its_days_and_a_row_that_does_not_wake_says_so(tmp
 def test_on_calendar_covers_every_registry_row():
     for e in A.REGISTRY:
         spec = A.on_calendar(e)
+        if e.hourly:                                   # RC-Build (PR 2): every hour at the row's minute
+            assert spec == f"*-*-* *:{e.time[-2:]}:00"
+            continue
         assert spec.endswith(f"*-*-* {e.time}:00")
         assert (spec.count(",") + 1 if e.days else 0) == len(e.days)
 

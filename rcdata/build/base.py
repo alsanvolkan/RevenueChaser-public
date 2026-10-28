@@ -12,10 +12,10 @@ A dataset (``Dataset``) has four steps:
 - ``build(ctx, con)`` creates the dataset's tables in the new serving file from its Parquet (no network).
 - ``check(ctx, con)`` compares the new tables with the live file and returns the ``dataset_check`` row.
 
-``run_request`` takes one queued request: it refuses a provider at its day cap (a ``skipped`` check, no call), runs
-the dataset's fetch and typing, builds the whole serving kind from Parquet (every dataset of the kind, so one
-dataset's run never drops another's tables), swaps it in, and writes the check row, the run row, the provider call
-counts and UW's rate headers. An exception anywhere is a ``failed`` check row; the live file is untouched.
+``run_request`` takes one queued request: it skips a paused dataset and refuses a provider at its day cap (a
+``skipped`` check either way, no call), runs the dataset's fetch and typing, builds the whole serving kind from
+Parquet (every dataset of the kind, so one dataset's run never drops another's tables), swaps it in, and writes the
+check row, the run row, the provider call counts and UW's rate headers. An exception anywhere is a ``failed`` check row; the live file is untouched.
 """
 from __future__ import annotations
 
@@ -398,6 +398,16 @@ def cap_problem(ds: Dataset) -> str | None:
     return "day cap reached: " + ", ".join(refused) if refused else None
 
 
+def paused_problem(ds: Dataset) -> str | None:
+    """``skipped: paused ...`` while ``ops.dataset_schedule`` holds a pause for the dataset (Settings' Pause), else
+    None. Checked before anything is fetched, so a paused dataset sends no call."""
+    row = ops.schedule_get(ds.name)
+    if not row or row.get("paused_at") is None:
+        return None
+    when = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(row["paused_at"]))
+    return f"skipped: paused by {row.get('paused_by') or '?'} at {when}"
+
+
 # ── One request ────────────────────────────────────────────────────────────────────────────────────────────────
 
 def new_run_id() -> str:
@@ -462,6 +472,9 @@ def _run(ctx: RunContext, ds, req: dict, params: dict) -> dict:
     try:
         if ds is None:
             raise ValueError(f"unknown dataset {req['dataset']!r}")
+        paused = paused_problem(ds)
+        if paused:
+            return _finish(ctx, req, {"result": "skipped", "note": paused}, "skipped", None)
         refused = cap_problem(ds)
         if refused:
             check = {"result": "skipped", "note": refused}

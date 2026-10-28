@@ -1281,6 +1281,81 @@ def api_jobs():
     return jsonify({"jobs": jobs.list_jobs()})
 
 
+# ── The market-store builder's queue and schedule (PR 2, F7 A) ────────────────────────────────────────────────
+# These routes only enqueue and read: the builder (``python -m RevenueChaser.rcdata.build``) is the one process that
+# runs a request. Each call opens its own ops.sqlite connection (``rcdata.ops``) and never a DuckDB file.
+_REQUESTED_BY_MAX = 40
+
+
+def _build_dataset(name: str):
+    from RevenueChaser.rcdata.build import DATASETS
+    return DATASETS.get(name)
+
+
+def _requested_by() -> str:
+    return (request.headers.get(_PANEL_HEADER) or "").strip()[:_REQUESTED_BY_MAX] or "panel"
+
+
+@app.route("/api/build/request/<path:dataset>", methods=["POST"])
+def api_build_request(dataset: str):
+    """Queue one build of ``dataset`` (Fetch), or a backfill from ``backfill_from`` (``YYYY-MM-DD``, JSON body or
+    query string). 202 with the request id; 400 for an unknown dataset or a bad date; 409 while one is queued or
+    running."""
+    from RevenueChaser.rcdata import ops
+
+    if _build_dataset(dataset) is None:
+        return jsonify({"ok": False, "error": f"unknown dataset {dataset!r}"}), 400
+    body = request.get_json(silent=True) if request.is_json else None
+    raw = (body or {}).get("backfill_from") if isinstance(body, dict) else None
+    if raw is None:
+        raw = request.args.get("backfill_from")
+    params = None
+    if raw is not None:
+        try:
+            start = date.fromisoformat(raw) if isinstance(raw, str) and len(raw) == 10 else None
+        except ValueError:
+            start = None
+        if start is None or start > today_ny():
+            return jsonify({"ok": False, "error": "backfill_from must be a past date, YYYY-MM-DD"}), 400
+        params = {"mode": "backfill", "from": start.isoformat()}
+    rid = ops.enqueue_once(dataset, params, by=_requested_by())
+    if rid is None:
+        return jsonify({"ok": False, "error": f"{dataset} is already queued or running"}), 409
+    return jsonify({"ok": True, "id": rid, "dataset": dataset}), 202
+
+
+@app.route("/api/build/queue")
+def api_build_queue():
+    """The queued and running build requests, oldest first, and the last 20 finished, newest first."""
+    from RevenueChaser.rcdata import ops
+
+    return jsonify({"ok": True, **ops.queue_view(finished=20)})
+
+
+@app.route("/api/build/schedule/<path:dataset>/<action>", methods=["POST"])
+def api_build_schedule(dataset: str, action: str):
+    """Pause or resume ``dataset``: the builder skips a paused dataset (a ``skipped: paused`` check row)."""
+    from RevenueChaser.rcdata import ops
+
+    if action not in ("pause", "resume"):
+        return jsonify({"ok": False, "error": "unknown action"}), 404
+    if _build_dataset(dataset) is None:
+        return jsonify({"ok": False, "error": f"unknown dataset {dataset!r}"}), 400
+    if action == "pause":
+        ops.schedule_pause(dataset, by=_requested_by())
+    else:
+        ops.schedule_resume(dataset)
+    return jsonify({"ok": True, "dataset": dataset, "schedule": ops.schedule_get(dataset)})
+
+
+@app.route("/api/idle")
+def api_idle():
+    """``{"idle": bool, "reasons": [...]}`` from ``jobs.idle()``: no dashboard job, no job lock held by anyone, no
+    other process's live marker in either store dir. ``stop.ps1`` and the deploy gate read this (F8 A)."""
+    ok, reasons = jobs.idle()
+    return jsonify({"idle": ok, "reasons": reasons})
+
+
 @app.route("/api/logs")
 def api_logs():
     """The Logs tab's poll: the tail of one of the dashboard's own log files, named by a source key."""

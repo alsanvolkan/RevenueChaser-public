@@ -641,3 +641,21 @@ def list_jobs() -> list[dict]:
     rows = _snapshot()
     rows.sort(key=lambda r: r.get("queued_at", ""))
     return rows
+
+
+def idle() -> tuple[bool, list[str]]:
+    """``(True, [])`` when nothing writes a store now, else ``(False, reasons)``: the deploy gate's question (F8 A).
+
+    Three probes, all checks only: a dashboard job queued or running; every ``core/job_lock`` name held, by any
+    process (``job_lock.holders()``, so a systemd writer the job list never sees counts); and a live
+    ``.rc-proc-<pid>`` marker of another process in either store dir, the old store beside ``raw.duckdb`` and the
+    market dir of ``rcdata``. A marker whose pid is gone (or reused) is a leftover and does not count.
+    """
+    from RevenueChaser.core import config, job_lock
+
+    reasons = [f"job {j.get('module')} {j.get('status')} ({j.get('id')})" for j in list_jobs()
+               if j.get("status") in ("queued", "running")]
+    reasons += [f"job lock {name} held by pid {pid}" for name, pid in sorted(job_lock.holders())]
+    for d in dict.fromkeys((Path(rawstore.DB_PATH).parent, Path(config.MARKET_DIR))):
+        reasons += [f"process pid {pid} uses {d}" for pid in rawstore._peer_pids(d / "raw.duckdb")]
+    return not reasons, reasons

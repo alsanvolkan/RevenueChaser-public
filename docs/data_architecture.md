@@ -611,8 +611,10 @@ worker thread writes while Flask request threads read. So:
   chained on a store writer) and daily 09:15 (the IBKR Gateway login check RC-IBKR-Login-Check, #162:
   `scripts/ibkr_login_check.py`, one TCP connection and the TWS API version handshake, which writes no table and
   no store file, only its own record under `.cache/ibkr_login/`, and exits 0 whatever it finds — a session that
-  expired on its weekly cycle is not a failed job), `core/automations.py`: the Relatedness and Value Chain rows
-  are 30 min apart.
+  expired on its weekly cycle is not a failed job), plus the market-store builder RC-Build hourly at :07 (one
+  `rcdata.build run --once` pass over the request queue, unit `life-rc-builder`, 50 min limit) and its backup
+  RC-Build-Backup daily 04:30 (`rcdata backup`, unit `life-rc-builder-backup`, 30 min limit), PR 2;
+  `core/automations.py`: the Relatedness and Value Chain rows are 30 min apart.
 
 ### Full-refresh vs. incremental tables
 The JSON files these tables replaced were rewritten wholesale, so the tables
@@ -949,7 +951,7 @@ ops schema version `1`, and a file stamped newer is refused):
 | `uw_remaining` | UW's `x-uw-*` rate headers, sampled once a run: `x-uw-daily-req-count` as `daily_req_count`, `daily_remaining_computed` = our cap (`rcdata/caps.py`) minus it, the per-minute window, and `x-uw-token-req-limit` as sent (it is not the daily cap) |
 | `provider_calls_daily` | Calls, failures and 429s per provider and New York day |
 | `watchlist_option`, `watchlist_stock`, `watchlist_option_changes`, `watchlist_stock_changes` | The two watch lists and their history (no UI yet) |
-| `dataset_schedule` | Cadence and pause state per dataset (no routes yet) |
+| `dataset_schedule` | Cadence and pause state per dataset (Pause / Resume on Settings, PR 2) |
 
 **Day caps** (`rcdata/caps.py`, avo's numbers, to be tuned): uw 150,000, sec 40,000, fred 10,000, alpaca 20,000;
 a dataset whose providers have all reached their cap for the New York day gets a `skipped` check row and sends
@@ -963,6 +965,16 @@ one; a 403 names the variable in the source's failure note).
 **Running it.** `python -m RevenueChaser.rcdata.build run [--once] [--dataset X [--as-of D]]` and
 `python -m RevenueChaser.rcdata.build backfill <dataset> --from <date>`. It refuses to start (exit 3) while a job
 lock is held in the store directory or another builder runs.
+
+**The builder as a service (PR 2).** Scheduled jobs run hourly unless avo says otherwise. The registry row
+RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :07, with a 50 min limit, as the
+systemd unit pair `life-rc-builder.service` / `.timer`. RC-Build-Backup runs `rcdata backup` daily at 04:30, with a
+30 min limit, as `life-rc-builder-backup`. Each pass first queues what is due (below), then takes the queued
+requests in order: those, Fetch and Backfill from Settings, and the CLI's. It skips a paused dataset (`dataset_schedule.paused_at`, a `skipped: paused` check row,
+no call). At start it fails a request a dead builder left running, with `lost: pid <n> gone` and a `failed` check
+row. A request whose builder is still alive (a live `.rc-proc` marker of its pid in the market dir) is left
+alone. Neither row writes an old `job_runs` row: the builder records its own `job_runs2` rows. The page and the routes only enqueue and read (`docs/data_retrieval.md`, "The
+market-store builder's routes").
 
 **Known limits.** The idle gate is checked when the builder starts, not again before each request: a job that takes
 a lock after that runs beside it (both write different files, so nothing breaks; the gate keeps a live store write
@@ -982,8 +994,9 @@ the last check. A check with no `next_check_due` (past the calendar's table) is 
 loop run (`run` without `--once`) does this once, at start. A due-step error (a due check that raised, `ops.sqlite`
 locked while queueing) is printed, the queue is still drained, and the pass exits 1. A second `--once` started while
 one runs exits 3 on the `rcdata_build` lock before its due step. A failed or skipped check is retried every hourly
-pass with no backoff: for the SPX slice at worst about 24 runs a day, each one UW call plus its retries. Only
-`due.py` reads a pause on main; `base` runs a request already queued until PR #222 adds its own pause skip.
+pass with no backoff: for the SPX slice at worst about 24 runs a day, each one UW call plus its retries. A pause
+holds a dataset twice: `due.py` does not queue it, and `base.run_request` skips a request of it that was queued
+anyway (PR #222).
 
 **Backup.** `python -m RevenueChaser.rcdata backup` writes under `<RAW_STORE_BACKUP_DIR>/market/` and refuses an empty
 `RAW_STORE_BACKUP_DIR` (exit 2, nothing written): `ops.sqlite` through SQLite's online backup API, each serving file

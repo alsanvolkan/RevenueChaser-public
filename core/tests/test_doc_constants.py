@@ -157,13 +157,15 @@ def test_data_architecture_names_no_scheduled_job_or_history_the_code_does_not_h
     text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
     for phrase in ("forward-test collector", "forward-test history", "calibration stats", "22:30", "Outcomes + Rotation"):
         assert phrase not in text, f"docs/data_architecture.md still says {phrase!r}"
-    times = {e.name: e.time for e in automations.REGISTRY}
+    # An hourly row (RC-Build, PR 2) is stated by its minute: "hourly at :07".
+    times = {e.name: f"hourly at :{e.time[-2:]}" if e.hourly else e.time for e in automations.REGISTRY}
     assert times == {"RC-Store-Backup": "04:00", "RC-Relatedness-OffPeak": "12:30",
                      "RC-ValueChain-Sync": "13:00", "RC-Daily-Bars": "22:35",
                      "RC-Screeners-Daily": "23:00", "RC-Forecast-Outcomes": "23:45",
                      "RC-Forecast-Baselines": "23:50",
                      "RC-Index-Lists": "10:00", "RC-Earnings-Inputs": "01:30",
-                     "RC-Open-Issues-Check": "09:30", "RC-IBKR-Login-Check": "09:15"}
+                     "RC-Open-Issues-Check": "09:30", "RC-IBKR-Login-Check": "09:15",
+                     "RC-Build": "hourly at :07", "RC-Build-Backup": "04:30"}
     for stamp in times.values():
         assert stamp in text, f"the registered time {stamp} is not in docs/data_architecture.md"
     ps1 = (_REPO / "register_tasks.ps1").read_text(encoding="utf-8")
@@ -218,3 +220,30 @@ def test_the_market_store_section_names_every_ops_table_root_and_cap():
     for provider, cap in caps.DAY_CAPS.items():
         assert f"{provider} {cap:,}" in section, provider
     assert f"newest {backup.KEEP}" in section and f"{backup.RAW_COPY_DAYS} days" in section
+
+
+def test_data_architecture_names_the_builder_units_and_their_times():
+    """PR 2: the builder service's unit names, schedule and limits are the registry's (core/automations.py)."""
+    from RevenueChaser.core import automations
+    text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
+    for name in ("RC-Build", "RC-Build-Backup"):
+        e = automations.entry(name)
+        assert f"unit `{e.unit}`" in text, f"docs/data_architecture.md does not name the unit {e.unit}"
+        assert f"{e.settings.limit_minutes} min limit" in text
+    assert automations.entry("RC-Build").unit == automations.BUILDER_UNIT == "life-rc-builder"
+    assert automations.entry("RC-Build-Backup").unit == automations.BUILDER_BACKUP_UNIT == "life-rc-builder-backup"
+
+
+def test_data_health_states_the_new_section_limits_the_code_owns():
+    """PR 2: the cycle lengths, the backup warning, the backfill confirm threshold and the handle rule."""
+    from RevenueChaser.module_settings import newdata, report
+    text = (_REPO / "docs" / "data_health.md").read_text(encoding="utf-8")
+    section = text[text.index('### 2.0 The "New data system" section'):text.index("### 2.1 The summary tiles")]
+    assert f"for {newdata.CYCLE_DAYS['weekly']} days" in section
+    assert f"monthly one for {newdata.CYCLE_DAYS['monthly']}" in section
+    assert f"past {newdata.BACKUP_WARN_DAYS} days" in section
+    assert f"over {report.ND_BACKFILL_CONFIRM_OVER:,}" in section
+    assert f"over {newdata.RETIREMENT_DAYS} days" in section
+    assert f"SPX expiry-strike {newdata.COVERAGE_TARGET['uw/spot_expiry_strike']:.0%}" in section
+    assert "`rcdata.serving.open_read(kind)`" in section and "No connection is cached" in section
+    assert f"`{newdata.RETENTION_ENV}`" in section and f"`{newdata.RETENTION_ROW}`" in section
