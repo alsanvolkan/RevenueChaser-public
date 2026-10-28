@@ -25,6 +25,12 @@ import pytest
 from RevenueChaser.core import rawstore
 
 
+def _stored_watchlist() -> set[str]:
+    """The tickers of the store's ``watchlist`` table, read by name: since PR 4 ``rawstore.load_watchlist`` is the
+    stock watch list in ops.sqlite, and this file uses the old table as its sample table."""
+    return {r["ticker"] for r in rawstore.get_all("watchlist")}
+
+
 def _seed():
     rawstore.write_rows("ticker_payload_cache", [{"ticker": "AAPL", "payload": {"x": 1},
                                           "fetched_at": 1.0, "fetched_at_iso": ""}])
@@ -158,7 +164,7 @@ class TestLockRetry:
         monkeypatch.setattr(duckdb, "connect", racy)
         rawstore.write_rows("watchlist", [{"ticker": "AAPL"}])
         assert calls["n"] == 2
-        assert rawstore.load_watchlist() == {"AAPL"}
+        assert _stored_watchlist() == {"AAPL"}
 
     def test_lock_contention_is_retried_then_succeeds(self, rawstore_tmp_db, monkeypatch):
         real = duckdb.connect
@@ -174,7 +180,7 @@ class TestLockRetry:
         monkeypatch.setattr(rawstore, "_WRITE_DELAYS", (0.01, 0.01, 0.01, 0.01))
         rawstore.write_rows("watchlist", [{"ticker": "AAPL"}])
         assert calls["n"] == 3
-        assert rawstore.load_watchlist() == {"AAPL"}
+        assert _stored_watchlist() == {"AAPL"}
 
     def test_exhausted_budget_raises_rawstore_error(self, rawstore_tmp_db, monkeypatch):
         def always_locked(path, *args, **kwargs):
@@ -228,8 +234,9 @@ class TestConcurrentWritesToTheSameRow:
         assert rawstore.count("store_meta") == 30
 
     def test_concurrent_watchlist_toggles(self, rawstore_tmp_db):
-        """Whole-list read-modify-write from several threads raises nothing (``save_watchlist``; the dashboard's
-        pin goes through ``toggle_watchlist`` since #306, its races are in test_inputs_history_306.py)."""
+        """Whole-list read-modify-write from several threads raises nothing (``save_watchlist``, the stock watch list
+        in ops.sqlite since PR 4; the dashboard's pin goes through ``toggle_watchlist``, its races are in
+        test_inputs_history_306.py)."""
         errors: list[Exception] = []
 
         def toggle(ticker):
@@ -273,7 +280,7 @@ class TestConcurrentWritesToTheSameRow:
         monkeypatch.setattr(rawstore, "_WRITE_DELAYS", (0.01, 0.01, 0.01))
         rawstore.write_rows("watchlist", [{"ticker": "AAPL"}])
         assert calls["n"] == 2
-        assert rawstore.load_watchlist() == {"AAPL"}
+        assert _stored_watchlist() == {"AAPL"}
 
     def test_a_real_constraint_error_is_not_swallowed_by_the_retry(self, rawstore_tmp_db):
         """A bad batch must still raise, not spin the retry budget."""

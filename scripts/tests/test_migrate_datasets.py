@@ -22,6 +22,12 @@ from RevenueChaser.core import rawstore
 from RevenueChaser.scripts import migrate_rawdata_to_duckdb as m
 
 
+def _stored_watchlist() -> set[str]:
+    """The tickers of the store's ``watchlist`` table, read by name: since PR 4 ``rawstore.load_watchlist`` is the
+    stock watch list in ops.sqlite, and this file uses the old table as its sample table."""
+    return {r["ticker"] for r in rawstore.get_all("watchlist")}
+
+
 def _w(path, payload):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -183,7 +189,7 @@ class TestFileSourceMigrators:
     def test_watchlist(self, legacy):
         _w(legacy / "watchlist_tickers.json", ["NOK", "AAPL"])
         _migrate(legacy, "watchlist")
-        assert rawstore.load_watchlist() == {"NOK", "AAPL"}
+        assert _stored_watchlist() == {"NOK", "AAPL"}
 
     @pytest.mark.parametrize("ds,rel,payload,key,check", [
         ("sec13f_security_meta", "universe_meta.json",
