@@ -21,6 +21,10 @@ from .harness.shared import running_dashboard
 pytestmark = pytest.mark.e2e
 
 DAY = "2026-10-26"
+# The dashboard's clock (``RC_E2E_NOW``): Tue 2026-10-27 18:00 New York, the session closed. During an open session
+# the board asks yfinance for a live spot (``candles.live_spot``), so a run on the host's clock failed inside
+# 09:30-16:30 New York and passed outside it.
+NOW = "2026-10-27T22:00:00+00:00"
 PHONE = (390, 844)
 TAB = "module_spx_gamma"
 
@@ -53,7 +57,8 @@ def _board(tmp_path, e2e_env, market_roots, *, stored: bool):
         from RevenueChaser.module_spx_gamma.tests import rcdata_fixture
         rcdata_fixture.serve()
     ssd, hdd = market_roots
-    env = {**e2e_env, "RC_MARKET_DIR": str(ssd), "RC_MARKET_RAW_DIR": str(hdd), "RC_MARKET_RAW_COPY_DIR": ""}
+    env = {**e2e_env, "RC_MARKET_DIR": str(ssd), "RC_MARKET_RAW_DIR": str(hdd), "RC_MARKET_RAW_COPY_DIR": "",
+           "RC_E2E_NOW": NOW}
     store, cache = tmp_path / ".store", tmp_path / ".cache"
     store.mkdir()
     cache.mkdir()
