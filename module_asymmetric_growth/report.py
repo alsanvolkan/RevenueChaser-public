@@ -590,6 +590,7 @@ var FLAG_TEXT = {{
   revenue_nonpositive: "Revenue of zero or less: margin unknown",
   gross_profit_exceeds_revenue: "Gross profit above revenue: margin unknown",
   mixed_share_basis: "Share counts on different bases (diluted against basic): dilution unknown",
+  price_bar_older: "Price and momentum from an older session than the board's (a halt or a Daily Bars gap)",
   no_recent_revenue: "No revenue figure in the last {engine.RULES["stale_days"]} days (the newer reports carry none): revenue unknown, no tier"
 }};
 function flagsHtml(c) {{
@@ -606,7 +607,8 @@ function provHtml(c) {{
   function fy(v) {{ return v != null ? "FY" + rcEsc(v) : "FY n/a"; }}
   return '<div class="prov">' + fy(c.anchor_fy) + ' vs ' + fy(c.prior_fy)
     + ' · revenue ' + d(rev[0]) + ' · ' + d(rev[1]) + ' · ' + d(rev[2])
-    + ' · balance sheet ' + d(pe.balance_sheet) + ' · cash flow ' + d(pe.cash_flow) + '</div>';
+    + ' · balance sheet ' + d(pe.balance_sheet) + ' · cash flow ' + d(pe.cash_flow)
+    + ' · price ' + d(pe.price_bar) + '</div>';
 }}
 
 function cardHtml(c) {{

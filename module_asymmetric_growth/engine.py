@@ -265,6 +265,7 @@ def technical_from_bars(rows, session: date | None = None) -> dict:
     vol_90d = _mean_last([b[3] for b in bars], BARS_3M)
     return {
         "price": price,
+        "bar_date": bars[-1][0].isoformat() if bars else None,   # the session this card's price is from (SF-1)
         "high_52w": high,
         "dist_52w_pct": (high - price) / high if (price is not None and high) else None,
         "sma50": sma50,
@@ -644,11 +645,22 @@ def _technical_for(ticker: str, financials: dict, meta: dict, preload: dict | No
         session = _d01_session()
         rows = _bars_by_ticker([ticker], session).get(ticker)
     technical = technical_from_bars(rows or [], session)
+    technical["session"] = session.isoformat() if session is not None else None
     if technical.get("price") is None:
         quote = meta.get("quote") or {}
         technical["price"] = (to_float(financials.get("current_price")) or to_float(meta.get("price"))
                               or to_float(quote.get("regularMarketPrice")))
     return technical
+
+
+def _mark_bar_date(card: dict, technical: dict) -> None:
+    """The card's own price session (AG review SF-1, PR 6): ``period_ends["price_bar"]`` (stored with the card, so a
+    Refresh shows it), and the ``price_bar_older`` data check when it is before the session the scan read up to (a
+    halt or a Daily Bars gap). No bars: no date, no check; the momentum is already unknown."""
+    day, session = technical.get("bar_date"), technical.get("session")
+    card.setdefault("period_ends", {})["price_bar"] = day
+    if day and session and day < session:
+        card["flags"] = [*(card.get("flags") or []), "price_bar_older"]
 
 
 def _is_thin(price, vol_90d) -> bool:
@@ -702,6 +714,7 @@ def enrich_and_score(ticker: str, meta: dict, no_fetch: bool = False,
                         stored_ownership=((preload or {}).get("ownership") or {}).get(ticker))
     if card is None:
         return dropped("foreign")
+    _mark_bar_date(card, technical)
     # #41: the one place the technical inputs are in hand for a scored name (the card does not carry vol_90d).
     if drops is not None and _is_thin(technical.get("price"), technical.get("vol_90d")):
         drops.note_thin(ticker)
