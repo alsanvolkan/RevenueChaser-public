@@ -362,7 +362,7 @@ class SpineSecurity:
                 for gv in sorted(gvkeys) for g in hgic.get(gv, [])]
         counts["gics_history"] = _create(con, "gics_history", gics)
 
-        members, member_issues = self._membership(con, rows, linked, securities)
+        members, member_issues = self._membership(con, rows, linked)
         found += member_issues
         counts["index_membership"] = _create(con, "index_membership", members)
         views.create(con)
@@ -388,7 +388,7 @@ class SpineSecurity:
         return out
 
     @staticmethod
-    def _membership(con, rows: list[dict], linked: dict, securities: dict) -> tuple[list[dict], list[tuple]]:
+    def _membership(con, rows: list[dict], linked: dict) -> tuple[list[dict], list[tuple]]:
         found: list[tuple[str, str, str]] = []
         tier = {r["ticker"]: r["tier"] for r in rows}
         cik = {r["ticker"]: r["cik"] for r in rows}
@@ -432,10 +432,9 @@ class SpineSecurity:
         slug_of = {v: k for k, v in INDEX_GVKEYX.items()}
         wrds = _rows(con, "SELECT * FROM stg_wrds_idx ORDER BY gvkeyx, gvkey, iid, valid_from")
         for w in wrds:
+            # Only a security the link step tied to an SEC ticker gets one. Compustat's current tic of an unlinked
+            # security is not used: a delisted member's tic may belong to another company today (should-fix 3).
             ticker = linked.get((w["gvkey"], w["iid"]))
-            if ticker is None:
-                cands = [compustat_ticker(s.get("tic")) for s in securities.get(w["gvkey"], []) if s["iid"] == w["iid"]]
-                ticker = cands[0] if cands and cands[0] in sec_tickers else None
             out.append({"index_slug": slug_of.get(w["gvkeyx"], w["gvkeyx"]), "ticker": ticker, "cik": cik.get(ticker),
                         "gvkey": w["gvkey"], "iid": w["iid"], "valid_from": w["valid_from"],
                         "valid_to": _next_day(w["thru"]), "source": IDXCST_HIS.name,

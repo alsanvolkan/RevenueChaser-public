@@ -45,7 +45,7 @@ def test_every_active_cusip_of_an_sec_cik_is_asked_once_with_the_key_in_its_head
     row = _run()
     assert row["result"] == "changed" and row["calls"] == 1
     (jobs,) = _jobs(env)
-    assert set(jobs) == {s["cusip"] for s in fx.SECURITY + fx.NEW_SECURITY if s["gvkey"] != "099999"}
+    assert set(jobs) == {s["cusip"] for s in fx.SECURITY + fx.NEW_SECURITY if s["secstat"] == "A"}
     req = env.calls("figi.test")[0]
     assert req.headers["X-OPENFIGI-APIKEY"] == KEY and KEY not in str(req.url)
     assert json.loads(req.content)[0] == {"idType": "ID_CUSIP", "idValue": jobs[0], "exchCode": "US"}

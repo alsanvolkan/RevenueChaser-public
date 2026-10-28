@@ -143,6 +143,16 @@ def test_wrds_constituents_are_kept_with_exclusive_ends(built):
         ("HEI", date(2010, 1, 4), date(2026, 10, 3)), ("HEI-A", date(2010, 1, 4), None)]
 
 
+def test_a_reused_ticker_does_not_give_an_old_members_history_to_its_new_owner(built):
+    """Review should-fix 3: gvkey 123456 left the S&P 500 in 2009 and still carries tic VYLR; VYLR is now another
+    CIK. Its constituent rows keep their gvkey and no ticker, and VYLR has no S&P 500 history."""
+    assert _q("SELECT ticker, cik, valid_from, valid_to FROM index_membership WHERE gvkey = '123456'") == [
+        (None, None, date(2001, 3, 1), date(2009, 7, 1))]
+    from RevenueChaser.rcdata import read
+    assert "VYLR" not in {r["ticker"] for r in read.membership("sp500", on=date(2008, 6, 30),
+                                                                 source=wrds.IDXCST_HIS.name)}
+
+
 def test_build_issues_name_the_plans_problems(built):
     issues = _issues()
     assert ("tier_a_no_figi", "NVR") in issues                     # OpenFIGI: absent

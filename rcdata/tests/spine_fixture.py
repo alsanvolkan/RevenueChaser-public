@@ -17,7 +17,8 @@ The names and what each one tests:
 | FDX | a fund file writes it with a CUSIP only (matched by CUSIP) |
 | NVR | OpenFIGI has no FIGI for its CUSIP (``tier_a_no_figi``) |
 | WFC-PC | a preferred (the ``-P`` ticker rule): Tier B, no Compustat link |
-| VYLR | a new listing Compustat's snapshot does not hold yet (the new-name query) |
+| VYLR | a new listing Compustat's snapshot does not hold yet (the new-name query); an old, delisted company that
+left the S&P 500 in 2009 still carries Compustat tic VYLR (a reused ticker: its history must not become VYLR's) |
 
 Plus WFC (common, so WFC-PC's CIK has two tickers), an OTC name (Tier C), a row with no exchange (Tier D) and an ETF
 (SPY: OpenFIGI ``ETP``, Tier B).
@@ -62,6 +63,8 @@ COMPANY = [
     {"gvkey": "025648", "conm": "NVR INC", "cik": "0000906163"},
     {"gvkey": "008007", "conm": "WELLS FARGO & CO", "cik": "0000072971"},
     {"gvkey": "001000", "conm": "SPDR S&P 500 ETF TRUST", "cik": "0000884394"},
+    # A company that left the S&P 500 in 2009 and was delisted, still carrying tic VYLR: today VYLR is another CIK.
+    {"gvkey": "123456", "conm": "OLD VAYLOR CORP", "cik": "0000999999"},
 ]
 NEW_COMPANY = [{"gvkey": "040001", "conm": "VYLR HOLDINGS INC", "cik": "0002000001"}]
 SECURITY = [
@@ -87,6 +90,8 @@ SECURITY = [
      "secstat": "A", "tpci": "0", "dldtei": None},
     {"gvkey": "001000", "iid": "01", "tic": "SPY", "cusip": "78462F103", "exchg": 11, "excntry": "USA",
      "secstat": "A", "tpci": "%", "dldtei": None},
+    {"gvkey": "123456", "iid": "01", "tic": "VYLR", "cusip": "92921Q100", "exchg": 11, "excntry": "USA",
+     "secstat": "I", "tpci": "0", "dldtei": "2009-07-15"},
 ]
 NEW_SECURITY = [{"gvkey": "040001", "iid": "01", "tic": "VYLR", "cusip": "92921V109", "exchg": 14, "excntry": "USA",
                  "secstat": "A", "tpci": "0", "dldtei": None}]
@@ -128,6 +133,7 @@ IDX = [
     {"gvkey": "008007", "iid": "01", "gvkeyx": "000003", "valid_from": "1976-06-30", "thru": None},
     {"gvkey": "005567", "iid": "01", "gvkeyx": "024248", "valid_from": "2010-01-04", "thru": "2026-10-02"},
     {"gvkey": "005567", "iid": "02", "gvkeyx": "024248", "valid_from": "2010-01-04", "thru": None},
+    {"gvkey": "123456", "iid": "01", "gvkeyx": "000003", "valid_from": "2001-03-01", "thru": "2009-06-30"},
 ]
 
 
