@@ -185,6 +185,9 @@ def compute_indicators(df: pd.DataFrame, spy_df: pd.DataFrame | None = None,
     ind["within_52w_high_pct"] = (price / high) if (price and high) else None
 
     vol = df["Volume"]
+    # ``vol_20d`` is the plain 20-day mean, today included; ``vol_ratio`` is NOT today / vol_20d but the best of the
+    # last VOL_WINDOW days, each against the VOL_AVG_DAYS before it (review 3). No card or row shows them side by
+    # side (Opus review N4); do not divide one by the other.
     ind["vol_20d"] = _to_float(vol.tail(20).mean())
     ind["vol_ratio"] = _breakout_volume(vol)
 

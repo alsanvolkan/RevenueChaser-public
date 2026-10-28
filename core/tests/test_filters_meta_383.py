@@ -75,7 +75,9 @@ def test_once_sp600_has_rows_fetch_index_may_refresh_it(fetchers):
 
 def test_sp600_never_joins_the_fetched_indexes():
     assert "sp600" not in dict(il.INDEXES)
-    assert set(ir.LABELS) == set(il.STORED)            # every stored slug has a label
+    # every stored slug has a label. This pins the spine's badge set to the OLD store's slug list (Opus review N3,
+    # PR 6): it goes with index_lists in PR 21, when the spine's own slugs (sp400 has no label yet) decide.
+    assert set(ir.LABELS) == set(il.STORED)
     assert ir.LABELS["sp600"] == "S&P SmallCap 600"
 
 
