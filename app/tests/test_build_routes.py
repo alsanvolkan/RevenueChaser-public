@@ -143,3 +143,10 @@ def test_the_routes_never_open_a_duckdb_file(client, monkeypatch):
     client.get("/api/build/queue")
     client.post("/api/build/schedule/market_series/pause")
     assert [a for a in opened if a and "market" in str(a[0])] == []
+
+
+def test_an_attended_dataset_is_refused_with_the_command_to_run_instead(client):
+    """PR 5: the WRDS datasets need a person at a terminal (login and Duo): a page cannot queue them."""
+    r = client.post("/api/build/request/wrds/sec_idhist")
+    assert r.status_code == 409 and "CLI" in r.get_json()["error"]
+    assert not ops.ops_path().exists() or _rows() == []        # nothing queued (the route did not even open ops)

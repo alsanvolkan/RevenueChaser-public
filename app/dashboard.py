@@ -1305,8 +1305,13 @@ def api_build_request(dataset: str):
     running."""
     from RevenueChaser.rcdata import ops
 
-    if _build_dataset(dataset) is None:
+    ds = _build_dataset(dataset)
+    if ds is None:
         return jsonify({"ok": False, "error": f"unknown dataset {dataset!r}"}), 400
+    if getattr(ds, "attended", False):
+        # WRDS (PR 5): a person logs in and confirms Duo, so only the CLI on the server queues it.
+        return jsonify({"ok": False, "error": f"{dataset} is attended: run it from the CLI on the server "
+                                              "(python -m RevenueChaser.rcdata.build backfill ...)"}), 409
     body = request.get_json(silent=True) if request.is_json else None
     raw = (body or {}).get("backfill_from") if isinstance(body, dict) else None
     if raw is None:

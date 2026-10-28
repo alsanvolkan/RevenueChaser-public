@@ -573,6 +573,12 @@ def open_issues(dataset: str, limit: int = 20) -> tuple[int, list[dict]]:
     return (n[0]["n"] if n else 0), rows
 
 
+def open_issue_kinds(dataset: str) -> list[dict]:
+    """``[{kind, count}]`` of the unresolved ``build_issues`` of ``dataset``, the most first."""
+    return _select("SELECT kind, count(*) AS count FROM build_issues WHERE dataset = ? AND resolved_on IS NULL "
+                   "GROUP BY kind ORDER BY count(*) DESC, kind", (dataset,))
+
+
 def read_queue(finished: int = 20) -> dict:
     """``queue_view`` for a reader: the same rows, without creating the file."""
     active = _select("SELECT * FROM build_requests WHERE status IN ('queued','running') ORDER BY id")
