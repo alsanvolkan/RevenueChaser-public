@@ -94,7 +94,7 @@ def test_effective_reads_the_store_and_the_window_argument(rawstore_tmp_db):
 def test_min_obs_never_exceeds_the_run_window(rawstore_tmp_db):
     bs.save(B, {"WINDOW": 378, "MIN_OBS": 300})
     e = cs.effective(126)
-    assert e.min_obs == 126 and e.min_periods <= e.min_obs
+    assert e.min_obs == 119 and e.min_periods <= e.min_obs       # 95 % of 126 (Co-movement review S2)
 
 
 @pytest.mark.parametrize("window,expect", [(21, 15), (42, 21), (63, 31), (125, 62)])
@@ -107,7 +107,27 @@ def test_short_windows_scale_min_obs_and_min_periods(rawstore_tmp_db, window, ex
 
 def test_window_126_is_not_short(rawstore_tmp_db):
     e = cs.effective(126)
-    assert not e.short_window and e.min_obs == 126 and e.min_periods == 60
+    assert not e.short_window and e.min_obs == 119 and e.min_periods == 60
+
+
+@pytest.mark.parametrize("window,expect", [(126, 119), (189, 126), (252, 126), (378, 126)])
+def test_a_window_never_needs_every_session(rawstore_tmp_db, window, expect):
+    """Fable review of Co-movement (28 Oct 2026), S2: ``min(MIN_OBS, window)`` asked the 6-month window for 126 of
+    126 returns, so one missing daily bar dropped the name. Daily Bars never goes back to a session before a name's
+    last stored one (``core.prices._classify``), so that gap is permanent. A window now needs at most 95 % of its
+    sessions; the longer windows keep MIN_OBS."""
+    assert cs.effective(window).min_obs == expect
+
+
+def test_one_missing_bar_no_longer_drops_a_name_from_the_6_month_window(rawstore_tmp_db):
+    ret = _two_group_returns()
+    ret.loc[ret.index[-10], "A1"] = np.nan                     # one session with no stored bar
+    tickers = list(ret.columns)
+    _seed_universe(tickers)
+    _seed_prices(ret)
+    p = engine.run(no_fetch=True, tickers=tickers, cuts=(2,), persist=False, window=126)
+    assert "A1" not in p["dropped"] and p["funnel"]["missing_bars"] == 0
+    assert any(m["ticker"] == "A1" for c in p["clusters"]["2"] for m in c["members"])
 
 
 def test_payload_block_for_the_ui(rawstore_tmp_db):

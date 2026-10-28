@@ -24,6 +24,10 @@ OHLC_PERIOD = "2y"
 WINDOW = 252          # last N sessions
 MIN_OBS = 126         # drop a ticker with fewer non-null returns
 MIN_PERIODS = 60      # pairwise Pearson minimum overlap
+# A window never needs more than this share of its sessions (Co-movement review S2): ``min(MIN_OBS, window)`` asked
+# the 6-month window for 126 of 126 returns, and one missing daily bar, which Daily Bars never goes back to fill,
+# dropped the name for good. 0.95 lets the 126 window miss 7; the longer windows keep MIN_OBS (126).
+MIN_OBS_MAX_SHARE = 0.95
 
 # Window is a board control (like horizon); ``WINDOW`` above is only its default.
 WINDOW_OPTIONS = (21, 42, 126, 189, 252, 378)   # 1m / 2m / 6m / 9m / 1y / 1.5y

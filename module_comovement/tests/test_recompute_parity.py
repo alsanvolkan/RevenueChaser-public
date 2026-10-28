@@ -39,6 +39,11 @@ S1 of the same review (h > 1: the null from shuffled daily returns summed over h
 h-th row) regenerated it again. Compared key by key: only ``w252_h5``'s ``n_factors`` moved, 10 -> 6 (the fixture
 has eight blocks; 125-odd overlapping rows read as independent had counted more than there are). The 5-day case is
 store-only, so its null is the stored one and no verdict moved. Then ``json.dumps(payloads())`` was written.
+
+S2 (a window needs at most 95 % of its sessions) regenerated it again. Compared key by key: only ``w126_h1`` moved,
+its ``min_obs`` 126 -> 119 (in ``settings``, ``funnel`` and the "Missing price bars" label) and so its
+``config_hash``; the fixture's two gappy names miss more than 7 sessions and stay dropped, and no cluster changed.
+Then ``json.dumps(payloads())`` was written.
 """
 from __future__ import annotations
 

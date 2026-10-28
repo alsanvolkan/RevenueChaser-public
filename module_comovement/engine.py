@@ -253,8 +253,9 @@ def split_short_history(prices, dropped, window: int, horizon: int, first: dict 
     *Listed recently*: the ticker's first stored bar is inside the window (it
     listed after the window start), so no Fetch can give it more history — by
     design. *Missing bars*: listed before the window start yet still short of
-    ``MIN_OBS`` returns in it, so stored prices have gaps and Fetch can fill
-    them. Reads only the price frame the run already holds (store-only). ``first`` (ticker -> first bar) is
+    ``MIN_OBS`` returns in it, so the stored prices have gaps. Neither a Fetch nor
+    Daily Bars fills them: Daily Bars writes from a name's last stored session on
+    and never goes back (``core.prices._classify``). Reads only the price frame the run already holds (store-only). ``first`` (ticker -> first bar) is
     given when that frame holds only the window (#379 COM-3), whose first bar is not the listing.
     """
     if not dropped or prices is None or prices.empty:
@@ -297,7 +298,8 @@ _STEP_KEYS = ("scanned_total", "below_floor", "no_market_cap", "no_prices",
 
 def _short_history_steps(f: dict, prices_fix: dict | None) -> list[dict]:
     """One ``short_history`` step, or — when the run recorded the split —
-    ``listed_recently`` (by design, no fix) and ``missing_bars`` (the Daily Bars job fills it)."""
+    ``listed_recently`` (by design, no fix) and ``missing_bars`` (gaps in the stored bars, which no job goes back to
+    fill: the step names no fix)."""
     window = f.get("window") or settings_mod.effective().window
     min_obs = f.get("min_obs") or settings_mod.effective(window).min_obs
     if f.get("listed_recently") is None or f.get("missing_bars") is None:
