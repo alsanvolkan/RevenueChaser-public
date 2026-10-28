@@ -141,6 +141,22 @@ def test_the_served_table_refuses_a_fact_without_its_accession_or_period_type():
     insert(accn="NULL", filed="NULL", preliminary="true")                 # a preliminary row has neither
 
 
+def test_a_restated_value_replaces_the_one_it_restates():
+    # The Opus review's S2: the served table keeps, per company, field, period type and period end, the row of the
+    # newest filing (then the larger accession on one day); the older value is the one the filer corrected.
+    con = duckdb.connect()
+    tables._ensure_staging(con)
+    stage = companyfacts.STAGING["facts"]
+    for value, accn, filed in ((100.0, "b-1", "2026-04-30"), (105.0, "a-2", "2026-07-30"), (110.0, "a-3", "2026-07-30"),
+                               (90.0, "c-0", "2026-02-01")):           # accessions do not sort with the filed day
+        con.execute(f"INSERT INTO {stage} (cik, field, period_type, fiscal_year, period_end, value, unit, accn, "
+                    f"filed, form, derived, preliminary, source) VALUES ('1', 'revenue', 'quarterly', 2026, "
+                    f"DATE '2026-03-31', {value}, 'USD', '{accn}', DATE '{filed}', '10-Q', false, false, "
+                    "'sec/companyfacts')")
+    tables._facts(con)
+    assert con.execute("SELECT value, accn FROM fundamental_fact").fetchall() == [(110.0, "a-3")]
+
+
 # ── Through the builder ───────────────────────────────────────────────────────────────────────────────────────
 
 def _answers(sec, msft=None):
@@ -167,6 +183,17 @@ def test_requests_to_the_sec_are_spaced_under_five_a_second(sec):
     fx.run(companyfacts.NAME, mode="backfill", to="2026-10-28", sleep=slept.append, clock=lambda: 100.0)
     assert len(slept) == len(sec.requests) - 1 and set(slept) == {companyfacts.common.SEC_INTERVAL_S}
     assert 1 / companyfacts.common.SEC_INTERVAL_S < 5
+
+
+def test_a_newer_filing_that_restates_an_old_quarter_is_served_with_its_accession(sec):
+    msft = fx.msft_facts(with_new_quarter=True)
+    msft["facts"]["us-gaap"]["Revenues"]["units"]["USD"].append(   # the 2026 10-Q restates the year-ago quarter
+        fx._fact(77_500, "2025-09-30", fx.Q27, "2026-10-27", "10-Q", "Q1", 2027, "2025-07-01"))
+    _answers(sec, msft=msft)
+    fx.run(companyfacts.NAME, mode="backfill", to="2026-10-28")
+    assert fx.q("SELECT value, accn, filed FROM fundamental_fact WHERE cik = '789019' AND field = 'revenue' "
+                "AND period_type = 'quarterly' AND period_end = DATE '2025-09-30'") == [
+        (77_500.0, fx.Q27, date(2026, 10, 27))]
 
 
 def test_a_statement_filed_yesterday_is_read_again_today(sec):
