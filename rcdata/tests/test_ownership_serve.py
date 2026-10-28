@@ -13,7 +13,7 @@ import pytest
 
 from RevenueChaser.rcdata import ops, read, serving
 from RevenueChaser.rcdata.build import base
-from RevenueChaser.rcdata.build.ownership import finra, ibkr, sec, sec13f, serve
+from RevenueChaser.rcdata.build.ownership import common, finra, ibkr, sec, sec13f, serve
 from RevenueChaser.rcdata.build.spine import openfigi_map, wrds
 
 from . import ownership_fixture as ox
@@ -106,6 +106,21 @@ def _issues() -> dict[tuple[str, str], str]:
 def test_the_openfigi_map_asks_the_newest_quarters_13f_cusips_no_other_source_holds(store, built):
     asked = {j["idValue"] for c in built.calls("figi.test/v3/mapping") for j in json.loads(c.content)}
     assert asked == {OLD_VYLR, NOBODY, WFC_PC}         # not MSFT's 2001 CUSIP: only the two newest periods
+
+
+def test_the_recent_cusips_read_only_the_holdings_filed_after_the_older_of_the_two_periods(store, monkeypatch):
+    """Review S5: the weekly OpenFIGI run asks the two newest quarters' CUSIPs; it must not scan every holdings
+    partition ever written (about 50 million rows after the 2025 fill) to find them."""
+    read_days = []
+    real = common.files_sql
+
+    def spy(files):
+        read_days.extend(f.parent.name for f in files if f.parent.parent.name == "holdings")
+        return real(files)
+    monkeypatch.setattr(common, "files_sql", spy)
+    cusips = sec13f.recent_cusips()
+    assert {"594918104", OLD_VYLR, WFC_PC} <= cusips and MSFT_OLD not in cusips
+    assert sorted(read_days) == ["day=2026-08-14", "day=2026-10-27"]          # not 2001-11-14
 
 
 def test_the_amendment_rule_long_equity_only_and_share_classes_apart(store):

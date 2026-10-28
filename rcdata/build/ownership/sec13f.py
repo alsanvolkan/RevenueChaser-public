@@ -152,18 +152,25 @@ def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
 def recent_cusips(periods: int = 2) -> set[str]:
     """The long-equity CUSIPs (``SH``, no put or call) the 13F holdings hold in the newest ``periods`` report periods,
     from Parquet: what the spine's OpenFIGI map asks besides its own (``openfigi_map.wanted_cusips``), so the
-    OpenFIGI fallback of ``ownership/serve`` has an answer for a CUSIP no other source names."""
-    files = DATASET.holding_files()
-    if not files:
+    OpenFIGI fallback of ``ownership/serve`` has an answer for a CUSIP no other source names. The periods come from
+    the filings (one row a filing), and only the holdings partitions filed after the older of them are read: a
+    report is filed after its period ends (review S5; the weekly run no longer scans every partition)."""
+    filings = DATASET.filing_files()
+    if not filings:
         return set()
     con = duckdb.connect()
     try:
+        newest = [r[0] for r in con.execute(
+            f"SELECT DISTINCT period FROM {common.files_sql(filings)} WHERE period IS NOT NULL AND holdings > 0 "
+            f"ORDER BY period DESC LIMIT {int(periods)}").fetchall()]
+        files = [f for day, f in partitions(DATASET.parquet_dir() / "holdings", "day")
+                 if newest and date.fromisoformat(str(day)) > min(newest)]
+        if not files:
+            return set()
         rows = con.execute(f"""
-            WITH h AS (SELECT period, upper(cusip) AS cusip FROM {common.files_sql(files)}
-                       WHERE upper(sh_type) = 'SH' AND coalesce(trim(put_call), '') = '' AND cusip IS NOT NULL
-                         AND period IS NOT NULL)
-            SELECT DISTINCT cusip FROM h
-            WHERE period IN (SELECT DISTINCT period FROM h ORDER BY period DESC LIMIT {int(periods)})""").fetchall()
+            SELECT DISTINCT upper(cusip) FROM {common.files_sql(files)}
+            WHERE upper(sh_type) = 'SH' AND coalesce(trim(put_call), '') = '' AND cusip IS NOT NULL
+              AND period IN ({", ".join(f"DATE '{p}'" for p in newest)})""").fetchall()
     finally:
         con.close()
     return {r[0] for r in rows}
