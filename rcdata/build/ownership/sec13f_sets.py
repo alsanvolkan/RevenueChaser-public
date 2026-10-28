@@ -250,14 +250,15 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
 
 def fill(ctx: base.RunContext, feed: edgar.Feed, start: date, end: date, schema: dict) -> date | None:
     """Fill ``feed``'s days from ``start`` to ``end`` that a listed set covers; the last day covered (None when no
-    set covers any). A range of fewer than ``MIN_WEEKDAYS`` weekdays asks nothing: the walk reads its forms.
+    set covers any). A range of fewer than ``MIN_WEEKDAYS`` weekdays asks nothing: the walk reads its forms. Every
+    backfill first removes a killed run's typing folders, a short one too.
     ``schema``: ``{"forms", "filings", "holdings", "dollars_from"}`` of ``sec/13f``."""
+    _clear_scratch(ctx)
     weekdays = sum(1 for k in range((end - start).days + 1) if (start + timedelta(days=k)).weekday() < 5)
     if weekdays < MIN_WEEKDAYS:
         ctx.notes.append(f"a backfill of {weekdays} weekdays reads the forms; the data sets fill a range of "
                          f"{MIN_WEEKDAYS} weekdays or more")
         return None
-    _clear_scratch(ctx)
     pacer = sec.Pacer(ctx)
     covered = None
     for name, (first, last, url) in sorted(listed(ctx, pacer).items(), key=lambda kv: kv[1][0]):

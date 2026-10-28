@@ -269,12 +269,16 @@ def test_a_cover_or_summary_row_written_twice_does_not_count_a_filing_twice(feed
     assert len(_holdings("0001000001-26-000101")) == 1
 
 
-def test_a_killed_runs_typing_scratch_is_removed_by_the_next_fill(feed, http_mock):
+@pytest.mark.parametrize("start, end", [("2026-06-01", "2026-08-31"), ("2026-07-29", "2026-07-31")])
+def test_a_killed_runs_typing_scratch_is_removed_by_the_next_fill(feed, http_mock, start, end):
     """Review (deploy risk): a set is typed in a scratch folder beside the raw zips, several GB; a killed run leaves
-    it behind where clean-scratch does not look, so the next fill removes it."""
+    it behind where clean-scratch does not look, so the next backfill removes it, a short one too (delta D4)."""
+    feed.add_day("2026-07-31", [(ox.idx_row(1000007, "MANAGER 1000007", "13F-HR", "2026-07-31", "0001000007-26-000099"),
+                                 ox.f13_filing("0001000007-26-000099", 1000007, "2026-07-31",
+                                               [ox.f13_holding("NVR INC", "62944T105", 1_000, 1)], "06-30-2026"))])
     stale = sec13f_sets.raw_dir() / ".typing-killed"
     stale.mkdir(parents=True)
     (stale / "set.duckdb").write_bytes(b"x" * 10)
-    row = _backfill("2026-06-01", "2026-08-31")
+    row = _backfill(start, end)
     assert not stale.exists() and not list(sec13f_sets.raw_dir().glob(".typing-*"))
     assert "13F data sets: 1 typing folder of a killed run removed" in row["note"]
