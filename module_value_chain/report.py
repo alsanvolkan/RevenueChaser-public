@@ -25,6 +25,7 @@ from RevenueChaser.core.reporting_common import (
     help_html,
     provider_health_html,
     recorded_sessions_html,
+    watchlist_html,
 )
 
 from . import engine
@@ -297,7 +298,7 @@ function render(){
   var links = g.links || [];
   var fm = FILINGS[FOCAL] || {};
   var q = fm.quality || "";
-  document.getElementById("fmeta").innerHTML =
+  document.getElementById("fmeta").innerHTML = rcWatchRow(FOCAL) +     // the focal company's pair (PR 4)
     (fm.form ? rcEsc(fm.form) + " · filed " + rcEsc(fm.filed) + " · " : "") +
     (q === "ok" ? "text: ok" : (q ? '<span class="chip warn">text: ' + rcEsc(q) + ' — item not fully extracted</span>' : ""));
   drawSankey(FOCAL, links);
@@ -406,6 +407,7 @@ function init(){
   </div>
 </div>
 <script>{FILTERS_JS}</script>
+{watchlist_html("value_chain")}
 <script>{JS}
 init();
 </script>

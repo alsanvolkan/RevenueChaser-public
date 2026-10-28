@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
 
 from RevenueChaser.core.reporting_common import payload_path
 from RevenueChaser.core.tests.board_js import run_board_js
@@ -41,7 +42,7 @@ def test_the_page_holds_no_rows_and_loads_them_from_the_payload():
     totals, meta = _three()
     html = report.render_sec13f_dashboard(totals, meta, {})
     assert "3 tickers" in html
-    assert "data-ticker=" not in html                       # no inline row markup
+    assert not re.search(r"<tr[^>]*data-ticker=", html)     # no inline row markup
     for t in ("AAA", "BBB", "CCC"):
         assert t not in html                                # no ticker text in the page either
     assert 'rcPayload("module_sec_13f")' in html
@@ -185,3 +186,24 @@ def test_a_refresh_with_no_totals_drops_the_old_payload(tmp_path, monkeypatch):
     with pytest.raises(JobMessage):
         runners.run_sec_13f_latest(None)
     assert page.exists() and not payload_path(page).exists()
+
+
+def test_each_built_row_carries_the_watch_list_pair_for_its_ticker(tmp_path):
+    """PR 4: the ticker cell gets the shared pair (``rcWatchButtons``), reading ``data-ticker``, from the payload."""
+    totals, meta = _three()
+    payload = report.board_payload(totals, meta, {})
+    html = report.render_sec13f_dashboard(totals, meta, {})
+    html = html.replace("var ROW_COUNT", "var created = [];\n"
+                        "document.createDocumentFragment = function(){ return document.createElement('fragment'); };\n"
+                        "document.createTextNode = function(t){ return {textContent: t}; };\n"
+                        "var _ce = document.createElement;\n"
+                        "document.createElement = function(tag){ var e = _ce(tag); created.push([tag, e]); return e; };\n"
+                        "var ROW_COUNT", 1)
+    log = run_board_js(html, """
+var tds = created.filter(function(c){ return c[0] === "td" && c[1].getAttribute("data-col") === "ticker"; });
+console.log(JSON.stringify(tds.map(function(c){ return c[1].innerHTML; })));
+""", tmp_path, payload=payload)
+    assert len(log) == 3
+    for t, cell in zip(("AAA", "BBB", "CCC"), log):
+        assert f'data-rc-watch="option" data-ticker="{t}"' in cell and f'data-rc-watch="stock" data-ticker="{t}"' in cell
+    assert 'rcWatchInit("sec_13f")' in html

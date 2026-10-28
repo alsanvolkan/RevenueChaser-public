@@ -355,6 +355,21 @@ def _card(dataset: str, ds, facts: dict, now: datetime) -> dict:
     }
 
 
+# The options build covers SPX always, and the option watch list besides it (D2). It is built later (build-plan
+# step 11); until then every name on the option list is waiting for its first build.
+OPTIONS_ALWAYS = ("SPX",)
+
+
+def _watchlists() -> dict:
+    """Both watch lists for their cards: ``{kind: {count, rows: [{ticker, added_on, added_by, note}]}}`` (one read
+    through ``rcdata.read``: the read itself never creates ops.sqlite; the read log's minute flush may)."""
+    from RevenueChaser.rcdata import read
+    lists = read.watchlists()
+    return {k: {"count": len(rows), "rows": [{"ticker": r["ticker"], "added_on": _iso_utc(r["added_at"]),
+                                              "added_by": r["added_by"], "note": r["note"]} for r in rows]}
+            for k, rows in lists.items()}
+
+
 def collect(now: datetime | None = None) -> dict:
     """Everything the section shows, read now. ``now`` is the clock (aware; default ``calendar``'s seam)."""
     now = _now(now)
@@ -373,5 +388,12 @@ def collect(now: datetime | None = None) -> dict:
         "backups": _backups(now),
         "retention": _retention(),
         "retirement": _retirement(now),
-        "watchlists": {k: ops.watch_count(k) for k in ops.WATCH_KINDS},
+        **_watch_section(),
     }
+
+
+def _watch_section() -> dict:
+    wl = _watchlists()
+    return {"watchlists": wl,
+            "options_build": {"always": list(OPTIONS_ALWAYS),
+                              "queued": [r["ticker"] for r in wl.get("option", {}).get("rows", [])]}}

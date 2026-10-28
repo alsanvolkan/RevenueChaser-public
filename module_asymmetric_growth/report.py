@@ -10,7 +10,7 @@ from RevenueChaser.core.gics_map import sector_path
 from RevenueChaser.core.html_safe import esc, script_json
 from RevenueChaser.core.reporting_common import (
     FILTERS_CSS, FILTERS_JS, PAYLOAD_JS, filters_bar_html, filters_meta,
-    help_html, notice_html, provider_health_html, universe_provenance_html,
+    help_html, notice_html, provider_health_html, universe_provenance_html, watchlist_html,
 )
 from RevenueChaser.module_asymmetric_growth import engine
 from RevenueChaser.module_asymmetric_growth import history as ag_history
@@ -444,6 +444,7 @@ def render_asymmetric_growth_hunter_html(result: dict) -> str:
 </div>
 
 <script>{FILTERS_JS}</script>
+{watchlist_html("asymmetric_growth")}
 <script>{PAYLOAD_JS}</script>
 <script>
 var DATA = [];   // the cards: loaded from the payload route (S7, K10), never inlined
@@ -621,6 +622,7 @@ function cardHtml(c) {{
     + indexBadges + '</div>'
     + '<div class="tick"><b>'+rcEsc(c.ticker)+'</b><span class="sep"> • </span>'+rcEsc(c.name)
     + (focus?'<span class="sep"> • </span><span class="focus">'+rcEsc(focus)+'</span>':"")+'</div>'
+    + rcWatchRow(c.ticker)
     + '<div class="pv"><span>Price <b>'+(c.price!=null?"$"+c.price.toFixed(2):"N/A")+'</b></span>'
     + '<span> · Mkt Cap <b>'+usd(c.market_cap)+'</b></span>'
     + (ear?'<span> · '+ear+'</span>':"")+'</div>'

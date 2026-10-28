@@ -23,6 +23,8 @@ from RevenueChaser.core.reporting_common import (
     help_html,
     provider_health_html,
     recorded_sessions_html,
+    watch_buttons_html,
+    watchlist_html,
 )
 
 CSS = """
@@ -408,6 +410,7 @@ def render_oipd_dashboard(payload: dict) -> str:
     <div>
       <h1>Implied Probability</h1>
       <div class="sub">What the options market implies about where {_html.escape(ticker)} can be at each expiry</div>
+      {watch_buttons_html(ticker)}
     </div>
     <div class="sync">Last sync: {_html.escape(_friendly(asof))}</div>
   </div>
@@ -418,6 +421,7 @@ def render_oipd_dashboard(payload: dict) -> str:
 {body}
 </div>
 <script>{FILTERS_JS}</script>
+{watchlist_html("oipd")}
 <script>
 var PAYLOAD = __PAYLOAD__;
 var DATA = __UNIVERSE__;

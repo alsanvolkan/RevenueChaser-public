@@ -187,6 +187,22 @@ routes only enqueue and read `ops.sqlite`. Each call opens its own SQLite connec
   process's live `.rc-proc-<pid>` marker sits in the store dir or the market dir (F8 A). `stop.ps1` reads it, and
   so does the deploy gate.
 
+### The watch-list routes (PR 4)
+
+The two watch lists (D2) live in `ops.sqlite` (`rcdata/ops.py`); each write is one `BEGIN IMMEDIATE` transaction
+with its history row. No provider call, no DuckDB file.
+
+- **`POST /api/watchlist/<option|stock>/toggle/<ticker>`**: puts the ticker on that list or takes it off;
+  `{ok, list, ticker, on}`. The `X-RC-Panel` value (the board) is the row's `added_by` and the history row's `by`.
+  404 for another list, 400 for a ticker `_valid_ticker` refuses, 403 without the panel header; none writes.
+- **`POST /api/watchlist/<option|stock>/remove/<ticker>`**: the Settings cards' Remove; `{ok, list, ticker,
+  removed}`. It never adds, so a Remove on a stale page cannot put back a name removed elsewhere.
+- **`POST /api/watchlist/toggle/<ticker>`**: the pre-PR 4 route, now the stock list; answers `{ok, ticker,
+  in_watchlist}` as before. `rawstore.toggle_watchlist`, `load_watchlist` and `save_watchlist` are the stock list too.
+- **`GET /api/watchlists`**: `{ok, option: [tickers], stock: [tickers]}`, what the board buttons show as pressed.
+  The read itself never creates `ops.sqlite`; the read log it counts into is flushed to it once a minute, which
+  may, as for every `rcdata.read` call.
+
 ### Known deviation (fixed 2026-09-30)
 
 `module_sec_13f` used to refresh by unlinking the artifact and returning HTML

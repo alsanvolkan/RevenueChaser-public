@@ -4,8 +4,9 @@ Layout: a pinned Watchlist table on top, then collapsible score tiers
 (🔥 High ≥50 / ⚡ Emerging 20–49 / 💤 Quiet <20) for the market scan. Rows are a
 scannable grid: [Ticker | Footprint | Flow | Net Notional | Prints | Ask % | ⚠ | ★].
 
-Near-term earnings are an orange ⚠ tag (not a drop). The ★ button pins a name
-into ``watchlist_tickers.json`` via ``POST /api/watchlist/toggle/<ticker>``.
+Near-term earnings are an orange ⚠ tag (not a drop). Every row carries the shared watch-list pair
+(``core/reporting_common.py``, PR 4): **Stk** puts the name on the stock watch list, which is the list this
+board pins on top and scans; **Opt** puts it on the option watch list.
 """
 import html as _html
 
@@ -13,7 +14,7 @@ from RevenueChaser.core import universe
 from RevenueChaser.core.html_safe import script_json
 from RevenueChaser.core.reporting_common import (FILTERS_CSS, FILTERS_JS, filters_bar_html, filters_meta, help_html,
                                                  notice_html, provider_health_html, recorded_sessions_html,
-                                                 write_artifact)
+                                                 watch_buttons_html, watchlist_html, write_artifact)
 from datetime import datetime
 from pathlib import Path
 
@@ -58,9 +59,8 @@ tr:hover{background:#161b22}
 .score{font-weight:700}
 .pos{color:#3fb950}.neg{color:#f87171}.zero{color:#8b949e}
 .warn{color:#d2991d;font-weight:700;margin-left:4px}
-.pin{background:transparent;border:0;color:#484f58;font-size:15px;cursor:pointer;padding:0 4px}
-.pin:hover{color:#d2991d}
-.pin.on{color:#d2991d}
+td.lists{overflow:visible;padding:2px 6px}
+td.lists .rc-watch{margin:0}
 footer{margin-top:26px;padding-top:12px;border-top:1px solid #21262d;color:#484f58;font-size:11px;text-align:center}
 .note{color:#8b949e;font-size:11px;margin-top:6px;line-height:1.6}
 .legend{margin-top:22px;padding:14px 16px;border:1px solid #21262d;border-radius:8px;background:#12161c}
@@ -127,18 +127,6 @@ function initKit(){
   RCF = RCFilters.mount({root: '#rc-filters', rows: rows, meta: META, onChange: applyKit});
   applyKit(RCF);
 }
-function togglePin(btn){
-  var t = btn.getAttribute('data-ticker');
-  fetch('/api/watchlist/toggle/' + encodeURIComponent(t), {method:'POST', headers:{'X-RC-Panel':'leaps'}})
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(d && d.ok){
-        btn.classList.toggle('on', d.in_watchlist);
-        btn.textContent = d.in_watchlist ? '★' : '☆';
-      }
-    })
-    .catch(function(){});
-}
 </script>"""
 
 
@@ -185,16 +173,13 @@ def _row(snapshot: dict, pinned: bool) -> str:
     net_cls = "pos" if (net or 0) > 0 else ("neg" if (net or 0) < 0 else "zero")
     warn = '<span class="warn" title="earnings within 7 days">⚠</span>' if near else ""
     # Ticker, name and label arrive from UW / meta strings: escape for text and
-    # attributes alike (togglePin reads data-ticker, so no value sits inside JS).
+    # attributes alike (the watch-list pair reads data-ticker, so no value sits inside JS).
     lbl_cls = _label_cls(label)
     data_label = _html.escape(str(label), quote=True)     # the label filter chips read this back (L2)
     t, name, label = (_html.escape(str(v), quote=True) for v in (t, name, label))
     footprint = _html.escape("—" if footprint is None else str(footprint), quote=True)
     flow = _html.escape("—" if flow is None else str(flow), quote=True)
-    star = (f'<button class="pin on" data-ticker="{t}" onclick="togglePin(this)" '
-            f'title="remove from watchlist">★</button>' if pinned else
-            f'<button class="pin" data-ticker="{t}" onclick="togglePin(this)" '
-            f'title="add to watchlist">☆</button>')
+    lists = watch_buttons_html(snapshot.get("ticker", ""), on=("stock",) if pinned else ())
     nm = f'<div class="nm">{name}</div>' if name else ""
     return (
         f'<tr data-label="{data_label}" data-ticker="{t}">'
@@ -205,7 +190,7 @@ def _row(snapshot: dict, pinned: bool) -> str:
         f'<td class="num">{_num(freq)}</td>'
         f'<td class="num">{_pct(ask)}</td>'
         f'<td><span class="lbl {lbl_cls}">{label}</span>{warn}</td>'
-        f'<td>{star}</td>'
+        f'<td class="lists">{lists}</td>'
         f'</tr>'
     )
 
@@ -227,7 +212,7 @@ _COLGROUP = ('<colgroup>'
              '<col style="width:8%">'    # Prints
              '<col style="width:8%">'    # Ask %
              '<col style="width:16%">'   # Signal
-             '<col style="width:7%">'    # pin
+             '<col style="width:112px">'  # the watch-list pair: two 44 px buttons
              '</colgroup>')
 
 
@@ -241,7 +226,7 @@ def _tier(tier_id: str, title: str, sub: str, rows: list[dict], pinned: set, ope
         f'<th class="num" title="{_COL_HINTS["Net Notional"]}">Net Notional</th>'
         f'<th class="num" title="{_COL_HINTS["Prints"]}">Prints</th>'
         f'<th class="num" title="{_COL_HINTS["Ask %"]}">Ask %</th>'
-        '<th>Signal</th><th></th></tr>'
+        '<th>Signal</th><th>Lists</th></tr>'
     )
     body = "".join(_row(s, s["ticker"] in pinned) for s in rows)
     return (
@@ -363,14 +348,15 @@ def render_leaps_dashboard(watched: list[dict], unwatched: list[dict],
              '<div class="lg-row"><b>Ask %</b> — premium-weighted share of that flow executed on the ask '
              '(buyer lifting offers) vs the bid (seller hitting bids). 100% = all aggressive buying.</div>'
              '<div class="lg-row"><b>⚠</b> = earnings within 7 days (tagged, not dropped) · '
-             '<b>★</b> = pin/unpin from the watchlist.</div></div>')
+             '<b>Opt</b> / <b>Stk</b> = put the name on (or take it off) the option or the stock watch list; '
+             'the stock list is the Watchlist pinned on top and scanned here.</div></div>')
     body += '<footer>RevenueChaser LEAPS radar — Unusual Whales API — far-dated flow prints + delta</footer>'
 
     kit_meta = filters_meta("leaps", facets=["index", "mc", "gics", "theme"], themes=_kit_themes())
     kit_js = (f"<script>var DATA = {script_json(kit_rows)};\nvar META = {script_json(kit_meta)};\n"
               f"{FILTERS_JS}\ndocument.addEventListener('DOMContentLoaded', initKit);</script>")
     html = (f'<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>LEAPS Accumulation Radar</title>'
-            f'{CSS}{FILTERS_CSS}</head><body>{body}{JS}{kit_js}</body></html>')
+            f'{CSS}{FILTERS_CSS}</head><body>{body}{JS}{kit_js}{watchlist_html("leaps")}</body></html>')
     path.parent.mkdir(parents=True, exist_ok=True)
     write_artifact(path, html)
     return path

@@ -24,6 +24,7 @@ from RevenueChaser.core.reporting_common import (
     JOB_JS,
     THEME_CSS,
     THEME_JS,
+    WATCH_TICKER_PATTERN,
     combobox_html,
     help_html,
     provider_health_html,
@@ -1071,12 +1072,26 @@ def _flow_row(flow: dict) -> str:
             f'<span class="tail"><span class="nowrap">{store}</span>{cov}</span></li>')
 
 
+# The ops.sqlite tables a board reads (PR 4): not store tables, so no dataset claims them.
+OPS_TABLE_LABELS = {"watchlist_stock": "Stock watch list", "watchlist_option": "Option watch list"}
+
+
+def _ops_flow_row(table: str) -> str:
+    t = _html.escape(str(table))
+    return (f'<li class="bflow-row"><span class="prov">You (Opt / Stk)</span>'
+            f'<span class="arrow" aria-hidden="true">→</span>'
+            f'<span class="ds">{_html.escape(OPS_TABLE_LABELS.get(str(table), str(table)))}</span>'
+            f'<span class="tbl">({t})</span>'
+            f'<span class="tail"><span class="muted">ops.sqlite</span></span></li>')
+
+
 def _board_card(card: dict, rows_by_key: dict | None = None) -> str:
     label = _html.escape(str(card.get("label") or card.get("key") or ""))
     state = card.get("state")
     flows = _board_flows(card, rows_by_key or {})
+    ops_rows = "".join(_ops_flow_row(t) for t in card.get("ops_tables") or [])
     reads = ('<h4 class="bflow-cap">What this board reads</h4><ul class="bflow">'
-             + "".join(_flow_row(f) for f in flows) + "</ul>") if flows else ""
+             + "".join(_flow_row(f) for f in flows) + ops_rows + "</ul>") if flows or ops_rows else ""
     params = "".join(f"<li>{_html.escape(str(p))}</li>" for p in (card.get("params") or []))
     win = card.get("window") or {}
     win_txt = " · ".join(f"{_html.escape(k.replace('_', ' '))} {_html.escape(str(v))}"
@@ -2236,8 +2251,9 @@ def _ibkr_login_card(value) -> str:
 # Rendered above the old inventory, from ``newdata.collect`` (read when this page is rendered). It uses the shell's
 # theme tokens (``THEME_CSS``), scoped to ``#newdata`` so the old page's own palette is left as it is until that page
 # goes (PR 21): the token values are the shell's, only the selector differs. One column, full-width stacked cards,
-# label-value rows instead of tables, 44 px targets. The only controls are requests: Fetch, Backfill and Pause /
-# Resume post to ``/api/build/*``; nothing on the page writes data. Every handler reads ``data-*``; every string the
+# label-value rows instead of tables, 44 px targets. The controls are requests: Fetch, Backfill and Pause /
+# Resume post to ``/api/build/*``, and a watch-list card's Remove posts ``/api/watchlist/<list>/remove/<ticker>``
+# (PR 4); nothing on the page writes market data. Every handler reads ``data-*``; every string the
 # JS puts into the page goes through ``rcEsc``.
 
 ND_STATUS_WORDS = {"fresh": "fresh", "unchanged": "unchanged", "late": "late", "stale": "stale",
@@ -2285,6 +2301,8 @@ ND_CSS = ND_THEME_CSS + """
 #newdata .nd-msg{color:var(--muted);font-size:12.5px;min-height:1em}
 #newdata .nd-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
 #newdata .nd-list li{border-bottom:1px solid var(--border);padding:4px 0}
+#newdata .nd-watch-item{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 12px}
+#newdata .nd-watch-line{min-width:0;flex:1 1 12em}
 """
 
 
@@ -2452,6 +2470,45 @@ def _nd_retirement(rows: list[dict]) -> str:
             f'<div class="nd-rows">{body}</div></div>')
 
 
+ND_WATCH_TITLES = {"option": "Option watch list", "stock": "Stock watch list"}
+ND_OPTIONS_LATER = "the options build comes later (build-plan step 11)"
+ND_WATCH_SUBS = {
+    "option": "The names the options build covers besides SPX (D2). Press <b>Opt</b> next to a ticker on any board "
+              "to add one.",
+    "stock": "The names LEAPS pins and scans, and Earnings treats as watched. Press <b>Stk</b> next to a ticker on "
+             "any board to add one.",
+}
+
+
+def _nd_watch_card(kind: str, wl: dict, ob: dict) -> str:
+    """One watch list's card: its names (ticker, added on, by, note) with a Remove each; stacked rows, no table."""
+    rows = wl.get("rows") or []
+    items = "".join(
+        f'<li class="nd-watch-item" data-ticker="{esc(r.get("ticker"))}">'
+        f'<div class="nd-watch-line"><b>{_nd(r.get("ticker"))}</b>'
+        f' <span class="nd-k">added {_nd(r.get("added_on"))} by {_nd(r.get("added_by"))}</span>'
+        + (f' · {_nd(r.get("note"))}' if r.get("note") else "") + "</div>"
+        f'<button type="button" class="nd-btn" data-nd-act="watch-remove" data-list="{esc(kind)}" '
+        f'data-ticker="{esc(r.get("ticker"))}" aria-label="Remove {esc(r.get("ticker"))} from the '
+        f'{esc(ND_WATCH_TITLES[kind].lower())}">Remove</button></li>' for r in rows)
+    empty = '<li class="nd-k nd-watch-empty">No names yet.</li>'
+    queued = ""
+    if kind == "option":
+        names = ob.get("queued") or []
+        always = " + ".join(_nd(a) for a in ob.get("always") or [])
+        queued = _nd_row("Names queued for the next options build",
+                         f"<span data-nd-queued>{always} and {len(names)} name{'' if len(names) == 1 else 's'} "
+                         "from this list" + (f": {', '.join(_nd(n) for n in names)}" if names else "")
+                         + f" · {ND_OPTIONS_LATER}</span>")
+    return (f'<div class="nd-card nd-watch" id="nd-watch-{esc(kind)}" data-list="{esc(kind)}">'
+            f'<h3>{esc(ND_WATCH_TITLES[kind])} <span class="nd-chip" data-nd-watch-count="{esc(kind)}">'
+            f'{len(rows)}</span></h3>'
+            f'<div class="nd-sub">{ND_WATCH_SUBS[kind]}</div>'
+            + (f'<div class="nd-rows">{queued}</div>' if queued else "")
+            + f'<ul class="nd-list nd-watch-list">{items or empty}</ul>'
+            '<div class="nd-msg" aria-live="polite" data-nd-msg></div></div>')
+
+
 def _newdata_section(nd: dict | None) -> str:
     if not nd:
         return ""
@@ -2467,12 +2524,17 @@ def _newdata_section(nd: dict | None) -> str:
     cards = "".join(_nd_dataset_card(c) for c in nd.get("datasets") or [])
     ret = nd.get("retention") or {}
     wl = nd.get("watchlists") or {}
+    ob = nd.get("options_build") or {}
+    counts = " · ".join(f'{esc(k)} <span data-nd-watch-count="{esc(k)}">{_nd((wl.get(k) or {}).get("count", 0))}'
+                        f'</span>' for k in ND_WATCH_TITLES)
     return (
         '<section id="newdata" aria-labelledby="newdata-h">'
         '<h2 id="newdata-h">New data system</h2>'
         f'<div class="nd-sub" id="nd-verified">Verified running: {verified}</div>'
+        f'<div class="nd-sub" id="nd-watch-summary">Watch lists: {counts}</div>'
         '<div class="nd-sub">Read when this page was rendered. Fetch, Backfill and Pause / Resume only put a request '
-        'in the queue; the builder runs it. Nothing on this page writes data.</div>'
+        'in the queue; the builder runs it. Remove takes a name off a watch list. Nothing on this page writes market '
+        'data.</div>'
         f"{cards}"
         f'<div class="nd-card" id="nd-queue"><h3>Queue</h3>{_nd_queue_rows(nd.get("queue") or {})}</div>'
         f'{_nd_spend(nd.get("spend") or {})}'
@@ -2481,9 +2543,8 @@ def _newdata_section(nd: dict | None) -> str:
         f'<div class="nd-rows">{_nd_row("Retention", _nd_warn(_nd(ret.get("text")), ret.get("warn")))}'
         + (_nd_row("Set by", _nd(ret.get("source"))) if ret.get("source") else "") + "</div></div>"
         f'{_nd_retirement(nd.get("retirement") or [])}'
-        '<div class="nd-card" id="nd-watchlists"><h3>Watch lists</h3><div class="nd-rows">'
-        + "".join(_nd_row(f"{k} watch list", f"{_nd(n)} tickers") for k, n in wl.items())
-        + "</div></div></section>")
+        + "".join(_nd_watch_card(k, wl.get(k) or {}, ob) for k in ND_WATCH_TITLES)
+        + "</section>")
 
 
 def _nd_client(nd: dict | None) -> dict:
@@ -2492,7 +2553,10 @@ def _nd_client(nd: dict | None) -> dict:
     for c in (nd or {}).get("datasets") or []:
         bf = c.get("backfill") or {}
         out[str(c.get("dataset"))] = {"missing": bf.get("missing"), "calls_per_partition": bf.get("calls_per_partition")}
-    return {"datasets": out, "confirm_over": ND_BACKFILL_CONFIRM_OVER, "next_pass": ND_NEXT_PASS}
+    ob = (nd or {}).get("options_build") or {}
+    return {"datasets": out, "confirm_over": ND_BACKFILL_CONFIRM_OVER, "next_pass": ND_NEXT_PASS,
+            "ticker_pattern": WATCH_TICKER_PATTERN, "options_always": ob.get("always") or [],
+            "options_later": ND_OPTIONS_LATER}
 
 
 ND_JS = r"""
@@ -2562,6 +2626,32 @@ function ndSchedule(btn, action){
     ndSay(card, paused ? 'Paused: the builder skips it until Resume.' : 'Resumed.');
   });
 }
+function ndWatchRemove(btn){
+  var list = btn.getAttribute('data-list'), t = btn.getAttribute('data-ticker');
+  var card = btn.closest('.nd-watch'), say = function(html){ var m = card && card.querySelector('[data-nd-msg]');
+    if(m) m.innerHTML = html; };
+  if((list !== 'option' && list !== 'stock') || !new RegExp('^' + ND.ticker_pattern + '$').test(t || '')) return;
+  btn.disabled = true;
+  fetch('/api/watchlist/' + list + '/remove/' + encodeURIComponent(t), {method: 'POST',
+        headers: {'X-RC-Panel': 'settings'}}).then(function(r){
+    return r.json().then(function(d){ return {status: r.status, d: d || {}}; });
+  }).then(function(res){
+    if(!res.d.ok){ btn.disabled = false; say('<span class="nd-bad">' + rcEsc(res.d.error || ('HTTP ' + res.status)) +
+      '</span>'); return; }
+    var li = btn.closest('li');
+    if(li && li.parentNode) li.parentNode.removeChild(li);
+    var items = card ? card.querySelectorAll('li.nd-watch-item') : [], left = items.length;
+    document.querySelectorAll('[data-nd-watch-count="' + list + '"]').forEach(function(el){
+      el.textContent = String(left); });
+    var q = list === 'option' && card ? card.querySelector('[data-nd-queued]') : null;
+    if(q){
+      var names = Array.prototype.map.call(items, function(i){ return i.getAttribute('data-ticker'); });
+      q.textContent = (ND.options_always || []).join(' + ') + ' and ' + left + (left === 1 ? ' name' : ' names') +
+        ' from this list' + (left ? ': ' + names.join(', ') : '') + ' · ' + ND.options_later;
+    }
+    say(rcEsc(t) + (res.d.removed ? ' removed.' : ' was no longer on the list.'));
+  }).catch(function(e){ btn.disabled = false; say('<span class="nd-bad">' + rcEsc(String(e)) + '</span>'); });
+}
 document.addEventListener('click', function(ev){
   var btn = ev.target && ev.target.closest ? ev.target.closest('#newdata [data-nd-act]') : null;
   if(!btn) return;
@@ -2573,6 +2663,7 @@ document.addEventListener('click', function(ev){
     if(real) ndBackfill(real, true);
   }
   else if(act === 'pause' || act === 'resume') ndSchedule(btn, act);
+  else if(act === 'watch-remove') ndWatchRemove(btn);
 });
 """
 

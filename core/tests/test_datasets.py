@@ -266,3 +266,11 @@ def test_no_dataset_carries_a_gap_kind_without_the_step_its_kind_needs():
     for spec in datasets.REGISTRY:
         if spec.gap_kind in needs_step:
             assert spec.next_step and spec.next_step.strip(), spec.key
+
+
+def test_the_inputs_freshness_no_longer_reads_the_unwritten_watchlist_history():
+    """PR 4: the watch lists live in ops.sqlite; the raw ``watchlist`` tables stay claimed (the manifest still has
+    them) but nothing writes them, so the inputs freshness reads the board settings' history only."""
+    spec = datasets.by_key("inputs")
+    assert spec.freshness == ("board_settings_changes", "run_at")
+    assert "watchlist" in spec.tables and "ops.sqlite" in spec.writer_note

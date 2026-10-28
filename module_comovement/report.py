@@ -41,6 +41,7 @@ from RevenueChaser.core.reporting_common import (
     filters_meta,
     help_html,
     provider_health_html,
+    watchlist_html,
 )
 
 from RevenueChaser.core.gics_map import sector_path
@@ -908,7 +909,8 @@ function jumpTo(r){
   var strip = document.getElementById("strip");
   var g = DATA.filter(function(x){ return x.cut === BOARD.cut && x.cluster_id === r.cluster_id; });
   strip.style.display = "block";
-  strip.innerHTML = '<b>' + rcEsc(r.ticker) + '</b> (' + rcEsc(r.name || r.ticker) + ') is in <b>' + rcEsc(r.cluster_label) + '</b> at the ' + rcEsc(cutWord(BOARD.cut)) + ' level, with ' + plural(Math.max(0, g.length - 1), "other name") + '.';
+  strip.innerHTML = '<b>' + rcEsc(r.ticker) + '</b> (' + rcEsc(r.name || r.ticker) + ') is in <b>' + rcEsc(r.cluster_label) + '</b> at the ' + rcEsc(cutWord(BOARD.cut)) + ' level, with ' + plural(Math.max(0, g.length - 1), "other name") + '.'
+    + rcWatchRow(r.ticker);       // the found name's watch-list pair (PR 4); a chip is itself a button
   if(card){
     var d = card.querySelector('.chip[data-t="' + r.ticker.replace(/"/g, "") + '"]').closest("details");
     if(d) d.open = true;
@@ -1036,6 +1038,7 @@ function init(){
 </div>
 <div class="tip" id="tip" role="tooltip" hidden></div>
 <script>{FILTERS_JS}</script>
+{watchlist_html("comovement")}
 <script>{JOB_JS}
 {JS}
 init();

@@ -52,8 +52,9 @@ CASES = {
          "/api/settings/board/module_comovement",
          "/api/automations/RC-Store-Backup/install"]),
     "module_leaps": (
-        "togglePin(_btn({'data-ticker': 'AAPL'}));",
-        ["/api/watchlist/toggle/AAPL"]),
+        "rcWatchToggle(_btn({'data-rc-watch': 'stock', 'data-ticker': 'AAPL'}));"
+        "rcWatchToggle(_btn({'data-rc-watch': 'option', 'data-ticker': 'AAPL'}));",
+        ["/api/watchlist/stock/toggle/AAPL", "/api/watchlist/option/toggle/AAPL"]),
     "module_uw_interaction": (
         """
         document.getElementById('uw-tool').value = 'flow_alerts';

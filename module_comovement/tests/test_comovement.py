@@ -1952,6 +1952,9 @@ def test_the_funnel_shows_the_split_steps():
 _FETCH_STUB = r"""
 var FETCHES = [], RESP = [];
 globalThis.fetch = function(url, opts){
+  // The watch-list pair's own read on load (PR 4) is answered here, so it takes no queued answer of the test's.
+  if(url === "/api/watchlists") return Promise.resolve({status: 200, ok: true,
+    json: function(){ return Promise.resolve({ok: true, option: [], stock: []}); }});
   FETCHES.push({url: url, body: opts && opts.body ? JSON.parse(opts.body) : null});
   var r = RESP.shift() || {status: 200, body: {ok: true, job: {status: "running"}}};
   return Promise.resolve({status: r.status, ok: r.status < 400,

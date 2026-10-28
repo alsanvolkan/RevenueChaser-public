@@ -56,19 +56,21 @@ def test_buttons_read_their_dataset_from_data_attributes_never_an_inline_handler
     sec = _section(_page(nd))
     buttons = re.findall(r"<button[^>]*>", sec)
     assert {re.search(r'data-nd-act="([^"]+)"', b).group(1) for b in buttons} == {"fetch", "backfill", "pause",
-                                                                                   "resume"}
+                                                                                   "resume", "watch-remove"}
     for b in buttons:
-        assert "onclick" not in b.lower() and 'data-dataset="' in b
+        remove = 'data-nd-act="watch-remove"' in b
+        assert "onclick" not in b.lower() and ('data-dataset="' in b or (remove and 'data-ticker="' in b))
         assert "<img" not in b                              # the hostile dataset name is escaped in the attribute
     assert "onclick" not in report.ND_JS and "addEventListener('click'" in report.ND_JS
 
 
-def test_the_only_controls_are_fetch_backfill_and_pause_resume():
+def test_the_only_controls_are_fetch_backfill_pause_resume_and_the_watch_list_remove():
     sec = _section(_page())
     labels = re.findall(r"<button[^>]*>([^<]*)</button>", sec)
-    assert sorted(set(labels)) == ["Backfill", "Fetch", "Pause", "Resume"]
+    assert sorted(set(labels)) == ["Backfill", "Fetch", "Pause", "Remove", "Resume"]
     routes = set(re.findall(r"'/api/[a-z/]+", report.ND_JS))
-    assert routes == {"'/api/build/queue", "'/api/build/request/", "'/api/build/schedule/"}
+    assert routes == {"'/api/build/queue", "'/api/build/request/", "'/api/build/schedule/", "'/api/watchlist/"}
+    assert "/remove/" in report.ND_JS and "/toggle/" not in report.ND_JS     # Remove never adds
     for word in ("drop", "restore", "compact", "delete", "edit"):
         assert f">{word.capitalize()}<" not in sec
 

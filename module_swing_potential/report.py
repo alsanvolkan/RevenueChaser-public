@@ -26,6 +26,7 @@ from RevenueChaser.core.reporting_common import (
     provider_health_html,
     recorded_sessions_html,
     universe_provenance_html,
+    watchlist_html,
 )
 from RevenueChaser.core.scan_quality import no_data_hint, regime_parts
 from RevenueChaser.module_swing_potential import config
@@ -375,6 +376,7 @@ function cardHtml(c){
     + '<span class="qscore" title="Quality (40/30/30)">' + qscoreTxt + '</span></div>'
     + '<div class="tick"><b>' + t + '</b>'
     + (name ? '<span class="sep"> • </span>'+name : '') + '</div>'
+    + rcWatchRow(c.ticker)
     + '<div class="px"><span class="big">$' + (price != null ? price.toFixed(2) : "N/A") + '</span>'
     + '<span class="chg ' + chgClass(chg1w) + '">' + chg1wTxt + '<em>1W</em></span>'
     + '<span class="chg ' + chgClass(chg1m) + '">' + chg1mTxt + '<em>1M</em></span>'
@@ -580,6 +582,7 @@ function start(){
   </div>
 </div>
 <script>{FILTERS_JS}</script>
+{watchlist_html("swing_potential")}
 <script>
 {JS}
 document.getElementById("modal").addEventListener("click", function(e){{ if(e.target === this) closeModal(); }});

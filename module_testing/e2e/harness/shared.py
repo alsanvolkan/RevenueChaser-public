@@ -64,6 +64,10 @@ def running_dashboard(root: Path, store: Path, cache: Path, base_env: dict[str, 
     # RUN, which all xdist workers share (and the backup dir would be the host's real platform default).
     env["RC_EDGAR_DOCS_DIR"] = str(root / "edgar_docs")
     env["RAW_STORE_BACKUP_DIR"] = str(root / "backups")
+    # The market roots hold ops.sqlite, and with it the watch lists (PR 4): one per run, a pin one test made would
+    # be every later dashboard's. A test that passes its own market roots keeps them.
+    env.setdefault("RC_MARKET_DIR", str(root / "market"))
+    env.setdefault("RC_MARKET_RAW_DIR", str(root / "market_raw"))
     (root / "patreon").mkdir(exist_ok=True)
     dash = Dashboard(store_dir=store, cache_dir=cache, env=env,
                      log_path=root / "dashboard.log")

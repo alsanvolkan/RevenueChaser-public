@@ -164,7 +164,7 @@ def test_restore_round_trip_keeps_the_previous_file(rawstore_tmp_db, tmp_path):
     snap = bs.snapshot(out_dir=tmp_path, keep=3)
     rawstore.write_rows("watchlist", [{"ticker": "LATER"}])
     assert rs.main(["--from", str(tmp_path), "--latest", "raw"]) == 0
-    assert rawstore.load_watchlist() == {"NOK"}
+    assert {r["ticker"] for r in rawstore.get_all("watchlist")} == {"NOK"}   # the store table, not the ops list
     assert rawstore.DB_PATH.with_name("raw.duckdb.pre-restore").exists()
     assert snap.is_file()
 
