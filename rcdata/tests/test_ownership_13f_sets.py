@@ -245,15 +245,16 @@ def test_a_short_backfill_reads_the_forms_and_never_the_sets(feed, http_mock):
     assert "a backfill of 3 weekdays reads the forms; the data sets fill a range of 20 weekdays or more" in row["note"]
 
 
-def _with_repeated_rows(zip_bytes: bytes, members: tuple[str, ...]) -> bytes:
-    """The zip with each member's first data row written twice, as a malformed set might."""
+def _with_repeated_rows(zip_bytes: bytes, members: tuple[str, ...], again=lambda line: line) -> bytes:
+    """The zip with each member's first data row written twice, as a malformed set might; ``again`` rewrites the
+    repeat (a conflicting row)."""
     src, out = zipfile.ZipFile(io.BytesIO(zip_bytes)), io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for name in src.namelist():
             body = src.read(name).decode()
             if name.rsplit("/", 1)[-1].split(".")[0] in members:
                 lines = body.splitlines(keepends=True)
-                body = "".join(lines[:2] + lines[1:])
+                body = "".join(lines[:2] + [again(lines[1])] + lines[2:])
             z.writestr(name, body)
     return out.getvalue()
 
@@ -267,6 +268,22 @@ def test_a_cover_or_summary_row_written_twice_does_not_count_a_filing_twice(feed
     _backfill("2026-06-01", "2026-08-31")
     assert _served(f"SELECT accession, holdings FROM {sec13f.TABLE}") == [("0001000001-26-000101", 1)]
     assert len(_holdings("0001000001-26-000101")) == 1
+
+
+def test_of_two_conflicting_summary_rows_the_first_the_set_wrote_is_kept(feed, http_mock):
+    """Delta review D6: when a repeated SUMMARYPAGE row disagrees with the first, the first row of the file is kept,
+    the same one on every run."""
+    one = ox.f13_set([ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026",
+                                    [ox.f13_holding("MICROSOFT CORP", "594918104", 400_000, 1000)])])
+    cols = ox.SET_COLUMNS["SUMMARYPAGE"]
+
+    def conflicting(line: str) -> str:
+        cells = line.rstrip("\n").split("\t")
+        cells[cols.index("TABLEENTRYTOTAL")] = "7"
+        return "\t".join(cells) + "\n"
+    http_mock.routes.insert(0, (HREFS[0], _with_repeated_rows(one, ("SUMMARYPAGE",), conflicting), 200, {}))
+    _backfill("2026-06-01", "2026-08-31")
+    assert _served(f"SELECT entry_total, detail FROM {sec13f.TABLE}") == [(1, None)]
 
 
 @pytest.mark.parametrize("start, end", [("2026-06-01", "2026-08-31"), ("2026-07-29", "2026-07-31")])

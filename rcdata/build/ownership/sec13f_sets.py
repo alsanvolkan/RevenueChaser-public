@@ -187,9 +187,10 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
     EDGAR path writes them."""
     form_list = ", ".join(f"'{f}'" for f in sorted(forms))
     # One row per accession in each member: a row written twice would fan a filing and its holdings out (review N4).
+    # Of conflicting rows the first the file holds is kept (``rowid`` is the file order), the same one every run.
     for table in ("submission", "coverpage", "summarypage"):
         con.execute(f"""CREATE OR REPLACE TABLE z_{table} AS SELECT * FROM z_{table}
-            QUALIFY row_number() OVER (PARTITION BY trim(ACCESSION_NUMBER)) = 1""")
+            QUALIFY row_number() OVER (PARTITION BY trim(ACCESSION_NUMBER) ORDER BY rowid) = 1""")
     con.execute(f"""CREATE TABLE z_sub AS
         SELECT trim(ACCESSION_NUMBER) AS accession, CAST(TRY_CAST(trim(CIK) AS BIGINT) AS VARCHAR) AS cik,
                upper(trim(SUBMISSIONTYPE)) AS form, {_day('PERIODOFREPORT')} AS period,
