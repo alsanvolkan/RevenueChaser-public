@@ -177,8 +177,17 @@ from a `dataset_check` row of dataset `backup/portable` or "not recorded"; each 
 missing), the raw option retention warning (on until `RC_RAW_RETENTION_DAYS` or a `dataset_schedule` row
 `retention_days`, with the days as its cadence, says how long raw option files are kept), retirement (reads of
 each old table the new data replaces, from `read_log` over 14 days, with the registry task that still writes it),
-and the watch-list counts (no buttons: PR 4). A "verified running" line on top: the builder's last run
-(`job_runs2`), the last swap per kind and the `ops_schema` version.
+and the two watch-list cards (PR 4, below). A "verified running" line on top: the builder's last run
+(`job_runs2`), the last swap per kind and the `ops_schema` version; under it the watch-list counts.
+
+**The two watch-list cards (PR 4, D2).** The option list (what the options build covers besides SPX) and the stock
+list (what LEAPS pins and scans and Earnings treats as watched), read through `rcdata.read.watchlists()`. Each name is
+a stacked row: ticker, added on (UTC), by (the board whose button added it), the note when one is set, and a
+**Remove** that posts `POST /api/watchlist/<list>/remove/<ticker>` (it never adds, so a stale page cannot put back a
+name removed elsewhere). The option card also says which names the next options build takes: SPX and every name on
+the option list, until that build exists (build-plan step 11). Names are added from the boards: every board that
+renders tickers carries the **Opt** / **Stk** pair (`docs/dashboard_ui.md` §2c). A note is not edited on the page
+yet.
 
 **The buttons are requests, nothing else (F7 A, F10 B).**
 

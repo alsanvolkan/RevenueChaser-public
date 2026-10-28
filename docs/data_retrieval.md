@@ -195,6 +195,8 @@ with its history row. No provider call, no DuckDB file.
 - **`POST /api/watchlist/<option|stock>/toggle/<ticker>`**: puts the ticker on that list or takes it off;
   `{ok, list, ticker, on}`. The `X-RC-Panel` value (the board) is the row's `added_by` and the history row's `by`.
   404 for another list, 400 for a ticker `_valid_ticker` refuses, 403 without the panel header; none writes.
+- **`POST /api/watchlist/<option|stock>/remove/<ticker>`**: the Settings cards' Remove; `{ok, list, ticker,
+  removed}`. It never adds, so a Remove on a stale page cannot put back a name removed elsewhere.
 - **`POST /api/watchlist/toggle/<ticker>`**: the pre-PR 4 route, now the stock list; answers `{ok, ticker,
   in_watchlist}` as before. `rawstore.toggle_watchlist`, `load_watchlist` and `save_watchlist` are the stock list too.
 - **`GET /api/watchlists`**: `{ok, option: [tickers], stock: [tickers]}`, what the board buttons show as pressed.

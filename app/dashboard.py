@@ -1595,6 +1595,21 @@ def api_watchlist_kind_toggle(kind: str, ticker: str):
     return jsonify({"ok": True, "list": kind, "ticker": t, "on": on})
 
 
+@app.route("/api/watchlist/<kind>/remove/<ticker>", methods=["POST"])
+def api_watchlist_remove(kind: str, ticker: str):
+    """Take ``ticker`` off one watch list (the Settings cards' Remove): ``{ok, list, ticker, removed}``, where
+    ``removed`` is false when it was not there (nothing is written then). Never adds, so a Remove pressed on a stale
+    page cannot put back a name removed elsewhere. 404 / 400 / 403 as the toggle."""
+    from RevenueChaser.rcdata import ops
+    if kind not in ops.WATCH_KINDS:
+        return jsonify({"ok": False, "error": f"unknown watch list {kind!r}"}), 404
+    t = (ticker or "").strip().upper()
+    if not _valid_ticker(t):
+        return jsonify({"ok": False, "error": "bad ticker"}), 400
+    removed = ops.watch_remove(kind, t, by=_requested_by())
+    return jsonify({"ok": True, "list": kind, "ticker": t, "removed": removed})
+
+
 @app.route("/api/watchlists")
 def api_watchlists():
     """Both watch lists' tickers, ``{ok, option: [...], stock: [...]}``: what a board's button pair shows as pressed.

@@ -45,7 +45,7 @@ def test_an_unknown_list_is_404_and_writes_nothing(client):
 
 @pytest.mark.parametrize("ticker", HOSTILE)
 @pytest.mark.parametrize("route", ["/api/watchlist/option/toggle/", "/api/watchlist/stock/toggle/",
-                                   "/api/watchlist/toggle/"])
+                                   "/api/watchlist/toggle/", "/api/watchlist/option/remove/"])
 def test_a_ticker_valid_ticker_refuses_is_400_and_writes_nothing(client, route, ticker):
     from urllib.parse import quote
     r = client.post(route + quote(ticker, safe=""))
@@ -95,3 +95,19 @@ def test_the_lists_read_is_both_tickers_lists_and_never_creates_the_file(client)
     client.post("/api/watchlist/stock/toggle/MSFT")
     client.post("/api/watchlist/stock/toggle/AAPL")
     assert client.get("/api/watchlists").get_json() == {"ok": True, "option": ["NVDA"], "stock": ["AAPL", "MSFT"]}
+
+
+def test_remove_takes_a_name_off_and_never_adds_it(client):
+    client.post("/api/watchlist/option/toggle/NVDA", headers={"X-RC-Panel": "leaps"})
+    r = client.post("/api/watchlist/option/remove/nvda", headers={"X-RC-Panel": "settings"})
+    assert r.get_json() == {"ok": True, "list": "option", "ticker": "NVDA", "removed": True}
+    again = client.post("/api/watchlist/option/remove/NVDA", headers={"X-RC-Panel": "settings"})
+    assert again.get_json()["removed"] is False and ops.watch_list("option") == []
+    assert _history("option") == [("NVDA", "add", "leaps"), ("NVDA", "remove", "settings")]
+
+
+def test_remove_refuses_an_unknown_list_a_bad_ticker_and_a_missing_header(client):
+    assert client.post("/api/watchlist/bond/remove/NVDA").status_code == 404
+    assert client.post("/api/watchlist/stock/remove/%3Cb%3E").status_code == 400
+    assert dashboard.app.test_client().post("/api/watchlist/stock/remove/NVDA").status_code == 403
+    assert not ops.ops_path().exists()
