@@ -17,6 +17,10 @@ from .conftest import make_raw, make_snapshot
 def _long_gamma_raw() -> dict:
     raw = make_raw()
     raw["gex_levels"]["data"]["gamma_flip"] = "7700"
+    # A stored 0-1 DTE slice (PR 3): without one there is no squeeze trigger (avo, 28 Oct 2026), and a strike it has
+    # no row for holds $0 (review SF1). -$300M at 7800 is past the $200M squeeze threshold.
+    raw["zero_one_dte"] = {"stored": True, "dollars": {7800.0: -300.0e6, 7850.0: 1.0e9},
+                           "label": "0-1 DTE fixture slice"}
     return raw
 
 
@@ -53,6 +57,15 @@ def test_synthetic_pin_and_flip(snapshot):
 def test_synthetic_upside_trigger(snapshot):
     p = snapshot["prediction"]
     assert p["upside_trigger"] == 7800.0
+    assert p["upside_trigger_net_gex"] == -300.0e6, "sized by its 0-1 DTE dollars, not the per-unit grid"
+
+
+def test_no_upside_trigger_at_a_strike_the_stored_slice_has_no_row_for():
+    """Review SF1: a strike missing from a stored 0-1 DTE slice holds $0 of 0-1 DTE gamma: below $200M, no trigger.
+    (The old rule fired there, sized by the per-unit grid.)"""
+    raw = _long_gamma_raw()
+    raw["zero_one_dte"]["dollars"] = {7850.0: 1.0e9}
+    assert normalize_snapshot(raw, "2026-08-14")["prediction"]["upside_trigger"] is None
 
 
 def test_synthetic_downside_vanna_floor(snapshot):
@@ -275,7 +288,7 @@ def test_html_prediction_absent_degrades():
     assert 'class="prediction-container"' not in html
     assert "EXPECTED DIRECTION" not in html
 
-def test_prediction_cache_written_without_api_duplication(tmp_path, monkeypatch):
+def test_prediction_cache_written_without_api_duplication(tmp_path, monkeypatch, stored_make_raw_window):
     """A cached prediction is written once alongside the snapshot; re-serving it
     (Refresh Tab) never invokes the UW client again."""
     from RevenueChaser.module_spx_gamma import run as spx_run

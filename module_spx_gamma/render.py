@@ -163,16 +163,15 @@ def level_migration(snapshot: dict, prev_snapshot: dict | None) -> list[dict]:
     return rows
 
 
-# The live raw file behind each panel (snapshot.LIVE_FILES); see run._historical_live_files.
+# The live raw file behind each panel (snapshot.LIVE_FILES); see run._historical_live_files. The VIX and CFTC panels
+# have none since PR 3: they read the market store for the day shown.
 _PANEL_FILES = {
-    "vix": "vix_family.json",
     "iv_rank": "iv_rank.json",
     "vrp": "variance_risk_premium.json",
     "realized_vol": "realized_vol.json",
     "options_volume": "options_volume.json",
     "max_pain": "max_pain.json",
     "vol_term": "vol_term_structure.json",
-    "cftc": "cftc_tff.json",
     "skew": "interpolated_iv.json",
     "iron_butterfly": "option_chain.json",
 }
@@ -182,6 +181,20 @@ def _historical_panels(snapshot: dict) -> dict[str, bool]:
     """Panel -> True when its live file was fetched in a later session than the day shown."""
     live = set(snapshot.get("historical_live_files") or [])
     return {panel: fn in live for panel, fn in _PANEL_FILES.items()}
+
+
+def store_labels(snapshot: dict) -> dict[str, str]:
+    """Market-store input -> the line naming where it came from (its date, source and status), or "<input> not
+    stored for <day>" (PR 3). Empty for a snapshot built without the store."""
+    inputs = snapshot.get("store_inputs") or {}
+    return {k: str(v.get("label")) for k, v in sorted(inputs.items()) if isinstance(v, dict) and v.get("label")}
+
+
+def store_notes(snapshot: dict) -> dict[str, str]:
+    """Market-store input -> its "not stored for <day>" label, for each input the store did not hold (PR 3)."""
+    inputs = snapshot.get("store_inputs") or {}
+    return {k: str(v.get("label")) for k, v in sorted(inputs.items())
+            if isinstance(v, dict) and v.get("stored") is False}
 
 
 # Quality flags (normalize.normalize_snapshot) -> the phrase the banner names them by.
@@ -224,7 +237,48 @@ def data_quality_notice(snapshot: dict, data_root=None) -> str | None:
         parts.append("Fetch warnings: " + "; ".join(warnings) + ".")
     if missing:
         parts.append("Data unavailable: " + ", ".join(missing) + ".")
+    not_stored = list(store_notes(snapshot).values())
+    if not_stored:
+        parts.append("Not stored (no live fallback): " + "; ".join(not_stored) + ".")
+    zero_one = (snapshot.get("store_inputs") or {}).get("zero_one_dte") or {}
+    if zero_one.get("stored") and zero_one.get("fallback"):
+        # review SF2: the previous session's snapshot holds the day's 0 DTE expiry only
+        parts.append(f"Partial: {zero_one.get('label')}; the pin and squeeze tests use that smaller sum.")
     return " ".join(parts) or None
+
+
+def _billions(value) -> str:
+    return f"${value / 1e9:,.2f}B" if value is not None else "n/a"
+
+
+def pin_source_line(snapshot: dict) -> str | None:
+    """The line under the pin naming the 0-1 DTE basis of its $10B test and the snapshot it came from (review S4).
+
+    The all-expiry number is shown beside it as context only (A2). None for a snapshot built without the market
+    store (no ``zero_one_dte`` meta), which renders as it always did.
+    """
+    meta = snapshot.get("zero_one_dte")
+    if not isinstance(meta, dict):
+        return None
+    if not meta.get("stored"):
+        return (f"{meta.get('label')}: the pin's $10B and the squeeze's $200M tests are not run, so there is no "
+                f"pin flag and no squeeze trigger.")
+    pred = snapshot.get("prediction") or {}
+    magnet = pred.get("pin_magnet")
+    if magnet is None:
+        return f"No 0-1 DTE magnet within the pin window. {meta.get('label')}."
+    return (f"Pin size at {magnet:,.0f}: {_billions(pred.get('pin_dollars'))} 0-1 DTE OI gamma (flag at $10B); "
+            f"all-expiry {_billions(pred.get('pin_dollars_all_expiry'))}, context only. {meta.get('label')}.")
+
+
+def builder_line(snapshot: dict) -> str | None:
+    """The one line a Fetch adds after asking the builder for the board's datasets (PR 3, A4); None otherwise."""
+    req = snapshot.get("builder_request")
+    if not isinstance(req, dict):
+        return None
+    asked = "; ".join(f"{name} {state}" for name, state in sorted((req.get("datasets") or {}).items()))
+    return (f"Market store: builder requested at {req.get('requested_at')} ({asked}); the builder runs hourly at "
+            f":07, and this board shows what is stored now.")
 
 
 def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=None) -> dict:
@@ -276,7 +330,9 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
     charm_mode = "directionalized volume" if charm.get("mode") == "directionalized_volume" else "open interest"
     charm_disclosure = f"Highest abs net Charm in Mode A ({charm_mode}). Status: {charm_label}"
     if charm_dom is not None:
-        charm_disclosure += f" (distance {charm_dist * 100:.1f}%, dominance {charm_dom:.2f}x)"
+        # No spot (the SPX closes not stored and no live level, PR 3) leaves the distance unknown.
+        dist_text = f"{charm_dist * 100:.1f}%" if charm_dist is not None else "n/a"
+        charm_disclosure += f" (distance {dist_text}, dominance {charm_dom:.2f}x)"
     else:
         charm_disclosure += " (no runner-up)"
 
@@ -459,6 +515,10 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "migration": level_migration(snapshot, prev_snapshot),
         "summary_expiry": _expiry_summary(snapshot),
         "prediction": snapshot.get("prediction") or {},
+        "pin_line": pin_source_line(snapshot),
+        "store_notes": store_notes(snapshot),
+        "store_labels": store_labels(snapshot),
+        "builder_line": builder_line(snapshot),
         "iron_butterfly": snapshot.get("iron_butterfly"),
         # ── v3 external panels ──
         "max_pain": _max_pain_rows(snapshot),

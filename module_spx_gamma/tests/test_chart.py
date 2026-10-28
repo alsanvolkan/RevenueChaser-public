@@ -107,3 +107,20 @@ def test_the_export_passes_the_responsive_config_to_plotly(tmp_path, snapshot):
     fig.__dict__["to_html"] = spy
     _export_chart(fig, tmp_path, "position_map", png=False)
     assert (seen.get("config") or {}).get("responsive") is True
+
+
+def test_a_close_only_window_is_drawn_as_a_close_line():
+    """PR 3: the market store's SPX window (Cboe's one-column file) has closes only; a candlestick of it would be
+    empty, so it is drawn as a line, and the footnote names its source."""
+    import plotly.graph_objects as go
+
+    from RevenueChaser.module_spx_gamma.charts import position_map
+    from RevenueChaser.module_spx_gamma.tests.conftest import make_snapshot
+
+    snap = make_snapshot()
+    snap["candles"] = [{**c, "open": None, "high": None, "low": None, "volume": None} for c in snap["candles"]]
+    fig = position_map.build(snap, include_tornado=False)
+    assert not any(isinstance(t, go.Candlestick) for t in fig.data)
+    line = next(t for t in fig.data if isinstance(t, go.Scatter) and t.name == "SPX close")
+    assert list(line.y) == [c["close"] for c in snap["candles"]]
+    assert any("Cboe SPX" in (a.text or "") for a in fig.layout.annotations)

@@ -206,6 +206,47 @@ def make_snapshot() -> dict:
     return normalize_snapshot(make_raw(), "2026-08-14")
 
 
+@pytest.fixture(autouse=True)
+def market_roots(tmp_path_factory, monkeypatch):
+    """Every test gets its own market roots (ops.sqlite and market.duckdb), as rcdata's own tests do: a serving file
+    or a queued request one test left must never be the next test's input (PR 3).
+
+    rcdata's ``market_roots`` puts them in ``tmp_path``; here they get a directory of their own, because many of
+    these tests use ``tmp_path`` as the board's data root and list what is in it.
+    """
+    from RevenueChaser.core import config
+    from RevenueChaser.rcdata import ops
+    root = tmp_path_factory.mktemp("market")
+    ssd, hdd = root / "market", root / "market_raw"
+    monkeypatch.setattr(config, "MARKET_DIR", ssd)
+    monkeypatch.setattr(config, "MARKET_RAW_DIR", hdd)
+    monkeypatch.setattr(config, "MARKET_RAW_COPY_DIR", None)
+    monkeypatch.setenv("RC_MARKET_DIR", str(ssd))
+    monkeypatch.setenv("RC_MARKET_RAW_DIR", str(hdd))
+    monkeypatch.setenv("RC_MARKET_RAW_COPY_DIR", "")
+    monkeypatch.setattr(ops, "read_log", ops.ReadLog(process="test"))
+    return ssd, hdd
+
+
+@pytest.fixture
+def stored_make_raw_window():
+    """The market store holding ``make_candles()``'s closes as Cboe's SPX series, for a test that builds a day from
+    ``make_raw()`` through ``run.build_day`` (which reads the window from the store since PR 3, not from the raw
+    day). Cboe's SPX file has one column, so the stored window has closes only."""
+    from datetime import date
+    from RevenueChaser.module_spx_gamma.tests import rcdata_fixture
+    rcdata_fixture.serve(spx={}, symbols=("SPX",), cot_reports=(), series_end=date(2026, 8, 14),
+                         closes={c["date"]: c["close"] for c in make_candles()})
+
+
+@pytest.fixture
+def rcdata_market():
+    """The default fixture ``market.duckdb`` (five SPX sessions, the VIX family, SPX closes, four COT reports)."""
+    from RevenueChaser.module_spx_gamma.tests import rcdata_fixture
+    rcdata_fixture.serve()
+    return rcdata_fixture
+
+
 @pytest.fixture
 def raw():
     return make_raw()

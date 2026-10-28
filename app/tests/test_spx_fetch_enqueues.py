@@ -1,0 +1,147 @@
+"""PR 3, sub-step 5: the SPX Gamma Fetch also asks the builder for the two datasets the board reads (A4).
+
+A Fetch the dashboard accepts (``POST /run/spxgamma`` -> 202) starts the board's job, and the job's first step puts
+one ``uw/spot_expiry_strike`` and one ``market_series`` request into ``ops.sqlite`` (``ops.enqueue_once``,
+``requested_by`` ``spx_gamma``), then renders at once with what is stored; it never waits for the builder. A request
+already queued is fine and adds nothing. A refused Fetch (403, 409, a failed key probe) starts no job and so queues
+nothing, and the queueing runs outside the route's submit lock (review nit, dashboard.py:807).
+"""
+from __future__ import annotations
+
+import sqlite3
+
+import pytest
+
+import RevenueChaser.app.dashboard as d
+from RevenueChaser.app import runners
+from RevenueChaser.core.tests.panel_client import panel_test_client
+from RevenueChaser.rcdata import ops
+from RevenueChaser.rcdata.tests.conftest import market_roots  # noqa: F401  (each test its own ops.sqlite)
+
+DATASETS = ("uw/spot_expiry_strike", "market_series")
+
+
+class _FakeUW:
+    def __init__(self, ok=True):
+        self.ok = ok
+
+    def verify(self):
+        return (True, None) if self.ok else (False, "Unusual Whales rejected the key (401)")
+
+
+@pytest.fixture
+def ran(monkeypatch, tmp_path):
+    """jobs.submit runs the job's runner at once (the board's module mocked): what each job was handed."""
+    from RevenueChaser.module_spx_gamma import run as spx_run
+    seen: list[tuple[str, dict]] = []
+
+    def module_run(asof_date, uw=None, force=False, builder_request=None):
+        seen.append(("spxgamma", {"asof_date": asof_date, "builder_request": builder_request}))
+        return {"paths": {"report_html": tmp_path / "section.html"}}
+
+    def module_refresh(day=None, builder_request=None):
+        seen.append(("spxgamma_stored", {"asof_date": day, "builder_request": builder_request}))
+        return {"paths": {"report_html": tmp_path / "section.html"}}
+
+    def submit(module, params):
+        d.jobs._RUNNERS[module](None, **params)
+        return f"job{len(seen)}"
+    monkeypatch.setattr(spx_run, "run", module_run)
+    monkeypatch.setattr(spx_run, "refresh", module_refresh)
+    monkeypatch.setattr(d, "UWClient", lambda: _FakeUW())
+    monkeypatch.setattr(d.jobs, "submit", submit)
+    monkeypatch.setattr(d.jobs, "active_id", lambda modules: None)
+    return seen
+
+
+def _client():
+    d.app.config["TESTING"] = True
+    return panel_test_client(d.app)
+
+
+def _requests() -> list[tuple]:
+    ops.ensure()
+    with ops.connect() as con:
+        return [tuple(r) for r in con.execute(
+            "SELECT dataset, requested_by, status FROM build_requests ORDER BY id").fetchall()]
+
+
+def test_a_fetch_queues_one_request_per_dataset_and_runs_the_board_job(ran):
+    r = _client().post("/run/spxgamma", data={"date": "2026-10-26"})
+    assert r.status_code == 202
+    assert _requests() == [(ds, "spx_gamma", "queued") for ds in DATASETS]
+    module, params = ran[0]
+    assert module == "spxgamma" and params["asof_date"] == "2026-10-26"
+    req = params["builder_request"]
+    assert req["requested_at"] and set(req["datasets"]) == set(DATASETS)
+    assert set(req["datasets"].values()) == {"queued"}
+
+
+def test_a_second_fetch_while_queued_adds_none_and_still_runs(ran):
+    c = _client()
+    assert c.post("/run/spxgamma", data={"date": "2026-10-26"}).status_code == 202
+    r = c.post("/run/spxgamma", data={"date": "2026-10-26"})
+    assert r.status_code == 202, "an already queued request is fine"
+    assert len(_requests()) == 2
+    assert set(ran[1][1]["builder_request"]["datasets"].values()) == {"already queued"}
+
+
+def test_a_stored_past_day_fetch_queues_them_too(ran, monkeypatch):
+    from RevenueChaser.module_spx_gamma import run as spx_run
+    monkeypatch.setattr(spx_run, "serves_from_disk", lambda asof, data_root=None: True)
+    r = _client().post("/run/spxgamma", data={"date": "2026-10-23"})
+    assert r.status_code == 202 and ran[0][0] == "spxgamma_stored"
+    assert len(_requests()) == 2 and ran[0][1]["builder_request"]
+
+
+def test_a_write_without_the_panel_header_is_refused_and_queues_nothing(ran):
+    d.app.config["TESTING"] = True
+    r = d.app.test_client().post("/run/spxgamma", data={"date": "2026-10-26"})
+    assert r.status_code == 403
+    assert _requests() == [] and ran == []
+
+
+def test_the_history_pull_still_refuses_the_fetch_with_409_and_nothing_is_queued(ran, monkeypatch):
+    monkeypatch.setattr(d.jobs, "active_id", lambda modules: "hist1" if "spxgamma_history" in modules else None)
+    r = _client().post("/run/spxgamma", data={"date": "2026-10-26"})
+    assert r.status_code == 409 and r.get_json()["job_id"] == "hist1"
+    assert _requests() == [] and ran == []
+
+
+def test_a_fetch_refused_by_the_key_probe_queues_nothing(ran, monkeypatch):
+    """Review nit: the builder was queued before _submit, so a Fetch the UW key probe refused still queued it."""
+    monkeypatch.setattr(d, "UWClient", lambda: _FakeUW(ok=False))
+    r = _client().post("/run/spxgamma", data={"date": "2026-10-26"})
+    assert r.status_code == 400
+    assert _requests() == [] and ran == []
+
+
+def test_the_route_queues_nothing_itself_the_accepted_job_does(monkeypatch):
+    """The queueing is the job's first step, so it runs in the job's worker, outside the route's submit lock (each
+    enqueue may wait up to ops' busy timeout), and only for a Fetch that was accepted."""
+    monkeypatch.setattr(d, "UWClient", lambda: _FakeUW())
+    monkeypatch.setattr(d.jobs, "submit", lambda module, params: "job1")
+    monkeypatch.setattr(d.jobs, "active_id", lambda modules: None)
+    assert _client().post("/run/spxgamma", data={"date": "2026-10-26"}).status_code == 202
+    assert _requests() == []
+
+
+def test_a_locked_queue_never_fails_the_fetch(ran, monkeypatch):
+    def locked(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(ops, "enqueue_once", locked)
+    r = _client().post("/run/spxgamma", data={"date": "2026-10-26"})
+    assert r.status_code == 202
+    notes = ran[0][1]["builder_request"]["datasets"]
+    assert all(v.startswith("not queued") and "locked" in v for v in notes.values())
+
+
+def test_the_board_says_the_builder_was_asked_and_when_it_runs():
+    from RevenueChaser.module_spx_gamma import render
+    from RevenueChaser.module_spx_gamma.tests.conftest import make_snapshot
+    snap = make_snapshot()
+    snap["builder_request"] = {"requested_at": "2026-10-26 16:40 New York",
+                               "datasets": {"uw/spot_expiry_strike": "queued", "market_series": "already queued"}}
+    html = render.render_html(snap)
+    assert "builder requested at 2026-10-26 16:40 New York" in html
+    assert "the builder runs hourly at :07" in html

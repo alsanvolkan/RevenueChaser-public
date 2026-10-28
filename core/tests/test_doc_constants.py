@@ -247,3 +247,17 @@ def test_data_health_states_the_new_section_limits_the_code_owns():
     assert f"SPX expiry-strike {newdata.COVERAGE_TARGET['uw/spot_expiry_strike']:.0%}" in section
     assert "`rcdata.serving.open_read(kind)`" in section and "No connection is cached" in section
     assert f"`{newdata.RETENTION_ENV}`" in section and f"`{newdata.RETENTION_ROW}`" in section
+
+
+def test_data_architecture_states_the_spx_gamma_store_reads_the_code_owns():
+    """PR 3: the market-store section says how SPX Gamma reads it; the lags and the requester are the code's."""
+    from RevenueChaser.app import runners
+    from RevenueChaser.module_spx_gamma import store_reads
+    text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
+    section = text[text.index("**The first board on it: SPX Gamma"):].split("\n\n")[0].replace("\n", " ")
+    for kind in ("vix", "cot"):
+        assert f"inside {store_reads.MAX_LAG[kind]} sessions" in section, kind
+    assert f"Tuesday + {store_reads.RELEASE_DAYS} days" in section
+    assert f"`requested_by` `{runners.SPX_REQUESTED_BY}`" in section
+    for name in runners.SPX_BUILDER_DATASETS:
+        assert f"`{name}`" in section

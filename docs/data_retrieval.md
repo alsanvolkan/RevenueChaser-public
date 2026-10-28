@@ -149,9 +149,25 @@ button silently degrades to a plain iframe reload.
   EDGAR quarter backfill), also credential-free.
 - **`/run/quick` bypasses the credential preflight** entirely — Financials is
   yfinance- and store-backed.
-- **SPX Gamma ignores `?refresh=1`.** Its view is intercepted before the generic
-  refresh path and always serves the latest report from its own tree
-  (`SPX_GAMMA_DATA_ROOT`).
+- **SPX Gamma's `?refresh=1` is its own.** Its view is intercepted before the
+  generic refresh path: Refresh rebuilds the newest stored raw day of its own tree
+  (`SPX_GAMMA_DATA_ROOT`) from disk and makes no network call. The VIX family, the
+  CFTC COT, the 8-week SPX closes and the 0-1 DTE dollar gamma the pin and squeeze
+  tests size by are read from the market store at render time
+  (`module_spx_gamma/store_reads.py` over `rcdata.read`: `market_series` and
+  `spx_gamma_expiry_strike`), so a Fetch and a Refresh of a day render the same.
+- **SPX Gamma's Fetch (`POST /run/spxgamma`) also asks the builder** (PR 3, decision
+  A4): the job of an accepted Fetch first queues one `uw/spot_expiry_strike` and
+  one `market_series` build (`ops.enqueue_once`, `requested_by` `spx_gamma`; one
+  already queued adds nothing; a refused Fetch queues nothing), then runs the
+  board's own UW snapshot as before and renders at once with what is
+  stored, saying "builder requested at <time>; the builder runs hourly at :07". It
+  never waits on the builder. There is no live fallback any more: no yfinance VIX,
+  no Socrata COT, no candle fetch; an input the store does not hold for the day
+  shows "<input> not stored for <day>" on its panel and in the data-quality banner,
+  and a missing 0-1 DTE slice raises no pin flag and no squeeze trigger (avo,
+  28 Oct 2026). The live spot during an open
+  session (one yfinance request, decision A7) is unchanged.
 
 ### The market-store builder's routes (PR 2)
 

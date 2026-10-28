@@ -369,6 +369,8 @@ def normalize_cftc(cftc_payload: dict | None) -> dict | None:
         "report_date": _report_day(cftc_payload.get("report_date")),
         "open_interest": cftc_payload.get("open_interest"),
         "rows": rows,
+        # the market store's COT (PR 3): no weekly change across a missing report (review SF4)
+        **({"change_gap": True} if cftc_payload.get("change_gap") else {}),
     }
 
 
@@ -463,6 +465,11 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
     vix = normalize_vix(raw.get("vix"))
     cftc = normalize_cftc(raw.get("cftc"))
 
+    # The 0-1 DTE dollar gamma per strike the pin and squeeze tests size by (review S4), read from the market store
+    # by run.build_day (store_reads.zero_one_dte_dollars). Absent or not stored: no dollars, no pin flag.
+    zero_one = raw.get("zero_one_dte") if isinstance(raw.get("zero_one_dte"), dict) else None
+    zero_one_dollars = (zero_one.get("dollars") or None) if zero_one and zero_one.get("stored") else None
+
     core = ("equilibrium_point", "upper_resistance_band", "lower_support_band", "regime_threshold")
     prediction = generate_prediction_matrix({
         "current_level": spot,
@@ -472,6 +479,7 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "strike_exposures": strike_rows,
         "strike_expiry_rows": strike_expiry_rows,
         "levels": levels,
+        "zero_one_dte_dollars": zero_one_dollars,
     })
     option_chain_rows = normalize_option_chain(raw.get("option_chain"), spot, asof_str)
     iron_butterfly = build_iron_butterfly({
@@ -529,6 +537,10 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "charm_live_sum": charm_live_sum(spot_exposure_rows),
         "strike_expiry_rows": strike_expiry_rows,
         "prediction": prediction,
+        # Where the market-store inputs came from (store_reads.read_day): stored or "not stored", label, source,
+        # source_as_of and status per input. Absent for a raw dict built without the store (the goldens).
+        "zero_one_dte": ({k: v for k, v in zero_one.items() if k != "dollars"} if zero_one else None),
+        "store_inputs": raw.get("store_inputs"),
         "quality": {
             "core_levels_available": all(levels[k] is not None for k in core),
             "charm_available": charm_qualification["strike"] is not None,

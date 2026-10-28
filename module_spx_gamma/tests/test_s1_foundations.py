@@ -139,8 +139,6 @@ class _SpotClient:
 def _candles(monkeypatch):
     monkeypatch.setattr(snap, "stored_spx_candles", lambda asof=None, ticker=None: [
         {"date": "2026-08-14", "open": 1.0, "high": 2.0, "low": 0.5, "close": 7785.76, "volume": 1.0}])
-    monkeypatch.setattr(snap, "fetch_vix_family", lambda: {"tickers": {}, "vix": 15.0})
-    monkeypatch.setattr(snap, "fetch_cftc_tff", lambda: None)
 
 
 def test_spot_exposure_is_two_calls_below_and_above_spot(tmp_path, _candles):
@@ -304,7 +302,7 @@ def test_fallback_day_is_filed_under_its_effective_date(tmp_path, monkeypatch):
     assert list(hist) == ["2026-08-14"]
 
 
-def test_run_with_data_root_writes_brier_and_history_inside_it(tmp_path, monkeypatch):
+def test_run_with_data_root_writes_brier_and_history_inside_it(tmp_path, monkeypatch, stored_make_raw_window):
     _patch_run(monkeypatch, [], make_raw())
     monkeypatch.setattr(spx_run, "_backfill_history", lambda *a, **k: None)
     real_brier = brier.BRIER_FILE

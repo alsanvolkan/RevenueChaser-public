@@ -226,7 +226,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 </head>
 <body>
 <div class="header">{{ header.ticker }} &middot; Price {{ header.price_source }} &middot; Report date {{ header.report_date }} &middot; Sessions {{ header.sessions }} &middot; Last sync: {{ header.last_sync }}&nbsp;EOD &middot; {{ header.source }}</div>
-{{ provider_banner }}{{ quality_banner }}{{ help_block }}
+{{ provider_banner }}{{ quality_banner }}{% if builder_line %}<div class="note store-source">{{ builder_line }}</div>{% endif %}{{ help_block }}
 
 {% if prediction and prediction.bias %}
 <div class="prediction-container">
@@ -236,7 +236,8 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     {% if prediction.active_pin is not none %}<div class="hero-metric"><span>Active Pin</span><strong>{{ prediction.active_pin | fmtnum }}{% if prediction.pin_flag == 'EXPIRING_PIN_FLIP' %}&nbsp;⚑{% endif %}</strong></div>{% endif %}
     {% if prediction.upside_trigger is not none %}<div class="hero-metric"><span>Accel Trigger</span><strong>&gt; {{ prediction.upside_trigger | fmtnum }}</strong></div>{% endif %}
     {% if prediction.downside_floor is not none %}<div class="hero-metric"><span>Bounce Floor</span><strong>{{ prediction.downside_floor | fmtnum }}</strong></div>{% endif %}
-  </div>
+  </div>{% if pin_line %}
+  <div class="note pin-source">{{ pin_line }}</div>{% endif %}
 
   <!-- Scenario Matrix Table -->
   <div class="overflow-x-auto">
@@ -423,7 +424,8 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 
 <h2>SPX Option Position Map</h2>
 <div class="box">{% if chart_html %}<div class="chart chart-map">{{ chart_html }}</div>
-{% elif chart_image %}<div class="chart"><img src="{{ chart_image }}" alt="SPX Option Position Map"></div>{% endif %}</div>
+{% elif chart_image %}<div class="chart"><img src="{{ chart_image }}" alt="SPX Option Position Map"></div>{% endif %}</div>{% if store_labels.candles %}
+<div class="note store-source">{{ store_labels.candles }}</div>{% endif %}
 
 <h2>Net GEX Tornado — Strike Profile</h2>
 <div class="box">{% if tornado_html %}<div class="chart">{{ tornado_html }}</div>{% else %}<div class="box-note">Tornado data unavailable for this snapshot.</div>{% endif %}</div>
@@ -494,8 +496,8 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   <thead><tr><th>Metric</th><th>Value</th><th>Meaning</th></tr></thead>
   <tbody>
   {% if vix %}<tr><td data-label="Metric">VIX family</td><td data-label="Value">
-    {% if historical.vix %}n/a (historical){% else %}{% if vix.vix %}VIX {{ vix.vix|round(2) }}{% endif %}{% if vix.vix9d %} · 9D {{ vix.vix9d|round(2) }}{% endif %}{% if vix.vix3m %} · 3M {{ vix.vix3m|round(2) }}{% endif %}{% if vix.vix6m %} · 6M {{ vix.vix6m|round(2) }}{% endif %}{% if vix.vix1y %} · 1Y {{ vix.vix1y|round(2) }}{% endif %}{% if vix.vvix %} · VVIX {{ vix.vvix|round(2) }}{% endif %}{% endif %}
-    </td><td data-label="Meaning">Term structure is <b>{{ "n/a" if historical.vix else (vix.term_mode or "n/a") }}</b>{% if vix.term_mode == 'contango' %} — short-dated calm, longer-dated more expensive (normal).{% elif vix.term_mode == 'backwardation' %} — near-term stress priced in (early warning).{% endif %}</td></tr>{% endif %}
+    {% if vix.vix %}VIX {{ vix.vix|round(2) }}{% endif %}{% if vix.vix9d %} · 9D {{ vix.vix9d|round(2) }}{% endif %}{% if vix.vix3m %} · 3M {{ vix.vix3m|round(2) }}{% endif %}{% if vix.vix6m %} · 6M {{ vix.vix6m|round(2) }}{% endif %}{% if vix.vix1y %} · 1Y {{ vix.vix1y|round(2) }}{% endif %}{% if vix.vvix %} · VVIX {{ vix.vvix|round(2) }}{% endif %}
+    </td><td data-label="Meaning">Term structure is <b>{{ vix.term_mode or "n/a" }}</b>{% if vix.term_mode == 'contango' %} — short-dated calm, longer-dated more expensive (normal).{% elif vix.term_mode == 'backwardation' %} — near-term stress priced in (early warning).{% endif %}</td></tr>{% endif %}
   {% if iv_rank %}<tr><td data-label="Metric">IV Rank (1Y)</td><td data-label="Value">{{ "n/a (historical)" if historical.iv_rank else (iv_rank.iv_rank_1y | fmtnum('{:,.1f}%')) }}</td><td data-label="Meaning">Where today's IV sits vs the past year; low = cheap options.</td></tr>{% endif %}
   {% if skew %}<tr><td data-label="Metric">Skew (Put Bias)</td><td data-label="Value">{% if historical.skew %}n/a (historical){% else %}{{ skew.put_bias_1m | fmtnum('{:.1%}') }} (1M) · {{ skew.put_bias_3m | fmtnum('{:.1%}') }} (3M){% endif %}</td><td data-label="Meaning">Cost of downside protection vs upside bets. <span style="color:var(--amber)">Derived/unverified</span> ({{ skew.note }})</td></tr>{% endif %}
   {% if realized_vol %}<tr><td data-label="Metric">Realized vs Implied</td><td data-label="Value">{% if historical.realized_vol %}n/a (historical){% else %}IV {{ realized_vol.implied_volatility | fmtnum('{:.1%}') }} · RV {{ realized_vol.realized_volatility | fmtnum('{:.1%}') }}{% endif %}</td><td data-label="Meaning">VRP posture: IV premium over realized = vol selling gets paid.</td></tr>{% endif %}
@@ -504,7 +506,8 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 </table>
 {% else %}
 <div class="note">Volatility data unavailable for this snapshot.</div>
-{% endif %}
+{% endif %}{% if store_labels.vix %}
+<div class="note store-source">{{ store_labels.vix }}</div>{% endif %}
 
 <h3>Vol Term Structure</h3>
 {% if vol_term and historical.vol_term %}
@@ -554,11 +557,9 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 {% endif %}
 
 <h2>CFTC COT — E-mini S&amp;P 500 (TFF)</h2>
-{% if cftc and historical.cftc %}
-<div class="note">n/a (historical): The CFTC report was fetched in a later session than this day.</div>
-{% elif cftc %}
+{% if cftc %}
 <div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> how big players (asset managers, leveraged funds, dealers) are positioned; weekly-delayed but regular.</div>
-<div class="note">Report date {{ cftc.report_date or "n/a" }} · Open interest {{ cftc.open_interest or "n/a" }}</div>
+<div class="note">Report date {{ cftc.report_date or "n/a" }} · Open interest {{ cftc.open_interest or "n/a" }}{% if store_labels.cftc %} · {{ store_labels.cftc }}{% endif %}</div>
 <table class="stack">
   <thead><tr><th>Group</th><th>Long</th><th>Short</th><th>Net</th><th>Weekly Δ</th></tr></thead>
   <tbody>
@@ -567,12 +568,12 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     <td data-label="Long">{{ c.long|fmtnum('{:,.0f}') }}</td>
     <td data-label="Short">{{ c.short|fmtnum('{:,.0f}') }}</td>
     <td data-label="Net" class="pos-neg {{ 'pos' if (c.net or 0) >= 0 else 'neg' }}">{{ c.net|fmtnum('{:+,.0f}') }}</td>
-    <td data-label="Weekly Δ">{{ c.change|fmtnum('{:+,.0f}') }}</td></tr>
+    <td data-label="Weekly Δ">{% if cftc.change_gap and c.change is none %}n/a (gap){% else %}{{ c.change|fmtnum('{:+,.0f}') }}{% endif %}</td></tr>
   {% endfor %}
   </tbody>
 </table>
 {% else %}
-<div class="note">CFTC COT data unavailable.</div>
+<div class="note">{{ store_notes.cftc or "CFTC COT data unavailable." }}</div>
 {% endif %}
 
 <h2>Scenario Set</h2>

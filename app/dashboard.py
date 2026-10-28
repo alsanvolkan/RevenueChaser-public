@@ -804,6 +804,8 @@ def run_spxgamma():
         refused = _busy(("spxgamma_history",), "The SPX Gamma history pull is running; Fetch again when it finishes.")
         if refused:
             return refused
+        # The builder is asked by the job itself (runners.spx_builder_request): only for an accepted Fetch, and
+        # outside this lock (PR 3 review).
         return _submit(module, params)
 
 

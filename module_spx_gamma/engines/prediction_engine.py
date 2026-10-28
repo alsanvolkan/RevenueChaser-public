@@ -7,6 +7,8 @@ Maps the normalized snapshot onto a deterministic scenario payload:
   to [-1, 1] so the weights stay interpretable.
 - Scenario extraction (spec §4.2): primary magnet / pin (0-1 DTE), upside
   short-gamma squeeze trigger, downside GEX support floor + vanna bounce floor.
+  The pin's $10B test and the trigger's $200M test size a strike by its 0-1 DTE
+  dollar OI gamma (``zero_one_dte_dollars``, from the market store; review S4).
 - OI vs volume divergence flags (``WALL_DECAYING`` / ``WALL_FORTIFYING``) per
   key strike from dollar gamma_oi vs gamma_vol.
 
@@ -144,11 +146,22 @@ def directional_score(snapshot: dict) -> dict:
     }
 
 
-def _dollar_gamma_at(snapshot: dict, strike: float, field: str) -> float | None:
-    """Dollar net gamma at a strike from spot-exposures (OI or VOL)."""
+def _dollar_gamma_at(snapshot: dict, strike: float) -> float | None:
+    """0-1 DTE dollar OI gamma at a strike: ``call_gamma_oi + put_gamma_oi`` summed over the 0 and 1 DTE expiries of
+    ``spx_gamma_expiry_strike`` (``store_reads.zero_one_dte_dollars``, review S4). None when the slice is not stored;
+    0.0 for a strike a stored slice has no row for (no 0-1 DTE OI gamma there, review SF1); never the all-expiry
+    number."""
+    dollars = snapshot.get("zero_one_dte_dollars")
+    if not dollars:
+        return None
+    return dollars.get(strike, 0.0)
+
+
+def _all_expiry_dollars_at(snapshot: dict, strike: float) -> float | None:
+    """All-expiry dollar OI gamma at a strike from spot-exposures: the old basis, kept as context only (A2)."""
     for r in _rows(snapshot, "spot_exposures"):
         if r.get("strike") == strike:
-            return net_sum(r.get(f"call_gamma_{field}"), r.get(f"put_gamma_{field}"))
+            return net_sum(r.get("call_gamma_oi"), r.get("put_gamma_oi"))
     return None
 
 
@@ -201,8 +214,10 @@ def scenario_extraction(snapshot: dict) -> dict:
     positives = [r for r in atm_rows if (r.get("net_gamma") or 0.0) > 0]
     magnet = max(positives, key=lambda r: r["net_gamma"]) if positives else None
 
-    # Dollar magnitude for the $10B flag comes from the dollar spot-exposures OI.
-    magnet_dollars = _dollar_gamma_at(snapshot, magnet["strike"], "oi") if magnet is not None else None
+    # Dollar magnitude for the $10B flag: the magnet strike's 0-1 DTE OI gamma (review S4). The all-expiry number
+    # rides along as context; a slice that is not stored raises no flag.
+    magnet_dollars = _dollar_gamma_at(snapshot, magnet["strike"]) if magnet is not None else None
+    magnet_all_expiry = _all_expiry_dollars_at(snapshot, magnet["strike"]) if magnet is not None else None
 
     # EXPIRING_PIN_FLIP: 1DTE net GEX < 0 at the same strike.
     expiring_flip = False
@@ -239,20 +254,23 @@ def scenario_extraction(snapshot: dict) -> dict:
     pin_distance_pct = (abs(anchor - spot) / spot) if anchor is not None and spot else None
 
     # 2. Upside acceleration zone: lowest strike above spot with negative GEX
-    #    (magnitude > $200M in dollar terms; fall back to grid per-unit net GEX),
-    #    bounded to the ATM window.
+    #    and a 0-1 DTE dollar magnitude > $200M, bounded to the ATM window.
     upside_trigger = None
     upside_net_gex = None
-    above = [r for r in atm_rows if r.get("strike") > spot]
+    upside_all_expiry = None
+    # avo, 28 Oct 2026: a day whose 0-1 DTE slice is not stored has no squeeze trigger at all; a strike a stored
+    # slice has no row for holds $0 and never fires (review SF1). There is no per-unit fallback any more.
+    slice_stored = bool(snapshot.get("zero_one_dte_dollars"))
+    above = [r for r in atm_rows if r.get("strike") > spot] if slice_stored else []
     for r in sorted(above, key=lambda x: x["strike"]):
         strike = r["strike"]
         if (r["net_gamma"] or 0.0) >= 0:
             continue
-        dollars = _dollar_gamma_at(snapshot, strike, "oi")
-        mag = abs(dollars) if dollars is not None else None
-        if mag is None or mag > UPSIDE_TRIGGER_MIN_MAGNITUDE:
+        dollars = _dollar_gamma_at(snapshot, strike)
+        if abs(dollars) > UPSIDE_TRIGGER_MIN_MAGNITUDE:
             upside_trigger = strike
-            upside_net_gex = dollars if dollars is not None else r["net_gamma"]
+            upside_net_gex = dollars
+            upside_all_expiry = _all_expiry_dollars_at(snapshot, strike)
             break
 
     # 2b. Downside breakdown trigger: strongest negative-GEX put wall below spot
@@ -296,12 +314,14 @@ def scenario_extraction(snapshot: dict) -> dict:
         "pin_magnet": magnet["strike"] if magnet is not None else None,
         "pin_net_gex": magnet["net_gamma"] if magnet is not None else None,
         "pin_dollars": magnet_dollars,
+        "pin_dollars_all_expiry": magnet_all_expiry,
         "pin_dominance": pin_dominance,
         "pin_distance_pct": pin_distance_pct,
         "expiring_pin_flip": expiring_flip,
         "pin_flag": pin_flag,
         "upside_trigger": upside_trigger,
         "upside_trigger_net_gex": upside_net_gex,
+        "upside_trigger_dollars_all_expiry": upside_all_expiry,
         "downside_trigger": downside_trigger,
         "downside_trigger_net_gex": downside_trigger_net_gex,
         "gex_floor": gex_floor,
@@ -460,7 +480,13 @@ def generate_prediction_matrix(snapshot: dict) -> dict:
         "pin_source": scen.get("pin_source"),
         "pin_flag": scen.get("pin_flag"),
         "expiring_pin_flip": scen.get("expiring_pin_flip"),
+        # The pin's size on the 0-1 DTE basis and, as context only, on the old all-expiry basis (review S4, A2).
+        "pin_magnet": scen.get("pin_magnet"),
+        "pin_dollars": scen.get("pin_dollars"),
+        "pin_dollars_all_expiry": scen.get("pin_dollars_all_expiry"),
         "upside_trigger": scen.get("upside_trigger"),
+        "upside_trigger_net_gex": scen.get("upside_trigger_net_gex"),
+        "upside_trigger_dollars_all_expiry": scen.get("upside_trigger_dollars_all_expiry"),
         "downside_trigger": scen.get("downside_trigger"),
         "downside_floor": scen.get("vanna_floor"),
         "gex_floor": scen.get("gex_floor"),
