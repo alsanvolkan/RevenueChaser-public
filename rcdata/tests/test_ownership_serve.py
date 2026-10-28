@@ -8,12 +8,13 @@ from __future__ import annotations
 import json
 from datetime import date, datetime, timezone
 
+import duckdb
 import pytest
 
 from RevenueChaser.rcdata import ops, read, serving
 from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.ownership import finra, ibkr, sec, sec13f, serve
-from RevenueChaser.rcdata.build.spine import openfigi_map
+from RevenueChaser.rcdata.build.spine import openfigi_map, wrds
 
 from . import ownership_fixture as ox
 from . import spine_fixture as fx
@@ -70,8 +71,8 @@ def _thirteen_f(**params) -> dict:
     return base.run_request({"dataset": sec13f.NAME, "params": params}, sleep=lambda s: None)
 
 
-def _serve(day: str = "2026-10-28") -> dict:
-    return base.run_request({"dataset": serve.NAME, "requested_by": "cli", "params": {"as_of": day}})
+def _serve(day: str = "2026-10-28", **params) -> dict:
+    return base.run_request({"dataset": serve.NAME, "requested_by": "cli", "params": {"as_of": day, **params}})
 
 
 @pytest.fixture
@@ -153,6 +154,30 @@ def test_an_old_companys_cusip_openfigi_gives_a_reused_ticker_is_refused_and_an_
     assert "VYLR" in detail and "123456/01" in detail and "040001/01" in detail
     assert ("cusip_unmapped_large", NOBODY) in _issues()
     assert ("cusip_unmapped_large", OLD_VYLR) not in _issues()
+
+
+def test_a_current_cusip_compustat_gave_another_security_in_the_period_is_refused_there_only(store):
+    """Review S1 (#236 on the current-CUSIP branch): Compustat's dated history gives MSFT's CUSIP to the old Vaylor
+    security from January to July 2026. The spine's current CUSIP names MSFT; for 30 Jun 2026 that is refused, kept
+    unnamed and one issue, and 30 Sep 2026 (after the other security's dates) stays MSFT's."""
+    folder = wrds.parquet_dir(wrds.SEC_IDHIST.name) / "delta=9999-12-31"
+    folder.mkdir(parents=True)
+    con = duckdb.connect()
+    try:
+        con.execute(f"COPY (SELECT '123456' AS gvkey, '01' AS iid, 'CUSIP' AS item, '594918104' AS itemvalue, "
+                    f"DATE '2026-01-01' AS efffrom, DATE '2026-07-31' AS effthru) "
+                    f"TO {base.sql_path(folder / 'sec_idhist.parquet')} (FORMAT parquet)")
+    finally:
+        con.close()
+    _serve(allow_shrink=True)                       # MSFT's 30 Jun 2026 row goes: more than the 1% the swap allows
+    assert _served("SELECT period, ticker, map_source, candidate_ticker FROM sec13f_cusip_map "
+                   "WHERE cusip = '594918104' ORDER BY period") == [(Q2, None, "refused", "MSFT"),
+                                                                    (Q3, "MSFT", "spine/security", None)]
+    detail = _issues()[("cusip_owner_differs", "594918104")]
+    assert "the spine's current CUSIP names MSFT (012141/01)" in detail and "123456/01" in detail
+    assert "1 period(s), $520,000 kept unnamed" in detail
+    assert _served("SELECT period FROM sec13f_ticker_period WHERE ticker = 'MSFT' ORDER BY period") == [
+        (date(2001, 9, 30),), (Q3,)]
 
 
 def test_the_period_summary_and_the_plans_two_counts(store):

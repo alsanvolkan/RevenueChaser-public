@@ -1164,8 +1164,8 @@ requests are paced at 4.5 a second and share `core/sec_throttle.py`'s bucket wit
 
 **The 13F totals** (`ownership/serve`; the rules in `rcdata/build/ownership/serve.py`): per filer and report period
 the amendment walk (`NEW HOLDINGS` adds, any other amendment replaces); long equity only; each CUSIP named through the
-spine's dated Compustat history, then its current CUSIP, then its OpenFIGI map behind the reused-ticker guard
-(#236); VALUE off by 1,000 found from the 13F's own consensus prices and rescaled both ways
+spine's dated Compustat history, then its current CUSIP (refused for a period in which Compustat gives the CUSIP to
+another security), then its OpenFIGI map behind the reused-ticker guard (#236); VALUE off by 1,000 found from the 13F's own consensus prices and rescaled both ways
 (alsanvolkan/RevenueChaser#208); flows and `breadth_chg` against the calendar quarter before; a quarter whose filing deadline passed before the store's
 first 13F day is not served; `filing_deadline` (period end + 45 days, rolled past weekends and Washington's
 Birthday) says when a quarter is complete; `exited_confidential` and `exited_no_filing` count the exits that may not

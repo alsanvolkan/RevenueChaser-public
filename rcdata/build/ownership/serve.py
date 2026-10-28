@@ -25,8 +25,11 @@
   13F CUSIPs too, a CINS as ``ID_CINS``). A CUSIP is never named from an issuer name.
 - *The reused-ticker guard* (#236, on the 13F side): OpenFIGI's ticker is refused when Compustat gives the CUSIP to
   securities (``comp.security`` and the CUSIP items of ``comp.sec_idhist``, every company, not only the linked) and
-  the ticker is linked to none of them: an old company's CUSIP whose ticker was later reused. The row stays in the
-  map (``map_source`` ``refused``, ``candidate_ticker``) and is a ``cusip_owner_differs`` issue; nothing is dropped.
+  the ticker is linked to none of them: an old company's CUSIP whose ticker was later reused. The spine's current
+  CUSIP (2), which carries no period, is refused for a period in which Compustat's dated history gives the CUSIP to
+  another security, or gives it to one with no dates (review S1, 2026-10-28). A refused row stays in the map
+  (``map_source`` ``refused``, ``candidate_ticker``) and is a ``cusip_owner_differs`` issue; nothing is dropped, and
+  OpenFIGI is not asked in its place.
 - *The metrics*, per ticker and period (summed over its CUSIPs; one holder per filer CIK), as the old derive defines
   them (``module_sec_13f/engine.py`` ``compute_period_metrics``): shares, value, holders, the top 10 holders' share of
   the shares (%), the HHI of the holders' shares, and breadth, the holders as a share of the period's filers (%; a
@@ -103,7 +106,8 @@ METRICS = ("shares", "value", "holders", "top10_pct", "hhi", "new_holders", "exi
            "sell_flow", "breadth", "breadth_chg")
 ISSUE_KINDS = {
     "spine_missing": "no live spine.duckdb: no CUSIP is named a ticker",
-    "cusip_owner_differs": "OpenFIGI names a ticker linked to another security than the CUSIP's (a reused ticker)",
+    "cusip_owner_differs": "the spine's current CUSIP or OpenFIGI names a ticker whose security Compustat does not "
+                           "give the CUSIP to in that period (a reused ticker or CUSIP)",
     "cusip_unmapped_large": "one of the newest period's largest long-equity CUSIPs no spine source names",
     "filings_unparsed": "13F filings of an index day whose documents did not parse",
 }
@@ -207,19 +211,24 @@ def _spine(con: duckdb.DuckDBPyConnection, found: list) -> bool:
         con.execute("DETACH spine_src")
 
 
+OWNERS = [("cusip", "TEXT"), ("gvkey", "TEXT"), ("iid", "TEXT"), ("efffrom", "DATE"), ("effthru", "DATE")]
+
+
 def _owners(con: duckdb.DuckDBPyConnection) -> None:
-    """``_owners(cusip, gvkey, iid)`` (TEMP): every security Compustat gives each CUSIP, now or before."""
-    parts = []
+    """``_owners(cusip, gvkey, iid, efffrom, effthru)`` (TEMP): every security Compustat gives each CUSIP, now or
+    before, with the dates of its identifier history; a security's own CUSIP with no dated row has none (NULL: any
+    period)."""
     security = wrds._parquet_files(wrds.SEC_IDHIST.name, "security")
     history = wrds._parquet_files(wrds.SEC_IDHIST.name, "sec_idhist")
-    if security:
-        parts.append(f"SELECT upper(cusip), gvkey, iid FROM {common.files_sql(security)} WHERE cusip IS NOT NULL")
+    _empty(con, "_owners", OWNERS)
     if history:
-        parts.append(f"SELECT upper(itemvalue), gvkey, iid FROM {common.files_sql(history)} "
-                     f"WHERE upper(item) = 'CUSIP' AND itemvalue IS NOT NULL")
-    _empty(con, "_owners", [("cusip", "TEXT"), ("gvkey", "TEXT"), ("iid", "TEXT")])
-    if parts:
-        con.execute("INSERT INTO _owners " + " UNION ".join(parts))
+        con.execute(f"INSERT INTO _owners SELECT DISTINCT upper(itemvalue), gvkey, iid, efffrom, effthru "
+                    f"FROM {common.files_sql(history)} WHERE upper(item) = 'CUSIP' AND itemvalue IS NOT NULL")
+    if security:
+        con.execute(f"""INSERT INTO _owners SELECT DISTINCT upper(s.cusip), s.gvkey, s.iid, NULL, NULL
+            FROM {common.files_sql(security)} s WHERE s.cusip IS NOT NULL AND NOT EXISTS (
+                SELECT 1 FROM _owners o WHERE o.cusip = upper(s.cusip) AND o.gvkey = s.gvkey
+                                         AND o.iid IS NOT DISTINCT FROM s.iid)""")
 
 
 def _figi(con: duckdb.DuckDBPyConnection) -> None:
@@ -300,7 +309,7 @@ class OwnershipServe:
                 _owners(con)
                 _figi(con)
             else:
-                _empty(con, "_owners", [("cusip", "TEXT"), ("gvkey", "TEXT"), ("iid", "TEXT")])
+                _empty(con, "_owners", OWNERS)
                 _empty(con, "_figi", [("cusip", "TEXT"), ("ticker", "TEXT")])
             counts = {"sec13f_filer_period": common.count(con, "sec13f_filer_period")}
             counts["sec13f_cusip_map"] = self._map(con)
@@ -385,9 +394,18 @@ class OwnershipServe:
             JOIN _sp_hist h ON h.cusip = c.cusip AND (h.valid_from IS NULL OR h.valid_from <= c.period)
                            AND (h.valid_to IS NULL OR c.period < h.valid_to)
             GROUP BY ALL HAVING count(DISTINCT h.ticker) = 1""")
+        # The current CUSIP has no period of its own: it is refused for a period in which Compustat's dated history
+        # gives the CUSIP to another security (or gives it with no dates), as a reused CUSIP would be (#236).
         con.execute("""CREATE OR REPLACE TEMP TABLE _m_cur AS
-            SELECT cusip, min(ticker) AS ticker FROM _sp_security WHERE cusip IS NOT NULL
-            GROUP BY ALL HAVING count(DISTINCT ticker) = 1""")
+            WITH s AS (SELECT cusip, min(ticker) AS ticker, min(gvkey) AS gvkey, min(iid) AS iid FROM _sp_security
+                       WHERE cusip IS NOT NULL GROUP BY ALL HAVING count(DISTINCT ticker) = 1)
+            SELECT c.cusip, c.period, s.ticker,
+                   s.gvkey IS NOT NULL AND EXISTS (
+                       SELECT 1 FROM _owners o WHERE o.cusip = c.cusip
+                       AND NOT (o.gvkey = s.gvkey AND o.iid IS NOT DISTINCT FROM s.iid)
+                       AND (o.efffrom IS NULL OR o.efffrom <= c.period)
+                       AND (o.effthru IS NULL OR c.period <= o.effthru)) AS refused
+            FROM _cp c JOIN s ON s.cusip = c.cusip""")
         con.execute("""CREATE OR REPLACE TEMP TABLE _m_figi AS
             SELECT f.cusip, f.ticker, s.gvkey, s.iid,
                    s.gvkey IS NOT NULL AND EXISTS (SELECT 1 FROM _owners o WHERE o.cusip = f.cusip)
@@ -396,14 +414,17 @@ class OwnershipServe:
             FROM _figi f JOIN _sp_security s ON s.ticker = f.ticker""")
         return common.create_table(con, "sec13f_cusip_map", MAP, f"""
             SELECT c.cusip, c.period,
-                   coalesce(a.ticker, b.ticker, CASE WHEN NOT f.refused THEN f.ticker END) AS ticker,
-                   CASE WHEN a.ticker IS NOT NULL THEN '{HIST}' WHEN b.ticker IS NOT NULL THEN '{CURRENT}'
-                        WHEN NOT f.refused THEN '{FIGI}' WHEN f.refused THEN '{REFUSED}' END AS map_source,
-                   CASE WHEN a.ticker IS NULL AND b.ticker IS NULL AND f.refused THEN f.ticker END AS candidate_ticker,
+                   coalesce(a.ticker, CASE WHEN NOT b.refused THEN b.ticker END,
+                            CASE WHEN b.ticker IS NULL AND NOT f.refused THEN f.ticker END) AS ticker,
+                   CASE WHEN a.ticker IS NOT NULL THEN '{HIST}' WHEN NOT b.refused THEN '{CURRENT}'
+                        WHEN b.refused THEN '{REFUSED}' WHEN NOT f.refused THEN '{FIGI}'
+                        WHEN f.refused THEN '{REFUSED}' END AS map_source,
+                   CASE WHEN a.ticker IS NULL AND b.refused THEN b.ticker
+                        WHEN a.ticker IS NULL AND b.ticker IS NULL AND f.refused THEN f.ticker END AS candidate_ticker,
                    c.issuer_name, c.value, c.holders
             FROM _cp c
             LEFT JOIN _m_hist a ON a.cusip = c.cusip AND a.period = c.period
-            LEFT JOIN _m_cur b ON b.cusip = c.cusip
+            LEFT JOIN _m_cur b ON b.cusip = c.cusip AND b.period = c.period
             LEFT JOIN _m_figi f ON f.cusip = c.cusip
             ORDER BY c.period, c.cusip""")
 
@@ -503,16 +524,18 @@ class OwnershipServe:
     @staticmethod
     def _issues(con: duckdb.DuckDBPyConnection) -> list[tuple[str, str, str]]:
         found = []
-        for cusip, ticker, periods, value, owners, gvkey, iid in con.execute(f"""
+        for cusip, ticker, periods, value, owners, gvkey, iid, current in con.execute(f"""
                 SELECT m.cusip, any_value(m.candidate_ticker), count(DISTINCT m.period), sum(m.value),
                        (SELECT string_agg(DISTINCT o.gvkey || '/' || coalesce(o.iid, '?'), ', ' ORDER BY 1)
                         FROM _owners o WHERE o.cusip = m.cusip),
-                       any_value(s.gvkey), any_value(s.iid)
+                       any_value(s.gvkey), any_value(s.iid), bool_or(b.refused)
                 FROM sec13f_cusip_map m LEFT JOIN _sp_security s ON s.ticker = m.candidate_ticker
+                LEFT JOIN _m_cur b ON b.cusip = m.cusip AND b.period = m.period
                 WHERE m.map_source = '{REFUSED}' GROUP BY m.cusip ORDER BY m.cusip""").fetchall():
+            names = "the spine's current CUSIP names" if current else "OpenFIGI names"
             found.append(("cusip_owner_differs", cusip,
-                          f"OpenFIGI names {ticker}; Compustat gives the CUSIP to {owners} and {ticker} is linked to "
-                          f"{gvkey}/{iid}: {periods} period(s), ${value or 0:,.0f} kept unnamed"))
+                          f"{names} {ticker} ({gvkey}/{iid}); Compustat gives the CUSIP to {owners} in the period: "
+                          f"{periods} period(s), ${value or 0:,.0f} kept unnamed"))
         for cusip, period, issuer, value, holders in con.execute(f"""
                 SELECT cusip, period, issuer_name, value, holders FROM sec13f_cusip_map
                 WHERE period = (SELECT max(period) FROM sec13f_cusip_map) AND map_source IS NULL
