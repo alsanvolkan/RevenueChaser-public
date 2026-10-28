@@ -137,6 +137,30 @@ def test_files_that_disagree_vote_and_are_an_issue(built):
     assert ("membership_files_disagree", "sp500:NVR") in _issues()
 
 
+def test_a_line_whose_cusip_conflicts_with_the_tickers_known_cusip_is_no_match(built):
+    """Should-fix 4a: a WFC line carrying another issuer's CUSIP (written before the ticker was reused) is not WFC."""
+    sp500 = [h for h in fx.SP500 if h[0] != "WFC"] + [("WFC", "999999999", "WFC OLD ISSUER")]
+    _funds_answer(built, sp500=sp500)
+    run_all("2026-10-28", names=(funds.NAME,))
+    assert _q("SELECT valid_from, valid_to FROM index_membership WHERE source = ? AND index_slug = 'sp500' "
+              "AND ticker = 'WFC'", funds.NAME) == [(date(2026, 10, 27), date(2026, 10, 28))]
+    assert ("member_not_in_sec", "sp500:WFC") in _issues()
+
+
+def test_an_acquired_member_keeps_its_history_after_it_leaves_the_sec_file(built):
+    """Should-fix 4b: each day's lines match that day's SEC snapshot, so NVR's period survives NVR leaving."""
+    without_nvr = dict(fx.SEC_FILE, data=[r for r in fx.SEC_FILE["data"] if r[2] != "NVR"])
+    built.routes[:] = [r for r in built.routes if r[0] != "company_tickers_exchange.json"]
+    built.add("company_tickers_exchange.json", without_nvr)
+    _funds_answer(built, sp500=[h for h in fx.SP500 if h[0] != "NVR"])
+    # One row of 14 leaving is over the swap's 1% shrink guard: in this tiny fixture the drop is allowed.
+    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-03", "allow_shrink": True}})
+    run_all("2026-11-03", names=(funds.NAME,))
+    assert _q("SELECT valid_from, valid_to FROM index_membership WHERE source = ? AND index_slug = 'sp500' "
+              "AND ticker = 'NVR'", funds.NAME) == [(date(2026, 10, 27), date(2026, 11, 3))]
+    assert _q("SELECT count(*) FROM security WHERE ticker = 'NVR'") == [(0,)]
+
+
 def test_wrds_constituents_are_kept_with_exclusive_ends(built):
     assert _q("SELECT ticker, valid_from, valid_to FROM index_membership WHERE source = ? AND index_slug = 'sp400' "
               "ORDER BY ticker", wrds.IDXCST_HIS.name) == [
@@ -216,8 +240,17 @@ def test_the_type_comes_from_the_identity_rules():
 
 
 def test_the_match_of_a_holding_line():
-    by_cusip, tickers = {"31428X106": "FDX"}, {"FDX", "BRK-B", "HEI-A"}
-    squashed = {"FDX": "FDX", "BRKB": "BRK-B", "HEIA": "HEI-A"}
-    assert security.match_holding({"ticker": None, "cusip": "31428X106"}, by_cusip, tickers, squashed) == "FDX"
-    assert security.match_holding({"ticker": "BRKB", "cusip": None}, by_cusip, tickers, squashed) == "BRK-B"
-    assert security.match_holding({"ticker": "NOPE", "cusip": None}, by_cusip, tickers, squashed) is None
+    by_cusip, cusip_of, tickers = {"31428X106": "FDX"}, {"FDX": "31428X106"}, {"FDX", "BRK-B", "HEI-A"}
+    m = lambda t, c: security.match_holding({"ticker": t, "cusip": c}, by_cusip, cusip_of, tickers,  # noqa: E731
+                                            security.squash(tickers))
+    assert m(None, "31428X106") == "FDX" and m("BRKB", None) == "BRK-B" and m("NOPE", None) is None
+    assert m("FDX", "000000000") is None                  # a CUSIP that is not FDX's known one: no match (4a)
+    assert m("HEI-A", "000000000") == "HEI-A"             # no known CUSIP for the ticker: the ticker decides
+
+
+def test_two_tickers_that_squash_alike_match_neither():
+    tickers = {"AB-C", "ABC", "A-BC"}
+    squashed = security.squash(tickers)
+    assert squashed["ABC"] is None
+    assert security.match_holding({"ticker": "ABC", "cusip": None}, {}, {}, tickers, squashed) == "ABC"  # exact
+    assert security.match_holding({"ticker": "A-B-C", "cusip": None}, {}, {}, tickers, squashed) is None

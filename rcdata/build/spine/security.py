@@ -180,23 +180,37 @@ def sec_history(snapshots: list[dict], fields=("cik", "name", "exchange")) -> li
 
 # ── The vote of the fund files ────────────────────────────────────────────────────────────────────────────────
 
-def match_holding(line: dict, by_cusip: dict[str, str], sec_tickers: set[str],
+def squash(tickers) -> dict[str, str | None]:
+    """``{ticker without its dashes: the ticker}`` over ``tickers``; None where two tickers squash alike."""
+    out: dict[str, str | None] = {}
+    for t in sorted(tickers):
+        k = t.replace("-", "")
+        out[k] = None if k in out and out[k] != t else t
+    return out
+
+
+def match_holding(line: dict, by_cusip: dict[str, str], cusip_of: dict[str, str], tickers: set[str],
                   squashed: dict[str, str | None]) -> str | None:
-    """The SEC ticker of one holdings line: by CUSIP, else its own ticker, else its ticker without the class dash
-    (iShares writes ``BRKB``) when exactly one SEC ticker squashes to it."""
+    """The SEC ticker of one holdings line: by CUSIP; else its own ticker when ``tickers`` (the SEC tickers of the
+    line's day) holds it, or its ticker without the class dash (iShares writes ``BRKB``) when exactly one of them
+    squashes to it (``squash(tickers)``). A line whose CUSIP is not the matched ticker's known CUSIP is no match (a
+    line written before the ticker was reused, should-fix 4a)."""
     cusip = line.get("cusip")
     if cusip and cusip in by_cusip:
         return by_cusip[cusip]
     t = line.get("ticker")
     if not t:
         return None
-    if t in sec_tickers:
-        return t
-    return squashed.get(t.replace("-", ""))
+    hit = t if t in tickers else squashed.get(t.replace("-", ""))
+    if hit and cusip and cusip_of.get(hit) and cusip_of[hit] != cusip:
+        return None
+    return hit
 
 
-# The vote, in SQL over the whole fund-file history (it grows by about 6,000 lines a day): ``_fund_map`` names the
-# SEC ticker of each distinct (ticker, CUSIP) a file wrote; a name is a member of an index on a day when more than
+# The vote, in SQL over the whole fund-file history (it grows by about 6,000 lines a day): ``_fund_snap`` gives each
+# fund day the SEC snapshot of that day (the newest on or before it, else the first), and ``_fund_map`` names the SEC
+# ticker of each distinct (snapshot, ticker, CUSIP) the files wrote, matched against that snapshot's tickers, so a
+# member that later left the SEC file keeps its past (should-fix 4b); a name is a member of an index on a day when more than
 # half of that day's counting files hold it; the periods are the runs of member days ("gaps and islands"), each
 # ending on the index's next day with a counting file, so a day with no counting file is no absence.
 VOTE_SQL = """
@@ -205,7 +219,8 @@ CREATE OR REPLACE TEMP TABLE _fund_days AS
 CREATE OR REPLACE TEMP TABLE _fund_held AS
     SELECT l.as_of, l.index_slug, m.sec_ticker AS ticker, count(DISTINCT l.provider || '/' || l.fund) AS held
     FROM stg_fund_lines l
-    JOIN _fund_map m ON m.tk = coalesce(l.ticker, '') AND m.cu = coalesce(l.cusip, '')
+    JOIN _fund_snap s ON s.as_of = l.as_of
+    JOIN _fund_map m ON m.snap = s.snap AND m.tk = coalesce(l.ticker, '') AND m.cu = coalesce(l.cusip, '')
     JOIN stg_fund_files f ON f.as_of = l.as_of AND f.index_slug = l.index_slug AND f.provider = l.provider
                          AND f.fund = l.fund AND f.counted
     WHERE m.sec_ticker IS NOT NULL GROUP BY ALL;
@@ -391,30 +406,43 @@ class SpineSecurity:
     def _membership(con, rows: list[dict], linked: dict) -> tuple[list[dict], list[tuple]]:
         found: list[tuple[str, str, str]] = []
         tier = {r["ticker"]: r["tier"] for r in rows}
-        cik = {r["ticker"]: r["cik"] for r in rows}
-        sec_tickers = set(tier)
-        by_cusip = {r["cusip"]: r["ticker"] for r in rows if r["cusip"]}
-        squashed: dict[str, str | None] = {}
-        for t in sec_tickers:
-            k = t.replace("-", "")
-            squashed[k] = None if k in squashed and squashed[k] != t else t
+        # A member's CIK: the newest SEC snapshot that held its ticker (an acquired member keeps its own).
+        cik = {t: c for t, c in con.execute("SELECT ticker, arg_max(cik, source_as_of) FROM stg_sec_all "
+                                            "GROUP BY ticker").fetchall()}
+        cusip_of = {r["ticker"]: r["cusip"] for r in rows if r["cusip"]}
         files = _rows(con, "SELECT * FROM stg_fund_files")
         latest = max((f["as_of"] for f in files), default=None)
         for f in files:
             if f["as_of"] == latest and not f["counted"]:
                 found.append(("fund_file_short", f"{f['index_slug']}:{f['provider']}-{f['fund']}",
                               f"{f['lines']} stock lines on {f['as_of']}, under the floor: not counted"))
-        # Match each distinct (ticker, CUSIP) the files wrote once, in Python; the vote runs in SQL (VOTE_SQL).
-        pairs = con.execute("SELECT DISTINCT coalesce(ticker, ''), coalesce(cusip, '') FROM stg_fund_lines "
-                            "WHERE ticker IS NOT NULL OR cusip IS NOT NULL").fetchall()
-        mapping = [{"tk": tk, "cu": cu, "sec_ticker": match_holding({"ticker": tk or None, "cusip": cu or None},
-                                                                    by_cusip, sec_tickers, squashed)}
-                   for tk, cu in pairs]
-        base.rows_table(con, "_fund_map", [("tk", "TEXT"), ("cu", "TEXT"), ("sec_ticker", "TEXT")], mapping)
+        # Each fund day's SEC snapshot; each distinct (snapshot, ticker, CUSIP) is matched once, in Python, against
+        # that snapshot's tickers; the vote runs in SQL (VOTE_SQL).
+        con.execute("CREATE OR REPLACE TEMP TABLE _fund_snap AS SELECT d.as_of, coalesce("
+                    "(SELECT max(source_as_of) FROM stg_sec_all WHERE source_as_of <= d.as_of), "
+                    "(SELECT min(source_as_of) FROM stg_sec_all)) AS snap "
+                    "FROM (SELECT DISTINCT as_of FROM stg_fund_lines) d")
+        on_snap: dict[date, set[str]] = defaultdict(set)
+        for t, d in con.execute("SELECT ticker, source_as_of FROM stg_sec_all").fetchall():
+            on_snap[d].add(t)
+        squashed = {d: squash(ts) for d, ts in on_snap.items()}
+        by_cusip_all = {r["cusip"]: r["ticker"] for r in rows if r["cusip"]}
+        mapping = []
+        for snap, tk, cu in con.execute(
+                "SELECT DISTINCT s.snap, coalesce(l.ticker, ''), coalesce(l.cusip, '') FROM stg_fund_lines l "
+                "JOIN _fund_snap s USING (as_of) WHERE (l.ticker IS NOT NULL OR l.cusip IS NOT NULL) "
+                "AND s.snap IS NOT NULL").fetchall():
+            by_cusip = {c: t for c, t in by_cusip_all.items() if t in on_snap[snap]}
+            mapping.append({"snap": snap, "tk": tk, "cu": cu,
+                            "sec_ticker": match_holding({"ticker": tk or None, "cusip": cu or None}, by_cusip,
+                                                        cusip_of, on_snap[snap], squashed[snap])})
+        base.rows_table(con, "_fund_map", [("snap", "DATE"), ("tk", "TEXT"), ("cu", "TEXT"), ("sec_ticker", "TEXT")],
+                        mapping)
         con.execute(VOTE_SQL)
         if latest is not None:
             for ln in _rows(con, "SELECT DISTINCT l.index_slug, l.provider, l.fund, l.ticker, l.cusip, l.name "
-                                 "FROM stg_fund_lines l JOIN _fund_map m ON m.tk = coalesce(l.ticker, '') "
+                                 "FROM stg_fund_lines l JOIN _fund_snap s ON s.as_of = l.as_of "
+                                 "JOIN _fund_map m ON m.snap = s.snap AND m.tk = coalesce(l.ticker, '') "
                                  "AND m.cu = coalesce(l.cusip, '') JOIN stg_fund_files f ON f.as_of = l.as_of "
                                  "AND f.index_slug = l.index_slug AND f.provider = l.provider AND f.fund = l.fund "
                                  f"AND f.counted WHERE m.sec_ticker IS NULL AND l.as_of = DATE '{latest}'"):
