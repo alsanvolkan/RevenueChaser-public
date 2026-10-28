@@ -593,7 +593,8 @@
     "short_refetch_refused": 0,
     "spy_stale": false,
     "stale_info": 0,
-    "stale_ohlc": 0
+    "stale_ohlc": 0,
+    "stale_submissions": 0
    },
    "distorted_count": 5,
    "funnel_steps": [

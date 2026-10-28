@@ -164,9 +164,12 @@ def _summary_html(s: dict, data_quality: dict | None = None) -> str:
     # The counters cover the shown cards (counted after top_n); a payload from before they existed has neither key.
     dq = data_quality or {}
     n_filings, n_cik = int(dq.get("no_submissions") or 0), int(dq.get("no_cik") or 0)
-    if n_filings or n_cik:
+    n_stale = int(dq.get("stale_submissions") or 0)          # review F2: rows the daily sync stopped refreshing
+    if n_filings or n_cik or n_stale:
+        from . import config as _config
         shown = f" of the {_fmt_int(top_n)} shown" if top_n else ""
-        parts = ([f"{_fmt_int(n_filings)} with no filings on record"] if n_filings else []) +                 ([f"{_fmt_int(n_cik)} with no CIK"] if n_cik else [])
+        parts = ([f"{_fmt_int(n_filings)} with no filings on record"] if n_filings else []) +                 ([f"{_fmt_int(n_cik)} with no CIK"] if n_cik else []) +                 ([f"{_fmt_int(n_stale)} with an 8-K list not checked in the last "
+                  f"{_config.CORPORATE_EVENT_CHECK_MAX_AGE_DAYS} days"] if n_stale else [])
         elim_part += (f" No corporate-event check{shown}: {' · '.join(parts)}"
                       " (a card without an amber event line is not proven event-free for these).")
     # #46: what the extraction could not read. The measure is the unit on the money facts, never the accounting

@@ -52,6 +52,9 @@ RO40_BARRIER = 150.0
 #   5.03 amendments to articles of incorporation or bylaws / change in fiscal year
 CORPORATE_EVENT_ITEMS = ["1.02", "2.01", "2.06", "3.01", "4.01", "4.02", "5.01", "5.03"]
 CORPORATE_EVENT_WINDOW_DAYS = 365
+# Review F2: a filer whose 8-K list the daily sync last checked longer ago than this (or never) is a blind spot,
+# counted on the board, not a clean "no event". Display only, like the flag (not in freeze._HASHED).
+CORPORATE_EVENT_CHECK_MAX_AGE_DAYS = 7
 
 # ── ROIC ──
 TAX_RATE = 0.21

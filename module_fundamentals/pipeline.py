@@ -614,6 +614,7 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
     found = events.corporate_events([c["ticker"] for c in candidates], stats=event_stats)
     run_stats["no_submissions"] = int(event_stats.get("no_submissions") or 0)
     run_stats["no_cik"] = int(event_stats.get("no_cik") or 0)
+    run_stats["stale_submissions"] = int(event_stats.get("stale_submissions") or 0)    # review F2
     for c in candidates:
         ev = found.get(c["ticker"])
         if ev:
@@ -636,6 +637,7 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
                          "stale_info": run_stats.get("stale_info", 0),
                          "no_submissions": run_stats.get("no_submissions", 0),
                          "no_cik": run_stats.get("no_cik", 0),
+                         "stale_submissions": run_stats.get("stale_submissions", 0),
                          # SPY's frame, the only one ``load_ohlc`` can still refuse (Swing review 8): 0 or 1
                          "short_refetch_refused": int(bool(run_stats.get("spy_short_refetch_refused"))),
                          "spy_stale": bool(run_stats.get("spy_stale")),
