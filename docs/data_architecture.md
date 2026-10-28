@@ -1085,7 +1085,8 @@ the only active US security of a CIK with one SEC ticker; otherwise no link and 
 a name is a member when more than half of the counting files hold it. Each day's lines are matched against that
 day's SEC snapshot (the newest on or before it), by CUSIP, then by ticker, then by the ticker without its class
 dash; a ticker match is refused when the line's CUSIP is known (Compustat) to belong to another security. A line
-the day's snapshot does not match is looked for in the snapshots of the next 14 days, but only by a ticker the SEC
+the day's snapshot does not match is looked for in the snapshots of the next 21 days (the weekly file's lag and one
+missed week), but only by a ticker the SEC
 file had not held by that day (a new joiner, a rename the files write first) or held under the same CIK (a name the
 file dropped and took back): a later row of a ticker under another CIK is its next owner. A member that later leaves the SEC file keeps its periods,
 and a period's CIK is that of the snapshot its last day's lines matched. Compustat constituents get a ticker only through the link (never Compustat's current `tic` alone).

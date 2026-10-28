@@ -52,9 +52,11 @@ NAME = "spine/security"
 TABLES = ("security", "security_history", "gics_history", "index_membership")
 # Compustat ``exchg`` codes of the US exchanges the SEC file's listed rows trade on: NYSE, AMEX, Nasdaq.
 US_EXCHG = (11, 12, 14)
-# How far ahead of a fund day's SEC snapshot a line is looked for (delta S1): the weekly file's lag, with room for one
-# missed week. Only for a ticker the SEC file has not held yet (delta-2 SF1).
-LOOKAHEAD = timedelta(days=14)
+# How far ahead of a fund day's SEC snapshot (the newest on or before the day) a line is looked for (delta S1): a fund
+# day is up to 6 days after its snapshot, the next weekly file 7 days, one missed week 14 more, so 21 days, the bound
+# included. Two missed weeks of the SEC file is no lookahead. Only for a ticker the SEC file has not held yet, or held
+# under the same CIK (delta-2 SF1, delta-3 SF-A).
+LOOKAHEAD = timedelta(days=21)
 
 SECURITY = [
     ("ticker", "TEXT PRIMARY KEY"), ("cik", "TEXT"), ("name", "TEXT"), ("exchange", "TEXT"),
@@ -220,7 +222,7 @@ def match_holding(line: dict, by_cusip: dict[str, str], cusip_owners: dict[str, 
 # The vote, in SQL over the whole fund-file history (it grows by about 6,000 lines a day): ``_fund_snap`` gives each
 # fund day the SEC snapshot of that day (the newest on or before it, else the first), and ``_fund_map`` names the SEC
 # ticker of each distinct (snapshot, ticker, CUSIP) the files wrote, matched against that snapshot's tickers (then
-# the next two weeks', for a ticker the weekly file has not held yet) and the snapshot it matched (``msnap``, whose
+# the next three weeks', for a ticker the weekly file has not held yet) and the snapshot it matched (``msnap``, whose
 # row gives the CIK), so a member that later left the SEC file keeps its
 # past (should-fix 4b); a name is a member of an index on a day when more than
 # half of that day's counting files hold it; the periods are the runs of member days ("gaps and islands"), each

@@ -225,13 +225,25 @@ def test_a_name_matched_ahead_takes_its_cik_from_the_snapshot_it_matched(built):
               "AND ticker = 'NEWCO'", funds.NAME) == [(date(2026, 10, 28), None, "4000001")]
 
 
-def test_a_line_is_not_looked_for_more_than_two_weeks_ahead(built):
-    """Delta-2 SF1 (a): NEWCO reaches the SEC file on 17 Nov, 20 days after the files wrote it on 28 Oct: no
-    match that far ahead."""
+def _newco_in_sec_from(built, day: str) -> None:
     _sec_answer(built, fx.SEC_FILE["data"] + [[4000001, "NEWCO INC", "NEWCO", "NYSE"]])
-    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-17"}})
+    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": day}})
     _funds_answer(built, sp500=fx.SP500 + [("NEWCO", None, "NEWCO INC")])
-    run_all("2026-10-28", names=(funds.NAME,))
+    run_all("2026-10-28", names=(funds.NAME,))       # the 28 Oct lines' snapshot is 27 Oct
+
+
+def test_a_line_is_looked_for_up_to_three_weeks_after_its_snapshot(built):
+    """Delta-3 nit 1: the weekly file's lag plus one missed week. NEWCO, written from 28 Oct, reaches the SEC file
+    on 17 Nov, 21 days after the line's snapshot (27 Oct): matched."""
+    _newco_in_sec_from(built, "2026-11-17")
+    assert _q("SELECT valid_from FROM index_membership WHERE source = ? AND ticker = 'NEWCO'", funds.NAME) == [
+        (date(2026, 10, 28),)]
+
+
+def test_a_line_is_not_looked_for_more_than_three_weeks_ahead(built):
+    """Delta-2 SF1 (a), delta-3 nit 1: NEWCO reaches the SEC file on 18 Nov, 22 days after the line's snapshot: no
+    match that far ahead (two missed weeks of the SEC file is no lookahead)."""
+    _newco_in_sec_from(built, "2026-11-18")
     assert _q("SELECT count(*) FROM index_membership WHERE source = ? AND ticker = 'NEWCO'", funds.NAME) == [(0,)]
     assert ("member_not_in_sec", "sp500:NEWCO") in _issues()
 
