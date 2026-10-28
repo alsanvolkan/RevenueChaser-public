@@ -89,12 +89,13 @@ def _say(answer: dict) -> None:
 
 
 def _error(e: BaseException) -> str:
-    """A driver error for the answer: capped, without the user name or a host name."""
-    text = f"{type(e).__name__}: {e}"[:300]
+    """A driver error for the answer: without the user name or a host name, then capped (masked first, so the cap
+    never leaves part of a name behind)."""
+    text = f"{type(e).__name__}: {e}"
     user = (os.getenv("WRDS_USERNAME") or "").strip()
-    if user:
-        text = re.sub(rf"(?<![\w.-]){re.escape(user)}(?![\w-])", "<user>", text)   # the name as a word, not inside one
-    return _HOST.sub("<host>", text)
+    if user:                                        # the name as a word, not inside one, in any case
+        text = re.sub(rf"(?<![\w.-]){re.escape(user)}(?![\w-])", "<user>", text, flags=re.I)
+    return _HOST.sub("<host>", text)[:300]
 
 
 def _isolate_streams():

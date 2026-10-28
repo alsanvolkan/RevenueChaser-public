@@ -155,3 +155,12 @@ def test_the_worker_env_keeps_the_tls_and_library_paths_and_drops_other_keys(mon
     env = wrds.worker_env()
     assert {"SSL_CERT_FILE", "SSL_CERT_DIR", "LD_LIBRARY_PATH", "PGSSLMODE"} <= set(env)
     assert "OPENFIGI_API_KEY" not in env
+
+
+def test_an_error_is_masked_before_it_is_cut_and_whatever_the_case(monkeypatch):
+    """Delta-3 nit 4: a name across the 300-character cut leaves no part of itself; "SecretUser" is masked too."""
+    from RevenueChaser.rcdata.build.spine import wrds_worker
+    monkeypatch.setenv("WRDS_USERNAME", "secretuser")
+    text = wrds_worker._error(RuntimeError("x" * 280 + " secretuser can not log in"))
+    assert len(text) <= 300 and "secre" not in text
+    assert wrds_worker._error(RuntimeError("role SecretUser denied")) == "RuntimeError: role <user> denied"
