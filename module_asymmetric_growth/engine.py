@@ -11,7 +11,7 @@ Toplam puan = geçen alt kriter sayısı (0-9). Kovalar: 9 · 8-7 · 6-5 · <5.
 Tier (#380 S2): a signal is strong with at least 2 of its 3 sub-criteria passed; 3 strong = Balanced (3),
 2 strong = Strong (2), otherwise no tier. Server-side, from the default thresholds.
 
-Etiketler: Disruptive Themed (rotation-map teması), Technological
+Etiketler: Themed (any pinned rotation-map theme; AG review N-3), Technological
 Breakthrough (R&D/Revenue >= 15%). Uyarı: High dilution (YoY hisse artışı > %20).
 """
 from __future__ import annotations
