@@ -605,10 +605,9 @@ def _window_prices(price_tickers, tickers, bench_ticker, eff, horizon):
         prices = prices.loc[:cut]
         if not whole.empty:
             whole = whole.loc[:cut]
-        first = {t: (pd.Timestamp(d) if pd.Timestamp(d) <= cut else None)
-                 for t, d in facts["first"].items()}
-    else:
-        first = {t: pd.Timestamp(d) for t, d in facts["first"].items()}
+    # A name's first bar stays its listing even when it falls after a stale benchmark's cut: it then listed after
+    # the window began, not "missing bars" (Co-movement review N3).
+    first = {t: pd.Timestamp(d) for t, d in facts["first"].items()}
     return prices, last, first, _flat(whole, tickers), cut is not None
 
 
@@ -670,6 +669,8 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
         cut = _bench_cut(prices.index, last, tickers, bench_ticker, eff)
         bench_stale = cut is not None
         if bench_stale:
+            # Each name's listing, read before the cut: one listed after it is listed recently (N3).
+            first = {t: prices[t].first_valid_index() for t in prices.columns}
             # Residuals need the market return on every date; cut the
             # window at the benchmark's last bar instead of NaN-ing the
             # newest sessions for every name (review F3).

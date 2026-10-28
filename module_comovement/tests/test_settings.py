@@ -501,3 +501,21 @@ def test_a_raw_return_fallback_has_its_own_hash(rawstore_tmp_db):
         == engine.config_hash(252, config.LINKAGE, (2,), 1, "spy")
     assert engine.config_hash(252, config.LINKAGE, (2,), 1, "off", benchmark_applied=False) \
         == engine.config_hash(252, config.LINKAGE, (2,), 1, "off")   # off is raw by choice, not a fallback
+
+
+@pytest.mark.parametrize("persist", [False, True])
+def test_a_name_listed_after_a_stale_benchmarks_last_bar_is_listed_recently(rawstore_tmp_db, persist):
+    """Fable review of Co-movement (28 Oct 2026), N3: when SPY is stale the window is cut at its last bar. A name
+    whose first bar is after that cut has no price inside the cut window; both the store-only and the full read
+    then filed it as "missing bars" (a gap), though it simply listed after the window started."""
+    ret = _market_two_groups(n=300)
+    ret.loc[ret.index[-6:], "SPY"] = np.nan                     # SPY 6 sessions behind: stale, the window is cut
+    new = pd.Series(np.nan, index=ret.index)
+    new.iloc[-3:] = 0.01                                        # first bar 3 sessions ago, after SPY's last
+    ret["NEW"] = new
+    tickers = [t for t in ret.columns if t != "SPY"]
+    _seed_universe(tickers)
+    _seed_prices(ret)
+    p = engine.run(no_fetch=True, tickers=tickers, cuts=(2,), persist=persist)
+    assert p["benchmark_status"] == "stale" and "NEW" in p["dropped"]
+    assert p["funnel"]["listed_recently"] == 1 and p["funnel"]["missing_bars"] == 0
