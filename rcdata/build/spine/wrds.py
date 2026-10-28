@@ -245,19 +245,34 @@ def _ask(ctx: base.RunContext, raw: Path, sql: str, as_of: date) -> Path:
     return raw
 
 
+def _typed(c: str, t: str) -> str:
+    """The SQL that types the raw text column ``c`` to ``t`` (a value it cannot type becomes null)."""
+    if t == "DATE":
+        return f'TRY_CAST("{c}" AS DATE)'
+    if t == "INTEGER":
+        return f'TRY_CAST(TRY_CAST("{c}" AS DOUBLE) AS INTEGER)'
+    return f'"{c}"'
+
+
+def _read_raw(raw: Path, schema: list[tuple[str, str]]) -> str:
+    cols = "{" + ", ".join(f"'{c}': 'VARCHAR'" for c, _ in schema) + "}"
+    return f"read_json({base.sql_path(raw)}, format = 'newline_delimited', columns = {cols})"
+
+
 def raw_rows(raw: Path, schema: list[tuple[str, str]]) -> str:
     """A SELECT of the raw file's rows typed to ``schema`` (every value arrives as text or null)."""
-    cols = "{" + ", ".join(f"'{c}': 'VARCHAR'" for c, _ in schema) + "}"
-    typed = []
-    for c, t in schema:
-        if t == "DATE":
-            typed.append(f'TRY_CAST("{c}" AS DATE) AS "{c}"')
-        elif t == "INTEGER":
-            typed.append(f'TRY_CAST(TRY_CAST("{c}" AS DOUBLE) AS INTEGER) AS "{c}"')
-        else:
-            typed.append(f'"{c}"')
-    return (f"SELECT {', '.join(typed)} FROM read_json({base.sql_path(raw)}, format = 'newline_delimited', "
-            f"columns = {cols})")
+    typed = ", ".join(f'{_typed(c, t)} AS "{c}"' for c, t in schema)
+    return f"SELECT {typed} FROM {_read_raw(raw, schema)}"
+
+
+def untyped(con: duckdb.DuckDBPyConnection, raw: Path, schema: list[tuple[str, str]]) -> dict[str, int]:
+    """Per typed column, the rows whose raw value is not null but did not type (``raw_rows`` made it null)."""
+    cols = [(c, t) for c, t in schema if t in ("DATE", "INTEGER")]
+    if not cols:
+        return {}
+    counts = ", ".join(f'count(*) FILTER (WHERE "{c}" IS NOT NULL AND {_typed(c, t)} IS NULL)' for c, t in cols)
+    row = con.execute(f"SELECT {counts} FROM {_read_raw(raw, schema)}").fetchone()
+    return {c: int(n) for (c, _), n in zip(cols, row) if n}
 
 
 def _snapshots(dataset: str) -> list[str]:
@@ -412,6 +427,9 @@ class WrdsDataset:
                 rows = int(con.execute(f"SELECT count(*) FROM ({raw_rows(raw, spec['schema'])})").fetchone()[0])
                 if not rows and not delta:
                     raise base.SourceError(f"wrds {table}: the snapshot came back empty")
+                types = dict(spec["schema"])
+                for col, n in untyped(con, raw, spec["schema"]).items():
+                    ctx.issue("value_untyped", f"{table}.{col}", f"{n} row(s) of {rows} nulled (as {types[col]})")
                 keys = ", ".join(spec["key"])
                 # Two raw rows of one key keep the same one whatever their order: the first by every column.
                 every = ", ".join(f'"{c}" NULLS LAST' for c, _ in spec["schema"])

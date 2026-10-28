@@ -154,3 +154,13 @@ def test_two_raw_rows_of_one_key_keep_the_same_one_whatever_their_order():
         kept.append(duckdb.connect().execute(f"SELECT tic FROM read_parquet({base.sql_path(out)})").fetchall())
     assert kept == [[("A",)], [("A",)]]
 
+
+def test_a_value_the_schema_cannot_type_is_a_build_issue_not_a_silent_null():
+    raw = _security_raw([_sec_row(), _sec_row(iid="02", exchg="eleven", dldtei="not a date"),
+                         _sec_row(iid="03", exchg=None)])
+    ctx = base.RunContext(run_id="r", dataset=wrds.SEC_IDHIST.name)
+    wrds.SEC_IDHIST.to_parquet_all(ctx, [raw])
+    n, rows = ops.open_issues(wrds.SEC_IDHIST.name)
+    got = sorted((r["kind"], r["key"], r["detail"]) for r in rows)
+    assert got == [("value_untyped", "security.dldtei", "1 row(s) of 3 nulled (as DATE)"),
+                   ("value_untyped", "security.exchg", "1 row(s) of 3 nulled (as INTEGER)")]

@@ -1089,6 +1089,7 @@ its periods. Compustat constituents get a ticker only through the link (never Co
 `index_key_empty`, `fund_file_short`, `member_not_in_sec`, `member_not_tier_a`, `membership_files_disagree`, `membership_wrds_differs`.
 A rule needing a source that has never run is not applied; that source is one `source_never_run` row.
 `index_key_empty`: an index key with no `comp.idxcst_his` rows in a run that answered rows for another.
+A WRDS raw value its schema cannot type (a DATE or INTEGER column) is typed to null and recorded as a `value_untyped` issue of that WRDS dataset, keyed `<table>.<column>`, with the row count; it is a one-off row of its run, not synced.
 
 **The bridge (D4).** Views in `spine.duckdb` under the old names, with the old columns in the old order:
 `equity_universe` (the listed rows, Tier A and B), `security_master`, `index_constituents` (current fund-file
