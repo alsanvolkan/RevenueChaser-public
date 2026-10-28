@@ -114,7 +114,6 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         "earnings_date": earnings_date,
         "ind": ind,
         "ohlc_stale": bool(df.attrs.get("stale")),
-        "short_refetch_refused": bool(df.attrs.get("short_refetch_refused")),
         "info_stale": info_stale,
     }
 
@@ -146,7 +145,6 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
     run_stats = run_stats or {}
     results = results or []
     run_stats["stale_info"] = sum(1 for r in results if r.get("info_stale"))
-    run_stats["short_refetch_refused"] = sum(1 for r in results if r.get("short_refetch_refused"))
 
     rs_pct = percentile_ranks([(r["ticker"], r["ind"].get("rs_vs_spy_12m")) for r in results])
     mom_pct = percentile_ranks([(r["ticker"], r["ind"].get("mom_12_1")) for r in results])
@@ -240,7 +238,8 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
         "no_data": False,
         "data_quality": {"stale_ohlc": run_stats.get("stale_ohlc", 0),
                          "stale_info": run_stats.get("stale_info", 0),
-                         "short_refetch_refused": run_stats.get("short_refetch_refused", 0),
+                         # SPY's frame, the only one ``load_ohlc`` can still refuse (review 8): 0 or 1
+                         "short_refetch_refused": int(bool(run_stats.get("spy_short_refetch_refused"))),
                          "spy_stale": bool(run_stats.get("spy_stale")),
                          "dropped": run_stats.get("dropped") or {}},
         "summary": {

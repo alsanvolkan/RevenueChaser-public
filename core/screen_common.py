@@ -494,6 +494,8 @@ def run_screen(*, board: str, refreshed_by: str, cfg: Any,
         "earnings_stored": earnings_stored,
         "stale_ohlc": sum(1 for r in results if r.get("ohlc_stale")),
         "spy_stale": bool(getattr(spy_df, "attrs", {}).get("stale")),
+        # Only the SPY fallback (``load_ohlc``) can refuse a short refetch now; D01 bars never do (Swing review 8).
+        "spy_short_refetch_refused": bool(getattr(spy_df, "attrs", {}).get("short_refetch_refused")),
         "dropped": count_drops(drops),
         "universe_generated_at": u_stats.get("universe_generated_at"),
         "universe_refreshed_by": u_stats.get("universe_refreshed_by"),

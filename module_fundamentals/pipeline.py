@@ -521,7 +521,6 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         "anchor_period_end": anchor_end.isoformat() if anchor_end else None,
         "metrics": metrics,
         "ohlc_stale": bool(df.attrs.get("stale")),
-        "short_refetch_refused": bool(df.attrs.get("short_refetch_refused")),
         "info_stale": info_stale,
         "edgar_extract_version": (emeta or {}).get("extract_version"),     # the result history checks it (#278)
     }
@@ -557,7 +556,6 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
     run_stats = run_stats or {}
     results = results or []
     run_stats["stale_info"] = sum(1 for r in results if r.get("info_stale"))
-    run_stats["short_refetch_refused"] = sum(1 for r in results if r.get("short_refetch_refused"))
 
     passing = {"rule_of_40": 0, "quality": 0, "momentum": 0}
     distorted_count = 0
@@ -636,7 +634,8 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
                          "stale_info": run_stats.get("stale_info", 0),
                          "no_submissions": run_stats.get("no_submissions", 0),
                          "no_cik": run_stats.get("no_cik", 0),
-                         "short_refetch_refused": run_stats.get("short_refetch_refused", 0),
+                         # SPY's frame, the only one ``load_ohlc`` can still refuse (Swing review 8): 0 or 1
+                         "short_refetch_refused": int(bool(run_stats.get("spy_short_refetch_refused"))),
                          "spy_stale": bool(run_stats.get("spy_stale")),
                          "dropped": run_stats.get("dropped") or {}},
         "summary": {
