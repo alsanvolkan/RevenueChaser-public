@@ -41,7 +41,7 @@ from ....core.gics_map import UNCLASSIFIED, canonical_sector
 from ....core.identity import isin as isin_mod
 from ... import ops
 from .. import base
-from . import KIND, stage, tier as tier_rule
+from . import KIND, stage, tier as tier_rule, views
 from .funds import NAME as FUNDS
 from .openfigi_map import NAME as OPENFIGI, PRESENT
 from .sec_tickers import NAME as SEC
@@ -367,6 +367,7 @@ class SpineSecurity:
         members, member_issues = self._membership(con, rows, linked, securities)
         found += member_issues
         counts["index_membership"] = _create(con, "index_membership", members)
+        views.create(con)
         ctx.pending[NAME] = found
         return counts
 
