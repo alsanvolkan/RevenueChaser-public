@@ -442,14 +442,15 @@ class SpineSecurity:
             on_snap[d].add(t)
         squashed = {d: squash(ts) for d, ts in on_snap.items()}
         by_cusip_all = {r["cusip"]: r["ticker"] for r in rows if r["cusip"]}
+        # Each snapshot's CUSIP map, built once (not once per distinct line).
+        by_cusip = {d: {c: t for c, t in by_cusip_all.items() if t in ts} for d, ts in on_snap.items()}
         mapping = []
         for snap, tk, cu in con.execute(
                 "SELECT DISTINCT s.snap, coalesce(l.ticker, ''), coalesce(l.cusip, '') FROM stg_fund_lines l "
                 "JOIN _fund_snap s USING (as_of) WHERE (l.ticker IS NOT NULL OR l.cusip IS NOT NULL) "
                 "AND s.snap IS NOT NULL").fetchall():
-            by_cusip = {c: t for c, t in by_cusip_all.items() if t in on_snap[snap]}
             mapping.append({"snap": snap, "tk": tk, "cu": cu,
-                            "sec_ticker": match_holding({"ticker": tk or None, "cusip": cu or None}, by_cusip,
+                            "sec_ticker": match_holding({"ticker": tk or None, "cusip": cu or None}, by_cusip[snap],
                                                         cusip_of, on_snap[snap], squashed[snap])})
         base.rows_table(con, "_fund_map", [("snap", "DATE"), ("tk", "TEXT"), ("cu", "TEXT"), ("sec_ticker", "TEXT")],
                         mapping)
