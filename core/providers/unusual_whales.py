@@ -502,15 +502,10 @@ class UWClient:
         balance = fin.get("balance_sheets", [])
         cashflow = fin.get("cash_flows", [])
 
-        # Index balance and cashflow by fiscal_date_ending
-        bal_by_date = {}
-        for b in balance:
-            d = b.get("fiscal_date_ending") or ""
-            if d: bal_by_date[d] = b
-        cf_by_date = {}
-        for c in cashflow:
-            d = c.get("fiscal_date_ending") or ""
-            if d: cf_by_date[d] = c
+        # Index balance and cashflow by fiscal_date_ending, quarterly rows only (the income rows' rule below): at a
+        # fiscal year end the annual and the Q4 row share one date, and the later one served used to win (review S3).
+        bal_by_date = _quarterly_by_date(balance)
+        cf_by_date = _quarterly_by_date(cashflow)
 
         num = self._num
         records = []
@@ -1115,6 +1110,20 @@ def _flow_num(v):
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _quarterly_by_date(rows: list) -> dict:
+    """``fiscal_date_ending`` -> row, for ``_map_financials``. A row that names its period counts only when it is
+    ``quarterly``; a row without a period type is kept (the legacy rule) but never replaces a quarterly one."""
+    out: dict = {}
+    for r in rows or []:
+        d = r.get("fiscal_date_ending") or ""
+        rt = (r.get("report_type") or "").lower()
+        if not d or (rt and rt != "quarterly"):
+            continue
+        if rt or d not in out:
+            out[d] = r
+    return out
 
 
 def _lean_bucket(item: dict, option_type: str) -> str:

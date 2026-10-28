@@ -171,3 +171,32 @@ def test_optional_rpo_is_mapped_when_present():
 def test_no_financials_returns_empty():
     c = _client()
     assert c._map_financials("QXO") == []
+
+
+@pytest.mark.parametrize("annual_first", [True, False])
+def test_an_annual_cash_flow_or_balance_row_on_a_quarter_end_never_joins(annual_first):
+    """Fable review S3 (Earnings Radar): /financials serves annual and quarterly rows on all three statements
+    (core/vendor_data.py), so at a fiscal year end an annual and a Q4 row share one date. The balance and cash-flow
+    rows were keyed by date alone and the later one served won; the income rows' quarterly filter now applies to
+    them too, in either served order."""
+    fd = "2025-12-31"
+    cf_q = {"fiscal_date_ending": fd, "report_type": "quarterly", "operating_cash_flow": "300", "net_income": "100"}
+    cf_a = {"fiscal_date_ending": fd, "report_type": "annual", "operating_cash_flow": "1200", "net_income": "400"}
+    bal_q = _bal(fd, report_type="quarterly", total_assets="10000")
+    bal_a = _bal(fd, report_type="annual", total_assets="9000")
+    c = _client(income=[{**_inc(fd, 1000, ni=100), "report_type": "quarterly"}],
+                balance=[bal_a, bal_q] if annual_first else [bal_q, bal_a],
+                cashflow=[cf_a, cf_q] if annual_first else [cf_q, cf_a])
+    rec = c._map_financials("QXO")[0]
+    assert rec["cash_from_operations"] == 300.0 and rec["cash_net_income"] == 100.0
+    assert rec["total_assets"] == 10000.0
+
+
+def test_an_untyped_cash_flow_row_still_joins_but_never_over_a_quarterly_one():
+    fd = "2025-12-31"
+    typed = {"fiscal_date_ending": fd, "report_type": "quarterly", "operating_cash_flow": "300"}
+    untyped = {"fiscal_date_ending": fd, "operating_cash_flow": "999"}
+    assert _client(income=[_inc(fd, 1000)], cashflow=[untyped])._map_financials("QXO")[0][
+        "cash_from_operations"] == 999.0, "legacy: a row without a period type is kept"
+    assert _client(income=[_inc(fd, 1000)], cashflow=[typed, untyped])._map_financials("QXO")[0][
+        "cash_from_operations"] == 300.0
