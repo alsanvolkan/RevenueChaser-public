@@ -1124,8 +1124,9 @@ NULL: the spine holds no market data.
 
 **Reading it.** `rcdata.read.universe(tiers=("A",))`, `rcdata.read.identity(tickers)`, `rcdata.read.membership(index,
 on, source)`. Since PR 6 `core/universe.py` and `core/index_registry.py` read them by default, `RC_UNIVERSE_SOURCE`
-unset or `RC_UNIVERSE_SOURCE=spine` (market cap, price and quote still from the old `equity_universe` by ticker; a
-spine name left untyped takes `security_master`'s type; the index badges and the filter's index list from the current
+unset or `RC_UNIVERSE_SOURCE=spine` (market cap and price from the prices store, `rcdata.read.latest_market`, each
+from the old `equity_universe` by ticker where the prices store has none; quote from the old table; a spine name left
+untyped takes `security_master`'s type; the index badges and the filter's index list from the current
 fund-file members, `nasdaq` from the listed names on Nasdaq, no Dow Jones). Any other value
 (`RC_UNIVERSE_SOURCE=store` by convention) reads the old store: the rollback, kept until PR 21. With the spine asked
 for but no spine file, or a last `spine/security` build that failed, the old store is read, a warning is logged, and
@@ -1202,7 +1203,12 @@ years again and keeps every bar value it replaces as a revision. The long histor
 
 **Reading it.** `rcdata.read.security_ids(tickers)`, `rcdata.read.bars(security_ids, start, end, basis)` (`nominal`,
 `split`: today's share basis, `total_return`: the cash dividends taken out too; each row says its basis and factors),
-`rcdata.read.actions(...)`, `rcdata.read.shares(..., measure)`, `rcdata.read.market_cap(...)`.
+`rcdata.read.actions(...)`, `rcdata.read.shares(..., measure)`, `rcdata.read.market_cap(...)`, and
+`rcdata.read.latest_market(tickers)`: per ticker its newest nominal close and market cap (the class's own and the
+issuer's sum over its listed classes), each only when it is at most 14 days before the store's newest session. The
+spine universe takes its market cap and price from it (`core/universe.py`): the issuer's cap for a company, as
+Yahoo's was, a fund's own (one trust's CIK files many funds), and the old `equity_universe` value by ticker where the
+prices store has none.
 
 ## Migration
 Two separate things, deliberately not conflated:

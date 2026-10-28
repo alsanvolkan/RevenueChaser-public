@@ -319,7 +319,7 @@ def test_the_spine_section_states_what_the_code_owns():
 def test_the_prices_section_states_what_the_code_owns():
     """PR 7 (G2): the prices store's datasets, tables, views, issue kinds and the numbers its rules use."""
     from RevenueChaser.module_settings import newdata
-    from RevenueChaser.rcdata import caps
+    from RevenueChaser.rcdata import caps, read
     from RevenueChaser.rcdata.build import DATASETS
     from RevenueChaser.rcdata.build.prices import KIND, actions, bars, floats, serving, wrds_history
     text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
@@ -344,3 +344,4 @@ def test_the_prices_section_states_what_the_code_owns():
     words = {1: "one", 2: "two", 3: "three"}
     assert f"the last {words[wrds_history.REFRESH_YEARS]} years again" in " ".join(section.split())
     assert f"{newdata.COVERAGE_TARGET['alpaca/bars']:.0%}" in section
+    assert f"at most {read.LATEST_WITHIN_DAYS} days before the store's newest session" in " ".join(section.split())

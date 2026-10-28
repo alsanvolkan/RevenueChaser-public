@@ -15,6 +15,7 @@ from .test_prices_serving import AAPL, FLG, M, built, env  # noqa: F401 - the bu
 def test_nothing_built_yet_is_no_rows():
     assert read.bars([AAPL]) == [] and read.actions([AAPL]) == [] and read.shares([AAPL]) == []
     assert read.market_cap([AAPL]) == [] and read.security_ids(["AAPL"]) == {}
+    assert read.latest_market(["AAPL"]) == {}
 
 
 @pytest.mark.usefixtures("built")
@@ -57,3 +58,18 @@ def test_actions_shares_and_market_cap_by_security():
     assert {r["measure"] for r in read.shares([AAPL])} == {"outstanding", "float"}
     caps = read.market_cap([AAPL], start=date(2026, 10, 27))
     assert [(r["session_date"], r["market_cap"]) for r in caps] == [(date(2026, 10, 27), 202.0 * 14_800_000_000)]
+
+
+@pytest.mark.usefixtures("built")
+def test_latest_market_is_each_tickers_newest_close_and_cap():
+    """The universe's market fields: each ticker's newest nominal close and its market cap, the class's own and the
+    issuer's sum over its listed classes (GOOGL and GOOG are one company)."""
+    out = read.latest_market(["aapl", "GOOGL", "GOOG", "NOPE"])
+    assert set(out) == {"AAPL", "GOOGL", "GOOG"}
+    a = out["AAPL"]
+    assert (a["security_id"], a["price"], a["price_session"]) == (AAPL, 202.0, date(2026, 10, 27))
+    assert a["market_cap"] == a["issuer_market_cap"] == 202.0 * 14_800_000_000
+    assert a["cap_session"] == date(2026, 10, 27)
+    assert out["GOOGL"]["market_cap"] == pytest.approx(255.0 * 5_800_000_000)
+    assert out["GOOGL"]["issuer_market_cap"] == pytest.approx(255.0 * 5_800_000_000 + 256.0 * 5_450_000_000)
+    assert read.latest_market([]) == {}

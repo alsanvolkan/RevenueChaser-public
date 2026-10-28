@@ -244,6 +244,38 @@ def market_cap(security_ids: Iterable[str], start=None, end=None) -> list[dict]:
     return _rows("market_cap_daily", sql + " ORDER BY security_id, session_date", params)
 
 
+# The newest close and cap of a security count only this close to the store's newest session; an older one (a name
+# Alpaca stopped answering, a history-only security) is no current value.
+LATEST_WITHIN_DAYS = 14
+
+
+def latest_market(tickers: Iterable[str]) -> dict[str, dict]:
+    """``{ticker: row}`` for the tickers (upper-cased, the SEC form ``BRK-B``) a security trades under now: its newest
+    nominal close (``price``, ``price_session``) and its newest market cap (``market_cap``, the class's own;
+    ``issuer_market_cap``, the sum over the issuer's listed classes; ``cap_session``), each only when it is at most
+    ``LATEST_WITHIN_DAYS`` before the store's newest session. A bar with no shares has a price and no cap (None). Of
+    two securities whose newest symbol is the ticker, the one with the newer bar, as ``security_ids``."""
+    wanted = sorted({str(t).strip().upper() for t in tickers if str(t or "").strip()})
+    if not wanted:
+        return {}
+    sql = f"""
+        WITH since AS (SELECT max(session_date) - INTERVAL {int(LATEST_WITHIN_DAYS)} DAY AS d FROM price_bar_daily
+                       WHERE security_id NOT LIKE 'index:%'),
+             bar AS (SELECT security_id, arg_max(close, session_date) AS price, max(session_date) AS price_session
+                     FROM price_bar_daily WHERE close IS NOT NULL AND session_date >= (SELECT d FROM since)
+                     GROUP BY ALL),
+             cap AS (SELECT security_id, arg_max(market_cap, session_date) AS market_cap,
+                            arg_max(issuer_market_cap, session_date) AS issuer_market_cap,
+                            max(session_date) AS cap_session
+                     FROM market_cap_daily WHERE session_date >= (SELECT d FROM since) GROUP BY ALL)
+        SELECT s.symbol AS ticker, s.security_id, bar.price, bar.price_session, cap.market_cap, cap.issuer_market_cap,
+               cap.cap_session
+        FROM security_symbol s JOIN bar USING (security_id) LEFT JOIN cap USING (security_id)
+        WHERE s.valid_to IS NULL AND s.symbol IN ({', '.join('?' * len(wanted))})
+        QUALIFY row_number() OVER (PARTITION BY s.symbol ORDER BY bar.price_session DESC, s.security_id) = 1"""
+    return {r["ticker"]: r for r in _rows("market_cap_daily", sql, wanted)}
+
+
 def as_frame(rows: list[dict]):
     """The rows as a pandas DataFrame (the one helper; pandas is imported only here)."""
     import pandas as pd
