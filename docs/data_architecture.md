@@ -1129,6 +1129,90 @@ NULL: the spine holds no market data.
 a last `spine/security` build that failed, the old store is read, a warning is logged, and the Settings Identity card
 says so ("Boards read"). The variable is read from the process environment: changing it needs a restart.
 
+### Fundamentals (`fundamentals.duckdb`, PR 12)
+
+The third serving kind: what each Tier A company reported, when, and in which filing. Built by the same builder,
+swapped the same way, read only through `rcdata.read`. The companies are the spine's Tier A names (their CIKs,
+gvkeys and GICS codes), so the spine is built first. Nothing here writes `raw.duckdb` or the old `edgar_financials`
+cache, which the boards still read until their move (G6).
+
+| Dataset | Cadence | Source | Stages |
+|---|---|---|---|
+| `sec/companyfacts` | daily | `data.sec.gov/api/xbrl/companyfacts/CIK*.json`, re-read on the day the SEC daily index shows a statement filing (10-K, 10-Q, 20-F, 40-F and their amendments) whose accession the stored facts do not hold; a new Tier A name up to 500 a run | `stg_sec_facts`, `stg_sec_company` |
+| `sec/filings` | daily | `data.sec.gov/submissions/CIK*.json` when the daily index shows a new filing; the primary document of the newest 10-K (else 20-F) and DEF 14A, fetched once each | `stg_sec_filings`, `stg_sec_documents`, `stg_sec_segments`, `stg_sec_customers` |
+| `alphavantage/earnings_calendar` | daily | Alpha Vantage `EARNINGS_CALENDAR`, three months ahead, one request a run (`ALPHAVANTAGE_API_KEY`) | `stg_av_calendar` |
+| `uw/financials` | daily | UW `/stock/<ticker>/financials` for a company that reported in the last 14 days and has not filed; off unless `RC_UW_PRELIMINARY=1` | `stg_uw_financials` |
+| `yfinance/estimates` | weekly | Yahoo's `earningsTrend` per company, its shortest ticker, when its newest answer is 7 days old; 5 failures in a row stop the run | `stg_yf_estimates` |
+| `sec/fsds` | monthly | The SEC's quarterly Financial Statement Data Sets zip, the newest quarter published | `stg_sec_fsds` |
+| `wrds/fundq` | monthly, attended | `comp.fundq`, the Tier A gvkeys, ten years | `stg_wrds_fundq`, `stg_wrds_fundq_revision` |
+| `wrds/funda` | monthly, attended | `comp.funda`, the Tier A gvkeys, ten years | `stg_wrds_funda`, `stg_wrds_funda_revision` |
+| `wrds/firm_ratio` | monthly, attended | `wrds_finratio.firm_ratio`, three years of publication dates | `stg_wrds_firm_ratio` |
+| `wrds/segments` | monthly, attended | `comp_segments_hist_daily.wrds_segmerged` and `seg_customer`, five years, the newest source date per key | `stg_wrds_segments`, `stg_wrds_customers` |
+| `fundamentals/tables` | daily | none: builds the served tables, the views, the peer groups and the build issues from the staging tables | the tables below |
+
+**Every value carries its filing.** A served fact has its accession, filed date and form; a value the SEC
+extraction (`core/providers/sec_edgar.py`, so a value here is the value the boards read today) keeps no provenance
+for gets the newest fact of its concepts on the period end, and a value still without one is not served. Total debt
+is the sum of three balance-sheet lines (long-term debt, its current part, short-term borrowings; #239), and EPS
+(basic and diluted) is read too. An accession the SEC's XBRL API does not hold yet after the re-read is asked again
+by the next day's run (the run's note says `pending`), so a statement reaches the served table on its filing day or
+the day after, never months late (the Fundamentals review's F3).
+
+**Preliminary quarters** (`uw/financials`). Off unless `RC_UW_PRELIMINARY=1`: a run asks nothing and the tables
+build serves none of the stored rows. On, a quarter UW has and the SEC does not is served with `preliminary` true and
+no accession, only for a period ending more than 30 days after the company's newest SEC quarter; the 10-Q replaces it
+in the next build. Quarterly rows only, USD only, no total debt and no EPS.
+
+**WRDS is a check, not a served value.** Attended and monthly on the spine's one WRDS worker (one login, at most one
+Duo push per builder process): `python -m RevenueChaser.rcdata.build backfill wrds/fundq wrds/funda wrds/firm_ratio
+wrds/segments` in a foreground terminal on the server. Each monthly `fundq` / `funda` snapshot is compared with the
+one before: every value that changed for a period both hold is a `fundamental_revision` row (a restatement, or a
+correction at Compustat; a new period is not one). The check notes count revenue, net income and diluted EPS that
+agree with the SEC's facts (Compustat's millions times a million, within 0.5%, EPS within a cent, period ends within
+7 days), and WRDS's `debt_at` against the SEC's total debt over total assets (within 0.02). The note of each
+WRDS dataset's newest run is its card's WRDS difference slot on Settings (`docs/data_health.md`). Compustat segments
+are served beside the annual report's inline XBRL ones, each row with its `source`; a Compustat customer's share is
+its sales over the SEC's annual revenue of that year, NULL when there is none or the ratio is above 1.
+
+**The FSDS check** (`sec/fsds`). The SEC's quarterly data sets hold every XBRL value filed in the quarter. The
+Tier A companies' own values (no co-registrant, no dimension) of revenue, net income, total assets and diluted EPS
+are compared with the served facts of the same period (within 0.5%, EPS within a cent); the note counts them per
+field. A difference is a note to look at, not an error: the served value may come from a later filing that restated
+the period.
+
+**Starts by hand.** Every fundamentals dataset is not due until it has built once, as the spine's are, so the first
+hourly pass after a deploy calls no source before the attended backfill.
+
+**Served tables** (`fundamentals` serving schema version `1`):
+
+| Table | Rows |
+|---|---|
+| `fundamental_company` | one per Tier A ticker: the spine's identity and GICS codes, the SEC filer's name and kind (`is_us`, `us_gaap`, non-USD units), the newest facts read and statement filed, and `submissions_as_of`, the day its filing list was last read ("no 8-K event" means something only after it, the Fundamentals review's F2) |
+| `fundamental_fact` | one per company, field, period type and period end: value, unit, accession, filed, form, `derived`, `preliminary`, source |
+| `filing_item` | one per filing and 8-K item (`kind` `item`), and one per document text (`kind` `document`: `business` or `proxy`, with `quality`; a text that reaches the 200,000-character cap is `capped`, never `ok`) |
+| `earnings_event` | one per report: a coming one from the calendar (`confirmed` false) or one that happened (an 8-K with item 2.02, `confirmed` true, its accession kept) |
+| `fundamental_revision` | one per Compustat value that changed between two monthly snapshots |
+| `segment_revenue` | revenue by business segment, product or country (`axis`), from the annual report's inline XBRL (its newest year) and from Compustat |
+| `customer_share` | a major customer's share of revenue (or of receivables, `benchmark`), from `ConcentrationRiskPercentage1` and from Compustat |
+| `estimate_latest` | the newest analyst estimates per company, ticker and period (the weekly snapshots stay in Parquet) |
+| `peer_group` | each company's 10 nearest companies on the GICS ladder (sub-industry, industry, industry group, sector), the closest annual revenue first within a rung |
+
+**Views** under the old names, with the old shapes, for the boards' move: `edgar_financials` (one row per ticker,
+`annual` and `quarterly` as JSON lists of records as `sec_edgar.extract_*` writes them, the SEC's rows only),
+`sec_submissions` (one row per filing, the 8-K items as one text), `earnings_calendar` (the old calendar columns; what
+this layer does not have is NULL) and `estimate_snapshots` (`session_date` the day it was asked). `fundamental_quarter`
+is one row per company and quarter with a column per field.
+
+**Build issues** live in `ops.sqlite` `build_issues`, dataset `fundamentals/tables`, synced after each swap. Kinds:
+`source_never_run`, `statement_older_than_120_days`, `no_statement`, `no_us_gaap_facts`. A source dataset records its
+own row-level problems (`missing_key`, `fetch_failed`) under its name.
+
+**Reading it.** `rcdata.read.statements(cik, period_type, n, fields)`, `rcdata.read.earnings_events(cik, start, end)`,
+`rcdata.read.estimates(tickers)`, `rcdata.read.filing_text(cik, item)`, `rcdata.read.segments(cik, axis, source)`,
+`rcdata.read.customers(cik)`, `rcdata.read.peers(cik)` and `rcdata.read.revisions(cik, since)`. Every row carries
+its provenance and `status`, the newest check of the dataset its own row came from (a segment row from Compustat
+reads `wrds/segments`' check, one from the annual report `sec/filings`'), or `never_checked`.
+
 ## Migration
 Two separate things, deliberately not conflated:
 

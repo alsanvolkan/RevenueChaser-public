@@ -16,7 +16,7 @@ borrowings outside those differs by design; the note counts, it does not fail.
 
 **Attended and monthly, on the spine's one WRDS worker** (``spine/wrds.py``: one login, at most one Duo push per
 builder process, ``WRDS_USERNAME``, ``RC_WRDS_PYTHON``): never due; ``python -m RevenueChaser.rcdata.build backfill
-wrds/fundq wrds/funda wrds/firm_ratio`` in a foreground terminal on the server. A run asks a table once its newest
+wrds/fundq wrds/funda wrds/firm_ratio wrds/segments`` in a foreground terminal on the server. A run asks a table once its newest
 snapshot is ``SNAPSHOT_DAYS`` old (the CLI's backfill asks it now); one query per table, for the Tier A gvkeys (the
 spine's Compustat link), Compustat's standard rows (``COMPUSTAT_FILTER``), ``YEARS`` of periods (``firm_ratio``:
 ``RATIO_YEARS`` of publication dates). Every query counts as one ``wrds`` call.

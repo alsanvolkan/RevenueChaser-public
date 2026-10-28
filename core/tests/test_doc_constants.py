@@ -314,3 +314,31 @@ def test_the_spine_section_states_what_the_code_owns():
         assert f"`{kind}`" in section, kind
     assert f"**Tier rule v{tier.VERSION}**" in section
     assert f"`{universe.SOURCE_ENV}={universe.SPINE}`" in section
+
+
+def test_the_fundamentals_section_states_what_the_code_owns():
+    """PR 12: the fundamentals layer's datasets and cadences, served tables, views, issue kinds, flag, attended
+    command and read API, as the code has them."""
+    from RevenueChaser.module_settings import newdata
+    from RevenueChaser.rcdata.build import DATASETS
+    from RevenueChaser.rcdata.build.fundamentals import KIND, tables, uw_financials
+    text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
+    section = text[text.index("### Fundamentals (`fundamentals.duckdb`, PR 12)"):text.index("## Migration")]
+    for name, ds in DATASETS.items():
+        if ds.kind == KIND:
+            cadence = ds.cadence + (", attended" if getattr(ds, "attended", False) else "")
+            assert f"| `{name}` | {cadence} |" in section, name
+    for table in tables.TABLES:
+        assert f"| `{table}` |" in section, table
+    for view in tables.VIEWS:
+        assert f"`{view}`" in section, view
+    for kind in tables.ISSUE_KINDS:
+        assert f"`{kind}`" in section, kind
+    assert f"`{uw_financials.FLAG}=1`" in section
+    assert f"`{newdata.attended_command(KIND)}`" in section.replace("\n", " ")
+    for fn in ("statements", "earnings_events", "estimates", "filing_text", "segments", "customers", "peers",
+               "revisions"):
+        assert f"`rcdata.read.{fn}(" in section, fn
+    health = (_REPO / "docs" / "data_health.md").read_text(encoding="utf-8")
+    for name in newdata.WRDS_DIFFERENCE:
+        assert f"`{name}`" in health, name

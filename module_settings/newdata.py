@@ -32,6 +32,19 @@ LABELS = {"uw/spot_expiry_strike": "SPX expiry-strike (Unusual Whales)", "market
           "wrds/idxcst_his": "Compustat index constituents (WRDS, the membership check)",
           "openfigi/map": "OpenFIGI map of the CUSIPs", "funds/index_holdings": "Index membership (ETF holdings files)",
           "spine/security": "Identity spine (security, tiers, history)"}
+# The fundamentals layer (PR 12).
+LABELS.update({
+    "sec/companyfacts": "SEC company facts (re-read on the filing day)",
+    "sec/filings": "SEC filing lists, 8-K items and report texts",
+    "alphavantage/earnings_calendar": "Earnings calendar (Alpha Vantage)",
+    "uw/financials": "Preliminary quarters (Unusual Whales, off by default)",
+    "yfinance/estimates": "Analyst estimates (yfinance)",
+    "sec/fsds": "SEC Financial Statement Data Sets (the check)",
+    "wrds/fundq": "Compustat quarterly fundamentals (WRDS, the revision check)",
+    "wrds/funda": "Compustat annual fundamentals (WRDS, the revision check)",
+    "wrds/firm_ratio": "WRDS financial ratios (the debt check)",
+    "wrds/segments": "Compustat segments and customers (WRDS)",
+    "fundamentals/tables": "Fundamentals (served tables, peers, build issues)"})
 # Default cadence per dataset (the dataset's own ``cadence`` when it has one); a ``dataset_schedule.cadence`` of
 # daily / weekly / monthly overrides it.
 CADENCE = {"uw/spot_expiry_strike": "daily", "market_series": "daily"}
@@ -43,10 +56,17 @@ COVERAGE_TARGET: dict[str, float | None] = {"uw/spot_expiry_strike": 0.95, "mark
 # The newest-date column of each serving table.
 DATE_COLUMN = {"spx_gamma_expiry_strike": "session_date", "market_series": "obs_date", "security": "source_as_of",
                "security_history": "valid_from", "gics_history": "valid_from", "index_membership": "valid_from"}
+DATE_COLUMN.update({"fundamental_company": "facts_as_of", "fundamental_fact": "filed", "filing_item": "filing_date",
+                    "earnings_event": "source_as_of", "fundamental_revision": "new_as_of",
+                    "segment_revenue": "document_date", "customer_share": "document_date",
+                    "estimate_latest": "source_as_of"})
 # The identity funnel (PR 5, D9): the indexes it counts, and the dataset whose build issues it lists.
 SPINE_INDEXES = ("sp500", "sp400", "sp600", "ndx")
 SPINE_ISSUES = "spine/security"
-ATTENDED_COMMAND = "python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist wrds/co_hgic wrds/idxcst_his"
+# The WRDS difference slot (decision 3): these check datasets' cards show their newest monthly difference report,
+# the note of their newest run that read WRDS (PR 12, decided 27 Oct); every other card says no WRDS run yet.
+WRDS_DIFFERENCE = ("wrds/fundq", "wrds/funda", "wrds/firm_ratio", "wrds/segments")
+NO_WRDS = {"text": "no WRDS run yet"}
 # Old .store tables a new dataset replaces: their reads in read_log are the retirement count (read for 14 days).
 RETIRING = {"macro_series": "market_series", "vol_index_daily": "market_series", "cftc_cot": "market_series",
             "economic_calendar": "market_series"}
@@ -139,6 +159,21 @@ def status_of(dataset: str, last: dict | None, base: dict | None, cadence: str,
     if base["result"] == "changed":
         return "fresh", "within its cycle; the last run changed rows", base
     return "unchanged", "within its cycle; the last run changed nothing", base
+
+
+def attended_command(kind: str) -> str:
+    """The CLI line that runs every attended (WRDS) dataset of ``kind``: one worker and one login for all of them."""
+    names = [n for n, d in _datasets().items() if d.kind == kind and getattr(d, "attended", False)]
+    return f"python -m RevenueChaser.rcdata.build backfill {' '.join(names)}"
+
+
+def _wrds_difference(dataset: str) -> dict:
+    """The WRDS difference slot: a check dataset's newest report (a run that read WRDS, not a skip or a failure)."""
+    if dataset not in WRDS_DIFFERENCE:
+        return NO_WRDS
+    report = next((c for c in ops.recent_checks(dataset, limit=24)
+                   if c["result"] in ("changed", "unchanged") and c.get("note")), None)
+    return {"text": report["note"], "as_of": report.get("source_as_of")} if report else NO_WRDS
 
 
 def _held(dataset: str, ds) -> str | None:
@@ -439,9 +474,9 @@ def _card(dataset: str, ds, facts: dict, now: datetime) -> dict:
                    for i in issues],
         "issues_open": n_issues,
         "backfill": backfill(now) if backfill else None,
-        "wrds": {"text": "no WRDS run yet"},
+        "wrds": _wrds_difference(dataset),
         "attended": bool(getattr(ds, "attended", False)),
-        "attended_command": ATTENDED_COMMAND if getattr(ds, "attended", False) else None,
+        "attended_command": attended_command(ds.kind) if getattr(ds, "attended", False) else None,
         "schedule": {"paused": bool(schedule and schedule.get("paused_at") is not None),
                      "paused_by": (schedule or {}).get("paused_by"),
                      "paused_at": _iso_utc((schedule or {}).get("paused_at"))},
