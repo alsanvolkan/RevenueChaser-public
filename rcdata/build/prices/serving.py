@@ -3,10 +3,12 @@
 **Tables** (``prices.duckdb``, serving schema version 1), every one keyed on the security id (``prices.security_id``):
 
 - ``price_bar_daily``: one bar per security and New York session, **nominal** (the prices as traded that day):
-  Alpaca's daily bars, the history sources of ``HISTORY`` where Alpaca has no bar (the WRDS backfill, Phase 8), and
-  the S&P 500 index level from the market store's Cboe file (``index:SPX``, the close only);
+  Alpaca's daily bars, then the WRDS history where Alpaca has no bar (``wrds/prices``: CRSP where it links to the
+  Compustat security, else Compustat; the long run is Phase 8), and the S&P 500 index level from the market store's
+  Cboe file (``index:SPX``, the close only);
 - ``corporate_action``: Alpaca's actions of the store's securities, resolved to the security that traded under the
-  action's symbol nearest its date (else the spine's current ticker), with ``applied`` (used by ``adj_factor``),
+  action's symbol nearest its date (else the spine's current ticker), and Compustat's splits and dividends of the
+  securities with bars where Alpaca has no action of that kind that day, with ``applied`` (used by ``adj_factor``),
   ``not_applied_why``, the split ``ratio`` (new over old shares) and the cash ``amount`` per share;
 - ``adj_factor``: per security, the periods ``[valid_from, valid_to)`` between two ex-dates and the factors that
   turn a nominal bar of the period into today's basis: ``split_factor`` (the product of ``1 / ratio`` of every split
@@ -18,10 +20,15 @@
 - ``security_symbol``: the symbols each security traded under and when (from its bars; the spine's ticker for a Tier
   A name with none yet);
 - ``market_cap_daily``: close times shares per security and session, the shares being the bar's own (a history
-  source's) else the newest cover on or before the session, moved over the splits between the two; and the issuer's
+  source's), else a WRDS source's of that session, else the newest cover on or before the session, moved over the
+  splits between the two; and the issuer's
   sum over its listed classes (``issuer_market_cap``; an unlisted class has no price and is not in it);
 - ``price_revision``: the values a later read replaced (Alpaca's re-read of the last sessions, the monthly WRDS
-  refresh), with when and by which run.
+  refresh), with when and by which run;
+- ``wrds_price_diff``: the WRDS difference report (``wrds_history.COMPARISONS``), one row per comparison: the closes
+  of CRSP against Compustat and of each against Alpaca on the sessions both have, and each WRDS source's own day
+  return against the store's (its closes, the store's factors) on consecutive sessions; a difference over 1 bp
+  counts. Shown on the ``wrds/prices`` Settings card.
 
 **Views** under the old ``prices.duckdb`` names (D4), with the old columns: ``price_bars_daily`` (split-adjusted OHLC,
 ``adj_close`` total-return adjusted, both to today, ``fetched_at`` the build time so the old reader applies no split
@@ -39,11 +46,11 @@ import duckdb
 
 from ... import ops
 from .. import base
-from . import KIND, stage
+from . import KIND, stage, wrds_history
 
 NAME = "prices/serving"
 TABLES = ("price_bar_daily", "corporate_action", "adj_factor", "shares_class", "security_symbol",
-          "market_cap_daily", "price_revision")
+          "market_cap_daily", "price_revision", "wrds_price_diff")
 ALPACA_BARS, ALPACA_ACTIONS = "alpaca/bars", "alpaca/corporate_actions"
 COVER, YAHOO, UW = "sec/cover_shares", "yfinance/float", "uw/total_float"
 INDEX_SOURCE = "market_series/cboe"
@@ -95,16 +102,13 @@ MARKET_CAP = [("security_id", "TEXT"), ("session_date", "DATE"), ("cik", "TEXT")
 PRICE_REVISION = [("security_id", "TEXT"), ("session_date", "DATE"), ("symbol", "TEXT"), ("open", "DOUBLE"),
                   ("high", "DOUBLE"), ("low", "DOUBLE"), ("close", "DOUBLE"), ("volume", "DOUBLE"), ("source", "TEXT"),
                   ("fetched_at", "DOUBLE"), ("run_id", "TEXT"), ("revised_at", "DOUBLE"), ("revised_by", "TEXT")]
+WRDS_PRICE_DIFF = [("comparison", "TEXT"), ("as_of", "DATE"), ("securities", "INTEGER"), ("sessions", "INTEGER"),
+                   ("close_differs", "INTEGER"), ("max_close_diff", "DOUBLE"), ("return_differs", "INTEGER"),
+                   ("max_return_diff", "DOUBLE"), ("first_session", "DATE"), ("last_session", "DATE")]
 SCHEMAS = {"price_bar_daily": PRICE_BAR, "corporate_action": CORPORATE_ACTION, "adj_factor": ADJ_FACTOR,
            "shares_class": SHARES_CLASS, "security_symbol": SECURITY_SYMBOL, "market_cap_daily": MARKET_CAP,
-           "price_revision": PRICE_REVISION}
+           "price_revision": PRICE_REVISION, "wrds_price_diff": WRDS_PRICE_DIFF}
 KEYS = {"price_bar_daily": ("security_id", "session_date"), "market_cap_daily": ("security_id", "session_date")}
-
-# History bars from other sources (the WRDS backfill registers its staging selects here, PR 7 step 5): each a
-# SELECT of PRICE_BAR's columns. Alpaca's bar wins a session; between history sources the earlier one listed wins.
-HISTORY: list[str] = []
-# Revisions of other sources: each a SELECT of PRICE_REVISION's columns.
-REVISIONS: list[str] = []
 
 # The security id of a spine row, the SQL twin of ``prices.security_id``.
 SPINE_ID = ("CASE WHEN nullif(gvkey, '') IS NOT NULL AND nullif(iid, '') IS NOT NULL THEN gvkey || ':' || iid "
@@ -187,8 +191,14 @@ CREATE OR REPLACE TEMP TABLE _act AS
         WHERE s.security_id IN (SELECT security_id FROM _symsec)),
     best AS (SELECT action_id, security_id FROM cand
              QUALIFY row_number() OVER (PARTITION BY action_id ORDER BY pri, dist, security_id) = 1)
-    SELECT best.security_id, a.* FROM a JOIN best USING (action_id);
+    SELECT best.security_id, a.*, '{actions}' AS source FROM a JOIN best USING (action_id);
+CREATE OR REPLACE TEMP TABLE _hist_all AS
+    SELECT * FROM ({crsp}) UNION ALL BY NAME SELECT * FROM ({comp});
 """
+# The kind of an action for "the same action on the same day" (a split and a reverse split are one kind).
+ACTION_KIND = ("CASE WHEN {a}.action_type IN ('forward_split', 'reverse_split') THEN 'split' "
+               "WHEN {a}.action_type IN ('cash_dividend', 'capital_gains_distribution') THEN 'cash_dividend' "
+               "ELSE {a}.action_type END")
 
 
 class PricesServing:
@@ -226,24 +236,24 @@ class PricesServing:
             if not n:
                 found.append(("source_never_run", ds, f"{ds} has no rows in this build"))
         _spine(con)
-        con.execute(BUILD_SQL.format(bars=ALPACA_BARS))
+        con.execute(BUILD_SQL.format(bars=ALPACA_BARS, actions=ALPACA_ACTIONS, crsp=wrds_history.CRSP_BARS,
+                                     comp=wrds_history.COMP_BARS))
         counts = {}
-        history = " UNION ALL ".join(f"SELECT * FROM ({h})" for h in HISTORY)
         cols = ", ".join(c for c, _ in PRICE_BAR)
-        bars_sql = f"SELECT {cols} FROM _alp UNION ALL SELECT * FROM ({_index_levels(con)})"
-        if history:
-            bars_sql += (f" UNION ALL SELECT {cols} FROM (SELECT *, row_number() OVER (PARTITION BY security_id, "
-                         f"session_date ORDER BY _pri) AS _n FROM (SELECT *, 1 AS _pri FROM ({history}))) h "
-                         "WHERE _n = 1 AND NOT EXISTS (SELECT 1 FROM _alp a WHERE a.security_id = h.security_id "
-                         "AND a.session_date = h.session_date)")
+        # Alpaca's bar wins its session; of the history bars, CRSP's before Compustat's.
+        bars_sql = (f"SELECT {cols} FROM _alp UNION ALL SELECT * FROM ({_index_levels(con)}) UNION ALL "
+                    f"SELECT {cols} FROM (SELECT * FROM _hist_all h WHERE NOT EXISTS (SELECT 1 FROM _alp a "
+                    "WHERE a.security_id = h.security_id AND a.session_date = h.session_date) "
+                    "QUALIFY row_number() OVER (PARTITION BY h.security_id, h.session_date ORDER BY h.priority) = 1)")
         counts["price_bar_daily"] = _create(con, "price_bar_daily", bars_sql)
         counts["corporate_action"] = self._actions(con, found)
         counts["adj_factor"] = _create(con, "adj_factor", ADJ_SQL)
         counts["shares_class"] = self._shares(con, found)
         counts["security_symbol"] = _create(con, "security_symbol", SYMBOL_SQL)
         counts["market_cap_daily"] = _create(con, "market_cap_daily", MARKET_CAP_SQL)
-        revisions = " UNION ALL ".join([REVISION_SQL, *REVISIONS])
-        counts["price_revision"] = _create(con, "price_revision", revisions)
+        counts["price_revision"] = _create(con, "price_revision",
+                                           f"{REVISION_SQL} UNION ALL {wrds_history.REVISIONS_SQL}")
+        counts["wrds_price_diff"] = self._wrds_report(con)
         self._views(con)
         found += self._issues(con, have)
         ctx.pending[NAME] = found
@@ -253,6 +263,11 @@ class PricesServing:
 
     @staticmethod
     def _actions(con: duckdb.DuckDBPyConnection, found: list) -> int:
+        # Compustat's actions of the securities with bars, unless Alpaca has one of that kind that day.
+        con.execute(f"""INSERT INTO _act BY NAME SELECT w.* FROM ({wrds_history.ACTIONS_SQL}) w
+            WHERE w.security_id IN (SELECT DISTINCT security_id FROM price_bar_daily)
+              AND NOT EXISTS (SELECT 1 FROM _act p WHERE p.security_id = w.security_id AND p.ex_date = w.ex_date
+                              AND {ACTION_KIND.format(a='p')} = {ACTION_KIND.format(a='w')})""")
         con.execute(f"""CREATE OR REPLACE TEMP TABLE _act_typed AS
             SELECT a.*, CASE WHEN action_type IN ('forward_split', 'reverse_split') THEN 'split'
                              WHEN action_type IN ('cash_dividend', 'capital_gains_distribution') THEN 'cash_dividend'
@@ -281,7 +296,7 @@ class PricesServing:
             SELECT security_id, ex_date, action, action_type, ratio, amount, currency, special,
                    CASE WHEN action IN {APPLIED} OR action IN {NOT_APPLIED} THEN ({why}) IS NULL END AS applied,
                    {why} AS not_applied_why, symbol, new_symbol, record_date, payable_date, process_date,
-                   '{ALPACA_ACTIONS}' AS source, action_id AS source_id, source_as_of, fetched_at, run_id,
+                   source, action_id AS source_id, source_as_of, fetched_at, run_id,
                    close_before
             FROM _act_close""")
         n = _create(con, "corporate_action", "SELECT * FROM _act_final ORDER BY security_id, ex_date, action")
@@ -323,6 +338,52 @@ class PricesServing:
                 "AND security_id LIKE 'class:%'").fetchall():
             found.append(("cover_class_unmapped", f"{cik}:{symbol}", "no spine ticker of the CIK is this symbol"))
         return n
+
+    # ── The WRDS difference report ────────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _wrds_report(con: duckdb.DuckDBPyConnection) -> int:
+        """``wrds_price_diff``: one row per ``wrds_history.COMPARISONS`` entry (zero sessions when a side has none)."""
+        con.execute(f"""CREATE OR REPLACE TEMP TABLE _hret AS
+            WITH d AS (SELECT security_id, ex_date, sum(amount) AS amount FROM corporate_action
+                       WHERE applied AND action = 'cash_dividend' GROUP BY ALL),
+            x AS (SELECT h.source, h.security_id, h.session_date, h.own_return,
+                         h.close * coalesce(a.split_factor, 1) AS sc,
+                         coalesce(d.amount, 0) * coalesce(a.split_factor, 1) AS dv
+                  FROM _hist_all h LEFT JOIN adj_factor a ON {period('a', 'h.security_id', 'h.session_date')}
+                  LEFT JOIN d ON d.security_id = h.security_id AND d.ex_date = h.session_date WHERE h.close > 0),
+            y AS (SELECT *, lag(sc) OVER w AS prev_sc, lag(session_date) OVER w AS prev_day FROM x
+                  WINDOW w AS (PARTITION BY source, security_id ORDER BY session_date))
+            -- The economic day return: the close plus the dividend over the previous close, in one share basis.
+            SELECT source, security_id, session_date, own_return, (sc + dv) / prev_sc - 1 AS ours FROM y
+            WHERE prev_sc > 0 AND own_return IS NOT NULL AND date_diff('day', prev_day, session_date) <= 7""")
+        side = {"crsp": f"SELECT security_id, session_date, close FROM _hist_all WHERE source = '{wrds_history.CRSP}'",
+                "compustat": ("SELECT security_id, session_date, close FROM _hist_all "
+                              f"WHERE source = '{wrds_history.COMPUSTAT}'"),
+                "alpaca": "SELECT security_id, session_date, close FROM _alp"}
+        pair = ("SELECT '{name}' AS comparison, count(DISTINCT x.security_id) AS securities, count(*) AS sessions, "
+                f"count(*) FILTER (WHERE abs(x.close - y.close) > {TOLERANCE} * y.close) AS close_differs, "
+                "max(abs(x.close - y.close) / y.close) AS max_close_diff, CAST(NULL AS INTEGER) AS return_differs, "
+                "CAST(NULL AS DOUBLE) AS max_return_diff, min(x.session_date) AS first_session, "
+                "max(x.session_date) AS last_session "
+                "FROM ({x}) x JOIN ({y}) y USING (security_id, session_date) WHERE y.close > 0")
+        own = ("SELECT '{name}', count(DISTINCT security_id), count(*), CAST(NULL AS INTEGER), CAST(NULL AS DOUBLE), "
+               f"count(*) FILTER (WHERE abs(ours - own_return) > {TOLERANCE}), max(abs(ours - own_return)), "
+               "min(session_date), max(session_date) FROM _hret WHERE source = '{source}'")
+        parts = []
+        for name in wrds_history.COMPARISONS:
+            if name.endswith("_returns"):
+                source = wrds_history.CRSP if name.startswith("crsp") else wrds_history.COMPUSTAT
+                parts.append(own.format(name=name, source=source))
+            else:
+                x, y = name.split("_vs_")
+                parts.append(pair.format(name=name, x=side[x], y=side[y]))
+        as_of = ("(SELECT max(source_as_of) FROM (SELECT source_as_of FROM stg_wrds_secd "
+                 "UNION ALL SELECT source_as_of FROM stg_wrds_dsf))")
+        return _create(con, "wrds_price_diff",
+                       f"SELECT comparison, {as_of} AS as_of, securities, sessions, close_differs, max_close_diff, "
+                       "return_differs, max_return_diff, first_session, last_session FROM ("
+                       + " UNION ALL ".join(parts) + ")")
 
     # ── Views ─────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -466,10 +527,18 @@ SYMBOL_SQL = """
 MARKET_CAP_SQL = f"""
     WITH o AS (SELECT security_id, as_of, value, source FROM shares_class WHERE measure = 'outstanding'
                QUALIFY row_number() OVER (PARTITION BY security_id, as_of ORDER BY fetched_at DESC) = 1),
-         b AS (SELECT b.*, coalesce(s.cik, b.cik) AS issuer FROM price_bar_daily b
+         h AS (SELECT security_id, session_date, shares_outstanding, source FROM _hist_all
+               WHERE shares_outstanding > 0
+               QUALIFY row_number() OVER (PARTITION BY security_id, session_date ORDER BY priority) = 1),
+         b AS (SELECT b.*, coalesce(s.cik, b.cik) AS issuer, h.shares_outstanding AS hist_shares,
+                      h.source AS hist_source FROM price_bar_daily b
                LEFT JOIN (SELECT DISTINCT security_id, cik FROM stg_spine) s USING (security_id)
+               LEFT JOIN h ON h.security_id = b.security_id AND h.session_date = b.session_date
                WHERE b.security_id NOT LIKE 'index:%' AND b.close IS NOT NULL),
-         j AS (SELECT b.security_id, b.session_date, b.issuer, b.close, b.shares_outstanding AS own, b.source AS bar_source,
+         -- The bar's own shares, else a WRDS source's of that session (an Alpaca bar Compustat also has), else the
+         -- newest cover on or before the session.
+         j AS (SELECT b.security_id, b.session_date, b.issuer, b.close, coalesce(b.shares_outstanding, b.hist_shares) AS own,
+                      CASE WHEN b.shares_outstanding IS NOT NULL THEN b.source ELSE b.hist_source END AS bar_source,
                       o.value AS cover, o.as_of AS cover_as_of, o.source AS cover_source
                FROM b ASOF LEFT JOIN o ON o.security_id = b.security_id AND b.session_date >= o.as_of),
          s AS (SELECT j.*, CASE WHEN own IS NOT NULL THEN own

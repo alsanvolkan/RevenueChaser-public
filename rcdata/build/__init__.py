@@ -13,9 +13,11 @@ DATASETS = {d.name: d for d in (uw_spot_expiry_strike.DATASET, market_series.DAT
                                 wrds.SEC_IDHIST, wrds.CO_HGIC, wrds.IDXCST_HIS, openfigi_map.DATASET, funds.DATASET,
                                 security.DATASET)}
 
-# PR 7 (G2): the prices store's sources, then ``prices/serving``, which builds the served tables from their staging.
+# PR 7 (G2): the prices store's sources (the WRDS history last), then ``prices/serving``, which builds the served
+# tables from their staging.
 from .prices import actions as prices_actions, bars as prices_bars, cover_shares as prices_cover  # noqa: E402
-from .prices import floats as prices_floats, serving as prices_serving  # noqa: E402
+from .prices import floats as prices_floats, serving as prices_serving, wrds_history as prices_wrds  # noqa: E402
 
 DATASETS.update({d.name: d for d in (prices_bars.DATASET, prices_actions.DATASET, prices_cover.DATASET,
-                                     prices_floats.YAHOO_FLOAT, prices_floats.UW_FLOAT, prices_serving.DATASET)})
+                                     prices_floats.YAHOO_FLOAT, prices_floats.UW_FLOAT, prices_wrds.DATASET,
+                                     prices_serving.DATASET)})
