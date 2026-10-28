@@ -116,10 +116,17 @@ class UWSpotExpiryStrike:
                               f"{MAX_PAGES} full pages of {PAGE_LIMIT} rows: the page ceiling, day not stored")
                     raise base.SourceError(f"UW {ENDPOINT} {session}: {MAX_PAGES} full pages of {PAGE_LIMIT} "
                                            f"rows reach the page ceiling {MAX_PAGES}; day not stored")
-                page = self._get_page(ctx, session, params, len(sizes))
-                more = page.get("data", []) if isinstance(page, dict) else page
+                n = len(sizes)
+                page = self._get_page(ctx, session, params, n)
+                # Only a ``data`` list (or a bare list) is a page: a 200 carrying ``{}`` or a message, read as an
+                # empty page, would end the day early and store its first pages as the whole day.
+                more = page.get("data") if isinstance(page, dict) else page
                 if not isinstance(more, list):
-                    raise base.SourceError(f"UW {ENDPOINT} {session} page {len(sizes)}: not a list of rows")
+                    raise base.SourceError(f"UW {ENDPOINT} {session} page {n}: no list of rows in the answer")
+                if more and not any(isinstance(r, dict) and snapshot_day(r.get("time")) in (session, None)
+                                    for r in more):
+                    raise base.SourceError(f"UW {ENDPOINT} {session} page {n}: every row is stamped on a day "
+                                           f"not on {session}")
                 sizes.append(len(more))
                 rows.extend(more)
             rows = _unique_rows(ctx, session, rows)

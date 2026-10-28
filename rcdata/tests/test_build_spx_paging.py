@@ -43,14 +43,16 @@ def _rows(n: int, first: int = 0, session: date = SESSION) -> list[dict]:
 
 
 def _paged(http_mock, pages: list, fail: dict | None = None) -> None:
-    """Answer page ``n`` with ``pages[n]`` (a page past the end is empty); ``fail`` maps a page to an HTTP status."""
+    """Answer page ``n`` with ``{"data": pages[n]}``, or ``pages[n]`` itself when it is a dict (a page past the end is
+    empty); ``fail`` maps a page to an HTTP status."""
     def answer(request):
         q = parse_qs(request.url.query.decode())
         page = int(q.get("page", ["0"])[0])
         if fail and page in fail:
             return fail[page], b'{"error": "bad"}', {"content-type": "application/json"}
         rows = pages[page] if page < len(pages) else []
-        return 200, json.dumps({"data": rows}), {"content-type": "application/json"}
+        body = rows if isinstance(rows, dict) else {"data": rows}      # a dict page is sent as it is
+        return 200, json.dumps(body), {"content-type": "application/json"}
     http_mock.add("/stock/SPX/spot-exposures/expiry-strike", answer)
 
 
@@ -125,6 +127,25 @@ def test_a_failed_second_page_stores_nothing_for_the_day(http_mock):
     assert _pages_asked(http_mock) == [None, "1"]
 
 
+@pytest.mark.parametrize("page1", [{}, {"message": "try later"}, {"data": None}])
+def test_a_later_page_without_a_list_of_rows_fails_the_day(http_mock, page1):
+    """Review should-fix 1: a 200 on page 1 that carries no ``data`` list is not an end of the day; read as an empty
+    page it would store page 0 alone as a whole day, and the raw marker would keep it so."""
+    _paged(http_mock, [_rows(LIMIT), page1])
+    row = _daily()
+    assert row["result"] == "failed" and "page 1" in row["note"]
+    assert not uw.raw_path(SESSION).exists() and not uw.partition_path(SESSION).exists()
+
+
+def test_a_later_page_stamped_wholly_on_another_day_fails_the_day(http_mock):
+    """Review nit 4: the any-row-on-this-session check of page 0 holds for every page."""
+    other = [dict(r, time="2026-10-23T20:15:00Z") for r in _rows(75, first=LIMIT)]
+    _paged(http_mock, [_rows(LIMIT), other])
+    row = _daily()
+    assert row["result"] == "failed" and "page 1" in row["note"] and "not on 2026-10-26" in row["note"]
+    assert not uw.raw_path(SESSION).exists()
+
+
 def test_a_day_that_reaches_the_page_ceiling_fails_with_a_build_issue(http_mock):
     _paged(http_mock, [_rows(LIMIT, first=k * LIMIT) for k in range(uw.MAX_PAGES + 5)])
     row = _daily()
@@ -150,7 +171,7 @@ def test_every_page_counts_against_the_day_cap(http_mock, monkeypatch):
     monkeypatch.setitem(caps.DAY_CAPS, "uw", 1)
     _paged(http_mock, [_rows(LIMIT), _rows(75, first=LIMIT)])
     row = _daily()
-    assert row["result"] != "changed"
+    assert row["result"] != "changed" and "day cap" in row["note"]
     assert len(http_mock.calls("expiry-strike")) == 1
     assert not uw.raw_path(SESSION).exists()
 
