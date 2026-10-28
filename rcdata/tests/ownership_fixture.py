@@ -13,9 +13,11 @@ import duckdb
 from RevenueChaser.rcdata import serving
 
 SPINE_TICKERS = ("MSFT", "BF-A", "BF-B", "BRK-B", "AAPL", "GME")
-# The issuers' real SEC CIKs (BF-A and BF-B share one, as do a company's share classes).
+# The issuers' real SEC CIKs (BF-A and BF-B share one, as do a company's share classes) and CUSIPs.
 SPINE_CIKS = {"MSFT": "789019", "BF-A": "14693", "BF-B": "14693", "BRK-B": "1067983", "AAPL": "320193",
               "GME": "1326380"}
+SPINE_CUSIPS = {"MSFT": "594918104", "BF-A": "115637100", "BF-B": "115637209", "BRK-B": "084670702",
+                "AAPL": "037833100", "GME": "36467W109"}
 
 
 def make_spine(tickers=SPINE_TICKERS, ciks=SPINE_CIKS) -> None:
@@ -25,8 +27,8 @@ def make_spine(tickers=SPINE_TICKERS, ciks=SPINE_CIKS) -> None:
     con = duckdb.connect(str(path))
     try:
         con.execute("CREATE TABLE security (ticker TEXT, cik TEXT, gvkey TEXT, iid TEXT, cusip TEXT, tier TEXT)")
-        con.executemany("INSERT INTO security VALUES (?, ?, NULL, NULL, NULL, 'A')",
-                        [[t, (ciks or {}).get(t)] for t in tickers])
+        con.executemany("INSERT INTO security VALUES (?, ?, NULL, NULL, ?, 'A')",
+                        [[t, (ciks or {}).get(t), SPINE_CUSIPS.get(t)] for t in tickers])
     finally:
         con.close()
 
@@ -351,3 +353,30 @@ def f4_filing(accession, filed, issuer_cik, issuer_name, symbol, owners, non_der
     return submission(accession, form, filed, roles,
                       [(form, "form4.xml", f4_document(issuer_cik, issuer_name, symbol, owners, non_derivative,
                                                        derivative, form))], period=filed)
+
+
+# ── Schedule 13D/G (XML since 2024-12-18; tags as the SEC's technical specification names them, read tolerantly) ──
+
+def sched_xml(kind, issuer_cik, issuer_name, cusip, persons, event="2026-10-20") -> str:
+    """A Schedule 13D/G ``edgarSubmission``; ``persons``: ``(name, amount, percent, sole_voting)``."""
+    ns = f"http://www.sec.gov/edgar/schedule{kind.lower()}"
+    people = "".join(
+        "<coverPageHeaderReportingPersonDetails>"
+        f"<reportingPersonName>{n}</reportingPersonName><typeOfReportingPerson>IA</typeOfReportingPerson>"
+        f"<reportingPersonBeneficiallyOwnedNumberOfShares><soleVotingPower>{sv}</soleVotingPower>"
+        "<sharedVotingPower>0</sharedVotingPower></reportingPersonBeneficiallyOwnedNumberOfShares>"
+        f"<reportingPersonBeneficiallyOwnedAggregateNumberOfShares>{amt}"
+        "</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>"
+        f"<classPercent>{pct}</classPercent></coverPageHeaderReportingPersonDetails>" for n, amt, pct, sv in persons)
+    return (f'<?xml version="1.0"?><edgarSubmission xmlns="{ns}"><headerData><submissionType>SCHEDULE {kind}'
+            "</submissionType></headerData><formData><coverPageHeader>"
+            f"<securitiesClassTitle>Common Stock</securitiesClassTitle><dateOfEvent>{event}</dateOfEvent>"
+            f"<issuerInfo><issuerCik>{issuer_cik:010d}</issuerCik><issuerName>{issuer_name}</issuerName>"
+            f"<issuerCusip>{cusip}</issuerCusip></issuerInfo></coverPageHeader>{people}</formData></edgarSubmission>")
+
+
+def sched_filing(accession, form, filed, issuer, filer, xml=None) -> bytes:
+    """``issuer`` and ``filer``: ``(cik, name)``; no ``xml`` is a text filing of the years before the XML form."""
+    roles = [("SUBJECT COMPANY", *issuer), ("FILED BY", *filer)]
+    doc = (form, "primary_doc.xml", xml) if xml is not None else (form, "sc13g.htm", None)
+    return submission(accession, form, filed, roles, [doc])

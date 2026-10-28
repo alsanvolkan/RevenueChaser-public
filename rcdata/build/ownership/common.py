@@ -190,3 +190,37 @@ def issuer_map(con: duckdb.DuckDBPyConnection, pairs_sql: str, notes: list[str],
     temp_rows(con, "_issuer_map", [("issuer_cik", "TEXT"), ("symbol", "TEXT"), ("ticker", "TEXT"),
                                    ("ticker_source", "TEXT")],
               [{"issuer_cik": c, "symbol": s, "ticker": t, "ticker_source": src} for (c, s), (t, src) in named.items()])
+
+
+ISSUER_CUSIP = "spine:cusip"
+
+
+def spine_cusips() -> dict[str, str] | None:
+    """``{cusip: ticker}`` of the live spine's current CUSIPs held by one ticker only; None with no spine file."""
+    try:
+        con = serving.open_read(SPINE)
+    except serving.ServingFileMissing:
+        return None
+    try:
+        rows = con.execute("SELECT cusip, min(ticker) FROM security WHERE cusip IS NOT NULL GROUP BY cusip "
+                           "HAVING count(*) = 1").fetchall()
+        return {c: t for c, t in rows}
+    finally:
+        con.close()
+
+
+def cusip_issuer_map(con: duckdb.DuckDBPyConnection, pairs_sql: str, notes: list[str], label: str) -> None:
+    """``_cusip_issuer_map(issuer_cik, cusip, ticker, ticker_source)`` (TEMP): the ticker whose current CUSIP the
+    filing names (it tells a company's share classes apart), else the issuer CIK's one ticker."""
+    pairs = [tuple(r) for r in con.execute(f"SELECT DISTINCT issuer_cik, cusip FROM ({pairs_sql})").fetchall()]
+    by_cusip, spine = spine_cusips(), spine_ciks()
+    if spine is None and pairs:
+        notes.append(f"{label}: no spine file yet, so no issuer is named a ticker")
+    by_cik = issuer_tickers([(c, None) for c, _ in pairs], spine)
+    rows = []
+    for cik, cusip in pairs:
+        hit = (by_cusip or {}).get(cusip) if cusip else None
+        ticker, src = (hit, ISSUER_CUSIP) if hit else by_cik.get((cik, None), (None, None))
+        rows.append({"issuer_cik": cik, "cusip": cusip, "ticker": ticker, "ticker_source": src})
+    temp_rows(con, "_cusip_issuer_map", [("issuer_cik", "TEXT"), ("cusip", "TEXT"), ("ticker", "TEXT"),
+                                         ("ticker_source", "TEXT")], rows)
