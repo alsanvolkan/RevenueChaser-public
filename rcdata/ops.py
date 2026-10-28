@@ -517,6 +517,19 @@ def watch_toggle(kind: str, ticker: str, *, by: str) -> bool:
         return not there
 
 
+def watch_replace(kind: str, tickers, *, by: str) -> tuple[int, int]:
+    """Make the list exactly ``tickers`` in one transaction; ``(added, removed)``, each with its history row."""
+    kind = _watch_kind(kind)
+    want = {str(t).strip().upper() for t in tickers if str(t).strip()}
+    with _open() as con, _tx(con):
+        have = {r[0] for r in con.execute(f"SELECT ticker FROM watchlist_{kind}")}
+        for t in sorted(have - want):
+            _watch_write(con, kind, t, "remove", by, None)
+        for t in sorted(want - have):
+            _watch_write(con, kind, t, "add", by, None)
+    return len(want - have), len(have - want)
+
+
 def watch_list(kind: str) -> list[str]:
     with _open() as con:
         return [r[0] for r in con.execute(f"SELECT ticker FROM watchlist_{_watch_kind(kind)} ORDER BY ticker")]

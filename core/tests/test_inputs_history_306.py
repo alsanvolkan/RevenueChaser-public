@@ -1,8 +1,9 @@
 """Watchlist and board settings keep every change (#306, D36, rule A; history redesign C).
 
-The store records each write to ``watchlist`` and ``board_settings`` in ``<table>_changes`` (schema 11). These tests
-pin what a user action leaves there: a toggle writes its own ticker only, in one transaction, and a Reset appends its
-'absent' rows in one change. Temp stores only.
+The store records each write to ``board_settings`` in ``board_settings_changes`` (schema 11), and the watchlist toggle
+(the stock watch list in ops.sqlite since PR 4) writes ``watchlist_stock_changes``. These tests pin what a user action
+leaves there: a toggle writes its own ticker only, in one transaction, and a Reset appends its 'absent' rows in one
+change. Temp stores only.
 """
 from __future__ import annotations
 
@@ -22,42 +23,58 @@ def _changes(name: str, where: str = "TRUE", params: list | None = None) -> list
 
 
 # ── watchlist: one ticker, one transaction ───────────────────────────────────────────────────────────────────────
-def test_toggle_adds_then_removes_and_says_which(rawstore_tmp_db):
+# Since PR 4 the toggle is the stock watch list's, in ops.sqlite, and its history is ``watchlist_stock_changes``
+# (one add / remove row per flip, ordered by ``id``); the guarantees these tests pin are the same.
+def _stock_history(ticker: str | None = None) -> list[tuple]:
+    from RevenueChaser.rcdata import ops
+    with ops.connect() as con:
+        rows = con.execute("SELECT ticker, action FROM watchlist_stock_changes ORDER BY id").fetchall()
+    return [tuple(r) for r in rows if ticker is None or r[0] == ticker]
+
+
+def _stock_history_equals_list() -> bool:
+    """Replaying the history (add / remove per ticker) gives the list as it stands."""
+    from RevenueChaser.rcdata import ops
+    state: dict[str, bool] = {}
+    for t, action in _stock_history():
+        state[t] = action == "add"
+    return {t for t, on in state.items() if on} == set(ops.watch_list("stock"))
+
+
+def test_toggle_adds_then_removes_and_says_which():
     assert rawstore.toggle_watchlist("AAA") is True
     assert rawstore.load_watchlist() == {"AAA"}
     assert rawstore.toggle_watchlist("AAA") is False
     assert rawstore.load_watchlist() == set()
 
 
-def test_toggle_off_then_on_in_one_session_keeps_both_rows(rawstore_tmp_db):
+def test_toggle_off_then_on_in_one_session_keeps_both_rows():
     for _ in range(3):
-        rawstore.toggle_watchlist("AAA")
-    rows = _changes("watchlist", "ticker = ?", ["AAA"])
-    assert [r["status"] for r in rows] == ["present", "absent", "present"]
-    assert {r["source"] for r in rows} == {"manual"}
-    assert len({r["run_at"] for r in rows}) == 3
+        rawstore.toggle_watchlist("AAA", by="leaps")
+    assert _stock_history("AAA") == [("AAA", "add"), ("AAA", "remove"), ("AAA", "add")]
 
 
-def test_toggle_leaves_the_other_tickers_alone(rawstore_tmp_db):
-    rawstore.write_rows("watchlist", [{"ticker": "BBB"}, {"ticker": "CCC"}])
-    before = _changes("watchlist")
+def test_toggle_leaves_the_other_tickers_alone():
+    rawstore.save_watchlist({"BBB", "CCC"})
+    before = _stock_history()
     rawstore.toggle_watchlist("AAA")
     rawstore.toggle_watchlist("BBB")
     assert rawstore.load_watchlist() == {"AAA", "CCC"}
-    new = _changes("watchlist")[len(before):]
-    assert [(r["ticker"], r["status"]) for r in new] == [("AAA", "present"), ("BBB", "absent")]
+    assert _stock_history()[len(before):] == [("AAA", "add"), ("BBB", "remove")]
 
 
-def test_toggle_never_rewrites_the_whole_list(rawstore_tmp_db, monkeypatch):
+def test_toggle_never_rewrites_the_whole_list(monkeypatch):
+    from RevenueChaser.rcdata import ops
+
     def boom(*a, **k):
         raise AssertionError("a toggle rewrote the whole watchlist")
+    monkeypatch.setattr(ops, "watch_replace", boom)
     monkeypatch.setattr(rawstore, "replace_all", boom)
-    monkeypatch.setattr(rawstore, "clear", boom)
     rawstore.toggle_watchlist("AAA")
     rawstore.toggle_watchlist("AAA")
 
 
-def test_concurrent_toggles_of_different_tickers_all_land(rawstore_tmp_db):
+def test_concurrent_toggles_of_different_tickers_all_land():
     tickers = [f"T{i}" for i in range(8)]
     errors: list[Exception] = []
     gate = threading.Barrier(len(tickers))
@@ -76,8 +93,7 @@ def test_concurrent_toggles_of_different_tickers_all_land(rawstore_tmp_db):
         t.join(60)
     assert not errors, errors[:2]
     assert rawstore.load_watchlist() == set(tickers)
-    latest = rawstore.changes_as_of("watchlist", float("inf"))
-    assert {r["ticker"] for r in latest} == set(tickers)
+    assert {t for t, _ in _stock_history()} == set(tickers) and _stock_history_equals_list()
 
 
 # ── board settings: Reset appends 'absent', the board reads its defaults ─────────────────────────────────────────
@@ -158,15 +174,14 @@ def _live_equals_history(name: str) -> bool:
 
 
 @pytest.mark.parametrize("n", [2, 7, 8])
-def test_same_ticker_concurrent_toggles(rawstore_tmp_db, n):
+def test_same_ticker_concurrent_toggles(n):
     """Each click flips the state the previous one left: a read outside the transaction would flip one state twice."""
     results, errors = _race(rawstore.toggle_watchlist, [("AAA",)] * n)
     assert not errors, errors[:2]
     assert sorted(results) == sorted([True] * ((n + 1) // 2) + [False] * (n // 2)), results
     assert rawstore.load_watchlist() == ({"AAA"} if n % 2 else set())
-    assert [r["status"] for r in _changes("watchlist", "ticker = ?", ["AAA"])] == (
-        ["present", "absent"] * (n // 2) + (["present"] if n % 2 else []))
-    assert _live_equals_history("watchlist")
+    assert [a for _, a in _stock_history("AAA")] == ["add", "remove"] * (n // 2) + (["add"] if n % 2 else [])
+    assert _stock_history_equals_list()
 
 
 def test_a_mixed_save_is_all_or_nothing(rawstore_tmp_db, monkeypatch):

@@ -24,9 +24,12 @@ def test_inputs_row_on_an_empty_store(rawstore_tmp_db):
 
 def test_inputs_row_counts_present_rows_and_dates_the_last_change(rawstore_tmp_db):
     _seed()
-    rawstore.toggle_watchlist("AAA")
-    rawstore.toggle_watchlist("BBB")
-    rawstore.toggle_watchlist("BBB")            # off again: an 'absent' row, not a present one
+    # The old ``watchlist`` table this row counts is no longer the toggle's (PR 4: the stock list in ops.sqlite);
+    # it is written here as a store-table row with its change rows, which is all this row reads.
+    rawstore.write_rows("watchlist", [{"ticker": "AAA"}, {"ticker": "BBB"}])
+    with rawstore.connect() as conn:
+        conn.execute("DELETE FROM watchlist WHERE ticker = 'BBB'")
+    rawstore.sync_changes("test")              # BBB off again: an 'absent' row, not a present one
     bs.save("module_comovement", {"WINSOR_K": 6.5, "MIN_OBS": 100})
     bs.reset("module_comovement", ["MIN_OBS"])
     last = max(r["m"] for r in rawstore.query(

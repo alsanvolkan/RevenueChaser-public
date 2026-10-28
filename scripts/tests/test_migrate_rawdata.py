@@ -29,7 +29,7 @@ def test_migrate_populates_db_and_keeps_originals_by_default(rawstore_tmp_db, mo
     rc = m.main(["--dataset", "ticker_payload_cache", "watchlist"])
     assert rc == 0
     assert rawstore.get("ticker_payload_cache", "AAPL")["payload"]["revenue"] == 100
-    assert rawstore.load_watchlist() == {"NOK"}
+    assert {r["ticker"] for r in rawstore.get_all("watchlist")} == {"NOK"}   # the store table, not the ops list
     # default --no-delete: originals still on disk
     assert (data_dir / "tickers" / "AAPL_raw.json").exists()
     assert (data_dir / "watchlist_tickers.json").exists()
@@ -54,7 +54,7 @@ def test_migrate_is_idempotent(rawstore_tmp_db, monkeypatch, capsys):
     assert "SKIP ticker_payload_cache: already migrated" in out
     assert "SKIP watchlist: already migrated" in out
     assert rawstore.count("ticker_payload_cache") == 1
-    assert rawstore.load_watchlist() == {"NOK"}
+    assert {r["ticker"] for r in rawstore.get_all("watchlist")} == {"NOK"}   # the store table, not the ops list
 
 
 def test_already_verified_reflects_the_manifest(rawstore_tmp_db, monkeypatch):
@@ -237,7 +237,7 @@ def test_failed_reset_restores_the_real_db_path(rawstore_tmp_db, tmp_path, monke
     assert not rawstore.DB_PATH.with_name(rawstore.DB_PATH.name + ".new").exists()
     rawstore.ensure_all_tables()
     rawstore.write_rows("watchlist", [{"ticker": "AAPL"}])
-    assert rawstore.load_watchlist() == {"AAPL"}
+    assert {r["ticker"] for r in rawstore.get_all("watchlist")} == {"AAPL"}   # the store table, not the ops list
 
 
 class TestPurgeClassification:

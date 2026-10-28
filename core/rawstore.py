@@ -4194,34 +4194,30 @@ def clear(name: str) -> None:
             _capture_changes(conn, name)
 
 
-# ── watchlist (single accessor for all 6+ inline readers) ──────────────────
+# ── watchlist: the stock watch list in ops.sqlite (PR 4) ─────────────────────
+# Since PR 4 "the watchlist" is the stock watch list of ``rcdata.ops`` (D2, D6). These three keep their names for the
+# readers that call them (Earnings, the old toggle route, the tests); the ``watchlist`` store table stays in the
+# manifest, untouched and unread by them (purged on 27 Oct, D5), until its retirement.
 def load_watchlist() -> set[str]:
-    """Current watchlist tickers (from the ``watchlist`` table)."""
-    rows = get_all("watchlist")
-    return {r["ticker"] for r in rows if r.get("ticker")}
+    """The stock watch list's tickers (``rcdata.read.watched("stock")``)."""
+    from RevenueChaser.rcdata import read
+    return read.watched("stock")
 
 
-def save_watchlist(tickers: set[str]) -> None:
-    """Replace the whole watchlist (atomically). An empty set clears it: that is the user's choice.
-    The dashboard does not call it: a click goes through ``toggle_watchlist``."""
-    replace_all("watchlist", [{"ticker": t} for t in sorted(tickers)], allow_empty=True)
+def save_watchlist(tickers: set[str], *, by: str = "save_watchlist") -> None:
+    """Make the stock watch list exactly ``tickers``, one history row per ticker added or removed. An empty set clears
+    it: that is the user's choice. The dashboard does not call it: a click goes through ``toggle_watchlist``."""
+    from RevenueChaser.rcdata import ops
+    ops.watch_replace("stock", tickers, by=by)
 
 
-def toggle_watchlist(ticker: str) -> bool:
-    """Add ``ticker`` to the watchlist, or remove it when it is there; returns whether it is in now (#306, D36).
+def toggle_watchlist(ticker: str, *, by: str = "dashboard") -> bool:
+    """Add ``ticker`` to the stock watch list, or remove it when it is there; whether it is on the list now.
 
-    One transaction that reads and writes this ticker's row only, so two clicks that race cannot drop each other's
-    ticker (a read-modify-write of the whole list did), and a lost commit race re-runs against the winner's state.
-    The store records the click in ``watchlist_changes`` ('present', or 'absent' on a removal)."""
-    def _flip(tx) -> bool:
-        tx.ensure_table("watchlist")
-        if tx.execute("SELECT 1 FROM watchlist WHERE ticker = ?", [ticker]).fetchone():
-            tx.execute("DELETE FROM watchlist WHERE ticker = ?", [ticker])
-            return False
-        tx.write_rows("watchlist", [{"ticker": ticker}])
-        return True
-
-    return atomic(_flip)
+    One ``BEGIN IMMEDIATE`` transaction on ``ops.sqlite`` that reads and writes this ticker only, so two clicks that
+    race cannot drop each other's ticker; each flip writes its history row (``watchlist_stock_changes``, with ``by``)."""
+    from RevenueChaser.rcdata import ops
+    return ops.watch_toggle("stock", ticker, by=by)
 
 
 def reset_db(include_edgar: bool = True) -> None:
