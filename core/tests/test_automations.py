@@ -32,7 +32,7 @@ def test_registry_names_are_stable_and_prefixed():
     assert [e.name for e in A.REGISTRY] == [
         "RC-Store-Backup", "RC-Relatedness-OffPeak", "RC-ValueChain-Sync", "RC-Daily-Bars", "RC-Screeners-Daily",
         "RC-Forecast-Outcomes", "RC-Forecast-Baselines", "RC-Index-Lists", "RC-Earnings-Inputs",
-        "RC-Open-Issues-Check", "RC-IBKR-Login-Check"]
+        "RC-Open-Issues-Check", "RC-IBKR-Login-Check", "RC-Build", "RC-Build-Backup"]
     assert all(e.name.startswith("RC-") for e in A.REGISTRY)
 
 
@@ -46,7 +46,7 @@ def test_the_index_lists_row_runs_weekly_on_saturday():
     assert not e.default_install
     assert all(x.days == () and x.schedule == f"daily {x.time} (local)" for x in A.REGISTRY
                if x.name not in (e.name, "RC-Screeners-Daily", "RC-Forecast-Outcomes", "RC-Forecast-Baselines",
-                                 "RC-Earnings-Inputs"))
+                                 "RC-Earnings-Inputs", "RC-Build"))
 
 
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
@@ -893,3 +893,80 @@ def test_the_ibkr_login_check_description_says_what_it_never_asks_for():
 
 def test_the_ibkr_login_check_is_not_installed_by_default():
     assert A.entry("RC-IBKR-Login-Check").default_install is False
+
+
+# --- the market-store builder as a service (PR 2 step 2) ----------------------------------------------------------
+
+class _FakeSystemctl:
+    def __init__(self):
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args):
+        self.calls.append(list(args))
+        return 0, "", ""
+
+
+def test_the_builder_row_runs_one_queue_pass_every_hour_at_07():
+    e = A.entry("RC-Build")
+    assert e.args == ("-m", "RevenueChaser.rcdata.build", "run", "--once")
+    assert e.hourly and e.time == "00:07" and e.schedule == "hourly at :07 (local)"
+    assert e.settings.time_limit_minutes == 50
+    assert e.tables_written == (), "it writes the market store, never the old one: no job_runs row (job_runs2 instead)"
+    assert e.after is None and not e.default_install
+    assert e.unit_name == "life-rc-builder"
+
+
+def test_the_builder_backup_row_runs_daily_at_0430_for_at_most_30_minutes():
+    e = A.entry("RC-Build-Backup")
+    assert e.args == ("-m", "RevenueChaser.rcdata", "backup")
+    assert not e.hourly and e.time == "04:30" and e.schedule == "daily 04:30 (local)"
+    assert e.settings.time_limit_minutes == 30 and e.tables_written == ()
+    assert e.unit_name == "life-rc-builder-backup"
+
+
+def test_linux_renders_the_builder_rows_as_life_rc_builder_units(tmp_path):
+    sc = _FakeSystemctl()
+    s = A.LinuxScheduler(runner=sc, python="/srv/rc/.venv/bin/python", workdir="/srv/rc", unit_dir=tmp_path / "u")
+    s.install(A.entry("RC-Build"))
+    s.install(A.entry("RC-Build-Backup"))
+    files = sorted(p.name for p in (tmp_path / "u").iterdir())
+    assert files == ["life-rc-builder-backup.service", "life-rc-builder-backup.timer",
+                     "life-rc-builder.service", "life-rc-builder.timer"]
+    service = (tmp_path / "u" / "life-rc-builder.service").read_text(encoding="utf-8")
+    timer = (tmp_path / "u" / "life-rc-builder.timer").read_text(encoding="utf-8")
+    assert 'ExecStart="/srv/rc/.venv/bin/python" "-m" "RevenueChaser.core.automations" "run" "RC-Build"' in service
+    assert "Type=oneshot" in service and "TimeoutStartSec=50min" in service
+    assert "OnCalendar=*-*-* *:07:00" in timer and "Unit=life-rc-builder.service" in timer
+    backup_service = (tmp_path / "u" / "life-rc-builder-backup.service").read_text(encoding="utf-8")
+    backup_timer = (tmp_path / "u" / "life-rc-builder-backup.timer").read_text(encoding="utf-8")
+    assert '"run" "RC-Build-Backup"' in backup_service and "TimeoutStartSec=30min" in backup_service
+    assert "OnCalendar=*-*-* 04:30:00" in backup_timer and "Unit=life-rc-builder-backup.service" in backup_timer
+    for text in (service, timer, backup_service, backup_timer):      # valid unit text: sections, key=value lines
+        lines = [ln for ln in text.splitlines() if ln.strip()]
+        assert lines[0] == "[Unit]"
+        assert all(ln.startswith("[") and ln.endswith("]") or "=" in ln for ln in lines)
+    assert ["enable", "--now", "life-rc-builder.timer"] in sc.calls
+    assert ["enable", "--now", "life-rc-builder-backup.timer"] in sc.calls
+    sc.calls.clear()
+    s.set_enabled("RC-Build", False)
+    s.run("RC-Build")
+    s.remove("RC-Build")
+    assert sc.calls == [["disable", "--now", "life-rc-builder.timer"], ["start", "--no-block", "life-rc-builder.service"],
+                        ["disable", "--now", "life-rc-builder.timer"], ["daemon-reload"]]
+    assert sorted(p.name for p in (tmp_path / "u").iterdir()) == ["life-rc-builder-backup.service",
+                                                                   "life-rc-builder-backup.timer"]
+
+
+def test_windows_installs_the_builder_as_an_hourly_trigger_with_a_minute_limit():
+    ps = FakePS()
+    _win(ps).install(A.entry("RC-Build"))
+    s = ps.scripts[0]
+    assert "-Once -At '00:07' -RepetitionInterval (New-TimeSpan -Hours 1)" in s
+    assert "-ExecutionTimeLimit (New-TimeSpan -Minutes 50)" in s
+
+
+def test_a_chain_step_cannot_wait_on_an_hourly_row():
+    step = A.AutomationEntry(name="RC-X", label="x", args=("-c", "pass"), time="00:30", description="d",
+                             after="RC-Build")
+    with pytest.raises(ValueError, match="hourly"):
+        A.check_chain(A.REGISTRY + (step,))

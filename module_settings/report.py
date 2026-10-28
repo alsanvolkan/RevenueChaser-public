@@ -17,11 +17,13 @@ from datetime import datetime
 from urllib.parse import urlsplit
 
 from RevenueChaser.core import automations, datasets, funnel
-from RevenueChaser.core.html_safe import script_json
+from RevenueChaser.core.html_safe import esc, script_json
 from RevenueChaser.core.reporting_common import (
     FILTERS_CSS,
     FILTERS_JS,
     JOB_JS,
+    THEME_CSS,
+    THEME_JS,
     combobox_html,
     help_html,
     provider_health_html,
@@ -2229,6 +2231,361 @@ def _ibkr_login_card(value) -> str:
             'http or https address is accepted.</div></div></section>')
 
 
+# ── The "New data system" section (PR 2; D9, F6, F7 A) ─────────────────────────────────────────────────────────
+#
+# Rendered above the old inventory, from ``newdata.collect`` (read when this page is rendered). It uses the shell's
+# theme tokens (``THEME_CSS``), scoped to ``#newdata`` so the old page's own palette is left as it is until that page
+# goes (PR 21): the token values are the shell's, only the selector differs. One column, full-width stacked cards,
+# label-value rows instead of tables, 44 px targets. The only controls are requests: Fetch, Backfill and Pause /
+# Resume post to ``/api/build/*``; nothing on the page writes data. Every handler reads ``data-*``; every string the
+# JS puts into the page goes through ``rcEsc``.
+
+ND_STATUS_WORDS = {"fresh": "fresh", "unchanged": "unchanged", "late": "late", "stale": "stale",
+                   "never": "never built"}
+ND_BACKFILL_CONFIRM_OVER = 1000
+ND_NEXT_PASS = "the builder takes it at its next pass (hourly at :07)"
+
+ND_THEME_CSS = (THEME_CSS.replace(':root[data-theme="auto"]{', ':root[data-theme="auto"] #newdata{')
+                .replace(':root[data-theme="light"]{', ':root[data-theme="light"] #newdata{')
+                .replace(":root{", "#newdata{"))
+
+ND_CSS = ND_THEME_CSS + """
+#newdata{background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:12px;
+  padding:12px;margin:0 0 18px;display:flex;flex-direction:column;gap:12px;max-width:100%;overflow-wrap:anywhere}
+#newdata h2{margin:0;font-size:17px;color:var(--bright)}
+#newdata .nd-sub{color:var(--muted);font-size:12.5px}
+#newdata .nd-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;
+  width:100%;min-width:0;display:flex;flex-direction:column;gap:8px}
+#newdata .nd-card h3{margin:0;font-size:15px;color:var(--bright);display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+#newdata .nd-chip{display:inline-block;border:1px solid currentColor;border-radius:99px;padding:0 8px;
+  font-size:11.5px;font-weight:600}
+#newdata .nd-st-fresh{color:var(--pos)}
+#newdata .nd-st-unchanged{color:var(--sky)}
+#newdata .nd-st-late{color:var(--amber)}
+#newdata .nd-st-stale{color:var(--neg)}
+#newdata .nd-st-never{color:var(--muted)}
+#newdata .nd-warn{color:var(--amber)}
+#newdata .nd-ok{color:var(--pos)}
+#newdata .nd-bad{color:var(--neg)}
+#newdata .nd-rows{display:flex;flex-direction:column}
+#newdata .nd-row{display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 12px;padding:5px 0;
+  border-bottom:1px solid var(--border)}
+#newdata .nd-row:last-child{border-bottom:none}
+#newdata .nd-k{color:var(--muted)}
+#newdata .nd-v{min-width:0;text-align:right;margin-left:auto}
+#newdata .nd-bar{width:100%;height:8px;border-radius:4px;background:var(--hover);overflow:hidden}
+#newdata .nd-bar>span{display:block;height:100%;background:var(--sky);max-width:100%}
+#newdata details>summary{min-height:44px;display:flex;align-items:center;cursor:pointer;color:var(--bright)}
+#newdata .nd-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+#newdata .nd-btn,#newdata .nd-date{min-height:44px;min-width:44px;border-radius:8px;font:inherit;padding:0 14px;
+  border:1px solid var(--input-border);background:var(--input-bg);color:var(--bright);max-width:100%}
+#newdata .nd-btn{cursor:pointer;font-weight:600}
+#newdata .nd-btn.nd-primary{background:var(--primary-bg);color:var(--primary-fg);border-color:var(--primary-bg)}
+#newdata .nd-btn:disabled{opacity:.6;cursor:default}
+#newdata .nd-msg{color:var(--muted);font-size:12.5px;min-height:1em}
+#newdata .nd-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+#newdata .nd-list li{border-bottom:1px solid var(--border);padding:4px 0}
+"""
+
+
+def _nd(value) -> str:
+    """One shown value: a number with thousands separators, ``—`` for nothing, anything else escaped text."""
+    if value is None or value == "":
+        return DASH
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, int):
+        return f"{value:,}"
+    if isinstance(value, float):
+        return f"{value:,.4g}"
+    return esc(value)
+
+
+def _nd_row(label: str, value_html: str) -> str:
+    return f'<div class="nd-row"><span class="nd-k">{esc(label)}</span><span class="nd-v">{value_html}</span></div>'
+
+
+def _nd_bar(done, total) -> str:
+    if not isinstance(done, (int, float)) or not isinstance(total, (int, float)) or total <= 0:
+        return ""
+    pct = max(0.0, min(100.0, 100.0 * done / total))
+    return f'<div class="nd-bar" role="img" aria-label="{pct:.0f}%"><span style="width:{pct:.1f}%"></span></div>'
+
+
+def _nd_flag(ok) -> str:
+    if ok is True:
+        return '<span class="nd-ok">ok</span>'
+    if ok is False:
+        return '<span class="nd-bad">check</span>'
+    return '<span class="nd-k">info</span>'
+
+
+def _nd_status_cls(status) -> str:
+    return f"nd-st-{status}" if status in ND_STATUS_WORDS else "nd-st-never"
+
+
+def _nd_dataset_card(c: dict) -> str:
+    ds = c.get("dataset")
+    status = c.get("status")
+    cov = c.get("coverage")
+    rows = [
+        _nd_row("Status", f'<span class="{_nd_status_cls(status)}">{esc(ND_STATUS_WORDS.get(status, status))}</span>'
+                          f' · {_nd(c.get("status_reason"))}'),
+        _nd_row("Checked on", _nd(c.get("checked_on"))),
+        _nd_row("Source as of", _nd(c.get("source_as_of"))),
+        _nd_row("Next check due", _nd(c.get("next_check_due"))),
+        _nd_row("Rows served", _nd(c.get("table_rows")) + " · newest " + _nd(c.get("newest"))),
+        _nd_row("Last run: added / removed", _nd(c.get("added")) + " / " + _nd(c.get("removed"))),
+        _nd_row("Last run: calls", _nd(c.get("calls"))),
+        _nd_row("Coverage", (f"{cov:.1%}" if isinstance(cov, (int, float)) else DASH)
+                + (f" (target {c['coverage_target']:.0%})" if isinstance(c.get("coverage_target"), (int, float))
+                   else "")),
+        _nd_row("Cadence", _nd(c.get("cadence"))),
+    ]
+    if c.get("last_note"):
+        rows.append(_nd_row("Last note", _nd(c.get("last_note"))))
+    checks = "".join(_nd_row(str(k.get("label") or ""), _nd_flag(k.get("ok")) + " " + _nd(k.get("detail")))
+                     for k in c.get("checks") or [])
+    issues = "".join(f'<li>{_nd(i.get("kind"))} · {_nd(i.get("key"))}: {_nd(i.get("detail"))}'
+                     f' <span class="nd-k">({_nd(i.get("found_on"))})</span></li>' for i in c.get("issues") or [])
+    checks_html = (f'<details class="nd-checks"><summary>Checks ({len(c.get("checks") or [])})</summary>'
+                   f'<div class="nd-rows">{checks}</div>'
+                   + (f'<ul class="nd-list">{issues}</ul>' if issues else "") + "</details>")
+    bf = c.get("backfill") or {}
+    if bf:
+        done, expected = bf.get("done"), bf.get("expected")
+        progress = _nd(done) + (f" of {_nd(expected)} partitions" if expected is not None else " partitions")
+        bf_html = ('<div class="nd-rows">' + _nd_row("Backfill", progress)
+                   + _nd_row("Last partition", _nd(bf.get("last_partition")))
+                   + _nd_row("Resumable", _nd(bf.get("resumable"))) + "</div>" + _nd_bar(done, expected))
+    else:
+        bf_html = '<div class="nd-k">No backfill view for this dataset.</div>'
+    sched = c.get("schedule") or {}
+    paused = bool(sched.get("paused"))
+    sched_text = (f"paused by {_nd(sched.get('paused_by'))} at {_nd(sched.get('paused_at'))}" if paused
+                  else "running on its schedule")
+    dsa = esc(ds)
+    earliest = bf.get("from_earliest")
+    actions = (
+        '<div class="nd-actions">'
+        f'<button type="button" class="nd-btn nd-primary" data-nd-act="fetch" data-dataset="{dsa}">Fetch</button>'
+        f'<input type="date" class="nd-date" aria-label="Backfill from" data-dataset="{dsa}"'
+        + (f' min="{esc(earliest)}"' if earliest else "") + ">"
+        f'<button type="button" class="nd-btn" data-nd-act="backfill" data-dataset="{dsa}">Backfill</button>'
+        f'<button type="button" class="nd-btn" data-nd-act="{"resume" if paused else "pause"}" data-dataset="{dsa}">'
+        f'{"Resume" if paused else "Pause"}</button>'
+        "</div>"
+        '<div class="nd-msg" aria-live="polite" data-nd-msg></div>'
+    )
+    return (f'<div class="nd-card nd-dataset" data-dataset="{dsa}" data-status="{esc(status)}">'
+            f'<h3>{_nd(c.get("label"))} <span class="nd-chip {_nd_status_cls(status)}">'
+            f'{esc(ND_STATUS_WORDS.get(status, status))}</span></h3>'
+            f'<div class="nd-sub tbl">{_nd(ds)}</div>'
+            f'<div class="nd-rows">{"".join(rows)}</div>'
+            f"{checks_html}{bf_html}"
+            + _nd_row("WRDS difference", _nd((c.get("wrds") or {}).get("text")))
+            + _nd_row("Schedule", f'<span data-nd-sched>{sched_text}</span>')
+            + actions + "</div>")
+
+
+def _nd_queue_rows(q: dict) -> str:
+    def item(r: dict) -> str:
+        return (f'<li>#{_nd(r.get("id"))} {_nd(r.get("dataset"))} · <b>{_nd(r.get("status"))}</b> · '
+                f'by {_nd(r.get("requested_by"))}' + (f' · {_nd(r.get("note"))}' if r.get("note") else "") + "</li>")
+    active = "".join(item(r) for r in q.get("active") or []) or '<li class="nd-k">Nothing queued or running.</li>'
+    done = "".join(item(r) for r in q.get("finished") or []) or '<li class="nd-k">No finished request yet.</li>'
+    return (f'<div class="nd-k">Queued and running</div><ul class="nd-list" id="nd-queue-active">{active}</ul>'
+            f'<details><summary>Last finished ({len(q.get("finished") or [])})</summary>'
+            f'<ul class="nd-list" id="nd-queue-finished">{done}</ul></details>')
+
+
+def _nd_spend(sp: dict) -> str:
+    rows = []
+    for p in sp.get("providers") or []:
+        cap = p.get("cap")
+        today = p.get("today")
+        text = f"today {_nd(today)}" + (f" of {_nd(cap)}" if cap is not None else " (no cap)")
+        text += f" · this week {_nd(p.get('week'))}"
+        if p.get("failures_today") or p.get("http_429_today"):
+            text += f" · failed {_nd(p.get('failures_today'))}, 429 {_nd(p.get('http_429_today'))}"
+        rows.append(_nd_row(str(p.get("provider") or ""), text) + _nd_bar(today, cap))
+    uw = sp.get("uw_remaining")
+    uw_text = (f"today {_nd(uw.get('daily_req_count'))} of our cap {_nd(uw.get('daily_cap'))} · "
+               f"{_nd(uw.get('daily_remaining_computed'))} left (computed) · per-minute remaining "
+               f"{_nd(uw.get('per_minute_remaining'))} · sampled {_nd(uw.get('sampled_at'))}"
+               if uw else "no Unusual Whales answer sampled yet")
+    return ('<div class="nd-card" id="nd-spend"><h3>Spend</h3>'
+            f'<div class="nd-sub">Calls per provider and New York day {_nd(sp.get("day"))}, week from '
+            f'{_nd(sp.get("week_from"))}, against the day caps.</div>'
+            f'<div class="nd-rows">{"".join(rows)}{_nd_row("Unusual Whales headers", uw_text)}</div></div>')
+
+
+def _nd_warn(text_html: str, warn) -> str:
+    return f'<span class="nd-warn">{text_html} · warn</span>' if warn else text_html
+
+
+def _nd_backups(b: dict) -> str:
+    days = b.get("warn_days")
+    rows = []
+    if not b.get("configured"):
+        rows.append(_nd_row("Backup folder", '<span class="nd-warn">not set: RAW_STORE_BACKUP_DIR is empty</span>'))
+    for k in b.get("kinds") or []:
+        age = k.get("age_days")
+        rows.append(_nd_row(f"Newest {k.get('kind')} copy",
+                            _nd_warn(("none" if age is None else f"{_nd(age)} d old · {_nd(k.get('newest'))}"),
+                                     k.get("warn"))))
+    rc = b.get("raw_copy") or {}
+    rows.append(_nd_row("35-day raw copy", _nd_warn(_nd(rc.get("text")), rc.get("warn"))))
+    po = b.get("portable") or {}
+    rows.append(_nd_row("Portable SSD", _nd_warn(_nd(po.get("text")), po.get("warn"))))
+    return ('<div class="nd-card" id="nd-backups"><h3>Market-store backups</h3>'
+            f'<div class="nd-sub">Warns past {_nd(days)} days.</div><div class="nd-rows">{"".join(rows)}</div></div>')
+
+
+def _nd_retirement(rows: list[dict]) -> str:
+    body = "".join(_nd_row(str(r.get("table") or ""),
+                           f"{_nd(r.get('reads_14d'))} reads in 14 d · replaced by {_nd(r.get('replaced_by'))}"
+                           f" · writer {', '.join(_nd(w) for w in r.get('writers') or []) or 'none'}")
+                   for r in rows)
+    return ('<div class="nd-card" id="nd-retirement"><h3>Retirement</h3>'
+            '<div class="nd-sub">Reads of each old table the new data replaces, from the read log.</div>'
+            f'<div class="nd-rows">{body}</div></div>')
+
+
+def _newdata_section(nd: dict | None) -> str:
+    if not nd:
+        return ""
+    if nd.get("error"):
+        return ('<section id="newdata"><h2>New data system</h2>'
+                f'<div class="nd-card nd-bad">Could not read the new data system: {_nd(nd.get("error"))}</div></section>')
+    v = nd.get("verified") or {}
+    run = v.get("builder_last_run") or {}
+    swaps = " · ".join(f"last swap {_nd(k)} {_nd(t)}" for k, t in (v.get("swaps") or {}).items())
+    verified = (f'builder last run {_nd(run.get("started_at"))} ({_nd(run.get("status"))})' if run
+                else "builder last run: none recorded") + (f" · {swaps}" if swaps else "") \
+        + f' · ops schema {_nd(v.get("ops_schema"))}'
+    cards = "".join(_nd_dataset_card(c) for c in nd.get("datasets") or [])
+    ret = nd.get("retention") or {}
+    wl = nd.get("watchlists") or {}
+    return (
+        '<section id="newdata" aria-labelledby="newdata-h">'
+        '<h2 id="newdata-h">New data system</h2>'
+        f'<div class="nd-sub" id="nd-verified">Verified running: {verified}</div>'
+        '<div class="nd-sub">Read when this page was rendered. Fetch, Backfill and Pause / Resume only put a request '
+        'in the queue; the builder runs it. Nothing on this page writes data.</div>'
+        f"{cards}"
+        f'<div class="nd-card" id="nd-queue"><h3>Queue</h3>{_nd_queue_rows(nd.get("queue") or {})}</div>'
+        f'{_nd_spend(nd.get("spend") or {})}'
+        f'{_nd_backups(nd.get("backups") or {})}'
+        '<div class="nd-card" id="nd-retention"><h3>Raw option retention</h3>'
+        f'<div class="nd-rows">{_nd_row("Retention", _nd_warn(_nd(ret.get("text")), ret.get("warn")))}'
+        + (_nd_row("Set by", _nd(ret.get("source"))) if ret.get("source") else "") + "</div></div>"
+        f'{_nd_retirement(nd.get("retirement") or [])}'
+        '<div class="nd-card" id="nd-watchlists"><h3>Watch lists</h3><div class="nd-rows">'
+        + "".join(_nd_row(f"{k} watch list", f"{_nd(n)} tickers") for k, n in wl.items())
+        + "</div></div></section>")
+
+
+def _nd_client(nd: dict | None) -> dict:
+    """What the section's JS needs: per dataset the sessions still missing and the calls each costs."""
+    out = {}
+    for c in (nd or {}).get("datasets") or []:
+        bf = c.get("backfill") or {}
+        out[str(c.get("dataset"))] = {"missing": bf.get("missing"), "calls_per_partition": bf.get("calls_per_partition")}
+    return {"datasets": out, "confirm_over": ND_BACKFILL_CONFIRM_OVER, "next_pass": ND_NEXT_PASS}
+
+
+ND_JS = r"""
+function ndPath(ds){ return String(ds).split('/').map(encodeURIComponent).join('/'); }
+function ndCard(btn){ var el = btn; while(el && !(el.classList && el.classList.contains('nd-dataset'))) el = el.parentNode; return el; }
+function ndSay(card, html){ var m = card && card.querySelector('[data-nd-msg]'); if(m) m.innerHTML = html; }
+function ndQueueItem(r){
+  return '<li>#' + rcEsc(r.id) + ' ' + rcEsc(r.dataset) + ' · <b>' + rcEsc(r.status) + '</b> · by ' +
+    rcEsc(r.requested_by) + (r.note ? ' · ' + rcEsc(r.note) : '') + '</li>';
+}
+function ndQueue(){
+  return fetch('/api/build/queue').then(function(r){ return r.json(); }).then(function(d){
+    if(!d || !d.ok) return;
+    var a = document.getElementById('nd-queue-active'), f = document.getElementById('nd-queue-finished');
+    if(a) a.innerHTML = (d.active || []).map(ndQueueItem).join('') || '<li class="nd-k">Nothing queued or running.</li>';
+    if(f) f.innerHTML = (d.finished || []).map(ndQueueItem).join('') || '<li class="nd-k">No finished request yet.</li>';
+  }).catch(function(){});
+}
+function ndPost(btn, url, body, done){
+  var card = ndCard(btn);
+  btn.disabled = true;
+  fetch(url, {method: 'POST', headers: body ? {'X-RC-Panel': 'settings', 'Content-Type': 'application/json'}
+                                           : {'X-RC-Panel': 'settings'},
+              body: body ? JSON.stringify(body) : undefined}).then(function(r){
+    return r.json().then(function(d){ return {status: r.status, d: d || {}}; });
+  }).then(function(res){
+    btn.disabled = false;
+    if(res.d.ok){ done(card, res.d); ndQueue(); }
+    else ndSay(card, '<span class="nd-bad">' + rcEsc(res.d.error || ('HTTP ' + res.status)) + '</span>');
+  }).catch(function(e){ btn.disabled = false; ndSay(card, '<span class="nd-bad">' + rcEsc(String(e)) + '</span>'); });
+}
+function ndQueued(card, d){
+  ndSay(card, 'Queued as request #' + rcEsc(d.id) + '; ' + rcEsc(ND.next_pass) + '.');
+}
+function ndEstimate(ds, from){
+  var info = (ND.datasets || {})[ds] || {};
+  if(!info.missing || info.calls_per_partition == null) return null;
+  return info.missing.filter(function(d){ return String(d) >= from; }).length * info.calls_per_partition;
+}
+function ndBackfill(btn, confirmed){
+  var ds = btn.getAttribute('data-dataset'), card = ndCard(btn);
+  var input = card && card.querySelector('input.nd-date');
+  var from = input ? input.value : '';
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(from)){ ndSay(card, 'Pick the first day to backfill from.'); return; }
+  var calls = ndEstimate(ds, from);
+  if(!confirmed && (calls === null || calls > ND.confirm_over)){
+    ndSay(card, (calls === null ? 'The calls of this backfill are not estimated for this dataset.'
+                                : 'This backfill sends about ' + rcEsc(calls.toLocaleString()) + ' calls.') +
+      ' <button type="button" class="nd-btn nd-primary" data-nd-act="backfill-confirm" data-dataset="' +
+      rcEsc(ds) + '">Queue it</button>');
+    return;
+  }
+  ndPost(btn, '/api/build/request/' + ndPath(ds), {backfill_from: from}, function(c, d){
+    ndQueued(c, d);
+    if(calls !== null) ndSay(c, 'Queued as request #' + rcEsc(d.id) + ' (about ' + rcEsc(calls.toLocaleString()) +
+      ' calls); ' + rcEsc(ND.next_pass) + '.');
+  });
+}
+function ndSchedule(btn, action){
+  var ds = btn.getAttribute('data-dataset');
+  ndPost(btn, '/api/build/schedule/' + ndPath(ds) + '/' + action, null, function(card, d){
+    var s = d.schedule || {}, paused = action === 'pause';
+    btn.setAttribute('data-nd-act', paused ? 'resume' : 'pause');
+    btn.textContent = paused ? 'Resume' : 'Pause';
+    var line = card && card.querySelector('[data-nd-sched]');
+    if(line) line.innerHTML = paused ? 'paused by ' + rcEsc(s.paused_by) : 'running on its schedule';
+    ndSay(card, paused ? 'Paused: the builder skips it until Resume.' : 'Resumed.');
+  });
+}
+document.addEventListener('click', function(ev){
+  var btn = ev.target && ev.target.closest ? ev.target.closest('#newdata [data-nd-act]') : null;
+  if(!btn) return;
+  var act = btn.getAttribute('data-nd-act'), ds = btn.getAttribute('data-dataset');
+  if(act === 'fetch') ndPost(btn, '/api/build/request/' + ndPath(ds), null, ndQueued);
+  else if(act === 'backfill') ndBackfill(btn, false);
+  else if(act === 'backfill-confirm'){
+    var card = ndCard(btn), real = card && card.querySelector('[data-nd-act="backfill"]');
+    if(real) ndBackfill(real, true);
+  }
+  else if(act === 'pause' || act === 'resume') ndSchedule(btn, act);
+});
+"""
+
+
+def _collect_newdata() -> dict:
+    """The section's data, read now; an error is a line on the page, never a blank board."""
+    from RevenueChaser.module_settings import newdata
+    try:
+        return newdata.collect()
+    except Exception as exc:  # noqa: BLE001 - one unreadable ops file must not take the whole board down
+        return {"error": f"{type(exc).__name__}: {exc}"[:300]}
+
+
 def render_settings_dashboard(payload: dict) -> str:
     payload = payload or {}
     rows = payload.get("rows") or []
@@ -2285,6 +2642,9 @@ def render_settings_dashboard(payload: dict) -> str:
     automations = payload.get("automations") or []
     automations_html = _automations_section(automations)
     automations_js = (AUTOMATIONS_JS + AUTOMATIONS_BOOT) if automations else ""
+    # The payload's own ``newdata`` when the caller read it (tests, fixtures); else read here, per render.
+    nd = payload["newdata"] if "newdata" in payload else _collect_newdata()
+    newdata_html = _newdata_section(nd)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -2293,7 +2653,9 @@ def render_settings_dashboard(payload: dict) -> str:
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Settings / Data health</title>
 <style>{CSS}</style>
+<style>{ND_CSS}</style>
 {FILTERS_CSS}
+<script>{THEME_JS}</script>
 </head>
 <body>
 <div class="wrap">
@@ -2305,6 +2667,7 @@ def render_settings_dashboard(payload: dict) -> str:
     <div class="sync">Last sync: {_html.escape(_friendly(generated))}</div>
   </div>
   {provider_health_html(payload.get("provider_health"))}
+  {newdata_html}
   {ibkr_login_html}
   {help_block}
   {_summary_tiles(rows, payload)}
@@ -2324,10 +2687,12 @@ def render_settings_dashboard(payload: dict) -> str:
 <script>
 var DATA = {data_json};
 var AUTOMATIONS = {script_json(automations)};
+var ND = {script_json(_nd_client(nd))};
 {JS}
 {FLOW_JS}
 {DRILL_JS}
 {automations_js}
+{ND_JS}
 </script>
 </body>
 </html>

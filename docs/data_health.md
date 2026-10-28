@@ -126,6 +126,77 @@ not an equity board.
 Same tokens as the rest of the app (`--bg #05111F`, `--accent #0EA5E9`). There is deliberately no
 "fetch everything" button: the locks, the provider quotas and the hours make it a trap.
 
+### 2.0 The "New data system" section (PR 2)
+
+The first section of the tab, above the old inventory (which stays until PR 21, with its drill, flow diagram and
+board-input cards). It shows the market store that the builder (`python -m RevenueChaser.rcdata.build`) writes. The
+contract below binds the page; decisions D1, D6, D9, F6, F7 A, F8 A, F10 B and the five Settings decisions of
+27 Oct 2026 are the source.
+
+**Where the data comes from.** `module_settings/newdata.py` `collect()`, read when the page is rendered (Refresh),
+with no network:
+
+- `ops.sqlite` through the read helpers of `rcdata/ops.py` (D6). They never create the file or a table: no file
+  yet, or a table an older file lacks, reads as no rows.
+- Row counts, the newest date and the last swap from the live serving file. **The handle rule:** every read opens
+  its own read-only handle with `rcdata.serving.open_read(kind)`, the path resolved at that moment, and closes it
+  before `collect()` returns. No connection is cached, at module level or across requests, because DuckDB keeps
+  one database instance per path in a process, and a kept handle would go on serving the build it opened after
+  the builder swapped in a newer one. The `/api/build/*` routes open no DuckDB file at all.
+- Backfill progress from the Parquet folder listing, backup ages from the market backup's `.manifest.json`.
+
+**One card per dataset**, worst status first: `stale`, `never` (no check yet), `late`, `unchanged`, `fresh`.
+
+| Status | Rule |
+|---|---|
+| fresh | within its cycle, and the last run changed rows |
+| unchanged | within its cycle, and the last run changed nothing |
+| late | one cycle missed, or coverage under its target |
+| stale | two cycles missed, or the last check failed |
+| never | no check row yet |
+
+A daily dataset's cycle is one New York session (`core/calendar.py`), counted from its newest `source_as_of`. A
+weekly dataset is in its cycle for 8 days after its last check, a monthly one for 35. A `skipped` check (paused,
+or a provider at its day cap) does not reset the clock: the status comes from the newest check that is not
+skipped. The cadence is `dataset_schedule.cadence` when set, else the dataset's default (both datasets of PR 1:
+daily). Coverage targets are `newdata.COVERAGE_TARGET` (SPX expiry-strike 95%, market series none). These are
+the proposed alarm limits as set (decision 1), to be checked again after two weeks of real data.
+
+Inside each card: the dataset's checks (decision 2: last run, source as of, coverage, rows removed and added,
+calls, next check due, open `build_issues`, with the newest ten issues listed), backfill progress (SPX: sessions
+with a partition out of the sessions expected since 16 Jan 2025, the missing ones, the last partition; market
+series: partitions per source and year), the WRDS difference slot (decision 3: "no WRDS run yet" until PR 7 and
+PR 12 bring the data) and the schedule state.
+
+**Page-level cards:** the queue (queued and running requests, then the last 20 finished), spend (F6: calls per
+provider for the New York day and the week from Monday, from `provider_calls_daily`, against the day caps of
+`rcdata/caps.py`, and UW's newest `x-uw-*` sample from `uw_remaining`: its daily count, what is left of our own cap
+(computed) and the per-minute window), market-store backups (the newest
+`ops` and `market` copies in the manifest, the 35-day raw copy dated by its newest copied file, the portable SSD
+from a `dataset_check` row of dataset `backup/portable` or "not recorded"; each warns past 35 days or when
+missing), the raw option retention warning (on until `RC_RAW_RETENTION_DAYS` or a `dataset_schedule` row
+`retention_days`, with the days as its cadence, says how long raw option files are kept), retirement (reads of
+each old table the new data replaces, from `read_log` over 14 days, with the registry task that still writes it),
+and the watch-list counts (no buttons: PR 4). A "verified running" line on top: the builder's last run
+(`job_runs2`), the last swap per kind and the `ops_schema` version.
+
+**The buttons are requests, nothing else (F7 A, F10 B).**
+
+| Button | What it does |
+|---|---|
+| Fetch | `POST /api/build/request/<dataset>`: one queued request; the builder runs it at its next pass |
+| Backfill | the same with `backfill_from` (a date field). The page first shows the expected calls (SPX: one per missing session from that date) and asks for a second click when they are over 1,000, or when the dataset has no estimate |
+| Pause / Resume | `POST /api/build/schedule/<dataset>/pause` or `/resume`; the builder skips a paused dataset with a `skipped: paused` check row and sends no call |
+
+**What the page never does:** it writes no data file and no `.store/` table, opens no serving file read-write,
+sends no provider call (Refresh makes none, and the e2e tier counts it), and has no drop, restore, edit or compact
+control. A request that is already queued or running answers 409.
+
+**Look.** The shell's theme tokens (`THEME_CSS`, `THEME_JS` of `core/reporting_common.py`), scoped to
+`#newdata` so the old page keeps its own palette until it goes; light and dark. One column of full-width cards,
+label-value rows instead of tables, 44 px targets, bars at the card's width, nothing that scrolls sideways at
+390 px. Every string reaches the page through `core/html_safe.py` or `rcEsc`; handlers read `data-*`.
+
 ### 2.1 The summary tiles
 
 Five tiles above the table, counted from the rows already collected, so no tile costs a second

@@ -257,11 +257,51 @@ def _settings(tmp_path, monkeypatch):
                           "log_tail": ["l1", "l2"], "offpeak_gated": True,
                           "default_install": True,
                           "offmachine": {"configured": True, "kind": "red", "text": "t"}}]}
+    p["newdata"] = newdata_fixture()
     hp = hostile(p)
     hp["provider_health"] = health("settings")
     # A live state, so the row's buttons (and their hostile data-name) render too.
     hp["automations"][0]["state"] = "enabled"
     return report.render_settings_dashboard(hp)
+
+
+def newdata_fixture() -> dict:
+    """PR 2: the "New data system" section of Settings, every field filled (dataset names, notes, provider names,
+    issue keys, queue rows, writers), so ``hostile`` reaches each sink of the section and of its JS data."""
+    card = {"dataset": "market_series", "label": "Market series", "status": "late", "status_reason": "one missed",
+            "cadence": "daily", "checked_on": "2026-10-27", "source_as_of": "2026-10-27", "next_check_due": "x",
+            "rows": 10, "added": 1, "removed": 0, "calls": 3, "coverage": 0.5, "coverage_target": 0.95,
+            "last_note": "note", "last_result": "changed", "table_rows": 10, "newest": "2026-10-27",
+            "checks": [{"label": "Last run", "ok": True, "detail": "changed"},
+                       {"label": "Coverage", "ok": False, "detail": "50%"}],
+            "issues": [{"kind": "fetch_failed", "key": "k", "detail": "HTTP 500", "found_on": "2026-10-27"}],
+            "issues_open": 1,
+            "backfill": {"done": 3, "expected": 9, "last_partition": "2026-10-27", "missing": ["2026-10-20"],
+                         "resumable": True, "calls_per_partition": 1, "from_earliest": "2025-01-16"},
+            "wrds": {"text": "no WRDS run yet"},
+            "schedule": {"paused": True, "paused_by": "settings", "paused_at": "2026-10-27T10:00:00+00:00"}}
+    req = {"id": 1, "dataset": "market_series", "status": "queued", "requested_by": "settings", "note": "n",
+           "params": {"mode": "backfill"}}
+    return {
+        "verified": {"builder_last_run": {"run_id": "r", "started_at": "s", "status": "ok"},
+                     "swaps": {"market": "2026-10-27T10:00:00+00:00"}, "ops_schema": 1},
+        "datasets": [card, {**card, "dataset": "uw/spot_expiry_strike", "status": "fresh",
+                            "schedule": {"paused": False, "paused_by": None, "paused_at": None}}],
+        "queue": {"active": [req], "finished": [{**req, "status": "done"}]},
+        "spend": {"day": "2026-10-27", "week_from": "2026-10-26",
+                  "providers": [{"provider": "uw", "cap": 150000, "today": 12, "week": 30, "failures_today": 1,
+                                 "http_429_today": 0}],
+                  "uw_remaining": {"daily_req_count": 1300, "daily_cap": 150000, "daily_remaining_computed": 148700,
+                                   "per_minute_remaining": 118, "token_req_limit": 100000000, "sampled_at": "t"}},
+        "backups": {"configured": True, "warn_days": 35,
+                    "kinds": [{"kind": "ops", "newest": "n", "age_days": 1, "warn": False}],
+                    "raw_copy": {"text": "not set", "warn": True, "age_days": None},
+                    "portable": {"text": "not recorded", "warn": True, "age_days": None}},
+        "retention": {"warn": True, "text": "kept without a limit", "source": "src"},
+        "retirement": [{"table": "macro_series", "replaced_by": "market_series", "reads_14d": 2,
+                        "writers": ["RC-Earnings-Inputs"]}],
+        "watchlists": {"option": 1, "stock": 2},
+    }
 
 
 def _uw_interaction(tmp_path, monkeypatch):
