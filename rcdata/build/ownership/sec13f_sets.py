@@ -55,6 +55,7 @@ INDEX_ENV = "RC_FORM13F_INDEX_URL"
 INDEX_PATH = "/data-research/sec-markets-data/form-13f-data-sets"
 MEMBERS = ("SUBMISSION", "COVERPAGE", "SUMMARYPAGE", "INFOTABLE")
 ORIGIN = "set:"
+MIN_WEEKDAYS = 20                 # a shorter backfill reads the forms only (a re-walk of a few days; review S6)
 _MONTHS = {m: n for n, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov",
                                        "dec"), 1)}
 
@@ -234,7 +235,13 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
 
 def fill(ctx: base.RunContext, feed: edgar.Feed, start: date, end: date, schema: dict) -> date | None:
     """Fill ``feed``'s days from ``start`` to ``end`` that a listed set covers; the last day covered (None when no
-    set covers any). ``schema``: ``{"forms", "filings", "holdings", "dollars_from"}`` of ``sec/13f``."""
+    set covers any). A range of fewer than ``MIN_WEEKDAYS`` weekdays asks nothing: the walk reads its forms.
+    ``schema``: ``{"forms", "filings", "holdings", "dollars_from"}`` of ``sec/13f``."""
+    weekdays = sum(1 for k in range((end - start).days + 1) if (start + timedelta(days=k)).weekday() < 5)
+    if weekdays < MIN_WEEKDAYS:
+        ctx.notes.append(f"a backfill of {weekdays} weekdays reads the forms; the data sets fill a range of "
+                         f"{MIN_WEEKDAYS} weekdays or more")
+        return None
     pacer = sec.Pacer(ctx)
     covered = None
     for name, (first, last, url) in sorted(listed(ctx, pacer).items(), key=lambda kv: kv[1][0]):

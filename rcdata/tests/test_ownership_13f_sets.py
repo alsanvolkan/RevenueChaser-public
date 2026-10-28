@@ -225,3 +225,17 @@ def test_a_report_with_no_information_table_is_typed_alike_on_both_paths(feed, h
     expected = [("1", "unparsed", 0, "no information table"), ("2", "ok", 0, None), ("3", "notice", 0, None)]
     assert [(c, s, n, d) for c, edgar_path, s, n, d in typed if not edgar_path] == expected
     assert [(c, s, n, d) for c, edgar_path, s, n, d in typed if edgar_path] == expected
+
+
+def test_a_short_backfill_reads_the_forms_and_never_the_sets(feed, http_mock):
+    """Review S6: re-walking a few days from EDGAR must not fetch the sets page or a 100 MB zip, nor mark the days
+    done from a set."""
+    feed.add_day("2026-07-31", [(ox.idx_row(1000007, "MANAGER 1000007", "13F-HR", "2026-07-31", "0001000007-26-000099"),
+                                 ox.f13_filing("0001000007-26-000099", 1000007, "2026-07-31",
+                                               [ox.f13_holding("NVR INC", "62944T105", 1_000, 1)], "06-30-2026"))])
+    row = _backfill("2026-07-29", "2026-07-31")
+    assert not http_mock.calls(ox.SETS_PAGE_PATH) and not http_mock.calls("_form13f.zip")
+    assert [str(c.url).rsplit(".", 2)[1] for c in http_mock.calls("/daily-index/")] == ["20260731", "20260730",
+                                                                                        "20260729"]
+    assert _served(f"SELECT accession, origin FROM {sec13f.TABLE}") == [("0001000007-26-000099", "edgar")]
+    assert "a backfill of 3 weekdays reads the forms; the data sets fill a range of 20 weekdays or more" in row["note"]

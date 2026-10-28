@@ -1157,7 +1157,8 @@ filing window meets the range (one zip of about 100 MB per three months, kept un
 once and asked again on a later backfill with `If-Modified-Since`), and types its 13F-HR and 13F-HR/A into the same
 day partitions the EDGAR walk writes, marking those days done up to the set's newest filing; the walk then reads the
 forms only for the days after it (the hourly runs, 15 minutes each). A set the SEC publishes again reopens the days
-it had filled; the days the walk finished stay the walk's. On
+it had filled; the days the walk finished stay the walk's. A backfill shorter than 20 weekdays (a re-walk of a few
+days) reads the forms only and asks nothing of the sets. On
 real data (28 Oct 2026) a set took about 30 seconds: 01jun2026-31aug2026 holds 9,900 13F-HR and 13F-HR/A with 3.8
 million holdings. Filings from 2025-01-01 make Q4 2024 the first quarter served, so Q1 2025 has its flows. SEC
 requests are paced at 4.5 a second and share `core/sec_throttle.py`'s bucket with every other SEC caller.
