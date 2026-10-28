@@ -91,6 +91,22 @@ def test_commercial_paper_filed_later_still_gives_a_whole_annual_row():
         "0000000001-26-000009", date(2026, 3, 1), "10-K/A", True)
 
 
+def test_total_debt_never_adds_lines_of_two_balance_sheet_dates():
+    # A filer that moved its year end: two FY balance sheets in calendar 2025 (the Opus review's M1 probe).
+    def fact(val, end, accn, filed, form="10-K", start=None):
+        return {"units": {"USD": [fx._fact(val, end, accn, filed, form, "FY", 2025, start)]}}
+    sheet = {"cik": 1, "entityName": "X", "facts": {"us-gaap": {
+        "Revenues": fact(5_000, "2025-12-31", "a-2", "2026-02-01", "10-KT", "2025-07-01"),
+        "LongTermDebtNoncurrent": fact(1_000, "2025-06-30", "a-1", "2025-08-01"),
+        "DebtCurrent": fact(300, "2025-12-31", "a-2", "2026-02-01", "10-KT"),
+        "Assets": fact(9_000, "2025-12-31", "a-2", "2026-02-01", "10-KT")}}}
+    rows = facts.fact_rows(sheet, "1")[0]
+    debt = [r for r in rows if r["field"] == "total_debt" and r["period_type"] == "annual"]
+    assert [(r["period_end"], r["value"]) for r in debt if r["period_end"].year == 2025] == []   # unknown, not 1,300
+    ends = {r["field"]: r["period_end"] for r in rows if r["period_type"] == "annual" and r["fiscal_year"] == 2025}
+    assert ends["lt_debt"] != ends["total_assets"]                       # the fixture holds the two balance dates
+
+
 def test_values_the_extraction_keeps_no_provenance_for_get_it_here():
     rows = _by_key(facts.fact_rows(fx.msft_facts(), "789019")[0])
     gross = rows[("gross_profit", "annual", date(2025, 6, 30))]

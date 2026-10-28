@@ -152,17 +152,24 @@ def _rows_of(facts: dict, rec: dict, period_type: str, index: _Index, counts: di
 
 def _debt_lines(out: dict[str, dict], index: _Index, balance_end: str | None) -> list[dict]:
     """The rows total debt sums (module docstring): each debt line of the balance sheet once, or none when no
-    long-term line is tagged (a current line alone is not the whole, so the total stays unknown)."""
-    lines = [r for r in out.values() if r["field"] in DEBT_LINES]
-    end = max(r["period_end"] for r in lines).isoformat() if lines else balance_end
-    short = out.get("short_term_borrowings") or _tagged(index, COMMERCIAL_PAPER, end)
+    long-term line is tagged (a current line alone is not the whole, so the total stays unknown).
+
+    Every line comes from the one balance sheet dated ``balance_end`` (the record's ``total_assets`` end; the newest
+    debt line's end when it has none). An annual record is keyed by calendar year and each field keeps its own end,
+    so a filer that moved its year end holds two balance dates in one record; a line of the other date is left out,
+    as ``sec_edgar._fill_gross_profit`` leaves out a cost of another period (the Opus review's M1)."""
+    lines = {f: r for f, r in out.items() if f in DEBT_LINES}
+    if balance_end is None and lines:
+        balance_end = max(r["period_end"] for r in lines.values()).isoformat()
+    lines = {f: r for f, r in lines.items() if r["period_end"] == _day(balance_end)}
+    short = lines.get("short_term_borrowings") or _tagged(index, COMMERCIAL_PAPER, balance_end)
     short = [short] if short else []
-    long_term = next((out[f] for f in LONG_TERM_DEBT if f in out), None)
+    long_term = next((lines[f] for f in LONG_TERM_DEBT if f in lines), None)
     if long_term is not None:
-        current = [out["debt_current"]] if "debt_current" in out else \
-            ([out["lt_debt_current"]] if "lt_debt_current" in out else []) + short
+        current = [lines["debt_current"]] if "debt_current" in lines else \
+            ([lines["lt_debt_current"]] if "lt_debt_current" in lines else []) + short
         return [long_term] + current
-    whole = out.get("lt_debt_total") or _tagged(index, WHOLE_LONG_TERM_DEBT, end)
+    whole = lines.get("lt_debt_total") or _tagged(index, WHOLE_LONG_TERM_DEBT, balance_end)
     return [whole] + short if whole else []                    # a whole long-term line holds its current portion
 
 
