@@ -38,6 +38,9 @@ PAGE_LIMIT = 500        # UW's documented maximum for this endpoint (docs/openap
 # Pages per session before the day fails instead of asking on: the busiest day seen live was two pages (683 rows on
 # 15 Oct 2026), so 20 pages (10,000 rows) is far past any real day and only stops an answer that never ends.
 MAX_PAGES = 20
+# The backfill's call estimate per missing session (Settings). An ordinary day is one call and a paged one two or
+# three; the days a first backfill leaves missing are the paged ones (168 of 447 on homesrv, 28 Oct 2026), so two.
+CALLS_PER_SESSION_ESTIMATE = 2
 FIRST_SESSION = date(2025, 1, 16)
 REJECTED_SUFFIX = ".rejected"
 # An epoch below this (9 Sep 2001) is not a UW snapshot time: 0, or a date written without dashes read as seconds.

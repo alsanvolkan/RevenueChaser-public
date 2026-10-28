@@ -167,7 +167,8 @@ def _backfill_sessions(now: datetime) -> dict:
     missing = [d.isoformat() for d in expected if d not in have]
     done = sum(1 for d in expected if d in have)
     return {"done": done, "expected": len(expected), "last_partition": max(have).isoformat() if have else None,
-            "missing": missing, "resumable": bool(missing), "calls_per_partition": 1,
+            "missing": missing, "resumable": bool(missing),
+            "calls_per_partition": spx.CALLS_PER_SESSION_ESTIMATE,
             "from_earliest": spx.FIRST_SESSION.isoformat()}
 
 

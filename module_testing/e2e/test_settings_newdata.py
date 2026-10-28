@@ -178,7 +178,7 @@ def test_a_backfill_without_an_estimate_or_over_1000_calls_waits_for_a_second_cl
     browser.eval("ND.datasets['uw/spot_expiry_strike'].missing = "
                  "Array.from({length: 1500}, function(_, i){ return '2026-01-' + String(10 + (i % 18)); })")
     msg = _backfill_click(browser, "uw/spot_expiry_strike", "2026-01-05")
-    assert "about 1,500 calls" in msg and _requests(market) == []
+    assert "about 3,000 calls" in msg and _requests(market) == []       # two calls a session
     # The second click queues exactly the one backfill that was asked for.
     browser.eval(f"{_card_js('market_series')}.querySelector('button[data-nd-act=\"backfill-confirm\"]').click()")
     browser.wait_for("document.getElementById('nd-queue-active').textContent.indexOf('market_series') >= 0")
@@ -194,5 +194,5 @@ def test_a_small_estimated_backfill_is_queued_on_the_first_click(dashboard, brow
     _backfill_click(browser, "uw/spot_expiry_strike", "2026-10-20")
     browser.wait_for("document.getElementById('nd-queue-active').textContent.indexOf('spot_expiry_strike') >= 0")
     msg = browser.eval(f"{_card_js('uw/spot_expiry_strike')}.querySelector('[data-nd-msg]').textContent")
-    assert "about 2 calls" in msg
+    assert "about 4 calls" in msg
     assert [r["dataset"] for r in _requests(market)] == ["uw/spot_expiry_strike"]
