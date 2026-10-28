@@ -17,7 +17,9 @@ memory. Each 13F-HR and 13F-HR/A becomes the row the EDGAR path writes (``sec13f
   ``AMENDMENTTYPE`` is ``RESTATEMENT`` or ``NEW HOLDINGS``;
 - dates are ``DD-MON-YYYY``; the CIK loses its leading zeros, as the EDGAR path writes it;
 - ``ISCONFIDENTIALOMITTED`` ``Y`` / ``N`` is ``confidential_omitted``; a 13F notice (``13F-NT``) is not kept, as the
-  EDGAR path does not fetch one.
+  EDGAR path does not fetch one;
+- the status is ``sec13f.status_of``'s rule, written in SQL: a 13F-HR whose report type is a notice is ``notice``, and
+  one with no holdings in ``INFOTABLE`` is ``unparsed`` unless its summary says 0 entries.
 
 The rows go to the EDGAR walk's own day partitions (``filings/day=<filed>``, ``holdings/day=<filed>``), and every
 weekday of the window inside the requested range, up to the set's newest filing, is marked done for that walk (a day
@@ -195,8 +197,13 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
                CASE upper(trim(m.ISCONFIDENTIALOMITTED)) WHEN 'Y' THEN true WHEN 'N' THEN false END
                    AS confidential_omitted,
                CASE WHEN coalesce(s.period, {_day('c.REPORTCALENDARORQUARTER')}) IS NULL THEN 'unparsed'
-                    ELSE 'ok' END AS status,
+                    WHEN upper(c.REPORTTYPE) LIKE '%NOTICE%' THEN 'notice'
+                    WHEN coalesce(k.n, 0) = 0 AND TRY_CAST(trim(m.TABLEENTRYTOTAL) AS INTEGER) IS DISTINCT FROM 0
+                    THEN 'unparsed' ELSE 'ok' END AS status,
                CASE WHEN coalesce(s.period, {_day('c.REPORTCALENDARORQUARTER')}) IS NULL THEN 'no report period'
+                    WHEN upper(c.REPORTTYPE) LIKE '%NOTICE%' THEN NULL
+                    WHEN coalesce(k.n, 0) = 0 AND TRY_CAST(trim(m.TABLEENTRYTOTAL) AS INTEGER) IS DISTINCT FROM 0
+                    THEN 'no information table'
                     WHEN TRY_CAST(trim(m.TABLEENTRYTOTAL) AS INTEGER) <> coalesce(k.n, 0)
                     THEN coalesce(k.n, 0) || ' holdings read, the summary says ' || trim(m.TABLEENTRYTOTAL)
                END AS detail,

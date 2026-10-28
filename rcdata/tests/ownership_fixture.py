@@ -274,10 +274,13 @@ def f13_infotable(holdings) -> str:
 
 
 def f13_filing(accession, cik, filed, holdings, period="09-30-2026", form="13F-HR", amendment_type=None,
-               amendment_no=None, report_type="13F HOLDINGS REPORT", name=None, confidential=None) -> bytes:
+               amendment_no=None, report_type="13F HOLDINGS REPORT", name=None, confidential=None,
+               entries=None) -> bytes:
+    """A 13F submission; ``holdings`` None leaves the information table out (``entries`` is then the summary's)."""
     name = name or f"MANAGER {cik}"
+    entries = len(holdings or []) if entries is None else entries
     docs = [(form, "primary_doc.xml", f13_primary(period, report_type, amendment_type, amendment_no, name,
-                                                  len(holdings), sum(h["value"] for h in holdings), confidential))]
+                                                  entries, sum(h["value"] for h in holdings or []), confidential))]
     if holdings is not None and report_type != "13F NOTICE":
         docs.append(("INFORMATION TABLE", "infotable.xml", f13_infotable(holdings)))
     m, d, y = period.split("-")

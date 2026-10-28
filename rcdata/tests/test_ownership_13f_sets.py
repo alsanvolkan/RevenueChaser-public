@@ -202,3 +202,26 @@ def test_a_set_the_sec_publishes_again_reopens_the_days_it_filled(feed, http_moc
     assert _served(f"SELECT accession FROM {sec13f.TABLE} WHERE filed BETWEEN '2026-07-31' AND '2026-08-31' "
                    "ORDER BY accession") == [("0001000001-26-000101",), ("0001000001-26-000102",)]
     assert sec13f.DATASET.is_done(date(2026, 8, 31))
+
+
+def test_a_report_with_no_information_table_is_typed_alike_on_both_paths(feed, http_mock):
+    """Review S3: one rule for both paths. A holdings report with no holdings read is unparsed unless its summary
+    says 0 entries (all left out in confidence: it is the filer's report for the quarter); a notice is a notice."""
+    sets = [ox.set_filing("0001000011-26-000301", 1000011, "31-JUL-2026", [], entries=2),
+            ox.set_filing("0001000012-26-000302", 1000012, "31-JUL-2026", [], entries=0, confidential="Y"),
+            ox.set_filing("0001000013-26-000303", 1000013, "31-JUL-2026", [], report_type="13F NOTICE")]
+    http_mock.routes.insert(0, (HREFS[0], ox.f13_set(sets), 200, {}))
+    feed.add_day("2026-09-02", [
+        (ox.idx_row(1000021, "MANAGER 1000021", "13F-HR", "2026-09-02", "0001000021-26-000401"),
+         ox.f13_filing("0001000021-26-000401", 1000021, "2026-09-02", None, "06-30-2026", entries=2)),
+        (ox.idx_row(1000022, "MANAGER 1000022", "13F-HR", "2026-09-02", "0001000022-26-000402"),
+         ox.f13_filing("0001000022-26-000402", 1000022, "2026-09-02", None, "06-30-2026", entries=0,
+                       confidential=True)),
+        (ox.idx_row(1000023, "MANAGER 1000023", "13F-HR", "2026-09-02", "0001000023-26-000403"),
+         ox.f13_filing("0001000023-26-000403", 1000023, "2026-09-02", [], "06-30-2026", report_type="13F NOTICE"))])
+    _backfill("2026-06-01", "2026-09-02")
+    typed = _served(f"SELECT substr(cik, -1), origin = 'edgar', status, holdings, detail FROM {sec13f.TABLE} "
+                    "WHERE cik > '1000010' ORDER BY 2, 1")
+    expected = [("1", "unparsed", 0, "no information table"), ("2", "ok", 0, None), ("3", "notice", 0, None)]
+    assert [(c, s, n, d) for c, edgar_path, s, n, d in typed if not edgar_path] == expected
+    assert [(c, s, n, d) for c, edgar_path, s, n, d in typed if edgar_path] == expected

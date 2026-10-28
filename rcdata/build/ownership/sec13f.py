@@ -68,6 +68,19 @@ def amendment_type(raw) -> str | None:
     return " ".join(str(raw or "").upper().split()) or None
 
 
+def status_of(report_type: str | None, holdings: int, entry_total: int | None) -> tuple[str, str | None]:
+    """``(status, detail)`` of a filing with a report period, the one rule of both paths (``sec13f_sets`` writes it in
+    SQL; review S3): a notice is a notice; a report with no holdings read is unparsed ("no information table") unless
+    its summary says 0 entries (all left out in confidence: still the filer's report for the quarter)."""
+    if "NOTICE" in (report_type or ""):
+        return "notice", None
+    if not holdings and entry_total != 0:
+        return "unparsed", "no information table"
+    if entry_total is not None and entry_total != holdings:
+        return "ok", f"{holdings} holdings read, the summary says {entry_total}"
+    return "ok", None
+
+
 def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
     """One 13F submission: its filing row and its holdings."""
     sub = edgar.parse_submission(text)
@@ -110,19 +123,13 @@ def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
     if row["period"] is None:
         row["detail"] = "no report period"
         return row, []
-    if table is None:
-        if "NOTICE" in (row["report_type"] or ""):
-            row["status"] = "notice"
-        else:
-            row["detail"] = "no information table"
-        return row, []
     try:
-        info = edgar.tree(table["xml"])
+        info = edgar.tree(table["xml"]) if table is not None else None
     except ET.ParseError as e:
         row["detail"] = f"information table does not parse: {e}"
         return row, []
     holdings = []
-    for n, it in enumerate(info.iter("infotable")):
+    for n, it in enumerate(info.iter("infotable") if info is not None else ()):
         value = edgar.number(edgar.text(it, "value"))
         cusip = (edgar.text(it, "cusip") or "").upper() or None
         holdings.append({
@@ -137,9 +144,8 @@ def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
             "vote_sole": edgar.integer(edgar.text(it, "votingauthority/sole")),
             "vote_shared": edgar.integer(edgar.text(it, "votingauthority/shared")),
             "vote_none": edgar.integer(edgar.text(it, "votingauthority/none"))})
-    row["holdings"], row["status"] = len(holdings), "ok"
-    if row["entry_total"] is not None and row["entry_total"] != len(holdings):
-        row["detail"] = f"{len(holdings)} holdings read, the summary says {row['entry_total']}"
+    row["holdings"] = len(holdings)
+    row["status"], row["detail"] = status_of(row["report_type"], len(holdings), row["entry_total"])
     return row, holdings
 
 
