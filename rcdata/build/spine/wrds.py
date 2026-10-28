@@ -10,7 +10,7 @@ of its own (its pandas has no wheel for the builder's Python 3.14). So the queri
 ``RC_WRDS_PYTHON`` (that venv's python; no default, it is set in the server's env file), one subprocess per builder
 process, started
 on the first query (``session``): one connection, at most one Duo push, for every WRDS dataset of one CLI call. The
-login is that venv's ``wrds.Connection`` (the user from ``WRDS_USERNAME`` when set; the password from that user's
+login is that venv's ``wrds.Connection`` (the user from ``WRDS_USERNAME``, required; the password from that user's
 ``~/.pgpass``). The three datasets are ``attended``: never due, and run only from the CLI (``python -m
 RevenueChaser.rcdata.build backfill wrds/sec_idhist wrds/co_hgic wrds/idxcst_his``). ``WRDS_USERNAME`` is required:
 it picks the line of the user's ``~/.pgpass``. A failed login, a worker that cannot start (no interpreter at

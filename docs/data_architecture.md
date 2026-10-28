@@ -1048,7 +1048,7 @@ rules (`raw/<source>/<dataset>/...`, `parquet/<source>/<dataset>/...`; a raw fil
 builder's venv (on the server it has a venv of its own, because its pandas has no wheel for the builder's Python).
 `rcdata/build/spine/wrds_worker.py` runs under `RC_WRDS_PYTHON` (that venv's python, set in the server's env file;
 no default), one subprocess per builder process, so one WRDS connection: the login is that venv's
-`wrds.Connection` (the user from `WRDS_USERNAME` when set, the password from that user's `~/.pgpass`; WRDS may ask
+`wrds.Connection` (the user from `WRDS_USERNAME`, which is required, the password from that user's `~/.pgpass`; WRDS may ask
 for a Duo push). The worker streams each answer in chunks to `<table>.jsonl.gz`; the builder types it in DuckDB.
 The datasets are never due, a request a page or the schedule queued is skipped (`skipped: attended ...`), the
 route answers 409, and the CLI runs them: `python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist

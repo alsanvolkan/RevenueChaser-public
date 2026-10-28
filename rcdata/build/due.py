@@ -34,7 +34,7 @@ CADENCES = ("daily", "weekly", "monthly")
 DEFAULT_CADENCE = "daily"
 CYCLE_DAYS = {"weekly": 7, "monthly": 30}
 REQUESTED_BY = "schedule"
-ATTENDED_WHY = "attended: run from the CLI on the server (a person logs in)"
+ATTENDED_WHY = "attended: run from the CLI on the server (a person logs in; WRDS_USERNAME must be set)"
 BY_HAND_WHY = "starts by hand: not due until a first run from the CLI or a Fetch has built it"
 
 

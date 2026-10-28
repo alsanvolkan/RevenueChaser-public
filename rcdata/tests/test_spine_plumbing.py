@@ -89,7 +89,8 @@ def test_an_attended_dataset_is_skipped_unless_the_cli_asked(fake):
 
 def test_an_attended_dataset_is_never_due(fake):
     fake.attended = True
-    assert due.is_due(fake) == (False, "attended: run from the CLI on the server (a person logs in)")
+    assert due.is_due(fake) == (False, "attended: run from the CLI on the server (a person logs in; WRDS_USERNAME "
+                                     "must be set)")
 
 
 def test_a_backfill_without_from_starts_at_the_sources_beginning(fake):
