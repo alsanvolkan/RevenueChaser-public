@@ -227,7 +227,7 @@ BOARD_ARTIFACT_PAIRS = (("FUNDAMENTALS", "module_fundamentals"), ("SWING", "modu
 
 @pytest.fixture(autouse=True)
 def isolate_board_artifacts():
-    """Point both copies of the six boards' artifact paths at a folder of this test's own.
+    """Point both copies of the six boards' artifact paths, and Asymmetric Growth's, at a folder of this test's own.
 
     Autouse for the reason ``isolate_rawstore`` is: the data-root redirect is one folder per process, so a payload
     one test saved was what the next test's Refresh read, and a Refresh test could pass on that leftover (#111). The
@@ -248,6 +248,11 @@ def isolate_board_artifacts():
         for attr in (f"{prefix}_LATEST", f"{prefix}_JSON"):
             for mod in (runners, cfg):
                 mp.setattr(mod, attr, dest / Path(getattr(mod, attr)).relative_to(root))
+    # Asymmetric Growth's two paths live on the runners only (the board has no config module of them). Left in the
+    # process root, two files' AG tests on two xdist workers wrote and unlinked the same file (a setup error seen
+    # under ``-n 4``, 28 Oct 2026).
+    for attr in ("ASYMMETRIC_GROWTH_LATEST", "ASYMMETRIC_GROWTH_JSON"):
+        mp.setattr(runners, attr, dest / Path(getattr(runners, attr)).relative_to(root))
     try:
         yield dest
     finally:
