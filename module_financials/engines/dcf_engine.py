@@ -22,7 +22,7 @@ from ..config import (
 from RevenueChaser.core.providers.validator import validate_annual
 
 from ._inputs import (DNA_ASSUMED_ZERO, assumed, effective_tax_rate as _effective_tax_rate, first_known,
-                      net_debt as _net_debt, pick)
+                      net_debt as _net_debt, not_for_a_bank, pick)
 
 
 def _nwc(rec: dict) -> float | None:
@@ -98,6 +98,8 @@ def _wacc(financials: dict, beta: float | None, rf: float, erp: float,
 
 def run_dcf(financials: dict, assumptions: dict | None = None) -> dict:
     """DCF değerleme çalıştırır ve yapılandırılmış sonuç döndürür."""
+    if (bank := not_for_a_bank(financials, "a free-cash-flow (FCFF) DCF")) is not None:
+        return bank
     a = dict(assumptions or {})
     annual, warnings = validate_annual(financials.get("annual", []))
     if not annual:

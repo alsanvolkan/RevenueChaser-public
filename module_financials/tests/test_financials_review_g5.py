@@ -389,3 +389,28 @@ def test_a_run_hands_the_stored_yield_to_the_dcf(rawstore_tmp_db, monkeypatch, f
     cache_manager.save("TEST", dict(copy.deepcopy(financials), info={"longName": "Test Corp."}))
     dcf = fm.run("TEST", modules=["dcf"], output="none", no_fetch=True)["results"]["modules"]["dcf"]
     assert (dcf["wacc"]["risk_free"], dcf["wacc"]["risk_free_source"]) == (pytest.approx(0.0425), "stored")
+
+
+# ── S3: a bank or an insurer gets no FCFF DCF, no EBITDA credit grade and no WACC grid ──
+def _bank(financials):
+    return dict(copy.deepcopy(financials), sector="Financial Services")
+
+
+@pytest.mark.parametrize("engine", ["dcf", "credit", "sensitivity"])
+def test_a_financial_services_target_gets_a_p_e_note_not_a_model(financials, engine):
+    from RevenueChaser.module_financials.engines.credit_capacity_engine import run_credit_capacity
+    from RevenueChaser.module_financials.engines.sensitivity_engine import run_sensitivity
+    run = {"dcf": run_dcf, "credit": run_credit_capacity, "sensitivity": run_sensitivity}[engine]
+    res = run(_bank(financials))
+    assert res["not_applicable"] is True and "valued on P/E only" in res["note"]
+    assert not {"wacc", "valuation", "metrics", "grades", "matrix"} & set(res)
+    assert run(financials).get("not_applicable") is None                       # any other sector is modelled
+
+
+def test_the_page_says_why_a_bank_has_no_dcf_credit_or_grid(financials):
+    from RevenueChaser.module_financials.engines.credit_capacity_engine import run_credit_capacity
+    from RevenueChaser.module_financials.engines.sensitivity_engine import run_sensitivity
+    f = _bank(financials)
+    html = _html(f, {"dcf": run_dcf(f), "credit": run_credit_capacity(f), "sensitivity": run_sensitivity(f)})
+    assert html.count("valued on P/E only (see Comps)") == 3
+    assert "WACC Components" not in html and 'class="badge b-' not in html and "g \\ WACC" not in html

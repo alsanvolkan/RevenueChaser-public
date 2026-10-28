@@ -28,6 +28,21 @@ def assumed(what: str, value: str, why: str = "not reported") -> str:
     return f"{what}: assumed {value} ({why})"
 
 
+# Banks and insurers are not valued on EV, free cash flow or EBITDA: the comps value a Financial Services target on
+# P/E only (FIN-3), and the DCF, the credit grades and the sensitivity grid step aside for it (Financials review S3).
+PE_ONLY_SECTOR = "Financial Services"
+
+
+def not_for_a_bank(financials: dict, what: str) -> dict | None:
+    """The result a model gives a Financial Services target in place of numbers that would not describe it, with the
+    reason the board shows; ``None`` for any other sector, which the model then runs for."""
+    if (financials or {}).get("sector") != PE_ONLY_SECTOR:
+        return None
+    return {"not_applicable": True, "warnings": [],
+            "note": f"A Financial Services target is valued on P/E only (see Comps): {what} does not describe a "
+                    "bank or an insurer, whose debt is its raw material rather than its financing."}
+
+
 def pick(assumptions: dict, key: str, default):
     """The user's value for ``key`` when given (0 included), else ``default``."""
     v = to_float(assumptions.get(key))

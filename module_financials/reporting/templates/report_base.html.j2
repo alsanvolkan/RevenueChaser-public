@@ -105,7 +105,12 @@
 </div>
 {% endif %}
 
-{% if dcf and not dcf.error %}
+{% if dcf and dcf.not_applicable %}
+<section>
+  <h2>DCF Valuation</h2>
+  <p style="color:var(--muted);">{{ dcf.note }}</p>
+</section>
+{% elif dcf and not dcf.error %}
 <section>
   <h2>DCF Valuation</h2>
   <div class="grid2">
@@ -287,7 +292,12 @@
 </section>
 {% endif %}
 
-{% if credit and not credit.error %}
+{% if credit and credit.not_applicable %}
+<section>
+  <h2>Credit Capacity</h2>
+  <p style="color:var(--muted);">{{ credit.note }}</p>
+</section>
+{% elif credit and not credit.error %}
 <section>
   <h2>Credit Capacity</h2>
   <div class="grid2">
@@ -309,7 +319,12 @@
 </section>
 {% endif %}
 
-{% if sensitivity and not sensitivity.error %}
+{% if sensitivity and sensitivity.not_applicable %}
+<section>
+  <h2>Sensitivity — WACC × Growth (Per Share)</h2>
+  <p style="color:var(--muted);">{{ sensitivity.note }}</p>
+</section>
+{% elif sensitivity and not sensitivity.error %}
 <section>
   <h2>Sensitivity — WACC × Growth (Per Share)</h2>
   <div class="panel" style="overflow-x:auto;">
