@@ -1,9 +1,10 @@
 """The pin and squeeze on the old and the new basis, side by side, for stored days (PR 3, homesrv step S3).
 
-Read-only and with no network: each day's raw files are read from ``<data root>/raw/<day>/`` (the board's own UW
-snapshot) and the market-store inputs through ``store_reads`` (``rcdata.read``: DuckDB ``read_only=True``, one
-connection per read). Nothing is written into the board's data root. ``rcdata.read`` counts each read in its read log
-(``ops.sqlite``), as every reader does.
+No market data written and no network: each day's raw files are read from ``<data root>/raw/<day>/`` (the board's
+own UW snapshot) and the market-store inputs through ``store_reads`` (``rcdata.read``: DuckDB ``read_only=True``, one
+connection per read); nothing is written into the board's data root or a serving file. It is not read-only, though:
+``rcdata.read`` counts each read in its read log and the status reads open ``ops.sqlite``, which ``rcdata.ops``
+creates with its tables when it is missing.
 
 For each day, one line: the magnet strike, its 0-1 DTE dollar gamma (the new basis, review S4) and its all-expiry
 dollar gamma (the old basis, ``/spot-exposures/strike``), the pin flag and the squeeze trigger on each basis, and the
