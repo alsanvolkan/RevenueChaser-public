@@ -8,7 +8,7 @@ from datetime import date
 import pytest
 
 from RevenueChaser.core.providers import sec_edgar
-from RevenueChaser.rcdata import serving
+from RevenueChaser.rcdata import read, serving
 from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.ownership import ftd, sec
 
@@ -97,3 +97,12 @@ def test_the_sec_pacer_keeps_its_requests_apart():
         times.append(now[0])
     gaps = [b - a for a, b in zip(times, times[1:])]
     assert min(gaps) >= 1 / sec.PER_SECOND - 1e-9
+
+
+def test_the_read_api_gives_a_tickers_fails_by_settlement_date(src):
+    _run("2026-10-28")
+    rows = read.fails_to_deliver(["gme", "AAPL"])
+    assert [(r["ticker"], r["settlement_date"], r["quantity"]) for r in rows] == [
+        ("AAPL", date(2026, 9, 16), 120345), ("GME", date(2026, 9, 17), 9000)]
+    assert read.fails_to_deliver(["AAPL"], start=date(2026, 9, 17)) == []
+    assert {r["source"] for r in rows} == {ftd.NAME}

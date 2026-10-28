@@ -7,7 +7,7 @@ from datetime import date
 
 import pytest
 
-from RevenueChaser.rcdata import serving
+from RevenueChaser.rcdata import read, serving
 from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.ownership import regsho
 
@@ -85,3 +85,13 @@ def test_the_default_day_is_the_session_before_today(monkeypatch):
     from RevenueChaser.core import calendar
     monkeypatch.setattr(calendar, "today_ny", lambda: date(2026, 10, 26))       # a Monday
     assert regsho.DATASET.default_as_of() == date(2026, 10, 23)
+
+
+def test_the_read_api_gives_the_newest_list_or_a_days(src):
+    assert read.threshold_list() == []
+    _run("2026-10-27")
+    rows = read.threshold_list()
+    assert [(r["market"], r["symbol"], r["ticker"]) for r in rows] == [
+        ("nasdaq", "AAPD", None), ("nasdaq", "GME", "GME"), ("nyse", "BRK-B", "BRK-B")]
+    assert {r["list_date"] for r in rows} == {date(2026, 10, 27)} and {r["source"] for r in rows} == {regsho.NAME}
+    assert read.threshold_list(on=date(2026, 10, 26)) == []

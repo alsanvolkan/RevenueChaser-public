@@ -9,7 +9,7 @@ from datetime import date
 import pytest
 
 from RevenueChaser.core.providers import sec_edgar
-from RevenueChaser.rcdata import serving
+from RevenueChaser.rcdata import ops, read, serving
 from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.ownership import form4, sec
 
@@ -96,3 +96,15 @@ def test_a_filing_that_does_not_parse_is_one_unparsed_row(feed):
     _run()
     assert _served("SELECT status, issuer_cik, ticker, code FROM insider_transactions "
                    "WHERE accession = '0000320193-26-000009'") == [("unparsed", "320193", "AAPL", None)]
+
+
+def test_the_read_api_gives_a_tickers_transactions_with_provenance(feed):
+    assert read.insider_transactions(["MSFT"]) == []                     # nothing built yet: no rows
+    _run()
+    rows = read.insider_transactions(["msft", "gme"])
+    assert [(r["ticker"], r["code"], r["tx_table"]) for r in rows] == [
+        ("GME", "S", "non_derivative"), ("MSFT", "S", "non_derivative"), ("MSFT", "M", "derivative")]
+    assert {r["status"] for r in rows} == {ops.latest_check(form4.NAME)["result"]}
+    assert {r["source"] for r in rows} == {form4.NAME} and all(r["run_id"] for r in rows)
+    assert read.insider_transactions(["MSFT"], start=date(2026, 10, 28)) == []        # filed 27 Oct
+    assert read.insider_transactions(["AAPL"]) == []                     # its one filing did not parse

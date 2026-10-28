@@ -10,7 +10,7 @@ from datetime import date, datetime, timezone
 
 import pytest
 
-from RevenueChaser.rcdata import ops, serving
+from RevenueChaser.rcdata import ops, read, serving
 from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.ownership import finra, ibkr, sec, sec13f, serve
 from RevenueChaser.rcdata.build.spine import openfigi_map
@@ -157,7 +157,8 @@ def test_an_old_companys_cusip_openfigi_gives_a_reused_ticker_is_refused_and_an_
 
 def test_the_period_summary_and_the_plans_two_counts(store):
     assert _served("SELECT period, filers, filings_active, value_total, value_mapped, coverage, unmapped_cusips, "
-                   "refused_value, filing_deadline, filed_through FROM sec13f_periods ORDER BY period DESC LIMIT 2") == [
+                   "refused_value, filing_deadline, filed_through FROM sec13f_periods "
+                   "ORDER BY period DESC LIMIT 2") == [
         (Q3, 4, 5, 1_077_750.0, 1_076_250.0, 0.9986, 2, 1_000.0, date(2026, 11, 16), date(2026, 10, 27)),
         (Q2, 2, 2, 700_000.0, 700_000.0, 1.0, 0, 0.0, date(2026, 8, 14), date(2026, 8, 14))]
     # 30 Sep is not complete before its deadline (16 Nov): the counts are the newest complete quarter's.
@@ -255,6 +256,14 @@ def test_short_interest_joins_the_newest_settled_short_interest_to_each_session(
         ("BRK-B", oct28, oct15, 9_000_000.0, 2.5, 0.25, 3.1, 3_500_000.0),
         ("GME", oct28, None, None, None, 16.0, -12.5, 150_000.0),
         ("MSFT", oct15, oct15, 50_000_000.0, 1.5, None, None, None)]
+    finra_rows = read.short_interest(["brk-b", "MSFT"])
+    assert [(r["ticker"], r["settlement_date"], r["current_short"]) for r in finra_rows] == [
+        ("BRK-B", oct15, 9_000_000), ("MSFT", oct15, 50_000_000)]
+    assert read.short_interest(["MSFT"], end=date(2026, 10, 14)) == []
+    assert [(r["ticker"], r["available"]) for r in read.shortable(["GME", "AAPL"])] == [("AAPL", 10_000_000),
+                                                                                        ("GME", 150_000)]
+    assert {r["session_date"] for r in read.shortable()} == {oct28}
+    assert read.shortable(session=date(2026, 10, 27)) == []
 
 
 def test_no_spine_names_nothing_and_is_one_issue():
@@ -264,3 +273,25 @@ def test_no_spine_names_nothing_and_is_one_issue():
     assert ("spine_missing", "spine") in _issues()
     with serving.open_read("ownership") as con:
         assert con.execute("SELECT count(*) FROM sec13f_totals").fetchone() == (0,)
+
+
+# ── The read API ─────────────────────────────────────────────────────────────────────────────────────────────
+
+def test_the_read_api_gives_13f_holders_with_a_complete_flag(store, monkeypatch):
+    monkeypatch.setattr(read.calendar, "today_ny", lambda: date(2026, 10, 28))
+    rows = read.holders_13f(["msft"])
+    assert [(r["period"], r["holders"], r["complete"]) for r in rows] == [
+        (date(2001, 9, 30), 1, True), (Q2, 2, True), (Q3, 2, False)]        # 30 Sep is due 16 Nov
+    assert {r["status"] for r in rows} == {ops.latest_check(serve.NAME)["result"]}
+    assert {r["source"] for r in rows} == {serve.NAME}
+    assert [r["ticker"] for r in read.holders_13f(periods=[Q3])] == ["ETN", "HEI", "HEI-A", "MSFT", "NVR", "WFC",
+                                                                     "WFC-PC"]
+    periods = read.periods_13f()
+    assert [(p["period"], p["complete"], p["coverage"]) for p in periods] == [
+        (date(2001, 9, 30), True, 1.0), (Q2, True, 1.0), (Q3, False, 0.9986)]
+
+
+def test_nothing_built_yet_is_no_rows_from_any_ownership_reader():
+    assert read.holders_13f() == [] and read.periods_13f() == [] and read.short_interest(["MSFT"]) == []
+    assert read.shortable() == [] and read.threshold_list() == [] and read.fails_to_deliver(["MSFT"]) == []
+    assert read.insider_transactions(["MSFT"]) == [] and read.beneficial_ownership(["MSFT"]) == []

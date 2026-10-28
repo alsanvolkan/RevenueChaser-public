@@ -8,7 +8,7 @@ from datetime import date
 import pytest
 
 from RevenueChaser.core.providers import sec_edgar
-from RevenueChaser.rcdata import serving
+from RevenueChaser.rcdata import read, serving
 from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.ownership import sec, sched13dg
 
@@ -80,3 +80,11 @@ def test_an_xml_document_with_no_person_found_is_unparsed_not_dropped(feed):
     _run()
     assert _served("SELECT status, issuer_cik, filer_cik FROM beneficial_ownership "
                    "WHERE accession = '0000102909-26-000001'") == [("unparsed", "14693", "102909")]
+
+
+def test_the_read_api_keeps_a_header_only_filing_and_leaves_out_an_unparsed_one(feed):
+    _run()
+    rows = read.beneficial_ownership(["GME", "AAPL"])
+    assert [(r["ticker"], r["person_name"], r["parse_status"]) for r in rows] == [
+        ("AAPL", None, "header_only"), ("GME", "ACTIVIST LP", "ok"), ("GME", "ACTIVIST GP LLC", "ok")]
+    assert {r["source"] for r in rows} == {sched13dg.NAME} and {r["status"] for r in rows} == {"changed"}
