@@ -143,7 +143,7 @@ def test_a_day_without_a_counting_file_is_no_absence(built):
 
 def test_files_that_disagree_vote_and_are_an_issue(built):
     _funds_answer(built, sp500=[h for h in fx.SP500 if h[0] != "NVR"])
-    built.routes.insert(0, ("fileName=IVV_holdings", lambda r: (200, fx.ishares_csv(fx.SP500), {}), 200, {}))
+    built.routes.insert(0, (fx.ISHARES_ROUTE["IVV"], lambda r: (200, fx.ishares_csv(fx.SP500), {}), 200, {}))
     run_all("2026-10-28", names=(funds.NAME,))
     assert _q("SELECT valid_to, files_held, files_counted FROM index_membership WHERE source = ? "
               "AND index_slug = 'sp500' AND ticker = 'NVR'", funds.NAME) == [(date(2026, 10, 28), 3, 3)]
@@ -307,7 +307,7 @@ def test_a_rename_the_fund_files_lag_is_not_matched_to_the_old_tickers_next_owne
     base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-10"}})
     _funds_answer(built)
     no_cusip = [(t, None, n) if t == "ETN" else (t, c, n) for t, c, n in fx.SP500]
-    built.routes.insert(0, ("fileName=IVV_holdings", lambda r: (200, fx.ishares_csv(no_cusip), {}), 200, {}))
+    built.routes.insert(0, (fx.ISHARES_ROUTE["IVV"], lambda r: (200, fx.ishares_csv(no_cusip), {}), 200, {}))
     run_all("2026-11-03", names=(funds.NAME,))
     assert _q("SELECT count(*) FROM index_membership WHERE source = ? AND ticker = 'ETN' AND cik = '8888888'",
               funds.NAME) == [(0,)]

@@ -53,7 +53,8 @@ FILE_SCHEMA = [("as_of", "DATE"), ("index_slug", "TEXT"), ("provider", "TEXT"), 
                ("lines", "INTEGER"), ("counted", "BOOLEAN")]
 META_SUFFIX = ".meta.json"
 _TICKER = re.compile(r"^[A-Z][A-Z0-9]{0,5}(-[A-Z0-9]{1,3})?$")
-# iShares' product pages, by fund: (product id, page slug). The CSV is the page's holdings download.
+# iShares' product pages, by fund: (product id, page slug). The CSV is the page's ``latest-holdings.csv`` download
+# (the page's own slug is now ``ishares-core-s-p-500-etf``; the old one still answers the same file).
 ISHARES_PRODUCTS = {"IVV": ("239726", "ishares-core-sp-500-etf"), "IJH": ("239763", "ishares-core-sp-midcap-etf"),
                     "IJR": ("239774", "ishares-core-sp-smallcap-etf")}
 
@@ -103,8 +104,9 @@ def parse_ssga(data: bytes) -> list[dict]:
 
 
 def parse_ishares(data: bytes) -> list[dict]:
-    """iShares' holdings CSV: preamble lines (fund name, ``Fund Holdings as of``), a header line starting
-    ``Ticker,Name,Sector,Asset Class,...``, the lines, then a blank line and a disclaimer. Equity lines only."""
+    """iShares' ``latest-holdings.csv`` (format of Oct 2026): preamble lines (fund name, ``Fund Holdings as of``), a
+    header line starting ``Ticker,Name,Type,...``, the lines, then a blank line. ``Type`` EQUITY lines only: swaps and
+    warrants are filed under ``Asset Class`` Equity too. The weight is ``Market Weight``."""
     text = data.decode("utf-8-sig", errors="replace")
     lines = text.splitlines()
     start = next((i for i, line in enumerate(lines) if line.startswith("Ticker,")), None)
@@ -115,12 +117,15 @@ def parse_ishares(data: bytes) -> list[dict]:
         if not line.strip() or line.startswith("\xa0"):
             break
         body.append(line)
+    reader = csv.DictReader(io.StringIO("\n".join(body)))
+    if "Type" not in (reader.fieldnames or ()):
+        raise base.SourceError("ishares: no Type column")
     out = []
-    for r in csv.DictReader(io.StringIO("\n".join(body))):
-        if (r.get("Asset Class") or "").strip() != "Equity":
+    for r in reader:
+        if (r.get("Type") or "").strip() != "EQUITY":
             continue
         out.append({"ticker_raw": r.get("Ticker"), "cusip": _cusip(r.get("CUSIP")), "name": r.get("Name"),
-                    "weight": _weight(r.get("Weight (%)"))})
+                    "weight": _weight(r.get("Market Weight"))})
     return out
 
 
@@ -168,8 +173,7 @@ class FundFile:
         if self.provider == "ishares":
             pid, slug = ISHARES_PRODUCTS[self.fund]
             return (_base("RC_ISHARES_BASE", "https://www.ishares.com")
-                    + f"/us/products/{pid}/{slug}/1467271812596.ajax"
-                    f"?fileType=csv&fileName={self.fund}_holdings&dataType=fund")
+                    + f"/us/products/{pid}/{slug}/latest-holdings.csv")
         if self.provider == "vanguard":
             return (_base("RC_VANGUARD_BASE", "https://investor.vanguard.com")
                     + f"/investment-products/etfs/profile/api/{self.fund}/portfolio-holding/stock")

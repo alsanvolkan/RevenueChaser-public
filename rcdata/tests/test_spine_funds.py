@@ -30,9 +30,23 @@ def test_ssga_drops_the_cash_line_and_reads_the_cusip():
     assert rows[0]["cusip"] == "594918104" and rows[0]["weight"] == 1.0
 
 
-def test_ishares_keeps_equity_lines_only_and_stops_at_the_disclaimer():
+def test_ishares_keeps_stock_lines_only_and_reads_the_market_weight():
+    """A swap and a warrant are filed under Asset Class Equity: only ``Type`` EQUITY is a holding of the stock."""
     rows = funds.parse_ishares(fx.ishares_csv(fx.SP400, drop_dash=True))
     assert [r["ticker_raw"] for r in rows] == ["HEI", "HEIA"] and rows[0]["cusip"] is None
+    assert rows[0]["weight"] == 1.0
+
+
+def test_an_ishares_file_without_the_type_column_is_a_source_error():
+    old = b'Ticker,Name,Sector,Asset Class,Market Value,Weight (%)\nMSFT,"MICROSOFT",IT,Equity,"1.00",1.00\n'
+    with pytest.raises(base.SourceError, match="Type"):
+        funds.parse_ishares(old)
+
+
+def test_the_ishares_file_is_the_product_pages_latest_holdings_csv():
+    """The old ``1467271812596.ajax?fileType=csv`` link answers the HTML product page since Oct 2026."""
+    url = next(f for f in funds.FILES if f.fund == "IVV").url()
+    assert url == "https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/latest-holdings.csv"
 
 
 def test_vanguard_and_nasdaq():
