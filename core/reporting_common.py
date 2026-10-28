@@ -232,6 +232,8 @@ WATCHLIST_CSS = """<style>
 .rc-watch button:focus-visible{outline:2px solid var(--sky,#0EA5E9);outline-offset:2px}
 .rc-watch button:disabled{opacity:.6;cursor:progress}
 .rc-watch button[data-rc-watch-error]{border-color:var(--neg,#F87171)}
+.rc-watch-row{display:flex;margin:4px 0 2px}
+.rc-watch-row .rc-watch{margin-left:0}
 </style>"""
 
 WATCHLIST_JS = ESC_JS + r"""
@@ -239,6 +241,8 @@ var RC_WATCH = {board: 'board', lists: {option: {}, stock: {}}, loaded: false};
 var RC_WATCH_RE = /^""" + WATCH_TICKER_PATTERN + r"""$/;
 var RC_WATCH_LABELS = """ + json.dumps({k: list(v) for k, v in WATCH_LABELS.items()}) + r""";
 function rcWatchTicker(t){ t = String(t == null ? '' : t).trim().toUpperCase(); return RC_WATCH_RE.test(t) ? t : ''; }
+// On a card, the pair gets its own line under the ticker (a ticker line that clips a long name must not clip it).
+function rcWatchRow(ticker){ var b = rcWatchButtons(ticker); return b ? '<div class="rc-watch-row">' + b + '</div>' : ''; }
 function rcWatchButtons(ticker){
   var t = rcWatchTicker(ticker);
   if(!t) return '';

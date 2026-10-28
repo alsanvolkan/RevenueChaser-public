@@ -3,8 +3,8 @@
 Three checks per board, on the hostile fixtures of ``board_fixtures`` (every ticker there is ``H(...)``):
 
 - the page mounts the pair once, with its own board key as the ``X-RC-Panel`` value (``rcWatchInit("<board>")``);
-- a hostile ticker gets no button: the server never renders ``data-rc-watch="option|stock"`` for it, so the only
-  ``data-rc-watch`` in the page is the snippet's own JS (and ``check_page`` holds: one escaper, ADR-X1);
+- a hostile ticker gets no button: every pair the server rendered carries a ``data-ticker`` the dashboard's ticker
+  rule accepts (a fixture's good tickers, XLK say, do get theirs), and ``check_page`` holds (one escaper, ADR-X1);
 - a board whose rows are built in the browser calls ``rcWatchButtons(`` where it renders the ticker.
 
 The board's own tests show the pair on a good ticker (``module_*/tests``). A new board in ``BOARDS`` must be listed
@@ -23,6 +23,10 @@ from RevenueChaser.core.tests.test_one_escaper_175 import check_page
 WITH_PAIR = {
     "module_leaps": "leaps",
     "module_sec_13f": "sec_13f",
+    "module_asymmetric_growth": "asymmetric_growth",
+    "module_swing_potential": "swing_potential",
+    "module_fundamentals": "fundamentals",
+    "module_sector_rotation": "sector_rotation",
 }
 # board key -> why it has no pair (deliberately left in PR 4)
 WITHOUT_PAIR = {
@@ -30,15 +34,15 @@ WITHOUT_PAIR = {
     "module_settings": "the two watch-list cards live here; the dataset rows carry no ticker",
     "logs": "not a data board",
     "runs": "not a data board",
+    "module_sector_rotation_trail": "a chart of the same funds' trails; the board's own table carries their pair",
     # The board groups that get the pair in the later commits of this PR; each commit moves its boards up.
     **{k: "pending in this PR" for k in (
         "module_earnings_radar", "module_earnings_radar_detail", "module_oipd", "module_financials",
         "module_uw_interaction", "module_comovement", "module_value_chain", "module_relatedness",
-        "module_sector_rotation", "module_sector_rotation_trail", "module_asymmetric_growth",
-        "module_swing_potential", "module_fundamentals")},
+        )},
 }
 
-_SERVER_BUTTON = re.compile(r'data-rc-watch="(?:option|stock)"')
+_SERVER_BUTTON = re.compile(r'data-rc-watch="(?:option|stock)" data-ticker="([^"]*)"')
 
 
 def test_every_board_is_classified():
@@ -57,11 +61,36 @@ def test_the_board_mounts_the_pair_once_with_its_own_key(key, tmp_path, monkeypa
 
 @pytest.mark.parametrize("key", sorted(WITH_PAIR))
 def test_a_hostile_ticker_gets_no_button(key, tmp_path, monkeypatch, rawstore_tmp_db):
+    from RevenueChaser.core.reporting_common import WATCH_TICKER_PATTERN
     page = BOARDS[key].render(tmp_path, monkeypatch)
-    assert not _SERVER_BUTTON.search(page), _SERVER_BUTTON.search(page)
+    tickers = _SERVER_BUTTON.findall(page)
+    assert all(re.fullmatch(WATCH_TICKER_PATTERN, t) for t in tickers), tickers
 
 
 @pytest.mark.parametrize("key", sorted(WITHOUT_PAIR))
 def test_a_board_left_out_does_not_mount_it(key, tmp_path, monkeypatch, rawstore_tmp_db):
     page = BOARDS[key].render(tmp_path, monkeypatch)
     assert "rcWatchInit(" not in page
+
+
+# A board that renders its tickers on the server: a good ticker of its fixture gets its pair.
+SERVER_GOOD = {"module_sector_rotation": "XLK"}
+# A board whose rows the browser builds: the call where the ticker is rendered (its own tests run it where they can).
+CLIENT_CALL = {
+    "module_sec_13f": "rcWatchButtons(r[0])",
+    "module_asymmetric_growth": "rcWatchRow(c.ticker)",
+    "module_swing_potential": "rcWatchRow(c.ticker)",
+    "module_fundamentals": "rcWatchRow(c.ticker)",
+}
+
+
+@pytest.mark.parametrize("key", sorted(SERVER_GOOD))
+def test_a_good_server_rendered_ticker_gets_its_pair(key, tmp_path, monkeypatch, rawstore_tmp_db):
+    page = BOARDS[key].render(tmp_path, monkeypatch)
+    assert SERVER_GOOD[key] in _SERVER_BUTTON.findall(page)
+
+
+@pytest.mark.parametrize("key", sorted(CLIENT_CALL))
+def test_a_client_rendered_board_calls_the_pair_where_it_renders_the_ticker(key, tmp_path, monkeypatch,
+                                                                             rawstore_tmp_db):
+    assert CLIENT_CALL[key] in BOARDS[key].render(tmp_path, monkeypatch)
