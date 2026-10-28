@@ -38,7 +38,7 @@ import duckdb
 
 from ....core import calendar
 from .. import base
-from . import KIND, names, rows, tables, uw
+from . import KIND, names, raw_retention, rows, tables, uw
 
 NAME = "uw/option_list"
 SOURCE = tables.LIST_SOURCE
@@ -220,6 +220,10 @@ class UWOptionList:
                 "source_as_of": as_of.isoformat(), "rows": rows_eod, "added": added, "removed": removed,
                 "coverage": round((len(wanted) - len(left)) / len(wanted), 4) if wanted else None,
                 "next_check_due": as_of.isoformat() if again else base.next_due(as_of), "note": "; ".join(note)}
+
+    def after_swap(self, ctx: base.RunContext) -> None:
+        """The raw option retention, once the new file is live (``raw_retention``; nothing while it is unset)."""
+        raw_retention.apply(ctx, ctx.as_of or self.default_as_of())
 
 
 DATASET = UWOptionList()
