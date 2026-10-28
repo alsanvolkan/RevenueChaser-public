@@ -142,3 +142,35 @@ class FakeFtp:
                 pass
 
         return Session()
+
+
+# ── The SEC's fails-to-deliver halves (format as the SEC documents it; sec.gov refused the cloud) ───────────────
+
+FTD_HEADER = "SETTLEMENT DATE|CUSIP|SYMBOL|QUANTITY (FAILS)|DESCRIPTION|PRICE"
+
+
+def ftd_zip(rows, member="cnsfails202609b.txt", trailer=True) -> bytes:
+    import io
+    import zipfile
+    lines = [FTD_HEADER, *rows]
+    if trailer:
+        lines += [f"Trailer record count {len(rows)}", "Trailer total quantity of shares 1"]
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr(member, "\r\n".join(lines) + "\r\n")
+    return buf.getvalue()
+
+
+class Ftd:
+    """``files/data/fails-deliver-data/cnsfails<YYYYMM><a|b>.zip``; a half not set answers 404."""
+
+    def __init__(self):
+        self.halves: dict[str, bytes] = {}
+
+    def answer(self, request):
+        name = str(request.url).rsplit("/", 1)[1]
+        body = self.halves.get(name[len("cnsfails"):-len(".zip")])
+        return (200, body, {"content-type": "application/zip"}) if body is not None else (404, b"Not Found", {})
+
+    def install(self, http_mock) -> None:
+        http_mock.add("/files/data/fails-deliver-data/cnsfails", self.answer)
