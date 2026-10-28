@@ -7,11 +7,17 @@
   HOLDINGS`` adds to it, and any other amendment (``RESTATEMENT``, or none stated) replaces it. An amendment belongs
   to the period it reports on, not to the quarter it was filed in.
 - *Long equity only*: ``sh_type`` ``SH`` and no put or call. Principal amounts and options stay in Parquet.
-- *VALUE in thousands after 2023* (alsanvolkan/RevenueChaser#208): a filing made from 2023-01-03 reports dollars, but
-  some filers kept writing thousands. The 13F's own prices are the reference: per CUSIP and period, the median value
-  per share over the filers holding it (``CONSENSUS_FILERS`` or more). A filer whose median ratio to those prices,
-  over ``MIN_NAMES`` or more names, lies inside ``SCALE_BAND`` (1/3000 to 1/300, the old derive's band, which read
-  closes instead) has its value read in thousands (``sec13f_filer_period.value_factor`` 1000). Shares never change.
+- *The quarters served*: a quarter whose filing deadline passed before the store's first 13F day (the walk's first
+  day, which the data-set fill moves back) is left out: only its late filers and amendments are stored (the sets
+  from 2025 hold 852 such filings of 135 filers, back to 2001), so its breadth and totals would mislead. The filings
+  stay in ``sec13f_filings`` and Parquet.
+- *VALUE off by 1,000* (alsanvolkan/RevenueChaser#208): a filing made from 2023-01-03 reports dollars, but some
+  filers kept writing thousands (332 of 8,848 in Q2 2026, T. Rowe Price among them) and one wrote dollars times
+  1,000. The 13F's own prices are the reference: per CUSIP and period, the median value per share over the filers
+  holding it (``CONSENSUS_FILERS`` or more). A filer whose median ratio to those prices, over ``MIN_NAMES`` or more
+  names, lies inside ``SCALE_BAND`` (1/3000 to 1/300, the old derive's band, which read closes instead) has its value
+  read in thousands (``sec13f_filer_period.value_factor`` 1000), and one inside its inverse (300 to 3000) has it
+  divided by 1,000 (0.001). Shares never change.
 - *Each CUSIP named*, per report period, by the first spine source that answers: (1) Compustat's dated identifier
   history (``security_history``, field ``cusip``, the period inside ``valid_from``..``valid_to``) with exactly one
   ticker: ``wrds/sec_idhist``; (2) the spine's current CUSIP of exactly one ticker: ``spine/security``; (3) the
@@ -77,7 +83,7 @@ SP500, FUNDS = "sp500", "funds/index_holdings"
 MAP = [("cusip", "TEXT"), ("period", "DATE"), ("ticker", "TEXT"), ("map_source", "TEXT"),
        ("candidate_ticker", "TEXT"), ("issuer_name", "TEXT"), ("value", "DOUBLE"), ("holders", "INTEGER")]
 FILER = [("cik", "TEXT"), ("period", "DATE"), ("filer_name", "TEXT"), ("filings", "INTEGER"), ("cusips", "INTEGER"),
-         ("value", "DOUBLE"), ("names", "INTEGER"), ("median_ratio", "DOUBLE"), ("value_factor", "INTEGER"),
+         ("value", "DOUBLE"), ("names", "INTEGER"), ("median_ratio", "DOUBLE"), ("value_factor", "DOUBLE"),
          ("confidential_omitted", "BOOLEAN")]
 TICKER = [("ticker", "TEXT"), ("period", "DATE"), ("shares", "DOUBLE"), ("value", "DOUBLE"), ("holders", "INTEGER"),
           ("top10_pct", "DOUBLE"), ("hhi", "DOUBLE"), ("new_holders", "INTEGER"), ("exited_holders", "INTEGER"),
@@ -289,7 +295,7 @@ class OwnershipServe:
         try:
             spine_on = _spine(con, found)
             files = sec13f.DATASET.holding_files()
-            self._held(con, files)
+            left_out = self._held(con, files)
             if files:
                 _owners(con)
                 _figi(con)
@@ -301,6 +307,9 @@ class OwnershipServe:
             counts["sec13f_ticker_period"] = self._metrics(con)
             counts["sec13f_periods"] = self._periods(con)
             found += self._issues(con)
+            summary["rescaled"] = common.count(con, "sec13f_filer_period", "value_factor <> 1")
+            if left_out:
+                summary["left_out"] = left_out
             if spine_on:
                 summary.update(self._summary(con, ctx.as_of or self.default_as_of()))
             return counts
@@ -309,12 +318,18 @@ class OwnershipServe:
                 con.execute(f"DROP TABLE IF EXISTS {t}")
 
     @staticmethod
-    def _held(con: duckdb.DuckDBPyConnection, files) -> None:
+    def _held(con: duckdb.DuckDBPyConnection, files) -> tuple[int, int, date] | None:
         """``_long`` (the active filings' long-equity rows), ``sec13f_filer_period`` with its VALUE factor, and
-        ``_held`` (filer, period and CUSIP: shares and value in dollars)."""
+        ``_held`` (filer, period and CUSIP: shares and value in dollars); ``(filings, quarters, first 13F day)`` left
+        out as quarters whose deadline passed before that day, None when none is."""
         rows = con.execute(f"SELECT accession, cik, period, filed, coalesce(amendment_no, 0), is_amendment, "
                            f"amendment_type FROM {sec13f.TABLE} WHERE status = 'ok' AND cik IS NOT NULL "
                            f"AND period IS NOT NULL ORDER BY cik, period, filed, 5, is_amendment, accession").fetchall()
+        first = sec13f.DATASET.first_day() or min((r[3] for r in rows), default=None)
+        served = [p for p in sorted({r[2] for r in rows}) if first is None or filing_deadline(p) >= first]
+        start = served[0] if served else date.max
+        left = [r for r in rows if r[2] < start]
+        rows = [r for r in rows if r[2] >= start]
         common.temp_rows(con, "_active", [("accession", "TEXT")], [{"accession": a} for a in active_accessions(rows)])
         # A filer's holdings report for the period, and whether it left holdings out under confidential treatment.
         con.execute(f"""CREATE OR REPLACE TEMP TABLE _conf AS
@@ -348,14 +363,17 @@ class OwnershipServe:
                    c.omitted AS confidential_omitted
             FROM _long l
             LEFT JOIN (SELECT cik, period, names, ratio,
-                              CASE WHEN names >= {MIN_NAMES} AND ratio > {lo!r} AND ratio < {hi!r} THEN 1000
-                                   ELSE 1 END AS factor FROM _ratio) x ON x.cik = l.cik AND x.period = l.period
+                              CASE WHEN names >= {MIN_NAMES} AND ratio > {lo!r} AND ratio < {hi!r} THEN 1000.0
+                                   WHEN names >= {MIN_NAMES} AND ratio > {1 / hi!r} AND ratio < {1 / lo!r}
+                                   THEN 0.001 ELSE 1.0 END AS factor FROM _ratio) x
+                   ON x.cik = l.cik AND x.period = l.period
             LEFT JOIN _conf c ON c.cik = l.cik AND c.period = l.period
             GROUP BY l.cik, l.period, x.factor, x.names, x.ratio, c.omitted ORDER BY l.period, l.cik""")
         con.execute("""CREATE OR REPLACE TEMP TABLE _held AS
             SELECT l.cik, l.period, l.cusip, sum(l.shares) AS shares, sum(l.value_usd * p.value_factor) AS value,
                    min(l.name_of_issuer) AS issuer_name
             FROM _long l JOIN sec13f_filer_period p ON p.cik = l.cik AND p.period = l.period GROUP BY ALL""")
+        return (len(left), len({r[2] for r in left}), first) if left else None
 
     @staticmethod
     def _map(con: duckdb.DuckDBPyConnection) -> int:
@@ -519,8 +537,7 @@ class OwnershipServe:
         held, members = con.execute(
             "SELECT count(*) FILTER (WHERE EXISTS (SELECT 1 FROM sec13f_ticker_period t "
             "WHERE t.ticker = s.ticker AND t.period = ?)), count(*) FROM _sp_sp500 s", [period]).fetchone()
-        rescaled = common.count(con, "sec13f_filer_period", "value_factor <> 1")
-        return {"period": period, "coverage": coverage, "sp500_held": held, "sp500": members, "rescaled": rescaled}
+        return {"period": period, "coverage": coverage, "sp500_held": held, "sp500": members}
 
     # ── Check and issues ───────────────────────────────────────────────────────────────────────────────────────
 
@@ -528,16 +545,20 @@ class OwnershipServe:
         table = "sec13f_ticker_period"
         added, removed = base.compare_with_live(con, KIND, table, ["ticker", "period", "shares", "holders"])
         summary = (ctx.pending.get(NAME) or {}).get("summary") or {}
-        if summary:
+        if summary.get("period"):
             p = summary["period"].isoformat()
             ctx.notes.append(f"S&P 500 names with 13F holders in {p}: {summary['sp500_held']} of {summary['sp500']}")
             if summary["coverage"] is not None:
                 ctx.notes.append(f"13F value mapped in {p}: {summary['coverage'] * 100:.2f}%")
-            if summary["rescaled"]:
-                ctx.notes.append(f"{summary['rescaled']} filer-quarters reported VALUE in thousands after 2023: "
-                                 f"rescaled")
         elif not common.count(con, table):
             ctx.notes.append("no 13F totals: no holdings yet, or no spine to name them")
+        if summary.get("rescaled"):
+            ctx.notes.append(f"{summary['rescaled']} filer-quarters' VALUE off by a factor of 1,000 against the 13F's "
+                             "own prices: rescaled")
+        if summary.get("left_out"):
+            n, quarters, first = summary["left_out"]
+            ctx.notes.append(f"{n} filings of {quarters} quarters whose filing deadline passed before the first 13F "
+                             f"day ({first}) left out")
         newest = con.execute("SELECT max(filed_through) FROM sec13f_periods").fetchone()[0]
         return {"dataset": NAME, "result": "changed" if added or removed else "unchanged",
                 "source_as_of": (newest or ctx.as_of or self.default_as_of()).isoformat(),

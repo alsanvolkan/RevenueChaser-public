@@ -207,7 +207,8 @@ def _book(scale: float = 1.0, names: int = 6) -> list[dict]:
     return [_h(f"ISSUER {c}", c, round(px * 100 * scale, 2), 100) for c, px in list(PRICES.items())[:names]]
 
 
-def test_a_filer_still_reporting_thousands_is_rescaled_once_its_prices_agree(monkeypatch, http_mock):
+def test_a_filers_value_off_by_1000_is_rescaled_once_its_prices_agree(monkeypatch, http_mock):
+    """Real data, 2026-10-28: 332 of 8,848 filers of Q2 2026 still report thousands, one reports x1000 too high."""
     monkeypatch.setattr(sec, "_shared_pace", lambda: True)
     monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
     ox.make_spine()
@@ -215,14 +216,34 @@ def test_a_filer_still_reporting_thousands_is_rescaled_once_its_prices_agree(mon
     filers = [_f(f"000200000{i}-26-00000{i}", 2000000 + i, "2026-10-27", _book()) for i in range(1, 5)]
     filers.append(_f("0002000005-26-000005", 2000005, "2026-10-27", _book(scale=0.001)))       # thousands
     filers.append(_f("0002000006-26-000006", 2000006, "2026-10-27", _book(scale=0.001, names=3)))  # too few names
+    filers.append(_f("0002000007-26-000007", 2000007, "2026-10-27", _book(scale=1000)))        # x1000 too high
     e.add_day("2026-10-27", filers)
     e.install(http_mock)
     _thirteen_f(as_of="2026-10-28")
     row = _serve()
-    assert _served("SELECT cik, names, value_factor FROM sec13f_filer_period WHERE value_factor <> 1") == [
-        ("2000005", 6, 1000)]
-    assert _served("SELECT value FROM sec13f_ticker_period WHERE ticker = 'MSFT'") == [(40_000.0 * 5 + 40.0,)]
-    assert "1 filer-quarters reported VALUE in thousands after 2023: rescaled" in row["note"]
+    assert _served("SELECT cik, names, value_factor FROM sec13f_filer_period WHERE value_factor <> 1 ORDER BY cik") == [
+        ("2000005", 6, 1000.0), ("2000007", 6, 0.001)]
+    assert _served("SELECT value FROM sec13f_ticker_period WHERE ticker = 'MSFT'") == [(40_000.0 * 6 + 40.0,)]
+    assert "2 filer-quarters' VALUE off by a factor of 1,000 against the 13F's own prices: rescaled" in row["note"]
+
+
+def test_a_quarter_whose_deadline_passed_before_the_first_13f_day_is_not_served(monkeypatch, http_mock):
+    """Real data, 2026-10-28: 852 filings of 135 filers in the sets from 2025 report quarters back to 2001, filed
+    late; only those late filers of such a quarter are stored, so its breadth and totals would mislead."""
+    monkeypatch.setattr(sec, "_shared_pace", lambda: True)
+    monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
+    ox.make_spine()
+    e = ox.Edgar()
+    e.add_day("2026-10-27", [_f("0002000001-26-000001", 2000001, "2026-10-27", _book()),
+                             _f("0002000002-26-000002", 2000002, "2026-10-27", _book(), period="09-30-2001")])
+    e.install(http_mock)
+    _thirteen_f(as_of="2026-10-28")                  # the first run: the walk's first day is 2026-10-25
+    row = _serve()
+    assert _served("SELECT DISTINCT period FROM sec13f_ticker_period") == [(Q3,)]
+    assert _served("SELECT period, filers FROM sec13f_periods") == [(Q3, 1)]
+    assert _served(f"SELECT count(*) FROM {sec13f.TABLE} WHERE period = '2001-09-30'") == [(1,)]     # kept, raw
+    assert ("1 filings of 1 quarters whose filing deadline passed before the first 13F day (2026-10-25) left out"
+            in row["note"])
 
 
 # ── An exit that may not be a sale ──────────────────────────────────────────────────────────────────────────
