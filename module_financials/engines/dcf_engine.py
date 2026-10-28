@@ -67,7 +67,13 @@ def _historical_fcff(annual: list[dict], tax_rate: float) -> list[dict]:
 
 def _wacc(financials: dict, beta: float | None, rf: float, erp: float,
           cost_of_debt: float, tax_rate: float, debt_weight: float | None) -> dict:
-    b = beta if beta is not None else first_known(to_float(financials.get("beta")), DEFAULT_BETA)
+    stated = to_float(financials.get("beta"))
+    if beta is not None:
+        b, beta_source = beta, "assumption"
+    elif stated is not None:
+        b, beta_source = stated, "Yahoo"
+    else:
+        b, beta_source = DEFAULT_BETA, "default"
     ke = rf + b * erp
     kd_after = cost_of_debt * (1 - tax_rate)
 
@@ -85,7 +91,7 @@ def _wacc(financials: dict, beta: float | None, rf: float, erp: float,
         we = 1 - wd
     wacc = we * ke + wd * kd_after
     return {
-        "beta": b, "cost_of_equity": ke, "cost_of_debt_after_tax": kd_after,
+        "beta": b, "beta_source": beta_source, "cost_of_equity": ke, "cost_of_debt_after_tax": kd_after,
         "equity_weight": we, "debt_weight": wd, "weights_source": source, "wacc": wacc,
     }
 
@@ -157,7 +163,16 @@ def run_dcf(financials: dict, assumptions: dict | None = None) -> dict:
             defaults.append("nwc_pct_rev")
             warnings.append(assumed("NWC", f"{nwc_pct:.1%} of revenue", "no working-capital lines reported"))
 
-    rf = pick(a, "risk_free", RISK_FREE_RATE)
+    # The rates say where they come from (review S2): the user's, else the stored 10-year yield the run read
+    # (``run._stored_risk_free``), else the default. The equity premium and the cost of debt have no measured source:
+    # the user's or the default.
+    stored_rf = to_float((financials.get("risk_free_rate") or {}).get("value"))
+    if to_float(a.get("risk_free")) is not None:
+        rf, rf_source = pick(a, "risk_free", RISK_FREE_RATE), "assumption"
+    elif stored_rf is not None:
+        rf, rf_source = stored_rf, "stored"
+    else:
+        rf, rf_source = RISK_FREE_RATE, "default"
     erp = pick(a, "equity_risk_premium", EQUITY_RISK_PREMIUM)
     cost_of_debt = pick(a, "cost_of_debt", DEFAULT_COST_OF_DEBT)
     beta = to_float(a.get("beta"))
@@ -166,6 +181,16 @@ def run_dcf(financials: dict, assumptions: dict | None = None) -> dict:
     exit_multiple = pick(a, "exit_multiple", DEFAULT_EXIT_MULTIPLE)
 
     wacc_info = _wacc(financials, beta, rf, erp, cost_of_debt, tax_rate, debt_weight)
+    wacc_info.update({
+        "risk_free": rf, "risk_free_source": rf_source,
+        "risk_free_as_of": (financials.get("risk_free_rate") or {}).get("as_of") if rf_source == "stored" else None,
+        "equity_risk_premium": erp,
+        "equity_risk_premium_source": "assumption" if to_float(a.get("equity_risk_premium")) is not None else "default",
+        "cost_of_debt": cost_of_debt,
+        "cost_of_debt_source": "assumption" if to_float(a.get("cost_of_debt")) is not None else "default",
+    })
+    if wacc_info["beta_source"] == "default":
+        warnings.append(assumed("Beta", f"{DEFAULT_BETA:.2f}"))
     if wacc_info["weights_source"] == "default":
         warnings.append(assumed("WACC weights", f"{wacc_info['equity_weight']:.0%} equity / "
                                 f"{wacc_info['debt_weight']:.0%} debt", "market cap or total debt missing"))

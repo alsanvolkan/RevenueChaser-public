@@ -5,6 +5,8 @@ measured number (the #173 convention: missing is unknown, never a silent number)
 S4: the header's "Last sync" and the comps' "as of" name the same New York session (core/calendar rule B), and a
 fetch inside the session says "intraday", not "EOD".
 S5: Quick Remarks say when they were scored, and a Refresh shows what the last Fetch scored instead of an empty card.
+S2: the rate inputs say where they come from, and the stored FRED 10-year yield is the risk-free rate when fresh.
+N1-N7: the nits, each under its own heading below.
 """
 from __future__ import annotations
 
@@ -140,8 +142,12 @@ def test_the_page_labels_the_default_rows(financials):
     assert html.count("default 0.0%") == 2                                  # D&A and NWC
 
 
-def test_a_measured_page_says_default_nowhere(financials):
-    assert "default" not in _html(financials, {"dcf": run_dcf(financials)})
+def test_a_measured_base_year_and_mix_say_default_nowhere(financials):
+    """The rate rows say "default" since review S2 (no stored yield here); the measured rows never do."""
+    html = _html(financials, {"dcf": run_dcf(financials)})
+    for row in ("EBITDA Margin", "D&amp;A / Revenue", "Capex / Revenue", "NWC / Revenue", "Equity Weight",
+                "Debt Weight", "Beta"):
+        assert f"{row}</span><span>default" not in html
 
 
 # ── S4: one New York day in the header and in the comps' "as of" ───────────────
@@ -304,3 +310,82 @@ def test_no_gordon_value_means_no_implied_multiple(financials):
 def test_a_non_positive_ebitda_or_ev_has_no_ratio(financials):
     tv = run_dcf(financials, {"ebitda_margin": -0.1})["terminal_value"]
     assert tv["implied_exit_multiple"] is None and tv["share_of_ev_exit"] is None
+
+
+# ── S2: the rate inputs say where they come from; the stored 10-year yield is the risk-free rate ─
+def test_without_a_stored_yield_the_rates_are_labelled_defaults(financials):
+    w = run_dcf(financials)["wacc"]
+    assert (w["risk_free"], w["risk_free_source"]) == (0.04, "default")
+    assert (w["equity_risk_premium"], w["cost_of_debt"], w["beta_source"]) == (0.05, 0.05, "Yahoo")
+    html = _html(financials, {"dcf": run_dcf(financials)})
+    for row in ("Risk-free rate</span><span>default 4.00%", "Equity Risk Premium</span><span>default 5.0%",
+                "Cost of Debt (Kd, before tax)</span><span>default 5.0%"):
+        assert row in html
+
+
+def test_the_stored_ten_year_yield_is_the_risk_free_rate(financials):
+    financials["risk_free_rate"] = {"value": 0.0425, "as_of": "2026-10-27"}
+    res = run_dcf(financials)
+    w = res["wacc"]
+    assert (w["risk_free"], w["risk_free_source"], w["risk_free_as_of"]) == (0.0425, "stored", "2026-10-27")
+    assert w["cost_of_equity"] == pytest.approx(0.0425 + 1.2 * 0.05)
+    assert "Risk-free rate</span><span>4.25% (10-year Treasury, FRED, 2026-10-27)" in _html(financials, {"dcf": res})
+
+
+def test_a_typed_risk_free_rate_wins_over_the_stored_one(financials):
+    financials["risk_free_rate"] = {"value": 0.0425, "as_of": "2026-10-27"}
+    w = run_dcf(financials, {"risk_free": 0.03})["wacc"]
+    assert (w["risk_free"], w["risk_free_source"]) == (0.03, "assumption")
+
+
+def test_a_missing_beta_is_a_labelled_default(financials):
+    f = dict(financials, beta=None)
+    res = run_dcf(f)
+    assert (res["wacc"]["beta"], res["wacc"]["beta_source"]) == (1.0, "default")
+    assert "Beta: assumed 1.00 (not reported)" in res["warnings"]
+    assert "Beta</span><span>default 1.00" in _html(f, {"dcf": res})
+
+
+def test_the_three_statement_interest_rate_is_a_labelled_default(financials):
+    res = run_three_statement(financials)
+    assert (res["assumptions"]["interest_rate"], res["assumptions"]["interest_rate_source"]) == (0.05, "default")
+    assert "Interest rate: default 5.0%" in _html(financials, {"three_statement": res})
+    typed = run_three_statement(financials, {"interest_rate": 0.06})
+    assert typed["assumptions"]["interest_rate_source"] == "assumption"
+    assert "Interest rate: 6.0%" in _html(financials, {"three_statement": typed})
+
+
+def _store_yield(points):
+    from RevenueChaser.core import rawstore
+    rawstore.write_rows("macro_series", [{"series_id": "DGS10", "obs_date": date.fromisoformat(d), "source": "fred",
+                                          "value": v} for d, v in points])
+
+
+def test_the_run_reads_the_newest_fresh_stored_yield(rawstore_tmp_db, monkeypatch):
+    import RevenueChaser.module_financials.run as fm
+    from RevenueChaser.core import calendar
+    monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 28, 15, 0, tzinfo=timezone.utc))
+    assert fm._stored_risk_free() is None                                     # nothing stored: the default
+    _store_yield([("2026-10-26", 4.31), ("2026-10-27", 4.25)])
+    assert fm._stored_risk_free() == {"value": pytest.approx(0.0425), "as_of": "2026-10-27"}
+
+
+def test_a_stale_stored_yield_is_not_used(rawstore_tmp_db, monkeypatch):
+    import RevenueChaser.module_financials.run as fm
+    from RevenueChaser.core import calendar
+    monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 28, 15, 0, tzinfo=timezone.utc))
+    _store_yield([("2026-10-13", 4.10)])                                       # fifteen days old
+    assert fm._stored_risk_free() is None
+
+
+def test_a_run_hands_the_stored_yield_to_the_dcf(rawstore_tmp_db, monkeypatch, financials, tmp_path):
+    """The wiring: a store-only Refresh reads the yield and the DCF uses it (zero network either way)."""
+    import RevenueChaser.module_financials.run as fm
+    from RevenueChaser.core import calendar
+    from RevenueChaser.core.providers import cache as cache_manager
+    monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 28, 15, 0, tzinfo=timezone.utc))
+    monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
+    _store_yield([("2026-10-27", 4.25)])
+    cache_manager.save("TEST", dict(copy.deepcopy(financials), info={"longName": "Test Corp."}))
+    dcf = fm.run("TEST", modules=["dcf"], output="none", no_fetch=True)["results"]["modules"]["dcf"]
+    assert (dcf["wacc"]["risk_free"], dcf["wacc"]["risk_free_source"]) == (pytest.approx(0.0425), "stored")

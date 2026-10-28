@@ -20,7 +20,10 @@ UW_RATE_LIMIT_PER_MIN = 120
 UW_RATE_LIMIT_PER_DAY = 15_000
 
 # ── DCF / WACC varsayımları ──
-RISK_FREE_RATE = 0.04        # 10y ABD tahvili vekili
+RISK_FREE_RATE = 0.04        # 10y ABD tahvili vekili: the default when no fresh stored DGS10 exists (review S2)
+# The stored FRED 10-year yield (macro_series DGS10) is the risk-free rate while its newest observation is at most
+# this many calendar days old; older, the default above stands and the board says so.
+RISK_FREE_MAX_AGE_DAYS = 14
 EQUITY_RISK_PREMIUM = 0.05   # CAPM hisse risk primi
 DEFAULT_BETA = 1.0
 DEFAULT_TAX_RATE = 0.21

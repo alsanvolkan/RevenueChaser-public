@@ -111,12 +111,16 @@
   <div class="grid2">
     <div class="panel">
       <h3>WACC Components</h3>
-      <div class="kv"><span class="k">Beta</span><span>{{ dcf.wacc.beta|num }}</span></div>
-      <div class="kv"><span class="k">Cost of Equity (Ke)</span><span>{{ dcf.wacc.cost_of_equity|pct }}</span></div>
-      <div class="kv"><span class="k">Cost of Debt (Kd, after tax)</span><span>{{ dcf.wacc.cost_of_debt_after_tax|pct }}</span></div>
+      {% set w = dcf.wacc %}
+      <div class="kv"><span class="k">Risk-free rate</span><span>{% if w.risk_free_source == "stored" %}{{ w.risk_free|pct(2) }} (10-year Treasury, FRED, {{ w.risk_free_as_of }}){% else %}{{ w.risk_free|pct(2)|or_default(w.risk_free_source == "default") }}{% endif %}</span></div>
+      <div class="kv"><span class="k">Equity Risk Premium</span><span>{{ w.equity_risk_premium|pct|or_default(w.equity_risk_premium_source == "default") }}</span></div>
+      <div class="kv"><span class="k">Beta</span><span>{{ w.beta|num|or_default(w.beta_source == "default") }}</span></div>
+      <div class="kv"><span class="k">Cost of Equity (Ke)</span><span>{{ w.cost_of_equity|pct }}</span></div>
+      <div class="kv"><span class="k">Cost of Debt (Kd, before tax)</span><span>{{ w.cost_of_debt|pct|or_default(w.cost_of_debt_source == "default") }}</span></div>
+      <div class="kv"><span class="k">Cost of Debt (Kd, after tax)</span><span>{{ w.cost_of_debt_after_tax|pct }}</span></div>
       {% set weights_default = dcf.wacc.weights_source == "default" %}
-      <div class="kv"><span class="k">Equity Weight</span><span>{{ dcf.wacc.equity_weight|pct_or_default(weights_default) }}</span></div>
-      <div class="kv"><span class="k">Debt Weight</span><span>{{ dcf.wacc.debt_weight|pct_or_default(weights_default) }}</span></div>
+      <div class="kv"><span class="k">Equity Weight</span><span>{{ dcf.wacc.equity_weight|pct|or_default(weights_default) }}</span></div>
+      <div class="kv"><span class="k">Debt Weight</span><span>{{ dcf.wacc.debt_weight|pct|or_default(weights_default) }}</span></div>
       <div class="kv"><span class="k">Tax Rate</span><span>{{ dcf.assumptions|tax_rate }}</span></div>
       <div class="kv"><span class="k" style="font-weight:600">WACC</span><span style="font-weight:600">{{ dcf.wacc.wacc|pct }}</span></div>
     </div>
@@ -124,10 +128,10 @@
       <h3>Base Year ({{ dcf.base_year.fiscal_year }})</h3>
       <div class="kv"><span class="k">Revenue</span><span>{{ dcf.base_year.revenue|usd }}</span></div>
       {% set base_defaults = dcf.base_year.defaults or [] %}
-      <div class="kv"><span class="k">EBITDA Margin</span><span>{{ dcf.base_year.ebitda_margin|pct_or_default("ebitda_margin" in base_defaults) }}</span></div>
-      <div class="kv"><span class="k">D&amp;A / Revenue</span><span>{{ dcf.base_year.dep_pct_rev|pct_or_default("dep_pct_rev" in base_defaults) }}</span></div>
-      <div class="kv"><span class="k">Capex / Revenue</span><span>{{ dcf.base_year.capex_pct_rev|pct_or_default("capex_pct_rev" in base_defaults) }}</span></div>
-      <div class="kv"><span class="k">NWC / Revenue</span><span>{{ dcf.base_year.nwc_pct_rev|pct_or_default("nwc_pct_rev" in base_defaults) }}</span></div>
+      <div class="kv"><span class="k">EBITDA Margin</span><span>{{ dcf.base_year.ebitda_margin|pct|or_default("ebitda_margin" in base_defaults) }}</span></div>
+      <div class="kv"><span class="k">D&amp;A / Revenue</span><span>{{ dcf.base_year.dep_pct_rev|pct|or_default("dep_pct_rev" in base_defaults) }}</span></div>
+      <div class="kv"><span class="k">Capex / Revenue</span><span>{{ dcf.base_year.capex_pct_rev|pct|or_default("capex_pct_rev" in base_defaults) }}</span></div>
+      <div class="kv"><span class="k">NWC / Revenue</span><span>{{ dcf.base_year.nwc_pct_rev|pct|or_default("nwc_pct_rev" in base_defaults) }}</span></div>
     </div>
   </div>
 
@@ -190,6 +194,7 @@
     </span>
     <span style="color:var(--muted); margin-left:8px;">Max deviation: {{ three_statement.balance_check.max_residual|num }}</span>
     <span style="color:var(--muted); margin-left:8px;">Tax rate: {{ three_statement.assumptions|tax_rate }}</span>
+    <span style="color:var(--muted); margin-left:8px;">Interest rate: {{ three_statement.assumptions.interest_rate|pct|or_default(three_statement.assumptions.interest_rate_source == "default") }}</span>
   </div>
   <div class="panel" style="overflow-x:auto;">
     <table>

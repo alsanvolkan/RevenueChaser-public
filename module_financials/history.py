@@ -25,14 +25,17 @@ from RevenueChaser.module_financials.engines import credit_capacity_engine as cr
 
 BOARD, TABLE = "module_financials", "financials_report_history"
 # Bump when a model changes in a way the config hash does not see (a formula, not a default).
-SELECTION_VERSION = "2"
+# 3: the Financials review's fixes (build plan PR 12): the risk-free rate is the stored 10-year yield when fresh
+# (S2); a historical FCFF with an unknown ΔNWC is unknown, not ΔNWC = 0 (N1).
+SELECTION_VERSION = "3"
 
 
 def effective_config() -> dict:
     """The defaults every model falls back to when the caller passes no assumptions (the dashboard passes none),
     plus the credit thresholds, the tax band and the sensitivity axes, which shape the stored numbers too."""
     return {
-        "RISK_FREE_RATE": config.RISK_FREE_RATE, "EQUITY_RISK_PREMIUM": config.EQUITY_RISK_PREMIUM,
+        "RISK_FREE_RATE": config.RISK_FREE_RATE, "RISK_FREE_MAX_AGE_DAYS": config.RISK_FREE_MAX_AGE_DAYS,
+        "EQUITY_RISK_PREMIUM": config.EQUITY_RISK_PREMIUM,
         "DEFAULT_BETA": config.DEFAULT_BETA, "DEFAULT_TAX_RATE": config.DEFAULT_TAX_RATE,
         "DEFAULT_COST_OF_DEBT": config.DEFAULT_COST_OF_DEBT, "TERMINAL_GROWTH": config.TERMINAL_GROWTH,
         "DEFAULT_EXIT_MULTIPLE": config.DEFAULT_EXIT_MULTIPLE, "PROJECTION_YEARS": config.PROJECTION_YEARS,

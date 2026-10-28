@@ -205,6 +205,8 @@ def run_three_statement(financials: dict, assumptions: dict | None = None) -> di
             "tax_rate": tax_rate,
             "tax_rate_source": tax_rate_source,
             "interest_rate": interest_rate,
+            # No measured source: the user's rate or the default, which the board labels (review S2).
+            "interest_rate_source": "assumption" if to_float(a.get("interest_rate")) is not None else "default",
             "payout_ratio": payout,
             "dso": dso, "dio": dio, "dpo": dpo,
             "min_cash_pct_rev": min_cash_pct,
