@@ -4,7 +4,7 @@ There is one name per writer family, so a second run of the same writer is refus
 lock shared by different families, whose cross-family order stays on the automation registry's ``after=`` chain and
 its times. The names in use: ``"edgar_sync"`` (``module_value_chain/sync.py`` and ``reslice.py``), ``"relatedness"``
 (``module_relatedness/engine.py``), ``"daily_bars"`` (``core/prices.py``), ``"index_lists"``
-(``core/index_registry.py``) and ``"index_levels"`` (``core/index_levels.py``); ``"identity"``
+(``core/index_lists.py``) and ``"index_levels"`` (``core/index_levels.py``); ``"identity"``
 (``core/identity/refresh.py``: the dashboard job and the ``python -m RevenueChaser.core.identity`` CLI alike),
 ``"sec_13f"`` (the three 13F jobs, ``app/runners.py``), ``"forecast_outcomes"`` (``scripts/forecast_outcomes.py``) and
 ``"nightly_inputs_<step>"`` (``scripts/nightly_inputs.py``, one per step, so two different steps still run together)

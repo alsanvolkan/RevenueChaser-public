@@ -1829,14 +1829,14 @@ def run_daily_bars(uw=None, tickers: list[str] | None = None) -> None:
 def run_index_lists(uw=None, first_fill: list[str] | None = None) -> None:
     """Write the index lists (#302, D24); RC-Index-Lists runs the same step weekly. ``first_fill=["sp600"]`` is the
     attended first SmallCap 600 fill, which needs the user's OK for that run."""
-    from RevenueChaser.core import index_registry
+    from RevenueChaser.core import index_lists
 
-    res = index_registry.refresh_lists(run_id=run_id(), first_fill=first_fill or ())
+    res = index_lists.refresh_lists(run_id=run_id(), first_fill=first_fill or ())
     if res.get("locked"):
         raise JobMessage("Index lists are already running; nothing started.")
-    if not index_registry.lists_ok(res):
-        raise RuntimeError(index_registry.summary_line(res))
-    raise JobMessage(index_registry.summary_line(res))
+    if not index_lists.lists_ok(res):
+        raise RuntimeError(index_lists.summary_line(res))
+    raise JobMessage(index_lists.summary_line(res))
 
 
 def run_edgar_sync(uw=None, limit: int | None = None, force: bool = False) -> Path:

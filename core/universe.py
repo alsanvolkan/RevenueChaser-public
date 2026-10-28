@@ -432,8 +432,8 @@ def filter_fields(tickers: list[str] | None = None) -> dict[str, dict]:
     """Per-ticker fields the universal dashboard filters need (ADR-2 contract).
 
     Joins ``equity_universe`` (name/sector/industry/market_cap) with ``ticker_scores``
-    (earnings_date), ``index_constituents`` via ``annotate_cards`` and the
-    pinned theme run. Every row carries ``gics`` (the filter path: sector,
+    (earnings_date), the index membership via ``annotate_cards`` (``index_registry``: the spine or
+    the old store) and the pinned theme run. Every row carries ``gics`` (the filter path: sector,
     then industry when there is one) and ``theme_ids`` (all levels; empty = unthemed).
     Tickers not on the spine still get a row so a picker never drops a known
     name.
@@ -479,22 +479,8 @@ def filter_fields(tickers: list[str] | None = None) -> dict[str, dict]:
     for c in cards:
         c["gics"] = sector_path(c["sector"], c["industry"])
         c["theme_ids"] = themes.get(c["ticker"], [])
-    annotate_cards(cards, _spine_index_registry() if _spine() else None)
+    annotate_cards(cards)
     return {c["ticker"]: c for c in cards}
-
-
-def _spine_index_registry() -> dict:
-    """``{ticker: {"index": [labels]}}`` from the spine's current members and listed Nasdaq names, under the labels
-    the filter already has (``index_registry.LABELS``, in its order); a slug without a label is left out."""
-    from ..rcdata import read
-    from .index_registry import LABELS
-    slugs: dict[str, set[str]] = {}
-    for m in read.membership():
-        slugs.setdefault(m["ticker"], set()).add(m["index_slug"])
-    for r in read.universe(tiers=("A", "B")):
-        if r.get("exchange") == "Nasdaq":
-            slugs.setdefault(r["ticker"], set()).add("nasdaq")
-    return {t: {"index": [label for slug, label in LABELS.items() if slug in have]} for t, have in slugs.items()}
 
 
 __all__ = ["classification_universe", "classification_universe_rows", "spine_gics", "gics_of",

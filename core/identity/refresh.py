@@ -527,8 +527,8 @@ def _gate(res: SourceResult):
 
 
 def _spdr_check(res: SourceResult, master_rows: list[dict]) -> tuple[list[dict], dict]:
-    """``(conflicts, counts)`` of the SPDR check: each S&P 500 member (``index_constituents`` slug ``sp500``, UW's
-    spelling normalised) that a fund holds and the master has is compared with the master sector. Flag only."""
+    """``(conflicts, counts)`` of the SPDR check: each S&P 500 member (``index_registry.load_index("sp500")``,
+    its spelling normalised) that a fund holds and the master has is compared with the master sector. Flag only."""
     hold = _rows_of(res)
     members = {norm_ticker(t) for t in index_registry.load_index("sp500") or ()}
     sector = {r["ticker"]: r.get("sector") for r in master_rows}
