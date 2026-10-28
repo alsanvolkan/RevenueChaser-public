@@ -156,15 +156,30 @@ def test_a_day_that_reaches_the_page_ceiling_fails_with_a_build_issue(http_mock)
     assert kinds == ["truncated"]
 
 
-def test_rows_repeated_across_pages_are_kept_once_with_an_issue(http_mock):
+def test_a_row_repeated_across_pages_fails_the_day(http_mock):
+    """Review should-fix 2: with offset paging a repeat means the ordered set moved between calls, and the same move
+    the other way skips a row unseen; so the day may be short and is not kept. The next run asks again."""
     page0 = _rows(LIMIT)
     page1 = [dict(r) for r in page0[:5]] + _rows(10, first=LIMIT)
     _paged(http_mock, [page0, page1])
     row = _daily()
-    assert row["result"] == "changed" and row["rows"] == LIMIT + 10
-    assert len(base.read_raw_json(uw.raw_path(SESSION))["body"]["data"]) == LIMIT + 10
+    assert row["result"] == "failed" and "repeated across pages" in row["note"]
+    assert not uw.raw_path(SESSION).exists() and not uw.partition_path(SESSION).exists()
     dup = [d for k, d in _issues() if k == "duplicate_key"]
-    assert len(dup) == 1 and "5 rows" in dup[0]
+    assert len(dup) == 1 and "5 rows" in dup[0] and "across pages" in dup[0]
+
+
+def test_a_row_repeated_within_one_page_of_a_paged_day_goes_to_the_per_key_issue(http_mock):
+    """Review nit 5: a repeat inside one page is what a one-page day already reports through ``to_parquet`` (the
+    second row for a key dropped); the paged day does the same and is kept."""
+    page1 = _rows(10, first=LIMIT)
+    page1.append(dict(page1[0]))
+    _paged(http_mock, [_rows(LIMIT), page1])
+    row = _daily()
+    assert row["result"] == "changed" and row["rows"] == LIMIT + 10
+    assert len(base.read_raw_json(uw.raw_path(SESSION))["body"]["data"]) == LIMIT + 11
+    dup = [d for k, d in _issues() if k == "duplicate_key"]
+    assert dup == ["second row for the key dropped"]
 
 
 def test_every_page_counts_against_the_day_cap(http_mock, monkeypatch):

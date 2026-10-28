@@ -10,8 +10,8 @@ fills the page and is asked for ``page=1, 2, ...`` (0-based, same ``limit``) unt
 day is kept only when every page arrived, and fails at ``MAX_PAGES`` full pages rather than loop.
 
 Raw: ``raw/uw/spot_expiry_strike/<YYYY-MM-DD>/SPX.json.gz`` (UW's body with the request and its provenance). A
-one-page day keeps UW's body as sent; a paged day keeps ``{"data": <every page's rows, once each by key>}`` and the
-row count of each page in ``request.pages``. Either way one file per day, written once all its pages arrived.
+one-page day keeps UW's body as sent; a paged day keeps ``{"data": <every page's rows, in order>}`` and the row count
+of each page in ``request.pages``. A key repeated across pages fails the day (the answer moved while paging). Either way one file per day, written once all its pages arrived.
 Parquet: ``parquet/uw/spot_expiry_strike/date=<YYYY-MM-DD>/part-0.parquet``. Serving: ``spx_gamma_expiry_strike``.
 
 ``dte`` counts NYSE sessions from the session to the expiry (``core/calendar.py``), so a Friday's next expiry,
@@ -107,9 +107,10 @@ class UWSpotExpiryStrike:
         request: dict = {"endpoint": ENDPOINT, "params": params}
         if len(rows) >= PAGE_LIMIT:
             # A full page may be a cut day (G3): ask the next pages until one is shorter than the limit (an empty
-            # one after a page of exactly 500). Only a day whose every page arrived is written; the raw file is the
-            # resume marker, so a failed page or the ceiling leaves no partial day.
-            sizes, rows = [len(rows)], list(rows)
+            # one after a page of exactly 500). Only a day whose every page arrived, each a list of rows on this
+            # session and none repeating an earlier page's key, is written; the raw file is the resume marker, so a
+            # failed page, a moved answer or the ceiling leaves no partial day.
+            sizes, pages = [len(rows)], [rows]
             while sizes[-1] >= PAGE_LIMIT:
                 if len(sizes) >= MAX_PAGES:
                     ctx.issue("truncated", session.isoformat(),
@@ -128,10 +129,10 @@ class UWSpotExpiryStrike:
                     raise base.SourceError(f"UW {ENDPOINT} {session} page {n}: every row is stamped on a day "
                                            f"not on {session}")
                 sizes.append(len(more))
-                rows.extend(more)
-            rows = _unique_rows(ctx, session, rows)
+                pages.append(more)
+            _check_pages_disjoint(ctx, session, pages)
             request["pages"] = sizes
-            body = {"data": rows}
+            body = {"data": [r for page in pages for r in page]}
         return base.write_raw_json(raw, {
             "request": request, "session_date": session.isoformat(),
             "observed": observed, "fetched_at": time_now(), "run_id": ctx.run_id, "body": body})
@@ -296,24 +297,27 @@ def snapshot_day(stamp) -> date | None:
         return None
 
 
-def _unique_rows(ctx: base.RunContext, session: date, rows: list) -> list:
-    """The rows of every page once each, by the dataset's key (expiry, strike), the first one kept. Pages do not
-    overlap on the live check; a repeat would mean the answer moved between pages, so it is reported."""
-    out, seen, dropped = [], set(), 0
-    for row in rows:
-        try:
-            key = (str(row["expiry"])[:10], float(row["strike"]))
-        except (KeyError, TypeError, ValueError):
-            out.append(row)                     # to_parquet reports a row without a usable key (bad_row)
-            continue
-        if key in seen:
-            dropped += 1
-            continue
-        seen.add(key)
-        out.append(row)
-    if dropped:
-        ctx.issue("duplicate_key", session.isoformat(), f"{dropped} rows repeated across pages, kept once")
-    return out
+def _check_pages_disjoint(ctx: base.RunContext, session: date, pages: list[list]) -> None:
+    """Fail the day when a key (expiry, strike) of one page is on an earlier page. Pages are offsets into an ordered
+    set (``page × limit``); a repeat means the set moved between calls, and the same move the other way skips a row
+    without a sign, so the day may be short and is not kept: the next run asks again. A repeat inside one page is
+    left to ``to_parquet``, which keeps the first row of a key with an issue, as on a one-page day."""
+    earlier: set = set()
+    repeated = 0
+    for page in pages:
+        keys = set()
+        for row in page:
+            try:
+                keys.add((str(row["expiry"])[:10], float(row["strike"])))
+            except (KeyError, TypeError, ValueError):
+                continue                        # to_parquet reports a row without a usable key (bad_row)
+        repeated += len(keys & earlier)
+        earlier |= keys
+    if repeated:
+        ctx.issue("duplicate_key", session.isoformat(),
+                  f"{repeated} rows repeated across pages: the answer moved while paging, day not stored")
+        raise base.SourceError(f"UW {ENDPOINT} {session}: {repeated} rows repeated across pages; the answer moved "
+                               f"while paging and the day may be short, so it is not stored")
 
 
 def time_now() -> float:
