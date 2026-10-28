@@ -128,11 +128,20 @@ def _placeholders(n: int) -> str:
 
 def bar_scope() -> list[str]:
     """The tickers the nightly keeps bars for (R8): the universe, the benchmarks and the
-    sector/theme rotation ETFs, upper-cased, de-duplicated, benchmarks first."""
-    try:
-        rows = rawstore.query("SELECT ticker FROM equity_universe")
-    except Exception:  # noqa: BLE001 - a missing table is "no universe", not a crash
-        rows = []
+    sector/theme rotation ETFs, upper-cased, de-duplicated, benchmarks first.
+
+    The universe is the boards' (``core.universe``): while they read the identity spine, its Tier A names, the
+    names a board can screen (#262; the prices store asks the same, ``rcdata.build.prices.scope``); on the old
+    store, its ``equity_universe``. The nightly's UW cap (``UW_NIGHTLY_CAP``) bounds the calls either way."""
+    from RevenueChaser.core import universe as universe_mod
+    if universe_mod.universe_source() == universe_mod.SPINE:
+        from RevenueChaser.rcdata import read
+        rows = read.universe(tiers=("A",))
+    else:
+        try:
+            rows = rawstore.query("SELECT ticker FROM equity_universe")
+        except Exception:  # noqa: BLE001 - a missing table is "no universe", not a crash
+            rows = []
     universe = [str(r["ticker"]).strip().upper() for r in rows if r.get("ticker")]
     etfs = [str(t).strip().upper() for t, info in ROTATION_ETFS.items()
             if (info or {}).get("group") not in ("yield", "commodity")]
