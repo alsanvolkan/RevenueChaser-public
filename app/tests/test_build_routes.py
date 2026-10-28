@@ -150,3 +150,10 @@ def test_an_attended_dataset_is_refused_with_the_command_to_run_instead(client):
     r = client.post("/api/build/request/wrds/sec_idhist")
     assert r.status_code == 409 and "CLI" in r.get_json()["error"]
     assert not ops.ops_path().exists() or _rows() == []        # nothing queued (the route did not even open ops)
+
+
+def test_the_panel_header_cannot_claim_to_be_the_cli(client):
+    """Review nit: `requested_by` "cli" is what lets an attended dataset run; a header must not produce it."""
+    r = client.post("/api/build/request/market_series", headers={"X-RC-Panel": "CLI "})
+    assert r.status_code == 202
+    assert _rows()[-1]["requested_by"] == "panel:cli"

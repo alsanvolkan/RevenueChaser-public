@@ -83,6 +83,7 @@ ISSUE_KINDS = {
     "figi_ticker_differs": "OpenFIGI's ticker for the CUSIP is not the SEC ticker",
     "cusip_shared": "one CUSIP linked to two SEC tickers (key: the CUSIP)",
     "cik_many_gvkeys": "a CIK with several Compustat companies and no ticker match among them (key: the CIK)",
+    "index_key_empty": "an index key of INDEX_GVKEYX with no comp.idxcst_his rows (key: the index)",
     "fund_file_short": "a fund file under its index's floor today, so it did not count (key: index:provider-fund)",
     "member_not_in_sec": "a fund-file holding that matches no SEC ticker (key: index:ticker)",
     "member_not_tier_a": "an index member that is not Tier A (key: index:ticker)",
@@ -483,6 +484,11 @@ class SpineSecurity:
                         "valid_to": _next_day(w["thru"]), "source": IDXCST_HIS.name,
                         "source_as_of": w["source_as_of"]})
         found += _wrds_differs(out, wrds)
+        if wrds:
+            # One wrong index key among right ones answers no rows for it: say so once, not per member.
+            seen = {w["gvkeyx"] for w in wrds}
+            found += [("index_key_empty", slug, f"comp.idxcst_his answered no rows for gvkeyx {key}")
+                      for slug, key in sorted(INDEX_GVKEYX.items()) if key not in seen]
         return out, found
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:

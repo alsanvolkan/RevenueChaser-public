@@ -1295,7 +1295,10 @@ def _build_dataset(name: str):
 
 
 def _requested_by() -> str:
-    return (request.headers.get(_PANEL_HEADER) or "").strip()[:_REQUESTED_BY_MAX] or "panel"
+    """The panel header's value, or "panel". "cli" is the builder CLI's own mark (an attended dataset runs only for
+    it), so a header that says it is recorded as "panel:cli"."""
+    by = (request.headers.get(_PANEL_HEADER) or "").strip()[:_REQUESTED_BY_MAX] or "panel"
+    return "panel:cli" if by.lower() == "cli" else by
 
 
 @app.route("/api/build/request/<path:dataset>", methods=["POST"])

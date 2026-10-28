@@ -124,13 +124,24 @@ def test_sync_issues_leaves_other_kinds_and_datasets_alone():
     assert ops.open_issues("spine/security")[0] == 1 and ops.open_issues("market_series")[0] == 1
 
 
-def test_http_post_counts_every_attempt_and_retries_a_429(http_mock):
-    answers = iter([(429, b"slow", {}), (200, b"[]", {})])
+def test_http_post_counts_every_attempt_and_retries_a_429_after_its_reset(http_mock):
+    answers = iter([(429, b"slow", {"ratelimit-reset": "7"}), (200, b"[]", {})])
     http_mock.add("figi.test", lambda request: next(answers))
-    ctx = base.RunContext(run_id="r", dataset="d", sleep=lambda s: None)
+    slept = []
+    ctx = base.RunContext(run_id="r", dataset="d", sleep=slept.append)
     r = base.http_post(ctx, "openfigi", "https://figi.test/v3/mapping", json=[{"a": 1}], headers={"X-K": "k"})
     assert r.status_code == 200 and ctx.calls["openfigi"] == [2, 0, 1]
+    assert slept == [8.0]                                  # ratelimit-reset + 1 s, not the ladder's backoff
     assert http_mock.calls("figi.test")[0].headers["X-K"] == "k"
+
+
+def test_http_post_does_not_retry_a_401(http_mock):
+    http_mock.add("figi.test", b"bad key", status=401)
+    slept = []
+    ctx = base.RunContext(run_id="r", dataset="d", sleep=slept.append)
+    with pytest.raises(base.SourceError, match="HTTP 401"):
+        base.http_post(ctx, "openfigi", "https://figi.test/v3/mapping", json=[])
+    assert ctx.calls["openfigi"] == [1, 1, 0] and slept == []
 
 
 def test_the_cli_backfills_several_datasets_in_one_process(fake, monkeypatch):

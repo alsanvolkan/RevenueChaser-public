@@ -181,7 +181,7 @@ def classification_universe_rows(mc_min: float = DEFAULT_MC_MIN) -> list[dict]:
     if _spine():
         rows = _by_cap(_spine_universe(), mc_min)
     else:
-            rows = rawstore.query(
+        rows = rawstore.query(
             f"SELECT ticker, market_cap, sector, industry FROM {_UNIVERSE_TABLE} "
             f"WHERE COALESCE(market_cap, 0) >= ? ORDER BY market_cap DESC",
             [mc_min])

@@ -1042,12 +1042,21 @@ The sources load their Parquet into TEMP tables of the build connection (never s
 datasets build in `DATASETS` order, so `spine/security` builds last. Raw and Parquet follow the market store's
 rules (`raw/<source>/<dataset>/...`, `parquet/<source>/<dataset>/...`; a raw file that exists is the resume marker).
 
-**Attended (WRDS).** The three WRDS datasets need a person: the login is `WRDS_USERNAME` with the password in that
-user's `~/.pgpass`, then a Duo push. They are never due, a request a page or the schedule queued is skipped (`skipped:
-attended ...`), the route answers 409, and the CLI runs them: `python -m RevenueChaser.rcdata.build backfill
-wrds/sec_idhist wrds/co_hgic wrds/idxcst_his openfigi/map` opens one WRDS connection for the whole process. A failed
-login fails the run and keeps the last snapshot served. The `wrds` package is imported only then (a server
-dependency, not in `requirements.txt`).
+**Attended (WRDS).** The three WRDS datasets need a person, and run in their own interpreter: `wrds` is not in the
+builder's venv (on the server it has a venv of its own, because its pandas has no wheel for the builder's Python).
+`rcdata/build/spine/wrds_worker.py` runs under `RC_WRDS_PYTHON` (that venv's python, set in the server's env file;
+no default), one subprocess per builder process, so one WRDS connection: the login is that venv's
+`wrds.Connection` (the user from `WRDS_USERNAME` when set, the password from that user's `~/.pgpass`; WRDS may ask
+for a Duo push). The worker streams each answer in chunks to `<table>.jsonl.gz`; the builder types it in DuckDB.
+The datasets are never due, a request a page or the schedule queued is skipped (`skipped: attended ...`), the
+route answers 409, and the CLI runs them: `python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist
+wrds/co_hgic wrds/idxcst_his openfigi/map` starts one worker for the whole process. A failed login, or no
+interpreter at `RC_WRDS_PYTHON`, fails the run and keeps the last snapshot served. `requested_by` `cli` is the CLI's
+own mark: a panel header that says `cli` is recorded as `panel:cli`.
+
+**Starts by hand.** Every spine dataset is not due until it has built once (a `changed` or `unchanged` check, from
+the CLI or a Fetch), so the first hourly builder pass after a deploy calls no spine source before the attended
+steps, and a first attempt that failed is not retried every hour.
 
 **Served tables** (`spine` serving schema version `1`). Periods are `valid_from` inclusive, `valid_to` exclusive
 (Compustat's inclusive ends are moved one day on), `valid_to` NULL while current.
@@ -1061,20 +1070,25 @@ dependency, not in `requirements.txt`).
 
 **Tier rule v1** (`rcdata/build/spine/tier.py`): A = listed on Nasdaq, NYSE or Cboe and not an excluded type
 (`core.identity.types.EXCLUDED_TYPES`; an untyped name stays); B = listed, excluded type; C = OTC; D = no exchange.
-The type comes from `core.identity.types.classify_type` over OpenFIGI's types and the name (no SEC submissions).
+The type comes from `core.identity.types.classify_type` over OpenFIGI's types and the name (no SEC submissions);
+a name those leave untyped takes Compustat's `tpci` of its linked security (`0` common, `F` ADR, `%` ETF; others
+type nothing).
 
 **The link.** CIK -> Compustat companies -> the security whose `tic` is the SEC ticker (`BRK.B` -> `BRK-B`), else
 the only active US security of a CIK with one SEC ticker; otherwise no link and no CUSIP.
 
 **Membership** (working choice): a fund file counts on a day when it parsed and holds at least its index's floor;
-a name is a member when more than half of the counting files hold it, matched to the SEC file by CUSIP, then by
-ticker, then by the ticker without its class dash.
+a name is a member when more than half of the counting files hold it. Each day's lines are matched against that
+day's SEC snapshot (the newest on or before it), by CUSIP, then by ticker, then by the ticker without its class
+dash; a line whose CUSIP is not the ticker's known CUSIP is no match. A member that later leaves the SEC file keeps
+its periods. Compustat constituents get a ticker only through the link (never Compustat's current `tic` alone).
 
 **Build issues** live in `ops.sqlite` `build_issues` (D6), dataset `spine/security`, synced after each swap
 (`ops.sync_issues`: found again stays open, gone is resolved). Kinds: `source_never_run`, `tier_a_no_wrds_link`,
 `tier_a_no_cusip`, `tier_a_no_figi`, `tier_a_no_gics`, `figi_ticker_differs`, `cusip_shared`, `cik_many_gvkeys`,
-`fund_file_short`, `member_not_in_sec`, `member_not_tier_a`, `membership_files_disagree`, `membership_wrds_differs`.
+`index_key_empty`, `fund_file_short`, `member_not_in_sec`, `member_not_tier_a`, `membership_files_disagree`, `membership_wrds_differs`.
 A rule needing a source that has never run is not applied; that source is one `source_never_run` row.
+`index_key_empty`: an index key with no `comp.idxcst_his` rows in a run that answered rows for another.
 
 **The bridge (D4).** Views in `spine.duckdb` under the old names, with the old columns in the old order:
 `equity_universe` (the listed rows, Tier A and B), `security_master`, `index_constituents` (current fund-file
@@ -1083,8 +1097,10 @@ NULL: the spine holds no market data.
 
 **Reading it.** `rcdata.read.universe(tiers=("A",))`, `rcdata.read.identity(tickers)`,
 `rcdata.read.membership(index, on, source)`. `core/universe.py` reads them when `RC_UNIVERSE_SOURCE=spine`
-(market cap, price and quote still from the old `equity_universe` by ticker); the default stays the old store
-until PR 6.
+(market cap, price and quote still from the old `equity_universe` by ticker; a spine name left untyped takes
+`security_master`'s type); the default stays the old store until PR 6. With the variable set but no spine file, or
+a last `spine/security` build that failed, the old store is read, a warning is logged, and the Settings Identity card
+says so ("Boards read"). The variable is read from the process environment: changing it needs a restart.
 
 ## Migration
 Two separate things, deliberately not conflated:

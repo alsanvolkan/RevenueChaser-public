@@ -190,6 +190,12 @@ def test_a_reused_ticker_does_not_give_an_old_members_history_to_its_new_owner(b
                                                                  source=wrds.IDXCST_HIS.name)}
 
 
+def test_an_index_key_with_no_constituent_rows_is_one_issue(built):
+    """The fixture has no SmallCap 600 rows (030824): one issue for the key, not a silent gap."""
+    assert ("index_key_empty", "sp600") in _issues()
+    assert ("index_key_empty", "sp500") not in _issues() and ("index_key_empty", "sp400") not in _issues()
+
+
 def test_build_issues_name_the_plans_problems(built):
     issues = _issues()
     assert ("tier_a_no_figi", "NVR") in issues                     # OpenFIGI: absent

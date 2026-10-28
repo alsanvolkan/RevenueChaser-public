@@ -14,7 +14,7 @@ the last dataset of the kind, ``spine/security``, builds the four served tables 
   index membership;
 - ``spine/security``: no fetch; tier rule v1 (``tier.py``), the served tables ``security``, ``security_history``,
   ``gics_history`` and ``index_membership``, the views under the old ``raw.duckdb`` names (D4), and the build-issue
-  rules (``issues.py``), whose rows go to ``ops.sqlite`` (D6), synced once the new file is live.
+  rules (``security.ISSUE_KINDS``), whose rows go to ``ops.sqlite`` (D6), synced once the new file is live.
 
 ``build_kind`` builds every dataset of the kind in ``DATASETS`` order, so the sources' staging tables exist when
 ``spine/security`` builds. A source that never ran has empty staging tables, never a missing one.
