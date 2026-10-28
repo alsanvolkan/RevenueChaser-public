@@ -1,7 +1,8 @@
 """The read API of the market store (D4): the only place a board gets market data, and the only SQL it runs.
 
-Two serving kinds: ``market`` (``market_series``, ``spx_expiry_strike``) and, since PR 5, the identity ``spine``
-(``universe``, ``identity``, ``membership``).
+Serving kinds: ``market`` (``market_series``, ``spx_expiry_strike``), since PR 5 the identity ``spine``
+(``universe``, ``identity``, ``membership``), and since PR 12 the ``fundamentals`` layer (``statements``,
+``earnings_events``, ``estimates``, ``filing_text``, ``segments``, ``customers``, ``peers``, ``revisions``).
 
 Every row comes back with its provenance (``session_date``, ``source``, ``fetched_at``, ``source_as_of``, ``run_id``)
 and ``status``, the newest ``dataset_check`` result of its dataset (``never_checked`` before the first). Each call
@@ -39,7 +40,15 @@ def _rows(table: str, sql: str, params: list) -> list[dict]:
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
     finally:
         con.close()
-    status = dataset_status(DATASET_OF_TABLE[table])
+    dataset = DATASET_OF_TABLE[table]
+    if dataset is None:
+        # A table several datasets write: each row's status is its own source's newest check.
+        seen: dict[str, str] = {}
+        for r in rows:
+            src = str(r.get("source") or "")
+            r["status"] = seen[src] if src in seen else seen.setdefault(src, dataset_status(src))
+        return rows
+    status = dataset_status(dataset)
     for r in rows:
         r["status"] = status
     return rows
@@ -135,6 +144,105 @@ def membership(index: str | None = None, on=None, source: str = "funds/index_hol
         sql += " AND valid_from <= ? AND (valid_to IS NULL OR valid_to > ?)"
         params += [_day(on), _day(on)]
     return _rows("index_membership", sql + " ORDER BY index_slug, ticker", params)
+
+
+# ── The fundamentals layer (PR 12) ────────────────────────────────────────────────────────────────────────────
+
+# A table several datasets write maps to None: each row's ``status`` is the newest check of its ``source``.
+DATASET_OF_TABLE.update({"fundamental_fact": None, "earnings_event": None, "estimate_latest": "yfinance/estimates",
+                         "filing_item": "sec/filings", "segment_revenue": None, "customer_share": None,
+                         "peer_group": "fundamentals/tables", "fundamental_revision": None})
+KIND_OF_TABLE.update({t: "fundamentals" for t in ("fundamental_fact", "earnings_event", "estimate_latest",
+                                                  "filing_item", "segment_revenue", "customer_share", "peer_group",
+                                                  "fundamental_revision")})
+
+
+def _cik(cik) -> str:
+    """A CIK as the layer keys it: digits without leading zeros (``0000789019`` and 789019 are ``789019``)."""
+    text = str(cik or "").strip()
+    return str(int(text)) if text.isdigit() else text
+
+
+def statements(cik, period_type: str = "quarterly", n: int = 8, fields: Iterable[str] | None = None) -> list[dict]:
+    """``fundamental_fact`` rows of company ``cik``: its ``n`` newest period ends of ``period_type`` (``annual`` or
+    ``quarterly``), one row per field (``fields`` only, when given), newest first. Every SEC row carries its
+    accession, filed date and form; a ``preliminary`` row (UW's, ahead of the 10-Q) has none."""
+    sql = "SELECT * FROM fundamental_fact WHERE cik = ? AND period_type = ?"
+    params: list = [_cik(cik), str(period_type)]
+    wanted = [str(f) for f in fields or []]
+    if wanted:
+        sql += f" AND field IN ({', '.join('?' * len(wanted))})"
+        params += wanted
+    sql += (" AND period_end IN (SELECT DISTINCT period_end FROM fundamental_fact WHERE cik = ? AND period_type = ? "
+            "ORDER BY period_end DESC LIMIT ?) ORDER BY period_end DESC, field")
+    return _rows("fundamental_fact", sql, params + [_cik(cik), str(period_type), int(n)])
+
+
+def earnings_events(cik=None, start=None, end=None) -> list[dict]:
+    """``earnings_event`` rows (of ``cik``, or every company) with ``start <= report_date <= end``, by date: a
+    coming report from a calendar (``confirmed`` false) or one that happened (an 8-K item 2.02, its accession)."""
+    sql, params = "SELECT * FROM earnings_event WHERE true", []
+    if cik is not None:
+        sql += " AND cik = ?"
+        params.append(_cik(cik))
+    if start is not None:
+        sql += " AND report_date >= ?"
+        params.append(_day(start))
+    if end is not None:
+        sql += " AND report_date <= ?"
+        params.append(_day(end))
+    return _rows("earnings_event", sql + " ORDER BY report_date, cik, source", params)
+
+
+def estimates(tickers: Iterable[str]) -> list[dict]:
+    """``estimate_latest`` rows of ``tickers`` (upper-cased): each ticker's newest estimates per period."""
+    wanted = sorted({str(t).strip().upper() for t in tickers if str(t or "").strip()})
+    if not wanted:
+        return []
+    return _rows("estimate_latest", f"SELECT * FROM estimate_latest WHERE ticker IN ({', '.join('?' * len(wanted))}) "
+                                    "ORDER BY ticker, period", wanted)
+
+
+def filing_text(cik, item: str = "business") -> dict | None:
+    """The served text of company ``cik``'s newest annual report (``item`` ``business``) or proxy (``proxy``), with
+    its ``quality`` (never ``ok`` at the cap); None when there is none."""
+    rows = _rows("filing_item", "SELECT * FROM filing_item WHERE cik = ? AND kind = 'document' AND item = ? "
+                                "ORDER BY filing_date DESC LIMIT 1", [_cik(cik), str(item)])
+    return rows[0] if rows else None
+
+
+def segments(cik, axis: str | None = None, source: str | None = None) -> list[dict]:
+    """``segment_revenue`` rows of company ``cik`` (``axis`` ``business``, ``product`` or ``geographic``; ``source``
+    ``sec/filings`` or ``wrds/segments``; each optional), newest period first, the biggest value first."""
+    sql, params = "SELECT * FROM segment_revenue WHERE cik = ?", [_cik(cik)]
+    for col, value in (("axis", axis), ("source", source)):
+        if value is not None:
+            sql += f" AND {col} = ?"
+            params.append(str(value))
+    return _rows("segment_revenue", sql + " ORDER BY period_end DESC, source, axis, value DESC", params)
+
+
+def customers(cik) -> list[dict]:
+    """``customer_share`` rows of company ``cik``, newest period first, the biggest share first."""
+    return _rows("customer_share", "SELECT * FROM customer_share WHERE cik = ? "
+                                   "ORDER BY period_end DESC, share DESC NULLS LAST, customer", [_cik(cik)])
+
+
+def peers(cik) -> list[dict]:
+    """``peer_group`` rows of company ``cik``, nearest first (``rank``)."""
+    return _rows("peer_group", "SELECT * FROM peer_group WHERE cik = ? ORDER BY rank", [_cik(cik)])
+
+
+def revisions(cik=None, since=None) -> list[dict]:
+    """``fundamental_revision`` rows (of ``cik``, or every company), Compustat snapshots from ``since`` on."""
+    sql, params = "SELECT * FROM fundamental_revision WHERE true", []
+    if cik is not None:
+        sql += " AND cik = ?"
+        params.append(_cik(cik))
+    if since is not None:
+        sql += " AND new_as_of >= ?"
+        params.append(_day(since))
+    return _rows("fundamental_revision", sql + " ORDER BY new_as_of DESC, cik, datadate, item", params)
 
 
 def as_frame(rows: list[dict]):
