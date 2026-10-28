@@ -6,7 +6,7 @@ the raw documents are large, immutable and write-once; ``edgar_documents`` in
 ``edgar.duckdb`` keeps only the metadata (path, sha256, sizes). CIK keying means
 dual-class shares (same CIK, same filing) store one file, not one per ticker.
 
-See docs/classification_design.md Phase 4 and docs/data_architecture.md.
+See docs/data_architecture.md (the EDGAR store; the Phase 4 history is in the private notes).
 """
 from __future__ import annotations
 

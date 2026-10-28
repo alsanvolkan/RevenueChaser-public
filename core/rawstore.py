@@ -697,7 +697,7 @@ MANIFEST: dict[str, dict] = {
         "history_mode": "event",
         # Metadata only — the raw HTML lives as files under edgar_docs/
         # (core/edgar_docs.py). Keyed by accession; CIK + accession identify the
-        # file. See docs/classification_design.md Phase 4. D16 (#299): append, the
+        # file. See docs/data_architecture.md (EDGAR store). D16 (#299): append, the
         # first write of an accession wins (a filed document does not change);
         # ``source`` 'sec_archives' and ``run_at`` are added to an existing store by
         # ``_ensure_table`` (ALTER TABLE ADD COLUMN), no schema bump.
@@ -3186,7 +3186,7 @@ def _auto_ensure(write: bool) -> None:
 
 # Old table name -> new. Applied idempotently on `ensure_all_tables()`, BEFORE any
 # CREATE IF NOT EXISTS, so a rename is never shadowed by an empty new table.
-# See docs/glossary.md + docs/classification_design.md (Phase 1).
+# See docs/glossary.md + docs/classification_design.md (Target data model).
 _RENAMES: dict[str, str] = {
     "asymmetric_universe_meta": "equity_universe_provenance",
     "asymmetric_universe": "equity_universe",
