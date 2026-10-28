@@ -313,3 +313,4 @@ def test_the_spine_section_states_what_the_code_owns():
         assert f"`{kind}`" in section, kind
     assert f"**Tier rule v{tier.VERSION}**" in section
     assert f"`{universe.SOURCE_ENV}={universe.SPINE}`" in section
+    assert f"`{universe.SOURCE_ENV}={universe.STORE}`" in section            # PR 6: the old store, the rollback

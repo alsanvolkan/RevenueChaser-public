@@ -17,7 +17,7 @@ file disagree, trust the code, then fix this file in the same change.
 | Sector + industry | `core/identity/` (`security_master`, the single writer via `apply.py`), `core/gics_map.py` (the 11 Morningstar names, the two-level path) | issues #85, #86, #265, #266 |
 | Themes | `core/taxonomy.py`, `core/ticker_themes.py` | `docs/classification_design.md` |
 | Universe | `core/universe.py` (reader), writer below | `docs/data_health.md` |
-| Index membership | `core/index_registry.py` | — |
+| Index membership | `core/index_registry.py` (reads; the old lists: `core/index_lists.py`) | — |
 | Area map (which area owns what) | — | `docs/system_map.md` (issue #45; may not exist yet) |
 
 ## 1. Where data lives
@@ -147,12 +147,19 @@ file disagree, trust the code, then fix this file in the same change.
 
 ## 6. Index membership
 
-- `core/index_registry.py` → the `index_constituents` table, read via the
-  `index_tickers` view. Sources are all Unusual Whales: S&P 500 (screener
-  `is_s_p_500`), Dow (DIA holdings), Nasdaq Composite (exchange map).
-- A completeness guard stops a partial fetch from shrinking an index.
+- `core/index_registry.py` is what the boards read (badges, the filter's index
+  list, `load_index`). By default (PR 6) it reads the identity spine through
+  `rcdata.read`: the current fund-file members of the S&P 500 / 400 / 600 and
+  the Nasdaq-100, and `nasdaq` = listed on Nasdaq; there is no Dow Jones on the
+  spine. `RC_UNIVERSE_SOURCE=store` reads the old store instead.
+- `core/index_lists.py` writes the old store's `index_constituents` (read via the
+  `index_tickers` view). Sources are all Unusual Whales: S&P 500 (screener
+  `is_s_p_500`), Dow (DIA holdings), Nasdaq Composite (exchange map); sp600 from
+  the S&P 1500 snapshot. A completeness guard stops a partial fetch from
+  shrinking a list. It goes with the old path (plan PR 21).
   **Russell 2000 is deferred** (#9).
-- Build: `python -m RevenueChaser.core.index_registry [--refresh]`.
+- Build: `python -m RevenueChaser.scripts.index_lists --weekly` (the old lists);
+  `python -m RevenueChaser.core.index_registry` prints what the boards read.
 
 ## 7. Tracking
 
