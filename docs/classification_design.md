@@ -270,7 +270,7 @@ extracted, facts filtered); **no BLOB duplication**.
 - Pipeline: `PILOT_N=50` gate -> 3,634 (no 7,403 in the first job).
 
 ### Phase 8a — NMF shadow
-- Normalize tags (`max_df 0.5`; synonyms in `module_relatedness/normalize.py`).
+- Normalize tags (`max_df 0.5`; synonyms in `module_relatedness/themes.py:82`).
 - Tag x ticker TF-IDF matrix.
 - Choose k by **elbow + stability >= 0.90 (5 seeds) + min size >= 20**; min size
   wins ties.
@@ -327,7 +327,7 @@ extracted, facts filtered); **no BLOB duplication**.
 | $ hard-stop | ~1.5x expected (~$8) |
 | Value Chain precision | P >= 0.70 on a labeled 50; max 40 edges/ticker; Refresh <= 30 s |
 | Zip SIC coverage floor | >= 90% |
-| DF threshold / synonyms | `max_df 0.5`; `module_relatedness/normalize.py` |
+| DF threshold / synonyms | `max_df 0.5`; `module_relatedness/themes.py:82` |
 | `theme_runs` | `id, created_at, k_fine, k_medium, k_coarse, jaccard, is_current` |
 | Pending TTL | 6 h |
 | Job mutex | host-level file lock (crawler, 13F, guidance) |
