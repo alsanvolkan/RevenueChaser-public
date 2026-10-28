@@ -222,8 +222,8 @@ def _owners(con: duckdb.DuckDBPyConnection) -> None:
     """``_owners(cusip, gvkey, iid, efffrom, effthru)`` (TEMP): every security Compustat gives each CUSIP, now or
     before, with the dates of its identifier history; a security's own CUSIP with no dated row has none (NULL: any
     period)."""
-    security = wrds._parquet_files(wrds.SEC_IDHIST.name, "security")
-    history = wrds._parquet_files(wrds.SEC_IDHIST.name, "sec_idhist")
+    security = wrds.parquet_files(wrds.SEC_IDHIST.name, "security")
+    history = wrds.parquet_files(wrds.SEC_IDHIST.name, "sec_idhist")
     _empty(con, "_owners", OWNERS)
     if history:
         con.execute(f"INSERT INTO _owners SELECT DISTINCT upper(itemvalue), gvkey, iid, efffrom, effthru "
