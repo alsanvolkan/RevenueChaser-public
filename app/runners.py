@@ -1214,23 +1214,48 @@ def spxgamma_view_report() -> Path | None:
     return _SPX_VIEW
 
 
-def run_spxgamma(uw, asof_date: str, force: bool = False, builder_request: dict | None = None) -> Path:
+# The builder datasets the SPX Gamma board reads (PR 3): its Fetch asks the builder for both and renders at once with
+# what is stored (decision A4), never waiting on them.
+SPX_BUILDER_DATASETS = ("uw/spot_expiry_strike", "market_series")
+SPX_REQUESTED_BY = "spx_gamma"
+
+
+def spx_builder_request() -> dict:
+    """Queue one build of each dataset the board reads (``ops.enqueue_once``: one already queued or running adds
+    nothing); the first step of an accepted SPX Gamma Fetch's job, so a refused Fetch queues nothing and no route
+    lock is held while ``ops.sqlite`` is written. What each got goes on the board. A locked or broken ``ops.sqlite``
+    is a note, never a failed Fetch (D1: the board only puts requests into the queue)."""
+    from RevenueChaser.core.calendar import now_ny
+    from RevenueChaser.rcdata import ops
+
+    datasets: dict[str, str] = {}
+    for name in SPX_BUILDER_DATASETS:
+        try:
+            rid = ops.enqueue_once(name, None, by=SPX_REQUESTED_BY)
+            datasets[name] = "queued" if rid is not None else "already queued"
+        except Exception as exc:  # noqa: BLE001 - the board renders what is stored either way
+            logger.warning("spx gamma: builder request for %s not queued: %s", name, exc)
+            datasets[name] = f"not queued ({type(exc).__name__}: {exc})"[:200]
+    return {"requested_at": f"{now_ny():%Y-%m-%d %H:%M} New York", "datasets": datasets}
+
+
+def run_spxgamma(uw, asof_date: str, force: bool = False) -> Path:
     """Run the SPX Option Position Map (Unusual Whales) for one as-of date.
 
     The module uses the job's own ``uw`` client, so its calls count in the job's provider health.
     A stored past day is rebuilt from disk with no network; ``force`` refetches it (#179 D5).
-    ``builder_request`` is what the route queued for the builder (PR 3); the board says so.
+    It first asks the builder for the board's two datasets (PR 3, :func:`spx_builder_request`); the board says so.
     """
     global _SPX_VIEW
     from RevenueChaser.module_spx_gamma.run import run as spx_run
     from RevenueChaser.module_spx_gamma.config import DATA_ROOT as spx_data_root
 
-    out = spx_run(asof_date, uw=uw, force=force, builder_request=builder_request)
+    out = spx_run(asof_date, uw=uw, force=force, builder_request=spx_builder_request())
     _SPX_VIEW = (out or {}).get("paths", {}).get("report_html")
     return spx_data_root / "latest.json"
 
 
-def run_spxgamma_stored(uw, asof_date: str, builder_request: dict | None = None) -> Path:
+def run_spxgamma_stored(uw, asof_date: str) -> Path:
     """Rebuild a stored past SPX day from disk (#179 D5): no UW client, so no auth probe either.
 
     Registered with ``requires_uw=False``; the route sends a date here only when
@@ -1240,7 +1265,7 @@ def run_spxgamma_stored(uw, asof_date: str, builder_request: dict | None = None)
     from RevenueChaser.module_spx_gamma.run import refresh
     from RevenueChaser.module_spx_gamma.config import DATA_ROOT as spx_data_root
 
-    out = refresh(asof_date, builder_request=builder_request)
+    out = refresh(asof_date, builder_request=spx_builder_request())
     _SPX_VIEW = out["paths"]["report_html"]
     return spx_data_root / "latest.json"
 

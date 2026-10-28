@@ -804,32 +804,9 @@ def run_spxgamma():
         refused = _busy(("spxgamma_history",), "The SPX Gamma history pull is running; Fetch again when it finishes.")
         if refused:
             return refused
-        params["builder_request"] = _spx_builder_request()
+        # The builder is asked by the job itself (runners.spx_builder_request): only for an accepted Fetch, and
+        # outside this lock (PR 3 review).
         return _submit(module, params)
-
-
-# The builder datasets the SPX Gamma board reads (PR 3): its Fetch asks the builder for both and renders at once with
-# what is stored (decision A4), never waiting on them.
-_SPX_BUILDER_DATASETS = ("uw/spot_expiry_strike", "market_series")
-_SPX_REQUESTED_BY = "spx_gamma"
-
-
-def _spx_builder_request() -> dict:
-    """Queue one build of each dataset the board reads (``ops.enqueue_once``: one already queued or running adds
-    nothing). What each got is handed to the job, which says so on the board. A locked or broken ``ops.sqlite`` is a
-    note, never a failed Fetch (D1: the board only puts requests into the queue)."""
-    from RevenueChaser.rcdata import ops
-
-    datasets: dict[str, str] = {}
-    for name in _SPX_BUILDER_DATASETS:
-        try:
-            rid = ops.enqueue_once(name, None, by=_SPX_REQUESTED_BY)
-            datasets[name] = "queued" if rid is not None else "already queued"
-        except Exception as exc:  # noqa: BLE001 - the board renders what is stored either way
-            logger.warning("spx gamma: builder request for %s not queued: %s", name, exc)
-            datasets[name] = f"not queued ({type(exc).__name__}: {exc})"[:200]
-    from RevenueChaser.core.calendar import now_ny
-    return {"requested_at": f"{now_ny():%Y-%m-%d %H:%M} New York", "datasets": datasets}
 
 
 # The SPX jobs that write raw/<date>/: one at a time from the queue.

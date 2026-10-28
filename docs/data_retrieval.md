@@ -157,9 +157,10 @@ button silently degrades to a plain iframe reload.
   (`module_spx_gamma/store_reads.py` over `rcdata.read`: `market_series` and
   `spx_gamma_expiry_strike`), so a Fetch and a Refresh of a day render the same.
 - **SPX Gamma's Fetch (`POST /run/spxgamma`) also asks the builder** (PR 3, decision
-  A4): it queues one `uw/spot_expiry_strike` and one `market_series` build
-  (`ops.enqueue_once`, `requested_by` `spx_gamma`; one already queued adds nothing),
-  then runs the board's own UW snapshot as before and renders at once with what is
+  A4): the job of an accepted Fetch first queues one `uw/spot_expiry_strike` and
+  one `market_series` build (`ops.enqueue_once`, `requested_by` `spx_gamma`; one
+  already queued adds nothing; a refused Fetch queues nothing), then runs the
+  board's own UW snapshot as before and renders at once with what is
   stored, saying "builder requested at <time>; the builder runs hourly at :07". It
   never waits on the builder. There is no live fallback any more: no yfinance VIX,
   no Socrata COT, no candle fetch; an input the store does not hold for the day
