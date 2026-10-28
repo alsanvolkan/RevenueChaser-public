@@ -7,7 +7,7 @@ in `tools/flow_data.py` (`AS_OF`).
 
 | File | What it is |
 |---|---|
-| [data_system.md](data_system.md) | How the data system works, in prose: layers, store files, jobs, write rules, retention, backups, source links, and the planned changes per phase. |
+| [data_system.md](data_system.md) | How the data system works, in prose: layers, store files, jobs, write rules, retention, backups, source links. |
 | [data_flow.md](data_flow.md) | One row per dataset: source, writer function, file, table, key, write rule, how long it stays, and the planned target. Generated. |
 | [data_flow.svg](data_flow.svg) | The overview chart: sources, then the jobs that write, then where it is stored. Generated. |
 | [tools/flow_data.py](tools/flow_data.py) | The data behind both generated files. Edit this, not the generated files. |
@@ -25,5 +25,5 @@ Refresh).
   `python .bookkeeping/tools/render_flow.py` from the repo root, and commit the regenerated `data_flow.md` and
   `data_flow.svg` with the change. Set `AS_OF` to the commit the values were read from.
 - **Where else it shows:** the same page is published as the "RevenueChaser Data Flow" artifact; the plan is to
-  show this record inside the dashboard under Settings / Data Health (see `data_system.md` §8).
+  show this record inside the dashboard under Settings / Data Health (the plan is in the private notes bookkeeping/data_system-decision-log.md).
 
