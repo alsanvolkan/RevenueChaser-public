@@ -49,14 +49,22 @@ def test_the_ishares_file_is_the_product_pages_latest_holdings_csv():
     assert url == "https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/latest-holdings.csv"
 
 
+def test_the_vanguard_file_is_the_daily_creation_basket():
+    """The old ``profile/api/<ticker>/portfolio-holding/stock`` answers 404 since Oct 2026."""
+    urls = {f.fund: f.url() for f in funds.FILES if f.provider == "vanguard"}
+    assert urls == {"VOO": "https://etfportal.vanguard.com/extrapi/v2/us/standard/01S990737/CRRD/holdings.json",
+                    "IVOO": "https://etfportal.vanguard.com/extrapi/v2/us/standard/00S991588/CRRD/holdings.json",
+                    "VIOO": "https://etfportal.vanguard.com/extrapi/v2/us/standard/00S991612/CRRD/holdings.json"}
+
+
 def test_vanguard_and_nasdaq():
     rows = funds.parse_vanguard(fx.vanguard_json(fx.SP500, cusip_only=("FDX",)))
-    assert len(rows) == 5 and rows[2] == {"ticker_raw": "-", "cusip": "31428X106", "name": "FEDEX CORP", "weight": 1.0}
+    assert len(rows) == 5 and rows[2] == {"ticker_raw": "", "cusip": "31428X106", "name": "FEDEX CORP", "weight": 1.0}
     assert [r["ticker_raw"] for r in funds.parse_nasdaq(fx.nasdaq_json(["MSFT", "NVDA"]))] == ["MSFT", "NVDA"]
 
 
 @pytest.mark.parametrize("parse, body", [(funds.parse_ssga, None), (funds.parse_ishares, b"Name,Weight\n"),
-                                         (funds.parse_vanguard, b'{"fund": {}}'), (funds.parse_nasdaq, b"{}")])
+                                         (funds.parse_vanguard, b'{"fund": {"entity": []}}'), (funds.parse_nasdaq, b"{}")])
 def test_a_file_of_another_shape_is_a_source_error(parse, body):
     if body is None:
         from openpyxl import Workbook
@@ -94,5 +102,5 @@ def test_a_day_already_fetched_is_not_fetched_again(env):
     env.requests.clear()
     base.run_request({"dataset": funds.NAME, "params": {"as_of": "2026-10-27"}})
     assert {str(r.url).split("/")[2] for r in env.requests} <= {"www.ssga.com", "www.ishares.com",
-                                                                 "investor.vanguard.com"}
+                                                                 "etfportal.vanguard.com"}
     assert len(env.requests) == 3                          # only the three that failed are asked again

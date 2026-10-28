@@ -57,6 +57,9 @@ _TICKER = re.compile(r"^[A-Z][A-Z0-9]{0,5}(-[A-Z0-9]{1,3})?$")
 # (the page's own slug is now ``ishares-core-s-p-500-etf``; the old one still answers the same file).
 ISHARES_PRODUCTS = {"IVV": ("239726", "ishares-core-sp-500-etf"), "IJH": ("239763", "ishares-core-sp-midcap-etf"),
                     "IJR": ("239774", "ishares-core-sp-smallcap-etf")}
+# Vanguard's daily creation basket (PCF), by fund: the basket id. The profile page's ``<portId>-AdditionalFundData``
+# answer (VOO 0968, IVOO 3342, VIOO 3345) names it under ``holdingDetails.portfolioCompositionFile`` if it changes.
+VANGUARD_BASKETS = {"VOO": "01S990737", "IVOO": "00S991588", "VIOO": "00S991612"}
 
 
 def norm_ticker(raw) -> str | None:
@@ -130,15 +133,16 @@ def parse_ishares(data: bytes) -> list[dict]:
 
 
 def parse_vanguard(data: bytes) -> list[dict]:
-    """Vanguard's portfolio-holding API: ``{"fund": {"entity": [{"ticker", "shortName", "cusip",
-    "percentWeight", ...}]}}``. Lines without a ticker (cash, futures) are dropped."""
+    """Vanguard's daily creation basket (PCF): ``{"portId", "trdDateStr", "holding": [{"assetType", "ticker",
+    "cusip", "shrtName", "weighting", ...}]}``. EQUITY lines only; a line with an empty ticker keeps its CUSIP."""
     body = json.loads(data)
     try:
-        entities = body["fund"]["entity"]
+        holding = body["holding"]
     except (KeyError, TypeError) as e:
-        raise base.SourceError("vanguard: no fund.entity list") from e
-    return [{"ticker_raw": e.get("ticker"), "cusip": _cusip(e.get("cusip")), "name": e.get("shortName"),
-             "weight": _weight(e.get("percentWeight"))} for e in entities or [] if (e or {}).get("ticker")]
+        raise base.SourceError("vanguard: no holding list") from e
+    return [{"ticker_raw": h.get("ticker"), "cusip": _cusip(h.get("cusip")), "name": h.get("shrtName"),
+             "weight": _weight(h.get("weighting"))}
+            for h in holding or [] if (h or {}).get("assetType") == "EQUITY" and (h.get("ticker") or h.get("cusip"))]
 
 
 def parse_nasdaq(data: bytes) -> list[dict]:
@@ -175,8 +179,8 @@ class FundFile:
             return (_base("RC_ISHARES_BASE", "https://www.ishares.com")
                     + f"/us/products/{pid}/{slug}/latest-holdings.csv")
         if self.provider == "vanguard":
-            return (_base("RC_VANGUARD_BASE", "https://investor.vanguard.com")
-                    + f"/investment-products/etfs/profile/api/{self.fund}/portfolio-holding/stock")
+            return (_base("RC_VANGUARD_BASE", "https://etfportal.vanguard.com")
+                    + f"/extrapi/v2/us/standard/{VANGUARD_BASKETS[self.fund]}/CRRD/holdings.json")
         return _base("RC_NASDAQ_API_BASE", "https://api.nasdaq.com") + "/api/quote/list-type/nasdaq100"
 
     def raw_name(self) -> str:

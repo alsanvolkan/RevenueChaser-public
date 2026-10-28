@@ -247,6 +247,7 @@ def ssga_xlsx(holdings) -> bytes:
 
 # A fund file's request, by the part of its URL that names the fund (the http mock matches a substring).
 ISHARES_ROUTE = {"IVV": "products/239726/", "IJH": "products/239763/", "IJR": "products/239774/"}
+VANGUARD_ROUTE = {"VOO": "standard/01S990737/", "IVOO": "standard/00S991588/", "VIOO": "standard/00S991612/"}
 
 
 def ishares_csv(holdings, drop_dash=False) -> bytes:
@@ -273,12 +274,15 @@ def ishares_csv(holdings, drop_dash=False) -> bytes:
 
 
 def vanguard_json(holdings, cusip_only=()) -> bytes:
-    """Vanguard's portfolio-holding answer; a name in ``cusip_only`` is written with ``-`` for its ticker, so only
-    its CUSIP can match it."""
-    entity = [{"ticker": "-" if t in cusip_only else t, "shortName": name, "cusip": cusip, "percentWeight": "1.00"}
-              for t, cusip, name in holdings]
-    entity.append({"ticker": "", "shortName": "CASH", "cusip": None, "percentWeight": "0.01"})
-    return json.dumps({"size": len(entity), "fund": {"entity": entity}}).encode()
+    """Vanguard's daily creation basket (PCF) of ``etfportal.vanguard.com/extrapi/v2/us/standard/<basket>/CRRD/
+    holdings.json``; a name in ``cusip_only`` is written with an empty ticker (as the real file writes two IVOO lines),
+    so only its CUSIP can match it. A futures line shows the non-equity lines are dropped."""
+    holding = [{"assetType": "EQUITY", "ticker": "" if t in cusip_only else t, "cusip": cusip, "shrtName": name,
+                "weighting": 1.0, "cashInLieu": "N"} for t, cusip, name in holdings]
+    holding.append({"assetType": "FUTURE", "ticker": "ESZ6", "cusip": None, "shrtName": "S&P500 EMINI FUT",
+                    "weighting": 0.03, "cashInLieu": "N"})
+    return json.dumps({"basketId": "01S990737", "portId": "0968", "trdDateStr": "10/27/2026 00:00:00",
+                       "equityHldgCnt": len(holdings), "holding": holding}).encode()
 
 
 def nasdaq_json(symbols) -> bytes:
@@ -295,6 +299,6 @@ def add_fund_routes(http_mock, sp500=SP500, sp400=SP400, ndx=("MSFT",), fail=())
     http_mock.add("holdings-daily-us-en-mdy", lambda r: maybe("MDY", ssga_xlsx(sp400)))
     http_mock.add(ISHARES_ROUTE["IVV"], lambda r: maybe("IVV", ishares_csv(sp500)))
     http_mock.add(ISHARES_ROUTE["IJH"], lambda r: maybe("IJH", ishares_csv(sp400, drop_dash=True)))
-    http_mock.add("/VOO/portfolio-holding", lambda r: maybe("VOO", vanguard_json(sp500, cusip_only=("FDX",))))
-    http_mock.add("/IVOO/portfolio-holding", lambda r: maybe("IVOO", vanguard_json(sp400)))
+    http_mock.add(VANGUARD_ROUTE["VOO"], lambda r: maybe("VOO", vanguard_json(sp500, cusip_only=("FDX",))))
+    http_mock.add(VANGUARD_ROUTE["IVOO"], lambda r: maybe("IVOO", vanguard_json(sp400)))
     http_mock.add("list-type/nasdaq100", lambda r: maybe("NDX", nasdaq_json(ndx)))
