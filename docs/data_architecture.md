@@ -953,7 +953,8 @@ sidecar (as-of date, fetch time, run id, URL without its query) and Parquet per 
 the newest fetch winning a key.
 
 **`ops.sqlite`** (SQLite WAL, `busy_timeout` 5000 ms on every open; `rcdata/ops.py` owns every statement;
-ops schema version `1`, and a file stamped newer is refused):
+ops schema version `2`; `ensure` upgrades an older file in place, in one transaction, and refuses a file stamped
+newer):
 
 | Table | Holds |
 |---|---|
@@ -965,7 +966,7 @@ ops schema version `1`, and a file stamped newer is refused):
 | `read_log` | Reads per day, process and table (counted in memory, written once a minute) |
 | `uw_remaining` | UW's `x-uw-*` rate headers, sampled once a run: `x-uw-daily-req-count` as `daily_req_count`, `daily_remaining_computed` = our cap (`rcdata/caps.py`) minus it, the per-minute window, and `x-uw-token-req-limit` as sent (it is not the daily cap) |
 | `provider_calls_daily` | Calls, failures and 429s per provider and New York day |
-| `watchlist_option`, `watchlist_stock`, `watchlist_option_changes`, `watchlist_stock_changes` | The two watch lists and their history (no UI yet) |
+| `watchlist_option`, `watchlist_stock`, `watchlist_option_changes`, `watchlist_stock_changes` | The two watch lists (D2): ticker, added at, added by (the board), note; and their history, one row per add or remove with an `id` that keeps its order (version 2 added `id` and `note` to the history). The toggle routes write them (`docs/data_retrieval.md`); `rcdata.read.watchlists()` reads them |
 | `dataset_schedule` | Cadence and pause state per dataset (Pause / Resume on Settings, PR 2) |
 
 **Day caps** (`rcdata/caps.py`, avo's numbers, to be tuned): uw 150,000, sec 40,000, fred 10,000, alpaca 20,000;

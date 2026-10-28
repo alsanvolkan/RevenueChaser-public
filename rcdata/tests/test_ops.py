@@ -25,7 +25,7 @@ def test_ensure_creates_every_table_in_wal_mode_with_the_busy_timeout():
         assert con.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert con.execute("PRAGMA busy_timeout").fetchone()[0] == ops.BUSY_TIMEOUT_MS == 5000
         tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert con.execute("SELECT max(version) FROM ops_schema").fetchone()[0] == ops.OPS_SCHEMA_VERSION == 1
+        assert con.execute("SELECT max(version) FROM ops_schema").fetchone()[0] == ops.OPS_SCHEMA_VERSION == 2
     assert set(ops.TABLES) <= tables
     assert ops.ops_path() == config.MARKET_DIR / "ops.sqlite"
 
@@ -35,7 +35,7 @@ def test_ensure_is_idempotent_and_refuses_a_newer_schema():
     ops.ensure()
     with ops.connect() as con:
         assert con.execute("SELECT count(*) FROM ops_schema").fetchone()[0] == 1
-        con.execute("INSERT INTO ops_schema VALUES (2, 0)")
+        con.execute("INSERT INTO ops_schema VALUES (?, 0)", (ops.OPS_SCHEMA_VERSION + 1,))
     with pytest.raises(ops.OpsSchemaTooNew):
         ops.ensure()
 
