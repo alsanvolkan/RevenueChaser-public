@@ -235,7 +235,7 @@ Center pin: **7,800** · Wing width: **35** (EM 37 pts @ IV 0.08)
 
 Net credit **+24** · Max risk **11** · R:R **1 : 2.18** · Net Θ/day **10** · Breakevens **7,776 – 7,824**
 
-Alternate widths: **25 pts** (credit 24, R:R 1 : 24.00) · **50 pts** (credit 22, R:R 1 : 0.82)
+Alternate widths: **25 pts** (credit 24, R:R 1 : 2.18) · **50 pts** (credit 22, R:R 1 : 0.82)
 
 
 
