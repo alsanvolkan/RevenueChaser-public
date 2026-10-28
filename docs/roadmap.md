@@ -94,15 +94,3 @@ gh api graphql -f query='
   #    (needs the DraftIssue node id, resolve it from the item id first).
   ```
 
-## Current items (as of the 2026-09 migration from future_ideas/)
-
-- Sector/theme-specific screener rules (Issue #2)
-- Biotech screener — Roadmap (4-phase, TNYA baseline)
-- Long-Term Ranking Board (3 clocks, no full-universe download)
-- Stock GEX / Greek Predictor (per-ticker)
-- Weekly US Credit Market Report module
-- Cross-Asset Derivatives Stress Module
-- Forward-Testing: post-earnings drift (1w/2w) as a rule
-- Russell 2000 membership (not yet implemented; deferred options)
-
-Prefer the live board over this list — the board is authoritative.
