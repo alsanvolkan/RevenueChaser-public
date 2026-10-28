@@ -127,3 +127,30 @@ def test_cik_is_normalised_and_text_values_are_typed_by_the_schema(tmp_path):
     import duckdb
     row = duckdb.connect().execute(wrds.raw_rows(raw, wrds.SECURITY)).fetchone()
     assert row == ("001", "01", "X", None, 11, "USA", "A", "0", date(2020, 1, 2))
+
+
+def _security_raw(rows, day="2026-10-27"):
+    raw = wrds.raw_dir(wrds.SEC_IDHIST.name) / day / f"security{wrds.RAW_SUFFIX}"
+    base.write_raw_json(wrds._meta(raw), {"as_of": day, "fetched_at": 1.0, "run_id": "r0",
+                                          "query": "SELECT ...", "rows": len(rows)})
+    fx.write_jsonl(raw, rows)
+    return raw
+
+
+def _sec_row(**kw):
+    row = {"gvkey": "001", "iid": "01", "tic": "X", "cusip": "000000001", "exchg": "11", "excntry": "USA",
+           "secstat": "A", "tpci": "0", "dldtei": None}
+    row.update(kw)
+    return row
+
+
+def test_two_raw_rows_of_one_key_keep_the_same_one_whatever_their_order():
+    import duckdb
+    kept = []
+    for order in (["B", "A"], ["A", "B"]):
+        raw = _security_raw([_sec_row(tic=t) for t in order])
+        ctx = base.RunContext(run_id="r", dataset=wrds.SEC_IDHIST.name)
+        (out,) = wrds.SEC_IDHIST.to_parquet_all(ctx, [raw])
+        kept.append(duckdb.connect().execute(f"SELECT tic FROM read_parquet({base.sql_path(out)})").fetchall())
+    assert kept == [[("A",)], [("A",)]]
+

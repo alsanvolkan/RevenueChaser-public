@@ -413,10 +413,12 @@ class WrdsDataset:
                 if not rows and not delta:
                     raise base.SourceError(f"wrds {table}: the snapshot came back empty")
                 keys = ", ".join(spec["key"])
+                # Two raw rows of one key keep the same one whatever their order: the first by every column.
+                every = ", ".join(f'"{c}" NULLS LAST' for c, _ in spec["schema"])
                 select = (f"SELECT *, DATE '{as_of.isoformat()}' AS source_as_of, "
                           f"CAST({float(meta['fetched_at'])} AS DOUBLE) AS fetched_at, "
                           f"'{meta['run_id']}' AS run_id FROM ({raw_rows(raw, spec['schema'])}) "
-                          f"QUALIFY row_number() OVER (PARTITION BY {keys} ORDER BY {keys}) = 1 ORDER BY {keys}")
+                          f"QUALIFY row_number() OVER (PARTITION BY {keys} ORDER BY {every}) = 1 ORDER BY {keys}")
                 out.append(base.write_parquet(con, select, final))
             finally:
                 con.close()
