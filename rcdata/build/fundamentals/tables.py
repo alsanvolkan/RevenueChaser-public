@@ -13,7 +13,7 @@ import duckdb
 from ....core import calendar
 from ... import ops
 from .. import base
-from . import KIND, common, companyfacts, earnings, facts, filings, uw_financials
+from . import KIND, common, companyfacts, earnings, facts, filings, uw_financials, wrds_fund
 
 NAME = "fundamentals/tables"
 
@@ -46,11 +46,18 @@ EARNINGS_EVENT = [("cik", "TEXT NOT NULL"), ("ticker", "TEXT"), ("report_date", 
                   ("currency", "TEXT"), ("confirmed", "BOOLEAN NOT NULL"), ("accession", "TEXT"),
                   ("source", "TEXT NOT NULL"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
 
+# One row per Compustat value that changed between two monthly snapshots, for a period both held (``wrds_fund``);
+# ``cik`` NULL when the gvkey is no longer a Tier A company's.
+REVISION = [("cik", "TEXT"), ("gvkey", "TEXT NOT NULL"), ("source", "TEXT NOT NULL"), ("datadate", "DATE NOT NULL"),
+            ("item", "TEXT NOT NULL"), ("old_value", "DOUBLE"), ("new_value", "DOUBLE"), ("old_as_of", "DATE NOT NULL"),
+            ("new_as_of", "DATE NOT NULL"), ("run_id", "TEXT")]
+
 SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "fundamental_company": COMPANY,
     "fundamental_fact": FACT,
     "filing_item": FILING_ITEM,
     "earnings_event": EARNINGS_EVENT,
+    "fundamental_revision": REVISION,
 }
 TABLE_CHECKS: dict[str, list[str]] = {
     # Every row is annual or quarterly, and a non-preliminary row carries its accession and filed date.
@@ -71,6 +78,7 @@ STAGED: dict[str, list[tuple[str, str]]] = {
     filings.STAGING["documents"]: filings.DOCUMENT,
     earnings.STAGING: earnings.SCHEMA,
     uw_financials.STAGING: facts.FACT,
+    **{d.revision_staging: wrds_fund.REVISION for d in wrds_fund.DATASETS if d.revisions},
 }
 
 # The named problems, one kind each; ``key`` is the CIK unless the kind says otherwise.
@@ -162,6 +170,19 @@ def _earnings(con: duckdb.DuckDBPyConnection) -> int:
         FROM {filings.STAGING['filings']} f
         WHERE f.form = '8-K' AND f.item = '{EARNINGS_8K_ITEM}' AND f.filing_date IS NOT NULL""")
     return common.count(con, "earnings_event")
+
+
+def _revisions(con: duckdb.DuckDBPyConnection) -> int:
+    """``fundamental_revision``: the Compustat revisions of ``fundq`` and ``funda``, with the company's CIK."""
+    create(con, "fundamental_revision")
+    union = " UNION ALL ".join(f"SELECT * FROM {d.revision_staging}" for d in wrds_fund.DATASETS if d.revisions)
+    con.execute(f"""
+        INSERT INTO fundamental_revision
+        SELECT c.cik, r.gvkey, r.source, r.datadate, r.item, r.old_value, r.new_value, r.old_as_of, r.new_as_of,
+               r.run_id
+        FROM ({union}) r LEFT JOIN (SELECT DISTINCT gvkey, cik FROM fundamental_company WHERE gvkey IS NOT NULL) c
+          ON c.gvkey = r.gvkey""")
+    return common.count(con, "fundamental_revision")
 
 
 def _companies(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rows: list[dict]) -> int:
@@ -305,6 +326,7 @@ class FundamentalsTables:
         counts = {"fundamental_fact": _facts(con), "filing_item": _filing_items(con)}
         counts["fundamental_company"] = _companies(ctx, con, common.universe())
         counts["earnings_event"] = _earnings(con)
+        counts["fundamental_revision"] = _revisions(con)
         _views(con)
         _submission_view(con)
         _calendar_view(con)

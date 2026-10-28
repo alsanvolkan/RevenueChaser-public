@@ -111,6 +111,7 @@ def msft_facts(with_new_quarter: bool = False) -> dict:
         "LongTermDebtNoncurrent": {"units": {"USD": series(40_000, 39_000, 38_000, instant=True)}},
         "LongTermDebtCurrent": {"units": {"USD": series(3_000, 2_500, 2_000, instant=True)}},
         "ShortTermBorrowings": {"units": {"USD": series(500, 400, 300, instant=True)}},
+        "Assets": {"units": {"USD": series(500_000, 510_000, 520_000, instant=True)}},
         "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": series(30_000, 28_000, 27_000, instant=True)}},
         "ShortTermInvestments": {"units": {"USD": series(64_000, 60_000, 59_000, instant=True)}},
         "EarningsPerShareDiluted": {"units": {"USD/shares": series(13.64, 3.65, 3.80)}},
@@ -188,3 +189,63 @@ def filing_routes(http_mock, lists: dict, documents: dict | None = None) -> None
         http_mock.add(f"submissions/CIK{int(cik):010d}.json", body)
     for name, html in (documents or {}).items():
         http_mock.add(f"/{name}", html)
+
+
+# ── WRDS: Compustat's statements and WRDS's ratios (a fake worker, never WRDS) ────────────────────────────────
+# Compustat values are in millions (MSFT's 77,000 USD revenue is 0.077); as text, as the worker writes them.
+# ``month`` 2 is the next monthly snapshot: MSFT's Sep-2025 net income revised, its Jun-2025 revenue gone, and a new
+# quarter (not a revision).
+
+def fundq_rows(month: int = 1) -> list[dict]:
+    rows = [
+        {"gvkey": "012141", "datadate": "2025-06-30", "fyearq": "2025", "fqtr": "4", "fyr": "6", "rdq": "2025-07-30",
+         "revtq": "0.075", "niq": "0.025", "epsfxq": "3.4"},
+        {"gvkey": "012141", "datadate": "2025-09-30", "fyearq": "2026", "fqtr": "1", "fyr": "6", "rdq": "2025-10-29",
+         "revtq": "0.077", "cogsq": "0.024", "niq": "0.027", "epspxq": "3.66", "epsfxq": "3.65", "atq": "0.51",
+         "dlttq": "0.039", "dlcq": "0.0029", "cheq": "0.028"},
+        # HEI's quarter disagrees with the SEC's 1,000 USD revenue.
+        {"gvkey": "005567", "datadate": "2025-04-30", "fyearq": "2025", "fqtr": "2", "fyr": "10",
+         "rdq": "2025-05-28", "revtq": "0.0012"},
+    ]
+    if month >= 2:
+        rows[0] = {**rows[0], "revtq": None}
+        rows[1] = {**rows[1], "niq": "0.0272"}
+        rows.append({"gvkey": "012141", "datadate": "2026-09-30", "fyearq": "2027", "fqtr": "1", "fyr": "6",
+                     "revtq": "0.08"})
+    return rows
+
+
+FUNDA_ROWS = [{"gvkey": "012141", "datadate": "2025-06-30", "fyear": "2025", "fyr": "6", "revt": "0.281",
+               "ni": "0.101", "epsfx": "13.64", "at": "0.5"}]
+# MSFT's newest quarter: 41,900 of debt over 510,000 of assets is 0.0822 at the SEC.
+FIRM_RATIO_ROWS = [
+    {"gvkey": "012141", "public_date": "2025-10-31", "qdate": "2025-06-30", "debt_at": "0.09"},
+    {"gvkey": "012141", "public_date": "2025-11-30", "qdate": "2025-09-30", "debt_at": "0.0822"},
+    {"gvkey": "005567", "public_date": "2025-06-30", "qdate": "2025-04-30", "debt_at": "0.3"},
+]
+
+
+class FakeFundWrds:
+    """A WRDS worker that answers ``comp.fundq``, ``comp.funda`` and ``wrds_finratio.firm_ratio`` from the rows
+    above, filtered by the query's gvkey list, and records every query."""
+
+    def __init__(self):
+        self.queries: list[str] = []
+        self.month = 1
+
+    def query(self, sql: str, out) -> int:
+        import re
+
+        from .spine_fixture import write_jsonl
+        self.queries.append(sql)
+        table = re.search(r"FROM (?:comp|wrds_finratio)\.(\w+)", sql).group(1)
+        rows = {"fundq": fundq_rows(self.month), "funda": FUNDA_ROWS, "firm_ratio": FIRM_RATIO_ROWS}[table]
+        gvkeys = re.search(r"gvkey IN \(([^)]*)\)", sql)
+        if gvkeys:
+            want = set(re.findall(r"'(\d+)'", gvkeys.group(1)))
+            rows = [r for r in rows if r["gvkey"] in want]
+        write_jsonl(out, rows)
+        return len(rows)
+
+    def close(self):
+        pass
