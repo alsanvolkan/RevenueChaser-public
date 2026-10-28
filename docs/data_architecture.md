@@ -1050,7 +1050,7 @@ the old identity tables there are untouched (D5: they are empty since 27 Oct).
 | `wrds/co_hgic` | monthly, attended | `comp.co_hgic` | `stg_wrds_hgic` |
 | `wrds/idxcst_his` | monthly, attended | `comp.idxcst_his` for the S&P 500, 400 and 600 index keys | `stg_wrds_idx` |
 | `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet, under 25 requests a minute | `stg_figi` |
-| `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR, Vanguard VOO/IVOO/VIOO, Nasdaq's nasdaq100 list | `stg_fund_lines`, `stg_fund_files` |
+| `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR (`latest-holdings.csv`), Vanguard VOO/IVOO/VIOO (daily creation basket), Nasdaq's nasdaq100 list and Invesco QQQ (both vote `ndx`) | `stg_fund_lines`, `stg_fund_files` |
 | `spine/security` | daily | none: builds the served tables from the staging tables | the four tables below |
 
 The sources load their Parquet into TEMP tables of the build connection (never stored in the file); the kind's

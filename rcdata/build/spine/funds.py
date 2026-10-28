@@ -1,12 +1,13 @@
 """``funds/index_holdings``: index membership from the ETF holdings files and Nasdaq's list API (daily).
 
-**Not run against the real sources.** Each parser is built against the provider's published file format; the tests
-use small files of that shape. The first real fetch is a homesrv step, and a format that has moved is a
-``source_failed`` build issue for that file (the others go on), never a guess.
+**Checked against the real files of 28 Oct 2026** (homesrv's first fetch, and the files a cloud thread read for #237):
+SSGA parsed there; the iShares link, the Vanguard API and the formats had moved and are read as of that day. The
+tests use small files of those shapes. A format that moves again is a ``source_failed`` build issue for that file (the
+others go on), never a guess.
 
 | Index | Files |
 |---|---|
-| ``sp500`` | SSGA SPY (xlsx), iShares IVV (csv), Vanguard VOO (json) |
+| ``sp500`` | SSGA SPY (xlsx), iShares IVV (``latest-holdings.csv``), Vanguard VOO (daily creation basket, json) |
 | ``sp400`` | SSGA MDY, iShares IJH, Vanguard IVOO |
 | ``sp600`` | SSGA SPSM, iShares IJR, Vanguard VIOO |
 | ``ndx`` | Nasdaq ``/api/quote/list-type/nasdaq100`` (json), Invesco QQQ (json) |

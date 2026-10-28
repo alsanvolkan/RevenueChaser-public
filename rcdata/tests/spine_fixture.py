@@ -218,6 +218,7 @@ def figi_answer(request):
 
 
 # ── Fund files ───────────────────────────────────────────────────────────────────────────────────────────────
+# The iShares, Vanguard and Invesco shapes follow the real files of 28 Oct 2026 (#237); the values are the tests'.
 
 # (ticker as the file writes it, CUSIP or None, name)
 SP500 = [("MSFT", "594918104", "MICROSOFT CORP"), ("ETN", "G29183103", "EATON CORP PLC"),
