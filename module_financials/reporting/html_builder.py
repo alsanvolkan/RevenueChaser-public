@@ -7,6 +7,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
 
+from RevenueChaser.core import calendar as market_calendar
 from RevenueChaser.core.reporting_common import (help_html, provider_health_html, recorded_sessions_html,
                                                  watch_buttons_html, watchlist_html)
 
@@ -68,13 +69,22 @@ def _fmt_day(iso: str | None) -> str:
 
 
 def _fmt_friendly_day(iso: str | None) -> str:
-    """``Wednesday, September 02, 2026`` for the top bar's ``Last sync`` (AGENTS.md §6, FIN-10)."""
+    """``Tuesday, September 01, 2026 EOD`` for the top bar's ``Last sync`` (AGENTS.md §6, FIN-10).
+
+    The day is the New York session the stamp belongs to (``core/calendar.session_for``, rule B), the same day the
+    comps' "as of" names (``history._as_of``); the stamp is written in UTC, and read as UTC a Tuesday-evening Fetch
+    said Wednesday. A fetch inside the session reads ``intraday``, not ``EOD`` (Financials review S4). A naive stamp
+    is New York time; one outside the holiday table shows its date as it reads.
+    """
     if not iso:
         return "N/A"
     try:
-        return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).strftime("%A, %B %d, %Y")
+        moment = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        stamp = market_calendar.session_for(moment if moment.tzinfo else moment.replace(tzinfo=market_calendar.NY))
     except ValueError:
         return _fmt_day(iso)
+    word = "intraday" if stamp.quality == market_calendar.QUALITY_INTRADAY else "EOD"
+    return f"{stamp.session_date:%A, %B %d, %Y} {word}"
 
 
 def _fmt_tax_rate(assumptions: dict | None) -> str:

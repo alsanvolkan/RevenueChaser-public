@@ -109,7 +109,8 @@ def test_report_shows_an_assumed_tax_rate_without_default(financials):
 def test_top_bar_reads_last_sync_eod(financials):
     financials["_fetched_at_iso"] = "2026-09-02T08:00:00+00:00"
     html = _html(financials, {})
-    assert "Last sync: Wednesday, September 02, 2026 EOD" in html
+    # 08:00 UTC is 04:00 in New York, before the open: the data is Tuesday's close (Financials review S4).
+    assert "Last sync: Tuesday, September 01, 2026 EOD" in html
     assert "Data as of" not in html
 
 

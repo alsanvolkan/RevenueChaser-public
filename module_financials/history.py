@@ -96,26 +96,33 @@ def record(results: dict, *, ticker: str, run_id: str, run_at: float, modules, r
         context={"ticker": ticker, "sector": rows[0]["sector"] if rows else None}, partial=note)
 
 
-def _ny_date(moment: datetime) -> date:
-    """The New York calendar date of ``moment``; a naive one is taken as it reads (it carries no zone to move)."""
-    return (moment if moment.tzinfo is None else moment.astimezone(market_calendar.NY)).date()
+def _session_day(value) -> date:
+    """The New York session ``value`` (an ISO text or an aware datetime) belongs to: ``core/calendar`` rule B, a
+    naive time read as New York time. Outside the holiday table, the New York calendar date."""
+    try:
+        return market_calendar.to_session_date(value)
+    except ValueError:
+        moment = datetime.fromisoformat(value) if isinstance(value, str) else value
+        return (moment if moment.tzinfo is None else moment.astimezone(market_calendar.NY)).date()
 
 
 def _as_of(data_fetched_at, run_at) -> str | None:
-    """The date the run's data was fetched: the payload's stamp, else the run's own moment — read in New York.
+    """The session the run's data was fetched in: the payload's stamp, else the run's own moment.
 
     Both are instants, and a run after 20:00 ET is already the NEXT day in UTC: read as UTC, a Tuesday-evening
     Fetch was labelled Wednesday, the following calendar day (a day the market may not even have traded). The
-    board's "as of" is the market's own day, so the instant is read in ``America/New_York``, through the zone
-    ``core/calendar`` owns (never a fixed offset: the US and EU change on different weekends).
+    board's "as of" is the market's own day, so the instant is read in ``America/New_York`` through ``core/calendar``
+    (never a fixed offset: the US and EU change on different weekends), as the New York session it belongs to — a
+    fetch before the open or on a weekend is the last close's. The header's "Last sync" names the same session
+    (Financials review S4).
     """
     text = str(data_fetched_at or "").strip()
     if len(text) >= 10:
         try:
-            return _ny_date(datetime.fromisoformat(text)).isoformat()
+            return _session_day(text).isoformat()
         except ValueError:
             pass
-    return _ny_date(datetime.fromtimestamp(float(run_at), timezone.utc)).isoformat() if run_at else None
+    return _session_day(datetime.fromtimestamp(float(run_at), timezone.utc)).isoformat() if run_at else None
 
 
 def has_comps(report: dict | None) -> bool:

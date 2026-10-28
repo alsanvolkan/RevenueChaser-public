@@ -2,13 +2,17 @@
 
 S1: a base-year input the statements do not give is a default, and the board says so instead of showing it as a
 measured number (the #173 convention: missing is unknown, never a silent number).
+S4: the header's "Last sync" and the comps' "as of" name the same New York session (core/calendar rule B), and a
+fetch inside the session says "intraday", not "EOD".
 """
 from __future__ import annotations
 
 import copy
+from datetime import date
 
 import pytest
 
+from RevenueChaser.module_financials import history as fin_history
 from RevenueChaser.module_financials.engines.dcf_engine import run_dcf
 from RevenueChaser.module_financials.engines.three_statement_engine import run_three_statement
 from RevenueChaser.module_financials.reporting.html_builder import build_report_html
@@ -132,3 +136,22 @@ def test_the_page_labels_the_default_rows(financials):
 
 def test_a_measured_page_says_default_nowhere(financials):
     assert "default" not in _html(financials, {"dcf": run_dcf(financials)})
+
+
+# ── S4: one New York day in the header and in the comps' "as of" ───────────────
+@pytest.mark.parametrize("stamp, header", [
+    ("2026-10-06T20:45:00+00:00", "Tuesday, October 06, 2026 EOD"),        # 16:45 ET, the session is complete
+    ("2026-10-07T02:00:00+00:00", "Tuesday, October 06, 2026 EOD"),        # 22:00 ET: UTC already says Wednesday
+    ("2026-10-07T12:00:00+00:00", "Tuesday, October 06, 2026 EOD"),        # 08:00 ET Wednesday, before the open
+    ("2026-10-10T15:00:00+00:00", "Friday, October 09, 2026 EOD"),         # a Saturday: Friday's close
+    ("2026-10-06T15:00:00+00:00", "Tuesday, October 06, 2026 intraday"),   # 11:00 ET, inside the session
+])
+def test_the_header_and_the_comps_name_the_same_new_york_session(financials, stamp, header):
+    financials["_fetched_at_iso"] = stamp
+    assert f"Last sync: {header}<" in _html(financials, {})
+    assert header.startswith(f"{date.fromisoformat(fin_history._as_of(stamp, None)):%A, %B %d, %Y} ")
+
+
+def test_an_intraday_fetch_is_not_called_end_of_day(financials):
+    financials["_fetched_at_iso"] = "2026-10-06T15:00:00+00:00"
+    assert "EOD" not in _html(financials, {})
