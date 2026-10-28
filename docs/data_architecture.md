@@ -1091,8 +1091,8 @@ So Tier A is not every listed name: listed is A and B. The type comes from `core
 OpenFIGI's types and the name (no SEC submissions); a name those leave untyped takes, in order, its ticker's type (a
 warrant, unit or right: `-WT`, `-UN`, `-RI`, or a Nasdaq fifth letter W, U, R; a right is typed warrant), Compustat's
 `tpci` of its linked security (`0` common, `F` ADR, `%` ETF; others type nothing), then `etp` from its SEC name (ETF
-or ETN, a commodity, currency or crypto pool, a pool sponsor's trust, a bank that issues ETNs) or from a Cboe listing.
-v2 (2026-10-28) types 288 of the 480 Tier A names the first live build left with no Compustat link.
+or ETN, a commodity, currency or crypto pool, a pool sponsor's trust, a bank that issues ETNs) or from a Cboe listing;
+those two never type the issuers' or Cboe's own shares (JPM, DB, BMO, CBOE). v2 (2026-10-28) types 288 of the 480 Tier A names the first live build left with no Compustat link.
 
 **The link.** CIK -> Compustat companies -> the security whose `tic` is the SEC ticker (`BRK.B` -> `BRK-B`), else
 the only active US security of a CIK with one SEC ticker; otherwise no link and no CUSIP.

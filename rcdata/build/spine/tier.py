@@ -28,6 +28,8 @@ the ticker rule even before OpenFIGI answered. A name those leave untyped is typ
    issues ETNs (``ETP_NAMES``);
 4. the venue (v2): an untyped Cboe listing is an exchange-traded product.
 
+Rules 3 and 4 never type the issuers' and Cboe's own listed shares (``OWN_SHARES``: JPM, DB, BMO, CBOE).
+
 v2 (2026-10-28): the first live spine left 480 Tier A names with no Compustat link, and so no CUSIP and no OpenFIGI
 answer, mostly ETFs, ETNs, commodity trusts, warrants, units and rights. Rules 1, 3 and 4 type 288 of them, and every
 one of those Nasdaq Trader's symbol files also list (2026-10-28) is the same kind in its security name there.
@@ -96,6 +98,9 @@ ROYALTY = re.compile(r"\broyalty\b", re.I)
 # 4. The venue: Cboe lists products. Of its 1,679 symbols in Nasdaq Trader's otherlisted.txt (2026-10-28), 1,673 are
 # ETFs, three ETNs (ATMP, VXX, VXZ), two test issues and one a company (Cboe Global Markets, typed by OpenFIGI first).
 PRODUCT_VENUES = ("CBOE",)
+# The listed shares of an ETN issuer and of Cboe itself: OpenFIGI and ``tpci`` type them first in a normal build, and
+# with neither (an empty WRDS source, a failed link) they stay untyped in Tier A, never one of their products.
+OWN_SHARES = frozenset({"JPM", "DB", "BMO", "CBOE"})
 
 
 def ticker_type(ticker: str, exchange: str | None) -> tuple[str, str] | None:
@@ -110,8 +115,10 @@ def ticker_type(ticker: str, exchange: str | None) -> tuple[str, str] | None:
     return None
 
 
-def product_type(name: str | None, exchange: str | None) -> tuple[str, str] | None:
+def product_type(ticker: str, name: str | None, exchange: str | None) -> tuple[str, str] | None:
     """``("etp", source)`` when the SEC name or the venue says exchange-traded product, else ``None``."""
+    if (ticker or "").strip().upper() in OWN_SHARES:
+        return None
     text = (name or "").strip()
     if text and not ROYALTY.search(text):
         for pattern, label in ETP_NAMES:
@@ -136,4 +143,4 @@ def security_type(ticker: str, name: str | None, figi: dict | None, tpci: str | 
     code = str(tpci).strip() if tpci is not None else ""
     if code in TPCI_TYPES:
         return TPCI_TYPES[code], f"compustat_tpci({code})"
-    return product_type(name, exchange) or (typ, src)
+    return product_type(ticker, name, exchange) or (typ, src)

@@ -471,6 +471,16 @@ def test_the_product_name_rules_leave_operating_names_alone(name):
     assert tier.security_type("XTKR", name, None, exchange="NYSE") == ("unknown", "none")
 
 
+@pytest.mark.parametrize("ticker, name, exchange", [
+    ("JPM", "JPMORGAN CHASE & CO", "NYSE"), ("DB", "DEUTSCHE BANK AKTIENGESELLSCHAFT", "NYSE"),
+    ("BMO", "BANK OF MONTREAL /CAN/", "NYSE"), ("CBOE", "Cboe Global Markets, Inc.", "CBOE")])
+def test_an_etn_issuers_and_cboes_own_shares_stay_in_tier_a_with_no_figi_and_no_tpci(ticker, name, exchange):
+    """OpenFIGI and Compustat's tpci type these first in a normal build; with neither (an empty WRDS source, a failed
+    link) the bank's own shares and Cboe's are still not one of their products (review should-fix 1, #238)."""
+    assert tier.security_type(ticker, name, None, None, exchange=exchange) == ("unknown", "none")
+    assert tier.tier(exchange, "unknown") == "A"
+
+
 def test_the_name_and_venue_rules_come_after_tpci_and_a_cboe_listing_is_a_product():
     # A royalty trust Compustat types common is not a product, whatever the commodity in its name.
     assert tier.security_type("MVO", "MV OIL TRUST", None, tpci="0", exchange="NYSE")[0] == "common"
