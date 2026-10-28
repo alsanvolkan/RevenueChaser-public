@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-10-27T12:12:36Z",
-  "generated_from": "05170e1",
+  "generated_at": "2026-10-28T18:09:08Z",
+  "generated_from": "783b599",
   "issues": [
     {
       "repo": "RevenueChaser-public",
@@ -2737,6 +2737,177 @@
       "refs": [],
       "issue_updated_at": "2026-10-27T11:49:02Z",
       "reviewed_at": "2026-10-27"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 227,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/227",
+      "title": "CFTC release schedule instead of +3 days, so a past day's render never sees an unreleased COT report",
+      "state": "open",
+      "labels": [
+        "area:spx_gamma",
+        "parked"
+      ],
+      "boards": [
+        "module_spx_gamma"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "",
+      "summary": "SPX Gamma treats a CFTC TFF report as released on the report date plus 3 days, so a render of a past day can show a report the market had not seen yet.",
+      "detail": {
+        "whats_wrong": "`module_spx_gamma/store_reads.py` (`RELEASE_DAYS`) adds 3 days to the Tuesday report date and calls the report released on that Friday. CFTC publishes Friday 15:30 ET, but a federal holiday in the week moves it to the next business day and the 2025 shutdown pushed releases out by weeks. `market_series` keeps no release date (`source_as_of` is the fetch date), so the board cannot read the real one from the store.",
+        "evidence": "The live board is safe: an unreleased report is not in the store yet. A Refresh, a backfill or a history render of a past day is not: about one business day early in a holiday week, weeks early across the shutdown backlog, and a Friday render before 15:30 counts that day's report.",
+        "example": "Thanksgiving week 2026: the Tuesday 24 Nov report is released Monday 30 Nov, but a render of Friday 27 Nov counts it released (24 Nov + 3 days) and shows it.",
+        "tried_or_decided": "The PR #226 review (SF5) agreed to keep +3 days as a labelled approximation for now; parked.",
+        "direction": "Read CFTC's published release schedule instead of adding days: either the builder stores each report's release date (its own `market_series` series or a column in a later schema version), or a small table of release dates with the shutdown marked as an exception. `store_reads.cot_tff` would then filter on the real date.",
+        "next_step": "Decide which of the two sources carries the release date, then filter `cot_tff` on it."
+      },
+      "refs": [
+        {
+          "label": "PR #226",
+          "url": "https://github.com/alsanvolkan/RevenueChaser-public/pull/226"
+        }
+      ],
+      "issue_updated_at": "2026-10-28T00:58:08Z",
+      "reviewed_at": "2026-10-28"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 228,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/228",
+      "title": "SPX Gamma store reads: five small follow-ups from the PR 3 delta review",
+      "state": "open",
+      "labels": [
+        "area:spx_gamma",
+        "parked"
+      ],
+      "boards": [
+        "module_spx_gamma"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "",
+      "summary": "Five small follow-ups from the PR 3 delta review of the SPX Gamma store reads: one untested failure path, a too-strict COT gap rule, stale docs and a blanking status read.",
+      "detail": {
+        "whats_wrong": "From the delta review of #226 at head cd62021: (1) `module_spx_gamma/store_reads.py:137-141` the `try/except` in `_with_board_status` has no test (mutation MA survived); (2) `:146` sets `status` even on a failed read marker; (3) `:251` calls reports 6 or 8 days apart a gap and shows \"n/a (gap)\"; (4) `docs/data_architecture.md:912` and `:211` still say \"this report minus the previous one\"; (5) `rcdata/read.py:25,36` call `ops.read_log.bump` and `dataset_status` after the read, so a locked `ops.sqlite` makes stored rows read \"not stored (read failed)\".",
+        "evidence": "Item 3 mislabels every Monday-dated holiday week as a gap; item 5 drops the pin flag and the squeeze trigger whenever `ops.sqlite` is locked, which the dashboard and the builder can both cause. The rest are a missing test and stale prose.",
+        "example": "A holiday week puts two COT reports 6 days apart, and the board shows \"n/a (gap)\" instead of the change.",
+        "tried_or_decided": "Parked by the #226 delta review: none of the five blocks the merge.",
+        "direction": "One small PR, one commit per item, tests red first. Item 3 accepts 5-9 days or folds into #227; item 5 catches the status read inside `_rows` and stamps `status_unknown`.",
+        "next_step": "Pick up the five as one lane when SPX Gamma is next open."
+      },
+      "refs": [
+        {
+          "label": "PR #226 delta review",
+          "url": "https://github.com/alsanvolkan/RevenueChaser-public/pull/226#issuecomment-6458071125"
+        }
+      ],
+      "issue_updated_at": "2026-10-28T01:20:48Z",
+      "reviewed_at": "2026-10-28"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 236,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/236",
+      "title": "Spine membership: the 4a CUSIP guard can unmatch an old member's past once its ticker's new owner is linked",
+      "state": "open",
+      "labels": [
+        "area:platform-store",
+        "parked"
+      ],
+      "boards": [],
+      "scope": "shared",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "",
+      "summary": "The spine's 4a CUSIP guard judges a reused ticker against today's link, so an old index member can lose its past periods once the ticker's new owner is linked.",
+      "detail": {
+        "whats_wrong": "`security.match_holding` refuses a ticker match when the line's CUSIP is known (Compustat `cusip_owners`) to belong to another security than the one the ticker is linked to (`link_of`). `link_of` is today's link, built from the newest SEC rows, and `by_cusip` holds current rows only. An old member's fund lines carry its own CUSIP, which is no longer in `by_cusip`, so the guard refuses those past lines too and the member loses its history — against fix 4b, which keeps an acquired member's past.",
+        "evidence": "Pre-existing since fix 4a, found in the delta-3 review of #233 (PR 5). It silently removes periods from the spine, which every board built on the spine then reads.",
+        "example": "NVR (CIK 906163) sits in the S&P 500 until it is acquired; the ticker later goes to another CIK with a new gvkey. On the next build, the old NVR's lines (CUSIP 62944T105) fail the 4a guard and its periods disappear.",
+        "tried_or_decided": "Not fixed in #233 by the coordinator's call: a follow-up with its own tests. Same as follow-up N6 there.",
+        "direction": "Judge the guard against the link as of the line's day, not today's — for example a per-snapshot `by_cusip`, so a member's own lines match by CUSIP before the ticker guard is reached.",
+        "next_step": "Write the reuse-with-link fixture red first, then make the guard snapshot-aware."
+      },
+      "refs": [
+        {
+          "label": "#233",
+          "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/233"
+        }
+      ],
+      "issue_updated_at": "2026-10-28T10:33:36Z",
+      "reviewed_at": "2026-10-28"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 239,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/239",
+      "title": "13F CUSIP map asks OpenFIGI for a CINS as ID_CUSIP, so foreign issuers get no ticker",
+      "state": "open",
+      "labels": [
+        "parked",
+        "area:data-layer"
+      ],
+      "boards": [
+        "module_sec_13f"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "",
+      "summary": "The 13F CUSIP map sends every code to OpenFIGI as ID_CUSIP, so a holding whose code is a CINS (a foreign issuer) gets no ticker at all.",
+      "detail": {
+        "whats_wrong": "`core/providers/openfigi.py:151`, the 13F CUSIP map behind the dashboard's 13F job (`app/runners.py:804`), asks `{\"idType\": \"ID_CUSIP\", ...}` for every code. A CINS — the CUSIP of an issuer outside the US and Canada, a letter first, e.g. Eaton's G29183103 — is its own OpenFIGI id type, `ID_CINS` (OpenFIGI API documentation, read 2026-10-28).",
+        "evidence": "The spine's first live `openfigi/map` on homesrv (2026-10-28) asked 2,092 CINS as `ID_CUSIP` and OpenFIGI found none of them. The 13F map asks the same way, so every 13F holding with a CINS stays without a ticker.",
+        "example": "Eaton's G29183103 is asked as `ID_CUSIP`, OpenFIGI answers \"No identifier found\", and the holding shows with no ticker.",
+        "tried_or_decided": "Found on the way in #238 (#237) and parked: it changes a job the dashboard runs, so it needs its own PR.",
+        "direction": "Pick the id type per code the way `rcdata/build/spine/openfigi_map.py` has since #238 (`id_type()`), and re-ask the CINS the map stored as absent after an `ID_CUSIP` question.",
+        "next_step": "Open the PR for the 13F map alone, with the counts of CINS re-asked and found."
+      },
+      "refs": [
+        {
+          "label": "PR #238",
+          "url": "https://github.com/alsanvolkan/RevenueChaser-public/pull/238"
+        }
+      ],
+      "issue_updated_at": "2026-10-28T14:13:17Z",
+      "reviewed_at": "2026-10-28"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 240,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/240",
+      "title": "Spine Tier A after tier rule v2: notes, SPAC shares and structured products still count as Tier A",
+      "state": "open",
+      "labels": [
+        "parked",
+        "area:data-layer"
+      ],
+      "boards": [],
+      "scope": "shared",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "",
+      "summary": "After tier rule v2, notes, SPAC shares and structured products still fall in the spine's Tier A, because no rule types them; measured on the homesrv lists of 28 Oct 2026.",
+      "detail": {
+        "whats_wrong": "With #238's `tier.security_type`: 192 of the 480 names with no Compustat link stay Tier A (157 second securities of a linked company — exchange-traded notes and baby bonds such as KMPB, XELLL, AFGE, preferreds, extra share classes such as FWONA/K); 109 of the 212 names with a CUSIP but no GICS (88 typed common, by name nearly all SPAC shares; 21 untyped STRATS/CORTS trusts, credit funds, Oxford Lane notes, Brookfield preferred units, TVA bonds); and 1,542 digit-first CUSIPs OpenFIGI answers \"No identifier found\" for.",
+        "evidence": "Measured on the homesrv `spine.duckdb` byte copy, read-only, 28 Oct 2026. `EXCLUDED_TYPES` has no debt type, and the Nasdaq fifth letters G, H, I, L, M, N, O, P, Z mix notes, preferreds and share classes, so no ticker rule separates them.",
+        "example": "KMPB (a baby bond) and the Churchill Capital Corp XI-XIII SPAC shares are counted as Tier A names.",
+        "tried_or_decided": "Parked after #238: the direction is not decided, and each option moves the boards' numbers.",
+        "direction": "SPAC shares via Compustat SIC 6770 (blank checks), which the spine does not read today; notes and structured trusts via a debt / structured-product type or Nasdaq Trader's symbol files as a spine input; absent CUSIPs via a ticker + `US` fallback question.",
+        "next_step": "avo's before/after look on the boards' numbers before any of the three lands."
+      },
+      "refs": [
+        {
+          "label": "PR #238",
+          "url": "https://github.com/alsanvolkan/RevenueChaser-public/pull/238"
+        }
+      ],
+      "issue_updated_at": "2026-10-28T14:13:25Z",
+      "reviewed_at": "2026-10-28"
     }
   ]
 }
