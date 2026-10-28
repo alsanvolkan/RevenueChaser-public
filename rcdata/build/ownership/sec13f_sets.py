@@ -55,6 +55,7 @@ INDEX_ENV = "RC_FORM13F_INDEX_URL"
 INDEX_PATH = "/data-research/sec-markets-data/form-13f-data-sets"
 MEMBERS = ("SUBMISSION", "COVERPAGE", "SUMMARYPAGE", "INFOTABLE")
 ORIGIN = "set:"
+SCRATCH = ".typing-"              # a set is typed in a folder of this prefix beside the raw zips
 MIN_WEEKDAYS = 20                 # a shorter backfill reads the forms only (a re-walk of a few days; review S6)
 _MONTHS = {m: n for n, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov",
                                        "dec"), 1)}
@@ -132,6 +133,16 @@ def download(ctx: base.RunContext, pacer: sec.Pacer, name: str, url: str) -> tup
     base.write_raw_json(_meta(path), {"url": url, "last_modified": r.headers.get("last-modified"),
                                       "fetched_at": time.time(), "run_id": ctx.run_id, "bytes": len(r.content)})
     return base.write_raw(path, r.content), kept
+
+
+def _clear_scratch(ctx: base.RunContext) -> None:
+    """Remove the typing folders a killed run left beside the raw zips (several GB each; ``./app.sh clean-scratch``
+    does not look here). One builder process writes, so a folder found before a fill is always a dead run's."""
+    stale = sorted(raw_dir().glob(SCRATCH + "*")) if raw_dir().is_dir() else []
+    for d in stale:
+        shutil.rmtree(d, ignore_errors=True)
+    if stale:
+        ctx.notes.append(f"13F data sets: {len(stale)} typing folder of a killed run removed")
 
 
 def _reopen(feed: edgar.Feed, name: str, first: date, last: date) -> int:
@@ -246,6 +257,7 @@ def fill(ctx: base.RunContext, feed: edgar.Feed, start: date, end: date, schema:
         ctx.notes.append(f"a backfill of {weekdays} weekdays reads the forms; the data sets fill a range of "
                          f"{MIN_WEEKDAYS} weekdays or more")
         return None
+    _clear_scratch(ctx)
     pacer = sec.Pacer(ctx)
     covered = None
     for name, (first, last, url) in sorted(listed(ctx, pacer).items(), key=lambda kv: kv[1][0]):
@@ -270,7 +282,7 @@ def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str,
         return 0
     raw_dir().mkdir(parents=True, exist_ok=True)
     fetched_at = (base.read_raw_json(_meta(zip_path)) if _meta(zip_path).exists() else {}).get("fetched_at")
-    with tempfile.TemporaryDirectory(dir=raw_dir(), prefix=".typing-") as tmp:
+    with tempfile.TemporaryDirectory(dir=raw_dir(), prefix=SCRATCH) as tmp:
         con = duckdb.connect(str(Path(tmp) / "set.duckdb"))
         try:
             _load(con, zip_path, Path(tmp))
