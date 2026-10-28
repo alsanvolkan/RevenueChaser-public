@@ -283,10 +283,13 @@ def test_the_market_roots_redirect_under_their_env_vars(tmp_path):
     assert r.stdout.split()[2] == "None", "an empty RC_MARKET_RAW_COPY_DIR must mean off, not a folder"
 
 
-def test_the_suite_never_points_at_the_repo_local_market_roots():
-    """conftest redirects both market roots to the per-process scratch, like RC_STORE_DIR."""
+def test_the_suite_never_points_at_the_repo_local_market_roots(tmp_path):
+    """conftest redirects both market roots to the per-process scratch, like RC_STORE_DIR (the environment a
+    subprocess inherits), and since PR 4 ``isolate_ops`` moves them again, to the test's own folder, for every test:
+    ops.sqlite holds the watch lists."""
     assert config.MARKET_DIR != config.BASE_DIR / ".market"
     assert config.MARKET_RAW_DIR != config.BASE_DIR / ".market_raw"
-    assert config.MARKET_DIR.parent == config.DATA_DIR.parent
-    assert config.MARKET_RAW_DIR.parent == config.DATA_DIR.parent
+    for var in ("RC_MARKET_DIR", "RC_MARKET_RAW_DIR"):
+        assert Path(os.environ[var]).parent == config.DATA_DIR.parent, var
+    assert config.MARKET_DIR == tmp_path / "market" and config.MARKET_RAW_DIR == tmp_path / "market_raw"
     assert config.MARKET_RAW_COPY_DIR is None

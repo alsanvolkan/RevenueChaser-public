@@ -148,9 +148,9 @@ def _spx_latest() -> Path:
 
 def _board(key: str, label: str, tables: list[str], payload_path, *,
            funnel: str = NO_FUNNEL, price_basis: str = "", params=None,
-           settings=None) -> dict:
+           settings=None, ops_tables: list[str] = ()) -> dict:
     row = {
-        "key": key, "label": label, "tables": list(tables),
+        "key": key, "label": label, "tables": list(tables), "ops_tables": list(ops_tables),
         "price_basis": price_basis, "params": params or _no_params,
         "payload_path": payload_path, "funnel": funnel,
     }
@@ -161,13 +161,13 @@ def _board(key: str, label: str, tables: list[str], payload_path, *,
 
 # Nav order (``app/dashboard.py`` TABS), minus Settings and Logs. Tables are the
 # store tables each board's engine or pipeline actually reads, not the tables it
-# writes. ``funnel_steps`` only where the rendered payload emits that list.
+# writes; ``ops_tables`` the ops.sqlite tables it reads (the stock watch list, PR 4). ``funnel_steps`` only where the rendered payload emits that list.
 BOARD_INPUTS: list[dict] = [
     _board("module_earnings_radar", "Earnings Radar",
            ["earnings_calendar", "estimate_snapshots", "short_interest", "economic_calendar",
             "macro_series", "vol_index_daily", "cftc_cot", "price_bars_daily"],
            lambda: _html("earnings_radar"),
-           price_basis="daily price bars, nominal closes for reactions"),
+           price_basis="daily price bars, nominal closes for reactions", ops_tables=["watchlist_stock"]),
     _board("module_spx_gamma", "SPX Gamma",
            ["index_levels_daily", "vol_index_daily", "cftc_cot"], _spx_latest,
            price_basis="index_levels_daily closes"),
@@ -218,8 +218,8 @@ BOARD_INPUTS: list[dict] = [
            ["sec13f_holdings", "sec13f_submissions", "sec13f_totals", "equity_universe"],
            lambda: _html("sec_13f")),
     _board("module_leaps", "LEAPS",
-           ["leaps_flow_prints", "leaps_cache", "watchlist"],
-           lambda: _html("leaps")),
+           ["leaps_flow_prints", "leaps_cache"],
+           lambda: _html("leaps"), ops_tables=["watchlist_stock"]),
 ]
 
 
@@ -231,6 +231,7 @@ def _path_of(entry: dict):
 def _card(entry: dict) -> dict:
     card = {
         "key": entry["key"], "label": entry["label"], "tables": list(entry["tables"]),
+        "ops_tables": list(entry.get("ops_tables") or []),
         "price_basis": entry["price_basis"], "params": entry["params"](),
         "as_of": None, "window": {}, "funnel_steps": [], "state": "ok", "error": None,
     }

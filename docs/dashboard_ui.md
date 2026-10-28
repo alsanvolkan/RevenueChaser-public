@@ -271,6 +271,36 @@ board was re-rendered, and Earnings Radar can only be re-rendered by a Fetch.
 
 ---
 
+## 2c. The watch-list pair (PR 4)
+
+Two 44 px toggles, **Opt** and **Stk**, next to a ticker: they put the name on the option watch list (what the
+options build covers besides SPX, D2) or the stock watch list (LEAPS, Earnings), or take it off. One shared snippet,
+`core/reporting_common.py`: `watch_buttons_html(ticker)` renders the pair on the server, `rcWatchButtons(ticker)` /
+`rcWatchRow(ticker)` (the pair on its own line, for a card) in a board's JS, and `watchlist_html(board)` mounts the
+CSS, the script and `rcWatchInit(board)` once per page. Which names are on the lists is read live
+(`GET /api/watchlists`) when the page loads, so a board rendered yesterday still shows today's lists. One
+capture-phase click handler reads `data-rc-watch` and `data-ticker` (never an interpolated value, ADR-X1), posts
+`/api/watchlist/<list>/toggle/<ticker>` with the board as `X-RC-Panel` (the row's `added_by`), and re-marks every
+pair of that ticker; a row or card that opens on click does not open when its pair is pressed. A ticker the
+dashboard's `_TICKER_RE` refuses gets no pair. Pressed is `aria-pressed="true"` in the sky token; a refused toggle
+leaves the state and says why in the button's title.
+
+Where each board puts it (`core/tests/test_watchlist_boards_pr4.py` classifies every board):
+
+| Board | Where |
+|---|---|
+| LEAPS | The last column of every tier (it replaced the ★ pin; Stk is the pinned list) |
+| SEC 13F | Each row's ticker cell |
+| Asymmetric Growth, Swing, Fundamentals | Its own line under each card's ticker line |
+| Sector Rotation | Each fund's ticker cell (not a macro series), and every holding and industry member when expanded |
+| Earnings Radar | The ticker's drawer header (the table's ticker column is a 50 px sticky column) |
+| Implied Probability | Under the title, for the focal ticker |
+| Financials | The company's ticker and each comps peer |
+| Co-movement | The found name's line after a Find (each name is itself a chip button) |
+| Value Chain | The focal company's filing line |
+| Relatedness | The focal company in the panel title, and each peer row |
+| SPX Gamma, UW Interaction, the Rotation trail, Settings, Logs, Runs | None: SPX is always built; a lab of raw columns; a chart of the funds the table already carries; the cards themselves; not data boards |
+
 ## 3. Theme cascade (coarse → medium → fine)
 
 Same widget shape as the sector cascade, **inside** the filter bar:
@@ -394,6 +424,8 @@ nested grouping). Count is `{n} names`.
 - [ ] Count string matches the grouping
 - [ ] Open issues group present, with the right counts for this board
 - [ ] Registry refreshed (`scripts/open_issues_sync.py --write`) after the merge round
+- [ ] Every ticker the board renders carries the watch-list pair (§2c), or the board is listed with a reason in
+  `core/tests/test_watchlist_boards_pr4.py`
 - [ ] Unit tests assert chrome; e2e if fetch/refresh/routes change
 - [x] Earnings Radar v2 and ER v2 Calibration are gone (no tab, route, job, package)
 

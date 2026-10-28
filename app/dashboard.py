@@ -1588,14 +1588,53 @@ def api_sec13f(ticker: str):
     return jsonify({"ok": True, "ticker": t, "fig": build_chart_fig(t, periods, enrich)})
 
 
+@app.route("/api/watchlist/<kind>/toggle/<ticker>", methods=["POST"])
+def api_watchlist_kind_toggle(kind: str, ticker: str):
+    """Put ``ticker`` on the ``option`` or ``stock`` watch list, or take it off (PR 4, D2). The board that sent the
+    click (its ``X-RC-Panel``) is the row's ``added_by`` and the history row's ``by``. 404 for another list, 400 for a
+    ticker ``_valid_ticker`` refuses; nothing is written for either."""
+    from RevenueChaser.rcdata import ops
+    if kind not in ops.WATCH_KINDS:
+        return jsonify({"ok": False, "error": f"unknown watch list {kind!r}"}), 404
+    t = (ticker or "").strip().upper()
+    if not _valid_ticker(t):
+        return jsonify({"ok": False, "error": "bad ticker"}), 400
+    on = ops.watch_toggle(kind, t, by=_requested_by())
+    return jsonify({"ok": True, "list": kind, "ticker": t, "on": on})
+
+
+@app.route("/api/watchlist/<kind>/remove/<ticker>", methods=["POST"])
+def api_watchlist_remove(kind: str, ticker: str):
+    """Take ``ticker`` off one watch list (the Settings cards' Remove): ``{ok, list, ticker, removed}``, where
+    ``removed`` is false when it was not there (nothing is written then). Never adds, so a Remove pressed on a stale
+    page cannot put back a name removed elsewhere. 404 / 400 / 403 as the toggle."""
+    from RevenueChaser.rcdata import ops
+    if kind not in ops.WATCH_KINDS:
+        return jsonify({"ok": False, "error": f"unknown watch list {kind!r}"}), 404
+    t = (ticker or "").strip().upper()
+    if not _valid_ticker(t):
+        return jsonify({"ok": False, "error": "bad ticker"}), 400
+    removed = ops.watch_remove(kind, t, by=_requested_by())
+    return jsonify({"ok": True, "list": kind, "ticker": t, "removed": removed})
+
+
+@app.route("/api/watchlists")
+def api_watchlists():
+    """Both watch lists' tickers, ``{ok, option: [...], stock: [...]}``: what a board's button pair shows as pressed.
+    The read itself never creates ``ops.sqlite`` (the read log's minute flush may, as for every rcdata read)."""
+    from RevenueChaser.rcdata import read
+    lists = read.watchlists()
+    return jsonify({"ok": True, **{k: [r["ticker"] for r in rows] for k, rows in lists.items()}})
+
+
 @app.route("/api/watchlist/toggle/<ticker>", methods=["POST"])
 def api_watchlist_toggle(ticker: str):
-    """Add/remove a ticker from the watchlist (used by the LEAPS pin)."""
+    """The pre-PR 4 route: toggles the stock watch list (the LEAPS pin's list). Answers ``in_watchlist`` as before."""
     from RevenueChaser.core import rawstore
     t = (ticker or "").strip().upper()
     if not _valid_ticker(t):
         return jsonify({"ok": False, "error": "bad ticker"}), 400
-    in_watchlist = rawstore.toggle_watchlist(t)     # this ticker only, one transaction (#306)
+    in_watchlist = rawstore.toggle_watchlist(t, by=_requested_by())     # this ticker only, one transaction
     return jsonify({"ok": True, "ticker": t, "in_watchlist": in_watchlist})
 
 

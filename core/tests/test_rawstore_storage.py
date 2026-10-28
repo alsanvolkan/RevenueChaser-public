@@ -17,6 +17,12 @@ import pytest
 from RevenueChaser.core import rawstore
 
 
+def _stored_watchlist() -> set[str]:
+    """The tickers of the store's ``watchlist`` table, read by name: since PR 4 ``rawstore.load_watchlist`` is the
+    stock watch list in ops.sqlite, and this file uses the old table as its sample table."""
+    return {r["ticker"] for r in rawstore.get_all("watchlist")}
+
+
 def _raw_conn(path):
     return duckdb.connect(str(path))
 
@@ -283,15 +289,15 @@ class TestSession:
         monkeypatch.setattr(duckdb, "connect", lambda *a, **k: (opened.append(a), real(*a, **k))[1])
         with rawstore.session():
             for _ in range(10):
-                rawstore.load_watchlist()
+                _stored_watchlist()
             rawstore.write_rows("watchlist", [{"ticker": "B"}])
         assert len(opened) == 1
-        assert rawstore.load_watchlist() == {"A", "B"}
+        assert _stored_watchlist() == {"A", "B"}
 
     def test_the_handle_is_closed_after_the_block(self, rawstore_tmp_db):
         rawstore.write_rows("watchlist", [{"ticker": "A"}])
         with rawstore.session():
-            rawstore.load_watchlist()
+            _stored_watchlist()
         # another PROCESS can open the file again once the session ended
         code = subprocess.run([sys.executable, "-c",
                                f"import duckdb; duckdb.connect(r'{rawstore_tmp_db}').close()"],
@@ -390,7 +396,7 @@ class TestCompact:
         r = rawstore.compact("raw")
         assert r["after_bytes"] < before
         assert rawstore.count("swing_ohlc") == 4000
-        assert rawstore.load_watchlist() == {"KEEP"}
+        assert _stored_watchlist() == {"KEEP"}
         assert rawstore.query("SELECT count(*) AS n FROM company_profile")  # views copied
         assert (rawstore_tmp_db.with_name("raw.duckdb.pre-compact")).exists()
 
@@ -501,7 +507,7 @@ class TestReplaceAllEmptyGuard:
         self._seed()
         with pytest.raises(rawstore.RawStoreError, match="allow_empty"):
             rawstore.replace_all("watchlist", [])
-        assert rawstore.load_watchlist() == {"AAPL", "MSFT"}
+        assert _stored_watchlist() == {"AAPL", "MSFT"}
 
     def test_allow_empty_empties_the_table(self, rawstore_tmp_db):
         self._seed()
@@ -511,7 +517,7 @@ class TestReplaceAllEmptyGuard:
     def test_a_non_empty_batch_still_replaces_everything(self, rawstore_tmp_db):
         self._seed()
         assert rawstore.replace_all("watchlist", [{"ticker": "NVDA"}]) == 1
-        assert rawstore.load_watchlist() == {"NVDA"}
+        assert _stored_watchlist() == {"NVDA"}
 
     def test_the_flag_is_keyword_only(self, rawstore_tmp_db):
         self._seed()
@@ -520,10 +526,13 @@ class TestReplaceAllEmptyGuard:
         assert rawstore.count("watchlist") == 2
 
     def test_clearing_the_watchlist_is_an_explicit_choice(self, rawstore_tmp_db):
-        # the one caller that really means "empty": the user removed their last ticker
+        # Emptying the store table stays an explicit choice (allow_empty); save_watchlist(set()), the user removing
+        # their last ticker, is the stock watch list in ops.sqlite since PR 4 and leaves this table alone.
         self._seed()
         rawstore.save_watchlist(set())
-        assert rawstore.load_watchlist() == set()
+        assert _stored_watchlist() == {"AAPL", "MSFT"} and rawstore.load_watchlist() == set()
+        rawstore.replace_all("watchlist", [], allow_empty=True)
+        assert _stored_watchlist() == set()
 
     def test_an_unknown_table_is_still_reported_as_unknown(self, rawstore_tmp_db):
         with pytest.raises(rawstore.RawStoreError, match="unknown table"):

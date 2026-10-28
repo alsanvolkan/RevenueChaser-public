@@ -14,6 +14,12 @@ import pytest
 
 from RevenueChaser.core import rawstore
 
+
+def _stored_watchlist() -> set[str]:
+    """The tickers of the store's ``watchlist`` table, read by name: since PR 4 ``rawstore.load_watchlist`` is the
+    stock watch list in ops.sqlite, and this file uses the old table as its sample table."""
+    return {r["ticker"] for r in rawstore.get_all("watchlist")}
+
 # a value DuckDB cannot cast into the DOUBLE/INTEGER column it lands in, so the
 # failure happens INSIDE executemany — after the DELETE, mid-batch
 BAD = "not-a-number"
@@ -70,7 +76,7 @@ class TestReplaceAll:
     def test_replace_all_removes_keys_absent_from_the_new_set(self, rawstore_tmp_db):
         rawstore.replace_all("watchlist", [{"ticker": "AAPL"}, {"ticker": "MSFT"}])
         rawstore.replace_all("watchlist", [{"ticker": "NVDA"}])
-        assert rawstore.load_watchlist() == {"NVDA"}
+        assert _stored_watchlist() == {"NVDA"}
 
     def test_failed_replace_all_keeps_the_previous_rows(self, rawstore_tmp_db):
         rawstore.replace_all("ticker_scores", [
@@ -88,7 +94,7 @@ class TestReplaceAll:
         # an empty batch is refused by default (#284, TestReplaceAllEmptyGuard); empty is opt-in
         rawstore.replace_all("watchlist", [{"ticker": "AAPL"}])
         assert rawstore.replace_all("watchlist", [], allow_empty=True) == 0
-        assert rawstore.load_watchlist() == set()
+        assert _stored_watchlist() == set()
 
 
 class TestTickerStoreFullRefresh:
@@ -143,4 +149,4 @@ class TestMultiTableTransaction:
                 tx.write_rows("watchlist", [{"ticker": "AAPL"}])
                 raise RuntimeError("boom")
         rawstore.write_rows("watchlist", [{"ticker": "MSFT"}])
-        assert rawstore.load_watchlist() == {"MSFT"}
+        assert _stored_watchlist() == {"MSFT"}

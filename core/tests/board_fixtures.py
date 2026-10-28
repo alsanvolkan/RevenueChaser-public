@@ -300,7 +300,11 @@ def newdata_fixture() -> dict:
         "retention": {"warn": True, "text": "kept without a limit", "source": "src"},
         "retirement": [{"table": "macro_series", "replaced_by": "market_series", "reads_14d": 2,
                         "writers": ["RC-Earnings-Inputs"]}],
-        "watchlists": {"option": 1, "stock": 2},
+        "watchlists": {"option": {"count": 1, "rows": [{"ticker": "NVDA", "added_on": "2026-10-28T10:00:00+00:00",
+                                                        "added_by": "leaps", "note": "note"}]},
+                       "stock": {"count": 1, "rows": [{"ticker": "MSFT", "added_on": "2026-10-28T10:00:00+00:00",
+                                                       "added_by": "sec_13f", "note": None}]}},
+        "options_build": {"always": ["SPX"], "queued": ["NVDA"]},
     }
 
 

@@ -185,13 +185,44 @@ def test_data_health_drill_line_names_the_500_store_read_failed_case():
     assert "500" in block and "store read failed" in block
 
 
-def test_ci_paths_list_every_markdown_file_a_unit_test_reads():
-    """#358 B1: tests.yml drops **.md, so a doc a test reads must be added back to both path lists."""
-    from pathlib import Path
+# Every Markdown file a test reads by path. tests.yml drops ``**.md``, so each one has to be added back to the
+# path filter of both triggers, or a docs-only PR that edits it skips CI and cannot go red against its test.
+# Keep this list in step with the tests (grep them for ``.md``); the test below also fails on a ``.md`` fixture
+# that lives under a ``tests`` directory and is missing here.
+_MARKDOWN_READ_BY_TESTS = (
+    "docs/data_architecture.md",        # test_doc_constants.py, test_store_schema_refuse.py:36, test_rawstore_history.py:595
+    "docs/data_health.md",             # test_doc_constants.py:179, test_automation_chain.py:125
+    "docs/data_retrieval.md",          # test_doc_constants.py:56
+    "docs/rules/00_overview.md",       # module_earnings_radar/tests/test_confidence_wording_df06.py:62
+    "docs/rules/redesign.md",          # module_earnings_radar/tests/test_cleanup_199.py:13-15
+    "module_spx_gamma/tests/golden/position_map.base.md",   # module_spx_gamma/tests/test_autoescape_175.py:106
+)
 
-    wf = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
-    for doc in ("docs/data_architecture.md", "docs/data_health.md"):
-        assert wf.count(f'- "{doc}"') == 2, doc
+
+def _trigger_path_lists() -> dict[str, list[str]]:
+    wf = (_REPO / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    lists: dict[str, list[str]] = {}
+    for trigger in ("pull_request", "push"):
+        block = re.search(rf"^  {trigger}:\n(?:    .*\n)+", wf, re.M).group(0)
+        lists[trigger] = re.findall(r'^      - "([^"]+)"$', block, re.M)
+    return lists
+
+
+def test_ci_paths_list_every_markdown_file_a_unit_test_reads():
+    """#358 B1: tests.yml drops **.md, so a doc a test reads must be added back to both path lists, after the drop."""
+    for trigger, paths in _trigger_path_lists().items():
+        assert "!**.md" in paths, trigger
+        after_drop = paths[paths.index("!**.md") + 1:]
+        missing = [d for d in _MARKDOWN_READ_BY_TESTS if d not in after_drop]
+        assert not missing, f"tests.yml {trigger}.paths does not add back (after !**.md): {missing}"
+
+
+def test_every_markdown_the_tests_read_exists_and_every_test_fixture_markdown_is_listed():
+    for doc in _MARKDOWN_READ_BY_TESTS:
+        assert (_REPO / doc).is_file(), f"{doc} is listed as read by a test but is not in the tree"
+    fixtures = {p.relative_to(_REPO).as_posix() for p in _REPO.rglob("*.md")
+                if "tests" in p.relative_to(_REPO).parts[:-1] and not {".git", ".cache", ".store"} & set(p.parts)}
+    assert fixtures <= set(_MARKDOWN_READ_BY_TESTS), sorted(fixtures - set(_MARKDOWN_READ_BY_TESTS))
 
 
 def _market_store_section() -> str:

@@ -25,6 +25,7 @@ from RevenueChaser.core.reporting_common import (
     provider_health_html,
     recorded_sessions_html,
     universe_provenance_html,
+    watchlist_html,
 )
 from RevenueChaser.core.scan_quality import no_data_hint, regime_parts
 from RevenueChaser.module_fundamentals.pipeline import NON_USD_DROP
@@ -346,6 +347,7 @@ function cardHtml(c){
     + indexBadges + distTag + staleTag + '</div>'
     + '<div class="tick"><b>' + t + '</b>'
     + (name ? '<span class="sep"> • </span>'+name : '') + '</div>'
+    + rcWatchRow(c.ticker)
     + '<div class="metrics">'
     + cell("Period", rcEsc(c.period))
     + cell("Basis", rcEsc(c.ro40_basis))
@@ -509,6 +511,7 @@ function start(){
   </div>
 </div>
 <script>{FILTERS_JS}</script>
+{watchlist_html("fundamentals")}
 <script>
 {JS}
 document.getElementById("modal").addEventListener("click", function(e){{ if(e.target === this) closeModal(); }});

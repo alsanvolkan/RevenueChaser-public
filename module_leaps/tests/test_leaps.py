@@ -1,5 +1,6 @@
 """Tests for the LEAPS accumulation engine (far-dated OI, growth, classifier)."""
 import json
+import re
 from datetime import date
 
 from RevenueChaser.module_leaps.engine import (
@@ -325,8 +326,10 @@ class TestEscaping:
                 "frequency": 4, "net_notional": 1.0, "ask_share": 0.5, "near_term_event": False}
         html = ld.render_leaps_dashboard([snap], [dict(snap)]).read_text(encoding="utf-8")
         assert "<img" not in html
-        # Only the page's own two script blocks survive (board script + filter-kit script, KL #377).
-        assert html.count("<script") == 2 and html.count("</script>") == 2
+        # Only the page's own three script blocks survive (board script, filter-kit script (KL #377), the
+        # watch-list pair (PR 4)); the hostile ticker gets no button pair.
+        assert html.count("<script") == 3 and html.count("</script>") == 3
+        assert not re.search(r"data-rc-watch=\"(option|stock)\"", html)
         assert 'data-ticker="&quot;&gt;&lt;img' in html
 
 
@@ -528,3 +531,18 @@ class TestLeapsRunners:
         store_prints([_print("z1", executed="2026-10-01T14:00:00Z")], today=date(2026, 10, 2))
         _w, unwatched = scan_leaps_cached(today=date(2026, 10, 2))
         assert unwatched[0]["name"] == "Zed Corp"
+
+
+def test_a_locked_store_is_not_swallowed_by_the_cached_scan(rawstore_tmp_db, monkeypatch):
+    """PR 4: the watch list moved to ops.sqlite, so the stored prints are the cached scan's first store read. A lock
+    there must reach the dashboard (503, "locked by another process"), not become an empty board."""
+    import pytest
+
+    from RevenueChaser.core import rawstore as rs
+    from RevenueChaser.module_leaps import engine, scan
+
+    def locked(**kw):
+        raise rs.StoreLockedError("raw.duckdb", 1, "duckdb", "/x", "Conflicting lock is held")
+    monkeypatch.setattr(engine, "load_recent_prints", locked)
+    with pytest.raises(rs.StoreLockedError):
+        scan.scan_leaps_cached()

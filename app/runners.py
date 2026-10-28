@@ -172,8 +172,9 @@ OIPD_JSON = OUTPUT_DIR / "oipd" / "oipd_latest.json"
 SETTINGS_LATEST = OUTPUT_DIR / "settings_latest.html"
 
 def _load_watchlist() -> set:
-    from RevenueChaser.core import rawstore
-    return rawstore.load_watchlist()
+    """The stock watch list (ops.sqlite, through ``rcdata.read``; PR 4): LEAPS pins and Earnings' watched names."""
+    from RevenueChaser.rcdata import read
+    return read.watched("stock")
 
 
 def _compute_nrc_results(cards) -> dict:

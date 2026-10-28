@@ -252,7 +252,11 @@ def test_watch_list_counts_schedule_state_and_the_queue():
     ops.schedule_pause("market_series", by="settings")
     rid = ops.enqueue("market_series", None, by="settings")
     data = newdata.collect(NOW)
-    assert data["watchlists"] == {"option": 1, "stock": 2}
+    assert {k: v["count"] for k, v in data["watchlists"].items()} == {"option": 1, "stock": 2}
+    assert [r["ticker"] for r in data["watchlists"]["stock"]["rows"]] == ["AAPL", "MSFT"]
+    assert data["watchlists"]["option"]["rows"][0]["added_by"] == "t"
+    assert data["watchlists"]["option"]["rows"][0]["added_on"].endswith("+00:00")
+    assert data["options_build"] == {"always": ["SPX"], "queued": ["SPY"]}
     assert _card(data, "market_series")["schedule"]["paused"] is True
     assert _card(data, "market_series")["schedule"]["paused_by"] == "settings"
     assert _card(data, "uw/spot_expiry_strike")["schedule"]["paused"] is False

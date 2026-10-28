@@ -7,7 +7,8 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
 
-from RevenueChaser.core.reporting_common import help_html, provider_health_html, recorded_sessions_html
+from RevenueChaser.core.reporting_common import (help_html, provider_health_html, recorded_sessions_html,
+                                                 watch_buttons_html, watchlist_html)
 
 _TEMPLATES = Path(__file__).resolve().parent / "templates"
 # Autoescape on: ticker, company, sector, source and warnings come from the
@@ -95,6 +96,9 @@ _ENV.filters["price"] = _fmt_price
 _ENV.filters["day"] = _fmt_day
 _ENV.filters["friendly_day"] = _fmt_friendly_day
 _ENV.filters["tax_rate"] = _fmt_tax_rate
+# The watch-list pair (PR 4): ``watch_buttons_html`` escapes the ticker and gives nothing for one the dashboard
+# refuses, so its output is markup the template takes as it is.
+_ENV.globals["watch_pair"] = lambda ticker: Markup(watch_buttons_html(ticker))
 
 
 def build_report_html(results: dict) -> str:
@@ -132,6 +136,7 @@ def build_report_html(results: dict) -> str:
         "provider_banner": Markup(provider_health_html(results.get("provider_health"))),
         # Every Fetch of any ticker, newest first (#383 C7); escapes its own strings.
         "history_block": Markup(recorded_sessions_html("module_financials")),
+        "watch_mount": Markup(watchlist_html("financials")),
         "dcf": modules.get("dcf"),
         "three_statement": modules.get("3stmt") or modules.get("three_statement"),
         "comps": modules.get("comps"),

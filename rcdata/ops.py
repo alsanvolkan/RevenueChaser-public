@@ -16,10 +16,13 @@ The tables and what writes them:
 - ``uw_remaining``: UW's rate headers, sampled once a run: the daily count UW reports, what is left of our own cap
   (computed), the per-minute window, and the token limit as sent (not a daily cap).
 - ``provider_calls_daily``: calls per provider and New York day; the day cap (``caps``) reads it.
-- ``watchlist_option`` / ``watchlist_stock`` and their ``*_changes`` history; ``dataset_schedule``. Tables and
-  helpers only here; the routes and the cards come later (PR 2, PR 4).
+- ``watchlist_option`` / ``watchlist_stock``: the two watch lists (D2), one row per ticker with when, by which board
+  and an optional note; ``watchlist_*_changes`` is their history, one row per add or remove. The dashboard's toggle
+  routes write them (PR 4); the option list is what the options build will cover besides SPX.
+- ``dataset_schedule``: cadence and pause state per dataset.
 
-``ensure()`` creates the tables and stamps ``ops_schema``; it refuses a file stamped by a newer version.
+``ensure()`` creates the tables and stamps ``ops_schema``; it upgrades an older file in place and refuses a file
+stamped by a newer version.
 """
 from __future__ import annotations
 
@@ -36,7 +39,7 @@ from typing import Any, Callable, Iterator
 
 from ..core import calendar, config
 
-OPS_SCHEMA_VERSION = 1
+OPS_SCHEMA_VERSION = 2
 BUSY_TIMEOUT_MS = 5000
 FILE_NAME = "ops.sqlite"
 
@@ -83,9 +86,10 @@ _DDL = {
         failures INTEGER NOT NULL DEFAULT 0, http_429 INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (provider, ny_day))""",
     **{f"watchlist_{k}": f"""CREATE TABLE IF NOT EXISTS watchlist_{k} (
         ticker TEXT PRIMARY KEY, added_at REAL NOT NULL, added_by TEXT, note TEXT)""" for k in WATCH_KINDS},
+    # Version 2: an ``id`` that keeps the history's order (a bare rowid may be renumbered by VACUUM), and the note.
     **{f"watchlist_{k}_changes": f"""CREATE TABLE IF NOT EXISTS watchlist_{k}_changes (
-        ticker TEXT NOT NULL, action TEXT NOT NULL CHECK (action IN ('add','remove')), at REAL NOT NULL, by TEXT)"""
-       for k in WATCH_KINDS},
+        id INTEGER PRIMARY KEY, ticker TEXT NOT NULL, action TEXT NOT NULL CHECK (action IN ('add','remove')),
+        at REAL NOT NULL, by TEXT, note TEXT)""" for k in WATCH_KINDS},
     "dataset_schedule": """CREATE TABLE IF NOT EXISTS dataset_schedule (
         dataset TEXT PRIMARY KEY, cadence TEXT, next_due TEXT, paused_at REAL, paused_by TEXT)""",
 }
@@ -93,6 +97,8 @@ TABLES = tuple(_DDL)
 _INDEXES = (
     "CREATE INDEX IF NOT EXISTS build_requests_status ON build_requests (status, id)",
     "CREATE INDEX IF NOT EXISTS dataset_check_dataset ON dataset_check (dataset, id)",
+    *(f"CREATE INDEX IF NOT EXISTS watchlist_{k}_changes_ticker ON watchlist_{k}_changes (ticker, id)"
+      for k in WATCH_KINDS),
 )
 
 
@@ -139,22 +145,48 @@ _ENSURED: set[str] = set()
 _ENSURE_LOCK = threading.Lock()
 
 
+def _upgrade_to_2(con: sqlite3.Connection) -> None:
+    """v1 -> v2: each ``watchlist_*_changes`` gets ``id INTEGER PRIMARY KEY`` and ``note``; its rows are copied in
+    the order they were written. The list tables themselves are unchanged.
+
+    A table that already has ``id`` is left as it is: a v2 file stamped back down to 1 (the rollback) keeps its v2
+    tables, and the next deploy must not copy them again, which would drop their notes."""
+    for k in WATCH_KINDS:
+        name = f"watchlist_{k}_changes"
+        if not con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone():
+            continue
+        if "id" in {r[1] for r in con.execute(f"PRAGMA table_info({name})")}:
+            continue
+        con.execute(f"ALTER TABLE {name} RENAME TO {name}_v1")
+        con.execute(_DDL[name])
+        con.execute(f"INSERT INTO {name} (ticker, action, at, by) SELECT ticker, action, at, by FROM {name}_v1 "
+                    "ORDER BY rowid")
+        con.execute(f"DROP TABLE {name}_v1")
+
+
+# The step that brings a file stamped ``n - 1`` to ``n``; ``ensure`` runs every step past the stamp it finds.
+_UPGRADES: dict[int, Callable[[sqlite3.Connection], None]] = {2: _upgrade_to_2}
+
+
 def ensure(path: Path | None = None) -> None:
     """Create every table (idempotent) and stamp ``ops_schema``; raise ``OpsSchemaTooNew`` on a newer stamp.
 
-    Version 1 is the first, so there is nothing to upgrade yet; a later version adds its step here, keyed on the
-    stamp it finds.
+    A file stamped older is upgraded in place, in the same transaction, one ``_UPGRADES`` step per version, before
+    the tables and indexes of this version are made; a failed step rolls the whole file back to what it was.
     """
     path = Path(path or ops_path())
     with _ENSURE_LOCK, connect(path) as con, _tx(con):
+        con.execute(_DDL["ops_schema"])
+        found = con.execute("SELECT max(version) FROM ops_schema").fetchone()[0]
+        if found is not None and found > OPS_SCHEMA_VERSION:
+            raise OpsSchemaTooNew(f"{path} is ops schema {found}; this checkout knows {OPS_SCHEMA_VERSION}")
+        for version in range((found or OPS_SCHEMA_VERSION) + 1, OPS_SCHEMA_VERSION + 1):
+            _UPGRADES[version](con)
         for ddl in _DDL.values():
             con.execute(ddl)
         for ddl in _INDEXES:
             con.execute(ddl)
-        found = con.execute("SELECT max(version) FROM ops_schema").fetchone()[0]
-        if found is not None and found > OPS_SCHEMA_VERSION:
-            raise OpsSchemaTooNew(f"{path} is ops schema {found}; this checkout knows {OPS_SCHEMA_VERSION}")
-        if found is None:
+        if found != OPS_SCHEMA_VERSION:
             con.execute("INSERT INTO ops_schema (version, applied_at) VALUES (?, ?)", (OPS_SCHEMA_VERSION, time.time()))
         _ENSURED.add(str(path))
 
@@ -471,7 +503,7 @@ def _flush_at_exit() -> None:
 atexit.register(_flush_at_exit)
 
 
-# ── Watch lists and the schedule (tables and helpers; the routes come in PR 2 and PR 4) ────────────────────────
+# ── Watch lists and the schedule ───────────────────────────────────────────────────────────────────────────
 
 def _watch_kind(kind: str) -> str:
     if kind not in WATCH_KINDS:
@@ -479,25 +511,57 @@ def _watch_kind(kind: str) -> str:
     return kind
 
 
+def _watch_write(con: sqlite3.Connection, kind: str, ticker: str, action: str, by: str, note: str | None) -> bool:
+    """Add or remove ``ticker`` and write its history row, inside the caller's transaction; False when nothing moved."""
+    now = time.time()
+    if action == "add":
+        cur = con.execute(f"INSERT OR IGNORE INTO watchlist_{kind} VALUES (?, ?, ?, ?)", (ticker, now, by, note))
+    else:
+        cur = con.execute(f"DELETE FROM watchlist_{kind} WHERE ticker = ?", (ticker,))
+    if not cur.rowcount:
+        return False
+    con.execute(f"INSERT INTO watchlist_{kind}_changes (ticker, action, at, by, note) VALUES (?, ?, ?, ?, ?)",
+                (ticker, action, now, by, note))
+    return True
+
+
 def watch_add(kind: str, ticker: str, *, by: str, note: str | None = None) -> bool:
     """Add ``ticker`` (upper-cased) to a watch list and its history; False when it was already there."""
-    kind, ticker, now = _watch_kind(kind), ticker.strip().upper(), time.time()
+    kind, ticker = _watch_kind(kind), ticker.strip().upper()
     with _open() as con, _tx(con):
-        cur = con.execute(f"INSERT OR IGNORE INTO watchlist_{kind} VALUES (?, ?, ?, ?)", (ticker, now, by, note))
-        if not cur.rowcount:
-            return False
-        con.execute(f"INSERT INTO watchlist_{kind}_changes VALUES (?, 'add', ?, ?)", (ticker, now, by))
-        return True
+        return _watch_write(con, kind, ticker, "add", by, note)
 
 
 def watch_remove(kind: str, ticker: str, *, by: str) -> bool:
     kind, ticker = _watch_kind(kind), ticker.strip().upper()
     with _open() as con, _tx(con):
-        cur = con.execute(f"DELETE FROM watchlist_{kind} WHERE ticker = ?", (ticker,))
-        if not cur.rowcount:
-            return False
-        con.execute(f"INSERT INTO watchlist_{kind}_changes VALUES (?, 'remove', ?, ?)", (ticker, time.time(), by))
-        return True
+        return _watch_write(con, kind, ticker, "remove", by, None)
+
+
+def watch_toggle(kind: str, ticker: str, *, by: str) -> bool:
+    """Add ``ticker`` when it is not on the list, else remove it; whether it is on the list now.
+
+    The read and the write are one ``BEGIN IMMEDIATE`` transaction, so two clicks that race flip it twice, in turn,
+    and each writes its own history row.
+    """
+    kind, ticker = _watch_kind(kind), ticker.strip().upper()
+    with _open() as con, _tx(con):
+        there = con.execute(f"SELECT 1 FROM watchlist_{kind} WHERE ticker = ?", (ticker,)).fetchone() is not None
+        _watch_write(con, kind, ticker, "remove" if there else "add", by, None)
+        return not there
+
+
+def watch_replace(kind: str, tickers, *, by: str) -> tuple[int, int]:
+    """Make the list exactly ``tickers`` in one transaction; ``(added, removed)``, each with its history row."""
+    kind = _watch_kind(kind)
+    want = {str(t).strip().upper() for t in tickers if str(t).strip()}
+    with _open() as con, _tx(con):
+        have = {r[0] for r in con.execute(f"SELECT ticker FROM watchlist_{kind}")}
+        for t in sorted(have - want):
+            _watch_write(con, kind, t, "remove", by, None)
+        for t in sorted(want - have):
+            _watch_write(con, kind, t, "add", by, None)
+    return len(want - have), len(have - want)
 
 
 def watch_list(kind: str) -> list[str]:
@@ -631,3 +695,15 @@ def last_builder_run() -> dict | None:
 def watch_count(kind: str) -> int:
     rows = _select(f"SELECT count(*) AS n FROM watchlist_{_watch_kind(kind)}")
     return rows[0]["n"] if rows else 0
+
+
+def watch_last_change() -> float | None:
+    """The newest add or remove on either watch list (epoch seconds), or None; never creates the file."""
+    rows = _select(" UNION ALL ".join(f"SELECT max(at) AS at FROM watchlist_{k}_changes" for k in WATCH_KINDS))
+    stamps = [r["at"] for r in rows if r["at"] is not None]
+    return max(stamps) if stamps else None
+
+
+def watch_rows(kind: str) -> list[dict]:
+    """The rows of one watch list, by ticker: ``ticker``, ``added_at`` (epoch seconds), ``added_by``, ``note``."""
+    return _select(f"SELECT ticker, added_at, added_by, note FROM watchlist_{_watch_kind(kind)} ORDER BY ticker")

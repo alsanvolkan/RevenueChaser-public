@@ -12,6 +12,12 @@ import pytest
 from RevenueChaser.core import rawstore
 
 
+def _stored_watchlist() -> set[str]:
+    """The tickers of the store's ``watchlist`` table, read by name: since PR 4 ``rawstore.load_watchlist`` is the
+    stock watch list in ops.sqlite, and this file uses the old table as its sample table."""
+    return {r["ticker"] for r in rawstore.get_all("watchlist")}
+
+
 @pytest.fixture
 def ensure_calls(monkeypatch):
     """Every ``ensure_all_tables`` call from here on, by the raw file it applied to."""
@@ -87,7 +93,7 @@ def written_first():
 def test_a_store_written_before_the_fixture_keeps_its_rows_and_gets_the_apply(ensure_calls, written_first,
                                                                               rawstore_tmp_db, tmp_path):
     assert ensure_calls == [tmp_path / "raw.duckdb"]
-    assert rawstore.load_watchlist() == {"FIRST"}
+    assert _stored_watchlist() == {"FIRST"}
     assert "store_schema" in _tables("raw")
 
 
@@ -130,7 +136,7 @@ def test_a_test_that_changes_its_store_a(rawstore_tmp_db, rawstore_template):
     with rawstore.connect() as conn:                     # past the history guard, as a broken migration would
         conn.execute("DROP TABLE equity_universe_changes")
     rawstore.execute("CREATE TABLE leaked_table (a INTEGER)")
-    assert rawstore.load_watchlist() == {"LEAK"}
+    assert _stored_watchlist() == {"LEAK"}
 
 
 def test_a_test_that_changes_its_store_b_sees_none_of_it(rawstore_tmp_db, rawstore_template):

@@ -197,6 +197,27 @@ def isolate_rawstore(tmp_path):
         mp.undo()
 
 
+@pytest.fixture(autouse=True)
+def isolate_ops(tmp_path):
+    """Give every test its own market root, so its ``ops.sqlite`` (the watch lists, the queue) is its own.
+
+    The watch lists live in ``ops.sqlite`` since PR 4, and LEAPS, Earnings and the dashboard's toggle read and write
+    them, so a list one test left would be the next test's input. Both market roots move (``rcdata`` reads
+    ``config.MARKET_DIR`` at call time); the read log moves too, or its exit flush would write into the per-process
+    root after the session removed it. Nothing is created until a test writes. A test's own ``monkeypatch`` still wins.
+    """
+    from RevenueChaser.core import config
+    from RevenueChaser.rcdata import ops
+    mp = pytest.MonkeyPatch()
+    mp.setattr(config, "MARKET_DIR", tmp_path / "market")
+    mp.setattr(config, "MARKET_RAW_DIR", tmp_path / "market_raw")
+    mp.setattr(ops, "read_log", ops.ReadLog(process="test"))
+    try:
+        yield config.MARKET_DIR
+    finally:
+        mp.undo()
+
+
 # #111: six boards keep the same ``<PREFIX>_LATEST`` / ``<PREFIX>_JSON`` pair twice, in ``app/runners.py`` and in
 # their own config, and different code reads each copy, so both copies are redirected together.
 BOARD_ARTIFACT_PAIRS = (("FUNDAMENTALS", "module_fundamentals"), ("SWING", "module_swing_potential"),

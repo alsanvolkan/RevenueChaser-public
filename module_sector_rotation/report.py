@@ -1,5 +1,6 @@
 """Rotation Map Dashboard — RRG-style quadrant HTML with ETF data table."""
-from RevenueChaser.core.reporting_common import help_html, provider_health_html, recorded_sessions_html, write_artifact
+from RevenueChaser.core.reporting_common import (help_html, provider_health_html, recorded_sessions_html,
+                                                 watch_buttons_html, watchlist_html, write_artifact)
 from RevenueChaser.core.html_safe import ESC_JS, esc, fill, script_json
 import html as _html
 from datetime import datetime, date
@@ -267,6 +268,7 @@ function toggleHoldings(ticker) {
     if (caret) caret.textContent = '▾';
     if (ROTATION_HOLDINGS && ROTATION_HOLDINGS[ticker]) {
         det.innerHTML = ROTATION_HOLDINGS[ticker];
+        rcWatchSync(det);                       // the fragment's watch-list pairs show the live lists (PR 4)
         return;
     }
     // Try the current route first, then the legacy route (covers servers that
@@ -283,7 +285,7 @@ function toggleHoldings(ticker) {
         }
         fetch(urls[ui++])
             .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-            .then(function(html){ det.innerHTML = html; })
+            .then(function(html){ det.innerHTML = html; rcWatchSync(det); })
             .catch(tryNext);
     })();
 }
@@ -940,7 +942,9 @@ def export_rotation_dashboard(snapshots: list[ETFRotationSnapshot], filename: st
 
         rows += f'<tr data-group="{esc(s.group_name)}" data-ticker="{esc(s.ticker)}">'
         caret = f'<span class="hold-caret" id="caret-{esc(s.ticker)}">▸</span> ' if s.group_name in ("sector", "theme") else ''
-        rows += f'<td class="ticker td-g1">{caret}{et_badge}{esc(s.ticker)}</td>'
+        # The watch-list pair (PR 4) for a fund; a macro series (a yield, an index level) is no name to watch.
+        pair = "" if s.ticker in MACRO_SERIES else watch_buttons_html(s.ticker)
+        rows += f'<td class="ticker td-g1">{caret}{et_badge}{esc(s.ticker)}{pair}</td>'
         rows += f'<td class="td-g1"><span class="group" style="color:{color}">{esc(info.get("name", s.ticker))}</span></td>'
         rows += f'<td class="td-g1 center">{_quadrant_badge(s.rrg_quadrant)}</td>'
         rows += f'<td class="num {r1c} td-g2" style="{_rs_heat_style(s.rs_1w)}" data-col="rs_1w" data-val="{"" if s.rs_1w is None else s.rs_1w}">{_format_rs(s.rs_1w)}</td>'
@@ -1085,6 +1089,7 @@ A high positive score = persistent net buying pressure relative to the fund's ow
 
 <footer>RevenueChaser v1 — Rotation Engine — Unusual Whales API &mdash; {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</footer>
 {HOVER_JS}
+{watchlist_html("sector_rotation")}
 {js}</body></html>"""
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1436,7 +1441,8 @@ def render_holdings_fragment(rows: list[dict]) -> str:
         name = _html.escape(str(r.get("name") or ""))
         body += (
             f'<tr data-ticker="{tick}">'
-            f'<td><b>{tick}</b> <span style="color:#8b949e;font-size:10px">{name}</span></td>'
+            f'<td><b>{tick}</b> <span style="color:#8b949e;font-size:10px">{name}</span>'
+            f'{watch_buttons_html(r.get("ticker"))}</td>'
             f'<td class="num">{w:.2f}%</td>'
             f'{_rs_cell(r.get("rs_1w"))}{_rs_cell(r.get("rs_1m"))}{_rs_cell(r.get("rs_3m"))}'
             f'<td class="num">{"—" if close is None else f"${close:.2f}"}</td>'
@@ -1470,7 +1476,7 @@ def render_industry_fragment(tree: list[dict]) -> str:
             label = f'<b style="color:#c9d1d9">{name}</b>' if i == 0 else ""
             body += (
                 f'<tr><td>{label}</td>'
-                f'<td><b>{_html.escape(h.get("ticker") or "")}</b></td>'
+                f'<td><b>{_html.escape(h.get("ticker") or "")}</b>{watch_buttons_html(h.get("ticker"))}</td>'
                 f'<td><span style="color:#8b949e;font-size:10px">{_html.escape(h.get("name") or "")}</span></td>'
                 f'<td class="num">{h.get("weight", 0):.2f}%</td></tr>'
             )

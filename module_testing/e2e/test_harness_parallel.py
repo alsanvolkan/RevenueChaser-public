@@ -15,7 +15,7 @@ from .harness.shared import running_dashboard
 
 # Every folder the dashboard subprocess writes to outside .store/.cache.
 SIDE_ROOTS = ("RC_EDGAR_DOCS_DIR", "RAW_STORE_BACKUP_DIR", "SPX_GAMMA_DATA_ROOT",
-              "RC_PATREON_DATA_DIR")
+              "RC_PATREON_DATA_DIR", "RC_MARKET_DIR", "RC_MARKET_RAW_DIR")
 
 
 def test_every_side_root_of_the_dashboard_is_the_tests_own(dashboard, tmp_path):
