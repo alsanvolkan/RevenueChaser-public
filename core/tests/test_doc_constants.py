@@ -27,7 +27,8 @@ _ENV_EXTRAS = ("RC_SEC_USER_AGENT",
                "RC_IBKR_LOGIN_CHECK", "RC_IBKR_HOST", "RC_IBKR_PORT",           # #162
                "RC_SCHEDULER",                                                  # #158
                "RC_HTTP_CONTACT",                                               # #206, the builder's User-Agent
-               "WRDS_USERNAME", "RC_UNIVERSE_SOURCE", "RC_WRDS_PYTHON")         # PR 5, the spine
+               "WRDS_USERNAME", "RC_UNIVERSE_SOURCE", "RC_WRDS_PYTHON",         # PR 5, the spine
+               "RC_UW_PRELIMINARY")                                             # PR 12, the fundamentals
 
 
 def _env_example_lines() -> list[str]:

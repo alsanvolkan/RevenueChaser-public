@@ -13,7 +13,7 @@ import duckdb
 from ....core import calendar
 from ... import ops
 from .. import base
-from . import KIND, common, companyfacts, earnings, facts, filings
+from . import KIND, common, companyfacts, earnings, facts, filings, uw_financials
 
 NAME = "fundamentals/tables"
 
@@ -70,6 +70,7 @@ STAGED: dict[str, list[tuple[str, str]]] = {
     filings.STAGING["filings"]: filings.FILING,
     filings.STAGING["documents"]: filings.DOCUMENT,
     earnings.STAGING: earnings.SCHEMA,
+    uw_financials.STAGING: facts.FACT,
 }
 
 # The named problems, one kind each; ``key`` is the CIK unless the kind says otherwise.
@@ -114,12 +115,20 @@ def _ensure_staging(con: duckdb.DuckDBPyConnection) -> None:
 # ── The served tables ─────────────────────────────────────────────────────────────────────────────────────────
 
 def _facts(con: duckdb.DuckDBPyConnection) -> int:
-    """``fundamental_fact``: the SEC facts, one row per (company, field, period type, period end)."""
+    """``fundamental_fact``: the SEC facts, one row per (company, field, period type, period end), and UW's
+    preliminary quarters after the company's newest SEC quarter (``uw_financials``; only when that is on)."""
     create(con, "fundamental_fact")
     names = _names("fundamental_fact")
     con.execute(f"""INSERT INTO fundamental_fact SELECT {names} FROM {companyfacts.STAGING['facts']}
                     QUALIFY row_number() OVER (PARTITION BY cik, field, period_type, period_end
                                                ORDER BY filed DESC, accn DESC) = 1""")
+    if uw_financials.enabled():
+        con.execute(f"""
+            INSERT INTO fundamental_fact SELECT {", ".join(f"u.{c}" for c in names.split(", "))}
+            FROM {uw_financials.STAGING} u
+            JOIN (SELECT cik, max(period_end) AS sec_end FROM fundamental_fact
+                  WHERE NOT preliminary AND period_type = '{facts.QUARTERLY}' GROUP BY cik) s ON s.cik = u.cik
+            WHERE u.period_type = '{facts.QUARTERLY}' AND u.period_end > s.sec_end + {uw_financials.MARGIN_DAYS}""")
     return common.count(con, "fundamental_fact")
 
 
@@ -191,7 +200,7 @@ def _views(con: duckdb.DuckDBPyConnection) -> None:
     # The old ``edgar_financials`` row per ticker: ``annual`` / ``quarterly`` as JSON lists of records (oldest
     # first) shaped as sec_edgar.extract_* writes them (a key per field, ``period_ends`` / ``filed`` / ``accn``
     # maps; ``fiscal_year`` or ``period``), and ``meta``. A field with no value has no key (the old rows held
-    # None); ``total_debt`` is the three-term sum.
+    # None); ``total_debt`` is the three-term sum. The SEC's rows only: a preliminary row has no accession.
     def records(period_type: str, key: str, key_json: str) -> str:
         return f"""
             SELECT cik, {key} AS k, json_merge_patch(
@@ -199,7 +208,7 @@ def _views(con: duckdb.DuckDBPyConnection) -> None:
                 json_object('period_ends', json_group_object(field, CAST(period_end AS VARCHAR)),
                             'filed', json_group_object(field, CAST(filed AS VARCHAR)),
                             'accn', json_group_object(field, accn))) AS rec
-            FROM fundamental_fact WHERE period_type = '{period_type}' GROUP BY cik, {key}"""
+            FROM fundamental_fact WHERE period_type = '{period_type}' AND NOT preliminary GROUP BY cik, {key}"""
     con.execute(f"""
         CREATE VIEW edgar_financials AS
         WITH a AS ({records('annual', 'fiscal_year', "'fiscal_year', CAST(fiscal_year AS VARCHAR)")}),
