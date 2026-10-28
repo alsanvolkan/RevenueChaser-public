@@ -6,9 +6,11 @@ form of 2024-12-18, ``SCHEDULE 13D``, ``SCHEDULE 13D/A``, ``SCHEDULE 13G``, ``SC
 
 - **XML** (``status`` ``ok``): the issuer (CIK, name, CUSIP), the class title and the event date, and one row per
   reporting person: name, type, the shares beneficially owned in aggregate, the percent of the class, sole and
-  shared voting power. The tags are read by lower-case local name from short lists of the names the SEC's technical
-  specification uses (``ISSUER_TAGS``, ``PERSON_TAGS``); not verified against a live filing from the cloud, so a
-  document in which no reporting person is found is one ``unparsed`` row, kept, and the first live run checks it.
+  shared voting power. The tags are read by lower-case local name from short lists (``ISSUER_TAGS``,
+  ``PERSON_TAGS``), checked on 2026-10-28 against the real filings of one day (248 filings): a 13G's persons sit in
+  ``coverPageHeaderReportingPersonDetails`` and its signature block names them again (not persons), a 13D's in
+  ``reportingPersons/reportingPersonInfo``, the issuer's CUSIP in ``issuerCusips/issuerCusipNumber``. A document in
+  which no reporting person is found is one ``unparsed`` row, kept.
 - **Text** (``status`` ``header_only``): the issuer (``SUBJECT COMPANY``) and the filer (``FILED BY``) from the SGML
   header, one row; no amount or percent is read from free text, so none is stored.
 
@@ -35,7 +37,7 @@ FORMS = frozenset({"SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A", "SCHEDULE 13D", "
                    "SCHEDULE 13G/A"})
 BUDGET_S = 5 * 60.0
 ISSUER_TAGS = {"issuer_cik": ("issuercik",), "issuer_name": ("issuername",),
-               "cusip": ("issuercusip", "cusipnumber", "cusip"),
+               "cusip": ("issuercusipnumber", "issuercusip", "cusipnumber", "cusip"),
                "class_title": ("securitiesclasstitle", "titleofclass", "classtitle"),
                "event_date": ("dateofevent", "eventdaterequiresfilingthisstatement")}
 PERSON_NAME = ("reportingpersonname", "nameofreportingperson", "nameofreportingpersons")
@@ -100,7 +102,9 @@ def parse(text: str, entry: dict, index_day: date) -> list[dict]:
                  "issuer_name": found["issuer_name"] or head["issuer_name"],
                  "cusip": (found["cusip"] or "").upper() or None, "class_title": found["class_title"],
                  "event_date": _date(found["event_date"])})
-    persons = [el for el in root.iter() if any(child.tag in PERSON_NAME for child in el)]
+    # A 13G's signature block names each person again (``signatureinformation``): not a reporting person.
+    persons = [el for el in root.iter() if "signature" not in el.tag
+               and any(child.tag in PERSON_NAME for child in el)]
     rows = []
     for n, el in enumerate(persons):
         name = next(child.text.strip() for child in el if child.tag in PERSON_NAME and child.text)

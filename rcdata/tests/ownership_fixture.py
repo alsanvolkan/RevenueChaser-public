@@ -362,24 +362,45 @@ def f4_filing(accession, filed, issuer_cik, issuer_name, symbol, owners, non_der
                                                        derivative, form))], period=filed)
 
 
-# ── Schedule 13D/G (XML since 2024-12-18; tags as the SEC's technical specification names them, read tolerantly) ──
+# ── Schedule 13D/G (XML since 2024-12-18; shaped as the real filings read on 2026-10-28) ────────────────────────
 
-def sched_xml(kind, issuer_cik, issuer_name, cusip, persons, event="2026-10-20") -> str:
-    """A Schedule 13D/G ``edgarSubmission``; ``persons``: ``(name, amount, percent, sole_voting)``."""
+def sched_xml(kind, issuer_cik, issuer_name, cusip, persons, event="10/20/2026") -> str:
+    """A Schedule 13D/G ``edgarSubmission`` as EDGAR serves it (13G 0001376474-26-000673, 13D/A
+    0001493152-26-048639): the issuer under ``coverPageHeader/issuerInfo`` (its CUSIP in ``issuerCusips``); a 13G's
+    persons in ``coverPageHeaderReportingPersonDetails`` and its signature block naming them again
+    (``signatureInformation/reportingPersonName``), a 13D's in ``reportingPersons/reportingPersonInfo``.
+    ``persons``: ``(name, amount, percent, sole_voting)``."""
     ns = f"http://www.sec.gov/edgar/schedule{kind.lower()}"
-    people = "".join(
-        "<coverPageHeaderReportingPersonDetails>"
-        f"<reportingPersonName>{n}</reportingPersonName><typeOfReportingPerson>IA</typeOfReportingPerson>"
-        f"<reportingPersonBeneficiallyOwnedNumberOfShares><soleVotingPower>{sv}</soleVotingPower>"
-        "<sharedVotingPower>0</sharedVotingPower></reportingPersonBeneficiallyOwnedNumberOfShares>"
-        f"<reportingPersonBeneficiallyOwnedAggregateNumberOfShares>{amt}"
-        "</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>"
-        f"<classPercent>{pct}</classPercent></coverPageHeaderReportingPersonDetails>" for n, amt, pct, sv in persons)
+    issuer = (f"<issuerInfo><issuerCik>{issuer_cik:010d}</issuerCik><issuerName>{issuer_name}</issuerName>"
+              f"<issuerCusips><issuerCusipNumber>{cusip}</issuerCusipNumber></issuerCusips></issuerInfo>")
+    if kind.upper() == "13G":
+        people = "".join(
+            f"<coverPageHeaderReportingPersonDetails><reportingPersonName>{n}</reportingPersonName>"
+            f"<soleVotingPower>{sv}</soleVotingPower><sharedVotingPower>0</sharedVotingPower>"
+            f"<reportingPersonBeneficiallyOwnedAggregateNumberOfShares>{amt}"
+            f"</reportingPersonBeneficiallyOwnedAggregateNumberOfShares><classPercent>{pct}</classPercent>"
+            "<typeOfReportingPerson>IA</typeOfReportingPerson></coverPageHeaderReportingPersonDetails>"
+            for n, amt, pct, sv in persons)
+        cover = (f"<coverPageHeader><securitiesClassTitle>Common Stock</securitiesClassTitle>"
+                 f"<eventDateRequiresFilingThisStatement>{event}</eventDateRequiresFilingThisStatement>{issuer}"
+                 "</coverPageHeader>")
+        signed = "".join(f"<signatureInformation><reportingPersonName>{n}</reportingPersonName>"
+                         "<signatureDetails><signature>/s/</signature></signatureDetails></signatureInformation>"
+                         for n, *_ in persons)
+    else:
+        people = "<reportingPersons>" + "".join(
+            f"<reportingPersonInfo><reportingPersonName>{n}</reportingPersonName>"
+            f"<soleVotingPower>{sv:.2f}</soleVotingPower><sharedVotingPower>0.00</sharedVotingPower>"
+            f"<aggregateAmountOwned>{amt:.2f}</aggregateAmountOwned><percentOfClass>{pct}</percentOfClass>"
+            "<typeOfReportingPerson>PN</typeOfReportingPerson></reportingPersonInfo>"
+            for n, amt, pct, sv in persons) + "</reportingPersons>"
+        cover = (f"<coverPageHeader><securitiesClassTitle>Common Stock</securitiesClassTitle>"
+                 f"<dateOfEvent>{event}</dateOfEvent>{issuer}</coverPageHeader>")
+        signed = "<signatureInfo>" + "".join(
+            f"<signaturePerson><signatureReportingPerson>{n}</signatureReportingPerson></signaturePerson>"
+            for n, *_ in persons) + "</signatureInfo>"
     return (f'<?xml version="1.0"?><edgarSubmission xmlns="{ns}"><headerData><submissionType>SCHEDULE {kind}'
-            "</submissionType></headerData><formData><coverPageHeader>"
-            f"<securitiesClassTitle>Common Stock</securitiesClassTitle><dateOfEvent>{event}</dateOfEvent>"
-            f"<issuerInfo><issuerCik>{issuer_cik:010d}</issuerCik><issuerName>{issuer_name}</issuerName>"
-            f"<issuerCusip>{cusip}</issuerCusip></issuerInfo></coverPageHeader>{people}</formData></edgarSubmission>")
+            f"</submissionType></headerData><formData>{cover}{people}{signed}</formData></edgarSubmission>")
 
 
 def sched_filing(accession, form, filed, issuer, filer, xml=None) -> bytes:
