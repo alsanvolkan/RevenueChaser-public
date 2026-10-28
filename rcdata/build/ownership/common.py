@@ -6,11 +6,13 @@ ticker and says so in its notes, it never guesses one from the symbol.
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Iterable
 
 import duckdb
 
+from ....core import calendar
 from ....core.identity.sources import norm_ticker
 from ... import serving
 from .. import base
@@ -103,3 +105,33 @@ def symbol_map(con: duckdb.DuckDBPyConnection, symbols_sql: str, notes: list[str
     temp_rows(con, "_symbol_map", [("symbol", "TEXT"), ("ticker", "TEXT"), ("ticker_source", "TEXT")],
               [{"symbol": s, "ticker": t, "ticker_source": src} for s, (t, src) in named.items()])
     return sum(1 for t, _ in named.values() if t)
+
+
+# ── Sessions ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+def is_session(d: date) -> bool:
+    """An NYSE session (``core/calendar.py``); outside its 2025-2028 table, a weekday (a list that does not exist
+    on a holiday answers 404 and is marked absent, never invented)."""
+    try:
+        return calendar.is_trading_day(d)
+    except ValueError:
+        return d.weekday() < 5
+
+
+def sessions(start: date, end: date) -> list[date]:
+    """Every session from ``start`` to ``end`` inclusive, oldest first."""
+    out, d = [], start
+    while d <= end:
+        if is_session(d):
+            out.append(d)
+        d += timedelta(days=1)
+    return out
+
+
+def session_before(d: date, n: int = 1) -> date:
+    """The ``n``-th session before ``d`` (``d`` itself not counted)."""
+    for _ in range(n):
+        d -= timedelta(days=1)
+        while not is_session(d):
+            d -= timedelta(days=1)
+    return d

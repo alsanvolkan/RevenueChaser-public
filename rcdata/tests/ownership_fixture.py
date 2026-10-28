@@ -56,3 +56,40 @@ class Finra:
     def install(self, http_mock) -> None:
         http_mock.add("finra.test/partitions/group/otcMarket/name/consolidatedShortInterest", self.partitions)
         http_mock.add("finra.test/data/group/otcMarket/name/consolidatedShortInterest", self.data)
+
+
+# ── Reg SHO threshold lists (the shapes Nasdaq Trader and NYSE answered on 2026-10-28) ──────────────────────────
+
+NASDAQ_HEADER = "Symbol|Security Name|Market Category|Reg SHO Threshold Flag|Rule 3210|Filler"
+NYSE_HEADER = "Symbol|Security Name|Market Category|Reg SHO Threshold Flag|Filler|Filler"
+
+
+def nasdaq_list(rows, stamp="20261027230025") -> bytes:
+    return "\r\n".join([NASDAQ_HEADER, *rows, stamp, ""]).encode()
+
+
+def nyse_list(rows, stamp="20261027220001") -> bytes:
+    return "\n".join([NYSE_HEADER, *rows, stamp, ""]).encode()
+
+
+class RegSho:
+    """Nasdaq's daily file by name, NYSE's download by ``selectedDate`` and ``market``; a day or market not set
+    answers 404 (Nasdaq) or the header alone (NYSE, as it does for a market with no threshold security)."""
+
+    def __init__(self):
+        self.nasdaq: dict[str, bytes] = {}
+        self.nyse: dict[tuple[str, str], bytes] = {}
+
+    def nasdaq_answer(self, request):
+        name = str(request.url).rsplit("/", 1)[1]
+        day = name[len("nasdaqth"):-len(".txt")]
+        body = self.nasdaq.get(day)
+        return (200, body, {}) if body is not None else (404, b"<html>Not Found</html>", {})
+
+    def nyse_answer(self, request):
+        key = (request.url.params["selectedDate"], request.url.params["market"])
+        return 200, self.nyse.get(key, nyse_list([], stamp="")), {}
+
+    def install(self, http_mock) -> None:
+        http_mock.add("/regsho/nasdaqth", self.nasdaq_answer)
+        http_mock.add("nyse.test/api/regulatory/threshold-securities/download", self.nyse_answer)
