@@ -1600,18 +1600,35 @@ def _compute_return_since_er(hist: list[dict], closes: list[float], ohlc: list[d
     return f"{anchor_label}: {pct:+.1f}%", pre_date[-5:], chart_json
 
 
+def _nrc_beat(card) -> float:
+    """NRC's event-beat slot: 60 a strong beat history, 45 a beat, 30 a miss, 50 neither.
+
+    Read from R2's own result in the card's rule audit (the sign of its score, and its "strong beat" reason), not
+    from the thesis text, where R2's "beat trend declining" read as a beat (review N2). A card without an R2 audit
+    keeps the keyword read, "miss" before "beat".
+    """
+    r2 = (getattr(card, "rule_audit", None) or {}).get("rule2_guidance")
+    if isinstance(r2, dict):
+        score = r2.get("score")
+        if not r2.get("available") or score is None or score == 0:
+            return 50.0
+        if score < 0:
+            return 30.0
+        return 60.0 if any("strong beat" in str(r).lower() for r in r2.get("reasons") or []) else 45.0
+    thesis = (card.key_thesis or "").lower()
+    if "strong beat" in thesis:
+        return 60.0
+    if "miss" in thesis:
+        return 30.0
+    if "beat" in thesis:
+        return 45.0
+    return 50.0
+
+
 def nrc_from_card(card, watchlist: set = None) -> dict:
     """Build one NRC result dict from a TradeCard (live slots only)."""
     growth = max(0.0, min(100.0, 50.0 + (card.direction_score or 0) * 0.5))
-    thesis = (card.key_thesis or "").lower()
-    if "strong beat" in thesis:
-        beat = 60.0
-    elif "beat" in thesis:
-        beat = 45.0
-    elif "miss" in thesis:
-        beat = 30.0
-    else:
-        beat = 50.0
+    beat = _nrc_beat(card)
     rot = card.rotation_quadrant
     rot_bonus = 10 if rot == "LEADING" else (5 if rot == "IMPROVING" else (-10 if rot == "LAGGING" else 0))
     accel = nrc_acceleration(card)

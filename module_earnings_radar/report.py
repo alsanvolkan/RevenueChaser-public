@@ -1608,7 +1608,8 @@ def _methodology_tables(filter_stats: dict = None) -> str:
         ("R0 · Composite lean", "25%", "Mapped from v1 direction score (not raw revenue growth)", "50 + 0.5 × direction"),
         ("R0 · Growth Acceleration", "20%", "AGH: revenue growth accelerating YoY", "ticker_scores; skipped if unknown"),
         ("R0 · Accounting quality", "15%", "Signed Sloan (R7) mapped 0–100", "R7; skipped if unavailable"),
-        ("R0 · Event Beat Rate", "10%", "Keyword beat/miss from thesis (heuristic)", "card.key_thesis"),
+        ("R0 · Event Beat Rate", "10%", "R2's own read: strong beat 60, beat 45, miss 30, neither 50",
+         "card.rule_audit (R2)"),
         ("R0 · Rotation Bonus", "±", "Sector/theme quadrant adjustment", "LEADING +10, IMPROVING +5, LAGGING −10"),
     ]
     for comp, wt, measures, src in nrc_rows:
