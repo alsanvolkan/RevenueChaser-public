@@ -363,7 +363,12 @@ def test_default_settings_reproduce_the_pre_change_payload(rawstore_tmp_db):
 
     Only the hash string and the new keys (funnel split, window, settings) may
     differ: clusters, labels, significance, persistence, funnel counts, window
-    dates and the lagged-test summary are identical."""
+    dates and the lagged-test summary are identical.
+
+    One case was rewritten for the Fable review of 28 Oct 2026, N2: ``mkt_nop`` (a store-only run with SPY applied)
+    used to reuse the null and lagged test that ``two_p`` (a Fetch on other data with no SPY, so raw returns) had
+    stored under the same hash. It now has its own hash and nothing stored to reuse: ``baseline_r``,
+    ``significant`` and ``persist`` are None and ``oos`` is empty. Nothing else in the file changed."""
     golden = json.loads(_GOLDEN.read_text(encoding="utf-8"))
     got = {}
     for name, ret in (("two", _two_group_returns(n=700)), ("mkt", _market_two_groups(n=700))):
@@ -481,3 +486,18 @@ def test_config_hash_carries_the_engine_method(rawstore_tmp_db, monkeypatch):
     before = _hash()
     monkeypatch.setattr(engine.config, "METHOD", engine.config.METHOD + 1)
     assert _hash() != before
+
+
+def test_a_raw_return_fallback_has_its_own_hash(rawstore_tmp_db):
+    """Fable review of Co-movement (28 Oct 2026), N2: with SPY missing, "remove market = SPY" falls back to raw
+    returns, but the run hashed as a residual one. A Refresh with SPY back then reused that Fetch's raw-return null
+    and lagged test, and the other way round. The hash now says when the benchmark was asked for and not applied."""
+    _t, kw = _market_run(persist=False)                  # no SPY bars: the board falls back to raw returns
+    p = engine.run(**kw)
+    assert p["benchmark"] == "spy" and p["benchmark_applied"] is False
+    assert p["config_hash"] != engine.config_hash(252, config.LINKAGE, (2,), 1, "spy")
+    assert p["config_hash"] == engine.config_hash(252, config.LINKAGE, (2,), 1, "spy", benchmark_applied=False)
+    assert engine.config_hash(252, config.LINKAGE, (2,), 1, "spy", benchmark_applied=True) \
+        == engine.config_hash(252, config.LINKAGE, (2,), 1, "spy")
+    assert engine.config_hash(252, config.LINKAGE, (2,), 1, "off", benchmark_applied=False) \
+        == engine.config_hash(252, config.LINKAGE, (2,), 1, "off")   # off is raw by choice, not a fallback
