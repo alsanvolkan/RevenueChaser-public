@@ -14,13 +14,23 @@ UW has none), the option volume, the dollar option volume (volume x 100, the rad
 ``passes_gates``: the Earnings Radar gates of ``core/config.py`` (option volume >= 500, total open interest >= 200,
 dollar option volume >= 50k; ``module_earnings_radar/pipeline.py`` ``preselect``).
 
-Both take a ``date`` but are fetched in the observed window (``uw.observed``) like the rest of the options data, so
+**The earnings set** (``names.earnings_set``): every screener-set name that reports on the next session, passes
+the gates on S and is not in the list set (SPX and the option watch list, which have their full chain), once, on
+that evening: ``spot-exposures/strike?date=S`` (paged), ``gex-levels?date=S``, ``volatility/term-structure?date=S``,
+``options-volume?limit=5`` (the row of S) and ``flow-recent`` (the newest 50 prints of S): five calls a name, not the
+full chain (the plan: 527 names over 9 report days). Raw: ``raw/uw/er_options/<S>/<TICKER>.json.gz``, the name's
+resume marker. ``er_options``: one row per name and evening, with the report date it was fetched for, the gate
+inputs, the GEX levels and the option volume; its strikes, term structure and prints go to ``option_strike``,
+``option_expiry`` and ``option_print`` as set ``earnings``.
+
+All of it takes a ``date`` or is fetched in the observed window (``uw.observed``) like the rest of the options data, so
 the screener row, the calendar and the earnings set of an evening are one moment. A run stops starting calls after
 ``uw.RUN_BUDGET_S``; the check asks for the same session again while anything is left and the window is open. A
 batch or calendar day UW fails with 429, 5xx or a transport error is asked again by the next run.
 """
 from __future__ import annotations
 
+import json
 import re
 import time
 from datetime import date, timedelta
@@ -30,7 +40,7 @@ import duckdb
 
 from ....core import calendar, config
 from .. import base
-from . import KIND, tables, uw
+from . import KIND, names, rows, tables, uw
 
 NAME = "uw/option_screener"
 SOURCE = tables.SCREENER_SOURCE
@@ -52,6 +62,10 @@ def calendar_path(session: date, day: date, report_session: str) -> Path:
 
 def screener_path(session: date, part: int) -> Path:
     return base.raw_root() / "uw" / "screener" / session.isoformat() / f"part-{part:02d}.json.gz"
+
+
+def er_path(session: date, ticker: str) -> Path:
+    return base.raw_root() / "uw" / "er_options" / session.isoformat() / f"{ticker}.json.gz"
 
 
 def report_days(session: date) -> list[date]:
@@ -200,32 +214,111 @@ class UWOptionScreener:
                                     "errors": errors}, before)
         return complete
 
+    def _earnings(self, ctx: base.RunContext, session: date, state: dict) -> None:
+        """Fetch the earnings-set names of ``session`` without a raw file."""
+        day = session.isoformat()
+        for r in names.earnings_set(session, screener_rows(session) or [], set(names.list_names())):
+            ticker = r["ticker"]
+            path = er_path(session, ticker)
+            if path.exists():
+                continue
+            if self._over_budget(ctx, state):
+                return
+            errors: dict[str, str] = {}
+            before = ctx.calls.get("uw", [0])[0]
+            try:
+                parts = {
+                    "spot_strike": uw.paged(ctx, uw.stock(ticker, "spot-exposures/strike"), {"date": day},
+                                            "spot_strike", errors, key=lambda x: float(x["strike"])),
+                    "gex_levels": uw.get(ctx, uw.stock(ticker, "gex-levels"), {"date": day}, "gex_levels", errors),
+                    "term_structure": uw.get(ctx, uw.stock(ticker, "volatility/term-structure"), {"date": day},
+                                             "term_structure", errors),
+                    "options_volume": uw.get(ctx, uw.stock(ticker, "options-volume"), {"limit": 5}, "options_volume",
+                                             errors),
+                    "prints": uw.get(ctx, uw.stock(ticker, "flow-recent"), None, "prints", errors),
+                }
+            except uw.NameFailed as e:
+                state["failed"].append(ticker)
+                ctx.issue("fetch_failed", f"{session} {ticker}", str(e)[:300])
+                continue
+            self._write(ctx, path, {
+                "session_date": day, "ticker": ticker, "set_name": tables.SET_EARNINGS,
+                "report_date": r["report_date"].isoformat(), "report_session": r["report_session"],
+                "gates": {"option_volume": r["option_volume"], "total_open_interest": r["total_open_interest"],
+                          "dollar_option_volume": r["dollar_option_volume"]},
+                "parts": parts, "errors": errors}, before)
+
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
-        state = ctx.pending.setdefault(NAME, {"stopped": None, "start": ctx.clock()})
+        state = ctx.pending.setdefault(NAME, {"stopped": None, "start": ctx.clock(), "failed": []})
         if not uw.observed(as_of):
             state["stopped"] = "outside the observed window: no UW call"
             return self._raws(as_of)
         try:
-            if self._calendar(ctx, as_of, state):
-                self._screener(ctx, as_of, state)
+            if self._calendar(ctx, as_of, state) and self._screener(ctx, as_of, state):
+                self._earnings(ctx, as_of, state)
         except base.CapReached as e:
             state["stopped"] = str(e)
         return self._raws(as_of)
 
     def _raws(self, session: date) -> list[Path]:
-        """The session's calendar and screener files: small, so every run types the session's screener set again."""
+        """The session's calendar and screener files (small, so every run types the session's screener set again),
+        and its earnings-set files not typed yet."""
         screener = sorted((base.raw_root() / "uw" / "screener" / session.isoformat()).glob("part-*.json.gz"))
-        return [p for p in calendar_files(session) if p.exists()] + screener
+        done = tables.names_done(SOURCE, session)
+        earnings = sorted(p for p in (base.raw_root() / "uw" / "er_options" / session.isoformat()).glob("*.json.gz")
+                          if p.name.removesuffix(".json.gz") not in done)
+        return [p for p in calendar_files(session) if p.exists()] + screener + earnings
 
     # ── type ──
+    def type_earnings(self, ctx: base.RunContext, raw: Path) -> tuple[dict[str, list[dict]], dict]:
+        """The table rows of one earnings-set raw file and its ``names`` row."""
+        doc = base.read_raw_json(raw)
+        session, ticker = date.fromisoformat(doc["session_date"]), doc["ticker"]
+        prov = {"source": "uw", "source_as_of": session, "fetched_at": doc["fetched_at"], "run_id": doc["run_id"],
+                "observed": bool(doc.get("observed"))}
+        parts, errors, gates = doc["parts"], doc.get("errors") or {}, doc.get("gates") or {}
+
+        def issue(kind: str, key: str, detail: str) -> None:
+            ctx.issue(kind, key, detail)
+
+        strike = rows.strike_rows(session, ticker, tables.SET_EARNINGS, parts.get("spot_strike"), None, prov, issue)
+        expiry = rows.expiry_rows(session, ticker, tables.SET_EARNINGS, prov, term=parts.get("term_structure"))
+        prints = rows.print_rows(session, ticker, tables.SET_EARNINGS, parts.get("prints"), prov)
+        er = {"session_date": session, "ticker": ticker, "report_date": tables.to_day(doc.get("report_date")),
+              "report_session": doc.get("report_session"), "option_volume": tables.to_int(gates.get("option_volume")),
+              "total_open_interest": tables.to_int(gates.get("total_open_interest")),
+              "dollar_option_volume": tables.to_float(gates.get("dollar_option_volume")),
+              "strikes": len(strike), "expiries": len(expiry), "prints": len(prints),
+              **rows.gex_levels(parts.get("gex_levels")), **rows.volume_fields(parts.get("options_volume"), session),
+              **prov}
+        if errors:
+            issue("part_empty", f"{session} {ticker}",
+                  ("UW refused, stored empty: " + "; ".join(f"{k} {v}" for k, v in sorted(errors.items())))[:300])
+        out = {"er_options": [er], "option_strike": strike, "option_expiry": expiry, "option_print": prints}
+        return out, {"session_date": session, "ticker": ticker, "set_name": tables.SET_EARNINGS,
+                     "raw_bytes": raw.stat().st_size, "calls": doc.get("calls"),
+                     "errors": json.dumps(errors, sort_keys=True) if errors else None,
+                     "fetched_at": doc["fetched_at"], "run_id": doc["run_id"]}
+
     def to_parquet_all(self, ctx: base.RunContext, raws: list[Path]) -> list[Path]:
-        sessions = sorted({date.fromisoformat(p.parent.name) for p in raws})
+        """The screener set of each session the files belong to, then the earnings-set files: one write per table and
+        session, and their ``names`` rows last."""
+        er_root = base.raw_root() / "uw" / "er_options"
         out: list[Path] = []
-        for session in sessions:
+        for session in sorted({date.fromisoformat(p.parent.name) for p in raws if er_root not in p.parents}):
             day_rows = screener_rows(session)
             if day_rows:
                 out += tables.upsert(SOURCE, tables.TABLES["option_screener_daily"], day_rows)
-        return out
+        by_table: dict[str, list[dict]] = {}
+        done = []
+        for raw in (p for p in raws if er_root in p.parents):
+            typed, name_row = self.type_earnings(ctx, raw)
+            for table, table_rows in typed.items():
+                by_table.setdefault(table, []).extend(table_rows)
+            done.append(name_row)
+        out += [p for table, table_rows in sorted(by_table.items()) if table_rows
+                for p in tables.upsert(SOURCE, tables.TABLES[table], table_rows)]
+        return out + (tables.upsert(SOURCE, tables.NAMES, done) if done else [])
 
     def to_parquet(self, ctx: base.RunContext, raw: Path) -> list[Path]:
         return self.to_parquet_all(ctx, [raw])
@@ -249,11 +342,20 @@ class UWOptionScreener:
         cal = calendar_names(as_of) if cal_done else {}
         parts = batches(cal)
         asked = {t for n, b in enumerate(parts) if screener_path(as_of, n).exists() for t in b}
-        rows = screener_rows(as_of) or []
+        day_rows = screener_rows(as_of) or []
         note = [f"{len(cal)} names report in the next {DAYS_AHEAD} days" if cal_done
                 else "the calendar is not complete yet",
-                f"{sum(r['screened'] for r in rows)} screened, {sum(r['passes_gates'] for r in rows)} pass the gates"]
+                f"{sum(r['screened'] for r in day_rows)} screened, "
+                f"{sum(r['passes_gates'] for r in day_rows)} pass the gates"]
         left = not cal_done or len(asked) < sum(len(b) for b in parts)
+        if day_rows:
+            wanted = names.earnings_set(as_of, day_rows, set(names.list_names()))
+            done = tables.names_done(SOURCE, as_of)
+            have = sum(r["ticker"] in done for r in wanted)
+            note.append(f"earnings set {have}/{len(wanted)} for {base.next_due(as_of)}")
+            left = left or have < len(wanted)
+            if state.get("failed"):
+                note.append("failed: " + ", ".join(state["failed"][:10]))
         if left and state.get("stopped"):
             note.append(f"stopped: {state['stopped']}")
         again = left and uw.observed(as_of)
