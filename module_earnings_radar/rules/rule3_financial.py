@@ -196,10 +196,27 @@ def _get(row, key: str, default=None):
     return default
 
 
+def _quarter_coverage(n_quarters: int) -> float:
+    """redesign.md R3: the coverage of the usable quarters held, buckets 4 / 5-7 / 8+ (R2's numbers)."""
+    if n_quarters >= 8:
+        return 0.80
+    if n_quarters >= 5:
+        return 0.60
+    return 0.40
+
+
 def score(ticker: str, cluster: str, fundamentals_history: list[dict],
           btc_price: Optional[float] = None) -> RuleResult:
     if not fundamentals_history or not fundamentals_history[0].get("revenue"):
         return RuleResult(score=None, available=False, coverage=0, reasons=["no fundamental data"])
+    # redesign.md R3: usable quarters >= 4 (a row with revenue), the last 8 read; fewer is unavailable, so one
+    # quarter's levels never vote (review S5). Default chosen, change if avo prefers: the alternative is
+    # docs/rules/r3_financial.md's older "two features" rule alone.
+    usable = sum(1 for r in fundamentals_history[:8] if _get(r, "revenue") is not None)
+    if usable < _MIN_OM_QUARTERS:
+        return RuleResult(score=None, available=False, coverage=0,
+                          reasons=[f"fewer than {_MIN_OM_QUARTERS} usable quarters ({usable})"],
+                          raw_metrics={"usable_quarters": usable})
 
     latest = fundamentals_history[0]
     pct_score = 0.0
@@ -270,22 +287,24 @@ def score(ticker: str, cluster: str, fundamentals_history: list[dict],
         reasons.append("RED FLAGS: " + "; ".join(matched))
         pct_score -= len(matched) * 10
 
-    # A scorer that counts more signals than its denominator never reads above full coverage (review S1).
-    coverage = min(1.0, signals_avail / max(signals_total, 1))
+    # The share of the cluster's signals present: a scorer that counts more signals than its denominator never
+    # reads above one (review S1). A raw metric; the rule's coverage is the quarter bucket (review S5).
+    signal_coverage = min(1.0, signals_avail / max(signals_total, 1))
+    raw = {"usable_quarters": usable, "signal_coverage": round(signal_coverage, 2)}
 
     # Minimum coverage gate
     if signals_avail < 2:
         return RuleResult(
-            score=None, available=False, coverage=round(coverage, 2),
+            score=None, available=False, coverage=round(signal_coverage, 2),
             reasons=["insufficient financial coverage"],
-            flags=matched,
+            flags=matched, raw_metrics=raw,
         )
 
     pct_score = max(SCORE_RANGE[0], min(SCORE_RANGE[1], pct_score))
 
     return RuleResult(
-        score=round(pct_score, 1), available=True, coverage=round(coverage, 2),
-        reasons=reasons if reasons else ["neutral financial quality"], flags=matched,
+        score=round(pct_score, 1), available=True, coverage=_quarter_coverage(usable),
+        reasons=reasons if reasons else ["neutral financial quality"], flags=matched, raw_metrics=raw,
     )
 
 

@@ -17,6 +17,12 @@ from RevenueChaser.module_earnings_radar.rules.rule3_financial import (
 )
 
 
+def _pad(hist, n=4):
+    """``hist`` with older revenue-only, undated rows up to ``n`` usable quarters (review S5: R3 needs four). The
+    padding has no date, margin or balance field, so no YoY partner, OM vote or cluster signal comes from it."""
+    return list(hist) + [{"revenue": 1000} for _ in range(n - len(hist))]
+
+
 def test_empty_history_unavailable():
     r = score("AAPL", "C1_saas", [])
     assert r.available is False
@@ -31,10 +37,10 @@ def test_no_revenue_unavailable():
 
 def test_insufficient_coverage_unavailable():
     # Only revenue -> signals_avail == 1 < 2 -> unavailable (never 0)
-    r = score("AAPL", "C1_saas", [
+    r = score("AAPL", "C1_saas", _pad([
         {"revenue": 1000},
         {"revenue": 800},
-    ])
+    ]))
     assert r.available is False
     assert r.score is None
     assert "insufficient financial coverage" in r.reasons
@@ -46,21 +52,23 @@ def test_saas_healthy_full_signals():
          "deferred_revenue": 300, "fiscal_date": "2026-03-31"},
         {"revenue": 800, "deferred_revenue": 200, "fiscal_date": "2025-03-31"},
     ]
-    r = score("AAPL", "C1_saas", hist)
+    r = score("AAPL", "C1_saas", _pad(hist))
     assert r.available is True
     # rev +15, deferred-accel +25, GM +10, OM +10
     assert r.score == 60.0
-    assert r.coverage == pytest.approx(0.8)  # 4/5
+    assert r.raw_metrics["signal_coverage"] == pytest.approx(0.8)  # 4/5
+    assert r.coverage == 0.40                                       # four usable quarters
 
 
 def test_fintech_red_flags_penalize():
     hist = [{"revenue": 1000, "gross_margin": 0.05, "operating_margin": 0.05,
              "receivables": 500}]
-    r = score("AAPL", "C3_fintech_lending", hist)
+    r = score("AAPL", "C3_fintech_lending", _pad(hist))
     assert r.available is True
-    # -15*3 (nim/eff-ratio/receivables) -30 (3 matched flags); GM is scored once (E6)
+    # -15*3 (nim/eff-ratio/receivables) -30 (3 matched flags); GM is scored once (E6). Four usable quarters:
+    # coverage 0.40, never 1.0 off the signals of one quarter (review S5).
     assert r.score == -75.0
-    assert r.coverage == 1.0
+    assert r.coverage == 0.40 and r.raw_metrics["signal_coverage"] == 1.0
     assert any("RED FLAGS" in reason for reason in r.reasons)
     flags = " ".join(r.reasons)
     assert "nim_compression" in flags
@@ -71,7 +79,7 @@ def test_fintech_red_flags_penalize():
 def test_gross_margin_supplement_clamped():
     # Extreme positive inputs must clamp to SCORE_RANGE high (100)
     hist = [{"revenue": 1000, "gross_margin": 0.99, "operating_margin": 0.99}]
-    r = score("AAPL", "unmapped", hist)
+    r = score("AAPL", "unmapped", _pad(hist))
     assert r.available is True
     assert r.score <= 100.0
 
@@ -83,7 +91,7 @@ def test_missing_deferred_revenue_does_not_fire_deceleration():
         {"revenue": 1200, "gross_margin": 0.55, "operating_margin": 0.20, "fiscal_date": "2026-03-31"},
         {"revenue": 1000, "gross_margin": 0.55, "fiscal_date": "2025-03-31"},
     ]
-    r = score("AAPL", "C1_saas", hist)
+    r = score("AAPL", "C1_saas", _pad(hist))
     assert r.available is True
     assert r.score == 35.0  # rev growth +15, GM +10, OM +10; no DR deceleration
     joined = " ".join(r.reasons)
@@ -108,7 +116,7 @@ def test_fintech_reasons_call_margins_not_nim():
     # UW financials contain a real net interest margin.
     hist = [{"revenue": 1000, "gross_margin": 0.60, "operating_margin": 0.50,
              "receivables": 50}]
-    r = score("AAPL", "C3_fintech_lending", hist)
+    r = score("AAPL", "C3_fintech_lending", _pad(hist))
     assert r.available is True
     joined = " ".join(r.reasons)
     assert "strong gross margin" in joined
@@ -270,10 +278,10 @@ def test_negative_operating_margin_flag_has_no_visible_effect_for_hardware():
     # in the result — documenting that quirk rather than asserting it's "correct".
     latest = {"revenue": 1000, "gross_margin": 0.30, "operating_margin": -0.05, "inventory": 200, "fiscal_date": "2026-03-31"}
     prev = {"revenue": 900, "gross_margin": 0.32, "operating_margin": 0.02, "fiscal_date": "2025-03-31"}
-    r = score("TICK", "C2_hardware", [latest, prev])
+    r = score("TICK", "C2_hardware", _pad([latest, prev]))
     assert r.available is True
     assert r.score == pytest.approx(-10.0)
-    assert r.coverage == pytest.approx(0.8)
+    assert r.raw_metrics["signal_coverage"] == pytest.approx(0.8)
     assert r.flags == []
     assert not any("RED FLAGS" in reason for reason in r.reasons)
 
@@ -322,7 +330,7 @@ def test_universal_om_unavailable_on_short_history():
          "fiscal_date": "2026-03-31"},
         {"revenue": 900, "operating_margin": 0.18, "fiscal_date": "2025-12-31"},
     ]
-    r = score("AAPL", "unmapped", hist)
+    r = score("AAPL", "unmapped", _pad(hist))
     assert r.available is True
     # no universal-OM reason strings appear
     assert not any("op. margin" in x and "pts" in x for x in r.reasons)
@@ -343,7 +351,7 @@ def test_universal_om_cluster_is_not_overridden_for_short_mild_case():
     hist = [{"revenue": 1000, "gross_margin": 0.60, "operating_margin": 0.20,
              "fiscal_date": "2026-03-31"},
             {"revenue": 800, "gross_margin": 0.55, "fiscal_date": "2026-01-31"}]
-    r = score("AAPL", "C1_saas", hist)
+    r = score("AAPL", "C1_saas", _pad(hist))
     assert r.available is True
     # C1 SaaS short history: layer inactive, cluster score stands
     assert not any("op. margin" in x for x in r.reasons)
@@ -392,19 +400,19 @@ def test_e2_zdivergence_pairs_inventory_and_revenue_by_quarter():
 
 def test_e6_unmapped_counts_margins_once():
     hist = [{"revenue": 1000, "gross_margin": 0.60, "operating_margin": 0.20}]
-    r = score("X", "unmapped", hist)
+    r = score("X", "unmapped", _pad(hist))
     assert r.score == 20.0  # GM +10, OM +10 once each (was 40)
-    assert r.coverage == pytest.approx(2 / 3, abs=0.01)  # gm + om, no growth partner
+    assert r.raw_metrics["signal_coverage"] == pytest.approx(2 / 3, abs=0.01)  # gm + om, no growth partner
 
 
 def test_e6_unknown_cluster_label_counts_margins_once():
     hist = [{"revenue": 1000, "gross_margin": 0.60, "operating_margin": 0.20}]
-    assert score("X", "C7_healthcare", hist).score == 20.0
+    assert score("X", "C7_healthcare", _pad(hist)).score == 20.0
 
 
 def test_e6_fintech_counts_gross_margin_once():
     hist = [{"revenue": 1000, "gross_margin": 0.60, "operating_margin": 0.50, "receivables": 50}]
-    r = score("X", "C3_fintech_lending", hist)
+    r = score("X", "C3_fintech_lending", _pad(hist))
     # nim +15, efficiency +15, low credit exposure +10; no extra GM/OM supplement
     assert r.score == 40.0
 
@@ -412,7 +420,7 @@ def test_e6_fintech_counts_gross_margin_once():
 def test_e6_saas_keeps_the_generic_margin_supplements():
     # C1 does not score margins itself, so the supplements still apply once.
     hist = [{"revenue": 1000, "gross_margin": 0.60, "operating_margin": 0.20}]
-    assert score("X", "C1_saas", hist).score == 20.0
+    assert score("X", "C1_saas", _pad(hist)).score == 20.0
 
 
 def test_e7_seasonal_quarter_is_not_read_as_growth():

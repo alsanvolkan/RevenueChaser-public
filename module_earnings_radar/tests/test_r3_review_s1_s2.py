@@ -23,15 +23,22 @@ def test_the_energy_scorer_counts_every_signal_it_scores():
     assert (a, t) == (5, 5)
 
 
-def test_r3_coverage_never_exceeds_one():
-    r = score("UTL", "C6_energy_utilities", [ENERGY_LATEST, ENERGY_PREV])
-    assert r.available and r.coverage == 1.0
+def _pad(rows, n=4):
+    """Older revenue-only rows without a date up to four usable quarters (review S5: R3 needs four). They carry no
+    margin, balance or date field, so no YoY partner, OM vote or cluster signal comes from them."""
+    return list(rows) + [{"revenue": 1000} for _ in range(n - len(rows))]
+
+
+def test_r3_signal_coverage_never_exceeds_one():
+    r = score("UTL", "C6_energy_utilities", _pad([ENERGY_LATEST, ENERGY_PREV]))
+    assert r.available and r.raw_metrics["signal_coverage"] == 1.0
+    assert r.coverage == 0.40, "the rule's coverage is the quarter bucket since review S5"
 
 
 def test_coverage_is_clamped_even_when_a_scorer_over_counts(monkeypatch):
     monkeypatch.setattr(rule3_financial, "_score_saas", lambda latest, history: (0.0, [], [], 4, 3))
-    r = score("SAAS", "C1_saas", [{"revenue": 100, "fiscal_date": "2026-03-31"}])
-    assert r.coverage == 1.0
+    r = score("SAAS", "C1_saas", _pad([{"revenue": 100, "fiscal_date": "2026-03-31"}]))
+    assert r.raw_metrics["signal_coverage"] == 1.0
 
 
 QUARTERS = ["2026-03-31", "2025-12-31", "2025-09-30", "2025-06-30", "2025-03-31",
