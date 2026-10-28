@@ -12,6 +12,7 @@ from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html, 
 from . import expected_move
 from .brier import scorecard
 from .config import BRIER_FILENAME, HISTORY_FILENAME
+from .snapshot import HISTORY_ORIGIN
 from .flow_signals import evaluate_flow_signal
 from .narrative import build_walkthrough
 from .normalize import compute_positioning_deltas
@@ -212,17 +213,28 @@ _QUALITY_LABELS = {
 }
 
 
-def _manifest_warnings(data_root, asof) -> list[str]:
-    """The Fetch manifest's ``warnings`` for the day shown (best-effort; [] when absent)."""
+def _manifest(data_root, asof) -> dict:
+    """The raw day's manifest for the day shown (best-effort; {} when absent)."""
     if not data_root or not asof:
-        return []
+        return {}
     path = Path(data_root) / "raw" / str(asof) / "manifest.json"
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return []
-    warns = manifest.get("warnings") if isinstance(manifest, dict) else None
+        return {}
+    return manifest if isinstance(manifest, dict) else {}
+
+
+def _manifest_warnings(data_root, asof) -> list[str]:
+    """The Fetch manifest's ``warnings`` for the day shown (best-effort; [] when absent)."""
+    warns = _manifest(data_root, asof).get("warnings")
     return [str(w) for w in warns] if isinstance(warns, list) else []
+
+
+# A day of the 2-year history pull holds only the calls that take a date (snapshot.HISTORY_ENDPOINTS; review S2).
+HISTORY_DAY_LINE = ("History pull day: only the calls that take a date were made, so the iron butterfly (no chain), "
+                    "IV rank, options volume and the DTE-band walls are not in it, and Put Support is the provider's "
+                    "put wall.")
 
 
 def data_quality_notice(snapshot: dict, data_root=None) -> str | None:
@@ -235,6 +247,8 @@ def data_quality_notice(snapshot: dict, data_root=None) -> str | None:
     missing = [_QUALITY_LABELS.get(k, k)
                for k, ok in sorted((snapshot.get("quality") or {}).items()) if ok is False]
     parts = []
+    if _manifest(data_root, snapshot.get("asof_date")).get("origin") == HISTORY_ORIGIN:
+        parts.append(HISTORY_DAY_LINE)
     if warnings:
         parts.append("Fetch warnings: " + "; ".join(warnings) + ".")
     if missing:
