@@ -1652,7 +1652,8 @@ def _end_empty_fetch(payload: dict, no_fetch: bool) -> None:
 def run_swing(uw, refresh_universe: bool = False, no_fetch: bool = False) -> Path:
     """Run the Swing Screener (broad US scan, Minervini/Weinstein/Qullamaggie).
 
-    yfinance-only (``uw`` is unused; options flow is manual-review). Writes the
+    Reads the store's daily bars (filled nightly from UW with a yfinance fallback); yfinance is called only for
+    company info and the SPY fallback, and ``uw`` is unused here (options flow is manual-review). Writes the
     structured JSON payload, the HTML board and its rows file (K10, #383 R3).
     ``refresh_universe=True`` re-fetches the shared ticker universe first;
     ``no_fetch=True`` (model-only) runs purely from cached per-ticker data.
@@ -1829,14 +1830,14 @@ def run_daily_bars(uw=None, tickers: list[str] | None = None) -> None:
 def run_index_lists(uw=None, first_fill: list[str] | None = None) -> None:
     """Write the index lists (#302, D24); RC-Index-Lists runs the same step weekly. ``first_fill=["sp600"]`` is the
     attended first SmallCap 600 fill, which needs the user's OK for that run."""
-    from RevenueChaser.core import index_registry
+    from RevenueChaser.core import index_lists
 
-    res = index_registry.refresh_lists(run_id=run_id(), first_fill=first_fill or ())
+    res = index_lists.refresh_lists(run_id=run_id(), first_fill=first_fill or ())
     if res.get("locked"):
         raise JobMessage("Index lists are already running; nothing started.")
-    if not index_registry.lists_ok(res):
-        raise RuntimeError(index_registry.summary_line(res))
-    raise JobMessage(index_registry.summary_line(res))
+    if not index_lists.lists_ok(res):
+        raise RuntimeError(index_lists.summary_line(res))
+    raise JobMessage(index_lists.summary_line(res))
 
 
 def run_edgar_sync(uw=None, limit: int | None = None, force: bool = False) -> Path:

@@ -10,7 +10,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from RevenueChaser.core import index_registry, rawstore
+from RevenueChaser.core import index_lists as il
+from RevenueChaser.core import rawstore
 from RevenueChaser.core.identity import apply as universe_apply
 from RevenueChaser.core.identity import cache, master, refresh as R
 from RevenueChaser.core.identity.sources import SourceResult
@@ -29,7 +30,7 @@ UNIVERSE = [("AAPL", "Apple Inc.", 3.0e12), ("PDI", "PIMCO Dynamic Income Fund",
 @pytest.fixture(autouse=True)
 def store():
     rawstore.write_rows("equity_universe", [{"ticker": t, "name": n, "market_cap": c} for t, n, c in UNIVERSE])
-    index_registry.save_index("sp500", {"AAPL"})        # the SPDR check reads its members from here
+    il.save_index("sp500", {"AAPL"})        # the SPDR check reads its members from here
 
 
 def ok(source, rows, at=NOW):
@@ -808,7 +809,7 @@ def test_only_sp500_members_held_by_a_fund_and_present_in_the_master_are_compare
     """Members come from ``index_constituents`` (UW spelling, BRK.B); the others in the holdings are not compared."""
     rawstore.write_rows("equity_universe", [{"ticker": "BRK-B", "name": "Berkshire Hathaway", "market_cap": 1e12},
                                             {"ticker": "XYZ", "name": "Xyz", "market_cap": 1e9}])
-    index_registry.save_index("sp500", {"AAPL", "BRK.B", "NOTLISTED"})
+    il.save_index("sp500", {"AAPL", "BRK.B", "NOTLISTED"})
     fk.results["uw"] = ok("uw_sector", fk.results["uw"].rows + [
         {"ticker": "BRK-B", "sector": "Financial Services", "industry": "Insurance - Diversified",
          "security_type": "Common Stock", "market_cap": 1e12},

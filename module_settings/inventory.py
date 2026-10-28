@@ -387,7 +387,7 @@ def _sec_nasdaq_count() -> int | None:
 
 def _index_note() -> str:
     """Each stored index list against its floor, the last change run and Nasdaq vs the SEC exchange file (#302)."""
-    from RevenueChaser.core import index_registry
+    from RevenueChaser.core import index_lists
     counts: dict[str, int] = {}
     if _table_exists("index_constituents"):
         try:
@@ -396,7 +396,7 @@ def _index_note() -> str:
         except Exception as exc:  # noqa: BLE001
             _record("index_constituents", "_index_note", exc)
     lists = " · ".join(f"{slug} {counts.get(slug, 0):,} / {'floor ' if i == 0 else ''}"
-                       f"{index_registry.MIN_INDEX[slug]:,}" for i, slug in enumerate(index_registry.STORED))
+                       f"{index_lists.MIN_INDEX[slug]:,}" for i, slug in enumerate(index_lists.STORED))
     when, n = _index_last_change()
     change = f"last change {when} (+{n:,})" if n is not None else "no change recorded"
     sec = _sec_nasdaq_count()

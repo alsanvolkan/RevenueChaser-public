@@ -107,7 +107,7 @@ def evaluate_weinstein(ind: dict, eff=None) -> dict:
               g("within_52w_high_pct"), f"≥ {_pct(e.breakout_high_pct)}% of the high"),
         _rule("volume_confirmation", f"Volume at least {e.vol_confirm:g}× average", "ratio",
               tri.rule((g("vol_ratio"),), lambda v: v >= e.vol_confirm),
-              g("vol_ratio"), f"≥ {e.vol_confirm:g}× 20-day avg"),
+              g("vol_ratio"), f"≥ {e.vol_confirm:g}× 20-day avg, best of {config.VOL_WINDOW} days"),
         _rule("rs_3m_gt_spy", "3-month relative strength above SPY", "diff_pct",
               tri.rule((g("rs_vs_spy_3m"),), lambda v: v > 0),
               g("rs_vs_spy_3m"), "beats SPY"),

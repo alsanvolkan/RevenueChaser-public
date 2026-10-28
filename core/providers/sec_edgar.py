@@ -1067,7 +1067,8 @@ def get_fundamentals(ticker: str, no_fetch: bool = False) -> tuple[list[dict], l
     fetched_at = time.time()          # the facts download, stamped on the row (K6, #383 R1)
 
     if not facts:
-        return [], [], {"source": "sec_edgar", "entity_name": row.get("name", ""), "is_us": True, "available": False}
+        return [], [], {"source": "sec_edgar", "entity_name": row.get("name", ""), "is_us": True, "available": False,
+                        "downloaded": True}
 
     non_usd: set[str] = set()         # #46: the other currencies the money concepts were tagged in
     annual = extract_annual(facts, non_usd)
@@ -1092,7 +1093,9 @@ def get_fundamentals(ticker: str, no_fetch: bool = False) -> tuple[list[dict], l
         "meta": meta,
         "fetched_at": fetched_at,
     }])
-    return annual, quarterly, meta
+    # ``downloaded``: this call reached the SEC and it answered (review N5, the caller's provider health counts
+    # it). Returned only, never stored: a later read of the stored row made no call.
+    return annual, quarterly, {**meta, "downloaded": True}
 
 
 def get_annual(ticker: str, no_fetch: bool = False) -> tuple[list[dict], dict]:

@@ -19,6 +19,11 @@ else differed.
 #49 A2 removed the Swing payload's dead ``is_fixture`` key (``demo_payload`` was its only setter); only that key left
 the golden, edited by hand.
 #49 finished it for Fundamentals (and ``no_data_payload``): its ``is_fixture: false`` left the golden the same way.
+G1 (build plan PR 6) moved Fundamentals' ``selection_version`` to 7 (review N1, net cash); re-captured, it was the
+only difference, edited by hand. Review F2 then added the additive ``data_quality.stale_submissions`` (0 here); the
+re-capture differed from the old golden by that key only. Opus review S4 put Swing's ``settings`` (the run's
+thresholds, review finding 2) back into the snapshot so a change to them shows here; the re-capture added that block
+only.
 To re-capture on another commit, run this file with ``RC_PARITY_CAPTURE=<path>`` (it writes the snapshot there
 instead of comparing).
 """

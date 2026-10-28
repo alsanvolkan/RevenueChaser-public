@@ -33,11 +33,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 import pandas as pd
 
-from RevenueChaser.core import calendar, earnings_dates, funnel, job_control, ledger
+from RevenueChaser.core import calendar, earnings_dates, fiscal_year, funnel, job_control, ledger
 from RevenueChaser.core import universe as _universe
 from RevenueChaser.core.config import to_float
 from RevenueChaser.core.gics_map import UNCLASSIFIED
@@ -57,13 +58,15 @@ class Prefiltered:
 
     ``quote_session`` is the newest session of the quotes it read; ``older_quotes`` counts the names whose quote is
     from an earlier session (U9: the board says which session its prefilter saw). ``no_volume`` lists the kept names
-    with no average volume anywhere in D04, which the dollar-volume rule could not test (S4, #434 review).
+    with no average volume anywhere in D04, which the dollar-volume rule could not test (S4, #434 review). ``cfg`` is
+    the thresholds it dropped on, so the funnel names those and not the board's defaults (Swing review finding 1).
     """
     kept: list[dict]
     drops: dict[str, list[str]] = field(default_factory=dict)
     quote_session: date | None = None
     older_quotes: int = 0
     no_volume: list[str] = field(default_factory=list)
+    cfg: Any = None
 
     @property
     def dropped(self) -> int:
@@ -106,7 +109,8 @@ def prefilter(rows: list[dict], cfg: Any, quotes: dict[str, dict] | None = None)
             continue
         drops.setdefault(reason, []).append(r.get("ticker"))
     newest = max(sessions) if sessions else None
-    return Prefiltered(kept, drops, newest, sum(1 for d in sessions if d < newest) if newest else 0, no_volume)
+    return Prefiltered(kept, drops, newest, sum(1 for d in sessions if d < newest) if newest else 0, no_volume,
+                       SimpleNamespace(MIN_PRICE=cfg.MIN_PRICE, MIN_DOLLAR_VOLUME=cfg.MIN_DOLLAR_VOLUME))
 
 
 def spy_summary(spy_df) -> dict:
@@ -311,16 +315,27 @@ def stored_payload(*, board: str, refreshed_by: str, build_payload: Callable[...
 # The funnel's typed drops after the excluded types (C16, #383 R3), in the order a name can leave: the prefilter's on
 # D04, then the scorer's on D01 and EDGAR. ``(key, label, by design)``: a by-design drop is a board rule; the rest are
 # data gaps that need a look. A scorer reason not listed here still gets its own step (``DROP_LABELS``' text).
-def _drop_steps(cfg: Any) -> tuple[tuple[str, str, bool], ...]:
+def _drop_steps(cfg: Any, floors: Any = None) -> tuple[tuple[str, str, bool], ...]:
+    """``floors`` (the thresholds the prefilter used, Swing review 1) names the price and volume floors; ``cfg`` (the
+    board's config) the rest. Fundamentals' sector and stale-annual gates are board rules (review N3); its Rule of 40
+    barrier stays a data gap, because the code drops an implausible figure as a data problem, not as a pick rule."""
+    floors = floors or cfg
+    sectors = ", ".join(getattr(cfg, "EXCLUDED_SECTORS", None) or ())
+    barrier = getattr(cfg, "RO40_BARRIER", None)
     return (
         ("no_quote", "No stored quote (D04) to prefilter on", False),
-        ("low_price", f"Price under ${cfg.MIN_PRICE:,.2f}", True),
-        ("low_dollar_volume", f"Average daily dollar volume under ${cfg.MIN_DOLLAR_VOLUME:,.0f}", True),
+        ("low_price", f"Price under ${floors.MIN_PRICE:,.2f}", True),
+        ("low_dollar_volume", f"Average daily dollar volume under ${floors.MIN_DOLLAR_VOLUME:,.0f}", True),
         ("no_bars", "No stored daily price bars (D01)", False),
         ("stale_bars", "No D01 bar of the latest stored session (a halt or a Daily Bars gap)", False),
         ("short_bars", "Fewer than 252 stored daily bars", True),
         ("no_price", "No usable price", False),
+        ("sector_excluded", f"Excluded sector ({sectors})" if sectors else "Excluded sector", True),
+        ("edgar_fetch_failed", "EDGAR request failed", False),
         ("no_edgar_annual", "No EDGAR annual data", False),
+        ("stale_annual", f"Latest annual report ended more than {fiscal_year.STALE_DAYS} days ago", True),
+        ("ro40_barrier", (f"Rule of 40 above {barrier:g}: an implausible figure, check the filing" if barrier
+                          else "Implausible Rule of 40: check the filing"), False),
         ("compute_error", "Scoring errors (see the log)", False),
     )
 
@@ -346,7 +361,7 @@ def funnel_steps(*, universe: int, excluded_types: int, prefiltered: Prefiltered
         steps.append(step("excluded_types", "Excluded security types (ETF, CEF, SPAC, preferred, unit, warrant)",
                           excluded_types, "drop", by_design=True))
     by_reason = {**prefiltered.drops, **dropped}
-    known = _drop_steps(cfg)
+    known = _drop_steps(cfg, getattr(prefiltered, "cfg", None))
     listed = {key for key, _, _ in known}
     extra = [(k, DROP_LABELS.get(k, k).capitalize(), False) for k in sorted(by_reason) if k not in listed]
     for key, label, by_design in (*known, *extra):
@@ -490,6 +505,8 @@ def run_screen(*, board: str, refreshed_by: str, cfg: Any,
         "earnings_stored": earnings_stored,
         "stale_ohlc": sum(1 for r in results if r.get("ohlc_stale")),
         "spy_stale": bool(getattr(spy_df, "attrs", {}).get("stale")),
+        # Only the SPY fallback (``load_ohlc``) can refuse a short refetch now; D01 bars never do (Swing review 8).
+        "spy_short_refetch_refused": bool(getattr(spy_df, "attrs", {}).get("short_refetch_refused")),
         "dropped": count_drops(drops),
         "universe_generated_at": u_stats.get("universe_generated_at"),
         "universe_refreshed_by": u_stats.get("universe_refreshed_by"),

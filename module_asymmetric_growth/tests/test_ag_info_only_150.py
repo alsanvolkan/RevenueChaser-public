@@ -183,6 +183,7 @@ def test_the_bulk_run_gives_the_cards_of_the_per_ticker_path(rawstore_tmp_db, mo
     for card in a:           # what only the full run adds: 13F and index fields
         for k in run_only:
             card.pop(k)
+        card["period_ends"].pop("inst_13f")              # the 13F quarters it read (PR 6, AG review SF-3)
     assert a == b and len(a) == 14          # 2 of 16 are foreign filers
 
 
