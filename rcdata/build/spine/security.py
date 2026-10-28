@@ -31,6 +31,7 @@ needs a source that has never run is not applied; that source is one ``source_ne
 """
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -457,17 +458,28 @@ class SpineSecurity:
                     "(SELECT min(source_as_of) FROM stg_sec_all)) AS snap "
                     "FROM (SELECT DISTINCT as_of FROM stg_fund_lines) d")
         on_snap: dict[date, set[str]] = defaultdict(set)
-        for t, d in con.execute("SELECT ticker, source_as_of FROM stg_sec_all").fetchall():
+        # Each ticker's (snapshot, CIK) rows, oldest first: who held it as of a snapshot (delta-3 SF-A).
+        held_by: dict[str, list[tuple[date, str]]] = defaultdict(list)
+        for t, d, cik in con.execute("SELECT ticker, source_as_of, cik FROM stg_sec_all "
+                                     "ORDER BY source_as_of").fetchall():
             on_snap[d].add(t)
+            held_by[t].append((d, cik))
         squashed = {d: squash(ts) for d, ts in on_snap.items()}
         by_cusip_all = {r["cusip"]: r["ticker"] for r in rows if r["cusip"]}
         # Each snapshot's CUSIP map, built once (not once per distinct line).
         by_cusip = {d: {c: t for c, t in by_cusip_all.items() if t in ts} for d, ts in on_snap.items()}
         snaps = sorted(on_snap)
-        first_seen: dict[str, date] = {}
-        for d in snaps:
-            for t in on_snap[d]:
-                first_seen.setdefault(t, d)
+        held_on = {t: [d for d, _ in rs] for t, rs in held_by.items()}
+
+        def same_holder(ticker: str, snap: date, ahead_snap: date) -> bool:
+            """Whether the ticker's row in ``ahead_snap`` is a ticker the SEC file had not held by ``snap``, or is held
+            by the same CIK as its last row on or before ``snap`` (a name the file dropped and took back)."""
+            rows_ = held_by[ticker]
+            i = bisect_right(held_on[ticker], snap)
+            if i == 0:
+                return True
+            prior = rows_[i - 1][1]
+            return any(d == ahead_snap and cik == prior for d, cik in rows_[i:])
         mapping = []
         for snap, tk, cu in con.execute(
                 "SELECT DISTINCT s.snap, coalesce(l.ticker, ''), coalesce(l.cusip, '') FROM stg_fund_lines l "
@@ -477,14 +489,14 @@ class SpineSecurity:
             hit, msnap = match_holding(line, by_cusip[snap], cusip_owners, link_of, on_snap[snap], squashed[snap]), snap
             # The SEC file is weekly, so a name the files already write under its new ticker (a new joiner, a rename)
             # is looked for in the snapshots up to LOOKAHEAD after the day's, oldest first (delta S1). Only a ticker
-            # the SEC file had not held by the day's snapshot: one it held and no longer does has left the file, and
-            # a later snapshot's row of it is the ticker's next owner (delta-2 SF1).
+            # the SEC file had not held by the day's snapshot, or one it held under the same CIK (it dropped the name
+            # for a while, delta-3 SF-A): a later row of a ticker under another CIK is its next owner (delta-2 SF1).
             if hit is None:
                 for d in snaps[snaps.index(snap) + 1:]:
                     if d > snap + LOOKAHEAD:
                         break
                     ahead = match_holding(line, by_cusip[d], cusip_owners, link_of, on_snap[d], squashed[d])
-                    if ahead and first_seen[ahead] > snap:
+                    if ahead and same_holder(ahead, snap, d):
                         hit, msnap = ahead, d
                         break
             mapping.append({"snap": snap, "tk": tk, "cu": cu, "sec_ticker": hit, "msnap": msnap if hit else None})

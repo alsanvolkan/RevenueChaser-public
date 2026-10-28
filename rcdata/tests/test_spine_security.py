@@ -267,6 +267,22 @@ def test_a_member_still_held_after_it_left_the_sec_file_is_not_matched_to_the_ti
     assert ("member_not_in_sec", "sp500:NVR") in _issues()
 
 
+def test_a_member_the_sec_file_drops_for_a_week_keeps_one_period(built):
+    """Delta-3 SF-A: NVR is missing from the 3 Nov SEC file and back, same CIK, on 10 Nov; the fund files hold it
+    with its CUSIP throughout. The 3 Nov line matches NVR ahead (the same company): one continuous period."""
+    without_nvr = [r for r in fx.SEC_FILE["data"] if r[2] != "NVR"]
+    _sec_answer(built, without_nvr)
+    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-03", "allow_shrink": True}})
+    _sec_answer(built, fx.SEC_FILE["data"])
+    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-10"}})
+    _funds_answer(built, sp500=fx.SP500)
+    run_all("2026-11-03", names=(funds.NAME,))
+    run_all("2026-11-10", names=(funds.NAME,))
+    assert _q("SELECT cik, valid_from, valid_to FROM index_membership WHERE source = ? AND index_slug = 'sp500' "
+              "AND ticker = 'NVR'", funds.NAME) == [("906163", date(2026, 10, 27), None)]
+    assert ("member_not_in_sec", "sp500:NVR") not in _issues()
+
+
 def test_a_rename_the_fund_files_lag_is_not_matched_to_the_old_tickers_next_owner(built):
     """Delta-2 SF1, the other direction: the SEC file writes ETN as ETNX from 3 Nov, a fund file still writes ETN
     without a CUSIP that day, and on 10 Nov the ticker ETN belongs to another CIK. The line is no match for the new
