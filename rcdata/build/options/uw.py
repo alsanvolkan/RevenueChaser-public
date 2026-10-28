@@ -29,6 +29,9 @@ PAGE_LIMIT = 500        # UW's documented maximum for the paged endpoints (docs/
 # Pages before a part fails instead of asking on: 20 pages are 10,000 rows, past any one expiry's contracts or any
 # ticker's strikes, and only stop an answer that never ends.
 MAX_PAGES = 20
+# A run starts no new name (or calendar day, or screener batch) after this many seconds: RC-Build stops a pass at 50
+# minutes (core/automations.py), and the typing, the build and the swap of the options file come after the fetch.
+RUN_BUDGET_S = 35 * 60
 
 
 class NameFailed(base.SourceError):
@@ -69,19 +72,20 @@ def rows_of(body) -> list:
     return items if isinstance(items, list) else []
 
 
-def paged(ctx: base.RunContext, ep: str, params: dict, part: str, errors: dict, key) -> dict | None:
+def paged(ctx: base.RunContext, ep: str, params: dict, part: str, errors: dict, key,
+          limit: int = PAGE_LIMIT) -> dict | None:
     """Every page of a paged UW answer: ``{"data": rows, "pages": [rows per page]}``, or None for a part stored
     empty. Page 0 is sent without ``page``, then ``page=1, 2, ...`` (0-based) until a page is shorter than the
     limit. A key (``key(row)``) on two pages means the answer moved while paging, and a row may have been skipped
     too, so the name fails this run (``NameFailed``); so does the ``MAX_PAGES`` ceiling."""
-    params = dict(params, limit=PAGE_LIMIT)
+    params = dict(params, limit=limit)
     body = get(ctx, ep, params, part, errors)
     if body is None:
         return None
     pages = [rows_of(body)]
-    while len(pages[-1]) >= PAGE_LIMIT:
+    while len(pages[-1]) >= limit:
         if len(pages) >= MAX_PAGES:
-            raise NameFailed(f"UW {ep}: {MAX_PAGES} full pages of {PAGE_LIMIT} rows reach the page ceiling")
+            raise NameFailed(f"UW {ep}: {MAX_PAGES} full pages of {limit} rows reach the page ceiling")
         more = get(ctx, ep, dict(params, page=len(pages)), part, errors)
         if more is None:
             raise NameFailed(f"UW {ep} page {len(pages)}: {errors.pop(part)}")

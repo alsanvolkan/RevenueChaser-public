@@ -74,7 +74,10 @@ class UWOptions:
                              for t in tickers if t in self.screener]}
         if path.startswith("/earnings/"):
             day = date.fromisoformat(q["date"][0])
-            return {"data": [{"symbol": t, "report_date": day.isoformat()} for t in self.calendar.get((day, parts[2]), [])]}
+            page, limit = int((q.get("page") or ["0"])[0]), int((q.get("limit") or ["50"])[0])
+            rows = [{"symbol": t, "report_date": day.isoformat(), "full_name": f"{t} Inc"}
+                    for t in self.calendar.get((day, parts[2]), [])]
+            return {"data": rows[page * limit:(page + 1) * limit]}
         ticker, ep = parts[2], "/".join(parts[3:])
         if ep == "expiry-breakdown":
             return {"data": [{"expiry": e.isoformat(), "chains": len(self.strikes) * 2, "open_interest": 1000,

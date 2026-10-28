@@ -43,9 +43,7 @@ from . import KIND, names, rows, tables, uw
 NAME = "uw/option_list"
 SOURCE = tables.LIST_SOURCE
 OWNED = ("option_eod", "option_strike", "option_expiry", "option_daily", "option_print", "iv_daily")
-# A run starts no new name after this many seconds: RC-Build stops a pass at 50 minutes, and the typing, the build
-# and the swap of the options file come after the fetch.
-RUN_BUDGET_S = 35 * 60
+RUN_BUDGET_S = uw.RUN_BUDGET_S
 
 
 def raw_path(session: date, ticker: str) -> Path:
