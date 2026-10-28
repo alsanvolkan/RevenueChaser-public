@@ -148,3 +148,43 @@ def sec_routes(http_mock, facts_by_cik: dict, indexes: dict | None = None) -> No
         http_mock.add(f"master.{day}.idx", body)
     for cik, body in facts_by_cik.items():
         http_mock.add(f"companyfacts/CIK{int(cik):010d}.json", body)
+
+
+# ── The SEC: filing lists and documents ───────────────────────────────────────────────────────────────────────
+
+def submissions(cik, rows: list[tuple[str, str, str, str, str, str]], name: str = "") -> dict:
+    """A submissions answer: ``rows`` of (accession, form, filingDate, reportDate, primaryDocument, items)."""
+    keys = ("accessionNumber", "form", "filingDate", "reportDate", "primaryDocument", "items")
+    recent = {k: [r[i] for r in rows] for i, k in enumerate(keys)}
+    return {"cik": str(cik), "name": name, "filings": {"recent": recent, "files": []}}
+
+
+EIGHT_K = "0001193125-25-250001"
+PROXY = "0001193125-25-240001"
+MSFT_FILINGS = [
+    (EIGHT_K, "8-K", "2025-10-29", "2025-10-29", "msft-8k.htm", "2.02,9.01"),
+    (Q26, "10-Q", "2025-10-29", "2025-09-30", "msft-10q.htm", ""),
+    (PROXY, "DEF 14A", "2025-10-20", "2025-12-05", "msft-def14a.htm", ""),
+    (K25, "10-K", "2025-07-30", "2025-06-30", "msft-10k.htm", ""),
+    ("0000789019-25-000077", "4", "2025-08-01", "2025-07-30", "xslF345X05/form4.xml", ""),
+]
+
+
+def ten_k(body_chars: int = 5_000, stop: bool = True) -> str:
+    """A 10-K body: a contents page, then Item 1 Business of ``body_chars`` characters, then Item 1A."""
+    words = ("We develop software and cloud services. Our customers include enterprises. " * (body_chars // 75 + 1))
+    return ("<html><body><p>Item 1. Business</p><p>Item 1A. Risk Factors</p>"
+            f"<p>PART I</p><p>Item 1. Business</p><p>{words[:body_chars]}</p>"
+            + ("<p>Item 1A. Risk Factors</p><p>Risks.</p>" if stop else "") + "</body></html>")
+
+
+def proxy(chars: int = 5_000) -> str:
+    return "<html><body><p>" + ("Executive compensation and the board. " * (chars // 38 + 1))[:chars] + "</p></body></html>"
+
+
+def filing_routes(http_mock, lists: dict, documents: dict | None = None) -> None:
+    """Answer the submissions URLs (``lists`` {cik: body}) and the archive documents (``documents`` {file: html})."""
+    for cik, body in lists.items():
+        http_mock.add(f"submissions/CIK{int(cik):010d}.json", body)
+    for name, html in (documents or {}).items():
+        http_mock.add(f"/{name}", html)

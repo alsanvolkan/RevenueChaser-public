@@ -13,7 +13,7 @@ import duckdb
 from ....core import calendar
 from ... import ops
 from .. import base
-from . import KIND, common, companyfacts, facts
+from . import KIND, common, companyfacts, facts, filings
 
 NAME = "fundamentals/tables"
 
@@ -24,28 +24,43 @@ COMPANY = [
     # From the SEC facts: the filer's name and kind, the newest re-read, and its newest statement (filed, period).
     ("entity_name", "TEXT"), ("is_us", "BOOLEAN"), ("non_usd_units", "TEXT"), ("us_gaap", "BOOLEAN"),
     ("facts_as_of", "DATE"), ("facts_fetched_at", "DOUBLE"), ("newest_filed", "DATE"), ("newest_period_end", "DATE"),
+    # The day the company's SEC filing list was last read: "no 8-K event" means something only after it (F2).
+    ("submissions_as_of", "DATE"),
     ("source", "TEXT"), ("run_id", "TEXT"),
 ]
 FACT = [(c, "TEXT NOT NULL" if c in ("cik", "field", "period_type", "source") else
          "DATE NOT NULL" if c == "period_end" else "DOUBLE NOT NULL" if c == "value" else
          "BOOLEAN NOT NULL" if c in ("derived", "preliminary") else t) for c, t in facts.FACT]
 
+# One row per filing and 8-K item (``kind`` ``item``; a filing without items has one row with ``item`` NULL), and
+# one per document text (``kind`` ``document``: ``item`` ``business`` or ``proxy``, with ``text`` and ``quality``).
+FILING_ITEM = [("cik", "TEXT NOT NULL"), ("accession", "TEXT NOT NULL"), ("form", "TEXT"), ("filing_date", "DATE"),
+               ("report_date", "DATE"), ("primary_document", "TEXT"), ("kind", "TEXT NOT NULL"), ("item", "TEXT"),
+               ("text", "TEXT"), ("chars", "INTEGER"), ("quality", "TEXT"), ("source", "TEXT NOT NULL"),
+               ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
+
 SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "fundamental_company": COMPANY,
     "fundamental_fact": FACT,
+    "filing_item": FILING_ITEM,
 }
 TABLE_CHECKS: dict[str, list[str]] = {
     # Every row is annual or quarterly, and a non-preliminary row carries its accession and filed date.
     "fundamental_fact": ["CHECK (period_type IN ('annual', 'quarterly'))",
                          "CHECK (preliminary OR (accn IS NOT NULL AND filed IS NOT NULL))"],
+    # A document's text is never labelled ok at the cap (filings.CAPPED).
+    "filing_item": ["CHECK (kind IN ('item', 'document'))",
+                    f"CHECK (quality IS NULL OR quality <> 'ok' OR chars < {filings.max_text_chars()})"],
 }
 TABLES = tuple(SCHEMAS)
-VIEWS = ("fundamental_quarter", "edgar_financials")
+VIEWS = ("fundamental_quarter", "edgar_financials", "sec_submissions")
 
 # The sources' staging tables, created empty here when a source is not registered (a test's registry).
 STAGED: dict[str, list[tuple[str, str]]] = {
     companyfacts.STAGING["facts"]: facts.FACT,
     companyfacts.STAGING["company"]: facts.COMPANY,
+    filings.STAGING["filings"]: filings.FILING,
+    filings.STAGING["documents"]: filings.DOCUMENT,
 }
 
 # The named problems, one kind each; ``key`` is the CIK unless the kind says otherwise.
@@ -99,6 +114,19 @@ def _facts(con: duckdb.DuckDBPyConnection) -> int:
     return common.count(con, "fundamental_fact")
 
 
+def _filing_items(con: duckdb.DuckDBPyConnection) -> int:
+    """``filing_item``: every listed filing and 8-K item, and the document texts."""
+    create(con, "filing_item")
+    con.execute(f"""
+        INSERT INTO filing_item
+        SELECT cik, accession, form, filing_date, report_date, primary_document, 'item', item, NULL, NULL, NULL,
+               '{filings.NAME}', source_as_of, fetched_at, run_id FROM {filings.STAGING['filings']}
+        UNION ALL
+        SELECT cik, accession, form, filing_date, report_date, primary_document, 'document', item, text, chars,
+               quality, '{filings.NAME}', source_as_of, fetched_at, run_id FROM {filings.STAGING['documents']}""")
+    return common.count(con, "filing_item")
+
+
 def _companies(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rows: list[dict]) -> int:
     spine = [{"ticker": r["ticker"], "cik": common.norm_cik(r["cik"]), "gvkey": r.get("gvkey"), "name": r.get("name"),
               "exchange": r.get("exchange"), "gsector": r.get("gsector"), "ggroup": r.get("ggroup"),
@@ -109,12 +137,14 @@ def _companies(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rows: list[
     con.execute(f"""
         INSERT INTO fundamental_company
         SELECT s.*, c.entity_name, c.is_us, c.non_usd_units, c.us_gaap, c.facts_as_of, c.fetched_at,
-               n.newest_filed, n.newest_period_end, 'spine/security', '{ctx.run_id}'
+               n.newest_filed, n.newest_period_end, l.submissions_as_of, 'spine/security', '{ctx.run_id}'
         FROM _spine s
         LEFT JOIN (SELECT * FROM {companyfacts.STAGING['company']}
                    QUALIFY row_number() OVER (PARTITION BY cik ORDER BY facts_as_of DESC) = 1) c ON c.cik = s.cik
         LEFT JOIN (SELECT cik, max(filed) AS newest_filed, max(period_end) AS newest_period_end
-                   FROM fundamental_fact WHERE NOT preliminary GROUP BY cik) n ON n.cik = s.cik""")
+                   FROM fundamental_fact WHERE NOT preliminary GROUP BY cik) n ON n.cik = s.cik
+        LEFT JOIN (SELECT cik, max(source_as_of) AS submissions_as_of FROM {filings.STAGING['filings']}
+                   GROUP BY cik) l ON l.cik = s.cik""")
     con.execute("DROP TABLE _spine")
     return common.count(con, "fundamental_company")
 
@@ -155,6 +185,17 @@ def _views(con: duckdb.DuckDBPyConnection) -> None:
                            'non_usd_units', coalesce(string_split(c.non_usd_units, ','), [])) AS meta,
                c.facts_fetched_at AS fetched_at
         FROM fundamental_company c LEFT JOIN al ON al.cik = c.cik LEFT JOIN ql ON ql.cik = c.cik""")
+
+
+def _submission_view(con: duckdb.DuckDBPyConnection) -> None:
+    # The old ``sec_submissions`` row per filing: its 8-K items as one comma-separated text, as the SEC lists them.
+    con.execute(f"""
+        CREATE VIEW sec_submissions AS
+        SELECT cik, accession, any_value(form) AS form, any_value(filing_date) AS filing_date,
+               any_value(primary_document) AS primary_document,
+               string_agg(item, ',' ORDER BY item) AS items, '{filings.NAME}' AS source,
+               max(fetched_at) AS fetched_at, any_value(run_id) AS run_id, NULL::DOUBLE AS run_at
+        FROM filing_item WHERE kind = 'item' GROUP BY cik, accession""")
 
 
 def _extract_version() -> int:
@@ -209,12 +250,14 @@ class FundamentalsTables:
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         _ensure_staging(con)
-        counts = {"fundamental_fact": _facts(con)}
+        counts = {"fundamental_fact": _facts(con), "filing_item": _filing_items(con)}
         counts["fundamental_company"] = _companies(ctx, con, common.universe())
         _views(con)
+        _submission_view(con)
         found = _issues(con, ctx.as_of or self.default_as_of())
         found += [("source_never_run", name, "no Parquet yet") for name, table in
-                  ((companyfacts.NAME, companyfacts.STAGING["facts"]),) if not common.count(con, table)]
+                  ((companyfacts.NAME, companyfacts.STAGING["facts"]),
+                   (filings.NAME, filings.STAGING["filings"])) if not common.count(con, table)]
         ctx.pending[NAME] = found
         return counts
 
