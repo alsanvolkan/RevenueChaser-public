@@ -24,22 +24,25 @@ _HASHED = (
 )
 
 
-def effective_config() -> dict:
+def effective_config(payload: dict | None = None) -> dict:
     """Config's thresholds with only a user's stored overrides on top (#384 SW-S4).
 
     The overrides are applied to config's own values rather than read as the effective settings, so an
     unconfigured board hashes exactly the dict it always did (``4+ab881cb0``). A store read that fails is
-    no overrides, never an exception: the ledger still names a model.
+    no overrides, never an exception: the ledger still names a model. Given a ``payload`` that carries its
+    run's settings, the overrides are that run's, not the store's now (Swing review finding 2, PR 6).
     """
     cfg = {name: getattr(config, name) for name in _HASHED}
-    for name, value in swing_settings.stored_overrides().items():
+    run = swing_settings.from_payload((payload or {}).get("settings"))
+    overrides = dict(run.override_values) if run is not None else swing_settings.stored_overrides()
+    for name, value in overrides.items():
         if name in cfg:
             cfg[name] = value
     return cfg
 
 
-def model_version() -> str:
-    return ledger.model_version(config.SELECTION_VERSION, effective_config())
+def model_version(payload: dict | None = None) -> str:
+    return ledger.model_version(config.SELECTION_VERSION, effective_config(payload))
 
 
 def picks(candidates: list[dict]) -> list[dict]:
@@ -64,6 +67,6 @@ def freeze_payload(payload: dict, *, run_id: str | None = None, now=None) -> led
     each frozen candidate's own last cached bar: a halted name must not carry an old price under D.
     """
     return ledger.freeze_board(
-        SOURCE, LABEL, payload, rows_key="candidates", to_rows=picks, model_version=model_version(),
+        SOURCE, LABEL, payload, rows_key="candidates", to_rows=picks, model_version=model_version(payload),
         run_id=run_id, now=now, anchor=ledger.spy_anchor_problem,
         bar_gaps=ledger.ohlc_gaps)

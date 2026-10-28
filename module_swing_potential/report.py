@@ -185,15 +185,32 @@ def _summary_html(s: dict) -> str:
     )
 
 
-def _gate_spec() -> dict:
+def _run_settings(payload: dict):
+    """The settings the payload's run scored with (Swing review finding 2, PR 6); the store's for a payload
+    written before runs carried them."""
+    return swing_settings.from_payload(payload.get("settings")) or swing_settings.effective()
+
+
+def _pct(x: float) -> str:
+    return f"{round(x * 100, 2):g}%"
+
+
+def _weights(e) -> str:
+    """The momentum tie-break's weights as shares of their sum (``ranking.composite`` normalises them)."""
+    parts = ((config.W_12_1, "JT 12-1"), (e.w_prox, "52-week proximity"), (e.w_cons, "consistency"))
+    total = sum(w for w, _ in parts) or 1.0
+    return " + ".join(f"{round(w / total * 100):g}% {name}" for w, name in parts)
+
+
+def _gate_spec(e) -> dict:
     """The static gate text, per rule id, once (#384 SW-S2).
 
     Built from the screeners with an empty indicator set: ``label`` / ``threshold`` / ``unit`` are static, only
     ``actual`` / ``passed`` vary per candidate. The report embeds this as ``GATE_SPEC`` so a candidate's ``gates``
-    carries no repeated text. The threshold text follows the effective settings (#384 SW-S4), so a saved
-    override is named on the card rather than the default it replaced.
+    carries no repeated text. The threshold text follows the run's settings ``e`` (#384 SW-S4, ``_run_settings``),
+    so a saved override is named on the card rather than the default it replaced, and a save after the Fetch does
+    not rewrite it.
     """
-    e = swing_settings.effective()
     gates = (evaluate_minervini({}, None, eff=e), evaluate_weinstein({}, eff=e),
              evaluate_qullamaggie({}, eff=e), evaluate_direction({}))
     names = {"minervini": "Minervini Trend", "weinstein": "Weinstein Stage",
@@ -241,6 +258,7 @@ def _render(payload: dict, inline: bool) -> tuple[str, dict | None]:
                                                panel_id="swing-funnel")
     # The stored payload's scoring version decides the method toggles (#384 SW-S1): a Fetch before v4 has none.
     current_version = payload.get("selection_version") == config.SELECTION_VERSION
+    run = _run_settings(payload)
     universe_prov = universe_provenance_html(
         payload.get("universe_generated_at"), payload.get("universe_refreshed_by"),
         partial=bool(payload.get("universe_partial")))
@@ -470,7 +488,7 @@ function start(){
 
     JS = fill(JS, {"__MOD__": script_json(MODULE),
                    "__BOOT__": script_json(boot),
-                   "__GATE_SPEC__": script_json(_gate_spec()),
+                   "__GATE_SPEC__": script_json(_gate_spec(run)),
                    "__METHODS_ON__": script_json(current_version),
                    "__META__": meta})
 
@@ -536,22 +554,22 @@ function start(){
       <table>
         <tr><th>Screener</th><th>Criteria</th><th>Scoring</th></tr>
         <tr><td><b>Minervini Trend</b></td>
-          <td>Price above 150 &amp; 200-day MA · 150&gt;200-day MA · 200-day MA rising · 50&gt;150-day MA · price above 50-day MA · ≥25% above 52-week low · within 25% of 52-week high · RS rating ≥ 70</td>
-          <td>7/7 price rules required; RS rating ≥ 70 ranks, does not decide</td></tr>
+          <td>Price above 150 &amp; 200-day MA · 150&gt;200-day MA · 200-day MA rising · 50&gt;150-day MA · price above 50-day MA · ≥{_pct(config.ABOVE_52W_LOW - 1)} above 52-week low · within {_pct(1 - config.WITHIN_52W_HIGH)} of 52-week high · RS rating ≥ {run.rs_min:g}</td>
+          <td>7/7 price rules required; RS rating ≥ {run.rs_min:g} ranks, does not decide</td></tr>
         <tr><td><b>Weinstein Stage</b></td>
-          <td>Price above 30-week MA · 30-week MA rising · overhead breakout (≥98% of 52w high) · volume ≥1.5× average · 3-month RS &gt; SPY</td>
+          <td>Price above 30-week MA · 30-week MA rising · overhead breakout (≥{_pct(run.breakout_high_pct)} of 52w high) · volume ≥{run.vol_confirm:g}× average · 3-month RS &gt; SPY</td>
           <td>5/5 required</td></tr>
         <tr><td><b>Qullamaggie</b></td>
-          <td>Preceding move ≥25% (1–3 mo) · price above 10 &amp; 20-day EMA · 10&gt;20-day EMA · EMAs rising · ADR ≥3%</td>
+          <td>Preceding move ≥{_pct(run.move_min)} (1–3 mo) · price above 10 &amp; 20-day EMA · 10&gt;20-day EMA · EMAs rising · ADR ≥{_pct(run.adr_min)}</td>
           <td>5 of 6 required</td></tr>
         <tr><td><b>Quality</b></td>
-          <td>Quality = 40 × Minervini rules passed/8 + 30 × Weinstein/5 + 30 × Qullamaggie/6; momentum (50% JT 12-1 + 25% 52-week proximity + 25% consistency) breaks ties</td>
+          <td>Quality = 40 × Minervini rules passed/8 + 30 × Weinstein/5 + 30 × Qullamaggie/6; momentum ({_weights(run)}) breaks ties</td>
           <td>0–100; ranks the board</td></tr>
         <tr><td><b>Direction</b></td>
           <td>Direction (required): 50-day MA ≥ 200-day MA and 3-month return ≥ 0</td>
           <td>Every card must pass</td></tr>
         <tr><td><b>Levels</b></td>
-          <td>Entry = current price · Stop = entry − 2×ATR(14) · Target = entry + 2×risk (R:R 2.0)</td>
+          <td>Entry = current price · Stop = entry − {run.stop_atr:g}×ATR({config.ATR_PERIOD}) · Target = entry + {run.target_r:g}×risk (R:R {run.target_r:.1f})</td>
           <td>Stop/Entry/Target on bar</td></tr>
       </table>
     </div>

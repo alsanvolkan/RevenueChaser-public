@@ -84,6 +84,7 @@ def test_defaults_reproduce_the_pre_change_output(rawstore_tmp_db, monkeypatch):
     golden = json.loads(_GOLDEN.read_text(encoding="utf-8"))
     payload = pipeline.build_payload(_rows(), top_n=10)
     payload.pop("generated_at", None)                      # the only clock-dependent field
+    payload.pop("settings")                                # the run's thresholds (finding 2), not a result
     pf = pipeline.prefilter(_prefilter_quotes(monkeypatch))
     assert {"payload": payload,
             "prefilter": {"kept": [r["ticker"] for r in pf.kept], "drops": pf.drops,
