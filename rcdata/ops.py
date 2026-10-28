@@ -357,9 +357,10 @@ def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[
         have = {(r["kind"], r["key"]): r["id"] for r in open_rows}
         gone = [i for k, i in have.items() if k not in want]
         con.executemany("UPDATE build_issues SET resolved_on = ? WHERE id = ?", [(today, i) for i in gone])
-        new = [(dataset, today, k, key, detail, run_id) for (k, key), detail in sorted(want.items()) if (k, key) not in have]
-        con.executemany("INSERT INTO build_issues (dataset, found_on, kind, key, detail, run_id) VALUES (?, ?, ?, ?, ?, ?)",
-                        new)
+        new = [(dataset, today, k, key, detail, run_id) for (k, key), detail in sorted(want.items())
+               if (k, key) not in have]
+        con.executemany("INSERT INTO build_issues (dataset, found_on, kind, key, detail, run_id) "
+                        "VALUES (?, ?, ?, ?, ?, ?)", new)
     return len(new), len(gone)
 
 

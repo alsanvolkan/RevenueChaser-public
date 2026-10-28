@@ -1,0 +1,84 @@
+"""``funds/index_holdings``: the four file formats parse (cash and futures lines dropped), one request per file, a
+failed file is an issue while the others go on, and a short file does not count."""
+from __future__ import annotations
+
+import pytest
+
+from RevenueChaser.rcdata import ops
+from RevenueChaser.rcdata.build import base
+from RevenueChaser.rcdata.build.spine import funds
+
+from . import spine_fixture as fx
+
+
+@pytest.fixture
+def env(monkeypatch, http_mock):
+    from RevenueChaser.core.providers import sec_edgar
+    from RevenueChaser.rcdata.build.spine import sec_tickers
+    monkeypatch.setattr(funds, "FLOOR", {"sp500": 4, "sp400": 2, "sp600": 2, "ndx": 1})
+    monkeypatch.setattr(sec_edgar, "SEC_WWW_BASE", "https://sec.test")
+    http_mock.add("company_tickers_exchange.json", fx.SEC_FILE)
+    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-10-27"}})
+    http_mock.requests.clear()
+    fx.add_fund_routes(http_mock)
+    return http_mock
+
+
+def test_ssga_drops_the_cash_line_and_reads_the_cusip():
+    rows = funds.parse_ssga(fx.ssga_xlsx(fx.SP500))
+    assert [r["ticker_raw"] for r in rows] == ["MSFT", "ETN", "FDX", "NVR", "WFC"]
+    assert rows[0]["cusip"] == "594918104" and rows[0]["weight"] == 1.0
+
+
+def test_ishares_keeps_equity_lines_only_and_stops_at_the_disclaimer():
+    rows = funds.parse_ishares(fx.ishares_csv(fx.SP400, drop_dash=True))
+    assert [r["ticker_raw"] for r in rows] == ["HEI", "HEIA"] and rows[0]["cusip"] is None
+
+
+def test_vanguard_and_nasdaq():
+    rows = funds.parse_vanguard(fx.vanguard_json(fx.SP500, cusip_only=("FDX",)))
+    assert len(rows) == 5 and rows[2] == {"ticker_raw": "-", "cusip": "31428X106", "name": "FEDEX CORP", "weight": 1.0}
+    assert [r["ticker_raw"] for r in funds.parse_nasdaq(fx.nasdaq_json(["MSFT", "NVDA"]))] == ["MSFT", "NVDA"]
+
+
+@pytest.mark.parametrize("parse, body", [(funds.parse_ssga, None), (funds.parse_ishares, b"Name,Weight\n"),
+                                         (funds.parse_vanguard, b'{"fund": {}}'), (funds.parse_nasdaq, b"{}")])
+def test_a_file_of_another_shape_is_a_source_error(parse, body):
+    if body is None:
+        from openpyxl import Workbook
+        import io
+        wb, buf = Workbook(), io.BytesIO()
+        wb.active.append(["nothing here"])
+        wb.save(buf)
+        body = buf.getvalue()
+    with pytest.raises(base.SourceError):
+        parse(body)
+
+
+def test_tickers_are_written_the_sec_way():
+    assert funds.norm_ticker("BRK.B") == "BRK-B" and funds.norm_ticker("BRK/B") == "BRK-B"
+    assert funds.norm_ticker("CASH_USD") is None and funds.norm_ticker("-") is None
+
+
+def test_one_request_per_file_a_failed_file_is_an_issue_and_the_others_count(env):
+    row = base.run_request({"dataset": funds.NAME, "params": {"as_of": "2026-10-27"}})
+    assert row["result"] == "changed" and row["calls"] == 10            # the three SmallCap files 404: no retry
+    n, issues = ops.open_issues(funds.NAME)
+    assert n == 3 and {i["key"] for i in issues} == {"ssga-SPSM.xlsx", "ishares-IJR.csv", "vanguard-VIOO.json"}
+    assert row["coverage"] == 0.7 and "failed files" in row["note"]
+    assert row["calls"] == len(env.calls())
+
+
+def test_every_file_failing_fails_the_run(env, http_mock):
+    http_mock.routes[:] = [r for r in http_mock.routes if "company_tickers" in r[0]]
+    row = base.run_request({"dataset": funds.NAME, "params": {"as_of": "2026-10-27"}})
+    assert row["result"] == "failed" and "every fund file failed" in row["note"]
+
+
+def test_a_day_already_fetched_is_not_fetched_again(env):
+    base.run_request({"dataset": funds.NAME, "params": {"as_of": "2026-10-27"}})
+    env.requests.clear()
+    base.run_request({"dataset": funds.NAME, "params": {"as_of": "2026-10-27"}})
+    assert {str(r.url).split("/")[2] for r in env.requests} <= {"www.ssga.com", "www.ishares.com",
+                                                                 "investor.vanguard.com"}
+    assert len(env.requests) == 3                          # only the three that failed are asked again

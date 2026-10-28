@@ -97,6 +97,7 @@ class RunContext:
     notes: list[str] = field(default_factory=list)
     uw_sampled: bool = False
     allow_shrink: bool = False                                      # a request's explicit "allow_shrink": true
+    pending: dict[str, Any] = field(default_factory=dict)          # a build's results for its after_swap step
     _pending: dict[str, list[int]] = field(default_factory=dict)    # counted, not yet written to ops.sqlite
     _http: httpx.Client | None = None
     _uw: Any = None

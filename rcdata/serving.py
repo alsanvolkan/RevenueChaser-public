@@ -1,9 +1,9 @@
 """Serving files: built as a new file, checked, then swapped over the live one; read only through ``open_read`` (D1).
 
-One builder process writes. Each kind (``market``; ``spine`` since PR 5) is built into ``<kind>.<build_id>.duckdb`` beside the
-live ``<kind>.duckdb`` under ``config.MARKET_DIR``; ``BuildFile.swap`` closes the writer (after a ``CHECKPOINT``, so
-no ``.wal`` is left), opens the new file read-only, checks its ``serving_schema_version`` row and the row count of
-every expected table, and only then moves it into place. On any failure — a check, or an exception inside the
+One builder process writes. Each kind (``market``; ``spine`` since PR 5) is built into ``<kind>.<build_id>.duckdb``
+beside the live ``<kind>.duckdb`` under ``config.MARKET_DIR``; ``BuildFile.swap`` closes the writer (after a
+``CHECKPOINT``, so no ``.wal`` is left), opens the new file read-only, checks its ``serving_schema_version`` row and
+the row count of every expected table, and only then moves it into place. On any failure — a check, or an exception inside the
 ``build()`` block — the new file is deleted and the live file is not touched (test T3).
 
 The swap never leaves the live name missing: the previous file is first hard-linked to ``<kind>.prev.duckdb``

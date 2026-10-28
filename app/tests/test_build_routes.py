@@ -110,8 +110,11 @@ def test_an_unknown_schedule_action_is_404(client):
 
 
 def test_a_paused_dataset_is_skipped_by_one_builder_pass_and_runs_again_after_resume(client, monkeypatch):
+    from RevenueChaser.rcdata import build
     from RevenueChaser.rcdata.build import DATASETS
     from RevenueChaser.rcdata.build import __main__ as cli
+    # The two market datasets only: the spine's (PR 5) would be queued as never built and call their providers.
+    monkeypatch.setattr(build, "DATASETS", {k: DATASETS[k] for k in ("market_series", "uw/spot_expiry_strike")})
     assert client.post("/api/build/schedule/market_series/pause").status_code == 200
     # `run --once` also queues every never-built dataset (#223's due step): the other one is paused too, so this
     # pass sends no call at all.
