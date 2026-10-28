@@ -733,7 +733,8 @@ _DROP_STEPS = (
 
 
 def _funnel_steps(universe_total: int, excluded_types: int, drops: _Drops, score_errors: dict[str, list[str]],
-                  scored: int, low_liquidity: int | None = 0, unreadable_sec: int = 0) -> list[dict]:
+                  scored: int, low_liquidity: int | None = 0, unreadable_sec: int = 0,
+                  momentum_unknown: list[str] | None = None) -> list[dict]:
     """The shared-format funnel (``core.funnel``): universe, then every reason a name has no card, then scored.
 
     The drops sum to ``universe_total - scored`` by construction: whatever no reason accounts for is shown as
@@ -742,7 +743,8 @@ def _funnel_steps(universe_total: int, excluded_types: int, drops: _Drops, score
     ``low_liquidity`` and ``unreadable_sec`` (#41) are ``note`` steps, never drops: those names HAVE a card, so
     counting them as drops would break the arithmetic above and misstate the board. They overlap each other by
     design, and ``low_liquidity`` is ``None`` where no liquidity basis was read — an unknown note is left out
-    rather than shown as 0.
+    rather than shown as 0. ``momentum_unknown`` (AG review N-2) names the cards whose momentum signal is not fully
+    known (no or too few D01 bars): a note too, since they have a card.
     """
     step = funnel_mod.step
     steps = [step("universe", "Universe, all market caps", universe_total, "start")]
@@ -770,8 +772,18 @@ def _funnel_steps(universe_total: int, excluded_types: int, drops: _Drops, score
     if unreadable_sec:
         steps.append(step("unreadable_sec", "Scored, but the financials are Yahoo statements, not EDGAR filings",
                           unreadable_sec, "note"))
+    if momentum_unknown:
+        names = sorted(momentum_unknown)
+        steps.append(step("momentum_unknown", "Scored, but momentum unknown (no or too few D01 price bars)",
+                          len(names), "note", tickers=names[:funnel_mod.MAX_TICKERS]))
     steps.append(step("scored", "Scored (a card on the board)", scored, "result"))
     return steps
+
+
+def _momentum_unknown(cards: list[dict]) -> list[str]:
+    """The cards whose momentum signal has an unknown input (AG review N-2): they cannot pass it."""
+    return [c["ticker"] for c in cards for s in (c.get("signals") or [])
+            if s.get("key") == "momentum" and (s.get("known") or 0) < (s.get("total") or 0)]
 
 
 def _quarter(period) -> tuple[int, int] | None:
@@ -914,6 +926,7 @@ def _summary(cards: list[dict], excluded_types: int | None, score_errors: dict[s
         # ``fetch_failed``) are drops and are not counted here.
         "low_liquidity": None if thin is None else sum(1 for c in cards if c["ticker"] in thin_names),
         "unreadable_sec": sum(1 for c in cards if c.get("source") != EDGAR_SOURCE),
+        "momentum_unknown": len(_momentum_unknown(cards)),   # AG review N-2: no or too few D01 bars
         "ownership": _ownership_counts(cards),   # #34 D20: stored vs live institutional shares
     }
 
@@ -1067,7 +1080,7 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
         "universe_refreshed_by": u_stats.get("universe_refreshed_by"),
         "universe_partial": bool(u_stats.get("partial")),
         "funnel_steps": _funnel_steps(len(universe), summary["excluded_types"], drops, error_tickers, len(cards),
-                                      summary["low_liquidity"], summary["unreadable_sec"]),
+                                      summary["low_liquidity"], summary["unreadable_sec"], _momentum_unknown(cards)),
         "summary": summary,
         "cards": cards,
         "thresholds": THRESHOLDS,
