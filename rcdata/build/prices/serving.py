@@ -23,8 +23,8 @@
   A name with none yet);
 - ``market_cap_daily``: close times shares per security and session, the shares being the bar's own (a history
   source's), else a WRDS source's of that session, else the newest cover on or before the session, moved over the
-  splits between the two; and the issuer's
-  sum over its listed classes (``issuer_market_cap``; an unlisted class has no price and is not in it);
+  splits between the two; and the issuer's sum over its listed classes, each at its newest cap at most
+  ``ISSUER_WITHIN_DAYS`` old (``issuer_market_cap``; an unlisted class has no price and is not in it);
 - ``price_revision``: the values a later read replaced (Alpaca's re-read of the last sessions, the monthly WRDS
   refresh), with when and by which run;
 - ``wrds_price_diff``: the WRDS difference report (``wrds_history.COMPARISONS``), one row per comparison: the closes
@@ -70,6 +70,9 @@ FLOAT_OVER = 1.05
 FLOAT_DISAGREE = 0.25
 # A dividend is applied with the close of the last bar before its ex-date, at most this many days before it.
 CLOSE_BEFORE_DAYS = 7
+# The issuer cap of a session counts each listed class at its newest cap at most this many days old (a thin class
+# that did not trade that day still counts): the window ``rcdata.read.latest_market`` reads the newest cap in.
+ISSUER_WITHIN_DAYS = 14
 APPLIED = ("split", "stock_dividend", "cash_dividend")
 NOT_APPLIED = ("spin_off", "unit_split", "rights_distribution")
 
@@ -261,7 +264,8 @@ class PricesServing:
         counts["adj_factor"] = _create(con, "adj_factor", ADJ_SQL)
         counts["shares_class"] = self._shares(con, found)
         counts["security_symbol"] = _create(con, "security_symbol", SYMBOL_SQL)
-        counts["market_cap_daily"] = _create(con, "market_cap_daily", MARKET_CAP_SQL)
+        counts["market_cap_daily"] = _create(con, "market_cap_daily",
+                                             MARKET_CAP_SQL.format(within=ISSUER_WITHIN_DAYS))
         counts["price_revision"] = _create(con, "price_revision",
                                            f"{REVISION_SQL} UNION ALL {wrds_history.REVISIONS_SQL}")
         counts["wrds_price_diff"] = self._wrds_report(con)
@@ -342,7 +346,8 @@ class PricesServing:
                        LEFT JOIN stg_spine s ON s.cik = c.cik AND s.ticker = replace(upper(c.symbol), '.', '-')
                        LEFT JOIN one o ON o.cik = c.cik)
             SELECT *, CASE WHEN spine_id IS NOT NULL AND spine_type IS DISTINCT FROM 'adr' THEN spine_id
-                           ELSE 'class:' || cik || ':' || coalesce(nullif(class_member, ''), 'common') END AS security_id
+                           ELSE 'class:' || cik || ':' || coalesce(nullif(class_member, ''), 'common')
+                      END AS security_id
             FROM m""")
         n = _create(con, "shares_class", f"""
             SELECT c.security_id, 'outstanding' AS measure, c.as_of, c.shares AS value, c.symbol, c.cik,
@@ -577,13 +582,23 @@ MARKET_CAP_SQL = f"""
          s AS (SELECT j.*, CASE WHEN own IS NOT NULL THEN own
                                 ELSE cover * coalesce(a1.split_factor, 1) / coalesce(a2.split_factor, 1) END AS shares
                FROM j LEFT JOIN adj_factor a1 ON {period('a1', 'j.security_id', 'j.session_date')}
-               LEFT JOIN adj_factor a2 ON {period('a2', 'j.security_id', 'j.cover_as_of')})
-    SELECT security_id, session_date, issuer AS cik, close, shares,
-           CASE WHEN own IS NOT NULL THEN bar_source ELSE cover_source END AS shares_source,
-           CASE WHEN own IS NOT NULL THEN session_date ELSE cover_as_of END AS shares_as_of,
-           close * shares AS market_cap,
-           sum(close * shares) OVER (PARTITION BY coalesce(issuer, security_id), session_date) AS issuer_market_cap
-    FROM s WHERE shares IS NOT NULL"""
+               LEFT JOIN adj_factor a2 ON {period('a2', 'j.security_id', 'j.cover_as_of')}),
+         c AS (SELECT security_id, session_date, issuer AS cik, close, shares,
+                      CASE WHEN own IS NOT NULL THEN bar_source ELSE cover_source END AS shares_source,
+                      CASE WHEN own IS NOT NULL THEN session_date ELSE cover_as_of END AS shares_as_of,
+                      close * shares AS market_cap, coalesce(issuer, security_id) AS iss
+               FROM s WHERE shares IS NOT NULL),
+         -- Each class of the issuer at its newest cap on or before the session, if at most ISSUER_WITHIN_DAYS old:
+         -- a class with no bar that day (GOOG on a day GOOGL traded) still counts.
+         k AS (SELECT DISTINCT iss, security_id AS cls FROM c),
+         g AS (SELECT c.security_id, c.session_date, k.cls FROM c JOIN k USING (iss)),
+         p AS (SELECT g.security_id, g.session_date, x.market_cap, x.session_date AS cap_day
+               FROM g ASOF LEFT JOIN c x ON x.security_id = g.cls AND g.session_date >= x.session_date),
+         i AS (SELECT security_id, session_date,
+                      sum(market_cap) FILTER (WHERE date_diff('day', cap_day, session_date) <= {{within}})
+                          AS issuer_market_cap
+               FROM p GROUP BY ALL)
+    SELECT c.*, i.issuer_market_cap FROM c JOIN i USING (security_id, session_date)"""
 
 REVISION_SQL = f"""
     SELECT coalesce(s.security_id, r.security_id) AS security_id, r.session_date, r.ticker AS symbol, r.open, r.high,

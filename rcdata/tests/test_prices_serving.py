@@ -233,6 +233,55 @@ def test_an_adrs_cover_count_is_ordinary_shares_so_it_gives_no_market_cap(http_m
     assert issues["cover_adr_ordinary"] == {sid} and sid in issues["tier_a_no_shares"]
     assert "1046179:TSM" not in issues.get("cover_class_unmapped", set())
 
+def _bars_answer(http_mock, raw: dict, all_: dict, skip=()) -> None:
+    """This test's own ``/v2/stocks/bars`` answer, ahead of the fixture's; ``skip``: ``(symbol, session)`` with no bar."""
+    def bars_of(series):
+        return {s: [bar(d, c) for d, c in zip(DAYS, cs) if (s, d) not in skip] for s, cs in series.items()}
+    http_mock.routes.insert(0, ("/v2/stocks/bars", BarsAnswer({"raw": bars_of(raw), "all": bars_of(all_)}), 200, {}))
+
+
+@pytest.mark.parametrize("within, goog_counts", [(14, True), (0, False)])
+def test_the_issuer_cap_counts_each_class_at_its_newest_cap_within_the_window(http_mock, monkeypatch, within,
+                                                                              goog_counts):
+    # The Opus review's S1: GOOG with no bar on the 27th halved Alphabet's cap that day, so the universe showed
+    # GOOGL at GOOGL's own cap. A class's newest cap within ISSUER_WITHIN_DAYS of the session counts instead.
+    monkeypatch.setattr(prices_serving, "ISSUER_WITHIN_DAYS", within)
+    _bars_answer(http_mock, RAW, ALL, skip={("GOOG", DAYS[-1])})
+    _shares_and_floats()
+    base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
+    base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    cap = {(r["security_id"], r["session_date"]): r for r in _q("SELECT * FROM market_cap_daily")}
+    googl = cap[("160329:01", DAYS[-1])]
+    assert ("160329:03", DAYS[-1]) not in cap
+    goog_26 = cap[("160329:03", DAYS[-2])]["market_cap"]
+    assert googl["issuer_market_cap"] == pytest.approx(googl["market_cap"] + (goog_26 if goog_counts else 0))
+    assert cap[("160329:01", DAYS[-2])]["issuer_market_cap"] == pytest.approx(
+        cap[("160329:01", DAYS[-2])]["market_cap"] + goog_26)
+
+
+def test_a_listed_class_the_spine_lacks_gets_bars_and_counts_in_the_issuer_cap(http_mock):
+    # The server's sample: BRK-B's cap was 0.658 of Yahoo's, because the spine has no BRK-A (cover_class_unmapped
+    # 1067983:BRK.A), so the A class had no bar and no cap. The cover's listed classes of a Tier A issuer join the
+    # bars' scope under their class id.
+    _bars_answer(http_mock, {**RAW, "BRK.A": [720_000.0 + i for i in range(6)]},
+                 {**ALL, "BRK.A": [720_000.0 + i for i in range(6)]})
+    _shares_and_floats()
+    a, b = "us-gaap:CommonClassAMember", "us-gaap:CommonClassBMember"
+    base.upsert_partition([{"cik": "1067983", "accession": "0001067983-26-000040", "form": "10-Q",
+                            "filed": date(2026, 8, 3), "period_end": date(2026, 6, 30), "class_member": m,
+                            "symbol": sym, "shares": n, "as_of": date(2026, 7, 24), "source_as_of": date(2026, 10, 27),
+                            "fetched_at": 1.0, "run_id": "cover"}
+                           for m, sym, n in ((a, "BRK.A", 540_000), (b, "BRK.B", 1_300_000_000))],
+                          cover_shares.SCHEMA, cover_shares.KEY, cover_shares.partition_path(2026))
+    base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
+    base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    brk_a = f"class:1067983:{a}"
+    cap = {(r["security_id"], r["session_date"]): r for r in _q("SELECT * FROM market_cap_daily")}
+    assert cap[(brk_a, DAYS[-1])]["market_cap"] == pytest.approx(720_005.0 * 540_000)
+    assert cap[("072726:02", DAYS[-1])]["issuer_market_cap"] == pytest.approx(
+        485.0 * 1_300_000_000 + 720_005.0 * 540_000)
+    assert _q("SELECT symbol FROM security_symbol WHERE security_id = ?", [brk_a]) == [{"symbol": "BRK-A"}]
+
 def test_shares_and_float_per_class_with_their_checks(built):
     rows = _q("SELECT * FROM shares_class ORDER BY security_id, measure, source")
     b = [r for r in rows if r["class_member"] == "us-gaap:CommonClassBMember"]
