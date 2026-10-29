@@ -1592,7 +1592,7 @@ def _methodology_tables(filter_stats: dict = None) -> str:
     rows = [
         ("OptVol", f"≥ {MIN_OPTION_VOLUME:,} contracts", "Dead options", "Ensures at least minimal option activity — removes stocks nobody is trading options on. Earnings plays need option liquidity."),
         ("OI (Open Interest)", "≥ 200", "No options chain", "Even a thin chain has 200+ OI. Without it, there is no options market to trade the earnings reaction."),
-        ("$Vol (call + put premium)", "≥ $50K", "Penny options / dead tickers", "The day's call plus put premium as the UW screener served it; a name without it fails this gate."),
+        ("$Vol (call + put premium)", "≥ $50K", "Penny options / dead tickers", "The day's call plus put premium as the UW screener served it, from the stored screener set (uw/option_screener); a name without it fails this gate."),
         ("Exp. Move Min", "≥ 1.5%", "Dull / no-reaction stocks", "If the market expects less than 1.5% move, there is no edge to capture. The stock is too stable."),
         ("Exp. Move Max", "≤ 25%", "Binary / biotech events", "Above 25% expected move, directional signals break down. These are lottery-ticket events, not systematic trades."),
         ("Watchlist ★", "Always pass", "Your selected tickers", "Tick from watchlist_tickers.json always get scored regardless of filters."),
@@ -1624,15 +1624,20 @@ def _methodology_tables(filter_stats: dict = None) -> str:
         ("R1 · Drivers", "reserved 0%", "Demand drivers before the print — not yet wired", "Future: street revenue revisions / alt-data"),
         ("R2 · Guidance", "direction 20%", "Recency-weighted EPS surprise + median; beat > +1%", "/stock/{t}/earnings (EPS vs street)"),
         ("R3 · Financials", "direction 20%", "GAAP operating-margin vote + opex/franchise tag", "/stock/{t}/financials (IS+BS)"),
-        ("R4 · Volatility", "vehicle 0%", "Expected-move box, volume-book GEX regime, last-4 straddle", "UW options + /spot-exposures/strike"),
-        ("R5 · Positioning", "tag 0% (no vote)", "Lean / Thin / package-risk / squeeze none or fuel", "/stock/{t}/flow-recent + ownership store (FINRA short interest, IBKR borrow fee)"),
-        ("R6 · Macro", "veto 0%", "Badge on extreme 10Y rate beta; NO_TRADE only w/ FOMC/CPI", "FRED DGS10 or UW 10Y daily"),
+        ("R4 · Volatility", "vehicle 0%", "Expected-move box, volume-book GEX regime, last-4 straddle", "options store: GEX levels, spot exposures, term structure"),
+        ("R5 · Positioning", "tag 0% (no vote)", "Lean / Thin / package-risk / squeeze none or fuel", "options store prints + ownership store (FINRA short interest, IBKR borrow fee)"),
+        ("R6 · Macro", "veto 0%", "Badge on extreme 10Y rate beta; NO_TRADE only w/ FOMC/CPI", "market store: DGS10, FOMC and CPI days"),
         ("R7 · Accounting", "direction 15%", "Signed Sloan accruals, last filed quarter", "cash-flows + balance-sheets (NI cross-check)"),
-        ("R8 · Sentiment", "momentum 10%", "Retail call share > 65% → +20; no call premium → unavailable", "/stock/{t}/flow-recent (size < 10)"),
+        ("R8 · Sentiment", "momentum 10%", "Retail call share > 65% → +20; no call premium → unavailable", "options store prints (size < 10)"),
     ]
     for rule, wt, what, src in rule_rows:
         h += f'<tr><td style="color:#c9d1d9;font-weight:600">{rule}</td><td>{wt}</td><td style="color:#8b949e">{what}</td><td style="color:#8b949e;font-size:10px">{src}</td></tr>'
     h += '</table>'
+    h += ('<p style="color:#8b949e;font-size:10px;margin-top:4px">R4, R5 and R8 read the options store: a name on the '
+          'option watch list its own rows of the session before the report, a name off the list that passed the gates '
+          'the earnings set fetched the evening before its report. Any other name shows '
+          '<b>not on the option watch list</b> on R4/R5/R8 and gets no score there. Fetch asks the builder for '
+          'uw/option_list and uw/option_screener.</p>')
     h += '<p style="color:#8b949e;font-size:10px;margin-top:4px">Direction comes from R2/R3/R7 and the R8 retail-call momentum; R5 is a tag (never a vote), R4/R6 vehicle/veto. Unavailable rules drop out of the direction score (no 0 fill), but they still count against Coverage %.</p>'
 
     h += '<h3 style="color:#58a6ff;font-size:13px;margin:20px 0 8px">What Is Coverage %?</h3>'

@@ -111,6 +111,7 @@ AREAS = [
      "files", "module_spx_gamma/data/raw/<date>/", "module_spx_gamma/config.py:25", "one folder per date", "file",
      "Every day folder stays. The nightly backup mirrors the tree (#276).", "module_spx_gamma/snapshot.py:491; scripts/backup_store.py:603"),
    ],
+   note="G9 (build plan PR 19): the OIPD board no longer fetches or writes oipd_chain; it fits SPX's and the option watch list's stored chain (options.duckdb option_eod, rcdata.read.option_chain; written by the uw/option_list builder dataset, G8) and shows any other name as 'not on the option watch list'. Its Fetch queues one uw/option_list (module_oipd/engine.py, core/board_requests.py).",
    planned="options_chain_snapshot. File decided in 2.6."),
   dict(id="D06", name="Dealer exposure: GEX, greeks, flow per strike", readers="SPX Gamma, Earnings",
    flows=[
@@ -120,7 +121,7 @@ AREAS = [
      "Every day folder stays. The GEX history file keeps only the newest 10 days; the nightly backup mirrors the tree and keeps every version of that file (#276).",
      "module_spx_gamma/run.py:27-28, :58-84; scripts/backup_store.py:475, :603"),
    ],
-   note="Earnings fetches its exposure live per run and keeps only the HTML report (R2:30).",
+   note="Earnings fetched its exposure live per run until G9. Since G9 (build plan PR 19) R4 reads the stored GEX levels and spot exposures by strike (options.duckdb option_daily, option_strike set list, or er_options and option_strike set earnings for an off-list name, the evening before its report; module_earnings_radar/store_reads.card_inputs); any other name reads 'not on the option watch list'.",
    planned="options_exposure_snapshot in DuckDB (#179). File decided in 2.6."),
   dict(id="D07-D08", name="IV, term, OI and flow per expiry", readers="LEAPS, Earnings, SPX Gamma",
    flows=[
@@ -129,6 +130,7 @@ AREAS = [
      "raw", "leaps_cache", ":659", "ticker", "upsert",
      "One payload per ticker (the latest snapshot Earnings reads), overwritten at each fetch; the older snapshots list it also carries is frozen since #377 L3 (D1: carried unchanged, never appended, never deleted), because the classifier reads its baselines from leaps_footprint_history now (module_leaps/history.baselines: the day baseline is the newest row strictly before today, the quarter baseline the newest row at or before the last quarter end, and growth is matched-expiry, module_leaps/engine.matched_far_growth). A footprint whose UW read failed or raised on a LEAPS Fetch is not saved, so a failure never evicts a real snapshot or becomes the next baseline (#377 L1, LP-A: module_leaps/engine.py:358-360). A LEAPS Fetch also records every watchlist footprint, with the UW answers and baselines it was built from, in leaps_footprint_history (history.duckdb, one run per session, uncapped; #377: module_leaps/history.py, called from app/runners.run_leaps_latest).", ":659"),
    ],
+   note="G9 (build plan PR 19): leaps_cache is no longer written: the LEAPS board scores the list names from options.duckdb (option_expiry, option_daily, option_print; module_leaps/scan.py) and records each footprint in leaps_footprint_history; Earnings reads the last recorded session there as its LEAPS context (module_leaps/history.latest) and its R4 term structure from option_expiry. leaps_cache keeps its rows until G10.",
    planned="options_ticker_daily and options_expiry_oi_flow. File decided in 2.6."),
   dict(id="D09", name="Option prints", readers="LEAPS, Earnings",
    flows=[
@@ -138,6 +140,7 @@ AREAS = [
      "Every print stays; the table only grows, a stored id is never rewritten. Each new print carries source 'uw', fetched_at (its page), run_at (the scan's start) and session_date (rule B on run_at; none past the holiday table). A print served without size, ask_vol or bid_vol stores NULL there, not 0, so the ask-side share skips it (#377 L1, DF95: module_leaps/engine.py:408-414). The board reads the last 5 days.",
      "O2:43; module_leaps/engine.py:313-324, :341, :367, :431, :438"),
    ],
+   note="G9 (build plan PR 19): leaps_flow_prints is no longer written; LEAPS' large-print scan and the Earnings R5 lean and R8 read the stored prints of options.duckdb option_print (the newest 50 of a session: the list set, or an off-list name's earnings set the evening before its report). The table keeps its rows until G10.",
    planned="Stays leaps_flow_prints in raw.duckdb, event, key id (06_interface §3 D09); its four stamps are written since #295."),
    dict(id="D10", name="Short interest", readers="13F Short%, Earnings R5",
     flows=[
@@ -152,7 +155,7 @@ AREAS = [
       "module_earnings_radar/inputs/short_interest.py:1-20"),
     ],
     note="#375 F6: the 13F board's Short% column reads short_interest (module_sec_13f/enrich.load_short_interest): newest non-null si_float per ticker, shown as percent. Since #372 E5c the Earnings Fetch reads short_interest too (module_earnings_radar/stored_inputs.short_rows, the newest session inside MAX_LAG 3, any source): R5's squeeze inputs are parsed from the stored columns with UWClient._parse_short_row, the very mapping the live answer went through, and short_screener is called for the tickers the store misses only.",
-    planned="sec13f_enrichment.short_pct is retired for the 13F board; Earnings R5 reads short_interest since #372 E5c."),
+    planned="sec13f_enrichment.short_pct is retired for the 13F board; Earnings R5 read short_interest from #372 E5c. Since G9 (build plan PR 17/19) neither board reads short_interest: the 13F board shows FINRA's short interest and days to cover and Earnings R5 reads FINRA and IBKR (fee, shares available), both from ownership.duckdb (rcdata.read.finra_short_interest, shortable)."),
  ]),
  ("Fundamentals and filings", [
   dict(id="D11", name="SEC XBRL statements", readers="AG, Fundamentals",

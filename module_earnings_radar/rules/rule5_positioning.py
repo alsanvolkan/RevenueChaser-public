@@ -4,7 +4,8 @@ Who is positioned how, and what does that imply for the stock's reaction to
 earnings? Two independent components, at least one of which must be present or
 the rule is unavailable (never a zero fill):
 
-1. **Institutional lean** — from UW flow-recent, by the print's side (docs/rules/redesign.md R5, review S4):
+1. **Institutional lean** — from the session's stored prints (``option_print``, G9; UW's flow-recent before), by
+   the print's side (docs/rules/redesign.md R5, review S4):
    bullish = ask-side calls + bid-side puts, bearish = bid-side calls + ask-side puts, mid dropped, institutional
    = size >= 10 AND premium >= $10k (``aggregate_flow``). The net is scaled by the sided premium (a one-sided
    but small imbalance scores less than a clean sweep); a net under ``INST_FLOW_MIN_NET`` is Thin (present, no

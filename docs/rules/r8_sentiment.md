@@ -1,7 +1,7 @@
 ﻿# R8 — Sentiment
 
 **Weight:** 10% of composite direction score
-**Source:** UW `/stock/{ticker}/flow-recent` via `aggregate_flow` (size &lt; 10 = retail)
+**Source:** the stored prints (`option_print`, G9: a list name's list set, or an off-list name's earnings set of the evening before the report) via `aggregate_prints` (size &lt; 10 = retail); any other name reads "not on the option watch list" and gets no score
 **File:** `module_earnings_radar/rules/rule8_sentiment.py`
 
 ## What It Measures (live)
