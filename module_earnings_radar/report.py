@@ -1625,7 +1625,7 @@ def _methodology_tables(filter_stats: dict = None) -> str:
         ("R2 · Guidance", "direction 20%", "Recency-weighted EPS surprise + median; beat > +1%", "/stock/{t}/earnings (EPS vs street)"),
         ("R3 · Financials", "direction 20%", "GAAP operating-margin vote + opex/franchise tag", "/stock/{t}/financials (IS+BS)"),
         ("R4 · Volatility", "vehicle 0%", "Expected-move box, volume-book GEX regime, last-4 straddle", "UW options + /spot-exposures/strike"),
-        ("R5 · Positioning", "tag 0% (no vote)", "Lean / Thin / package-risk / squeeze read", "/stock/{t}/flow-recent + /short_screener"),
+        ("R5 · Positioning", "tag 0% (no vote)", "Lean / Thin / package-risk / squeeze none or fuel", "/stock/{t}/flow-recent + ownership store (FINRA short interest, IBKR borrow fee)"),
         ("R6 · Macro", "veto 0%", "Badge on extreme 10Y rate beta; NO_TRADE only w/ FOMC/CPI", "FRED DGS10 or UW 10Y daily"),
         ("R7 · Accounting", "direction 15%", "Signed Sloan accruals, last filed quarter", "cash-flows + balance-sheets (NI cross-check)"),
         ("R8 · Sentiment", "momentum 10%", "Retail call share > 65% → +20; no call premium → unavailable", "/stock/{t}/flow-recent (size < 10)"),

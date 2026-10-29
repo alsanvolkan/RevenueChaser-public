@@ -36,12 +36,6 @@ def _calendar(session):
     return stored_inputs.calendar_items([DAY])[1]
 
 
-def _short(session):
-    rawstore.write_rows("short_interest", [{"ticker": "AAA", "session_date": session, "source": "yfinance",
-                                            "si_float": 0.1, "total_float": 1e6}])
-    return stored_inputs.short_rows(["AAA"])[1]
-
-
 def _estimates(session):
     rawstore.write_rows("estimate_snapshots", [{"ticker": "AAA", "session_date": session, "period": "0q",
                                                 "source": "yfinance", "eps_trend_current": 1.0}])
@@ -49,7 +43,8 @@ def _estimates(session):
 
 
 # (reader, the spec's MAX_LAG) — written out, so a changed constant fails here rather than moving the boundary.
-READERS = {"earnings_calendar": (_calendar, 1), "short_interest": (_short, 3), "estimate_snapshots": (_estimates, 5)}
+# Short interest's lag (IBKR's snapshot, from the ownership store since G9) is pinned in test_r5_ownership_store_g9.
+READERS = {"earnings_calendar": (_calendar, 1), "estimate_snapshots": (_estimates, 5)}
 
 
 @pytest.mark.parametrize("table", sorted(READERS))

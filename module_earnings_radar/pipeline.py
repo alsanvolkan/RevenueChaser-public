@@ -179,7 +179,6 @@ class EarningsPipeline:
         self._shorts_cache = None
         self._dgs10_cache = None
         self._rate_events = None        # the stored economic calendar, read once per run (E5d, #372)
-        self._peers_registered = False
         self._preselected_tickers = None
         # The stored D01 bars for the tickers that will be scored, read once before the workers start (E5e, #372).
         self._ohlc_bars = None
@@ -225,53 +224,17 @@ class EarningsPipeline:
         return self._screener_cache
 
     def _warm_short_interest(self) -> dict[str, dict]:
-        """Fetch short-interest rows once for the tickers that will be deep-scored.
-
-        The nightly D10 sweep already stored them (E5c, #372), so UW's batch /short_screener (one extra round per
-        ~100 tickers) is asked only for the tickers the store does not cover — and not at all when it covers them
-        all. Stored rows are parsed with ``UWClient._parse_short_row``, the mapping the live answer would have gone
-        through, so R5 cannot tell the two apart.
-
-        Every ticker's squeeze metrics are then registered under its spine sector (the sector the card is scored
-        against, #272) so the in-sector peer Z-scores can be built before scoring. A name the spine
-        cannot place is nobody's peer. Test fakes that lack
-        ``short_screener`` keep working — R5 simply falls back to flow-only.
-        """
+        """R5's squeeze inputs for the tickers that will be deep-scored, read once from the ownership store (G9):
+        FINRA's short interest and days to cover as published by the latest complete session (no look-ahead, #252),
+        IBKR's borrow fee and shares available (``stored_inputs.short_rows``). No provider call: a name the store
+        does not hold has no squeeze inputs, and R5 reads the lean alone."""
         if self._shorts_cache is None:
             from RevenueChaser.module_earnings_radar import stored_inputs
-            stored, session = stored_inputs.short_rows(self.tickers)
-            parsed: dict[str, dict] = {}
-            missing: list[str] = []
-            for t in self.tickers:
-                row = stored.get(t)
-                if row is None:
-                    missing.append(t)
-                    continue
-                parsed[t] = UWClient._parse_short_row(row)
-            n_stored = len(parsed)
-            n_live = 0
-            if missing and hasattr(self.uw, "short_screener"):
-                rows = self.uw.short_screener(missing) or {}
-                for t, row in rows.items():
-                    parsed[t] = self.uw._parse_short_row(row)
-                n_live = len(rows)
-            self._shorts_cache = parsed
+            stored, settled = stored_inputs.short_rows(self.tickers)
+            self._shorts_cache = stored
             self.input_sources["short_interest"] = {
-                "stored": n_stored, "live": n_live,
-                "session": session.isoformat() if session else None}
-        if not self._peers_registered:
-            # the peer group is the spine's sector, the one _score reads: for a name the S&P 1500 list or the SIC
-            # table places differently from the UW calendar the two differ (#272)
-            if getattr(self, "_spine_gics", None) is None:
-                self._spine_gics = _spine.spine_gics()
-            for t in self.tickers:
-                stats = self._shorts_cache.get(t)
-                if not stats:
-                    continue
-                sector = _spine.gics_of(t, self._spine_gics).sector
-                if sector and not is_unclassified(sector):
-                    rule5_positioning.register_peer_stats(t, sector, stats)
-            self._peers_registered = True
+                "stored": len(stored), "live": 0, "source": "rcdata:ownership",
+                "session": settled.isoformat() if settled else None}
         return self._shorts_cache
 
     def _warm_dgs10(self) -> dict[str, float]:
@@ -412,8 +375,6 @@ class EarningsPipeline:
 
     def run(self, use_preselect: bool = True, watchlist: set = None) -> list[TradeCard]:
         logger.info(f"Fetching screener batch for {len(self.tickers)} tickers...")
-        rule5_positioning.reset_peer_stats()
-        self._peers_registered = False
         _ = self.screener_cache  # warm cache
 
         wl = watchlist or (rawstore.load_watchlist())
@@ -701,11 +662,11 @@ class EarningsPipeline:
             short_interest_pct_float=shorts.get("si_pct"),
             days_to_cover=shorts.get("days_to_cover"),
             borrow_fee=shorts.get("borrow_fee"),
-            sector=sector,
+            short_interest=shorts.get("short_interest"),
+            shares_available=shorts.get("shares_available"),
             institutional_net_delta=flow.get("inst_lean_net"),
             institutional_call_premium=flow.get("inst_bull_side"),
             institutional_put_premium=flow.get("inst_bear_side"),
-            ticker=ticker,
             institutional_side_served=flow.get("side_served"),
             institutional_package_premium=flow.get("inst_package"),
         )

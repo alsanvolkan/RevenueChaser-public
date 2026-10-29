@@ -60,8 +60,8 @@ def _write_ownership(market, rows, periods=(), shorts=()):
                          p["unmapped"], p["deadline"], p["deadline"] - timedelta(days=1)])
         con.execute("CREATE TABLE finra_short_interest (settlement_date DATE, symbol TEXT, ticker TEXT, "
                     "current_short BIGINT, days_to_cover DOUBLE, avg_daily_volume BIGINT, source TEXT)")
-        con.executemany("INSERT INTO finra_short_interest VALUES (?, ?, ?, ?, ?, 1000, 'finra')",
-                        [[d, t, t, n, dtc] for t, d, n, dtc in shorts])
+        for t, d, n, dtc in shorts:
+            con.execute("INSERT INTO finra_short_interest VALUES (?, ?, ?, ?, ?, 1000, 'finra')", [d, t, t, n, dtc])
     finally:
         con.close()
 

@@ -1,5 +1,6 @@
 """E5/E6 (#372) through ``EarningsPipeline.run()``: with every nightly input stored and fresh, a run asks UW for no
 short-interest batch and no year of bars, does not call FRED, and scores R1 from the stored estimates (review S2).
+Since G9 R5's short inputs come from the ownership store, and no run asks UW for them.
 
 The slice tests call ``_score`` with the caches set by hand; this one pins that ``run()`` itself warms them.
 """
@@ -14,7 +15,8 @@ from RevenueChaser.core import calendar, rawstore
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline
 from RevenueChaser.module_earnings_radar.tests.test_rule1_drivers_e6 import FULL
 from RevenueChaser.module_earnings_radar.tests.test_stored_ohlc_e5e import _bars, _prints, _seed as _seed_bars
-from RevenueChaser.module_earnings_radar.tests.test_stored_short_e5c import LIVE, _seed as _seed_short
+from RevenueChaser.module_earnings_radar.tests.test_r5_ownership_store_g9 import _write as _write_ownership
+from RevenueChaser.module_sec_13f.tests.ownership_store import market  # noqa: F401 - the fixture
 from RevenueChaser.module_earnings_radar.tests.test_pipeline_score import _FakeUW
 
 NY = ZoneInfo("America/New_York")
@@ -29,8 +31,8 @@ def _clock(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _store(rawstore_tmp_db):
-    return rawstore_tmp_db
+def _store(rawstore_tmp_db, market):  # noqa: F811
+    return market
 
 
 class _CountingUW(_FakeUW):
@@ -49,9 +51,10 @@ class _CountingUW(_FakeUW):
         return {}
 
 
-def _seed_everything():
+def _seed_everything(market):
     _seed_bars(_bars(300))
-    _seed_short({"AAPL": LIVE["AAPL"]})
+    _write_ownership(market, finra=[("AAPL", date(2026, 9, 30), 1_000_000, 2.0, date(2026, 10, 9))],
+                     ibkr=[("AAPL", SESSION, 35.0, -30.0, 120_000, False)])
     rawstore.write_rows("estimate_snapshots", [{"ticker": "AAPL", "session_date": SESSION, "period": "0q",
                                                 "source": "yfinance", **FULL}])
     rawstore.write_rows("macro_series", [
@@ -62,10 +65,10 @@ def _seed_everything():
          "event": "GDP", "type": "report", "source": "uw"} for d in (date(2026, 10, 15), date(2026, 10, 23))])
 
 
-def test_a_run_with_every_input_stored_asks_uw_and_fred_for_none_of_them(monkeypatch):
+def test_a_run_with_every_input_stored_asks_uw_and_fred_for_none_of_them(monkeypatch, _store):
     from RevenueChaser.module_earnings_radar import macro_watch
     monkeypatch.setattr(macro_watch, "fred_daily_map", lambda *a, **k: pytest.fail("FRED must not be called"))
-    _seed_everything()
+    _seed_everything(_store)
     fake = _CountingUW()
     p = EarningsPipeline(["AAPL"], uw=fake, cal_meta={"AAPL": {
         "earnings_date": REPORT, "full_name": "Aple", "sector": "Technology", "expected_move_perc": 0.05}})
@@ -76,14 +79,17 @@ def test_a_run_with_every_input_stored_asks_uw_and_fred_for_none_of_them(monkeyp
     assert fake.shorts_asked == []                                 # R5 read the stored short row
     assert card.rule_audit["rule1_drivers"]["available"] is True   # run() warmed the stored estimates
     assert p.input_sources["ohlc"] == {"stored": 1, "live": 0}
-    assert p.input_sources["short_interest"] == {"stored": 1, "live": 0, "session": SESSION.isoformat()}
+    assert p.input_sources["short_interest"] == {"stored": 1, "live": 0, "source": "rcdata:ownership",
+                                                 "session": "2026-09-30"}
+    assert "squeeze fuel (borrow fee 35.0%)" in card.rule_audit["rule5_positioning"]["reasons"]
     assert p.input_sources["estimates"] == {"stored": 1, "missing": 0}
     assert p.input_sources["dgs10"] == "stored"
     assert p.input_sources["rate_events"] == "stored"
 
 
 def test_the_same_run_with_an_empty_store_asks_uw(monkeypatch):
-    """The reference: without the store the same run asks UW for both, so the zeros above are the store's doing."""
+    """The reference: without the store the same run asks UW for the bars, so the zero above is the store's doing.
+    Short interest is never asked of UW since G9: an empty ownership store is no squeeze inputs."""
     from RevenueChaser.module_earnings_radar import macro_watch
     monkeypatch.setattr(macro_watch, "fred_daily_map", lambda *a, **k: {})
     fake = _CountingUW()
@@ -93,5 +99,5 @@ def test_the_same_run_with_an_empty_store_asks_uw(monkeypatch):
     (card,) = p.run(use_preselect=False, watchlist={"ZZZZ"})
 
     assert fake.ohlc_asked == ["AAPL"]
-    assert fake.shorts_asked == [["AAPL"]]
+    assert fake.shorts_asked == []
     assert card.rule_audit["rule1_drivers"]["available"] is False
