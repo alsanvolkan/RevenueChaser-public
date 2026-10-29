@@ -5,6 +5,11 @@
 into one flag per ticker: the item codes of ``config.CORPORATE_EVENT_ITEMS`` a filer reported, and the date of its
 newest such filing.
 
+**On the fundamentals layer** (``core.fundamentals_layer.reads_layer()``, review F2, G6) the same answer comes from
+``fundamentals.duckdb``: the CIK from ``fundamental_company``, the 8-K items from ``filing_item`` (``sec/filings``),
+and a CIK's checked day from its list's read day (``submissions_as_of``) or a later good ``sec/filings`` run
+(``_layer_reads``). The old rows are not read on that path.
+
 **Display only.** Nothing here is scored, ranked, bucketed or frozen: the flag is not in ``freeze._HASHED`` and
 changes no ``ledger.model_version``.
 
@@ -30,7 +35,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 
-from RevenueChaser.core import rawstore, sec_submissions
+from RevenueChaser.core import fundamentals_layer, rawstore, sec_submissions
 
 from . import config
 
@@ -71,6 +76,90 @@ def _items(raw) -> set[str]:
     return {part.strip() for part in str(raw or "").split(",") if part.strip()}
 
 
+def _store_reads(wanted: list[str], since: date, *, counted: bool):
+    """The old store's answer: ``(cik_of, rows, stored, checked)``. ``cik_of`` maps a ticker to its CIK
+    (``security_master``), ``rows`` are the 8-Ks filed since ``since`` (``sec_submissions``), ``stored`` the CIKs with
+    any filing row and ``checked`` the day the daily sync last checked each (``source_checks``); the last two only
+    when ``counted``."""
+    cik_of: dict[str, str] = {}
+    rows: list[dict] = []
+    stored: set[str] = set()
+    checked: dict[str, date] = {}
+    # One handle per store file for all of it (#386 F5 review): no outer session exists in a job worker or the
+    # scheduled CLI Fetch, and a per-statement connect would open the 500 MB file once per slice.
+    with rawstore.session():
+        for chunk in _slices(wanted):
+            for row in rawstore.query(
+                    f"SELECT ticker, cik FROM security_master WHERE ticker IN ({_placeholders(len(chunk))}) "
+                    "AND cik IS NOT NULL AND cik <> ''", chunk, db="raw"):
+                cik = _norm_cik(row.get("cik"))
+                if cik and row.get("ticker"):
+                    cik_of[row["ticker"]] = cik
+        ciks = sorted(set(cik_of.values()))
+        for chunk in _slices(ciks):
+            rows += rawstore.query(
+                "SELECT cik, items, filing_date FROM sec_submissions "
+                f"WHERE form = '8-K' AND filing_date >= ? AND cik IN ({_placeholders(len(chunk))})",
+                [since, *chunk], db="edgar")
+        if counted:
+            for chunk in _slices(ciks):
+                for row in rawstore.query(
+                        f"SELECT DISTINCT cik FROM sec_submissions WHERE cik IN ({_placeholders(len(chunk))})",
+                        chunk, db="edgar"):
+                    cik = _norm_cik(row.get("cik"))
+                    if cik:
+                        stored.add(cik)
+            # Review F2: the sync's own watermark per CIK (``source_checks``, written in raw by
+            # ``sec_submissions.record``). Rows that stopped being refreshed cannot show a recent 8-K.
+            for chunk in _slices(sorted(stored)):
+                for row in rawstore.query(
+                        f"SELECT key, max(checked_at) AS at FROM {sec_submissions.CHECKS} WHERE dataset = ? "
+                        f"AND source = ? AND key IN ({_placeholders(len(chunk))}) GROUP BY key",
+                        [sec_submissions.SOURCE, sec_submissions.SOURCE, *chunk]):
+                    cik = _norm_cik(row.get("key"))
+                    if cik and row.get("at") is not None:
+                        day = datetime.fromtimestamp(float(row["at"]), timezone.utc).date()
+                        checked[cik] = max(checked.get(cik, day), day)
+    return cik_of, rows, stored, checked
+
+
+def _layer_reads(wanted: list[str], since: date, *, counted: bool):
+    """The fundamentals layer's answer, in ``_store_reads``'s shape (review F2, G6): ``fundamental_company`` maps a
+    ticker to its CIK, ``filing_item`` holds the 8-K items ``sec/filings`` listed, and a CIK is stored once its list
+    was read (``submissions_as_of``). Its checked day is that read, or the day of the newest good ``sec/filings``
+    run when later: that run read the daily index and re-read the list of every company that filed, so a quiet
+    filer's list is current through it.
+
+    shortcut: the run's check date stands in for the day its daily-index scan reached, and a backfill run (which
+    reads no index) counts too; serve the scan day per run if the stale count must be exact."""
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata import read as rc_read
+    from RevenueChaser.rcdata.build.fundamentals import filings
+    cik_of: dict[str, str] = {}
+    listed: dict[str, date] = {}
+    for chunk in _slices(wanted):
+        for row in rc_read.fundamental_companies(chunk):
+            cik = _norm_cik(row.get("cik"))
+            if cik and row.get("ticker"):
+                cik_of[row["ticker"]] = cik
+                if row.get("submissions_as_of") is not None:
+                    listed[cik] = date.fromisoformat(str(row["submissions_as_of"])[:10])
+    by_accession: dict[tuple, dict] = {}
+    for chunk in _slices(sorted(set(cik_of.values()))):
+        for row in rc_read.filing_items(chunk, "8-K", since):
+            rec = by_accession.setdefault((row["cik"], row["accession"]),
+                                          {"cik": row["cik"], "filing_date": row.get("filing_date"), "items": []})
+            if row.get("item"):
+                rec["items"].append(str(row["item"]))
+    rows = [{**r, "items": ",".join(r["items"])} for r in by_accession.values()]
+    checked: dict[str, date] = {}
+    if counted and listed:
+        good = ops.latest_good_check(filings.NAME)
+        run_day = date.fromisoformat(str(good["checked_on"])[:10]) if good else None
+        checked = {cik: max(day, run_day) if run_day else day for cik, day in listed.items()}
+    return cik_of, rows, set(listed), checked
+
+
 def corporate_events(tickers, *, today=None, stats: dict | None = None) -> dict[str, dict]:
     """``{ticker: {"items": [codes, sorted], "last_filing_date": "YYYY-MM-DD"}}`` for tickers that have one.
 
@@ -90,49 +179,13 @@ def corporate_events(tickers, *, today=None, stats: dict | None = None) -> dict[
         return {}
 
     since = today - timedelta(days=config.CORPORATE_EVENT_WINDOW_DAYS)
-    cik_of = {}
-    by_cik = {}
-    rows = []
-    stored: set[str] = set()
-    checked: dict[str, float] = {}
-    # One handle per store file for all of it (#386 F5 review): no outer session exists in a job worker or the
-    # scheduled CLI Fetch, and a per-statement connect would open the 500 MB file once per slice.
-    with rawstore.session():
-        for chunk in _slices(wanted):
-            for row in rawstore.query(
-                    f"SELECT ticker, cik FROM security_master WHERE ticker IN ({_placeholders(len(chunk))}) "
-                    "AND cik IS NOT NULL AND cik <> ''", chunk, db="raw"):
-                cik = _norm_cik(row.get("cik"))
-                if cik and row.get("ticker"):
-                    cik_of[row["ticker"]] = cik
-        for ticker in wanted:
-            cik = cik_of.get(ticker)
-            if cik:
-                by_cik.setdefault(cik, []).append(ticker)
-        ciks = list(by_cik)
-        for chunk in _slices(ciks):
-            rows += rawstore.query(
-                "SELECT cik, items, filing_date FROM sec_submissions "
-                f"WHERE form = '8-K' AND filing_date >= ? AND cik IN ({_placeholders(len(chunk))})",
-                [since, *chunk], db="edgar")
-        if stats is not None:
-            for chunk in _slices(ciks):
-                for row in rawstore.query(
-                        f"SELECT DISTINCT cik FROM sec_submissions WHERE cik IN ({_placeholders(len(chunk))})",
-                        chunk, db="edgar"):
-                    cik = _norm_cik(row.get("cik"))
-                    if cik:
-                        stored.add(cik)
-            # Review F2: the sync's own watermark per CIK (``source_checks``, written in raw by
-            # ``sec_submissions.record``). Rows that stopped being refreshed cannot show a recent 8-K.
-            for chunk in _slices(sorted(stored)):
-                for row in rawstore.query(
-                        f"SELECT key, max(checked_at) AS at FROM {sec_submissions.CHECKS} WHERE dataset = ? "
-                        f"AND source = ? AND key IN ({_placeholders(len(chunk))}) GROUP BY key",
-                        [sec_submissions.SOURCE, sec_submissions.SOURCE, *chunk]):
-                    cik = _norm_cik(row.get("key"))
-                    if cik and row.get("at") is not None:
-                        checked[cik] = max(checked.get(cik, 0.0), float(row["at"]))
+    read = _layer_reads if fundamentals_layer.reads_layer() else _store_reads
+    cik_of, rows, stored, checked = read(wanted, since, counted=stats is not None)
+    by_cik: dict[str, list[str]] = {}
+    for ticker in wanted:
+        cik = cik_of.get(ticker)
+        if cik:
+            by_cik.setdefault(cik, []).append(ticker)
     if stats is not None:
         # Two blind spots, counted apart: no CIK at all, and a CIK the filings do not mention. A candidate of the
         # first kind was counted nowhere before, so a card that says nothing read as a clean one (#386 F5 review).
@@ -142,8 +195,7 @@ def corporate_events(tickers, *, today=None, stats: dict | None = None) -> dict[
         line = today - timedelta(days=config.CORPORATE_EVENT_CHECK_MAX_AGE_DAYS)
         stats["stale_submissions"] = sum(
             len(names) for cik, names in by_cik.items()
-            if cik in stored and (cik not in checked
-                                  or datetime.fromtimestamp(checked[cik], timezone.utc).date() < line))
+            if cik in stored and (cik not in checked or checked[cik] < line))
 
     wanted_items = set(config.CORPORATE_EVENT_ITEMS)
     found: dict[str, dict] = {}

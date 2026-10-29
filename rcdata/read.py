@@ -243,6 +243,22 @@ def estimates(tickers: Iterable[str]) -> list[dict]:
                                     "ORDER BY ticker, period", wanted)
 
 
+def filing_items(ciks: Iterable, form: str, since=None) -> list[dict]:
+    """The listed filings of several companies, one row per filing and 8-K item (``item`` NULL for a filing without
+    items): ``cik``, ``accession``, ``form``, ``filing_date``, ``item``, of ``form`` only and filed on or after ``since``
+    (when given), by company, filing date and item."""
+    wanted = sorted({_cik(c) for c in ciks if str(c or "").strip()})
+    if not wanted:
+        return []
+    sql = ("SELECT cik, accession, form, filing_date, item FROM filing_item WHERE kind = 'item' AND form = ? "
+           f"AND cik IN ({', '.join('?' * len(wanted))})")
+    params: list = [str(form), *wanted]
+    if since is not None:
+        sql += " AND filing_date >= ?"
+        params.append(_day(since))
+    return _rows("filing_item", sql + " ORDER BY cik, filing_date, accession, item", params)
+
+
 def filing_text(cik, item: str = "business") -> dict | None:
     """The served text of company ``cik``'s newest annual report (``item`` ``business``) or proxy (``proxy``), with
     its ``quality`` (never ``ok`` at the cap); None when there is none."""
