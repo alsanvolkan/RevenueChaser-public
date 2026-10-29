@@ -18,12 +18,12 @@ def test_index_row_on_an_empty_store(rawstore_tmp_db):
 
 
 def test_index_row_shows_each_list_its_last_change_and_the_sec_nasdaq_count(rawstore_tmp_db):
-    from RevenueChaser.core import index_registry as ir
+    from RevenueChaser.core import index_lists as il
     with rawstore.change_label("uw", run_id="r1"):
-        ir.save_index("sp500", {"AAPL", "MSFT"})
+        il.save_index("sp500", {"AAPL", "MSFT"})
     with rawstore.change_label("uw", run_id="r2"):
-        ir.save_index("sp500", {"AAPL", "NVDA"})            # NVDA joins, MSFT leaves: 2 rows in run r2
-        ir.save_index("dow", {"AAPL"})                      # same run: 1 more
+        il.save_index("sp500", {"AAPL", "NVDA"})            # NVDA joins, MSFT leaves: 2 rows in run r2
+        il.save_index("dow", {"AAPL"})                      # same run: 1 more
     rawstore.write_rows("sec_exchange_file", [
         {"ticker": "AAPL", "exchange": "Nasdaq", "status": "present", "run_at": 1.0},
         {"ticker": "MSFT", "exchange": "Nasdaq", "status": "present", "run_at": 1.0},

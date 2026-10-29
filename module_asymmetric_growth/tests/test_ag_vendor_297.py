@@ -15,7 +15,9 @@ from RevenueChaser.module_asymmetric_growth.tests.test_ag_info_only_150 import _
 from RevenueChaser.module_asymmetric_growth.tests.test_ag_dated_momentum_380 import seed_momentum
 
 COMPLETE = datetime(2026, 10, 8, 20, 35, tzinfo=timezone.utc).timestamp()   # 16:35 EDT: a complete session
-_DATED = [dict(r, period_end=f"{r['fiscal_year']}-12-31") for r in _YF_ANNUAL]
+# Period ends two years after the fixture's labels, so the newest (2025-12-31) is not stale on the pinned run day:
+# since PR 6 a Yahoo record's period end is judged too (AG review SF-2).
+_DATED = [dict(r, period_end=f"{r['fiscal_year'] + 2}-12-31") for r in _YF_ANNUAL]
 
 
 class _DatedYahoo(_Yahoo):
@@ -34,6 +36,7 @@ def _run(monkeypatch, tickers, no_fetch=False, run_id="job-ag"):
     monkeypatch.setattr(engine._spine, "excluded_tickers", lambda: set())
     monkeypatch.setattr(engine._spine, "spine_gics", lambda *a, **k: {})
     monkeypatch.setattr(vendor_data, "_clock", lambda: COMPLETE)
+    monkeypatch.setattr(engine, "_run_day", lambda: datetime.fromtimestamp(COMPLETE, timezone.utc).date())
     return engine.run_asymmetric_growth_hunter(None, max_workers=2, no_fetch=no_fetch, run_id=run_id)
 
 

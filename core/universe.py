@@ -20,14 +20,15 @@ The types are read with a separate query, never a JOIN: `rawstore.query` answers
 `[]` for a missing table, so a JOIN against an absent `security_master` would
 silently empty the universe. `_security_types` is the one seam for them.
 
-**The source** (build plan PR 5): ``RC_UNIVERSE_SOURCE`` unset (or anything but ``spine``) reads ``raw.duckdb`` as
-above. ``RC_UNIVERSE_SOURCE=spine`` reads the identity spine through ``rcdata.read``: the members are the spine's
-listed names (Tier A and B, the old membership rule), with the spine's name, sector, industry and security type, and
-the same two-part rule applied to them; only the market fields (``market_cap``, ``price``, ``quote``) still come
-from the old ``equity_universe``, by ticker, because the spine holds no market data until PR 6. The index badges of
-``filter_fields`` come from the spine's current membership, under the labels the filter already has (the filter is
-unchanged). The default stays the old store until PR 6. With the variable set but no spine file, or a last
-``spine/security`` build that failed, the old store is read and a warning is logged (``source_state``).
+**The source** (build plan PR 5; the default since PR 6): ``RC_UNIVERSE_SOURCE`` unset (or empty, or ``spine``) reads
+the identity spine through ``rcdata.read``: the members are the spine's listed names (Tier A and B, the old
+membership rule), with the spine's name, sector, industry and security type, and the same two-part rule applied to
+them; only the market fields (``market_cap``, ``price``, ``quote``) still come from the old ``equity_universe``, by
+ticker, because the spine holds no market data yet. The index badges of ``filter_fields`` come from the spine's
+current membership (``index_registry``). Any other value (``store`` by convention) reads ``raw.duckdb`` as above:
+the escape hatch, kept until the old path is retired (plan PR 21). With the spine asked for, by default or by the
+variable, but no spine file, or a last ``spine/security`` build that failed, the old store is read and a warning is
+logged (``source_state``).
 """
 from __future__ import annotations
 
@@ -52,6 +53,7 @@ DEFAULT_MC_MIN = 300_000_000.0
 # The source switch (PR 5): read at call time, so a test or a restart with the variable set changes it.
 SOURCE_ENV = "RC_UNIVERSE_SOURCE"
 SPINE = "spine"
+STORE = "store"          # the value that selects the old store (any value but ``spine`` does)
 logger = logging.getLogger(__name__)
 
 UNIVERSE_META_KEY = "__meta__"
@@ -67,15 +69,18 @@ TYPE_GROUPS = (
 )
 
 
-_FALLBACK_LOGGED: set[str] = set()
+_FALLBACK_LOGGED: set[tuple[str, str]] = set()   # (how the spine was asked for, why not), logged once
 
 
 def source_state() -> dict:
-    """``{requested, effective, reason}`` of the universe source: ``RC_UNIVERSE_SOURCE=spine`` is honoured only while
-    the spine is there and ``spine/security``'s newest check that is not a skip built it (changed or unchanged);
-    otherwise the old store is read and ``reason`` says why (review should-fix 7). Read at call time."""
-    if (os.getenv(SOURCE_ENV) or "").strip().lower() != SPINE:
-        return {"requested": "store", "effective": "store", "reason": None}
+    """``{requested, effective, reason, variable}`` of the universe source, read at call time. ``variable`` is
+    ``RC_UNIVERSE_SOURCE`` as set (None when unset or empty). Unset or ``spine`` asks for the spine; any other value
+    asks for the old store. The spine is honoured only while it is there and ``spine/security``'s newest check that is
+    not a skip built it (changed or unchanged); otherwise the old store is read and ``reason`` says why (review
+    should-fix 7)."""
+    variable = (os.getenv(SOURCE_ENV) or "").strip() or None
+    if variable is not None and variable.lower() != SPINE:
+        return {"requested": STORE, "effective": STORE, "reason": None, "variable": variable}
     from ..rcdata import ops, serving
     reason = None
     if not serving.live_path(SPINE).exists():
@@ -86,14 +91,17 @@ def source_state() -> dict:
             reason = "spine/security has not built yet"
         elif last["result"] not in ("changed", "unchanged"):
             reason = f"spine/security's last check {last['result']}"
-    if reason and reason not in _FALLBACK_LOGGED:
-        _FALLBACK_LOGGED.add(reason)
-        logger.warning("%s=%s is set, but the universe falls back to the old store: %s", SOURCE_ENV, SPINE, reason)
-    return {"requested": SPINE, "effective": "store" if reason else SPINE, "reason": reason}
+    asked = (f"{SOURCE_ENV}={SPINE} is set" if variable
+             else f"The universe reads the spine by default ({SOURCE_ENV} unset)")
+    if reason and (asked, reason) not in _FALLBACK_LOGGED:
+        _FALLBACK_LOGGED.add((asked, reason))
+        logger.warning("%s, but the universe falls back to the old store: %s", asked, reason)
+    return {"requested": SPINE, "effective": STORE if reason else SPINE, "reason": reason, "variable": variable}
 
 
 def universe_source() -> str:
-    """``"spine"`` when ``RC_UNIVERSE_SOURCE=spine`` and the spine is built, else ``"store"`` (``source_state``)."""
+    """``"spine"`` when the spine is asked for (``RC_UNIVERSE_SOURCE`` unset or ``spine``) and built, else ``"store"``
+    (``source_state``)."""
     return source_state()["effective"]
 
 
@@ -101,11 +109,40 @@ def _spine() -> bool:
     return universe_source() == SPINE
 
 
+def spine_provenance() -> dict | None:
+    """The spine the boards read: ``{built_at, source_as_of}``, or None while the boards read the old store.
+
+    ``built_at`` is when the live ``spine.duckdb`` was built (its swap, ``YYYY-MM-DD HH:MM UTC``), from the file itself:
+    any dataset of the kind rebuilds the whole file, so ``spine/security``'s own check can read "unchanged" for the
+    build that made it (real-data check, PR 6). ``source_as_of`` is the day of the SEC file in it. A value the file
+    does not hold is None."""
+    if not _spine():
+        return None
+    import duckdb
+    from datetime import datetime, timezone
+    from ..rcdata import serving
+    built = as_of = None
+    try:
+        con = serving.open_read(SPINE)
+    except (serving.ServingFileMissing, duckdb.Error):  # no file, or one DuckDB cannot open: never fail a header
+        return {"built_at": None, "source_as_of": None}
+    try:
+        built = con.execute(f"SELECT max(built_at) FROM {serving.VERSION_TABLE}").fetchone()[0]
+        as_of = con.execute("SELECT max(source_as_of) FROM security").fetchone()[0]
+    except duckdb.Error:  # a file without the table: say less, never fail a board header
+        pass
+    finally:
+        con.close()
+    return {"built_at": (datetime.fromtimestamp(built, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                         if built is not None else None),
+            "source_as_of": as_of.isoformat() if as_of is not None else None}
+
+
 def _spine_universe() -> list[dict]:
     """The spine's listed names as ``equity_universe`` rows: identity from ``rcdata.read``, market fields from the
     old ``equity_universe`` by ticker (NULL where it has none). No spine file yet: no rows."""
-    from ..rcdata import read
-    ids = read.universe(tiers=("A", "B"))
+    from . import spine_reads
+    ids = spine_reads.universe(("A", "B"))
     if not ids:
         return []
     market = {r["ticker"]: r for r in rawstore.query(
@@ -132,8 +169,8 @@ def _security_types() -> dict[str, str]:
     decision below derives from this one function. On the spine, the spine's types.
     """
     if _spine():
-        from ..rcdata import read
-        rows = [r for r in read.identity() if r.get("ticker")]
+        from . import spine_reads
+        rows = [r for r in spine_reads.identity_all() if r.get("ticker")]
         spine = {r["ticker"]: r["security_type"] for r in rows}
         # A spine name left untyped (no OpenFIGI answer, no Compustat link) takes the identity master's type, so the
         # flag does not let through an ETF the old path excluded (review should-fix 6). A type whose only source is
@@ -263,6 +300,21 @@ def load_universe_meta() -> dict:
         return {}
     return {"generated_at": row.get("generated_at") or "",
             "refreshed_by": row.get("refreshed_by") or ""}
+
+
+def has_universe() -> bool:
+    """Whether the universe the boards read holds any name: the spine's listed names (Tier A/B) on the spine, else a
+    row of the old ``equity_universe``. Opus review M1 (PR 6): the "Loading universe…" gate and AG's no-card Refresh
+    asked the old table directly, which is empty under the spine."""
+    if _spine():
+        from . import spine_reads
+        return bool(spine_reads.universe(("A", "B")))
+    return bool(rawstore.query(f"SELECT 1 FROM {_UNIVERSE_TABLE} LIMIT 1"))
+
+
+def has_market_caps() -> bool:
+    """Whether any market cap is stored (the old cache still feeds the caps under the spine, until G2)."""
+    return bool(rawstore.query(f"SELECT 1 FROM {_UNIVERSE_TABLE} WHERE market_cap IS NOT NULL LIMIT 1"))
 
 
 def load_cached_universe() -> list[dict]:
@@ -407,8 +459,9 @@ def spine_gics(tickers: list[str] | None = None) -> dict[str, GicsPath]:
         params = wanted
     if _spine():
         from ..rcdata import read
+        from . import spine_reads
         listed = ("A", "B")
-        found = read.identity(params) if tickers is not None else read.universe(tiers=listed)
+        found = read.identity(params) if tickers is not None else spine_reads.universe(listed)
         rows = [r for r in found if r.get("tier") in listed]
     else:
         rows = rawstore.query(sql, params)
@@ -432,8 +485,8 @@ def filter_fields(tickers: list[str] | None = None) -> dict[str, dict]:
     """Per-ticker fields the universal dashboard filters need (ADR-2 contract).
 
     Joins ``equity_universe`` (name/sector/industry/market_cap) with ``ticker_scores``
-    (earnings_date), ``index_constituents`` via ``annotate_cards`` and the
-    pinned theme run. Every row carries ``gics`` (the filter path: sector,
+    (earnings_date), the index membership via ``annotate_cards`` (``index_registry``: the spine or
+    the old store) and the pinned theme run. Every row carries ``gics`` (the filter path: sector,
     then industry when there is one) and ``theme_ids`` (all levels; empty = unthemed).
     Tickers not on the spine still get a row so a picker never drops a known
     name.
@@ -479,24 +532,11 @@ def filter_fields(tickers: list[str] | None = None) -> dict[str, dict]:
     for c in cards:
         c["gics"] = sector_path(c["sector"], c["industry"])
         c["theme_ids"] = themes.get(c["ticker"], [])
-    annotate_cards(cards, _spine_index_registry() if _spine() else None)
+    annotate_cards(cards)
     return {c["ticker"]: c for c in cards}
-
-
-def _spine_index_registry() -> dict:
-    """``{ticker: {"index": [labels]}}`` from the spine's current members and listed Nasdaq names, under the labels
-    the filter already has (``index_registry.LABELS``, in its order); a slug without a label is left out."""
-    from ..rcdata import read
-    from .index_registry import LABELS
-    slugs: dict[str, set[str]] = {}
-    for m in read.membership():
-        slugs.setdefault(m["ticker"], set()).add(m["index_slug"])
-    for r in read.universe(tiers=("A", "B")):
-        if r.get("exchange") == "Nasdaq":
-            slugs.setdefault(r["ticker"], set()).add("nasdaq")
-    return {t: {"index": [label for slug, label in LABELS.items() if slug in have]} for t, have in slugs.items()}
 
 
 __all__ = ["classification_universe", "classification_universe_rows", "spine_gics", "gics_of",
            "DEFAULT_MC_MIN", "TYPE_GROUPS", "excluded_tickers", "filter_fields", "theme_catalog",
-           "current_theme_run", "universe_counts", "universe_source", "SOURCE_ENV"]
+           "current_theme_run", "universe_counts", "universe_source", "spine_provenance", "SOURCE_ENV", "SPINE",
+           "STORE"]

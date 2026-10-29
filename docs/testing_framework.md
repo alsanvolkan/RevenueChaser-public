@@ -214,7 +214,8 @@ than behaviour.
 | Module | Does | Tests guarantee |
 |---|---|---|
 | `taxonomy.py` | The shared sector vocabulary — the `core/gics_map.py` SSoT (the 11 Morningstar names + Unclassified) — and the theme labels: the pinned NMF run's medium themes, loaded per ticker | The sector list is the eleven Morningstar names then `Unclassified`; a ticker's themes are the pinned run's or `[]` — never a keyword or sector guess (C21, #383), because every dashboard's labels come from here and drift desynchronizes all of them |
-| `index_registry.py` | Cache-first `ticker -> index` registry (S&P 500 / Dow / Nasdaq) | Membership inversion is correct, lookups resolve, cards get stamped, and `fetch_index` serves cache rather than refetching |
+| `index_registry.py` | The boards' `ticker -> index` reads: the spine's membership by default, the old store's `index_constituents` on `RC_UNIVERSE_SOURCE=store` | Membership inversion is correct, lookups resolve, cards get stamped, the spine's members are read and the old store's are not (and the reverse on `store`); the module never imports `rawstore` |
+| `index_lists.py` | The old store's weekly Unusual Whales index lists (`refresh_lists`), cache-first | Floors, the sp600 first-fill gate, the change rows, and that `fetch_index` serves cache rather than refetching |
 | `ticker_store.py` | Shared per-ticker store (the `ticker_scores` table in raw.duckdb) — the Hunter writes, other boards read | Roundtrip, missing keys, and that a repeat write overwrites instead of duplicating |
 | `module_earnings_radar/models.py` | `TradeCard` / `RuleResult` | Every column the radar renders maps to a `TradeCard` field; `TradeCard()` always constructs (all fields defaulted); unavailable rules carry `score=None` |
 | `config.py`, `reporting_common.py` | Constants; shared dashboard filter HTML/JS | No dedicated tests — exercised incidentally |

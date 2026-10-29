@@ -5,7 +5,7 @@ import pytest
 
 from RevenueChaser.app import dashboard, runners
 from RevenueChaser.app.jobs import JobMessage
-from RevenueChaser.core import index_registry as ir
+from RevenueChaser.core import index_lists as il
 from RevenueChaser.core.tests.panel_client import panel_test_client
 
 
@@ -67,7 +67,7 @@ def _result(statuses: dict, locked: bool = False) -> dict:
 def test_the_runner_hands_its_run_id_and_first_fill_to_the_step(monkeypatch):
     seen = {}
     monkeypatch.setattr(runners, "run_id", lambda: "job-1")
-    monkeypatch.setattr(ir, "refresh_lists",
+    monkeypatch.setattr(il, "refresh_lists",
                         lambda run_id, first_fill=(): seen.update(run_id=run_id, first_fill=list(first_fill))
                         or _result({"sp500": "written"}))
     with pytest.raises(JobMessage, match="Index lists: sp500 500"):
@@ -76,12 +76,12 @@ def test_the_runner_hands_its_run_id_and_first_fill_to_the_step(monkeypatch):
 
 
 def test_a_list_under_its_floor_fails_the_job(monkeypatch):
-    monkeypatch.setattr(ir, "refresh_lists", lambda run_id, first_fill=(): _result({"sp500": "below_floor"}))
+    monkeypatch.setattr(il, "refresh_lists", lambda run_id, first_fill=(): _result({"sp500": "below_floor"}))
     with pytest.raises(RuntimeError, match="below floor"):
         runners.run_index_lists()
 
 
 def test_a_running_copy_is_a_message_not_a_failure(monkeypatch):
-    monkeypatch.setattr(ir, "refresh_lists", lambda run_id, first_fill=(): _result({}, locked=True))
+    monkeypatch.setattr(il, "refresh_lists", lambda run_id, first_fill=(): _result({}, locked=True))
     with pytest.raises(JobMessage, match="already running"):
         runners.run_index_lists()
