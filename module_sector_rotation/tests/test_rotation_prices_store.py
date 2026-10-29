@@ -85,6 +85,26 @@ def test_a_macro_series_that_stopped_is_missing_not_shifted(world):
     assert "US10Y" not in {s.ticker for s in engine.RotationEngine().process_all()}
 
 
+def test_a_macro_series_a_week_behind_spy_carries_its_last_week_and_is_named(world):
+    """Review M1 (PR 270): ``market_series`` stores day D on D+1 at the earliest (a raw file per as-of day, FRED's own
+    lag, Yahoo's 16:00 cut-off), so on the first session of an ISO week the newest macro value sits in the week before.
+    That week carries forward, as a week in between does, and the engine names the series; one that stopped weeks ago
+    stays missing."""
+    world.setattr(engine, "MACRO_SERIES", {t: MACRO_SERIES[t] for t in ("US10Y", "VVIX")})
+    prices_store.put_bars(_bars("SPY"))
+    last_week = [d for d in DAYS if d.isocalendar()[1] < SESSION.isocalendar()[1]]
+    assert last_week[-1] == date(2026, 6, 26) and SESSION.isocalendar()[1] == date(2026, 6, 29).isocalendar()[1]
+    prices_store.put_series([{"series_id": "DGS10", "source": "fred", "obs_date": d, "value": 4.0 + i / 1000}
+                             for i, d in enumerate(last_week)]
+                            + [{"series_id": "VVIX", "source": "cboe", "obs_date": d, "value": 90.0}
+                               for d in DAYS[:-20]])
+    eng = engine.RotationEngine()
+    snaps = {s.ticker: s for s in eng.process_all()}
+    assert "US10Y" in snaps and "VVIX" not in snaps
+    assert snaps["US10Y"].close_price == pytest.approx(4.0 + (len(last_week) - 1) / 1000)
+    assert eng.carried == ["US10Y"]
+
+
 def test_money_flow_reads_the_prices_store():
     prices_store.put_bars([{"ticker": "XLK", "session_date": d, "close": 10.0 + i, "volume": 5.0}
                            for i, d in enumerate(DAYS[-40:])])

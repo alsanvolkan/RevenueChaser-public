@@ -462,7 +462,7 @@ def run_rotation_latest(uw: UWClient, benchmark: str = "SPY", start: str = None,
     from RevenueChaser.module_sector_rotation import history as rotation_history, store as rotation_store
 
     run, run_at, window, saved, kept, notes = _freeze_run_id(), time.time(), None, [], None, []
-    short, stale = [], None
+    short, stale, carried = [], None, []
     if start or end:
         # Range fetch: reconstruct snapshots for every week in [start, end].
         from datetime import date as _date
@@ -497,6 +497,7 @@ def run_rotation_latest(uw: UWClient, benchmark: str = "SPY", start: str = None,
         if not snapshots:
             return _rotation_empty_fetch(uw, run, run_at, benchmark)
         short = list(getattr(engine, "too_short", None) or [])
+        carried = list(getattr(engine, "carried", None) or [])
         stale = getattr(engine, "stale", None)
         early = stale or ("an intraday run (the US session is open)" if getattr(engine, "intraday", False) else None)
         # ROT-5: a symbol with no series is missing. A thinner pull must not replace a session snapshot that covers
@@ -525,6 +526,8 @@ def run_rotation_latest(uw: UWClient, benchmark: str = "SPY", start: str = None,
                 notes.append(f"{stale}.")
         if short:
             notes.append(f"{rotation_history.short_warning(short)}.")
+        if carried and not kept:
+            notes.append(f"{rotation_history.carried_warning(carried)}.")
     # Embed holdings so the served map is self-contained (expandable rows work
     # even if the holdings route is unavailable / server is stale). Theme rows
     # only (ROT-4): sector rows expand to the sector -> industry tree
@@ -539,7 +542,7 @@ def run_rotation_latest(uw: UWClient, benchmark: str = "SPY", start: str = None,
     # Result history (#374): after the board file, so it holds what the board showed.
     _record_rotation(rotation_history, snapshots, holdings, sector_holdings, run, run_at, health, benchmark,
                      window=window, warnings=[backfill_note] if backfill_note else None, snapshot_rows=saved,
-                     kept=kept, too_short=short, stale=stale)
+                     kept=kept, too_short=short, stale=stale, carried=carried if not kept else None)
     if notes:
         raise JobMessage(" ".join(notes))
     return html_path

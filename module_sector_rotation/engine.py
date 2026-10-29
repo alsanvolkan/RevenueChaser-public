@@ -399,16 +399,23 @@ def weekly_closes(points, as_of: date) -> list[float]:
     return list(_weekly(points, as_of).values())
 
 
-def aligned_weekly_closes(points, benchmark_points, as_of: date) -> list[float]:
+# A macro series may end one ISO week before SPY: ``market_series`` stores day D on D+1 at the earliest (one raw file
+# per as-of day, FRED's own lag, Yahoo's 16:00 cut-off), so on the first session of a week its newest value is in the
+# week before (review M1, PR 270). That week carries forward; a series further behind stopped and is missing.
+MACRO_CARRY_WEEKS = 1
+
+
+def aligned_weekly_closes(points, benchmark_points, as_of: date, carry_weeks: int = 0) -> list[float]:
     """``weekly_closes`` of one symbol lined up with the benchmark's ISO weeks, so the 1/4/12-week lookbacks of
     ``relative_strength_pct`` (counted from the end of both lists) compare the same weeks.
 
-    ``[]`` when the symbol has no close in the benchmark's last week: a series that stopped early is not plotted as of
-    the session (it is missing). A benchmark week the symbol lacks in between carries its previous week's close
-    (a 0% week) instead of shifting every older week by one (review 2026-10-16)."""
+    ``[]`` when the symbol has no close in the benchmark's last ``carry_weeks + 1`` weeks: a series that stopped early
+    is not plotted as of the session (it is missing). A benchmark week the symbol lacks in between, or one of its last
+    ``carry_weeks``, carries its previous week's close (a 0% week) instead of shifting every older week by one
+    (review 2026-10-16)."""
     own = _weekly(points, as_of)
     weeks = list(_weekly(benchmark_points, as_of))
-    if not own or not weeks or weeks[-1] not in own:
+    if not own or not weeks or not any(w in own for w in weeks[-(carry_weeks + 1):]):
         return []
     out, last = [], None
     for w in weeks:
@@ -517,7 +524,9 @@ class RotationEngine:
     - ``as_of`` is that session: the latest complete session, or SPY's last stored session before it when the prices
       build has not stored it yet (``stale`` then says so);
     - ``intraday`` is true when the run happened while the US session was open (rule B, ``calendar.session_for``);
-    - ``too_short`` lists the symbols left off the map for having under ``MIN_WEEKS`` weekly closes (a warning).
+    - ``too_short`` lists the symbols left off the map for having under ``MIN_WEEKS`` weekly closes (a warning);
+    - ``carried`` lists the macro series on the map with no value in ``as_of``'s ISO week yet, whose previous week's
+      value stands for it (``MACRO_CARRY_WEEKS``; a warning).
     ``uw`` is not called for closes any more; it is kept for the callers that pass one.
     """
 
@@ -531,10 +540,11 @@ class RotationEngine:
         self.stale: str | None = None
         self.intraday = False
         self.too_short: list[str] = []
+        self.carried: list[str] = []
 
     def process_all(self) -> list[ETFRotationSnapshot]:
         from RevenueChaser.core import calendar
-        self.snapshots, self.too_short, self.stale = [], [], None
+        self.snapshots, self.too_short, self.stale, self.carried = [], [], None, []
         try:
             session = calendar.latest_complete_session(self.now)
             self.intraday = calendar.session_for(
@@ -559,9 +569,13 @@ class RotationEngine:
             return []
         closes = {t: aligned_weekly_closes(points.get(t) or [], spy, self.as_of) for t in rrg_tickers()}
         macro = macro_points(start, self.as_of, [t for t in MACRO_SERIES if t in ROTATION_ETFS])
+        last_week = tuple(self.as_of.isocalendar())[:2]
         for ticker in MACRO_SERIES:
             if ticker in ROTATION_ETFS:
-                closes[ticker] = aligned_weekly_closes(macro.get(ticker) or [], spy, self.as_of)
+                own = macro.get(ticker) or []
+                closes[ticker] = aligned_weekly_closes(own, spy, self.as_of, carry_weeks=MACRO_CARRY_WEEKS)
+                if closes[ticker] and last_week not in _weekly(own, self.as_of):
+                    self.carried.append(ticker)
         self.too_short = too_short(closes)
         self.snapshots = cross_section(closes, self.spy_closes, self.as_of)
         return self.snapshots

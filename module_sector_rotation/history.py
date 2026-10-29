@@ -104,7 +104,7 @@ def tree_rows(sector_holdings: dict[str, list[dict]]) -> list[dict]:
 def record_rotation(snapshots: list, holdings: dict, sector_holdings: dict, *, run_id: str, run_at: float,
                     uw_health: dict | None = None, benchmark: str = "SPY", window: tuple | None = None,
                     warnings: list | None = None, snapshot_rows: list[dict] | None = None, kept: str | None = None,
-                    too_short: list | None = None, stale: str | None = None):
+                    too_short: list | None = None, stale: str | None = None, carried: list | None = None):
     """Record a Rotation Fetch: a header for every Fetch, with the holdings and tree rows the board embeds and the RRG
     points a live Fetch saved (``snapshot_rows``, the ``rotation_snapshots`` rows ``store.save_snapshot`` wrote).
     ``window`` is the ``(start, end)`` of a range Fetch, which shows stored snapshots: its run is partial, so a live
@@ -112,7 +112,9 @@ def record_rotation(snapshots: list, holdings: dict, sector_holdings: dict, *, r
     own thinner pull (ROT-5); that run is partial too. ``without_holdings`` lists the sector and theme rows with no ETF
     holdings: every sector (its detail is the industry tree) and any theme whose RS failed. ``too_short`` names the
     symbols left off the RRG for too little stored history: a warning, and not ``missing`` (M-ROT-2). ``stale`` says the
-    RRG is an older session's because the prices store did not hold this one yet; that run is partial. Returns rows written."""
+    RRG is an older session's because the prices store did not hold this one yet; that run is partial. ``carried`` names
+    the macro series whose previous week's value stands for the session's week (``engine.MACRO_CARRY_WEEKS``): a
+    warning. Returns rows written."""
     expandable = sorted({s.ticker for s in snapshots if getattr(s, "group_name", "") in _EXPANDABLE})
     detailed = sorted({s.ticker for s in snapshots if getattr(s, "group_name", "") in _HOLDINGS_GROUPS})
     hrows, dup = holdings_rows(holdings)
@@ -138,6 +140,8 @@ def record_rotation(snapshots: list, holdings: dict, sector_holdings: dict, *, r
     warns = list(warnings or []) + ([f"{dup} duplicate ETF holdings kept their first row"] if dup else [])
     if short:
         warns.append(short_warning(short))
+    if carried:
+        warns.append(carried_warning(carried))
     params = rotation_config(benchmark)
     return history.record_run(
         ROTATION_BOARD, run_id=run_id, run_at=run_at, model_version=model_version(params),
@@ -153,6 +157,12 @@ def short_warning(short: list[str]) -> str:
     """The job and history line for symbols with too little stored history for the RRG."""
     return (f"{len(short)} rotation symbol(s) have under {engine.MIN_WEEKS} weeks of stored daily bars and are left "
             f"off the map until their history grows: {', '.join(short)}")
+
+
+def carried_warning(carried: list[str]) -> str:
+    """The job and history line for macro series plotted with their previous week's value (review M1, PR 270)."""
+    return (f"{len(carried)} macro series have no value of the session's week in market_series yet and are plotted "
+            f"with the week before's: {', '.join(carried)}")
 
 
 def money_flow_rows(result: dict) -> list[dict]:
