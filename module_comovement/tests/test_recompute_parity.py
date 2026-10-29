@@ -44,6 +44,12 @@ S2 (a window needs at most 95 % of its sessions) regenerated it again. Compared 
 its ``min_obs`` 126 -> 119 (in ``settings``, ``funnel`` and the "Missing price bars" label) and so its
 ``config_hash``; the fixture's two gappy names miss more than 7 sessions and stay dropped, and no cluster changed.
 Then ``json.dumps(payloads())`` was written.
+
+PR 8 (G3) regenerated it again: the market is seeded in the prices store (``d01_bars.write_bars`` now writes
+``prices.duckdb``) and read through ``rcdata.read.ticker_bars(basis="total_return")``, and ``config.METHOD`` is 3.
+Compared key by key: in each of the four payloads only the ``config_hash`` (the method), the three ``source`` texts
+and the "Missing price bars" label (a missing session can come back, review S2) moved; no number, member, label or
+verdict changed. Then ``json.dumps(payloads())`` was written.
 """
 from __future__ import annotations
 

@@ -31,6 +31,8 @@ def seeded_settings(dashboard, monkeypatch):
     import RevenueChaser.core.rawstore as rawstore
 
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+
+    monkeypatch.setattr("RevenueChaser.core.config.MARKET_DIR", dashboard.env["RC_MARKET_DIR"])  # the prices store (G3)
     rawstore.write_rows("equity_universe", [
         {"ticker": "AAPL", "market_cap": 3.0e12, "name": "Apple Inc."},
         {"ticker": "MU", "market_cap": None, "name": "Micron Technology"},

@@ -91,6 +91,7 @@ def d01(dashboard, monkeypatch):
     """The test's own dashboard, its store seeded by ``_seed_d01``; returns the session the bars end on."""
     import RevenueChaser.core.rawstore as rawstore
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+    monkeypatch.setattr("RevenueChaser.core.config.MARKET_DIR", dashboard.env["RC_MARKET_DIR"])  # the prices store (G3)
     return _seed_d01()
 
 

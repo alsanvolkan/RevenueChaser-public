@@ -56,10 +56,19 @@ def _max(sql: str, db: str = "raw") -> str | None:
 # ── per-board resolvers ─────────────────────────────────────────────────────
 
 def _comovement_day() -> str | None:
-    """Newest D01 session over the names Co-movement clusters (the classification universe): it reads D01 since
-    the #379 D01 switch, so its date is its own names' price date (DF101, as K7 does for Swing and Fundamentals)."""
+    """Newest prices-store session over the names Co-movement clusters (the classification universe): it reads the
+    prices store since PR 8 (G3), so its date is its own names' price date (DF101, as K7 does for Swing and
+    Fundamentals)."""
     from RevenueChaser.module_comovement import ohlc
-    return d01_day(ohlc.universe_tickers())
+    return prices_day(ohlc.universe_tickers())
+
+
+def prices_day(tickers) -> str | None:
+    """Newest session of the prices store (``rcdata.read.last_sessions``) over ``tickers``; ``None`` when none has a
+    bar or there is no store."""
+    from RevenueChaser.rcdata import read
+    days = list(read.last_sessions(list(tickers)).values())
+    return max(days).isoformat() if days else None
 
 
 def d01_day(tickers) -> str | None:
@@ -78,6 +87,13 @@ def _scored_d01_day(scores: str):
     """
     def resolve() -> str | None:
         return d01_day(r["ticker"] for r in rawstore.query(f"SELECT ticker FROM {scores}"))
+    return resolve
+
+
+def _scored_prices_day(scores: str):
+    """``_scored_d01_day`` over the prices store: Asymmetric Growth reads its momentum there since PR 11 (G3)."""
+    def resolve() -> str | None:
+        return prices_day(r["ticker"] for r in rawstore.query(f"SELECT ticker FROM {scores}"))
     return resolve
 
 
@@ -190,11 +206,12 @@ def _quick_financials_day() -> str | None:
 # A board absent from this map, or mapped to None, shows no data date — say so
 # explicitly rather than leaving a stale value on screen.
 RESOLVERS = {
-    # Swing, Fundamentals and Asymmetric Growth: the D01 date of the names they last scored (K7, #383 R3; AG #380 S4).
+    # Swing and Fundamentals: the D01 date of the names they last scored (K7, #383 R3); Asymmetric Growth: their
+    # prices-store date (#380 S4, PR 11).
     "module_swing_potential": _scored_d01_day("swing_scores"),
     "module_fundamentals": _scored_d01_day("fundamentals_scores"),
-    "module_asymmetric_growth": _scored_d01_day("ticker_scores"),
-    # Co-movement clusters its names' D01 closes (#379 D01 switch).
+    "module_asymmetric_growth": _scored_prices_day("ticker_scores"),
+    # Co-movement clusters its names' prices-store closes (PR 8).
     "module_comovement": _comovement_day,
     # Earnings Radar: the calendar session its last Fetch read (that run's record), not the newest stored one.
     "module_earnings_radar": _earnings_day,

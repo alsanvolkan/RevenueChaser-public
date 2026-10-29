@@ -1,15 +1,17 @@
-"""Test helpers: D01 bars (``price_bars_daily``) for the Rotation tests and a pinned session clock (M-ROT-2, #374).
+"""Test helpers: stored daily bars for the Rotation tests and a pinned session clock (M-ROT-2, #374).
 
-Since M-ROT-2 the RRG, the backfill and (M-ROT-3) the holdings RS and Money Flow read the stored daily bars, so a test
-seeds them the way RC-Daily-Bars leaves them, and pins ``core.calendar``'s clock seam to place "the latest complete
-session".
+Since M-ROT-2 the RRG, the backfill and (M-ROT-3) the holdings RS and Money Flow read the stored daily bars; since PR 9
+(G3) those are the prices store's (``prices.duckdb``, ``rcdata/tests/prices_store``), not D01's. A test seeds them the
+way the prices build leaves them, and pins ``core.calendar``'s clock seam to place "the latest complete session". The
+module keeps its D01-era name so the tests that import it did not move.
 """
 from __future__ import annotations
 
 import hashlib
 from datetime import date, datetime, timedelta, timezone
 
-from RevenueChaser.core import calendar, rawstore
+from RevenueChaser.core import calendar
+from RevenueChaser.rcdata.tests import prices_store
 
 FIRST = date(2025, 3, 3)
 
@@ -25,7 +27,7 @@ def sessions(start: date, end: date) -> list[date]:
 
 
 def seed(ticker: str, end: date, start: date = FIRST, closes=None, volume: float = 1_000_000.0) -> list[date]:
-    """D01 bars of ``ticker`` on every session in ``[start, end]``. ``closes`` is a function of the bar's index, or
+    """Stored bars of ``ticker`` on every session in ``[start, end]``. ``closes`` is a function of the bar's index, or
     ``None`` for a deterministic path whose drift is seeded by the ticker (so ETFs land in different quadrants).
     Returns the sessions written."""
     days = sessions(start, end)
@@ -39,10 +41,8 @@ def seed(ticker: str, end: date, start: date = FIRST, closes=None, volume: float
         else:
             close = float(closes(i))
         rows.append({"ticker": ticker, "session_date": d, "open": close, "high": close, "low": close, "close": close,
-                     "adj_close": None, "volume": volume + i, "split_ratio": None, "adj_source": None, "source": "uw",
-                     "fetched_at": 0.0, "run_id": "seed", "run_at": 0.0})
-    if rows:
-        rawstore.write_rows("price_bars_daily", rows)
+                     "volume": volume + i, "fetched_at": 0.0})
+    prices_store.put_bars(rows, replace=False, overwrite=True)
     return days
 
 

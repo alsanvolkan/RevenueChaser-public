@@ -64,7 +64,7 @@ def test_an_etf_with_no_stored_bars_makes_the_result_partial_and_is_named(d01):
 def test_only_the_last_days_sessions_up_to_the_session_are_read(d01):
     d01()
     seed("XLK", date(2026, 8, 21), start=date(2026, 8, 17), closes=lambda i: 1.0)   # after the session: not read
-    rows = mf.d01_rows(["XLK"], SESSION, days=30)
+    rows = mf.bar_rows(["XLK"], SESSION, days=30)
     assert len(rows) == 30 and rows[-1]["date"] == SESSION.isoformat()
     assert all(r["close"] != 1.0 for r in rows)
 

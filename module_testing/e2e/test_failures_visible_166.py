@@ -87,6 +87,8 @@ def _seed_d01(dashboard, monkeypatch, skip=(), only=None) -> None:
     from RevenueChaser.module_sector_rotation.tests.d01_seed import seed
 
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+
+    monkeypatch.setattr("RevenueChaser.core.config.MARKET_DIR", dashboard.env["RC_MARKET_DIR"])  # the prices store (G3)
     rawstore.ensure_all_tables()
     session = calendar.latest_complete_session()
     for t in ["SPY", *engine.rrg_tickers()]:
@@ -95,9 +97,9 @@ def _seed_d01(dashboard, monkeypatch, skip=(), only=None) -> None:
 
 
 def _drop_d01(ticker: str) -> None:
-    """Remove ``ticker``'s D01 bars from the store ``_seed_d01`` pointed at."""
-    import RevenueChaser.core.rawstore as rawstore
-    rawstore.execute("DELETE FROM price_bars_daily WHERE ticker = ?", [ticker], db="prices")
+    """Remove ``ticker``'s stored bars from the prices store ``_seed_d01`` pointed at."""
+    from RevenueChaser.rcdata.tests import prices_store
+    prices_store.delete_bars(ticker)
 
 
 def _record_complete_leaderboard(board: dict) -> None:
@@ -145,7 +147,7 @@ class TestSpyCandlesDown:
         res = dashboard.run_job("/run/rotation", start="2026-06-01", end="2026-08-30")
         dashboard.wait_until_idle()
         assert res.ok, res
-        assert "days not written: the stored daily bars (D01) hold no SPY bar" in res.message, res
+        assert "days not written: the prices store holds no SPY bar" in res.message, res
         assert dashboard.table_count("rotation_snapshots") == 0
 
     def test_the_same_range_with_spy_in_d01_writes_the_days(self, dashboard, routes, monkeypatch):

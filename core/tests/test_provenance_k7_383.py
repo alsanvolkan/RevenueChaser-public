@@ -9,6 +9,9 @@ both score every name from D01, so:
 - a Fetch's own payload ``data_as_of`` is the newest D01 session over the names that Fetch scored (the score table
   still holds the previous run's names while the payload is built);
 - Co-movement reads D01 too since its own switch (#379), so its chip is the newest D01 session over its names.
+
+Since PR 8 and PR 11 (G3) Co-movement and Asymmetric Growth read the prices store instead, so their chip is the newest
+prices-store session over the same names (``provenance.prices_day``); Swing and Fundamentals stay on D01 until G4.
 Offline: a temp store.
 """
 from __future__ import annotations
@@ -23,12 +26,23 @@ from RevenueChaser.core.tests import screen_parity as scn
 from RevenueChaser.core.tests.d01_seed import seed_d01
 from RevenueChaser.module_fundamentals import pipeline as fp
 from RevenueChaser.module_swing_potential import pipeline as sp
+from RevenueChaser.rcdata.tests import prices_store
 
 D = date(2026, 10, 14)
 EVENING = datetime(2026, 10, 14, 21, 0, tzinfo=timezone.utc).timestamp()
 BOARDS = [pytest.param("module_swing_potential", "swing_scores", id="swing"),
           pytest.param("module_fundamentals", "fundamentals_scores", id="fundamentals"),
-          pytest.param("module_asymmetric_growth", "ticker_scores", id="ag")]   # #380 S4: AG's momentum is D01's
+          pytest.param("module_asymmetric_growth", "ticker_scores", id="ag")]   # #380 S4; the prices store's since PR 11
+PRICES_STORE_BOARDS = {"module_asymmetric_growth", "module_comovement"}
+
+
+def _bars(module: str, ticker: str, days, fetched_at: float) -> None:
+    """The board's own price bars: the prices store for the boards that read it (G3), else D01."""
+    if module in PRICES_STORE_BOARDS:
+        prices_store.put_bars([{"ticker": ticker, "session_date": d, "close": 1.5, "fetched_at": fetched_at}
+                               for d in days])
+    else:
+        seed_d01(ticker, days, fetched_at)
 
 
 def _days(end: date, n: int = 5) -> list[date]:
@@ -41,8 +55,8 @@ def _scored(table: str, *tickers: str) -> None:
 
 @pytest.mark.parametrize("module,table", BOARDS)
 def test_the_chip_is_the_newest_d01_bar_of_the_names_the_board_last_scored(rawstore_tmp_db, module, table):
-    seed_d01("AAA", _days(D), EVENING)
-    seed_d01("BBB", _days(date(2026, 10, 13)), EVENING)
+    _bars(module, "AAA", _days(D), EVENING)
+    _bars(module, "BBB", _days(date(2026, 10, 13)), EVENING)
     _scored(table, "BBB")
     assert provenance.data_as_of(module) == "2026-10-13"      # AAA's newer bar is not this board's
     _scored(table, "AAA", "BBB")
@@ -51,7 +65,7 @@ def test_the_chip_is_the_newest_d01_bar_of_the_names_the_board_last_scored(rawst
 
 @pytest.mark.parametrize("module,table", BOARDS)
 def test_a_newer_bar_in_the_old_cache_is_not_the_chip(rawstore_tmp_db, module, table):
-    seed_d01("AAA", _days(date(2026, 10, 13)), EVENING)
+    _bars(module, "AAA", _days(date(2026, 10, 13)), EVENING)
     _scored(table, "AAA")
     rawstore.write_rows("swing_ohlc", [{"ticker": "AAA", "ts": "2026-10-15T00:00:00", "open": 1.0, "high": 1.0,
                                         "low": 1.0, "close": 1.0, "volume": 1.0, "cached_at": EVENING}])
@@ -64,10 +78,12 @@ def test_no_scored_name_is_no_date(rawstore_tmp_db, module, table):
     assert provenance.data_as_of(module) is None
 
 
-def test_co_movement_reads_the_d01_date_of_its_names(rawstore_tmp_db):
-    """#379 D01 switch: Co-movement clusters D01, so its date is its names' newest D01 session, not swing_ohlc's."""
-    seed_d01("AAA", _days(date(2026, 10, 9)), EVENING)
-    seed_d01("OUT", _days(D), EVENING)                      # not in the universe: not this board's
+def test_co_movement_reads_the_prices_store_date_of_its_names(rawstore_tmp_db):
+    """Co-movement clusters the prices store's closes (PR 8; D01 since #379 before), so its date is its names' newest
+    session there, not swing_ohlc's nor D01's."""
+    _bars("module_comovement", "AAA", _days(date(2026, 10, 9)), EVENING)
+    _bars("module_comovement", "OUT", _days(D), EVENING)    # not in the universe: not this board's
+    seed_d01("AAA", _days(D), EVENING, prices=False)        # the old D01: not read
     rawstore.write_rows("swing_ohlc", [{"ticker": "AAA", "ts": "2026-10-14T00:00:00", "open": 1.0, "high": 1.0,
                                         "low": 1.0, "close": 1.0, "volume": 1.0, "cached_at": EVENING}])
     rawstore.replace_all("equity_universe", [{"ticker": "AAA", "market_cap": 1.0e10, "sector": "Technology",

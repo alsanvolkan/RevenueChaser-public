@@ -24,7 +24,7 @@ from datetime import date, datetime, timedelta, timezone
 from RevenueChaser.core import earnings_dates, fiscal_year
 from RevenueChaser.core import funnel as funnel_mod
 from RevenueChaser.core import job_control
-from RevenueChaser.core import ledger, ownership, prices, rawstore
+from RevenueChaser.core import ledger, ownership, rawstore
 from RevenueChaser.core import tristate as tri
 from RevenueChaser.core import vendor_data
 from RevenueChaser.core.config import to_float
@@ -75,7 +75,7 @@ US_COUNTRY = "United States"
 
 PRELOAD_BATCH = 500   # tickers whose stored rows one bulk read loads (bounds memory)
 
-# Momentum from D01 (#380 S4, decision 2): the sessions each input needs, and how far back the one windowed read
+# Momentum from the stored daily bars (#380 S4, decision 2; the prices store since PR 11): the sessions each input needs, and how far back the one windowed read
 # looks (380 calendar days: 252 sessions plus the market's closed days, with room for a gap).
 BARS_52W = 252        # the 52-week high is the highest HIGH of these sessions
 BARS_SMA = 50         # the mean close of these sessions
@@ -239,9 +239,9 @@ def _mean_last(values: list, n: int):
 
 
 def technical_from_bars(rows, session: date | None = None) -> dict:
-    """Momentum inputs from stored D01 bars (#380 S4, decision 2), the same keys as ``technical_from_quote``.
+    """Momentum inputs from the stored daily bars (#380 S4, decision 2), the same keys as ``technical_from_quote``.
 
-    ``rows`` are ``price_bars_daily`` rows of ONE ticker (nominal, ``core.prices.daily_bars``), up to and including
+    ``rows`` are bar rows of ONE ticker (the prices store's split basis, ``rcdata.read.ticker_bars``), up to and including
     ``session``; a later bar is ignored. price = the last close; ``high_52w`` = the highest **High** of the last
     ``BARS_52W`` sessions; ``dist_52w_pct`` keeps the quote path's sign, ``(high - price) / high`` (>= 0), because
     ``DIST_52W_MAX`` compares it with ``<=``; ``sma50`` = the mean of the last ``BARS_SMA`` closes; ``vol_10d`` /
@@ -542,40 +542,38 @@ def _cached_financials(ticker: str, no_fetch: bool = False, preload: dict | None
     return financials
 
 
-def _d01_session() -> date | None:
-    """The newest D01 session SPY has a bar for: the session an AG card's momentum is read up to (#380 S4).
-
-    Read through ``ledger.d01_last_bars``, the helper the freeze and the history snapshot use (``d01_has_session``
-    is the same read): no price file, no table or no SPY bar reads as no session, and the scan then scores every
+def _price_session() -> date | None:
+    """The newest prices-store session SPY has a bar for: the session an AG card's momentum is read up to (#380 S4,
+    PR 11: ``rcdata.read.last_sessions``). No store or no SPY bar reads as no session, and the scan then scores every
     card with unknown momentum instead of failing.
+
+    shortcut: the freeze anchor still asks D01 (``freeze.py``, ``ledger.d01_has_session``); it moves with the
+    ledger's own switch to the prices store (G4, PR 10), and until then a session SPY has here but not in D01 scores
+    without being frozen.
     """
-    last = ledger.d01_last_bars(["SPY"]).get("SPY")
-    if not last:
-        return None
-    try:
-        return date.fromisoformat(str(last[0])[:10])
-    except ValueError:
-        return None
+    from RevenueChaser.rcdata import read
+    return read.last_sessions(["SPY"]).get("SPY")
 
 
 def _bars_by_ticker(tickers, session: date | None) -> dict[str, list[dict]]:
-    """One windowed nominal D01 read for ``tickers`` up to ``session``: ``{ticker: rows}``.
+    """One windowed prices-store read for ``tickers`` up to ``session``: ``{ticker: rows}``.
 
-    ``prices.daily_bars``'s nominal basis (K8a window: ``session - BARS_WINDOW_DAYS``), so a split is applied and a
-    dividend is not: the momentum inputs are the price levels of the scored session. A store without D01 bars reads
-    as ``{}`` (the 247 research script runs on a snapshot with no price file).
+    ``rcdata.read.ticker_bars``'s split basis (window: ``session - BARS_WINDOW_DAYS``), so a split is applied and a
+    dividend is not, as D01's "nominal" was: the momentum inputs are the price levels of the scored session. No
+    store reads as ``{}``.
     """
+    from RevenueChaser.rcdata import read
     if not tickers or session is None:
         return {}
-    frame = prices.daily_bars(list(tickers), basis="nominal", start=session - timedelta(days=BARS_WINDOW_DAYS),
-                              end=session)
+    frame = read.ticker_bars(list(tickers), start=session - timedelta(days=BARS_WINDOW_DAYS), end=session,
+                             basis="split")
     if frame is None or frame.empty:
         return {}
     return {str(ticker): rows.to_dict("records") for ticker, rows in frame.groupby("ticker", sort=False)}
 
 
 def _newest_bar_sessions(bars: dict) -> dict[str, date]:
-    """Each ticker's newest bar day in a batch's ``bars`` (``daily_bars`` sorts by ticker then date)."""
+    """Each ticker's newest bar day in a batch's ``bars`` (``ticker_bars`` sorts by ticker then date)."""
     out = {}
     for ticker, rows in bars.items():
         for row in reversed(rows or []):
@@ -587,13 +585,13 @@ def _newest_bar_sessions(bars: dict) -> dict[str, date]:
 
 
 def _preload(tickers: list[str], no_fetch: bool, session: date | None = None) -> dict:
-    """The stored EDGAR rows, cached payloads, pinned themes and nominal D01 bars of ``tickers``.
+    """The stored EDGAR rows, cached payloads, pinned themes and split-basis daily bars of ``tickers``.
 
     The boards read the store in a fixed number of queries per batch, and the price bars are no exception: ONE
-    windowed ``price_bars_daily`` read for the batch (``prices.daily_bars``, K8a), up to ``session``, the newest D01
-    session SPY has. ``{"bars": {}, "session": None}`` when the store holds no D01 bars at all.
+    windowed prices-store read for the batch (``rcdata.read.ticker_bars``), up to ``session``, the newest session SPY
+    has. ``{"bars": {}, "session": None}`` when the store holds no SPY bar at all.
     """
-    session = session or _d01_session()
+    session = session or _price_session()
     return {
         "edgar": sec_edgar.stored_annual_many(tickers),
         "payload": cache_manager.load_many(tickers, ignore_ttl=no_fetch, allow_info_only=True),
@@ -632,7 +630,7 @@ class _Drops:
 
 
 def _technical_for(ticker: str, financials: dict, meta: dict, preload: dict | None) -> dict:
-    """The momentum inputs of one name: its D01 bars, the price falling back to financials / the quote (#380 S4).
+    """The momentum inputs of one name: its stored bars, the price falling back to financials / the quote (#380 S4).
 
     In a Fetch the batch's ``preload`` carries the bars (``_preload``); the per-ticker path (a research script)
     reads the ticker's own window. A name with no bars keeps a card with unknown momentum (decision 3): only the
@@ -642,7 +640,7 @@ def _technical_for(ticker: str, financials: dict, meta: dict, preload: dict | No
     if preload is not None and "bars" in preload:
         rows, session = preload["bars"].get(ticker), preload.get("session")
     else:
-        session = _d01_session()
+        session = _price_session()
         rows = _bars_by_ticker([ticker], session).get(ticker)
     technical = technical_from_bars(rows or [], session)
     technical["session"] = session.isoformat() if session is not None else None
@@ -674,13 +672,13 @@ def _is_thin(price, vol_90d) -> bool:
 
 def enrich_and_score(ticker: str, meta: dict, no_fetch: bool = False,
                      spine: dict | None = None, preload: dict | None = None) -> dict | None:
-    """Ticker için yfinance finansal (cache'li) çeker; momentum D01 barlarından (#380 S4).
+    """Ticker için yfinance finansal (cache'li) çeker; momentum fiyat deposunun barlarından (#380 S4, PR 11).
 
     A name that gets no card is recorded in ``preload["drops"]`` (when the batch has one) with the reason.
     A US name whose newest annual record ended more than ``fiscal_year.STALE_DAYS`` before the run day
     (``preload["as_of"]``, else today in UTC) gets no card (card O-2, #380 S1; ``fiscal_year.latest_is_stale``: a fresh
     filer whose last revenue figure is older keeps its card, see ``_card_anchor``).
-    ``no_price`` is decided on every price source (the D01 close, ``financials.current_price``, the quote), never on
+    ``no_price`` is decided on every price source (the stored close, ``financials.current_price``, the quote), never on
     the momentum inputs: a name with a price but no bars is a card with unknown momentum (decision 3), so an expired
     or missing quote costs no request.
     """
@@ -727,7 +725,7 @@ _DROP_STEPS = (
     ("foreign", "Non-US filers (country or exchange, or a 20-F / 40-F filer)", True),
     ("stale_annual", f"Latest annual report ended more than {fiscal_year.STALE_DAYS} days ago", True),
     ("no_annual", "No annual financials (no EDGAR record and no Yahoo statements)", False),
-    ("no_price", "No price in any source (the D01 close, the financials, the stored quote)", False),
+    ("no_price", "No price in any source (the stored close, the financials, the stored quote)", False),
     ("fetch_failed", "Provider error while reading the financials", False),
 )
 
@@ -744,7 +742,7 @@ def _funnel_steps(universe_total: int, excluded_types: int, drops: _Drops, score
     counting them as drops would break the arithmetic above and misstate the board. They overlap each other by
     design, and ``low_liquidity`` is ``None`` where no liquidity basis was read — an unknown note is left out
     rather than shown as 0. ``momentum_unknown`` (AG review N-2) names the cards whose momentum signal is not fully
-    known (no or too few D01 bars): a note too, since they have a card.
+    known (no or too few stored bars): a note too, since they have a card.
     """
     step = funnel_mod.step
     steps = [step("universe", "Universe, all market caps", universe_total, "start")]
@@ -774,7 +772,7 @@ def _funnel_steps(universe_total: int, excluded_types: int, drops: _Drops, score
                           unreadable_sec, "note"))
     if momentum_unknown:
         names = sorted(momentum_unknown)
-        steps.append(step("momentum_unknown", "Scored, but momentum unknown (no or too few D01 price bars)",
+        steps.append(step("momentum_unknown", "Scored, but momentum unknown (no or too few stored price bars)",
                           len(names), "note", tickers=names[:funnel_mod.MAX_TICKERS]))
     steps.append(step("scored", "Scored (a card on the board)", scored, "result"))
     return steps
@@ -926,7 +924,7 @@ def _summary(cards: list[dict], excluded_types: int | None, score_errors: dict[s
         # ``fetch_failed``) are drops and are not counted here.
         "low_liquidity": None if thin is None else sum(1 for c in cards if c["ticker"] in thin_names),
         "unreadable_sec": sum(1 for c in cards if c.get("source") != EDGAR_SOURCE),
-        "momentum_unknown": len(_momentum_unknown(cards)),   # AG review N-2: no or too few D01 bars
+        "momentum_unknown": len(_momentum_unknown(cards)),   # AG review N-2: no or too few stored bars
         "ownership": _ownership_counts(cards),   # #34 D20: stored vs live institutional shares
     }
 
@@ -937,7 +935,7 @@ def stored_result() -> dict:
     The cards are the ``ticker_scores`` rows (``ticker_store``), sorted as a Fetch sorts them, with their index
     labels. Universe, summary and funnel come from the last Fetch's history header (``core/history.last_run``) when
     it is this scan's (its ``asof`` is the table's); otherwise the summary is counted from the cards and there is no
-    funnel. ``data_as_of`` (the D01 session the Fetch's prices came from, #380 S4) is restored from that header too.
+    funnel. ``data_as_of`` (the prices-store session the Fetch's prices came from, #380 S4) is restored from that header too.
     No stored card: the no-data message (no stored universe, or no stored scan). No scorer, no network, no write.
     """
     from RevenueChaser.core import history, ticker_store
@@ -988,7 +986,7 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
 
     The yfinance answers a Fetch gets are stored in ``vendor_financials`` / ``vendor_valuation`` (#297) after each
     batch, stamped ``run_id`` (the job's id; a fresh one without it). A store failure is a job note, not an error.
-    ``data_as_of`` is the newest D01 session among the cards this Fetch scored (#380 S4): the price session their
+    ``data_as_of`` is the newest prices-store session among the cards this Fetch scored (#380 S4): the price session their
     momentum came from, None when no card has a bar.
     """
     from RevenueChaser.module_sec_13f import engine as sec_13f
@@ -1003,7 +1001,7 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     to_score = [r for r in universe if r["ticker"] not in excluded]
     spine = _spine.spine_gics()
     cards = []
-    data_as_of: date | None = None           # the newest D01 session of a card's bars (#380 S4)
+    data_as_of: date | None = None           # the newest stored session of a card's bars (#380 S4)
     score_errors: dict[str, int] = {}  # exception type -> tickers dropped by it (#202)
     error_tickers: dict[str, list[str]] = {}  # the same, by name (the funnel lists them)
     drops = _Drops()
@@ -1011,7 +1009,7 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     vendor = None if no_fetch else vendor_data.Capture(ownership=True)
     vendor_run = run_id or ledger.new_run_id()
     run_day = _run_day()                    # anchor age is judged against the day the scan runs (card O-2)
-    scan_session = _d01_session()           # one D01 cutoff for the whole Fetch, so no batch reads a newer SPY bar
+    scan_session = _price_session()         # one price cutoff for the whole Fetch, so no batch reads a newer SPY bar
     stored_earnings = earnings_dates.stored_next_dates()      # #304: one read per run, not per batch
     # #34 D20: ONE store read for the whole scan, never one per card. The stored institutional share wins over the
     # live ``.info`` one, which the Yahoo client can swallow to ``{}`` (#23/#169); a name with no stored row keeps
@@ -1119,7 +1117,7 @@ RULES = {
     "suspicious_growth": fiscal_year.SUSPICIOUS_GROWTH,
     "tier_min_passes": TIER_MIN_PASSES,
     "not_comparable_sectors": sorted(sector_rules.NOT_COMPARABLE_SECTORS),   # #380 S6 (C17)
-    # #380 S4: the momentum windows, read from D01 (nominal) up to the scan's session. In RULES so a change moves
+    # #380 S4: the momentum windows, read from the prices store (split basis) up to the scan's session. In RULES so a change moves
     # the ledger's hash like every other rule the board scores with.
     "momentum_windows": {"high_52w": BARS_52W, "sma50": BARS_SMA, "vol_3m": BARS_3M, "vol_10d": BARS_10D},
 }
@@ -1131,7 +1129,8 @@ RULES = {
 # 4: #380 S1 honest signals (C18 growth / margin / share basis, stale anchors excluded).
 # 5: #380 S2 tiers (sort by tier, ledger bucket tier + points).
 # 6: #380 S4 momentum from D01 bars of the scored session (no per-name Yahoo technical fallback).
-SELECTION_VERSION = "6"
+# 7: PR 11 (G3) those bars come from the prices store (Alpaca, split basis) instead of D01.
+SELECTION_VERSION = "7"
 # A run where more than this share of the tickers it attempted failed to score is not frozen:
 # the board is missing too much to stand for the day (#202 counts the errors).
 FREEZE_MAX_SCORE_ERROR_RATE = 0.01

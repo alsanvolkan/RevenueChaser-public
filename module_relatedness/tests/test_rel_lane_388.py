@@ -1,5 +1,5 @@
 """#388 REL lane: the Pending split (D4), a Refresh keeps the last run's ``as_of`` (REL-10), and the peer market reads
-only its window of D01 (``price_bars_daily``, since the #379 D01 switch).
+only its window of the stored bars (the prices store since PR 8; D01 from the #379 switch before).
 
 Offline, temp store; nothing calls DeepSeek or SEC (``build_profiles`` runs with ``use_llm=False`` on a Refresh and is
 replaced on a Fetch).

@@ -338,7 +338,10 @@ whole app at a local server:
 **yfinance is the exception.** It hardcodes the Yahoo hosts, manages its own
 session with cookie+crumb auth, and impersonates a browser TLS fingerprint —
 there is no URL to redirect. It must be faked at the Python boundary
-(`yf.Ticker` / `yf.screen`); see [`e2e_testing.md`](e2e_testing.md).
+(`yf.Ticker` / `yf.screen`); see [`e2e_testing.md`](e2e_testing.md). The market store's
+`yahoo` source (MOVE and wheat for Sector Rotation, PR 9) goes through it too, behind the
+`rcdata/build/sources/yahoo._history` seam: Yahoo's chart endpoint answers the builder's own
+User-Agent with HTTP 429, and its `range=max` with monthly bars (measured 29 Oct 2026).
 
 If you add a provider, give it a base-URL constant read from an env var in the
 same shape. A URL inlined at the call site has no seam and cannot be tested.

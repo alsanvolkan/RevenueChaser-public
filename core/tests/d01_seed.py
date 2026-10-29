@@ -7,7 +7,8 @@ its session's close + 30 min, so the tests that stamp one earlier stage what the
 
 Since PR 10 (G4) the screeners, the freeze and the history snapshot read the prices store (``prices.duckdb``,
 ``rcdata.read``), while other boards still read the old D01 until their own group moves them; a seed writes the same
-bars to both (``rcdata/tests/prices_seed``).
+bars to both (``rcdata/tests/prices_seed``); ``prices=False`` writes D01 alone, for a test that shows the old D01
+is not read.
 """
 from __future__ import annotations
 
@@ -17,8 +18,10 @@ from RevenueChaser.core import rawstore
 from RevenueChaser.rcdata.tests import prices_seed
 
 
-def seed_d01(ticker: str, days, fetched_at: float, *, close: float = 1.5, replace: bool = True) -> None:
-    """One flat bar per day in ``days`` (dates or ISO texts) for ``ticker``, stamped ``fetched_at``."""
+def seed_d01(ticker: str, days, fetched_at: float, *, close: float = 1.5, replace: bool = True,
+             prices: bool = True) -> None:
+    """One flat bar per day in ``days`` (dates or ISO texts) for ``ticker``, stamped ``fetched_at``; also in the
+    prices store unless ``prices`` is False."""
     if replace:
         with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
             conn.execute("DELETE FROM price_bars_daily WHERE ticker = ?", [ticker])
@@ -27,4 +30,5 @@ def seed_d01(ticker: str, days, fetched_at: float, *, close: float = 1.5, replac
         "open": 1.0, "high": 2.0, "low": 0.5, "close": close, "adj_close": None, "volume": 100.0,
         "split_ratio": None, "adj_source": None, "source": "uw", "fetched_at": fetched_at, "run_id": "seed",
         "run_at": fetched_at} for d in days])
-    prices_seed.seed_bars(ticker, days, fetched_at, close=close, replace=replace)
+    if prices:
+        prices_seed.seed_bars(ticker, days, fetched_at, close=close, replace=replace)

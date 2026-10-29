@@ -19,11 +19,12 @@ The mappings live here, in the module, not in ``core/``. A Refresh never calls t
 
 Both are session boards: the first complete run of a session keeps its rows; a later, intraday or partial run keeps
 its header only (``core/history.record_run``). Rotation is partial when the RRG pull returned no ETF or dropped some
-(an ETF with no D01 series, a macro series whose FRED/yfinance read failed), D01 did not hold the session yet (the RRG
+(an ETF with no stored series, a macro series ``market_series`` does not hold), the prices store did not hold the
+session yet (the RRG
 is an older session's), the runner kept the stored session snapshot instead, no theme ETF got its holdings' relative
 strength (e.g. SPY's closes were short), or the UW key was rejected, the client's breaker opened
-or some UW calls failed. An ETF with too little D01 history for the RRG (``engine.MIN_WEEKS``) is a warning, not a
-partial run (M-ROT-2): it is short on every run until its history grows. Money Flow is partial when D01 holds no bar
+or some UW calls failed. An ETF with too little stored history for the RRG (``engine.MIN_WEEKS``) is a warning, not a
+partial run (M-ROT-2): it is short on every run until its history grows. Money Flow is partial when the prices store holds no bar
 of an ETF it ranks (M-ROT-3), nothing was ranked, the runner kept the stored leaderboard, or UW calls failed.
 
 ``stored_leaderboard`` reads the newest complete Money Flow session back (K2 readers, ``core.history``): the
@@ -46,7 +47,9 @@ SNAPSHOTS_TABLE = "rotation_snapshots_history"
 # weekly candles dated by the machine's day.
 # 4 (M-ROT-3, #374): the holdings' relative strength and the money-flow closes and volumes come from D01, not UW
 # candles, and a holding with no bars is a recorded "n/a" row instead of a dropped one (ROT-8).
-SELECTION_VERSION = "4"
+# 5 (PR 9, G3): those closes and volumes come from the prices store (``rcdata.read.ticker_bars``, split basis) instead
+# of D01, and the 11 macro series from ``market_series`` (FRED, Cboe, Yahoo) instead of a FRED/yfinance read.
+SELECTION_VERSION = "5"
 _EXPANDABLE = ("theme",)                  # rows whose detail is the ETF's top holdings with RS (ROT-4)
 _HOLDINGS_GROUPS = ("sector", "theme")    # rows with an expandable detail; a sector's is the industry tree
 _NOT_RANKED = ("region", "bond", "yield", "commodity")       # money_flow.compute_money_flow skips these groups
@@ -108,8 +111,8 @@ def record_rotation(snapshots: list, holdings: dict, sector_holdings: dict, *, r
     Fetch is the session's snapshot. ``kept`` says why a live Fetch showed the stored same-day snapshot instead of its
     own thinner pull (ROT-5); that run is partial too. ``without_holdings`` lists the sector and theme rows with no ETF
     holdings: every sector (its detail is the industry tree) and any theme whose RS failed. ``too_short`` names the
-    symbols left off the RRG for too little D01 history: a warning, and not ``missing`` (M-ROT-2). ``stale`` says the
-    RRG is an older session's because D01 did not hold this one yet; that run is partial. Returns rows written."""
+    symbols left off the RRG for too little stored history: a warning, and not ``missing`` (M-ROT-2). ``stale`` says the
+    RRG is an older session's because the prices store did not hold this one yet; that run is partial. Returns rows written."""
     expandable = sorted({s.ticker for s in snapshots if getattr(s, "group_name", "") in _EXPANDABLE})
     detailed = sorted({s.ticker for s in snapshots if getattr(s, "group_name", "") in _HOLDINGS_GROUPS})
     hrows, dup = holdings_rows(holdings)
@@ -147,7 +150,7 @@ def record_rotation(snapshots: list, holdings: dict, sector_holdings: dict, *, r
 
 
 def short_warning(short: list[str]) -> str:
-    """The job and history line for symbols with too little D01 history for the RRG."""
+    """The job and history line for symbols with too little stored history for the RRG."""
     return (f"{len(short)} rotation symbol(s) have under {engine.MIN_WEEKS} weeks of stored daily bars and are left "
             f"off the map until their history grows: {', '.join(short)}")
 
