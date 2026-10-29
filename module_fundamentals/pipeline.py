@@ -26,7 +26,7 @@ from RevenueChaser.core.reporting_common import write_artifact
 from RevenueChaser.core import funnel
 # load_ohlc: the SPY fallback only (U1); a scored name reads D01 (``screen_common.load_bars``).
 from RevenueChaser.module_swing_potential.indicators import compute_indicators, load_ohlc, load_ticker_info
-from RevenueChaser.core import fiscal_year
+from RevenueChaser.core import fiscal_year, trailing_year
 from RevenueChaser.core import screen_common
 from RevenueChaser.core import universe as _universe
 from RevenueChaser.core.taxonomy import assign_themes
@@ -356,51 +356,12 @@ def _quality_of(a: dict) -> dict:
 
 
 def _quality_ttm(annual: list[dict], quarterly: list[dict], i: int) -> dict | None:
-    """A trailing-year record for Quality, or None: the anchor year ``annual[i]`` plus the newest year to date after
-    it minus the same year to date a year earlier (``_ttm_point``'s rule, per flow), and the balance sheet of the
-    quarter that year to date ends on. Every flow the year has must come through, on one quarter and one length."""
-    a = annual[i]
-    starts, ends = a.get("period_starts") or {}, a.get("period_ends") or {}
-    flows = [f for f in _QUALITY_FLOWS if _to_float(a.get(f)) is not None and starts.get(f) and ends.get(f)]
-    if "revenue" not in flows:
-        return None
-    e0, s0 = ends["revenue"], starts["revenue"]
-    cur = None
-    for q in sorted(quarterly, key=lambda r: str(r.get("period")), reverse=True):
-        end = str(q.get("period"))[:10]
-        if end <= str(e0)[:10]:
-            break
-        y = _ytd(q, "revenue")
-        gap = _days(e0, y[0]) if y else None
-        if gap is not None and _NEXT_START_DAYS[0] <= gap <= _NEXT_START_DAYS[1] and y[1] in (3, 6, 9):
-            cur = q
-            break
-    if cur is None:
-        return None
-    cur_start, months = _ytd(cur, "revenue")[:2]
-    cur_end = str(cur.get("period"))[:10]
-    ordered = sorted(quarterly, key=lambda r: str(r.get("period")))
-    rec: dict = {}
-    for f in flows:
-        y = _ytd(cur, f)
-        prior = (_ytd_point(ordered, (f,), s0, months, cur_end)
-                 if y and y[0] == cur_start and y[1] == months and starts[f] == s0 else None)
-        if prior is not None:
-            rec[f] = _to_float(a[f]) + y[2] - prior[1][f]
-    # Gross profit, or revenue minus cost of revenue when only that came through (a filer that tags no gross
-    # profit: the year's is the extraction's ``gross_profit_derived``); every other flow must come through.
-    if "gross_profit" not in rec and "cost_of_revenue" in rec:
-        rec["gross_profit"] = rec["revenue"] - rec["cost_of_revenue"]
-    if any(f not in rec for f in flows if f != "cost_of_revenue"):
-        return None
-    for f in _QUALITY_BALANCE:
-        if _to_float(a.get(f)) is not None:
-            v = _to_float(cur.get(f))
-            if v is None:
-                return None
-            rec[f] = v
-    rec["net_income"] = _to_float(a.get("net_income"))
-    return {**rec, "period": cur_end}
+    """A trailing-year record for Quality on the anchor year ``annual[i]`` (``core.trailing_year``: the Rule of 40's
+    TTM rule per flow, the balance sheet of the quarter it ends on), or None."""
+    rec = trailing_year.trailing_year(annual, quarterly, i, _QUALITY_FLOWS, _QUALITY_BALANCE)
+    if rec is not None:
+        rec["net_income"] = _to_float(annual[i].get("net_income"))
+    return rec
 
 
 def _quality_metrics(annual: list[dict], quarterly: list[dict] | None = None) -> dict:
