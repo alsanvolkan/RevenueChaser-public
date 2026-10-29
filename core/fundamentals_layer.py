@@ -171,9 +171,9 @@ def _annual_records(rows: list[dict]) -> list[dict]:
 
 
 def _quarterly_records(rows: list[dict], annual_rows: list[dict]) -> tuple[list[dict], list[str]]:
-    from .providers import sec_edgar
     """``(records, preliminary period ends)`` of one company's quarterly rows, oldest first. A preliminary value
     (UW's, ahead of the 10-Q) fills a field only where the SEC has none for that quarter."""
+    from .providers import sec_edgar
     by_end: dict[str, dict[str, dict]] = {}
     for r in sorted(rows, key=lambda r: bool(r.get("preliminary"))):      # the SEC's rows first
         by_end.setdefault(_iso(r["period_end"]), {}).setdefault(r["field"], r)
