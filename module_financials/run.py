@@ -81,6 +81,11 @@ _SEC_FIELDS = ("revenue", "cost_of_revenue", "gross_profit", "ebit", "net_income
                "short_term_investments", "receivables", "inventory", "payables", "total_debt")
 # shortcut: the newest five fiscal years (Yahoo gave four); read more when a model projects from a longer history.
 SEC_YEARS = 5
+# What a run on the SEC's statements always takes a default for, because the facts never carry it (no pre-tax
+# income, tax provision or interest expense): the Source line names it (Opus review M1; avo, 29 Oct 2026: stay on the
+# SEC's statements and say so, rather than letting these send every run to Yahoo's).
+# shortcut: named, not filled; upgrade when the layer serves the tax and interest concepts (#271).
+NOT_IN_FACTS = ("tax rate", "interest expense")
 
 
 def _financials_record(rec: dict) -> dict:
@@ -248,6 +253,7 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
         annual, meta = sec
         used, lacking = _statements_choice(annual, financials.get("annual") or [], bank=sector == PE_ONLY_SECTOR)
         if used == "sec":
+            lacking = lacking + list(NOT_IN_FACTS)
             filed = meta.get("newest_filed")
             financials = {**financials, "annual": annual,
                           "statements_meta": {**meta, "used": "sec", "sec_lacks": lacking},

@@ -205,3 +205,31 @@ def test_a_run_tells_the_choice_when_the_target_is_a_bank(built, monkeypatch, tm
                                 "source": "yfinance", "annual": [_year(2024)]})
     fm.run(TICKER, modules=["dcf"], output="none", no_fetch=True)
     assert seen == [True]
+
+
+def test_on_the_secs_statements_the_source_line_names_the_tax_rate_and_interest_default(built, monkeypatch,
+                                                                                        tmp_path):  # noqa: F811
+    # Opus review M1 (avo, 29 Oct 2026: stay on the SEC's statements and say so): the SEC facts carry no pre-tax
+    # income, tax provision or interest expense, so with the SEC's statements the DCF runs on the default tax rate
+    # even when Yahoo's year measured one, and the Source line names both inputs as defaults.
+    import RevenueChaser.module_financials.run as fm
+    from RevenueChaser.core.providers import cache as cache_manager
+    _clock(monkeypatch)
+    monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
+    cache_manager.save(TICKER, {"ticker": TICKER, "info": {"longName": "Growth Co."}, "shares_outstanding": 50.0,
+                                "market_cap": 5000.0, "beta": 1.1, "current_price": 100.0, "currency": "USD",
+                                "source": "yfinance",
+                                "annual": [_year(2024, pretax_income=20.0, tax_provision=3.0, interest_expense=2.0)]})
+    out = fm.run(TICKER, modules=["dcf"], output="none", no_fetch=True)["results"]
+    fin = out["financials"]
+    assert fin["statements_meta"]["used"] == "sec"
+    defaults = fin["source"].split("defaults: ")[1]
+    assert "tax rate" in defaults and "interest expense" in defaults
+    assert {"tax rate", "interest expense"} <= set(fin["statements_meta"]["sec_lacks"])
+    assert out["modules"]["dcf"]["assumptions"]["tax_rate_source"] == "default"
+
+
+def test_on_yahoos_statements_the_tax_rate_is_not_named():
+    import RevenueChaser.module_financials.run as fm
+    used, lacking = fm._statements_choice([_year(2025, drop=("depreciation",))], [_year(2025)])
+    assert used == "yahoo" and "tax rate" not in lacking
