@@ -119,7 +119,7 @@ def test_the_dataset_checks_are_listed_inside_its_card():
     assert labels["Rows removed"]["ok"] is False and labels["Rows removed"]["detail"] == "1"
     assert labels["Open build issues"]["ok"] is False and labels["Open build issues"]["detail"] == "1"
     assert [i["kind"] for i in card["issues"]] == ["fetch_failed"]
-    assert card["wrds"] == {"text": "no WRDS run yet"}
+    assert card["wrds"] == {"text": "no WRDS run yet", "produced": False}      # S8: the slot says it has not run
 
 
 # ── backfill progress ─────────────────────────────────────────────────────────────────────────────────────────

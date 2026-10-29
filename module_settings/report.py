@@ -17,6 +17,7 @@ from datetime import datetime
 from urllib.parse import urlsplit
 
 from RevenueChaser.core import automations, datasets
+from RevenueChaser.rcdata.api import screen as api_screen
 from RevenueChaser.core.html_safe import esc, script_json
 from RevenueChaser.core.reporting_common import (
     FILTERS_CSS,
@@ -2179,6 +2180,14 @@ def _ibkr_login_card(value) -> str:
 
 ND_STATUS_WORDS = {"fresh": "fresh", "unchanged": "unchanged", "late": "late", "stale": "stale",
                    "never": "never built"}
+#: A status is a word and a shape, never a colour alone (M6, A23): the palette stays as it was and each status
+#: gains an icon, marked decorative so a screen reader hears the word and not the shape.
+ND_STATUS_ICONS = {"fresh": "●", "unchanged": "○", "late": "▲", "stale": "■", "never": "–"}
+#: The worker is counted silent past this many minutes, and the "verified running" line turns red (M7).
+ND_WORKER_SILENT_MINUTES = 70
+#: The page never refreshes itself (A26). Past this many minutes since it was read, a ribbon says to refresh (M8).
+ND_PAGE_STALE_MINUTES = 15
+ND_NO_CANCEL = "A queued request cannot be cancelled: the builder runs it or skips it."
 ND_BACKFILL_CONFIRM_OVER = 1000
 ND_NEXT_PASS = "the builder takes it at its next pass (hourly at :07)"
 
@@ -2210,7 +2219,11 @@ ND_CSS = ND_THEME_CSS + """
 #newdata .nd-row:last-child{border-bottom:none}
 #newdata .nd-k{color:var(--muted)}
 #newdata .nd-v{min-width:0;text-align:right;margin-left:auto}
-#newdata .nd-bar{width:100%;height:8px;border-radius:4px;background:var(--hover);overflow:hidden}
+/* S9: the empty part of the bar is visible (it has an edge) and the cap is a line at the right end, so a bar
+   that is nearly full and one that is full do not look the same. */
+#newdata .nd-bar{width:100%;height:8px;border-radius:4px;background:var(--hover);overflow:hidden;
+  border:1px solid var(--border);position:relative}
+#newdata .nd-bar::after{content:"";position:absolute;top:0;right:0;width:2px;height:100%;background:var(--fg)}
 #newdata .nd-bar>span{display:block;height:100%;background:var(--sky);max-width:100%}
 #newdata details>summary{min-height:44px;display:flex;align-items:center;cursor:pointer;color:var(--bright)}
 #newdata .nd-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -2218,7 +2231,21 @@ ND_CSS = ND_THEME_CSS + """
   border:1px solid var(--input-border);background:var(--input-bg);color:var(--bright);max-width:100%}
 #newdata .nd-btn{cursor:pointer;font-weight:600}
 #newdata .nd-btn.nd-primary{background:var(--primary-bg);color:var(--primary-fg);border-color:var(--primary-bg)}
-#newdata .nd-btn:disabled{opacity:.6;cursor:default}
+/* M5: a faded control is a colour token, never opacity — opacity cannot be checked for contrast, and the
+   3:1 the review asks for is a property of two colours. */
+#newdata .nd-btn:disabled{cursor:default;background:var(--hover);color:var(--muted);border-color:var(--border)}
+/* M4 (A24-B): every target is 44 px, with one exemption written down — inside a dense table, where 44 px a row
+   would push the numbers off a phone, a control may be 32 px. Nothing uses it yet. */
+#newdata .nd-dense .nd-btn,#newdata .nd-dense .nd-date,#newdata .nd-dense summary{min-height:32px;min-width:32px;
+  padding:0 8px}
+#newdata .nd-why{color:var(--amber);font-size:12.5px}
+#newdata .nd-cost{color:var(--muted);font-size:12.5px}
+/* S10: why a control is off is the sentence a reader needs most, so it is page text, not muted text. */
+#newdata .nd-off-why{color:var(--fg);font-size:12.5px}
+#newdata .nd-filter{text-decoration:none;min-height:44px;display:inline-flex;align-items:center;padding:0 12px}
+#newdata .nd-filter[aria-current="true"]{background:var(--hover);color:var(--bright)}
+#newdata .nd-filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+#newdata .nd-ribbon{border:1px solid currentColor;border-radius:8px;padding:6px 10px;font-size:12.5px}
 #newdata .nd-msg{color:var(--muted);font-size:12.5px;min-height:1em}
 #newdata .nd-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
 #newdata .nd-list li{border-bottom:1px solid var(--border);padding:4px 0}
@@ -2263,13 +2290,42 @@ def _nd_status_cls(status) -> str:
     return f"nd-st-{status}" if status in ND_STATUS_WORDS else "nd-st-never"
 
 
-def _nd_dataset_card(c: dict) -> str:
+def _nd_status_chip(status) -> str:
+    """The status as a word and a shape (M6). The shape is ``aria-hidden``: a reader hears the word."""
+    icon = ND_STATUS_ICONS.get(status, ND_STATUS_ICONS["never"])
+    return (f'<span class="nd-chip {_nd_status_cls(status)}"><span aria-hidden="true">{esc(icon)}</span> '
+            f'{esc(ND_STATUS_WORDS.get(status, status))}</span>')
+
+
+def _nd_report_cell(slot: dict | None) -> str:
+    """A report's cell (S8): its own words when it has run, a dash and "not produced yet" when it has not."""
+    slot = slot or {}
+    if slot.get("produced"):
+        return _nd(slot.get("text"))
+    return f'{DASH} · not produced yet'
+
+
+def _nd_cost_line(cost: dict | None) -> str:
+    """What a run costs, beside the buttons (M3, A22): the calls it sends and what the provider has left today."""
+    cost = cost or {}
+    per = cost.get("calls_per_partition")
+    calls = f"about {_nd(per)} calls a run" if per else "call count not estimated"
+    provider = cost.get("provider")
+    if not provider:
+        left = "no provider of its own"
+    elif cost.get("cap") is None:
+        left = f"{esc(str(provider))}: no cap"
+    else:
+        left = f'{esc(str(provider))}: {_nd(cost.get("remaining"))} of {_nd(cost.get("cap"))} left today'
+    return f'<div class="nd-cost">Cost: {calls} · {left}. {esc(ND_NO_CANCEL)}</div>'
+
+
+def _nd_dataset_card(c: dict, *, open_: bool = False) -> str:
     ds = c.get("dataset")
     status = c.get("status")
     cov = c.get("coverage")
     rows = [
-        _nd_row("Status", f'<span class="{_nd_status_cls(status)}">{esc(ND_STATUS_WORDS.get(status, status))}</span>'
-                          f' · {_nd(c.get("status_reason"))}'),
+        _nd_row("Status", f'{_nd_status_chip(status)} · {_nd(c.get("status_reason"))}'),
         _nd_row("Checked on", _nd(c.get("checked_on"))),
         _nd_row("Source as of", _nd(c.get("source_as_of"))),
         _nd_row("Next check due", _nd(c.get("next_check_due"))),
@@ -2281,6 +2337,8 @@ def _nd_dataset_card(c: dict) -> str:
                    else "")),
         _nd_row("Cadence", _nd(c.get("cadence"))),
     ]
+    if c.get("measured_at"):
+        rows.append(_nd_row("Measured", f'{esc(str(c["measured_at"]))} (UTC)'))
     if c.get("last_note"):
         rows.append(_nd_row("Last note", _nd(c.get("last_note"))))
     checks = "".join(_nd_row(str(k.get("label") or ""), _nd_flag(k.get("ok")) + " " + _nd(k.get("detail")))
@@ -2298,7 +2356,8 @@ def _nd_dataset_card(c: dict) -> str:
                    + _nd_row("Last partition", _nd(bf.get("last_partition")))
                    + _nd_row("Resumable", _nd(bf.get("resumable"))) + "</div>" + _nd_bar(done, expected))
     else:
-        bf_html = '<div class="nd-k">No backfill view for this dataset.</div>'
+        bf_html = ('<div class="nd-off-why">No backfill view for this dataset, so there is nothing to backfill: '
+                   'the builder fetches it whole on its next pass.</div>')
     sched = c.get("schedule") or {}
     paused = bool(sched.get("paused"))
     sched_text = (f"paused by {_nd(sched.get('paused_by'))} at {_nd(sched.get('paused_at'))}" if paused
@@ -2318,19 +2377,24 @@ def _nd_dataset_card(c: dict) -> str:
             f'<button type="button" class="nd-btn nd-primary" data-nd-act="fetch" data-dataset="{dsa}">Fetch</button>'
             f'<input type="date" class="nd-date" aria-label="Backfill from" data-dataset="{dsa}"'
             + (f' min="{esc(earliest)}"' if earliest else "") + ">"
-            f'<button type="button" class="nd-btn" data-nd-act="backfill" data-dataset="{dsa}">Backfill</button>'
+            f'<button type="button" class="nd-btn" data-nd-act="backfill" data-dataset="{dsa}"'
+            + ("" if bf else " disabled") + ">Backfill</button>"
             f"{pause}</div>"
         )
+    actions += _nd_cost_line(c.get("cost"))
     actions += '<div class="nd-msg" aria-live="polite" data-nd-msg></div>'
-    return (f'<div class="nd-card nd-dataset" data-dataset="{dsa}" data-status="{esc(status)}">'
-            f'<h3>{_nd(c.get("label"))} <span class="nd-chip {_nd_status_cls(status)}">'
-            f'{esc(ND_STATUS_WORDS.get(status, status))}</span></h3>'
+    why = (f'<div class="nd-why">Why it is not fresh: {_nd(c.get("status_reason"))}</div>'
+           if status != "fresh" and c.get("status_reason") else "")
+    return (f'<details class="nd-card nd-dataset" data-dataset="{dsa}" data-status="{esc(status)}"'
+            + (" open" if open_ else "") + ">"
+            f'<summary><h3>{_nd(c.get("label"))} {_nd_status_chip(status)}</h3></summary>'
             f'<div class="nd-sub tbl">{_nd(ds)}</div>'
+            f"{why}"
             f'<div class="nd-rows">{"".join(rows)}</div>'
             f"{checks_html}{bf_html}"
-            + _nd_row("WRDS difference", _nd((c.get("wrds") or {}).get("text")))
+            + _nd_row("WRDS difference", _nd_report_cell(c.get("wrds")))
             + _nd_row("Schedule", f'<span data-nd-sched>{sched_text}</span>')
-            + actions + "</div>")
+            + actions + "</details>")
 
 
 ND_INDEX_LABELS = {"sp500": "S&P 500", "sp400": "S&P MidCap 400", "sp600": "S&P SmallCap 600", "ndx": "Nasdaq-100"}
@@ -2482,6 +2546,29 @@ def _nd_watch_card(kind: str, wl: dict, ob: dict) -> str:
             '<div class="nd-msg" aria-live="polite" data-nd-msg></div></div>')
 
 
+def _nd_filters(cards: list) -> str:
+    """One link per status, carrying the filter in the address bar (S14), so "4 late" can be linked to.
+
+    A link rather than a button: it works with JavaScript off (the whole section renders either way) and it is
+    what makes the filtered view shareable at all.
+    """
+    counts: dict[str, int] = {}
+    for c in cards:
+        counts[str(c.get("status"))] = counts.get(str(c.get("status")), 0) + 1
+    chips = [f'<a class="nd-chip nd-filter" href="?nd_status=#newdata" data-nd-status="">All '
+             f"({len(cards)})</a>"]
+    for status in api_screen.STATUS_ORDER:
+        chips.append(f'<a class="nd-chip nd-filter {_nd_status_cls(status)}" href="?nd_status={status}#newdata" '
+                     f'data-nd-status="{status}">{_nd_status_chip(status)} ({counts.get(status, 0)})</a>')
+    return f'<div class="nd-filters" id="nd-filters">{"".join(chips)}</div>'
+
+
+def _nd_read_at() -> str:
+    """The minute this page was rendered, in UTC and machine-readable, for the stale ribbon's own clock (M8)."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
 def _newdata_section(nd: dict | None) -> str:
     if not nd:
         return ""
@@ -2494,7 +2581,20 @@ def _newdata_section(nd: dict | None) -> str:
     verified = (f'builder last run {_nd(run.get("started_at"))} ({_nd(run.get("status"))})' if run
                 else "builder last run: none recorded") + (f" · {swaps}" if swaps else "") \
         + f' · ops schema {_nd(v.get("ops_schema"))}'
-    cards = "".join(_nd_dataset_card(c) for c in nd.get("datasets") or [])
+    # M7: a worker that has not started a run for over an hour is the page's own alarm, not a number to read off
+    # the line, so the line turns red and says the limit it passed.
+    silent = v.get("silent_minutes")
+    quiet = isinstance(silent, (int, float)) and silent > ND_WORKER_SILENT_MINUTES
+    if quiet:
+        verified += (f' · the builder has started nothing for {_nd(int(silent))} minutes, past the '
+                     f'{ND_WORKER_SILENT_MINUTES}-minute limit')
+    # M1: the datasets arrive sorted worst first (``newdata.collect``), so the first row is the group's worst and
+    # the only one born open; every other row opens from its own title.
+    verified_html = (f'<div class="nd-sub nd-ribbon nd-bad" id="nd-verified">Verified running: {verified}</div>'
+                     if quiet else
+                     f'<div class="nd-sub" id="nd-verified">Verified running: {verified}</div>')
+    cards = "".join(_nd_dataset_card(c, open_=(i == 0))
+                    for i, c in enumerate(nd.get("datasets") or []))
     ret = nd.get("retention") or {}
     wl = nd.get("watchlists") or {}
     ob = nd.get("options_build") or {}
@@ -2503,11 +2603,18 @@ def _newdata_section(nd: dict | None) -> str:
     return (
         '<section id="newdata" aria-labelledby="newdata-h">'
         '<h2 id="newdata-h">New data system</h2>'
-        f'<div class="nd-sub" id="nd-verified">Verified running: {verified}</div>'
+        f'{verified_html}'
         f'<div class="nd-sub" id="nd-watch-summary">Watch lists: {counts}</div>'
         '<div class="nd-sub">Read when this page was rendered. Fetch, Backfill and Pause / Resume only put a request '
         'in the queue; the builder runs it. Remove takes a name off a watch list. Nothing on this page writes market '
-        'data.</div>'
+        f'data. {esc(ND_NO_CANCEL)}</div>'
+        # M8 (A26): the page carries the minute it was read and never refreshes itself. Past
+        # ``ND_PAGE_STALE_MINUTES`` the ribbon below appears and says to refresh; the reader decides when.
+        f'<div class="nd-sub" id="nd-read-at" data-nd-read-at="{esc(_nd_read_at())}">'
+        f'Read {esc(_nd_read_at()[11:16])} (UTC). This page does not refresh itself.</div>'
+        f'<div class="nd-sub nd-ribbon nd-warn" id="nd-page-stale" hidden>This page was read over '
+        f'{ND_PAGE_STALE_MINUTES} minutes ago. Refresh it to see the store as it is now.</div>'
+        f'{_nd_filters(nd.get("datasets") or [])}'
         f'{_nd_identity(nd.get("identity"))}'
         f"{cards}"
         f'<div class="nd-card" id="nd-queue"><h3>Queue</h3>{_nd_queue_rows(nd.get("queue") or {})}</div>'
@@ -2534,6 +2641,38 @@ def _nd_client(nd: dict | None) -> dict:
 
 
 ND_JS = r"""
+// M8 (A26): the page's own freshness, checked on a timer against the minute the page was rendered. It fetches
+// nothing and reloads nothing: it shows a ribbon and leaves the refresh to the reader.
+function ndPageStale(){
+  var el = document.getElementById('nd-read-at'), ribbon = document.getElementById('nd-page-stale');
+  if(!el || !ribbon) return;
+  var read = Date.parse(el.getAttribute('data-nd-read-at'));
+  if(!read) return;
+  ribbon.hidden = (Date.now() - read) < ND_PAGE_STALE_MS;
+}
+// S14: the filter lives in the address bar, so a reader can send "the four late ones" as a link. It is read on
+// load and written back with replaceState on a click; nothing is fetched and nothing reloads.
+function ndStatusWanted(){
+  var m = /[?&]nd_status=([a-z]*)/.exec(location.search || '');
+  return m ? m[1] : '';
+}
+function ndFilter(){
+  var want = ndStatusWanted();
+  Array.prototype.forEach.call(document.querySelectorAll('#newdata .nd-dataset'), function(row){
+    row.hidden = !!want && row.getAttribute('data-status') !== want;
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('#newdata .nd-filter'), function(a){
+    a.setAttribute('aria-current', a.getAttribute('data-nd-status') === want ? 'true' : 'false');
+  });
+}
+document.addEventListener('click', function(ev){
+  var a = ev.target && ev.target.closest ? ev.target.closest('#newdata .nd-filter') : null;
+  if(!a) return;
+  ev.preventDefault();
+  var want = a.getAttribute('data-nd-status');
+  history.replaceState(null, '', a.getAttribute('href'));
+  ndFilter();
+});
 function ndPath(ds){ return String(ds).split('/').map(encodeURIComponent).join('/'); }
 function ndCard(btn){ var el = btn; while(el && !(el.classList && el.classList.contains('nd-dataset'))) el = el.parentNode; return el; }
 function ndSay(card, html){ var m = card && card.querySelector('[data-nd-msg]'); if(m) m.innerHTML = html; }
@@ -2639,6 +2778,12 @@ document.addEventListener('click', function(ev){
   else if(act === 'pause' || act === 'resume') ndSchedule(btn, act);
   else if(act === 'watch-remove') ndWatchRemove(btn);
 });
+ndPageStale();
+// Checked when the page is read and again whenever the reader comes back to the tab, which is exactly when a page
+// read fifteen minutes ago matters. No repeating timer: the board-JS harness runs a page's inline scripts under
+// node, where a setInterval keeps the process alive and the test hangs rather than failing.
+document.addEventListener('visibilitychange', ndPageStale);
+ndFilter();
 """
 
 
@@ -2751,6 +2896,7 @@ def render_settings_dashboard(payload: dict) -> str:
 var DATA = {data_json};
 var AUTOMATIONS = {script_json(automations)};
 var ND = {script_json(_nd_client(nd))};
+var ND_PAGE_STALE_MS = {ND_PAGE_STALE_MINUTES * 60 * 1000};
 {JS}
 {FLOW_JS}
 {DRILL_JS}

@@ -1,11 +1,13 @@
 """Fetch and persist raw endpoint snapshots plus a SHA-256 audit manifest."""
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import logging
 import os
 import shutil
+import threading
 import uuid
 from datetime import date, datetime, timezone
 
@@ -251,6 +253,35 @@ def fetch_snapshot(
         # Promotion renames the staging dir away; anything left is a failed run.
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
+
+
+#: Promotion is one critical section. Two threads of one process can stage the same day (a board Fetch's backfill
+#: and the history pull, #194), and removing the destination and renaming onto it are two steps: between them the
+#: other thread can promote, and ``rename`` onto a directory that is not empty raises ``ENOTEMPTY``. That is the
+#: failure CI run 40950317460 hit on a diff that does not touch this module.
+_PROMOTE_LOCK = threading.Lock()
+_RACE_ERRNOS = (errno.ENOTEMPTY, errno.EEXIST)
+
+
+def _promote(staged, final) -> None:
+    """Rename a finished staging folder onto the cached day, removing whatever is there first.
+
+    The lock serialises the two threads of this process. The one retry covers a second *process* doing the same
+    thing, which no lock of ours reaches: the destination reappeared between the removal and the rename, so remove
+    it again and rename once more. Any other error is the caller's to see.
+    """
+    with _PROMOTE_LOCK:
+        for attempt in (1, 2):
+            if final.exists():
+                shutil.rmtree(final, ignore_errors=True)
+            try:
+                staged.replace(final)
+                return
+            except OSError as exc:
+                if attempt == 2 or exc.errno not in _RACE_ERRNOS:
+                    raise
+                logger.warning("spx snapshot: raw/%s reappeared while promoting; removing it and renaming again",
+                               final.name)
 
 
 def _fetch_snapshot_staged(
@@ -572,7 +603,5 @@ def _fetch_snapshot_staged(
         # A Fetch completed this day while the pull was staging it: a complete day is never replaced.
         logger.warning("spx history pull: raw/%s completed meanwhile; kept it and discarded the pull", asof_date)
         return None
-    if final.exists():
-        shutil.rmtree(final)
-    raw_dir.replace(final)
+    _promote(raw_dir, final)
     return raw

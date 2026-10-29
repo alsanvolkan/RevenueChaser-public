@@ -113,9 +113,11 @@ def test_a_paused_dataset_is_skipped_by_one_builder_pass_and_the_page_shows_it(d
     assert r.returncode == 0, r.stderr[-2000:]
     assert [x["status"] for x in _requests(market)] == ["skipped"]
     html = dashboard.view(_APP, refresh=True).text
+    # A dataset row is a <details> since the review's M1, and it holds <details> of its own, so the row ends where
+    # the next row begins.
+    row = '<details class="nd-card nd-dataset"'
     card = html[html.index('data-dataset="market_series" data-status='):]
-    card = card[:card.index('<div class="nd-card nd-dataset"', 1) if '<div class="nd-card nd-dataset"' in card[1:]
-                else len(card)]
+    card = card[:card.index(row, 1) if row in card[1:] else len(card)]
     assert "skipped: paused by e2e" in card and ">Resume</button>" in card
 
 

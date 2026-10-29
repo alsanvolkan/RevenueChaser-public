@@ -113,7 +113,8 @@ SPINE_ISSUES = "spine/security"
 # The WRDS difference slot (decision 3): these check datasets' cards show their newest monthly difference report,
 # the note of their newest run that read WRDS (PR 12, decided 27 Oct); every other card says no WRDS run yet.
 WRDS_DIFFERENCE = ("wrds/fundq", "wrds/funda", "wrds/firm_ratio", "wrds/segments")
-NO_WRDS = {"text": "no WRDS run yet"}
+# S8: a report that has not run shows a dash and says so, rather than a sentence that reads like a result.
+NO_WRDS = {"text": "no WRDS run yet", "produced": False}
 # Old .store tables a new dataset replaces: their reads in read_log are the retirement count (read for 14 days).
 BACKUP_WARN_DAYS = 35
 PORTABLE_DATASET = "backup/portable"
@@ -221,7 +222,8 @@ def _wrds_difference(dataset: str) -> dict:
         return dict(NO_WRDS)                     # a copy: a caller that edits its card must not edit the constant
     report = next((c for c in ops.recent_checks(dataset, limit=24)
                    if c["result"] in ("changed", "unchanged") and c.get("note")), None)
-    return {"text": report["note"], "as_of": report.get("source_as_of")} if report else dict(NO_WRDS)
+    return ({"text": report["note"], "as_of": report.get("source_as_of"), "produced": True} if report
+            else dict(NO_WRDS))
 
 
 def _held(dataset: str, ds) -> str | None:
@@ -346,7 +348,7 @@ def _wrds_slot(dataset: str, facts: dict) -> dict:
     report = (facts.get("wrds_price_diff") or {}).get("report") if dataset == "wrds/prices" else None
     as_of = max((r["as_of"] for r in report or [] if r.get("as_of")), default=None)
     if not report or as_of is None:
-        return {"text": "no WRDS run yet"}
+        return dict(NO_WRDS)                     # a copy, as above: a card's slot is the card's own
     parts = []
     for r in sorted(report, key=lambda r: list(WRDS_REPORT_LABELS).index(r["comparison"])
                     if r["comparison"] in WRDS_REPORT_LABELS else 99):
@@ -359,7 +361,7 @@ def _wrds_slot(dataset: str, facts: dict) -> dict:
             continue
         parts.append(f"{label}: {r['sessions']:,} sessions, {differs or 0:,} over 1 bp"
                      + (f" (max {worst:.3%})" if differs and worst is not None else ""))
-    return {"text": f"as of {as_of}: " + "; ".join(parts), "rows": report}
+    return {"text": f"as of {as_of}: " + "; ".join(parts), "rows": report, "produced": True}
 
 
 # ── The serving file: one read-only handle per call ───────────────────────────────────────────────────────────
@@ -557,7 +559,45 @@ def _retirement(now: datetime) -> list[dict]:
 
 # ── The section ───────────────────────────────────────────────────────────────────────────────────────────────
 
-def _card(dataset: str, ds, facts: dict, now: datetime) -> dict:
+def _cost(dataset: str, backfill_view: dict | None, used_today: dict[str, int] | None = None) -> dict:
+    """What one run of this dataset costs, for the line beside its buttons (M3, A22).
+
+    The call estimate is the backfill view's own ``calls_per_partition`` where it has one, and the provider is the
+    first part of the dataset's name (``uw/option_list`` is UW's; ``market_series`` has no provider of its own,
+    because several answer it). ``remaining`` is the day cap less what the provider has already sent today, and is
+    None for a provider with no cap.
+
+    The day's calls are handed in, from the spend section this collect has already read, rather than read again
+    here: ``caps.at_cap`` would open ops.sqlite, and a page render must never create or migrate it
+    (``test_the_collect_never_creates_ops_sqlite_or_a_serving_file``).
+    """
+    provider = dataset.split("/")[0] if "/" in dataset else None
+    cap = caps.cap_for(provider) if provider else None
+    used = (used_today or {}).get(provider, 0) if provider else 0
+    return {"provider": provider, "calls_per_partition": (backfill_view or {}).get("calls_per_partition"),
+            "remaining": None if cap is None else max(0, cap - used), "cap": cap}
+
+
+def _measured_at(now: datetime) -> str:
+    """The clock the store was read at, for each card's "Measured" row (S6)."""
+    return now.strftime("%H:%M")
+
+
+def _silent_minutes(last_run: dict | None, now: datetime) -> int | None:
+    """How many whole minutes since the builder last *started* a run, or None when that cannot be read (M7)."""
+    started = (last_run or {}).get("started_at")
+    if not started:
+        return None
+    try:
+        when = datetime.fromisoformat(str(started))
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return max(0, int((now - when).total_seconds() // 60))
+
+
+def _card(dataset: str, ds, facts: dict, now: datetime, used_today: dict[str, int] | None = None) -> dict:
     newest = ops.recent_checks(dataset, limit=1)
     last = newest[0] if newest else None
     schedule = ops.read_schedule(dataset)
@@ -583,6 +623,8 @@ def _card(dataset: str, ds, facts: dict, now: datetime) -> dict:
                    for i in issues],
         "issues_open": n_issues,
         "backfill": backfill(now) if backfill else None,
+        "cost": _cost(dataset, backfill(now) if backfill else None, used_today),
+        "measured_at": _measured_at(now),
         "wrds": _wrds_difference(dataset) if dataset in WRDS_DIFFERENCE else _wrds_slot(dataset, facts),
         "attended": bool(getattr(ds, "attended", False)),
         "attended_command": (ATTENDED_COMMANDS.get(dataset) or attended_command(ds.kind))
@@ -612,18 +654,22 @@ def collect(now: datetime | None = None) -> dict:
     """Everything the section shows, read now. ``now`` is the clock (aware; default ``calendar``'s seam)."""
     now = _now(now)
     facts, swaps, spine_counts = _serving_facts()
-    cards = [_card(name, ds, facts, now) for name, ds in _datasets().items()]
+    # Read once, used twice: the Spend card, and each dataset's cost line (M3).
+    spend = _spend(now)
+    used_today = {str(p["provider"]): int(p["today"] or 0) for p in spend["providers"]}
+    cards = [_card(name, ds, facts, now, used_today) for name, ds in _datasets().items()]
     cards.sort(key=lambda c: (STATUS_ORDER.index(c["status"]), c["dataset"]))
     last_run = ops.last_builder_run()
     if last_run:
         last_run = {**last_run, "started_at": _iso_utc(last_run["started_at"]),
                     "finished_at": _iso_utc(last_run["finished_at"])}
     return {
-        "verified": {"builder_last_run": last_run, "swaps": swaps, "ops_schema": ops.schema_version()},
+        "verified": {"builder_last_run": last_run, "swaps": swaps, "ops_schema": ops.schema_version(),
+                     "silent_minutes": _silent_minutes(last_run, now)},
         "datasets": cards,
         "identity": {**_identity(spine_counts), "universe_source": _universe_source()},
         "queue": ops.read_queue(finished=20),
-        "spend": _spend(now),
+        "spend": spend,
         "backups": _backups(now),
         "retention": _retention(),
         "retirement": _retirement(now),

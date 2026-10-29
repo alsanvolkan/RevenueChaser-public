@@ -91,6 +91,11 @@ def with_payload(html: str, payload) -> str:
     return html[:i] + stub + html[i:] if i >= 0 else stub + html
 
 
+#: How long the node process gets. A real run is well under a second; this only has to be longer than the slowest
+#: honest page and shorter than a reader's patience.
+NODE_TIMEOUT_SECONDS = 60
+
+
 def run_board_js(html: str, tail: str, tmp_path: Path, payload=None):
     """Run every inline script of ``html``, then ``tail``; return the JSON it logs.
 
@@ -106,8 +111,18 @@ def run_board_js(html: str, tail: str, tmp_path: Path, payload=None):
     path = tmp_path / "board.js"
     path.write_text(DOM_STUB + "\n;\n".join(inline_scripts(html)) + "\n" + tail,
                     encoding="utf-8")
-    out = subprocess.run(["node", str(path)], capture_output=True, text=True,
-                         encoding="utf-8")
+    # A timeout, because a page's inline script that leaves a live timer behind (a setInterval, or a setTimeout
+    # far in the future) keeps node alive after the tail has logged: without this the test hangs for ever instead
+    # of failing, and a hang tells the reader nothing. Measured 2026-10-29: a real run of this harness is well
+    # under a second.
+    try:
+        out = subprocess.run(["node", str(path)], capture_output=True, text=True,
+                             encoding="utf-8", timeout=NODE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as expired:
+        raise AssertionError(
+            f"the page's scripts did not let node exit within {NODE_TIMEOUT_SECONDS}s: a live timer "
+            f"(setInterval, or a setTimeout far in the future) left behind by an inline script keeps the "
+            f"process alive. Output so far: {(expired.stdout or b'')!r:.400}") from None
     assert out.returncode == 0, out.stderr[-2000:]
     return json.loads(out.stdout.strip().splitlines()[-1])
 
