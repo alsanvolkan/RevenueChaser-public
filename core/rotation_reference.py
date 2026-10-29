@@ -105,17 +105,19 @@ ROTATION_ETFS = {
 }
 
 
-# Per-symbol data resolution for RRG-mapped macro symbols: FRED id / yf proxy.
+# Per-symbol data resolution for RRG-mapped macro symbols: the market_series row, and the FRED id / yf proxy.
 MACRO_SERIES = {
-    "US02Y":       {"fred": "DGS2",  "yf": "2YY=F"},
-    "US05Y":       {"fred": "DGS5",  "yf": "^FVX"},
-    "US10Y":       {"fred": "DGS10", "yf": "^TNX"},
-    "US20Y":       {"fred": "DGS20", "yf": "^TYX"},
-    "US30Y":       {"fred": "DGS30", "yf": "^TYX"},
-    "US10Y-US02Y": {"fred": "T10Y2Y", "yf": None},
-    "USIRYY":      {"fred": "T10YIE", "yf": "TIP"},
-    "CL1!":        {"fred": "DCOILWTICO", "yf": "CL=F"},
-    "MOVE":        {"fred": None, "yf": "^MOVE"},
-    "VVIX":        {"fred": None,     "yf": "^VVIX"},  # FRED VIXCLS is the VIX itself; FRED has no VVIX
-    "WHEATF":      {"fred": None, "yf": "ZW=F"},
+    # ``series``: the ``market_series`` row (series id, source) the map reads since PR 9 (G3), at no Fetch-time call.
+    # ``fred`` / ``yf`` are the live ids Earnings Radar's ``macro_watch`` still uses.
+    "US02Y":       {"fred": "DGS2",  "yf": "2YY=F", "series": ("DGS2", "fred")},
+    "US05Y":       {"fred": "DGS5",  "yf": "^FVX", "series": ("DGS5", "fred")},
+    "US10Y":       {"fred": "DGS10", "yf": "^TNX", "series": ("DGS10", "fred")},
+    "US20Y":       {"fred": "DGS20", "yf": "^TYX", "series": ("DGS20", "fred")},
+    "US30Y":       {"fred": "DGS30", "yf": "^TYX", "series": ("DGS30", "fred")},
+    "US10Y-US02Y": {"fred": "T10Y2Y", "yf": None, "series": ("T10Y2Y", "fred")},
+    "USIRYY":      {"fred": "T10YIE", "yf": "TIP", "series": ("T10YIE", "fred")},
+    "CL1!":        {"fred": "DCOILWTICO", "yf": "CL=F", "series": ("DCOILWTICO", "fred")},
+    "MOVE":        {"fred": None, "yf": "^MOVE", "series": ("MOVE", "yahoo")},
+    "VVIX":        {"fred": None,     "yf": "^VVIX", "series": ("VVIX", "cboe")},  # FRED VIXCLS is the VIX; no VVIX
+    "WHEATF":      {"fred": None, "yf": "ZW=F", "series": ("WHEATF", "yahoo")},
 }

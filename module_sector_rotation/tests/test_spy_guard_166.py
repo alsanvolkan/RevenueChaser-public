@@ -114,8 +114,8 @@ def test_fetch_all_holdings_reads_d01_once_for_the_whole_job(rawstore_tmp_db, mo
     uw = _healthy()
     for t in ("SPY", "BIG", "DN"):
         seed(t, BASE, start=BASE - timedelta(days=150))
-    reads, real = [], engine.d01_points
-    monkeypatch.setattr(engine, "d01_points", lambda *a, **k: reads.append(a) or real(*a, **k))
+    reads, real = [], engine.bar_points
+    monkeypatch.setattr(engine, "bar_points", lambda *a, **k: reads.append(a) or real(*a, **k))
     # #303: the holdings come from the store (the holdings job), not from a fetch
     rawstore.write_rows("etf_holdings", [{"ticker": t, "entry": HOLDINGS}
                                          for t in ("AIQ", "ARKQ", "IGV", "ROBO", "SKYY")])

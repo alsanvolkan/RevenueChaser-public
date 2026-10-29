@@ -1,10 +1,10 @@
 """Rotation snapshot persistence — DuckDB-backed session cross-sections + backfill.
 
 A snapshot is the rotation engine's cross-section (z-normalized) keyed by its session (``as_of_date``, #283), stored
-in ``.store/raw.duckdb`` (``rotation_snapshots``). Backfill reconstructs past sessions from the stored daily bars (D01,
-one read for the whole window, every session computed locally with ``engine.cross_section``, the live Fetch's
+in ``.store/raw.duckdb`` (``rotation_snapshots``). Backfill reconstructs past sessions from the stored daily bars (the prices
+store, ``rcdata.read.ticker_bars``; one read for the whole window, every session computed locally with ``engine.cross_section``, the live Fetch's
 function: D-M3 "weekly, both", M-ROT-2), so the trail view works without waiting for live snapshots to accumulate.
-It makes no provider call; the macro series have no D01 bars and stay live-only.
+It makes no provider call; the macro series (``market_series``) are not backfilled and stay live-only.
 """
 import logging
 import time
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class BackfillResult(int):
     """Days written (an int, so every caller and test that compares it keeps working) plus what
     stopped the rest: ``skipped`` days left unwritten. ``failed`` names tickers whose candles could not be read; since
-    the backfill reads D01 (M-ROT-2) nothing is fetched, so it stays empty."""
+    the backfill reads the prices store (M-ROT-2, PR 9) nothing is fetched, so it stays empty."""
 
     def __new__(cls, written: int, failed=(), skipped: int = 0, left_out=()):
         self = super().__new__(cls, written)
@@ -38,12 +38,12 @@ class BackfillResult(int):
             if self.failed:
                 parts.append(f"{self.skipped} {noun} not written, ETF fetch failed: {', '.join(self.failed)}.")
             else:
-                parts.append(f"{self.skipped} {noun} not written: the stored daily bars (D01) hold no SPY bar of that "
+                parts.append(f"{self.skipped} {noun} not written: the prices store holds no SPY bar of that "
                              f"session or fewer than {engine.MIN_WEEKS} weeks of SPY history before it.")
         if self.left_out:
-            # The sessions are still written (D01 is what it is; a re-run gives the same cross-section), but a gap in
+            # The sessions are still written (the store is what it is; a re-run gives the same cross-section), but a gap in
             # a trail or a z-score shift between sessions is explained (review 2026-10-16).
-            parts.append(f"{len(self.left_out)} rotation ETF(s) left out of written sessions (no D01 bar in the "
+            parts.append(f"{len(self.left_out)} rotation ETF(s) left out of written sessions (no stored bar in the "
                          f"session's week, or under {engine.MIN_WEEKS} weeks of them): {', '.join(self.left_out)}.")
         return " ".join(parts)
 
@@ -146,10 +146,10 @@ def _sessions_back(latest: date, n: int) -> list[date]:
 
 
 def backfill_snapshots(uw=None, days: int = 20, force: bool = False) -> BackfillResult:
-    """Reconstruct the last ``days`` complete sessions of rotation snapshots from D01.
+    """Reconstruct the last ``days`` complete sessions of rotation snapshots from the prices store.
 
-    ``force`` recomputes sessions already stored. A session is not written when D01 holds no SPY bar of it or too
-    little SPY history before it; the result counts them. ``uw`` is unused (D01, no provider call); kept for callers.
+    ``force`` recomputes sessions already stored. A session is not written when the prices store holds no SPY bar of it or too
+    little SPY history before it; the result counts them. ``uw`` is unused (the prices store, no provider call); kept for callers.
     """
     try:
         sessions = _sessions_back(calendar.latest_complete_session(), days)
@@ -170,10 +170,10 @@ def _session_of(day: date, latest: date) -> date | None:
 
 
 def _write_days(days: list[date], force: bool) -> BackfillResult:
-    """Read D01 once for the window and write every requested session that can be computed whole.
+    """Read the prices store once for the window and write every requested session that can be computed whole.
 
     Each day stands for its session (a Wednesday holiday for the Tuesday before), and a session that is not complete
-    yet is not written. A session D01 has no SPY bar of, or too little SPY history before, is skipped and counted.
+    yet is not written. A session the store has no SPY bar of, or too little SPY history before, is skipped and counted.
     """
     try:
         latest = calendar.latest_complete_session()
@@ -185,7 +185,7 @@ def _write_days(days: list[date], force: bool) -> BackfillResult:
     if not todo:
         return BackfillResult(0)
     tickers = engine.rrg_tickers()
-    points = engine.d01_points(["SPY", *tickers], todo[0] - timedelta(weeks=engine.READ_WEEKS), todo[-1])
+    points = engine.bar_points(["SPY", *tickers], todo[0] - timedelta(weeks=engine.READ_WEEKS), todo[-1])
     spy_points = points.get("SPY") or []
     spy_days = {d for d, _ in spy_points}
     written = skipped = 0
@@ -211,7 +211,7 @@ def _write_days(days: list[date], force: bool) -> BackfillResult:
         written += 1
         left |= set(tickers) - {snap.ticker for snap in snaps}
     if skipped:
-        logger.warning("rotation backfill: %d session(s) not written: D01 lacks SPY for them", skipped)
+        logger.warning("rotation backfill: %d session(s) not written: the prices store lacks SPY for them", skipped)
     return BackfillResult(written, skipped=skipped, left_out=[t for t in tickers if t in left])
 
 
@@ -231,9 +231,9 @@ def backfill_weekly(uw, start_date: date, end_date: date = None,
                     force: bool = False) -> BackfillResult:
     """Reconstruct one snapshot per Wednesday from start_date through end_date.
 
-    One D01 read for the window (no provider call; ``uw`` is unused and kept for callers). Each Wednesday is written
+    One prices-store read for the window (no provider call; ``uw`` is unused and kept for callers). Each Wednesday is written
     as its session (the trading day on or before it); one that is not complete yet is not written. Skips stored
-    sessions (idempotent). Sessions D01 cannot cover (no SPY bar, SPY history short) are counted, not written."""
+    sessions (idempotent). Sessions the store cannot cover (no SPY bar, SPY history short) are counted, not written."""
     end_date = end_date or calendar.today_ny()
     wednesdays = _wednesdays(start_date, end_date)
     if not wednesdays:
