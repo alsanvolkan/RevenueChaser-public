@@ -44,6 +44,12 @@ _LOOKBACK_DAYS = 240
 DGS10_SERIES = tuple(MACRO_SERIES["US10Y"]["series"])
 # The dataset name the fundamentals estimates are checked under (``rcdata/build/fundamentals/estimates.NAME``, "yfinance/estimates").
 ESTIMATES_DATASET = "yfinance/estimates"
+# Calendar days a stored estimate may be old before it is not read. The fundamentals build asks each company again
+# once its answer is a week old (``rcdata/build/fundamentals/estimates.WEEK_DAYS``), so a normal read is 0 to 7 days old
+# and 14 covers one missed weekly run. Past that the build has stopped renewing it: R1 would score an old EPS trend
+# without a word, so the row is "not stored" instead. The nightly table the board read before allowed 5 sessions, but it
+# was asked every night. Default chosen in the PR 285 review; change it if avo prefers.
+MAX_AGE_DAYS = {"estimates": 14}
 
 
 def _day(value) -> date | None:
@@ -133,12 +139,19 @@ ESTIMATE_FIELDS = ("eps_trend_current", "eps_trend_7d", "eps_trend_30d", "eps_tr
 ESTIMATE_PERIOD = "0q"               # the current quarter: the print R1 scores
 
 
-def estimates(tickers) -> tuple[dict[str, dict], dict]:
+def estimates(tickers, today: date | None = None) -> tuple[dict[str, dict], dict]:
     """``({ticker: current-quarter row}, note)`` from the fundamentals store's ``estimate_latest``.
 
     Only ``ESTIMATE_PERIOD`` is kept: that is the print R1 scores. A ticker the store has no row for is absent from
     the map, and R1 stays unavailable on its card (it is logged only, weight 0) — never a reason to call a provider.
+    So is a ticker whose row has no as-of day or is more than ``MAX_AGE_DAYS["estimates"]`` days older than ``today``
+    (default New York's today); the note counts those it left out.
     """
+    try:
+        today = _day(today) or calendar.today_ny()
+    except ValueError:
+        today = calendar.today_ny()
+    oldest = today - timedelta(days=MAX_AGE_DAYS["estimates"])
     names = sorted({str(t).strip().upper() for t in (tickers or []) if str(t or "").strip()})
     if not names:
         return {}, _missing("the analyst estimates", None, "no ticker asked", source=ESTIMATES_SOURCE,
@@ -151,18 +164,25 @@ def estimates(tickers) -> tuple[dict[str, dict], dict]:
                             source=ESTIMATES_SOURCE, status=_estimates_status())
     out: dict[str, dict] = {}
     as_of: list[str] = []
+    stale: dict[str, str | None] = {}
     for r in rows:
         if str(r.get("period") or "") != ESTIMATE_PERIOD:
             continue
         ticker = str(r.get("ticker") or "").strip().upper()
         if not ticker:
             continue
+        day = _day(r.get("source_as_of"))
+        if day is None or day < oldest:
+            stale[ticker] = _iso(day)
+            continue
         out[ticker] = {k: r.get(k) for k in ESTIMATE_FIELDS}
-        if r.get("source_as_of") is not None:
-            as_of.append(_iso(r["source_as_of"]))
+        as_of.append(day.isoformat())
+    left_out = f"{len(stale)} left out as older than {MAX_AGE_DAYS['estimates']} days" if stale else ""
     if not out:
-        return {}, _missing("the analyst estimates", None, source=ESTIMATES_SOURCE,
+        newest_stale = max((d for d in stale.values() if d), default=None)
+        reason = (left_out + (f", newest {newest_stale}" if newest_stale else "")) if stale else None
+        return {}, _missing("the analyst estimates", None, reason, source=ESTIMATES_SOURCE,
                             status=_estimates_status())
-    newest = max(as_of) if as_of else None
-    return out, {"stored": True, "label": f"{len(out)} of {len(names)} names have estimates",
-                 "source": ESTIMATES_SOURCE, "source_as_of": newest, "status": _estimates_status()}
+    return out, {"stored": True,
+                 "label": f"{len(out)} of {len(names)} names have estimates" + (f"; {left_out}" if left_out else ""),
+                 "source": ESTIMATES_SOURCE, "source_as_of": max(as_of), "status": _estimates_status()}
