@@ -331,6 +331,7 @@ whole app at a local server:
 | `RC_VANGUARD_BASE` | Vanguard's daily creation baskets (PCF, `etfportal.vanguard.com`): VOO, IVOO, VIOO (`rcdata/build/spine/funds.py`) |
 | `RC_NASDAQ_API_BASE` | Nasdaq's list API, the Nasdaq-100 members (`rcdata/build/spine/funds.py`) |
 | `RC_INVESCO_API_BASE` | Invesco's fund holdings API: QQQ, the second Nasdaq-100 file (`rcdata/build/spine/funds.py`) |
+| `RC_ALPACA_BASE` | Alpaca market data (`data.alpaca.markets`): the prices store's daily bars and corporate actions (`rcdata/build/sources/alpaca.py`, read at call time) |
 | `RC_FINRA_API_BASE` | FINRA's keyless API, consolidated short interest (`rcdata/build/ownership/finra.py`, read at call time); default `https://api.finra.org` |
 | `RC_REGSHO_NASDAQ_BASE` | Nasdaq Trader's Reg SHO threshold files (`rcdata/build/ownership/regsho.py`, read at call time); default `https://www.nasdaqtrader.com/dynamic/symdir/regsho` |
 | `RC_NYSE_BASE` | NYSE's site, the Reg SHO threshold downloads of NYSE, NYSE American and NYSE Arca (`rcdata/build/ownership/regsho.py`, read at call time); default `https://www.nyse.com` |

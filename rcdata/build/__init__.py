@@ -19,6 +19,15 @@ DATASETS = {d.name: d for d in (uw_spot_expiry_strike.DATASET, market_series.DAT
 DATASETS.update({d.name: d for d in (finra.DATASET, regsho.DATASET, ibkr.DATASET, ftd.DATASET, sec13f.DATASET,
                                      form4.DATASET, sched13dg.DATASET, ownership_serve.DATASET)})
 
+# PR 7 (G2): the prices store's sources (the WRDS history last), then ``prices/serving``, which builds the served
+# tables from their staging.
+from .prices import actions as prices_actions, bars as prices_bars, cover_shares as prices_cover  # noqa: E402
+from .prices import floats as prices_floats, serving as prices_serving, wrds_history as prices_wrds  # noqa: E402
+
+DATASETS.update({d.name: d for d in (prices_bars.DATASET, prices_actions.DATASET, prices_cover.DATASET,
+                                     prices_floats.YAHOO_FLOAT, prices_floats.UW_FLOAT, prices_wrds.DATASET,
+                                     prices_serving.DATASET)})
+
 # ── Fundamentals (build plan PR 12): the sources stage their Parquet, ``fundamentals/tables`` builds the served
 # file last (``base.build_kind`` builds a kind's datasets in this order).
 from .fundamentals import companyfacts as fundamentals_companyfacts  # noqa: E402

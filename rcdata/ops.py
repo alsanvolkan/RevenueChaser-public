@@ -175,19 +175,23 @@ def ensure(path: Path | None = None) -> None:
     the tables and indexes of this version are made; a failed step rolls the whole file back to what it was.
     """
     path = Path(path or ops_path())
-    with _ENSURE_LOCK, connect(path) as con, _tx(con):
-        con.execute(_DDL["ops_schema"])
-        found = con.execute("SELECT max(version) FROM ops_schema").fetchone()[0]
-        if found is not None and found > OPS_SCHEMA_VERSION:
-            raise OpsSchemaTooNew(f"{path} is ops schema {found}; this checkout knows {OPS_SCHEMA_VERSION}")
-        for version in range((found or OPS_SCHEMA_VERSION) + 1, OPS_SCHEMA_VERSION + 1):
-            _UPGRADES[version](con)
-        for ddl in _DDL.values():
-            con.execute(ddl)
-        for ddl in _INDEXES:
-            con.execute(ddl)
-        if found != OPS_SCHEMA_VERSION:
-            con.execute("INSERT INTO ops_schema (version, applied_at) VALUES (?, ?)", (OPS_SCHEMA_VERSION, time.time()))
+    with _ENSURE_LOCK:
+        with connect(path) as con, _tx(con):
+            con.execute(_DDL["ops_schema"])
+            found = con.execute("SELECT max(version) FROM ops_schema").fetchone()[0]
+            if found is not None and found > OPS_SCHEMA_VERSION:
+                raise OpsSchemaTooNew(f"{path} is ops schema {found}; this checkout knows {OPS_SCHEMA_VERSION}")
+            for version in range((found or OPS_SCHEMA_VERSION) + 1, OPS_SCHEMA_VERSION + 1):
+                _UPGRADES[version](con)
+            for ddl in _DDL.values():
+                con.execute(ddl)
+            for ddl in _INDEXES:
+                con.execute(ddl)
+            if found != OPS_SCHEMA_VERSION:
+                con.execute("INSERT INTO ops_schema (version, applied_at) VALUES (?, ?)",
+                            (OPS_SCHEMA_VERSION, time.time()))
+        # After the COMMIT: ``_open`` skips ``ensure`` for a marked file, so a mark made inside the transaction let
+        # another thread read the file before its tables were committed (CI on PR 251, 28 Oct 2026).
         _ENSURED.add(str(path))
 
 

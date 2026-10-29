@@ -4,46 +4,34 @@
   "clusters": {
    "2": [
     {
-     "baseline_r": 0.07697799376367176,
+     "baseline_r": null,
      "catchall": true,
      "id": "1",
      "label": "Cluster 1",
-     "mean_corr": 0.9943673725134728,
+     "mean_corr": 0.9943673725134733,
      "members": [
       "A1",
       "A2",
       "A3"
      ],
      "n": 3,
-     "persist": {
-      "held": false,
-      "jaccard": 1.0,
-      "new": false,
-      "oos_base": 0.997387946899292,
-      "oos_r": 0.9972050262638604
-     },
-     "significant": true
+     "persist": null,
+     "significant": null
     },
     {
-     "baseline_r": 0.07697799376367176,
+     "baseline_r": null,
      "catchall": true,
      "id": "2",
      "label": "Cluster 2",
-     "mean_corr": 0.9932185557401856,
+     "mean_corr": 0.9932185557401857,
      "members": [
       "B1",
       "B2",
       "B3"
      ],
      "n": 3,
-     "persist": {
-      "held": false,
-      "jaccard": 1.0,
-      "new": false,
-      "oos_base": 0.997387946899292,
-      "oos_r": 0.997387946899292
-     },
-     "significant": true
+     "persist": null,
+     "significant": null
     }
    ]
   },
@@ -66,12 +54,7 @@
   },
   "horizon": 1,
   "n_factors": 2,
-  "oos": {
-   "2": {
-    "held": 0,
-    "total": 2
-   }
-  },
+  "oos": {},
   "oos_start": "2026-09-29",
   "window_start": "2026-03-25"
  },

@@ -6,7 +6,8 @@ read ``config.*`` for these knobs themselves, so there is exactly one place wher
 
 Short windows (``window < config.SHORT_WINDOW``): ``MIN_OBS = MIN_PERIODS =
 max(15, window // 2)`` for that run, whatever is stored; horizon is locked to 1;
-the out-of-sample persistence test is skipped.
+the out-of-sample persistence test is skipped. Longer windows need at most
+``MIN_OBS_MAX_SHARE`` of their sessions (119 of 126), never every one.
 """
 from __future__ import annotations
 
@@ -79,7 +80,7 @@ def effective(window: int | None = None) -> Effective:
         min_obs = min(win, max(config.SHORT_MIN_FLOOR, win // 2))
         min_periods = min_obs
     else:
-        min_obs = min(int(v["MIN_OBS"]), win)
+        min_obs = min(int(v["MIN_OBS"]), int(win * config.MIN_OBS_MAX_SHARE))
         min_periods = min(int(v["MIN_PERIODS"]), min_obs)
     holdout = int(v["OOS_HOLDOUT"])
     return Effective(

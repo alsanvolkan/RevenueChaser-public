@@ -174,6 +174,15 @@ spine"), each with its own cadence (the SEC file and OpenFIGI weekly, WRDS month
 cards are attended: they show the CLI command and Pause / Resume, and no Fetch or Backfill (a person logs in and
 confirms Duo on the server).
 
+**The prices store (PR 7).** Seven more cards, one per prices dataset (`docs/data_architecture.md`, "The prices
+store"): Alpaca's daily bars (coverage = Tier A names with a bar on the session, target 99%; backfill = its day
+partitions), Alpaca's corporate actions, the SEC cover shares, the Yahoo and UW float, the WRDS history and
+`prices/serving`. The WRDS history card is attended (`python -m RevenueChaser.rcdata.build backfill wrds/prices`);
+its backfill progress counts the table-year partitions (`secd 1984` ...) out of those expected, and its WRDS
+difference slot shows the store's monthly report (`wrds_price_diff`): per comparison the sessions compared and how
+many differ by more than 1 bp, with the largest difference. Every other card still says "no WRDS run yet", except
+the four WRDS checks of the fundamentals layer below.
+
 **The fundamentals layer (PR 12).** Eleven more dataset cards, one per fundamentals dataset
 (`docs/data_architecture.md`, "Fundamentals"), each with its own cadence (the SEC facts and filings, the Alpha Vantage
 calendar, UW's preliminary quarters and `fundamentals/tables` daily, the yfinance estimates weekly, the SEC's FSDS and
