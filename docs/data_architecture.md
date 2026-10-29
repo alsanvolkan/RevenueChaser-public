@@ -25,7 +25,12 @@ order avo set: finish the setup, purge the data, run the backfill, then build th
 its final shape is settled by real data rather than guessed. Nothing of the API — no catalog, no
 `get()` envelope, no on-demand fill, no HTTP surface — is built before that. The design it will be
 built from is `/mnt/project-files/earnings_bridge/2026-10-29_internal_data_api.md`; earnings dates
-are its first use case, not the whole design.
+are its first use case, not the whole design. Its locking follows the concurrency model below rather
+than adding a scheme of its own: a file lock (`core/job_lock.py`) where liveness matters, an
+`ops.sqlite` row under `BEGIN IMMEDIATE` for shared state and for collapsing concurrent fill
+requests, the existing `Pacer` and `DAY_CAPS` for provider rate and budget, and no leases while
+homesrv is the only runtime (avo asked for mutex and semaphore to be worked out; that section of the
+design file holds it).
 
 **What a purge loses for good.** The backfill cannot bring these back, so the purge decision has to
 cover them first:
