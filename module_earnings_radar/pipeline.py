@@ -10,7 +10,7 @@ from RevenueChaser.module_earnings_radar.rules import (
     rule5_positioning, rule6_macro, rule7_accounting, rule8_sentiment,
 )
 from RevenueChaser.module_earnings_radar.composite import compute_composite_scores, select_action, classify_bias, classify_conviction, recommend_options_structure
-from RevenueChaser.module_earnings_radar import earnings_store, stored_inputs
+from RevenueChaser.module_earnings_radar import earnings_store, store_reads, stored_inputs
 from RevenueChaser.core import calendar, rawstore, vendor_data
 from RevenueChaser.core import universe as _spine
 from RevenueChaser.core.gics_map import is_unclassified
@@ -204,6 +204,7 @@ class EarningsPipeline:
             "calendar": {"stored": 0, "live": 0, "session": None},
             "short_interest": {"stored": 0, "live": 0, "session": None},
             "dgs10": "none",
+            "dgs10_note": None,
             "rate_events": "none",
             "ohlc": {"stored": 0, "live": 0},
             "estimates": {"stored": 0, "missing": 0},
@@ -275,23 +276,19 @@ class EarningsPipeline:
         return self._shorts_cache
 
     def _warm_dgs10(self) -> dict[str, float]:
-        """One FRED DGS10 daily fetch per run for R6 yield beta — unless the nightly D27 sweep already stored it
-        (E5d, #372), in which case FRED is not called at all.
+        """The 10-year yield observations R6 pairs its reaction returns with, read once per run from the market store
+        (``store_reads.dgs10_map``, the need ``macro.dgs10``).
 
-        Missing key or a failed fetch leaves an empty map — R6 stays
-        unavailable and the earnings run continues. Tests that pre-set
-        ``_dgs10_cache`` skip the store and the network.
+        No provider call: the market build fetches the series, and a run never asks FRED itself. A store that holds
+        no fresh series leaves an empty map — R6 stays unavailable and the run continues, with the reader's own note
+        in ``input_sources``. Tests that pre-set ``_dgs10_cache`` skip the store.
         """
         if self._dgs10_cache is not None:
             return self._dgs10_cache
-        stored = stored_inputs.dgs10_map()
-        if stored:
-            self._dgs10_cache = stored
-            self.input_sources["dgs10"] = "stored"
-            return self._dgs10_cache
-        from RevenueChaser.module_earnings_radar.macro_watch import fred_daily_map
-        self._dgs10_cache = fred_daily_map("DGS10") or {}
-        self.input_sources["dgs10"] = "fred" if self._dgs10_cache else "none"
+        rows, note = store_reads.dgs10_map()
+        self._dgs10_cache = rows
+        self.input_sources["dgs10"] = "stored" if rows else "none"
+        self.input_sources["dgs10_note"] = note.get("label")
         return self._dgs10_cache
 
     def _warm_rate_events(self) -> list[dict]:

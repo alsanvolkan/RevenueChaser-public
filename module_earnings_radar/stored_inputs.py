@@ -2,9 +2,11 @@
 
 The Earnings Fetch used to ask UW (and FRED) for everything it needed, every run. Since E0 the nightly job stores
 the same answers in ``raw.duckdb``: the earnings calendar (D26), short interest (D10), the economic calendar (D37),
-the FRED daily series (D27), the analyst estimates (D14), and the two market series SPX Gamma reads instead of
-fetching (the vol indices, D28, and the CFTC COT, D29). This module is the ONE reader of those tables — it reads
-only, over ``rawstore.query(..., read_only=True)``, and never writes, migrates or alters anything.
+the analyst estimates (D14), and the two market series SPX Gamma used to read here (the vol indices, D28, and the
+CFTC COT, D29). The 10-year yield left with the market store (``store_reads.dgs10_map``).
+
+This module is the ONE reader of those tables — it reads only, over ``rawstore.query(..., read_only=True)``,
+and never writes, migrates or alters anything.
 
 Two rules hold for every reader here:
 
@@ -32,17 +34,13 @@ logger = logging.getLogger(__name__)
 NY = ZoneInfo("America/New_York")
 
 # Trading sessions a stored session may lag the latest complete one by, before the reader goes live instead.
-# ``macro_series`` counts the sessions after the newest DGS10 observation. FRED posts a day late, so a normal night
-# reads 1 or 2; 3 covers one missed night. A missed night next to a bond-only holiday (Columbus or Veterans Day)
-# reaches 4 and the run asks FRED, which is one free call.
 # ``vol_index_daily`` is a daily series too, so it gets the same tolerance as ``short_interest``.
 # ``cftc_cot`` is weekly: CFTC publishes on Friday the positions held on the Tuesday before, so on a current night
 # the newest stored row is already ~6 sessions old (measured: 2026-10-13 stored against the 2026-10-21 session). A
 # tighter number would read "nothing stored" every night and the table would never be used.
-MAX_LAG = {"earnings_calendar": 1, "short_interest": 3, "estimate_snapshots": 5, "macro_series": 3,
+MAX_LAG = {"earnings_calendar": 1, "short_interest": 3, "estimate_snapshots": 5,
            "vol_index_daily": 3, "cftc_cot": 10}
 
-_DGS10_LIMIT = 80                 # the same window ``macro_watch.fred_daily_map`` asks FRED for
 _OHLC_MAX_BARS = 270              # ``pipeline.REACTION_OHLC_SESSIONS``
 _OHLC_LOOKBACK_DAYS = 400         # calendar days back from the latest complete session
 
@@ -216,37 +214,6 @@ def short_rows(tickers) -> tuple[dict[str, dict], date | None]:
             continue
         out[t] = {k: r.get(k) for k in _SHORT_FIELDS if r.get(k) is not None}
     return out, session
-
-
-# ── D27: the FRED daily series (10Y yield) ───────────────────────────────────────────────────────────────────────
-
-def dgs10_map(latest: date | None = None) -> dict[str, float]:
-    """The stored FRED DGS10 observations as ``{YYYY-MM-DD: value}`` — the same window
-    ``macro_watch.fred_daily_map("DGS10")`` asks FRED for (the newest 80, ascending order not needed: R6 pairs
-    them by date). An empty map means the run should ask FRED.
-
-    Fresh only while the newest observation is at most ``MAX_LAG["macro_series"]`` sessions before ``latest``
-    (default ``calendar.latest_complete_session()``): if the nightly stops, beta would pair fewer and fewer
-    recent dates until R6 went unavailable without a word, so a stale series is "nothing stored" and FRED is
-    asked instead."""
-    rows = _query("SELECT obs_date, value FROM macro_series WHERE series_id = 'DGS10' AND source = 'fred' "
-                  "AND value IS NOT NULL ORDER BY obs_date DESC LIMIT ?", [_DGS10_LIMIT], table="macro_series")
-    out: dict[str, float] = {}
-    for r in rows:
-        d = _as_date(r.get("obs_date"))
-        try:
-            value = float(r.get("value"))
-        except (TypeError, ValueError):
-            continue
-        if d is not None:
-            out[d.isoformat()] = value
-    if not out:
-        return {}
-    latest = calendar.latest_complete_session() if latest is None else latest
-    lag = _sessions_after(date.fromisoformat(max(out)), latest)
-    if lag is None or lag > MAX_LAG["macro_series"]:
-        return {}
-    return out
 
 
 # ── D37: the economic calendar (rate events) ─────────────────────────────────────────────────────────────────────

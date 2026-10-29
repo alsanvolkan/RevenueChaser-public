@@ -12,6 +12,7 @@ import pytest
 
 from RevenueChaser.core import calendar, rawstore
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline
+from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve as serve_market
 from RevenueChaser.module_earnings_radar.tests.test_rule1_drivers_e6 import FULL
 from RevenueChaser.module_earnings_radar.tests.test_stored_ohlc_e5e import _bars, _prints, _seed as _seed_bars
 from RevenueChaser.module_earnings_radar.tests.test_stored_short_e5c import LIVE, _seed as _seed_short
@@ -54,17 +55,15 @@ def _seed_everything():
     _seed_short({"AAPL": LIVE["AAPL"]})
     rawstore.write_rows("estimate_snapshots", [{"ticker": "AAPL", "session_date": SESSION, "period": "0q",
                                                 "source": "yfinance", **FULL}])
-    rawstore.write_rows("macro_series", [
-        {"series_id": "DGS10", "obs_date": SESSION - timedelta(days=i), "source": "fred", "value": 4.0 + i / 100}
-        for i in range(1, 90)])
+    serve_market({(SESSION - timedelta(days=i)).isoformat(): 4.0 + i / 100 for i in range(1, 90)})
     rawstore.write_rows("economic_calendar", [
         {"session_date": SESSION, "event_ts": datetime(d.year, d.month, d.day, 8, 30, tzinfo=NY).timestamp(),
          "event": "GDP", "type": "report", "source": "uw"} for d in (date(2026, 10, 15), date(2026, 10, 23))])
 
 
-def test_a_run_with_every_input_stored_asks_uw_and_fred_for_none_of_them(monkeypatch):
+def test_a_run_with_every_input_stored_asks_uw_and_fred_for_none_of_them():
     from RevenueChaser.module_earnings_radar import macro_watch
-    monkeypatch.setattr(macro_watch, "fred_daily_map", lambda *a, **k: pytest.fail("FRED must not be called"))
+    assert not hasattr(macro_watch, "fred_daily_map")      # the board has no FRED reader to call any more
     _seed_everything()
     fake = _CountingUW()
     p = EarningsPipeline(["AAPL"], uw=fake, cal_meta={"AAPL": {
@@ -82,10 +81,12 @@ def test_a_run_with_every_input_stored_asks_uw_and_fred_for_none_of_them(monkeyp
     assert p.input_sources["rate_events"] == "stored"
 
 
-def test_the_same_run_with_an_empty_store_asks_uw(monkeypatch):
-    """The reference: without the store the same run asks UW for both, so the zeros above are the store's doing."""
-    from RevenueChaser.module_earnings_radar import macro_watch
-    monkeypatch.setattr(macro_watch, "fred_daily_map", lambda *a, **k: {})
+def test_the_same_run_with_an_empty_store_asks_uw():
+    """The reference: without the store the same run asks UW for both, so the zeros above are the store's doing.
+
+    The yield series is the one input with no live read left: an empty store leaves R6 unavailable (``dgs10`` is
+    ``none``), it does not reach for FRED.
+    """
     fake = _CountingUW()
     p = EarningsPipeline(["AAPL"], uw=fake, cal_meta={"AAPL": {
         "earnings_date": REPORT, "full_name": "Aple", "sector": "Technology", "expected_move_perc": 0.05}})
