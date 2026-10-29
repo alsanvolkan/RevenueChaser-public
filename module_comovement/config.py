@@ -16,14 +16,19 @@ COMOVEMENT_JSON = OUTPUT_DIR / "comovement" / "comovement_latest.json"
 # absent history, which is noise for a return-correlation hierarchy. The floor is
 # NOT defined here: ``core.universe.DEFAULT_MC_MIN`` ($300M) is the one definition
 # and it is not editable (issue #40); read it from there.
-# The span of D01 the board reads, back from D01's newest session (``ohlc.history_start``; #379 D01 switch): the
-# history the old ``swing_ohlc`` cache held. The bars themselves come from Daily Bars only.
+# The span of the prices store the board reads, back from its newest session (``ohlc.history_start``; PR 8): the
+# history the old ``swing_ohlc`` cache held. The bars themselves come from the prices build only.
 OHLC_PERIOD = "2y"
 
 # ── Return matrix ───────────────────────────────────────────────────────────
 WINDOW = 252          # last N sessions
 MIN_OBS = 126         # drop a ticker with fewer non-null returns
 MIN_PERIODS = 60      # pairwise Pearson minimum overlap
+# A window never needs more than this share of its sessions (Co-movement review S2): ``min(MIN_OBS, window)`` asked
+# the 6-month window for 126 of 126 returns, so one missing daily bar dropped the name. 0.95 lets the 126 window miss
+# 7; the longer windows keep MIN_OBS (126). A missing session can come back (PR 8): the prices build re-reads the
+# last sessions every run and the history run (Run H) fills older gaps, so a name dropped today can return.
+MIN_OBS_MAX_SHARE = 0.95
 
 # Window is a board control (like horizon); ``WINDOW`` above is only its default.
 WINDOW_OPTIONS = (21, 42, 126, 189, 252, 378)   # 1m / 2m / 6m / 9m / 1y / 1.5y
@@ -73,6 +78,12 @@ PRECOMPUTE_WINDOWS = (126, 252)   # 6m, 1y
 # (2026-10-17 03:30 Amsterdam); the merge gate checks before the restart that no stored run is newer, since a run the
 # older build stored after this time would be served until the next D01 write.
 ENGINE_EPOCH = "2026-10-17T01:30:00+00:00"
+# The engine's method, part of ``engine.config_hash``: bump it when a change alters a run's numbers at the same
+# inputs. A stored run, null or lagged test of an older method then never matches, so it is neither served nor
+# reused, with no race against a run the older build stores before the restart (unlike ``ENGINE_EPOCH``).
+# 2: the Fable review of 28 Oct 2026 (held-out test winsorised, S3; h>1 null and factor count, S1; null mean, N1).
+# 3: PR 8 (G3), the closes come from the prices store (Alpaca, total-return factors) instead of D01.
+METHOD = 3
 
 # ── Clustering ──────────────────────────────────────────────────────────────
 # Ward (review 2026-10-01 §1): average linkage chained a quarter to half of the

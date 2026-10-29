@@ -43,6 +43,9 @@ MAX_PAGES = 20
 CALLS_PER_SESSION_ESTIMATE = 2
 FIRST_SESSION = date(2025, 1, 16)
 REJECTED_SUFFIX = ".rejected"
+# An answer with more than this share of its rows unusable (no expiry/strike, or stamped on another day) is refused
+# like an empty one (review S-3 of #220); the same figure as the swap's serving.MAX_SHRINK.
+MAX_DROPPED = 0.01
 # An epoch below this (9 Sep 2001) is not a UW snapshot time: 0, or a date written without dashes read as seconds.
 MIN_EPOCH = 1e9
 
@@ -90,6 +93,12 @@ class UWSpotExpiryStrike:
 
     # ── fetch ──
     def _fetch_session(self, ctx: base.RunContext, session: date, *, observed: bool) -> Path:
+        # A session that has not finished (an explicit --as-of or backfill --to of today) would be stored as UW's
+        # intraday snapshot for good: its raw file is the resume marker (review S-2 of #220). No call is sent.
+        latest = calendar.latest_complete_session()
+        if session > latest:
+            raise base.SourceError(f"UW {ENDPOINT} {session}: the session is not complete yet (latest complete "
+                                   f"session {latest}); not fetched")
         raw = raw_path(session)
         if raw.exists():
             return raw
@@ -102,8 +111,7 @@ class UWSpotExpiryStrike:
         rows = body.get("data", []) if isinstance(body, dict) else body
         if not isinstance(rows, list) or not rows:
             raise base.SourceError(f"UW {ENDPOINT} {session}: no rows")
-        if not any(isinstance(r, dict) and snapshot_day(r.get("time")) in (session, None) for r in rows):
-            raise base.SourceError(f"UW {ENDPOINT}: every row is stamped on a day not on {session}")
+        _check_answer_day(rows, session, "")
         request: dict = {"endpoint": ENDPOINT, "params": params}
         if len(rows) >= PAGE_LIMIT:
             # A full page may be a cut day (G3): ask the next pages until one is shorter than the limit (an empty
@@ -124,10 +132,8 @@ class UWSpotExpiryStrike:
                 more = page.get("data") if isinstance(page, dict) else page
                 if not isinstance(more, list):
                     raise base.SourceError(f"UW {ENDPOINT} {session} page {n}: no list of rows in the answer")
-                if more and not any(isinstance(r, dict) and snapshot_day(r.get("time")) in (session, None)
-                                    for r in more):
-                    raise base.SourceError(f"UW {ENDPOINT} {session} page {n}: every row is stamped on a day "
-                                           f"not on {session}")
+                if more:
+                    _check_answer_day(more, session, f" page {n}")
                 sizes.append(len(more))
                 pages.append(more)
             _check_pages_disjoint(ctx, session, pages)
@@ -159,7 +165,7 @@ class UWSpotExpiryStrike:
         session = date.fromisoformat(doc["session_date"])
         body = doc["body"]
         items = body.get("data", []) if isinstance(body, dict) else body
-        rows, seen, extras, bad = [], set(), set(), []
+        rows, seen, extras, bad, wrong, unreadable = [], set(), set(), [], 0, 0
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -169,8 +175,11 @@ class UWSpotExpiryStrike:
             except (KeyError, TypeError, ValueError):
                 bad.append(sorted(item)[:6])
                 continue
-            if snapshot_day(item.get("time")) not in (session, None):
+            if _unreadable(item.get("time")):
+                unreadable += 1                     # kept: date= named the session; counted below (review N-1)
+            elif snapshot_day(item.get("time")) not in (session, None):
                 ctx.issue("wrong_session", f"{session} {expiry} {strike}", f"row stamped {item.get('time')}")
+                wrong += 1
                 continue
             key = (expiry, strike)
             if key in seen:
@@ -187,14 +196,22 @@ class UWSpotExpiryStrike:
         if bad:                                     # one issue per answer, not one per row
             ctx.issue("bad_row", session.isoformat(),
                       f"{len(bad)} rows without a usable expiry/strike; first one's fields: {bad[0]}")
-        if not rows:
+        if unreadable:                              # one issue per answer, not one per row
+            ctx.issue("unreadable_time", session.isoformat(),
+                      f"{unreadable} rows with a time stamp that cannot be read, kept on date={session}")
+        dropped = len(bad) + wrong
+        if not rows or dropped > MAX_DROPPED * len(items):
             # An empty partition would mark the session done for good (S6), and so would the raw file, which is the
             # fetch's resume marker (N1): it is set aside as .rejected, kept for a look, and the next run asks again.
-            # The run id in the name: a second rejection of the same day keeps the first one's file (F2).
+            # The run id in the name: a second rejection of the same day keeps the first one's file (F2). A mostly
+            # unusable answer (more than MAX_DROPPED of its rows without a strike or stamped on another day) is
+            # refused the same way: storing its few good rows would mark the day done as well (review S-3 of #220).
             rejected = raw.with_name(f"{raw.name}.{ctx.run_id}{REJECTED_SUFFIX}")
             os.replace(raw, rejected)
-            raise base.SourceError(f"UW {session}: no usable row in {raw.name} ({len(items)} rows answered); "
-                                   f"set aside as {rejected.name}")
+            why = (f"no usable row in {raw.name} ({len(items)} rows answered)" if not rows else
+                   f"{dropped} of {len(items)} rows unusable in {raw.name} ({len(bad)} without an expiry/strike, "
+                   f"{wrong} stamped on another day), more than {MAX_DROPPED:.0%}")
+            raise base.SourceError(f"UW {session}: {why}; set aside as {rejected.name}")
         if extras:
             ctx.issue("unknown_field", session.isoformat(), "numeric fields without a column: " + ", ".join(sorted(extras)))
         con = duckdb.connect()
@@ -295,6 +312,24 @@ def snapshot_day(stamp) -> date | None:
         return datetime.fromtimestamp(epoch, tz=timezone.utc).astimezone(calendar.NY).date()
     except (ValueError, OverflowError, OSError):       # out of the platform's range (1e20 is OSError errno 75)
         return None
+
+
+def _unreadable(stamp) -> bool:
+    """A stamp that is there but cannot be read (review N-1 of #220); no stamp at all is not one."""
+    return not (stamp is None or stamp == "" or isinstance(stamp, bool)) and snapshot_day(stamp) is None
+
+
+def _check_answer_day(rows: list, session: date, where: str) -> None:
+    """Refuse an answer (or a page) none of whose rows is on ``session``: every stamp on another day, or every stamp
+    present but unreadable. A row with no stamp at all still passes, ``date=`` being the first guard. An unreadable
+    stamp used to count as on the session (review N-1 of #220), so an answer in a new stamp format passed any day."""
+    dicts = [r for r in rows if isinstance(r, dict)]
+    if any(r.get("time") in (None, "") or snapshot_day(r.get("time")) == session for r in dicts):
+        return
+    if dicts and all(_unreadable(r.get("time")) for r in dicts):
+        raise base.SourceError(f"UW {ENDPOINT} {session}{where}: every row's time stamp cannot be read "
+                               f"(first: {dicts[0].get('time')!r})")
+    raise base.SourceError(f"UW {ENDPOINT} {session}{where}: every row is stamped on a day not on {session}")
 
 
 def _check_pages_disjoint(ctx: base.RunContext, session: date, pages: list[list]) -> None:

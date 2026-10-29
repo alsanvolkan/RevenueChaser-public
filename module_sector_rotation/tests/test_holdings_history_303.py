@@ -18,7 +18,7 @@ from RevenueChaser.core import calendar, rawstore
 from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 from RevenueChaser.module_sector_rotation import engine
 from RevenueChaser.module_sector_rotation import etf_holdings as eh
-from RevenueChaser.module_sector_rotation.tests.d01_seed import seed
+from RevenueChaser.module_sector_rotation.tests.bars_seed import seed
 from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
 
 SYNCED = [t for t, i in ROTATION_ETFS.items() if i.get("group") in ("sector", "theme")]

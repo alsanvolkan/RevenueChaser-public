@@ -256,6 +256,8 @@ def _typed(c: str, t: str) -> str:
         return f'TRY_CAST("{c}" AS DATE)'
     if t == "INTEGER":
         return f'TRY_CAST(TRY_CAST("{c}" AS DOUBLE) AS INTEGER)'
+    if t == "DOUBLE":
+        return f'TRY_CAST("{c}" AS DOUBLE)'
     return f'"{c}"'
 
 
@@ -272,7 +274,7 @@ def raw_rows(raw: Path, schema: list[tuple[str, str]]) -> str:
 
 def untyped(con: duckdb.DuckDBPyConnection, raw: Path, schema: list[tuple[str, str]]) -> dict[str, int]:
     """Per typed column, the rows whose raw value is not null but did not type (``raw_rows`` made it null)."""
-    cols = [(c, t) for c, t in schema if t in ("DATE", "INTEGER")]
+    cols = [(c, t) for c, t in schema if t in ("DATE", "INTEGER", "DOUBLE")]
     if not cols:
         return {}
     counts = ", ".join(f'count(*) FILTER (WHERE "{c}" IS NOT NULL AND {_typed(c, t)} IS NULL)' for c, t in cols)

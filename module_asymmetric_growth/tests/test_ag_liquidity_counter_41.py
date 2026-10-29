@@ -20,7 +20,8 @@ from RevenueChaser.core import funnel, rawstore
 from RevenueChaser.core.providers import cache as cache_manager
 from RevenueChaser.module_asymmetric_growth import engine
 from RevenueChaser.module_asymmetric_growth.report import render_asymmetric_growth_hunter_html
-from RevenueChaser.module_asymmetric_growth.tests.test_ag_dated_momentum_380 import bar, sessions, universe
+from RevenueChaser.module_asymmetric_growth.tests.test_ag_dated_momentum_380 import (bar, sessions, store_bars,
+                                                                            universe)
 from RevenueChaser.module_asymmetric_growth.tests.test_ag_info_only_150 import _QUOTE, _YF_ANNUAL, _edgar
 
 # The bars close at 102 and their 63-session mean volume is 1.095x the base volume, so price * vol_90d is
@@ -30,7 +31,7 @@ LIQUID_VOLUME = 10_000.0
 
 
 def _seed_bars(volumes: dict[str, float]) -> None:
-    """D01 bars that pass all three momentum rules, at the chosen base volume per ticker (plus SPY, the anchor)."""
+    """Stored bars that pass all three momentum rules, at the chosen base volume per ticker (plus SPY, the anchor)."""
     days = sessions()
     rows = []
     for ticker, volume in {**volumes, "SPY": LIQUID_VOLUME}.items():
@@ -38,7 +39,7 @@ def _seed_bars(volumes: dict[str, float]) -> None:
             tail = k >= len(days) - 10
             rows.append(bar(ticker, day, close=102.0 if tail else 100.0,
                             volume=volume * 1.6 if tail else volume))
-    rawstore.write_rows("price_bars_daily", rows)
+    store_bars(rows)
 
 
 def _edgar_rows(*tickers) -> None:
@@ -159,7 +160,7 @@ def test_nothing_qualifies_reports_zero_for_both_keys(rawstore_tmp_db, monkeypat
 
 
 def test_a_name_with_no_90_day_volume_is_untested_not_thin(rawstore_tmp_db, monkeypatch):
-    _edgar_rows("NBARS")                        # no D01 bars at all: the price falls back to the quote
+    _edgar_rows("NBARS")                        # no stored bars at all: the price falls back to the quote
 
     result = _scan(monkeypatch, ["NBARS"])
 

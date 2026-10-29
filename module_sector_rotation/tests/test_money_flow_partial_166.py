@@ -16,7 +16,7 @@ import pytest
 
 from RevenueChaser.module_sector_rotation import money_flow as mf
 from RevenueChaser.module_sector_rotation import report
-from RevenueChaser.module_sector_rotation.tests.d01_seed import ny, pin_clock, seed
+from RevenueChaser.module_sector_rotation.tests.bars_seed import ny, pin_clock, seed
 from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
 
 QUERIED = [t for t, i in ROTATION_ETFS.items() if i.get("group") not in ("region", "bond", "yield", "commodity")]
@@ -48,14 +48,14 @@ def d01(rawstore_tmp_db, monkeypatch):
 
 def test_a_healthy_result_has_exactly_the_old_keys(d01):
     d01()
-    res = mf.compute_money_flow(_NoUW(), days=30, window=21, top_n=10)
+    res = mf.compute_money_flow(days=30, window=21, top_n=10)
     assert set(res) == {"inflows", "outflows", "generated_at", "as_of"}
     assert len(res["inflows"]) == 10 and res["as_of"] == SESSION.isoformat()
 
 
 def test_an_etf_with_no_stored_bars_makes_the_result_partial_and_is_named(d01):
     d01(skip={"XLK", "SMH"})
-    res = mf.compute_money_flow(_NoUW(), days=30, window=21, top_n=10)
+    res = mf.compute_money_flow(days=30, window=21, top_n=10)
     assert res["partial"] is True and res["missing"] == [t for t in QUERIED if t in {"XLK", "SMH"}]
     ranked = {r["ticker"] for r in res["inflows"] + res["outflows"]}
     assert "XLK" not in ranked and res["inflows"]            # the others are still ranked
@@ -64,13 +64,13 @@ def test_an_etf_with_no_stored_bars_makes_the_result_partial_and_is_named(d01):
 def test_only_the_last_days_sessions_up_to_the_session_are_read(d01):
     d01()
     seed("XLK", date(2026, 8, 21), start=date(2026, 8, 17), closes=lambda i: 1.0)   # after the session: not read
-    rows = mf.d01_rows(["XLK"], SESSION, days=30)
+    rows = mf.bar_rows(["XLK"], SESSION, days=30)
     assert len(rows) == 30 and rows[-1]["date"] == SESSION.isoformat()
     assert all(r["close"] != 1.0 for r in rows)
 
 
 def test_nothing_stored_is_an_empty_partial_result(d01):
-    res = mf.compute_money_flow(_NoUW(), days=30, window=21, top_n=10)
+    res = mf.compute_money_flow(days=30, window=21, top_n=10)
     assert res["inflows"] == [] and res["outflows"] == [] and res["as_of"] is None
     assert res["partial"] is True and res["missing"] == QUERIED
 

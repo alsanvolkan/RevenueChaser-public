@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from RevenueChaser.module_comovement import cluster, noise
+from RevenueChaser.module_comovement import returns
 
 
 def _noise_returns(n=120, t=250, seed=0):
@@ -119,3 +120,105 @@ def test_factors_above_noise_none_when_too_few_rows_or_columns_remain():
     assert noise.factors_above_noise(ret.iloc[:2]) is None          # 2 rows
     assert noise.factors_above_noise(ret.iloc[:, :2]) is None       # 2 columns
     assert noise.factors_above_noise(None) is None
+
+
+# ── h > 1: overlapping returns (Fable review of Co-movement, 28 Oct 2026, S1) ─
+# Overlapping h-session returns are serially correlated, so a pair's sample r spreads about sqrt(1 + (h-1)(2h-1)/3h)
+# times wider than at 1 day. Shuffling those returns row by row broke the overlap: the null was 1-day tight, and on
+# pure noise every 10-day group "passed"; the Marchenko-Pastur edge read 250 overlapping rows as 250 independent ones.
+def _noise_prices(n=120, t=250, h=10, seed=0, factor=0.0):
+    rng = np.random.default_rng(seed)
+    d = rng.normal(0, 0.01, size=(t + h, n)) + factor * rng.normal(0, 0.01, size=(t + h, 1))
+    idx = pd.date_range("2025-01-01", periods=t + h, freq="B")
+    return pd.DataFrame(100 * np.exp(d.cumsum(axis=0)), index=idx, columns=[f"N{i:03d}" for i in range(n)])
+
+
+def _overlapping(prices, h, winsor=True):
+    ret, _ = returns.log_returns(prices, window=len(prices) - h, min_obs=10, horizon=h)
+    return returns.winsorize_mad(ret, 5.0) if winsor else ret
+
+
+def _passed_share(real, null, cuts):
+    _Z, _labels, corr, groups = _cluster_fn(real, cuts)
+    judged = passed = 0
+    for per in groups.values():
+        for mem in per.values():
+            base, r = noise.baseline_for(null, len(mem)), cluster.mean_intra_corr(corr, mem)
+            if base is not None and r is not None:
+                judged += 1
+                passed += r > base
+    return passed / judged
+
+
+def test_at_ten_day_returns_noise_groups_mostly_fail_the_null():
+    prices, cuts = _noise_prices(seed=4), (4, 12)
+    real = _overlapping(prices, 10)
+    row_shuffle = noise.selected_group_null(real, cuts, _cluster_fn, n_perm=5)
+    assert _passed_share(real, row_shuffle, cuts) > 0.5          # the old null, kept visible
+    daily = np.log(prices / prices.shift(1)).iloc[1:]
+    null = noise.selected_group_null(real, cuts, _cluster_fn, n_perm=5, horizon=10, daily=daily, winsor_k=5.0)
+    assert _passed_share(real, null, cuts) <= 0.15
+
+
+def test_at_one_day_the_null_is_unchanged():
+    ret = _noise_returns(seed=1)
+    daily = pd.DataFrame(np.zeros((len(ret), ret.shape[1])), columns=ret.columns)
+    assert noise.selected_group_null(ret, (4, 12), _cluster_fn, n_perm=2, horizon=1, daily=daily, winsor_k=5.0) \
+        == noise.selected_group_null(ret, (4, 12), _cluster_fn, n_perm=2)
+
+
+def test_without_the_daily_returns_a_longer_horizon_is_not_judged():
+    real = _overlapping(_noise_prices(seed=4), 10)
+    assert noise.selected_group_null(real, (4, 12), _cluster_fn, horizon=10) == {}
+    short = np.zeros((len(real), real.shape[1]))                  # not ``horizon - 1`` rows more than ``ret``
+    assert noise.selected_group_null(real, (4, 12), _cluster_fn, horizon=10, daily=pd.DataFrame(short)) == {}
+
+
+def test_at_ten_day_returns_pure_noise_shows_no_common_move():
+    ret = _overlapping(_noise_prices(n=200, seed=5), 10, winsor=False)
+    assert noise.factors_above_noise(ret) >= 5                    # read as 250 independent rows
+    assert noise.factors_above_noise(ret, horizon=10) == 0
+
+
+def test_at_five_day_returns_a_real_common_move_still_counts():
+    ret = _overlapping(_noise_prices(n=200, h=5, seed=6, factor=2.0), 5, winsor=False)
+    assert noise.factors_above_noise(ret, horizon=5) == 1
+
+
+def test_a_fetch_at_five_days_gives_the_null_the_daily_returns_under_its_matrix(rawstore_tmp_db, monkeypatch):
+    from RevenueChaser.module_comovement import engine
+    from RevenueChaser.module_comovement.tests.test_settings import _market_run
+
+    seen = {}
+    real_null, real_factors = noise.selected_group_null, noise.factors_above_noise
+
+    def null_spy(ret, cuts, fn, **kw):
+        seen.update(kw, rows=len(ret), cols=list(ret.columns))
+        return real_null(ret, cuts, fn, **kw)
+
+    def factors_spy(ret, horizon=1):
+        seen["factors_horizon"] = horizon
+        return real_factors(ret, horizon=horizon)
+
+    monkeypatch.setattr(engine.noise, "selected_group_null", null_spy)
+    monkeypatch.setattr(engine.noise, "factors_above_noise", factors_spy)
+    _t, kw = _market_run(persist=True)
+    p = engine.run(horizon=5, **kw)
+    assert seen["horizon"] == 5 and seen["factors_horizon"] == 5 and seen["winsor_k"] == 5.0
+    assert seen["daily"].shape == (seen["rows"] + 4, len(seen["cols"]))
+    assert list(seen["daily"].columns) == seen["cols"]
+    assert any(c["baseline_r"] is not None for items in p["clusters"].values() for c in items)
+
+
+def test_the_null_mean_skips_unmeasured_pairs_as_the_real_mean_does():
+    """Fable review of Co-movement (28 Oct 2026), N1: a pair with too little overlap has no r. A real group's
+    mean drops it (``cluster.mean_intra_corr``); the null counted it as r = 0, so it read lower than a real group of
+    the same names would, and the bar it set was too easy."""
+    names = ["A", "B", "C"]
+    corr = pd.DataFrame([[1.0, 0.6, 0.6], [0.6, 1.0, np.nan], [0.6, np.nan, 1.0]], index=names, columns=names)
+
+    def fn(ret, cuts):
+        return None, names, corr, {3: {1: names}}
+
+    null = noise.selected_group_null(_noise_returns(n=3), (3,), fn, n_perm=1)
+    assert null[3] == pytest.approx(cluster.mean_intra_corr(corr, names)) == pytest.approx(0.6)

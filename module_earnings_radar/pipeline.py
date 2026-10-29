@@ -208,11 +208,13 @@ class EarningsPipeline:
             "calendar": {"stored": 0, "live": 0, "session": None},
             "short_interest": {"stored": 0, "live": 0, "session": None},
             "dgs10": "none",
+            "dgs10_note": None,
             "rate_events": "none",
             "ohlc": {"stored": 0, "live": 0},
             "estimates": {"stored": 0, "missing": 0},
             # Which set each scored card's options inputs came from (G9): the list, the earnings set, or none.
             "options": {"list": 0, "earnings": 0, "none": 0},
+            "estimates_note": None,
         }
 
     @property
@@ -248,14 +250,19 @@ class EarningsPipeline:
         return self._shorts_cache
 
     def _warm_dgs10(self) -> dict[str, float]:
-        """R6's 10-year: the stored FRED DGS10 of ``market_series`` (``store_reads.dgs10_map``, G9), read once per run.
+        """The 10-year yield observations R6 pairs its reaction returns with, read once per run from the market store
+        (``store_reads.dgs10_map``, the need ``macro.dgs10``).
 
-        No FRED call: a series the store does not hold, or one too old, leaves an empty map and R6 has no beta. Tests
-        that pre-set ``_dgs10_cache`` skip the store.
+        No provider call: the market build fetches the series, and a run never asks FRED itself. A store that holds
+        no fresh series leaves an empty map — R6 stays unavailable and the run continues, with the reader's own note
+        in ``input_sources``. Tests that pre-set ``_dgs10_cache`` skip the store.
         """
-        if self._dgs10_cache is None:
-            self._dgs10_cache = store_reads.dgs10_map()
-            self.input_sources["dgs10"] = "stored" if self._dgs10_cache else "none"
+        if self._dgs10_cache is not None:
+            return self._dgs10_cache
+        rows, note = store_reads.dgs10_map()
+        self._dgs10_cache = rows
+        self.input_sources["dgs10"] = "stored" if rows else "none"
+        self.input_sources["dgs10_note"] = note.get("label")
         return self._dgs10_cache
 
     def _leaps_context(self) -> dict:
@@ -308,16 +315,18 @@ class EarningsPipeline:
         return report_date in (today, calendar.previous_trading_day(today - timedelta(days=1)))
 
     def _warm_estimates(self) -> dict[str, dict]:
-        """The stored ``estimate_snapshots`` ``0q`` rows for the run's tickers (E6, #372, D14).
+        """The current-quarter estimates for the run's tickers, from the fundamentals store
+        (``store_reads.estimates``, the need ``fundamentals.estimates``).
 
-        Only a read: the nightly sweep owns the table. R1 is logged only (weight 0), so a missing snapshot is never
-        a reason to call a provider — it just leaves R1 unavailable on that card.
+        Only a read, and no provider call: the fundamentals build fetches the estimates. R1 is logged only
+        (weight 0), so a name the store has no row for just leaves R1 unavailable on that card.
         """
         if self._estimates is None:
-            rows, _session = stored_inputs.estimates(self.tickers)
+            rows, note = store_reads.estimates(self.tickers)
             self._estimates = rows
-            named = {str(t).upper() for t in self.tickers if t}
+            named = {str(t).strip().upper() for t in self.tickers if t}
             self.input_sources["estimates"] = {"stored": len(rows), "missing": len(named - set(rows))}
+            self.input_sources["estimates_note"] = note.get("label")
         return self._estimates
 
     def _gex_profile(self, rows: list, spot, em_pct: float | None, capture: dict | None = None) -> dict:

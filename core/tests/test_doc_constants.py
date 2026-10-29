@@ -27,7 +27,8 @@ _ENV_EXTRAS = ("RC_SEC_USER_AGENT",
                "RC_IBKR_LOGIN_CHECK", "RC_IBKR_HOST", "RC_IBKR_PORT",           # #162
                "RC_SCHEDULER",                                                  # #158
                "RC_HTTP_CONTACT",                                               # #206, the builder's User-Agent
-               "WRDS_USERNAME", "RC_UNIVERSE_SOURCE", "RC_WRDS_PYTHON")         # PR 5, the spine
+               "WRDS_USERNAME", "RC_UNIVERSE_SOURCE", "RC_WRDS_PYTHON",         # PR 5, the spine
+               "RC_UW_PRELIMINARY")                                             # PR 12, the fundamentals
 
 
 def _env_example_lines() -> list[str]:
@@ -316,6 +317,39 @@ def test_the_spine_section_states_what_the_code_owns():
     assert f"`{universe.SOURCE_ENV}={universe.STORE}`" in section            # PR 6: the old store, the rollback
 
 
+def test_the_prices_section_states_what_the_code_owns():
+    """PR 7 (G2): the prices store's datasets, tables, views, issue kinds and the numbers its rules use."""
+    from RevenueChaser.module_settings import newdata
+    from RevenueChaser.rcdata import caps, read
+    from RevenueChaser.rcdata.build import DATASETS
+    from RevenueChaser.rcdata.build.prices import KIND, actions, bars, floats, serving, wrds_history
+    text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
+    section = text[text.index("### The prices store (`prices.duckdb` in `RC_MARKET_DIR`, PR 7)"):text.index("## Migration")]
+    for name, ds in DATASETS.items():
+        if ds.kind == KIND:
+            assert f"| `{name}` |" in section, name
+    for table in serving.TABLES:
+        assert f"| `{table}` |" in section, table
+    for view in ("price_bars_daily", "price_actions", "index_levels_daily"):
+        assert f"`{view}`" in section, view
+    for kind in serving.ISSUE_KINDS:
+        assert f"`{kind}`" in section, kind
+    assert f"the last {bars.WINDOW} complete sessions" in section and f"{bars.CHUNK} symbols a request" in section
+    assert f"from {actions.LOOKBACK.days} days back to {actions.AHEAD.days} days ahead" in section
+    assert f"{floats.SLICE} Tier A names a run, {floats.INTERVAL_S} s apart" in section
+    assert f"{serving.GAP_FACTOR} times" in section and f"at most {serving.CLOSE_BEFORE_DAYS} days" in section
+    assert f"over {serving.FLOAT_OVER} times" in section and f"{serving.FLOAT_DISAGREE:.0%} apart" in section
+    assert f"`comp.secd` from {wrds_history.START_YEAR}" in section
+    assert f"`crsp.dsf_v2` per year to {wrds_history.CRSP_LAST_YEAR}" in section
+    assert f"({caps.DAY_CAPS['wrds']} queries" in section
+    words = {1: "one", 2: "two", 3: "three"}
+    assert f"the last {words[wrds_history.REFRESH_YEARS]} years again" in " ".join(section.split())
+    assert f"{newdata.COVERAGE_TARGET['alpaca/bars']:.0%}" in section
+    assert f"at most {read.LATEST_WITHIN_DAYS} days before the store's newest session" in " ".join(section.split())
+    assert f"each at its newest cap at most {serving.ISSUER_WITHIN_DAYS} days old" in section
+    assert f"`sharesOutstanding` more than {serving.SHARES_DISAGREE:.0%} apart" in " ".join(section.split())
+
+
 def test_the_ownership_section_states_what_the_code_owns():
     """PR 16: the ownership store's datasets, served tables, views and build issue kinds, as the code has them."""
     from RevenueChaser.rcdata.build import DATASETS
@@ -332,6 +366,38 @@ def test_the_ownership_section_states_what_the_code_owns():
     for kind in serve.ISSUE_KINDS:
         assert f"`{kind}`" in section, kind
     assert f"`coverage_ex_etf` below {serve.COVERAGE_BAR * 100:.1f}%" in " ".join(section.split())
+
+
+def test_the_fundamentals_section_states_what_the_code_owns():
+    """PR 12: the fundamentals layer's datasets and cadences, served tables, views, issue kinds, flag, attended
+    command and read API, as the code has them."""
+    from RevenueChaser.module_settings import newdata
+    from RevenueChaser.rcdata.build import DATASETS
+    from RevenueChaser.rcdata.build.fundamentals import KIND, tables, uw_financials
+    text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
+    section = text[text.index("### Fundamentals (`fundamentals.duckdb`, PR 12)"):text.index("## Migration")]
+    for name, ds in DATASETS.items():
+        if ds.kind == KIND:
+            cadence = ds.cadence + (", attended" if getattr(ds, "attended", False) else "")
+            assert f"| `{name}` | {cadence} |" in section, name
+    for table in tables.TABLES:
+        assert f"| `{table}` |" in section, table
+    for view in tables.VIEWS:
+        assert f"`{view}`" in section, view
+    for kind in tables.ISSUE_KINDS:
+        assert f"`{kind}`" in section, kind
+    assert f"`{uw_financials.FLAG}=1`" in section
+    assert f"`{newdata.attended_command(KIND)}`" in section.replace("\n", " ")
+    for fn in ("statements", "earnings_events", "estimates", "filing_text", "segments", "customers", "peers",
+               "revisions", "statements_many", "fundamental_companies", "filing_items", "filing_texts",
+               "customer_shares"):
+        assert f"`rcdata.read.{fn}(" in section, fn
+    # G6: the boards' switch, and the rollback value.
+    from RevenueChaser.core import fundamentals_layer
+    assert f"`{fundamentals_layer.SOURCE_ENV}={fundamentals_layer.STORE}`" in section
+    health = (_REPO / "docs" / "data_health.md").read_text(encoding="utf-8")
+    for name in newdata.WRDS_DIFFERENCE:
+        assert f"`{name}`" in health, name
 
 
 def test_the_options_section_states_what_the_code_owns():
@@ -351,7 +417,7 @@ def test_the_options_section_states_what_the_code_owns():
     assert f"after {uw.RUN_BUDGET_S // 60} minutes" in flat and f"next {uw_screener.DAYS_AHEAD} days" in flat
     assert f"`option-contracts` ({uw.PAGE_LIMIT} a page)" in flat
     assert f"{uw_screener.SCREENER_BATCH} names a call" in flat and f"{uw_screener.CALENDAR_LIMIT} a page" in flat
-    assert f"{ibkr_iv.PER_MINUTE} requests a minute" in flat
+    assert f"{ibkr_iv.PER_MINUTE} requests a minute" in flat and f"at most {ibkr_iv.DAY_CALLS:,} a day" in flat
     assert (f"A list name is {options.LIST_CALLS} calls plus {options.EXPIRY_CALLS} per expiry" in flat
             and f"an earnings-set name {options.EARNINGS_CALLS}" in flat)
     for n, words in ((0, "with SPX alone"), (100, "with 100 list names"), (500, "with 500")):

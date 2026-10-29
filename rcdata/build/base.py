@@ -170,11 +170,13 @@ class RunContext:
 
 
 def http_get(ctx: RunContext, provider: str, url: str, params: dict | None = None,
-             headers: dict | None = None, accept: tuple[int, ...] = ()) -> httpx.Response:
+             headers: dict | None = None, keyed: bool = False, accept: tuple[int, ...] = ()) -> httpx.Response:
     """GET with the keyless retry ladder; every attempt is counted for ``provider``. Raises ``SourceError``.
 
-    ``params`` may hold a key (FRED): neither the query nor the headers are ever logged. A status in ``accept`` is
-    answered as it is, neither retried nor raised: a source whose 404 means "not published yet" reads it itself.
+    ``params`` may hold a key (FRED): neither the query nor the headers are ever logged. ``keyed``: the request
+    carries the provider's key (Alpaca's headers), so a 403 points at the key, not at ``RC_HTTP_CONTACT``. A status in
+    ``accept`` is answered as it is, neither retried nor raised: a source whose 404 means "not published yet" reads it
+    itself.
     """
     last = ""
     for attempt in range(1, HTTP_ATTEMPTS + 1):
@@ -190,7 +192,9 @@ def http_get(ctx: RunContext, provider: str, url: str, params: dict | None = Non
             if r.status_code < 400 or r.status_code in accept:
                 return r
             last = f"HTTP {r.status_code}"
-            if r.status_code == 403:
+            if r.status_code == 403 and keyed:
+                last += " (refused: check the key and what it is allowed to read)"
+            elif r.status_code == 403:
                 last += (f" (refused: set {CONTACT_ENV} to a contact for the User-Agent)"
                          if not (os.getenv(CONTACT_ENV) or "").strip() else " (refused although a contact is set)")
             if not (r.status_code == 429 or r.status_code >= 500):
@@ -468,6 +472,17 @@ def kind_datasets(kind: str) -> list[Dataset]:
     return [d for d in DATASETS.values() if d.kind == kind]
 
 
+def shrink_scope(ds: Dataset) -> tuple[str, ...]:
+    """The tables a request's ``allow_shrink`` may let shrink (review S-1 of #220): the dataset's own tables and the
+    tables the kind derives from its sources (a dataset with no provider: ``ownership/serve``, ``prices/serving``,
+    ``spine/security``, ``fundamentals/tables``), never another source dataset's own table. A feeder that serves no
+    table itself (a spine or fundamentals source) relaxes only the derived tables.
+    shortcut: every derived table of the kind is relaxed, not only those the asking source's rows reach; upgrade when
+    the datasets declare which tables each source feeds."""
+    derived = [t for d in kind_datasets(ds.kind) if not tuple(d.providers) for t in d.tables]
+    return tuple(dict.fromkeys([*ds.tables, *derived]))
+
+
 def build_kind(ctx: RunContext, ds: Dataset) -> dict:
     """Build ``ds``'s serving kind from Parquet (every dataset of the kind), check it, swap it in; the check row."""
     if not parquet_root().is_dir():
@@ -477,7 +492,7 @@ def build_kind(ctx: RunContext, ds: Dataset) -> dict:
         for d in kind_datasets(ds.kind):
             counts.update(d.build(ctx, b.con))
         check = ds.check(ctx, b.con)
-        b.swap(counts, checks=[check], allow_shrink=ctx.allow_shrink)
+        b.swap(counts, checks=[check], allow_shrink=shrink_scope(ds) if ctx.allow_shrink else ())
     for d in kind_datasets(ds.kind):
         step = getattr(d, "after_swap", None)
         if step is not None:

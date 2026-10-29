@@ -25,21 +25,32 @@ from RevenueChaser.module_financials.engines import credit_capacity_engine as cr
 
 BOARD, TABLE = "module_financials", "financials_report_history"
 # Bump when a model changes in a way the config hash does not see (a formula, not a default).
-SELECTION_VERSION = "2"
+# 3: the Financials review's fixes (build plan PR 12): the risk-free rate is the stored 10-year yield when fresh
+# (S2); a historical FCFF with an unknown ΔNWC is unknown, not ΔNWC = 0 (N1).
+# 4: on the fundamentals layer the models read the SEC's annual statements, not Yahoo's (G6, build plan PR 15);
+#    the risk-free rate is market_series DGS10.
+SELECTION_VERSION = "4"
 
 
 def effective_config() -> dict:
     """The defaults every model falls back to when the caller passes no assumptions (the dashboard passes none),
     plus the credit thresholds, the tax band and the sensitivity axes, which shape the stored numbers too."""
     return {
-        "RISK_FREE_RATE": config.RISK_FREE_RATE, "EQUITY_RISK_PREMIUM": config.EQUITY_RISK_PREMIUM,
+        "RISK_FREE_RATE": config.RISK_FREE_RATE, "RISK_FREE_MAX_AGE_DAYS": config.RISK_FREE_MAX_AGE_DAYS,
+        "EQUITY_RISK_PREMIUM": config.EQUITY_RISK_PREMIUM,
         "DEFAULT_BETA": config.DEFAULT_BETA, "DEFAULT_TAX_RATE": config.DEFAULT_TAX_RATE,
         "DEFAULT_COST_OF_DEBT": config.DEFAULT_COST_OF_DEBT, "TERMINAL_GROWTH": config.TERMINAL_GROWTH,
         "DEFAULT_EXIT_MULTIPLE": config.DEFAULT_EXIT_MULTIPLE, "PROJECTION_YEARS": config.PROJECTION_YEARS,
         "DEFAULT_REVENUE_GROWTH": list(config.DEFAULT_REVENUE_GROWTH),
         "DEFAULT_EBITDA_MARGIN": config.DEFAULT_EBITDA_MARGIN, "DEFAULT_CAPEX_PCT_REV": config.DEFAULT_CAPEX_PCT_REV,
         "DEFAULT_DNWC_PCT_REV": config.DEFAULT_DNWC_PCT_REV, "PEER_K": config.PEER_K,
-        "SECTOR_DEFAULTS": config.load_sector_defaults(),
+        "DEFAULT_DSO": config.DEFAULT_DSO, "DEFAULT_DIO": config.DEFAULT_DIO, "DEFAULT_DPO": config.DEFAULT_DPO,
+        "DEFAULT_DEBT_WEIGHT": config.DEFAULT_DEBT_WEIGHT,
+        # Only the part of the sector bands a model reads: a band's tax_rate (``_inputs.default_tax_rate``). The
+        # wacc / growth / margin / exit-multiple ranges are read by no engine (#49), so editing them must not start
+        # a new model version (Financials review N7).
+        "SECTOR_TAX_RATES": {sector: band["tax_rate"] for sector, band in config.load_sector_defaults().items()
+                             if isinstance(band, dict) and "tax_rate" in band},
         "MEASURED_TAX_RATE_BAND": list(_inputs.MEASURED_TAX_RATE_BAND),
         "DEBT_EBITDA_SAFE": credit.DEBT_EBITDA_SAFE, "DEBT_EBITDA_STRESSED": credit.DEBT_EBITDA_STRESSED,
         "INTEREST_COVERAGE_SAFE": credit.INTEREST_COVERAGE_SAFE,
@@ -94,26 +105,33 @@ def record(results: dict, *, ticker: str, run_id: str, run_at: float, modules, r
         context={"ticker": ticker, "sector": rows[0]["sector"] if rows else None}, partial=note)
 
 
-def _ny_date(moment: datetime) -> date:
-    """The New York calendar date of ``moment``; a naive one is taken as it reads (it carries no zone to move)."""
-    return (moment if moment.tzinfo is None else moment.astimezone(market_calendar.NY)).date()
+def _session_day(value) -> date:
+    """The New York session ``value`` (an ISO text or an aware datetime) belongs to: ``core/calendar`` rule B, a
+    naive time read as New York time. Outside the holiday table, the New York calendar date."""
+    try:
+        return market_calendar.to_session_date(value)
+    except ValueError:
+        moment = datetime.fromisoformat(value) if isinstance(value, str) else value
+        return (moment if moment.tzinfo is None else moment.astimezone(market_calendar.NY)).date()
 
 
 def _as_of(data_fetched_at, run_at) -> str | None:
-    """The date the run's data was fetched: the payload's stamp, else the run's own moment — read in New York.
+    """The session the run's data was fetched in: the payload's stamp, else the run's own moment.
 
     Both are instants, and a run after 20:00 ET is already the NEXT day in UTC: read as UTC, a Tuesday-evening
     Fetch was labelled Wednesday, the following calendar day (a day the market may not even have traded). The
-    board's "as of" is the market's own day, so the instant is read in ``America/New_York``, through the zone
-    ``core/calendar`` owns (never a fixed offset: the US and EU change on different weekends).
+    board's "as of" is the market's own day, so the instant is read in ``America/New_York`` through ``core/calendar``
+    (never a fixed offset: the US and EU change on different weekends), as the New York session it belongs to — a
+    fetch before the open or on a weekend is the last close's. The header's "Last sync" names the same session
+    (Financials review S4).
     """
     text = str(data_fetched_at or "").strip()
     if len(text) >= 10:
         try:
-            return _ny_date(datetime.fromisoformat(text)).isoformat()
+            return _session_day(text).isoformat()
         except ValueError:
             pass
-    return _ny_date(datetime.fromtimestamp(float(run_at), timezone.utc)).isoformat() if run_at else None
+    return _session_day(datetime.fromtimestamp(float(run_at), timezone.utc)).isoformat() if run_at else None
 
 
 def has_comps(report: dict | None) -> bool:
@@ -126,9 +144,32 @@ def has_comps(report: dict | None) -> bool:
     return isinstance(comps, dict) and bool(comps) and not comps.get("error")
 
 
+def last_quick_remarks(ticker: str) -> dict | None:
+    """The Quick Remarks the newest recorded Fetch of ``ticker`` scored, dated, or ``None`` when none did.
+
+    A Refresh fetches nothing, so without this it showed an empty card although the last Fetch had scored the name
+    (Financials review S5). A newer run that scored nothing does not hide an older score. The remarks keep their own
+    ``as_of`` when they carry one; an older row without it is dated by its run (:func:`_as_of`). Read-only, bounded
+    like :func:`last_report`.
+    """
+    rows = rawstore.query(
+        "SELECT h.quick_remarks, h.data_fetched_at, r.run_at "
+        f"FROM {TABLE} h JOIN result_runs r ON r.board = ? AND r.run_id = h.run_id "
+        "WHERE h.ticker = ? ORDER BY r.run_at DESC, h.run_id DESC LIMIT 20",
+        [BOARD, (ticker or "").strip().upper()], db="history")
+    for row in rows:
+        remarks = rawstore._decode_row(TABLE, row).get("quick_remarks")
+        if isinstance(remarks, dict) and remarks.get("score") is not None:
+            return {**remarks, "as_of": remarks.get("as_of") or _as_of(row.get("data_fetched_at"), row.get("run_at")),
+                    "as_of_note": "the last stored Fetch"}
+    return None
+
+
 def last_report(ticker: str) -> dict | None:
     """The newest recorded Fetch's report for ``ticker`` that has comps, decoded: ``modules`` (comps included),
-    ``warnings``, ``quick_remarks``, ``sector``, ``run_id`` and ``as_of`` (the date its data was fetched).
+    ``warnings``, ``quick_remarks``, ``sector``, ``run_id`` and ``as_of``: the session of the run, when the comps'
+    peers were fetched. The target's payload can be older (the Fetch reads it through the cache), but every peer's
+    ``.info`` is fetched live by the run, so its multiples are the run's (Financials review N6).
 
     A run whose comps step errored must not hide the comps an older run did compute (FIN-4, #385), so the rows are
     walked newest first and the first with usable comps wins (:func:`has_comps`); when no stored run has any, the
@@ -160,5 +201,5 @@ def last_report(ticker: str) -> dict | None:
             report = decoded
             break
     report = report or newest
-    report["as_of"] = _as_of(report.get("data_fetched_at"), report.get("run_at"))
+    report["as_of"] = _as_of(None, report.get("run_at"))
     return report

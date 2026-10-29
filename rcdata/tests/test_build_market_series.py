@@ -1,6 +1,7 @@
 """``market_series``: each source parses its fixture to the key shape; the whole dataset builds and serves."""
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timezone
 
 import pytest
@@ -8,7 +9,7 @@ import pytest
 from RevenueChaser.core import calendar
 from RevenueChaser.rcdata import ops, read, serving
 from RevenueChaser.rcdata.build import base, market_series as ms
-from RevenueChaser.rcdata.build.sources import bls, cboe, cftc, fed, fred, treasury
+from RevenueChaser.rcdata.build.sources import bls, cboe, cftc, fed, fred, treasury, yahoo
 
 
 def _keys(rows):
@@ -83,6 +84,9 @@ def sources(http_mock, fixture_text, monkeypatch):
     monkeypatch.setattr(cftc, "DISAGG_BASE", "https://cftc.test/resource/72hh-3qpy.json")
     monkeypatch.setattr(fed, "BASE", "https://fed.test")
     monkeypatch.setattr(bls, "BASE", "https://bls.test")
+    history = json.loads(fixture_text("yahoo_history_MOVE.json"))["bars"]
+    http_mock.yahoo = []                                    # the symbols yfinance was asked for (no HTTP seam)
+    monkeypatch.setattr(yahoo, "_history", lambda symbol: http_mock.yahoo.append(symbol) or history)
     monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 27, 22, 0, tzinfo=timezone.utc))
     http_mock.add("treasury.test", fixture_text("treasury_2026.csv"))
     http_mock.add("cboe.test/daily/VVIX", fixture_text("VVIX_History.csv"))
@@ -103,11 +107,13 @@ def test_a_daily_run_builds_every_source_and_a_second_run_makes_no_call(sources)
     row = _run()
     assert row["result"] == "changed", row
     first_calls = len(sources.requests)
-    # 1 Treasury year + 8 Cboe + 13 FRED + 2 CFTC reports + 1 FOMC + 1 BLS
-    assert first_calls == row["calls"] == 1 + len(cboe.SYMBOLS) + len(fred.SERIES) + 2 + 1 + 1
+    # 1 Treasury year + 8 Cboe + 13 FRED + 2 CFTC reports + 1 FOMC + 1 BLS over HTTP, and 2 yfinance reads
+    assert first_calls == 1 + len(cboe.SYMBOLS) + len(fred.SERIES) + 2 + 1 + 1
+    assert row["calls"] == first_calls + len(yahoo.SYMBOLS) and len(sources.yahoo) == len(yahoo.SYMBOLS)
     assert row["coverage"] == 1.0 and row["added"] == row["rows"] and row["removed"] == 0
     second = _run()
     assert len(sources.requests) == first_calls, "a second run the same day must not call any source"
+    assert len(sources.yahoo) == len(yahoo.SYMBOLS)
     assert second["result"] == "unchanged" and second["calls"] == 0 and second["rows"] == row["rows"]
 
 
@@ -254,3 +260,65 @@ def test_g4_spx_and_ovx_are_one_column_files_like_vvix():
     for sym in ("SPX", "OVX"):
         rows = cboe.parse(f"DATE,{sym}\n10/27/2026,6812.34\n", {"symbol": sym})
         assert [(r["series_id"], r["value"], r["close"]) for r in rows] == [(sym, 6812.34, None)]
+
+
+# ── PR 9 (G3): MOVE and wheat for the Sector Rotation map, from Yahoo through yfinance ──
+
+def test_yahoo_base_set_after_import_still_keeps_yfinance_out(monkeypatch):
+    """Review S2 (PR 270): ``RC_YAHOO_BASE`` is read when ``_history`` runs, not at import, so a test that sets it
+    later is not silently sent to the real Yahoo."""
+    import sys
+    import types
+
+    import httpx
+    asked = []
+
+    class _Answer:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"symbol": "^MOVE", "bars": [["2026-10-27", 1.0, 1.0, 1.0, 1.0]]}
+
+    monkeypatch.setenv("RC_YAHOO_BASE", "http://127.0.0.1:9/yahoo")
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: asked.append(url) or _Answer())
+    monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(
+        Ticker=lambda *a, **k: pytest.fail("yfinance was asked with RC_YAHOO_BASE set")))
+    assert yahoo._history("^MOVE") == [["2026-10-27", 1.0, 1.0, 1.0, 1.0]]
+    assert asked == ["http://127.0.0.1:9/yahoo/%5EMOVE.json"]
+
+
+def test_yahoo_parses_daily_closes_by_the_exchange_day(fixture_text):
+    fetched = datetime(2026, 10, 28, 1, 0, tzinfo=timezone.utc).timestamp()       # 27 Oct 21:00 in New York
+    rows = yahoo.parse(fixture_text("yahoo_history_MOVE.json"), {"series": "MOVE", "fetched_at": fetched})
+    assert [(r["obs_date"], r["value"]) for r in rows] == [
+        (date(2026, 10, 22), 91.0), (date(2026, 10, 23), 92.0), (date(2026, 10, 27), 94.0)]   # null close skipped
+    assert rows[-1] == {"series_id": "MOVE", "obs_date": date(2026, 10, 27), "value": 94.0, "open": 93.0,
+                        "high": 95.0, "low": 92.0, "close": 94.0, "frequency": "daily"}
+
+
+def test_yahoo_skips_the_bar_of_a_day_whose_session_is_not_over(fixture_text):
+    fetched = datetime(2026, 10, 27, 18, 0, tzinfo=timezone.utc).timestamp()      # 27 Oct 14:00 in New York
+    rows = yahoo.parse(fixture_text("yahoo_history_MOVE.json"), {"series": "WHEATF", "fetched_at": fetched})
+    assert [r["obs_date"] for r in rows] == [date(2026, 10, 22), date(2026, 10, 23)]
+    assert {r["series_id"] for r in rows} == {"WHEATF"}
+
+
+def test_yahoo_is_counted_under_yfinance_and_served_by_series(sources):
+    """Yahoo's chart endpoint refuses the builder's User-Agent and answers ``range=max`` monthly (measured
+    29 Oct 2026), so the series come through the yfinance library, counted under its provider and day cap."""
+    _run()
+    assert sources.yahoo == list(yahoo.SYMBOLS.values())
+    assert "yfinance" in ms.DATASET.providers and "yahoo" not in ms.DATASET.providers
+    assert ops.calls_today("yfinance") == len(yahoo.SYMBOLS)
+    rows = {r["series_id"]: r for r in read.market_series(["MOVE", "WHEATF"]) if r["obs_date"] == date(2026, 10, 27)}
+    assert rows["MOVE"]["source"] == rows["WHEATF"]["source"] == "yahoo" and rows["MOVE"]["value"] == 94.0
+
+
+def test_yahoo_down_is_an_issue_and_the_other_sources_still_build(sources, monkeypatch):
+    def refused(symbol):
+        raise RuntimeError("Too Many Requests")
+    monkeypatch.setattr(yahoo, "_history", refused)
+    row = _run()
+    assert row["result"] == "changed" and "yahoo" in (row["note"] or "")
+    assert not read.market_series(["MOVE"]) and read.market_series(["VIX"])

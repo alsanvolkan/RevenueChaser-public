@@ -29,6 +29,27 @@ funnel steps carry ``fix`` = null instead of "Fetch prices". Compared key by key
 Data Health S11 (#80, #124) regenerated it once more: every payload gains the additive ``provider_health`` key for
 the provider-health banner. Compared with the old golden with ``provider_health`` removed: no key differed (floats
 within the 1e-9 tolerance). Then ``json.dumps(payloads())`` was written.
+
+The Fable review of 28 Oct 2026, S3 (the held-out quarter read on winsorised residuals) regenerated it once more.
+Compared key by key with the old golden: the four ``config_hash`` values (the hash now carries ``config.METHOD``)
+and, in the persisted case only, three ``oos_r`` and two ``oos_base`` values moved (by under 2e-4); no ``held``
+verdict, member, label or other number changed. Then ``json.dumps(payloads())`` was written.
+
+S1 of the same review (h > 1: the null from shuffled daily returns summed over h sessions, the factor count on every
+h-th row) regenerated it again. Compared key by key: only ``w252_h5``'s ``n_factors`` moved, 10 -> 6 (the fixture
+has eight blocks; 125-odd overlapping rows read as independent had counted more than there are). The 5-day case is
+store-only, so its null is the stored one and no verdict moved. Then ``json.dumps(payloads())`` was written.
+
+S2 (a window needs at most 95 % of its sessions) regenerated it again. Compared key by key: only ``w126_h1`` moved,
+its ``min_obs`` 126 -> 119 (in ``settings``, ``funnel`` and the "Missing price bars" label) and so its
+``config_hash``; the fixture's two gappy names miss more than 7 sessions and stay dropped, and no cluster changed.
+Then ``json.dumps(payloads())`` was written.
+
+PR 8 (G3) regenerated it again: the market is seeded in the prices store (``prices_bars.write_bars`` now writes
+``prices.duckdb``) and read through ``rcdata.read.ticker_bars(basis="total_return")``, and ``config.METHOD`` is 3.
+Compared key by key: in each of the four payloads only the ``config_hash`` (the method), the three ``source`` texts
+and the "Missing price bars" label (a missing session can come back, review S2) moved; no number, member, label or
+verdict changed. Then ``json.dumps(payloads())`` was written.
 """
 from __future__ import annotations
 
@@ -43,7 +64,7 @@ import pandas as pd
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_comovement import engine
 from RevenueChaser.module_comovement import returns as returns_mod
-from RevenueChaser.module_comovement.tests import d01_bars
+from RevenueChaser.module_comovement.tests import prices_bars
 from RevenueChaser.module_comovement.tests.test_settings import _diff
 
 _GOLDEN = Path(__file__).with_name("golden_recompute_parity.json")
@@ -96,7 +117,7 @@ def _seed(ret: pd.DataFrame) -> list[str]:
                 continue
             rows.append({"ticker": t, "ts": ts.isoformat(), "open": p, "high": p,
                          "low": p, "close": float(p), "volume": 1.0, "cached_at": now})
-    d01_bars.write_bars(rows)
+    prices_bars.write_bars(rows)
     return tickers
 
 

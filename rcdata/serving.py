@@ -1,12 +1,11 @@
 """Serving files: built as a new file, checked, then swapped over the live one; read only through ``open_read`` (D1).
 
-One builder process writes. Each kind (``market``; ``spine`` since PR 5; ``ownership`` since PR 16; ``options``
-since G8) is built into ``<kind>.<build_id>.duckdb`` beside the live ``<kind>.duckdb`` under
-``config.MARKET_DIR``; ``BuildFile.swap`` closes
-the writer (after a ``CHECKPOINT``, so no ``.wal`` is left), opens the new file read-only, checks its
-``serving_schema_version`` row and the row count of every expected table, and only then moves it into place. On any
-failure — a check, or an exception inside the ``build()`` block — the new file is deleted and the live file is not
-touched (test T3).
+One builder process writes. Each kind (``market``; ``spine`` since PR 5; ``prices`` since PR 7; ``ownership`` since
+PR 16; ``fundamentals`` since PR 12; ``options`` since PR 18) is built into ``<kind>.<build_id>.duckdb``
+beside the live ``<kind>.duckdb`` under ``config.MARKET_DIR``; ``BuildFile.swap`` closes the writer (after a
+``CHECKPOINT``, so no ``.wal`` is left), opens the new file read-only, checks its ``serving_schema_version`` row and
+the row count of every expected table, and only then moves it into place. On any failure — a check, or an exception inside the
+``build()`` block — the new file is deleted and the live file is not touched (test T3).
 
 The swap never leaves the live name missing: the previous file is first hard-linked to ``<kind>.prev.duckdb``
 (copied where the file system has no hard links), then ``os.replace`` moves the new file over the live name in one
@@ -31,7 +30,15 @@ import duckdb
 from ..core import config
 
 # The serving schema of each kind. A change to a kind's tables bumps its number in its own PR (box rule).
-SERVING_SCHEMA_VERSION = {"market": 1, "spine": 1, "ownership": 1, "options": 1}
+SERVING_SCHEMA_VERSION = {"market": 1, "spine": 1, "ownership": 1}
+
+# PR 7 (G2): ``prices.duckdb``, the daily bars, corporate actions, shares and market cap (``build/prices/``).
+SERVING_SCHEMA_VERSION["prices"] = 1
+# PR 12 (G5): ``fundamentals.duckdb``, the facts, filings, earnings, estimates and checks (``build/fundamentals/``).
+SERVING_SCHEMA_VERSION["fundamentals"] = 1
+# PR 18 (G8): ``options.duckdb``, the option chains, exposures, prints and IV (``build/options/``).
+SERVING_SCHEMA_VERSION["options"] = 1
+
 KINDS = tuple(SERVING_SCHEMA_VERSION)
 VERSION_TABLE = "serving_schema_version"
 # A table may lose at most this share of its live rows in one build without an explicit allow_shrink. The datasets
@@ -106,22 +113,23 @@ class BuildFile:
             self.con = None
 
     def swap(self, expected_counts: dict[str, int], checks: Iterable[dict] = (), *,
-             allow_shrink: bool = False) -> Path:
+             allow_shrink: Iterable[str] = ()) -> Path:
         """Check this build and move it over the live file; :class:`SwapRefused` (file deleted) when a check fails.
 
         ``expected_counts`` maps every table the build must hold to its row count; ``checks`` are the build's
         ``dataset_check`` rows, and one whose result is ``failed`` refuses the swap. Every table of the live file
         must be in the build and may not empty or shrink by more than ``MAX_SHRINK`` (B2: the expected counts come
-        from the build itself, so only the live file can show a build made from a missing Parquet tree), unless
-        ``allow_shrink`` (a request's explicit ``"allow_shrink": true``). A windowed table (``declare_window``) is
-        compared on its rows inside the build's window, in both files.
+        from the build itself, so only the live file can show a build made from a missing Parquet tree). The tables
+        named in ``allow_shrink`` (the asking dataset's own, on a request's explicit ``"allow_shrink": true``) may
+        shrink or empty; every other table keeps the guard (review S-1 of #220: the flag used to switch the check off
+        for the whole file, and another dataset's table could empty under it). A windowed table
+        (``declare_window``) is compared on its rows inside the build's window, in both files.
         """
         self.con.execute("CHECKPOINT")
         self.close()
         try:
             _verify(self.kind, self.path, expected_counts, list(checks))
-            if not allow_shrink:
-                _verify_against_live(self.kind, self.path)
+            _verify_against_live(self.kind, self.path, relax=frozenset(allow_shrink))
         except Exception as e:
             _remove(self.path)
             raise SwapRefused(f"{self.kind} build {self.build_id} refused: {e}") from e
@@ -213,7 +221,8 @@ def _counts(path: Path, windows: dict[str, tuple[str, str]] | None = None) -> di
         con.close()
 
 
-def _verify_against_live(kind: str, path: Path) -> None:
+def _verify_against_live(kind: str, path: Path, relax: frozenset[str] = frozenset()) -> None:
+    """Refuse a build missing a live table, or (outside ``relax``) emptying or shrinking one by over MAX_SHRINK."""
     live = live_path(kind)
     if not live.exists():
         return
@@ -223,6 +232,8 @@ def _verify_against_live(kind: str, path: Path) -> None:
         if table not in new:
             raise ValueError(f"table {table} of the live file is missing from the build")
         after = new[table]
+        if table in relax:
+            continue
         if before > 0 and after == 0:
             raise ValueError(f"{table} empties: {before} rows live, 0 in the build")
         if after < before * (1 - MAX_SHRINK):

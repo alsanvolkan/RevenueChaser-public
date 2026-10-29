@@ -18,7 +18,7 @@ from RevenueChaser.app import runners
 from RevenueChaser.app.jobs import JobMessage
 from RevenueChaser.core import calendar, ledger, rawstore
 from RevenueChaser.module_sector_rotation import engine, history as rot_history, report as rot_report, store, universe
-from RevenueChaser.module_sector_rotation.tests.d01_seed import ny as _at, seed as _seed, sessions as _sessions
+from RevenueChaser.module_sector_rotation.tests.bars_seed import ny as _at, seed as _seed, sessions as _sessions
 
 UNIVERSE = {
     "SPY": {"name": "S&P 500", "group": "benchmark"},
@@ -199,6 +199,27 @@ def test_an_etf_with_too_short_depth_is_a_warning_and_the_run_stays_complete(wor
     assert head["quality"] == "complete", head["quality_note"]
     assert "IBB" in json.dumps(json.loads(head["warnings"]))
     assert json.loads(head["context"])["missing"] == []
+
+
+def test_a_macro_series_a_week_behind_is_carried_named_and_the_run_stays_complete(world, monkeypatch):
+    """Review M1 (PR 270): the newest ``market_series`` value of a macro series can sit in the ISO week before the
+    session's. It carries forward, the job and the history header say which series, and the run is not partial."""
+    from RevenueChaser.core.rotation_reference import MACRO_SERIES
+    from RevenueChaser.rcdata.tests import prices_store
+    with_macro = {**UNIVERSE, "US10Y": {"name": "US 10-Year Treasury Yield", "group": "yield"}}
+    for mod in (engine, store, rot_history, universe):
+        monkeypatch.setattr(mod, "ROTATION_ETFS", with_macro)
+    monkeypatch.setattr(engine, "MACRO_SERIES", {"US10Y": MACRO_SERIES["US10Y"]})
+    for t in UNIVERSE:
+        _seed(t, date(2026, 10, 7))
+    prices_store.put_series([{"series_id": "DGS10", "source": "fred", "obs_date": d, "value": 4.0 + i / 1000}
+                             for i, d in enumerate(_sessions(date(2025, 6, 2), date(2026, 10, 2)))])
+    with pytest.raises(JobMessage, match="US10Y"):
+        runners.run_rotation_latest(_UW())
+    assert "US10Y" in {r["ticker"] for r in _stored(date(2026, 10, 7))}
+    (head,) = rawstore.query("SELECT * FROM result_runs WHERE board = 'module_sector_rotation'", db="history")
+    assert head["quality"] == "complete", head["quality_note"]
+    assert "US10Y" in json.dumps(json.loads(head["warnings"]))
 
 
 def test_an_etf_with_no_d01_series_is_still_a_partial_run(world):

@@ -20,7 +20,7 @@ from RevenueChaser.app.jobs import JobMessage
 from RevenueChaser.core import ledger, rawstore
 from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 from RevenueChaser.module_sector_rotation import engine, money_flow
-from RevenueChaser.module_sector_rotation.tests.d01_seed import ny, pin_clock, seed, sessions
+from RevenueChaser.module_sector_rotation.tests.bars_seed import ny, pin_clock, seed, sessions
 from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
 
 SESSION = date(2026, 10, 7)
@@ -87,7 +87,7 @@ def test_money_flow_ranks_d01_closes_and_volumes_without_uw(clock):
     for k, t in enumerate(RANKED):
         step = (k - len(RANKED) / 2) / 10.0                   # half rise, half fall
         seed(t, SESSION, start=date(2026, 7, 1), closes=lambda i, s=step: 100.0 + i * s)
-    result = money_flow.compute_money_flow(_NoUW(), days=30, window=21, top_n=10)
+    result = money_flow.compute_money_flow(days=30, window=21, top_n=10)
     assert result["as_of"] == SESSION.isoformat()
     assert "partial" not in result
     rising = {t for k, t in enumerate(RANKED) if k > len(RANKED) / 2}
@@ -100,7 +100,7 @@ def test_money_flow_ranks_d01_closes_and_volumes_without_uw(clock):
 def test_an_etf_with_no_d01_series_is_missing(clock):
     for t in RANKED[1:]:
         seed(t, SESSION, start=date(2026, 7, 1), closes=lambda i: 100.0 + i)
-    result = money_flow.compute_money_flow(_NoUW(), days=30, window=21, top_n=10)
+    result = money_flow.compute_money_flow(days=30, window=21, top_n=10)
     assert result["partial"] is True and result["missing"] == [RANKED[0]]
 
 
@@ -119,7 +119,7 @@ def board(rawstore_tmp_db, monkeypatch, tmp_path):
     monkeypatch.setattr(runners, "_write_output",
                         lambda m, content, s, ext="html": latest.write_text(content, encoding="utf-8"))
     state = SimpleNamespace(result=None, at=datetime(2026, 10, 6, 22, 0, tzinfo=timezone.utc), n=0, latest=latest)
-    monkeypatch.setattr(money_flow, "compute_money_flow", lambda uw, **k: json.loads(json.dumps(state.result)))
+    monkeypatch.setattr(money_flow, "compute_money_flow", lambda **k: json.loads(json.dumps(state.result)))
 
     def _run_id():
         state.n += 1

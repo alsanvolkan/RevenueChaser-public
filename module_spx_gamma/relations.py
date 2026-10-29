@@ -15,7 +15,7 @@ the data says; unavailable values degrade to "unknown".
 """
 from __future__ import annotations
 
-from .charm_pin import MODE_DIRECTIONALIZED_VOLUME, net_charm, net_vanna
+from .charm_pin import MODE_DIRECTIONALIZED_VOLUME, charm_direction, net_charm, net_vanna
 
 
 def _fmt_usd(v) -> str:
@@ -58,7 +58,9 @@ def greek_relations(snapshot: dict) -> list[dict]:
 
     spot_expo = snapshot.get("spot_exposures", [])
     net_v = sum((net_vanna(r, MODE_DIRECTIONALIZED_VOLUME) or 0.0) for r in spot_expo) if spot_expo else None
-    net_c = sum((net_charm(r, MODE_DIRECTIONALIZED_VOLUME) or 0.0) for r in spot_expo) if spot_expo else None
+    # The same sum as the Charm card's Live charm: rows without a charm value are no data, not a zero (review N1).
+    charm_vals = [v for v in (net_charm(r, MODE_DIRECTIONALIZED_VOLUME) for r in spot_expo) if v is not None]
+    net_c = sum(charm_vals) if charm_vals else None
 
     strike_rows = snapshot.get("strike_exposures", [])
     net_delta = sum((r.get("net_delta") or 0.0) for r in strike_rows) if strike_rows else None
@@ -165,7 +167,12 @@ def greek_relations(snapshot: dict) -> list[dict]:
             f"Net charm {_fmt_usd(net_c)} (pozitif). Vade yaklaştıkça dealer delta'sı erir; "
             "dealer kapanışa doğru mekanik ALIŞ yapar (pin yönlü baskı)."
         )
-        charm_row = ("Net Charm", _fmt_usd(net_c), "Buy pressure")
+        charm_row = ("Net Charm", _fmt_usd(net_c), charm_direction(net_c))
+    elif net_c == 0:
+        charm_head = "Flat charm — no mechanical pressure into the close"
+        charm_en = "Net charm sums to zero: time decay leaves dealer delta unchanged, so it forces no hedge either way."
+        charm_tr = "Net charm sıfır: zaman erimesi dealer delta'sını değiştirmiyor, mekanik alış ya da satış yok."
+        charm_row = ("Net Charm", _fmt_usd(net_c), charm_direction(net_c))
     else:
         charm_head = "Negative charm — mechanical selling into the close"
         charm_en = (
@@ -176,7 +183,7 @@ def greek_relations(snapshot: dict) -> list[dict]:
             f"Net charm {_fmt_usd(net_c)} (negatif). Vade yaklaştıkça dealer delta'sı birikir; "
             "dealer kapanışa doğru mekanik SATIŞ yapar."
         )
-        charm_row = ("Net Charm", _fmt_usd(net_c), "Sell pressure")
+        charm_row = ("Net Charm", _fmt_usd(net_c), charm_direction(net_c))
     cq = snapshot.get("charm_qualification") or {}
     cards.append({
         "greek": "Charm",

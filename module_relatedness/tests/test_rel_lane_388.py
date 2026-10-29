@@ -1,5 +1,5 @@
 """#388 REL lane: the Pending split (D4), a Refresh keeps the last run's ``as_of`` (REL-10), and the peer market reads
-only its window of D01 (``price_bars_daily``, since the #379 D01 switch).
+only its window of the stored bars (the prices store since PR 8; D01 from the #379 switch before).
 
 Offline, temp store; nothing calls DeepSeek or SEC (``build_profiles`` runs with ``use_llm=False`` on a Refresh and is
 replaced on a Fetch).
@@ -14,7 +14,7 @@ import pandas as pd
 import pytest
 
 from RevenueChaser.core import rawstore
-from RevenueChaser.module_comovement.tests import d01_bars
+from RevenueChaser.module_comovement.tests import prices_bars
 from RevenueChaser.module_relatedness import engine, report, store
 from RevenueChaser.module_relatedness.tests.test_pure_refresh import _market_peers, _market_prices
 from RevenueChaser.module_relatedness.tests.test_relatedness import _prof, _seed_filings, _seed_universe
@@ -103,7 +103,7 @@ def test_a_refresh_before_any_fetch_has_no_run_to_show(seeded):
 # ── the peer market reads its window only ───────────────────────────────────
 def _seed_prices(prices: pd.DataFrame) -> None:
     now = time.time()
-    d01_bars.write_bars([
+    prices_bars.write_bars([
         {"ticker": t, "ts": ts.isoformat(), "open": float(p), "high": float(p), "low": float(p),
          "close": float(p), "volume": 1.0, "cached_at": now}
         for t in prices.columns for ts, p in prices[t].items() if not np.isnan(p)])

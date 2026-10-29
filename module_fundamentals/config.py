@@ -69,7 +69,9 @@ TAX_RATE = 0.21
 # 7: a net-cash firm passes the leverage rule when EBITDA <= 0 (review N1); gross margin follows the C18
 #    comparability rule (review N4); a Rule of 40 above the barrier is unknown and DISTORTED, no longer a dropped
 #    name (review N2, default chosen)
-SELECTION_VERSION = "7"
+# 8: Quality (ROIC, gross margin, net debt / EBITDA) reads the trailing year from the quarters when a 10-Q follows
+#    the anchor year, else the year (G6, build plan PR 13); the statements come from the fundamentals layer
+SELECTION_VERSION = "8"
 
 # ── Options flow (constitutional bypass) ──
 MANUAL_FLOW_ONLY = True

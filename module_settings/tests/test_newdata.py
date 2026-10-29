@@ -264,6 +264,9 @@ def test_retirement_counts_reads_of_the_old_tables_in_the_last_14_days():
     assert rows["vol_index_daily"]["reads_14d"] == 0
     assert "market_series" not in rows                                  # a new table is not being retired
     assert "RC-Earnings-Inputs" in rows["macro_series"]["writers"]
+    # The analyst estimates joined the list when the board stopped reading the old table (the fundamentals store
+    # serves them as ``estimate_latest``), so the card counts its reads down to zero too.
+    assert rows["estimate_snapshots"]["replaced_by"] == "estimate_latest"
 
 
 def test_watch_list_counts_schedule_state_and_the_queue():
@@ -349,7 +352,6 @@ def test_every_call_opens_its_own_handle_and_sees_a_swapped_file(handles):
 def test_no_serving_file_yet_is_no_rows_not_an_error(handles):
     card = _card(newdata.collect(NOW), "uw/spot_expiry_strike")
     assert card["table_rows"] is None and handles["opened"] == 0
-    from RevenueChaser.rcdata import serving
     # Every serving kind, each without a swap yet (the kinds come from rcdata, so a new one needs no edit here).
     assert newdata.collect(NOW)["verified"]["swaps"] == {kind: None for kind in serving.KINDS}
     assert {"market", "spine", "options"} <= set(serving.KINDS)

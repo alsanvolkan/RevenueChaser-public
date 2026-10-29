@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from ..config import TERMINAL_GROWTH
-from ._inputs import pick
+from ._inputs import not_for_a_bank, pick
 from .dcf_engine import run_dcf
 
 WACC_DELTAS = [-0.02, -0.01, 0.0, 0.01, 0.02]
@@ -11,6 +11,8 @@ GROWTH_DELTAS = [-0.01, 0.0, 0.01]
 
 def run_sensitivity(financials: dict, base_assumptions: dict | None = None) -> dict:
     """Base DCF üzerinden WACC × terminal büyüme matrisi üretir."""
+    if (bank := not_for_a_bank(financials, "a WACC x growth grid of the DCF")) is not None:
+        return bank
     a = dict(base_assumptions or {})
     base = run_dcf(financials, a)
     if "error" in base:

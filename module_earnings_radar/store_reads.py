@@ -1,4 +1,10 @@
-"""Earnings Radar's reads of the options store and ``market_series`` (G9, build plan PR 19).
+"""Earnings Radar's reads of the serving stores: the options store, ``market_series`` and the fundamentals store.
+
+Each reader is a thin mapping over ``rcdata.read``, which opens the serving file read-only for the one call and closes
+it again (the same shape as ``module_spx_gamma/store_reads.py``). Nothing here keeps a connection, writes, or calls a
+provider; a missing file reads as no rows or a "not stored" marker, never a live read.
+
+The options store and the rate events (G9, build plan PR 19):
 
 * **The screener set** (``option_screener_daily``, ``uw/option_screener``): every name reporting in the 28 days after
   the session, with its UW screener row. The gates and the pre-score read it (``screener_set``), in the shape of the
@@ -14,9 +20,20 @@
      ``earnings``);
   3. any other name (it failed the gates, or its earnings-set fetch is missing, or it reports later than the next
      session) has no options inputs: R4, R5 and R8 show ``NOT_ON_LIST`` and give no score.
-* **R6** reads the 10-year (``DGS10``) and the FOMC decision and CPI release days from ``market_series``.
+* **R6's rate events**: the FOMC decision and CPI release days from ``market_series`` (``rate_event_days``).
 
-Every read here is a read of a serving file: no provider call, no write. A missing file reads as no rows.
+Named after the need the internal data API will serve them as:
+
+- ``dgs10_map`` (``macro.dgs10``): the 10-year Treasury yield observations rule R6 pairs its reaction returns with.
+  The series is ``market_series``'s own FRED row (``core.rotation_reference.MACRO_SERIES["US10Y"]["series"]``), the
+  same row the Rotation board's macro map reads, so the two boards cannot disagree about a yield.
+- ``estimates`` (``fundamentals.estimates``): the current-quarter EPS trend and revision counts rule R1 reads, from
+  the fundamentals store's ``estimate_latest`` (``rcdata/build/fundamentals/estimates.py``, the same D14 value
+  columns). The old nightly made one Yahoo request per ticker for these; the fundamentals build fetches them now.
+
+Before this module the board read the nightly ``macro_series`` table of ``raw.duckdb`` and called FRED itself when
+that table was empty or stale (``stored_inputs.dgs10_map`` and ``macro_watch.fred_daily_map``). The market build
+(``rcdata/build/market_series.py``) already fetches the same FRED series, so both of those are gone.
 """
 from __future__ import annotations
 
@@ -25,6 +42,8 @@ from datetime import date, timedelta
 
 from RevenueChaser.core import board_requests, calendar
 from RevenueChaser.core.config import to_float
+from RevenueChaser.core.rotation_reference import MACRO_SERIES
+from RevenueChaser.rcdata import read
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +52,28 @@ LIST_SET, EARNINGS_SET = "list", "earnings"
 # Trading sessions the newest screener session may lag the latest complete one by: the set is fetched every evening,
 # so 0 on a normal day and 1 after one missed night.
 SCREENER_MAX_LAG = 1
-# Sessions the newest DGS10 observation may lag the latest complete session by (``stored_inputs.MAX_LAG``).
-DGS10_MAX_LAG = 3
-DGS10_LOOKBACK_DAYS = 150          # about the 80 observations R6's beta pairs with the bars (``stored_inputs``)
 RATE_SERIES = ("FOMC_DECISION", "CPI_RELEASE")
 GEX_LEVELS = ("call_wall", "gamma_flip", "gamma_magnet", "put_wall")
+SERIES_SOURCE = "rcdata:market_series"
+ESTIMATES_SOURCE = "rcdata:estimate_latest"
+# Sessions an observation may lag the board's day by before it is not read. The limit the old stored reader had
+# (``stored_inputs.MAX_LAG["macro_series"]``): FRED posts a day late, so a normal night reads 1 or 2, and 3 covers one
+# missed night. Past that the series would silently pair fewer and fewer recent dates, so it is "not stored" instead.
+MAX_LAG = {"dgs10": 3}
+# The newest observations the board pairs (R6): the window the old reader asked for.
+DGS10_LIMIT = 80
+# Calendar days read back to find ``DGS10_LIMIT`` observations: 80 sessions is about 16 weeks, doubled for holidays
+# and the days FRED has no value for.
+_LOOKBACK_DAYS = 240
+DGS10_SERIES = tuple(MACRO_SERIES["US10Y"]["series"])
+# The dataset name the fundamentals estimates are checked under (``rcdata/build/fundamentals/estimates.NAME``, "yfinance/estimates").
+ESTIMATES_DATASET = "yfinance/estimates"
+# Calendar days a stored estimate may be old before it is not read. The fundamentals build asks each company again
+# once its answer is a week old (``rcdata/build/fundamentals/estimates.WEEK_DAYS``), so a normal read is 0 to 7 days old
+# and 14 covers one missed weekly run. Past that the build has stopped renewing it: R1 would score an old EPS trend
+# without a word, so the row is "not stored" instead. The nightly table the board read before allowed 5 sessions, but it
+# was asked every night. Default chosen in the PR 285 review; change it if avo prefers.
+MAX_AGE_DAYS = {"estimates": 14}
 
 
 def _day(value) -> date | None:
@@ -46,9 +82,138 @@ def _day(value) -> date | None:
     return value if isinstance(value, date) else date.fromisoformat(str(value)[:10])
 
 
+def _sessions_after(obs: date, day: date) -> int | None:
+    """NYSE sessions after ``obs`` up to and including ``day`` (0 when ``obs >= day``); None past the calendar."""
+    n, d = 0, obs
+    while n <= 40:
+        try:
+            d = calendar.next_trading_day(d)
+        except ValueError:
+            return None
+        if d > day:
+            return n
+        n += 1
+    return None
+
+
+def _missing(what: str, day, reason: str | None = None, source: str = SERIES_SOURCE,
+             status: str | None = None) -> dict:
+    """The "not stored" marker every reader here returns instead of raising or reading live."""
+    label = f"{what} not stored" + (f" for {_iso(day)}" if day is not None else "") + \
+            (f" ({reason})" if reason else "")
+    return {"stored": False, "label": label, "source": source, "source_as_of": None,
+            "status": status if status is not None else _status()}
+
+
+def _iso(value) -> str | None:
+    return None if value is None else str(value)[:10]
+
+
+def _status(dataset: str = "market_series") -> str:
+    try:
+        return read.dataset_status(dataset)
+    except Exception as exc:                                  # noqa: BLE001 - a status read must not fail a render
+        logger.warning("earnings market-store status read failed: %s", exc)
+        return "unknown"
+
+
+def _estimates_status() -> str:
+    return _status(ESTIMATES_DATASET)
+
+
+def dgs10_map(latest: date | None = None) -> tuple[dict[str, float], dict]:
+    """``({"YYYY-MM-DD": yield}, note)``: the newest ``DGS10_LIMIT`` stored 10-year yield observations.
+
+    ``latest`` is the day the freshness is measured against (default the latest complete session). An empty map means
+    the board has no yield series: either nothing is stored, or the newest observation lags ``latest`` by more than
+    ``MAX_LAG["dgs10"]`` sessions. The note says which, and carries the dataset's own check result.
+    """
+    try:
+        day = _day(latest) or calendar.latest_complete_session()
+    except ValueError:
+        return {}, _missing("the 10-year yield", latest, "outside the calendar")
+    series_id, source = DGS10_SERIES
+    try:
+        rows = read.market_series([series_id], start=day - timedelta(days=_LOOKBACK_DAYS), end=day)
+    except Exception as exc:                                  # noqa: BLE001 - a store error is "not stored"
+        logger.warning("earnings market-store read failed: %s", exc)
+        return {}, _missing("the 10-year yield", day, f"read failed: {type(exc).__name__}")
+    out: dict[str, float] = {}
+    for r in rows:
+        if r.get("source") != source or r.get("value") is None:
+            continue
+        obs = _day(r.get("obs_date"))
+        if obs is not None:
+            out[obs.isoformat()] = float(r["value"])
+    if not out:
+        return {}, _missing("the 10-year yield", day)
+    newest = max(out)
+    lag = _sessions_after(date.fromisoformat(newest), day)
+    if lag is None or lag > MAX_LAG["dgs10"]:
+        return {}, _missing("the 10-year yield", day, f"stale: newest observation {newest}")
+    kept = dict(sorted(out.items())[-DGS10_LIMIT:])
+    return kept, {"stored": True, "label": f"the 10-year yield through {newest}", "source": SERIES_SOURCE,
+                  "source_as_of": newest, "status": _status()}
+
+
+# The nine columns rule R1 reads: the EPS trend and the 7/30-day revision counts. The names the fundamentals store
+# serves are D14's own (``rcdata/build/fundamentals/estimates.value_columns``), so no renaming happens here.
+ESTIMATE_FIELDS = ("eps_trend_current", "eps_trend_7d", "eps_trend_30d", "eps_trend_60d", "eps_trend_90d",
+                   "eps_rev_up_7d", "eps_rev_up_30d", "eps_rev_down_7d", "eps_rev_down_30d")
+ESTIMATE_PERIOD = "0q"               # the current quarter: the print R1 scores
+
+
+def estimates(tickers, today: date | None = None) -> tuple[dict[str, dict], dict]:
+    """``({ticker: current-quarter row}, note)`` from the fundamentals store's ``estimate_latest``.
+
+    Only ``ESTIMATE_PERIOD`` is kept: that is the print R1 scores. A ticker the store has no row for is absent from
+    the map, and R1 stays unavailable on its card (it is logged only, weight 0) — never a reason to call a provider.
+    So is a ticker whose row has no as-of day or is more than ``MAX_AGE_DAYS["estimates"]`` days older than ``today``
+    (default New York's today); the note counts those it left out.
+    """
+    try:
+        today = _day(today) or calendar.today_ny()
+    except ValueError:
+        today = calendar.today_ny()
+    oldest = today - timedelta(days=MAX_AGE_DAYS["estimates"])
+    names = sorted({str(t).strip().upper() for t in (tickers or []) if str(t or "").strip()})
+    if not names:
+        return {}, _missing("the analyst estimates", None, "no ticker asked", source=ESTIMATES_SOURCE,
+                            status=_estimates_status())
+    try:
+        rows = read.estimates(names)
+    except Exception as exc:                                  # noqa: BLE001 - a store error is "not stored"
+        logger.warning("earnings fundamentals-store read failed: %s", exc)
+        return {}, _missing("the analyst estimates", None, f"read failed: {type(exc).__name__}",
+                            source=ESTIMATES_SOURCE, status=_estimates_status())
+    out: dict[str, dict] = {}
+    as_of: list[str] = []
+    stale: dict[str, str | None] = {}
+    for r in rows:
+        if str(r.get("period") or "") != ESTIMATE_PERIOD:
+            continue
+        ticker = str(r.get("ticker") or "").strip().upper()
+        if not ticker:
+            continue
+        day = _day(r.get("source_as_of"))
+        if day is None or day < oldest:
+            stale[ticker] = _iso(day)
+            continue
+        out[ticker] = {k: r.get(k) for k in ESTIMATE_FIELDS}
+        as_of.append(day.isoformat())
+    left_out = f"{len(stale)} left out as older than {MAX_AGE_DAYS['estimates']} days" if stale else ""
+    if not out:
+        newest_stale = max((d for d in stale.values() if d), default=None)
+        reason = (left_out + (f", newest {newest_stale}" if newest_stale else "")) if stale else None
+        return {}, _missing("the analyst estimates", None, reason, source=ESTIMATES_SOURCE,
+                            status=_estimates_status())
+    return out, {"stored": True,
+                 "label": f"{len(out)} of {len(names)} names have estimates" + (f"; {left_out}" if left_out else ""),
+                 "source": ESTIMATES_SOURCE, "source_as_of": max(as_of), "status": _estimates_status()}
+
+
 def _lag(day: date, latest: date) -> int | None:
-    from RevenueChaser.module_earnings_radar import stored_inputs
-    return stored_inputs._sessions_after(day, latest)
+    return _sessions_after(day, latest)
 
 
 # ── the screener set ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -61,7 +226,6 @@ def screener_set(tickers, latest: date | None = None) -> tuple[dict[str, dict], 
     screener row for (``screened`` false) has none. ``outcome`` is ``{"status", "error", "session"}``: ``ok``,
     ``stale`` (the newest session is older than ``SCREENER_MAX_LAG`` sessions: no rows) or ``missing`` (no session).
     """
-    from RevenueChaser.rcdata import read
     wanted = {str(t).upper() for t in tickers if t}
     rows = read.option_screener()
     if not rows:
@@ -84,7 +248,6 @@ def screener_set(tickers, latest: date | None = None) -> tuple[dict[str, dict], 
 
 def _list_session(ticker: str, report_date: date) -> tuple[date, dict] | None:
     """The newest ``option_daily`` session of a list name before ``report_date``, and its row."""
-    from RevenueChaser.rcdata import read
     rows = [r for r in read.option_daily(ticker, None, report_date - timedelta(days=1)) if r.get("session_date")]
     if not rows:
         return None
@@ -94,7 +257,6 @@ def _list_session(ticker: str, report_date: date) -> tuple[date, dict] | None:
 
 def _earnings_session(ticker: str, report_date: date) -> tuple[date, dict] | None:
     """The ``er_options`` row ``uw/option_screener`` fetched for this report, the evening before it."""
-    from RevenueChaser.rcdata import read
     rows = [r for r in read.earnings_options(tickers=[ticker]) if _day(r.get("report_date")) == report_date]
     if not rows:
         return None
@@ -111,7 +273,6 @@ def card_inputs(ticker: str, report_date: date, listed) -> dict:
     ``prints`` the stored prints (the newest 50 of the session, as UW's ``flow-recent`` served them) and ``volume``
     the day's option volume and open interest.
     """
-    from RevenueChaser.rcdata import read
     t = str(ticker).upper()
     found, set_name = None, None
     if t in set(listed):
@@ -134,28 +295,10 @@ def card_inputs(ticker: str, report_date: date, listed) -> dict:
             "volume": volume}
 
 
-# ── R6: the 10-year and the rate events ──────────────────────────────────────────────────────────────────────────
-
-def dgs10_map(latest: date | None = None) -> dict[str, float]:
-    """The stored FRED DGS10 observations of the last ``DGS10_LOOKBACK_DAYS`` days as ``{YYYY-MM-DD: value}``; empty
-    when the newest is more than ``DGS10_MAX_LAG`` sessions older than ``latest`` (R6 then has no beta: a stale
-    series would pair fewer and fewer dates without a word)."""
-    from RevenueChaser.rcdata import read
-    latest = calendar.latest_complete_session() if latest is None else latest
-    out: dict[str, float] = {}
-    for r in read.market_series(["DGS10"], latest - timedelta(days=DGS10_LOOKBACK_DAYS), latest):
-        value = to_float(r.get("value"))
-        if r.get("source") == "fred" and value is not None and r.get("obs_date") is not None:
-            out[_day(r["obs_date"]).isoformat()] = value
-    if not out:
-        return {}
-    lag = _lag(date.fromisoformat(max(out)), latest)
-    return out if lag is not None and lag <= DGS10_MAX_LAG else {}
-
+# ── R6: the rate events ────────────────────────────────────────────────────────────────────────────────────────
 
 def rate_event_days() -> dict[str, list[date]]:
     """``{series: [days]}`` of the FOMC decisions and CPI releases ``market_series`` holds (one read per run)."""
-    from RevenueChaser.rcdata import read
     out: dict[str, list[date]] = {s: [] for s in RATE_SERIES}
     for r in read.market_series(RATE_SERIES):
         if r.get("obs_date") is not None and (to_float(r.get("value")) or 0) > 0:

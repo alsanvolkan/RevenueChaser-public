@@ -10,9 +10,10 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from RevenueChaser.core import calendar, rawstore
+from RevenueChaser.core import calendar
 from RevenueChaser.rcdata import ops
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline
+from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve_estimates
 from RevenueChaser.module_earnings_radar.tests.test_rule1_drivers_e6 import FULL
 from RevenueChaser.module_earnings_radar.tests.test_stored_ohlc_e5e import _bars, _prints, _seed as _seed_bars
 from RevenueChaser.module_earnings_radar.tests.test_r5_ownership_store_g9 import _write as _write_ownership
@@ -54,21 +55,20 @@ def _seed_everything(market):
     _seed_bars(_bars(300))
     _write_ownership(market, finra=[("AAPL", date(2026, 9, 30), 1_000_000, 2.0, date(2026, 10, 9))],
                      ibkr=[("AAPL", SESSION, 35.0, -30.0, 120_000, False)])
-    rawstore.write_rows("estimate_snapshots", [{"ticker": "AAPL", "session_date": SESSION, "period": "0q",
-                                                "source": "yfinance", **FULL}])
+    serve_estimates([{"ticker": "AAPL", "period": "0q", **FULL}])
     # R4/R5/R8 (G9): AAPL is on the option watch list, with its list rows of the session.
     ops.watch_add("option", "AAPL", by="test")
     list_name("AAPL", SESSION)
     write_options(option_screener_daily=[screener_row("AAPL", SESSION, date.fromisoformat(REPORT))])
     # R6 (G9): the 10-year and the FOMC/CPI days from ``market_series``; both rate calendars span the report.
-    write_series([("DGS10", SESSION - timedelta(days=i), 4.0 + i / 100) for i in range(0, 90)]
+    write_series([("DGS10", SESSION - timedelta(days=i), 4.0 + i / 100) for i in range(1, 90)]
                  + [(sid, d, 1.0) for sid in ("FOMC_DECISION", "CPI_RELEASE")
                     for d in (date(2026, 1, 28), date(2026, 12, 9))], market=market)
 
 
-def test_a_run_with_every_input_stored_asks_uw_and_fred_for_none_of_them(monkeypatch, _store):
+def test_a_run_with_every_input_stored_asks_uw_and_fred_for_none_of_them(_store):
     from RevenueChaser.module_earnings_radar import macro_watch
-    monkeypatch.setattr(macro_watch, "fred_daily_map", lambda *a, **k: pytest.fail("FRED must not be called"))
+    assert not hasattr(macro_watch, "fred_daily_map")      # the board has no FRED reader to call any more
     _seed_everything(_store)
     fake = _CountingUW()
     p = EarningsPipeline(["AAPL"], uw=fake, cal_meta={"AAPL": {
@@ -88,11 +88,13 @@ def test_a_run_with_every_input_stored_asks_uw_and_fred_for_none_of_them(monkeyp
     assert p.input_sources["rate_events"] == "stored"
 
 
-def test_the_same_run_with_an_empty_store_asks_uw(monkeypatch):
+def test_the_same_run_with_an_empty_store_asks_uw():
     """The reference: without the store the same run asks UW for the bars, so the zero above is the store's doing.
-    Short interest is never asked of UW since G9: an empty ownership store is no squeeze inputs."""
-    from RevenueChaser.module_earnings_radar import macro_watch
-    monkeypatch.setattr(macro_watch, "fred_daily_map", lambda *a, **k: {})
+    Short interest is never asked of UW since G9: an empty ownership store is no squeeze inputs.
+
+    The yield series is the one input with no live read left: an empty store leaves R6 unavailable (``dgs10`` is
+    ``none``), it does not reach for FRED.
+    """
     fake = _CountingUW()
     p = EarningsPipeline(["AAPL"], uw=fake, cal_meta={"AAPL": {
         "earnings_date": REPORT, "full_name": "Aple", "sector": "Technology", "expected_move_perc": 0.05}})

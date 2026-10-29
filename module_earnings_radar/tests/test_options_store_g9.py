@@ -165,10 +165,7 @@ def test_an_old_or_missing_screener_set_is_no_row_for_every_name_and_says_so(raw
 
 def test_r6_reads_the_ten_year_and_the_rate_days_from_market_series(week, monkeypatch):
     from RevenueChaser.module_earnings_radar import macro_watch
-
-    def _fred(*a, **k):
-        raise AssertionError("R6 must not call FRED")
-    monkeypatch.setattr(macro_watch, "fred_daily_map", _fred)
+    assert not hasattr(macro_watch, "fred_daily_map")      # the board has no FRED reader to call any more
     days = weekdays(SESSION - timedelta(days=120), SESSION)
     write_series([("DGS10", d, 4.0 + i / 100) for i, d in enumerate(days)]
                  + [("FOMC_DECISION", SESSION - timedelta(days=200), 1.0), ("FOMC_DECISION", REPORT, 1.0),
@@ -176,16 +173,14 @@ def test_r6_reads_the_ten_year_and_the_rate_days_from_market_series(week, monkey
                     ("CPI_RELEASE", SESSION - timedelta(days=200), 1.0),
                     ("CPI_RELEASE", REPORT + timedelta(days=200), 1.0)])
     p = _pipeline("LST")
-    assert len(p._warm_dgs10()) == len(days) and p.input_sources["dgs10"] == "stored"
+    assert len(p._warm_dgs10()) == min(len(days), store_reads.DGS10_LIMIT) and p.input_sources["dgs10"] == "stored"
     events = p._warm_rate_events()
     assert store_reads.rate_event_overlap(REPORT, events) is True
     assert store_reads.rate_event_overlap(REPORT + timedelta(days=60), events) is False
     assert store_reads.rate_event_overlap(REPORT + timedelta(days=400), events) is None   # past both calendars
 
 
-def test_a_stale_ten_year_gives_r6_no_beta_and_no_fred_call(rawstore_tmp_db, monkeypatch):
-    from RevenueChaser.module_earnings_radar import macro_watch
-    monkeypatch.setattr(macro_watch, "fred_daily_map", lambda *a, **k: pytest.fail("FRED was called"))
+def test_a_stale_ten_year_gives_r6_no_beta_and_no_fred_call(rawstore_tmp_db):
     write_series([("DGS10", SESSION - timedelta(days=30), 4.1)])
     p = _pipeline("AAA")
     assert p._warm_dgs10() == {} and p.input_sources["dgs10"] == "none"

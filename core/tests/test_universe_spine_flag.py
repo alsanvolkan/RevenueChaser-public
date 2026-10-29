@@ -1,6 +1,7 @@
 """``core/universe.py`` and ``RC_UNIVERSE_SOURCE`` (build plan PR 5, default flipped in PR 6): unset reads the identity
-spine, membership, names, classification and types through ``rcdata.read`` and only the market fields (cap, price,
-quote) from the old ``equity_universe``; any other value (``store``) reads ``raw.duckdb`` as before."""
+spine, membership, names, classification and types through ``rcdata.read`` and, with no prices store here, the market
+fields (cap, price, quote) from the old ``equity_universe`` (the prices store's: ``test_universe_market_prices``); any
+other value (``store``) reads ``raw.duckdb`` as before."""
 from __future__ import annotations
 
 import pytest

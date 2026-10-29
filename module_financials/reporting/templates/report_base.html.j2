@@ -83,11 +83,11 @@
   <div class="sub">Fin Research — Quick Remarks + Financial Model</div>
   <div class="meta">
     <span>Sector: {{ sector or "N/A" }}</span>
-    <span>Price: {{ price|price }}</span>
+    <span>Price: {{ price|price }}{% if price_session %} (close {{ price_session }}){% endif %}</span>
     <span>Market Cap: {{ market_cap|usd }}</span>
-    <span>EV: {{ enterprise_value|usd }}</span>
+    <span>EV: {{ enterprise_value|usd }}{% if ev_is_yahoos and enterprise_value is not none %} (Yahoo){% endif %}</span>
     <span>Source: {{ source }}</span>
-    <span>Last sync: {{ data_date|friendly_day }}{% if data_date %} EOD{% endif %}</span>
+    <span>Last sync: {{ data_date|friendly_day }}</span>
   </div>
 </header>
 
@@ -105,27 +105,38 @@
 </div>
 {% endif %}
 
-{% if dcf and not dcf.error %}
+{% if dcf and dcf.not_applicable %}
+<section>
+  <h2>DCF Valuation</h2>
+  <p style="color:var(--muted);">{{ dcf.note }}</p>
+</section>
+{% elif dcf and not dcf.error %}
 <section>
   <h2>DCF Valuation</h2>
   <div class="grid2">
     <div class="panel">
       <h3>WACC Components</h3>
-      <div class="kv"><span class="k">Beta</span><span>{{ dcf.wacc.beta|num }}</span></div>
-      <div class="kv"><span class="k">Cost of Equity (Ke)</span><span>{{ dcf.wacc.cost_of_equity|pct }}</span></div>
-      <div class="kv"><span class="k">Cost of Debt (Kd, after tax)</span><span>{{ dcf.wacc.cost_of_debt_after_tax|pct }}</span></div>
-      <div class="kv"><span class="k">Equity Weight</span><span>{{ dcf.wacc.equity_weight|pct }}</span></div>
-      <div class="kv"><span class="k">Debt Weight</span><span>{{ dcf.wacc.debt_weight|pct }}</span></div>
+      {% set w = dcf.wacc %}
+      <div class="kv"><span class="k">Risk-free rate</span><span>{% if w.risk_free_source == "stored" %}{{ w.risk_free|pct(2) }} (10-year Treasury, FRED, {{ w.risk_free_as_of }}){% else %}{{ w.risk_free|pct(2)|or_default(w.risk_free_source == "default") }}{% endif %}</span></div>
+      <div class="kv"><span class="k">Equity Risk Premium</span><span>{{ w.equity_risk_premium|pct|or_default(w.equity_risk_premium_source == "default") }}</span></div>
+      <div class="kv"><span class="k">Beta</span><span>{{ w.beta|num|or_default(w.beta_source == "default") }}</span></div>
+      <div class="kv"><span class="k">Cost of Equity (Ke)</span><span>{{ w.cost_of_equity|pct }}</span></div>
+      <div class="kv"><span class="k">Cost of Debt (Kd, before tax)</span><span>{{ w.cost_of_debt|pct|or_default(w.cost_of_debt_source == "default") }}</span></div>
+      <div class="kv"><span class="k">Cost of Debt (Kd, after tax)</span><span>{{ w.cost_of_debt_after_tax|pct }}</span></div>
+      {% set weights_default = dcf.wacc.weights_source == "default" %}
+      <div class="kv"><span class="k">Equity Weight</span><span>{{ dcf.wacc.equity_weight|pct|or_default(weights_default) }}</span></div>
+      <div class="kv"><span class="k">Debt Weight</span><span>{{ dcf.wacc.debt_weight|pct|or_default(weights_default) }}</span></div>
       <div class="kv"><span class="k">Tax Rate</span><span>{{ dcf.assumptions|tax_rate }}</span></div>
       <div class="kv"><span class="k" style="font-weight:600">WACC</span><span style="font-weight:600">{{ dcf.wacc.wacc|pct }}</span></div>
     </div>
     <div class="panel">
       <h3>Base Year ({{ dcf.base_year.fiscal_year }})</h3>
       <div class="kv"><span class="k">Revenue</span><span>{{ dcf.base_year.revenue|usd }}</span></div>
-      <div class="kv"><span class="k">EBITDA Margin</span><span>{{ dcf.base_year.ebitda_margin|pct }}</span></div>
-      <div class="kv"><span class="k">D&amp;A / Revenue</span><span>{{ dcf.base_year.dep_pct_rev|pct }}</span></div>
-      <div class="kv"><span class="k">Capex / Revenue</span><span>{{ dcf.base_year.capex_pct_rev|pct }}</span></div>
-      <div class="kv"><span class="k">NWC / Revenue</span><span>{{ dcf.base_year.nwc_pct_rev|pct }}</span></div>
+      {% set base_defaults = dcf.base_year.defaults or [] %}
+      <div class="kv"><span class="k">EBITDA Margin</span><span>{{ dcf.base_year.ebitda_margin|pct|or_default("ebitda_margin" in base_defaults) }}</span></div>
+      <div class="kv"><span class="k">D&amp;A / Revenue</span><span>{{ dcf.base_year.dep_pct_rev|pct|or_default("dep_pct_rev" in base_defaults) }}</span></div>
+      <div class="kv"><span class="k">Capex / Revenue</span><span>{{ dcf.base_year.capex_pct_rev|pct|or_default("capex_pct_rev" in base_defaults) }}</span></div>
+      <div class="kv"><span class="k">NWC / Revenue</span><span>{{ dcf.base_year.nwc_pct_rev|pct|or_default("nwc_pct_rev" in base_defaults) }}</span></div>
     </div>
   </div>
 
@@ -164,6 +175,9 @@
       <div class="kv"><span class="k">EV (Gordon)</span><span>{{ dcf.valuation.ev_gordon|usd }}</span></div>
       <div class="kv"><span class="k">EV (Exit)</span><span>{{ dcf.valuation.ev_exit|usd }}</span></div>
       <div class="kv"><span class="k">Net Debt</span><span>{{ dcf.valuation.net_debt|usd }}</span></div>
+      <div class="kv"><span class="k">Terminal share of EV (Gordon / Exit)</span><span>{{ dcf.terminal_value.share_of_ev_gordon|pct }} / {{ dcf.terminal_value.share_of_ev_exit|pct }}</span></div>
+      <div class="kv"><span class="k">Exit multiple Gordon implies</span><span>{% if dcf.terminal_value.implied_exit_multiple is not none %}{{ dcf.terminal_value.implied_exit_multiple|num(1) }}x{% else %}N/A{% endif %}</span></div>
+      <div class="kv"><span class="k">Growth the exit multiple implies</span><span>{{ dcf.terminal_value.implied_growth|pct }}</span></div>
     </div>
     <div class="panel">
       <div class="kv"><span class="k">Equity (Gordon)</span><span>{{ dcf.valuation.equity_gordon|usd }}</span></div>
@@ -185,6 +199,7 @@
     </span>
     <span style="color:var(--muted); margin-left:8px;">Max deviation: {{ three_statement.balance_check.max_residual|num }}</span>
     <span style="color:var(--muted); margin-left:8px;">Tax rate: {{ three_statement.assumptions|tax_rate }}</span>
+    <span style="color:var(--muted); margin-left:8px;">Interest rate: {{ three_statement.assumptions.interest_rate|pct|or_default(three_statement.assumptions.interest_rate_source == "default") }}</span>
   </div>
   <div class="panel" style="overflow-x:auto;">
     <table>
@@ -227,7 +242,7 @@
   <p style="color:var(--muted); font-size:12px; margin:-6px 0 12px;">as of {{ comps.as_of }} — the last stored Fetch; the Refresh fetched nothing.</p>
   {% endif %}
   {% if comps.basis %}
-  <p style="color:var(--muted); font-size:12px; margin:-6px 0 12px;">Basis: peer multiples are {{ comps.basis.peers }} (Yahoo); the target's EBITDA, revenue and net income are from fiscal year {{ comps.basis.target_fiscal_year or "unknown" }}.</p>
+  <p style="color:var(--muted); font-size:12px; margin:-6px 0 12px;">Basis: peer multiples are {{ comps.basis.peers }} (Yahoo); the target's EBITDA, revenue and net income are from fiscal year {{ comps.basis.target_fiscal_year or "unknown" }}; per share divides by the target's shares from {{ "the " if comps.basis.target_shares and comps.basis.target_shares != "Yahoo" }}{{ comps.basis.target_shares or "Yahoo" }}.</p>
   {% endif %}
   {% if comps.pe_only %}
   <p style="color:var(--muted);">A Financial Services target is valued on P/E only: EV/EBITDA and EV/Revenue do not describe a bank.</p>
@@ -252,11 +267,13 @@
   <div class="grid2">
     <div class="panel">
       <h3>Percentiles</h3>
+      {# Each row says how many peers it rests on: a median of 2 is not a median of 8 (review N3). #}
+      {% macro pct_row(label, m) %}<div class="kv"><span class="k">{{ label }} (25/50/75 of {{ m.count or 0 }} peer{{ "" if m.count == 1 else "s" }})</span><span>{{ m.p25|num }} / {{ m.p50|num }} / {{ m.p75|num }}</span></div>{% endmacro %}
       {% if not comps.pe_only %}
-      <div class="kv"><span class="k">EV/EBITDA (25/50/75)</span><span>{{ comps.multiples.ev_ebitda.p25|num }} / {{ comps.multiples.ev_ebitda.p50|num }} / {{ comps.multiples.ev_ebitda.p75|num }}</span></div>
-      <div class="kv"><span class="k">EV/Revenue (25/50/75)</span><span>{{ comps.multiples.ev_revenue.p25|num }} / {{ comps.multiples.ev_revenue.p50|num }} / {{ comps.multiples.ev_revenue.p75|num }}</span></div>
+      {{ pct_row("EV/EBITDA", comps.multiples.ev_ebitda) }}
+      {{ pct_row("EV/Revenue", comps.multiples.ev_revenue) }}
       {% endif %}
-      <div class="kv"><span class="k">P/E (25/50/75)</span><span>{{ comps.multiples.pe.p25|num }} / {{ comps.multiples.pe.p50|num }} / {{ comps.multiples.pe.p75|num }}</span></div>
+      {{ pct_row("P/E", comps.multiples.pe) }}
     </div>
     <div class="panel">
       <h3>Implied Value</h3>
@@ -275,7 +292,12 @@
 </section>
 {% endif %}
 
-{% if credit and not credit.error %}
+{% if credit and credit.not_applicable %}
+<section>
+  <h2>Credit Capacity</h2>
+  <p style="color:var(--muted);">{{ credit.note }}</p>
+</section>
+{% elif credit and not credit.error %}
 <section>
   <h2>Credit Capacity</h2>
   <div class="grid2">
@@ -297,7 +319,12 @@
 </section>
 {% endif %}
 
-{% if sensitivity and not sensitivity.error %}
+{% if sensitivity and sensitivity.not_applicable %}
+<section>
+  <h2>Sensitivity — WACC × Growth (Per Share)</h2>
+  <p style="color:var(--muted);">{{ sensitivity.note }}</p>
+</section>
+{% elif sensitivity and not sensitivity.error %}
 <section>
   <h2>Sensitivity — WACC × Growth (Per Share)</h2>
   <div class="panel" style="overflow-x:auto;">

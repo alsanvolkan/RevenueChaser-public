@@ -5,16 +5,14 @@ Flow Score         = sum(Directional Flow) / sum(Close * Volume) * 100   (over w
 
 Scores are normalized to roughly -100..+100. The leaderboard is computed as a
 separate, cached async job so the rotation tab refresh stays fast. Closes and
-volumes are the stored daily bars (D01, ``core.prices.daily_bars``), not a UW
-candle (M-ROT-3, #374).
+volumes are the stored daily bars (the prices store, ``rcdata.read.ticker_bars``,
+PR 9), not a UW candle (M-ROT-3, #374).
 """
 from __future__ import annotations
 
 import math
 from datetime import date, timedelta
-from typing import Optional
 
-from RevenueChaser.core.providers.unusual_whales import UWClient
 from .universe import ROTATION_ETFS
 
 _NOT_RANKED = ("region", "bond", "yield", "commodity")
@@ -26,12 +24,12 @@ def ranked_tickers() -> list[str]:
     return [t for t, info in ROTATION_ETFS.items() if info.get("group") not in _NOT_RANKED]
 
 
-def d01_rows(tickers, session: date, days: int = 30) -> list[dict]:
-    """``{ticker, date, close, volume}`` rows from one D01 read (``core.prices.daily_bars``, nominal), the last
-    ``days`` sessions of each ticker up to ``session``; never fetches. A ticker D01 holds no bar of has no row."""
-    from RevenueChaser.core import prices
-    frame = prices.daily_bars(list(tickers), basis="nominal", start=session - timedelta(days=days * 2 + 14),
-                              end=session)
+def bar_rows(tickers, session: date, days: int = 30) -> list[dict]:
+    """``{ticker, date, close, volume}`` rows from one prices-store read (``rcdata.read.ticker_bars``, split basis),
+    the last ``days`` sessions of each ticker up to ``session``; never fetches. A ticker the store holds no bar of
+    has no row."""
+    from RevenueChaser.rcdata import read
+    frame = read.ticker_bars(list(tickers), start=session - timedelta(days=days * 2 + 14), end=session, basis="split")
     if frame is None or frame.empty:
         return []
     by: dict[str, list[dict]] = {}
@@ -92,13 +90,13 @@ def get_money_flow_leaderboards(df, window: int = 21, top_n: int = 4) -> dict:
     return {"inflows": inflows, "outflows": outflows}
 
 
-def compute_money_flow(uw: Optional[UWClient] = None, days: int = 30, window: int = 21, top_n: int = 4) -> dict:
-    """Rank the sector/theme ETFs by money flow from D01 closes and volumes (M-ROT-3, ROT-13).
+def compute_money_flow(days: int = 30, window: int = 21, top_n: int = 4) -> dict:
+    """Rank the sector/theme ETFs by money flow from the stored closes and volumes (M-ROT-3, ROT-13; PR 9).
 
-    One ``core.prices.daily_bars`` read up to the latest complete session; ``uw`` is kept for the callers' signature
-    and not used. region, bond, yield and commodity groups are excluded (``ranked_tickers``).
+    One ``bar_rows`` read up to the latest complete session, and no provider call: the board has no client handle
+    any more. region, bond, yield and commodity groups are excluded (``ranked_tickers``).
 
-    When D01 holds no bar of some ETFs in the window, or an ETF's bars stop before the newest session read, the result
+    When the store holds no bar of some ETFs in the window, or an ETF's bars stop before the newest session read, the result
     also carries ``partial: True`` and ``missing`` (their tickers, in universe order); a whole result has neither key.
     """
     import pandas as pd
@@ -109,9 +107,9 @@ def compute_money_flow(uw: Optional[UWClient] = None, days: int = 30, window: in
         session = calendar.latest_complete_session()
     except ValueError:                                  # outside the holiday table: nothing to rank
         session = None
-    rows = d01_rows(wanted, session, days=days) if session else []
+    rows = bar_rows(wanted, session, days=days) if session else []
     if rows:
-        # An ETF whose D01 series stops before the newest session read is not ranked as of it (its window would end
+        # An ETF whose stored series stops before the newest session read is not ranked as of it (its window would end
         # weeks earlier than the others'): it is missing (review 2026-10-16).
         newest = max(r["date"] for r in rows)
         last: dict[str, str] = {}

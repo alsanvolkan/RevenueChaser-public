@@ -15,7 +15,7 @@ def _patch_row_inputs(monkeypatch, info: dict, frame: pd.DataFrame):
                                                                               "within_52w_high_pct": 0.9})
     monkeypatch.setattr(pipeline, "_ttm_metrics", lambda q, a: {k: None for k in (
         "rev_growth_ttm", "fcf_margin", "ro40", "ro40_basis", "ttm_revenue", "ttm_net_income")})
-    monkeypatch.setattr(pipeline, "_quality_metrics", lambda a: {k: None for k in (
+    monkeypatch.setattr(pipeline, "_quality_metrics", lambda a, q=None: {k: None for k in (
         "gross_margin", "roic", "net_debt_ebitda", "total_equity")})
 
 

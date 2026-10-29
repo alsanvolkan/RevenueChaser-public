@@ -228,19 +228,16 @@ class TestR6YieldBetaWiring:
         assert card.macro_veto is False
         assert (card.rule_audit or {}).get("rule6_macro") is None
 
-    def test_the_stored_dgs10_map_replaces_the_fred_call(self, monkeypatch):
-        """G9: the 10-year comes from ``market_series`` (E5d, #372, read the old store's ``macro_series``), so FRED
-        is not called at all."""
-        from datetime import date
-        from RevenueChaser.module_earnings_radar import macro_watch
-        from RevenueChaser.module_earnings_radar.tests.options_store import write_series
+    def test_the_market_store_series_is_what_r6_scores(self, monkeypatch):
+        """The yield series comes from the market store and nothing is fetched: the board has no FRED reader left."""
         from datetime import datetime, timezone
         from RevenueChaser.core import calendar
+        from RevenueChaser.module_earnings_radar import macro_watch
+        from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve as serve_market
         monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 1, 30, 23, 0, tzinfo=timezone.utc))
         ohlc, yld = _duration_ohlc_and_yields(duration=10.0)       # 2026-01-05 .. 01-29: fresh on Jan 30
-        write_series([("DGS10", date.fromisoformat(d), v) for d, v in yld.items()])
-        monkeypatch.setattr(macro_watch, "fred_daily_map",
-                            lambda *a, **k: pytest.fail("FRED must not be called with a stored series"))
+        serve_market(dict(yld))
+        assert not hasattr(macro_watch, "fred_daily_map")
         p = _make_pipeline(_FakeUW(etf_ohlc=ohlc),
                            {"AAPL": {"close": "100", "call_volume": "0", "put_volume": "0",
                                      "total_open_interest": "0"}},

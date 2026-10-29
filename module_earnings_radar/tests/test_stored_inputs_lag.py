@@ -11,7 +11,7 @@ from datetime import date, datetime, timezone
 import pytest
 
 from RevenueChaser.core import calendar, rawstore
-from RevenueChaser.module_earnings_radar import stored_inputs
+from RevenueChaser.module_earnings_radar import store_reads, stored_inputs
 
 NOW = datetime(2026, 10, 14, 21, 0, tzinfo=timezone.utc)      # 17:00 New York: Wed 10-14 is complete
 BACK = {1: date(2026, 10, 13), 2: date(2026, 10, 12), 3: date(2026, 10, 9), 4: date(2026, 10, 8),
@@ -36,15 +36,10 @@ def _calendar(session):
     return stored_inputs.calendar_items([DAY])[1]
 
 
-def _estimates(session):
-    rawstore.write_rows("estimate_snapshots", [{"ticker": "AAA", "session_date": session, "period": "0q",
-                                                "source": "yfinance", "eps_trend_current": 1.0}])
-    return stored_inputs.estimates(["AAA"])[1]
-
-
 # (reader, the spec's MAX_LAG) — written out, so a changed constant fails here rather than moving the boundary.
-# Short interest's lag (IBKR's snapshot, from the ownership store since G9) is pinned in test_r5_ownership_store_g9.
-READERS = {"earnings_calendar": (_calendar, 1), "estimate_snapshots": (_estimates, 5)}
+# Short interest's lag (IBKR's snapshot, from the ownership store since G9) is pinned in test_r5_ownership_store_g9;
+# the estimates read the fundamentals store since G5.
+READERS = {"earnings_calendar": (_calendar, 1)}
 
 
 @pytest.mark.parametrize("table", sorted(READERS))
@@ -61,5 +56,6 @@ def test_a_session_one_past_max_lag_is_not_read(table):
 
 def test_the_lags_are_the_spec_values():
     """The boundaries above follow MAX_LAG; these are the values the spec and the model version name."""
-    assert stored_inputs.MAX_LAG == {"earnings_calendar": 1, "short_interest": 3, "estimate_snapshots": 5,
-                                     "macro_series": 3, "vol_index_daily": 3, "cftc_cot": 10}
+    assert stored_inputs.MAX_LAG == {"earnings_calendar": 1, "short_interest": 3}
+    # The 10-year yield left this module with the market store; its own limit is the same 3 sessions.
+    assert store_reads.MAX_LAG["dgs10"] == 3

@@ -15,7 +15,7 @@ import pytest
 from RevenueChaser.core import board_settings as bs
 from RevenueChaser.core import funnel as funnel_mod
 from RevenueChaser.core import rawstore
-from RevenueChaser.module_comovement.tests import d01_bars
+from RevenueChaser.module_comovement.tests import prices_bars
 from RevenueChaser.core.tests.panel_client import panel_test_client
 from RevenueChaser.core import universe as universe_mod
 from RevenueChaser.module_comovement import config, engine, ohlc
@@ -94,7 +94,7 @@ def test_effective_reads_the_store_and_the_window_argument(rawstore_tmp_db):
 def test_min_obs_never_exceeds_the_run_window(rawstore_tmp_db):
     bs.save(B, {"WINDOW": 378, "MIN_OBS": 300})
     e = cs.effective(126)
-    assert e.min_obs == 126 and e.min_periods <= e.min_obs
+    assert e.min_obs == 119 and e.min_periods <= e.min_obs       # 95 % of 126 (Co-movement review S2)
 
 
 @pytest.mark.parametrize("window,expect", [(21, 15), (42, 21), (63, 31), (125, 62)])
@@ -107,7 +107,27 @@ def test_short_windows_scale_min_obs_and_min_periods(rawstore_tmp_db, window, ex
 
 def test_window_126_is_not_short(rawstore_tmp_db):
     e = cs.effective(126)
-    assert not e.short_window and e.min_obs == 126 and e.min_periods == 60
+    assert not e.short_window and e.min_obs == 119 and e.min_periods == 60
+
+
+@pytest.mark.parametrize("window,expect", [(126, 119), (189, 126), (252, 126), (378, 126)])
+def test_a_window_never_needs_every_session(rawstore_tmp_db, window, expect):
+    """Fable review of Co-movement (28 Oct 2026), S2: ``min(MIN_OBS, window)`` asked the 6-month window for 126 of
+    126 returns, so one missing daily bar dropped the name. Daily Bars never goes back to a session before a name's
+    last stored one (``core.prices._classify``), so that gap is permanent. A window now needs at most 95 % of its
+    sessions; the longer windows keep MIN_OBS."""
+    assert cs.effective(window).min_obs == expect
+
+
+def test_one_missing_bar_no_longer_drops_a_name_from_the_6_month_window(rawstore_tmp_db):
+    ret = _two_group_returns()
+    ret.loc[ret.index[-10], "A1"] = np.nan                     # one session with no stored bar
+    tickers = list(ret.columns)
+    _seed_universe(tickers)
+    _seed_prices(ret)
+    p = engine.run(no_fetch=True, tickers=tickers, cuts=(2,), persist=False, window=126)
+    assert "A1" not in p["dropped"] and p["funnel"]["missing_bars"] == 0
+    assert any(m["ticker"] == "A1" for c in p["clusters"]["2"] for m in c["members"])
 
 
 def test_payload_block_for_the_ui(rawstore_tmp_db):
@@ -235,7 +255,7 @@ def _seed_prices(ret: pd.DataFrame):
                 continue
             rows.append({"ticker": t, "ts": ts.isoformat(), "open": p, "high": p,
                          "low": p, "close": float(p), "volume": 1.0, "cached_at": now})
-    d01_bars.write_bars(rows)
+    prices_bars.write_bars(rows)
 
 
 def _split_fixture():
@@ -343,7 +363,12 @@ def test_default_settings_reproduce_the_pre_change_payload(rawstore_tmp_db):
 
     Only the hash string and the new keys (funnel split, window, settings) may
     differ: clusters, labels, significance, persistence, funnel counts, window
-    dates and the lagged-test summary are identical."""
+    dates and the lagged-test summary are identical.
+
+    One case was rewritten for the Fable review of 28 Oct 2026, N2: ``mkt_nop`` (a store-only run with SPY applied)
+    used to reuse the null and lagged test that ``two_p`` (a Fetch on other data with no SPY, so raw returns) had
+    stored under the same hash. It now has its own hash and nothing stored to reuse: ``baseline_r``,
+    ``significant`` and ``persist`` are None and ``oos`` is empty. Nothing else in the file changed."""
     golden = json.loads(_GOLDEN.read_text(encoding="utf-8"))
     got = {}
     for name, ret in (("two", _two_group_returns(n=700)), ("mkt", _market_two_groups(n=700))):
@@ -454,3 +479,43 @@ def test_route_reset_some_keys(client):
     bs.save(B, {"WINSOR_K": 6.5, "MIN_OBS": 100})
     r = client.post("/api/settings/board/module_comovement", json={"reset": ["WINSOR_K"]})
     assert r.status_code == 202 and r.get_json()["values"]["overridden"] == ["MIN_OBS"]
+
+
+def test_config_hash_carries_the_engine_method(rawstore_tmp_db, monkeypatch):
+    """A stored run, null or lagged test of an older method never matches (Co-movement review, 28 Oct 2026)."""
+    before = _hash()
+    monkeypatch.setattr(engine.config, "METHOD", engine.config.METHOD + 1)
+    assert _hash() != before
+
+
+def test_a_raw_return_fallback_has_its_own_hash(rawstore_tmp_db):
+    """Fable review of Co-movement (28 Oct 2026), N2: with SPY missing, "remove market = SPY" falls back to raw
+    returns, but the run hashed as a residual one. A Refresh with SPY back then reused that Fetch's raw-return null
+    and lagged test, and the other way round. The hash now says when the benchmark was asked for and not applied."""
+    _t, kw = _market_run(persist=False)                  # no SPY bars: the board falls back to raw returns
+    p = engine.run(**kw)
+    assert p["benchmark"] == "spy" and p["benchmark_applied"] is False
+    assert p["config_hash"] != engine.config_hash(252, config.LINKAGE, (2,), 1, "spy")
+    assert p["config_hash"] == engine.config_hash(252, config.LINKAGE, (2,), 1, "spy", benchmark_applied=False)
+    assert engine.config_hash(252, config.LINKAGE, (2,), 1, "spy", benchmark_applied=True) \
+        == engine.config_hash(252, config.LINKAGE, (2,), 1, "spy")
+    assert engine.config_hash(252, config.LINKAGE, (2,), 1, "off", benchmark_applied=False) \
+        == engine.config_hash(252, config.LINKAGE, (2,), 1, "off")   # off is raw by choice, not a fallback
+
+
+@pytest.mark.parametrize("persist", [False, True])
+def test_a_name_listed_after_a_stale_benchmarks_last_bar_is_listed_recently(rawstore_tmp_db, persist):
+    """Fable review of Co-movement (28 Oct 2026), N3: when SPY is stale the window is cut at its last bar. A name
+    whose first bar is after that cut has no price inside the cut window; both the store-only and the full read
+    then filed it as "missing bars" (a gap), though it simply listed after the window started."""
+    ret = _market_two_groups(n=300)
+    ret.loc[ret.index[-6:], "SPY"] = np.nan                     # SPY 6 sessions behind: stale, the window is cut
+    new = pd.Series(np.nan, index=ret.index)
+    new.iloc[-3:] = 0.01                                        # first bar 3 sessions ago, after SPY's last
+    ret["NEW"] = new
+    tickers = [t for t in ret.columns if t != "SPY"]
+    _seed_universe(tickers)
+    _seed_prices(ret)
+    p = engine.run(no_fetch=True, tickers=tickers, cuts=(2,), persist=persist)
+    assert p["benchmark_status"] == "stale" and "NEW" in p["dropped"]
+    assert p["funnel"]["listed_recently"] == 1 and p["funnel"]["missing_bars"] == 0

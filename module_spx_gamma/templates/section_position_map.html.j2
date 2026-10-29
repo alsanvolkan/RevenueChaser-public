@@ -497,7 +497,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   <tbody>
   {% if vix %}<tr><td data-label="Metric">VIX family</td><td data-label="Value">
     {% if vix.vix %}VIX {{ vix.vix|round(2) }}{% endif %}{% if vix.vix9d %} · 9D {{ vix.vix9d|round(2) }}{% endif %}{% if vix.vix3m %} · 3M {{ vix.vix3m|round(2) }}{% endif %}{% if vix.vix6m %} · 6M {{ vix.vix6m|round(2) }}{% endif %}{% if vix.vix1y %} · 1Y {{ vix.vix1y|round(2) }}{% endif %}{% if vix.vvix %} · VVIX {{ vix.vvix|round(2) }}{% endif %}
-    </td><td data-label="Meaning">Term structure is <b>{{ vix.term_mode or "n/a" }}</b>{% if vix.term_mode == 'contango' %} — short-dated calm, longer-dated more expensive (normal).{% elif vix.term_mode == 'backwardation' %} — near-term stress priced in (early warning).{% endif %}</td></tr>{% endif %}
+    </td><td data-label="Meaning">Term structure is <b>{{ vix.term_mode or "n/a" }}</b>{% if vix.term_mode == 'contango' %} — short-dated calm, longer-dated more expensive (normal).{% elif vix.term_mode == 'backwardation' %} — near-term stress priced in (early warning).{% elif vix.term_mode == 'front backwardation' %} — the next 9 days priced above the month while the 3M curve still slopes up (first sign of near-term stress).{% endif %}</td></tr>{% endif %}
   {% if iv_rank %}<tr><td data-label="Metric">IV Rank (1Y)</td><td data-label="Value">{{ "n/a (historical)" if historical.iv_rank else (iv_rank.iv_rank_1y | fmtnum('{:,.1f}%')) }}</td><td data-label="Meaning">Where today's IV sits vs the past year; low = cheap options.</td></tr>{% endif %}
   {% if skew %}<tr><td data-label="Metric">Skew (Put Bias)</td><td data-label="Value">{% if historical.skew %}n/a (historical){% else %}{{ skew.put_bias_1m | fmtnum('{:.1%}') }} (1M) · {{ skew.put_bias_3m | fmtnum('{:.1%}') }} (3M){% endif %}</td><td data-label="Meaning">Cost of downside protection vs upside bets. <span style="color:var(--amber)">Derived/unverified</span> ({{ skew.note }})</td></tr>{% endif %}
   {% if realized_vol %}<tr><td data-label="Metric">Realized vs Implied</td><td data-label="Value">{% if historical.realized_vol %}n/a (historical){% else %}IV {{ realized_vol.implied_volatility | fmtnum('{:.1%}') }} · RV {{ realized_vol.realized_volatility | fmtnum('{:.1%}') }}{% endif %}</td><td data-label="Meaning">VRP posture: IV premium over realized = vol selling gets paid.</td></tr>{% endif %}
@@ -635,11 +635,14 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 
 <h2>Brier Scorecard</h2>
 <div class="at-glance">
-  <span class="muted">Scored weeks:</span> {{ brier.scored_count }}
+  <span class="muted">Scored days:</span> {{ brier.scored_count }}
   &middot; <span class="muted">Avg Brier:</span> {{ brier.average if brier.average is not none else "—" }}
   &middot; <span class="muted">Equal-weight ref:</span> {{ ("%.4f"|format(brier.equal_weight_reference)) if brier.equal_weight_reference is number else brier.equal_weight_reference }}
   {%- if brier.skill_score is number %}
   &middot; <span class="muted">Skill score:</span> {{ "%+.2f"|format(brier.skill_score) }}
+  {%- endif %}
+  {%- if brier.base_rate_reference is number %}
+  &middot; <span class="muted">Base-rate ref:</span> {{ "%.4f"|format(brier.base_rate_reference) }}
   {%- endif %}
 </div>
 <div class="note">{{ brier.verdict }}</div>

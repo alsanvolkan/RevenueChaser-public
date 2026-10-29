@@ -1,9 +1,11 @@
-"""E5d (#372): R6's rate-event overlap and yield series come from the store, never from a live call.
+"""E5d (#372): R6's rate-event overlap and yield series come from the stores, never from a live call.
 
 The rule (FOMC/CPI only, the ±1 trading-day window, None = no veto) is pinned on ``stored_inputs`` against the old
-store's ``economic_calendar`` and ``macro_series`` (D37, D27), which retire with the old store (G10). Since G9 the
-pipeline reads ``market_series`` instead (``store_reads``: ``DGS10``, ``FOMC_DECISION``, ``CPI_RELEASE``) and asks
-FRED for nothing; the pipeline tests below seed that.
+store's ``economic_calendar`` (D37), which retires with the old store (G10). Since G9 the pipeline reads the FOMC and
+CPI days from ``market_series`` (``store_reads.rate_event_days``: ``FOMC_DECISION``, ``CPI_RELEASE``), and the yield
+series from the market store (``store_reads.dgs10_map``); no run asks FRED. The pipeline tests below seed those.
+
+The yield reader's own cases live in ``test_store_reads.py``; what is pinned here is the rule and the wiring.
 
 Offline: temp stores seeded with the rows, a fake client with a duration-like price series. The rule itself
 (FOMC/CPI only, the ±1 trading-day window, None = no veto) is pinned here; the pipeline wiring is in
@@ -20,6 +22,7 @@ from RevenueChaser.core import rawstore
 from RevenueChaser.module_earnings_radar import store_reads, stored_inputs
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline
 from RevenueChaser.module_earnings_radar.tests.options_store import write_series
+from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve as serve_market
 from RevenueChaser.module_earnings_radar.tests.test_pipeline_score import _FakeUW, _duration_ohlc_and_yields
 
 NY = ZoneInfo("America/New_York")
@@ -203,66 +206,8 @@ def test_sweeps_that_each_cover_half_the_window_are_none():
 # ── the stored DGS10 map ─────────────────────────────────────────────────────────────────────────────────────────
 
 def _seed_dgs10(yields: dict):
-    rawstore.write_rows("macro_series", [
-        {"series_id": "DGS10", "obs_date": date.fromisoformat(d), "source": "fred", "value": v,
-         "frequency": "daily"} for d, v in yields.items()])
-
-
-def test_dgs10_map_reads_the_fred_rows():
-    _seed_dgs10({"2026-01-28": 4.0, "2026-01-29": 4.1})
-    rawstore.write_rows("macro_series", [{"series_id": "DGS10", "obs_date": date(2026, 1, 30), "source": "yfinance",
-                                          "value": 9.9}])
-    assert stored_inputs.dgs10_map() == {"2026-01-28": 4.0, "2026-01-29": 4.1}
-
-
-def test_dgs10_map_skips_null_values():
-    rawstore.write_rows("macro_series", [
-        {"series_id": "DGS10", "obs_date": date(2026, 1, 29), "source": "fred", "value": None}])
-    assert stored_inputs.dgs10_map() == {}
-
-
-def test_dgs10_map_is_the_newest_80_observations():
-    """The window FRED would serve: the 80 newest, not the 80 oldest and not all of them (review S1)."""
-    days = [date(2025, 10, 22) + timedelta(days=i) for i in range(100)]          # .. 2026-01-29
-    _seed_dgs10({d.isoformat(): 4.0 + i / 100 for i, d in enumerate(days)})
-    got = stored_inputs.dgs10_map()
-    assert sorted(got) == [d.isoformat() for d in days[-80:]]
-
-
-def _dgs10_ending(newest: date):
-    _seed_dgs10({(newest - timedelta(days=i)).isoformat(): 4.0 for i in range(30)})
-
-
-def test_dgs10_three_sessions_old_is_still_read():
-    """Newest observation Tue Jan 27: three sessions (Wed, Thu, Fri) after it up to Fri Jan 30 = MAX_LAG."""
-    _dgs10_ending(date(2026, 1, 27))
-    assert stored_inputs.MAX_LAG["macro_series"] == 3
-    assert max(stored_inputs.dgs10_map()) == "2026-01-27"
-
-
-def test_dgs10_four_sessions_old_is_stale():
-    """Newest observation Mon Jan 26: four sessions behind, so the run asks FRED instead (review S3)."""
-    _dgs10_ending(date(2026, 1, 26))
-    assert stored_inputs.dgs10_map() == {}
-
-
-def test_dgs10_on_a_day_the_stock_market_is_closed_counts_the_sessions_after_it():
-    """FRED observes bond-market days; Good Friday 2026-04-03 has no stock session but the lag still counts."""
-    _seed_dgs10({"2026-04-02": 4.0, "2026-04-03": 4.1})
-    assert stored_inputs.dgs10_map(latest=date(2026, 4, 6)) == {"2026-04-02": 4.0, "2026-04-03": 4.1}
-
-
-def test_a_stale_dgs10_in_market_series_gives_no_beta_and_asks_fred_for_nothing(monkeypatch):
-    from RevenueChaser.module_earnings_radar import macro_watch
-    write_series([("DGS10", date(2026, 1, 20) - timedelta(days=i), 4.0) for i in range(30)])
-    monkeypatch.setattr(macro_watch, "fred_daily_map", lambda *a, **k: pytest.fail("FRED was called"))
-    p = _pipeline([])
-    assert p._warm_dgs10() == {}
-    assert p.input_sources["dgs10"] == "none"
-
-
-def test_dgs10_map_of_an_empty_store_is_empty():
-    assert stored_inputs.dgs10_map() == {}
+    """The 10-year yield in the market store, the only place the board reads it from."""
+    serve_market({d: v for d, v in yields.items()})
 
 
 # ── the pipeline: stored macro in, veto out ──────────────────────────────────────────────────────────────────────
@@ -320,9 +265,8 @@ def test_a_report_outside_the_stored_span_keeps_the_badge_only():
     assert p.input_sources["rate_events"] == "none"
 
 
-def test_an_empty_market_series_is_none_and_asks_fred_for_nothing(monkeypatch):
-    from RevenueChaser.module_earnings_radar import macro_watch
-    monkeypatch.setattr(macro_watch, "fred_daily_map", lambda *a, **k: pytest.fail("FRED was called"))
+def test_without_a_market_store_r6_has_no_yield_series_and_no_provider_is_asked():
+    """The old run called FRED here. There is no live read left: R6 simply stays unavailable."""
     p = _pipeline([])
     assert p._warm_dgs10() == {}
     assert p.input_sources["dgs10"] == "none"

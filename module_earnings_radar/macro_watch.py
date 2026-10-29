@@ -1,9 +1,12 @@
-"""Macro series resolution (FRED + yfinance).
+"""The FRED request of the nightly macro sweep (``inputs/macro.py``, D27).
 
-Weekly closes feed the rotation RRG map. Daily dated observations feed
-Earnings Radar R6 (10Y yield beta). The isolated Macro Market Watch panel
-was removed; yields/futures/volatility are plotted on the RRG via
-``macro_weekly_closes``.
+Ingestion only. No board reads this module: the Earnings board takes its 10-year yield from the market store
+(``store_reads.dgs10_map``) and the Rotation board plots its macro series from the same store
+(``module_sector_rotation/engine.macro_points``), so neither calls FRED or Yahoo while it renders.
+
+What was here before: ``fred_daily_map`` (the board's own FRED read for R6 yield beta) and the weekly pair
+``_fred_weekly`` / ``_yf_weekly`` behind ``macro_weekly_closes`` (the RRG's old macro plot). The market build
+(``rcdata/build/market_series.py``) fetches both the daily and the weekly series now, so all four are gone.
 """
 from __future__ import annotations
 
@@ -13,7 +16,6 @@ import re
 
 from RevenueChaser.core.config import FRED_API_KEY
 from RevenueChaser.core.providers.result import ProviderResult
-from RevenueChaser.core.rotation_reference import MACRO_SERIES
 
 logger = logging.getLogger(__name__)
 
@@ -36,38 +38,6 @@ def _log_body(r) -> None:
 FRED_BASE = os.getenv("RC_FRED_BASE") or "https://api.stlouisfed.org/fred/series/observations"
 
 
-def _fred_weekly(series_id: str, api_key: str, limit: int = 160):
-    """Weekly (eop) FRED observations -> ascending list of floats."""
-    if not api_key:
-        return []
-    import httpx
-    try:
-        r = httpx.get(FRED_BASE, params={
-            "series_id": series_id, "api_key": api_key,
-            "file_type": "json", "frequency": "w", "aggregation_method": "eop",
-            "sort_order": "desc", "limit": limit,
-        }, timeout=25, follow_redirects=True)
-        r.raise_for_status()
-        try:
-            payload = r.json()
-        except ValueError:
-            logger.warning(f"[fred-weekly] {series_id}: {_not_json_diagnostic(r)['error']}")
-            _log_body(r)
-            return []
-        obs = payload.get("observations", [])
-    except Exception as exc:
-        logger.debug(f"[fred-weekly] {series_id}: {exc}")
-        return []
-    vals = []
-    for o in obs:
-        v = o.get("value")
-        if v in (None, ".", ""):
-            continue
-        try:
-            vals.append(float(v))
-        except (ValueError, TypeError):
-            continue
-    return vals[::-1]
 
 
 def fred_daily_result(series_id: str, api_key: str = None, limit: int = 80) -> ProviderResult:
@@ -122,41 +92,3 @@ def _fred_daily(series_id: str, api_key: str = None, limit: int = 80) -> list[tu
     if res.status != "ok" and res.error.get("error") != "missing_key":
         logger.debug(f"[fred-daily] {series_id}: {res.error.get('error')}")
     return res.data
-
-
-def fred_daily_map(series_id: str = "DGS10", api_key: str = None, limit: int = 80) -> dict[str, float]:
-    """Dated daily FRED series as ``{YYYY-MM-DD: value}`` for R6 yield beta."""
-    return {d: v for d, v in _fred_daily(series_id, api_key=api_key, limit=limit)}
-
-
-def _yf_weekly(symbol: str, limit: int = 160):
-    """yfinance weekly closes -> ascending list of floats."""
-    import math
-    import yfinance as yf
-    try:
-        h = yf.Ticker(symbol).history(period="3y", interval="1wk")
-        if h is None or h.empty:
-            return []
-        closes = [float(x) for x in h["Close"].tolist()
-                  if x is not None and not (isinstance(x, float) and math.isnan(x))]
-    except Exception as exc:
-        logger.debug(f"[yf-weekly] {symbol}: {exc}")
-        return []
-    return closes[-limit:]
-
-
-def macro_weekly_closes(symbol: str) -> list[float]:
-    """Weekly closing series for a macro indicator (FRED -> yfinance)."""
-    cfg = MACRO_SERIES.get(symbol, {})
-    fred_id = cfg.get("fred")
-    yf_sym = cfg.get("yf")
-
-    if fred_id:
-        vals = _fred_weekly(fred_id, FRED_API_KEY)
-        if vals:
-            return vals
-    if yf_sym:
-        vals = _yf_weekly(yf_sym)
-        if vals:
-            return vals
-    return []

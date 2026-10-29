@@ -1,8 +1,10 @@
-"""#380 AG S4 (scope A): the momentum signal reads D01 bars, never a per-name Yahoo fetch.
+"""#380 AG S4 (scope A): the momentum signal reads stored daily bars, never a per-name Yahoo fetch.
 
-Spec: ``.hermes/plans_claude/2026-10-16_r8_specs/380-ag-s4.md``, decisions 2-4. The momentum inputs come from
-``price_bars_daily`` (nominal, ``core.prices.daily_bars``) of one ticker up to the newest D01 session SPY has, so a
-Fetch spends no yfinance request on a technical fallback, and the board says which price session it used.
+Spec: ``.hermes/plans_claude/2026-10-16_r8_specs/380-ag-s4.md``, decisions 2-4. The momentum inputs come from the
+stored bars of one ticker up to the newest session SPY has, so a Fetch spends no yfinance request on a technical
+fallback, and the board says which price session it used. Since PR 11 (G3) those bars are the prices store's
+(``rcdata.read.ticker_bars``, split basis: D01's old "nominal"); the freeze anchor still reads SPY's D01 bar until G4
+moves the ledger, so ``store_bars`` writes both.
 
 The three D01 rules (decision 2, the sign of ``dist_52w_pct`` kept as ``technical_from_quote`` has it):
 
@@ -24,6 +26,7 @@ import pytest
 from RevenueChaser.core import calendar as cal
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_asymmetric_growth import engine, freeze
+from RevenueChaser.rcdata.tests import prices_store
 
 SESSION = date(2026, 10, 15)                                    # a Thursday
 CLOSE = cal.session_close(SESSION).astimezone(timezone.utc)
@@ -58,8 +61,21 @@ def bar(ticker: str, day, *, close: float = 100.0, high: float = 105.0, low: flo
             "fetched_at": stamp, "run_id": "seed", "run_at": stamp}
 
 
+def store_bars(rows: list[dict]) -> None:
+    """``bar`` rows in the prices store (the momentum's source since PR 11) and in D01 (the freeze anchor's).
+
+    shortcut: the D01 write only feeds ``ledger.d01_has_session`` for the freeze; drop it when G4 moves the ledger
+    to the prices store."""
+    prices_store.put_bars(rows, replace=False, overwrite=True)
+    rawstore.write_rows("price_bars_daily", rows)
+
+
+def put_action(ticker: str, ex: date, action: str, value: float) -> None:
+    prices_store.put_action(ticker, ex, action, value, fetched_at=EVENING)
+
+
 def seed_momentum(tickers, *, session: date = SESSION, n: int = 260) -> list[date]:
-    """D01 bars that pass all three momentum rules for ``tickers`` (and SPY, the session's anchor).
+    """Stored bars that pass all three momentum rules for ``tickers`` (and SPY, the session's anchor).
 
     Each series: 250 sessions at close 100 and 10 at 102 (price above its own 50-day mean, 100.4); every high 105
     (2.9% off the high) and the last 10 sessions' volume 160 against the 63-session mean 109.5 (1.46x).
@@ -70,7 +86,7 @@ def seed_momentum(tickers, *, session: date = SESSION, n: int = 260) -> list[dat
         for k, day in enumerate(days):
             tail = k >= len(days) - 10
             rows.append(bar(ticker, day, close=102.0 if tail else 100.0, volume=160.0 if tail else 100.0))
-    rawstore.write_rows("price_bars_daily", rows)
+    store_bars(rows)
     return days
 
 
@@ -226,10 +242,8 @@ def test_a_split_inside_the_window_reads_nominal_bars(rawstore_tmp_db):
     rows = [bar("SPL", d, close=100.0, high=105.0, volume=100.0, fetched_at=1.0) for d in days if d < ex]
     rows += [bar("SPL", d, close=50.0, high=52.5, volume=200.0) for d in days if d >= ex]
     rows += [bar("SPY", d) for d in days[-5:]]
-    rawstore.write_rows("price_bars_daily", rows)
-    rawstore.write_rows("price_actions", [{
-        "ticker": "SPL", "ex_date": ex, "action": "split", "value": 2.0, "session_date": ex, "source": "yfinance",
-        "fetched_at": EVENING, "run_id": "seed", "run_at": EVENING}])
+    store_bars(rows)
+    put_action("SPL", ex, "split", 2.0)
 
     preload = engine._preload(["SPL"], True)
     assert set(preload["bars"]) == {"SPL"} and preload["session"] == SESSION
@@ -244,7 +258,7 @@ def test_a_split_inside_the_window_reads_nominal_bars(rawstore_tmp_db):
 
 def test_the_window_starts_380_days_before_the_session(rawstore_tmp_db):
     days = sessions(n=300)                                         # ~420 calendar days: some bars fall outside
-    rawstore.write_rows("price_bars_daily", [bar("OLD", d) for d in days] + [bar("SPY", d) for d in days[-5:]])
+    store_bars([bar("OLD", d) for d in days] + [bar("SPY", d) for d in days[-5:]])
     preload = engine._preload(["OLD"], True)
     kept = [str(r["session_date"])[:10] for r in preload["bars"]["OLD"]]
     assert min(kept) >= (SESSION - timedelta(days=380)).isoformat() and len(kept) < len(days)
@@ -254,10 +268,8 @@ def test_a_dividend_in_the_window_does_not_move_the_nominal_momentum(rawstore_tm
     """Nominal applies splits only; an amount (the adjusted basis) would move the highs and so the distance."""
     days = sessions()
     ex = days[-50]
-    rawstore.write_rows("price_bars_daily", [bar("DIV", d) for d in days] + [bar("SPY", d) for d in days[-5:]])
-    rawstore.write_rows("price_actions", [{
-        "ticker": "DIV", "ex_date": ex, "action": "dividend", "value": 1.0, "session_date": ex, "source": "yfinance",
-        "fetched_at": EVENING, "run_id": "seed", "run_at": EVENING}])
+    store_bars([bar("DIV", d) for d in days] + [bar("SPY", d) for d in days[-5:]])
+    put_action("DIV", ex, "dividend", 1.0)
 
     preload = engine._preload(["DIV"], True)
     got = engine.technical_from_bars(preload["bars"]["DIV"], preload["session"])
@@ -269,8 +281,7 @@ def test_a_dividend_in_the_window_does_not_move_the_nominal_momentum(rawstore_tm
 
 def test_a_passing_quote_with_failing_bars_follows_the_bars(rawstore_tmp_db, monkeypatch):
     seed_momentum([])                                              # SPY's session only
-    rawstore.write_rows("price_bars_daily", [bar("SLIDE", d, close=50.0, high=100.0, volume=100.0)
-                                             for d in sessions()])
+    store_bars([bar("SLIDE", d, close=50.0, high=100.0, volume=100.0) for d in sessions()])
     rawstore.write_rows("edgar_financials", [edgar("SLIDE")])
     universe(monkeypatch, [row("SLIDE")])                          # the quote passes all three rules
     res = engine.run_asymmetric_growth_hunter(None, max_workers=1, no_fetch=True)
@@ -281,9 +292,9 @@ def test_a_passing_quote_with_failing_bars_follows_the_bars(rawstore_tmp_db, mon
     assert [s["passed"] for s in momentum(card)["subs"]] == [False, False, False]
 
 
-# ── 10. no D01 rows at all: the 247 research script's path still scores ─────────────────────────────────────────
+# ── 10. no stored bars at all: the 247 research script's path still scores ─────────────────────────────────────────
 
-def test_a_store_without_d01_rows_still_scores(rawstore_tmp_db):
+def test_a_store_without_bars_still_scores(rawstore_tmp_db):
     empty = engine._preload(["AAA"], True)
     assert empty["bars"] == {} and empty["session"] is None
     rawstore.write_rows("edgar_financials", [edgar("AAA")])
@@ -312,10 +323,10 @@ def test_a_zero_short_volume_is_a_zero_ratio_not_unknown():
     assert t["vol_10d"] == 0.0 and t["vol_ratio"] == 0.0
 
 
-def test_one_d01_session_cutoff_serves_every_preload_batch(rawstore_tmp_db, monkeypatch):
+def test_one_price_session_cutoff_serves_every_preload_batch(rawstore_tmp_db, monkeypatch):
     seen = []
     monkeypatch.setattr(engine, "_bars_by_ticker", lambda tickers, session: seen.append(session) or {})
-    monkeypatch.setattr(engine, "_d01_session", lambda: date(2026, 10, 1))
+    monkeypatch.setattr(engine, "_price_session", lambda: date(2026, 10, 1))
     first = engine._preload([], True, session=date(2026, 9, 30))
     assert first["session"] == date(2026, 9, 30)                       # a given cutoff is used, not re-read
     assert engine._preload([], True)["session"] == date(2026, 10, 1)   # none given: the newest SPY session

@@ -2,10 +2,14 @@
 
 On each report we record the scenario probabilities for the asof date. When a
 later session closes, we can score that date: Brier = sum((p - o)^2) over the
-3 scenario classes (0-2 scale, lower = better). A running average is compared
-to the equal-weight reference (2/3) so uncalibrated probabilities are flagged,
-not hidden, and reported as a Brier Skill Score: BSS = 1 - average / reference
-(0 = no better than 1/3 each, 1 = perfect, negative = worse).
+3 scenario classes (0-2 scale, lower = better). A running average is shown
+against the equal-weight reference (2/3) as a Brier Skill Score: BSS = 1 - average /
+reference (0 = no better than 1/3 each, 1 = perfect, negative = worse).
+
+The verdict is decided against the base rate instead (review N6): the Brier of always
+forecasting the outcome frequencies the scored days actually had. Beating 1/3 each is
+easy when one outcome dominates (constant probabilities do it), so it proves nothing.
+Each record is one report day, so the scorecard counts days.
 """
 from __future__ import annotations
 
@@ -31,6 +35,17 @@ def skill_score(average: float | None) -> float | None:
     if average is None:
         return None
     return 1.0 - average / EQUAL_WEIGHT_REFERENCE
+
+
+def base_rate_reference(records: list[dict]) -> float | None:
+    """Brier of forecasting the scored days' own outcome frequencies: 1 - sum(f_c^2); None when nothing is scored.
+
+    shortcut: the frequencies are in-sample (the same days the average covers), which flatters the reference a
+    little; upgrade to a trailing out-of-sample base rate once a few hundred days are scored."""
+    outcomes = [r.get("outcome") for r in records if r.get("brier") is not None and r.get("outcome") in CLASSES]
+    if not outcomes:
+        return None
+    return 1.0 - sum((outcomes.count(c) / len(outcomes)) ** 2 for c in CLASSES)
 
 
 def _validated_probs(probs: dict) -> dict[str, float]:
@@ -138,27 +153,37 @@ def score_date(asof_date: str, realized: str, path: Path | None = None) -> dict:
 
 
 def scorecard(path: Path | None = None) -> dict:
-    """Summary for the dashboard: average, n, and calibration verdict."""
+    """Summary for the dashboard: average, n, both references and the verdict against the base rate."""
     data = load_scores(path=path)
     records = data.get("records", [])
     avg = data.get("average")
     n = data.get("n", 0)
+    base = base_rate_reference(records) if avg is not None else None
+    base_skill = (1.0 - avg / base) if (base is not None and base > 0) else None
     if avg is None:
-        verdict = "No scored weeks yet — scorecard is in training mode."
+        verdict = "No scored days yet — scorecard is in training mode."
         calibrated = None
-    elif avg <= EQUAL_WEIGHT_REFERENCE:
+    elif base_skill is None:
         verdict = (
-            f"Average Brier {avg:.4f} is at or below the equal-weight reference "
-            f"({EQUAL_WEIGHT_REFERENCE:.4f}), skill score {skill_score(avg):+.2f} — "
-            "this probability layer is calibrated."
+            f"Average Brier {avg:.4f} over {n} scored day(s), all with one outcome, so there is no base rate to "
+            f"beat yet (equal-weight reference {EQUAL_WEIGHT_REFERENCE:.4f}, skill {skill_score(avg):+.2f}). "
+            "Recorded for audit only."
+        )
+        calibrated = None
+    elif avg < base:
+        verdict = (
+            f"Average Brier {avg:.4f} is below the base-rate reference ({base:.4f}, always forecasting the "
+            f"observed outcome frequencies), base-rate skill {base_skill:+.2f} — "
+            "this probability layer adds information over the base rate."
         )
         calibrated = True
     else:
         verdict = (
-            f"Average Brier {avg:.4f} is ABOVE the equal-weight reference "
-            f"({EQUAL_WEIGHT_REFERENCE:.4f}), skill score {skill_score(avg):+.2f} — "
+            f"Average Brier {avg:.4f} does NOT beat the base-rate reference ({base:.4f}, always forecasting the "
+            f"observed outcome frequencies), base-rate skill {base_skill:+.2f} — "
             "this probability layer is NOT yet calibrated "
-            "and has not measured better than an uninformed reference. Recorded for audit only."
+            f"(equal-weight reference {EQUAL_WEIGHT_REFERENCE:.4f}, skill {skill_score(avg):+.2f}, is no test: "
+            "constant probabilities beat it whenever one outcome dominates). Recorded for audit only."
         )
         calibrated = False
     return {
@@ -167,6 +192,8 @@ def scorecard(path: Path | None = None) -> dict:
         "average": avg,
         "equal_weight_reference": EQUAL_WEIGHT_REFERENCE,
         "skill_score": skill_score(avg),
+        "base_rate_reference": base,
+        "base_rate_skill_score": base_skill,
         "verdict": verdict,
         "calibrated": calibrated,
         "recorded_count": len(records),

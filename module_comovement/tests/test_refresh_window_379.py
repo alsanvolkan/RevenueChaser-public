@@ -1,4 +1,4 @@
-"""#379 COM-3: a store-only run (Refresh, window switch, Settings recompute) reads only its window of D01.
+"""#379 COM-3: a store-only run (Refresh, window switch, Settings recompute) reads only its window of the bars.
 
 The engine used to load every stored bar of every name (two years, ~1.96M rows live) before it could even decide to
 serve a stored run. A store-only run now reads the bars from the first session its numbers use
@@ -7,8 +7,8 @@ first and last session, the sessions of the union index, and the halted / flat n
 finds are read whole and judged by the same ``returns.flat_print_names``). A Fetch and a precompute still read the
 whole history (the lagged test needs it).
 
-Since the D01 switch the bars are D01's (``core.prices.daily_bars(basis="adjusted")``), over the span
-``ohlc.history_start`` names; the "whole history" is that span.
+Since the D01 switch the bars are stored ones, the prices store's since PR 8 (``rcdata.read.ticker_bars(
+basis="total_return")``), over the span ``ohlc.history_start`` names; the "whole history" is that span.
 
 The rule is "no number moves": every payload here is compared with the full read (``engine.WINDOWED_REFRESH =
 False``) key for key, and ``test_recompute_parity`` keeps its golden. Offline, temp store.
@@ -22,10 +22,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from RevenueChaser.core import prices, rawstore
+from RevenueChaser.core import rawstore
 from RevenueChaser.module_comovement import engine, ohlc
-from RevenueChaser.module_comovement.tests import d01_bars
+from RevenueChaser.module_comovement.tests import prices_bars
 from RevenueChaser.module_comovement.tests import test_recompute_parity as parity
+from RevenueChaser.rcdata import read
 
 
 def _rows(t: str, closes: pd.Series, fmt: str = "{}") -> list[dict]:
@@ -59,9 +60,9 @@ def _edge_store(stale_spy: bool = False) -> list[str]:
     rows = []
     for t, s in extra.items():
         rows += _rows(t, s)
-    d01_bars.write_bars(rows)
+    prices_bars.write_bars(rows)
     if stale_spy:
-        d01_bars.delete_bars("SPY", idx[-5])
+        prices_bars.delete_bars("SPY", idx[-5])
     names = [*tickers, *extra]
     rawstore.replace_all("equity_universe", [{
         "ticker": t, "market_cap": 1.0e10, "sector": "Technology", "price": 10.0, "name": t,
@@ -123,36 +124,24 @@ def test_a_served_run_matches_the_full_read(rawstore_tmp_db, monkeypatch):
 # ── what is read ────────────────────────────────────────────────────────────
 @pytest.fixture
 def reads(monkeypatch):
-    """Every D01 bar read (``core.prices.daily_bars``, rows with a ``close``): (sql, params, rows)."""
-    seen: list[tuple[str, list, list]] = []
-    real = rawstore.query
+    """Every bar read Co-movement makes (``rcdata.read.ticker_bars``, rows with a ``close``): (tickers, start, rows)."""
+    seen: list[tuple[list, object, list]] = []
+    real = read.ticker_bars
 
-    def spy(sql, params=None, *a, **kw):
-        out = real(sql, params, *a, **kw)
-        if "FROM price_bars_daily b" in sql and out and "close" in out[0]:
-            seen.append((sql, list(params or []), out))
+    def spy(tickers, start=None, end=None, basis="split"):
+        out = real(tickers, start=start, end=end, basis=basis)
+        if len(out):
+            rows = [{"session_date": pd.Timestamp(d).date(), "close": c}
+                    for d, c in zip(out["session_date"], out["close"])]
+            seen.append((sorted(str(t).upper() for t in tickers), start, rows))
         return out
 
-    monkeypatch.setattr(rawstore, "query", spy)
-    if hasattr(prices, "_read_columns"):
-        # K8a speed (#383) reads the bars as numpy columns, past rawstore.query: record those reads as rows too
-        real_columns = prices._read_columns
-
-        def spy_columns(sql, params, *a, **kw):
-            out = real_columns(sql, params, *a, **kw)
-            if "FROM price_bars_daily b" in sql and out and "close" in out and len(out["close"]):
-                rows = [{"session_date": pd.Timestamp(d).date(), "close": c}
-                        for d, c in zip(out["session_date"], out["close"])]
-                seen.append((sql, list(params or []), rows))
-            return out
-
-        monkeypatch.setattr(prices, "_read_columns", spy_columns)
+    monkeypatch.setattr(read, "ticker_bars", spy)
     return seen
 
 
 def _sessions() -> list[str]:
-    return sorted({str(r["d"]) for r in rawstore.query(
-        "SELECT DISTINCT session_date d FROM price_bars_daily WHERE close IS NOT NULL", db=d01_bars.DB)})
+    return [d.isoformat() for d in read.bar_sessions(["SPY"])]
 
 
 @pytest.mark.parametrize("window,horizon", [(252, 1), (126, 5), (21, 1)])
@@ -163,20 +152,20 @@ def test_a_store_only_run_reads_only_its_window(rawstore_tmp_db, reads, window, 
     need = max(window + horizon, engine.settings_mod.effective(window).oos_holdout + 1)
     start = sessions[-need]
     lo = ohlc.history_start()
-    bounded = [r for r in reads if str(r[1][-1]) == start]
+    bounded = [r for r in reads if str(r[1]) == start]
     assert len(bounded) == 1
-    # the window plus each name's previous bar (the close a dividend in the window needs, K8a)
-    assert len({r["session_date"] for r in bounded[0][2] if str(r["session_date"]) >= start}) == need
+    # the window only: the factors come with each bar, so no earlier close is read (D01 needed one, K8a)
+    assert len({r["session_date"] for r in bounded[0][2]}) == need
     whole = [r for r in reads if r not in bounded]
-    assert all(r[1][-1] == lo for r in whole)
-    assert {t for r in whole for t in r[1][:-2]} <= {"FLATOLD", "FLATNEW", "THIN"}   # only the flat candidates
+    assert all(r[1] == lo for r in whole)
+    assert {t for r in whole for t in r[0]} <= {"FLATOLD", "FLATNEW", "THIN"}   # only the flat candidates
 
 
 def test_a_persisting_run_still_reads_the_whole_history(rawstore_tmp_db, reads):
     tickers = _edge_store()
     engine.run(no_fetch=True, persist=True, tickers=tickers, window=252)
     lo = ohlc.history_start()
-    assert reads and all(r[1][-1] == lo for r in reads)
+    assert reads and all(r[1] == lo for r in reads)
 
 
 def test_price_frame_start_keeps_the_sessions_on_and_after_it(rawstore_tmp_db):
@@ -199,11 +188,11 @@ def test_history_facts_name_the_bars_price_frame_keeps(rawstore_tmp_db):
 
 
 def test_history_facts_skip_a_nan_close(rawstore_tmp_db):
-    """A NaN close is no bar, in SQL as in ``price_frame`` (D01 holds one row per session, so the old two-closes
-    case cannot occur)."""
+    """A NaN close is no bar, in SQL as in ``price_frame`` (the store holds one row per session, so the old
+    two-closes case cannot occur)."""
     idx = pd.date_range("2025-01-01", periods=20, freq="B")
     s = pd.Series(np.linspace(10, 20, 20), index=idx)
-    d01_bars.write_bars(_rows("ONE", s) + [{"ticker": "NAN", "ts": "2025-01-01T00:00:00", "close": float("nan"),
+    prices_bars.write_bars(_rows("ONE", s) + [{"ticker": "NAN", "ts": "2025-01-01T00:00:00", "close": float("nan"),
                                             "open": None, "high": None, "low": None, "volume": 1.0,
                                             "cached_at": time.time()}])
     facts = ohlc.history_facts(["ONE", "NAN"])

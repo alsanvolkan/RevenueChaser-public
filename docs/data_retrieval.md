@@ -80,8 +80,8 @@ no downloaded state worth re-deriving, so they keep a "click Fetch" empty state.
 | Financials | `/run/quick` | `ticker` (required) | per-ticker: `?refresh=1&ticker=X` |
 | UW Interaction (lab) | `/run/uw` | `tool` (required) + tool params | **live-only** — board renders from its stored `.cache/uw_interaction/` payload |
 | Co-movement | `/run/module_comovement` | `no_fetch` | model-only; writes .cache only (runs persist on Fetch) |
-| Value Chain | `/run/module_value_chain` | `no_fetch` | model-only (reads `edgar.duckdb`) |
-| Relatedness | `/run/module_relatedness` | `no_fetch` | model-only (reads the filings in `edgar.duckdb` and the `relatedness_*` profiles in `raw.duckdb`). Fetch also downloads missing filings from SEC and calls DeepSeek off-peak for new profiles; only Fetch writes `relatedness_scores` and `run_registry` (`module_relatedness/engine.py:81-92`, `:449-466`) |
+| Value Chain | `/run/module_value_chain` | `no_fetch` | model-only (reads `edgar.duckdb`; on the fundamentals layer also the XBRL major customers in `fundamentals.duckdb`) |
+| Relatedness | `/run/module_relatedness` | `no_fetch` | model-only (reads the filings in `edgar.duckdb`, or on the fundamentals layer the annual report text in `fundamentals.duckdb`, and the `relatedness_*` profiles in `raw.duckdb`). Fetch also downloads missing filings from SEC and calls DeepSeek off-peak for new profiles; only Fetch writes `relatedness_scores` and `run_registry` (`module_relatedness/engine.py:81-92`, `:449-466`) |
 | Sector Rotation | `/run/rotation` | `start`, `end` (optional) | store |
 | Asymmetric Growth | `/run/module_asymmetric_growth` | `refresh_universe`, `no_fetch` | model-only |
 | Swing Potential | `/run/swing` | `refresh_universe`, `no_fetch` | model-only |
@@ -306,9 +306,10 @@ whole app at a local server:
 
 | Env var | Redirects |
 |---|---|
-| `RC_UW_BASE` | Unusual Whales (`core/providers/unusual_whales.py`, `core/index_lists.py`) |
+| `RC_UW_BASE` | Unusual Whales (`core/providers/unusual_whales.py`, `core/index_lists.py`; also the fundamentals layer's `uw/financials`, off unless `RC_UW_PRELIMINARY=1`) |
 | `RC_UW_BASE_ROOT` | Unusual Whales for `module_spx_gamma` (no `/api` suffix) |
-| `RC_SEC_WWW_BASE` / `RC_SEC_DATA_BASE` | SEC EDGAR + 13F archives; the spine's `sec/company_tickers_exchange`; the ownership store's EDGAR daily index, filings (`sec/13f`, `sec/form4`, `sec/13dg`) and fails-to-deliver files (`sec/ftd`) |
+| `RC_SEC_WWW_BASE` / `RC_SEC_DATA_BASE` | SEC EDGAR + 13F archives; the spine's `sec/company_tickers_exchange`; the ownership store's EDGAR daily index, filings (`sec/13f`, `sec/form4`, `sec/13dg`) and fails-to-deliver files (`sec/ftd`); the fundamentals layer's SEC datasets (`rcdata/build/fundamentals/`) |
+| `RC_ALPHAVANTAGE_BASE` | Alpha Vantage, the fundamentals layer's `alphavantage/earnings_calendar` (`rcdata/build/fundamentals/earnings.py`; read at call time) |
 | `RC_FORM13F_INDEX_URL` | SEC Form 13F data-set page (zip links are resolved from it) |
 | `RC_FRED_BASE` | FRED series (also the market store's FRED source) |
 | `RC_CBOE_BASE` | Cboe daily-price index files (`module_earnings_radar/inputs/vol_index.py`, `rcdata/build/sources/cboe.py`) |
@@ -317,6 +318,7 @@ whole app at a local server:
 | `RC_TREASURY_BASE` | US Treasury daily par yield curve CSV (`rcdata/build/sources/treasury.py`) |
 | `RC_FED_BASE` | Federal Reserve site, the FOMC calendar page (`rcdata/build/sources/fed.py`) |
 | `RC_BLS_BASE` | BLS site, the release calendar `.ics` (`rcdata/build/sources/bls.py`) |
+| `RC_YAHOO_BASE` | Unset in production: Yahoo is read through yfinance, which has no base URL. When set, the MOVE and wheat history is read as `<base>/<quoted symbol>.json` instead (the CLI test's loopback mock; `rcdata/build/sources/yahoo.py`) |
 | `RC_FDA_OOPD_BASE` | FDA Office of Orphan Products Development (OOPD) search |
 | `RC_DEEPSEEK_BASE` | DeepSeek chat API (`core/providers/deepseek.py`; read at call time) |
 | `RC_GROK_BASE` | SuperGrok chat API, the Relatedness Grok writer (`core/providers/grok.py`, #388; read at call time). Default the Grok CLI chat proxy `https://cli-chat-proxy.grok.com/v1`. Only https on `grok.com` / `*.grok.com` or a loopback mock is accepted, so the subscription token never goes elsewhere (`api.x.ai`, the metered developer API, is refused); the model is `RC_GROK_MODEL` |
@@ -330,6 +332,7 @@ whole app at a local server:
 | `RC_VANGUARD_BASE` | Vanguard's daily creation baskets (PCF, `etfportal.vanguard.com`): VOO, IVOO, VIOO (`rcdata/build/spine/funds.py`) |
 | `RC_NASDAQ_API_BASE` | Nasdaq's list API, the Nasdaq-100 members (`rcdata/build/spine/funds.py`) |
 | `RC_INVESCO_API_BASE` | Invesco's fund holdings API: QQQ, the second Nasdaq-100 file (`rcdata/build/spine/funds.py`) |
+| `RC_ALPACA_BASE` | Alpaca market data (`data.alpaca.markets`): the prices store's daily bars and corporate actions (`rcdata/build/sources/alpaca.py`, read at call time) |
 | `RC_FINRA_API_BASE` | FINRA's keyless API, consolidated short interest (`rcdata/build/ownership/finra.py`, read at call time); default `https://api.finra.org` |
 | `RC_REGSHO_NASDAQ_BASE` | Nasdaq Trader's Reg SHO threshold files (`rcdata/build/ownership/regsho.py`, read at call time); default `https://www.nasdaqtrader.com/dynamic/symdir/regsho` |
 | `RC_NYSE_BASE` | NYSE's site, the Reg SHO threshold downloads of NYSE, NYSE American and NYSE Arca (`rcdata/build/ownership/regsho.py`, read at call time); default `https://www.nyse.com` |
@@ -341,7 +344,10 @@ whole app at a local server:
 **yfinance is the exception.** It hardcodes the Yahoo hosts, manages its own
 session with cookie+crumb auth, and impersonates a browser TLS fingerprint —
 there is no URL to redirect. It must be faked at the Python boundary
-(`yf.Ticker` / `yf.screen`); see [`e2e_testing.md`](e2e_testing.md).
+(`yf.Ticker` / `yf.screen`); see [`e2e_testing.md`](e2e_testing.md). The market store's
+`yahoo` source (MOVE and wheat for Sector Rotation, PR 9) goes through it too, behind the
+`rcdata/build/sources/yahoo._history` seam: Yahoo's chart endpoint answers the builder's own
+User-Agent with HTTP 429, and its `range=max` with monthly bars (measured 29 Oct 2026).
 
 If you add a provider, give it a base-URL constant read from an env var in the
 same shape. A URL inlined at the call site has no seam and cannot be tested.

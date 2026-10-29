@@ -479,7 +479,7 @@ def run_rotation_latest(uw: UWClient, benchmark: str = "SPY", start: str = None,
     from RevenueChaser.module_sector_rotation import history as rotation_history, store as rotation_store
 
     run, run_at, window, saved, kept, notes = _freeze_run_id(), time.time(), None, [], None, []
-    short, stale = [], None
+    short, stale, carried = [], None, []
     if start or end:
         # Range fetch: reconstruct snapshots for every week in [start, end].
         from datetime import date as _date
@@ -514,6 +514,7 @@ def run_rotation_latest(uw: UWClient, benchmark: str = "SPY", start: str = None,
         if not snapshots:
             return _rotation_empty_fetch(uw, run, run_at, benchmark)
         short = list(getattr(engine, "too_short", None) or [])
+        carried = list(getattr(engine, "carried", None) or [])
         stale = getattr(engine, "stale", None)
         early = stale or ("an intraday run (the US session is open)" if getattr(engine, "intraday", False) else None)
         # ROT-5: a symbol with no series is missing. A thinner pull must not replace a session snapshot that covers
@@ -542,6 +543,8 @@ def run_rotation_latest(uw: UWClient, benchmark: str = "SPY", start: str = None,
                 notes.append(f"{stale}.")
         if short:
             notes.append(f"{rotation_history.short_warning(short)}.")
+        if carried and not kept:
+            notes.append(f"{rotation_history.carried_warning(carried)}.")
     # Embed holdings so the served map is self-contained (expandable rows work
     # even if the holdings route is unavailable / server is stale). Theme rows
     # only (ROT-4): sector rows expand to the sector -> industry tree
@@ -556,7 +559,7 @@ def run_rotation_latest(uw: UWClient, benchmark: str = "SPY", start: str = None,
     # Result history (#374): after the board file, so it holds what the board showed.
     _record_rotation(rotation_history, snapshots, holdings, sector_holdings, run, run_at, health, benchmark,
                      window=window, warnings=[backfill_note] if backfill_note else None, snapshot_rows=saved,
-                     kept=kept, too_short=short, stale=stale)
+                     kept=kept, too_short=short, stale=stale, carried=carried if not kept else None)
     if notes:
         raise JobMessage(" ".join(notes))
     return html_path
@@ -659,7 +662,7 @@ def run_money_flow_latest(uw: UWClient, days: int = 30) -> Path:
     from RevenueChaser.module_sector_rotation.money_flow import compute_money_flow
 
     run, run_at = _freeze_run_id(), time.time()
-    result = compute_money_flow(uw, days=days, window=_MF_WINDOW, top_n=_MF_TOP_N)
+    result = compute_money_flow(days=days, window=_MF_WINDOW, top_n=_MF_TOP_N)
     record = functools.partial(_record_money_flow, result, run, run_at, uw, days)   # result history (#374)
     partial = bool(result.get("partial"))
     empty = not (result.get("inflows") or result.get("outflows"))
@@ -1057,29 +1060,39 @@ def run_etf_holdings_sync(uw: UWClient) -> None:
     # runs here (backend D3/B9): theme ETFs get RS-vs-SPY rows stored for the
     # view. Sector ETFs show the sector -> industry tree instead, so they are
     # skipped (no wasted calls).
+    from datetime import timedelta
     from RevenueChaser.module_sector_rotation import store as rotation_store
     from RevenueChaser.module_sector_rotation.engine import (
-        SPY_MIN_CLOSES, fetch_spy_closes, holdings_with_rs_from,
+        HOLDINGS_READ_DAYS, SPY_MIN_CLOSES, bar_points, holdings_rs_rows,
     )
     enriched, rs_kept = 0, []
-    # SPY once for the whole job (it used to be fetched again for every theme ETF). Without enough
-    # of it every RS would be 0.0, so the theme ETFs keep the RS they already have and are named.
-    spy_closes = fetch_spy_closes(uw) if uw is not None else []
-    for ticker, info in ROTATION_ETFS.items():
-        if uw is None or info.get("group") != "theme" or not cache.get(ticker):
-            continue
-        if len(spy_closes) < SPY_MIN_CLOSES:
+    # One prices-store read of SPY and every holding for the whole job (the Rotation Fetch does the same,
+    # ``engine.fetch_all_holdings``): no candle is fetched here any more. Without enough SPY sessions in the store
+    # every RS would be 0.0, so the theme ETFs keep the RS they already have and are named.
+    themes = [t for t, info in ROTATION_ETFS.items() if info.get("group") == "theme" and cache.get(t)]
+    points, spy, as_of = {}, [], None
+    if themes:
+        try:
+            as_of = calendar.latest_complete_session()
+        except ValueError:
+            as_of = None
+    if as_of is not None:
+        wanted = sorted({h.get("ticker") for t in themes for h in cache[t] if h.get("ticker")} - {"SPY"})
+        points = bar_points(["SPY", *wanted], as_of - timedelta(days=HOLDINGS_READ_DAYS), as_of)
+        spy = points.get("SPY", [])
+    for ticker in themes:
+        if as_of is None or len(spy) < SPY_MIN_CLOSES:
             rs_kept.append(ticker)
             continue
-        rows = holdings_with_rs_from(cache[ticker], uw, spy_closes=spy_closes)
+        rows = holdings_rs_rows(cache[ticker], points, spy, as_of)
         if rows:
             rotation_store.save_holdings_cache(ticker, rows)
             enriched += 1
     msg = (f"Holdings synced for {sum(1 for r in cache.values() if r)} ETFs; "
            f"RS computed for {enriched} theme ETFs.")
     if rs_kept:
-        msg += (f" Kept stored RS for {len(rs_kept)} theme ETF(s): SPY candles missing "
-                f"(provider failure): {', '.join(rs_kept)}.")
+        msg += (f" Kept stored RS for {len(rs_kept)} theme ETF(s): the prices store has too few SPY "
+                f"sessions: {', '.join(rs_kept)}.")
     if kept:
         msg += (f" Kept stored holdings for {len(kept)} ETF(s) whose fetch returned nothing "
                 f"(provider failure): {', '.join(kept)}.")
@@ -1236,7 +1249,7 @@ def _copy_quick_artifact(html: str) -> bool:
 def run_quick(uw, ticker: str) -> Path:
     """Run Fin Research for one ticker — Quick Remarks (ticker_scores) + Fin Model (DCF/3-stmt/comps/credit/sensitivity).
 
-    yfinance / SEC EDGAR only (``uw`` ignored, no Unusual Whales key required).
+    yfinance only (``uw`` ignored, no Unusual Whales key required); nothing on this path reads SEC EDGAR.
     Fetches fresh raw data into .store, then recomputes the report into .cache.
     """
     from RevenueChaser.module_financials.run import run as fm_run

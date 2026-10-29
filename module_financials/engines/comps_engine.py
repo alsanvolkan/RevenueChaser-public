@@ -5,7 +5,7 @@ import logging
 from typing import Callable
 
 from ..config import to_float
-from ._inputs import net_debt as _net_debt
+from ._inputs import PE_ONLY_SECTOR, net_debt as _net_debt
 from RevenueChaser.core.providers.validator import validate_annual
 
 logger = logging.getLogger(__name__)
@@ -37,9 +37,6 @@ def _default_fetch(ticker: str) -> dict:
 # A multiple whose denominator was reported and is not positive is not meaningful: the cell reads NM and the
 # value stays out of the percentile. 0 would read as a real multiple, and None as "not reported".
 NM = "NM"
-
-# Banks and insurers are not valued on EV: a Financial Services target is a P/E comp (FIN-3).
-PE_ONLY_SECTOR = "Financial Services"
 
 
 def _multiple(numerator, denominator) -> float | str | None:
@@ -141,7 +138,9 @@ def run_comps(financials: dict, peers: list[str],
         # A Financial Services target is P/E only: the EV multiples are absent by design, not missing data.
         "pe_only": pe_only,
         # DF45: the two sides are on different bases, and the board says so (a label, no number moves).
-        "basis": {"peers": "trailing twelve months", "target_fiscal_year": latest.get("fiscal_year")},
+        # The peers' multiples are Yahoo's .info; the target's shares may be the prices store's (G6 follow-up).
+        "basis": {"peers": "trailing twelve months", "target_fiscal_year": latest.get("fiscal_year"),
+                  "target_shares": (financials.get("market_meta") or {}).get("shares_source") or "Yahoo"},
         "peers": rows,
         "multiples": {
             "ev_ebitda": _pct(ev_ebitda),

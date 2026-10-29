@@ -214,11 +214,10 @@ Line numbers are this worktree's.
   and `_market_where` — two **private** helpers, and the module docstring says the parse
   is "SPX Gamma's own". **Worth an issue**: either the CFTC parse becomes a shared
   provider-side reader or the two public names are agreed.
-- `module_sector_rotation/engine.py:550` imports earnings' `macro_weekly_closes` from
-  inside a function, so rotation → earnings is the one remaining direction: `#12` moved
-  `module_earnings_radar/macro_watch.py` onto `core/rotation_reference.py`, which removed
-  the other half of the cycle. **Worth an issue** (#13's second half): whether that reader
-  belongs to `earnings` at all, which is what would let its import move to module level.
+- Rotation no longer imports earnings' macro reader: the macro series come from the market
+  store (`engine.macro_points` over `rcdata.read.market_series`, PR 9) and
+  `macro_weekly_closes` is gone, so the rotation → earnings direction `#13` asked about
+  closed with it.
 - `module_asymmetric_growth/engine.py:842` — a screener imports
   `module_sec_13f.engine`. **Worth an issue** only if the two are meant to stay
   independent; today an AG run cannot be reasoned about without the 13F store.

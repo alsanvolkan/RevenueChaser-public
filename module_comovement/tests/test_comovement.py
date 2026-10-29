@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 
 from RevenueChaser.core import rawstore
-from RevenueChaser.module_comovement.tests import d01_bars
+from RevenueChaser.module_comovement.tests import prices_bars
 from RevenueChaser.module_comovement import (cluster, config, engine, label, noise,
                                              ohlc, returns)
 
@@ -346,7 +346,7 @@ def test_benchmark_tickers_constant():
 def test_fetch_bulk_no_fetch_never_downloads(rawstore_tmp_db):
     res = ohlc.fetch_bulk(["AAA", "BBB"], no_fetch=True)
     assert res["no_fetch"] is True and res["fetched"] == 0
-    assert res["pending"] == 2 + len(ohlc.BENCHMARK_TICKERS)          # an empty D01 holds none of them
+    assert res["pending"] == 2 + len(ohlc.BENCHMARK_TICKERS)          # an empty store holds none of them
 
 
 # ── engine ──────────────────────────────────────────────────────────────────
@@ -366,7 +366,7 @@ def _seed_ohlc(ret: pd.DataFrame):
         for ts, p in price.items():
             rows.append({"ticker": t, "ts": ts.isoformat(), "open": p, "high": p,
                          "low": p, "close": float(p), "volume": 1.0, "cached_at": now})
-    d01_bars.write_bars(rows)
+    prices_bars.write_bars(rows)
 
 
 def test_engine_run_persists_and_clusters(rawstore_tmp_db):
@@ -998,7 +998,7 @@ def test_report_uses_the_shared_help_box_once():
     assert "Dashed names joined the group since then." in html
     assert "“stable”" not in html
     # Source, window and horizon are stated, not left to guess (plan S5).
-    assert "price_bars_daily" in html and "Daily Bars" in html and "swing_ohlc" not in html
+    assert "price_bar_daily" in html and "prices build" in html and "swing_ohlc" not in html
     assert "What a group is" in html
     # #97: a label is the enrichment rule, not a bare majority.
     assert ("A group is named only when one industry (else a theme) is over-represented "
@@ -1654,7 +1654,7 @@ def test_members_carry_the_spine_contract_and_the_run_states_its_funnel(rawstore
     assert f["clustered"] == (f["classification_total"] - f["no_prices"]
                               - f["short_history"] - f["flat"])
     assert p["window_start"] and p["window_start"] < p["window_end"]
-    assert p["source"]["table"] == "prices.duckdb → price_bars_daily + price_actions"
+    assert p["source"]["table"] == "prices.duckdb → price_bar_daily + adj_factor"
     assert p["verdicts_from"] is None
     loaded = engine.load_payload()
     assert loaded["funnel"]["clustered"] == f["clustered"]         # survives a reload

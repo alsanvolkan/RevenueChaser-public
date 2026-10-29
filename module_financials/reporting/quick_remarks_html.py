@@ -111,6 +111,15 @@ def _text(result: dict) -> dict:
     }
 
 
+def _scored(result: dict) -> str:
+    """``Scored: 2026-10-06 (the last Asymmetric Growth Fetch)``: a stored card can be days older than the report
+    around it, so the section says when the score was made and by what (Financials review S5)."""
+    as_of, note = result.get("as_of"), result.get("as_of_note")
+    if not as_of:
+        return "Scored: N/A"
+    return f"Scored: {_esc(str(as_of))}" + (f" ({_esc(str(note))})" if note else "")
+
+
 def render_quick_remarks_section(result: dict) -> str:
     """Fin Research raporuna gömülecek Quick Remarks fragment'i (0-9 skor + 3 sinyal + overlay)."""
     score = result.get("score")
@@ -162,6 +171,7 @@ def render_quick_remarks_section(result: dict) -> str:
     <span>Price: {('$' + f'{result["price"]:,.2f}') if result.get("price") is not None else "N/A"}</span>
     <span>Sector: {t["sector"]}</span>
     <span>Source: {t["source"]}</span>
+    <span>{_scored(result)}</span>
   </div>
   {_overlays_html(result)}
   {_signals_html(result)}
@@ -234,6 +244,7 @@ def render_quick_remarks_html(result: dict) -> str:
     <span>Price: {('$' + f'{result["price"]:,.2f}') if result.get("price") is not None else "N/A"}</span>
     <span>Sector: {t["sector"]}</span>
     <span>Source: {t["source"]}</span>
+    <span>{_scored(result)}</span>
   </div>
   <div class="tags">{_overlays_html(result)}</div>
   {_signals_html(result)}

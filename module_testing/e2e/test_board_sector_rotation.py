@@ -6,9 +6,9 @@ rendered *every* stored date, and `/api/rotation/weeks` only listed weeks that
 already had snapshots, so "Fetch Data Range" could never reach a new week.
 Both passed the entire unit suite.
 
-Since M-ROT-2 (#374) the RRG and the range backfill read their closes from D01 (``price_bars_daily``): the test
-process seeds them into the dashboard's store the way RC-Daily-Bars leaves them, and no Fetch asks the provider for a
-candle of a rotation ETF.
+Since M-ROT-2 (#374) the RRG and the range backfill read their closes from the stored daily bars, since PR 9 (G3)
+the prices store's (``price_bar_daily``): the test process seeds them into the dashboard's prices store the way the
+prices build leaves them, and no Fetch asks the provider for a candle of a rotation ETF.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from .harness.shared import clear_cache_dir, shared_dashboard, store_of
 
 # The tests that only read what one default Fetch left behind share it (``fetched``); this mark keeps them on one
 # worker under ``--dist loadgroup``. A test that fetches a range, restarts or needs an empty store keeps its own
-# dashboard, seeded by ``d01``.
+# dashboard, seeded by ``stored_bars``.
 SHARED = pytest.mark.xdist_group("e2e-sector-rotation-shared-fetch")
 
 CANDLES = 200  # enough history for the 3-month RS lookback
@@ -72,12 +72,12 @@ def ohlc_routes(provider_routes):
     return provider_routes
 
 
-def _seed_d01():
-    """D01 bars for SPY and every rotation ETF D01 holds, ~19 months up to the latest complete session."""
+def _seed_bars():
+    """Prices-store bars for SPY and every rotation ETF, ~19 months up to the latest complete session."""
     import RevenueChaser.core.rawstore as rawstore
     from RevenueChaser.core import calendar
     from RevenueChaser.module_sector_rotation import engine
-    from RevenueChaser.module_sector_rotation.tests.d01_seed import seed
+    from RevenueChaser.module_sector_rotation.tests.bars_seed import seed
 
     rawstore.ensure_all_tables()
     session = calendar.latest_complete_session()
@@ -87,11 +87,12 @@ def _seed_d01():
 
 
 @pytest.fixture
-def d01(dashboard, monkeypatch):
-    """The test's own dashboard, its store seeded by ``_seed_d01``; returns the session the bars end on."""
+def stored_bars(dashboard, monkeypatch):
+    """The test's own dashboard, its store seeded by ``_seed_bars``; returns the session the bars end on."""
     import RevenueChaser.core.rawstore as rawstore
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
-    return _seed_d01()
+    monkeypatch.setattr("RevenueChaser.core.config.MARKET_DIR", dashboard.env["RC_MARKET_DIR"])  # the prices store (G3)
+    return _seed_bars()
 
 
 def _rotation_candle_calls(routes, since: int = 0) -> list[str]:
@@ -113,7 +114,7 @@ def _rotation_candle_paths(paths: list[str]) -> list[str]:
 class Fetched:
     dashboard: Dashboard
     result: JobResult
-    session: date                   # the session the seeded D01 bars end on
+    session: date                   # the session the seeded bars end on
     requests: list[str]             # every provider path asked for since the dashboard started, Fetch included
 
 
@@ -121,7 +122,7 @@ class Fetched:
 def _fetched_once(tmp_path_factory, mock_provider):
     with shared_dashboard(tmp_path_factory, mock_provider, "sector-rotation-shared") as dash:
         with store_of(dash):
-            session = _seed_d01()
+            session = _seed_bars()
         _route_ohlc(mock_provider)
         result = dash.run_job("/run/rotation")
         # The Fetch also queued the money-flow job (app/dashboard.py, run_rotation);
@@ -151,7 +152,7 @@ class TestFetch:
     def test_provenance_reports_a_data_date(self, fetched):
         assert fetched.dashboard.data_as_of("module_sector_rotation") is not None
 
-    def test_the_rrg_is_the_latest_session_from_d01(self, fetched):
+    def test_the_rrg_is_the_latest_session_from_the_prices_store(self, fetched):
         """M-ROT-2: the snapshot is dated by the session (#283), and no rotation ETF candle is requested (A5)."""
         assert _newest_stored(fetched.dashboard) == fetched.session.isoformat()
         assert [p for p in _rotation_candle_paths(fetched.requests) if p.endswith("/1w")] == []
@@ -177,7 +178,7 @@ class TestRefreshIsOfflineAndFaithful:
             "refresh reached the network: "
             f"{[q.path for q in ohlc_routes.requests()[before:]]}")
 
-    def test_refresh_survives_a_restart(self, dashboard, d01, ohlc_routes, clear_cache):
+    def test_refresh_survives_a_restart(self, dashboard, stored_bars, ohlc_routes, clear_cache):
         result = dashboard.run_job("/run/rotation")
         assert result.ok, f"rotation fetch failed: {result}\n{dashboard.logs()}"
         dashboard.wait_until_idle()
@@ -189,7 +190,7 @@ class TestRefreshIsOfflineAndFaithful:
 class TestWeekPicker:
     """`/api/rotation/weeks` feeds the "Fetch Data Range" calendar."""
 
-    @pytest.mark.usefixtures("d01")
+    @pytest.mark.usefixtures("stored_bars")
     def test_an_empty_store_still_offers_selectable_weeks(self, dashboard):
         """Regression: the picker used to list only weeks already fetched, so a
         fresh install had nothing to click and the button was unusable."""
@@ -197,7 +198,7 @@ class TestWeekPicker:
         assert len(weeks) >= 26
         assert not any(w["has_data"] for w in weeks)
 
-    @pytest.mark.usefixtures("d01")
+    @pytest.mark.usefixtures("stored_bars")
     def test_weeks_are_monday_to_sunday_spans(self, dashboard):
         for w in dashboard.get("/api/rotation/weeks").json()["weeks"]:
             start, end = date.fromisoformat(w["start"]), date.fromisoformat(w["end"])
@@ -211,7 +212,7 @@ class TestWeekPicker:
             "a completed fetch must show up as a week with data"
 
 
-@pytest.mark.usefixtures("d01")
+@pytest.mark.usefixtures("stored_bars")
 class TestRangeSelectionNarrowsTheBoard:
     """The bug this harness was built to catch, and DF66 (#181 R-1).
 
@@ -260,7 +261,8 @@ class TestRangeSelectionNarrowsTheBoard:
         assert dashboard.run_job("/run/rotation", start="2026-08-30", end="2026-08-03").ok
 
     def test_a_range_fetch_requests_no_rotation_candle(self, dashboard, ohlc_routes):
-        """The range backfill (M-ROT-2) and Money Flow (M-ROT-3) read D01: 79 + 34 UW candle calls before."""
+        """The range backfill (M-ROT-2) and Money Flow (M-ROT-3) read the stored bars: 79 + 34 UW candle calls
+        before."""
         before = ohlc_routes.request_count
         assert dashboard.run_job("/run/rotation", start="2026-08-03", end="2026-08-30").ok
         dashboard.wait_until_idle()

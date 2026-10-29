@@ -3,7 +3,7 @@
 - The RRG lines an ETF's ISO-week closes up with SPY's weeks: a week D01 lacks for the ETF does not shift its 4- and
   12-week lookbacks onto other weeks, and an ETF whose D01 series stops before the session's week is not plotted as
   of that session (it is missing, so the run is partial).
-- A split inside the window does not move the RRG (``core.prices.daily_bars`` applies it on read).
+- A split inside the window does not move the RRG (the prices store's split basis applies it on read, since PR 9).
 - Money Flow does not rank an ETF whose D01 series stops before the session (missing, so the result is partial).
 - The range backfill names the ETFs it left out of the sessions it wrote.
 Offline: a temp store, the calendar clock pinned.
@@ -19,17 +19,18 @@ from RevenueChaser.app import runners
 from RevenueChaser.app.jobs import JobMessage
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_sector_rotation import engine, money_flow as mf, store
-from RevenueChaser.module_sector_rotation.tests.d01_seed import ny, pin_clock, seed as _seed, sessions as _sessions
+from RevenueChaser.module_sector_rotation.tests.bars_seed import ny, pin_clock, seed as _seed, sessions as _sessions
+from RevenueChaser.rcdata import read
+from RevenueChaser.rcdata.tests import prices_store
 from RevenueChaser.module_sector_rotation.tests.test_rotation_a5_374 import UNIVERSE, _UW, _stored, world  # noqa: F401
 
 SESSION = date(2026, 10, 7)
 
 
 def _bars(ticker: str, days: list[date], close, fetched_at: float = 0.0) -> None:
-    rawstore.write_rows("price_bars_daily", [
+    prices_store.put_bars([
         {"ticker": ticker, "session_date": d, "open": close(d), "high": close(d), "low": close(d), "close": close(d),
-         "adj_close": None, "volume": 1e6, "split_ratio": None, "adj_source": None, "source": "uw",
-         "fetched_at": fetched_at, "run_id": "seed", "run_at": 0.0} for d in days])
+         "volume": 1e6, "fetched_at": fetched_at} for d in days], replace=False, overwrite=True)
 
 
 def _rising(d: date) -> float:
@@ -50,7 +51,7 @@ def test_a_week_missing_from_an_etf_series_does_not_shift_its_lookbacks(world):
             _seed(t, SESSION)
     _bars("XLK", [d for d in days if _week_start(d) != gap], _rising)
     snaps = {s.ticker: s for s in engine.RotationEngine(_UW()).process_all()}
-    spy = engine.weekly_closes([(d, c) for d, c in engine.d01_points(["SPY"], days[0], SESSION)["SPY"]], SESSION)
+    spy = engine.weekly_closes([(d, c) for d, c in engine.bar_points(["SPY"], days[0], SESSION)["SPY"]], SESSION)
 
     def week_close(weeks_back: int) -> float:
         monday = _week_start(SESSION) - timedelta(weeks=weeks_back)
@@ -68,7 +69,7 @@ def test_an_etf_whose_series_stops_before_the_sessions_week_is_not_plotted_as_of
     for t in UNIVERSE:
         if t != "IBB":
             _seed(t, SESSION)
-    _seed("IBB", date(2026, 9, 18))                          # D01 stops three weeks before the session
+    _seed("IBB", date(2026, 9, 18))                          # the series stops three weeks before the session
     with pytest.raises(JobMessage, match="IBB"):
         runners.run_rotation_latest(_UW())
     assert "IBB" not in {r["ticker"] for r in _stored(SESSION)}
@@ -81,18 +82,14 @@ def test_a_split_inside_the_window_does_not_move_the_rrg(world):
         _seed(t, SESSION)
     plain = {s.ticker: (s.rs_1w, s.rs_1m, s.rs_3m) for s in engine.RotationEngine(_UW()).process_all()}
     ex = date(2026, 8, 3)                                      # inside the 12-week lookback
-    rows = rawstore.query("SELECT * FROM price_bars_daily WHERE ticker = 'XLK'", db="prices")
-    with rawstore.connect(db="prices") as conn:
-        conn.execute("DELETE FROM price_bars_daily WHERE ticker = 'XLK'")
-    for r in rows:                                             # as served before a 2:1 split: twice the price
-        d = r["session_date"].date() if hasattr(r["session_date"], "date") else r["session_date"]
-        if d < ex:
+    rows = read.ticker_bars(["XLK"]).to_dict("records")
+    for r in rows:                                             # as traded before a 2:1 split: twice the price
+        r["session_date"] = r["session_date"].date()
+        if r["session_date"] < ex:
             for k in ("open", "high", "low", "close"):
                 r[k] = r[k] * 2
-    rawstore.write_rows("price_bars_daily", rows)
-    rawstore.write_rows("price_actions", [{"ticker": "XLK", "ex_date": ex, "action": "split", "value": 2.0,
-                                           "session_date": ex, "source": "yfinance", "fetched_at": 0.0,
-                                           "run_id": "seed", "run_at": 0.0}])
+    prices_store.put_bars(rows)
+    prices_store.put_action("XLK", ex, "split", 2.0)
     split = {s.ticker: (s.rs_1w, s.rs_1m, s.rs_3m) for s in engine.RotationEngine(_UW()).process_all()}
     assert split == plain
 
@@ -107,7 +104,7 @@ def test_money_flow_does_not_rank_an_etf_whose_series_stops_before_the_session(r
     for k, t in enumerate(ranked):
         end = date(2026, 7, 24) if t == stale else session
         _seed(t, end, start=date(2026, 5, 1), closes=(lambda i: 100.0 + i) if k % 2 else (lambda i: 200.0 - i))
-    res = mf.compute_money_flow(None, days=30, window=21, top_n=len(ranked))
+    res = mf.compute_money_flow(days=30, window=21, top_n=len(ranked))
     assert res["partial"] is True and res["missing"] == [stale]
     assert stale not in {r["ticker"] for r in res["inflows"] + res["outflows"]}
     assert res["as_of"] == session.isoformat()

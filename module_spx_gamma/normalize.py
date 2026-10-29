@@ -29,6 +29,7 @@ from .levels import (
     map_volume_levels,
 )
 from .summary import charm_live_sum, vanna_at_spot
+from .vix import vix_term_mode
 
 
 def normalize_strike_rows(payload: dict | None) -> list[dict]:
@@ -333,7 +334,8 @@ def normalize_vix(vix_payload: dict | None) -> dict | None:
         "vix6m": to_float(tk.get("^VIX6M")),
         "vix1y": to_float(tk.get("^VIX1Y")),
         "vvix": to_float(tk.get("^VVIX")),
-        "term_mode": vix_payload.get("term_mode"),
+        # Re-read from the closes, so a day stored before the 9D rule shows the same mode as a new one (review N7).
+        "term_mode": vix_term_mode({k: to_float(v) for k, v in tk.items()}),
     }
 
 
@@ -446,8 +448,11 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
     # DTE-band walls (put wall standard = 181-365 day band, e.g. 7500)
     dte_band_walls = band_walls(all_se_rows, spot)
     put_wall_band = next((w for w in dte_band_walls if w["band"] == "181-365"), None)
+    # Which put wall the board shows (review N5): the 181-365 day band's, else the provider's gex-levels put_wall.
+    put_wall_origin = "provider" if levels.get("lower_support_band") is not None else None
     if put_wall_band and put_wall_band["put_wall"] is not None:
         levels["lower_support_band"] = put_wall_band["put_wall"]
+        put_wall_origin = "band_181_365"
     levels["put_wall_all"] = next((w["put_wall"] for w in dte_band_walls if w["band"] == "ALL"), None)
 
     iv_rows = (raw.get("interpolated_iv") or {}).get("data", [])
@@ -481,7 +486,8 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "levels": levels,
         "zero_one_dte_dollars": zero_one_dollars,
     })
-    option_chain_rows = normalize_option_chain(raw.get("option_chain"), spot, asof_str)
+    option_chain_rows = normalize_option_chain(raw.get("option_chain"), spot, asof_str,
+                                               (raw.get("_meta") or {}).get("api_snapshot_time"))
     iron_butterfly = build_iron_butterfly({
         "current_level": spot,
         "asof_date": asof_str,
@@ -501,12 +507,15 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "charm_mode": MODE_DIRECTIONALIZED_VOLUME,
         "vanna_mode": MODE_DIRECTIONALIZED_VOLUME,
         "current_level": spot,
+        # Where the spot came from (review N4): the recorded source, or None when it is the stored window's last close.
+        "spot_source": (raw.get("spot") or {}).get("source") if recorded is not None else None,
         "regime": regime_detail["label"],
         "regime_detail": regime_detail,
         "net_gamma_total": net_gamma_total,
         "gex_envelope": gex_envelope,
         "levels": levels,
         "dte_band_walls": dte_band_walls,
+        "put_wall_origin": put_wall_origin,
         "charm_qualification": charm_qualification,
         "vanna_peaks": vanna,
         "spot_exposures": spot_exposure_rows,

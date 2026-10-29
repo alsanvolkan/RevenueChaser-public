@@ -16,7 +16,7 @@ import pytest
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_sector_rotation import history as rot_history, store as rotation_store
 from RevenueChaser.module_sector_rotation.tests.test_rotation_history_374 import HOLDINGS, OK_HEALTH, SNAPS, TREE
-from RevenueChaser.module_sector_rotation.tests.d01_seed import ny, pin_clock, seed
+from RevenueChaser.module_sector_rotation.tests.bars_seed import ny, pin_clock, seed
 from RevenueChaser.module_sector_rotation.tests.test_rotation_store import _FakeUW, _snap
 
 COMPLETE = datetime(2026, 10, 6, 22, 0, tzinfo=timezone.utc).timestamp()

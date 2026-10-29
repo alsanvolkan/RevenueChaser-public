@@ -175,21 +175,24 @@ def ensure(path: Path | None = None) -> None:
     the tables and indexes of this version are made; a failed step rolls the whole file back to what it was.
     """
     path = Path(path or ops_path())
-    with _ENSURE_LOCK, connect(path) as con, _tx(con):
-        con.execute(_DDL["ops_schema"])
-        found = con.execute("SELECT max(version) FROM ops_schema").fetchone()[0]
-        if found is not None and found > OPS_SCHEMA_VERSION:
-            raise OpsSchemaTooNew(f"{path} is ops schema {found}; this checkout knows {OPS_SCHEMA_VERSION}")
-        for version in range((found or OPS_SCHEMA_VERSION) + 1, OPS_SCHEMA_VERSION + 1):
-            _UPGRADES[version](con)
-        for ddl in _DDL.values():
-            con.execute(ddl)
-        for ddl in _INDEXES:
-            con.execute(ddl)
-        if found != OPS_SCHEMA_VERSION:
-            con.execute("INSERT INTO ops_schema (version, applied_at) VALUES (?, ?)", (OPS_SCHEMA_VERSION, time.time()))
-    # Only after the COMMIT: a thread that finds the path here skips ``ensure`` and must see the tables at once.
-    _ENSURED.add(str(path))
+    with _ENSURE_LOCK:
+        with connect(path) as con, _tx(con):
+            con.execute(_DDL["ops_schema"])
+            found = con.execute("SELECT max(version) FROM ops_schema").fetchone()[0]
+            if found is not None and found > OPS_SCHEMA_VERSION:
+                raise OpsSchemaTooNew(f"{path} is ops schema {found}; this checkout knows {OPS_SCHEMA_VERSION}")
+            for version in range((found or OPS_SCHEMA_VERSION) + 1, OPS_SCHEMA_VERSION + 1):
+                _UPGRADES[version](con)
+            for ddl in _DDL.values():
+                con.execute(ddl)
+            for ddl in _INDEXES:
+                con.execute(ddl)
+            if found != OPS_SCHEMA_VERSION:
+                con.execute("INSERT INTO ops_schema (version, applied_at) VALUES (?, ?)",
+                            (OPS_SCHEMA_VERSION, time.time()))
+        # After the COMMIT: ``_open`` skips ``ensure`` for a marked file, so a mark made inside the transaction let
+        # another thread read the file before its tables were committed (CI on PR 251, 28 Oct 2026).
+        _ENSURED.add(str(path))
 
 
 @contextmanager
@@ -627,6 +630,13 @@ def latest_unskipped_check(dataset: str) -> dict | None:
     """The newest ``dataset_check`` row of ``dataset`` that is not ``skipped``, however many skips came after it."""
     rows = _select("SELECT * FROM dataset_check WHERE dataset = ? AND result != 'skipped' ORDER BY id DESC LIMIT 1",
                    (dataset,))
+    return rows[0] if rows else None
+
+
+def latest_good_check(dataset: str) -> dict | None:
+    """The newest ``changed`` or ``unchanged`` ``dataset_check`` row of ``dataset``: the last run that built."""
+    rows = _select("SELECT * FROM dataset_check WHERE dataset = ? AND result IN ('changed', 'unchanged') "
+                   "ORDER BY id DESC LIMIT 1", (dataset,))
     return rows[0] if rows else None
 
 

@@ -405,7 +405,8 @@ def merge_for_refresh(stored: dict | None, cached: dict | None) -> dict | None:
     stores statements and its own ``.info`` in the cache but no valuation row. The statements are therefore
     ``stored``'s when it has any, else ``cached``'s; the valuation — ``.info`` and the scalars ``get_financials``
     derives from it, every key of the payload but ``annual`` — is ``cached``'s when it carries an ``.info``, else
-    ``stored``'s, so the board shows the market snapshot of the last Fetch instead of an older session's. Either
+    ``stored``'s, so the board shows the market snapshot of the last Fetch instead of an older session's. The stored
+    statements are cut to as many years as the cached payload has, the window the last Fetch modelled. Either
     payload alone is returned as it is, and ``None`` means neither exists (the caller turns that into no report).
     """
     if stored is None or cached is None:
@@ -413,6 +414,11 @@ def merge_for_refresh(stored: dict | None, cached: dict | None) -> dict | None:
     out = dict(stored)
     if not out.get("annual") and cached.get("annual"):
         out["annual"] = cached["annual"]
+    elif cached.get("annual"):
+        # As many fiscal years as the last Fetch modelled, the newest of them: Yahoo serves about four and the store
+        # keeps every period it ever served, so the newest MAX_YEARS stored can be six where the Fetch had four, and
+        # the averages over the years (NWC / revenue) would differ from the Fetch's (Financials review N4).
+        out["annual"] = out["annual"][-len(cached["annual"]):]
     if cached.get("info"):
         out.update({k: v for k, v in cached.items() if k != "annual"})
     return out
