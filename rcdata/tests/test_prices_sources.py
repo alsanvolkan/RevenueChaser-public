@@ -275,3 +275,20 @@ def test_uw_total_float_failed_answer_stores_nothing(http_mock, monkeypatch):
     with pytest.raises(base.SourceError):
         floats.UW_FLOAT.fetch(ctx, TUE)
     assert not floats.UW_FLOAT.raw_path(TUE).exists()
+
+
+# ── Each share and float source through the builder ──────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("name", [floats.YAHOO, floats.UW, cover_shares.NAME])
+def test_each_share_and_float_source_runs_through_the_builder_to_its_check(http_mock, monkeypatch, name):
+    # The server's sample (29 Oct 2026) lost both float runs in their check, which no test ran: it iterated the
+    # DuckDB connection, not the query's result. This drives the queue's whole path, fetch to check.
+    monkeypatch.setattr(floats, "_lookup", lambda t: {"floatShares": 5.0} if t != "GAPX" else {})
+    monkeypatch.setattr(cover_shares, "FILL_PER_RUN", 2)
+    http_mock.add("/short_screener", {"data": [{"symbol": "AAPL", "total_float": 7}, {"symbol": "BRK.B",
+                                                                                     "total_float": 8}]})
+    _sec_routes(http_mock)
+    row = base.run_request({"dataset": name, "params": {"as_of": TUE.isoformat()}})
+    assert row["result"] != "failed", row
+    # Tier A: six names (GAPX unanswered by Yahoo), five issuers (covers of Apple and Alphabet this run)
+    assert row["coverage"] == {floats.YAHOO: 0.8333, floats.UW: 0.3333, cover_shares.NAME: 0.4}[name], row

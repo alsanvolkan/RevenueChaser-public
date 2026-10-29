@@ -248,11 +248,11 @@ class UWFloat:
 
 def _float_check(ctx, con, name: str, staging: str, column: str, default: date) -> dict:
     """The check row of a float source: its ``shares_class`` rows against the live file, and the share of Tier A
-    with a value in its newest day."""
+    with a value on any stored day (Yahoo asks a slice of the names a day)."""
     cols = ["security_id", "measure", "as_of", "value", "source"]
     added, removed = stage.compare_live(con, "shares_class", cols, f"source = '{name}'")
     tier_a = {n["ticker"] for n in _tier_a()}
-    have = {r[0] for r in con.execute(f"SELECT DISTINCT ticker FROM {staging} WHERE {column} IS NOT NULL")}
+    have = {r[0] for r in con.execute(f"SELECT DISTINCT ticker FROM {staging} WHERE {column} IS NOT NULL").fetchall()}
     as_of = ctx.as_of or default
     return {"dataset": name, "result": "changed" if added or removed else "unchanged",
             "source_as_of": as_of.isoformat(), "rows": stage.count(con, staging), "added": added, "removed": removed,
