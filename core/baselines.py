@@ -7,23 +7,25 @@ app (a 6.6 point gap a raw hit rate hid).
 
 Two baselines, both computed from the store only (no provider call, no ledger write):
 
-- **universe** — every ticker in that day's equity-universe snapshot, same MFE/MAE window as ``forecast_outcomes``
-  (``outcomes.outcome`` is reused, so the two cannot drift apart on the rule).
+- **universe** — every security with a usable close in the prices store on that day, same MFE/MAE window as
+  ``forecast_outcomes`` (``outcomes.outcome`` is reused, so the two cannot drift apart on the rule).
 - **vol_decile_<n>** — the same universe split into ten groups by trailing 20-session realised volatility, so a pick
   is judged against names that moved like it. Deciles, not quintiles: a coarse bucket hides the gap.
 
 **Two price bases, one stated choice.** The outcomes (MFE/MAE) are on the **nominal** basis; the risk measure (the
 trailing volatility that places a member in a decile) is on the **adjusted** one. Nominal already applies every
-split the store has recorded (``prices.apply_events``), so a split is the reason for neither choice — the reason for
+split the store has recorded (the prices store's ``split`` basis), so a split is the reason for neither choice — the reason for
 the adjusted basis is **dividends**: an ex-dividend date is a real one-day fall of the printed price that is not a
 move of the stock, and one such day inside a 20-session window distorts a volatility badly. A MFE/MAE over 30 or 90
 days is not distorted by it, and the pick a baseline is compared with is measured on nominal prices
 (``core/outcomes.py``), so the baseline is too.
 
-The snapshot is the store's own history (``rawstore.changes_as_of("equity_universe", ...)``), never today's
-membership: a name that has since left the universe still counts on the day it was in it, or the baseline is
-survivorship-biased. A freeze date before the store's first change capture has no snapshot, and the row says ``n = 0``
-rather than quietly using today's list.
+The universe of a day is what traded that day (``market_bars.tickers_on``: the securities with a bar on it), never
+today's membership: a name that has since been delisted still counts on the days it traded, or the baseline is
+survivorship-biased. A freeze date the prices store holds no bars for has no universe, and the row says ``n = 0``
+rather than quietly using today's list. Default chosen in PR 10 (G4), change if avo prefers: until PR 10 it was the
+equity universe's own change history (``equity_universe``, purged on 27 Oct 2026 when the spine replaced it), which is
+narrower than "everything that traded" (the boards' universe filters: listing, type, size).
 
 Rules (HR-1 of #25; every number below is a constant, so a change is one edit plus a ``MODEL_VERSION`` bump):
 - One row per freeze date, horizon (``outcomes.HORIZONS``: 30 and 90 calendar days) and basis, always all eleven
@@ -55,8 +57,9 @@ Rules (HR-1 of #25; every number below is a constant, so a change is one edit pl
 - With no daily bar stored at all while a freeze date is in the past, the run refuses before any write: it would
   otherwise turn every baseline into ``n = 0`` (the same guard ``core/outcomes.py`` carries).
 
-Reads ``forecast_ledger`` (which dates to compute), ``equity_universe_changes`` and the D01 bars; writes
-``forecast_baselines`` only, through ``rawstore.write_rows``. ``prices.daily_bars_bases`` reads the store only.
+Reads ``forecast_ledger`` (which dates to compute) and ``forecast_baselines`` in ``con`` (the builder's build file of
+the ledger kind, PR 10) and the prices store's bars; writes ``forecast_baselines`` only, in ``con``. ``market_bars``
+reads the store only.
 """
 from __future__ import annotations
 
@@ -66,10 +69,10 @@ import math
 import statistics
 import time
 from collections import Counter
-from datetime import date, datetime, time as dt_time, timedelta
+from datetime import date, datetime, timedelta
 from typing import NamedTuple
 
-from RevenueChaser.core import calendar, outcomes, prices, rawstore
+from RevenueChaser.core import calendar, market_bars, outcomes
 
 logger = logging.getLogger(__name__)
 
@@ -85,26 +88,20 @@ GE = (("ge20", 0.20), ("ge10", 0.10), ("ge5", 0.05))     # the issue's buckets, 
 HORIZONS = outcomes.HORIZONS             # one definition of 30 and 90, never a second copy
 OPEN, CLOSED = outcomes.OPEN, outcomes.CLOSED
 # Bump when a rule above changes: every date is then recomputed, because the skip reads this column.
-MODEL_VERSION = "b2:universe+trailing20v-deciles"
+MODEL_VERSION = "b3:traded-universe+trailing20v-deciles"     # b3: the universe is what traded (PR 10)
 CHUNK = 200                              # tickers per bar read (the outcomes writer's chunk)
 
 
-def day_end(day: date) -> float:
-    """The epoch of ``day``'s last second in New York: the universe as the freeze evening left it."""
-    return datetime.combine(day, dt_time(23, 59, 59), tzinfo=calendar.NY).timestamp()
-
-
 def universe_at(day: date) -> list[str]:
-    """The tickers the equity universe held at the end of ``day`` (empty: no snapshot that far back).
+    """The tickers that traded on ``day`` (a usable close in the prices store; empty: no bars that day).
 
-    A failed read is no snapshot (logged), never a reason to fall back on today's membership.
+    A failed read is no universe (logged), never a reason to fall back on today's membership.
     """
     try:
-        rows = rawstore.changes_as_of("equity_universe", day_end(day))
-    except Exception as exc:  # noqa: BLE001 - no change history is no snapshot, never a wrong one
-        logger.warning("baselines: the universe snapshot of %s could not be read (%s)", day, exc)
+        return market_bars.tickers_on(day)
+    except Exception as exc:  # noqa: BLE001 - no bars is no universe, never a wrong one
+        logger.warning("baselines: the universe of %s could not be read (%s)", day, exc)
         return []
-    return sorted({str(r.get("ticker") or "").strip().upper() for r in rows} - {""})
 
 
 def _value(v) -> float | None:
@@ -183,14 +180,14 @@ def _mean(values) -> float | None:
     return (sum(vals) / len(vals)) if vals else None
 
 
-def _freeze_dates() -> list[date]:
+def _freeze_dates(con) -> list[date]:
     """The dates the ledger froze a pick on: the only dates a baseline exists for."""
-    rows = rawstore.query(f"SELECT DISTINCT forecast_date AS d FROM {outcomes.LEDGER} WHERE target_type = ? "
+    rows = outcomes._query(con, f"SELECT DISTINCT forecast_date AS d FROM {outcomes.LEDGER} WHERE target_type = ? "
                           "ORDER BY d", [outcomes.PICK])
     return [r["d"] for r in rows if r["d"] is not None]
 
 
-def _open_rows(dates: list[date]) -> dict[date, tuple[int, ...]]:
+def _open_rows(con, dates: list[date]) -> dict[date, tuple[int, ...]]:
     """The horizons still to compute, per freeze date: those whose universe row is not ``closed`` on this
     ``MODEL_VERSION``.
 
@@ -200,8 +197,8 @@ def _open_rows(dates: list[date]) -> dict[date, tuple[int, ...]]:
     if not dates:
         return {}
     marks = ", ".join("?" for _ in HORIZONS)
-    rows = rawstore.query(
-        f"SELECT forecast_date AS d, horizon_days AS h FROM {TABLE} WHERE basis = ? AND model_version = ? "
+    rows = outcomes._query(
+        con, f"SELECT forecast_date AS d, horizon_days AS h FROM {TABLE} WHERE basis = ? AND model_version = ? "
         f"AND status = ? AND horizon_days IN ({marks})",
         [UNIVERSE, MODEL_VERSION, CLOSED, *HORIZONS])
     closed = {(r["d"], int(r["h"])) for r in rows}
@@ -281,7 +278,7 @@ def _membership(wanted: list[str], universes: dict[date, list[str]], horizons: d
     bars_seen = 0
     for i in range(0, len(wanted), CHUNK):
         chunk = wanted[i:i + CHUNK]
-        frames = prices.daily_bars_bases(chunk, start=min(universes) - timedelta(days=VOL_LOOKBACK_DAYS), end=latest)
+        frames = market_bars.daily_bars_bases(chunk, start=min(universes) - timedelta(days=VOL_LOOKBACK_DAYS), end=latest)
         nominal, adjusted = _by_ticker(frames["nominal"]), _by_ticker(frames["adjusted"])
         for ticker in chunk:
             days = sorted(d for d in universes if ticker in seen_in[d])
@@ -335,8 +332,14 @@ def _rows_for(day: date, members: list[Member], horizons: tuple[int, ...], lates
     return rows
 
 
-def run(*, now: datetime | None = None, run_id: str | None = None, full: bool = False, write: bool = True) -> dict:
-    """Compute and upsert the baseline rows of every freeze date that needs them; returns a summary.
+COLUMNS = ["forecast_date", "horizon_days", "basis", "n", "ge20", "ge10", "ge5", "mfe_mean", "mae_mean", "vol_lo",
+           "vol_hi", "status", "computed_at", "model_version", "run_id"]
+KEY = ["forecast_date", "horizon_days", "basis"]
+
+
+def run(con, *, now: datetime | None = None, run_id: str | None = None, full: bool = False,
+        write: bool = True) -> dict:
+    """Compute and upsert the baseline rows of every freeze date that needs them, in ``con``; returns a summary.
 
     ``full=False`` (the nightly) leaves a row alone once it is closed on the current ``MODEL_VERSION``, and reads a
     date once for the horizons still open; ``write=False`` computes and counts only (a dry run). ``now`` is the clock
@@ -345,19 +348,24 @@ def run(*, now: datetime | None = None, run_id: str | None = None, full: bool = 
     t0 = time.monotonic()
     latest = calendar.latest_complete_session(now)
     stamp = (now or calendar.now_ny()).timestamp()
-    dates = _freeze_dates()
-    todo = {d: HORIZONS for d in dates} if full else _open_rows(dates)
+    dates = _freeze_dates(con)
+    todo = {d: HORIZONS for d in dates} if full else _open_rows(con, dates)
     res = {"run_id": run_id, "latest_session": latest.isoformat(), "freeze_dates": len(dates), "dates": 0,
            "rows": 0, "written": 0, "tickers": 0, "no_snapshot": 0, "status": {}, "full": full,
            "dry_run": not write}
     if todo:
+        newest = outcomes.newest_bar()           # the store's newest bar, not the clock (see _rows_for)
+        if newest is None and min(todo) < latest:
+            # The universe is read from the same bars (PR 10): with none at all every date's universe is empty, and
+            # the run would turn every open row into n = 0.
+            raise RuntimeError("no daily bars in the prices store: refusing to compute baselines "
+                               "(every row would turn into n = 0)")
         universes = {d: universe_at(d) for d in todo}
         res["no_snapshot"] = sum(1 for tickers in universes.values() if not tickers)
         wanted = sorted({t for tickers in universes.values() for t in tickers})
         members, bars_seen = _membership(wanted, universes, todo, latest)
-        newest = outcomes.newest_bar()           # the store's newest bar, not the clock (see _rows_for)
         if wanted and not bars_seen and min(todo) < latest:
-            raise RuntimeError("no daily bars in the price store: refusing to compute baselines "
+            raise RuntimeError("no daily bars in the prices store: refusing to compute baselines "
                                "(every row would turn into n = 0)")
         status: Counter = Counter()
         rows_total = written = 0
@@ -366,7 +374,7 @@ def run(*, now: datetime | None = None, run_id: str | None = None, full: bool = 
             status.update(r["status"] for r in rows)
             rows_total += len(rows)
             if write:
-                written += rawstore.write_rows(TABLE, rows)
+                written += outcomes.upsert(con, TABLE, COLUMNS, KEY, rows)
         res.update(dates=len(todo), rows=rows_total, written=written, tickers=len(wanted),
                    status=dict(status))
     res["seconds"] = round(time.monotonic() - t0, 2)

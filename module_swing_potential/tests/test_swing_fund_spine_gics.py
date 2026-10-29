@@ -102,7 +102,6 @@ def test_run_scan_drops_excluded_types_and_counts_them(rawstore_tmp_db, monkeypa
         {"out_of_universe": 0}))
     monkeypatch.setattr(mod, "prefilter", lambda rows: screen_common.Prefiltered(seen.setdefault("rows", rows)))
     monkeypatch.setattr(screen_common, "load_bars", lambda *a, **k: (pd.DataFrame(), pd.DataFrame()))
-    monkeypatch.setattr(mod, "load_ohlc", lambda *a, **k: None)          # the SPY fallback
     monkeypatch.setattr(mod, "load_ticker_info", lambda *a, **k: {})      # no live yfinance info call
     mod.run_scan()
     assert [r["ticker"] for r in seen["rows"]] == ["OPCO"]

@@ -104,7 +104,7 @@ def test_stored_sessions_reads_spy_from_the_prices_store(rawstore_tmp_db):
     from RevenueChaser.core.tests.d01_seed import seed_d01
     from RevenueChaser.rcdata.tests import prices_store
     prices_store.put_bars([{"ticker": "SPY", "session_date": f"2025-01-{d:02d}", "close": 1.0} for d in range(1, 11)])
-    seed_d01("SPY", [f"2025-02-{d:02d}" for d in range(1, 21)], 1.0)                 # the old D01: not counted
+    seed_d01("SPY", [f"2025-02-{d:02d}" for d in range(1, 21)], 1.0, prices=False)   # the old D01: not counted
     rawstore.write_rows("swing_ohlc", [{"ticker": "SPY", "ts": f"2024-02-{d:02d}T00:00:00", "open": 1.0,
                                         "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0, "cached_at": 1.0}
                                        for d in range(1, 21)])

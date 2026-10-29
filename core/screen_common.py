@@ -1,20 +1,21 @@
 """The shared skeleton of the Swing and Fundamentals scans (#147, 27-3a; U20).
 
 Both boards ran the same ``run_scan`` body, copied: load the stored universe, drop the identity master's excluded
-types (R5), prefilter on D04's quotes, score every kept ticker on a thread pool (no shortlist cap since C12, #383 R3:
-the whole screenable universe), build the payload, and persist on a Fetch. ``run_screen`` is that body once; what differs per board stays in the
+types (R5), prefilter on price and volume (the prices store's since PR 10, D04's quotes before), score every kept
+ticker on a thread pool (no shortlist cap since C12, #383 R3: the whole screenable universe), build the payload, and persist on a Fetch. ``run_screen`` is that body once; what differs per board stays in the
 board's package and is passed in: ``compute_row``, ``build_payload`` and ``persist`` (and the board's own report
 and score tables).
 
 ``prefilter`` and ``spy_summary`` are the two helpers that were identical in both pipelines. ``prefilter`` is the one
-hook for the quote-level hygiene rule (7-A: price and dollar volume on D04, #383 R3 C12); the thresholds come from the
+hook for the quote-level hygiene rule (7-A: price and dollar volume, #383 R3 C12; from the prices store since PR 10); the thresholds come from the
 board's config, which holds the same values in both boards today. ``load_bars`` is a scored name's D01 bars (levels
 nominal, returns adjusted), read for a chunk of names at a time in a scan (``load_bars_many``); a name with no bar of
 SPY's newest D01 session drops as ``stale_bars`` (#434 review S1, S3). ``funnel_steps`` is the payload's
 ``funnel_steps`` (C16): where every stored name went.
 
-``load_spy`` is the SPY baseline of both boards: D01 when it holds the latest complete session, else the board's old
-read (U1, #402).
+``load_spy`` is the SPY baseline of both boards. Since PR 10 (G4) "D01" in this module is the prices store
+(``prices.duckdb``, read through ``rcdata.read`` and ``core.market_bars``): the scored names' bars, SPY's baseline and
+the freeze's checks all come from it, and the old ``swing_ohlc`` SPY fallback is gone (F4 A, part 1).
 
 A Refresh (``no_fetch=True``) scores nothing (K4, #383 R1): ``stored_payload`` returns the board the last Fetch
 built (its history header's payload, or the saved board JSON when that is newer), so the board shows what that Fetch
@@ -58,7 +59,7 @@ class Prefiltered:
 
     ``quote_session`` is the newest session of the quotes it read; ``older_quotes`` counts the names whose quote is
     from an earlier session (U9: the board says which session its prefilter saw). ``no_volume`` lists the kept names
-    with no average volume anywhere in D04, which the dollar-volume rule could not test (S4, #434 review). ``cfg`` is
+    with no average volume (in the prices store since PR 10), which the dollar-volume rule could not test (S4, #434 review). ``cfg`` is
     the thresholds it dropped on, so the funnel names those and not the board's defaults (Swing review finding 1).
     """
     kept: list[dict]
@@ -73,19 +74,39 @@ class Prefiltered:
         return sum(len(v) for v in self.drops.values())
 
 
+def prefilter_inputs(tickers) -> dict[str, dict]:
+    """``{ticker (the caller's spelling): {"price", "avg_volume", "session_date", "source"}}`` from the prices store
+    (``rcdata.read.liquidity``, PR 10): the newest nominal close at most ``LATEST_WITHIN_DAYS`` old and the mean
+    volume of the last ``LIQUIDITY_SESSIONS`` bars on today's share basis. A name with no current close is absent.
+
+    shortcut: the mean rests on however many bars the store holds (fewer than 63 until Run H fills the history),
+    upgrade when Run H has loaded the long history, so every name's mean covers the full window.
+    """
+    from RevenueChaser.rcdata import read
+    asked = [t for t in (tickers or ()) if t and str(t).strip()]
+    got = read.liquidity(asked)
+    out: dict[str, dict] = {}
+    for t in asked:
+        row = got.get(str(t).strip().upper())
+        if row is not None and row.get("price") is not None:
+            out[t] = {"price": float(row["price"]), "session_date": row["price_session"], "source": "prices",
+                      "avg_volume": None if row.get("avg_volume") is None else float(row["avg_volume"])}
+    return out
+
+
 def prefilter(rows: list[dict], cfg: Any, quotes: dict[str, dict] | None = None) -> Prefiltered:
     """The 7-A prefilter (avo 2026-10-02; #383 R3 C12): price and dollar volume only.
 
-    The inputs are D04's (``quotes.prefilter_quotes``: each name's newest session row, Yahoo first), not the
-    universe row's screener quote; ``quotes`` stands in for that read in tests. A name drops as ``no_quote`` with no
-    D04 price, ``low_price`` under ``cfg.MIN_PRICE``, ``low_dollar_volume`` when price times the average daily volume
-    is under ``cfg.MIN_DOLLAR_VOLUME``. The volume is the newest Yahoo average D04 holds (``prefilter_quotes``); a name
-    with none anywhere is kept, since its price passed, and listed in ``no_volume`` so the board counts it (S4, #434
-    review). The trend rules (52-week distance, above the 50-day average) are gone: the gates test them on fresh bars.
+    The inputs are the prices store's since PR 10 (``prefilter_inputs``: each name's newest close and its mean volume
+    over the last ``rcdata.read.LIQUIDITY_SESSIONS`` bars), not D04's ``quote_snapshot``, which no job fills since the
+    27 Oct purge; ``quotes`` stands in for that read in tests. A name drops as ``no_quote`` with no current close,
+    ``low_price`` under ``cfg.MIN_PRICE``, ``low_dollar_volume`` when price times the average daily volume is under
+    ``cfg.MIN_DOLLAR_VOLUME``. A name with no volume is kept, since its price passed, and listed in ``no_volume`` so
+    the board counts it (S4, #434 review). The trend rules (52-week distance, above the 50-day average) are gone: the
+    gates test them on fresh bars.
     """
     if quotes is None:
-        from RevenueChaser.core import quotes as _quotes
-        quotes = _quotes.prefilter_quotes([r.get("ticker") for r in rows])
+        quotes = prefilter_inputs([r.get("ticker") for r in rows])
     kept: list[dict] = []
     drops: dict[str, list[str]] = {}
     no_volume: list[str] = []
@@ -136,33 +157,34 @@ def spy_summary(spy_df) -> dict:
 SPY_BASELINE_DAYS = 730          # the window of the old read (``load_ohlc``: yfinance ``period="2y"``)
 
 
-def load_spy(fallback: Callable[[], Any], now=None):
-    """SPY's daily bars, the Swing and Fundamentals baseline (U1, #402; K8b's SPY part).
+def load_spy(now=None):
+    """SPY's daily bars, the Swing and Fundamentals baseline (U1, #402; PR 10).
 
-    D01 (``price_bars_daily``, written by RC-Daily-Bars) when its SPY bar of the latest complete session is complete:
-    the test the freeze anchor uses (``ledger.d01_has_session``), so the baseline and the anchor agree. The series is
-    D01's split- and dividend-adjusted one (``prices.daily_bars``), as yfinance's ``auto_adjust`` was, over the last
-    ``SPY_BASELINE_DAYS``, in the frame shape ``load_ohlc`` returns. Otherwise ``fallback()``, the board's old read
-    (``swing_ohlc`` through yfinance), stale flag and all: when D01 lacks that session, when the calendar cannot place
-    the run, and when the D01 read fails.
+    The prices store's split- and dividend-adjusted series (``core.market_bars``, the total-return basis), as
+    yfinance's ``auto_adjust`` was, over the last ``SPY_BASELINE_DAYS``, in the frame shape ``load_ohlc`` returned.
+    ``attrs["stale"]`` is true unless SPY's newest bar is one complete latest session: the test the freeze anchor uses
+    (``ledger.prices_has_session``), so the baseline and the anchor agree, and a stale SPY refuses the freeze
+    (``payload_problem``: ``spy_stale``). The ``swing_ohlc`` fallback is gone (F4 A, part 1): no SPY bars is an empty,
+    stale frame (no regime), never a yfinance read.
     """
     try:
         session = calendar.latest_complete_session(now)
-        if ledger.d01_has_session(session, "SPY"):
-            from RevenueChaser.core import prices
-            bars = prices.daily_bars(["SPY"], basis="adjusted", start=session - timedelta(days=SPY_BASELINE_DAYS))
-            frame = _ohlcv(bars)
-            if not frame.empty:
-                logger.info("SPY baseline: D01 through %s (%d bars)", session, len(frame))
-                return frame
-        logger.info("SPY baseline: D01 has no complete %s bar; using the board's OHLC read", session)
-    except Exception as exc:  # noqa: BLE001 - D01 never fails a scan: the old read is the fallback
-        logger.warning("SPY baseline: D01 could not be read (%s); using the board's OHLC read", exc)
-    return fallback()
+        from RevenueChaser.core import market_bars
+        frame = _ohlcv(market_bars.daily_bars(["SPY"], basis="adjusted",
+                                              start=session - timedelta(days=SPY_BASELINE_DAYS)))
+        frame.attrs["stale"] = not ledger.prices_has_session(session, "SPY")
+        logger.info("SPY baseline: the prices store through %s (%d bars%s)", session, len(frame),
+                    ", stale" if frame.attrs["stale"] else "")
+        return frame
+    except Exception as exc:  # noqa: BLE001 - a failed read is no baseline, never a failed scan
+        logger.warning("SPY baseline: the prices store could not be read (%s)", exc)
+        empty = pd.DataFrame()
+        empty.attrs["stale"] = True
+        return empty
 
 
 def _ohlcv(bars: pd.DataFrame) -> pd.DataFrame:
-    """D01 rows as a date-indexed Open/High/Low/Close/Volume frame, marked ``attrs["source"] = "d01"``."""
+    """Daily bars as a date-indexed Open/High/Low/Close/Volume frame, marked ``attrs["source"] = "prices"``."""
     if bars is None or bars.empty:
         return pd.DataFrame()
     frame = pd.DataFrame({"Open": bars["open"].to_numpy(), "High": bars["high"].to_numpy(),
@@ -170,7 +192,7 @@ def _ohlcv(bars: pd.DataFrame) -> pd.DataFrame:
                           "Volume": bars["volume"].to_numpy()},
                          index=pd.DatetimeIndex(bars["session_date"]))
     frame = frame.apply(pd.to_numeric, errors="coerce").dropna(subset=["Close"])
-    frame.attrs["source"] = "d01"
+    frame.attrs["source"] = "prices"
     return frame
 
 
@@ -189,12 +211,13 @@ def _split_bars(frame: pd.DataFrame, ticker: str, session: date) -> pd.DataFrame
 
 
 def load_bars_many(tickers, now=None) -> dict[str, tuple[pd.DataFrame, pd.DataFrame]]:
-    """``{ticker: (nominal, adjusted)}`` for many names from one D01 read (S3, #434 review), each pair equal to
-    ``load_bars(ticker)``. A name D01 has no bar of in the window gets two empty frames."""
-    from RevenueChaser.core import prices
+    """``{ticker: (nominal, adjusted)}`` for many names from one read of the prices store (S3, #434 review; PR 10),
+    each pair equal to ``load_bars(ticker)``. A name the store has no bar of in the window gets two empty frames.
+    "Nominal" is the boards' split basis and "adjusted" the total-return basis (``core.market_bars``)."""
+    from RevenueChaser.core import market_bars
     names = list(dict.fromkeys(str(t).strip().upper() for t in tickers if t))
     session = calendar.latest_complete_session(now)
-    both = prices.daily_bars_bases(names, start=session - timedelta(days=BAR_DAYS))
+    both = market_bars.daily_bars_bases(names, start=session - timedelta(days=BAR_DAYS))
     return {t: (_split_bars(both["nominal"], t, session), _split_bars(both["adjusted"], t, session))
             for t in names}
 
@@ -228,7 +251,7 @@ def stale_names(tickers, reference: date | None) -> set[str]:
     if reference is None:
         return set()
     names = [str(t).strip().upper() for t in tickers if t]
-    last = ledger.d01_last_bars(names)
+    last = ledger.prices_last_bars(names)
     stale = {t for t in names if t in last and last[t][0] < reference.isoformat()}
     if len(stale) > STALE_DROP_MAX_SHARE * len(names):
         logger.warning("%d of %d names have no D01 bar of %s: a Daily Bars failure, not a few gaps; "
@@ -243,7 +266,7 @@ def bars_reference_session() -> date | None:
     ``None`` when D01 holds no SPY bar or cannot be read: then no name drops as ``stale_bars`` (the freeze's SPY
     anchor decides that day).
     """
-    last = ledger.d01_last_bars(["SPY"]).get("SPY")
+    last = ledger.prices_last_bars(["SPY"]).get("SPY")
     if last is None:
         return None
     try:
@@ -313,7 +336,7 @@ def stored_payload(*, board: str, refreshed_by: str, build_payload: Callable[...
 
 
 # The funnel's typed drops after the excluded types (C16, #383 R3), in the order a name can leave: the prefilter's on
-# D04, then the scorer's on D01 and EDGAR. ``(key, label, by design)``: a by-design drop is a board rule; the rest are
+# the prices store's close and volume (PR 10), then the scorer's on the daily bars and EDGAR. ``(key, label, by design)``: a by-design drop is a board rule; the rest are
 # data gaps that need a look. A scorer reason not listed here still gets its own step (``DROP_LABELS``' text).
 def _drop_steps(cfg: Any, floors: Any = None) -> tuple[tuple[str, str, bool], ...]:
     """``floors`` (the thresholds the prefilter used, Swing review 1) names the price and volume floors; ``cfg`` (the
@@ -323,7 +346,7 @@ def _drop_steps(cfg: Any, floors: Any = None) -> tuple[tuple[str, str, bool], ..
     sectors = ", ".join(getattr(cfg, "EXCLUDED_SECTORS", None) or ())
     barrier = getattr(cfg, "RO40_BARRIER", None)
     return (
-        ("no_quote", "No stored quote (D04) to prefilter on", False),
+        ("no_quote", "No current close in the prices store to prefilter on", False),
         ("low_price", f"Price under ${floors.MIN_PRICE:,.2f}", True),
         ("low_dollar_volume", f"Average daily dollar volume under ${floors.MIN_DOLLAR_VOLUME:,.0f}", True),
         ("no_bars", "No stored daily price bars (D01)", False),
@@ -505,22 +528,20 @@ def run_screen(*, board: str, refreshed_by: str, cfg: Any,
         "earnings_stored": earnings_stored,
         "stale_ohlc": sum(1 for r in results if r.get("ohlc_stale")),
         "spy_stale": bool(getattr(spy_df, "attrs", {}).get("stale")),
-        # Only the SPY fallback (``load_ohlc``) can refuse a short refetch now; D01 bars never do (Swing review 8).
-        "spy_short_refetch_refused": bool(getattr(spy_df, "attrs", {}).get("short_refetch_refused")),
         "dropped": count_drops(drops),
         "universe_generated_at": u_stats.get("universe_generated_at"),
         "universe_refreshed_by": u_stats.get("universe_refreshed_by"),
         "universe_partial": bool(u_stats.get("partial")),
     }
-    # K7 (#383 R3): the payload's data date is the newest D01 bar over the names this Fetch scored.
+    # K7 (#383 R3): the payload's data date is the newest bar over the names this Fetch scored (the prices store, PR 10).
     from RevenueChaser.core import provenance
-    run_stats["data_as_of"] = provenance.d01_day(r.get("ticker") for r in results)
+    run_stats["data_as_of"] = provenance.prices_day(r.get("ticker") for r in results)
     if extra_stats is not None:
         run_stats.update(extra_stats())
     payload = build_payload(results, top_n=top_n, run_stats=run_stats)
     shown = len(payload.get("candidates") or [])
-    # U9: the session of the D04 quotes the prefilter read, and how many names had only an older one.
-    # S4 (#434 review): the kept names the dollar-volume rule could not test (no average volume in D04).
+    # U9: the session of the closes the prefilter read, and how many names had only an older one.
+    # S4 (#434 review): the kept names the dollar-volume rule could not test (no average volume).
     payload.setdefault("data_quality", {}).update(
         quote_session=pf.quote_session.isoformat() if pf.quote_session else None, older_quotes=pf.older_quotes,
         no_avg_volume=len(pf.no_volume))

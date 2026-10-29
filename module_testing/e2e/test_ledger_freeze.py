@@ -2,9 +2,11 @@
 
 The dashboard runs as a subprocess, so the test clock reaches it through ``RC_E2E_NOW`` (an ISO UTC
 time read by ``harness/dashboard_entrypoint.py``, which replaces ``core.calendar._now``). Bars are
-seeded the way RC-Daily-Bars leaves D01 after the close: they end on the faked session D and carry a real
-``fetched_at``, which is later than D's close + 30 min because D is in the past. Since C12 (#383 R3) the board
-scores ZETA from those D01 bars and its D04 quote, and the freeze checks the same D01 bars (K8b).
+seeded the way the builder's daily bars leave the prices store after the close: they end on the faked session D and
+carry a real ``fetched_at``, which is later than D's close + 30 min because D is in the past. Since PR 10 (G4) the board
+scores ZETA from those bars and the freeze checks the same bars. The freeze queues its picks; the builder writes them
+to ``ledger.duckdb``, so a test runs the builder's ``ledger/freeze`` pass (``ledger_queue.drain``, in this process,
+against the dashboard's market root) before it reads the ledger.
 """
 from __future__ import annotations
 
@@ -19,7 +21,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from RevenueChaser.module_testing.e2e.harness.screener_seed import seed_d01, seed_quote
+from RevenueChaser.module_testing.e2e.harness.screener_seed import point_at, seed_d01, seed_quote
 
 D = "2026-09-25"                                    # a Friday, in the past on any machine running this
 POST_CLOSE = "2026-09-25T21:00:00+00:00"            # 17:00 ET (EDT)
@@ -57,7 +59,7 @@ def _bars() -> pd.DataFrame:
 def seeded(dashboard, monkeypatch):
     import RevenueChaser.core.rawstore as rawstore
 
-    monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+    point_at(dashboard, monkeypatch)
     rawstore.ensure_all_tables()
     quote = {"regularMarketPrice": 130.0, "fiftyTwoWeekHigh": 135.0, "fiftyDayAverage": 120.0,
              "averageDailyVolume10Day": 2_000_000}
@@ -77,16 +79,9 @@ def seeded(dashboard, monkeypatch):
 
 
 def _ledger(dashboard) -> list[dict]:
-    """Ledger rows straight from the temp store (the dashboard is idle between calls)."""
-    import duckdb
-    db = dashboard.store_dir / "raw.duckdb"
-    conn = duckdb.connect(str(db), read_only=True)
-    try:
-        cur = conn.execute("SELECT * FROM forecast_ledger ORDER BY source, rank")
-        cols = [c[0] for c in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
-    finally:
-        conn.close()
+    """Run the builder's pass over the queued picks, then the ledger rows (the dashboard is idle between calls)."""
+    from RevenueChaser.rcdata.tests import ledger_queue
+    return ledger_queue.stored()
 
 
 def _fetch(dashboard):
@@ -116,15 +111,16 @@ def test_a_post_close_fetch_freezes_the_shown_pick(dashboard, seeded):
     from RevenueChaser.module_fundamentals import config as fund_config
     assert rows[0]["model_version"].startswith(f"{fund_config.SELECTION_VERSION}+")   # stamped with the board's version
     assert rows[0]["shown_price"] is not None
-    assert job.notes == ["Froze 1 Fundamentals rows for 2026-09-25."]
+    assert re.fullmatch(r"Queued 1 Fundamentals picks for 2026-09-25 \(request \d+\); the builder writes them\.",
+                        job.notes[0]) and len(job.notes) == 1
     assert job.message is None                               # a message is what the dashboard pops up
-    assert "forecast ledger: Froze 1 Fundamentals rows for 2026-09-25." in dashboard.logs()
+    assert f"forecast ledger: {job.notes[0]}" in dashboard.logs()
 
 
 def test_a_refresh_adds_no_rows_and_makes_no_network_calls(dashboard, provider_routes, seeded):
     before = provider_routes.request_count
     assert dashboard.view("module_fundamentals", refresh=True).status_code == 200
-    assert dashboard.table_count("forecast_ledger") == 0
+    assert len(_ledger(dashboard)) == 0
     assert provider_routes.request_count == before
     assert dashboard.yf_calls() == []
 
@@ -153,7 +149,7 @@ def test_the_subprocess_clock_seam_is_honoured_inside_the_session_window(dashboa
     suite runs on) would give a different answer, so this proves ``RC_E2E_NOW`` reached the dashboard."""
     job = _fetch(dashboard)
     assert job.ok, job
-    assert dashboard.table_count("forecast_ledger") == 0
+    assert len(_ledger(dashboard)) == 0
     assert [n.split(":")[0] for n in job.notes] == ["Fundamentals not frozen"]
     assert "inside the US session window" in job.notes[0]
     assert job.message is None
@@ -179,7 +175,7 @@ def test_a_refresh_makes_no_yfinance_call_even_when_bars_were_cached_mid_session
     A Refresh shows the last Fetch and never re-scores (K4, #383 R1), so a Fetch runs first; the bars are then
     made mid-session and the Refresh must still reach nothing and freeze nothing."""
     assert _fetch(dashboard).ok
-    ledger = dashboard.table_count("forecast_ledger")
+    ledger = len(_ledger(dashboard))
     _cache_mid_session(dashboard)
     before, yf_before = provider_routes.request_count, dashboard.yf_calls()
     page = dashboard.view("module_fundamentals", refresh=True)
@@ -188,7 +184,7 @@ def test_a_refresh_makes_no_yfinance_call_even_when_bars_were_cached_mid_session
     assert [r["ticker"] for r in rows] == ["ZETA"]   # the Refresh shows the Fetch, whatever the bars' age now
     assert dashboard.yf_calls() == yf_before
     assert provider_routes.request_count == before
-    assert dashboard.table_count("forecast_ledger") == ledger
+    assert len(_ledger(dashboard)) == ledger
 
 
 # ── a Fetch opens no popup (headless Chrome) ─────────────────────────────────────────────────────────

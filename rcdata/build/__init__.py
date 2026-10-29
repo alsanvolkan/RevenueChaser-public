@@ -21,3 +21,10 @@ from .prices import floats as prices_floats, serving as prices_serving, wrds_his
 DATASETS.update({d.name: d for d in (prices_bars.DATASET, prices_actions.DATASET, prices_cover.DATASET,
                                      prices_floats.YAHOO_FLOAT, prices_floats.UW_FLOAT, prices_wrds.DATASET,
                                      prices_serving.DATASET)})
+
+# PR 10 (G4): the forecast ledger (``ledger.duckdb``); the freeze first, so a kind build reads its new rows, then the
+# outcomes and the baselines derived from it.
+from .ledger import derived as ledger_derived, freeze as ledger_freeze  # noqa: E402
+
+DATASETS.update({d.name: d for d in (ledger_freeze.DATASET, ledger_derived.OUTCOMES_DATASET,
+                                     ledger_derived.BASELINES_DATASET)})

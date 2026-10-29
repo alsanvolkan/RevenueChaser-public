@@ -98,6 +98,7 @@ class RunContext:
     uw_sampled: bool = False
     allow_shrink: bool = False                                      # a request's explicit "allow_shrink": true
     pending: dict[str, Any] = field(default_factory=dict)          # a build's results for its after_swap step
+    params: dict[str, Any] = field(default_factory=dict)           # the request's params (the ledger's rows, PR 10)
     _pending: dict[str, list[int]] = field(default_factory=dict)    # counted, not yet written to ops.sqlite
     _http: httpx.Client | None = None
     _uw: Any = None
@@ -383,6 +384,8 @@ class Dataset(Protocol):
     #                               when the CLI queued it (``requested_by`` "cli")
     #   backfill_needs_from: bool   default True; False lets ``backfill`` start at the source's beginning (None)
     #   after_swap(ctx)             runs once the kind's new file is live (the spine's build-issue sync)
+    #   by_request: bool            only a request queues it (the ledger's freeze, PR 10): never due
+    #   needs_parquet: bool         default True; False builds the kind without the Parquet root (PR 10)
 
 
 ATTENDED_BY = "cli"
@@ -471,8 +474,11 @@ def kind_datasets(kind: str) -> list[Dataset]:
 
 
 def build_kind(ctx: RunContext, ds: Dataset) -> dict:
-    """Build ``ds``'s serving kind from Parquet (every dataset of the kind), check it, swap it in; the check row."""
-    if not parquet_root().is_dir():
+    """Build ``ds``'s serving kind from Parquet (every dataset of the kind), check it, swap it in; the check row.
+
+    A kind whose datasets all say ``needs_parquet = False`` (the ledger, PR 10: its rows come in the request) is built
+    without the Parquet root."""
+    if any(getattr(d, "needs_parquet", True) for d in kind_datasets(ds.kind)) and not parquet_root().is_dir():
         raise SourceError(f"the Parquet root {parquet_root()} is missing (RC_MARKET_RAW_DIR unset or not mounted?)")
     with serving.build(ds.kind) as b:
         counts: dict[str, int] = {}
@@ -503,7 +509,7 @@ def run_request(req: dict, *, trigger: str = "queue", sleep: Callable[[float], A
     params = req.get("params") or {}
     run_id = new_run_id()
     ctx = RunContext(run_id=run_id, dataset=req["dataset"], trigger=trigger, sleep=sleep, clock=clock,
-                     allow_shrink=params.get("allow_shrink") is True)
+                     allow_shrink=params.get("allow_shrink") is True, params=params)
     ops.start_run(run_id, req["dataset"], trigger, params)
     try:
         return _run(ctx, ds, req, params)

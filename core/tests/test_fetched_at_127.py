@@ -23,15 +23,13 @@ def _forget():
 
 
 def _columns(table: str) -> dict[str, str]:
-    import duckdb
+    """Through ``rawstore.connect``, not a ``read_only`` handle of its own: DuckDB refuses a second configuration of a
+    file another test on the same worker still holds open (seen under ``pytest -n 8`` on edgar.duckdb)."""
     db = "edgar" if table == "chain_meta" else "raw"
-    con = duckdb.connect(str(rawstore._db_path(db)), read_only=True)
-    try:
+    with rawstore.connect(db=db) as con:
         return dict(con.execute(
             "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = ?",
             [table]).fetchall())
-    finally:
-        con.close()
 
 
 def test_the_six_tables_declare_fetched_at_as_double_without_a_bump():

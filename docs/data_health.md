@@ -486,9 +486,7 @@ it, so without that line its old archives would never be listed. The newest copy
 installer. Rows: `RC-Store-Backup` (daily 04:00, `scripts.backup_store --keep 5`),
 `RC-Relatedness-OffPeak` (12:30, `--run --cap 8`), `RC-ValueChain-Sync` (13:00, `--sync-filings`),
 `RC-Daily-Bars` (22:35, `scripts.daily_bars --nightly --sec-files`), `RC-Screeners-Daily` (weekdays
-23:00, after `RC-Daily-Bars`, `app.universe_cli`), `RC-Forecast-Outcomes` (daily 23:45, after
-`RC-Daily-Bars`, `scripts.forecast_outcomes --nightly`), `RC-Forecast-Baselines` (daily 23:50, after
-`RC-Forecast-Outcomes`, `scripts.forecast_baselines --nightly`), `RC-Index-Lists` (Saturday 10:00,
+23:00, after `RC-Daily-Bars`, `app.universe_cli`), `RC-Index-Lists` (Saturday 10:00,
 `scripts.index_lists --weekly`) and `RC-Earnings-Inputs` (Tuesday to Saturday 01:30, after
 `RC-Daily-Bars`, `scripts.nightly_inputs earnings`). Each entry carries its schedule, the tables it
 writes, whether it is off-peak gated, a log path under `.cache/logs/` and its task settings (named

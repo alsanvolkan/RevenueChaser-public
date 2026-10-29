@@ -19,7 +19,7 @@ nowhere else; ``sec_company_tickers`` is retired.
   ``core/universe_fetch.MIN_FULL_UNIVERSE``) or a fund file with fewer classes than ``MIN_FUND_CLASSES`` is a failed
   pull: nothing is written, so a short file can never mark the rest 'absent'.
 - **Never raises.** Every failure is a ``failed`` status with its error; the stored rows stay. The daily-bars exit
-  code does not depend on this step, because RC-Screeners-Daily, RC-Forecast-Outcomes and RC-Earnings-Inputs wait on
+  code does not depend on this step, because RC-Screeners-Daily and RC-Earnings-Inputs wait on
   that exit 0.
 """
 from __future__ import annotations

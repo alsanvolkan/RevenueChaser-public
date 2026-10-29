@@ -7,10 +7,11 @@
   SPY's complete session bar (Daily Bars has run), a pick without its own is ``no_session_bar``: a later Fetch will
   not change it. Only before Daily Bars has written the session is it ``needs_refetch``.
 - **S3:** the scan reads D01 once per chunk of names (one bars read and one actions read, both bases derived from
-  it), not four store reads per name. The frames equal the per-name read.
+  it), not four store reads per name. The frames equal the per-name read. Since PR 10 "D01" is the prices store,
+  read once per chunk (``rcdata.read.bars_by_ticker``, each bar with its factors).
 - **S4:** a D04 row without an average volume (UW, ``fast_info``) falls back to the newest Yahoo screener row that
   carries one; a name with none anywhere is kept and counted (``data_quality["no_avg_volume"]``), not silently
-  passed.
+  passed. Since PR 10 the screeners' prefilter reads the prices store's mean volume instead (no volume: counted).
 Offline: a temp store, the calendar seam as the clock.
 """
 from __future__ import annotations
@@ -22,12 +23,14 @@ import pandas as pd
 import pytest
 
 from RevenueChaser.core import calendar as cal
-from RevenueChaser.core import ledger, prices, rawstore, screen_common
+from RevenueChaser.core import ledger, market_bars, rawstore, screen_common
 from RevenueChaser.core.tests import screen_parity as scn
 from RevenueChaser.module_fundamentals import freeze as fund_freeze
 from RevenueChaser.module_fundamentals import pipeline as fp
 from RevenueChaser.module_swing_potential import freeze as swing_freeze
 from RevenueChaser.module_swing_potential import pipeline as sp
+from RevenueChaser.rcdata import read
+from RevenueChaser.rcdata.tests import prices_seed
 
 D = date(2026, 10, 14)
 PREV = date(2026, 10, 13)
@@ -50,6 +53,10 @@ def _sessions(end: date, n: int) -> list[date]:
 
 
 def _seed(ticker: str, days: list[date], actions=()):
+    closes = {d: (100.0 if i < len(days) // 2 else 50.0) + 0.01 * i for i, d in enumerate(days)}
+    prices_seed.seed_bars(ticker, days, _evening, ohlc={d: (c, c * 1.01, c * 0.99, c) for d, c in closes.items()},
+                          volume=1.0e6)                                   # the prices store, read since PR 10
+    prices_seed.seed_actions(ticker, closes, actions)
     rawstore.write_rows("price_bars_daily", [{
         "ticker": ticker, "session_date": d, "open": c, "high": c * 1.01, "low": c * 0.99, "close": c,
         "adj_close": None, "volume": 1.0e6, "split_ratio": None, "adj_source": None, "source": "uw",
@@ -86,11 +93,13 @@ def test_a_name_without_spys_session_bar_drops_as_stale_bars_and_the_day_freezes
     step = {s["key"]: s for s in payload["funnel_steps"]}["stale_bars"]
     assert step["count"] == 1 and step["tickers"] == ["UP1"] and step["by_design"] is False
     assert step["label"] == "No D01 bar of the latest stored session (a halt or a Daily Bars gap)"
+    declared = [k for k, _label, _design in screen_common._drop_steps(sp.config)]
+    assert declared.index("stale_bars") == declared.index("no_bars") + 1     # a data gap next to its sibling
     keys = [s["key"] for s in payload["funnel_steps"]]
-    assert keys.index("stale_bars") == keys.index("no_bars") + 1        # a data gap next to its sibling
+    assert [k for k in declared if k in keys] == [k for k in keys if k in declared]   # (no_bars is empty since PR 10)
     assert payload["data_quality"]["dropped"]["stale_bars"] == 1
     out = frz.freeze_payload(payload, run_id="s1", now=scn.NOW)
-    assert out.frozen == len(payload["candidates"]) > 0, out.message
+    assert out.queued == len(payload["candidates"]) > 0, out.message
 
 
 def test_before_daily_bars_has_run_no_name_drops_as_stale(rawstore_tmp_db, monkeypatch):
@@ -99,8 +108,7 @@ def test_before_daily_bars_has_run_no_name_drops_as_stale(rawstore_tmp_db, monke
     scn.seed()
     scn.patch(monkeypatch)
     _halt_up1(monkeypatch)
-    with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
-        conn.execute("DELETE FROM price_bars_daily WHERE session_date = DATE '2026-10-14'")
+    prices_seed.drop_session(D)
     payload = sp.run_scan()
     assert "stale_bars" not in {s["key"] for s in payload["funnel_steps"]}
     assert "stale_bars" not in payload["data_quality"]["dropped"]
@@ -117,7 +125,7 @@ def test_one_gap_over_the_drop_share_is_a_daily_bars_failure_and_nothing_drops(r
     assert "stale_bars" not in {s["key"] for s in payload["funnel_steps"]}
     assert "UP1" in {c["ticker"] for c in payload["candidates"]}
     out = swing_freeze.freeze_payload(payload, run_id="s1", now=scn.NOW)
-    assert out.frozen == 0 and "UP1" in out.reason
+    assert out.queued == 0 and "UP1" in out.reason
 
 
 def test_the_drop_share_is_a_share_of_the_scored_names(rawstore_tmp_db, clock, monkeypatch):
@@ -158,7 +166,7 @@ def test_the_refusal_note_for_a_halted_pick_says_a_fetch_will_not_change_it(raws
                               to_rows=lambda items: [{"subject": i["ticker"], "rank": 1} for i in items],
                               model_version="t", run_id="s2", now=NOW, check_spy=False,
                               bar_gaps=ledger.ohlc_gaps)
-    assert out.frozen == 0
+    assert out.queued == 0
     assert "HALTED" in out.reason and "a later Fetch will not change it" in out.reason
     assert "can complete the day" not in out.reason
 
@@ -173,8 +181,8 @@ def test_the_batched_read_equals_the_per_name_read(rawstore_tmp_db, clock):
     batch = screen_common.load_bars_many(["AAA", "BBB", "NONE"])
     start = D - pd.Timedelta(days=screen_common.BAR_DAYS).to_pytimedelta()
     for t in ("AAA", "BBB"):            # the read before S3: one ``daily_bars`` call per basis and name
-        nominal = screen_common._ohlcv(prices.daily_bars([t], basis="nominal", start=start))
-        adjusted = screen_common._ohlcv(prices.daily_bars([t], basis="adjusted", start=start))
+        nominal = screen_common._ohlcv(market_bars.daily_bars([t], basis="nominal", start=start))
+        adjusted = screen_common._ohlcv(market_bars.daily_bars([t], basis="adjusted", start=start))
         pd.testing.assert_frame_equal(batch[t][0], nominal)
         pd.testing.assert_frame_equal(batch[t][1], adjusted)
         assert batch[t][0].attrs["stale"] == (nominal.index[-1].date() < D)
@@ -186,9 +194,9 @@ def test_the_batched_read_equals_the_per_name_read(rawstore_tmp_db, clock):
 def test_both_bases_come_from_one_read(rawstore_tmp_db, clock):
     days = _sessions(D, 300)
     _seed("AAA", days, actions=[(days[150], "split", 2.0), (days[280], "dividend", 1.0)])
-    both = prices.daily_bars_bases(["AAA"], start=days[10])
+    both = market_bars.daily_bars_bases(["AAA"], start=days[10])
     for basis in ("nominal", "adjusted"):
-        pd.testing.assert_frame_equal(both[basis], prices.daily_bars(["AAA"], basis=basis, start=days[10]))
+        pd.testing.assert_frame_equal(both[basis], market_bars.daily_bars(["AAA"], basis=basis, start=days[10]))
     nominal, adjusted = both["nominal"].set_index("session_date"), both["adjusted"].set_index("session_date")
     assert nominal["close"].iloc[-1] == adjusted["close"].iloc[-1]                   # after the dividend: equal
     before = pd.Timestamp(days[279])
@@ -201,21 +209,19 @@ def test_both_bases_come_from_one_read(rawstore_tmp_db, clock):
 def test_a_scan_reads_d01_once_per_chunk_not_per_name(rawstore_tmp_db, monkeypatch, pipe):
     scn.seed()
     scn.patch(monkeypatch)
-    calls: list[str] = []
+    calls: list[list[str]] = []
+    real = read.bars_by_ticker
 
-    def counting(real):
-        def counted(sql, params=None):
-            names = [p for p in params or [] if isinstance(p, str)]
-            if ("price_bars_daily b" in sql or "FROM price_actions" in sql) and names != ["SPY"]:   # not the baseline
-                calls.append(sql)
-            return real(sql, params)
-        return counted
+    def counted(tickers, start=None, end=None):
+        names = list(tickers)
+        if names != ["SPY"]:                      # not the baseline
+            calls.append(names)
+        return real(names, start=start, end=end)
 
-    monkeypatch.setattr(prices, "_read", counting(prices._read))
-    monkeypatch.setattr(prices, "_read_columns", counting(prices._read_columns))   # the bars, as columns (#383)
+    monkeypatch.setattr(read, "bars_by_ticker", counted)
     payload = pipe.run_scan()
     assert payload["candidates"]
-    assert len(calls) == 2                       # one bars read and one actions read for the whole (single) chunk
+    assert len(calls) == 1                       # one read of the prices store (bars and factors) for the one chunk
 
 
 def test_the_chunks_cover_every_name(rawstore_tmp_db, monkeypatch):
@@ -251,19 +257,14 @@ def test_a_row_without_volume_falls_back_to_the_newest_yahoo_average(rawstore_tm
     got = quotes.prefilter_quotes(["THIN", "FAST", "UWONLY"])
     assert got["THIN"]["avg_volume"] == 1_000.0 and got["THIN"]["session_date"] == D
     assert got["FAST"]["avg_volume"] == 50_000.0                 # the newest Yahoo row that has one
-    assert got["UWONLY"]["avg_volume"] is None
-    pf = screen_common.prefilter([{"ticker": t} for t in ("THIN", "FAST", "UWONLY")], CFG)
-    assert pf.drops == {"low_dollar_volume": ["THIN"]}
-    assert [r["ticker"] for r in pf.kept] == ["FAST", "UWONLY"]
-    assert pf.no_volume == ["UWONLY"]
+    assert got["UWONLY"]["avg_volume"] is None          # (the screeners' prefilter reads the prices store since PR 10)
 
 
 @pytest.mark.parametrize("pipe", [sp, fp], ids=["swing", "fundamentals"])
 def test_the_payload_counts_names_kept_without_a_volume(rawstore_tmp_db, monkeypatch, pipe):
     scn.seed()
     scn.patch(monkeypatch)
-    with rawstore.connect(db=rawstore.MANIFEST["quote_snapshot"].get("db", "raw")) as conn:
-        conn.execute("DELETE FROM quote_snapshot WHERE ticker = 'UP2'")
-    rawstore.write_rows("quote_snapshot", [_q("UP2", scn.SESSION, 50.0, source="uw", payload={"close": "50"})])
+    kind, drift = scn.BARS["UP2"]
+    prices_seed.seed_frame("UP2", scn._bars(kind, drift, scn.LONG_BARS).assign(Volume=float("nan")), scn.D01_WRITTEN)
     dq = pipe.run_scan()["data_quality"]
     assert dq["no_avg_volume"] == 1

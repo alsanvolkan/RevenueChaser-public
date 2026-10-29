@@ -1,9 +1,10 @@
 """Seeds for the Swing and Fundamentals Fetch in the e2e tier (#383 R3 C12).
 
-Since C12 the two boards prefilter on D04 (``quote_snapshot``) and score from D01 (``price_bars_daily``), so a test
-that runs their Fetch writes those two tables, the way the universe pull and RC-Daily-Bars leave them. The test
-process writes the dashboard's store directly (``rawstore.DB_PATH`` patched to the dashboard's store folder; D01 lives
-beside it in ``prices.duckdb``).
+Since PR 10 (G4) the two boards prefilter on and score from the prices store (``prices.duckdb`` in the market root,
+which only the builder writes in production); before it, D04 (``quote_snapshot``) and D01 (``price_bars_daily``). A
+test that runs their Fetch seeds both: ``seed_d01`` writes the D01 rows and the same bars into the prices store, and
+``seed_quote`` the D04 row the universe pull records. The test process writes the dashboard's files directly:
+``point_at`` aims ``rawstore.DB_PATH`` at the dashboard's store and ``config.MARKET_DIR`` at its market root.
 """
 from __future__ import annotations
 
@@ -13,10 +14,23 @@ from datetime import date
 import pandas as pd
 
 
-def seed_d01(ticker: str, df: pd.DataFrame, fetched_at: float | None = None) -> None:
-    """``df``'s Open/High/Low/Close/Volume bars as D01 rows; ``fetched_at`` defaults to now (after any past close)."""
+def point_at(dashboard, monkeypatch) -> None:
+    """Write the dashboard's store and market root from this process (the dashboard is idle between calls)."""
+    from pathlib import Path
+
     import RevenueChaser.core.rawstore as rawstore
+    from RevenueChaser.core import config
+    monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+    monkeypatch.setattr(config, "MARKET_DIR", Path(dashboard.env["RC_MARKET_DIR"]))
+
+
+def seed_d01(ticker: str, df: pd.DataFrame, fetched_at: float | None = None) -> None:
+    """``df``'s Open/High/Low/Close/Volume bars as D01 rows and in the prices store; ``fetched_at`` defaults to now
+    (after any past close)."""
+    import RevenueChaser.core.rawstore as rawstore
+    from RevenueChaser.rcdata.tests.prices_seed import seed_frame
     at = time.time() if fetched_at is None else fetched_at
+    seed_frame(ticker, df, at)
     rawstore.write_rows("price_bars_daily", [{
         "ticker": ticker, "session_date": pd.Timestamp(ts).date(), "open": float(r["Open"]),
         "high": float(r["High"]), "low": float(r["Low"]), "close": float(r["Close"]), "adj_close": None,

@@ -8,18 +8,16 @@ bars were stale, so the board's baseline is stale".
 The replay runs both real scans (``run_scan``, a Fetch) and the real freezes on the scenario of
 ``core/tests/screen_parity.py`` (bars ending on 14 Oct, the clock at 21:45Z) with a fake Yahoo that refuses every read.
 Since C12 and K8b (#383 R3) the picks score from D01 and the freeze checks their D01 bars, so Yahoo's refusal no longer
-touches the picks; it reaches only the ``.info`` reads and the SPY fallback (``load_ohlc``), which runs when D01 lacks
-SPY's session. Four shapes:
+touches the picks; since PR 10 (G4) "D01" is the prices store (``prices.duckdb``) and the SPY fallback (``load_ohlc``)
+is gone, so Yahoo's refusal reaches only the ``.info`` reads. Three shapes:
 
 - **the night as it was:** D01 held every name's 14 Oct bar: both boards freeze and no yfinance bar is read.
 - **D01 a day behind for the picks:** the freeze refuses and names them; a Fetch after Daily Bars can complete it.
-- **D01 a day behind for SPY,** the fallback refetch cured by one session reset: both freeze.
-- **the same, with no cure:** SPY's baseline is stale and both are refused for it.
+- **the prices store a day behind for SPY:** SPY's baseline is stale and both are refused for it; no yfinance bar is
+  read (before PR 10 a fallback refetch, cured by one session reset, froze both).
 
-Yahoo refuses while yfinance's shared crumb is the one it stopped accepting (``YfData()._crumb``), so the session reset
-of ``load_ohlc`` (``core/providers/yf_session.py``) is the real one, on the installed yfinance; whether a new crumb
-cures it is the scenario's choice (on 14 Oct the PC was also rate-limited later, which a reset does not cure). Offline;
-the store is a temp DuckDB and yfinance's on-disk cookie cache is faked.
+Yahoo refuses while yfinance's shared crumb is the one it stopped accepting (``YfData()._crumb``). Offline; the store is
+a temp DuckDB and yfinance's on-disk cookie cache is faked.
 """
 from __future__ import annotations
 
@@ -36,6 +34,7 @@ from RevenueChaser.module_fundamentals import freeze as fund_freeze
 from RevenueChaser.module_fundamentals import pipeline as fp
 from RevenueChaser.module_swing_potential import freeze as swing_freeze
 from RevenueChaser.module_swing_potential import pipeline as sp
+from RevenueChaser.rcdata.tests import ledger_queue
 
 D = date(2026, 10, 14)
 NOW = datetime(2026, 10, 14, 21, 45, tzinfo=timezone.utc)                      # 17:45 EDT
@@ -56,13 +55,6 @@ def _bars(ticker: str, end: date = D) -> pd.DataFrame:
         return _dated(sc._bars("up", 0.004, sc.SHORT_BARS), end)
     kind, drift = sc.BARS[ticker]
     return _dated(sc._bars(kind, drift, sc.LONG_BARS), end)
-
-
-def _cache(ticker: str, df: pd.DataFrame, cached_at: float) -> None:
-    rawstore.write_rows("swing_ohlc", [{
-        "ticker": ticker, "ts": ts.isoformat(), "open": float(r["Open"]), "high": float(r["High"]),
-        "low": float(r["Low"]), "close": float(r["Close"]), "volume": float(r["Volume"]), "cached_at": cached_at}
-        for ts, r in df.iterrows()])
 
 
 def _d01_day_behind(*tickers: str) -> None:
@@ -154,7 +146,7 @@ def test_the_night_as_it_was_both_boards_freeze_from_d01_and_read_no_yahoo_bar(n
     for name, (payload, outcome) in out.items():
         assert payload["data_quality"]["spy_stale"] is False, name
         assert payload["data_quality"]["stale_ohlc"] == 0, name
-        assert outcome.frozen == len(payload["candidates"]) > 0, (name, outcome.message)
+        assert outcome.queued == len(payload["candidates"]) > 0, (name, outcome.message)
         assert outcome.forecast_date == D
     assert night.history_calls == []                        # picks and SPY come from D01: no yfinance bar read
 
@@ -168,32 +160,21 @@ def test_d01_a_day_behind_for_the_picks_refuses_and_names_them(night):
     out = _fetch_and_freeze()
     for name, (payload, outcome) in out.items():
         assert payload["data_quality"]["spy_stale"] is False, name
-        assert outcome.frozen == 0, name
+        assert outcome.queued == 0, name
         assert "lack a complete 2026-10-14 daily bar" in outcome.reason, (name, outcome.reason)
-        assert "a later Fetch will not change it unless Daily Bars is run again" in outcome.reason
+        assert "a later Fetch will not change it unless the daily bars are read again" in outcome.reason
         assert "stale_bars" not in {s["key"] for s in payload["funnel_steps"]}
-    assert rawstore.query("SELECT count(*) AS n FROM forecast_ledger")[0]["n"] == 0
+    assert ledger_queue.count() == 0
     assert night.history_calls == []
 
 
-def test_d01_a_day_behind_for_spy_one_session_reset_cures_the_fallback_and_both_freeze(night):
-    """D01 lacks SPY's session, so the baseline falls back to ``load_ohlc`` (the night before's cache). Its refetch
-    meets the 401, resets yfinance's session once, retries, and both boards freeze the 14 Oct session."""
+def test_the_prices_store_a_day_behind_for_spy_refuses_both_for_spy_and_reads_no_yahoo_bar(night):
+    """Since PR 10 (G4) there is no SPY fallback (F4 A, part 1): before, the baseline fell back to ``load_ohlc`` (the
+    old cache and a yfinance refetch). Now a prices store without SPY's session is a stale baseline, both boards are
+    refused for it, and Yahoo is never asked for a bar, cured crumb or not."""
     _d01_day_behind("SPY")
-    _cache("SPY", _bars("SPY", date(2026, 10, 13)), NIGHT_BEFORE)
-    out = _fetch_and_freeze()
-    for name, (payload, outcome) in out.items():
-        assert payload["data_quality"]["spy_stale"] is False, name
-        assert outcome.frozen == len(payload["candidates"]) > 0, (name, outcome.message)
-    assert set(night.history_calls) == {"SPY"}              # the fallback is the only yfinance bar read
-    assert night.shared._crumb is None                     # reset: yfinance mints a new crumb on its next request
-
-
-def test_d01_a_day_behind_for_spy_and_no_cure_refuses_both_for_spy(night):
-    night.refuse_new_crumb = True
-    _d01_day_behind("SPY")
-    _cache("SPY", _bars("SPY", date(2026, 10, 13)), NIGHT_BEFORE)
     out = _fetch_and_freeze()
     for name, (payload, outcome) in out.items():
         assert payload["data_quality"]["spy_stale"] is True, name
-        assert outcome.frozen == 0 and "SPY" in outcome.reason, (name, outcome.reason)
+        assert outcome.queued == 0 and "SPY" in outcome.reason, (name, outcome.reason)
+    assert night.history_calls == []

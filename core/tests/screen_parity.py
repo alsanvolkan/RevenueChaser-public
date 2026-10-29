@@ -106,7 +106,10 @@ class _OfflineTicker:
 
 
 def seed_d01(ticker: str, df: pd.DataFrame, fetched_at: float = D01_WRITTEN) -> None:
-    """``df``'s bars as D01 rows, written by RC-Daily-Bars after the last session's close + 30 min."""
+    """``df``'s bars as D01 rows, written by RC-Daily-Bars after the last session's close + 30 min, and the same bars
+    in the prices store, which Swing and Fundamentals read since PR 10 (``rcdata/tests/prices_seed``)."""
+    from RevenueChaser.rcdata.tests import prices_seed
+    prices_seed.seed_frame(ticker, df, fetched_at)
     rawstore.write_rows("price_bars_daily", [{
         "ticker": ticker, "session_date": ts.date(), "open": float(r["Open"]), "high": float(r["High"]),
         "low": float(r["Low"]), "close": float(r["Close"]), "adj_close": None, "volume": float(r["Volume"]),
@@ -123,6 +126,19 @@ def seed_quotes(session: date = SESSION) -> None:
         "run_at": D01_WRITTEN} for t, (cap, q) in UNIVERSE.items()])
 
 
+def _prefilter_shape(ticker: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Since PR 10 the prefilter reads the newest close and the mean volume from the prices store, not the quote:
+    LOWPX's bars end at its quote's price (3.0), DOWN1's at its quote's 30.0 (its drift floors the unscaled series at
+    1.0, under the $5 floor) and LOWVOL trades its quote's 1,000 shares a day. A scale leaves every return as it was."""
+    q = UNIVERSE.get(ticker, (None, {}))[1]
+    if ticker in ("LOWPX", "DOWN1"):
+        scale = q["regularMarketPrice"] / float(df["Close"].iloc[-1])
+        df = df.assign(**{c: df[c] * scale for c in ("Open", "High", "Low", "Close")})
+    if ticker == "LOWVOL":
+        df = df.assign(Volume=q["averageDailyVolume10Day"])
+    return df
+
+
 def seed() -> None:
     """Write the scenario's store. Call with an isolated, fully created rawstore."""
     rawstore.replace_all("equity_universe", [
@@ -137,7 +153,7 @@ def seed() -> None:
     rawstore.ensure_table("security_master")
     rawstore.write_rows("security_master", [{"ticker": t, "security_type": ty} for t, ty in EXCLUDED.items()])
     for t, (kind, drift) in BARS.items():
-        seed_d01(t, _bars(kind, drift, LONG_BARS))
+        seed_d01(t, _prefilter_shape(t, _bars(kind, drift, LONG_BARS)))
     seed_d01("SHORT1", _bars("up", 0.004, SHORT_BARS))
     seed_quotes()
     rawstore.write_rows("swing_info", [

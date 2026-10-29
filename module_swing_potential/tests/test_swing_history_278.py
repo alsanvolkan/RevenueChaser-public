@@ -213,7 +213,7 @@ def test_bars_cached_intraday_make_a_post_close_scan_partial_and_a_fresh_one_the
     sw_history.record(_payload(COMPLETE_1, "AAA"), rows=_rows(_results("AAA")), run_id="stale")
     (head,) = _headers()
     assert head["quality"] == "partial" and head["session_snapshot"] is False
-    assert "cached before the close + 30 min" in head["quality_note"] and _score_rows("stale") == []
+    assert "read before the close + 30 min" in head["quality_note"] and _score_rows("stale") == []
     for t in ("SPY", "AAA"):
         _seed(t, _fresh())                                   # a later Fetch refetches the bars
     sw_history.record(_payload(COMPLETE_2, "AAA"), rows=_rows(_results("AAA")), run_id="fresh")

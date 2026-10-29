@@ -165,6 +165,8 @@ def test_a_scan_with_no_spy_bars_reports_no_regime(seeded, monkeypatch, mod, ren
     This ran as a Refresh before K4 (#383 R1); a Refresh no longer scores, so it is a Fetch now."""
     with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
         conn.execute("DELETE FROM price_bars_daily WHERE ticker = 'SPY'")
+    from RevenueChaser.rcdata.tests import prices_seed
+    prices_seed.drop_ticker("SPY")                       # the prices store, the SPY baseline since PR 10
     monkeypatch.setattr(scores, "persist", lambda r: None)
     for name in ("Ticker", "download"):
         monkeypatch.setattr(f"yfinance.{name}", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")))

@@ -139,8 +139,13 @@ def _seed_at(ticker: str, last_day: date, written: datetime, periods: int = 30) 
 
 
 def _cache_cause(ticker: str) -> str | None:
-    """Why ``ticker``'s ``swing_ohlc`` cache lacks one complete D bar (None: it has one), by the freeze's rule."""
-    return ledger._bar_cause(D, ledger.last_bars([ticker]).get(ticker))
+    """Why ``ticker``'s ``swing_ohlc`` cache lacks one complete D bar (None: it has one), by the freeze's rule. The
+    cache's own reader (``ledger.last_bars``) left with the SPY fallback in PR 10; this is its query, kept here until
+    PR 21 retires the cache."""
+    rows = rawstore.query(
+        "SELECT max(substr(ts, 1, 10)) AS last_day, arg_max(cached_at, ts) AS cached_at FROM swing_ohlc "
+        "WHERE ticker = ? GROUP BY ticker", [ticker])
+    return ledger._bar_cause(D, (rows[0]["last_day"], rows[0]["cached_at"]) if rows else None)
 
 
 @pytest.fixture

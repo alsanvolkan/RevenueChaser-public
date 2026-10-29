@@ -179,32 +179,15 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         args=("-m", "RevenueChaser.app.universe_cli"), time="23:00", days=_WEEKDAYS, after="RC-Daily-Bars",
         description="Step S2 of the nightly chain (#129): once tonight's daily bars run exited 0, the universe "
                     "refresh (AG with the universe pull, then Swing, then Fundamentals) and the forecast freeze "
-                    "(#128, which writes nothing inside the US session). A busy universe lock exits 3.",
+                    "(#128, which queues nothing inside the US session; since PR 10 the builder writes the queued "
+                    "picks). A busy universe lock exits 3.",
         tables_written=("equity_universe", "equity_universe_provenance", "quote_snapshot", "source_checks",
                         "ticker_payload_cache", "edgar_financials", "swing_ohlc", "swing_info", "ticker_scores",
                         "swing_scores", "swing_gates", "fundamentals_scores", "fundamentals_gates",
-                        "vendor_financials", "vendor_valuation", "ownership_snapshot", "forecast_ledger",
+                        "vendor_financials", "vendor_valuation", "ownership_snapshot",
                         "result_runs", "ag_scores_history", "swing_scores_history", "swing_gates_history",
                         "fundamentals_scores_history", "fundamentals_gates_history", "job_runs"),
         settings=TaskSettings(wake_to_run=True)),
-    AutomationEntry(
-        name="RC-Forecast-Outcomes", label="Forecast outcomes",
-        args=("-m", "RevenueChaser.scripts.forecast_outcomes", "--nightly"), time="23:45", after="RC-Daily-Bars",
-        description="Once tonight's daily bars run exited 0, recomputes the 30- and 90-day outcome (reference open, "
-                    "MFE, MAE, open/closed) of every frozen pick not closed yet, from the stored bars; no calls "
-                    "(#380 S0). 23:45 keeps it clear of RC-Screeners-Daily, the other raw.duckdb writer. A busy "
-                    "forecast-outcomes lock exits 3, and nothing was written.",
-        tables_written=("forecast_outcomes",)),
-    AutomationEntry(
-        name="RC-Forecast-Baselines", label="Forecast baselines",
-        args=("-m", "RevenueChaser.scripts.forecast_baselines", "--nightly"), time="23:50",
-        after="RC-Forecast-Outcomes",
-        description="Once tonight's outcomes run exited 0, recomputes the baselines still open: what each freeze "
-                    "date's own universe did over the same 30- and 90-day windows, and the same names split into ten "
-                    "trailing-volatility deciles, from the stored bars and the universe change history; no calls "
-                    "(#25 HR-1). Chained on RC-Forecast-Outcomes, the other raw.duckdb writer of the 23:45 slot, so "
-                    "the two never run together; 23:50 is its own trigger.",
-        tables_written=("forecast_baselines",)),
     AutomationEntry(
         name="RC-Index-Lists", label="Index lists (weekly)",
         args=("-m", "RevenueChaser.scripts.index_lists", "--weekly"), time="10:00", days=("Saturday",),

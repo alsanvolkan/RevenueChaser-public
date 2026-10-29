@@ -545,11 +545,8 @@ def _cached_financials(ticker: str, no_fetch: bool = False, preload: dict | None
 def _price_session() -> date | None:
     """The newest prices-store session SPY has a bar for: the session an AG card's momentum is read up to (#380 S4,
     PR 11: ``rcdata.read.last_sessions``). No store or no SPY bar reads as no session, and the scan then scores every
-    card with unknown momentum instead of failing.
-
-    shortcut: the freeze anchor still asks D01 (``freeze.py``, ``ledger.d01_has_session``); it moves with the
-    ledger's own switch to the prices store (G4, PR 10), and until then a session SPY has here but not in D01 scores
-    without being frozen.
+    card with unknown momentum instead of failing. The freeze anchors on the same store (``freeze.py``,
+    ``ledger.prices_has_session``, PR 10).
     """
     from RevenueChaser.rcdata import read
     return read.last_sessions(["SPY"]).get("SPY")

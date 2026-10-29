@@ -1,7 +1,9 @@
 """The read API of the market store (D4): the only place a board gets market data, and the only SQL it runs.
 
-Two serving kinds: ``market`` (``market_series``, ``spx_expiry_strike``) and, since PR 5, the identity ``spine``
-(``universe``, ``identity``, ``membership``).
+Four serving kinds: ``market`` (``market_series``, ``spx_expiry_strike``), since PR 5 the identity ``spine``
+(``universe``, ``identity``, ``membership``), since PR 7 the ``prices`` store (``bars``, ``actions``, ``shares``,
+``market_cap``) and since PR 10 the forecast ``ledger`` (``forecast_ledger``, ``forecast_outcomes``,
+``forecast_baselines``).
 
 Every row comes back with its provenance (``session_date``, ``source``, ``fetched_at``, ``source_as_of``, ``run_id``)
 and ``status``, the newest ``dataset_check`` result of its dataset (``never_checked`` before the first). Each call
@@ -27,7 +29,9 @@ def dataset_status(dataset: str) -> str:
     return check["result"] if check else NEVER_CHECKED
 
 
-def _rows(table: str, sql: str, params: list) -> list[dict]:
+def _rows(table: str, sql: str, params: list, status_key: str = "status") -> list[dict]:
+    """The rows, each with its dataset's newest check result under ``status_key`` (``dataset_status`` for a table
+    whose own ``status`` column is data, the forecast outcomes and baselines)."""
     ops.read_log.bump(table)
     try:
         con = serving.open_read(KIND_OF_TABLE[table])
@@ -41,7 +45,7 @@ def _rows(table: str, sql: str, params: list) -> list[dict]:
         con.close()
     status = dataset_status(DATASET_OF_TABLE[table])
     for r in rows:
-        r["status"] = status
+        r[status_key] = status
     return rows
 
 
@@ -429,3 +433,128 @@ def as_frame(rows: list[dict]):
     """The rows as a pandas DataFrame (the one helper; pandas is imported only here)."""
     import pandas as pd
     return pd.DataFrame(rows)
+
+
+# ── The screeners' reads (PR 10, G4) ──────────────────────────────────────────────────────────────────────────
+# Swing and Fundamentals ask by ticker, and a ticker names the security G3's ``_now_cte`` picks: the one trading
+# under it now, of two the one with the newer bar.
+
+def last_bars(tickers: Iterable[str]) -> dict[str, dict]:
+    """``{ticker: row}`` for the tickers with a bar: ``security_id``, ``last_session`` (a date, the newest bar's New
+    York session) and ``last_fetched_at`` (that bar's ``fetched_at``: when the builder read it, so a test of "written
+    after the session's close + 30 min" can be made on it). A ticker with no bar is absent."""
+    wanted = _tickers(tickers)
+    if not wanted:
+        return {}
+    sql = (f"WITH {_now_cte(len(wanted))} SELECT now.ticker, now.security_id, max(b.session_date) AS last_session, "
+           "arg_max(b.fetched_at, b.session_date) AS last_fetched_at FROM price_bar_daily b JOIN now USING "
+           "(security_id) GROUP BY ALL")
+    return {r["ticker"]: r for r in _rows("price_bar_daily", sql, wanted)}
+
+
+def bars_by_ticker(tickers: Iterable[str], start=None, end=None) -> list[dict]:
+    """``bars`` of the securities the tickers name, nominal, each row with its ``ticker`` (the name asked), by ticker
+    and session. The factors (``split_factor``, ``tr_factor``) come with every row, so a caller derives the split and
+    the total-return basis from one read."""
+    ids = security_ids(tickers)
+    if not ids:
+        return []
+    ticker_of = {sid: t for t, sid in ids.items()}
+    rows = bars(ids.values(), start=start, end=end, basis="nominal")
+    for r in rows:
+        r["ticker"] = ticker_of[r["security_id"]]
+    return sorted(rows, key=lambda r: (r["ticker"], r["session_date"]))
+
+
+# The prefilter's average volume: the mean of a name's last this many sessions (Yahoo's averageVolume, which the old
+# quote row carried, is a 3-month mean: about 63 sessions).
+LIQUIDITY_SESSIONS = 63
+
+
+def liquidity(tickers: Iterable[str], sessions: int = LIQUIDITY_SESSIONS) -> dict[str, dict]:
+    """``{ticker: row}``: ``price`` (the newest nominal close) and ``price_session``, and ``avg_volume``, the mean
+    volume over the name's last ``sessions`` bars on today's share basis (divided by ``split_factor``), with
+    ``volume_sessions``, how many bars that mean rests on. Like ``latest_market``, only a close at most
+    ``LATEST_WITHIN_DAYS`` before the store's newest session counts: an older one is no current price."""
+    wanted = _tickers(tickers)
+    if not wanted:
+        return {}
+    sql = (f"WITH {_now_cte(len(wanted))}, "
+           f"since AS (SELECT max(session_date) - INTERVAL {int(LATEST_WITHIN_DAYS)} DAY AS d FROM price_bar_daily "
+           "WHERE security_id NOT LIKE 'index:%'), "
+           "recent AS (SELECT b.security_id, b.session_date, b.close, b.volume / coalesce(a.split_factor, 1) AS volume, "
+           "row_number() OVER (PARTITION BY b.security_id ORDER BY b.session_date DESC) AS n "
+           f"FROM price_bar_daily b LEFT JOIN adj_factor a ON {_PERIOD} "
+           "WHERE b.security_id IN (SELECT security_id FROM now)) "
+           "SELECT now.ticker, now.security_id, "
+           "arg_max(recent.close, recent.session_date) FILTER (WHERE recent.close IS NOT NULL) AS price, "
+           "max(recent.session_date) FILTER (WHERE recent.close IS NOT NULL) AS price_session, "
+           "avg(recent.volume) FILTER (WHERE recent.n <= ?) AS avg_volume, "
+           "count(recent.volume) FILTER (WHERE recent.n <= ?) AS volume_sessions "
+           "FROM now JOIN recent USING (security_id) GROUP BY ALL "
+           "HAVING max(recent.session_date) FILTER (WHERE recent.close IS NOT NULL) >= (SELECT d FROM since)")
+    return {r["ticker"]: r for r in _rows("price_bar_daily", sql, [*wanted, int(sessions), int(sessions)])}
+
+
+def tickers_on(day) -> list[str]:
+    """The tickers of the securities with a usable close on ``day`` (an index not counted), each by the symbol it
+    trades under now (``security_symbol`` with no ``valid_to``; a delisted security keeps its last), sorted.
+
+    The forecast baselines' universe of a freeze day (PR 10): whatever traded that day, delisted names included, so
+    it is not survivorship-biased. shortcut: two securities that now share a symbol count once, and a security whose
+    symbols all closed is left out; upgrade when the baselines read bars by ``security_id`` (no ticker round trip)."""
+    rows = _rows("price_bar_daily",
+                 "SELECT DISTINCT s.symbol FROM price_bar_daily b JOIN security_symbol s USING (security_id) "
+                 "WHERE b.session_date = ? AND b.close > 0 AND s.valid_to IS NULL "
+                 "AND b.security_id NOT LIKE 'index:%' ORDER BY s.symbol", [_day(day)])
+    return [r["symbol"] for r in rows]
+
+
+# ── the forecast ledger (PR 10, G4) ───────────────────────────────────────────────────────────────────────────────
+
+DATASET_OF_TABLE.update({"forecast_ledger": "ledger/freeze", "forecast_outcomes": "ledger/outcomes",
+                         "forecast_baselines": "ledger/baselines"})
+KIND_OF_TABLE.update({"forecast_ledger": "ledger", "forecast_outcomes": "ledger", "forecast_baselines": "ledger"})
+
+
+def forecast_ledger(source: str | None = None, start=None, end=None, target_type: str | None = None) -> list[dict]:
+    """``forecast_ledger`` rows (of ``source`` and ``target_type`` when given) with ``start <= forecast_date <= end``
+    (either bound optional), by source, forecast date and rank. No ledger file yet is no rows."""
+    sql, params = "SELECT * FROM forecast_ledger WHERE true", []
+    if source is not None:
+        sql += " AND source = ?"
+        params.append(source)
+    if target_type is not None:
+        sql += " AND target_type = ?"
+        params.append(target_type)
+    sql = _bounded(sql, params, "forecast_date", start, end)
+    return _rows("forecast_ledger", sql + " ORDER BY source, forecast_date, rank, subject", params)
+
+
+def ledger_day_frozen(source: str, forecast_date, target_type: str = "pick") -> bool:
+    """True when ``forecast_ledger`` already holds ``source``'s ``target_type`` rows for ``forecast_date``."""
+    return bool(_rows("forecast_ledger", "SELECT 1 AS hit FROM forecast_ledger WHERE source = ? AND forecast_date = ? "
+                      "AND target_type = ? LIMIT 1", [source, _day(forecast_date), target_type]))
+
+
+def forecast_outcomes(source: str | None = None, start=None, end=None) -> list[dict]:
+    """``forecast_outcomes`` rows (of ``source`` when given) with ``start <= forecast_date <= end``, by source,
+    forecast date, subject and horizon: what happened after each frozen pick (``core/outcomes.py``). ``status`` is the
+    row's own (open, closed, no_bars, split_check); the dataset's check result is ``dataset_status``."""
+    sql, params = "SELECT * FROM forecast_outcomes WHERE true", []
+    if source is not None:
+        sql += " AND source = ?"
+        params.append(source)
+    sql = _bounded(sql, params, "forecast_date", start, end)
+    return _rows("forecast_outcomes", sql + " ORDER BY source, forecast_date, subject, horizon_days", params,
+                 status_key="dataset_status")
+
+
+def forecast_baselines(start=None, end=None) -> list[dict]:
+    """``forecast_baselines`` rows with ``start <= forecast_date <= end``, by forecast date, horizon and basis: what
+    the day's universe did over the same windows (``core/baselines.py``). ``status`` is the row's own (open, closed);
+    the dataset's check result is ``dataset_status``."""
+    params: list = []
+    sql = _bounded("SELECT * FROM forecast_baselines WHERE true", params, "forecast_date", start, end)
+    return _rows("forecast_baselines", sql + " ORDER BY forecast_date, horizon_days, basis", params,
+                 status_key="dataset_status")

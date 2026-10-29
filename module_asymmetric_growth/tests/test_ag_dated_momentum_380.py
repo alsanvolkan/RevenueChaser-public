@@ -3,8 +3,8 @@
 Spec: ``.hermes/plans_claude/2026-10-16_r8_specs/380-ag-s4.md``, decisions 2-4. The momentum inputs come from the
 stored bars of one ticker up to the newest session SPY has, so a Fetch spends no yfinance request on a technical
 fallback, and the board says which price session it used. Since PR 11 (G3) those bars are the prices store's
-(``rcdata.read.ticker_bars``, split basis: D01's old "nominal"); the freeze anchor still reads SPY's D01 bar until G4
-moves the ledger, so ``store_bars`` writes both.
+(``rcdata.read.ticker_bars``, split basis: D01's old "nominal"), and since PR 10 (G4) the freeze anchor reads SPY's
+bar there too.
 
 The three D01 rules (decision 2, the sign of ``dist_52w_pct`` kept as ``technical_from_quote`` has it):
 
@@ -62,12 +62,8 @@ def bar(ticker: str, day, *, close: float = 100.0, high: float = 105.0, low: flo
 
 
 def store_bars(rows: list[dict]) -> None:
-    """``bar`` rows in the prices store (the momentum's source since PR 11) and in D01 (the freeze anchor's).
-
-    shortcut: the D01 write only feeds ``ledger.d01_has_session`` for the freeze; drop it when G4 moves the ledger
-    to the prices store."""
+    """``bar`` rows in the prices store: the momentum's source since PR 11 and the freeze anchor's since PR 10."""
     prices_store.put_bars(rows, replace=False, overwrite=True)
-    rawstore.write_rows("price_bars_daily", rows)
 
 
 def put_action(ticker: str, ex: date, action: str, value: float) -> None:

@@ -12,6 +12,7 @@ import pytest
 from RevenueChaser.app import jobs, runners
 from RevenueChaser.core import calendar as cal
 from RevenueChaser.core import ledger, rawstore
+from RevenueChaser.rcdata import ops
 
 INTRADAY = datetime(2026, 10, 2, 16, 0, tzinfo=timezone.utc)        # 12:00 ET on a trading day
 
@@ -109,12 +110,13 @@ def test_a_refresh_never_freezes(order, freezers, runner):
 @pytest.mark.parametrize("runner", ["run_swing", "run_fundamentals", "run_asymmetric_growth"])
 def test_a_refresh_writes_no_ledger_rows_even_with_the_real_freezers(order, runner, monkeypatch):
     """The refresh-purity proof: with the real freeze functions and a post-close clock, no_fetch
-    still leaves ``forecast_ledger`` untouched (spy on the store's writer)."""
+    still leaves ``forecast_ledger`` untouched: no store write and, since PR 10, no ``ledger/freeze`` request."""
     monkeypatch.setattr(cal, "_now", lambda: datetime(2026, 10, 2, 21, 0, tzinfo=timezone.utc))
     writes = []
     monkeypatch.setattr(rawstore, "write_rows", lambda name, rows: writes.append(name) or 0)
     getattr(runners, runner)(None, no_fetch=True)
     assert "forecast_ledger" not in writes
+    assert ops.queue_view()["active"] == []
     assert ledger.take_notes() == []
 
 
@@ -161,6 +163,7 @@ def test_a_universe_job_runs_all_three_families_and_its_notes_name_each(order, m
         assert sum(label in n for n in notes) == 1
     assert sum("session window" in n for n in notes) == 3
     assert "forecast_ledger" not in writes
+    assert ops.queue_view()["active"] == []
 
 
 # ── a Fetch opens no popup: the freeze outcome is in ``notes``, never in ``message`` ─────────────────────
@@ -197,4 +200,4 @@ def test_a_fetch_job_leaves_its_message_empty_so_the_dashboard_opens_no_alert(or
     assert job["message"] is None, "a message is what the dashboard shows with alert()"
     assert job["error"] is None
     assert job["notes"], "the freeze outcome is still recorded, in its own field"
-    assert all(("Froze" in n or "not frozen" in n) for n in job["notes"])
+    assert all(("Queued" in n or "not frozen" in n) for n in job["notes"])

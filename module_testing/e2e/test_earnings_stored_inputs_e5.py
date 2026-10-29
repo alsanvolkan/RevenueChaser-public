@@ -13,7 +13,7 @@ from datetime import date
 import duckdb
 import pytest
 
-from RevenueChaser.module_testing.e2e.harness.screener_seed import bars_to, seed_d01
+from RevenueChaser.module_testing.e2e.harness.screener_seed import bars_to, point_at, seed_d01
 
 NOW = "2026-08-12T21:00:00+00:00"           # Wed 17:00 EDT
 SWEPT = date(2026, 8, 12)
@@ -34,7 +34,7 @@ def _item(symbol, session):
 @pytest.fixture
 def seeded(dashboard, monkeypatch):
     import RevenueChaser.core.rawstore as rawstore
-    monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+    point_at(dashboard, monkeypatch)
     rawstore.ensure_all_tables()
     rawstore.write_rows("earnings_calendar", [
         {"session_date": SWEPT, "earnings_date": DAY, "ticker": t, "report_session": s, "item": _item(t, s),

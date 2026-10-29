@@ -47,10 +47,10 @@ def _rows(run_id):
 
 
 def _spy_bar(when=date(2026, 10, 6), minutes=45):
-    """SPY's D01 bar for the session: the run is complete for the board when Daily Bars has written it (#380 S4)."""
+    """SPY's prices-store bar for the session: the run is complete for the board when it is there (#380 S4, PR 10)."""
     from RevenueChaser.core import calendar as cal
-    from RevenueChaser.core.tests.d01_seed import seed_d01
-    seed_d01("SPY", [when], (cal.session_close(when) + timedelta(minutes=minutes)).timestamp())
+    from RevenueChaser.rcdata.tests import prices_seed
+    prices_seed.seed_bars("SPY", [when], (cal.session_close(when) + timedelta(minutes=minutes)).timestamp())
 
 
 @pytest.fixture
@@ -135,15 +135,15 @@ def test_a_fetch_with_no_cards_still_gets_a_header_and_is_never_the_snapshot(sto
     assert [h["session_snapshot"] for h in _headers()] == [False, True] and len(_rows("real")) == 1
 
 
-def test_a_post_close_scan_without_spy_s_d01_bar_is_not_the_snapshot_a_later_one_is(store):
-    """#380 S4: the session's snapshot needs Daily Bars' SPY bar; a run before it reaches the session header only."""
-    from RevenueChaser.core import rawstore as rs
-    with rs.connect(db="prices") as conn:
-        conn.execute("DELETE FROM price_bars_daily")                 # Daily Bars has not run for the session
+def test_a_post_close_scan_without_spy_s_bar_is_not_the_snapshot_a_later_one_is(store):
+    """#380 S4: the session's snapshot needs the session's SPY bar (in the prices store since PR 10, the freeze's own
+    anchor); a run before it reaches the session header only."""
+    from RevenueChaser.rcdata.tests import prices_seed
+    prices_seed.drop_ticker("SPY")                                   # the daily bars have not run for the session
     ag_history.record(_result([_card("AAA")]), run_id="early")
     (head,) = _headers()
     assert head["quality"] == "partial" and head["session_snapshot"] is False
-    assert "no SPY D01 bar for the 2026-10-06 session" in head["quality_note"] and _rows("early") == []
+    assert "no SPY bar in the prices store for the 2026-10-06 session" in head["quality_note"] and _rows("early") == []
     _spy_bar()                                                       # Daily Bars wrote it: the next run takes the day
     ag_history.record(_result([_card("AAA"), _card("BBB")]), run_id="fresh")
     assert [h["session_snapshot"] for h in _headers()] == [False, True] and len(_rows("fresh")) == 2

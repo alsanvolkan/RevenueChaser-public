@@ -24,6 +24,11 @@ only difference, edited by hand. Review F2 then added the additive ``data_qualit
 re-capture differed from the old golden by that key only. Opus review S4 put Swing's ``settings`` (the run's
 thresholds, review finding 2) back into the snapshot so a change to them shows here; the re-capture added that block
 only.
+PR 10 (G4) re-captured it: the prefilter reads the prices store's newest close and mean volume instead of D04's
+quote, so NOBARS1 (no bars) drops there as ``no_quote`` instead of later as ``no_bars``, the scenario scales DOWN1's
+bars to its quote's 30.0 (unscaled they floor at 1.0, under the $5 floor), which moves only DOWN1's dollar-valued
+gate and score fields (every return is scale-free), and ``data_quality.short_refetch_refused`` left with the SPY
+fallback. Nothing else differed (``/mnt/project-files/rcdata-G4/evidence/parity_golden_pr10_diff.txt``).
 To re-capture on another commit, run this file with ``RC_PARITY_CAPTURE=<path>`` (it writes the snapshot there
 instead of comparing).
 """
@@ -69,7 +74,8 @@ def test_the_scenario_exercises_every_branch_of_the_scan(scenario):
         assert p["candidates"], f"{name}: no candidate passed a gate"
         s = p["summary"]
         assert s["excluded_types"] == 1, "the ETP must be dropped by the identity exclusion (R5)"
-        assert s["hygiene"] == 2, "LOWPX and LOWVOL fail the 7-A prefilter; FAR and BELOW50 pass it (C12)"
+        assert s["hygiene"] == 3, ("NOBARS1 has no close, LOWPX and LOWVOL fail the 7-A prefilter; FAR and BELOW50 "
+                                   "pass it (C12, PR 10)")
         assert p["universe_total"] == len(scn.UNIVERSE)
         assert snap[name]["tables"][scn.TABLES[name][0]], f"{name}: a Fetch must persist its scores"
     # Swing scores NOEDGAR (it needs no filings); Fundamentals drops it and says why.
@@ -78,7 +84,8 @@ def test_the_scenario_exercises_every_branch_of_the_scan(scenario):
     assert "NOEDGAR" in swing_tickers and "NOEDGAR" not in fund_tickers
     assert snap["fundamentals"]["fetch"]["data_quality"]["dropped"]["no_edgar_annual"] == 1
     assert snap["swing"]["fetch"]["data_quality"]["dropped"]["short_bars"] == 1
-    assert snap["swing"]["fetch"]["data_quality"]["dropped"]["no_bars"] == 1      # NOBARS1: no D01 rows
+    steps = {st["key"]: st for st in snap["swing"]["fetch"]["funnel_steps"]}
+    assert steps["no_quote"]["tickers"] == ["NOBARS1"]          # no bars, so no close to prefilter on (PR 10)
 
 
 def test_a_refresh_leaves_the_persisted_scores_alone(scenario):

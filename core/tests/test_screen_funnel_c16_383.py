@@ -52,13 +52,13 @@ def test_the_excluded_types_and_the_prefilter_reasons_are_typed_steps(scenario, 
     assert steps["low_price"]["label"] == "Price under $5.00"
     assert steps["low_dollar_volume"]["tickers"] == ["LOWVOL"] and steps["low_dollar_volume"]["by_design"] is True
     assert steps["low_dollar_volume"]["label"] == "Average daily dollar volume under $250,000"
-    assert "no_quote" not in steps
+    assert steps["no_quote"]["tickers"] == ["NOBARS1"]          # no bars, no close to prefilter on (PR 10)
 
 
 @pytest.mark.parametrize("mod", BOARDS)
 def test_the_scorer_reasons_name_their_tickers(scenario, mod):
     steps = _steps(mod.run_scan())
-    assert steps["no_bars"]["tickers"] == ["NOBARS1"] and steps["no_bars"]["by_design"] is False
+    assert "no_bars" not in steps          # since PR 10 a name without bars has no close and leaves at the prefilter
     assert steps["short_bars"]["tickers"] == ["SHORT1"] and steps["short_bars"]["by_design"] is True
 
 
@@ -78,12 +78,12 @@ def test_scored_names_that_pass_no_screen_are_their_own_by_design_step(scenario,
 
 
 @pytest.mark.parametrize("mod", BOARDS)
-def test_a_name_without_a_d04_quote_is_a_no_quote_drop_that_needs_a_look(scenario, mod):
-    with rawstore.connect(db=rawstore.MANIFEST["quote_snapshot"].get("db", "raw")) as conn:
-        conn.execute("DELETE FROM quote_snapshot WHERE ticker = 'UP2'")
+def test_a_name_without_a_current_close_is_a_no_quote_drop_that_needs_a_look(scenario, mod):
+    from RevenueChaser.rcdata.tests import prices_seed
+    prices_seed.drop_ticker("UP2")                    # the prefilter reads the prices store since PR 10
     payload = mod.run_scan()
     steps = _steps(payload)
-    assert steps["no_quote"]["tickers"] == ["UP2"] and steps["no_quote"]["by_design"] is False
+    assert steps["no_quote"]["tickers"] == ["NOBARS1", "UP2"] and steps["no_quote"]["by_design"] is False
     assert funnel.validate(payload["funnel_steps"]) == []
 
 

@@ -28,7 +28,7 @@ from . import config
 from . import flow as flow_mod
 from . import settings as swing_settings
 from RevenueChaser.core.scan_quality import ohlc_drop_reason
-from .indicators import compute_indicators, load_ohlc, load_ticker_info  # load_ohlc: the SPY fallback only (U1)
+from .indicators import compute_indicators, load_ticker_info
 from .ranking import composite, execution_levels, ma_alignment, percentile_ranks, quality_403030
 from .screeners import evaluate_direction, evaluate_minervini, evaluate_qullamaggie, evaluate_weinstein
 
@@ -238,8 +238,6 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
         "no_data": False,
         "data_quality": {"stale_ohlc": run_stats.get("stale_ohlc", 0),
                          "stale_info": run_stats.get("stale_info", 0),
-                         # SPY's frame, the only one ``load_ohlc`` can still refuse (review 8): 0 or 1
-                         "short_refetch_refused": int(bool(run_stats.get("spy_short_refetch_refused"))),
                          "spy_stale": bool(run_stats.get("spy_stale")),
                          "dropped": run_stats.get("dropped") or {}},
         "summary": {
@@ -289,7 +287,7 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
         payload = screen_common.run_screen(
             board="swing", refreshed_by="Swing Potential", cfg=config,
             load_universe=fetch_universe_stats, prefilter=prefilter,
-            load_spy=lambda: screen_common.load_spy(lambda: load_ohlc("SPY", ttl_days=0.5, no_fetch=no_fetch)),
+            load_spy=screen_common.load_spy,
             compute_row=_compute_row, build_payload=build_payload, persist=persist,
             top_n=top_n, refresh_universe=refresh_universe, no_fetch=no_fetch,
             history_board="module_swing_potential", saved=config.SWING_JSON)
