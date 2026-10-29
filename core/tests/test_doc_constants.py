@@ -412,7 +412,7 @@ def test_the_options_section_states_what_the_code_owns():
     assert f"after {uw.RUN_BUDGET_S // 60} minutes" in flat and f"next {uw_screener.DAYS_AHEAD} days" in flat
     assert f"`option-contracts` ({uw.PAGE_LIMIT} a page)" in flat
     assert f"{uw_screener.SCREENER_BATCH} names a call" in flat and f"{uw_screener.CALENDAR_LIMIT} a page" in flat
-    assert f"{ibkr_iv.PER_MINUTE} requests a minute" in flat
+    assert f"{ibkr_iv.PER_MINUTE} requests a minute" in flat and f"at most {ibkr_iv.DAY_CALLS:,} a day" in flat
     assert (f"A list name is {options.LIST_CALLS} calls plus {options.EXPIRY_CALLS} per expiry" in flat
             and f"an earnings-set name {options.EARNINGS_CALLS}" in flat)
     for n, words in ((0, "with SPX alone"), (100, "with 100 list names"), (500, "with 500")):

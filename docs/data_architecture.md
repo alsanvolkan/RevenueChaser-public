@@ -996,7 +996,9 @@ ishares 50, vanguard 50, nasdaq 50, invesco 50 (one request per fund file); yfin
 (working numbers avo has not set): the prices store's float lookups (PR 7, 3,000) and the fundamentals layer's
 weekly analyst estimates (PR 12, 2,000, one request per ticker); the ownership store's (PR 16, working numbers too;
 its SEC filings count under sec): finra 2,000 (pages of 5,000 rows), nasdaqtrader 500 and nyse 2,000 (one Reg SHO
-threshold file per market and day), ibkr 50 (one download of IBKR's public short-stock file a run); the
+threshold file per market and day); ibkr 1,050, shared by two stores (working numbers): 50 for one download of
+IBKR's public short-stock file a run (PR 16) and 1,000 for the options data's IV year through the gateway (PR 18,
+one historical request per list name, once); the
 fundamentals layer's (PR 12, working numbers): alphavantage 25 (its free tier);
 a dataset whose providers have all reached their cap for the New York day gets a `skipped` check row and sends
 nothing; inside a run every call checks its provider's cap first (one capped provider, FRED among the market series,
@@ -1439,7 +1441,7 @@ CLI or Settings):
   later gets its year on the next run). Through `core/providers/ibkr_tws.py`, a minimal TWS socket client that sends
   only the handshake, `startApi` and `reqHistoricalData`: market data only, never an account, a position or an
   order (`ib_async`'s connect asks for the positions, so it is not used). 6 requests a minute, under IBKR's 60 in
-  10 minutes.
+  10 minutes, and at most 1,000 a day, its share of the `ibkr` day cap.
 
 The first week's raw size per list name is in each `uw/option_list` check note ("raw N KB a name"), the plan's F5
 measure. Read through `rcdata.read`: `option_chain`, `option_strikes`, `option_expiries`, `option_daily`,
