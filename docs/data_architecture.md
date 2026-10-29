@@ -1188,7 +1188,8 @@ applies no split a second time), `price_actions` (splits and dividends, the amou
 **Build issues** (dataset `prices/serving`, synced after each swap): `source_never_run`, `tier_a_no_bar`,
 `tier_a_no_shares`, `price_gap_no_action` (the split-adjusted close moved by 1.9 times or more, either way, within 7
 days, with no split), `adjustment_differs` (the store's total-return day return more than 1 bp from Alpaca's own, or
-more than half a cent on each of Alpaca's cent-rounded adjusted closes where that is larger: about 1.5 bp at $70),
+more than half a cent on each of Alpaca's cent-rounded adjusted closes, the exact bound, where that is larger: about
+1.5 bp at $70, 5 bp at $20, 50 bp at $2, so below a few dollars of adjusted close a dividend-sized gap hides in it),
 `dividend_not_applied`, `action_not_applied` (a spin-off, unit split or rights distribution), `cover_class_unmapped`,
 `cover_adr_ordinary` (an ADR's issuer's cover counts ordinary shares, not ADSs: kept under `class:`, no cap from it),
 `float_above_outstanding` (over 1.05 times), `float_sources_disagree` (Yahoo and UW more than 25% apart),

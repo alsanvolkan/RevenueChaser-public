@@ -169,12 +169,16 @@ def test_the_one_basis_point_rule_allows_for_alpacas_cent_rounded_adjusted_close
     # series holds a dividend the store does not know, rounded: the 27th is 1.24 bp off, inside half a cent on each
     # close (1.48 bp). The 23rd is two cents more, so it and the 26th are 2.3 and 3.5 bp off: issues. GOOGL's 0.5 bp
     # at $255 is under 1 bp, though over its own rounding. SPY's 5 bp, an action Alpaca knows and the store does not,
-    # stays an issue.
+    # stays an issue. GOOG carries the server's last ADV row (29 Oct 2026, 1-for-25 reverse split): 0.8158 and 0.7946
+    # times 25 land on half cents and Alpaca rounds them apart, to 20.40 and 19.86, exactly the bound's worst case;
+    # the first-order bound sat 0.02 % under it and flagged the row.
     raw = [70.00, 70.35, 70.12, 70.50, 70.41, 70.62]
     brk = [round(c * 0.96, 2) for c in raw]
     brk[3] = round(brk[3] + 0.02, 2)
     googl = RAW["GOOGL"][:5] + [RAW["GOOGL"][5] * 1.00005]
-    series = {"raw": {**RAW, "BRK.B": raw}, "all": {**ALL, "BRK.B": brk, "GOOGL": googl}}
+    goog_raw, goog_all = [0.80] * 4 + [0.8158, 0.7946], [20.00] * 4 + [20.40, 19.86]
+    series = {"raw": {**RAW, "BRK.B": raw, "GOOG": goog_raw},
+              "all": {**ALL, "BRK.B": brk, "GOOGL": googl, "GOOG": goog_all}}
     http_mock.routes.insert(0, ("/v2/stocks/bars", BarsAnswer(
         {k: {s: [bar(d, c) for d, c in zip(DAYS, cs)] for s, cs in v.items()} for k, v in series.items()}), 200, {}))
     _shares_and_floats()
@@ -183,6 +187,9 @@ def test_the_one_basis_point_rule_allows_for_alpacas_cent_rounded_adjusted_close
     ours = raw[5] / raw[4] - 1
     theirs = round(raw[5] * 0.96, 2) / round(raw[4] * 0.96, 2) - 1
     assert 1e-4 < abs(ours - theirs) < 1.3e-4                              # over the flat 1 bp
+    adv = (goog_all[5] / goog_all[4] - 1) - (goog_raw[5] / goog_raw[4] - 1)
+    first_order = (goog_all[5] / goog_all[4]) * 0.005 * (1 + goog_all[5] / goog_all[4]) / goog_all[5]
+    assert abs(adv) > first_order
     assert _issues()["adjustment_differs"] == {SPY + ":2026-10-26", "072726:02:2026-10-23", "072726:02:2026-10-26"}
 
 def test_a_gap_without_an_action_is_an_issue_and_the_reverse_split_is_not(built):

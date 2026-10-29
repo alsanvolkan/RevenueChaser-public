@@ -62,7 +62,9 @@ GAP_FACTOR = 1.9
 TOLERANCE = 1e-4
 # Alpaca's adjusted closes come rounded to the cent, so its day return can be off by half a cent on each close
 # (KO in the server's sample, 29 Oct 2026: 1.1-1.3 bp at ~$70 between two days no factor separates). The rule
-# allows that much where it is more than 1 bp: (1 + r) * h * (1 / close + 1 / previous close).
+# allows that much where it is more than 1 bp: the widest the return can move with the two closes half a cent apart
+# in opposite directions, h * (close + previous) / (previous * (previous - h)), exact, since a row can sit on it
+# (ADV, 29 Oct: 20.395 and 19.865 rounded apart; the first-order bound was 0.02 % short).
 # shortcut: the cent rounding is read from the sample's KO rows, Alpaca does not document it; measure it on the server
 # (count of rows left, and their sizes) and narrow or widen this once a full Tier A build runs.
 HALF_CENT = 0.005
@@ -494,9 +496,12 @@ class PricesServing:
                                   AND c.ex_date <= r.session_date)
                 ORDER BY 1, 2""").fetchall():
             found.append(("price_gap_no_action", f"{sid}:{day}", f"split-adjusted close x{ratio:.3f}, no split"))
-        # Alpaca's previous adjusted close is close_all / (1 + all_return), so the rounding allowance is
-        # (1 + r) * h * (1 + (1 + r)) / close_all.
-        allowance = (f"coalesce((1 + a.all_return) * {HALF_CENT} * (2 + a.all_return) / nullif(a.close_all, 0), 0)")
+        # Alpaca's previous adjusted close is close_all / (1 + all_return). The allowance is its exact rounding
+        # bound, a hair wider (1e-6 of it) for the float error of a row that sits on it; none at a previous close of
+        # half a cent or less, where the bound has no meaning and the flat 1 bp stays.
+        prev = "a.close_all / nullif(1 + a.all_return, 0)"
+        allowance = (f"CASE WHEN {prev} > {HALF_CENT} THEN {HALF_CENT} * (a.close_all + {prev}) "
+                     f"/ ({prev} * ({prev} - {HALF_CENT})) * (1 + 1e-6) ELSE 0 END")
         for sid, day, ours, theirs in con.execute(f"""
                 SELECT r.security_id, r.session_date, r.tr_close / r.prev_tr - 1, a.all_return
                 FROM _ret r JOIN _alp a ON a.security_id = r.security_id AND a.session_date = r.session_date
