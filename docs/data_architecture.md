@@ -1137,7 +1137,8 @@ needs a restart.
 The third serving kind: what each Tier A company reported, when, and in which filing. Built by the same builder,
 swapped the same way, read only through `rcdata.read`. The companies are the spine's Tier A names (their CIKs,
 gvkeys and GICS codes), so the spine is built first. Nothing here writes `raw.duckdb` or the old `edgar_financials`
-cache, which the boards still read until their move (G6).
+cache; since their move (G6, below) the boards read that cache only with `RC_FUNDAMENTALS_SOURCE=store` or while the
+layer is not there yet.
 
 | Dataset | Cadence | Source | Stages |
 |---|---|---|---|
@@ -1165,7 +1166,8 @@ is a long-term line plus a current line, each debt line of the balance sheet rea
 uses (`LongTermDebtNoncurrent`, `LongTermDebtAndCapitalLeaseObligations` or `LongTermNotesPayable`; then `DebtCurrent`,
 else the current portion plus `ShortTermBorrowings` or `CommercialPaper`; a long-term line that includes its current
 portion plus the short-term line; no total without a long-term line; #239, measured on the real-data check of
-2026-10-28 in PR 249), and EPS
+2026-10-28 in PR 249; convertible notes due within the year are the current line when no other current line is
+tagged, and are added beside a whole long-term line only when that line is below them, #264), and EPS
 (basic and diluted) is read too. An accession the SEC's XBRL API does not hold yet after the re-read is asked again
 by the next day's run (the run's note says `pending`), so a statement reaches the served table on its filing day or
 the day after, never months late (the Fundamentals review's F3).
@@ -1222,9 +1224,29 @@ own row-level problems (`missing_key`, `fetch_failed`) under its name.
 
 **Reading it.** `rcdata.read.statements(cik, period_type, n, fields)`, `rcdata.read.earnings_events(cik, start, end)`,
 `rcdata.read.estimates(tickers)`, `rcdata.read.filing_text(cik, item)`, `rcdata.read.segments(cik, axis, source)`,
-`rcdata.read.customers(cik)`, `rcdata.read.peers(cik)` and `rcdata.read.revisions(cik, since)`. Every row carries
-its provenance and `status`, the newest check of the dataset its own row came from (a segment row from Compustat
-reads `wrds/segments`' check, one from the annual report `sec/filings`'), or `never_checked`.
+`rcdata.read.customers(cik)`, `rcdata.read.peers(cik)` and `rcdata.read.revisions(cik, since)`; for many companies
+at once `rcdata.read.statements_many(ciks, annual_years, quarters)`, `rcdata.read.fundamental_companies(tickers)`,
+`rcdata.read.filing_items(ciks, form, since)`, `rcdata.read.filing_texts(ciks, item)` and
+`rcdata.read.customer_shares(ciks, benchmark)`. Every row carries its provenance and `status`, the newest check of
+the dataset its own row came from (a segment row from Compustat reads `wrds/segments`' check, one from the annual
+report `sec/filings`'), or `never_checked`.
+
+**The boards on the layer (G6, build plan PR 13-15 and 20).** `core/fundamentals_layer.py` rebuilds the old
+`edgar_financials` record shape from `fundamental_fact`, so a board keeps its rules and reads current rows. The
+switch is `RC_FUNDAMENTALS_SOURCE`: unset (or `layer`) reads the layer once `fundamentals.duckdb` exists and
+`sec/companyfacts` has a good check; any other value (`store` by convention) reads the old cache, the rollback kept
+until PR 21. What each board reads there:
+
+| Board | Reads on the layer |
+|---|---|
+| Fundamentals | The statements, and on each card the filing and read days (F3); the 8-K flag from `filing_item`, its checked day the newer of the filing list's read day and `sec/filings`' newest good check (F2); ROIC, gross margin and net debt on the trailing year when the quarters give one (TTM, else the fiscal year, the basis named on the card) |
+| Asymmetric Growth | Growth, acceleration, margins, free cash flow, runway and dilution on three trailing years a year apart when the 10-Qs give them, else the fiscal years, one basis per card (`period_ends.basis`; review SF-4) |
+| Financials | The SEC's annual statements, the newest five (a line the SEC facts do not carry stays empty, so the engines' labelled default shows; EBITDA is operating income plus depreciation); price, shares and beta still Yahoo's until the prices store (G2); the risk-free rate from `market_series` DGS10, at most 14 days old |
+| Relatedness | The newest annual report text `sec/filings` serves (Value Chain's splitter and cap, so the same filing gives the same input hash) and the layer's CIK; a profile's cache key and the payload carry the filing it was read from (CIK, accession, form, filed) |
+| Value Chain | The annual report's XBRL major customers (`customer_share`, share of revenue): a customer the alias list names is a `customer` edge with its share; a sentence that states the same customer keeps its text and gains the share; an anonymised customer is no edge |
+
+The trailing year (`core/trailing_year.py`) is the fiscal year plus the newest year to date minus the same months a
+year earlier, each flow all or nothing, the balance sheet the quarter's.
 
 ## Migration
 Two separate things, deliberately not conflated:
