@@ -3,9 +3,10 @@
 ``GET <RC_SEC_WWW_BASE>/files/dera/data/financial-statement-data-sets/<YYYY>q<N>.zip``: every XBRL statement
 filed in the quarter, as tab-separated ``sub.txt`` (one row per filing: ``adsh``, ``cik``, ``form``, ``filed``)
 and ``num.txt`` (one row per value: ``adsh``, ``tag``, ``ddate``, ``qtrs``, ``uom``, ``value``, and ``coreg`` /
-``segments`` for a co-registrant's or a dimension's value). Read by header name. A run asks the newest quarter
-that has ended, then the one before (the SEC publishes a quarter some days after it ends: a 404 is "not yet"),
-and stops at the first quarter it holds. One zip of tens of MB a quarter, counted against the ``sec`` cap.
+``segments`` for a co-registrant's or a dimension's value). Read by header name; a field in double quotes is one
+value, tabs and line breaks inside it included. A run asks the newest quarter that has ended, then the one before
+(the SEC publishes a quarter some days after it ends: a 404 is "not yet"), and stops at the first quarter it holds.
+One zip of tens of MB a quarter, counted against the ``sec`` cap.
 
 What is kept: the values of the Tier A companies' filings, the company's own (no co-registrant, no dimension), of
 the tags in ``TAGS``. The check: each kept value against the served fact of the same company, field, period end and
@@ -126,8 +127,10 @@ class Fsds:
     @staticmethod
     def _select(con, sub: Path, num: Path, quarter: str, ciks: list[str], meta: dict) -> str:
         def table(path: Path) -> str:
+            # A text field that holds a tab, a line break or a quote comes in double quotes, an inner quote doubled
+            # (num.txt's segments and footnote; the server run of 2026-10-29, PR 249, failed on one read unquoted).
             return (f"read_csv({base.sql_path(path)}, delim = '\\t', header = true, all_varchar = true, "
-                    "quote = '', escape = '')")
+                    "quote = '\"', escape = '\"')")
         cols = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {table(num)}").fetchall()}
         missing = {"adsh", "tag", "ddate", "qtrs", "uom", "value"} - cols
         if missing:

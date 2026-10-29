@@ -72,9 +72,13 @@ def fake(monkeypatch, http_mock, sec):
 def test_compustat_segments_and_customers(fake):
     check = fx.run(wrds_fund.SEGMENTS.name, mode="backfill", to="2026-10-27")
     assert check["result"] == "changed", check["note"]
-    seg_q, cust_q = fake.queries
+    catalog, seg_q, cust_q = fake.queries
+    assert "FROM information_schema.columns WHERE table_name IN ('wrds_segmerged', 'seg_customer')" in catalog
     assert "FROM comp_segments_hist_daily.wrds_segmerged" in seg_q and "stype IN ('BUSSEG', 'GEOSEG', 'OPSEG')" in seg_q
-    assert "FROM comp_segments_hist_daily.seg_customer" in cust_q
+    # The server run of 2026-10-29 (PR 249): ``seg_customer`` has no ``srcdate``, so it is not asked for there.
+    assert cust_q.startswith("SELECT gvkey, datadate, cnms, ctype, salecs, stype, sid "
+                             "FROM comp_segments_hist_daily.seg_customer WHERE ")
+    assert "comp_segments_hist_daily.seg_customer has no srcdate (read as empty)" in check["note"]
     # The newest source filing of a segment; the state segment is not kept; Compustat's millions in USD.
     assert fx.q("SELECT axis, segment, member, value, period_end, source FROM segment_revenue ORDER BY axis") == [
         ("business", "Intelligent Cloud", "BUSSEG 1", 106_265.0, FY25, wrds_fund.SEGMENTS.name),
@@ -84,3 +88,11 @@ def test_compustat_segments_and_customers(fake):
     assert [r[:3] + (round(r[3], 4),) + r[4:] for r in rows] == [
         ("Customer A", "COMPANY", 33_720.0, 0.12, "revenue", wrds_fund.SEGMENTS.name)]
     assert "1 of 4 Tier A companies with segments" in check["note"]
+
+
+def test_a_customer_table_without_its_sales_column_fails_naming_the_columns_wrds_has(fake):
+    fake.catalog = {**fx.WRDS_CATALOG, ("comp_segments_hist_daily", "seg_customer"): ["gvkey", "datadate", "cnms"]}
+    check = fx.run(wrds_fund.SEGMENTS.name, mode="backfill", to="2026-10-27")
+    assert check["result"] == "failed"
+    assert "comp_segments_hist_daily.seg_customer has no salecs (it has cnms, datadate, gvkey)" in check["note"]
+    assert len(fake.queries) == 1                                        # no table is asked

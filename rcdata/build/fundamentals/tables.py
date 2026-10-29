@@ -118,7 +118,7 @@ STAGED: dict[str, list[tuple[str, str]]] = {
     filings.STAGING["segments"]: filings.SEGMENT,
     filings.STAGING["customers"]: filings.CUSTOMER,
     **{wrds_fund.SEGMENTS.STAGING[p]: schema + wrds_fund.PROVENANCE
-       for p, (schema, _, _) in wrds_fund.SEGMENTS.PARTS.items()},
+       for p, (schema, _, _, _) in wrds_fund.SEGMENTS.PARTS.items()},
 }
 
 # The named problems, one kind each; ``key`` is the CIK unless the kind says otherwise.

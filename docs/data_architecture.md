@@ -923,9 +923,11 @@ renders at once with what is stored.
 | `RC_MARKET_RAW_DIR` | `MARKET_RAW_DIR` | `raw/<source>/<dataset>/...` and `parquet/<source>/<dataset>/<partition>/` (the HDD) |
 | `RC_MARKET_RAW_COPY_DIR` | `MARKET_RAW_COPY_DIR` | Where the backup copies the newest raw days; empty = off |
 
-**Files.** Serving kinds: `market`, `spine`, `fundamentals`. Each kind is one file, `<MARKET_DIR>/<kind>.duckdb`. The
-identity spine, `spine` (serving schema version `1`), is described under "The identity spine" below, and the
-fundamentals layer, `fundamentals` (serving schema version `1`), under "Fundamentals" after it. The market data,
+**Files.** Serving kinds: `market`, `spine`, `ownership`, `fundamentals`. Each kind is one file,
+`<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `1`), is described under
+"The identity spine" below, the ownership store, `ownership` (serving schema version `1`), under "The
+ownership store" below, and the fundamentals layer, `fundamentals` (serving schema version `1`), under
+"Fundamentals" after it. The market data,
 `market` (serving schema version `1`): `serving_schema_version` (one row: kind, version, build time, build id),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
 `source`, `source_as_of`, `fetched_at`, `run_id`, `observed`) and `market_series` (key series id, observation date,
@@ -987,8 +989,11 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 
 **Day caps** (`rcdata/caps.py`, avo's numbers, to be tuned): uw 150,000, sec 40,000, fred 10,000, alpaca 20,000;
 the spine's (PR 5, working numbers avo has not set): wrds 50 (queries), openfigi 1,000 (requests), ssga 50,
-ishares 50, vanguard 50, nasdaq 50, invesco 50 (one request per fund file); the fundamentals layer's (PR 12,
-working numbers): alphavantage 25 (its free tier), yfinance 2,000 (one request per ticker);
+ishares 50, vanguard 50, nasdaq 50, invesco 50 (one request per fund file); the ownership store's (PR 16, working
+numbers too; its SEC filings count under sec): finra 2,000 (pages of 5,000 rows), nasdaqtrader 500 and nyse 2,000
+(one Reg SHO threshold file per market and day), ibkr 50 (one download of IBKR's public short-stock file a run);
+the fundamentals layer's (PR 12, working numbers): alphavantage 25 (its free tier), yfinance 2,000 (one request
+per ticker);
 a dataset whose providers have all reached their cap for the New York day gets a `skipped` check row and sends
 nothing; inside a run every call checks its provider's cap first (one capped provider, FRED among the market series,
 is a source failure and the others go on), and the counter is written every 25 calls, at the end, and on SIGTERM (systemd's stop, turned into a clean exit) or Ctrl-C; a keyless call is counted when it is sent, a UW call when its answer arrives (the UW client's observer), so a UW request cut off by a stop is not counted. Only the
@@ -1132,9 +1137,87 @@ for but no spine file, or a last `spine/security` build that failed, the old sto
 the Settings Identity card says so ("Boards read"). The variable is read from the process environment: changing it
 needs a restart.
 
+### The ownership store (`ownership.duckdb`, PR 16)
+
+The third serving kind: who is short a name, who fails to deliver it, who holds it at quarter end and who trades it
+from inside. Built by the same builder, swapped the same way, read only through `rcdata.read`; it reads the spine and
+never writes it. Nothing here writes `raw.duckdb`: the old 13F, short and insider tables stay until the boards move
+(G9) and the old writers retire (G10).
+
+| Dataset | Cadence | Source | Served table |
+|---|---|---|---|
+| `finra/short_interest` | daily | FINRA's consolidated short interest API (keyless), one settlement date at a time, pages of 5,000 rows checked against `record-total` | `finra_short_interest` |
+| `regsho/threshold` | daily | Nasdaq's `nasdaqth<day>.txt` and NYSE's threshold download (NYSE, NYSE American, NYSE Arca); a day with no list is a 404 or, at Nasdaq, a redirect to its not-found page | `regsho_threshold` |
+| `ibkr/shortable` | daily | IBKR's public short-stock file (`usa.txt`, FTP, no account): borrow fee, rebate, shares available | `ibkr_shortable` |
+| `sec/ftd` | daily | The SEC's fails-to-deliver halves (`cnsfails<YYYYMM><a/b>.zip`) | `sec_ftd` |
+| `sec/13f` | daily | The SEC's Form 13F data sets (the first fill), then 13F-HR and 13F-HR/A through the EDGAR daily index | `sec13f_filings` (holdings stay in Parquet) |
+| `sec/form4` | daily | Form 4 and 4/A through the EDGAR daily index | `insider_transactions` |
+| `sec/13dg` | daily | Schedules 13D and 13G, old (`SC 13G`) and new (`SCHEDULE 13G`, XML since 2024-12-18) names | `beneficial_ownership` |
+| `ownership/serve` | daily | none: derives the 13F totals from the 13F tables and the spine | the four 13F tables below |
+
+**Starts by hand.** Every ownership dataset is not due until it has built once, so the first hourly pass after a
+deploy calls no source before the server thread's first runs (after a backup).
+
+**The 13F first fill** (avo, 28 Oct 2026): `python -m RevenueChaser.rcdata.build backfill sec/13f --from
+2025-01-01`. The backfill reads the SEC's Form 13F data-set page (`RC_FORM13F_INDEX_URL`), downloads each set whose
+filing window meets the range (one zip of about 100 MB per three months, kept under `raw/sec/13f_sets/`, downloaded
+once and asked again on a later backfill with `If-Modified-Since`), and types its 13F-HR and 13F-HR/A into the same
+day partitions the EDGAR walk writes, marking those days done up to the set's newest filing; the walk then reads the
+forms only for the days after it (the hourly runs, 15 minutes each). A set the SEC publishes again reopens the days
+it had filled; the days the walk finished stay the walk's. A backfill shorter than 20 weekdays (a re-walk of a few
+days) reads the forms only and asks nothing of the sets. On
+real data (28 Oct 2026) a set took about 30 seconds: 01jun2026-31aug2026 holds 9,900 13F-HR and 13F-HR/A with 3.8
+million holdings. Filings from 2025-01-01 make Q4 2024 the first quarter served, so Q1 2025 has its flows. SEC
+requests are paced at 4.5 a second and share `core/sec_throttle.py`'s bucket with every other SEC caller.
+
+**The 13F totals** (`ownership/serve`; the rules in `rcdata/build/ownership/serve.py`): per filer and report period
+the amendment walk (`NEW HOLDINGS` adds, any other amendment replaces); long equity only; each CUSIP named through the
+spine's dated Compustat history, then its current CUSIP (refused for a period in which Compustat gives the CUSIP to
+another security), then its OpenFIGI map behind the reused-ticker guard (#236); VALUE off by 1,000 found from the 13F's own consensus prices and rescaled both ways
+(alsanvolkan/RevenueChaser#208); flows and `breadth_chg` against the calendar quarter before; a quarter whose filing deadline passed before the store's
+first 13F day is not served; `filing_deadline` (period end + 45 days, rolled past weekends and Washington's
+Birthday) says when a quarter is complete; `exited_confidential` and `exited_no_filing` count the exits that may not
+be sales.
+
+**Served tables** (`ownership` serving schema version `1`):
+
+| Table | Rows |
+|---|---|
+| `finra_short_interest` | one per settlement date and symbol: short interest, the previous one, average daily volume, days to cover, the spine ticker |
+| `regsho_threshold` | one per list day, market and symbol |
+| `ibkr_shortable` | one per snapshot session and symbol: fee, rebate, shares available (`available_capped` above 10,000,000) |
+| `sec_ftd` | one per settlement date, CUSIP and symbol as the SEC wrote them |
+| `sec13f_filings` | one per 13F-HR and 13F-HR/A: period, filed, amendment and its type, `confidential_omitted`, `value_scale`, `origin` (`edgar` or `set:<zip>`), status |
+| `insider_transactions` | one per Form 4 transaction (or one `unparsed` / `no_transaction` row per filing) |
+| `beneficial_ownership` | one per Schedule 13D/G reporting person (or one `header_only` / `unparsed` row per filing) |
+| `sec13f_cusip_map` | one per CUSIP and period: its ticker and `map_source`, or the refused `candidate_ticker` |
+| `sec13f_filer_period` | one per filer and period: names, value, `median_ratio`, `value_factor`, `confidential_omitted` |
+| `sec13f_ticker_period` | one per ticker and period: shares, value, holders, top-10 %, HHI, new / exited holders, buy / sell flow, breadth and its change, `prev_period`, `filing_deadline` |
+| `sec13f_periods` | one per period: filers, value, value mapped, `coverage`, unmapped CUSIPs, refused value, rescaled filers |
+
+**The bridge (D4).** Views under the old `raw.duckdb` names: `sec13f_totals` (ticker, `entry` JSON keyed by period
+with the old metric keys) and `short_interest` (one row per ticker and session: the newest FINRA short interest
+settled on or before it and that session's IBKR fee, rebate and shares available; `si_float` and `total_float` are
+NULL).
+
+**Build issues** (`ownership/serve`): `spine_missing`, `cusip_owner_differs`, `cusip_unmapped_large`,
+`filings_unparsed`, `value_rescaled` (the 50 filer-quarters whose VALUE rescale moved the most dollars, keyed
+`cik|period`, with the median ratio and the names it rests on).
+
+**Reading it.** `rcdata.read.holders_13f(tickers, periods)`, `periods_13f()` (both with `complete`),
+`finra_short_interest(tickers, start, end)`, `shortable(tickers, session)`, `threshold_list(on)`,
+`fails_to_deliver(tickers, start, end)`, `insider_transactions(tickers, start, end)` and
+`beneficial_ownership(tickers, start, end)` (each with the dataset's last check as `status` and a filing's own as
+`parse_status`).
+
+**Known limits.** The IBKR file is not reachable from the cloud (no FTP egress): its format is checked by the first
+server run. Cboe's threshold list is a JavaScript page and is not read. FINRA's later revisions of a settlement date
+are not fetched again. A quarter's flows across a stock split compare unadjusted shares (G2). A store built before
+the served-quarter rule shrinks once on its next derive (`allow_shrink`).
+
 ### Fundamentals (`fundamentals.duckdb`, PR 12)
 
-The third serving kind: what each Tier A company reported, when, and in which filing. Built by the same builder,
+The fourth serving kind: what each Tier A company reported, when, and in which filing. Built by the same builder,
 swapped the same way, read only through `rcdata.read`. The companies are the spine's Tier A names (their CIKs,
 gvkeys and GICS codes), so the spine is built first. Nothing here writes `raw.duckdb` or the old `edgar_financials`
 cache; since their move (G6, below) the boards read that cache only with `RC_FUNDAMENTALS_SOURCE=store` or while the
@@ -1150,8 +1233,8 @@ layer is not there yet.
 | `sec/fsds` | monthly | The SEC's quarterly Financial Statement Data Sets zip, the newest quarter published | `stg_sec_fsds` |
 | `wrds/fundq` | monthly, attended | `comp.fundq`, the Tier A gvkeys, ten years | `stg_wrds_fundq`, `stg_wrds_fundq_revision` |
 | `wrds/funda` | monthly, attended | `comp.funda`, the Tier A gvkeys, ten years | `stg_wrds_funda`, `stg_wrds_funda_revision` |
-| `wrds/firm_ratio` | monthly, attended | `wrds_finratio.firm_ratio`, three years of publication dates | `stg_wrds_firm_ratio` |
-| `wrds/segments` | monthly, attended | `comp_segments_hist_daily.wrds_segmerged` and `seg_customer`, five years, the newest source date per key | `stg_wrds_segments`, `stg_wrds_customers` |
+| `wrds/firm_ratio` | monthly, attended | `firm_ratio` from the first of `wrdsapps_finratio`, `wrdsapps` that WRDS's catalog shows, three years of publication dates | `stg_wrds_firm_ratio` |
+| `wrds/segments` | monthly, attended | `comp_segments_hist_daily.wrds_segmerged` and `seg_customer`, five years, the newest source date per key where the table has one | `stg_wrds_segments`, `stg_wrds_customers` |
 | `fundamentals/tables` | daily | none: builds the served tables, the views, the peer groups and the build issues from the staging tables | the tables below |
 
 **A builder that was down still reads what was filed meanwhile.** `sec/companyfacts` and `sec/filings` read the
@@ -1186,7 +1269,11 @@ agree with the SEC's facts (Compustat's millions times a million, within 0.5%, E
 7 days), and WRDS's `debt_at` against the SEC's total debt over total assets (within 0.02). The note of each
 WRDS dataset's newest run is its card's WRDS difference slot on Settings (`docs/data_health.md`). Compustat segments
 are served beside the annual report's inline XBRL ones, each row with its `source`; a Compustat customer's share is
-its sales over the SEC's annual revenue of that year, NULL when there is none or the ratio is above 1.
+its sales over the SEC's annual revenue of that year, NULL when there is none or the ratio is above 1. The first
+real run (2026-10-29, PR 249) found no `wrds_finratio` library and no `srcdate` in `seg_customer`, so `wrds/firm_ratio`
+and `wrds/segments` read WRDS's own catalog (`information_schema.columns`, one more query) before their tables: a
+column the code can do without that WRDS lacks is not asked and the note says so, and a table in none of its
+libraries, or without a column it needs, fails the run naming what WRDS has.
 
 **The FSDS check** (`sec/fsds`). The SEC's quarterly data sets hold every XBRL value filed in the quarter. The
 Tier A companies' own values (no co-registrant, no dimension) of revenue, net income, total assets and diluted EPS

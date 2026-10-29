@@ -12,13 +12,19 @@ from RevenueChaser.rcdata.build.fundamentals import companyfacts, fsds
 
 from . import fund_fixture as fx
 
-# The columns as the SEC's data-set notes list them (a subset of sub.txt's; num.txt's with ``segments``).
+# The columns as the SEC's data-set notes list them (a subset of sub.txt's; num.txt's with ``segments``). A text
+# field that holds a tab, a line break or a quote comes in double quotes, an inner quote doubled: the server run of
+# 2026-10-29 (PR 249) failed on such a row of 2026q2's num.txt, whose shape the investment row below copies.
 SUB = ("adsh\tcik\tname\tsic\tform\tperiod\tfy\tfp\tfiled\n"
        f"{fx.Q26}\t789019\tMICROSOFT CORP\t7372\t10-Q\t20250930\t2026\tQ1\t20251029\n"
        "0000072971-25-000099\t72971\tWELLS FARGO\t6021\t10-Q\t20250930\t2025\tQ3\t20251030\n")
 NUM = ("adsh\ttag\tversion\tddate\tqtrs\tuom\tsegments\tcoreg\tvalue\tfootnote\n"
        f"{fx.Q26}\tRevenues\tus-gaap/2025\t20250930\t1\tUSD\t\t\t77000\t\n"
-       f"{fx.Q26}\tNetIncomeLoss\tus-gaap/2025\t20250930\t1\tUSD\t\t\t27000\t\n"
+       f"{fx.Q26}\tNetIncomeLoss\tus-gaap/2025\t20250930\t1\tUSD\t\t\t27000\t"
+       '"Includes the\t""one-time"" tax item;\nsee Note 12."\n'                                     # a footnote
+       f"{fx.Q26}\tInvestmentBasisSpreadVariableRate\tus-gaap/2025\t20250930\t0\tpure\t"
+       '"InvestmentIdentifier=Lafayette Square Mortgage Solutions, LLC / First lien senior secured loan;"\t\t0.0650\t'
+       '"Loan includes interest rate floor feature,\twhich generally ranges from 1.00% to 4.00%."\n'
        f"{fx.Q26}\tAssets\tus-gaap/2025\t20250930\t0\tUSD\t\t\t510000\t\n"
        f"{fx.Q26}\tEarningsPerShareDiluted\tus-gaap/2025\t20250930\t1\tUSD/shares\t\t\t3.70\t\n"
        f"{fx.Q26}\tRevenues\tus-gaap/2025\t20250930\t1\tUSD\tBusinessSegments=Cloud;\t\t30000\t\n"   # a segment

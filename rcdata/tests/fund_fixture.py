@@ -294,31 +294,68 @@ SEGMERGED_ROWS = [
      "snms": "Washington", "sales": "0.001"},
 ]
 SEG_CUSTOMER_ROWS = [
-    {"gvkey": "012141", "datadate": "2025-06-30", "srcdate": "2025-07-30", "cnms": "Customer A", "ctype": "COMPANY",
-     "salecs": "0.03372", "stype": "BUSSEG", "sid": "1"},
+    {"gvkey": "012141", "datadate": "2025-06-30", "cnms": "Customer A", "ctype": "COMPANY", "salecs": "0.03372",
+     "stype": "BUSSEG", "sid": "1"},
 ]
 
 
-class FakeFundWrds:
-    """A WRDS worker that answers ``comp.fundq``, ``comp.funda`` and ``wrds_finratio.firm_ratio`` from the rows
-    above, filtered by the query's gvkey list, and records every query."""
+# WRDS's catalog as the fake answers it: the relations a query may name and their columns, also the answer to an
+# ``information_schema.columns`` query. Two facts come from the server run of 2026-10-29 (PR 249): WRDS has no
+# ``wrds_finratio`` library, and ``seg_customer`` has no ``srcdate``. The rest is the documented columns, not
+# checked against WRDS. A query that names a relation or a column not here fails as PostgreSQL's would.
+_COMPUSTAT = ["gvkey", "datadate", "indfmt", "datafmt", "popsrc", "consol", "fyr"]
+WRDS_CATALOG = {
+    ("comp", "fundq"): _COMPUSTAT + ["fyearq", "fqtr", "rdq", "revtq", "cogsq", "oiadpq", "niq", "epspxq", "epsfxq",
+                                     "atq", "dlttq", "dlcq", "cheq", "ceqq"],
+    ("comp", "funda"): _COMPUSTAT + ["fyear", "revt", "cogs", "oiadp", "ni", "epspx", "epsfx", "at", "dltt", "dlc",
+                                     "che", "ceq", "oancf", "capx"],
+    ("wrdsapps_finratio", "firm_ratio"): ["gvkey", "permno", "adate", "qdate", "public_date", "debt_at"],
+    ("comp_segments_hist_daily", "wrds_segmerged"): ["gvkey", "datadate", "srcdate", "stype", "sid", "snms",
+                                                     "sales"],
+    ("comp_segments_hist_daily", "seg_customer"): ["gvkey", "datadate", "cid", "cnms", "ctype", "salecs", "stype",
+                                                   "sid"],
+}
 
-    def __init__(self):
+
+class FakeFundWrds:
+    """A WRDS worker that answers ``comp.fundq``, ``comp.funda``, ``wrdsapps_finratio.firm_ratio`` and the segment
+    tables from the rows above, filtered by the query's gvkey list, and WRDS's catalog (``catalog``, by default
+    ``WRDS_CATALOG``) from ``information_schema.columns``; it records every query."""
+
+    def __init__(self, catalog: dict | None = None):
         self.queries: list[str] = []
         self.month = 1
+        self.catalog = WRDS_CATALOG if catalog is None else catalog
 
     def query(self, sql: str, out) -> int:
         import re
 
+        from RevenueChaser.rcdata.build import base
+
         from .spine_fixture import write_jsonl
         self.queries.append(sql)
-        table = re.search(r"FROM \w+\.(\w+)", sql).group(1)
+        if "FROM information_schema.columns" in sql:
+            want = set(re.findall(r"'(\w+)'", re.search(r"table_name IN \(([^)]*)\)", sql).group(1)))
+            rows = [{"table_schema": lib, "table_name": table, "column_name": col}
+                    for (lib, table), cols in self.catalog.items() if table in want for col in cols]
+            write_jsonl(out, rows)
+            return len(rows)
+        library, table = re.search(r"FROM (\w+)\.(\w+)", sql).groups()
+        if (library, table) not in self.catalog:
+            raise base.SourceError(f'wrds query failed: relation "{library}.{table}" does not exist')
+        select, where = re.match(r"SELECT (.*?) FROM \S+(?: WHERE (.*))?$", sql, re.S).groups()
+        named = [c.strip() for c in select.split(",")] + re.findall(r"(\w+) (?:IN \(|>= |= )", where or "")
+        for col in named:
+            if col not in self.catalog[(library, table)]:
+                raise base.SourceError(f'wrds query failed: column "{col}" does not exist')
         rows = {"fundq": fundq_rows(self.month), "funda": FUNDA_ROWS, "firm_ratio": FIRM_RATIO_ROWS,
                 "wrds_segmerged": SEGMERGED_ROWS, "seg_customer": SEG_CUSTOMER_ROWS}[table]
         gvkeys = re.search(r"gvkey IN \(([^)]*)\)", sql)
         if gvkeys:
             want = set(re.findall(r"'(\d+)'", gvkeys.group(1)))
             rows = [r for r in rows if r["gvkey"] in want]
+        # The columns asked, as WRDS answers them (a row's other keys are not sent).
+        rows = [{c: r.get(c) for c in select.split(", ")} for r in rows]
         write_jsonl(out, rows)
         return len(rows)
 
