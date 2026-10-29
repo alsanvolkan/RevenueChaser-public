@@ -211,11 +211,13 @@ def test_market_cap_from_the_cover_shares_split_adjusted_and_summed_per_issuer(b
     assert {GAPX, "072726:02"} <= _issues()["tier_a_no_shares"]
 
 
-@pytest.mark.parametrize("symbol", ["TSM", None])
-def test_an_adrs_cover_count_is_ordinary_shares_so_it_gives_no_market_cap(http_mock, symbol):
+@pytest.mark.parametrize("symbol, as_of", [("TSM", date(2026, 2, 28)), (None, date(2026, 2, 28)), ("TSM", None)])
+def test_an_adrs_cover_count_is_ordinary_shares_so_it_gives_no_market_cap(http_mock, symbol, as_of):
     # The Opus review's M1: a 20-F cover counts the issuer's ordinary shares and the bar is the ADS's (TSM: one ADS
     # is five shares), so cover times close was five times the cap. Matched by the symbol, or as the one class of the
-    # CIK's one Tier A row, the count stays under ``class:``, the ADR has no shares (no cap), and it is an issue.
+    # CIK's one Tier A row, the count stays under ``class:``, the ADR has no shares (no cap), and it is an issue. A
+    # cover fact whose context has no date (``as_of`` None) is named too, not a failed build (the delta review's
+    # should 2).
     tsm = {"ticker": "TSM", "cik": "1046179", "name": "TAIWAN SEMICONDUCTOR MANUFACTURING CO LTD", "exchange": "NYSE",
            "tier": "A", "security_type": "adr", "gvkey": None, "iid": None, "composite_figi": None}
     serving.live_path("spine").unlink()
@@ -226,7 +228,7 @@ def test_an_adrs_cover_count_is_ordinary_shares_so_it_gives_no_market_cap(http_m
     _shares_and_floats()
     base.upsert_partition([{"cik": "1046179", "accession": "0001046179-26-000010", "form": "20-F",
                             "filed": date(2026, 4, 15), "period_end": date(2025, 12, 31), "class_member": "",
-                            "symbol": symbol, "shares": 25_930_000_000, "as_of": date(2026, 2, 28),
+                            "symbol": symbol, "shares": 25_930_000_000, "as_of": as_of,
                             "source_as_of": date(2026, 10, 27), "fetched_at": 1.0, "run_id": "cover"}],
                           cover_shares.SCHEMA, cover_shares.KEY, cover_shares.partition_path(2026))
     base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})

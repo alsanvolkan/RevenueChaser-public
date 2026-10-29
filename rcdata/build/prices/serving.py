@@ -376,9 +376,10 @@ class PricesServing:
         for cik, symbol in con.execute(
                 "SELECT DISTINCT cik, symbol FROM _cover WHERE symbol IS NOT NULL AND by_symbol IS NULL").fetchall():
             found.append(("cover_class_unmapped", f"{cik}:{symbol}", "no spine ticker of the CIK is this symbol"))
+        # arg_max skips a fact with no date (its context had none): then the largest count.
         for sid, forms, shares in con.execute(
-                "SELECT spine_id, string_agg(DISTINCT form, ', '), arg_max(shares, as_of) FROM _cover "
-                "WHERE spine_type = 'adr' GROUP BY spine_id ORDER BY 1").fetchall():
+                "SELECT spine_id, string_agg(DISTINCT form, ', '), coalesce(arg_max(shares, as_of), max(shares)) "
+                "FROM _cover WHERE spine_type = 'adr' GROUP BY spine_id ORDER BY 1").fetchall():
             found.append(("cover_adr_ordinary", sid, f"{forms} cover counts {shares:,.0f} ordinary shares, not the "
                                                      "ADSs: no market cap from it"))
         return n
