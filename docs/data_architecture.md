@@ -1143,7 +1143,7 @@ only through `rcdata.read`.
 | Dataset | Cadence | Source | Stages |
 |---|---|---|---|
 | `alpaca/bars` | daily | Alpaca `/v2/stocks/bars`, `timeframe=1Day`, feed `sip`, `adjustment` `raw` and `all`, 100 symbols a request, the last 5 complete sessions re-read (the `all` window one session earlier) | `stg_alpaca_bars`, `stg_alpaca_bar_revisions` |
-| `alpaca/corporate_actions` | daily | Alpaca `/v1/corporate-actions`, every symbol, processed in the last 14 days | `stg_alpaca_actions` |
+| `alpaca/corporate_actions` | daily | Alpaca `/v1/corporate-actions`, every symbol, processed from 14 days back to 90 days ahead (a cash dividend is processed on its payable date, weeks after it goes ex; an action is applied once its ex-date has a session) | `stg_alpaca_actions` |
 | `sec/cover_shares` | daily | The SEC daily master index (10-K, 10-Q, 20-F, 40-F and their -T forms of the last 7 days), each filer's submissions file, the filing's inline-XBRL instance: `dei:EntityCommonStockSharesOutstanding` per class member | `stg_sec_cover` |
 | `yfinance/float` | daily | Yahoo `floatShares` (`yfinance` `get_info`), 400 Tier A names a run, 1.5 s apart, stopped by a 401 or 429 | `stg_yahoo_float` |
 | `uw/total_float` | daily | Unusual Whales `/short_screener` `total_float`, every Tier A name (the client's batching) | `stg_uw_float` |
@@ -1174,9 +1174,9 @@ are stored **nominal**; the factors are applied on read.
 | `price_bar_daily` | one nominal bar per security and session (key `security_id`, `session_date`): Alpaca's, then WRDS's where Alpaca has none (CRSP where it links to the Compustat security, else Compustat; only USD rows), and the S&P 500 level from the market store's Cboe Parquet (`index:SPX`); `shares_outstanding` is a WRDS bar's own (`cshoc`; CRSP `shrout` in thousands) |
 | `corporate_action` | Alpaca's actions of the store's securities (resolved to the security that traded under the action's symbol nearest its date, else the spine's ticker) and Compustat's splits and dividends where Alpaca has none of that kind that day; `ratio` new over old shares, `amount` per share, `applied` and `not_applied_why` |
 | `adj_factor` | per security, the periods between two ex-dates and their `split_factor` (the product of `1 / ratio` of every later split and stock dividend) and `tr_factor` (that, times `1 - amount / close before the ex-date` of every later cash dividend, the close at most 7 days before) |
-| `shares_class` | `outstanding` per class from the SEC covers (an unlisted class keyed `class:<CIK>:<member>`), `float` from Yahoo and from UW |
+| `shares_class` | `outstanding` per class from the SEC covers (an unlisted class keyed `class:<CIK>:<member>`, and so is an ADR issuer's count of ordinary shares), `float` from Yahoo and from UW |
 | `security_symbol` | the symbols a security traded under and when |
-| `market_cap_daily` | close times shares per security and session (the bar's own shares, else a WRDS source's of that session, else the newest cover on or before it moved over the splits between); `issuer_market_cap` sums the issuer's listed classes |
+| `market_cap_daily` | close times shares per security and session (the bar's own shares, else a WRDS source's of that session, else the newest cover on or before it moved over the splits between); `issuer_market_cap` sums the issuer's listed classes, each at its newest cap at most 14 days old (a class with no bar that session still counts); the bars' scope asks every listed class a cover names for a Tier A issuer, under `class:<CIK>:<member>` when the spine lacks it (BRK-A) |
 | `price_revision` | the values a later read replaced: Alpaca's re-read and the monthly WRDS refresh, with `revised_at` and `revised_by` |
 | `wrds_price_diff` | the WRDS difference report, one row per comparison: CRSP against Compustat and each against Alpaca on the closes of the sessions both have, and each WRDS source's own day return (Compustat's `prccd / ajexdi * trfd` over the previous session's, CRSP's `dlyret`) against the store's on consecutive sessions; a difference over 1 bp counts; on the `wrds/prices` Settings card |
 
@@ -1187,9 +1187,13 @@ applies no split a second time), `price_actions` (splits and dividends, the amou
 
 **Build issues** (dataset `prices/serving`, synced after each swap): `source_never_run`, `tier_a_no_bar`,
 `tier_a_no_shares`, `price_gap_no_action` (the split-adjusted close moved by 1.9 times or more, either way, within 7
-days, with no split), `adjustment_differs` (the store's total-return day return more than 1 bp from Alpaca's own),
+days, with no split), `adjustment_differs` (the store's total-return day return more than 1 bp from Alpaca's own, or
+more than half a cent on each of Alpaca's cent-rounded adjusted closes where that is larger: about 1.5 bp at $70),
 `dividend_not_applied`, `action_not_applied` (a spin-off, unit split or rights distribution), `cover_class_unmapped`,
-`float_above_outstanding` (over 1.05 times), `float_sources_disagree` (Yahoo and UW more than 25% apart). Run issues of
+`cover_adr_ordinary` (an ADR's issuer's cover counts ordinary shares, not ADSs: kept under `class:`, no cap from it),
+`float_above_outstanding` (over 1.05 times), `float_sources_disagree` (Yahoo and UW more than 25% apart),
+`shares_disagree_yahoo` (the cover shares behind a cap and Yahoo's `sharesOutstanding` more than 25% apart on the
+session of Yahoo's answer: a count from before a dilution or a split; the cap stays, flagged). Run issues of
 the sources: `not_a_session`, `symbol_refused`, `action_undated`, `no_inline_xbrl`, `submissions_missing`,
 `filing_not_in_submissions`, `instance_unreadable`, `wrds_column_empty` (a WRDS answer with rows and none of a
 column the store needs: the column names are the documented ones, not read from WRDS before the first run).

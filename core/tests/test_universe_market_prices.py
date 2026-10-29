@@ -130,3 +130,9 @@ def test_a_render_reads_the_prices_store_once_per_file(monkeypatch):
     os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))       # what a swap looks like to stat
     render()
     assert seen.count("prices") == 2 and seen.count("spine") == spine      # the spine's answers are still kept
+    # The Opus review's N3: latest_market finds the tickers through the spine, so a new spine file reads it again.
+    path = serving.live_path("spine")
+    st = path.stat()
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+    render()
+    assert seen.count("prices") == 3
