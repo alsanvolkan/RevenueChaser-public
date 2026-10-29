@@ -7,8 +7,8 @@ has none (404).
 
 Raw: ``raw/sec/daily_index/<date>.idx.gz`` with a ``.meta.json`` sidecar, shared by every dataset that reads it (the
 first to need a day fetches it; a raw file that exists is not fetched again). A 404 for a day before yesterday writes
-``<date>.absent.json`` (no index will come: a holiday), so it is not asked again; a 404 for yesterday or today writes
-nothing (the index may not be published yet). Weekends are never asked.
+``<date>.absent.json`` (no index will come: a holiday), so it is not asked again; a 404 or a 403 for yesterday or
+today writes nothing (the index may not be published yet: the SEC answers 403 for it). Weekends are never asked.
 
 **The scan window.** A run reads the last ``LOOKBACK_DAYS`` days, or further back when it has to: a dataset that
 reads the index writes ``raw/<dataset>/_scanned.json`` (the last day a run of it read whole) at the end of each run,
@@ -84,9 +84,14 @@ def fetch_day(ctx: base.RunContext, day: date, as_of: date) -> Path | None:
         return raw
     if absent_path(day).exists():
         return None
-    r = common.sec_get(ctx, url(day), missing=(404,))
+    recent = day >= as_of - timedelta(days=1)
+    # The SEC answers 403, not 404, for an index not published yet (today's, seen 29 Oct 2026), so a 403 on today's
+    # or yesterday's index is "not out yet", like a 404. On an older index it is a real block and fails the run.
+    # shortcut: a block that starts today shows two days late (once the day is older); upgrade if the SEC documents
+    # one status for an unpublished index.
+    r = common.sec_get(ctx, url(day), missing=(404, 403) if recent else (404,))
     if r is None:
-        if day < as_of - timedelta(days=1):
+        if not recent:
             base.write_raw_json(absent_path(day), {"day": day.isoformat(), "fetched_at": time.time(),
                                                    "run_id": ctx.run_id, "url": url(day)})
         return None

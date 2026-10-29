@@ -231,6 +231,33 @@ def test_a_statement_filed_yesterday_is_read_again_today(sec):
     assert again == ["20261028", "20261029"]          # a past holiday's 404 is not asked again; the last two are
 
 
+def test_todays_index_not_published_yet_answers_403_and_the_run_still_reads_yesterdays(sec):
+    # Seen on the server on 29 Oct 2026 09:07 UTC: master.20261029.idx answered 403 (not 404) while the 27th and
+    # 28th answered 200. Today's and yesterday's index may not be out yet; neither may fail the whole run.
+    _answers(sec)
+    fx.run(companyfacts.NAME, mode="backfill", to="2026-10-23")
+    sec.routes.clear()
+    _answers(sec, msft=fx.msft_facts(with_new_quarter=True))
+    sec.add("master.20261027.idx", b"Forbidden", status=403)              # yesterday
+    sec.add("master.20261028.idx", b"Forbidden", status=403)              # today
+    fx.sec_routes(sec, {}, {"20261026": fx.daily_index([("789019", "MICROSOFT CORP", "10-Q", "20261026", fx.Q27)])})
+    check = fx.run(companyfacts.NAME, "2026-10-28")
+    assert check["result"] == "changed", check["note"]
+    assert fx.q("SELECT accn FROM fundamental_fact WHERE cik = '789019' AND field = 'revenue' "
+                "AND period_type = 'quarterly' AND period_end = DATE '2026-09-30'") == [(fx.Q27,)]
+    for day in (date(2026, 10, 27), date(2026, 10, 28)):                   # asked again by the next run
+        assert not sec_index.absent_path(day).exists() and not sec_index.raw_path(day).exists()
+
+
+def test_a_403_for_an_older_index_still_fails_the_run(sec):
+    # An index older than yesterday is published, so a 403 there is a real block, not "not out yet".
+    _answers(sec)
+    fx.run(companyfacts.NAME, mode="backfill", to="2026-10-26")
+    sec.add("master.20261026.idx", b"Forbidden", status=403)              # two days before the run
+    check = fx.run(companyfacts.NAME, "2026-10-28")
+    assert check["result"] == "failed" and "HTTP 403" in check["note"], check["note"]
+
+
 @pytest.mark.parametrize("last, days, note", [
     ("2026-10-27", 7, None),                                              # yesterday's run: the 7-day floor
     ("2026-09-01", 56, "daily index read for 56 days (last whole scan 2026-09-01)"),
