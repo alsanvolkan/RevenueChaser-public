@@ -1027,8 +1027,13 @@ def _stored_fundamentals(row: dict | None) -> tuple[list[dict], list[dict], dict
 def stored_annual_many(tickers) -> dict[str, tuple[list[dict], dict]]:
     """``{ticker: (annual, meta)}`` for the stored rows ``get_annual(no_fetch=True)`` would return, in one query.
 
-    A ticker with no usable stored row is absent: ``get_annual`` would have to go online for it.
+    A ticker with no usable stored row is absent: ``get_annual`` would have to go online for it. On the
+    fundamentals layer (``core/fundamentals_layer``, G6) the rows are the layer's, and a ticker it holds no company
+    for is absent.
     """
+    from .. import fundamentals_layer
+    if fundamentals_layer.reads_layer():
+        return {t: (annual, meta) for t, (annual, _q, meta) in fundamentals_layer.records_many(tickers).items()}
     rows = rawstore.get_many("edgar_financials", [t.upper() for t in tickers],
                              columns=["annual", "quarterly", "meta"])
     out = {}
@@ -1043,8 +1048,15 @@ def get_fundamentals(ticker: str, no_fetch: bool = False) -> tuple[list[dict], l
     """Ticker için EDGAR yıllık + çeyreklik finansallar; (annual, quarterly, meta). Cache'li.
 
     ``no_fetch=True`` — yalnızca cache'den okur; cache yoksa boş döner (ağ yok).
+
+    On the fundamentals layer (G6, ``core/fundamentals_layer``; the default once ``fundamentals.duckdb`` is built)
+    the records are the layer's, re-read by the builder on the filing day, and nothing is downloaded here whatever
+    ``no_fetch`` says: the builder owns the SEC reads (D1).
     """
     ticker = ticker.upper()
+    from .. import fundamentals_layer
+    if fundamentals_layer.reads_layer():
+        return fundamentals_layer.records(ticker)
     stored = _stored_fundamentals(rawstore.get("edgar_financials", ticker))
     if stored:
         return stored

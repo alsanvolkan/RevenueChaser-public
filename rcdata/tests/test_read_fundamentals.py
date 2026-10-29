@@ -55,3 +55,13 @@ def test_the_filing_side():
     assert read.estimates(["MSFT"]) == [] and read.revisions("789019") == []
     # A row's status is its own source's newest check (peer groups are the tables build's).
     assert {r["status"] for r in read.peers("789019")} == {read.NEVER_CHECKED}
+
+
+@pytest.mark.usefixtures("built")
+def test_statements_many_reads_a_window_per_company():
+    """A board's batch read (G6): the newest fiscal years and quarter ends of each company, every field."""
+    rows = read.statements_many(["0000789019", "999"], annual_years=1, quarters=1)
+    assert {(r["period_type"], r["fiscal_year"] if r["period_type"] == "annual" else r["period_end"]) for r in rows} \
+        == {("annual", 2025), ("quarterly", date(2025, 9, 30))}
+    assert {r["field"] for r in rows} >= {"revenue", "total_debt", "eps_diluted"}
+    assert [c["cik"] for c in read.fundamental_companies(["msft", "NOPE"])] == ["789019"]

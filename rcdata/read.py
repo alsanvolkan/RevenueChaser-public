@@ -149,10 +149,10 @@ def membership(index: str | None = None, on=None, source: str = "funds/index_hol
 # ── The fundamentals layer (PR 12) ────────────────────────────────────────────────────────────────────────────
 
 # A table several datasets write maps to None: each row's ``status`` is the newest check of its ``source``.
-DATASET_OF_TABLE.update({"fundamental_fact": None, "earnings_event": None, "estimate_latest": "yfinance/estimates",
+DATASET_OF_TABLE.update({"fundamental_company": "fundamentals/tables", "fundamental_fact": None, "earnings_event": None, "estimate_latest": "yfinance/estimates",
                          "filing_item": "sec/filings", "segment_revenue": None, "customer_share": None,
                          "peer_group": "fundamentals/tables", "fundamental_revision": None})
-KIND_OF_TABLE.update({t: "fundamentals" for t in ("fundamental_fact", "earnings_event", "estimate_latest",
+KIND_OF_TABLE.update({t: "fundamentals" for t in ("fundamental_company", "fundamental_fact", "earnings_event", "estimate_latest",
                                                   "filing_item", "segment_revenue", "customer_share", "peer_group",
                                                   "fundamental_revision")})
 
@@ -180,6 +180,42 @@ def statements(cik, period_type: str = "quarterly", n: int = 8, fields: Iterable
     sql += (" AND period_end IN (SELECT DISTINCT period_end FROM fundamental_fact WHERE cik = ? AND period_type = ? "
             "ORDER BY period_end DESC LIMIT ?) ORDER BY period_end DESC, field")
     return _rows("fundamental_fact", sql, params + [_cik(cik), str(period_type), int(n)])
+
+
+def fundamental_companies(tickers: Iterable[str]) -> list[dict]:
+    """``fundamental_company`` rows of ``tickers`` (upper-cased): the CIK a ticker's statements are filed under, the
+    filer's kind (``is_us``, ``us_gaap``, ``non_usd_units``), the day its facts were last read (``facts_as_of``) and
+    its filing list (``submissions_as_of``), and its newest statement (``newest_filed``, ``newest_period_end``)."""
+    wanted = sorted({str(t).strip().upper() for t in tickers if str(t or "").strip()})
+    if not wanted:
+        return []
+    return _rows("fundamental_company", f"SELECT * FROM fundamental_company WHERE ticker IN "
+                                        f"({', '.join('?' * len(wanted))}) ORDER BY ticker", wanted)
+
+
+def statements_many(ciks: Iterable, annual_years: int, quarters: int) -> list[dict]:
+    """``fundamental_fact`` rows of several companies at once (a board's batch): per company its ``annual_years``
+    newest fiscal years and ``quarters`` newest quarter ends, every field, preliminary rows included (they carry
+    ``preliminary`` true and no accession), by company, period type and period end. The window is counted per company
+    over every field, as ``statements`` counts it (fiscal years for annual rows, period ends for quarterly ones)."""
+    wanted = sorted({_cik(c) for c in ciks if str(c or "").strip()})
+    if not wanted:
+        return []
+    marks = ", ".join("?" * len(wanted))
+    # An annual record is a fiscal year (its fields may end on two days), a quarterly one a period end.
+    def key(t: str) -> str:
+        return (f"CASE WHEN {t}.period_type = 'annual' THEN CAST({t}.fiscal_year AS VARCHAR) "
+                f"ELSE CAST({t}.period_end AS VARCHAR) END")
+    sql = f"""
+        WITH ends AS (
+            SELECT cik, period_type, pkey, dense_rank() OVER (PARTITION BY cik, period_type ORDER BY pkey DESC) AS k
+            FROM (SELECT DISTINCT cik, period_type, {key("x")} AS pkey FROM fundamental_fact x WHERE cik IN ({marks})))
+        SELECT f.* FROM fundamental_fact f JOIN ends e
+          ON e.cik = f.cik AND e.period_type = f.period_type AND e.pkey = {key("f")}
+        WHERE f.cik IN ({marks})
+          AND ((f.period_type = 'annual' AND e.k <= ?) OR (f.period_type = 'quarterly' AND e.k <= ?))
+        ORDER BY f.cik, f.period_type, f.period_end, f.field"""
+    return _rows("fundamental_fact", sql, wanted + wanted + [int(annual_years), int(quarters)])
 
 
 def earnings_events(cik=None, start=None, end=None) -> list[dict]:
