@@ -282,6 +282,23 @@ def test_a_listed_class_the_spine_lacks_gets_bars_and_counts_in_the_issuer_cap(h
         485.0 * 1_300_000_000 + 720_005.0 * 540_000)
     assert _q("SELECT symbol FROM security_symbol WHERE security_id = ?", [brk_a]) == [{"symbol": "BRK-A"}]
 
+def test_a_cover_count_far_from_yahoos_shares_outstanding_is_an_issue(http_mock):
+    # The Opus review's S2 and the sample's AEHL: its cap was 0.0025 of Yahoo's, from a cover count of 4,580,550 as
+    # of 30 Sep 2025 moved over two reverse splits (1:6, 1:16) to 47,714, while Yahoo counts about 19 million after
+    # the dilution since. Yahoo's ``sharesOutstanding`` was fetched and never read; now a cover count more than
+    # SHARES_DISAGREE from it, on the session of Yahoo's answer, is an issue. FLG's count, moved over its 1-for-3
+    # split, agrees; so does AAPL's within 1 %.
+    _shares_and_floats()
+    yahoo = {"AAPL": (AAPL, 14_700_000_000, 14_650_000_000), "FLG": (FLG, 2_000_000_000, 415_100_000),
+             "GOOGL": ("160329:01", 5_000_000_000, 1_000_000_000)}
+    base.upsert_partition([{"ticker": t, "security_id": sid, "float_shares": f, "shares_outstanding": n,
+                            "source_as_of": date(2026, 10, 27), "fetched_at": 2.0, "run_id": "yf2"}
+                           for t, (sid, f, n) in yahoo.items()], floats.YAHOO_SCHEMA, ["ticker"],
+                          base.parquet_root() / "yfinance" / "float" / "date=2026-10-27" / "part-0.parquet")
+    base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
+    base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    assert _issues()["shares_disagree_yahoo"] == {"160329:01"}
+
 def test_shares_and_float_per_class_with_their_checks(built):
     rows = _q("SELECT * FROM shares_class ORDER BY security_id, measure, source")
     b = [r for r in rows if r["class_member"] == "us-gaap:CommonClassBMember"]

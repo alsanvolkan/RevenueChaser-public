@@ -1191,7 +1191,9 @@ days, with no split), `adjustment_differs` (the store's total-return day return 
 more than half a cent on each of Alpaca's cent-rounded adjusted closes where that is larger: about 1.5 bp at $70),
 `dividend_not_applied`, `action_not_applied` (a spin-off, unit split or rights distribution), `cover_class_unmapped`,
 `cover_adr_ordinary` (an ADR's issuer's cover counts ordinary shares, not ADSs: kept under `class:`, no cap from it),
-`float_above_outstanding` (over 1.05 times), `float_sources_disagree` (Yahoo and UW more than 25% apart). Run issues of
+`float_above_outstanding` (over 1.05 times), `float_sources_disagree` (Yahoo and UW more than 25% apart),
+`shares_disagree_yahoo` (the cover shares behind a cap and Yahoo's `sharesOutstanding` more than 25% apart on the
+session of Yahoo's answer: a count from before a dilution or a split; the cap stays, flagged). Run issues of
 the sources: `not_a_session`, `symbol_refused`, `action_undated`, `no_inline_xbrl`, `submissions_missing`,
 `filing_not_in_submissions`, `instance_unreadable`, `wrds_column_empty` (a WRDS answer with rows and none of a
 column the store needs: the column names are the documented ones, not read from WRDS before the first run).

@@ -346,3 +346,4 @@ def test_the_prices_section_states_what_the_code_owns():
     assert f"{newdata.COVERAGE_TARGET['alpaca/bars']:.0%}" in section
     assert f"at most {read.LATEST_WITHIN_DAYS} days before the store's newest session" in " ".join(section.split())
     assert f"each at its newest cap at most {serving.ISSUER_WITHIN_DAYS} days old" in section
+    assert f"`sharesOutstanding` more than {serving.SHARES_DISAGREE:.0%} apart" in " ".join(section.split())
