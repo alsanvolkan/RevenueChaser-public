@@ -1,8 +1,8 @@
 """OIPD board -> result history (#382, A3). Offline; the store is a temp DuckDB.
 
 An OIPD Fetch records its run through ``core/history.record_run``: one ``result_runs`` header, the chain the fit used
-in ``oipd_chain_history`` (the mirror of ``oipd_chain``, numbered by ``row_no``) and one ``oipd_fit_history`` row per
-fitted expiry. OIPD is a run board: every run keeps its rows; a partial chain is kept and the run says 'partial'.
+in ``oipd_chain_history`` (G9: the options store's chain, numbered by ``row_no``) and one ``oipd_fit_history`` row per
+fitted expiry. OIPD is a run board: every run keeps its rows; a run that fitted nothing is kept and says 'partial'.
 """
 from __future__ import annotations
 
@@ -13,9 +13,9 @@ from datetime import datetime, timezone
 import pytest
 
 from RevenueChaser.core import ledger, rawstore
-from RevenueChaser.core.providers.result import ProviderResult
 from RevenueChaser.module_oipd import config, engine, history as oipd_history
-from RevenueChaser.module_oipd.tests.test_engine import _TRUE, _FakeUW, _chain_for, fixed_today  # noqa: F401
+from RevenueChaser.module_oipd.tests.test_engine import _TRUE, _chain_for, fixed_today, store_chain  # noqa: F401
+from RevenueChaser.rcdata import ops, read
 
 BOARD, CHAIN, FITS = "module_oipd", "oipd_chain_history", "oipd_fit_history"
 # 2026-10-06 is a Tuesday: 22:00 UTC = 18:00 ET (session complete); 14:00 UTC = 10:00 ET (intraday).
@@ -23,25 +23,16 @@ COMPLETE = datetime(2026, 10, 6, 22, 0, tzinfo=timezone.utc).timestamp()
 INTRADAY = datetime(2026, 10, 6, 14, 0, tzinfo=timezone.utc).timestamp()
 
 
-class _PartialUW(_FakeUW):
-    """The second expiry's page 2 failed: its contracts are the ones that arrived (half of them)."""
-
-    def option_contracts_result(self, ticker, expiry=None, **kw):
-        rows = _chain_for(expiry)
-        if expiry == self.expiries[1]:
-            return ProviderResult("partial", rows[: len(rows) // 2], {"page": 2, "status": 500}, "")
-        return ProviderResult("ok", rows, None, "")
-
-
 @pytest.fixture
 def store(rawstore_tmp_db, fixed_today):  # noqa: F811
     ledger.take_notes()
+    store_chain()
     return rawstore_tmp_db
 
 
-def _fetch(uw=None, ticker="TST"):
+def _fetch(ticker="TST"):
     capture: dict = {}
-    payload = engine.run(uw or _FakeUW(), ticker, capture=capture)
+    payload = engine.run(None, ticker, capture=capture)
     return payload, capture
 
 
@@ -65,11 +56,11 @@ def _unpack(cell):
 
 # ── the engine's capture ──
 
-def test_a_fetch_captures_the_chain_it_saved_and_the_svi_of_each_fitted_expiry(store):
+def test_a_fetch_captures_the_stored_chain_it_fitted_and_the_svi_of_each_fitted_expiry(store):
     payload, capture = _fetch()
     assert capture["status"] == "ok" and capture["errors"] == []
-    stored = rawstore.query("SELECT * FROM oipd_chain WHERE ticker = 'TST' ORDER BY option_symbol")
-    assert sorted(capture["chain"], key=lambda r: r["option_symbol"]) == stored
+    assert sorted(r["option_symbol"] for r in capture["chain"]) == sorted(
+        r["option_symbol"] for r in read.option_chain("TST"))
     assert sorted(capture["svi"]) == [e["date"] for e in payload["expiries"]]
     fitted = capture["svi"][payload["expiries"][0]["date"]]
     assert set(fitted) == {"a", "b", "rho", "m", "sigma"} and fitted["rho"] == pytest.approx(_TRUE["rho"], abs=0.05)
@@ -77,7 +68,7 @@ def test_a_fetch_captures_the_chain_it_saved_and_the_svi_of_each_fitted_expiry(s
 
 def test_the_payload_the_board_renders_is_unchanged_by_the_capture(store):
     with_capture, _ = _fetch()
-    without = engine.run(_FakeUW(), "TST")
+    without = engine.run(None, "TST")
     for p in (with_capture, without):
         p.pop("generated_at"), p.pop("fetched_at")
     assert with_capture == without
@@ -133,7 +124,7 @@ def test_the_header_carries_model_version_params_and_context(store):
     payload, capture = _fetch()
     _record(payload, capture)
     (head,) = _headers()
-    assert head["model_version"] == oipd_history.model_version() and head["model_version"].startswith("1+")
+    assert head["model_version"] == oipd_history.model_version() and head["model_version"].startswith("2+")
     assert json.loads(head["params"])["MAX_EXPIRIES"] == config.MAX_EXPIRIES
     ctx = json.loads(head["context"])
     assert ctx["ticker"] == "TST" and ctx["expiries_fitted"] == 4 and ctx["chain_status"] == "ok"
@@ -171,24 +162,19 @@ def test_recording_the_same_run_id_twice_writes_nothing_more(store):
 
 # ── a degraded run: kept, partial (design C rule E) ──
 
-def test_a_partial_chain_is_not_saved_but_its_rows_are_kept_and_the_run_is_partial(store):
-    payload, capture = _fetch(_PartialUW())
-    assert capture["status"] == "partial" and rawstore.count("oipd_chain") == 0
-    counts = _record(payload, capture)
-    (head,) = _headers()
-    assert head["quality"] == "partial" and "the chain is partial (2026-11-22" in head["quality_note"]
-    assert counts[CHAIN] == len(capture["chain"]) > 0 and counts[FITS] == len(payload["expiries"])
-
-
-def test_a_run_that_fitted_nothing_is_partial_with_the_board_error(store):
-    class EmptyUW(_FakeUW):
-        def option_contracts(self, ticker, expiry=None, **kw):
-            return []
-
-    payload, capture = _fetch(EmptyUW(), "APPL")
+def test_a_name_off_the_list_is_kept_and_partial_with_the_label(store):
+    payload, capture = _fetch("APPL")
     assert _record(payload, capture) == {CHAIN: 0, FITS: 0}
     (head,) = _headers()
-    assert head["quality"] == "partial" and "no option chain for APPL" in head["quality_note"]
+    assert head["quality"] == "partial" and "APPL is not on the option watch list" in head["quality_note"]
+
+
+def test_a_list_name_with_no_stored_chain_is_partial_with_the_board_error(store):
+    ops.watch_add("option", "APPL", by="test")
+    payload, capture = _fetch("APPL")
+    assert _record(payload, capture) == {CHAIN: 0, FITS: 0}
+    (head,) = _headers()
+    assert head["quality"] == "partial" and "No stored option chain for APPL" in head["quality_note"]
 
 
 def test_failed_uw_calls_make_the_run_partial(store):
@@ -200,11 +186,8 @@ def test_failed_uw_calls_make_the_run_partial(store):
 
 
 def test_the_board_warnings_ride_on_the_header(store):
-    class NoSpot(_FakeUW):
-        def ohlc_latest(self, ticker):
-            return {}
-
-    payload, capture = _fetch(NoSpot())
+    store_chain("NOS", close=None)
+    payload, capture = _fetch("NOS")
     _record(payload, capture)
     (head,) = _headers()
     assert any("No spot price" in w for w in json.loads(head["warnings"])) and head["quality"] == "complete"

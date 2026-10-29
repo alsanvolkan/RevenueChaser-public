@@ -264,13 +264,15 @@ class TestRotationBoard:
 
 
 class TestPayloadBoards:
-    def test_oipd_payload_carries_health_and_renders_the_banner(self, monkeypatch):
+    def test_oipd_payload_carries_no_health_and_still_renders_a_banner(self, monkeypatch):
+        """G9: the OIPD Fetch reads the options store and calls no provider, so its payload has no UW health."""
         from RevenueChaser.module_oipd import engine, report
         monkeypatch.setattr(engine, "run", lambda **kw: {"ticker": "AAA", "expiries": [{"x": 1}]})
+        monkeypatch.setattr(engine, "builder_request", lambda: "Builder request: uw/option_list queued.")
         seen = {}
         monkeypatch.setattr(runners, "_render_oipd", lambda p: seen.update(p) or None)
         runners.run_oipd(_FakeUW(_BAD), ticker="AAA")
-        assert seen["provider_health"]["failed"] == 5
+        assert seen["provider_health"] is None
         html = report.render_oipd_dashboard({"ticker": "AAA", "provider_health": _BAD})
         assert "rc-provider-health" in html
 

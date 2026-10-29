@@ -73,23 +73,28 @@ class TestResolvers:
         ])
         assert provenance.data_as_of("module_sector_rotation") == "2026-09-01"
 
-    def test_sec13f_reports_the_newest_period_in_the_totals(self, rawstore_tmp_db):
-        """The board renders ``sec13f_totals``, so that is the date it is "as of" — not a newer
-        period that was ingested but not derived yet (#206)."""
-        rawstore.write_rows("sec13f_totals", [
-            {"ticker": "AAPL", "entry": {"2025-12-31": {"shares": 1.0}, "2026-03-31": {"shares": 2.0}}},
-            {"ticker": "MSFT", "entry": {"2025-12-31": {"shares": 1.0}}},
-        ])
-        rawstore.write_rows("sec13f_submissions", [
-            {"accession": "a1", "cik": "1", "period": "2026-06-30",
-             "filing_date": "01-AUG-2026", "type": "13F-HR"}])
-        assert provenance.data_as_of("module_sec_13f") == "2026-03-31"
-
-    def test_sec13f_with_no_totals_has_no_data_date(self, rawstore_tmp_db):
-        rawstore.write_rows("sec13f_submissions", [
-            {"accession": "a1", "cik": "1", "period": "2026-06-30",
-             "filing_date": "01-AUG-2026", "type": "13F-HR"}])
+    def test_sec13f_reports_the_newest_period_the_ownership_store_serves(self, rawstore_tmp_db):
+        """G9: the board renders the ownership store, so its newest served quarter (a still-filing one too, the
+        board shows it marked) dates it; the old ``sec13f_totals`` is not read (#206)."""
+        from RevenueChaser.core import config
+        from RevenueChaser.module_sec_13f.tests.ownership_store import Q3, _store
+        rawstore.write_rows("sec13f_totals", [{"ticker": "AAPL", "entry": {"2027-03-31": {"shares": 2.0}}}])
         assert provenance.data_as_of("module_sec_13f") is None
+        config.MARKET_DIR.mkdir(parents=True, exist_ok=True)
+        _store(config.MARKET_DIR)
+        assert provenance.data_as_of("module_sec_13f") == Q3.isoformat()
+
+    def test_oipd_reports_the_session_of_the_chain_on_the_board(self, rawstore_tmp_db, tmp_path, monkeypatch):
+        """G9: the session of the stored chain the board fitted; a board with no chain has no data date."""
+        from RevenueChaser.core import config
+        monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path)
+        assert provenance.data_as_of("module_oipd") is None
+        board = tmp_path / "oipd" / "oipd_latest.json"
+        board.parent.mkdir(parents=True)
+        board.write_text(json.dumps({"ticker": "SPX", "asof": "2026-10-27", "n_contracts": 812}), encoding="utf-8")
+        assert provenance.data_as_of("module_oipd") == "2026-10-27"
+        board.write_text(json.dumps({"ticker": "ZZZ", "asof": "2026-10-28", "n_contracts": 0}), encoding="utf-8")
+        assert provenance.data_as_of("module_oipd") is None
 
     def test_leaps_prefers_prints_and_falls_back_to_the_cache(self, rawstore_tmp_db):
         rawstore.write_rows("leaps_cache", [

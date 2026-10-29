@@ -1,30 +1,31 @@
-"""Implied Probability (OIPD) engine — UW chain -> SVI surface -> risk-neutral PDF.
+"""Implied Probability (OIPD) engine — stored chain -> SVI surface -> risk-neutral PDF.
 
-Two paths, mirroring every store-backed board:
+G9 (build plan PR 19): the chain is the options store's ``option_eod`` (``rcdata.read.option_chain``), which the
+builder's ``uw/option_list`` fills every evening for SPX and the option watch list. Any other name shows "not on the
+option watch list" and gets no fit. Fetch and Refresh fit the same stored chain with **zero network calls**; a Fetch
+also records the run (``history.py``) and, in the runner, queues ``uw/option_list`` (D1).
 
-- **Fetch** (``no_fetch=False``): pull the option chain from Unusual Whales,
-  persist it to ``oipd_chain`` / ``oipd_meta``, then fit.
-- **Refresh** (``no_fetch=True``): re-read the stored chain and re-fit with
-  **zero network calls**.
-
-The fit itself is pure numpy/scipy (``opd_math``) and deterministic, so a
-Refresh reproduces the Fetch board exactly.
+The fit itself is pure numpy/scipy (``opd_math``) and deterministic, so a Refresh reproduces the Fetch board exactly.
 """
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import numpy as np
 
-from RevenueChaser.core import calendar, rawstore
+from RevenueChaser.core import calendar
 from RevenueChaser.core.config import to_float
-from RevenueChaser.core.providers.result import ProviderResult
 
 from . import config, opd_math, uw_chain
 
 logger = logging.getLogger(__name__)
+
+DATASET = "uw/option_list"
+SOURCE = "options store (uw/option_list)"
+REQUESTED_BY = "oipd"
+NOT_ON_LIST = "not on the option watch list"
 
 
 def _now() -> str:
@@ -32,19 +33,23 @@ def _now() -> str:
 
 
 def _today() -> str:
-    """The latest complete session: the ``as_of`` when no spot candle dates the run (#382)."""
+    """The latest complete session: the ``as_of`` of a board with no stored chain (#382)."""
     return calendar.latest_complete_session().isoformat()
 
 
-def _candle_session(data: dict | None) -> str | None:
-    """The session date of an ``ohlc_latest`` bar, when the bar carries one."""
-    day = (data or {}).get("date")
-    return day[:10] if isinstance(day, str) and day else None
+# ── the stored chain ─────────────────────────────────────────────────────────────────────────────────────────────
+def list_names() -> list[str]:
+    """SPX and the option watch list (``rcdata/build/options/names.py``: the names ``uw/option_list`` fetches)."""
+    from RevenueChaser.rcdata.build.options import names
+    try:
+        return names.list_names()
+    except Exception as exc:  # noqa: BLE001 - an unreadable ops.sqlite still leaves SPX
+        logger.warning("oipd: option watch list not read: %s", exc)
+        return list(names.ALWAYS)
 
 
-# ── persistence ─────────────────────────────────────────────────────────────
 def chain_rows(ticker: str, contracts: list[dict], meta: dict) -> list[dict]:
-    """The ``oipd_chain`` rows of a pull (its result history, ``oipd_chain_history``, is their mirror)."""
+    """The chain a run fitted, as its result history (``oipd_chain_history``) keeps it."""
     fetched = meta["fetched_at"]
     return [{
         "ticker": ticker,
@@ -58,153 +63,80 @@ def chain_rows(ticker: str, contracts: list[dict], meta: dict) -> list[dict]:
     } for c in contracts]
 
 
-def _persist(ticker: str, contracts: list[dict], meta: dict) -> None:
-    rows = chain_rows(ticker, contracts, meta)
-    # write mode "replace" + group_by ticker: only this ticker's chain is swapped.
-    rawstore.write_rows("oipd_chain", rows)
-    rawstore.write_rows("oipd_meta", [meta])
-
-
-def _contracts_from_store(rows: list[dict]) -> list[dict]:
-    out = []
-    for r in rows:
-        out.append({
-            "option_symbol": r.get("option_symbol"),
-            "expiry": r.get("expiry"), "option_type": r.get("option_type"),
-            "strike": r.get("strike"), "bid": r.get("bid"), "ask": r.get("ask"),
-            "last_price": r.get("last_price"),
-            "mid": uw_chain.mid_price(r.get("bid"), r.get("ask"), r.get("last_price")),
-            "iv": r.get("iv"), "open_interest": r.get("open_interest"),
-            "volume": r.get("volume"), "delta": r.get("delta"),
-            "tape_time": r.get("tape_time"),
-        })
-    return out
-
-
-def last_ticker() -> str | None:
-    rows = rawstore.query(
-        "SELECT ticker FROM oipd_meta ORDER BY fetched_at DESC LIMIT 1")
-    return rows[0]["ticker"] if rows else None
-
-
-# ── fetch ───────────────────────────────────────────────────────────────────
-@dataclass
-class FetchResult:
-    """One chain pull: the contracts, and whether every request behind them worked.
-
-    ``status`` is ``ok``, ``partial`` (some expiry was truncated or missing: the contracts are the
-    ones that arrived) or ``failed`` (requests failed and nothing arrived). An empty answer from
-    a request that worked, or a 404 chain, is ``ok``: the provider simply has no chain.
-    """
-
-    contracts: list[dict]
-    meta: dict
-    warnings: list[str]
-    status: str = "ok"
-    errors: list[dict] = field(default_factory=list)
-    # The spot candle's failure (its ``status`` and ``error``), or None. Not a chain error: the chain stays whole.
-    candle_error: dict | None = None
-
-
-def _ask(uw, method: str, *args, **kw) -> ProviderResult:
-    """``uw.<method>_result(...)``: the answer with its outcome. A client without that ``*_result`` twin (a test
-    fake) is taken at its word: what its plain method returns is an ``ok`` answer."""
-    fn = getattr(uw, f"{method}_result", None)
-    if fn is not None:
-        res = fn(*args, **kw)
-        if isinstance(res, ProviderResult):
-            return res
-    return ProviderResult("ok", getattr(uw, method)(*args, **kw), None, "")
-
-
-def _meta(ticker: str, asof: str, spot: float | None, contracts: list[dict]) -> dict:
+def _contract(r: dict) -> dict:
+    """One ``option_eod`` row in the shape the fit reads (``option_type`` ``C``/``P``, ISO expiry)."""
+    bid, ask, last = to_float(r.get("nbbo_bid")), to_float(r.get("nbbo_ask")), to_float(r.get("last_price"))
     return {
-        "ticker": ticker, "as_of": asof, "spot": spot,
-        "risk_free": config.RISK_FREE_RATE,
-        "expiry_count": len({c["expiry"] for c in contracts}),
-        "horizon_days": config.MAX_DTE,
-        "fetched_at": _now(),
+        "option_symbol": r.get("option_symbol"),
+        "expiry": str(r.get("expiry"))[:10], "option_type": "C" if r.get("option_type") == "call" else "P",
+        "strike": to_float(r.get("strike")), "bid": bid, "ask": ask, "last_price": last,
+        "mid": uw_chain.mid_price(bid, ask, last),
+        "iv": to_float(r.get("implied_volatility")), "open_interest": to_float(r.get("open_interest")),
+        "volume": to_float(r.get("volume")), "delta": to_float(r.get("delta")),
+        "tape_time": r.get("last_tape_time"),
     }
 
 
-def _pull(uw, ticker: str, **kw) -> ProviderResult:
-    """One chain request with its outcome. A client without ``option_contracts_result`` (a test fake)
-    is taken at its word: the list it returns is an ``ok`` answer."""
-    fn = getattr(uw, "option_contracts_result", None)
-    if fn is not None:
-        res = fn(ticker, **kw)
-        if isinstance(res, ProviderResult):
-            return res
-    return ProviderResult("ok", uw.option_contracts(ticker, **kw) or [], None, "")
+def _pick_expiries(contracts: list[dict], asof: str) -> set[str]:
+    """The expiries to fit: DTE in ``[MIN_DTE, MAX_DTE]``, the ``MAX_EXPIRIES`` with the most open interest."""
+    oi: dict[str, float] = {}
+    for c in contracts:
+        oi[c["expiry"]] = oi.get(c["expiry"], 0.0) + (c["open_interest"] or 0.0)
+    rows = [{"expiry": e, "open_interest": v} for e, v in oi.items()]
+    return {p["expiry"] for p in uw_chain.expiries_from_breakdown(
+        rows, asof, config.MIN_DTE, config.MAX_DTE, config.MAX_EXPIRIES)}
 
 
-def fetch_result(uw, ticker: str) -> FetchResult:
-    """Pull the chain for ``ticker`` and say whether it is whole."""
-    warnings: list[str] = []
-    errors: list[dict] = []
+def store_chain(ticker: str) -> tuple[list[dict], dict | None]:
+    """``(contracts, meta)`` of ``ticker``'s newest stored session; ``([], None)`` when the store has none.
 
-    # The spot candle dates the run: its session drives every DTE/T, so it is read first. With no
-    # candle the latest complete session is the as_of (#382).
-    candle = _ask(uw, "ohlc_latest", ticker)
-    spot = to_float((candle.data or {}).get("close"))
-    asof = _candle_session(candle.data) or _today()
-    candle_error = None
-    if candle.status != "ok":
-        # Only the spot-relative probabilities are lost: the chain is whole and is still saved.
-        err = candle.error or {}
-        candle_error = {"status": err.get("status"), "error": err.get("error")}
-        code = err.get("status")
-        warnings.append(f"The Unusual Whales spot price request failed{f' (HTTP {code})' if code else ''}; "
-                        "the forward falls back to the chain.")
-    elif spot is None:
-        warnings.append("No spot price available; the forward falls back to the chain.")
+    The spot is that session's ``option_daily`` close (None when it is missing: the forward then comes from the
+    chain). ``fetched_at`` is the newest row's, as ISO."""
+    from RevenueChaser.rcdata import read
+    rows = read.option_chain(ticker)
+    if not rows:
+        return [], None
+    session = rows[0]["session_date"]
+    asof = session.isoformat() if isinstance(session, date) else str(session)[:10]
+    daily = read.option_daily(ticker, session, session)
+    spot = to_float(daily[0].get("close")) if daily else None
+    contracts = [c for c in map(_contract, rows) if c["strike"] and c["strike"] > 0]
+    keep = _pick_expiries(contracts, asof)
+    contracts = [c for c in contracts if c["expiry"] in keep]
+    stamps = [to_float(r.get("fetched_at")) for r in rows if to_float(r.get("fetched_at")) is not None]
+    fetched = (datetime.fromtimestamp(max(stamps), timezone.utc).isoformat(timespec="seconds")
+               if stamps else None)
+    meta = {"ticker": ticker, "as_of": asof, "spot": spot, "risk_free": config.RISK_FREE_RATE,
+            "expiry_count": len({c["expiry"] for c in contracts}), "horizon_days": config.MAX_DTE,
+            "fetched_at": fetched}
+    return contracts, meta
 
-    breakdown = _ask(uw, "expiry_breakdown", ticker)
-    if breakdown.status != "ok":
-        # The expiry list is unknown, not empty: no chain is pulled, not even the default one. A 404 is a
-        # ticker UW has no options for (an empty chain, "check the ticker"); any other failure fails the run,
-        # so nothing is saved and the stored chain is kept.
-        err = breakdown.error or {}
-        if err.get("status") == 404:
-            return FetchResult([], _meta(ticker, asof, None, []), warnings)
-        return FetchResult([], _meta(ticker, asof, None, []), warnings, "failed",
-                           [{"expiry": "the expiry breakdown", **err}])
-    picks = uw_chain.expiries_from_breakdown(
-        breakdown.data or [], asof, config.MIN_DTE, config.MAX_DTE, config.MAX_EXPIRIES)
-    if not picks:
-        warnings.append("No expiries in the 1d-365d window; fetched the default chain.")
-        pulls = [("the default chain", _pull(uw, ticker, limit=config.PAGE_LIMIT,
-                                             max_pages=config.MAX_PAGES))]
-    else:
-        pulls = [(p["expiry"], _pull(uw, ticker, expiry=p["expiry"], limit=config.PAGE_LIMIT,
-                                     max_pages=config.MAX_PAGES)) for p in picks]
 
-    raw: list[dict] = []
-    for label, res in pulls:
-        raw.extend(res.data or [])
-        err = res.error or {}
-        if res.status == "ok" or (res.status == "failed" and err.get("status") == 404):
-            continue
-        errors.append({"expiry": label, **err})
-        if res.status == "partial":
-            warnings.append(f"{label}: page {err.get('page', '?')} of the Unusual Whales chain failed; "
-                            "this expiry is truncated.")
+def last_ticker() -> str | None:
+    """The ticker the board last showed (its JSON), for a Refresh with no ticker in the box."""
+    try:
+        return (json.loads(config.OIPD_JSON.read_text(encoding="utf-8")).get("ticker") or None)
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def builder_request() -> str:
+    """Queue one ``uw/option_list`` unless one is queued or running; the board's one-line note.
+
+    Before the dataset's first run (the server thread's: it ``starts_by_hand``) nothing is queued, so a board press
+    is never the store's first write. A locked or broken ``ops.sqlite`` is a note, never a failed Fetch.
+    Default chosen, change if avo prefers: the Fetch asks for the whole list's run (the builder skips the names it
+    already has for the session and sends UW nothing outside the evening window), not for the picked name alone."""
+    from RevenueChaser.rcdata import ops
+    try:
+        if not ops.ever_built(DATASET):
+            state = "not queued: it has not had its first run yet (the server thread starts it after a backup)"
         else:
-            warnings.append(f"{label}: the Unusual Whales request failed; this expiry is missing.")
-
-    contracts = uw_chain.map_rows(raw)
-    if not contracts:
-        warnings.append("Unusual Whales returned no usable contracts.")
-
-    meta = _meta(ticker, asof, spot, contracts)
-    status = "ok" if not errors else ("partial" if contracts else "failed")
-    return FetchResult(contracts, meta, warnings, status, errors, candle_error)
-
-
-def fetch(uw, ticker: str) -> tuple[list[dict], dict, list[str]]:
-    """Pull the chain for ``ticker``; returns (contracts, meta, warnings)."""
-    res = fetch_result(uw, ticker)
-    return res.contracts, res.meta, res.warnings
+            state = "queued" if ops.enqueue_once(DATASET, None, by=REQUESTED_BY) is not None else "already queued"
+    except Exception as exc:  # noqa: BLE001 - the board renders what is stored either way
+        logger.warning("oipd: builder request for %s not queued: %s", DATASET, exc)
+        state = f"not queued ({type(exc).__name__}: {exc})"[:200]
+    return f"Builder request: {DATASET} {state}."
 
 
 # ── fit ─────────────────────────────────────────────────────────────────────
@@ -287,7 +219,7 @@ def _fit_expiry(expiry: str, contracts: list[dict], spot: float, r: float,
     st = curve.stats()
     atm = opd_math.atm_iv(params, T)
     greeks = opd_math.atm_greeks(params, T, r, F)
-    # With no spot (UW returned no regular-session bar) the fit stands on the
+    # With no spot (no stored close for the session) the fit stands on the
     # chain's forward; only the spot-relative probabilities are unknown.
     if spot is not None:
         up10, dn10 = spot * 1.10, spot * 0.90
@@ -345,7 +277,8 @@ def _fit_payload(ticker: str, contracts: list[dict], meta: dict,
         "asof": asof,
         "spot": spot,
         "risk_free": r,
-        "source": "Unusual Whales",
+        "source": SOURCE,
+        "on_list": True,
         "generated_at": _now(),
         "fetched_at": meta.get("fetched_at"),
         "horizon_days": meta.get("horizon_days"),
@@ -374,10 +307,10 @@ def _fit_payload(ticker: str, contracts: list[dict], meta: dict,
     return payload
 
 
-def _empty_payload(ticker: str, message: str) -> dict:
+def _empty_payload(ticker: str, message: str, on_list: bool | None = None) -> dict:
     return {
         "ticker": ticker, "asof": _today(), "spot": None,
-        "risk_free": config.RISK_FREE_RATE, "source": "Unusual Whales",
+        "risk_free": config.RISK_FREE_RATE, "source": SOURCE, "on_list": on_list,
         "generated_at": _now(), "fetched_at": None, "horizon_days": None,
         "n_contracts": 0, "expiries": [], "fan": None,
         "warnings": [], "error": message,
@@ -385,49 +318,30 @@ def _empty_payload(ticker: str, message: str) -> dict:
 
 
 def run(uw=None, ticker: str | None = None, no_fetch: bool = False, capture: dict | None = None) -> dict:
-    """Fit the risk-neutral surface for ``ticker`` (Fetch or store-only Refresh).
+    """Fit the risk-neutral surface for ``ticker`` from the options store (Fetch and Refresh alike, no network).
 
-    A Fetch that passes ``capture`` (the result history, #382) gets what the fit stood on: the pull's ``status``
-    and ``errors``, the ``chain`` rows it pulled (kept even when a partial chain is not saved), the ``meta``, each
-    fitted expiry's ``svi`` parameters and the spot candle's ``candle_error`` (None when it worked). A Refresh
-    never fills it."""
-    warnings: list[str] = []
-    if no_fetch:
-        ticker = (ticker or last_ticker() or config.DEFAULT_TICKER).upper()
-        rows = rawstore.query(
-            "SELECT option_symbol, expiry, option_type, strike, bid, ask, "
-            "last_price, volume, open_interest, iv, delta, tape_time "
-            "FROM oipd_chain WHERE ticker = ?", [ticker])
-        meta = rawstore.get("oipd_meta", ticker)
-        if not rows or not meta:
-            return _empty_payload(
-                ticker, f"No cached chain for {ticker}. Run a Fetch first.")
-        contracts = _contracts_from_store(rows)
-        return _fit_payload(ticker, contracts, meta, warnings)
-
-    ticker = (ticker or config.DEFAULT_TICKER).upper()
-    pulled = fetch_result(uw, ticker)
-    contracts, meta = pulled.contracts, pulled.meta
-    warnings.extend(pulled.warnings)
-    svi: dict | None = None
-    if capture is not None:
-        svi = {}
-        capture.update(status=pulled.status, errors=list(pulled.errors), meta=dict(meta), svi=svi,
-                       chain=chain_rows(ticker, contracts, meta), candle_error=pulled.candle_error)
-    if pulled.status == "failed":
-        status = pulled.errors[0].get("status")
+    ``uw`` is unused (G9: the builder fetches the chain). A Refresh with no ticker shows the board's last one. A
+    Fetch that passes ``capture`` (the result history, #382) gets what the fit stood on: ``status`` ``ok``, no
+    ``errors``, the ``chain`` rows, the ``meta``, each fitted expiry's ``svi`` parameters and ``candle_error`` None.
+    A Refresh never fills it.
+    """
+    ticker = (ticker or (last_ticker() if no_fetch else None) or config.DEFAULT_TICKER).strip().upper()
+    names = list_names()
+    if ticker not in names:
         return _empty_payload(
-            ticker,
-            f"Unusual Whales request failed for {ticker}"
-            f"{f' (HTTP {status})' if status else ''} — the option chain was not fetched and "
-            "nothing was saved. Try the Fetch again.")
+            ticker, f"{ticker} is {NOT_ON_LIST} (" + ", ".join(names) + "), so it gets no fit. Add it with the "
+            f"option-list button; its chain is fetched with the next {DATASET} run, after the close.", False)
+    contracts, meta = store_chain(ticker)
     if not contracts:
         return _empty_payload(
-            ticker,
-            f"Unusual Whales returned no option chain for {ticker} — check the ticker.")
-    if pulled.status == "partial":
-        # A truncated chain would replace a whole one with a thinner one and make Refresh reproduce it.
-        warnings.append("Partial chain: not saved, the stored chain was kept.")
-    else:
-        _persist(ticker, contracts, meta)
+            ticker, f"No stored option chain for {ticker} yet: it fills with the next {DATASET} run, after the "
+            "close.", True)
+    warnings: list[str] = []
+    if meta["spot"] is None:
+        warnings.append("No spot price available; the forward falls back to the chain.")
+    svi: dict | None = None
+    if capture is not None and not no_fetch:            # a Refresh never records
+        svi = {}
+        capture.update(status="ok", errors=[], meta=dict(meta), svi=svi,
+                       chain=chain_rows(ticker, contracts, meta), candle_error=None)
     return _fit_payload(ticker, contracts, meta, warnings, svi)

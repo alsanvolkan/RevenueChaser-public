@@ -248,7 +248,7 @@ jobs.register("daily_bars", runners.run_daily_bars, ["module_settings"], lane="l
               cancellable=True, deadline_s=9600)
 # Index lists (#302): three UW requests plus the SmallCap 600 list from the identity cache.
 jobs.register("index_lists", runners.run_index_lists, ["module_settings"], lane="long")
-jobs.register("module_oipd", runners.run_oipd, ["module_oipd"], requires_uw=True)
+jobs.register("module_oipd", runners.run_oipd, ["module_oipd"], requires_uw=False)   # G9: reads the options store
 
 # Which store-only job a board's Save / Reset queues (``api_settings_board``, #40 / #384 SW-S4).
 SETTINGS_JOBS = {"module_comovement": "comovement_recompute", "module_swing_potential": "settings_refresh"}

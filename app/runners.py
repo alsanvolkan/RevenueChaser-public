@@ -1819,13 +1819,14 @@ def run_relatedness(uw=None, no_fetch: bool = False) -> Path:
     return RELATEDNESS_LATEST
 
 
-def run_oipd(uw: UWClient, ticker: str | None = None, no_fetch: bool = False) -> Path:
+def run_oipd(uw: UWClient | None = None, ticker: str | None = None, no_fetch: bool = False) -> Path:
     """Run the Implied Probability (OIPD) board for one ticker.
 
-    Fetch pulls the Unusual Whales option chain, fits an SVI smile per expiry and
-    persists the chain to ``oipd_chain`` / ``oipd_meta``; the ``no_fetch``
-    (Refresh) path re-fits from the store with zero network. Writes the JSON
-    payload + the self-contained HTML board.
+    G9 (build plan PR 19): the chain is the options store's (``uw/option_list``, SPX and the option watch list); any
+    other name shows "not on the option watch list". The Fetch queues one ``uw/option_list`` (D1: a board only puts
+    a request into the queue; the builder runs it), fits what is stored and records the run; the ``no_fetch``
+    (Refresh) path fits the same chain. Neither calls a provider. Writes the JSON payload + the self-contained HTML
+    board.
 
     A run that fits no expiry still writes the board (with its error/warning
     state) and raises ``JobMessage`` so the UI explains itself rather than
@@ -1835,9 +1836,10 @@ def run_oipd(uw: UWClient, ticker: str | None = None, no_fetch: bool = False) ->
 
     capture: dict | None = None if no_fetch else {}      # what the fit stood on, for the result history (#382)
     run, run_at = (None, None) if no_fetch else (_freeze_run_id(), time.time())
-    payload = engine.run(uw=uw, ticker=ticker, no_fetch=no_fetch, capture=capture)
+    payload = engine.run(uw=None, ticker=ticker, no_fetch=no_fetch, capture=capture)
     if not no_fetch:
-        payload["provider_health"] = _uw_health(uw)
+        payload["notice"] = engine.builder_request()
+        payload["provider_health"] = None          # no provider call: the builder fetches the chain
     path = _render_oipd(payload)
     if not no_fetch:
         # Result history (#382): after the board file, so it holds what the board showed. A failure is a job note,
