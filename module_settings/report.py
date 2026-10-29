@@ -2300,6 +2300,50 @@ def _nd_status_chip(status) -> str:
             f'{esc(ND_STATUS_WORDS.get(status, status))}</span>')
 
 
+def _nd_cross_check(cross: dict | None) -> str:
+    """The cross-check table (A17-B, Karar 32-B): per field, what the second source said and what asking again
+    costs.
+
+    avo chose that this button may ask the live source. The three conditions that make that safe are visible here:
+    it happens only on a press, the press queues a run through the build queue rather than calling a provider from
+    the page, and the call count and the provider's remaining day budget sit beside the button. A field with no
+    second source in the store says so, because a blank would read as "no difference".
+    """
+    rows = (cross or {}).get("fields") or []
+    if not rows:
+        return ""
+    cards = []
+    for f in rows:
+        dataset = f.get("dataset")
+        dsa = esc(str(dataset or ""))
+        cost = (f'about {_nd(f.get("calls"))} calls' if f.get("calls") else "call count not estimated")
+        left = (f'{_nd(f.get("remaining"))} left today' if f.get("remaining") is not None else "no cap")
+        button = (f'<button type="button" class="nd-btn" data-nd-act="cross" data-dataset="{dsa}"'
+                  + ("" if dataset else " disabled") + ">Cross-check now</button>")
+        body = [_nd_row("Second source", _nd(f.get("second_source")) if f.get("second_source")
+                        else f'{DASH} · {_nd(f.get("why"))}')]
+        if f.get("second_source"):
+            body += [_nd_row("Report as of", _nd(f.get("as_of")) if f.get("as_of") else f'{DASH} · {_nd(f.get("why"))}'),
+                     _nd_row("Compared", _nd(f.get("checked"))),
+                     _nd_row("Differ by more than the rule", _nd(f.get("differs"))),
+                     _nd_row("Worst difference", _nd(f.get("worst")))]
+        cards.append(
+            f'<div class="nd-card" data-cross-field="{esc(str(f.get("field") or ""))}">'
+            f'<h3>{esc(str(f.get("field") or ""))}</h3>'
+            f'<div class="nd-rows">{"".join(body)}</div>'
+            + f'<div class="nd-actions">{button}</div>'
+            + (f'<div class="nd-cost">Cost: {cost} · {left}. {esc(ND_NO_CANCEL)}</div>' if dataset else
+               f'<div class="nd-off-why">The button is off: {_nd(f.get("cannot_queue"))}.</div>'
+               + (f'<div class="nd-k">Run it there: <code>{_nd(f.get("command"))}</code></div>'
+                  if f.get("command") else ""))
+            + '<div class="nd-msg" aria-live="polite" data-nd-msg></div></div>')
+    return ('<div class="nd-card" id="nd-cross"><h3>Cross-check against a second source</h3>'
+            '<div class="nd-sub">A second source is looked for in these two fields only (avo, 29 Oct 2026). '
+            'The numbers below are the stored report: opening this page asks nobody anything. A fresh check runs '
+            'only when you press the button, and the press queues a run for the builder - this page never calls a '
+            f'provider itself.</div>{"".join(cards)}</div>')
+
+
 def _nd_sample(block: dict) -> str:
     """One table's example rows (A16): the columns with their types, up to five rows stacked, and the cases that
     look like a bug and are not (K13).
@@ -2652,6 +2696,7 @@ def _newdata_section(nd: dict | None) -> str:
         '<div class="nd-card" id="nd-retention"><h3>Raw option retention</h3>'
         f'<div class="nd-rows">{_nd_row("Retention", _nd_warn(_nd(ret.get("text")), ret.get("warn")))}'
         + (_nd_row("Set by", _nd(ret.get("source"))) if ret.get("source") else "") + "</div></div>"
+        f'{_nd_cross_check(nd.get("cross_check"))}'
         f'{_nd_retirement(nd.get("retirement") or [])}'
         + "".join(_nd_watch_card(k, wl.get(k) or {}, ob) for k in ND_WATCH_TITLES)
         + "</section>")
@@ -2794,6 +2839,13 @@ function ndWatchRemove(btn){
     say(rcEsc(t) + (res.d.removed ? ' removed.' : ' was no longer on the list.'));
   }).catch(function(e){ btn.disabled = false; say('<span class="nd-bad">' + rcEsc(String(e)) + '</span>'); });
 }
+// A17-B: the cross-check press queues a run for the builder. The page sends one POST to its own dashboard and
+// calls no provider: the builder owns every provider call, and the queue is where a run is asked for.
+function ndCross(btn){
+  var ds = btn.getAttribute('data-dataset');
+  if(!ds) return;
+  ndPost(btn, '/api/build/request/' + ndPath(ds), null, ndQueued);
+}
 document.addEventListener('click', function(ev){
   var btn = ev.target && ev.target.closest ? ev.target.closest('#newdata [data-nd-act]') : null;
   if(!btn) return;
@@ -2805,6 +2857,7 @@ document.addEventListener('click', function(ev){
     if(real) ndBackfill(real, true);
   }
   else if(act === 'pause' || act === 'resume') ndSchedule(btn, act);
+  else if(act === 'cross') ndCross(btn);
   else if(act === 'watch-remove') ndWatchRemove(btn);
 });
 ndPageStale();

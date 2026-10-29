@@ -24,12 +24,15 @@ from .serve import UnknownNeed
 #: A dashboard lives in a top-level package with this prefix.
 BOARD_PREFIX = "module_"
 #: Packages that carry the prefix without being a dashboard.
-NOT_A_BOARD = frozenset({"module_testing"})
+#: ``module_testing`` is the e2e tier. ``module_settings`` is the control screen: it names needs to say what the
+#: catalog holds and what a cross-check covers, which is not a board reading a need's rows, so the declaration
+#: would say something untrue about it.
+NOT_A_BOARD = frozenset({"module_testing", "module_settings"})
 #: Boards whose reads are not declared yet, because they have not migrated to the API. Each entry goes away in the
 #: PR that migrates that board, which is also the PR that adds its ``READS``.
 UNDECLARED = frozenset({
     "module_asymmetric_growth", "module_comovement", "module_financials", "module_fundamentals", "module_leaps",
-    "module_oipd", "module_relatedness", "module_sec_13f", "module_sector_rotation", "module_settings",
+    "module_oipd", "module_relatedness", "module_sec_13f", "module_sector_rotation",
     "module_spx_gamma", "module_swing_potential", "module_uw_interaction", "module_value_chain",
 })
 

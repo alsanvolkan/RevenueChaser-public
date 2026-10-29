@@ -40,14 +40,26 @@ def dataset_status(dataset: str) -> str:
     return check["result"] if check else NEVER_CHECKED
 
 
-def _rows(table: str, sql: str, params: list) -> list[dict]:
+def _rows(table: str, sql: str, params: list, *, missing_table_ok: bool = False) -> list[dict]:
+    """The rows of one SELECT, through a read-only handle on the table's kind.
+
+    ``missing_table_ok`` is for a table that a file built before it existed does not have - a report added to a
+    kind later. Without it such a read raises a catalog error, which on a page render is a 500 where "no rows yet"
+    is the truth. It is off by default on purpose: for every other table, a name the file does not have is a typo,
+    and the catalog's column guard exists to make that loud rather than silent.
+    """
     ops.read_log.bump(table)
     try:
         con = serving.open_read(KIND_OF_TABLE[table])
     except serving.ServingFileMissing:
         return []
     try:
-        cur = con.execute(sql, params)
+        try:
+            cur = con.execute(sql, params)
+        except Exception as exc:  # noqa: BLE001 - duckdb's catalog error is not a public class here
+            if missing_table_ok and "does not exist" in str(exc) and table in str(exc):
+                return []
+            raise
         cols = [d[0] for d in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
     finally:
@@ -165,9 +177,14 @@ def membership(index: str | None = None, on=None, source: str = "funds/index_hol
 
 DATASET_OF_TABLE.update({"price_bar_daily": "alpaca/bars", "security_symbol": "alpaca/bars",
                          "market_cap_daily": "alpaca/bars", "corporate_action": "alpaca/corporate_actions",
-                         "shares_class": "sec/cover_shares"})
+                         "shares_class": "sec/cover_shares",
+                         # The two second-source reports a cross-check reads (Karar 32-B): the monthly WRDS
+                         # comparison, written by the attended WRDS run, and the revisions the serving build writes
+                         # when a later run replaces a stored bar.
+                         "wrds_price_diff": "wrds/prices", "price_revision": "prices/serving"})
 KIND_OF_TABLE.update({t: "prices" for t in ("price_bar_daily", "security_symbol", "market_cap_daily",
-                                            "corporate_action", "shares_class")})
+                                            "corporate_action", "shares_class", "wrds_price_diff",
+                                            "price_revision")})
 BASES = ("nominal", "split", "total_return")
 # The factor period of a bar: ``valid_from <= session_date < valid_to``, open at both ends (no row: factor 1).
 _PERIOD = ("a.security_id = b.security_id AND b.session_date >= coalesce(a.valid_from, DATE '0001-01-01') "
@@ -749,6 +766,37 @@ def revisions(cik=None, since=None) -> list[dict]:
         sql += " AND new_as_of >= ?"
         params.append(_day(since))
     return _rows("fundamental_revision", sql + " ORDER BY new_as_of DESC, cik, datadate, item", params)
+
+
+def price_source_diff(comparison: str | None = None) -> list[dict]:
+    """``wrds_price_diff`` rows, newest report first: our closes and returns against WRDS's, per comparison.
+
+    The second source of the prices field (Karar 32-B, avo 29 Oct 2026). One row per comparison and report day,
+    with how many securities and sessions it covered and how many differed by more than the 1-bp rule.
+    """
+    sql, params = "SELECT * FROM wrds_price_diff WHERE true", []
+    if comparison is not None:
+        sql += " AND comparison = ?"
+        params.append(str(comparison))
+    return _rows("wrds_price_diff", sql + " ORDER BY as_of DESC, comparison", params, missing_table_ok=True)
+
+
+def price_revisions(security_ids: Iterable[str] | None = None, start=None, end=None) -> list[dict]:
+    """``price_revision`` rows: every stored bar a later run replaced, newest session first.
+
+    The other half of the prices cross-check: not a second provider's answer but our own, before and after. A
+    security with no revision has no row, which is the answer "nothing was revised" and not missing data.
+    """
+    sql, params = "SELECT * FROM price_revision WHERE true", []
+    ids = _ids(security_ids) if security_ids is not None else []
+    if security_ids is not None:
+        if not ids:
+            return []
+        sql += f" AND security_id IN ({', '.join('?' * len(ids))})"
+        params.extend(ids)
+    sql = _bounded(sql, params, "session_date", start, end)
+    return _rows("price_revision", sql + " ORDER BY session_date DESC, security_id", params,
+                 missing_table_ok=True)
 
 
 def table_summary(table: str, day_column: str | None = None, key_column: str | None = None,

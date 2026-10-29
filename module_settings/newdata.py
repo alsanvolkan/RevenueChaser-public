@@ -398,14 +398,31 @@ def _sample_hour(now: datetime) -> str:
     return now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H")
 
 
+def _sample_key(table: str, now: datetime) -> str:
+    """The cache key: the table, the hour, and the serving file it was read from with its last write.
+
+    The file belongs in the key for two reasons. A swap mid-hour replaces the rows, and a sample from before it is
+    then wrong rather than merely old. And the store root moves between runs (every test gets its own), so a key of
+    table and hour alone serves one test's rows to the next.
+    """
+    from RevenueChaser.rcdata import read
+    kind = read.KIND_OF_TABLE.get(table)
+    path = serving.live_path(kind) if kind is not None else None
+    try:
+        stamp = path.stat().st_mtime_ns if path is not None else None
+    except OSError:
+        stamp = None                           # not built yet: that is a key of its own
+    return f"{table}|{_sample_hour(now)}|{path}|{stamp}"
+
+
 def _cached_sample(table: str, now: datetime, read):
-    """``read(table)`` at most once an hour per table (A16's hourly cache)."""
-    hour = _sample_hour(now)
+    """``read(table)`` at most once an hour per table and serving file (A16's hourly cache)."""
+    key = _sample_key(table, now)
     hit = _SAMPLE_CACHE.get(table)
-    if hit is not None and hit[0] == hour:
+    if hit is not None and hit[0] == key:
         return hit[1]
     value = read(table)
-    _SAMPLE_CACHE[table] = (hour, value)
+    _SAMPLE_CACHE[table] = (key, value)
     return value
 
 
@@ -655,6 +672,72 @@ def _cost(dataset: str, backfill_view: dict | None, used_today: dict[str, int] |
             "remaining": None if cap is None else max(0, cap - used), "cap": cap}
 
 
+# ── The cross-check table (A17-B, Karar 32-B) ────────────────────────────────────────────────────────────────
+
+#: The one comparison of the WRDS report the prices row shows: our closes against CRSP's, which is the field's
+#: second source. The other rows of that report are on the WRDS card itself.
+CROSS_COMPARISON = "crsp_vs_alpaca"
+CROSS_SECOND_SOURCE = "WRDS (CRSP and Compustat)"
+#: Karar 32-B (avo, 29 Oct 2026): a real second source is looked for in two fields and no more.
+CROSS_FIELDS = ("prices", "interest rates")
+NO_SECOND_SOURCE = ("no second source is stored for this field yet: FRED is the only one that answers for it, so "
+                    "a cross-check would compare the series with itself")
+NO_REPORT_YET = "the monthly WRDS comparison has not run yet, so there is nothing to compare against"
+#: Why the prices check is not a button press away: its second source is WRDS, which needs a person to log in and
+#: confirm Duo, so the run is attended and the queue cannot start it (``rcdata/build``'s ``attended`` flag). avo's
+#: A17-B allows a press to ask the live source; this is the field where that cannot apply, and saying so is better
+#: than a button that queues a run nothing will pick up.
+CROSS_ATTENDED = ("this check is attended: WRDS asks for a login and Duo, so it runs from a terminal on the "
+                  "server and the queue cannot start it")
+
+
+def _diff_rows() -> list[dict]:
+    """The stored WRDS comparison, read once. Its own function so a test can stand in for the store."""
+    from RevenueChaser.rcdata import read
+    return read.price_source_diff(comparison=CROSS_COMPARISON)
+
+
+def cross_check(now: datetime, facts: dict, used_today: dict[str, int]) -> dict:
+    """The cross-check table: per field, what the second source said and what a fresh check would cost.
+
+    This reads the **stored** report and nothing else. The check itself runs only when the reader presses the
+    button, and then through the queue (``/api/build/request/<dataset>``), never by this page calling a provider:
+    that is what makes avo's choice of A17-B safe.
+    """
+    newest = next(iter(_diff_rows()), None)
+    prices = {"field": "prices", "need": "prices.wrds_diff", "second_source": CROSS_SECOND_SOURCE,
+              # Attended, so there is nothing for the button to queue; the command is shown instead.
+              "dataset": None, "attended": True, "command": ATTENDED_COMMANDS.get("wrds/prices"),
+              "calls": None, "remaining": _remaining("wrds", used_today), "as_of": None, "checked": None,
+              "differs": None, "worst": None, "why": NO_REPORT_YET, "cannot_queue": CROSS_ATTENDED}
+    if newest is not None:
+        worst = newest.get("max_close_diff")
+        prices.update({
+            "as_of": _day_text(newest.get("as_of")),
+            "checked": f'{_count(newest.get("sessions"))} sessions of {_count(newest.get("securities"))} names',
+            "differs": newest.get("close_differs"),
+            "worst": f"{worst:.3%}" if isinstance(worst, (int, float)) else None,
+            "why": None})
+    rates = {"field": "interest rates", "need": "macro.dgs10", "second_source": None, "dataset": None,
+             "attended": False, "command": None, "calls": None, "remaining": None, "as_of": None,
+             "checked": None, "differs": None, "worst": None, "why": NO_SECOND_SOURCE,
+             "cannot_queue": NO_SECOND_SOURCE}
+    return {"fields": [prices, rates]}
+
+
+def _remaining(provider: str, used_today: dict[str, int]) -> int | None:
+    cap = caps.cap_for(provider)
+    return None if cap is None else max(0, cap - (used_today or {}).get(provider, 0))
+
+
+def _count(value) -> str:
+    return "?" if value is None else f"{int(value):,}"
+
+
+def _day_text(value) -> str | None:
+    return value.isoformat() if isinstance(value, (date, datetime)) else (str(value) if value else None)
+
+
 def _measured_at(now: datetime) -> str:
     """The clock the store was read at, for each card's "Measured" row (S6)."""
     return now.strftime("%H:%M")
@@ -752,6 +835,7 @@ def collect(now: datetime | None = None) -> dict:
         "backups": _backups(now),
         "retention": _retention(),
         "retirement": _retirement(now),
+        "cross_check": cross_check(now, facts, used_today),
         **_watch_section(),
     }
 

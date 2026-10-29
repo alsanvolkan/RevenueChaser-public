@@ -171,6 +171,14 @@ _NEEDS = (
     # ``latest_market`` returns a row keyed ``ticker``; the table itself is keyed ``security_id``.
     Need("prices.latest", "latest_market", "market_cap_daily", "session_date", "ticker", 1,
          table_key_column="security_id", ask_param="tickers", normalize=TICKER, providers=("alpaca",)),
+    # The two second-source reports (Karar 32-B): the WRDS comparison is a monthly attended run, so its freshness
+    # is counted in calendar days - a month-old report is not stale, and in sessions the number would mean
+    # something else. The revision log is written by every serving build, so it is counted in sessions like the
+    # bars it revises.
+    Need("prices.wrds_diff", "price_source_diff", "wrds_price_diff", "as_of", "comparison", 35, DAYS,
+         ask_param="comparison", providers=("wrds",)),
+    Need("prices.revision", "price_revisions", "price_revision", "session_date", "security_id", 1,
+         ask_param="security_ids"),
     Need("prices.security_ids", "security_ids", "security_symbol", "valid_from", "symbol", 5,
          ask_param="tickers", normalize=TICKER, providers=("alpaca",)),
 )

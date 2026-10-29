@@ -47,6 +47,24 @@ def test_each_table_is_cached_on_its_own():
     assert reads == ["a", "b"]
 
 
+def test_a_swap_inside_the_hour_is_read_again_rather_than_served_from_the_cache(prices_store):
+    """The file belongs in the key: a swap replaces the rows, and a sample from before it is wrong, not old. It is
+    also what keeps one test's rows out of the next one's cache, since every test has its own store root."""
+    import time
+
+    from RevenueChaser.rcdata import serving
+    reads = []
+    read = lambda name: (reads.append(name), {"columns": [], "rows": [[len(reads)]]})[1]
+    first = newdata._cached_sample("price_bar_daily", NOW, read)
+    assert newdata._cached_sample("price_bar_daily", NOW, read) == first and len(reads) == 1
+    path = serving.live_path("prices")
+    path.touch()
+    time.sleep(0.01)
+    path.write_bytes(path.read_bytes())        # a new mtime: the file was written again
+    assert newdata._cached_sample("price_bar_daily", NOW, read) != first
+    assert len(reads) == 2
+
+
 def test_the_cache_key_is_the_hour_the_page_was_read_not_the_minute():
     assert newdata._sample_hour(NOW) == newdata._sample_hour(NOW.replace(minute=59))
     assert newdata._sample_hour(NOW) != newdata._sample_hour(NOW + timedelta(hours=1))
