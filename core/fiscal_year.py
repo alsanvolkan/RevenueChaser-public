@@ -46,12 +46,14 @@ def anchor(annual: list[dict]) -> int | None:
 
 
 def period_end(rec: dict | None) -> date | None:
-    """The period end of an annual record: its revenue's end, else the newest end of any field; None without
-    ``period_ends`` (records stored before #239, yfinance shapes) or with an unreadable date."""
+    """The period end of an annual record: its revenue's end, else the newest end of any field (EDGAR's
+    ``period_ends``), else the record's one ``period_end`` (the yfinance shape: Asymmetric Growth review SF-2, PR 6,
+    so the staleness and adjacent-year rules apply to a Yahoo-scored name too); None without any (records stored
+    before #239) or with an unreadable date."""
     ends = (rec or {}).get("period_ends") or {}
     if not isinstance(ends, dict):
         return None
-    raw = ends.get("revenue") or max((v for v in ends.values() if v), default=None)
+    raw = ends.get("revenue") or max((v for v in ends.values() if v), default=None) or (rec or {}).get("period_end")
     try:
         return date.fromisoformat(str(raw)[:10]) if raw else None
     except ValueError:

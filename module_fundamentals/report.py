@@ -82,6 +82,7 @@ input[type=text]{flex:1;min-width:200px}
 .gates{display:flex;gap:6px;border-top:1px solid var(--panel2);padding-top:8px}
 .event{color:var(--amber);font-size:11px;line-height:1.35}
 .event .when{color:var(--muted)}
+.m .when{display:block;font-weight:400;font-size:9px;color:var(--muted)}
 .gate{flex:1;background:var(--panel2);color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:5px 0;cursor:pointer;font-weight:700;font-size:12px}
 .gate.on{color:var(--green);border-color:rgba(46,204,113,.4)}
 .gate.off{color:var(--red)}
@@ -163,9 +164,12 @@ def _summary_html(s: dict, data_quality: dict | None = None) -> str:
     # The counters cover the shown cards (counted after top_n); a payload from before they existed has neither key.
     dq = data_quality or {}
     n_filings, n_cik = int(dq.get("no_submissions") or 0), int(dq.get("no_cik") or 0)
-    if n_filings or n_cik:
+    n_stale = int(dq.get("stale_submissions") or 0)          # review F2: rows the daily sync stopped refreshing
+    if n_filings or n_cik or n_stale:
+        from . import config as _config
         shown = f" of the {_fmt_int(top_n)} shown" if top_n else ""
-        parts = ([f"{_fmt_int(n_filings)} with no filings on record"] if n_filings else []) +                 ([f"{_fmt_int(n_cik)} with no CIK"] if n_cik else [])
+        parts = ([f"{_fmt_int(n_filings)} with no filings on record"] if n_filings else []) +                 ([f"{_fmt_int(n_cik)} with no CIK"] if n_cik else []) +                 ([f"{_fmt_int(n_stale)} with an 8-K list not checked in the last "
+                  f"{_config.CORPORATE_EVENT_CHECK_MAX_AGE_DAYS} days"] if n_stale else [])
         elim_part += (f" No corporate-event check{shown}: {' · '.join(parts)}"
                       " (a card without an amber event line is not proven event-free for these).")
     # #46: what the extraction could not read. The measure is the unit on the money facts, never the accounting
@@ -273,6 +277,7 @@ var BOOT = __BOOT__;
 var DATA = [];
 var GATES = {};
 var PERIODS = {};
+var ANCHORS = {};
 var META = __META__;
 var RULES = ["rule_of_40","quality","momentum"];
 var RULE_ON = __RULE_ON__;
@@ -352,7 +357,9 @@ function cardHtml(c){
     + cell("Period", rcEsc(c.period))
     + cell("Basis", rcEsc(c.ro40_basis))
     + cell("Rule of 40", r40)
-    + cell("Quality", rcEsc(c.quality_score))
+    // Review F1: ROIC, gross margin and net debt are one fiscal year's (the anchor), the growth half is TTM.
+    + cell("Quality", rcEsc(c.quality_score)
+           + (c.anchor_period_end ? '<span class="when">FY to ' + rcEsc(c.anchor_period_end) + '</span>' : ''))
     + cell("Momentum", rcEsc(c.momentum_score))
     + cell("Price", usd(c.price))
     + cell("Mkt cap", usd(c.market_cap))
@@ -378,6 +385,9 @@ function openGate(btn){
   var gate = (GATES[t]||{})[g];
   if(!gate) return;
   var period = PERIODS[t] || "";
+  // Review F1: Quality mixes two time bases; its window names both.
+  if(g === "quality" && ANCHORS[t])
+    period = "growth: TTM " + period + " · ROIC, gross margin, net debt: fiscal year to " + ANCHORS[t];
   document.getElementById("m-title").textContent = gate.name;
   document.getElementById("m-sub").textContent = t + " — " + gate.score + (gate.passed ? " (PASS)" : " (FAIL)") + (period ? " · " + period : "");
   var rules = gate.rules.map(function(r){
@@ -415,7 +425,10 @@ function boot(d){
   DATA = (d && d.rows) || [];
   GATES = {};
   PERIODS = {};
-  DATA.forEach(function(c){ GATES[c.ticker] = c.gates || {}; PERIODS[c.ticker] = c.period || ""; });
+  ANCHORS = {};
+  DATA.forEach(function(c){
+    GATES[c.ticker] = c.gates || {}; PERIODS[c.ticker] = c.period || ""; ANCHORS[c.ticker] = c.anchor_period_end || "";
+  });
   init();
 }
 function start(){

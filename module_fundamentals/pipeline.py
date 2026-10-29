@@ -317,14 +317,12 @@ def _ttm_metrics(quarterly: list[dict], annual: list[dict]) -> dict:
 
 
 def _quality_metrics(annual: list[dict]) -> dict:
-    out = {"gross_margin": None, "roic": None, "net_debt_ebitda": None,
+    out = {"gross_margin": None, "roic": None, "net_debt_ebitda": None, "net_cash": None,
            "net_income": None, "total_equity": None}
     i = fiscal_year.anchor(annual)          # #386 F2: Quality reads the anchor year, not annual[-1]
     if i is None:
         return out
     a = annual[i]
-    rev = _to_float(a.get("revenue"))
-    gp = _to_float(a.get("gross_profit"))
     ebit = _to_float(a.get("ebit"))
     dep = _to_float(a.get("depreciation"))
     debt = _to_float(a.get("total_debt"))
@@ -334,13 +332,17 @@ def _quality_metrics(annual: list[dict]) -> dict:
     out["net_income"] = _to_float(a.get("net_income"))
     out["total_equity"] = eq
 
-    if rev and gp is not None:
-        out["gross_margin"] = gp / rev
+    # Review N4: the C18 comparability rule every board uses (revenue <= 0 or gross profit > revenue is unknown).
+    out["gross_margin"] = fiscal_year.gross_margin(a)[0]
 
     ebitda = (ebit + dep) if (ebit is not None and dep is not None) else ebit
     liquid, _basis = liquid_assets(a)  # cash + short-term investments of this record (#187)
-    if ebitda is not None and ebitda > 0 and debt is not None and liquid is not None:
-        out["net_debt_ebitda"] = (debt - liquid) / ebitda
+    if debt is not None and liquid is not None and ebitda is not None:
+        # Review N1: more cash than debt is no leverage in a loss year (EBITDA known and <= 0); the ratio itself
+        # needs EBITDA > 0. No EBITDA figure at all is a missing input and stays unknown (Opus review S5).
+        out["net_cash"] = debt - liquid <= 0
+        if ebitda > 0:
+            out["net_debt_ebitda"] = (debt - liquid) / ebitda
 
     if ebit is not None and debt is not None and eq is not None and cash is not None:
         nopat = ebit * (1 - config.TAX_RATE)
@@ -433,6 +435,8 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         if not no_fetch:
             _EDGAR_HEALTH.call(error=str(exc) or type(exc).__name__, endpoint=f"{ticker}.companyfacts")
         return _drop("edgar_fetch_failed")     # the call failed: a data gap, not "EDGAR has nothing" (#386 F1)
+    if not no_fetch and (emeta or {}).get("downloaded"):
+        _EDGAR_HEALTH.call(endpoint=f"{ticker}.companyfacts")     # review N5: a download that worked is a call too
     # #46: whether this row was extracted since the currency measure landed at all. An absent key is "not
     # measured", and a stored row is never re-extracted (``sec_edgar._stored_fundamentals``), so only a
     # re-extraction fills it.
@@ -470,9 +474,9 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         return _drop("no_price")
 
     ttm = _ttm_metrics(quarterly, annual)
-    # #386 F1: an absurd Rule of 40 is a data problem, not a pick.
-    if ttm["ro40"] is not None and ttm["ro40"] > config.RO40_BARRIER:
-        return _drop("ro40_barrier")
+    # #386 F1: an absurd Rule of 40 is a data problem, not a pick. Review N2 (default chosen, avo may prefer the
+    # old drop): the name is no longer dropped, so Quality and Momentum still read it; the screener makes that Rule
+    # of 40 unknown and the card DISTORTED (screeners.evaluate_rule_of_40, is_distorted).
     qual = _quality_metrics(annual)
     market_cap = _to_float(row.get("market_cap")) or _to_float(info.get("marketCap"))
 
@@ -495,6 +499,7 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         "gross_margin": qual["gross_margin"],
         "roic": qual["roic"],
         "net_debt_ebitda": qual["net_debt_ebitda"],
+        "net_cash": qual.get("net_cash"),
         "pe": pe,
         "pb": pb,
         "dist_52w_pct": ind.get("within_52w_high_pct"),
@@ -521,7 +526,6 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         "anchor_period_end": anchor_end.isoformat() if anchor_end else None,
         "metrics": metrics,
         "ohlc_stale": bool(df.attrs.get("stale")),
-        "short_refetch_refused": bool(df.attrs.get("short_refetch_refused")),
         "info_stale": info_stale,
         "edgar_extract_version": (emeta or {}).get("extract_version"),     # the result history checks it (#278)
     }
@@ -557,7 +561,6 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
     run_stats = run_stats or {}
     results = results or []
     run_stats["stale_info"] = sum(1 for r in results if r.get("info_stale"))
-    run_stats["short_refetch_refused"] = sum(1 for r in results if r.get("short_refetch_refused"))
 
     passing = {"rule_of_40": 0, "quality": 0, "momentum": 0}
     distorted_count = 0
@@ -614,6 +617,7 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
     found = events.corporate_events([c["ticker"] for c in candidates], stats=event_stats)
     run_stats["no_submissions"] = int(event_stats.get("no_submissions") or 0)
     run_stats["no_cik"] = int(event_stats.get("no_cik") or 0)
+    run_stats["stale_submissions"] = int(event_stats.get("stale_submissions") or 0)    # review F2
     for c in candidates:
         ev = found.get(c["ticker"])
         if ev:
@@ -636,7 +640,9 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
                          "stale_info": run_stats.get("stale_info", 0),
                          "no_submissions": run_stats.get("no_submissions", 0),
                          "no_cik": run_stats.get("no_cik", 0),
-                         "short_refetch_refused": run_stats.get("short_refetch_refused", 0),
+                         "stale_submissions": run_stats.get("stale_submissions", 0),
+                         # SPY's frame, the only one ``load_ohlc`` can still refuse (Swing review 8): 0 or 1
+                         "short_refetch_refused": int(bool(run_stats.get("spy_short_refetch_refused"))),
                          "spy_stale": bool(run_stats.get("spy_stale")),
                          "dropped": run_stats.get("dropped") or {}},
         "summary": {

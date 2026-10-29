@@ -306,7 +306,7 @@ whole app at a local server:
 
 | Env var | Redirects |
 |---|---|
-| `RC_UW_BASE` | Unusual Whales (`core/providers/unusual_whales.py`, `core/index_registry.py`) |
+| `RC_UW_BASE` | Unusual Whales (`core/providers/unusual_whales.py`, `core/index_lists.py`) |
 | `RC_UW_BASE_ROOT` | Unusual Whales for `module_spx_gamma` (no `/api` suffix) |
 | `RC_SEC_WWW_BASE` / `RC_SEC_DATA_BASE` | SEC EDGAR + 13F archives; the spine's `sec/company_tickers_exchange`; the ownership store's EDGAR daily index, filings (`sec/13f`, `sec/form4`, `sec/13dg`) and fails-to-deliver files (`sec/ftd`) |
 | `RC_FORM13F_INDEX_URL` | SEC Form 13F data-set page (zip links are resolved from it) |

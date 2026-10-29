@@ -179,9 +179,10 @@ the old page (3.6), which is no longer shown. From the same read-only spine hand
 rows, then the listed ones, then Tier A, then with a CUSIP, with a FIGI, with a GICS classification and in the
 S&P 500, 400, 600 or Nasdaq-100, each of those four out of Tier A; the drops (Tier B, C, D); the members per index;
 and the open `build_issues` of `spine/security` by kind with the newest ten. Before the first spine build it says
-so instead of drawing zeros. Its first row, "Boards read", says which universe the boards read: the old store, the
-spine (`RC_UNIVERSE_SOURCE=spine`), or the old store because the spine was asked for but is missing or its last build
-failed (in amber, with the reason).
+so instead of drawing zeros. Its first row, "Boards read", says which universe the boards read and how that was
+chosen: the spine (the default, `RC_UNIVERSE_SOURCE` unset, or the variable set to `spine`), the old store (the
+variable set to anything else, `store` by convention), or the old store because the spine was asked for but is
+missing or its last build failed (in amber, with the reason).
 
 **Page-level cards:** the queue (queued and running requests, then the last 20 finished), spend (F6: calls per
 provider for the New York day and the week from Monday, from `provider_calls_daily`, against the day caps of

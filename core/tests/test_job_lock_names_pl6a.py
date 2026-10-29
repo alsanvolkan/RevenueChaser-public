@@ -19,7 +19,7 @@ NAMES = (
     "universe_run",            # core/universe_fetch.py: the refresh-run marker beside it
     "board_fetch_<board>",     # core/universe_fetch.py: one single-board Fetch
     "daily_bars",              # core/prices.py
-    "index_lists",             # core/index_registry.py
+    "index_lists",             # core/index_lists.py
     "index_levels",            # core/index_levels.py
     "identity",                # core/identity/refresh.py: the dashboard job and its CLI (#26, PL6-a)
     "sec_13f",                 # app/runners.py: the three 13F jobs (#26, PL6-a)

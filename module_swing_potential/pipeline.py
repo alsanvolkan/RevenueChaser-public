@@ -114,7 +114,6 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         "earnings_date": earnings_date,
         "ind": ind,
         "ohlc_stale": bool(df.attrs.get("stale")),
-        "short_refetch_refused": bool(df.attrs.get("short_refetch_refused")),
         "info_stale": info_stale,
     }
 
@@ -146,7 +145,6 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
     run_stats = run_stats or {}
     results = results or []
     run_stats["stale_info"] = sum(1 for r in results if r.get("info_stale"))
-    run_stats["short_refetch_refused"] = sum(1 for r in results if r.get("short_refetch_refused"))
 
     rs_pct = percentile_ranks([(r["ticker"], r["ind"].get("rs_vs_spy_12m")) for r in results])
     mom_pct = percentile_ranks([(r["ticker"], r["ind"].get("mom_12_1")) for r in results])
@@ -240,7 +238,8 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
         "no_data": False,
         "data_quality": {"stale_ohlc": run_stats.get("stale_ohlc", 0),
                          "stale_info": run_stats.get("stale_info", 0),
-                         "short_refetch_refused": run_stats.get("short_refetch_refused", 0),
+                         # SPY's frame, the only one ``load_ohlc`` can still refuse (review 8): 0 or 1
+                         "short_refetch_refused": int(bool(run_stats.get("spy_short_refetch_refused"))),
                          "spy_stale": bool(run_stats.get("spy_stale")),
                          "dropped": run_stats.get("dropped") or {}},
         "summary": {
@@ -261,6 +260,7 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
             "top_n": len(candidates),
         },
         "candidates": candidates,
+        "settings": e.payload(),               # the run's thresholds: card text and ledger version read these
     }
 
 
@@ -278,19 +278,21 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
     from RevenueChaser.core.providers import yfinance as yfp
 
     from . import scores
-    # Without a sink the one-argument call stays as it was (stand-ins of ``scores.persist`` keep working);
-    # each of prefilter / build_payload / persist resolves the effective settings (#384 SW-S4) once itself.
+    # Without a sink the one-argument call stays as it was (stand-ins of ``scores.persist`` keep working).
+    # The settings are resolved once and pinned for the whole run (Swing review finding 2): prefilter /
+    # build_payload / persist each still call ``effective()``, and all of them get these.
     persist = scores.persist if rows_sink is None else (lambda results: scores.persist(results, sink=rows_sink))
     # This Fetch's Yahoo reads only (#80). A Refresh serves the stored payload, which already carries the key.
     if not no_fetch:
         yfp.reset_health()
-    payload = screen_common.run_screen(
-        board="swing", refreshed_by="Swing Potential", cfg=config,
-        load_universe=fetch_universe_stats, prefilter=prefilter,
-        load_spy=lambda: screen_common.load_spy(lambda: load_ohlc("SPY", ttl_days=0.5, no_fetch=no_fetch)),
-        compute_row=_compute_row, build_payload=build_payload, persist=persist,
-        top_n=top_n, refresh_universe=refresh_universe, no_fetch=no_fetch,
-        history_board="module_swing_potential", saved=config.SWING_JSON)
+    with swing_settings.pinned(swing_settings.effective()):
+        payload = screen_common.run_screen(
+            board="swing", refreshed_by="Swing Potential", cfg=config,
+            load_universe=fetch_universe_stats, prefilter=prefilter,
+            load_spy=lambda: screen_common.load_spy(lambda: load_ohlc("SPY", ttl_days=0.5, no_fetch=no_fetch)),
+            compute_row=_compute_row, build_payload=build_payload, persist=persist,
+            top_n=top_n, refresh_universe=refresh_universe, no_fetch=no_fetch,
+            history_board="module_swing_potential", saved=config.SWING_JSON)
     if not no_fetch:
         payload["provider_health"] = yfp.health()
     return payload

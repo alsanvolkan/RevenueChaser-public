@@ -51,6 +51,10 @@ def evaluate_rule_of_40(m: dict) -> dict:
     # value is shown, but the rule is unknown and never decides (the gate cannot pass on it).
     passed = (None if basis and "EBITDA" in basis
               else tri.rule((ro40,), lambda r: r >= config.RO40_MIN))
+    if ro40 is not None and ro40 > config.RO40_BARRIER:
+        # Review N2: above the barrier the figure is a data problem: shown, unknown, never a pass (#386 F1).
+        passed = None
+        label += f" (above {config.RO40_BARRIER:g}: a data problem)"
     rules = [_rule("ro40", label, "pts", passed, ro40, "≥ 40")]
     return {
         "name": "Rule of 40",
@@ -59,6 +63,15 @@ def evaluate_rule_of_40(m: dict) -> dict:
         "known": sum(1 for r in rules if r["passed"] is not None), "total": len(rules),
         "rules": rules,
     }
+
+
+def _leverage_rule(nde, net_cash) -> dict:
+    """Net Debt / EBITDA < 3×. Review N1: a firm with more cash than debt passes even when EBITDA ≤ 0 leaves the
+    ratio undefined (shown as "Net cash"); net debt with EBITDA ≤ 0 stays unknown."""
+    if nde is None and net_cash is True:
+        return _rule("net_debt_ebitda", "Net Debt / EBITDA < 3×", "text", True, "Net cash", "< 3.0×")
+    return _rule("net_debt_ebitda", "Net Debt / EBITDA < 3×", "ratio",
+                 tri.rule((nde,), lambda n: n < config.ND_EBITDA_MAX), nde, "< 3.0×")
 
 
 def evaluate_quality(m: dict) -> dict:
@@ -76,8 +89,7 @@ def evaluate_quality(m: dict) -> dict:
               tri.either(growth_ok, roic_ok), growth if growth_ok else roic, "≥20% / ≥15%"),
         _rule("gross_margin", "Gross margin ≥30%", "pct",
               tri.rule((gm,), lambda g: g >= config.GM_MIN), gm, "≥ 30%"),
-        _rule("net_debt_ebitda", "Net Debt / EBITDA < 3×", "ratio",
-              tri.rule((nde,), lambda n: n < config.ND_EBITDA_MAX), nde, "< 3.0×"),
+        _leverage_rule(nde, m.get("net_cash")),
     ]
     return _counted("Quality", rules)
 
@@ -99,9 +111,12 @@ def evaluate_momentum(m: dict) -> dict:
 
 
 def is_distorted(m: dict) -> bool:
-    """[DISTORTED] guardrail: absurd growth or a micro revenue base."""
+    """[DISTORTED] guardrail: absurd growth, a micro revenue base, or a Rule of 40 above the barrier (review N2)."""
     growth = m.get("rev_growth_ttm")
     rev = m.get("ttm_revenue")
+    ro40 = m.get("ro40")
+    if ro40 is not None and ro40 > config.RO40_BARRIER:
+        return True
     if growth is not None and abs(growth) > config.DISTORTED_GROWTH:
         return True
     if rev is not None and rev < config.DISTORTED_REV_MIN:

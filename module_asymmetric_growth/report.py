@@ -318,7 +318,7 @@ def render_asymmetric_growth_hunter_html(result: dict) -> str:
     <div class="stat"><div class="v" id="b-87">{summary.get("pts_8_7", 0)}</div><div class="l">8-7 pts</div><div class="d">7-8 points</div></div>
     <div class="stat"><div class="v" id="b-65">{summary.get("pts_6_5", 0)}</div><div class="l">6-5 pts</div><div class="d">5-6 points</div></div>
     <div class="stat"><div class="v" id="b-lt5">{summary.get("pts_lt5", 0)}</div><div class="l">&lt;5 pts</div><div class="d">0-4 points</div></div>
-    <div class="stat"><div class="v" id="b-disruptive">{summary.get("disruptive_themed", 0)}</div><div class="l">Disruptive Theme</div><div class="d">Sector &amp; Theme</div></div>
+    <div class="stat"><div class="v" id="b-disruptive">{summary.get("disruptive_themed", 0)}</div><div class="l">Themed</div><div class="d">any pinned theme of the rotation map</div></div>
     <div class="stat"><div class="v" id="b-tech">{summary.get("tech_breakthrough", 0)}</div><div class="l">Technological Breakthrough</div><div class="d">High R&D intensity</div></div>
   </div>
 
@@ -396,7 +396,7 @@ def render_asymmetric_growth_hunter_html(result: dict) -> str:
         <tr><td>Tier</td><td>—</td><td>A signal is strong with at least {engine.TIER_MIN_PASSES} of its 3 sub-criteria passed. Balanced = 3 strong signals, Strong = 2. Computed with the default thresholds (the sliders move points only). Cards sort by tier, then points, then revenue growth capped at +100%.</td></tr>
         <tr><td>Sector</td><td>—</td><td>Financial Services and Real Estate (the universe sector) are not comparable on revenue, margin and free cash flow: their cards keep their points, carry a "Not comparable" badge and get no tier.</td></tr>
         <tr><td>Data checks</td><td>—</td><td>A prior year with revenue of zero or less, gross profit above revenue, or share counts on different bases (diluted against basic) make that figure unknown, not a fail. Growth above +{int(engine.RULES["suspicious_growth"] * 100)}% is flagged and sorts with the unknowns. A name whose latest annual report ended more than {engine.RULES["stale_days"]} days ago is excluded and listed in the funnel. When only its revenue figure is that old (the newer reports carry none), the card reads the latest report with revenue unknown, is flagged and gets no tier.</td></tr>
-        <tr><td>Overlays</td><td>—</td><td>Disruptive Themed (rotation-map Sector &amp; Theme classification) · Technological Breakthrough (research and development (R&amp;D) spending divided by revenue of at least 15%)</td></tr>
+        <tr><td>Overlays</td><td>—</td><td>Themed (any pinned theme of the rotation map; no theme is graded as disruptive) · Technological Breakthrough (research and development (R&amp;D) spending divided by revenue of at least 15%)</td></tr>
         <tr><td>Warnings</td><td>—</td><td>High dilution (year-over-year (YoY) diluted share count growth above +20%)</td></tr>
       </table>
       <div class="note">
@@ -560,6 +560,8 @@ function instTable(c) {{
     }}
     return '<div class="foot">Institutional: N/A</div>';
   }}
+  // The 13F quarter read and the one QoQ compares to (AG review SF-3); none compared when it was not stored.
+  var q13 = (c.period_ends || {{}}).inst_13f || [];
   var netH = (c.inst_new||0) - (c.inst_exited||0);
   var netF = (c.inst_buy_flow||0) - (c.inst_sell_flow||0);
   var dir, cls;
@@ -570,12 +572,14 @@ function instTable(c) {{
     ? ((c.inst_shares_delta_pct >= 0 ? '+' : '') + (c.inst_shares_delta_pct * 100).toFixed(1) + '%')
     : 'N/A';
   return '<div class="inst">'
-    + '<div class="ih">Institutional <span class="' + cls + '">' + dir + '</span></div>'
+    + '<div class="ih">Institutional' + (q13[0] ? ' (13F ' + rcEsc(q13[0]) + ')' : '')
+    + ' <span class="' + cls + '">' + dir + '</span></div>'
     + '<table>'
     + '<tr><td class="k">Holders</td><td class="v">' + c.inst_holders + '</td></tr>'
     + '<tr><td class="k">New / Exited</td><td class="v">+' + (c.inst_new||0) + ' / -' + (c.inst_exited||0) + '</td></tr>'
     + '<tr><td class="k">Buy / Sell (shares)</td><td class="v">' + shares(c.inst_buy_flow) + ' / ' + shares(c.inst_sell_flow) + '</td></tr>'
-    + '<tr><td class="k">Shares QoQ</td><td class="v">' + qoq + '</td></tr>'
+    + '<tr><td class="k">Shares QoQ' + (q13[1] ? ' (vs ' + rcEsc(q13[1]) + ')' : '')
+    + '</td><td class="v">' + qoq + '</td></tr>'
     + '</table></div>';
 }}
 
@@ -586,6 +590,7 @@ var FLAG_TEXT = {{
   revenue_nonpositive: "Revenue of zero or less: margin unknown",
   gross_profit_exceeds_revenue: "Gross profit above revenue: margin unknown",
   mixed_share_basis: "Share counts on different bases (diluted against basic): dilution unknown",
+  price_bar_older: "Price and momentum from an older session than the board's (a halt or a Daily Bars gap)",
   no_recent_revenue: "No revenue figure in the last {engine.RULES["stale_days"]} days (the newer reports carry none): revenue unknown, no tier"
 }};
 function flagsHtml(c) {{
@@ -602,7 +607,8 @@ function provHtml(c) {{
   function fy(v) {{ return v != null ? "FY" + rcEsc(v) : "FY n/a"; }}
   return '<div class="prov">' + fy(c.anchor_fy) + ' vs ' + fy(c.prior_fy)
     + ' · revenue ' + d(rev[0]) + ' · ' + d(rev[1]) + ' · ' + d(rev[2])
-    + ' · balance sheet ' + d(pe.balance_sheet) + ' · cash flow ' + d(pe.cash_flow) + '</div>';
+    + ' · balance sheet ' + d(pe.balance_sheet) + ' · cash flow ' + d(pe.cash_flow)
+    + ' · price ' + d(pe.price_bar) + '</div>';
 }}
 
 function cardHtml(c) {{

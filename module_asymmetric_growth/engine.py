@@ -11,7 +11,7 @@ Toplam puan = geçen alt kriter sayısı (0-9). Kovalar: 9 · 8-7 · 6-5 · <5.
 Tier (#380 S2): a signal is strong with at least 2 of its 3 sub-criteria passed; 3 strong = Balanced (3),
 2 strong = Strong (2), otherwise no tier. Server-side, from the default thresholds.
 
-Etiketler: Disruptive Themed (rotation-map teması), Technological
+Etiketler: Themed (any pinned rotation-map theme; AG review N-3), Technological
 Breakthrough (R&D/Revenue >= 15%). Uyarı: High dilution (YoY hisse artışı > %20).
 """
 from __future__ import annotations
@@ -265,6 +265,7 @@ def technical_from_bars(rows, session: date | None = None) -> dict:
     vol_90d = _mean_last([b[3] for b in bars], BARS_3M)
     return {
         "price": price,
+        "bar_date": bars[-1][0].isoformat() if bars else None,   # the session this card's price is from (SF-1)
         "high_52w": high,
         "dist_52w_pct": (high - price) / high if (price is not None and high) else None,
         "sma50": sma50,
@@ -644,11 +645,22 @@ def _technical_for(ticker: str, financials: dict, meta: dict, preload: dict | No
         session = _d01_session()
         rows = _bars_by_ticker([ticker], session).get(ticker)
     technical = technical_from_bars(rows or [], session)
+    technical["session"] = session.isoformat() if session is not None else None
     if technical.get("price") is None:
         quote = meta.get("quote") or {}
         technical["price"] = (to_float(financials.get("current_price")) or to_float(meta.get("price"))
                               or to_float(quote.get("regularMarketPrice")))
     return technical
+
+
+def _mark_bar_date(card: dict, technical: dict) -> None:
+    """The card's own price session (AG review SF-1, PR 6): ``period_ends["price_bar"]`` (stored with the card, so a
+    Refresh shows it), and the ``price_bar_older`` data check when it is before the session the scan read up to (a
+    halt or a Daily Bars gap). No bars: no date, no check; the momentum is already unknown."""
+    day, session = technical.get("bar_date"), technical.get("session")
+    card.setdefault("period_ends", {})["price_bar"] = day
+    if day and session and day < session:
+        card["flags"] = [*(card.get("flags") or []), "price_bar_older"]
 
 
 def _is_thin(price, vol_90d) -> bool:
@@ -702,6 +714,7 @@ def enrich_and_score(ticker: str, meta: dict, no_fetch: bool = False,
                         stored_ownership=((preload or {}).get("ownership") or {}).get(ticker))
     if card is None:
         return dropped("foreign")
+    _mark_bar_date(card, technical)
     # #41: the one place the technical inputs are in hand for a scored name (the card does not carry vol_90d).
     if drops is not None and _is_thin(technical.get("price"), technical.get("vol_90d")):
         drops.note_thin(ticker)
@@ -720,7 +733,8 @@ _DROP_STEPS = (
 
 
 def _funnel_steps(universe_total: int, excluded_types: int, drops: _Drops, score_errors: dict[str, list[str]],
-                  scored: int, low_liquidity: int | None = 0, unreadable_sec: int = 0) -> list[dict]:
+                  scored: int, low_liquidity: int | None = 0, unreadable_sec: int = 0,
+                  momentum_unknown: list[str] | None = None) -> list[dict]:
     """The shared-format funnel (``core.funnel``): universe, then every reason a name has no card, then scored.
 
     The drops sum to ``universe_total - scored`` by construction: whatever no reason accounts for is shown as
@@ -729,7 +743,8 @@ def _funnel_steps(universe_total: int, excluded_types: int, drops: _Drops, score
     ``low_liquidity`` and ``unreadable_sec`` (#41) are ``note`` steps, never drops: those names HAVE a card, so
     counting them as drops would break the arithmetic above and misstate the board. They overlap each other by
     design, and ``low_liquidity`` is ``None`` where no liquidity basis was read — an unknown note is left out
-    rather than shown as 0.
+    rather than shown as 0. ``momentum_unknown`` (AG review N-2) names the cards whose momentum signal is not fully
+    known (no or too few D01 bars): a note too, since they have a card.
     """
     step = funnel_mod.step
     steps = [step("universe", "Universe, all market caps", universe_total, "start")]
@@ -757,15 +772,37 @@ def _funnel_steps(universe_total: int, excluded_types: int, drops: _Drops, score
     if unreadable_sec:
         steps.append(step("unreadable_sec", "Scored, but the financials are Yahoo statements, not EDGAR filings",
                           unreadable_sec, "note"))
+    if momentum_unknown:
+        names = sorted(momentum_unknown)
+        steps.append(step("momentum_unknown", "Scored, but momentum unknown (no or too few D01 price bars)",
+                          len(names), "note", tickers=names[:funnel_mod.MAX_TICKERS]))
     steps.append(step("scored", "Scored (a card on the board)", scored, "result"))
     return steps
 
 
+def _momentum_unknown(cards: list[dict]) -> list[str]:
+    """The cards whose momentum signal has an unknown input (AG review N-2): they cannot pass it."""
+    return [c["ticker"] for c in cards for s in (c.get("signals") or [])
+            if s.get("key") == "momentum" and (s.get("known") or 0) < (s.get("total") or 0)]
+
+
+def _quarter(period) -> tuple[int, int] | None:
+    """``(year, quarter)`` of a 13F period key (an ISO quarter end), else None."""
+    try:
+        d = date.fromisoformat(str(period)[:10])
+    except ValueError:
+        return None
+    return d.year, (d.month - 1) // 3 + 1
+
+
 def _institutional(ticker: str, totals: dict) -> dict:
-    """13F kurumsal sahiplik (en son dönem + QoQ hisse değişimi)."""
+    """13F institutional ownership: the newest stored quarter, and its share change against the quarter right
+    before it. ``inst_quarter`` / ``inst_prev_quarter`` name them (``2026 Q1``); when the quarter before is not
+    stored, there is no QoQ change rather than one over two quarters (AG review SF-3, PR 6)."""
     out = {"inst_holders": None, "inst_new": None, "inst_exited": None,
            "inst_buy_flow": None, "inst_sell_flow": None,
-           "inst_shares": None, "inst_shares_delta_pct": None}
+           "inst_shares": None, "inst_shares_delta_pct": None,
+           "inst_quarter": None, "inst_prev_quarter": None}
     periods = totals.get(ticker)
     if not periods:
         return out
@@ -781,12 +818,16 @@ def _institutional(ticker: str, totals: dict) -> dict:
     out["inst_buy_flow"] = p.get("buy_flow")
     out["inst_sell_flow"] = p.get("sell_flow")
     out["inst_shares"] = p.get("shares")
-    if len(sorted_periods) >= 2:
-        prev = periods[sorted_periods[-2]]
-        prev_shares = prev.get("shares")
-        cur = p.get("shares")
-        if prev_shares is not None and cur is not None and prev_shares:
-            out["inst_shares_delta_pct"] = (cur - prev_shares) / prev_shares
+    q = _quarter(latest)
+    out["inst_quarter"] = f"{q[0]} Q{q[1]}" if q else None
+    if len(sorted_periods) >= 2 and q:
+        pq = _quarter(sorted_periods[-2])
+        if pq and pq[0] * 4 + pq[1] == q[0] * 4 + q[1] - 1:          # the quarter right before, not two back
+            out["inst_prev_quarter"] = f"{pq[0]} Q{pq[1]}"
+            prev_shares = periods[sorted_periods[-2]].get("shares")
+            cur = p.get("shares")
+            if prev_shares is not None and cur is not None and prev_shares:
+                out["inst_shares_delta_pct"] = (cur - prev_shares) / prev_shares
     return out
 
 
@@ -885,6 +926,7 @@ def _summary(cards: list[dict], excluded_types: int | None, score_errors: dict[s
         # ``fetch_failed``) are drops and are not counted here.
         "low_liquidity": None if thin is None else sum(1 for c in cards if c["ticker"] in thin_names),
         "unreadable_sec": sum(1 for c in cards if c.get("source") != EDGAR_SOURCE),
+        "momentum_unknown": len(_momentum_unknown(cards)),   # AG review N-2: no or too few D01 bars
         "ownership": _ownership_counts(cards),   # #34 D20: stored vs live institutional shares
     }
 
@@ -909,7 +951,7 @@ def stored_result() -> dict:
               "universe_refreshed_by": None, "universe_partial": False, "funnel_steps": None, "summary": {},
               "cards": cards, "thresholds": THRESHOLDS}
     if not cards:
-        stored = bool(rawstore.query("SELECT 1 FROM equity_universe LIMIT 1"))
+        stored = _spine.has_universe()        # the universe the boards read (Opus review M1), not the old table
         reason = "no_scan_stored" if stored else "no_universe_stored"
         result.update(universe_total=0, no_data_reason=reason, no_data_message=no_data_message(reason))
         return result
@@ -1016,7 +1058,11 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     from RevenueChaser.module_asymmetric_growth import freeze
     version = freeze.model_version()        # the rows say which rules scored them (old-rows view, #380 S2)
     for c in cards:
-        c.update(_institutional(c["ticker"], totals))
+        inst = _institutional(c["ticker"], totals)
+        # The 13F quarters the card read are period ends it read: they ride in ``period_ends`` (a JSON column of
+        # ``ticker_scores``), so a Refresh shows them too (AG review SF-3).
+        c.setdefault("period_ends", {})["inst_13f"] = [inst.pop("inst_quarter"), inst.pop("inst_prev_quarter")]
+        c.update(inst)
         c["model_version"] = version
 
     _sort_cards(cards)
@@ -1034,7 +1080,7 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
         "universe_refreshed_by": u_stats.get("universe_refreshed_by"),
         "universe_partial": bool(u_stats.get("partial")),
         "funnel_steps": _funnel_steps(len(universe), summary["excluded_types"], drops, error_tickers, len(cards),
-                                      summary["low_liquidity"], summary["unreadable_sec"]),
+                                      summary["low_liquidity"], summary["unreadable_sec"], _momentum_unknown(cards)),
         "summary": summary,
         "cards": cards,
         "thresholds": THRESHOLDS,

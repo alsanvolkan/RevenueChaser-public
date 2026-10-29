@@ -102,10 +102,25 @@ def test_the_identity_card_says_which_universe_the_boards_read(monkeypatch):
     from RevenueChaser.core import universe
     monkeypatch.setenv(universe.SOURCE_ENV, "spine")
     funnel = newdata.collect(NOW)["identity"]
-    assert funnel["universe_source"] == {"requested": "spine", "effective": "store", "reason": "no spine.duckdb yet"}
+    assert funnel["universe_source"] == {"requested": "spine", "effective": "store", "reason": "no spine.duckdb yet",
+                                         "variable": "spine"}
     html = report.render_settings_dashboard({"newdata": newdata.collect(NOW), "rows": []})
     card = html[html.index('id="nd-identity"'):]
-    assert "Boards read" in card and "spine requested, falling back: no spine.duckdb yet" in card
+    assert "Boards read" in card and "spine requested (RC_UNIVERSE_SOURCE=spine), falling back: no spine.duckdb yet" in card
+
+
+@pytest.mark.usefixtures("built")
+def test_the_identity_card_says_the_spine_is_the_default(monkeypatch):
+    """PR 6: with the variable unset the boards read the spine, and the card says it is the default."""
+    from RevenueChaser.core import universe
+    monkeypatch.delenv(universe.SOURCE_ENV, raising=False)
+    card = report.render_settings_dashboard({"newdata": newdata.collect(NOW), "rows": []})
+    card = card[card.index('id="nd-identity"'):]
+    assert "the spine (the default, RC_UNIVERSE_SOURCE unset)" in card
+    monkeypatch.setenv(universe.SOURCE_ENV, "store")
+    card = report.render_settings_dashboard({"newdata": newdata.collect(NOW), "rows": []})
+    card = card[card.index('id="nd-identity"'):]
+    assert "the old store (RC_UNIVERSE_SOURCE=store)" in card
 
 
 def test_a_never_built_spine_card_says_it_starts_by_hand():

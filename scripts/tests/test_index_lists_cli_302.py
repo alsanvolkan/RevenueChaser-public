@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from RevenueChaser.core import index_registry as ir
+from RevenueChaser.core import index_lists as il
 from RevenueChaser.scripts import index_lists
 
 
@@ -18,7 +18,7 @@ def _result(statuses: dict, locked: bool = False) -> dict:
 def calls(monkeypatch):
     seen: list[dict] = []
     box = {"res": _result({"sp500": "written", "sp600": "awaiting_first_fill"})}
-    monkeypatch.setattr(ir, "refresh_lists",
+    monkeypatch.setattr(il, "refresh_lists",
                         lambda run_id, first_fill=(): seen.append({"run_id": run_id, "first_fill": list(first_fill)})
                         or box["res"])
     return seen, box

@@ -13,6 +13,7 @@ import re
 import pytest
 
 from RevenueChaser.core import index_registry as ir
+from RevenueChaser.core import index_lists as il
 from RevenueChaser.core import rawstore
 from RevenueChaser.core import reporting_common as rc
 
@@ -34,7 +35,7 @@ def fetchers(rawstore_tmp_db, monkeypatch):
             return set(state[slug])
         return f
 
-    monkeypatch.setattr(ir, "_FETCHERS", {s: fetcher(s) for s in state})
+    monkeypatch.setattr(il, "_FETCHERS", {s: fetcher(s) for s in state})
     return state, calls
 
 
@@ -45,42 +46,44 @@ def _stored(slug: str) -> int:
 # ── the first-fill gate lives in fetch_index ──────────────────────────────────────────────────────────────────────
 def test_fetch_index_refuses_a_gated_first_fill(fetchers):
     _, calls = fetchers
-    assert ir.fetch_index("sp600") == set()
-    assert ir.fetch_index("sp600", refresh=True) == set()
+    assert il.fetch_index("sp600") == set()
+    assert il.fetch_index("sp600", refresh=True) == set()
     assert _stored("sp600") == 0
     assert "sp600" not in calls                       # not even read
 
 
 def test_fetch_all_indexes_on_an_empty_sp600_writes_nothing(fetchers):
     _, calls = fetchers
-    ir.fetch_all_indexes()
-    ir.fetch_all_indexes(refresh=True)
+    il.fetch_all_indexes()
+    il.fetch_all_indexes(refresh=True)
     assert _stored("sp600") == 0 and "sp600" not in calls
     assert _stored("sp500") == 450                    # the ungated lists still fill
 
 
 def test_the_weekly_step_still_writes_the_named_first_fill(fetchers):
-    res = ir.refresh_lists(run_id="r1", first_fill=["sp600"])
+    res = il.refresh_lists(run_id="r1", first_fill=["sp600"])
     assert res["slugs"]["sp600"]["status"] == "written"
     assert _stored("sp600") == 601
 
 
 def test_once_sp600_has_rows_fetch_index_may_refresh_it(fetchers):
     state, _ = fetchers
-    ir.refresh_lists(run_id="r1", first_fill=["sp600"])
+    il.refresh_lists(run_id="r1", first_fill=["sp600"])
     state["sp600"] = _members("M", 590)
-    assert len(ir.fetch_index("sp600", refresh=True)) == 590
+    assert len(il.fetch_index("sp600", refresh=True)) == 590
 
 
 def test_sp600_never_joins_the_fetched_indexes():
-    assert "sp600" not in dict(ir.INDEXES)
-    assert set(ir.LABELS) == set(ir.STORED)            # every stored slug has a label
+    assert "sp600" not in dict(il.INDEXES)
+    # every stored slug has a label. This pins the spine's badge set to the OLD store's slug list (Opus review N3,
+    # PR 6): it goes with index_lists in PR 21, when the spine's own slugs (sp400 has no label yet) decide.
+    assert set(ir.LABELS) == set(il.STORED)
     assert ir.LABELS["sp600"] == "S&P SmallCap 600"
 
 
 # ── labels and meta ───────────────────────────────────────────────────────────────────────────────────────────────
 def test_a_stored_sp600_member_is_labelled_on_a_card(fetchers):
-    ir.refresh_lists(run_id="r1", first_fill=["sp600"])
+    il.refresh_lists(run_id="r1", first_fill=["sp600"])
     cards = ir.annotate_cards([{"ticker": "M0001"}, {"ticker": "S0001"}])
     assert cards[0]["index"] == ["S&P SmallCap 600"] and cards[1]["index"] == ["S&P 500"]
 
@@ -89,7 +92,7 @@ def test_filters_meta_lists_sp600_only_when_it_has_rows(fetchers):
     meta = rc.filters_meta("b")
     assert meta["indexes"] == ["S&P 500", "Dow Jones", "Nasdaq Composite"]
     assert meta["index_labels"] == {"Nasdaq Composite": "Nasdaq-listed"}
-    ir.refresh_lists(run_id="r1", first_fill=["sp600"])
+    il.refresh_lists(run_id="r1", first_fill=["sp600"])
     assert rc.filters_meta("b")["indexes"] == ["S&P 500", "Dow Jones", "S&P SmallCap 600", "Nasdaq Composite"]
 
 
