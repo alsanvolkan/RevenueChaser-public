@@ -92,6 +92,15 @@ def test_without_an_issuer_sum_the_class_cap_counts(market_roots):  # noqa: F811
     assert mi.from_store(TICKER)["market_cap"] == 5500.0
 
 
+def test_a_funds_cap_is_its_own_not_its_trusts_sum(market_roots):  # noqa: F811
+    from RevenueChaser.core import rawstore
+    rawstore.ensure_table("security_master")
+    rawstore.write_rows("security_master", [{"ticker": TICKER, "security_type": "etp"}])
+    _store()                                                 # own 5500, issuer 6000: the trust's CIK files many funds
+    got = mi.from_store(TICKER)
+    assert got["market_cap"] == 5500.0 and got["shares_outstanding"] == pytest.approx(5500.0 / 120.0)
+
+
 def test_a_bar_without_a_cap_gives_the_price_alone(market_roots):  # noqa: F811
     _store(own_cap=None, months=12)
     got = mi.from_store(TICKER)

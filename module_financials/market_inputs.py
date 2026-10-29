@@ -2,8 +2,9 @@
 the beta the models read, Yahoo's values only where the store has none.
 
 - **Price:** the newest close (``rcdata.read.latest_market``, at most ``LATEST_WITHIN_DAYS`` behind the store).
-- **Market cap:** the issuer's (every listed class), as the universe reads it and as Yahoo's was; the class's own
-  when the store has no issuer sum. It is the WACC's equity weight.
+- **Market cap:** the issuer's (every listed class), as the universe reads it and as Yahoo's was; a fund's or a
+  trust's its own (one trust's CIK files many funds), and the class's own when the store has no issuer sum. It is
+  the WACC's equity weight.
 - **Shares:** the market cap over the price, the class-equivalent count. For one class it is the shares outstanding;
   for an issuer with two classes it is the count that makes the per-share value comparable with this class's price.
 - **Beta:** the slope of ``BETA_MONTHS`` monthly returns of the split-adjusted close on the S&P 500 level
@@ -49,6 +50,18 @@ def monthly_beta(stock: list[tuple[date, float]], index: list[tuple[date, float]
     return float(both["s"].cov(both["m"]) / both["m"].var())
 
 
+def _is_fund(ticker: str) -> bool:
+    """A fund, trust or other excluded type (``identity.types.EXCLUDED_TYPES``) by the universe's own type seam: its
+    cap is the class's own, because one trust's CIK files many funds (``core/universe.py``'s ``_spine_universe``)."""
+    from RevenueChaser.core import universe
+    try:
+        return ticker in universe.excluded_tickers()
+    except Exception as exc:  # noqa: BLE001 - an unreadable type reads as an operating company: the issuer's cap
+        logger.warning("financials: the security type of %s could not be read (%s); the issuer's cap counts",
+                       ticker, exc)
+        return False
+
+
 def from_store(ticker: str) -> dict:
     """``{current_price, market_cap, shares_outstanding, beta, price_session, beta_months}`` from the prices store,
     each only when the store gives it; ``{}`` with no prices file or a failed read (logged)."""
@@ -65,7 +78,9 @@ def from_store(ticker: str) -> dict:
     if price is None or session is None or not price > 0:
         return {}
     out = {"current_price": float(price), "price_session": session}
-    cap = latest.get("issuer_market_cap") if latest.get("issuer_market_cap") is not None else latest.get("market_cap")
+    cap = latest.get("market_cap") if _is_fund(t) else latest.get("issuer_market_cap")
+    if cap is None:
+        cap = latest.get("market_cap")
     if cap is not None and cap > 0:
         out["market_cap"] = float(cap)
         out["shares_outstanding"] = float(cap) / float(price)
