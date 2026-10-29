@@ -280,3 +280,78 @@ def as_frame(rows: list[dict]):
     """The rows as a pandas DataFrame (the one helper; pandas is imported only here)."""
     import pandas as pd
     return pd.DataFrame(rows)
+
+
+# ── The screeners' reads (PR 10, G4) ──────────────────────────────────────────────────────────────────────────
+# Swing and Fundamentals ask by ticker; the security a ticker names is the one ``security_ids`` picks: the security
+# that trades under it now (``security_symbol`` with no ``valid_to``), of two the one with the newer bar.
+
+_CURRENT = ("WITH sym AS (SELECT symbol, security_id FROM security_symbol WHERE valid_to IS NULL AND symbol IN ({ph})), "
+            "last AS (SELECT security_id, max(session_date) AS last_session, "
+            "arg_max(fetched_at, session_date) AS last_fetched_at FROM price_bar_daily "
+            "WHERE security_id IN (SELECT security_id FROM sym) GROUP BY ALL) ")
+_ONE_PER_SYMBOL = ("QUALIFY row_number() OVER (PARTITION BY sym.symbol "
+                   "ORDER BY last.last_session DESC NULLS LAST, sym.security_id) = 1")
+
+
+def _tickers(tickers: Iterable[str]) -> list[str]:
+    return sorted({str(t).strip().upper() for t in tickers if str(t or "").strip()})
+
+
+def last_bars(tickers: Iterable[str]) -> dict[str, dict]:
+    """``{ticker: row}`` for the tickers with a bar: ``security_id``, ``last_session`` (a date, the newest bar's New
+    York session) and ``last_fetched_at`` (that bar's ``fetched_at``: when the builder read it, so a test of "written
+    after the session's close + 30 min" can be made on it). A ticker with no bar is absent."""
+    wanted = _tickers(tickers)
+    if not wanted:
+        return {}
+    sql = (_CURRENT.format(ph=", ".join("?" * len(wanted))) +
+           "SELECT sym.symbol AS ticker, sym.security_id, last.last_session, last.last_fetched_at "
+           "FROM sym JOIN last USING (security_id) " + _ONE_PER_SYMBOL)
+    return {r["ticker"]: r for r in _rows("price_bar_daily", sql, wanted)}
+
+
+def bars_by_ticker(tickers: Iterable[str], start=None, end=None) -> list[dict]:
+    """``bars`` of the securities the tickers name, nominal, each row with its ``ticker`` (the name asked), by ticker
+    and session. The factors (``split_factor``, ``tr_factor``) come with every row, so a caller derives the split and
+    the total-return basis from one read."""
+    ids = security_ids(tickers)
+    if not ids:
+        return []
+    ticker_of = {sid: t for t, sid in ids.items()}
+    rows = bars(ids.values(), start=start, end=end, basis="nominal")
+    for r in rows:
+        r["ticker"] = ticker_of[r["security_id"]]
+    return sorted(rows, key=lambda r: (r["ticker"], r["session_date"]))
+
+
+# The prefilter's average volume: the mean of a name's last this many sessions (Yahoo's averageVolume, which the old
+# quote row carried, is a 3-month mean: about 63 sessions).
+LIQUIDITY_SESSIONS = 63
+
+
+def liquidity(tickers: Iterable[str], sessions: int = LIQUIDITY_SESSIONS) -> dict[str, dict]:
+    """``{ticker: row}``: ``price`` (the newest nominal close) and ``price_session``, and ``avg_volume``, the mean
+    volume over the name's last ``sessions`` bars on today's share basis (divided by ``split_factor``), with
+    ``volume_sessions``, how many bars that mean rests on. Like ``latest_market``, only a close at most
+    ``LATEST_WITHIN_DAYS`` before the store's newest session counts: an older one is no current price."""
+    wanted = _tickers(tickers)
+    if not wanted:
+        return {}
+    sql = (_CURRENT.format(ph=", ".join("?" * len(wanted))) +
+           f", since AS (SELECT max(session_date) - INTERVAL {int(LATEST_WITHIN_DAYS)} DAY AS d FROM price_bar_daily "
+           "WHERE security_id NOT LIKE 'index:%'), "
+           "pick AS (SELECT sym.symbol, sym.security_id FROM sym JOIN last USING (security_id) "
+           + _ONE_PER_SYMBOL + "), "
+           "recent AS (SELECT b.security_id, b.session_date, b.close, b.volume / coalesce(a.split_factor, 1) AS volume, "
+           "row_number() OVER (PARTITION BY b.security_id ORDER BY b.session_date DESC) AS n "
+           f"FROM price_bar_daily b LEFT JOIN adj_factor a ON {_PERIOD} "
+           "WHERE b.security_id IN (SELECT security_id FROM pick)) "
+           "SELECT pick.symbol AS ticker, pick.security_id, "
+           "arg_max(recent.close, recent.session_date) FILTER (WHERE recent.close IS NOT NULL) AS price, "
+           "max(recent.session_date) FILTER (WHERE recent.close IS NOT NULL) AS price_session, "
+           "avg(recent.volume) FILTER (WHERE recent.n <= ?) AS avg_volume, "
+           "count(recent.volume) FILTER (WHERE recent.n <= ?) AS volume_sessions "
+           "FROM pick JOIN recent USING (security_id) GROUP BY ALL "
+           "HAVING max(recent.session_date) FILTER (WHERE recent.close IS NOT NULL) >= (SELECT d FROM since)")
+    return {r["ticker"]: r for r in _rows("price_bar_daily", sql, [*wanted, int(sessions), int(sessions)])}
