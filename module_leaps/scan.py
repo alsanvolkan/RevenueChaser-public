@@ -1,16 +1,20 @@
-"""LEAPS accumulation scan (live UW + store-only), owned by the LEAPS module.
+"""LEAPS accumulation scan, owned by the LEAPS module, on the options store (G9, build plan PR 19).
 
-Relocated from the former ``module_testing.forwards_testing.forward_collector``
-when the forward-test subsystem was removed. The universe is the stock watch list;
-``scan_leaps`` fetches from Unusual Whales, ``scan_leaps_cached`` reads only
-``.store/raw.duckdb`` (no network).
+The pinned names are the stock watch list. Their footprints and the large-print scan read the options store that
+``uw/option_list`` fills every evening for SPX and the option watch list (``rcdata.read``): a pinned name off that
+list shows "not on the option watch list" and gets no footprint score, and the print scan runs over the list
+names' stored prints only. ``scan_leaps`` (the Fetch) and ``scan_leaps_cached`` (the Refresh) compute the same board
+from the same store with no network; only the Fetch fills ``footprints`` for the result history.
+
+The UW pull (``engine.fetch_and_classify``, ``engine.discover_flow_prints``) and the old store's ``leaps_cache`` and
+``leaps_flow_prints`` are no longer used by the board; they retire with the old store (G10).
 """
-import json
 import logging
-from datetime import date
+from collections import defaultdict
+from datetime import date, timedelta
 
-from RevenueChaser.core.providers.unusual_whales import UWClient
-from RevenueChaser.core import rawstore
+from RevenueChaser.core import board_requests
+from RevenueChaser.core.config import to_float
 from RevenueChaser.module_leaps import engine as leaps
 
 logger = logging.getLogger(__name__)
@@ -22,22 +26,12 @@ def _leaps_tickers() -> set:
     return {t for t in (read.watched("stock") or set()) if t}
 
 
-def _sec13f_names() -> dict:
-    """Ticker -> name from the shared 13F security meta — the Refresh's fallback name source."""
-    try:
-        from RevenueChaser.module_sec_13f.engine import load_sec13f_meta
-        return {t: (m.get("name") or "") for t, m in load_sec13f_meta().items()}
-    except Exception as e:  # pragma: no cover - defensive
-        logger.warning(f"cached 13F name lookup failed: {e}")
-        return {}
-
-
 def _history_names() -> dict:
     """Ticker -> name from the last recorded LEAPS session snapshot (K2 readers, ``core.history``, #377 L5).
 
-    The Fetch resolves names through the UW screener and records one ``leaps_footprint_history`` row per watchlist
-    ticker, so a ticker the 13F meta does not carry keeps its name on Refresh. Empty when nothing is recorded, so
-    the caller falls back to the 13F meta; a read never creates the history file.
+    The Fetch records one ``leaps_footprint_history`` row per pinned ticker with its name, so a ticker the spine does
+    not carry keeps the name an older Fetch resolved (through the UW screener, before G9). Empty when nothing is
+    recorded; a read never creates the history file.
     """
     from RevenueChaser.core import history, rawstore
     from RevenueChaser.module_leaps import history as leaps_history
@@ -48,20 +42,10 @@ def _history_names() -> dict:
                 return {}
             rows = rawstore.query("SELECT ticker, name FROM leaps_footprint_history WHERE run_id = ?",
                                   [snaps[0]["run_id"]], db="history")
-        return {r["ticker"]: r["name"] for r in rows if r["name"]}   # a blank name never hides the 13F one
+        return {r["ticker"]: r["name"] for r in rows if r["name"]}   # a blank name never hides another one
     except Exception as e:  # pragma: no cover - defensive
         logger.warning(f"cached history name lookup failed: {e}")
         return {}
-
-
-def _screener_names(uw, tickers: list) -> dict:
-    """The screener's ticker rows, through the real client's outcome-carrying ``screener_batch_result`` (#377 L5).
-
-    A test double that offers only ``screener_batch`` still works."""
-    read = getattr(uw, "screener_batch_result", None)
-    if read is not None:
-        return read(tickers).data or {}
-    return uw.screener_batch(tickers) or {}
 
 
 def _history_baselines(tickers, today: date, warnings: list | None = None) -> dict:
@@ -82,30 +66,33 @@ def _history_baselines(tickers, today: date, warnings: list | None = None) -> di
         return {}
 
 
-def _near_event_dates(today: date, warnings: list | None = None) -> dict:
-    """The whole watchlist's next earnings dates in one batched store read (DF94, #39).
+# The newest screener session counts for this many days (``core/earnings_dates.MAX_AGE_DAYS``, the same rule).
+REPORT_DATES_MAX_AGE_DAYS = 4
 
-    A calendar read never fails a Fetch: an unreadable store gives no dates and one warning, so the board can say a
-    Quiet label there is missing calendar data rather than a near event. ``stored_next_dates`` already swallows its
-    own errors, so the empty mapping carries the warning on either path.
-    """
-    from RevenueChaser.core import earnings_dates
+
+def _near_event_dates(today: date, warnings: list | None = None) -> dict:
+    """``{ticker: report date}`` from the options store's newest screener session (``option_screener_daily``: every
+    name reporting in the 28 days after it, DF94, #39).
+
+    A read never fails a scan: no session within ``REPORT_DATES_MAX_AGE_DAYS`` days, or an unreadable store, gives
+    no dates and one warning, so the board can say a Quiet label there is missing calendar data, not a near event."""
+    from RevenueChaser.rcdata import read
     note = None
     try:
-        dates = earnings_dates.stored_next_dates(today)
+        rows = read.option_screener()
     except Exception as e:  # noqa: BLE001 - a missing date, never a failed run
-        logger.warning(f"LEAPS earnings dates not read: {e}")
-        dates, note = {}, f"could not be read ({type(e).__name__}: {e})"
-    else:
-        # An empty mapping is a successful read of nothing: a fresh store, or the nightly sweep has not run within
-        # ``earnings_dates.MAX_AGE_DAYS``, which refuses an older session rather than outranking the tape. The board
-        # is told which of the two it was, because this sentence is persisted with the run (app/runners.py).
-        if not dates:
-            note = "has no rows from the last few sessions"
+        logger.warning(f"LEAPS report dates not read: {e}")
+        rows, note = [], f"could not be read ({type(e).__name__})"
+    sessions = [r["session_date"] for r in rows if r.get("session_date")]
+    if sessions and (today - max(sessions)).days > REPORT_DATES_MAX_AGE_DAYS:
+        rows = []
+    dates = {str(r["ticker"]).upper(): r["report_date"] for r in rows if r.get("ticker") and r.get("report_date")}
+    if not dates and note is None:
+        note = "has no rows from the last few sessions"
     if note and warnings is not None:
         warnings.append(f"The stored earnings calendar {note}, so no watchlist name was flagged for a near event "
                         "from the calendar: a Quiet label here may be missing calendar data, not a near event.")
-    return dates or {}
+    return dates
 
 
 def _watchlist_near_event(ticker: str, cand: dict, near: dict, today: date) -> bool:
@@ -121,174 +108,161 @@ def _watchlist_near_event(ticker: str, cand: dict, near: dict, today: date) -> b
     return own or bool(cand.get("near_event"))
 
 
-def rederive(snap: dict, oi, base_1d: dict | None, base_q: dict | None, ask_share=None) -> dict:
-    """Classify a stored snapshot again from its own OI and the recorded baselines (a copy; nothing is written).
+# ── the store reads ──────────────────────────────────────────────────────────────────────────────────────────
 
-    This is the Refresh's D4 re-derivation (#377 L3): the same classifier a Fetch runs, at the recorded session's
-    own date, so the far-dated cut and the quarter baseline are the ones that session saw.
+IV_RANK_DAYS = 14          # calendar days of option_daily read for the IV-rank slope (its last five sessions)
+PRINT_DAYS = 5             # the print window, as ``engine.load_recent_prints``
+
+
+def _iso(value) -> str:
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)[:10]
+
+
+def store_inputs(ticker: str) -> dict | None:
+    """The footprint's inputs from the options store's newest session of ``ticker``; None when none is stored.
+
+    ``oi_per_expiry`` sums ``option_eod``'s open interest per expiry and side, ``flow_per_expiry`` is
+    ``option_expiry``'s ask-side premium (set ``list``), ``iv_rank`` is ``option_daily``'s 1-year IV rank over the
+    last ``IV_RANK_DAYS`` days, oldest first: the shapes the UW answers had, so ``engine.build_snapshot`` is unchanged.
     """
-    return leaps.classify(dict(snap), base_1d, base_q, cur_oi=oi, ask_share=ask_share)
+    from RevenueChaser.rcdata import read
+    rows = read.option_chain(ticker)
+    if not rows:
+        return None
+    session = rows[0]["session_date"]
+    oi: dict[str, dict] = defaultdict(lambda: {"call_oi": 0, "put_oi": 0})
+    for r in rows:
+        side = "call_oi" if r.get("option_type") == "call" else "put_oi"
+        oi[_iso(r["expiry"])][side] += int(r.get("open_interest") or 0)
+    flow = [{"expiry": _iso(r["expiry"]), "call_premium_ask_side": r.get("call_premium_ask_side"),
+             "put_premium_ask_side": r.get("put_premium_ask_side")}
+            for r in read.option_expiries(ticker, session, "list")]
+    iv = [{"date": _iso(r["session_date"]), "iv_rank_1y": r.get("iv_rank_1y")}
+          for r in read.option_daily(ticker, session - timedelta(days=IV_RANK_DAYS), session)]
+    return {"session": session, "oi_per_expiry": [{"expiry": e, **v} for e, v in sorted(oi.items())],
+            "flow_per_expiry": flow, "iv_rank": iv}
 
 
-def _rederive_from_history(snap: dict, base: dict) -> dict:
-    """Re-label a stored snapshot from its recorded session row (D4, #377 L3).
+def store_prints(names, today: date, near: dict) -> list[tuple]:
+    """The list names' far-dated large prints of the last ``PRINT_DAYS`` days, as ``engine.aggregate_flow_prints``
+    reads them: ``(ticker, premium, option_type, delta, report date, ask_vol, bid_vol)``.
 
-    Only when the newest recorded session is the session the cache holds. A newer intraday Fetch lives only in
-    ``leaps_cache.latest`` and has no recorded row of its own, so its stored label stands.
+    ``option_print`` set ``list`` only (the earnings set is Earnings Radar's), not cancelled, at least
+    ``engine.MIN_DTE`` days to expiry on its session and at least ``engine.MIN_PREMIUM``; an index is not a stock.
+    The report date is the stored calendar's (a print carries none).
+    shortcut: the store keeps the last 50 prints a name and session (UW's flow-recent), so a busy name's far-dated
+    large prints can be cut off; upgrade when ``uw/option_list`` also stores each list name's far-dated large prints
+    (``/option-trades`` by ticker, ``min_dte`` and ``min_premium``).
     """
+    from RevenueChaser.rcdata import read
+    since = today - timedelta(days=PRINT_DAYS)
+    out = []
+    for ticker in names:
+        if ticker in leaps.INDEX_TICKERS:
+            continue
+        sessions = sorted({r["session_date"] for r in read.option_daily(ticker, since, today)})
+        report = near.get(ticker)
+        for session in sessions:
+            for p in read.option_prints(ticker, session, "list"):
+                premium = to_float(p.get("premium")) or 0.0
+                expiry = p.get("expiry")
+                if p.get("canceled") or expiry is None or premium < leaps.MIN_PREMIUM:
+                    continue
+                if (expiry - session).days < leaps.MIN_DTE or "index" in (p.get("tags") or []):
+                    continue
+                out.append((ticker, premium, p.get("option_type"), to_float(p.get("delta")),
+                            _iso(report) if report else None, p.get("ask_vol"), p.get("bid_vol")))
+    return out
+
+
+def _spine_names(tickers) -> dict:
+    """Ticker -> name from the spine (any tier), the first name source; the last recorded session fills the rest."""
+    try:
+        from RevenueChaser.module_sec_13f import store_reads
+        return {t: m.get("name") or "" for t, m in store_reads.meta(sorted(tickers)).items() if m.get("name")}
+    except Exception as e:  # noqa: BLE001 - a name is never worth a failed board
+        logger.warning(f"LEAPS spine name lookup failed: {e}")
+        return {}
+
+
+def _footprint(ticker: str, listed: set, cand: dict, near: dict, base: dict,
+               today: date) -> tuple[dict, dict, str]:
+    """``(snapshot, inputs, fetch_status)`` of one pinned name from the store.
+
+    ``fetch_status`` is ``ok``, ``not_on_list`` (a pinned name off the option watch list: the label, no score) or
+    ``missing`` (a list name the store has no chain for yet)."""
     from RevenueChaser.module_leaps import history as leaps_history
-    newest = (base or {}).get("newest")
-    if not newest or str(newest.get("as_of")) != str(snap.get("as_of")):
-        return snap
-    own = leaps_history.pick((base or {}).get("rows") or [], newest["as_of"])
-    return rederive(snap, newest.get("oi_per_expiry"), own.get("1d"), own.get("q"),
-                    ask_share=newest.get("ask_share"))
+    if ticker not in listed:
+        return ({**leaps.build_snapshot(ticker, [], [], [], today=today), "note": board_requests.NOT_ON_LIST},
+                {}, "not_on_list")
+    inputs = store_inputs(ticker)
+    if inputs is None:
+        note = f"no stored option chain yet: it fills with the next {board_requests.OPTION_LIST} run"
+        return {**leaps.build_snapshot(ticker, [], [], [], today=today), "note": note}, {}, "missing"
+    session = inputs["session"]
+    oi, flow, iv = inputs["oi_per_expiry"], inputs["flow_per_expiry"], inputs["iv_rank"]
+    snap = leaps.build_snapshot(ticker, oi, flow, iv, near_term_event=_watchlist_near_event(ticker, cand, near,
+                                                                                            session),
+                                today=session)
+    # The baselines are picked at the stored session, so a Refresh the day after compares the same two sessions.
+    picked = leaps_history.pick((base or {}).get("rows") or [], session)
+    snap = leaps.classify(snap, picked["1d"], picked["q"], cur_oi=oi, ask_share=cand.get("ask_share"))
+    return snap, {**inputs, "session": _iso(session), "baseline_1d": picked["1d"], "baseline_q": picked["q"]}, "ok"
+
+
+def _scan(today: date | None, warnings: list | None, footprints: list | None) -> tuple[list[dict], list[dict]]:
+    d = today or date.today()
+    pinned = sorted(_leaps_tickers())
+    listed = board_requests.option_list_names()
+    logger.info(f"LEAPS scan: {len(pinned)} pinned names, {len(listed)} on the option watch list.")
+    bases = _history_baselines(pinned, d, warnings)               # one batched read for the whole scan (#377 L3)
+    near = _near_event_dates(d, warnings)                         # one batched calendar read for the whole scan (DF94)
+
+    agg = leaps.aggregate_flow_prints(store_prints(listed, d, near), d)
+    candidates = {c["ticker"]: c for c in leaps.score_flow_candidates(agg)}
+    name_map = {**_history_names(), **_spine_names(set(pinned) | set(candidates))}
+
+    watched, unwatched = [], []
+    for t in pinned:
+        cand = candidates.get(t) or {}
+        snap, inputs, status = _footprint(t, set(listed), cand, near, bases.get(t) or {}, d)
+        _merge_radar(snap, candidates.get(t))
+        snap.setdefault("name", name_map.get(t, ""))
+        if footprints is not None:
+            footprints.append({"ticker": t, "name": snap["name"], "snapshot": dict(snap),
+                               "inputs": {**inputs, "flow_candidate": candidates.get(t)}, "fetch_status": status})
+        watched.append(snap)                       # every pinned name, whatever its label (#377 L2)
+
+    seen = set(pinned)
+    for cand in candidates.values():
+        sym = cand["ticker"]
+        if sym in seen:
+            continue
+        snap = leaps.radar_snapshot(cand, d)
+        snap["name"] = name_map.get(sym, "")
+        unwatched.append(snap)
+        if len(unwatched) >= leaps.UNWATCHED_CAP:
+            break
+    return watched, unwatched
 
 
 def scan_leaps_cached(today: date | None = None,
                       warnings: list | None = None) -> tuple[list[dict], list[dict]]:
-    """Store-only LEAPS render — no network.
-
-    Mirrors ``scan_leaps`` but reads every input from ``.store/raw.duckdb``
-    instead of Unusual Whales:
-      - watchlist footprints come from the latest cached snapshot per ticker
-        (``leaps_cache``), re-labelled from the recorded sessions when the cache holds the session that was
-        recorded (D4, #377 L3);
-      - flow-print candidates come from the stored far-dated prints
-        (``leaps_flow_prints`` via ``leaps.load_recent_prints``);
-      - names come from the last recorded LEAPS session (``leaps_footprint_history``, #377 L5), the 13F meta as
-        the fallback.
-    """
-    d = today or date.today()
-    watched_tickers = sorted(_leaps_tickers())
-    bases = _history_baselines(watched_tickers, d, warnings)
-
-    try:
-        rows = leaps.load_recent_prints(today=today)
-    except rawstore.StoreLockedError:
-        # The board's first store read since the watch list moved to ops.sqlite (PR 4): a lock must reach the
-        # dashboard (503, naming the holder), never pass for an empty board.
-        raise
-    except Exception as e:  # pragma: no cover - defensive
-        logger.warning(f"cached flow-print read failed: {e}")
-        rows = []
-    agg = leaps.aggregate_flow_prints(rows, today)
-    candidates = {c["ticker"]: c for c in leaps.score_flow_candidates(agg)}
-
-    # Names from the last recorded Fetch (the resolved UW names), the 13F meta as the fallback (#377 L5).
-    name_map = {**_sec13f_names(), **_history_names()}
-
-    watched, unwatched = [], []
-    for t in watched_tickers:
-        data = leaps.load_cache(t)
-        snap = (data or {}).get("latest") if isinstance(data, dict) else None
-        if not snap:
-            continue
-        snap = _rederive_from_history(snap, bases.get(t) or {})
-        _merge_radar(snap, candidates.get(t))
-        snap.setdefault("name", name_map.get(t, ""))
-        watched.append(snap)                       # every pinned name, whatever its label (#377 L2)
-
-    seen = set(watched_tickers)
-    for cand in candidates.values():
-        sym = cand["ticker"]
-        if sym in seen:
-            continue
-        snap = leaps.radar_snapshot(cand, today)
-        snap["name"] = name_map.get(sym, "")
-        unwatched.append(snap)
-        if len(unwatched) >= leaps.UNWATCHED_CAP:
-            break
-
-    return watched, unwatched
+    """The Refresh: the same board as the Fetch, from the same store, recording nothing."""
+    return _scan(today, warnings, None)
 
 
-def _failed_calls(uw) -> int:
-    """How many UW calls of this client have failed so far (0 for a client without ``health``)."""
-    try:
-        return int((uw.health() or {}).get("failed") or 0)
-    except Exception:  # noqa: BLE001 - a test double or a client without health
-        return 0
-
-
-def scan_leaps(uw: UWClient, today: date | None = None, warnings: list | None = None,
+def scan_leaps(uw=None, today: date | None = None, warnings: list | None = None,
                footprints: list | None = None) -> tuple[list[dict], list[dict]]:
-    """Scan LEAPS accumulation for the watchlist universe, plus a market-wide
-    far-dated flow-print scan that surfaces new (unwatched) names.
+    """The Fetch's scan: the pinned names' footprints and the list names' far-dated large prints, from the store.
 
-    Discovery uses /api/option-trades (min_dte=183, min_premium=$50k), deduped
-    by trade id into the store, scored as min-max(0.4·freq + 0.6·log notional)
-    times a tiered ITM/OTM delta concentration multiplier.
-
-    Returns (watched_candidates, unwatched_candidates). Warnings worth showing on the
-    board (the print scan hit its cap, the stored earnings calendar could not be read)
-    are appended to ``warnings`` when it is passed.
-
-    ``footprints``, when passed, gets one entry per watchlist ticker, whatever its label (the result history,
-    #377): ``snapshot`` (the merged footprint, None when the fetch raised), ``fetch_status`` ('ok',
-    'provider_failed' when one of its UW calls failed, or 'error: ...') and ``inputs`` (the UW answers, the two
-    baselines and the flow candidate it was scored on).
+    ``uw`` is unused (G9: the builder fetches). Returns (watched_candidates, unwatched_candidates); warnings worth
+    showing on the board (the stored calendar could not be read) are appended to ``warnings``. ``footprints``, when
+    passed, gets one entry per pinned name, whatever its label (the result history, #377): ``snapshot``,
+    ``fetch_status`` (``ok``, ``not_on_list`` or ``missing``) and ``inputs`` (the store rows it was built from, the
+    two baselines and its flow candidate).
     """
-    d = today or date.today()
-    watched_tickers = sorted(_leaps_tickers())
-    logger.info(f"LEAPS scan: {len(watched_tickers)} watchlist tickers.")
-    bases = _history_baselines(watched_tickers, d, warnings)      # one batched read for the whole scan (#377 L3)
-    near = _near_event_dates(d, warnings)                         # one batched calendar read for the whole scan (DF94)
-
-    try:
-        rows, _new = leaps.discover_flow_prints(uw, today=today, warnings=warnings)
-    except Exception as e:
-        logger.warning(f"flow-print discovery failed: {e}")
-        rows = []
-    agg = leaps.aggregate_flow_prints(rows, today)
-    candidates = {c["ticker"]: c for c in leaps.score_flow_candidates(agg)}
-
-    name_map = {}
-    try:
-        name_universe = sorted(set(watched_tickers) | set(candidates))
-        scr = _screener_names(uw, name_universe)
-        name_map = {t: (item.get("full_name") or item.get("name") or "") for t, item in scr.items()}
-    except Exception as e:
-        logger.warning(f"screener name lookup failed: {e}")
-
-    watched, unwatched = [], []
-    for t in watched_tickers:
-        inputs, failed_before = {}, _failed_calls(uw)
-        cand = candidates.get(t) or {}
-        try:
-            snap = leaps.fetch_and_classify(t, uw, today=today, inputs=inputs,
-                                            near_term_event=_watchlist_near_event(t, cand, near, d),
-                                            ask_share=cand.get("ask_share"),
-                                            baselines=bases.get(t, {}))
-        except Exception as e:
-            logger.warning(f"leaps {t}: {e}")
-            if footprints is not None:
-                footprints.append({"ticker": t, "name": name_map.get(t, ""), "snapshot": None, "inputs": inputs,
-                                   "fetch_status": f"error: {type(e).__name__}"})
-            continue
-        _merge_radar(snap, candidates.get(t))
-        snap.setdefault("name", name_map.get(t, ""))
-        if footprints is not None:
-            # A counted UW failure, a failed read health() does not count (e.g. 404), or a read that raised.
-            failed = (_failed_calls(uw) > failed_before or inputs.get("error")
-                      or "failed" in (inputs.get("read_status") or {}).values())
-            footprints.append({"ticker": t, "name": snap["name"], "snapshot": dict(snap),
-                               "inputs": {**inputs, "flow_candidate": candidates.get(t)},
-                               "fetch_status": "provider_failed" if failed else "ok"})
-        watched.append(snap)                       # every pinned name, whatever its label (#377 L2)
-
-    seen = set(watched_tickers)
-    for cand in candidates.values():
-        sym = cand["ticker"]
-        if sym in seen:
-            continue
-        snap = leaps.radar_snapshot(cand, today)
-        snap["name"] = name_map.get(sym, "")
-        unwatched.append(snap)
-        if len(unwatched) >= leaps.UNWATCHED_CAP:
-            break
-
-    return watched, unwatched
+    return _scan(today, warnings, footprints)
 
 
 def _merge_radar(snap: dict, cand: dict) -> dict:
@@ -317,8 +291,8 @@ def _merge_radar(snap: dict, cand: dict) -> dict:
     return snap
 
 
-def run_leaps(uw: UWClient, write_report: bool = True) -> int:
-    """Run the LEAPS accumulation scan and (optionally) write the dashboard."""
+def run_leaps(uw=None, write_report: bool = True) -> int:
+    """Run the LEAPS accumulation scan from the store and (optionally) write the dashboard."""
     watched, unwatched = scan_leaps(uw)
     logger.info(f"LEAPS scan complete: {len(watched)} watched, {len(unwatched)} unwatched.")
     if write_report:
@@ -330,16 +304,11 @@ def run_leaps(uw: UWClient, write_report: bool = True) -> int:
 
 def main():
     import argparse
-    from RevenueChaser.core.config import UW_API_KEY
 
-    parser = argparse.ArgumentParser(description="RevenueChaser LEAPS accumulation scan")
+    parser = argparse.ArgumentParser(description="RevenueChaser LEAPS accumulation scan (options store)")
     parser.add_argument("--no-report", action="store_true", help="scan only; do not write the dashboard")
     args = parser.parse_args()
-
-    if not UW_API_KEY:
-        print("UNUSUAL_WHALES_API_KEY not set — add it to .env.")
-        return 2
-    n = run_leaps(UWClient(), write_report=not args.no_report)
+    n = run_leaps(write_report=not args.no_report)
     print(f"LEAPS scan: {n} candidates.")
     return 0
 
@@ -347,4 +316,3 @@ def main():
 if __name__ == "__main__":
     import sys
     sys.exit(main())
-

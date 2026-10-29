@@ -118,31 +118,25 @@ def _rotation_day() -> str | None:
 
 
 def _sec13f_day() -> str | None:
-    """Newest 13F reporting period in ``sec13f_totals`` — what the board renders.
+    """Newest 13F reporting period the ownership store serves (``sec13f_periods``) — what the board renders (G9).
 
-    Quarterly, so months behind by design. It reads the totals (``{period: metrics}``
-    per ticker), not the submissions: a period that was ingested but not derived yet
-    is not on the board.
+    Quarterly, so months behind by design; a quarter still filing is on the board (marked), so it dates it too. A
+    period the builder has not derived yet is not served, so it is not on the board.
     """
-    return _max("SELECT max(k) AS v FROM "
-                "(SELECT unnest(json_keys(entry)) AS k FROM sec13f_totals)")
-
-
-# Newest print times read for the LEAPS chip: text order is near the time order (offsets can move a value a few
-# hours), so the session is taken over this many newest values, not only the first.
-_LEAPS_CANDIDATES = 50
+    from RevenueChaser.module_sec_13f import store_reads
+    periods = [p.get("period") for p in store_reads.periods() if p.get("period") is not None]
+    return _day(str(max(periods))) if periods else None
 
 
 def _leaps_day() -> str | None:
-    """NY session of the newest flow print (its ``executed_at``, else when the store found it), falling back to the
-    newest cached snapshot. ``discovered_at`` alone dated a print by its discovery: a Saturday scan read Saturday."""
-    rows = rawstore.query(
-        "SELECT v FROM (SELECT DISTINCT COALESCE(NULLIF(executed_at, ''), discovered_at) AS v "
-        "FROM leaps_flow_prints) WHERE v IS NOT NULL AND v <> '' ORDER BY v DESC LIMIT ?", [_LEAPS_CANDIDATES])
-    sessions = [d for d in (session_of(r["v"]) for r in rows) if d]
-    if sessions:
-        return max(sessions)
-    return _max("SELECT max(json_extract_string(payload, '$.latest.as_of')) AS v FROM leaps_cache")
+    """Newest session the options store holds for SPX and the option watch list (``option_daily``, G9): the names the
+    LEAPS board reads its footprints and prints from. A name off the list, or the old store's ``leaps_flow_prints``
+    and ``leaps_cache``, never date it. ``option_daily`` holds one row a name and session, so the read is small."""
+    from RevenueChaser.core import board_requests
+    from RevenueChaser.rcdata import read
+    sessions = [r["session_date"] for r in read.option_daily(board_requests.option_list_names())
+                if r.get("session_date")]
+    return _day(str(max(sessions))) if sessions else None
 
 
 def _spx_gamma_day() -> str | None:
@@ -161,22 +155,20 @@ def _chain_day() -> str | None:
 
 
 def _oipd_day() -> str | None:
-    """As-of day of the cached chain of the ticker on the board (falls back to its fetch time).
+    """Session of the stored chain the board last fitted (the options store's ``option_eod``, G9).
 
-    The shown ticker is the one in the last rendered payload (``.cache/oipd/oipd_latest.json``); with none
-    rendered there is no shown ticker and no date. Not the newest ``as_of`` of any ticker (OIPD-7).
+    Read from the last rendered payload (``.cache/oipd/oipd_latest.json``): its ``asof`` is the chain's session when
+    it fitted one. A board showing no chain (a name off the option watch list, or none stored yet) has no data date;
+    nor has a board never rendered. Not the newest session of any ticker (OIPD-7).
     """
     from RevenueChaser.core.config import OUTPUT_DIR as CACHE_ROOT
     p = CACHE_ROOT / "oipd" / "oipd_latest.json"
     if not p.exists():
         return None
-    ticker = (json.loads(p.read_text(encoding="utf-8")).get("ticker") or "").strip().upper()
-    if not ticker:
+    payload = json.loads(p.read_text(encoding="utf-8"))
+    if not payload.get("n_contracts"):
         return None
-    rows = rawstore.query("SELECT as_of, fetched_at FROM oipd_meta WHERE ticker = ?", [ticker])
-    if not rows:
-        return None
-    return _day(rows[0].get("as_of")) or _day(rows[0].get("fetched_at"))
+    return _day(payload.get("asof"))
 
 
 def _quick_financials_day() -> str | None:
@@ -223,7 +215,7 @@ RESOLVERS = {
     "module_value_chain": _chain_day,
     # Relatedness profiles are derived from the same 10-K/20-F corpus.
     "module_relatedness": _chain_day,
-    # Implied Probability reads its own cached UW option chain.
+    # Implied Probability fits the options store's chain of the name on the board.
     "module_oipd": _oipd_day,
     # Settings / Data health is an inventory of many datasets, each reporting its
     # own date on its row — there is no single downloaded dataset to stamp here.

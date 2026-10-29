@@ -256,6 +256,16 @@ def test_sec13f_ticker_names_populated(rawstore_tmp_db):
     assert [r["ticker"] for r in rows] == ["AAPL"]
 
 
+def test_oipd_chain_populated(rawstore_tmp_db):
+    # G9: Implied Probability reads the options store, so these tables have no writer or reader in the app; the
+    # legacy rows stay readable until the retirement group (G10) drops them.
+    rawstore.write_rows("oipd_chain", [{"ticker": "SPY", "option_symbol": "SPY261120C00500000", "expiry": "2026-11-20",
+                                        "option_type": "C", "strike": 500.0, "fetched_at": "2026-10-20T20:00:00+00:00"}])
+    rawstore.write_rows("oipd_meta", [{"ticker": "SPY", "as_of": "2026-10-20", "spot": 500.0,
+                                       "fetched_at": "2026-10-20T20:00:00+00:00"}])
+    assert rawstore.count("oipd_chain") == 1 and rawstore.get("oipd_meta", "SPY")["spot"] == 500.0
+
+
 def test_cusip_ticker_populated(rawstore_tmp_db):
     from RevenueChaser.module_sec_13f import engine as sf
     sf.save_cusip_ticker({"037833100": {"ticker": "AAPL", "source": "openfigi"}})
@@ -435,8 +445,8 @@ POPULATION: dict[str, str] = {
     "relatedness_theme_tags": "module_relatedness/tests/test_themes.py::test_build_shadow_writes_nested_themes",
     "relatedness_theme_members": "module_relatedness/tests/test_themes.py::test_build_shadow_writes_nested_themes",
     "relatedness_theme_etfs": "module_relatedness/tests/test_themes.py::test_match_theme_etfs",
-    "oipd_chain": "module_oipd/tests/test_engine.py::test_oipd_store_populated",
-    "oipd_meta": "module_oipd/tests/test_engine.py::test_oipd_store_populated",
+    "oipd_chain": f"{_HERE}::test_oipd_chain_populated",
+    "oipd_meta": f"{_HERE}::test_oipd_chain_populated",
     "sec13f_submissions": f"{_HERE}::test_sec13f_ingest_populated",
     "sec13f_holdings": f"{_HERE}::test_sec13f_ingest_populated",
     "sec13f_cusip_names": f"{_HERE}::test_sec13f_ingest_populated",

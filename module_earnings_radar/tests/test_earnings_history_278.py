@@ -241,18 +241,19 @@ def test_a_repeated_ticker_keeps_its_first_card_the_key_is_run_id_and_ticker(sto
 
 # ── a card from the real pipeline (not a hand-filled one) ────────────────────
 
-def _real_card(**uw):
+def _real_card(monkeypatch, **uw):
+    """A card scored by the real pipeline; its options inputs are a list set (G9: the options store)."""
+    from RevenueChaser.module_earnings_radar import store_reads
     from RevenueChaser.module_earnings_radar.tests.test_pipeline_score import _FakeUW, _make_pipeline
 
+    term = [{"expiry": "2026-10-16", "volatility": "0.9", "dte": 8},
+            {"expiry": "2026-11-20", "volatility": "0.6", "dte": 43}]
+    strikes = [{"strike": "150", "call_gamma_oi": "10", "put_gamma_oi": "-5", "price": "150.0", "time": "t",
+                "ticker": "AAPL", "expiry": "x", "call_gamma_ask": "1"}]
+    monkeypatch.setattr(store_reads, "card_inputs", lambda ticker, report_date, listed: {
+        "set": "list", "session": None, "gex": {}, "strikes": strikes, "term": term, "prints": [], "volume": {}})
+
     class UW(_FakeUW):
-        def term_structure(self, ticker):
-            return [{"expiry": "2026-10-16", "volatility": "0.9", "dte": 8},
-                    {"expiry": "2026-11-20", "volatility": "0.6", "dte": 43}]
-
-        def spot_exposures_by_strike(self, ticker):
-            return [{"strike": "150", "call_gamma_oi": "10", "put_gamma_oi": "-5", "price": "150.0", "time": "t",
-                     "ticker": "AAPL", "expiry": "x", "call_gamma_ask": "1"}]
-
         def stock_earnings(self, ticker):
             return [{"actual_eps": "1.1", "estimate": "1.0", "report_date": "2026-07-30"}]
 
@@ -266,8 +267,8 @@ def _real_card(**uw):
     return p._score("AAPL")
 
 
-def test_a_real_pipeline_card_stores_its_live_rules_in_slots(store):
-    card = _real_card()
+def test_a_real_pipeline_card_stores_its_live_rules_in_slots(store, monkeypatch):
+    card = _real_card(monkeypatch)
     assert card.rule_audit
     _record([card])
     (row,) = _rows("r1")
@@ -277,8 +278,8 @@ def test_a_real_pipeline_card_stores_its_live_rules_in_slots(store):
                                       if v["contribution"] is not None}
 
 
-def test_a_real_pipeline_card_stores_every_uw_answer_it_was_scored_on(store):
-    card = _real_card()
+def test_a_real_pipeline_card_stores_every_uw_answer_it_was_scored_on(store, monkeypatch):
+    card = _real_card(monkeypatch)
     _record([card])
     (row,) = _rows("r1")
     inputs = _unpack(row["inputs"])

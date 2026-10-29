@@ -19,6 +19,17 @@ def _isolate_leaps_cache(rawstore_tmp_db):
     return rawstore_tmp_db
 
 
+@pytest.fixture(autouse=True)
+def options_set(monkeypatch):
+    """Every card reads a list set (G9: the options store) whose rows a test fills: ``strikes`` (spot exposures by
+    strike), ``term`` (the term structure), ``gex`` (the four levels) and ``prints``. Empty by default, as the old
+    fake UW answered; the three-way rule itself is tested in ``test_options_store_g9``."""
+    from RevenueChaser.module_earnings_radar import store_reads
+    state = {"set": "list", "session": None, "gex": {}, "strikes": [], "term": [], "prints": [], "volume": {}}
+    monkeypatch.setattr(store_reads, "card_inputs", lambda ticker, report_date, listed: dict(state))
+    return state
+
+
 class _FakeUW:
     """Minimal UW client returning empty data except what each test overrides."""
 
@@ -123,12 +134,13 @@ class TestScoreStringPrice:
 
 
 class TestScoreStringCloseEndToEnd:
-    def test_run_produces_card_for_string_close(self):
+    def test_run_produces_card_for_string_close(self, monkeypatch):
         """Full run() path: string close must not drop the ticker from cards."""
-        fake = _FakeUW(
-            screener_batch={"AAPL": {"close": "6.355", "call_volume": "1000",
-                                      "put_volume": "1000", "total_open_interest": "2000"}},
-        )
+        from RevenueChaser.module_earnings_radar import store_reads
+        monkeypatch.setattr(store_reads, "screener_set", lambda tickers, latest=None: (
+            {"AAPL": {"close": "6.355", "call_volume": "1000", "put_volume": "1000", "total_open_interest": "2000"}},
+            {"status": "ok", "error": None, "session": None}))
+        fake = _FakeUW()
         p = EarningsPipeline(["AAPL"], uw=fake, cal_meta={
             "AAPL": {"earnings_date": "2026-08-14", "full_name": "Aple",
                      "sector": "Technology", "expected_move_perc": 0.05},
@@ -138,23 +150,8 @@ class TestScoreStringCloseEndToEnd:
         assert cards[0].current_price == "$6.36"
 
 
-class _ShortUW(_FakeUW):
-    """Fake UW that serves real short_screener rows through the client parser."""
-
-    def __init__(self, **overrides):
-        super().__init__(**overrides)
-        self._short_rows = overrides.get("short_rows", {})
-
-    def short_screener(self, tickers):
-        return {t: self._short_rows[t] for t in tickers if t in self._short_rows}
-
-    def _parse_short_row(self, row):
-        from RevenueChaser.core.providers.unusual_whales import UWClient
-        return UWClient(key="test")._parse_short_row(row)
-
-
 class TestR5ShortInterestWiring:
-    """R5's squeeze inputs must reach the scorer via the batch short screener."""
+    """R5's squeeze inputs must reach the scorer from the ownership store (G9)."""
 
     def _pipeline(self, fake):
         cal = {
@@ -167,49 +164,17 @@ class TestR5ShortInterestWiring:
         p._screener_cache = {}
         return p
 
-    @staticmethod
-    def _seed_spine(sectors):
-        """The peer group is the spine's sector (``equity_universe``), the one the card is scored against (#272)."""
-        from RevenueChaser.core import rawstore
-        rawstore.replace_all("equity_universe", [{
-            "ticker": t, "cik": "", "name": t, "market_cap": 1e9, "price": 10.0, "sector": sec, "industry": "x",
-            "industry_group": None, "sub_industry": None, "quote": {"symbol": t}} for t, sec in sectors.items()])
-
-    def test_warm_short_interest_registers_peer_stats(self):
-        fake = _ShortUW(short_rows={
-            "AAPL": {"si_float": "0.35", "fee_rate": "10", "short_interest": "1000000",
-                     "short_shares_available": "100000", "days_to_cover": "8"},
-            "MSFT": {"si_float": "0.03", "fee_rate": "1", "short_interest": "100000",
-                     "short_shares_available": "5000000", "days_to_cover": "1"},
-        })
-        rule5_positioning.reset_peer_stats()
-        self._seed_spine({"AAPL": "Technology", "MSFT": "Technology"})
-        p = self._pipeline(fake)
-        p._warm_short_interest()
-        assert sorted(rule5_positioning.PEER_STATS["Technology"]["si"]) == pytest.approx([3.0, 35.0])
-        assert sorted(rule5_positioning.PEER_STATS["Technology"]["borrow"]) == pytest.approx([1.0, 10.0])
-        assert fake.short_screener(["AAPL", "MSFT"])
-
     def test_score_uses_shorts_for_squeeze_signal(self):
-        """AAPL has flow {} (no inst signal) but a short-interest row -> R5 must
-        be available from the squeeze side alone; without wiring it would be
-        unavailable."""
-        fake = _ShortUW(short_rows={
-            "AAPL": {"si_float": "0.35", "fee_rate": "10", "short_interest": "1000000",
-                     "short_shares_available": "100000", "days_to_cover": "8"},
-            "MSFT": {"si_float": "0.03", "fee_rate": "1", "short_interest": "100000",
-                     "short_shares_available": "5000000", "days_to_cover": "1"},
-        })
-        rule5_positioning.reset_peer_stats()
-        p = self._pipeline(fake)
-        p._warm_short_interest()
+        """AAPL has flow {} (no inst signal) but a borrow fee in the store -> R5 must be available from the
+        squeeze tag alone; without wiring it would be unavailable (G9: the ownership store's row)."""
+        p = self._pipeline(_FakeUW())
+        p._shorts_cache = {"AAPL": {"si_pct": None, "borrow_fee": 35.0, "short_interest": 1_000_000.0}}
         card = p._score("AAPL")
         audit = (card.rule_audit or {}).get("rule5_positioning", {})
         assert audit.get("available") is True
 
-    def test_missing_short_screener_falls_back_to_flow_only(self):
-        """A fake without short_screener must not crash the warm/score path."""
-        rule5_positioning.reset_peer_stats()
+    def test_no_stored_row_falls_back_to_flow_only(self):
+        """No ownership file: the warm path reads nothing, asks no provider, and R5 has no squeeze."""
         fake = _FakeUW()
         p = self._pipeline(fake)
         p._warm_short_interest()
@@ -217,38 +182,6 @@ class TestR5ShortInterestWiring:
         card = p._score("AAPL")
         audit = (card.rule_audit or {}).get("rule5_positioning", {})
         assert audit.get("available") is False
-
-    def test_the_stored_rows_replace_the_batch_call(self, monkeypatch):
-        """E5c (#372): when the nightly D10 sweep covers every ticker, /short_screener is not called at all, and
-        the stored row is parsed with the client's own mapping so R5 reads exactly what the live row would give."""
-        from datetime import date, datetime, timezone
-        from RevenueChaser.core import calendar, rawstore
-        monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 14, 21, 0, tzinfo=timezone.utc))
-        self._seed_spine({"AAPL": "Technology", "MSFT": "Technology"})
-        rawstore.write_rows("short_interest", [
-            {"ticker": t, "session_date": date(2026, 10, 14), "source": "uw_short_screener", "si_float": si,
-             "fee_rate": fee, "short_interest": 1_000_000, "short_shares_available": 100_000,
-             "days_to_cover": 8}
-            for t, (si, fee) in {"AAPL": (0.35, 10.0), "MSFT": (0.03, 1.0)}.items()])
-
-        class _Counting(_ShortUW):
-            def __init__(self, **kw):
-                super().__init__(**kw)
-                self.asked = []
-
-            def short_screener(self, tickers):
-                self.asked.append(list(tickers))
-                return super().short_screener(tickers)
-
-        fake = _Counting(short_rows={})
-        rule5_positioning.reset_peer_stats()
-        p = self._pipeline(fake)
-        p._warm_short_interest()
-
-        assert fake.asked == []
-        assert sorted(p._shorts_cache["AAPL"]) == ["borrow_fee", "days_to_cover", "si_pct"]
-        assert p._shorts_cache["AAPL"]["si_pct"] == pytest.approx(35.0)
-        assert sorted(rule5_positioning.PEER_STATS["Technology"]["si"]) == pytest.approx([3.0, 35.0])
 
 
 def _duration_ohlc_and_yields(n=25, duration=10.0):
@@ -342,15 +275,6 @@ class TestR7ReusesFinRecords:
         assert audit.get("available") is True
         assert audit.get("score") == 20.0
 
-class _GexUW(_FakeUW):
-    def __init__(self, strike_rows, **overrides):
-        super().__init__(**overrides)
-        self._strike_rows = strike_rows
-
-    def spot_exposures_by_strike(self, ticker):
-        return self._strike_rows
-
-
 def _strike(cg=None, pg=None):
     return {"strike": "0", "call_gamma_vol": None if cg is None else str(cg),
             "put_gamma_vol": None if pg is None else str(pg),
@@ -360,7 +284,7 @@ def _strike(cg=None, pg=None):
 
 
 class TestR4GexProfileWiring:
-    def test_strike_profile_reaches_r4_and_structure(self):
+    def test_strike_profile_reaches_r4_and_structure(self, options_set):
         # COO-like: red band 65/70 inside the EM window => volume-book short.
         rows = [
             _strike(332, 0),      # 60 -> net +332
@@ -371,7 +295,8 @@ class TestR4GexProfileWiring:
         ]
         for i, s in enumerate((60, 65, 70, 75, 80)):
             rows[i]["strike"] = str(s)
-        fake = _GexUW(rows, flow_recent=[], aggregate_flow={})
+        options_set["strikes"] = rows
+        fake = _FakeUW()
         p = _make_pipeline(fake, {"AAPL": {"close": "66.83", "call_volume": "0",
                                            "put_volume": "0", "total_open_interest": "0"}},
                            {"AAPL": {"earnings_date": "2026-09-09", "full_name": "Cooper",
@@ -384,7 +309,7 @@ class TestR4GexProfileWiring:
         assert "volume book" in reasons and "short" in reasons
         assert "Negative gamma regime" in (card.gex_structure or "")
 
-    def test_no_spot_exposures_method_falls_back_cleanly(self):
+    def test_no_stored_strikes_fall_back_cleanly(self):
         fake = _FakeUW()
         p = _make_pipeline(fake, {"AAPL": {"close": "66.83", "call_volume": "0",
                                            "put_volume": "0", "total_open_interest": "0"}},
@@ -415,24 +340,16 @@ def _drift_bars_dated(n, start_iso="2026-07-01", drift=0.005):
     return bars
 
 
-class _TermUW(_FakeUW):
-    def __init__(self, term_rows, **overrides):
-        super().__init__(**overrides)
-        self._term_rows = term_rows
-
-    def term_structure(self, ticker):
-        return self._term_rows
-
-
 class TestR4TermStructureWiring:
-    def test_term_slope_reaches_r4_as_a_penalty(self):
+    def test_term_slope_reaches_r4_as_a_penalty(self, options_set):
         # Near 7 DTE at 0.60 vs 45 DTE at 0.425 -> deep backwardation
         # (-0.00461/day). EM 7.4 (+15) minus the -8 backwardation penalty.
-        fake = _TermUW([
+        options_set["term"] = [
             {"dte": "7", "volatility": "0.60"},
             {"dte": "30", "volatility": "0.425"},
             {"dte": "45", "volatility": "0.425"},
-        ], flow_recent=[], aggregate_flow={})
+        ]
+        fake = _FakeUW()
         p = _make_pipeline(fake, {"AAPL": {"close": "66.83", "call_volume": "0",
                                            "put_volume": "0", "total_open_interest": "0"}},
                            {"AAPL": {"earnings_date": "2026-09-09", "full_name": "Cooper",
@@ -444,7 +361,7 @@ class TestR4TermStructureWiring:
         assert "backwardated" in reasons
         assert card.volatility_edge_score == 7.0  # +15 EM, -8 backwardation
 
-    def test_no_term_structure_method_falls_back_cleanly(self):
+    def test_no_stored_term_structure_falls_back_cleanly(self):
         fake = _FakeUW()
         p = _make_pipeline(fake, {"AAPL": {"close": "66.83", "call_volume": "0",
                                            "put_volume": "0", "total_open_interest": "0"}},
@@ -618,67 +535,6 @@ class TestSectorIsTheSpine:
     def test_ticker_without_a_spine_row_is_unclassified(self):
         self._seed_spine([("OTHR", "Energy", "Oil & Gas E&P")])
         assert self._card().cluster == self._label("Unclassified", "Unclassified")
-
-
-class TestR5PeersAreTheTickersSector:
-    """#266: rule 5 builds the peer Z-scores from the ticker's sector (the spine's Morningstar name)."""
-
-    _ROWS = {
-        # (si_float, fee_rate, days_to_cover): one squeezed name and three quiet peers
-        "AAAA": ("0.30", "40", "12"), "BBBB": ("0.02", "1", "1"),
-        "CCCC": ("0.03", "1.2", "1.1"), "DDDD": ("0.025", "0.9", "0.9"),
-    }
-
-    def _pipeline(self, sectors):
-        from RevenueChaser.core import rawstore
-        rawstore.replace_all("equity_universe", [{
-            "ticker": t, "cik": "", "name": t, "market_cap": 1e9, "price": 10.0,
-            "sector": sec, "industry": "x", "industry_group": None, "sub_industry": None,
-            "quote": {"symbol": t}} for t, sec in sectors.items()])
-        fake = _ShortUW(short_rows={
-            t: {"si_float": si, "fee_rate": fee, "short_interest": "1000000",
-                "short_shares_available": "100000", "days_to_cover": dtc}
-            for t, (si, fee, dtc) in self._ROWS.items()})
-        cal = {t: {"earnings_date": "2026-08-14", "full_name": t, "sector": "Technology",
-                   "expected_move_perc": 0.05} for t in self._ROWS}
-        p = EarningsPipeline(list(self._ROWS), uw=fake, cal_meta=cal)
-        p._screener_cache = {}
-        rule5_positioning.reset_peer_stats()
-        p._warm_short_interest()
-        return p
-
-    def teardown_method(self):
-        rule5_positioning.reset_peer_stats()
-
-    @staticmethod
-    def _reasons(card):
-        return " ".join((card.rule_audit or {}).get("rule5_positioning", {}).get("reasons") or [])
-
-    def test_the_peer_z_is_taken_inside_the_spine_sector(self):
-        p = self._pipeline({t: "Technology" for t in self._ROWS})
-        assert "peer Z=" in self._reasons(p._score("AAAA"))
-
-    def test_the_peers_are_registered_under_the_spine_sector_not_the_calendars(self):
-        """The UW calendar says Technology for all four; the spine puts three of them in Energy (the S&P 1500 list or
-        the SIC table can place a name differently from UW, #272). They are each other's peers, not Technology's."""
-        self._pipeline({"AAAA": "Energy", "BBBB": "Energy", "CCCC": "Energy", "DDDD": "Technology"})
-        assert {k: len(v["si"]) for k, v in rule5_positioning.PEER_STATS.items()} == {"Energy": 3, "Technology": 1}
-
-    def test_the_peer_z_is_taken_inside_the_spine_sector_when_the_calendar_names_another(self):
-        p = self._pipeline({t: "Energy" for t in self._ROWS})        # the calendar still says Technology for all
-        assert "peer Z=" in self._reasons(p._score("AAAA"))
-
-    def test_a_name_the_spine_cannot_place_is_nobodys_peer(self):
-        """Unclassified names are not a sector: three of them must not be Z-scored against each other."""
-        p = self._pipeline({"AAAA": "Unclassified", "BBBB": "Unclassified", "DDDD": "Technology"})     # CCCC: no row
-        assert list(rule5_positioning.PEER_STATS) == ["Technology"]
-        assert "peer Z=" not in self._reasons(p._score("AAAA"))
-
-    def test_a_sector_the_peers_are_not_registered_under_has_no_peer_z(self):
-        """The spine puts AAAA in Energy: nobody was registered there, so the absolute short-interest read applies."""
-        p = self._pipeline({"AAAA": "Energy", "BBBB": "Technology", "CCCC": "Technology", "DDDD": "Technology"})
-        reasons = self._reasons(p._score("AAAA"))
-        assert "peer Z=" not in reasons and "high short interest" in reasons
 
 
 def test_e18_edge_counts_a_zero_eps_print():

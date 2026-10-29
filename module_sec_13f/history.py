@@ -29,11 +29,13 @@ BOARD, TABLE = "module_sec_13f", "sec13f_metrics_history"
 # OpenFIGI's (#207). 3: plus the legacy entries whose issuer prefix OpenFIGI confirms, 9x issues out (#207).
 # 4: shares out, insider % and price come from ownership_snapshot and D01, not sec13f_enrichment (#375 F2).
 # 5: plus ownership breadth, holders ÷ that quarter's filers, and its change (#375 F4, Chen-Hong-Stein 2002).
-SELECTION_VERSION = "5"
+# 6: the totals are the ownership store's (G9): the newest complete quarter is the snapshot, a quarter still filing is
+# left out of it, Short is FINRA's short interest in shares (no float).
+SELECTION_VERSION = "6"
 _LAST = ("shares", "value", "holders", "top10_pct", "hhi", "new_holders", "exited_holders", "buy_flow", "sell_flow",
          "breadth", "breadth_chg")
 _ENTRY = ("name", "sector", "streak", "accel", "pct_out", "price", "price_delta", "shares_outstanding",
-          "float_shares", "short_pct", "insider_pct")
+          "float_shares", "short_interest", "days_to_cover", "insider_pct")
 
 
 def effective_config() -> dict:
@@ -58,9 +60,15 @@ def cusips_by_ticker(cusip_ticker: dict) -> dict[str, list[str]]:
 
 
 def metric_rows(totals: dict, meta: dict, enrichment: dict | None, cusip_ticker: dict) -> tuple[str | None, list]:
-    """``(quarter, rows)``: one row per board row, in board order; ``quarter`` is the board's latest quarter."""
+    """``(quarter, rows)``: one row per board row, in board order; ``quarter`` is the board's snapshot quarter, the
+    newest complete one (the newest quarter when none is complete).
+
+    shortcut: ``cusips`` still come from the old stored map (``engine.load_cusip_ticker``, empty since the 27 Oct
+    purge); the ownership store serves a CUSIP count per row, not the list. Upgrade when G10 retires the old map."""
     quarters, entries = report.board_entries(totals, meta, enrichment)
-    quarter = quarters[-1] if quarters else None
+    filing = report.filing_quarters(totals)
+    done = [q for q in quarters if q not in filing]
+    quarter = (done or quarters)[-1] if quarters else None
     cusips = cusips_by_ticker(cusip_ticker)
     rows = []
     for e in entries:

@@ -17,8 +17,7 @@ import pytest
 from RevenueChaser.core import ledger, rawstore
 from RevenueChaser.core.providers.result import ProviderResult
 from RevenueChaser.core.providers.unusual_whales import UWClient
-from RevenueChaser.module_leaps import engine, history as leaps_history
-from RevenueChaser.module_leaps.scan import scan_leaps
+from RevenueChaser.module_leaps import engine
 
 TODAY = date(2026, 10, 6)
 COMPLETE = datetime(2026, 10, 6, 22, 0, tzinfo=timezone.utc).timestamp()
@@ -100,28 +99,6 @@ def test_a_failed_oi_read_returns_na_and_does_not_save(store, monkeypatch, statu
     assert calls == []
     assert _cache_row() == before                                   # leaps_cache untouched, byte for byte
     assert inputs["read_status"]["oi_per_expiry"] == "failed"
-
-
-def test_every_read_raising_leaves_the_cache_and_keeps_no_session_rows(store):
-    before = _cache_row()
-    footprints: list = []
-    scan_leaps(_Raising(), today=TODAY, footprints=footprints)
-    (bbb,) = footprints
-    assert bbb["snapshot"]["label"] == "N/A" and bbb["fetch_status"] == "provider_failed"
-    assert bbb["inputs"]["error"] == "RuntimeError"
-    assert _cache_row() == before
-    assert engine.load_cache("BBB")["latest"] == REAL                # the real entry is not evicted
-    leaps_history.record(footprints, run_id="r1", run_at=COMPLETE)
-    (head,) = rawstore.query("SELECT * FROM result_runs WHERE board = 'module_leaps'", db="history")
-    assert head["quality"] == "partial" and head["session_snapshot"] is False
-    assert rawstore.query("SELECT * FROM leaps_footprint_history", db="history") == []
-
-
-def test_the_history_row_of_a_failed_read_says_na_not_quiet(store):
-    footprints: list = []
-    scan_leaps(_real_uw(404), today=TODAY, footprints=footprints)
-    (row,) = leaps_history.rows_from_footprints(footprints)
-    assert row["label"] == "N/A" and row["fetch_status"] == "provider_failed" and row["score"] is None
 
 
 def test_an_ok_read_with_empty_data_still_saves_the_quiet_snapshot(store, monkeypatch):

@@ -1,7 +1,8 @@
 """E2 (#372): the Earnings runner hands the screener outcome to history and the board notice.
 
-A partial or failed UW screener answer must reach both the recorded run (a partial note) and the
-board (the amber notice), and a board with only "no screener row" exclusions must say so.
+A missing or stale stored screener set (G9; before it a partial or failed UW answer) must reach both the recorded
+run (a partial note) and the board (the amber notice), and a board with only "no screener row" exclusions must say
+so.
 Offline; the store is a temp DuckDB.
 """
 from __future__ import annotations
@@ -61,7 +62,7 @@ def run(monkeypatch, rawstore_tmp_db):
     monkeypatch.setattr("RevenueChaser.module_earnings_radar.report.export_html", fake_export)
 
     class Pipe:
-        screener_result = {"status": "partial", "error": {"failed_chunks": 1, "chunks": 2}}
+        screener_result = {"status": "missing", "error": {"reason": "no stored screener session"}, "session": None}
 
         def __init__(self, tickers, uw, raw_cal, etf_quadrant_map=None):
             self.tickers = tickers
@@ -81,7 +82,10 @@ def run(monkeypatch, rawstore_tmp_db):
 
 def test_the_runner_shows_the_notice_and_records_the_screener_reason(run):
     runners.run_earnings_range(_UW(), date(2026, 10, 8), date(2026, 10, 8))
-    expected = er_history.screener_problem({"status": "partial", "error": {"failed_chunks": 1, "chunks": 2}})
-    assert run["notice"] == expected and "chunks failed" in run["notice"]
+    expected = er_history.screener_problem(
+        {"status": "missing", "error": {"reason": "no stored screener session"}, "session": None})
+    # G9: the screener reason, then the Fetch's builder request line.
+    assert run["notice"].startswith(expected + " Builder request: uw/option_list")
+    assert "(uw/option_screener) is missing" in run["notice"]
     (head,) = rawstore.query("SELECT * FROM result_runs WHERE board = ?", [BOARD], db="history")
     assert head["quality"] == "partial" and "screener" in head["quality_note"]

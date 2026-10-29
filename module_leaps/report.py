@@ -172,6 +172,8 @@ def _row(snapshot: dict, pinned: bool) -> str:
     near = snapshot.get("near_term_event")
     net_cls = "pos" if (net or 0) > 0 else ("neg" if (net or 0) < 0 else "zero")
     warn = '<span class="warn" title="earnings within 7 days">⚠</span>' if near else ""
+    if snapshot.get("note"):                # G9: not on the option watch list, or no stored chain yet
+        warn += f'<div class="nm">{_html.escape(str(snapshot["note"]), quote=True)}</div>'
     # Ticker, name and label arrive from UW / meta strings: escape for text and
     # attributes alike (the watch-list pair reads data-ticker, so no value sits inside JS).
     lbl_cls = _label_cls(label)

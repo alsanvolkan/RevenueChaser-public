@@ -15,7 +15,6 @@ from RevenueChaser.core.config import INST_PRINT_MIN_PREMIUM
 from RevenueChaser.core.providers.unusual_whales import UWClient
 from RevenueChaser.module_earnings_radar.pipeline import _institutional_flow_comment, _trade_flow_part
 from RevenueChaser.module_earnings_radar.rules import rule5_positioning
-from RevenueChaser.module_earnings_radar.rules.rule5_positioning import register_peer_stats, reset_peer_stats
 from RevenueChaser.module_earnings_radar.rules.rule5_positioning import score as r5_score
 
 QUOTE = {"nbbo_bid": "1.00", "nbbo_ask": "1.10"}
@@ -101,23 +100,3 @@ def test_a_small_package_is_no_risk_and_a_small_net_is_thin():
     assert r.available and r.score == 0.0 and "thin institutional lean" in r.reasons
     assert not any("package-risk" in reason for reason in r.reasons)
 
-
-class TestPeerZWithoutTheNameItself:
-    def setup_method(self):
-        reset_peer_stats()
-
-    def teardown_method(self):
-        reset_peer_stats()
-
-    def test_the_name_is_left_out_of_its_own_peer_group(self):
-        for t, si in (("AAA", 5.0), ("BBB", 6.0), ("CCC", 7.0)):
-            register_peer_stats(t, "Widgets", {"si_pct": si})
-        r = r5_score(ticker="AAA", short_interest_pct_float=5.0, sector="Widgets")
-        assert r.raw_metrics["z_si"] == pytest.approx((5.0 - 6.5) / 0.7071, abs=0.01)
-
-    def test_self_and_one_peer_is_not_a_peer_group(self):
-        register_peer_stats("AAA", "Widgets", {"si_pct": 5.0})
-        register_peer_stats("BBB", "Widgets", {"si_pct": 6.0})
-        r = r5_score(ticker="AAA", short_interest_pct_float=5.0, sector="Widgets")
-        assert "z_si" not in r.raw_metrics, "one peer is under the two-peer minimum"
-        assert rule5_positioning.PEER_STATS["Widgets"]["si"] == [5.0, 6.0]

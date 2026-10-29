@@ -22,6 +22,7 @@ from RevenueChaser.core.providers.result import ProviderResult
 from RevenueChaser.module_leaps import engine
 from RevenueChaser.module_leaps import history as leaps_history
 from RevenueChaser.module_leaps.scan import scan_leaps, scan_leaps_cached
+from RevenueChaser.module_leaps.tests.options_store import pin, print_row, store_footprint
 
 BOARD, TABLE = "module_leaps", "leaps_footprint_history"
 TODAY = date(2026, 10, 5)                       # a Monday session
@@ -186,17 +187,18 @@ def test_an_empty_history_gives_none_never_zero():
 def test_the_fetch_reads_history_not_the_frozen_cache_list(store):
     # A frozen cache list holding a far-call OI of 400 (the old baseline source) is not read: no recorded
     # session, no baseline.
-    rawstore.save_watchlist({"AAA"})
+    pin("AAA")
+    store_footprint("AAA", TODAY, {date.fromisoformat(FAR): (1000, 200)})
     frozen = [{"ticker": "AAA", "far_call_oi": 400, "as_of": "2026-10-02"}]
     rawstore.write_rows("leaps_cache", [{"ticker": "AAA", "payload": {
         "latest": {"ticker": "AAA", "far_call_oi": 400, "as_of": "2026-10-02"}, "history": frozen}}])
-    watched, _ = scan_leaps(_UW({"AAA": (1000, 200)}), today=TODAY)
+    watched, _ = scan_leaps(None, today=TODAY)
     (aaa,) = watched
     assert aaa["far_oi_growth_1d_pct"] is None and aaa["label"] == "Quiet"
     # With a recorded session the same Fetch grows from it, not from the cache list.
     seed_session(date(2026, 10, 2), {"AAA": _oi(400)})
     footprints: list = []
-    watched, _ = scan_leaps(_UW({"AAA": (1000, 200)}), today=TODAY, footprints=footprints)
+    watched, _ = scan_leaps(None, today=TODAY, footprints=footprints)
     assert footprints[0]["inputs"]["baseline_1d"]["as_of"] == "2026-10-02"
     assert watched[0]["far_oi_growth_1d_pct"] == 150.0
 
@@ -262,17 +264,12 @@ def test_high_ask_share_stays_accumulating():
 
 def test_the_scan_passes_the_flows_ask_share_to_the_classifier(store):
     # A seeded baseline says the footprint grew; the scan's only print is all bid, so it is not Accumulating.
-    rawstore.save_watchlist({"AAA"})
+    pin("AAA")
     seed_session(date(2026, 10, 2), {"AAA": _oi(400)})
-    tape = [{"id": "b1", "underlying_symbol": "AAA", "strike": "200", "expiry": "2027-06-18", "premium": "200000",
-             "size": 10, "option_type": "call", "delta": "0.8", "next_earnings_date": None,
-             "executed_at": "2026-10-05T14:00:00Z", "ask_vol": 0, "bid_vol": 10, "tags": []}]
-
-    class _Tape(_UW):
-        def option_trades(self, **kw):
-            return tape
-
-    watched, _ = scan_leaps(_Tape({"AAA": (1000, 100)}), today=TODAY)
+    store_footprint("AAA", TODAY, {date.fromisoformat(FAR): (1000, 100)},
+                    prints=[print_row("AAA", "b1", TODAY, date(2027, 6, 18), premium=200_000.0, ask_vol=0,
+                                      bid_vol=10)])
+    watched, _ = scan_leaps(None, today=TODAY)
     (aaa,) = watched
     assert aaa["far_oi_growth_1d_pct"] == 150.0        # the footprint grew from the recorded session
     assert aaa["ask_share"] == 0.0 and aaa["label"] == "Quiet"
@@ -299,10 +296,11 @@ def test_unreadable_history_gives_growth_none_and_a_warning(store, monkeypatch):
         raise rawstore.StoreLockedError("history.duckdb", 4242, "duckdb.exe", "C:/duckdb.exe", "held")
 
     monkeypatch.setattr(leaps_history, "baselines", boom)
-    rawstore.save_watchlist({"AAA"})
+    pin("AAA")
+    store_footprint("AAA", TODAY, {date.fromisoformat(FAR): (1000, 200)})
     notes: list = []
     footprints: list = []
-    watched, _ = scan_leaps(_UW({"AAA": (1000, 200)}), today=TODAY, warnings=notes, footprints=footprints)
+    watched, _ = scan_leaps(None, today=TODAY, warnings=notes, footprints=footprints)
     # One warning for the baseline read, never one per ticker (the scan's calendar warning may sit beside it, DF94).
     assert sum("baseline" in n.lower() for n in notes) == 1
     (aaa,) = watched
@@ -346,42 +344,19 @@ def test_latest_keeps_label_and_as_of(store):
     assert data["history"] == old                     # carried unchanged: never appended, never deleted (D1)
 
 
-# ── 8. Refresh: re-derive with the row's own date (D4) ───────────────────────────────────────────────────────────
-
-def _cached_0915(expiry, label="Quiet"):
-    return {"ticker": "AAA", "label": label, "score": 0, "as_of": "2026-09-15",
-            "far_call_oi": 1000, "far_put_oi": 50, "far_call_share": 0.9524,
-            "far_oi_growth_1d_pct": None, "far_oi_growth_q_pct": None,
-            "iv_rank": 55.0, "iv_rank_slope": None, "near_term_event": False}
-
+# ── 8. Refresh: the far line is decided at the stored session's date, not the Refresh date (D4) ─────────────────
 
 def test_refresh_rederives_with_the_rows_own_date(store):
-    # The recorded sessions end on 2026-09-15; at that date 2027-06-18 is 276 DTE (far), at the 2026-11-20
-    # Refresh date it is 210 (near). Re-deriving with the row's own as_of finds the growth; any other date does not.
-    expiry = "2027-06-18"
-    seed_session(date(2026, 6, 30), {"AAA": _oi(500, expiry=expiry)})
-    seed_session(date(2026, 9, 15), {"AAA": _oi(1000, expiry=expiry)})
-    rawstore.save_watchlist({"AAA"})
-    engine.save_cache("AAA", _cached_0915(expiry))
+    # The store's newest session is 2026-09-15: at that date 2027-06-18 is 276 DTE (far), at the 2026-11-20
+    # Refresh date it is 210 (near). Deriving at the session's own date finds the growth; any other date does not.
+    expiry = date(2027, 6, 18)
+    seed_session(date(2026, 6, 30), {"AAA": _oi(500, expiry=expiry.isoformat())})
+    pin("AAA")
+    store_footprint("AAA", date(2026, 9, 15), {expiry: (1000, 50)})
     watched, _ = scan_leaps_cached(today=date(2026, 11, 20))
     (aaa,) = watched
+    assert aaa["as_of"] == "2026-09-15"
     assert aaa["far_oi_growth_1d_pct"] == 100.0 and aaa["label"] == "Accumulating"
-
-
-def test_refresh_shows_the_cache_latest_when_a_newer_fetch_is_not_recorded(store):
-    # The cache holds an intraday Fetch of 2026-10-07; the newest recorded session is 2026-09-15: it is not
-    # re-derived from the older row (D4), so its own label stands.
-    expiry = "2027-06-18"
-    seed_session(date(2026, 6, 30), {"AAA": _oi(500, expiry=expiry)})
-    seed_session(date(2026, 9, 15), {"AAA": _oi(1000, expiry=expiry)})
-    rawstore.save_watchlist({"AAA"})
-    snap = _cached_0915(expiry, label="Distributing")
-    snap["as_of"] = "2026-10-07"
-    engine.save_cache("AAA", snap)
-    watched, _ = scan_leaps_cached(today=date(2026, 11, 20))
-    (aaa,) = watched
-    assert aaa["as_of"] == "2026-10-07" and aaa["label"] == "Distributing"
-    assert aaa["far_oi_growth_1d_pct"] is None
 
 
 # ── 9. the board says the signal is exploratory (Q5) ─────────────────────────────────────────────────────────────

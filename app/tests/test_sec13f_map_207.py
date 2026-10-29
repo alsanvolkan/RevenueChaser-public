@@ -1,10 +1,10 @@
-"""#207 F1b: the CUSIP map step in the 13F Fetch and the 13F map job. Offline: temp stores, a fake OpenFIGI, fake UW.
+"""#207 F1b: the 13F map job (the old store's CUSIP map). Offline: temp stores, a fake OpenFIGI, fake UW.
 
-- the Fetch asks OpenFIGI only once the map is seeded; the first map runs through the map job;
 - the map job makes no SEC or UW call;
-- a complete map rebuilds ``cusip_ticker`` when the derive passes; an incomplete one keeps the stored map;
-- no key: the step is skipped with a job note and the derive uses the stored map;
-- the history header carries the map identity.
+- a complete map rebuilds ``cusip_ticker`` when the derive passes; an incomplete one keeps the stored map.
+
+Since G9 the 13F Fetch reads the ownership store and runs no map step (``test_sec13f_store_g9``); the map job stays
+until G10 retires the old store.
 """
 from __future__ import annotations
 
@@ -229,83 +229,6 @@ class TestPrefixFallback:
         except runners.JobMessage:
             pass
         assert sec_13f.load_cusip_ticker() == first
-
-
-class TestFetchStep:
-    def test_before_the_map_is_seeded_a_fetch_asks_nothing_and_says_so(self, fetch, figi):
-        with pytest.raises(runners.JobMessage, match="has not mapped the 13F holdings yet"):
-            runners.build_sec13f(None)
-        assert figi.requests == 0
-        assert sec_13f.load_cusip_ticker()["333333333"] == "GOOGL"
-
-    def test_once_seeded_a_fetch_asks_only_the_new_cusips(self, fetch, figi):
-        with pytest.raises(runners.JobMessage):
-            runners.run_sec13f_map(None)
-        _zip(fetch / "2026q1c_form13f.zip", [("c1", "5000", "444444444", "NEW CO", 9)])
-        FIGI["444444444"] = "NEWC"
-        try:
-            runners.build_sec13f(None)
-        except runners.JobMessage:
-            pass
-        finally:
-            del FIGI["444444444"]
-        assert figi.asked[-1] == ["444444444"]
-        assert sec_13f.load_cusip_ticker()["444444444"]["ticker"] == "NEWC"
-        assert sec_13f.load_totals()["NEWC"]["2026-03-31"]["shares"] == 9
-
-    def test_no_key_skips_the_step_with_a_job_note_and_the_derive_uses_the_stored_map(self, fetch, figi,
-                                                                                      monkeypatch):
-        identity_cusip.record({"999999999": {"status": "absent", "fetched_at": 0.0}}, run_id="seed", run_at=0.0)
-        monkeypatch.delenv("OPENFIGI_API_KEY")
-        with pytest.raises(runners.JobMessage, match="no OpenFIGI key"):
-            runners.build_sec13f(None)
-        assert figi.requests == 0
-        assert sec_13f.load_totals()["GOOGL"]["2026-03-31"]["shares"] == 100       # the stored (legacy) map
-        assert "GOOG" not in sec_13f.load_totals()
-
-    def test_the_history_header_carries_the_map_identity(self, fetch, figi):
-        with pytest.raises(runners.JobMessage):
-            runners.run_sec13f_map(None)
-        try:
-            runners.build_sec13f(None)
-        except runners.JobMessage:
-            pass
-        head = history.last_run(sec13f_history.BOARD)
-        ident = head["context"]["map"]
-        assert ident["count"] == 3 and ident["by_source"] == {"openfigi": 3}
-        assert ident["hash"] == sec_13f.map_identity(sec_13f.load_cusip_ticker())["hash"]
-        assert ident["unmatched_cusips"] == 1 and ident["unmatched_value"] == 1000.0
-
-    def test_a_map_step_note_is_a_history_warning(self, fetch, figi):
-        with pytest.raises(runners.JobMessage):
-            runners.build_sec13f(None)
-        head = history.last_run(sec13f_history.BOARD)
-        assert any("has not mapped the 13F holdings yet" in w for w in head["warnings"])
-
-    def test_a_refused_new_map_falls_back_to_the_stored_map_and_says_so(self, fetch, figi, monkeypatch):
-        real_guard = sec_13f.guard
-
-        def refuse_the_split(before, totals, factors=None):
-            if "GOOG" in totals:
-                raise sec_13f.DeriveRefused("the derive would cut the mapped value of 2026-03-31")
-            real_guard(before, totals, factors)
-        monkeypatch.setattr(sec_13f, "guard", refuse_the_split)
-        with pytest.raises(sec_13f.DeriveRefused):
-            runners.run_sec13f_map(None)                      # seeded, but the stored map stays the legacy one
-        with pytest.raises(runners.JobMessage, match="new map was not applied"):
-            runners.build_sec13f(None)                        # not a failed Fetch, and not every Fetch after
-        assert sec_13f.load_totals()["GOOGL"]["2026-03-31"]["shares"] == 100
-        assert sec_13f.load_cusip_ticker()["333333333"] == "GOOGL"
-        head = history.last_run(sec13f_history.BOARD)
-        assert head["error"] is None and any("new map was not applied" in w for w in head["warnings"])
-
-    def test_a_raising_step_never_fails_the_fetch(self, fetch, figi, monkeypatch):
-        def boom():
-            raise RuntimeError("store hiccup")
-        monkeypatch.setattr(sec_13f, "map_candidates", boom)
-        with pytest.raises(runners.JobMessage, match="CUSIP map step failed"):
-            runners.build_sec13f(None)
-        assert "GOOGL" in sec_13f.load_totals()
 
 
 class TestRoute:

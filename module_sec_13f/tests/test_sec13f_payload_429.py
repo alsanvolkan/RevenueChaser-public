@@ -92,7 +92,7 @@ def test_an_empty_board_writes_no_payload_and_shows_the_empty_state(tmp_path, mo
     path = report.export_sec13f_dashboard({}, {}, {}, filename="sec_13f_latest.html")
     html = path.read_text(encoding="utf-8")
     assert not payload_path(path).exists()
-    assert "No SEC 13F data stored yet" in html
+    assert "The ownership store holds no 13F quarter yet" in html
     assert "var ROW_COUNT = 0;" in html
 
 
@@ -178,10 +178,10 @@ def test_a_refresh_with_no_totals_drops_the_old_payload(tmp_path, monkeypatch):
     import pytest
     from RevenueChaser.app import runners
     from RevenueChaser.app.jobs import JobMessage
-    from RevenueChaser.module_sec_13f import engine
+    from RevenueChaser.module_sec_13f import store_reads
     page = tmp_path / "sec_13f_latest.html"
     monkeypatch.setattr(runners, "SEC_13F_LATEST", page)
-    monkeypatch.setattr(engine, "load_totals", lambda: {})
+    monkeypatch.setattr(store_reads, "totals", lambda tickers=None: {})
     payload_path(page).write_bytes(gzip.compress(b'{"cols": [], "rows": [["OLD", "", "", []]]}'))
     with pytest.raises(JobMessage):
         runners.run_sec_13f_latest(None)

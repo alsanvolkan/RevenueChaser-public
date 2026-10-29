@@ -79,6 +79,7 @@ table.mini{border-collapse:collapse;width:100%;font-size:12px}
 table.mini th,table.mini td{padding:5px 8px;border-bottom:1px solid var(--border);text-align:right}
 table.mini th:first-child,table.mini td:first-child{text-align:left;color:var(--muted)}
 .empty{color:var(--muted);font-size:13px;padding:20px;text-align:center}
+.notice{color:var(--muted);font-size:12px;margin:0 0 10px}
 .disclaimer{color:var(--muted);font-size:11.5px;margin-top:8px;line-height:1.6}
 """
 
@@ -334,6 +335,8 @@ def render_oipd_dashboard(payload: dict) -> str:
     <span class="share-px" id="share-px">{px}<span class="d">Share price</span></span>
     </div>
   </div>"""
+    if payload.get("notice"):              # the Fetch's builder request (G9, D1)
+        chrome += f'\n  <div class="notice" id="notice">{_html.escape(str(payload["notice"]))}</div>'
 
     if error:
         body = (f'<div class="err" id="err" style="display:block">{_html.escape(error)}</div>'
@@ -343,7 +346,7 @@ def render_oipd_dashboard(payload: dict) -> str:
   <div class="warn" id="warn"></div>
   <div class="banner">
     <div class="stat"><div class="v acc">{_html.escape(ticker)}</div><div class="l">Ticker</div>
-      <div class="d">Unusual Whales chain</div></div>
+      <div class="d">stored chain · options store</div></div>
     <div class="stat"><div class="v">{px}</div><div class="l">Share price</div>
       <div class="d">last close · {_html.escape(asof or '—')}</div></div>
     <div class="stat"><div class="v">{len(expiries)}</div><div class="l">Expiries fitted</div>
@@ -392,8 +395,11 @@ def render_oipd_dashboard(payload: dict) -> str:
         "The <b>fan</b> shows the 5–95% and 25–75% price bands across maturities; the <b>median</b> "
         "is the 50th percentile. Use the expiry tabs to inspect one distribution's PDF/CDF, its "
         "fitted smile, and tail probabilities. All figures are <b>risk-neutral</b> — a pricing "
-        "convention, not a real-world forecast. <b>Fetch</b> pulls the picked ticker's option chain "
-        "from Unusual Whales; <b>Refresh</b> re-fits the stored chain with no network call.")
+        "convention, not a real-world forecast. The chain is the options store's close of the newest "
+        "session, fetched every evening from Unusual Whales for <b>SPX and the option watch list</b> only; "
+        "any other name shows 'not on the option watch list' and gets no fit. <b>Fetch</b> re-fits the "
+        "stored chain and asks the builder for the next uw/option_list run; <b>Refresh</b> re-fits it "
+        "with no network call.")
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>

@@ -10,26 +10,23 @@ Each test breaks one provider call through the mock server and drives the real d
 * the range backfill reads the stored bars since M-ROT-2 (#374), so no candle answer reaches it: with SPY absent from
   the prices store it writes no day and says why, and an ETF the store lacks is left out of the days it writes, with
   no provider call;
-* the second page of an expiry's option chain answers 500: OIPD fits what it has, warns, and does not save it.
+* (G9: OIPD reads the options store and pulls no chain, so its second-page case is gone; the builder's
+  ``uw/option_list`` tests cover a failed page: ``rcdata/tests``.)
 
 The healthy path is asserted next to each failure so a fix that blanks everything cannot pass.
 """
 from __future__ import annotations
 
 import hashlib
-import math
 import os
 import re
 import shutil
 import subprocess
 from datetime import date, timedelta
 from pathlib import Path
-from urllib.parse import parse_qs
 
-import numpy as np
 import pytest
 
-from RevenueChaser.module_oipd import opd_math
 
 CANDLES = 200
 THEME_HOLDINGS = [{"ticker": t, "name": f"{t} Corp", "weight": str(w), "updated": "2026-09-01"}
@@ -272,96 +269,3 @@ class TestMoneyFlowNoteOnTheBoard:
         dashboard.wait_until_idle()
         dom = _dump_dom(chrome, f"{dashboard.url}/view/module_sector_rotation", tmp_path / "p2")
         assert 'id="mf-inflows"' in dom and _note(dom) is None
-
-
-# ── OIPD: the second page of an expiry fails ─────────────────────────────────────────────
-
-_SPOT, _R, _TICKER = 100.0, 0.04, "TST"
-_TRUE = dict(a=0.02, b=0.12, rho=-0.5, m=0.0, sigma=0.15)
-
-
-def _expiries():
-    today = date.today()
-    return [(today + timedelta(days=n)).isoformat() for n in (30, 60, 120)]
-
-
-def _contracts_for(expiry: str) -> list[dict]:
-    """About 600 contracts per expiry: more than one 500-row page, so a second page exists."""
-    d = (date.fromisoformat(expiry) - date.today()).days
-    T = d / 365.0
-    F = _SPOT * math.exp(_R * T)
-    out = []
-    for K in np.arange(70.0, 130.0, 0.2):
-        k = math.log(K / F)
-        iv = math.sqrt(float(opd_math.svi_w(k, **_TRUE)) / T)
-        for cp in ("C", "P"):
-            price = opd_math.black76_price(F, K, T, _R, iv, cp)
-            out.append({
-                "option_symbol": f"{_TICKER}{expiry[2:4]}{expiry[5:7]}{expiry[8:10]}{cp}{int(round(K * 1000)):08d}",
-                "nbbo_bid": round(price * 0.99, 4), "nbbo_ask": round(price * 1.01, 4),
-                "last_price": round(price, 4), "implied_volatility": round(iv, 5),
-                "open_interest": 100, "volume": 10, "delta": 0.5, "last_tape_time": "2026-09-23T20:00:00Z"})
-    return out
-
-
-@pytest.fixture
-def oipd_routes(provider_routes):
-    exps = _expiries()
-    chains = {e: _contracts_for(e) for e in exps}
-    state = {"fail_page2_for": set()}
-
-    def contracts(path, query, body):
-        q = parse_qs(query)
-        expiry = (q.get("expiry") or [""])[0]
-        page, limit = int((q.get("page") or ["1"])[0]), int((q.get("limit") or ["500"])[0])
-        if page >= 2 and expiry in state["fail_page2_for"]:
-            return 500, BOOM
-        rows = chains.get(expiry, [])
-        return 200, {"data": rows[(page - 1) * limit: page * limit]}
-
-    provider_routes.route(f"/api/stock/{_TICKER}/expiry-breakdown", payload={
-        "data": [{"expiry": e, "open_interest": 10000, "volume": 500, "chains": 50} for e in exps]})
-    provider_routes.route_fn(f"/api/stock/{_TICKER}/option-contracts", contracts)
-    provider_routes.route(f"/api/stock/{_TICKER}/ohlc/1d", payload={"data": [
-        {"date": "2026-09-29", "market_time": "r", "open": _SPOT, "high": _SPOT, "low": _SPOT,
-         "close": _SPOT, "volume": 1000}]})
-    provider_routes.fail_page2_for = state["fail_page2_for"]
-    return provider_routes
-
-
-class TestOipdSecondPageFails:
-    def test_a_healthy_fetch_pages_and_saves_the_chain(self, dashboard, oipd_routes):
-        res = dashboard.run_job("/run/module_oipd", ticker=_TICKER)
-        assert res.ok, res
-        assert dashboard.table_count("oipd_chain") > 0
-        pages = [q.query for q in oipd_routes.requests(f"/api/stock/{_TICKER}/option-contracts")]
-        assert any("page=2" in q for q in pages), "the fixture must really have a second page"
-
-    def test_a_failed_second_page_warns_and_saves_nothing(self, dashboard, oipd_routes):
-        bad = _expiries()[1]
-        oipd_routes.fail_page2_for.add(bad)
-        res = dashboard.run_job("/run/module_oipd", ticker=_TICKER)
-        assert res.ok, res
-        html = dashboard.view("module_oipd").text
-        assert bad in html and "page 2" in html and "truncated" in html
-        assert "Partial chain: not saved" in html
-        assert dashboard.table_count("oipd_chain") == 0
-
-    def test_a_failed_second_page_leaves_the_stored_chain_alone(self, dashboard, oipd_routes):
-        assert dashboard.run_job("/run/module_oipd", ticker=_TICKER).ok
-        def snapshot():
-            return (_query(dashboard, "SELECT count(*) FROM oipd_chain"),
-                    _query(dashboard, "SELECT ticker, fetched_at FROM oipd_meta"))
-
-        stored = snapshot()
-        assert stored[0][0][0] > 0 and stored[1]
-        oipd_routes.fail_page2_for.add(_expiries()[0])
-        assert dashboard.run_job("/run/module_oipd", ticker=_TICKER).ok
-        assert snapshot() == stored
-
-    def test_every_chain_request_failing_says_the_request_failed(self, dashboard, oipd_routes):
-        oipd_routes.route(f"/api/stock/{_TICKER}/option-contracts", payload=BOOM, status=500)
-        res = dashboard.run_job("/run/module_oipd", ticker=_TICKER)
-        assert res.ok, res
-        html = dashboard.view("module_oipd").text
-        assert "Unusual Whales request failed" in html and "check the ticker" not in html

@@ -219,17 +219,17 @@ class TestArtifacts:
     def test_empty_13f_writes_an_empty_board_and_a_message(self, rawstore_tmp_db):
         from RevenueChaser.app import runners
         runners.SEC_13F_LATEST.unlink(missing_ok=True)
-        with pytest.raises(jobs.JobMessage, match="No 13F totals"):
+        with pytest.raises(jobs.JobMessage, match="holds no 13F quarter yet"):
             runners.run_sec_13f_latest(None)
         assert runners.SEC_13F_LATEST.exists()
 
     def test_13f_refresh_rewrites_the_artifact(self, client, rawstore_tmp_db):
         from RevenueChaser.app import runners
-        runners.SEC_13F_LATEST.write_text("<html>old</html>", encoding="utf-8")
+        runners.SEC_13F_LATEST.write_text("<html>stale-sentinel</html>", encoding="utf-8")
         r = client.get("/view/module_sec_13f?refresh=1")
         assert r.status_code == 200
         assert runners.SEC_13F_LATEST.exists()
-        assert "old" not in runners.SEC_13F_LATEST.read_text(encoding="utf-8")
+        assert "stale-sentinel" not in runners.SEC_13F_LATEST.read_text(encoding="utf-8")
 
 
 # ── S7: B12/B13 ─────────────────────────────────────────────────────────────

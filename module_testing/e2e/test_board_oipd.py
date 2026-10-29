@@ -1,18 +1,21 @@
-"""Implied Probability (OIPD) board, end to end: fetch -> store -> refresh.
+"""Implied Probability (OIPD) board, end to end: options store -> Fetch -> Refresh (G9, build plan PR 19).
 
-The chain fixture is generated relative to ``date.today()`` rather than stored
-as static JSON, because the board's expiry window is DTE-based (1d-365d) and a
-frozen fixture would age out of range.
+The chain is a fixture ``options.duckdb`` in the dashboard's market root, as ``uw/option_list`` serves it, for a name
+put on the option watch list through the dashboard's own route. Its session is today and its expiries are relative to
+today, because the board's expiry window is DTE-based (1d-365d) and a frozen fixture would age out of range. Neither
+the Fetch nor the Refresh calls a provider.
 """
 from __future__ import annotations
 
 import math
 from datetime import date, timedelta
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 from RevenueChaser.module_oipd import opd_math
+from RevenueChaser.module_oipd.tests.options_store import daily_row, eod_rows, write_options
 
 _SPOT = 100.0
 _R = 0.04
@@ -49,30 +52,21 @@ def _contracts_for(expiry):
 
 
 @pytest.fixture
-def oipd_routes(provider_routes):
-    """Canned UW chain for TST, with expiries relative to today."""
-    exps = _expiries()
-    contracts = [c for e in exps for c in _contracts_for(e)]
-    provider_routes.route(
-        f"/api/stock/{_TICKER}/expiry-breakdown",
-        payload=lambda p: {"data": [{"expiry": e, "open_interest": 10000,
-                                     "volume": 500, "chains": 50} for e in exps]})
-    provider_routes.route(
-        f"/api/stock/{_TICKER}/option-contracts",
-        payload=lambda p: {"data": contracts})
-    # Real UW candle rows carry a date and a session tag; since MB4 a row with
-    # no date is not a bar, so a bare {"close": ...} would mean "no spot".
-    provider_routes.route(f"/api/stock/{_TICKER}/ohlc/1d",
-                          payload={"data": [{"date": "2026-09-29", "market_time": "r",
-                                             "open": _SPOT, "high": _SPOT, "low": _SPOT,
-                                             "close": _SPOT, "volume": 1000}]})
-    return provider_routes
+def stored(dashboard):
+    """TST on the option watch list, with today's chain and close in ``options.duckdb``."""
+    r = dashboard.client.post(f"/api/watchlist/option/toggle/{_TICKER}", headers={"X-RC-Panel": "oipd"})
+    assert r.status_code == 200, r.text
+    today = date.today()
+    write_options(Path(dashboard.env["RC_MARKET_DIR"]),
+                  option_eod=eod_rows(_TICKER, today, [c for e in _expiries() for c in _contracts_for(e)]),
+                  option_daily=[daily_row(_TICKER, today, _SPOT)])
+    return dashboard
 
 
 @pytest.fixture
-def fetched(dashboard, oipd_routes):
-    result = dashboard.run_job("/run/module_oipd", ticker=_TICKER)
-    assert result.ok, f"OIPD fetch failed: {result}\n{dashboard.logs()}"
+def fetched(stored, provider_routes):
+    result = stored.run_job("/run/module_oipd", ticker=_TICKER)
+    assert result.ok, f"OIPD fetch failed: {result}\n{stored.logs()}"
     return result
 
 
@@ -82,9 +76,6 @@ class TestFetch:
         assert r.status_code == 200
         assert "Implied Probability" in r.text
 
-    def test_fetch_persists_the_chain(self, dashboard, fetched):
-        assert dashboard.table_count("oipd_chain") > 0
-
     def test_fetch_writes_the_board_artifact(self, dashboard, fetched):
         assert dashboard.artifact("oipd_latest.html").exists()
 
@@ -93,13 +84,14 @@ class TestFetch:
         assert "Implied Probability" in html
         assert _TICKER in html
         assert "Risk-neutral" in html
+        assert "stored chain · options store" in html
+
+    def test_the_fetch_is_a_builder_request_and_calls_no_provider(self, dashboard, provider_routes, fetched):
+        assert provider_routes.request_count == 0, [q.path for q in provider_routes.requests()]
+        assert "Builder request: uw/option_list not queued" in dashboard.view("module_oipd").text
 
     def test_provenance_reports_a_data_date(self, dashboard, fetched):
         assert dashboard.data_as_of("module_oipd") is not None
-
-    def test_the_fetch_called_the_chain_endpoint(self, dashboard, oipd_routes, fetched):
-        assert oipd_routes.requests(f"/api/stock/{_TICKER}/option-contracts"), \
-            "fetch must hit the option-contracts endpoint"
 
 
 class TestRefreshIsOfflineAndFaithful:
@@ -110,15 +102,14 @@ class TestRefreshIsOfflineAndFaithful:
         assert r.status_code == 200
         assert "Implied Probability" in r.text
 
-    def test_refresh_makes_no_network_calls(self, dashboard, fetched, oipd_routes,
-                                            clear_cache):
+    def test_refresh_makes_no_network_calls(self, dashboard, fetched, provider_routes, clear_cache):
         clear_cache()
-        before = oipd_routes.request_count
+        before = provider_routes.request_count
         r = dashboard.view("module_oipd", refresh=True, ticker=_TICKER)
         assert r.status_code == 200
-        assert oipd_routes.request_count == before, (
+        assert provider_routes.request_count == before, (
             "refresh reached the network: "
-            f"{[q.path for q in oipd_routes.requests()[before:]]}")
+            f"{[q.path for q in provider_routes.requests()[before:]]}")
 
     def test_refresh_survives_a_restart(self, dashboard, fetched, clear_cache):
         clear_cache()
@@ -128,8 +119,13 @@ class TestRefreshIsOfflineAndFaithful:
         assert _TICKER in r.text
 
 
-class TestEmptyStore:
-    def test_a_board_with_no_data_renders_an_empty_state(self, dashboard):
-        r = dashboard.view("module_oipd", refresh=True, ticker="ZZZ")
+class TestOffTheList:
+    def test_a_name_off_the_list_shows_the_label_and_no_fit(self, stored):
+        r = stored.view("module_oipd", refresh=True, ticker="ZZZ")
         assert r.status_code == 200
-        assert "No cached chain" in r.text
+        assert "ZZZ is not on the option watch list" in r.text
+
+    def test_a_list_name_with_no_stored_chain_says_when_it_fills(self, dashboard):
+        r = dashboard.view("module_oipd", refresh=True, ticker="SPX")
+        assert r.status_code == 200
+        assert "No stored option chain for SPX yet" in r.text

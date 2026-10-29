@@ -1,7 +1,7 @@
 # R6 — Macro (veto only)
 
 **Weight:** 0% of composite direction score (never votes bull/bear)
-**Sources:** FRED `DGS10` daily + ticker OHLC already fetched for the card
+**Sources:** `DGS10` (source `fred`) and the `FOMC_DECISION` / `CPI_RELEASE` days from the market store's `market_series` (G9; no FRED call from the board) + ticker OHLC already read for the card
 **File:** `module_earnings_radar/rules/rule6_macro.py`
 
 ## What It Does
@@ -12,7 +12,7 @@ audit-only (same pattern as R4's vol-edge).
 
 ## Live input — 10Y yield beta
 
-Once per earnings `run()`, FRED `DGS10` is fetched daily (not weekly). Each
+Once per earnings `run()`, the stored `DGS10` series (the last 150 days, `store_reads.dgs10_map`) is read; it is empty when its newest observation is more than 3 sessions old. Each
 ticker's already-fetched ~60d OHLC is paired on calendar date. OLS beta of
 stock simple returns vs Δ yield, with FRED percent converted to **decimal**,
 so β ≈ equity duration (−10 ≈ 10% price drop per 1pp yield rise).
@@ -26,7 +26,7 @@ so β ≈ equity duration (−10 ≈ 10% price drop per 1pp yield rise).
 Needs ≥ 20 paired returns and nonzero yield variance. Otherwise R6 is
 `unavailable` (`score=None`, never a 0 fill).
 
-No FRED key / failed fetch → empty series → R6 unavailable; the earnings run
+No stored series, or a stale one → empty map → R6 unavailable; the earnings run
 continues. There is no yfinance `^TNX` fallback (`^TNX` is yield×10).
 
 Duration > 4 is common (software, REITs, utilities). This will veto more cards

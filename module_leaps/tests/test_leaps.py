@@ -283,37 +283,6 @@ class TestFlowPrints:
         assert rows[0][0] == "AAPL"
 
 
-def test_scan_leaps_cached_is_store_only(rawstore_tmp_db):
-    """The model-only LEAPS render must come from the store — no network.
-
-    Watchlist footprints come from ``leaps_cache``, unwatched candidates from
-    ``leaps_flow_prints``. This is what the dashboard's Refresh runs.
-    """
-    from RevenueChaser.core import rawstore as rs
-    from RevenueChaser.module_leaps.engine import save_cache, store_prints
-
-    rs.save_watchlist({"AAPL", "MSFT"})
-    save_cache("AAPL", {"ticker": "AAPL", "label": "Accumulating",
-                        "score": 42, "as_of": "2026-09-01"})
-    save_cache("MSFT", {"ticker": "MSFT", "label": "Quiet",
-                        "score": 5, "as_of": "2026-09-01"})
-    store_prints([
-        {"id": "zz1", "ticker": "ZZZZ", "strike": 200.0, "expiry": "2027-01-15",
-         "premium": 200000.0, "size": 20, "option_type": "call", "delta": 0.8,
-         "next_earnings_date": None, "executed_at": "2026-08-17T00:00:00Z",
-         "ask_vol": 10, "bid_vol": 2},
-    ])
-
-    from RevenueChaser.module_leaps.scan import scan_leaps_cached
-    watched, unwatched = scan_leaps_cached(today=date(2026, 8, 18))  # the print is 1 day old
-
-    # Both pinned names are shown (#377 L2): AAPL is Accumulating (cached), MSFT is Quiet;
-    # ZZZZ has a stored far-dated call print -> unwatched candidate.
-    assert [w["ticker"] for w in watched] == ["AAPL", "MSFT"]
-    assert any(u["ticker"] == "ZZZZ" for u in unwatched)
-    assert rs.load_watchlist() == {"AAPL", "MSFT"}  # untouched
-
-
 class TestEscaping:
     """L-1: ticker, name and label come from UW / meta strings — never raw markup."""
 
@@ -394,8 +363,13 @@ class TestPrintCap:
 
 class TestInjectedClock:
     def test_scan_leaps_cached_honours_its_argument(self, rawstore_tmp_db):
+        """A print of the 2026-08-17 session is inside the window on 08-18 and outside it on 10-02 (G9: the store)."""
         from RevenueChaser.module_leaps.scan import scan_leaps_cached
-        store_prints([_print("z1", executed="2026-08-17T14:00:00Z")], today=date(2026, 8, 18))
+        from RevenueChaser.module_leaps.tests.options_store import pin, print_row, store_footprint
+        session = date(2026, 8, 17)
+        pin(option=["ZZZZ"])
+        store_footprint("ZZZZ", session, {date(2027, 6, 18): (10, 0)},
+                        prints=[print_row("ZZZZ", "z1", session, date(2027, 6, 18))])
         _w, unwatched = scan_leaps_cached(today=date(2026, 8, 18))
         assert [u["ticker"] for u in unwatched] == ["ZZZZ"]
         assert unwatched[0]["as_of"] == "2026-08-18"
@@ -481,40 +455,14 @@ class TestEmptyBoardAndNotice:
 
 
 class TestLeapsRunners:
-    class _UW:
-        """A UW double whose tape is empty."""
-        auth_error = None
-
-        def option_trades(self, **kw):
-            return []
-
-        def screener_batch(self, tickers):
-            return {}
-
-        def health(self):
-            return {"calls": 1, "failed": 1, "auth_error": None,
-                    "failures": [{"endpoint": "/api/option-trades", "status": 500}]}
-
     def test_an_empty_fetch_writes_the_board_and_says_why(self, rawstore_tmp_db):
         import pytest
         from RevenueChaser.app import runners
         from RevenueChaser.app.jobs import JobMessage
         runners.LEAPS_LATEST.unlink(missing_ok=True)
-        with pytest.raises(JobMessage, match="Unusual Whales calls failed"):
-            runners.run_leaps_latest(self._UW())
+        with pytest.raises(JobMessage, match="No pinned name and no far-dated large print"):
+            runners.run_leaps_latest(None)
         assert "No LEAPS data yet" in runners.LEAPS_LATEST.read_text(encoding="utf-8")
-
-    def test_an_empty_fetch_without_a_provider_failure_says_so(self, rawstore_tmp_db):
-        import pytest
-        from RevenueChaser.app import runners
-        from RevenueChaser.app.jobs import JobMessage
-
-        class Quiet(self._UW):
-            def health(self):
-                return {"calls": 1, "failed": 0, "auth_error": None, "failures": []}
-
-        with pytest.raises(JobMessage, match="No far-dated"):
-            runners.run_leaps_latest(Quiet())
 
     def test_the_cached_refresh_renders_the_empty_state_without_raising(self, rawstore_tmp_db):
         from RevenueChaser.app import runners
@@ -522,27 +470,34 @@ class TestLeapsRunners:
         assert runners.run_leaps_cached() == runners.LEAPS_LATEST
         assert "No LEAPS data yet" in runners.LEAPS_LATEST.read_text(encoding="utf-8")
 
-    def test_the_cached_board_shows_names_from_the_13f_meta(self, rawstore_tmp_db):
-        """The names come from ``sec13f_security_meta``; a missed repoint of the loader hides behind
+    def test_the_cached_board_shows_names_from_the_spine(self, rawstore_tmp_db):
+        """The names come from the spine (``store_reads.meta``); a missed repoint of the loader hides behind
         a bare ``except`` and silently blanks them."""
-        from RevenueChaser.module_sec_13f import engine as sf
+        from RevenueChaser.core import config
         from RevenueChaser.module_leaps.scan import scan_leaps_cached
-        sf.save_sec13f_meta({"ZZZZ": {"name": "Zed Corp", "sector": "Energy", "type": "Stock"}})
-        store_prints([_print("z1", executed="2026-10-01T14:00:00Z")], today=date(2026, 10, 2))
+        from RevenueChaser.module_leaps.tests.options_store import pin, print_row, store_footprint
+        from RevenueChaser.module_sec_13f.tests.ownership_store import _write_spine
+        config.MARKET_DIR.mkdir(parents=True, exist_ok=True)
+        _write_spine(config.MARKET_DIR, {"ZZZZ": ("Zed Corp", "Energy")})
+        session = date(2026, 10, 1)
+        pin(option=["ZZZZ"])
+        store_footprint("ZZZZ", session, {date(2027, 6, 18): (10, 0)},
+                        prints=[print_row("ZZZZ", "z1", session, date(2027, 6, 18))])
         _w, unwatched = scan_leaps_cached(today=date(2026, 10, 2))
         assert unwatched[0]["name"] == "Zed Corp"
 
 
-def test_a_locked_store_is_not_swallowed_by_the_cached_scan(rawstore_tmp_db, monkeypatch):
-    """PR 4: the watch list moved to ops.sqlite, so the stored prints are the cached scan's first store read. A lock
-    there must reach the dashboard (503, "locked by another process"), not become an empty board."""
+def test_a_failed_options_store_read_is_not_swallowed_by_the_cached_scan(rawstore_tmp_db, monkeypatch):
+    """G9: the stored prints and chains are the scan's store reads. A failure there must reach the dashboard as a
+    failed Refresh, not become an empty board (the baselines, the calendar and the names are the reads that warn)."""
     import pytest
 
-    from RevenueChaser.core import rawstore as rs
-    from RevenueChaser.module_leaps import engine, scan
+    from RevenueChaser.module_leaps import scan
+    from RevenueChaser.rcdata import ops, read
 
-    def locked(**kw):
-        raise rs.StoreLockedError("raw.duckdb", 1, "duckdb", "/x", "Conflicting lock is held")
-    monkeypatch.setattr(engine, "load_recent_prints", locked)
-    with pytest.raises(rs.StoreLockedError):
+    def broken(*a, **k):
+        raise RuntimeError("options.duckdb: IO Error")
+    monkeypatch.setattr(read, "option_daily", broken)
+    ops.watch_add("option", "AAA", by="test")
+    with pytest.raises(RuntimeError, match="options.duckdb"):
         scan.scan_leaps_cached()

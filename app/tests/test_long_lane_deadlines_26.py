@@ -2,13 +2,11 @@
 
 A deadline of 0 s is already past at the first checkpoint, so the job ends ``error`` naming that phase and
 writes nothing of the unit it was about to start. A cancel observed at that checkpoint ends ``cancelled``.
-A run that finishes inside its deadline writes what it always wrote.
+A run that finishes inside its deadline writes what it always wrote. The 13F Fetch is no longer one of them (G9:
+it queues ``ownership/serve`` and writes nothing itself), so its zip-boundary tests went with the old Fetch.
 """
 from __future__ import annotations
 
-import csv
-import io
-import zipfile
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -62,74 +60,6 @@ def test_the_four_long_writers_are_cancellable_and_only_daily_bars_has_a_deadlin
         assert jobs._DEADLINE[module] is None, module
     text = Path(_dashboard.__file__).read_text(encoding="utf-8")
     assert text.count(_NO_DEADLINE) == 3
-
-
-# ── 13F: between zips, before any holdings write ──────────────────────────────
-
-def _form13f_zip(path: Path) -> None:
-    sub = io.StringIO()
-    w = csv.DictWriter(sub, fieldnames=[
-        "ACCESSION_NUMBER", "CIK", "FILING_DATE", "SUBMISSIONTYPE", "PERIODOFREPORT"], delimiter="\t")
-    w.writeheader()
-    w.writerow({"ACCESSION_NUMBER": "0001-26-000001", "CIK": "1000", "FILING_DATE": "01-MAY-2026",
-                "SUBMISSIONTYPE": "13F-HR", "PERIODOFREPORT": "31-MAR-2026"})
-    info = io.StringIO()
-    iw = csv.DictWriter(info, fieldnames=[
-        "ACCESSION_NUMBER", "INFOTABLE_SK", "NAMEOFISSUER", "CUSIP", "VALUE", "SSHPRNAMT",
-        "SSHPRNAMTTYPE", "PUTCALL", "TITLEOFCLASS", "INVESTMENTDISCRETION", "OTHERMANAGER",
-        "VOTING_AUTH_SOLE", "VOTING_AUTH_SHARED", "VOTING_AUTH_NONE"], delimiter="\t")
-    iw.writeheader()
-    iw.writerow({"ACCESSION_NUMBER": "0001-26-000001", "INFOTABLE_SK": "1", "NAMEOFISSUER": "ACME",
-                 "CUSIP": "111111111", "VALUE": "1000", "SSHPRNAMT": "10", "SSHPRNAMTTYPE": "SH",
-                 "PUTCALL": "", "TITLEOFCLASS": "COM", "INVESTMENTDISCRETION": "SOLE", "OTHERMANAGER": "",
-                 "VOTING_AUTH_SOLE": "10", "VOTING_AUTH_SHARED": "0", "VOTING_AUTH_NONE": "0"})
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(path, "w") as z:
-        z.writestr("SUBMISSION.tsv", sub.getvalue())
-        z.writestr("INFOTABLE.tsv", info.getvalue())
-
-
-def _quiet_13f(monkeypatch, tmp_path):
-    from RevenueChaser.module_sec_13f import engine as sec_13f
-    zdir = tmp_path / "zips"
-    _form13f_zip(zdir / "2026q1_form13f.zip")
-    monkeypatch.setattr(sec_13f, "SEC13F_DIR", zdir)
-    monkeypatch.setattr(sec_13f, "available_zips", lambda: {})
-    monkeypatch.setattr(runners, "_13f_map_step", lambda *a, **k: (None, None, {}))
-    monkeypatch.setattr(runners, "_refresh_13f_meta", lambda *a, **k: (None, None, None))
-    monkeypatch.setattr(runners, "_store_13f_shares", lambda *a, **k: None)
-    monkeypatch.setattr(runners, "_render_13f", lambda *a, **k: zdir / "board.html")
-    monkeypatch.setattr(runners, "_record_13f", lambda *a, **k: None)
-
-
-def _13f_rows():
-    return (rawstore.count("sec13f_holdings") + rawstore.count("sec13f_submissions")
-            + rawstore.count("sec13f_ingested_zips"))
-
-
-def test_a_13f_deadline_at_the_first_zip_writes_nothing(sync_jobs, rawstore_tmp_db, monkeypatch, tmp_path):
-    _quiet_13f(monkeypatch, tmp_path)
-    job = _run("module_sec_13f", deadline_s=0)
-    assert job["status"] == "error", job
-    assert "deadline" in job["error"] and "13F zip 2026q1_form13f.zip" in job["error"]
-    assert _13f_rows() == 0
-
-
-def test_a_13f_cancel_at_the_first_zip_writes_nothing(sync_jobs, rawstore_tmp_db, monkeypatch, tmp_path):
-    _quiet_13f(monkeypatch, tmp_path)
-    _cancel_on_bind(monkeypatch)
-    job = _run("module_sec_13f", deadline_s=3600)
-    assert job["status"] == "cancelled", job
-    assert "13F zip 2026q1_form13f.zip" in job["message"]
-    assert _13f_rows() == 0
-
-
-def test_a_13f_run_inside_its_deadline_ingests_the_zip(sync_jobs, rawstore_tmp_db, monkeypatch, tmp_path):
-    _quiet_13f(monkeypatch, tmp_path)
-    job = _run("module_sec_13f", deadline_s=3600)
-    assert "deadline" not in (job["error"] or "")
-    assert rawstore.count("sec13f_ingested_zips") == 1
-    assert rawstore.count("sec13f_holdings") == 1
 
 
 # ── EDGAR: between filers, before any submissions request ─────────────────────

@@ -179,39 +179,76 @@ def calendar_items(days) -> tuple[dict, date | None]:
     return out, session
 
 
-# ── D10: short interest ──────────────────────────────────────────────────────────────────────────────────────────
+# ── short interest and borrow: the ownership store (G9, build plan PR 17) ───────────────────────────────────────
 
-# The ``short_interest`` columns that make up the UW row ``UWClient._parse_short_row`` reads.
-_SHORT_FIELDS = ("short_interest", "si_float", "total_float", "days_to_cover", "fee_rate", "rebate_rate",
-                 "short_shares_available")
+# FINRA publishes a settlement date's short interest seven or eight business days after it (its published calendar).
+# A session sees a settlement once it was fetched, or, for one fetched later (a backfill), from the eighth session
+# after it: never a number nobody could see yet (#252, the look-ahead the old bridge view had).
+FINRA_PUBLISH_SESSIONS = 8
+# FINRA settles twice a month, so a newest visible settlement older than this is a gap in the store.
+SHORT_LOOKBACK_DAYS = 45
 
 
-def short_rows(tickers) -> tuple[dict[str, dict], date | None]:
-    """``({ticker: UW-shaped short row}, session|None)`` from the newest fresh session of ``short_interest``.
+def finra_visible_from(settlement: date, fetched_at) -> date:
+    """The first New York day a FINRA settlement's short interest could be read: the earlier of the day it was
+    fetched and the ``FINRA_PUBLISH_SESSIONS``-th session after the settlement date."""
+    d = settlement
+    for _ in range(FINRA_PUBLISH_SESSIONS):
+        d = calendar.next_trading_day(d)
+    try:
+        fetched = datetime.fromtimestamp(float(fetched_at), NY).date()
+    except (TypeError, ValueError, OSError, OverflowError):
+        return d
+    return min(d, fetched)
 
-    The row is the shape ``/short_screener`` serves, rebuilt from the typed columns (``payload`` is the source row
-    but not every source fills it, and a NULL cell is dropped rather than served as ``None``). Any source counts:
-    the sweep's yfinance fallback carries ``si_float`` and ``total_float`` only, and a ticker with no stored row
-    here is one the caller must still ask UW for.
+
+def short_rows(tickers, as_of: date | None = None) -> tuple[dict[str, dict], date | None]:
+    """``({ticker: row}, newest settlement|None)``: R5's squeeze inputs from the ownership store, as seen on
+    ``as_of`` (default ``calendar.latest_complete_session()``).
+
+    A row holds what the store has of ``short_interest`` (FINRA's shares short), ``days_to_cover`` and
+    ``short_as_of`` (its settlement date: the newest one visible on ``as_of``, ``finra_visible_from``, at most
+    ``SHORT_LOOKBACK_DAYS`` old), and IBKR's ``borrow_fee`` and ``rebate_rate`` (annual %) and ``shares_available``
+    (a count; ``shares_available_capped`` when IBKR wrote ``>10000000``) from its newest snapshot on or before
+    ``as_of`` within ``MAX_LAG["short_interest"]`` sessions. There is no float in the store, so no SI %: ``si_pct``
+    is None. A missing value has no key, never 0. A missing ``ownership.duckdb`` is no rows.
     """
+    from RevenueChaser.rcdata import read
     names = sorted({str(t).upper() for t in (tickers or []) if t})
     if not names:
         return {}, None
-    session, usable = _fresh_session("short_interest")
-    if not usable:
-        return {}, None
-    marks = ", ".join("?" * len(names))
-    rows = _query(
-        f"SELECT ticker, {', '.join(_SHORT_FIELDS)} FROM short_interest "
-        f"WHERE session_date = ? AND ticker IN ({marks})",
-        [session, *names], table="short_interest")
+    as_of = calendar.latest_complete_session() if as_of is None else as_of
     out: dict[str, dict] = {}
-    for r in rows:
-        t = str(r.get("ticker") or "").upper()
-        if not t:
+    newest: date | None = None
+    try:
+        finra = read.finra_short_interest(names, start=as_of - timedelta(days=SHORT_LOOKBACK_DAYS), end=as_of)
+        ibkr = read.shortable(names)
+    except Exception as exc:  # noqa: BLE001 - a broken store is "nothing stored", never a failed Fetch
+        logger.warning("stored_inputs: ownership store short read failed: %s", exc)
+        return {}, None
+    for r in finra:                                    # ordered by ticker, settlement date
+        settled = _as_date(r.get("settlement_date"))
+        if settled is None or r.get("current_short") is None:
             continue
-        out[t] = {k: r.get(k) for k in _SHORT_FIELDS if r.get(k) is not None}
-    return out, session
+        if finra_visible_from(settled, r.get("fetched_at")) > as_of:
+            continue
+        out[r["ticker"]] = {"short_interest": float(r["current_short"]), "short_as_of": settled,
+                            **({"days_to_cover": float(r["days_to_cover"])} if r.get("days_to_cover") is not None
+                               else {})}
+        newest = settled if newest is None or settled > newest else newest
+    for r in ibkr:
+        session = _as_date(r.get("session_date"))
+        lag = None if session is None or session > as_of else _sessions_after(session, as_of)
+        if lag is None or lag > MAX_LAG["short_interest"]:
+            continue
+        row = out.setdefault(r["ticker"], {})
+        for src, dst in (("fee_rate", "borrow_fee"), ("rebate_rate", "rebate_rate"),
+                         ("available", "shares_available")):
+            if r.get(src) is not None:
+                row[dst] = float(r[src])
+        if r.get("available_capped"):
+            row["shares_available_capped"] = True
+    return {t: {"si_pct": None, **row} for t, row in out.items() if row}, newest
 
 
 # ── D37: the economic calendar (rate events) ─────────────────────────────────────────────────────────────────────

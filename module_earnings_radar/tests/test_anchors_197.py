@@ -176,8 +176,13 @@ class TestExpectedMoveUnits:
 
 
 class TestIvRvRatioWiring:
-    def test_card_reads_the_ratio_r4_writes(self, rawstore_tmp_db):
+    def test_card_reads_the_ratio_r4_writes(self, rawstore_tmp_db, monkeypatch):
+        from RevenueChaser.module_earnings_radar import store_reads
         from RevenueChaser.module_earnings_radar.tests.test_pipeline_score import _FakeUW, _make_pipeline
+        # A list name with an empty stored session (G9): R4 reads the screener's IV and RV.
+        monkeypatch.setattr(store_reads, "card_inputs", lambda *a: {"set": "list", "session": None, "gex": {},
+                                                                    "strikes": [], "term": [], "prints": [],
+                                                                    "volume": {}})
         scr = {"AAPL": {"close": 100.0, "iv30d": 0.60, "realized_volatility": 0.40}}
         cal = {"AAPL": {"earnings_date": "2026-08-14", "full_name": "Aple",
                         "sector": "Technology", "expected_move_perc": 0.05}}

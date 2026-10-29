@@ -128,13 +128,18 @@ def rows_from_cards(cards, nrc: dict) -> list[dict]:
 
 
 def screener_problem(screener) -> str | None:
-    """The run-level reason when the UW screener answered partial/failed, else None (E2, #372).
+    """The run-level reason when the screener set is missing or stale (G9), or a UW screener answer was
+    partial/failed, else None (E2, #372).
 
     Shared by the history note and the board notice, so the board and the record say the same thing.
     """
     if not screener:
         return None
     status = screener.get("status")
+    if status in ("missing", "stale"):          # G9: the stored screener set, not a live answer
+        when = f"newest session {screener.get('session')}" if screener.get("session") else "no session stored"
+        return (f"the stored screener set (uw/option_screener) is {status} ({when}): every card reads liquidity "
+                "N/A and no name passes the gates")
     if status not in ("partial", "failed"):
         return None
     err = screener.get("error") or {}

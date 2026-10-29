@@ -1,12 +1,28 @@
-"""The Earnings board's one reader of the market store: the market-wide series it scores against.
+"""Earnings Radar's reads of the serving stores: the options store, ``market_series`` and the fundamentals store.
 
-The same shape as ``module_spx_gamma/store_reads.py`` (PR 3), and for the same reason: each reader is a thin mapping
-over ``rcdata.read``, which opens the serving file read-only for the one call and closes it again. Nothing here keeps
-a connection, runs SQL of its own, or calls a provider. A series the store does not hold comes back as a "not stored"
-marker — never an exception, and never a live read.
+Each reader is a thin mapping over ``rcdata.read``, which opens the serving file read-only for the one call and closes
+it again (the same shape as ``module_spx_gamma/store_reads.py``). Nothing here keeps a connection, writes, or calls a
+provider; a missing file reads as no rows or a "not stored" marker, never a live read.
 
-Each function is named after the need the internal data API will serve it as, so the API later wraps this module
-rather than the board:
+The options store and the rate events (G9, build plan PR 19):
+
+* **The screener set** (``option_screener_daily``, ``uw/option_screener``): every name reporting in the 28 days after
+  the session, with its UW screener row. The gates and the pre-score read it (``screener_set``), in the shape of the
+  UW screener answer the pipeline read before, so the gate rule itself is unchanged. The newest session is used
+  while it lags the latest complete session by at most ``SCREENER_MAX_LAG`` sessions; an older one, or none, is
+  "no screener row" for every name, and the run says so on the board.
+* **A card's options inputs** (``card_inputs``), three ways per name (the plan, avo 27 Oct):
+  1. a name on the option watch list (or SPX) reads the list set: its ``option_daily`` row (the GEX levels), its
+     ``option_strike`` rows (spot exposures by strike, the GEX profile), its ``option_expiry`` rows (the term
+     structure) and its ``option_print`` rows, of its newest session before the report;
+  2. a name off the list that passed the gates on the evening before its report reads the earnings set that
+     ``uw/option_screener`` fetched that evening for that report (``er_options`` and the same three tables, set
+     ``earnings``);
+  3. any other name (it failed the gates, or its earnings-set fetch is missing, or it reports later than the next
+     session) has no options inputs: R4, R5 and R8 show ``NOT_ON_LIST`` and give no score.
+* **R6's rate events**: the FOMC decision and CPI release days from ``market_series`` (``rate_event_days``).
+
+Named after the need the internal data API will serve them as:
 
 - ``dgs10_map`` (``macro.dgs10``): the 10-year Treasury yield observations rule R6 pairs its reaction returns with.
   The series is ``market_series``'s own FRED row (``core.rotation_reference.MACRO_SERIES["US10Y"]["series"]``), the
@@ -24,12 +40,20 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 
-from RevenueChaser.core import calendar
+from RevenueChaser.core import board_requests, calendar
+from RevenueChaser.core.config import to_float
 from RevenueChaser.core.rotation_reference import MACRO_SERIES
 from RevenueChaser.rcdata import read
 
 logger = logging.getLogger(__name__)
 
+NOT_ON_LIST = board_requests.NOT_ON_LIST
+LIST_SET, EARNINGS_SET = "list", "earnings"
+# Trading sessions the newest screener session may lag the latest complete one by: the set is fetched every evening,
+# so 0 on a normal day and 1 after one missed night.
+SCREENER_MAX_LAG = 1
+RATE_SERIES = ("FOMC_DECISION", "CPI_RELEASE")
+GEX_LEVELS = ("call_wall", "gamma_flip", "gamma_magnet", "put_wall")
 SERIES_SOURCE = "rcdata:market_series"
 ESTIMATES_SOURCE = "rcdata:estimate_latest"
 # Sessions an observation may lag the board's day by before it is not read. The limit the old stored reader had
@@ -186,3 +210,113 @@ def estimates(tickers, today: date | None = None) -> tuple[dict[str, dict], dict
     return out, {"stored": True,
                  "label": f"{len(out)} of {len(names)} names have estimates" + (f"; {left_out}" if left_out else ""),
                  "source": ESTIMATES_SOURCE, "source_as_of": max(as_of), "status": _estimates_status()}
+
+
+def _lag(day: date, latest: date) -> int | None:
+    return _sessions_after(day, latest)
+
+
+# ── the screener set ─────────────────────────────────────────────────────────────────────────────────────────────
+
+def screener_set(tickers, latest: date | None = None) -> tuple[dict[str, dict], dict]:
+    """``({ticker: screener row}, outcome)`` for ``tickers`` from the newest stored screener session.
+
+    A row is the UW screener answer the gates read (``call_volume``, ``put_volume``, ``total_open_interest``,
+    ``call_premium``, ``put_premium``, ``close``, ``iv30d``, ``iv_rank``, ``marketcap``, ...); a name UW had no
+    screener row for (``screened`` false) has none. ``outcome`` is ``{"status", "error", "session"}``: ``ok``,
+    ``stale`` (the newest session is older than ``SCREENER_MAX_LAG`` sessions: no rows) or ``missing`` (no session).
+    """
+    wanted = {str(t).upper() for t in tickers if t}
+    rows = read.option_screener()
+    if not rows:
+        return {}, {"status": "missing", "error": {"reason": "no stored screener session"}, "session": None}
+    session = _day(rows[0]["session_date"])
+    latest = calendar.latest_complete_session() if latest is None else latest
+    lag = _lag(session, latest)
+    if lag is None or lag > SCREENER_MAX_LAG:
+        return {}, {"status": "stale", "error": {"reason": f"newest stored screener session {session}"},
+                    "session": session.isoformat()}
+    out = {}
+    for r in rows:
+        t = str(r.get("ticker") or "").upper()
+        if t in wanted and r.get("screened"):
+            out[t] = {k: v for k, v in r.items() if v is not None and k not in ("status",)}
+    return out, {"status": "ok", "error": None, "session": session.isoformat()}
+
+
+# ── a card's options inputs ──────────────────────────────────────────────────────────────────────────────────────
+
+def _list_session(ticker: str, report_date: date) -> tuple[date, dict] | None:
+    """The newest ``option_daily`` session of a list name before ``report_date``, and its row."""
+    rows = [r for r in read.option_daily(ticker, None, report_date - timedelta(days=1)) if r.get("session_date")]
+    if not rows:
+        return None
+    row = max(rows, key=lambda r: r["session_date"])
+    return _day(row["session_date"]), row
+
+
+def _earnings_session(ticker: str, report_date: date) -> tuple[date, dict] | None:
+    """The ``er_options`` row ``uw/option_screener`` fetched for this report, the evening before it."""
+    rows = [r for r in read.earnings_options(tickers=[ticker]) if _day(r.get("report_date")) == report_date]
+    if not rows:
+        return None
+    row = max(rows, key=lambda r: r["session_date"])
+    return _day(row["session_date"]), row
+
+
+def card_inputs(ticker: str, report_date: date, listed) -> dict:
+    """The options inputs of one card: ``{"set", "session", "gex", "strikes", "term", "prints", "volume"}``.
+
+    ``set`` is ``list``, ``earnings`` or None (the three-way rule in the module doc); with None every other field is
+    empty and the card's R4, R5 and R8 read ``NOT_ON_LIST``. ``gex`` holds the four GEX levels, ``strikes`` the
+    spot exposures by strike (the GEX profile's rows), ``term`` the term structure as ``{"dte", "volatility"}`` rows,
+    ``prints`` the stored prints (the newest 50 of the session, as UW's ``flow-recent`` served them) and ``volume``
+    the day's option volume and open interest.
+    """
+    t = str(ticker).upper()
+    found, set_name = None, None
+    if t in set(listed):
+        found, set_name = _list_session(t, report_date), LIST_SET
+    else:
+        found, set_name = _earnings_session(t, report_date), EARNINGS_SET
+    if found is None:
+        return {"set": None, "session": None, "gex": {}, "strikes": [], "term": [], "prints": [], "volume": {}}
+    session, row = found
+    term = [{"dte": r.get("days_to_expiry"), "volatility": r.get("volatility"), "expiry": r.get("expiry")}
+            for r in read.option_expiries(t, session, set_name)]
+    volume = {"option_volume": (row.get("option_volume") if set_name == EARNINGS_SET
+                                else (to_float(row.get("call_volume")) or 0) + (to_float(row.get("put_volume")) or 0)),
+              "open_interest": (row.get("total_open_interest") if set_name == EARNINGS_SET
+                                else (to_float(row.get("call_open_interest")) or 0)
+                                + (to_float(row.get("put_open_interest")) or 0))}
+    return {"set": set_name, "session": session, "gex": {k: row.get(k) for k in GEX_LEVELS},
+            "strikes": read.option_strikes(t, session, set_name), "term": term,
+            "prints": [p for p in read.option_prints(t, session, set_name) if not p.get("canceled")],
+            "volume": volume}
+
+
+# ── R6: the rate events ────────────────────────────────────────────────────────────────────────────────────────
+
+def rate_event_days() -> dict[str, list[date]]:
+    """``{series: [days]}`` of the FOMC decisions and CPI releases ``market_series`` holds (one read per run)."""
+    out: dict[str, list[date]] = {s: [] for s in RATE_SERIES}
+    for r in read.market_series(RATE_SERIES):
+        if r.get("obs_date") is not None and (to_float(r.get("value")) or 0) > 0:
+            out.setdefault(r["series_id"], []).append(_day(r["obs_date"]))
+    return out
+
+
+def rate_event_overlap(report_date, events: dict[str, list[date]]) -> bool | None:
+    """Is an FOMC decision or a CPI release inside ``report_date`` ± 1 trading day?
+
+    ``True``/``False`` when both series span the window (the Fed's page and the BLS calendar list the year ahead),
+    None when either does not: R6 must not turn a calendar that does not reach the report into "no event"."""
+    from RevenueChaser.module_earnings_radar import stored_inputs
+    window = stored_inputs.rate_event_window(report_date)
+    if window is None:
+        return None
+    start, end = window
+    days = [events.get(s) or [] for s in RATE_SERIES]
+    if any(not d or min(d) > start or max(d) < end for d in days):
+        return None
+    return any(start <= d <= end for series in days for d in series)

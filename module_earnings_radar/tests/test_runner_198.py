@@ -212,7 +212,7 @@ class TestLeapsIsReadOnly:
     """
 
     def test_a_cache_miss_makes_no_uw_call_and_stays_n_a(self, monkeypatch):
-        monkeypatch.setattr(pl, "leaps_load_cache", lambda t: {})
+        monkeypatch.setattr(pl, "leaps_latest", lambda tickers: {})
         ts = _tickers(8)
         uw = _LeapsCountingUW()
         _, _, cards = _run(ts, {t: _strong() for t in ts}, uw=uw)

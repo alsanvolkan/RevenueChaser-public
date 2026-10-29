@@ -1,5 +1,9 @@
-"""E5d (#372): R6's rate-event overlap comes from the stored ``economic_calendar`` (D37) and the yield series from
-the market store (``store_reads.dgs10_map``) — no run asks FRED.
+"""E5d (#372): R6's rate-event overlap and yield series come from the stores, never from a live call.
+
+The rule (FOMC/CPI only, the ±1 trading-day window, None = no veto) is pinned on ``stored_inputs`` against the old
+store's ``economic_calendar`` (D37), which retires with the old store (G10). Since G9 the pipeline reads the FOMC and
+CPI days from ``market_series`` (``store_reads.rate_event_days``: ``FOMC_DECISION``, ``CPI_RELEASE``), and the yield
+series from the market store (``store_reads.dgs10_map``); no run asks FRED. The pipeline tests below seed those.
 
 The yield reader's own cases live in ``test_store_reads.py``; what is pinned here is the rule and the wiring.
 
@@ -15,8 +19,9 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from RevenueChaser.core import rawstore
-from RevenueChaser.module_earnings_radar import stored_inputs
+from RevenueChaser.module_earnings_radar import store_reads, stored_inputs
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline
+from RevenueChaser.module_earnings_radar.tests.options_store import write_series
 from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve as serve_market
 from RevenueChaser.module_earnings_radar.tests.test_pipeline_score import _FakeUW, _duration_ohlc_and_yields
 
@@ -207,6 +212,18 @@ def _seed_dgs10(yields: dict):
 
 # ── the pipeline: stored macro in, veto out ──────────────────────────────────────────────────────────────────────
 
+def _series(yields: dict):
+    """G9: the 10-year in ``market_series``."""
+    write_series([("DGS10", date.fromisoformat(d), v) for d, v in yields.items()])
+
+
+def _rate_days_in_span(cpi: date = WINDOW[1]):
+    """``market_series`` FOMC decision and CPI release days that span REPORT's window, a CPI on ``cpi``."""
+    return write_series([("FOMC_DECISION", date(2025, 12, 10), 1.0), ("FOMC_DECISION", date(2026, 3, 18), 1.0),
+                         ("CPI_RELEASE", date(2025, 12, 18), 1.0), ("CPI_RELEASE", cpi, 1.0),
+                         ("CPI_RELEASE", date(2026, 3, 11), 1.0)])
+
+
 def _pipeline(ohlc, report=REPORT):
     cal = {"AAPL": {"earnings_date": report.isoformat(), "full_name": "Aple", "sector": "Technology",
                     "expected_move_perc": 0.05}}
@@ -218,8 +235,8 @@ def _pipeline(ohlc, report=REPORT):
 
 def test_stored_dgs10_and_a_rate_event_veto_an_extreme_duration():
     ohlc, yields = _duration_ohlc_and_yields(duration=10.0)
-    _seed_dgs10(yields)
-    rawstore.write_rows("economic_calendar", _rate_event_in_span())
+    _series(yields)
+    _rate_days_in_span()
     p = _pipeline(ohlc)
 
     p._warm_dgs10()
@@ -235,8 +252,8 @@ def test_stored_dgs10_and_a_rate_event_veto_an_extreme_duration():
 
 def test_a_report_outside_the_stored_span_keeps_the_badge_only():
     ohlc, yields = _duration_ohlc_and_yields(duration=10.0)
-    _seed_dgs10(yields)
-    rawstore.write_rows("economic_calendar", _rate_event_in_span())
+    _series(yields)
+    _rate_days_in_span()
     p = _pipeline(ohlc, report=date(2026, 6, 16))
 
     p._warm_dgs10()
@@ -258,8 +275,8 @@ def test_without_a_market_store_r6_has_no_yield_series_and_no_provider_is_asked(
 def test_the_raw_packet_carries_the_overlap():
     import json
     ohlc, yields = _duration_ohlc_and_yields(duration=10.0)
-    _seed_dgs10(yields)
-    rawstore.write_rows("economic_calendar", _rate_event_in_span())
+    _series(yields)
+    _rate_days_in_span()
     p = _pipeline(ohlc)
     p._warm_dgs10()
     packet = json.loads(p._score("AAPL").raw_packet_json)
@@ -322,8 +339,8 @@ def test_a_noisy_extreme_beta_with_a_rate_event_is_a_badge_not_a_veto():
     ohlc, yields = _noisy_ohlc_and_yields()
     beta, t = _ols_t(ohlc, yields)
     assert abs(beta) > 4 and abs(t) < 2                                 # the fixture is what its name says
-    _seed_dgs10(yields)
-    rawstore.write_rows("economic_calendar", _rate_event_in_span())
+    _series(yields)
+    _rate_days_in_span()
     p = _pipeline(ohlc)
     p._warm_dgs10()
 
@@ -336,12 +353,12 @@ def test_a_noisy_extreme_beta_with_a_rate_event_is_a_badge_not_a_veto():
     assert not any("macro veto" in x for x in audit.get("reasons") or [])
 
 
-def test_the_economic_calendar_is_read_once_per_run(monkeypatch):
+def test_the_rate_days_are_read_once_per_run(monkeypatch):
     """Every card's overlap is a lookup in the run's one read, not a table read per card (review S6)."""
-    rawstore.write_rows("economic_calendar", _rate_event_in_span())
+    _rate_days_in_span()
     reads = []
-    real = stored_inputs.rate_events
-    monkeypatch.setattr(stored_inputs, "rate_events", lambda: reads.append(1) or real())
+    real = store_reads.rate_event_days
+    monkeypatch.setattr(store_reads, "rate_event_days", lambda: reads.append(1) or real())
     ohlc, yields = _duration_ohlc_and_yields(duration=10.0)
     p = _pipeline(ohlc)
     p._dgs10_cache = yields

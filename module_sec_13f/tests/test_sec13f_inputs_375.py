@@ -158,45 +158,18 @@ def test_a_name_with_no_row_shows_a_dash_never_zero(rawstore_tmp_db):
         assert cells[col][0] == "—" and cells[col][1] is None, col
 
 
-# ── the D10 short-interest reader ───────────────────────────────────────────
+# ── the old D10 short-interest table is not read (G9) ─────────────────────
 
-def test_short_pct_is_the_stored_si_float_in_percent(rawstore_tmp_db):
+def test_the_old_short_interest_table_is_not_read(rawstore_tmp_db):
+    """Since G9 the Short column is FINRA's short interest from the ownership store (``store_reads``); a row in the
+    old ``short_interest`` table (D10) neither fills it nor reaches the inputs."""
     rawstore.write_rows("short_interest", [_short("AAA", "2026-10-15", 0.052)])
     inputs = enrich.load_inputs(TOTALS)
-    assert inputs["AAA"]["short_pct"] == pytest.approx(5.2)
+    assert "short_pct" not in inputs.get("AAA", {})
     cells = _cells(report.board_payload(TOTALS, META, inputs), "AAA")
-    assert cells["short"][:2] == ["5.2%", pytest.approx(5.2)]
-
-
-def test_the_newest_short_interest_row_wins(rawstore_tmp_db):
-    rawstore.write_rows("short_interest", [
-        _short("AAA", "2026-10-14", 0.010),
-        _short("AAA", "2026-10-15", 0.052),
-        _short("AAA", "2026-10-13", 0.090)])
-    assert enrich.load_inputs(TOTALS)["AAA"]["short_pct"] == pytest.approx(5.2)
-
-
-def test_a_null_si_float_row_does_not_win(rawstore_tmp_db):
-    rawstore.write_rows("short_interest", [
-        _short("AAA", "2026-10-15", None),
-        _short("AAA", "2026-10-14", 0.040)])
-    assert enrich.load_inputs(TOTALS)["AAA"]["short_pct"] == pytest.approx(4.0)
-
-
-def test_a_ticker_outside_the_totals_is_not_read_into_short_interest(rawstore_tmp_db):
-    rawstore.write_rows("short_interest", [_short("ZZZ", "2026-10-15", 0.100)])
-    assert "ZZZ" not in enrich.load_inputs(TOTALS)
-
-
-def test_short_pct_column_is_shown_when_d10_has_rows(rawstore_tmp_db):
-    rawstore.write_rows("short_interest", [_short("AAA", "2026-10-15", 0.052)])
-    inputs = enrich.load_inputs(TOTALS)
-    payload = report.board_payload(TOTALS, META, inputs)
-    assert "short" in payload["cols"]
+    assert cells["short"][0] == "—" and cells["short"][1] is None
     html = report.render_sec13f_dashboard(TOTALS, META, inputs)
-    assert 'data-col="short"' in html and ">Short%<" in html
-    assert "short interest as % of float" in html
-    assert "as of 2026-10-15" in html
+    assert ">Short int<" in html and ">Short%<" not in html
 
 
 def test_the_board_quarters_start_at_the_engines_start_quarter(monkeypatch):

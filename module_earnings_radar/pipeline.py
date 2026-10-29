@@ -1,9 +1,11 @@
-"""UW-first earnings pipeline — Unusual Whales API for all data."""
+"""Earnings pipeline: the calendar, earnings rows, statements and bars from Unusual Whales; the options inputs from
+the options store (G9, ``store_reads``): the screener set for the gates, the list names' and the earnings set's rows
+for R4, the R5 lean and R8, and ``market_series`` for R6."""
 import json
 import logging
 from datetime import date, datetime, timedelta, timezone
 
-from RevenueChaser.core.providers.unusual_whales import UWClient
+from RevenueChaser.core.providers.unusual_whales import UWClient, aggregate_prints
 from RevenueChaser.module_earnings_radar.classifier import classify_ticker, TICKER_OVERRIDES, get_cluster_label
 from RevenueChaser.module_earnings_radar.rules import (
     rule1_drivers, rule2_guidance, rule3_financial, rule4_volatility,
@@ -22,7 +24,7 @@ from RevenueChaser.core.calendar import now_ny, today_ny
 from RevenueChaser.core.reaction_anchor import reaction_anchor, session_closes, timing_kind
 from RevenueChaser.module_earnings_radar.models import TradeCard, RuleResult
 from RevenueChaser.module_sector_rotation.engine import get_quadrant_for_ticker
-from RevenueChaser.module_leaps.engine import load_cache as leaps_load_cache
+from RevenueChaser.module_leaps.history import latest as leaps_latest
 
 logger = logging.getLogger(__name__)
 
@@ -178,8 +180,10 @@ class EarningsPipeline:
         self.screener_result = None
         self._shorts_cache = None
         self._dgs10_cache = None
-        self._rate_events = None        # the stored economic calendar, read once per run (E5d, #372)
-        self._peers_registered = False
+        self._rate_events = None        # the FOMC and CPI days of market_series, read once per run (G9)
+        self._leaps = None              # the last recorded LEAPS session's rows, read once per run (G9)
+        self._listed = None             # SPX and the option watch list, read once per run (G9)
+        self._options_sets: dict = {}    # ticker -> the options set its card read ("list", "earnings" or None)
         self._preselected_tickers = None
         # The stored D01 bars for the tickers that will be scored, read once before the workers start (E5e, #372).
         self._ohlc_bars = None
@@ -208,72 +212,41 @@ class EarningsPipeline:
             "rate_events": "none",
             "ohlc": {"stored": 0, "live": 0},
             "estimates": {"stored": 0, "missing": 0},
+            # Which set each scored card's options inputs came from (G9): the list, the earnings set, or none.
+            "options": {"list": 0, "earnings": 0, "none": 0},
             "estimates_note": None,
         }
 
     @property
     def screener_cache(self) -> dict[str, dict]:
+        """The stored screener set's rows of the run's tickers (``store_reads.screener_set``, G9), read once. Its
+        outcome (``{"status", "error", "session"}``) is kept for the run's history note and the board notice (E2,
+        #372): a stale or missing set leaves every name without a row, which is unknown liquidity, not thin."""
         if self._screener_cache is None:
-            fn = getattr(self.uw, "screener_batch_result", None)
-            if fn is not None:
-                # Keep the batch outcome: a partial/failed answer means a name can have no row at all,
-                # which is unknown liquidity, not thin liquidity (E2, #372).
-                res = fn(self.tickers)
-                self.screener_result = {"status": res.status, "error": res.error}
-                self._screener_cache = res.data or {}
-            else:                                 # fakes and older clients only offer the plain batch
-                self._screener_cache = self.uw.screener_batch(self.tickers)
-                self.screener_result = {"status": "ok", "error": None}
+            self._screener_cache, self.screener_result = store_reads.screener_set(self.tickers)
+            self.input_sources["screener"] = {"rows": len(self._screener_cache),
+                                              "session": self.screener_result.get("session"),
+                                              "source": "rcdata:options"}
         return self._screener_cache
 
+    def _listed_names(self) -> set:
+        if self._listed is None:
+            from RevenueChaser.core import board_requests
+            self._listed = set(board_requests.option_list_names())
+        return self._listed
+
     def _warm_short_interest(self) -> dict[str, dict]:
-        """Fetch short-interest rows once for the tickers that will be deep-scored.
-
-        The nightly D10 sweep already stored them (E5c, #372), so UW's batch /short_screener (one extra round per
-        ~100 tickers) is asked only for the tickers the store does not cover — and not at all when it covers them
-        all. Stored rows are parsed with ``UWClient._parse_short_row``, the mapping the live answer would have gone
-        through, so R5 cannot tell the two apart.
-
-        Every ticker's squeeze metrics are then registered under its spine sector (the sector the card is scored
-        against, #272) so the in-sector peer Z-scores can be built before scoring. A name the spine
-        cannot place is nobody's peer. Test fakes that lack
-        ``short_screener`` keep working — R5 simply falls back to flow-only.
-        """
+        """R5's squeeze inputs for the tickers that will be deep-scored, read once from the ownership store (G9):
+        FINRA's short interest and days to cover as published by the latest complete session (no look-ahead, #252),
+        IBKR's borrow fee and shares available (``stored_inputs.short_rows``). No provider call: a name the store
+        does not hold has no squeeze inputs, and R5 reads the lean alone."""
         if self._shorts_cache is None:
             from RevenueChaser.module_earnings_radar import stored_inputs
-            stored, session = stored_inputs.short_rows(self.tickers)
-            parsed: dict[str, dict] = {}
-            missing: list[str] = []
-            for t in self.tickers:
-                row = stored.get(t)
-                if row is None:
-                    missing.append(t)
-                    continue
-                parsed[t] = UWClient._parse_short_row(row)
-            n_stored = len(parsed)
-            n_live = 0
-            if missing and hasattr(self.uw, "short_screener"):
-                rows = self.uw.short_screener(missing) or {}
-                for t, row in rows.items():
-                    parsed[t] = self.uw._parse_short_row(row)
-                n_live = len(rows)
-            self._shorts_cache = parsed
+            stored, settled = stored_inputs.short_rows(self.tickers)
+            self._shorts_cache = stored
             self.input_sources["short_interest"] = {
-                "stored": n_stored, "live": n_live,
-                "session": session.isoformat() if session else None}
-        if not self._peers_registered:
-            # the peer group is the spine's sector, the one _score reads: for a name the S&P 1500 list or the SIC
-            # table places differently from the UW calendar the two differ (#272)
-            if getattr(self, "_spine_gics", None) is None:
-                self._spine_gics = _spine.spine_gics()
-            for t in self.tickers:
-                stats = self._shorts_cache.get(t)
-                if not stats:
-                    continue
-                sector = _spine.gics_of(t, self._spine_gics).sector
-                if sector and not is_unclassified(sector):
-                    rule5_positioning.register_peer_stats(t, sector, stats)
-            self._peers_registered = True
+                "stored": len(stored), "live": 0, "source": "rcdata:ownership",
+                "session": settled.isoformat() if settled else None}
         return self._shorts_cache
 
     def _warm_dgs10(self) -> dict[str, float]:
@@ -292,11 +265,24 @@ class EarningsPipeline:
         self.input_sources["dgs10_note"] = note.get("label")
         return self._dgs10_cache
 
-    def _warm_rate_events(self) -> list[dict]:
-        """The stored ``economic_calendar`` rows, read once per run (E5d, #372): every card's overlap is a lookup
-        in this list, not a table read of its own."""
+    def _leaps_context(self) -> dict:
+        """The last recorded LEAPS session's rows for this run's tickers (G9), read once per run. A failed read is
+        no LEAPS context (every card reads N/A) and says so in ``input_sources["leaps"]``, kept in the run header."""
+        if self._leaps is None:
+            try:
+                self._leaps = leaps_latest(self.tickers)
+                self.input_sources["leaps"] = {"rows": len(self._leaps)}
+            except Exception as e:  # noqa: BLE001 - the LEAPS column is context, never a reason to drop a card
+                logger.warning(f"LEAPS context read failed: {e}")
+                self._leaps = {}
+                self.input_sources["leaps"] = {"rows": 0, "error": str(e)[:200]}
+        return self._leaps
+
+    def _warm_rate_events(self) -> dict:
+        """The FOMC decision and CPI release days of ``market_series`` (G9), read once per run: every card's overlap
+        is a lookup in them, not a read of its own."""
         if self._rate_events is None:
-            self._rate_events = stored_inputs.rate_events()
+            self._rate_events = store_reads.rate_event_days()
         return self._rate_events
 
     def _year_of_bars(self, ticker: str, report_date: date | None = None) -> list:
@@ -343,56 +329,40 @@ class EarningsPipeline:
             self.input_sources["estimates_note"] = note.get("label")
         return self._estimates
 
-    def _gex_profile(self, ticker: str, spot, em_pct: float | None, capture: dict | None = None) -> dict:
-        """Strike-level GEX profile (Directionalized Volume) for R4.
-
-        One extra UW call per deep-scored ticker when ``R4_GEX_PROFILE_ENABLED``
-        and the provider exposes ``spot_exposures_by_strike``. Any failure or a
-        payload without usable rows returns ``{}`` — R4 then falls back to the
-        ``gex-levels`` flip (never fabricated, never a block).
-        """
+    def _gex_profile(self, rows: list, spot, em_pct: float | None, capture: dict | None = None) -> dict:
+        """Strike-level GEX profile (Directionalized Volume) for R4, from the stored spot exposures by strike of the
+        card's options set (G9). Rows without usable values return ``{}``: R4 then falls back to the stored
+        ``gex-levels`` flip (never fabricated, never a block)."""
         from RevenueChaser.core.config import R4_GEX_PROFILE_ENABLED
         from RevenueChaser.core.gex_profile import normalize_strike_rows, build_profile
-        if not R4_GEX_PROFILE_ENABLED or not em_pct:
-            return {}
-        if not hasattr(self.uw, "spot_exposures_by_strike"):
+        if not R4_GEX_PROFILE_ENABLED or not em_pct or not rows:
             return {}
         try:
-            payload = self.uw.spot_exposures_by_strike(ticker) or []
             if capture is not None:
-                capture["spot_exposures"] = _strike_fields(payload)   # the fields R4 reads, kept in the history row
-            rows = normalize_strike_rows(payload)
+                capture["spot_exposures"] = _strike_fields(rows)   # the fields R4 reads, kept in the history row
+            norm = normalize_strike_rows(rows)
             spot_f = _fmt_price_float(spot)
-            if not rows or spot_f is None:
+            if not norm or spot_f is None:
                 return {}
-            return build_profile(rows, spot_f, em_pct=em_pct)
+            return build_profile(norm, spot_f, em_pct=em_pct)
         except Exception as e:  # noqa: BLE001 — a missing profile must never kill a score
-            logger.debug("gex profile %s unavailable: %s", ticker, e)
+            logger.debug("gex profile unavailable: %s", e)
             return {}
 
-    def _term_slope(self, ticker: str, em_pct: float | None, capture: dict | None = None) -> float | None:
-        """Per-day ATM-IV slope (nearest expiry -> 45 DTE) for R4's slope term.
-
-        One extra UW call per deep-scored ticker when
-        ``R4_TERM_STRUCTURE_ENABLED`` and the provider exposes ``term_structure``
-        (mirrors ``_gex_profile``). Any failure, an empty curve, or a curve that
-        cannot span near -> horizon returns ``None`` — R4 then simply has no
-        slope term; a slope is never fabricated.
-        """
+    def _term_slope(self, rows: list, em_pct: float | None, capture: dict | None = None) -> float | None:
+        """Per-day ATM-IV slope (nearest expiry -> 45 DTE) for R4's slope term, from the stored term structure of the
+        card's options set (G9). An empty curve, or one that cannot span near -> horizon, returns None: R4 then has
+        no slope term; a slope is never fabricated."""
         from RevenueChaser.core.config import R4_TERM_STRUCTURE_ENABLED
         from RevenueChaser.core.vol_metrics import term_structure_curve, term_structure_slope
-        if not R4_TERM_STRUCTURE_ENABLED or not em_pct:
-            return None
-        if not hasattr(self.uw, "term_structure"):
+        if not R4_TERM_STRUCTURE_ENABLED or not em_pct or not rows:
             return None
         try:
-            rows = self.uw.term_structure(ticker) or []
             if capture is not None:
-                capture["term_structure"] = rows             # the answer, kept in the card's history row
-            curve = term_structure_curve(rows)
-            return term_structure_slope(curve)
+                capture["term_structure"] = rows             # the rows, kept in the card's history row
+            return term_structure_slope(term_structure_curve(rows))
         except Exception as e:  # noqa: BLE001 — a missing slope must never kill a score
-            logger.debug("term structure %s unavailable: %s", ticker, e)
+            logger.debug("term structure unavailable: %s", e)
             return None
 
     def _yz_rv30(self, ticker: str, ohlc: list) -> float | None:
@@ -412,8 +382,6 @@ class EarningsPipeline:
 
     def run(self, use_preselect: bool = True, watchlist: set = None) -> list[TradeCard]:
         logger.info(f"Fetching screener batch for {len(self.tickers)} tickers...")
-        rule5_positioning.reset_peer_stats()
-        self._peers_registered = False
         _ = self.screener_cache  # warm cache
 
         wl = watchlist or (rawstore.load_watchlist())
@@ -456,8 +424,11 @@ class EarningsPipeline:
             with ThreadPoolExecutor(max_workers=workers) as ex:
                 scored = list(ex.map(score_one, scoring))
         cards = [c for c in scored if c]
-        # The workers are done: the OHLC source counts are settled (E5e, #372).
+        # The workers are done: the OHLC source counts are settled (E5e, #372), and the options sets (G9).
         self.input_sources["ohlc"] = {"stored": len(self._ohlc_stored), "live": len(self._ohlc_live)}
+        sets = list(self._options_sets.values())
+        self.input_sources["options"] = {"list": sets.count("list"), "earnings": sets.count("earnings"),
+                                         "none": sets.count(None)}
         cards.sort(key=lambda c: (-(c.confidence_score + c.pre_score), -c.expected_move_pct))
         return cards
 
@@ -555,19 +526,6 @@ class EarningsPipeline:
             self._filter_stats["by_reason"]["cap"] = self._filter_stats["by_reason"].get("cap", 0) + 1
         return result
 
-    def _flow_recent(self, ticker: str) -> tuple[list, bool]:
-        """``(prints, failed)``: the recent option tape and whether the request itself failed.
-
-        A client without ``flow_recent_result`` is taken at its word; a 404 is "no flow", not a failure.
-        """
-        fn = getattr(self.uw, "flow_recent_result", None)
-        if fn is not None:
-            res = fn(ticker)
-            if getattr(res, "status", None) is not None:
-                failed = res.status != "ok" and (res.error or {}).get("status") != 404
-                return res.data or [], failed
-        return self.uw.flow_recent(ticker) or [], False
-
     def _score(self, ticker: str) -> TradeCard:
         captured: dict = {}      # UW answers behind R4 that only a derived value keeps (the history row's inputs)
         rows_fn = getattr(self.uw, "earnings_rows", None)
@@ -596,8 +554,6 @@ class EarningsPipeline:
         r2_own = bool(r2_hist)
         if not r2_hist:
             r2_hist = hist
-        flow_recent_raw, flow_failed = self._flow_recent(ticker)
-        flow = self.uw.aggregate_flow(ticker, flow_recent_raw) or {}
         cal_raw = self.cal_meta.get(ticker, {})
         scr = self.screener_cache.get(ticker, {})
         # ── Identity ──
@@ -631,6 +587,13 @@ class EarningsPipeline:
         if isinstance(report_date, str) and len(report_date) > 10:
             report_date = report_date[:10]
         ed = date.fromisoformat(report_date) if report_date else today_ny()
+
+        # ── The options inputs (G9): the list set, the earnings set fetched for this report, or none ──
+        options_in = store_reads.card_inputs(ticker, ed, self._listed_names())
+        has_options = options_in["set"] is not None
+        self._options_sets[ticker] = options_in["set"]
+        flow_recent_raw = options_in["prints"]
+        flow = aggregate_prints(flow_recent_raw) if has_options else {}
 
         agh = _agh_context(ticker)
         eps_est = cal_raw.get("street_mean_est") or earn.get("street_mean_est")
@@ -672,9 +635,9 @@ class EarningsPipeline:
         spot = scr.get("close") or earn.get("price") or None
         spot = _fmt_price_float(spot)
         current_price = f"${spot:.2f}" if spot is not None else ""
-        gex = self.uw.gex_levels(ticker) or {}
+        gex = options_in["gex"]
         spot_num = _fmt_price_float(earn.get("price") or spot)
-        gex_profile = self._gex_profile(ticker, spot_num, em_pct, captured)
+        gex_profile = self._gex_profile(options_in["strikes"], spot_num, em_pct, captured)
         scr_rv = _safe_float(scr.get("realized_volatility"))
         yz_rv30 = self._yz_rv30(ticker, ohlc)
         opt = {
@@ -687,7 +650,7 @@ class EarningsPipeline:
             # screener RV — same construction the skill's 1.25 threshold assumes.
             "realized_volatility": yz_rv30 if yz_rv30 is not None else scr_rv,
             "rv_source": "yang_zhang" if yz_rv30 is not None else "screener",
-            "ts_slope": self._term_slope(ticker, em_pct, captured),
+            "ts_slope": self._term_slope(options_in["term"], em_pct, captured),
             "iv_rank": _safe_float(scr.get("iv_rank")),
             "straddle_payoff_median": _straddle_payoff_median(hist),
         }
@@ -697,28 +660,30 @@ class EarningsPipeline:
         r3 = _score_financials(ticker, cluster, fin_records)
         r4 = rule4_volatility.score(opt) if em_pct else rule4_volatility.score(None)
         shorts = (self._shorts_cache or {}).get(ticker, {})
-        r5 = rule5_positioning.score(
+        r5 = _not_on_list() if not has_options else rule5_positioning.score(
             short_interest_pct_float=shorts.get("si_pct"),
             days_to_cover=shorts.get("days_to_cover"),
             borrow_fee=shorts.get("borrow_fee"),
-            sector=sector,
+            short_interest=shorts.get("short_interest"),
+            shares_available=shorts.get("shares_available"),
             institutional_net_delta=flow.get("inst_lean_net"),
             institutional_call_premium=flow.get("inst_bull_side"),
             institutional_put_premium=flow.get("inst_bear_side"),
-            ticker=ticker,
             institutional_side_served=flow.get("side_served"),
             institutional_package_premium=flow.get("inst_package"),
         )
         beta, beta_t = r6_beta(ohlc, self._dgs10_cache or {}, _gap_sessions(hist, ohlc))
-        # rate_event_overlap: FOMC/CPI within the print's ±1 trading day, from the stored economic calendar
-        # (E5d, #372). None — the store does not span the window — keeps the old behaviour: an extreme duration
+        # rate_event_overlap: FOMC/CPI within the print's ±1 trading day, from the FOMC_DECISION and CPI_RELEASE rows
+        # of ``market_series`` (G9; E5d, #372). None — the series do not span the window — keeps the old behaviour: an extreme duration
         # is a badge, never a veto (design doc). A noisy beta (|t| < 2) is a badge too.
-        overlap = stored_inputs.rate_event_overlap(ed, self._warm_rate_events())
+        overlap = store_reads.rate_event_overlap(ed, self._warm_rate_events())
         if overlap is not None:
             self.input_sources["rate_events"] = "stored"
         r6 = rule6_macro.score(rate_sensitivity=beta, rate_event_overlap=overlap, beta_tstat=beta_t)
         r7 = _score_accounting(fin_records)
-        r8 = _score_sentiment(flow)
+        r8 = _score_sentiment(flow) if has_options else _not_on_list()
+        if not has_options:
+            r4 = _not_on_list()
 
         r1 = rule1_drivers.score((self._estimates or {}).get(ticker))
         composite = compute_composite_scores(r1=r1, r2=r2, r3=r3, r4=r4, r5=r5, r6=r6, r7=r7, r8=r8)
@@ -785,6 +750,8 @@ class EarningsPipeline:
             badges.append("UNMAPPED")
         if not has_implied:
             badges.append("HIST. IMPLIED N/A")
+        if not has_options:
+            badges.append("NOT ON OPTION LIST")
 
         thesis = []
         for rule_name, result in composite.get("rule_results", {}).items():
@@ -800,14 +767,17 @@ class EarningsPipeline:
         nrc_score = nrc_info.get("nrc", 0)
         nrc_tier = nrc_info.get("tier", "")
         attention = _attention_score(conf, vol_edge, liquidity, rotation_quadrant, ed)
-        inst_label, inst_net, inst_tone = _institutional_flow_comment(flow, failed=flow_failed)
+        if has_options:
+            inst_label, inst_net, inst_tone = _institutional_flow_comment(flow)
+            gex_struct = _gex_structure_label(spot, gex, gex_profile)
+        else:
+            inst_label, inst_net, inst_tone = store_reads.NOT_ON_LIST, 0.0, "neutral"
+            gex_struct = store_reads.NOT_ON_LIST
         inst_prints, inst_span = _flow_window(flow_recent_raw)
-        gex_struct = _gex_structure_label(spot, gex, gex_profile)
 
-        # LEAPS is read-only here (C26, #383, LP-D): the label comes from leaps_cache, whose one
-        # writer is the LEAPS Fetch. No UW call, no store write, no lock on the scoring pool.
-        payload = leaps_load_cache(ticker) or {}
-        leaps = payload.get("latest") or {}
+        # LEAPS is read-only here (C26, #383, LP-D): the label is the ticker's row of the last recorded LEAPS
+        # session (G9: the LEAPS Fetch no longer writes leaps_cache). No UW call, no store write.
+        leaps = self._leaps_context().get(ticker) or {}
 
         inst_call_premium = float(flow.get("inst_call", 0) or 0)
         inst_put_premium = float(flow.get("inst_put", 0) or 0)
@@ -816,6 +786,8 @@ class EarningsPipeline:
 
         raw_packet = {
             "earnings_history": hist,
+            "options_set": options_in["set"],
+            "options_session": options_in["session"].isoformat() if options_in["session"] else None,
             "flow_recent": flow_recent_raw,
             "screener": scr,
             "gex_levels": gex,
@@ -865,7 +837,11 @@ class EarningsPipeline:
         # R4 is not a direction rule (0% weight, excluded from rule_results), so
         # surface it explicitly — otherwise its reasons never reach the Why chips
         # and OPTIONS_*/SHARES_* actions are a black box.
-        if r4 is not None and r4.available and r4.score is not None:
+        if not has_options:                 # the label on the drawer and in the history row (G9)
+            rule_audit["rule4_volatility"] = {"label": "Vol Edge", "score": None, "weight": 0.0, "coverage": 0,
+                                              "available": False, "contribution": None,
+                                              "reasons": list(r4.reasons), "flags": []}
+        elif r4 is not None and r4.available and r4.score is not None:
             rule_audit["rule4_volatility"] = {
                 "label": "Vol Edge",
                 "score": r4.score,
@@ -922,23 +898,11 @@ class EarningsPipeline:
                     mcap = f"${val/1e9:.1f}B" if val >= 1e9 else f"${val/1e6:.1f}M"
                 except:
                     pass
-        if not opt_vol or not oi:
-            opt_data = self.uw.options_volume(ticker) or {}
-            if isinstance(opt_data, list) and opt_data:
-                opts = opt_data[0]
-                if not opt_vol:
-                    cv = opts.get("call_volume", 0) or 0
-                    pv = opts.get("put_volume", 0) or 0
-                    opt_vol = _fmt_int(cv + pv)
-                if not oi:
-                    oi = _fmt_int(opts.get("total_open_interest") or opts.get("open_interest"))
-            elif isinstance(opt_data, dict):
-                if not opt_vol:
-                    cv = opt_data.get("call_volume", 0) or 0
-                    pv = opt_data.get("put_volume", 0) or 0
-                    opt_vol = _fmt_int(cv + pv)
-                if not oi:
-                    oi = _fmt_int(opt_data.get("total_open_interest") or opt_data.get("open_interest"))
+        # fallback: the stored options set's own volume and open interest when the screener row has none (G9)
+        if not opt_vol and options_in["volume"].get("option_volume"):
+            opt_vol = _fmt_int(options_in["volume"]["option_volume"])
+        if not oi and options_in["volume"].get("open_interest"):
+            oi = _fmt_int(options_in["volume"]["open_interest"])
 
         return TradeCard(
             ticker=ticker, name=name, company=ticker, cluster=get_cluster_label(cluster),
@@ -1017,7 +981,7 @@ class EarningsPipeline:
             sweep_premium=sweep_premium,
             block_premium=block_premium,
             raw_packet_json=raw_packet_json,
-            flow_source="failed" if flow_failed else ("flow_recent" if flow_recent_raw else "none"),
+            flow_source=("not_on_list" if not has_options else "option_print" if flow_recent_raw else "none"),
         )
 
 
@@ -1743,6 +1707,12 @@ def _fmt_gex(val) -> str:
         return f"${f:.2f}"
     except (ValueError, TypeError):
         return ""
+
+
+def _not_on_list() -> RuleResult:
+    """R4, R5 or R8 of a name with no options inputs (neither on the option watch list nor in the earnings set of its
+    report's evening): the label, no score (G9; the same words as Implied Probability and LEAPS)."""
+    return RuleResult(score=None, available=False, coverage=0, reasons=[store_reads.NOT_ON_LIST])
 
 
 def _score_financials(ticker: str, cluster: str, records: list) -> RuleResult:

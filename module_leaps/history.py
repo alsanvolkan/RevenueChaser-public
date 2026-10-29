@@ -2,9 +2,8 @@
 
 ``record`` is a step of a LEAPS Fetch (``app/runners.run_leaps_latest``), after the board file is written. It hands
 ``core/history.record_run`` one ``leaps_footprint_history`` row per watchlist ticker the scan fetched, whatever its
-label (the board lists only Accumulating and Distributing): the footprint's columns, the flow-print metrics merged
-into it, ``fetch_status`` and ``inputs`` (compressed: the three UW answers, the two baselines it was classified
-against and its flow candidate). The mapping lives here, in the module, not in ``core/``. A Refresh
+label: the footprint's columns, the flow-print metrics merged into it, ``fetch_status`` and ``inputs`` (compressed:
+the options store rows it was built from (G9), the two baselines it was classified against and its flow candidate). The mapping lives here, in the module, not in ``core/``. A Refresh
 (``run_leaps_cached``) never calls it (06 rule 9); it reads the resolved names back from the last recorded session
 (``scan._history_names``, #377 L5).
 
@@ -14,13 +13,13 @@ today (a same-session row is not its own baseline), the ``q`` baseline the newes
 quarter end (O8), and both carry the OI-per-expiry rows they were built from, so growth is matched-expiry (O9,
 ``engine.matched_far_growth``). One batched read per scan: the session runs, their run counts and their rows.
 
-``leaps_cache`` keeps the latest snapshot per ticker (Earnings reads it) and its old list, frozen (D1, #377 L3):
-``engine.save_cache`` carries it unchanged and never appends, so no data is deleted.
+``leaps_cache`` is no longer written (G9: the board reads the options store); its rows stay until the old store
+retires (G10).
 
 LEAPS is a session board: the first complete run of a session keeps its rows; a later, intraday or partial run keeps
-its header only (``core/history.record_run``). A run is partial when the watchlist is empty, a footprint could not be
-fetched, or the UW key was rejected, the client's breaker opened or some UW calls failed. The print scan hitting its
-page cap is a header warning, not a reason: the footprints are whole and the board shows the same warning.
+its header only (``core/history.record_run``). A run is partial when the watchlist is empty or a pinned name on the
+option watch list has no stored chain (``missing``). A pinned name off the option watch list (``not_on_list``) is the
+board's label, not a reason.
 """
 from __future__ import annotations
 
@@ -34,7 +33,8 @@ BOARD, TABLE = "module_leaps", "leaps_footprint_history"
 # Bump when the footprint or flow scoring changes in a way the config hash does not see (``engine._score``'s
 # weights, ``bucket_score``, a formula), not a threshold.
 # 2 (#377 L3): the baselines are the recorded sessions and growth is matched-expiry.
-SELECTION_VERSION = "2"
+# 3 (G9): the inputs are the options store's (the list names only) and the baselines are picked at the stored session.
+SELECTION_VERSION = "3"
 _SESSIONS_READ = 130            # about two quarters of sessions: enough for the 1d and the quarter baseline
 _LIST_CAP = 10
 _COLUMNS = ("label", "score", "flow_score", "far_call_oi", "far_put_oi", "far_call_share", "far_oi_growth_1d_pct",
@@ -127,6 +127,30 @@ def baselines(tickers, today) -> dict:
     return out
 
 
+def latest(tickers) -> dict[str, dict]:
+    """``{ticker: row}`` of the last recorded LEAPS session snapshot for ``tickers`` (G9: Earnings' LEAPS context).
+
+    The row carries the footprint columns (``label``, ``score``, ``as_of``, the far OI, growth and IV rank): what
+    ``leaps_cache.latest`` held before the board read the options store. One read for all tickers; a ticker the
+    session did not record (off the option watch list, or never pinned) is missing, and nothing recorded is ``{}``.
+    A read never creates the history file.
+    """
+    wanted = {str(t).strip().upper() for t in (tickers or []) if t}
+    if not wanted:
+        return {}
+    with rawstore.brief_wait():
+        snaps = history.sessions(BOARD, 1)
+        if not snaps:
+            return {}
+        rows = rawstore.query(f"SELECT * FROM {TABLE} WHERE run_id = ?", [snaps[0]["run_id"]], db="history")
+    out = {}
+    for row in rows:
+        ticker = (row.get("ticker") or "").upper()
+        if ticker in wanted:
+            out[ticker] = {c: row.get(c) for c in _COLUMNS}
+    return out
+
+
 def _plain(value):
     """JSON-safe copy: dates and other non-JSON values become strings."""
     return json.loads(json.dumps(value, default=str))
@@ -151,10 +175,10 @@ def rows_from_footprints(footprints) -> list[dict]:
 def _problems(rows: list[dict], uw_health: dict | None) -> list[str]:
     """Why this run is not a whole session snapshot (empty when it is)."""
     out = [] if rows else ["the watchlist is empty, so no footprint was scanned"]
-    bad = sorted(r["ticker"] for r in rows if r["fetch_status"] != "ok")
+    bad = sorted(r["ticker"] for r in rows if r["fetch_status"] not in ("ok", "not_on_list"))
     if bad:
         listed = ", ".join(bad[:_LIST_CAP]) + (f" +{len(bad) - _LIST_CAP} more" if len(bad) > _LIST_CAP else "")
-        out.append(f"{len(bad)} of {len(rows)} footprints were not fetched whole: {listed}")
+        out.append(f"{len(bad)} of {len(rows)} footprints have no stored option chain: {listed}")
     return out + history.uw_problems(uw_health)
 
 

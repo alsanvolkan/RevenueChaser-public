@@ -25,8 +25,8 @@ from RevenueChaser.core.tests.panel_client import panel_test_client
 
 # ── the 13F runners: one family lock ─────────────────────────────────────────
 
-_13F_RUNNERS = [("build", runners.build_sec13f), ("rebuild", runners.run_sec13f_rebuild),
-                ("map", runners.run_sec13f_map)]
+# The Fetch is not one of them since G9: it queues ownership/serve and writes no 13F table.
+_13F_RUNNERS = [("rebuild", runners.run_sec13f_rebuild), ("map", runners.run_sec13f_map)]
 
 
 @pytest.mark.parametrize("runner", [r for _, r in _13F_RUNNERS], ids=[n for n, _ in _13F_RUNNERS])
@@ -38,17 +38,6 @@ def test_each_13f_runner_refuses_while_the_family_lock_is_held(rawstore_tmp_db, 
             runner()
     assert err.value.message == f"A 13F job is already running (pid {os.getpid()}); nothing was written."
     assert rawstore.query("SELECT * FROM sec13f_totals") == before, "a refused run wrote the totals"
-
-
-def test_a_refused_fetch_downloads_nothing(rawstore_tmp_db, monkeypatch):
-    from RevenueChaser.module_sec_13f import engine as sec_13f
-
-    called: list[tuple] = []
-    monkeypatch.setattr(sec_13f, "download_missing_zips", lambda *a, **k: called.append(a) or [])
-    with lock_held("sec_13f"):
-        with pytest.raises(jobs.JobMessage):
-            runners.build_sec13f()
-    assert called == [], "the lock is taken before the first download"
 
 
 def test_a_finished_13f_run_releases_the_lock(rawstore_tmp_db):

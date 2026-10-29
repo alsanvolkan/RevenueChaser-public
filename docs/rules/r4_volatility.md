@@ -1,7 +1,7 @@
 # R4 — Options Volatility Edge (Direction-Free)
 
 **Weight:** 0% of composite direction score (edge/gate only)
-**Source:** UW calendar expected move, screener `iv30d` / `iv_rank`, Yang-Zhang RV30 (offline from the OHLC the pipeline already fetches), `/stock/{ticker}/volatility/term-structure`, `gex-levels`, `/earnings/{ticker}` history (long-straddle payoffs)
+**Source:** UW calendar expected move, the stored screener row `iv30d` / `iv_rank` (`option_screener_daily`), Yang-Zhang RV30 (offline from the OHLC the pipeline already reads), the stored term structure, spot exposures by strike and GEX levels (G9: a list name's list set, an off-list name's earnings set of the evening before the report; any other name reads "not on the option watch list" and gets no R4), `/earnings/{ticker}` history (long-straddle payoffs)
 **File:** `module_earnings_radar/rules/rule4_volatility.py` (+ `core/vol_metrics.py`)
 
 ## What It Measures
@@ -19,11 +19,11 @@ It is **not** the "Edge" column — that display value is median realized 1D mov
 | Input | Source | Role |
 |---|---|---|
 | Expected move (%) | earnings calendar / history | EM buckets |
-| Implied vol | screener row `iv30d` | IV/RV numerator |
+| Implied vol | stored screener row `iv30d` | IV/RV numerator |
 | Realized vol | **Yang-Zhang RV30** offline from the fetched OHLC bars (fallback: screener `realized_volatility`) | IV/RV denominator |
-| Term-structure curve | `/stock/{ticker}/volatility/term-structure` | IV/RV context + slope term |
-| Volume-book GEX profile | `/stock/{ticker}/spot-exposures/strike` (Directionalized Volume) | regime, magnet, charm, vanna |
-| `gamma_flip` + spot | `gex-levels` + screener close | GEX regime fallback |
+| Term-structure curve | `option_expiry` rows (`volatility`, `days_to_expiry`), UW's term structure as stored | IV/RV context + slope term |
+| Volume-book GEX profile | `option_strike` rows, UW's spot exposures by strike as stored (Directionalized Volume) | regime, magnet, charm, vanna |
+| `gamma_flip` + spot | `option_daily` (list) or `er_options` (earnings set) GEX levels + screener close | GEX regime fallback |
 | Long-straddle 1D payoffs | `/earnings/{ticker}` history (last 4 completed) | history term |
 | (fallback) realized 1D moves | same history | realized-vs-implied ratio |
 | `iv_rank` | screener row | reason only |
@@ -78,7 +78,7 @@ today-or-later is dropped so a still-forming bar never feeds RV (the skill's
 
 The term-structure slope is the per-day ATM-IV change from the nearest
 expiration out to ~45 DTE (`core/vol_metrics.term_structure_slope`, one curve
-from `/stock/{ticker}/volatility/term-structure`; mirror the skill — never
+from the stored term structure, `option_expiry`; mirror the skill — never
 interpolate a fake far end). For a **premium buyer** the polarity is inverted
 from the skill's calendar-seller filter: backwardation (front IV rich vs the
 back) is a −8 drag, mild backwardation −3, contango (front-dated vol cheap)
@@ -97,8 +97,8 @@ coverage stays the shipped four-part set below.
 - **RV source is additive.** Yang-Zhang RV30 is computed offline from bars the
   pipeline already fetched; no extra call. It is used only when it exists;
   otherwise the screener RV stands.
-- **Slope is additive.** The term-structure fetch is one extra call per
-  deep-scored ticker behind `R4_TERM_STRUCTURE_ENABLED`; disabled, failed, or a
+- **Slope is additive.** The term structure is read from the store (no call since
+  G9) behind `R4_TERM_STRUCTURE_ENABLED`; disabled, missing, or a
   curve that cannot span near → 45 DTE yields `None` — no slope, never a
   fabricated curve.
 - **Coverage** = fraction of {EM, IV/RV, GEX, history} that actually fired

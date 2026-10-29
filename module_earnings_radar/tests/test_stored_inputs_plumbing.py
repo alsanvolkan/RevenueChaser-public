@@ -54,12 +54,13 @@ def test_a_locked_table_notes_once_and_reads_as_nothing(monkeypatch, caplog):
         raise RuntimeError("database is locked")
 
     monkeypatch.setattr(rawstore, "query", locked)
+    # Short interest reads the ownership store since G9, not raw.duckdb: the calendar reads stand in for it here.
     with caplog.at_level(logging.INFO, logger=stored_inputs.__name__):
-        assert stored_inputs.short_rows(["AAPL"]) == ({}, None)
+        assert stored_inputs.calendar_items([LATEST]) == ({}, None)
         assert stored_inputs.rate_events() == []
-        assert stored_inputs.short_rows(["AAPL"]) == ({}, None)    # a second read adds no second note
+        assert stored_inputs.calendar_items([LATEST]) == ({}, None)    # a second read adds no second note
 
     notes = [r.getMessage() for r in caplog.records if r.getMessage().startswith("stored inputs:")]
     assert len(notes) == 2
-    assert "short_interest" in notes[0] and "database is locked" in notes[0]
+    assert "earnings_calendar" in notes[0] and "database is locked" in notes[0]
     assert "economic_calendar" in notes[1]
