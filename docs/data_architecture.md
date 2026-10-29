@@ -1234,7 +1234,7 @@ report `sec/filings`'), or `never_checked`.
 **The boards on the layer (G6, build plan PR 13-15 and 20).** `core/fundamentals_layer.py` rebuilds the old
 `edgar_financials` record shape from `fundamental_fact`, so a board keeps its rules and reads current rows. The
 switch is `RC_FUNDAMENTALS_SOURCE`: unset (or `layer`) reads the layer once `fundamentals.duckdb` exists and
-`sec/companyfacts` has a good check; any other value (`store` by convention) reads the old cache, the rollback kept
+`sec/companyfacts` has built it once (a failed newer check keeps that last good build); any other value (`store` by convention) reads the old cache, the rollback kept
 until PR 21. What each board reads there:
 
 | Board | Reads on the layer |

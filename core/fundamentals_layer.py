@@ -27,7 +27,8 @@ What the rebuilt shape does not carry: the extraction's per-period flags (``<fie
 **The source** (the pattern of ``core/universe.py``): ``RC_FUNDAMENTALS_SOURCE`` unset (or ``layer``) reads the
 layer; any other value (``store`` by convention) reads the old ``edgar_financials`` rows, the escape hatch kept until
 the old path is retired (plan PR 21). With the layer asked for but no ``fundamentals.duckdb``, or no
-``sec/companyfacts`` build yet, the old store is read and a warning is logged once (``source_state``).
+``sec/companyfacts`` build yet, the old store is read and a warning is logged once (``source_state``); a failed
+newest check keeps the layer's last good build.
 """
 from __future__ import annotations
 
@@ -59,22 +60,29 @@ _FALLBACK_LOGGED: set[tuple[str, str]] = set()
 def source_state() -> dict:
     """``{requested, effective, reason, variable}`` of the statements source, read at call time (``core.universe``'s
     rule): unset or ``layer`` asks for the layer, honoured while ``fundamentals.duckdb`` is there and
-    ``sec/companyfacts`` has built it at least once; any other value asks for the old store."""
+    ``sec/companyfacts`` has built it at least once; any other value asks for the old store.
+
+    Unlike the universe's rule, a failed newest check does not send the boards back (Opus review S3): the served
+    file is then still the last good build, and the old ``edgar_financials`` rows are never refreshed at all. The
+    failure is logged once. Default chosen, change if avo prefers the universe's stricter rule."""
     variable = (os.getenv(SOURCE_ENV) or "").strip() or None
     if variable is not None and variable.lower() != LAYER:
         return {"requested": STORE, "effective": STORE, "reason": None, "variable": variable}
     from ..rcdata import ops, serving
     reason = None
-    if not serving.live_path("fundamentals").exists():
-        reason = "no fundamentals.duckdb yet"
-    else:
-        last = ops.latest_unskipped_check(FACTS_DATASET)
-        if last is None:
-            reason = f"{FACTS_DATASET} has not built yet"
-        elif last["result"] not in ("changed", "unchanged"):
-            reason = f"{FACTS_DATASET}'s last check {last['result']}"
     asked = (f"{SOURCE_ENV}={LAYER} is set" if variable
              else f"The fundamentals boards read the layer by default ({SOURCE_ENV} unset)")
+    if not serving.live_path("fundamentals").exists():
+        reason = "no fundamentals.duckdb yet"
+    elif not ops.ever_built(FACTS_DATASET):
+        reason = f"{FACTS_DATASET} has not built yet"
+    else:
+        last = ops.latest_unskipped_check(FACTS_DATASET)
+        if last and last["result"] not in ("changed", "unchanged"):
+            note = f"{FACTS_DATASET}'s last check {last['result']}"
+            if (asked, note) not in _FALLBACK_LOGGED:
+                _FALLBACK_LOGGED.add((asked, note))
+                logger.warning("%s; %s, so they read its last good build", asked, note)
     if reason and (asked, reason) not in _FALLBACK_LOGGED:
         _FALLBACK_LOGGED.add((asked, reason))
         logger.warning("%s, but they fall back to the old store: %s", asked, reason)

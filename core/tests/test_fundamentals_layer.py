@@ -151,6 +151,30 @@ def test_without_a_layer_the_old_rows_are_read(monkeypatch):
     assert sec_edgar.get_annual(TICKER, no_fetch=True)[0] == [{"fiscal_year": 2020, "revenue": 1.0}]
 
 
+def test_a_failed_facts_check_keeps_the_last_good_build(built, monkeypatch, caplog):
+    # Opus review S3: one failed ``sec/companyfacts`` run (an SEC 403, a timeout) leaves the served file the last
+    # good build, so the boards keep reading it, never the old rows nobody refreshes; the failure is logged.
+    from RevenueChaser.rcdata import ops
+    monkeypatch.delenv(layer.SOURCE_ENV, raising=False)
+    layer._FALLBACK_LOGGED.clear()
+    ops.record_check(layer.FACTS_DATASET, "failed", note="HTTP 403")
+    with caplog.at_level("WARNING"):
+        state = layer.source_state()
+    assert state["effective"] == layer.LAYER and state["reason"] is None
+    assert "failed" in caplog.text and "last good build" in caplog.text
+    assert sec_edgar.get_annual(TICKER, no_fetch=True)[1]["layer"]
+
+
+def test_without_any_good_facts_check_the_old_rows_are_read(market_roots, monkeypatch):  # noqa: F811
+    from RevenueChaser.rcdata import ops, serving
+    monkeypatch.delenv(layer.SOURCE_ENV, raising=False)
+    serving.live_path("fundamentals").parent.mkdir(parents=True, exist_ok=True)
+    serving.live_path("fundamentals").touch()
+    assert layer.source_state()["reason"] == f"{layer.FACTS_DATASET} has not built yet"
+    ops.record_check(layer.FACTS_DATASET, "failed", note="HTTP 403")
+    assert layer.source_state()["reason"] == f"{layer.FACTS_DATASET} has not built yet"
+
+
 def test_the_escape_hatch_reads_the_old_rows(built, monkeypatch):
     monkeypatch.setenv(layer.SOURCE_ENV, "store")
     assert layer.source_state()["effective"] == layer.STORE
