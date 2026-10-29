@@ -143,6 +143,8 @@ def build_report_html(results: dict) -> str:
         "company": info.get("longName") or info.get("shortName") or ticker,
         "sector": financials.get("sector"),
         "price": financials.get("current_price"),
+        # The prices store's session of that price (G6 follow-up); None when the price is Yahoo's.
+        "price_session": (financials.get("market_meta") or {}).get("price_session"),
         "currency": financials.get("currency", "USD"),
         "shares_outstanding": financials.get("shares_outstanding"),
         "market_cap": financials.get("market_cap"),

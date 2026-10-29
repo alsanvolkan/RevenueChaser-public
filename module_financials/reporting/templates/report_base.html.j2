@@ -83,7 +83,7 @@
   <div class="sub">Fin Research — Quick Remarks + Financial Model</div>
   <div class="meta">
     <span>Sector: {{ sector or "N/A" }}</span>
-    <span>Price: {{ price|price }}</span>
+    <span>Price: {{ price|price }}{% if price_session %} (close {{ price_session }}){% endif %}</span>
     <span>Market Cap: {{ market_cap|usd }}</span>
     <span>EV: {{ enterprise_value|usd }}</span>
     <span>Source: {{ source }}</span>

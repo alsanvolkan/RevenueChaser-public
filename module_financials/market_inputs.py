@@ -1,7 +1,10 @@
 """Financials' market inputs from the prices store (``prices.duckdb``, G2): the price, the market cap, the shares and
 the beta the models read, Yahoo's values only where the store has none.
 
-- **Price:** the newest close (``rcdata.read.latest_market``, at most ``LATEST_WITHIN_DAYS`` behind the store).
+- **Price:** the newest close (``rcdata.read.latest_market``), at most ``MAX_AGE_DAYS`` before today: the
+  risk-free rate's limit on the same card (``config.RISK_FREE_MAX_AGE_DAYS``). An older close, and the store gives
+  nothing, so a store the nightly stopped filling never prices a report with a month-old close. The session is named
+  on the card and in the Source line.
 - **Market cap:** the issuer's (every listed class), as the universe reads it and as Yahoo's was; a fund's or a
   trust's its own (one trust's CIK files many funds), and the class's own when the store has no issuer sum. It is
   the WACC's equity weight.
@@ -18,12 +21,15 @@ from __future__ import annotations
 import logging
 from datetime import date
 
+from .config import RISK_FREE_MAX_AGE_DAYS
+
 logger = logging.getLogger(__name__)
 
 BETA_MONTHS = 60
 BETA_MIN_MONTHS = 36
 INDEX_ID = "index:SPX"
 STORE = "prices store"
+MAX_AGE_DAYS = RISK_FREE_MAX_AGE_DAYS
 
 
 def _month_ends(rows: list[tuple[date, float]], before: date):
@@ -77,6 +83,12 @@ def from_store(ticker: str) -> dict:
     price, session = latest.get("price"), latest.get("price_session")
     if price is None or session is None or not price > 0:
         return {}
+    from RevenueChaser.core import calendar
+    age = (calendar.today_ny() - session).days
+    if age > MAX_AGE_DAYS:
+        logger.warning("financials: the prices store's newest close of %s is %s (%d days old, more than %d); "
+                       "Yahoo's price, shares and beta stay", t, session, age, MAX_AGE_DAYS)
+        return {}
     out = {"current_price": float(price), "price_session": session}
     cap = latest.get("market_cap") if _is_fund(t) else latest.get("issuer_market_cap")
     if cap is None:
@@ -100,15 +112,17 @@ def from_store(ticker: str) -> dict:
 
 def overlay(ticker: str, financials: dict) -> tuple[dict, str]:
     """``(financials with the store's market inputs, the Source line's market part)``. A value the store does not
-    give keeps Yahoo's; the part names each side, e.g. ``prices store (price, shares) · Yahoo (beta)``."""
+    give keeps Yahoo's; the part names each side and the store's session, e.g.
+    ``prices store, 2026-10-27 close (price, shares) · Yahoo (beta)``."""
     store = from_store(ticker)
     got = {"price": "current_price" in store, "shares": "shares_outstanding" in store, "beta": "beta" in store}
     fields = {k: store[k] for k in ("current_price", "market_cap", "shares_outstanding", "beta") if k in store}
-    meta = {"from_store": [k for k, v in got.items() if v], "price_session": store.get("price_session")}
+    session = store["price_session"].isoformat() if "price_session" in store else None
+    meta = {"from_store": [k for k, v in got.items() if v], "price_session": session}
     if got["beta"]:
         fields["beta_source"] = f"{STORE} ({BETA_MONTHS // 12}y monthly vs S&P 500)"
     out = {**financials, **fields, "market_meta": meta}
     ours = [k for k, v in got.items() if v]
     theirs = [k for k, v in got.items() if not v]
-    parts = ([f"{STORE} ({', '.join(ours)})"] if ours else []) + ([f"Yahoo ({', '.join(theirs)})"] if theirs else [])
+    parts = ([f"{STORE}, {session} close ({', '.join(ours)})"] if ours else []) + ([f"Yahoo ({', '.join(theirs)})"] if theirs else [])
     return out, " · ".join(parts)

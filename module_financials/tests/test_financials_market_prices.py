@@ -17,6 +17,17 @@ NEWEST = date(2026, 10, 27)
 YAHOO = {"shares_outstanding": 50.0, "market_cap": 5000.0, "beta": 1.1, "current_price": 100.0}
 
 
+@pytest.fixture(autouse=True)
+def _today(monkeypatch):
+    """Today is the day after the store's newest session, unless a test moves it."""
+    _clock(monkeypatch)
+
+
+def _clock(monkeypatch, now: datetime = datetime(2026, 10, 28, 15, 0, tzinfo=timezone.utc)):
+    from RevenueChaser.core import calendar
+    monkeypatch.setattr(calendar, "_now", lambda: now)
+
+
 def _month_end_series(n: int, beta: float, end: date = date(2026, 9, 30)):
     """``n`` month ends up to ``end`` (index level, stock close) where every stock return is 0.002 + beta x the
     index return."""
@@ -107,6 +118,17 @@ def test_a_bar_without_a_cap_gives_the_price_alone(market_roots):  # noqa: F811
     assert set(got) == {"current_price", "price_session"}
 
 
+@pytest.mark.parametrize("today, fresh", [(date(2026, 11, 10), True), (date(2026, 11, 11), False)])
+def test_a_close_older_than_the_rates_limit_gives_nothing(market_roots, monkeypatch, today, fresh):  # noqa: F811
+    # The same 14 days as the risk-free rate on that card, counted from today, not from the store's newest session.
+    from RevenueChaser.module_financials.config import RISK_FREE_MAX_AGE_DAYS
+    assert (date(2026, 11, 10) - NEWEST).days == RISK_FREE_MAX_AGE_DAYS
+    _store()
+    _clock(monkeypatch, datetime(today.year, today.month, today.day, 20, 0, tzinfo=timezone.utc))
+    got = mi.from_store(TICKER)
+    assert (got.get("current_price") == 120.0) is fresh and (got == {}) is not fresh
+
+
 def test_no_prices_file_gives_nothing(market_roots):  # noqa: F811
     assert mi.from_store(TICKER) == {}
 
@@ -115,7 +137,8 @@ def test_the_overlay_keeps_yahoos_value_where_the_store_has_none(market_roots): 
     _store(months=12)                                        # too short for a beta
     out, part = mi.overlay(TICKER, {**YAHOO, "annual": []})
     assert out["current_price"] == 120.0 and out["market_cap"] == 6000.0 and out["beta"] == 1.1
-    assert part == "prices store (price, shares) · Yahoo (beta)"
+    assert part == "prices store, 2026-10-27 close (price, shares) · Yahoo (beta)"
+    assert out["market_meta"]["price_session"] == "2026-10-27"
     assert "beta_source" not in out
 
 
@@ -124,15 +147,9 @@ def test_the_overlay_with_nothing_in_the_store_names_yahoo(market_roots):  # noq
     assert {k: out[k] for k in YAHOO} == YAHOO and part == "Yahoo (price, shares, beta)"
 
 
-def _clock(monkeypatch):
-    from RevenueChaser.core import calendar
-    monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 28, 15, 0, tzinfo=timezone.utc))
-
-
 def _run(monkeypatch, tmp_path):
     import RevenueChaser.module_financials.run as fm
     from RevenueChaser.core.providers import cache as cache_manager
-    _clock(monkeypatch)
     monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
     cache_manager.save(TICKER, {"ticker": TICKER, "info": {"longName": "Growth Co."}, **YAHOO, "currency": "USD",
                                 "source": "yfinance",
@@ -147,7 +164,8 @@ def test_a_run_models_the_stores_market_inputs_and_says_so(built, monkeypatch, t
     out = _run(monkeypatch, tmp_path)
     fin, dcf = out["financials"], out["modules"]["dcf"]
     assert fin["current_price"] == 120.0 and fin["market_cap"] == 6000.0
-    assert fin["source"].endswith(" · prices store (price, shares, beta)") and "Yahoo (price" not in fin["source"]
+    assert fin["source"].endswith(" · prices store, 2026-10-27 close (price, shares, beta)")
+    assert "Yahoo (price" not in fin["source"]
     assert dcf["wacc"]["beta"] == pytest.approx(1.5)
     assert dcf["wacc"]["beta_source"] == "prices store (5y monthly vs S&P 500)"
 
@@ -164,4 +182,13 @@ def test_off_the_fundamentals_layer_the_source_line_still_names_the_market_input
                                                                                    tmp_path):  # noqa: F811
     _store()
     out = _run(monkeypatch, tmp_path)
-    assert out["financials"]["source"] == "Yahoo (statements) · prices store (price, shares, beta)"
+    assert out["financials"]["source"] == "Yahoo (statements) · prices store, 2026-10-27 close (price, shares, beta)"
+
+
+def test_the_card_names_the_session_of_the_stores_price():
+    from RevenueChaser.module_financials.reporting.html_builder import build_report_html
+    fin = {**YAHOO, "market_meta": {"from_store": ["price"], "price_session": "2026-10-27"}}
+    html = build_report_html({"ticker": TICKER, "financials": fin, "modules": {}, "warnings": []})
+    assert "Price: $100.00 (close 2026-10-27)<" in html
+    yahoo = build_report_html({"ticker": TICKER, "financials": dict(YAHOO), "modules": {}, "warnings": []})
+    assert "Price: $100.00<" in yahoo
