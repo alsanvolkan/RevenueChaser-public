@@ -3,6 +3,10 @@ from __future__ import annotations
 
 from .config import IV_MAX, IV_MIN, to_float
 
+# The raw file the expected move is read from. It is a live file (snapshot.LIVE_FILES): in a backfilled or re-fetched
+# past day it holds a later session's IV (run._historical_live_files; Fable review S1).
+IV_FILE = "interpolated_iv.json"
+
 
 def expected_move(spot: float | None, annualized_iv: float | None, trading_days: int = 252) -> dict | None:
     if not spot or not annualized_iv:
@@ -25,3 +29,13 @@ def pick_iv(iv_rows: list[dict]) -> float | None:
         return None
     best = min(candidates, key=lambda r: to_float(r.get("days")) if to_float(r.get("days")) is not None else 1e9)
     return to_float(best["volatility"])
+
+
+def historical(snapshot: dict) -> bool:
+    """True when the snapshot's IV was fetched in a later session than the day shown (review S1)."""
+    return IV_FILE in (snapshot.get("historical_live_files") or [])
+
+
+def shown(snapshot: dict) -> dict | None:
+    """The snapshot's expected move, or None when it was read from a later session's IV (``historical``)."""
+    return None if historical(snapshot) else snapshot.get("expected_move")

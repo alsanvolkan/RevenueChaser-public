@@ -44,3 +44,10 @@ DATASETS.update({d.name: d for d in (fundamentals_companyfacts.DATASET, fundamen
                                      fundamentals_estimates.DATASET, fundamentals_fsds.DATASET,
                                      *fundamentals_wrds.DATASETS,
                                      fundamentals_tables.DATASET)})
+
+# The options data (G8, serving kind ``options``), in a block of its own.
+from .options import ibkr_iv as _options_ibkr_iv, uw_list as _options_uw_list  # noqa: E402
+from .options import uw_screener as _options_uw_screener  # noqa: E402
+
+DATASETS.update({d.name: d for d in (_options_uw_list.DATASET, _options_uw_screener.DATASET,
+                                     _options_ibkr_iv.DATASET)})

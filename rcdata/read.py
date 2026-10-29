@@ -575,10 +575,10 @@ def beneficial_ownership(tickers: Iterable[str], start=None, end=None) -> list[d
 # ── The fundamentals layer (PR 12) ────────────────────────────────────────────────────────────────────────────
 
 # A table several datasets write maps to None: each row's ``status`` is the newest check of its ``source``.
-DATASET_OF_TABLE.update({"fundamental_fact": None, "earnings_event": None, "estimate_latest": "yfinance/estimates",
+DATASET_OF_TABLE.update({"fundamental_company": "fundamentals/tables", "fundamental_fact": None, "earnings_event": None, "estimate_latest": "yfinance/estimates",
                          "filing_item": "sec/filings", "segment_revenue": None, "customer_share": None,
                          "peer_group": "fundamentals/tables", "fundamental_revision": None})
-KIND_OF_TABLE.update({t: "fundamentals" for t in ("fundamental_fact", "earnings_event", "estimate_latest",
+KIND_OF_TABLE.update({t: "fundamentals" for t in ("fundamental_company", "fundamental_fact", "earnings_event", "estimate_latest",
                                                   "filing_item", "segment_revenue", "customer_share", "peer_group",
                                                   "fundamental_revision")})
 
@@ -608,6 +608,42 @@ def statements(cik, period_type: str = "quarterly", n: int = 8, fields: Iterable
     return _rows("fundamental_fact", sql, params + [_cik(cik), str(period_type), int(n)])
 
 
+def fundamental_companies(tickers: Iterable[str]) -> list[dict]:
+    """``fundamental_company`` rows of ``tickers`` (upper-cased): the CIK a ticker's statements are filed under, the
+    filer's kind (``is_us``, ``us_gaap``, ``non_usd_units``), the day its facts were last read (``facts_as_of``) and
+    its filing list (``submissions_as_of``), and its newest statement (``newest_filed``, ``newest_period_end``)."""
+    wanted = sorted({str(t).strip().upper() for t in tickers if str(t or "").strip()})
+    if not wanted:
+        return []
+    return _rows("fundamental_company", f"SELECT * FROM fundamental_company WHERE ticker IN "
+                                        f"({', '.join('?' * len(wanted))}) ORDER BY ticker", wanted)
+
+
+def statements_many(ciks: Iterable, annual_years: int, quarters: int) -> list[dict]:
+    """``fundamental_fact`` rows of several companies at once (a board's batch): per company its ``annual_years``
+    newest fiscal years and ``quarters`` newest quarter ends, every field, preliminary rows included (they carry
+    ``preliminary`` true and no accession), by company, period type and period end. The window is counted per company
+    over every field, as ``statements`` counts it (fiscal years for annual rows, period ends for quarterly ones)."""
+    wanted = sorted({_cik(c) for c in ciks if str(c or "").strip()})
+    if not wanted:
+        return []
+    marks = ", ".join("?" * len(wanted))
+    # An annual record is a fiscal year (its fields may end on two days), a quarterly one a period end.
+    def key(t: str) -> str:
+        return (f"CASE WHEN {t}.period_type = 'annual' THEN CAST({t}.fiscal_year AS VARCHAR) "
+                f"ELSE CAST({t}.period_end AS VARCHAR) END")
+    sql = f"""
+        WITH ends AS (
+            SELECT cik, period_type, pkey, dense_rank() OVER (PARTITION BY cik, period_type ORDER BY pkey DESC) AS k
+            FROM (SELECT DISTINCT cik, period_type, {key("x")} AS pkey FROM fundamental_fact x WHERE cik IN ({marks})))
+        SELECT f.* FROM fundamental_fact f JOIN ends e
+          ON e.cik = f.cik AND e.period_type = f.period_type AND e.pkey = {key("f")}
+        WHERE f.cik IN ({marks})
+          AND ((f.period_type = 'annual' AND e.k <= ?) OR (f.period_type = 'quarterly' AND e.k <= ?))
+        ORDER BY f.cik, f.period_type, f.period_end, f.field"""
+    return _rows("fundamental_fact", sql, wanted + wanted + [int(annual_years), int(quarters)])
+
+
 def earnings_events(cik=None, start=None, end=None) -> list[dict]:
     """``earnings_event`` rows (of ``cik``, or every company) with ``start <= report_date <= end``, by date: a
     coming report from a calendar (``confirmed`` false) or one that happened (an 8-K item 2.02, its accession)."""
@@ -633,12 +669,40 @@ def estimates(tickers: Iterable[str]) -> list[dict]:
                                     "ORDER BY ticker, period", wanted)
 
 
+def filing_items(ciks: Iterable, form: str, since=None) -> list[dict]:
+    """The listed filings of several companies, one row per filing and 8-K item (``item`` NULL for a filing without
+    items): ``cik``, ``accession``, ``form``, ``filing_date``, ``item``, of ``form`` only and filed on or after ``since``
+    (when given), by company, filing date and item."""
+    wanted = sorted({_cik(c) for c in ciks if str(c or "").strip()})
+    if not wanted:
+        return []
+    sql = ("SELECT cik, accession, form, filing_date, item FROM filing_item WHERE kind = 'item' AND form = ? "
+           f"AND cik IN ({', '.join('?' * len(wanted))})")
+    params: list = [str(form), *wanted]
+    if since is not None:
+        sql += " AND filing_date >= ?"
+        params.append(_day(since))
+    return _rows("filing_item", sql + " ORDER BY cik, filing_date, accession, item", params)
+
+
 def filing_text(cik, item: str = "business") -> dict | None:
     """The served text of company ``cik``'s newest annual report (``item`` ``business``) or proxy (``proxy``), with
     its ``quality`` (never ``ok`` at the cap); None when there is none."""
     rows = _rows("filing_item", "SELECT * FROM filing_item WHERE cik = ? AND kind = 'document' AND item = ? "
                                 "ORDER BY filing_date DESC LIMIT 1", [_cik(cik), str(item)])
     return rows[0] if rows else None
+
+
+def filing_texts(ciks: Iterable, item: str = "business") -> list[dict]:
+    """``filing_text`` of several companies at once: per company the newest served document of ``item``, one row
+    each (a company with none is absent)."""
+    wanted = sorted({_cik(c) for c in ciks if str(c or "").strip()})
+    if not wanted:
+        return []
+    return _rows("filing_item", "SELECT * FROM filing_item WHERE kind = 'document' AND item = ? "
+                                f"AND cik IN ({', '.join('?' * len(wanted))}) "
+                                "QUALIFY row_number() OVER (PARTITION BY cik ORDER BY filing_date DESC) = 1 "
+                                "ORDER BY cik", [str(item), *wanted])
 
 
 def segments(cik, axis: str | None = None, source: str | None = None) -> list[dict]:
@@ -656,6 +720,18 @@ def customers(cik) -> list[dict]:
     """``customer_share`` rows of company ``cik``, newest period first, the biggest share first."""
     return _rows("customer_share", "SELECT * FROM customer_share WHERE cik = ? "
                                    "ORDER BY period_end DESC, share DESC NULLS LAST, customer", [_cik(cik)])
+
+
+def customer_shares(ciks: Iterable, benchmark: str = "revenue") -> list[dict]:
+    """``customer_share`` rows of several companies at once: per company its newest period's customers with a share
+    of ``benchmark``, the biggest share first."""
+    wanted = sorted({_cik(c) for c in ciks if str(c or "").strip()})
+    if not wanted:
+        return []
+    return _rows("customer_share", "SELECT * FROM customer_share WHERE benchmark = ? AND share IS NOT NULL "
+                                   f"AND cik IN ({', '.join('?' * len(wanted))}) "
+                                   "QUALIFY rank() OVER (PARTITION BY cik ORDER BY period_end DESC) = 1 "
+                                   "ORDER BY cik, share DESC, customer", [str(benchmark), *wanted])
 
 
 def peers(cik) -> list[dict]:
@@ -679,3 +755,142 @@ def as_frame(rows: list[dict]):
     """The rows as a pandas DataFrame (the one helper; pandas is imported only here)."""
     import pandas as pd
     return pd.DataFrame(rows)
+
+
+# ── The options data (G8): ``options.duckdb`` ─────────────────────────────────────────────────────────────────
+
+DATASET_OF_TABLE.update({**{t: "uw/option_list" for t in ("option_eod", "option_strike", "option_expiry",
+                                                          "option_daily", "option_print", "iv_daily")},
+                         "option_screener_daily": "uw/option_screener", "er_options": "uw/option_screener"})
+KIND_OF_TABLE.update({t: "options" for t in ("option_eod", "option_strike", "option_expiry", "option_daily",
+                                             "option_print", "iv_daily", "option_screener_daily", "er_options")})
+# Rows a table shares between datasets: the earnings set (``set_name`` earnings) is uw/option_screener's, the IBKR
+# year of ``iv_daily`` (``source`` ibkr) is ibkr/iv_history's. Their ``status`` is that dataset's newest check.
+_SHARED_STATUS = (("set_name", "earnings", "uw/option_screener"), ("source", "ibkr", "ibkr/iv_history"))
+
+
+def _ticker_list(tickers: Iterable[str] | str) -> list[str]:
+    if isinstance(tickers, str):
+        tickers = [tickers]
+    return sorted({str(t).strip().upper() for t in tickers if str(t or "").strip()})
+
+
+def _option_rows(table: str, sql: str, params: list) -> list[dict]:
+    rows = _rows(table, sql, params)
+    for column, value, dataset in _SHARED_STATUS:
+        if any(r.get(column) == value for r in rows):
+            status = dataset_status(dataset)
+            for r in rows:
+                if r.get(column) == value:
+                    r["status"] = status
+    return rows
+
+
+def _session_clause(table: str, session_date, ticker_param: str) -> tuple[str, list]:
+    """``session_date = ?`` for a given day, else the newest session the table holds for the ticker."""
+    if session_date is not None:
+        return "session_date = ?", [_day(session_date)]
+    return f"session_date = (SELECT max(session_date) FROM {table} WHERE ticker = ?)", [ticker_param]
+
+
+def option_chain(ticker: str, session_date=None) -> list[dict]:
+    """``option_eod``: every contract of one list name (SPX or the option watch list) at one session's close, the
+    newest served when ``session_date`` is None (the file serves the last 30), by expiry, strike and type."""
+    t = str(ticker).strip().upper()
+    where, params = _session_clause("option_eod", session_date, t)
+    return _option_rows("option_eod", f"SELECT * FROM option_eod WHERE ticker = ? AND {where} "
+                                      "ORDER BY expiry, strike, option_type", [t, *params])
+
+
+def option_strikes(ticker: str, session_date, set_name: str = "list") -> list[dict]:
+    """``option_strike``: spot and greek exposure by strike of one name and session, in the set ``list`` (SPX and the
+    option watch list) or ``earnings`` (the evening before a report), by strike."""
+    t = str(ticker).strip().upper()
+    return _option_rows("option_strike", "SELECT * FROM option_strike WHERE ticker = ? AND session_date = ? "
+                                         "AND set_name = ? ORDER BY strike", [t, _day(session_date), set_name])
+
+
+def option_expiries(ticker: str, session_date, set_name: str = "list") -> list[dict]:
+    """``option_expiry``: contracts, open interest, volume, greek exposure, flow and term structure by expiry."""
+    t = str(ticker).strip().upper()
+    return _option_rows("option_expiry", "SELECT * FROM option_expiry WHERE ticker = ? AND session_date = ? "
+                                         "AND set_name = ? ORDER BY expiry", [t, _day(session_date), set_name])
+
+
+def option_daily(tickers: Iterable[str] | str, start=None, end=None) -> list[dict]:
+    """``option_daily``: the GEX levels, the day's option volume and premium and IV rank of list names, by ticker and
+    session, ``start <= session_date <= end`` (either bound optional)."""
+    names = _ticker_list(tickers)
+    if not names:
+        return []
+    sql = f"SELECT * FROM option_daily WHERE ticker IN ({', '.join('?' * len(names))})"
+    params: list = list(names)
+    if start is not None:
+        sql += " AND session_date >= ?"
+        params.append(_day(start))
+    if end is not None:
+        sql += " AND session_date <= ?"
+        params.append(_day(end))
+    return _option_rows("option_daily", sql + " ORDER BY ticker, session_date", params)
+
+
+def option_prints(ticker: str, session_date, set_name: str | None = None) -> list[dict]:
+    """``option_print``: the last 50 prints of one name and session, newest first, with ``side`` (ask, bid, mid or
+    NULL) and ``package``; of either set when ``set_name`` is None."""
+    t = str(ticker).strip().upper()
+    sql = "SELECT * FROM option_print WHERE ticker = ? AND session_date = ?"
+    params: list = [t, _day(session_date)]
+    if set_name is not None:
+        sql += " AND set_name = ?"
+        params.append(set_name)
+    return _option_rows("option_print", sql + " ORDER BY executed_at DESC, print_id", params)
+
+
+def iv_history(tickers: Iterable[str] | str, start=None, end=None, days: int | None = 30,
+               source: str | None = None) -> list[dict]:
+    """``iv_daily``: implied volatility of ``tickers`` at the tenor ``days`` (every tenor when None), by ticker,
+    session and source. ``observed`` tells the day UW's daily run saw (``uw``) from IBKR's backfilled year (``ibkr``,
+    30 days only); a board showing a past day's IV reads ``observed`` before calling it that day's."""
+    names = _ticker_list(tickers)
+    if not names:
+        return []
+    sql = f"SELECT * FROM iv_daily WHERE ticker IN ({', '.join('?' * len(names))})"
+    params: list = list(names)
+    for clause, value in (("days = ?", days), ("source = ?", source), ("session_date >= ?", _day(start)),
+                          ("session_date <= ?", _day(end))):
+        if value is not None:
+            sql += f" AND {clause}"
+            params.append(value)
+    return _option_rows("iv_daily", sql + " ORDER BY ticker, session_date, source, days", params)
+
+
+def option_screener(session_date=None, passing_only: bool = False) -> list[dict]:
+    """``option_screener_daily``: every name reporting in the 28 days after the session, with its screener row and
+    whether it passes the Earnings Radar gates, by ticker; the newest session when ``session_date`` is None."""
+    if session_date is None:
+        where, params = "session_date = (SELECT max(session_date) FROM option_screener_daily)", []
+    else:
+        where, params = "session_date = ?", [_day(session_date)]
+    if passing_only:
+        where += " AND passes_gates"
+    return _option_rows("option_screener_daily",
+                        f"SELECT * FROM option_screener_daily WHERE {where} ORDER BY ticker", params)
+
+
+def earnings_options(start=None, end=None, tickers: Iterable[str] | None = None) -> list[dict]:
+    """``er_options``: the earnings set, one row per name and the evening it was fetched (``session_date``), with
+    the ``report_date`` it was fetched for, by session and ticker."""
+    sql, params = "SELECT * FROM er_options WHERE true", []
+    if tickers is not None:
+        names = _ticker_list(tickers)
+        if not names:
+            return []
+        sql += f" AND ticker IN ({', '.join('?' * len(names))})"
+        params += names
+    if start is not None:
+        sql += " AND session_date >= ?"
+        params.append(_day(start))
+    if end is not None:
+        sql += " AND session_date <= ?"
+        params.append(_day(end))
+    return _option_rows("er_options", sql + " ORDER BY session_date, ticker", params)

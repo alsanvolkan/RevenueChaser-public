@@ -21,7 +21,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 
-from RevenueChaser.core import earnings_dates, fiscal_year
+from RevenueChaser.core import earnings_dates, fiscal_year, trailing_year
 from RevenueChaser.core import funnel as funnel_mod
 from RevenueChaser.core import job_control
 from RevenueChaser.core import ledger, ownership, rawstore
@@ -115,6 +115,33 @@ def _card_anchor(annual: list[dict], as_of: date | None) -> tuple[int | None, li
     return last, ["no_recent_revenue"]
 
 
+# Review SF-4 (G6, build plan PR 14): the figures a trailing year is built for, and the ones read on its quarter.
+_TTM_FLOWS = ("revenue", "gross_profit", "cost_of_revenue", "operating_cash_flow", "capex", "capital_expenditure",
+              "rd_expense")
+_TTM_BALANCE = ("total_debt", "cash", "short_term_investments", "total_assets", "diluted_shares", "basic_shares")
+
+
+def _trailing_years(annual: list[dict], quarterly: list[dict], ai: int | None) -> list[dict] | None:
+    """Three trailing years a year apart, oldest first, on the anchor year and the two before it (review SF-4), or
+    None: ``core.trailing_year`` on each, the two older ones on the same length of year to date and ending a year
+    before the next. Three, because acceleration compares this year's growth with last year's."""
+    pi = _prior(annual, ai)
+    ppi = _prior(annual, pi)
+    if ai is None or pi is None or ppi is None or not quarterly:
+        return None
+    r0 = trailing_year.trailing_year(annual, quarterly, ai, _TTM_FLOWS, _TTM_BALANCE)
+    if r0 is None:
+        return None
+    out = [r0]
+    for j in (pi, ppi):
+        r = trailing_year.trailing_year(annual, quarterly, j, _TTM_FLOWS, _TTM_BALANCE, months=r0["months"],
+                                        near=trailing_year.year_before(out[-1]["period"]))
+        if r is None:
+            return None
+        out.append(r)
+    return out[::-1]
+
+
 def _growth(annual: list[dict], i: int | None, field: str) -> tuple[float | None, list[str]]:
     """``(YoY change, flags)`` of ``field`` between ``annual[i]`` and its adjacent prior year, by the C18 rule
     (``fiscal_year.growth``, #380 S1): a prior that is not positive is unknown and flagged ``prior_nonpositive``,
@@ -158,7 +185,7 @@ def _end(rec: dict | None, *fields: str) -> str | None:
 
 
 def _provenance(annual: list[dict], ai: int | None, pi: int | None,
-                ownership_source: dict | None = None) -> dict:
+                ownership_source: dict | None = None, series: list[dict] | None = None) -> dict:
     """What the card read (#380 S3, #66 provenance line): the anchor and prior fiscal years, the three revenue
     period ends (anchor, prior, the year before) and the anchor's balance-sheet and cash-flow period ends.
 
@@ -167,13 +194,18 @@ def _provenance(annual: list[dict], ai: int | None, pi: int | None,
     """
     ppi = _prior(annual, pi)
     cur = annual[ai] if ai is not None else None
+    # Review SF-4 (G6): on the trailing years (``series``, oldest first) every end is the quarter's.
+    rows = [series[2], series[1], series[0]] if series else [annual[k] if k is not None else None
+                                                             for k in (ai, pi, ppi)]
     return {
         "anchor_fy": _fy(cur),
         "prior_fy": _fy(annual[pi]) if pi is not None else None,
         "period_ends": {
-            "revenue": [_end(annual[k], "revenue") if k is not None else None for k in (ai, pi, ppi)],
-            "balance_sheet": _end(cur, "total_assets", "cash", "total_debt"),
-            "cash_flow": _end(cur, "operating_cash_flow", "capex", "capital_expenditure"),
+            # Review SF-4 (G6): which years the card read; kept in ``period_ends`` so the stored card keeps it.
+            "basis": "TTM" if series else "FY",
+            "revenue": [_end(r, "revenue") for r in rows],
+            "balance_sheet": _end(rows[0], "total_assets", "cash", "total_debt"),
+            "cash_flow": _end(rows[0], "operating_cash_flow", "capex", "capital_expenditure"),
         },
         "ownership": ownership_source,
     }
@@ -314,12 +346,21 @@ def score_ticker(ticker: str, financials: dict, technical: dict, meta: dict | No
         return None
 
     ai, anchor_flags = _card_anchor(annual, as_of)
-    cur = annual[ai] if ai is not None else {}
     pi = _prior(annual, ai)
-    # Everything below reads ONE fiscal year (the anchor) and its adjacent prior year (#150 U8), through the C18
-    # rules (#380 S1): ``flags`` names every figure a rule made unknown or marked; the anchor year's only.
-    rev_growth, flags = _growth(annual, ai, "revenue")
-    rev_growth_last, _ = _growth(annual, pi, "revenue")
+    # Review SF-4 (G6): when 10-Qs follow the anchor year, the card reads three trailing years instead of three
+    # fiscal years (``_trailing_years``); one basis for the whole card. Default chosen (plan): the trailing year
+    # whenever the quarters give it, change if avo prefers the fiscal year. A card whose anchor is not the
+    # revenue anchor (``no_recent_revenue``) stays on its years.
+    trailing = None if anchor_flags else _trailing_years(annual, financials.get("quarterly") or [], ai)
+    basis = "TTM" if trailing else "FY"
+    series, si = (trailing, 2) if trailing else (annual, ai)
+    sp = _prior(series, si)
+    cur = series[si] if si is not None else {}
+    # Everything below reads ONE year (the anchor, or the trailing year on it) and its adjacent prior year (#150
+    # U8), through the C18 rules (#380 S1): ``flags`` names every figure a rule made unknown or marked; the
+    # anchor year's only.
+    rev_growth, flags = _growth(series, si, "revenue")
+    rev_growth_last, _ = _growth(series, sp, "revenue")
     gross_margin, margin_flags = fiscal_year.gross_margin(cur)
 
     ocf = to_float(cur.get("operating_cash_flow"))
@@ -345,7 +386,7 @@ def score_ticker(ticker: str, financials: dict, technical: dict, meta: dict | No
 
     rd_intensity = _pct_div(to_float(cur.get("rd_expense")), to_float(cur.get("revenue")))
 
-    dilution_yoy, share_flags = _share_change(cur, annual[pi] if pi is not None else None)
+    dilution_yoy, share_flags = _share_change(cur, series[sp] if sp is not None else None)
     flags = [*anchor_flags, *flags, *margin_flags, *share_flags]
 
     market_cap = financials.get("market_cap") or meta.get("market_cap")
@@ -425,7 +466,7 @@ def score_ticker(ticker: str, financials: dict, technical: dict, meta: dict | No
 
     return {
         "ticker": ticker,
-        "fiscal_year": _fy(cur),
+        "fiscal_year": _fy(annual[ai]) if ai is not None else None,
         "name": info.get("longName") or info.get("shortName") or meta.get("name") or ticker,
         "sector": sector,
         "industry": gics.industry,
@@ -444,7 +485,8 @@ def score_ticker(ticker: str, financials: dict, technical: dict, meta: dict | No
         "tier": tier,
         "signals": signals,
         "flags": flags,
-        **_provenance(annual, ai, pi, ownership_src),
+        "basis": basis,
+        **_provenance(annual, ai, pi, ownership_src, series=trailing),
         "themes": themes,
         "tech_breakthrough": tech_breakthrough,
         "dilution_warning": dilution_warning,
@@ -478,10 +520,11 @@ def _cached_financials(ticker: str, no_fetch: bool = False, preload: dict | None
     """
     if preload is not None and ticker in preload["edgar"]:
         edgar_annual, edgar_meta = preload["edgar"][ticker]
+        edgar_quarterly = (preload.get("quarterly") or {}).get(ticker) or []
     elif preload is not None and no_fetch:
-        edgar_annual, edgar_meta = [], {}   # no stored row, and a store-only run never goes online
+        edgar_annual, edgar_quarterly, edgar_meta = [], [], {}   # no stored row; a store-only run never goes online
     else:
-        edgar_annual, edgar_meta = sec_edgar.get_annual(ticker, no_fetch=no_fetch)
+        edgar_annual, edgar_quarterly, edgar_meta = sec_edgar.get_fundamentals(ticker, no_fetch=no_fetch)
 
     if preload is not None:
         financials = preload["payload"].get(ticker)
@@ -529,6 +572,7 @@ def _cached_financials(ticker: str, no_fetch: bool = False, preload: dict | None
 
     if edgar_annual:
         financials["annual"] = edgar_annual
+        financials["quarterly"] = edgar_quarterly     # review SF-4 (G6): the trailing years read them
         financials["source"] = EDGAR_SOURCE
         info = financials.get("info") or {}
         if edgar_meta.get("is_us") is False:
@@ -592,8 +636,10 @@ def _preload(tickers: list[str], no_fetch: bool, session: date | None = None) ->
     has. ``{"bars": {}, "session": None}`` when the store holds no SPY bar at all.
     """
     session = session or _price_session()
+    stored = sec_edgar.stored_fundamentals_many(tickers)
     return {
-        "edgar": sec_edgar.stored_annual_many(tickers),
+        "edgar": {t: (annual, meta) for t, (annual, _q, meta) in stored.items()},
+        "quarterly": {t: quarterly for t, (_a, quarterly, _m) in stored.items()},     # review SF-4 (G6)
         "payload": cache_manager.load_many(tickers, ignore_ttl=no_fetch, allow_info_only=True),
         "themes": themes_for_many(tickers),
         "bars": _bars_by_ticker(tickers, session),
@@ -1129,8 +1175,11 @@ RULES = {
 # 4: #380 S1 honest signals (C18 growth / margin / share basis, stale anchors excluded).
 # 5: #380 S2 tiers (sort by tier, ledger bucket tier + points).
 # 6: #380 S4 momentum from D01 bars of the scored session (no per-name Yahoo technical fallback).
-# 7: PR 11 (G3) those bars come from the prices store (Alpaca, split basis) instead of D01.
-SELECTION_VERSION = "7"
+# 7: review SF-4 (G6, build plan PR 14): growth, margins and survival read three trailing years from the quarters
+#    when 10-Qs follow the anchor year, else the fiscal years; the statements come from the fundamentals layer.
+# 8: PR 11 (G3) the momentum bars come from the prices store (Alpaca, split basis) instead of D01. G3 and G6 each
+#    bumped 6 to 7 on their own branches; the second to land takes 8.
+SELECTION_VERSION = "8"
 # A run where more than this share of the tickers it attempted failed to score is not frozen:
 # the board is missing too much to stand for the day (#202 counts the errors).
 FREEZE_MAX_SCORE_ERROR_RATE = 0.01

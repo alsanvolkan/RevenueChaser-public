@@ -53,8 +53,26 @@ DTE_BANDS = [
 ]
 
 
+def _walls(rows: list[dict], spot: float) -> dict:
+    """Put and call wall of ``rows``: the strike below / above spot whose net gamma, summed over the rows' expiries,
+    is the largest (Fable review S5: the largest single (expiry, strike) cell let one big expiry win)."""
+    by_strike: dict[float, float] = {}
+    for r in rows:
+        by_strike[r["strike"]] = by_strike.get(r["strike"], 0.0) + r["net_gamma"]
+    below = [k for k in by_strike if k < spot]
+    above = [k for k in by_strike if k > spot]
+    pw = max(below, key=lambda k: by_strike[k]) if below else None
+    cw = max(above, key=lambda k: by_strike[k]) if above else None
+    return {
+        "put_wall": pw,
+        "put_wall_net": by_strike[pw] if pw is not None else None,
+        "call_wall": cw,
+        "call_wall_net": by_strike[cw] if cw is not None else None,
+    }
+
+
 def band_walls(strike_expiry_rows: list[dict], spot: float | None) -> list[dict]:
-    """Per-DTE-band put/call walls (max positive net below/above spot).
+    """Per-DTE-band put/call walls (max positive net below/above spot, per strike summed over the band's expiries).
 
     The 181-365 day band yields the deepest
     put-support level (7500). Each row: band, put_wall, put_wall_net,
@@ -62,36 +80,10 @@ def band_walls(strike_expiry_rows: list[dict], spot: float | None) -> list[dict]
     """
     if spot is None:
         return []
-    out = []
-    for label, keep in DTE_BANDS:
-        rows = [r for r in strike_expiry_rows
-                if r.get("strike") is not None and r.get("net_gamma") is not None
-                and keep(r.get("dte"))]
-        below = [r for r in rows if r["strike"] < spot]
-        above = [r for r in rows if r["strike"] > spot]
-        pw = max(below, key=lambda r: r["net_gamma"]) if below else None
-        cw = max(above, key=lambda r: r["net_gamma"]) if above else None
-        out.append({
-            "band": label,
-            "put_wall": pw["strike"] if pw else None,
-            "put_wall_net": pw["net_gamma"] if pw else None,
-            "call_wall": cw["strike"] if cw else None,
-            "call_wall_net": cw["net_gamma"] if cw else None,
-        })
+    usable = [r for r in strike_expiry_rows if r.get("strike") is not None and r.get("net_gamma") is not None]
+    out = [{"band": label, **_walls([r for r in usable if keep(r.get("dte"))], spot)} for label, keep in DTE_BANDS]
     # All expiries row
-    all_rows = [r for r in strike_expiry_rows
-                if r.get("strike") is not None and r.get("net_gamma") is not None]
-    abelow = [r for r in all_rows if r["strike"] < spot]
-    aabove = [r for r in all_rows if r["strike"] > spot]
-    apw = max(abelow, key=lambda r: r["net_gamma"]) if abelow else None
-    acw = max(aabove, key=lambda r: r["net_gamma"]) if aabove else None
-    out.append({
-        "band": "ALL",
-        "put_wall": apw["strike"] if apw else None,
-        "put_wall_net": apw["net_gamma"] if apw else None,
-        "call_wall": acw["strike"] if acw else None,
-        "call_wall_net": acw["net_gamma"] if acw else None,
-    })
+    out.append({"band": "ALL", **_walls(usable, spot)})
     return out
 
 

@@ -33,11 +33,17 @@ def prompt_hash(system: str, user: str) -> str:
 ALT_WRITERS = frozenset({"grok"})
 
 
-def cache_key(model, thinking, effort, prompt_version, ticker, input_hash, provider=None) -> str:
+# The filing a profile was read from (build plan PR 20, G6): the company, the accession, the form and the day filed.
+SOURCE_KEYS = ("cik", "accession", "form", "filed")
+
+
+def cache_key(model, thinking, effort, prompt_version, ticker, input_hash, provider=None, source=None) -> str:
     """Structured (sorted-keys) cache key — stable across dict ordering.
 
     ``provider`` names a writer other than DeepSeek (``"grok"``, #388); a DeepSeek key carries none, so its bytes
-    are what they were before Grok.
+    are what they were before Grok. ``source`` (G6) is the filing the prompt's text came from (``SOURCE_KEYS``);
+    a key made without one carries none. Staleness never reads it (``is_stale``): the input hash already moves
+    with the text.
     """
     key = {
         "model": model or "", "thinking": int(bool(thinking)), "effort": effort or "",
@@ -46,7 +52,16 @@ def cache_key(model, thinking, effort, prompt_version, ticker, input_hash, provi
     }
     if provider and provider != "deepseek":
         key["provider"] = provider
+    if source:
+        key["source"] = {k: (None if source.get(k) is None else str(source[k])) for k in SOURCE_KEYS}
     return json.dumps(key, sort_keys=True, separators=(",", ":"))
+
+
+def profile_source(cache_key_value) -> dict | None:
+    """The filing a stored profile was read from (``cache_key``'s ``source``), or None for a profile made before
+    G6 or from no filing."""
+    src = (_key_mode(cache_key_value or "") or {}).get("source")
+    return dict(src) if isinstance(src, dict) else None
 
 
 def mode_stamp() -> dict:

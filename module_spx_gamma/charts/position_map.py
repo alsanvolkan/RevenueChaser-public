@@ -9,6 +9,7 @@ from __future__ import annotations
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from .. import expected_move
 from ..config import CHARM_AXIS_LIMIT_PCT
 from .tornado import _level_entries, bar_value_and_overflow, tornado_range, tornado_rows
 
@@ -70,7 +71,7 @@ def build(snapshot: dict, include_tornado: bool = True) -> go.Figure | None:
     levels = snapshot.get("levels", {})
     charm = snapshot.get("charm_qualification", {})
     vanna = snapshot.get("vanna_peaks") or {}
-    em = snapshot.get("expected_move")
+    em = expected_move.shown(snapshot)      # no band from a later session's IV (review S1)
     current = snapshot.get("current_level")
     asof = snapshot.get("asof_date", "")
     first = snapshot.get("first_session_date", "")

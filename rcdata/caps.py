@@ -31,7 +31,9 @@ DAY_CAPS: dict[str, int] = {
     "finra": 2_000,
     "nasdaqtrader": 500,
     "nyse": 2_000,
-    "ibkr": 50,
+    # IBKR, shared by two stores (working numbers): the ownership store's short-stock file (PR 16, 50) and the options
+    # data's IV year through the gateway (PR 18, ``ibkr_iv.DAY_CALLS``, one historical request per list name, once).
+    "ibkr": 50 + 1_000,
     # The fundamentals layer's (PR 12; working numbers): Alpha Vantage's free tier allows 25 requests a day. Its
     # yfinance estimates share "yfinance" above.
     "alphavantage": 25,

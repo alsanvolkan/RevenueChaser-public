@@ -22,7 +22,8 @@ BOARD, TABLE = "module_value_chain", "value_chain_edges_history"
 # Bump when the extraction changes in a way the config hash does not see (``mentions``' relation patterns,
 # ``concentration``, ``aliases``, the splitter's patterns), not a setting.
 # 2: a concentration edge keeps the share its sentence states (``share_pct``, #387 D7).
-SELECTION_VERSION = "2"
+# 3: the annual report's XBRL major customers (``customer_share``) are edges too, on the fundamentals layer (G6).
+SELECTION_VERSION = "3"
 
 
 def effective_config() -> dict:

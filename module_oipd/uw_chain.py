@@ -37,7 +37,8 @@ def expiries_from_breakdown(rows: list[dict], asof: str,
     """
     picked: list[dict] = []
     for r in rows or []:
-        exp = (r.get("expiry") or "")[:10]
+        # UW sends ``expires`` (the spec says ``expiry``): rcdata/build/options/rows.py ``expiry_of``.
+        exp = str(r.get("expiry") or r.get("expires") or "")[:10]
         d = dte(asof, exp)
         if d is None or d < min_dte or d > max_dte:
             continue

@@ -100,7 +100,7 @@ def test_the_first_fetch_on_an_old_store_writes_the_share_on_both_tables(old_sto
 # ── the selection version ──
 
 def test_the_selection_version_is_2_so_the_model_version_changes():
-    assert vc_history.SELECTION_VERSION == "2"
+    assert vc_history.SELECTION_VERSION == "3"      # 2 for #387 D7, 3 since G6 (XBRL customers)
     assert vc_history.model_version() != ledger.model_version("1", vc_history.effective_config())
 
 

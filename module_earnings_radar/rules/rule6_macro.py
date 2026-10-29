@@ -30,12 +30,15 @@ def yield_beta(
     stock_by_date: dict[str, float],
     yield_by_date: dict[str, float],
     min_obs: int = MIN_OBS,
+    *,
+    exclude: frozenset | set = frozenset(),
 ) -> Optional[float]:
     """OLS beta of stock simple returns vs Δ 10Y yield (decimal).
 
     FRED DGS10 arrives in percent (4.25); divide by 100 so a duration-10
     name prints near −10. Common dates only. ``None`` when the window is
-    too short or yield did not move.
+    too short or yield did not move. A return that ends on a date in ``exclude`` (an earnings reaction session,
+    pipeline._gap_sessions) is left out: "earnings-gap days are dropped from beta" (redesign.md R6, review N1).
     """
     if not stock_by_date or not yield_by_date:
         return None
@@ -44,6 +47,8 @@ def yield_beta(
         return None
     r, dy = [], []
     for i in range(1, len(dates)):
+        if dates[i] in exclude:
+            continue
         p0, p1 = stock_by_date[dates[i - 1]], stock_by_date[dates[i]]
         y0, y1 = yield_by_date[dates[i - 1]], yield_by_date[dates[i]]
         if p0 in (None, 0) or p1 is None or y0 is None or y1 is None:

@@ -159,7 +159,8 @@ A daily dataset's cycle is one New York session (`core/calendar.py`), counted fr
 weekly dataset is in its cycle for 8 days after its last check, a monthly one for 35. A `skipped` check (paused,
 or a provider at its day cap) does not reset the clock: the status comes from the newest check that is not
 skipped. The cadence is `dataset_schedule.cadence` when set, else the dataset's default (both datasets of PR 1:
-daily). Coverage targets are `newdata.COVERAGE_TARGET` (SPX expiry-strike 95%, market series none). These are
+daily). Coverage targets are `newdata.COVERAGE_TARGET` (SPX expiry-strike 95%, market series none; the options
+data of G8: the option list and the earnings options 95%, the IBKR year none). These are
 the proposed alarm limits as set (decision 1), to be checked again after two weeks of real data.
 
 Inside each card: the dataset's checks (decision 2: last run, source as of, coverage, rows removed and added,
@@ -210,7 +211,9 @@ provider for the New York day and the week from Monday, from `provider_calls_dai
 `ops` and `market` copies in the manifest, the 35-day raw copy dated by its newest copied file, the portable SSD
 from a `dataset_check` row of dataset `backup/portable` or "not recorded"; each warns past 35 days or when
 missing), the raw option retention warning (on until `RC_RAW_RETENTION_DAYS` or a `dataset_schedule` row
-`retention_days`, with the days as its cadence, says how long raw option files are kept), retirement (reads of
+`retention_days`, with the days as its cadence, says how long raw option files are kept; zero or a value that is
+not a whole number of days counts as unset, and the builder's retention hook reads the same rule,
+`rcdata/retention.py`), retirement (reads of
 each old table the new data replaces, from `read_log` over 14 days, with the registry task that still writes it),
 and the two watch-list cards (PR 4, below). A "verified running" line on top: the builder's last run
 (`job_runs2`), the last swap per kind and the `ops_schema` version; under it the watch-list counts.

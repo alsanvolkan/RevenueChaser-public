@@ -633,6 +633,13 @@ def latest_unskipped_check(dataset: str) -> dict | None:
     return rows[0] if rows else None
 
 
+def latest_good_check(dataset: str) -> dict | None:
+    """The newest ``changed`` or ``unchanged`` ``dataset_check`` row of ``dataset``: the last run that built."""
+    rows = _select("SELECT * FROM dataset_check WHERE dataset = ? AND result IN ('changed', 'unchanged') "
+                   "ORDER BY id DESC LIMIT 1", (dataset,))
+    return rows[0] if rows else None
+
+
 def open_issues(dataset: str, limit: int = 20) -> tuple[int, list[dict]]:
     """``(count, newest rows)`` of the unresolved ``build_issues`` of ``dataset``."""
     n = _select("SELECT count(*) AS n FROM build_issues WHERE dataset = ? AND resolved_on IS NULL", (dataset,))

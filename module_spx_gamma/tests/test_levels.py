@@ -153,3 +153,21 @@ def test_map_volume_levels():
     assert out["gamma_flip_vol"] == 7649.3
     # missing data -> None, never crash
     assert map_volume_levels({})["call_wall_vol"] is None
+
+
+def test_a_band_wall_is_the_strike_with_the_most_gamma_summed_over_the_band():
+    """Fable review S5: band_walls took the largest single (expiry, strike) cell, so one big expiry beat a strike
+    that holds more gamma across the band's expiries. The wall is now the strike sum over the band (and over all
+    expiries for the ALL row), which is what Put Support says it is."""
+    rows = [
+        {"expiry": "2027-03-19", "dte": 217, "strike": 7400.0, "net_gamma": 100.0},   # one big cell
+        {"expiry": "2027-03-19", "dte": 217, "strike": 7500.0, "net_gamma": 70.0},
+        {"expiry": "2027-06-18", "dte": 308, "strike": 7500.0, "net_gamma": 60.0},    # 7500 holds 130 in the band
+        {"expiry": "2027-03-19", "dte": 217, "strike": 7900.0, "net_gamma": 90.0},
+        {"expiry": "2027-06-18", "dte": 308, "strike": 7800.0, "net_gamma": 50.0},
+        {"expiry": "2027-12-17", "dte": 490, "strike": 7800.0, "net_gamma": 50.0},    # 365+: only in ALL
+    ]
+    walls = {w["band"]: w for w in band_walls(rows, spot=7700.0)}
+    assert (walls["181-365"]["put_wall"], walls["181-365"]["put_wall_net"]) == (7500.0, 130.0)
+    assert (walls["181-365"]["call_wall"], walls["181-365"]["call_wall_net"]) == (7900.0, 90.0)
+    assert (walls["ALL"]["call_wall"], walls["ALL"]["call_wall_net"]) == (7800.0, 100.0)

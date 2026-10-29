@@ -82,6 +82,7 @@ input[type=text]{flex:1;min-width:200px}
 .gates{display:flex;gap:6px;border-top:1px solid var(--panel2);padding-top:8px}
 .event{color:var(--amber);font-size:11px;line-height:1.35}
 .event .when{color:var(--muted)}
+.prov{color:var(--muted);font-size:11px;line-height:1.35}
 .m .when{display:block;font-weight:400;font-size:9px;color:var(--muted)}
 .gate{flex:1;background:var(--panel2);color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:5px 0;cursor:pointer;font-weight:700;font-size:12px}
 .gate.on{color:var(--green);border-color:rgba(46,204,113,.4)}
@@ -317,6 +318,18 @@ function usd(v){
 }
 function fmtNum(v, d){ return (v == null) ? "N/A" : v.toFixed(d == null ? 2 : d); }
 function fmtPct(v){ return (v == null) ? "N/A" : (v*100).toFixed(1) + "%"; }
+// G6: the period Quality reads ("TTM to 2026-06-30", "FY to 2025-12-31"; ``long``: "trailing year to",
+// "fiscal year to"); "" when none is known.
+function qualityAsOf(c, long){
+  var ttm = c.quality_basis === "TTM" && c.quality_period_end;
+  var end = ttm ? c.quality_period_end : (c.quality_period_end || c.anchor_period_end);
+  if(!end) return "";
+  return (ttm ? (long ? "trailing year to " : "TTM to ") : (long ? "fiscal year to " : "FY to ")) + end;
+}
+function qualityWhen(c){
+  var w = qualityAsOf(c, false);
+  return w ? '<span class="when">' + rcEsc(w) + '</span>' : '';
+}
 function cell(k, v){ return '<div class="m"><div class="k">'+k+'</div><div class="val">'+v+'</div></div>'; }
 function cardHtml(c){
   var t = rcEsc(c.ticker);
@@ -346,6 +359,13 @@ function cardHtml(c){
       + (ev.last_filing_date ? ' <span class="when">' + rcEsc(ev.last_filing_date) + '</span>' : '')
       + '</div>'
     : "";
+  // Review F3 (G6): on the layer, the day the newest statement was filed and the facts last read.
+  var st = c.statements || null;
+  var stLine = (st && st.source === "layer" && (st.filed || st.read))
+    ? '<div class="prov">SEC statements'
+      + (st.filed ? ' filed ' + rcEsc(st.filed) : '') + (st.filed && st.read ? ',' : '')
+      + (st.read ? ' read ' + rcEsc(st.read) : '') + '</div>'
+    : "";
   return '<div class="card">'
     + '<div class="head">'
     + (sector ? '<span class="badge b-sector">'+sector+'</span>' : '')
@@ -357,14 +377,15 @@ function cardHtml(c){
     + cell("Period", rcEsc(c.period))
     + cell("Basis", rcEsc(c.ro40_basis))
     + cell("Rule of 40", r40)
-    // Review F1: ROIC, gross margin and net debt are one fiscal year's (the anchor), the growth half is TTM.
-    + cell("Quality", rcEsc(c.quality_score)
-           + (c.anchor_period_end ? '<span class="when">FY to ' + rcEsc(c.anchor_period_end) + '</span>' : ''))
+    // Review F1, G6: ROIC, gross margin and net debt read the trailing year when the quarters give it ("TTM to"),
+    // else the anchor fiscal year ("FY to"). A payload written before G6 has no basis: its figures are the year's.
+    + cell("Quality", rcEsc(c.quality_score) + qualityWhen(c))
     + cell("Momentum", rcEsc(c.momentum_score))
     + cell("Price", usd(c.price))
     + cell("Mkt cap", usd(c.market_cap))
     + '</div>'
     + evLine
+    + stLine
     + '<div class="gates">' + gates + '</div>'
     + tagsRow
     + '</div>';
@@ -387,7 +408,7 @@ function openGate(btn){
   var period = PERIODS[t] || "";
   // Review F1: Quality mixes two time bases; its window names both.
   if(g === "quality" && ANCHORS[t])
-    period = "growth: TTM " + period + " · ROIC, gross margin, net debt: fiscal year to " + ANCHORS[t];
+    period = "growth: TTM " + period + " · ROIC, gross margin, net debt: " + ANCHORS[t];
   document.getElementById("m-title").textContent = gate.name;
   document.getElementById("m-sub").textContent = t + " — " + gate.score + (gate.passed ? " (PASS)" : " (FAIL)") + (period ? " · " + period : "");
   var rules = gate.rules.map(function(r){
@@ -427,7 +448,7 @@ function boot(d){
   PERIODS = {};
   ANCHORS = {};
   DATA.forEach(function(c){
-    GATES[c.ticker] = c.gates || {}; PERIODS[c.ticker] = c.period || ""; ANCHORS[c.ticker] = c.anchor_period_end || "";
+    GATES[c.ticker] = c.gates || {}; PERIODS[c.ticker] = c.period || ""; ANCHORS[c.ticker] = qualityAsOf(c, true);
   });
   init();
 }
@@ -461,11 +482,18 @@ function start(){
             'onchange="setRule(\'momentum\', this.checked)"> Momentum</label>'
             '</div></div>')
 
+    # Review F3 (G6): the store the last Fetch read its statements from. A payload stored before G6 has no key and
+    # read the old store.
+    on_layer = payload.get("statements_source") == "layer"
+    statements_from = ("<b>SEC company facts</b> in the fundamentals layer, re-read on each filing day" if on_layer
+                       else "<b>SEC EDGAR</b>")
+    statements_foot = ("SEC company facts (10-K + 10-Q), the fundamentals layer" if on_layer
+                       else "SEC EDGAR (10-K + 10-Q)")
     help_block = help_html(
         "A quality-growth scan of US-listed stocks through three methods: the <b>Rule of 40</b> "
         "(revenue growth plus margin), <b>Quality</b> and <b>Momentum</b>. Tick the rules a card must pass; "
         "<b>DISTORTED</b> rows have figures that need a manual look. "
-        "Statements come from <b>SEC EDGAR</b>, prices from <b>Yahoo</b>. <b>Fetch</b> runs the scan "
+        f"Statements come from {statements_from}, prices from <b>Yahoo</b>. <b>Fetch</b> runs the scan "
         "and stores the scores. <b>Refresh</b> shows the last Fetch's stored result with no network "
         "call and no re-scoring.")
     return f"""<!DOCTYPE html>
@@ -511,7 +539,7 @@ function start(){
   <div class="grid" id="grid">{cards}</div>
 
   <footer>
-    <span>Fundamentals: SEC EDGAR (10-K + 10-Q) · Price: Yahoo Finance · Unusual Whales flow manual-only (K3) · No SA confirmation. For information only, not financial advice.</span>
+    <span>Fundamentals: {statements_foot} · Price: Yahoo Finance · Unusual Whales flow manual-only (K3) · No SA confirmation. For information only, not financial advice.</span>
     <span id="flow-flag">Flow not scanned</span>
   </footer>
 </div>

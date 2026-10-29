@@ -51,6 +51,14 @@ class TestExpirySelection:
         # 86d (800 OI) and 58d (700 OI) win over 24d (500 OI)
         assert [p["expiry"] for p in picked] == ["2026-11-20", "2026-12-18"]
 
+    def test_reads_the_expires_key_uw_really_sends(self):
+        """UW's expiry-breakdown sends ``expires`` (the options data's first real sample, 2026-10-28), though the
+        spec names it ``expiry``; read by the spec's name only, no expiry was ever picked."""
+        rows = [{("expires" if k == "expiry" else k): v for k, v in r.items()} for r in self._rows()]
+        picked = uw_chain.expiries_from_breakdown(
+            rows, "2026-09-23", min_dte=1, max_dte=365, max_expiries=12)
+        assert [p["expiry"] for p in picked] == ["2026-10-17", "2026-12-18"]
+
 
 class TestForward:
     def test_infers_from_put_call_parity(self):

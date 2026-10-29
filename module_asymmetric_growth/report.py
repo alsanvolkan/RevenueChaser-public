@@ -605,7 +605,9 @@ function provHtml(c) {{
   var pe = c.period_ends || {{}}, rev = pe.revenue || [];
   function d(v) {{ return v ? rcEsc(v) : "n/a"; }}
   function fy(v) {{ return v != null ? "FY" + rcEsc(v) : "FY n/a"; }}
-  return '<div class="prov">' + fy(c.anchor_fy) + ' vs ' + fy(c.prior_fy)
+  // Review SF-4 (G6): on the trailing years the card names their ends, not the fiscal years.
+  var years = pe.basis === "TTM" ? "TTM to " + d(rev[0]) + " vs TTM to " + d(rev[1]) : fy(c.anchor_fy) + ' vs ' + fy(c.prior_fy);
+  return '<div class="prov">' + years
     + ' · revenue ' + d(rev[0]) + ' · ' + d(rev[1]) + ' · ' + d(rev[2])
     + ' · balance sheet ' + d(pe.balance_sheet) + ' · cash flow ' + d(pe.cash_flow)
     + ' · price ' + d(pe.price_bar) + '</div>';

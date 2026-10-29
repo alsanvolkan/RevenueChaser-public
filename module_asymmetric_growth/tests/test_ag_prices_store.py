@@ -91,4 +91,4 @@ def test_the_board_data_date_is_its_scored_names_prices_store_session(rawstore_t
 
 
 def test_the_selection_version_moved_with_the_source():
-    assert engine.SELECTION_VERSION == "7"
+    assert engine.SELECTION_VERSION == "8"                  # after G6's 7 (review SF-4)

@@ -67,9 +67,40 @@ def _save(path, data: dict) -> None:
     write_artifact(path, json.dumps(data, ensure_ascii=False))
 
 
+def _layer_documents(tickers: list[str]) -> dict[str, dict] | None:
+    """``{ticker: filing_item document row}``: the newest annual report text the fundamentals layer serves per
+    ticker (``sec/filings``, the same splitter and cap as Value Chain's corpus, so the same filing gives the same
+    text), or None off the layer (build plan PR 20, G6)."""
+    from RevenueChaser.core import fundamentals_layer
+    if not fundamentals_layer.reads_layer():
+        return None
+    from RevenueChaser.rcdata import read
+    cik_of = {str(c["ticker"]).upper(): str(c["cik"]) for c in read.fundamental_companies(tickers) if c.get("cik")}
+    docs = {str(d["cik"]): d for d in read.filing_texts(set(cik_of.values()))}
+    return {t: docs[c] for t, c in cik_of.items() if c in docs}
+
+
 def _filing_text(ticker: str) -> tuple[str, str]:
+    docs = _layer_documents([ticker])
+    if docs is not None:
+        return ticker, (docs.get(ticker.upper()) or {}).get("text") or ""
     row = rawstore.get("chain_filings", ticker) or {}
     return row.get("name") or ticker, row.get("item_text") or ""
+
+
+def _filing_source(ticker: str) -> dict | None:
+    """The filing ``_filing_text`` reads for ``ticker``: ``{cik, accession, form, filed}`` (build plan PR 20: a profile
+    carries the filing it was made from), or None without one."""
+    docs = _layer_documents([ticker])
+    if docs is not None:
+        d = docs.get(ticker.upper())
+        return {"cik": d["cik"], "accession": d["accession"], "form": d.get("form"),
+                "filed": d.get("filing_date")} if d else None
+    row = rawstore.get("chain_filings", ticker)
+    if not row or not row.get("accession"):
+        return None
+    return {"cik": row.get("cik") or None, "accession": row["accession"], "form": row.get("form"),
+            "filed": row.get("filed")}
 
 
 def _company_names(tickers: list[str]) -> dict[str, str]:
@@ -102,8 +133,10 @@ def _input_hashes(groups: dict[str, list[str]], names: dict[str, str]) -> dict[s
     items = list(groups.items())
     for i in range(0, len(items), _HASH_CHUNK):
         chunk = items[i:i + _HASH_CHUNK]
-        rows = rawstore.get_many("chain_filings", [t for _k, ts in chunk for t in ts],
-                                 columns=["ticker", "item_text"])
+        wanted = [t for _k, ts in chunk for t in ts]
+        docs = _layer_documents(wanted)
+        rows = ({t: {"item_text": d.get("text")} for t, d in docs.items()} if docs is not None else
+                rawstore.get_many("chain_filings", wanted, columns=["ticker", "item_text"]))
         for key, ts in chunk:
             rep = next((t for t in ts if (rows.get(t) or {}).get("item_text")), None)
             if rep is None:
@@ -114,7 +147,13 @@ def _input_hashes(groups: dict[str, list[str]], names: dict[str, str]) -> dict[s
 
 
 def _cik_for(tickers: list[str]) -> dict[str, str]:
-    """``{ticker: cik}`` from the SEC ticker map (empty string when unknown)."""
+    """``{ticker: cik}`` (empty string when unknown): the fundamentals layer's company (G6) when the boards read it,
+    else the SEC ticker map."""
+    from RevenueChaser.core import fundamentals_layer
+    if fundamentals_layer.reads_layer():
+        from RevenueChaser.rcdata import read
+        got = {str(c["ticker"]).upper(): str(c.get("cik") or "") for c in read.fundamental_companies(tickers)}
+        return {t: got.get(t.upper(), "") for t in tickers}
     from RevenueChaser.core.providers import sec_edgar
     cmap = sec_edgar._cik_map()
     return {t: str((cmap.get(t.upper()) or {}).get("cik") or "") for t in tickers}
@@ -291,7 +330,8 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
         # is in the prompt; ``profiles.system_prompt``). A Grok key names its
         # provider (#388); a DeepSeek key is byte-identical to before.
         ck = store.cache_key(w_model, w_thinking, w_effort, store.PROMPT_VERSION, rep,
-                             store.prompt_hash(profiles_mod.SYSTEM, user), provider=provider)
+                             store.prompt_hash(profiles_mod.SYSTEM, user), provider=provider,
+                             source=_filing_source(rep))
         if stop.is_set():
             return
         try:
@@ -541,6 +581,8 @@ def _payload(profiles: dict[str, dict], thinking: dict[str, dict],
     # so the second ``equity_universe`` query this function used to run only risked disagreeing with it.
     extra = filter_fields(list(profiles))
     themes = _theme_levels()
+    from . import store
+    sources = {t: store.profile_source(m.get("cache_key")) for t, m in store.profile_meta(list(profiles)).items()}
     companies = []
     for t in sorted(profiles):
         x = extra.get(t) or {}
@@ -564,6 +606,8 @@ def _payload(profiles: dict[str, dict], thinking: dict[str, dict],
             "theme_medium": tl.get("medium") or "",
             "theme_fine": tl.get("fine") or "",
             "stale": t in (stale or ()),
+            # Build plan PR 20 (G6): the filing the profile was read from (CIK, accession, form, filed).
+            "source": sources.get(t),
             "weights": similarity.term_weights(profiles[t]),
             "profile": profiles[t],
         })

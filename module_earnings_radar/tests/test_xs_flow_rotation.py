@@ -52,6 +52,13 @@ def test_the_drawer_knows_the_flow_request_failed(tmp_path):
 
 
 def test_a_measured_flow_still_shows_its_net(tmp_path):
-    shown = _structure(_card(inst_flow_label="Institutional buying", inst_flow_net=2_500_000.0,
+    shown = _structure(_card(inst_flow_label="Institutional bullish lean", inst_flow_net=2_500_000.0,
                              flow_source="flow_recent"), tmp_path)
-    assert "Institutional buying" in shown and "net" in shown
+    assert "Institutional bullish lean" in shown and "net" in shown
+
+
+def test_no_lean_shows_no_zero_net(tmp_path):
+    """Review S4: a tape without a print side has no lean, so the drawer prints no "· $0 net" after its label."""
+    shown = _structure(_card(inst_flow_label="Lean unavailable (no print side)", inst_flow_net=0.0,
+                             flow_source="flow_recent"), tmp_path)
+    assert "Lean unavailable (no print side)" in shown and "net" not in shown

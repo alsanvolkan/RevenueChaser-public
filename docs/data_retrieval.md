@@ -80,8 +80,8 @@ no downloaded state worth re-deriving, so they keep a "click Fetch" empty state.
 | Financials | `/run/quick` | `ticker` (required) | per-ticker: `?refresh=1&ticker=X` |
 | UW Interaction (lab) | `/run/uw` | `tool` (required) + tool params | **live-only** — board renders from its stored `.cache/uw_interaction/` payload |
 | Co-movement | `/run/module_comovement` | `no_fetch` | model-only; writes .cache only (runs persist on Fetch) |
-| Value Chain | `/run/module_value_chain` | `no_fetch` | model-only (reads `edgar.duckdb`) |
-| Relatedness | `/run/module_relatedness` | `no_fetch` | model-only (reads the filings in `edgar.duckdb` and the `relatedness_*` profiles in `raw.duckdb`). Fetch also downloads missing filings from SEC and calls DeepSeek off-peak for new profiles; only Fetch writes `relatedness_scores` and `run_registry` (`module_relatedness/engine.py:81-92`, `:449-466`) |
+| Value Chain | `/run/module_value_chain` | `no_fetch` | model-only (reads `edgar.duckdb`; on the fundamentals layer also the XBRL major customers in `fundamentals.duckdb`) |
+| Relatedness | `/run/module_relatedness` | `no_fetch` | model-only (reads the filings in `edgar.duckdb`, or on the fundamentals layer the annual report text in `fundamentals.duckdb`, and the `relatedness_*` profiles in `raw.duckdb`). Fetch also downloads missing filings from SEC and calls DeepSeek off-peak for new profiles; only Fetch writes `relatedness_scores` and `run_registry` (`module_relatedness/engine.py:81-92`, `:449-466`) |
 | Sector Rotation | `/run/rotation` | `start`, `end` (optional) | store |
 | Asymmetric Growth | `/run/module_asymmetric_growth` | `refresh_universe`, `no_fetch` | model-only |
 | Swing Potential | `/run/swing` | `refresh_universe`, `no_fetch` | model-only |

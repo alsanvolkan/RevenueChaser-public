@@ -30,12 +30,12 @@ UW does not document how it computes its gamma flip, and the open-interest and v
 
 | DTE Band | Put Wall | Put Wall Net GEX | Call Wall | Call Wall Net GEX |
 |---|---|---|---|---|
-| 0-30 | 7,750 | -140 | 7,900 | +10 |
+| 0-30 | 7,750 | -140 | 7,900 | -10 |
 | 31-90 | 7,750 | +28 | 7,900 | +49 |
 | 91-180 | 7,700 | +38 | 8,000 | +19 |
 | 181-365 **(Put Wall standard)** | 7,500 | +58 | 7,900 | +9 |
 | 365+ | N/A | N/A | N/A | N/A |
-| ALL | 7,500 | +58 | 7,900 | +49 |
+| ALL | 7,500 | +60 | 7,900 | +48 |
 
 
 Put Wall (main level) is the 181-365 day band. The ALL row is the all-expiry reference.
@@ -235,7 +235,7 @@ Center pin: **7,800** · Wing width: **35** (EM 37 pts @ IV 0.08)
 
 Net credit **+24** · Max risk **11** · R:R **1 : 2.18** · Net Θ/day **10** · Breakevens **7,776 – 7,824**
 
-Alternate widths: **25 pts** (credit 24, R:R 1 : 24.00) · **50 pts** (credit 22, R:R 1 : 0.82)
+Alternate widths: **25 pts** (credit 24, R:R 1 : 2.18) · **50 pts** (credit 22, R:R 1 : 0.82)
 
 
 

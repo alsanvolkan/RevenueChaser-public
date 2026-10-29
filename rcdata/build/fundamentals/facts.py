@@ -18,7 +18,10 @@ today. What this layer adds:
   portion together) when tagged, else ``LongTermDebtCurrent`` plus the short-term line. A filer whose long-term line
   includes the current portion (``LongTermDebt``, ``LongTermDebtAndCapitalLeaseObligationsIncludingCurrent
   Maturities``) gets that plus the short-term line. The short-term line is ``ShortTermBorrowings``, else
-  ``CommercialPaper`` (which ``ShortTermBorrowings`` already holds when both are tagged). A line of credit is not
+  ``CommercialPaper`` (which ``ShortTermBorrowings`` already holds when both are tagged). Convertible notes due within
+  the year (``ConvertibleNotesPayableCurrent``, ``ConvertibleDebtCurrent``) are the current line when neither
+  ``DebtCurrent`` nor ``LongTermDebtCurrent`` is tagged, and are added to a whole long-term line only when that line
+  is below them, so it cannot hold them (#264: NVIDIA's restated 0 for 31 Jan 2016). A line of credit is not
   added: the filers that tag one carry it inside their long-term line. With no long-term line tagged there is no
   total: a current line alone is not the whole. Measured on the real-data check of 2026-10-28 (PR 249): the earlier
   three-term sum served HEI 3.4 million instead of 2.17 billion (its long-term line is
@@ -44,7 +47,8 @@ SOURCE = "sec/companyfacts"
 LONG_TERM_DEBT = ("lt_debt", "lt_debt_and_lease_noncurrent", "notes_payable_noncurrent")
 COMMERCIAL_PAPER = "CommercialPaper"
 WHOLE_LONG_TERM_DEBT = "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities"
-DEBT_LINES = LONG_TERM_DEBT + ("lt_debt_total", "debt_current", "lt_debt_current", "short_term_borrowings")
+DEBT_LINES = LONG_TERM_DEBT + ("lt_debt_total", "debt_current", "lt_debt_current", "short_term_borrowings",
+                               "convertible_debt_current")
 EPS_CONCEPTS = {
     "eps_basic": (["EarningsPerShareBasic", "EarningsPerShareBasicAndDiluted"], "USD/shares"),
     "eps_diluted": (["EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted"], "USD/shares"),
@@ -176,12 +180,20 @@ def _debt_lines(out: dict[str, dict], index: _Index, balance_end: str | None) ->
     short = lines.get("short_term_borrowings") or _tagged(index, COMMERCIAL_PAPER, balance_end)
     short = [short] if short else []
     long_term = next((lines[f] for f in LONG_TERM_DEBT if f in lines), None)
+    convertible = lines.get("convertible_debt_current")
     if long_term is not None:
-        current = [lines["debt_current"]] if "debt_current" in lines else \
-            ([lines["lt_debt_current"]] if "lt_debt_current" in lines else []) + short
+        # #264: convertible notes due within the year are the current line only when no other current line is
+        # tagged (DebtCurrent and LongTermDebtCurrent hold them when they are), so they are never read twice.
+        current_line = lines.get("lt_debt_current") or convertible
+        current = [lines["debt_current"]] if "debt_current" in lines else ([current_line] if current_line else []) + short
         return [long_term] + current
     whole = lines.get("lt_debt_total") or _tagged(index, WHOLE_LONG_TERM_DEBT, balance_end)
-    return [whole] + short if whole else []                    # a whole long-term line holds its current portion
+    if not whole:
+        return []
+    # A whole long-term line holds its current portion, so it is never below the convertible notes due within the
+    # year; one that is (NVIDIA's LongTermDebt of 31 Jan 2016 as restated: 0, beside 1.41 billion of them) leaves
+    # them out, and they are added (#264).
+    return [whole] + ([convertible] if convertible and whole["value"] < convertible["value"] else []) + short
 
 
 def _tagged(index: _Index, concept: str, end: str | None) -> dict | None:
