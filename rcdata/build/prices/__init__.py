@@ -7,8 +7,8 @@ last dataset of the kind, ``prices/serving``, builds the served tables and the b
 
 - ``alpaca/bars`` (daily, after the close): Alpaca's daily bars of the scope (below), ``adjustment`` raw and all,
   100 symbols a request; the last 5 sessions are read again every run and a changed value is kept as a revision;
-- ``alpaca/corporate_actions`` (daily): Alpaca's splits, dividends, spin-offs and name changes processed in the last
-  weeks;
+- ``alpaca/corporate_actions`` (daily): Alpaca's splits, dividends, spin-offs and name changes processed from two
+  weeks back to 90 days ahead (a dividend is processed on its payable date);
 - ``sec/cover_shares`` (daily): the shares outstanding per class from the cover page of each new 10-K and 10-Q
   (the filing's XBRL), found through the SEC's daily index;
 - ``yfinance/float`` (daily, a slice): Yahoo's float, paced 1.5 s apart, stopped on a 401 or 429;

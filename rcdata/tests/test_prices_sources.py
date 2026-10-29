@@ -75,7 +75,8 @@ def test_corporate_actions_one_window_on_the_process_date_typed_and_kept_once(ht
     ctx = _ctx(actions.NAME)
     out = actions.DATASET.to_parquet_all(ctx, actions.DATASET.fetch(ctx, TUE))
     q = _query(http_mock.calls("/v1/corporate-actions")[0])
-    assert (q["start"], q["end"], q["limit"]) == ("2026-10-13", "2026-10-27", "1000") and "symbols" not in q
+    # The end reaches 90 days past as_of: a cash dividend's process date is its payable date, weeks after it goes ex.
+    assert (q["start"], q["end"], q["limit"]) == ("2026-10-13", "2027-01-25", "1000") and "symbols" not in q
     assert sorted(p.parent.name for p in out) == ["year=2025", "year=2026"]
     rows = {r["action_id"]: r for p in out for r in stage.read_rows(p)}
     assert rows["rs-1"]["action_type"] == "reverse_split" and (rows["rs-1"]["old_rate"], rows["rs-1"]["new_rate"]) \
@@ -92,9 +93,10 @@ def test_the_actions_backfill_asks_windows_of_its_own(http_mock):
     ctx = _ctx(actions.NAME)
     actions.DATASET.backfill(ctx, date(2026, 1, 1), date(2026, 6, 30))
     windows = [(q["start"], q["end"]) for q in map(_query, http_mock.calls("/v1/corporate-actions"))]
-    assert windows == [("2026-01-01", "2026-03-31"), ("2026-04-01", "2026-06-29"), ("2026-06-30", "2026-06-30")]
+    assert windows == [("2026-01-01", "2026-03-31"), ("2026-04-01", "2026-06-29"), ("2026-06-30", "2026-09-27"),
+                       ("2026-09-28", "2026-09-28")]                       # to 90 days past the end, as a run
     actions.DATASET.backfill(ctx, date(2026, 1, 1), date(2026, 6, 30))
-    assert len(http_mock.calls("/v1/corporate-actions")) == 3
+    assert len(http_mock.calls("/v1/corporate-actions")) == 4
 
 
 # ── SEC cover shares ─────────────────────────────────────────────────────────────────────────────────────────

@@ -37,7 +37,9 @@ ALL = {**RAW,
        "SPY": RAW["SPY"][:4] + [c * 1.0005 for c in RAW["SPY"][4:]]}
 ACTIONS = {
     "cash_dividends": [{"id": "cd-1", "symbol": "AAPL", "rate": 0.26, "special": False, "foreign": False,
-                        "process_date": "2026-10-24", "ex_date": "2026-10-23", "currency": "USD"}],
+                        "process_date": "2026-10-24", "ex_date": "2026-10-23", "currency": "USD"},
+                       {"id": "cd-2", "symbol": "AAPL", "rate": 0.27, "special": False, "foreign": False,
+                        "process_date": "2026-11-12", "ex_date": "2026-10-30", "currency": "USD"}],
     "reverse_splits": [{"id": "rs-1", "symbol": "FLG", "old_rate": 3, "new_rate": 1, "process_date": "2026-10-22",
                         "ex_date": "2026-10-22"}],
     "spin_offs": [{"id": "so-1", "source_symbol": "BRK.B", "source_rate": 1, "new_symbol": "SPUN", "new_rate": 0.1,
@@ -98,7 +100,7 @@ def _shares_and_floats():
 def built():
     _shares_and_floats()
     first = base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
-    assert first["result"] == "unchanged" and first["rows"] == 4, first      # no bars yet: no action resolves
+    assert first["result"] == "unchanged" and first["rows"] == 5, first      # no bars yet: no action resolves
     row = base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
     assert row["result"] == "changed", row
     return row
@@ -132,11 +134,14 @@ def test_the_bars_are_served_nominal_keyed_on_the_security(built):
 
 def test_actions_typed_resolved_and_marked_applied(built):
     acts = {r["source_id"]: r for r in _q("SELECT * FROM corporate_action")}
-    assert set(acts) == {"cd-1", "rs-1", "so-1"}                          # ZZZZ is no security of the store
+    assert set(acts) == {"cd-1", "cd-2", "rs-1", "so-1"}                  # ZZZZ is no security of the store
     assert acts["rs-1"]["security_id"] == FLG and acts["rs-1"]["action"] == "split"
     assert acts["rs-1"]["ratio"] == pytest.approx(1 / 3) and acts["rs-1"]["applied"] is True
     assert acts["cd-1"]["action"] == "cash_dividend" and acts["cd-1"]["amount"] == 0.26 and acts["cd-1"]["applied"]
     assert acts["so-1"]["applied"] is False and "spin_off" in acts["so-1"]["not_applied_why"]
+    # Announced, not yet ex on the newest session (the 27th): kept, not applied, and no issue until it goes ex.
+    assert acts["cd-2"]["applied"] is False and acts["cd-2"]["not_applied_why"].startswith("not yet ex")
+    assert "cd-2" not in _issues().get("dividend_not_applied", set())
 
 
 def test_adjustment_factors_and_the_one_basis_point_rule(built):

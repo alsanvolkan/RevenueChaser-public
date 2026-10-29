@@ -9,7 +9,8 @@
 - ``corporate_action``: Alpaca's actions of the store's securities, resolved to the security that traded under the
   action's symbol nearest its date (else the spine's current ticker), and Compustat's splits and dividends of the
   securities with bars where Alpaca has no action of that kind that day, with ``applied`` (used by ``adj_factor``),
-  ``not_applied_why``, the split ``ratio`` (new over old shares) and the cash ``amount`` per share;
+  ``not_applied_why``, the split ``ratio`` (new over old shares) and the cash ``amount`` per share; an action whose
+  ex-date is after the newest session is kept, not applied, and raises no issue until it goes ex;
 - ``adj_factor``: per security, the periods ``[valid_from, valid_to)`` between two ex-dates and the factors that
   turn a nominal bar of the period into today's basis: ``split_factor`` (the product of ``1 / ratio`` of every split
   and stock dividend after it) and ``tr_factor`` (that, times ``1 - amount / close before the ex-date`` of every cash
@@ -281,7 +282,11 @@ class PricesServing:
             SELECT a.*, p.close AS close_before, p.session_date AS close_day
             FROM _act_typed a ASOF LEFT JOIN price_bar_daily p
                 ON p.security_id = a.security_id AND a.ex_date > p.session_date""")
+        # An action announced for a later day (the actions window reaches ahead) waits until its ex-date has a
+        # session: applied now, it would turn today's bars into a basis that does not exist yet.
+        newest = "(SELECT max(session_date) FROM price_bar_daily WHERE security_id NOT LIKE 'index:%')"
         why = f"""CASE
+            WHEN ex_date > {newest} THEN 'not yet ex: the ex-date is after the newest session'
             WHEN action IN ('split', 'stock_dividend') AND ex_date IS NULL THEN 'no ex-date'
             WHEN action IN ('split', 'stock_dividend') AND ratio IS NULL THEN 'no ratio'
             WHEN action = 'cash_dividend' AND ex_date IS NULL THEN 'no ex-date'
@@ -302,7 +307,7 @@ class PricesServing:
         n = _create(con, "corporate_action", "SELECT * FROM _act_final ORDER BY security_id, ex_date, action")
         for aid, action, sid, why_ in con.execute(
                 "SELECT source_id, action, security_id, not_applied_why FROM corporate_action "
-                "WHERE applied = false").fetchall():
+                "WHERE applied = false AND NOT starts_with(not_applied_why, 'not yet ex')").fetchall():
             kind = "dividend_not_applied" if action == "cash_dividend" else "action_not_applied"
             found.append((kind, aid, f"{sid}: {why_}"))
         return n
