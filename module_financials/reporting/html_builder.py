@@ -8,6 +8,7 @@ from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
 
 from RevenueChaser.core import calendar as market_calendar
+from RevenueChaser.module_financials.config import RISK_FREE_MAX_AGE_DAYS
 from RevenueChaser.core.reporting_common import (help_html, provider_health_html, recorded_sessions_html,
                                                  watch_buttons_html, watchlist_html)
 
@@ -21,7 +22,9 @@ HELP = help_html(
     "One company at a time: <b>Quick Remarks</b> (the stored scores for the ticker) on top, then the "
     "<b>financial model</b>: DCF, three-statement view, comparables, credit and sensitivity. "
     "<b>Fetch</b> downloads the ticker's price, shares, beta and statements from <b>Yahoo</b> into the store and "
-    "rebuilds the report. The models read the annual statements the company filed with the <b>SEC</b> (the "
+    "rebuilds the report. The price, market cap, shares and beta are the <b>prices store</b>'s (its newest close, "
+    f"at most {RISK_FREE_MAX_AGE_DAYS} days old) where it has them, Yahoo's otherwise. The models read the annual "
+    "statements the company filed with the <b>SEC</b> (the "
     "fundamentals layer, re-read on each filing day) once that is built, and Yahoo's before, or when Yahoo's "
     "year is newer or gives an input the SEC's lacks (depreciation, working capital); the "
     "<b>Source</b> line says which, why, and which inputs the SEC's statements lack. <b>Refresh</b> rebuilds the report for the ticker in the "
@@ -143,10 +146,16 @@ def build_report_html(results: dict) -> str:
         "company": info.get("longName") or info.get("shortName") or ticker,
         "sector": financials.get("sector"),
         "price": financials.get("current_price"),
+        # The prices store's session of that price (G6 follow-up); None when the price is Yahoo's.
+        "price_session": (financials.get("market_meta") or {}).get("price_session"),
         "currency": financials.get("currency", "USD"),
         "shares_outstanding": financials.get("shares_outstanding"),
         "market_cap": financials.get("market_cap"),
         "enterprise_value": financials.get("enterprise_value"),
+        # shortcut: the EV stays Yahoo's (its newest quarter's debt and cash) next to the prices store's cap, and the
+        # header says so (review should 2 on #284); the statements' net debt is up to a year old, so the store's cap
+        # plus it would be no better. Upgrade when the fundamentals layer serves the newest quarter's debt and cash.
+        "ev_is_yahoos": (financials.get("market_meta") or {}).get("shares_source", "Yahoo") != "Yahoo",
         "source": financials.get("source", "yfinance"),
         "data_date": financials.get("_fetched_at_iso") or financials.get("fetched_at_iso"),
         "quick_remarks": quick_remarks,

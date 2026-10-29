@@ -138,7 +138,9 @@ def run_comps(financials: dict, peers: list[str],
         # A Financial Services target is P/E only: the EV multiples are absent by design, not missing data.
         "pe_only": pe_only,
         # DF45: the two sides are on different bases, and the board says so (a label, no number moves).
-        "basis": {"peers": "trailing twelve months", "target_fiscal_year": latest.get("fiscal_year")},
+        # The peers' multiples are Yahoo's .info; the target's shares may be the prices store's (G6 follow-up).
+        "basis": {"peers": "trailing twelve months", "target_fiscal_year": latest.get("fiscal_year"),
+                  "target_shares": (financials.get("market_meta") or {}).get("shares_source") or "Yahoo"},
         "peers": rows,
         "multiples": {
             "ev_ebitda": _pct(ev_ebitda),

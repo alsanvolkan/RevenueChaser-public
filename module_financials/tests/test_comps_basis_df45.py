@@ -13,7 +13,8 @@ def _fetch(t):
 def test_the_comps_result_names_each_sides_basis(financials):
     res = run_comps(financials, ["AAA", "BBB"], fetch_info=_fetch)
     latest = financials["annual"][-1]["fiscal_year"]
-    assert res["basis"] == {"peers": "trailing twelve months", "target_fiscal_year": latest}
+    assert res["basis"] == {"peers": "trailing twelve months", "target_fiscal_year": latest,
+                            "target_shares": "Yahoo"}
 
 
 def test_the_board_says_which_basis_each_side_is_on(financials):
