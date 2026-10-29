@@ -2,7 +2,8 @@
 
 Each test breaks one provider call through the mock server and drives the real dashboard:
 
-* SPY candles answer 500: the holdings sync keeps the stored RS (no zero rows) and names the theme ETFs;
+* the holdings sync reads its RS bars from the prices store since the ties to the old data system were cut, so no
+  candle is asked for: with SPY absent from the store it keeps the stored RS (no zero rows) and names the theme ETFs;
 * Money Flow ranks the stored bars since M-ROT-3 (#374), the prices store's since PR 9: an ETF the store lacks flags
   the leaderboard partial on the board, it never replaces the newest complete leaderboard in result history, and no
   candle is asked for;
@@ -16,6 +17,7 @@ The healthy path is asserted next to each failure so a fix that blanks everythin
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import os
 import re
@@ -123,25 +125,41 @@ def _candle_calls(routes) -> list[str]:
 
 # ── SPY candles down ─────────────────────────────────────────────────────────────────────
 
+def _seed_holdings_bars(dashboard, monkeypatch) -> None:
+    """SPY and the three theme holdings in the prices store, on the same sessions: what the holdings RS reads."""
+    from RevenueChaser.core import calendar
+    from RevenueChaser.module_sector_rotation.tests.bars_seed import seed
+
+    _seed_bars(dashboard, monkeypatch, only={"SPY"})
+    session = calendar.latest_complete_session()
+    for h in THEME_HOLDINGS:
+        seed(h["ticker"], session)
+
+
 class TestSpyCandlesDown:
-    def test_the_holdings_sync_keeps_the_stored_rs_and_names_the_theme_etfs(self, dashboard, routes):
+    def test_the_holdings_sync_keeps_the_stored_rs_and_names_the_theme_etfs(self, dashboard, routes, monkeypatch):
+        _seed_holdings_bars(dashboard, monkeypatch)
         healthy = dashboard.run_job("/run/holdings")
         assert healthy.ok and "RS computed for 0 theme" not in healthy.message, healthy
         stored = _query(dashboard, "SELECT ticker, rows FROM rotation_holdings ORDER BY ticker")
         assert stored
 
-        _break(routes, "SPY")
-        broken = dashboard.run_job("/run/holdings")
-        assert broken.ok, broken
-        assert "SPY candles missing" in broken.message and "Kept stored RS for" in broken.message
+        _drop_bars("SPY")
+        _break(routes, "SPY")                            # and a live candle could not stand in for it either
+        kept = dashboard.run_job("/run/holdings")
+        assert kept.ok, kept
+        assert "too few SPY sessions" in kept.message and "Kept stored RS for" in kept.message, kept
         assert _query(dashboard, "SELECT ticker, rows FROM rotation_holdings ORDER BY ticker") == stored
-        spy_calls = [q for q in routes.requests("/api/stock/SPY/ohlc")]
-        assert spy_calls, "the sync must have asked for SPY"
+        assert _candle_calls(routes) == []               # neither run asked for a candle
 
-    def test_spy_is_asked_for_once_per_holdings_job(self, dashboard, routes):
-        assert dashboard.run_job("/run/holdings").ok
-        spy_calls = [q for q in routes.requests("/api/stock/SPY/ohlc") if "limit=270" in q.query]
-        assert len(spy_calls) == 1, f"SPY was fetched {len(spy_calls)} times for one job"
+    def test_the_holdings_rs_comes_from_the_prices_store_with_no_candle_asked(self, dashboard, routes, monkeypatch):
+        _seed_holdings_bars(dashboard, monkeypatch)
+        res = dashboard.run_job("/run/holdings")
+        assert res.ok and "RS computed for 0 theme" not in res.message, res
+        rows = json.loads(_query(dashboard, "SELECT rows FROM rotation_holdings ORDER BY ticker")[0][0])
+        assert {r["ticker"] for r in rows} == {h["ticker"] for h in THEME_HOLDINGS}
+        assert all(r["close"] is not None and r["rs_3m"] is not None for r in rows), rows
+        assert _candle_calls(routes) == []
 
     def test_a_range_backfill_without_spy_in_the_prices_store_writes_no_day_and_says_so(
             self, dashboard, routes, monkeypatch):
