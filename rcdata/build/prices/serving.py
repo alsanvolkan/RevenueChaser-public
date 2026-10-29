@@ -338,6 +338,8 @@ class PricesServing:
         # A cover class goes to the spine row of its trading symbol, else (no symbol, the filing's one class) to the
         # CIK's one Tier A row. Not to an ADR's: the cover counts the issuer's ordinary shares and the bar is the ADS
         # (one TSM ADS is five shares), so the count stays under ``class:`` and the ADR has no cover shares.
+        # shortcut: an ADR gets no market cap from the store at all; once a source of its ADS ratio (or its ADS count)
+        # is read, divide the ordinary count by the ratio and map it to the ADR's row.
         con.execute("""CREATE OR REPLACE TEMP TABLE _cover AS
             WITH one AS (SELECT cik, any_value(security_id) AS security_id, any_value(security_type) AS security_type
                          FROM stg_spine WHERE tier = 'A' GROUP BY cik HAVING count(*) = 1),
