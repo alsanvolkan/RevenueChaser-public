@@ -276,6 +276,155 @@ def latest_market(tickers: Iterable[str]) -> dict[str, dict]:
     return {r["ticker"]: r for r in _rows("market_cap_daily", sql, wanted)}
 
 
+# ── The price boards' by-ticker reads (G3: PR 8 Co-movement, PR 9 Sector Rotation, PR 11 Asymmetric Growth) ─────────
+# A board names tickers; a ticker is the security trading under it now (``security_symbol``, valid_to NULL; of two,
+# the one with the newer bar, as ``security_ids``), so a renamed name keeps its bars from before the rename. The index
+# level (``index:SPX``) is never a ticker here. Each read is one query over the live file.
+
+def _tickers(tickers: Iterable[str]) -> list[str]:
+    if isinstance(tickers, str):
+        tickers = [tickers]
+    return sorted({str(t).strip().upper() for t in tickers or () if str(t or "").strip()})
+
+
+def _now_cte(n: int) -> str:
+    """``now (ticker, security_id)``: the security each of ``n`` asked tickers (the first ``n`` parameters) is."""
+    return ("now AS (SELECT s.symbol AS ticker, s.security_id FROM security_symbol s LEFT JOIN (SELECT security_id, "
+            "max(session_date) AS last FROM price_bar_daily GROUP BY ALL) l USING (security_id) "
+            f"WHERE s.valid_to IS NULL AND s.security_id NOT LIKE 'index:%' AND s.symbol IN ({', '.join('?' * n)}) "
+            "QUALIFY row_number() OVER (PARTITION BY s.symbol ORDER BY l.last DESC NULLS LAST, s.security_id) = 1)")
+
+
+def _frame(table: str, sql: str, params: list, columns: list[str]):
+    """The rows of ``sql`` as a pandas DataFrame (DuckDB's own conversion: a bar read can be a million rows), with
+    ``status``; an empty frame with ``columns`` when there is no file yet."""
+    import pandas as pd
+    ops.read_log.bump(table)
+    try:
+        con = serving.open_read(KIND_OF_TABLE[table])
+    except serving.ServingFileMissing:
+        return pd.DataFrame(columns=[*columns, "status"])
+    try:
+        frame = con.execute(sql, params).df()
+    finally:
+        con.close()
+    frame["status"] = dataset_status(DATASET_OF_TABLE[table])
+    return frame
+
+
+TICKER_BAR_COLUMNS = ["ticker", "security_id", "session_date", "open", "high", "low", "close", "volume", "source",
+                      "fetched_at", "basis"]
+
+
+def ticker_bars(tickers: Iterable[str], start=None, end=None, basis: str = "split"):
+    """Daily bars of ``tickers`` with ``start <= session_date <= end`` as a DataFrame (``TICKER_BAR_COLUMNS``), by
+    ticker and session, on one of ``bars``'s bases. ``session_date`` is a pandas datetime (midnight, no zone).
+
+    ``split`` is the price as the old D01 store served it as "nominal" (splits applied, dividends not: the level a
+    chart shows); ``total_return`` its "adjusted" (every cash dividend after the bar taken out too: the returns)."""
+    if basis not in BASES:
+        raise ValueError(f"unknown basis {basis!r}: one of {', '.join(BASES)}")
+    import pandas as pd
+    names = _tickers(tickers)
+    if not names:
+        return pd.DataFrame(columns=TICKER_BAR_COLUMNS)
+    price = {"nominal": "1.0", "split": "coalesce(a.split_factor, 1)", "total_return": "coalesce(a.tr_factor, 1)"}[basis]
+    shares = "1.0" if basis == "nominal" else "coalesce(a.split_factor, 1)"
+    sql = (f"WITH {_now_cte(len(names))} SELECT now.ticker, b.security_id, CAST(b.session_date AS TIMESTAMP) AS "
+           f"session_date, b.open * {price} AS open, b.high * {price} AS high, b.low * {price} AS low, "
+           f"b.close * {price} AS close, b.volume / {shares} AS volume, b.source, b.fetched_at, '{basis}' AS basis "
+           f"FROM price_bar_daily b JOIN now USING (security_id) LEFT JOIN adj_factor a ON {_PERIOD} WHERE true")
+    params: list = list(names)
+    sql = _bounded(sql, params, "b.session_date", start, end)
+    frame = _frame("price_bar_daily", sql + " ORDER BY now.ticker, b.session_date", params, TICKER_BAR_COLUMNS)
+    return frame.drop(columns=["status"])
+
+
+def last_sessions(tickers: Iterable[str]) -> dict[str, date]:
+    """``{ticker: newest session with a close}`` of the ``tickers`` the store has a bar of."""
+    names = _tickers(tickers)
+    if not names:
+        return {}
+    sql = (f"WITH {_now_cte(len(names))} SELECT now.ticker, max(b.session_date) AS d FROM price_bar_daily b "
+           "JOIN now USING (security_id) WHERE b.close IS NOT NULL AND NOT isnan(b.close) GROUP BY ALL")
+    return {r["ticker"]: r["d"] for r in _rows("price_bar_daily", sql, names)}
+
+
+def newest_session() -> date | None:
+    """The store's newest session with a close of any security (the index level left out); None when empty."""
+    rows = _rows("price_bar_daily", "SELECT max(session_date) AS d FROM price_bar_daily WHERE close IS NOT NULL "
+                                    "AND NOT isnan(close) AND security_id NOT LIKE 'index:%'", [])
+    return rows[0]["d"] if rows else None
+
+
+def changed_at(tickers: Iterable[str]) -> float:
+    """When the store last changed under ``tickers``: the newest ``fetched_at`` of their bars and actions (0.0 when
+    none). An action revises every bar before it without adding one, so a board's stored run older than this is
+    stale even when the newest session has not moved."""
+    names = _tickers(tickers)
+    if not names:
+        return 0.0
+    sql = (f"WITH {_now_cte(len(names))} SELECT greatest("
+           "coalesce((SELECT max(fetched_at) FROM price_bar_daily WHERE security_id IN (SELECT security_id FROM now)), 0), "
+           "coalesce((SELECT max(fetched_at) FROM corporate_action WHERE security_id IN (SELECT security_id FROM now)), "
+           "0)) AS t")
+    rows = _rows("price_bar_daily", sql, names)
+    return float((rows[0]["t"] if rows else None) or 0.0)
+
+
+def bar_sessions(tickers: Iterable[str], start=None) -> list[date]:
+    """The sessions, oldest first, on which any of ``tickers`` has a close (from ``start`` on when given)."""
+    names = _tickers(tickers)
+    if not names:
+        return []
+    sql = (f"WITH {_now_cte(len(names))} SELECT DISTINCT b.session_date AS d FROM price_bar_daily b "
+           "JOIN now USING (security_id) WHERE b.close IS NOT NULL AND NOT isnan(b.close)")
+    params: list = list(names)
+    sql = _bounded(sql, params, "b.session_date", start, None)
+    return [r["d"] for r in _rows("price_bar_daily", sql + " ORDER BY d", params)]
+
+
+def bar_facts(tickers: Iterable[str], start, flat_run: int) -> dict:
+    """What a windowed read cannot see, over the bars of ``tickers`` from ``start`` on (Co-movement, #379 COM-3):
+
+    - ``first`` / ``last``: each ticker's first and last session with a close (``YYYY-MM-DD``);
+    - ``sessions``: the sessions on which any of them has one, oldest first (``YYYY-MM-DD``);
+    - ``flat``: the tickers with ``flat_run`` steps in a row on which the close did not move. The bars are as traded,
+      so a step counts as unmoved when the stored close is equal OR an applied action has its ex-date inside it (its
+      adjusted closes can be equal while the stored ones are not); the caller judges these candidates on their
+      adjusted closes. A split needs no rule of its own here: a bar is as traded whenever it was fetched.
+    """
+    names = _tickers(tickers)
+    empty = {"first": {}, "last": {}, "sessions": [], "flat": []}
+    if not names or start is None:
+        return empty
+    run = max(2, int(flat_run))
+    lo = _day(start)
+    bars = (f"WITH {_now_cte(len(names))}, bars AS (SELECT now.ticker, b.security_id, b.session_date AS d, b.close "
+            "FROM price_bar_daily b JOIN now USING (security_id) WHERE b.session_date >= ? AND b.close IS NOT NULL "
+            "AND NOT isnan(b.close))")
+    sql = (bars + ", ex AS (SELECT DISTINCT security_id, ex_date FROM corporate_action WHERE applied AND ex_date > ? "
+           "AND security_id IN (SELECT security_id FROM now)), "
+           "steps AS (SELECT ticker, security_id, d, close, lag(close) OVER w AS pc, lag(d) OVER w AS pd FROM bars "
+           "WINDOW w AS (PARTITION BY ticker ORDER BY d)), "
+           "moves AS (SELECT s.ticker, s.d, CASE WHEN s.pc IS NULL THEN NULL WHEN s.close = s.pc THEN 0 "
+           "WHEN EXISTS (SELECT 1 FROM ex WHERE ex.security_id = s.security_id AND ex.ex_date > s.pd "
+           "AND ex.ex_date <= s.d) THEN 0 ELSE 1 END AS moved FROM steps s), "
+           "runs AS (SELECT ticker, d, count(moved) OVER r = ? AND sum(moved) OVER r = 0 AS flat FROM moves "
+           f"WINDOW r AS (PARTITION BY ticker ORDER BY d ROWS BETWEEN {run - 1} PRECEDING AND CURRENT ROW)) "
+           "SELECT ticker, CAST(min(d) AS VARCHAR) AS first, CAST(max(d) AS VARCHAR) AS last, "
+           "bool_or(coalesce(flat, false)) AS flat FROM runs GROUP BY ticker")
+    rows = _rows("price_bar_daily", sql, [*names, lo, lo, run])
+    if not rows:
+        return empty
+    sessions = _rows("price_bar_daily", bars + " SELECT DISTINCT CAST(d AS VARCHAR) AS d FROM bars ORDER BY d",
+                     [*names, lo])
+    return {"first": {r["ticker"]: r["first"] for r in rows},
+            "last": {r["ticker"]: r["last"] for r in rows},
+            "sessions": [r["d"] for r in sessions],
+            "flat": sorted(r["ticker"] for r in rows if r["flat"])}
+
+
 def as_frame(rows: list[dict]):
     """The rows as a pandas DataFrame (the one helper; pandas is imported only here)."""
     import pandas as pd
