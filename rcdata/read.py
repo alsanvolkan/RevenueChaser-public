@@ -267,6 +267,18 @@ def filing_text(cik, item: str = "business") -> dict | None:
     return rows[0] if rows else None
 
 
+def filing_texts(ciks: Iterable, item: str = "business") -> list[dict]:
+    """``filing_text`` of several companies at once: per company the newest served document of ``item``, one row
+    each (a company with none is absent)."""
+    wanted = sorted({_cik(c) for c in ciks if str(c or "").strip()})
+    if not wanted:
+        return []
+    return _rows("filing_item", "SELECT * FROM filing_item WHERE kind = 'document' AND item = ? "
+                                f"AND cik IN ({', '.join('?' * len(wanted))}) "
+                                "QUALIFY row_number() OVER (PARTITION BY cik ORDER BY filing_date DESC) = 1 "
+                                "ORDER BY cik", [str(item), *wanted])
+
+
 def segments(cik, axis: str | None = None, source: str | None = None) -> list[dict]:
     """``segment_revenue`` rows of company ``cik`` (``axis`` ``business``, ``product`` or ``geographic``; ``source``
     ``sec/filings`` or ``wrds/segments``; each optional), newest period first, the biggest value first."""
@@ -282,6 +294,18 @@ def customers(cik) -> list[dict]:
     """``customer_share`` rows of company ``cik``, newest period first, the biggest share first."""
     return _rows("customer_share", "SELECT * FROM customer_share WHERE cik = ? "
                                    "ORDER BY period_end DESC, share DESC NULLS LAST, customer", [_cik(cik)])
+
+
+def customer_shares(ciks: Iterable, benchmark: str = "revenue") -> list[dict]:
+    """``customer_share`` rows of several companies at once: per company its newest period's customers with a share
+    of ``benchmark``, the biggest share first."""
+    wanted = sorted({_cik(c) for c in ciks if str(c or "").strip()})
+    if not wanted:
+        return []
+    return _rows("customer_share", "SELECT * FROM customer_share WHERE benchmark = ? AND share IS NOT NULL "
+                                   f"AND cik IN ({', '.join('?' * len(wanted))}) "
+                                   "QUALIFY rank() OVER (PARTITION BY cik ORDER BY period_end DESC) = 1 "
+                                   "ORDER BY cik, share DESC, customer", [str(benchmark), *wanted])
 
 
 def peers(cik) -> list[dict]:

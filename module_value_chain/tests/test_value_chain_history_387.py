@@ -69,7 +69,7 @@ def test_the_header_carries_model_version_and_params(store):
     _seed_corpus()
     engine.run(no_fetch=False, tickers=["NVDA"], run_id="r1")
     (head,) = _headers()
-    assert head["model_version"] == vc_history.model_version() and head["model_version"].startswith("2+")  # #387 D7
+    assert head["model_version"] == vc_history.model_version() and head["model_version"].startswith("3+")  # #387 D7, G6 XBRL customers
     assert json.loads(head["params"])["MENTION_WINDOW"] == config.MENTION_WINDOW
 
 
