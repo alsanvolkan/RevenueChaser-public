@@ -2202,6 +2202,8 @@ ND_CSS = ND_THEME_CSS + """
 #newdata .nd-sub{color:var(--muted);font-size:12.5px}
 #newdata .nd-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;
   width:100%;min-width:0;display:flex;flex-direction:column;gap:8px}
+#newdata .nd-field{border-top:1px solid var(--border);padding:10px 0 0;display:flex;flex-direction:column;gap:8px;min-width:0}
+#newdata .nd-field h3{margin:0;font-size:14px;color:var(--bright)}
 #newdata .nd-card h3{margin:0;font-size:15px;color:var(--bright);display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 #newdata .nd-chip{display:inline-block;border:1px solid currentColor;border-radius:99px;padding:0 8px;
   font-size:11.5px;font-weight:600}
@@ -2328,7 +2330,7 @@ def _nd_cross_check(cross: dict | None) -> str:
                      _nd_row("Differ by more than the rule", _nd(f.get("differs"))),
                      _nd_row("Worst difference", _nd(f.get("worst")))]
         cards.append(
-            f'<div class="nd-card" data-cross-field="{esc(str(f.get("field") or ""))}">'
+            f'<div class="nd-field" data-cross-field="{esc(str(f.get("field") or ""))}">'
             f'<h3>{esc(str(f.get("field") or ""))}</h3>'
             f'<div class="nd-rows">{"".join(body)}</div>'
             + f'<div class="nd-actions">{button}</div>'

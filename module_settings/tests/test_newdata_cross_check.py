@@ -150,3 +150,16 @@ def test_the_collector_reads_no_provider_and_opens_no_connection_on_a_render(mon
     monkeypatch.setattr(newdata, "_diff_rows", lambda: calls.append("read") or [])
     newdata.cross_check(NOW, {}, {})
     assert calls == ["read"], "one read of the stored report, and nothing else"
+
+
+def test_a_field_block_is_not_a_card_of_its_own():
+    """The phone rule is one column of cards, all at the same left edge and the same width
+    (``module_testing/e2e/test_settings_newdata.py``). A field block sits *inside* the cross-check card, so a second
+    ``nd-card`` there is a card indented inside a card: the e2e layout test measured 50 px against the others' 37.
+    It is a row of the card, and carries its own class."""
+    sec = _section(_page(_with(FULL)))
+    block = sec[sec.index('id="nd-cross"'):]
+    block = block[:block.index('<div class="nd-card', 10)] if '<div class="nd-card' in block[10:] else block
+    assert 'data-cross-field="prices"' in block, "the field block is gone"
+    assert 'class="nd-card" data-cross-field' not in block, "a field block is a card nested inside a card"
+    assert 'class="nd-field" data-cross-field' in block
