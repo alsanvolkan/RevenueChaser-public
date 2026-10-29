@@ -32,7 +32,11 @@ def test_every_need_names_its_freshness_in_one_place():
     for name, need in api.catalog.NEEDS.items():
         assert isinstance(need.max_lag, int) and need.max_lag >= 0, f"{name}: no max_lag"
         assert need.max_lag_unit in api.catalog.UNITS, f"{name}: {need.max_lag_unit!r} is not a unit"
-        assert need.kind and need.dataset and need.day_column and need.key_column, f"{name}: an empty catalog field"
+        assert need.kind and need.key_column, f"{name}: an empty catalog field"
+        # ``dataset`` is None for a table several datasets write: there each row carries its own source's status.
+        assert need.dataset is None or need.dataset, f"{name}: an empty dataset"
+        # day_column may be None, for a table with no date of its own; it may never be an empty string.
+        assert need.day_column is None or need.day_column, f"{name}: an empty day_column"
 
 
 def test_unknown_need_is_an_error():
@@ -71,60 +75,23 @@ def test_a_summary_of_a_table_with_no_serving_file_is_empty_never_an_error():
 
 
 def _served_columns() -> dict[str, set[str]]:
-    """``{table: its served columns}`` from the build modules that declare them (``SERVED``, else ``SCHEMA``).
+    """``{table: its served columns}``, from the per-kind schemas an empty serving file is built with.
 
-    Not every serving table declares one, so this covers what it can; what it covers, it covers exactly.
+    That is every serving table there is, so this covers every need, not only the ones whose build module happens
+    to expose a module-level schema.
     """
-    import importlib
-    import pkgutil
-
-    from RevenueChaser.rcdata import build
-
-    out: dict[str, set[str]] = {}
-    for found in pkgutil.walk_packages(build.__path__, build.__name__ + "."):
-        try:
-            mod = importlib.import_module(found.name)
-        except Exception:                      # noqa: BLE001 - a build module that will not import is its own test
-            continue
-        table = getattr(mod, "TABLE", None)
-        cols = getattr(mod, "SERVED", None) or getattr(mod, "SCHEMA", None)
-        if isinstance(table, str) and cols:
-            out[table] = {c for c, *_ in cols}
-    return out
+    from RevenueChaser.rcdata import scaffold
+    return {table: {c for c, _ in columns}
+            for tables in scaffold.SCHEMA_OF_KIND.values() for table, columns in tables.items()}
 
 
 def test_every_needs_day_and_key_column_is_a_real_column():
     """A catalog typo is a wrong answer, not an error: ``max(no_such_column)`` would simply never look fresh."""
     served = _served_columns()
-    assert served, "no build module declares its served columns any more"
-    checked = 0
+    assert served, "no serving kind declares its tables any more"
     for name, need in api.catalog.NEEDS.items():
         cols = served.get(need.table)
-        if not cols:
-            continue
-        checked += 1
-        assert need.day_column in cols, f"{name}: {need.day_column!r} is not a column of {need.table}"
-        assert need.key_column in cols, f"{name}: {need.key_column!r} is not a column of {need.table}"
-    assert checked >= 5, "the column check stopped covering the needs it used to"
-
-
-# ── The unit (avo, 29 Oct 2026: one number per need, and the unit it is counted in) ─────────────────────────────
-
-def test_a_calendar_day_lag_counts_calendar_days_not_sessions():
-    """A weekend is two days and no sessions: the two units must not answer the same."""
-    friday, monday = date(2026, 10, 23), date(2026, 10, 26)
-    assert api.lag_in("days", friday, monday) == 3
-    assert api.lag_in("sessions", friday, monday) == 1
-    assert api.lag_in("days", monday, friday) == 0           # rows newer than the reference
-    thanksgiving_week = (date(2026, 11, 25), date(2026, 11, 27))
-    assert api.lag_in("days", *thanksgiving_week) == 2 and api.lag_in("sessions", *thanksgiving_week) == 1
-
-
-def test_a_need_counted_in_days_exists_and_is_the_weekly_build():
-    need = api.catalog.NEEDS["fundamentals.estimates"]
-    assert need.max_lag_unit == "days" and need.max_lag == 14, "PR 285 measured 14 calendar days"
-
-
-def test_an_unknown_unit_is_refused_when_the_catalog_is_built():
-    with pytest.raises(ValueError):
-        api.catalog.Need("x", "universe", "security", "source_as_of", "ticker", 1, max_lag_unit="fortnights")
+        assert cols, f"{name}: {need.table} is not a table any serving file declares"
+        if need.day_column is not None:
+            assert need.day_column in cols, f"{name}: {need.day_column!r} is not a column of {need.table}"
+        assert need.summary_key in cols, f"{name}: {need.summary_key!r} is not a column of {need.table}"

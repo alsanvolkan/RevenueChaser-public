@@ -240,7 +240,21 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m RevenueChaser.rcdata")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("backup", help="verified copies of ops.sqlite and the serving files, then the raw copy")
-    p.parse_args(argv)
+    sub.add_parser("create-empty-stores", help="create a serving file with its tables and no rows for every kind "
+                                               "that has none; an existing file is never touched")
+    args = p.parse_args(argv)
+    if args.cmd == "create-empty-stores":
+        # A write to the live store: run it behind a verified backup, with an idle queue and a named rollback.
+        from . import scaffold, serving
+        if not logging.getLogger().handlers:
+            logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+        made = scaffold.create_missing()
+        for kind in sorted(serving.KINDS):
+            print(f"{kind}: {'created ' + str(made[kind]) if kind in made else 'already built, left alone'}",
+                  flush=True)
+        if not made:
+            print("nothing to create: every kind already has a serving file", flush=True)
+        return 0
     if not logging.getLogger().handlers:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     try:

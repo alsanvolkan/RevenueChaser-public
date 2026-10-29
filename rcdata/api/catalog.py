@@ -36,16 +36,25 @@ class Need:
     name: str
     reader_name: str
     table: str
-    day_column: str
+    #: The column a row's day comes from, or None for a table with no date of its own (a peer group, a symbol
+    #: mapping): such a need can be present or absent, never stale.
+    day_column: str | None
     key_column: str
     max_lag: int
     max_lag_unit: str = SESSIONS
+    #: The table's own key column, when the reader renames it on the way out (``latest_market`` returns ``ticker``
+    #: for a table keyed ``security_id``). A summary counts this one; a row's key stays ``key_column``.
+    table_key_column: str | None = None
     ask_param: str | None = None
     normalize: str = IDENTIFIER
     providers: tuple[str, ...] = ()
     fallbacks: tuple[str, ...] = ()
     legacy: bool = False
     extra: dict = field(default_factory=dict)
+
+    @property
+    def summary_key(self) -> str:
+        return self.table_key_column or self.key_column
 
     def __post_init__(self):
         if self.max_lag_unit not in UNITS:
@@ -56,8 +65,12 @@ class Need:
         return getattr(read, self.reader_name)
 
     @property
-    def dataset(self) -> str:
-        """The dataset that owns writing this need's table (``rcdata.read``'s own map)."""
+    def dataset(self) -> str | None:
+        """The dataset that owns writing this need's table (``rcdata.read``'s own map).
+
+        None for a table several datasets write: there the status is each row's own source's, as ``read`` returns
+        it, and a dataset-level status would have to pick one of them.
+        """
         return read.DATASET_OF_TABLE[self.table]
 
     @property
@@ -108,6 +121,58 @@ _NEEDS = (
     # calendar); the stricter of the two wins, so a calendar older than the last session is not read at all.
     Need("earnings.next", "option_screener", "option_screener_daily", "session_date", "ticker", 1,
          providers=("uw",), fallbacks=("d26_calendar",)),
+    # ── The fundamentals layer ──────────────────────────────────────────────────────────────────────────────────
+    # The filings-driven needs are as old as the newest filing, so their window is wide: a company that has not
+    # filed in a month is not stale data, it is a company that has not filed.
+    Need("fundamentals.statements", "statements", "fundamental_fact", "period_end", "cik", 65, providers=("sec",)),
+    Need("fundamentals.companies", "fundamental_companies", "fundamental_company", "facts_as_of", "cik", 5,
+         ask_param="tickers", normalize=TICKER, providers=("sec",)),
+    Need("fundamentals.earnings_event", "earnings_events", "earnings_event", "report_date", "cik", 1,
+         providers=("sec", "uw")),
+    Need("fundamentals.filings", "filing_items", "filing_item", "filing_date", "cik", 1, providers=("sec",)),
+    Need("fundamentals.segments", "segments", "segment_revenue", "period_end", "cik", 65, providers=("sec",)),
+    Need("fundamentals.customers", "customers", "customer_share", "period_end", "cik", 65, providers=("sec",)),
+    # A peer group carries no date of its own: it is present or absent, never stale.
+    Need("fundamentals.peers", "peers", "peer_group", None, "cik", 65, providers=("sec",)),
+    Need("fundamentals.revision", "revisions", "fundamental_revision", "datadate", "cik", 65, providers=("wrds",)),
+    # ── Ownership ───────────────────────────────────────────────────────────────────────────────────────────────
+    # The 13F period tables are quarterly by construction: a filing deadline 45 days after a quarter end means the
+    # newest period is routinely a quarter old, which is the data, not staleness.
+    Need("ownership.holders_13f", "holders_13f", "sec13f_ticker_period", "period", "ticker", 65,
+         ask_param="tickers", normalize=TICKER, providers=("sec",)),
+    Need("ownership.periods_13f", "periods_13f", "sec13f_periods", "filed_through", "period", 65,
+         providers=("sec",)),
+    Need("ownership.shortable", "shortable", "ibkr_shortable", "session_date", "ticker", 1,
+         ask_param="tickers", normalize=TICKER, providers=("ibkr",)),
+    Need("ownership.threshold", "threshold_list", "regsho_threshold", "list_date", "ticker", 1,
+         providers=("nasdaqtrader", "nyse")),
+    Need("ownership.ftd", "fails_to_deliver", "sec_ftd", "settlement_date", "ticker", 10,
+         ask_param="tickers", normalize=TICKER, providers=("sec",)),
+    Need("ownership.insider", "insider_transactions", "insider_transactions", "filed", "ticker", 1,
+         ask_param="tickers", normalize=TICKER, providers=("sec",)),
+    Need("ownership.beneficial", "beneficial_ownership", "beneficial_ownership", "filed", "ticker", 5,
+         ask_param="tickers", normalize=TICKER, providers=("sec",)),
+    # ── Options ─────────────────────────────────────────────────────────────────────────────────────────────────
+    Need("options.chain", "option_chain", "option_eod", "session_date", "ticker", 1, providers=("uw",)),
+    Need("options.strikes", "option_strikes", "option_strike", "session_date", "ticker", 1, providers=("uw",)),
+    Need("options.expiries", "option_expiries", "option_expiry", "session_date", "ticker", 1, providers=("uw",)),
+    Need("options.daily", "option_daily", "option_daily", "session_date", "ticker", 1,
+         ask_param="tickers", normalize=TICKER, providers=("uw",)),
+    Need("options.prints", "option_prints", "option_print", "session_date", "ticker", 1, providers=("uw",)),
+    Need("options.iv", "iv_history", "iv_daily", "session_date", "ticker", 1,
+         ask_param="tickers", normalize=TICKER, providers=("uw", "ibkr")),
+    Need("options.screener", "option_screener", "option_screener_daily", "session_date", "ticker", 1,
+         providers=("uw",)),
+    Need("earnings.options", "earnings_options", "er_options", "session_date", "ticker", 1,
+         ask_param="tickers", normalize=TICKER, providers=("uw",)),
+    # ── The prices store's remaining reads ──────────────────────────────────────────────────────────────────────
+    Need("prices.actions", "actions", "corporate_action", "ex_date", "security_id", 1,
+         ask_param="security_ids", providers=("alpaca",)),
+    # ``latest_market`` returns a row keyed ``ticker``; the table itself is keyed ``security_id``.
+    Need("prices.latest", "latest_market", "market_cap_daily", "session_date", "ticker", 1,
+         table_key_column="security_id", ask_param="tickers", normalize=TICKER, providers=("alpaca",)),
+    Need("prices.security_ids", "security_ids", "security_symbol", "valid_from", "symbol", 5,
+         ask_param="tickers", normalize=TICKER, providers=("alpaca",)),
 )
 
 NEEDS: dict[str, Need] = {n.name: n for n in _NEEDS}

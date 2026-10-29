@@ -134,7 +134,7 @@ def summary(need: str, *, sample: int = 0) -> dict:
         raise UnknownNeed(f"unknown need {need!r}: one of {', '.join(sorted(NEEDS))}") from None
 
     ops.read_log.bump(f"need:{need}")
-    s = read.table_summary(spec.table, day_column=spec.day_column, key_column=spec.key_column, sample=sample)
+    s = read.table_summary(spec.table, day_column=spec.day_column, key_column=spec.summary_key, sample=sample)
 
     as_of = s["newest_day"]
     lag = lag_in(spec.max_lag_unit, as_of, _latest_session()) if as_of is not None else None
@@ -190,6 +190,10 @@ def get(need: str, *, fill: str = NEVER, **params) -> Answer:
     else:
         state = STALE
 
-    status = rows[0].get("status") if rows else read.dataset_status(spec.dataset)
+    if rows:
+        status = rows[0].get("status")
+    else:
+        # No rows and no single owning dataset (a table several datasets write): there is no status to give.
+        status = read.dataset_status(spec.dataset) if spec.dataset else read.NEVER_CHECKED
     return Answer(need=need, rows=rows, state=state, freshness=freshness, coverage=coverage,
                   provenance=_provenance(spec, rows), status=str(status), fill=None)
