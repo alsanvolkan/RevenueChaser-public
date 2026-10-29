@@ -24,7 +24,7 @@ HELP = help_html(
     "rebuilds the report. The models read the annual statements the company filed with the <b>SEC</b> (the "
     "fundamentals layer, re-read on each filing day) once that is built, and Yahoo's before, or when Yahoo's "
     "year is newer or gives an input the SEC's lacks (depreciation, working capital); the "
-    "<b>Source</b> line says which and why. <b>Refresh</b> rebuilds the report for the ticker in the "
+    "<b>Source</b> line says which, why, and which inputs the SEC's statements lack. <b>Refresh</b> rebuilds the report for the ticker in the "
     "box from the stored data with no network call; a ticker with nothing stored needs a Fetch first.")
 
 

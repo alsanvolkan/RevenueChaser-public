@@ -103,11 +103,14 @@ def _financials_record(rec: dict) -> dict:
 
 
 def _statement_gaps(annual: list[dict]) -> list[str]:
-    """The base-year inputs the engines would run on a labelled default for (``dcf_engine``): EBITDA, depreciation
-    and capex of the newest year, and working capital in every year."""
+    """The base-year inputs the engines would run on a labelled default for (``dcf_engine``): revenue, EBITDA,
+    depreciation and capex of the newest year with revenue (``fiscal_year.anchor``), and working capital in every
+    year."""
+    from RevenueChaser.core import fiscal_year
     from RevenueChaser.core.config import to_float
     from .engines.dcf_engine import _nwc
-    latest = annual[-1] if annual else {}
+    i = fiscal_year.anchor(annual)
+    latest = annual[i] if i is not None else {}
     gaps = sorted(f for f in ("revenue", "ebitda", "depreciation") if to_float(latest.get(f)) is None)
     if to_float(latest.get("capex")) is None and to_float(latest.get("capital_expenditure")) is None:
         gaps = sorted(gaps + ["capex"])
@@ -117,38 +120,50 @@ def _statement_gaps(annual: list[dict]) -> list[str]:
 
 
 def _statements_choice(sec: list[dict], yahoo: list[dict]) -> tuple[str, list[str]]:
-    """``("sec", [])`` or ``("yahoo", what the SEC's statements lack)``: which annual statements a run models.
+    """``(used, what the SEC's statements lack)``: which annual statements a run models, ``"sec"`` or ``"yahoo"``.
 
     The SEC's, unless Yahoo's newest year is newer, or is the same year and gives an input the SEC's lacks (the
     real-data check of 29 Oct 2026: the SEC facts carry no depreciation for MSFT, ORCL, AMD and AVGO, no working
     capital for a filer without an inventory line, and no year after 2020 for an IFRS filer such as TM, so their DCF
     ran on defaults Yahoo did not need). Default chosen, change if avo prefers the SEC's statements always.
 
+    A year is the newest one with revenue (``fiscal_year.anchor``), so a newer year with only a balance sheet is no
+    newer year (Opus review S2). With ``"sec"`` the list is every input the SEC's year lacks, which then runs on a
+    default and is named on the Source line (Opus review S1); with ``"yahoo"`` it is what Yahoo's gives that the
+    SEC's lacks.
+
     shortcut: a whole-source choice per run, never a field-by-field mix; upgrade when the layer serves depreciation's
     other tags and current assets and liabilities (#271; then the SEC's statements stand alone)."""
+    from RevenueChaser.core import fiscal_year
+    sec_gaps = _statement_gaps(sec)
     if not yahoo:
-        return "sec", []
+        return "sec", sec_gaps
 
     def year(rows):
-        text = str((rows[-1] if rows else {}).get("fiscal_year") or "")[:4]
+        i = fiscal_year.anchor(rows)
+        text = str(rows[i].get("fiscal_year") or "")[:4] if i is not None else ""
         return int(text) if text.isdigit() else None
 
     s, y = year(sec), year(yahoo)
     if s is not None and y is not None and s != y:
-        return ("sec", []) if s > y else ("yahoo", [f"the fiscal year {y}"])
-    lacking = [g for g in _statement_gaps(sec) if g not in _statement_gaps(yahoo)]
-    return ("yahoo", lacking) if lacking else ("sec", [])
+        return ("sec", sec_gaps) if s > y else ("yahoo", [f"the fiscal year {y}"])
+    lacking = [g for g in sec_gaps if g not in _statement_gaps(yahoo)]
+    return ("yahoo", lacking) if lacking else ("sec", sec_gaps)
 
 
 def _sec_statements(ticker: str) -> tuple[list[dict], dict] | None:
     """``(annual, meta)``: the newest ``SEC_YEARS`` fiscal years from the fundamentals layer (G6, build plan PR 15:
-    "statement inputs from the store"), or None off the layer or when it holds no year for ``ticker``."""
-    from RevenueChaser.core import fundamentals_layer
+    "statement inputs from the store"), or None off the layer or when it holds no year for ``ticker``. They end on
+    the newest year with revenue: a later year the layer serves with only balance-sheet fields is not a base year
+    (Opus review S2)."""
+    from RevenueChaser.core import fiscal_year, fundamentals_layer
     if not fundamentals_layer.reads_layer():
         return None
     annual, _quarterly, meta = fundamentals_layer.records(ticker)
-    if not annual:
+    i = fiscal_year.anchor(annual)
+    if i is None:
         return None
+    annual = annual[:i + 1]
     return [_financials_record(r) for r in annual[-SEC_YEARS:]], meta
 
 
@@ -228,8 +243,10 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
         used, lacking = _statements_choice(annual, financials.get("annual") or [])
         if used == "sec":
             filed = meta.get("newest_filed")
-            financials = {**financials, "annual": annual, "statements_meta": {**meta, "used": "sec"},
+            financials = {**financials, "annual": annual,
+                          "statements_meta": {**meta, "used": "sec", "sec_lacks": lacking},
                           "source": "SEC company facts (statements" + (f", newest filed {filed}" if filed else "")
+                                    + ("; not in the facts, so defaults: " + ", ".join(lacking) if lacking else "")
                                     + ") · Yahoo (price, shares, beta)"}
         else:
             financials = {**financials, "statements_meta": {**meta, "used": "yahoo", "sec_lacks": lacking},

@@ -117,13 +117,46 @@ def _year(fy, drop=(), **extra):
                                                 current_assets=50.0, current_liabilities=30.0)], "yahoo",
      ["working capital"]),                                                                      # a software filer
     ([_year(2013)], [_year(2026)], "yahoo", ["the fiscal year 2026"]),                          # TM: SEC years stale
-    ([_year(2026, drop=("depreciation",))], [_year(2025)], "sec", []),                          # the SEC's is newer
-    ([_year(2025, drop=("depreciation",))], [_year(2025, drop=("depreciation",))], "sec", []),   # neither has it
+    # The SEC's year is newer: its statements are modelled, and what they lack is named (Opus review S1).
+    ([_year(2026, drop=("depreciation",))], [_year(2025)], "sec", ["depreciation"]),
+    ([_year(2025, drop=("depreciation",))], [_year(2025, drop=("depreciation",))], "sec", ["depreciation"]),
+    # The years compare on revenue (Opus review S2): a newer year with only a balance sheet is no newer year.
+    ([_year(2025, drop=("depreciation",)), {"fiscal_year": "2026", "cash": 1.0}], [_year(2025)], "yahoo",
+     ["depreciation"]),
+    ([_year(2024)], [_year(2025), {"fiscal_year": "2026", "cash": 1.0}], "yahoo", ["the fiscal year 2025"]),
     ([_year(2025)], [], "sec", []),                                                             # no Yahoo payload
 ])
 def test_the_statements_a_run_models(sec, yahoo, used, missing):
     import RevenueChaser.module_financials.run as fm
     assert fm._statements_choice(sec, yahoo) == (used, missing)
+
+
+def test_the_sec_statements_end_on_the_newest_year_with_revenue(monkeypatch):
+    # Opus review S2: a newest year the layer serves with only balance-sheet fields is not the DCF's base year.
+    import RevenueChaser.module_financials.run as fm
+    from RevenueChaser.core import fundamentals_layer
+    years = [{"fiscal_year": "2024", "revenue": 90.0}, {"fiscal_year": "2025", "revenue": 100.0},
+             {"fiscal_year": "2026", "cash": 5.0}]
+    monkeypatch.setattr(fundamentals_layer, "reads_layer", lambda: True)
+    monkeypatch.setattr(fundamentals_layer, "records", lambda t: (years, [], {"newest_filed": "2026-08-01"}))
+    annual, _meta = fm._sec_statements(TICKER)
+    assert [r["fiscal_year"] for r in annual] == ["2024", "2025"]
+
+
+def test_a_run_on_the_secs_statements_names_what_they_lack(built, monkeypatch, tmp_path):  # noqa: F811
+    # Opus review S1: the SEC's newer year wins, and the Source line names the inputs that run on a default.
+    import RevenueChaser.module_financials.run as fm
+    from RevenueChaser.core.providers import cache as cache_manager
+    _clock(monkeypatch)
+    monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
+    cache_manager.save(TICKER, {"ticker": TICKER, "info": {"longName": "Growth Co."}, "shares_outstanding": 50.0,
+                                "market_cap": 5000.0, "beta": 1.1, "current_price": 100.0, "currency": "USD",
+                                "source": "yfinance", "annual": [_year(2024)]})
+    out = fm.run(TICKER, modules=["dcf"], output="none", no_fetch=True)["results"]
+    fin = out["financials"]
+    assert fin["statements_meta"]["used"] == "sec" and "ebitda" in fin["statements_meta"]["sec_lacks"]
+    assert fin["source"].startswith("SEC company facts (statements") and "defaults: " in fin["source"]
+    assert "ebitda" in fin["source"].split("defaults: ")[1]
 
 
 def test_a_run_keeps_yahoos_statements_and_says_why(built, monkeypatch, tmp_path):  # noqa: F811
