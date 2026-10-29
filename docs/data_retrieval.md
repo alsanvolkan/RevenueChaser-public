@@ -308,7 +308,7 @@ whole app at a local server:
 |---|---|
 | `RC_UW_BASE` | Unusual Whales (`core/providers/unusual_whales.py`, `core/index_lists.py`) |
 | `RC_UW_BASE_ROOT` | Unusual Whales for `module_spx_gamma` (no `/api` suffix) |
-| `RC_SEC_WWW_BASE` / `RC_SEC_DATA_BASE` | SEC EDGAR + 13F archives; the spine's `sec/company_tickers_exchange` |
+| `RC_SEC_WWW_BASE` / `RC_SEC_DATA_BASE` | SEC EDGAR + 13F archives; the spine's `sec/company_tickers_exchange`; the ownership store's EDGAR daily index, filings (`sec/13f`, `sec/form4`, `sec/13dg`) and fails-to-deliver files (`sec/ftd`) |
 | `RC_FORM13F_INDEX_URL` | SEC Form 13F data-set page (zip links are resolved from it) |
 | `RC_FRED_BASE` | FRED series (also the market store's FRED source) |
 | `RC_CBOE_BASE` | Cboe daily-price index files (`module_earnings_radar/inputs/vol_index.py`, `rcdata/build/sources/cboe.py`) |
@@ -331,6 +331,10 @@ whole app at a local server:
 | `RC_NASDAQ_API_BASE` | Nasdaq's list API, the Nasdaq-100 members (`rcdata/build/spine/funds.py`) |
 | `RC_INVESCO_API_BASE` | Invesco's fund holdings API: QQQ, the second Nasdaq-100 file (`rcdata/build/spine/funds.py`) |
 | `RC_ALPACA_BASE` | Alpaca market data (`data.alpaca.markets`): the prices store's daily bars and corporate actions (`rcdata/build/sources/alpaca.py`, read at call time) |
+| `RC_FINRA_API_BASE` | FINRA's keyless API, consolidated short interest (`rcdata/build/ownership/finra.py`, read at call time); default `https://api.finra.org` |
+| `RC_REGSHO_NASDAQ_BASE` | Nasdaq Trader's Reg SHO threshold files (`rcdata/build/ownership/regsho.py`, read at call time); default `https://www.nasdaqtrader.com/dynamic/symdir/regsho` |
+| `RC_NYSE_BASE` | NYSE's site, the Reg SHO threshold downloads of NYSE, NYSE American and NYSE Arca (`rcdata/build/ownership/regsho.py`, read at call time); default `https://www.nyse.com` |
+| `RC_IBKR_SHORT_FTP_HOST` | IBKR's public short-stock FTP server (`rcdata/build/ownership/ibkr.py`, read at call time; the public `shortstock` login, no account); default `ftp3.interactivebrokers.com` |
 
 `RC_FDA_USER_AGENT` overrides the `User-Agent` header sent to FDA OOPD
 (`core/providers/fda_orphan.py`); default `"RevenueChaser research"`.

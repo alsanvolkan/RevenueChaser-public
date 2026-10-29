@@ -170,11 +170,13 @@ class RunContext:
 
 
 def http_get(ctx: RunContext, provider: str, url: str, params: dict | None = None,
-             headers: dict | None = None, keyed: bool = False) -> httpx.Response:
+             headers: dict | None = None, keyed: bool = False, accept: tuple[int, ...] = ()) -> httpx.Response:
     """GET with the keyless retry ladder; every attempt is counted for ``provider``. Raises ``SourceError``.
 
     ``params`` may hold a key (FRED): neither the query nor the headers are ever logged. ``keyed``: the request
-    carries the provider's key (Alpaca's headers), so a 403 points at the key, not at ``RC_HTTP_CONTACT``.
+    carries the provider's key (Alpaca's headers), so a 403 points at the key, not at ``RC_HTTP_CONTACT``. A status in
+    ``accept`` is answered as it is, neither retried nor raised: a source whose 404 means "not published yet" reads it
+    itself.
     """
     last = ""
     for attempt in range(1, HTTP_ATTEMPTS + 1):
@@ -187,7 +189,7 @@ def http_get(ctx: RunContext, provider: str, url: str, params: dict | None = Non
         else:
             if r.status_code == 429:
                 ctx.count(provider, http_429=1)
-            if r.status_code < 400:
+            if r.status_code < 400 or r.status_code in accept:
                 return r
             last = f"HTTP {r.status_code}"
             if r.status_code == 403 and keyed:
