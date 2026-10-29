@@ -181,7 +181,7 @@ def test_a_run_models_the_stores_market_inputs_and_says_so(built, monkeypatch, t
     assert fin["source"].endswith(" · prices store, 2026-10-27 close (price, market cap, shares, beta)")
     assert "Yahoo (price" not in fin["source"]
     assert dcf["wacc"]["beta"] == pytest.approx(1.5)
-    assert dcf["wacc"]["beta_source"] == "prices store (5y monthly vs S&P 500)"
+    assert dcf["wacc"]["beta_source"] == "prices store (5y monthly split-adjusted price returns vs S&P 500)"
 
 
 def test_a_run_without_the_prices_store_keeps_yahoos_and_says_so(built, monkeypatch, tmp_path):  # noqa: F811

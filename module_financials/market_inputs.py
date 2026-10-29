@@ -12,8 +12,9 @@ the beta the models read, Yahoo's values only where the store has none.
   cap of an earlier session over today's close is no count; Yahoo's cap and shares stay). For one class it is the shares outstanding;
   for an issuer with two classes it is the count that makes the per-share value comparable with this class's price.
 - **Beta:** the slope of ``BETA_MONTHS`` monthly returns of the split-adjusted close on the S&P 500 level
-  (``index:SPX``), Yahoo's own definition (five years, monthly). Price returns on both sides: the index level carries
-  no dividends. Fewer than ``BETA_MIN_MONTHS`` returns, and Yahoo's beta stays.
+  (``index:SPX``): five years of monthly price returns on both sides, the window Yahoo states for its own. Neither
+  side carries dividends (the close is split-adjusted only, the index level is a price index), so a high-yield
+  name's beta is not Yahoo's to the decimal. Fewer than ``BETA_MIN_MONTHS`` returns, and Yahoo's beta stays.
 
 Each value the store does not give keeps Yahoo's, and the Source line names which came from where.
 """
@@ -123,7 +124,7 @@ def overlay(ticker: str, financials: dict) -> tuple[dict, str]:
     session = store["price_session"].isoformat() if "price_session" in store else None
     meta = {"from_store": [k for k, v in got.items() if v], "price_session": session}
     if got["beta"]:
-        fields["beta_source"] = f"{STORE} ({BETA_MONTHS // 12}y monthly vs S&P 500)"
+        fields["beta_source"] = f"{STORE} ({BETA_MONTHS // 12}y monthly split-adjusted price returns vs S&P 500)"
     out = {**financials, **fields, "market_meta": meta}
     ours = [k for k, v in got.items() if v]
     theirs = [k for k, v in got.items() if not v]
