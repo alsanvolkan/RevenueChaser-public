@@ -1,7 +1,7 @@
 """Summary cards: Delta/Gamma/Vanna/Charm signals + narratives + metrics (derived from data)."""
 from __future__ import annotations
 
-from .charm_pin import MODE_DIRECTIONALIZED_VOLUME, MODE_OPEN_INTEREST, net_charm, net_vanna
+from .charm_pin import MODE_DIRECTIONALIZED_VOLUME, MODE_OPEN_INTEREST, charm_direction, net_charm, net_vanna
 
 
 def _fmt_usd(v) -> str:
@@ -181,8 +181,9 @@ def charm_card(spot_exposure_rows, charm_qualification, spot):
     pos_v = positioning or 0.0
     # Two zero sums (or one) carry no direction, so they never "agree".
     agree = live_v != 0 and pos_v != 0 and (live_v > 0) == (pos_v > 0)
-    live_dir = "Sell pressure" if live_v < 0 else "Buy pressure"
-    pos_dir = "Buy pressure" if pos_v > 0 else "Sell pressure"
+    # A zero sum is flat on both rows; it used to read Buy on one and Sell on the other (review N1).
+    live_dir = charm_direction(live) or ""
+    pos_dir = charm_direction(positioning) or ""
     imbalance = abs(pos_v) / (abs(live_v) + abs(pos_v)) * 100 if (abs(live_v) + abs(pos_v)) else None
     cq = charm_qualification or {}
     c_strike = cq.get("strike")

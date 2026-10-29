@@ -35,7 +35,7 @@ def latest(tmp_path, monkeypatch):
 
 def _compute(monkeypatch, result):
     import RevenueChaser.module_sector_rotation.money_flow as mf
-    monkeypatch.setattr(mf, "compute_money_flow", lambda uw, **k: dict(result))
+    monkeypatch.setattr(mf, "compute_money_flow", lambda **k: dict(result))
 
 
 def _read(path):

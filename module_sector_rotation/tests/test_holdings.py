@@ -1,99 +1,48 @@
 """Tests for ETF holdings + SPY-relative strength (engine, cache, fragment, route)."""
-from datetime import date
+from datetime import date, timedelta
 
-from RevenueChaser.module_sector_rotation.engine import holdings_with_rs, _normalize_ohlc, _closes_from
+from RevenueChaser.module_sector_rotation.engine import holdings_rs_rows
 from RevenueChaser.module_sector_rotation.report import render_holdings_fragment
 
-
-class TestNormalizeOhlc:
-    def test_sorts_descending_weekly_ascending(self):
-        # UW weekly endpoint returns newest-first with 3 rows/week (pr/r/po)
-        rows = [
-            {"date": "2026-08-10", "close": "167.76", "market_time": "pr"},
-            {"date": "2026-08-10", "close": "167.37", "market_time": "r"},
-            {"date": "2026-08-10", "close": "167.37", "market_time": "po"},
-            {"date": "2026-08-03", "close": "160.0", "market_time": "r"},
-            {"date": "2026-04-13", "close": "147.25", "market_time": "pr"},
-        ]
-        norm = _normalize_ohlc(rows)
-        dates = [r["date"] for r in norm]
-        assert dates == sorted(dates), "sorted ascending by date"
-        assert len(norm) == 3, "one row per date after dedupe"
-
-    def test_prefers_regular_close(self):
-        rows = [
-            {"date": "2026-08-10", "close": "167.76", "market_time": "pr"},
-            {"date": "2026-08-10", "close": "167.37", "market_time": "r"},
-            {"date": "2026-08-10", "close": "167.40", "market_time": "po"},
-        ]
-        norm = _normalize_ohlc(rows)
-        assert norm[0]["close"] == "167.37", "regular 'r' close preferred"
-
-    def test_closes_last_is_latest(self):
-        rows = [
-            {"date": "2026-04-13", "close": "147.25", "market_time": "pr"},
-            {"date": "2026-08-10", "close": "167.37", "market_time": "r"},
-        ]
-        closes = _closes_from(rows)
-        assert closes[-1] == 167.37, "last close is the latest date, not the oldest"
+# The holdings RS is a prices-store read now (``bar_points`` -> ``holdings_rs_rows``): the UW candle path and its
+# normalizers are gone, so the rules below are pinned on the stored ``(session, close)`` points.
+AS_OF = date(2026, 8, 14)
+SESSIONS = [AS_OF - timedelta(days=69 - i) for i in range(70)]
 
 
-class _FakeUW:
-    def __init__(self, holdings=None, spy_ohlc=None, ohlc=None):
-        self._holdings = holdings or []
-        self._spy_ohlc = spy_ohlc or []
-        self._ohlc = ohlc or {}
-
-    def etf_holdings(self, ticker):
-        return self._holdings
-
-    def etf_ohlc(self, ticker, days=90, candle_size="1d"):
-        if ticker == "SPY":
-            return self._spy_ohlc
-        return self._ohlc.get(ticker, [])
+def _points(closes: list[float]) -> list[tuple]:
+    return list(zip(SESSIONS, closes))
 
 
-def _ohlc(closes):
-    return [{"date": f"2026-0{1+i//20}-{1+i%20:02d}", "close": c} for i, c in enumerate(closes)]
+FLAT_SPY = _points([100.0] * 70)
+UP = _points([100.0 + i for i in range(70)])
+DOWN = _points([200.0 - i for i in range(70)])
 
 
-class TestHoldingsWithRs:
-    def test_drops_no_ohlc_listing_and_rs(self):
-        # spy flat; holding rising => positive RS
-        spy = _ohlc([100.0] * 70)
-        up = _ohlc([100.0 + i for i in range(70)])   # rising
-        down = _ohlc([200.0 - i for i in range(70)])  # falling
-        uw = _FakeUW(
-            holdings=[
-                {"ticker": "BIG", "name": "Big", "weight": "5.0"},
-                {"ticker": "FOREIGN", "name": "Foreign", "weight": "9.0"},  # no OHLC -> skipped
-                {"ticker": "DN", "name": "Down", "weight": "4.0"},
-            ],
-            spy_ohlc=spy,
-            ohlc={"BIG": up, "DN": down},  # FOREIGN has no OHLC entry
-        )
-        rows = holdings_with_rs("XLK", uw)
-        tickers = [r["ticker"] for r in rows]
-        assert "FOREIGN" not in tickers, "listings with no OHLC data are excluded"
-        big = [r for r in rows if r["ticker"] == "BIG"][0]
-        assert big["rs_1m"] > 0, "rising stock vs flat SPY => positive RS"
-        assert big["close"] == 169.0, "close comes from the last OHLC close"
-        dn = [r for r in rows if r["ticker"] == "DN"][0]
-        assert dn["rs_1m"] < 0, "falling stock vs flat SPY => negative RS"
+class TestHoldingsRs:
+    def test_a_holding_with_no_stored_bar_keeps_its_row_with_no_rs(self):
+        """It used to be dropped silently when UW had no candle; the store path shows it as "n/a" instead."""
+        holdings = [{"ticker": "BIG", "name": "Big", "weight": "5.0"},
+                    {"ticker": "FOREIGN", "name": "Foreign", "weight": "9.0"},
+                    {"ticker": "DN", "name": "Down", "weight": "4.0"}]
+        rows = holdings_rs_rows(holdings, {"BIG": UP, "DN": DOWN}, FLAT_SPY, AS_OF)
+        by = {r["ticker"]: r for r in rows}
+        assert by["FOREIGN"]["close"] is None and by["FOREIGN"]["rs_1m"] is None
+        assert by["BIG"]["rs_1m"] > 0                       # rising against a flat SPY
+        assert by["BIG"]["close"] == 169.0
+        assert by["DN"]["rs_1m"] < 0
 
-    def test_caps_at_max_holdings(self):
-        spy = _ohlc([100.0] * 70)
-        up = _ohlc([100.0 + i for i in range(70)])
-        holdings = [{"ticker": f"T{i}", "name": f"T{i}", "weight": f"{100 - i}"}
-                    for i in range(15)]
-        uw = _FakeUW(holdings=holdings, spy_ohlc=spy, ohlc={f"T{i}": up for i in range(15)})
-        rows = holdings_with_rs("XLK", uw, max_holdings=10)
-        assert len(rows) == 10, "capped at max_holdings"
-        weights = [r["weight"] for r in rows]
-        assert weights == sorted(weights, reverse=True), "sorted by weight desc"
+    def test_capped_at_max_holdings_and_sorted_by_weight(self):
+        holdings = [{"ticker": f"T{i}", "name": f"T{i}", "weight": f"{100 - i}"} for i in range(15)]
+        rows = holdings_rs_rows(holdings, {f"T{i}": UP for i in range(15)}, FLAT_SPY, AS_OF, max_holdings=10)
+        assert len(rows) == 10
+        assert [r["weight"] for r in rows] == sorted((r["weight"] for r in rows), reverse=True)
 
-    def test_empty_holdings(self):
-        assert holdings_with_rs("XLK", _FakeUW([])) == []
+    def test_no_holdings_is_no_rows(self):
+        assert holdings_rs_rows([], {}, FLAT_SPY, AS_OF) == []
+
+    def test_a_short_spy_series_computes_nothing(self):
+        assert holdings_rs_rows([{"ticker": "BIG", "weight": "5.0"}], {"BIG": UP}, FLAT_SPY[:10], AS_OF) == []
 
 
 class TestRenderHoldingsFragment:

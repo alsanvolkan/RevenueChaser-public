@@ -38,6 +38,7 @@ UW_CALENDAR_ROW_LIMIT = 500          # the limit the client asks for (unusual_wh
 
 def effective_config() -> dict:
     """What the board scores and filters with: the gates, the rule and NRC weights, the rule tunables."""
+    from RevenueChaser.module_earnings_radar import store_reads
     from RevenueChaser.module_earnings_radar.stored_inputs import max_lag_map
     return {
         "MAX_DEEP_CHECKS_PER_DAY": config.MAX_DEEP_CHECKS_PER_DAY, "MIN_OPTION_VOLUME": config.MIN_OPTION_VOLUME,
@@ -46,9 +47,12 @@ def effective_config() -> dict:
         "WATCHLIST_BYPASS": config.WATCHLIST_BYPASS, "FLOW_SWEEP_BLOCK_MIN": config.FLOW_SWEEP_BLOCK_MIN,
         "INST_FLOW_MIN_NET": config.INST_FLOW_MIN_NET, "RULE_WEIGHTS": dict(config.RULE_WEIGHTS),
         "NRC_WEIGHTS": dict(config.NRC_WEIGHTS), "TUNABLES": dict(config.TUNABLES),
-        # How stale a stored input may be before the run reads live instead (E5, #372). Read from the need
-        # catalog, its single owner (avo, 29 Oct 2026), so moving a number there moves this hash with it.
-        "MAX_LAG": max_lag_map(),
+        # How stale a stored input may be before the run reads live instead (E5, #372), or, for the market and
+        # fundamentals stores' inputs (``store_reads``), before it is not read at all. Every one of these numbers
+        # is read from the need catalog, its single owner (avo, 29 Oct 2026), so moving one there moves this hash
+        # with it instead of the two drifting apart in silence.
+        "MAX_LAG": {**max_lag_map(), **store_reads.max_lag()},
+        "MAX_AGE_DAYS": store_reads.max_age_days(),
     }
 
 

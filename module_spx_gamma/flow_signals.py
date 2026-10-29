@@ -12,6 +12,9 @@ Signals:
   - FAKEOUT_RISK  : price above an OI wall but flow is not confirming
                     (mean-reversion risk back inside the wall).
   - WALL_HOLDING  : neither condition — structural wall is holding.
+  - ABOVE_CALL_WALL / BELOW_PUT_WALL : price is past a wall by more than the 1% band, so the wall is
+                    no longer being tested (review N3: "at the wall" had no far edge, so a spot 3% past
+                    the wall still read as testing it, or as a wall that holds).
 """
 from __future__ import annotations
 
@@ -52,8 +55,8 @@ def evaluate_flow_signal(snapshot: dict) -> dict:
     """Evaluate the intraday flow signal from a normalized snapshot.
 
     Returns ``{signal, label, tone, narrative}`` where ``signal`` is one of
-    ``SQUEEZE_ALERT`` / ``FAKEOUT_RISK`` / ``WALL_HOLDING``, or None when there is nothing to test:
-    missing flow rows or a missing spot are not a wall that holds (DF26).
+    ``SQUEEZE_ALERT`` / ``FAKEOUT_RISK`` / ``WALL_HOLDING`` / ``ABOVE_CALL_WALL`` / ``BELOW_PUT_WALL``,
+    or None when there is nothing to test: missing flow rows or a missing spot are not a wall that holds (DF26).
     """
     spot = snapshot.get("current_level")
     levels = snapshot.get("levels", {})
@@ -70,7 +73,8 @@ def evaluate_flow_signal(snapshot: dict) -> dict:
     put_wall_oi = to_float(levels.get("lower_support_band"))
 
     def _at_wall(strike: float | None) -> bool:
-        return strike is not None and spot >= strike * (1 - WALL_DISTANCE_PCT)
+        # Within the band on either side of the wall (review N3).
+        return strike is not None and abs(spot - strike) <= strike * WALL_DISTANCE_PCT
 
     # Confluence (squeeze / breakout): at the OI call wall with strong call flow.
     if _at_wall(call_wall_oi):
@@ -103,7 +107,7 @@ def evaluate_flow_signal(snapshot: dict) -> dict:
             }
 
     # Holding at the put wall? symmetric confirmation check.
-    if put_wall_oi is not None and spot <= put_wall_oi * (1 + WALL_DISTANCE_PCT):
+    if _at_wall(put_wall_oi):
         rows = _wall_rows(flow_rows, put_wall_oi)
         cv, pv = _call_vs_put(rows)
         if pv > 0 and pv >= cv * CALL_FLOW_RATIO:
@@ -115,6 +119,20 @@ def evaluate_flow_signal(snapshot: dict) -> dict:
                               f"{ratio} Put flow."),
             }
 
+    if call_wall_oi is not None and spot > call_wall_oi * (1 + WALL_DISTANCE_PCT):
+        return {
+            "signal": "ABOVE_CALL_WALL", "label": "Above Call Wall",
+            "tone": "flat",
+            "narrative": (f"Price {(spot / call_wall_oi - 1) * 100:.1f}% above Call Wall {call_wall_oi:,.0f}: "
+                          "the wall is behind price, not being tested, and no fakeout signal."),
+        }
+    if put_wall_oi is not None and spot < put_wall_oi * (1 - WALL_DISTANCE_PCT):
+        return {
+            "signal": "BELOW_PUT_WALL", "label": "Below Put Wall",
+            "tone": "flat",
+            "narrative": (f"Price {(1 - spot / put_wall_oi) * 100:.1f}% below Put Wall {put_wall_oi:,.0f}: "
+                          "the wall has given way and is not being tested."),
+        }
     return {
         "signal": "WALL_HOLDING", "label": "Wall Holding",
         "tone": "flat",

@@ -71,7 +71,7 @@ class TestMoneyFlow:
         good = {"inflows": [{"ticker": "UP"}], "outflows": [{"ticker": "DN"}],
                 "generated_at": "2026-09-01T00:00:00", "as_of": "2026-08-29"}
         latest.write_text(json.dumps(good), encoding="utf-8")
-        monkeypatch.setattr(mf, "compute_money_flow", lambda uw, **k: {
+        monkeypatch.setattr(mf, "compute_money_flow", lambda **k: {
             "inflows": [], "outflows": [], "generated_at": None, "as_of": None})
         with pytest.raises(JobMessage, match=r"(?i)kept"):
             runners.run_money_flow_latest(uw=None)
@@ -80,7 +80,7 @@ class TestMoneyFlow:
     def test_non_empty_result_is_written(self, tmp_path, monkeypatch):
         import RevenueChaser.module_sector_rotation.money_flow as mf
         latest = self._patch_paths(tmp_path, monkeypatch)
-        monkeypatch.setattr(mf, "compute_money_flow", lambda uw, **k: {
+        monkeypatch.setattr(mf, "compute_money_flow", lambda **k: {
             "inflows": [{"ticker": "NEW"}], "outflows": [], "generated_at": None, "as_of": "2026-09-29"})
         runners.run_money_flow_latest(uw=None)
         assert json.loads(latest.read_text(encoding="utf-8"))["inflows"] == [{"ticker": "NEW"}]

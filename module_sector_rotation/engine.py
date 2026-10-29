@@ -9,7 +9,6 @@ import numpy as np
 from .universe import ROTATION_ETFS, MACRO_SERIES
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.gics_map import UNCLASSIFIED, canonical_sector, is_unclassified
-from RevenueChaser.core.providers.result import ProviderResult
 from RevenueChaser.core.providers.unusual_whales import UWClient
 from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 
@@ -26,60 +25,9 @@ def _finite(v):
     return v is not None and not (isinstance(v, float) and math.isnan(v))
 
 
-def _normalize_ohlc(rows: list[dict]) -> list[dict]:
-    """One regular-session close per date, oldest first.
-
-    The rule now lives in the provider (core/providers/ohlc.py, review X2) so
-    Earnings and the Rotation backfill use the same bars; kept here as the
-    name the board and money flow already call. Daily bars arrive already
-    session-clean from ``UWClient``; this also serves weekly candles, where a
-    week with only an extended-hours row is kept (``sessions_only=False``), as
-    before.
-    """
-    from RevenueChaser.core.providers.ohlc import regular_session_bars
-    return regular_session_bars(rows, sessions_only=False)
-
-
-def _closes_from(rows: list[dict]) -> list[float]:
-    return [float(c["close"]) for c in _normalize_ohlc(rows)]
-
-
-# SPY closes the holdings RS needs: the longest lookback plus today's close. Fewer means the
-# benchmark is missing (a failed fetch looks exactly like this), and every RS would read 0.0.
+# SPY closes the holdings RS needs: the longest lookback plus today's close. Fewer means the prices store does not
+# hold enough of the benchmark, and every RS would read 0.0.
 SPY_MIN_CLOSES = HOLDING_LOOKBACKS["rs_3m"] + 1
-
-
-def fetch_etf_bars(uw, ticker: str, days: int, candle_size: str = "1d") -> ProviderResult:
-    """Candles for ``ticker`` with the request outcome: ``ok`` (bars may be empty) or ``failed``.
-
-    A client without ``etf_ohlc_result`` (a test fake, an older client) is taken at its word:
-    whatever list it returns is an ``ok`` answer; an exception is a ``failed`` one.
-    """
-    try:
-        fn = getattr(uw, "etf_ohlc_result", None)
-        if fn is not None:
-            res = fn(ticker, days=days, candle_size=candle_size)
-            if isinstance(res, ProviderResult):
-                return res
-        return ProviderResult("ok", uw.etf_ohlc(ticker, days=days, candle_size=candle_size) or [], None, "")
-    except Exception as exc:  # noqa: BLE001 - a provider fault is a failed result, never a crash
-        return ProviderResult("failed", [], {"error": type(exc).__name__}, "")
-
-
-def etf_fetch_failed(res: ProviderResult) -> bool:
-    """True when the provider could not answer: no HTTP status (a transport error, or a client that raised),
-    429 or 5xx. 401/403 count too: our key was rejected, so every fetch fails and "no data" would hide a dead
-    key. Any other 4xx (404 symbol not listed, 400/422 a request UW refuses) is about that one ETF, so it is
-    "no data": a persistent refusal for one ETF must not freeze Money Flow or block every backfill day."""
-    if res.status == "ok":
-        return False
-    status = (res.error or {}).get("status")
-    return status is None or status in (401, 403, 429) or status >= 500
-
-
-def fetch_spy_closes(uw, days: int = 90) -> list[float]:
-    """SPY's regular-session closes, oldest first; ``[]`` when the fetch failed or came back empty."""
-    return _closes_from(fetch_etf_bars(uw, "SPY", days).data or [])
 
 
 def relative_strength_pct(etf_closes: list[float], spy_closes: list[float], lookback: int) -> float:
@@ -88,62 +36,6 @@ def relative_strength_pct(etf_closes: list[float], spy_closes: list[float], look
     etf_ret = etf_closes[-1] / etf_closes[-1 - lookback] - 1
     spy_ret = spy_closes[-1] / spy_closes[-1 - lookback] - 1
     return round((etf_ret - spy_ret) * 100, 2)
-
-
-def holdings_with_rs(ticker: str, uw, max_holdings: int = 10,
-                     spy_closes: Optional[list[float]] = None) -> list[dict]:
-    """Top ETF holdings with SPY-relative strength, capped at `max_holdings`.
-
-    Resolves holdings via UW -> yfinance, then computes SPY-relative RS.
-    Returns {ticker, name, weight, close, rs_1w, rs_1m, rs_3m}. A job that does this for many
-    ETFs fetches SPY once and passes it as ``spy_closes``.
-    """
-    try:
-        from .etf_holdings import get_etf_holdings
-        holdings = get_etf_holdings(ticker, uw)
-    except Exception:
-        return []
-    return holdings_with_rs_from(holdings, uw, max_holdings=max_holdings, spy_closes=spy_closes)
-
-
-def holdings_with_rs_from(holdings: list[dict], uw, max_holdings: int = 10,
-                          spy_closes: Optional[list[float]] = None) -> list[dict]:
-    """Compute SPY-relative RS for a pre-resolved holdings list (no re-fetch).
-
-    ``spy_closes`` is SPY's closes when the caller already has them (one fetch per job); otherwise
-    they are fetched here. Without at least ``SPY_MIN_CLOSES`` of them every RS would read 0.0, so
-    the answer is ``[]`` (no RS this run) and the caller keeps what it stored.
-    """
-    if spy_closes is None:
-        spy_closes = fetch_spy_closes(uw)
-    if len(spy_closes) < SPY_MIN_CLOSES:
-        logger.warning("holdings RS: SPY has %d closes, need %d; no RS computed", len(spy_closes), SPY_MIN_CLOSES)
-        return []
-
-    rows = []
-    for h in holdings:
-        t = h.get("ticker")
-        if not t:
-            continue
-        try:
-            ohlc = uw.etf_ohlc(t, days=90, candle_size="1d") or []
-        except Exception:
-            ohlc = []
-        closes = _closes_from(ohlc)
-        if not closes:
-            continue  # no OHLC data (foreign/unpriced listing)
-        rows.append({
-            "ticker": t,
-            "name": h.get("name") or "",
-            "weight": _safe_float(h.get("weight")),
-            "close": closes[-1],
-            "rs_1w": relative_strength_pct(closes, spy_closes, HOLDING_LOOKBACKS["rs_1w"]),
-            "rs_1m": relative_strength_pct(closes, spy_closes, HOLDING_LOOKBACKS["rs_1m"]),
-            "rs_3m": relative_strength_pct(closes, spy_closes, HOLDING_LOOKBACKS["rs_3m"]),
-        })
-
-    rows.sort(key=lambda r: r["weight"], reverse=True)
-    return rows[:max_holdings]
 
 
 def _industry_label(value) -> str:

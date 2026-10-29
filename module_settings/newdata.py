@@ -78,7 +78,7 @@ WRDS_DIFFERENCE = ("wrds/fundq", "wrds/funda", "wrds/firm_ratio", "wrds/segments
 NO_WRDS = {"text": "no WRDS run yet"}
 # Old .store tables a new dataset replaces: their reads in read_log are the retirement count (read for 14 days).
 RETIRING = {"macro_series": "market_series", "vol_index_daily": "market_series", "cftc_cot": "market_series",
-            "economic_calendar": "market_series"}
+            "economic_calendar": "market_series", "estimate_snapshots": "estimate_latest"}
 RETIREMENT_DAYS = 14
 BACKUP_WARN_DAYS = 35
 PORTABLE_DATASET = "backup/portable"

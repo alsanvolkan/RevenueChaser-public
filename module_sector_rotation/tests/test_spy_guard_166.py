@@ -61,51 +61,16 @@ def test_relative_strength_pct_still_returns_zero_on_short_data():
     assert engine.relative_strength_pct([1.0] * 70, [], 5) == 0.0
 
 
-# ── holdings RS ───────────────────────────────────────────────────────────────────────────
+# ── holdings RS (the prices store since M-ROT-3; the per-holding candle path is gone) ─────
 
 HOLDINGS = [{"ticker": "BIG", "name": "Big", "weight": "5.0"}, {"ticker": "DN", "name": "Down", "weight": "4.0"}]
 
 
 def _healthy():
+    """A client that must not be asked anything: the holdings RS is a store read."""
     start = BASE - timedelta(days=89)
-    return FakeUW(spy=_rows(70, start, step=0.0), etfs={"BIG": _rows(70, start, 1.0), "DN": _rows(70, start, -1.0, 200.0)})
-
-
-def test_holdings_rs_is_computed_when_spy_has_enough_closes():
-    rows = engine.holdings_with_rs_from(HOLDINGS, _healthy())
-    assert [r["ticker"] for r in rows] == ["BIG", "DN"] and rows[0]["rs_1m"] > 0 > rows[1]["rs_1m"]
-
-
-@pytest.mark.parametrize("spy", [[], _rows(63, BASE - timedelta(days=62))])
-def test_holdings_rs_is_empty_not_zero_when_spy_candles_are_missing_or_short(spy, caplog):
-    uw = _healthy()
-    uw.spy = spy
-    with caplog.at_level(logging.WARNING):
-        assert engine.holdings_with_rs_from(HOLDINGS, uw) == []
-    assert "SPY" in caplog.text
-
-
-def test_holdings_rs_boundary_is_64_closes():
-    uw = _healthy()
-    uw.spy = _rows(64, BASE - timedelta(days=63), step=0.0)
-    assert len(engine.holdings_with_rs_from(HOLDINGS, uw)) == 2
-
-
-def test_holdings_rs_is_empty_when_the_spy_request_failed():
-    uw = ResultUW(spy=_rows(70, BASE - timedelta(days=69)), etfs=_healthy().etfs, failed={"SPY"})
-    assert engine.holdings_with_rs_from(HOLDINGS, uw) == []
-
-
-def test_holdings_rs_does_not_fetch_spy_when_it_is_passed_in():
-    uw = _healthy()
-    spy = engine._closes_from(uw.spy)
-    uw.spy = []                                             # would be "missing" if it were fetched
-    rows = engine.holdings_with_rs_from(HOLDINGS, uw, spy_closes=spy)
-    assert len(rows) == 2 and "SPY" not in uw.calls
-
-
-def test_passed_in_short_spy_closes_are_guarded_too():
-    assert engine.holdings_with_rs_from(HOLDINGS, _healthy(), spy_closes=[100.0] * 10) == []
+    return FakeUW(spy=_rows(70, start, step=0.0), etfs={"BIG": _rows(70, start, 1.0),
+                                                        "DN": _rows(70, start, -1.0, 200.0)})
 
 
 def test_fetch_all_holdings_reads_d01_once_for_the_whole_job(rawstore_tmp_db, monkeypatch):
@@ -235,23 +200,3 @@ class TestDailyBackfillGuards:
         _full_d01(skip={"XLE"})
         res = store.backfill_snapshots(None, days=5)
         assert res == 5 and res.failed == []
-
-
-# ── which failures count as a failed fetch ─────────────────────────────────────────────────
-
-@pytest.mark.parametrize("error", [{"status": None}, {"error": "ConnectError"}, {"status": 401}, {"status": 403},
-                                   {"status": 429}, {"status": 500}, {"status": 502}, {"status": 503}, None])
-def test_a_provider_that_could_not_answer_is_a_failed_fetch(error):
-    """No status (transport error, or a fake that raised), 429, 5xx: the provider did not answer. 401/403:
-    our key was rejected, so every ETF fetch fails and calling that "no data" would hide a dead key."""
-    assert engine.etf_fetch_failed(ProviderResult("failed", [], error, "")) is True
-
-
-@pytest.mark.parametrize("status", [400, 404, 410, 422])
-def test_a_request_the_provider_refuses_is_no_data_not_a_failed_fetch(status):
-    """404 (symbol not listed) and any other 4xx but 401/403/429 are about that one request, not an outage."""
-    assert engine.etf_fetch_failed(ProviderResult("failed", [], {"status": status}, "")) is False
-
-
-def test_an_ok_result_is_never_a_failed_fetch():
-    assert engine.etf_fetch_failed(ProviderResult("ok", [], None, "")) is False

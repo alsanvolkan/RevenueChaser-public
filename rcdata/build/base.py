@@ -472,6 +472,17 @@ def kind_datasets(kind: str) -> list[Dataset]:
     return [d for d in DATASETS.values() if d.kind == kind]
 
 
+def shrink_scope(ds: Dataset) -> tuple[str, ...]:
+    """The tables a request's ``allow_shrink`` may let shrink (review S-1 of #220): the dataset's own tables and the
+    tables the kind derives from its sources (a dataset with no provider: ``ownership/serve``, ``prices/serving``,
+    ``spine/security``, ``fundamentals/tables``), never another source dataset's own table. A feeder that serves no
+    table itself (a spine or fundamentals source) relaxes only the derived tables.
+    shortcut: every derived table of the kind is relaxed, not only those the asking source's rows reach; upgrade when
+    the datasets declare which tables each source feeds."""
+    derived = [t for d in kind_datasets(ds.kind) if not tuple(d.providers) for t in d.tables]
+    return tuple(dict.fromkeys([*ds.tables, *derived]))
+
+
 def build_kind(ctx: RunContext, ds: Dataset) -> dict:
     """Build ``ds``'s serving kind from Parquet (every dataset of the kind), check it, swap it in; the check row."""
     if not parquet_root().is_dir():
@@ -481,7 +492,7 @@ def build_kind(ctx: RunContext, ds: Dataset) -> dict:
         for d in kind_datasets(ds.kind):
             counts.update(d.build(ctx, b.con))
         check = ds.check(ctx, b.con)
-        b.swap(counts, checks=[check], allow_shrink=ctx.allow_shrink)
+        b.swap(counts, checks=[check], allow_shrink=shrink_scope(ds) if ctx.allow_shrink else ())
     for d in kind_datasets(ds.kind):
         step = getattr(d, "after_swap", None)
         if step is not None:
