@@ -257,8 +257,9 @@ date; no table or board does its own `date.today()` or UTC-date cut.
   data-date labels (a Saturday fetch would read as Friday). Early-close days (13:00 ET) stay full days on purpose
   (conservative: 13:00-16:30 reads `intraday`); revisit only if a writer needs the early-close time.
 
-**The forecast-ledger writer (#128).** `core/ledger.py` is the only code that writes `forecast_ledger`,
-through `rawstore.write_rows` alone. A board freezes its shown picks at the end of a **Fetch** (`no_fetch=False`;
+**The forecast-ledger writer (#128).** `core/ledger.py` is the only code that asks for `forecast_ledger` rows;
+since PR 10 it queues them as a `ledger/freeze` request and the builder appends them to `ledger.duckdb` (see "The
+forecast ledger" below). A board freezes its shown picks at the end of a **Fetch** (`no_fetch=False`;
 a Refresh never freezes), from `app/runners.py` (`run_swing`, `run_fundamentals`, `run_asymmetric_growth`) into
 the module's own `freeze.py`, which maps the board to ledger rows. The rule, applied by `ledger.freeze_board`:
 - the data is one complete New York session D, and D is the latest complete session (`core/calendar.py`:
@@ -266,20 +267,23 @@ the module's own `freeze.py`, which maps the board to ledger rows. The rule, app
 - the run is outside the US session window (09:30–16:30 ET);
 - the payload is real (not a fixture, not "no data", not empty; Swing and Fundamentals need SPY not stale, AG needs
   at most 1% scoring errors);
-- Swing and Fundamentals: each shown pick's last D01 bar (`price_bars_daily`, the bars the board scored from since
-  #383 R3 C12/K8b) is D and was written after D's close + 30 min (`fetched_at`); SPY's too, read from D01 first and
-  from `swing_ohlc.cached_at` only when D01 lacks SPY's D bar (the board's SPY fallback). **All or nothing:** one
+- Swing and Fundamentals: each shown pick's last bar in the prices store (the bars the board scored from; D01's,
+  `price_bars_daily`, from #383 R3 C12/K8b until PR 10) is D and was read after D's close + 30 min (`fetched_at`);
+  SPY's too, from the same store (the `swing_ohlc` fallback is gone since PR 10, F4 A part 1). **All or nothing:** one
   shown pick without such a bar refuses the whole board for the day (a thinner board would not be the forecast the
-  user saw). A scored name whose last D01 bar is before SPY's newest D01 session (a halt, a Daily Bars gap) drops
-  at the scan as `stale_bars` (a data-gap step in the funnel), so it never becomes a pick (#434 review S1); when more
-  than 5% of the names lack that bar it is a failed Daily Bars run, none drops and the freeze refuses the day. The note
-  names the picks in board rank order, split by cause: *need their D bar* (D01 has no D bar of SPY yet: Daily Bars
-  has not run; only this cause says a later Fetch can complete the day, once Daily Bars has run) and *no D bar after
-  the close* (SPY has its D bar and the pick has none: a halted name or a Daily Bars gap; a later Fetch will not
-  change it unless Daily Bars is run again). D01 is append-only, so a pick's own bar always carries its own
-  session's write time and cannot tell the two apart (#434 review S2).
-  AG: SPY's D01 bar for that session, written after its close + 30 min (`ledger.d01_has_session`, #380 S4); not the
-  universe snapshot behind the quote prices, and not `ohlc_gaps` (one name's gap must not refuse the board);
+  user saw). A scored name whose last bar is before SPY's newest session in the store (a halt, a gap in the daily
+  bars) drops at the scan as `stale_bars` (a data-gap step in the funnel), so it never becomes a pick (#434 review
+  S1); when more than 5% of the names lack that bar it is a failed daily-bars run, none drops and the freeze refuses
+  the day. The note names the picks in board rank order, split by cause: *need their D bar* (the store has no D bar
+  of SPY yet: the builder's daily bars have not run; only this cause says a later Fetch can complete the day) and
+  *no D bar after the close* (SPY has its D bar and the pick has none: a halted name or a gap; a later Fetch will not
+  change it unless the daily bars are read again). A stored bar keeps its own session's read time, so a pick's own
+  bar cannot tell the two apart (#434 review S2).
+  AG: SPY's bar for that session in the prices store, read after its close + 30 min (`ledger.prices_has_session`,
+  #380 S4; D01's until PR 10); not the universe snapshot behind the quote prices, and not `ohlc_gaps` (one name's gap
+  must not refuse the board). AG's own guards (`freeze.run_problem`: a partial universe pull, too many scoring errors)
+  are the history's "partial" rule too (review N-1, PR 10), and each AG pick carries its card's own price session
+  (`period_ends.price_bar`, review SF-1);
 - first write wins per (source, day), not just per row: the key includes `subject`, so the writer checks the whole
   (source, day) under one lock before writing, and a second Fetch the same day writes nothing.
 
@@ -1225,7 +1229,7 @@ from the store's newest session (`module_comovement/ohlc.py`; method 3). **Secto
 `split` closes and volumes, and the 11 macro series from `market_series` by `(series_id, source)` (FRED's yields and
 oil, Cboe's VVIX, Yahoo's MOVE and wheat; `core/rotation_reference.py`), so a Fetch asks no provider for them; the
 range backfill stays ETF-only. **Asymmetric Growth** scores its momentum from `split` bars up to SPY's newest session
-(`SELECTION_VERSION` 7); its freeze anchor still asks D01 until the ledger moves (G4). Until the history run (Run H)
+(`SELECTION_VERSION` 7); its freeze anchors on SPY's bar there too since PR 10 (G4). Until the history run (Run H)
 the store holds only the bars from the prices layer's deploy day on, so a two-year window or a 52-week high is short
 and the boards say so (too few sessions, momentum unknown) rather than reading the empty old D01.
 

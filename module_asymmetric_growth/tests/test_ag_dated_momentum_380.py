@@ -3,8 +3,8 @@
 Spec: ``.hermes/plans_claude/2026-10-16_r8_specs/380-ag-s4.md``, decisions 2-4. The momentum inputs come from the
 stored bars of one ticker up to the newest session SPY has, so a Fetch spends no yfinance request on a technical
 fallback, and the board says which price session it used. Since PR 11 (G3) those bars are the prices store's
-(``rcdata.read.ticker_bars``, split basis: D01's old "nominal"); the freeze anchor still reads SPY's D01 bar until G4
-moves the ledger, so ``store_bars`` writes both.
+(``rcdata.read.ticker_bars``, split basis: D01's old "nominal"), and since PR 10 (G4) the freeze anchor reads SPY's
+bar there too.
 
 The three D01 rules (decision 2, the sign of ``dist_52w_pct`` kept as ``technical_from_quote`` has it):
 

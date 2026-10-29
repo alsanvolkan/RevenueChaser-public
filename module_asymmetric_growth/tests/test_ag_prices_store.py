@@ -3,7 +3,7 @@
 ``_price_session`` is SPY's newest session there (``rcdata.read.last_sessions``) and ``_bars_by_ticker`` one windowed
 ``rcdata.read.ticker_bars`` read on the split basis (D01's old "nominal"); a bar only in the old ``price_bars_daily``
 is no bar. The board's data date (``core.provenance``) is its scored names' prices-store session, and each card keeps
-its own bar date (review SF-1, the card half from PR 6). The freeze anchor still reads D01 until G4. Offline.
+its own bar date (review SF-1, the card half from PR 6). The freeze anchors on the prices store too since PR 10 (G4). Offline.
 """
 from __future__ import annotations
 
