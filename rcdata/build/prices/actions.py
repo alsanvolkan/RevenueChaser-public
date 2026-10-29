@@ -1,9 +1,13 @@
 """``alpaca/corporate_actions``: Alpaca's splits, dividends, spin-offs, mergers and name changes, every symbol at once.
 
-**One run** asks ``/v1/corporate-actions`` for every action Alpaca processed from ``LOOKBACK`` days before ``as_of``
-to ``as_of`` (``start`` / ``end`` filter the process date, inclusive), with no ``symbols``: the whole market is a few
-pages of 1,000, fewer requests than asking the scope 100 at a time, and ``prices/serving`` keeps only the actions of
-the securities it knows. A backfill asks windows of ``BACKFILL_DAYS`` of its own.
+**One run** asks ``/v1/corporate-actions`` for every action Alpaca processes from ``LOOKBACK`` days before ``as_of``
+to ``AHEAD`` days after it (``start`` / ``end`` filter the process date, inclusive), with no ``symbols``: the whole
+market is a few pages of 1,000, fewer requests than asking the scope 100 at a time, and ``prices/serving`` keeps only
+the actions of the securities it knows. The window reaches ahead because a cash dividend's process date is its
+payable date, weeks after its ex-date, while Alpaca's adjusted bars apply it from the ex-date: a window that ended
+on ``as_of`` missed JPM's dividend that went ex on 6 Oct 2026 and is paid on the 31st (the server's sample,
+29 Oct 2026). ``prices/serving`` applies an action once its ex-date has a session. A backfill asks windows of
+``BACKFILL_DAYS`` of its own, up to ``AHEAD`` days past its end.
 
 **Raw**: ``raw/alpaca/corporate_actions/<as_of>.json.gz`` (a backfill window: ``backfill/<start>_<end>.json.gz``),
 every page; a file that exists is not asked again.
@@ -30,6 +34,7 @@ from . import KIND, stage
 
 NAME = "alpaca/corporate_actions"
 LOOKBACK = timedelta(days=14)
+AHEAD = timedelta(days=90)          # past as_of: the payable dates of the dividends already ex
 BACKFILL_DAYS = 90
 LIMIT = 1000
 SOURCE_DIR = ("alpaca", "corporate_actions")
@@ -121,12 +126,12 @@ class AlpacaActions:
                                           "fetched_at": calendar._now().timestamp(), "run_id": ctx.run_id})
 
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
-        return [self._ask(ctx, raw_path(as_of), as_of - LOOKBACK, as_of, as_of, alpaca.pacer(ctx))]
+        return [self._ask(ctx, raw_path(as_of), as_of - LOOKBACK, as_of + AHEAD, as_of, alpaca.pacer(ctx))]
 
     def backfill(self, ctx: base.RunContext, start: date | None, end: date) -> None:
-        pace, out, lo = alpaca.pacer(ctx), [], start
-        while lo <= end:
-            hi = min(lo + timedelta(days=BACKFILL_DAYS - 1), end)
+        pace, out, lo, last = alpaca.pacer(ctx), [], start, end + AHEAD
+        while lo <= last:
+            hi = min(lo + timedelta(days=BACKFILL_DAYS - 1), last)
             out.append(self._ask(ctx, backfill_path(lo, hi), lo, hi, end, pace))
             lo = hi + timedelta(days=1)
         self.to_parquet_all(ctx, out)

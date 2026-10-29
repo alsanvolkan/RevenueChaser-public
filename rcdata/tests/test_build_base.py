@@ -89,3 +89,14 @@ def test_a_403_says_what_to_set(http_mock, monkeypatch):
     with pytest.raises(base.SourceError, match=r"HTTP 403 \(refused: set RC_HTTP_CONTACT"):
         base.http_get(ctx, "bls", "https://bls.test/schedule/news_release/bls.ics")
     assert ctx.calls["bls"] == [1, 1, 0]
+
+
+def test_a_403_to_a_keyed_request_points_at_the_key_not_the_contact(http_mock, monkeypatch):
+    # The Opus review's N2: Alpaca answers a wrong key with 403, and the contact hint sent the reader the wrong way.
+    monkeypatch.setenv("RC_HTTP_CONTACT", "")
+    http_mock.add("alpaca.test", b"forbidden", status=403)
+    ctx = base.RunContext(run_id="r", dataset="d", sleep=lambda s: None)
+    with pytest.raises(base.SourceError, match=r"HTTP 403 \(refused: check the key") as err:
+        base.http_get(ctx, "alpaca", "https://alpaca.test/v2/stocks/bars", headers={"APCA-API-KEY-ID": "test-key"},
+                      keyed=True)
+    assert "RC_HTTP_CONTACT" not in str(err.value) and "test-key" not in str(err.value)

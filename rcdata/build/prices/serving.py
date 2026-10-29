@@ -9,20 +9,22 @@
 - ``corporate_action``: Alpaca's actions of the store's securities, resolved to the security that traded under the
   action's symbol nearest its date (else the spine's current ticker), and Compustat's splits and dividends of the
   securities with bars where Alpaca has no action of that kind that day, with ``applied`` (used by ``adj_factor``),
-  ``not_applied_why``, the split ``ratio`` (new over old shares) and the cash ``amount`` per share;
+  ``not_applied_why``, the split ``ratio`` (new over old shares) and the cash ``amount`` per share; an action whose
+  ex-date is after the newest session is kept, not applied, and raises no issue until it goes ex;
 - ``adj_factor``: per security, the periods ``[valid_from, valid_to)`` between two ex-dates and the factors that
   turn a nominal bar of the period into today's basis: ``split_factor`` (the product of ``1 / ratio`` of every split
   and stock dividend after it) and ``tr_factor`` (that, times ``1 - amount / close before the ex-date`` of every cash
   dividend after it). A bar after the last ex-date, or of a security with no action, has both factors 1. The
   factors are applied on read (``rcdata.read.bars``); nothing stored is ever adjusted;
 - ``shares_class``: shares per class and day: ``outstanding`` from the SEC covers (an unlisted class keyed
-  ``class:<CIK>:<member>``), ``float`` from Yahoo and from Unusual Whales;
+  ``class:<CIK>:<member>``, and so is an ADR issuer's count, which is of ordinary shares, not of the ADSs),
+  ``float`` from Yahoo and from Unusual Whales;
 - ``security_symbol``: the symbols each security traded under and when (from its bars; the spine's ticker for a Tier
   A name with none yet);
 - ``market_cap_daily``: close times shares per security and session, the shares being the bar's own (a history
   source's), else a WRDS source's of that session, else the newest cover on or before the session, moved over the
-  splits between the two; and the issuer's
-  sum over its listed classes (``issuer_market_cap``; an unlisted class has no price and is not in it);
+  splits between the two; and the issuer's sum over its listed classes, each at its newest cap at most
+  ``ISSUER_WITHIN_DAYS`` old (``issuer_market_cap``; an unlisted class has no price and is not in it);
 - ``price_revision``: the values a later read replaced (Alpaca's re-read of the last sessions, the monthly WRDS
   refresh), with when and by which run;
 - ``wrds_price_diff``: the WRDS difference report (``wrds_history.COMPARISONS``), one row per comparison: the closes
@@ -58,10 +60,22 @@ INDEX_SOURCE = "market_series/cboe"
 GAP_FACTOR = 1.9
 # The 1-bp rule: our total-return day return against the source's own adjusted one.
 TOLERANCE = 1e-4
+# Alpaca's adjusted closes come rounded to the cent, so its day return can be off by half a cent on each close
+# (KO in the server's sample, 29 Oct 2026: 1.1-1.3 bp at ~$70 between two days no factor separates). The rule
+# allows that much where it is more than 1 bp: (1 + r) * h * (1 / close + 1 / previous close).
+# shortcut: the cent rounding is read from the sample's KO rows, Alpaca does not document it; measure it on the server
+# (count of rows left, and their sizes) and narrow or widen this once a full Tier A build runs.
+HALF_CENT = 0.005
 FLOAT_OVER = 1.05
 FLOAT_DISAGREE = 0.25
+# A cover count behind a market cap and Yahoo's sharesOutstanding further apart than this, on the session of Yahoo's
+# answer, is an issue (AEHL in the server's sample: a count from before its dilution, 400 times too small).
+SHARES_DISAGREE = 0.25
 # A dividend is applied with the close of the last bar before its ex-date, at most this many days before it.
 CLOSE_BEFORE_DAYS = 7
+# The issuer cap of a session counts each listed class at its newest cap at most this many days old (a thin class
+# that did not trade that day still counts): the window ``rcdata.read.latest_market`` reads the newest cap in.
+ISSUER_WITHIN_DAYS = 14
 APPLIED = ("split", "stock_dividend", "cash_dividend")
 NOT_APPLIED = ("spin_off", "unit_split", "rights_distribution")
 
@@ -71,12 +85,17 @@ ISSUE_KINDS = {
     "tier_a_no_shares": "a Tier A name with no shares, so no market cap, on the newest session (key: the security id)",
     "price_gap_no_action": ("the split-adjusted close moved by GAP_FACTOR or more with no split that day "
                             "(key: security:session)"),
-    "adjustment_differs": "our total-return day return is more than 1 bp from the source's own (key: security:session)",
+    "adjustment_differs": ("our total-return day return is more than 1 bp from the source's own, or more than the "
+                           "rounding of its cent-rounded closes where that is larger (key: security:session)"),
     "dividend_not_applied": "a cash dividend the factors could not use (key: the action id)",
     "action_not_applied": "a spin-off, unit split or rights distribution the factors do not apply (key: the action id)",
     "cover_class_unmapped": "a cover class whose trading symbol is no spine ticker of its CIK (key: CIK:symbol)",
+    "cover_adr_ordinary": ("an ADR's issuer's cover count: ordinary shares, not ADSs, so kept under class: and no "
+                           "market cap from it (key: the ADR's security id)"),
     "float_above_outstanding": "the newest float is above FLOAT_OVER times the shares outstanding (key: the security id)",
     "float_sources_disagree": "Yahoo's and UW's newest float differ by more than FLOAT_DISAGREE (key: the security id)",
+    "shares_disagree_yahoo": ("the cover shares behind a market cap and Yahoo's newest sharesOutstanding differ by more "
+                              "than SHARES_DISAGREE on the session of Yahoo's answer (key: the security id)"),
 }
 
 PRICE_BAR = [("security_id", "TEXT"), ("session_date", "DATE"), ("symbol", "TEXT"), ("cik", "TEXT"),
@@ -137,15 +156,15 @@ def _create(con: duckdb.DuckDBPyConnection, table: str, select: str) -> int:
 def _spine(con: duckdb.DuckDBPyConnection) -> int:
     """``stg_spine``: the live spine's ``security`` rows with their security id (empty before a first spine)."""
     from ... import serving
-    con.execute("CREATE OR REPLACE TEMP TABLE stg_spine (ticker TEXT, cik TEXT, tier TEXT, gvkey TEXT, iid TEXT, "
-                "composite_figi TEXT, security_id TEXT)")
+    con.execute("CREATE OR REPLACE TEMP TABLE stg_spine (ticker TEXT, cik TEXT, tier TEXT, security_type TEXT, "
+                "gvkey TEXT, iid TEXT, composite_figi TEXT, security_id TEXT)")
     live = serving.live_path("spine")
     if not live.exists():
         return 0
     con.execute(f"ATTACH {base.sql_path(live)} AS live_spine (READ_ONLY)")
     try:
-        con.execute(f"INSERT INTO stg_spine SELECT ticker, cik, tier, gvkey, iid, composite_figi, {SPINE_ID} "
-                    "FROM live_spine.security")
+        con.execute(f"INSERT INTO stg_spine SELECT ticker, cik, tier, security_type, gvkey, iid, composite_figi, "
+                    f"{SPINE_ID} FROM live_spine.security")
     finally:
         con.execute("DETACH live_spine")
     return stage.count(con, "stg_spine")
@@ -171,7 +190,7 @@ CREATE OR REPLACE TEMP TABLE _alp AS
     SELECT coalesce(s.security_id, b.security_id) AS security_id, b.session_date, b.ticker AS symbol, b.cik,
            b.open, b.high, b.low, b.close, b.volume, b.vwap, b.trade_count,
            CAST(NULL AS DOUBLE) AS shares_outstanding, '{bars}' AS source, b.source_as_of, b.fetched_at, b.run_id,
-           b.symbol AS alpaca_symbol, b.all_return, b.tier
+           b.symbol AS alpaca_symbol, b.close_all, b.all_return, b.tier
     FROM stg_alpaca_bars b LEFT JOIN stg_spine s ON s.ticker = b.ticker AND s.cik IS NOT DISTINCT FROM b.cik
     QUALIFY row_number() OVER (PARTITION BY coalesce(s.security_id, b.security_id), b.session_date
                                ORDER BY b.fetched_at DESC) = 1;
@@ -250,7 +269,8 @@ class PricesServing:
         counts["adj_factor"] = _create(con, "adj_factor", ADJ_SQL)
         counts["shares_class"] = self._shares(con, found)
         counts["security_symbol"] = _create(con, "security_symbol", SYMBOL_SQL)
-        counts["market_cap_daily"] = _create(con, "market_cap_daily", MARKET_CAP_SQL)
+        counts["market_cap_daily"] = _create(con, "market_cap_daily",
+                                             MARKET_CAP_SQL.format(within=ISSUER_WITHIN_DAYS))
         counts["price_revision"] = _create(con, "price_revision",
                                            f"{REVISION_SQL} UNION ALL {wrds_history.REVISIONS_SQL}")
         counts["wrds_price_diff"] = self._wrds_report(con)
@@ -281,7 +301,11 @@ class PricesServing:
             SELECT a.*, p.close AS close_before, p.session_date AS close_day
             FROM _act_typed a ASOF LEFT JOIN price_bar_daily p
                 ON p.security_id = a.security_id AND a.ex_date > p.session_date""")
+        # An action announced for a later day (the actions window reaches ahead) waits until its ex-date has a
+        # session: applied now, it would turn today's bars into a basis that does not exist yet.
+        newest = "(SELECT max(session_date) FROM price_bar_daily WHERE security_id NOT LIKE 'index:%')"
         why = f"""CASE
+            WHEN ex_date > {newest} THEN 'not yet ex: the ex-date is after the newest session'
             WHEN action IN ('split', 'stock_dividend') AND ex_date IS NULL THEN 'no ex-date'
             WHEN action IN ('split', 'stock_dividend') AND ratio IS NULL THEN 'no ratio'
             WHEN action = 'cash_dividend' AND ex_date IS NULL THEN 'no ex-date'
@@ -302,7 +326,7 @@ class PricesServing:
         n = _create(con, "corporate_action", "SELECT * FROM _act_final ORDER BY security_id, ex_date, action")
         for aid, action, sid, why_ in con.execute(
                 "SELECT source_id, action, security_id, not_applied_why FROM corporate_action "
-                "WHERE applied = false").fetchall():
+                "WHERE applied = false AND NOT starts_with(not_applied_why, 'not yet ex')").fetchall():
             kind = "dividend_not_applied" if action == "cash_dividend" else "action_not_applied"
             found.append((kind, aid, f"{sid}: {why_}"))
         return n
@@ -311,18 +335,32 @@ class PricesServing:
 
     @staticmethod
     def _shares(con: duckdb.DuckDBPyConnection, found: list) -> int:
+        # A cover class goes to the spine row of its trading symbol, else (no symbol, the filing's one class) to the
+        # CIK's one Tier A row. Not to an ADR's: the cover counts the issuer's ordinary shares and the bar is the ADS
+        # (one TSM ADS is five shares), so the count stays under ``class:`` and the ADR has no cover shares.
+        # shortcut: an ADR gets no market cap from the store at all; once a source of its ADS ratio (or its ADS count)
+        # is read, divide the ordinary count by the ratio and map it to the ADR's row.
+        con.execute("""CREATE OR REPLACE TEMP TABLE _cover AS
+            WITH one AS (SELECT cik, any_value(security_id) AS security_id, any_value(security_type) AS security_type
+                         FROM stg_spine WHERE tier = 'A' GROUP BY cik HAVING count(*) = 1),
+                 classes AS (SELECT accession, count(*) AS n FROM stg_sec_cover GROUP BY accession),
+                 m AS (SELECT c.*, s.security_id AS by_symbol,
+                              coalesce(s.security_id, CASE WHEN c.symbol IS NULL AND k.n = 1 THEN o.security_id END)
+                                  AS spine_id,
+                              CASE WHEN s.security_id IS NOT NULL THEN s.security_type
+                                   WHEN c.symbol IS NULL AND k.n = 1 THEN o.security_type END AS spine_type
+                       FROM stg_sec_cover c JOIN classes k USING (accession)
+                       LEFT JOIN stg_spine s ON s.cik = c.cik AND s.ticker = replace(upper(c.symbol), '.', '-')
+                       LEFT JOIN one o ON o.cik = c.cik)
+            SELECT *, CASE WHEN spine_id IS NOT NULL AND spine_type IS DISTINCT FROM 'adr' THEN spine_id
+                           ELSE 'class:' || cik || ':' || coalesce(nullif(class_member, ''), 'common')
+                      END AS security_id
+            FROM m""")
         n = _create(con, "shares_class", f"""
-            WITH one AS (SELECT cik, any_value(security_id) AS security_id FROM stg_spine WHERE tier = 'A'
-                         GROUP BY cik HAVING count(*) = 1),
-                 classes AS (SELECT accession, count(*) AS n FROM stg_sec_cover GROUP BY accession)
-            SELECT coalesce(s.security_id, CASE WHEN c.symbol IS NULL AND k.n = 1 THEN o.security_id END,
-                            'class:' || c.cik || ':' || coalesce(nullif(c.class_member, ''), 'common')) AS security_id,
-                   'outstanding' AS measure, c.as_of, c.shares AS value, c.symbol, c.cik,
+            SELECT c.security_id, 'outstanding' AS measure, c.as_of, c.shares AS value, c.symbol, c.cik,
                    nullif(c.class_member, '') AS class_member, '{COVER}' AS source, c.accession AS source_ref,
                    c.filed, c.source_as_of, c.fetched_at, c.run_id
-            FROM stg_sec_cover c JOIN classes k USING (accession)
-            LEFT JOIN stg_spine s ON s.cik = c.cik AND s.ticker = replace(upper(c.symbol), '.', '-')
-            LEFT JOIN one o ON o.cik = c.cik
+            FROM _cover c
             UNION ALL
             SELECT coalesce(s.security_id, y.security_id), 'float', y.source_as_of, y.float_shares, y.ticker, y.cik,
                    NULL, '{YAHOO}', NULL, NULL, y.source_as_of, y.fetched_at, y.run_id
@@ -334,9 +372,13 @@ class PricesServing:
             FROM stg_uw_float u LEFT JOIN stg_spine s ON s.ticker = u.ticker AND s.cik IS NOT DISTINCT FROM u.cik
             WHERE u.total_float IS NOT NULL""")
         for cik, symbol in con.execute(
-                f"SELECT DISTINCT cik, symbol FROM shares_class WHERE source = '{COVER}' AND symbol IS NOT NULL "
-                "AND security_id LIKE 'class:%'").fetchall():
+                "SELECT DISTINCT cik, symbol FROM _cover WHERE symbol IS NOT NULL AND by_symbol IS NULL").fetchall():
             found.append(("cover_class_unmapped", f"{cik}:{symbol}", "no spine ticker of the CIK is this symbol"))
+        for sid, forms, shares in con.execute(
+                "SELECT spine_id, string_agg(DISTINCT form, ', '), arg_max(shares, as_of) FROM _cover "
+                "WHERE spine_type = 'adr' GROUP BY spine_id ORDER BY 1").fetchall():
+            found.append(("cover_adr_ordinary", sid, f"{forms} cover counts {shares:,.0f} ordinary shares, not the "
+                                                     "ADSs: no market cap from it"))
         return n
 
     # ── The WRDS difference report ────────────────────────────────────────────────────────────────────────────
@@ -452,12 +494,15 @@ class PricesServing:
                                   AND c.ex_date <= r.session_date)
                 ORDER BY 1, 2""").fetchall():
             found.append(("price_gap_no_action", f"{sid}:{day}", f"split-adjusted close x{ratio:.3f}, no split"))
+        # Alpaca's previous adjusted close is close_all / (1 + all_return), so the rounding allowance is
+        # (1 + r) * h * (1 + (1 + r)) / close_all.
+        allowance = (f"coalesce((1 + a.all_return) * {HALF_CENT} * (2 + a.all_return) / nullif(a.close_all, 0), 0)")
         for sid, day, ours, theirs in con.execute(f"""
                 SELECT r.security_id, r.session_date, r.tr_close / r.prev_tr - 1, a.all_return
                 FROM _ret r JOIN _alp a ON a.security_id = r.security_id AND a.session_date = r.session_date
                 WHERE r.source = '{ALPACA_BARS}' AND r.prev_tr > 0 AND a.all_return IS NOT NULL
                   AND date_diff('day', r.prev_day, r.session_date) <= 5
-                  AND abs((r.tr_close / r.prev_tr - 1) - a.all_return) > {TOLERANCE}
+                  AND abs((r.tr_close / r.prev_tr - 1) - a.all_return) > greatest({TOLERANCE}, {allowance})
                 ORDER BY 1, 2""").fetchall():
             found.append(("adjustment_differs", f"{sid}:{day}", f"ours {ours:.6f}, alpaca {theirs:.6f}"))
         newest_of = ("SELECT security_id, value FROM shares_class WHERE measure = '{m}' AND source = '{s}' "
@@ -478,6 +523,24 @@ class PricesServing:
                 JOIN ({newest_of.format(m='float', s=UW)}) u USING (security_id)
                 WHERE abs(y.value - u.value) > {FLOAT_DISAGREE} * greatest(y.value, u.value) ORDER BY 1""").fetchall():
             found.append(("float_sources_disagree", sid, f"yahoo {y:,.0f}, uw {u:,.0f}"))
+        # shortcut: flagged only, the cap stays; if avo wants it, withhold a cover cap beyond a factor of two from
+        # Yahoo (the universe then falls back as for a name with no shares).
+        for sid, cover, as_of, yahoo, day in con.execute(f"""
+                WITH y AS (SELECT coalesce(s.security_id, y.security_id) AS security_id,
+                                  y.shares_outstanding AS yahoo, y.source_as_of
+                           FROM stg_yahoo_float y
+                           LEFT JOIN stg_spine s ON s.ticker = y.ticker AND s.cik IS NOT DISTINCT FROM y.cik
+                           WHERE y.shares_outstanding > 0
+                           QUALIFY row_number() OVER (PARTITION BY coalesce(s.security_id, y.security_id)
+                                                      ORDER BY y.source_as_of DESC, y.fetched_at DESC) = 1)
+                SELECT y.security_id, m.shares, m.shares_as_of, y.yahoo, m.session_date
+                FROM y ASOF JOIN market_cap_daily m
+                    ON m.security_id = y.security_id AND y.source_as_of >= m.session_date
+                WHERE m.shares_source = '{COVER}'
+                  AND abs(m.shares - y.yahoo) > {SHARES_DISAGREE} * greatest(m.shares, y.yahoo)
+                ORDER BY 1""").fetchall():
+            found.append(("shares_disagree_yahoo", sid, f"cover {cover:,.0f} (as of {as_of}, moved over the splits "
+                                                        f"since), yahoo {yahoo:,.0f} on {day}"))
         return found
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
@@ -544,13 +607,23 @@ MARKET_CAP_SQL = f"""
          s AS (SELECT j.*, CASE WHEN own IS NOT NULL THEN own
                                 ELSE cover * coalesce(a1.split_factor, 1) / coalesce(a2.split_factor, 1) END AS shares
                FROM j LEFT JOIN adj_factor a1 ON {period('a1', 'j.security_id', 'j.session_date')}
-               LEFT JOIN adj_factor a2 ON {period('a2', 'j.security_id', 'j.cover_as_of')})
-    SELECT security_id, session_date, issuer AS cik, close, shares,
-           CASE WHEN own IS NOT NULL THEN bar_source ELSE cover_source END AS shares_source,
-           CASE WHEN own IS NOT NULL THEN session_date ELSE cover_as_of END AS shares_as_of,
-           close * shares AS market_cap,
-           sum(close * shares) OVER (PARTITION BY coalesce(issuer, security_id), session_date) AS issuer_market_cap
-    FROM s WHERE shares IS NOT NULL"""
+               LEFT JOIN adj_factor a2 ON {period('a2', 'j.security_id', 'j.cover_as_of')}),
+         c AS (SELECT security_id, session_date, issuer AS cik, close, shares,
+                      CASE WHEN own IS NOT NULL THEN bar_source ELSE cover_source END AS shares_source,
+                      CASE WHEN own IS NOT NULL THEN session_date ELSE cover_as_of END AS shares_as_of,
+                      close * shares AS market_cap, coalesce(issuer, security_id) AS iss
+               FROM s WHERE shares IS NOT NULL),
+         -- Each class of the issuer at its newest cap on or before the session, if at most ISSUER_WITHIN_DAYS old:
+         -- a class with no bar that day (GOOG on a day GOOGL traded) still counts.
+         k AS (SELECT DISTINCT iss, security_id AS cls FROM c),
+         g AS (SELECT c.security_id, c.session_date, k.cls FROM c JOIN k USING (iss)),
+         p AS (SELECT g.security_id, g.session_date, x.market_cap, x.session_date AS cap_day
+               FROM g ASOF LEFT JOIN c x ON x.security_id = g.cls AND g.session_date >= x.session_date),
+         i AS (SELECT security_id, session_date,
+                      sum(market_cap) FILTER (WHERE date_diff('day', cap_day, session_date) <= {{within}})
+                          AS issuer_market_cap
+               FROM p GROUP BY ALL)
+    SELECT c.*, i.issuer_market_cap FROM c JOIN i USING (security_id, session_date)"""
 
 REVISION_SQL = f"""
     SELECT coalesce(s.security_id, r.security_id) AS security_id, r.session_date, r.ticker AS symbol, r.open, r.high,
