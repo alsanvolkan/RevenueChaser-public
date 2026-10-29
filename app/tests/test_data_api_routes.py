@@ -1,0 +1,93 @@
+"""``GET /api/data`` and ``GET /api/data/<need>`` (step D): the internal data API over HTTP.
+
+Read-only. The routes call ``rcdata.api.get``, which calls no provider and writes nothing, so a page may ask them on
+every render. Filling (``POST .../fill``) arrives with step C, where filling itself is built.
+"""
+from __future__ import annotations
+
+from datetime import date
+
+import pytest
+
+from RevenueChaser.app import dashboard
+from RevenueChaser.rcdata import api
+
+
+@pytest.fixture
+def client():
+    return dashboard.app.test_client()
+
+
+@pytest.fixture
+def answer(monkeypatch):
+    """Pin what ``api.get`` returns, so the route is tested and not the store."""
+    seen = {}
+
+    def set_answer(**over):
+        base = dict(need="identity.universe", rows=[{"ticker": "MSFT", "source_as_of": date(2026, 10, 27)}],
+                    state="fresh", freshness={"as_of_session": date(2026, 10, 27), "lag_sessions": 0, "max_lag": 5},
+                    coverage={"asked": 1, "served": 1, "missing": [], "from_fallback": 0},
+                    provenance=[{"key": "MSFT", "dataset": "spine/security", "source": "sec",
+                                 "source_as_of": date(2026, 10, 27), "fetched_at": 1.0, "run_id": "r1"}],
+                    status="changed", fill=None)
+        ans = api.Answer(**{**base, **over})
+
+        def fake_get(need, *, fill="never", **params):
+            seen["need"], seen["fill"], seen["params"] = need, fill, params
+            return ans
+        monkeypatch.setattr(api, "get", fake_get)
+        return seen
+    return set_answer
+
+
+def test_the_catalog_is_listed_with_its_freshness_rule(client):
+    body = client.get("/api/data").get_json()
+    names = {n["need"]: n for n in body["needs"]}
+    assert "identity.universe" in names and "earnings.next" in names
+    assert names["earnings.next"]["max_lag_sessions"] == 4
+    assert names["earnings.next"]["dataset"] == "uw/option_screener"
+    assert names["earnings.next"]["kind"] == "options"
+
+
+def test_an_answer_comes_back_as_json_with_dates_as_iso_strings(client, answer):
+    answer()
+    body = client.get("/api/data/identity.universe").get_json()
+    assert body["need"] == "identity.universe" and body["state"] == "fresh"
+    assert body["freshness"] == {"as_of_session": "2026-10-27", "lag_sessions": 0, "max_lag": 5}
+    assert body["coverage"]["served"] == 1 and body["fill"] is None
+    assert body["rows"][0]["source_as_of"] == "2026-10-27"
+    assert body["provenance"][0]["key"] == "MSFT"
+
+
+def test_the_list_param_of_the_need_is_split_on_commas(client, answer):
+    seen = answer()
+    client.get("/api/data/identity.security?tickers=msft,aapl")
+    assert seen["params"] == {"tickers": ["msft", "aapl"]}
+
+
+def test_a_scalar_param_is_passed_through(client, answer):
+    seen = answer()
+    client.get("/api/data/prices.bars?security_ids=sec:1&basis=split")
+    assert seen["params"] == {"security_ids": ["sec:1"], "basis": "split"}
+
+
+def test_an_unknown_need_is_404(client):
+    r = client.get("/api/data/prices.nope")
+    assert r.status_code == 404 and r.get_json()["ok"] is False
+
+
+def test_an_unknown_param_is_400_never_a_500(client):
+    r = client.get("/api/data/identity.universe?nonsense=1")
+    assert r.status_code == 400 and "nonsense" in r.get_json()["error"]
+
+
+def test_the_route_never_fills(client, answer):
+    seen = answer()
+    client.get("/api/data/identity.universe?fill=if_stale")
+    assert seen["fill"] == "never", "a GET must never trigger a fill (avo, 29 Oct 2026)"
+    assert seen["params"] == {}, "a fill in the query string must be dropped, not smuggled into the reader"
+
+
+def test_a_get_needs_no_panel_header(client, answer):
+    answer()
+    assert client.get("/api/data/identity.universe").status_code == 200

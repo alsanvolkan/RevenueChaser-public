@@ -1212,6 +1212,80 @@ def api_data_asof(mod: str):
     return jsonify({"module": mod, "data_as_of": provenance.data_as_of(mod)})
 
 
+@app.route("/api/data")
+def api_data_catalog():
+    """The need catalog: what a board can ask for, which dataset owns it and how fresh it has to be.
+
+    The Settings / Data screen reads this instead of carrying its own list, so a need added to the catalog shows up
+    there without a second edit (the plan's "generate the screen from the code").
+    """
+    from RevenueChaser.rcdata import api
+    needs = [{"need": n.name, "kind": n.kind, "dataset": n.dataset, "reader": n.reader_name,
+              "max_lag_sessions": n.max_lag_sessions, "ask_param": n.ask_param,
+              "providers": list(n.providers), "fallbacks": list(n.fallbacks), "legacy": n.legacy}
+             for n in sorted(api.catalog.NEEDS.values(), key=lambda n: n.name)]
+    return jsonify({"needs": needs})
+
+
+# The scalar parameters a need's reader may take from the query string. Anything else is a 400 rather than a
+# TypeError inside the reader, so a typo in a page's URL is a readable answer and never a 500.
+_DATA_SCALARS = {"as_of", "basis", "end", "index", "measure", "on", "passing_only", "period_type", "session_date",
+                 "source", "start"}
+
+
+def _data_params(need, args) -> dict:
+    """The reader's keyword arguments from a query string: the need's own list parameter split on commas, plus the
+    scalars above. ``tiers`` is a list too (the universe's)."""
+    params: dict = {}
+    for key, value in args.items():
+        if key == "fill":
+            continue                                   # a GET never fills: avo, 29 Oct 2026
+        if key in (need.ask_param, "tiers"):
+            params[key] = [v for v in (p.strip() for p in value.split(",")) if v]
+        elif key in _DATA_SCALARS:
+            params[key] = value
+        else:
+            raise ValueError(f"unknown parameter {key!r} for need {need.name!r}")
+    return params
+
+
+def _json_safe(value):
+    """Dates and datetimes as ISO strings; Flask would otherwise write an HTTP date a page cannot parse."""
+    from datetime import date as _date, datetime as _datetime
+    if isinstance(value, (_date, _datetime)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+@app.route("/api/data/<path:need>")
+def api_data_need(need: str):
+    """One need's answer: the store's rows with how fresh they are, what is missing and where each row came from.
+
+    Read-only and never a fill: ``rcdata.api.get`` calls no provider and writes nothing, so a page may ask this on
+    every render without holding the panel up. Filling is a press of Fetch (avo's decision of 29 Oct 2026) and
+    arrives with the queue work; a ``fill`` in the query string is ignored here, not honoured quietly.
+    """
+    from RevenueChaser.rcdata import api
+    spec = api.catalog.NEEDS.get(need)
+    if spec is None:
+        return jsonify({"ok": False, "error": f"unknown need {need!r}"}), 404
+    try:
+        params = _data_params(spec, request.args)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    try:
+        ans = api.get(need, fill="never", **params)
+    except TypeError as e:
+        return jsonify({"ok": False, "error": f"the need's reader refused the parameters: {e}"}), 400
+    return jsonify(_json_safe({"need": ans.need, "state": ans.state, "freshness": ans.freshness,
+                               "coverage": ans.coverage, "status": ans.status, "fill": ans.fill,
+                               "provenance": ans.provenance, "rows": ans.rows}))
+
+
 @app.route("/api/universe")
 def api_universe():
     """Shared-universe provenance: which board last refreshed it + when + count."""
