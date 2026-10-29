@@ -528,6 +528,11 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         "ohlc_stale": bool(df.attrs.get("stale")),
         "info_stale": info_stale,
         "edgar_extract_version": (emeta or {}).get("extract_version"),     # the result history checks it (#278)
+        # Review F3 (G6): where the statements came from, the day the newest one was filed and the day the facts
+        # were last read. On the layer the facts are read again on each filing day, so the stale gate above measures
+        # the filer; the old store has neither date (its row was never read again).
+        "statements": {"source": "layer" if (emeta or {}).get("layer") else "store",
+                       "filed": (emeta or {}).get("newest_filed"), "read": (emeta or {}).get("facts_as_of")},
     }
 
 
@@ -595,6 +600,7 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
             "ro40": m.get("ro40"), "ro40_basis": m.get("ro40_basis"),
             "rev_growth_ttm": m.get("rev_growth_ttm"), "fcf_margin": m.get("fcf_margin"),
             "anchor_period_end": r.get("anchor_period_end"),
+            "statements": r.get("statements"),
             "pe": m.get("pe"), "pb": m.get("pb"), "roic": m.get("roic"),
             "distorted": distorted,
             "info_stale": bool(r.get("info_stale")),
@@ -721,6 +727,9 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
     # The banner reads this key (#80). A Refresh serves the stored payload, which already carries it.
     if not no_fetch:
         payload["provider_health"] = _EDGAR_HEALTH.health()
+        # Review F3 (G6): the store this Fetch read its statements from (the page says so; a Refresh keeps it).
+        from RevenueChaser.core import fundamentals_layer
+        payload["statements_source"] = fundamentals_layer.source_state()["effective"]
     return payload
 
 
