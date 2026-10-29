@@ -33,7 +33,7 @@ READER_OHLC_SESSIONS = 60
 
 
 def yield_beta_tstat(stock_by_date: dict[str, float], yield_by_date: dict[str, float],
-                     beta: float | None) -> float | None:
+                     beta: float | None, exclude: frozenset | set = frozenset()) -> float | None:
     """The OLS t-stat of R6's yield beta, over the same return pairs as ``rule6_macro.yield_beta``.
 
     ``rule6_macro.score`` skips the NO_TRADE veto when ``|t| < 2`` (the noise gate, ``docs/rules/redesign.md``): a
@@ -45,6 +45,8 @@ def yield_beta_tstat(stock_by_date: dict[str, float], yield_by_date: dict[str, f
     dates = sorted(set(stock_by_date) & set(yield_by_date))
     r, dy = [], []
     for a, b in zip(dates, dates[1:]):
+        if b in exclude:
+            continue
         p0, p1 = stock_by_date[a], stock_by_date[b]
         y0, y1 = yield_by_date[a], yield_by_date[b]
         if p0 in (None, 0) or p1 is None or y0 is None or y1 is None:
@@ -62,10 +64,12 @@ def yield_beta_tstat(stock_by_date: dict[str, float], yield_by_date: dict[str, f
     return beta / ((sse / (n - 2)) / sxx) ** 0.5
 
 
-def r6_beta(bars: list, yield_by_date: dict[str, float]) -> tuple[float | None, float | None]:
+def r6_beta(bars: list, yield_by_date: dict[str, float],
+            gap_sessions: frozenset | set = frozenset()) -> tuple[float | None, float | None]:
     """``(beta, t)``: R6's yield beta and its t-stat from the reader's bar slice (the last 60 sessions).
 
-    The one place the card's R6 inputs are formed, so the E5 card script counts what the board does.
+    The one place the card's R6 inputs are formed, so the E5 card script counts what the board does. The return
+    ending on each of ``gap_sessions`` (``_gap_sessions``) is left out of both (review N1).
     """
     stock_by_date = {}
     for c in bars or []:
@@ -75,8 +79,21 @@ def r6_beta(bars: list, yield_by_date: dict[str, float]) -> tuple[float | None, 
                 stock_by_date[d] = float(c["close"])
             except (TypeError, ValueError):
                 continue
-    beta = rule6_macro.yield_beta(stock_by_date, yield_by_date or {})
-    return beta, yield_beta_tstat(stock_by_date, yield_by_date or {}, beta)
+    beta = rule6_macro.yield_beta(stock_by_date, yield_by_date or {}, exclude=gap_sessions)
+    return beta, yield_beta_tstat(stock_by_date, yield_by_date or {}, beta, gap_sessions)
+
+
+def _gap_sessions(hist: list, bars: list) -> set[str]:
+    """The reaction session (core/reaction_anchor) of every reported print in ``hist`` that falls in ``bars``:
+    the earnings-gap days R6's beta drops (docs/rules/redesign.md R6, review N1)."""
+    out = set()
+    for h in hist or []:
+        if h.get("actual_eps") is None or not h.get("report_date"):
+            continue
+        anchor = reaction_anchor(bars, str(h["report_date"])[:10], h.get("report_time"))
+        if anchor:
+            out.add(anchor[0])
+    return out
 
 
 def _agh_context(ticker: str) -> dict:
@@ -486,7 +503,7 @@ class EarningsPipeline:
 
             opt_vol = int(float(scr.get("call_volume", 0) or 0) + float(scr.get("put_volume", 0) or 0))
             oi = int(float(scr.get("total_open_interest", 0) or 0))
-            dollar_opt_vol = opt_vol * 100  # rough estimate: $100 per contract
+            dollar_opt_vol = option_premium(scr)   # None when the screener served no premium: fails $Vol
 
             em = _expected_move_pct(cal)
 
@@ -495,7 +512,8 @@ class EarningsPipeline:
             reasons = []
             if opt_vol < MIN_OPTION_VOLUME: passed = False; reasons.append("OptVol"); stats["opt_vol"] += 1
             if oi < MIN_TOTAL_OI: passed = False; reasons.append("OI"); stats["oi"] += 1
-            if dollar_opt_vol < MIN_DOLLAR_OPTION_VOLUME: passed = False; reasons.append("$Vol"); stats["dollar_vol"] += 1
+            if dollar_opt_vol is None or dollar_opt_vol < MIN_DOLLAR_OPTION_VOLUME:
+                passed = False; reasons.append("$Vol"); stats["dollar_vol"] += 1
             if em < MIN_EXPECTED_MOVE_PCT: passed = False; reasons.append("EM<1.5%"); stats["em_low"] += 1
             if em > MAX_EXPECTED_MOVE_PCT: passed = False; reasons.append("EM>25%"); stats["em_high"] += 1
             
@@ -683,13 +701,15 @@ class EarningsPipeline:
             short_interest_pct_float=shorts.get("si_pct"),
             days_to_cover=shorts.get("days_to_cover"),
             borrow_fee=shorts.get("borrow_fee"),
-            utilization=shorts.get("utilization"),
             sector=sector,
-            institutional_net_delta=flow.get("inst_net"),
-            institutional_call_premium=flow.get("inst_call"),
-            institutional_put_premium=flow.get("inst_put"),
+            institutional_net_delta=flow.get("inst_lean_net"),
+            institutional_call_premium=flow.get("inst_bull_side"),
+            institutional_put_premium=flow.get("inst_bear_side"),
+            ticker=ticker,
+            institutional_side_served=flow.get("side_served"),
+            institutional_package_premium=flow.get("inst_package"),
         )
-        beta, beta_t = r6_beta(ohlc, self._dgs10_cache or {})
+        beta, beta_t = r6_beta(ohlc, self._dgs10_cache or {}, _gap_sessions(hist, ohlc))
         # rate_event_overlap: FOMC/CPI within the print's ±1 trading day, from the stored economic calendar
         # (E5d, #372). None — the store does not span the window — keeps the old behaviour: an extreme duration
         # is a badge, never a veto (design doc). A noisy beta (|t| < 2) is a badge too.
@@ -735,12 +755,9 @@ class EarningsPipeline:
                 parts.append("favorable rotation")
             elif rotation_quadrant == "LAGGING":
                 parts.append("lagging rotation")
-            inst_net = flow.get("inst_net")
-            if inst_net and abs(inst_net) >= INST_FLOW_MIN_NET:
-                if inst_net > 0:
-                    parts.append("institutional call flow")
-                else:
-                    parts.append("institutional put flow")
+            flow_part = _trade_flow_part(flow, trade_read)
+            if flow_part:
+                parts.append(flow_part)
             if trade_read == "BULLISH":
                 trade_reason = "Bullish — " + (" · ".join(parts) or "directional edge")
             elif trade_read == "BEARISH":
@@ -1002,6 +1019,19 @@ class EarningsPipeline:
             raw_packet_json=raw_packet_json,
             flow_source="failed" if flow_failed else ("flow_recent" if flow_recent_raw else "none"),
         )
+
+
+def option_premium(scr: dict) -> float | None:
+    """The day's call plus put premium of a screener row, None when either is missing. The $Vol gate reads it
+    (Fable review N3: volume x 100 made $Vol the OptVol gate again); the options data's earnings set reads the same
+    rule (``rcdata/build/options/uw_screener.premium``)."""
+    try:
+        calls, puts = scr.get("call_premium"), scr.get("put_premium")
+        if calls in (None, "") or puts in (None, ""):
+            return None
+        return float(calls) + float(puts)
+    except (TypeError, ValueError):
+        return None
 
 
 def _expected_move_pct(*sources: dict) -> float:
@@ -1316,41 +1346,60 @@ def _flow_window(prints: list) -> tuple[int, float | None]:
     return n, round(span, 1)
 
 
-def _institutional_flow_comment(flow: dict, failed: bool = False):
-    """Deterministic institutional flow read. Returns (label, net, tone).
+def _trade_flow_part(flow: dict, trade_read: str):
+    """The trade reason's flow part: the institutional lean, only when the read is already on its side (R5 is a
+    tag, "tape on the same side", never a vote; docs/rules/redesign.md R5). None otherwise."""
+    _, _, tone = _institutional_flow_comment(flow)
+    if (tone, trade_read) == ("bull", "BULLISH"):
+        return "institutional bullish lean"
+    if (tone, trade_read) == ("bear", "BEARISH"):
+        return "institutional bearish lean"
+    return None
 
-    ``failed`` says the flow request itself failed: "no flow" would be a claim about the market.
+
+def _institutional_flow_comment(flow: dict, failed: bool = False):
+    """Deterministic institutional lean read. Returns (label, net, tone).
+
+    The lean is read from the print side (``aggregate_flow``; docs/rules/redesign.md R5, review S4): net = bullish
+    side premium (ask-side calls + bid-side puts) minus bearish (bid-side calls + ask-side puts), mid dropped. No
+    print side served is no lean, never a call-minus-put guess. A package at or above ``INST_FLOW_MIN_NET`` is left
+    out of the net and marked "(package risk)". ``failed`` says the flow request itself failed: "no flow" would be a
+    claim about the market.
     """
     if failed:
         return "Flow unavailable (provider failure)", 0.0, "neutral"
-    inst_call = float(flow.get("inst_call", 0) or 0)
-    inst_put = float(flow.get("inst_put", 0) or 0)
-    inst_net = inst_call - inst_put
-    total = inst_call + inst_put
+    bull = float(flow.get("inst_bull_side", 0) or 0)
+    bear = float(flow.get("inst_bear_side", 0) or 0)
+    outside = float(flow.get("inst_mid", 0) or 0) + float(flow.get("inst_no_side", 0) or 0)
+    package = float(flow.get("inst_package", 0) or 0)
     sweep = float(flow.get("sweep", 0) or 0)
     block = float(flow.get("block", 0) or 0)
+    risk = " (package risk)" if package >= INST_FLOW_MIN_NET else ""
 
-    if total == 0:
-        return "No institutional flow", 0.0, "neutral"
+    if bull + bear + outside == 0:
+        return ("Package flow only" + risk, 0.0, "neutral") if package else ("No institutional flow", 0.0, "neutral")
+    if not flow.get("side_served"):
+        return "Lean unavailable (no print side)" + risk, 0.0, "neutral"
 
+    inst_net = bull - bear
     if abs(inst_net) < INST_FLOW_MIN_NET:
-        return "Thin flow", inst_net, "neutral"
+        return "Thin flow" + risk, inst_net, "neutral"
 
-    imbalance = abs(inst_net) / total
+    imbalance = abs(inst_net) / (bull + bear)
 
     if imbalance < 0.15:
-        label, tone = "Mixed institutional flow", "neutral"
+        label, tone = "Mixed institutional lean", "neutral"
     elif inst_net > 0:
-        label, tone = "Institutional buying", "bull"
+        label, tone = "Institutional bullish lean", "bull"
     else:
-        label, tone = "Institutional selling", "bear"
+        label, tone = "Institutional bearish lean", "bear"
 
     if sweep > 0 and imbalance >= 0.15:
-        label = label.replace("Institutional", "Inst.") + " sweep"
+        label = label.replace("Institutional", "Inst.") + " · sweep"
     elif block > 0 and imbalance >= 0.15:
-        label = label.replace("Institutional", "Inst.") + " block"
+        label = label.replace("Institutional", "Inst.") + " · block"
 
-    return label, inst_net, tone
+    return label + risk, inst_net, tone
 
 
 def _gex_structure_label(spot, gex: dict, gex_profile: dict = None) -> str:
@@ -1567,18 +1616,35 @@ def _compute_return_since_er(hist: list[dict], closes: list[float], ohlc: list[d
     return f"{anchor_label}: {pct:+.1f}%", pre_date[-5:], chart_json
 
 
+def _nrc_beat(card) -> float:
+    """NRC's event-beat slot: 60 a strong beat history, 45 a beat, 30 a miss, 50 neither.
+
+    Read from R2's own result in the card's rule audit (the sign of its score, and its "strong beat" reason), not
+    from the thesis text, where R2's "beat trend declining" read as a beat (review N2). A card without an R2 audit
+    keeps the keyword read, "miss" before "beat".
+    """
+    r2 = (getattr(card, "rule_audit", None) or {}).get("rule2_guidance")
+    if isinstance(r2, dict):
+        score = r2.get("score")
+        if not r2.get("available") or score is None or score == 0:
+            return 50.0
+        if score < 0:
+            return 30.0
+        return 60.0 if any("strong beat" in str(r).lower() for r in r2.get("reasons") or []) else 45.0
+    thesis = (card.key_thesis or "").lower()
+    if "strong beat" in thesis:
+        return 60.0
+    if "miss" in thesis:
+        return 30.0
+    if "beat" in thesis:
+        return 45.0
+    return 50.0
+
+
 def nrc_from_card(card, watchlist: set = None) -> dict:
     """Build one NRC result dict from a TradeCard (live slots only)."""
     growth = max(0.0, min(100.0, 50.0 + (card.direction_score or 0) * 0.5))
-    thesis = (card.key_thesis or "").lower()
-    if "strong beat" in thesis:
-        beat = 60.0
-    elif "beat" in thesis:
-        beat = 45.0
-    elif "miss" in thesis:
-        beat = 30.0
-    else:
-        beat = 50.0
+    beat = _nrc_beat(card)
     rot = card.rotation_quadrant
     rot_bonus = 10 if rot == "LEADING" else (5 if rot == "IMPROVING" else (-10 if rot == "LAGGING" else 0))
     accel = nrc_acceleration(card)

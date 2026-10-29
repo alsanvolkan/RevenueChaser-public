@@ -80,7 +80,7 @@ def test_stored_rows_give_the_same_inputs_and_rule5_result():
 
     assert stored_p._shorts_cache == live_p._shorts_cache
     assert stored_p._shorts_cache["AAPL"]["si_pct"] == pytest.approx(35.0)
-    assert stored_p._shorts_cache["AAPL"]["utilization"] == pytest.approx(100.0 * 1_000_000 / 1_100_000)
+    assert "utilization" not in stored_p._shorts_cache["AAPL"]          # never invented (review)
 
     a = stored_p._score("AAPL").rule_audit["rule5_positioning"]
     b = live_p._score("AAPL").rule_audit["rule5_positioning"]

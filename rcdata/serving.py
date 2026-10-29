@@ -1,10 +1,12 @@
 """Serving files: built as a new file, checked, then swapped over the live one; read only through ``open_read`` (D1).
 
-One builder process writes. Each kind (``market``; ``spine`` since PR 5; ``ownership`` since PR 16) is built into ``<kind>.<build_id>.duckdb``
-beside the live ``<kind>.duckdb`` under ``config.MARKET_DIR``; ``BuildFile.swap`` closes the writer (after a
-``CHECKPOINT``, so no ``.wal`` is left), opens the new file read-only, checks its ``serving_schema_version`` row and
-the row count of every expected table, and only then moves it into place. On any failure — a check, or an exception inside the
-``build()`` block — the new file is deleted and the live file is not touched (test T3).
+One builder process writes. Each kind (``market``; ``spine`` since PR 5; ``ownership`` since PR 16; ``options``
+since G8) is built into ``<kind>.<build_id>.duckdb`` beside the live ``<kind>.duckdb`` under
+``config.MARKET_DIR``; ``BuildFile.swap`` closes
+the writer (after a ``CHECKPOINT``, so no ``.wal`` is left), opens the new file read-only, checks its
+``serving_schema_version`` row and the row count of every expected table, and only then moves it into place. On any
+failure — a check, or an exception inside the ``build()`` block — the new file is deleted and the live file is not
+touched (test T3).
 
 The swap never leaves the live name missing: the previous file is first hard-linked to ``<kind>.prev.duckdb``
 (copied where the file system has no hard links), then ``os.replace`` moves the new file over the live name in one
@@ -29,12 +31,16 @@ import duckdb
 from ..core import config
 
 # The serving schema of each kind. A change to a kind's tables bumps its number in its own PR (box rule).
-SERVING_SCHEMA_VERSION = {"market": 1, "spine": 1, "ownership": 1}
+SERVING_SCHEMA_VERSION = {"market": 1, "spine": 1, "ownership": 1, "options": 1}
 KINDS = tuple(SERVING_SCHEMA_VERSION)
 VERSION_TABLE = "serving_schema_version"
 # A table may lose at most this share of its live rows in one build without an explicit allow_shrink. The datasets
 # only ever add or replace rows, so any real shrink is a build from a partial or missing Parquet tree.
 MAX_SHRINK = 0.01
+# A table that serves only its newest sessions (``option_eod``, G8) names the first value it keeps here, in its own
+# build file (``declare_window``), so the shrink check compares the rows both files are meant to hold: a session
+# that left the window is not a loss, a session inside it that lost rows is.
+WINDOW_TABLE = "serving_window"
 
 
 class SwapRefused(RuntimeError):
@@ -107,7 +113,8 @@ class BuildFile:
         ``dataset_check`` rows, and one whose result is ``failed`` refuses the swap. Every table of the live file
         must be in the build and may not empty or shrink by more than ``MAX_SHRINK`` (B2: the expected counts come
         from the build itself, so only the live file can show a build made from a missing Parquet tree), unless
-        ``allow_shrink`` (a request's explicit ``"allow_shrink": true``).
+        ``allow_shrink`` (a request's explicit ``"allow_shrink": true``). A windowed table (``declare_window``) is
+        compared on its rows inside the build's window, in both files.
         """
         self.con.execute("CHECKPOINT")
         self.close()
@@ -167,12 +174,41 @@ def sweep_builds(kind: str) -> list[Path]:
     return removed
 
 
-def _counts(path: Path) -> dict[str, int]:
+def declare_window(con: duckdb.DuckDBPyConnection, table: str, column: str, first) -> None:
+    """Record in the build file that ``table`` keeps only the rows whose ``column`` is ``>= first``."""
+    con.execute(f"CREATE TABLE IF NOT EXISTS {WINDOW_TABLE} (table_name TEXT PRIMARY KEY, column_name TEXT, "
+                "first_value TEXT)")
+    con.execute(f"INSERT OR REPLACE INTO {WINDOW_TABLE} VALUES (?, ?, ?)", (table, column, str(first)))
+
+
+def _windows(path: Path) -> dict[str, tuple[str, str]]:
+    con = duckdb.connect(str(path), read_only=True)
+    try:
+        names = {r[0] for r in con.execute("SELECT table_name FROM duckdb_tables()").fetchall()}
+        if WINDOW_TABLE not in names:
+            return {}
+        return {t: (c, v) for t, c, v in con.execute(f"SELECT * FROM {WINDOW_TABLE}").fetchall()}
+    finally:
+        con.close()
+
+
+def _counts(path: Path, windows: dict[str, tuple[str, str]] | None = None) -> dict[str, int]:
+    """Rows per table; a windowed table counts only its rows inside the window (``windows``, the build's)."""
+    windows = windows or {}
     con = duckdb.connect(str(path), read_only=True)
     try:
         names = [r[0] for r in con.execute("SELECT table_name FROM duckdb_tables() WHERE database_name = "
-                                           "current_database()").fetchall() if r[0] != VERSION_TABLE]
-        return {n: int(con.execute(f'SELECT count(*) FROM "{n}"').fetchone()[0]) for n in names}
+                                           "current_database()").fetchall()
+                 if r[0] not in (VERSION_TABLE, WINDOW_TABLE)]
+        out = {}
+        for n in names:
+            sql, params = f'SELECT count(*) FROM "{n}"', []
+            if n in windows:
+                column, first = windows[n]
+                sql += f' WHERE CAST("{column}" AS VARCHAR) >= ?'
+                params.append(first)
+            out[n] = int(con.execute(sql, params).fetchone()[0])
+        return out
     finally:
         con.close()
 
@@ -181,7 +217,8 @@ def _verify_against_live(kind: str, path: Path) -> None:
     live = live_path(kind)
     if not live.exists():
         return
-    old, new = _counts(live), _counts(path)
+    windows = _windows(path)
+    old, new = _counts(live, windows), _counts(path, windows)
     for table, before in sorted(old.items()):
         if table not in new:
             raise ValueError(f"table {table} of the live file is missing from the build")

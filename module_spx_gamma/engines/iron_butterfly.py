@@ -73,7 +73,9 @@ def _price(chain: list[dict], center: float, width: float, spot: float) -> dict:
     priced = all(m is not None for m in mids)
     if priced:
         net_credit = (mids[1] + mids[2]) - (mids[0] + mids[3])
-        max_risk = width - net_credit
+        # the wings the picked legs really span: a missing strike falls back to the nearest (review S6)
+        span = max(short_put["strike"] - long_put["strike"], long_call["strike"] - short_call["strike"])
+        max_risk = span - net_credit
         return_on_risk = (net_credit / max_risk) if max_risk > 0 else None
     else:
         net_credit = max_risk = return_on_risk = None
@@ -156,10 +158,21 @@ def signal_recommendation(snapshot: dict, center: float | None) -> dict:
     }
 
 
+def _one_expiry(chain: list[dict], asof) -> tuple[str | None, list[dict]]:
+    """``(expiry, rows)``: the chain's first expiry on or after ``asof``, else its latest. The Fetch's retry without
+    an expiry returns every expiry, and one structure must not mix them (review S6)."""
+    expiries = sorted({r["expiry"] for r in chain if r.get("expiry")})
+    if not expiries:
+        return None, chain
+    later = [e for e in expiries if not asof or e >= str(asof)[:10]]
+    pick = later[0] if later else expiries[-1]
+    return pick, [r for r in chain if r.get("expiry") == pick]
+
+
 def build_iron_butterfly(snapshot: dict) -> dict | None:
     """Executes the pin-harvest ruleset; None when chain/spot/pin are missing."""
     spot = snapshot.get("current_level")
-    chain = snapshot.get("option_chain") or []
+    expiry, chain = _one_expiry(snapshot.get("option_chain") or [], snapshot.get("asof_date"))
     pin = (snapshot.get("prediction") or {}).get("active_pin")
     em = snapshot.get("expected_move") or {}
     if spot is None or not chain or pin is None:
@@ -195,6 +208,7 @@ def build_iron_butterfly(snapshot: dict) -> dict | None:
             "band": f"{IB_MIN_W:,.0f}–{IB_MAX_W:,.0f}",
         },
         "strategy": "Iron Butterfly",
+        "expiry": expiry,
         "legs": base["legs"],
         "net_credit": base["net_credit"],
         "max_risk": base["max_risk"],

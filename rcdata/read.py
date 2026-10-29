@@ -276,3 +276,142 @@ def as_frame(rows: list[dict]):
     """The rows as a pandas DataFrame (the one helper; pandas is imported only here)."""
     import pandas as pd
     return pd.DataFrame(rows)
+
+
+# ── The options data (G8): ``options.duckdb`` ─────────────────────────────────────────────────────────────────
+
+DATASET_OF_TABLE.update({**{t: "uw/option_list" for t in ("option_eod", "option_strike", "option_expiry",
+                                                          "option_daily", "option_print", "iv_daily")},
+                         "option_screener_daily": "uw/option_screener", "er_options": "uw/option_screener"})
+KIND_OF_TABLE.update({t: "options" for t in ("option_eod", "option_strike", "option_expiry", "option_daily",
+                                             "option_print", "iv_daily", "option_screener_daily", "er_options")})
+# Rows a table shares between datasets: the earnings set (``set_name`` earnings) is uw/option_screener's, the IBKR
+# year of ``iv_daily`` (``source`` ibkr) is ibkr/iv_history's. Their ``status`` is that dataset's newest check.
+_SHARED_STATUS = (("set_name", "earnings", "uw/option_screener"), ("source", "ibkr", "ibkr/iv_history"))
+
+
+def _ticker_list(tickers: Iterable[str] | str) -> list[str]:
+    if isinstance(tickers, str):
+        tickers = [tickers]
+    return sorted({str(t).strip().upper() for t in tickers if str(t or "").strip()})
+
+
+def _option_rows(table: str, sql: str, params: list) -> list[dict]:
+    rows = _rows(table, sql, params)
+    for column, value, dataset in _SHARED_STATUS:
+        if any(r.get(column) == value for r in rows):
+            status = dataset_status(dataset)
+            for r in rows:
+                if r.get(column) == value:
+                    r["status"] = status
+    return rows
+
+
+def _session_clause(table: str, session_date, ticker_param: str) -> tuple[str, list]:
+    """``session_date = ?`` for a given day, else the newest session the table holds for the ticker."""
+    if session_date is not None:
+        return "session_date = ?", [_day(session_date)]
+    return f"session_date = (SELECT max(session_date) FROM {table} WHERE ticker = ?)", [ticker_param]
+
+
+def option_chain(ticker: str, session_date=None) -> list[dict]:
+    """``option_eod``: every contract of one list name (SPX or the option watch list) at one session's close, the
+    newest served when ``session_date`` is None (the file serves the last 30), by expiry, strike and type."""
+    t = str(ticker).strip().upper()
+    where, params = _session_clause("option_eod", session_date, t)
+    return _option_rows("option_eod", f"SELECT * FROM option_eod WHERE ticker = ? AND {where} "
+                                      "ORDER BY expiry, strike, option_type", [t, *params])
+
+
+def option_strikes(ticker: str, session_date, set_name: str = "list") -> list[dict]:
+    """``option_strike``: spot and greek exposure by strike of one name and session, in the set ``list`` (SPX and the
+    option watch list) or ``earnings`` (the evening before a report), by strike."""
+    t = str(ticker).strip().upper()
+    return _option_rows("option_strike", "SELECT * FROM option_strike WHERE ticker = ? AND session_date = ? "
+                                         "AND set_name = ? ORDER BY strike", [t, _day(session_date), set_name])
+
+
+def option_expiries(ticker: str, session_date, set_name: str = "list") -> list[dict]:
+    """``option_expiry``: contracts, open interest, volume, greek exposure, flow and term structure by expiry."""
+    t = str(ticker).strip().upper()
+    return _option_rows("option_expiry", "SELECT * FROM option_expiry WHERE ticker = ? AND session_date = ? "
+                                         "AND set_name = ? ORDER BY expiry", [t, _day(session_date), set_name])
+
+
+def option_daily(tickers: Iterable[str] | str, start=None, end=None) -> list[dict]:
+    """``option_daily``: the GEX levels, the day's option volume and premium and IV rank of list names, by ticker and
+    session, ``start <= session_date <= end`` (either bound optional)."""
+    names = _ticker_list(tickers)
+    if not names:
+        return []
+    sql = f"SELECT * FROM option_daily WHERE ticker IN ({', '.join('?' * len(names))})"
+    params: list = list(names)
+    if start is not None:
+        sql += " AND session_date >= ?"
+        params.append(_day(start))
+    if end is not None:
+        sql += " AND session_date <= ?"
+        params.append(_day(end))
+    return _option_rows("option_daily", sql + " ORDER BY ticker, session_date", params)
+
+
+def option_prints(ticker: str, session_date, set_name: str | None = None) -> list[dict]:
+    """``option_print``: the last 50 prints of one name and session, newest first, with ``side`` (ask, bid, mid or
+    NULL) and ``package``; of either set when ``set_name`` is None."""
+    t = str(ticker).strip().upper()
+    sql = "SELECT * FROM option_print WHERE ticker = ? AND session_date = ?"
+    params: list = [t, _day(session_date)]
+    if set_name is not None:
+        sql += " AND set_name = ?"
+        params.append(set_name)
+    return _option_rows("option_print", sql + " ORDER BY executed_at DESC, print_id", params)
+
+
+def iv_history(tickers: Iterable[str] | str, start=None, end=None, days: int | None = 30,
+               source: str | None = None) -> list[dict]:
+    """``iv_daily``: implied volatility of ``tickers`` at the tenor ``days`` (every tenor when None), by ticker,
+    session and source. ``observed`` tells the day UW's daily run saw (``uw``) from IBKR's backfilled year (``ibkr``,
+    30 days only); a board showing a past day's IV reads ``observed`` before calling it that day's."""
+    names = _ticker_list(tickers)
+    if not names:
+        return []
+    sql = f"SELECT * FROM iv_daily WHERE ticker IN ({', '.join('?' * len(names))})"
+    params: list = list(names)
+    for clause, value in (("days = ?", days), ("source = ?", source), ("session_date >= ?", _day(start)),
+                          ("session_date <= ?", _day(end))):
+        if value is not None:
+            sql += f" AND {clause}"
+            params.append(value)
+    return _option_rows("iv_daily", sql + " ORDER BY ticker, session_date, source, days", params)
+
+
+def option_screener(session_date=None, passing_only: bool = False) -> list[dict]:
+    """``option_screener_daily``: every name reporting in the 28 days after the session, with its screener row and
+    whether it passes the Earnings Radar gates, by ticker; the newest session when ``session_date`` is None."""
+    if session_date is None:
+        where, params = "session_date = (SELECT max(session_date) FROM option_screener_daily)", []
+    else:
+        where, params = "session_date = ?", [_day(session_date)]
+    if passing_only:
+        where += " AND passes_gates"
+    return _option_rows("option_screener_daily",
+                        f"SELECT * FROM option_screener_daily WHERE {where} ORDER BY ticker", params)
+
+
+def earnings_options(start=None, end=None, tickers: Iterable[str] | None = None) -> list[dict]:
+    """``er_options``: the earnings set, one row per name and the evening it was fetched (``session_date``), with
+    the ``report_date`` it was fetched for, by session and ticker."""
+    sql, params = "SELECT * FROM er_options WHERE true", []
+    if tickers is not None:
+        names = _ticker_list(tickers)
+        if not names:
+            return []
+        sql += f" AND ticker IN ({', '.join('?' * len(names))})"
+        params += names
+    if start is not None:
+        sql += " AND session_date >= ?"
+        params.append(_day(start))
+    if end is not None:
+        sql += " AND session_date <= ?"
+        params.append(_day(end))
+    return _option_rows("er_options", sql + " ORDER BY session_date, ticker", params)

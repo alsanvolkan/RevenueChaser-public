@@ -246,7 +246,7 @@ class TestR5ShortInterestWiring:
         p._warm_short_interest()
 
         assert fake.asked == []
-        assert sorted(p._shorts_cache["AAPL"]) == ["borrow_fee", "days_to_cover", "si_pct", "utilization"]
+        assert sorted(p._shorts_cache["AAPL"]) == ["borrow_fee", "days_to_cover", "si_pct"]
         assert p._shorts_cache["AAPL"]["si_pct"] == pytest.approx(35.0)
         assert sorted(rule5_positioning.PEER_STATS["Technology"]["si"]) == pytest.approx([3.0, 35.0])
 
