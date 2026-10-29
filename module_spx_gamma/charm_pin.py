@@ -39,6 +39,18 @@ def net_charm(row: dict, mode: str) -> float | None:
     return net_sum(row.get(f"call_charm{s}"), row.get(f"put_charm{s}"))
 
 
+def charm_direction(total: float | None) -> str | None:
+    """The one reading of a summed charm's sign, shared by the Relations card and the Charm card (review N1):
+    positive buys, negative sells, an exact zero is flat, and no value has no direction."""
+    if total is None:
+        return None
+    if total > 0:
+        return "Buy pressure"
+    if total < 0:
+        return "Sell pressure"
+    return "Flat"
+
+
 def net_vanna(row: dict, mode: str) -> float | None:
     s = _suffix(mode)
     return net_sum(row.get(f"call_vanna{s}"), row.get(f"put_vanna{s}"))
