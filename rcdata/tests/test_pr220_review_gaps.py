@@ -169,3 +169,42 @@ def test_s3_four_of_391_rows_dropped_is_just_over_1pct_and_fails(http_mock, uw_a
     http_mock.add("expiry-strike", body, headers=UW_HEADERS)
     row = base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-26"}})
     assert row["result"] == "failed" and "4 of 391" in row["note"]
+
+
+# ── N-1: stamps that cannot be read do not count as "on the session" ────────────────────────────────────────────
+def _stamped(stamp) -> dict:
+    body = uw_fixture.body()
+    for r in body["data"]:
+        r["time"] = stamp
+    return body
+
+
+def test_n1_an_answer_whose_every_stamp_is_unreadable_is_refused(http_mock, uw_after_the_close):
+    # Epoch microseconds of 27 Oct 15:00 UTC: snapshot_day cannot read it, and it used to pass as the 26th.
+    http_mock.add("expiry-strike", _stamped(1793113200000000), headers=UW_HEADERS)
+    row = base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-26"}})
+    assert row["result"] == "failed" and "cannot be read" in row["note"]
+    assert not uw.raw_path(date(2026, 10, 26)).exists()
+
+
+def test_n1_a_few_unreadable_stamps_in_a_good_answer_are_kept_with_one_issue(http_mock, uw_after_the_close):
+    from RevenueChaser.rcdata import ops
+    body = uw_fixture.body()
+    for r in body["data"][:2]:
+        r["time"] = "not a time"
+    http_mock.add("expiry-strike", body, headers=UW_HEADERS)
+    row = base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-26"}})
+    assert row["result"] == "changed" and row["rows"] == 391
+    with ops.connect() as con:
+        issues = con.execute("SELECT kind, detail FROM build_issues").fetchall()
+    assert [k for k, _ in issues] == ["unreadable_time"] and "2 rows" in issues[0][1]
+
+
+def test_n1_an_answer_without_any_stamp_is_still_accepted(http_mock, uw_after_the_close):
+    """No stamp at all is not an unreadable one: date= stays the first guard, as before."""
+    body = uw_fixture.body()
+    for r in body["data"]:
+        del r["time"]
+    http_mock.add("expiry-strike", body, headers=UW_HEADERS)
+    row = base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-26"}})
+    assert row["result"] == "changed" and row["rows"] == 391
