@@ -71,6 +71,17 @@ def test_bounds_and_sort_order():
     assert [d.date() for d in frame["session_date"]] == DAYS[2:5] * 2
 
 
+def test_a_bar_without_a_close_is_not_a_bar():
+    """Review S1 (PR 270): like the other five reads, ``ticker_bars`` leaves out a NULL or NaN close (a halt row), so
+    no board takes a bar with no price as its newest one."""
+    prices_store.put_bars(_bars("AAA", [1, 2, 3], days=DAYS[:3])
+                          + [{"ticker": "AAA", "session_date": DAYS[3], "close": None, "volume": 5.0},
+                             {"ticker": "AAA", "session_date": DAYS[4], "close": float("nan"), "volume": 5.0}],
+                          replace=False)
+    frame = read.ticker_bars(["AAA"])
+    assert [d.date() for d in frame["session_date"]] == DAYS[:3] and list(frame["close"]) == [1, 2, 3]
+
+
 def test_newest_session_leaves_out_the_index_level_and_counts_only_closes():
     prices_store.put_bars(_bars("AAA", [1, 2, 3], days=DAYS[:3])
                           + [{"ticker": "SPX", "security_id": "index:SPX", "session_date": DAYS[5], "close": 1.0},

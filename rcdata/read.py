@@ -333,7 +333,8 @@ def ticker_bars(tickers: Iterable[str], start=None, end=None, basis: str = "spli
     ticker and session, on one of ``bars``'s bases. ``session_date`` is a pandas datetime (midnight, no zone).
 
     ``split`` is the price as the old D01 store served it as "nominal" (splits applied, dividends not: the level a
-    chart shows); ``total_return`` its "adjusted" (every cash dividend after the bar taken out too: the returns)."""
+    chart shows); ``total_return`` its "adjusted" (every cash dividend after the bar taken out too: the returns). A bar
+    with no close (NULL or NaN, a halt row) is left out, as the other by-ticker reads leave it out."""
     if basis not in BASES:
         raise ValueError(f"unknown basis {basis!r}: one of {', '.join(BASES)}")
     import pandas as pd
@@ -345,7 +346,8 @@ def ticker_bars(tickers: Iterable[str], start=None, end=None, basis: str = "spli
     sql = (f"WITH {_now_cte(len(names))} SELECT now.ticker, b.security_id, CAST(b.session_date AS TIMESTAMP) AS "
            f"session_date, b.open * {price} AS open, b.high * {price} AS high, b.low * {price} AS low, "
            f"b.close * {price} AS close, b.volume / {shares} AS volume, b.source, b.fetched_at, '{basis}' AS basis "
-           f"FROM price_bar_daily b JOIN now USING (security_id) LEFT JOIN adj_factor a ON {_PERIOD} WHERE true")
+           f"FROM price_bar_daily b JOIN now USING (security_id) LEFT JOIN adj_factor a ON {_PERIOD} "
+           "WHERE b.close IS NOT NULL AND NOT isnan(b.close)")
     params: list = list(names)
     sql = _bounded(sql, params, "b.session_date", start, end)
     frame = _frame("price_bar_daily", sql + " ORDER BY now.ticker, b.session_date", params, TICKER_BAR_COLUMNS)

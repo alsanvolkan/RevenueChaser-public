@@ -59,6 +59,17 @@ def test_a_dividend_does_not_move_the_52_week_high(rawstore_tmp_db):
     assert (t["price"], t["high_52w"]) == (100.0, 105.0)
 
 
+def test_a_halt_row_with_no_close_does_not_blank_the_momentum(rawstore_tmp_db):
+    """Review S1 (PR 270): a newest bar with no close (a halt row) is no bar, so the card keeps the session before's
+    price, its momentum and that session as its bar date."""
+    days = sessions()
+    rows = _momentum_rows("HLT", days[:-1]) + [{**bar("HLT", days[-1]), "close": None}]
+    prices_store.put_bars(rows + [bar("SPY", d) for d in days[-5:]])
+    preload = engine._preload(["HLT"], True)
+    t = engine.technical_from_bars(preload["bars"]["HLT"], preload["session"])
+    assert (t["price"], t["bar_date"], t["above_sma50"]) == (102.0, days[-2].isoformat(), True)
+
+
 def test_a_scan_dates_its_cards_from_the_prices_store(rawstore_tmp_db, monkeypatch):
     days = sessions()
     prices_store.put_bars(_momentum_rows("AAA", days) + _momentum_rows("SPY", days))
