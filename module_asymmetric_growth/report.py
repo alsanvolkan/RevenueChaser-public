@@ -154,15 +154,15 @@ def render_asymmetric_growth_hunter_html(result: dict) -> str:
 
     universe_tile, funnel_html = _universe_tile_and_funnel(result, summary)
     history_html = _history_html()
-    # The D01 session the momentum came from (#380 S4): the Fetch dates it, a Refresh restores it from the header.
+    # The prices-store session the momentum came from (#380 S4, PR 11): the Fetch dates it, a Refresh restores it from the header.
     prices_date = result.get("data_as_of")
-    prices_chip = (f'<span id="prices-date">Prices: D01 session {esc(prices_date)}</span>'
+    prices_chip = (f'<span id="prices-date">Prices: session {esc(prices_date)}</span>'
                    if prices_date else "")
     # Rows a Fetch stored before this version (#380 S2): no tier yet, so the board opens on every card, said here.
     old_rows = engine.scored_before(result.get("cards") or [])
     old_notice = notice_html(
         f"These cards were scored before v{engine.SELECTION_VERSION} (tiers, the C18 data checks and momentum "
-        "from the D01 bars of the scored session); the board shows every card. The next Fetch applies the new "
+        "from the stored daily bars of the scored session); the board shows every card. The next Fetch applies the new "
         "rules.") if old_rows else ""
     tier_default = "all" if old_rows else "top"
 
@@ -174,8 +174,8 @@ def render_asymmetric_growth_hunter_html(result: dict) -> str:
         "A signal is <b>strong</b> with 2 of its 3 checks passed: three strong signals make the <b>Balanced</b> "
         "tier, two the <b>Strong</b> tier, and the board opens on those two (ALL shows every card). The tier "
         "uses the default thresholds; the sliders move points only. "
-        "Figures come from <b>SEC EDGAR</b> filings; prices, volume and the 52-week high from the <b>D01 daily "
-        "bars</b> (Daily Bars, the session named above). <b>Fetch</b> runs the scan: it reads filings and prices "
+        "Figures come from <b>SEC EDGAR</b> filings; prices, volume and the 52-week high from the <b>stored daily "
+        "bars</b> (the prices store, the session named above). <b>Fetch</b> runs the scan: it reads filings and prices "
         "for the universe and stores the scored cards. <b>Refresh</b> shows the last Fetch's stored cards with no "
         "network call and no re-scoring.")
     return f"""<!DOCTYPE html>
@@ -391,7 +391,7 @@ def render_asymmetric_growth_hunter_html(result: dict) -> str:
         <tr><td>Universe</td><td>—</td><td><b>United States (US)-listed common stocks only</b> (American Depositary Receipts (ADRs) and foreign companies excluded) · all market capitalizations · all sectors</td></tr>
         <tr><td rowspan="3">Signal 1</td><td>Accelerated Growth</td><td>Revenue growth of at least 20% · growth accelerating year-over-year (YoY) · gross profit margin of at least 40%</td></tr>
         <tr><td>Survival / Runway</td><td>Positive free cash flow (FCF) · net debt divided by total assets of at most 10% · cash runway of at least 2 years</td></tr>
-        <tr><td>Momentum / Volume</td><td>Price within 10% of the 52-week high · 10-day average trading volume at least 1.4× the 3-month average volume · price above the 50-day moving average (MA), read from the D01 daily bars of the scored session</td></tr>
+        <tr><td>Momentum / Volume</td><td>Price within 10% of the 52-week high · 10-day average trading volume at least 1.4× the 3-month average volume · price above the 50-day moving average (MA), read from the stored daily bars (the prices store) of the scored session</td></tr>
         <tr><td>Scoring</td><td>—</td><td>Total points = the number of passed sub-criteria (0 to 9). Point buckets: 9 · 8-7 · 6-5 · below 5.</td></tr>
         <tr><td>Tier</td><td>—</td><td>A signal is strong with at least {engine.TIER_MIN_PASSES} of its 3 sub-criteria passed. Balanced = 3 strong signals, Strong = 2. Computed with the default thresholds (the sliders move points only). Cards sort by tier, then points, then revenue growth capped at +100%.</td></tr>
         <tr><td>Sector</td><td>—</td><td>Financial Services and Real Estate (the universe sector) are not comparable on revenue, margin and free cash flow: their cards keep their points, carry a "Not comparable" badge and get no tier.</td></tr>
@@ -401,7 +401,7 @@ def render_asymmetric_growth_hunter_html(result: dict) -> str:
       </table>
       <div class="note">
         Data: fundamentals from the Securities and Exchange Commission (SEC) EDGAR filings (annual 10-K) ·
-        price, volume, 52-week high and 50-day mean from the D01 daily price bars (Daily Bars, the session in the header) ·
+        price, volume, 52-week high and 50-day mean from the stored daily price bars (the prices store, the session in the header) ·
         institutional ownership from SEC Form 13F (reported quarterly, ~45-day filing lag) where available,
         otherwise the institutional ownership percentage from Yahoo ·
         Unusual Whales (UW) options flow is manual-only (rule K3) ·
@@ -590,7 +590,7 @@ var FLAG_TEXT = {{
   revenue_nonpositive: "Revenue of zero or less: margin unknown",
   gross_profit_exceeds_revenue: "Gross profit above revenue: margin unknown",
   mixed_share_basis: "Share counts on different bases (diluted against basic): dilution unknown",
-  price_bar_older: "Price and momentum from an older session than the board's (a halt or a Daily Bars gap)",
+  price_bar_older: "Price and momentum from an older session than the board's (a halt or a gap in the stored bars)",
   no_recent_revenue: "No revenue figure in the last {engine.RULES["stale_days"]} days (the newer reports carry none): revenue unknown, no tier"
 }};
 function flagsHtml(c) {{
