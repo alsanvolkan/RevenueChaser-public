@@ -1,7 +1,7 @@
 """``market_series``: the market-wide series in one serving table, keyed ``(series_id, obs_date, source)``.
 
 Sources (``rcdata/build/sources/``): Treasury par yields, Cboe index files, FRED, CFTC COT (keyed on contract code),
-FOMC meeting dates and CPI release dates. Each source writes raw files under ``raw/<source>/<dataset>/`` with a
+FOMC meeting dates, CPI release dates and Yahoo's daily chart for MOVE and wheat (PR 9). Each source writes raw files under ``raw/<source>/<dataset>/`` with a
 ``<name>.meta.json`` beside each (the as-of date, the fetch time, the run id and the URL without its query; written
 first, so the raw file itself stays the resume marker), and the rows go to
 ``parquet/<source>/<dataset>/year=<YYYY>/part-0.parquet``, merged by key, the newest fetch winning a key. Nothing is
@@ -23,11 +23,11 @@ import duckdb
 
 from ...core import calendar
 from . import base
-from .sources import bls, cboe, cftc, fed, fred, treasury
+from .sources import bls, cboe, cftc, fed, fred, treasury, yahoo
 
 NAME = "market_series"
 TABLE = "market_series"
-SOURCES = (treasury, cboe, fred, cftc, fed, bls)
+SOURCES = (treasury, cboe, fred, cftc, fed, bls, yahoo)
 SCHEMA = [("series_id", "TEXT"), ("obs_date", "DATE"), ("source", "TEXT"), ("value", "DOUBLE"),
           ("open", "DOUBLE"), ("high", "DOUBLE"), ("low", "DOUBLE"), ("close", "DOUBLE"), ("frequency", "TEXT"),
           ("session_date", "DATE"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
@@ -80,7 +80,7 @@ def _session_dates(ctx: base.RunContext, source: str, rows: list[dict]) -> None:
 class MarketSeries:
     name = NAME
     kind = "market"
-    providers = tuple(s.SOURCE for s in SOURCES)
+    providers = tuple(getattr(s, "PROVIDER", s.SOURCE) for s in SOURCES)   # Yahoo counts under yfinance
     tables = (TABLE,)
 
     def default_as_of(self) -> date:
