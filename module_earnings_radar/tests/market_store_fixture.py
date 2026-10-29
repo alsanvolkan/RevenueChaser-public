@@ -34,3 +34,28 @@ def serve(observations: dict[str, float], *, series: str = "DGS10", as_of: date 
     base.build_kind(ctx, ms.DATASET)
     if check:
         ops.record_check(ms.NAME, check, run_id=RUN_ID, source_as_of=as_of.isoformat())
+
+
+def serve_estimates(rows: list[dict], *, as_of: date | None = None, check: str | None = "changed") -> None:
+    """Build and swap in a ``fundamentals`` serving file whose ``estimate_latest`` holds ``rows``.
+
+    The same way ``rcdata/tests/fund_fixture.spine`` builds a spine: the dataset's own schema, the columns a row
+    leaves out written NULL. ``rows`` carry at least ``ticker`` and ``period``.
+    """
+    from RevenueChaser.rcdata import serving
+    from RevenueChaser.rcdata.build.fundamentals import estimates as est
+
+    as_of = as_of or date(2026, 10, 28)
+    schema = est.schema()
+    full = [{**{c: None for c, _ in schema}, "cik": "1", "source_as_of": as_of, "fetched_at": 1.0,
+             "run_id": RUN_ID, **r} for r in rows]
+    cols = ", ".join(f'"{c}" {t}' for c, t in schema)
+    names = [c for c, _ in schema]
+    with serving.build("fundamentals") as b:
+        b.con.execute(f"CREATE TABLE estimate_latest ({cols})")
+        if full:
+            b.con.executemany(f"INSERT INTO estimate_latest VALUES ({', '.join('?' * len(names))})",
+                              [[r[c] for c in names] for r in full])
+        b.swap({"estimate_latest": len(full)})
+    if check:
+        ops.record_check(est.NAME, check, run_id=RUN_ID, source_as_of=as_of.isoformat())

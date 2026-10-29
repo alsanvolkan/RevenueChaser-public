@@ -11,7 +11,8 @@ from datetime import date, datetime, timezone
 import pytest
 
 from RevenueChaser.core import calendar, rawstore
-from RevenueChaser.module_earnings_radar import stored_inputs
+from RevenueChaser.module_earnings_radar import store_reads
+from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve_estimates
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline, nrc_from_card
 from RevenueChaser.module_earnings_radar.rules import rule1_drivers
 from RevenueChaser.module_earnings_radar.tests.test_pipeline_score import _FakeUW
@@ -104,28 +105,26 @@ def test_the_rule_has_no_weight_of_its_own():
 
 # ── the stored row ───────────────────────────────────────────────────────────────────────────────────────────────
 
-def _seed(row=FULL, ticker="AAPL", session=SESSION, period="0q"):
-    rawstore.write_rows("estimate_snapshots", [{"ticker": ticker, "session_date": session, "period": period,
-                                                "source": "yfinance", **row}])
+def _seed(row=FULL, ticker="AAPL", period="0q", extra: list[dict] | None = None):
+    """The row in the fundamentals store, which is where the board reads its estimates (``store_reads.estimates``).
+
+    ``estimate_latest`` holds one row per (company, ticker, period) already — the "newest snapshot" rule is the
+    build's, not the reader's — so a stale-session case has no meaning here any more.
+    """
+    serve_estimates([{"ticker": ticker, "period": period, **row}, *(extra or [])])
 
 
-def test_estimates_reads_the_zero_quarter_row_of_the_newest_session():
-    _seed()
-    rawstore.write_rows("estimate_snapshots", [
-        {"ticker": "AAPL", "session_date": date(2026, 10, 13), "period": "0q", "eps_trend_current": 9.9},
-        {"ticker": "AAPL", "session_date": SESSION, "period": "+1q", "eps_trend_current": 8.8}])
-    rows, session = stored_inputs.estimates(["AAPL"])
-    assert session == SESSION
+def test_estimates_read_the_current_quarter_row_of_the_asked_name():
+    _seed(extra=[{"ticker": "AAPL", "period": "+1q", "eps_trend_current": 8.8}])
+    rows, note = store_reads.estimates(["AAPL"])
+    assert note["stored"] is True
     assert rows["AAPL"]["eps_trend_current"] == pytest.approx(1.05)
 
 
-def test_estimates_ignores_a_session_older_than_the_lag():
-    _seed(session=date(2026, 10, 1))               # 9 sessions back, MAX_LAG is 5
-    assert stored_inputs.estimates(["AAPL"]) == ({}, None)
-
-
 def test_estimates_of_an_empty_store_is_empty():
-    assert stored_inputs.estimates(["AAPL"]) == ({}, None)
+    rows, note = store_reads.estimates(["AAPL"])
+    assert rows == {}
+    assert note["stored"] is False
 
 
 # ── the pipeline ─────────────────────────────────────────────────────────────────────────────────────────────────

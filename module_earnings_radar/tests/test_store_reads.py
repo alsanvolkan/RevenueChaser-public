@@ -8,7 +8,7 @@ import pytest
 from RevenueChaser.core import calendar
 from RevenueChaser.module_earnings_radar import store_reads
 
-from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve
+from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve, serve_estimates
 
 LAST = date(2026, 10, 26)
 
@@ -123,3 +123,47 @@ def test_a_bond_market_only_observation_still_counts_its_sessions():
     serve({"2026-04-02": 4.0, "2026-04-03": 4.1})
     rows, _note = store_reads.dgs10_map(latest=date(2026, 4, 6))
     assert rows == {"2026-04-02": 4.0, "2026-04-03": 4.1}
+
+
+# ── the analyst estimates (need ``fundamentals.estimates``) ──
+
+def _estimate(ticker: str, period: str = "0q", **values) -> dict:
+    return {"ticker": ticker, "period": period, **values}
+
+
+def test_the_current_quarter_row_is_read_from_the_fundamentals_store():
+    serve_estimates([_estimate("AAPL", eps_trend_current=1.5, eps_rev_up_7d=2.0),
+                     _estimate("AAPL", "+1q", eps_trend_current=9.9)])
+    rows, note = store_reads.estimates(["aapl"])
+    assert rows["AAPL"]["eps_trend_current"] == pytest.approx(1.5)
+    assert rows["AAPL"]["eps_rev_up_7d"] == pytest.approx(2.0)
+    assert set(rows["AAPL"]) == set(store_reads.ESTIMATE_FIELDS)
+    assert note["stored"] is True
+    assert note["source"] == store_reads.ESTIMATES_SOURCE
+
+
+def test_only_the_current_quarter_is_kept():
+    serve_estimates([_estimate("AAPL", "+1y", eps_trend_current=9.9)])
+    rows, note = store_reads.estimates(["AAPL"])
+    assert rows == {}
+    assert note["stored"] is False
+
+
+def test_a_name_the_store_has_no_row_for_is_absent():
+    serve_estimates([_estimate("AAPL", eps_trend_current=1.5)])
+    rows, note = store_reads.estimates(["AAPL", "MSFT"])
+    assert set(rows) == {"AAPL"}
+    assert "1 of 2 names" in note["label"]
+
+
+def test_no_fundamentals_store_is_nothing_stored():
+    rows, note = store_reads.estimates(["AAPL"])
+    assert rows == {}
+    assert note["stored"] is False
+
+
+def test_the_run_warms_the_estimates_from_the_fundamentals_store():
+    serve_estimates([_estimate("AAPL", eps_trend_current=1.5)])
+    p = _pipeline()
+    assert p._warm_estimates()["AAPL"]["eps_trend_current"] == pytest.approx(1.5)
+    assert p.input_sources["estimates"] == {"stored": 1, "missing": 0}

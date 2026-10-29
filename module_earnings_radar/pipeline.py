@@ -208,6 +208,7 @@ class EarningsPipeline:
             "rate_events": "none",
             "ohlc": {"stored": 0, "live": 0},
             "estimates": {"stored": 0, "missing": 0},
+            "estimates_note": None,
         }
 
     @property
@@ -328,16 +329,18 @@ class EarningsPipeline:
         return report_date in (today, calendar.previous_trading_day(today - timedelta(days=1)))
 
     def _warm_estimates(self) -> dict[str, dict]:
-        """The stored ``estimate_snapshots`` ``0q`` rows for the run's tickers (E6, #372, D14).
+        """The current-quarter estimates for the run's tickers, from the fundamentals store
+        (``store_reads.estimates``, the need ``fundamentals.estimates``).
 
-        Only a read: the nightly sweep owns the table. R1 is logged only (weight 0), so a missing snapshot is never
-        a reason to call a provider — it just leaves R1 unavailable on that card.
+        Only a read, and no provider call: the fundamentals build fetches the estimates. R1 is logged only
+        (weight 0), so a name the store has no row for just leaves R1 unavailable on that card.
         """
         if self._estimates is None:
-            rows, _session = stored_inputs.estimates(self.tickers)
+            rows, note = store_reads.estimates(self.tickers)
             self._estimates = rows
-            named = {str(t).upper() for t in self.tickers if t}
+            named = {str(t).strip().upper() for t in self.tickers if t}
             self.input_sources["estimates"] = {"stored": len(rows), "missing": len(named - set(rows))}
+            self.input_sources["estimates_note"] = note.get("label")
         return self._estimates
 
     def _gex_profile(self, ticker: str, spot, em_pct: float | None, capture: dict | None = None) -> dict:

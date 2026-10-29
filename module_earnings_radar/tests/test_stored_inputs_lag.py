@@ -42,14 +42,10 @@ def _short(session):
     return stored_inputs.short_rows(["AAA"])[1]
 
 
-def _estimates(session):
-    rawstore.write_rows("estimate_snapshots", [{"ticker": "AAA", "session_date": session, "period": "0q",
-                                                "source": "yfinance", "eps_trend_current": 1.0}])
-    return stored_inputs.estimates(["AAA"])[1]
 
 
 # (reader, the spec's MAX_LAG) — written out, so a changed constant fails here rather than moving the boundary.
-READERS = {"earnings_calendar": (_calendar, 1), "short_interest": (_short, 3), "estimate_snapshots": (_estimates, 5)}
+READERS = {"earnings_calendar": (_calendar, 1), "short_interest": (_short, 3)}
 
 
 @pytest.mark.parametrize("table", sorted(READERS))
@@ -66,7 +62,6 @@ def test_a_session_one_past_max_lag_is_not_read(table):
 
 def test_the_lags_are_the_spec_values():
     """The boundaries above follow MAX_LAG; these are the values the spec and the model version name."""
-    assert stored_inputs.MAX_LAG == {"earnings_calendar": 1, "short_interest": 3, "estimate_snapshots": 5,
-                                     "vol_index_daily": 3, "cftc_cot": 10}
+    assert stored_inputs.MAX_LAG == {"earnings_calendar": 1, "short_interest": 3}
     # The 10-year yield left this module with the market store; its own limit is the same 3 sessions.
     assert store_reads.MAX_LAG["dgs10"] == 3

@@ -13,6 +13,7 @@ import pytest
 from RevenueChaser.core import calendar, rawstore
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline
 from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve as serve_market
+from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve_estimates
 from RevenueChaser.module_earnings_radar.tests.test_rule1_drivers_e6 import FULL
 from RevenueChaser.module_earnings_radar.tests.test_stored_ohlc_e5e import _bars, _prints, _seed as _seed_bars
 from RevenueChaser.module_earnings_radar.tests.test_stored_short_e5c import LIVE, _seed as _seed_short
@@ -53,8 +54,7 @@ class _CountingUW(_FakeUW):
 def _seed_everything():
     _seed_bars(_bars(300))
     _seed_short({"AAPL": LIVE["AAPL"]})
-    rawstore.write_rows("estimate_snapshots", [{"ticker": "AAPL", "session_date": SESSION, "period": "0q",
-                                                "source": "yfinance", **FULL}])
+    serve_estimates([{"ticker": "AAPL", "period": "0q", **FULL}])
     serve_market({(SESSION - timedelta(days=i)).isoformat(): 4.0 + i / 100 for i in range(1, 90)})
     rawstore.write_rows("economic_calendar", [
         {"session_date": SESSION, "event_ts": datetime(d.year, d.month, d.day, 8, 30, tzinfo=NY).timestamp(),
