@@ -170,10 +170,11 @@ class RunContext:
 
 
 def http_get(ctx: RunContext, provider: str, url: str, params: dict | None = None,
-             headers: dict | None = None) -> httpx.Response:
+             headers: dict | None = None, keyed: bool = False) -> httpx.Response:
     """GET with the keyless retry ladder; every attempt is counted for ``provider``. Raises ``SourceError``.
 
-    ``params`` may hold a key (FRED): neither the query nor the headers are ever logged.
+    ``params`` may hold a key (FRED): neither the query nor the headers are ever logged. ``keyed``: the request
+    carries the provider's key (Alpaca's headers), so a 403 points at the key, not at ``RC_HTTP_CONTACT``.
     """
     last = ""
     for attempt in range(1, HTTP_ATTEMPTS + 1):
@@ -189,7 +190,9 @@ def http_get(ctx: RunContext, provider: str, url: str, params: dict | None = Non
             if r.status_code < 400:
                 return r
             last = f"HTTP {r.status_code}"
-            if r.status_code == 403:
+            if r.status_code == 403 and keyed:
+                last += " (refused: check the key and what it is allowed to read)"
+            elif r.status_code == 403:
                 last += (f" (refused: set {CONTACT_ENV} to a contact for the User-Agent)"
                          if not (os.getenv(CONTACT_ENV) or "").strip() else " (refused although a contact is set)")
             if not (r.status_code == 429 or r.status_code >= 500):
