@@ -264,6 +264,30 @@ def test_g4_spx_and_ovx_are_one_column_files_like_vvix():
 
 # ── PR 9 (G3): MOVE and wheat for the Sector Rotation map, from Yahoo through yfinance ──
 
+def test_yahoo_base_set_after_import_still_keeps_yfinance_out(monkeypatch):
+    """Review S2 (PR 270): ``RC_YAHOO_BASE`` is read when ``_history`` runs, not at import, so a test that sets it
+    later is not silently sent to the real Yahoo."""
+    import sys
+    import types
+
+    import httpx
+    asked = []
+
+    class _Answer:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"symbol": "^MOVE", "bars": [["2026-10-27", 1.0, 1.0, 1.0, 1.0]]}
+
+    monkeypatch.setenv("RC_YAHOO_BASE", "http://127.0.0.1:9/yahoo")
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: asked.append(url) or _Answer())
+    monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(
+        Ticker=lambda *a, **k: pytest.fail("yfinance was asked with RC_YAHOO_BASE set")))
+    assert yahoo._history("^MOVE") == [["2026-10-27", 1.0, 1.0, 1.0, 1.0]]
+    assert asked == ["http://127.0.0.1:9/yahoo/%5EMOVE.json"]
+
+
 def test_yahoo_parses_daily_closes_by_the_exchange_day(fixture_text):
     fetched = datetime(2026, 10, 28, 1, 0, tzinfo=timezone.utc).timestamp()       # 27 Oct 21:00 in New York
     rows = yahoo.parse(fixture_text("yahoo_history_MOVE.json"), {"series": "MOVE", "fetched_at": fetched})

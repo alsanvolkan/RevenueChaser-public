@@ -11,7 +11,8 @@ backfill; counted under the ``yfinance`` provider (its day cap). Raw: ``raw/yaho
 the bars as ``[day, open, high, low, close]``. A bar is dated by the exchange's own day; a bar of a day whose session
 is not over when it was fetched is skipped (16:00 New York), and the next fetch brings it complete.
 
-``RC_YAHOO_BASE`` is a test seam, because yfinance has no base URL of its own: when it is set, ``_history`` reads
+``RC_YAHOO_BASE`` is a test seam, because yfinance has no base URL of its own: when it is set (read at each call, so
+a test that sets it late is not sent to the real Yahoo), ``_history`` reads
 ``<base>/<symbol, URL-quoted>.json``, a raw file of this source (``{"symbol", "bars"}``), instead of asking yfinance.
 The CLI test points it at its loopback mock, so the builder subprocess stays offline.
 """
@@ -30,7 +31,6 @@ from .. import base
 SOURCE, DATASET_DIR = "yahoo", "history"
 PROVIDER = "yfinance"
 SYMBOLS = {"MOVE": "^MOVE", "WHEATF": "ZW=F"}
-BASE = os.getenv("RC_YAHOO_BASE")
 NY = ZoneInfo("America/New_York")
 # shortcut: one New York cut-off for both; wheat settles at 13:20 Chicago, so its bar waits up to two hours longer
 # than it must. Upgrade to a per-symbol close if a same-afternoon wheat bar ever matters.
@@ -39,9 +39,10 @@ CLOSED_HOUR = 16
 
 def _history(symbol: str) -> list[list]:
     """The daily bars of ``symbol`` from yfinance, ``[[ISO day, open, high, low, close], ...]`` oldest first."""
-    if BASE:
+    base = os.getenv("RC_YAHOO_BASE")
+    if base:
         import httpx
-        r = httpx.get(f"{BASE}/{quote(symbol, safe='')}.json", timeout=30)
+        r = httpx.get(f"{base}/{quote(symbol, safe='')}.json", timeout=30)
         r.raise_for_status()
         return r.json().get("bars") or []
     import yfinance as yf
