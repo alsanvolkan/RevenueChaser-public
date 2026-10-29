@@ -1,11 +1,11 @@
 """C26 (#383, LP-D): Earnings reads the LEAPS label read-only.
 
-The lazy ``get_or_fetch_leaps`` path and ``LEAPS_LAZY_FETCH`` are gone, so
-``leaps_cache`` has one writer, the LEAPS Fetch; the card shows the label's
-``as_of`` and its age. Offline: fake UW, ``rawstore_tmp_db`` keeps LEAPS reads off
-the real store.
+The lazy ``get_or_fetch_leaps`` path and ``LEAPS_LAZY_FETCH`` are gone; the card shows the label's ``as_of`` and its
+age. Since G9 the LEAPS Fetch no longer writes ``leaps_cache``: the label is the ticker's row of the last recorded
+LEAPS session (``leaps_footprint_history``, ``module_leaps.history.latest``), read once per run. Offline: fake UW,
+``rawstore_tmp_db`` keeps LEAPS reads off the real store.
 """
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -52,9 +52,8 @@ def _pipeline(uw):
 
 def test_the_latest_snapshot_is_read_without_a_fetch(monkeypatch):
     uw = _LeapsUW()
-    monkeypatch.setattr(pl, "leaps_load_cache", lambda t: {
-        "latest": {"label": "Accumulating", "as_of": "2026-10-10", "score": 70},
-        "history": [{"as_of": "2026-07-10", "label": "Quiet"}]})
+    monkeypatch.setattr(pl, "leaps_latest", lambda tickers: {
+        "AAPL": {"label": "Accumulating", "as_of": "2026-10-10", "score": 70}})
     card = _pipeline(uw)._score("AAPL")
     assert card.leaps_label == "Accumulating"
     assert card.leaps_as_of == "2026-10-10"
@@ -62,21 +61,35 @@ def test_the_latest_snapshot_is_read_without_a_fetch(monkeypatch):
     assert uw.leaps_calls == []          # never a UW LEAPS call on the Earnings path
 
 
-def test_a_real_cache_payload_scores_the_same_label():
-    """The contract L3 keeps (#377 L3): ``save_cache``'s payload is what Earnings reads, unchanged."""
-    from RevenueChaser.module_leaps import engine
-    engine.save_cache("AAPL", {"ticker": "AAPL", "label": "Accumulating", "as_of": "2026-10-10", "score": 70,
-                               "far_call_oi": 1000, "far_put_oi": 100, "far_call_share": 0.9091,
-                               "far_oi_growth_1d_pct": 12.5, "far_oi_growth_q_pct": None, "iv_rank": 55.0})
+def _record_leaps(snapshot, run_at=datetime(2026, 10, 6, 22, 0, tzinfo=timezone.utc).timestamp()):
+    from RevenueChaser.module_leaps import history as leaps_history
+    leaps_history.record([{"ticker": "AAPL", "name": "Apple", "snapshot": snapshot, "inputs": {},
+                           "fetch_status": "ok"}], run_id="r1", run_at=run_at)
+
+
+def test_the_last_recorded_leaps_session_is_what_earnings_reads():
+    """G9: the row the LEAPS Fetch recorded for the ticker is what Earnings reads, unchanged."""
+    _record_leaps({"ticker": "AAPL", "label": "Accumulating", "as_of": "2026-10-06", "score": 70,
+                   "far_call_oi": 1000, "far_put_oi": 100, "far_call_share": 0.9091,
+                   "far_oi_growth_1d_pct": 12.5, "far_oi_growth_q_pct": None, "iv_rank": 55.0})
     uw = _LeapsUW()
     card = _pipeline(uw)._score("AAPL")
-    assert (card.leaps_label, card.leaps_as_of, card.leaps_score) == ("Accumulating", "2026-10-10", 70)
+    assert (card.leaps_label, card.leaps_as_of, card.leaps_score) == ("Accumulating", "2026-10-06", 70)
+    assert (card.leaps_far_call_oi, card.leaps_far_put_oi, card.leaps_growth_1d_pct) == (1000, 100, 12.5)
     assert uw.leaps_calls == []
+
+
+def test_the_old_leaps_cache_is_not_read():
+    """``leaps_cache`` keeps its rows until G10, but nothing writes it any more: a stale row there is not a label."""
+    from RevenueChaser.module_leaps import engine
+    engine.save_cache("AAPL", {"ticker": "AAPL", "label": "Accumulating", "as_of": "2026-10-10", "score": 70})
+    card = _pipeline(_LeapsUW())._score("AAPL")
+    assert card.leaps_label == "N/A" and card.leaps_as_of == ""
 
 
 def test_no_cache_reads_n_a_and_writes_nothing(monkeypatch):
     uw = _LeapsUW()
-    monkeypatch.setattr(pl, "leaps_load_cache", lambda t: None)
+    monkeypatch.setattr(pl, "leaps_latest", lambda tickers: {})
     from RevenueChaser.module_leaps import engine as leaps_engine
     monkeypatch.setattr(leaps_engine, "save_cache",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("save_cache called")))
@@ -101,3 +114,12 @@ def test_a_card_without_an_as_of_shows_the_label_alone():
     content = export_html([card], [], {}).read_text(encoding="utf-8")
     assert '"leaps_as_of": ""' in content
     assert '"leaps_age_days": null' in content
+
+
+def test_a_failed_leaps_read_is_n_a_and_the_run_says_so(monkeypatch):
+    def _locked(tickers):
+        raise RuntimeError("history file locked")
+    monkeypatch.setattr(pl, "leaps_latest", _locked)
+    p = _pipeline(_LeapsUW())
+    assert p._score("AAPL").leaps_label == "N/A"
+    assert p.input_sources["leaps"] == {"rows": 0, "error": "history file locked"}

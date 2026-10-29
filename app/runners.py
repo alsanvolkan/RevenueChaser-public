@@ -224,6 +224,10 @@ def _fetch_calendar_days(uw: UWClient, days: list[date]) -> tuple[list, dict]:
     the EM gate, the daily cap, R4 and the card's estimate and report time read it, fields UW moves during the
     day for the names about to report (review S4).
     """
+    # shortcut: the build plan (PR 19) has the gates read the UW earnings calendar with its expected move from the
+    # options store (plan step 9), but rcdata serves no calendar table yet: G8 keeps the UW answer only as raw files
+    # (raw/uw/earnings_calendar/). So the calendar, and the expected move the EM gate reads, still come from the old
+    # store's nightly sweep or from UW. Upgrade when the calendar is served (G5's earnings_event, parked issue).
     from RevenueChaser.core import calendar
     from RevenueChaser.module_earnings_radar import stored_inputs
     events = []

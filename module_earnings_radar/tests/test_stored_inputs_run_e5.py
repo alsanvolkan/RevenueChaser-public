@@ -7,19 +7,20 @@ The slice tests call ``_score`` with the caches set by hand; this one pins that 
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 import pytest
 
 from RevenueChaser.core import calendar, rawstore
+from RevenueChaser.rcdata import ops
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline
 from RevenueChaser.module_earnings_radar.tests.test_rule1_drivers_e6 import FULL
 from RevenueChaser.module_earnings_radar.tests.test_stored_ohlc_e5e import _bars, _prints, _seed as _seed_bars
 from RevenueChaser.module_earnings_radar.tests.test_r5_ownership_store_g9 import _write as _write_ownership
 from RevenueChaser.module_sec_13f.tests.ownership_store import market  # noqa: F401 - the fixture
+from RevenueChaser.module_earnings_radar.tests.options_store import list_name, screener_row, write_series
+from RevenueChaser.module_oipd.tests.options_store import write_options
 from RevenueChaser.module_earnings_radar.tests.test_pipeline_score import _FakeUW
 
-NY = ZoneInfo("America/New_York")
 SESSION = date(2026, 10, 14)
 NOW = datetime(2026, 10, 14, 21, 0, tzinfo=timezone.utc)          # Wed 17:00 New York: 10-14 is complete
 REPORT = "2026-10-20"                                               # Tue: window Mon 10-19 .. Wed 10-21
@@ -37,9 +38,7 @@ def _store(rawstore_tmp_db, market):  # noqa: F811
 
 class _CountingUW(_FakeUW):
     def __init__(self):
-        super().__init__(earnings_history=_prints(),
-                         screener_batch={"AAPL": {"close": "100", "call_volume": "1000", "put_volume": "1000",
-                                                  "total_open_interest": "2000"}})
+        super().__init__(earnings_history=_prints())        # the screener rows are stored since G9
         self.ohlc_asked, self.shorts_asked = [], []
 
     def etf_ohlc(self, ticker, days=60, candle_size="1d"):
@@ -57,12 +56,14 @@ def _seed_everything(market):
                      ibkr=[("AAPL", SESSION, 35.0, -30.0, 120_000, False)])
     rawstore.write_rows("estimate_snapshots", [{"ticker": "AAPL", "session_date": SESSION, "period": "0q",
                                                 "source": "yfinance", **FULL}])
-    rawstore.write_rows("macro_series", [
-        {"series_id": "DGS10", "obs_date": SESSION - timedelta(days=i), "source": "fred", "value": 4.0 + i / 100}
-        for i in range(1, 90)])
-    rawstore.write_rows("economic_calendar", [
-        {"session_date": SESSION, "event_ts": datetime(d.year, d.month, d.day, 8, 30, tzinfo=NY).timestamp(),
-         "event": "GDP", "type": "report", "source": "uw"} for d in (date(2026, 10, 15), date(2026, 10, 23))])
+    # R4/R5/R8 (G9): AAPL is on the option watch list, with its list rows of the session.
+    ops.watch_add("option", "AAPL", by="test")
+    list_name("AAPL", SESSION)
+    write_options(option_screener_daily=[screener_row("AAPL", SESSION, date.fromisoformat(REPORT))])
+    # R6 (G9): the 10-year and the FOMC/CPI days from ``market_series``; both rate calendars span the report.
+    write_series([("DGS10", SESSION - timedelta(days=i), 4.0 + i / 100) for i in range(0, 90)]
+                 + [(sid, d, 1.0) for sid in ("FOMC_DECISION", "CPI_RELEASE")
+                    for d in (date(2026, 1, 28), date(2026, 12, 9))], market=market)
 
 
 def test_a_run_with_every_input_stored_asks_uw_and_fred_for_none_of_them(monkeypatch, _store):

@@ -127,6 +127,30 @@ def baselines(tickers, today) -> dict:
     return out
 
 
+def latest(tickers) -> dict[str, dict]:
+    """``{ticker: row}`` of the last recorded LEAPS session snapshot for ``tickers`` (G9: Earnings' LEAPS context).
+
+    The row carries the footprint columns (``label``, ``score``, ``as_of``, the far OI, growth and IV rank): what
+    ``leaps_cache.latest`` held before the board read the options store. One read for all tickers; a ticker the
+    session did not record (off the option watch list, or never pinned) is missing, and nothing recorded is ``{}``.
+    A read never creates the history file.
+    """
+    wanted = {str(t).strip().upper() for t in (tickers or []) if t}
+    if not wanted:
+        return {}
+    with rawstore.brief_wait():
+        snaps = history.sessions(BOARD, 1)
+        if not snaps:
+            return {}
+        rows = rawstore.query(f"SELECT * FROM {TABLE} WHERE run_id = ?", [snaps[0]["run_id"]], db="history")
+    out = {}
+    for row in rows:
+        ticker = (row.get("ticker") or "").upper()
+        if ticker in wanted:
+            out[ticker] = {c: row.get(c) for c in _COLUMNS}
+    return out
+
+
 def _plain(value):
     """JSON-safe copy: dates and other non-JSON values become strings."""
     return json.loads(json.dumps(value, default=str))

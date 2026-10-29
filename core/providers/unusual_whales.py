@@ -569,58 +569,8 @@ class UWClient:
         return self._shaped(f"/stock/{_seg(ticker)}/flow-recent", None, _list_rows)
 
     def aggregate_flow(self, ticker: str, flow: list = None) -> dict:
-        """The tape's premium in buckets. ``inst_call``/``inst_put``/``retail_*`` split by size only (size >= 10 is
-        institutional; R8 and Swing read these). The R5 lean (docs/rules/redesign.md R5, review S4) reads only
-        institutional prints, size >= 10 AND premium >= ``INST_PRINT_MIN_PREMIUM``, by the print's side
-        (``core/option_prints``): ``inst_bull_side`` = ask-side calls + bid-side puts, ``inst_bear_side`` = bid-side
-        calls + ask-side puts, ``inst_mid`` dropped, ``inst_no_side`` neither. A package print (multi-leg or
-        stock-tied condition code) is left out of all four and summed in ``inst_package``. ``side_served`` is True
-        when at least one institutional print outside a package carries a side, False when such prints exist and
-        none does (no lean), None when there is none to judge."""
-        if flow is None:
-            flow = self.flow_recent(ticker)
-        if not flow:
-            return _empty_flow()
-        inst_c, inst_p, ret_c, ret_p = 0.0, 0.0, 0.0, 0.0
-        unknown_p = 0.0
-        sweep_p, block_p = 0.0, 0.0
-        bull, bear = 0.0, 0.0
-        lean = {"bull": 0.0, "bear": 0.0, "mid": 0.0, "none": 0.0, "package": 0.0}
-        for t in flow:
-            prem = _flow_num(t.get("premium")) or 0.0
-            size = _flow_num(t.get("size"))
-            ot = str(t.get("option_type", "") or "").strip().lower()
-            tt = str(t.get("trade_type", "") or "").lower()
-            # Classify only when BOTH size and option type are known. A missing
-            # size is not a small lot and an unknown option type is not a put;
-            # unclassifiable premium is tracked separately, never fabricated.
-            if size is not None and ot in ("call", "put"):
-                if size < 10:
-                    if ot == "call": ret_c += prem
-                    else: ret_p += prem
-                else:
-                    if ot == "call": inst_c += prem
-                    else: inst_p += prem
-                    if prem >= _config.INST_PRINT_MIN_PREMIUM:
-                        lean[_lean_bucket(t, ot)] += prem
-            else:
-                unknown_p += prem
-            if "sweep" in tt: sweep_p += prem
-            if "block" in tt: block_p += prem
-            delta = _flow_num(t.get("delta")) or 0.0
-            if ot == "call" and delta > 0.20: bull += prem
-            if ot == "put" and abs(delta) > 0.20: bear += prem
-        return {
-            "inst_call": inst_c, "inst_put": inst_p, "retail_call": ret_c, "retail_put": ret_p,
-            "unknown": unknown_p,
-            "sweep": sweep_p, "block": block_p, "bullish": bull, "bearish": bear,
-            "inst_net": inst_c - inst_p,
-            "inst_bull_side": lean["bull"], "inst_bear_side": lean["bear"], "inst_mid": lean["mid"],
-            "inst_no_side": lean["none"], "inst_package": lean["package"],
-            "inst_lean_net": lean["bull"] - lean["bear"],
-            "side_served": (lean["bull"] + lean["bear"] + lean["mid"] > 0
-                            if lean["bull"] + lean["bear"] + lean["mid"] + lean["none"] > 0 else None),
-        }
+        """:func:`aggregate_prints` of ``flow``, or of the ticker's ``flow-recent`` when None."""
+        return aggregate_prints(self.flow_recent(ticker) if flow is None else flow)
 
     # ── Dark Pool ──
     def dark_pool(self, ticker: str, limit: int = 100) -> list[dict]:
@@ -1099,6 +1049,60 @@ def _holdings(data) -> list[dict]:
     rows = list(by_ticker.values())
     rows.sort(key=lambda x: float(x.get("weight") or 0), reverse=True)
     return rows
+
+
+def aggregate_prints(flow: list) -> dict:
+    """The tape's premium in buckets. ``inst_call``/``inst_put``/``retail_*`` split by size only (size >= 10 is
+    institutional; R8 and Swing read these). The R5 lean (docs/rules/redesign.md R5, review S4) reads only
+    institutional prints, size >= 10 AND premium >= ``INST_PRINT_MIN_PREMIUM``, by the print's side
+    (``core/option_prints``): ``inst_bull_side`` = ask-side calls + bid-side puts, ``inst_bear_side`` = bid-side
+    calls + ask-side puts, ``inst_mid`` dropped, ``inst_no_side`` neither. A package print (multi-leg or
+    stock-tied condition code) is left out of all four and summed in ``inst_package``. ``side_served`` is True
+    when at least one institutional print outside a package carries a side, False when such prints exist and
+    none does (no lean), None when there is none to judge. The options store's ``option_print`` rows carry the same
+    fields, so Earnings Radar aggregates them unchanged (G9)."""
+    if not flow:
+        return _empty_flow()
+    inst_c, inst_p, ret_c, ret_p = 0.0, 0.0, 0.0, 0.0
+    unknown_p = 0.0
+    sweep_p, block_p = 0.0, 0.0
+    bull, bear = 0.0, 0.0
+    lean = {"bull": 0.0, "bear": 0.0, "mid": 0.0, "none": 0.0, "package": 0.0}
+    for t in flow:
+        prem = _flow_num(t.get("premium")) or 0.0
+        size = _flow_num(t.get("size"))
+        ot = str(t.get("option_type", "") or "").strip().lower()
+        tt = str(t.get("trade_type", "") or "").lower()
+        # Classify only when BOTH size and option type are known. A missing
+        # size is not a small lot and an unknown option type is not a put;
+        # unclassifiable premium is tracked separately, never fabricated.
+        if size is not None and ot in ("call", "put"):
+            if size < 10:
+                if ot == "call": ret_c += prem
+                else: ret_p += prem
+            else:
+                if ot == "call": inst_c += prem
+                else: inst_p += prem
+                if prem >= _config.INST_PRINT_MIN_PREMIUM:
+                    lean[_lean_bucket(t, ot)] += prem
+        else:
+            unknown_p += prem
+        if "sweep" in tt: sweep_p += prem
+        if "block" in tt: block_p += prem
+        delta = _flow_num(t.get("delta")) or 0.0
+        if ot == "call" and delta > 0.20: bull += prem
+        if ot == "put" and abs(delta) > 0.20: bear += prem
+    return {
+        "inst_call": inst_c, "inst_put": inst_p, "retail_call": ret_c, "retail_put": ret_p,
+        "unknown": unknown_p,
+        "sweep": sweep_p, "block": block_p, "bullish": bull, "bearish": bear,
+        "inst_net": inst_c - inst_p,
+        "inst_bull_side": lean["bull"], "inst_bear_side": lean["bear"], "inst_mid": lean["mid"],
+        "inst_no_side": lean["none"], "inst_package": lean["package"],
+        "inst_lean_net": lean["bull"] - lean["bear"],
+        "side_served": (lean["bull"] + lean["bear"] + lean["mid"] > 0
+                        if lean["bull"] + lean["bear"] + lean["mid"] + lean["none"] > 0 else None),
+    }
 
 
 def _flow_num(v):

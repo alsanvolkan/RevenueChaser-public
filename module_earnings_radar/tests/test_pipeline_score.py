@@ -19,6 +19,17 @@ def _isolate_leaps_cache(rawstore_tmp_db):
     return rawstore_tmp_db
 
 
+@pytest.fixture(autouse=True)
+def options_set(monkeypatch):
+    """Every card reads a list set (G9: the options store) whose rows a test fills: ``strikes`` (spot exposures by
+    strike), ``term`` (the term structure), ``gex`` (the four levels) and ``prints``. Empty by default, as the old
+    fake UW answered; the three-way rule itself is tested in ``test_options_store_g9``."""
+    from RevenueChaser.module_earnings_radar import store_reads
+    state = {"set": "list", "session": None, "gex": {}, "strikes": [], "term": [], "prints": [], "volume": {}}
+    monkeypatch.setattr(store_reads, "card_inputs", lambda ticker, report_date, listed: dict(state))
+    return state
+
+
 class _FakeUW:
     """Minimal UW client returning empty data except what each test overrides."""
 
@@ -123,12 +134,13 @@ class TestScoreStringPrice:
 
 
 class TestScoreStringCloseEndToEnd:
-    def test_run_produces_card_for_string_close(self):
+    def test_run_produces_card_for_string_close(self, monkeypatch):
         """Full run() path: string close must not drop the ticker from cards."""
-        fake = _FakeUW(
-            screener_batch={"AAPL": {"close": "6.355", "call_volume": "1000",
-                                      "put_volume": "1000", "total_open_interest": "2000"}},
-        )
+        from RevenueChaser.module_earnings_radar import store_reads
+        monkeypatch.setattr(store_reads, "screener_set", lambda tickers, latest=None: (
+            {"AAPL": {"close": "6.355", "call_volume": "1000", "put_volume": "1000", "total_open_interest": "2000"}},
+            {"status": "ok", "error": None, "session": None}))
+        fake = _FakeUW()
         p = EarningsPipeline(["AAPL"], uw=fake, cal_meta={
             "AAPL": {"earnings_date": "2026-08-14", "full_name": "Aple",
                      "sector": "Technology", "expected_move_perc": 0.05},
@@ -217,17 +229,16 @@ class TestR6YieldBetaWiring:
         assert (card.rule_audit or {}).get("rule6_macro") is None
 
     def test_the_stored_dgs10_map_replaces_the_fred_call(self, monkeypatch):
-        """E5d (#372): the nightly D27 sweep stored the series, so FRED is not called at all."""
+        """G9: the 10-year comes from ``market_series`` (E5d, #372, read the old store's ``macro_series``), so FRED
+        is not called at all."""
         from datetime import date
-        from RevenueChaser.core import rawstore
         from RevenueChaser.module_earnings_radar import macro_watch
+        from RevenueChaser.module_earnings_radar.tests.options_store import write_series
         from datetime import datetime, timezone
         from RevenueChaser.core import calendar
         monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 1, 30, 23, 0, tzinfo=timezone.utc))
         ohlc, yld = _duration_ohlc_and_yields(duration=10.0)       # 2026-01-05 .. 01-29: fresh on Jan 30
-        rawstore.write_rows("macro_series", [
-            {"series_id": "DGS10", "obs_date": date.fromisoformat(d), "source": "fred", "value": v}
-            for d, v in yld.items()])
+        write_series([("DGS10", date.fromisoformat(d), v) for d, v in yld.items()])
         monkeypatch.setattr(macro_watch, "fred_daily_map",
                             lambda *a, **k: pytest.fail("FRED must not be called with a stored series"))
         p = _make_pipeline(_FakeUW(etf_ohlc=ohlc),
@@ -267,15 +278,6 @@ class TestR7ReusesFinRecords:
         assert audit.get("available") is True
         assert audit.get("score") == 20.0
 
-class _GexUW(_FakeUW):
-    def __init__(self, strike_rows, **overrides):
-        super().__init__(**overrides)
-        self._strike_rows = strike_rows
-
-    def spot_exposures_by_strike(self, ticker):
-        return self._strike_rows
-
-
 def _strike(cg=None, pg=None):
     return {"strike": "0", "call_gamma_vol": None if cg is None else str(cg),
             "put_gamma_vol": None if pg is None else str(pg),
@@ -285,7 +287,7 @@ def _strike(cg=None, pg=None):
 
 
 class TestR4GexProfileWiring:
-    def test_strike_profile_reaches_r4_and_structure(self):
+    def test_strike_profile_reaches_r4_and_structure(self, options_set):
         # COO-like: red band 65/70 inside the EM window => volume-book short.
         rows = [
             _strike(332, 0),      # 60 -> net +332
@@ -296,7 +298,8 @@ class TestR4GexProfileWiring:
         ]
         for i, s in enumerate((60, 65, 70, 75, 80)):
             rows[i]["strike"] = str(s)
-        fake = _GexUW(rows, flow_recent=[], aggregate_flow={})
+        options_set["strikes"] = rows
+        fake = _FakeUW()
         p = _make_pipeline(fake, {"AAPL": {"close": "66.83", "call_volume": "0",
                                            "put_volume": "0", "total_open_interest": "0"}},
                            {"AAPL": {"earnings_date": "2026-09-09", "full_name": "Cooper",
@@ -309,7 +312,7 @@ class TestR4GexProfileWiring:
         assert "volume book" in reasons and "short" in reasons
         assert "Negative gamma regime" in (card.gex_structure or "")
 
-    def test_no_spot_exposures_method_falls_back_cleanly(self):
+    def test_no_stored_strikes_fall_back_cleanly(self):
         fake = _FakeUW()
         p = _make_pipeline(fake, {"AAPL": {"close": "66.83", "call_volume": "0",
                                            "put_volume": "0", "total_open_interest": "0"}},
@@ -340,24 +343,16 @@ def _drift_bars_dated(n, start_iso="2026-07-01", drift=0.005):
     return bars
 
 
-class _TermUW(_FakeUW):
-    def __init__(self, term_rows, **overrides):
-        super().__init__(**overrides)
-        self._term_rows = term_rows
-
-    def term_structure(self, ticker):
-        return self._term_rows
-
-
 class TestR4TermStructureWiring:
-    def test_term_slope_reaches_r4_as_a_penalty(self):
+    def test_term_slope_reaches_r4_as_a_penalty(self, options_set):
         # Near 7 DTE at 0.60 vs 45 DTE at 0.425 -> deep backwardation
         # (-0.00461/day). EM 7.4 (+15) minus the -8 backwardation penalty.
-        fake = _TermUW([
+        options_set["term"] = [
             {"dte": "7", "volatility": "0.60"},
             {"dte": "30", "volatility": "0.425"},
             {"dte": "45", "volatility": "0.425"},
-        ], flow_recent=[], aggregate_flow={})
+        ]
+        fake = _FakeUW()
         p = _make_pipeline(fake, {"AAPL": {"close": "66.83", "call_volume": "0",
                                            "put_volume": "0", "total_open_interest": "0"}},
                            {"AAPL": {"earnings_date": "2026-09-09", "full_name": "Cooper",
@@ -369,7 +364,7 @@ class TestR4TermStructureWiring:
         assert "backwardated" in reasons
         assert card.volatility_edge_score == 7.0  # +15 EM, -8 backwardation
 
-    def test_no_term_structure_method_falls_back_cleanly(self):
+    def test_no_stored_term_structure_falls_back_cleanly(self):
         fake = _FakeUW()
         p = _make_pipeline(fake, {"AAPL": {"close": "66.83", "call_volume": "0",
                                            "put_volume": "0", "total_open_interest": "0"}},

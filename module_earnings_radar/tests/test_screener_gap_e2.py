@@ -8,7 +8,6 @@ from datetime import date, datetime, timezone
 
 import pytest
 
-from RevenueChaser.core.providers.result import ProviderResult
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline
 from RevenueChaser.module_earnings_radar.tests.test_pipeline_score import _FakeUW
 
@@ -20,19 +19,16 @@ _STRONG = {"close": "50", "call_volume": "5000", "put_volume": "5000", "total_op
 
 
 class _ScreenerUW(_FakeUW):
-    """Fake UW whose screener batch carries the request outcome (the real client's ``*_result``)."""
+    """Fake UW carrying the screener rows and their outcome. Since G9 the pipeline reads the stored screener set
+    (``store_reads.screener_set``), so ``_pipeline`` hands both to the pipeline as that read would; a status other
+    than ``ok`` stands for a set the builder fetched only in part."""
 
     def __init__(self, rows, status="ok", error=None, **ov):
         super().__init__(**ov)
         self._rows, self._status, self._error = rows, status, error
-        self.result_calls = 0
-
-    def screener_batch_result(self, tickers, date=None):
-        self.result_calls += 1
-        return ProviderResult(self._status, self._rows, self._error, "/screener/stocks")
 
     def screener_batch(self, tickers, date=None):
-        raise AssertionError("the Earnings pipeline must read screener_batch_result when it exists")
+        raise AssertionError("the Earnings pipeline reads the stored screener set, never UW's screener")
 
 
 def _pipeline(uw, tickers):
@@ -40,6 +36,8 @@ def _pipeline(uw, tickers):
                "expected_move_perc": 0.05} for t in tickers}
     p = EarningsPipeline(tickers, uw=uw, cal_meta=cal)
     p._dgs10_cache = {}
+    p._screener_cache = dict(uw._rows)
+    p.screener_result = {"status": uw._status, "error": uw._error}
     return p
 
 

@@ -1,9 +1,12 @@
-"""#166: a failed UW flow request is not "No institutional flow"."""
+"""#166: a failed UW flow request is not "No institutional flow".
+
+Since G9 the Earnings Fetch makes no flow request (the prints come from the options store, ``store_reads``), so a
+card can no longer meet a failed one; the label rule stays for any reader that still asks UW. The card side is
+``test_options_store_g9`` (``flow_source`` ``option_print``, ``none`` or ``not_on_list``)."""
 from __future__ import annotations
 
 import pytest
 
-from RevenueChaser.core.providers.result import ProviderResult
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline, _institutional_flow_comment
 
 FAILED_LABEL = "Flow unavailable (provider failure)"
@@ -59,28 +62,3 @@ def test_without_a_failure_the_label_is_unchanged():
     assert _institutional_flow_comment({})[0] == "No institutional flow"
     assert _institutional_flow_comment({}, failed=False)[0] == "No institutional flow"
 
-
-def test_a_failed_flow_request_marks_the_card():
-    card = _card(_ResultUW(ProviderResult("failed", [], {"status": 500}, "")))
-    assert card.flow_source == "failed" and card.inst_flow_label == FAILED_LABEL
-
-
-def test_an_empty_tape_is_still_no_flow():
-    card = _card(_ResultUW(ProviderResult("ok", [], None, "")))
-    assert card.flow_source == "none" and card.inst_flow_label == "No institutional flow"
-
-
-def test_a_404_flow_request_is_not_a_failure():
-    card = _card(_ResultUW(ProviderResult("failed", [], {"status": 404}, "")))
-    assert card.flow_source == "none" and card.inst_flow_label == "No institutional flow"
-
-
-def test_flow_that_arrived_keeps_its_source():
-    prints = [{"premium": "100", "size": 20, "option_type": "call", "executed_at": "2026-08-13T15:00:00Z"}]
-    card = _card(_ResultUW(ProviderResult("ok", prints, None, "")))
-    assert card.flow_source == "flow_recent"
-
-
-def test_a_list_only_client_behaves_as_before():
-    assert _card(_UW()).flow_source == "none"
-    assert _card(_UW([{"premium": "1", "size": 20, "option_type": "call"}])).flow_source == "flow_recent"
