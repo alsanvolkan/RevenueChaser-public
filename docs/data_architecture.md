@@ -16,6 +16,35 @@ The Discord archive was a fourth store file until October 2026. It is now its ow
 (`discord-archive`), with its own database, schema version and backup, because nothing here ever
 read it for analysis.
 
+## Decision note — the internal data API comes after the setup (avo, 2026-10-29)
+
+The bridge between the dashboards and the store (an internal data API: a board asks for a named
+need, the API serves it from the store with its freshness, coverage and provenance, and enqueues a
+fill when something is missing or stale) is **not built before the data setup is finished**. The
+order avo set: finish the setup, purge the data, run the backfill, then build the API in one go, so
+its final shape is settled by real data rather than guessed. Nothing of the API — no catalog, no
+`get()` envelope, no on-demand fill, no HTTP surface — is built before that. The design it will be
+built from is `/mnt/project-files/earnings_bridge/2026-10-29_internal_data_api.md`; earnings dates
+are its first use case, not the whole design.
+
+**What a purge loses for good.** The backfill cannot bring these back, so the purge decision has to
+cover them first:
+
+- the SPX Gamma raw day files (`module_spx_gamma/data/raw/<date>/`): UW serves only recent days (see
+  Storage layout);
+- the UW options data observed inside its window (`option_strike`, `option_expiry`, `option_print`,
+  the UW rows of `iv_daily`, `er_options`): a past evening cannot be observed again, and the raw
+  retention hook already removes the older `option_list/` and `er_options/` raw folders;
+- `ibkr_shortable`: IBKR's public short-stock file is one snapshot per read, with no history served;
+- the weekly analyst-estimate snapshots behind `estimate_latest`: a past week's snapshot cannot be
+  asked for again;
+- `fundamental_revision`: it is the difference between two consecutive monthly Compustat snapshots,
+  so without the earlier snapshot the revision cannot be recomputed (unless WRDS serves that
+  publication date for the library in question);
+- the result history in `history.duckdb` (`result_runs` and its run-keyed tables) and
+  `forecast_ledger`: our own board runs, which no provider ever served;
+- the Drive mirrors (see Backups): they cannot be fetched again either.
+
 ## The two data folders — read this first (for future maintainers & AI)
 
 | Folder | Semantics | May you delete it? |
