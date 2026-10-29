@@ -798,7 +798,8 @@ def _quarter(period) -> tuple[int, int] | None:
 def _institutional(ticker: str, totals: dict) -> dict:
     """13F institutional ownership: the newest stored quarter, and its share change against the quarter right
     before it. ``inst_quarter`` / ``inst_prev_quarter`` name them (``2026 Q1``); when the quarter before is not
-    stored, there is no QoQ change rather than one over two quarters (AG review SF-3, PR 6)."""
+    stored, there is no QoQ change rather than one over two quarters (AG review SF-3, PR 6). A quarter still filing
+    (``complete`` False in the ownership store, G9) is not read: its late filers would read as selling."""
     out = {"inst_holders": None, "inst_new": None, "inst_exited": None,
            "inst_buy_flow": None, "inst_sell_flow": None,
            "inst_shares": None, "inst_shares_delta_pct": None,
@@ -807,8 +808,11 @@ def _institutional(ticker: str, totals: dict) -> dict:
     if not periods:
         return out
     try:
-        sorted_periods = sorted(periods)
+        sorted_periods = sorted(k for k, v in periods.items()
+                                if not (isinstance(v, dict) and v.get("complete") is False))
     except TypeError:
+        return out
+    if not sorted_periods:
         return out
     latest = sorted_periods[-1]
     p = periods[latest]
@@ -991,7 +995,7 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     ``data_as_of`` is the newest D01 session among the cards this Fetch scored (#380 S4): the price session their
     momentum came from, None when no card has a bar.
     """
-    from RevenueChaser.module_sec_13f import engine as sec_13f
+    from RevenueChaser.module_sec_13f import store_reads as sec_13f
 
     # This Fetch's Yahoo reads only (Common K3). A Refresh never calls Yahoo, so it does not reset the counter.
     if not no_fetch:
@@ -1054,7 +1058,7 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     if vendor is not None:
         vendor.flush(run_id=vendor_run, label="Asymmetric Growth")
 
-    totals = sec_13f.load_totals()
+    totals = sec_13f.totals([c["ticker"] for c in cards]) if cards else {}      # the ownership store (G9)
     from RevenueChaser.module_asymmetric_growth import freeze
     version = freeze.model_version()        # the rows say which rules scored them (old-rows view, #380 S2)
     for c in cards:
