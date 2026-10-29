@@ -125,7 +125,7 @@ def _statements_choice(sec: list[dict], yahoo: list[dict]) -> tuple[str, list[st
     ran on defaults Yahoo did not need). Default chosen, change if avo prefers the SEC's statements always.
 
     shortcut: a whole-source choice per run, never a field-by-field mix; upgrade when the layer serves depreciation's
-    other tags and current assets and liabilities (then the SEC's statements stand alone)."""
+    other tags and current assets and liabilities (#271; then the SEC's statements stand alone)."""
     if not yahoo:
         return "sec", []
 
