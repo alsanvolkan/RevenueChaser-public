@@ -316,13 +316,17 @@ def _ttm_metrics(quarterly: list[dict], annual: list[dict]) -> dict:
     return out
 
 
-def _quality_metrics(annual: list[dict]) -> dict:
+# Quality's inputs (G6, build plan PR 13): the flows a trailing year is built for and the balance-sheet fields read on
+# the newest quarter. ``cost_of_revenue`` only stands in for a gross profit the filer did not tag (the extraction's
+# ``gross_profit_derived``: revenue minus cost of revenue).
+_QUALITY_FLOWS = ("revenue", "gross_profit", "cost_of_revenue", "ebit", "depreciation")
+_QUALITY_BALANCE = ("total_debt", "cash", "short_term_investments", "total_equity")
+
+
+def _quality_of(a: dict) -> dict:
+    """ROIC, gross margin and net debt / EBITDA of one record (a fiscal year, or a trailing year)."""
     out = {"gross_margin": None, "roic": None, "net_debt_ebitda": None, "net_cash": None,
            "net_income": None, "total_equity": None}
-    i = fiscal_year.anchor(annual)          # #386 F2: Quality reads the anchor year, not annual[-1]
-    if i is None:
-        return out
-    a = annual[i]
     ebit = _to_float(a.get("ebit"))
     dep = _to_float(a.get("depreciation"))
     debt = _to_float(a.get("total_debt"))
@@ -348,6 +352,78 @@ def _quality_metrics(annual: list[dict]) -> dict:
         nopat = ebit * (1 - config.TAX_RATE)
         ic = debt + eq - cash
         out["roic"] = nopat / ic if ic > 0 else None
+    return out
+
+
+def _quality_ttm(annual: list[dict], quarterly: list[dict], i: int) -> dict | None:
+    """A trailing-year record for Quality, or None: the anchor year ``annual[i]`` plus the newest year to date after
+    it minus the same year to date a year earlier (``_ttm_point``'s rule, per flow), and the balance sheet of the
+    quarter that year to date ends on. Every flow the year has must come through, on one quarter and one length."""
+    a = annual[i]
+    starts, ends = a.get("period_starts") or {}, a.get("period_ends") or {}
+    flows = [f for f in _QUALITY_FLOWS if _to_float(a.get(f)) is not None and starts.get(f) and ends.get(f)]
+    if "revenue" not in flows:
+        return None
+    e0, s0 = ends["revenue"], starts["revenue"]
+    cur = None
+    for q in sorted(quarterly, key=lambda r: str(r.get("period")), reverse=True):
+        end = str(q.get("period"))[:10]
+        if end <= str(e0)[:10]:
+            break
+        y = _ytd(q, "revenue")
+        gap = _days(e0, y[0]) if y else None
+        if gap is not None and _NEXT_START_DAYS[0] <= gap <= _NEXT_START_DAYS[1] and y[1] in (3, 6, 9):
+            cur = q
+            break
+    if cur is None:
+        return None
+    cur_start, months = _ytd(cur, "revenue")[:2]
+    cur_end = str(cur.get("period"))[:10]
+    ordered = sorted(quarterly, key=lambda r: str(r.get("period")))
+    rec: dict = {}
+    for f in flows:
+        y = _ytd(cur, f)
+        prior = (_ytd_point(ordered, (f,), s0, months, cur_end)
+                 if y and y[0] == cur_start and y[1] == months and starts[f] == s0 else None)
+        if prior is not None:
+            rec[f] = _to_float(a[f]) + y[2] - prior[1][f]
+    # Gross profit, or revenue minus cost of revenue when only that came through (a filer that tags no gross
+    # profit: the year's is the extraction's ``gross_profit_derived``); every other flow must come through.
+    if "gross_profit" not in rec and "cost_of_revenue" in rec:
+        rec["gross_profit"] = rec["revenue"] - rec["cost_of_revenue"]
+    if any(f not in rec for f in flows if f != "cost_of_revenue"):
+        return None
+    for f in _QUALITY_BALANCE:
+        if _to_float(a.get(f)) is not None:
+            v = _to_float(cur.get(f))
+            if v is None:
+                return None
+            rec[f] = v
+    rec["net_income"] = _to_float(a.get("net_income"))
+    return {**rec, "period": cur_end}
+
+
+def _quality_metrics(annual: list[dict], quarterly: list[dict] | None = None) -> dict:
+    """Quality's three figures and their basis (G6, build plan PR 13: Quality reads the quarter store).
+
+    ``quality_basis`` ``TTM`` when a 10-Q follows the anchor year and the quarters give every figure the year gives
+    (``_quality_ttm``); else ``FY``, the anchor year (#386 F2: never ``annual[-1]``). ``quality_period_end`` is the
+    day the figures are read to. One basis for all three, never a mix. Default chosen (plan): TTM whenever the
+    quarters give it, change if avo prefers the year."""
+    i = fiscal_year.anchor(annual)
+    if i is None:
+        return {**_quality_of({}), "quality_basis": None, "quality_period_end": None}
+    a = annual[i]
+    fy = _quality_of(a)
+    end = fiscal_year.period_end(a)
+    out = {**fy, "quality_basis": "FY", "quality_period_end": end.isoformat() if end else None}
+    ttm_rec = _quality_ttm(annual, quarterly or [], i)
+    if ttm_rec is not None:
+        ttm = _quality_of(ttm_rec)
+        # The year's net income stays (P/E reads its own TTM, ``_ttm_metrics``); P/B reads the newest equity.
+        if all(ttm[k] is not None or fy[k] is None for k in ("gross_margin", "roic", "net_debt_ebitda", "net_cash")):
+            out = {**ttm, "net_income": fy["net_income"], "quality_basis": "TTM",
+                   "quality_period_end": ttm_rec["period"]}
     return out
 
 
@@ -477,7 +553,7 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
     # #386 F1: an absurd Rule of 40 is a data problem, not a pick. Review N2 (default chosen, avo may prefer the
     # old drop): the name is no longer dropped, so Quality and Momentum still read it; the screener makes that Rule
     # of 40 unknown and the card DISTORTED (screeners.evaluate_rule_of_40, is_distorted).
-    qual = _quality_metrics(annual)
+    qual = _quality_metrics(annual, quarterly)
     market_cap = _to_float(row.get("market_cap")) or _to_float(info.get("marketCap"))
 
     pe = (market_cap / ttm["ttm_net_income"]) if (market_cap and ttm["ttm_net_income"] and ttm["ttm_net_income"] > 0) else None
@@ -524,6 +600,8 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         "earnings_date": _to_float((row.get("quote") or {}).get("earningsTimestampStart")),
         "period": _period_label(quarterly, annual),
         "anchor_period_end": anchor_end.isoformat() if anchor_end else None,
+        # G6 (build plan PR 13): Quality's basis and the day it reads to (TTM on the quarters, else the anchor year).
+        "quality_basis": qual.get("quality_basis"), "quality_period_end": qual.get("quality_period_end"),
         "metrics": metrics,
         "ohlc_stale": bool(df.attrs.get("stale")),
         "info_stale": info_stale,
@@ -600,6 +678,7 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
             "ro40": m.get("ro40"), "ro40_basis": m.get("ro40_basis"),
             "rev_growth_ttm": m.get("rev_growth_ttm"), "fcf_margin": m.get("fcf_margin"),
             "anchor_period_end": r.get("anchor_period_end"),
+            "quality_basis": r.get("quality_basis"), "quality_period_end": r.get("quality_period_end"),
             "statements": r.get("statements"),
             "pe": m.get("pe"), "pb": m.get("pb"), "roic": m.get("roic"),
             "distorted": distorted,

@@ -318,6 +318,18 @@ function usd(v){
 }
 function fmtNum(v, d){ return (v == null) ? "N/A" : v.toFixed(d == null ? 2 : d); }
 function fmtPct(v){ return (v == null) ? "N/A" : (v*100).toFixed(1) + "%"; }
+// G6: the period Quality reads ("TTM to 2026-06-30", "FY to 2025-12-31"; ``long``: "trailing year to",
+// "fiscal year to"); "" when none is known.
+function qualityAsOf(c, long){
+  var ttm = c.quality_basis === "TTM" && c.quality_period_end;
+  var end = ttm ? c.quality_period_end : (c.quality_period_end || c.anchor_period_end);
+  if(!end) return "";
+  return (ttm ? (long ? "trailing year to " : "TTM to ") : (long ? "fiscal year to " : "FY to ")) + end;
+}
+function qualityWhen(c){
+  var w = qualityAsOf(c, false);
+  return w ? '<span class="when">' + rcEsc(w) + '</span>' : '';
+}
 function cell(k, v){ return '<div class="m"><div class="k">'+k+'</div><div class="val">'+v+'</div></div>'; }
 function cardHtml(c){
   var t = rcEsc(c.ticker);
@@ -365,9 +377,9 @@ function cardHtml(c){
     + cell("Period", rcEsc(c.period))
     + cell("Basis", rcEsc(c.ro40_basis))
     + cell("Rule of 40", r40)
-    // Review F1: ROIC, gross margin and net debt are one fiscal year's (the anchor), the growth half is TTM.
-    + cell("Quality", rcEsc(c.quality_score)
-           + (c.anchor_period_end ? '<span class="when">FY to ' + rcEsc(c.anchor_period_end) + '</span>' : ''))
+    // Review F1, G6: ROIC, gross margin and net debt read the trailing year when the quarters give it ("TTM to"),
+    // else the anchor fiscal year ("FY to"). A payload written before G6 has no basis: its figures are the year's.
+    + cell("Quality", rcEsc(c.quality_score) + qualityWhen(c))
     + cell("Momentum", rcEsc(c.momentum_score))
     + cell("Price", usd(c.price))
     + cell("Mkt cap", usd(c.market_cap))
@@ -396,7 +408,7 @@ function openGate(btn){
   var period = PERIODS[t] || "";
   // Review F1: Quality mixes two time bases; its window names both.
   if(g === "quality" && ANCHORS[t])
-    period = "growth: TTM " + period + " · ROIC, gross margin, net debt: fiscal year to " + ANCHORS[t];
+    period = "growth: TTM " + period + " · ROIC, gross margin, net debt: " + ANCHORS[t];
   document.getElementById("m-title").textContent = gate.name;
   document.getElementById("m-sub").textContent = t + " — " + gate.score + (gate.passed ? " (PASS)" : " (FAIL)") + (period ? " · " + period : "");
   var rules = gate.rules.map(function(r){
@@ -436,7 +448,7 @@ function boot(d){
   PERIODS = {};
   ANCHORS = {};
   DATA.forEach(function(c){
-    GATES[c.ticker] = c.gates || {}; PERIODS[c.ticker] = c.period || ""; ANCHORS[c.ticker] = c.anchor_period_end || "";
+    GATES[c.ticker] = c.gates || {}; PERIODS[c.ticker] = c.period || ""; ANCHORS[c.ticker] = qualityAsOf(c, true);
   });
   init();
 }
