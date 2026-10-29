@@ -6,6 +6,11 @@ The mock tape covers the calendar and the common UW reads but not a Rotation map
 ``partial`` with that named cause. A fixture gap and a real breakage differ in the header, which is why the
 tests pin it rather than only "the job finished".
 
+Since G9 (build plan PR 19) the options inputs come from the options store: the Fetch asks UW for no screener batch,
+GEX levels, prints, term structure, spot exposures or options volume, and queues one ``uw/option_list`` and one
+``uw/option_screener`` (D1; "not queued" before their first run). With nothing stored NVDA is off the option watch
+list, so its R4/R5/R8 read the label.
+
 Earnings is not store-refreshable (``_STORE_REFRESHABLE``): Refresh serves the written board and, with the
 board file gone, answers the fetch-only empty state. Both paths make no network call.
 """
@@ -24,6 +29,8 @@ CALENDAR = {"data": [{
     "symbol": "NVDA", "sector": "Technology", "full_name": "NVIDIA Corp", "marketcap": "3000000000000",
     "expected_move_perc": "0.06", "street_mean_est": "1.2", "report_time": "premarket"}]}
 ROTATION_CAUSE = "rotation quadrant map failed or came back empty"
+OPTIONS_ROUTES = ("/screener/stocks", "/gex-levels", "/flow-recent", "/volatility/term-structure",
+                  "/spot-exposures", "/options-volume")
 
 
 @pytest.fixture
@@ -70,6 +77,20 @@ class TestFetch:
     def test_the_fetch_actually_called_the_provider(self, provider_routes, fetched):
         assert provider_routes.requests("/api/earnings/premarket"), "fetch must read the calendar"
         assert provider_routes.requests("/api/stock/NVDA/"), "fetch must read the per-ticker UW data"
+
+    def test_the_fetch_asks_uw_for_no_options_input(self, provider_routes, fetched):
+        asked = [q.path for q in provider_routes.requests()]
+        for part in OPTIONS_ROUTES:
+            assert not [p for p in asked if part in p], f"the Fetch asked UW for {part}: {asked}"
+
+    def test_the_fetch_is_a_builder_request_for_the_options_datasets(self, dashboard, fetched):
+        text = dashboard.view("module_earnings_radar").text
+        assert "Builder request: uw/option_list not queued" in text and "uw/option_screener not queued" in text
+
+    def test_a_name_off_the_list_reads_the_label(self, dashboard, fetched):
+        (inputs,) = _history(dashboard, "SELECT slots FROM earnings_cards_history")
+        assert '"rule4_volatility": false' in inputs[0] and '"rule8_sentiment": false' in inputs[0]
+        assert "not on the option watch list" in dashboard.view("module_earnings_radar").text
 
     def test_a_day_with_no_events_still_gets_a_header(self, dashboard, provider_routes):
         """README: every Fetch gets a header, also one with no events."""

@@ -301,9 +301,20 @@ def _record_earnings_history(cards, nrc, *, uw, span, events, filter_stats=None,
         ledger.add_note(f"Earnings result history was not recorded: {type(exc).__name__}: {exc}")
 
 
+# The options datasets the Earnings board reads (G9): its Fetch queues one build of each.
+EARNINGS_DATASETS = ("uw/option_list", "uw/option_screener")
+
+
 def run_earnings_range(uw: UWClient, start: date | None = None, end: date | None = None,
                        dates=None) -> Path:
-    """Run the earnings pipeline for a date range or a discrete day list."""
+    """Run the earnings pipeline for a date range or a discrete day list.
+
+    G9 (D1): the Fetch first queues one build of each options dataset the board reads (``uw/option_list`` and
+    ``uw/option_screener``); the cards read what those builds stored. The calendar and the earnings rows are still
+    read here (see ``_fetch_calendar_days``).
+    """
+    from RevenueChaser.core import board_requests
+    request = board_requests.builder_notes(EARNINGS_DATASETS, "earnings")
     days = _coerce_earnings_days(start, end, dates)
     run_at = time.time()   # one clock for the board stamp and the history header (ER-9, #372)
     _CALENDAR_SOURCES.clear()          # a patched calendar read leaves the slot empty, not the last run's
@@ -329,12 +340,12 @@ def run_earnings_range(uw: UWClient, start: date | None = None, end: date | None
             # "no earnings scheduled" — say what actually happened.
             message = f"Could not load the earnings calendar: {gap}"
             _write_empty_board(EARNINGS_LATEST, "Earnings Radar", message,
-                               "Run Fetch again later; the previous calendar is not shown.")
+                               f"Run Fetch again later; the previous calendar is not shown. {request}")
             _record_earnings_history([], {}, uw=uw, span=span, events=events, reason=message, run_at=run_at,
                                      input_sources={"calendar": calendar_sources})
             raise JobMessage(message)
         message, hint = empty_msg
-        _write_empty_board(EARNINGS_LATEST, "Earnings Radar", message, hint)
+        _write_empty_board(EARNINGS_LATEST, "Earnings Radar", message, f"{hint} {request}".strip())
         _record_earnings_history([], {}, uw=uw, span=span, events=events, reason=message, run_at=run_at,
                                  input_sources={"calendar": calendar_sources})
         raise JobMessage(message)
@@ -371,7 +382,7 @@ def run_earnings_range(uw: UWClient, start: date | None = None, end: date | None
     screener = getattr(pipeline, "screener_result", None)
     export_html(cards, events, nrc, filename=str(EARNINGS_LATEST.relative_to(OUTPUT_DIR)),
                 filter_stats=pipeline._filter_stats, provider_health=_uw_health(uw),
-                notice=er_history.screener_problem(screener), run_at=run_at)
+                notice=" ".join(n for n in (er_history.screener_problem(screener), request) if n), run_at=run_at)
     # Result history (#278): the board file is written, a JobMessage below still follows. A Refresh has no path here.
     no_cards = (_no_cards_text(len(tickers), pipeline._filter_stats, _provider_gap_text(uw))
                 if not cards else None)
