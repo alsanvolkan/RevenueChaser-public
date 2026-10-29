@@ -178,3 +178,30 @@ def test_a_run_keeps_yahoos_statements_and_says_why(built, monkeypatch, tmp_path
 def test_the_model_version_moves_with_the_statements():
     from RevenueChaser.module_financials import history
     assert history.SELECTION_VERSION == "4"
+
+
+def test_a_bank_names_no_working_capital_gap():
+    # Opus review N4: no model of a Financial Services target reads working capital (P/E only), so the choice
+    # neither counts it nor names it there.
+    import RevenueChaser.module_financials.run as fm
+    sec = [_year(2025, drop=("receivables", "inventory", "payables"))]
+    yahoo = [_year(2025)]
+    assert fm._statements_choice(sec, yahoo) == ("yahoo", ["working capital"])
+    assert fm._statements_choice(sec, yahoo, bank=True) == ("sec", [])
+
+
+def test_a_run_tells_the_choice_when_the_target_is_a_bank(built, monkeypatch, tmp_path):  # noqa: F811
+    import types
+    import RevenueChaser.module_financials.run as fm
+    from RevenueChaser.core import universe
+    from RevenueChaser.core.providers import cache as cache_manager
+    _clock(monkeypatch)
+    monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(universe, "gics_of", lambda t, g: types.SimpleNamespace(sector="Financial Services"))
+    seen = []
+    monkeypatch.setattr(fm, "_statements_choice", lambda sec, yahoo, bank=False: seen.append(bank) or ("sec", []))
+    cache_manager.save(TICKER, {"ticker": TICKER, "info": {"longName": "Growth Co."}, "shares_outstanding": 50.0,
+                                "market_cap": 5000.0, "beta": 1.1, "current_price": 100.0, "currency": "USD",
+                                "source": "yfinance", "annual": [_year(2024)]})
+    fm.run(TICKER, modules=["dcf"], output="none", no_fetch=True)
+    assert seen == [True]

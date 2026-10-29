@@ -102,10 +102,10 @@ def _financials_record(rec: dict) -> dict:
     return out
 
 
-def _statement_gaps(annual: list[dict]) -> list[str]:
+def _statement_gaps(annual: list[dict], bank: bool = False) -> list[str]:
     """The base-year inputs the engines would run on a labelled default for (``dcf_engine``): revenue, EBITDA,
     depreciation and capex of the newest year with revenue (``fiscal_year.anchor``), and working capital in every
-    year."""
+    year, except for a bank (``bank``), whose models never read it (P/E only, Opus review N4)."""
     from RevenueChaser.core import fiscal_year
     from RevenueChaser.core.config import to_float
     from .engines.dcf_engine import _nwc
@@ -114,12 +114,12 @@ def _statement_gaps(annual: list[dict]) -> list[str]:
     gaps = sorted(f for f in ("revenue", "ebitda", "depreciation") if to_float(latest.get(f)) is None)
     if to_float(latest.get("capex")) is None and to_float(latest.get("capital_expenditure")) is None:
         gaps = sorted(gaps + ["capex"])
-    if not any(_nwc(r) is not None for r in annual):
+    if not bank and not any(_nwc(r) is not None for r in annual):
         gaps.append("working capital")
     return gaps
 
 
-def _statements_choice(sec: list[dict], yahoo: list[dict]) -> tuple[str, list[str]]:
+def _statements_choice(sec: list[dict], yahoo: list[dict], bank: bool = False) -> tuple[str, list[str]]:
     """``(used, what the SEC's statements lack)``: which annual statements a run models, ``"sec"`` or ``"yahoo"``.
 
     The SEC's, unless Yahoo's newest year is newer, or is the same year and gives an input the SEC's lacks (the
@@ -135,7 +135,7 @@ def _statements_choice(sec: list[dict], yahoo: list[dict]) -> tuple[str, list[st
     shortcut: a whole-source choice per run, never a field-by-field mix; upgrade when the layer serves depreciation's
     other tags and current assets and liabilities (#271; then the SEC's statements stand alone)."""
     from RevenueChaser.core import fiscal_year
-    sec_gaps = _statement_gaps(sec)
+    sec_gaps = _statement_gaps(sec, bank)
     if not yahoo:
         return "sec", sec_gaps
 
@@ -147,7 +147,7 @@ def _statements_choice(sec: list[dict], yahoo: list[dict]) -> tuple[str, list[st
     s, y = year(sec), year(yahoo)
     if s is not None and y is not None and s != y:
         return ("sec", sec_gaps) if s > y else ("yahoo", [f"the fiscal year {y}"])
-    lacking = [g for g in sec_gaps if g not in _statement_gaps(yahoo)]
+    lacking = [g for g in sec_gaps if g not in _statement_gaps(yahoo, bank)]
     return ("yahoo", lacking) if lacking else ("sec", sec_gaps)
 
 
@@ -235,12 +235,18 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
     except Exception:  # pragma: no cover - a missing stamp must not break a report
         pass
 
+    # R5 (#88): the sector is the spine's (DCF bands, comps peers and the report header all read it);
+    # the yfinance sector no longer feeds GICS. A name the spine lacks is Unclassified.
+    from RevenueChaser.core import universe as _spine
+    from .engines._inputs import PE_ONLY_SECTOR
+    sector = _spine.gics_of(ticker, _spine.spine_gics([ticker])).sector
+
     # G6 (build plan PR 15): on the fundamentals layer the statements the models read are the SEC's; Yahoo's
     # payload keeps only the price, the shares, the beta and the name until the prices store is in (G2).
     sec = _sec_statements(ticker)
     if sec is not None:
         annual, meta = sec
-        used, lacking = _statements_choice(annual, financials.get("annual") or [])
+        used, lacking = _statements_choice(annual, financials.get("annual") or [], bank=sector == PE_ONLY_SECTOR)
         if used == "sec":
             filed = meta.get("newest_filed")
             financials = {**financials, "annual": annual,
@@ -261,10 +267,6 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
     results["quick_remarks"] = quick_remarks_engine.run_quick_remarks(ticker, no_fetch=no_fetch,
                                                                      financials=financials)
 
-    # R5 (#88): the sector is the spine's (DCF bands, comps peers and the report header all read it);
-    # the yfinance sector no longer feeds GICS. A name the spine lacks is Unclassified.
-    from RevenueChaser.core import universe as _spine
-    sector = _spine.gics_of(ticker, _spine.spine_gics([ticker])).sector
     financials["sector"] = sector
     financials["risk_free_rate"] = _stored_risk_free()
     for m in modules:
