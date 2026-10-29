@@ -5,8 +5,8 @@ The DCF, the three-statement model and the credit grades read the annual stateme
 those are the SEC's (``core/fundamentals_layer``), not Yahoo's: a figure the SEC facts do not carry (pre-tax income,
 the tax provision, interest expense, current assets and liabilities) stays empty, so the engines' labelled defaults
 show (review S1). EBITDA is operating income plus depreciation when the year has both. Price, shares and beta come
-from the prices store since the G6 follow-up (``test_financials_market_prices.py``). The ten-year yield is read from ``market_series`` (DGS10, FRED;
-review S2), the old ``macro_series`` row only while the market file is not there.
+from the prices store since the G6 follow-up (``test_financials_market_prices.py``). The ten-year yield is read from
+``market_series`` (DGS10, FRED; review S2), the old ``macro_series`` row only while the market file is not there.
 """
 from __future__ import annotations
 

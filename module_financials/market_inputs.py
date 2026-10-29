@@ -21,6 +21,7 @@ Each value the store does not give keeps Yahoo's, and the Source line names whic
 from __future__ import annotations
 
 import logging
+import math
 from datetime import date
 
 from .config import RISK_FREE_MAX_AGE_DAYS
@@ -49,13 +50,15 @@ def _month_ends(rows: list[tuple[date, float]], before: date):
 
 def monthly_beta(stock: list[tuple[date, float]], index: list[tuple[date, float]], before: date) -> float | None:
     """The beta of ``stock`` on ``index`` over the last ``BETA_MONTHS`` monthly returns of complete months before
-    ``before``; None with fewer than ``BETA_MIN_MONTHS`` months where both have a return."""
+    ``before``; None with fewer than ``BETA_MIN_MONTHS`` months where both have a return, or a slope that is not a
+    finite number."""
     s = _month_ends(stock, before).pct_change(fill_method=None)
     m = _month_ends(index, before).pct_change(fill_method=None)
     both = s.to_frame("s").join(m.to_frame("m"), how="inner").dropna().tail(BETA_MONTHS)
     if len(both) < BETA_MIN_MONTHS or both["m"].var() == 0:
         return None
-    return float(both["s"].cov(both["m"]) / both["m"].var())
+    beta = float(both["s"].cov(both["m"]) / both["m"].var())
+    return beta if math.isfinite(beta) else None     # an overflowing variance (a near-zero level) is no beta
 
 
 def _is_fund(ticker: str) -> bool:
@@ -71,8 +74,8 @@ def _is_fund(ticker: str) -> bool:
 
 
 def from_store(ticker: str) -> dict:
-    """``{current_price, market_cap, shares_outstanding, beta, price_session, beta_months}`` from the prices store,
-    each only when the store gives it; ``{}`` with no prices file or a failed read (logged)."""
+    """``{current_price, price_session, market_cap, shares_outstanding, beta}`` from the prices store, each only when
+    the store gives it; ``{}`` with no prices file, a close older than ``MAX_AGE_DAYS`` or a failed read (logged)."""
     from RevenueChaser.core import spine_reads
     from RevenueChaser.rcdata import read
     t = str(ticker).strip().upper()

@@ -65,6 +65,20 @@ def test_too_few_months_give_no_beta():
     assert mi.monthly_beta(stock, index, NEWEST) is None
 
 
+def test_exactly_the_minimum_of_months_gives_a_beta():
+    stock, index = _month_end_series(mi.BETA_MIN_MONTHS + 1, 1.5)    # BETA_MIN_MONTHS returns
+    assert mi.monthly_beta(stock, index, NEWEST) == pytest.approx(1.5)
+
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")         # the overflow is the point
+def test_a_beta_that_is_not_a_number_is_none():
+    # A month-end index level of 1e-300 makes a return of ~1e303: the variance overflows and the slope is NaN.
+    stock, index = _month_end_series(61, 1.5)
+    index = [(d, 1e-300 if i == 30 else c) for i, (d, c) in enumerate(index)]
+    stock = [(d, 1e-300 if i == 30 else c) for i, (d, c) in enumerate(stock)]
+    assert mi.monthly_beta(stock, index, NEWEST) is None
+
+
 def test_a_missing_month_makes_no_return_across_the_gap():
     stock, index = _month_end_series(61, 1.5)
     gap = stock[:30] + [(d, c * 3) for d, c in stock[31:]]      # month 31 missing, later closes on another level
