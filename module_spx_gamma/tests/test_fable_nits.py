@@ -96,3 +96,48 @@ def test_n2_the_snapshot_passes_its_fetch_time_to_the_chain():
     spot = snap["current_level"]
     assert snap["option_chain"][0]["mid"] == round(
         black_scholes_mid(spot, 7800.0, 1.0 / YEAR_HOURS, 0.15, "C"), 2)
+
+
+# ── N3: "at the wall" means within 1% of it on either side, not anywhere past it ───────────────
+from RevenueChaser.module_spx_gamma.flow_signals import evaluate_flow_signal  # noqa: E402
+
+
+def _flow_snap(spot: float, call_wall: float | None = 7800.0, put_wall: float | None = None,
+               call_wall_vol: float | None = None, flow: list[dict] | None = None) -> dict:
+    return {"current_level": spot,
+            "levels": {"upper_resistance_band": call_wall, "call_wall_vol": call_wall_vol,
+                       "lower_support_band": put_wall},
+            "flow_strikes": flow or []}
+
+
+def _calls(strike: float) -> list[dict]:
+    return [{"strike": strike, "call_volume": 3000, "put_volume": 500, "call_volume_ask_side": 2400,
+             "call_volume_bid_side": 600}]
+
+
+def _puts(strike: float) -> list[dict]:
+    return [{"strike": strike, "call_volume": 500, "put_volume": 3000, "call_volume_ask_side": 200,
+             "call_volume_bid_side": 300}]
+
+
+def test_n3_a_spot_3pct_above_the_call_wall_is_not_at_it():
+    res = evaluate_flow_signal(_flow_snap(spot=8034.0, flow=_calls(7800.0)))
+    assert res["signal"] != "SQUEEZE_ALERT"
+    assert "at Call Wall" not in res["narrative"]
+    assert "holding" not in res["narrative"].lower()
+
+
+def test_n3_a_spot_within_1pct_above_the_call_wall_still_counts():
+    res = evaluate_flow_signal(_flow_snap(spot=7850.0, flow=_calls(7800.0)))
+    assert res["signal"] == "SQUEEZE_ALERT"
+
+
+def test_n3_a_spot_5pct_below_the_put_wall_is_not_a_defended_wall():
+    res = evaluate_flow_signal(_flow_snap(spot=7125.0, call_wall=None, put_wall=7500.0, flow=_puts(7500.0)))
+    assert res["label"] != "Put Wall Defense"
+    assert "holding" not in res["narrative"].lower()
+
+
+def test_n3_a_spot_just_below_the_put_wall_is_still_at_it():
+    res = evaluate_flow_signal(_flow_snap(spot=7480.0, call_wall=None, put_wall=7500.0, flow=_puts(7500.0)))
+    assert res["label"] == "Put Wall Defense"
