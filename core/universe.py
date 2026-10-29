@@ -23,12 +23,12 @@ silently empty the universe. `_security_types` is the one seam for them.
 **The source** (build plan PR 5; the default since PR 6): ``RC_UNIVERSE_SOURCE`` unset (or empty, or ``spine``) reads
 the identity spine through ``rcdata.read``: the members are the spine's listed names (Tier A and B, the old
 membership rule), with the spine's name, sector, industry and security type, and the same two-part rule applied to
-them; only the market fields (``market_cap``, ``price``, ``quote``) still come from the old ``equity_universe``, by
-ticker, because the spine holds no market data yet. The index badges of ``filter_fields`` come from the spine's
-current membership (``index_registry``). Any other value (``store`` by convention) reads ``raw.duckdb`` as above:
-the escape hatch, kept until the old path is retired (plan PR 21). With the spine asked for, by default or by the
-variable, but no spine file, or a last ``spine/security`` build that failed, the old store is read and a warning is
-logged (``source_state``).
+them; the market cap and price come from the prices store (PR 7, ``rcdata.read.latest_market``), each from the old
+``equity_universe`` by ticker where the prices store has none, and ``quote`` from the old table. The index badges of
+``filter_fields`` come from the spine's current membership (``index_registry``). Any other value (``store`` by
+convention) reads ``raw.duckdb`` as above: the escape hatch, kept until the old path is retired (plan PR 21). With
+the spine asked for, by default or by the variable, but no spine file, or a last ``spine/security`` build that
+failed, the old store is read and a warning is logged (``source_state``).
 """
 from __future__ import annotations
 
@@ -139,18 +139,24 @@ def spine_provenance() -> dict | None:
 
 
 def _spine_universe() -> list[dict]:
-    """The spine's listed names as ``equity_universe`` rows: identity from ``rcdata.read``, market fields from the
-    old ``equity_universe`` by ticker (NULL where it has none). No spine file yet: no rows."""
+    """The spine's listed names as ``equity_universe`` rows: identity from ``rcdata.read``; market cap and price from
+    the prices store (``read.latest_market``), each from the old ``equity_universe`` by ticker where the prices store
+    has none (NULL where neither has one); ``quote`` from the old table. The cap is the issuer's (every listed class,
+    as Yahoo's was), a fund's its own: one trust's CIK files many funds. No spine file yet: no rows."""
     from . import spine_reads
     ids = spine_reads.universe(("A", "B"))
     if not ids:
         return []
     market = {r["ticker"]: r for r in rawstore.query(
         f"SELECT ticker, market_cap, price, quote FROM {_UNIVERSE_TABLE}")}
+    latest = spine_reads.latest_market(r["ticker"] for r in ids)
     out = []
     for r in ids:
-        m = market.get(r["ticker"]) or {}
-        out.append({"ticker": r["ticker"], "market_cap": m.get("market_cap"), "price": m.get("price"),
+        m, n = market.get(r["ticker"]) or {}, latest.get(r["ticker"]) or {}
+        cap = n.get("market_cap") if r.get("security_type") in EXCLUDED_TYPES else n.get("issuer_market_cap")
+        out.append({"ticker": r["ticker"],
+                    "market_cap": cap if cap is not None else m.get("market_cap"),
+                    "price": n["price"] if n.get("price") is not None else m.get("price"),
                     "quote": m.get("quote"), "name": r.get("name") or "", "sector": r.get("sector") or "",
                     "industry": r.get("industry") or "", "industry_group": None, "sub_industry": None})
     return out
@@ -313,7 +319,10 @@ def has_universe() -> bool:
 
 
 def has_market_caps() -> bool:
-    """Whether any market cap is stored (the old cache still feeds the caps under the spine, until G2)."""
+    """Whether any market cap is stored: on the spine, any listed name's (the prices store's or the old cache's,
+    ``_spine_universe``), else any row of the old ``equity_universe``."""
+    if _spine():
+        return any(r.get("market_cap") is not None for r in _spine_universe())
     return bool(rawstore.query(f"SELECT 1 FROM {_UNIVERSE_TABLE} WHERE market_cap IS NOT NULL LIMIT 1"))
 
 

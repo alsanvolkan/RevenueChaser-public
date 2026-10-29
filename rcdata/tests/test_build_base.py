@@ -41,6 +41,15 @@ def test_http_get_does_not_retry_a_404(http_mock):
     assert ctx.calls["fed"] == [1, 1, 0]
 
 
+def test_http_get_answers_an_accepted_status_as_it_is(http_mock):
+    """PR 16: a source whose 404 means "not published yet" (a daily file, a filing index) reads the answer itself:
+    one call, not a failure."""
+    ctx = base.RunContext(run_id="r", dataset="d", sleep=lambda s: None)
+    r = base.http_get(ctx, "sec", "https://nothing.test/master.20261026.idx", accept=(404,))
+    assert r.status_code == 404
+    assert ctx.calls["sec"] == [1, 0, 0]
+
+
 def test_raw_files_round_trip_and_gzip_by_name(tmp_path):
     p = base.write_raw(tmp_path / "a" / "x.json.gz", b'{"a": 1}')
     assert p.read_bytes()[:2] == b"\x1f\x8b" and base.read_raw_json(p) == {"a": 1}
@@ -89,3 +98,14 @@ def test_a_403_says_what_to_set(http_mock, monkeypatch):
     with pytest.raises(base.SourceError, match=r"HTTP 403 \(refused: set RC_HTTP_CONTACT"):
         base.http_get(ctx, "bls", "https://bls.test/schedule/news_release/bls.ics")
     assert ctx.calls["bls"] == [1, 1, 0]
+
+
+def test_a_403_to_a_keyed_request_points_at_the_key_not_the_contact(http_mock, monkeypatch):
+    # The Opus review's N2: Alpaca answers a wrong key with 403, and the contact hint sent the reader the wrong way.
+    monkeypatch.setenv("RC_HTTP_CONTACT", "")
+    http_mock.add("alpaca.test", b"forbidden", status=403)
+    ctx = base.RunContext(run_id="r", dataset="d", sleep=lambda s: None)
+    with pytest.raises(base.SourceError, match=r"HTTP 403 \(refused: check the key") as err:
+        base.http_get(ctx, "alpaca", "https://alpaca.test/v2/stocks/bars", headers={"APCA-API-KEY-ID": "test-key"},
+                      keyed=True)
+    assert "RC_HTTP_CONTACT" not in str(err.value) and "test-key" not in str(err.value)

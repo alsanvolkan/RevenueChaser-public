@@ -371,7 +371,7 @@ def _funnel_rows(payload: dict, f: dict, floor_txt: str, eff: dict, scanned,
     """Rows of the About funnel: ``(css class, label HTML, count)``.
 
     From ``funnel_steps`` when the run has them (so the short-history split —
-    *Listed recently* by design, *Missing price bars* fixable by Fetch — reads
+    *Listed recently* by design, *Missing price bars* a gap no job fills — reads
     exactly as on the Settings card); the legacy drop counts otherwise.
     """
     steps = payload.get("funnel_steps") or []

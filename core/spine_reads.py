@@ -22,9 +22,9 @@ def clear() -> None:
         _KEPT.clear()
 
 
-def _file_key():
+def _file_key(kind: str = "spine"):
     from ..rcdata import serving
-    path = serving.live_path("spine")
+    path = serving.live_path(kind)
     try:
         st = path.stat()
     except OSError:
@@ -32,19 +32,21 @@ def _file_key():
     return (str(path), st.st_ino, st.st_mtime_ns, st.st_size)
 
 
-def _kept(name: str, args: tuple, fetch) -> list[dict]:
-    """``fetch()``'s rows, read once per spine file: kept under ``(name, args, file identity)``; a new file drops
-    every older answer. No file yet is never kept (the first build must be seen at once)."""
-    key = _file_key()
+def _kept(name: str, args: tuple, fetch, kind: str = "spine", also: tuple[str, ...] = ()) -> list[dict]:
+    """``fetch()``'s rows, read once per ``kind`` file: kept under ``(name, args, file identity)``; a new file drops
+    every older answer read from that file. No file yet is never kept (the first build must be seen at once).
+    ``also``: the other kinds the answer reads, whose files join the identity (a new one reads it again)."""
+    key = _file_key(kind)
     if key is None:
         return [dict(r) for r in fetch()]
+    key = key + tuple(_file_key(k) for k in also)
     with _LOCK:
         rows = _KEPT.get((name, args, key))
     if rows is None:
         rows = fetch()
         with _LOCK:
-            if any(k[2] != key for k in _KEPT):
-                _KEPT.clear()
+            for old in [k for k in _KEPT if k[2][0] == key[0] and k[2] != key]:
+                del _KEPT[old]
             _KEPT[(name, args, key)] = rows
     return [dict(r) for r in rows]
 
@@ -65,3 +67,15 @@ def identity_all() -> list[dict]:
     """Every ``security`` row, as ``read.identity()``."""
     from ..rcdata import read
     return _kept("identity", (), lambda: read.identity())
+
+
+def latest_market(tickers) -> dict[str, dict]:
+    """``read.latest_market(tickers)``, kept until the prices file changes (PR 7). No prices file yet: ``{}`` without a
+    read, so a render before the first prices build opens nothing more than it did."""
+    from ..rcdata import read
+    if _file_key("prices") is None:
+        return {}
+    wanted = tuple(sorted({str(t).strip().upper() for t in tickers if str(t or "").strip()}))
+    rows = _kept("latest_market", wanted, lambda: list(read.latest_market(wanted).values()), kind="prices",
+                 also=("spine",))                     # it finds the tickers' securities through the spine
+    return {r["ticker"]: r for r in rows}

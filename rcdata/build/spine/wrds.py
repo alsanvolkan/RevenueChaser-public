@@ -256,6 +256,8 @@ def _typed(c: str, t: str) -> str:
         return f'TRY_CAST("{c}" AS DATE)'
     if t == "INTEGER":
         return f'TRY_CAST(TRY_CAST("{c}" AS DOUBLE) AS INTEGER)'
+    if t == "DOUBLE":
+        return f'TRY_CAST("{c}" AS DOUBLE)'
     return f'"{c}"'
 
 
@@ -272,7 +274,7 @@ def raw_rows(raw: Path, schema: list[tuple[str, str]]) -> str:
 
 def untyped(con: duckdb.DuckDBPyConnection, raw: Path, schema: list[tuple[str, str]]) -> dict[str, int]:
     """Per typed column, the rows whose raw value is not null but did not type (``raw_rows`` made it null)."""
-    cols = [(c, t) for c, t in schema if t in ("DATE", "INTEGER")]
+    cols = [(c, t) for c, t in schema if t in ("DATE", "INTEGER", "DOUBLE")]
     if not cols:
         return {}
     counts = ", ".join(f'count(*) FILTER (WHERE "{c}" IS NOT NULL AND {_typed(c, t)} IS NULL)' for c, t in cols)
@@ -301,6 +303,11 @@ def _parquet_files(dataset: str, table: str) -> list[Path]:
             if d.name.startswith("delta=") and d.name.split("=", 1)[1] >= floor and (d / f"{table}.parquet").is_file():
                 files.append(d / f"{table}.parquet")
     return files
+
+
+def parquet_files(dataset: str, table: str) -> list[Path]:
+    """``_parquet_files`` for a reader outside the spine package (the ownership store's ``ownership/serve``)."""
+    return _parquet_files(dataset, table)
 
 
 def _sec_ciks() -> list[str]:

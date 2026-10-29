@@ -32,6 +32,24 @@ LABELS = {"uw/spot_expiry_strike": "SPX expiry-strike (Unusual Whales)", "market
           "wrds/idxcst_his": "Compustat index constituents (WRDS, the membership check)",
           "openfigi/map": "OpenFIGI map of the CUSIPs", "funds/index_holdings": "Index membership (ETF holdings files)",
           "spine/security": "Identity spine (security, tiers, history)"}
+# The ownership store (PR 16).
+LABELS.update({"finra/short_interest": "Short interest (FINRA)", "regsho/threshold": "Reg SHO threshold lists",
+               "ibkr/shortable": "Borrow fee and shares available (IBKR file)", "sec/ftd": "Fails to deliver (SEC)",
+               "sec/13f": "13F holdings (SEC data sets, then forms)", "sec/form4": "Insider transactions (Form 4)",
+               "sec/13dg": "5% owners (Schedules 13D and 13G)", "ownership/serve": "13F totals per ticker and quarter"})
+# The fundamentals layer (PR 12).
+LABELS.update({
+    "sec/companyfacts": "SEC company facts (re-read on the filing day)",
+    "sec/filings": "SEC filing lists, 8-K items and report texts",
+    "alphavantage/earnings_calendar": "Earnings calendar (Alpha Vantage)",
+    "uw/financials": "Preliminary quarters (Unusual Whales, off by default)",
+    "yfinance/estimates": "Analyst estimates (yfinance)",
+    "sec/fsds": "SEC Financial Statement Data Sets (the check)",
+    "wrds/fundq": "Compustat quarterly fundamentals (WRDS, the revision check)",
+    "wrds/funda": "Compustat annual fundamentals (WRDS, the revision check)",
+    "wrds/firm_ratio": "WRDS financial ratios (the debt check)",
+    "wrds/segments": "Compustat segments and customers (WRDS)",
+    "fundamentals/tables": "Fundamentals (served tables, peers, build issues)"})
 # Default cadence per dataset (the dataset's own ``cadence`` when it has one); a ``dataset_schedule.cadence`` of
 # daily / weekly / monthly overrides it.
 CADENCE = {"uw/spot_expiry_strike": "daily", "market_series": "daily"}
@@ -43,10 +61,21 @@ COVERAGE_TARGET: dict[str, float | None] = {"uw/spot_expiry_strike": 0.95, "mark
 # The newest-date column of each serving table.
 DATE_COLUMN = {"spx_gamma_expiry_strike": "session_date", "market_series": "obs_date", "security": "source_as_of",
                "security_history": "valid_from", "gics_history": "valid_from", "index_membership": "valid_from"}
+DATE_COLUMN.update({"finra_short_interest": "settlement_date", "regsho_threshold": "list_date",
+                    "ibkr_shortable": "session_date", "sec_ftd": "settlement_date", "sec13f_filings": "filed",
+                    "insider_transactions": "filed", "beneficial_ownership": "filed", "sec13f_cusip_map": "period",
+                    "sec13f_filer_period": "period", "sec13f_ticker_period": "period", "sec13f_periods": "period"})
+DATE_COLUMN.update({"fundamental_company": "facts_as_of", "fundamental_fact": "filed", "filing_item": "filing_date",
+                    "earnings_event": "source_as_of", "fundamental_revision": "new_as_of",
+                    "segment_revenue": "document_date", "customer_share": "document_date",
+                    "estimate_latest": "source_as_of"})
 # The identity funnel (PR 5, D9): the indexes it counts, and the dataset whose build issues it lists.
 SPINE_INDEXES = ("sp500", "sp400", "sp600", "ndx")
 SPINE_ISSUES = "spine/security"
-ATTENDED_COMMAND = "python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist wrds/co_hgic wrds/idxcst_his"
+# The WRDS difference slot (decision 3): these check datasets' cards show their newest monthly difference report,
+# the note of their newest run that read WRDS (PR 12, decided 27 Oct); every other card says no WRDS run yet.
+WRDS_DIFFERENCE = ("wrds/fundq", "wrds/funda", "wrds/firm_ratio", "wrds/segments")
+NO_WRDS = {"text": "no WRDS run yet"}
 # Old .store tables a new dataset replaces: their reads in read_log are the retirement count (read for 14 days).
 RETIRING = {"macro_series": "market_series", "vol_index_daily": "market_series", "cftc_cot": "market_series",
             "economic_calendar": "market_series"}
@@ -152,6 +181,21 @@ def status_of(dataset: str, last: dict | None, base: dict | None, cadence: str,
     return "unchanged", "within its cycle; the last run changed nothing", base
 
 
+def attended_command(kind: str) -> str:
+    """The CLI line that runs every attended (WRDS) dataset of ``kind``: one worker and one login for all of them."""
+    names = [n for n, d in _datasets().items() if d.kind == kind and getattr(d, "attended", False)]
+    return f"python -m RevenueChaser.rcdata.build backfill {' '.join(names)}"
+
+
+def _wrds_difference(dataset: str) -> dict:
+    """The WRDS difference slot: a check dataset's newest report (a run that read WRDS, not a skip or a failure)."""
+    if dataset not in WRDS_DIFFERENCE:
+        return dict(NO_WRDS)                     # a copy: a caller that edits its card must not edit the constant
+    report = next((c for c in ops.recent_checks(dataset, limit=24)
+                   if c["result"] in ("changed", "unchanged") and c.get("note")), None)
+    return {"text": report["note"], "as_of": report.get("source_as_of")} if report else dict(NO_WRDS)
+
+
 def _held(dataset: str, ds) -> str | None:
     """Why the schedule never queues ``dataset`` now (``rcdata/build/due.py``), or None: an attended dataset runs only
     from the CLI; a dataset that starts by hand waits for its first build (delta S6)."""
@@ -230,6 +274,75 @@ def _backfill_years(now: datetime) -> dict:
 BACKFILL = {"uw/spot_expiry_strike": _backfill_sessions, "market_series": _backfill_years}
 
 
+# ── The prices store (PR 7, G2) ───────────────────────────────────────────────────────────────────────────────
+
+LABELS.update({"alpaca/bars": "Daily bars (Alpaca)", "alpaca/corporate_actions": "Corporate actions (Alpaca)",
+               "sec/cover_shares": "Shares per class (SEC filing covers)", "yfinance/float": "Float (Yahoo)",
+               "uw/total_float": "Float check (Unusual Whales)",
+               "wrds/prices": "Price history and actions (WRDS: Compustat, CRSP)",
+               "prices/serving": "Prices store (bars, actions, factors, shares, market cap)"})
+# The plan's acceptance: Tier A sessions complete >= 99% (sized against the real Tier A, 5,655 names on 28 Oct).
+COVERAGE_TARGET.update({"alpaca/bars": 0.99})
+DATE_COLUMN.update({"price_bar_daily": "session_date", "corporate_action": "ex_date", "adj_factor": "valid_to",
+                    "shares_class": "as_of", "security_symbol": "valid_from", "market_cap_daily": "session_date",
+                    "price_revision": "session_date", "wrds_price_diff": "as_of"})
+# An attended dataset's own command, where it is not its kind's (``attended_command``).
+ATTENDED_COMMANDS = {"wrds/prices": "python -m RevenueChaser.rcdata.build backfill wrds/prices"}
+# The rows of the WRDS difference report (``wrds_price_diff``), as the card words them.
+WRDS_REPORT_LABELS = {"crsp_vs_compustat": "CRSP vs Compustat closes", "compustat_vs_alpaca": "Compustat vs Alpaca closes",
+                      "crsp_vs_alpaca": "CRSP vs Alpaca closes", "compustat_returns": "Compustat returns vs the store's",
+                      "crsp_returns": "CRSP returns vs the store's"}
+
+
+def _backfill_dates(*parts: str):
+    """A dataset kept in ``date=`` partitions: how many there are and the newest (no expected count)."""
+    def view(now: datetime) -> dict:
+        from RevenueChaser.rcdata.build import base
+        folder = base.parquet_root().joinpath(*parts)
+        days = sorted(d.name[5:] for d in folder.iterdir()
+                      if d.name.startswith("date=") and (d / "part-0.parquet").is_file()) if folder.is_dir() else []
+        return {"done": len(days), "expected": None, "last_partition": days[-1] if days else None, "missing": None,
+                "resumable": True, "calls_per_partition": None, "from_earliest": None}
+    return view
+
+
+def _backfill_wrds_prices(now: datetime) -> dict:
+    """The WRDS history's year partitions (``wrds_history``): one query each, newest year first."""
+    from RevenueChaser.rcdata.build.prices import wrds_history as wh
+    today = calendar._as_ny(now).date()
+    plan = [(t, y) for t in wh.YEARLY for y in wh.years(t, today)]
+    have = [(t, y) for t, y in plan if wh.partition_path(t, y).is_file()]
+    newest = max(have, key=lambda p: (p[1], -wh.YEARLY.index(p[0])), default=None)
+    return {"done": len(have), "expected": len(plan), "last_partition": f"{newest[0]} {newest[1]}" if newest else None,
+            "missing": [f"{t} {y}" for t, y in plan if (t, y) not in have], "resumable": len(have) < len(plan),
+            "calls_per_partition": 1, "from_earliest": f"{wh.START_YEAR}-01-01"}
+
+
+BACKFILL.update({"alpaca/bars": _backfill_dates("alpaca", "bars"), "wrds/prices": _backfill_wrds_prices})
+
+
+def _wrds_slot(dataset: str, facts: dict) -> dict:
+    """The card's "WRDS difference" line: the monthly report of ``wrds/prices`` (read with the serving facts), or
+    "no WRDS run yet"."""
+    report = (facts.get("wrds_price_diff") or {}).get("report") if dataset == "wrds/prices" else None
+    as_of = max((r["as_of"] for r in report or [] if r.get("as_of")), default=None)
+    if not report or as_of is None:
+        return {"text": "no WRDS run yet"}
+    parts = []
+    for r in sorted(report, key=lambda r: list(WRDS_REPORT_LABELS).index(r["comparison"])
+                    if r["comparison"] in WRDS_REPORT_LABELS else 99):
+        label = WRDS_REPORT_LABELS.get(r["comparison"], r["comparison"])
+        returns = r["comparison"].endswith("_returns")
+        differs, worst = (r.get("return_differs"), r.get("max_return_diff")) if returns else \
+            (r.get("close_differs"), r.get("max_close_diff"))
+        if not r.get("sessions"):
+            parts.append(f"{label}: no common session")
+            continue
+        parts.append(f"{label}: {r['sessions']:,} sessions, {differs or 0:,} over 1 bp"
+                     + (f" (max {worst:.3%})" if differs and worst is not None else ""))
+    return {"text": f"as of {as_of}: " + "; ".join(parts), "rows": report}
+
+
 # ── The serving file: one read-only handle per call ───────────────────────────────────────────────────────────
 
 def _serving_facts() -> tuple[dict[str, dict], dict[str, str | None], dict | None]:
@@ -256,6 +369,12 @@ def _serving_facts() -> tuple[dict[str, dict], dict[str, str | None], dict | Non
                 tables[table] = {"rows": int(rows), "newest": newest.isoformat() if newest else None}
             if kind == "spine" and {"security", "index_membership"} <= names:
                 funnel = _spine_counts(con)
+            if kind == "prices" and "wrds_price_diff" in names:
+                cur = con.execute("SELECT * FROM wrds_price_diff")
+                cols = [d[0] for d in cur.description]
+                tables["wrds_price_diff"]["report"] = [
+                    {k: (v.isoformat() if isinstance(v, date) else v) for k, v in zip(cols, r)}
+                    for r in cur.fetchall()]
         finally:
             con.close()
     return tables, swaps, funnel
@@ -445,9 +564,10 @@ def _card(dataset: str, ds, facts: dict, now: datetime) -> dict:
                    for i in issues],
         "issues_open": n_issues,
         "backfill": backfill(now) if backfill else None,
-        "wrds": {"text": "no WRDS run yet"},
+        "wrds": _wrds_difference(dataset) if dataset in WRDS_DIFFERENCE else _wrds_slot(dataset, facts),
         "attended": bool(getattr(ds, "attended", False)),
-        "attended_command": ATTENDED_COMMAND if getattr(ds, "attended", False) else None,
+        "attended_command": (ATTENDED_COMMANDS.get(dataset) or attended_command(ds.kind))
+                            if getattr(ds, "attended", False) else None,
         "schedule": {"paused": bool(schedule and schedule.get("paused_at") is not None),
                      "paused_by": (schedule or {}).get("paused_by"),
                      "paused_at": _iso_utc((schedule or {}).get("paused_at"))},

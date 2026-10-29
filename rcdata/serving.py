@@ -1,11 +1,11 @@
 """Serving files: built as a new file, checked, then swapped over the live one; read only through ``open_read`` (D1).
 
-One builder process writes. Each kind (``market``; ``spine`` since PR 5; ``options`` since G8) is built into
-``<kind>.<build_id>.duckdb`` beside the live ``<kind>.duckdb`` under ``config.MARKET_DIR``; ``BuildFile.swap`` closes
-the writer (after a ``CHECKPOINT``, so no ``.wal`` is left), opens the new file read-only, checks its
-``serving_schema_version`` row and the row count of every expected table, and only then moves it into place. On any
-failure — a check, or an exception inside the ``build()`` block — the new file is deleted and the live file is not
-touched (test T3).
+One builder process writes. Each kind (``market``; ``spine`` since PR 5; ``prices`` since PR 7; ``ownership`` since
+PR 16; ``fundamentals`` since PR 12; ``options`` since PR 18) is built into ``<kind>.<build_id>.duckdb``
+beside the live ``<kind>.duckdb`` under ``config.MARKET_DIR``; ``BuildFile.swap`` closes the writer (after a
+``CHECKPOINT``, so no ``.wal`` is left), opens the new file read-only, checks its ``serving_schema_version`` row and
+the row count of every expected table, and only then moves it into place. On any failure — a check, or an exception inside the
+``build()`` block — the new file is deleted and the live file is not touched (test T3).
 
 The swap never leaves the live name missing: the previous file is first hard-linked to ``<kind>.prev.duckdb``
 (copied where the file system has no hard links), then ``os.replace`` moves the new file over the live name in one
@@ -30,7 +30,15 @@ import duckdb
 from ..core import config
 
 # The serving schema of each kind. A change to a kind's tables bumps its number in its own PR (box rule).
-SERVING_SCHEMA_VERSION = {"market": 1, "spine": 1, "options": 1}
+SERVING_SCHEMA_VERSION = {"market": 1, "spine": 1, "ownership": 1}
+
+# PR 7 (G2): ``prices.duckdb``, the daily bars, corporate actions, shares and market cap (``build/prices/``).
+SERVING_SCHEMA_VERSION["prices"] = 1
+# PR 12 (G5): ``fundamentals.duckdb``, the facts, filings, earnings, estimates and checks (``build/fundamentals/``).
+SERVING_SCHEMA_VERSION["fundamentals"] = 1
+# PR 18 (G8): ``options.duckdb``, the option chains, exposures, prints and IV (``build/options/``).
+SERVING_SCHEMA_VERSION["options"] = 1
+
 KINDS = tuple(SERVING_SCHEMA_VERSION)
 VERSION_TABLE = "serving_schema_version"
 # A table may lose at most this share of its live rows in one build without an explicit allow_shrink. The datasets

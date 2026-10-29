@@ -124,8 +124,9 @@ LATE_ET = datetime(2026, 10, 7, 2, 0, tzinfo=timezone.utc).timestamp()
 def test_the_fetch_date_is_the_new_york_date_not_the_utc_one(rawstore_tmp_db):
     """A 22:00 ET Fetch is already Wednesday in UTC; the board's "as of" is the session's Tuesday.
 
-    The stamp is the one run.py copies from ``ticker_payload_cache.fetched_at_iso``, written in UTC. Read as
-    UTC it labelled a Tuesday-evening Fetch Wednesday, a day the market had not traded.
+    The run's moment and the stamp run.py copies from ``ticker_payload_cache.fetched_at_iso`` are both UTC
+    instants. Read as UTC they labelled a Tuesday-evening Fetch Wednesday, a day the market had not traded. (The
+    "as of" is the run's own session since review N6: the comps' peers are fetched by the run.)
     """
     results = _results("AAA")
     results["financials"]["fetched_at_iso"] = "2026-10-07T02:00:00+00:00"
