@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from RevenueChaser.core.reporting_common import write_artifact
@@ -34,18 +34,30 @@ logger = logging.getLogger(__name__)
 
 
 def _stored_risk_free() -> dict | None:
-    """The newest stored FRED 10-year Treasury yield (``macro_series`` DGS10, the Earnings nightly's D27) as a rate
-    with its date, or ``None`` when none is stored or the newest is more than ``RISK_FREE_MAX_AGE_DAYS`` old.
+    """The newest stored FRED 10-year Treasury yield as a rate with its date, or ``None`` when none is stored or the
+    newest is more than ``RISK_FREE_MAX_AGE_DAYS`` old.
 
     The DCF's risk-free rate was the 4% constant although the store holds the real yield (Financials review S2).
-    Read-only and zero network, so a Refresh reads it too; without it the DCF takes its default and says so.
+    Read-only and zero network, so a Refresh reads it too; without it the DCF takes its default and says so. The
+    yield is ``market_series`` DGS10 (``rcdata``, G6); the old ``macro_series`` row (the Earnings nightly's D27) is
+    read only while there is no market file, until the old store is retired (plan PR 21).
 
-    The query is the Earnings Radar's (``module_earnings_radar.stored_inputs.dgs10_map``), but the window is looser
-    on purpose (the Opus review's N1): that one pairs daily yields with returns for a beta, so a series three
-    sessions behind is already wrong there. Here one level is read, a ten-year yield moves a few basis points in two
-    weeks, and the fallback is a flat 4%, which is further off than a two-week-old yield; the date is shown.
+    The window is looser than the Earnings Radar's on purpose (the Opus review's N1): that one pairs daily yields
+    with returns for a beta, so a series three sessions behind is already wrong there. Here one level is read, a
+    ten-year yield moves a few basis points in two weeks, and the fallback is a flat 4%, which is further off than a
+    two-week-old yield; the date is shown.
     """
-    from RevenueChaser.core import calendar as market_calendar, rawstore
+    from RevenueChaser.core import calendar as market_calendar
+    from RevenueChaser.rcdata import read, serving
+    today = market_calendar.today_ny()
+    if serving.live_path("market").exists():
+        rows = [r for r in read.market_series(["DGS10"], start=today - timedelta(days=RISK_FREE_MAX_AGE_DAYS))
+                if r.get("source") == "fred" and r.get("value") is not None]
+        if not rows:
+            return None
+        newest = max(rows, key=lambda r: r["obs_date"])
+        return {"value": float(newest["value"]) / 100, "as_of": newest["obs_date"].isoformat()}
+    from RevenueChaser.core import rawstore
     try:
         rows = rawstore.query("SELECT obs_date, value FROM macro_series WHERE series_id = 'DGS10' AND source = 'fred' "
                               "AND value IS NOT NULL ORDER BY obs_date DESC LIMIT 1")
@@ -56,9 +68,50 @@ def _stored_risk_free() -> dict | None:
         return None
     obs = rows[0]["obs_date"]
     obs = obs if isinstance(obs, date) else date.fromisoformat(str(obs)[:10])
-    if (market_calendar.today_ny() - obs).days > RISK_FREE_MAX_AGE_DAYS:
+    if (today - obs).days > RISK_FREE_MAX_AGE_DAYS:
         return None
     return {"value": float(rows[0]["value"]) / 100, "as_of": obs.isoformat()}
+
+
+# The statement fields the SEC facts carry (``sec_edgar.CONCEPTS``) that the engines read, by the engines' names. A
+# field the facts do not carry (pre-tax income, tax provision, interest expense, current assets and liabilities) is
+# left out, so the engines' labelled defaults show (review S1).
+_SEC_FIELDS = ("revenue", "cost_of_revenue", "gross_profit", "ebit", "net_income", "diluted_shares", "basic_shares",
+               "rd_expense", "operating_cash_flow", "capex", "depreciation", "total_assets", "total_equity", "cash",
+               "short_term_investments", "receivables", "inventory", "payables", "total_debt")
+# shortcut: the newest five fiscal years (Yahoo gave four); read more when a model projects from a longer history.
+SEC_YEARS = 5
+
+
+def _financials_record(rec: dict) -> dict:
+    """One SEC annual record (``sec_edgar.extract_annual``'s shape) as the engines read a year: the fields above,
+    ``capital_expenditure`` beside ``capex``, ``period_end`` (the revenue's) and EBITDA as operating income plus
+    depreciation when the year has both."""
+    from RevenueChaser.core import fiscal_year
+    from RevenueChaser.core.config import to_float
+    end = fiscal_year.period_end(rec)
+    out: dict = {"fiscal_year": rec.get("fiscal_year"), "period_end": end.isoformat() if end else None}
+    for f in _SEC_FIELDS:
+        v = to_float(rec.get(f))
+        if v is not None:
+            out[f] = v
+    if "capex" in out:
+        out["capital_expenditure"] = out["capex"]
+    if "ebit" in out and "depreciation" in out:
+        out["ebitda"] = out["ebit"] + out["depreciation"]
+    return out
+
+
+def _sec_statements(ticker: str) -> tuple[list[dict], dict] | None:
+    """``(annual, meta)``: the newest ``SEC_YEARS`` fiscal years from the fundamentals layer (G6, build plan PR 15:
+    "statement inputs from the store"), or None off the layer or when it holds no year for ``ticker``."""
+    from RevenueChaser.core import fundamentals_layer
+    if not fundamentals_layer.reads_layer():
+        return None
+    annual, _quarterly, meta = fundamentals_layer.records(ticker)
+    if not annual:
+        return None
+    return [_financials_record(r) for r in annual[-SEC_YEARS:]], meta
 
 
 class _NoCachedData(Exception):
@@ -128,6 +181,16 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
             financials["fetched_at_iso"] = row["fetched_at_iso"]
     except Exception:  # pragma: no cover - a missing stamp must not break a report
         pass
+
+    # G6 (build plan PR 15): on the fundamentals layer the statements the models read are the SEC's; Yahoo's
+    # payload keeps only the price, the shares, the beta and the name until the prices store is in (G2).
+    sec = _sec_statements(ticker)
+    if sec is not None:
+        annual, meta = sec
+        filed = meta.get("newest_filed")
+        financials = {**financials, "annual": annual, "statements_meta": meta,
+                      "source": "SEC company facts (statements" + (f", newest filed {filed}" if filed else "")
+                                + ") · Yahoo (price, shares, beta)"}
 
     warnings: list[str] = []
     results: dict = {"ticker": ticker, "financials": financials, "modules": {}, "warnings": warnings}

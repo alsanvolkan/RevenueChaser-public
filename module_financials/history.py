@@ -27,7 +27,9 @@ BOARD, TABLE = "module_financials", "financials_report_history"
 # Bump when a model changes in a way the config hash does not see (a formula, not a default).
 # 3: the Financials review's fixes (build plan PR 12): the risk-free rate is the stored 10-year yield when fresh
 # (S2); a historical FCFF with an unknown ΔNWC is unknown, not ΔNWC = 0 (N1).
-SELECTION_VERSION = "3"
+# 4: on the fundamentals layer the models read the SEC's annual statements, not Yahoo's (G6, build plan PR 15);
+#    the risk-free rate is market_series DGS10.
+SELECTION_VERSION = "4"
 
 
 def effective_config() -> dict:

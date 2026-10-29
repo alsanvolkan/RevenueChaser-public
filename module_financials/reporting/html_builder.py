@@ -20,8 +20,10 @@ _ENV = Environment(loader=FileSystemLoader(str(_TEMPLATES)), autoescape=True)
 HELP = help_html(
     "One company at a time: <b>Quick Remarks</b> (the stored scores for the ticker) on top, then the "
     "<b>financial model</b>: DCF, three-statement view, comparables, credit and sensitivity. "
-    "<b>Fetch</b> downloads the ticker's statements and prices from <b>Yahoo</b> into the store and rebuilds "
-    "the report. <b>Refresh</b> rebuilds the report for the ticker in the "
+    "<b>Fetch</b> downloads the ticker's price, shares, beta and statements from <b>Yahoo</b> into the store and "
+    "rebuilds the report. The models read the annual statements the company filed with the <b>SEC</b> (the "
+    "fundamentals layer, re-read on each filing day) once that is built, and Yahoo's before; the "
+    "<b>Source</b> line says which. <b>Refresh</b> rebuilds the report for the ticker in the "
     "box from the stored data with no network call; a ticker with nothing stored needs a Fetch first.")
 
 
