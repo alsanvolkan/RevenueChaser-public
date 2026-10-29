@@ -117,7 +117,7 @@ def test_the_row_carries_the_data_date_the_warnings_and_quick_remarks(results):
 def test_the_header_carries_model_version_params_and_context(results):
     _record(results)
     (head,) = _headers()
-    assert head["model_version"] == fin_history.model_version() and head["model_version"].startswith("2+")
+    assert head["model_version"] == fin_history.model_version() and head["model_version"].startswith("3+")
     params = json.loads(head["params"])
     assert params["modules"] == MODULES and params["defaults"]["TERMINAL_GROWTH"] == 0.025
     ctx = json.loads(head["context"])

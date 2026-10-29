@@ -7,10 +7,11 @@ Nakit açığı "revolver" (plug borç) ile kapatılır; fazla nakit revolver'ı
 """
 from __future__ import annotations
 
-from ..config import DEFAULT_EBITDA_MARGIN, DEFAULT_REVENUE_GROWTH, PROJECTION_YEARS, to_float
+from ..config import (DEFAULT_CAPEX_PCT_REV, DEFAULT_DIO, DEFAULT_DPO, DEFAULT_DSO, DEFAULT_EBITDA_MARGIN,
+                      DEFAULT_REVENUE_GROWTH, PROJECTION_YEARS, to_float)
 from RevenueChaser.core.providers.validator import validate_annual
 
-from ._inputs import DNA_ASSUMED_ZERO, effective_tax_rate, pick
+from ._inputs import DNA_ASSUMED_ZERO, assumed, effective_tax_rate, pick
 
 
 def _get(rec: dict, key: str, default: float | None = None) -> float | None:
@@ -47,24 +48,40 @@ def run_three_statement(financials: dict, assumptions: dict | None = None) -> di
         return {"error": f"missing {', '.join(missing)} in the latest year: opening balance sheet unknown",
                 "warnings": warnings}
 
+    # A base-year input that neither the user nor the statements give takes a default, and the board says so
+    # (review S1): ``defaults`` names each one, the warning gives its value.
+    defaults: list[str] = []
+
+    def _base(key: str, measured: float | None, default: float, what: str, shown: str) -> float:
+        if measured is None and to_float(a.get(key)) is None:
+            defaults.append(key)
+            warnings.append(assumed(what, shown))
+            return default
+        return pick(a, key, measured)
+
     # Marj ve oranlar (tarihselden türet, varsayım override'ına izin ver)
     ebitda0 = _get(latest, "ebitda")
-    ebitda_margin = pick(a, "ebitda_margin", ebitda0 / rev0 if ebitda0 is not None else DEFAULT_EBITDA_MARGIN)
+    ebitda_margin = _base("ebitda_margin", ebitda0 / rev0 if ebitda0 is not None else None, DEFAULT_EBITDA_MARGIN,
+                          "EBITDA margin", f"{DEFAULT_EBITDA_MARGIN:.1%}")
     dep0 = _get(latest, "depreciation")
     dep_pct = pick(a, "depreciation_pct_rev", dep0 / rev0 if dep0 is not None else 0.0)
     if dep0 is None and to_float(a.get("depreciation_pct_rev")) is None:
         warnings.append(DNA_ASSUMED_ZERO)                 # FIN-2 / DF41
     capex0 = _get(latest, "capex")
-    capex_pct = pick(a, "capex_pct_rev", capex0 / rev0 if capex0 is not None else 0.05)
+    capex_pct = _base("capex_pct_rev", capex0 / rev0 if capex0 is not None else None, DEFAULT_CAPEX_PCT_REV,
+                      "Capex", f"{DEFAULT_CAPEX_PCT_REV:.1%} of revenue")
     interest_rate = pick(a, "interest_rate", 0.05)
     payout = pick(a, "payout_ratio", 0.0)
     min_cash_pct = pick(a, "min_cash_pct_rev", 0.02)
 
     # İşletme günleri (varsayım yoksa tarihselden)
     ar0, inv0, ap0 = _get(latest, "receivables"), _get(latest, "inventory"), _get(latest, "payables")
-    dso = pick(a, "dso", (ar0 / rev0 * 365) if ar0 is not None else 45.0)
-    dio = pick(a, "dio", (inv0 / rev0 * 365) if inv0 is not None else 60.0)
-    dpo = pick(a, "dpo", (ap0 / rev0 * 365) if ap0 is not None else 45.0)
+    dso = _base("dso", (ar0 / rev0 * 365) if ar0 is not None else None, DEFAULT_DSO,
+                "Receivable days", f"{DEFAULT_DSO:.0f}")
+    dio = _base("dio", (inv0 / rev0 * 365) if inv0 is not None else None, DEFAULT_DIO,
+                "Inventory days", f"{DEFAULT_DIO:.0f}")
+    dpo = _base("dpo", (ap0 / rev0 * 365) if ap0 is not None else None, DEFAULT_DPO,
+                "Payable days", f"{DEFAULT_DPO:.0f}")
 
     # Başlangıç bilanço
     cash = _get(latest, "cash", min_cash_pct * rev0)       # a reported 0 stays 0; missing takes the minimum
@@ -179,6 +196,7 @@ def run_three_statement(financials: dict, assumptions: dict | None = None) -> di
     return {
         "ticker": financials.get("ticker"),
         "warnings": warnings,
+        "defaults": defaults,
         "assumptions": {
             "revenue_growth": growth,
             "ebitda_margin": ebitda_margin,
@@ -187,6 +205,8 @@ def run_three_statement(financials: dict, assumptions: dict | None = None) -> di
             "tax_rate": tax_rate,
             "tax_rate_source": tax_rate_source,
             "interest_rate": interest_rate,
+            # No measured source: the user's rate or the default, which the board labels (review S2).
+            "interest_rate_source": "assumption" if to_float(a.get("interest_rate")) is not None else "default",
             "payout_ratio": payout,
             "dso": dso, "dio": dio, "dpo": dpo,
             "min_cash_pct_rev": min_cash_pct,

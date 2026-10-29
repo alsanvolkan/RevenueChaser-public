@@ -20,7 +20,10 @@ UW_RATE_LIMIT_PER_MIN = 120
 UW_RATE_LIMIT_PER_DAY = 15_000
 
 # ── DCF / WACC varsayımları ──
-RISK_FREE_RATE = 0.04        # 10y ABD tahvili vekili
+RISK_FREE_RATE = 0.04        # 10y ABD tahvili vekili: the default when no fresh stored DGS10 exists (review S2)
+# The stored FRED 10-year yield (macro_series DGS10) is the risk-free rate while its newest observation is at most
+# this many calendar days old; older, the default above stands and the board says so.
+RISK_FREE_MAX_AGE_DAYS = 14
 EQUITY_RISK_PREMIUM = 0.05   # CAPM hisse risk primi
 DEFAULT_BETA = 1.0
 DEFAULT_TAX_RATE = 0.21
@@ -34,6 +37,12 @@ DEFAULT_REVENUE_GROWTH = [0.08, 0.07, 0.06, 0.05, 0.04]
 DEFAULT_EBITDA_MARGIN = 0.30
 DEFAULT_CAPEX_PCT_REV = 0.05
 DEFAULT_DNWC_PCT_REV = 0.00
+# The working-capital days and the WACC debt weight a model takes when the statements give none. The board labels
+# each as assumed (Financials review S1), never as a measured number.
+DEFAULT_DSO = 45.0
+DEFAULT_DIO = 60.0
+DEFAULT_DPO = 45.0
+DEFAULT_DEBT_WEIGHT = 0.15
 
 # ── Comps peers (FIN-3): k comes from a measurement, never a guess ──
 # A leave-one-out run over 3,365 names: k = 8 was the best of 3/5/8/12 on EV/EBITDA, EV/Revenue and P/E.
