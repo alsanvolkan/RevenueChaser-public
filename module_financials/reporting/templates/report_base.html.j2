@@ -242,7 +242,7 @@
   <p style="color:var(--muted); font-size:12px; margin:-6px 0 12px;">as of {{ comps.as_of }} — the last stored Fetch; the Refresh fetched nothing.</p>
   {% endif %}
   {% if comps.basis %}
-  <p style="color:var(--muted); font-size:12px; margin:-6px 0 12px;">Basis: peer multiples are {{ comps.basis.peers }} (Yahoo); the target's EBITDA, revenue and net income are from fiscal year {{ comps.basis.target_fiscal_year or "unknown" }}.</p>
+  <p style="color:var(--muted); font-size:12px; margin:-6px 0 12px;">Basis: peer multiples are {{ comps.basis.peers }} (Yahoo); the target's EBITDA, revenue and net income are from fiscal year {{ comps.basis.target_fiscal_year or "unknown" }}; per share divides by the target's shares from {{ "the " if comps.basis.target_shares and comps.basis.target_shares != "Yahoo" }}{{ comps.basis.target_shares or "Yahoo" }}.</p>
   {% endif %}
   {% if comps.pe_only %}
   <p style="color:var(--muted);">A Financial Services target is valued on P/E only: EV/EBITDA and EV/Revenue do not describe a bank.</p>

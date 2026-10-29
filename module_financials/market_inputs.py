@@ -122,7 +122,8 @@ def overlay(ticker: str, financials: dict) -> tuple[dict, str]:
            "beta": "beta" in store}
     fields = {k: store[k] for k in ("current_price", "market_cap", "shares_outstanding", "beta") if k in store}
     session = store["price_session"].isoformat() if "price_session" in store else None
-    meta = {"from_store": [k for k, v in got.items() if v], "price_session": session}
+    meta = {"from_store": [k for k, v in got.items() if v], "price_session": session,
+            "shares_source": f"{STORE}, {session} close" if got["market cap, shares"] else "Yahoo"}
     if got["beta"]:
         fields["beta_source"] = f"{STORE} ({BETA_MONTHS // 12}y monthly split-adjusted price returns vs S&P 500)"
     out = {**financials, **fields, "market_meta": meta}

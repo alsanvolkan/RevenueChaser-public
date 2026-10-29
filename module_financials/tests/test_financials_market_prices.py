@@ -207,3 +207,21 @@ def test_the_card_names_the_session_of_the_stores_price():
     assert "Price: $100.00 (close 2026-10-27)<" in html
     yahoo = build_report_html({"ticker": TICKER, "financials": dict(YAHOO), "modules": {}, "warnings": []})
     assert "Price: $100.00<" in yahoo
+
+
+def test_the_comps_basis_names_where_the_targets_shares_came_from(market_roots):  # noqa: F811
+    # The peer multiples stay Yahoo's (their .info); the target's per-share values divide by the store's shares.
+    from RevenueChaser.module_financials.engines import comps_engine
+    from RevenueChaser.module_financials.reporting.html_builder import build_report_html
+    _store()
+    fin, _part = mi.overlay(TICKER, {**YAHOO, "annual": [{"fiscal_year": "2025", "revenue": 100.0, "ebitda": 30.0,
+                                                          "net_income": 10.0, "total_debt": 5.0, "cash": 5.0}]})
+    peer = {"enterpriseValue": 900.0, "ebitda": 90.0, "totalRevenue": 300.0, "marketCap": 800.0,
+            "netIncomeToCommon": 40.0}
+    comps = comps_engine.run_comps(fin, ["PEER"], fetch_info=lambda p: peer)
+    assert comps["basis"]["target_shares"] == "prices store, 2026-10-27 close"
+    html = build_report_html({"ticker": TICKER, "financials": fin, "modules": {"comps": comps}, "warnings": []})
+    assert "peer multiples are trailing twelve months (Yahoo)" in html
+    assert "per share divides by the target's shares from the prices store, 2026-10-27 close." in html
+    yahoo = comps_engine.run_comps({**YAHOO, "annual": fin["annual"]}, ["PEER"], fetch_info=lambda p: peer)
+    assert yahoo["basis"]["target_shares"] == "Yahoo"
