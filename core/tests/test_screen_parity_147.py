@@ -24,6 +24,9 @@ only difference, edited by hand. Review F2 then added the additive ``data_qualit
 re-capture differed from the old golden by that key only. Opus review S4 put Swing's ``settings`` (the run's
 thresholds, review finding 2) back into the snapshot so a change to them shows here; the re-capture added that block
 only.
+G6 (build plan PR 13) moved Fundamentals' ``selection_version`` to 8 (Quality on the trailing year) and added the
+additive ``quality_basis``, ``quality_period_end`` and ``statements`` keys per candidate and ``statements_source`` on
+the payload (the scenario reads the old store: ``FY``, ``store``); the re-capture differed by those only.
 To re-capture on another commit, run this file with ``RC_PARITY_CAPTURE=<path>`` (it writes the snapshot there
 instead of comparing).
 """
