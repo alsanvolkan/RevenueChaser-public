@@ -71,7 +71,7 @@ def _wacc(financials: dict, beta: float | None, rf: float, erp: float,
     if beta is not None:
         b, beta_source = beta, "assumption"
     elif stated is not None:
-        b, beta_source = stated, "Yahoo"
+        b, beta_source = stated, financials.get("beta_source") or "Yahoo"   # the prices store's names itself
     else:
         b, beta_source = DEFAULT_BETA, "default"
     ke = rf + b * erp

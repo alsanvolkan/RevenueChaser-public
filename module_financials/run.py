@@ -18,6 +18,7 @@ from .engines import (
     three_statement_engine,
 )
 from . import history as fin_history
+from . import market_inputs
 from .peers import select_peers, target_row
 from .reporting.html_builder import build_report_html
 from RevenueChaser.core import vendor_data
@@ -246,8 +247,12 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
     from .engines._inputs import PE_ONLY_SECTOR
     sector = _spine.gics_of(ticker, _spine.spine_gics([ticker])).sector
 
+    # G6 follow-up: the price, the market cap, the shares and the beta are the prices store's (G2), each Yahoo's only
+    # where the store has none; ``market`` is the Source line's part that says which.
+    financials, market = market_inputs.overlay(ticker, financials)
+
     # G6 (build plan PR 15): on the fundamentals layer the statements the models read are the SEC's; Yahoo's
-    # payload keeps only the price, the shares, the beta and the name until the prices store is in (G2).
+    # payload keeps the name (and whatever market input the prices store does not give).
     sec = _sec_statements(ticker)
     if sec is not None:
         annual, meta = sec
@@ -261,11 +266,13 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
                           "statements_meta": {**meta, "used": "sec", "sec_lacks": lacking},
                           "source": "SEC company facts (statements" + (f", newest filed {filed}" if filed else "")
                                     + ("; not in the facts, so defaults: " + ", ".join(lacking) if lacking else "")
-                                    + ") · Yahoo (price, shares, beta)"}
+                                    + ") · " + market}
         else:
             financials = {**financials, "statements_meta": {**meta, "used": "yahoo", "sec_lacks": lacking},
                           "source": "Yahoo (statements: the SEC company facts lack " + ", ".join(lacking)
-                                    + "; price, shares, beta)"}
+                                    + ") · " + market}
+    else:
+        financials = {**financials, "source": "Yahoo (statements) · " + market}
 
     warnings: list[str] = []
     results: dict = {"ticker": ticker, "financials": financials, "modules": {}, "warnings": warnings}
