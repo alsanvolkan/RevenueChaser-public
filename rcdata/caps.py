@@ -21,6 +21,13 @@ DAY_CAPS: dict[str, int] = {
     "vanguard": 50,
     "nasdaq": 50,
     "invesco": 50,
+    # The ownership store's providers (PR 16; working numbers, not avo's yet). The SEC's filings share "sec" above.
+    # FINRA: up to 5 pages of 5,000 rows per settlement date; Nasdaq Trader and NYSE: the Reg SHO threshold lists,
+    # one file per market and day; IBKR: its public short-stock file (one FTP download a run, no account).
+    "finra": 2_000,
+    "nasdaqtrader": 500,
+    "nyse": 2_000,
+    "ibkr": 50,
     # The fundamentals layer's (PR 12; working numbers): Alpha Vantage's free tier allows 25 requests a day, and
     # one yfinance request per ticker for the weekly analyst estimates.
     "alphavantage": 25,

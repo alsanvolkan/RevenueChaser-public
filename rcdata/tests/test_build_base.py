@@ -41,6 +41,15 @@ def test_http_get_does_not_retry_a_404(http_mock):
     assert ctx.calls["fed"] == [1, 1, 0]
 
 
+def test_http_get_answers_an_accepted_status_as_it_is(http_mock):
+    """PR 16: a source whose 404 means "not published yet" (a daily file, a filing index) reads the answer itself:
+    one call, not a failure."""
+    ctx = base.RunContext(run_id="r", dataset="d", sleep=lambda s: None)
+    r = base.http_get(ctx, "sec", "https://nothing.test/master.20261026.idx", accept=(404,))
+    assert r.status_code == 404
+    assert ctx.calls["sec"] == [1, 0, 0]
+
+
 def test_raw_files_round_trip_and_gzip_by_name(tmp_path):
     p = base.write_raw(tmp_path / "a" / "x.json.gz", b'{"a": 1}')
     assert p.read_bytes()[:2] == b"\x1f\x8b" and base.read_raw_json(p) == {"a": 1}

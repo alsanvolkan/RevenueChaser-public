@@ -305,6 +305,11 @@ def _parquet_files(dataset: str, table: str) -> list[Path]:
     return files
 
 
+def parquet_files(dataset: str, table: str) -> list[Path]:
+    """``_parquet_files`` for a reader outside the spine package (the ownership store's ``ownership/serve``)."""
+    return _parquet_files(dataset, table)
+
+
 def _sec_ciks() -> list[str]:
     """The CIKs of the listed rows (Nasdaq, NYSE, Cboe) of the newest SEC-file snapshot in Parquet (no network):
     the names that need a Compustat link. An OTC name is never asked for."""
