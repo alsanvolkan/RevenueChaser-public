@@ -502,6 +502,8 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "charm_mode": MODE_DIRECTIONALIZED_VOLUME,
         "vanna_mode": MODE_DIRECTIONALIZED_VOLUME,
         "current_level": spot,
+        # Where the spot came from (review N4): the recorded source, or None when it is the stored window's last close.
+        "spot_source": (raw.get("spot") or {}).get("source") if recorded is not None else None,
         "regime": regime_detail["label"],
         "regime_detail": regime_detail,
         "net_gamma_total": net_gamma_total,

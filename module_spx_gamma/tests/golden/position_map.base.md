@@ -281,7 +281,7 @@ No scored weeks yet
 | Call Wall | 7,900 | Provider GEX Level | Largest positive net gamma above spot — a magnetic ceiling; dealers may sell into rallies as price approaches. Role: threshold (breakout risk). |
 | Gamma Magnet | 7,900 | High-GEX Concentration | Provider gex-levels output: largest-magnitude net gamma concentration. |
 | 0DTE Gamma Concentration | 7,700 | Intraday Concentration | Active expiration 2026-08-14: maximum absolute call_gex + put_gex. |
-| SPX Close / Spot | 7,784 | Market Reference | Verified candle close as of snapshot market date. |
+| SPX Close / Spot | 7,784 | Market Reference | Last close in the stored candle window (yfinance ^GSPC). |
 | 0DTE Put Concentration | 7,700 | Intraday Put Concentration | Active expiration 2026-08-14: most negative put_gex. |
 | Gamma Flip | 7,821 | Regime Threshold | The volatility turning point — above = positive gamma (calm), below = negative gamma (wild). |
 | Put Wall | 7,500 | Provider GEX Level | Largest positive net gamma below spot — a trampoline floor; dealers may buy into dips as price approaches. Role: threshold (breakout risk). |

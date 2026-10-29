@@ -297,6 +297,17 @@ def builder_line(snapshot: dict) -> str | None:
             f":07, and this board shows what is stored now.")
 
 
+def _spot_method(snapshot: dict) -> str:
+    """What the spot row's number is (review N4): it said "Verified candle close" even for a live yfinance quote."""
+    source = snapshot.get("spot_source")
+    if source and str(source).startswith("yfinance (live)"):
+        return (f"Live yfinance ^GSPC quote read at fetch time ({snapshot.get('api_snapshot_time') or 'time unknown'}); "
+                "not a session close.")
+    if source:
+        return f"Close from {source}."
+    return f"Last close in the stored candle window ({snapshot.get('candle_source') or 'source unknown'})."
+
+
 def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=None) -> dict:
     levels = snapshot.get("levels", {})
     prev_levels = (prev_snapshot or {}).get("levels", {}) or {}
@@ -364,7 +375,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         {"level": "0DTE Gamma Concentration", "value": lv("zero_dte_concentration"),
          "ref": "Intraday Concentration", "method": f"Active expiration {asof}: maximum absolute call_gex + put_gex."},
         {"level": "SPX Close / Spot", "value": fmt_level(current),
-         "ref": "Market Reference", "method": "Verified candle close as of snapshot market date."},
+         "ref": "Market Reference", "method": _spot_method(snapshot)},
         {"level": "0DTE Put Concentration", "value": lv("zero_dte_put_concentration"),
          "ref": "Intraday Put Concentration", "method": f"Active expiration {asof}: most negative put_gex."},
         {"level": "Gamma Flip", "value": lv("regime_threshold"),

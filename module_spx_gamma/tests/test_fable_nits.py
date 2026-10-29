@@ -141,3 +141,32 @@ def test_n3_a_spot_5pct_below_the_put_wall_is_not_a_defended_wall():
 def test_n3_a_spot_just_below_the_put_wall_is_still_at_it():
     res = evaluate_flow_signal(_flow_snap(spot=7480.0, call_wall=None, put_wall=7500.0, flow=_puts(7500.0)))
     assert res["label"] == "Put Wall Defense"
+
+
+# ── N4: the spot row says where the spot came from ──────────────────────────────────────────────
+def _details(raw_over: dict | None = None) -> dict:
+    from RevenueChaser.module_spx_gamma import render
+    from RevenueChaser.module_spx_gamma.normalize import normalize_snapshot
+    from .conftest import make_raw
+    raw = make_raw()
+    raw.update(raw_over or {})
+    return {d["level"]: d for d in render.build_context(normalize_snapshot(raw, "2026-08-14"))["details"]}
+
+
+def test_n4_a_live_spot_is_not_called_a_verified_candle_close():
+    row = _details({"spot": {"source": "yfinance (live)", "value": 7790.0}})["SPX Close / Spot"]
+    assert "candle close" not in row["method"].lower()
+    assert "live" in row["method"].lower() and "yfinance" in row["method"]
+    assert "quote read at fetch time" in row["method"]
+
+
+def test_n4_a_stored_close_names_its_source():
+    source = "market_series SPX (cboe) (close of 2026-08-14)"
+    row = _details({"spot": {"source": source, "value": 7784.0}})["SPX Close / Spot"]
+    assert source in row["method"]
+    assert "Verified" not in row["method"]
+
+
+def test_n4_without_a_recorded_spot_the_row_names_the_candle_source():
+    row = _details()["SPX Close / Spot"]
+    assert "yfinance ^GSPC" in row["method"] and "Verified" not in row["method"]
