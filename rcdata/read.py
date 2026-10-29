@@ -355,3 +355,51 @@ def liquidity(tickers: Iterable[str], sessions: int = LIQUIDITY_SESSIONS) -> dic
            "FROM pick JOIN recent USING (security_id) GROUP BY ALL "
            "HAVING max(recent.session_date) FILTER (WHERE recent.close IS NOT NULL) >= (SELECT d FROM since)")
     return {r["ticker"]: r for r in _rows("price_bar_daily", sql, [*wanted, int(sessions), int(sessions)])}
+
+
+def newest_session() -> date | None:
+    """The newest session the prices store holds a security's bar for (an index's own series not counted), or None
+    with no bars or no file."""
+    rows = _rows("price_bar_daily", "SELECT max(session_date) AS d FROM price_bar_daily "
+                 "WHERE security_id NOT LIKE 'index:%'", [])
+    return rows[0]["d"] if rows else None
+
+
+def tickers_on(day) -> list[str]:
+    """The tickers of the securities with a usable close on ``day`` (an index not counted), each by the symbol it
+    trades under now (``security_symbol`` with no ``valid_to``; a delisted security keeps its last), sorted.
+
+    The forecast baselines' universe of a freeze day (PR 10): whatever traded that day, delisted names included, so
+    it is not survivorship-biased. shortcut: two securities that now share a symbol count once, and a security whose
+    symbols all closed is left out; upgrade when the baselines read bars by ``security_id`` (no ticker round trip)."""
+    rows = _rows("price_bar_daily",
+                 "SELECT DISTINCT s.symbol FROM price_bar_daily b JOIN security_symbol s USING (security_id) "
+                 "WHERE b.session_date = ? AND b.close > 0 AND s.valid_to IS NULL "
+                 "AND b.security_id NOT LIKE 'index:%' ORDER BY s.symbol", [_day(day)])
+    return [r["symbol"] for r in rows]
+
+
+# ── the forecast ledger (PR 10, G4) ───────────────────────────────────────────────────────────────────────────────
+
+DATASET_OF_TABLE.update({"forecast_ledger": "ledger/freeze"})
+KIND_OF_TABLE.update({"forecast_ledger": "ledger"})
+
+
+def forecast_ledger(source: str | None = None, start=None, end=None, target_type: str | None = None) -> list[dict]:
+    """``forecast_ledger`` rows (of ``source`` and ``target_type`` when given) with ``start <= forecast_date <= end``
+    (either bound optional), by source, forecast date and rank. No ledger file yet is no rows."""
+    sql, params = "SELECT * FROM forecast_ledger WHERE true", []
+    if source is not None:
+        sql += " AND source = ?"
+        params.append(source)
+    if target_type is not None:
+        sql += " AND target_type = ?"
+        params.append(target_type)
+    sql = _bounded(sql, params, "forecast_date", start, end)
+    return _rows("forecast_ledger", sql + " ORDER BY source, forecast_date, rank, subject", params)
+
+
+def ledger_day_frozen(source: str, forecast_date, target_type: str = "pick") -> bool:
+    """True when ``forecast_ledger`` already holds ``source``'s ``target_type`` rows for ``forecast_date``."""
+    return bool(_rows("forecast_ledger", "SELECT 1 AS hit FROM forecast_ledger WHERE source = ? AND forecast_date = ? "
+                      "AND target_type = ? LIMIT 1", [source, _day(forecast_date), target_type]))

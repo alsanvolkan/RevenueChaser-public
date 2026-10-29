@@ -3,6 +3,7 @@
 A dataset is due (``is_due``) when nothing holds it and its last run is old enough:
 
 - an attended dataset (WRDS: a person logs in and confirms Duo) is never due: it runs only from the CLI (PR 5);
+- a ``by_request`` dataset (the ledger's freeze, PR 10) is never due: only a board's freeze queues it;
 - a dataset that ``starts_by_hand`` (every spine dataset) is not due until it has built once (a ``changed`` or
   ``unchanged`` check from a CLI run or a Fetch), so the first hourly pass after a deploy does not start it before
   the attended steps, and a first attempt that failed is not retried every hour before a person has seen it work;
@@ -35,6 +36,7 @@ DEFAULT_CADENCE = "daily"
 CYCLE_DAYS = {"weekly": 7, "monthly": 30}
 REQUESTED_BY = "schedule"
 ATTENDED_WHY = "attended: run from the CLI on the server (a person logs in; WRDS_USERNAME must be set)"
+BY_REQUEST_WHY = "by request only: a board's freeze queues it (PR 10)"
 BY_HAND_WHY = "starts by hand: not due until a first run from the CLI or a Fetch has built it"
 
 
@@ -42,6 +44,8 @@ def is_due(ds) -> tuple[bool, str]:
     """``(due, why)`` for dataset ``ds``, from its ``dataset_schedule`` row and its newest ``dataset_check`` row."""
     if getattr(ds, "attended", False):
         return False, ATTENDED_WHY
+    if getattr(ds, "by_request", False):
+        return False, BY_REQUEST_WHY
     if getattr(ds, "starts_by_hand", False) and not ops.ever_built(ds.name):
         return False, BY_HAND_WHY
     schedule = ops.schedule_get(ds.name) or {}

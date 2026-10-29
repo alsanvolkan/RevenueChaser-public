@@ -1,6 +1,7 @@
 """Serving files: built as a new file, checked, then swapped over the live one; read only through ``open_read`` (D1).
 
-One builder process writes. Each kind (``market``; ``spine`` since PR 5; ``prices`` since PR 7) is built into ``<kind>.<build_id>.duckdb``
+One builder process writes. Each kind (``market``; ``spine`` since PR 5; ``prices`` since PR 7; ``ledger`` since PR 10) is
+built into ``<kind>.<build_id>.duckdb``
 beside the live ``<kind>.duckdb`` under ``config.MARKET_DIR``; ``BuildFile.swap`` closes the writer (after a
 ``CHECKPOINT``, so no ``.wal`` is left), opens the new file read-only, checks its ``serving_schema_version`` row and
 the row count of every expected table, and only then moves it into place. On any failure — a check, or an exception inside the
@@ -33,6 +34,10 @@ SERVING_SCHEMA_VERSION = {"market": 1, "spine": 1}
 
 # PR 7 (G2): ``prices.duckdb``, the daily bars, corporate actions, shares and market cap (``build/prices/``).
 SERVING_SCHEMA_VERSION["prices"] = 1
+
+# PR 10 (G4): ``ledger.duckdb``, the forecast ledger (``build/ledger/``). Written from board Fetches through the queue,
+# not from raw files, so it cannot be rebuilt from the HDD; the nightly ``rcdata backup`` copies it like ops.sqlite.
+SERVING_SCHEMA_VERSION["ledger"] = 1
 
 KINDS = tuple(SERVING_SCHEMA_VERSION)
 VERSION_TABLE = "serving_schema_version"
@@ -137,7 +142,8 @@ class BuildFile:
 def _verify(kind: str, path: Path, expected_counts: dict[str, int], checks: list[dict]) -> None:
     failed = [c.get("dataset") for c in checks if c.get("result") == "failed"]
     if failed:
-        raise ValueError(f"failed dataset checks: {failed}")
+        why = "; ".join(str(c["note"]) for c in checks if c.get("result") == "failed" and c.get("note"))
+        raise ValueError(f"failed dataset checks: {failed}" + (f" ({why})" if why else ""))
     if path.with_name(path.name + ".wal").exists():
         raise ValueError("the build file still has a .wal after its checkpoint")
     con = duckdb.connect(str(path), read_only=True)

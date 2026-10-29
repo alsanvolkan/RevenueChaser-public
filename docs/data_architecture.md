@@ -923,9 +923,10 @@ renders at once with what is stored.
 | `RC_MARKET_RAW_DIR` | `MARKET_RAW_DIR` | `raw/<source>/<dataset>/...` and `parquet/<source>/<dataset>/<partition>/` (the HDD) |
 | `RC_MARKET_RAW_COPY_DIR` | `MARKET_RAW_COPY_DIR` | Where the backup copies the newest raw days; empty = off |
 
-**Files.** Serving kinds: `market`, `spine`, `prices`. Each kind is one file, `<MARKET_DIR>/<kind>.duckdb`. The identity
-spine, `spine` (serving schema version `1`), is described under "The identity spine" below; the prices store,
-`prices` (serving schema version `1`), under "The prices store" below. The market data,
+**Files.** Serving kinds: `market`, `spine`, `prices`, `ledger`. Each kind is one file, `<MARKET_DIR>/<kind>.duckdb`.
+The identity spine, `spine` (serving schema version `1`), is described under "The identity spine" below; the prices
+store, `prices` (serving schema version `1`), under "The prices store" below; the forecast ledger,
+`ledger` (serving schema version `1`), under "The forecast ledger" below. The market data,
 `market` (serving schema version `1`): `serving_schema_version` (one row: kind, version, build time, build id),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
 `source`, `source_as_of`, `fetched_at`, `run_id`, `observed`) and `market_series` (key series id, observation date,

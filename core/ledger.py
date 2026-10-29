@@ -85,19 +85,23 @@ def take_notes() -> list[str]:
 
 @dataclass(frozen=True)
 class Outcome:
-    """What one board's freeze did. ``frozen == 0`` means nothing was written; ``reason`` says why."""
+    """What one board's freeze did. Since PR 10 a freeze writes nothing itself: ``queued`` picks went to the builder as
+    request ``request_id`` (``ledger.duckdb`` is a serving kind only the builder writes). ``queued == 0`` means
+    nothing was handed over; ``reason`` says why."""
     source: str
     label: str
-    frozen: int = 0
+    queued: int = 0
     forecast_date: date | None = None
     reason: str | None = None
     dropped: int = 0
     dropped_why: str = ""
+    request_id: int | None = None
 
     @property
     def message(self) -> str:
-        if self.frozen:
-            text = f"Froze {self.frozen:,} {self.label} rows for {self.forecast_date}"
+        if self.queued:
+            text = (f"Queued {self.queued:,} {self.label} picks for {self.forecast_date} (request {self.request_id}); "
+                    "the builder writes them")
             if self.dropped:
                 why = f": {self.dropped_why}" if self.dropped_why else ""
                 text += f" ({self.dropped:,} left out{why})"
@@ -335,21 +339,44 @@ def _text(value) -> str | None:
     return None if value is None else str(value)
 
 
+FREEZE_DATASET = "ledger/freeze"
+FREEZE_REQUESTED_BY = "freeze"
+
+
 def _day_frozen(source: str, forecast_date: date) -> bool:
-    rows = rawstore.query(
-        f"SELECT 1 AS hit FROM {TABLE} WHERE source = ? AND forecast_date = ? AND target_type = ? LIMIT 1",
-        [source, forecast_date, PICK])
-    return bool(rows)
+    """True when the ledger file (``ledger.duckdb``, PR 10) already holds ``source``'s picks of ``forecast_date``."""
+    from RevenueChaser.rcdata import read
+    return read.ledger_day_frozen(source, forecast_date, PICK)
+
+
+def _day_queued(source: str, forecast_date: date) -> int | None:
+    """The id of a queued or running freeze request that carries ``source``'s picks of ``forecast_date``, or None."""
+    from RevenueChaser.rcdata import ops
+    day = forecast_date.isoformat()
+    for req in ops.queue_view(finished=0)["active"]:
+        if req["dataset"] != FREEZE_DATASET:
+            continue
+        rows = (req.get("params") or {}).get("rows") or []
+        if any(r.get("source") == source and str(r.get("forecast_date"))[:10] == day for r in rows):
+            return int(req["id"])
+    return None
+
+
+def _jsonable(row: dict) -> dict:
+    return {k: (v.isoformat() if isinstance(v, date) else v) for k, v in row.items()}
 
 
 def write_picks(source: str, label: str, rows: list[dict], *, model_version: str,
                 forecast_date: date, run_id: str, frozen_at: float | None = None) -> Outcome:
-    """Append one day of picks for ``source``; the first freeze of (source, day) wins.
+    """Queue one day of picks for ``source``; the first freeze of (source, day) wins.
 
     ``rows`` carry ``subject``, ``rank`` (1-based), ``score``, ``bucket``, ``market_cap``,
-    ``sector``, ``shown_price``, ``stop``, ``target``; the rest of the ledger row is filled here.
-    Returns an ``Outcome``: ``frozen == 0`` with a reason when the day was already frozen or
-    nothing usable was handed in. Raises on a bad ``forecast_date`` or ``rank`` (a code error).
+    ``sector``, ``shown_price``, ``stop``, ``target`` and, optionally, ``price_session`` (the session of the shown
+    price, AG SF-1); the rest of the ledger row is filled here. Since PR 10 the rows go to the builder as one
+    ``ledger/freeze`` request (``ledger.duckdb`` is a serving kind only the builder writes); the builder appends them
+    on its next pass and refuses a day that is already frozen. Returns an ``Outcome``: ``queued`` picks and the request
+    id, or ``queued == 0`` with a reason when the day was already frozen or queued, or nothing usable was handed in.
+    Raises on a bad ``forecast_date`` or ``rank`` (a code error).
     """
     if type(forecast_date) is not date:
         raise TypeError(f"forecast_date must be a datetime.date, got {type(forecast_date).__name__}")
@@ -374,16 +401,20 @@ def write_picks(source: str, label: str, rows: list[dict], *, model_version: str
             "rank": rank, "score": _num(r.get("score")), "bucket": _text(r.get("bucket")),
             "probs": None, "market_cap": _num(r.get("market_cap")), "sector": _text(r.get("sector")),
             "shown_price": _num(r.get("shown_price")), "stop": _num(r.get("stop")),
-            "target": _num(r.get("target")),
+            "target": _num(r.get("target")), "price_session": r.get("price_session"),
         }
     if not built:
         return skipped(source, label, "there were no usable picks", forecast_date)
 
+    from RevenueChaser.rcdata import ops
     with _LOCK:
         if _day_frozen(source, forecast_date):
             return skipped(source, label, f"already frozen for {forecast_date}", forecast_date)
-        rawstore.write_rows(TABLE, list(built.values()))
-    return Outcome(source, label, frozen=len(built), forecast_date=forecast_date,
+        pending = _day_queued(source, forecast_date)
+        if pending is not None:
+            return skipped(source, label, f"already queued for {forecast_date} (request {pending})", forecast_date)
+        rid = ops.enqueue(FREEZE_DATASET, {"rows": [_jsonable(r) for r in built.values()]}, by=FREEZE_REQUESTED_BY)
+    return Outcome(source, label, queued=len(built), request_id=rid, forecast_date=forecast_date,
                    dropped=duplicates, dropped_why="duplicate ticker" if duplicates else "")
 
 

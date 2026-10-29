@@ -9,6 +9,7 @@ from RevenueChaser.core import calendar as cal
 from RevenueChaser.core import ledger, rawstore
 from RevenueChaser.core.tests.d01_seed import seed_d01
 from RevenueChaser.module_swing_potential import config, freeze
+from RevenueChaser.rcdata.tests import ledger_queue
 
 D = date(2026, 10, 2)
 POST_CLOSE = datetime(2026, 10, 2, 21, 0, tzinfo=timezone.utc)      # 17:00 ET
@@ -44,7 +45,7 @@ def _seed(ticker, last_day="2026-10-02", cached_at=None):
 
 
 def _stored():
-    return rawstore.query("SELECT * FROM forecast_ledger WHERE source = 'swing' ORDER BY rank")
+    return ledger_queue.stored("swing")
 
 
 @pytest.fixture
@@ -100,13 +101,13 @@ def test_the_model_version_is_the_golden_version():
 def test_a_post_close_fetch_freezes_the_shown_picks(seeded):
     out = freeze.freeze_payload(_payload([_cand("AAA", 90.0), _cand("BBB", 80.0)]), run_id="job1",
                                 now=POST_CLOSE)
-    assert (out.frozen, out.source, out.label) == (2, "swing", "Swing")
+    assert (out.queued, out.source, out.label) == (2, "swing", "Swing")
     rows = _stored()
     assert [(r["subject"], r["rank"], r["forecast_date"], r["target_date"]) for r in rows] == [
         ("AAA", 1, D, D), ("BBB", 2, D, D)]
     assert {r["run_id"] for r in rows} == {"job1"}
     assert {r["model_version"] for r in rows} == {freeze.model_version()}
-    assert ledger.take_notes() == ["Froze 2 Swing rows for 2026-10-02."]
+    assert ledger.take_notes() == ["Queued 2 Swing picks for 2026-10-02 (request 1); the builder writes them."]
 
 
 def test_a_second_fetch_the_same_day_changes_nothing(seeded):
@@ -114,13 +115,13 @@ def test_a_second_fetch_the_same_day_changes_nothing(seeded):
     before = _stored()
     out = freeze.freeze_payload(_payload([_cand("CCC", 99.0), _cand("AAA", 50.0)]), run_id="two",
                                 now=POST_CLOSE)
-    assert out.frozen == 0
+    assert out.queued == 0
     assert _stored() == before
 
 
 def test_an_intraday_run_freezes_nothing(seeded):
     out = freeze.freeze_payload(_payload([_cand("AAA", 90.0)]), run_id="x", now=INTRADAY)
-    assert out.frozen == 0 and rawstore.count("forecast_ledger") == 0
+    assert out.queued == 0 and ledger_queue.count() == 0
     assert "session window" in ledger.take_notes()[0]
 
 
@@ -130,7 +131,7 @@ def test_a_post_close_run_on_bars_cached_intraday_freezes_nothing(rawstore_tmp_d
         _seed(t, cached_at=_close_plus(-265))
     ledger.take_notes()
     out = freeze.freeze_payload(_payload([_cand("AAA", 90.0)]), run_id="x", now=POST_CLOSE)
-    assert out.frozen == 0 and rawstore.count("forecast_ledger") == 0
+    assert out.queued == 0 and ledger_queue.count() == 0
     (note,) = ledger.take_notes()
     assert "2026-10-02" in note and "before the close + 30 min" in note
 
@@ -141,7 +142,7 @@ def test_one_halted_candidate_skips_the_whole_board_and_names_it(seeded):
     _seed("BBB", last_day="2026-10-01")                  # written at close + 45 min by default
     out = freeze.freeze_payload(_payload([_cand("AAA", 90.0), _cand("BBB", 80.0), _cand("CCC", 70.0)]),
                                 run_id="x", now=POST_CLOSE)
-    assert out.frozen == 0 and rawstore.count("forecast_ledger") == 0
+    assert out.queued == 0 and ledger_queue.count() == 0
     (note,) = ledger.take_notes()
     assert note.startswith("Swing not frozen:") and "1 of 3" in note
     assert ("no 2026-10-02 bar after the close (a halt or a gap in the daily bars; a later Fetch will not "
@@ -154,7 +155,7 @@ def test_a_candidate_still_cached_intraday_skips_the_whole_board_and_says_a_refe
     board, and the note says a later Fetch can complete the day."""
     _seed("CCC", cached_at=_close_plus(-265))
     out = freeze.freeze_payload(_payload([_cand("AAA", 90.0), _cand("CCC", 70.0)]), run_id="x", now=POST_CLOSE)
-    assert out.frozen == 0 and rawstore.count("forecast_ledger") == 0
+    assert out.queued == 0 and ledger_queue.count() == 0
     (note,) = ledger.take_notes()
     assert ("need their 2026-10-02 bar (none in the prices store read past the close + 30 min yet; "
             "a later Fetch can complete the day once the builder's daily bars have run): CCC") in note
@@ -166,7 +167,7 @@ def test_a_candidate_without_its_bar_after_daily_bars_ran_is_named_as_such(seede
     D01 is append-only, so another Fetch cannot complete the day (#434 review S2)."""
     _seed("BBB", last_day="2026-10-01", cached_at=_close_plus(-1200))
     out = freeze.freeze_payload(_payload([_cand("AAA", 90.0), _cand("BBB", 80.0)]), run_id="x", now=POST_CLOSE)
-    assert out.frozen == 0
+    assert out.queued == 0
     (note,) = ledger.take_notes()
     assert ("no 2026-10-02 bar after the close (a halt or a gap in the daily bars; "
             "a later Fetch will not change it unless the daily bars are read again): BBB") in note
@@ -178,40 +179,40 @@ def test_the_candidates_are_named_in_board_rank_order(seeded):
         _seed(t, cached_at=_close_plus(-265))
     out = freeze.freeze_payload(_payload([_cand("CCC", 90.0), _cand("BBB", 80.0), _cand("AAA", 70.0)]),
                                 run_id="x", now=POST_CLOSE)
-    assert out.frozen == 0 and "CCC, AAA" in ledger.take_notes()[0]
+    assert out.queued == 0 and "CCC, AAA" in ledger.take_notes()[0]
 
 
 def test_a_complete_board_is_frozen_whole_after_a_refused_run(seeded):
     """The refusal writes nothing, so a later run with the bars fixed freezes the full board."""
     _seed("BBB", last_day="2026-10-01")
     picks = [_cand("AAA", 90.0), _cand("BBB", 80.0), _cand("CCC", 70.0)]
-    assert freeze.freeze_payload(_payload(picks), run_id="a", now=POST_CLOSE).frozen == 0
+    assert freeze.freeze_payload(_payload(picks), run_id="a", now=POST_CLOSE).queued == 0
     _seed("BBB")
     out = freeze.freeze_payload(_payload(picks), run_id="b", now=POST_CLOSE)
-    assert out.frozen == 3 and [r["subject"] for r in _stored()] == ["AAA", "BBB", "CCC"]
+    assert out.queued == 3 and [r["subject"] for r in _stored()] == ["AAA", "BBB", "CCC"]
 
 
 def test_a_stale_spy_freezes_nothing(seeded):
     out = freeze.freeze_payload(_payload([_cand("AAA", 90.0)], data_quality={"spy_stale": True}),
                                 run_id="x", now=POST_CLOSE)
-    assert out.frozen == 0 and rawstore.count("forecast_ledger") == 0
+    assert out.queued == 0 and ledger_queue.count() == 0
 
 
 @pytest.mark.parametrize("kw", [{"is_fixture": True}, {"no_data": True}])
 def test_a_fixture_or_no_data_payload_freezes_nothing(seeded, kw):
     out = freeze.freeze_payload(_payload([_cand("AAA", 90.0)], **kw), run_id="x", now=POST_CLOSE)
-    assert out.frozen == 0 and rawstore.count("forecast_ledger") == 0
+    assert out.queued == 0 and ledger_queue.count() == 0
 
 
 def test_an_empty_payload_freezes_nothing(seeded):
-    assert freeze.freeze_payload(_payload([]), run_id="x", now=POST_CLOSE).frozen == 0
+    assert freeze.freeze_payload(_payload([]), run_id="x", now=POST_CLOSE).queued == 0
 
 
 def test_no_spy_bars_freeze_nothing(rawstore_tmp_db):
     _seed("AAA")
     ledger.take_notes()
     out = freeze.freeze_payload(_payload([_cand("AAA", 90.0)]), run_id="x", now=POST_CLOSE)
-    assert out.frozen == 0 and "no SPY" in ledger.take_notes()[0]
+    assert out.queued == 0 and "no SPY" in ledger.take_notes()[0]
 
 
 def test_the_run_at_00_30_utc_is_still_the_previous_new_york_session(rawstore_tmp_db):
@@ -226,4 +227,4 @@ def test_the_run_at_00_30_utc_is_still_the_previous_new_york_session(rawstore_tm
 
 def test_the_freeze_uses_the_clock_seam_when_no_time_is_passed(seeded, monkeypatch):
     monkeypatch.setattr(cal, "_now", lambda: POST_CLOSE)
-    assert freeze.freeze_payload(_payload([_cand("AAA", 90.0)]), run_id="x").frozen == 1
+    assert freeze.freeze_payload(_payload([_cand("AAA", 90.0)]), run_id="x").queued == 1

@@ -99,7 +99,7 @@ def test_a_name_without_spys_session_bar_drops_as_stale_bars_and_the_day_freezes
     assert [k for k in declared if k in keys] == [k for k in keys if k in declared]   # (no_bars is empty since PR 10)
     assert payload["data_quality"]["dropped"]["stale_bars"] == 1
     out = frz.freeze_payload(payload, run_id="s1", now=scn.NOW)
-    assert out.frozen == len(payload["candidates"]) > 0, out.message
+    assert out.queued == len(payload["candidates"]) > 0, out.message
 
 
 def test_before_daily_bars_has_run_no_name_drops_as_stale(rawstore_tmp_db, monkeypatch):
@@ -125,7 +125,7 @@ def test_one_gap_over_the_drop_share_is_a_daily_bars_failure_and_nothing_drops(r
     assert "stale_bars" not in {s["key"] for s in payload["funnel_steps"]}
     assert "UP1" in {c["ticker"] for c in payload["candidates"]}
     out = swing_freeze.freeze_payload(payload, run_id="s1", now=scn.NOW)
-    assert out.frozen == 0 and "UP1" in out.reason
+    assert out.queued == 0 and "UP1" in out.reason
 
 
 def test_the_drop_share_is_a_share_of_the_scored_names(rawstore_tmp_db, clock, monkeypatch):
@@ -166,7 +166,7 @@ def test_the_refusal_note_for_a_halted_pick_says_a_fetch_will_not_change_it(raws
                               to_rows=lambda items: [{"subject": i["ticker"], "rank": 1} for i in items],
                               model_version="t", run_id="s2", now=NOW, check_spy=False,
                               bar_gaps=ledger.ohlc_gaps)
-    assert out.frozen == 0
+    assert out.queued == 0
     assert "HALTED" in out.reason and "a later Fetch will not change it" in out.reason
     assert "can complete the day" not in out.reason
 

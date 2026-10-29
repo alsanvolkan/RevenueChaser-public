@@ -38,7 +38,7 @@ def d01_only(rawstore_tmp_db, monkeypatch):
 def test_a_d01_only_store_freezes(d01_only, pipe, frz, hist):
     payload = pipe.run_scan()
     out = frz.freeze_payload(payload, run_id="k8b", now=scn.NOW)
-    assert out.frozen == len(payload["candidates"]) > 0, out.message
+    assert out.queued == len(payload["candidates"]) > 0, out.message
     assert out.forecast_date == scn.SESSION
     assert hist._bar_problem(payload, scn.SESSION) is None
 
@@ -59,7 +59,7 @@ def test_a_name_whose_d01_bars_stop_the_day_before_drops_and_the_day_freezes(d01
     assert "UP1" not in {c["ticker"] for c in payload["candidates"]}
     assert {s["key"]: s for s in payload["funnel_steps"]}["stale_bars"]["tickers"] == ["UP1"]
     out = frz.freeze_payload(payload, run_id="k8b", now=scn.NOW)
-    assert out.frozen == len(payload["candidates"]) > 0, out.message
+    assert out.queued == len(payload["candidates"]) > 0, out.message
     assert hist._bar_problem(payload, scn.SESSION) is None
     # the gap check alone still names such a pick, with the cause a later Fetch cannot fix (S2)
     assert ledger.ohlc_gaps(scn.SESSION, ["UP1", "UP3"]) == {"UP1": ledger.NO_SESSION_BAR}

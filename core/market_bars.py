@@ -79,3 +79,9 @@ def last_bars(tickers) -> dict[str, tuple[str, float | None]]:
     from RevenueChaser.rcdata import read
     return {t: (r["last_session"].isoformat(), _num(r["last_fetched_at"]))
             for t, r in read.last_bars(tickers).items() if r.get("last_session") is not None}
+
+
+def newest_session() -> date | None:
+    """The newest session the prices store holds a bar for, or None (no bars, no file)."""
+    from RevenueChaser.rcdata import read
+    return _day(read.newest_session())
