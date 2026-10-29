@@ -8,6 +8,9 @@ it cost a long debugging session to find.
 
 The lock here is held by the *test process*, so its own PID is the holder and
 the assertions can check the page names it.
+
+The LEAPS and SEC 13F boards are not in the list: since the data migration (G9) they read the rcdata serving
+files, not ``raw.duckdb``, so a lock on it no longer reaches them. ``TestServingBoardsIgnoreTheLock`` keeps that.
 """
 from __future__ import annotations
 
@@ -38,8 +41,8 @@ def locked_store(store_file):
         conn.close()
 
 
-BOARDS = ["module_sector_rotation", "module_leaps", "module_sec_13f",
-          "module_financials"]
+BOARDS = ["module_sector_rotation", "module_financials"]
+SERVING_BOARDS = ["module_leaps", "module_sec_13f"]
 
 
 class TestTheBoardExplainsTheLock:
@@ -82,6 +85,14 @@ class TestTheBoardExplainsTheLock:
         body = dashboard.view("module_sector_rotation", refresh=True).text
         assert ("Conflicting lock is held" in body
                 or "being used by another process" in body)
+
+
+class TestServingBoardsIgnoreTheLock:
+    @pytest.mark.parametrize("board", SERVING_BOARDS)
+    def test_a_board_on_the_serving_files_still_renders(self, dashboard, locked_store, board):
+        r = dashboard.view(board, refresh=True)
+        assert r.status_code == 200, f"{board} answered {r.status_code} with raw.duckdb locked"
+        assert "locked by another process" not in r.text.lower()
 
 
 class TestApiCallersGetJson:
