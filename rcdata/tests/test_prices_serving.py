@@ -37,7 +37,9 @@ ALL = {**RAW,
        "SPY": RAW["SPY"][:4] + [c * 1.0005 for c in RAW["SPY"][4:]]}
 ACTIONS = {
     "cash_dividends": [{"id": "cd-1", "symbol": "AAPL", "rate": 0.26, "special": False, "foreign": False,
-                        "process_date": "2026-10-24", "ex_date": "2026-10-23", "currency": "USD"}],
+                        "process_date": "2026-10-24", "ex_date": "2026-10-23", "currency": "USD"},
+                       {"id": "cd-2", "symbol": "AAPL", "rate": 0.27, "special": False, "foreign": False,
+                        "process_date": "2026-11-12", "ex_date": "2026-10-30", "currency": "USD"}],
     "reverse_splits": [{"id": "rs-1", "symbol": "FLG", "old_rate": 3, "new_rate": 1, "process_date": "2026-10-22",
                         "ex_date": "2026-10-22"}],
     "spin_offs": [{"id": "so-1", "source_symbol": "BRK.B", "source_rate": 1, "new_symbol": "SPUN", "new_rate": 0.1,
@@ -98,7 +100,7 @@ def _shares_and_floats():
 def built():
     _shares_and_floats()
     first = base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
-    assert first["result"] == "unchanged" and first["rows"] == 4, first      # no bars yet: no action resolves
+    assert first["result"] == "unchanged" and first["rows"] == 5, first      # no bars yet: no action resolves
     row = base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
     assert row["result"] == "changed", row
     return row
@@ -132,11 +134,14 @@ def test_the_bars_are_served_nominal_keyed_on_the_security(built):
 
 def test_actions_typed_resolved_and_marked_applied(built):
     acts = {r["source_id"]: r for r in _q("SELECT * FROM corporate_action")}
-    assert set(acts) == {"cd-1", "rs-1", "so-1"}                          # ZZZZ is no security of the store
+    assert set(acts) == {"cd-1", "cd-2", "rs-1", "so-1"}                  # ZZZZ is no security of the store
     assert acts["rs-1"]["security_id"] == FLG and acts["rs-1"]["action"] == "split"
     assert acts["rs-1"]["ratio"] == pytest.approx(1 / 3) and acts["rs-1"]["applied"] is True
     assert acts["cd-1"]["action"] == "cash_dividend" and acts["cd-1"]["amount"] == 0.26 and acts["cd-1"]["applied"]
     assert acts["so-1"]["applied"] is False and "spin_off" in acts["so-1"]["not_applied_why"]
+    # Announced, not yet ex on the newest session (the 27th): kept, not applied, and no issue until it goes ex.
+    assert acts["cd-2"]["applied"] is False and acts["cd-2"]["not_applied_why"].startswith("not yet ex")
+    assert "cd-2" not in _issues().get("dividend_not_applied", set())
 
 
 def test_adjustment_factors_and_the_one_basis_point_rule(built):
@@ -158,6 +163,56 @@ def test_adjustment_factors_and_the_one_basis_point_rule(built):
     assert _issues()["adjustment_differs"] == {SPY + ":2026-10-26"}
 
 
+def test_the_one_basis_point_rule_allows_for_alpacas_cent_rounded_adjusted_closes(http_mock):
+    # Alpaca's adjusted closes are rounded to the cent (the server's sample: KO 1.1-1.3 bp apart at ~$70 on days
+    # with no action between them, where a factor cannot move a day return). Here BRK.B trades at ~$70 and Alpaca's
+    # series holds a dividend the store does not know, rounded: the 27th is 1.24 bp off, inside half a cent on each
+    # close (1.48 bp). The 23rd is two cents more, so it and the 26th are 2.3 and 3.5 bp off: issues. GOOGL's 0.5 bp
+    # at $255 is under 1 bp, though over its own rounding. SPY's 5 bp, an action Alpaca knows and the store does not,
+    # stays an issue. GOOG carries the server's last ADV row (29 Oct 2026, 1-for-25 reverse split): 0.8158 and 0.7946
+    # times 25 land on half cents and Alpaca rounds them apart, to 20.40 and 19.86, exactly the bound's worst case;
+    # the first-order bound sat 0.02 % under it and flagged the row.
+    raw = [70.00, 70.35, 70.12, 70.50, 70.41, 70.62]
+    brk = [round(c * 0.96, 2) for c in raw]
+    brk[3] = round(brk[3] + 0.02, 2)
+    googl = RAW["GOOGL"][:5] + [RAW["GOOGL"][5] * 1.00005]
+    goog_raw, goog_all = [0.80] * 4 + [0.8158, 0.7946], [20.00] * 4 + [20.40, 19.86]
+    series = {"raw": {**RAW, "BRK.B": raw, "GOOG": goog_raw},
+              "all": {**ALL, "BRK.B": brk, "GOOGL": googl, "GOOG": goog_all}}
+    http_mock.routes.insert(0, ("/v2/stocks/bars", BarsAnswer(
+        {k: {s: [bar(d, c) for d, c in zip(DAYS, cs)] for s, cs in v.items()} for k, v in series.items()}), 200, {}))
+    _shares_and_floats()
+    base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
+    base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    ours = raw[5] / raw[4] - 1
+    theirs = round(raw[5] * 0.96, 2) / round(raw[4] * 0.96, 2) - 1
+    assert 1e-4 < abs(ours - theirs) < 1.3e-4                              # over the flat 1 bp
+    adv = (goog_all[5] / goog_all[4] - 1) - (goog_raw[5] / goog_raw[4] - 1)
+    first_order = (goog_all[5] / goog_all[4]) * 0.005 * (1 + goog_all[5] / goog_all[4]) / goog_all[5]
+    assert abs(adv) > first_order
+    assert _issues()["adjustment_differs"] == {SPY + ":2026-10-26", "072726:02:2026-10-23", "072726:02:2026-10-26"}
+
+def test_a_malformed_action_not_yet_ex_is_an_issue_now_and_a_sound_one_waits(http_mock):
+    # The Opus delta review's nit 2: "not yet ex" came first, so a split three weeks out with no ratio was filed as
+    # waiting and surfaced only on its ex-date, the day its factor is needed. What is wrong with the action itself is
+    # named at once; only what needs a close (the dividend's) waits for the ex-date.
+    bad = {"id": "fs-2", "symbol": "AAPL", "old_rate": 1, "new_rate": 0, "process_date": "2026-11-20",
+           "ex_date": "2026-11-20"}
+    far = {"id": "cd-3", "symbol": "AAPL", "rate": 0.27, "special": False, "foreign": False,
+           "process_date": "2027-01-14", "ex_date": "2026-12-28", "currency": "USD"}  # no close within a week of it
+    http_mock.routes.insert(0, ("/v1/corporate-actions", {"corporate_actions": {
+        **ACTIONS, "forward_splits": ACTIONS["forward_splits"] + [bad],
+        "cash_dividends": ACTIONS["cash_dividends"] + [far]}, "next_page_token": None}, 200, {}))
+    _shares_and_floats()
+    base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
+    base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    why = {r["source_id"]: r["not_applied_why"] for r in _q("SELECT source_id, not_applied_why FROM corporate_action")}
+    assert why["fs-2"] == "no ratio" and why["cd-2"].startswith("not yet ex") and why["cd-3"].startswith("not yet ex")
+    issues = _issues()
+    assert "fs-2" in issues["action_not_applied"]
+    assert not {"cd-2", "cd-3"} & issues.get("dividend_not_applied", set())
+
+
 def test_a_gap_without_an_action_is_an_issue_and_the_reverse_split_is_not(built):
     gaps = _issues()["price_gap_no_action"]
     assert gaps == {GAPX + ":2026-10-22"}
@@ -176,6 +231,103 @@ def test_market_cap_from_the_cover_shares_split_adjusted_and_summed_per_issuer(b
     assert (GAPX, date(2026, 10, 27)) not in cap                           # no shares known: no row, an issue
     assert {GAPX, "072726:02"} <= _issues()["tier_a_no_shares"]
 
+
+@pytest.mark.parametrize("symbol, as_of", [("TSM", date(2026, 2, 28)), (None, date(2026, 2, 28)), ("TSM", None)])
+def test_an_adrs_cover_count_is_ordinary_shares_so_it_gives_no_market_cap(http_mock, symbol, as_of):
+    # The Opus review's M1: a 20-F cover counts the issuer's ordinary shares and the bar is the ADS's (TSM: one ADS
+    # is five shares), so cover times close was five times the cap. Matched by the symbol, or as the one class of the
+    # CIK's one Tier A row, the count stays under ``class:``, the ADR has no shares (no cap), and it is an issue. A
+    # cover fact whose context has no date (``as_of`` None) is named too, not a failed build (the delta review's
+    # should 2).
+    tsm = {"ticker": "TSM", "cik": "1046179", "name": "TAIWAN SEMICONDUCTOR MANUFACTURING CO LTD", "exchange": "NYSE",
+           "tier": "A", "security_type": "adr", "gvkey": None, "iid": None, "composite_figi": None}
+    serving.live_path("spine").unlink()
+    write_spine(SPINE + ALPHABET + [tsm])
+    series = {"raw": {**RAW, "TSM": [300.0] * 6}, "all": {**ALL, "TSM": [300.0] * 6}}
+    http_mock.routes.insert(0, ("/v2/stocks/bars", BarsAnswer(
+        {k: {s: [bar(d, c) for d, c in zip(DAYS, cs)] for s, cs in v.items()} for k, v in series.items()}), 200, {}))
+    _shares_and_floats()
+    base.upsert_partition([{"cik": "1046179", "accession": "0001046179-26-000010", "form": "20-F",
+                            "filed": date(2026, 4, 15), "period_end": date(2025, 12, 31), "class_member": "",
+                            "symbol": symbol, "shares": 25_930_000_000, "as_of": as_of,
+                            "source_as_of": date(2026, 10, 27), "fetched_at": 1.0, "run_id": "cover"}],
+                          cover_shares.SCHEMA, cover_shares.KEY, cover_shares.partition_path(2026))
+    base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
+    base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    sid = "cik:1046179:TSM"
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = ?", [sid])[0]["n"] == 5
+    assert _q("SELECT count(*) AS n FROM market_cap_daily WHERE security_id = ?", [sid])[0]["n"] == 0
+    held = _q("SELECT security_id, value FROM shares_class WHERE cik = '1046179'")
+    assert held == [{"security_id": "class:1046179:common", "value": 25_930_000_000}]
+    issues = _issues()
+    assert issues["cover_adr_ordinary"] == {sid} and sid in issues["tier_a_no_shares"]
+    assert "1046179:TSM" not in issues.get("cover_class_unmapped", set())
+
+def _bars_answer(http_mock, raw: dict, all_: dict, skip=()) -> None:
+    """This test's own ``/v2/stocks/bars`` answer, ahead of the fixture's; ``skip``: ``(symbol, session)`` with no bar."""
+    def bars_of(series):
+        return {s: [bar(d, c) for d, c in zip(DAYS, cs) if (s, d) not in skip] for s, cs in series.items()}
+    http_mock.routes.insert(0, ("/v2/stocks/bars", BarsAnswer({"raw": bars_of(raw), "all": bars_of(all_)}), 200, {}))
+
+
+@pytest.mark.parametrize("within, goog_counts", [(14, True), (0, False)])
+def test_the_issuer_cap_counts_each_class_at_its_newest_cap_within_the_window(http_mock, monkeypatch, within,
+                                                                              goog_counts):
+    # The Opus review's S1: GOOG with no bar on the 27th halved Alphabet's cap that day, so the universe showed
+    # GOOGL at GOOGL's own cap. A class's newest cap within ISSUER_WITHIN_DAYS of the session counts instead.
+    monkeypatch.setattr(prices_serving, "ISSUER_WITHIN_DAYS", within)
+    _bars_answer(http_mock, RAW, ALL, skip={("GOOG", DAYS[-1])})
+    _shares_and_floats()
+    base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
+    base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    cap = {(r["security_id"], r["session_date"]): r for r in _q("SELECT * FROM market_cap_daily")}
+    googl = cap[("160329:01", DAYS[-1])]
+    assert ("160329:03", DAYS[-1]) not in cap
+    goog_26 = cap[("160329:03", DAYS[-2])]["market_cap"]
+    assert googl["issuer_market_cap"] == pytest.approx(googl["market_cap"] + (goog_26 if goog_counts else 0))
+    assert cap[("160329:01", DAYS[-2])]["issuer_market_cap"] == pytest.approx(
+        cap[("160329:01", DAYS[-2])]["market_cap"] + goog_26)
+
+
+def test_a_listed_class_the_spine_lacks_gets_bars_and_counts_in_the_issuer_cap(http_mock):
+    # The server's sample: BRK-B's cap was 0.658 of Yahoo's, because the spine has no BRK-A (cover_class_unmapped
+    # 1067983:BRK.A), so the A class had no bar and no cap. The cover's listed classes of a Tier A issuer join the
+    # bars' scope under their class id.
+    _bars_answer(http_mock, {**RAW, "BRK.A": [720_000.0 + i for i in range(6)]},
+                 {**ALL, "BRK.A": [720_000.0 + i for i in range(6)]})
+    _shares_and_floats()
+    a, b = "us-gaap:CommonClassAMember", "us-gaap:CommonClassBMember"
+    base.upsert_partition([{"cik": "1067983", "accession": "0001067983-26-000040", "form": "10-Q",
+                            "filed": date(2026, 8, 3), "period_end": date(2026, 6, 30), "class_member": m,
+                            "symbol": sym, "shares": n, "as_of": date(2026, 7, 24), "source_as_of": date(2026, 10, 27),
+                            "fetched_at": 1.0, "run_id": "cover"}
+                           for m, sym, n in ((a, "BRK.A", 540_000), (b, "BRK.B", 1_300_000_000))],
+                          cover_shares.SCHEMA, cover_shares.KEY, cover_shares.partition_path(2026))
+    base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
+    base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    brk_a = f"class:1067983:{a}"
+    cap = {(r["security_id"], r["session_date"]): r for r in _q("SELECT * FROM market_cap_daily")}
+    assert cap[(brk_a, DAYS[-1])]["market_cap"] == pytest.approx(720_005.0 * 540_000)
+    assert cap[("072726:02", DAYS[-1])]["issuer_market_cap"] == pytest.approx(
+        485.0 * 1_300_000_000 + 720_005.0 * 540_000)
+    assert _q("SELECT symbol FROM security_symbol WHERE security_id = ?", [brk_a]) == [{"symbol": "BRK-A"}]
+
+def test_a_cover_count_far_from_yahoos_shares_outstanding_is_an_issue(http_mock):
+    # The Opus review's S2 and the sample's AEHL: its cap was 0.0025 of Yahoo's, from a cover count of 4,580,550 as
+    # of 30 Sep 2025 moved over two reverse splits (1:6, 1:16) to 47,714, while Yahoo counts about 19 million after
+    # the dilution since. Yahoo's ``sharesOutstanding`` was fetched and never read; now a cover count more than
+    # SHARES_DISAGREE from it, on the session of Yahoo's answer, is an issue. FLG's count, moved over its 1-for-3
+    # split, agrees; so does AAPL's within 1 %.
+    _shares_and_floats()
+    yahoo = {"AAPL": (AAPL, 14_700_000_000, 14_650_000_000), "FLG": (FLG, 2_000_000_000, 415_100_000),
+             "GOOGL": ("160329:01", 5_000_000_000, 1_000_000_000)}
+    base.upsert_partition([{"ticker": t, "security_id": sid, "float_shares": f, "shares_outstanding": n,
+                            "source_as_of": date(2026, 10, 27), "fetched_at": 2.0, "run_id": "yf2"}
+                           for t, (sid, f, n) in yahoo.items()], floats.YAHOO_SCHEMA, ["ticker"],
+                          base.parquet_root() / "yfinance" / "float" / "date=2026-10-27" / "part-0.parquet")
+    base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
+    base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    assert _issues()["shares_disagree_yahoo"] == {"160329:01"}
 
 def test_shares_and_float_per_class_with_their_checks(built):
     rows = _q("SELECT * FROM shares_class ORDER BY security_id, measure, source")

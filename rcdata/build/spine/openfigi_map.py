@@ -80,8 +80,8 @@ def _query(sql: str) -> list[tuple]:
 
 
 def wanted_cusips() -> list[str]:
-    """Every CUSIP the spine would map: Compustat's active ones for the SEC-file CIKs, and the fund files'. From Parquet
-    only."""
+    """Every CUSIP the spine would map: Compustat's active ones for the SEC-file CIKs, the fund files', and the newest
+    two quarters' 13F long-equity CUSIPs (the ownership store's fallback, PR 16). From Parquet only."""
     from . import funds, sec_tickers, wrds
     out: set[str] = set()
     sec = stage.partitions(sec_tickers.parquet_dir(), "date")
@@ -97,6 +97,8 @@ def wanted_cusips() -> list[str]:
     if parts:
         out |= {str(r[0]).upper() for r in _query(
             f"SELECT DISTINCT cusip FROM read_parquet({base.sql_path(parts[-1][1])}) WHERE cusip IS NOT NULL")}
+    from ..ownership import sec13f              # imported here: the ownership package imports the spine's
+    out |= sec13f.recent_cusips()
     return sorted(c for c in out if valid_cusip(c))
 
 

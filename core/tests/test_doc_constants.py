@@ -334,7 +334,7 @@ def test_the_prices_section_states_what_the_code_owns():
     for kind in serving.ISSUE_KINDS:
         assert f"`{kind}`" in section, kind
     assert f"the last {bars.WINDOW} complete sessions" in section and f"{bars.CHUNK} symbols a request" in section
-    assert f"last {actions.LOOKBACK.days} days" in section
+    assert f"from {actions.LOOKBACK.days} days back to {actions.AHEAD.days} days ahead" in section
     assert f"{floats.SLICE} Tier A names a run, {floats.INTERVAL_S} s apart" in section
     assert f"{serving.GAP_FACTOR} times" in section and f"at most {serving.CLOSE_BEFORE_DAYS} days" in section
     assert f"over {serving.FLOAT_OVER} times" in section and f"{serving.FLOAT_DISAGREE:.0%} apart" in section
@@ -345,3 +345,22 @@ def test_the_prices_section_states_what_the_code_owns():
     assert f"the last {words[wrds_history.REFRESH_YEARS]} years again" in " ".join(section.split())
     assert f"{newdata.COVERAGE_TARGET['alpaca/bars']:.0%}" in section
     assert f"at most {read.LATEST_WITHIN_DAYS} days before the store's newest session" in " ".join(section.split())
+    assert f"each at its newest cap at most {serving.ISSUER_WITHIN_DAYS} days old" in section
+    assert f"`sharesOutstanding` more than {serving.SHARES_DISAGREE:.0%} apart" in " ".join(section.split())
+
+
+def test_the_ownership_section_states_what_the_code_owns():
+    """PR 16: the ownership store's datasets, served tables, views and build issue kinds, as the code has them."""
+    from RevenueChaser.rcdata.build import DATASETS
+    from RevenueChaser.rcdata.build.ownership import KIND, serve
+    text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
+    section = text[text.index("### The ownership store (`ownership.duckdb`, PR 16)"):text.index("## Migration")]
+    for name, ds in DATASETS.items():
+        if ds.kind == KIND:
+            assert f"| `{name}` |" in section, name
+            for table in ds.tables:
+                assert f"| `{table}` |" in section, table
+    for view in serve.VIEWS:
+        assert f"`{view}`" in section, view
+    for kind in serve.ISSUE_KINDS:
+        assert f"`{kind}`" in section, kind

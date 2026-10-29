@@ -7,8 +7,8 @@ last dataset of the kind, ``prices/serving``, builds the served tables and the b
 
 - ``alpaca/bars`` (daily, after the close): Alpaca's daily bars of the scope (below), ``adjustment`` raw and all,
   100 symbols a request; the last 5 sessions are read again every run and a changed value is kept as a revision;
-- ``alpaca/corporate_actions`` (daily): Alpaca's splits, dividends, spin-offs and name changes processed in the last
-  weeks;
+- ``alpaca/corporate_actions`` (daily): Alpaca's splits, dividends, spin-offs and name changes processed from two
+  weeks back to 90 days ahead (a dividend is processed on its payable date);
 - ``sec/cover_shares`` (daily): the shares outstanding per class from the cover page of each new 10-K and 10-Q
   (the filing's XBRL), found through the SEC's daily index;
 - ``yfinance/float`` (daily, a slice): Yahoo's float, paced 1.5 s apart, stopped on a 401 or 429;
@@ -19,7 +19,8 @@ last dataset of the kind, ``prices/serving``, builds the served tables and the b
   issues (``serving.ISSUE_KINDS``), synced to ``ops.sqlite`` once the new file is live.
 
 **The scope** of the daily fetches is the spine's Tier A, the three benchmarks, the rotation ETFs the old nightly
-kept bars for, and the stock watch list (``scope``). The spine is read from its live file, read-only.
+kept bars for, the stock watch list, and the other listed classes the SEC covers name for a Tier A issuer (``scope``).
+The spine is read from its live file, read-only.
 
 **The security id** keys every served table: ``<gvkey>:<iid>`` when the spine links the ticker to Compustat, else
 ``figi:<composite FIGI>``, else ``cik:<CIK>:<ticker>``, else ``sym:<ticker>`` (``security_id``). Parquet keeps what
@@ -94,10 +95,42 @@ def with_id(row: dict) -> dict:
                                               row.get("cik"), row.get("ticker"))}
 
 
+def cover_classes(rows: list[dict]) -> list[dict]:
+    """The listed share classes of the Tier A issuers that the SEC covers name (a ``dei:TradingSymbol`` with a share
+    count, ``sec/cover_shares``), as names to ask: the spine's row of the symbol, else ``class:<CIK>:<member>``, the
+    id ``prices/serving`` keys that class's count under. So the issuer cap counts every listed class, Berkshire's A
+    shares too, which the spine does not hold (the server's sample, 29 Oct 2026: BRK-B's cap 0.658 of Yahoo's)."""
+    import duckdb
+
+    from .. import base
+    from .stage import partitions
+    files = [f for _, f in partitions(base.parquet_root() / "sec" / "cover_shares", "year")]
+    if not files:
+        return []
+    con = duckdb.connect()
+    try:
+        found = con.execute("SELECT cik, coalesce(nullif(class_member, ''), 'common'), arg_max(symbol, as_of) "
+                            f"FROM read_parquet([{', '.join(base.sql_path(f) for f in files)}], union_by_name = true) "
+                            "WHERE symbol IS NOT NULL GROUP BY ALL ORDER BY 1, 2").fetchall()
+    finally:
+        con.close()
+    issuers = {r.get("cik") for r in rows if r.get("tier") == "A"}
+    by_key = {(r.get("cik"), r["ticker"]): r for r in rows}
+    out = []
+    for cik, member, symbol in found:
+        if cik in issuers:
+            ticker = sec_ticker(symbol)
+            r = by_key.get((cik, ticker))
+            out.append(with_id(r) if r else {"ticker": ticker, "cik": cik, "tier": None,
+                                             "security_id": f"class:{cik}:{member}"})
+    return out
+
+
 def scope(rows: list[dict] | None = None, watched: set[str] | None = None) -> list[dict]:
     """The names the daily fetches ask for: Tier A, then the benchmarks, the rotation ETFs and the stock watch list
-    (any tier), each once, as ``{ticker, cik, tier, security_id, ...}``. A benchmark, ETF or watched name the spine
-    does not hold is asked under its ticker alone (``sym:<ticker>``)."""
+    (any tier), then the other listed classes of the Tier A issuers (``cover_classes``), each once, as
+    ``{ticker, cik, tier, security_id, ...}``. A benchmark, ETF or watched name the spine does not hold is asked under
+    its ticker alone (``sym:<ticker>``)."""
     if rows is None:
         rows = spine_rows()
     if watched is None:
@@ -114,4 +147,8 @@ def scope(rows: list[dict] | None = None, watched: set[str] | None = None) -> li
         if t and t not in seen:
             seen.add(t)
             out.append(with_id(by_ticker.get(t) or {"ticker": t, "cik": None, "tier": None}))
+    for r in cover_classes(rows):
+        if r["ticker"] not in seen:
+            seen.add(r["ticker"])
+            out.append(r)
     return out

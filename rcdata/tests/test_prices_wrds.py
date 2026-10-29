@@ -18,7 +18,8 @@ import pytest
 from RevenueChaser.core import calendar
 from RevenueChaser.rcdata import caps, ops, serving
 from RevenueChaser.rcdata.build import base
-from RevenueChaser.rcdata.build.prices import actions, bars, wrds_history
+from RevenueChaser.rcdata.build.prices import actions, bars, cover_shares, floats, wrds_history
+from RevenueChaser.rcdata.build.prices import serving as prices_serving
 from RevenueChaser.rcdata.build.spine import wrds
 
 from .prices_fixture import SPINE, BarsAnswer, bar, write_spine
@@ -224,12 +225,16 @@ def test_compustat_adjusted_return_is_the_true_total_return_within_1bp():
 
 # ── The served history ────────────────────────────────────────────────────────────────────────────────────────
 
-@pytest.fixture
-def built(fake):
+def _build():
     assert _backfill()["result"] == "changed"
     assert base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
     row = base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
     assert row["result"] == "changed", row
+
+
+@pytest.fixture
+def built(fake):
+    _build()
     return fake
 
 
@@ -248,6 +253,31 @@ def test_history_bars_crsp_first_then_compustat_and_alpaca_wins_its_sessions(bui
                                                                      (5.1, "OLD-A", wrds_history.COMPUSTAT)]
     assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = '088888:01'")[0]["n"] == 0  # CAD
     assert _q("SELECT ticker FROM price_bars_daily WHERE session_date = '2024-03-01'")[0]["ticker"] == "OLD-A"
+
+
+def test_the_yahoo_shares_check_reads_the_newest_cover_sourced_cap_not_the_newest_cap(fake):
+    # The Opus delta review's nit 1: the check took the newest cap on or before Yahoo's day and only then kept it if
+    # its shares were the cover's. On the 26th and 27th Alpaca's bars take Compustat's shares of the session, so the
+    # newest cap is not cover-sourced and AAPL, whose cover count is a third over Yahoo's, was skipped silently.
+    base.upsert_partition([{"cik": "320193", "accession": "0000320193-26-000090", "form": "10-K",
+                            "filed": date(2026, 10, 18), "period_end": None, "class_member": "", "symbol": "AAPL",
+                            "shares": 14_800_000_000, "as_of": date(2026, 10, 17), "source_as_of": date(2026, 10, 27),
+                            "fetched_at": 1.0, "run_id": "cover"}], cover_shares.SCHEMA, cover_shares.KEY,
+                          cover_shares.partition_path(2026))
+    base.upsert_partition([{"ticker": "AAPL", "security_id": AAPL, "float_shares": 9_900_000_000,
+                            "shares_outstanding": 10_000_000_000, "source_as_of": date(2026, 10, 27),
+                            "fetched_at": 1.0, "run_id": "yf"}], floats.YAHOO_SCHEMA, ["ticker"],
+                          base.parquet_root() / "yfinance" / "float" / "date=2026-10-27" / "part-0.parquet")
+    _build()
+    source = {str(r["session_date"]): r["shares_source"] for r in _q(
+        "SELECT session_date, shares_source FROM market_cap_daily WHERE security_id = ? "
+        "AND session_date >= '2026-10-21'", [AAPL])}
+    assert source == {"2026-10-21": cover_shares.NAME, "2026-10-22": cover_shares.NAME,
+                      "2026-10-23": cover_shares.NAME, "2026-10-26": wrds_history.COMPUSTAT,
+                      "2026-10-27": wrds_history.COMPUSTAT}
+    keys = {i["key"]: i for i in ops.open_issues(prices_serving.NAME, limit=500)[1]
+            if i["kind"] == "shares_disagree_yahoo"}
+    assert set(keys) == {AAPL}
 
 
 def test_wrds_actions_feed_the_factors_and_alpaca_wins_an_action_both_know(built):

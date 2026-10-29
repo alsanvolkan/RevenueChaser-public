@@ -60,7 +60,7 @@ def get_pages(ctx: base.RunContext, path: str, params: dict, pace: base.Pacer, k
     for _ in range(MAX_PAGES):
         pace.wait()
         r = base.http_get(ctx, PROVIDER, base_url() + path,
-                          params={**params, **({"page_token": token} if token else {})}, headers=auth)
+                          params={**params, **({"page_token": token} if token else {})}, headers=auth, keyed=True)
         try:
             body = r.json()
         except ValueError as e:
