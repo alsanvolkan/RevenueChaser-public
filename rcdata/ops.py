@@ -188,7 +188,8 @@ def ensure(path: Path | None = None) -> None:
             con.execute(ddl)
         if found != OPS_SCHEMA_VERSION:
             con.execute("INSERT INTO ops_schema (version, applied_at) VALUES (?, ?)", (OPS_SCHEMA_VERSION, time.time()))
-        _ENSURED.add(str(path))
+    # Only after the COMMIT: a thread that finds the path here skips ``ensure`` and must see the tables at once.
+    _ENSURED.add(str(path))
 
 
 @contextmanager

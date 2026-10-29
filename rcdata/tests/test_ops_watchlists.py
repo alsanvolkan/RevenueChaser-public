@@ -219,3 +219,23 @@ def test_concurrent_whole_list_replaces_raise_nothing_and_the_history_replays_to
         for t, action in con.execute("SELECT ticker, action FROM watchlist_stock_changes ORDER BY id"):
             state[t] = action == "add"
     assert {t for t, on in state.items() if on} == set(ops.watch_list("stock"))
+
+
+def test_a_file_counts_as_made_only_once_its_tables_are_committed(monkeypatch):
+    """A thread that finds the path in ``_ENSURED`` skips ``ensure`` and reads at once; marked before the COMMIT,
+    it would read a file whose tables another connection cannot see yet (CI: ``no such table: watchlist_stock``)."""
+    from contextlib import contextmanager
+    seen = []
+    real_tx = ops._tx
+
+    @contextmanager
+    def watching_tx(con):
+        with real_tx(con):
+            yield con
+            seen.append(str(ops.ops_path()) in ops._ENSURED)
+
+    monkeypatch.setattr(ops, "_tx", watching_tx)
+    monkeypatch.setattr(ops, "_ENSURED", set())
+    ops.ensure()
+    assert seen == [False]
+    assert str(ops.ops_path()) in ops._ENSURED
