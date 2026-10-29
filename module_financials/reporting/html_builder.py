@@ -8,6 +8,7 @@ from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
 
 from RevenueChaser.core import calendar as market_calendar
+from RevenueChaser.module_financials.config import RISK_FREE_MAX_AGE_DAYS
 from RevenueChaser.core.reporting_common import (help_html, provider_health_html, recorded_sessions_html,
                                                  watch_buttons_html, watchlist_html)
 
@@ -21,7 +22,9 @@ HELP = help_html(
     "One company at a time: <b>Quick Remarks</b> (the stored scores for the ticker) on top, then the "
     "<b>financial model</b>: DCF, three-statement view, comparables, credit and sensitivity. "
     "<b>Fetch</b> downloads the ticker's price, shares, beta and statements from <b>Yahoo</b> into the store and "
-    "rebuilds the report. The models read the annual statements the company filed with the <b>SEC</b> (the "
+    "rebuilds the report. The price, market cap, shares and beta are the <b>prices store</b>'s (its newest close, "
+    f"at most {RISK_FREE_MAX_AGE_DAYS} days old) where it has them, Yahoo's otherwise. The models read the annual "
+    "statements the company filed with the <b>SEC</b> (the "
     "fundamentals layer, re-read on each filing day) once that is built, and Yahoo's before, or when Yahoo's "
     "year is newer or gives an input the SEC's lacks (depreciation, working capital); the "
     "<b>Source</b> line says which, why, and which inputs the SEC's statements lack. <b>Refresh</b> rebuilds the report for the ticker in the "

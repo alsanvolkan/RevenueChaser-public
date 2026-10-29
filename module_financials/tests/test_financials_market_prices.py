@@ -144,14 +144,21 @@ def test_the_overlay_keeps_yahoos_value_where_the_store_has_none(market_roots): 
     _store(months=12)                                        # too short for a beta
     out, part = mi.overlay(TICKER, {**YAHOO, "annual": []})
     assert out["current_price"] == 120.0 and out["market_cap"] == 6000.0 and out["beta"] == 1.1
-    assert part == "prices store, 2026-10-27 close (price, shares) · Yahoo (beta)"
+    assert part == "prices store, 2026-10-27 close (price, market cap, shares) · Yahoo (beta)"
     assert out["market_meta"]["price_session"] == "2026-10-27"
     assert "beta_source" not in out
 
 
+def test_the_overlay_names_yahoos_cap_where_the_store_has_a_price_alone(market_roots):  # noqa: F811
+    _store(own_cap=None, months=12)
+    out, part = mi.overlay(TICKER, dict(YAHOO))
+    assert out["current_price"] == 120.0 and out["market_cap"] == 5000.0 and out["shares_outstanding"] == 50.0
+    assert part == "prices store, 2026-10-27 close (price) · Yahoo (market cap, shares, beta)"
+
+
 def test_the_overlay_with_nothing_in_the_store_names_yahoo(market_roots):  # noqa: F811
     out, part = mi.overlay(TICKER, dict(YAHOO))
-    assert {k: out[k] for k in YAHOO} == YAHOO and part == "Yahoo (price, shares, beta)"
+    assert {k: out[k] for k in YAHOO} == YAHOO and part == "Yahoo (price, market cap, shares, beta)"
 
 
 def _run(monkeypatch, tmp_path):
@@ -171,7 +178,7 @@ def test_a_run_models_the_stores_market_inputs_and_says_so(built, monkeypatch, t
     out = _run(monkeypatch, tmp_path)
     fin, dcf = out["financials"], out["modules"]["dcf"]
     assert fin["current_price"] == 120.0 and fin["market_cap"] == 6000.0
-    assert fin["source"].endswith(" · prices store, 2026-10-27 close (price, shares, beta)")
+    assert fin["source"].endswith(" · prices store, 2026-10-27 close (price, market cap, shares, beta)")
     assert "Yahoo (price" not in fin["source"]
     assert dcf["wacc"]["beta"] == pytest.approx(1.5)
     assert dcf["wacc"]["beta_source"] == "prices store (5y monthly vs S&P 500)"
@@ -181,7 +188,7 @@ def test_a_run_without_the_prices_store_keeps_yahoos_and_says_so(built, monkeypa
     out = _run(monkeypatch, tmp_path)
     fin, dcf = out["financials"], out["modules"]["dcf"]
     assert fin["current_price"] == 100.0 and fin["market_cap"] == 5000.0
-    assert fin["source"].endswith(" · Yahoo (price, shares, beta)")
+    assert fin["source"].endswith(" · Yahoo (price, market cap, shares, beta)")
     assert dcf["wacc"]["beta"] == 1.1 and dcf["wacc"]["beta_source"] == "Yahoo"
 
 
@@ -189,7 +196,8 @@ def test_off_the_fundamentals_layer_the_source_line_still_names_the_market_input
                                                                                    tmp_path):  # noqa: F811
     _store()
     out = _run(monkeypatch, tmp_path)
-    assert out["financials"]["source"] == "Yahoo (statements) · prices store, 2026-10-27 close (price, shares, beta)"
+    assert out["financials"]["source"] == ("Yahoo (statements) · prices store, 2026-10-27 close "
+                                           "(price, market cap, shares, beta)")
 
 
 def test_the_card_names_the_session_of_the_stores_price():

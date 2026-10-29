@@ -114,9 +114,11 @@ def from_store(ticker: str) -> dict:
 def overlay(ticker: str, financials: dict) -> tuple[dict, str]:
     """``(financials with the store's market inputs, the Source line's market part)``. A value the store does not
     give keeps Yahoo's; the part names each side and the store's session, e.g.
-    ``prices store, 2026-10-27 close (price, shares) · Yahoo (beta)``."""
+    ``prices store, 2026-10-27 close (price, market cap, shares) · Yahoo (beta)``. The cap is named: it is the
+    WACC's equity weight, and a price of one source with a cap of the other is visible."""
     store = from_store(ticker)
-    got = {"price": "current_price" in store, "shares": "shares_outstanding" in store, "beta": "beta" in store}
+    got = {"price": "current_price" in store, "market cap, shares": "shares_outstanding" in store,
+           "beta": "beta" in store}
     fields = {k: store[k] for k in ("current_price", "market_cap", "shares_outstanding", "beta") if k in store}
     session = store["price_session"].isoformat() if "price_session" in store else None
     meta = {"from_store": [k for k, v in got.items() if v], "price_session": session}
