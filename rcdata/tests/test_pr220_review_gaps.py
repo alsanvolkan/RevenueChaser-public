@@ -118,3 +118,54 @@ def test_s2_the_cli_help_names_the_real_default():
     from RevenueChaser.rcdata.build import __main__ as cli
     import inspect
     assert "default: today's" not in inspect.getsource(cli)
+
+
+# ── S-3: an answer that is mostly unusable is not stored as the day ─────────────────────────────────────────────
+@pytest.fixture
+def uw_after_the_close(monkeypatch):
+    monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "test-key")
+    monkeypatch.setattr(unusual_whales, "BASE", "https://uw.test/api")
+    monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 26, 21, 0, tzinfo=timezone.utc))
+
+
+def _rejected(day: date) -> list:
+    return sorted(uw.raw_path(day).parent.glob(uw.raw_path(day).name + ".*" + uw.REJECTED_SUFFIX))
+
+
+def test_s3_390_of_391_rows_without_a_strike_fail_the_day(http_mock, uw_after_the_close):
+    body = uw_fixture.body()
+    for r in body["data"][1:]:
+        del r["strike"]
+    http_mock.add("expiry-strike", body, headers=UW_HEADERS)
+    row = base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-26"}})
+    assert row["result"] == "failed" and "390 of 391" in row["note"]
+    day = date(2026, 10, 26)
+    assert not uw.partition_path(day).exists() and not uw.raw_path(day).exists() and len(_rejected(day)) == 1
+
+
+def test_s3_one_row_on_the_session_and_390_on_the_next_day_fail_the_day(http_mock, uw_after_the_close):
+    body = uw_fixture.body()
+    for r in body["data"][1:]:
+        r["time"] = "2026-10-27T14:00:00Z"
+    http_mock.add("expiry-strike", body, headers=UW_HEADERS)
+    row = base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-26"}})
+    assert row["result"] == "failed" and "390 of 391" in row["note"]
+    assert not uw.partition_path(date(2026, 10, 26)).exists()
+
+
+def test_s3_a_few_dropped_rows_under_1pct_still_store_the_day_with_an_issue(http_mock, uw_after_the_close):
+    body = uw_fixture.body()
+    for r in body["data"][:3]:
+        del r["strike"]
+    http_mock.add("expiry-strike", body, headers=UW_HEADERS)
+    row = base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-26"}})
+    assert row["result"] == "changed" and row["rows"] == 388
+
+
+def test_s3_four_of_391_rows_dropped_is_just_over_1pct_and_fails(http_mock, uw_after_the_close):
+    body = uw_fixture.body()
+    for r in body["data"][:4]:
+        del r["strike"]
+    http_mock.add("expiry-strike", body, headers=UW_HEADERS)
+    row = base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-26"}})
+    assert row["result"] == "failed" and "4 of 391" in row["note"]

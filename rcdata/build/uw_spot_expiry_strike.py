@@ -43,6 +43,9 @@ MAX_PAGES = 20
 CALLS_PER_SESSION_ESTIMATE = 2
 FIRST_SESSION = date(2025, 1, 16)
 REJECTED_SUFFIX = ".rejected"
+# An answer with more than this share of its rows unusable (no expiry/strike, or stamped on another day) is refused
+# like an empty one (review S-3 of #220); the same figure as the swap's serving.MAX_SHRINK.
+MAX_DROPPED = 0.01
 # An epoch below this (9 Sep 2001) is not a UW snapshot time: 0, or a date written without dashes read as seconds.
 MIN_EPOCH = 1e9
 
@@ -165,7 +168,7 @@ class UWSpotExpiryStrike:
         session = date.fromisoformat(doc["session_date"])
         body = doc["body"]
         items = body.get("data", []) if isinstance(body, dict) else body
-        rows, seen, extras, bad = [], set(), set(), []
+        rows, seen, extras, bad, wrong = [], set(), set(), [], 0
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -177,6 +180,7 @@ class UWSpotExpiryStrike:
                 continue
             if snapshot_day(item.get("time")) not in (session, None):
                 ctx.issue("wrong_session", f"{session} {expiry} {strike}", f"row stamped {item.get('time')}")
+                wrong += 1
                 continue
             key = (expiry, strike)
             if key in seen:
@@ -193,14 +197,19 @@ class UWSpotExpiryStrike:
         if bad:                                     # one issue per answer, not one per row
             ctx.issue("bad_row", session.isoformat(),
                       f"{len(bad)} rows without a usable expiry/strike; first one's fields: {bad[0]}")
-        if not rows:
+        dropped = len(bad) + wrong
+        if not rows or dropped > MAX_DROPPED * len(items):
             # An empty partition would mark the session done for good (S6), and so would the raw file, which is the
             # fetch's resume marker (N1): it is set aside as .rejected, kept for a look, and the next run asks again.
-            # The run id in the name: a second rejection of the same day keeps the first one's file (F2).
+            # The run id in the name: a second rejection of the same day keeps the first one's file (F2). A mostly
+            # unusable answer (more than MAX_DROPPED of its rows without a strike or stamped on another day) is
+            # refused the same way: storing its few good rows would mark the day done as well (review S-3 of #220).
             rejected = raw.with_name(f"{raw.name}.{ctx.run_id}{REJECTED_SUFFIX}")
             os.replace(raw, rejected)
-            raise base.SourceError(f"UW {session}: no usable row in {raw.name} ({len(items)} rows answered); "
-                                   f"set aside as {rejected.name}")
+            why = (f"no usable row in {raw.name} ({len(items)} rows answered)" if not rows else
+                   f"{dropped} of {len(items)} rows unusable in {raw.name} ({len(bad)} without an expiry/strike, "
+                   f"{wrong} stamped on another day), more than {MAX_DROPPED:.0%}")
+            raise base.SourceError(f"UW {session}: {why}; set aside as {rejected.name}")
         if extras:
             ctx.issue("unknown_field", session.isoformat(), "numeric fields without a column: " + ", ".join(sorted(extras)))
         con = duckdb.connect()
