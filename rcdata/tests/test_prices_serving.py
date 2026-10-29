@@ -192,6 +192,27 @@ def test_the_one_basis_point_rule_allows_for_alpacas_cent_rounded_adjusted_close
     assert abs(adv) > first_order
     assert _issues()["adjustment_differs"] == {SPY + ":2026-10-26", "072726:02:2026-10-23", "072726:02:2026-10-26"}
 
+def test_a_malformed_action_not_yet_ex_is_an_issue_now_and_a_sound_one_waits(http_mock):
+    # The Opus delta review's nit 2: "not yet ex" came first, so a split three weeks out with no ratio was filed as
+    # waiting and surfaced only on its ex-date, the day its factor is needed. What is wrong with the action itself is
+    # named at once; only what needs a close (the dividend's) waits for the ex-date.
+    bad = {"id": "fs-2", "symbol": "AAPL", "old_rate": 1, "new_rate": 0, "process_date": "2026-11-20",
+           "ex_date": "2026-11-20"}
+    far = {"id": "cd-3", "symbol": "AAPL", "rate": 0.27, "special": False, "foreign": False,
+           "process_date": "2027-01-14", "ex_date": "2026-12-28", "currency": "USD"}  # no close within a week of it
+    http_mock.routes.insert(0, ("/v1/corporate-actions", {"corporate_actions": {
+        **ACTIONS, "forward_splits": ACTIONS["forward_splits"] + [bad],
+        "cash_dividends": ACTIONS["cash_dividends"] + [far]}, "next_page_token": None}, 200, {}))
+    _shares_and_floats()
+    base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
+    base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    why = {r["source_id"]: r["not_applied_why"] for r in _q("SELECT source_id, not_applied_why FROM corporate_action")}
+    assert why["fs-2"] == "no ratio" and why["cd-2"].startswith("not yet ex") and why["cd-3"].startswith("not yet ex")
+    issues = _issues()
+    assert "fs-2" in issues["action_not_applied"]
+    assert not {"cd-2", "cd-3"} & issues.get("dividend_not_applied", set())
+
+
 def test_a_gap_without_an_action_is_an_issue_and_the_reverse_split_is_not(built):
     gaps = _issues()["price_gap_no_action"]
     assert gaps == {GAPX + ":2026-10-22"}

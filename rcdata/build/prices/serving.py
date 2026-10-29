@@ -306,15 +306,17 @@ class PricesServing:
             FROM _act_typed a ASOF LEFT JOIN price_bar_daily p
                 ON p.security_id = a.security_id AND a.ex_date > p.session_date""")
         # An action announced for a later day (the actions window reaches ahead) waits until its ex-date has a
-        # session: applied now, it would turn today's bars into a basis that does not exist yet.
+        # session: applied now, it would turn today's bars into a basis that does not exist yet. What is wrong with
+        # the action itself (no ratio, no amount) is named at once, so a malformed one gets the window's notice;
+        # only what needs the close before the ex-date, and a kind the factors never apply, waits.
         newest = "(SELECT max(session_date) FROM price_bar_daily WHERE security_id NOT LIKE 'index:%')"
         why = f"""CASE
-            WHEN ex_date > {newest} THEN 'not yet ex: the ex-date is after the newest session'
             WHEN action IN ('split', 'stock_dividend') AND ex_date IS NULL THEN 'no ex-date'
             WHEN action IN ('split', 'stock_dividend') AND ratio IS NULL THEN 'no ratio'
             WHEN action = 'cash_dividend' AND ex_date IS NULL THEN 'no ex-date'
             WHEN action = 'cash_dividend' AND coalesce(upper(currency), 'USD') <> 'USD' THEN 'paid in ' || currency
             WHEN action = 'cash_dividend' AND NOT (amount > 0) THEN 'no amount'
+            WHEN ex_date > {newest} THEN 'not yet ex: the ex-date is after the newest session'
             WHEN action = 'cash_dividend' AND (close_before IS NULL
                  OR date_diff('day', close_day, ex_date) > {CLOSE_BEFORE_DAYS}) THEN 'no close before the ex-date'
             WHEN action = 'cash_dividend' AND NOT (amount < close_before) THEN 'the amount is not below the close'
