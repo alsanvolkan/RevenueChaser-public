@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from . import catalog, serve
 from .catalog import NEEDS, Need
-from .serve import Answer, FillNotSupported, UnknownNeed, get
+from .serve import Answer, FillNotSupported, UnknownNeed, get, lag_sessions
 
-__all__ = ["Answer", "FillNotSupported", "NEEDS", "Need", "UnknownNeed", "catalog", "get", "serve"]
+__all__ = ["Answer", "FillNotSupported", "NEEDS", "Need", "UnknownNeed", "catalog", "get",
+           "lag_sessions", "serve"]

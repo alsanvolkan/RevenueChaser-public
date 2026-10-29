@@ -78,7 +78,7 @@ def _day(value: Any) -> date | None:
         return None
 
 
-def _lag_sessions(as_of: date, latest: date) -> int:
+def lag_sessions(as_of: date, latest: date) -> int:
     """Trading sessions between ``as_of`` and ``latest`` (0 when the rows are up to the newest session)."""
     if as_of >= latest:
         return 0
@@ -130,7 +130,7 @@ def get(need: str, *, fill: str = NEVER, **params) -> Answer:
 
     days = [d for d in (_day(r.get(spec.day_column)) for r in rows) if d is not None]
     as_of = max(days) if days else None
-    lag = _lag_sessions(as_of, _latest_session()) if as_of is not None else None
+    lag = lag_sessions(as_of, _latest_session()) if as_of is not None else None
     freshness = {"as_of_session": as_of, "lag_sessions": lag, "max_lag": spec.max_lag_sessions}
 
     asked = _asked(spec, params)

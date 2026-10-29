@@ -56,7 +56,7 @@ def test_nothing_built_yet_is_missing_never_an_error():
 def test_the_lag_is_counted_in_sessions_not_calendar_days():
     # Friday 23 Oct 2026 to Monday 26 Oct: three calendar days, one session. Thanksgiving week: Wed 25 Nov to
     # Friday 27 Nov is two calendar days and one session, because the Thursday is a holiday.
-    assert api.serve._lag_sessions(date(2026, 10, 23), date(2026, 10, 26)) == 1
-    assert api.serve._lag_sessions(date(2026, 11, 25), date(2026, 11, 27)) == 1
-    assert api.serve._lag_sessions(date(2026, 10, 26), date(2026, 10, 26)) == 0
-    assert api.serve._lag_sessions(date(2026, 10, 27), date(2026, 10, 26)) == 0   # rows newer than the reference
+    assert api.lag_sessions(date(2026, 10, 23), date(2026, 10, 26)) == 1
+    assert api.lag_sessions(date(2026, 11, 25), date(2026, 11, 27)) == 1
+    assert api.lag_sessions(date(2026, 10, 26), date(2026, 10, 26)) == 0
+    assert api.lag_sessions(date(2026, 10, 27), date(2026, 10, 26)) == 0   # rows newer than the reference

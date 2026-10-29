@@ -66,6 +66,13 @@ _NEEDS = (
          ask_param="security_ids", providers=("alpaca",)),
     Need("prices.shares", "shares", "shares_class", "as_of", "security_id", 65,
          ask_param="security_ids", providers=("sec",)),
+    # ── The earnings calendar a screener card shows (step B) ────────────────────────────────────────────────────
+    # The options layer's screener calendar is the first source; the stored D26 calendar fills the names it does not
+    # cover. That fallback is not a need of its own yet: the dashboard, not the builder, writes ``raw.duckdb``, so it
+    # cannot be filled through the queue (the legacy row of the design's section 6). ``core.earnings_dates`` holds
+    # the union until the D26 sweep moves to the builder.
+    Need("earnings.next", "option_screener", "option_screener_daily", "session_date", "ticker", 4,
+         providers=("uw",), fallbacks=("d26_calendar",)),
 )
 
 NEEDS: dict[str, Need] = {n.name: n for n in _NEEDS}
