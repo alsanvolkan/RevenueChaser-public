@@ -10,13 +10,19 @@ the library (1.7.0, 29 Oct 2026) ``^MOVE`` gave 5,925 daily bars from 12 Nov 200
 backfill; counted under the ``yfinance`` provider (its day cap). Raw: ``raw/yahoo/history/<as-of>/<SERIES>.json``,
 the bars as ``[day, open, high, low, close]``. A bar is dated by the exchange's own day; a bar of a day whose session
 is not over when it was fetched is skipped (16:00 New York), and the next fetch brings it complete.
+
+``RC_YAHOO_BASE`` is a test seam, because yfinance has no base URL of its own: when it is set, ``_history`` reads
+``<base>/<symbol, URL-quoted>.json``, a raw file of this source (``{"symbol", "bars"}``), instead of asking yfinance.
+The CLI test points it at its loopback mock, so the builder subprocess stays offline.
 """
 from __future__ import annotations
 
 import json
 import math
+import os
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from .. import base
@@ -24,6 +30,7 @@ from .. import base
 SOURCE, DATASET_DIR = "yahoo", "history"
 PROVIDER = "yfinance"
 SYMBOLS = {"MOVE": "^MOVE", "WHEATF": "ZW=F"}
+BASE = os.getenv("RC_YAHOO_BASE")
 NY = ZoneInfo("America/New_York")
 # shortcut: one New York cut-off for both; wheat settles at 13:20 Chicago, so its bar waits up to two hours longer
 # than it must. Upgrade to a per-symbol close if a same-afternoon wheat bar ever matters.
@@ -32,6 +39,11 @@ CLOSED_HOUR = 16
 
 def _history(symbol: str) -> list[list]:
     """The daily bars of ``symbol`` from yfinance, ``[[ISO day, open, high, low, close], ...]`` oldest first."""
+    if BASE:
+        import httpx
+        r = httpx.get(f"{BASE}/{quote(symbol, safe='')}.json", timeout=30)
+        r.raise_for_status()
+        return r.json().get("bars") or []
     import yfinance as yf
     frame = yf.Ticker(symbol).history(period="max", interval="1d", auto_adjust=False, actions=False)
     return [[ts.date().isoformat(), *(_num(row.get(k)) for k in ("Open", "High", "Low", "Close"))]
