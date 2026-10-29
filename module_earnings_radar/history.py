@@ -38,6 +38,7 @@ UW_CALENDAR_ROW_LIMIT = 500          # the limit the client asks for (unusual_wh
 
 def effective_config() -> dict:
     """What the board scores and filters with: the gates, the rule and NRC weights, the rule tunables."""
+    from RevenueChaser.module_earnings_radar import store_reads
     from RevenueChaser.module_earnings_radar.stored_inputs import MAX_LAG
     return {
         "MAX_DEEP_CHECKS_PER_DAY": config.MAX_DEEP_CHECKS_PER_DAY, "MIN_OPTION_VOLUME": config.MIN_OPTION_VOLUME,
@@ -46,8 +47,9 @@ def effective_config() -> dict:
         "WATCHLIST_BYPASS": config.WATCHLIST_BYPASS, "FLOW_SWEEP_BLOCK_MIN": config.FLOW_SWEEP_BLOCK_MIN,
         "INST_FLOW_MIN_NET": config.INST_FLOW_MIN_NET, "RULE_WEIGHTS": dict(config.RULE_WEIGHTS),
         "NRC_WEIGHTS": dict(config.NRC_WEIGHTS), "TUNABLES": dict(config.TUNABLES),
-        # How stale a stored input may be before the run reads live instead (E5, #372).
-        "MAX_LAG": dict(MAX_LAG),
+        # How stale a stored input may be before the run reads live instead (E5, #372), or, for the market and
+        # fundamentals stores' inputs (``store_reads``), before it is not read at all.
+        "MAX_LAG": {**MAX_LAG, **store_reads.MAX_LAG}, "MAX_AGE_DAYS": dict(store_reads.MAX_AGE_DAYS),
     }
 
 

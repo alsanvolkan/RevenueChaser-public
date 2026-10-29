@@ -167,3 +167,53 @@ def test_the_run_warms_the_estimates_from_the_fundamentals_store():
     p = _pipeline()
     assert p._warm_estimates()["AAPL"]["eps_trend_current"] == pytest.approx(1.5)
     assert p.input_sources["estimates"] == {"stored": 1, "missing": 0}
+
+
+# ── the estimates' age limit: a snapshot the weekly build has not renewed is "not stored" ──
+
+TODAY = date(2026, 10, 29)
+
+
+def test_an_estimate_older_than_the_age_limit_is_not_read():
+    limit = store_reads.MAX_AGE_DAYS["estimates"]
+    serve_estimates([_estimate("AAPL", eps_trend_current=1.5)], as_of=TODAY - timedelta(days=limit + 1))
+    rows, note = store_reads.estimates(["AAPL"], today=TODAY)
+    assert rows == {}
+    assert note["stored"] is False
+    assert "older than" in note["label"] and (TODAY - timedelta(days=limit + 1)).isoformat() in note["label"]
+
+
+def test_an_estimate_exactly_at_the_age_limit_is_still_read():
+    limit = store_reads.MAX_AGE_DAYS["estimates"]
+    serve_estimates([_estimate("AAPL", eps_trend_current=1.5)], as_of=TODAY - timedelta(days=limit))
+    rows, note = store_reads.estimates(["AAPL"], today=TODAY)
+    assert set(rows) == {"AAPL"}
+    assert note["stored"] is True
+
+
+def test_a_stale_name_is_left_out_and_counted_while_a_fresh_one_is_read():
+    limit = store_reads.MAX_AGE_DAYS["estimates"]
+    serve_estimates([_estimate("AAPL", eps_trend_current=1.5),
+                     _estimate("MSFT", eps_trend_current=2.5, source_as_of=TODAY - timedelta(days=limit + 7))],
+                    as_of=TODAY - timedelta(days=2))
+    rows, note = store_reads.estimates(["AAPL", "MSFT"], today=TODAY)
+    assert set(rows) == {"AAPL"}
+    assert "1 of 2 names" in note["label"] and "1 left out" in note["label"]
+    assert note["source_as_of"] == (TODAY - timedelta(days=2)).isoformat()
+
+
+def test_an_estimate_with_no_as_of_day_is_not_read():
+    serve_estimates([_estimate("AAPL", eps_trend_current=1.5, source_as_of=None)])
+    rows, note = store_reads.estimates(["AAPL"], today=TODAY)
+    assert rows == {}
+    assert note["stored"] is False
+
+
+def test_the_read_limits_are_part_of_the_earnings_model_version(monkeypatch):
+    from RevenueChaser.module_earnings_radar import history as er_history
+    config = er_history.effective_config()
+    assert config["MAX_LAG"]["dgs10"] == store_reads.MAX_LAG["dgs10"]
+    assert config["MAX_AGE_DAYS"] == store_reads.MAX_AGE_DAYS
+    before = er_history.model_version()
+    monkeypatch.setitem(store_reads.MAX_AGE_DAYS, "estimates", store_reads.MAX_AGE_DAYS["estimates"] + 1)
+    assert er_history.model_version() != before

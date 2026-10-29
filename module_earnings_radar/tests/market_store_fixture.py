@@ -40,12 +40,14 @@ def serve_estimates(rows: list[dict], *, as_of: date | None = None, check: str |
     """Build and swap in a ``fundamentals`` serving file whose ``estimate_latest`` holds ``rows``.
 
     The same way ``rcdata/tests/fund_fixture.spine`` builds a spine: the dataset's own schema, the columns a row
-    leaves out written NULL. ``rows`` carry at least ``ticker`` and ``period``.
+    leaves out written NULL. ``rows`` carry at least ``ticker`` and ``period``. ``as_of`` (default New York's today, so
+    a reader's age limit sees a fresh row whenever the suite runs) is every row's ``source_as_of`` unless it names its own.
     """
+    from RevenueChaser.core import calendar
     from RevenueChaser.rcdata import serving
     from RevenueChaser.rcdata.build.fundamentals import estimates as est
 
-    as_of = as_of or date(2026, 10, 28)
+    as_of = as_of or calendar.today_ny()
     schema = est.schema()
     full = [{**{c: None for c, _ in schema}, "cik": "1", "source_as_of": as_of, "fetched_at": 1.0,
              "run_id": RUN_ID, **r} for r in rows]
