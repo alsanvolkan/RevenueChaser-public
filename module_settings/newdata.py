@@ -37,6 +37,19 @@ LABELS.update({"finra/short_interest": "Short interest (FINRA)", "regsho/thresho
                "ibkr/shortable": "Borrow fee and shares available (IBKR file)", "sec/ftd": "Fails to deliver (SEC)",
                "sec/13f": "13F holdings (SEC data sets, then forms)", "sec/form4": "Insider transactions (Form 4)",
                "sec/13dg": "5% owners (Schedules 13D and 13G)", "ownership/serve": "13F totals per ticker and quarter"})
+# The fundamentals layer (PR 12).
+LABELS.update({
+    "sec/companyfacts": "SEC company facts (re-read on the filing day)",
+    "sec/filings": "SEC filing lists, 8-K items and report texts",
+    "alphavantage/earnings_calendar": "Earnings calendar (Alpha Vantage)",
+    "uw/financials": "Preliminary quarters (Unusual Whales, off by default)",
+    "yfinance/estimates": "Analyst estimates (yfinance)",
+    "sec/fsds": "SEC Financial Statement Data Sets (the check)",
+    "wrds/fundq": "Compustat quarterly fundamentals (WRDS, the revision check)",
+    "wrds/funda": "Compustat annual fundamentals (WRDS, the revision check)",
+    "wrds/firm_ratio": "WRDS financial ratios (the debt check)",
+    "wrds/segments": "Compustat segments and customers (WRDS)",
+    "fundamentals/tables": "Fundamentals (served tables, peers, build issues)"})
 # Default cadence per dataset (the dataset's own ``cadence`` when it has one); a ``dataset_schedule.cadence`` of
 # daily / weekly / monthly overrides it.
 CADENCE = {"uw/spot_expiry_strike": "daily", "market_series": "daily"}
@@ -52,10 +65,17 @@ DATE_COLUMN.update({"finra_short_interest": "settlement_date", "regsho_threshold
                     "ibkr_shortable": "session_date", "sec_ftd": "settlement_date", "sec13f_filings": "filed",
                     "insider_transactions": "filed", "beneficial_ownership": "filed", "sec13f_cusip_map": "period",
                     "sec13f_filer_period": "period", "sec13f_ticker_period": "period", "sec13f_periods": "period"})
+DATE_COLUMN.update({"fundamental_company": "facts_as_of", "fundamental_fact": "filed", "filing_item": "filing_date",
+                    "earnings_event": "source_as_of", "fundamental_revision": "new_as_of",
+                    "segment_revenue": "document_date", "customer_share": "document_date",
+                    "estimate_latest": "source_as_of"})
 # The identity funnel (PR 5, D9): the indexes it counts, and the dataset whose build issues it lists.
 SPINE_INDEXES = ("sp500", "sp400", "sp600", "ndx")
 SPINE_ISSUES = "spine/security"
-ATTENDED_COMMAND = "python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist wrds/co_hgic wrds/idxcst_his"
+# The WRDS difference slot (decision 3): these check datasets' cards show their newest monthly difference report,
+# the note of their newest run that read WRDS (PR 12, decided 27 Oct); every other card says no WRDS run yet.
+WRDS_DIFFERENCE = ("wrds/fundq", "wrds/funda", "wrds/firm_ratio", "wrds/segments")
+NO_WRDS = {"text": "no WRDS run yet"}
 # Old .store tables a new dataset replaces: their reads in read_log are the retirement count (read for 14 days).
 RETIRING = {"macro_series": "market_series", "vol_index_daily": "market_series", "cftc_cot": "market_series",
             "economic_calendar": "market_series"}
@@ -150,6 +170,21 @@ def status_of(dataset: str, last: dict | None, base: dict | None, cadence: str,
     return "unchanged", "within its cycle; the last run changed nothing", base
 
 
+def attended_command(kind: str) -> str:
+    """The CLI line that runs every attended (WRDS) dataset of ``kind``: one worker and one login for all of them."""
+    names = [n for n, d in _datasets().items() if d.kind == kind and getattr(d, "attended", False)]
+    return f"python -m RevenueChaser.rcdata.build backfill {' '.join(names)}"
+
+
+def _wrds_difference(dataset: str) -> dict:
+    """The WRDS difference slot: a check dataset's newest report (a run that read WRDS, not a skip or a failure)."""
+    if dataset not in WRDS_DIFFERENCE:
+        return dict(NO_WRDS)                     # a copy: a caller that edits its card must not edit the constant
+    report = next((c for c in ops.recent_checks(dataset, limit=24)
+                   if c["result"] in ("changed", "unchanged") and c.get("note")), None)
+    return {"text": report["note"], "as_of": report.get("source_as_of")} if report else dict(NO_WRDS)
+
+
 def _held(dataset: str, ds) -> str | None:
     """Why the schedule never queues ``dataset`` now (``rcdata/build/due.py``), or None: an attended dataset runs only
     from the CLI; a dataset that starts by hand waits for its first build (delta S6)."""
@@ -240,7 +275,7 @@ COVERAGE_TARGET.update({"alpaca/bars": 0.99})
 DATE_COLUMN.update({"price_bar_daily": "session_date", "corporate_action": "ex_date", "adj_factor": "valid_to",
                     "shares_class": "as_of", "security_symbol": "valid_from", "market_cap_daily": "session_date",
                     "price_revision": "session_date", "wrds_price_diff": "as_of"})
-# An attended dataset's own command, where it is not the spine's.
+# An attended dataset's own command, where it is not its kind's (``attended_command``).
 ATTENDED_COMMANDS = {"wrds/prices": "python -m RevenueChaser.rcdata.build backfill wrds/prices"}
 # The rows of the WRDS difference report (``wrds_price_diff``), as the card words them.
 WRDS_REPORT_LABELS = {"crsp_vs_compustat": "CRSP vs Compustat closes", "compustat_vs_alpaca": "Compustat vs Alpaca closes",
@@ -523,9 +558,10 @@ def _card(dataset: str, ds, facts: dict, now: datetime) -> dict:
                    for i in issues],
         "issues_open": n_issues,
         "backfill": backfill(now) if backfill else None,
-        "wrds": _wrds_slot(dataset, facts),
+        "wrds": _wrds_difference(dataset) if dataset in WRDS_DIFFERENCE else _wrds_slot(dataset, facts),
         "attended": bool(getattr(ds, "attended", False)),
-        "attended_command": ATTENDED_COMMANDS.get(dataset, ATTENDED_COMMAND) if getattr(ds, "attended", False) else None,
+        "attended_command": (ATTENDED_COMMANDS.get(dataset) or attended_command(ds.kind))
+                            if getattr(ds, "attended", False) else None,
         "schedule": {"paused": bool(schedule and schedule.get("paused_at") is not None),
                      "paused_by": (schedule or {}).get("paused_by"),
                      "paused_at": _iso_utc((schedule or {}).get("paused_at"))},

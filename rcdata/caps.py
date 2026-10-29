@@ -21,9 +21,10 @@ DAY_CAPS: dict[str, int] = {
     "vanguard": 50,
     "nasdaq": 50,
     "invesco": 50,
-    # The prices store's (PR 7; working numbers, not avo's yet): yfinance float lookups, paced 1.5 s apart. Shared
-    # with market_series' yahoo source (PR 9): one whole-history read per symbol (MOVE, wheat) and as-of day.
-    "yfinance": 3_000,
+    # yfinance, shared by three readers (working numbers, not avo's yet): the prices store's float lookups (PR 7, 3,000,
+    # paced 1.5 s apart), the fundamentals layer's weekly analyst estimates (PR 12, 2,000, one per ticker) and
+    # market_series' yahoo source (PR 9: one whole-history read per symbol, MOVE and wheat, and as-of day).
+    "yfinance": 3_000 + 2_000,
     # The ownership store's providers (PR 16; working numbers, not avo's yet). The SEC's filings share "sec" above.
     # FINRA: up to 5 pages of 5,000 rows per settlement date; Nasdaq Trader and NYSE: the Reg SHO threshold lists,
     # one file per market and day; IBKR: its public short-stock file (one FTP download a run, no account).
@@ -31,6 +32,9 @@ DAY_CAPS: dict[str, int] = {
     "nasdaqtrader": 500,
     "nyse": 2_000,
     "ibkr": 50,
+    # The fundamentals layer's (PR 12; working numbers): Alpha Vantage's free tier allows 25 requests a day. Its
+    # yfinance estimates share "yfinance" above.
+    "alphavantage": 25,
 }
 
 

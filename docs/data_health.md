@@ -165,8 +165,8 @@ the proposed alarm limits as set (decision 1), to be checked again after two wee
 Inside each card: the dataset's checks (decision 2: last run, source as of, coverage, rows removed and added,
 calls, next check due, open `build_issues`, with the newest ten issues listed), backfill progress (SPX: sessions
 with a partition out of the sessions expected since 16 Jan 2025, the missing ones, the last partition; market
-series: partitions per source and year), the WRDS difference slot (decision 3: "no WRDS run yet" until PR 7 and
-PR 12 bring the data) and the schedule state.
+series: partitions per source and year), the WRDS difference slot (decision 3: "no WRDS run yet" on every card but
+the fundamentals layer's WRDS checks, below) and the schedule state.
 
 **The spine (PR 5).** Seven more dataset cards, one per spine dataset (`docs/data_architecture.md`, "The identity
 spine"), each with its own cadence (the SEC file and OpenFIGI weekly, WRDS monthly, the fund files and
@@ -180,7 +180,18 @@ partitions), Alpaca's corporate actions, the SEC cover shares, the Yahoo and UW 
 `prices/serving`. The WRDS history card is attended (`python -m RevenueChaser.rcdata.build backfill wrds/prices`);
 its backfill progress counts the table-year partitions (`secd 1984` ...) out of those expected, and its WRDS
 difference slot shows the store's monthly report (`wrds_price_diff`): per comparison the sessions compared and how
-many differ by more than 1 bp, with the largest difference. Every other card still says "no WRDS run yet".
+many differ by more than 1 bp, with the largest difference. Every other card still says "no WRDS run yet", except
+the four WRDS checks of the fundamentals layer below.
+
+**The fundamentals layer (PR 12).** Eleven more dataset cards, one per fundamentals dataset
+(`docs/data_architecture.md`, "Fundamentals"), each with its own cadence (the SEC facts and filings, the Alpha Vantage
+calendar, UW's preliminary quarters and `fundamentals/tables` daily, the yfinance estimates weekly, the SEC's FSDS and
+the four WRDS checks monthly). The WRDS cards `wrds/fundq`, `wrds/funda`, `wrds/firm_ratio` and `wrds/segments` are
+attended, with their own command (`python -m RevenueChaser.rcdata.build backfill wrds/fundq wrds/funda
+wrds/firm_ratio wrds/segments`), and their WRDS difference slot is the monthly difference report: the note of the
+newest run that read WRDS (a skipped or failed run is not one), so the agreement counts against the SEC and the
+number of revisions since the snapshot before are on the card (decided 27 Oct). No coverage target is set for these
+cards yet: the coverage is shown, and the alarm limits wait for two weeks of real data, as decision 1 did.
 
 **The identity card** (D9) is the first card of the section. It replaces the hand-built Identity coverage card of
 the old page (3.6), which is no longer shown. From the same read-only spine handle as the cards: the SEC file's

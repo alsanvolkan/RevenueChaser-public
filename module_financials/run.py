@@ -1,12 +1,14 @@
 """Orkestrasyon: ticker -> Quick Remarks + Fin Model engine'leri -> rapor."""
 from __future__ import annotations
 
+import logging
 import re
+from datetime import date
 from pathlib import Path
 
 from RevenueChaser.core.reporting_common import write_artifact
 
-from .config import OUTPUT_DIR, PEER_K
+from .config import OUTPUT_DIR, PEER_K, RISK_FREE_MAX_AGE_DAYS
 from .engines import (
     comps_engine,
     credit_capacity_engine,
@@ -26,6 +28,37 @@ from RevenueChaser.core.providers import yfinance as yfinance_client
 # An upper-cased symbol such as BRK.B. The ticker becomes a file name (CLI report), so a path piece
 # must never get through (#173 D5, #175).
 _TICKER_RE = re.compile(r"[A-Z0-9][A-Z0-9.\-]{0,9}")
+
+
+logger = logging.getLogger(__name__)
+
+
+def _stored_risk_free() -> dict | None:
+    """The newest stored FRED 10-year Treasury yield (``macro_series`` DGS10, the Earnings nightly's D27) as a rate
+    with its date, or ``None`` when none is stored or the newest is more than ``RISK_FREE_MAX_AGE_DAYS`` old.
+
+    The DCF's risk-free rate was the 4% constant although the store holds the real yield (Financials review S2).
+    Read-only and zero network, so a Refresh reads it too; without it the DCF takes its default and says so.
+
+    The query is the Earnings Radar's (``module_earnings_radar.stored_inputs.dgs10_map``), but the window is looser
+    on purpose (the Opus review's N1): that one pairs daily yields with returns for a beta, so a series three
+    sessions behind is already wrong there. Here one level is read, a ten-year yield moves a few basis points in two
+    weeks, and the fallback is a flat 4%, which is further off than a two-week-old yield; the date is shown.
+    """
+    from RevenueChaser.core import calendar as market_calendar, rawstore
+    try:
+        rows = rawstore.query("SELECT obs_date, value FROM macro_series WHERE series_id = 'DGS10' AND source = 'fred' "
+                              "AND value IS NOT NULL ORDER BY obs_date DESC LIMIT 1")
+    except Exception as exc:  # a store without the table reads as no yield, never a failed report
+        logger.debug("stored DGS10: %s", exc)
+        return None
+    if not rows:
+        return None
+    obs = rows[0]["obs_date"]
+    obs = obs if isinstance(obs, date) else date.fromisoformat(str(obs)[:10])
+    if (market_calendar.today_ny() - obs).days > RISK_FREE_MAX_AGE_DAYS:
+        return None
+    return {"value": float(rows[0]["value"]) / 100, "as_of": obs.isoformat()}
 
 
 class _NoCachedData(Exception):
@@ -109,6 +142,7 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
     from RevenueChaser.core import universe as _spine
     sector = _spine.gics_of(ticker, _spine.spine_gics([ticker])).sector
     financials["sector"] = sector
+    financials["risk_free_rate"] = _stored_risk_free()
     for m in modules:
         m = m.strip().lower()
         if m in ("dcf", "dcf_engine"):

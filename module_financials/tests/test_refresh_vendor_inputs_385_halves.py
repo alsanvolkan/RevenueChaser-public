@@ -147,7 +147,8 @@ def test_both_halves_stored_still_take_the_valuation_from_the_cache(rawstore_tmp
     _fetch(monkeypatch, tmp_path, _payload(_annual(2021, 3)))
     assert _rows("vendor_financials") > 0 and _rows("vendor_valuation") == 1
 
-    cache_manager.save("TEST", _payload(_annual(2010, 1), info=_DECOY_INFO))
+    # Three decoy years: the cache's year count is the window the Refresh models (review N4), its values are not.
+    cache_manager.save("TEST", _payload(_annual(2008, 3), info=_DECOY_INFO))
     res = _refresh(monkeypatch, tmp_path)
     stored = vendor_data.read_financials("TEST")
 
@@ -228,3 +229,21 @@ def test_a_cache_without_an_info_falls_back_to_the_stored_valuation(rawstore_tmp
     assert fin["market_cap"] == 100_000.0 and fin["beta"] == 1.2 and fin["current_price"] == 100.0
     assert fin["shares_outstanding"] == 1000.0
     assert [r["fiscal_year"] for r in fin["annual"]] == ["2021", "2022", "2023"]   # statements from the cache
+
+
+# ── T8: as many years as the Fetch modelled (Financials review N4) ──────────────────────────────────────────
+def test_a_refresh_models_as_many_years_as_its_fetch(rawstore_tmp_db, tmp_path, monkeypatch):
+    """Yahoo serves about four fiscal years and the store keeps every period it ever served, so six can be stored
+    when the Fetch modelled four. The NWC/revenue average takes every year: the Refresh must take the same four."""
+    six = _annual(2018, 6)
+    for rec in six[:2]:                                    # two older years with a different working-capital mix
+        rec["receivables"] = rec["revenue"] * 0.5
+    vendor_data.record(statements=vendor_data.statement_rows_yfinance("TEST", _payload(six)),
+                       run_id="job-old", run_at=COMPLETE - 365 * 86400)
+    assert len(vendor_data.read_financials("TEST")["annual"]) == 6
+
+    fetched = _fetch(monkeypatch, tmp_path, _payload(_annual(2020, 4)))      # what the provider serves today
+    res = _refresh(monkeypatch, tmp_path)
+
+    assert [r["fiscal_year"] for r in res["results"]["financials"]["annual"]] == ["2020", "2021", "2022", "2023"]
+    assert res["results"]["modules"]["dcf"]["base_year"] == fetched["results"]["modules"]["dcf"]["base_year"]

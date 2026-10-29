@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from ..config import to_float
-from ._inputs import net_debt as _net_debt
+from ._inputs import net_debt as _net_debt, not_for_a_bank
 from RevenueChaser.core.providers.validator import validate_annual
 
 # Genel eşikler (sektöre göre ayarlanabilir)
@@ -14,6 +14,8 @@ INTEREST_COVERAGE_STRESSED = 2.0
 
 def run_credit_capacity(financials: dict, assumptions: dict | None = None) -> dict:
     """En son mali yıldan kaldıraç ve karşılama metriklerini hesaplar."""
+    if (bank := not_for_a_bank(financials, "debt / EBITDA and interest-coverage grading")) is not None:
+        return bank
     a = dict(assumptions or {})
     annual, warnings = validate_annual(financials.get("annual", []))
     if not annual:

@@ -19,5 +19,5 @@ def test_the_alpaca_key_id_and_secret_are_two_declared_names():
 
 
 def test_yfinance_has_a_day_cap():
-    assert caps.cap_for("yfinance") == 3_000
+    assert caps.cap_for("yfinance") == 3_000 + 2_000      # the float lookups and the fundamentals estimates
     assert caps.cap_for("alpaca") == 20_000

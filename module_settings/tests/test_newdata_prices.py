@@ -67,7 +67,7 @@ def test_the_wrds_history_card_names_its_own_attended_command_and_no_run_yet():
     card = _card("wrds/prices")
     assert card["attended"] and card["attended_command"] == "python -m RevenueChaser.rcdata.build backfill wrds/prices"
     assert card["wrds"]["text"] == "no WRDS run yet"
-    assert _card("wrds/sec_idhist")["attended_command"] == newdata.ATTENDED_COMMAND
+    assert _card("wrds/sec_idhist")["attended_command"] == newdata.attended_command("spine")
 
 
 def test_the_wrds_history_backfill_counts_its_table_years(monkeypatch):

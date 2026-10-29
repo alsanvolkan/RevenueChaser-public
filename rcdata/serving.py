@@ -1,7 +1,7 @@
 """Serving files: built as a new file, checked, then swapped over the live one; read only through ``open_read`` (D1).
 
 One builder process writes. Each kind (``market``; ``spine`` since PR 5; ``prices`` since PR 7; ``ownership`` since
-PR 16) is built into ``<kind>.<build_id>.duckdb``
+PR 16; ``fundamentals`` since PR 12) is built into ``<kind>.<build_id>.duckdb``
 beside the live ``<kind>.duckdb`` under ``config.MARKET_DIR``; ``BuildFile.swap`` closes the writer (after a
 ``CHECKPOINT``, so no ``.wal`` is left), opens the new file read-only, checks its ``serving_schema_version`` row and
 the row count of every expected table, and only then moves it into place. On any failure — a check, or an exception inside the
@@ -34,6 +34,8 @@ SERVING_SCHEMA_VERSION = {"market": 1, "spine": 1, "ownership": 1}
 
 # PR 7 (G2): ``prices.duckdb``, the daily bars, corporate actions, shares and market cap (``build/prices/``).
 SERVING_SCHEMA_VERSION["prices"] = 1
+# PR 12 (G5): ``fundamentals.duckdb``, the facts, filings, earnings, estimates and checks (``build/fundamentals/``).
+SERVING_SCHEMA_VERSION["fundamentals"] = 1
 
 KINDS = tuple(SERVING_SCHEMA_VERSION)
 VERSION_TABLE = "serving_schema_version"

@@ -22,7 +22,7 @@ def test_report_renders_the_data_date_from_the_store_stamp(financials):
     financials["_fetched_at_iso"] = "2026-09-02T08:00:00+00:00"
     html = build_report_html(_results(financials))
     assert "Last sync:" in html
-    assert "Wednesday, September 02, 2026 EOD" in html
+    assert "Tuesday, September 01, 2026 EOD" in html          # 04:00 ET: before the open (review S4)
 
 
 def test_report_still_renders_when_the_stamp_is_missing(financials):
