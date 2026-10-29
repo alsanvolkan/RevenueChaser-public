@@ -112,21 +112,15 @@ def _sec13f_day() -> str | None:
     return _day(str(max(periods))) if periods else None
 
 
-# Newest print times read for the LEAPS chip: text order is near the time order (offsets can move a value a few
-# hours), so the session is taken over this many newest values, not only the first.
-_LEAPS_CANDIDATES = 50
-
-
 def _leaps_day() -> str | None:
-    """NY session of the newest flow print (its ``executed_at``, else when the store found it), falling back to the
-    newest cached snapshot. ``discovered_at`` alone dated a print by its discovery: a Saturday scan read Saturday."""
-    rows = rawstore.query(
-        "SELECT v FROM (SELECT DISTINCT COALESCE(NULLIF(executed_at, ''), discovered_at) AS v "
-        "FROM leaps_flow_prints) WHERE v IS NOT NULL AND v <> '' ORDER BY v DESC LIMIT ?", [_LEAPS_CANDIDATES])
-    sessions = [d for d in (session_of(r["v"]) for r in rows) if d]
-    if sessions:
-        return max(sessions)
-    return _max("SELECT max(json_extract_string(payload, '$.latest.as_of')) AS v FROM leaps_cache")
+    """Newest session the options store holds for SPX and the option watch list (``option_daily``, G9): the names the
+    LEAPS board reads its footprints and prints from. A name off the list, or the old store's ``leaps_flow_prints``
+    and ``leaps_cache``, never date it. ``option_daily`` holds one row a name and session, so the read is small."""
+    from RevenueChaser.core import board_requests
+    from RevenueChaser.rcdata import read
+    sessions = [r["session_date"] for r in read.option_daily(board_requests.option_list_names())
+                if r.get("session_date")]
+    return _day(str(max(sessions))) if sessions else None
 
 
 def _spx_gamma_day() -> str | None:

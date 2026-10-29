@@ -15,17 +15,17 @@ from datetime import date, datetime, timezone
 
 import numpy as np
 
-from RevenueChaser.core import calendar
+from RevenueChaser.core import board_requests, calendar
 from RevenueChaser.core.config import to_float
 
 from . import config, opd_math, uw_chain
 
 logger = logging.getLogger(__name__)
 
-DATASET = "uw/option_list"
+DATASET = board_requests.OPTION_LIST
 SOURCE = "options store (uw/option_list)"
 REQUESTED_BY = "oipd"
-NOT_ON_LIST = "not on the option watch list"
+NOT_ON_LIST = board_requests.NOT_ON_LIST
 
 
 def _now() -> str:
@@ -39,13 +39,8 @@ def _today() -> str:
 
 # ── the stored chain ─────────────────────────────────────────────────────────────────────────────────────────────
 def list_names() -> list[str]:
-    """SPX and the option watch list (``rcdata/build/options/names.py``: the names ``uw/option_list`` fetches)."""
-    from RevenueChaser.rcdata.build.options import names
-    try:
-        return names.list_names()
-    except Exception as exc:  # noqa: BLE001 - an unreadable ops.sqlite still leaves SPX
-        logger.warning("oipd: option watch list not read: %s", exc)
-        return list(names.ALWAYS)
+    """SPX and the option watch list (the names ``uw/option_list`` fetches)."""
+    return board_requests.option_list_names()
 
 
 def chain_rows(ticker: str, contracts: list[dict], meta: dict) -> list[dict]:
@@ -121,22 +116,11 @@ def last_ticker() -> str | None:
 
 
 def builder_request() -> str:
-    """Queue one ``uw/option_list`` unless one is queued or running; the board's one-line note.
+    """Queue one ``uw/option_list`` (``core/board_requests.py``); the board's one-line note.
 
-    Before the dataset's first run (the server thread's: it ``starts_by_hand``) nothing is queued, so a board press
-    is never the store's first write. A locked or broken ``ops.sqlite`` is a note, never a failed Fetch.
     Default chosen, change if avo prefers: the Fetch asks for the whole list's run (the builder skips the names it
     already has for the session and sends UW nothing outside the evening window), not for the picked name alone."""
-    from RevenueChaser.rcdata import ops
-    try:
-        if not ops.ever_built(DATASET):
-            state = "not queued: it has not had its first run yet (the server thread starts it after a backup)"
-        else:
-            state = "queued" if ops.enqueue_once(DATASET, None, by=REQUESTED_BY) is not None else "already queued"
-    except Exception as exc:  # noqa: BLE001 - the board renders what is stored either way
-        logger.warning("oipd: builder request for %s not queued: %s", DATASET, exc)
-        state = f"not queued ({type(exc).__name__}: {exc})"[:200]
-    return f"Builder request: {DATASET} {state}."
+    return board_requests.builder_note(DATASET, REQUESTED_BY)
 
 
 # ── fit ─────────────────────────────────────────────────────────────────────

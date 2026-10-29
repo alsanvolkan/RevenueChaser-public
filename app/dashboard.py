@@ -194,7 +194,7 @@ def _no_cache(resp):
 # Register module runners with the job queue. ``produces`` lists which iframes
 # to reload when the job completes.
 jobs.register("earnings", runners.run_earnings_range, ["module_earnings_radar"])
-jobs.register("module_leaps", runners.run_leaps_latest, ["module_leaps"])  # live UW scan (Fetch)
+jobs.register("module_leaps", runners.run_leaps_latest, ["module_leaps"], requires_uw=False)   # G9: options store
 # 13F Fetch (G9) = queue one ownership/serve and render from the ownership store; no SEC, OpenFIGI or UW call.
 jobs.register("module_sec_13f", runners.build_sec13f, ["module_sec_13f"], requires_uw=False, lane="long",
               cancellable=True)

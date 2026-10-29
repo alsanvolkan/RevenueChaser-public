@@ -9,61 +9,20 @@ Red-first for the three L2 behaviours:
 from datetime import date, timedelta
 
 from RevenueChaser.core import rawstore
-from RevenueChaser.core.providers.result import ProviderResult
 from RevenueChaser.module_leaps import engine
 from RevenueChaser.module_leaps.scan import scan_leaps, scan_leaps_cached
+from RevenueChaser.module_leaps.tests.options_store import pin, print_row, store_footprint
 from RevenueChaser.module_leaps.tests.test_leaps_l3 import seed_session
+from RevenueChaser.module_oipd.tests.options_store import write_options
 
 TODAY = date(2026, 10, 6)
 FAR = "2027-12-17"                       # > 270 days after TODAY
 
 
-class _UW:
-    """A UW double: far-dated OI per ticker, one tape page, names from the screener."""
-    auth_error = None
-
-    def __init__(self, oi, tape=()):
-        self.oi, self.tape = oi, list(tape)
-        self.calls = self.failed = 0
-
-    def health(self):
-        return {"calls": self.calls, "failed": self.failed, "auth_error": None, "failures": [],
-                "breaker_open": False, "skipped_calls": 0}
-
-    def option_trades(self, **kw):
-        return list(self.tape)
-
-    def screener_batch(self, tickers):
-        return {t: {"full_name": f"{t} Inc"} for t in tickers}
-
-    def oi_per_expiry(self, ticker, date=None):
-        self.calls += 1
-        call, put = self.oi.get(ticker, (0, 0))
-        return [{"expiry": FAR, "call_oi": call, "put_oi": put}]
-
-    def flow_per_expiry(self, ticker):
-        self.calls += 1
-        return []
-
-    def iv_rank(self, ticker):
-        self.calls += 1
-        return [{"iv_rank_1y": "55.0"}]
-
-    def oi_per_expiry_result(self, ticker, date=None):
-        return ProviderResult("ok", self.oi_per_expiry(ticker, date))
-
-    def flow_per_expiry_result(self, ticker):
-        return ProviderResult("ok", self.flow_per_expiry(ticker))
-
-    def iv_rank_result(self, ticker):
-        return ProviderResult("ok", self.iv_rank(ticker))
-
-
-def _print(pid, ticker, ned=None):
-    return {"id": pid, "underlying_symbol": ticker, "strike": "200", "expiry": "2027-06-18",
-            "premium": "200000", "size": 10, "option_type": "call", "delta": "0.8",
-            "next_earnings_date": ned, "executed_at": f"{TODAY.isoformat()}T14:00:00Z",
-            "ask_vol": 10, "bid_vol": 2, "tags": []}
+def _calendar(dates: dict):
+    """The options store's screener set, the calendar the near-event flag reads (G9)."""
+    write_options(option_screener_daily=[{"session_date": TODAY, "ticker": t, "report_date": d, "passes_gates": True,
+                                          "source": "uw/option_screener"} for t, d in dates.items()])
 
 
 def _render(tmp_path, monkeypatch, watched, unwatched, watchlist):
@@ -89,8 +48,9 @@ def test_a_quiet_pinned_name_is_shown_on_the_refresh_path(rawstore_tmp_db, tmp_p
 
 
 def test_a_quiet_pinned_name_is_shown_on_the_fetch_path(rawstore_tmp_db, tmp_path, monkeypatch):
-    rawstore.save_watchlist({"BBB"})
-    watched, unwatched = scan_leaps(_UW({"BBB": (300, 300)}), today=TODAY)
+    pin("BBB")
+    store_footprint("BBB", TODAY, {date.fromisoformat(FAR): (300, 300)})
+    watched, unwatched = scan_leaps(None, today=TODAY)
     assert [w["ticker"] for w in watched] == ["BBB"] and watched[0]["label"] == "Quiet"
     html = _render(tmp_path, monkeypatch, watched, unwatched, {"BBB"})
     assert '<div class="tkr">BBB</div>' in _watchlist_block(html)
@@ -109,21 +69,26 @@ def test_the_board_carries_a_label_filter_chip_per_label_default_on(tmp_path, mo
 
 # ── 2. the event guard ──
 
-def test_a_print_with_earnings_within_seven_days_is_quiet_and_tagged(rawstore_tmp_db):
-    rawstore.save_watchlist({"AAA"})
+def _event_scan(days_to_report: int):
+    """AAA pinned and on the option list, its far-dated call OI doubled since yesterday, one far-dated large print
+    today, reporting ``days_to_report`` days out."""
+    pin("AAA")
     seed_session(date(2026, 10, 5), {"AAA": [{"expiry": FAR, "call_oi": 500, "put_oi": 0}]})
-    ned = (TODAY + timedelta(days=3)).isoformat()
-    watched, _ = scan_leaps(_UW({"AAA": (1000, 200)}, tape=[_print("q1", "AAA", ned)]), today=TODAY)
-    (aaa,) = watched
+    store_footprint("AAA", TODAY, {date.fromisoformat(FAR): (1000, 200)},
+                    prints=[print_row("AAA", "q1", TODAY, date(2027, 6, 18))])
+    _calendar({"AAA": TODAY + timedelta(days=days_to_report)})
+    (aaa,), _ = scan_leaps(None, today=TODAY)
+    assert aaa["frequency"] == 1
+    return aaa
+
+
+def test_a_print_with_earnings_within_seven_days_is_quiet_and_tagged(rawstore_tmp_db):
+    aaa = _event_scan(3)
     assert aaa["near_term_event"] is True and aaa["label"] == "Quiet"
 
 
 def test_a_print_with_earnings_beyond_seven_days_stays_accumulating(rawstore_tmp_db):
-    rawstore.save_watchlist({"AAA"})
-    seed_session(date(2026, 10, 5), {"AAA": [{"expiry": FAR, "call_oi": 500, "put_oi": 0}]})
-    ned = (TODAY + timedelta(days=30)).isoformat()
-    watched, _ = scan_leaps(_UW({"AAA": (1000, 200)}, tape=[_print("q1", "AAA", ned)]), today=TODAY)
-    (aaa,) = watched
+    aaa = _event_scan(30)
     assert aaa["near_term_event"] is False and aaa["label"] == "Accumulating"
 
 

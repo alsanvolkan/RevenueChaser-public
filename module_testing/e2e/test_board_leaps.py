@@ -1,9 +1,9 @@
-"""LEAPS board, end to end: fetch → store → restart → refresh.
+"""LEAPS board, end to end: options store -> Fetch -> restart -> Refresh (G9, build plan PR 19).
 
-The first board wired into the harness, and the reference for the rest. It is a
-good canary because it is UW-only (no yfinance), writes a table whose contents
-are easy to reason about (``leaps_flow_prints``), and its refresh path is a
-model-only re-render — exactly the "no network" claim under test.
+The footprints and prints are a fixture ``options.duckdb`` in the dashboard's market root, as ``uw/option_list``
+serves it, for names put on the option watch list through the dashboard's own route. The session is today and the
+expiries are relative to today, because the scan's print window and the far line are date-based. Neither the Fetch
+nor the Refresh calls a provider, and the old store's ``leaps_cache`` and ``leaps_flow_prints`` are not written.
 """
 from __future__ import annotations
 
@@ -12,17 +12,48 @@ import os
 import re
 import shutil
 import subprocess
+from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
 import pytest
 
+from RevenueChaser.module_leaps.tests.options_store import print_row, store_footprint
+
+_PANEL = {"X-RC-Panel": "leaps"}
+
+
+def _toggle(dashboard, kind, ticker):
+    path = f"/api/watchlist/option/toggle/{ticker}" if kind == "option" else f"/api/watchlist/toggle/{ticker}"
+    r = dashboard.client.post(path, headers=_PANEL)
+    assert r.status_code == 200, r.text
+
 
 @pytest.fixture
-def fetched(dashboard):
-    """A completed LEAPS fetch against the mock provider."""
-    result = dashboard.run_job("/run/module_leaps")
-    assert result.ok, f"LEAPS fetch failed: {result}\n{dashboard.logs()}"
+def stored(dashboard):
+    """NVDA and AMD on the option watch list with far-dated large prints today, NVDA pinned; SPX prints too (an
+    index, never a row); TSLA pinned off the option list, with stored rows that must not be read."""
+    today = date.today()
+    far, far2 = today + timedelta(days=400), today + timedelta(days=500)
+    market = Path(dashboard.env["RC_MARKET_DIR"])
+    for t in ("NVDA", "AMD"):
+        _toggle(dashboard, "option", t)
+    for t in ("NVDA", "TSLA"):
+        _toggle(dashboard, "stock", t)
+    store_footprint("NVDA", today, {far: (900, 100), far2: (300, 0)}, market=market,
+                    prints=[print_row("NVDA", "n1", today, far), print_row("NVDA", "n2", today, far2)])
+    store_footprint("AMD", today, {far: (500, 500)}, market=market,
+                    prints=[print_row("AMD", "a1", today, far, premium=300_000.0)])
+    store_footprint("SPX", today, {far: (10, 10)}, market=market, prints=[print_row("SPX", "s1", today, far)])
+    store_footprint("TSLA", today, {far: (900, 0)}, market=market, prints=[print_row("TSLA", "t1", today, far)])
+    return dashboard
+
+
+@pytest.fixture
+def fetched(stored, provider_routes):
+    """A completed LEAPS Fetch over the stored fixture."""
+    result = stored.run_job("/run/module_leaps")
+    assert result.ok, f"LEAPS fetch failed: {result}\n{stored.logs()}"
     return result
 
 
@@ -33,11 +64,8 @@ class TestFetch:
         assert r.status_code == 200
         assert "LEAPS" in r.text
 
-    def test_fetch_persists_prints_to_the_store(self, dashboard, fetched):
-        assert dashboard.table_count("leaps_flow_prints") > 0
-
     def test_index_tickers_are_excluded_from_the_scan(self, dashboard, fetched):
-        """SPX is in the fixture tape and must not become a candidate."""
+        """SPX is on the list and has a far-dated print: it must not become a candidate."""
         html = dashboard.view("module_leaps").text
         assert "NVDA" in html
         assert ">SPX<" not in html
@@ -45,17 +73,24 @@ class TestFetch:
     def test_fetch_writes_the_board_artifact(self, dashboard, fetched):
         assert dashboard.artifact("leaps_latest.html").exists()
 
-    def test_the_board_shows_the_fetched_names(self, dashboard, fetched):
+    def test_the_board_shows_the_stored_names(self, dashboard, fetched):
         html = dashboard.view("module_leaps").text
-        assert "NVDA" in html and "AMD" in html
+        assert 'data-ticker="NVDA"' in html and 'data-ticker="AMD"' in html
+
+    def test_a_pinned_name_off_the_list_shows_the_label(self, dashboard, fetched):
+        html = dashboard.view("module_leaps").text
+        block = html[html.index('data-ticker="TSLA"'):]
+        assert "not on the option watch list" in block[:block.index("</tr>")]
 
     def test_provenance_reports_a_data_date(self, dashboard, fetched):
-        """`/api/data_asof` is the store-backed proof that a fetch landed."""
-        assert dashboard.data_as_of("module_leaps") is not None
+        assert dashboard.data_as_of("module_leaps") == date.today().isoformat()
 
-    def test_the_fetch_actually_called_the_provider(self, dashboard, provider_routes, fetched):
-        assert provider_routes.requests("/api/option-trades"), \
-            "fetch must hit the tape endpoint"
+    def test_the_fetch_is_a_builder_request_and_calls_no_provider(self, dashboard, provider_routes, fetched):
+        assert provider_routes.request_count == 0, [q.path for q in provider_routes.requests()]
+        assert "Builder request: uw/option_list not queued" in dashboard.view("module_leaps").text
+
+    def test_nothing_is_written_to_the_old_store(self, dashboard, fetched):
+        assert dashboard.table_count("leaps_cache") == 0 and dashboard.table_count("leaps_flow_prints") == 0
 
 
 class TestRefreshIsOfflineAndFaithful:
@@ -78,7 +113,7 @@ class TestRefreshIsOfflineAndFaithful:
         )
 
     def test_refresh_survives_a_restart(self, dashboard, fetched, clear_cache):
-        """Nothing in memory may be load-bearing — only .store survives a restart."""
+        """Nothing in memory may be load-bearing: only the stores survive a restart."""
         clear_cache()
         dashboard.restart()
         r = dashboard.view("module_leaps", refresh=True)
@@ -98,52 +133,6 @@ class TestEmptyStore:
         r = dashboard.view("module_leaps")
         assert r.status_code == 200
         assert "No LEAPS data yet" in r.text or "LEAPS" in r.text
-
-
-class TestPinnedFootprint:
-    """L1 (#377 LP-A): a pinned name's footprint is saved when its reads answer, and not when one failed."""
-
-    def _pin(self, dashboard, ticker="NVDA"):
-        r = dashboard.client.post(f"/api/watchlist/toggle/{ticker}")
-        assert r.status_code == 200 and r.json()["in_watchlist"] is True
-
-    def test_a_pinned_name_whose_reads_answer_is_cached(self, dashboard, provider_routes):
-        self._pin(dashboard)
-        result = dashboard.run_job("/run/module_leaps")
-        assert result.ok, f"LEAPS fetch failed: {result}\n{dashboard.logs()}"
-        assert provider_routes.requests("/api/stock/NVDA/oi-per-expiry")
-        assert dashboard.table_count("leaps_cache") == 1
-
-    def test_a_pinned_name_whose_oi_read_failed_is_not_cached(self, dashboard, provider_routes):
-        provider_routes.route("/api/stock/NVDA/oi-per-expiry", payload={"message": "not found"}, status=404)
-        self._pin(dashboard)
-        result = dashboard.run_job("/run/module_leaps")
-        assert result.ok, f"LEAPS fetch failed: {result}\n{dashboard.logs()}"
-        assert provider_routes.requests("/api/stock/NVDA/oi-per-expiry")
-        assert dashboard.table_count("leaps_cache") == 0
-
-
-class TestHistoryBaselines:
-    """L3 (#377): the label comes from the recorded sessions, and a Refresh re-derives it with no network."""
-
-    def test_a_refresh_after_two_fetches_makes_no_request_and_leaves_the_cache(
-            self, dashboard, provider_routes, clear_cache):
-        r0 = dashboard.client.post("/api/watchlist/toggle/NVDA")
-        assert r0.status_code == 200 and r0.json()["in_watchlist"] is True
-        for _ in range(2):
-            result = dashboard.run_job("/run/module_leaps")
-            assert result.ok, f"LEAPS fetch failed: {result}\n{dashboard.logs()}"
-        cached = dashboard.table_count("leaps_cache")
-        assert cached > 0
-        clear_cache()
-        before = provider_routes.request_count
-        r = dashboard.view("module_leaps", refresh=True)
-        assert r.status_code == 200
-        assert provider_routes.request_count == before, (
-            "the Refresh re-deriving from the recorded sessions reached the network: "
-            f"{[q.path for q in provider_routes.requests()[before:]]}"
-        )
-        assert dashboard.table_count("leaps_cache") == cached      # a Refresh writes nothing
 
 
 class TestFilterKit:

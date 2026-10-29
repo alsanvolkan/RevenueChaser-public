@@ -220,7 +220,7 @@ class TestDashboardRoutes:
     def test_run_no_api_key(self, monkeypatch):
         c = self._client()
         monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())
-        r = c.post("/run/module_leaps")  # Fetch = live UW scan -> gated on the key
+        r = c.post("/run/rotation")  # Fetch = live UW pull -> gated on the key (LEAPS reads the store since G9)
         assert r.status_code == 400
         data = r.get_json()
         assert data["ok"] is False
@@ -753,10 +753,11 @@ class TestRefreshReadsStoreFetchReadsNetwork:
         fresh = (tmp_path / "leaps_latest.html").read_text(encoding="utf-8")
         assert "STALE board" not in fresh               # artifact overwritten too
 
-    def test_leaps_fetch_is_gated_on_the_api_key(self, monkeypatch):
-        # "Fetch" is a live UW scan -> without a key it is refused before any network
+    def test_a_uw_fetch_is_gated_on_the_api_key(self, monkeypatch):
+        # A "Fetch" that is a live UW pull is refused before any network without a key. LEAPS was the example until
+        # G9 moved it onto the options store; Sector Rotation still pulls UW itself.
         monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())
-        r = panel_test_client(dashboard.app).post("/run/module_leaps")
+        r = panel_test_client(dashboard.app).post("/run/rotation")
         assert r.status_code == 400
         assert r.get_json()["ok"] is False
         # The refusal must name the key, the file, and where to get one — the

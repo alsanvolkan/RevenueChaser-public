@@ -380,31 +380,33 @@ def run_earnings_range(uw: UWClient, start: date | None = None, end: date | None
     return EARNINGS_LATEST
 
 
-def run_leaps_latest(uw: UWClient) -> Path:
+def run_leaps_latest(uw: UWClient | None = None) -> Path:
+    """The LEAPS Fetch (G9, build plan PR 19): queue one ``uw/option_list`` (D1), score the board from the options
+    store and record the run (#377). No provider call: the builder fetches the chain and the prints."""
+    from RevenueChaser.core import board_requests
     from RevenueChaser.module_leaps.scan import scan_leaps
     from RevenueChaser.module_leaps.report import render_leaps_dashboard
     from RevenueChaser.module_leaps import history as leaps_history
     notes: list[str] = []
     footprints: list[dict] = []                # every watchlist footprint, for the result history (#377)
     run, run_at = _freeze_run_id(), time.time()
-    watched, unwatched = scan_leaps(uw, warnings=notes, footprints=footprints)
-    health = _uw_health(uw)
+    watched, unwatched = scan_leaps(None, warnings=notes, footprints=footprints)
+    request = board_requests.builder_note(board_requests.OPTION_LIST, "leaps")
     render_leaps_dashboard(watched, unwatched, watchlist=_load_watchlist(),
                            filename=str(LEAPS_LATEST.relative_to(OUTPUT_DIR)),
-                           provider_health=health, notice=" ".join(notes) or None)
+                           provider_health=None, notice=" ".join([*notes, request]))
     # Result history (#377): after the board file, so it holds what the board showed. A failure is a job note,
     # never a failed Fetch: the board file does not depend on it.
     try:
-        leaps_history.record(footprints, run_id=run, run_at=run_at, uw_health=health, warnings=notes,
+        leaps_history.record(footprints, run_id=run, run_at=run_at, uw_health=None, warnings=notes,
                              shown={"watched": len(watched), "unwatched": len(unwatched)})
     except Exception as exc:
         logger.exception("LEAPS result history failed")
         ledger.add_note(f"LEAPS result history was not recorded: {type(exc).__name__}: {exc}")
     if not watched and not unwatched:
         # The empty board is written above; say why on the job too (O13).
-        raise JobMessage(_provider_gap_text(uw)
-                         or "No far-dated flow prints in the lookback window and no watchlist "
-                            "footprint stored — the board shows its empty state.")
+        raise JobMessage("No pinned name and no far-dated large print among the option watch list's stored prints "
+                         "— the board shows its empty state.")
     return LEAPS_LATEST
 
 
@@ -440,9 +442,8 @@ def last_fetch_notice(board: str, *, partial: bool = False) -> str | None:
 def run_leaps_cached(uw=None) -> Path:
     """Model-only LEAPS render from the store — no network.
 
-    Reads the last cached footprint per watchlist ticker (``leaps_cache``) and
-    the stored far-dated prints (``leaps_flow_prints``), then renders the board.
-    The dashboard's Refresh uses this; the live UW re-scan is ``run_leaps_latest``.
+    Scores the board from the options store exactly as the Fetch does (G9), recording nothing, then renders it.
+    The dashboard's Refresh uses this; the Fetch is ``run_leaps_latest``.
     The last Fetch's notes come back from its history header (C24, #383).
     """
     from RevenueChaser.module_leaps.scan import scan_leaps_cached

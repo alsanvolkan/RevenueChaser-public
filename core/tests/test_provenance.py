@@ -96,13 +96,21 @@ class TestResolvers:
         board.write_text(json.dumps({"ticker": "ZZZ", "asof": "2026-10-28", "n_contracts": 0}), encoding="utf-8")
         assert provenance.data_as_of("module_oipd") is None
 
-    def test_leaps_prefers_prints_and_falls_back_to_the_cache(self, rawstore_tmp_db):
-        rawstore.write_rows("leaps_cache", [
-            {"ticker": "NOK", "payload": {"latest": {"as_of": "2026-08-27"}, "history": []}}])
-        assert provenance.data_as_of("module_leaps") == "2026-08-27"
-        rawstore.write_rows("leaps_flow_prints", [
-            {"id": "p1", "ticker": "AAPL", "discovered_at": "2026-09-02"}])
-        assert provenance.data_as_of("module_leaps") == "2026-09-02"
+    def test_leaps_is_the_newest_options_store_session_of_the_list_names(self, rawstore_tmp_db):
+        """G9: the LEAPS board reads the options store, so its data date is the newest session ``uw/option_list``
+        stored for SPX and the option watch list; a name off the list, or the old store's prints, never date it."""
+        from datetime import date
+
+        from RevenueChaser.module_oipd.tests.options_store import daily_row, write_options
+        from RevenueChaser.rcdata import ops
+        rawstore.write_rows("leaps_flow_prints", [{"id": "p1", "ticker": "AAPL", "discovered_at": "2026-09-02"}])
+        assert provenance.data_as_of("module_leaps") is None
+        write_options(option_daily=[daily_row("SPX", date(2026, 10, 26), 5800.0),
+                                    daily_row("AAA", date(2026, 10, 27), 100.0),
+                                    daily_row("ZZZ", date(2026, 10, 28), 10.0)])
+        assert provenance.data_as_of("module_leaps") == "2026-10-26"
+        ops.watch_add("option", "AAA", by="test")
+        assert provenance.data_as_of("module_leaps") == "2026-10-27"
 
     def test_financials_reports_the_last_tickers_fetch_day(self, rawstore_tmp_db, tmp_path,
                                                            monkeypatch):
