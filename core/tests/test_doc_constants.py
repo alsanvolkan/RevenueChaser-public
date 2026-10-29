@@ -314,3 +314,20 @@ def test_the_spine_section_states_what_the_code_owns():
     assert f"**Tier rule v{tier.VERSION}**" in section
     assert f"`{universe.SOURCE_ENV}={universe.SPINE}`" in section
     assert f"`{universe.SOURCE_ENV}={universe.STORE}`" in section            # PR 6: the old store, the rollback
+
+
+def test_the_ownership_section_states_what_the_code_owns():
+    """PR 16: the ownership store's datasets, served tables, views and build issue kinds, as the code has them."""
+    from RevenueChaser.rcdata.build import DATASETS
+    from RevenueChaser.rcdata.build.ownership import KIND, serve
+    text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
+    section = text[text.index("### The ownership store (`ownership.duckdb`, PR 16)"):text.index("## Migration")]
+    for name, ds in DATASETS.items():
+        if ds.kind == KIND:
+            assert f"| `{name}` |" in section, name
+            for table in ds.tables:
+                assert f"| `{table}` |" in section, table
+    for view in serve.VIEWS:
+        assert f"`{view}`" in section, view
+    for kind in serve.ISSUE_KINDS:
+        assert f"`{kind}`" in section, kind
