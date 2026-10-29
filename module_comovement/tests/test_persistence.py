@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from RevenueChaser.module_comovement import cluster, config, persistence
+from RevenueChaser.module_comovement import returns as returns_mod
 
 
 def _fn(ret, cuts):
@@ -123,3 +124,25 @@ def test_random_names_baseline_is_reproducible_and_strict():
     assert set(a) == {2, 7, 10, 500}
     assert a[500] <= a[10] <= a[2]                     # bar falls as groups grow
     assert persistence.random_names_baseline(corr.iloc[:1, :1], [2]) == {}
+
+
+def test_the_held_out_quarter_is_read_with_the_boards_winsorised_estimator():
+    """Fable review of Co-movement (28 Oct 2026), S3: the groups are formed on winsorised returns (one print must
+    not decide a group, S10), but the held-out quarter was tested on raw ones. A shared print there moved ``oos_r``
+    by however large it was; now the held-out r is the mean pairwise r of the winsorised held-out returns."""
+    prices = _prices()
+    day = prices.index[-20]
+    jump = pd.Series(1.0, index=prices.index)
+    jump[jump.index >= day] = np.exp(0.5)                 # one +50 log-point print, shared by the block
+    for name in BLOCK:
+        prices[name] = prices[name] * jump
+    g = _block_row(persistence.lagged_test(prices, (4,), 1, None, _fn), 4)
+    held_out = np.log(prices / prices.shift(1)).iloc[-config.OOS_HOLDOUT:]
+    members = [m for m in g["members"] if m in held_out.columns]
+
+    def mean_r(ret):
+        c = ret[members].corr().to_numpy()
+        return c[np.triu_indices(len(members), 1)].mean()
+
+    assert g["oos_r"] == pytest.approx(mean_r(returns_mod.winsorize_mad(held_out, config.WINSOR_K)), abs=1e-9)
+    assert g["oos_r"] < mean_r(held_out) - 0.005           # the raw read, which the shared print inflated

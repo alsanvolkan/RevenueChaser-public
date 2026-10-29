@@ -21,6 +21,8 @@ DAY_CAPS: dict[str, int] = {
     "vanguard": 50,
     "nasdaq": 50,
     "invesco": 50,
+    # The prices store's (PR 7; working numbers, not avo's yet): yfinance float lookups, paced 1.5 s apart.
+    "yfinance": 3_000,
     # The ownership store's providers (PR 16; working numbers, not avo's yet). The SEC's filings share "sec" above.
     # FINRA: up to 5 pages of 5,000 rows per settlement date; Nasdaq Trader and NYSE: the Reg SHO threshold lists,
     # one file per market and day; IBKR: its public short-stock file (one FTP download a run, no account).

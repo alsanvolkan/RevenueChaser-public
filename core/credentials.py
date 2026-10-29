@@ -52,6 +52,22 @@ PROVIDERS: dict[str, Provider] = {
         signup_url="https://www.openfigi.com/api",
         required_for="Identity refresh: security type (optional; works slower without a key)",
     ),
+    # PR 7 (G2): Alpaca market data, the prices store's daily bars and corporate actions. Two names: Alpaca
+    # authenticates with a key id and its secret, sent as the APCA-API-KEY-ID / APCA-API-SECRET-KEY headers.
+    "alpaca": Provider(
+        slug="alpaca",
+        label="Alpaca market data (key id)",
+        env_var="ALPACA_API_KEY_ID",
+        signup_url="https://app.alpaca.markets/paper/dashboard/overview",
+        required_for="the prices store's daily bars and corporate actions (rcdata alpaca/bars, alpaca/corporate_actions)",
+    ),
+    "alpaca_secret": Provider(
+        slug="alpaca_secret",
+        label="Alpaca market data (secret key)",
+        env_var="ALPACA_API_SECRET_KEY",
+        signup_url="https://app.alpaca.markets/paper/dashboard/overview",
+        required_for="the prices store's daily bars and corporate actions (with ALPACA_API_KEY_ID)",
+    ),
     "deepseek": Provider(
         slug="deepseek",
         label="DeepSeek",

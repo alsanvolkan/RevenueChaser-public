@@ -174,6 +174,14 @@ spine"), each with its own cadence (the SEC file and OpenFIGI weekly, WRDS month
 cards are attended: they show the CLI command and Pause / Resume, and no Fetch or Backfill (a person logs in and
 confirms Duo on the server).
 
+**The prices store (PR 7).** Seven more cards, one per prices dataset (`docs/data_architecture.md`, "The prices
+store"): Alpaca's daily bars (coverage = Tier A names with a bar on the session, target 99%; backfill = its day
+partitions), Alpaca's corporate actions, the SEC cover shares, the Yahoo and UW float, the WRDS history and
+`prices/serving`. The WRDS history card is attended (`python -m RevenueChaser.rcdata.build backfill wrds/prices`);
+its backfill progress counts the table-year partitions (`secd 1984` ...) out of those expected, and its WRDS
+difference slot shows the store's monthly report (`wrds_price_diff`): per comparison the sessions compared and how
+many differ by more than 1 bp, with the largest difference. Every other card still says "no WRDS run yet".
+
 **The identity card** (D9) is the first card of the section. It replaces the hand-built Identity coverage card of
 the old page (3.6), which is no longer shown. From the same read-only spine handle as the cards: the SEC file's
 rows, then the listed ones, then Tier A, then with a CUSIP, with a FIGI, with a GICS classification and in the

@@ -70,14 +70,19 @@ def config_hash(window: int, linkage: str, cuts,
                 min_obs: int | None = None, oos_holdout: int | None = None,
                 winsor_k: float | None = None, min_periods: int | None = None,
                 bench_stale_sessions: int | None = None,
-                floor: float | None = None) -> str:
+                floor: float | None = None,
+                benchmark_applied: bool | None = None) -> str:
     """Identity of everything that changes a run's numbers.
 
     window, linkage, cuts, horizon, benchmark, MIN_OBS, OOS_HOLDOUT, WINSOR_K,
-    MIN_PERIODS, BENCH_STALE_SESSIONS and the market-cap floor: a stored null or
-    lagged test is reused only under exactly these inputs. An input left ``None``
+    MIN_PERIODS, BENCH_STALE_SESSIONS, the market-cap floor and the engine's
+    method (``config.METHOD``): a stored null or lagged test is reused only under
+    exactly these inputs. An input left ``None``
     is resolved by ``settings.effective(window)`` (what a run at ``window``
-    would use).
+    would use). ``benchmark_applied=False`` with a benchmark asked for is the
+    raw-return fallback (no usable benchmark prices): its own hash, so its null
+    and lagged test never stand in for a residual run's, nor the other way
+    round (Co-movement review N2). ``None`` reads as applied.
     """
     horizon, benchmark = _resolve(horizon, benchmark)
     eff = settings_mod.effective(window)
@@ -87,7 +92,9 @@ def config_hash(window: int, linkage: str, cuts,
         pick(min_obs, eff.min_obs), pick(oos_holdout, eff.oos_holdout),
         f"{float(pick(winsor_k, eff.winsor_k)):g}", pick(min_periods, eff.min_periods),
         pick(bench_stale_sessions, eff.bench_stale_sessions),
-        f"{float(pick(floor, eff.floor)):g}"))
+        f"{float(pick(floor, eff.floor)):g}", f"method={config.METHOD}"))
+    if benchmark_applied is False and config.BENCHMARKS.get(benchmark):
+        raw += "|returns=raw"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
@@ -252,8 +259,9 @@ def split_short_history(prices, dropped, window: int, horizon: int, first: dict 
     *Listed recently*: the ticker's first stored bar is inside the window (it
     listed after the window start), so no Fetch can give it more history — by
     design. *Missing bars*: listed before the window start yet still short of
-    ``MIN_OBS`` returns in it, so stored prices have gaps and Fetch can fill
-    them. Reads only the price frame the run already holds (store-only). ``first`` (ticker -> first bar) is
+    ``MIN_OBS`` returns in it, so the stored prices have gaps. Neither a Fetch nor
+    Daily Bars fills them: Daily Bars writes from a name's last stored session on
+    and never goes back (``core.prices._classify``). Reads only the price frame the run already holds (store-only). ``first`` (ticker -> first bar) is
     given when that frame holds only the window (#379 COM-3), whose first bar is not the listing.
     """
     if not dropped or prices is None or prices.empty:
@@ -296,7 +304,8 @@ _STEP_KEYS = ("scanned_total", "below_floor", "no_market_cap", "no_prices",
 
 def _short_history_steps(f: dict, prices_fix: dict | None) -> list[dict]:
     """One ``short_history`` step, or — when the run recorded the split —
-    ``listed_recently`` (by design, no fix) and ``missing_bars`` (the Daily Bars job fills it)."""
+    ``listed_recently`` (by design, no fix) and ``missing_bars`` (gaps in the stored bars, which no job goes back to
+    fill: the step names no fix)."""
     window = f.get("window") or settings_mod.effective().window
     min_obs = f.get("min_obs") or settings_mod.effective(window).min_obs
     if f.get("listed_recently") is None or f.get("missing_bars") is None:
@@ -596,11 +605,21 @@ def _window_prices(price_tickers, tickers, bench_ticker, eff, horizon):
         prices = prices.loc[:cut]
         if not whole.empty:
             whole = whole.loc[:cut]
-        first = {t: (pd.Timestamp(d) if pd.Timestamp(d) <= cut else None)
-                 for t, d in facts["first"].items()}
-    else:
-        first = {t: pd.Timestamp(d) for t, d in facts["first"].items()}
+    # A name's first bar stays its listing even when it falls after a stale benchmark's cut: it then listed after
+    # the window began, not "missing bars" (Co-movement review N3).
+    first = {t: pd.Timestamp(d) for t, d in facts["first"].items()}
     return prices, last, first, _flat(whole, tickers), cut is not None
+
+
+def _daily_under(prices, ret, horizon: int):
+    """The daily log returns under ``ret``'s ``horizon``-session ones (``horizon - 1`` rows more, same columns),
+    which the h > 1 null shuffles and sums (Co-movement review S1); ``None`` at 1 day or when they do not line up."""
+    if int(horizon) <= 1 or ret is None or ret.empty:
+        return None
+    p = prices.loc[:ret.index[-1], [c for c in ret.columns if c in prices.columns]].tail(len(ret) + int(horizon))
+    if p.shape[1] != ret.shape[1] or len(p) != len(ret) + int(horizon) or not p.index[int(horizon):].equals(ret.index):
+        return None
+    return np.log(p / p.shift(1)).iloc[1:].replace([np.inf, -np.inf], np.nan)
 
 
 def run(no_fetch: bool = False, tickers: list[str] | None = None,
@@ -650,6 +669,8 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
         cut = _bench_cut(prices.index, last, tickers, bench_ticker, eff)
         bench_stale = cut is not None
         if bench_stale:
+            # Each name's listing, read before the cut: one listed after it is listed recently (N3).
+            first = {t: prices[t].first_valid_index() for t in prices.columns}
             # Residuals need the market return on every date; cut the
             # window at the benchmark's last bar instead of NaN-ing the
             # newest sessions for every name (review F3).
@@ -690,7 +711,7 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
                             oos_holdout=eff.oos_holdout, winsor_k=eff.winsor_k,
                             min_periods=eff.min_periods,
                             bench_stale_sessions=eff.bench_stale_sessions,
-                            floor=eff.floor)
+                            floor=eff.floor, benchmark_applied=benchmark_applied)
         stored = _stored_run(chash, prices_through, set(universe_ret.columns),
                              price_tickers)
         if stored:
@@ -705,7 +726,7 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
         universe_ret = returns_mod.residualize(universe_ret, market)
     # The honest counterweight to 250 groups: how many common moves the window
     # holds beyond noise (eigenvalues above the Marchenko–Pastur edge).
-    n_factors = noise.factors_above_noise(universe_ret)
+    n_factors = noise.factors_above_noise(universe_ret, horizon=horizon)
     # S10: the hierarchy is built on the winsorised matrix (one print must not
     # decide a group), while ``universe_ret`` stays raw for the direction line.
     clustered_ret = returns_mod.winsorize_mad(universe_ret, eff.winsor_k)
@@ -732,7 +753,7 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
                         min_obs=eff.min_obs, oos_holdout=eff.oos_holdout,
                         winsor_k=eff.winsor_k, min_periods=eff.min_periods,
                         bench_stale_sessions=eff.bench_stale_sessions,
-                        floor=eff.floor)
+                        floor=eff.floor, benchmark_applied=benchmark_applied)
 
     # The significance null and the lagged persistence test are Fetch-only
     # costs — NULL_PERMS + 1 extra clusterings. A Refresh reuses the last
@@ -740,7 +761,9 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
     # run, groups are not judged and carry no persistence verdict.
     if persisting:
         null = noise.selected_group_null(clustered_ret, cuts, cluster_fn,
-                                         n_perm=noise.NULL_PERMS)
+                                         n_perm=noise.NULL_PERMS, horizon=horizon,
+                                         daily=_daily_under(prices, clustered_ret, horizon),
+                                         winsor_k=eff.winsor_k)
         # Out-of-sample persistence: one extra clustering on the window ending
         # a quarter ago, tested on that quarter only (persistence.py). A short
         # window has no room for it: skipped, and the payload says why.

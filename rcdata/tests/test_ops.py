@@ -30,6 +30,26 @@ def test_ensure_creates_every_table_in_wal_mode_with_the_busy_timeout():
     assert ops.ops_path() == config.MARKET_DIR / "ops.sqlite"
 
 
+def test_a_file_is_marked_ensured_only_after_its_tables_are_committed(monkeypatch, tmp_path):
+    """CI on PR 251 (28 Oct 2026): ``ensure`` marked the file done inside its own transaction, so a thread that saw
+    the mark skipped ``ensure`` and read the file before the COMMIT ("no such table: watchlist_stock")."""
+    seen: list[int] = []
+
+    class Probe(set):
+        def add(self, key):                                 # another connection looks, as a second thread would
+            con = sqlite3.connect(key, timeout=0)
+            try:
+                seen.append(con.execute("SELECT count(*) FROM sqlite_master WHERE name = 'watchlist_stock'")
+                            .fetchone()[0])
+            finally:
+                con.close()
+            super().add(key)
+
+    monkeypatch.setattr(ops, "_ENSURED", Probe())
+    ops.ensure(tmp_path / "ops.sqlite")
+    assert seen == [1]
+
+
 def test_ensure_is_idempotent_and_refuses_a_newer_schema():
     ops.ensure()
     ops.ensure()
