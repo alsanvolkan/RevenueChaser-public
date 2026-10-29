@@ -73,3 +73,48 @@ def test_s1_the_scope_is_the_own_tables_plus_the_kinds_derived_ones(monkeypatch)
     monkeypatch.setattr(base, "kind_datasets", lambda kind: [series, spx, derived, feeder])
     assert base.shrink_scope(series) == ("market_series", "derived")
     assert base.shrink_scope(feeder) == ("derived",)
+
+
+# ── S-2: a session that has not finished is never fetched ────────────────────────────────────────────────────────
+from datetime import date, datetime, timezone  # noqa: E402
+
+from RevenueChaser.core import calendar  # noqa: E402
+from RevenueChaser.core.providers import unusual_whales  # noqa: E402
+from RevenueChaser.rcdata.build import uw_spot_expiry_strike as uw  # noqa: E402
+
+from . import uw_fixture  # noqa: E402
+
+UW_HEADERS = {"x-uw-daily-req-count": "355", "x-uw-req-per-minute-remaining": "1000000",
+              "x-uw-req-per-minute-reset": "60000", "x-uw-token-req-limit": "100000000",
+              "content-type": "application/json"}
+
+
+@pytest.fixture
+def uw_at_11_new_york(monkeypatch):
+    """Tue 27 Oct 2026, 11:00 New York: the 27th is open, the latest complete session is the 26th."""
+    monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "test-key")
+    monkeypatch.setattr(unusual_whales, "BASE", "https://uw.test/api")
+    monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 27, 15, 0, tzinfo=timezone.utc))
+
+
+def test_s2_an_explicit_as_of_of_an_open_session_is_refused_without_a_call(http_mock, uw_at_11_new_york):
+    http_mock.add("expiry-strike", uw_fixture.body(date(2026, 10, 27)), headers=UW_HEADERS)
+    row = base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-27"}})
+    assert row["result"] == "failed" and "not complete" in row["note"]
+    assert http_mock.calls("expiry-strike") == []
+    assert not uw.raw_path(date(2026, 10, 27)).exists()
+
+
+def test_s2_a_backfill_to_an_open_session_stops_at_the_latest_complete_one(http_mock, uw_at_11_new_york):
+    http_mock.add("date=2026-10-26", uw_fixture.body(date(2026, 10, 26)), headers=UW_HEADERS)
+    http_mock.add("date=2026-10-27", uw_fixture.body(date(2026, 10, 27)), headers=UW_HEADERS)
+    base.run_request({"dataset": uw.NAME, "params": {"mode": "backfill", "from": "2026-10-26", "to": "2026-10-27"}})
+    asked = [c.url.query.decode() for c in http_mock.calls("expiry-strike")]
+    assert len(asked) == 1 and "date=2026-10-26" in asked[0]
+    assert not uw.raw_path(date(2026, 10, 27)).exists()
+
+
+def test_s2_the_cli_help_names_the_real_default():
+    from RevenueChaser.rcdata.build import __main__ as cli
+    import inspect
+    assert "default: today's" not in inspect.getsource(cli)

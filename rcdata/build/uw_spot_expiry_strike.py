@@ -90,6 +90,12 @@ class UWSpotExpiryStrike:
 
     # ── fetch ──
     def _fetch_session(self, ctx: base.RunContext, session: date, *, observed: bool) -> Path:
+        # A session that has not finished (an explicit --as-of or backfill --to of today) would be stored as UW's
+        # intraday snapshot for good: its raw file is the resume marker (review S-2 of #220). No call is sent.
+        latest = calendar.latest_complete_session()
+        if session > latest:
+            raise base.SourceError(f"UW {ENDPOINT} {session}: the session is not complete yet (latest complete "
+                                   f"session {latest}); not fetched")
         raw = raw_path(session)
         if raw.exists():
             return raw

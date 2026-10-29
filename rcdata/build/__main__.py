@@ -77,7 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     run = sub.add_parser("run")
     run.add_argument("--once", action="store_true")
     run.add_argument("--dataset", choices=sorted(DATASETS))
-    run.add_argument("--as-of", dest="as_of", help="with --dataset: the as-of date to queue (default: today's)")
+    run.add_argument("--as-of", dest="as_of", help="with --dataset: the as-of date to queue (default: the dataset's own, for "
+                     "uw/spot_expiry_strike the latest complete session; a later day is refused)")
     shrink_help = ("let this build swap in a smaller table of this dataset's own (a source removed on purpose); "
                    "without it a table that empties or loses more than 1%% of its rows refuses the swap, and "
                    "another dataset's table keeps that guard even with it")
