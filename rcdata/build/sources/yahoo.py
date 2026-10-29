@@ -59,6 +59,8 @@ def fetch(ctx, as_of: date, download=None) -> list[Path]:
         path = base.raw_root() / SOURCE / DATASET_DIR / as_of.isoformat() / f"{series}.json"
         if not path.exists():
             ctx.check_cap(PROVIDER)
+            # shortcut: one history() is counted as one call, but yfinance also fetches its own cookie and crumb, so
+            # the count is a lower bound. Upgrade by counting the library's requests if the day cap ever binds.
             ctx.count(PROVIDER, calls=1)
             try:
                 bars = get(symbol)
