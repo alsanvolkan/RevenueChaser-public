@@ -366,9 +366,83 @@ def _wrds_slot(dataset: str, facts: dict) -> dict:
 
 # ── The serving file: one read-only handle per call ───────────────────────────────────────────────────────────
 
-def _serving_facts() -> tuple[dict[str, dict], dict[str, str | None], dict | None]:
-    """``({table: {rows, newest}}, {kind: last swap}, the spine's funnel counts or None)``, from one ``open_read`` per
-    kind, closed before return."""
+#: How many example rows a card shows (A16). Five: enough to see what a row looks like, few enough to read on a
+#: phone and to cost nothing to fetch.
+SAMPLE_ROWS = 5
+#: The cases in the data that look like a bug and are not (K13). One line each, shown beside that table's rows.
+SAMPLE_NOTES: dict[str, tuple[str, ...]] = {
+    "security_symbol": ("HEI and HEI-A are two share classes of one issuer: the symbol is not the key, the "
+                        "security is, and only one class carries the index membership.",),
+    "security": ("An OTC name can have no CUSIP at all, so it has no row here and is not missing data.",),
+    "price_bar_daily": ("A bar after a split is the adjusted price: the factor comes from adj_factor, not from "
+                        "the bar.",
+                        "A session with no bar for a name is a halt or a name not yet listed, not a gap in the "
+                        "fetch."),
+    "index_membership": ("A second share class does not inherit the first class's membership.",),
+    "adj_factor": ("A factor's day is the day it stops applying (valid_to), which is why the card dates it on "
+                   "that column.",),
+    "fundamental_fact": ("A fact's own day is the period it covers; the card dates the table by when it was "
+                         "filed, which is a different column on purpose.",),
+    "wrds_price_diff": ("A check that answers \"failed\" ran and could not compare, which is not the same as a "
+                        "check that found a difference.",),
+}
+_SAMPLE_CACHE: dict[str, tuple[str, dict | None]] = {}
+
+
+def clear_sample_cache() -> None:
+    _SAMPLE_CACHE.clear()
+
+
+def _sample_hour(now: datetime) -> str:
+    """The cache key: the hour the page was read. A sample is a picture of the store, not a live number."""
+    return now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H")
+
+
+def _cached_sample(table: str, now: datetime, read):
+    """``read(table)`` at most once an hour per table (A16's hourly cache)."""
+    hour = _sample_hour(now)
+    hit = _SAMPLE_CACHE.get(table)
+    if hit is not None and hit[0] == hour:
+        return hit[1]
+    value = read(table)
+    _SAMPLE_CACHE[table] = (hour, value)
+    return value
+
+
+def _read_sample(con, table: str, day_column: str | None) -> dict:
+    """The newest ``SAMPLE_ROWS`` rows of one table, through the read-only connection already open.
+
+    One SELECT and nothing else: this runs on a page render, against the live store, and must not write.
+    """
+    order = f' ORDER BY "{day_column}" DESC' if day_column else ""
+    cur = con.execute(f'SELECT * FROM "{table}"{order} LIMIT {SAMPLE_ROWS}')
+    columns = [{"name": d[0], "type": str(d[1])} for d in cur.description]
+    rows = [[v.isoformat() if isinstance(v, (date, datetime)) else v for v in r] for r in cur.fetchall()]
+    return {"columns": columns, "rows": rows}
+
+
+def _sample_block(table: str, sample: dict | None) -> dict:
+    """One card's example block. Without a sample the kind's file has never been built, so the declared schema
+    stands in for the rows: "never built" and "built and empty" must not read the same (``rcdata/scaffold.py``)."""
+    from RevenueChaser.rcdata import scaffold
+    from RevenueChaser.rcdata import read
+    out = {"table": table, "dataset": read.DATASET_OF_TABLE.get(table), "notes": SAMPLE_NOTES.get(table, ())}
+    if sample is not None:
+        return {**out, "built": True, "columns": sample["columns"], "rows": sample["rows"]}
+    declared = next((cols for kind in scaffold.SCHEMA_OF_KIND
+                     for name, cols in scaffold.SCHEMA_OF_KIND[kind].items() if name == table), [])
+    return {**out, "built": False, "rows": [],
+            "columns": [{"name": name, "type": str(kind)} for name, kind in declared]}
+
+
+def _serving_facts(now: datetime | None = None) -> tuple[dict[str, dict], dict[str, str | None], dict | None]:
+    """``({table: {rows, newest, sample}}, {kind: last swap}, the spine's funnel counts or None)``, from one
+    ``open_read`` per kind, closed before return.
+
+    ``sample`` is the table's newest five rows (A16), read through this same connection and cached by the hour, so
+    a page render costs one read per table per hour rather than one per render. Without ``now`` no sample is read
+    at all, which is what a caller that only wants the counts asks for.
+    """
     tables: dict[str, dict] = {}
     swaps: dict[str, str | None] = {}
     funnel: dict | None = None
@@ -388,6 +462,9 @@ def _serving_facts() -> tuple[dict[str, dict], dict[str, str | None], dict | Non
                     continue
                 rows, newest = con.execute(f'SELECT count(*), max("{col}") FROM "{table}"').fetchone()
                 tables[table] = {"rows": int(rows), "newest": newest.isoformat() if newest else None}
+                if now is not None:
+                    tables[table]["sample"] = _cached_sample(
+                        table, now, lambda name, c=con, column=col: _read_sample(c, name, column))
             if kind == "spine" and {"security", "index_membership"} <= names:
                 funnel = _spine_counts(con)
             if kind == "prices" and "wrds_price_diff" in names:
@@ -625,6 +702,8 @@ def _card(dataset: str, ds, facts: dict, now: datetime, used_today: dict[str, in
         "backfill": backfill(now) if backfill else None,
         "cost": _cost(dataset, backfill(now) if backfill else None, used_today),
         "measured_at": _measured_at(now),
+        # A16: one example block per serving table this dataset writes, in the dataset's own order.
+        "samples": [_sample_block(name, (facts.get(name) or {}).get("sample")) for name in ds.tables],
         "wrds": _wrds_difference(dataset) if dataset in WRDS_DIFFERENCE else _wrds_slot(dataset, facts),
         "attended": bool(getattr(ds, "attended", False)),
         "attended_command": (ATTENDED_COMMANDS.get(dataset) or attended_command(ds.kind))
@@ -653,7 +732,7 @@ def _watchlists() -> dict:
 def collect(now: datetime | None = None) -> dict:
     """Everything the section shows, read now. ``now`` is the clock (aware; default ``calendar``'s seam)."""
     now = _now(now)
-    facts, swaps, spine_counts = _serving_facts()
+    facts, swaps, spine_counts = _serving_facts(now)
     # Read once, used twice: the Spend card, and each dataset's cost line (M3).
     spend = _spend(now)
     used_today = {str(p["provider"]): int(p["today"] or 0) for p in spend["providers"]}

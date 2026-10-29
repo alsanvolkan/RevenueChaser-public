@@ -2242,6 +2242,9 @@ ND_CSS = ND_THEME_CSS + """
 #newdata .nd-cost{color:var(--muted);font-size:12.5px}
 /* S10: why a control is off is the sentence a reader needs most, so it is page text, not muted text. */
 #newdata .nd-off-why{color:var(--fg);font-size:12.5px}
+#newdata .nd-type{color:var(--muted);font-size:11.5px}
+#newdata .nd-cols{flex-direction:row;flex-wrap:wrap;gap:4px 12px}
+#newdata .nd-cols li{border-bottom:none}
 #newdata .nd-filter{text-decoration:none;min-height:44px;display:inline-flex;align-items:center;padding:0 12px}
 #newdata .nd-filter[aria-current="true"]{background:var(--hover);color:var(--bright)}
 #newdata .nd-filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -2295,6 +2298,31 @@ def _nd_status_chip(status) -> str:
     icon = ND_STATUS_ICONS.get(status, ND_STATUS_ICONS["never"])
     return (f'<span class="nd-chip {_nd_status_cls(status)}"><span aria-hidden="true">{esc(icon)}</span> '
             f'{esc(ND_STATUS_WORDS.get(status, status))}</span>')
+
+
+def _nd_sample(block: dict) -> str:
+    """One table's example rows (A16): the columns with their types, up to five rows stacked, and the cases that
+    look like a bug and are not (K13).
+
+    Stacked rather than a wide table: a phone must not scroll sideways, so a row is shown as its own list of
+    column-and-value pairs. Every value is escaped, and a value is a string by the time it gets here.
+    """
+    table = esc(str(block.get("table") or ""))
+    columns = block.get("columns") or []
+    heads = "".join(f'<li><span class="nd-k">{esc(str(c.get("name") or ""))}</span> '
+                    f'<span class="nd-type">{esc(str(c.get("type") or ""))}</span></li>' for c in columns)
+    if block.get("built"):
+        rows = "".join('<div class="nd-rows">'
+                       + "".join(_nd_row(str((columns[i].get("name") if i < len(columns) else i)), _nd(v))
+                                 for i, v in enumerate(row))
+                       + "</div>" for row in block.get("rows") or [])
+        body = rows or '<div class="nd-k">The file is built and holds no row for this table yet.</div>'
+    else:
+        body = ('<div class="nd-off-why">This serving file is not built yet, so there is no row to show. '
+                "These are the columns it will have.</div>")
+    notes = "".join(f'<div class="nd-why">\u26a0 {_nd(n)}</div>' for n in block.get("notes") or ())
+    return (f'<details class="nd-sample"><summary>Example rows \u00b7 {table}</summary>'
+            f'<ul class="nd-list nd-cols">{heads}</ul>{body}{notes}</details>')
 
 
 def _nd_report_cell(slot: dict | None) -> str:
@@ -2381,6 +2409,7 @@ def _nd_dataset_card(c: dict, *, open_: bool = False) -> str:
             + ("" if bf else " disabled") + ">Backfill</button>"
             f"{pause}</div>"
         )
+    samples = "".join(_nd_sample(b) for b in c.get("samples") or [])
     actions += _nd_cost_line(c.get("cost"))
     actions += '<div class="nd-msg" aria-live="polite" data-nd-msg></div>'
     why = (f'<div class="nd-why">Why it is not fresh: {_nd(c.get("status_reason"))}</div>'
@@ -2391,7 +2420,7 @@ def _nd_dataset_card(c: dict, *, open_: bool = False) -> str:
             f'<div class="nd-sub tbl">{_nd(ds)}</div>'
             f"{why}"
             f'<div class="nd-rows">{"".join(rows)}</div>'
-            f"{checks_html}{bf_html}"
+            f"{checks_html}{samples}{bf_html}"
             + _nd_row("WRDS difference", _nd_report_cell(c.get("wrds")))
             + _nd_row("Schedule", f'<span data-nd-sched>{sched_text}</span>')
             + actions + "</details>")
