@@ -974,7 +974,9 @@ stays as `<kind>.prev.duckdb`.
 checked before it replaces anything: its `serving_schema_version` row, the row count of every table, the run's
 `dataset_check` row (a `failed` one refuses the swap), and the live file: every live table must be in the build, and
 none may empty or lose more than 1% of its rows unless the request says `"allow_shrink": true` (the CLI's
-`--allow-shrink`). A table that serves only its newest sessions (`option_eod`) names its first kept session in the
+`--allow-shrink`), which relaxes only the asking dataset's own tables and the tables the kind derives from its sources
+(a dataset with no provider, such as `ownership/serve`), never another source dataset's table (`base.shrink_scope`).
+A table that serves only its newest sessions (`option_eod`) names its first kept session in the
 build file's `serving_window` table, and is compared on the rows inside that window: a session leaving it is not a
 loss, a session inside it that lost rows is. A build also refuses
 a missing Parquet root (the raw disk not mounted). Then the live file is hard-linked to `<kind>.prev.duckdb` and
