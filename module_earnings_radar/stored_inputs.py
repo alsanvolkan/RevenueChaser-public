@@ -39,8 +39,34 @@ NY = ZoneInfo("America/New_York")
 # ``cftc_cot`` is weekly: CFTC publishes on Friday the positions held on the Tuesday before, so on a current night
 # the newest stored row is already ~6 sessions old (measured: 2026-10-13 stored against the 2026-10-21 session). A
 # tighter number would read "nothing stored" every night and the table would never be used.
-MAX_LAG = {"earnings_calendar": 1, "short_interest": 3, "estimate_snapshots": 5, "macro_series": 3,
-           "vol_index_daily": 3, "cftc_cot": 10}
+# The catalog is the single owner of every one of these numbers (avo, 29 Oct 2026): a copy here would let the two
+# drift while ``model_version``, which hashes this map, claims nothing changed. ``estimate_snapshots`` is the old
+# store's own table and has no need yet, so it keeps the board's number until it migrates.
+NEED_OF_TABLE = {"earnings_calendar": "earnings.next", "short_interest": "ownership.short_interest",
+                 "macro_series": "macro.dgs10", "vol_index_daily": "market.vix", "cftc_cot": "market.cot"}
+LEGACY_MAX_LAG = {"estimate_snapshots": 5}
+
+
+def max_lag_map() -> dict[str, int]:
+    """``{table: how many sessions old a stored input may be}``, read from the catalog on every call."""
+    from RevenueChaser.rcdata import api
+    out = dict(LEGACY_MAX_LAG)
+    for table, need in NEED_OF_TABLE.items():
+        out[table] = api.catalog.NEEDS[need].max_lag
+    return out
+
+
+class _MaxLag(dict):
+    """``MAX_LAG`` as the board has always used it, filled from the catalog at import and on every read."""
+
+    def __getitem__(self, table):
+        return max_lag_map()[table]
+
+    def get(self, table, default=None):
+        return max_lag_map().get(table, default)
+
+
+MAX_LAG = _MaxLag(max_lag_map())
 
 _DGS10_LIMIT = 80                 # the same window ``macro_watch.fred_daily_map`` asks FRED for
 _OHLC_MAX_BARS = 270              # ``pipeline.REACTION_OHLC_SESSIONS``

@@ -14,8 +14,11 @@ through ``api.get("earnings.next")``; the stored D26 calendar then fills in ever
 Yahoo's own value stays for whatever neither holds. Before this, a fresh layer session returned early and a name
 only the D26 sweep had a date for silently lost it, although the two sources cover different names.
 
-Freshness is the catalog's (``earnings.next``'s ``max_lag_sessions``), counted in trading sessions: a session older
-than that, or later than ``today``, is not read, so a stale sweep never outranks Yahoo.
+Freshness is the catalog's and only the catalog's (avo, 29 Oct 2026): ``earnings.next``'s ``max_lag``, with the unit
+it is counted in. avo set it to **one session** the same day, which settles the contradiction this module carried —
+``MAX_AGE_DAYS`` said four calendar days while ``stored_inputs.MAX_LAG`` said one session for the same calendar —
+in favour of the stricter one. A session older than that, or later than ``today``, is not read, so a stale sweep
+never outranks Yahoo.
 """
 from __future__ import annotations
 
@@ -26,9 +29,9 @@ from RevenueChaser.core import calendar, rawstore
 
 logger = logging.getLogger(__name__)
 
-#: The need the layer's calendar is asked for; its ``max_lag_sessions`` is the one freshness constant.
+#: The need the layer's calendar is asked for; its ``max_lag`` is the one freshness constant.
 NEED = "earnings.next"
-# Kept for the D26 window below and for the callers that still name it; the layer's own freshness is the catalog's.
+# The D26 sweep's own window, in calendar days. Not the layer's: that one is the catalog's and nothing else's.
 MAX_AGE_DAYS = 4
 
 
@@ -52,9 +55,9 @@ def next_dates_answer(today: date | None = None):
                        "read", exc)
         ans = api.Answer(need=NEED, rows=[], state="missing", status="unreadable",
                          freshness={"as_of_session": None, "lag_sessions": None,
-                                    "max_lag": need.max_lag_sessions},
+                                    "max_lag": need.max_lag, "unit": need.max_lag_unit},
                          coverage={"asked": 0, "served": 0, "missing": [], "from_fallback": 0}, provenance=[])
-    layer = _layer_dates(ans, today, need.max_lag_sessions)
+    layer = _layer_dates(ans, today, need)
     stored = _d26_dates(today)
     extra = sorted(set(stored) - set(layer))
     coverage = {**ans.coverage, "from_fallback": len(extra)}
@@ -70,7 +73,7 @@ def stored_next_dates(today: date | None = None) -> dict[str, date]:
     need = api.catalog.NEEDS[NEED]
     try:
         ans = api.get(NEED)
-        layer = _layer_dates(ans, today, need.max_lag_sessions)
+        layer = _layer_dates(ans, today, need)
     except Exception as exc:  # noqa: BLE001 - the D26 store is the fallback, as before the API
         logger.warning("the options layer's earnings calendar could not be read (%s); the stored D26 calendar is "
                        "read", exc)
@@ -79,7 +82,7 @@ def stored_next_dates(today: date | None = None) -> dict[str, date]:
     return {**_d26_dates(today), **layer}
 
 
-def _layer_dates(ans, today: date, max_lag_sessions: int) -> dict[str, date]:
+def _layer_dates(ans, today: date, need) -> dict[str, date]:
     """``{ticker: coming report date}`` from the layer's answer, or ``{}`` when its session is too old or not yet
     reached. A session later than ``today`` is a calendar from a run that has not happened for this day yet."""
     session = ans.freshness["as_of_session"]
@@ -87,7 +90,7 @@ def _layer_dates(ans, today: date, max_lag_sessions: int) -> dict[str, date]:
         return {}
     from RevenueChaser.rcdata import api
 
-    if api.lag_sessions(session, today) > max_lag_sessions:
+    if api.lag_in(need.max_lag_unit, session, today) > need.max_lag:
         return {}
     # One row per session and ticker (the table's key), so a name has one report date in the session.
     return {str(r["ticker"]).strip().upper(): r["report_date"] for r in ans.rows

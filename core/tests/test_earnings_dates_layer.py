@@ -2,9 +2,10 @@
 (``option_screener_daily``, G8) first and the stored D26 calendar for the names the layer does not hold, Yahoo last.
 
 Since the internal data API (step B) the two are a **union**, not a choice, and the age window is counted in trading
-sessions (the ``earnings.next`` need's ``max_lag_sessions``) rather than calendar days, so the layer's freshness is
-measured the way the rest of the store's is. Across a weekend the two units differ: 17 Oct 2026 is five calendar
-days before 22 Oct but only four sessions.
+sessions (the ``earnings.next`` need's ``max_lag``) rather than calendar days, so the layer's freshness is
+measured the way the rest of the store's is. avo set that number to **one session** on 29 Oct 2026, which settles
+the contradiction the boards carried (four calendar days here, one session in ``stored_inputs``) in favour of the
+stricter one: a calendar older than the last session is not read at all.
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ def _raw_none(*a, **k):
 
 def test_a_fresh_layer_session_gives_each_names_nearest_coming_report(monkeypatch):
     from RevenueChaser.rcdata import read
-    s = date(2026, 10, 21)
+    s = date(2026, 10, 21)   # one session back: inside the window
     monkeypatch.setattr(read, "option_screener", _screener([
         {"session_date": s, "ticker": " aaa ", "report_date": date(2026, 10, 28)},
         {"session_date": s, "ticker": "BBB", "report_date": date(2026, 11, 2)},
@@ -40,16 +41,17 @@ def test_a_fresh_layer_session_gives_each_names_nearest_coming_report(monkeypatc
     assert ed.stored_next_dates(TODAY) == {"AAA": date(2026, 10, 28), "BBB": date(2026, 11, 2), "DDD": TODAY}
 
 
-# 22 Oct 2026 is a Thursday: 16 Oct (Friday) is four sessions back, 15 Oct five. ``MAX_AGE_SESSIONS`` is the
-# ``earnings.next`` need's, the one place the window is written.
-MAX_AGE_SESSIONS = 4
-AT_THE_EDGE = date(2026, 10, 16)
-PAST_THE_EDGE = date(2026, 10, 15)
+# 22 Oct 2026 is a Thursday, so 21 Oct is one session back and 20 Oct two. The window is the need's, read from the
+# catalog rather than restated, so this file cannot drift from it.
+MAX_AGE_SESSIONS = 1
+AT_THE_EDGE = date(2026, 10, 21)
+PAST_THE_EDGE = date(2026, 10, 20)
 
 
 def test_the_age_window_is_the_needs_own(monkeypatch):
     from RevenueChaser.rcdata import api
-    assert api.catalog.NEEDS["earnings.next"].max_lag_sessions == MAX_AGE_SESSIONS
+    need = api.catalog.NEEDS["earnings.next"]
+    assert need.max_lag == MAX_AGE_SESSIONS and need.max_lag_unit == "sessions"
     assert api.lag_sessions(AT_THE_EDGE, TODAY) == MAX_AGE_SESSIONS
     assert api.lag_sessions(PAST_THE_EDGE, TODAY) == MAX_AGE_SESSIONS + 1
 

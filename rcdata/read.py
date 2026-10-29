@@ -751,6 +751,46 @@ def revisions(cik=None, since=None) -> list[dict]:
     return _rows("fundamental_revision", sql + " ORDER BY new_as_of DESC, cik, datadate, item", params)
 
 
+def table_summary(table: str, day_column: str | None = None, key_column: str | None = None,
+                  sample: int = 0) -> dict:
+    """How much one serving table holds and how new it is: ``row_count``, ``key_count``, ``newest_day``, ``status``.
+
+    ``sample`` asks for that many whole rows as well (``sample_rows``, newest first where the table has a day), so a
+    screen can show what the data looks like without opening the serving file itself.
+
+    The Settings / Data screen asks for a dataset's state without naming a ticker, and the by-key readers above
+    cannot answer that. One query, here, where the store's SQL lives; ``table`` must be a table this module already
+    knows (a ``KeyError`` otherwise, so a typo is never a query). No serving file yet is an empty summary, not an
+    error, as everywhere else.
+    """
+    kind = KIND_OF_TABLE[table]
+    dataset = DATASET_OF_TABLE[table]
+    ops.read_log.bump(table)
+    empty = {"table": table, "dataset": dataset, "row_count": 0, "key_count": 0, "newest_day": None,
+             "status": dataset_status(dataset) if dataset else NEVER_CHECKED, "sample_rows": []}
+    try:
+        con = serving.open_read(kind)
+    except serving.ServingFileMissing:
+        return empty
+    parts = ["count(*) AS row_count"]
+    parts.append(f"count(DISTINCT {key_column}) AS key_count" if key_column else "0 AS key_count")
+    parts.append(f"max({day_column}) AS newest_day" if day_column else "NULL AS newest_day")
+    rows: list[dict] = []
+    try:
+        row = con.execute(f"SELECT {', '.join(parts)} FROM {table}").fetchone()
+        if sample > 0:
+            order = f" ORDER BY {day_column} DESC" if day_column else ""
+            cur = con.execute(f"SELECT * FROM {table}{order} LIMIT ?", [int(sample)])
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    finally:
+        con.close()
+    if row is None:
+        return empty
+    return {**empty, "row_count": int(row[0] or 0), "key_count": int(row[1] or 0), "newest_day": _day(row[2]),
+            "sample_rows": rows}
+
+
 def as_frame(rows: list[dict]):
     """The rows as a pandas DataFrame (the one helper; pandas is imported only here)."""
     import pandas as pd

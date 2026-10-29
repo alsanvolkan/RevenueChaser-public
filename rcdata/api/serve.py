@@ -3,9 +3,9 @@
 What the envelope adds, and nothing else:
 
 - ``state``: ``fresh`` | ``stale`` | ``missing`` — one word a card can show without knowing the store's shape.
-- ``freshness``: the newest day the rows carry, how many trading sessions behind the market that is, and the need's
-  own ``max_lag_sessions``. The lag is counted in sessions, not calendar days, so a Monday answer is not "stale by
-  three" because of the weekend.
+- ``freshness``: the newest day the rows carry, how far behind the market that is, the need's own ``max_lag`` and
+  the unit both are counted in. Sessions by default, so a Monday answer is not "stale by three" because of the
+  weekend; calendar days for a need whose build has no session of its own (avo, 29 Oct 2026).
 - ``coverage``: how many things were asked for, how many came back, and which ones the store does not hold.
 - ``provenance``: per row, where it came from (``source``, ``source_as_of``, ``fetched_at``, ``run_id``) and which
   dataset owns writing it.
@@ -24,7 +24,7 @@ from typing import Any
 
 from ...core import calendar
 from .. import ops, read
-from .catalog import NEEDS, TICKER, Need
+from .catalog import DAYS, NEEDS, SESSIONS, TICKER, Need
 
 FRESH, STALE, MISSING = "fresh", "stale", "missing"
 NEVER = "never"
@@ -78,6 +78,13 @@ def _day(value: Any) -> date | None:
         return None
 
 
+def lag_in(unit: str, as_of: date, latest: date) -> int:
+    """How far ``as_of`` is behind ``latest`` in a need's own unit: trading sessions, or calendar days."""
+    if unit == DAYS:
+        return max(0, (latest - as_of).days)
+    return lag_sessions(as_of, latest)
+
+
 def lag_sessions(as_of: date, latest: date) -> int:
     """Trading sessions between ``as_of`` and ``latest`` (0 when the rows are up to the newest session)."""
     if as_of >= latest:
@@ -111,6 +118,41 @@ def _provenance(need: Need, rows: list[dict]) -> list[dict]:
             for r in rows]
 
 
+def summary(need: str, *, sample: int = 0) -> dict:
+    """One need's state without naming anything: how much the store holds for it and how new that is.
+
+    The Settings / Data screen asks this of every need; it wants row and key counts, the newest day, the last
+    check's result and a few example rows, not a ticker's rows. The by-key readers cannot answer it, so the single
+    query is ``rcdata.read.table_summary`` — in the module that owns the store's SQL, never here.
+
+    The envelope is the same shape ``get`` returns, so a card reads one shape either way; ``coverage["asked"]`` is
+    None because nothing was asked for. Read-only: no provider, no write, no fill.
+    """
+    try:
+        spec = NEEDS[need]
+    except KeyError:
+        raise UnknownNeed(f"unknown need {need!r}: one of {', '.join(sorted(NEEDS))}") from None
+
+    ops.read_log.bump(f"need:{need}")
+    s = read.table_summary(spec.table, day_column=spec.day_column, key_column=spec.key_column, sample=sample)
+
+    as_of = s["newest_day"]
+    lag = lag_in(spec.max_lag_unit, as_of, _latest_session()) if as_of is not None else None
+    if s["row_count"] == 0:
+        state = MISSING
+    elif lag is None or lag <= spec.max_lag:
+        state = FRESH
+    else:
+        state = STALE
+    return {"need": need, "state": state,
+            "freshness": {"as_of_session": as_of, "lag_sessions": lag, "max_lag": spec.max_lag,
+                          "unit": spec.max_lag_unit},
+            "coverage": {"asked": None, "served": s["key_count"], "missing": [], "from_fallback": 0},
+            "status": str(s["status"]), "row_count": s["row_count"], "key_count": s["key_count"],
+            "dataset": s["dataset"], "legacy": spec.legacy, "fill": None,
+            "sample_rows": s["sample_rows"], "provenance": _provenance(spec, s["sample_rows"])}
+
+
 def get(need: str, *, fill: str = NEVER, **params) -> Answer:
     """Answer ``need`` from the store. ``params`` go to the need's ``rcdata.read`` function unchanged.
 
@@ -130,8 +172,9 @@ def get(need: str, *, fill: str = NEVER, **params) -> Answer:
 
     days = [d for d in (_day(r.get(spec.day_column)) for r in rows) if d is not None]
     as_of = max(days) if days else None
-    lag = lag_sessions(as_of, _latest_session()) if as_of is not None else None
-    freshness = {"as_of_session": as_of, "lag_sessions": lag, "max_lag": spec.max_lag_sessions}
+    lag = lag_in(spec.max_lag_unit, as_of, _latest_session()) if as_of is not None else None
+    freshness = {"as_of_session": as_of, "lag_sessions": lag, "max_lag": spec.max_lag,
+                 "unit": spec.max_lag_unit}
 
     asked = _asked(spec, params)
     served_keys = {str(r.get(spec.key_column)) for r in rows if r.get(spec.key_column) is not None}
@@ -142,7 +185,7 @@ def get(need: str, *, fill: str = NEVER, **params) -> Answer:
 
     if not rows:
         state = MISSING
-    elif lag is None or lag <= spec.max_lag_sessions:
+    elif lag is None or lag <= spec.max_lag:
         state = FRESH
     else:
         state = STALE

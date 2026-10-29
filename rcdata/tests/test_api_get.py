@@ -35,7 +35,8 @@ def test_fresh_rows_are_the_read_rows_with_provenance_and_status(at_session):
     ans = api.get("identity.universe")
     assert ans.rows == read.universe()
     assert ans.state == "fresh" and ans.ok
-    assert ans.freshness == {"as_of_session": SPINE_AS_OF, "lag_sessions": 0, "max_lag": 5}
+    assert ans.freshness == {"as_of_session": SPINE_AS_OF, "lag_sessions": 0, "max_lag": 5,
+                             "unit": "sessions"}
     assert ans.status == ops.latest_check("spine/security")["result"]
     msft = next(p for p in ans.provenance if p["key"] == "MSFT")
     assert msft["source"] == "sec/company_tickers_exchange" and msft["dataset"] == "spine/security"

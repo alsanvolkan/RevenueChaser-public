@@ -1221,7 +1221,7 @@ def api_data_catalog():
     """
     from RevenueChaser.rcdata import api
     needs = [{"need": n.name, "kind": n.kind, "dataset": n.dataset, "reader": n.reader_name,
-              "max_lag_sessions": n.max_lag_sessions, "ask_param": n.ask_param,
+              "max_lag": n.max_lag, "max_lag_unit": n.max_lag_unit, "ask_param": n.ask_param,
               "providers": list(n.providers), "fallbacks": list(n.fallbacks), "legacy": n.legacy}
              for n in sorted(api.catalog.NEEDS.values(), key=lambda n: n.name)]
     return jsonify({"needs": needs})
@@ -1238,8 +1238,8 @@ def _data_params(need, args) -> dict:
     scalars above. ``tiers`` is a list too (the universe's)."""
     params: dict = {}
     for key, value in args.items():
-        if key == "fill":
-            continue                                   # a GET never fills: avo, 29 Oct 2026
+        if key in ("fill", "summary", "sample"):
+            continue            # "fill" is dropped (a GET never fills: avo, 29 Oct 2026); the other two are ours
         if key in (need.ask_param, "tiers"):
             params[key] = [v for v in (p.strip() for p in value.split(",")) if v]
         elif key in _DATA_SCALARS:
@@ -1247,6 +1247,19 @@ def _data_params(need, args) -> dict:
         else:
             raise ValueError(f"unknown parameter {key!r} for need {need.name!r}")
     return params
+
+
+#: Example rows a summary may carry back; the screen shows five.
+DATA_SAMPLE_DEFAULT = 5
+DATA_SAMPLE_MAX = 50
+
+
+def _sample_size(args) -> int:
+    try:
+        n = int(args.get("sample", DATA_SAMPLE_DEFAULT))
+    except (TypeError, ValueError):
+        return DATA_SAMPLE_DEFAULT
+    return max(0, min(n, DATA_SAMPLE_MAX))
 
 
 def _json_safe(value):
@@ -1273,6 +1286,9 @@ def api_data_need(need: str):
     spec = api.catalog.NEEDS.get(need)
     if spec is None:
         return jsonify({"ok": False, "error": f"unknown need {need!r}"}), 404
+    if request.args.get("summary") not in (None, "", "0", "false"):
+        # The Settings / Data screen asks for a need's state without naming a ticker. Read-only, never a fill.
+        return jsonify(_json_safe(api.summary(need, sample=_sample_size(request.args))))
     try:
         params = _data_params(spec, request.args)
     except ValueError as e:

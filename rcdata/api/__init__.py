@@ -12,14 +12,17 @@ Two hard rules, both under test:
   queue the fill through ``ops.enqueue_once`` and let the builder do it, so the single-writer rule (D1) holds. In
   this PR only ``fill="never"`` exists: the answer serves what the store has and says how old it is.
 
-Freshness lives in one place, the catalog's ``max_lag_sessions`` — the constants that are spread over the boards
-today (a calendar's 1 day, short interest's 3, estimates' 5, prices' 14) fold into it as the boards migrate.
+Freshness lives in one place, the catalog's ``max_lag``, and the catalog is its single owner (avo, 29 Oct 2026):
+the constants spread over the boards today (a calendar's 1 day, short interest's 3, estimates' 14, prices' 14) fold
+into it as the boards migrate, and a board's model version reads the number from here rather than keeping a copy.
+Each need carries one number and the unit it is counted in — sessions, or calendar days for a build that has no
+session of its own.
 """
 from __future__ import annotations
 
 from . import catalog, serve
 from .catalog import NEEDS, Need
-from .serve import Answer, FillNotSupported, UnknownNeed, get, lag_sessions
+from .serve import Answer, FillNotSupported, UnknownNeed, get, lag_in, lag_sessions, summary
 
 __all__ = ["Answer", "FillNotSupported", "NEEDS", "Need", "UnknownNeed", "catalog", "get",
-           "lag_sessions", "serve"]
+           "lag_in", "lag_sessions", "serve", "summary"]

@@ -25,7 +25,8 @@ def answer(monkeypatch):
 
     def set_answer(**over):
         base = dict(need="identity.universe", rows=[{"ticker": "MSFT", "source_as_of": date(2026, 10, 27)}],
-                    state="fresh", freshness={"as_of_session": date(2026, 10, 27), "lag_sessions": 0, "max_lag": 5},
+                    state="fresh", freshness={"as_of_session": date(2026, 10, 27), "lag_sessions": 0, "max_lag": 5,
+                               "unit": "sessions"},
                     coverage={"asked": 1, "served": 1, "missing": [], "from_fallback": 0},
                     provenance=[{"key": "MSFT", "dataset": "spine/security", "source": "sec",
                                  "source_as_of": date(2026, 10, 27), "fetched_at": 1.0, "run_id": "r1"}],
@@ -44,7 +45,8 @@ def test_the_catalog_is_listed_with_its_freshness_rule(client):
     body = client.get("/api/data").get_json()
     names = {n["need"]: n for n in body["needs"]}
     assert "identity.universe" in names and "earnings.next" in names
-    assert names["earnings.next"]["max_lag_sessions"] == 4
+    assert names["earnings.next"]["max_lag"] == 1 and names["earnings.next"]["max_lag_unit"] == "sessions"
+    assert names["fundamentals.estimates"]["max_lag_unit"] == "days"
     assert names["earnings.next"]["dataset"] == "uw/option_screener"
     assert names["earnings.next"]["kind"] == "options"
 
@@ -53,7 +55,8 @@ def test_an_answer_comes_back_as_json_with_dates_as_iso_strings(client, answer):
     answer()
     body = client.get("/api/data/identity.universe").get_json()
     assert body["need"] == "identity.universe" and body["state"] == "fresh"
-    assert body["freshness"] == {"as_of_session": "2026-10-27", "lag_sessions": 0, "max_lag": 5}
+    assert body["freshness"] == {"as_of_session": "2026-10-27", "lag_sessions": 0, "max_lag": 5,
+                                 "unit": "sessions"}
     assert body["coverage"]["served"] == 1 and body["fill"] is None
     assert body["rows"][0]["source_as_of"] == "2026-10-27"
     assert body["provenance"][0]["key"] == "MSFT"
@@ -91,3 +94,62 @@ def test_the_route_never_fills(client, answer):
 def test_a_get_needs_no_panel_header(client, answer):
     answer()
     assert client.get("/api/data/identity.universe").status_code == 200
+
+
+# ── summary=1: the Settings / Data screen's read (no ticker, never a fill) ───────────────────────────────────────
+
+@pytest.fixture
+def summary(monkeypatch):
+    seen = {}
+
+    def set_summary(**over):
+        base = {"need": "identity.universe", "state": "fresh",
+                "freshness": {"as_of_session": date(2026, 10, 27), "lag_sessions": 0, "max_lag": 5,
+                              "unit": "sessions"},
+                "coverage": {"asked": None, "served": 14, "missing": [], "from_fallback": 0},
+                "status": "changed", "row_count": 14, "key_count": 14, "dataset": "spine/security",
+                "legacy": False, "fill": None,
+                "sample_rows": [{"ticker": "MSFT", "source_as_of": date(2026, 10, 27)}],
+                "provenance": [{"key": "MSFT", "dataset": "spine/security", "source": "sec",
+                                "source_as_of": date(2026, 10, 27), "fetched_at": 1.0, "run_id": "r1"}]}
+
+        def fake_summary(need, *, sample=0):
+            seen["need"], seen["sample"] = need, sample
+            return {**base, **over}
+        monkeypatch.setattr(api, "summary", fake_summary)
+        return seen
+    return set_summary
+
+
+def test_summary_answers_without_a_ticker_and_dates_are_iso(client, summary):
+    summary()
+    body = client.get("/api/data/identity.universe?summary=1").get_json()
+    assert body["row_count"] == 14 and body["coverage"]["asked"] is None and body["fill"] is None
+    assert body["freshness"]["as_of_session"] == "2026-10-27" and body["freshness"]["unit"] == "sessions"
+    assert body["sample_rows"][0]["source_as_of"] == "2026-10-27"
+
+
+def test_summary_asks_for_five_sample_rows_by_default(client, summary):
+    seen = summary()
+    client.get("/api/data/identity.universe?summary=1")
+    assert seen["sample"] == 5
+    client.get("/api/data/identity.universe?summary=1&sample=2")
+    assert seen["sample"] == 2
+
+
+def test_the_sample_size_is_bounded_and_a_bad_one_falls_back(client, summary):
+    seen = summary()
+    client.get("/api/data/identity.universe?summary=1&sample=5000")
+    assert seen["sample"] == 50
+    client.get("/api/data/identity.universe?summary=1&sample=lots")
+    assert seen["sample"] == 5
+
+
+def test_summary_0_is_the_ordinary_read(client, answer):
+    seen = answer()
+    client.get("/api/data/identity.universe?summary=0")
+    assert seen["fill"] == "never" and "rows" in client.get("/api/data/identity.universe").get_json()
+
+
+def test_an_unknown_need_is_still_404_with_summary(client):
+    assert client.get("/api/data/prices.nope?summary=1").status_code == 404
