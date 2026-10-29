@@ -70,8 +70,9 @@ TOLERANCE = 1e-4
 HALF_CENT = 0.005
 FLOAT_OVER = 1.05
 FLOAT_DISAGREE = 0.25
-# A cover count behind a market cap and Yahoo's sharesOutstanding further apart than this, on the session of Yahoo's
-# answer, is an issue (AEHL in the server's sample: a count from before its dilution, 400 times too small).
+# A cover count behind a market cap and Yahoo's sharesOutstanding further apart than this, on the newest session up to
+# Yahoo's answer whose cap is cover-sourced, is an issue (AEHL in the server's sample: a count from before its
+# dilution, 400 times too small).
 SHARES_DISAGREE = 0.25
 # A dividend is applied with the close of the last bar before its ex-date, at most this many days before it.
 CLOSE_BEFORE_DAYS = 7
@@ -97,7 +98,8 @@ ISSUE_KINDS = {
     "float_above_outstanding": "the newest float is above FLOAT_OVER times the shares outstanding (key: the security id)",
     "float_sources_disagree": "Yahoo's and UW's newest float differ by more than FLOAT_DISAGREE (key: the security id)",
     "shares_disagree_yahoo": ("the cover shares behind a market cap and Yahoo's newest sharesOutstanding differ by more "
-                              "than SHARES_DISAGREE on the session of Yahoo's answer (key: the security id)"),
+                              "than SHARES_DISAGREE, on the newest cover-sourced cap up to Yahoo's answer (key: the "
+                              "security id)"),
 }
 
 PRICE_BAR = [("security_id", "TEXT"), ("session_date", "DATE"), ("symbol", "TEXT"), ("cik", "TEXT"),
@@ -540,10 +542,9 @@ class PricesServing:
                            QUALIFY row_number() OVER (PARTITION BY coalesce(s.security_id, y.security_id)
                                                       ORDER BY y.source_as_of DESC, y.fetched_at DESC) = 1)
                 SELECT y.security_id, m.shares, m.shares_as_of, y.yahoo, m.session_date
-                FROM y ASOF JOIN market_cap_daily m
+                FROM y ASOF JOIN (SELECT * FROM market_cap_daily WHERE shares_source = '{COVER}') m
                     ON m.security_id = y.security_id AND y.source_as_of >= m.session_date
-                WHERE m.shares_source = '{COVER}'
-                  AND abs(m.shares - y.yahoo) > {SHARES_DISAGREE} * greatest(m.shares, y.yahoo)
+                WHERE abs(m.shares - y.yahoo) > {SHARES_DISAGREE} * greatest(m.shares, y.yahoo)
                 ORDER BY 1""").fetchall():
             found.append(("shares_disagree_yahoo", sid, f"cover {cover:,.0f} (as of {as_of}, moved over the splits "
                                                         f"since), yahoo {yahoo:,.0f} on {day}"))
