@@ -1,8 +1,12 @@
 """``wrds/fundq``, ``wrds/funda``, ``wrds/firm_ratio``: Compustat's statements and WRDS's ratios, a check of the SEC.
 
-**Not run against the real source.** Built against the documented tables (``comp.fundq``, ``comp.funda``,
-``wrds_finratio.firm_ratio``); the tests answer from a fake worker. The first real run is the attended homesrv
-backfill.
+**Run against the real source once** (the server run of 2026-10-29, PR 249: ``comp.fundq`` and ``comp.funda``
+answered; ``wrds_finratio.firm_ratio`` did not exist and ``seg_customer`` had no ``srcdate``). So the two datasets
+whose library or columns were a guess, ``wrds/firm_ratio`` and ``wrds/segments``, read WRDS's own catalog first
+(``catalog``: ``information_schema.columns``, one more query): the ratio table is asked from the first of
+``RATIO_LIBRARIES`` that holds it, and a segment table's columns in ``optional`` that WRDS does not have are not asked
+(read as empty, said in the note). A table in none of its libraries, or without a column it needs, fails the run with
+what WRDS has. The tests answer from a fake worker whose catalog follows that run.
 
 **A check source, not a served value.** The served statement values are the SEC's (``sec/companyfacts``). What WRDS
 adds: (1) **the revision table**: each monthly snapshot of ``fundq`` / ``funda`` against the one before, every value
@@ -21,9 +25,10 @@ snapshot is ``SNAPSHOT_DAYS`` old (the CLI's backfill asks it now); one query pe
 spine's Compustat link), Compustat's standard rows (``COMPUSTAT_FILTER``), ``YEARS`` of periods (``firm_ratio``:
 ``RATIO_YEARS`` of publication dates). Every query counts as one ``wrds`` call.
 
-Raw: ``raw/wrds/<table>/<as-of>/<table>.jsonl.gz`` with a ``.meta.json`` sidecar (the query, rows, run); an existing
-raw file is not asked again. Parquet: ``parquet/wrds/<table>/snapshot=<as-of>/<table>.parquet`` and, from the second
-snapshot on, ``.../revision=<as-of>/<table>.parquet`` (its changes against the snapshot before). Staging:
+Raw: ``raw/wrds/<table>/<as-of>/<table>.jsonl.gz`` with a ``.meta.json`` sidecar (the query, rows, run), and
+``.../catalog.jsonl.gz`` for the catalog read; an existing raw file is not asked again. Parquet:
+``parquet/wrds/<table>/snapshot=<as-of>/<table>.parquet`` and, from the second snapshot on,
+``.../revision=<as-of>/<table>.parquet`` (its changes against the snapshot before). Staging:
 ``stg_wrds_<table>`` (the newest snapshot) and ``stg_wrds_<table>_revision`` (every revision file).
 """
 from __future__ import annotations
@@ -50,6 +55,11 @@ EPS_TOLERANCE = 0.01
 DEBT_TOLERANCE = 0.02
 MILLION = 1_000_000.0
 SEGMENT_LIBRARY = "comp_segments_hist_daily"
+# Where WRDS may keep the Financial Ratios Suite's ``firm_ratio``, in the order tried. shortcut: neither name is
+# verified against WRDS (the catalog read is the check, and a run names the libraries that hold it when neither
+# does); upgrade by pinning the one the server's ``catalog.jsonl.gz`` shows.
+RATIO_LIBRARIES = ("wrdsapps_finratio", "wrdsapps")
+CATALOG = [("table_schema", "TEXT"), ("table_name", "TEXT"), ("column_name", "TEXT")]
 SEGMENT_YEARS = 5
 # Compustat's segment types: business and operating segments are one axis here, geographic the other.
 SEGMENT_TYPES = {"BUSSEG": "business", "OPSEG": "business", "GEOSEG": "geographic"}
@@ -58,6 +68,41 @@ _GVKEY = re.compile(r"^\d{6}$")
 REVISION = [("source", "TEXT"), ("gvkey", "TEXT"), ("datadate", "DATE"), ("item", "TEXT"), ("old_value", "DOUBLE"),
             ("new_value", "DOUBLE"), ("old_as_of", "DATE"), ("new_as_of", "DATE"), ("run_id", "TEXT")]
 PROVENANCE = [("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
+
+
+def catalog(ctx: base.RunContext, dataset: str, as_of: date, tables: list[str]) -> dict[tuple[str, str], set[str]]:
+    """WRDS's own columns of ``tables`` in every library this login can read, ``{(library, table): columns}``: one
+    query on the shared worker (``information_schema.columns``), kept like a table's answer."""
+    raw = common.raw_dir(dataset) / as_of.isoformat() / f"catalog{wrds_session.RAW_SUFFIX}"
+    names = ", ".join(f"'{t}'" for t in tables)
+    wrds_session._ask(ctx, raw, "SELECT table_schema, table_name, column_name FROM information_schema.columns "
+                                f"WHERE table_name IN ({names})", as_of)
+    con = duckdb.connect()
+    try:
+        rows = con.execute(wrds_session.raw_rows(raw, CATALOG)).fetchall()
+    finally:
+        con.close()
+    out: dict[tuple[str, str], set[str]] = {}
+    for library, table, column in rows:
+        out.setdefault((library, table), set()).add(str(column).lower())
+    return out
+
+
+def locate(found: dict[tuple[str, str], set[str]], libraries: tuple[str, ...], table: str,
+           needed: list[str]) -> tuple[str, set[str]]:
+    """``(library, columns)``: the first of ``libraries`` that holds ``table`` in ``found`` (``catalog``). A
+    ``SourceError`` names what WRDS has when none does, or when that table lacks a ``needed`` column."""
+    for library in libraries:
+        columns = found.get((library, table))
+        if columns:
+            missing = [c for c in needed if c not in columns]
+            if missing:
+                raise base.SourceError(f"wrds {library}.{table} has no {', '.join(missing)} "
+                                       f"(it has {', '.join(sorted(columns))})")
+            return library, columns
+    elsewhere = sorted(lib for lib, t in found if t == table)
+    raise base.SourceError(f"wrds {table} is not in {' or '.join(libraries)}; WRDS has it in "
+                           f"{', '.join(elsewhere) or 'no library this login can read'}")
 
 
 def _years_before(day: date, years: int) -> date:
@@ -94,12 +139,17 @@ class WrdsFund:
         return calendar.today_ny()
 
     # ── what is asked ──
-    def sql(self, gvkeys: list[str], as_of: date) -> str:
+    def sql(self, gvkeys: list[str], as_of: date, library: str | None = None) -> str:
+        library = library or self.library
         cols = ", ".join(c for c, _ in self.schema)
-        where = [COMPUSTAT_FILTER] if self.library == "comp" else []
+        where = [COMPUSTAT_FILTER] if library == "comp" else []
         where += [f"gvkey IN ({', '.join(repr(g) for g in gvkeys)})",
                   f"{self.since} >= DATE '{_years_before(as_of, self.years).isoformat()}'"]
-        return f"SELECT {cols} FROM {self.library}.{self.table} WHERE {' AND '.join(where)}"
+        return f"SELECT {cols} FROM {library}.{self.table} WHERE {' AND '.join(where)}"
+
+    def _library(self, ctx: base.RunContext, as_of: date) -> str:
+        """The library the table is asked from: Compustat's ``comp``, known, so nothing is asked for it."""
+        return self.library
 
     def raw_path(self, as_of: date) -> Path:
         return common.raw_dir(self.name) / as_of.isoformat() / f"{self.table}{wrds_session.RAW_SUFFIX}"
@@ -128,7 +178,8 @@ class WrdsFund:
             ctx.notes.append("no Tier A company has a Compustat link yet (wrds/sec_idhist): nothing asked")
             return []
         # The spine's resumable ask (one query on the shared worker, its sidecar first).
-        return [wrds_session._ask(ctx, self.raw_path(as_of), self.sql(gvkeys, as_of), as_of)]
+        return [wrds_session._ask(ctx, self.raw_path(as_of), self.sql(gvkeys, as_of, self._library(ctx, as_of)),
+                                  as_of)]
 
     def backfill(self, ctx: base.RunContext, start: date | None, end: date) -> None:
         # WRDS answers the whole history in one snapshot: a backfill is a snapshot as of the end day.
@@ -261,6 +312,10 @@ def agreement(con: duckdb.DuckDBPyConnection, staging: str, item: str, field: st
 
 
 class FirmRatio(WrdsFund):
+    def _library(self, ctx: base.RunContext, as_of: date) -> str:
+        found = catalog(ctx, self.name, as_of, [self.table])
+        return locate(found, RATIO_LIBRARIES, self.table, [c for c, _ in self.schema])[0]
+
     def note(self, con: duckdb.DuckDBPyConnection) -> str:
         n, ok = con.execute(f"""
             WITH r AS (SELECT c.cik, s.qdate, s.debt_at FROM {self.staging} s JOIN {_links()} c ON c.gvkey = s.gvkey
@@ -281,18 +336,21 @@ class FirmRatio(WrdsFund):
 class WrdsSegments(WrdsFund):
     """``wrds/segments``: Compustat's segment sales (``wrds_segmerged``: business, operating and geographic
     segments) and major customers (``seg_customer``), ``SEGMENT_YEARS`` of fiscal years; per segment and year the
-    newest source filing's row (``srcdate``). Served as rows of ``segment_revenue`` and ``customer_share``
-    (``source`` ``wrds/segments``) beside the annual report's own (``sec/filings``). The library name
-    (``SEGMENT_LIBRARY``) is not verified against WRDS."""
+    newest source filing's row (``srcdate``, where the table has it). Served as rows of ``segment_revenue`` and
+    ``customer_share`` (``source`` ``wrds/segments``) beside the annual report's own (``sec/filings``). Both tables
+    answered from ``SEGMENT_LIBRARY`` on the server run of 2026-10-29; ``seg_customer`` had no ``srcdate``, so a
+    part's columns are read from WRDS's catalog first and its ``optional`` ones that WRDS lacks are not asked."""
 
+    # part -> (schema, key, extra filter, optional columns: read as empty when WRDS does not have them)
     PARTS = {
         "wrds_segmerged": ([("gvkey", "TEXT"), ("datadate", "DATE"), ("srcdate", "DATE"), ("stype", "TEXT"),
                             ("sid", "TEXT"), ("snms", "TEXT"), ("sales", "DOUBLE")],
                            ["gvkey", "datadate", "stype", "sid"],
-                           "stype IN (" + ", ".join(f"'{t}'" for t in sorted(SEGMENT_TYPES)) + ")"),
+                           "stype IN (" + ", ".join(f"'{t}'" for t in sorted(SEGMENT_TYPES)) + ")", {"srcdate"}),
+        # Only gvkey and datadate are known to exist (PostgreSQL named srcdate, the third column asked, first).
         "seg_customer": ([("gvkey", "TEXT"), ("datadate", "DATE"), ("srcdate", "DATE"), ("cnms", "TEXT"),
                           ("ctype", "TEXT"), ("salecs", "DOUBLE"), ("stype", "TEXT"), ("sid", "TEXT")],
-                         ["gvkey", "datadate", "cnms", "stype", "sid"], None),
+                         ["gvkey", "datadate", "cnms", "stype", "sid"], None, {"srcdate", "ctype", "stype", "sid"}),
     }
     STAGING = {"wrds_segmerged": "stg_wrds_segments", "seg_customer": "stg_wrds_customers"}
 
@@ -319,12 +377,19 @@ class WrdsSegments(WrdsFund):
         if not gvkeys:
             ctx.notes.append("no Tier A company has a Compustat link yet (wrds/sec_idhist): nothing asked")
             return []
+        found = catalog(ctx, self.name, as_of, list(self.PARTS))
+        asked = {}
+        for part, (schema, _, _, optional) in self.PARTS.items():
+            _, columns = locate(found, (self.library,), part, [c for c, _ in schema if c not in optional])
+            asked[part] = [c for c, _ in schema if c in columns]
+            absent = [c for c, _ in schema if c not in columns]
+            if absent:
+                ctx.notes.append(f"{self.library}.{part} has no {', '.join(absent)} (read as empty)")
         out = []
-        for part, (schema, _, extra) in self.PARTS.items():
+        for part, (_, _, extra, _) in self.PARTS.items():
             where = [f"gvkey IN ({', '.join(repr(g) for g in gvkeys)})",
                      f"datadate >= DATE '{_years_before(as_of, self.years).isoformat()}'"] + ([extra] if extra else [])
-            sql = (f"SELECT {', '.join(c for c, _ in schema)} FROM {self.library}.{part} "
-                   f"WHERE {' AND '.join(where)}")
+            sql = f"SELECT {', '.join(asked[part])} FROM {self.library}.{part} WHERE {' AND '.join(where)}"
             out.append(wrds_session._ask(ctx, self.raw_path(as_of, part), sql, as_of))
         return out
 
@@ -332,7 +397,7 @@ class WrdsSegments(WrdsFund):
         out = []
         for raw in raws:
             part = raw.name[: -len(wrds_session.RAW_SUFFIX)]
-            schema, key, _ = self.PARTS[part]
+            schema, key, _, _ = self.PARTS[part]
             meta = base.read_raw_json(common.meta_path(raw))
             as_of = meta["as_of"]
             con = duckdb.connect()
@@ -344,6 +409,9 @@ class WrdsSegments(WrdsFund):
                     raise base.SourceError("wrds segments: the snapshot came back empty")
                 for col, n in wrds_session.untyped(con, raw, schema).items():
                     ctx.issue("value_untyped", f"{part}.{col}", f"{n} row(s) nulled")
+                # shortcut: without srcdate (seg_customer on WRDS today) two source filings of one key keep the row
+                # first in column order, not the newer filing's; upgrade once the server's catalog.jsonl.gz shows
+                # which column dates a customer row's source filing.
                 every = ", ".join(f'"{c}" NULLS LAST' for c, _ in schema)
                 select = (f"SELECT *, DATE '{as_of}' AS source_as_of, CAST({float(meta['fetched_at'])} AS DOUBLE) "
                           f"AS fetched_at, '{meta['run_id']}' AS run_id FROM ({rows}) "
@@ -357,7 +425,7 @@ class WrdsSegments(WrdsFund):
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         snaps = self.snapshots()
-        for part, (schema, _, _) in self.PARTS.items():
+        for part, (schema, _, _, _) in self.PARTS.items():
             common.stage_glob(con, self.STAGING[part], schema + PROVENANCE, common.parquet_dir(self.name),
                               f"snapshot={snaps[-1]}/{part}.parquet" if snaps else "snapshot=none/none")
         return {}
@@ -389,7 +457,7 @@ FUNDA = WrdsFund("funda", "comp",
                  [("gvkey", "TEXT"), ("datadate", "DATE"), ("fyear", "INTEGER"), ("fyr", "INTEGER")],
                  ["revt", "cogs", "oiadp", "ni", "epspx", "epsfx", "at", "dltt", "dlc", "che", "ceq", "oancf", "capx"],
                  ["gvkey", "datadate"], "datadate", YEARS, revisions=True)
-FIRM_RATIO = FirmRatio("firm_ratio", "wrds_finratio",
+FIRM_RATIO = FirmRatio("firm_ratio", RATIO_LIBRARIES[0],
                        [("gvkey", "TEXT"), ("public_date", "DATE"), ("qdate", "DATE")], ["debt_at"],
                        ["gvkey", "public_date"], "public_date", RATIO_YEARS, revisions=False)
 SEGMENTS = WrdsSegments()

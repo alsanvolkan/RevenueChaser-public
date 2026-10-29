@@ -42,12 +42,14 @@ def test_one_login_the_tier_a_gvkeys_and_the_compustat_filters(fake):
     for name in (wrds_fund.FUNDQ.name, wrds_fund.FUNDA.name, wrds_fund.FIRM_RATIO.name):
         check = fx.run(name, mode="backfill", to="2026-10-27")
         assert check["result"] == "changed", check["note"]
-    assert logins == [1] and ops.calls_today("wrds") == 3
-    fundq, funda, ratio = conn.queries
+    assert logins == [1] and ops.calls_today("wrds") == 4
+    fundq, funda, catalog, ratio = conn.queries
     assert "FROM comp.fundq" in fundq and GVKEYS in fundq and COMPUSTAT in fundq
     assert "datadate >= DATE '2016-10-27'" in fundq                     # ten years
     assert "FROM comp.funda" in funda and GVKEYS in funda and COMPUSTAT in funda
-    assert "FROM wrds_finratio.firm_ratio" in ratio and GVKEYS in ratio and "public_date >= DATE '2023-10-27'" in ratio
+    assert "FROM information_schema.columns WHERE table_name IN ('firm_ratio')" in catalog
+    assert "FROM wrdsapps_finratio.firm_ratio" in ratio and GVKEYS in ratio
+    assert "public_date >= DATE '2023-10-27'" in ratio
 
 
 def test_a_scheduled_run_is_skipped_without_a_login(fake):
@@ -83,3 +85,37 @@ def test_funda_and_firm_ratio_agree_with_the_sec(fake):
     check = fx.run(wrds_fund.FIRM_RATIO.name, mode="backfill", to="2026-10-27")
     # MSFT's newest quarter (Sep 2025) only; HEI has no SEC total debt to compare.
     assert "debt to assets within 0.02 of WRDS on 1 of 1 companies" in check["note"]
+
+
+# The server run of 2026-10-29 (PR 249) failed on ``relation "wrds_finratio.firm_ratio" does not exist``: the
+# library is now looked up in WRDS's own catalog before the table is asked.
+@pytest.mark.parametrize("libraries, library", [(["wrdsapps_finratio"], "wrdsapps_finratio"),
+                                                (["wrdsapps"], "wrdsapps"),
+                                                (["wrdsapps", "wrdsapps_finratio"], "wrdsapps_finratio")])
+def test_firm_ratio_is_asked_from_the_library_wrds_keeps_it_in(fake, libraries, library):
+    conn, _ = fake
+    conn.catalog = {**{k: v for k, v in fx.WRDS_CATALOG.items() if k[1] != "firm_ratio"},
+                    **{(lib, "firm_ratio"): fx.WRDS_CATALOG[("wrdsapps_finratio", "firm_ratio")] for lib in libraries}}
+    check = fx.run(wrds_fund.FIRM_RATIO.name, mode="backfill", to="2026-10-27")
+    assert check["result"] == "changed", check["note"]
+    assert conn.queries[1].startswith(f"SELECT gvkey, public_date, qdate, debt_at FROM {library}.firm_ratio WHERE ")
+    assert ops.calls_today("wrds") == 2                                  # the catalog, then the table
+
+
+def test_firm_ratio_in_no_known_library_fails_naming_where_wrds_has_it(fake):
+    conn, _ = fake
+    conn.catalog = {**{k: v for k, v in fx.WRDS_CATALOG.items() if k[1] != "firm_ratio"},
+                    ("elsewhere", "firm_ratio"): ["gvkey", "public_date", "qdate", "debt_at"]}
+    check = fx.run(wrds_fund.FIRM_RATIO.name, mode="backfill", to="2026-10-27")
+    assert check["result"] == "failed"
+    assert "firm_ratio is not in wrdsapps_finratio or wrdsapps; WRDS has it in elsewhere" in check["note"]
+    assert len(conn.queries) == 1                                        # the table is not asked
+
+
+def test_firm_ratio_without_a_column_it_needs_fails_naming_the_columns_wrds_has(fake):
+    conn, _ = fake
+    conn.catalog = {**fx.WRDS_CATALOG, ("wrdsapps_finratio", "firm_ratio"): ["gvkey", "public_date", "qdate"]}
+    check = fx.run(wrds_fund.FIRM_RATIO.name, mode="backfill", to="2026-10-27")
+    assert check["result"] == "failed"
+    assert "wrdsapps_finratio.firm_ratio has no debt_at (it has gvkey, public_date, qdate)" in check["note"]
+    assert len(conn.queries) == 1

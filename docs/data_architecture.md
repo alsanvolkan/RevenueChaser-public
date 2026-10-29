@@ -1149,8 +1149,8 @@ cache, which the boards still read until their move (G6).
 | `sec/fsds` | monthly | The SEC's quarterly Financial Statement Data Sets zip, the newest quarter published | `stg_sec_fsds` |
 | `wrds/fundq` | monthly, attended | `comp.fundq`, the Tier A gvkeys, ten years | `stg_wrds_fundq`, `stg_wrds_fundq_revision` |
 | `wrds/funda` | monthly, attended | `comp.funda`, the Tier A gvkeys, ten years | `stg_wrds_funda`, `stg_wrds_funda_revision` |
-| `wrds/firm_ratio` | monthly, attended | `wrds_finratio.firm_ratio`, three years of publication dates | `stg_wrds_firm_ratio` |
-| `wrds/segments` | monthly, attended | `comp_segments_hist_daily.wrds_segmerged` and `seg_customer`, five years, the newest source date per key | `stg_wrds_segments`, `stg_wrds_customers` |
+| `wrds/firm_ratio` | monthly, attended | `firm_ratio` from the first of `wrdsapps_finratio`, `wrdsapps` that WRDS's catalog shows, three years of publication dates | `stg_wrds_firm_ratio` |
+| `wrds/segments` | monthly, attended | `comp_segments_hist_daily.wrds_segmerged` and `seg_customer`, five years, the newest source date per key where the table has one | `stg_wrds_segments`, `stg_wrds_customers` |
 | `fundamentals/tables` | daily | none: builds the served tables, the views, the peer groups and the build issues from the staging tables | the tables below |
 
 **A builder that was down still reads what was filed meanwhile.** `sec/companyfacts` and `sec/filings` read the
@@ -1184,7 +1184,11 @@ agree with the SEC's facts (Compustat's millions times a million, within 0.5%, E
 7 days), and WRDS's `debt_at` against the SEC's total debt over total assets (within 0.02). The note of each
 WRDS dataset's newest run is its card's WRDS difference slot on Settings (`docs/data_health.md`). Compustat segments
 are served beside the annual report's inline XBRL ones, each row with its `source`; a Compustat customer's share is
-its sales over the SEC's annual revenue of that year, NULL when there is none or the ratio is above 1.
+its sales over the SEC's annual revenue of that year, NULL when there is none or the ratio is above 1. The first
+real run (2026-10-29, PR 249) found no `wrds_finratio` library and no `srcdate` in `seg_customer`, so `wrds/firm_ratio`
+and `wrds/segments` read WRDS's own catalog (`information_schema.columns`, one more query) before their tables: a
+column the code can do without that WRDS lacks is not asked and the note says so, and a table in none of its
+libraries, or without a column it needs, fails the run naming what WRDS has.
 
 **The FSDS check** (`sec/fsds`). The SEC's quarterly data sets hold every XBRL value filed in the quarter. The
 Tier A companies' own values (no co-registrant, no dimension) of revenue, net income, total assets and diluted EPS
