@@ -238,3 +238,30 @@ def test_n6_recorded_but_unscored_days_do_not_move_the_base_rate(tmp_path):
         brier.score_date(day, outcome, path=p)
     brier.record_probs("2026-08-12", CONSTANT, path=p)        # today's record, not scored yet
     assert brier.scorecard(path=p)["base_rate_reference"] == pytest.approx(0.5)
+
+
+# ── N7: the VIX term mode reads the 9-day point too ─────────────────────────────────────────────
+from RevenueChaser.module_spx_gamma.normalize import normalize_vix  # noqa: E402
+from RevenueChaser.module_spx_gamma.vix import vix_term_mode  # noqa: E402
+
+
+def test_n7_a_9d_above_spot_vix_is_front_backwardation_even_in_contango():
+    assert vix_term_mode({"^VIX": 15.0, "^VIX9D": 17.0, "^VIX3M": 18.0}) == "front backwardation"
+
+
+def test_n7_the_old_readings_are_unchanged():
+    assert vix_term_mode({"^VIX": 15.0, "^VIX9D": 13.0, "^VIX3M": 18.0}) == "contango"
+    assert vix_term_mode({"^VIX": 25.0, "^VIX9D": 28.0, "^VIX3M": 22.0}) == "backwardation"
+    assert vix_term_mode({"^VIX": 15.0, "^VIX3M": 18.0}) == "contango"      # no 9D: as before
+    assert vix_term_mode({"^VIX9D": 17.0, "^VIX3M": 18.0}) is None
+
+
+def test_n7_a_stored_payload_is_read_with_the_9d_rule():
+    vix = normalize_vix({"tickers": {"^VIX": 15.0, "^VIX9D": 17.0, "^VIX3M": 18.0}, "term_mode": "contango"})
+    assert vix["term_mode"] == "front backwardation"
+
+
+def test_n7_the_board_explains_front_backwardation():
+    from pathlib import Path
+    html = (Path(brier.__file__).parent / "templates" / "section_position_map.html.j2").read_text(encoding="utf-8")
+    assert "vix.term_mode == 'front backwardation'" in html
