@@ -163,6 +163,28 @@ def test_adjustment_factors_and_the_one_basis_point_rule(built):
     assert _issues()["adjustment_differs"] == {SPY + ":2026-10-26"}
 
 
+def test_the_one_basis_point_rule_allows_for_alpacas_cent_rounded_adjusted_closes(http_mock):
+    # Alpaca's adjusted closes are rounded to the cent (the server's sample: KO 1.1-1.3 bp apart at ~$70 on days
+    # with no action between them, where a factor cannot move a day return). Here BRK.B trades at ~$70 and Alpaca's
+    # series holds a dividend the store does not know, rounded: the 27th is 1.24 bp off, inside half a cent on each
+    # close (1.48 bp). The 23rd is two cents more, so it and the 26th are 2.3 and 3.5 bp off: issues. GOOGL's 0.5 bp
+    # at $255 is under 1 bp, though over its own rounding. SPY's 5 bp, an action Alpaca knows and the store does not,
+    # stays an issue.
+    raw = [70.00, 70.35, 70.12, 70.50, 70.41, 70.62]
+    brk = [round(c * 0.96, 2) for c in raw]
+    brk[3] = round(brk[3] + 0.02, 2)
+    googl = RAW["GOOGL"][:5] + [RAW["GOOGL"][5] * 1.00005]
+    series = {"raw": {**RAW, "BRK.B": raw}, "all": {**ALL, "BRK.B": brk, "GOOGL": googl}}
+    http_mock.routes.insert(0, ("/v2/stocks/bars", BarsAnswer(
+        {k: {s: [bar(d, c) for d, c in zip(DAYS, cs)] for s, cs in v.items()} for k, v in series.items()}), 200, {}))
+    _shares_and_floats()
+    base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
+    base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    ours = raw[5] / raw[4] - 1
+    theirs = round(raw[5] * 0.96, 2) / round(raw[4] * 0.96, 2) - 1
+    assert 1e-4 < abs(ours - theirs) < 1.3e-4                              # over the flat 1 bp
+    assert _issues()["adjustment_differs"] == {SPY + ":2026-10-26", "072726:02:2026-10-23", "072726:02:2026-10-26"}
+
 def test_a_gap_without_an_action_is_an_issue_and_the_reverse_split_is_not(built):
     gaps = _issues()["price_gap_no_action"]
     assert gaps == {GAPX + ":2026-10-22"}

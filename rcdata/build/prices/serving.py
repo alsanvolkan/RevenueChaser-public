@@ -59,6 +59,12 @@ INDEX_SOURCE = "market_series/cboe"
 GAP_FACTOR = 1.9
 # The 1-bp rule: our total-return day return against the source's own adjusted one.
 TOLERANCE = 1e-4
+# Alpaca's adjusted closes come rounded to the cent, so its day return can be off by half a cent on each close
+# (KO in the server's sample, 29 Oct 2026: 1.1-1.3 bp at ~$70 between two days no factor separates). The rule
+# allows that much where it is more than 1 bp: (1 + r) * h * (1 / close + 1 / previous close).
+# shortcut: the cent rounding is read from the sample's KO rows, Alpaca does not document it; measure it on the server
+# (count of rows left, and their sizes) and narrow or widen this once a full Tier A build runs.
+HALF_CENT = 0.005
 FLOAT_OVER = 1.05
 FLOAT_DISAGREE = 0.25
 # A dividend is applied with the close of the last bar before its ex-date, at most this many days before it.
@@ -72,7 +78,8 @@ ISSUE_KINDS = {
     "tier_a_no_shares": "a Tier A name with no shares, so no market cap, on the newest session (key: the security id)",
     "price_gap_no_action": ("the split-adjusted close moved by GAP_FACTOR or more with no split that day "
                             "(key: security:session)"),
-    "adjustment_differs": "our total-return day return is more than 1 bp from the source's own (key: security:session)",
+    "adjustment_differs": ("our total-return day return is more than 1 bp from the source's own, or more than the "
+                           "rounding of its cent-rounded closes where that is larger (key: security:session)"),
     "dividend_not_applied": "a cash dividend the factors could not use (key: the action id)",
     "action_not_applied": "a spin-off, unit split or rights distribution the factors do not apply (key: the action id)",
     "cover_class_unmapped": "a cover class whose trading symbol is no spine ticker of its CIK (key: CIK:symbol)",
@@ -172,7 +179,7 @@ CREATE OR REPLACE TEMP TABLE _alp AS
     SELECT coalesce(s.security_id, b.security_id) AS security_id, b.session_date, b.ticker AS symbol, b.cik,
            b.open, b.high, b.low, b.close, b.volume, b.vwap, b.trade_count,
            CAST(NULL AS DOUBLE) AS shares_outstanding, '{bars}' AS source, b.source_as_of, b.fetched_at, b.run_id,
-           b.symbol AS alpaca_symbol, b.all_return, b.tier
+           b.symbol AS alpaca_symbol, b.close_all, b.all_return, b.tier
     FROM stg_alpaca_bars b LEFT JOIN stg_spine s ON s.ticker = b.ticker AND s.cik IS NOT DISTINCT FROM b.cik
     QUALIFY row_number() OVER (PARTITION BY coalesce(s.security_id, b.security_id), b.session_date
                                ORDER BY b.fetched_at DESC) = 1;
@@ -457,12 +464,15 @@ class PricesServing:
                                   AND c.ex_date <= r.session_date)
                 ORDER BY 1, 2""").fetchall():
             found.append(("price_gap_no_action", f"{sid}:{day}", f"split-adjusted close x{ratio:.3f}, no split"))
+        # Alpaca's previous adjusted close is close_all / (1 + all_return), so the rounding allowance is
+        # (1 + r) * h * (1 + (1 + r)) / close_all.
+        allowance = (f"coalesce((1 + a.all_return) * {HALF_CENT} * (2 + a.all_return) / nullif(a.close_all, 0), 0)")
         for sid, day, ours, theirs in con.execute(f"""
                 SELECT r.security_id, r.session_date, r.tr_close / r.prev_tr - 1, a.all_return
                 FROM _ret r JOIN _alp a ON a.security_id = r.security_id AND a.session_date = r.session_date
                 WHERE r.source = '{ALPACA_BARS}' AND r.prev_tr > 0 AND a.all_return IS NOT NULL
                   AND date_diff('day', r.prev_day, r.session_date) <= 5
-                  AND abs((r.tr_close / r.prev_tr - 1) - a.all_return) > {TOLERANCE}
+                  AND abs((r.tr_close / r.prev_tr - 1) - a.all_return) > greatest({TOLERANCE}, {allowance})
                 ORDER BY 1, 2""").fetchall():
             found.append(("adjustment_differs", f"{sid}:{day}", f"ours {ours:.6f}, alpaca {theirs:.6f}"))
         newest_of = ("SELECT security_id, value FROM shares_class WHERE measure = '{m}' AND source = '{s}' "
