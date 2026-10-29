@@ -1,8 +1,8 @@
 """Co-movement engine — returns → clusters → dated hierarchy.
 
-Both paths read D01's adjusted closes (``core.prices.daily_bars``, through
-``ohlc.price_frame``; #379 D01 switch) and never touch the network: Daily Bars
-writes D01, a Fetch persists a dated run and a model-only (``no_fetch``) run
+Both paths read the prices store's adjusted closes (``rcdata.read.ticker_bars``, through
+``ohlc.price_frame``; PR 8) and never touch the network: the prices build
+writes the store, a Fetch persists a dated run and a model-only (``no_fetch``) run
 re-clusters or serves one. Results are persisted as a dated run (``comov_runs`` / ``comov_nodes``
 / ``comov_members``) so a Refresh can re-render with zero network.
 """
@@ -34,7 +34,7 @@ from . import settings as settings_mod
 
 logger = logging.getLogger(__name__)
 
-# #379 COM-3: a store-only run (Refresh, window switch, Settings recompute) reads its window of D01
+# #379 COM-3: a store-only run (Refresh, window switch, Settings recompute) reads its window of the prices store
 # and takes the whole-history facts from SQL (``_window_prices``). False restores the full read: the parity
 # tests' baseline, and a rollback that needs no revert.
 WINDOWED_REFRESH = True
@@ -44,10 +44,10 @@ def _source(eff: settings_mod.Effective | None = None) -> dict:
     """Where the board's numbers come from ("About this data", ADR-3 disclosure)."""
     eff = eff or settings_mod.effective()
     return {
-        "provider": "D01 daily bars (Daily Bars job: Unusual Whales, Yahoo Finance fallback)",
-        "detail": "daily split/dividend-adjusted closes (core.prices.daily_bars, basis=adjusted)",
+        "provider": "Prices store (Alpaca daily bars; the WRDS history comes with the history run)",
+        "detail": "daily split/dividend-adjusted closes (rcdata.read.ticker_bars, basis=total_return)",
         "period": config.OHLC_PERIOD,
-        "table": "prices.duckdb → price_bars_daily + price_actions", "window": eff.window,
+        "table": "prices.duckdb → price_bar_daily + adj_factor", "window": eff.window,
         "oos_holdout": eff.oos_holdout, "floor_mc": eff.floor,
     }
 
@@ -156,8 +156,8 @@ def _settings_keys(eff: settings_mod.Effective | None = None) -> dict:
 def _provider_health(fetch: dict | None) -> dict | None:
     """The banner's health from this run's fetch report (#80).
 
-    Co-movement calls no provider itself (Daily Bars writes the closes). ``failed`` is the count the fetch
-    report already carries; a clean report (``failed`` 0, which a D01 coverage check is) leaves the banner empty.
+    Co-movement calls no provider itself (the prices build writes the closes). ``failed`` is the count the fetch
+    report already carries; a clean report (``failed`` 0, which a store coverage check is) leaves the banner empty.
     """
     failed = int((fetch or {}).get("failed") or 0)
     if failed <= 0:
@@ -259,9 +259,9 @@ def split_short_history(prices, dropped, window: int, horizon: int, first: dict 
     *Listed recently*: the ticker's first stored bar is inside the window (it
     listed after the window start), so no Fetch can give it more history — by
     design. *Missing bars*: listed before the window start yet still short of
-    ``MIN_OBS`` returns in it, so the stored prices have gaps. Neither a Fetch nor
-    Daily Bars fills them: Daily Bars writes from a name's last stored session on
-    and never goes back (``core.prices._classify``). Reads only the price frame the run already holds (store-only). ``first`` (ticker -> first bar) is
+    ``MIN_OBS`` returns in it, so the stored prices have gaps. A Fetch does not fill
+    them, but a session can come back: the prices build re-reads the last sessions
+    every run and the history run fills older ones. Reads only the price frame the run already holds (store-only). ``first`` (ticker -> first bar) is
     given when that frame holds only the window (#379 COM-3), whose first bar is not the listing.
     """
     if not dropped or prices is None or prices.empty:
@@ -304,8 +304,9 @@ _STEP_KEYS = ("scanned_total", "below_floor", "no_market_cap", "no_prices",
 
 def _short_history_steps(f: dict, prices_fix: dict | None) -> list[dict]:
     """One ``short_history`` step, or — when the run recorded the split —
-    ``listed_recently`` (by design, no fix) and ``missing_bars`` (gaps in the stored bars, which no job goes back to
-    fill: the step names no fix)."""
+    ``listed_recently`` (by design, no fix) and ``missing_bars`` (gaps in the stored bars; no button fixes them, but
+    the prices build re-reads the last sessions and the history run fills older ones, so the label says a session can
+    come back)."""
     window = f.get("window") or settings_mod.effective().window
     min_obs = f.get("min_obs") or settings_mod.effective(window).min_obs
     if f.get("listed_recently") is None or f.get("missing_bars") is None:
@@ -318,7 +319,8 @@ def _short_history_steps(f: dict, prices_fix: dict | None) -> list[dict]:
             f"Listed recently (first price inside the {window}-session window)",
             f["listed_recently"], "drop", by_design=True),
         funnel_mod.step(
-            "missing_bars", f"Missing price bars (< {min_obs} of {window} sessions)",
+            "missing_bars", f"Missing price bars (< {min_obs} of {window} sessions; a missing session can come back "
+                            "with the next prices build or the history run)",
             f["missing_bars"], "drop", by_design=False, fix=prices_fix),
     ]
 
@@ -356,7 +358,7 @@ def funnel_steps(f: dict) -> list[dict]:
     if not f or any(f.get(k) is None for k in _STEP_KEYS):
         return []
     caps = {"route": "/run/universe-stats", "label": "Fetch caps"}
-    # A Fetch downloads no prices since #379 (the nightly Daily Bars job fills D01), so a price drop has no button
+    # A Fetch downloads no prices since #379 (the prices build fills the store), so a price drop has no button
     prices = None
     return [
         funnel_mod.step("scanned", "Scanned universe", f["scanned_total"], "start"),
@@ -455,7 +457,7 @@ def _stored_run(chash: str, prices_through: str | None,
     Same config hash (every input that changes the numbers), same
     ``prices_through``, and the same clustered names: a changed universe or a
     name that crossed MIN_OBS changes the clustering even when the median last
-    date has not moved. The run must also be newer than the last D01 write for
+    date has not moved. The run must also be newer than the last store change for
     these tickers (``ohlc.last_written``: bars or actions): a new dividend or
     split revises the adjusted history without moving the last date. A run
     older than ``config.ENGINE_EPOCH`` is never served (bumped whenever a
@@ -575,10 +577,10 @@ def _flat(prices, tickers) -> list[str]:
 
 
 def _window_prices(price_tickers, tickers, bench_ticker, eff, horizon):
-    """A store-only run's inputs from its window of D01 (#379 COM-3): no number moves.
+    """A store-only run's inputs from its window of the prices store (#379 COM-3): no number moves.
 
     The full read loaded every stored bar (two years of every name) only to use the last ``window + horizon``
-    sessions. Three facts still need the whole history and come from SQL (``ohlc.history_facts``): each
+    sessions. Three facts still need the whole history and come from one SQL read (``ohlc.history_facts``): each
     name's first and last bar (no prices, the median last date, listed recently vs missing bars), the session
     index (a stale benchmark, where the window starts), and the flat printers, judged on the whole history by
     the same ``flat_print_names`` over the few candidates SQL finds. The frame keeps every column the full

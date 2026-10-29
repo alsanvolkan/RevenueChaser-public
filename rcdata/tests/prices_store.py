@@ -14,6 +14,7 @@ import time
 from datetime import date, datetime
 
 import duckdb
+import pandas as pd
 
 from RevenueChaser.rcdata import serving
 from RevenueChaser.rcdata.build.prices import serving as prices_serving
@@ -51,10 +52,11 @@ def _connect() -> duckdb.DuckDBPyConnection:
     return con
 
 
-def put_bars(rows: list[dict], *, replace: bool = True) -> int:
+def put_bars(rows: list[dict], *, replace: bool = True, overwrite: bool = False) -> int:
     """``rows`` (``ticker``, ``session_date`` or ``ts``, ``close``, optional ``open``/``high``/``low``/``volume``,
     ``fetched_at``, ``source``, ``security_id``, ``symbol``) as served bars. With ``replace`` each ticker's stored
-    bars go first (a re-fetched series); the first row of a (security, session) wins."""
+    bars go first (a re-fetched series); with ``overwrite`` only the stored bars of the rows' own sessions do (an
+    upsert, as the old D01 seed did). Otherwise the first row of a (security, session) wins."""
     if not rows:
         return 0
     con = _connect()
@@ -62,6 +64,9 @@ def put_bars(rows: list[dict], *, replace: bool = True) -> int:
         if replace:
             sids = sorted({_sid(r) for r in rows})
             con.execute(f"DELETE FROM price_bar_daily WHERE security_id IN ({', '.join('?' * len(sids))})", sids)
+        elif overwrite:
+            con.executemany("DELETE FROM price_bar_daily WHERE security_id = ? AND session_date = ?",
+                            sorted({(_sid(r), _day(r.get("session_date") or r.get("ts"))) for r in rows}))
         seen = {(r[0], r[1]) for r in con.execute("SELECT security_id, session_date FROM price_bar_daily").fetchall()}
         out = []
         for r in rows:
@@ -75,7 +80,12 @@ def put_bars(rows: list[dict], *, replace: bool = True) -> int:
                         r.get("open", close), r.get("high", close), r.get("low", close), close,
                         r.get("volume", 1.0), None, None, None, r.get("source", "alpaca/bars"), day,
                         time.time() if at is None else float(at), "test"))
-        con.executemany(f"INSERT INTO price_bar_daily VALUES ({', '.join('?' * 16)})", out)
+        if out:
+            # One frame insert: DuckDB's executemany sends a statement per row (~110 s for a 161-name market).
+            cols = [c for c, _ in prices_serving.SCHEMAS["price_bar_daily"]]
+            con.register("_new_bars", pd.DataFrame(out, columns=cols).astype({"cik": "object"}))
+            con.execute("INSERT INTO price_bar_daily SELECT * FROM _new_bars")
+            con.unregister("_new_bars")
         _derive(con)
         return len(out)
     finally:
@@ -139,5 +149,34 @@ def clear() -> None:
         con.execute("DELETE FROM price_bar_daily")
         con.execute("DELETE FROM corporate_action")
         _derive(con)
+    finally:
+        con.close()
+
+
+def put_series(rows: list[dict]) -> None:
+    """``market_series`` rows (``series_id``, ``obs_date``, ``value``, optional ``source``, ``close``) in a served
+    ``market.duckdb``: the market-wide series a board reads beside the bars (Sector Rotation's macro series, PR 9)."""
+    from RevenueChaser.rcdata.build import market_series
+    path = serving.live_path("market")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(str(path))
+    try:
+        have = {r[0] for r in con.execute("SELECT table_name FROM information_schema.tables").fetchall()}
+        if serving.VERSION_TABLE not in have:
+            con.execute(f"CREATE TABLE {serving.VERSION_TABLE} (kind TEXT, version INTEGER, built_at DOUBLE, "
+                        "build_id TEXT)")
+            con.execute(f"INSERT INTO {serving.VERSION_TABLE} VALUES ('market', ?, ?, 'test')",
+                        [serving.SERVING_SCHEMA_VERSION["market"], time.time()])
+        if "market_series" not in have:
+            con.execute("CREATE TABLE market_series (" + ", ".join(f'"{c}" {t}' for c, t in market_series.SCHEMA)
+                        + ")")
+        names = [c for c, _ in market_series.SCHEMA]
+        for r in rows:
+            day = _day(r["obs_date"])
+            row = {"source": "fred", "frequency": "daily", "session_date": day, "source_as_of": day,
+                   "fetched_at": time.time(), "run_id": "test", **r, "obs_date": day}
+            con.execute(f"INSERT INTO market_series ({', '.join(names)}) VALUES ({', '.join('?' * len(names))})",
+                        [row.get(c) for c in names])
+        con.execute("CHECKPOINT")
     finally:
         con.close()

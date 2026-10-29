@@ -462,12 +462,12 @@ def _about(payload: dict, horizon: int, benchmark: str, applied: bool,
     about = (
         '<details class="about" id="about"><summary>About this data — source, dates, '
         'horizon, universe</summary><div class="about-body">'
-        '<div><h3>Where the prices come from</h3>Daily closes from the shared daily bars '
-        '(<code>prices.duckdb → price_bars_daily</code>), which the nightly <b>Daily Bars</b> job '
-        'downloads (Unusual Whales, Yahoo Finance as the fallback). Splits and dividends are applied '
-        f'on read (adjusted closes); the board reads the last <b>{period}</b>. Neither <b>Fetch</b> nor '
-        '<b>Refresh</b> downloads anything: Fetch stores a dated run, Refresh re-clusters the stored '
-        'prices. A name the daily bars do not hold yet shows under no prices.</div>'
+        '<div><h3>Where the prices come from</h3>Daily closes from the prices store '
+        '(<code>prices.duckdb → price_bar_daily</code>), which the <b>prices build</b> fills after each '
+        'close from Alpaca (the older history arrives with the history run). Splits and dividends are '
+        f'applied on read (adjusted closes); the board reads the last <b>{period}</b>. Neither '
+        '<b>Fetch</b> nor <b>Refresh</b> downloads anything: Fetch stores a dated run, Refresh re-clusters '
+        'the stored prices. A name the store does not hold yet shows under no prices.</div>'
         f'<div><h3>Date range used</h3>Window <b class="num">{ws} → {we}</b> '
         f'({eff["window"]} trading sessions).'
         + (f' Benchmark <b>{etf}</b> is removed over the same window.' if applied and etf else '')
@@ -511,8 +511,8 @@ def render_comovement_dashboard(payload: dict) -> str:
     sync = _friendly(payload.get("prices_through") or payload.get("as_of"))
 
     if not members:
-        grid = ('<div class="empty">No clusters yet. The nightly <b>Daily Bars</b> job fills the daily '
-                'prices; run <b>Fetch</b> to cluster them.</div>')
+        grid = ('<div class="empty">No clusters yet. The <b>prices build</b> fills the daily prices after '
+                'each close; run <b>Fetch</b> to cluster them.</div>')
     else:
         grid = ""
 
@@ -534,7 +534,7 @@ def render_comovement_dashboard(payload: dict) -> str:
         p_thr = _html.escape(str(payload.get("prices_through")))
         alerts.append(f"<b>{etf} ends {w_end}</b>, earlier than the other prices ({p_thr}). "
                       f"Residual groups and the last-{horizon}d move stop at {w_end}. "
-                      f"The nightly <b>Daily Bars</b> job fills it; <b>Refresh</b> then re-clusters.")
+                      f"The next <b>prices build</b> fills it; <b>Refresh</b> then re-clusters.")
     if applied:
         sub = (f"Groups of stocks whose returns moved together <b>after removing "
                f"{blabel}</b> ({etf}) · {horizon}-day overlapping returns · "
@@ -543,8 +543,8 @@ def render_comovement_dashboard(payload: dict) -> str:
         sub = (f"Remove market unavailable ({etf} has no usable prices) · "
                f"{horizon}-day overlapping returns")
         alerts.append(f"<b>{etf} has no usable prices in the store</b>, so the board fell "
-                      f"back to raw returns (market still inside the groups). The nightly "
-                      f"<b>Daily Bars</b> job adds it; <b>Refresh</b> then re-clusters.")
+                      f"back to raw returns (market still inside the groups). The next "
+                      f"<b>prices build</b> adds it; <b>Refresh</b> then re-clusters.")
     else:
         sub = (f"Raw return clusters · {horizon}-day overlapping returns — market still "
                f"inside the groups")
@@ -566,8 +566,8 @@ def render_comovement_dashboard(payload: dict) -> str:
         "Each group is a set of stocks whose daily returns moved together over the window. "
         "<b>Remove market</b> takes out the move of SPY, DIA or QQQ first, so a group is a shared "
         "story rather than the whole market going up or down. The <b>About this data</b> box below "
-        "gives the source, dates and universe. Prices are the shared daily bars the nightly "
-        "<b>Daily Bars</b> job stores. <b>Fetch</b> clusters them and stores a dated run; <b>Refresh</b> "
+        "gives the source, dates and universe. Prices are the daily bars the <b>prices build</b> "
+        "stores after each close. <b>Fetch</b> clusters them and stores a dated run; <b>Refresh</b> "
         "re-clusters the stored prices. Neither makes a network call.")
 
     market_now = (f"Now: residual vs <b>{etf}</b>. Nasdaq-100 here is QQQ, not the "
