@@ -24,51 +24,89 @@ from pathlib import Path
 
 from RevenueChaser.core import calendar, config
 from RevenueChaser.rcdata import caps, ops, retention, serving
+from RevenueChaser.rcdata.api import screen as api_screen
 
-LABELS = {"uw/spot_expiry_strike": "SPX expiry-strike (Unusual Whales)", "market_series": "Market series",
-          "sec/company_tickers_exchange": "SEC ticker and exchange file",
-          "wrds/sec_idhist": "Compustat securities and identifier history (WRDS)",
-          "wrds/co_hgic": "Compustat GICS history (WRDS)",
-          "wrds/idxcst_his": "Compustat index constituents (WRDS, the membership check)",
-          "openfigi/map": "OpenFIGI map of the CUSIPs", "funds/index_holdings": "Index membership (ETF holdings files)",
-          "spine/security": "Identity spine (security, tiers, history)"}
+
+class _FromScreen(dict):
+    """A map the screen reads from ``rcdata.api.screen`` and never writes.
+
+    It is a dict so that everything reading it keeps working, and every read goes back to the one source, so a card
+    changed there is what the screen shows without a second edit. Setting a key raises: that is the point.
+    """
+
+    def __init__(self, source, what: str):
+        super().__init__()
+        self._source, self._what = source, what
+
+    def _now(self) -> dict:
+        return self._source()
+
+    def __getitem__(self, key):
+        return self._now()[key]
+
+    def get(self, key, default=None):
+        return self._now().get(key, default)
+
+    def __contains__(self, key):
+        return key in self._now()
+
+    def __iter__(self):
+        return iter(self._now())
+
+    def __len__(self):
+        return len(self._now())
+
+    def keys(self):
+        return self._now().keys()
+
+    def values(self):
+        return self._now().values()
+
+    def items(self):
+        return self._now().items()
+
+    def __eq__(self, other):
+        return self._now() == other
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    __hash__ = None
+
+    def __repr__(self):
+        return repr(self._now())
+
+    def __setitem__(self, key, value):
+        raise TypeError(f"{key!r}: {self._what} lives in rcdata/api/screen.py (avo, 29 Oct 2026); set it there")
+
+    def update(self, *args, **kwargs):
+        raise TypeError(f"{self._what} lives in rcdata/api/screen.py (avo, 29 Oct 2026); set it there")
+
+
+def _card_label(dataset: str) -> str:
+    """The dataset's label as the screen shows it, or the dataset's own name when it has no card."""
+    return api_screen.labels().get(dataset, dataset)
+
+
+# The screen carries no list of its own: labels, cadence, coverage targets, the newest-date column, the status
+# order and the retirement list all come from ``rcdata/api/screen.py``, beside the need catalog (avo's plan, 29 Oct
+# 2026). A need or a dataset added there needs no second edit here, and a write to one of these maps is refused so
+# that a second copy cannot creep back in.
+LABELS = _FromScreen(api_screen.labels, "a dataset's label")
+CADENCE = _FromScreen(api_screen.cadences, "a dataset's cadence")
+COVERAGE_TARGET = _FromScreen(api_screen.coverage_targets, "a dataset's coverage target")
+DATE_COLUMN = _FromScreen(api_screen.written_columns, "a table's newest-date column")
+RETIRING = _FromScreen(lambda: api_screen.RETIRING, "the retirement list")
+CYCLE_DAYS = api_screen.CYCLE_DAYS
+RETIREMENT_DAYS = api_screen.RETIREMENT_DAYS
+STATUS_ORDER = api_screen.STATUS_ORDER
 # The ownership store (PR 16).
-LABELS.update({"finra/short_interest": "Short interest (FINRA)", "regsho/threshold": "Reg SHO threshold lists",
-               "ibkr/shortable": "Borrow fee and shares available (IBKR file)", "sec/ftd": "Fails to deliver (SEC)",
-               "sec/13f": "13F holdings (SEC data sets, then forms)", "sec/form4": "Insider transactions (Form 4)",
-               "sec/13dg": "5% owners (Schedules 13D and 13G)", "ownership/serve": "13F totals per ticker and quarter"})
 # The fundamentals layer (PR 12).
-LABELS.update({
-    "sec/companyfacts": "SEC company facts (re-read on the filing day)",
-    "sec/filings": "SEC filing lists, 8-K items and report texts",
-    "alphavantage/earnings_calendar": "Earnings calendar (Alpha Vantage)",
-    "uw/financials": "Preliminary quarters (Unusual Whales, off by default)",
-    "yfinance/estimates": "Analyst estimates (yfinance)",
-    "sec/fsds": "SEC Financial Statement Data Sets (the check)",
-    "wrds/fundq": "Compustat quarterly fundamentals (WRDS, the revision check)",
-    "wrds/funda": "Compustat annual fundamentals (WRDS, the revision check)",
-    "wrds/firm_ratio": "WRDS financial ratios (the debt check)",
-    "wrds/segments": "Compustat segments and customers (WRDS)",
-    "fundamentals/tables": "Fundamentals (served tables, peers, build issues)"})
 # Default cadence per dataset (the dataset's own ``cadence`` when it has one); a ``dataset_schedule.cadence`` of
 # daily / weekly / monthly overrides it.
-CADENCE = {"uw/spot_expiry_strike": "daily", "market_series": "daily"}
-CYCLE_DAYS = {"weekly": 8, "monthly": 35}
 # Coverage targets: alarm limits as proposed, to be re-checked after two weeks of real data (decision 1, 27 Oct).
 # spine/security's coverage is the share of Tier A with a CUSIP (the plan's target, >= 98%).
-COVERAGE_TARGET: dict[str, float | None] = {"uw/spot_expiry_strike": 0.95, "market_series": None,
-                                            "spine/security": 0.98}
 # The newest-date column of each serving table.
-DATE_COLUMN = {"spx_gamma_expiry_strike": "session_date", "market_series": "obs_date", "security": "source_as_of",
-               "security_history": "valid_from", "gics_history": "valid_from", "index_membership": "valid_from"}
-DATE_COLUMN.update({"finra_short_interest": "settlement_date", "regsho_threshold": "list_date",
-                    "ibkr_shortable": "session_date", "sec_ftd": "settlement_date", "sec13f_filings": "filed",
-                    "insider_transactions": "filed", "beneficial_ownership": "filed", "sec13f_cusip_map": "period",
-                    "sec13f_filer_period": "period", "sec13f_ticker_period": "period", "sec13f_periods": "period"})
-DATE_COLUMN.update({"fundamental_company": "facts_as_of", "fundamental_fact": "filed", "filing_item": "filing_date",
-                    "earnings_event": "source_as_of", "fundamental_revision": "new_as_of",
-                    "segment_revenue": "document_date", "customer_share": "document_date",
-                    "estimate_latest": "source_as_of"})
 # The identity funnel (PR 5, D9): the indexes it counts, and the dataset whose build issues it lists.
 SPINE_INDEXES = ("sp500", "sp400", "sp600", "ndx")
 SPINE_ISSUES = "spine/security"
@@ -77,26 +115,16 @@ SPINE_ISSUES = "spine/security"
 WRDS_DIFFERENCE = ("wrds/fundq", "wrds/funda", "wrds/firm_ratio", "wrds/segments")
 NO_WRDS = {"text": "no WRDS run yet"}
 # Old .store tables a new dataset replaces: their reads in read_log are the retirement count (read for 14 days).
-RETIRING = {"macro_series": "market_series", "vol_index_daily": "market_series", "cftc_cot": "market_series",
-            "economic_calendar": "market_series", "estimate_snapshots": "estimate_latest"}
-RETIREMENT_DAYS = 14
 BACKUP_WARN_DAYS = 35
 PORTABLE_DATASET = "backup/portable"
 # The raw-option retention: on as a warning until one of these says how many days raw option files are kept
 # (``rcdata/retention.py``, the rule the builder's retention hook reads too).
 RETENTION_ENV = retention.ENV
 RETENTION_ROW = retention.ROW             # a dataset_schedule row whose cadence holds the days
-STATUS_ORDER = ("stale", "never", "late", "unchanged", "fresh")
 
 # The options data (G8), in a block of its own. Coverage: the share of the names a run set out to fetch that it has
 # (the list names; the earnings set and the screener batches of the evening). The IBKR year has no target: a name
 # just added to the list is uncovered until the next run, which is not a late dataset.
-LABELS.update({"uw/option_list": "Options of SPX and the option list (Unusual Whales)",
-               "uw/option_screener": "Earnings options: calendar, screener and earnings set (Unusual Whales)",
-               "ibkr/iv_history": "One year of 30-day implied volatility per list name (IBKR)"})
-COVERAGE_TARGET.update({"uw/option_list": 0.95, "uw/option_screener": 0.95, "ibkr/iv_history": None})
-DATE_COLUMN.update({t: "session_date" for t in ("option_eod", "option_strike", "option_expiry", "option_daily",
-                                                "option_print", "iv_daily", "option_screener_daily", "er_options")})
 
 
 def _datasets() -> dict:
@@ -276,16 +304,7 @@ BACKFILL = {"uw/spot_expiry_strike": _backfill_sessions, "market_series": _backf
 
 # ── The prices store (PR 7, G2) ───────────────────────────────────────────────────────────────────────────────
 
-LABELS.update({"alpaca/bars": "Daily bars (Alpaca)", "alpaca/corporate_actions": "Corporate actions (Alpaca)",
-               "sec/cover_shares": "Shares per class (SEC filing covers)", "yfinance/float": "Float (Yahoo)",
-               "uw/total_float": "Float check (Unusual Whales)",
-               "wrds/prices": "Price history and actions (WRDS: Compustat, CRSP)",
-               "prices/serving": "Prices store (bars, actions, factors, shares, market cap)"})
 # The plan's acceptance: Tier A sessions complete >= 99% (sized against the real Tier A, 5,655 names on 28 Oct).
-COVERAGE_TARGET.update({"alpaca/bars": 0.99})
-DATE_COLUMN.update({"price_bar_daily": "session_date", "corporate_action": "ex_date", "adj_factor": "valid_to",
-                    "shares_class": "as_of", "security_symbol": "valid_from", "market_cap_daily": "session_date",
-                    "price_revision": "session_date", "wrds_price_diff": "as_of"})
 # An attended dataset's own command, where it is not its kind's (``attended_command``).
 ATTENDED_COMMANDS = {"wrds/prices": "python -m RevenueChaser.rcdata.build backfill wrds/prices"}
 # The rows of the WRDS difference report (``wrds_price_diff``), as the card words them.
