@@ -85,7 +85,7 @@
     <span>Sector: {{ sector or "N/A" }}</span>
     <span>Price: {{ price|price }}{% if price_session %} (close {{ price_session }}){% endif %}</span>
     <span>Market Cap: {{ market_cap|usd }}</span>
-    <span>EV: {{ enterprise_value|usd }}</span>
+    <span>EV: {{ enterprise_value|usd }}{% if ev_is_yahoos and enterprise_value is not none %} (Yahoo){% endif %}</span>
     <span>Source: {{ source }}</span>
     <span>Last sync: {{ data_date|friendly_day }}</span>
   </div>

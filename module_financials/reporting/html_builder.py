@@ -152,6 +152,10 @@ def build_report_html(results: dict) -> str:
         "shares_outstanding": financials.get("shares_outstanding"),
         "market_cap": financials.get("market_cap"),
         "enterprise_value": financials.get("enterprise_value"),
+        # shortcut: the EV stays Yahoo's (its newest quarter's debt and cash) next to the prices store's cap, and the
+        # header says so (review should 2 on #284); the statements' net debt is up to a year old, so the store's cap
+        # plus it would be no better. Upgrade when the fundamentals layer serves the newest quarter's debt and cash.
+        "ev_is_yahoos": (financials.get("market_meta") or {}).get("shares_source", "Yahoo") != "Yahoo",
         "source": financials.get("source", "yfinance"),
         "data_date": financials.get("_fetched_at_iso") or financials.get("fetched_at_iso"),
         "quick_remarks": quick_remarks,

@@ -225,3 +225,17 @@ def test_the_comps_basis_names_where_the_targets_shares_came_from(market_roots):
     assert "per share divides by the target's shares from the prices store, 2026-10-27 close." in html
     yahoo = comps_engine.run_comps({**YAHOO, "annual": fin["annual"]}, ["PEER"], fetch_info=lambda p: peer)
     assert yahoo["basis"]["target_shares"] == "Yahoo"
+
+
+def test_the_cards_ev_says_it_is_yahoos_next_to_the_stores_cap():
+    # Shortcut kept on purpose (review should 2): the EV stays Yahoo's (its newest quarter's debt and cash); the
+    # statements' net debt is up to a year old, so a store cap plus it would be no better. The card says so.
+    from RevenueChaser.module_financials.reporting.html_builder import build_report_html
+    fin = {**YAHOO, "enterprise_value": 5200.0,
+           "market_meta": {"from_store": ["price", "market cap, shares"], "price_session": "2026-10-27",
+                           "shares_source": "prices store, 2026-10-27 close"}}
+    html = build_report_html({"ticker": TICKER, "financials": fin, "modules": {}, "warnings": []})
+    assert "EV: $5.2K (Yahoo)<" in html
+    yahoo = build_report_html({"ticker": TICKER, "financials": {**YAHOO, "enterprise_value": 5200.0},
+                               "modules": {}, "warnings": []})
+    assert "EV: $5.2K<" in yahoo
