@@ -481,7 +481,8 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "levels": levels,
         "zero_one_dte_dollars": zero_one_dollars,
     })
-    option_chain_rows = normalize_option_chain(raw.get("option_chain"), spot, asof_str)
+    option_chain_rows = normalize_option_chain(raw.get("option_chain"), spot, asof_str,
+                                               (raw.get("_meta") or {}).get("api_snapshot_time"))
     iron_butterfly = build_iron_butterfly({
         "current_level": spot,
         "asof_date": asof_str,
