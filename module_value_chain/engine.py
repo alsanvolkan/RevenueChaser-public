@@ -270,7 +270,43 @@ def fetch_corpus(tickers: list[str] | None = None, no_fetch: bool = False,
             "kept": kept, **counts, "misses": missed, "no_fetch": False}
 
 
-def filing_edges(ticker: str, text: str, filed: str = "") -> list[dict]:
+def _xbrl_customer_edges(ticker: str, customers: list[dict]) -> list[dict]:
+    """``customer`` edges from the annual report's inline XBRL (``customer_share`` rows of the filer, G6 build plan
+    PR 20): a major customer the alias list names, with its share of revenue. An anonymised customer ("Customer A")
+    names no company and gives none.
+
+    shortcut: only customers the hand-kept alias list knows become edges (as in the text); upgrade when the Value
+    Chain redo resolves a customer's name to a company of the universe.
+    """
+    me, out = aliases.issuer(ticker), {}
+    for c in customers:
+        hits = [h for h in aliases.find_aliases(c.get("customer") or "") if not h["context_only"]]
+        if len(hits) != 1 or aliases.issuer(hits[0]["ticker"]) == me or hits[0]["ticker"] in out:
+            continue
+        pct = round(float(c["share"]) * 100, 2)
+        filed = str(c.get("document_date") or c.get("period_end") or "")
+        out[hits[0]["ticker"]] = {
+            "dst_name": hits[0]["name"], "dst_ticker": hits[0]["ticker"], "relation": "customer",
+            "snippet": (f"Annual report XBRL: {c['customer']} {pct:g}% of revenue (period ending {c.get('period_end')}"
+                        + (f", {c['form']} {c['accession']})" if c.get("accession") else f", {c.get('source')})")),
+            "filed": filed, "share_pct": pct}
+    return list(out.values())
+
+
+def _stored_customers(rows: list[dict]) -> dict[str, list[dict]]:
+    """``{ticker: customer_share rows}`` of the filings' companies on the fundamentals layer; empty off it."""
+    from RevenueChaser.core import fundamentals_layer
+    if not fundamentals_layer.reads_layer():
+        return {}
+    from RevenueChaser.rcdata import read
+    by_cik: dict[str, list[dict]] = {}
+    for c in read.customer_shares({r.get("cik") for r in rows}):
+        by_cik.setdefault(str(c["cik"]), []).append(c)
+    return {r["ticker"]: by_cik[read._cik(r.get("cik"))] for r in rows
+            if r.get("cik") and read._cik(r.get("cik")) in by_cik}
+
+
+def filing_edges(ticker: str, text: str, filed: str = "", customers: list[dict] | None = None) -> list[dict]:
     """Edges one filing states: concentration sentences first, then keyword mentions.
 
     A concentration sentence ("Apple accounted for 29.8% of our net sales")
@@ -278,9 +314,19 @@ def filing_edges(ticker: str, text: str, filed: str = "") -> list[dict]:
     the same counterparty, and its share rides on the edge as ``share_pct``
     (#387 D7; None on a keyword edge). A company naming itself (or its other
     share class) is not an edge.
+
+    ``customers`` (the filer's ``customer_share`` rows, G6) are stated too: a named major customer is a ``customer``
+    edge with its share of revenue; when a sentence already states that customer, the sentence stays and gains the
+    share it did not give.
     """
     me = aliases.issuer(ticker)
     stated = [c for c in concentration.find(text, filed) if aliases.issuer(c["dst_ticker"]) != me]
+    for x in _xbrl_customer_edges(ticker, customers or []):
+        same = next((c for c in stated if c["dst_ticker"] == x["dst_ticker"] and c["relation"] == "customer"), None)
+        if same is None:
+            stated.append(x)
+        elif same.get("share_pct") is None:
+            same["share_pct"] = x["share_pct"]
     stated_dst = {c["dst_ticker"] for c in stated}
     out = [{"src": ticker, "dst_name": c["dst_name"], "dst_ticker": c["dst_ticker"],
             "relation": c["relation"], "snippet": c["snippet"], "filed": c["filed"],
@@ -310,11 +356,13 @@ def build_edges(info: dict | None = None) -> list[dict]:
     A caller that passes ``info`` (the result history, #387) learns how many filings were read (``filings``) and
     whether the stored edges were kept because none came out (``kept``)."""
     rows = rawstore.get_all(_TABLE)
+    customers = _stored_customers(rows)
     edges: list[dict] = []
     for f in rows:
-        if f.get("quality") == "missing" or not f.get("item_text"):
+        text = "" if f.get("quality") == "missing" else (f.get("item_text") or "")
+        if not text and f["ticker"] not in customers:
             continue
-        edges.extend(filing_edges(f["ticker"], f["item_text"], f.get("filed") or ""))
+        edges.extend(filing_edges(f["ticker"], text, f.get("filed") or "", customers.get(f["ticker"])))
     rawstore.ensure_table("chain_mentions")
     if info is not None:
         info.update(filings=len(rows), kept=not edges)

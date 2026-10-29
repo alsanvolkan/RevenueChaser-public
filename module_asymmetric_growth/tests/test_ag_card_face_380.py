@@ -35,7 +35,7 @@ def test_the_card_carries_the_years_and_period_ends_it_read():
     card = _score([_rec(2023, "2023-06-30", 100.0), _rec(2024, "2024-06-29", 120.0),
                    _rec(2025, "2025-06-28", 150.0, total_assets="2025-06-28", operating_cash_flow="2025-06-28")])
     assert (card["anchor_fy"], card["prior_fy"]) == (2025, 2024)
-    assert card["period_ends"] == {"revenue": ["2025-06-28", "2024-06-29", "2023-06-30"],
+    assert card["period_ends"] == {"basis": "FY", "revenue": ["2025-06-28", "2024-06-29", "2023-06-30"],
                                    "balance_sheet": "2025-06-28", "cash_flow": "2025-06-28"}
 
 
@@ -50,7 +50,8 @@ def test_a_record_without_period_ends_gives_none():
     annual = [{"fiscal_year": 2024, "revenue": 100.0}, {"fiscal_year": 2025, "revenue": 150.0}]
     card = _score(annual)
     assert (card["anchor_fy"], card["prior_fy"]) == (2025, 2024)
-    assert card["period_ends"] == {"revenue": [None, None, None], "balance_sheet": None, "cash_flow": None}
+    assert card["period_ends"] == {"basis": "FY", "revenue": [None, None, None], "balance_sheet": None,
+                                   "cash_flow": None}
 
 
 def test_ticker_scores_keeps_the_provenance(rawstore_tmp_db):

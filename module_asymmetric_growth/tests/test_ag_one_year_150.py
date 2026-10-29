@@ -107,7 +107,7 @@ _QUOTE = {"regularMarketPrice": 100.0, "fiftyTwoWeekHigh": 105.0, "fiftyDayAvera
 
 
 def _edgar(monkeypatch, annual, meta):
-    monkeypatch.setattr(engine.sec_edgar, "get_annual", lambda t, no_fetch=False: (annual, meta))
+    monkeypatch.setattr(engine.sec_edgar, "get_fundamentals", lambda t, no_fetch=False: (annual, [], meta))
 
 
 def test_no_fetch_without_a_yfinance_cache_scores_from_edgar(rawstore_tmp_db, monkeypatch):

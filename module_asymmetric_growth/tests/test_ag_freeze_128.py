@@ -86,8 +86,8 @@ GOLDEN_CONFIG = {
               "not_comparable_sectors": ["Financial Services", "Real Estate"],   # #380 S6 (C17)
               "momentum_windows": {"high_52w": 252, "sma50": 50, "vol_3m": 63, "vol_10d": 10}},  # #380 S4
 }
-GOLDEN_VERSION = "6"
-GOLDEN_MODEL_VERSION = "6+0dcadf0b"
+GOLDEN_VERSION = "7"
+GOLDEN_MODEL_VERSION = "7+0dcadf0b"
 
 
 def test_the_effective_config_is_the_golden_config():

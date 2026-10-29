@@ -128,7 +128,7 @@ def test_compute_row_carries_the_extract_version_of_the_edgar_row(monkeypatch, m
                                                                               "within_52w_high_pct": 0.9})
     monkeypatch.setattr(pipeline, "_ttm_metrics", lambda q, a: {k: None for k in (
         "rev_growth_ttm", "fcf_margin", "ro40", "ro40_basis", "ttm_revenue", "ttm_net_income")})
-    monkeypatch.setattr(pipeline, "_quality_metrics", lambda a: {k: None for k in (
+    monkeypatch.setattr(pipeline, "_quality_metrics", lambda a, q=None: {k: None for k in (
         "gross_margin", "roic", "net_debt_ebitda", "total_equity")})
     row = pipeline._compute_row({"ticker": "AAA", "market_cap": 1e9}, None, spine={})
     assert row["edgar_extract_version"] == want

@@ -104,6 +104,8 @@
      "pe": 41666666.666667,
      "period": "FY2024 vs FY2023",
      "price": 117.000316,
+     "quality_basis": "FY",
+     "quality_period_end": null,
      "quality_score": "2/3",
      "rev_growth_ttm": 0.6,
      "ro40": 69.765625,
@@ -114,6 +116,11 @@
       "momentum"
      ],
      "sector": "Technology",
+     "statements": {
+      "filed": null,
+      "read": null,
+      "source": "store"
+     },
      "themes": [],
      "ticker": "UP3"
     },
@@ -219,6 +226,8 @@
      "pe": 83333333.333333,
      "period": "FY2024 vs FY2023",
      "price": 99.173021,
+     "quality_basis": "FY",
+     "quality_period_end": null,
      "quality_score": "2/3",
      "rev_growth_ttm": 0.45,
      "ro40": 54.512485,
@@ -229,6 +238,11 @@
       "momentum"
      ],
      "sector": "Technology",
+     "statements": {
+      "filed": null,
+      "read": null,
+      "source": "store"
+     },
      "themes": [],
      "ticker": "UP1"
     },
@@ -334,6 +348,8 @@
      "pe": 45833333.333333,
      "period": "FY2024 vs FY2023",
      "price": 51.633569,
+     "quality_basis": "FY",
+     "quality_period_end": null,
      "quality_score": "3/3",
      "rev_growth_ttm": 0.3,
      "ro40": 41.83432,
@@ -344,6 +360,11 @@
       "quality"
      ],
      "sector": "Utilities",
+     "statements": {
+      "filed": null,
+      "read": null,
+      "source": "store"
+     },
      "themes": [],
      "ticker": "BELOW50"
     },
@@ -449,6 +470,8 @@
      "pe": 41666666.666667,
      "period": "FY2024 vs FY2023",
      "price": 51.633569,
+     "quality_basis": "FY",
+     "quality_period_end": null,
      "quality_score": "3/3",
      "rev_growth_ttm": 0.3,
      "ro40": 41.83432,
@@ -459,6 +482,11 @@
       "quality"
      ],
      "sector": "Utilities",
+     "statements": {
+      "filed": null,
+      "read": null,
+      "source": "store"
+     },
      "themes": [],
      "ticker": "FAR"
     },
@@ -564,6 +592,8 @@
      "pe": 260416666.666667,
      "period": "FY2024 vs FY2023",
      "price": 75.403295,
+     "quality_basis": "FY",
+     "quality_period_end": null,
      "quality_score": "3/3",
      "rev_growth_ttm": 0.2,
      "ro40": 30.416667,
@@ -574,6 +604,11 @@
       "momentum"
      ],
      "sector": "Healthcare",
+     "statements": {
+      "filed": null,
+      "read": null,
+      "source": "store"
+     },
      "themes": [],
      "ticker": "UP2"
     }
@@ -701,7 +736,8 @@
     "skipped_calls": 0
    },
    "regime": "RISK-ON",
-   "selection_version": "7",
+   "selection_version": "8",
+   "statements_source": "store",
    "summary": {
     "data_short": 2,
     "distorted_count": 5,

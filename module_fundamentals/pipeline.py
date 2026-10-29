@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from datetime import date as _date
 from datetime import datetime, timezone
 
@@ -26,7 +27,7 @@ from RevenueChaser.core.reporting_common import write_artifact
 from RevenueChaser.core import funnel
 # load_ohlc: the SPY fallback only (U1); a scored name reads D01 (``screen_common.load_bars``).
 from RevenueChaser.module_swing_potential.indicators import compute_indicators, load_ohlc, load_ticker_info
-from RevenueChaser.core import fiscal_year
+from RevenueChaser.core import fiscal_year, trailing_year
 from RevenueChaser.core import screen_common
 from RevenueChaser.core import universe as _universe
 from RevenueChaser.core.taxonomy import assign_themes
@@ -85,12 +86,19 @@ def _is_derived(rec: dict, field: str) -> bool:
     return field in marks or str(rec.get("period"))[:10] in marks
 
 
+def _is_preliminary(rec: dict, field: str) -> bool:
+    """A figure the fundamentals layer filled from UW's press release ahead of the 10-Q (``preliminary``, G6) is not
+    a reported quarter either, so it never forms a TTM run: the card names the SEC statements it scored (Opus review
+    S4). Default chosen, change if avo prefers UW's quarter in the TTM with a label on the card."""
+    return field in (rec.get("preliminary") or [])
+
+
 def _quarter_run(quarterly: list[dict], field: str, n: int) -> tuple[list[float], list[str]] | None:
     """The newest ``n`` quarters that have a ``field`` figure, as ``(values, period ends)``, only when those
     quarters are consecutive (period ends ~91 days apart). ``None`` otherwise: a gap (no Q4 on a 10-Q only run, a
     missing quarter) is never summed as if it were a trailing year (#148 U3)."""
     have = [(q.get("period"), _to_float(q.get(field))) for q in quarterly
-            if _to_float(q.get(field)) is not None and not _is_derived(q, field)]
+            if _to_float(q.get(field)) is not None and not _is_derived(q, field) and not _is_preliminary(q, field)]
     if len(have) < n:
         return None
     tail = have[-n:]
@@ -316,13 +324,17 @@ def _ttm_metrics(quarterly: list[dict], annual: list[dict]) -> dict:
     return out
 
 
-def _quality_metrics(annual: list[dict]) -> dict:
+# Quality's inputs (G6, build plan PR 13): the flows a trailing year is built for and the balance-sheet fields read on
+# the newest quarter. ``cost_of_revenue`` only stands in for a gross profit the filer did not tag (the extraction's
+# ``gross_profit_derived``: revenue minus cost of revenue).
+_QUALITY_FLOWS = ("revenue", "gross_profit", "cost_of_revenue", "ebit", "depreciation")
+_QUALITY_BALANCE = ("total_debt", "cash", "short_term_investments", "total_equity")
+
+
+def _quality_of(a: dict) -> dict:
+    """ROIC, gross margin and net debt / EBITDA of one record (a fiscal year, or a trailing year)."""
     out = {"gross_margin": None, "roic": None, "net_debt_ebitda": None, "net_cash": None,
            "net_income": None, "total_equity": None}
-    i = fiscal_year.anchor(annual)          # #386 F2: Quality reads the anchor year, not annual[-1]
-    if i is None:
-        return out
-    a = annual[i]
     ebit = _to_float(a.get("ebit"))
     dep = _to_float(a.get("depreciation"))
     debt = _to_float(a.get("total_debt"))
@@ -348,6 +360,39 @@ def _quality_metrics(annual: list[dict]) -> dict:
         nopat = ebit * (1 - config.TAX_RATE)
         ic = debt + eq - cash
         out["roic"] = nopat / ic if ic > 0 else None
+    return out
+
+
+def _quality_ttm(annual: list[dict], quarterly: list[dict], i: int) -> dict | None:
+    """A trailing-year record for Quality on the anchor year ``annual[i]`` (``core.trailing_year``: the Rule of 40's
+    TTM rule per flow, the balance sheet of the quarter it ends on), or None."""
+    rec = trailing_year.trailing_year(annual, quarterly, i, _QUALITY_FLOWS, _QUALITY_BALANCE)
+    if rec is not None:
+        rec["net_income"] = _to_float(annual[i].get("net_income"))
+    return rec
+
+
+def _quality_metrics(annual: list[dict], quarterly: list[dict] | None = None) -> dict:
+    """Quality's three figures and their basis (G6, build plan PR 13: Quality reads the quarter store).
+
+    ``quality_basis`` ``TTM`` when a 10-Q follows the anchor year and the quarters give every figure the year gives
+    (``_quality_ttm``); else ``FY``, the anchor year (#386 F2: never ``annual[-1]``). ``quality_period_end`` is the
+    day the figures are read to. One basis for all three, never a mix. Default chosen (plan): TTM whenever the
+    quarters give it, change if avo prefers the year."""
+    i = fiscal_year.anchor(annual)
+    if i is None:
+        return {**_quality_of({}), "quality_basis": None, "quality_period_end": None}
+    a = annual[i]
+    fy = _quality_of(a)
+    end = fiscal_year.period_end(a)
+    out = {**fy, "quality_basis": "FY", "quality_period_end": end.isoformat() if end else None}
+    ttm_rec = _quality_ttm(annual, quarterly or [], i)
+    if ttm_rec is not None:
+        ttm = _quality_of(ttm_rec)
+        # The year's net income stays (P/E reads its own TTM, ``_ttm_metrics``); P/B reads the newest equity.
+        if all(ttm[k] is not None or fy[k] is None for k in ("gross_margin", "roic", "net_debt_ebitda", "net_cash")):
+            out = {**ttm, "net_income": fy["net_income"], "quality_basis": "TTM",
+                   "quality_period_end": ttm_rec["period"]}
     return out
 
 
@@ -398,10 +443,52 @@ NON_USD_DROP = "non_usd_currency"
 NON_USD_LABEL = "Report in a currency other than USD and could not be scored"
 
 
+class _LayerChunks:
+    """The fundamentals layer's records of the names a Fetch kept, read one scan chunk at a time (Opus review S5).
+
+    ``run_screen`` scores ``screen_common.BARS_CHUNK`` names at a time, in the kept order, and finishes a chunk
+    before the next, so one ``records_many`` read per chunk serves every name of it and only that chunk is held. A
+    name read one by one opens the served file twice (57 ms a name against 11 ms batched, the 29 Oct 2026 sample).
+    ``get`` answers None for a name that was not kept, which then reads its own row. A chunk whose batch read fails
+    is read name by name, once (``screen_common.load_bars_many``'s rule; delta review D2)."""
+
+    def __init__(self, tickers: list[str]):
+        self._tickers = tickers
+        self._pos = {t: i for i, t in enumerate(tickers)}
+        self._lock = threading.Lock()
+        self._start: int | None = None
+        self._rows: dict = {}
+
+    def get(self, ticker: str):
+        from RevenueChaser.core import fundamentals_layer
+        ticker = str(ticker).strip().upper()
+        i = self._pos.get(ticker)
+        if i is None:
+            return None
+        size = screen_common.BARS_CHUNK
+        start = i // size * size
+        with self._lock:
+            if self._start != start:
+                self._rows, self._start = {}, None
+                chunk = self._tickers[start:start + size]
+                try:
+                    self._rows = fundamentals_layer.records_many(chunk)
+                except Exception as exc:  # noqa: BLE001 - each name then reads its own row (delta review D2)
+                    logger.warning("fundamentals: the layer records of %d names could not be read in one go (%s); "
+                                   "reading per name", len(chunk), exc)
+                    self._rows = None
+                self._start = start
+            rows = self._rows
+        if rows is None:
+            return fundamentals_layer.records(ticker)
+        return rows.get(ticker) or ([], [], fundamentals_layer._unavailable())
+
+
 def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None = None,
                  drops: list | None = None, non_usd: set[str] | None = None,
-                 non_usd_seen: list | None = None) -> dict | None:
-    """One ticker's row, or None. ``drops`` (a list) collects the reason for each None (#205).
+                 non_usd_seen: list | None = None, layer: _LayerChunks | None = None) -> dict | None:
+    """One ticker's row, or None. ``drops`` (a list) collects the reason for each None (#205). ``layer`` (a Fetch on
+    the fundamentals layer) serves the statements of the run's kept names in chunks (``_LayerChunks``).
 
     ``non_usd`` (the scan's, one per run) collects the currencies of the names that end on the currency check below
     (#46): they are dropped for that reason, so the count in ``dropped`` and this set are the same names.
@@ -429,7 +516,9 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         return _drop("sector_excluded")
 
     try:
-        annual, quarterly, emeta = sec_edgar.get_fundamentals(ticker, no_fetch=no_fetch)
+        found = layer.get(ticker) if layer is not None else None
+        annual, quarterly, emeta = found if found is not None else sec_edgar.get_fundamentals(ticker,
+                                                                                              no_fetch=no_fetch)
     except Exception as exc:  # pragma: no cover - network
         logger.debug("fundamental edgar %s: %s", ticker, exc)
         if not no_fetch:
@@ -477,7 +566,7 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
     # #386 F1: an absurd Rule of 40 is a data problem, not a pick. Review N2 (default chosen, avo may prefer the
     # old drop): the name is no longer dropped, so Quality and Momentum still read it; the screener makes that Rule
     # of 40 unknown and the card DISTORTED (screeners.evaluate_rule_of_40, is_distorted).
-    qual = _quality_metrics(annual)
+    qual = _quality_metrics(annual, quarterly)
     market_cap = _to_float(row.get("market_cap")) or _to_float(info.get("marketCap"))
 
     pe = (market_cap / ttm["ttm_net_income"]) if (market_cap and ttm["ttm_net_income"] and ttm["ttm_net_income"] > 0) else None
@@ -524,10 +613,17 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         "earnings_date": _to_float((row.get("quote") or {}).get("earningsTimestampStart")),
         "period": _period_label(quarterly, annual),
         "anchor_period_end": anchor_end.isoformat() if anchor_end else None,
+        # G6 (build plan PR 13): Quality's basis and the day it reads to (TTM on the quarters, else the anchor year).
+        "quality_basis": qual.get("quality_basis"), "quality_period_end": qual.get("quality_period_end"),
         "metrics": metrics,
         "ohlc_stale": bool(df.attrs.get("stale")),
         "info_stale": info_stale,
         "edgar_extract_version": (emeta or {}).get("extract_version"),     # the result history checks it (#278)
+        # Review F3 (G6): where the statements came from, the day the newest one was filed and the day the facts
+        # were last read. On the layer the facts are read again on each filing day, so the stale gate above measures
+        # the filer; the old store has neither date (its row was never read again).
+        "statements": {"source": "layer" if (emeta or {}).get("layer") else "store",
+                       "filed": (emeta or {}).get("newest_filed"), "read": (emeta or {}).get("facts_as_of")},
     }
 
 
@@ -595,6 +691,8 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
             "ro40": m.get("ro40"), "ro40_basis": m.get("ro40_basis"),
             "rev_growth_ttm": m.get("rev_growth_ttm"), "fcf_margin": m.get("fcf_margin"),
             "anchor_period_end": r.get("anchor_period_end"),
+            "quality_basis": r.get("quality_basis"), "quality_period_end": r.get("quality_period_end"),
+            "statements": r.get("statements"),
             "pe": m.get("pe"), "pb": m.get("pb"), "roic": m.get("roic"),
             "distorted": distorted,
             "info_stale": bool(r.get("info_stale")),
@@ -706,13 +804,23 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
     if not no_fetch:
         _EDGAR_HEALTH.reset()
 
+    # Opus review S5: a Fetch on the layer reads the kept names per chunk; the newest prefilter's names serve.
+    chunks: list[_LayerChunks] = []
+
+    def prefilter_and_chunk(rows: list[dict]) -> screen_common.Prefiltered:
+        from RevenueChaser.core import fundamentals_layer
+        pf = prefilter(rows)
+        if not no_fetch and fundamentals_layer.reads_layer():
+            chunks.append(_LayerChunks([str(r.get("ticker") or "").strip().upper() for r in pf.kept]))
+        return pf
+
     def compute_row(row, spy_df, no_fetch: bool = False, spine: dict | None = None, drops: list | None = None):
         return _compute_row(row, spy_df, no_fetch=no_fetch, spine=spine, drops=drops, non_usd=non_usd,
-                            non_usd_seen=non_usd_seen)
+                            non_usd_seen=non_usd_seen, layer=chunks[-1] if chunks else None)
 
     payload = screen_common.run_screen(
         board="fundamental", refreshed_by="Fundamentals", cfg=config,
-        load_universe=fetch_universe_stats, prefilter=prefilter,
+        load_universe=fetch_universe_stats, prefilter=prefilter_and_chunk,
         load_spy=lambda: screen_common.load_spy(lambda: load_ohlc("SPY", ttl_days=0.5, no_fetch=no_fetch)),
         compute_row=compute_row, build_payload=build_payload, persist=scores.persist if rows_sink is None else (lambda results: scores.persist(results, sink=rows_sink)),
         top_n=top_n, refresh_universe=refresh_universe, no_fetch=no_fetch,
@@ -721,6 +829,9 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
     # The banner reads this key (#80). A Refresh serves the stored payload, which already carries it.
     if not no_fetch:
         payload["provider_health"] = _EDGAR_HEALTH.health()
+        # Review F3 (G6): the store this Fetch read its statements from (the page says so; a Refresh keeps it).
+        from RevenueChaser.core import fundamentals_layer
+        payload["statements_source"] = fundamentals_layer.source_state()["effective"]
     return payload
 
 
