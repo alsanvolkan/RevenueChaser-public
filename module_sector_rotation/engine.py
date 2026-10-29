@@ -243,23 +243,23 @@ def etf_trees(tree: dict[str, list[dict]]) -> dict[str, list[dict]]:
     return out
 
 
-# Calendar days of D01 the holdings RS reads before the rotation session: 63 sessions back plus holidays and margin.
+# Calendar days of the prices store the holdings RS reads before the rotation session: 63 sessions back plus holidays and margin.
 HOLDINGS_READ_DAYS = 120
 
 
 def holdings_rs_rows(holdings: list[dict], points: dict[str, list[tuple[date, float]]],
                      spy: list[tuple[date, float]], as_of: date, max_holdings: int = 10) -> list[dict]:
-    """Top holdings with SPY-relative strength from D01 daily closes (M-ROT-3, ROT-8); pure, no read, no fetch.
+    """Top holdings with SPY-relative strength from the stored daily closes (M-ROT-3, ROT-8); pure, no read, no fetch.
 
     The lookbacks (``HOLDING_LOOKBACKS``) are counted in SPY's sessions up to ``as_of``: a holding's RS over L sessions
     compares its close on SPY's last session with its close L sessions before, both on the same dates as SPY's. A
-    holding D01 holds no bar of on either date gets ``None`` for that RS (shown "n/a", a dash, DF67), and one with no
+    holding the store holds no bar of on either date gets ``None`` for that RS (shown "n/a", a dash, DF67), and one with no
     bar at all keeps its row with ``close`` ``None`` too: it is never dropped silently. ``[]`` when SPY has fewer than
     ``SPY_MIN_CLOSES`` sessions (every RS would be missing), so the caller keeps what it stored.
     """
     spy = sorted((d, c) for d, c in spy if d <= as_of and _finite(c))
     if len(spy) < SPY_MIN_CLOSES:
-        logger.warning("holdings RS: D01 holds %d SPY sessions up to %s, need %d; no RS computed",
+        logger.warning("holdings RS: the prices store holds %d SPY sessions up to %s, need %d; no RS computed",
                        len(spy), as_of, SPY_MIN_CLOSES)
         return []
     dates = [d for d, _ in spy]
@@ -308,9 +308,9 @@ def fetch_all_holdings(uw, snapshots, max_holdings: int = 10, max_workers: int =
     holdings job (#303, D25); an ETF with no stored holdings gets none. Sector rows expand to the
     sector -> industry tree (``sector_etf_trees``) instead, so their ETF holdings are not priced (ROT-4).
 
-    The RS reads D01 (M-ROT-3): one ``core.prices.daily_bars`` read of SPY and every holding up to the rotation
-    session; ``uw`` (and ``max_workers``) are kept for the callers' signature and not used. A holding with no stored
-    bars shows "n/a" (``holdings_rs_rows``). ``{}`` when SPY is short in D01.
+    The RS reads the prices store (M-ROT-3, PR 9): one ``rcdata.read.ticker_bars`` read of SPY and every holding up
+    to the rotation session; ``uw`` (and ``max_workers``) are kept for the callers' signature and not used. A holding
+    with no stored bars shows "n/a" (``holdings_rs_rows``). ``{}`` when SPY is short in the store.
     """
     from RevenueChaser.core import calendar
     from .etf_holdings import stored_holdings
@@ -326,10 +326,11 @@ def fetch_all_holdings(uw, snapshots, max_holdings: int = 10, max_workers: int =
         except ValueError:
             return {}
     wanted = sorted({h.get("ticker") for rows in held.values() for h in rows if h.get("ticker")} - {"SPY"})
-    points = d01_points(["SPY", *wanted], as_of - timedelta(days=HOLDINGS_READ_DAYS), as_of)
+    points = bar_points(["SPY", *wanted], as_of - timedelta(days=HOLDINGS_READ_DAYS), as_of)
     spy = points.get("SPY", [])
     if len(spy) < SPY_MIN_CLOSES:                       # no RS this run: the caller keeps what it stored
-        logger.warning("holdings RS: D01 holds %d SPY sessions up to %s, need %d", len(spy), as_of, SPY_MIN_CLOSES)
+        logger.warning("holdings RS: the prices store holds %d SPY sessions up to %s, need %d", len(spy), as_of,
+                       SPY_MIN_CLOSES)
         return {}
     out: dict[str, list[dict]] = {}
     for t, rows in held.items():
@@ -377,9 +378,9 @@ def zscore_normalize(values: list[float]) -> list[float]:
     return ((arr - mean) / std).round(4).tolist()
 
 
-# ── the RRG cross-section from D01 (M-ROT-2, #374: D-M3 "weekly, both"; #283 session date) ─────────────────────────
+# ── the RRG cross-section from the stored bars (M-ROT-2, #374: D-M3 "weekly, both"; #283 session date; PR 9) ─────────
 MIN_WEEKS = 48                    # weekly closes an ETF (and SPY) needs to be on the map; fewer is "too short"
-READ_WEEKS = MIN_WEEKS + 8        # the D01 window read before a session: enough ISO weeks for the floor
+READ_WEEKS = MIN_WEEKS + 8        # the window read before a session: enough ISO weeks for the floor
 
 
 def _weekly(points, as_of: date) -> dict[tuple, float]:
@@ -394,20 +395,27 @@ def _weekly(points, as_of: date) -> dict[tuple, float]:
 
 def weekly_closes(points, as_of: date) -> list[float]:
     """ISO-week closes, oldest first, from ``(session, close)`` daily points: each week's last session up to
-    ``as_of``. The current week is closed at ``as_of`` (D01 holds complete sessions only, so never intraday)."""
+    ``as_of``. The current week is closed at ``as_of`` (the store holds complete sessions only, so never intraday)."""
     return list(_weekly(points, as_of).values())
 
 
-def aligned_weekly_closes(points, benchmark_points, as_of: date) -> list[float]:
+# A macro series may end one ISO week before SPY: ``market_series`` stores day D on D+1 at the earliest (one raw file
+# per as-of day, FRED's own lag, Yahoo's 16:00 cut-off), so on the first session of a week its newest value is in the
+# week before (review M1, PR 270). That week carries forward; a series further behind stopped and is missing.
+MACRO_CARRY_WEEKS = 1
+
+
+def aligned_weekly_closes(points, benchmark_points, as_of: date, carry_weeks: int = 0) -> list[float]:
     """``weekly_closes`` of one symbol lined up with the benchmark's ISO weeks, so the 1/4/12-week lookbacks of
     ``relative_strength_pct`` (counted from the end of both lists) compare the same weeks.
 
-    ``[]`` when the symbol has no close in the benchmark's last week: a series that stopped early is not plotted as of
-    the session (it is missing). A benchmark week the symbol lacks in between carries its previous week's close
-    (a 0% week) instead of shifting every older week by one (review 2026-10-16)."""
+    ``[]`` when the symbol has no close in the benchmark's last ``carry_weeks + 1`` weeks: a series that stopped early
+    is not plotted as of the session (it is missing). A benchmark week the symbol lacks in between, or one of its last
+    ``carry_weeks``, carries its previous week's close (a 0% week) instead of shifting every older week by one
+    (review 2026-10-16)."""
     own = _weekly(points, as_of)
     weeks = list(_weekly(benchmark_points, as_of))
-    if not own or not weeks or weeks[-1] not in own:
+    if not own or not weeks or not any(w in own for w in weeks[-(carry_weeks + 1):]):
         return []
     out, last = [], None
     for w in weeks:
@@ -417,11 +425,12 @@ def aligned_weekly_closes(points, benchmark_points, as_of: date) -> list[float]:
     return out
 
 
-def d01_points(tickers, start: date, end: date) -> dict[str, list[tuple[date, float]]]:
-    """``{ticker: [(session, nominal close), ...]}`` from one D01 read (``core.prices.daily_bars``); never fetches.
-    A ticker D01 holds no bar of in the window is absent."""
-    from RevenueChaser.core import prices
-    frame = prices.daily_bars(list(tickers), basis="nominal", start=start, end=end)
+def bar_points(tickers, start: date, end: date) -> dict[str, list[tuple[date, float]]]:
+    """``{ticker: [(session, close), ...]}`` from one prices-store read (``rcdata.read.ticker_bars``, split basis: the
+    level a chart shows, as D01's "nominal" was); never fetches. A ticker the store holds no bar of in the window is
+    absent."""
+    from RevenueChaser.rcdata import read
+    frame = read.ticker_bars(list(tickers), start=start, end=end, basis="split")
     out: dict[str, list[tuple[date, float]]] = {}
     if frame is None or frame.empty:
         return out
@@ -431,8 +440,26 @@ def d01_points(tickers, start: date, end: date) -> dict[str, list[tuple[date, fl
     return out
 
 
+def macro_points(start: date, end: date, tickers=None) -> dict[str, list[tuple[date, float]]]:
+    """``{macro symbol: [(day, value), ...]}`` from one ``market_series`` read (PR 9): each symbol's own row
+    (``MACRO_SERIES[...]["series"]``: FRED's yields and oil, Cboe's VVIX, Yahoo's MOVE and wheat). A symbol with no
+    row in the window is absent; nothing is fetched (the market build stores the series)."""
+    from RevenueChaser.rcdata import read
+    wanted = {t: tuple(MACRO_SERIES[t]["series"]) for t in (tickers if tickers is not None else MACRO_SERIES)
+              if (MACRO_SERIES.get(t) or {}).get("series")}
+    if not wanted:
+        return {}
+    of = {v: t for t, v in wanted.items()}
+    out: dict[str, list[tuple[date, float]]] = {}
+    for r in read.market_series(sorted({sid for sid, _ in wanted.values()}), start=start, end=end):
+        t = of.get((r["series_id"], r["source"]))
+        if t is not None and _finite(r.get("value")):
+            out.setdefault(t, []).append((r["obs_date"], float(r["value"])))
+    return out
+
+
 def rrg_tickers() -> list[str]:
-    """The RRG symbols D01 can hold: every rotation ETF but the benchmark and the macro series."""
+    """The RRG symbols the prices store can hold: every rotation ETF but the benchmark and the macro series."""
     return [t for t in ROTATION_ETFS if t != "SPY" and t not in MACRO_SERIES]
 
 
@@ -489,15 +516,17 @@ def normalize_z_scores(snapshots: list[ETFRotationSnapshot]) -> None:
 
 
 class RotationEngine:
-    """The live RRG pull: D01 weekly closes for the ETFs, ``macro_weekly_closes`` (FRED/yfinance) for the 11 macro
-    series, one ``cross_section`` dated by the session its closes end on.
+    """The RRG pull (PR 9): weekly closes of the ETFs from the prices store, the 11 macro series from ``market_series``
+    (``macro_points``), both lined up with SPY's weeks, one ``cross_section`` dated by the session its closes end on.
+    Nothing is fetched: a Fetch and a Refresh of the same stores give the same map.
 
     After ``process_all``:
-    - ``as_of`` is that session: the latest complete session, or SPY's last D01 session before it when the nightly has
-      not written it yet (``stale`` then says so);
-    - ``intraday`` is true when the run happened while the US session was open (rule B, ``calendar.session_for``):
-      its macro values are not a session close;
-    - ``too_short`` lists the symbols left off the map for having under ``MIN_WEEKS`` weekly closes (a warning).
+    - ``as_of`` is that session: the latest complete session, or SPY's last stored session before it when the prices
+      build has not stored it yet (``stale`` then says so);
+    - ``intraday`` is true when the run happened while the US session was open (rule B, ``calendar.session_for``);
+    - ``too_short`` lists the symbols left off the map for having under ``MIN_WEEKS`` weekly closes (a warning);
+    - ``carried`` lists the macro series on the map with no value in ``as_of``'s ISO week yet, whose previous week's
+      value stands for it (``MACRO_CARRY_WEEKS``; a warning).
     ``uw`` is not called for closes any more; it is kept for the callers that pass one.
     """
 
@@ -511,10 +540,11 @@ class RotationEngine:
         self.stale: str | None = None
         self.intraday = False
         self.too_short: list[str] = []
+        self.carried: list[str] = []
 
     def process_all(self) -> list[ETFRotationSnapshot]:
         from RevenueChaser.core import calendar
-        self.snapshots, self.too_short, self.stale = [], [], None
+        self.snapshots, self.too_short, self.stale, self.carried = [], [], None, []
         try:
             session = calendar.latest_complete_session(self.now)
             self.intraday = calendar.session_for(
@@ -522,37 +552,33 @@ class RotationEngine:
         except ValueError as exc:                       # outside the holiday table: no session to date it by
             logger.warning("Rotation: no session for this run: %s", exc)
             return []
-        points = d01_points([self.benchmark, *rrg_tickers()], session - timedelta(weeks=READ_WEEKS), session)
+        start = session - timedelta(weeks=READ_WEEKS)
+        points = bar_points([self.benchmark, *rrg_tickers()], start, session)
         spy = points.get(self.benchmark) or []
         if not spy:
-            logger.warning("Rotation: D01 holds no %s bar up to %s", self.benchmark, session)
+            logger.warning("Rotation: the prices store holds no %s bar up to %s", self.benchmark, session)
             return []
         self.as_of = spy[-1][0]
         if self.as_of < session:
-            self.stale = (f"D01 has no {self.benchmark} bar of the {session.isoformat()} session yet (the nightly "
-                          f"daily-bars job has not written it); the RRG is as of {self.as_of.isoformat()}")
+            self.stale = (f"the prices store has no {self.benchmark} bar of the {session.isoformat()} session yet "
+                          f"(the prices build has not stored it); the RRG is as of {self.as_of.isoformat()}")
         self.spy_closes = weekly_closes(spy, self.as_of)
         if len(self.spy_closes) < MIN_WEEKS:
-            logger.warning("Rotation: %s has %d weekly closes in D01, need %d",
+            logger.warning("Rotation: %s has %d weekly closes in the prices store, need %d",
                            self.benchmark, len(self.spy_closes), MIN_WEEKS)
             return []
         closes = {t: aligned_weekly_closes(points.get(t) or [], spy, self.as_of) for t in rrg_tickers()}
+        macro = macro_points(start, self.as_of, [t for t in MACRO_SERIES if t in ROTATION_ETFS])
+        last_week = tuple(self.as_of.isocalendar())[:2]
         for ticker in MACRO_SERIES:
             if ticker in ROTATION_ETFS:
-                closes[ticker] = self._macro_closes(ticker)
+                own = macro.get(ticker) or []
+                closes[ticker] = aligned_weekly_closes(own, spy, self.as_of, carry_weeks=MACRO_CARRY_WEEKS)
+                if closes[ticker] and last_week not in _weekly(own, self.as_of):
+                    self.carried.append(ticker)
         self.too_short = too_short(closes)
         self.snapshots = cross_section(closes, self.spy_closes, self.as_of)
         return self.snapshots
-
-    @staticmethod
-    def _macro_closes(ticker: str) -> list[float]:
-        """Weekly closes of one macro series (FRED/yfinance, live path only until #182); ``[]`` when it failed."""
-        from RevenueChaser.module_earnings_radar.macro_watch import macro_weekly_closes
-        try:
-            return list(macro_weekly_closes(ticker) or [])
-        except Exception as exc:  # noqa: BLE001 - one failed series is a missing row, never a failed Fetch
-            logger.error("Rotation macro series %s failed: %s", ticker, exc)
-            return []
 
 
 def ticker_rotation_adjustment(
@@ -606,9 +632,10 @@ def rotation_quadrant_map(uw: UWClient = None, compute: bool = True,
 
     Returns ``{ETF ticker: quadrant}`` for ``as_of`` (default: the latest complete session, #283). A stored
     snapshot for that session is reused — the Sector Rotation board or an earlier run already refreshed it. When none
-    exists and ``compute=True`` the engine runs once (D01 closes, no UW call) and persists its snapshot under the
+    exists and ``compute=True`` the engine runs once (stored closes, no call) and persists its snapshot under the
     session its closes end on, so Earnings Radar and the Sector Rotation board agree on the same read; a run that is
-    not a complete session (intraday, or D01 short of the session) never replaces a snapshot stored for that day.
+    not a complete session (intraday, or the store short of the session) never replaces a snapshot stored for that
+    day.
     With ``compute=False`` only the store is read (zero network).
     """
     from RevenueChaser.core import calendar

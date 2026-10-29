@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from RevenueChaser.core import rawstore
-from RevenueChaser.module_comovement.tests import d01_bars
+from RevenueChaser.module_comovement.tests import prices_bars
 from RevenueChaser.module_relatedness import config, engine, profiles, similarity
 
 
@@ -84,7 +84,7 @@ def _seed_ohlc(prices: pd.DataFrame):
             rows.append({"ticker": t, "ts": ts.isoformat(), "open": float(p),
                          "high": float(p), "low": float(p), "close": float(p),
                          "volume": 1.0, "cached_at": 1.0})
-    d01_bars.write_bars(rows)
+    prices_bars.write_bars(rows)
 
 
 def _correlated_prices(n: int = 260, seed: int = 7) -> pd.DataFrame:

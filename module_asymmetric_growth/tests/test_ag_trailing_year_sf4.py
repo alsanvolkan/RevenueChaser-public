@@ -118,4 +118,4 @@ def test_the_batch_read_carries_the_quarters(monkeypatch):
 
 
 def test_the_selection_version_moves_with_the_basis():
-    assert engine.SELECTION_VERSION == "7"
+    assert engine.SELECTION_VERSION == "8"                  # 7 was this change; 8 adds G3's prices-store momentum

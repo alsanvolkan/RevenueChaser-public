@@ -136,16 +136,16 @@ def test_ag_refresh_reads_the_stored_rows_and_the_header(ag_fetched, monkeypatch
 
 
 def test_ag_refresh_header_says_the_fetch_s_prices_session(ag_fetched, monkeypatch):
-    """#380 S4: the Fetch names the D01 session its momentum read, and a Refresh restores it from the header."""
+    """#380 S4: the Fetch names the prices session its momentum read, and a Refresh restores it from the header."""
     from RevenueChaser.module_asymmetric_growth import engine
     html, _ = ag_fetched
-    assert "Prices: D01 session 2026-10-06" in html
+    assert "Prices: session 2026-10-06" in html
     assert engine.stored_result()["data_as_of"] == "2026-10-06"
     _no_scoring(monkeypatch)
     runners.ASYMMETRIC_GROWTH_LATEST.unlink()
     runners.run_asymmetric_growth(None, no_fetch=True)
     refreshed = _html(runners.ASYMMETRIC_GROWTH_LATEST)
-    assert "Prices: D01 session 2026-10-06" in refreshed
+    assert "Prices: session 2026-10-06" in refreshed
     assert refreshed == html                    # the whole header, not just the chip
 
 

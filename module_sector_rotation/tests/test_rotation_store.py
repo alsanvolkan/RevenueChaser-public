@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 from RevenueChaser.module_sector_rotation import store as rotation_store
-from RevenueChaser.module_sector_rotation.tests.d01_seed import ny, pin_clock, seed
+from RevenueChaser.module_sector_rotation.tests.bars_seed import ny, pin_clock, seed
 
 
 def _seed_snapshot(asof: str, rows: list[dict]):

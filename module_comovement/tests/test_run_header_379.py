@@ -19,7 +19,7 @@ import pytest
 
 from RevenueChaser.core import calendar, history, rawstore
 from RevenueChaser.module_comovement import config, engine
-from RevenueChaser.module_comovement.tests import d01_bars
+from RevenueChaser.module_comovement.tests import prices_bars
 from RevenueChaser.module_comovement.tests.test_comovement import (
     _market_two_groups, _seed_ohlc, _seed_universe)
 
@@ -163,7 +163,7 @@ def test_a_precompute_failure_is_a_header_warning(runner, monkeypatch):
 
 
 def test_a_fetch_that_stores_no_run_is_a_partial_header(rawstore_tmp_db, runner):
-    d01_bars.clear()
+    prices_bars.clear()
     runner.run_comovement(None)
     h = history.last_run(B)
     assert h["quality"] == "partial" and "no run was stored" in h["quality_note"]

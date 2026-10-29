@@ -31,6 +31,8 @@ def seeded_settings(dashboard, monkeypatch):
     import RevenueChaser.core.rawstore as rawstore
 
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+
+    monkeypatch.setattr("RevenueChaser.core.config.MARKET_DIR", dashboard.env["RC_MARKET_DIR"])  # the prices store (G3)
     rawstore.write_rows("equity_universe", [
         {"ticker": "AAPL", "market_cap": 3.0e12, "name": "Apple Inc."},
         {"ticker": "MU", "market_cap": None, "name": "Micron Technology"},
@@ -318,7 +320,7 @@ class TestBoardInputs:
                     rows.append({"ticker": t, "ts": ts.isoformat(), "open": p,
                                  "high": p, "low": p, "close": float(p),
                                  "volume": 1.0, "cached_at": now})
-        from RevenueChaser.module_comovement.tests.d01_bars import write_bars
+        from RevenueChaser.module_comovement.tests.prices_bars import write_bars
         write_bars(rows)
         result = dashboard.run_job("/run/module_comovement")
         assert result.ok, f"comovement fetch failed: {result}\n{dashboard.logs()}"

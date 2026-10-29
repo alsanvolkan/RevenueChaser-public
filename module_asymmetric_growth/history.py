@@ -8,8 +8,8 @@ module, not in ``core/``. A Refresh never calls it (06 rule 9).
 AG is a session board: the first complete run of a session keeps its rows; a later, intraday or partial run keeps
 its header only (``core/history.record_run``). A run is partial when it has no cards, the universe pull was partial,
 more than ``FREEZE_MAX_SCORE_ERROR_RATE`` of the tickers failed to score, or Daily Bars has not written the session's
-SPY bar yet (the freeze's own anchor, #380 S4). The header's context also carries ``data_as_of``: the newest D01
-session among the cards, so a Refresh says which price session it shows.
+SPY bar yet (the freeze's own anchor, #380 S4). The header's context also carries ``data_as_of``: the newest
+prices-store session among the cards (PR 11), so a Refresh says which price session it shows.
 
 ``recorded_sessions`` reads it back for the board (#380, core review slice A2: the first history reader), through
 the shared reader ``core/history.sessions`` (K2, #383 R1) and the snapshot runs' ``ag_scores_history`` rows. It is
@@ -41,8 +41,8 @@ def _run_at(result: dict) -> float:
 def _partial(result: dict, run_at: float) -> str | None:
     """Why this run is not a whole, correct session snapshot (None when it is).
 
-    The card momentum is D01's since #380 S4, so the run is judged on the session's price bars (the freeze's anchor:
-    SPY's D01 bar for the session), not on the universe snapshot behind the quote prices."""
+    The card momentum is the stored bars' since #380 S4 (the prices store's since PR 11), so the run is judged on the
+    session's price bars (the freeze's anchor: still SPY's D01 bar for the session until G4 moves the ledger), not on the universe snapshot behind the quote prices."""
     if not result.get("cards"):
         return result.get("no_data_message") or "no cards"
     if result.get("universe_partial"):

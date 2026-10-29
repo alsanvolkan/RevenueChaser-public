@@ -77,6 +77,7 @@ def store(dashboard, monkeypatch):
     """The dashboard's temp store, opened from the test process (dashboard idle)."""
     import RevenueChaser.core.rawstore as rawstore
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+    monkeypatch.setattr("RevenueChaser.core.config.MARKET_DIR", dashboard.env["RC_MARKET_DIR"])  # the prices store (G3)
     return rawstore
 
 

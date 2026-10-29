@@ -20,7 +20,7 @@ from RevenueChaser.app.jobs import JobMessage
 from RevenueChaser.core import ledger, rawstore
 from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 from RevenueChaser.module_sector_rotation import engine, money_flow
-from RevenueChaser.module_sector_rotation.tests.d01_seed import ny, pin_clock, seed, sessions
+from RevenueChaser.module_sector_rotation.tests.bars_seed import ny, pin_clock, seed, sessions
 from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
 
 SESSION = date(2026, 10, 7)

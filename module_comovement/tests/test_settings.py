@@ -15,7 +15,7 @@ import pytest
 from RevenueChaser.core import board_settings as bs
 from RevenueChaser.core import funnel as funnel_mod
 from RevenueChaser.core import rawstore
-from RevenueChaser.module_comovement.tests import d01_bars
+from RevenueChaser.module_comovement.tests import prices_bars
 from RevenueChaser.core.tests.panel_client import panel_test_client
 from RevenueChaser.core import universe as universe_mod
 from RevenueChaser.module_comovement import config, engine, ohlc
@@ -255,7 +255,7 @@ def _seed_prices(ret: pd.DataFrame):
                 continue
             rows.append({"ticker": t, "ts": ts.isoformat(), "open": p, "high": p,
                          "low": p, "close": float(p), "volume": 1.0, "cached_at": now})
-    d01_bars.write_bars(rows)
+    prices_bars.write_bars(rows)
 
 
 def _split_fixture():
