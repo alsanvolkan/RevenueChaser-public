@@ -134,3 +134,14 @@ def test_the_row_carries_the_quality_basis(monkeypatch):
     assert drops == [] and (row["quality_basis"], row["quality_period_end"]) == ("TTM", "2026-06-30")
     assert row["metrics"]["gross_margin"] == pytest.approx(460 / 1100)
     assert build_payload([row], top_n=10)["candidates"][0]["quality_basis"] == "TTM"
+
+
+def test_a_uw_preliminary_quarter_is_not_summed_into_the_ttm():
+    # Opus review S4: a quarter end whose figure is UW's press-release number (``preliminary``, ahead of the 10-Q)
+    # is not a reported quarter, so TTM revenue and the P/E's net income stay on the SEC's four, as the card says.
+    from RevenueChaser.module_fundamentals.pipeline import _ttm_metrics
+    ends = ["2024-12-31", "2025-03-31", "2025-06-30", "2025-09-30", "2025-12-31"]
+    q = [{"period": e, "revenue": 100.0 + 10 * i, "net_income": 10.0 + i} for i, e in enumerate(ends)]
+    q[-1]["preliminary"] = ["net_income", "revenue"]
+    ttm = _ttm_metrics(q, [])
+    assert ttm["ttm_revenue"] == 100.0 + 110 + 120 + 130 and ttm["ttm_net_income"] == 10.0 + 11 + 12 + 13

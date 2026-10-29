@@ -85,12 +85,19 @@ def _is_derived(rec: dict, field: str) -> bool:
     return field in marks or str(rec.get("period"))[:10] in marks
 
 
+def _is_preliminary(rec: dict, field: str) -> bool:
+    """A figure the fundamentals layer filled from UW's press release ahead of the 10-Q (``preliminary``, G6) is not
+    a reported quarter either, so it never forms a TTM run: the card names the SEC statements it scored (Opus review
+    S4). Default chosen, change if avo prefers UW's quarter in the TTM with a label on the card."""
+    return field in (rec.get("preliminary") or [])
+
+
 def _quarter_run(quarterly: list[dict], field: str, n: int) -> tuple[list[float], list[str]] | None:
     """The newest ``n`` quarters that have a ``field`` figure, as ``(values, period ends)``, only when those
     quarters are consecutive (period ends ~91 days apart). ``None`` otherwise: a gap (no Q4 on a 10-Q only run, a
     missing quarter) is never summed as if it were a trailing year (#148 U3)."""
     have = [(q.get("period"), _to_float(q.get(field))) for q in quarterly
-            if _to_float(q.get(field)) is not None and not _is_derived(q, field)]
+            if _to_float(q.get(field)) is not None and not _is_derived(q, field) and not _is_preliminary(q, field)]
     if len(have) < n:
         return None
     tail = have[-n:]
