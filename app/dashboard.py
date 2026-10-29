@@ -195,9 +195,7 @@ def _no_cache(resp):
 # to reload when the job completes.
 jobs.register("earnings", runners.run_earnings_range, ["module_earnings_radar"])
 jobs.register("module_leaps", runners.run_leaps_latest, ["module_leaps"])  # live UW scan (Fetch)
-# 13F Fetch = download the new SEC Form 13F data set(s), ingest, derive the totals, render (backend D4).
-# The SEC form-13f zips are the only trusted 13F source. The Fetch needs no UW key: the names/sectors
-# step uses the UW screener best-effort and opens its own client (#206).
+# 13F Fetch (G9) = queue one ownership/serve and render from the ownership store; no SEC, OpenFIGI or UW call.
 jobs.register("module_sec_13f", runners.build_sec13f, ["module_sec_13f"], requires_uw=False, lane="long",
               cancellable=True)
 # no deadline: fewer than 5 recorded runs (23 Oct); set from job_runs when measured
@@ -1575,14 +1573,13 @@ def view_rotation_trail():
 @app.route("/api/sec_13f/<ticker>")
 def api_sec13f(ticker: str):
     """Plotly figure for a ticker's SEC 13F total-ownership chart."""
-    from RevenueChaser.module_sec_13f import engine as module_sec_13f
+    from RevenueChaser.module_sec_13f import store_reads
     from RevenueChaser.module_sec_13f.enrich import load_inputs
     from RevenueChaser.module_sec_13f.report import build_chart_fig
     t = ticker.strip().upper()
     if not _valid_ticker(t):
         return jsonify({"ok": False, "error": "bad ticker"}), 400
-    totals = module_sec_13f.load_totals()
-    periods = totals.get(t)
+    periods = store_reads.totals([t]).get(t)          # the ownership store (G9)
     if not periods:
         return jsonify({"ok": False, "error": "no series", "ticker": t}), 404
     enrich = load_inputs({t: periods}).get(t, {})       # the board's inputs (#375 F2): D01 closes, store only

@@ -28,7 +28,7 @@ TOTALS = {"AAA": {Q1: _cell(100.0), Q2: _cell(150.0), Q3: _cell(300.0, holders=9
           "BBB": {Q1: _cell(500.0), Q2: _cell(400.0)}}
 META = {"AAA": {"name": "Aaa Corp", "sector": "Technology"}, "BBB": {"name": "Bbb Inc", "sector": "Energy"}}
 ENRICH = {"AAA": {"price": {Q1: 10.0, Q3: 15.0}, "shares_outstanding": 1000.0, "float_shares": 900.0,
-                  "short_pct": 2.5, "insider_pct": 1.5}}
+                  "short_interest": 2.5e6, "days_to_cover": 2.0, "insider_pct": 1.5}}
 CUSIPS = {"111111111": "aaa", "222222222": {"ticker": "AAA"}, "333333333": {"ticker": "BBB"}, "444": {"ticker": ""}}
 SHOWN = {"totals": TOTALS, "meta": META, "enrichment": ENRICH}
 
@@ -57,8 +57,8 @@ def test_metric_rows_are_the_board_entries_in_board_order():
     assert aaa["name"] == "Aaa Corp" and aaa["sector"] == "Technology"
     assert aaa["streak"] == 2 and aaa["accel"] == pytest.approx(100.0 - 50.0)
     assert aaa["pct_out"] == pytest.approx(30.0) and aaa["price"] == 15.0 and aaa["price_delta"] == pytest.approx(50.0)
-    assert (aaa["shares_outstanding"], aaa["float_shares"], aaa["short_pct"], aaa["insider_pct"]) == \
-        (1000.0, 900.0, 2.5, 1.5)
+    assert (aaa["shares_outstanding"], aaa["float_shares"], aaa["short_interest"], aaa["days_to_cover"],
+            aaa["insider_pct"]) == (1000.0, 900.0, 2.5e6, 2.0, 1.5)
     assert aaa["shares_by_quarter"] == {Q1: 100.0, Q2: 150.0, Q3: 300.0}
     assert aaa["chg_by_quarter"] == {Q2: pytest.approx(50.0), Q3: pytest.approx(100.0)}
     assert aaa["cusips"] == ["111111111", "222222222"]
@@ -91,7 +91,7 @@ def test_a_fetch_records_a_header_and_one_row_per_board_row(store):
 def test_the_header_carries_model_version_and_params(store):
     sec13f_history.record(SHOWN, run_id="r1", run_at=COMPLETE)
     (head,) = _headers()
-    assert head["model_version"] == sec13f_history.model_version() and head["model_version"].startswith("5+")   # #375 F4
+    assert head["model_version"] == sec13f_history.model_version() and head["model_version"].startswith("6+")   # #375 F4, G9
     assert json.loads(head["params"])["START_QUARTER"] == engine.START_QUARTER
 
 

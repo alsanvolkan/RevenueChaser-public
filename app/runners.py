@@ -6,6 +6,7 @@ Each runner returns the Path to the generated file (or None if nothing was produ
 import functools
 import json
 import logging
+import re
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -709,37 +710,40 @@ def _record_money_flow(result: dict, run: str, run_at: float, uw, days: int, kep
 
 def run_sec_13f_latest(uw: UWClient | None = None, notice: str | None = None,
                        provider_health: dict | None = None, capture: dict | None = None) -> Path:
-    """Render the SEC 13F total-ownership dashboard from cached totals.
+    """Render the SEC 13F total-ownership dashboard from the ownership store (G9, build plan PR 17).
 
-    No API calls — reads ``sec13f_totals``, the meta and the snapshot inputs from the store: shares outstanding
-    and insider % from ``ownership_snapshot``, quarter-end prices from D01 (``enrich.load_inputs``, #375 F2; the
-    retired ``sec13f_enrichment`` is not read). The Fetch renders through here too, so a Refresh shows the numbers
-    the Fetch showed. The board banner comes from ``provider_health`` (or ``uw.health()`` when a client is
-    passed), and ``notice`` adds a one-line note (e.g. "names were not refreshed"). ``capture`` (the Fetch only)
-    receives the totals, meta and inputs (under ``enrichment``) the board was rendered from, for the result
-    history (#375).
+    No API calls: the totals, the quarters and the names come from ``ownership.duckdb`` and the spine through
+    ``module_sec_13f.store_reads``; FINRA's short interest from the same store; shares outstanding, insider % and the
+    quarter-end prices still from the old readers (``enrich.load_inputs``), empty since the 27 Oct purge until the
+    fundamentals and price stores serve them. The Fetch renders through here too, so a Refresh shows the numbers and
+    the coverage line (#77) the Fetch showed. ``notice`` adds a note (the Fetch's builder request); ``capture``
+    (the Fetch only) receives the totals, meta and inputs (under ``enrichment``) the board was rendered from, for
+    the result history (#375). No 13F quarter stored yet writes the board's empty state and raises ``JobMessage``.
     """
-    from RevenueChaser.module_sec_13f import engine as sec_13f
+    from RevenueChaser.module_sec_13f import store_reads
     from RevenueChaser.module_sec_13f.enrich import load_inputs
-    from RevenueChaser.module_sec_13f.report import export_sec13f_dashboard
+    from RevenueChaser.module_sec_13f.report import EMPTY_TEXT, export_sec13f_dashboard
 
-    totals = sec_13f.load_totals()
+    totals = store_reads.totals()
     if capture is not None:
         capture["totals"] = totals
+    periods = store_reads.periods()
+    notes = " ".join(n for n in (notice, store_reads.coverage_note(periods)) if n) or None
     if not totals:
-        # Say so on the board instead of leaving the old (or no) file behind.
-        _write_empty_board(
-            SEC_13F_LATEST, "SEC 13F", "No 13F ownership totals are stored yet.",
-            "Press Fetch to download and ingest the newest SEC Form 13F data set.")
-        from RevenueChaser.core.reporting_common import payload_path
-        payload_path(SEC_13F_LATEST).unlink(missing_ok=True)     # K10: the rows go with the rows' file (#429)
-        raise JobMessage("No 13F totals stored yet — press Fetch to ingest the SEC data set.")
-    meta, enrichment = sec_13f.load_sec13f_meta(), load_inputs(totals)
+        # The board's own empty state (header, filter bar, one row saying why), never the old (or no) file.
+        export_sec13f_dashboard({}, {}, {}, filename=str(SEC_13F_LATEST), provider_health=provider_health,
+                                notice=notes)
+        raise JobMessage(re.sub(r"<[^>]+>", "", EMPTY_TEXT))
+    meta = store_reads.meta(list(totals))
+    enrichment = load_inputs(totals)
+    for ticker, short in store_reads.short_interest(list(totals)).items():
+        enrichment.setdefault(ticker, {}).update(short)
     if capture is not None:
-        capture.update(meta=meta, enrichment=enrichment)
+        capture.update(meta=meta, enrichment=enrichment, coverage=store_reads.newest_complete(periods))
     export_sec13f_dashboard(totals, meta, enrichment,
-                            filename="sec_13f_latest.html",
-                            provider_health=provider_health or _uw_health(uw), notice=notice)
+                            filename=str(SEC_13F_LATEST),
+                            provider_health=provider_health or (_uw_health(uw) if uw is not None else None),
+                            notice=notes, as_of=store_reads.as_of_line(periods, totals))
     return SEC_13F_LATEST
 
 
@@ -853,47 +857,6 @@ def _13f_map_step(run: str, run_at: float, *, first_run: bool = False) -> tuple[
         return None, f"CUSIP map step failed ({type(exc).__name__}: {exc}); the totals use the stored map.", stats
 
 
-def _refresh_13f_meta(uw, ingested: int) -> tuple[dict | None, str | None, UWClient | None]:
-    """The UW name/sector step, best-effort: ``(provider_health, note, client)``.
-
-    The 13F job needs no UW key (the SEC data is the board), so a missing key or an
-    outage only means the stored names and sectors stay as they were; ``note`` says
-    so for the board. Skipped entirely (F-1) when nothing new was ingested and the
-    stored meta already covers every ticker in the totals. A client is opened here
-    when the runner was not given one, and returned so the caller can close it.
-    """
-    from RevenueChaser.module_sec_13f import engine as sec_13f
-    universe = {t for t in sec_13f.load_totals() if t}
-    meta = sec_13f.load_sec13f_meta()
-    # Covered = a real name or sector. A failed UW pass leaves ''/Unclassified
-    # placeholders; counting those would skip the retry until a new zip lands (B2).
-    covered = {t for t, m in meta.items()
-               if (m or {}).get("name") or not is_unclassified((m or {}).get("sector"))}
-    if not universe or (not ingested and universe <= covered):
-        return None, None, None
-    own = None
-    if uw is None:
-        uw = own = UWClient()
-    try:
-        ok, message = uw.verify()
-        if not ok:
-            return None, f"Names and sectors were not refreshed: {message}", own
-        try:
-            build_sec13f_meta(uw)
-        except Exception as exc:  # noqa: BLE001 - best-effort: the SEC data stands without it
-            logger.warning("13F meta step failed: %s", exc)
-            return None, f"Names and sectors were not refreshed: {exc}", own
-        health = _uw_health(uw)
-        gaps = int((health or {}).get("failed") or 0)
-        note = ("Names and sectors may be incomplete: some Unusual Whales calls failed."
-                if gaps else None)
-        return health, note, own
-    except Exception:
-        if own is not None:
-            own.close()
-        raise
-
-
 def _sec13f_busy_message() -> str:
     """The message a refused 13F job ends with: another Fetch, rebuild or map holds the family's lock (#26)."""
     pid = dict(job_lock.holders()).get("sec_13f", 0)
@@ -902,121 +865,29 @@ def _sec13f_busy_message() -> str:
 
 
 def build_sec13f(uw: UWClient | None = None) -> Path:
-    """The 13F Fetch: download -> ingest (SEC) -> derive (store) -> names -> shares out -> render -> history.
+    """The SEC 13F board's Fetch (G9, build plan PR 17): queue one ``ownership/serve`` and render at once from the
+    ownership store (D1: a board only puts a request into the queue; the builder runs it). No SEC, OpenFIGI or UW
+    call, no write to the old store; the filings themselves arrive through the builder's ``sec/13f`` runs. The
+    result history keeps what the board showed (#375).
 
-    The job needs no Unusual Whales key. The SEC stages run only when the data-set
-    page is reachable; the derive (``recompute_totals``) and the render always run,
-    and an SEC failure is raised at the end, after the board is up to date. The UW
-    name/sector step is best-effort (``_refresh_13f_meta``), and so is the UW shares
-    outstanding step (``_store_13f_shares``, #300 D20), which replaced the 13F enrichment. The shares step runs
-    before the render (#375 F2): the board's % Out reads the rows it stores.
-
-    One 13F job at a time (#26): the ``"sec_13f"`` lock covers this job, ``run_sec13f_rebuild`` and
-    ``run_sec13f_map``, because they all write the ``sec13f_*`` tables and the CUSIP map. A second one refuses with a
-    ``JobMessage`` and writes nothing. A cancel or a deadline stops between zips (``engine.ingest_zips``), before the
-    next zip's holdings write.
-    """
-    with job_lock.acquire("sec_13f", wait=0) as got:
-        if not got:
-            raise JobMessage(_sec13f_busy_message())
-        return _build_sec13f(uw)
-
-
-def _build_sec13f(uw: UWClient | None = None) -> Path:
-    """The Fetch's work, once ``build_sec13f`` holds the ``"sec_13f"`` lock."""
-    from RevenueChaser.module_sec_13f import engine as sec_13f
-
+    Default chosen, change if avo prefers: the Fetch queues the derive only, not ``sec/13f``, so a press never
+    starts an SEC fetch (and never the first fill). The old Fetch (zips, OpenFIGI map and UW names and shares into
+    ``raw.duckdb``) is gone; the rebuild and map jobs that still derive the old totals go with the old 13F module
+    in G10."""
+    from RevenueChaser.module_sec_13f import store_reads
     run, run_at = run_id(), time.time()
-    sec_error = None
-    ingested = 0
-    ingest_failed = False
+    request = store_reads.builder_request()
+    note = "Builder request: " + ", ".join(f"{name} {state}" for name, state in request["datasets"].items()) + "."
+    shown: dict = {}
     try:
-        sec_13f.download_missing_zips()
-        zips = sorted(str(p) for p in sec_13f.SEC13F_DIR.glob("*_form13f.zip"))
-        try:
-            ingested = sec_13f.ingest_zips(zips) if zips else 0
-        except Exception:
-            ingest_failed = True  # a half-written zip: never derive from it (B1)
-            raise
-    except Exception as exc:  # noqa: BLE001 - reported below, once the board is rendered
-        logger.warning("13F SEC stage failed: %s", exc)
-        sec_error = exc
-
-    unmatched, summary, map_note = None, None, None
-    if not ingest_failed:  # a download failure alone leaves the store consistent
-        cusip_map, map_note, _stats = _13f_map_step(run, run_at)
-        try:
-            try:
-                sec_13f.recompute_totals(cusip_map)
-            except sec_13f.DeriveRefused as exc:
-                if cusip_map is None:
-                    raise
-                # A new map the guards refuse must not fail every later Fetch: derive with the stored map, say so.
-                logger.warning("13F derive with the new CUSIP map refused: %s", exc)
-                map_note = (f"CUSIP map: the new map was not applied, the derive with it was refused ({exc}) "
-                            "The totals use the stored map.")
-                sec_13f.recompute_totals()
-            unmatched, summary = _13f_unmatched()
-        except sec_13f.DeriveRefused as exc:
-            logger.warning("13F derive refused: %s", exc)
-            sec_error = sec_error or exc
-
-    health, note, own = None, None, None
-    shown: dict = {}                        # what the board was rendered from, for the result history (#375)
-    try:
-        health, names_note, own = _refresh_13f_meta(uw, ingested)
-        note = " ".join(n for n in (names_note, map_note, unmatched) if n) or None
-        _store_13f_shares(uw or own)        # before the render: the board's % Out reads these rows (#375 F2)
-        path = _render_13f(health, note, shown)
-        _record_13f(shown, run, run_at, sec_error, names_note, unmatched, ingested,
-                    sec_13f.map_identity(sec_13f.load_cusip_ticker(), summary), map_note)
-    finally:
-        if own is not None:
-            own.close()
-
-    if sec_error is not None:
-        raise sec_error
-    if note:
-        raise JobMessage(note)
+        path = run_sec_13f_latest(None, notice=note, capture=shown)
+    except JobMessage:
+        path = SEC_13F_LATEST      # the empty state was written
+    coverage = shown.get("coverage") or {}
+    _record_13f(shown, run, run_at, None, None, store_reads.coverage_note([coverage] if coverage else []), 0,
+                {"source": store_reads.SOURCE, "period": str(coverage.get("period") or "") or None,
+                 "coverage": coverage.get("coverage"), "unmapped_cusips": coverage.get("unmapped_cusips")})
     return path
-
-
-def _store_13f_shares(uw: UWClient | None) -> None:
-    """D20 (#300): UW ``info`` shares outstanding of every 13F ticker into ``ownership_snapshot``, best-effort.
-
-    One call per ticker, once per complete session, at most ``ownership.UW_MAX_CALLS_PER_FETCH`` per Fetch (the cap is
-    the bound; a capped run is one job note). The shares step already checkpoints between batches. An intraday run, or a session whose
-    tickers are all stored, asks nothing and opens no client (``ownership.pending_uw``). A client is opened here
-    only when the runner has none, and closed here. A key that fails ``verify`` (cached per client) asks nothing; it
-    and a store error are a job note, never a failed Fetch: the board then shows the shares stored before.
-    """
-    from RevenueChaser.core import ownership
-    from RevenueChaser.module_sec_13f import engine as sec_13f
-
-    run_at = ownership._clock()
-    _, todo = ownership.pending_uw(sec_13f.load_totals(), run_at)
-    if not todo:
-        return
-    own = None
-    try:
-        if uw is None:
-            uw = own = UWClient()
-        ok, message = uw.verify()          # cached per client: free when the meta step already asked
-        if not ok:
-            ledger.add_note(f"13F shares outstanding were not stored: {message}")
-            return
-        res = ownership.store_uw_shares(uw, todo, run_id=run_id(), run_at=run_at)
-        logger.info("13F shares outstanding: %d asked, %d stored, %d without a value, %d left (session %s)",
-                    res["asked"], res["written"], res["no_value"], res["left"], res["session"])
-        if res["left"]:
-            ledger.add_note(f"13F shares outstanding: the cap of {ownership.UW_MAX_CALLS_PER_FETCH:,} UW calls per "
-                            f"Fetch was reached; {res['left']:,} ticker(s) left for the next Fetch.")
-    except Exception as exc:  # noqa: BLE001 - best-effort, see docstring (a cancel is not an Exception)
-        logger.exception("13F shares outstanding were not stored")
-        ledger.add_note(f"13F shares outstanding were not stored: {type(exc).__name__}: {exc}")
-    finally:
-        if own is not None:
-            own.close()
 
 
 def _13f_unmatched() -> tuple[str | None, dict | None]:

@@ -171,7 +171,8 @@ class TestDashboard:
                                           "buy_flow": 60.0, "sell_flow": 10.0}}}
         meta = {"RKT": {"name": "Rocket Companies Inc", "sector": "Financial Services"}}
         enrich = {"RKT": {"price": {"2025-03-31": 10.0, "2025-06-30": 12.0},
-                          "shares_outstanding": 2000.0, "short_pct": 5.2, "insider_pct": 1.4}}
+                          "shares_outstanding": 2000.0, "short_interest": 5_200_000.0, "days_to_cover": 1.5,
+                          "insider_pct": 1.4}}
         h = render_sec13f_dashboard(totals, meta, enrich)
         assert "SEC 13F" in h
         assert "Value ($)" in h
@@ -179,12 +180,12 @@ class TestDashboard:
         assert "New/Exit" in h
         assert "Top10%" in h
         assert "Net flow" in h
-        assert "Short%" in h
+        assert "Short int" in h
         assert "Insider%" in h
         assert "RKT" not in h                                        # the row lives in the payload (#429)
         cells = dict(zip(board_payload(totals, meta, enrich)["cols"],
                          board_payload(totals, meta, enrich)["rows"][0][3]))
-        assert cells["short"][:2] == ["5.2%", pytest.approx(5.2)]
+        assert cells["short"][:2] == ["5.20M (1.5d)", 5_200_000.0]
         assert [row[0] for row in board_payload(totals, meta, enrich)["rows"]] == ["RKT"]
 
     def test_render_suppresses_delta_for_missing_quarter(self):

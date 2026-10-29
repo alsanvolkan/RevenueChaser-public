@@ -5,11 +5,13 @@ sourced from SEC 13F bulk data (includes BlackRock/Vanguard/State Street).
 
 Inputs:
   ``totals`` = ``{ticker: {period: {shares, value, holders, new_holders,
-                 exited_holders, top10_pct, hhi, buy_flow, sell_flow}}}``
-  ``meta``  = ``{ticker: {"name": str, "sector": str}}``
-  ``enrichment`` = ``{ticker: {price, shares_outstanding, insider_pct, short_pct, short_pct_as_of, float_shares}}``
-                   (optional): the snapshot inputs, ``enrich.load_inputs`` (#375 F2: ``ownership_snapshot`` and D01;
-                   #375 F6: D10 ``short_interest``). ``short_pct`` is short interest as % of float.
+                 exited_holders, top10_pct, hhi, buy_flow, sell_flow, ...}}}``: since G9 the ownership store's rows
+                 (``store_reads.totals``), each cell with ``complete`` (a quarter still filing says False: it is
+                 shown, marked "(filing)", and left out of the snapshot, the streak and Accel)
+  ``meta``  = ``{ticker: {"name": str, "sector": str}}`` (the spine, ``store_reads.meta``)
+  ``enrichment`` = ``{ticker: {price, shares_outstanding, insider_pct, short_interest, days_to_cover, short_as_of}}``
+                   (optional): the snapshot inputs, ``enrich.load_inputs`` (#375 F2: ``ownership_snapshot`` and D01)
+                   and FINRA's short interest (``store_reads.short_interest``, G9).
 """
 from RevenueChaser.core.reporting_common import (FILTERS_CSS, FILTERS_JS, PAYLOAD_JS, filters_bar_html,
                                                  filters_meta, help_html, notice_html, provider_health_html,
@@ -288,6 +290,13 @@ def _quarters(totals: dict) -> list:
     return sorted(q for q in qs if q >= engine.START_QUARTER)
 
 
+def filing_quarters(totals: dict) -> set:
+    """The quarters still filing: a served cell says ``complete`` False (its filing deadline has not passed, G9). A
+    cell without the key (the old totals) counts as complete."""
+    return {q for periods in totals.values() for q, cell in periods.items()
+            if isinstance(cell, dict) and cell.get("complete") is False}
+
+
 def _fmt_money(v):
     if v is None:
         return "—"
@@ -345,7 +354,7 @@ _SNAP_COLS = [
     ("streak", "Streak"),
     ("accel", "Accel"),
     ("insider", "Insider%"),
-    ("short", "Short%"),
+    ("short", "Short int"),
     ("price_delta", "Price Δ"),
 ]
 
@@ -354,6 +363,10 @@ def board_entries(totals: dict, meta: dict, enrichment: dict = None) -> tuple[li
     """``(quarters, entries)``: the board's quarter columns and one entry per ticker, in board order (most shares in
     the latest quarter first). The board renders these; the result history (``history.py``, #375) records them."""
     quarters = _quarters(totals)
+    filing = filing_quarters(totals)
+    # The snapshot, the streak and Accel read the complete quarters only: a quarter still filing (late and amended
+    # filers arrive up to its deadline and after) would read as selling (G9).
+    done = [i for i, q in enumerate(quarters) if q not in filing]
     enrichment = enrichment or {}
     entries = []
     for t, periods in totals.items():
@@ -367,21 +380,26 @@ def board_entries(totals: dict, meta: dict, enrichment: dict = None) -> tuple[li
             shares.append(s)
             chgs.append(None if q == quarters[0] else _pct(s, prev))
             prev = s
-            if cell:
+            if cell and q not in filing:
                 last = cell
         info = meta.get(t, {})
         enr = enrichment.get(t, {})
 
         streak = 0
-        for i in range(len(quarters) - 1, 0, -1):
+        for k in range(len(done) - 1, 0, -1):
+            i = done[k]
+            if done[k - 1] != i - 1:
+                break
             cur, pr = shares[i], shares[i - 1]
             if cur is not None and pr is not None and cur > pr:
                 streak += 1
             else:
                 break
         accel = None
-        if len(chgs) >= 3 and chgs[-1] is not None and chgs[-2] is not None:
-            accel = chgs[-1] - chgs[-2]
+        if len(done) >= 3 and done[-2] == done[-1] - 1 and done[-3] == done[-1] - 2:
+            c1, c2 = chgs[done[-1]], chgs[done[-2]]
+            if c1 is not None and c2 is not None:
+                accel = c1 - c2
 
         pct_out = None
         so = enr.get("shares_outstanding")
@@ -402,13 +420,16 @@ def board_entries(totals: dict, meta: dict, enrichment: dict = None) -> tuple[li
             "ticker": t, "name": info.get("name", ""), "sector": _row_sector(info.get("sector")),
             "shares": shares, "chgs": chgs, "last": last,
             "streak": streak, "accel": accel, "pct_out": pct_out,
-            "price_delta": price_delta, "short_pct": enr.get("short_pct"),
-            "short_pct_as_of": enr.get("short_pct_as_of"),
+            "price_delta": price_delta,
+            "short_interest": enr.get("short_interest"), "days_to_cover": enr.get("days_to_cover"),
+            "short_as_of": enr.get("short_as_of"),
             "insider_pct": enr.get("insider_pct"), "price": price,
             "shares_outstanding": so, "float_shares": enr.get("float_shares"),
         })
 
-    entries.sort(key=lambda e: (e["shares"][-1] is None, -(e["shares"][-1] or 0)))
+    # Board order: most shares in the newest complete quarter first (the newest quarter when none is complete).
+    k = done[-1] if done else len(quarters) - 1
+    entries.sort(key=lambda e: (not e["shares"] or e["shares"][k] is None, -((e["shares"] or [0])[k] or 0)))
     return quarters, entries
 
 
@@ -461,7 +482,11 @@ def _payload(quarters: list, entries: list, fields: dict | None = None) -> dict:
         cells.append(_cell(_fmt_money(last.get("value")), last.get("value"), "zero"))
         cells.append(_cell(_f(e["pct_out"], 1, "%", False), e["pct_out"], "zero"))
         cells.append(_cell(str(_num(last.get("holders"))), last.get("holders"), "zero"))
-        cells.append(_cell(new_exit or "—", new_exit_val, "zero"))
+        apart = [(last.get("exited_confidential"), "left holdings out in confidence"),
+                 (last.get("exited_no_filing"), "filed no report this quarter")]
+        apart_text = "; ".join(f"{n} exit(s) by filers that {why}" for n, why in apart if n)
+        cells.append(_cell(new_exit or "—", new_exit_val, "zero", apart_text) if apart_text
+                     else _cell(new_exit or "—", new_exit_val, "zero"))
         breadth = last.get("breadth")
         breadth_chg = last.get("breadth_chg")
         breadth_text = "—"
@@ -476,10 +501,23 @@ def _payload(quarters: list, entries: list, fields: dict | None = None) -> dict:
         cells.append(_cell(str(e["streak"]) if e["streak"] is not None else "—", e["streak"], "zero"))
         cells.append(_cell(_f(e["accel"], 1, "pp"), e["accel"], _sign_class(e["accel"])))
         cells.append(_cell(_f(e["insider_pct"], 1, "%", False), e["insider_pct"], "zero"))
-        cells.append(_cell(_f(e["short_pct"], 1, "%", False), e["short_pct"], "zero"))
+        cells.append(_short_cell(e))
         cells.append(_cell(_f(e["price_delta"]), e["price_delta"], _sign_class(e["price_delta"])))
         rows.append([e["ticker"], e["name"], e["sector"], cells])
     return {"cols": cols, "rows": rows, "fields": {r["ticker"]: r for r in (fields or [])}}
+
+
+def _short_cell(e: dict) -> list:
+    """FINRA short interest in shares, with days to cover, as of its settlement date (G9). Before G9 the column was
+    short interest as % of float; the ownership store has no float, so it is not one."""
+    si = e.get("short_interest")
+    if si is None:
+        return _cell("—", None, "zero")
+    dtc = e.get("days_to_cover")
+    text = _fmt_shares(si) + (f" ({dtc:.1f}d)" if dtc is not None else "")
+    as_of = e.get("short_as_of")
+    return _cell(text, si, "zero", f"{si:,.0f} shares short" + (f", {dtc:.2f} days to cover" if dtc is not None
+                                                               else "") + (f", settled {as_of}" if as_of else ""))
 
 
 def board_payload(totals: dict, meta: dict, enrichment: dict = None, fields: list | None = None) -> dict:
@@ -496,17 +534,26 @@ def board_payload(totals: dict, meta: dict, enrichment: dict = None, fields: lis
 
 
 def render_sec13f_dashboard(totals: dict, meta: dict, enrichment: dict = None,
-                            provider_health: dict | None = None, notice: str | None = None) -> str:
+                            provider_health: dict | None = None, notice: str | None = None,
+                            as_of: str | None = None) -> str:
     quarters, entries = board_entries(totals, meta, enrichment)
     fields, kit_notice = _kit_rows(entries)
-    return _render_page(quarters, entries, fields, kit_notice, provider_health, notice)
+    return _render_page(quarters, entries, fields, kit_notice, provider_health, notice,
+                        filing=filing_quarters(totals), as_of=as_of)
+
+
+EMPTY_TEXT = ("The ownership store holds no 13F quarter yet. It fills after the 13F first fill (the SEC's Form 13F "
+              "data sets from 2025-01-01, started on the server) and the <code>ownership/serve</code> derive.")
 
 
 def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | None = None,
-                 provider_health: dict | None = None, notice: str | None = None) -> str:
-    q_labels = {q: _qlabel(q) for q in quarters}
+                 provider_health: dict | None = None, notice: str | None = None, filing: set | None = None,
+                 as_of: str | None = None) -> str:
+    filing = filing or set()
+    q_labels = {q: _qlabel(q) + (" (filing)" if q in filing else "") for q in quarters}
+    complete = [q for q in quarters if q not in filing]
 
-    default_sort = f"sh_{quarters[-1]}" if quarters else "ticker"
+    default_sort = f"sh_{(complete or quarters)[-1]}" if quarters else "ticker"
     n = len(quarters)
     ns = len(_SNAP_COLS)
     ncols = 2 + n + max(0, n - 1) + ns          # Ticker, Sector, shares per quarter, Δ%, the snapshot (13F-7)
@@ -520,7 +567,9 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
         f'<th class="group" colspan="{ns}">Latest snapshot</th>'
         '</tr><tr>'
         + ''.join(f'<th data-col="sh_{esc(q)}" onclick="sortTable(this.dataset.col,this)"'
-                  f' class="{("sort-desc " if q == quarters[-1] else "")}">{esc(q_labels[q])}</th>' for q in quarters)
+                  f' class="{("sort-desc " if f"sh_{q}" == default_sort else "")}"'
+                  + (' title="Still filing: the quarter\'s 13F deadline has not passed"' if q in filing else "")
+                  + f'>{esc(q_labels[q])}</th>' for q in quarters)
         + ''.join(f'<th data-col="ch_{esc(q)}" onclick="sortTable(this.dataset.col,this)">{esc(q_labels[q])}</th>' for q in quarters[1:])
         + ''.join(f'<th data-col="{c}" onclick="sortTable(this.dataset.col,this)">{label}</th>' for c, label in _SNAP_COLS)
         + '</tr>'
@@ -531,8 +580,7 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
     if entries:
         rows_html = f'<tr><td colspan="{ncols}" class="empty">Loading rows…</td></tr>'
     else:
-        rows_html = (f'<tr><td colspan="{ncols}" class="empty">No SEC 13F data stored yet. Press Fetch to '
-                     'download and ingest the newest SEC Form 13F data set.</td></tr>')
+        rows_html = f'<tr><td colspan="{ncols}" class="empty">{EMPTY_TEXT}</td></tr>'
 
     js = fill(JS, {"__DEFAULT_SORT__": script_json(default_sort),
                    "__ROW_COUNT__": script_json(len(entries)), "__NCOLS__": script_json(ncols)})
@@ -551,28 +599,34 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
 
     short_as_of = None
     for e in entries:
-        d = e.get("short_pct_as_of")
+        d = e.get("short_as_of")
         if d is not None and (short_as_of is None or d > short_as_of):
             short_as_of = d
     short_legend = (
-        "<b>Short%</b> = short interest as % of float from UW short screener → UW interest-float → yfinance "
-        f"(D10, nightly RC-Earnings-Inputs); as of {short_as_of.isoformat() if short_as_of else '—'}.")
+        "<b>Short int</b> = FINRA consolidated short interest in shares, with days to cover in brackets "
+        "(<code>finra/short_interest</code>, twice a month; settled up to "
+        f"{short_as_of.isoformat() if short_as_of else '—'}, published about a week later). The store has no "
+        "float yet, so it is not a % of float.")
 
     help_block = help_html(
         "Every fund manager with more than $100M files a <b>Form 13F</b> each quarter listing its stock "
         "holdings. This board adds them up per company: how many shares all 13F filers hold, the change "
         "against the prior quarter, new and exited holders, concentration and the streak of quarters with "
         "net buying. The legend under the table defines each column; click a row for its chart. "
-        "<b>Fetch</b> downloads the newest SEC 13F data set from <b>SEC EDGAR</b> and stores the totals; it also "
-        "reads names, sectors and shares outstanding from <b>Unusual Whales</b>. "
-        "<b>Refresh</b> redraws the board from the stored totals with no network call.")
+        "The filings come from <b>SEC EDGAR</b> through the ownership store, which the builder fills on the "
+        "server. <b>Fetch</b> asks the builder for one <code>ownership/serve</code> (the totals derived again from "
+        "the stored filings, no network) and redraws the board at once with what is stored. "
+        "<b>Refresh</b> redraws the board from the store with no network call. A quarter marked "
+        "<b>(filing)</b> is still inside its 45-day filing window: it is shown, but the snapshot, the streak and "
+        "Accel use the newest complete quarter.")
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>RevenueChaser — SEC 13F Ownership</title>
 <script src="{PLOTLY_CDN_URL}"></script>
 {CSS}{FILTERS_CSS}</head><body>
 <div class="header"><h1>SEC 13F — Total Institutional Ownership</h1>
-<div class="meta">{len(entries)} tickers · all 13F filers (incl. BlackRock/Vanguard/State Street) · quarterly · click a row for the chart</div></div>
+<div class="meta">{len(entries)} tickers · all 13F filers (incl. BlackRock/Vanguard/State Street) · quarterly · click a row for the chart</div>
+{f'<div class="meta">{esc(as_of)}</div>' if as_of else ''}</div>
 {provider_health_html(provider_health)}{notice_html(notice)}{notice_html(kit_notice)}
 {help_block}
 {recorded_sessions_html("module_sec_13f")}
@@ -582,15 +636,18 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
 <table><thead>{header}</thead><tbody id="rows">{rows_html}</tbody></table>
 <div style="color:#8b949e;font-size:11px;margin-top:8px;line-height:1.5">
 <b>Total ownership</b> = shares held by every 13F filer. <b>Δ% vs prior</b> = QoQ change in shares.
-<b>Value</b> = $ market value held. <b>% Out</b> = shares ÷ shares outstanding (newest stored).
-<b>New/Exit</b> = holders entered / exited vs prior quarter.
+<b>Value</b> = $ market value held. <b>% Out</b> = shares ÷ shares outstanding (newest stored; empty until the
+fundamentals store serves shares outstanding).
+<b>New/Exit</b> = holders entered / exited vs the calendar quarter before (hover: exits by a filer that left
+holdings out in confidence or filed no report, which may not be sales).
 <b>Breadth</b> = share of that quarter's 13F filers holding the name (holders ÷ filers), with the change in
-percentage points vs the name's own previous stored quarter, which is not necessarily the calendar quarter
-before it; as of quarter-end, filed up to 45 days later.
+percentage points vs the calendar quarter before (Chen, Hong and Stein 2002: falling breadth is the signal); as of
+quarter-end, filed up to 45 days later.
 <b>Top10%/HHI</b> = ownership concentration.
 <b>Net flow</b> = shares bought − sold (holder-level deltas). <b>Streak</b> = consecutive quarters of net accumulation.
 <b>Accel</b> = Δ%(latest) − Δ%(prior). <b>Insider%</b> = newest stored snapshot. {short_legend}
-<b>Price Δ</b> = close change since the first quarter end.
+<b>Price Δ</b> = close change since the first quarter end (empty until the price store holds the quarter-end
+closes).
 </div>
 <div id="modal"><div id="modal-card">
 <div id="modal-head"><span id="modal-title"></span><button id="modal-close">×</button></div>
@@ -607,11 +664,14 @@ def _pct(cur, prev):
 
 
 def export_sec13f_dashboard(totals: dict, meta: dict, enrichment: dict = None, filename: str = None,
-                            provider_health: dict | None = None, notice: str | None = None) -> Path:
+                            provider_health: dict | None = None, notice: str | None = None,
+                            as_of: str | None = None) -> Path:
     # One ``board_entries`` pass feeds both the page and the payload (#429); filter rows ride the payload (KF).
     quarters, entries = board_entries(totals, meta, enrichment)
     fields, kit_notice = _kit_rows(entries)
     path = OUTPUT_DIR / (filename or f"sec_13f/sec_13f_latest.html")
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = _payload(quarters, entries, fields) if entries else None
-    return write_board(path, _render_page(quarters, entries, fields, kit_notice, provider_health, notice), payload)
+    page = _render_page(quarters, entries, fields, kit_notice, provider_health, notice,
+                        filing=filing_quarters(totals), as_of=as_of)
+    return write_board(path, page, payload)

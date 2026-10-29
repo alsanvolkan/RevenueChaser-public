@@ -14,8 +14,12 @@ Per 13F ticker (``load_inputs``), in the shape ``report.board_entries`` reads:
   why not the open-ended K8a window). The board's Price Δ is the change between the first and the last of these
   closes.
 
-Short % is not read: the column stays hidden until D10 (``short_interest``) has rows (F6). A ticker with no value
-for a field has no key for it, so the board shows "—", never 0.
+Short interest is not read here since G9: the board takes FINRA's from the ownership store
+(``store_reads.short_interest``); the old ``short_interest`` table is not read. A ticker with no value for a field has no key for it, so the board shows "—", never 0.
+
+shortcut: shares outstanding, insider % and the quarter-end closes still come from ``raw.duckdb``
+(``ownership_snapshot``, ``price_bars_daily``), empty since the 27 Oct purge; upgrade when the fundamentals and price
+stores serve them (G5/G2 data, then a board PR).
 
 The Fetch (after its shares step), the store-only Refresh and the ``/api/sec_13f/<t>`` chart all read these inputs
 here, so every number comes out of the same path.
@@ -32,7 +36,6 @@ from RevenueChaser.core import ownership, rawstore
 SEC_DEI = "sec_dei"          # the D11 slot of the readers' order; no writer stores it yet (#161)
 SHARES_ORDER = (ownership.UW_INFO, SEC_DEI, ownership.YFINANCE)
 PRICE_LOOKBACK_DAYS = 10     # a quarter end on a weekend or a holiday still finds the session before it
-SHORT_INTEREST_TABLE = "short_interest"
 
 
 def load_enrichment() -> dict:
@@ -68,34 +71,6 @@ def load_ownership(tickers) -> dict[str, dict]:
         if r["insider"] is not None:
             entry.setdefault("insider_pct", float(r["insider"]) * 100.0)
     return {t: e for t, e in out.items() if e}
-
-
-def load_short_interest(tickers) -> tuple[dict[str, dict], date | None]:
-    """``({ticker: {"short_pct": .., "short_pct_as_of": session_date}}, newest_session)`` from ``short_interest``:
-    the newest non-NULL ``si_float`` row per ticker. ``si_float`` is stored as a fraction, so ``short_pct`` is the
-    value × 100. A ticker with no row is left out; ``newest_session`` is the latest ``session_date`` of any row used,
-    for the board legend."""
-    wanted = {str(t).upper() for t in tickers if t}
-    if not wanted:
-        return {}, None
-    marks = ", ".join("?" * len(wanted))
-    rows = rawstore.query(
-        f"SELECT ticker, arg_max(si_float, session_date) FILTER (WHERE si_float IS NOT NULL) AS si, "
-        f"arg_max(session_date, session_date) FILTER (WHERE si_float IS NOT NULL) AS session "
-        f"FROM {SHORT_INTEREST_TABLE} WHERE ticker IN ({marks}) GROUP BY ticker",
-        list(wanted))
-    out: dict[str, dict] = {}
-    newest: date | None = None
-    for r in rows:
-        if r["si"] is None:
-            continue
-        entry = {"short_pct": float(r["si"]) * 100.0}
-        if r["session"] is not None:
-            entry["short_pct_as_of"] = r["session"]
-            if newest is None or r["session"] > newest:
-                newest = r["session"]
-        out[r["ticker"]] = entry
-    return out, newest
 
 
 def quarter_end_closes(tickers, quarters) -> dict[str, dict[str, float]]:
@@ -143,9 +118,6 @@ def load_inputs(totals: dict) -> dict[str, dict]:
     tickers = [t for t in totals if t]
     quarters = sorted({q for periods in totals.values() for q in periods if q >= engine.START_QUARTER})
     out = load_ownership(tickers)
-    shorts, _ = load_short_interest(tickers)
-    for ticker, s in shorts.items():
-        out.setdefault(ticker, {}).update(s)
     for ticker, px in quarter_end_closes(tickers, quarters).items():
         out.setdefault(ticker, {})["price"] = px
     return out
