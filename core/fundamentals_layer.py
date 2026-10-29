@@ -218,7 +218,8 @@ def _add_ytd(quarterly: list[dict], annual_rows: list[dict], additive: set[str])
     reports only as a year to date is the difference of two of them), so the year to date is their sum. The fiscal
     year is the annual record's span when the layer holds one, else it starts with the first quarter that begins
     ``NEXT_START_DAYS`` after the newest fiscal year end. A run that is not consecutive, or that does not begin on the
-    year's first day, has no year to date. Only 3, 6 and 9 months are given: twelve is the annual record itself.
+    year's first day, has no year to date, nor has one over a UW preliminary figure. Only 3, 6 and 9 months are given:
+    twelve is the annual record itself.
 
     shortcut: the sum of the discrete quarters, not the filer's own cumulative fact; equal unless a later filing
     restated one quarter and not the others. Serve the cumulative facts from the layer if the real-data check ever
@@ -251,6 +252,10 @@ def _add_ytd(quarterly: list[dict], annual_rows: list[dict], additive: set[str])
             run = [q for q in quarterly[:i + 1] if f in q and f in (q.get("period_starts") or {})
                    and _day(q["period_starts"][f]) >= fy_start]
             if not run or _day(run[0]["period_starts"][f]) != fy_start or len(run) > 3:
+                continue
+            # Delta review D1: a figure UW filled ahead of the 10-Q (``preliminary``) is no reported quarter, so no
+            # year to date runs over it (``module_fundamentals.pipeline._quarter_run``'s rule).
+            if any(f in (q.get("preliminary") or []) for q in run):
                 continue
             ends = [_day(q["period"]) for q in run]
             if any(not lo <= (b - a).days <= hi for a, b in zip(ends, ends[1:])):

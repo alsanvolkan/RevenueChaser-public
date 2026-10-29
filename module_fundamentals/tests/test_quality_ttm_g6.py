@@ -145,3 +145,26 @@ def test_a_uw_preliminary_quarter_is_not_summed_into_the_ttm():
     q[-1]["preliminary"] = ["net_income", "revenue"]
     ttm = _ttm_metrics(q, [])
     assert ttm["ttm_revenue"] == 100.0 + 110 + 120 + 130 and ttm["ttm_net_income"] == 10.0 + 11 + 12 + 13
+
+
+@pytest.mark.parametrize("field", ["cash", "ebit"])
+def test_a_uw_preliminary_figure_on_the_newest_quarter_keeps_quality_on_the_year(field):
+    # Delta review D1: the trailing year reads the newest quarter's balance sheet and year to date; a figure UW filled
+    # ahead of the 10-Q (``preliminary``) is no SEC figure, so Quality stays on the fiscal year, as TTM revenue does.
+    quarterly = copy.deepcopy(QUARTERLY)
+    quarterly[-1]["preliminary"] = [field]
+    assert pipeline._quality_metrics(ANNUAL, quarterly)["quality_basis"] == "FY"
+
+
+def test_the_layer_builds_no_year_to_date_over_a_uw_preliminary_quarter():
+    from RevenueChaser.core import fundamentals_layer
+    starts = ["2026-01-01", "2026-04-01", "2026-07-01"]
+    ends = ["2026-03-31", "2026-06-30", "2026-09-30"]
+    quarters = [{"period": e, "revenue": 100.0, "ebit": 10.0, "period_starts": {"revenue": s, "ebit": s}}
+                for s, e in zip(starts, ends)]
+    quarters[1]["preliminary"] = ["revenue"]
+    annual_rows = [{"field": f, "period_start": "2025-01-01", "period_end": "2025-12-31"} for f in ("revenue", "ebit")]
+    fundamentals_layer._add_ytd(quarters, annual_rows, {"revenue", "ebit"})
+    assert quarters[0]["ytd"]["revenue"]["val"] == 100.0
+    assert "revenue" not in quarters[1].get("ytd", {}) and "revenue" not in quarters[2].get("ytd", {})
+    assert quarters[2]["ytd"]["ebit"] == {"start": "2026-01-01", "months": 9, "val": 30.0}

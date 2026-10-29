@@ -76,7 +76,7 @@ def trailing_year(annual: list[dict], quarterly: list[dict], i: int, flows, bala
 
     ``flows`` are summed over the trailing year (each one the year carries must come through; ``cost_of_revenue``
     only stands in for ``gross_profit``); ``balance`` fields are the quarter's (each one the year carries must be
-    on it). The quarter is the newest one after the year whose revenue year to date starts the day after the year
+    on it, and a UW preliminary figure is none). The quarter is the newest one after the year whose revenue year to date starts the day after the year
     ends; ``months`` pins its length and ``near`` its end (within ``NEAR_DAYS``), for the trailing year a year
     before another one. The record carries ``period`` (its end), ``months``, ``period_ends`` (every field: that
     end) and ``fiscal_year`` (the year it starts from)."""
@@ -108,9 +108,11 @@ def trailing_year(annual: list[dict], quarterly: list[dict], i: int, flows, bala
         return None
     cur_start, m = ytd(cur, "revenue")[:2]
     cur_end = str(cur.get("period"))[:10]
+    # Delta review D1: a figure UW filled ahead of the 10-Q (``preliminary``) is no SEC figure: the year stands.
+    prelim = set(cur.get("preliminary") or [])
     rec: dict = {}
     for f in present:
-        y = ytd(cur, f)
+        y = ytd(cur, f) if f not in prelim else None
         prior = (ytd_point(ordered, (f,), s0, m, cur_end)
                  if y and y[0] == cur_start and y[1] == m and starts[f] == s0 else None)
         if prior is not None:
@@ -121,7 +123,7 @@ def trailing_year(annual: list[dict], quarterly: list[dict], i: int, flows, bala
         return None
     for f in balance:
         if _float(a.get(f)) is not None:
-            v = _float(cur.get(f))
+            v = _float(cur.get(f)) if f not in prelim else None
             if v is None:
                 return None
             rec[f] = v
