@@ -62,14 +62,17 @@ GAP_FACTOR = 1.9
 TOLERANCE = 1e-4
 # Alpaca's adjusted closes come rounded to the cent, so its day return can be off by half a cent on each close
 # (KO in the server's sample, 29 Oct 2026: 1.1-1.3 bp at ~$70 between two days no factor separates). The rule
-# allows that much where it is more than 1 bp: (1 + r) * h * (1 / close + 1 / previous close).
+# allows that much where it is more than 1 bp: the widest the return can move with the two closes half a cent apart
+# in opposite directions, h * (close + previous) / (previous * (previous - h)), exact, since a row can sit on it
+# (ADV, 29 Oct: 20.395 and 19.865 rounded apart; the first-order bound was 0.02 % short).
 # shortcut: the cent rounding is read from the sample's KO rows, Alpaca does not document it; measure it on the server
 # (count of rows left, and their sizes) and narrow or widen this once a full Tier A build runs.
 HALF_CENT = 0.005
 FLOAT_OVER = 1.05
 FLOAT_DISAGREE = 0.25
-# A cover count behind a market cap and Yahoo's sharesOutstanding further apart than this, on the session of Yahoo's
-# answer, is an issue (AEHL in the server's sample: a count from before its dilution, 400 times too small).
+# A cover count behind a market cap and Yahoo's sharesOutstanding further apart than this, on the newest session up to
+# Yahoo's answer whose cap is cover-sourced, is an issue (AEHL in the server's sample: a count from before its
+# dilution, 400 times too small).
 SHARES_DISAGREE = 0.25
 # A dividend is applied with the close of the last bar before its ex-date, at most this many days before it.
 CLOSE_BEFORE_DAYS = 7
@@ -95,7 +98,8 @@ ISSUE_KINDS = {
     "float_above_outstanding": "the newest float is above FLOAT_OVER times the shares outstanding (key: the security id)",
     "float_sources_disagree": "Yahoo's and UW's newest float differ by more than FLOAT_DISAGREE (key: the security id)",
     "shares_disagree_yahoo": ("the cover shares behind a market cap and Yahoo's newest sharesOutstanding differ by more "
-                              "than SHARES_DISAGREE on the session of Yahoo's answer (key: the security id)"),
+                              "than SHARES_DISAGREE, on the newest cover-sourced cap up to Yahoo's answer (key: the "
+                              "security id)"),
 }
 
 PRICE_BAR = [("security_id", "TEXT"), ("session_date", "DATE"), ("symbol", "TEXT"), ("cik", "TEXT"),
@@ -302,15 +306,17 @@ class PricesServing:
             FROM _act_typed a ASOF LEFT JOIN price_bar_daily p
                 ON p.security_id = a.security_id AND a.ex_date > p.session_date""")
         # An action announced for a later day (the actions window reaches ahead) waits until its ex-date has a
-        # session: applied now, it would turn today's bars into a basis that does not exist yet.
+        # session: applied now, it would turn today's bars into a basis that does not exist yet. What is wrong with
+        # the action itself (no ratio, no amount) is named at once, so a malformed one gets the window's notice;
+        # only what needs the close before the ex-date, and a kind the factors never apply, waits.
         newest = "(SELECT max(session_date) FROM price_bar_daily WHERE security_id NOT LIKE 'index:%')"
         why = f"""CASE
-            WHEN ex_date > {newest} THEN 'not yet ex: the ex-date is after the newest session'
             WHEN action IN ('split', 'stock_dividend') AND ex_date IS NULL THEN 'no ex-date'
             WHEN action IN ('split', 'stock_dividend') AND ratio IS NULL THEN 'no ratio'
             WHEN action = 'cash_dividend' AND ex_date IS NULL THEN 'no ex-date'
             WHEN action = 'cash_dividend' AND coalesce(upper(currency), 'USD') <> 'USD' THEN 'paid in ' || currency
             WHEN action = 'cash_dividend' AND NOT (amount > 0) THEN 'no amount'
+            WHEN ex_date > {newest} THEN 'not yet ex: the ex-date is after the newest session'
             WHEN action = 'cash_dividend' AND (close_before IS NULL
                  OR date_diff('day', close_day, ex_date) > {CLOSE_BEFORE_DAYS}) THEN 'no close before the ex-date'
             WHEN action = 'cash_dividend' AND NOT (amount < close_before) THEN 'the amount is not below the close'
@@ -374,9 +380,10 @@ class PricesServing:
         for cik, symbol in con.execute(
                 "SELECT DISTINCT cik, symbol FROM _cover WHERE symbol IS NOT NULL AND by_symbol IS NULL").fetchall():
             found.append(("cover_class_unmapped", f"{cik}:{symbol}", "no spine ticker of the CIK is this symbol"))
+        # arg_max skips a fact with no date (its context had none): then the largest count.
         for sid, forms, shares in con.execute(
-                "SELECT spine_id, string_agg(DISTINCT form, ', '), arg_max(shares, as_of) FROM _cover "
-                "WHERE spine_type = 'adr' GROUP BY spine_id ORDER BY 1").fetchall():
+                "SELECT spine_id, string_agg(DISTINCT form, ', '), coalesce(arg_max(shares, as_of), max(shares)) "
+                "FROM _cover WHERE spine_type = 'adr' GROUP BY spine_id ORDER BY 1").fetchall():
             found.append(("cover_adr_ordinary", sid, f"{forms} cover counts {shares:,.0f} ordinary shares, not the "
                                                      "ADSs: no market cap from it"))
         return n
@@ -494,9 +501,12 @@ class PricesServing:
                                   AND c.ex_date <= r.session_date)
                 ORDER BY 1, 2""").fetchall():
             found.append(("price_gap_no_action", f"{sid}:{day}", f"split-adjusted close x{ratio:.3f}, no split"))
-        # Alpaca's previous adjusted close is close_all / (1 + all_return), so the rounding allowance is
-        # (1 + r) * h * (1 + (1 + r)) / close_all.
-        allowance = (f"coalesce((1 + a.all_return) * {HALF_CENT} * (2 + a.all_return) / nullif(a.close_all, 0), 0)")
+        # Alpaca's previous adjusted close is close_all / (1 + all_return). The allowance is its exact rounding
+        # bound, a hair wider (1e-6 of it) for the float error of a row that sits on it; none at a previous close of
+        # half a cent or less, where the bound has no meaning and the flat 1 bp stays.
+        prev = "a.close_all / nullif(1 + a.all_return, 0)"
+        allowance = (f"CASE WHEN {prev} > {HALF_CENT} THEN {HALF_CENT} * (a.close_all + {prev}) "
+                     f"/ ({prev} * ({prev} - {HALF_CENT})) * (1 + 1e-6) ELSE 0 END")
         for sid, day, ours, theirs in con.execute(f"""
                 SELECT r.security_id, r.session_date, r.tr_close / r.prev_tr - 1, a.all_return
                 FROM _ret r JOIN _alp a ON a.security_id = r.security_id AND a.session_date = r.session_date
@@ -534,10 +544,9 @@ class PricesServing:
                            QUALIFY row_number() OVER (PARTITION BY coalesce(s.security_id, y.security_id)
                                                       ORDER BY y.source_as_of DESC, y.fetched_at DESC) = 1)
                 SELECT y.security_id, m.shares, m.shares_as_of, y.yahoo, m.session_date
-                FROM y ASOF JOIN market_cap_daily m
+                FROM y ASOF JOIN (SELECT * FROM market_cap_daily WHERE shares_source = '{COVER}') m
                     ON m.security_id = y.security_id AND y.source_as_of >= m.session_date
-                WHERE m.shares_source = '{COVER}'
-                  AND abs(m.shares - y.yahoo) > {SHARES_DISAGREE} * greatest(m.shares, y.yahoo)
+                WHERE abs(m.shares - y.yahoo) > {SHARES_DISAGREE} * greatest(m.shares, y.yahoo)
                 ORDER BY 1""").fetchall():
             found.append(("shares_disagree_yahoo", sid, f"cover {cover:,.0f} (as of {as_of}, moved over the splits "
                                                         f"since), yahoo {yahoo:,.0f} on {day}"))
