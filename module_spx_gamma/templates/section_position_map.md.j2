@@ -183,7 +183,7 @@ Net credit **+{{ iron_butterfly.net_credit | fmtnum }}** · Max risk **{{ iron_b
 {% endfor %}
 ## Brier Scorecard
 
-Scored weeks: {{ brier.scored_count }} · Avg Brier: {{ brier.average if brier.average is not none else '—' }} · Equal-weight ref: {{ ('%.4f'|format(brier.equal_weight_reference)) if brier.equal_weight_reference is number else brier.equal_weight_reference }}{% if brier.skill_score is number %} · Skill score: {{ '%+.2f'|format(brier.skill_score) }}{% endif %}
+Scored days: {{ brier.scored_count }} · Avg Brier: {{ brier.average if brier.average is not none else '—' }} · Equal-weight ref: {{ ('%.4f'|format(brier.equal_weight_reference)) if brier.equal_weight_reference is number else brier.equal_weight_reference }}{% if brier.skill_score is number %} · Skill score: {{ '%+.2f'|format(brier.skill_score) }}{% endif %}{% if brier.base_rate_reference is number %} · Base-rate ref: {{ '%.4f'|format(brier.base_rate_reference) }}{% endif %}
 
 {{ brier.verdict }}
 

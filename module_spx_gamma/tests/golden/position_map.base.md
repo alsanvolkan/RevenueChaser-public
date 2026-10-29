@@ -269,7 +269,7 @@ Alternate widths: **25 pts** (credit 24, R:R 1 : 2.18) · **50 pts** (credit 22,
 
 ## Brier Scorecard
 
-Scored weeks:  · Avg Brier: — · Equal-weight ref: 
+Scored days:  · Avg Brier: — · Equal-weight ref: 
 
 No scored weeks yet
 

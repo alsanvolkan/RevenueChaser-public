@@ -635,11 +635,14 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 
 <h2>Brier Scorecard</h2>
 <div class="at-glance">
-  <span class="muted">Scored weeks:</span> {{ brier.scored_count }}
+  <span class="muted">Scored days:</span> {{ brier.scored_count }}
   &middot; <span class="muted">Avg Brier:</span> {{ brier.average if brier.average is not none else "—" }}
   &middot; <span class="muted">Equal-weight ref:</span> {{ ("%.4f"|format(brier.equal_weight_reference)) if brier.equal_weight_reference is number else brier.equal_weight_reference }}
   {%- if brier.skill_score is number %}
   &middot; <span class="muted">Skill score:</span> {{ "%+.2f"|format(brier.skill_score) }}
+  {%- endif %}
+  {%- if brier.base_rate_reference is number %}
+  &middot; <span class="muted">Base-rate ref:</span> {{ "%.4f"|format(brier.base_rate_reference) }}
   {%- endif %}
 </div>
 <div class="note">{{ brier.verdict }}</div>
