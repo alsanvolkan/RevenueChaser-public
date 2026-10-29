@@ -2,7 +2,7 @@
 
 Text and sort labels only: the Coverage formula renders its direction-weight sum from the config,
 the Sector cell shows the spine sector the card was scored against, the dead Rotation sort goes,
-$Vol is named as OptVol x 100, Last sync stamps the run time in New York, and the Owners header
+$Vol is named by what it reads (the call plus put premium, review N3), Last sync stamps the run time in New York, and the Owners header
 names its real source (AG). Offline.
 """
 from datetime import date, datetime, timezone
@@ -44,12 +44,13 @@ def test_the_dead_rotation_sort_is_gone():
     assert 'data-sort-key="rot"' not in content
 
 
-def test_the_dollar_volume_help_names_its_optvol_identity():
+def test_the_dollar_volume_help_names_the_premium_it_reads():
     stats = {"total": 1, "passed": 1, "bypassed": 0, "filtered": 0, "by_reason": {}, "excluded": []}
     content = export_html([_card()], [], {}, filter_stats=stats).read_text(encoding="utf-8")
-    assert "$Vol (= OptVol × 100)" in content
-    assert "adds nothing to OptVol" in content
-    assert "$Vol≥$50K (= OptVol×100)" in content
+    assert "$Vol (call + put premium)" in content
+    assert "a name without it fails this gate" in content
+    assert "$Vol≥$50K (call + put premium)" in content
+    assert "OptVol × 100" not in content and "OptVol×100" not in content
 
 
 def test_the_owners_header_names_the_asymmetric_growth_source():

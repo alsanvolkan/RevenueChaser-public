@@ -393,3 +393,30 @@ def test_the_fundamentals_section_states_what_the_code_owns():
     health = (_REPO / "docs" / "data_health.md").read_text(encoding="utf-8")
     for name in newdata.WRDS_DIFFERENCE:
         assert f"`{name}`" in health, name
+
+
+def test_the_options_section_states_what_the_code_owns():
+    """G8: the options data's datasets, tables, window, page sizes, pacing, call arithmetic and retention rule."""
+    from RevenueChaser.rcdata import caps, retention
+    from RevenueChaser.rcdata.build import DATASETS, options
+    from RevenueChaser.rcdata.build.options import ibkr_iv, tables, uw, uw_screener
+    text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
+    section = text[text.index("### The options data (`options.duckdb`, G8)"):text.index("## Migration")]
+    flat = " ".join(section.split())
+    for name, ds in DATASETS.items():
+        if ds.kind == options.KIND:
+            assert f"`{name}`" in section, name
+    for table in tables.TABLES:
+        assert f"| `{table}` |" in section, table
+    assert f"the last {tables.EOD_SESSIONS} sessions" in flat
+    assert f"after {uw.RUN_BUDGET_S // 60} minutes" in flat and f"next {uw_screener.DAYS_AHEAD} days" in flat
+    assert f"`option-contracts` ({uw.PAGE_LIMIT} a page)" in flat
+    assert f"{uw_screener.SCREENER_BATCH} names a call" in flat and f"{uw_screener.CALENDAR_LIMIT} a page" in flat
+    assert f"{ibkr_iv.PER_MINUTE} requests a minute" in flat and f"at most {ibkr_iv.DAY_CALLS:,} a day" in flat
+    assert (f"A list name is {options.LIST_CALLS} calls plus {options.EXPIRY_CALLS} per expiry" in flat
+            and f"an earnings-set name {options.EARNINGS_CALLS}" in flat)
+    for n, words in ((0, "with SPX alone"), (100, "with 100 list names"), (500, "with 500")):
+        assert f"{options.uw_calls_a_session(n):,} calls {words}" in flat or \
+            f"{options.uw_calls_a_session(n):,} {words}" in flat, n
+    assert f"UW's day cap of {caps.DAY_CAPS['uw']:,}" in flat
+    assert f"`{retention.ENV}`" in section and f"`{retention.ROW}`" in section

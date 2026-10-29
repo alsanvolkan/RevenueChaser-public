@@ -9,8 +9,10 @@ from markupsafe import Markup
 
 from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html, notice_html, provider_health_html
 
+from . import expected_move
 from .brier import scorecard
 from .config import BRIER_FILENAME, HISTORY_FILENAME
+from .snapshot import HISTORY_ORIGIN
 from .flow_signals import evaluate_flow_signal
 from .narrative import build_walkthrough
 from .normalize import compute_positioning_deltas
@@ -172,15 +174,16 @@ _PANEL_FILES = {
     "options_volume": "options_volume.json",
     "max_pain": "max_pain.json",
     "vol_term": "vol_term_structure.json",
-    "skew": "interpolated_iv.json",
-    "iron_butterfly": "option_chain.json",
+    "skew": expected_move.IV_FILE,
+    # the chain, and the IV its wing width is sized from (review S1)
+    "iron_butterfly": ("option_chain.json", expected_move.IV_FILE),
 }
 
 
 def _historical_panels(snapshot: dict) -> dict[str, bool]:
-    """Panel -> True when its live file was fetched in a later session than the day shown."""
+    """Panel -> True when a live file it reads was fetched in a later session than the day shown."""
     live = set(snapshot.get("historical_live_files") or [])
-    return {panel: fn in live for panel, fn in _PANEL_FILES.items()}
+    return {panel: bool(live & ({fn} if isinstance(fn, str) else set(fn))) for panel, fn in _PANEL_FILES.items()}
 
 
 def store_labels(snapshot: dict) -> dict[str, str]:
@@ -210,17 +213,28 @@ _QUALITY_LABELS = {
 }
 
 
-def _manifest_warnings(data_root, asof) -> list[str]:
-    """The Fetch manifest's ``warnings`` for the day shown (best-effort; [] when absent)."""
+def _manifest(data_root, asof) -> dict:
+    """The raw day's manifest for the day shown (best-effort; {} when absent)."""
     if not data_root or not asof:
-        return []
+        return {}
     path = Path(data_root) / "raw" / str(asof) / "manifest.json"
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return []
-    warns = manifest.get("warnings") if isinstance(manifest, dict) else None
+        return {}
+    return manifest if isinstance(manifest, dict) else {}
+
+
+def _manifest_warnings(data_root, asof) -> list[str]:
+    """The Fetch manifest's ``warnings`` for the day shown (best-effort; [] when absent)."""
+    warns = _manifest(data_root, asof).get("warnings")
     return [str(w) for w in warns] if isinstance(warns, list) else []
+
+
+# A day of the 2-year history pull holds only the calls that take a date (snapshot.HISTORY_ENDPOINTS; review S2).
+HISTORY_DAY_LINE = ("History pull day: only the calls that take a date were made, so the iron butterfly (no chain), "
+                    "IV rank, options volume and the DTE-band walls are not in it, and Put Support is the provider's "
+                    "put wall.")
 
 
 def data_quality_notice(snapshot: dict, data_root=None) -> str | None:
@@ -233,6 +247,8 @@ def data_quality_notice(snapshot: dict, data_root=None) -> str | None:
     missing = [_QUALITY_LABELS.get(k, k)
                for k, ok in sorted((snapshot.get("quality") or {}).items()) if ok is False]
     parts = []
+    if _manifest(data_root, snapshot.get("asof_date")).get("origin") == HISTORY_ORIGIN:
+        parts.append(HISTORY_DAY_LINE)
     if warnings:
         parts.append("Fetch warnings: " + "; ".join(warnings) + ".")
     if missing:
@@ -286,7 +302,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
     prev_levels = (prev_snapshot or {}).get("levels", {}) or {}
     charm = snapshot.get("charm_qualification", {})
     vanna = snapshot.get("vanna_peaks") or {}
-    em = snapshot.get("expected_move")
+    em = expected_move.shown(snapshot)      # None from a later session's IV (review S1)
     current = snapshot.get("current_level")
     asof = snapshot.get("asof_date", "")
     first = snapshot.get("first_session_date", "")
@@ -321,8 +337,9 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
             delta_map["expected_move"] = _d(em.get("lower"), (prev_snapshot or {}).get("expected_move", {}).get("lower"))
 
     role = _role(regime)
-    em_value = f"{fmt_level(em['lower'])} – {fmt_level(em['upper'])}" if em else "N/A"
-    em_pts = f"±{em['points']:,.1f}" if em else "N/A"
+    em_none = "n/a (historical)" if expected_move.historical(snapshot) else "N/A"
+    em_value = f"{fmt_level(em['lower'])} – {fmt_level(em['upper'])}" if em else em_none
+    em_pts = f"±{em['points']:,.1f}" if em else em_none
 
     charm_label = charm.get("label") or "Charm Peak"
     charm_dist = charm.get("distance_pct_from_spot")

@@ -103,13 +103,13 @@ class TestUWClientPaths:
         assert parsed["si_pct"] == pytest.approx(1.7647058)
         assert parsed["borrow_fee"] == pytest.approx(0.2782)
         assert parsed["days_to_cover"] == pytest.approx(2.1)
-        # utilization = SI / (SI + available) * 100
-        assert parsed["utilization"] == pytest.approx(100.0 * 75000 / (75000 + 10000000))
+        # No utilization: the short screener serves none, and redesign.md R5 says never invent one (review).
+        assert "utilization" not in parsed
 
     def test_parse_short_row_missing_fields_are_none(self):
         uw = UWClient(key="test")
         parsed = uw._parse_short_row({})
-        assert parsed == {"si_pct": None, "borrow_fee": None, "utilization": None, "days_to_cover": None}
+        assert parsed == {"si_pct": None, "borrow_fee": None, "days_to_cover": None}
         parsed2 = uw._parse_short_row(None)
         assert parsed2 == parsed
 

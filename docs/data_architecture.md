@@ -923,11 +923,12 @@ renders at once with what is stored.
 | `RC_MARKET_RAW_DIR` | `MARKET_RAW_DIR` | `raw/<source>/<dataset>/...` and `parquet/<source>/<dataset>/<partition>/` (the HDD) |
 | `RC_MARKET_RAW_COPY_DIR` | `MARKET_RAW_COPY_DIR` | Where the backup copies the newest raw days; empty = off |
 
-**Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`. Each kind is one file,
-`<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `1`), is described under "The
-identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store" below; the
-ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; and the fundamentals
-layer, `fundamentals` (serving schema version `1`), under "Fundamentals" after it. The market data,
+**Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`. Each kind is one
+file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `1`), is described under
+"The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
+below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
+fundamentals layer, `fundamentals` (serving schema version `1`), under "Fundamentals" after it; and the options
+data, `options` (serving schema version `1`), under "The options data" last. The market data,
 `market` (serving schema version `1`): `serving_schema_version` (one row: kind, version, build time, build id),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
 `source`, `source_as_of`, `fetched_at`, `run_id`, `observed`) and `market_series` (key series id, observation date,
@@ -939,7 +940,9 @@ stays as `<kind>.prev.duckdb`.
 checked before it replaces anything: its `serving_schema_version` row, the row count of every table, the run's
 `dataset_check` row (a `failed` one refuses the swap), and the live file: every live table must be in the build, and
 none may empty or lose more than 1% of its rows unless the request says `"allow_shrink": true` (the CLI's
-`--allow-shrink`). A build also refuses
+`--allow-shrink`). A table that serves only its newest sessions (`option_eod`) names its first kept session in the
+build file's `serving_window` table, and is compared on the rows inside that window: a session leaving it is not a
+loss, a session inside it that lost rows is. A build also refuses
 a missing Parquet root (the raw disk not mounted). Then the live file is hard-linked to `<kind>.prev.duckdb` and
 `os.replace` moves the new file over the live name, so the live name is never missing. Any failure deletes the new
 file and leaves the live file byte-identical (test T3, `rcdata/tests/test_serving.py`). The dashboard opens a serving
@@ -993,7 +996,9 @@ ishares 50, vanguard 50, nasdaq 50, invesco 50 (one request per fund file); yfin
 (working numbers avo has not set): the prices store's float lookups (PR 7, 3,000) and the fundamentals layer's
 weekly analyst estimates (PR 12, 2,000, one request per ticker); the ownership store's (PR 16, working numbers too;
 its SEC filings count under sec): finra 2,000 (pages of 5,000 rows), nasdaqtrader 500 and nyse 2,000 (one Reg SHO
-threshold file per market and day), ibkr 50 (one download of IBKR's public short-stock file a run); the
+threshold file per market and day); ibkr 1,050, shared by two stores (working numbers): 50 for one download of
+IBKR's public short-stock file a run (PR 16) and 1,000 for the options data's IV year through the gateway (PR 18,
+one historical request per list name, once); the
 fundamentals layer's (PR 12, working numbers): alphavantage 25 (its free tier);
 a dataset whose providers have all reached their cap for the New York day gets a `skipped` check row and sends
 nothing; inside a run every call checks its provider's cap first (one capped provider, FRED among the market series,
@@ -1396,6 +1401,66 @@ own row-level problems (`missing_key`, `fetch_failed`) under its name.
 `rcdata.read.customers(cik)`, `rcdata.read.peers(cik)` and `rcdata.read.revisions(cik, since)`. Every row carries
 its provenance and `status`, the newest check of the dataset its own row came from (a segment row from Compustat
 reads `wrds/segments`' check, one from the annual report `sec/filings`'), or `never_checked`.
+
+### The options data (`options.duckdb`, G8)
+
+The third serving kind (build plan PR 18): SPX and the option watch list (D2), the screener set of every reporting
+name, and the earnings set of the evening. Built by the same builder, swapped the same way, read only through
+`rcdata.read`. The tables (`rcdata/build/options/tables.py`; every one carries the provenance `source`,
+`source_as_of`, `fetched_at`, `run_id`, `observed`, and the per-strike, per-expiry and print tables a `set_name`,
+`list` or `earnings`, that is part of their key):
+
+| Table | Key | Holds |
+|---|---|---|
+| `option_eod` | session date, option symbol | The chain at the close: every contract of SPX and the list names, its quotes, IV, greeks, open interest and its change, volume by side, charm and vanna; the last 30 sessions (the Parquet keeps every one). `cross_volume` is a spec field UW has not sent yet (NULL on all 19,774 rows of the first real run, 2026-10-28) |
+| `option_strike` | session date, ticker, set, strike | Spot exposures by strike (the four greeks for calls and puts by OI, volume, bid and ask) and the greek exposure by strike |
+| `option_expiry` | session date, ticker, set, expiry | Contracts, open interest and volume per expiry, greek exposure by expiry, the day's flow per expiry, the IV term structure |
+| `option_daily` | session date, ticker | The GEX levels, the day's option volume and premium, IV rank, and the chain's size |
+| `option_print` | session date, ticker, set, print id | The last 50 prints of the session, with `tags`, `nbbo_bid`/`nbbo_ask`, the side volumes, `multi_vol`, `upstream_condition_detail` and `report_flags`; `side` (`ask`, `bid` or `mid`: UW's side tag, else the side of the quote's midpoint the price is on, NULL without either) and `package` (a multi-leg or stock-tied trade condition); the rule is `core/option_prints.py`, the same one the Earnings Radar R5 lean reads from the live tape |
+| `iv_daily` | session date, ticker, source, days | Implied volatility per tenor: UW's interpolated IV (observed by the daily run) and IBKR's 30-day IV year (backfilled, `observed` false) |
+| `option_screener_daily` | session date, ticker | Every name reporting in the next 28 days, its report date and session, its screener row (or `screened` false), and whether it passes the Earnings Radar gates; `dollar_option_volume` is the day's call plus put premium as UW served it (NULL when not served, which fails the gate), not volume x 100 |
+| `er_options` | session date, ticker | The earnings set: one row per name fetched on the evening before its report, with the report date it was fetched for |
+
+**Datasets.** Three, all daily and all `starts_by_hand` (no automatic first run: the first one is started from the
+CLI or Settings):
+
+- `uw/option_list`: SPX and the option watch list, read at each run through `rcdata.read.watched("option")`. Per
+  name and session: `expiry-breakdown`, then per expiry `option-contracts` (500 a page) and `greeks`; the stats
+  (`spot-exposures/strike`, `greek-exposure/strike` and `/expiry`, `flow-per-expiry`, `volatility/term-structure`,
+  `gex-levels`, `options-volume`, `interpolated-iv`, `iv-rank`) and `flow-recent`. Only in the observed window
+  (from 30 minutes after the close until the next open, `core/calendar.py`): UW serves the chain and the prints of
+  the current session only, so there is no backfill. A run stops starting names after 35 minutes and the next run
+  goes on; a paged answer that moves between pages, or reaches the page ceiling, fails that name for the run
+  instead of storing part of it.
+- `uw/option_screener`: the earnings calendar of the next 28 days (`raw/uw/earnings_calendar/`, premarket and
+  afterhours, 100 a page), the screener row of every name on it (`/screener/stocks`, 100 names a call), and the
+  earnings set: once per name, on the evening before its report, each name that passes the Earnings Radar gates and
+  is not on the option list gets spot exposures by strike, GEX levels, term structure, options volume and the last
+  50 prints (not the chain).
+- `ibkr/iv_history`: one year of IBKR's daily 30-day option implied volatility per list name, once (a name added
+  later gets its year on the next run). Through `core/providers/ibkr_tws.py`, a minimal TWS socket client that sends
+  only the handshake, `startApi` and `reqHistoricalData`: market data only, never an account, a position or an
+  order (`ib_async`'s connect asks for the positions, so it is not used). 6 requests a minute, under IBKR's 60 in
+  10 minutes, and at most 1,000 a day, its share of the `ibkr` day cap.
+
+The first week's raw size per list name is in each `uw/option_list` check note ("raw N KB a name"), the plan's F5
+measure. Read through `rcdata.read`: `option_chain`, `option_strikes`, `option_expiries`, `option_daily`,
+`option_prints`, `iv_history`, `option_screener`, `earnings_options`; a row of the earnings set carries
+`uw/option_screener`'s status, an IBKR row of `iv_daily` `ibkr/iv_history`'s.
+
+**UW calls a session** (`rcdata/build/options/__init__.py`, the plan's arithmetic: list names x (chain + stats +
+prints) + screener pages + earnings-set names). A list name is 11 calls plus 2 per expiry plus one per extra page;
+an earnings-set name 5; the screener one per 100 reporting names; the calendar one per day and report session plus
+one per extra 100 names. With the planning numbers (25 expiries and 5 extra pages a name, SPX 400, 2,500 reporting
+names, 150 in the earnings set: assumptions until the first week's real counts replace them) that is 1,240 calls
+with SPX alone, 7,840 with 100 list names and 34,240 with 500, against UW's day cap of 150,000 (`rcdata/caps.py`),
+which the other UW datasets share. The real count is the builder's, per request, in `provider_calls_daily`.
+
+**Raw retention.** A hook after each `options` swap (`rcdata/build/options/raw_retention.py`) removes the
+per-session raw folders of `raw/uw/option_list/` and `raw/uw/er_options/` older than the retention, once one is
+set: `RC_RAW_RETENTION_DAYS`, else the `dataset_schedule` row `retention_days` (`rcdata/retention.py`). It ships
+unset, so nothing is removed and the Settings card keeps its warning. The Parquet, the calendar, the screener
+answers and the IBKR raw files (the marker that a name has its year) are never removed.
 
 ## Migration
 Two separate things, deliberately not conflated:

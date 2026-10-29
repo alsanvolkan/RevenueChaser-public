@@ -16,6 +16,7 @@ from .. import credentials
 # Imported for its side effect: core/config.py loads .env, and the key is read from the
 # environment per client (credentials.key_for), so .env must be loaded before the first one.
 from .. import config as _config  # noqa: F401
+from ..option_prints import is_package, print_side
 from .ohlc import regular_session_bars
 from .result import ProviderResult
 
@@ -501,15 +502,10 @@ class UWClient:
         balance = fin.get("balance_sheets", [])
         cashflow = fin.get("cash_flows", [])
 
-        # Index balance and cashflow by fiscal_date_ending
-        bal_by_date = {}
-        for b in balance:
-            d = b.get("fiscal_date_ending") or ""
-            if d: bal_by_date[d] = b
-        cf_by_date = {}
-        for c in cashflow:
-            d = c.get("fiscal_date_ending") or ""
-            if d: cf_by_date[d] = c
+        # Index balance and cashflow by fiscal_date_ending, quarterly rows only (the income rows' rule below): at a
+        # fiscal year end the annual and the Q4 row share one date, and the later one served used to win (review S3).
+        bal_by_date = _quarterly_by_date(balance)
+        cf_by_date = _quarterly_by_date(cashflow)
 
         num = self._num
         records = []
@@ -573,6 +569,14 @@ class UWClient:
         return self._shaped(f"/stock/{_seg(ticker)}/flow-recent", None, _list_rows)
 
     def aggregate_flow(self, ticker: str, flow: list = None) -> dict:
+        """The tape's premium in buckets. ``inst_call``/``inst_put``/``retail_*`` split by size only (size >= 10 is
+        institutional; R8 and Swing read these). The R5 lean (docs/rules/redesign.md R5, review S4) reads only
+        institutional prints, size >= 10 AND premium >= ``INST_PRINT_MIN_PREMIUM``, by the print's side
+        (``core/option_prints``): ``inst_bull_side`` = ask-side calls + bid-side puts, ``inst_bear_side`` = bid-side
+        calls + ask-side puts, ``inst_mid`` dropped, ``inst_no_side`` neither. A package print (multi-leg or
+        stock-tied condition code) is left out of all four and summed in ``inst_package``. ``side_served`` is True
+        when at least one institutional print outside a package carries a side, False when such prints exist and
+        none does (no lean), None when there is none to judge."""
         if flow is None:
             flow = self.flow_recent(ticker)
         if not flow:
@@ -581,6 +585,7 @@ class UWClient:
         unknown_p = 0.0
         sweep_p, block_p = 0.0, 0.0
         bull, bear = 0.0, 0.0
+        lean = {"bull": 0.0, "bear": 0.0, "mid": 0.0, "none": 0.0, "package": 0.0}
         for t in flow:
             prem = _flow_num(t.get("premium")) or 0.0
             size = _flow_num(t.get("size"))
@@ -596,6 +601,8 @@ class UWClient:
                 else:
                     if ot == "call": inst_c += prem
                     else: inst_p += prem
+                    if prem >= _config.INST_PRINT_MIN_PREMIUM:
+                        lean[_lean_bucket(t, ot)] += prem
             else:
                 unknown_p += prem
             if "sweep" in tt: sweep_p += prem
@@ -608,6 +615,11 @@ class UWClient:
             "unknown": unknown_p,
             "sweep": sweep_p, "block": block_p, "bullish": bull, "bearish": bear,
             "inst_net": inst_c - inst_p,
+            "inst_bull_side": lean["bull"], "inst_bear_side": lean["bear"], "inst_mid": lean["mid"],
+            "inst_no_side": lean["none"], "inst_package": lean["package"],
+            "inst_lean_net": lean["bull"] - lean["bear"],
+            "side_served": (lean["bull"] + lean["bear"] + lean["mid"] > 0
+                            if lean["bull"] + lean["bear"] + lean["mid"] + lean["none"] > 0 else None),
         }
 
     # ── Dark Pool ──
@@ -867,13 +879,16 @@ class UWClient:
 
         Missing fields map to ``None`` (never a 0 fill) so a missing metric is
         honestly absent, not silently neutral. ``si_float`` arrives as a decimal
-        fraction (``'0.017'``) and is converted to a percentage.
+        fraction (``'0.017'``) and is converted to a percentage. There is no
+        utilization: the short screener serves none, and redesign.md R5 says never
+        invent one (the old short_interest / (short_interest + shares available)
+        proxy is gone, Earnings Radar review, #256).
 
         A static method (E5c, #372) so the Earnings reader can parse a stored row with the very same mapping it
         would have applied to the live answer; ``self._parse_short_row(row)`` is unchanged.
         """
         if not row:
-            return {"si_pct": None, "borrow_fee": None, "utilization": None, "days_to_cover": None}
+            return {"si_pct": None, "borrow_fee": None, "days_to_cover": None}
 
         def _f(v):
             try:
@@ -886,15 +901,9 @@ class UWClient:
         si = _f(row.get("si_float"))
         if si is not None:
             si = si * 100 if abs(si) < 1 else si
-        shares = _f(row.get("short_interest"))
-        avail = _f(row.get("short_shares_available"))
-        util = None
-        if shares is not None and avail is not None and shares + avail > 0:
-            util = 100.0 * shares / (shares + avail)
         return {
             "si_pct": si,
             "borrow_fee": _f(row.get("fee_rate")),
-            "utilization": util,
             "days_to_cover": _f(row.get("days_to_cover")),
         }
 
@@ -1100,6 +1109,32 @@ def _flow_num(v):
         return None
 
 
+def _quarterly_by_date(rows: list) -> dict:
+    """``fiscal_date_ending`` -> row, for ``_map_financials``. A row that names its period counts only when it is
+    ``quarterly``; a row without a period type is kept (the legacy rule) but never replaces a quarterly one."""
+    out: dict = {}
+    for r in rows or []:
+        d = r.get("fiscal_date_ending") or ""
+        rt = (r.get("report_type") or "").lower()
+        if not d or (rt and rt != "quarterly"):
+            continue
+        if rt or d not in out:
+            out[d] = r
+    return out
+
+
+def _lean_bucket(item: dict, option_type: str) -> str:
+    """``package``, ``bull``, ``bear``, ``mid`` or ``none`` for one institutional print (``aggregate_flow``)."""
+    if is_package(item):
+        return "package"
+    side = print_side(item)
+    if side in ("ask", "bid"):
+        return "bull" if (side == "ask") == (option_type == "call") else "bear"
+    return side or "none"
+
+
 def _empty_flow():
     return {"inst_call": 0, "inst_put": 0, "retail_call": 0, "retail_put": 0,
-            "unknown": 0, "sweep": 0, "block": 0, "bullish": 0, "bearish": 0, "inst_net": 0}
+            "unknown": 0, "sweep": 0, "block": 0, "bullish": 0, "bearish": 0, "inst_net": 0,
+            "inst_bull_side": 0, "inst_bear_side": 0, "inst_mid": 0, "inst_no_side": 0, "inst_package": 0,
+            "inst_lean_net": 0, "side_served": None}

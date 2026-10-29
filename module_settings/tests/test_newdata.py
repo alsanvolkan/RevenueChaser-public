@@ -235,6 +235,24 @@ def test_the_raw_retention_warning_is_on_until_a_retention_is_set(monkeypatch):
     assert r["warn"] is False and "dataset_schedule" in r["source"]
 
 
+def test_the_options_datasets_have_a_card_each_with_their_label_and_target():
+    """G8: the three options datasets are cards (never built yet: held until their first build by hand), and the
+    eight options tables are counted by their session date."""
+    data = newdata.collect(NOW)
+    for name, target in (("uw/option_list", 0.95), ("uw/option_screener", 0.95), ("ibkr/iv_history", None)):
+        card = _card(data, name)
+        assert card["label"] == newdata.LABELS[name] and card["label"] != name
+        assert card["status"] == "never" and card["coverage_target"] == target
+    from RevenueChaser.rcdata.build.options import tables
+    assert all(newdata.DATE_COLUMN[t] == "session_date" for t in tables.TABLES)
+
+
+def test_a_zero_retention_is_no_retention(monkeypatch):
+    """Zero days would remove the session just fetched: the card keeps warning (the rule is rcdata.retention's)."""
+    monkeypatch.setenv(newdata.RETENTION_ENV, "0")
+    assert newdata.collect(NOW)["retention"]["warn"] is True
+
+
 def test_retirement_counts_reads_of_the_old_tables_in_the_last_14_days():
     ops.ensure()
     with ops.connect() as con:
@@ -331,7 +349,9 @@ def test_every_call_opens_its_own_handle_and_sees_a_swapped_file(handles):
 def test_no_serving_file_yet_is_no_rows_not_an_error(handles):
     card = _card(newdata.collect(NOW), "uw/spot_expiry_strike")
     assert card["table_rows"] is None and handles["opened"] == 0
+    # Every serving kind, each without a swap yet (the kinds come from rcdata, so a new one needs no edit here).
     assert newdata.collect(NOW)["verified"]["swaps"] == {kind: None for kind in serving.KINDS}
+    assert {"market", "spine", "options"} <= set(serving.KINDS)
 
 
 def test_the_collect_never_creates_ops_sqlite_or_a_serving_file():

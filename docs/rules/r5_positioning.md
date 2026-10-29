@@ -9,7 +9,7 @@
 Who is positioned how, and what does that imply for the stock's reaction to earnings? Two independent components, **at least one of which must be present** or the rule is `unavailable` (score `None`, never a 0 fill):
 
 1. **Institutional flow asymmetry** — are institutions net buyers or sellers of options?
-2. **Squeeze potential** — is there elevated short interest / borrow cost / float utilization creating squeeze risk, measured **within the ticker's own sector**?
+2. **Squeeze potential** — is there elevated short interest / borrow cost / days to cover creating squeeze risk, measured **within the ticker's own sector**? There is no utilization: UW's short screener serves none and redesign.md R5 says never invent one (the old `short_interest / (short_interest + short_shares_available)` proxy is gone, #256).
 
 > Retail-call euphoria is **not** scored here. The same `retail_call / (retail_call + inst_call) > 65%` fade is R8's job; scoring it in both R5 and R8 double-faded retail and effectively gave one signal ~30% weight.
 
@@ -21,7 +21,6 @@ Who is positioned how, and what does that imply for the stock's reaction to earn
 |--------|-------|-------|
 | SI % | `si_float` | decimal → ×100 when `< 1` |
 | Borrow | `fee_rate` | hard-to-borrow cost |
-| Utilization | `short_interest / (short_interest + short_shares_available)` | proxy |
 | Days to cover | `days_to_cover` | |
 
 Missing fields are `None`, never a 0 fill — an absent borrow fee must not read as "cheap to borrow".
@@ -40,7 +39,7 @@ A one-sided but small imbalance scores less than a clean sweep. Zero / empty ins
 ### Squeeze (peer Z within sector)
 
 ```
-squeeze_z = (0.4·Z(si) + 0.3·Z(borrow) + 0.2·Z(util) + 0.1·Z(dtc))
+squeeze_z = (0.4·Z(si) + 0.3·Z(borrow) + 0.1·Z(dtc))
             / (sum of weights actually present)
 ```
 

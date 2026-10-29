@@ -169,7 +169,8 @@ class TestExpectedMoveUnits:
     def test_binary_name_is_excluded_by_the_em_gate(self):
         p = EarningsPipeline(["BIO"], uw=None, cal_meta={"BIO": {"expected_move_perc": 1.2}})
         p._screener_cache = {"BIO": {"call_volume": "5000", "put_volume": "5000",
-                                       "total_open_interest": "50000"}}
+                                       "total_open_interest": "50000", "call_premium": "400000",
+                                       "put_premium": "300000"}}
         p.preselect()
         assert p._filter_outcome["BIO"] == ("excluded", ["EM>25%"])  # was passed as a 1.2% move
 

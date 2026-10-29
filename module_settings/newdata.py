@@ -23,7 +23,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from RevenueChaser.core import calendar, config
-from RevenueChaser.rcdata import caps, ops, serving
+from RevenueChaser.rcdata import caps, ops, retention, serving
 
 LABELS = {"uw/spot_expiry_strike": "SPX expiry-strike (Unusual Whales)", "market_series": "Market series",
           "sec/company_tickers_exchange": "SEC ticker and exchange file",
@@ -82,10 +82,21 @@ RETIRING = {"macro_series": "market_series", "vol_index_daily": "market_series",
 RETIREMENT_DAYS = 14
 BACKUP_WARN_DAYS = 35
 PORTABLE_DATASET = "backup/portable"
-# The raw-option retention: on as a warning until one of these says how many days raw option files are kept.
-RETENTION_ENV = "RC_RAW_RETENTION_DAYS"
-RETENTION_ROW = "retention_days"          # a dataset_schedule row whose cadence holds the days
+# The raw-option retention: on as a warning until one of these says how many days raw option files are kept
+# (``rcdata/retention.py``, the rule the builder's retention hook reads too).
+RETENTION_ENV = retention.ENV
+RETENTION_ROW = retention.ROW             # a dataset_schedule row whose cadence holds the days
 STATUS_ORDER = ("stale", "never", "late", "unchanged", "fresh")
+
+# The options data (G8), in a block of its own. Coverage: the share of the names a run set out to fetch that it has
+# (the list names; the earnings set and the screener batches of the evening). The IBKR year has no target: a name
+# just added to the list is uncovered until the next run, which is not a late dataset.
+LABELS.update({"uw/option_list": "Options of SPX and the option list (Unusual Whales)",
+               "uw/option_screener": "Earnings options: calendar, screener and earnings set (Unusual Whales)",
+               "ibkr/iv_history": "One year of 30-day implied volatility per list name (IBKR)"})
+COVERAGE_TARGET.update({"uw/option_list": 0.95, "uw/option_screener": 0.95, "ibkr/iv_history": None})
+DATE_COLUMN.update({t: "session_date" for t in ("option_eod", "option_strike", "option_expiry", "option_daily",
+                                                "option_print", "iv_daily", "option_screener_daily", "er_options")})
 
 
 def _datasets() -> dict:
@@ -509,14 +520,9 @@ def _portable(now: datetime) -> dict:
 
 
 def _retention() -> dict:
-    env = (os.getenv(RETENTION_ENV) or "").strip()
-    if env.isdigit():
-        return {"warn": False, "text": f"raw option files are kept {env} days", "source": f"{RETENTION_ENV}={env}"}
-    row = ops.read_schedule(RETENTION_ROW)
-    days = str((row or {}).get("cadence") or "").strip()
-    if days.isdigit():
-        return {"warn": False, "text": f"raw option files are kept {days} days",
-                "source": f"dataset_schedule row {RETENTION_ROW!r}"}
+    days, where = retention.days()
+    if days is not None:
+        return {"warn": False, "text": f"raw option files are kept {days} days", "source": where}
     return {"warn": True, "source": None,
             "text": f"raw option files are kept without a limit: no {RETENTION_ENV} and no dataset_schedule row "
                     f"{RETENTION_ROW!r} sets their retention in days"}
