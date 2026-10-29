@@ -446,8 +446,11 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
     # DTE-band walls (put wall standard = 181-365 day band, e.g. 7500)
     dte_band_walls = band_walls(all_se_rows, spot)
     put_wall_band = next((w for w in dte_band_walls if w["band"] == "181-365"), None)
+    # Which put wall the board shows (review N5): the 181-365 day band's, else the provider's gex-levels put_wall.
+    put_wall_origin = "provider" if levels.get("lower_support_band") is not None else None
     if put_wall_band and put_wall_band["put_wall"] is not None:
         levels["lower_support_band"] = put_wall_band["put_wall"]
+        put_wall_origin = "band_181_365"
     levels["put_wall_all"] = next((w["put_wall"] for w in dte_band_walls if w["band"] == "ALL"), None)
 
     iv_rows = (raw.get("interpolated_iv") or {}).get("data", [])
@@ -510,6 +513,7 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "gex_envelope": gex_envelope,
         "levels": levels,
         "dte_band_walls": dte_band_walls,
+        "put_wall_origin": put_wall_origin,
         "charm_qualification": charm_qualification,
         "vanna_peaks": vanna,
         "spot_exposures": spot_exposure_rows,

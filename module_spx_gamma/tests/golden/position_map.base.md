@@ -284,7 +284,7 @@ No scored weeks yet
 | SPX Close / Spot | 7,784 | Market Reference | Last close in the stored candle window (yfinance ^GSPC). |
 | 0DTE Put Concentration | 7,700 | Intraday Put Concentration | Active expiration 2026-08-14: most negative put_gex. |
 | Gamma Flip | 7,821 | Regime Threshold | The volatility turning point — above = positive gamma (calm), below = negative gamma (wild). |
-| Put Wall | 7,500 | Provider GEX Level | Largest positive net gamma below spot — a trampoline floor; dealers may buy into dips as price approaches. Role: threshold (breakout risk). |
+| Put Wall | 7,500 | 181-365 DTE Band Wall | Strike below spot with the largest net gamma summed over the 181-365 day expiries — a trampoline floor; dealers may buy into dips as price approaches. Role: threshold (breakout risk). |
 | 0DTE Cumulative GEX Crossing | 7,825 | Table-Only Proxy | Interpolated zero-crossing of cumulative same-day net GEX. Not a scenario flip. |
 | Vanna Call Peak | 7,850 (+15.0M) | Directionalized Volume | Highest call_vanna_vol within ±25% of the as-of spot (window scales with spot, re-derived per report date). |
 | Vanna Put Peak | 7,650 (+30.0M) | Directionalized Volume | Highest put_vanna_vol within ±25% of the as-of spot (window scales with spot, re-derived per report date). |

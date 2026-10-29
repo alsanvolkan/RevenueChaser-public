@@ -170,3 +170,18 @@ def test_n4_a_stored_close_names_its_source():
 def test_n4_without_a_recorded_spot_the_row_names_the_candle_source():
     row = _details()["SPX Close / Spot"]
     assert "yfinance ^GSPC" in row["method"] and "Verified" not in row["method"]
+
+
+# ── N5: the Put Wall row says which put wall it shows ───────────────────────────────────────────
+def test_n5_the_band_put_wall_is_not_labelled_a_provider_level():
+    row = _details()["Put Wall"]
+    assert row["value"].startswith("7,500")
+    assert row["ref"] != "Provider GEX Level"
+    assert "181-365" in row["method"]
+    assert "positive" not in row["method"].lower()
+
+
+def test_n5_the_provider_put_wall_keeps_its_provider_label():
+    row = _details({"strike_expiry_all": {}})["Put Wall"]
+    assert row["ref"] == "Provider GEX Level"
+    assert "181-365" not in row["method"]
