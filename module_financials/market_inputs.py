@@ -8,7 +8,8 @@ the beta the models read, Yahoo's values only where the store has none.
 - **Market cap:** the issuer's (every listed class), as the universe reads it and as Yahoo's was; a fund's or a
   trust's its own (one trust's CIK files many funds), and the class's own when the store has no issuer sum. It is
   the WACC's equity weight.
-- **Shares:** the market cap over the price, the class-equivalent count. For one class it is the shares outstanding;
+- **Shares:** the market cap over the price, the class-equivalent count, only when both are of one session (a
+  cap of an earlier session over today's close is no count; Yahoo's cap and shares stay). For one class it is the shares outstanding;
   for an issuer with two classes it is the count that makes the per-share value comparable with this class's price.
 - **Beta:** the slope of ``BETA_MONTHS`` monthly returns of the split-adjusted close on the S&P 500 level
   (``index:SPX``), Yahoo's own definition (five years, monthly). Price returns on both sides: the index level carries
@@ -93,7 +94,7 @@ def from_store(ticker: str) -> dict:
     cap = latest.get("market_cap") if _is_fund(t) else latest.get("issuer_market_cap")
     if cap is None:
         cap = latest.get("market_cap")
-    if cap is not None and cap > 0:
+    if cap is not None and cap > 0 and latest.get("cap_session") == session:
         out["market_cap"] = float(cap)
         out["shares_outstanding"] = float(cap) / float(price)
     try:

@@ -72,7 +72,7 @@ def test_a_missing_month_makes_no_return_across_the_gap():
 
 
 def _store(ticker: str = TICKER, *, months: int = 61, price: float = 120.0, own_cap: float | None = 5500.0,
-           issuer_cap: float | None = 6000.0, beta: float = 1.5) -> None:
+           issuer_cap: float | None = 6000.0, beta: float = 1.5, cap_session: date = NEWEST) -> None:
     stock, index = _month_end_series(months, beta)
     prices_store.put_bars([{"ticker": ticker, "session_date": d, "close": c} for d, c in stock]
                           + [{"ticker": ticker, "session_date": NEWEST, "close": price}]
@@ -83,7 +83,7 @@ def _store(ticker: str = TICKER, *, months: int = 61, price: float = 120.0, own_
         try:
             con.execute("INSERT INTO market_cap_daily (security_id, session_date, close, market_cap, "
                         "issuer_market_cap) VALUES (?, ?, ?, ?, ?)",
-                        [f"sym:{ticker}", NEWEST, price, own_cap, issuer_cap])
+                        [f"sym:{ticker}", cap_session, price, own_cap, issuer_cap])
             con.execute("CHECKPOINT")
         finally:
             con.close()
@@ -127,6 +127,13 @@ def test_a_close_older_than_the_rates_limit_gives_nothing(market_roots, monkeypa
     _clock(monkeypatch, datetime(today.year, today.month, today.day, 20, 0, tzinfo=timezone.utc))
     got = mi.from_store(TICKER)
     assert (got.get("current_price") == 120.0) is fresh and (got == {}) is not fresh
+
+
+def test_a_cap_from_another_session_than_the_price_is_not_divided_by_it(market_roots):  # noqa: F811
+    # The cap of 2026-10-23 over the close of 2026-10-27 is no share count: Yahoo's cap and shares stay.
+    _store(cap_session=date(2026, 10, 23))
+    got = mi.from_store(TICKER)
+    assert got["current_price"] == 120.0 and "market_cap" not in got and "shares_outstanding" not in got
 
 
 def test_no_prices_file_gives_nothing(market_roots):  # noqa: F811
