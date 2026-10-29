@@ -245,6 +245,9 @@ def _runlog(key: str, label: str, tables: tuple[str, ...], db: str, source: Sour
     )
 
 
+_LEDGER_MOVED = "moved to the builder's ledger.duckdb in PR 10 (rcdata ledger/*); no writer of this table any more"
+
+
 # Seeded from module_settings/inventory.py ``_collect`` (the 19 rows that builder returns), then
 # extended so every base MANIFEST table has one owner. ``*_changes`` companions are on the base's dataset.
 REGISTRY: tuple[DatasetSpec, ...] = (
@@ -519,19 +522,22 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         "fundamentals_scores", "Fundamentals scores", ("fundamentals_scores", "fundamentals_gates"),
         "raw", Source.derived, "RC-Screeners-Daily",
     ),
+    # PR 10 (G4): the three forecast tables moved to the builder's ledger kind (``ledger.duckdb``: ``ledger/freeze``,
+    # ``ledger/outcomes``, ``ledger/baselines``, shown with the other builder datasets). These raw.duckdb tables have no
+    # writer any more and stay empty until the retirement group drops them from the manifest.
     DatasetSpec(
-        key="forecast_ledger", label="Forecast ledger",
+        key="forecast_ledger", label="Forecast ledger (old raw.duckdb table)",
         tables=("forecast_ledger",),
-        db="raw", source=Source.derived, writer="RC-Screeners-Daily",
+        db="raw", source=Source.derived, writer=None, writer_note=_LEDGER_MOVED,
         freshness=("forecast_ledger", "forecast_date"),
     ),
     _runlog(
-        "forecast_outcomes", "Forecast outcomes", ("forecast_outcomes",),
-        "raw", Source.derived, "RC-Forecast-Outcomes",
+        "forecast_outcomes", "Forecast outcomes (old raw.duckdb table)", ("forecast_outcomes",),
+        "raw", Source.derived, None, _LEDGER_MOVED,
     ),
     _runlog(
-        "forecast_baselines", "Forecast baselines", ("forecast_baselines",),
-        "raw", Source.derived, "RC-Forecast-Baselines",
+        "forecast_baselines", "Forecast baselines (old raw.duckdb table)", ("forecast_baselines",),
+        "raw", Source.derived, None, _LEDGER_MOVED,
     ),
     DatasetSpec(
         key="comovement", label="Co-movement runs",

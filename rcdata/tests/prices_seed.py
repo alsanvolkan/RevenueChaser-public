@@ -13,6 +13,7 @@ import math
 from datetime import date
 
 import duckdb
+import pandas as pd
 
 # The seeded series per live file: every test has its own ``MARKET_DIR``, so its own entry here.
 _STATE: dict[str, tuple[dict[str, list[dict]], list[dict]]] = {}
@@ -42,15 +43,22 @@ def _write() -> None:
         for table, schema in SCHEMAS.items():
             con.execute(f"CREATE TABLE {table} ({', '.join(f'{chr(34)}{c}{chr(34)} {t}' for c, t in schema)})")
         for ticker, rows in bars_of.items():
-            sid = f"sym:{ticker}"
             con.execute("INSERT INTO security_symbol VALUES (?, ?, NULL, ?, NULL, 'test')",
-                        [sid, ticker, min(r["session_date"] for r in rows) if rows else None])
-            for r in rows:
-                con.execute("INSERT INTO price_bar_daily (security_id, session_date, symbol, open, high, low, close, "
-                            "volume, source, source_as_of, fetched_at, run_id) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'alpaca/bars', ?, ?, 'seed')",
-                            [sid, r["session_date"], ticker, r["open"], r["high"], r["low"], r["close"],
-                             r["volume"], r["session_date"], r["fetched_at"]])
+                        [f"sym:{ticker}", ticker, min(r["session_date"] for r in rows) if rows else None])
+        frame = pd.DataFrame([{"security_id": f"sym:{t}", "session_date": r["session_date"], "symbol": t,
+                               "open": r["open"], "high": r["high"], "low": r["low"], "close": r["close"],
+                               "volume": r["volume"], "fetched_at": r["fetched_at"]}
+                              for t, rows in bars_of.items() for r in rows],
+                             columns=["security_id", "session_date", "symbol", "open", "high", "low", "close",
+                                      "volume", "fetched_at"], dtype=object)       # object: None stays NULL
+        if len(frame):
+            con.register("_seed_bars", frame)
+            con.execute("INSERT INTO price_bar_daily (security_id, session_date, symbol, open, high, low, close, "
+                        "volume, source, source_as_of, fetched_at, run_id) "
+                        "SELECT security_id, session_date, symbol, CAST(open AS DOUBLE), CAST(high AS DOUBLE), "
+                        "CAST(low AS DOUBLE), CAST(close AS DOUBLE), CAST(volume AS DOUBLE), 'alpaca/bars', "
+                        "session_date, CAST(fetched_at AS DOUBLE), 'seed' FROM _seed_bars")
+            con.unregister("_seed_bars")
         for f in factors:
             con.execute("INSERT INTO adj_factor VALUES (?, ?, ?, ?, ?, 1)",
                         [f"sym:{f['ticker']}", f.get("valid_from"), f.get("valid_to"), f["split_factor"],
@@ -131,3 +139,37 @@ def drop_ticker(ticker: str) -> None:
     bars_of.pop(ticker, None)
     factors[:] = [f for f in factors if f["ticker"] != ticker]
     _write()
+
+
+def upsert_bars(ticker: str, rows, *, write: bool = True) -> None:
+    """Write ``rows`` (``session_date``, ``open``, ``high``, ``low``, ``close``, optional ``volume`` and
+    ``fetched_at``) into ``ticker``'s series, a row replacing the bar of its day (the old D01 upsert). ``write=False``
+    only stages them (a caller seeding many tickers writes the file once, with ``flush``)."""
+    ticker = ticker.strip().upper()
+    bars_of = _state()[0]
+    by_day = {r["session_date"]: r for r in bars_of.get(ticker, [])}
+    for r in rows:
+        day = _day(r["session_date"])
+        by_day[day] = {"session_date": day, "open": r.get("open"), "high": r.get("high"), "low": r.get("low"),
+                       "close": r.get("close"), "volume": r.get("volume", 100.0),
+                       "fetched_at": r.get("fetched_at", 0.0)}
+    bars_of[ticker] = sorted(by_day.values(), key=lambda r: r["session_date"])
+    if write:
+        _write()
+
+
+def flush() -> None:
+    """Write the staged series to the live file."""
+    _write()
+
+
+def set_actions(ticker: str, actions) -> None:
+    """Replace ``ticker``'s factors with the ones ``actions`` give over its seeded closes (``seed_actions``)."""
+    ticker = ticker.strip().upper()
+    bars_of, factors = _state()
+    factors[:] = [f for f in factors if f["ticker"] != ticker]
+    closes = {r["session_date"]: r["close"] for r in bars_of.get(ticker, []) if r["close"] is not None}
+    if actions:
+        seed_actions(ticker, closes, actions)
+    else:
+        _write()

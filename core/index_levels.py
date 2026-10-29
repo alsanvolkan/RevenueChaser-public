@@ -24,7 +24,7 @@ inside the session writes nothing of it); before 2025 a rule-C date, i.e. a date
 ``^GSPC`` date before SPY's first bar. ``core/prices.py`` never stores an index level; this module does.
 
 Neither entry point raises: a failure is a ``failed`` status with its error. The daily-bars exit code never depends
-on the nightly step, because RC-Screeners-Daily, RC-Forecast-Outcomes and RC-Earnings-Inputs wait on that exit 0
+on the nightly step, because RC-Screeners-Daily and RC-Earnings-Inputs wait on that exit 0
 (the #301 rule).
 """
 from __future__ import annotations

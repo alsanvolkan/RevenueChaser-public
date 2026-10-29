@@ -131,3 +131,121 @@ def test_a_malformed_request_row_fails_the_build_and_leaves_the_file(rawstore_tm
     [check] = _drain()
     assert check["result"] == "failed"
     assert not serving.live_path("ledger").exists()
+
+
+# ── the derived tables: ledger/outcomes and ledger/baselines (step 5) ─────────────────────────────────────────────
+
+def _bars_through(day, tickers=("AAA", "BBB", "SPY")):
+    """Flat bars from 2026-08-03 to ``day`` (open 10, high 11, low 9, close 10) for ``tickers``."""
+    from datetime import timedelta
+
+    from RevenueChaser.core import calendar as cal
+    from RevenueChaser.rcdata.tests import prices_seed
+    days, d = [], date(2026, 8, 3)
+    while d <= day:
+        if cal.is_trading_day(d):
+            days.append(d)
+        d += timedelta(days=1)
+    for t in tickers:
+        prices_seed.seed_bars(t, days, fetched_at=0.0, close=10.0, ohlc={x: (10.0, 11.0, 9.0, 10.0) for x in days})
+
+
+def _derive(name, params=None):
+    ops.enqueue(name, params, by="test")
+    return drain(name)
+
+
+@pytest.mark.parametrize("name", ["ledger/outcomes", "ledger/baselines"])
+def test_the_derived_tables_are_datasets_of_the_ledger_kind_due_daily(name):
+    ds = DATASETS[name]
+    assert ds.kind == "ledger" and ds.needs_parquet is False and not getattr(ds, "by_request", False)
+    assert due.is_due(ds) == (True, "never built")
+
+
+def test_the_derived_datasets_run_once_per_new_day_of_bars(rawstore_tmp_db):
+    """The as-of is the prices store's newest session: a run for it is not due again until a newer bar lands."""
+    _bars_through(date(2026, 10, 9))
+    ds = DATASETS["ledger/outcomes"]
+    assert ds.default_as_of() == date(2026, 10, 9)
+    _derive("ledger/outcomes")
+    assert due.is_due(ds)[0] is False
+    _bars_through(date(2026, 10, 12))
+    assert due.is_due(ds)[0] is True
+
+
+def test_the_outcomes_run_writes_its_rows_into_the_ledger_file_and_leaves_the_picks(rawstore_tmp_db):
+    _bars_through(date(2026, 10, 9))
+    _queue(day=date(2026, 9, 1))
+    _drain()
+    picks = read.forecast_ledger()
+    [check] = _derive("ledger/outcomes")
+    assert check["result"] == "changed" and check["added"] == 4 and "4 row(s) computed" in check["note"]
+    rows = read.forecast_outcomes(source="swing")
+    assert [(r["subject"], r["horizon_days"], r["status"]) for r in rows] == [
+        ("AAA", 30, "closed"), ("AAA", 90, "open"), ("BBB", 30, "closed"), ("BBB", 90, "open")]
+    assert rows[0]["ref_price"] == 10.0 and rows[0]["mfe"] == pytest.approx(0.1)
+    assert read.forecast_ledger() == picks
+
+
+def test_a_later_freeze_keeps_the_derived_rows(rawstore_tmp_db):
+    _bars_through(date(2026, 10, 9))
+    _queue(day=date(2026, 9, 1))
+    _drain()
+    _derive("ledger/outcomes")
+    _derive("ledger/baselines")
+    before = (read.forecast_outcomes(), read.forecast_baselines())
+    _queue(day=date(2026, 10, 9), tickers=("CCC",))
+    _drain()
+    assert (read.forecast_outcomes(), read.forecast_baselines()) == before and before[0] and before[1]
+
+
+def test_the_baselines_run_writes_eleven_rows_per_horizon(rawstore_tmp_db):
+    _bars_through(date(2026, 10, 9))
+    _queue(day=date(2026, 9, 1))
+    _drain()
+    [check] = _derive("ledger/baselines")
+    assert check["result"] == "changed"
+    rows = read.forecast_baselines()
+    assert len(rows) == 22 and {r["forecast_date"] for r in rows} == {date(2026, 9, 1)}
+    universe = [r for r in rows if r["basis"] == "universe" and r["horizon_days"] == 30]
+    assert universe[0]["n"] == 3                                  # AAA, BBB and SPY traded that day
+
+
+def test_a_full_request_recomputes_every_row(rawstore_tmp_db):
+    _bars_through(date(2026, 10, 9))
+    _queue(day=date(2026, 9, 1))
+    _drain()
+    _derive("ledger/outcomes")
+    first = {(r["subject"], r["horizon_days"]): r["run_id"] for r in read.forecast_outcomes()}
+    _derive("ledger/outcomes")                                    # the daily run: the closed 30-day rows stay
+    second = {(r["subject"], r["horizon_days"]): r["run_id"] for r in read.forecast_outcomes()}
+    assert second[("AAA", 30)] == first[("AAA", 30)] and second[("AAA", 90)] != first[("AAA", 90)]
+    _derive("ledger/outcomes", {"full": True})
+    third = {(r["subject"], r["horizon_days"]): r["run_id"] for r in read.forecast_outcomes()}
+    assert third[("AAA", 30)] != first[("AAA", 30)]
+
+
+def test_a_derived_build_that_changes_a_pick_is_refused(rawstore_tmp_db, monkeypatch):
+    """The ledger's append-only guard runs on every build of the kind, whichever dataset asked for it."""
+    _bars_through(date(2026, 10, 9))
+    _queue(day=date(2026, 9, 1))
+    _drain()
+    from RevenueChaser.core import outcomes
+    real = outcomes.run
+
+    def tampering(con, **kw):
+        con.execute("DELETE FROM forecast_ledger WHERE subject = 'BBB'")
+        return real(con, **kw)
+
+    monkeypatch.setattr(outcomes, "run", tampering)
+    [check] = _derive("ledger/outcomes")
+    assert check["result"] == "failed" and "append-only" in check["note"]
+    assert [r["subject"] for r in read.forecast_ledger()] == ["AAA", "BBB"] and read.forecast_outcomes() == []
+
+
+def test_no_bars_at_all_fails_the_run_and_keeps_the_file(rawstore_tmp_db):
+    _queue(day=date(2026, 9, 1))
+    _drain()
+    [check] = _derive("ledger/outcomes")
+    assert check["result"] == "failed" and "no daily bars" in check["note"]
+    assert read.forecast_outcomes() == [] and len(read.forecast_ledger()) == 2

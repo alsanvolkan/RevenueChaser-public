@@ -31,7 +31,7 @@ def _cache(tmp_path, monkeypatch):
 def test_registry_names_are_stable_and_prefixed():
     assert [e.name for e in A.REGISTRY] == [
         "RC-Store-Backup", "RC-Relatedness-OffPeak", "RC-ValueChain-Sync", "RC-Daily-Bars", "RC-Screeners-Daily",
-        "RC-Forecast-Outcomes", "RC-Forecast-Baselines", "RC-Index-Lists", "RC-Earnings-Inputs",
+        "RC-Index-Lists", "RC-Earnings-Inputs",
         "RC-Open-Issues-Check", "RC-IBKR-Login-Check", "RC-Build", "RC-Build-Backup"]
     assert all(e.name.startswith("RC-") for e in A.REGISTRY)
 
@@ -45,8 +45,7 @@ def test_the_index_lists_row_runs_weekly_on_saturday():
     assert set(e.tables_written) == {"index_constituents", "index_constituents_changes"}
     assert not e.default_install
     assert all(x.days == () and x.schedule == f"daily {x.time} (local)" for x in A.REGISTRY
-               if x.name not in (e.name, "RC-Screeners-Daily", "RC-Forecast-Outcomes", "RC-Forecast-Baselines",
-                                 "RC-Earnings-Inputs", "RC-Build"))
+               if x.name not in (e.name, "RC-Screeners-Daily", "RC-Earnings-Inputs", "RC-Build"))
 
 
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
@@ -62,10 +61,10 @@ def test_the_screeners_row_is_chained_on_the_daily_bars():
     s = e.settings
     assert s.wake_to_run and s.allow_on_battery and s.start_when_available and s.run_only_when_logged_on
     assert s.time_limit_hours == 4 and e.chain_wait_minutes < s.time_limit_hours * 60
-    assert {"equity_universe", "forecast_ledger", "swing_ohlc", "job_runs"} <= set(e.tables_written)
+    assert {"equity_universe", "swing_ohlc", "job_runs"} <= set(e.tables_written)
+    assert "forecast_ledger" not in e.tables_written      # PR 10: the freeze queues its picks; the builder writes them
     assert not A.entry("RC-Daily-Bars").days       # the chain needs a daily predecessor
-    assert [x.name for x in A.REGISTRY if x.after] == ["RC-Screeners-Daily", "RC-Forecast-Outcomes",
-                                                       "RC-Forecast-Baselines", "RC-Earnings-Inputs"]
+    assert [x.name for x in A.REGISTRY if x.after] == ["RC-Screeners-Daily", "RC-Earnings-Inputs"]
 
 
 def test_the_daily_bars_row_first_stores_the_sec_files():
@@ -96,29 +95,11 @@ def test_the_daily_bars_row_then_stores_the_spx_levels():
     assert index_levels.SYMBOL in e.description and "1 yfinance request a night" in e.description
 
 
-def test_the_forecast_outcomes_row_is_chained_daily_on_the_daily_bars():
-    """S0 (#380): the outcomes writer reads D01, so it waits for tonight's RC-Daily-Bars, every day at 23:45, clear of
-    RC-Screeners-Daily (23:00 to about 23:15), and writes forecast_outcomes alone."""
-    e = A.entry("RC-Forecast-Outcomes")
-    assert (e.after, e.time, e.days) == ("RC-Daily-Bars", "23:45", ())
-    assert e.args == ("-m", "RevenueChaser.scripts.forecast_outcomes", "--nightly")
-    assert e.schedule == "daily 23:45 (local), after RC-Daily-Bars"
-    assert e.tables_written == ("forecast_outcomes",)
-    assert e.chain_wait_minutes == 120 and not e.default_install and not e.offpeak_gated
-
-
-def test_the_forecast_baselines_row_is_chained_on_the_outcomes_run():
-    """#25 HR-1: the baselines read the same stored bars and write raw.duckdb, so they wait for tonight's
-    RC-Forecast-Outcomes instead of running beside it, on their own 23:50 trigger, and write
-    ``forecast_baselines`` alone."""
-    e = A.entry("RC-Forecast-Baselines")
-    assert (e.after, e.time, e.days) == ("RC-Forecast-Outcomes", "23:50", ())
-    assert e.args == ("-m", "RevenueChaser.scripts.forecast_baselines", "--nightly")
-    assert e.schedule == "daily 23:50 (local), after RC-Forecast-Outcomes"
-    assert e.tables_written == ("forecast_baselines",)
-    assert e.chain_wait_minutes == 120 and not e.default_install and not e.offpeak_gated
+def test_the_forecast_rows_are_retired():
+    """PR 10 (G4): the outcomes and baselines are the builder's ``ledger/outcomes`` and ``ledger/baselines`` (hourly
+    RC-Build, once per new day of bars), so the two nightly rows and their scripts are gone."""
     names = [x.name for x in A.REGISTRY]
-    assert names.index("RC-Forecast-Outcomes") + 1 == names.index("RC-Forecast-Baselines")    # after it, never before
+    assert "RC-Forecast-Outcomes" not in names and "RC-Forecast-Baselines" not in names
 
 
 def test_each_busy_capable_nightly_row_says_its_busy_exit_in_the_description():
@@ -126,15 +107,15 @@ def test_each_busy_capable_nightly_row_says_its_busy_exit_in_the_description():
 
     The wording follows RC-Screeners-Daily's "A busy universe lock exits 3."
     """
-    for name in ("RC-Forecast-Outcomes", "RC-Earnings-Inputs"):
+    for name in ("RC-Earnings-Inputs",):
         description = A.entry(name).description
         assert "exits 3" in description and "nothing was written" in description, name
 
 
-def test_the_outcomes_row_cannot_chain_on_the_weekday_screeners_row():
+def test_a_daily_row_cannot_chain_on_the_weekday_screeners_row():
     """``check_chain`` refuses a weekly predecessor; RC-Screeners-Daily runs on weekdays only."""
     import dataclasses
-    rows = tuple(dataclasses.replace(e, after="RC-Screeners-Daily") if e.name == "RC-Forecast-Outcomes" else e
+    rows = tuple(dataclasses.replace(e, after="RC-Screeners-Daily") if e.name == "RC-Earnings-Inputs" else e
                  for e in A.REGISTRY)
     with pytest.raises(ValueError, match="runs weekly"):
         A.check_chain(rows)

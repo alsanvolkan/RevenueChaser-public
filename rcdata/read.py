@@ -1,7 +1,9 @@
 """The read API of the market store (D4): the only place a board gets market data, and the only SQL it runs.
 
-Two serving kinds: ``market`` (``market_series``, ``spx_expiry_strike``) and, since PR 5, the identity ``spine``
-(``universe``, ``identity``, ``membership``).
+Four serving kinds: ``market`` (``market_series``, ``spx_expiry_strike``), since PR 5 the identity ``spine``
+(``universe``, ``identity``, ``membership``), since PR 7 the ``prices`` store (``bars``, ``actions``, ``shares``,
+``market_cap``) and since PR 10 the forecast ``ledger`` (``forecast_ledger``, ``forecast_outcomes``,
+``forecast_baselines``).
 
 Every row comes back with its provenance (``session_date``, ``source``, ``fetched_at``, ``source_as_of``, ``run_id``)
 and ``status``, the newest ``dataset_check`` result of its dataset (``never_checked`` before the first). Each call
@@ -27,7 +29,9 @@ def dataset_status(dataset: str) -> str:
     return check["result"] if check else NEVER_CHECKED
 
 
-def _rows(table: str, sql: str, params: list) -> list[dict]:
+def _rows(table: str, sql: str, params: list, status_key: str = "status") -> list[dict]:
+    """The rows, each with its dataset's newest check result under ``status_key`` (``dataset_status`` for a table
+    whose own ``status`` column is data, the forecast outcomes and baselines)."""
     ops.read_log.bump(table)
     try:
         con = serving.open_read(KIND_OF_TABLE[table])
@@ -41,7 +45,7 @@ def _rows(table: str, sql: str, params: list) -> list[dict]:
         con.close()
     status = dataset_status(DATASET_OF_TABLE[table])
     for r in rows:
-        r["status"] = status
+        r[status_key] = status
     return rows
 
 
@@ -381,8 +385,9 @@ def tickers_on(day) -> list[str]:
 
 # ── the forecast ledger (PR 10, G4) ───────────────────────────────────────────────────────────────────────────────
 
-DATASET_OF_TABLE.update({"forecast_ledger": "ledger/freeze"})
-KIND_OF_TABLE.update({"forecast_ledger": "ledger"})
+DATASET_OF_TABLE.update({"forecast_ledger": "ledger/freeze", "forecast_outcomes": "ledger/outcomes",
+                         "forecast_baselines": "ledger/baselines"})
+KIND_OF_TABLE.update({"forecast_ledger": "ledger", "forecast_outcomes": "ledger", "forecast_baselines": "ledger"})
 
 
 def forecast_ledger(source: str | None = None, start=None, end=None, target_type: str | None = None) -> list[dict]:
@@ -403,3 +408,26 @@ def ledger_day_frozen(source: str, forecast_date, target_type: str = "pick") -> 
     """True when ``forecast_ledger`` already holds ``source``'s ``target_type`` rows for ``forecast_date``."""
     return bool(_rows("forecast_ledger", "SELECT 1 AS hit FROM forecast_ledger WHERE source = ? AND forecast_date = ? "
                       "AND target_type = ? LIMIT 1", [source, _day(forecast_date), target_type]))
+
+
+def forecast_outcomes(source: str | None = None, start=None, end=None) -> list[dict]:
+    """``forecast_outcomes`` rows (of ``source`` when given) with ``start <= forecast_date <= end``, by source,
+    forecast date, subject and horizon: what happened after each frozen pick (``core/outcomes.py``). ``status`` is the
+    row's own (open, closed, no_bars, split_check); the dataset's check result is ``dataset_status``."""
+    sql, params = "SELECT * FROM forecast_outcomes WHERE true", []
+    if source is not None:
+        sql += " AND source = ?"
+        params.append(source)
+    sql = _bounded(sql, params, "forecast_date", start, end)
+    return _rows("forecast_outcomes", sql + " ORDER BY source, forecast_date, subject, horizon_days", params,
+                 status_key="dataset_status")
+
+
+def forecast_baselines(start=None, end=None) -> list[dict]:
+    """``forecast_baselines`` rows with ``start <= forecast_date <= end``, by forecast date, horizon and basis: what
+    the day's universe did over the same windows (``core/baselines.py``). ``status`` is the row's own (open, closed);
+    the dataset's check result is ``dataset_status``."""
+    params: list = []
+    sql = _bounded("SELECT * FROM forecast_baselines WHERE true", params, "forecast_date", start, end)
+    return _rows("forecast_baselines", sql + " ORDER BY forecast_date, horizon_days, basis", params,
+                 status_key="dataset_status")

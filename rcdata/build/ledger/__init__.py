@@ -1,7 +1,6 @@
 """The forecast ledger's serving kind, ``ledger.duckdb`` (PR 10, G4): what each board forecast on a day.
 
-``forecast_ledger`` (and, from the next step, ``forecast_outcomes`` and ``forecast_baselines``) were rawstore tables in
-``raw.duckdb``. They are data, not operational state, so they do not go to ``ops.sqlite``; they become a serving kind
+``forecast_ledger``, ``forecast_outcomes`` and ``forecast_baselines`` were rawstore tables in ``raw.duckdb``. They are data, not operational state, so they do not go to ``ops.sqlite``; they become a serving kind
 that only the builder writes. Unlike every other kind, its rows come from a board's Fetch through the request queue
 (``core.ledger.write_picks`` queues ``ledger/freeze`` with the picks in its params), not from raw files: the file
 cannot be rebuilt from the HDD, so a build never starts from Parquet. Each build copies the live tables into the new
@@ -30,6 +29,25 @@ LEDGER_SCHEMA = [
     ("price_session", "DATE"),
 ]
 LEDGER_KEY = ["source", "forecast_date", "subject", "target_type", "target_date"]
+
+# The derived tables, recomputed by ``ledger/outcomes`` and ``ledger/baselines`` (``core/outcomes.py``,
+# ``core/baselines.py``): the rawstore columns, the same keys.
+OUTCOMES = "forecast_outcomes"
+OUTCOMES_SCHEMA = [
+    ("source", "TEXT"), ("forecast_date", "DATE"), ("subject", "TEXT"), ("target_type", "TEXT"),
+    ("target_date", "DATE"), ("horizon_days", "INTEGER"), ("ref_price", "DOUBLE"), ("mfe", "DOUBLE"),
+    ("mae", "DOUBLE"), ("sessions_seen", "INTEGER"), ("status", "TEXT"), ("computed_at", "DOUBLE"),
+    ("model_version", "TEXT"), ("run_id", "TEXT"),
+]
+OUTCOMES_KEY = [*LEDGER_KEY, "horizon_days"]
+BASELINES = "forecast_baselines"
+BASELINES_SCHEMA = [
+    ("forecast_date", "DATE"), ("horizon_days", "INTEGER"), ("basis", "TEXT"), ("n", "INTEGER"),
+    ("ge20", "INTEGER"), ("ge10", "INTEGER"), ("ge5", "INTEGER"), ("mfe_mean", "DOUBLE"), ("mae_mean", "DOUBLE"),
+    ("vol_lo", "DOUBLE"), ("vol_hi", "DOUBLE"), ("status", "TEXT"), ("computed_at", "DOUBLE"),
+    ("model_version", "TEXT"), ("run_id", "TEXT"),
+]
+BASELINES_KEY = ["forecast_date", "horizon_days", "basis"]
 
 
 def create_table(con: duckdb.DuckDBPyConnection, table: str, schema: list[tuple[str, str]], key: list[str]) -> None:

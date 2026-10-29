@@ -175,14 +175,12 @@ def test_a_from_run_log_dataset_reads_the_newest_run_of_its_writer(rawstore_tmp_
          "started_at": _epoch("2026-10-18T21:00:00"), "finished_at": _epoch("2026-10-18T21:20:00")},
         {"run_id": "b", "registry_name": "RC-Screeners-Daily", "status": "done",
          "started_at": _epoch("2026-10-20T21:00:00"), "finished_at": _epoch("2026-10-20T21:20:00")},
-        {"run_id": "c", "registry_name": "RC-Forecast-Outcomes", "status": "done",
-         "started_at": _epoch("2026-10-19T21:00:00"), "finished_at": _epoch("2026-10-19T21:20:00")},
+        {"run_id": "c", "registry_name": "RC-Daily-Bars", "status": "done",          # another writer, newer
+         "started_at": _epoch("2026-10-21T21:00:00"), "finished_at": _epoch("2026-10-21T21:20:00")},
     ])
-    out, _errors = _attach([_row("ag_scores"), _row("forecast_outcomes")])
+    out, _errors = _attach([_row("ag_scores")])
     assert out[0]["fresh"] == {"state": "run_log", "date": "2026-10-20",
                                "text": "taken from the run log, 2026-10-20"}
-    assert out[1]["fresh"] == {"state": "run_log", "date": "2026-10-19",
-                               "text": "taken from the run log, 2026-10-19"}
 
 
 def test_a_from_run_log_dataset_with_no_recorded_run_reads_the_words_only(rawstore_tmp_db):

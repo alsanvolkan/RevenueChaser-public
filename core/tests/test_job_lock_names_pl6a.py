@@ -23,8 +23,6 @@ NAMES = (
     "index_levels",            # core/index_levels.py
     "identity",                # core/identity/refresh.py: the dashboard job and its CLI (#26, PL6-a)
     "sec_13f",                 # app/runners.py: the three 13F jobs (#26, PL6-a)
-    "forecast_outcomes",       # scripts/forecast_outcomes.py (#26, PL6-a)
-    "forecast_baselines",      # scripts/forecast_baselines.py (#25 HR-1)
     "nightly_inputs_<step>",   # scripts/nightly_inputs.py, one per step (#26, PL6-a)
     "rcdata_build",            # rcdata/build/__main__.py: the market-store builder (#206)
 )
@@ -67,7 +65,8 @@ def _keyword_names_in(text: str) -> set[str]:
 
 
 def _keyword_names() -> set[str]:
-    """The names passed as a ``lock="..."`` keyword, e.g. a ``forecast_cli.WriterCli`` (#110)."""
+    """The names passed as a ``lock="..."`` keyword (#110; the ``forecast_cli.WriterCli`` that needed it was retired in
+    PR 10, the scan stays for the next one)."""
     return {name for path in _sources() for name in _keyword_names_in(path.read_text(encoding="utf-8"))}
 
 
@@ -111,17 +110,3 @@ def test_a_lock_name_passed_as_a_keyword_is_found(tmp_path, monkeypatch):
                    encoding="utf-8")
     monkeypatch.setattr(sys.modules[__name__], "_sources", lambda: [src])
     assert "sneaky_writer" in _scanned_names(), "the guard does not see a lock passed as a keyword"
-
-
-def test_every_writer_cli_takes_a_documented_lock():
-    """The same promise at run time: every ``WriterCli`` a script defines names a lock in the docstring."""
-    import importlib
-
-    root = Path(job_lock.__file__).resolve().parents[1]
-    found = []
-    for path in sorted((root / "scripts").glob("*.py")):
-        if "WriterCli(" in path.read_text(encoding="utf-8") and path.stem != "forecast_cli":
-            mod = importlib.import_module(f"RevenueChaser.scripts.{path.stem}")
-            found.append(mod.CLI.lock)
-    assert found, "no WriterCli found: the scan is looking at the wrong tree"
-    assert set(found) <= set(NAMES), f"undocumented WriterCli lock(s): {sorted(set(found) - set(NAMES))}"

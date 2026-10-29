@@ -85,3 +85,9 @@ def newest_session() -> date | None:
     """The newest session the prices store holds a bar for, or None (no bars, no file)."""
     from RevenueChaser.rcdata import read
     return _day(read.newest_session())
+
+
+def tickers_on(day) -> list[str]:
+    """The tickers with a usable close on ``day`` in the prices store (``rcdata.read.tickers_on``)."""
+    from RevenueChaser.rcdata import read
+    return read.tickers_on(_day(day))

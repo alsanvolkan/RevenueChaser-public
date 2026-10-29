@@ -222,9 +222,9 @@ Computed from raw caches and persisted in `raw.duckdb`.
 
 | Table / VIEW | Derived from | Notes |
 |---|---|---|
-| `forecast_ledger` | Frozen forecasts of every board (#128 / #62 D-3) | **append-only, first write wins** (nothing is ever updated; don't call `update_columns`/`replace_all`/`delete`/`clear` on it); `forecast_date` = the NY session of the newest complete bar used; `target_date` = the session the forecast resolves on (the forecast date for picks). Outcomes live in the derived `forecast_outcomes` table (62b-1, #380 S0) |
-| `forecast_outcomes` | `forecast_ledger` picks + D01 bars (`price_bars_daily` / `price_actions`, nominal basis) | **derived, keyed upsert** (`latest_cache`): recomputed from the ledger and the bars, never a fact of its own. Writer `core/outcomes.py` (CLI `scripts/forecast_outcomes.py`, task RC-Forecast-Outcomes 23:45, after RC-Daily-Bars); one row per pick and horizon (30 and 90 calendar days). See "The forecast-outcomes writer" below |
-| `forecast_baselines` | the `equity_universe` snapshot of a freeze date (`equity_universe_changes`) + D01 bars (nominal outcomes, adjusted closes for the volatility) | **derived, keyed upsert** (`latest_cache`, #25 HR-1, added with no schema bump): what the same day's universe did, so a family's hit rate can be compared with something. Writer `core/baselines.py` (CLI `scripts/forecast_baselines.py`, task RC-Forecast-Baselines 23:50, after RC-Forecast-Outcomes); one row per freeze date, horizon (30 and 90) and basis (`universe`, `vol_decile_1` … `vol_decile_10`) |
+| `forecast_ledger` | Frozen forecasts of every board (#128 / #62 D-3); **moved to `ledger.duckdb` in PR 10**, see "The forecast ledger" below; this table stays, unwritten, until PR 21 | **append-only, first write wins** (nothing is ever updated; don't call `update_columns`/`replace_all`/`delete`/`clear` on it); `forecast_date` = the NY session of the newest complete bar used; `target_date` = the session the forecast resolves on (the forecast date for picks). Outcomes live in the derived `forecast_outcomes` table (62b-1, #380 S0) |
+| `forecast_outcomes` | `forecast_ledger` picks + D01 bars (`price_bars_daily` / `price_actions`, nominal basis) | **derived, keyed upsert** (`latest_cache`): recomputed from the ledger and the bars, never a fact of its own. Writer `core/outcomes.py`, since PR 10 the builder dataset `ledger/outcomes` into `ledger.duckdb` (this table stays, unwritten, until PR 21); one row per pick and horizon (30 and 90 calendar days). See "The forecast-outcomes writer" below |
+| `forecast_baselines` | the `equity_universe` snapshot of a freeze date (`equity_universe_changes`) + D01 bars (nominal outcomes, adjusted closes for the volatility) | **derived, keyed upsert** (`latest_cache`, #25 HR-1, added with no schema bump): what the same day's universe did, so a family's hit rate can be compared with something. Writer `core/baselines.py`, since PR 10 the builder dataset `ledger/baselines` into `ledger.duckdb` (this table stays, unwritten, until PR 21); one row per freeze date, horizon (30 and 90) and basis (`universe`, `vol_decile_1` … `vol_decile_10`) |
 | `index_constituents` | UW screener (sp500), DIA holdings (dow), ticker-exchanges (nasdaq); sp600 from the last accepted S&P 1500 snapshot in `identity_source_cache` (#302) | replace per slug; written by `index_lists.refresh_lists` (job `index_lists`, task RC-Index-Lists Saturday 10:00, CLI `scripts/index_lists.py`); a list under its floor (`MIN_INDEX`: 400 / 25 / 1,000 / 480) is not written; the first sp600 fill needs the user's OK for that run; joins and leaves are in `index_constituents_changes`. sp600 shows as "S&P SmallCap 600" on the badge and in the filter once stored (#214); `fetch_index` never fills it (Common K1). Read only on the old universe path (`RC_UNIVERSE_SOURCE=store`) since PR 6: by default the boards' index badges come from the spine |
 | `index_tickers` (VIEW) | `index_constituents` ⨝ `equity_universe` | adds `name`/`sector`; replaces the old `ticker_registry` |
 | `ticker_scores` | Asymmetric Growth cards (ex-SQLite `tickers.db`) | single writer = market-cap scan; others read-only |
@@ -294,8 +294,9 @@ boards in a row. A job that fails after a board froze appends its notes to its `
 (`... (before the error: Froze 4,251 AG rows for 2026-10-02.)`), because the dashboard shows `error` for a failed job.
 
 **The forecast-outcomes writer (#62 62b-1, #380 S0).** `core/outcomes.py` is the only code that writes
-`forecast_outcomes`, through `rawstore.write_rows` alone; it reads `forecast_ledger` and never writes it, and it makes
-no network call (`prices.daily_bars` reads the store). For every ledger row with `target_type` 'pick' it writes one row
+`forecast_outcomes`; since PR 10 it runs inside the builder's `ledger/outcomes` build, on the build file of
+`ledger.duckdb`, and reads the split-adjusted bars of the prices store (`core.market_bars.daily_bars`, basis
+`nominal`). It reads `forecast_ledger` and never writes it, and it makes no network call. For every ledger row with `target_type` 'pick' it writes one row
 per horizon (`HORIZONS` = 30 and 90 calendar days), keyed by the ledger's key plus `horizon_days`:
 - the window is the sessions after `forecast_date` up to the last session on or before `forecast_date` + N
   (`window_end`); the forecast day itself is never in it;
@@ -311,19 +312,20 @@ per horizon (`HORIZONS` = 30 and 90 calendar days), keyed by the ledger's key pl
   1/2.5 of) the last usable close before it, from the forecast day's close to the window's end (`SPLIT_JUMP`): a split with no action in `price_actions`, so the bars mix
   two bases (a reverse split between the freeze and the next open showed 0.14 → 2.12 on the PC store). The row keeps its
   values but is not final; once D01 records the split, the nightly recomputes it on one basis and it closes;
-- a `closed` row of the current `MODEL_VERSION` is final and the nightly run (`--nightly`) skips it, selecting the picks
-  still to do in SQL rather than loading the whole ledger; `--full` recomputes every row (the first fill, or after a
-  rule change bumps `MODEL_VERSION`); `--dry-run` writes nothing;
-- with no daily bar stored at all (a missing or empty `prices.duckdb`) while a pick has a completed session, the run
-  refuses before any write (exit 1), so final rows never turn into `no_bars`.
+- a `closed` row of the current `MODEL_VERSION` is final and the daily run skips it, selecting the picks still to do
+  in SQL rather than loading the whole ledger; a request with `{"full": true}` recomputes every row (after a rule
+  change bumps `MODEL_VERSION`, or a bar backfill);
+- with no daily bar in the prices store while a pick has a completed session, the build fails before any write and
+  the live file stays as it was, so final rows never turn into `no_bars`.
 
 **The baselines beside it (#25 HR-1).** `core/baselines.py` writes `forecast_baselines` and nothing else, from the
 store alone (no provider call, no ledger write). A hit rate on its own says nothing — 41% means a different thing in a
 market where the average name rose 20% — so for every date the ledger froze a pick on it records what the same day's
 universe did, over the same windows (`outcomes.outcome` is reused, so the rules cannot drift):
-- `basis` `universe`: every ticker in that date's `equity_universe` snapshot, read at the end of the date from its
-  change history (`rawstore.changes_as_of`). Never today's membership: a name that has since left still counts on the
-  day it was in it. A date before the store recorded membership has no snapshot, and the rows say `n = 0`;
+- `basis` `universe`: every ticker that traded on that date in the prices store (a close above zero, index levels
+  left out; `rcdata.read.tickers_on`). Never today's membership: a name that has since been delisted still counts on
+  the day it traded. Until PR 10 this was the `equity_universe` snapshot of the date, which the 27 Oct purge emptied
+  and the spine universe does not record per day. Default chosen in PR 10 (G4), change if avo prefers;
 - `basis` `vol_decile_1` … `vol_decile_10`: the same names split into ten groups by trailing realised volatility (the
   standard deviation of the last 20 daily log returns of the **adjusted** closes up to and including the date,
   annualised; 1 the calmest). A name with fewer than 21 closes is in the universe baseline and in no decile. Fewer
@@ -350,10 +352,10 @@ universe did, over the same windows (`outcomes.outcome` is reused, so the rules 
   90-day ones; `full` recomputes the date, after a bar backfill or a rule change). A night whose Daily Bars failed
   therefore leaves the rows open instead of freezing them on a short window.
 
-The task RC-Forecast-Outcomes runs daily at 23:45, chained on RC-Daily-Bars (the bars it reads), after
-RC-Screeners-Daily (weekdays from 23:00), the other `raw.duckdb` writer of the night. The task RC-Forecast-Baselines
-runs daily at 23:50, chained on RC-Forecast-Outcomes (the same night's other `raw.duckdb` writer, so the two never
-overlap) and writes `forecast_baselines` alone; its `--full` is the attended first fill. A dated target (an SPX pin)
+Both run as builder datasets of the `ledger` kind, due once per new session in the prices store (their as-of is
+its newest session), so they follow the bars without a chain of their own. Until PR 10 they were the tasks
+RC-Forecast-Outcomes (23:45) and RC-Forecast-Baselines (23:50) with the CLIs `scripts/forecast_outcomes.py` and
+`scripts/forecast_baselines.py`; both are gone. A dated target (an SPX pin)
 gets one row with `horizon_days` = `target_date` - `forecast_date` from its own writer later; S0 writes picks only.
 
 **Daily-bar cache and the freeze.** To let a post-close Fetch meet the rule above, `load_ohlc`
@@ -603,9 +605,7 @@ worker thread writes while Flask request threads read. So:
   (Value Chain filing sync) and 22:35 (daily price bars, #156; first the SEC exchange and fund files, #301; last the
   `^GSPC` daily levels, #293), plus Saturday 10:00 weekly (index lists,
   RC-Index-Lists, #302), weekdays not before 23:00 (the screeners Fetch RC-Screeners-Daily, chained on the
-  daily price bars, #129), daily not before 23:45 (the forecast outcomes RC-Forecast-Outcomes, chained on the daily
-  price bars, #380 S0), daily 23:50 (the forecast baselines RC-Forecast-Baselines, chained on the outcomes run, #25
-  HR-1) and Tuesday to Saturday not before 01:30 (the Earnings inputs RC-Earnings-Inputs, chained on the
+  daily price bars, #129) and Tuesday to Saturday not before 01:30 (the Earnings inputs RC-Earnings-Inputs, chained on the
   daily price bars, E0 #372), plus daily 09:30 (the open-issues registry check RC-Open-Issues-Check, #74:
   `scripts/open_issues_sync.py --check`, which reads the GitHub API, writes nothing and is deliberately not
   chained on a store writer) and daily 09:15 (the IBKR Gateway login check RC-IBKR-Login-Check, #162:
@@ -1210,6 +1210,31 @@ issuer's sum over its listed classes), each only when it is at most 14 days befo
 spine universe takes its market cap and price from it (`core/universe.py`): the issuer's cap for a company, as
 Yahoo's was, a fund's own (one trust's CIK files many funds), and the old `equity_universe` value by ticker where the
 prices store has none.
+
+### The forecast ledger (`ledger.duckdb` in `RC_MARKET_DIR`, PR 10)
+
+The fourth serving kind: the boards' frozen picks and what became of them. Before PR 10 these were the
+`forecast_ledger`, `forecast_outcomes` and `forecast_baselines` tables of `.store/raw.duckdb`, written by the boards
+and by `scripts/forecast_*.py`; they are data, not operational state, so they did not go to `ops.sqlite`. The old
+tables held 0 rows on the server on 29 Oct 2026, so nothing was imported; they stay in the rawstore manifest, unwritten,
+until the retirement (PR 21).
+
+| Dataset | Cadence | What it writes |
+|---|---|---|
+| `ledger/freeze` | on request | the picks a board's Fetch queued (`core.ledger.write_picks`): appended unless that board's day is already frozen (first write wins) |
+| `ledger/outcomes` | daily, as of the prices store's newest session | `forecast_outcomes`: per pick and horizon the reference price, MFE, MAE and status, from the prices store's split-adjusted bars (`core/outcomes.py`) |
+| `ledger/baselines` | daily, as of the prices store's newest session | `forecast_baselines`: per freeze day, horizon and trailing-volatility decile, the same outcomes over every name that traded that day (`core/baselines.py`) |
+
+**Append-only.** Every build of the kind copies the live tables first and is refused when a live `forecast_ledger`
+row is missing or changed, whichever dataset asked for it. A request with `{"full": true}` recomputes every derived
+row; the daily run recomputes only the rows that are still open.
+
+**Not rebuildable.** `ledger.duckdb` is written from board Fetches through the queue, not from raw files, so it cannot
+be rebuilt from the HDD. It is the one serving kind in the nightly `rcdata backup`, next to `ops.sqlite`.
+
+**Reading it.** `rcdata.read.forecast_ledger(source, start, end)`, `rcdata.read.forecast_outcomes(source, start,
+end)` and `rcdata.read.forecast_baselines(start, end)`; a row's own `status` is kept, the dataset's is
+`dataset_status`.
 
 ## Migration
 Two separate things, deliberately not conflated:

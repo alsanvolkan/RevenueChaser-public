@@ -59,9 +59,9 @@ writers are `data_architecture.md`'s subject; this is only "who reaches for the 
 |---|---|
 | `core/rawstore.py`, `core/config.py` | Every area: the schema manifest, the data roots and the test redirects |
 | `core/history.py` | Every board module that has a `history.py` (see the note under the diagram) |
-| `core/ledger.py` | The freeze, called from `module_asymmetric_growth/`, `module_swing_potential/`, `module_fundamentals/`, `module_comovement/engine.py`, `module_value_chain/engine.py`, `module_financials/run.py`, the jobs in `app/` (`jobs.py`, `runners.py`, `universe_cli.py`), `core/provenance.py` and `scripts/forecast_cli.py` (the shared skeleton of the two forecast tasks) |
-| `core/outcomes.py` | `scripts/forecast_outcomes.py` (the `RC-Forecast-Outcomes` task) |
-| `core/baselines.py` | `scripts/forecast_baselines.py` (the `RC-Forecast-Baselines` task); its outcomes come from `core/outcomes.py` |
+| `core/ledger.py` | The freeze, called from `module_asymmetric_growth/`, `module_swing_potential/`, `module_fundamentals/`, `module_comovement/engine.py`, `module_value_chain/engine.py`, `module_financials/run.py`, the jobs in `app/` (`jobs.py`, `runners.py`, `universe_cli.py`) and `core/provenance.py`; since PR 10 a freeze queues a `ledger/freeze` request and the builder writes `ledger.duckdb` |
+| `core/outcomes.py` | The builder dataset `ledger/outcomes` (`rcdata/build/ledger/derived.py`) |
+| `core/baselines.py` | The builder dataset `ledger/baselines` (`rcdata/build/ledger/derived.py`); its outcomes come from `core/outcomes.py` |
 | `core/prices.py` | The daily bars the Asymmetric Growth engine, `module_comovement/`, Sector Rotation's money flow, SEC 13F's enrich step, Settings and the Earnings inputs read; `scripts/daily_bars.py` writes them |
 | `core/ticker_store.py` | Written once per Asymmetric Growth scan, by the job rather than the engine (`app/runners.py` calls `write_from_cards` with the scan's cards); read by `app/dashboard.py`, `module_asymmetric_growth/report.py`, `module_earnings_radar/pipeline.py` and `module_financials/engines/quick_remarks_engine.py` |
 | `core/provenance.py` | `app/dashboard.py` and the Swing / Fundamentals pipelines (through `core/screen_common.py`); one dispatch entry per board |
@@ -97,8 +97,7 @@ flowchart LR
         OWN["SEC 13F · LEAPS · EDGAR sync"]
         COM["Co-movement · Relatedness · Value Chain"]
         BAR["Daily bars RC-Daily-Bars"]
-        OUT["Forecast outcomes RC-Forecast-Outcomes"]
-        BAS["Forecast baselines RC-Forecast-Baselines"]
+        OUT["Forecast outcomes · baselines<br/>(rcdata builder, ledger.duckdb, PR 10)"]
         BAK["Backup RC-Store-Backup"]
     end
 
@@ -135,14 +134,10 @@ flowchart LR
     OWN --> RAW & EDGAR & EDOCS & HIST
     COM --> RAW & EDGAR & EDOCS & HIST
     BAR --> PRICES
-    OUT --> RAW
-    BAS --> RAW
     DS --> RAW
 
     RAW --> B_RESEARCH & B_CLASS & B_SCREEN & B_OWN
     EDGAR --> B_CLASS
-    PRICES --> OUT
-    PRICES --> BAS
     HIST --> B_RESEARCH & B_CLASS & B_SCREEN & B_OWN
     EDOCS --> B_CLASS
     SPXTREE --> B_RESEARCH
@@ -160,10 +155,10 @@ Notes the diagram simplifies:
   The file appears with the first recorded run. Every board module except `module_spx_gamma`,
   `module_uw_interaction` and `module_settings` has a `history.py` that calls it; those three record
   nothing.
-- **The forecast ledger.** `core/ledger.py` freezes each board's shown picks into
-  `raw.duckdb.forecast_ledger` (append-only, `"history": True`, #286); `core/outcomes.py` derives
-  `forecast_outcomes` from it and the `prices.duckdb` bars, and `core/baselines.py` derives
-  `forecast_baselines` beside it (the same freeze dates, the universe change history and the same bars).
+- **The forecast ledger.** `core/ledger.py` queues each board's shown picks; the builder appends them to
+  `forecast_ledger` in the serving kind `ledger.duckdb` (append-only, first write wins, PR 10), and its datasets
+  `ledger/outcomes` and `ledger/baselines` derive `forecast_outcomes` (`core/outcomes.py`) and `forecast_baselines`
+  (`core/baselines.py`, over the names that traded on each freeze date) from it and the prices store's bars.
 - **Credentials and providers.** Provider base URLs are env-overridable and their key messages live in
   `core/credentials.py`; the job queue and its `X-RC-Panel` CSRF rule are in `app/jobs.py` and
   `app/dashboard.py`.
@@ -276,7 +271,7 @@ that patches one in place still patches what every reader sees. The board's own
 
 `core/ledger.py` and `core/outcomes.py` were listed under `screeners` in the older
 version of the area table. They are shared — the ledger is the freeze used by three
-areas' boards, and `outcomes` is derived by `scripts/forecast_outcomes.py` — so they are
+areas' boards, and `outcomes` is derived by the builder's `ledger/outcomes` dataset — so they are
 in §Where the shared code lives instead. `core/screen_common.py` likewise moved out of
 `shared-ui`: it is a scan skeleton, not UI.
 
