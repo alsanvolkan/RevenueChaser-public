@@ -14,7 +14,7 @@ import pytest
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.providers.result import ProviderResult
 from RevenueChaser.module_sector_rotation import engine, store
-from RevenueChaser.module_sector_rotation.tests.d01_seed import FIRST, ny, pin_clock, seed
+from RevenueChaser.module_sector_rotation.tests.bars_seed import FIRST, ny, pin_clock, seed
 from RevenueChaser.module_sector_rotation.universe import MACRO_SERIES
 
 BASE = date(2026, 8, 14)

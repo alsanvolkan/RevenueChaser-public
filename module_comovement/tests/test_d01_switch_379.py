@@ -20,7 +20,7 @@ import pytest
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_comovement import config, engine, ohlc
 from RevenueChaser.module_comovement import returns as returns_mod
-from RevenueChaser.module_comovement.tests import d01_bars
+from RevenueChaser.module_comovement.tests import prices_bars
 from RevenueChaser.module_comovement.tests import test_recompute_parity as parity
 from RevenueChaser.rcdata import read
 
@@ -40,8 +40,8 @@ def test_price_frame_is_the_stores_adjusted_close(rawstore_tmp_db):
     """The store's total-return closes, not the traded ones, and never a ``swing_ohlc`` row."""
     idx = pd.bdate_range("2025-06-02", periods=30)
     s = _walk(idx, 1)
-    d01_bars.write_bars(_swing_rows("AAA", s) + _swing_rows("SPY", _walk(idx, 2)))
-    d01_bars.write_action("AAA", idx[20].date(), "dividend", 2.0)
+    prices_bars.write_bars(_swing_rows("AAA", s) + _swing_rows("SPY", _walk(idx, 2)))
+    prices_bars.write_action("AAA", idx[20].date(), "dividend", 2.0)
     rawstore.write_rows("swing_ohlc", _swing_rows("AAA", s * 3) + _swing_rows("ZZZ", s))
     frame = ohlc.price_frame(["AAA", "SPY", "ZZZ"])
     adj = read.ticker_bars(["AAA"], basis="total_return")
@@ -54,7 +54,7 @@ def test_price_frame_is_the_stores_adjusted_close(rawstore_tmp_db):
 def test_price_frame_reads_the_last_two_years_of_the_store(rawstore_tmp_db):
     """The history the old 2y ``swing_ohlc`` cache held: the store's newest session minus ``OHLC_PERIOD``."""
     idx = pd.bdate_range("2022-01-03", "2025-06-30")
-    d01_bars.write_bars(_swing_rows("AAA", _walk(idx, 3)))
+    prices_bars.write_bars(_swing_rows("AAA", _walk(idx, 3)))
     frame = ohlc.price_frame(["AAA"])
     assert frame.index[-1] == pd.Timestamp("2025-06-30")
     assert frame.index[0] >= pd.Timestamp("2023-06-30") and frame.index[0] <= pd.Timestamp("2023-07-05")
@@ -65,7 +65,7 @@ def test_price_frame_reads_the_last_two_years_of_the_store(rawstore_tmp_db):
 
 def test_window_start_counts_the_stores_sessions(rawstore_tmp_db):
     idx = pd.bdate_range("2025-01-02", periods=40)
-    d01_bars.write_bars(_swing_rows("AAA", _walk(idx, 4)))
+    prices_bars.write_bars(_swing_rows("AAA", _walk(idx, 4)))
     assert ohlc.window_start(["AAA"], 5) == idx[-5].strftime("%Y-%m-%d")
     assert ohlc.window_start(["aaa"], 5) == idx[-5].strftime("%Y-%m-%d")
 
@@ -79,8 +79,8 @@ def test_history_facts_find_a_flat_run_that_only_the_adjusted_closes_show(rawsto
     s = _walk(idx, 5)
     s.iloc[30:33] = 10.0
     s.iloc[33:36] = 9.0                    # ex-date idx[33]: 10.00 -> 9.00 with a 1.00 dividend (m = 0.9)
-    d01_bars.write_bars(_swing_rows("DIV", s) + _swing_rows("SPY", _walk(idx, 6)))
-    d01_bars.write_action("DIV", idx[33].date(), "dividend", 1.0)
+    prices_bars.write_bars(_swing_rows("DIV", s) + _swing_rows("SPY", _walk(idx, 6)))
+    prices_bars.write_action("DIV", idx[33].date(), "dividend", 1.0)
     whole = ohlc.price_frame(["DIV"])
     assert whole["DIV"].iloc[30:36].nunique() == 1                         # 5 unchanged steps, 2 in the stored closes
     assert returns_mod.flat_print_names(whole, run=config.FLAT_RUN, max_share=config.FLAT_SHARE) == ["DIV"]
@@ -95,8 +95,8 @@ def test_history_facts_find_a_flat_run_across_a_split(rawstore_tmp_db):
     s = _walk(idx, 7)
     s.iloc[30:33] = 10.0
     s.iloc[33:36] = 5.0
-    d01_bars.write_bars(_swing_rows("SPL", s) + _swing_rows("ONE", _walk(idx, 8)))
-    d01_bars.write_action("SPL", idx[33].date(), "split", 2.0)
+    prices_bars.write_bars(_swing_rows("SPL", s) + _swing_rows("ONE", _walk(idx, 8)))
+    prices_bars.write_action("SPL", idx[33].date(), "split", 2.0)
     assert ohlc.price_frame(["SPL"])["SPL"].iloc[30:36].nunique() == 1
     facts = ohlc.history_facts(["SPL", "ONE"])
     assert facts["flat"] == ["SPL"]
@@ -132,7 +132,7 @@ def test_a_fetch_downloads_nothing_and_clusters_the_store(rawstore_tmp_db, no_pr
 
 def test_fetch_bulk_reports_what_the_store_lacks(rawstore_tmp_db, no_provider):
     idx = pd.bdate_range("2025-01-02", periods=10)
-    d01_bars.write_bars(_swing_rows("AAA", _walk(idx, 9)) + _swing_rows("SPY", _walk(idx, 10)))
+    prices_bars.write_bars(_swing_rows("AAA", _walk(idx, 9)) + _swing_rows("SPY", _walk(idx, 10)))
     out = ohlc.fetch_bulk(["AAA", "BBB"])
     assert out == {"requested": 5, "cached": 2, "pending": 3, "fetched": 0, "failed": 0, "no_fetch": False}
     assert ohlc.fetch_bulk(["AAA"], no_fetch=True)["no_fetch"] is True
@@ -147,7 +147,7 @@ def test_a_new_dividend_retires_the_stored_run(rawstore_tmp_db):
     served = engine.run(no_fetch=True, tickers=tickers, window=252)
     assert served["as_of"] == stored["as_of"]
     time.sleep(0.01)
-    d01_bars.write_action("B0N00", parity._market().index[-30].date(), "dividend", 1.0)
+    prices_bars.write_action("B0N00", parity._market().index[-30].date(), "dividend", 1.0)
     again = engine.run(no_fetch=True, tickers=tickers, window=252)
     assert again["as_of"] != stored["as_of"]
 
@@ -165,7 +165,7 @@ def test_the_peer_market_reads_the_store(rawstore_tmp_db):
     from RevenueChaser.module_relatedness.tests.test_pure_refresh import _market_peers, _market_prices
 
     px = _market_prices(n=300)
-    d01_bars.write_bars([r for t in px.columns for r in _swing_rows(t, px[t])])
+    prices_bars.write_bars([r for t in px.columns for r in _swing_rows(t, px[t])])
     peers = _market_peers()
     rel_engine._attach_peer_market(peers)
     nvda = {p["peer"]: p for p in peers["NVDA"]}
@@ -177,7 +177,7 @@ def test_stored_sessions_counts_spy_in_the_store(rawstore_tmp_db):
     from RevenueChaser.core import board_settings as bs
 
     idx = pd.bdate_range("2025-01-02", periods=12)
-    d01_bars.write_bars(_swing_rows("SPY", _walk(idx, 11)))
+    prices_bars.write_bars(_swing_rows("SPY", _walk(idx, 11)))
     rawstore.write_rows("swing_ohlc", _swing_rows("SPY", _walk(pd.bdate_range("2024-01-02", periods=30), 12)))
     assert bs.stored_sessions() == 12
     assert ohlc.sessions_held("SPY") == 12
@@ -187,7 +187,7 @@ def test_stored_sessions_counts_spy_in_the_store(rawstore_tmp_db):
 def test_the_data_date_is_the_stores_date_of_its_names(rawstore_tmp_db):
     from RevenueChaser.core import provenance
 
-    d01_bars.write_bars(_swing_rows("AAA", _walk(pd.bdate_range(end="2026-10-13", periods=5), 13))
+    prices_bars.write_bars(_swing_rows("AAA", _walk(pd.bdate_range(end="2026-10-13", periods=5), 13))
                         + _swing_rows("OTHER", _walk(pd.bdate_range(end="2026-10-14", periods=5), 14)))
     rawstore.write_rows("swing_ohlc", _swing_rows("AAA", _walk(pd.bdate_range(end="2026-10-15", periods=5), 15)))
     rawstore.replace_all("equity_universe", [{"ticker": "AAA", "market_cap": 1.0e10, "sector": "Technology",

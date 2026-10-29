@@ -18,7 +18,7 @@ from RevenueChaser.app import runners
 from RevenueChaser.app.jobs import JobMessage
 from RevenueChaser.core import calendar, ledger, rawstore
 from RevenueChaser.module_sector_rotation import engine, history as rot_history, report as rot_report, store, universe
-from RevenueChaser.module_sector_rotation.tests.d01_seed import ny as _at, seed as _seed, sessions as _sessions
+from RevenueChaser.module_sector_rotation.tests.bars_seed import ny as _at, seed as _seed, sessions as _sessions
 
 UNIVERSE = {
     "SPY": {"name": "S&P 500", "group": "benchmark"},

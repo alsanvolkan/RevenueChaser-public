@@ -34,7 +34,7 @@ from RevenueChaser.module_sector_rotation import etf_holdings as eh
 from RevenueChaser.module_sector_rotation import report as rot_report
 from RevenueChaser.module_sector_rotation import store as rotation_store
 from RevenueChaser.module_sector_rotation.money_flow import get_money_flow_leaderboards
-from RevenueChaser.module_sector_rotation.tests.d01_seed import seed
+from RevenueChaser.module_sector_rotation.tests.bars_seed import seed
 from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
 
 COMPLETE = datetime(2026, 10, 6, 22, 0, tzinfo=timezone.utc).timestamp()   # Tuesday 18:00 ET: a complete session

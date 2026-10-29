@@ -3,7 +3,7 @@
 Since M-ROT-2 the RRG, the backfill and (M-ROT-3) the holdings RS and Money Flow read the stored daily bars; since PR 9
 (G3) those are the prices store's (``prices.duckdb``, ``rcdata/tests/prices_store``), not D01's. A test seeds them the
 way the prices build leaves them, and pins ``core.calendar``'s clock seam to place "the latest complete session". The
-module keeps its D01-era name so the tests that import it did not move.
+module was named ``d01_seed`` until review S4 of PR 270.
 """
 from __future__ import annotations
 

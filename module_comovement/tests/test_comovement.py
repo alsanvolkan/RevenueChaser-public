@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 
 from RevenueChaser.core import rawstore
-from RevenueChaser.module_comovement.tests import d01_bars
+from RevenueChaser.module_comovement.tests import prices_bars
 from RevenueChaser.module_comovement import (cluster, config, engine, label, noise,
                                              ohlc, returns)
 
@@ -366,7 +366,7 @@ def _seed_ohlc(ret: pd.DataFrame):
         for ts, p in price.items():
             rows.append({"ticker": t, "ts": ts.isoformat(), "open": p, "high": p,
                          "low": p, "close": float(p), "volume": 1.0, "cached_at": now})
-    d01_bars.write_bars(rows)
+    prices_bars.write_bars(rows)
 
 
 def test_engine_run_persists_and_clusters(rawstore_tmp_db):

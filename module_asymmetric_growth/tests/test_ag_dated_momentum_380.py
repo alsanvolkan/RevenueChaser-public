@@ -292,9 +292,9 @@ def test_a_passing_quote_with_failing_bars_follows_the_bars(rawstore_tmp_db, mon
     assert [s["passed"] for s in momentum(card)["subs"]] == [False, False, False]
 
 
-# ── 10. no D01 rows at all: the 247 research script's path still scores ─────────────────────────────────────────
+# ── 10. no stored bars at all: the 247 research script's path still scores ─────────────────────────────────────────
 
-def test_a_store_without_d01_rows_still_scores(rawstore_tmp_db):
+def test_a_store_without_bars_still_scores(rawstore_tmp_db):
     empty = engine._preload(["AAA"], True)
     assert empty["bars"] == {} and empty["session"] is None
     rawstore.write_rows("edgar_financials", [edgar("AAA")])

@@ -24,7 +24,7 @@ import pytest
 
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_comovement import engine, ohlc
-from RevenueChaser.module_comovement.tests import d01_bars
+from RevenueChaser.module_comovement.tests import prices_bars
 from RevenueChaser.module_comovement.tests import test_recompute_parity as parity
 from RevenueChaser.rcdata import read
 
@@ -60,9 +60,9 @@ def _edge_store(stale_spy: bool = False) -> list[str]:
     rows = []
     for t, s in extra.items():
         rows += _rows(t, s)
-    d01_bars.write_bars(rows)
+    prices_bars.write_bars(rows)
     if stale_spy:
-        d01_bars.delete_bars("SPY", idx[-5])
+        prices_bars.delete_bars("SPY", idx[-5])
     names = [*tickers, *extra]
     rawstore.replace_all("equity_universe", [{
         "ticker": t, "market_cap": 1.0e10, "sector": "Technology", "price": 10.0, "name": t,
@@ -192,7 +192,7 @@ def test_history_facts_skip_a_nan_close(rawstore_tmp_db):
     two-closes case cannot occur)."""
     idx = pd.date_range("2025-01-01", periods=20, freq="B")
     s = pd.Series(np.linspace(10, 20, 20), index=idx)
-    d01_bars.write_bars(_rows("ONE", s) + [{"ticker": "NAN", "ts": "2025-01-01T00:00:00", "close": float("nan"),
+    prices_bars.write_bars(_rows("ONE", s) + [{"ticker": "NAN", "ts": "2025-01-01T00:00:00", "close": float("nan"),
                                             "open": None, "high": None, "low": None, "volume": 1.0,
                                             "cached_at": time.time()}])
     facts = ohlc.history_facts(["ONE", "NAN"])

@@ -3,7 +3,7 @@
 Both boards read ``rcdata.read.ticker_bars(basis="total_return")`` (``ohlc.price_frame``). The tests build their
 markets as ``swing_ohlc``-shaped rows (``ticker``, ``ts``, ``close``, ``cached_at``); ``write_bars`` stores the same
 closes as served bars of ``prices.duckdb`` (``rcdata/tests/prices_store``), one per (ticker, session), replacing each
-ticker's stored series. The module keeps its D01-era name so the tests that import it did not move.
+ticker's stored series. The module was named ``d01_bars`` until review S4 of PR 270.
 """
 from __future__ import annotations
 

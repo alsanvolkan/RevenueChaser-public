@@ -14,7 +14,7 @@ import pytest
 from RevenueChaser.core import calendar, rawstore
 from RevenueChaser.core.rotation_reference import MACRO_SERIES
 from RevenueChaser.module_sector_rotation import engine, money_flow
-from RevenueChaser.module_sector_rotation.tests.d01_seed import ny, pin_clock, sessions
+from RevenueChaser.module_sector_rotation.tests.bars_seed import ny, pin_clock, sessions
 from RevenueChaser.rcdata.tests import prices_store
 
 SESSION = date(2026, 6, 30)

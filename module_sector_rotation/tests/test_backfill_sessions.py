@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from RevenueChaser.module_sector_rotation import engine, store
-from RevenueChaser.module_sector_rotation.tests.d01_seed import ny, pin_clock, seed, sessions
+from RevenueChaser.module_sector_rotation.tests.bars_seed import ny, pin_clock, seed, sessions
 
 
 def test_weekly_closes_count_weeks_not_sessions():

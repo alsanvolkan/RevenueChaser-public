@@ -3,7 +3,7 @@
 - The RRG lines an ETF's ISO-week closes up with SPY's weeks: a week D01 lacks for the ETF does not shift its 4- and
   12-week lookbacks onto other weeks, and an ETF whose D01 series stops before the session's week is not plotted as
   of that session (it is missing, so the run is partial).
-- A split inside the window does not move the RRG (``core.prices.daily_bars`` applies it on read).
+- A split inside the window does not move the RRG (the prices store's split basis applies it on read, since PR 9).
 - Money Flow does not rank an ETF whose D01 series stops before the session (missing, so the result is partial).
 - The range backfill names the ETFs it left out of the sessions it wrote.
 Offline: a temp store, the calendar clock pinned.
@@ -19,7 +19,7 @@ from RevenueChaser.app import runners
 from RevenueChaser.app.jobs import JobMessage
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_sector_rotation import engine, money_flow as mf, store
-from RevenueChaser.module_sector_rotation.tests.d01_seed import ny, pin_clock, seed as _seed, sessions as _sessions
+from RevenueChaser.module_sector_rotation.tests.bars_seed import ny, pin_clock, seed as _seed, sessions as _sessions
 from RevenueChaser.rcdata import read
 from RevenueChaser.rcdata.tests import prices_store
 from RevenueChaser.module_sector_rotation.tests.test_rotation_a5_374 import UNIVERSE, _UW, _stored, world  # noqa: F401

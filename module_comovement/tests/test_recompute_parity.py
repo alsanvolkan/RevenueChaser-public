@@ -45,7 +45,7 @@ its ``min_obs`` 126 -> 119 (in ``settings``, ``funnel`` and the "Missing price b
 ``config_hash``; the fixture's two gappy names miss more than 7 sessions and stay dropped, and no cluster changed.
 Then ``json.dumps(payloads())`` was written.
 
-PR 8 (G3) regenerated it again: the market is seeded in the prices store (``d01_bars.write_bars`` now writes
+PR 8 (G3) regenerated it again: the market is seeded in the prices store (``prices_bars.write_bars`` now writes
 ``prices.duckdb``) and read through ``rcdata.read.ticker_bars(basis="total_return")``, and ``config.METHOD`` is 3.
 Compared key by key: in each of the four payloads only the ``config_hash`` (the method), the three ``source`` texts
 and the "Missing price bars" label (a missing session can come back, review S2) moved; no number, member, label or
@@ -64,7 +64,7 @@ import pandas as pd
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_comovement import engine
 from RevenueChaser.module_comovement import returns as returns_mod
-from RevenueChaser.module_comovement.tests import d01_bars
+from RevenueChaser.module_comovement.tests import prices_bars
 from RevenueChaser.module_comovement.tests.test_settings import _diff
 
 _GOLDEN = Path(__file__).with_name("golden_recompute_parity.json")
@@ -117,7 +117,7 @@ def _seed(ret: pd.DataFrame) -> list[str]:
                 continue
             rows.append({"ticker": t, "ts": ts.isoformat(), "open": p, "high": p,
                          "low": p, "close": float(p), "volume": 1.0, "cached_at": now})
-    d01_bars.write_bars(rows)
+    prices_bars.write_bars(rows)
     return tickers
 
 
