@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from datetime import date as _date
 from datetime import datetime, timezone
 
@@ -442,10 +443,42 @@ NON_USD_DROP = "non_usd_currency"
 NON_USD_LABEL = "Report in a currency other than USD and could not be scored"
 
 
+class _LayerChunks:
+    """The fundamentals layer's records of the names a Fetch kept, read one scan chunk at a time (Opus review S5).
+
+    ``run_screen`` scores ``screen_common.BARS_CHUNK`` names at a time, in the kept order, and finishes a chunk
+    before the next, so one ``records_many`` read per chunk serves every name of it and only that chunk is held. A
+    name read one by one opens the served file twice (57 ms a name against 11 ms batched, the 29 Oct 2026 sample).
+    ``get`` answers None for a name that was not kept, which then reads its own row."""
+
+    def __init__(self, tickers: list[str]):
+        self._tickers = tickers
+        self._pos = {t: i for i, t in enumerate(tickers)}
+        self._lock = threading.Lock()
+        self._start: int | None = None
+        self._rows: dict = {}
+
+    def get(self, ticker: str):
+        from RevenueChaser.core import fundamentals_layer
+        ticker = str(ticker).strip().upper()
+        i = self._pos.get(ticker)
+        if i is None:
+            return None
+        size = screen_common.BARS_CHUNK
+        start = i // size * size
+        with self._lock:
+            if self._start != start:
+                self._rows, self._start = {}, None
+                self._rows = fundamentals_layer.records_many(self._tickers[start:start + size])
+                self._start = start
+            return self._rows.get(ticker) or ([], [], fundamentals_layer._unavailable())
+
+
 def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None = None,
                  drops: list | None = None, non_usd: set[str] | None = None,
-                 non_usd_seen: list | None = None) -> dict | None:
-    """One ticker's row, or None. ``drops`` (a list) collects the reason for each None (#205).
+                 non_usd_seen: list | None = None, layer: _LayerChunks | None = None) -> dict | None:
+    """One ticker's row, or None. ``drops`` (a list) collects the reason for each None (#205). ``layer`` (a Fetch on
+    the fundamentals layer) serves the statements of the run's kept names in chunks (``_LayerChunks``).
 
     ``non_usd`` (the scan's, one per run) collects the currencies of the names that end on the currency check below
     (#46): they are dropped for that reason, so the count in ``dropped`` and this set are the same names.
@@ -473,7 +506,9 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
         return _drop("sector_excluded")
 
     try:
-        annual, quarterly, emeta = sec_edgar.get_fundamentals(ticker, no_fetch=no_fetch)
+        found = layer.get(ticker) if layer is not None else None
+        annual, quarterly, emeta = found if found is not None else sec_edgar.get_fundamentals(ticker,
+                                                                                              no_fetch=no_fetch)
     except Exception as exc:  # pragma: no cover - network
         logger.debug("fundamental edgar %s: %s", ticker, exc)
         if not no_fetch:
@@ -759,13 +794,22 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
     if not no_fetch:
         _EDGAR_HEALTH.reset()
 
+    chunks: list[_LayerChunks] = []    # Opus review S5: a Fetch on the layer reads the kept names per chunk
+
+    def prefilter_and_chunk(rows: list[dict]) -> screen_common.Prefiltered:
+        from RevenueChaser.core import fundamentals_layer
+        pf = prefilter(rows)
+        if not no_fetch and fundamentals_layer.reads_layer():
+            chunks.append(_LayerChunks([str(r.get("ticker") or "").strip().upper() for r in pf.kept]))
+        return pf
+
     def compute_row(row, spy_df, no_fetch: bool = False, spine: dict | None = None, drops: list | None = None):
         return _compute_row(row, spy_df, no_fetch=no_fetch, spine=spine, drops=drops, non_usd=non_usd,
-                            non_usd_seen=non_usd_seen)
+                            non_usd_seen=non_usd_seen, layer=chunks[0] if chunks else None)
 
     payload = screen_common.run_screen(
         board="fundamental", refreshed_by="Fundamentals", cfg=config,
-        load_universe=fetch_universe_stats, prefilter=prefilter,
+        load_universe=fetch_universe_stats, prefilter=prefilter_and_chunk,
         load_spy=lambda: screen_common.load_spy(lambda: load_ohlc("SPY", ttl_days=0.5, no_fetch=no_fetch)),
         compute_row=compute_row, build_payload=build_payload, persist=scores.persist if rows_sink is None else (lambda results: scores.persist(results, sink=rows_sink)),
         top_n=top_n, refresh_universe=refresh_universe, no_fetch=no_fetch,
