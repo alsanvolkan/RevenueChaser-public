@@ -203,8 +203,10 @@ def test_a_run_tells_the_choice_when_the_target_is_a_bank(built, monkeypatch, tm
     cache_manager.save(TICKER, {"ticker": TICKER, "info": {"longName": "Growth Co."}, "shares_outstanding": 50.0,
                                 "market_cap": 5000.0, "beta": 1.1, "current_price": 100.0, "currency": "USD",
                                 "source": "yfinance", "annual": [_year(2024)]})
-    fm.run(TICKER, modules=["dcf"], output="none", no_fetch=True)
+    out = fm.run(TICKER, modules=["dcf"], output="none", no_fetch=True)["results"]
     assert seen == [True]
+    # Delta review N-a: no bank model reads the tax rate or interest expense either, so neither is named.
+    assert "tax rate" not in out["financials"]["source"] and "defaults" not in out["financials"]["source"]
 
 
 def test_on_the_secs_statements_the_source_line_names_the_tax_rate_and_interest_default(built, monkeypatch,

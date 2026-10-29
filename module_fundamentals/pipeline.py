@@ -804,7 +804,8 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
     if not no_fetch:
         _EDGAR_HEALTH.reset()
 
-    chunks: list[_LayerChunks] = []    # Opus review S5: a Fetch on the layer reads the kept names per chunk
+    # Opus review S5: a Fetch on the layer reads the kept names per chunk; the newest prefilter's names serve.
+    chunks: list[_LayerChunks] = []
 
     def prefilter_and_chunk(rows: list[dict]) -> screen_common.Prefiltered:
         from RevenueChaser.core import fundamentals_layer
@@ -815,7 +816,7 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
 
     def compute_row(row, spy_df, no_fetch: bool = False, spine: dict | None = None, drops: list | None = None):
         return _compute_row(row, spy_df, no_fetch=no_fetch, spine=spine, drops=drops, non_usd=non_usd,
-                            non_usd_seen=non_usd_seen, layer=chunks[0] if chunks else None)
+                            non_usd_seen=non_usd_seen, layer=chunks[-1] if chunks else None)
 
     payload = screen_common.run_screen(
         board="fundamental", refreshed_by="Fundamentals", cfg=config,

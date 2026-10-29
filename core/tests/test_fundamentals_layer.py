@@ -190,3 +190,11 @@ def test_a_batch_read_keeps_a_window_per_company(built):
     assert {r["fiscal_year"] for r in rows if r["period_type"] == "annual"} == {2025}
     assert {r["period_end"] for r in rows if r["period_type"] == "quarterly"} == {date(2026, 3, 31),
                                                                                   date(2026, 6, 30)}
+
+
+def test_a_stored_ticker_with_whitespace_still_keys_its_records(monkeypatch):
+    # Delta review N-c: the chunk read strips the ticker it asks for, so the layer's own key must too.
+    from RevenueChaser.rcdata import read
+    monkeypatch.setattr(read, "fundamental_companies", lambda tickers: [{"ticker": " grw ", "cik": "1"}])
+    monkeypatch.setattr(read, "statements_many", lambda ciks, years, quarters: [])
+    assert set(layer.records_many(["GRW"])) == {"GRW"}

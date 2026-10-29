@@ -269,7 +269,7 @@ def records_many(tickers) -> dict[str, tuple[list[dict], list[dict], dict]]:
     """``{ticker: (annual, quarterly, meta)}`` from the layer for every ticker it names a company for (a ticker it
     does not hold is absent). Two reads for the whole list: the companies, then their statements."""
     from ..rcdata import read
-    companies = {str(c["ticker"]).upper(): c for c in read.fundamental_companies(tickers)}
+    companies = {str(c["ticker"]).strip().upper(): c for c in read.fundamental_companies(tickers)}
     if not companies:
         return {}
     rows_of: dict[str, list[dict]] = {}

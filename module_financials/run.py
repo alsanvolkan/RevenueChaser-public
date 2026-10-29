@@ -253,7 +253,9 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
         annual, meta = sec
         used, lacking = _statements_choice(annual, financials.get("annual") or [], bank=sector == PE_ONLY_SECTOR)
         if used == "sec":
-            lacking = lacking + list(NOT_IN_FACTS)
+            # Delta review nit: a bank's model (P/E only) reads neither a tax rate nor an interest expense.
+            if sector != PE_ONLY_SECTOR:
+                lacking = lacking + list(NOT_IN_FACTS)
             filed = meta.get("newest_filed")
             financials = {**financials, "annual": annual,
                           "statements_meta": {**meta, "used": "sec", "sec_lacks": lacking},
