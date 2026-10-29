@@ -12,9 +12,7 @@ from __future__ import annotations
 
 import math
 from datetime import date, timedelta
-from typing import Optional
 
-from RevenueChaser.core.providers.unusual_whales import UWClient
 from .universe import ROTATION_ETFS
 
 _NOT_RANKED = ("region", "bond", "yield", "commodity")
@@ -92,11 +90,11 @@ def get_money_flow_leaderboards(df, window: int = 21, top_n: int = 4) -> dict:
     return {"inflows": inflows, "outflows": outflows}
 
 
-def compute_money_flow(uw: Optional[UWClient] = None, days: int = 30, window: int = 21, top_n: int = 4) -> dict:
+def compute_money_flow(days: int = 30, window: int = 21, top_n: int = 4) -> dict:
     """Rank the sector/theme ETFs by money flow from the stored closes and volumes (M-ROT-3, ROT-13; PR 9).
 
-    One ``bar_rows`` read up to the latest complete session; ``uw`` is kept for the callers' signature
-    and not used. region, bond, yield and commodity groups are excluded (``ranked_tickers``).
+    One ``bar_rows`` read up to the latest complete session, and no provider call: the board has no client handle
+    any more. region, bond, yield and commodity groups are excluded (``ranked_tickers``).
 
     When the store holds no bar of some ETFs in the window, or an ETF's bars stop before the newest session read, the result
     also carries ``partial: True`` and ``missing`` (their tickers, in universe order); a whole result has neither key.

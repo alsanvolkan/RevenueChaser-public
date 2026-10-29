@@ -64,7 +64,7 @@ def flow(fetch, monkeypatch, tmp_path):
     monkeypatch.setattr(runners, "MONEY_FLOW_LATEST", tmp_path / "mf.json")
     monkeypatch.setattr(runners, "_write_output",
                         lambda m, content, s, ext="html": (tmp_path / "mf.json").write_text(content))
-    monkeypatch.setattr(money_flow, "compute_money_flow", lambda uw, **k: json.loads(json.dumps(FLOW)))
+    monkeypatch.setattr(money_flow, "compute_money_flow", lambda **k: json.loads(json.dumps(FLOW)))
 
 
 def _headers(board):
@@ -138,7 +138,7 @@ def test_the_money_flow_history_is_recorded_after_the_file(flow, monkeypatch):
 
 def test_a_kept_leaderboard_still_records_a_partial_header(flow, monkeypatch, tmp_path):
     (tmp_path / "mf.json").write_text(json.dumps({**FLOW, "as_of": "2026-10-05"}))
-    monkeypatch.setattr(money_flow, "compute_money_flow", lambda uw, **k: {"inflows": [], "outflows": [],
+    monkeypatch.setattr(money_flow, "compute_money_flow", lambda **k: {"inflows": [], "outflows": [],
                                                                            "as_of": None})
     with pytest.raises(JobMessage, match="kept the"):
         runners.run_money_flow_latest(_UW())
@@ -152,7 +152,7 @@ def test_a_partial_pull_that_keeps_a_whole_board_records_a_partial_header(flow, 
                                   window=21, top_n=10)
     (tmp_path / "mf.json").write_text(json.dumps({**FLOW, "as_of": "2026-10-05"}))
     monkeypatch.setattr(money_flow, "compute_money_flow",
-                        lambda uw, **k: {**FLOW, "partial": True, "missing": ["XLB"]})
+                        lambda **k: {**FLOW, "partial": True, "missing": ["XLB"]})
     with pytest.raises(JobMessage, match="kept the stored leaderboard from 2026-10-05"):
         runners.run_money_flow_latest(_UW())
     (head,) = [h for h in _headers("module_money_flow") if h["run_id"] == "job-x"]

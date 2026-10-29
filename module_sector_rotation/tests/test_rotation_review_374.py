@@ -104,7 +104,7 @@ def test_money_flow_does_not_rank_an_etf_whose_series_stops_before_the_session(r
     for k, t in enumerate(ranked):
         end = date(2026, 7, 24) if t == stale else session
         _seed(t, end, start=date(2026, 5, 1), closes=(lambda i: 100.0 + i) if k % 2 else (lambda i: 200.0 - i))
-    res = mf.compute_money_flow(None, days=30, window=21, top_n=len(ranked))
+    res = mf.compute_money_flow(days=30, window=21, top_n=len(ranked))
     assert res["partial"] is True and res["missing"] == [stale]
     assert stale not in {r["ticker"] for r in res["inflows"] + res["outflows"]}
     assert res["as_of"] == session.isoformat()

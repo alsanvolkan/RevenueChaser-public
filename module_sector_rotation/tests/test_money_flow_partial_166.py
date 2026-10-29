@@ -48,14 +48,14 @@ def d01(rawstore_tmp_db, monkeypatch):
 
 def test_a_healthy_result_has_exactly_the_old_keys(d01):
     d01()
-    res = mf.compute_money_flow(_NoUW(), days=30, window=21, top_n=10)
+    res = mf.compute_money_flow(days=30, window=21, top_n=10)
     assert set(res) == {"inflows", "outflows", "generated_at", "as_of"}
     assert len(res["inflows"]) == 10 and res["as_of"] == SESSION.isoformat()
 
 
 def test_an_etf_with_no_stored_bars_makes_the_result_partial_and_is_named(d01):
     d01(skip={"XLK", "SMH"})
-    res = mf.compute_money_flow(_NoUW(), days=30, window=21, top_n=10)
+    res = mf.compute_money_flow(days=30, window=21, top_n=10)
     assert res["partial"] is True and res["missing"] == [t for t in QUERIED if t in {"XLK", "SMH"}]
     ranked = {r["ticker"] for r in res["inflows"] + res["outflows"]}
     assert "XLK" not in ranked and res["inflows"]            # the others are still ranked
@@ -70,7 +70,7 @@ def test_only_the_last_days_sessions_up_to_the_session_are_read(d01):
 
 
 def test_nothing_stored_is_an_empty_partial_result(d01):
-    res = mf.compute_money_flow(_NoUW(), days=30, window=21, top_n=10)
+    res = mf.compute_money_flow(days=30, window=21, top_n=10)
     assert res["inflows"] == [] and res["outflows"] == [] and res["as_of"] is None
     assert res["partial"] is True and res["missing"] == QUERIED
 
