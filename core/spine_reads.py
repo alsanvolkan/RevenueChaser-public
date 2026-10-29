@@ -32,12 +32,14 @@ def _file_key(kind: str = "spine"):
     return (str(path), st.st_ino, st.st_mtime_ns, st.st_size)
 
 
-def _kept(name: str, args: tuple, fetch, kind: str = "spine") -> list[dict]:
+def _kept(name: str, args: tuple, fetch, kind: str = "spine", also: tuple[str, ...] = ()) -> list[dict]:
     """``fetch()``'s rows, read once per ``kind`` file: kept under ``(name, args, file identity)``; a new file drops
-    every older answer read from that file. No file yet is never kept (the first build must be seen at once)."""
+    every older answer read from that file. No file yet is never kept (the first build must be seen at once).
+    ``also``: the other kinds the answer reads, whose files join the identity (a new one reads it again)."""
     key = _file_key(kind)
     if key is None:
         return [dict(r) for r in fetch()]
+    key = key + tuple(_file_key(k) for k in also)
     with _LOCK:
         rows = _KEPT.get((name, args, key))
     if rows is None:
@@ -74,5 +76,6 @@ def latest_market(tickers) -> dict[str, dict]:
     if _file_key("prices") is None:
         return {}
     wanted = tuple(sorted({str(t).strip().upper() for t in tickers if str(t or "").strip()}))
-    rows = _kept("latest_market", wanted, lambda: list(read.latest_market(wanted).values()), kind="prices")
+    rows = _kept("latest_market", wanted, lambda: list(read.latest_market(wanted).values()), kind="prices",
+                 also=("spine",))                     # it finds the tickers' securities through the spine
     return {r["ticker"]: r for r in rows}
