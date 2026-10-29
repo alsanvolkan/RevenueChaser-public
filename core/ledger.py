@@ -255,37 +255,6 @@ def prices_has_session(session: date, ticker: str) -> bool:
     return _bar_cause(session, prices_last_bars([ticker]).get(_norm(ticker))) is None
 
 
-# D01, the daily bars RC-Daily-Bars wrote (``core/prices.py``, #156): one row per session, written once, after the
-# session's close + 30 min. Swing and Fundamentals left it in PR 10 (``prices_last_bars``); Asymmetric Growth's engine
-# and freeze and the boards' provenance still read it until their own groups move them (AG: PR 11), so each board's
-# freeze keeps checking the bars that board scored from.
-_D01 = "price_bars_daily"
-
-
-def d01_last_bars(tickers) -> dict[str, tuple[str, float | None]]:
-    """``{ticker: (last session 'YYYY-MM-DD', fetched_at of that bar)}`` from D01.
-
-    A store without the price file or the table reads as no bars, and so does a failed read (logged).
-    """
-    tickers = sorted({_norm(t) for t in tickers if _norm(t)})
-    if not tickers:
-        return {}
-    try:
-        rows = rawstore.query(
-            "SELECT ticker, max(session_date) AS last_day, arg_max(fetched_at, session_date) AS fetched_at "
-            f"FROM {_D01} WHERE ticker IN (SELECT unnest(?)) GROUP BY ticker", [tickers],
-            db=rawstore.MANIFEST[_D01].get("db", "raw"))
-    except Exception as exc:  # noqa: BLE001 - no D01 is no bars, never a failed freeze
-        logger.warning("forecast ledger: the D01 bars could not be read (%s)", exc)
-        return {}
-    return {r["ticker"]: (str(r["last_day"])[:10], r["fetched_at"]) for r in rows if r.get("last_day") is not None}
-
-
-def d01_has_session(session: date, ticker: str) -> bool:
-    """True when D01's last bar of ``ticker`` is ``session`` and was written after its close + 30 min."""
-    return _bar_cause(session, d01_last_bars([ticker]).get(_norm(ticker))) is None
-
-
 def spy_anchor_problem(session: date) -> str | None:
     """Why SPY's bars are not one complete ``session``, or ``None``. SPY is the board anchor.
 

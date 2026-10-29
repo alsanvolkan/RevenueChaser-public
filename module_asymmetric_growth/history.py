@@ -7,8 +7,8 @@ module, not in ``core/``. A Refresh never calls it (06 rule 9).
 
 AG is a session board: the first complete run of a session keeps its rows; a later, intraday or partial run keeps
 its header only (``core/history.record_run``). A run is partial when it has no cards, the universe pull was partial,
-more than ``FREEZE_MAX_SCORE_ERROR_RATE`` of the tickers failed to score, or Daily Bars has not written the session's
-SPY bar yet (the freeze's own anchor, #380 S4). The header's context also carries ``data_as_of``: the newest
+more than ``FREEZE_MAX_SCORE_ERROR_RATE`` of the tickers failed to score, or the prices store holds no complete SPY bar
+of the session yet (the freeze's own anchor, #380 S4; one rule with the freeze, review N-1). The header's context also carries ``data_as_of``: the newest
 prices-store session among the cards (PR 11), so a Refresh says which price session it shows.
 
 ``recorded_sessions`` reads it back for the board (#380, core review slice A2: the first history reader), through
@@ -42,12 +42,11 @@ def _partial(result: dict, run_at: float) -> str | None:
     """Why this run is not a whole, correct session snapshot (None when it is).
 
     The card momentum is the stored bars' since #380 S4 (the prices store's since PR 11), so the run is judged on the
-    session's price bars (the freeze's anchor: still SPY's D01 bar for the session until G4 moves the ledger), not on the universe snapshot behind the quote prices."""
+    session's price bars (the freeze's anchor: SPY's prices-store bar for the session, PR 10), not on the universe
+    snapshot behind the quote prices. The rest is the freeze's own rule (``freeze.run_problem``, review N-1)."""
     if not result.get("cards"):
         return result.get("no_data_message") or "no cards"
-    if result.get("universe_partial"):
-        return "the universe pull was partial"
-    why = freeze._score_error_problem(result)
+    why = freeze.run_problem(result)
     if why:
         return why
     try:

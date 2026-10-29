@@ -62,12 +62,8 @@ def bar(ticker: str, day, *, close: float = 100.0, high: float = 105.0, low: flo
 
 
 def store_bars(rows: list[dict]) -> None:
-    """``bar`` rows in the prices store (the momentum's source since PR 11) and in D01 (the freeze anchor's).
-
-    shortcut: the D01 write only feeds ``ledger.d01_has_session`` for the freeze; drop it when G4 moves the ledger
-    to the prices store."""
+    """``bar`` rows in the prices store: the momentum's source since PR 11 and the freeze anchor's since PR 10."""
     prices_store.put_bars(rows, replace=False, overwrite=True)
-    rawstore.write_rows("price_bars_daily", rows)
 
 
 def put_action(ticker: str, ex: date, action: str, value: float) -> None:

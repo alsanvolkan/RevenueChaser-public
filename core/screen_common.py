@@ -533,9 +533,9 @@ def run_screen(*, board: str, refreshed_by: str, cfg: Any,
         "universe_refreshed_by": u_stats.get("universe_refreshed_by"),
         "universe_partial": bool(u_stats.get("partial")),
     }
-    # K7 (#383 R3): the payload's data date is the newest D01 bar over the names this Fetch scored.
+    # K7 (#383 R3): the payload's data date is the newest bar over the names this Fetch scored (the prices store, PR 10).
     from RevenueChaser.core import provenance
-    run_stats["data_as_of"] = provenance.d01_day(r.get("ticker") for r in results)
+    run_stats["data_as_of"] = provenance.prices_day(r.get("ticker") for r in results)
     if extra_stats is not None:
         run_stats.update(extra_stats())
     payload = build_payload(results, top_n=top_n, run_stats=run_stats)

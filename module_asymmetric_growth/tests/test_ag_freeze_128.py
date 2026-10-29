@@ -32,16 +32,16 @@ def _result(cards, *, universe_total=None, excluded=0, errors=0, **kw):
     return r
 
 
-def _spy_bar(minutes=45):
-    """SPY's D01 bar for D, written ``minutes`` after the close: the freeze's anchor (#380 S4, decision 4)."""
-    from RevenueChaser.core.tests.d01_seed import seed_d01
-    seed_d01("SPY", [D], (cal.session_close(D) + timedelta(minutes=minutes)).timestamp())
+def _spy_bar(minutes=45, day=D):
+    """SPY's prices-store bar for ``day``, read ``minutes`` after D's close: the freeze's anchor (#380 S4, decision 4;
+    the prices store's since PR 10, where AG's momentum comes from since PR 11)."""
+    from RevenueChaser.rcdata.tests import prices_seed
+    prices_seed.seed_bars("SPY", [day], (cal.session_close(D) + timedelta(minutes=minutes)).timestamp())
 
 
 def _no_bars():
-    from RevenueChaser.core import rawstore
-    with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
-        conn.execute("DELETE FROM price_bars_daily")
+    from RevenueChaser.rcdata.tests import prices_seed
+    prices_seed.drop_ticker("SPY")
 
 
 def _stored():
@@ -58,7 +58,8 @@ def store(rawstore_tmp_db):
 def test_picks_map_the_shown_cards_column_by_column():
     rows = freeze.picks([_card("AAA", 9), _card("BBB", 6, price=None)])
     assert rows[0] == {"subject": "AAA", "rank": 1, "score": 9.0, "bucket": "tier:none|pts_9", "market_cap": 8.0e8,
-                       "sector": "Information Technology", "shown_price": 12.5, "stop": None, "target": None}
+                       "sector": "Information Technology", "shown_price": 12.5, "stop": None, "target": None,
+                       "price_session": None}
     assert rows[1]["rank"] == 2 and rows[1]["bucket"] == "tier:none|pts_6_5" and rows[1]["shown_price"] is None
 
 
@@ -130,18 +131,21 @@ def test_an_intraday_run_freezes_nothing(store):
     assert ledger_queue.count() == 0
 
 
-def test_a_session_without_a_spy_d01_bar_freezes_nothing(store):
-    """#380 S4 (decision 4): the anchor is SPY's own D01 bar for the session, not the universe snapshot."""
+def test_a_session_without_a_spy_bar_in_the_prices_store_freezes_nothing(store):
+    """#380 S4 (decision 4): the anchor is SPY's own bar for the session, not the universe snapshot; since PR 10 the
+    prices store's, where the momentum is read (PR 11). D01's bar no longer counts."""
+    from RevenueChaser.core.tests.d01_seed import seed_d01
     _no_bars()
+    seed_d01("SPY", [D], (cal.session_close(D) + timedelta(minutes=45)).timestamp(), prices=False)
     out = freeze.freeze_result(_result([_card("AAA", 9)]), run_id="x", now=POST_CLOSE)
     assert out.queued == 0 and ledger_queue.count() == 0
     (note,) = ledger.take_notes()
-    assert "SPY D01 bar" in note and "2026-10-02" in note
+    assert "no SPY bar in the prices store" in note and "2026-10-02" in note
 
 
 def test_a_spy_bar_for_another_session_freezes_nothing(store):
-    from RevenueChaser.core.tests.d01_seed import seed_d01
-    seed_d01("SPY", [date(2026, 10, 1)], (cal.session_close(D) + timedelta(minutes=45)).timestamp())
+    _no_bars()
+    _spy_bar(day=date(2026, 10, 1))
     out = freeze.freeze_result(_result([_card("AAA", 9)]), run_id="x", now=POST_CLOSE)
     assert out.queued == 0 and "2026-10-02" in ledger.take_notes()[0]
 
@@ -190,3 +194,33 @@ def test_a_missing_summary_is_not_a_crash(store):
     result = _result([_card("AAA", 9)])
     del result["summary"]
     assert freeze.freeze_result(result, run_id="x", now=POST_CLOSE).queued == 1
+
+
+# ── PR 10 (G4): the review's SF-1 ledger half and N-1 ────────────────────────────────────────────────────────────
+
+def test_each_pick_carries_its_cards_own_price_session(store):
+    """SF-1: a card priced from an older session (a halt, a gap) says so in the ledger, not only on the board."""
+    cards = [_card("AAA", 9, period_ends={"price_bar": "2026-10-02"}),
+             _card("BBB", 8, period_ends={"price_bar": "2026-09-30"}), _card("CCC", 7)]
+    assert [r["price_session"] for r in freeze.picks(cards)] == ["2026-10-02", "2026-09-30", None]
+    freeze.freeze_result(_result(cards), run_id="x", now=POST_CLOSE)
+    assert [(r["subject"], r["price_session"]) for r in _stored()] == [
+        ("AAA", D), ("BBB", date(2026, 9, 30)), ("CCC", None)]
+
+
+def test_a_partial_universe_pull_freezes_nothing(store):
+    """N-1: the freeze refuses what the history calls partial; a partial universe is one of them."""
+    out = freeze.freeze_result(_result([_card("AAA", 9)], universe_partial=True), run_id="x", now=POST_CLOSE)
+    assert out.queued == 0 and ledger_queue.count() == 0
+    assert "the universe pull was partial" in ledger.take_notes()[0]
+
+
+@pytest.mark.parametrize("result", [
+    _result([]), _result([_card("AAA", 9)], universe_partial=True),
+    _result([_card("AAA", 9)], universe_total=100, errors=5), _result([_card("AAA", 9)])])
+def test_the_freeze_and_the_history_share_one_partial_rule(store, result):
+    """N-1: one rule decides both: a run the history keeps whole is one the freeze writes, and the other way round."""
+    from RevenueChaser.module_asymmetric_growth import history
+    partial = history._partial(result, POST_CLOSE.timestamp())
+    queued = freeze.freeze_result(result, run_id="x", now=POST_CLOSE).queued
+    assert (partial is None) == (queued > 0)

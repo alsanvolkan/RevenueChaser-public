@@ -71,27 +71,13 @@ def prices_day(tickers) -> str | None:
     return max(days).isoformat() if days else None
 
 
-def d01_day(tickers) -> str | None:
-    """Newest D01 session (``price_bars_daily``) over ``tickers``; ``None`` when none has a bar."""
-    from RevenueChaser.core import ledger
-    days = [day for day, _ in ledger.d01_last_bars(tickers).values()]
-    return max(days) if days else None
-
-
-def _scored_d01_day(scores: str):
-    """A resolver: the newest D01 session over the names in the board's score table ``scores`` (K7, #383 R3).
-
-    Swing and Fundamentals score every name from D01 since C12, so their date is the price date of their own names
-    (DF101), not the newest bar of any ticker in a shared cache. Asymmetric Growth reads its momentum from D01 since
-    #380 S4, so its date is its scored names' too. No scored name: no date.
-    """
-    def resolve() -> str | None:
-        return d01_day(r["ticker"] for r in rawstore.query(f"SELECT ticker FROM {scores}"))
-    return resolve
-
-
 def _scored_prices_day(scores: str):
-    """``_scored_d01_day`` over the prices store: Asymmetric Growth reads its momentum there since PR 11 (G3)."""
+    """A resolver: the newest prices-store session over the names in the board's score table ``scores`` (K7, #383 R3).
+
+    Swing and Fundamentals score every name from the stored bars (the prices store's since PR 10), so their date is the
+    price date of their own names (DF101), not the newest bar of any ticker in a shared cache; Asymmetric Growth reads
+    its momentum there too (PR 11). No scored name: no date.
+    """
     def resolve() -> str | None:
         return prices_day(r["ticker"] for r in rawstore.query(f"SELECT ticker FROM {scores}"))
     return resolve
@@ -208,8 +194,8 @@ def _quick_financials_day() -> str | None:
 RESOLVERS = {
     # Swing and Fundamentals: the D01 date of the names they last scored (K7, #383 R3); Asymmetric Growth: their
     # prices-store date (#380 S4, PR 11).
-    "module_swing_potential": _scored_d01_day("swing_scores"),
-    "module_fundamentals": _scored_d01_day("fundamentals_scores"),
+    "module_swing_potential": _scored_prices_day("swing_scores"),
+    "module_fundamentals": _scored_prices_day("fundamentals_scores"),
     "module_asymmetric_growth": _scored_prices_day("ticker_scores"),
     # Co-movement clusters its names' prices-store closes (PR 8).
     "module_comovement": _comovement_day,

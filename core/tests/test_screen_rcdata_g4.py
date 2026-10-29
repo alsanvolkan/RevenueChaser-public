@@ -81,11 +81,12 @@ def test_stale_names_and_the_reference_session_read_the_prices_store():
     assert screen_common.stale_names(names, SESSION) == {"OLD"}
 
 
-def test_asymmetric_growths_freeze_keeps_reading_the_bars_its_board_scores_from(rawstore_tmp_db):
-    """AG's engine still reads D01 until PR 11 moves it, so its freeze checks (``d01_has_session``) stay on D01 while
-    Swing's and Fundamentals' move to the prices store: each board's freeze checks the bars that board scored from."""
+def test_every_boards_freeze_checks_the_prices_store_and_d01_is_gone(rawstore_tmp_db):
+    """Swing, Fundamentals and (since G3 moved its momentum) Asymmetric Growth all score from the prices store, so the
+    D01 checks are gone: a bar there makes the session, a D01 bar alone does not."""
     from RevenueChaser.core.tests.d01_seed import seed_d01
-    seed_bars("SPY", DAYS, fetched_at=AFTER)                             # the prices store only
-    assert ledger.prices_has_session(SESSION, "SPY") and not ledger.d01_has_session(SESSION, "SPY")
-    seed_d01("SPY", DAYS, AFTER)                                         # both stores
-    assert ledger.d01_has_session(SESSION, "SPY")
+    seed_d01("SPY", DAYS, AFTER, prices=False)                           # the old D01 only
+    assert not ledger.prices_has_session(SESSION, "SPY")
+    seed_bars("SPY", DAYS, fetched_at=AFTER)
+    assert ledger.prices_has_session(SESSION, "SPY")
+    assert not hasattr(ledger, "d01_has_session") and not hasattr(ledger, "d01_last_bars")
