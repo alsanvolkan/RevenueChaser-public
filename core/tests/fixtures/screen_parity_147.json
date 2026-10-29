@@ -581,7 +581,6 @@
    "data_as_of": "2026-10-14",
    "data_quality": {
     "dropped": {
-     "no_bars": 1,
      "no_edgar_annual": 1,
      "short_bars": 1
     },
@@ -590,7 +589,6 @@
     "no_submissions": 0,
     "older_quotes": 0,
     "quote_session": "2026-10-14",
-    "short_refetch_refused": 0,
     "spy_stale": false,
     "stale_info": 0,
     "stale_ohlc": 0,
@@ -614,6 +612,17 @@
      "label": "Excluded security types (ETF, CEF, SPAC, preferred, unit, warrant)"
     },
     {
+     "by_design": false,
+     "count": 1,
+     "fix": null,
+     "key": "no_quote",
+     "kind": "drop",
+     "label": "No current close in the prices store to prefilter on",
+     "tickers": [
+      "NOBARS1"
+     ]
+    },
+    {
      "by_design": true,
      "count": 1,
      "fix": null,
@@ -633,17 +642,6 @@
      "label": "Average daily dollar volume under $250,000",
      "tickers": [
       "LOWVOL"
-     ]
-    },
-    {
-     "by_design": false,
-     "count": 1,
-     "fix": null,
-     "key": "no_bars",
-     "kind": "drop",
-     "label": "No stored daily price bars (D01)",
-     "tickers": [
-      "NOBARS1"
      ]
     },
     {
@@ -703,17 +701,17 @@
    "regime": "RISK-ON",
    "selection_version": "7",
    "summary": {
-    "data_short": 2,
+    "data_short": 1,
     "distorted_count": 5,
     "excluded_types": 1,
-    "filtered_universe": 10,
+    "filtered_universe": 9,
     "health_drops": {
      "edgar_fetch_failed": 0,
      "ro40_barrier": 0,
      "sector_excluded": 0,
      "stale_annual": 0
     },
-    "hygiene": 2,
+    "hygiene": 3,
     "no_edgar": 1,
     "no_spine_gics": 0,
     "out_of_universe": null,
@@ -1144,7 +1142,7 @@
      "pb": 9000000.0,
      "pe": 250000000.0,
      "period": "FY2024 vs FY2023",
-     "price": 1.0,
+     "price": 30.0,
      "quality_pass": 1,
      "rev_growth_ttm": -0.05,
      "ro40": -2.229917,
@@ -1957,13 +1955,11 @@
    "data_as_of": "2026-10-14",
    "data_quality": {
     "dropped": {
-     "no_bars": 1,
      "short_bars": 1
     },
     "no_avg_volume": 0,
     "older_quotes": 0,
     "quote_session": "2026-10-14",
-    "short_refetch_refused": 0,
     "spy_stale": false,
     "stale_info": 0,
     "stale_ohlc": 0
@@ -1985,6 +1981,17 @@
      "label": "Excluded security types (ETF, CEF, SPAC, preferred, unit, warrant)"
     },
     {
+     "by_design": false,
+     "count": 1,
+     "fix": null,
+     "key": "no_quote",
+     "kind": "drop",
+     "label": "No current close in the prices store to prefilter on",
+     "tickers": [
+      "NOBARS1"
+     ]
+    },
+    {
      "by_design": true,
      "count": 1,
      "fix": null,
@@ -2004,17 +2011,6 @@
      "label": "Average daily dollar volume under $250,000",
      "tickers": [
       "LOWVOL"
-     ]
-    },
-    {
-     "by_design": false,
-     "count": 1,
-     "fix": null,
-     "key": "no_bars",
-     "kind": "drop",
-     "label": "No stored daily price bars (D01)",
-     "tickers": [
-      "NOBARS1"
      ]
     },
     {
@@ -2102,10 +2098,10 @@
    },
    "summary": {
     "avg_quality": 82.75,
-    "data_short": 2,
+    "data_short": 1,
     "excluded_types": 1,
-    "filtered_universe": 10,
-    "hygiene": 2,
+    "filtered_universe": 9,
+    "hygiene": 3,
     "no_spine_gics": 0,
     "out_of_universe": null,
     "passing": {
@@ -2185,7 +2181,7 @@
      "unit": "diff_pct"
     },
     {
-     "actual": -2.327598,
+     "actual": -69.827954,
      "gate": "weinstein",
      "passed": 0,
      "rule_id": "ma30w_rising",
@@ -2193,7 +2189,7 @@
      "unit": "diff_price"
     },
     {
-     "actual": -2.618042,
+     "actual": -78.541267,
      "gate": "minervini",
      "passed": 0,
      "rule_id": "ma200_rising",
@@ -2586,62 +2582,6 @@
     },
     {
      "actual": 1.0,
-     "gate": "direction",
-     "passed": 0,
-     "rule_id": "sma50_ge_sma200",
-     "ticker": "DOWN1",
-     "unit": "price"
-    },
-    {
-     "actual": 1.0,
-     "gate": "minervini",
-     "passed": 0,
-     "rule_id": "ma50_leading",
-     "ticker": "DOWN1",
-     "unit": "price"
-    },
-    {
-     "actual": 1.0,
-     "gate": "minervini",
-     "passed": 0,
-     "rule_id": "price_above_150_200",
-     "ticker": "DOWN1",
-     "unit": "price"
-    },
-    {
-     "actual": 1.0,
-     "gate": "minervini",
-     "passed": 0,
-     "rule_id": "price_above_50",
-     "ticker": "DOWN1",
-     "unit": "price"
-    },
-    {
-     "actual": 1.0,
-     "gate": "qullamaggie",
-     "passed": 0,
-     "rule_id": "price_above_ema10",
-     "ticker": "DOWN1",
-     "unit": "price"
-    },
-    {
-     "actual": 1.0,
-     "gate": "qullamaggie",
-     "passed": 0,
-     "rule_id": "price_above_ema20",
-     "ticker": "DOWN1",
-     "unit": "price"
-    },
-    {
-     "actual": 1.0,
-     "gate": "weinstein",
-     "passed": 0,
-     "rule_id": "price_above_30w",
-     "ticker": "DOWN1",
-     "unit": "price"
-    },
-    {
-     "actual": 1.0,
      "gate": "weinstein",
      "passed": 0,
      "rule_id": "volume_confirmation",
@@ -2703,22 +2643,6 @@
      "rule_id": "volume_confirmation",
      "ticker": "UP3",
      "unit": "ratio"
-    },
-    {
-     "actual": 1.000011,
-     "gate": "qullamaggie",
-     "passed": 0,
-     "rule_id": "ema10_above_ema20",
-     "ticker": "DOWN1",
-     "unit": "price"
-    },
-    {
-     "actual": 1.000011,
-     "gate": "qullamaggie",
-     "passed": 0,
-     "rule_id": "emas_rising",
-     "ticker": "DOWN1",
-     "unit": "price"
     },
     {
      "actual": 1.010101,
@@ -2865,6 +2789,14 @@
      "unit": "rating"
     },
     {
+     "actual": 172.421068,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "ma150_above_ma200",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
      "actual": 2.219015,
      "gate": "minervini",
      "passed": 1,
@@ -2919,6 +2851,78 @@
      "rule_id": "ma30w_rising",
      "ticker": "NOEDGAR",
      "unit": "diff_price"
+    },
+    {
+     "actual": 30.0,
+     "gate": "direction",
+     "passed": 0,
+     "rule_id": "sma50_ge_sma200",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 30.0,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "ma50_leading",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 30.0,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "price_above_150_200",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 30.0,
+     "gate": "minervini",
+     "passed": 0,
+     "rule_id": "price_above_50",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 30.0,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "price_above_ema10",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 30.0,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "price_above_ema20",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 30.0,
+     "gate": "weinstein",
+     "passed": 0,
+     "rule_id": "price_above_30w",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 30.000339,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "ema10_above_ema20",
+     "ticker": "DOWN1",
+     "unit": "price"
+    },
+    {
+     "actual": 30.000339,
+     "gate": "qullamaggie",
+     "passed": 0,
+     "rule_id": "emas_rising",
+     "ticker": "DOWN1",
+     "unit": "price"
     },
     {
      "actual": 39.600391,
@@ -3047,14 +3051,6 @@
      "rule_id": "ma30w_rising",
      "ticker": "UP3",
      "unit": "diff_price"
-    },
-    {
-     "actual": 5.747369,
-     "gate": "minervini",
-     "passed": 0,
-     "rule_id": "ma150_above_ma200",
-     "ticker": "DOWN1",
-     "unit": "price"
     },
     {
      "actual": 50.82576,
@@ -3475,22 +3471,22 @@
    ],
    "swing_scores": [
     {
-     "atr": 0.02,
+     "atr": 0.6,
      "change_1m": 0.0,
      "change_1w": 0.0,
      "change_pct": 0.0,
      "direction_ok": 0,
-     "entry": 1.0,
+     "entry": 30.0,
      "m_pass": 0,
      "ma_alignment": "broken",
      "multiplier": 0,
-     "price": 1.0,
+     "price": 30.0,
      "q_pass": 0,
      "quality": 0.0,
      "rr": 2.0,
      "rs_rating": 0.0,
-     "stop": 0.96,
-     "target": 1.08,
+     "stop": 28.8,
+     "target": 32.4,
      "ticker": "DOWN1",
      "w_pass": 0
     },

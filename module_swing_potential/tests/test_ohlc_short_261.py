@@ -110,7 +110,7 @@ def test_the_pipeline_counts_a_refused_short_frame_as_stale(rawstore_tmp_db, mon
     assert "short_refetch_refused" not in row                   # D01 bars are never refused; SPY's flag counts (PR 6)
     assert row["ohlc_stale"] is True                            # a refused frame is still counted stale
     payload = pipeline.build_payload([row], run_stats={})
-    assert payload["data_quality"]["short_refetch_refused"] == 0
+    assert "short_refetch_refused" not in payload["data_quality"]    # the count left with SPY's fallback (PR 10)
 
 
 # ── review round (2026-10-14): boundaries, equal counts, a reused symbol ──────

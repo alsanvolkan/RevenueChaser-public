@@ -13,7 +13,8 @@ mode replaces a ticker's whole stored series, so the writer guards that replacem
   Amsterdam). Without the gap a truncated download (one bar right after the stored last bar shares no session
   either) replaced a 500-bar history.
 
-Readers stay where they are (``indicators.load_ohlc``, ``ohlc.price_frame``, ``ledger.last_bars``). No network.
+Readers stay where they are (``indicators.load_ohlc``, ``ohlc.price_frame``; ``ledger.last_bars`` left in PR 10). No
+network.
 """
 from __future__ import annotations
 

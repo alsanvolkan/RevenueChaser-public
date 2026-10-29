@@ -13,14 +13,13 @@ Rules (decisions D1 / 4-A):
 - A freeze never runs inside the US trading window (09:30-16:30 ET): that run would mix
   unfinished and finished bars.
 - The payload must be real (not a fixture, not "no data", not empty).
-- All or nothing: every shown pick must have one complete D bar in the OHLC cache. One pick without it
-  refuses the whole board for the day, and the note says which picks and why (see ``ohlc_gaps``). A
-  partial board would be a different, silently thinner forecast than the one the user saw.
-- SPY anchors the Swing and Fundamentals boards: its complete D bar comes from D01 when D01 has it (U1, #402),
-  else from the OHLC cache (``spy_anchor_problem``).
-- Bars cached before D's close + 30 min are refetched, not skipped (option A, avo 2026-10-03). The refetch
-  happens when the board loads its bars (``load_ohlc``, Fetch only), so the board and its frozen picks
-  come from the same complete bars; a pick that is still partial here (a failed refetch) refuses the day.
+- All or nothing: every shown pick must have one complete D bar in the daily bars (since PR 10 the prices store's,
+  ``prices_last_bars``). One pick without it refuses the whole board for the day, and the note says which picks and
+  why (see ``ohlc_gaps``). A partial board would be a different, silently thinner forecast than the one the user saw.
+- SPY anchors the Swing and Fundamentals boards: its complete D bar in the same store (``spy_anchor_problem``). The
+  old ``swing_ohlc`` fallback is gone (F4 A, part 1).
+- A bar counts as complete only when it was read after D's close + 30 min (``calendar.bars_complete`` on its
+  ``fetched_at``).
 - The first freeze of a (source, day) wins. The table key includes ``subject``, so a second run
   with another candidate set would add its new tickers and turn the day into a union of two
   runs; ``write_picks`` therefore checks the whole (source, day) before writing.
@@ -144,18 +143,7 @@ def payload_problem(payload: dict, rows_key: str, *, check_spy: bool = True) -> 
     return None
 
 
-# ── is the daily-bar cache complete for session D? ───────────────────────────
-
-def last_bars(tickers) -> dict[str, tuple[str, float | None]]:
-    """``{ticker: (last bar day 'YYYY-MM-DD', cached_at of that bar)}`` from the shared OHLC cache."""
-    tickers = sorted({str(t).strip().upper() for t in tickers if t})
-    if not tickers:
-        return {}
-    rows = rawstore.query(
-        "SELECT ticker, max(substr(ts, 1, 10)) AS last_day, arg_max(cached_at, ts) AS cached_at "
-        "FROM swing_ohlc WHERE ticker IN (SELECT unnest(?)) GROUP BY ticker", [tickers])
-    return {r["ticker"]: (r["last_day"], r["cached_at"]) for r in rows}
-
+# ── are the daily bars complete for session D? ───────────────────────────────
 
 # Why a shown pick has no complete D bar (the values of ``ohlc_gaps``). Only the first can be fixed by
 # running a Fetch again (after Daily Bars, for D01), and the note says so for that cause only.
@@ -209,14 +197,15 @@ def _bar_cause(session: date, last_bar) -> str | None:
 def ohlc_gaps(session: date, tickers) -> dict[str, str]:
     """``{ticker: cause}`` for each ticker without one complete ``session`` bar; complete tickers are absent.
 
-    The bars are D01's (``d01_last_bars``; K8b, #383 R3): Swing and Fundamentals score every pick from D01 since C12,
-    so the freeze and the history snapshot check the bars the board scored from. A failed D01 read is no bars: every
+    The bars are the prices store's since PR 10 (``prices_last_bars``; D01's before, K8b, #383 R3): Swing and
+    Fundamentals score every pick from them, so the freeze and the history snapshot check the bars the board scored
+    from. A failed D01 read is no bars: every
     pick is a gap and the day is refused, never frozen on bars nobody checked. A pick without its ``session`` bar is
     ``NEEDS_REFETCH`` only while D01 lacks SPY's complete ``session`` bar (Daily Bars has not run); after that it is
     ``NO_SESSION_BAR`` (S2, #434 review).
     """
     wanted = sorted({_norm(t) for t in tickers if _norm(t)})
-    bars = d01_last_bars([*wanted, "SPY"])
+    bars = prices_last_bars([*wanted, "SPY"])
     # D01 is append-only: a pick's newest bar carries its own session's ``fetched_at``, never a later one, so the bar
     # alone cannot say whether a later Fetch helps (S2, #434 review). SPY's does: once Daily Bars has written SPY's
     # complete ``session`` bar, a pick without its own will not get one from another Fetch.
@@ -238,16 +227,41 @@ def ohlc_complete(session: date, tickers) -> set[str]:
     return wanted - set(ohlc_gaps(session, wanted))      # a ticker with no bars at all is a gap too
 
 
-# D01, the daily bars RC-Daily-Bars writes (``core/prices.py``, #156): one row per session, written once, after the
-# session's close + 30 min. It lives in its own file (prices.duckdb).
+def prices_last_bars(tickers) -> dict[str, tuple[str, float | None]]:
+    """``{ticker: (last session 'YYYY-MM-DD', fetched_at of that bar)}`` from the prices store (``prices.duckdb``,
+    ``rcdata.read.last_bars`` through ``core.market_bars``; PR 10, G4): the bars Swing and Fundamentals score from.
+
+    The builder writes a session's bar after its close, and ``fetched_at`` says when. A missing prices store reads as
+    no bars, and so does a failed read (logged): ``ohlc_gaps`` then refuses every pick and ``spy_anchor_problem``
+    refuses the day, never a freeze on bars nobody checked.
+    """
+    tickers = [t for t in (tickers or ()) if _norm(t)]
+    if not tickers:
+        return {}
+    try:
+        from RevenueChaser.core import market_bars
+        return market_bars.last_bars(tickers)
+    except Exception as exc:  # noqa: BLE001 - no bars means a refused freeze, never a failed one
+        logger.warning("forecast ledger: the prices store's bars could not be read (%s)", exc)
+        return {}
+
+
+def prices_has_session(session: date, ticker: str) -> bool:
+    """True when the prices store's last bar of ``ticker`` is ``session`` and was read after its close + 30 min."""
+    return _bar_cause(session, prices_last_bars([ticker]).get(_norm(ticker))) is None
+
+
+# D01, the daily bars RC-Daily-Bars wrote (``core/prices.py``, #156): one row per session, written once, after the
+# session's close + 30 min. Swing and Fundamentals left it in PR 10 (``prices_last_bars``); Asymmetric Growth's engine
+# and freeze and the boards' provenance still read it until their own groups move them (AG: PR 11), so each board's
+# freeze keeps checking the bars that board scored from.
 _D01 = "price_bars_daily"
 
 
 def d01_last_bars(tickers) -> dict[str, tuple[str, float | None]]:
-    """``{ticker: (last session 'YYYY-MM-DD', fetched_at of that bar)}`` from D01: the shape of ``last_bars``.
+    """``{ticker: (last session 'YYYY-MM-DD', fetched_at of that bar)}`` from D01.
 
-    A store without the price file or the table reads as no bars, and so does a failed read (logged): ``ohlc_gaps``
-    then refuses every pick, and ``spy_anchor_problem`` decides SPY on ``swing_ohlc`` (the board's SPY fallback).
+    A store without the price file or the table reads as no bars, and so does a failed read (logged).
     """
     tickers = sorted({_norm(t) for t in tickers if _norm(t)})
     if not tickers:
@@ -257,7 +271,7 @@ def d01_last_bars(tickers) -> dict[str, tuple[str, float | None]]:
             "SELECT ticker, max(session_date) AS last_day, arg_max(fetched_at, session_date) AS fetched_at "
             f"FROM {_D01} WHERE ticker IN (SELECT unnest(?)) GROUP BY ticker", [tickers],
             db=rawstore.MANIFEST[_D01].get("db", "raw"))
-    except Exception as exc:  # noqa: BLE001 - no D01 means the old check, never a failed freeze
+    except Exception as exc:  # noqa: BLE001 - no D01 is no bars, never a failed freeze
         logger.warning("forecast ledger: the D01 bars could not be read (%s)", exc)
         return {}
     return {r["ticker"]: (str(r["last_day"])[:10], r["fetched_at"]) for r in rows if r.get("last_day") is not None}
@@ -271,23 +285,18 @@ def d01_has_session(session: date, ticker: str) -> bool:
 def spy_anchor_problem(session: date) -> str | None:
     """Why SPY's bars are not one complete ``session``, or ``None``. SPY is the board anchor.
 
-    D01 first (U1, #402; K8b's SPY part): a complete ``session`` SPY bar in D01 anchors the board. That is the test the
-    Swing and Fundamentals baseline uses (``screen_common.load_spy``), so a board whose SPY came from D01 is never
-    refused for SPY's cache. Only when D01 lacks that bar does the ``swing_ohlc`` check below decide, with its old
-    reasons (the board's SPY fallback, ``load_ohlc``, reads that cache). The shown picks' own bars are D01's
-    (``ohlc_gaps``): the board scores them from D01 since C12.
+    The prices store's SPY bar (``prices_last_bars``), the same read the Swing and Fundamentals baseline uses
+    (``screen_common.load_spy``) and the picks' own check (``ohlc_gaps``). The ``swing_ohlc`` fallback is gone (F4 A,
+    part 1, PR 10): one source of bars for the board, its anchor and its picks.
     """
-    if d01_has_session(session, "SPY"):
-        return None
-    bar = last_bars(["SPY"]).get("SPY")
+    bar = prices_last_bars(["SPY"]).get("SPY")
     if bar is None:
-        return "no SPY bars in the store"
-    last_day, cached_at = bar
+        return "no SPY bars in the prices store"
+    last_day, fetched_at = bar
     if last_day != session.isoformat():
         return f"SPY's last bar is {last_day}, not the {session} session"
-    if cached_at is None or not calendar.bars_complete(session, cached_at):
-        return (f"the {session} bars were cached before the close + 30 min "
-                "(an intraday Fetch; the next Fetch refetches them)")
+    if fetched_at is None or not calendar.bars_complete(session, fetched_at):
+        return f"SPY's {session} bar was read before the close + 30 min"
     return None
 
 
@@ -403,10 +412,10 @@ def freeze_board(source: str, label: str, payload: dict, *, rows_key: str, to_ro
 
 # How each cause reads in a refusal note. Only the first may say a later Fetch can complete the day.
 _GAP_TEXT = {
-    NEEDS_REFETCH: ("need their {session} bar (none in D01 written past the close + 30 min yet; "
-                    "a later Fetch can complete the day once Daily Bars has run)"),
-    NO_SESSION_BAR: ("no {session} bar after the close (a halt or a Daily Bars gap; "
-                     "a later Fetch will not change it unless Daily Bars is run again)"),
+    NEEDS_REFETCH: ("need their {session} bar (none in the prices store read past the close + 30 min yet; "
+                    "a later Fetch can complete the day once the builder's daily bars have run)"),
+    NO_SESSION_BAR: ("no {session} bar after the close (a halt or a gap in the daily bars; "
+                     "a later Fetch will not change it unless the daily bars are read again)"),
 }
 _LIST_CAP = 10          # names listed per cause; the rest are counted
 

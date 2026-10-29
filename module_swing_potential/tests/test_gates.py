@@ -15,9 +15,9 @@ from RevenueChaser.module_swing_potential.screeners import (
 
 @pytest.fixture
 def d04(monkeypatch):
-    """The D04 quote the prefilter reads for "X" (``quotes.prefilter_quotes``), set per test."""
+    """The quote the prefilter reads for "X" (``screen_common.prefilter_inputs``, the prices store since PR 10)."""
     held: dict = {}
-    monkeypatch.setattr("RevenueChaser.core.quotes.prefilter_quotes", lambda tickers: dict(held))
+    monkeypatch.setattr("RevenueChaser.core.screen_common.prefilter_inputs", lambda tickers: dict(held))
 
     def put(price=100.0, avg_volume=5000.0):
         held.clear()

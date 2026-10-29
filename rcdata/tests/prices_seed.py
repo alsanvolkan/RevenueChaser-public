@@ -9,6 +9,7 @@ The root conftest gives every test its own ``config.MARKET_DIR`` (``isolate_ops`
 """
 from __future__ import annotations
 
+import math
 from datetime import date
 
 import duckdb
@@ -53,15 +54,16 @@ def _write() -> None:
         for f in factors:
             con.execute("INSERT INTO adj_factor VALUES (?, ?, ?, ?, ?, 1)",
                         [f"sym:{f['ticker']}", f.get("valid_from"), f.get("valid_to"), f["split_factor"],
-                         f.get("tr_factor", f["split_factor"])])
+                         f["split_factor"] if f.get("tr_factor") is None else f["tr_factor"]])
     finally:
         con.close()
 
 
-def seed_bars(ticker: str, days, fetched_at: float, *, close: float = 1.5, volume: float = 100.0,
+def seed_bars(ticker: str, days, fetched_at, *, close: float = 1.5, volume: float | None = 100.0,
               replace: bool = True, ohlc: dict | None = None) -> None:
-    """One bar per day in ``days`` (dates or ISO texts) for ``ticker``, stamped ``fetched_at``: open 1.0, high 2.0,
-    low 0.5 and ``close`` (the old D01 seed's flat bar), unless ``ohlc`` maps a day to its own ``(o, h, l, c)``."""
+    """One bar per day in ``days`` (dates or ISO texts) for ``ticker``, stamped ``fetched_at`` (a number, or a
+    function of the day): open 1.0, high 2.0, low 0.5 and ``close`` (the old D01 seed's flat bar), unless ``ohlc`` maps
+    a day to its own ``(o, h, l, c)``. ``volume`` None is a bar without volume."""
     ticker = ticker.strip().upper()
     bars_of = _state()[0]
     rows = [] if replace else list(bars_of.get(ticker, []))
@@ -72,7 +74,7 @@ def seed_bars(ticker: str, days, fetched_at: float, *, close: float = 1.5, volum
             continue                                   # first write of a key wins, as the old append did
         o, h, lo, c = (ohlc or {}).get(day, (1.0, 2.0, 0.5, close))
         rows.append({"session_date": day, "open": o, "high": h, "low": lo, "close": c, "volume": volume,
-                     "fetched_at": fetched_at})
+                     "fetched_at": fetched_at(day) if callable(fetched_at) else fetched_at})
     bars_of[ticker] = sorted(rows, key=lambda r: r["session_date"])
     _write()
 
@@ -82,7 +84,8 @@ def seed_frame(ticker: str, frame, fetched_at: float) -> None:
     ticker = ticker.strip().upper()
     _state()[0][ticker] = [{"session_date": _day(ix.date() if hasattr(ix, "date") else ix), "open": float(r["Open"]),
                       "high": float(r["High"]), "low": float(r["Low"]), "close": float(r["Close"]),
-                      "volume": float(r["Volume"]), "fetched_at": fetched_at} for ix, r in frame.iterrows()]
+                      "volume": None if r["Volume"] is None or math.isnan(float(r["Volume"])) else float(r["Volume"]),
+                      "fetched_at": fetched_at} for ix, r in frame.iterrows()]
     _write()
 
 
@@ -91,4 +94,40 @@ def seed_factor(ticker: str, split_factor: float, *, valid_from=None, valid_to=N
     _state()[1].append({"ticker": ticker.strip().upper(), "split_factor": split_factor,
                      "valid_from": _day(valid_from) if valid_from else None,
                      "valid_to": _day(valid_to) if valid_to else None, "tr_factor": tr_factor})
+    _write()
+
+
+def seed_actions(ticker: str, closes: dict, actions) -> None:
+    """``adj_factor`` periods for ``actions`` (``(ex_date, "split" | "dividend", value)``), as the builder derives
+    them from the nominal ``closes`` (``{day: close}``): every bar before an ex-date is multiplied by ``1 / ratio``
+    for a split (split and total-return factor) and by ``1 - value / the close before it`` for a cash dividend (the
+    total-return factor only)."""
+    edges = sorted((_day(ex), kind, float(v)) for ex, kind, v in actions)
+    days = sorted(_day(d) for d in closes)
+    close_of = {_day(d): float(c) for d, c in closes.items()}
+    for i, (ex, _kind, _v) in enumerate(edges):
+        split = tr = 1.0
+        for ex2, kind2, v2 in edges[i:]:
+            if kind2 == "split":
+                split, tr = split / v2, tr / v2
+            else:
+                tr *= 1.0 - v2 / close_of[max(d for d in days if d < ex2)]
+        seed_factor(ticker, split, valid_from=edges[i - 1][0] if i else None, valid_to=ex, tr_factor=tr)
+
+
+def drop_session(day) -> None:
+    """Remove every ticker's bar of ``day``, as if the builder had not read that session yet."""
+    day = _day(day)
+    bars_of = _state()[0]
+    for ticker in list(bars_of):
+        bars_of[ticker] = [r for r in bars_of[ticker] if r["session_date"] != day]
+    _write()
+
+
+def drop_ticker(ticker: str) -> None:
+    """Remove ``ticker``'s bars and factors, as if the store had never held it."""
+    ticker = ticker.strip().upper()
+    bars_of, factors = _state()
+    bars_of.pop(ticker, None)
+    factors[:] = [f for f in factors if f["ticker"] != ticker]
     _write()

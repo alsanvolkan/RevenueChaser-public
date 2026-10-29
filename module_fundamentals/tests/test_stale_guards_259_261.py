@@ -28,7 +28,8 @@ def test_the_stale_marker_is_stripped_and_counted(monkeypatch):
     assert row["info_stale"] is True and "short_refetch_refused" not in row    # D01 bars are never refused (PR 6)
     assert "'_stale'" not in repr(row)                   # the marker key never reaches a card field
     quality = pipeline.build_payload([row], run_stats={})["data_quality"]
-    assert quality["stale_info"] == 1 and quality["short_refetch_refused"] == 0
+    assert quality["stale_info"] == 1 and "short_refetch_refused" not in quality   # the count left with SPY's
+    # fallback in PR 10 (F4 A, part 1)
 
 
 def test_a_fresh_row_counts_nothing(monkeypatch):

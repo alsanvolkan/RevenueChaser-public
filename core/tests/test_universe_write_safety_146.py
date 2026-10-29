@@ -498,7 +498,6 @@ def test_the_boards_show_the_stored_partial_flag(rawstore_tmp_db, monkeypatch):
     _store("AAA")
     for mod, render in ((fp, render_fundamental_dashboard), (sp, render_swing_dashboard)):
         monkeypatch.setattr(mod, "prefilter", lambda r: mod.screen_common.Prefiltered([]))
-        monkeypatch.setattr(mod, "load_ohlc", lambda *a, **k: None)
         assert mod.run_scan()["universe_partial"] is False
     uf._save_fetch_state(True, "2026-10-03T00:00:00+00:00")
     for mod, render in ((fp, render_fundamental_dashboard), (sp, render_swing_dashboard)):

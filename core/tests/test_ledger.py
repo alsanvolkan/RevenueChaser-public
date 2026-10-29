@@ -280,8 +280,9 @@ def test_the_spy_stale_check_can_be_left_to_a_family_without_the_flag():
 # ── OHLC anchor ───────────────────────────────────────────────────────────────
 
 def _seed_bars(ticker, last_day, cached_at, ts_suffix="T00:00:00"):
-    """The bars in ``swing_ohlc`` (``last_bars``, SPY's fallback anchor) and in D01 (``ohlc_gaps`` since K8b,
-    #383 R3); ``ts_suffix`` shapes the cache's text timestamp only."""
+    """The bars in ``swing_ohlc`` (no longer read since PR 10) and in the daily bars (``ohlc_gaps`` since K8b, #383 R3;
+    the prices store since PR 10, which ``seed_d01`` also writes); ``ts_suffix`` shapes the cache's text timestamp
+    only."""
     rawstore.write_rows("swing_ohlc", [
         {"ticker": ticker, "ts": f"{d}{ts_suffix}", "open": 1.0, "high": 2.0, "low": 0.5,
          "close": 1.5, "volume": 100.0, "cached_at": cached_at}
@@ -396,8 +397,7 @@ def test_spy_anchor_problem_names_the_reason(rawstore_tmp_db):
     assert "2026-10-01" in ledger.spy_anchor_problem(D)
     _seed_bars("SPY", "2026-10-02", _close_plus(-270))
     why = ledger.spy_anchor_problem(D)
-    assert "before the close" in why and "intraday" in why
-    assert "reuses" not in why and "refetch" in why            # option A: the next Fetch refetches them
+    assert why == "SPY's 2026-10-02 bar was read before the close + 30 min"
     _seed_bars("SPY", "2026-10-02", _close_plus(31))
     assert ledger.spy_anchor_problem(D) is None
 
@@ -533,9 +533,10 @@ def test_the_refusal_note_splits_the_incomplete_picks_by_cause_in_rank_order(raw
     no_bar = re.search(r"no 2026-10-02 bar after the close \(([^)]*)\): ([A-Z0-9, ]+?)(?:;|$)", why)
     assert refetch and no_bar
     assert refetch.group(2) == "T2, T4" and no_bar.group(2) == "T3, T5, T6"
-    assert refetch.group(1) == ("none in D01 written past the close + 30 min yet; "
-                                "a later Fetch can complete the day once Daily Bars has run")
-    assert no_bar.group(1) == "a halt or a Daily Bars gap; a later Fetch will not change it unless Daily Bars is run again"
+    assert refetch.group(1) == ("none in the prices store read past the close + 30 min yet; "
+                                "a later Fetch can complete the day once the builder's daily bars have run")
+    assert no_bar.group(1) == ("a halt or a gap in the daily bars; "
+                               "a later Fetch will not change it unless the daily bars are read again")
     assert why.count("later Fetch can") == 1                      # only the refetch cause may promise a fix
     assert "cached intraday" not in why and "reuses" not in why
 

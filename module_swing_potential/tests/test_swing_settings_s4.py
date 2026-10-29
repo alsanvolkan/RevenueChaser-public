@@ -67,11 +67,12 @@ def _rows():
 
 
 def _prefilter_quotes(monkeypatch):
-    """Three D04 quotes around the default price and dollar-volume floors (``quotes.prefilter_quotes``)."""
+    """Three names around the default price and dollar-volume floors (the prefilter's input,
+    ``screen_common.prefilter_inputs``: the prices store's since PR 10, D04's ``quotes.prefilter_quotes`` before)."""
     held = {"LOWP": {"price": 4.99, "avg_volume": 10_000.0},
             "THIN": {"price": 50.0, "avg_volume": 1_000.0},
             "OK": {"price": 100.0, "avg_volume": 5_000.0}}
-    monkeypatch.setattr("RevenueChaser.core.quotes.prefilter_quotes", lambda tickers: dict(held))
+    monkeypatch.setattr("RevenueChaser.core.screen_common.prefilter_inputs", lambda tickers: dict(held))
     return [{"ticker": t, "quote": {}} for t in ("LOWP", "THIN", "OK")]
 
 
@@ -87,6 +88,7 @@ def test_defaults_reproduce_the_pre_change_output(rawstore_tmp_db, monkeypatch):
     payload.pop("settings")                                # the run's thresholds (finding 2), not a result
     assert payload.pop("selection_version") == config.SELECTION_VERSION
     golden["payload"].pop("selection_version")             # the model's version moved (5, PR 6), not its output here
+    golden["payload"]["data_quality"].pop("short_refetch_refused")   # the swing_ohlc refetch is gone (PR 10)
     pf = pipeline.prefilter(_prefilter_quotes(monkeypatch))
     assert {"payload": payload,
             "prefilter": {"kept": [r["ticker"] for r in pf.kept], "drops": pf.drops,
@@ -329,3 +331,4 @@ def test_route_reset_deletes_the_swing_rows(client):
 def test_zero_weights_and_no_momentum_percentile_give_no_composite_not_a_crash(rawstore_tmp_db):
     bs.save(B, {"W_PROX": 0.0, "W_CONS": 0.0})
     assert ranking.composite(None, 40.0, 60.0, eff=_settings().effective()) is None
+

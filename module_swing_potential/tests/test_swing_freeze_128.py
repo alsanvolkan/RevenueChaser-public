@@ -132,7 +132,7 @@ def test_a_post_close_run_on_bars_cached_intraday_freezes_nothing(rawstore_tmp_d
     out = freeze.freeze_payload(_payload([_cand("AAA", 90.0)]), run_id="x", now=POST_CLOSE)
     assert out.frozen == 0 and rawstore.count("forecast_ledger") == 0
     (note,) = ledger.take_notes()
-    assert "2026-10-02" in note and "intraday" in note
+    assert "2026-10-02" in note and "before the close + 30 min" in note
 
 
 def test_one_halted_candidate_skips_the_whole_board_and_names_it(seeded):
@@ -144,8 +144,8 @@ def test_one_halted_candidate_skips_the_whole_board_and_names_it(seeded):
     assert out.frozen == 0 and rawstore.count("forecast_ledger") == 0
     (note,) = ledger.take_notes()
     assert note.startswith("Swing not frozen:") and "1 of 3" in note
-    assert ("no 2026-10-02 bar after the close (a halt or a Daily Bars gap; a later Fetch will not change it "
-            "unless Daily Bars is run again): BBB") in note
+    assert ("no 2026-10-02 bar after the close (a halt or a gap in the daily bars; a later Fetch will not "
+            "change it unless the daily bars are read again): BBB") in note
     assert "AAA" not in note and "CCC" not in note and "later Fetch can" not in note
 
 
@@ -156,8 +156,8 @@ def test_a_candidate_still_cached_intraday_skips_the_whole_board_and_says_a_refe
     out = freeze.freeze_payload(_payload([_cand("AAA", 90.0), _cand("CCC", 70.0)]), run_id="x", now=POST_CLOSE)
     assert out.frozen == 0 and rawstore.count("forecast_ledger") == 0
     (note,) = ledger.take_notes()
-    assert ("need their 2026-10-02 bar (none in D01 written past the close + 30 min yet; "
-            "a later Fetch can complete the day once Daily Bars has run): CCC") in note
+    assert ("need their 2026-10-02 bar (none in the prices store read past the close + 30 min yet; "
+            "a later Fetch can complete the day once the builder's daily bars have run): CCC") in note
     assert "1 of 2" in note and "reuses" not in note
 
 
@@ -168,8 +168,8 @@ def test_a_candidate_without_its_bar_after_daily_bars_ran_is_named_as_such(seede
     out = freeze.freeze_payload(_payload([_cand("AAA", 90.0), _cand("BBB", 80.0)]), run_id="x", now=POST_CLOSE)
     assert out.frozen == 0
     (note,) = ledger.take_notes()
-    assert ("no 2026-10-02 bar after the close (a halt or a Daily Bars gap; "
-            "a later Fetch will not change it unless Daily Bars is run again): BBB") in note
+    assert ("no 2026-10-02 bar after the close (a halt or a gap in the daily bars; "
+            "a later Fetch will not change it unless the daily bars are read again): BBB") in note
     assert "can complete the day" not in note
 
 

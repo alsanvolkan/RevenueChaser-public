@@ -118,7 +118,7 @@ def test_a_post_close_run_on_bars_cached_intraday_freezes_nothing(rawstore_tmp_d
         _seed(t, cached_at=_close_plus(-265))
     ledger.take_notes()
     out = freeze.freeze_payload(_payload([_cand("AAA", 70.0)]), run_id="x", now=POST_CLOSE)
-    assert out.frozen == 0 and "intraday" in ledger.take_notes()[0]
+    assert out.frozen == 0 and "before the close + 30 min" in ledger.take_notes()[0]
 
 
 def test_one_candidate_without_the_session_bar_skips_the_whole_board(seeded):
@@ -134,8 +134,8 @@ def test_a_candidate_without_its_bar_after_daily_bars_ran_is_named_as_such(seede
     """D01 holds SPY's D bar and BBB's last bar is D-1: another Fetch cannot complete the day (#434 review S2)."""
     _seed("BBB", last_day="2026-10-01", cached_at=_close_plus(-1200))
     out = freeze.freeze_payload(_payload([_cand("AAA", 70.0), _cand("BBB", 55.0)]), run_id="x", now=POST_CLOSE)
-    assert out.frozen == 0 and ("no 2026-10-02 bar after the close (a halt or a Daily Bars gap; a later Fetch will "
-                                "not change it unless Daily Bars is run again): BBB") in ledger.take_notes()[0]
+    assert out.frozen == 0 and ("no 2026-10-02 bar after the close (a halt or a gap in the daily bars; a later "
+                                "Fetch will not change it unless the daily bars are read again): BBB") in ledger.take_notes()[0]
 
 
 def test_a_stale_spy_freezes_nothing(seeded):

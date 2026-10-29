@@ -1,12 +1,12 @@
 """C12 (#383 R3 slice 2; #147 27-3b; card C, avo 2026-10-15): Swing and Fundamentals scan the whole universe.
 
 - **7-A prefilter** (avo 2026-10-02): price and dollar volume only. The trend rules (52-week distance, above the
-  50-day average) leave it; the gates test them on fresh bars. The inputs come from D04 ``quote_snapshot`` (the
-  newest session's row, Yahoo first), not the universe quote; a name with no D04 price drops as ``no_quote``. The
-  quotes' session is reported (U9).
+  50-day average) leave it; the gates test them on fresh bars. The inputs come from the prices store since PR 10 (the
+  newest close and the mean volume; D04 ``quote_snapshot`` before), not the universe quote; a name with no current
+  close drops as ``no_quote``. The closes' session is reported (U9).
 - **No cap:** every prefiltered name is scored (``MAX_PHASE2`` 500 goes); **no TOP_N cut:** every candidate reaches
   the page and the ledger (card 6/7).
-- **Bars from D01** through ``prices.daily_bars``: level rules read nominal bars, returns read adjusted ones (D3).
+- **Bars from D01** (the prices store since PR 10, ``core.market_bars``): level rules read nominal bars, returns read adjusted ones (D3).
   No ``swing_ohlc`` read or write and no yfinance history call for a scored name.
 - **The RS population** is every scored name with a 12-month return: the whole screenable universe.
 - **Long lane** for both Fetch jobs.
@@ -25,6 +25,7 @@ from RevenueChaser.core import rawstore, screen_common
 from RevenueChaser.module_fundamentals import pipeline as fp
 from RevenueChaser.module_swing_potential import indicators
 from RevenueChaser.module_swing_potential import pipeline as sp
+from RevenueChaser.rcdata.tests import prices_seed
 
 D = date(2026, 10, 14)
 NOW = datetime(2026, 10, 14, 21, 45, tzinfo=timezone.utc)      # 17:45 EDT: the 14 Oct session is complete
@@ -52,11 +53,20 @@ def _seed_d01(ticker: str, days: list[date], close=None, actions=()):
         "adj_close": None, "volume": 1.0e6, "split_ratio": None, "adj_source": None, "source": "uw",
         "fetched_at": _evening(d), "run_id": "seed", "run_at": _evening(d)}
         for i, d in enumerate(days) for c in [close(i) if close else 50.0 + 0.1 * i]])
+    _mirror(ticker, days, close, actions)
     if actions:
         rawstore.write_rows("price_actions", [
             {"ticker": ticker, "ex_date": ex, "action": kind, "value": v, "session_date": ex,
              "source": "yfinance", "fetched_at": FETCHED, "run_id": "seed", "run_at": FETCHED}
             for ex, kind, v in actions])
+
+
+def _mirror(ticker: str, days: list[date], close=None, actions=()):
+    """The same bars in the prices store (PR 10), each on its own evening, with the actions as ``adj_factor``."""
+    closes = {d: (close(i) if close else 50.0 + 0.1 * i) for i, d in enumerate(days)}
+    prices_seed.seed_bars(ticker, days, _evening, ohlc={d: (c, c * 1.01, c * 0.99, c) for d, c in closes.items()},
+                          volume=1.0e6)
+    prices_seed.seed_actions(ticker, closes, actions)
 
 
 def _q(ticker, session, price, *, v10=None, v3m=None, source="yfinance", payload=None):
@@ -71,18 +81,25 @@ def _row(ticker, **quote):
     return {"ticker": ticker, "quote": quote}
 
 
-# ── the 7-A prefilter on D04 ──────────────────────────────────────────────────
+# ── the 7-A prefilter on the prices store (D04 before PR 10) ─────────────────────
 
-def test_the_trend_rules_are_gone(rawstore_tmp_db):
-    rawstore.write_rows("quote_snapshot", [_q("FAR", D, 20.0, v10=1e6)])
+def _closes(ticker, close, volume=1e6, end=D):
+    """Five sessions of ``ticker`` ending ``end`` in the prices store, the prefilter's input since PR 10."""
+    prices_seed.seed_bars(ticker, _sessions(end, 5), FETCHED, close=close, volume=volume)
+
+
+def test_the_trend_rules_are_gone():
+    _closes("FAR", 20.0)
     row = _row("FAR", regularMarketPrice=20.0, fiftyTwoWeekHigh=40.0, fiftyDayAverage=25.0,
                averageDailyVolume10Day=1e6)
     pf = screen_common.prefilter([row], CFG)
     assert pf.kept == [row] and pf.drops == {}
 
 
-def test_the_prefilter_reads_d04_not_the_universe_quote(rawstore_tmp_db):
-    rawstore.write_rows("quote_snapshot", [_q("UP", D, 50.0, v10=1e6), _q("DOWN", D, 3.0, v10=1e6)])
+def test_the_prefilter_reads_the_prices_store_not_d04_nor_the_universe_quote(rawstore_tmp_db):
+    rawstore.write_rows("quote_snapshot", [_q("UP", D, 3.0, v10=1e6), _q("DOWN", D, 50.0, v10=1e6)])
+    _closes("UP", 50.0)
+    _closes("DOWN", 3.0)
     up = _row("UP", regularMarketPrice=3.0, averageDailyVolume10Day=1e6)        # the stale universe quote
     down = _row("DOWN", regularMarketPrice=50.0, averageDailyVolume10Day=1e6)
     pf = screen_common.prefilter([up, down], CFG)
@@ -90,42 +107,32 @@ def test_the_prefilter_reads_d04_not_the_universe_quote(rawstore_tmp_db):
     assert pf.drops == {"low_price": ["DOWN"]}
 
 
-def test_the_newest_session_wins_and_yahoo_comes_first(rawstore_tmp_db):
-    old = date(2026, 10, 13)
-    rawstore.write_rows("quote_snapshot", [
-        _q("AAA", old, 60.0, v10=1e6), _q("AAA", D, 3.0, v10=1e6),                     # newest says 3
-        _q("BBB", D, 3.0, source="uw", payload={"close": "3"}), _q("BBB", D, 60.0, v10=1e6),   # Yahoo first
-        _q("CCC", D, 60.0, source="uw", payload={"close": "60"})])                    # UW where Yahoo has none
-    pf = screen_common.prefilter([_row("AAA"), _row("BBB"), _row("CCC")], CFG)
-    assert [r["ticker"] for r in pf.kept] == ["BBB", "CCC"]
+def test_the_newest_close_is_the_price():
+    prices_seed.seed_bars("AAA", _sessions(D, 5), FETCHED, close=60.0,
+                          ohlc={D: (1.0, 2.0, 0.5, 3.0)})                         # the newest close says 3
+    pf = screen_common.prefilter([_row("AAA")], CFG)
     assert pf.drops == {"low_price": ["AAA"]}
 
 
-def test_dollar_volume_reads_the_yahoo_quote_and_a_row_without_volume_skips_the_rule(rawstore_tmp_db):
-    rawstore.write_rows("quote_snapshot", [
-        _q("THIN", D, 10.0, v3m=24_999.0),                    # no 10-day: the 3-month average stands in
-        _q("EDGE", D, 10.0, v10=25_000.0),                    # exactly at the floor
-        _q("UWONLY", D, 10.0, source="uw", payload={"close": "10"})])
-    pf = screen_common.prefilter([_row("THIN"), _row("EDGE"), _row("UWONLY")], CFG)
-    assert [r["ticker"] for r in pf.kept] == ["EDGE", "UWONLY"]
-    assert pf.drops == {"low_dollar_volume": ["THIN"]}
+def test_dollar_volume_reads_the_mean_volume_and_a_name_without_volume_skips_the_rule():
+    _closes("THIN", 10.0, volume=24_999.0)
+    _closes("EDGE", 10.0, volume=25_000.0)                    # exactly at the floor
+    _closes("NOVOL", 10.0, volume=None)
+    pf = screen_common.prefilter([_row("THIN"), _row("EDGE"), _row("NOVOL")], CFG)
+    assert [r["ticker"] for r in pf.kept] == ["EDGE", "NOVOL"]
+    assert pf.drops == {"low_dollar_volume": ["THIN"]} and pf.no_volume == ["NOVOL"]
 
 
-def test_the_10_day_volume_comes_before_the_3_month_one(rawstore_tmp_db):
-    rawstore.write_rows("quote_snapshot", [_q("TEN", D, 10.0, v10=1_000.0, v3m=1.0e6)])
-    pf = screen_common.prefilter([_row("TEN")], CFG)
-    assert pf.drops == {"low_dollar_volume": ["TEN"]}         # 10 x 1,000 is under the floor; the 3-month is not read
-
-
-def test_a_name_with_no_d04_price_drops_as_no_quote(rawstore_tmp_db):
-    rawstore.write_rows("quote_snapshot", [_q("NOPX", D, None, payload={"marketCap": 1e9})])
+def test_a_name_with_no_close_drops_as_no_quote(rawstore_tmp_db):
+    rawstore.write_rows("quote_snapshot", [_q("NOPX", D, 50.0, v10=1e6)])          # D04 is not read
     pf = screen_common.prefilter([_row("NONE", regularMarketPrice=50.0), _row("NOPX")], CFG)
     assert pf.kept == [] and pf.drops == {"no_quote": ["NONE", "NOPX"]}
 
 
-def test_the_quotes_session_is_reported(rawstore_tmp_db):
-    old = date(2026, 10, 13)
-    rawstore.write_rows("quote_snapshot", [_q("AAA", D, 50.0), _q("BBB", D, 50.0), _q("CCC", old, 50.0)])
+def test_the_closes_session_is_reported():
+    _closes("AAA", 50.0)
+    _closes("BBB", 50.0)
+    _closes("CCC", 50.0, end=date(2026, 10, 13))
     pf = screen_common.prefilter([_row("AAA"), _row("BBB"), _row("CCC")], CFG)
     assert pf.quote_session == D and pf.older_quotes == 1
 
@@ -276,7 +283,7 @@ def test_a_fundamentals_row_reads_d01(rawstore_tmp_db, clock, monkeypatch):
     _seed_d01("AAA", days, close=lambda i: 100.0 if i < 150 else 50.0, actions=[(days[150], "split", 2.0),
                                                                                 (days[280], "dividend", 1.0)])
     _seed_d01("SPY", days, close=lambda i: 400.0)
-    spy = screen_common._ohlcv(__import__("RevenueChaser.core.prices", fromlist=["x"]).daily_bars(
+    spy = screen_common._ohlcv(__import__("RevenueChaser.core.market_bars", fromlist=["x"]).daily_bars(
         ["SPY"], basis="adjusted"))
     monkeypatch.setattr(fp.sec_edgar, "get_fundamentals",
                         lambda t, no_fetch=False: ([{"fy": 2025, "revenue": 1e9}], [], {}))
@@ -295,8 +302,8 @@ def test_the_payload_names_the_quotes_session_and_counts_older_quotes(rawstore_t
     from RevenueChaser.core.tests import screen_parity as scn
     scn.seed()
     scn.patch(monkeypatch)
-    with rawstore.connect(db=rawstore.MANIFEST["quote_snapshot"].get("db", "raw")) as conn:
-        conn.execute("UPDATE quote_snapshot SET session_date = DATE '2026-10-13' WHERE ticker = 'UP2'")
+    kind, drift = scn.BARS["UP2"]
+    prices_seed.seed_frame("UP2", scn._bars(kind, drift, scn.LONG_BARS, end=date(2026, 10, 13)), FETCHED)
     dq = mod.run_scan()["data_quality"]
     assert dq["quote_session"] == "2026-10-14" and dq["older_quotes"] == 1
 

@@ -11,7 +11,8 @@ import json
 
 import pytest
 
-from RevenueChaser.module_testing.e2e.harness.screener_seed import bars_to, seed_d01, seed_quote
+from RevenueChaser.module_testing.e2e.harness.screener_seed import bars_to, point_at, seed_d01, seed_quote
+from RevenueChaser.rcdata.tests import prices_seed
 
 
 @pytest.fixture
@@ -20,7 +21,7 @@ def seeded(dashboard, monkeypatch):
     import RevenueChaser.core.rawstore as rawstore
     from RevenueChaser.core import calendar
 
-    monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+    point_at(dashboard, monkeypatch)
     rawstore.ensure_all_tables()
     quote = {"regularMarketPrice": 130.0, "fiftyTwoWeekHigh": 135.0, "fiftyDayAverage": 120.0,
              "averageDailyVolume10Day": 2_000_000}
@@ -97,7 +98,8 @@ console.log(JSON.stringify(log));
         import RevenueChaser.core.rawstore as rawstore
         with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
             conn.execute("DELETE FROM price_bars_daily WHERE ticker = 'SPY'")
-        _fetch(dashboard)                       # no D01 SPY: the fallback finds no cache, and the fake Yahoo no SPY
+        prices_seed.drop_ticker("SPY")         # the prices store the board reads (PR 10)
+        _fetch(dashboard)                       # no SPY bars: no fallback since PR 10
         r = _refresh(dashboard)
         assert _payload(dashboard)["no_data"] is False
         assert "Regime —" in r.text

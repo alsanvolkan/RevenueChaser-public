@@ -24,8 +24,8 @@ from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.core.providers.result import ProviderHealth
 from RevenueChaser.core.reporting_common import write_artifact
 from RevenueChaser.core import funnel
-# load_ohlc: the SPY fallback only (U1); a scored name reads D01 (``screen_common.load_bars``).
-from RevenueChaser.module_swing_potential.indicators import compute_indicators, load_ohlc, load_ticker_info
+# A scored name and SPY read the prices store (``screen_common.load_bars`` / ``load_spy``, PR 10).
+from RevenueChaser.module_swing_potential.indicators import compute_indicators, load_ticker_info
 from RevenueChaser.core import fiscal_year
 from RevenueChaser.core import screen_common
 from RevenueChaser.core import universe as _universe
@@ -641,8 +641,6 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
                          "no_submissions": run_stats.get("no_submissions", 0),
                          "no_cik": run_stats.get("no_cik", 0),
                          "stale_submissions": run_stats.get("stale_submissions", 0),
-                         # SPY's frame, the only one ``load_ohlc`` can still refuse (Swing review 8): 0 or 1
-                         "short_refetch_refused": int(bool(run_stats.get("spy_short_refetch_refused"))),
                          "spy_stale": bool(run_stats.get("spy_stale")),
                          "dropped": run_stats.get("dropped") or {}},
         "summary": {
@@ -713,7 +711,7 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
     payload = screen_common.run_screen(
         board="fundamental", refreshed_by="Fundamentals", cfg=config,
         load_universe=fetch_universe_stats, prefilter=prefilter,
-        load_spy=lambda: screen_common.load_spy(lambda: load_ohlc("SPY", ttl_days=0.5, no_fetch=no_fetch)),
+        load_spy=screen_common.load_spy,
         compute_row=compute_row, build_payload=build_payload, persist=scores.persist if rows_sink is None else (lambda results: scores.persist(results, sink=rows_sink)),
         top_n=top_n, refresh_universe=refresh_universe, no_fetch=no_fetch,
         history_board="module_fundamentals", saved=config.FUNDAMENTALS_JSON)
