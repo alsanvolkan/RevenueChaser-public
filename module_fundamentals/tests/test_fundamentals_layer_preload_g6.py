@@ -73,3 +73,27 @@ def test_compute_row_takes_the_chunk_record_and_never_asks_sec_edgar(monkeypatch
 def _bars():
     import pandas as pd
     return pd.DataFrame({"close": [1.0]}), True
+
+
+def test_a_failed_chunk_read_falls_back_to_each_names_own_read(monkeypatch, caplog):
+    # Delta review D2: one DuckDB error on the batch read must not drop the chunk's 200 names as SEC failures, nor
+    # retry the batch once per name; the chunk reads each name on its own (``screen_common.load_bars_many``'s rule).
+    calls, singles = [], []
+
+    def records_many(tickers):
+        calls.append(list(tickers))
+        raise RuntimeError("IO Error: could not open fundamentals.duckdb")
+
+    def records(ticker):
+        singles.append(ticker)
+        return [{"fiscal_year": "2025"}], [], {"layer": True}
+
+    monkeypatch.setattr(fundamentals_layer, "records_many", records_many)
+    monkeypatch.setattr(fundamentals_layer, "records", records)
+    monkeypatch.setattr(screen_common, "BARS_CHUNK", 2)
+    chunks = pipeline._LayerChunks(["A", "B", "C"])
+    with caplog.at_level("WARNING"):
+        assert chunks.get("A")[0] and chunks.get("B")[0]
+    assert calls == [["A", "B"]] and singles == ["A", "B"]
+    assert "reading per name" in caplog.text
+    assert chunks.get("C")[0] and calls == [["A", "B"], ["C"]]

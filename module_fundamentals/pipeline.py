@@ -449,7 +449,8 @@ class _LayerChunks:
     ``run_screen`` scores ``screen_common.BARS_CHUNK`` names at a time, in the kept order, and finishes a chunk
     before the next, so one ``records_many`` read per chunk serves every name of it and only that chunk is held. A
     name read one by one opens the served file twice (57 ms a name against 11 ms batched, the 29 Oct 2026 sample).
-    ``get`` answers None for a name that was not kept, which then reads its own row."""
+    ``get`` answers None for a name that was not kept, which then reads its own row. A chunk whose batch read fails
+    is read name by name, once (``screen_common.load_bars_many``'s rule; delta review D2)."""
 
     def __init__(self, tickers: list[str]):
         self._tickers = tickers
@@ -469,9 +470,18 @@ class _LayerChunks:
         with self._lock:
             if self._start != start:
                 self._rows, self._start = {}, None
-                self._rows = fundamentals_layer.records_many(self._tickers[start:start + size])
+                chunk = self._tickers[start:start + size]
+                try:
+                    self._rows = fundamentals_layer.records_many(chunk)
+                except Exception as exc:  # noqa: BLE001 - each name then reads its own row (delta review D2)
+                    logger.warning("fundamentals: the layer records of %d names could not be read in one go (%s); "
+                                   "reading per name", len(chunk), exc)
+                    self._rows = None
                 self._start = start
-            return self._rows.get(ticker) or ([], [], fundamentals_layer._unavailable())
+            rows = self._rows
+        if rows is None:
+            return fundamentals_layer.records(ticker)
+        return rows.get(ticker) or ([], [], fundamentals_layer._unavailable())
 
 
 def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None = None,
