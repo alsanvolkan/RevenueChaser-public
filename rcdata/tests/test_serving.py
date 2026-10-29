@@ -136,7 +136,7 @@ def test_b2_a_table_the_live_file_has_must_be_in_the_build():
 
 def test_b2_a_shrink_is_allowed_only_when_asked_for():
     _build_t(10)
-    _build_t(0, allow_shrink=True)
+    _build_t(0, allow_shrink=("t",))
     with serving.open_read("market") as con:
         assert con.execute("SELECT count(*) FROM t").fetchone()[0] == 0
     _build_t(11)                                   # growing is always fine

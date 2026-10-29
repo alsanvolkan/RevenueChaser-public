@@ -113,22 +113,23 @@ class BuildFile:
             self.con = None
 
     def swap(self, expected_counts: dict[str, int], checks: Iterable[dict] = (), *,
-             allow_shrink: bool = False) -> Path:
+             allow_shrink: Iterable[str] = ()) -> Path:
         """Check this build and move it over the live file; :class:`SwapRefused` (file deleted) when a check fails.
 
         ``expected_counts`` maps every table the build must hold to its row count; ``checks`` are the build's
         ``dataset_check`` rows, and one whose result is ``failed`` refuses the swap. Every table of the live file
         must be in the build and may not empty or shrink by more than ``MAX_SHRINK`` (B2: the expected counts come
-        from the build itself, so only the live file can show a build made from a missing Parquet tree), unless
-        ``allow_shrink`` (a request's explicit ``"allow_shrink": true``). A windowed table (``declare_window``) is
-        compared on its rows inside the build's window, in both files.
+        from the build itself, so only the live file can show a build made from a missing Parquet tree). The tables
+        named in ``allow_shrink`` (the asking dataset's own, on a request's explicit ``"allow_shrink": true``) may
+        shrink or empty; every other table keeps the guard (review S-1 of #220: the flag used to switch the check off
+        for the whole file, and another dataset's table could empty under it). A windowed table
+        (``declare_window``) is compared on its rows inside the build's window, in both files.
         """
         self.con.execute("CHECKPOINT")
         self.close()
         try:
             _verify(self.kind, self.path, expected_counts, list(checks))
-            if not allow_shrink:
-                _verify_against_live(self.kind, self.path)
+            _verify_against_live(self.kind, self.path, relax=frozenset(allow_shrink))
         except Exception as e:
             _remove(self.path)
             raise SwapRefused(f"{self.kind} build {self.build_id} refused: {e}") from e
@@ -220,7 +221,8 @@ def _counts(path: Path, windows: dict[str, tuple[str, str]] | None = None) -> di
         con.close()
 
 
-def _verify_against_live(kind: str, path: Path) -> None:
+def _verify_against_live(kind: str, path: Path, relax: frozenset[str] = frozenset()) -> None:
+    """Refuse a build missing a live table, or (outside ``relax``) emptying or shrinking one by over MAX_SHRINK."""
     live = live_path(kind)
     if not live.exists():
         return
@@ -230,6 +232,8 @@ def _verify_against_live(kind: str, path: Path) -> None:
         if table not in new:
             raise ValueError(f"table {table} of the live file is missing from the build")
         after = new[table]
+        if table in relax:
+            continue
         if before > 0 and after == 0:
             raise ValueError(f"{table} empties: {before} rows live, 0 in the build")
         if after < before * (1 - MAX_SHRINK):
