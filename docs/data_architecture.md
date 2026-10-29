@@ -1440,7 +1440,7 @@ year earlier, each flow all or nothing, the balance sheet the quarter's.
 
 ### The options data (`options.duckdb`, G8)
 
-The third serving kind (build plan PR 18): SPX and the option watch list (D2), the screener set of every reporting
+The sixth serving kind (build plan PR 18): SPX and the option watch list (D2), the screener set of every reporting
 name, and the earnings set of the evening. Built by the same builder, swapped the same way, read only through
 `rcdata.read`. The tables (`rcdata/build/options/tables.py`; every one carries the provenance `source`,
 `source_as_of`, `fetched_at`, `run_id`, `observed`, and the per-strike, per-expiry and print tables a `set_name`,
@@ -1483,6 +1483,15 @@ The first week's raw size per list name is in each `uw/option_list` check note (
 measure. Read through `rcdata.read`: `option_chain`, `option_strikes`, `option_expiries`, `option_daily`,
 `option_prints`, `iv_history`, `option_screener`, `earnings_options`; a row of the earnings set carries
 `uw/option_screener`'s status, an IBKR row of `iv_daily` `ibkr/iv_history`'s.
+
+**The cards' earnings date (G6).** The next earnings date on the Asymmetric Growth, Fundamentals and Swing cards,
+their earnings-week filter (and so the Relatedness and Value Chain filters, which read Asymmetric Growth's
+`ticker_scores` dates through `universe.filter_fields`), and LEAPS' near-term event flag come from
+`core/earnings_dates.py`. It reads
+`option_screener_daily`'s newest session when that session is at most `MAX_AGE_DAYS` (4) calendar days old and not
+after today (New York), each name's `report_date` on or after today. With no options file, a stale session or a failed
+read, it reads the stored D26 `earnings_calendar` as before (#304), and Yahoo's `earningsTimestampStart` where neither
+has the name.
 
 **UW calls a session** (`rcdata/build/options/__init__.py`, the plan's arithmetic: list names x (chain + stats +
 prints) + screener pages + earnings-set names). A list name is 11 calls plus 2 per expiry plus one per extra page;

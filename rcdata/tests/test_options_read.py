@@ -106,3 +106,13 @@ def test_each_read_is_counted_in_the_read_log(built):
     with ops.connect() as con:
         reads = dict(con.execute("SELECT table_name, reads FROM read_log WHERE process = 'test'").fetchall())
     assert reads["option_eod"] == 1 and reads["iv_daily"] == 2
+
+
+def test_the_cards_earnings_dates_come_from_the_built_screener_calendar(built, monkeypatch):
+    """G6 earnings-week filter: ``core.earnings_dates`` reads this file's calendar before the stored D26 one."""
+    from RevenueChaser.core import earnings_dates
+
+    def raw_never(*a, **k):
+        raise AssertionError("the stored D26 calendar is read only when the layer has no fresh session")
+    monkeypatch.setattr(earnings_dates.rawstore, "query", raw_never)
+    assert earnings_dates.stored_next_dates(SESSION) == {"GOOD": NEXT}
