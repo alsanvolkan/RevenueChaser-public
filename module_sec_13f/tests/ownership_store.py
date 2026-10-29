@@ -53,11 +53,14 @@ def _write_ownership(market, rows, periods=(), shorts=()):
                         [r[c] for c in TICKER_COLS] + [1_760_000_000.0])
         con.execute("CREATE TABLE sec13f_periods (period DATE, filers INTEGER, filings_active INTEGER, "
                     "value_total DOUBLE, value_mapped DOUBLE, coverage DOUBLE, unmapped_cusips INTEGER, "
-                    "refused_value DOUBLE, rescaled_filers INTEGER, filing_deadline DATE, filed_through DATE)")
+                    "refused_value DOUBLE, rescaled_filers INTEGER, filing_deadline DATE, filed_through DATE, "
+                    "value_etf DOUBLE, coverage_ex_etf DOUBLE)")
         for p in periods:
-            con.execute("INSERT INTO sec13f_periods VALUES (?, 200, 210, ?, ?, ?, ?, 0, 0, ?, ?)",
+            etf = p.get("value_etf", 0.0)
+            con.execute("INSERT INTO sec13f_periods VALUES (?, 200, 210, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)",
                         [p["period"], p["value_total"], p["value_mapped"], p["value_mapped"] / p["value_total"],
-                         p["unmapped"], p["deadline"], p["deadline"] - timedelta(days=1)])
+                         p["unmapped"], p["deadline"], p["deadline"] - timedelta(days=1), etf,
+                         p["value_mapped"] / (p["value_total"] - etf)])
         con.execute("CREATE TABLE finra_short_interest (settlement_date DATE, symbol TEXT, ticker TEXT, "
                     "current_short BIGINT, days_to_cover DOUBLE, avg_daily_volume BIGINT, source TEXT)")
         for t, d, n, dtc in shorts:

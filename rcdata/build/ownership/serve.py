@@ -46,7 +46,9 @@
 
 **Tables**: ``sec13f_cusip_map`` (CUSIP and period: its ticker and how, its long-equity value and holders),
 ``sec13f_filer_period`` (filer and period: its long-equity names and value, ``value_factor``), ``sec13f_ticker_period``
-(the metrics) and ``sec13f_periods`` (per period: filers, value, value mapped, coverage).
+(the metrics) and ``sec13f_periods`` (per period: filers, value, value mapped, coverage; and ``value_etf`` and
+``coverage_ex_etf``, the value Compustat's issue type ``tpci`` '%' marks an ETF's and the share of the rest named a
+ticker, because the spine carries no ETF by design; ``COVERAGE_BAR`` is set on that share).
 
 **Views** under the old ``raw.duckdb`` names, with the old columns (D4): ``sec13f_totals`` (ticker, ``entry`` JSON
 ``{period: {shares, value, holders, ...}}``) and ``short_interest``: one row per ticker and session (an IBKR snapshot
@@ -60,7 +62,8 @@ from the live file otherwise, so a FINRA or IBKR run does not read millions of h
 **Build issues** (``ISSUE_KINDS``), written once the file is live: ``spine_missing``, ``cusip_owner_differs``,
 ``cusip_unmapped_large`` (the ``UNMAPPED_TOP`` largest CUSIPs no source names, of the newest complete quarter, as
 the plan's counts are, else the newest),
-``filings_unparsed`` (per index day) and ``value_rescaled`` (the ``RESCALED_TOP`` filer-quarters whose rescale moved
+``filings_unparsed`` (per index day), ``coverage_low`` (the newest complete quarter's ``coverage_ex_etf`` below
+``COVERAGE_BAR``) and ``value_rescaled`` (the ``RESCALED_TOP`` filer-quarters whose rescale moved
 the most dollars, keyed ``cik|period``, with the median ratio and the names it rests on).
 """
 from __future__ import annotations
@@ -84,10 +87,15 @@ SCALE_BAND = (1.0 / 3000.0, 1.0 / 300.0)
 DEADLINE_DAYS = 45
 UNMAPPED_TOP = 50
 RESCALED_TOP = 50
+# The newest complete quarter's share of the 13F value outside ETFs that is named a ticker; below it, an issue. ETFs
+# are left out of the bar because the spine carries none by design (avo, 29 Oct 2026: 12.9 of the 13.5 points
+# Q2 2026 missed were ETFs; 99.35% of the rest was named).
+COVERAGE_BAR = 0.99
 SP500, FUNDS = "sp500", "funds/index_holdings"
 
 MAP = [("cusip", "TEXT"), ("period", "DATE"), ("ticker", "TEXT"), ("map_source", "TEXT"),
-       ("candidate_ticker", "TEXT"), ("issuer_name", "TEXT"), ("value", "DOUBLE"), ("holders", "INTEGER")]
+       ("candidate_ticker", "TEXT"), ("issuer_name", "TEXT"), ("value", "DOUBLE"), ("holders", "INTEGER"),
+       ("etf", "BOOLEAN")]
 FILER = [("cik", "TEXT"), ("period", "DATE"), ("filer_name", "TEXT"), ("filings", "INTEGER"), ("cusips", "INTEGER"),
          ("value", "DOUBLE"), ("names", "INTEGER"), ("median_ratio", "DOUBLE"), ("value_factor", "DOUBLE"),
          ("confidential_omitted", "BOOLEAN")]
@@ -100,7 +108,7 @@ TICKER = [("ticker", "TEXT"), ("period", "DATE"), ("shares", "DOUBLE"), ("value"
 PERIODS = [("period", "DATE"), ("filers", "INTEGER"), ("filings_active", "INTEGER"), ("value_total", "DOUBLE"),
            ("value_mapped", "DOUBLE"), ("coverage", "DOUBLE"), ("unmapped_cusips", "INTEGER"),
            ("refused_value", "DOUBLE"), ("rescaled_filers", "INTEGER"), ("filing_deadline", "DATE"),
-           ("filed_through", "DATE")]
+           ("filed_through", "DATE"), ("value_etf", "DOUBLE"), ("coverage_ex_etf", "DOUBLE")]
 SCHEMAS = {"sec13f_cusip_map": MAP, "sec13f_filer_period": FILER, "sec13f_ticker_period": TICKER,
            "sec13f_periods": PERIODS}
 TABLES = tuple(SCHEMAS)
@@ -114,6 +122,8 @@ ISSUE_KINDS = {
     "cusip_unmapped_large": "one of the newest complete quarter's largest long-equity CUSIPs no spine source names",
     "filings_unparsed": "13F filings of an index day whose documents did not parse",
     "value_rescaled": "one of the largest filer-quarters whose VALUE was off by a factor of 1,000 and was rescaled",
+    "coverage_low": "the newest complete quarter names a ticker for less of its 13F value outside ETFs than "
+                    "COVERAGE_BAR",
 }
 
 VIEWS = {
@@ -233,6 +243,20 @@ def _owners(con: duckdb.DuckDBPyConnection) -> None:
             FROM {common.files_sql(security)} s WHERE s.cusip IS NOT NULL AND NOT EXISTS (
                 SELECT 1 FROM _owners o WHERE o.cusip = upper(s.cusip) AND o.gvkey = s.gvkey
                                          AND o.iid IS NOT DISTINCT FROM s.iid)""")
+    _etfs(con, security)
+
+
+def _etfs(con: duckdb.DuckDBPyConnection, security: list) -> None:
+    """``_etf(cusip)`` (TEMP): every CUSIP Compustat gives, now or before, to a security whose issue type is an ETF
+    (``tpci`` '%').
+
+    shortcut: the flag carries no period, so a CUSIP an ETF once held and a company holds now counts as an ETF's in
+    every quarter; upgrade to the ``_owners`` dates if a reused ETF CUSIP ever shows in ``coverage_low``."""
+    _empty(con, "_etf", [("cusip", "TEXT")])
+    if security:
+        con.execute(f"""INSERT INTO _etf SELECT DISTINCT o.cusip FROM _owners o
+            JOIN (SELECT DISTINCT gvkey, iid FROM {common.files_sql(security)} WHERE tpci = '%') e
+              ON e.gvkey = o.gvkey AND e.iid IS NOT DISTINCT FROM o.iid""")
 
 
 def _figi(con: duckdb.DuckDBPyConnection) -> None:
@@ -243,7 +267,7 @@ def _figi(con: duckdb.DuckDBPyConnection) -> None:
                     f"AND ticker IS NOT NULL")
 
 
-TEMPS = ("_sp_security", "_sp_hist", "_sp_sp500", "_owners", "_figi", "_active", "_conf", "_long", "_px", "_ratio",
+TEMPS = ("_sp_security", "_sp_hist", "_sp_sp500", "_owners", "_etf", "_figi", "_active", "_conf", "_long", "_px", "_ratio",
          "_held",
          "_cp", "_m_hist", "_m_cur", "_m_figi", "_filers", "_filed", "_deadline", "_tot", "_pos", "_shape", "_pairs",
          "_flow")
@@ -314,6 +338,7 @@ class OwnershipServe:
                 _figi(con)
             else:
                 _empty(con, "_owners", OWNERS)
+                _etfs(con, [])
                 _empty(con, "_figi", [("cusip", "TEXT"), ("ticker", "TEXT")])
             counts = {"sec13f_filer_period": common.count(con, "sec13f_filer_period")}
             counts["sec13f_cusip_map"] = self._map(con)
@@ -425,7 +450,7 @@ class OwnershipServe:
                         WHEN f.refused THEN '{REFUSED}' END AS map_source,
                    CASE WHEN a.ticker IS NULL AND b.refused THEN b.ticker
                         WHEN a.ticker IS NULL AND b.ticker IS NULL AND f.refused THEN f.ticker END AS candidate_ticker,
-                   c.issuer_name, c.value, c.holders
+                   c.issuer_name, c.value, c.holders, c.cusip IN (SELECT cusip FROM _etf) AS etf
             FROM _cp c
             LEFT JOIN _m_hist a ON a.cusip = c.cusip AND a.period = c.period
             LEFT JOIN _m_cur b ON b.cusip = c.cusip AND b.period = c.period
@@ -510,14 +535,19 @@ class OwnershipServe:
                    CASE WHEN v.value_total > 0 THEN round(coalesce(v.value_mapped, 0) / v.value_total, 4)
                    END AS coverage,
                    v.unmapped_cusips, v.refused_value, r.rescaled_filers, d.deadline AS filing_deadline,
-                   fd.filed_through
+                   fd.filed_through, coalesce(v.value_etf, 0) AS value_etf,
+                   CASE WHEN v.value_total - coalesce(v.value_etf, 0) > 0
+                        THEN round(coalesce(v.value_mapped_ex_etf, 0) / (v.value_total - coalesce(v.value_etf, 0)), 4)
+                   END AS coverage_ex_etf
             FROM _filers f
             LEFT JOIN (SELECT period, count(DISTINCT accession) AS filings_active FROM _long GROUP BY ALL) a
                    ON a.period = f.period
             LEFT JOIN (SELECT period, sum(value) AS value_total,
                               sum(value) FILTER (WHERE ticker IS NOT NULL) AS value_mapped,
                               count(*) FILTER (WHERE ticker IS NULL) AS unmapped_cusips,
-                              coalesce(sum(value) FILTER (WHERE map_source = '{REFUSED}'), 0) AS refused_value
+                              coalesce(sum(value) FILTER (WHERE map_source = '{REFUSED}'), 0) AS refused_value,
+                              sum(value) FILTER (WHERE etf) AS value_etf,
+                              sum(value) FILTER (WHERE ticker IS NOT NULL AND NOT etf) AS value_mapped_ex_etf
                        FROM sec13f_cusip_map GROUP BY ALL) v ON v.period = f.period
             LEFT JOIN (SELECT period, count(*) FILTER (WHERE value_factor <> 1) AS rescaled_filers
                        FROM sec13f_filer_period GROUP BY ALL) r ON r.period = f.period
@@ -559,6 +589,13 @@ class OwnershipServe:
             found.append(("cusip_unmapped_large", cusip,
                           f"{period}: {issuer or '?'}, ${value or 0:,.0f} held by {holders} filer(s); "
                           f"no spine source names it"))
+        for period, ex_etf, coverage, etf in con.execute(f"""
+                SELECT * FROM (SELECT period, coverage_ex_etf, coverage, value_etf FROM sec13f_periods
+                               WHERE filing_deadline < ? ORDER BY period DESC LIMIT 1)
+                WHERE coverage_ex_etf < {COVERAGE_BAR}""", [as_of]).fetchall():
+            found.append(("coverage_low", str(period),
+                          f"{period}: {ex_etf * 100:.2f}% of the 13F value outside ETFs is named a ticker, below the "
+                          f"{COVERAGE_BAR * 100:.2f}% bar (all value {coverage * 100:.2f}%, ETFs ${etf:,.0f})"))
         for cik, period, name, factor, ratio, names, value in con.execute(f"""
                 SELECT cik, period, filer_name, value_factor, median_ratio, names, value FROM sec13f_filer_period
                 WHERE value_factor <> 1 ORDER BY abs(value - value / value_factor) DESC, cik, period
@@ -576,15 +613,16 @@ class OwnershipServe:
     @staticmethod
     def _summary(con: duckdb.DuckDBPyConnection, as_of: date) -> dict:
         """The plan's two counts, for the newest complete quarter (its deadline passed), else the newest one."""
-        rows = con.execute("SELECT period, filing_deadline, coverage FROM sec13f_periods "
+        rows = con.execute("SELECT period, filing_deadline, coverage, coverage_ex_etf FROM sec13f_periods "
                            "ORDER BY period DESC").fetchall()
         if not rows:
             return {}
-        period, _deadline, coverage = next((r for r in rows if r[1] is not None and r[1] < as_of), rows[0])
+        period, _deadline, coverage, ex_etf = next((r for r in rows if r[1] is not None and r[1] < as_of), rows[0])
         held, members = con.execute(
             "SELECT count(*) FILTER (WHERE EXISTS (SELECT 1 FROM sec13f_ticker_period t "
             "WHERE t.ticker = s.ticker AND t.period = ?)), count(*) FROM _sp_sp500 s", [period]).fetchone()
-        return {"period": period, "coverage": coverage, "sp500_held": held, "sp500": members}
+        return {"period": period, "coverage": coverage, "coverage_ex_etf": ex_etf, "sp500_held": held,
+                "sp500": members}
 
     # ── Check and issues ───────────────────────────────────────────────────────────────────────────────────────
 
@@ -596,7 +634,9 @@ class OwnershipServe:
             p = summary["period"].isoformat()
             ctx.notes.append(f"S&P 500 names with 13F holders in {p}: {summary['sp500_held']} of {summary['sp500']}")
             if summary["coverage"] is not None:
-                ctx.notes.append(f"13F value mapped in {p}: {summary['coverage'] * 100:.2f}%")
+                ex_etf = summary.get("coverage_ex_etf")
+                outside = f" ({ex_etf * 100:.2f}% outside ETFs)" if ex_etf is not None else ""
+                ctx.notes.append(f"13F value mapped in {p}: {summary['coverage'] * 100:.2f}%{outside}")
         elif not common.count(con, table):
             ctx.notes.append("no 13F totals: no holdings yet, or no spine to name them")
         if summary.get("rescaled"):

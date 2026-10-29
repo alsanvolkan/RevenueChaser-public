@@ -230,7 +230,46 @@ def test_the_period_summary_and_the_plans_two_counts(store):
     # 30 Sep is not complete before its deadline (16 Nov): the counts are the newest complete quarter's.
     assert store["coverage"] == 1.0
     assert "S&P 500 names with 13F holders in 2026-06-30: 2 of 5" in store["note"]
-    assert "13F value mapped in 2026-06-30: 100.00%" in store["note"]
+    assert "13F value mapped in 2026-06-30: 100.00% (100.00% outside ETFs)" in store["note"]
+
+
+def _etf(cusip: str) -> None:
+    """Compustat gives ``cusip`` to an ETF (``tpci`` '%'), as a delta file after the fixture's snapshot."""
+    folder = wrds.parquet_dir(wrds.SEC_IDHIST.name) / "delta=9999-12-31"
+    folder.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect()
+    try:
+        con.execute(f"COPY (SELECT '777777' AS gvkey, '01' AS iid, 'ETFX' AS tic, '{cusip}' AS cusip, 14 AS exchg, "
+                    f"'USA' AS excntry, 'A' AS secstat, '%' AS tpci, NULL::DATE AS dldtei) "
+                    f"TO {base.sql_path(folder / 'security.parquet')} (FORMAT parquet)")
+    finally:
+        con.close()
+
+
+def test_etf_value_is_counted_apart_and_the_coverage_is_given_without_it(store):
+    """avo, 29 Oct 2026: 12.9 of the 13.5 points of Q2 2026 13F value no ticker names are ETFs, which the spine
+    leaves out by design; the coverage the bar is set on is the value outside ETFs. The all-value figure stays."""
+    assert _served("SELECT period, value_etf, coverage_ex_etf FROM sec13f_periods ORDER BY period DESC LIMIT 1") == [
+        (Q3, 0.0, 0.9986)]
+    _etf(NOBODY)
+    _serve()
+    assert _served("SELECT cusip, etf FROM sec13f_cusip_map WHERE period = ? AND (etf OR cusip = ?) ORDER BY 1",
+                   Q3, "594918104") == [("594918104", False), (NOBODY, True)]
+    assert _served("SELECT period, value_total, value_mapped, coverage, value_etf, coverage_ex_etf "
+                   "FROM sec13f_periods ORDER BY period DESC LIMIT 1") == [
+        (Q3, 1_077_750.0, 1_076_250.0, 0.9986, 500.0, 0.9991)]
+
+
+def test_a_complete_quarter_below_the_coverage_bar_outside_etfs_is_an_issue(store, monkeypatch):
+    _etf(NOBODY)
+    _serve("2026-11-17")
+    assert not [key for kind, key in _issues() if kind == "coverage_low"]
+    monkeypatch.setattr(serve, "COVERAGE_BAR", 0.9995)
+    note = _serve("2026-11-17")["note"]
+    assert _issues()[("coverage_low", "2026-09-30")] == (
+        "2026-09-30: 99.91% of the 13F value outside ETFs is named a ticker, below the 99.95% bar "
+        "(all value 99.86%, ETFs $500)")
+    assert "13F value mapped in 2026-09-30: 99.86% (99.91% outside ETFs)" in note
 
 
 def test_the_totals_view_keeps_the_old_table_shape(store):

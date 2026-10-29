@@ -82,6 +82,21 @@ def test_the_coverage_and_source_lines_come_from_the_store_on_a_refresh_too(mark
     assert "ownership store (ownership/serve)" in html and "newest quarter 2025 Q3, still filing until" in html
 
 
+def test_the_coverage_line_gives_the_share_outside_etfs_too():
+    """avo, 29 Oct 2026: the bar is set on the value outside ETFs, which the store names none of; the line keeps the
+    all-value share and adds that one. A file built before the column says nothing more."""
+    from datetime import date
+
+    from RevenueChaser.module_sec_13f import store_reads
+    row = {"period": date(2026, 6, 30), "complete": True, "value_total": 75.69e12, "value_mapped": 65.47e12,
+           "coverage": 0.8651, "unmapped_cusips": 16_248, "value_etf": 9.78e12, "coverage_ex_etf": 0.9935}
+    note = store_reads.coverage_note([row])
+    assert note.startswith("13F 2026 Q2: 86.5% of the $75.69T reported value is named a ticker; 16,248 CUSIPs")
+    assert note.endswith("Outside the $9.78T held in ETFs, which have no ticker here: 99.4%.")
+    del row["value_etf"], row["coverage_ex_etf"]
+    assert "ETF" not in store_reads.coverage_note([row])
+
+
 def test_the_short_column_is_finras_newest_short_interest_with_days_to_cover(market):
     from RevenueChaser.app import runners
     _store(market)

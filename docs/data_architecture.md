@@ -1189,10 +1189,10 @@ be sales.
 | `sec13f_filings` | one per 13F-HR and 13F-HR/A: period, filed, amendment and its type, `confidential_omitted`, `value_scale`, `origin` (`edgar` or `set:<zip>`), status |
 | `insider_transactions` | one per Form 4 transaction (or one `unparsed` / `no_transaction` row per filing) |
 | `beneficial_ownership` | one per Schedule 13D/G reporting person (or one `header_only` / `unparsed` row per filing) |
-| `sec13f_cusip_map` | one per CUSIP and period: its ticker and `map_source`, or the refused `candidate_ticker` |
+| `sec13f_cusip_map` | one per CUSIP and period: its ticker and `map_source`, or the refused `candidate_ticker`; `etf` when Compustat gives the CUSIP to an ETF (`tpci` `%`) |
 | `sec13f_filer_period` | one per filer and period: names, value, `median_ratio`, `value_factor`, `confidential_omitted` |
 | `sec13f_ticker_period` | one per ticker and period: shares, value, holders, top-10 %, HHI, new / exited holders, buy / sell flow, breadth and its change, `prev_period`, `filing_deadline` |
-| `sec13f_periods` | one per period: filers, value, value mapped, `coverage`, unmapped CUSIPs, refused value, rescaled filers |
+| `sec13f_periods` | one per period: filers, value, value mapped, `coverage`, unmapped CUSIPs, refused value, rescaled filers, `value_etf`, `coverage_ex_etf` (the share of the value outside ETFs named a ticker) |
 
 **The bridge (D4).** Views under the old `raw.duckdb` names: `sec13f_totals` (ticker, `entry` JSON keyed by period
 with the old metric keys) and `short_interest` (one row per ticker and session: the newest FINRA short interest
@@ -1201,7 +1201,10 @@ NULL).
 
 **Build issues** (`ownership/serve`): `spine_missing`, `cusip_owner_differs`, `cusip_unmapped_large`,
 `filings_unparsed`, `value_rescaled` (the 50 filer-quarters whose VALUE rescale moved the most dollars, keyed
-`cik|period`, with the median ratio and the names it rests on).
+`cik|period`, with the median ratio and the names it rests on), `coverage_low` (the newest complete quarter's
+`coverage_ex_etf` below 99.0%, keyed by period). The bar leaves ETFs out because the spine carries none by design:
+on the first real quarter (Q2 2026) 12.9 of the 13.5 points of value no ticker names were ETFs, and 99.35% of the
+rest was named (avo, 29 Oct 2026). `coverage`, over all value, stays served and on the board's line.
 
 **Reading it.** `rcdata.read.holders_13f(tickers, periods)`, `periods_13f()` (both with `complete`),
 `finra_short_interest(tickers, start, end)`, `shortable(tickers, session)`, `threshold_list(on)`,

@@ -196,8 +196,8 @@ def holders_13f(tickers: Iterable[str] | None = None, periods: Iterable | None =
 
 
 def periods_13f() -> list[dict]:
-    """``sec13f_periods``: per report period its filers, value, the share of value named a ticker (``coverage``) and
-    ``complete``, by period."""
+    """``sec13f_periods``: per report period its filers, value, the share of value named a ticker (``coverage``), the
+    same share outside ETFs (``coverage_ex_etf``, with ``value_etf``) and ``complete``, by period."""
     return _completed(_rows("sec13f_periods", "SELECT * FROM sec13f_periods ORDER BY period", []))
 
 

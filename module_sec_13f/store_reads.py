@@ -98,16 +98,22 @@ def short_interest(tickers, today: date | None = None) -> dict[str, dict]:
 
 def coverage_note(rows: list[dict]) -> str | None:
     """One line on how much of the newest complete quarter's 13F value is named a ticker (the CUSIPs left out of
-    the totals, #77): read from the store, so a Refresh says what the Fetch said."""
+    the totals, #77), and the share outside ETFs, the one ``ownership/serve``'s ``COVERAGE_BAR`` is set on: read
+    from the store, so a Refresh says what the Fetch said."""
     p = newest_complete(rows)
     if p is None or not p.get("value_total"):
         return None
     left = (p.get("value_total") or 0.0) - (p.get("value_mapped") or 0.0)
     cov = p.get("coverage")
     cov_text = f"{cov * 100:.1f}%" if cov is not None else "an unknown share"
-    return (f"13F {_quarter_label(p['period'])}: {cov_text} of the ${(p.get('value_total') or 0) / 1e12:.2f}T "
+    note = (f"13F {_quarter_label(p['period'])}: {cov_text} of the ${(p.get('value_total') or 0) / 1e12:.2f}T "
             f"reported value is named a ticker; {int(p.get('unmapped_cusips') or 0):,} CUSIPs "
             f"(${left / 1e9:,.1f}B) are not, and are left out of the totals.")
+    ex_etf = p.get("coverage_ex_etf")
+    if ex_etf is not None and p.get("value_etf"):
+        note += (f" Outside the ${p['value_etf'] / 1e12:.2f}T held in ETFs, which have no ticker here: "
+                 f"{ex_etf * 100:.1f}%.")
+    return note
 
 
 def _quarter_label(period) -> str:

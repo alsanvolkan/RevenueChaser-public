@@ -331,6 +331,7 @@ def test_the_ownership_section_states_what_the_code_owns():
         assert f"`{view}`" in section, view
     for kind in serve.ISSUE_KINDS:
         assert f"`{kind}`" in section, kind
+    assert f"`coverage_ex_etf` below {serve.COVERAGE_BAR * 100:.1f}%" in " ".join(section.split())
 
 
 def test_the_options_section_states_what_the_code_owns():
