@@ -1,7 +1,10 @@
 """The read API of the market store (D4): the only place a board gets market data, and the only SQL it runs.
 
-Two serving kinds: ``market`` (``market_series``, ``spx_expiry_strike``) and, since PR 5, the identity ``spine``
-(``universe``, ``identity``, ``membership``).
+Four serving kinds: ``market`` (``market_series``, ``spx_expiry_strike``), since PR 5 the identity ``spine``
+(``universe``, ``identity``, ``membership``), since PR 7 ``prices`` (``security_ids``, ``bars``, ``actions``,
+``shares``, ``market_cap``, ``latest_market``) and, since PR 16, ``ownership`` (``holders_13f``, ``periods_13f``,
+``finra_short_interest``, ``shortable``, ``threshold_list``, ``fails_to_deliver``, ``insider_transactions``,
+``beneficial_ownership``).
 
 Every row comes back with its provenance (``session_date``, ``source``, ``fetched_at``, ``source_as_of``, ``run_id``)
 and ``status``, the newest ``dataset_check`` result of its dataset (``never_checked`` before the first). Each call
@@ -13,6 +16,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Iterable
 
+from ..core import calendar
 from . import ops, serving
 
 NEVER_CHECKED = "never_checked"
@@ -20,6 +24,14 @@ DATASET_OF_TABLE = {"market_series": "market_series", "spx_gamma_expiry_strike":
                     "security": "spine/security", "index_membership": "funds/index_holdings"}
 KIND_OF_TABLE = {"market_series": "market", "spx_gamma_expiry_strike": "market", "security": "spine",
                  "index_membership": "spine"}
+# The ownership store (PR 16).
+DATASET_OF_TABLE.update({"sec13f_ticker_period": "ownership/serve", "sec13f_periods": "ownership/serve",
+                         "finra_short_interest": "finra/short_interest", "ibkr_shortable": "ibkr/shortable",
+                         "regsho_threshold": "regsho/threshold", "sec_ftd": "sec/ftd",
+                         "insider_transactions": "sec/form4", "beneficial_ownership": "sec/13dg"})
+KIND_OF_TABLE.update({t: "ownership" for t in ("sec13f_ticker_period", "sec13f_periods", "finra_short_interest",
+                                               "ibkr_shortable", "regsho_threshold", "sec_ftd",
+                                               "insider_transactions", "beneficial_ownership")})
 
 
 def dataset_status(dataset: str) -> str:
@@ -281,7 +293,7 @@ def latest_market(tickers: Iterable[str]) -> dict[str, dict]:
 # the one with the newer bar, as ``security_ids``), so a renamed name keeps its bars from before the rename. The index
 # level (``index:SPX``) is never a ticker here. Each read is one query over the live file.
 
-def _tickers(tickers: Iterable[str]) -> list[str]:
+def _bar_tickers(tickers: Iterable[str]) -> list[str]:
     if isinstance(tickers, str):
         tickers = [tickers]
     return sorted({str(t).strip().upper() for t in tickers or () if str(t or "").strip()})
@@ -325,7 +337,7 @@ def ticker_bars(tickers: Iterable[str], start=None, end=None, basis: str = "spli
     if basis not in BASES:
         raise ValueError(f"unknown basis {basis!r}: one of {', '.join(BASES)}")
     import pandas as pd
-    names = _tickers(tickers)
+    names = _bar_tickers(tickers)
     if not names:
         return pd.DataFrame(columns=TICKER_BAR_COLUMNS)
     price = {"nominal": "1.0", "split": "coalesce(a.split_factor, 1)", "total_return": "coalesce(a.tr_factor, 1)"}[basis]
@@ -342,7 +354,7 @@ def ticker_bars(tickers: Iterable[str], start=None, end=None, basis: str = "spli
 
 def last_sessions(tickers: Iterable[str]) -> dict[str, date]:
     """``{ticker: newest session with a close}`` of the ``tickers`` the store has a bar of."""
-    names = _tickers(tickers)
+    names = _bar_tickers(tickers)
     if not names:
         return {}
     sql = (f"WITH {_now_cte(len(names))} SELECT now.ticker, max(b.session_date) AS d FROM price_bar_daily b "
@@ -361,7 +373,7 @@ def changed_at(tickers: Iterable[str]) -> float:
     """When the store last changed under ``tickers``: the newest ``fetched_at`` of their bars and actions (0.0 when
     none). An action revises every bar before it without adding one, so a board's stored run older than this is
     stale even when the newest session has not moved."""
-    names = _tickers(tickers)
+    names = _bar_tickers(tickers)
     if not names:
         return 0.0
     sql = (f"WITH {_now_cte(len(names))} SELECT greatest("
@@ -374,7 +386,7 @@ def changed_at(tickers: Iterable[str]) -> float:
 
 def bar_sessions(tickers: Iterable[str], start=None) -> list[date]:
     """The sessions, oldest first, on which any of ``tickers`` has a close (from ``start`` on when given)."""
-    names = _tickers(tickers)
+    names = _bar_tickers(tickers)
     if not names:
         return []
     sql = (f"WITH {_now_cte(len(names))} SELECT DISTINCT b.session_date AS d FROM price_bar_daily b "
@@ -394,7 +406,7 @@ def bar_facts(tickers: Iterable[str], start, flat_run: int) -> dict:
       adjusted closes can be equal while the stored ones are not); the caller judges these candidates on their
       adjusted closes. A split needs no rule of its own here: a bar is as traded whenever it was fetched.
     """
-    names = _tickers(tickers)
+    names = _bar_tickers(tickers)
     empty = {"first": {}, "last": {}, "sessions": [], "flat": []}
     if not names or start is None:
         return empty
@@ -423,6 +435,130 @@ def bar_facts(tickers: Iterable[str], start, flat_run: int) -> dict:
             "last": {r["ticker"]: r["last"] for r in rows},
             "sessions": [r["d"] for r in sessions],
             "flat": sorted(r["ticker"] for r in rows if r["flat"])}
+
+
+# ── The ownership store (PR 16) ───────────────────────────────────────────────────────────────────────────────
+
+def _tickers(tickers: Iterable[str] | None) -> list[str] | None:
+    return None if tickers is None else sorted({str(t).strip().upper() for t in tickers if str(t or "").strip()})
+
+
+def _where(tickers: list[str] | None, day_col: str, start, end, extra: str = "") -> tuple[str, list]:
+    """`` WHERE`` over ``tickers`` (all when None) and ``start <= day_col <= end`` (either bound optional)."""
+    parts, params = ["ticker IS NOT NULL"] + ([extra] if extra else []), []
+    if tickers is not None:
+        parts.append(f"ticker IN ({', '.join('?' * len(tickers))})")
+        params += tickers
+    if start is not None:
+        parts.append(f"{day_col} >= ?")
+        params.append(_day(start))
+    if end is not None:
+        parts.append(f"{day_col} <= ?")
+        params.append(_day(end))
+    return " WHERE " + " AND ".join(parts), params
+
+
+def _completed(rows: list[dict]) -> list[dict]:
+    today = calendar.today_ny()
+    for r in rows:
+        r["complete"] = r["filing_deadline"] is not None and r["filing_deadline"] < today
+    return rows
+
+
+def holders_13f(tickers: Iterable[str] | None = None, periods: Iterable | None = None) -> list[dict]:
+    """``sec13f_ticker_period`` rows (13F institutional holders per ticker and report period: shares, value, holders,
+    concentration, flows against the calendar quarter before, breadth) of ``tickers`` (every ticker when None) and
+    ``periods`` (every period when None), by ticker and period. ``complete`` says whether the period's filing
+    deadline has passed (New York today): before it, the quarter is still arriving."""
+    wanted = _tickers(tickers)
+    if wanted == []:
+        return []
+    sql, params = _where(wanted, "period", None, None)
+    if periods is not None:
+        days = sorted({_day(p) for p in periods})
+        if not days:
+            return []
+        sql += f" AND period IN ({', '.join('?' * len(days))})"
+        params += days
+    return _completed(_rows("sec13f_ticker_period",
+                            f"SELECT * FROM sec13f_ticker_period{sql} ORDER BY ticker, period", params))
+
+
+def periods_13f() -> list[dict]:
+    """``sec13f_periods``: per report period its filers, value, the share of value named a ticker (``coverage``) and
+    ``complete``, by period."""
+    return _completed(_rows("sec13f_periods", "SELECT * FROM sec13f_periods ORDER BY period", []))
+
+
+def finra_short_interest(tickers: Iterable[str], start=None, end=None) -> list[dict]:
+    """FINRA's consolidated short interest of ``tickers`` by settlement date (``start <= settlement_date <= end``),
+    by ticker and date: the ``finra_short_interest`` table, not the ``short_interest`` bridge view (review N3)."""
+    wanted = _tickers(tickers)
+    if not wanted:
+        return []
+    sql, params = _where(wanted, "settlement_date", start, end)
+    return _rows("finra_short_interest", f"SELECT * FROM finra_short_interest{sql} ORDER BY ticker, settlement_date, "
+                                         "symbol", params)
+
+
+def shortable(tickers: Iterable[str] | None = None, session=None) -> list[dict]:
+    """IBKR's borrow fee, rebate and shares available for ``tickers`` (every named ticker when None) in the snapshot of
+    ``session`` (the newest session stored when None), by ticker."""
+    wanted = _tickers(tickers)
+    if wanted == []:
+        return []
+    sql, params = _where(wanted, "session_date", None, None)
+    if session is None:
+        sql += " AND session_date = (SELECT max(session_date) FROM ibkr_shortable)"
+    else:
+        sql += " AND session_date = ?"
+        params.append(_day(session))
+    return _rows("ibkr_shortable", f"SELECT * FROM ibkr_shortable{sql} ORDER BY ticker, snapshot_at", params)
+
+
+def threshold_list(on=None) -> list[dict]:
+    """The Reg SHO threshold securities of day ``on`` (the newest list stored when None), every market, by market and
+    symbol; a symbol the spine does not name is kept (``ticker`` None)."""
+    if on is None:
+        sql, params = "list_date = (SELECT max(list_date) FROM regsho_threshold)", []
+    else:
+        sql, params = "list_date = ?", [_day(on)]
+    return _rows("regsho_threshold", f"SELECT * FROM regsho_threshold WHERE {sql} ORDER BY market, symbol", params)
+
+
+def fails_to_deliver(tickers: Iterable[str], start=None, end=None) -> list[dict]:
+    """The SEC's fails-to-deliver of ``tickers`` (``start <= settlement_date <= end``), by ticker and date."""
+    wanted = _tickers(tickers)
+    if not wanted:
+        return []
+    sql, params = _where(wanted, "settlement_date", start, end)
+    return _rows("sec_ftd", f"SELECT * FROM sec_ftd{sql} ORDER BY ticker, settlement_date, cusip", params)
+
+
+def insider_transactions(tickers: Iterable[str], start=None, end=None) -> list[dict]:
+    """The Form 4 transactions of ``tickers`` filed ``start <= filed <= end``, by ticker, newest filing first. Only
+    rows that are a transaction (the table's ``status`` ok, here ``parse_status``, since ``status`` is the dataset's
+    check): a filing that did not parse or reported none is left out."""
+    wanted = _tickers(tickers)
+    if not wanted:
+        return []
+    sql, params = _where(wanted, "filed", start, end, "status = 'ok'")
+    return _rows("insider_transactions", f"SELECT * EXCLUDE (status), status AS parse_status "
+                                         f"FROM insider_transactions{sql} "
+                                         "ORDER BY ticker, filed DESC, accession, tx_table DESC, line", params)
+
+
+def beneficial_ownership(tickers: Iterable[str], start=None, end=None) -> list[dict]:
+    """The Schedule 13D and 13G rows of ``tickers`` filed ``start <= filed <= end``, by ticker, newest filing first:
+    one per reporting person (``parse_status`` ok), or one ``header_only`` row for a text filing (who filed on whom,
+    no amounts). A filing whose document did not parse is left out."""
+    wanted = _tickers(tickers)
+    if not wanted:
+        return []
+    sql, params = _where(wanted, "filed", start, end, "status <> 'unparsed'")
+    return _rows("beneficial_ownership", f"SELECT * EXCLUDE (status), status AS parse_status "
+                                         f"FROM beneficial_ownership{sql} "
+                                         "ORDER BY ticker, filed DESC, accession, person_line", params)
 
 
 def as_frame(rows: list[dict]):
