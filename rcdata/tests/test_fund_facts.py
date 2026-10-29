@@ -74,6 +74,14 @@ def _balance_sheet(**tags):
       "ShortTermBorrowings": 72_430}, 532_953),                                                                   # JPM
     ({"ShortTermBorrowings": 64_776}, None),           # JPM before: a current line alone is not the whole, so unknown
     ({"NotesPayableCurrent": 7_625, "LongTermDebtCurrent": 500}, None),     # ORCL's 10-Q: no long-term line tagged
+    # #264: convertible notes due within the year are the current line when no other current line is tagged.
+    ({"LongTermDebtNoncurrent": 100, "ConvertibleDebtCurrent": 40}, 140),
+    ({"LongTermDebtNoncurrent": 100, "ConvertibleDebtCurrent": 40, "ShortTermBorrowings": 30}, 170),
+    ({"LongTermDebtNoncurrent": 100, "LongTermDebtCurrent": 10, "ConvertibleDebtCurrent": 40}, 110),  # held in it
+    ({"LongTermDebtNoncurrent": 100, "DebtCurrent": 45, "ConvertibleDebtCurrent": 40}, 145),          # held in it
+    ({"LongTermDebt": 0, "ConvertibleDebtCurrent": 1_413_000_000}, 1_413_000_000),   # NVDA FY2016 as restated
+    ({"LongTermDebt": 1_413_000_000, "ConvertibleDebtCurrent": 1_413_000_000}, 1_413_000_000),  # as first filed
+    ({"ConvertibleDebtCurrent": 40}, None),                                  # still no long-term line: unknown
 ])
 def test_total_debt_reads_the_debt_lines_the_filer_uses(tags, total):
     rows = _by_key(facts.fact_rows(_balance_sheet(**tags), "1")[0])
