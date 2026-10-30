@@ -9,9 +9,11 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from datetime import date
 
 import duckdb
 
+from RevenueChaser.core.calendar import is_federal_holiday
 from RevenueChaser.rcdata import serving
 
 SPINE_TICKERS = ("MSFT", "BF-A", "BF-B", "BRK-B", "AAPL", "GME")
@@ -360,22 +362,58 @@ def f13_set(filings: list[dict], folder: str | None = None, sk_from: int = 133_6
     return out.getvalue()
 
 
+# An object that is not in the ``/Archives/`` bucket: the S3 ``AccessDenied`` answer, as sec.gov gave it on
+# 2026-10-30 for the index of 2026-10-12 (Columbus Day) and for every other day it keeps closed. The body and the
+# ``application/xml`` type are what tells it apart from a refusal.
+MISSING_OBJECT = (b'<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>AccessDenied</Code>'
+                  b'<Message>Access Denied</Message><RequestId>D28HDAKJRS9CRPRG</RequestId></Error>')
+MISSING_HEADERS = {"content-type": "application/xml", "server": "Apache"}
+
+# The SEC's own refusal (an undeclared User-Agent, or the fair-access rate): Akamai, an HTML page, no S3 error.
+REFUSED_PAGE = (b"<!DOCTYPE html><html><head><title>SEC.gov | Your Request Originates from an Undeclared "
+                b"Automated Tool</title></head><body>Your Request Originates from an Undeclared Automated Tool"
+                b"</body></html>")
+REFUSED_HEADERS = {"content-type": "text/html", "server": "AkamaiGHost"}
+
+
 class Edgar:
-    """The daily indexes by day and the submissions by accession; anything else answers 404."""
+    """The daily indexes by day and the submissions by accession, as EDGAR answers them.
+
+    EDGAR publishes an index for every day it is open, so a day no test gave entries for answers an index with no
+    rows; a day in ``missing``, a weekend and a federal holiday have no index object at all and answer the
+    bucket's 403. ``refuse`` makes every answer the SEC's own 403 instead (the undeclared-tool page), which is the
+    answer a walk must stop on, and ``refuse_days`` does the same for one day's index alone.
+    """
 
     def __init__(self):
         self.indexes: dict[str, bytes] = {}
         self.filings: dict[str, bytes] = {}
+        self.missing: set[str] = set()
+        self.refuse_days: set[str] = set()
+        self.refuse = False
+
+    def _answer(self, body):
+        if self.refuse:
+            return 403, REFUSED_PAGE, dict(REFUSED_HEADERS)
+        if body is None:
+            return 403, MISSING_OBJECT, dict(MISSING_HEADERS)
+        return 200, body, {}
 
     def index(self, request):
-        day = str(request.url).rsplit("master.", 1)[1][:8]
-        body = self.indexes.get(day)
-        return (200, body, {}) if body is not None else (404, b"Not Found", {})
+        ymd = str(request.url).rsplit("master.", 1)[1][:8]
+        day = date(int(ymd[:4]), int(ymd[4:6]), int(ymd[6:]))
+        if ymd in self.refuse_days:
+            return 403, REFUSED_PAGE, dict(REFUSED_HEADERS)
+        if ymd in self.missing:
+            return self._answer(None)
+        body = self.indexes.get(ymd)
+        if body is None and day.weekday() < 5 and not is_federal_holiday(day):
+            body = daily_index([])
+        return self._answer(body)
 
     def filing(self, request):
         acc = str(request.url).rsplit("/", 1)[1][:-len(".txt")]
-        body = self.filings.get(acc)
-        return (200, body, {}) if body is not None else (404, b"Not Found", {})
+        return self._answer(self.filings.get(acc))
 
     def install(self, http_mock) -> None:
         http_mock.add("/Archives/edgar/daily-index/", self.index)
