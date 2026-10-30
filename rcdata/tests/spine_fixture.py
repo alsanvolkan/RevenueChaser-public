@@ -256,25 +256,46 @@ ISHARES_ROUTE = {"IVV": "products/239726/", "IJH": "products/239763/", "IJR": "p
 VANGUARD_ROUTE = {"VOO": "standard/01S990737/", "IVOO": "standard/00S991588/", "VIOO": "standard/00S991612/"}
 
 
-def ishares_csv(holdings, drop_dash=False) -> bytes:
-    """iShares' ``latest-holdings.csv`` (format of Oct 2026): eight preamble lines and a blank one, the header, the
-    lines (every value quoted), a blank line. ``Type`` tells a stock from a swap or a warrant, both of which iShares
-    files under ``Asset Class`` Equity; the weight is ``Market Weight``. ``drop_dash`` writes class tickers without
-    the dot (iShares' ``BRKB`` style)."""
-    lines = ['iShares Core S&P 500 ETF', 'Fund Holdings as of,"Oct 27, 2026"', 'Inception Date,"May 15, 2000"',
-             'Shares Outstanding,"1,000,000.00"', 'Stock,"-"', 'Bond,"-"', 'Cash,"-"', 'Other,"-"', '',
-             'Ticker,Name,Type,Sector,Asset Class,Market Value,Notional Value,Quantity,Price,Location,Exchange,'
-             'Currency,FX Rate,Market Currency,Accrual Date,Market Weight,Notional Weight']
+def ishares_csv(holdings, drop_dash=False, typed=True) -> bytes:
+    """iShares' ``latest-holdings.csv``, in both shapes the issuer serves (both measured 30 Oct 2026): eight
+    preamble lines and a blank one, the header, the lines (every value quoted), a blank line.
+
+    ``typed`` is the core funds' shape (IVV, IJH, IJR, and IAK): a ``Type`` column tells a stock from a swap or a
+    warrant, both of which iShares files under ``Asset Class`` Equity, and the weight is ``Market Weight``. Without
+    ``typed`` it is the sector and industry funds' shape (SOXX, IBB, ITA, ITB, IGV): no ``Type`` column, the weight
+    is ``Weight (%)``, and the lines that are no holding of a stock are a money-market fund, cash collateral, a
+    future and cash, each under ``Asset Class`` of its own. ``drop_dash`` writes class tickers without the dot
+    (iShares' ``BRKB`` style)."""
+    head = ['iShares Core S&P 500 ETF', 'Fund Holdings as of,"Oct 27, 2026"', 'Inception Date,"May 15, 2000"',
+            'Shares Outstanding,"1,000,000.00"', 'Stock,"-"', 'Bond,"-"', 'Cash,"-"', 'Other,"-"', '']
+    cols = (["Ticker", "Name", "Type", "Sector", "Asset Class", "Market Value", "Notional Value", "Quantity",
+             "Price", "Location", "Exchange", "Currency", "FX Rate", "Market Currency", "Accrual Date",
+             "Market Weight", "Notional Weight"] if typed else
+            ["Ticker", "Name", "Sector", "Asset Class", "Market Value", "Weight (%)", "Notional Value", "Quantity",
+             "Price", "Location", "Exchange", "Currency", "FX Rate", "Market Currency", "Accrual Date"])
 
     def line(t, name, kind, sector, asset_class, weight):
-        return (f'"{t}","{name}","{kind}","{sector}","{asset_class}","1,000.00","1,000.00","10.00","100.00",'
-                f'"United States","NASDAQ","USD","1.00","USD","-","{weight}","{weight}"')
+        v = {"Ticker": t, "Name": name, "Type": kind, "Sector": sector, "Asset Class": asset_class,
+             "Market Value": "1,000.00", "Notional Value": "1,000.00", "Quantity": "10.00", "Price": "100.00",
+             "Location": "United States", "Exchange": "NASDAQ", "Currency": "USD", "FX Rate": "1.00",
+             "Market Currency": "USD", "Accrual Date": "-", "Market Weight": weight, "Notional Weight": weight,
+             "Weight (%)": weight}
+        return ",".join(f'"{v[c]}"' for c in cols)
+    lines = head + [",".join(cols)]
     for t, _cusip, name in holdings:
-        t = t.replace(".", "") if drop_dash else t
-        lines.append(line(t, name, "EQUITY", "Information Technology", "Equity", "1.00"))
-    lines.append(line("ZSWP", "SWAPPED CORP", "SWAP", "Financials", "Equity", "-"))
-    lines.append(line("SKYD WS", "SKYDANCE EQUITY WARRANTS", "WARRANT", "Communication", "Equity", "-"))
-    lines.append(line("USD", "USD CASH", "CASH", "Cash and/or Derivatives", "Cash", "0.01"))
+        lines.append(line(t.replace(".", "") if drop_dash else t, name, "EQUITY", "Information Technology",
+                          "Equity", "1.00"))
+    if typed:
+        lines.append(line("ZSWP", "SWAPPED CORP", "SWAP", "Financials", "Equity", "-"))
+        lines.append(line("SKYD WS", "SKYDANCE EQUITY WARRANTS", "WARRANT", "Communication", "Equity", "-"))
+        lines.append(line("USD", "USD CASH", "CASH", "Cash and/or Derivatives", "Cash", "0.01"))
+    else:
+        lines.append(line("XTSLA", "BLK CSH FND TREASURY SL AGENCY", "", "Cash and/or Derivatives",
+                          "Money Market", "0.30"))
+        lines.append(line("WFFUT", "WELLS FARGO CASH COLLATERAL", "", "Cash and/or Derivatives",
+                          "Cash Collateral and Margins", "0.02"))
+        lines.append(line("IXTZ6", "TECH SELECT SECTOR DEC 26", "", "Cash and/or Derivatives", "Futures", "0.01"))
+        lines.append(line("USD", "USD CASH", "", "Cash and/or Derivatives", "Cash", "0.01"))
     lines.append("")
     return ("\n".join(lines) + "\n").encode("utf-8")
 
@@ -334,3 +355,42 @@ def add_fund_routes(http_mock, sp500=SP500, sp400=SP400, ndx=("MSFT",), fail=())
     http_mock.add("list-type/nasdaq100", lambda r: maybe("NDX", nasdaq_json(ndx)))
     http_mock.add("shareclasses/QQQ/holdings", lambda r: maybe("QQQ", invesco_json(
         [h for h in sp500 + sp400 + [("NVDA", "67066G104", "NVIDIA CORP")] if h[0] in ndx])))
+
+
+# ── The ETFs' own holdings (``funds/etf_holdings``) ───────────────────────────────────────────────────────────
+
+def uw_holdings_json(holdings, repeat=()) -> bytes:
+    """UW's ``/etfs/<ticker>/holdings`` answer (``docs/openapi.yaml``, ``Holdings``): one row per holding, the
+    weights as strings, no CUSIP. A ticker in ``repeat`` is sent twice, the second row newer and lighter: the read
+    keeps the newer one, as the client's own rule does (``core/providers/unusual_whales._holdings``)."""
+    rows = []
+    for i, (t, _cusip, name) in enumerate(holdings):
+        rows.append({"ticker": t, "name": name, "short_name": name.split()[0], "weight": f"{10 - i:.3f}",
+                     "shares": 1_000 + i, "sector": "Technology", "type": "stock", "has_options": True,
+                     "updated": "2026-10-29T20:00:00Z"})
+        if t in repeat:
+            rows.append({**rows[-1], "weight": "0.001", "updated": "2026-10-30T20:00:00Z"})
+    rows.append({"ticker": None, "name": "CASH", "weight": "0.1", "updated": "2026-10-29T20:00:00Z"})
+    return json.dumps({"data": rows}).encode()
+
+
+def add_etf_routes(http_mock, holdings=None, fail=(), repeat=()) -> None:
+    """Answer every file of ``spine/etf_holdings.FILES``: the SPDR workbooks, the iShares CSVs (each in the shape
+    its own fund serves — IAK typed, the five sector funds not) and UW's holdings answers, each holding
+    ``holdings`` (``SP500`` by default). An ETF named in ``fail`` answers 500 instead."""
+    from RevenueChaser.rcdata.build.spine import etf_holdings as etf
+    rows = SP500 if holdings is None else holdings
+
+    def answer(body, etf_name):
+        def go(_request):
+            return (500, b"down", {}) if etf_name in fail else (200, body, {})
+        return go
+    for f in etf.FILES:
+        if f.provider == "ssga":
+            route, body = f"holdings-daily-us-en-{f.etf.lower()}.", ssga_xlsx(rows)
+        elif f.provider == "ishares":
+            pid, _slug, typed = etf.ISHARES_PRODUCTS[f.etf]
+            route, body = f"/products/{pid}/", ishares_csv(rows, typed=typed)
+        else:
+            route, body = f"/etfs/{f.etf}/holdings", uw_holdings_json(rows, repeat=repeat)
+        http_mock.add(route, answer(body, f.etf))

@@ -78,6 +78,23 @@ def test_every_table_a_need_names_has_a_written_column_or_no_date_at_all():
         assert need.table in screen.written_columns(), f"{need.name}: {need.table} has no written column"
 
 
+#: Served tables the control board's "Refresh the example rows" cannot answer: it draws the button for every table
+#: a dataset serves (``module_settings/newdata.py``: ``samples`` comes from ``ds.tables``), but the route behind it
+#: needs the table's written column and its kind, and these seven are in neither or only one map. Measured
+#: 30 Oct 2026. The set is the record of a gap that predates the test, not a target: a table added to a dataset
+#: must be answerable, not join this list.
+REFRESH_GAPS = {"adj_factor", "gics_history", "peer_group", "sec13f_cusip_map", "sec13f_filer_period",
+                "sec13f_filings", "security_history"}
+
+
+def test_every_served_table_can_answer_the_boards_refresh_or_is_a_named_gap():
+    from RevenueChaser.rcdata.build import DATASETS
+    written = screen.written_columns()
+    served = {t for ds in DATASETS.values() for t in ds.tables}
+    assert served, "no dataset serves a table: the registry did not load"
+    assert {t for t in served if t not in written or t not in read.KIND_OF_TABLE} == REFRESH_GAPS
+
+
 def test_the_rows_day_and_the_written_column_are_allowed_to_differ():
     written = screen.written_columns()
     differ = {n.table for n in catalog.NEEDS.values()

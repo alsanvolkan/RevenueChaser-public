@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from . import market_series, uw_spot_expiry_strike
 from .ownership import finra, form4, ftd, ibkr, regsho, sched13dg, sec13f, serve as ownership_serve
-from .spine import funds, openfigi_map, sec_tickers, security, wrds
+from .spine import etf_holdings as spine_etf_holdings, funds, openfigi_map, sec_tickers, security, wrds
 
 DATASETS = {d.name: d for d in (uw_spot_expiry_strike.DATASET, market_series.DATASET, sec_tickers.DATASET,
                                 wrds.SEC_IDHIST, wrds.CO_HGIC, wrds.IDXCST_HIS, openfigi_map.DATASET, funds.DATASET,
-                                security.DATASET)}
+                                spine_etf_holdings.DATASET, security.DATASET)}
 # The ownership store (PR 16): its sources, then ``ownership/serve``, which derives from their tables (last).
 DATASETS.update({d.name: d for d in (finra.DATASET, regsho.DATASET, ibkr.DATASET, ftd.DATASET, sec13f.DATASET,
                                      form4.DATASET, sched13dg.DATASET, ownership_serve.DATASET)})
