@@ -28,8 +28,9 @@ def old_store():
 def test_the_default_is_the_spine(monkeypatch, built, old_store):
     monkeypatch.delenv(universe.SOURCE_ENV, raising=False)
     assert universe.source_state() == {"requested": "spine", "effective": "spine", "reason": None, "variable": None}
-    names = universe.classification_universe(0)
+    names = universe.classification_universe(0, operating_only=True)
     assert names[:3] == ["MSFT", "TM", "WFC"] and "OLDONLY" not in names
+    assert universe.classification_universe(0)[:3] == ["MSFT", "SPY", "TM"]   # PR 2: every A+B type
     monkeypatch.setenv(universe.SOURCE_ENV, "  ")                          # empty is unset
     assert universe.universe_source() == "spine"
 
@@ -37,8 +38,9 @@ def test_the_default_is_the_spine(monkeypatch, built, old_store):
 def test_the_old_value_is_the_old_store(monkeypatch, built, old_store):
     monkeypatch.setenv(universe.SOURCE_ENV, universe.STORE)
     assert universe.universe_source() == "store"
-    names = universe.classification_universe(0)
+    names = universe.classification_universe(0, operating_only=True)
     assert names[0] == "MSFT" and "OLDONLY" in names and "SPY" not in names
+    assert "SPY" in universe.classification_universe(0)                          # PR 2: every type
     assert universe.spine_gics(["MSFT"])["MSFT"].sector == "Unclassified"     # "Old Sector" is no Morningstar name
 
 
@@ -49,21 +51,26 @@ def spine(monkeypatch, built, old_store):
 
 
 @pytest.mark.usefixtures("spine")
-def test_the_spine_universe_is_its_listed_names_less_the_excluded_types_by_cap():
-    names = universe.classification_universe(0)
+def test_the_spine_universe_is_its_listed_names_by_cap_and_a_board_may_ask_for_operating_ones():
+    names = universe.classification_universe(0, operating_only=True)
     assert names[:3] == ["MSFT", "TM", "WFC"] and "OLDONLY" not in names
     assert not {"SPY", "WFC-PC"} & set(names)                               # etp and preferred, as before
     assert "VYLR" in names and names[-1] == "VYLR"                          # no cap in the old store: last
     # No market-cap floor (avo, 29 Oct 2026): the default is the whole set, VYLR's missing cap included.
-    assert universe.classification_universe() == names
-    assert universe.classification_universe(3e8) == [t for t in names if CAPS.get(t, 0) >= 3e8]
+    assert universe.classification_universe(operating_only=True) == names
+    assert (universe.classification_universe(3e8, operating_only=True)
+            == [t for t in names if CAPS.get(t, 0) >= 3e8])
+    # PR 2 (avo, 30 Oct 2026): the universe itself is every A+B type, the ETF and the preferred included.
+    every = universe.classification_universe(0)
+    assert {"SPY", "WFC-PC"} <= set(every) and set(every) - {"SPY", "WFC-PC"} == set(names)
 
 
 @pytest.mark.usefixtures("spine")
 def test_rows_names_and_classification_come_from_the_spine():
     rows = {r["ticker"]: r for r in universe.classification_universe_rows(0)}
     assert rows["MSFT"] == {"ticker": "MSFT", "market_cap": 3.1e12, "sector": "Technology",
-                            "industry": "Software & Services"}
+                            "industry": "Software & Services", "security_type": rows["MSFT"]["security_type"]}
+    assert rows["SPY"]["security_type"] == "etp"
     gics = universe.spine_gics(["TM", "nvr"])
     assert (gics["TM"].sector, gics["NVR"].industry) == ("Consumer Cyclical", "Consumer Durables & Apparel")
     assert universe.excluded_tickers() == {"SPY", "WFC-PC"}
@@ -76,9 +83,10 @@ def test_the_funnel_counts_add_up_on_the_spine():
     c = universe.universe_counts(3e8)
     assert c["scanned_total"] == 12                      # the 14 SEC rows less the OTC and the no-exchange name
     assert c["scanned_total"] == c["below_floor"] + c["no_market_cap"] + c["floor_total"]
-    assert c["floor_total"] == c["funds_etfs"] + c["spacs"] + c["other_securities"] + c["classification_total"]
+    assert c["floor_total"] == c["funds_etfs"] + c["spacs"] + c["other_securities"] + c["operating_total"]
     assert (c["funds_etfs"], c["other_securities"], c["no_market_cap"]) == (1, 1, 1)
-    assert c["classification_total"] == len(universe.classification_universe(3e8))
+    assert c["classification_total"] == c["floor_total"] == len(universe.classification_universe(3e8))
+    assert c["operating_total"] == len(universe.classification_universe(3e8, operating_only=True))
 
 
 @pytest.mark.usefixtures("spine")
@@ -140,7 +148,7 @@ def test_an_untyped_spine_name_takes_the_old_masters_type(monkeypatch):
     monkeypatch.setattr(read, "identity", lambda tickers=None: [
         {**r, "security_type": "unknown"} if r["ticker"] == "VYLR" else r for r in real(tickers)])
     assert "VYLR" in universe.excluded_tickers()
-    assert "VYLR" not in universe.classification_universe(0)
+    assert "VYLR" not in universe.classification_universe(0, operating_only=True)
 
 
 @pytest.mark.usefixtures("spine")

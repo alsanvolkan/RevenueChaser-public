@@ -12,8 +12,9 @@ from RevenueChaser.module_fundamentals import config
 SOURCE = "fundamentals"
 LABEL = "Fundamentals"
 
-# The thresholds the board scores with; ``model_version`` hashes exactly these.
-# (Per-board setting overrides, #188, join this dict once the board reads them.)
+# The thresholds the board scores with; ``model_version`` hashes exactly these. A saved setting (PR 2: the two
+# prefilter floors and the type filter, ``module_fundamentals/settings.py``) replaces its config value or, for the
+# type filter, joins the hash only when overridden, so the default leaves today's model version as it was.
 _HASHED = (
     "MIN_PRICE", "MIN_DOLLAR_VOLUME",
     "RO40_MIN", "GROWTH_MIN", "ROIC_MIN", "GM_MIN", "ND_EBITDA_MAX",
@@ -23,7 +24,8 @@ _HASHED = (
 
 
 def effective_config() -> dict:
-    return {name: getattr(config, name) for name in _HASHED}
+    from RevenueChaser.module_fundamentals import settings as fund_settings
+    return {**{name: getattr(config, name) for name in _HASHED}, **fund_settings.stored_overrides()}
 
 
 def model_version() -> str:

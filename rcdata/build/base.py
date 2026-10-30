@@ -28,7 +28,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
 
@@ -252,6 +252,119 @@ class RunContext:
             self.count("uw", failures=max(0, health["failed"] - health["skipped_calls"]))
             self._uw.close()
             self._uw = None
+
+
+# An object sec.gov does not hold under ``/Archives/`` answers **403**, not 404: that bucket grants the read of an
+# object and not the listing, so S3 answers ``AccessDenied`` for one that is not there (measured 2026-10-30:
+# ``master.20261012.idx``, Columbus Day, and a made-up file name; 200 for the open days around them). The SEC's own
+# refusal — an undeclared User-Agent, or the fair-access rate — is also a 403, but Akamai's HTML page ("Your Request
+# Originates from an Undeclared Automated Tool"), never the XML error. So the answer's own body tells an object the
+# host does not hold from a refusal that must stop a run; the day's place in the calendar does not, because the
+# closures are not only the statutory holidays (24 and 26 December 2025 were closed by executive order), and neither
+# does its age. ``/files/`` (nginx) and ``data.sec.gov`` answer a real 404, which is covered here too.
+MISSING_CODE = b"<Code>AccessDenied</Code>"
+
+
+def is_missing(r: httpx.Response) -> bool:
+    """Whether the answer says the host holds no object for the URL: a 404, or a bucket's XML ``AccessDenied``."""
+    if r.status_code == 404:
+        return True
+    return (r.status_code == 403 and "xml" in str(r.headers.get("content-type") or "").lower()
+            and MISSING_CODE in r.content)
+
+
+MISSING_RUN = 3     # consecutive open weekdays with no object: a refusal of the whole path, not that many days
+
+
+def open_weekdays(first: date, last: date) -> list[date]:
+    """The days from ``first`` to ``last`` EDGAR was open: weekdays that are no federal holiday."""
+    out, day = [], first
+    while day <= last:
+        if day.weekday() < 5 and not calendar.is_federal_holiday(day):
+            out.append(day)
+        day += timedelta(days=1)
+    return out
+
+
+class MissingStreak:
+    """The open weekdays one run found no object for, in a reader that walks a day at a time.
+
+    ``is_missing`` reads the answer's body, which separates the SEC's own refusal from an object the bucket does not
+    hold — it cannot separate that from a path or bucket that answers ``AccessDenied`` for *everything* (a wrong
+    ``RC_SEC_WWW_BASE``, an EDGAR path change, a bucket-policy change). So a reader that writes a day off on that
+    answer alone would walk a wholesale refusal and never ask those days again. A day EDGAR was closed on is
+    written off; a day nothing explains is only noted, and ``MISSING_RUN`` of them in a row stops the run with
+    nothing written off, so the next run asks them again.
+
+    ``what`` names the thing in the notes and the error ("daily index"). One streak per walk.
+    """
+
+    def __init__(self, what: str, limit: int = MISSING_RUN) -> None:
+        self.what, self.limit = what, limit
+        self.unexplained: list[date] = []
+
+    @staticmethod
+    def closed(day: date) -> bool:
+        """Whether EDGAR was closed on ``day``: a weekend, or a federal holiday (not an NYSE one)."""
+        return day.weekday() >= 5 or calendar.is_federal_holiday(day)
+
+    def missing(self, ctx: "RunContext", day: date) -> bool:
+        """``day`` has no object. True when that is explained and may be written off; False when it is not, and a
+        stretch of ``limit`` unexplained open weekdays raises instead of writing any of them off."""
+        if self.closed(day):
+            ctx.notes.append(f"{day}: no {self.what}, EDGAR closed")
+            return True
+        self.unexplained.append(day)
+        run = sorted(self.unexplained[-self.limit:])
+        if len(run) >= self.limit and open_weekdays(run[0], run[-1]) == run:
+            raise SourceError(f"sec: no {self.what} for {self.limit} weekdays EDGAR was open "
+                              f"({', '.join(str(d) for d in run)}); the bucket may be refusing every request, so "
+                              "none of them is written off and the next run asks them again")
+        ctx.notes.append(f"{day}: no {self.what} although EDGAR was open")
+        return False
+
+
+class MissingObjects:
+    """The objects in a row a host answered ``AccessDenied`` for, where no calendar can explain one.
+
+    ``MissingStreak``'s sibling for a thing with no closed days: a filing's document either is in the archive or
+    is not, and the ambiguous 403 (see ``is_missing``) is also what a path refusing everything answers. So the
+    marker that writes one off is **held**, not written: an answer that carries an object (``answered``) clears
+    the run and writes the held markers, while ``limit`` misses in a row stop the run with none of them written,
+    so the next run asks them again. ``release`` ends a walk: it writes what is held only if the host's last word
+    was an object, and otherwise leaves the trailing few to the next run.
+    """
+
+    def __init__(self, what: str, limit: int = MISSING_RUN) -> None:
+        self.what, self.limit = what, limit
+        self.run: list[str] = []
+        self.held: list[tuple[str, Callable[[], Any]]] = []
+
+    def answered(self) -> None:
+        """The host handed over an object, so it is not refusing everything: what is held can be written."""
+        self.run = []
+        held, self.held = self.held, []
+        for _, write in held:
+            write()
+
+    def gone(self, name: str, write: Callable[[], Any]) -> None:
+        """One the host says it holds no object for; ``write`` marks it, once the host has answered. Raises with
+        nothing written once ``limit`` of them came in a row."""
+        self.run.append(name)
+        self.held.append((name, write))
+        if len(self.run) >= self.limit:
+            raise SourceError(f"sec: the archive holds no {self.what} for {self.limit} in a row "
+                              f"({', '.join(self.run)}); it may be refusing every request, so none of them is "
+                              "written off and the next run asks them again")
+
+    def release(self, ctx: "RunContext") -> None:
+        """End of the walk: write what is held if the host's last answer carried an object, else leave it."""
+        if not self.run:
+            self.answered()
+        elif self.held:
+            ctx.notes.append(f"{len(self.held)} {self.what} markers held back: the archive's last answers carried "
+                             "no object, so the next run asks for them again")
+            self.held = []
 
 
 def refusal_note(keyed: bool = False) -> str:

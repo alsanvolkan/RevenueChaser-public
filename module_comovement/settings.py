@@ -34,6 +34,7 @@ class Effective:
     default_window: int
     short_window: bool
     custom: bool
+    operating_only: bool = False          # the type filter (PR 2): every A+B type by default
     overridden: tuple = ()
 
     @property
@@ -54,6 +55,7 @@ class Effective:
             "winsor_k": self.winsor_k,
             "bench_stale_sessions": self.bench_stale_sessions,
             "floor": self.floor, "short_window": self.short_window,
+            "operating_only": self.operating_only,
             "horizon_locked": self.horizon_locked,
             "custom": self.custom, "overridden": list(self.overridden),
         }
@@ -90,4 +92,5 @@ def effective(window: int | None = None) -> Effective:
         bench_stale_sessions=int(v["BENCH_STALE_SESSIONS"]),
         floor=universe_mod.DEFAULT_MC_MIN, default_window=default_window,
         short_window=short, custom=bool(vals["overridden"]),
+        operating_only=bool(int(v.get("OPERATING_ONLY", config.OPERATING_ONLY))),
         overridden=tuple(vals["overridden"]))

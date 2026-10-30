@@ -285,14 +285,15 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
     # This Fetch's Yahoo reads only (#80). A Refresh serves the stored payload, which already carries the key.
     if not no_fetch:
         yfp.reset_health()
-    with swing_settings.pinned(swing_settings.effective()):
+    with swing_settings.pinned(swing_settings.effective()) as eff:
         payload = screen_common.run_screen(
             board="swing", refreshed_by="Swing Potential", cfg=config,
             load_universe=fetch_universe_stats, prefilter=prefilter,
             load_spy=lambda: screen_common.load_spy(lambda: load_ohlc("SPY", ttl_days=0.5, no_fetch=no_fetch)),
             compute_row=_compute_row, build_payload=build_payload, persist=persist,
             top_n=top_n, refresh_universe=refresh_universe, no_fetch=no_fetch,
-            history_board="module_swing_potential", saved=config.SWING_JSON)
+            history_board="module_swing_potential", saved=config.SWING_JSON,
+            operating_only=eff.operating_only)
     if not no_fetch:
         payload["provider_health"] = yfp.health()
     return payload

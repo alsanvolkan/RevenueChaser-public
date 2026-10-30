@@ -24,6 +24,7 @@ from RevenueChaser.core.config import OUTPUT_DIR
 from RevenueChaser.core.universe import DEFAULT_MC_MIN
 from RevenueChaser.module_comovement import config as comov_config
 from RevenueChaser.module_comovement import settings as comov_settings
+from RevenueChaser.module_fundamentals import settings as fund_settings
 from RevenueChaser.module_swing_potential import config as swing_config
 from RevenueChaser.module_swing_potential import settings as swing_settings
 
@@ -48,7 +49,17 @@ def _comovement_params() -> list[str]:
 
 _WINDOW_LABELS = {21: "1m", 42: "2m", 126: "6m", 189: "9m", 252: "1y", 378: "1.5y"}
 _INPUT_KEYS = ("WINDOW", "MIN_OBS", "OOS_HOLDOUT")
-_FINE_KEYS = ("WINSOR_K", "MIN_PERIODS", "BENCH_STALE_SESSIONS")
+_FINE_KEYS = ("WINSOR_K", "MIN_PERIODS", "BENCH_STALE_SESSIONS", "OPERATING_ONLY")
+
+# The type filter's two values in words (PR 2), for the cards' select.
+_TYPE_FILTER_LABELS = {0: "Every type (Tiers A and B)", 1: "Operating companies only"}
+
+
+def _type_filter_field(f: dict) -> dict:
+    """The ``OPERATING_ONLY`` row as a card prints it: a two-way choice, never a numeric range."""
+    f["range"] = " or ".join(f"{c} = {_TYPE_FILTER_LABELS[c].lower()}" for c in f["choices"])
+    f["choices"] = [[c, _TYPE_FILTER_LABELS[c]] for c in f["choices"]]
+    return f
 
 
 def _range_text(f: dict) -> str:
@@ -67,6 +78,9 @@ def _comovement_settings() -> dict:
     """Editable inputs for the card: effective value, default, override flag, range."""
     rows = {f["key"]: f for f in board_settings.describe(comov_settings.BOARD)}
     for f in rows.values():
+        if f["key"] == "OPERATING_ONLY":
+            _type_filter_field(f)
+            continue
         f["range"] = _range_text(f)
         if f["choices"] is not None:
             f["choices"] = [[c, f"{_WINDOW_LABELS.get(c, c)} ({c})"] for c in f["choices"]]
@@ -89,7 +103,7 @@ def _plain_range(f: dict) -> str:
 
 _SWING_INPUT_KEYS = ("MIN_PRICE", "MIN_DOLLAR_VOLUME", "RS_MIN")
 _SWING_FINE_KEYS = ("VOL_CONFIRM", "BREAKOUT_HIGH_PCT", "MOVE_MIN", "ADR_MIN",
-                    "W_PROX", "W_CONS", "STOP_ATR", "TARGET_R")
+                    "W_PROX", "W_CONS", "STOP_ATR", "TARGET_R", "OPERATING_ONLY")
 
 
 def _swing_params() -> list[str]:
@@ -112,12 +126,45 @@ def _swing_settings() -> dict:
     """Editable thresholds for the Swing card: effective value, default, override flag, range."""
     rows = {f["key"]: f for f in board_settings.describe(swing_settings.BOARD)}
     for f in rows.values():
-        f["range"] = _plain_range(f)
+        if f["key"] == "OPERATING_ONLY":
+            _type_filter_field(f)
+        else:
+            f["range"] = _plain_range(f)
     return {
         "board": swing_settings.BOARD,
         "custom": any(f["overridden"] for f in rows.values()),
         "inputs": [rows[k] for k in _SWING_INPUT_KEYS],
         "fine": [rows[k] for k in _SWING_FINE_KEYS],
+    }
+
+
+_FUND_INPUT_KEYS = ("MIN_PRICE", "MIN_DOLLAR_VOLUME")
+_FUND_FINE_KEYS = ("OPERATING_ONLY",)
+
+
+def _fundamentals_params() -> list[str]:
+    """Plain-label knobs, read from the effective settings at call time (PR 2)."""
+    e = fund_settings.effective()
+    return [
+        f"Minimum price ${e.min_price:g}",
+        f"Minimum dollar volume ${e.min_dollar_volume:,.0f} a day",
+        "Operating companies only" if e.operating_only else "Every security type (Tiers A and B)",
+    ]
+
+
+def _fundamentals_settings() -> dict:
+    """Editable inputs for the Fundamentals card (PR 2): the prefilter's two floors and the type filter."""
+    rows = {f["key"]: f for f in board_settings.describe(fund_settings.BOARD)}
+    for f in rows.values():
+        if f["key"] == "OPERATING_ONLY":
+            _type_filter_field(f)
+        else:
+            f["range"] = _plain_range(f)
+    return {
+        "board": fund_settings.BOARD,
+        "custom": any(f["overridden"] for f in rows.values()),
+        "inputs": [rows[k] for k in _FUND_INPUT_KEYS],
+        "fine": [rows[k] for k in _FUND_FINE_KEYS],
     }
 
 
@@ -214,7 +261,8 @@ BOARD_INPUTS: list[dict] = [
            ["equity_universe", "quote_snapshot", "price_bars_daily", "edgar_financials"],
            lambda: _json("fundamentals", "fundamentals_latest.json"),
            funnel="funnel_steps",
-           price_basis="daily price bars: levels nominal, returns adjusted"),
+           price_basis="daily price bars: levels nominal, returns adjusted",
+           params=_fundamentals_params, settings=_fundamentals_settings),
     _board("module_sec_13f", "SEC 13F",
            ["sec13f_holdings", "sec13f_submissions", "sec13f_totals", "equity_universe"],
            lambda: _html("sec_13f")),

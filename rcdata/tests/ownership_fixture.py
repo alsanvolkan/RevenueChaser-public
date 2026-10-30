@@ -16,6 +16,8 @@ import duckdb
 from RevenueChaser.core.calendar import is_federal_holiday
 from RevenueChaser.rcdata import serving
 
+from .sec_answers import MISSING_HEADERS, MISSING_OBJECT, REFUSED_HEADERS, REFUSED_PAGE
+
 SPINE_TICKERS = ("MSFT", "BF-A", "BF-B", "BRK-B", "AAPL", "GME")
 # The issuers' real SEC CIKs (BF-A and BF-B share one, as do a company's share classes) and CUSIPs.
 SPINE_CIKS = {"MSFT": "789019", "BF-A": "14693", "BF-B": "14693", "BRK-B": "1067983", "AAPL": "320193",
@@ -360,20 +362,6 @@ def f13_set(filings: list[dict], folder: str | None = None, sk_from: int = 133_6
             z.writestr(f"{folder}/{table}.tsv" if folder else f"{table}.tsv", body)
         z.writestr("FORM13F_metadata.json", "{}")
     return out.getvalue()
-
-
-# An object that is not in the ``/Archives/`` bucket: the S3 ``AccessDenied`` answer, as sec.gov gave it on
-# 2026-10-30 for the index of 2026-10-12 (Columbus Day) and for every other day it keeps closed. The body and the
-# ``application/xml`` type are what tells it apart from a refusal.
-MISSING_OBJECT = (b'<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>AccessDenied</Code>'
-                  b'<Message>Access Denied</Message><RequestId>D28HDAKJRS9CRPRG</RequestId></Error>')
-MISSING_HEADERS = {"content-type": "application/xml", "server": "Apache"}
-
-# The SEC's own refusal (an undeclared User-Agent, or the fair-access rate): Akamai, an HTML page, no S3 error.
-REFUSED_PAGE = (b"<!DOCTYPE html><html><head><title>SEC.gov | Your Request Originates from an Undeclared "
-                b"Automated Tool</title></head><body>Your Request Originates from an Undeclared Automated Tool"
-                b"</body></html>")
-REFUSED_HEADERS = {"content-type": "text/html", "server": "AkamaiGHost"}
 
 
 class Edgar:

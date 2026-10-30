@@ -312,7 +312,8 @@ def run(ticker: str, modules: list[str] | tuple[str, ...] = ("dcf",),
                     # FIN-3: the peers are the spine's (industry at the nearest market cap, then sector), never
                     # a static list. A short ladder is reported, not silently padded — and a target the spine
                     # does not carry is not a short ladder: it is the reason there is no ladder at all.
-                    spine_rows = _spine.classification_universe_rows()
+                    spine_rows = _spine.classification_universe_rows(
+                        operating_only=_spine.BOARD_OPERATING_ONLY["module_financials"])
                     used_peers = select_peers(ticker, spine_rows)
                     if target_row(ticker, spine_rows) is None:
                         warnings.append(f"comps: {ticker} is not in the spine universe (below the market-cap "

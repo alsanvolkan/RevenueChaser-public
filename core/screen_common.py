@@ -397,8 +397,13 @@ def run_screen(*, board: str, refreshed_by: str, cfg: Any,
                persist: Callable[[list[dict]], Any],
                extra_stats: Callable[[], dict] | None = None,
                top_n: int | None = None, refresh_universe: bool = False, no_fetch: bool = False,
-               history_board: str | None = None, saved: Path | None = None) -> dict:
+               history_board: str | None = None, saved: Path | None = None,
+               operating_only: bool = True) -> dict:
     """End-to-end scan for one board; returns its JSON payload.
+
+    ``operating_only`` is the board's type filter (PR 2): True (every screener's default, the set it read
+    before the universe became A+B) leaves the excluded security types out before the prefilter and counts
+    them as ``excluded_types``; False screens every type the universe holds.
 
     ``no_fetch=True`` (a Refresh, or the plain-load self-heal) scores nothing: it returns ``stored_payload`` (the last
     Fetch's recorded payload, ``history_board``; else the board's ``saved`` JSON), so it never loads the universe
@@ -419,8 +424,9 @@ def run_screen(*, board: str, refreshed_by: str, cfg: Any,
         logger.warning("%s: no universe (%s); reporting no data", board, reason)
         return no_data_payload(build_payload([], run_stats={}), reason)
 
-    # R5 D-2 (#88): the identity master's excluded types (CEF, ETF/ETP, SPAC, preferred, unit, warrant) never screen.
-    excluded = _universe.excluded_tickers()
+    # R5 D-2 (#88): with the board's type filter on (``operating_only``, PR 2), the identity master's excluded
+    # types (CEF, ETF/ETP, SPAC, preferred, unit, warrant) do not screen.
+    excluded = _universe.excluded_tickers() if operating_only else set()
     n_excluded = sum(1 for r in rows if r.get("ticker") in excluded)
     all_rows = rows
     rows = [r for r in rows if r.get("ticker") not in excluded]

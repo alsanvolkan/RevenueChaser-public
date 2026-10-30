@@ -200,3 +200,34 @@ def test_the_bits_apply_saves_are_the_servers_own_maps():
     data = control_render.client(control.build(control_nd(), now=NOW))
     assert data["universe"]["bits"] is board_settings.UNIVERSE_SET_BITS
     assert data["universe"]["inc_bits"] is board_settings.UNIVERSE_INCLUDE_BITS
+
+
+def _flow_js() -> str:
+    """The flow diagram's own block of ``control.js`` (it has its own ``paint`` and ``hit``)."""
+    js = control_render.CTL_JS
+    return js[js.index("/* The flow diagram is the filter"):]
+
+
+def test_a_press_in_the_flow_diagram_leaves_the_page_where_it_is():
+    """avo, 30 Oct: pressing a value must not carry the page to the cards; only the press on 'open them' does."""
+    from RevenueChaser.core.tests.board_js import function_source
+    flow = _flow_js()
+    assert "scrollIntoView" not in function_source(flow, "paint"), "a pick never scrolls"
+    assert flow.count("scrollIntoView") == 1, "only the 'open them ↓' button carries the reader down"
+
+
+def test_a_health_badge_picks_its_own_file():
+    """avo, 30 Oct: the 6/7 on spine.duckdb picks that file, not every file whose health reads the same."""
+    from RevenueChaser.core.tests.board_js import function_source
+    flow = _flow_js()
+    assert "picks.hs" not in flow, "the badge picks a file, so there is no health-state pick left"
+    hit = function_source(flow, "hit")
+    assert "'file:' + t.getAttribute('data-file')" in hit, "the badge picks the file it sits in"
+
+
+def test_a_pick_closes_the_data_cards_and_opens_the_one_that_is_left():
+    """avo, 30 Oct: everything below collapses and only the card holding the pressed value stays open."""
+    from RevenueChaser.core.tests.board_js import function_source
+    paint = function_source(_flow_js(), "paint")
+    assert "c.open = false" in paint, "every card closes on a pick"
+    assert "shown === 1" in paint, "the single card that matches opens by itself"

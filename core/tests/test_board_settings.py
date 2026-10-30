@@ -134,14 +134,14 @@ def test_empty_change_set_is_invalid(rawstore_tmp_db):
 def test_unknown_board_raises(rawstore_tmp_db):
     with pytest.raises(KeyError):
         bs.values("module_nope")
-    assert bs.boards() == ["module_comovement", "module_settings", "module_swing_potential"]
+    assert bs.boards() == ["module_comovement", "module_fundamentals", "module_settings", "module_swing_potential"]
 
 
 def test_describe_lists_every_field_with_value_default_and_override_flag(rawstore_tmp_db):
     bs.save(B, {"MIN_OBS": 100})
     rows = {r["key"]: r for r in bs.describe(B)}
     assert set(rows) == {"WINDOW", "MIN_OBS", "OOS_HOLDOUT", "WINSOR_K",
-                         "MIN_PERIODS", "BENCH_STALE_SESSIONS"}
+                         "MIN_PERIODS", "BENCH_STALE_SESSIONS", "OPERATING_ONLY"}
     m = rows["MIN_OBS"]
     assert m["value"] == 100 and m["default"] == config.MIN_OBS
     assert m["overridden"] is True and rows["WINSOR_K"]["overridden"] is False
@@ -150,6 +150,30 @@ def test_describe_lists_every_field_with_value_default_and_override_flag(rawstor
     assert rows["WINSOR_K"]["kind"] == "float"
     assert rows["OOS_HOLDOUT"]["lo"] == config.OOS_HOLDOUT_LO
     assert rows["OOS_HOLDOUT"]["hi"] == config.OOS_HOLDOUT_HI
+
+
+# ── PR 2: the type filter and Fundamentals' thresholds are settings ──────────────────────────────
+@pytest.mark.parametrize("board,default", [("module_comovement", 0), ("module_swing_potential", 1),
+                                           ("module_fundamentals", 1)])
+def test_every_screening_board_has_a_type_filter_setting_whose_default_keeps_its_old_set(
+        rawstore_tmp_db, board, default):
+    from RevenueChaser.core.universe import BOARD_OPERATING_ONLY
+    assert bs.get(board, "OPERATING_ONLY") == default == int(BOARD_OPERATING_ONLY[board])
+    row = next(r for r in bs.describe(board) if r["key"] == "OPERATING_ONLY")
+    assert row["kind"] == "int" and row["choices"] == [0, 1]
+    assert bs.validate(board, {"OPERATING_ONLY": 2}) == ["OPERATING_ONLY must be one of 0, 1; got 2"]
+    bs.save(board, {"OPERATING_ONLY": 1 - default})
+    assert bs.get(board, "OPERATING_ONLY") == 1 - default
+
+
+def test_fundamentals_price_and_volume_floors_are_settings_with_todays_defaults(rawstore_tmp_db):
+    from RevenueChaser.module_fundamentals import config as fcfg
+    f = "module_fundamentals"
+    assert bs.get(f, "MIN_PRICE") == fcfg.MIN_PRICE == 5.0
+    assert bs.get(f, "MIN_DOLLAR_VOLUME") == fcfg.MIN_DOLLAR_VOLUME == 250_000
+    bs.save(f, {"MIN_PRICE": 0.5, "MIN_DOLLAR_VOLUME": 0})        # a user may switch the floor off
+    assert bs.get(f, "MIN_PRICE") == 0.5 and bs.get(f, "MIN_DOLLAR_VOLUME") == 0
+    assert bs.validate(f, {"MIN_PRICE": -1})
 
 
 # ── The control board's universe (design v28, Karar 86 A: a press drafts, Apply commits) ─────────────────────────

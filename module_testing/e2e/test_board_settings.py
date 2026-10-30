@@ -346,7 +346,8 @@ class TestBoardInputs:
             f"funnel_steps keys drifted: {[s['key'] for s in steps]}")
         # the seed makes the type step and the note non-zero, so they are really compared
         assert f["funds_etfs"] == 1 and f["unknown_type"] == 1, f
-        assert [s["key"] for s in noted] == ["unknown_type"]
+        # PR 2: Co-movement keeps every type by default, so the type groups are notes (the kept names' mix)
+        assert [s["key"] for s in noted] == ["funds_etfs", "spacs", "other_securities", "unknown_type"]
         assert len(shown) == len(counted), (
             f"card shows {len(shown)} funnel rows, payload has {len(counted)}: {shown}")
         assert len(notes) == len(noted), f"card notes {notes}, payload notes {noted}"
@@ -369,7 +370,7 @@ class TestBoardInputs:
         assert f"clustered <b class=\"num\">{payload['eligible']}</b>" in board
         # the board says the same: the type row, the note, and no store-writing button
         assert "Funds / ETFs" in board and "Unknown security type — kept" in board
-        assert "operating companies" in board
+        assert "every security type" in board
         assert "/run/identity" not in board
 
     def test_a_settings_refresh_stays_offline_with_the_card(

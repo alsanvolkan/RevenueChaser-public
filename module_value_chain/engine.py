@@ -202,8 +202,8 @@ def fetch_corpus(tickers: list[str] | None = None, no_fetch: bool = False,
     """
     if tickers is None:
         if config.USE_SHARED_UNIVERSE:
-            from RevenueChaser.core.universe import classification_universe
-            tickers = classification_universe()
+            from RevenueChaser.core.universe import BOARD_OPERATING_ONLY, classification_universe
+            tickers = classification_universe(operating_only=BOARD_OPERATING_ONLY["module_value_chain"])
         else:
             tickers = list(config.SEED)
     else:
@@ -411,11 +411,12 @@ def _board_payload(filings: list[dict], edges: list[dict], as_of: str,
     (``dst``) is a name in a filing's text, whatever type it is. Below-floor names
     that were synced earlier are not filtered here (out of scope: type only).
     """
-    from RevenueChaser.core.universe import classification_universe, excluded_tickers, theme_catalog
+    from RevenueChaser.core.universe import (BOARD_OPERATING_ONLY, classification_universe, excluded_tickers,
+                                             theme_catalog)
     excluded = excluded_tickers()
     filings = [f for f in filings if f["ticker"] not in excluded]
     edges = [e for e in edges if e.get("src") not in excluded]
-    universe = classification_universe()
+    universe = classification_universe(operating_only=BOARD_OPERATING_ONLY["module_value_chain"])
     universe_total = len(universe)
     # Universe tickers with no filing row that are known not to be fetchable:
     # a recorded miss, or no CIK in the stored map (reads only).

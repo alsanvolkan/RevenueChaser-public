@@ -303,8 +303,8 @@ def _filter_universe() -> list[dict]:
     The OIPD filters only narrow the ticker combobox — they never slice the
     fitted PDF — so this is the picker's pool, not a board filter.
     """
-    from RevenueChaser.core.universe import classification_universe, filter_fields
-    tickers = classification_universe()
+    from RevenueChaser.core.universe import BOARD_OPERATING_ONLY, classification_universe, filter_fields
+    tickers = classification_universe(operating_only=BOARD_OPERATING_ONLY["module_oipd"])
     fields = filter_fields(tickers)
     return [fields[t] for t in tickers if t in fields]
 

@@ -3,7 +3,8 @@
 Layout (plan 2026-09-30_plan_filters_ux.md, pilot of the shared filter bar):
 
 * **Header** — what the board is, when the prices end, and always the universe
-  funnel: scanned universe (all caps) → the cap floor, when one is set → operating companies → clustered.
+  funnel: scanned universe (all caps) → the cap floor, when one is set → the type filter's slice (every security
+  type by default since PR 2, operating companies with ``OPERATING_ONLY`` on) → clustered.
 * **About this data** — source, date window, what Horizon does, the full
   funnel, and what a group is (and is not).
 * **Co-movement settings** — the board's own controls, each with an ⓘ
@@ -425,6 +426,14 @@ def _about(payload: dict, horizon: int, benchmark: str, applied: bool,
         f["classification_total"] = payload["universe_total"]
     src = payload.get("source") or {}
     scanned, op_n = f.get("scanned_total"), f.get("classification_total")
+    # PR 2: a run records its type filter. With it on, the step is the operating-company slice; with it off (the
+    # default) every A+B type is kept, so the step says so. A run persisted before PR 2 has no flag: its
+    # ``classification_total`` was the operating-company count.
+    op_label = "operating companies"
+    if f.get("operating_only") is True:
+        op_n = f.get("operating_total", op_n)
+    elif f.get("operating_only") is False:
+        op_label = "every security type"
     # A payload from before the security-type filter has no ``floor_total``: its
     # "≥ floor" step is then ``classification_total`` and there is no
     # "operating companies" step.
@@ -445,7 +454,7 @@ def _about(payload: dict, horizon: int, benchmark: str, applied: bool,
         # that rather than drop it. With both steps present the floor step would only repeat "Scanned".
         steps.append(f'<span class="step">operating companies <b class="num">{_n(floor_n)}</b></span>')
     if op_n is not None:
-        steps.append(f'<span class="step">operating companies <b class="num">{_n(op_n)}</b></span>')
+        steps.append(f'<span class="step">{op_label} <b class="num">{_n(op_n)}</b></span>')
     steps.append(f'<span class="step">clustered <b class="num">{_n(clustered)}</b></span>')
     funnel_line = ('<div class="universe" aria-label="Universe">'
                    + '<span class="arrow" aria-hidden="true">→</span>'.join(steps)
