@@ -184,7 +184,15 @@ def _recent(body: dict) -> dict[str, dict]:
 class MissingObject(base.SourceError):
     """The host answered that it holds no object for the URL: a 404, or the ``/Archives/`` bucket's 403
     ``AccessDenied`` (``base.is_missing``). A plain 403 is the SEC refusing and stays a ``SourceError``, because
-    writing a day or a filing off under a refusal would never ask for it again."""
+    writing a day or a filing off under a refusal would never ask for it again.
+
+    ``status`` is that answer's own: a 404 (``data.sec.gov``, ``/files/``) says the key is not there and nothing
+    else, while the bucket's 403 is also what a path refusing everything answers, so only the 403 is counted
+    against ``base.MissingObjects``."""
+
+    def __init__(self, message: str, status: int = 403) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class SecCoverShares:
@@ -207,7 +215,8 @@ class SecCoverShares:
             spacer.wait()
             r = base.http_get(ctx, PROVIDER, url, accept=(403, 404))
             if base.is_missing(r):
-                raise MissingObject(f"{PROVIDER} {url}: HTTP {r.status_code} (the host holds no such object)")
+                raise MissingObject(f"{PROVIDER} {url}: HTTP {r.status_code} (the host holds no such object)",
+                                    r.status_code)
             if r.status_code >= 400:
                 # ``accept`` means ``http_get`` returned instead of raising, so it counted no failure for this one.
                 ctx.count(PROVIDER, failures=1)
@@ -244,9 +253,12 @@ class SecCoverShares:
         wanted: dict[str, set[str]] = {}
         known = set(tier_a)
         day = as_of - LOOKBACK
-        # The whole day walk comes before any filing is read, so a path refusing everything stops this run here
-        # (``base.MissingStreak``) and no filing is written off under it either.
+        # A path refusing everything answers each index and each filing with the same ``AccessDenied``, so both
+        # walks hold their write-offs back: the days by the calendar (``base.MissingStreak``) and the filings by
+        # how many came in a row (``base.MissingObjects``). The day walk alone is not enough, because in steady
+        # state the days of the window are already stored and this run asks for none of them.
         streak = base.MissingStreak("daily index")
+        gone = base.MissingObjects("filing instance")
         while day < as_of:
             if day.weekday() < 5:
                 for row in parse_index(self._index(ctx, day, as_of, get, streak) or ""):
@@ -282,12 +294,14 @@ class SecCoverShares:
                     ctx.issue("filing_not_in_submissions", f"{cik}:{acc}", "the daily index names it; the "
                               "submissions file's recent filings do not")
                     continue
-                path = self._filing(ctx, cik, f, as_of, get)
+                path = self._filing(ctx, cik, f, as_of, get, gone)
                 if path is not None:
                     out.append(path)
+        gone.release(ctx)
         return out + [p for p in self._untyped() if p not in out]
 
-    def _filing(self, ctx: base.RunContext, cik: str, f: dict, as_of: date, get) -> Path | None:
+    def _filing(self, ctx: base.RunContext, cik: str, f: dict, as_of: date, get,
+                gone: base.MissingObjects | None = None) -> Path | None:
         acc, doc = f["accession"], f.get("primary_document") or ""
         meta = {"cik": cik, **f, "as_of": as_of.isoformat(), "run_id": ctx.run_id}
         if not f.get("inline") or not doc.lower().endswith((".htm", ".html")):
@@ -302,9 +316,18 @@ class SecCoverShares:
         except (base.SourceError, ET.ParseError) as e:
             if isinstance(e, base.SourceError) and not isinstance(e, MissingObject):
                 raise
+            run = gone if gone is not None else base.MissingObjects("filing instance")
             ctx.issue("instance_unreadable", f"{cik}:{acc}", f"{type(e).__name__}: {str(e)[-160:]}")
-            base.write_raw_json(none_path(cik, acc), {**meta, "why": f"{type(e).__name__}"})
+            mark = {**meta, "why": f"{type(e).__name__}"}
+            if isinstance(e, MissingObject) and e.status == 403:
+                # Held, not written: a stretch of these raises, and then none of them has been written off.
+                run.gone(f"{cik}:{acc}", lambda: base.write_raw_json(none_path(cik, acc), mark))
+            else:
+                run.answered()                  # the archive handed over a body, unreadable as it was
+                base.write_raw_json(none_path(cik, acc), mark)
             return None
+        if gone is not None:
+            gone.answered()
         return base.write_raw_json(filing_path(cik, acc), {**meta, "url": url, "facts": facts,
                                                            "fetched_at": calendar._now().timestamp()})
 

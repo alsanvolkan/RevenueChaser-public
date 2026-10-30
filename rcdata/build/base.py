@@ -324,6 +324,49 @@ class MissingStreak:
         return False
 
 
+class MissingObjects:
+    """The objects in a row a host answered ``AccessDenied`` for, where no calendar can explain one.
+
+    ``MissingStreak``'s sibling for a thing with no closed days: a filing's document either is in the archive or
+    is not, and the ambiguous 403 (see ``is_missing``) is also what a path refusing everything answers. So the
+    marker that writes one off is **held**, not written: an answer that carries an object (``answered``) clears
+    the run and writes the held markers, while ``limit`` misses in a row stop the run with none of them written,
+    so the next run asks them again. ``release`` ends a walk: it writes what is held only if the host's last word
+    was an object, and otherwise leaves the trailing few to the next run.
+    """
+
+    def __init__(self, what: str, limit: int = MISSING_RUN) -> None:
+        self.what, self.limit = what, limit
+        self.run: list[str] = []
+        self.held: list[tuple[str, Callable[[], Any]]] = []
+
+    def answered(self) -> None:
+        """The host handed over an object, so it is not refusing everything: what is held can be written."""
+        self.run = []
+        held, self.held = self.held, []
+        for _, write in held:
+            write()
+
+    def gone(self, name: str, write: Callable[[], Any]) -> None:
+        """One the host says it holds no object for; ``write`` marks it, once the host has answered. Raises with
+        nothing written once ``limit`` of them came in a row."""
+        self.run.append(name)
+        self.held.append((name, write))
+        if len(self.run) >= self.limit:
+            raise SourceError(f"sec: the archive holds no {self.what} for {self.limit} in a row "
+                              f"({', '.join(self.run)}); it may be refusing every request, so none of them is "
+                              "written off and the next run asks them again")
+
+    def release(self, ctx: "RunContext") -> None:
+        """End of the walk: write what is held if the host's last answer carried an object, else leave it."""
+        if not self.run:
+            self.answered()
+        elif self.held:
+            ctx.notes.append(f"{len(self.held)} {self.what} markers held back: the archive's last answers carried "
+                             "no object, so the next run asks for them again")
+            self.held = []
+
+
 def refusal_note(keyed: bool = False) -> str:
     """What a 403 points at: the provider's key when the request carries one, else ``RC_HTTP_CONTACT``. A source
     that accepts a 403 itself (``accept``) and then decides it is a real refusal raises with the same words."""
