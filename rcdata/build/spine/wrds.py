@@ -62,7 +62,10 @@ _DIGITS = re.compile(r"^\d{1,10}$")
 _GVKEY = re.compile(r"^\d{6}$")
 
 # table -> (dataset, schema, key, full query); the new-name queries are built in ``_new_name_queries``.
-COMPANY = [("gvkey", "TEXT"), ("conm", "TEXT"), ("cik", "TEXT")]
+# ``sic`` since #240: Compustat's company SIC, the spine's only SPAC source (``spine/tier.SIC_SPAC``). A
+# snapshot taken before this column was asked for has no ``sic`` in its Parquet; staging reads it as NULL
+# (``stage.create``), so the rule types nothing until the next attended snapshot.
+COMPANY = [("gvkey", "TEXT"), ("conm", "TEXT"), ("cik", "TEXT"), ("sic", "TEXT")]
 SECURITY = [("gvkey", "TEXT"), ("iid", "TEXT"), ("tic", "TEXT"), ("cusip", "TEXT"), ("exchg", "INTEGER"),
             ("excntry", "TEXT"), ("secstat", "TEXT"), ("tpci", "TEXT"), ("dldtei", "DATE")]
 IDHIST = [("gvkey", "TEXT"), ("iid", "TEXT"), ("item", "TEXT"), ("itemvalue", "TEXT"), ("efffrom", "DATE"),
@@ -74,7 +77,7 @@ PROVENANCE = [("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TE
 
 TABLES: dict[str, dict] = {
     "company": {"dataset": "wrds/sec_idhist", "schema": COMPANY, "key": ["gvkey"],
-                "sql": "SELECT gvkey, conm, cik FROM comp.company"},
+                "sql": "SELECT gvkey, conm, cik, sic FROM comp.company"},
     "security": {"dataset": "wrds/sec_idhist", "schema": SECURITY, "key": ["gvkey", "iid"],
                  "sql": "SELECT gvkey, iid, tic, cusip, exchg, excntry, secstat, tpci, dldtei FROM comp.security"},
     "sec_idhist": {"dataset": "wrds/sec_idhist", "schema": IDHIST, "key": ["gvkey", "iid", "item", "efffrom"],
@@ -399,7 +402,7 @@ class WrdsDataset:
         padded = [c.zfill(10) for c in new]
         out = []
         raw = _ask(ctx, folder / f"new-company{RAW_SUFFIX}",
-                   f"SELECT gvkey, conm, cik FROM comp.company WHERE cik IN ({_in_list(padded)})", as_of)
+                   f"{TABLES['company']['sql']} WHERE cik IN ({_in_list(padded)})", as_of)
         out.append(raw)
         con = duckdb.connect()
         try:

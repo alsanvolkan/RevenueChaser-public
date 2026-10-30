@@ -26,8 +26,11 @@ def create(con: duckdb.DuckDBPyConnection, name: str, schema: list[tuple[str, st
     con.execute(f"CREATE OR REPLACE TEMP TABLE {name} ({cols})")
     files = sorted(Path(f) for f in files)
     if files:
-        names = ", ".join(f'"{c}"' for c, _ in schema)
         src = f"read_parquet([{', '.join(base.sql_path(f) for f in files)}], union_by_name = true)"
+        # A column added to a schema after the Parquet was written is in none of the files, and selecting it would
+        # fail the build; it is read as NULL until the source is fetched again (#240 added ``company.sic``).
+        have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
+        names = ", ".join(f'"{c}"' if c in have else f'NULL AS "{c}"' for c, _ in schema)
         body = select.replace("{src}", src) if select else f"SELECT {names} FROM {src}"
         con.execute(f"INSERT INTO {name} SELECT {names} FROM ({body})")
     return count(con, name)

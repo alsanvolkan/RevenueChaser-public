@@ -316,10 +316,13 @@ class SpineSecurity:
         wrds_on, figi_on = bool(have[SEC_IDHIST.name]), bool(have[OPENFIGI])
 
         sec = _rows(con, "SELECT * FROM stg_sec ORDER BY ticker")
-        company = _rows(con, "SELECT gvkey, conm, cik FROM stg_wrds_company")
+        company = _rows(con, "SELECT gvkey, conm, cik, sic FROM stg_wrds_company")
         gvkeys_of_cik: dict[str, list[str]] = defaultdict(list)
         cik_of_gvkey: dict[str, str] = {}
+        sic_of_gvkey: dict[str, str] = {}
         for c in company:
+            if c.get("sic"):
+                sic_of_gvkey[c["gvkey"]] = c["sic"]
             cik = norm_cik(c["cik"])
             if cik:
                 gvkeys_of_cik[cik].append(c["gvkey"])
@@ -346,7 +349,8 @@ class SpineSecurity:
             f = figi.get(cusip) if cusip else None
             f_ok = f if f and f.get("status") == PRESENT else None
             typ, typ_src = tier_rule.security_type(r["ticker"], r["name"], f_ok, (sec_row or {}).get("tpci"),
-                                                    exchange=r["exchange"])
+                                                    exchange=r["exchange"],
+                                                    sic=sic_of_gvkey.get((sec_row or {}).get("gvkey")))
             current = [g for g in hgic.get((sec_row or {}).get("gvkey"), []) if g.get("indthru") is None]
             g = current[-1] if current else None
             sector, industry = sector_names(g and g.get("gsector"), g and g.get("ggroup"))
