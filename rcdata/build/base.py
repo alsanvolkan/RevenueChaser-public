@@ -28,7 +28,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
 
@@ -271,6 +271,57 @@ def is_missing(r: httpx.Response) -> bool:
         return True
     return (r.status_code == 403 and "xml" in str(r.headers.get("content-type") or "").lower()
             and MISSING_CODE in r.content)
+
+
+MISSING_RUN = 3     # consecutive open weekdays with no object: a refusal of the whole path, not that many days
+
+
+def open_weekdays(first: date, last: date) -> list[date]:
+    """The days from ``first`` to ``last`` EDGAR was open: weekdays that are no federal holiday."""
+    out, day = [], first
+    while day <= last:
+        if day.weekday() < 5 and not calendar.is_federal_holiday(day):
+            out.append(day)
+        day += timedelta(days=1)
+    return out
+
+
+class MissingStreak:
+    """The open weekdays one run found no object for, in a reader that walks a day at a time.
+
+    ``is_missing`` reads the answer's body, which separates the SEC's own refusal from an object the bucket does not
+    hold — it cannot separate that from a path or bucket that answers ``AccessDenied`` for *everything* (a wrong
+    ``RC_SEC_WWW_BASE``, an EDGAR path change, a bucket-policy change). So a reader that writes a day off on that
+    answer alone would walk a wholesale refusal and never ask those days again. A day EDGAR was closed on is
+    written off; a day nothing explains is only noted, and ``MISSING_RUN`` of them in a row stops the run with
+    nothing written off, so the next run asks them again.
+
+    ``what`` names the thing in the notes and the error ("daily index"). One streak per walk.
+    """
+
+    def __init__(self, what: str, limit: int = MISSING_RUN) -> None:
+        self.what, self.limit = what, limit
+        self.unexplained: list[date] = []
+
+    @staticmethod
+    def closed(day: date) -> bool:
+        """Whether EDGAR was closed on ``day``: a weekend, or a federal holiday (not an NYSE one)."""
+        return day.weekday() >= 5 or calendar.is_federal_holiday(day)
+
+    def missing(self, ctx: "RunContext", day: date) -> bool:
+        """``day`` has no object. True when that is explained and may be written off; False when it is not, and a
+        stretch of ``limit`` unexplained open weekdays raises instead of writing any of them off."""
+        if self.closed(day):
+            ctx.notes.append(f"{day}: no {self.what}, EDGAR closed")
+            return True
+        self.unexplained.append(day)
+        run = sorted(self.unexplained[-self.limit:])
+        if len(run) >= self.limit and open_weekdays(run[0], run[-1]) == run:
+            raise SourceError(f"sec: no {self.what} for {self.limit} weekdays EDGAR was open "
+                              f"({', '.join(str(d) for d in run)}); the bucket may be refusing every request, so "
+                              "none of them is written off and the next run asks them again")
+        ctx.notes.append(f"{day}: no {self.what} although EDGAR was open")
+        return False
 
 
 def refusal_note(keyed: bool = False) -> str:

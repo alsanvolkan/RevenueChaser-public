@@ -238,7 +238,7 @@ def test_a_statement_filed_yesterday_is_read_again_today(sec):
     assert days == ["20261021", "20261022", "20261023", "20261026", "20261027", "20261028"]   # weekdays only
     fx.run(companyfacts.NAME, "2026-10-29")
     again = [str(r.url).rsplit("master.", 1)[1][:8] for r in sec.calls("daily-index")][len(days):]
-    assert again == ["20261028", "20261029"]          # a past holiday's 404 is not asked again; the last two are
+    assert again == ["20261029"]                      # every day of the first window is stored: only the new one
 
 
 def test_todays_index_not_published_yet_answers_403_and_the_run_still_reads_yesterdays(sec):
@@ -282,6 +282,44 @@ def test_a_day_edgar_keeps_closed_is_marked_absent_and_the_scan_goes_on(sec):
     before = len(sec.calls("master.20261012.idx"))
     assert sec_index.fetch_day(ctx, day, as_of) is None
     assert len(sec.calls("master.20261012.idx")) == before          # not asked again
+
+
+def test_a_stretch_of_open_weekdays_with_no_index_stops_the_scan(sec):
+    """The bucket's ``AccessDenied`` is also what a wrong base URL, an EDGAR path change or a bucket-policy change
+    answers for every request. ``fetch_day`` cannot tell that from one missing object, so a stretch of open weekdays
+    stops the scan and writes none of them off, the way ``ownership/edgar`` does; before this the scan marked four
+    real business days absent, said nothing, and ``mark_scanned`` moved the window past them for good."""
+    as_of = date(2026, 11, 20)                       # a Friday; no federal holiday in the window
+    sec.add("master.", MISSING_OBJECT, status=403, headers=MISSING_HEADERS)
+    ctx = base.RunContext(run_id="r", dataset=companyfacts.NAME, sleep=lambda s: None)
+    with pytest.raises(base.SourceError, match="3 weekdays EDGAR was open"):
+        sec_index.filings(ctx, as_of, lookback=7)
+    for day in (date(2026, 11, 13), date(2026, 11, 16), date(2026, 11, 17), date(2026, 11, 18)):
+        assert not sec_index.absent_path(day).exists(), day
+
+
+def test_an_open_weekday_with_no_index_on_its_own_is_not_written_off(sec):
+    """One such day is no proof either way, so it is noted and asked again rather than marked absent; only EDGAR's
+    own closure (11 Nov 2026, Veterans Day) explains a day well enough to write it off."""
+    sec.add("master.", MISSING_OBJECT, status=403, headers=MISSING_HEADERS)
+    ctx = base.RunContext(run_id="r", dataset=companyfacts.NAME, sleep=lambda s: None)
+    assert sec_index.fetch_day(ctx, date(2026, 11, 12), date(2026, 11, 20)) is None
+    assert not sec_index.absent_path(date(2026, 11, 12)).exists()
+    assert ctx.notes == ["2026-11-12: no daily index although EDGAR was open"]
+    assert sec_index.fetch_day(ctx, date(2026, 11, 11), date(2026, 11, 20)) is None
+    assert sec_index.absent_path(date(2026, 11, 11)).exists()
+
+
+def test_an_isolated_missing_day_does_not_make_a_stretch_with_two_later_ones(sec):
+    """Only *consecutive* open weekdays point at a path refusing everything: a day with no index on 13 Nov and two
+    more on the 17th and 18th, with the 16th answered, are three days and no stretch, so the scan goes on."""
+    as_of = date(2026, 11, 20)
+    sec.add("master.20261116.idx", fx.daily_index([]))
+    sec.add("master.", MISSING_OBJECT, status=403, headers=MISSING_HEADERS)
+    ctx = base.RunContext(run_id="r", dataset=companyfacts.NAME, sleep=lambda s: None)
+    assert sec_index.filings(ctx, as_of, lookback=7) == []
+    assert not any(sec_index.absent_path(d).exists()
+                   for d in (date(2026, 11, 13), date(2026, 11, 17), date(2026, 11, 18)))
 
 
 def test_a_refused_index_raises_whatever_the_days_age(sec):
@@ -330,8 +368,7 @@ def test_a_filing_made_during_an_outage_longer_than_the_lookback_is_still_read(s
     assert days[0] == "20260902" and days[-1] == "20261028"              # from the day after the last read
     assert "daily index read for" not in fx.run(companyfacts.NAME, "2026-10-29")["note"]
     again = [str(r.url).rsplit("master.", 1)[1][:8] for r in sec.calls("daily-index")][len(days):]
-    assert again == ["20261027", "20261028", "20261029"]   # the scan is recorded: the 7-day window again (the 27th
-    #                                                        answered 404 as yesterday, so it is asked again)
+    assert again == ["20261029"]      # the scan is recorded, and every day of the 7-day window is already stored
 
 
 def test_an_accession_not_in_the_xbrl_api_yet_is_asked_again_the_next_day(sec):

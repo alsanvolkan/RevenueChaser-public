@@ -75,7 +75,7 @@ def index_url(day: date) -> str:
 
 # A day or a filing the ``/Archives/`` bucket does not hold answers 403, not 404: ``base.is_missing`` reads the
 # answer's body, and the comment above it says why that, and not the calendar, is what decides.
-MISSING_RUN = 3     # consecutive missing weekdays EDGAR does not keep closed: a refusal of the whole bucket, not days
+MISSING_RUN = base.MISSING_RUN   # consecutive missing weekdays EDGAR does not keep closed: a refusal, not days
 
 
 def ymd(text) -> date | None:
@@ -243,16 +243,6 @@ class _Held:
         return done
 
 
-def _open_weekdays(first: date, last: date) -> list[date]:
-    """The days from ``first`` to ``last`` EDGAR was open: weekdays that are no federal holiday."""
-    out, day = [], first
-    while day <= last:
-        if day.weekday() < 5 and not calendar.is_federal_holiday(day):
-            out.append(day)
-        day += timedelta(days=1)
-    return out
-
-
 class Feed:
     """One family of forms walked through the daily index. A subclass sets ``name``, ``forms``, ``sub`` (its raw
     and Parquet folder under ``sec/``) and ``budget_s``, and types a day (``type_day``)."""
@@ -394,7 +384,7 @@ class Feed:
         unexplained.append(day)
         # The walk goes newest first, so the days it just found are the last ones appended, not the earliest dates.
         run = sorted(unexplained[-MISSING_RUN:])
-        if len(run) >= MISSING_RUN and _open_weekdays(run[0], run[-1]) == run:
+        if len(run) >= MISSING_RUN and base.open_weekdays(run[0], run[-1]) == run:
             raise base.SourceError(f"sec: no daily index for {MISSING_RUN} weekdays EDGAR was open "
                                    f"({', '.join(str(d) for d in run)}); the bucket may be refusing every "
                                    "request, so none of them is written off and the next run asks them again")

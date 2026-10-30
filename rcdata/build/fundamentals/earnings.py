@@ -118,7 +118,8 @@ class EarningsCalendar:
             ctx.notes.append("no ALPHAVANTAGE_API_KEY: nothing asked")
             return []
         url = f"{base_url()}/query"
-        r = common.get(ctx, PROVIDER, url, params={"function": "EARNINGS_CALENDAR", "horizon": HORIZON, "apikey": key})
+        r = common.get(ctx, PROVIDER, url, keyed=True,
+                       params={"function": "EARNINGS_CALENDAR", "horizon": HORIZON, "apikey": key})
         rows = parse(r.text)                      # refuse a rate-limit answer before it is kept
         base.write_raw_json(common.meta_path(raw), {"as_of": as_of.isoformat(), "fetched_at": time.time(),
                                                     "run_id": ctx.run_id, "url": url, "rows": len(rows)})

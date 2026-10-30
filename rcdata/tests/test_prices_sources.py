@@ -120,6 +120,7 @@ def _sec_routes(http_mock):
         ("0000910073-26-000010", "10-Q", "2026-08-05", "2026-06-30", "flg-10q.htm", 0)]))
     http_mock.add(GOOG_URL, goog_instance())
     http_mock.add(AAPL_URL, aapl_instance())
+    http_mock.fallback("master.", master_index([]))     # EDGAR has an index for every open day, rows or none
 
 
 def test_cover_shares_from_the_daily_index_and_the_fill(http_mock, monkeypatch):
@@ -163,6 +164,21 @@ def test_a_day_the_archive_does_not_hold_is_marked_missing_and_a_refusal_is_not(
     with pytest.raises(base.SourceError, match="HTTP 403"):
         cover_shares.DATASET._index(ctx, refused, TUE, get)
     assert not cover_shares.index_path(refused).with_name(f"master.{refused:%Y%m%d}.idx.missing").exists()
+    # ``accept=(403, 404)`` means ``http_get`` returned rather than raised, so the count is this reader's to make.
+    assert ctx.calls[cover_shares.PROVIDER][1] == 1
+
+
+def test_an_archive_that_answers_nothing_writes_no_day_and_no_filing_off(http_mock, monkeypatch):
+    """A path or bucket refusing everything answers each index with the same ``AccessDenied`` as a day with no
+    index. The day walk comes before any filing, so a stretch of open weekdays stops the run there and nothing —
+    no ``.missing`` day, no ``.none`` filing — is written off; before this, four real days were."""
+    monkeypatch.setattr(cover_shares, "FILL_PER_RUN", 2)
+    _sec_routes(http_mock)
+    http_mock.routes.insert(0, ("master.", MISSING_OBJECT, 403, dict(MISSING_HEADERS)))
+    with pytest.raises(base.SourceError, match="weekdays EDGAR was open"):
+        cover_shares.DATASET.fetch(_ctx(cover_shares.NAME), TUE)
+    assert not list((base.raw_root() / "sec").rglob("*.missing"))
+    assert not list((base.raw_root() / "sec" / "cover_shares").rglob("*.json.gz"))
 
 
 def test_a_stored_filing_is_never_asked_again(http_mock, monkeypatch):

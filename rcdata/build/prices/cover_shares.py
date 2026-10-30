@@ -15,7 +15,7 @@ and whether it is inline XBRL) and the instance: two requests, ``SEC_INTERVAL_S`
 through the box's shared SEC bucket (``core/sec_throttle.py``), with the builder's User-Agent.
 
 **Raw**: ``raw/sec/daily_index/master.<YYYYMMDD>.idx.gz`` (a ``.missing`` marker for a day with no index, two days
-past), and ``raw/sec/cover_shares/cik=<CIK>/<accession>.json.gz``, the cover facts only (an instance runs to
+past, and only when EDGAR's closure explains it: ``base.MissingStreak``), and ``raw/sec/cover_shares/cik=<CIK>/<accession>.json.gz``, the cover facts only (an instance runs to
 megabytes); ``<accession>.none.json.gz`` for a filing with no instance to read, ``_asked.json.gz`` for a CIK whose
 submissions file has no ``FORMS`` filing. A filing that has a raw file is never asked again.
 
@@ -209,11 +209,14 @@ class SecCoverShares:
             if base.is_missing(r):
                 raise MissingObject(f"{PROVIDER} {url}: HTTP {r.status_code} (the host holds no such object)")
             if r.status_code >= 400:
+                # ``accept`` means ``http_get`` returned instead of raising, so it counted no failure for this one.
+                ctx.count(PROVIDER, failures=1)
                 raise base.SourceError(f"{PROVIDER} {url}: HTTP {r.status_code}{base.refusal_note()}")
             return r
         return get
 
-    def _index(self, ctx: base.RunContext, day: date, as_of: date, get) -> str | None:
+    def _index(self, ctx: base.RunContext, day: date, as_of: date, get,
+               streak: base.MissingStreak | None = None) -> str | None:
         path = index_path(day)
         missing = path.with_name(path.name.removesuffix(".gz") + ".missing")
         if path.exists():
@@ -225,7 +228,9 @@ class SecCoverShares:
         except base.CapReached:
             raise
         except MissingObject:
-            if as_of - day >= MISSING_AFTER:
+            # The archive answers the same for an index it does not hold and for a path that refuses everything, so
+            # a day is written off only when EDGAR's closure explains it; a stretch of open weekdays raises instead.
+            if as_of - day >= MISSING_AFTER and (streak or base.MissingStreak("daily index")).missing(ctx, day):
                 base.write_raw(missing, b"")
             return None
         base.write_raw(path, r.content)
@@ -239,9 +244,12 @@ class SecCoverShares:
         wanted: dict[str, set[str]] = {}
         known = set(tier_a)
         day = as_of - LOOKBACK
+        # The whole day walk comes before any filing is read, so a path refusing everything stops this run here
+        # (``base.MissingStreak``) and no filing is written off under it either.
+        streak = base.MissingStreak("daily index")
         while day < as_of:
             if day.weekday() < 5:
-                for row in parse_index(self._index(ctx, day, as_of, get) or ""):
+                for row in parse_index(self._index(ctx, day, as_of, get, streak) or ""):
                     if row["cik"] in known and row["form"] in FORMS:
                         wanted.setdefault(row["cik"], set()).add(row["accession"])
             day += timedelta(days=1)
