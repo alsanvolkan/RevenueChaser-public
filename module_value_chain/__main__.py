@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     pick = p.add_mutually_exclusive_group()
     warn = " Makes SEC requests for these names and rebuilds the Value Chain edges."
     pick.add_argument("--floor", type=_floor, default=None, metavar="M",
-                      help="operating names with a market cap >= M USD millions (default: the $300M universe)."
+                      help="operating names with a market cap >= M USD millions (default: no floor, Tiers A and B)."
                            + warn)
     pick.add_argument("--tickers", default=None, metavar="A,B",
                       help="exactly these tickers, comma-separated." + warn)

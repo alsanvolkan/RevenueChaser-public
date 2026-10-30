@@ -184,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     warn = (" With --run: a full Fetch of exactly these names (SEC filings, DeepSeek profiles) that replaces "
             "every peer score and relatedness_latest.json until the next default run.")
     pick.add_argument("--floor", type=_floor, default=None, metavar="M",
-                      help="operating names with a market cap >= M USD millions (default: the $300M universe)."
+                      help="operating names with a market cap >= M USD millions (default: no floor, Tiers A and B)."
                            + warn)
     pick.add_argument("--tickers", default=None, metavar="A,B",
                       help="exactly these tickers, comma-separated." + warn)

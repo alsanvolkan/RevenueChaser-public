@@ -16,13 +16,23 @@ def _seed_universe(rows):
     } for r in rows])
 
 
-def test_classification_universe_applies_the_300m_floor(rawstore_tmp_db):
+def test_classification_universe_has_no_market_cap_floor(rawstore_tmp_db):
+    """avo, 29 Oct 2026: the tier is the whole limit, so the default keeps every cap."""
     _seed_universe([
         {"ticker": "BIG", "market_cap": 400e6},
         {"ticker": "TINY", "market_cap": 50e6},
     ])
-    assert universe.classification_universe() == ["BIG"]
-    assert universe.classification_universe(mc_min=0) == ["BIG", "TINY"]
+    assert universe.DEFAULT_MC_MIN == 0
+    assert universe.classification_universe() == ["BIG", "TINY"]
+
+
+def test_a_caller_can_still_ask_for_a_floor_of_its_own(rawstore_tmp_db):
+    """The parameter stays for --floor and the Co-movement setting, it is only no longer the default."""
+    _seed_universe([
+        {"ticker": "BIG", "market_cap": 400e6},
+        {"ticker": "TINY", "market_cap": 50e6},
+    ])
+    assert universe.classification_universe(mc_min=300_000_000) == ["BIG"]
 
 
 def test_filter_fields_joins_name_gics_and_index(rawstore_tmp_db):
@@ -173,14 +183,31 @@ def test_no_pinned_run_means_no_themes_not_a_crash(rawstore_tmp_db):
 
 
 def test_universe_counts_are_all_caps_and_the_classified_slice(rawstore_tmp_db):
+    """With no floor (the default) nothing is below it.
+
+    A NULL cap is still counted apart and, on this store path, still left out: the query is
+    ``market_cap >= ?`` and NULL compares to nothing. The spine path keeps it (``COALESCE(..., 0) >= 0``),
+    which is the live behaviour since PR 6.
+    """
     _seed_universe([{"ticker": "BIG", "market_cap": 4e8},
                     {"ticker": "TINY", "market_cap": 5e7},
                     {"ticker": "NOCAP", "market_cap": None}])
     c = universe.universe_counts()
-    assert c == {"scanned_total": 3, "classification_total": 1, "floor_total": 1,
-                 "funds_etfs": 0, "spacs": 0, "other_securities": 0, "unknown_type": 1,
-                 "below_floor": 1, "no_market_cap": 1,
-                 "floor": universe.DEFAULT_MC_MIN}
+    assert c == {"scanned_total": 3, "classification_total": 2, "floor_total": 2,
+                 "funds_etfs": 0, "spacs": 0, "other_securities": 0, "unknown_type": 2,
+                 "below_floor": 0, "no_market_cap": 1,
+                 "floor": 0}
+
+
+def test_universe_counts_still_split_by_an_explicit_floor(rawstore_tmp_db):
+    """The funnel machinery stays for the callers that pass a floor (--floor, the Co-movement setting)."""
+    _seed_universe([{"ticker": "BIG", "market_cap": 4e8},
+                    {"ticker": "TINY", "market_cap": 5e7},
+                    {"ticker": "NOCAP", "market_cap": None}])
+    c = universe.universe_counts(mc_min=300_000_000)
+    assert c["below_floor"] == 1 and c["no_market_cap"] == 1
+    assert c["floor_total"] == 1 and c["classification_total"] == 1
+    assert c["floor"] == 300_000_000
 
 
 # ── R3 (#86): an unknown GICS value reads Unclassified (never the legacy "Other") ─────────────
@@ -257,7 +284,7 @@ def test_classification_universe_drops_excluded_types_at_any_cap(rawstore_tmp_db
 def test_classification_universe_rows_carries_the_columns_the_peer_ladder_needs(rawstore_tmp_db):
     """FIN-3: comps peers are picked inside the spine, so the reader that feeds them carries sector and industry.
 
-    The rows are the same slice as the ticker list (same floor, same excluded types, same cap-descending order);
+    The rows are the same slice as the ticker list (same floor if one is asked for, same excluded types, same cap-descending order);
     ``sub_industry`` is not read — the identity master writes it NULL.
     """
     _seed_universe([
@@ -266,8 +293,9 @@ def test_classification_universe_rows_carries_the_columns_the_peer_ladder_needs(
         {"ticker": "TINY", "market_cap": 50e6, "sector": "Energy", "industry": "Oil & Gas E&P"}])
     _seed_master({"BIG": "common", "ETFX": "etp"})
     assert universe.classification_universe_rows() == [
-        {"ticker": "BIG", "market_cap": 4e9, "sector": "Energy", "industry": "Oil & Gas E&P"}]
-    for mc_min in (universe.DEFAULT_MC_MIN, 0):
+        {"ticker": "BIG", "market_cap": 4e9, "sector": "Energy", "industry": "Oil & Gas E&P"},
+        {"ticker": "TINY", "market_cap": 50e6, "sector": "Energy", "industry": "Oil & Gas E&P"}]
+    for mc_min in (universe.DEFAULT_MC_MIN, 0, 300_000_000):
         assert ([r["ticker"] for r in universe.classification_universe_rows(mc_min)]
                 == universe.classification_universe(mc_min))
 
@@ -331,15 +359,16 @@ def _mixed_universe():
 
 
 def test_universe_counts_split_the_floor_slice_by_type_group(rawstore_tmp_db):
+    """Asked with an explicit floor: the three tiny names and the NULL cap stay out of the slice."""
     _mixed_universe()
-    c = universe.universe_counts()
+    c = universe.universe_counts(mc_min=300_000_000)
     assert c["scanned_total"] == 14
     assert c["below_floor"] == 3 and c["no_market_cap"] == 1
     assert c["floor_total"] == 10
     assert (c["funds_etfs"], c["spacs"], c["other_securities"]) == (2, 1, 3)
     assert c["classification_total"] == 4
     assert c["unknown_type"] == 2               # NOROW + UNK1 (kept, not an operating type)
-    assert c["floor"] == universe.DEFAULT_MC_MIN
+    assert c["floor"] == 300_000_000
 
 
 def test_universe_counts_invariants_and_agreement_with_the_universe(rawstore_tmp_db):

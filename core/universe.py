@@ -7,8 +7,10 @@ place the membership rule lives.
 
 The rule has two parts:
 
-* **the floor** — `market_cap >= mc_min`, `mc_min` defaulting to $300M (the liquid
-  slice used by the boards; pass a lower value, or 0, for the full universe);
+* **the tier** — the spine's Tiers A and B, which is the whole limit (avo, 29 Oct
+  2026). There is no market-cap floor any more: `mc_min` defaults to 0, so every
+  tier A/B name is kept, NULL-cap names included. A caller that wants a floor of
+  its own still passes one (`--floor`, the Co-movement setting);
 * **the security type** (Identity R4, #87) — names the identity master
   (`security_master.security_type`) types as `identity.types.EXCLUDED_TYPES`
   (funds, ETFs, SPACs, preferreds, warrants, units) are not operating companies and
@@ -48,7 +50,9 @@ if TYPE_CHECKING:
 _UNIVERSE_TABLE = ("equity_universe" if "equity_universe" in rawstore.MANIFEST
                    else "equity_universe")
 
-DEFAULT_MC_MIN = 300_000_000.0
+# No market-cap floor (avo, 29 Oct 2026): the universe is the spine's Tiers A and B and nothing else.
+# The parameter stays, so a caller can still ask for a floor of its own; 0 keeps NULL-cap names too.
+DEFAULT_MC_MIN = 0.0
 
 # The source switch (PR 5): read at call time, so a test or a restart with the variable set changes it.
 SOURCE_ENV = "RC_UNIVERSE_SOURCE"
