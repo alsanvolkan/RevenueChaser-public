@@ -146,10 +146,19 @@ def test_the_builder_starts_while_a_lock_on_the_old_store_is_held(cli_env, tmp_p
 
 
 def test_the_builder_refuses_to_start_while_an_undeclared_lock_is_held(cli_env):
-    """A family with no ``job_lock.WRITES`` entry still holds the builder off, and the message names it."""
+    """A family with no ``job_lock.WRITES`` entry still holds the builder off, and the message names it.
+
+    ``run --dataset`` is a command a person types, so it waits for the writer turn (#309): ``--wait 0`` is the
+    refusal at once, and a short wait says what it is waiting for and is still refused when the wait runs out.
+    """
     with _holding(cli_env, "a_new_writer"):
-        r = _run(cli_env, "RevenueChaser.rcdata.build", "run", "--once", "--dataset", "market_series")
+        r = _run(cli_env, "RevenueChaser.rcdata.build", "run", "--once", "--dataset", "market_series",
+                 "--wait", "0")
         assert r.returncode == 3 and "a_new_writer" in r.stderr
+        assert not (Path(cli_env["RC_MARKET_DIR"]) / "market.duckdb").exists()
+        r = _run(cli_env, "RevenueChaser.rcdata.build", "run", "--once", "--dataset", "market_series",
+                 "--wait", "1")
+        assert r.returncode == 3 and "waiting for the writer turn" in r.stderr and "a_new_writer" in r.stderr
         assert not (Path(cli_env["RC_MARKET_DIR"]) / "market.duckdb").exists()
 
 

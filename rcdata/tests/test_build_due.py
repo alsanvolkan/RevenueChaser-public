@@ -160,7 +160,7 @@ def ran(monkeypatch):
     from RevenueChaser.rcdata.build import base
     seen = []
 
-    def fake(req):
+    def fake(req, **kw):
         seen.append(req)
         ops.record_check(req["dataset"], "unchanged", source_as_of="2026-10-27", next_check_due="2026-10-28")
         ops.finish_request(req["id"], "done")

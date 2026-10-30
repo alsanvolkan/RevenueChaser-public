@@ -1512,6 +1512,14 @@ def api_build_request(dataset: str):
     JSON body or the query string. 202 with the request id; 400 for an unknown dataset, a bad date or a scope the
     builder could not run; 409 while one is queued or running.
 
+    An attended dataset (WRDS: a person logs in and confirms Duo) is queued too, and the answer says what it waits
+    for: the store takes one writer at a time and the login needs a terminal, so the request waits in the queue
+    until ``python -m RevenueChaser.rcdata.build attended`` on the server takes it. The hourly builder leaves it
+    there (``base.attended_names``). Its mode is the press's own, like every other dataset's: the daily ``fetch``
+    unless ``backfill_from`` is given. Each WRDS dataset has a ``fetch`` that is not its backfill — for
+    ``wrds/prices`` the monthly refresh of the last two years, where the backfill only fills missing partitions —
+    so a press must not be turned into one (review MUST-1).
+
     A dataset that cannot narrow its fetch to a scope still takes the request and says so on its check row
     (``base.honours_scope``), so a press is never silently something else."""
     from RevenueChaser.rcdata import ops
@@ -1519,10 +1527,7 @@ def api_build_request(dataset: str):
     ds = _build_dataset(dataset)
     if ds is None:
         return jsonify({"ok": False, "error": f"unknown dataset {dataset!r}"}), 400
-    if getattr(ds, "attended", False):
-        # WRDS (PR 5): a person logs in and confirms Duo, so only the CLI on the server queues it.
-        return jsonify({"ok": False, "error": f"{dataset} is attended: run it from the CLI on the server "
-                                              "(python -m RevenueChaser.rcdata.build backfill ...)"}), 409
+    attended = bool(getattr(ds, "attended", False))
     body = request.get_json(silent=True) if request.is_json else None
     body = body if isinstance(body, dict) else {}
 
@@ -1538,10 +1543,17 @@ def api_build_request(dataset: str):
     if problem:
         return jsonify({"ok": False, "error": problem}), 400
     params.update(scope)
+    waits_for = None
+    if attended:
+        waits_for = ("a person at a terminal on the server: python -m RevenueChaser.rcdata.build attended "
+                     "(the WRDS login and Duo)")
     rid = ops.enqueue_once(dataset, params or None, by=_requested_by())
     if rid is None:
         return jsonify({"ok": False, "error": f"{dataset} is already queued or running"}), 409
-    return jsonify({"ok": True, "id": rid, "dataset": dataset}), 202
+    out = {"ok": True, "id": rid, "dataset": dataset}
+    if attended:
+        out.update(attended=True, waits_for=waits_for)
+    return jsonify(out), 202
 
 
 @app.route("/api/build/queue")

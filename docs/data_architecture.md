@@ -1045,19 +1045,31 @@ builder's calls are counted: the dashboard's own UW client is not yet.
 The keyless sources send one User-Agent with the contact from `RC_HTTP_CONTACT` (BLS refuses a client without
 one; a 403 names the variable in the source's failure note).
 
-**Running it.** `python -m RevenueChaser.rcdata.build run [--once] [--dataset X [--as-of D]]` and
-`python -m RevenueChaser.rcdata.build backfill <dataset> --from <date>`. It refuses to start (exit 3) while a job
-lock is held **on a file it writes**, or another builder runs.
+**Running it.** `python -m RevenueChaser.rcdata.build run [--once] [--dataset X [--as-of D]]`,
+`python -m RevenueChaser.rcdata.build backfill <dataset> --from <date>` and
+`python -m RevenueChaser.rcdata.build attended` (the attended datasets' runner, below).
+
+The store takes one writer at a time, so a start whose turn it is not **waits** for it: the gate (a job lock held
+on a file it writes, another builder) and the builder lock are one loop. `--wait SECONDS` is how long; a person's
+commands (`backfill`, `attended`, and `run --dataset X`) wait 1800 s by default and the hourly pass (`run` with no
+dataset) waits none, because its timer brings the next pass anyway. It exits 3 only when the wait runs out, and
+names the holder it is waiting for, again whenever that changes.
+
+`attended` refuses a runner with no terminal (`sys.stdin.isatty()`), because the WRDS login and the Duo push need a
+person, and it says so and exits 0 when no attended request is queued rather than waiting for a turn it has no use
+for. A person's `backfill <dataset>` and `run --dataset X` run **their own** request for an attended dataset
+(`ops.next_request(by="cli")`), never one a page left for `attended`: that would spend their login and the WRDS day
+cap on somebody else's params. For every other dataset an older queued request still goes first, as it always has.
 
 **Which lock holds which off.** `core/job_lock.WRITES` says which store each writer family writes: `STORE` for the
 old store's DuckDB files under `RC_STORE_DIR` (`raw`, `edgar`, `history`, the legacy `prices`) and `MARKET` for the
 serving files and `ops.sqlite` under `RC_MARKET_DIR`, the builder's. The gate asks `blocking_holders(name)` —
 `holders()` filtered to the families that can meet `name` on a file — so an old-store job (the Relatedness pilot, an
-EDGAR sync, a nightly step) no longer stops the market builder, while a second builder still does. The grain is the
-store and not the single file on purpose: a store is a superset of every family's real file set, so the map can only
-refuse too much, never too little. A family with no entry writes `UNKNOWN` and holds everything off, which is what
-keeps a new writer from slipping past the gate; `core/tests/test_job_lock_names_pl6a.py` fails when a documented
-lock name has no entry.
+EDGAR sync, a nightly step) no longer makes the market builder wait, while a second builder still does. The grain is
+the store and not the single file on purpose: a store is a superset of every family's real file set, so the map can
+only refuse too much, never too little. A family with no entry writes `UNKNOWN` and holds everything off, which is
+what keeps a new writer from slipping past the gate; `core/tests/test_job_lock_names_pl6a.py` fails when a
+documented lock name has no entry.
 
 **The builder as a service (PR 2).** Scheduled jobs run hourly unless avo says otherwise. The registry row
 RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :07, with a 50 min limit, as the
@@ -1124,8 +1136,12 @@ builder's venv (on the server it has a venv of its own, because its pandas has n
 no default), one subprocess per builder process, so one WRDS connection: the login is that venv's
 `wrds.Connection` (the user from `WRDS_USERNAME`, which is required, the password from that user's `~/.pgpass`; WRDS may ask
 for a Duo push). The worker streams each answer in chunks to `<table>.jsonl.gz`; the builder types it in DuckDB.
-The datasets are never due, a request a page or the schedule queued is skipped (`skipped: attended ...`), the
-route answers 409, and the CLI runs them: `python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist
+The datasets are never due, and only a runner with a person at it runs one: the CLI's own request
+(`requested_by` `cli`) or `python -m RevenueChaser.rcdata.build attended`. A request a page queued **waits in the
+queue** for that runner — the route answers 202 with `waits_for`, the hourly builder leaves it there
+(`ops.next_request(skip=base.attended_names())`) and `attended` claims nothing else
+(`only=base.attended_names()`); the schedule queues none. So the CLI runs them:
+`python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist
 wrds/co_hgic wrds/idxcst_his openfigi/map` starts one worker for the whole process. Run it in a foreground terminal:
 the worker reads a WRDS prompt from `/dev/tty`, and a background job that reads its terminal is stopped (SIGTTIN).
 A failed login, or no

@@ -8,7 +8,7 @@ from datetime import date
 import pytest
 
 from RevenueChaser.rcdata import ops, serving
-from RevenueChaser.rcdata.build import base, due
+from RevenueChaser.rcdata.build import DATASETS, base, due
 
 
 class _Fake:
@@ -154,3 +154,25 @@ def test_the_cli_backfills_several_datasets_in_one_process(fake, monkeypatch):
     assert cli.main(["backfill", "fake/one,", "fake/two"]) == 0
     assert fake.fetched == [("backfill", None, date(2026, 10, 27))]
     assert two.fetched == [("backfill", None, date(2026, 10, 27))]
+
+
+def test_the_attended_runner_runs_a_request_a_page_queued(fake):
+    """A Fetch press may queue an attended dataset; it waits in the queue until the person's terminal takes it,
+    and that runner is what lets it run — not who asked for it."""
+    fake.attended = True
+    rid = ops.enqueue(fake.name, None, by="settings")
+    row = base.run_request({"id": rid, "dataset": fake.name, "requested_by": "settings", "params": {}},
+                           attended_ok=True)
+    assert row["result"] == "changed" and fake.fetched == [date(2026, 10, 27)]
+
+
+def test_an_attended_dataset_the_hourly_builder_claims_says_it_waits_for_the_runner(fake):
+    fake.attended = True
+    row = base.run_request({"dataset": fake.name, "requested_by": "settings", "params": {}})
+    assert row["result"] == "skipped" and "build attended" in row["note"]
+
+
+def test_attended_names_are_the_datasets_that_need_a_person():
+    names = base.attended_names()
+    assert "wrds/sec_idhist" in names and "market_series" not in names
+    assert all(base.attended(DATASETS[n]) for n in names)

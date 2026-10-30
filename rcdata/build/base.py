@@ -585,8 +585,10 @@ class Dataset(Protocol):
     def check(self, ctx: RunContext, con: duckdb.DuckDBPyConnection) -> dict: ...
 
     # Optional (PR 5), read with getattr so the market datasets need none of them:
-    #   attended: bool              a person must be there (WRDS login and Duo): never due, and a request runs only
-    #                               when the CLI queued it (``requested_by`` "cli")
+    #   attended: bool              a person must be there (WRDS login and Duo): never due, and a request runs
+    #                               only in a runner that has one — the CLI's own request (``requested_by``
+    #                               "cli") or ``build attended`` (``attended_ok``). Anyone else's request waits
+    #                               in the queue for that runner (``attended_names``).
     #   backfill_needs_from: bool   default True; False lets ``backfill`` start at the source's beginning (None)
     #   after_swap(ctx)             runs once the kind's new file is live (the spine's build-issue sync)
     #   honours_scope: bool         the fetch asks the names ``ctx.scope`` names (#265); without it a request that
@@ -598,6 +600,17 @@ ATTENDED_BY = "cli"
 
 def attended(ds) -> bool:
     return bool(getattr(ds, "attended", False))
+
+
+def attended_names() -> frozenset[str]:
+    """The datasets a person must be there for (the WRDS login and Duo).
+
+    The hourly builder leaves their requests in the queue (``ops.next_request(skip=...)``) and the attended runner
+    (``python -m RevenueChaser.rcdata.build attended``) claims only them, so a Fetch press on one of them waits for
+    the terminal instead of being refused.
+    """
+    from . import DATASETS
+    return frozenset(name for name, ds in DATASETS.items() if attended(ds))
 
 
 def compare_with_live(con: duckdb.DuckDBPyConnection, kind: str, table: str, columns: list[str]) -> tuple[int, int]:
@@ -713,13 +726,18 @@ def _parse_day(value) -> date:
     return value if isinstance(value, date) else date.fromisoformat(str(value))
 
 
-def run_request(req: dict, *, trigger: str = "queue", sleep: Callable[[float], Any] = time.sleep,
+def run_request(req: dict, *, trigger: str = "queue", attended_ok: bool = False,
+                sleep: Callable[[float], Any] = time.sleep,
                 clock: Callable[[], float] = time.monotonic) -> dict:
     """Run one queued request to its end and return the ``dataset_check`` row written for it.
 
     ``req["params"]``: ``{"mode": "daily", "as_of": "YYYY-MM-DD"}`` (both optional) or
     ``{"mode": "backfill", "from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}``, either with the scope the request asks for
     (``{"tiers": ["A", "B"], "names": ["KO"]}``, both optional; ``parse_scope``).
+
+    ``attended_ok`` says this runner is a person at a terminal (``build attended``, or a CLI command that named the
+    dataset): only then does an attended dataset run whoever queued it. Without it, an attended request still runs
+    when the CLI itself queued it (``requested_by`` ``ATTENDED_BY``), and is skipped otherwise.
     """
     from . import DATASETS
     ds = DATASETS.get(req["dataset"])
@@ -729,7 +747,7 @@ def run_request(req: dict, *, trigger: str = "queue", sleep: Callable[[float], A
                      allow_shrink=params.get("allow_shrink") is True)
     ops.start_run(run_id, req["dataset"], trigger, params)
     try:
-        return _run(ctx, ds, req, params)
+        return _run(ctx, ds, req, params, attended_ok)
     except BaseException as e:
         # A kill (SIGTERM, which the CLI turns into SystemExit, or Ctrl-C) is "killed"; anything else that got past
         # _run (a locked ops.sqlite while writing the check row) is "failed". No check row either way, but the
@@ -745,7 +763,7 @@ def run_request(req: dict, *, trigger: str = "queue", sleep: Callable[[float], A
         ctx.flush_counts()
 
 
-def _run(ctx: RunContext, ds, req: dict, params: dict) -> dict:
+def _run(ctx: RunContext, ds, req: dict, params: dict, attended_ok: bool = False) -> dict:
     status, error, check = "failed", None, None
     try:
         if ds is None:
@@ -753,9 +771,10 @@ def _run(ctx: RunContext, ds, req: dict, params: dict) -> dict:
         paused = paused_problem(ds)
         if paused:
             return _finish(ctx, req, {"result": "skipped", "note": paused}, "skipped", None)
-        if attended(ds) and req.get("requested_by") != ATTENDED_BY:
-            note = (f"skipped: attended dataset: run it from the CLI on the server (a person logs in); "
-                    f"requested by {req.get('requested_by') or '?'}")
+        if attended(ds) and not attended_ok and req.get("requested_by") != ATTENDED_BY:
+            note = (f"skipped: attended dataset: it waits for the runner on the server (a person logs in): "
+                    f"python -m RevenueChaser.rcdata.build attended; requested by "
+                    f"{req.get('requested_by') or '?'}")
             return _finish(ctx, req, {"result": "skipped", "note": note}, "skipped", None)
         refused = cap_problem(ds)
         if refused:
