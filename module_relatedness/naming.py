@@ -196,7 +196,11 @@ def name_themes(run_id: str | None = None, *, complete=None,
         return {"run_id": run_id, "named": 0, "copied": 0, "pending": 0, "next_off_peak": None}
 
     parent = {tid: (r.get("parent_id") or "") for tid, r in rows.items()}
-    fine_ids = [tid for tid, r in rows.items() if r.get("level") == "fine"]
+    # ``theme_id`` order, not the scan's (#20): ``_descendant_fines`` passes this order on to
+    # ``_aggregate``, which decides the prompt's tag order (``Counter.most_common()`` on a tie) and
+    # its example companies. A prompt that differs between machines also misses the LLM cache, so
+    # the same theme is paid for twice.
+    fine_ids = sorted(tid for tid, r in rows.items() if r.get("level") == "fine")
     tags_by_fine = _fine_tags(run_id)
     members_by_fine = _fine_members(run_id)
     doc_freq = themes_mod.tag_doc_freq(tags_by_fine.values())

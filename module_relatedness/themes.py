@@ -324,18 +324,53 @@ def current_run_id() -> str | None:
     return current_theme_run(strict=True)
 
 
+# The deterministic read order of a run's theme tables (#20). ``relatedness_themes`` is deliberately
+# absent -- see :func:`run_rows`.
+ROW_ORDER = {"relatedness_theme_tags": "theme_id, rank, tag",
+             "relatedness_theme_members": "theme_id, ticker"}
+
+
 def run_rows(table: str, run_id: str, level: str | None = None) -> list[dict]:
     """Rows of a theme table that belong to ``run_id`` (the run id or ``run:fN``).
 
     The one reader of a run's rows: a SQL prefix filter (no ``run_id`` column, no
     whole-table scan filtered in Python). ``level`` narrows ``relatedness_themes``.
+
+    **The order is part of the contract for the tags and the members table** (#20, ``ROW_ORDER``):
+    without it the order was the scan's, and a caller that aggregates one theme's rows into
+    another's -- the offline label (:func:`relabel_from_tags`) and the naming prompt
+    (``naming.name_themes``) both do -- could give a different answer on two machines from the same
+    rows. #20 reports the #51 e2e labelling one merged medium theme ``branch, consumer, deposits`` on
+    Windows and ``biologics, clinical, drugs`` on the hosted Linux CI; the cause of *that* split is
+    not the scan order (the tag rows are written in numeric fine order, and DuckDB here returns rows
+    in insertion order) but which group NMF numbers ``f0``: the fixture's top singular values are
+    exactly tied, so ``nndsvda``'s starting point is down to the LAPACK build. This function removes
+    the scan-order dependency, which is a real one for any run whose rows were not written in that
+    order; it does not and cannot fix the fine numbering.
+
+    ``relatedness_theme_members`` is ordered ``theme_id, ticker``, which reproduces the order
+    ``build_shadow`` writes today: the members come from ``tag_docs``' ``sorted(profiles)``
+    (:func:`tag_docs`), so within a theme they are already alphabetical, and ``naming._aggregate``
+    keeps the first ``MAX_TICKERS`` of a theme as the prompt's example companies. The entry makes
+    that order a contract instead of the planner's choice. Whether those examples *should* instead be
+    the theme's largest names is a separate question -- it needs a ``rank`` column written from the
+    fit's ticker position, and it changes what the model is asked, so it changes the names a board
+    shows. Parked.
+
+    ``relatedness_themes`` is deliberately **not** ordered. #20 does not need it (the two callers
+    above sort the ids they walk themselves), and an ``ORDER BY theme_id`` would change
+    :func:`rebalance_coarses`, which takes the mediums in read order: the numeric insertion order
+    ``m0, m1, m2, ...`` would become the text order ``m0, m1, m10, ..., m2`` for a run with 11+
+    mediums, deciding which coarse group gets the ``(2)`` suffix on a future rebuild. That is a
+    board-visible change and not this PR's.
     """
     sql = (f"SELECT * FROM {table} WHERE (theme_id = ? OR starts_with(theme_id, ?))")
     args: list = [run_id, f"{run_id}:"]
     if level:
         sql += " AND level = ?"
         args.append(level)
-    return rawstore.query(sql, args)
+    order = ROW_ORDER.get(table)
+    return rawstore.query(f"{sql} ORDER BY {order}" if order else sql, args)
 
 
 def _useful_tag(tag: str) -> bool:
@@ -398,6 +433,12 @@ def relabel_from_tags(run_id: str, top: int = 3, only_empty: bool = False) -> in
     fine themes' tags (the reader level is ``medium``); coarse themes aggregate
     their child medium themes. Numeric/spec junk is skipped and rarer (more
     distinctive) tags are preferred -- this is the offline fallback, not a name.
+
+    The aggregation walks the children in ``theme_id`` order (#20), not in the order the tag rows
+    were scanned. ``Counter.most_common()`` keeps first-seen order, so on an exact tie -- two merged
+    fine themes of equal size whose tags are equally rare -- the label is the tags of the child with
+    the lowest ``theme_id`` *as text* (``f10`` sorts before ``f2``), the same on every machine. Stored labels are not rewritten by this: only a run
+    relabelled from here on follows the rule.
     """
     from collections import Counter
     themes_rows = {r["theme_id"]: r for r in run_rows("relatedness_themes", run_id)}
@@ -408,7 +449,7 @@ def relabel_from_tags(run_id: str, top: int = 3, only_empty: bool = False) -> in
     doc_freq = tag_doc_freq([t for _r, t in items] for items in fine_tags.values())
 
     rows, med_tags, coarse_tags = [], {}, {}
-    for tid, items in fine_tags.items():
+    for tid, items in sorted(fine_tags.items()):
         ordered = [t for _r, t in sorted(items)]
         parent = (themes_rows.get(tid) or {}).get("parent_id")
         if parent:
@@ -417,7 +458,7 @@ def relabel_from_tags(run_id: str, top: int = 3, only_empty: bool = False) -> in
             row = dict(themes_rows[tid])
             row["label"] = _label(ordered, top, doc_freq)
             rows.append(row)
-    for mid, tags in med_tags.items():
+    for mid, tags in sorted(med_tags.items()):
         if mid not in themes_rows:
             continue
         row = dict(themes_rows[mid])
@@ -427,7 +468,7 @@ def relabel_from_tags(run_id: str, top: int = 3, only_empty: bool = False) -> in
         cparent = themes_rows[mid].get("parent_id")
         if cparent:
             coarse_tags.setdefault(cparent, []).extend(tags)
-    for cid, tags in coarse_tags.items():
+    for cid, tags in sorted(coarse_tags.items()):
         if cid not in themes_rows:
             continue
         row = dict(themes_rows[cid])
