@@ -131,7 +131,9 @@ _NEEDS = (
     Need("market.cot", "market_series", "market_series", "obs_date", "series_id", 10, ask_param="series_ids",
          filter_prefix="cftc:tff:13874A:", providers=("cftc",)),
     # The one need without a filter: the caller names the series it wants, and must (``ask_required``), because
-    # the reader answers nothing otherwise and the envelope would call a full table missing.
+    # the reader answers nothing otherwise and the envelope would call a full table missing. Its window is the
+    # generic 3, so the same observation can read ``stale`` here and ``fresh`` through ``macro.dgs10`` (4): a need
+    # over 236 series cannot carry one series' publication rhythm, and a card that cares asks the named need.
     Need("market.series", "market_series", "market_series", "obs_date", "series_id", 3,
          ask_param="series_ids", ask_required=True, providers=("fred", "yfinance")),
     Need("market.spx_expiry_strike", "spx_expiry_strike", "spx_gamma_expiry_strike", "session_date", "expiry", 1,

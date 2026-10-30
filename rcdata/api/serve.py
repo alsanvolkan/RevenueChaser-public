@@ -200,7 +200,10 @@ def get(need: str, *, fill: str = NEVER, **params) -> Answer:
     if fill != NEVER:
         raise FillNotSupported(f"fill={fill!r} is not built yet (PR C); only fill={NEVER!r} exists")
 
-    if spec.ask_required and _asked(spec, params) is None:
+    # "Nothing was asked", not "the parameter was absent": ``_asked`` answers None only for an absent parameter,
+    # and an empty value normalises to ``[]``, which used to slip past and answer ``state: missing`` on a full
+    # table (the delta review of #295). ``prefix`` is the reader's other way of naming rows, so it counts as an ask.
+    if spec.ask_required and not _asked(spec, params) and not params.get("prefix"):
         raise AskRequired(f"{need} answers nothing unless it is asked for something: name {spec.ask_param!r} "
                           f"(or ask for the whole table's state with summary=1)")
 

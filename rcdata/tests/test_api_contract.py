@@ -253,3 +253,30 @@ def test_the_dgs10_window_has_more_than_one_session_of_room():
     a trading week."""
     assert api.catalog.NEEDS["macro.dgs10"].max_lag == 4
     assert api.catalog.NEEDS["macro.dgs10"].max_lag_unit == "sessions"
+
+
+def test_an_empty_ask_is_refused_like_a_missing_one():
+    """The delta review's MUST: ``_asked`` answers None only when the parameter is **absent**, so an empty value
+    (``?series_ids=``, which ``_data_params`` turns into ``[]``) slipped past the guard and answered 200 with
+    ``state: missing`` on a full table - the very envelope finding 2 exists to prevent. A card rendering its URL
+    from an empty selection box lands there."""
+    import duckdb
+
+    from RevenueChaser.rcdata import scaffold, serving
+    scaffold.create_empty("market")
+    con = duckdb.connect(str(serving.live_path("market")))
+    con.execute("INSERT INTO market_series (series_id, obs_date, source, value) VALUES "
+                "('DGS10', DATE '2026-10-27', 'fred', 4.1)")
+    con.close()
+    for empty in ([], (), ""):
+        with pytest.raises(api.AskRequired, match="series_ids"):
+            api.get("market.series", series_ids=empty)
+    # The reader's other way of naming rows is an ask too, so it must not be refused (the review's nit 2).
+    assert api.get("market.series", prefix="DGS").rows
+
+
+@pytest.mark.parametrize("name", sorted(n for n, d in api.catalog.NEEDS.items() if not d.ask_param))
+def test_a_need_with_nothing_to_ask_for_never_requires_an_ask(name):
+    """The review's nit 3: the rule above only walks the needs that have an ask parameter, so ``ask_required`` on
+    one of the nine without one went unnoticed - and it makes every call raise with ``name None`` in the message."""
+    assert not api.catalog.NEEDS[name].ask_required

@@ -192,3 +192,11 @@ def test_a_need_that_must_be_asked_answers_400_in_words_not_200_missing(client):
     assert r.status_code == 400 and "series_ids" in r.get_json()["error"]
     assert client.get("/api/data/market.series?summary=1").status_code == 200
     assert client.get("/api/data/market.series?series_ids=DGS10").status_code == 200
+
+
+def test_an_empty_parameter_is_the_same_refusal_as_no_parameter(client):
+    """The delta review's MUST, over HTTP: ``?series_ids=`` and ``?series_ids=,`` both build an empty list, which
+    used to answer 200 / ``state: missing``."""
+    for query in ("series_ids=", "series_ids=,", "series_ids=%20"):
+        r = client.get(f"/api/data/market.series?{query}")
+        assert r.status_code == 400 and "series_ids" in r.get_json()["error"], query
