@@ -49,6 +49,11 @@ class Need:
     #: False when ``ask_param`` is a single value rather than a list (``cik``, ``ticker``): the HTTP route then
     #: passes the query string's value as it stands instead of splitting it on commas.
     ask_list: bool = True
+    #: True when the reader answers **nothing** unless something is named, and the need names no rows of its own:
+    #: ``read.market_series`` with no series is no rows by design, so ``get("market.series")`` read as
+    #: ``state: missing`` on a full table (the live verification's finding 2, 30 Oct 2026). ``get`` refuses such a
+    #: call in words instead; ``summary`` still answers, because it counts the table rather than asking the reader.
+    ask_required: bool = False
     #: The rows this need is about inside a table several needs share. Four needs read ``market_series``; without a
     #: key of their own each one counted the whole table, so a series that had stopped updating read ``fresh`` as
     #: long as any other series in the table was current (the review's C2). ``filter_values`` names the keys,
@@ -116,15 +121,19 @@ _NEEDS = (
     # the ones the boards ask for: ``core.rotation_reference.MACRO_SERIES["US10Y"]`` for the yield,
     # ``module_spx_gamma/store_reads.VIX_SERIES`` for the volatility indices, and the E-mini S&P 500 contract of the
     # CFTC's TFF report for the positions - a prefix there, because the fields are built from the provider's row.
-    Need("macro.dgs10", "market_series", "market_series", "obs_date", "series_id", 3,
+    # 4, not 3: measured on the live store 30 Oct 2026, the newest observation was 27 Oct against the reference
+    # session of the 29th, a lag of 2. FRED publishes DGS10 one business day late and the builder runs in the
+    # morning, so an ordinary day sits at 2 or 3 and one missed run would read ``stale`` with nothing wrong.
+    Need("macro.dgs10", "market_series", "market_series", "obs_date", "series_id", 4,
          ask_param="series_ids", filter_values=("DGS10",), providers=("fred",)),
     Need("market.vix", "market_series", "market_series", "obs_date", "series_id", 3, ask_param="series_ids",
          filter_values=("VIX", "VIX9D", "VIX3M", "VIX6M", "VIX1Y", "VVIX"), providers=("yfinance",)),
     Need("market.cot", "market_series", "market_series", "obs_date", "series_id", 10, ask_param="series_ids",
          filter_prefix="cftc:tff:13874A:", providers=("cftc",)),
-    # The one need without a filter: the caller names the series it wants.
+    # The one need without a filter: the caller names the series it wants, and must (``ask_required``), because
+    # the reader answers nothing otherwise and the envelope would call a full table missing.
     Need("market.series", "market_series", "market_series", "obs_date", "series_id", 3,
-         ask_param="series_ids", providers=("fred", "yfinance")),
+         ask_param="series_ids", ask_required=True, providers=("fred", "yfinance")),
     Need("market.spx_expiry_strike", "spx_expiry_strike", "spx_gamma_expiry_strike", "session_date", "expiry", 1,
          providers=("uw",)),
     # ── Ownership ───────────────────────────────────────────────────────────────────────────────────────────────

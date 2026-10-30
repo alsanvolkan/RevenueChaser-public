@@ -1316,6 +1316,10 @@ def api_data_need(need: str):
         return jsonify({"ok": False, "error": str(e)}), 400
     try:
         ans = api.get(need, fill="never", **params)
+    except api.AskRequired as e:
+        # A need that answers nothing unless something is named (``market.series``): the refusal says so, where a
+        # bare call used to answer "missing" on a full table (the live verification's finding 2).
+        return jsonify({"ok": False, "error": str(e)}), 400
     except TypeError as e:
         return jsonify({"ok": False, "error": f"the need's reader refused the parameters: {e}"}), 400
     cap = _row_cap(request.args)
