@@ -187,3 +187,19 @@ def test_on_a_day_whose_session_is_not_closed_the_card_and_the_filter_agree(monk
                      coverage={"asked": 0, "served": 1, "missing": [], "from_fallback": 0},
                      provenance=[], status="changed")
     assert earnings_dates._layer_dates(ans, thursday, need) == {"KO": _date(2026, 11, 3)}
+
+
+@pytest.mark.parametrize("name", sorted(n for n, d in api.catalog.NEEDS.items() if d.ask_param))
+def test_ask_list_agrees_with_what_the_reader_takes(name):
+    """``bind()`` checks how many arguments there are, not what they are, so a list fitting a ``str`` parameter
+    binds fine and then matches no row. ``prices.wrds_diff`` was exactly that: the route passed
+    ``["crsp_vs_alpaca"]`` to a reader that does ``str(comparison)``, so the query asked for the literal text
+    ``"['crsp_vs_alpaca']"`` and answered empty where the row exists - silently, with no error."""
+    need = api.catalog.NEEDS[name]
+    annotation = inspect.signature(need.reader).parameters[need.ask_param].annotation
+    text = annotation if isinstance(annotation, str) else getattr(annotation, "__name__", str(annotation))
+    if text is inspect.Parameter.empty or "empty" in str(text):
+        return                                  # unannotated (``cik``): nothing to compare against
+    takes_many = "Iterable" in str(text) or "list" in str(text)
+    assert need.ask_list == takes_many, (
+        f"{name}: ask_list={need.ask_list} but {need.reader_name}'s {need.ask_param!r} is {text!r}")

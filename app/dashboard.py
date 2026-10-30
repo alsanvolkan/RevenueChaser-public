@@ -1253,9 +1253,16 @@ def _data_params(need, args) -> dict:
 DATA_SAMPLE_DEFAULT = 5
 DATA_SAMPLE_MAX = 50
 #: The most rows one answer may carry over HTTP (the review's I2). Fourteen needs take no argument at all, so
-#: without a bound their URL serves a whole serving table as JSON - with a provenance entry per row - out of the
-#: process that holds the DuckDB writer. A caller may ask for fewer with ``limit``, never for more, and the body
-#: says when the cap bit rather than quietly serving part of the table.
+#: without a bound their URL serves a whole serving table as JSON, with a provenance entry per row. A caller may
+#: ask for fewer with ``limit``, never for more, and the body says when the cap bit rather than quietly serving
+#: part of the table.
+#:
+#: What it does **not** do, said plainly (the delta review): it bounds the response, not the read. ``api.get``
+#: has already materialised every row and built a provenance entry for each by the time this slices, so the peak
+#: memory in the process that holds the DuckDB writer is still the whole result. Pushing the bound into the
+#: readers is the real fix and belongs with the work that gives a need its own ask parameters; today the
+#: unargumented needs read mid-size tables, and the big one (``price_bar_daily``) cannot be asked for without
+#: naming securities.
 DATA_ROWS_MAX = 5000
 
 

@@ -203,8 +203,11 @@ _NEEDS = (
     # is counted in calendar days - a month-old report is not stale, and in sessions the number would mean
     # something else. The revision log is written by every serving build, so it is counted in sessions like the
     # bars it revises.
+    # ``ask_list=False``: ``price_source_diff`` takes one comparison name, not a list. With the default a caller's
+    # ``?comparison=crsp_vs_alpaca`` arrived as a list, stringified to "['crsp_vs_alpaca']" and matched no row -
+    # an empty answer where the row exists, with no error (the delta review).
     Need("prices.wrds_diff", "price_source_diff", "wrds_price_diff", "as_of", "comparison", 35, DAYS,
-         ask_param="comparison", providers=("wrds",)),
+         ask_param="comparison", ask_list=False, providers=("wrds",)),
     Need("prices.revision", "price_revisions", "price_revision", "session_date", "security_id", 1,
          ask_param="security_ids"),
     Need("prices.security_ids", "security_ids", "security_symbol", "valid_from", "symbol", 5,
