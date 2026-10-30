@@ -10,9 +10,11 @@ import pytest
 
 from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.rcdata import ops
+from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.fundamentals import companyfacts, facts, sec_index, tables
 
 from . import fund_fixture as fx
+from .sec_answers import MISSING_HEADERS, MISSING_OBJECT, REFUSED_HEADERS, REFUSED_PAGE
 
 
 @pytest.fixture
@@ -241,13 +243,14 @@ def test_a_statement_filed_yesterday_is_read_again_today(sec):
 
 def test_todays_index_not_published_yet_answers_403_and_the_run_still_reads_yesterdays(sec):
     # Seen on the server on 29 Oct 2026 09:07 UTC: master.20261029.idx answered 403 (not 404) while the 27th and
-    # 28th answered 200. Today's and yesterday's index may not be out yet; neither may fail the whole run.
+    # 28th answered 200. An index the archive does not hold answers the bucket's 403, and today's and yesterday's
+    # may not be out yet; neither may fail the whole run.
     _answers(sec)
     fx.run(companyfacts.NAME, mode="backfill", to="2026-10-23")
     sec.routes.clear()
     _answers(sec, msft=fx.msft_facts(with_new_quarter=True))
-    sec.add("master.20261027.idx", b"Forbidden", status=403)              # yesterday
-    sec.add("master.20261028.idx", b"Forbidden", status=403)              # today
+    sec.add("master.20261027.idx", MISSING_OBJECT, status=403, headers=MISSING_HEADERS)       # yesterday
+    sec.add("master.20261028.idx", MISSING_OBJECT, status=403, headers=MISSING_HEADERS)       # today
     fx.sec_routes(sec, {}, {"20261026": fx.daily_index([("789019", "MICROSOFT CORP", "10-Q", "20261026", fx.Q27)])})
     check = fx.run(companyfacts.NAME, "2026-10-28")
     assert check["result"] == "changed", check["note"]
@@ -257,13 +260,38 @@ def test_todays_index_not_published_yet_answers_403_and_the_run_still_reads_yest
         assert not sec_index.absent_path(day).exists() and not sec_index.raw_path(day).exists()
 
 
-def test_a_403_for_an_older_index_still_fails_the_run(sec):
-    # An index older than yesterday is published, so a 403 there is a real block, not "not out yet".
+def test_a_403_that_is_the_sec_refusing_still_fails_the_run(sec):
+    # The SEC's own 403 is Akamai's undeclared-tool page, never the bucket's XML error: it fails the run whatever
+    # the day's age, where before only a day older than yesterday did.
     _answers(sec)
     fx.run(companyfacts.NAME, mode="backfill", to="2026-10-26")
-    sec.add("master.20261026.idx", b"Forbidden", status=403)              # two days before the run
+    sec.add("master.20261026.idx", REFUSED_PAGE, status=403, headers=REFUSED_HEADERS)
     check = fx.run(companyfacts.NAME, "2026-10-28")
     assert check["result"] == "failed" and "HTTP 403" in check["note"], check["note"]
+
+
+def test_a_day_edgar_keeps_closed_is_marked_absent_and_the_scan_goes_on(sec):
+    """12 Oct 2026 is Columbus Day: a federal holiday the NYSE trades through, so EDGAR has no index for it and the
+    archive answers 403. Before this, only a 404 marked a day absent, so such a day failed every run and could
+    never be marked (measured against sec.gov on 2026-10-30: 403 for 20261012, 200 for 20261009 and 20261013)."""
+    day, as_of = date(2026, 10, 12), date(2026, 10, 28)
+    sec.add("master.20261012.idx", MISSING_OBJECT, status=403, headers=MISSING_HEADERS)
+    ctx = base.RunContext(run_id="r", dataset=companyfacts.NAME, sleep=lambda s: None)
+    assert sec_index.fetch_day(ctx, day, as_of) is None
+    assert sec_index.absent_path(day).exists()
+    before = len(sec.calls("master.20261012.idx"))
+    assert sec_index.fetch_day(ctx, day, as_of) is None
+    assert len(sec.calls("master.20261012.idx")) == before          # not asked again
+
+
+def test_a_refused_index_raises_whatever_the_days_age(sec):
+    """The SEC's own 403 is a refusal at any age: before this, it was read as "not published yet" for today and
+    yesterday, so a block on yesterday looked like a day with no index."""
+    sec.add("master.20261027.idx", REFUSED_PAGE, status=403, headers=REFUSED_HEADERS)
+    ctx = base.RunContext(run_id="r", dataset=companyfacts.NAME, sleep=lambda s: None)
+    with pytest.raises(base.SourceError, match="HTTP 403"):
+        sec_index.fetch_day(ctx, date(2026, 10, 27), date(2026, 10, 28))     # yesterday
+    assert not sec_index.absent_path(date(2026, 10, 27)).exists()
 
 
 @pytest.mark.parametrize("last, days, note", [

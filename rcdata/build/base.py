@@ -254,6 +254,25 @@ class RunContext:
             self._uw = None
 
 
+# An object sec.gov does not hold under ``/Archives/`` answers **403**, not 404: that bucket grants the read of an
+# object and not the listing, so S3 answers ``AccessDenied`` for one that is not there (measured 2026-10-30:
+# ``master.20261012.idx``, Columbus Day, and a made-up file name; 200 for the open days around them). The SEC's own
+# refusal — an undeclared User-Agent, or the fair-access rate — is also a 403, but Akamai's HTML page ("Your Request
+# Originates from an Undeclared Automated Tool"), never the XML error. So the answer's own body tells an object the
+# host does not hold from a refusal that must stop a run; the day's place in the calendar does not, because the
+# closures are not only the statutory holidays (24 and 26 December 2025 were closed by executive order), and neither
+# does its age. ``/files/`` (nginx) and ``data.sec.gov`` answer a real 404, which is covered here too.
+MISSING_CODE = b"<Code>AccessDenied</Code>"
+
+
+def is_missing(r: httpx.Response) -> bool:
+    """Whether the answer says the host holds no object for the URL: a 404, or a bucket's XML ``AccessDenied``."""
+    if r.status_code == 404:
+        return True
+    return (r.status_code == 403 and "xml" in str(r.headers.get("content-type") or "").lower()
+            and MISSING_CODE in r.content)
+
+
 def refusal_note(keyed: bool = False) -> str:
     """What a 403 points at: the provider's key when the request carries one, else ``RC_HTTP_CONTACT``. A source
     that accepts a 403 itself (``accept``) and then decides it is a real refusal raises with the same words."""

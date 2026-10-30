@@ -3,11 +3,11 @@
 ``GET <RC_SEC_WWW_BASE>/Archives/edgar/daily-index/<year>/QTR<n>/master.<YYYYMMDD>.idx``: a few header lines, then
 ``CIK|Company Name|Form Type|Date Filed|Filename`` per filing, the accession in the file name
 (``edgar/data/789019/0000950170-26-000123.txt``). The SEC publishes a day's index that night; a weekend or SEC holiday
-has none (404).
+has none (403: ``base.is_missing``).
 
 Raw: ``raw/sec/daily_index/<date>.idx.gz`` with a ``.meta.json`` sidecar, shared by every dataset that reads it (the
 first to need a day fetches it; a raw file that exists is not fetched again). A 404 for a day before yesterday writes
-``<date>.absent.json`` (no index will come: a holiday), so it is not asked again; a 404 or a 403 for yesterday or
+``<date>.absent.json`` (no index will come: a holiday), so it is not asked again; the same answer for yesterday or
 today writes nothing (the index may not be published yet: the SEC answers 403 for it). Weekends are never asked.
 
 **The scan window.** A run reads the last ``LOOKBACK_DAYS`` days, or further back when it has to: a dataset that
@@ -85,11 +85,10 @@ def fetch_day(ctx: base.RunContext, day: date, as_of: date) -> Path | None:
     if absent_path(day).exists():
         return None
     recent = day >= as_of - timedelta(days=1)
-    # The SEC answers 403, not 404, for an index not published yet (today's, seen 29 Oct 2026), so a 403 on today's
-    # or yesterday's index is "not out yet", like a 404. On an older index it is a real block and fails the run.
-    # shortcut: a block that starts today shows two days late (once the day is older); upgrade if the SEC documents
-    # one status for an unpublished index.
-    r = common.sec_get(ctx, url(day), missing=(404, 403) if recent else (404,))
+    # An index the archive does not hold answers 403 (``base.is_missing``), whether it is a day EDGAR keeps closed
+    # or a day not published yet; which of the two it is, is the day's age. A 403 that is not that answer is the
+    # SEC refusing, and fails the run however old the day is.
+    r = common.sec_get(ctx, url(day), missing_object=True)
     if r is None:
         if not recent:
             base.write_raw_json(absent_path(day), {"day": day.isoformat(), "fetched_at": time.time(),

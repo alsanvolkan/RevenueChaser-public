@@ -3,7 +3,7 @@ Unusual Whales' ``total_float``, each mocked at its boundary (HTTP; Yahoo at its
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -16,6 +16,7 @@ from RevenueChaser.rcdata.build.prices import actions, cover_shares, floats, sta
 
 from .prices_fixture import (ALPHABET, GOOG_ACCESSION, SPINE, aapl_instance, goog_instance, master_index,
                              submissions, write_spine)
+from .sec_answers import MISSING_HEADERS, MISSING_OBJECT, REFUSED_HEADERS, REFUSED_PAGE
 
 TUE = date(2026, 10, 27)
 
@@ -143,6 +144,25 @@ def test_cover_shares_from_the_daily_index_and_the_fill(http_mock, monkeypatch):
     assert len([k for k in rows if k[0] == "1652044"]) == 3               # the co-registrant's fact is not Alphabet's
     assert not any(k[0] == "910073" for k in rows)                        # no inline XBRL: a marker, no rows
     assert any(i["kind"] == "no_inline_xbrl" for i in ops.open_issues(cover_shares.NAME)[1])
+
+
+def test_a_day_the_archive_does_not_hold_is_marked_missing_and_a_refusal_is_not(http_mock, monkeypatch):
+    """A day with no index answers the bucket's 403; the SEC's own 403 is a refusal, and writing a real day off
+    under one would never ask for it again. Before this, both were read as "no index" by the status alone."""
+    monkeypatch.setattr(cover_shares, "FILL_PER_RUN", 0)
+    _sec_routes(http_mock)
+    old = TUE - cover_shares.MISSING_AFTER - timedelta(days=1)
+    http_mock.routes.insert(0, (f"master.{old:%Y%m%d}.idx", MISSING_OBJECT, 403, dict(MISSING_HEADERS)))
+    ctx = _ctx(cover_shares.NAME)
+    get = cover_shares.DATASET._getter(ctx)
+    assert cover_shares.DATASET._index(ctx, old, TUE, get) is None
+    assert cover_shares.index_path(old).with_name(f"master.{old:%Y%m%d}.idx.missing").exists()
+
+    refused = old - timedelta(days=1)
+    http_mock.routes.insert(0, (f"master.{refused:%Y%m%d}.idx", REFUSED_PAGE, 403, dict(REFUSED_HEADERS)))
+    with pytest.raises(base.SourceError, match="HTTP 403"):
+        cover_shares.DATASET._index(ctx, refused, TUE, get)
+    assert not cover_shares.index_path(refused).with_name(f"master.{refused:%Y%m%d}.idx.missing").exists()
 
 
 def test_a_stored_filing_is_never_asked_again(http_mock, monkeypatch):

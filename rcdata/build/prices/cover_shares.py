@@ -181,10 +181,10 @@ def _recent(body: dict) -> dict[str, dict]:
                 "inline": bool(col("isInlineXBRL", i))} for i, a in enumerate(accs)}
 
 
-def _status(e: Exception) -> str:
-    import re
-    m = re.search(r"HTTP (\d{3})", str(e))
-    return m.group(1) if m else ""
+class MissingObject(base.SourceError):
+    """The host answered that it holds no object for the URL: a 404, or the ``/Archives/`` bucket's 403
+    ``AccessDenied`` (``base.is_missing``). A plain 403 is the SEC refusing and stays a ``SourceError``, because
+    writing a day or a filing off under a refusal would never ask for it again."""
 
 
 class SecCoverShares:
@@ -205,7 +205,12 @@ class SecCoverShares:
         def get(url: str):
             sec_throttle.pace()
             spacer.wait()
-            return base.http_get(ctx, PROVIDER, url)
+            r = base.http_get(ctx, PROVIDER, url, accept=(403, 404))
+            if base.is_missing(r):
+                raise MissingObject(f"{PROVIDER} {url}: HTTP {r.status_code} (the host holds no such object)")
+            if r.status_code >= 400:
+                raise base.SourceError(f"{PROVIDER} {url}: HTTP {r.status_code}{base.refusal_note()}")
+            return r
         return get
 
     def _index(self, ctx: base.RunContext, day: date, as_of: date, get) -> str | None:
@@ -219,9 +224,7 @@ class SecCoverShares:
             r = get(index_url(day))
         except base.CapReached:
             raise
-        except base.SourceError as e:
-            if _status(e) not in ("403", "404"):
-                raise
+        except MissingObject:
             if as_of - day >= MISSING_AFTER:
                 base.write_raw(missing, b"")
             return None
@@ -254,7 +257,7 @@ class SecCoverShares:
             except base.CapReached:
                 raise
             except (base.SourceError, ValueError) as e:
-                if isinstance(e, base.SourceError) and _status(e) not in ("403", "404"):
+                if isinstance(e, base.SourceError) and not isinstance(e, MissingObject):
                     raise
                 ctx.issue("submissions_missing", cik, str(e)[-160:])
                 base.write_raw_json(cik_dir(cik) / "_asked.json.gz", {"as_of": as_of.isoformat(), "error": str(e)})
@@ -289,7 +292,7 @@ class SecCoverShares:
         except base.CapReached:
             raise
         except (base.SourceError, ET.ParseError) as e:
-            if isinstance(e, base.SourceError) and _status(e) not in ("403", "404"):
+            if isinstance(e, base.SourceError) and not isinstance(e, MissingObject):
                 raise
             ctx.issue("instance_unreadable", f"{cik}:{acc}", f"{type(e).__name__}: {str(e)[-160:]}")
             base.write_raw_json(none_path(cik, acc), {**meta, "why": f"{type(e).__name__}"})

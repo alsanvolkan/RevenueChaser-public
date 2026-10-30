@@ -81,9 +81,14 @@ def sec_spacing(ctx: base.RunContext) -> Spacing:
 
 
 def get(ctx: base.RunContext, provider: str, url: str, *, params: dict | None = None, headers: dict | None = None,
-        spacing: Spacing | None = None, missing: Iterable[int] = ()) -> httpx.Response | None:
+        spacing: Spacing | None = None, missing: Iterable[int] = (),
+        missing_object: bool = False) -> httpx.Response | None:
     """GET with ``base.http_get``'s retry ladder and counting; a status in ``missing`` returns None (nothing there:
     a holiday's daily index, a company with no XBRL facts). Raises ``SourceError`` like ``http_get``.
+
+    ``missing_object``: an answer that says the host holds no object for the URL (``base.is_missing``: a 404, or a
+    bucket's XML ``AccessDenied``) returns None as well. An ``/Archives/`` URL needs this, because that bucket
+    answers a missing object with a 403 and a plain 403 is a refusal that has to raise.
 
     ``params`` and ``headers`` may hold a key: neither is ever logged.
     """
@@ -99,13 +104,13 @@ def get(ctx: base.RunContext, provider: str, url: str, *, params: dict | None = 
         except httpx.HTTPError as e:
             last = type(e).__name__
         else:
-            if r.status_code in missing:
+            if r.status_code in missing or (missing_object and base.is_missing(r)):
                 return None
             if r.status_code == 429:
                 ctx.count(provider, http_429=1)
             if r.status_code < 400:
                 return r
-            last = f"HTTP {r.status_code}"
+            last = f"HTTP {r.status_code}" + (base.refusal_note() if r.status_code == 403 else "")
             if not (r.status_code == 429 or r.status_code >= 500):
                 break
         if attempt < base.HTTP_ATTEMPTS:
@@ -114,8 +119,10 @@ def get(ctx: base.RunContext, provider: str, url: str, *, params: dict | None = 
     raise base.SourceError(f"{provider} {url}: {last}")
 
 
-def sec_get(ctx: base.RunContext, url: str, *, missing: Iterable[int] = ()) -> httpx.Response | None:
-    return get(ctx, SEC, url, headers=sec_headers(), spacing=sec_spacing(ctx), missing=missing)
+def sec_get(ctx: base.RunContext, url: str, *, missing: Iterable[int] = (),
+            missing_object: bool = False) -> httpx.Response | None:
+    return get(ctx, SEC, url, headers=sec_headers(), spacing=sec_spacing(ctx), missing=missing,
+               missing_object=missing_object)
 
 
 # ── The companies ─────────────────────────────────────────────────────────────────────────────────────────────
