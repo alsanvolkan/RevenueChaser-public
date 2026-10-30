@@ -165,15 +165,37 @@ def _member(z: zipfile.ZipFile, table: str) -> str:
     raise base.SourceError(f"13F data set {Path(z.filename or '').name}: no {table}.tsv in the zip")
 
 
-def _load(con: duckdb.DuckDBPyConnection, zip_path: Path, tmp: Path) -> None:
-    """The set's four tables as ``z_submission``, ``z_coverpage``, ``z_summarypage``, ``z_infotable`` (text)."""
+def _header(path: Path) -> tuple[list[str], str]:
+    """The member's column names from its first line, and its line ending."""
+    with open(path, "rb") as f:
+        first = f.readline()
+    ending = "\r\n" if first.endswith(b"\r\n") else "\n"
+    return [c.strip() for c in first.decode("utf-8", errors="replace").rstrip("\r\n").split("\t")], ending
+
+
+def _load(con: duckdb.DuckDBPyConnection, zip_path: Path, tmp: Path, name: str, notes: list[str]) -> None:
+    """The set's four tables as ``z_submission``, ``z_coverpage``, ``z_summarypage``, ``z_infotable`` (text). The
+    columns are the member's own header line (no sniffing: the dialect is known). A row that does not read (a tab
+    too few or too many, a byte that is not UTF-8) is left out and counted in ``notes``, not the whole set and the
+    year's fill with it (13F review B3, 2026-10-30); the filing it belonged to says in its ``detail`` that fewer
+    holdings were read than its summary counts."""
     with zipfile.ZipFile(zip_path) as z:
         for table in MEMBERS:
             out = tmp / f"{table}.tsv"
             with z.open(_member(z, table)) as src, open(out, "wb") as dst:
                 shutil.copyfileobj(src, dst, 1 << 20)
+            cols, ending = _header(out)
+            columns = ", ".join(f"'{c}': 'VARCHAR'" for c in cols)
+            nl = "\\r\\n" if ending == "\r\n" else "\\n"
             con.execute(f"CREATE TABLE z_{table.lower()} AS SELECT * FROM read_csv({base.sql_path(out)}, "
-                        "delim = '\t', header = true, all_varchar = true, quote = '', escape = '')")
+                        f"delim = '\t', header = true, quote = '', escape = '', new_line = '{nl}', "
+                        f"auto_detect = false, columns = {{{columns}}}, ignore_errors = true, store_rejects = true)")
+            bad = con.execute("SELECT count(DISTINCT line), min(line), arg_min(error_type, line) "
+                              "FROM reject_errors").fetchone()
+            con.execute("DROP TABLE reject_errors; DROP TABLE reject_scans")
+            if bad[0]:
+                notes.append(f"13F data set {name}: {bad[0]} rows of {table}.tsv rejected (first: line {bad[1]}, "
+                             f"{bad[2]})")
             out.unlink()
 
 
@@ -287,7 +309,7 @@ def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str,
     with tempfile.TemporaryDirectory(dir=raw_dir(), prefix=SCRATCH) as tmp:
         con = duckdb.connect(str(Path(tmp) / "set.duckdb"))
         try:
-            _load(con, zip_path, Path(tmp))
+            _load(con, zip_path, Path(tmp), name, ctx.notes)
             newest = con.execute(f"SELECT max({_day('FILING_DATE')}) FROM z_submission").fetchone()[0]
             later = [d for d in todo if newest is None or d > newest]
             if later:

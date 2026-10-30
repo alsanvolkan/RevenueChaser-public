@@ -286,6 +286,44 @@ def test_of_two_conflicting_summary_rows_the_first_the_set_wrote_is_kept(feed, h
     assert _served(f"SELECT entry_total, detail FROM {sec13f.TABLE}") == [(1, None)]
 
 
+def _with_bad_rows(zip_bytes: bytes) -> bytes:
+    """The zip with its INFOTABLE's first data row cut short (a tab too few) and its second carrying a byte that is
+    not UTF-8 in the issuer's name, as a damaged set might."""
+    src, out = zipfile.ZipFile(io.BytesIO(zip_bytes)), io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for name in src.namelist():
+            body = src.read(name)
+            if name.rsplit("/", 1)[-1] == "INFOTABLE.tsv":
+                lines = body.splitlines(keepends=True)
+                lines[1] = b"\t".join(lines[1].split(b"\t")[:3]) + b"\n"
+                lines[2] = lines[2].replace(b"MICROSOFT", b"MICROSOFT \xc9", 1)
+                body = b"".join(lines)
+            z.writestr(name, body)
+    return out.getvalue()
+
+
+def test_a_row_that_does_not_read_is_rejected_and_counted_not_the_whole_set(feed, http_mock):
+    """13F review B3 (2026-10-30): one damaged INFOTABLE row (a tab too few, a byte that is not UTF-8) failed the
+    read of the whole set, and with it the year's fill. The row is left out and counted in the run's note; the
+    filing it belonged to says in its detail that fewer holdings were read than its summary counts."""
+    h = ox.f13_holding
+    one = ox.f13_set([
+        ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026", [
+            h("MICROSOFT CORP", "594918104", 400_000, 1000), h("MICROSOFT CORP", "594918104", 90_000, 400,
+                                                                put_call="Put"),
+            h("EATON CORP PLC", "G29183103", 150_000, 500)]),
+        ox.set_filing("0001000002-26-000105", 1000002, "14-AUG-2026", [h("WELLS FARGO", "949746101", 10_000, 200)])])
+    http_mock.routes.insert(0, (HREFS[0], _with_bad_rows(one), 200, {}))
+    row = _backfill("2026-06-01", "2026-08-31")
+    assert row["result"] == "changed", row["note"]
+    assert (f"13F data set {SUMMER}: 2 rows of INFOTABLE.tsv rejected (first: line 2, MISSING COLUMNS)"
+            in row["note"]), row["note"]
+    assert _served(f"SELECT accession, holdings, status, detail FROM {sec13f.TABLE} ORDER BY accession") == [
+        ("0001000001-26-000101", 1, "ok", "1 holdings read, the summary says 3"),
+        ("0001000002-26-000105", 1, "ok", None)]
+    assert [r[1] for r in _holdings("0001000001-26-000101")] == ["594918104"]
+
+
 @pytest.mark.parametrize("start, end", [("2026-06-01", "2026-08-31"), ("2026-07-29", "2026-07-31")])
 def test_a_killed_runs_typing_scratch_is_removed_by_the_next_fill(feed, http_mock, start, end):
     """Review (deploy risk): a set is typed in a scratch folder beside the raw zips, several GB; a killed run leaves
