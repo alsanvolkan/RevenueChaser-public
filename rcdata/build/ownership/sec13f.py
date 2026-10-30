@@ -161,8 +161,8 @@ def recent_cusips(periods: int = 2) -> set[str]:
     con = duckdb.connect()
     try:
         newest = [r[0] for r in con.execute(
-            f"SELECT DISTINCT period FROM {common.files_sql(filings)} WHERE period IS NOT NULL AND holdings > 0 "
-            f"ORDER BY period DESC LIMIT {int(periods)}").fetchall()]
+            f"SELECT DISTINCT {common.quarter_end('period')} AS q FROM {common.files_sql(filings)} "
+            f"WHERE period IS NOT NULL AND holdings > 0 ORDER BY q DESC LIMIT {int(periods)}").fetchall()]
         files = [f for day, f in partitions(DATASET.parquet_dir() / "holdings", "day")
                  if newest and date.fromisoformat(str(day)) >= min(newest)]
         if not files:
@@ -170,7 +170,7 @@ def recent_cusips(periods: int = 2) -> set[str]:
         rows = con.execute(f"""
             SELECT DISTINCT upper(cusip) FROM {common.files_sql(files)}
             WHERE upper(sh_type) = 'SH' AND coalesce(trim(put_call), '') = '' AND cusip IS NOT NULL
-              AND period IN ({", ".join(f"DATE '{p}'" for p in newest)})""").fetchall()
+              AND {common.quarter_end('period')} IN ({", ".join(f"DATE '{p}'" for p in newest)})""").fetchall()
     finally:
         con.close()
     return {r[0] for r in rows}

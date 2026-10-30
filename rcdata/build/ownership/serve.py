@@ -9,6 +9,10 @@
   other amendment (``RESTATEMENT``, or none stated) replaces it. An amendment belongs to the period it reports on,
   not to the quarter it was filed in.
 - *Long equity only*: ``sh_type`` ``SH`` and no put or call. Principal amounts and options stay in Parquet.
+- *The period is the calendar quarter*: a report period that is not a quarter end (a filer writes 09-29 or 10-01
+  for the September quarter) counts in the quarter it falls in (``common.quarter_end``); the filing keeps the
+  period as written. Read as written it was a quarter of its own: one filer, breadth 100 %, never paired with the
+  filer's other quarters (13F review B2, 2026-10-30).
 - *The quarters served*: a quarter whose filing deadline passed before the store's first 13F day (the walk's first
   day, which the data-set fill moves back) is left out: only its late filers and amendments are stored (the sets
   from 2025 hold 852 such filings of 135 filers, back to 2001), so its breadth and totals would mislead. The filings
@@ -87,6 +91,7 @@ DEADLINE_DAYS = 45
 UNMAPPED_TOP = 50
 RESCALED_TOP = 50
 SP500, FUNDS = "sp500", "funds/index_holdings"
+QE = common.quarter_end("period")
 
 MAP = [("cusip", "TEXT"), ("period", "DATE"), ("ticker", "TEXT"), ("map_source", "TEXT"),
        ("candidate_ticker", "TEXT"), ("issuer_name", "TEXT"), ("value", "DOUBLE"), ("holders", "INTEGER")]
@@ -338,9 +343,9 @@ class OwnershipServe:
         """``_long`` (the active filings' long-equity rows), ``sec13f_filer_period`` with its VALUE factor, and
         ``_held`` (filer, period and CUSIP: shares and value in dollars); ``(filings, quarters, first 13F day)`` left
         out as quarters whose deadline passed before that day, None when none is."""
-        rows = con.execute(f"SELECT accession, cik, period, filed, coalesce(amendment_no, 0), is_amendment, "
+        rows = con.execute(f"SELECT accession, cik, {QE} AS period, filed, coalesce(amendment_no, 0), is_amendment, "
                            f"amendment_type FROM {sec13f.TABLE} WHERE status = 'ok' AND cik IS NOT NULL "
-                           f"AND period IS NOT NULL ORDER BY cik, period, filed, 5, is_amendment, accession").fetchall()
+                           f"AND period IS NOT NULL ORDER BY cik, 3, filed, 5, is_amendment, accession").fetchall()
         first = sec13f.DATASET.first_day() or min((r[3] for r in rows), default=None)
         served = [p for p in sorted({r[2] for r in rows}) if first is None or filing_deadline(p) >= first]
         start = served[0] if served else date.max
@@ -349,7 +354,7 @@ class OwnershipServe:
         common.temp_rows(con, "_active", [("accession", "TEXT")], [{"accession": a} for a in active_accessions(rows)])
         # A filer's holdings report for the period, and whether it left holdings out under confidential treatment.
         con.execute(f"""CREATE OR REPLACE TEMP TABLE _conf AS
-            SELECT f.cik, f.period, bool_or(f.confidential_omitted) AS omitted
+            SELECT f.cik, {common.quarter_end('f.period')} AS period, bool_or(f.confidential_omitted) AS omitted
             FROM {sec13f.TABLE} f JOIN _active a ON a.accession = f.accession GROUP BY ALL""")
         long_cols = [("accession", "TEXT"), ("cik", "TEXT"), ("period", "DATE"), ("cusip", "TEXT"),
                      ("name_of_issuer", "TEXT"), ("shares", "DOUBLE"), ("value_usd", "DOUBLE"),
@@ -357,8 +362,8 @@ class OwnershipServe:
         _empty(con, "_long", long_cols)
         if files:
             con.execute(f"""INSERT INTO _long
-                SELECT h.accession, h.cik, h.period, upper(h.cusip), h.name_of_issuer, h.shares, h.value_usd,
-                       f.value_scale, f.filer_name
+                SELECT h.accession, h.cik, {common.quarter_end('h.period')}, upper(h.cusip), h.name_of_issuer,
+                       h.shares, h.value_usd, f.value_scale, f.filer_name
                 FROM {common.files_sql(files)} h
                 JOIN _active a ON a.accession = h.accession
                 JOIN {sec13f.TABLE} f ON f.accession = h.accession
@@ -439,7 +444,7 @@ class OwnershipServe:
     def _metrics(con: duckdb.DuckDBPyConnection) -> int:
         con.execute("CREATE OR REPLACE TEMP TABLE _filers AS "
                     "SELECT period, count(DISTINCT cik) AS filers FROM _held GROUP BY ALL")
-        con.execute(f"CREATE OR REPLACE TEMP TABLE _filed AS SELECT period, max(filed) AS filed_through "
+        con.execute(f"CREATE OR REPLACE TEMP TABLE _filed AS SELECT {QE} AS period, max(filed) AS filed_through "
                     f"FROM {sec13f.TABLE} WHERE status = 'ok' AND period IS NOT NULL GROUP BY ALL")
         periods = sorted({r[0] for r in con.execute("SELECT period FROM _filers UNION SELECT period FROM _filed")
                           .fetchall()})
