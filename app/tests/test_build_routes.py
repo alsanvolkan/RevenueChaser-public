@@ -157,3 +157,58 @@ def test_the_panel_header_cannot_claim_to_be_the_cli(client):
     r = client.post("/api/build/request/market_series", headers={"X-RC-Panel": "CLI "})
     assert r.status_code == 202
     assert _rows()[-1]["requested_by"] == "panel:cli"
+
+
+# ── The scope a Fetch press may carry (#265) ───────────────────────────────────────────────────────────────────
+
+def _params(client) -> dict:
+    return client.get("/api/build/queue").get_json()["active"][0]["params"]
+
+
+def test_the_route_carries_the_scope_and_the_date_range_into_the_queue_row(client):
+    start = calendar.today_ny().replace(day=1)
+    r = client.post("/api/build/request/alpaca/bars",
+                    json={"tiers": ["A", "B"], "names": ["ko"], "backfill_from": start.isoformat(),
+                          "backfill_to": start.isoformat()})
+    assert r.status_code == 202, r.get_json()
+    assert _params(client) == {"mode": "backfill", "from": start.isoformat(), "to": start.isoformat(),
+                               "tiers": ["A", "B"], "names": ["KO"]}
+
+
+def test_a_scope_with_no_date_range_is_a_daily_request(client):
+    assert client.post("/api/build/request/alpaca/bars", json={"tiers": ["B"]}).status_code == 202
+    assert _params(client) == {"tiers": ["B"]}
+
+
+def test_a_comma_separated_scope_is_the_same_as_a_list(client):
+    """What a link in the page can carry: ``?tiers=a,b&names=ko``. The builder's own reader normalises both."""
+    assert client.post("/api/build/request/alpaca/bars?tiers=a,b&names=ko,ko").status_code == 202
+    assert _params(client) == {"tiers": ["A", "B"], "names": ["KO"]}
+
+
+def test_the_extra_groups_are_carried_too(client):
+    """Karar 82: a narrowed fill asks only what it names, so the benchmarks, the watch list and the cover classes
+    are groups a request names for itself."""
+    assert client.post("/api/build/request/alpaca/bars", json={"include": ["Anchors"]}).status_code == 202
+    assert _params(client) == {"include": ["anchors"]}
+
+
+def test_an_unknown_group_is_refused_at_the_route(client):
+    r = client.post("/api/build/request/alpaca/bars", json={"include": ["etfs"]})
+    assert r.status_code == 400 and "include" in r.get_json()["error"]
+    assert not ops.ops_path().exists() or _rows() == []
+
+
+@pytest.mark.parametrize("body, word", [
+    ({"tiers": ["Z"]}, "tiers"),
+    ({"tiers": {"A": 1}}, "tiers"),
+    ({"names": ["KO", ""]}, "names"),
+    ({"names": 7}, "names"),
+    ({"names": [f"T{i}" for i in range(20_001)]}, "names"),
+    ({"backfill_to": "2026-10-10"}, "backfill_from"),
+    ({"backfill_from": "2026-10-10", "backfill_to": "2026-10-01"}, "backfill_to"),
+])
+def test_a_request_the_builder_could_not_run_is_refused_at_the_route(client, body, word):
+    r = client.post("/api/build/request/alpaca/bars", json=body)
+    assert r.status_code == 400 and word in r.get_json()["error"]
+    assert not ops.ops_path().exists() or _rows() == [], "nothing was queued"

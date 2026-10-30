@@ -1198,10 +1198,28 @@ only through `rcdata.read`.
 | `wrds/prices` | monthly, attended | Compustat `comp.secd` from 1984 on the US exchanges and `comp.sec_divid` per year, CRSP `crsp.dsf_v2` per year to 2025, `comp.sec_split` and the CRSP link `crsp.ccmxpf_lnkhist` whole | `stg_wrds_secd`, `stg_wrds_dsf`, `stg_wrds_divid`, `stg_wrds_split`, `stg_wrds_link`, `stg_wrds_revisions` |
 | `prices/serving` | daily | none: builds the served tables from the staging tables | the tables below |
 
-**The universe.** The bars ask the live spine's Tier A (5,655 names on 28 Oct 2026, not the plan's ~7,691), the
-benchmarks (SPY, DIA, QQQ), the rotation ETFs and the stock watch list. The acceptance "Tier A sessions complete
->= 99%" is the bars dataset's coverage: Tier A names with a bar on the asked session over the Tier A names asked,
-against that real count.
+**The universe.** The bars ask the live spine's Tier A and B (`prices.DEFAULT_TIERS`; 5,655 + 2,015 = 7,670 names
+on 29 Oct 2026, avo's decision of 30 Oct: the limit is A+B, with no market-cap floor), the benchmarks (SPY, DIA,
+QQQ), the rotation ETFs and the stock watch list. The acceptance "Tier A sessions complete >= 99%" is the bars
+dataset's coverage: Tier A names with a bar on the asked session over the Tier A names asked, against that real
+count; Tier B's own coverage is reported beside it and is not part of the acceptance, because an OTC or fund name
+may have no Alpaca bar.
+
+**A request's own scope (#265).** A queued request carries what it asks for, so a fill does not mean editing the
+code: `{"tiers": ["A", "B"], "names": ["KO"], "include": ["anchors"], "mode": "backfill", "from": ..., "to": ...}`.
+A request that names nothing is the daily run: `DEFAULT_TIERS`, the benchmarks and rotation ETFs, the stock watch
+list and the Tier A issuers' other listed classes. **A request that names something gets only what it names**
+(avo's Karar 82, 30 Oct 2026): its `tiers`, its `names` (a name the spine does not hold is asked under
+`sym:<ticker>`), and whichever of the three groups it lists in `include` — `anchors` (the benchmarks and the
+rotation ETFs), `watchlist`, `cover_classes`. So `tiers=["B"]` is 2,015 names, not 2,015 plus every Tier A
+issuer's other class plus about 70 ETFs. A narrowed run leaves `coverage` empty on its check row and says so in a
+note, because the acceptance is read off that number and a one-name fill is not the universe's share. `rcdata.build.base.parse_scope` is the one reader of it and
+`RunContext.scope` is how a dataset sees it; the Fetch route (`POST /api/build/request/<dataset>`) takes the same
+keys from its JSON body or query string. Three datasets narrow their fetch to it today: `alpaca/bars` (tiers and
+names), `yfinance/float` and `uw/total_float` (a name list; otherwise the scope's Tier A names, because a fund has
+no float). Every other dataset asks its names elsewhere (the SEC's daily index, a whole-market file, a calendar
+day) and records `scope ignored: ...` on its check row rather than fetching something else;
+`rcdata/tests/test_build_scope.py` names each one with the reason.
 
 **The security id** (`rcdata/build/prices/__init__.py`, `security_id`): `<gvkey>:<iid>` when the spine links the name
 to Compustat, else `figi:<composite FIGI>`, else `cik:<CIK>:<TICKER>`, else `sym:<TICKER>`; a WRDS bar with no spine

@@ -99,3 +99,33 @@ def test_f5_allow_shrink_or_as_of_without_a_dataset_is_an_error(capsys):
             cli.main(argv)
         assert e.value.code == 2
         assert "--dataset" in capsys.readouterr().err
+
+
+def test_the_cli_queues_the_tiers_and_names_it_was_given(monkeypatch):
+    """A fill on the server is run from the CLI (#265): ``--tiers`` and ``--names`` shape the request the same way
+    the Fetch route's body does, and a wrong tier is refused before the queue, not inside the run."""
+    import pytest
+
+    from RevenueChaser.rcdata.build import base
+    seen = []
+    monkeypatch.setattr(base, "run_request", lambda req: (seen.append(req), {
+        "dataset": req["dataset"], "result": "changed", "source_as_of": None, "rows": 0, "added": 0,
+        "removed": 0, "calls": 0, "note": None})[1])
+    assert cli.main(["run", "--once", "--dataset", "alpaca/bars", "--tiers", "a,b", "--names", "ko",
+                     "--include", "anchors"]) == 0
+    assert seen[0]["params"] == {"tiers": ["A", "B"], "names": ["KO"], "include": ["anchors"]}
+    assert cli.main(["backfill", "alpaca/bars", "--from", "2026-10-01", "--tiers", "B"]) == 0
+    assert seen[1]["params"] == {"mode": "backfill", "from": "2026-10-01", "tiers": ["B"]}
+    with pytest.raises(SystemExit) as e:
+        cli.main(["run", "--once", "--dataset", "alpaca/bars", "--tiers", "Z"])
+    assert e.value.code == 2
+
+
+def test_tiers_or_names_without_a_dataset_is_an_error(capsys):
+    import pytest
+
+    for argv in (["run", "--once", "--tiers", "A"], ["run", "--once", "--names", "KO"],
+                 ["run", "--once", "--include", "anchors"]):
+        with pytest.raises(SystemExit) as e:
+            cli.main(argv)
+        assert e.value.code == 2
