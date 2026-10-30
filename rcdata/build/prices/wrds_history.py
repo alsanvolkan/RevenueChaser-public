@@ -35,6 +35,11 @@ file is left for the refused query, so the next backfill asks it once again and 
 picked up. The CRSP rows of ``wrds_price_diff`` then count no session. A refused Compustat table, and every other
 error, still fails the run.
 
+**The columns first.** The first query of a run that asks anything is ``information_schema.columns`` for the five
+tables (``fundamentals/wrds_fund.catalog``, the columns this login can read; one ``wrds`` call, the same login, so no
+second Duo): a Compustat table the login cannot read, or a column a query names that WRDS lacks (``ASKED_COLUMNS``,
+``exchg`` among them), fails the run before any data is asked; a CRSP table missing from it is skipped as above.
+
 **Served** by ``prices/serving``: the bars (``COMP_BARS``, ``CRSP_BARS``; CRSP first where linked, an Alpaca bar
 always winning its session), the actions (``ACTIONS_SQL``; an Alpaca action of the same kind and day winning), the
 revisions, and the difference report ``wrds_price_diff`` (``COMPARISONS``). Compustat's own adjusted return is
@@ -49,6 +54,7 @@ import duckdb
 
 from ....core import calendar
 from .. import base
+from ..fundamentals import wrds_fund
 from ..spine import wrds
 from ..spine.security import US_EXCHG
 from . import KIND, stage
@@ -110,6 +116,12 @@ SNAPSHOTS = ("sec_split", "link")
 # CRSP's tables: a subscription without CRSP (or without CCM, the link) answers them with a permission refusal,
 # and the history is then Compustat's alone (``_skip_crsp``).
 CRSP_TABLES = ("dsf", "link")
+# The WRDS columns each query names (its SELECT list and filters), checked against ``information_schema.columns``
+# before any data is asked (``_check_columns``): a name WRDS does not have fails the run on that one query, not on a
+# data query after the Duo push.
+ASKED_COLUMNS = {"secd": [c for c, _ in SECD], "dsf": [c for c, _ in DSF],
+                 "sec_divid": ["gvkey", "iid", "datadate", "divd"], "sec_split": [c for c, _ in SPLIT],
+                 "link": ["gvkey", "liid", "lpermno", "linktype", "linkprim", "linkdt", "linkenddt"]}
 STAGING = {"secd": "stg_wrds_secd", "dsf": "stg_wrds_dsf", "sec_divid": "stg_wrds_divid",
            "sec_split": "stg_wrds_split", "link": "stg_wrds_link"}
 
@@ -213,10 +225,15 @@ class WrdsPrices:
         return [(t, y) for y in every for t in YEARLY if y in lo[t]]
 
     def _ask_or_skip(self, ctx: base.RunContext, table: str, year: int | None, as_of: date,
-                     refused: list[str]) -> Path | None:
+                     run: dict) -> Path | None:
         """``_ask``, except that a CRSP table the subscription refuses is skipped: once refused, every later CRSP
-        query of the run is skipped unasked (``refused`` holds the schema), so a run never asks it year by year.
-        A refusal of a Compustat table, and any other error, fails the run as before."""
+        query of the run is skipped unasked (``run["refused"]`` holds the schema), so a run never asks it year by
+        year. A refusal of a Compustat table, and any other error, fails the run as before. The first query of a
+        run is ``_check_columns``'s."""
+        if not run["checked"]:
+            self._check_columns(ctx, as_of, run)
+            run["checked"] = True
+        refused = run["refused"]
         if table in CRSP_TABLES and refused:
             return None
         try:
@@ -224,23 +241,46 @@ class WrdsPrices:
         except wrds.PermissionRefused as e:
             if table not in CRSP_TABLES:
                 raise
-            self._skip_crsp(ctx, table, e, refused)
+            self._skip_crsp(ctx, table, e, refused, e.schema)
             return None
 
     @staticmethod
-    def _skip_crsp(ctx: base.RunContext, table: str, e: wrds.PermissionRefused, refused: list[str]) -> None:
-        schema = e.schema or TABLES[table]["wrds"]
+    def _skip_crsp(ctx: base.RunContext, table: str, e: Exception, refused: list[str], schema: str | None) -> None:
+        schema = schema or TABLES[table]["wrds"]
         refused.append(schema)
         ctx.issue("wrds_no_access", schema,
                   f"{TABLES[table]['wrds']}: the WRDS subscription refuses it ({e}); CRSP skipped, the history "
                   "is Compustat's alone")
         ctx.notes.append(f"{TABLES[table]['wrds']}: permission denied for {schema}; CRSP skipped, Compustat only")
 
+    def _check_columns(self, ctx: base.RunContext, as_of: date, run: dict) -> None:
+        """One ``information_schema.columns`` query (``wrds_fund.catalog``, the columns this login can read) before
+        any data is asked: a Compustat table the login cannot read, or a column a query names that WRDS lacks,
+        fails the run here; a CRSP library the login cannot read is skipped as a refusal (``wrds_no_access``)."""
+        found = wrds_fund.catalog(ctx, NAME, as_of, sorted({TABLES[t]["wrds"].split(".")[1] for t in TABLES}))
+        for table in (*SNAPSHOTS, *YEARLY):
+            library, name = TABLES[table]["wrds"].split(".")
+            columns = found.get((library, name))
+            if not columns:
+                if table in CRSP_TABLES:
+                    if not run["refused"]:
+                        self._skip_crsp(ctx, table, base.SourceError(f"{library}.{name} is not in "
+                                                                     "information_schema for this login"),
+                                        run["refused"], library)
+                    continue
+                elsewhere = sorted(lib for lib, t in found if t == name)
+                raise base.SourceError(f"wrds {library}.{name} is not readable by this login; WRDS has {name} in "
+                                       f"{', '.join(elsewhere) or 'no library this login can read'}")
+            missing = [c for c in ASKED_COLUMNS[table] if c not in columns]
+            if missing:
+                raise base.SourceError(f"wrds {library}.{name} has no {', '.join(missing)}, which the query names "
+                                       f"(it has {', '.join(sorted(columns))}); nothing was asked")
+
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
         """The monthly run: the snapshots when due, then the last ``REFRESH_YEARS`` years of each table again."""
-        refused: list[str] = []
-        out = [self._ask_or_skip(ctx, t, None, as_of, refused) for t in SNAPSHOTS if self._snapshot_due(t, as_of)]
-        out += [self._ask_or_skip(ctx, t, y, as_of, refused) for t, y in self._plan(as_of, None, refresh=True)]
+        run = {"refused": [], "checked": False}
+        out = [self._ask_or_skip(ctx, t, None, as_of, run) for t in SNAPSHOTS if self._snapshot_due(t, as_of)]
+        out += [self._ask_or_skip(ctx, t, y, as_of, run) for t, y in self._plan(as_of, None, refresh=True)]
         out = [p for p in out if p is not None]
         if not any(partition_path("secd", y).is_file() for y in years("secd", as_of)[:-REFRESH_YEARS]):
             ctx.notes.append("no history before the refreshed years: run the backfill (attended)")
@@ -249,11 +289,11 @@ class WrdsPrices:
     def backfill(self, ctx: base.RunContext, start: date | None, end: date) -> None:
         """Every missing snapshot and year partition up to ``end``; a partition that exists is never asked."""
         asked = 0
-        refused: list[str] = []
+        run = {"refused": [], "checked": False}
         try:
             for table in SNAPSHOTS:
                 if not _snapshots(table):
-                    raw = self._ask_or_skip(ctx, table, None, end, refused)
+                    raw = self._ask_or_skip(ctx, table, None, end, run)
                     if raw is not None:
                         self.to_parquet_all(ctx, [raw])
                         asked += 1
@@ -261,7 +301,7 @@ class WrdsPrices:
                 if partition_path(table, year).is_file():
                     continue
                 have = sorted(raw_dir(table, year).glob(f"*{RAW_SUFFIX}"))
-                raw = have[-1] if have else self._ask_or_skip(ctx, table, year, end, refused)
+                raw = have[-1] if have else self._ask_or_skip(ctx, table, year, end, run)
                 if raw is None:
                     continue
                 self.to_parquet_all(ctx, [raw])
