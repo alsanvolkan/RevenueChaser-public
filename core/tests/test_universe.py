@@ -183,20 +183,26 @@ def test_no_pinned_run_means_no_themes_not_a_crash(rawstore_tmp_db):
 
 
 def test_universe_counts_are_all_caps_and_the_classified_slice(rawstore_tmp_db):
-    """With no floor (the default) nothing is below it.
-
-    A NULL cap is still counted apart and, on this store path, still left out: the query is
-    ``market_cap >= ?`` and NULL compares to nothing. The spine path keeps it (``COALESCE(..., 0) >= 0``),
-    which is the live behaviour since PR 6.
-    """
+    """With no floor (the default) nothing is below it, and a NULL cap is kept just as the universe keeps it."""
     _seed_universe([{"ticker": "BIG", "market_cap": 4e8},
                     {"ticker": "TINY", "market_cap": 5e7},
                     {"ticker": "NOCAP", "market_cap": None}])
     c = universe.universe_counts()
-    assert c == {"scanned_total": 3, "classification_total": 2, "floor_total": 2,
-                 "funds_etfs": 0, "spacs": 0, "other_securities": 0, "unknown_type": 2,
-                 "below_floor": 0, "no_market_cap": 1,
+    assert c == {"scanned_total": 3, "classification_total": 3, "floor_total": 3,
+                 "funds_etfs": 0, "spacs": 0, "other_securities": 0, "unknown_type": 3,
+                 "below_floor": 0, "no_market_cap": 0,
                  "floor": 0}
+
+
+def test_the_funnel_and_the_universe_are_the_same_set(rawstore_tmp_db):
+    """The funnel's last line is what the boards read, at any floor (the C2 lesson: never report another set)."""
+    _seed_universe([{"ticker": "BIG", "market_cap": 4e8},
+                    {"ticker": "TINY", "market_cap": 5e7},
+                    {"ticker": "NOCAP", "market_cap": None}])
+    for mc_min in (0, 1e7, 3e8, 1e9):
+        c = universe.universe_counts(mc_min=mc_min)
+        assert c["classification_total"] == len(universe.classification_universe(mc_min)), mc_min
+        assert c["scanned_total"] == c["below_floor"] + c["no_market_cap"] + c["floor_total"], mc_min
 
 
 def test_universe_counts_still_split_by_an_explicit_floor(rawstore_tmp_db):
