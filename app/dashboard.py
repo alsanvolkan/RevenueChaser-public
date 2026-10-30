@@ -253,7 +253,9 @@ jobs.register("index_lists", runners.run_index_lists, ["module_settings"], lane=
 jobs.register("module_oipd", runners.run_oipd, ["module_oipd"], requires_uw=True)
 
 # Which store-only job a board's Save / Reset queues (``api_settings_board``, #40 / #384 SW-S4).
-SETTINGS_JOBS = {"module_comovement": "comovement_recompute", "module_swing_potential": "settings_refresh"}
+SETTINGS_JOBS = {"module_comovement": "comovement_recompute", "module_swing_potential": "settings_refresh",
+                 # The control board's universe (Apply, design v28): a saved choice, re-rendered store-only.
+                 "module_settings": "settings_refresh"}
 
 TABS = [
     {"type": "header", "label": "Research"},
