@@ -134,7 +134,7 @@ def test_empty_change_set_is_invalid(rawstore_tmp_db):
 def test_unknown_board_raises(rawstore_tmp_db):
     with pytest.raises(KeyError):
         bs.values("module_nope")
-    assert bs.boards() == ["module_comovement", "module_swing_potential"]
+    assert bs.boards() == ["module_comovement", "module_settings", "module_swing_potential"]
 
 
 def test_describe_lists_every_field_with_value_default_and_override_flag(rawstore_tmp_db):
@@ -150,3 +150,25 @@ def test_describe_lists_every_field_with_value_default_and_override_flag(rawstor
     assert rows["WINSOR_K"]["kind"] == "float"
     assert rows["OOS_HOLDOUT"]["lo"] == config.OOS_HOLDOUT_LO
     assert rows["OOS_HOLDOUT"]["hi"] == config.OOS_HOLDOUT_HI
+
+
+# ── The control board's universe (design v28, Karar 86 A: a press drafts, Apply commits) ─────────────────────────
+
+def test_the_universe_defaults_to_every_offered_set_and_every_named_group(rawstore_tmp_db):
+    v = bs.values("module_settings")
+    assert v["values"] == {"UNIVERSE_SETS": 7, "UNIVERSE_INCLUDE": 7} and v["overridden"] == []
+
+
+def test_the_universe_is_saved_as_its_bit_mask_and_an_empty_one_is_refused(rawstore_tmp_db):
+    assert bs.save("module_settings", {"UNIVERSE_SETS": 1})["values"]["UNIVERSE_SETS"] == 1     # A only
+    with pytest.raises(bs.SettingsError) as exc:
+        bs.save("module_settings", {"UNIVERSE_SETS": 0})
+    assert any("UNIVERSE_SETS" in m for m in exc.value.messages)
+    assert bs.save("module_settings", {"UNIVERSE_INCLUDE": 0})["values"]["UNIVERSE_INCLUDE"] == 0  # none is allowed
+
+
+def test_the_universe_masks_are_named_by_the_screens_own_lists():
+    from RevenueChaser.rcdata.api import screen
+    from RevenueChaser.rcdata.build import base
+    assert bs.UNIVERSE_SET_BITS == {s.key: 1 << i for i, s in enumerate(x for x in screen.UNIVERSE_SETS if x.offered)}
+    assert bs.UNIVERSE_INCLUDE_BITS == {g: 1 << i for i, g in enumerate(base.SCOPE_GROUPS)}

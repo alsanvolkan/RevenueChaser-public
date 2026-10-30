@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 
 from RevenueChaser.core import automations, datasets
 from RevenueChaser.rcdata.api import screen as api_screen
+from RevenueChaser.module_settings import control as control_model, control_render
 from RevenueChaser.core.html_safe import esc, script_json
 from RevenueChaser.core.reporting_common import (
     FILTERS_CSS,
@@ -2871,6 +2872,34 @@ ndFilter();
 """
 
 
+#: The fold the old sections sit in, below the control board (avo, 28 Oct: not deleted, folded). Touch-sized.
+OLD_FOLD_CSS = """
+.oldfold{margin:24px 0 48px}
+.oldfold>summary{min-height:44px;display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;cursor:pointer;
+  padding:0 max(16px,env(safe-area-inset-left,0px));font-weight:600}
+.oldfold-sub{font-weight:400;opacity:.75;font-size:13px}
+"""
+
+
+def _applied_universe() -> dict:
+    """The universe as saved (``board_settings``), or nothing when it cannot be read: the board then shows the
+    default universe, which is what the builder runs anyway."""
+    from RevenueChaser.core import board_settings
+    try:
+        return board_settings.values("module_settings")["values"]
+    except Exception:  # noqa: BLE001 - an unreadable settings row must not take the board down
+        return {}
+
+
+def _control_view(nd: dict | None, payload: dict) -> dict:
+    if not nd:
+        return {"error": "the new data system was not read", "read_at": datetime.now().strftime("%H:%M")}
+    try:
+        return control_model.build(nd, applied=_applied_universe(), ibkr=payload.get("ibkr_login_state"))
+    except Exception as exc:  # noqa: BLE001 - one broken field is a line on the page, never a blank board
+        return {"error": f"{type(exc).__name__}: {exc}"[:300], "read_at": datetime.now().strftime("%H:%M")}
+
+
 def _collect_newdata() -> dict:
     """The section's data, read now; an error is a line on the page, never a blank board."""
     from RevenueChaser.module_settings import newdata
@@ -2938,6 +2967,10 @@ def render_settings_dashboard(payload: dict) -> str:
     # The payload's own ``newdata`` when the caller read it (tests, fixtures); else read here, per render.
     nd = payload["newdata"] if "newdata" in payload else _collect_newdata()
     newdata_html = _newdata_section(nd)
+    # The control board (design v28) on top, from the same read; the old sections fold under it.
+    view = _control_view(nd, payload)
+    control_html = control_render.render(view)
+    control_js = control_render.scripts(view)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -2947,10 +2980,16 @@ def render_settings_dashboard(payload: dict) -> str:
 <title>Settings / Data health</title>
 <style>{CSS}</style>
 <style>{ND_CSS}</style>
+<style>{control_render.CTL_CSS}</style>
+<style>{OLD_FOLD_CSS}</style>
 {FILTERS_CSS}
 <script>{THEME_JS}</script>
 </head>
 <body>
+{provider_health_html(payload.get("provider_health"))}
+{control_html}
+<details class="oldfold" id="old-settings">
+<summary>Old Settings sections <span class="oldfold-sub">not deleted, folded · each opens on its own</span></summary>
 <div class="wrap">
   <div class="topbar">
     <div>
@@ -2959,7 +2998,6 @@ def render_settings_dashboard(payload: dict) -> str:
     </div>
     <div class="sync">Last sync: {_html.escape(_friendly(generated))}</div>
   </div>
-  {provider_health_html(payload.get("provider_health"))}
   {newdata_html}
   {ibkr_login_html}
   {help_block}
@@ -2975,6 +3013,7 @@ def render_settings_dashboard(payload: dict) -> str:
   {boards_html}
   {flow_html}
 </div>
+</details>
 <script>{FILTERS_JS}</script>
 <script>
 var DATA = {data_json};
@@ -2986,6 +3025,9 @@ var ND_PAGE_STALE_MS = {ND_PAGE_STALE_MINUTES * 60 * 1000};
 {DRILL_JS}
 {automations_js}
 {ND_JS}
+</script>
+<script>
+{control_js}
 </script>
 </body>
 </html>

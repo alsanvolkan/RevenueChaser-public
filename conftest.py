@@ -260,6 +260,14 @@ def isolate_board_artifacts():
     sec13f_report = importlib.import_module("RevenueChaser.module_sec_13f.report")
     mp.setattr(runners, "SEC_13F_LATEST", dest / Path(runners.SEC_13F_LATEST).relative_to(root))
     mp.setattr(sec13f_report, "OUTPUT_DIR", dest / Path(sec13f_report.OUTPUT_DIR).relative_to(root))
+    # Earnings Radar the same way, and for the same reason. ``report.export_html`` names its page from a
+    # second-resolution timestamp (``earnings/revenue_chaser_%Y%m%d_%H%M%S.html``) and the caller reads that path
+    # back; nine test files render one, ``--dist loadfile`` puts each file on a different worker, and in the process
+    # root two workers rendering in the same second write and read one file. That is how
+    # ``test_the_dollar_volume_help_names_the_premium_it_reads`` read a page rendered without ``filter_stats`` and
+    # failed on the missing gates line (CI run 41034036608, 30 Oct 2026).
+    earnings_report = importlib.import_module("RevenueChaser.module_earnings_radar.report")
+    mp.setattr(earnings_report, "OUTPUT_DIR", dest / Path(earnings_report.OUTPUT_DIR).relative_to(root))
     dest.mkdir(parents=True, exist_ok=True)     # the 13F page sits at its top, where a test may write it directly
     try:
         yield dest
