@@ -82,6 +82,64 @@ def parquet_root() -> Path:
     return Path(config.MARKET_RAW_DIR) / "parquet"
 
 
+# ── What one request asks for ──────────────────────────────────────────────────────────────────────────────────
+
+# The spine's tiers, in the order they are reported (``rcdata/build/spine/tier.py``).
+TIERS = ("A", "B", "C", "D")
+
+
+@dataclass(frozen=True)
+class Scope:
+    """The names one request asks for: spine tiers, an explicit list, or neither (the dataset's own default).
+
+    A name list wins over the tiers: a person naming ten tickers means those ten, not those ten within a tier.
+    Empty (``not scope``) is the daily run, which asks whatever the dataset asks by itself.
+    """
+    tiers: tuple[str, ...] = ()
+    names: tuple[str, ...] = ()
+
+    def __bool__(self) -> bool:
+        return bool(self.tiers or self.names)
+
+    def text(self) -> str:
+        parts = [f"tiers {'+'.join(self.tiers)}" if self.tiers else "",
+                 f"{len(self.names)} name{'s' if len(self.names) != 1 else ''}" if self.names else ""]
+        return ", ".join(p for p in parts if p) or "no scope"
+
+
+def parse_scope(params: dict) -> Scope:
+    """``{"tiers": ["A", "B"], "names": ["KO", "MSFT"]}`` of a request's params, normalised.
+
+    Upper-cased, de-duplicated, the tiers in ``TIERS`` order, so two requests for the same set are the same scope.
+    An unknown tier or an empty name is a ``ValueError``: the request is refused with a note instead of fetching
+    something nobody asked for.
+    """
+    raw_tiers = params.get("tiers") or ()
+    raw_names = params.get("names") or ()
+    for value, what in ((raw_tiers, "tiers"), (raw_names, "names")):
+        if isinstance(value, str) or not isinstance(value, (list, tuple)):
+            raise ValueError(f"{what} must be a list, not {type(value).__name__}")
+    tiers = {str(t).strip().upper() for t in raw_tiers}
+    unknown = sorted(t for t in tiers if t not in TIERS)
+    if unknown:
+        raise ValueError(f"unknown tier {', '.join(unknown)}: the spine has {', '.join(TIERS)}")
+    names, seen = [], set()
+    for n in raw_names:
+        name = str(n).strip().upper()
+        if not name:
+            raise ValueError("a name in names is empty")
+        if name not in seen:
+            seen.add(name)
+            names.append(name)
+    return Scope(tiers=tuple(t for t in TIERS if t in tiers), names=tuple(names))
+
+
+def honours_scope(ds) -> bool:
+    """Whether the dataset asks the names a request's scope names. A dataset whose names come from somewhere else
+    (the SEC's daily index, a whole-market page, a calendar day) declares nothing and gets the note instead."""
+    return bool(getattr(ds, "honours_scope", False))
+
+
 # ── The run context ────────────────────────────────────────────────────────────────────────────────────────────
 
 @dataclass
@@ -97,6 +155,7 @@ class RunContext:
     notes: list[str] = field(default_factory=list)
     uw_sampled: bool = False
     allow_shrink: bool = False                                      # a request's explicit "allow_shrink": true
+    scope: Scope = field(default_factory=Scope)                     # a request's "tiers" / "names" (empty: daily)
     pending: dict[str, Any] = field(default_factory=dict)          # a build's results for its after_swap step
     _pending: dict[str, list[int]] = field(default_factory=dict)    # counted, not yet written to ops.sqlite
     _http: httpx.Client | None = None
@@ -385,6 +444,8 @@ class Dataset(Protocol):
     #                               when the CLI queued it (``requested_by`` "cli")
     #   backfill_needs_from: bool   default True; False lets ``backfill`` start at the source's beginning (None)
     #   after_swap(ctx)             runs once the kind's new file is live (the spine's build-issue sync)
+    #   honours_scope: bool         the fetch asks the names ``ctx.scope`` names (#265); without it a request that
+    #                               carried a scope gets a note saying this dataset ignored it
 
 
 ATTENDED_BY = "cli"
@@ -509,7 +570,8 @@ def run_request(req: dict, *, trigger: str = "queue", sleep: Callable[[float], A
     """Run one queued request to its end and return the ``dataset_check`` row written for it.
 
     ``req["params"]``: ``{"mode": "daily", "as_of": "YYYY-MM-DD"}`` (both optional) or
-    ``{"mode": "backfill", "from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}``.
+    ``{"mode": "backfill", "from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}``, either with the scope the request asks for
+    (``{"tiers": ["A", "B"], "names": ["KO"]}``, both optional; ``parse_scope``).
     """
     from . import DATASETS
     ds = DATASETS.get(req["dataset"])
@@ -552,6 +614,10 @@ def _run(ctx: RunContext, ds, req: dict, params: dict) -> dict:
             check = {"result": "skipped", "note": refused}
             status = "skipped"
             return _finish(ctx, req, check, status, None)
+        ctx.scope = parse_scope(params)             # a bad scope is this run's failed check row, like a bad date
+        if ctx.scope and not honours_scope(ds):
+            ctx.notes.append(f"scope ignored: {ds.name} does not ask by name or tier ({ctx.scope.text()} "
+                             "not applied)")
         mode = params.get("mode", "daily")
         if mode == "backfill":
             if params.get("from"):

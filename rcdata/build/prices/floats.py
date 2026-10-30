@@ -86,6 +86,15 @@ def _tier_a() -> list[dict]:
     return [n for n in scope() if n.get("tier") == "A"]
 
 
+def asked(want=None) -> list[dict]:
+    """The names one float run asks: the scope's Tier A names, because a fund (Tier B) has no float (#265). An
+    explicit name list in the request is taken as it is: a person asking for one name means that name."""
+    names = scope(want=want)
+    if want is not None and want.names:
+        return names
+    return [n for n in names if n.get("tier") == "A"]
+
+
 def _partitions(*parts: str) -> list[Path]:
     return [f for _, f in stage.partitions(base.parquet_root().joinpath(*parts), "date")]
 
@@ -97,6 +106,7 @@ class YahooFloat:
     tables = ("shares_class",)
     cadence = "daily"
     starts_by_hand = True
+    honours_scope = True              # the request's names, else the scope's Tier A (``asked``)
 
     def default_as_of(self) -> date:
         return calendar.today_ny()
@@ -118,9 +128,9 @@ class YahooFloat:
         return sorted(names, key=lambda n: (n["ticker"] in last, last.get(n["ticker"], 0.0), n["ticker"]))
 
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
-        names = _tier_a()
+        names = asked(ctx.scope)
         if not names:
-            raise base.SourceError("the spine holds no Tier A name (spine.duckdb not built?): nothing to ask")
+            raise base.SourceError("nothing to ask: no Tier A name in the scope (spine.duckdb not built?)")
         folder = self.raw_dir(as_of)
         have = sorted(folder.glob("batch-*.json.gz")) if folder.is_dir() else []
         done = {t for p in have for t in base.read_raw_json(p)["rows"]}
@@ -193,6 +203,7 @@ class UWFloat:
     tables = ("shares_class",)
     cadence = "daily"
     starts_by_hand = True
+    honours_scope = True              # the request's names, else the scope's Tier A (``asked``)
 
     def default_as_of(self) -> date:
         return calendar.today_ny()
@@ -204,9 +215,9 @@ class UWFloat:
         path = self.raw_path(as_of)
         if path.exists():
             return [path]
-        names = {n["ticker"]: {"cik": n.get("cik"), "security_id": n["security_id"]} for n in _tier_a()}
+        names = {n["ticker"]: {"cik": n.get("cik"), "security_id": n["security_id"]} for n in asked(ctx.scope)}
         if not names:
-            raise base.SourceError("the spine holds no Tier A name (spine.duckdb not built?): nothing to ask")
+            raise base.SourceError("nothing to ask: no Tier A name in the scope (spine.duckdb not built?)")
         ctx.check_cap("uw")
         res = ctx.uw_client().short_screener_result(sorted(names))
         if res.status == "failed":

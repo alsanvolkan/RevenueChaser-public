@@ -102,6 +102,7 @@ class AlpacaBars:
     tables = ("price_bar_daily",)
     cadence = "daily"
     starts_by_hand = True             # the first run is the deploy's own request (POST /api/build/request/...)
+    honours_scope = True              # a request's tiers and names are what it asks (#265)
 
     def default_as_of(self) -> date:
         return calendar.latest_complete_session()
@@ -114,9 +115,10 @@ class AlpacaBars:
             raise base.SourceError(f"{as_of} is not a New York session")
         if not calendar.bars_complete(as_of, now.timestamp()):
             raise base.SourceError(f"the session of {as_of} is not complete yet (16:30 New York): not fetched")
-        names = scope()
-        if not any(n.get("tier") == "A" for n in names):
-            raise base.SourceError("the spine holds no Tier A name (spine.duckdb not built?): nothing to ask")
+        names = scope(want=ctx.scope)
+        if not ctx.scope.names and not any(n.get("tier") for n in names):
+            raise base.SourceError("the spine holds no name of the asked tiers (spine.duckdb not built?): "
+                                   "nothing to ask")
         folder = raw_dir(as_of)
         have = sorted(folder.glob("*.json.gz")) if folder.is_dir() else []
         covered = {(payload["adjustment"], n["symbol"]) for payload in map(base.read_raw_json, have)
@@ -178,13 +180,13 @@ class AlpacaBars:
         rows: dict[tuple[str, date], dict] = {}
         closes: dict[tuple[str, str], list[tuple[date, float]]] = {}
         dropped: dict[str, int] = {}
-        tier_a: dict[str, set[str]] = {}
+        asked: dict[str, dict[str, str | None]] = {}      # as_of -> symbol -> the tier it was asked under
         for p in payloads:
             as_of = date.fromisoformat(p["as_of"])
             keep = set(window(as_of))
             names = {n["symbol"]: n for n in p["names"]}
             if p["adjustment"] == "raw":
-                tier_a.setdefault(p["as_of"], set()).update(s for s, n in names.items() if n.get("tier") == "A")
+                asked.setdefault(p["as_of"], {}).update({s: n.get("tier") for s, n in names.items()})
             for page in p["pages"]:
                 for symbol, bars in (page or {}).items():
                     for b in bars or []:
@@ -218,7 +220,7 @@ class AlpacaBars:
                     row["all_return"] = c1 / c0 - 1.0
         if dropped:
             ctx.notes.append("bars dropped: " + ", ".join(f"{n} {why}" for why, n in sorted(dropped.items())))
-        self._coverage(ctx, rows, tier_a)
+        self._coverage(ctx, rows, asked)
         by_day: dict[date, list[dict]] = {}
         for r in rows.values():
             by_day.setdefault(r["session_date"], []).append(r)
@@ -252,14 +254,23 @@ class AlpacaBars:
         return None
 
     @staticmethod
-    def _coverage(ctx: base.RunContext, rows: dict, tier_a: dict[str, set[str]]) -> None:
-        if not tier_a:
+    def _coverage(ctx: base.RunContext, rows: dict, asked: dict[str, dict[str, str | None]]) -> None:
+        """The run's coverage: Tier A's share, which is the acceptance, and a note per other tier beside it (#265).
+
+        The scope is A+B now, and an OTC or fund name may have no Alpaca bar at all, so counting B into the one
+        number would move an acceptance nobody changed. It is reported instead, or an empty tier goes unseen.
+        """
+        if not asked:
             return
-        as_of = max(tier_a)
-        asked = tier_a[as_of]
-        got = {s for (s, d) in rows if d.isoformat() == as_of and s in asked}
-        ctx.pending[NAME] = {"as_of": as_of, "asked": len(asked), "with_bar": len(got)}
-        ctx.notes.append(f"{len(got)} of {len(asked)} Tier A names with a bar on {as_of}")
+        as_of = max(asked)
+        tiers = asked[as_of]
+        got = {s for (s, d) in rows if d.isoformat() == as_of and s in tiers}
+        tier_a = {s for s, t in tiers.items() if t == "A"}
+        ctx.pending[NAME] = {"as_of": as_of, "asked": len(tier_a), "with_bar": len(got & tier_a)}
+        ctx.notes.append(f"{len(got & tier_a)} of {len(tier_a)} Tier A names with a bar on {as_of}")
+        for tier in sorted({t for t in tiers.values() if t and t != "A"}):
+            of_tier = {s for s, t in tiers.items() if t == tier}
+            ctx.notes.append(f"{len(got & of_tier)} of {len(of_tier)} Tier {tier} names with a bar on {as_of}")
 
     # ── build ─────────────────────────────────────────────────────────────────────────────────────────────────
 

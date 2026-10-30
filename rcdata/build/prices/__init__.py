@@ -18,7 +18,7 @@ last dataset of the kind, ``prices/serving``, builds the served tables and the b
 - ``prices/serving``: no fetch; the served tables, the views under the old ``prices.duckdb`` names, and the build
   issues (``serving.ISSUE_KINDS``), synced to ``ops.sqlite`` once the new file is live.
 
-**The scope** of the daily fetches is the spine's Tier A, the three benchmarks, the rotation ETFs the old nightly
+**The scope** of the daily fetches is the spine's Tier A and B (``DEFAULT_TIERS``), the three benchmarks, the rotation ETFs the old nightly
 kept bars for, the stock watch list, and the other listed classes the SEC covers name for a Tier A issuer (``scope``).
 The spine is read from its live file, read-only.
 
@@ -37,6 +37,10 @@ BENCHMARKS = ("SPY", "DIA", "QQQ")
 # The rotation ETFs the old nightly kept bars for (``core/prices.bar_scope``): every group but yield and commodity.
 ROTATION = tuple(t for t, info in ROTATION_ETFS.items() if (info or {}).get("group") not in ("yield", "commodity"))
 SPINE_COLUMNS = ("ticker", "cik", "tier", "gvkey", "iid", "composite_figi", "exchange", "security_type", "name")
+# The tiers a daily fetch asks when the request names none: the listed universe, Tier A and B (avo, 30 Oct 2026:
+# "the limit is A+B", no market-cap floor; 5,655 + 2,015 = 7,670 names on the live spine). A request may narrow it
+# (``scope(want=...)``, #265).
+DEFAULT_TIERS = ("A", "B")
 
 
 class Spacer:
@@ -126,20 +130,32 @@ def cover_classes(rows: list[dict]) -> list[dict]:
     return out
 
 
-def scope(rows: list[dict] | None = None, watched: set[str] | None = None) -> list[dict]:
-    """The names the daily fetches ask for: Tier A, then the benchmarks, the rotation ETFs and the stock watch list
-    (any tier), then the other listed classes of the Tier A issuers (``cover_classes``), each once, as
-    ``{ticker, cik, tier, security_id, ...}``. A benchmark, ETF or watched name the spine does not hold is asked under
-    its ticker alone (``sym:<ticker>``)."""
+def scope(rows: list[dict] | None = None, watched: set[str] | None = None,
+          want=None) -> list[dict]:
+    """The names the daily fetches ask for, as ``{ticker, cik, tier, security_id, ...}``.
+
+    Without a request's scope (``want``, ``base.Scope``): the spine's ``DEFAULT_TIERS``, then the benchmarks, the
+    rotation ETFs and the stock watch list (any tier), then the other listed classes of the Tier A issuers
+    (``cover_classes``), each once. A benchmark, ETF or watched name the spine does not hold is asked under its
+    ticker alone (``sym:<ticker>``).
+
+    With a scope (#265): ``want.names`` is the whole ask, exactly those names and nothing beside them, so a fill of
+    ten tickers sends ten tickers' worth of calls; else ``want.tiers`` replaces ``DEFAULT_TIERS`` and the rest is
+    unchanged.
+    """
     if rows is None:
         rows = spine_rows()
+    if want is not None and want.names:
+        by_ticker = {r["ticker"]: r for r in rows}
+        return [with_id(by_ticker.get(t) or {"ticker": t, "cik": None, "tier": None}) for t in want.names]
+    tiers = tuple(want.tiers) if want is not None and want.tiers else DEFAULT_TIERS
     if watched is None:
         from ... import read
         watched = read.watched("stock")
     by_ticker = {r["ticker"]: r for r in rows}
     out, seen = [], set()
     for r in rows:
-        if r.get("tier") == "A":
+        if r.get("tier") in tiers:
             out.append(with_id(r))
             seen.add(r["ticker"])
     for t in (*BENCHMARKS, *ROTATION, *sorted(watched)):

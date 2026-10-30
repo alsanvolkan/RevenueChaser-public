@@ -1416,11 +1416,78 @@ def _requested_by() -> str:
     return "panel:cli" if by.lower() == "cli" else by
 
 
+def _past_day(raw, field: str):
+    """One ``YYYY-MM-DD`` of a request body, or ``(None, "<field> must be ...")``."""
+    try:
+        day = date.fromisoformat(raw) if isinstance(raw, str) and len(raw) == 10 else None
+    except ValueError:
+        day = None
+    if day is None or day > today_ny():
+        return None, f"{field} must be a past date, YYYY-MM-DD"
+    return day, None
+
+
+def _request_days(raw_from, raw_to) -> tuple[dict, str | None]:
+    """``{"mode": "backfill", "from": ..., "to": ...}`` of a request's date range, or ``({}, None)`` for a daily
+    run. ``backfill_to`` alone is refused: a range with no first day is the whole history, which nobody asked for."""
+    if raw_from is None:
+        if raw_to is not None:
+            return {}, "backfill_to needs a backfill_from"
+        return {}, None
+    start, problem = _past_day(raw_from, "backfill_from")
+    if problem:
+        return {}, problem
+    out = {"mode": "backfill", "from": start.isoformat()}
+    if raw_to is not None:
+        end, problem = _past_day(raw_to, "backfill_to")
+        if problem:
+            return {}, problem
+        if end < start:
+            return {}, "backfill_to must not be before backfill_from"
+        out["to"] = end.isoformat()
+    return out, None
+
+
+# A name list longer than the whole listed universe (about 7,700 names) is a mistake, not an ask.
+SCOPE_NAMES_MAX = 20_000
+
+
+def _request_scope(raw_tiers, raw_names) -> tuple[dict, str | None]:
+    """``{"tiers": [...], "names": [...]}`` of a Fetch press (#265), checked here so the queue holds only a request
+    the builder can run. A comma-separated string is accepted from the query string, a JSON body sends a list.
+
+    The normalising itself is ``rcdata.build.base.parse_scope``'s, the builder's own reader, so the page and the
+    builder cannot disagree about what a tier or a name is.
+    """
+    from RevenueChaser.rcdata.build import base
+
+    out = {}
+    for raw, key in ((raw_tiers, "tiers"), (raw_names, "names")):
+        if raw is None:
+            continue
+        values = [p for p in raw.split(",") if p.strip()] if isinstance(raw, str) else raw
+        if not isinstance(values, (list, tuple)):
+            return {}, f"{key} must be a list"
+        out[key] = list(values)
+    if len(out.get("names") or ()) > SCOPE_NAMES_MAX:
+        return {}, f"names holds more than {SCOPE_NAMES_MAX} names"
+    try:
+        asked = base.parse_scope(out)
+    except ValueError as e:
+        key = "tiers" if "tier" in str(e) else "names"
+        return {}, f"{key}: {e}"
+    return {k: list(v) for k, v in (("tiers", asked.tiers), ("names", asked.names)) if v}, None
+
+
 @app.route("/api/build/request/<path:dataset>", methods=["POST"])
 def api_build_request(dataset: str):
-    """Queue one build of ``dataset`` (Fetch), or a backfill from ``backfill_from`` (``YYYY-MM-DD``, JSON body or
-    query string). 202 with the request id; 400 for an unknown dataset or a bad date; 409 while one is queued or
-    running."""
+    """Queue one build of ``dataset`` (Fetch), with the scope the press asks for: ``backfill_from`` and
+    ``backfill_to`` (``YYYY-MM-DD``), ``tiers`` (the spine's A..D) and ``names`` (tickers), each optional, in the
+    JSON body or the query string. 202 with the request id; 400 for an unknown dataset, a bad date or a scope the
+    builder could not run; 409 while one is queued or running.
+
+    A dataset that cannot narrow its fetch to a scope still takes the request and says so on its check row
+    (``base.honours_scope``), so a press is never silently something else."""
     from RevenueChaser.rcdata import ops
 
     ds = _build_dataset(dataset)
@@ -1431,19 +1498,21 @@ def api_build_request(dataset: str):
         return jsonify({"ok": False, "error": f"{dataset} is attended: run it from the CLI on the server "
                                               "(python -m RevenueChaser.rcdata.build backfill ...)"}), 409
     body = request.get_json(silent=True) if request.is_json else None
-    raw = (body or {}).get("backfill_from") if isinstance(body, dict) else None
-    if raw is None:
-        raw = request.args.get("backfill_from")
-    params = None
-    if raw is not None:
-        try:
-            start = date.fromisoformat(raw) if isinstance(raw, str) and len(raw) == 10 else None
-        except ValueError:
-            start = None
-        if start is None or start > today_ny():
-            return jsonify({"ok": False, "error": "backfill_from must be a past date, YYYY-MM-DD"}), 400
-        params = {"mode": "backfill", "from": start.isoformat()}
-    rid = ops.enqueue_once(dataset, params, by=_requested_by())
+    body = body if isinstance(body, dict) else {}
+
+    def given(key):
+        return body[key] if key in body else request.args.get(key)
+
+    params: dict = {}
+    days, problem = _request_days(given("backfill_from"), given("backfill_to"))
+    if problem:
+        return jsonify({"ok": False, "error": problem}), 400
+    params.update(days)
+    scope, problem = _request_scope(given("tiers"), given("names"))
+    if problem:
+        return jsonify({"ok": False, "error": problem}), 400
+    params.update(scope)
+    rid = ops.enqueue_once(dataset, params or None, by=_requested_by())
     if rid is None:
         return jsonify({"ok": False, "error": f"{dataset} is already queued or running"}), 409
     return jsonify({"ok": True, "id": rid, "dataset": dataset}), 202

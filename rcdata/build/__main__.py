@@ -83,15 +83,28 @@ def main(argv: list[str] | None = None) -> int:
                    "without it a table that empties or loses more than 1%% of its rows refuses the swap, and "
                    "another dataset's table keeps that guard even with it")
     run.add_argument("--allow-shrink", action="store_true", help="with --dataset: " + shrink_help)
+    scope_help = ("with --dataset: ask only these spine tiers (A,B,C,D) / only these tickers, instead of the "
+                  "dataset's own set; a dataset that cannot narrow its fetch says so on its check row (#265)")
+    run.add_argument("--tiers", help=scope_help)
+    run.add_argument("--names", help=scope_help)
     bf = sub.add_parser("backfill")
     bf.add_argument("datasets", nargs="+", metavar="dataset")
     bf.add_argument("--from", dest="start")
     bf.add_argument("--to", dest="end")
     bf.add_argument("--allow-shrink", action="store_true", help=shrink_help)
+    bf.add_argument("--tiers", help=scope_help)
+    bf.add_argument("--names", help=scope_help)
     args = p.parse_args(argv)
-    if args.cmd == "run" and not args.dataset and (args.as_of or args.allow_shrink):
+    if args.cmd == "run" and not args.dataset and (args.as_of or args.allow_shrink or args.tiers or args.names):
         # They only shape the request queued for --dataset; without it they would be dropped silently (F5).
-        p.error("--as-of and --allow-shrink need --dataset")
+        p.error("--as-of, --allow-shrink, --tiers and --names need --dataset")
+    scope = {k: [n.strip() for n in v.split(",") if n.strip()]
+             for k, v in (("tiers", args.tiers), ("names", args.names)) if v}
+    try:
+        asked = base.parse_scope(scope)                 # the builder's own reader, so the CLI cannot differ from it
+    except ValueError as e:
+        p.error(str(e))
+    scope = {k: list(v) for k, v in (("tiers", asked.tiers), ("names", asked.names)) if v}
     if args.cmd == "backfill":
         args.datasets = [n.strip() for a in args.datasets for n in a.split(",") if n.strip()]
         unknown = [n for n in args.datasets if n not in DATASETS]
@@ -129,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "backfill":
             params = {"mode": "backfill", **({"from": args.start} if args.start else {}),
                       **({"to": args.end} if args.end else {}),
-                      **({"allow_shrink": True} if args.allow_shrink else {})}
+                      **({"allow_shrink": True} if args.allow_shrink else {}), **scope}
             worst = 0
             for name in args.datasets:
                 rid = ops.enqueue(name, params, by="cli")
@@ -141,9 +154,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(base.format_check(row), flush=True)
                 worst = max(worst, int(row["result"] == "failed"))
             return worst
-        if args.dataset and (args.as_of or args.allow_shrink or not ops.queued(args.dataset)):
+        if args.dataset and (args.as_of or args.allow_shrink or scope or not ops.queued(args.dataset)):
             params = {**({"as_of": args.as_of} if args.as_of else {}),
-                      **({"allow_shrink": True} if args.allow_shrink else {})}
+                      **({"allow_shrink": True} if args.allow_shrink else {}), **scope}
             ops.enqueue(args.dataset, params or None, by="cli")
         due_failed = 0
         if not args.dataset:
