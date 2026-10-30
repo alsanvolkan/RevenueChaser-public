@@ -348,11 +348,14 @@ class SpineSecurity:
             cusip = str(cusip).strip().upper() if cusip else None
             f = figi.get(cusip) if cusip else None
             f_ok = f if f and f.get("status") == PRESENT else None
-            typ, typ_src = tier_rule.security_type(r["ticker"], r["name"], f_ok, (sec_row or {}).get("tpci"),
-                                                    exchange=r["exchange"],
-                                                    sic=sic_of_gvkey.get((sec_row or {}).get("gvkey")))
+            # The current GICS row is read before the type, because the SIC 6770 rule uses its sector as the
+            # de-SPAC guard (``tier.shell_sector``).
             current = [g for g in hgic.get((sec_row or {}).get("gvkey"), []) if g.get("indthru") is None]
             g = current[-1] if current else None
+            typ, typ_src = tier_rule.security_type(r["ticker"], r["name"], f_ok, (sec_row or {}).get("tpci"),
+                                                    exchange=r["exchange"],
+                                                    sic=sic_of_gvkey.get((sec_row or {}).get("gvkey")),
+                                                    gsector=(g or {}).get("gsector"))
             sector, industry = sector_names(g and g.get("gsector"), g and g.get("ggroup"))
             isin = isin_mod.from_cusip(cusip)
             row = {

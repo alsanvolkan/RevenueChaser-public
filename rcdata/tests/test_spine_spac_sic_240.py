@@ -142,7 +142,8 @@ def test_staging_reads_a_column_the_parquet_does_not_hold_as_null(tmp_path):
     old = tmp_path / "company.parquet"
     con.execute(f"COPY (SELECT '012141' AS gvkey, 'MICROSOFT CORP' AS conm, '0000789019' AS cik) "
                 f"TO '{old}' (FORMAT parquet)")
-    n = stage.create(con, "stg_x", [("gvkey", "TEXT"), ("conm", "TEXT"), ("cik", "TEXT"), ("sic", "TEXT")], [old])
+    n = stage.create(con, "stg_x", [("gvkey", "TEXT"), ("conm", "TEXT"), ("cik", "TEXT"), ("sic", "TEXT")], [old],
+                     added_later={"sic"})
     assert n == 1
     assert con.execute("SELECT gvkey, sic FROM stg_x").fetchall() == [("012141", None)]
 
@@ -157,3 +158,61 @@ def test_staging_still_reads_a_column_the_parquet_does_hold(tmp_path):
     con.execute(f"COPY (SELECT '012141' AS gvkey, '7372' AS sic) TO '{new}' (FORMAT parquet)")
     stage.create(con, "stg_y", [("gvkey", "TEXT"), ("sic", "TEXT")], [new])
     assert con.execute("SELECT gvkey, sic FROM stg_y").fetchall() == [("012141", "7372")]
+
+
+# ── The de-SPAC guard (review SHOULD 1) ──────────────────────────────────────────────────────────────────────
+
+def test_an_operating_gics_sector_blocks_the_sic_rule():
+    """A company whose Compustat record still says 6770 after its merger, but which Compustat has already given an
+    operating GICS sector, is not a shell. The spine has no ``shell_closed`` signal, so the sector is the guard."""
+    assert tier.security_type("DSPC", "De-Spacced Industries", {"security_type": "Common Stock"},
+                              sic="6770", gsector="45") == ("common", "openfigi")
+
+
+@pytest.mark.parametrize("sector", [None, "", "  ", "40"])
+def test_the_sic_rule_fires_with_no_gics_row_or_a_financials_one(sector):
+    assert tier.security_type("CCCX", "Churchill Capital Corp XI", None,
+                              sic="6770", gsector=sector) == ("spac", "compustat_sic(6770)")
+
+
+def test_every_other_sector_blocks_it():
+    for sector in ("10", "15", "20", "25", "30", "35", "45", "50", "55", "60"):
+        assert tier.security_type("CCCX", "Churchill Capital Corp XI", None,
+                                  sic="6770", gsector=sector)[0] != "spac", sector
+
+
+def test_a_blank_check_with_an_operating_sector_stays_in_tier_a_end_to_end(built_with):
+    built_with("012141", "6770")                       # MSFT's gvkey, whose current GICS sector is 45
+    row = _sec("MSFT")
+    assert (row["tier"], row["security_type"]) == ("A", "common")
+
+
+# ── The staging fallback is no longer silent or general (review SHOULD 2) ────────────────────────────────────
+
+def test_a_missing_column_outside_the_declared_set_still_fails_the_build(tmp_path):
+    import duckdb
+
+    from RevenueChaser.rcdata.build.spine import stage
+
+    con = duckdb.connect()
+    f = tmp_path / "company.parquet"
+    con.execute(f"COPY (SELECT '012141' AS gvkey) TO '{f}' (FORMAT parquet)")
+    with pytest.raises(duckdb.Error):
+        stage.create(con, "stg_z", [("gvkey", "TEXT"), ("cusip", "TEXT")], [f], added_later={"sic"})
+
+
+def test_a_column_read_as_null_is_logged(tmp_path, caplog):
+    import duckdb
+
+    from RevenueChaser.rcdata.build.spine import stage
+
+    con = duckdb.connect()
+    f = tmp_path / "company.parquet"
+    con.execute(f"COPY (SELECT '012141' AS gvkey) TO '{f}' (FORMAT parquet)")
+    with caplog.at_level("WARNING"):
+        stage.create(con, "stg_w", [("gvkey", "TEXT"), ("sic", "TEXT")], [f], added_later={"sic"})
+    assert "sic" in caplog.text and "stg_w" in caplog.text
+
+
+def test_the_company_table_declares_sic_as_added_later():
+    assert wrds.ADDED_LATER == {"company": {"sic"}}

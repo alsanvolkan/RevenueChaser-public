@@ -6,6 +6,7 @@ the security build never meets a missing table.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Iterable
 
@@ -14,23 +15,35 @@ import duckdb
 from .. import base
 from . import KIND
 
+logger = logging.getLogger(__name__)
+
 
 def create(con: duckdb.DuckDBPyConnection, name: str, schema: list[tuple[str, str]],
-           files: Iterable[Path] = (), select: str | None = None) -> int:
+           files: Iterable[Path] = (), select: str | None = None,
+           added_later: Iterable[str] = ()) -> int:
     """``CREATE TEMP TABLE name`` with ``schema`` and load ``files`` (Parquet, by name) into it; its row count.
 
     ``select`` is an optional query over ``{src}`` (the union of the files) that shapes what is loaded, e.g. the
     newest row per key.
+
+    ``added_later`` names the columns a source gained after its stored Parquet was written: one of those is read as
+    NULL, with a warning, until the source is fetched again (#240 added ``company.sic``, and its fetch is attended).
+    Every other column is selected by name, so a writer that renames or drops one still fails the build loudly
+    rather than reshaping a tier with NULLs.
     """
     cols = ", ".join(f'"{c}" {t}' for c, t in schema)
     con.execute(f"CREATE OR REPLACE TEMP TABLE {name} ({cols})")
     files = sorted(Path(f) for f in files)
     if files:
         src = f"read_parquet([{', '.join(base.sql_path(f) for f in files)}], union_by_name = true)"
-        # A column added to a schema after the Parquet was written is in none of the files, and selecting it would
-        # fail the build; it is read as NULL until the source is fetched again (#240 added ``company.sic``).
-        have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
-        names = ", ".join(f'"{c}"' if c in have else f'NULL AS "{c}"' for c, _ in schema)
+        later = set(added_later)
+        if later:
+            have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
+            later &= {c for c, _ in schema} - have
+        for c in sorted(later):
+            logger.warning("%s: %s is not in the stored Parquet yet, read as NULL until the source is fetched again",
+                           name, c)
+        names = ", ".join(f'NULL AS "{c}"' if c in later else f'"{c}"' for c, _ in schema)
         body = select.replace("{src}", src) if select else f"SELECT {names} FROM {src}"
         con.execute(f"INSERT INTO {name} SELECT {names} FROM ({body})")
     return count(con, name)

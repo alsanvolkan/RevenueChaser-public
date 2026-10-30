@@ -90,6 +90,9 @@ TABLES: dict[str, dict] = {
 }
 STAGING = {"company": "stg_wrds_company", "security": "stg_wrds_security", "sec_idhist": "stg_wrds_idhist",
            "co_hgic": "stg_wrds_hgic", "idxcst_his": "stg_wrds_idx"}
+# Per table, the columns asked for after its stored snapshot was written: read as NULL, with a warning, until the
+# next attended backfill (``stage.create``). Any other missing column still fails the build.
+ADDED_LATER = {"company": {"sic"}}
 
 
 # ── The one connection: a worker subprocess under the interpreter that has ``wrds`` ──────────────────────────
@@ -465,7 +468,8 @@ class WrdsDataset:
             # The newest snapshot plus the deltas after it; a delta's row replaces the snapshot's (newest fetch wins).
             stage.create(con, STAGING[table], schema, _parquet_files(self.name, table),
                          select=f"SELECT * FROM {{src}} QUALIFY row_number() OVER (PARTITION BY {keys} "
-                                f"ORDER BY fetched_at DESC) = 1")
+                                f"ORDER BY fetched_at DESC) = 1",
+                         added_later=ADDED_LATER.get(table, ()))
         return {}
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:

@@ -23,9 +23,10 @@ the ticker rule even before OpenFIGI answered. A name those leave untyped is typ
 
 1. the ticker (v2): a warrant, unit or right is written ``-WT`` / ``-UN`` / ``-RI`` (NYSE) or with a fifth letter
    W / U / R (Nasdaq) in the SEC file;
-2. Compustat's company SIC: 6770 ("blank checks") is a SPAC, over a common-like or untyped name only (#240). The
-   identity master types a SPAC from the same code, but from the SEC submissions summary, which the spine does not
-   fetch;
+2. Compustat's company SIC: 6770 ("blank checks") is a SPAC, over a common-like or untyped name only, and only
+   where Compustat's current GICS sector does not contradict it (none, or Financials -- ``SHELL_SECTORS``, the
+   de-SPAC guard, #240). The identity master types a SPAC from the same code, but from the SEC submissions
+   summary, which the spine does not fetch, and it has an 8-K shell-closed guard the spine cannot read;
 3. Compustat's ``tpci`` of the linked security (``TPCI_TYPES``);
 4. the SEC name (v2): an ETF or ETN, a commodity, currency or crypto pool, a pool sponsor's trust, or a bank that
    issues ETNs (``ETP_NAMES``);
@@ -96,6 +97,20 @@ def sic_code(v) -> int | None:
     m = _SIC_FLOAT.match(s)
     return sic_int(m.group(1) if m else s)
 
+
+# The de-SPAC guard. The identity master will not type a SPAC whose shell is closed
+# (``core.identity.types.spac_signals``, from an 8-K item 5.06); the spine reads no SEC forms, so it has no such
+# signal, and an operating company whose Compustat record still said 6770 after its merger would drop out of
+# Tier A. Compustat's own GICS is the stand-in: a live shell has no sector or sits in Financials, and a company
+# Compustat has already re-coded to an operating sector is not a shell whatever its SIC still says. How quickly
+# Compustat re-codes a de-SPAC'd gvkey is unmeasured, so the guard is deliberately the narrower reading.
+SHELL_SECTORS = ("", "40")
+
+
+def shell_sector(gsector: str | None) -> bool:
+    """True when Compustat's current GICS sector does not contradict a blank check (none, or Financials)."""
+    return (str(gsector).strip() if gsector is not None else "") in SHELL_SECTORS
+
 # 1. The ticker. The SEC file writes an NYSE warrant ``AMPX-WT`` (a series ``NE-WTA``), a unit ``BCSS-UN`` and a right
 # ``CELG-RI``. A Nasdaq one is a fifth letter: of Nasdaq Trader's five-letter symbols (nasdaqlisted.txt, 2026-10-28) all
 # 358 ending W are warrants (PSNYW's name says "ADS (ADW)", a depositary warrant; OpenFIGI types it first), 247 of 247
@@ -158,7 +173,8 @@ def product_type(ticker: str, name: str | None, exchange: str | None) -> tuple[s
 
 
 def security_type(ticker: str, name: str | None, figi: dict | None, tpci: str | None = None,
-                  exchange: str | None = None, sic: str | None = None) -> tuple[str, str]:
+                  exchange: str | None = None, sic: str | None = None,
+                  gsector: str | None = None) -> tuple[str, str]:
     """``(type, source)`` from the spine's inputs, through the identity master's one rule set; a name those leave
     untyped takes its ticker's type, and a common-like or untyped one Compustat's SIC 6770, then Compustat's
     ``tpci``, then its SEC name's or its venue's (the module doc)."""
@@ -167,7 +183,7 @@ def security_type(ticker: str, name: str | None, figi: dict | None, tpci: str | 
     by_ticker = ticker_type(ticker, exchange) if typ in UNTYPED else None
     if by_ticker:
         return by_ticker
-    if sic_code(sic) == SIC_SPAC and typ in SIC_GATE:
+    if sic_code(sic) == SIC_SPAC and typ in SIC_GATE and shell_sector(gsector):
         return "spac", SIC_SOURCE
     if typ not in UNTYPED:
         return typ, src
