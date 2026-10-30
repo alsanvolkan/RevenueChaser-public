@@ -324,6 +324,44 @@ def test_a_row_that_does_not_read_is_rejected_and_counted_not_the_whole_set(feed
     assert [r[1] for r in _holdings("0001000001-26-000101")] == ["594918104"]
 
 
+def test_the_cover_pages_period_wins_on_both_paths_and_a_cusip_placeholder_is_no_cusip(feed, http_mock):
+    """13F review D2 and D3 (2026-10-30). The EDGAR path takes the period from the cover page and falls back on
+    the submission header; the sets path did the opposite, so one filing could land in two quarters. And a CUSIP
+    written as ``000000000`` or ``N/A`` is none (the old engine's rule), not a name no source maps."""
+    h = ox.f13_holding
+    sets = [ox.set_filing("0001000031-26-000501", 1000031, "31-JUL-2026", [h("MICROSOFT CORP", "594918104", 400, 1)],
+                          period="30-JUN-2026", cover_period="31-MAR-2026"),
+            ox.set_filing("0001000032-26-000502", 1000032, "31-JUL-2026", [
+                h("NO CUSIP FUND", "000000000", 100, 1), h("ANOTHER", "n/a", 100, 1), h("EATON CORP PLC", "G29183103",
+                                                                                         150_000, 500)])]
+    http_mock.routes.insert(0, (HREFS[0], ox.f13_set(sets), 200, {}))
+    feed.add_day("2026-09-02", [
+        (ox.idx_row(1000033, "MANAGER 1000033", "13F-HR", "2026-09-02", "0001000033-26-000503"),
+         ox.f13_filing("0001000033-26-000503", 1000033, "2026-09-02", [h("NO CUSIP FUND", "000000000", 100, 1),
+                                                                        h("ANOTHER", "N/A", 100, 1)], "06-30-2026"))])
+    _backfill("2026-06-01", "2026-09-02")
+    assert _served(f"SELECT period FROM {sec13f.TABLE} WHERE accession = '0001000031-26-000501'") == [(Q1,)]
+    assert [r[1] for r in _holdings("0001000032-26-000502")] == [None, None, "G29183103"]
+    assert [r[1] for r in _holdings("0001000033-26-000503")] == [None, None]
+
+
+def test_a_set_before_2023_has_no_figi_column_and_still_reads(feed, http_mock):
+    """13F review D4 (2026-10-30): FIGI came to Form 13F in 2023; a set before it has no such column, and the
+    typing SQL named it."""
+    one = ox.f13_set([ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026",
+                                    [ox.f13_holding("MICROSOFT CORP", "594918104", 400_000, 1000)])],
+                     without=("FIGI",))
+    http_mock.routes.insert(0, (HREFS[0], one, 200, {}))
+    row = _backfill("2026-06-01", "2026-08-31")
+    assert row["result"] == "changed", row["note"]
+    con = duckdb.connect()
+    try:
+        assert con.execute(f"SELECT cusip, figi FROM {common.files_sql(sec13f.DATASET.holding_files())}").fetchall() \
+            == [("594918104", None)]
+    finally:
+        con.close()
+
+
 @pytest.mark.parametrize("start, end", [("2026-06-01", "2026-08-31"), ("2026-07-29", "2026-07-31")])
 def test_a_killed_runs_typing_scratch_is_removed_by_the_next_fill(feed, http_mock, start, end):
     """Review (deploy risk): a set is typed in a scratch folder beside the raw zips, several GB; a killed run leaves
