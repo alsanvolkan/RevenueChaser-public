@@ -246,7 +246,7 @@ def test_the_waiting_line_is_printed_again_when_the_holder_changes(monkeypatch, 
     assert "relatedness (pid 7)" in err and "pid 9" in err
 
 
-def test_a_lock_another_builder_held_is_waited_for_and_then_taken(monkeypatch):
+def test_a_lock_another_builder_held_is_waited_for_and_then_taken(monkeypatch, capsys):
     """N1: the gate and the lock are one loop, so a lock that frees inside the wait still starts this builder."""
     import contextlib
 
@@ -265,6 +265,8 @@ def test_a_lock_another_builder_held_is_waited_for_and_then_taken(monkeypatch):
     assert cli.main(["run", "--once", "--dataset", "market_series"]) == 0
     assert len(tries) == 2 and tries == [0, 0]              # each try is non-blocking; the loop does the waiting
     assert [r[0] for r in ran] == ["market_series"]
+    # Delta review nit 2: a lock another builder holds is named while waiting, like a gate holder is.
+    assert "waiting for the writer turn: another builder holds the lock" in capsys.readouterr().err
 
 
 def test_a_lock_that_never_frees_is_exit_3(monkeypatch, capsys):
@@ -279,3 +281,34 @@ def test_a_lock_that_never_frees_is_exit_3(monkeypatch, capsys):
     monkeypatch.setattr(cli.job_lock, "acquire", never)
     assert cli.main(["run", "--once", "--dataset", "market_series", "--wait", "0"]) == 3
     assert "another builder holds the lock" in capsys.readouterr().err
+
+
+def test_at_a_terminal_is_false_without_one(monkeypatch):
+    """Delta review SHOULD 1: the one safety guard of this PR, read from `sys.stdin` itself rather than through
+    the stand-in the other test monkeypatches."""
+    import sys as _sys
+
+    class Fake:
+        def __init__(self, tty):
+            self._t = tty
+
+        def isatty(self):
+            return self._t
+
+    monkeypatch.setattr(_sys, "stdin", Fake(False))
+    assert cli.at_a_terminal() is False
+    monkeypatch.setattr(_sys, "stdin", Fake(True))
+    assert cli.at_a_terminal() is True
+    monkeypatch.setattr(_sys, "stdin", None)                # a pythonw-style runner has none at all
+    assert cli.at_a_terminal() is False
+
+
+def test_attended_with_a_dataset_says_so_when_only_another_one_is_queued(monkeypatch, capsys):
+    """Delta review SHOULD 2: `attended --dataset X` must not take the writer turn for a request of some other
+    dataset, wait out the whole budget and exit without a word."""
+    monkeypatch.setattr(cli, "at_a_terminal", lambda: True)
+    monkeypatch.setattr(cli.base, "idle_problem",
+                        lambda: (_ for _ in ()).throw(AssertionError("took the turn")))
+    ops.enqueue("wrds/sec_idhist", None, by="settings")
+    assert cli.main(["attended", "--dataset", "wrds/prices"]) == 0
+    assert "no attended request queued" in capsys.readouterr().err

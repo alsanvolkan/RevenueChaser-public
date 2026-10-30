@@ -87,23 +87,29 @@ def _attended_queued(dataset: str | None) -> bool:
                for r in ops.queue_view(finished=0)["active"])
 
 
-def _wait_for_turn(wait: float) -> str | None:
+def _say_waiting(problem: str, said: list) -> None:
+    """Name what the turn is waiting for, and say it again whenever that changes (N7). ``said`` is the one-cell
+    memory of what was printed last, shared by the gate and the lock so neither repeats the other."""
+    if problem != said[0]:
+        print(f"waiting for the writer turn: {problem}", file=sys.stderr, flush=True)
+        said[0] = problem
+
+
+def _wait_for_turn(wait: float, said: list | None = None) -> str | None:
     """None once nothing else holds the store, or the problem that still stands when ``wait`` seconds are up.
 
-    The problem is read again every ``WAIT_POLL_S``, and printed whenever it changes, so a waiting terminal always
-    names the holder it is actually waiting for (N7). Nothing is queued or run before it clears.
+    The problem is read again every ``WAIT_POLL_S`` and printed through ``_say_waiting``, so a waiting terminal
+    always names the holder it is actually waiting for. Nothing is queued or run before it clears.
     """
     deadline = time.monotonic() + max(0.0, wait)
-    said = None
+    said = said if said is not None else [None]
     while True:
         problem = base.idle_problem()
         if problem is None:
             return None
         if time.monotonic() >= deadline:
             return problem
-        if problem != said:
-            print(f"waiting for the writer turn: {problem}", file=sys.stderr, flush=True)
-            said = problem
+        _say_waiting(problem, said)
         time.sleep(min(WAIT_POLL_S, max(0.0, deadline - time.monotonic())))
 
 
@@ -113,11 +119,17 @@ def _take_the_turn(stack: contextlib.ExitStack, wait: float) -> tuple[bool, str 
 
     The gate (``base.idle_problem``) and the lock are one loop, so a job lock taken while the lock was being
     waited for is seen before the builder starts, and the window between them stays as short as it was when
-    neither waited (N1). ``ops.ensure`` is inside, after the gate, as it has always been.
+    neither waited (N1). A lock another builder holds is named while waiting too, like a gate holder.
+
+    ``ops.ensure`` is inside, after the gate, as the first write of the ``run`` and ``backfill`` paths — but it is
+    no longer the first touch of ``ops.sqlite`` for ``attended``, whose queue check runs before the turn
+    (``ops._open`` ensures the file on a process's first use). That file is not the DuckDB writer this gate
+    protects, and the dashboard ensures it on every request.
     """
     deadline = time.monotonic() + max(0.0, wait)
+    said: list = [None]
     while True:
-        problem = _wait_for_turn(max(0.0, deadline - time.monotonic()))
+        problem = _wait_for_turn(max(0.0, deadline - time.monotonic()), said)
         if problem is None:
             ops.ensure()
             if stack.enter_context(job_lock.acquire(base.BUILDER_LOCK, wait=0)):
@@ -126,6 +138,7 @@ def _take_the_turn(stack: contextlib.ExitStack, wait: float) -> tuple[bool, str 
             problem = "another builder holds the lock"
         if time.monotonic() >= deadline:
             return False, problem
+        _say_waiting(problem, said)
         time.sleep(min(WAIT_POLL_S, max(0.0, deadline - time.monotonic())))
 
 
