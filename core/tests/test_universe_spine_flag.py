@@ -54,7 +54,9 @@ def test_the_spine_universe_is_its_listed_names_less_the_excluded_types_by_cap()
     assert names[:3] == ["MSFT", "TM", "WFC"] and "OLDONLY" not in names
     assert not {"SPY", "WFC-PC"} & set(names)                               # etp and preferred, as before
     assert "VYLR" in names and names[-1] == "VYLR"                          # no cap in the old store: last
-    assert universe.classification_universe() == [t for t in names if CAPS.get(t, 0) >= 3e8]
+    # No market-cap floor (avo, 29 Oct 2026): the default is the whole set, VYLR's missing cap included.
+    assert universe.classification_universe() == names
+    assert universe.classification_universe(3e8) == [t for t in names if CAPS.get(t, 0) >= 3e8]
 
 
 @pytest.mark.usefixtures("spine")
