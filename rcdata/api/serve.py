@@ -36,6 +36,14 @@ class UnknownNeed(KeyError):
     """A need name the catalog does not hold."""
 
 
+class AskRequired(ValueError):
+    """A need whose reader answers nothing unless something is named, called with nothing named.
+
+    Without this the answer was ``state: missing`` on a table holding 236 series (the live verification's finding
+    2, 30 Oct 2026): "no rows" is the truth about the call, not about the store, and a card cannot tell them apart.
+    """
+
+
 class FillNotSupported(NotImplementedError):
     """``fill`` other than ``"never"``: on-demand filling lands in PR C."""
 
@@ -191,6 +199,13 @@ def get(need: str, *, fill: str = NEVER, **params) -> Answer:
         raise UnknownNeed(f"unknown need {need!r}: one of {', '.join(sorted(NEEDS))}") from None
     if fill != NEVER:
         raise FillNotSupported(f"fill={fill!r} is not built yet (PR C); only fill={NEVER!r} exists")
+
+    # "Nothing was asked", not "the parameter was absent": ``_asked`` answers None only for an absent parameter,
+    # and an empty value normalises to ``[]``, which used to slip past and answer ``state: missing`` on a full
+    # table (the delta review of #295). ``prefix`` is the reader's other way of naming rows, so it counts as an ask.
+    if spec.ask_required and not _asked(spec, params) and not params.get("prefix"):
+        raise AskRequired(f"{need} answers nothing unless it is asked for something: name {spec.ask_param!r} "
+                          f"(or ask for the whole table's state with summary=1)")
 
     ops.read_log.bump(f"need:{need}")
     rows = spec.reader(**_with_needs_own_rows(spec, params))
