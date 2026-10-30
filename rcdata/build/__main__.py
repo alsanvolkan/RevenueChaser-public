@@ -18,9 +18,19 @@
                                         A narrowed request gets only what it names (Karar 82); a dataset that
                                         cannot narrow its fetch takes the request and says so on its check row
 
-It refuses to start while a job lock is held in the store directory or another builder runs (exit 3), and prints
-one line per dataset run: the ``dataset_check`` fields. Exit 0 when every run it made ended ok or skipped, 1 when
-one failed or a dataset's due step failed (its due check raised, or ops.sqlite stayed locked while queueing it).
+    attended [--dataset X]              drain the queued requests of the attended datasets (WRDS: a person logs in
+                                        and confirms Duo) and stop. The only runner that may take someone else's
+                                        request for one of them, so a Fetch press waits in the queue for this
+                                        terminal instead of being refused; --dataset limits it to one of them
+    --wait SECONDS                      how long to wait for the store's writer turn when a job lock is held or
+                                        another builder runs, instead of giving up at once. A person's commands
+                                        (``backfill``, ``attended``) wait ``DEFAULT_WAIT_S`` by default and
+                                        ``run`` waits none, because its timer brings the next pass anyway
+
+The store takes one writer at a time, so the start waits that long for the job locks in the store directory, for
+another builder, and for the builder lock itself; it exits 3 only when the wait runs out. It prints one line per
+dataset run: the ``dataset_check`` fields. Exit 0 when every run it made ended ok or skipped, 1 when one failed or
+a dataset's due step failed (its due check raised, or ops.sqlite stayed locked while queueing it).
 """
 from __future__ import annotations
 
@@ -37,13 +47,44 @@ from .. import ops, serving
 from . import DATASETS, base, due
 
 POLL_S = 30.0
+# How often the start asks again whose turn it is, and how long a person's command waits for it by default. A
+# backfill is started by hand and the hourly pass is minutes at most, so waiting beats exit 3 and a second attempt.
+WAIT_POLL_S = 5.0
+DEFAULT_WAIT_S = 1800.0
+# The commands a person runs at a terminal: they wait their turn, where the hourly ``run`` leaves it to its timer.
+ATTENDED_COMMANDS = ("backfill", "attended")
 
 
-def _run_queue(dataset: str | None, once: bool) -> int:
+def default_wait_s(cmd: str) -> float:
+    """How long ``cmd`` waits for the writer turn when ``--wait`` was not given."""
+    return DEFAULT_WAIT_S if cmd in ATTENDED_COMMANDS else 0.0
+
+
+def _wait_for_turn(wait: float) -> str | None:
+    """None once nothing else holds the store, or the problem that still stands when ``wait`` seconds are up.
+
+    The problem is read again every ``WAIT_POLL_S``; the first one is printed so a waiting terminal says what it
+    waits for, and nothing is queued or run before it clears.
+    """
+    deadline = time.monotonic() + max(0.0, wait)
+    said = False
+    while True:
+        problem = base.idle_problem()
+        if problem is None:
+            return None
+        if time.monotonic() >= deadline:
+            return problem
+        if not said:
+            print(f"waiting for the writer turn: {problem}", file=sys.stderr, flush=True)
+            said = True
+        time.sleep(min(WAIT_POLL_S, max(0.0, deadline - time.monotonic())))
+
+
+def _run_queue(dataset: str | None, once: bool, *, skip=(), only=None, attended_ok: bool = False) -> int:
     worst = 0
     while True:
         try:
-            req = ops.next_request(dataset)
+            req = ops.next_request(dataset, skip=skip, only=only)
         except sqlite3.OperationalError as e:
             # ops.sqlite held past busy_timeout (a long backup, a stuck writer): wait and ask again, never die.
             print(f"ops.sqlite busy: {e}; retrying", file=sys.stderr, flush=True)
@@ -56,7 +97,7 @@ def _run_queue(dataset: str | None, once: bool) -> int:
             time.sleep(POLL_S)
             continue
         try:
-            row = base.run_request(req)
+            row = base.run_request(req, attended_ok=attended_ok)
         except sqlite3.OperationalError as e:
             # The run could not write its rows (ops.sqlite locked past busy_timeout): the request is failed when the
             # file lets us, and the loop goes on with the next one.
@@ -97,6 +138,8 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--tiers", help=scope_help)
     run.add_argument("--names", help=scope_help)
     run.add_argument("--include", help=group_help)
+    at = sub.add_parser("attended")
+    at.add_argument("--dataset", choices=sorted(base.attended_names()), help="only this attended dataset")
     bf = sub.add_parser("backfill")
     bf.add_argument("datasets", nargs="+", metavar="dataset")
     bf.add_argument("--from", dest="start")
@@ -105,13 +148,18 @@ def main(argv: list[str] | None = None) -> int:
     bf.add_argument("--tiers", help=scope_help)
     bf.add_argument("--names", help=scope_help)
     bf.add_argument("--include", help=group_help)
+    for sp in (run, at, bf):
+        sp.add_argument("--wait", type=float, default=None, metavar="SECONDS",
+                        help="how long to wait for the store's writer turn before exit 3 (default: "
+                             f"{DEFAULT_WAIT_S:.0f} for backfill and attended, 0 for run)")
     args = p.parse_args(argv)
     if args.cmd == "run" and not args.dataset and (args.as_of or args.allow_shrink or args.tiers or args.names
                                                    or args.include):
         # They only shape the request queued for --dataset; without it they would be dropped silently (F5).
         p.error("--as-of, --allow-shrink, --tiers, --names and --include need --dataset")
     scope = {k: [n.strip() for n in v.split(",") if n.strip()]
-             for k, v in (("tiers", args.tiers), ("names", args.names), ("include", args.include)) if v}
+             for k, v in (("tiers", getattr(args, "tiers", None)), ("names", getattr(args, "names", None)),
+                          ("include", getattr(args, "include", None))) if v}
     try:
         asked = base.parse_scope(scope)                 # the builder's own reader, so the CLI cannot differ from it
     except ValueError as e:
@@ -135,12 +183,15 @@ def main(argv: list[str] | None = None) -> int:
     # systemd stops the unit with SIGTERM: as SystemExit it unwinds through the run's finally, which writes the call
     # counter, instead of ending the process where it stands.
     signal.signal(signal.SIGTERM, _terminate)
-    problem = base.idle_problem()
+    wait = default_wait_s(args.cmd) if args.wait is None else max(0.0, args.wait)
+    deadline = time.monotonic() + wait
+    problem = _wait_for_turn(wait)
     if problem:
         print(f"builder not started: {problem}", file=sys.stderr)
         return 3
     ops.ensure()
-    with job_lock.acquire(base.BUILDER_LOCK, wait=0) as got:
+    # The turn can still be taken between the gate and the lock, so the lock gets what is left of the wait.
+    with job_lock.acquire(base.BUILDER_LOCK, wait=max(0.0, deadline - time.monotonic())) as got:
         if not got:
             print("builder not started: another builder holds the lock", file=sys.stderr)
             return 3
@@ -152,6 +203,9 @@ def main(argv: list[str] | None = None) -> int:
         if any(orphans):
             print(f"failed {orphans[0]} request(s) and {orphans[1]} run(s) a dead builder left running",
                   file=sys.stderr, flush=True)
+        if args.cmd == "attended":
+            # A person is at this terminal (the WRDS login and Duo), so this runner may run what others queued.
+            return _run_queue(args.dataset, once=True, only=base.attended_names(), attended_ok=True)
         if args.cmd == "backfill":
             params = {"mode": "backfill", **({"from": args.start} if args.start else {}),
                       **({"to": args.end} if args.end else {}),
@@ -161,9 +215,9 @@ def main(argv: list[str] | None = None) -> int:
                 rid = ops.enqueue(name, params, by="cli")
                 req = ops.next_request(name)
                 while req is not None and req["id"] != rid:      # an older request of this dataset goes first
-                    print(base.format_check(base.run_request(req)), flush=True)
+                    print(base.format_check(base.run_request(req, attended_ok=True)), flush=True)
                     req = ops.next_request(name)
-                row = base.run_request(req)
+                row = base.run_request(req, attended_ok=True)
                 print(base.format_check(row), flush=True)
                 worst = max(worst, int(row["result"] == "failed"))
             return worst
@@ -177,7 +231,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{name}: {why}", file=sys.stderr, flush=True)
                 due_failed = due_failed or int(error)
         # A due step that failed still drains the queue, then fails the pass, so an hourly error is not an exit 0.
-        return max(_run_queue(args.dataset, args.once), due_failed)
+        # Without --dataset this is the hourly pass: it leaves the attended requests queued for the terminal that
+        # may run them. With one, a person named it, so this runner is that terminal.
+        skip = () if args.dataset else base.attended_names()
+        return max(_run_queue(args.dataset, args.once, skip=skip, attended_ok=bool(args.dataset)), due_failed)
 
 
 if __name__ == "__main__":

@@ -145,11 +145,31 @@ def test_the_routes_never_open_a_duckdb_file(client, monkeypatch):
     assert [a for a in opened if a and "market" in str(a[0])] == []
 
 
-def test_an_attended_dataset_is_refused_with_the_command_to_run_instead(client):
-    """PR 5: the WRDS datasets need a person at a terminal (login and Duo): a page cannot queue them."""
+def test_an_attended_dataset_is_queued_and_waits_for_the_runner_on_the_server(client):
+    """PR 5 refused it with 409. It is queued now and waits: the WRDS login and Duo still happen at a terminal,
+    so only the attended runner on the server takes it out of the queue."""
     r = client.post("/api/build/request/wrds/sec_idhist")
-    assert r.status_code == 409 and "CLI" in r.get_json()["error"]
-    assert not ops.ops_path().exists() or _rows() == []        # nothing queued (the route did not even open ops)
+    assert r.status_code == 202, r.get_json()
+    body = r.get_json()
+    assert body["ok"] is True and body["attended"] is True
+    assert "build attended" in body["waits_for"]
+    rows = _rows()
+    assert [(x["dataset"], x["status"], x["requested_by"], x["params"]) for x in rows] == [
+        ("wrds/sec_idhist", "queued", "test", '{"mode": "backfill"}')]
+
+
+def test_an_attended_dataset_that_needs_a_first_day_is_refused_without_one(client, monkeypatch):
+    from RevenueChaser.rcdata.build import DATASETS
+    monkeypatch.setattr(DATASETS["wrds/sec_idhist"], "backfill_needs_from", True, raising=False)
+    r = client.post("/api/build/request/wrds/sec_idhist")
+    assert r.status_code == 400 and "backfill_from" in r.get_json()["error"]
+    assert not ops.ops_path().exists() or _rows() == []
+
+
+def test_an_attended_request_keeps_the_window_the_press_asked_for(client):
+    r = client.post("/api/build/request/wrds/sec_idhist?backfill_from=2026-09-01")
+    assert r.status_code == 202, r.get_json()
+    assert _rows()[-1]["params"] == '{"from": "2026-09-01", "mode": "backfill"}'
 
 
 def test_the_panel_header_cannot_claim_to_be_the_cli(client):

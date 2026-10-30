@@ -35,7 +35,7 @@ import threading
 import time
 from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterable, Iterator
 
 from ..core import calendar, config
 
@@ -255,14 +255,35 @@ def _request(row: sqlite3.Row | None) -> dict | None:
     return out
 
 
-def next_request(dataset: str | None = None) -> dict | None:
-    """Take the oldest queued request (of ``dataset``, when given) and mark it running; None when none is queued."""
+def next_request(dataset: str | None = None, *, skip: Iterable[str] = (),
+                 only: Iterable[str] | None = None) -> dict | None:
+    """Take the oldest queued request (of ``dataset``, when given) and mark it running; None when none is queued.
+
+    ``skip`` leaves those datasets' requests in the queue, and ``only`` claims nothing else: that is how a request
+    waits for the runner that may run it instead of being consumed by the one that may not. The hourly builder
+    skips the attended datasets (a person logs in to WRDS), the attended runner claims only them. The two are
+    complements, so asking for both at once is a mistake, not an intersection.
+    """
+    skip = tuple(skip)
+    if skip and only is not None:
+        raise ValueError("next_request takes skip or only, not both")
     with _open() as con, _tx(con):
         sql = "SELECT id FROM build_requests WHERE status = 'queued'"
         args: tuple = ()
         if dataset is not None:
             sql += " AND dataset = ?"
             args = (dataset,)
+        if skip:
+            sql += f" AND dataset NOT IN ({', '.join('?' * len(skip))})"
+            args += skip
+        if only is not None:
+            names = tuple(only)
+            if not names:
+                return None                     # "only these" with no name is nothing to claim, not
+                #                                 everything. SQLite reads IN () as false too, so this is the
+                #                                 explicit form of behaviour the SQL already has.
+            sql += f" AND dataset IN ({', '.join('?' * len(names))})"
+            args += names
         row = con.execute(sql + " ORDER BY id LIMIT 1", args).fetchone()
         if row is None:
             return None

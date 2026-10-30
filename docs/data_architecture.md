@@ -1045,9 +1045,14 @@ builder's calls are counted: the dashboard's own UW client is not yet.
 The keyless sources send one User-Agent with the contact from `RC_HTTP_CONTACT` (BLS refuses a client without
 one; a 403 names the variable in the source's failure note).
 
-**Running it.** `python -m RevenueChaser.rcdata.build run [--once] [--dataset X [--as-of D]]` and
-`python -m RevenueChaser.rcdata.build backfill <dataset> --from <date>`. It refuses to start (exit 3) while a job
-lock is held in the store directory or another builder runs.
+**Running it.** `python -m RevenueChaser.rcdata.build run [--once] [--dataset X [--as-of D]]`,
+`python -m RevenueChaser.rcdata.build backfill <dataset> --from <date>` and
+`python -m RevenueChaser.rcdata.build attended` (the attended datasets' runner, below).
+
+The store takes one writer at a time, so a start whose turn it is not **waits** for it: for the job locks in the
+store directory, for another builder, and for the builder lock. `--wait SECONDS` is how long; a person's commands
+(`backfill`, `attended`) wait 1800 s by default and `run` waits none, because its hourly timer brings the next pass
+anyway. It exits 3 only when the wait runs out, and prints what it waits for while it waits.
 
 **The builder as a service (PR 2).** Scheduled jobs run hourly unless avo says otherwise. The registry row
 RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :07, with a 50 min limit, as the
@@ -1113,8 +1118,12 @@ builder's venv (on the server it has a venv of its own, because its pandas has n
 no default), one subprocess per builder process, so one WRDS connection: the login is that venv's
 `wrds.Connection` (the user from `WRDS_USERNAME`, which is required, the password from that user's `~/.pgpass`; WRDS may ask
 for a Duo push). The worker streams each answer in chunks to `<table>.jsonl.gz`; the builder types it in DuckDB.
-The datasets are never due, a request a page or the schedule queued is skipped (`skipped: attended ...`), the
-route answers 409, and the CLI runs them: `python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist
+The datasets are never due, and only a runner with a person at it runs one: the CLI's own request
+(`requested_by` `cli`) or `python -m RevenueChaser.rcdata.build attended`. A request a page queued **waits in the
+queue** for that runner — the route answers 202 with `waits_for`, the hourly builder leaves it there
+(`ops.next_request(skip=base.attended_names())`) and `attended` claims nothing else
+(`only=base.attended_names()`); the schedule queues none. So the CLI runs them:
+`python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist
 wrds/co_hgic wrds/idxcst_his openfigi/map` starts one worker for the whole process. Run it in a foreground terminal:
 the worker reads a WRDS prompt from `/dev/tty`, and a background job that reads its terminal is stopped (SIGTTIN).
 A failed login, or no

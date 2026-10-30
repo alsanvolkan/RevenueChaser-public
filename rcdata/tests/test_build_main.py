@@ -33,7 +33,7 @@ def test_s2_requests_and_runs_left_running_by_a_dead_builder_are_failed_at_start
 def test_s2_the_run_loop_outlives_a_locked_ops_file(monkeypatch):
     calls = []
 
-    def flaky(dataset=None):
+    def flaky(dataset=None, **kw):
         calls.append(dataset)
         if len(calls) == 1:
             raise sqlite3.OperationalError("database is locked")
@@ -63,7 +63,8 @@ def test_s4_build_files_a_dead_builder_left_are_swept_at_start():
 def test_n2_an_operational_error_inside_a_run_does_not_end_the_loop(monkeypatch):
     ops.enqueue("market_series", None, by="test")
     from RevenueChaser.rcdata.build import base
-    monkeypatch.setattr(base, "run_request", lambda req: (_ for _ in ()).throw(sqlite3.OperationalError("locked")))
+    monkeypatch.setattr(base, "run_request",
+                        lambda req, **kw: (_ for _ in ()).throw(sqlite3.OperationalError("locked")))
     monkeypatch.setattr(cli, "POLL_S", 0)
     assert cli._run_queue(None, once=True) == 1
     with ops.connect() as con:
@@ -83,7 +84,7 @@ def test_n2_a_database_error_at_the_end_of_a_run_is_failed_not_killed(monkeypatc
 def test_n3_allow_shrink_reaches_the_request(monkeypatch):
     from RevenueChaser.rcdata.build import base
     seen = []
-    monkeypatch.setattr(base, "run_request", lambda req: (seen.append(req), ops.latest_check("x") or {
+    monkeypatch.setattr(base, "run_request", lambda req, **kw: (seen.append(req), ops.latest_check("x") or {
         "dataset": req["dataset"], "result": "changed", "source_as_of": None, "rows": 0, "added": 0,
         "removed": 0, "calls": 0, "note": None})[1])
     assert cli.main(["run", "--once", "--dataset", "market_series", "--allow-shrink"]) == 0
@@ -108,7 +109,7 @@ def test_the_cli_queues_the_tiers_and_names_it_was_given(monkeypatch):
 
     from RevenueChaser.rcdata.build import base
     seen = []
-    monkeypatch.setattr(base, "run_request", lambda req: (seen.append(req), {
+    monkeypatch.setattr(base, "run_request", lambda req, **kw: (seen.append(req), {
         "dataset": req["dataset"], "result": "changed", "source_as_of": None, "rows": 0, "added": 0,
         "removed": 0, "calls": 0, "note": None})[1])
     assert cli.main(["run", "--once", "--dataset", "alpaca/bars", "--tiers", "a,b", "--names", "ko",
@@ -129,3 +130,64 @@ def test_tiers_or_names_without_a_dataset_is_an_error(capsys):
         with pytest.raises(SystemExit) as e:
             cli.main(argv)
         assert e.value.code == 2
+
+
+# ── Waiting its turn instead of exit 3, and the attended runner ────────────────────────────────────────────────
+
+def _fake_run(rows: list) -> callable:
+    """A ``base.run_request`` that records the request and writes nothing."""
+    def run(req, **kw):
+        rows.append((req["dataset"], req.get("requested_by"), kw.get("attended_ok", False)))
+        return {"dataset": req["dataset"], "result": "ok", "source_as_of": None, "rows": 0, "added": 0,
+                "removed": 0, "calls": 0}
+    return run
+
+
+def test_the_hourly_pass_leaves_an_attended_request_in_the_queue(monkeypatch):
+    """A Fetch press on a WRDS dataset waits for the person's terminal; the hourly builder must not consume it."""
+    ran: list = []
+    monkeypatch.setattr(cli.base, "run_request", _fake_run(ran))
+    rid = ops.enqueue("wrds/sec_idhist", None, by="settings")
+    _nothing_due()
+    assert cli.main(["run", "--once"]) == 0
+    assert ran == []
+    with ops.connect() as con:
+        assert con.execute("SELECT status FROM build_requests WHERE id = ?", (rid,)).fetchone()[0] == "queued"
+
+
+def test_the_attended_runner_drains_the_attended_requests_only(monkeypatch):
+    ran: list = []
+    monkeypatch.setattr(cli.base, "run_request", _fake_run(ran))
+    plain = ops.enqueue("market_series", None, by="settings")
+    ops.enqueue("wrds/sec_idhist", None, by="settings")
+    assert cli.main(["attended"]) == 0
+    assert ran == [("wrds/sec_idhist", "settings", True)]
+    with ops.connect() as con:
+        assert con.execute("SELECT status FROM build_requests WHERE id = ?", (plain,)).fetchone()[0] == "queued"
+
+
+def test_a_backfill_waits_for_its_turn_and_runs_when_the_store_is_free(monkeypatch):
+    ran: list = []
+    monkeypatch.setattr(cli.base, "run_request", _fake_run(ran))
+    monkeypatch.setattr(cli, "WAIT_POLL_S", 0)
+    seen = []
+
+    def busy_twice():
+        seen.append(1)
+        return "job lock held: relatedness (pid 7)" if len(seen) < 3 else None
+    monkeypatch.setattr(cli.base, "idle_problem", busy_twice)
+    assert cli.main(["backfill", "market_series", "--from", "2026-10-01"]) == 0
+    assert len(seen) == 3 and [r[0] for r in ran] == ["market_series"]
+
+
+def test_a_wait_that_runs_out_is_still_exit_3(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "WAIT_POLL_S", 0)
+    monkeypatch.setattr(cli.base, "idle_problem", lambda: "job lock held: relatedness (pid 7)")
+    assert cli.main(["backfill", "market_series", "--from", "2026-10-01", "--wait", "0"]) == 3
+    assert "relatedness (pid 7)" in capsys.readouterr().err
+
+
+def test_the_hourly_run_does_not_wait_but_a_person_s_commands_do():
+    assert cli.default_wait_s("run") == 0.0
+    assert cli.default_wait_s("backfill") == cli.DEFAULT_WAIT_S == 1800.0
+    assert cli.default_wait_s("attended") == cli.DEFAULT_WAIT_S
