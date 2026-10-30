@@ -243,8 +243,10 @@ class EtfHoldings:
         con.execute("CREATE TABLE {} ({})".format(TABLE, ", ".join(f'"{c}" {t}' for c, t in SERVED)))
         if files:
             src = f"read_parquet([{', '.join(base.sql_path(f) for f in files)}], union_by_name = true)"
-            # A line with no ticker is no holding of a stock: the files' cash and futures lines are dropped by the
-            # parsers, and a holding whose ticker does not parse (a foreign line) has nothing to join on.
+            # A line whose ticker does not parse is no holding of a stock. In the SPDR files of 30 Oct 2026 those
+            # are two or three lines a fund, each with a made-up identifier: the money-market fund (924QSGII3),
+            # the dollar (999USDZ92), the CVRs of past deals (CONTRA METSERA, 592CVR013) and earnout rights
+            # (OMNIAB 12.5 EARNOUT). Keeping them would put identifiers in the table that are no CUSIP.
             con.execute(f"INSERT INTO {TABLE} SELECT {cols} FROM {src} WHERE ticker IS NOT NULL "
                         "ORDER BY as_of, etf, weight DESC NULLS LAST, ticker")
         return {TABLE: stage.count(con, TABLE)}
