@@ -2127,6 +2127,7 @@
     "min_dollar_volume": 250000.0,
     "min_price": 5.0,
     "move_min": 0.25,
+    "operating_only": true,
     "overridden": [],
     "overrides": {},
     "rs_min": 70.0,

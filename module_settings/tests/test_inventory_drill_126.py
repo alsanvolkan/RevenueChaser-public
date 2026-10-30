@@ -414,3 +414,16 @@ def test_a_failed_table_list_of_a_file_the_check_reads_makes_an_unknown_name_unk
 
     monkeypatch.setattr(rawstore, "query", query)
     assert inventory.ticker_detail("ZZZZ") is not None
+
+
+def test_an_excluded_type_is_judged_on_the_whole_universe_for_a_board_that_reads_every_type(rawstore_tmp_db):
+    """PR 2 review S2: the same ETF Swing cannot score is a universe name for a board whose type filter is off."""
+    rawstore.write_rows("equity_universe", [{"ticker": "TINY", "market_cap": 1.0e6}])
+    rawstore.write_rows("security_master", [{"ticker": "TINY", "security_type": "etp"}])
+    rawstore.write_rows("price_bars_daily", _bars("TINY", "2026-02-02"))
+
+    fit = _boards_of("TINY")
+
+    assert fit["module_swing_potential"]["missing"] == ["equity universe membership"]
+    assert "equity universe membership" not in fit["module_comovement"]["missing"]
+    assert fit["module_comovement"]["state"] == "can"

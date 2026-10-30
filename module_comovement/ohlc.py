@@ -60,13 +60,14 @@ def history_start() -> date | None:
     return (pd.Timestamp(_as_date(d)) - pd.DateOffset(years=_period_years())).date()
 
 
-def universe_tickers(mc_min: float = DEFAULT_MC_MIN) -> list[str]:
+def universe_tickers(mc_min: float = DEFAULT_MC_MIN, *, operating_only: bool = False) -> list[str]:
     """Liquid slice of the shared universe (highest market cap first).
 
     Delegates to the one shared selector so every classification board reads the
-    same ticker set (see core/universe.py).
+    same ticker set (see core/universe.py). ``operating_only`` is the board's type
+    filter (PR 2; off by default: Co-movement correlates every A+B type).
     """
-    return classification_universe(mc_min)
+    return classification_universe(mc_min, operating_only=operating_only)
 
 
 def fetch_bulk(tickers: list[str] | None = None, no_fetch: bool = False) -> dict:

@@ -120,7 +120,7 @@ def test_card_carries_the_editable_settings_block(payload_file, rawstore_tmp_db)
     assert s["board"] == "module_comovement" and s["custom"] is False
     assert [f["key"] for f in s["inputs"]] == ["WINDOW", "MIN_OBS", "OOS_HOLDOUT"]
     assert [f["key"] for f in s["fine"]] == ["WINSOR_K", "MIN_PERIODS",
-                                             "BENCH_STALE_SESSIONS"]
+                                             "BENCH_STALE_SESSIONS", "OPERATING_ONLY"]
     by = {f["key"]: f for f in s["inputs"] + s["fine"]}
     assert by["MIN_OBS"]["value"] == cfg.MIN_OBS and by["MIN_OBS"]["overridden"] is False
     assert "60" in by["MIN_OBS"]["range"] and "WINDOW" in by["MIN_OBS"]["range"]
@@ -128,6 +128,10 @@ def test_card_carries_the_editable_settings_block(payload_file, rawstore_tmp_db)
     assert by["WINSOR_K"]["range"] == "4–8"
     assert by["BENCH_STALE_SESSIONS"]["range"] == "0–5"
     assert by["WINDOW"]["choices"][0] == [21, "1m (21)"]
+    # PR 2: the type filter is a two-way choice in words, off by default on Co-movement
+    assert by["OPERATING_ONLY"]["value"] == 0
+    assert by["OPERATING_ONLY"]["choices"] == [[0, "Every type (Tiers A and B)"], [1, "Operating companies only"]]
+    assert "operating companies only" in by["OPERATING_ONLY"]["range"]
     assert s["derived"] == {"label": "Held-out observations needed (derived)",
                             "key": "OOS_MIN_OBS",
                             "value": round(cfg.OOS_MIN_SHARE * cfg.OOS_HOLDOUT)}
@@ -160,12 +164,33 @@ def test_the_swing_card_lists_its_editable_thresholds(rawstore_tmp_db, monkeypat
     by = {f["key"]: f for f in s["inputs"] + s["fine"]}
     assert [f["key"] for f in s["inputs"]] == ["MIN_PRICE", "MIN_DOLLAR_VOLUME", "RS_MIN"]
     assert set(by) == {"MIN_PRICE", "MIN_DOLLAR_VOLUME", "RS_MIN", "VOL_CONFIRM", "BREAKOUT_HIGH_PCT",
-                       "MOVE_MIN", "ADR_MIN", "W_PROX", "W_CONS", "STOP_ATR", "TARGET_R"}
+                       "MOVE_MIN", "ADR_MIN", "W_PROX", "W_CONS", "STOP_ATR", "TARGET_R", "OPERATING_ONLY"}
+    assert by["OPERATING_ONLY"]["value"] == 1          # PR 2: Swing screens operating companies by default
     assert by["MIN_PRICE"]["value"] == sw_cfg.MIN_PRICE and by["MIN_PRICE"]["overridden"] is False
     assert by["MIN_PRICE"]["range"] == f"{sw_cfg.MIN_PRICE_LO:g}–{sw_cfg.MIN_PRICE_HI:g}"
     board_settings.save("module_swing_potential", {"RS_MIN": 80})
     by = {f["key"]: f for f in _card("module_swing_potential")["settings"]["inputs"]}
     assert by["RS_MIN"]["value"] == 80 and by["RS_MIN"]["overridden"] is True
+
+
+def test_the_fundamentals_card_lists_its_floors_and_type_filter(rawstore_tmp_db):
+    """PR 2: Fundamentals' price and dollar-volume floors are settings, with today's defaults."""
+    from RevenueChaser.core import board_settings
+    from RevenueChaser.module_fundamentals import config as f_cfg
+
+    c = _card("module_fundamentals")
+    s = c["settings"]
+    assert s["board"] == "module_fundamentals" and s["custom"] is False
+    assert [f["key"] for f in s["inputs"]] == ["MIN_PRICE", "MIN_DOLLAR_VOLUME"]
+    assert [f["key"] for f in s["fine"]] == ["OPERATING_ONLY"]
+    by = {f["key"]: f for f in s["inputs"] + s["fine"]}
+    assert by["MIN_PRICE"]["value"] == f_cfg.MIN_PRICE == 5.0
+    assert by["MIN_DOLLAR_VOLUME"]["range"] == f"{f_cfg.MIN_DOLLAR_VOLUME_LO:g}–{f_cfg.MIN_DOLLAR_VOLUME_HI:g}"
+    assert by["OPERATING_ONLY"]["value"] == 1
+    assert "Minimum price $5" in c["params"]
+    board_settings.save("module_fundamentals", {"MIN_PRICE": 0})
+    by = {f["key"]: f for f in _card("module_fundamentals")["settings"]["inputs"]}
+    assert by["MIN_PRICE"]["value"] == 0 and by["MIN_PRICE"]["overridden"] is True
 
 
 def _data_board_keys() -> list[str]:

@@ -22,7 +22,7 @@ from RevenueChaser.core.identity import types as identity_types
 # a dedicated alias for the identity-health code, so it does not lean on the shared universe import below
 from RevenueChaser.core.universe import DEFAULT_MC_MIN as _MC_FLOOR
 from RevenueChaser.module_settings import boards
-from RevenueChaser.core.universe import DEFAULT_MC_MIN, classification_universe
+from RevenueChaser.core.universe import DEFAULT_MC_MIN, classification_universe, excluded_tickers
 
 DASH = "—"
 # The drill's value for a security_master column this store does not carry yet (CUSIP / ISIN arrive later).
@@ -37,7 +37,7 @@ IDENTITY_MASTER_STALE_DAYS = 7
 COVERAGE_UNREADABLE = "unreadable"
 COVERAGE_UNMEASURED = "unmeasured"
 
-# The excluded security types in the board's own words. The groups themselves are
+# The security type groups in the board's own words (the kept names' type mix since PR 2). The groups are
 # ``core.universe.TYPE_GROUPS`` (together exactly ``identity.types.EXCLUDED_TYPES``); only the
 # labels differ, because those are written for code.
 SECURITY_TYPE_WORDS = {
@@ -818,9 +818,20 @@ def _master_identifier(master: dict | None, column: str):
 # The drill measures a name's presence in these store tables. ``boards.BOARD_INPUTS`` lists the
 # tables each board reads, so a board is decided by the tables this drill measured — and a board
 # that reads any other table is "not checked for this board", never a guess.
-# ``equity_universe`` is read as the list the boards themselves apply (cap floor and security
-# type, ``classification_universe``), not merely as "a row exists".
+# ``equity_universe`` is read as the list the boards themselves apply (the cap rule,
+# ``classification_universe``), not merely as "a row exists"; for a board whose type filter is on
+# (PR 2, ``_board_operating_only``) it is the operating-company slice.
 _PRESENCE_KEY = {"equity_universe": "in_classification_universe"}
+_OPERATING_PRESENCE_KEY = {"equity_universe": "in_operating_universe"}
+
+
+def _board_operating_only(board: str) -> bool:
+    """A board's type filter default (PR 2, ``core.universe.BOARD_OPERATING_ONLY``; a board not listed there reads
+    every type). The default, not a saved ``OPERATING_ONLY`` override: the board list costs no store read."""
+    from RevenueChaser.core.universe import BOARD_OPERATING_ONLY
+    return bool(BOARD_OPERATING_ONLY.get(board, False))
+
+
 _DRILL_TABLE_LABELS = {
     "equity_universe": "equity universe membership",
     "chain_filings": "10-K / 20-F filing",
@@ -864,12 +875,16 @@ def _board_fit(presence: dict) -> list[dict]:
     table still says ``cannot``, because that much is known. Nav order. One pass over
     ``presence``: no table is queried again here.
     """
-    measured = {table: _rows_stored(presence.get(_PRESENCE_KEY.get(table, table)))
-                for table in _DRILL_TABLE_LABELS}
-    failed = {table for table in _DRILL_TABLE_LABELS
-              if _unreadable(presence, _PRESENCE_KEY.get(table, table))}
+    def _measure(keys: dict) -> tuple[dict, set]:
+        measured = {table: _rows_stored(presence.get(keys.get(table, table))) for table in _DRILL_TABLE_LABELS}
+        failed = {table for table in _DRILL_TABLE_LABELS if _unreadable(presence, keys.get(table, table))}
+        return measured, failed
+
+    every_type = _measure(_PRESENCE_KEY)
+    operating = _measure({**_PRESENCE_KEY, **_OPERATING_PRESENCE_KEY})
     out = []
     for entry in boards.BOARD_INPUTS:
+        measured, failed = operating if _board_operating_only(entry.get("key") or "") else every_type
         tables = list(entry.get("tables") or [])
         all_measured = bool(tables) and all(table in measured for table in tables)
         missing = [_DRILL_TABLE_LABELS[table] for table in tables
@@ -977,6 +992,7 @@ def _ticker_detail(ticker: str) -> dict | None:
     cik = (master or {}).get("cik") or next(
         (src["cik"] for src in (sec, sic, filing) if src and src.get("cik")), None)
     cap = universe.get("market_cap") if universe else None
+    in_universe = t in set(classification_universe())
     presence = {
         "edgar_financials": edgar,
         # D01 is the price of record. swing_ohlc is the SPY-fallback cache.
@@ -989,9 +1005,12 @@ def _ticker_detail(ticker: str) -> dict | None:
         "relatedness_profiles": related,
         # The latest stored annual filing, the row the drill shows as "Last 10-K / 20-F".
         "chain_filings": filing is not None,
-        # One universe definition: the very list the boards read (cap floor and
-        # security type), not a second copy of the rule.
-        "in_classification_universe": t in set(classification_universe()),
+        # One universe definition: the very list the boards read (the tiers and the cap rule; every
+        # security type since PR 2), not a second copy of the rule.
+        "in_classification_universe": in_universe,
+        # The slice a board with its type filter on reads (PR 2): ``_board_fit`` asks it for those boards. The
+        # universe less the excluded types, as ``_collect`` derives it: one universe read, not two.
+        "in_operating_universe": in_universe and t not in excluded_tickers(),
     }
     return {
         "ticker": t,
@@ -1812,10 +1831,11 @@ def unclaimed_tables() -> list[dict]:
 # Three objects, counted over the same population (the names the boards screen):
 #
 # 1. the universe funnel — the SEC ticker and exchange file's present rows, down through the
-#    listed venues, the stored universe, the cap rule (no floor now) and the excluded security types to
-#    ``universe.classification_universe()``. The steps are the rules the rest of the store already
-#    applies (``sec_files.latest``, ``universe_fetch.SEC_LIST_EXCHANGES``, ``DEFAULT_MC_MIN``,
-#    ``universe.TYPE_GROUPS``); this block only counts them, in one read per store file.
+#    listed venues, the stored universe and the cap rule (no floor now) to
+#    ``universe.classification_universe()``, with the kept names' type mix (``universe.TYPE_GROUPS``)
+#    as notes: since PR 2 a type is data a board filters on, not a drop. The steps are the rules the
+#    rest of the store already applies (``sec_files.latest``, ``universe_fetch.SEC_LIST_EXCHANGES``,
+#    ``DEFAULT_MC_MIN``); this block only counts them, in one read per store file.
 # 2. the inputs each surviving name carries.
 # 3. the identifier matrix, each row naming its own denominator.
 #
@@ -1927,8 +1947,8 @@ def _universe_funnel(kept: set[str], present: list[dict] | None,
     below = {t for t in in_universe
              if caps[t] is not None and not spine._at_floor(float(caps[t]), floor)}
     no_cap = {t for t in in_universe if caps[t] is None and not spine._at_floor(None, floor)}
-    # The type rule is ``universe``'s own (``TYPE_GROUPS``, together ``EXCLUDED_TYPES``); untyped
-    # names stay, exactly as ``classification_universe`` keeps them.
+    # The type groups are ``universe``'s own (``TYPE_GROUPS``, together ``EXCLUDED_TYPES``). Since PR 2 they
+    # are the kept names' type mix, a note each, never a drop: ``classification_universe`` keeps every type.
     types = spine._security_types()
     by_group = {key: set() for key, _label, _members in spine.TYPE_GROUPS}
     for ticker in in_universe - below - no_cap:
@@ -1936,7 +1956,7 @@ def _universe_funnel(kept: set[str], present: list[dict] | None,
                       if types.get(ticker) in members), None)
         if group:
             by_group[group].add(ticker)
-    remaining = in_universe - below - no_cap - set().union(*by_group.values())
+    remaining = in_universe - below - no_cap
 
     steps = [
         funnel_mod.step("file", "Companies in the SEC ticker and exchange file", len(present), "start"),
@@ -1952,8 +1972,8 @@ def _universe_funnel(kept: set[str], present: list[dict] | None,
         # A missing cap is not a rule: it is the store's own hole, and the row says so.
         funnel_mod.step("no_cap", "No market cap stored", len(no_cap), "drop", by_design=False),
     ]
-    steps += [funnel_mod.step(key, SECURITY_TYPE_WORDS.get(key, label), len(by_group[key]),
-                              "drop", by_design=True)
+    steps += [funnel_mod.step(key, f"Kept, of which: {SECURITY_TYPE_WORDS.get(key, label).lower()}",
+                              len(by_group[key]), "note")
               for key, label, _members in spine.TYPE_GROUPS]
     # A kept name the file does not list is still screened: a note, outside the arithmetic.
     unreached = kept - in_universe
@@ -2023,17 +2043,29 @@ def _count_text(n: int, word: str) -> str:
     return f"{int(n):,} {word}" if int(n) == 1 else f"{int(n):,} {word}s"
 
 
-def identity_coverage(tickers: list[str], now: datetime | None = None) -> dict:
+def identity_coverage(tickers: list[str], now: datetime | None = None,
+                      operating: list[str] | None = None) -> dict:
     """S7 (#124): the universe funnel, the inputs the kept names carry, and identifier coverage.
 
     ``tickers`` is ``classification_universe()`` — computed once by ``_collect`` and reused here, so
     the tables count the population the boards screen rather than a second definition of it. A
     stored universe that is ahead of the SEC file is named in the funnel as a note, never dropped.
     Store only, one read per store file.
+
+    ``operating`` is the operating-company slice of ``tickers`` (PR 2): the two company-filing inputs (EDGAR company
+    facts, the annual report) count over it, with a denominator that says so, because a fund or a SPAC files neither
+    and the dataset rows above count their holes over the same slice (review S1). None derives it from
+    ``tickers`` less the excluded types.
     """
     kept = sorted({str(t).upper() for t in (tickers or []) if str(t or "").strip()})
     n_kept = len(kept)
     denominator = f"{_count_text(n_kept, 'name')} the funnel keeps"
+    if operating is None:
+        excluded = excluded_tickers()
+        operating = [t for t in kept if t not in excluded]
+    kept_operating = sorted({str(t).upper() for t in operating if str(t or "").strip()} & set(kept))
+    n_op = len(kept_operating)
+    operating_denominator = f"{n_op:,} operating {'company' if n_op == 1 else 'companies'} the funnel keeps"
 
     present = _present_file_rows()
     funnel, funnel_note = _universe_funnel(set(kept), present, _universe_caps())
@@ -2091,11 +2123,13 @@ def identity_coverage(tickers: list[str], now: datetime | None = None) -> dict:
                                     covered=sum(1 for t in kept if _value(spine.get(t), column)),
                                     expected=n_kept))
 
-    for key, label, table in (("facts", "EDGAR company facts", "edgar_financials"),
-                              ("annual", "Annual report (10-K or 20-F)", "chain_filings"),
-                              ("ownership", "Ownership", "ownership_snapshot")):
-        covered = _covered_from_missing(kept, table)
-        inputs.append(_coverage(key, label, denominator, covered=covered, expected=n_kept,
+    for key, label, table, names, denom in (
+            ("facts", "EDGAR company facts", "edgar_financials", kept_operating, operating_denominator),
+            ("annual", "Annual report (10-K or 20-F)", "chain_filings", kept_operating, operating_denominator),
+            # Ownership is held in funds as in companies (13F holds ETFs), so it counts every kept name.
+            ("ownership", "Ownership", "ownership_snapshot", kept, denominator)):
+        covered = _covered_from_missing(names, table)
+        inputs.append(_coverage(key, label, denom, covered=covered, expected=len(names),
                                 state="" if covered is not None else COVERAGE_UNREADABLE))
 
     # ── the identifier matrix ──
@@ -2164,6 +2198,12 @@ def sort_key(row: dict) -> tuple:
 def _collect(now: datetime) -> dict:
     """Inventory of every dataset. Zero network, store only."""
     tickers = classification_universe()
+    # The company datasets (10-K corpus, companyfacts, the Swing bar cache) are read by the operating-company
+    # boards only (``BOARD_OPERATING_ONLY``), so their holes count that slice: a fund has no 10-K to miss.
+    # ``classification_universe(operating_only=True)`` is this list less the excluded types: one type read, not a second
+    # universe read (the collect's time budget).
+    excluded = excluded_tickers()
+    operating = [t for t in tickers if t not in excluded]
     prov = _provenance()
 
     present_keys = [k for k in ("__meta__", "__stats__", "__fetch__") if k in prov]
@@ -2184,7 +2224,7 @@ def _collect(now: datetime) -> dict:
     identity_note = f"last run {last_run['status']}" if last_run else "no identity run yet"
     master_age = _identity_master_age(now)
 
-    corpus_note = _corpus_note(tickers)
+    corpus_note = _corpus_note(operating)
     recorded_misses = _recorded_misses()  # #381 (DF97): settled names are not corpus holes
 
     profiles_count = _count("relatedness_profiles")
@@ -2237,7 +2277,7 @@ def _collect(now: datetime) -> dict:
             "rows": _sum_counts(["chain_filings", "edgar_documents"]),
             "last_date": _max_date(("chain_filings", "filed"),
                                    ("edgar_documents", "filed")),
-            "holes": _missing(tickers, "chain_filings", exclude=recorded_misses),
+            "holes": _missing(operating, "chain_filings", exclude=recorded_misses),
             "hole_label": "no filing, excluding recorded misses" if recorded_misses is not None else "no filing",
             "fetch": {"route": "/run/edgar-sync", "label": "Fetch 10-K sync"},
             "note": "; ".join(n for n in (corpus_note, _documents_note()) if n),
@@ -2250,7 +2290,7 @@ def _collect(now: datetime) -> dict:
             "tables": ["edgar_financials"],
             "rows": _count("edgar_financials"),
             "last_date": DASH,
-            "holes": _missing(tickers, "edgar_financials"),
+            "holes": _missing(operating, "edgar_financials"),
             "hole_label": "no facts",
             "fetch": None,
             "note": "",
@@ -2261,7 +2301,7 @@ def _collect(now: datetime) -> dict:
             "tables": ["swing_ohlc"],
             "rows": _count("swing_ohlc"),
             "last_date": _max_date(("swing_ohlc", "ts")),
-            "holes": _missing(tickers, "swing_ohlc"),
+            "holes": _missing(operating, "swing_ohlc"),
             "hole_label": "no bars",
             "fetch": None,
             "note": "",
@@ -2348,7 +2388,7 @@ def _collect(now: datetime) -> dict:
         "other_tables": unclaimed_tables(),
         # S7 (#124): the funnel, the inputs and the identifiers, over the same population ``rows``
         # above use (``tickers`` is ``classification_universe()``).
-        "identity_coverage": identity_coverage(tickers, now),
+        "identity_coverage": identity_coverage(tickers, now, operating),
         "errors": list(getattr(_CALL, "errors", None) or []),
         "generated_at": now.isoformat(timespec="seconds"),
         "provider_health": _provider_health(),

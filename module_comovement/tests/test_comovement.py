@@ -664,6 +664,21 @@ def test_refresh_reuses_the_persisted_null_and_skips_the_permutations(
     assert any(c["significant"] for c in refreshed["clusters"]["4"])
 
 
+def test_a_recompute_with_the_type_filter_flipped_reuses_no_other_runs_null(rawstore_tmp_db):
+    """PR 2 review M1: a Fetch persisted with the filter off; a store-only recompute after the filter is switched on
+    must not judge its groups against that run's null (a different universe), so its groups stay unjudged."""
+    from RevenueChaser.core import board_settings
+    ret = _blocky_returns()
+    tickers = list(ret.columns)
+    _seed_universe(tickers)
+    _seed_ohlc(ret)
+    engine.run(no_fetch=True, tickers=tickers, cuts=(4,), persist=True)
+    board_settings.save("module_comovement", {"OPERATING_ONLY": 1})
+    p = engine.run(no_fetch=True, tickers=tickers, cuts=(4,), persist=False)
+    for c in p["clusters"]["4"]:
+        assert c["baseline_r"] is None and c["significant"] is None
+
+
 def test_refresh_without_a_persisted_null_leaves_groups_unjudged(rawstore_tmp_db):
     ret = _blocky_returns()
     tickers = list(ret.columns)
@@ -2119,20 +2134,24 @@ def _typed_run(rawstore_tmp_db, master):
 
 
 def test_run_drops_a_fund_from_the_clusters_and_the_funnel_says_so(rawstore_tmp_db):
+    """With the board's type filter on (``OPERATING_ONLY`` = 1), a fund leaves the run as a by-design drop."""
+    from RevenueChaser.core import board_settings
     from RevenueChaser.core import funnel as funnel_mod
 
     tickers = _typed_run(rawstore_tmp_db, {"FUNDX": "cef"})        # the six are untyped
+    board_settings.save("module_comovement", {"OPERATING_ONLY": 1})
     p = engine.run(no_fetch=True, cuts=(2,), persist=True)         # universe from the spine
     members = {m["ticker"] for c in p["clusters"]["2"] for m in c["members"]}
     assert members == set(tickers) and "FUNDX" not in members
     f = p["funnel"]
     assert f["scanned_total"] == 7 and f["floor_total"] == 7
     assert (f["funds_etfs"], f["spacs"], f["other_securities"]) == (1, 0, 0)
-    assert f["classification_total"] == 6 == f["unknown_type"]
+    assert f["operating_total"] == 6 == f["unknown_type"] and f["operating_only"] is True
     assert funnel_mod.validate(p["funnel_steps"]) == []
     by = {s["key"]: s for s in p["funnel_steps"]}
-    assert by["funds_etfs"]["count"] == 1 and by["unknown_type"]["count"] == 6
-    assert by["unknown_type"]["kind"] == "note"
+    assert by["funds_etfs"]["count"] == 1 and by["funds_etfs"]["kind"] == "drop"
+    assert by["unknown_type"]["count"] == 6 and by["unknown_type"]["kind"] == "note"
+    assert "FUNDX" not in by["no_prices"].get("tickers", []) and by["no_prices"]["count"] == 0
     # the persisted run carries the new counts, so a reload rebuilds the same steps
     stored = engine._loads_or_empty(rawstore.query(
         "SELECT funnel_json FROM comov_runs")[0]["funnel_json"])
@@ -2141,6 +2160,21 @@ def test_run_drops_a_fund_from_the_clusters_and_the_funnel_says_so(rawstore_tmp_
     loaded = engine.load_payload()
     assert funnel_mod.validate(loaded["funnel_steps"]) == []
     assert loaded["funnel_steps"] == p["funnel_steps"]
+
+
+def test_by_default_a_fund_stays_in_the_run_and_its_type_is_a_note(rawstore_tmp_db):
+    """PR 2: Co-movement correlates every A+B type by default, so the fund is asked for prices like any name
+    and the type groups are the kept names' mix (notes), never drops."""
+    from RevenueChaser.core import funnel as funnel_mod
+
+    _typed_run(rawstore_tmp_db, {"FUNDX": "cef"})
+    p = engine.run(no_fetch=True, cuts=(2,), persist=True)
+    f = p["funnel"]
+    assert f["classification_total"] == 7 and f["operating_only"] is False
+    assert funnel_mod.validate(p["funnel_steps"]) == []
+    by = {s["key"]: s for s in p["funnel_steps"]}
+    assert by["funds_etfs"]["kind"] == "note" and by["funds_etfs"]["count"] == 1
+    assert by["no_prices"]["count"] == 1                            # FUNDX has no bars in this store
 
 
 def test_a_fully_typed_universe_has_no_unknown_type_note(rawstore_tmp_db):

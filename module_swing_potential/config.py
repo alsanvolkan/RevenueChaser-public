@@ -55,6 +55,9 @@ ATR_PERIOD = 14
 # Shares are entered as shares (0.25 = 25%), so the range says what the engine compares against.
 MIN_PRICE_LO, MIN_PRICE_HI = 0.5, 100.0                     # $ per share; under $5 is the penny end
 MIN_DOLLAR_VOLUME_LO, MIN_DOLLAR_VOLUME_HI = 0, 50_000_000  # $/day; 0 = no liquidity floor
+# The board's type filter (PR 2): 1 screens operating companies only (the set it read before the universe became
+# Tiers A and B whole), 0 every type.
+OPERATING_ONLY = 1
 RS_MIN_LO, RS_MIN_HI = 0.0, 100.0                           # RS rating is a 0-100 percentile
 VOL_CONFIRM_LO, VOL_CONFIRM_HI = 0.5, 10.0                  # multiple of the 20-day average
 BREAKOUT_HIGH_PCT_LO, BREAKOUT_HIGH_PCT_HI = 0.5, 1.0       # share of the 52-week high

@@ -153,9 +153,20 @@ def _hash(**over) -> str:
     ("window", 126), ("linkage", "average"), ("cuts", (10, 30, 80)), ("horizon", 5),
     ("benchmark", "qqq"), ("min_obs", 100), ("oos_holdout", 84), ("winsor_k", 6.0),
     ("min_periods", 40), ("bench_stale_sessions", 3), ("floor", 500_000_000.0),
+    ("operating_only", True),                                     # PR 2 review M1
 ])
 def test_config_hash_covers_every_input(rawstore_tmp_db, name, value):
     assert _hash(**{name: value}) != _hash()
+
+
+def test_config_hash_separates_the_type_filter(rawstore_tmp_db):
+    """PR 2 review M1: the type filter changes the universe exactly as the floor does (7,670 names vs 5,655), so a
+    null or lagged test stored under one setting is never reused under the other."""
+    assert _hash(operating_only=False) != _hash(operating_only=True)
+    from RevenueChaser.core import board_settings
+    off = engine.config_hash(252, "ward", (20, 80, 250))                # resolved from the setting
+    board_settings.save("module_comovement", {"OPERATING_ONLY": 1})
+    assert engine.config_hash(252, "ward", (20, 80, 250)) != off
 
 
 def test_config_hash_is_stable_for_equal_inputs(rawstore_tmp_db):
@@ -386,7 +397,10 @@ def test_default_settings_reproduce_the_pre_change_payload(rawstore_tmp_db):
     # compared no more than the hash string is.
     new_funnel_keys = {"listed_recently", "missing_bars", "window", "min_obs",
                        "floor_total", "funds_etfs", "spacs", "other_securities",
-                       "unknown_type", "floor"}
+                       "unknown_type", "floor",
+                       # PR 2 (the universe is A+B whole): the operating-only slice and the run's type filter flag.
+                       # Nothing is typed here, so both equal what the golden already holds.
+                       "operating_total", "operating_only"}
     for k, v in got.items():
         v["funnel"] = {a: b for a, b in v["funnel"].items() if a not in new_funnel_keys}
     # ``floor`` is in the golden with the old value, so it comes off both sides, not just the new one.

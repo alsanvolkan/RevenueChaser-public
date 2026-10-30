@@ -68,7 +68,8 @@ def test_the_caps_come_from_the_prices_store_and_the_old_table_where_it_has_none
     assert rows["TM"] == CAPS["TM"]                                 # not in the prices store: the old table's
     assert rows["FDX"] == CAPS["FDX"]                               # a bar with no shares: the old table's cap
     assert rows["ETN"] == CAPS["ETN"]                               # behind the store's newest session: the old one
-    assert universe.classification_universe(0)[:3] == ["MSFT", "TM", "WFC"]
+    assert universe.classification_universe(0, operating_only=True)[:3] == ["MSFT", "TM", "WFC"]
+    assert universe.classification_universe(0)[:3] == ["MSFT", "SPY", "TM"]      # PR 2: the fund is a universe name
 
 
 @pytest.mark.usefixtures("prices")

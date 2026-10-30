@@ -31,7 +31,8 @@ def _settings():
 
 # The keys the SPEC registers, in the order the Settings card shows them.
 _KEYS = ("MIN_PRICE", "MIN_DOLLAR_VOLUME", "RS_MIN", "VOL_CONFIRM", "BREAKOUT_HIGH_PCT",
-         "MOVE_MIN", "ADR_MIN", "W_PROX", "W_CONS", "STOP_ATR", "TARGET_R")
+         "MOVE_MIN", "ADR_MIN", "W_PROX", "W_CONS", "STOP_ATR", "TARGET_R",
+         "OPERATING_ONLY")                                  # PR 2: the type filter
 
 
 # ── the fixed fixture the golden and the override tests share ───────────────
@@ -102,7 +103,10 @@ def test_the_spec_registers_exactly_the_editable_thresholds(rawstore_tmp_db):
     assert rows["MIN_PRICE"]["lo"] == config.MIN_PRICE_LO
     assert rows["MIN_PRICE"]["hi"] == config.MIN_PRICE_HI
     assert rows["TARGET_R"]["label"]
-    for r in rows.values():
+    for key, r in rows.items():
+        if key == "OPERATING_ONLY":                 # PR 2: the type filter is a closed 0/1 choice
+            assert r["choices"] == [0, 1] and r["lo"] is None and r["hi"] is None
+            continue
         assert r["choices"] is None and r["lo"] is not None and r["hi"] is not None
 
 

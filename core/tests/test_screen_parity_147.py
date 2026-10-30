@@ -30,6 +30,8 @@ the payload (the scenario reads the old store: ``FY``, ``store``); the re-captur
 golden never covers the fundamentals layer or the trailing-year Quality path: those rest on their own tests
 (``core/tests/test_fundamentals_layer.py``, ``module_fundamentals/tests/test_quality_ttm_g6.py`` and the other G6
 files; Opus review N2).
+PR 2 (the universe is Tiers A and B whole) added Swing's type filter to its ``settings`` block
+(``operating_only: true``, the default); the re-capture differed by that key only.
 To re-capture on another commit, run this file with ``RC_PARITY_CAPTURE=<path>`` (it writes the snapshot there
 instead of comparing).
 """

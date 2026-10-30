@@ -398,11 +398,13 @@ def _seed_typed():
 def test_ticker_detail_flag_is_membership_in_the_classification_universe(rawstore_tmp_db):
     from RevenueChaser.core import universe
     _seed_typed()
-    assert universe.classification_universe() == ["AAPL", "NOROW"]
-    flags = {t: inventory.ticker_detail(t)["presence"]["in_classification_universe"]
-             for t in ("AAPL", "FUND", "NOROW")}
-    # FUND clears the cap floor but is a fund: not in the universe the boards read
-    assert flags == {"AAPL": True, "FUND": False, "NOROW": True}
+    assert universe.classification_universe() == ["AAPL", "FUND", "NOROW"]
+    presence = {t: inventory.ticker_detail(t)["presence"] for t in ("AAPL", "FUND", "NOROW")}
+    # PR 2: FUND is a universe name (every type of Tiers A and B), outside the operating-company slice
+    assert {t: p["in_classification_universe"] for t, p in presence.items()} == {
+        "AAPL": True, "FUND": True, "NOROW": True}
+    assert {t: p["in_operating_universe"] for t, p in presence.items()} == {
+        "AAPL": True, "FUND": False, "NOROW": True}
 
 
 def test_coverage_counts_follow_the_typed_universe(rawstore_tmp_db):

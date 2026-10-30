@@ -34,9 +34,9 @@ def _seed() -> None:
     """A store with one of every funnel outcome and one of every input present for some names.
 
     The funnel, in order: 8 present rows in the SEC file; 2 outside Nasdaq / NYSE / Cboe;
-    1 listed name the equity universe does not hold; 1 below the $300M floor; 1 row with no
-    market cap; 1 exchange-traded fund. What is left is AAPL and MU — exactly
-    ``classification_universe()``.
+    1 listed name the equity universe does not hold; 1 below the old $300M floor; 1 row with no
+    market cap; 1 exchange-traded fund. With no floor and every type kept (PR 2) the funnel keeps AAPL, MU,
+    SMALL, NOCAP and FUND — exactly ``classification_universe()``; FUND is a type note, not a drop.
     """
     rawstore.write_rows("equity_universe", [
         {"ticker": "AAPL", "market_cap": 3.0e12, "name": "Apple"},
@@ -138,9 +138,10 @@ def test_the_funnel_result_is_the_classification_universe(rawstore_tmp_db):
     steps = cov["funnel"]
     assert funnel_mod.validate(steps) == [], "the funnel must add up: no name lost off the books"
     kept = universe.classification_universe()
-    # No market-cap floor (avo, 29 Oct 2026): SMALL and the NULL-cap name are universe names too.
-    assert sorted(kept) == ["AAPL", "MU", "NOCAP", "SMALL"]
-    assert steps[-1]["kind"] == "result" and steps[-1]["count"] == len(kept) == 4
+    # No market-cap floor (avo, 29 Oct 2026): SMALL and the NULL-cap name are universe names too; every security
+    # type is (PR 2, avo 30 Oct 2026), so the fund is as well.
+    assert sorted(kept) == ["AAPL", "FUND", "MU", "NOCAP", "SMALL"]
+    assert steps[-1]["kind"] == "result" and steps[-1]["count"] == len(kept) == 5
     assert steps[0]["kind"] == "start" and steps[0]["count"] == 8, "8 present rows in the SEC file"
     drops = sum(s["count"] for s in steps if s["kind"] == "drop")
     assert steps[0]["count"] - drops == steps[-1]["count"]
@@ -157,11 +158,13 @@ def test_every_drop_is_named_in_plain_words_and_carries_its_count(rawstore_tmp_d
     assert "no floor is set" in steps["floor"]["label"]
     assert steps["no_cap"]["count"] == 0 and steps["no_cap"]["by_design"] is False, \
         "at floor 0 a missing cap keeps the name, so the row drops nobody"
-    assert steps["funds_etfs"]["count"] == 1, "the exchange-traded fund leaves at the type step"
-    assert steps["funds_etfs"]["by_design"] is True
+    assert steps["funds_etfs"]["count"] == 1, "the exchange-traded fund is counted in the kept names' type mix"
+    assert steps["funds_etfs"]["kind"] == "note", "PR 2: a type is data, never a drop"
+    assert steps["funds_etfs"]["label"] == "Kept, of which: funds and exchange-traded funds"
     assert steps["universe"]["by_design"] is False, \
         "a listed name the universe does not hold is the universe being behind, not a rule"
-    for key in ("venues", "floor", "funds_etfs"):
+    assert "spac" not in steps["spacs"]["label"].lower(), "plain words, no code short forms"
+    for key in ("venues", "floor"):
         assert steps[key]["by_design"] is True, key
         assert "spac" not in steps[key]["label"].lower(), "plain words, no code short forms"
 
@@ -180,8 +183,8 @@ def test_a_kept_name_the_sec_file_does_not_list_is_said_not_counted(rawstore_tmp
     cov = _coverage()
     steps = _steps(cov)
     assert steps["unreached"]["kind"] == "note" and steps["unreached"]["count"] == 1
-    assert steps["kept"]["count"] == 4, "the chain's own result, not the classification count"
-    assert cov["names_kept"] == 5
+    assert steps["kept"]["count"] == 5, "the chain's own result, not the classification count"
+    assert cov["names_kept"] == 6
     assert funnel_mod.validate(cov["funnel"]) == []
 
 
@@ -213,15 +216,20 @@ def test_the_inputs_are_the_eight_the_plan_names_in_order(rawstore_tmp_db):
 def test_every_input_row_names_its_own_denominator(rawstore_tmp_db):
     _seed()
     for row in _coverage()["inputs"]:
-        assert row["denominator"] == "4 names the funnel keeps", row["key"]
-        assert row["expected"] == 4, row["key"]
+        if row["key"] in ("facts", "annual"):
+            # PR 2 review S1: a fund files neither, so these two count the operating companies, and say so
+            assert row["denominator"] == "4 operating companies the funnel keeps", row["key"]
+            assert row["expected"] == 4, row["key"]
+        else:
+            assert row["denominator"] == "5 names the funnel keeps", row["key"]
+            assert row["expected"] == 5, row["key"]
         assert row["label"] and row["label"][0].isupper(), row["key"]
 
 
 def test_the_inputs_count_the_names_that_carry_each_one(rawstore_tmp_db):
     _seed()
     rows = _rows(_coverage(), "inputs")
-    assert (rows["cik"]["covered"], rows["cik"]["state"]) == (4, "")
+    assert (rows["cik"]["covered"], rows["cik"]["state"]) == (5, "")      # FUND files with the SEC too
     assert rows["quotes"]["covered"] == 2, "both names have a quote on the newest session"
     assert rows["bars"]["covered"] == 1, "MU's newest bar is behind the latest complete session"
     assert rows["cusip"]["covered"] == 2 and rows["figi"]["covered"] == 1
@@ -361,7 +369,7 @@ def test_the_section_asks_each_store_summary_once_per_collect(rawstore_tmp_db, m
     with_section = dict(calls)
 
     calls.update(prices=0, quotes=0)
-    monkeypatch.setattr(inventory, "identity_coverage", lambda tickers, now=None: {
+    monkeypatch.setattr(inventory, "identity_coverage", lambda tickers, now=None, operating=None: {
         "names_kept": len(tickers), "funnel": [], "funnel_note": "", "inputs": [], "identifiers": []})
     inventory.collect(now=FIXED)
     without_section = dict(calls)

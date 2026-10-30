@@ -25,11 +25,14 @@ single work order.
 - Canonical per-domain tables + derived `company_profile` **VIEW**.
 - Gates/signals in typed `*_gates` tables (filterable).
 - `equity_universe` = only membership + sector source; **all three classification
-  boards read one set: the spine's Tiers A and B, no market-cap floor** via
-  `core/universe.py::classification_universe`, minus the identity-master security
-  types that are not operating companies (`identity.types.EXCLUDED_TYPES`: funds /
-  ETFs, SPACs, preferred / warrants / units; Identity R4, #87). A name with no
-  type, or an `unknown` / `other` one, stays and is counted in the funnel note.
+  boards read one set: the spine's Tiers A and B, no market-cap floor, every
+  security type** via `core/universe.py::classification_universe` (PR 2, avo
+  30 Oct 2026). The type is data: a board that screens operating companies asks
+  for them (`operating_only=True`), which leaves out the identity-master types
+  in `identity.types.EXCLUDED_TYPES` (funds / ETFs, SPACs, preferred / warrants /
+  units; Identity R4, #87); `BOARD_OPERATING_ONLY` is each board's default
+  (Relatedness and Value Chain: operating only). A name with no type, or an
+  `unknown` / `other` one, stays even then and is counted in the funnel note.
 - Prune rule (single): spine + reference dictionaries + fact tables + per-ticker
   scores KEPT (`ticker_payload_cache`, `edgar_financials`, `watchlist`); board
   artifacts restricted to the classification universe.
@@ -71,8 +74,8 @@ N-valued typed children:
 
 Derived VIEW: `company_profile` = **one row per `equity_universe` ticker** (7,403
 at plan date; the invariant is `|equity_universe|`), scalar joins only, no scalar
-theme. Boards iterate `classification_universe()` (operating companies at or above the
-floor).
+theme. Boards iterate `classification_universe()` (Tiers A and B; with
+`operating_only=True`, operating companies only).
 
 Reference dictionaries (never pruned): `sec_company_tickers` + `sec_company_sic`
 (**ticker-keyed** — the CIK-parent/`cusip_map` merges are deferred, see Phase 1);

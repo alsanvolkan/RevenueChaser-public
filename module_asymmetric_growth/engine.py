@@ -1042,8 +1042,9 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
         yfinance_client.reset_health()
     universe, u_stats = fetch_universe_stats(uw, refreshed_by="Asymmetric Growth",
                                              refresh=refresh_universe, no_fetch=no_fetch)
-    # R5 D-2 (#88): the identity master's excluded types (CEF, ETF/ETP, SPAC, preferred, unit, warrant) never screen.
-    excluded = _spine.excluded_tickers()
+    # R5 D-2 (#88): the board's type filter (PR 2, ``BOARD_OPERATING_ONLY``): growth signals need company data,
+    # so by default the identity master's excluded types (CEF, ETF/ETP, SPAC, preferred, unit, warrant) do not screen.
+    excluded = (_spine.excluded_tickers() if _spine.BOARD_OPERATING_ONLY["module_asymmetric_growth"] else set())
     to_score = [r for r in universe if r["ticker"] not in excluded]
     spine = _spine.spine_gics()
     cards = []

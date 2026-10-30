@@ -430,9 +430,12 @@ def fetch_universe_stats(refreshed_by: str | None = None,
     return _fus(refreshed_by=refreshed_by, refresh=refresh, no_fetch=no_fetch)
 
 
-def prefilter(rows: list[dict]) -> screen_common.Prefiltered:
-    """The 7-A prefilter with this board's thresholds (``core.screen_common.prefilter``)."""
-    return screen_common.prefilter(rows, config)
+def prefilter(rows: list[dict], eff=None) -> screen_common.Prefiltered:
+    """The 7-A prefilter with this board's thresholds (``core.screen_common.prefilter``): the effective settings
+    since PR 2 (a saved override, else the config default read at call time)."""
+    from . import settings as fund_settings
+    e = eff or fund_settings.effective()
+    return screen_common.prefilter(rows, e.prefilter_cfg())
 
 
 # #46, #64 checkbox 6: the names whose money facts are tagged in a currency other than USD. The extraction reads the
@@ -799,6 +802,8 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
     Refresh persists nothing and leaves it empty. ``no_fetch=True`` (a Refresh) scores nothing: it returns the payload
     the last Fetch recorded (K4, ``screen_common.stored_payload``)."""
     from . import scores
+    from . import settings as fund_settings
+    eff = fund_settings.effective()     # the run's type filter; ``prefilter`` resolves the two floors itself
     non_usd: set[str] = set()      # #46: the currencies of the names that drop on the currency check
     non_usd_seen: list[str] = []   # #46: the names whose stored row carries the measure at all
     if not no_fetch:
@@ -824,7 +829,8 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
         load_spy=lambda: screen_common.load_spy(lambda: load_ohlc("SPY", ttl_days=0.5, no_fetch=no_fetch)),
         compute_row=compute_row, build_payload=build_payload, persist=scores.persist if rows_sink is None else (lambda results: scores.persist(results, sink=rows_sink)),
         top_n=top_n, refresh_universe=refresh_universe, no_fetch=no_fetch,
-        history_board="module_fundamentals", saved=config.FUNDAMENTALS_JSON)
+        history_board="module_fundamentals", saved=config.FUNDAMENTALS_JSON,
+        operating_only=eff.operating_only)
     _note_non_usd(payload, non_usd, non_usd_seen)
     # The banner reads this key (#80). A Refresh serves the stored payload, which already carries it.
     if not no_fetch:

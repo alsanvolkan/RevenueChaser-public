@@ -165,8 +165,9 @@ def _selection(args) -> list[str] | None:
     if args.tickers:
         return [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
     if args.floor is not None:
-        from RevenueChaser.core.universe import classification_universe
-        return classification_universe(args.floor * 1_000_000)
+        from RevenueChaser.core.universe import BOARD_OPERATING_ONLY, classification_universe
+        return classification_universe(args.floor * 1_000_000,
+                                       operating_only=BOARD_OPERATING_ONLY["module_relatedness"])
     return None
 
 

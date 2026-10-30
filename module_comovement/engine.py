@@ -71,11 +71,14 @@ def config_hash(window: int, linkage: str, cuts,
                 winsor_k: float | None = None, min_periods: int | None = None,
                 bench_stale_sessions: int | None = None,
                 floor: float | None = None,
-                benchmark_applied: bool | None = None) -> str:
+                benchmark_applied: bool | None = None,
+                operating_only: bool | None = None) -> str:
     """Identity of everything that changes a run's numbers.
 
     window, linkage, cuts, horizon, benchmark, MIN_OBS, OOS_HOLDOUT, WINSOR_K,
-    MIN_PERIODS, BENCH_STALE_SESSIONS, the market-cap floor and the engine's
+    MIN_PERIODS, BENCH_STALE_SESSIONS, the market-cap floor, the type filter
+    (``OPERATING_ONLY``, PR 2: like the floor it changes the universe, 7,670 names
+    against 5,655) and the engine's
     method (``config.METHOD``): a stored null or lagged test is reused only under
     exactly these inputs. An input left ``None``
     is resolved by ``settings.effective(window)`` (what a run at ``window``
@@ -92,7 +95,10 @@ def config_hash(window: int, linkage: str, cuts,
         pick(min_obs, eff.min_obs), pick(oos_holdout, eff.oos_holdout),
         f"{float(pick(winsor_k, eff.winsor_k)):g}", pick(min_periods, eff.min_periods),
         pick(bench_stale_sessions, eff.bench_stale_sessions),
-        f"{float(pick(floor, eff.floor)):g}", f"method={config.METHOD}"))
+        f"{float(pick(floor, eff.floor)):g}", f"method={config.METHOD}",
+        # Always written, the default too: a run stored before PR 2 clustered the operating companies only, so its
+        # null must not stand in for an A+B run's under the old hash (review M1).
+        f"types={'operating' if pick(operating_only, eff.operating_only) else 'all'}"))
     if benchmark_applied is False and config.BENCHMARKS.get(benchmark):
         raw += "|returns=raw"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
@@ -279,15 +285,20 @@ def split_short_history(prices, dropped, window: int, horizon: int, first: dict 
 
 def _funnel(counts: dict, no_prices, dropped, flat_prints, eligible: int,
             short_split: tuple[list, list] | None = None,
-            window: int | None = None, min_obs: int | None = None) -> dict:
+            window: int | None = None, min_obs: int | None = None,
+            operating_only: bool | None = None) -> dict:
     """The universe line every board states (ADR-2): all caps → floor → drops.
 
     ``short_history`` stays the sum of ``listed_recently`` + ``missing_bars``
     (legacy readers), which are recorded when ``short_split`` is given.
+    ``operating_only`` is the run's type filter (PR 2), recorded so its type rows read as drops or as the kept
+    names' type mix.
     """
     out = {**counts,
            "no_prices": len(no_prices or []), "short_history": len(dropped or []),
            "flat": len(flat_prints or []), "clustered": int(eligible)}
+    if operating_only is not None:
+        out["operating_only"] = bool(operating_only)
     if short_split is not None:
         out["listed_recently"] = len(short_split[0])
         out["missing_bars"] = len(short_split[1])
@@ -330,17 +341,22 @@ _UNKNOWN_TYPE_LINK = {"tab": "module_settings", "anchor": "identity",
 
 
 def _type_steps(f: dict) -> list[dict]:
-    """The security-type filter (Identity R4, #87): one by-design drop per type group,
-    then a note when kept names have no established type.
+    """The security-type rows (Identity R4, #87), then a note when kept names have no established type.
 
-    Empty for a funnel persisted before the filter (no group keys): it gets no type
-    rows and no note. The note is shown, never counted (``core.funnel``).
+    A run with the type filter on (``operating_only``, and every run persisted before PR 2, which carry no flag)
+    drops each type group by design; a run with it off (the default since PR 2: the universe is A+B whole) keeps
+    them, so each group is a note, the kept names' type mix. Empty for a funnel persisted before the filter (no group
+    keys): it gets no type rows and no note. A note is shown, never counted (``core.funnel``).
     """
     keys = [key for key, _label, _types in universe_mod.TYPE_GROUPS]
     if any(f.get(k) is None for k in keys):
         return []
-    steps = [funnel_mod.step(key, label, f[key], "drop", by_design=True)
-             for key, label, _types in universe_mod.TYPE_GROUPS]
+    if f.get("operating_only") is False:
+        steps = [funnel_mod.step(key, f"Kept, of which: {label}", f[key], "note")
+                 for key, label, _types in universe_mod.TYPE_GROUPS]
+    else:
+        steps = [funnel_mod.step(key, label, f[key], "drop", by_design=True)
+                 for key, label, _types in universe_mod.TYPE_GROUPS]
     if f.get("unknown_type"):
         steps.append(funnel_mod.step(
             "unknown_type", "Unknown security type — kept", f["unknown_type"], "note",
@@ -656,7 +672,7 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
         horizon = 1
     bench_ticker = config.BENCHMARKS.get(benchmark)
     if tickers is None:
-        tickers = ohlc.universe_tickers()
+        tickers = ohlc.universe_tickers(operating_only=eff.operating_only)
     fetch = ohlc.fetch_bulk(tickers, no_fetch=no_fetch)
 
     price_tickers = list(tickers)
@@ -715,13 +731,14 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
                             oos_holdout=eff.oos_holdout, winsor_k=eff.winsor_k,
                             min_periods=eff.min_periods,
                             bench_stale_sessions=eff.bench_stale_sessions,
-                            floor=eff.floor, benchmark_applied=benchmark_applied)
+                            floor=eff.floor, benchmark_applied=benchmark_applied,
+                            operating_only=eff.operating_only)
         stored = _stored_run(chash, prices_through, set(universe_ret.columns),
                              price_tickers)
         if stored:
             funnel = _funnel(universe_mod.universe_counts(eff.floor), no_prices,
                              dropped, flat_prints, n, short_split=short_split,
-                             window=eff.window, min_obs=eff.min_obs)
+                             window=eff.window, min_obs=eff.min_obs, operating_only=eff.operating_only)
             return _serve_stored(stored, eff, tickers=tickers, fetch=fetch,
                                  dropped=dropped, no_prices=no_prices,
                                  flat_prints=flat_prints, window_end=window_end,
@@ -757,7 +774,8 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
                         min_obs=eff.min_obs, oos_holdout=eff.oos_holdout,
                         winsor_k=eff.winsor_k, min_periods=eff.min_periods,
                         bench_stale_sessions=eff.bench_stale_sessions,
-                        floor=eff.floor, benchmark_applied=benchmark_applied)
+                        floor=eff.floor, benchmark_applied=benchmark_applied,
+                        operating_only=eff.operating_only)
 
     # The significance null and the lagged persistence test are Fetch-only
     # costs — NULL_PERMS + 1 extra clusterings. A Refresh reuses the last
@@ -830,7 +848,7 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
                  if len(prices) > eff.oos_holdout and not eff.short_window else None)
     funnel = _funnel(universe_mod.universe_counts(eff.floor), no_prices, dropped,
                      flat_prints, n, short_split=short_split, window=eff.window,
-                     min_obs=eff.min_obs)
+                     min_obs=eff.min_obs, operating_only=eff.operating_only)
     if persisting:
         _persist(as_of, chash, n, nodes, members, horizon, benchmark, eff.window,
                  benchmark_status=benchmark_status, prices_through=prices_through,
