@@ -30,7 +30,8 @@ import duckdb
 from ..core import config
 
 # The serving schema of each kind. A change to a kind's tables bumps its number in its own PR (box rule).
-SERVING_SCHEMA_VERSION = {"market": 1, "spine": 1, "ownership": 1}
+# ``spine`` is 2 since PR 2 of the ETF universe: the kind gained ``etf_holdings`` (``build/spine/etf_holdings.py``).
+SERVING_SCHEMA_VERSION = {"market": 1, "spine": 2, "ownership": 1}
 
 # PR 7 (G2): ``prices.duckdb``, the daily bars, corporate actions, shares and market cap (``build/prices/``).
 SERVING_SCHEMA_VERSION["prices"] = 1

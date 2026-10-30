@@ -77,11 +77,11 @@ def parse_uw(data: bytes) -> list[dict]:
     wins, the client's own rule — ``core/providers/unusual_whales._holdings``). No CUSIP: UW's rows carry none."""
     try:
         rows = json.loads(data)["data"]
-        by_ticker: dict[str, dict] = {}
     except (ValueError, KeyError, TypeError) as e:
         raise base.SourceError(f"uw holdings: not the documented shape ({type(e).__name__}: {e})") from e
     if not isinstance(rows, list):
         raise base.SourceError("uw holdings: data is not a list")
+    by_ticker: dict[str, dict] = {}
     for r in rows:
         t = (r or {}).get("ticker")
         if not t:
