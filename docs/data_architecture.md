@@ -958,7 +958,7 @@ renders at once with what is stored.
 | `RC_MARKET_RAW_COPY_DIR` | `MARKET_RAW_COPY_DIR` | Where the backup copies the newest raw days; empty = off |
 
 **Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`. Each kind is one
-file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `1`), is described under
+file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `2`), is described under
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
 below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `1`), under "Fundamentals" after it; and the options
@@ -1107,15 +1107,17 @@ the old identity tables there are untouched (D5: they are empty since 27 Oct).
 | Dataset | Cadence | Source | Stages |
 |---|---|---|---|
 | `sec/company_tickers_exchange` | weekly | `www.sec.gov/files/company_tickers_exchange.json`, `If-Modified-Since` from the last copy (a 304 writes nothing) | `stg_sec`, `stg_sec_all` |
+| `sec/company_tickers_mf` | weekly | `www.sec.gov/files/company_tickers_mf.json`, the same shape and the same `If-Modified-Since` fetch: the fund file, one row per series and share class | `stg_sec_mf`, `stg_sec_mf_all` |
 | `wrds/sec_idhist` | monthly, attended | `comp.company`, `comp.security`, `comp.sec_idhist`; between snapshots only the new listed CIKs | `stg_wrds_company`, `stg_wrds_security`, `stg_wrds_idhist` |
 | `wrds/co_hgic` | monthly, attended | `comp.co_hgic` | `stg_wrds_hgic` |
 | `wrds/idxcst_his` | monthly, attended | `comp.idxcst_his` for the S&P 500, 400 and 600 index keys | `stg_wrds_idx` |
 | `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet (a CINS, a letter first, asked as `ID_CINS`), under 25 requests a minute | `stg_figi` |
 | `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR (`latest-holdings.csv`), Vanguard VOO/IVOO/VIOO (daily creation basket), Nasdaq's nasdaq100 list and Invesco QQQ (both vote `ndx`) | `stg_fund_lines`, `stg_fund_files` |
-| `spine/security` | daily | none: builds the served tables from the staging tables | the four tables below |
+| `spine/security` | daily | none: builds the served tables from the staging tables | the four tables below except `fund` |
 
-The sources load their Parquet into TEMP tables of the build connection (never stored in the file); the kind's
-datasets build in `DATASETS` order, so `spine/security` builds last. Raw and Parquet follow the market store's
+The sources load their Parquet into TEMP tables of the build connection (never stored in the file), and all
+but one stop there; `sec/company_tickers_mf` also serves `fund` from its own staging, because nothing derives
+that table from anything. The kind's datasets build in `DATASETS` order, so `spine/security` builds last. Raw and Parquet follow the market store's
 rules (`raw/<source>/<dataset>/...`, `parquet/<source>/<dataset>/...`; a raw file that exists is the resume marker).
 
 **Attended (WRDS).** The three WRDS datasets need a person, and run in their own interpreter: `wrds` is not in the
@@ -1136,7 +1138,7 @@ own mark: a panel header that says `cli` is recorded as `panel:cli`.
 the CLI or a Fetch), so the first hourly builder pass after a deploy calls no spine source before the attended
 steps, and a first attempt that failed is not retried every hour.
 
-**Served tables** (`spine` serving schema version `1`). Periods are `valid_from` inclusive, `valid_to` exclusive
+**Served tables** (`spine` serving schema version `2`). Periods are `valid_from` inclusive, `valid_to` exclusive
 (Compustat's inclusive ends are moved one day on), `valid_to` NULL while current.
 
 | Table | Rows |
@@ -1145,6 +1147,23 @@ steps, and a first attempt that failed is not retried every hour.
 | `security_history` | the SEC file's `cik`, `name`, `exchange` per ticker over the stored snapshots; Compustat's identifier history of the linked securities |
 | `gics_history` | Compustat's GICS periods of the linked companies |
 | `index_membership` | the fund-file members (source `funds/index_holdings`) and Compustat's constituents (source `wrds/idxcst_his`, the check) |
+| `fund` | one per share class of the newest SEC fund file: `cik`, `series_id`, `class_id`, the normalised `ticker` and the file's `ticker_raw`, `is_etf` with the `is_etf_source` that decided it, and the file's provenance. `security`'s counterpart: an ETF is a series of a trust, so it has no row of its own in the equity file (the ETF rule, and the two exceptions, below). The kind's only source-owned served table, so `base.shrink_scope` relaxes it for `allow_shrink` on `sec/company_tickers_mf` alone: an empty `fund` refuses the swap for every spine dataset until that one is run |
+
+**The ETF rule** (`rcdata/build/spine/sec_tickers_mf.py`). The fund file carries no "this is an ETF" field, so
+`is_etf` is a rule and says so in `is_etf_source` (`length_rule_v1`): a symbol of five letters ending in X is
+the classic open-end mutual-fund share class and is not an ETF. Measured 30 Oct 2026 over the file's 28,614
+rows: 22,797 such share classes, leaving 5,811 ETF candidates — the same order as a third-party count of US
+ETFs (5,394), which is the only corroboration there is. The rule reads the **normalised** ticker, because 25 of
+the symbols are written lower case. It is wrong in both directions, and only one of them is visible to a reader filtering on
+`is_etf`: a **fund** whose symbol is not five letters ending in X is in the ETF set (`AAAX`,
+`QINSQ`), and an **ETF** whose symbol is five letters ending in X is outside it and so outside
+every filter — the error to weigh when the second signal (the ticker trading on an exchange, or
+the N-CEN ETF field) is chosen. A symbol that does not parse (`(NWAGX)`, `n/a`, the empty string) is dropped and counted in the
+run's note.
+
+**The ETF universe is `fund` plus `security`'s `etp` rows.** SPY is a unit investment trust and GLD a commodity
+trust: neither has a series and a class, so neither is in the fund file. Both are rows of the equity file (GLD,
+SLV and USO are its `etp` rows). A reader after the whole ETF universe reads both tables, never `fund` alone.
 
 **Tier rule v2** (`rcdata/build/spine/tier.py`): A = listed on Nasdaq, NYSE or Cboe and not an excluded type
 (`core.identity.types.EXCLUDED_TYPES`; an untyped name stays); B = listed, excluded type; C = OTC; D = no exchange.

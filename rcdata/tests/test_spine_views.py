@@ -38,13 +38,14 @@ def test_index_constituents_and_index_tickers_keep_their_columns():
 
 
 def test_they_are_views_not_tables_so_the_swap_checks_count_only_the_served_tables():
-    from RevenueChaser.rcdata.build.spine import security
+    from RevenueChaser.rcdata.build.spine import sec_tickers_mf, security
     with serving.open_read("spine") as con:
         names = {r[0] for r in con.execute("SELECT view_name FROM duckdb_views() WHERE NOT internal").fetchall()}
         tables = {r[0] for r in con.execute("SELECT table_name FROM duckdb_tables()").fetchall()}
     assert set(views.VIEWS) <= names and not set(views.VIEWS) & tables
-    # No helper table of the build is left in the file: only the served tables and the version row.
-    assert tables == set(security.TABLES) | {serving.VERSION_TABLE}
+    # No helper table of the build is left in the file: only the served tables and the version row. ``fund`` is
+    # served by ``sec/company_tickers_mf`` rather than by ``spine/security``, so it is named apart.
+    assert tables == set(security.TABLES) | set(sec_tickers_mf.DATASET.tables) | {serving.VERSION_TABLE}
 
 
 def test_equity_universe_is_the_listed_rows_and_the_old_universe_query_runs():
