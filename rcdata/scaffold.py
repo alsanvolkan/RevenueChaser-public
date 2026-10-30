@@ -44,12 +44,15 @@ def _schema_of_kind() -> dict[str, dict[str, list[tuple[str, str]]]]:
     from .build.fundamentals import tables as fundamentals_tables
     from .build.market_series import SCHEMA as MARKET_SERIES_SCHEMA, TABLE as MARKET_SERIES_TABLE
     from .build.prices import serving as prices_serving
+    from .build.spine import sec_tickers_mf as spine_fund
     from .build.spine import security as spine_security
     from .build.uw_spot_expiry_strike import SCHEMA as SPX_SCHEMA, TABLE as SPX_TABLE
 
     return {
         "market": {MARKET_SERIES_TABLE: list(MARKET_SERIES_SCHEMA), SPX_TABLE: list(SPX_SCHEMA)},
-        "spine": {t: list(s) for t, s in spine_security.SCHEMAS.items()},
+        # ``spine/security`` builds four of the five; ``sec/company_tickers_mf`` serves ``fund`` itself.
+        "spine": {**{t: list(s) for t, s in spine_security.SCHEMAS.items()},
+                  spine_fund.TABLE: list(spine_fund.FUND)},
         "prices": {t: list(s) for t, s in prices_serving.SCHEMAS.items()},
         "fundamentals": {t: list(s) for t, s in fundamentals_tables.SCHEMAS.items()},
         "ownership": _ownership_schemas(),

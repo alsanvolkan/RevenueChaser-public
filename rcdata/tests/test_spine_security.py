@@ -9,7 +9,8 @@ import pytest
 from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.rcdata import ops, serving
 from RevenueChaser.rcdata.build import base
-from RevenueChaser.rcdata.build.spine import funds, openfigi_map, sec_tickers, security, tier, wrds
+from RevenueChaser.rcdata.build.spine import funds, openfigi_map, sec_tickers, sec_tickers_mf
+from RevenueChaser.rcdata.build.spine import security, tier, wrds
 
 from . import spine_fixture as fx
 
@@ -23,6 +24,7 @@ def built(monkeypatch, http_mock):
     monkeypatch.setattr(wrds, "_factory", lambda: fx.FakeWrds())
     wrds.reset()
     http_mock.add("company_tickers_exchange.json", fx.SEC_FILE)
+    http_mock.add("company_tickers_mf.json", fx.SEC_MF_FILE)
     http_mock.add("figi.test/v3/mapping", fx.figi_answer)
     fx.add_fund_routes(http_mock)
     run_all("2026-10-27")
@@ -32,8 +34,8 @@ def built(monkeypatch, http_mock):
 
 def run_all(day: str, names=None) -> list[dict]:
     out = []
-    for name in names or (sec_tickers.NAME, wrds.SEC_IDHIST.name, wrds.CO_HGIC.name, wrds.IDXCST_HIS.name,
-                          openfigi_map.NAME, funds.NAME, security.NAME):
+    for name in names or (sec_tickers.NAME, sec_tickers_mf.NAME, wrds.SEC_IDHIST.name, wrds.CO_HGIC.name,
+                          wrds.IDXCST_HIS.name, openfigi_map.NAME, funds.NAME, security.NAME):
         attended = name.startswith("wrds/")
         params = {"mode": "backfill", "to": day} if attended else {"as_of": day}
         out.append(base.run_request({"dataset": name, "requested_by": "cli", "params": params}))
@@ -374,8 +376,8 @@ def test_a_source_that_never_ran_is_one_issue_not_thousands(monkeypatch, http_mo
     base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-10-27"}})
     kinds = {k for k, _ in _issues()}
     assert kinds == {"source_never_run"}
-    assert {key for _, key in _issues()} == {wrds.SEC_IDHIST.name, wrds.CO_HGIC.name, wrds.IDXCST_HIS.name,
-                                             openfigi_map.NAME, funds.NAME}
+    assert {key for _, key in _issues()} == {sec_tickers_mf.NAME, wrds.SEC_IDHIST.name, wrds.CO_HGIC.name,
+                                             wrds.IDXCST_HIS.name, openfigi_map.NAME, funds.NAME}
 
 
 def test_coverage_is_tier_a_with_a_cusip(built):

@@ -64,6 +64,10 @@ NAMES = ("MSFT", "HEI", "HEI-A", "ETN", "TM", "CNA", "FDX", "NVR", "WFC-PC", "VY
 # | AAAX | 4 letters ending in X: the rule keeps it, so a mutual fund this short is a known false positive |
 # | QINSQ | 5 letters not ending in X: the rule keeps it |
 # | (NWAGX), n/a, "" | symbols that do not parse: dropped and counted, never guessed at |
+# | NOCIK | a row whose cik is null: dropped for its own reason, not reported as a bad symbol |
+# | NOCLASS | a row whose classId is blank: dropped, because keying on a blank would collapse every such row |
+# | DUPCLS | the same class id twice, with two symbols: the first row wins |
+# | TWINA, TWINB | two class ids of one series: both are rows, so `fund` has no unique ticker and none is claimed |
 #
 # SPY and GLD are **not** here, and that is the real file too: SPY is a unit investment trust and GLD a commodity
 # trust, so neither has a series and a class. They are rows of the equity file (``SEC_FILE`` holds SPY).
@@ -81,12 +85,20 @@ SEC_MF_FILE = {
         [2110, "S000009188", "C000024961", "(NWAGX)"],
         [2110, "S000009189", "C000024962", "n/a"],
         [2110, "S000009190", "C000024963", ""],
+        [None, "S000009191", "C000024964", "NOCIK"],
+        [2110, "S000009192", "", "NOCLASS"],
+        [2110, "S000009193", "C000024965", "DUPCLS"],
+        [2110, "S000009193", "C000024965", "DUPCLX"],
+        [2110, "S000009194", "C000024966", "TWINA"],
+        [2110, "S000009194", "C000024967", "TWINB"],
     ],
 }
 #: What the ETF rule keeps out of ``SEC_MF_FILE``, in ticker order.
-MF_ETF_TICKERS = ("AAAX", "QINSQ", "QQQ", "SOXX", "XLK")
+MF_ETF_TICKERS = ("AAAX", "DUPCLS", "QINSQ", "QQQ", "SOXX", "TWINA", "TWINB", "XLK")
 #: What does not parse, so never reaches the table.
 MF_UNPARSED = ("(NWAGX)", "n/a", "")
+#: Every ticker the file yields a row for, in the order ``fund`` serves them.
+MF_TICKERS = ("AAAX", "ACRNX", "DUPCLS", "ELFNX", "LACAX", "QINSQ", "QQQ", "SOXX", "TWINA", "TWINB", "XLK")
 
 # ── Compustat ────────────────────────────────────────────────────────────────────────────────────────────────
 
