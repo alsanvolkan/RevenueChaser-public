@@ -111,6 +111,7 @@ def test_every_dataset_either_honours_the_scope_or_is_named_here():
         "alphavantage/earnings_calendar": "a calendar, asked by day",
         "finra/short_interest": "one file a settlement cycle for the whole market",
         "fundamentals/tables": "no fetch",
+        "funds/etf_holdings": "a fixed list of ETFs: the board's sector and theme funds",
         "funds/index_holdings": "the index funds' own holdings files",
         "ibkr/iv_history": "the options universe, from the option list",
         "ibkr/shortable": "IBKR's one shortable-shares file",

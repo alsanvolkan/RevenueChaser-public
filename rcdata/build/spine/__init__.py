@@ -12,6 +12,8 @@ the last dataset of the kind, ``spine/security``, builds the four served tables 
 - ``openfigi/map`` (weekly): the CUSIPs not mapped yet, under 25 requests a minute;
 - ``funds/index_holdings`` (daily): the ETF holdings files of SSGA, iShares and Vanguard and Nasdaq's list API, the
   index membership;
+- ``funds/etf_holdings`` (daily): the rotation board's ETFs read whole, from the SPDR and iShares files and UW's
+  holdings answer for the themes whose issuer has no keyless file; it serves ``etf_holdings`` itself (no vote);
 - ``spine/security``: no fetch; tier rule v1 (``tier.py``), the served tables ``security``, ``security_history``,
   ``gics_history`` and ``index_membership``, the views under the old ``raw.duckdb`` names (D4), and the build-issue
   rules (``security.ISSUE_KINDS``), whose rows go to ``ops.sqlite`` (D6), synced once the new file is live.

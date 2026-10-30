@@ -116,10 +116,11 @@ def test_a_run_reads_every_fund_once_and_serves_its_whole_holdings(env):
     assert len(served) == 38 * len(fx.SP500)
     assert {r[2] for r in served} == {"ssga", "ishares", "uw"}
     xlk = _served("etf = 'XLK'")
-    assert [(r[3], r[4]) for r in xlk] == [("MSFT", "594918104"), ("ETN", "G29183103"), ("FDX", "31428X106"),
-                                           ("NVR", "62944T105"), ("WFC", "949746101")]
-    assert [r[3] for r in _served("etf = 'SMH'")] == ["MSFT", "ETN", "FDX", "NVR", "WFC"]   # UW, by weight
-    assert _served("etf = 'SMH'")[0][6] == 10.0 and str(xlk[0][0]) == AS_OF
+    assert {(r[3], r[4]) for r in xlk} == {(t, c) for t, c, _n in fx.SP500}, "the SPDR file's CUSIPs are kept"
+    assert str(xlk[0][0]) == AS_OF
+    smh = _served("etf = 'SMH'")                               # UW: by weight, and UW's rows carry no CUSIP
+    assert [r[3] for r in smh] == [t for t, _c, _n in fx.SP500] and {r[4] for r in smh} == {None}
+    assert smh[0][6] == 10.0 and smh[-1][6] == 6.0
 
 
 def test_the_cash_and_futures_lines_of_a_file_are_not_holdings(env):
