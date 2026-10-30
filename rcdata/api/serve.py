@@ -126,6 +126,28 @@ def _asked(need: Need, params: dict) -> list[str] | None:
     return sorted(set(items))
 
 
+def _asked_nothing(need: Need, params: dict) -> bool:
+    """True when the caller named the need's ask parameter and named nothing in it.
+
+    avo, 30 Oct 2026: "Boş liste 'hiçbir şey' demek, 400 dönsün". The readers whose ask parameter defaults to
+    ``None`` read the whole table when it is absent, but an empty list is not that default - they answer no rows
+    for it (``read.identity``: ``if not wanted: return []``), and the envelope then called a full table
+    ``missing``. That is finding 2's envelope again, one need at a time, reachable from any card that renders its
+    URL from an emptied selection box. The ask is refused in words instead, before the reader is called.
+
+    Not refused: a need that names its own rows (``macro.dgs10`` and the other filtered ones), because
+    ``_with_needs_own_rows`` replaces the caller's value before the reader sees it; and an explicit ``None``,
+    which is the reader's own default and means every row.
+    """
+    if need.ask_param is None or need.ask_param not in params:
+        return False
+    if need.filter_values or need.filter_prefix:
+        return False
+    if params[need.ask_param] is None:
+        return False
+    return not _asked(need, params)
+
+
 def _provenance(need: Need, rows: list[dict]) -> list[dict]:
     return [{"key": r.get(need.key_column), "dataset": need.dataset, "source": r.get("source"),
              "source_as_of": r.get("source_as_of"), "fetched_at": r.get("fetched_at"), "run_id": r.get("run_id")}
@@ -206,6 +228,10 @@ def get(need: str, *, fill: str = NEVER, **params) -> Answer:
     if spec.ask_required and not _asked(spec, params) and not params.get("prefix"):
         raise AskRequired(f"{need} answers nothing unless it is asked for something: name {spec.ask_param!r} "
                           f"(or ask for the whole table's state with summary=1)")
+    if _asked_nothing(spec, params):
+        raise AskRequired(f"{need} was asked for nothing: {spec.ask_param!r} is there and names nothing. An empty "
+                          f"ask is nothing, never every row (avo, 30 Oct 2026): leave {spec.ask_param!r} out to "
+                          f"read every row, or ask for the whole table's state with summary=1")
 
     ops.read_log.bump(f"need:{need}")
     rows = spec.reader(**_with_needs_own_rows(spec, params))
