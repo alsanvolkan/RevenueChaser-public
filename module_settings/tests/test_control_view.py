@@ -187,7 +187,7 @@ def test_every_line_of_the_flow_diagram_ends_at_a_box_it_draws():
 def test_the_flow_sources_are_the_datasets_providers():
     flow = _build()["flow"]
     prices = next(g for g in flow["sourceGroups"] if g["group"] == "Prices")
-    assert {"Alpaca", "WRDS", "SEC", "yfinance", "UW"} <= {i["name"] for i in prices["items"]}
+    assert {"Alpaca", "WRDS", "SEC", "yfinance", "Unusual Whales"} <= {i["name"] for i in prices["items"]}
     assert all(i["icon"] for g in flow["sourceGroups"] for i in g["items"])
 
 

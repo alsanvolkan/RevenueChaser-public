@@ -147,8 +147,12 @@ def _shade(hex_color: str, i: int, n: int) -> str:
     return "#" + "".join(f"{max(0, min(255, int(c * f))):02x}" for c in (r, g, b))
 
 
+#: A menu label in plain words where the menu uses a short form avo keeps off this page (#155: "UW").
+PLAIN_LABELS = {"module_uw_interaction": "Unusual Whales Interaction (lab)"}
+
+
 def _board_labels() -> dict[str, str]:
-    return {key: label for _, tabs in BOARD_MENU for key, label in tabs}
+    return {key: PLAIN_LABELS.get(key, label) for _, tabs in BOARD_MENU for key, label in tabs}
 
 
 def _status_of(card: dict) -> str:
@@ -475,7 +479,7 @@ def _cal_spx(nd: dict, providers: dict) -> dict | None:
     if not bf.get("from_earliest"):
         return None
     p = providers.get("uw") or {}
-    return {"dataset": "uw/spot_expiry_strike", "provider": "UW", "from": bf["from_earliest"], "groups": False,
+    return {"dataset": "uw/spot_expiry_strike", "provider": "Unusual Whales", "from": bf["from_earliest"], "groups": False,
             "missing": bf.get("missing") or [], "calls_per_session": bf.get("calls_per_partition") or 1,
             "cap": p.get("cap"), "used": p.get("used", 0), "unit": "sessions",
             "first": f"the SPX expiry-strike set starts on {day_words(bf['from_earliest'])} {bf['from_earliest'][:4]}"}
@@ -562,8 +566,8 @@ def flow(file_views: list[dict], datasets: dict, reads: dict, universe_view: dic
                   "health": {"fresh": f["health"]["fresh"], "total": f["health"]["total"],
                              "state": f["health"]["state"]},
                   "line": f["color"], "tables_color": [t["color"] for t in f["tables"]]} for f in file_views]
-    board_groups = [{"group": g, "boards": [{"name": lb, "color": _shade(BOARD_COLOR, i, len(tabs) + 6)}
-                                            for i, (_, lb) in enumerate(tabs)]} for g, tabs in BOARD_MENU]
+    board_groups = [{"group": g, "boards": [{"name": labels[key], "color": _shade(BOARD_COLOR, i, len(tabs) + 6)}
+                                            for i, (key, _) in enumerate(tabs)]} for g, tabs in BOARD_MENU]
     need_reader = {n: f"read.{need.reader_name}" for n, need in catalog.NEEDS.items()}
     table_reads = {}
     for key, label in labels.items():

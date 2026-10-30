@@ -267,7 +267,7 @@ PROVIDERS: dict[str, ProviderWords] = {
     "sec": ProviderWords("SEC", "the ticker file, company facts, filings, 13F, Form 4, 13D/G, fails to deliver",
                          "4.5 a second (ownership) · 0.25 s apart (fundamentals)",
                          "10 a second per User-Agent (fair access)"),
-    "uw": ProviderWords("UW", "options, SPX, float, financials", "a budget a run · 500 rows a page"),
+    "uw": ProviderWords("Unusual Whales", "options, SPX, float, financials", "a budget a run · 500 rows a page"),
     "alpaca": ProviderWords("Alpaca", "bars, corporate actions", "190 a minute",
                             "200 a minute (free plan) · no SIP data of the last 15 minutes"),
     "yfinance": ProviderWords("yfinance", "float, estimates, MOVE", "float lookups 1.5 s apart · a 429 stops the run",
