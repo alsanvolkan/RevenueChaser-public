@@ -627,16 +627,19 @@ def compare_with_live(con: duckdb.DuckDBPyConnection, kind: str, table: str, col
 
 # ── Gates ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
-def idle_problem() -> str | None:
-    """Why the builder must not start now, or None: a job lock held in the store dir, or another live builder.
+def idle_problem(lock: str = BUILDER_LOCK) -> str | None:
+    """Why the writer of ``lock`` must not start now, or None: a lock on a file it writes, or another live builder.
 
     Checked once, at start (S5): a job that takes a lock later runs beside the builder, which writes only its own
     files.
 
-    The job locks are read with ``job_lock.holders()`` (checks only, never takes one); another builder shows as its
-    ``rcdata_build`` lock and as a live ``.rc-proc-<pid>`` marker in the market dir.
+    Only the locks that can meet ``lock`` on a file count (``job_lock.blocking_holders``, which checks and never
+    takes one). The builder writes the market store, so an old-store job — the Relatedness pilot, an EDGAR sync, a
+    nightly step — no longer stops it: that refusal is what stopped the WRDS price backfill while the pilot ran
+    (30 Oct 2026). A second builder still does, both as its own ``rcdata_build`` lock and as a live
+    ``.rc-proc-<pid>`` marker in the market dir, and so does any lock whose family has not declared what it writes.
     """
-    held = job_lock.holders()
+    held = job_lock.blocking_holders(lock)
     if held:
         return "job lock held: " + ", ".join(f"{name} (pid {pid})" for name, pid in sorted(held))
     peers = rawstore._peer_pids(Path(config.MARKET_DIR) / "ops.sqlite")
