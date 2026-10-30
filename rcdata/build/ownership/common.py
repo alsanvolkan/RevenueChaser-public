@@ -57,6 +57,14 @@ def symbol_tickers(symbols: Iterable[str], tickers: set[str] | None) -> dict[str
     return out
 
 
+def quarter_end(col: str) -> str:
+    """SQL: ``col`` (a DATE) moved to the nearest calendar quarter end: the quarter the day falls in, or the one
+    before when the day is within 15 days after its end (so 10-01 goes to 09-30, not 12-31; review S1 of #300).
+    A 13F report period is a quarter end, but a filer writes 09-29 or 10-01 for the September quarter now and
+    then; read as written it became a quarter of its own with one filer (13F review B2, 2026-10-30)."""
+    return f"CAST(date_trunc('quarter', {col} - INTERVAL 15 DAY) + INTERVAL 3 MONTH - INTERVAL 1 DAY AS DATE)"
+
+
 def files_sql(files: Iterable[Path]) -> str:
     return f"read_parquet([{', '.join(base.sql_path(f) for f in sorted(files))}], union_by_name = true)"
 

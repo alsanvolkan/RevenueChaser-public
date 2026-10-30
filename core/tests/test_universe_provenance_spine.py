@@ -55,10 +55,17 @@ def test_a_partial_pull_is_about_the_market_caps_only():
 @pytest.mark.usefixtures("spine")
 def test_the_build_time_is_the_spines_own_not_a_datasets_check():
     """Real-data check (28 Oct): ``spine/security`` reads "unchanged" when an earlier dataset of the kind already
-    rebuilt the file, so its check says nothing about when the spine was built. A later check changes nothing."""
+    rebuilt the file, so its check says nothing about when the spine was built. A later check changes nothing.
+
+    The check's day is a date no build can carry. It used to be 2026-10-30, which the line really did contain on
+    30 Oct 2026 - the day the clock reached it - because the line carries the build's own day: the test failed on
+    a date rather than on a change (CI run 40982614219, on a diff that does not touch this file).
+    """
+    later = "2099-01-01"
     before = universe_provenance_html(WHEN, "X")
-    ops.record_check("spine/security", "unchanged", source_as_of="2026-10-28", checked_on="2026-10-30")
-    assert universe_provenance_html(WHEN, "X") == before and "2026-10-30" not in before
+    assert later not in before, "the sentinel day must be one the line can never carry"
+    ops.record_check("spine/security", "unchanged", source_as_of="2026-10-28", checked_on=later)
+    assert universe_provenance_html(WHEN, "X") == before and later not in before
 
 
 @pytest.mark.usefixtures("spine")

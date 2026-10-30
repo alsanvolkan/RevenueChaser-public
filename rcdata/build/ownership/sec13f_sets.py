@@ -15,7 +15,9 @@ memory. Each 13F-HR and 13F-HR/A becomes the row the EDGAR path writes (``sec13f
 
 - an amendment by the ``/A`` of ``SUBMISSIONTYPE`` (``ISAMENDMENT`` is blank on half the rows of 01jun2026-31aug2026);
   ``AMENDMENTTYPE`` is ``RESTATEMENT`` or ``NEW HOLDINGS``;
-- dates are ``DD-MON-YYYY``; the CIK loses its leading zeros, as the EDGAR path writes it;
+- dates are ``DD-MON-YYYY``; the CIK loses its leading zeros, as the EDGAR path writes it; the period is the
+  cover page's (``REPORTCALENDARORQUARTER``), the submission header's (``PERIODOFREPORT``) when the cover page has
+  none, as the EDGAR path reads it; a CUSIP placeholder (``sec13f.CUSIP_NONE``) is none;
 - ``ISCONFIDENTIALOMITTED`` ``Y`` / ``N`` is ``confidential_omitted``; a 13F notice (``13F-NT``) is not kept, as the
   EDGAR path does not fetch one;
 - the status is ``sec13f.status_of``'s rule, written in SQL: a 13F-HR whose report type is a notice is ``notice``, and
@@ -165,15 +167,39 @@ def _member(z: zipfile.ZipFile, table: str) -> str:
     raise base.SourceError(f"13F data set {Path(z.filename or '').name}: no {table}.tsv in the zip")
 
 
-def _load(con: duckdb.DuckDBPyConnection, zip_path: Path, tmp: Path) -> None:
-    """The set's four tables as ``z_submission``, ``z_coverpage``, ``z_summarypage``, ``z_infotable`` (text)."""
+def _header(path: Path) -> tuple[list[str], str]:
+    """The member's column names from its first line, and its line ending."""
+    with open(path, "rb") as f:
+        first = f.readline()
+    ending = "\r\n" if first.endswith(b"\r\n") else "\n"
+    return [c.strip() for c in first.decode("utf-8", errors="replace").rstrip("\r\n").split("\t")], ending
+
+
+def _load(con: duckdb.DuckDBPyConnection, zip_path: Path, tmp: Path, name: str, notes: list[str]) -> None:
+    """The set's four tables as ``z_submission``, ``z_coverpage``, ``z_summarypage``, ``z_infotable`` (text). The
+    columns are the member's own header line (no sniffing: the dialect is known). A row that does not read (a tab
+    too few or too many, a byte that is not UTF-8) is left out and counted in ``notes``, not the whole set and the
+    year's fill with it (13F review B3, 2026-10-30); the filing it belonged to says in its ``detail`` that fewer
+    holdings were read than its summary counts. A set before 2023 has no ``FIGI`` column: it is added, empty (D4)."""
     with zipfile.ZipFile(zip_path) as z:
         for table in MEMBERS:
             out = tmp / f"{table}.tsv"
             with z.open(_member(z, table)) as src, open(out, "wb") as dst:
                 shutil.copyfileobj(src, dst, 1 << 20)
+            cols, ending = _header(out)
+            columns = ", ".join(f"'{c}': 'VARCHAR'" for c in cols)
+            nl = "\\r\\n" if ending == "\r\n" else "\\n"
             con.execute(f"CREATE TABLE z_{table.lower()} AS SELECT * FROM read_csv({base.sql_path(out)}, "
-                        "delim = '\t', header = true, all_varchar = true, quote = '', escape = '')")
+                        f"delim = '\t', header = true, quote = '', escape = '', new_line = '{nl}', "
+                        f"auto_detect = false, columns = {{{columns}}}, ignore_errors = true, store_rejects = true)")
+            bad = con.execute("SELECT count(DISTINCT line), min(line), arg_min(error_type, line) "
+                              "FROM reject_errors").fetchone()
+            con.execute("DROP TABLE reject_errors; DROP TABLE reject_scans")
+            if bad[0]:
+                notes.append(f"13F data set {name}: {bad[0]} rows of {table}.tsv rejected (first: line {bad[1]}, "
+                             f"{bad[2]})")
+            if table == "INFOTABLE" and "FIGI" not in cols:
+                con.execute("ALTER TABLE z_infotable ADD COLUMN FIGI VARCHAR")
             out.unlink()
 
 
@@ -182,10 +208,13 @@ def _day(col: str) -> str:
 
 
 def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, forms, dollars_from: date,
-           fetched_at: float, run_id: str | None) -> None:
+           fetched_at: float, run_id: str | None, cusip_none=()) -> None:
     """``filings`` and ``holdings`` of the set's 13F-HR and 13F-HR/A filed from ``first`` to ``last``, typed as the
-    EDGAR path writes them."""
+    EDGAR path writes them: the period is the cover page's, the submission header's when the cover page has none
+    (13F review D2, 2026-10-30), and a CUSIP in ``cusip_none`` is none (D3)."""
     form_list = ", ".join(f"'{f}'" for f in sorted(forms))
+    none_list = ", ".join(f"'{c}'" for c in sorted(cusip_none)) or "''"
+    period = f"coalesce({_day('c.REPORTCALENDARORQUARTER')}, s.period)"
     # One row per accession in each member: a row written twice would fan a filing and its holdings out (review N4).
     # Of conflicting rows the first the file holds is kept (``rowid`` is the file order), the same one every run.
     for table in ("submission", "coverpage", "summarypage"):
@@ -202,7 +231,7 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
         WHERE trim(ACCESSION_NUMBER) IN (SELECT accession FROM z_sub) GROUP BY ALL""")
     con.execute(f"""CREATE TABLE filings AS
         SELECT s.accession, s.cik, nullif(trim(c.FILINGMANAGER_NAME), '') AS filer_name, s.form,
-               coalesce(s.period, {_day('c.REPORTCALENDARORQUARTER')}) AS period, s.filed, s.filed AS index_day,
+               {period} AS period, s.filed, s.filed AS index_day,
                ends_with(s.form, '/A') AS is_amendment, TRY_CAST(trim(c.AMENDMENTNO) AS INTEGER) AS amendment_no,
                nullif(upper(regexp_replace(trim(c.AMENDMENTTYPE), '\\s+', ' ', 'g')), '') AS amendment_type,
                nullif(upper(regexp_replace(trim(c.REPORTTYPE), '\\s+', ' ', 'g')), '') AS report_type,
@@ -213,11 +242,11 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
                CASE WHEN s.filed < DATE '{dollars_from}' THEN 1000 ELSE 1 END AS value_scale,
                CASE upper(trim(m.ISCONFIDENTIALOMITTED)) WHEN 'Y' THEN true WHEN 'N' THEN false END
                    AS confidential_omitted,
-               CASE WHEN coalesce(s.period, {_day('c.REPORTCALENDARORQUARTER')}) IS NULL THEN 'unparsed'
+               CASE WHEN {period} IS NULL THEN 'unparsed'
                     WHEN upper(c.REPORTTYPE) LIKE '%NOTICE%' THEN 'notice'
                     WHEN coalesce(k.n, 0) = 0 AND TRY_CAST(trim(m.TABLEENTRYTOTAL) AS INTEGER) IS DISTINCT FROM 0
                     THEN 'unparsed' ELSE 'ok' END AS status,
-               CASE WHEN coalesce(s.period, {_day('c.REPORTCALENDARORQUARTER')}) IS NULL THEN 'no report period'
+               CASE WHEN {period} IS NULL THEN 'no report period'
                     WHEN upper(c.REPORTTYPE) LIKE '%NOTICE%' THEN NULL
                     WHEN coalesce(k.n, 0) = 0 AND TRY_CAST(trim(m.TABLEENTRYTOTAL) AS INTEGER) IS DISTINCT FROM 0
                     THEN 'no information table'
@@ -239,7 +268,8 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
                                        ORDER BY TRY_CAST(trim(i.INFOTABLE_SK) AS BIGINT), i.INFOTABLE_SK) - 1
                     AS INTEGER) AS line,
                nullif(trim(i.NAMEOFISSUER), '') AS name_of_issuer, nullif(trim(i.TITLEOFCLASS), '') AS title_of_class,
-               nullif(upper(trim(i.CUSIP)), '') AS cusip, nullif(trim(i.FIGI), '') AS figi,
+               CASE WHEN upper(trim(i.CUSIP)) IN ({none_list}) THEN NULL ELSE nullif(upper(trim(i.CUSIP)), '') END
+                   AS cusip, nullif(trim(i.FIGI), '') AS figi,
                {num('i.VALUE')} AS value, {num('i.VALUE')} * f.value_scale AS value_usd,
                {num('i.SSHPRNAMT')} AS shares, nullif(upper(trim(i.SSHPRNAMTTYPE)), '') AS sh_type,
                nullif(trim(i.PUTCALL), '') AS put_call, nullif(trim(i.INVESTMENTDISCRETION), '') AS discretion,
@@ -253,7 +283,7 @@ def fill(ctx: base.RunContext, feed: edgar.Feed, start: date, end: date, schema:
     """Fill ``feed``'s days from ``start`` to ``end`` that a listed set covers; the last day covered (None when no
     set covers any). A range of fewer than ``MIN_WEEKDAYS`` weekdays asks nothing: the walk reads its forms. Every
     backfill first removes a killed run's typing folders, a short one too.
-    ``schema``: ``{"forms", "filings", "holdings", "dollars_from"}`` of ``sec/13f``."""
+    ``schema``: ``{"forms", "filings", "holdings", "dollars_from", "cusip_none"}`` of ``sec/13f``."""
     _clear_scratch(ctx)
     weekdays = sum(1 for k in range((end - start).days + 1) if (start + timedelta(days=k)).weekday() < 5)
     if weekdays < MIN_WEEKDAYS:
@@ -287,7 +317,7 @@ def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str,
     with tempfile.TemporaryDirectory(dir=raw_dir(), prefix=SCRATCH) as tmp:
         con = duckdb.connect(str(Path(tmp) / "set.duckdb"))
         try:
-            _load(con, zip_path, Path(tmp))
+            _load(con, zip_path, Path(tmp), name, ctx.notes)
             newest = con.execute(f"SELECT max({_day('FILING_DATE')}) FROM z_submission").fetchone()[0]
             later = [d for d in todo if newest is None or d > newest]
             if later:
@@ -297,7 +327,7 @@ def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str,
             if not todo:
                 return 0
             _typed(con, name, todo[0], todo[-1], schema["forms"], schema["dollars_from"],
-                   fetched_at or zip_path.stat().st_mtime, ctx.run_id)
+                   fetched_at or zip_path.stat().st_mtime, ctx.run_id, schema.get("cusip_none", ()))
             filed = {r[0] for r in con.execute("SELECT DISTINCT filed FROM filings").fetchall()}
             cols_f = ", ".join(f'"{c}"' for c, _ in schema["filings"])
             cols_h = ", ".join(f'"{c}"' for c, _ in schema["holdings"])

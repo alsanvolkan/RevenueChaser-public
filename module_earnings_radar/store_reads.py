@@ -21,6 +21,7 @@ that table was empty or stale (``stored_inputs.dgs10_map`` and ``macro_watch.fre
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 import logging
 from datetime import date, timedelta
 
@@ -35,7 +36,56 @@ ESTIMATES_SOURCE = "rcdata:estimate_latest"
 # Sessions an observation may lag the board's day by before it is not read. The limit the old stored reader had
 # (``stored_inputs.MAX_LAG["macro_series"]``): FRED posts a day late, so a normal night reads 1 or 2, and 3 covers one
 # missed night. Past that the series would silently pair fewer and fewer recent dates, so it is "not stored" instead.
-MAX_LAG = {"dgs10": 3}
+# The catalog is the single owner of this number (avo, 29 Oct 2026). ``MAX_LAG`` stays readable as a mapping for the
+# callers that have always used it; both it and the hash answer from ``macro.dgs10``.
+_NEED_OF_LAG = {"dgs10": "macro.dgs10"}
+
+
+def max_lag() -> dict[str, int]:
+    """``{input: sessions it may lag by}``, read from the need catalog on every call."""
+    from RevenueChaser.rcdata import api
+    return {key: api.catalog.NEEDS[need].max_lag for key, need in _NEED_OF_LAG.items()}
+
+
+class _FromCatalog(Mapping):
+    """A mapping that answers from the catalog rather than from the copy it was built with.
+
+    A ``Mapping`` and not a ``dict`` subclass (the review's m3): seeding a dict subclass at import made ``.copy()``
+    and ``json.dumps`` answer with the import-time snapshot while ``[]`` answered with the live number - two
+    answers from one map, which is the drift this whole arrangement exists to prevent.
+    """
+
+    def __init__(self, source):
+        self._source = source
+
+    def __getitem__(self, key):
+        return self._source()[key]
+
+    def get(self, key, default=None):
+        return self._source().get(key, default)
+
+    def __iter__(self):
+        return iter(self._source())
+
+    def __len__(self):
+        return len(self._source())
+
+    def copy(self) -> dict:
+        return dict(self._source())
+
+    def __repr__(self):
+        return repr(self._source())
+
+    def __eq__(self, other):
+        return self._source() == other
+
+    __hash__ = None
+
+    def __setitem__(self, key, value):
+        raise TypeError(f"{key!r} belongs to the need catalog (avo, 29 Oct 2026): set it there, not here")
+
+
+MAX_LAG = _FromCatalog(max_lag)
 # The newest observations the board pairs (R6): the window the old reader asked for.
 DGS10_LIMIT = 80
 # Calendar days read back to find ``DGS10_LIMIT`` observations: 80 sessions is about 16 weeks, doubled for holidays
@@ -49,7 +99,22 @@ ESTIMATES_DATASET = "yfinance/estimates"
 # and 14 covers one missed weekly run. Past that the build has stopped renewing it: R1 would score an old EPS trend
 # without a word, so the row is "not stored" instead. The nightly table the board read before allowed 5 sessions, but it
 # was asked every night. Default chosen in the PR 285 review; change it if avo prefers.
-MAX_AGE_DAYS = {"estimates": 14}
+_NEED_OF_AGE = {"estimates": "fundamentals.estimates"}
+
+
+def max_age_days() -> dict[str, int]:
+    """``{input: calendar days it may be old}``, read from the need catalog on every call."""
+    from RevenueChaser.rcdata import api
+    out = {}
+    for key, name in _NEED_OF_AGE.items():
+        need = api.catalog.NEEDS[name]
+        if need.max_lag_unit != "days":
+            raise ValueError(f"{name}: this reader counts calendar days, the catalog says {need.max_lag_unit}")
+        out[key] = need.max_lag
+    return out
+
+
+MAX_AGE_DAYS = _FromCatalog(max_age_days)
 
 
 def _day(value) -> date | None:

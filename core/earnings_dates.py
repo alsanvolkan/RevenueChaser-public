@@ -7,8 +7,18 @@ Yahoo has a date for, so a name the store has no date for keeps Yahoo's value: a
 week filter. The overlay only changes the row a score reads, never the stored universe row.
 
 Since G6 the first source is ``options.duckdb``'s ``option_screener_daily`` (``uw/option_screener``, G8): the same UW
-calendar endpoints, every name reporting in the 28 days after its session. Its newest session is read when it is no
-older than ``MAX_AGE_DAYS``; otherwise (no file yet, a stale or future session, a failed read) the D26 store is read.
+calendar endpoints, every name reporting in the 28 days after its session.
+
+Since the internal data API (step B) the two sources are **one ordered union**, not a choice. The layer is asked
+through ``api.get("earnings.next")``; the stored D26 calendar then fills in every name the layer does not hold, and
+Yahoo's own value stays for whatever neither holds. Before this, a fresh layer session returned early and a name
+only the D26 sweep had a date for silently lost it, although the two sources cover different names.
+
+Freshness is the catalog's and only the catalog's (avo, 29 Oct 2026): ``earnings.next``'s ``max_lag``, with the unit
+it is counted in. avo set it to **one session** the same day, which settles the contradiction this module carried —
+``MAX_AGE_DAYS`` said four calendar days while ``stored_inputs.MAX_LAG`` said one session for the same calendar —
+in favour of the stricter one. A session older than that, or later than ``today``, is not read, so a stale sweep
+never outranks Yahoo.
 """
 from __future__ import annotations
 
@@ -19,45 +29,91 @@ from RevenueChaser.core import calendar, rawstore
 
 logger = logging.getLogger(__name__)
 
-# A stored calendar older than this (calendar days) is not read: a stale sweep must not outrank Yahoo.
+#: The need the layer's calendar is asked for; its ``max_lag`` is the one freshness constant.
+NEED = "earnings.next"
+# The D26 sweep's own window, in calendar days. Not the layer's: that one is the catalog's and nothing else's.
 MAX_AGE_DAYS = 4
 
 
+def next_dates_answer(today: date | None = None):
+    """The ``earnings.next`` answer, with the stored D26 calendar counted in ``coverage["from_fallback"]``.
+
+    ``rows`` are the layer's screener rows as the store holds them. The merged ``{ticker: date}`` map a card wants is
+    ``stored_next_dates``; this is the same read with the envelope kept, for the cards that want to show how fresh
+    the calendar is and how much of it came from the older sweep.
+    """
+    import dataclasses
+
+    from RevenueChaser.rcdata import api
+
+    today = today or calendar.today_ny()
+    need = api.catalog.NEEDS[NEED]
+    try:
+        ans = api.get(NEED)
+    except Exception as exc:  # noqa: BLE001 - the D26 store is the fallback, as before the API
+        logger.warning("the options layer's earnings calendar could not be read (%s); the stored D26 calendar is "
+                       "read", exc)
+        ans = api.Answer(need=NEED, rows=[], state="missing", status="unreadable",
+                         freshness={"as_of_session": None, "lag_sessions": None,
+                                    "max_lag": need.max_lag, "unit": need.max_lag_unit},
+                         coverage={"asked": 0, "served": 0, "missing": [], "from_fallback": 0}, provenance=[])
+    layer = _layer_dates(ans, today, need)
+    stored = _d26_dates(today)
+    extra = sorted(set(stored) - set(layer))
+    coverage = {**ans.coverage, "from_fallback": len(extra)}
+    return dataclasses.replace(ans, coverage=coverage)
+
+
 def stored_next_dates(today: date | None = None) -> dict[str, date]:
-    """``{ticker: next earnings date on or after today}`` from the newest stored calendar session, ``{}`` when the store
-    has none, a stale one, or cannot be read."""
+    """``{ticker: next earnings date on or after today}``: the layer's calendar, then the stored D26 one for the names
+    the layer does not hold. ``{}`` when neither source answers; never an error."""
     today = today or calendar.today_ny()      # the New York date: after midnight in Amsterdam it is still yesterday there
-    layer = _layer_next_dates(today)
-    if layer is not None:
-        return layer
+    from RevenueChaser.rcdata import api
+
+    need = api.catalog.NEEDS[NEED]
+    try:
+        ans = api.get(NEED)
+        layer = _layer_dates(ans, today, need)
+    except Exception as exc:  # noqa: BLE001 - the D26 store is the fallback, as before the API
+        logger.warning("the options layer's earnings calendar could not be read (%s); the stored D26 calendar is "
+                       "read", exc)
+        layer = {}
+    # The stored sweep fills the names the layer does not hold; a name both name keeps the layer's date.
+    return {**_d26_dates(today), **layer}
+
+
+def _layer_dates(ans, today: date, need) -> dict[str, date]:
+    """``{ticker: coming report date}`` from the layer's answer, or ``{}`` when its session is too old or not yet
+    reached. A session later than ``today`` is a calendar from a run that has not happened for this day yet."""
+    session = ans.freshness["as_of_session"]
+    if session is None or session > today:
+        return {}
+    from RevenueChaser.rcdata import api
+
+    # The lag is counted against the day the API counts it against, not against ``today``: on a trading day whose
+    # session is not over yet those differ by one, and the card and the filter would disagree (review I1).
+    if api.lag_in(need.max_lag_unit, session, max(api.reference_session(), session)) > need.max_lag:
+        return {}
+    # One row per session and ticker (the table's key), so a name has one report date in the session.
+    return {str(r["ticker"]).strip().upper(): r["report_date"] for r in ans.rows
+            if r.get("session_date") == session and r.get("ticker") and r.get("report_date")
+            and r["report_date"] >= today}
+
+
+def _d26_dates(today: date) -> dict[str, date]:
+    """``{ticker: next earnings date}`` from the newest stored D26 session, ``{}`` when the store has none, a stale
+    one, or cannot be read. Its writer is the dashboard, not the builder, so it is not a need of its own yet."""
     try:
         rows = rawstore.query(
             "SELECT ticker, min(earnings_date) AS d FROM earnings_calendar "
             "WHERE session_date = (SELECT max(session_date) FROM earnings_calendar "
             "WHERE session_date <= ? AND session_date >= ?) AND earnings_date >= ? GROUP BY ticker",
             [today, today - timedelta(days=MAX_AGE_DAYS), today], db="raw")
-    except Exception as exc:  # noqa: BLE001 - a missing table or an unreadable store leaves Yahoo's value in place
-        logger.warning("stored earnings dates could not be read (%s); the cards keep Yahoo's dates", exc)
+    except Exception as exc:  # noqa: BLE001 - a missing table or an unreadable store leaves the layer's dates
+        logger.warning("stored earnings dates could not be read (%s); the cards keep what the layer and Yahoo have",
+                       exc)
         return {}
     return {str(r["ticker"]).strip().upper(): r["d"] for r in rows if r.get("ticker") and r.get("d")}
-
-
-def _layer_next_dates(today: date) -> dict[str, date] | None:
-    """``{ticker: coming report date, on or after today}`` from the options layer's newest screener session, ``None``
-    when that session is missing, older than ``MAX_AGE_DAYS`` or after ``today``, or the file cannot be read."""
-    try:
-        from RevenueChaser.rcdata import read
-        rows = read.option_screener()
-    except Exception as exc:  # noqa: BLE001 - the D26 store is the fallback, as before G6
-        logger.warning("the options layer's earnings calendar could not be read (%s); the stored D26 calendar is "
-                       "read", exc)
-        return None
-    session = max((r["session_date"] for r in rows if r.get("session_date")), default=None)
-    if session is None or not today - timedelta(days=MAX_AGE_DAYS) <= session <= today:
-        return None
-    # One row per session and ticker (the table's key), so a name has one report date in the session.
-    return {str(r["ticker"]).strip().upper(): r["report_date"] for r in rows
-            if r.get("ticker") and r.get("report_date") and r["report_date"] >= today}
 
 
 def epoch(day: date) -> float:

@@ -31,10 +31,12 @@ def test_the_section_renders_above_the_old_inventory():
 
 def test_one_card_per_dataset_in_the_order_given_with_its_checks_inside():
     sec = _section(_page())
-    cards = re.findall(r'<div class="nd-card nd-dataset" data-dataset="([^"]+)"', sec)
+    # Since the review's M1 a dataset row is a <details>, born closed unless it is the group's worst.
+    cards = re.findall(r'<details class="nd-card nd-dataset" data-dataset="([^"]+)"', sec)
     assert cards == ["market_series", "uw/spot_expiry_strike"]
     first = sec[sec.index('data-dataset="market_series"'):sec.index('data-dataset="uw/spot_expiry_strike"')]
-    assert "Checks (2)" in first and "fetch_failed" in first and "no WRDS run yet" in first
+    # The fixture's WRDS slot has not run, so the cell is a dash and says so (the review's S8).
+    assert "Checks (2)" in first and "fetch_failed" in first and "not produced yet" in first
     assert "3 of 9 partitions" in first and 'class="nd-bar"' in first
 
 

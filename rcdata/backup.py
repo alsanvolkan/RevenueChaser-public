@@ -236,11 +236,71 @@ def run_backup() -> dict:
     return summary
 
 
+def _queue_is_idle() -> tuple[bool, str]:
+    """``(idle, what is running)``: the builder is the serving files' writer, so nothing of its may be in flight."""
+    from . import ops
+    try:
+        active = ops.queue_view(finished=0).get("active") or []
+    except Exception as exc:                                  # noqa: BLE001 - no queue file yet is idle
+        return True, f"the queue could not be read ({type(exc).__name__}), taken as idle"
+    if not active:
+        return True, "nothing queued or running"
+    names = ", ".join(sorted({str(r.get("dataset")) for r in active}))
+    return False, f"{len(active)} request(s) queued or running: {names}"
+
+
+def _create_empty_stores(*, apply: bool) -> int:
+    """``create-empty-stores``: a write to the live store, so it carries the three protections CLAUDE.md asks for.
+
+    The backup is the same verified one ``backup`` runs, the queue must be idle (the builder owns these files), and
+    every created file is printed with the command that undoes it. Without ``--apply`` nothing is written and the
+    missing kinds are only listed - the review's I3, which found the comment promising all three above a call that
+    did none of them.
+    """
+    from . import scaffold, serving
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    missing = [k for k in sorted(serving.KINDS) if not serving.live_path(k).exists()]
+    for kind in sorted(serving.KINDS):
+        print(f"{kind}: {'missing' if kind in missing else 'already built, left alone'}", flush=True)
+    if not missing:
+        print("nothing to create: every kind already has a serving file", flush=True)
+        return 0
+    if not apply:
+        print(f"would create {len(missing)} file(s): {', '.join(missing)}", flush=True)
+        print("nothing was written. Run it again with --apply to create them.", flush=True)
+        return 0
+    idle, what = _queue_is_idle()
+    if not idle:
+        print(f"refused: the build queue is not idle ({what}). The builder writes these files; "
+              f"wait for it to finish, or pause the datasets, then run this again.", flush=True)
+        return 2
+    try:
+        summary = run_backup()
+    except (BackupRefused, BackupFailed) as exc:
+        print(f"refused: the verified backup did not complete ({exc}). Nothing was created.", flush=True)
+        return 2
+    print(f"backup taken: {summary}", flush=True)
+    made = scaffold.create_missing()
+    for kind in sorted(made):
+        print(f"{kind}: created {made[kind]}", flush=True)
+    paths = " ".join(f'"{made[k]}"' for k in sorted(made))
+    print(f"rollback: these files hold no rows, so removing them undoes this step: rm {paths}", flush=True)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m RevenueChaser.rcdata")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("backup", help="verified copies of ops.sqlite and the serving files, then the raw copy")
-    p.parse_args(argv)
+    empty = sub.add_parser("create-empty-stores",
+                           help="create a serving file with its tables and no rows for every kind that has none; "
+                                "an existing file is never touched. Says what it would do unless --apply is given")
+    empty.add_argument("--apply", action="store_true",
+                       help="actually create the files (the default only reports what is missing)")
+    args = p.parse_args(argv)
+    if args.cmd == "create-empty-stores":
+        return _create_empty_stores(apply=args.apply)
     if not logging.getLogger().handlers:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     try:

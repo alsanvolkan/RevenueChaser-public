@@ -109,10 +109,17 @@ def test_each_read_is_counted_in_the_read_log(built):
 
 
 def test_the_cards_earnings_dates_come_from_the_built_screener_calendar(built, monkeypatch):
-    """G6 earnings-week filter: ``core.earnings_dates`` reads this file's calendar before the stored D26 one."""
+    """G6 earnings-week filter: ``core.earnings_dates`` reads this file's calendar, and since the internal data API
+    the stored D26 calendar is read **as well** and fills the names this file does not hold (step B). Here it holds
+    none, so the layer's date is the whole answer."""
     from RevenueChaser.core import earnings_dates
-
-    def raw_never(*a, **k):
-        raise AssertionError("the stored D26 calendar is read only when the layer has no fresh session")
-    monkeypatch.setattr(earnings_dates.rawstore, "query", raw_never)
+    monkeypatch.setattr(earnings_dates.rawstore, "query", lambda *a, **k: [])
     assert earnings_dates.stored_next_dates(SESSION) == {"GOOD": NEXT}
+
+
+def test_a_name_only_the_stored_d26_calendar_holds_is_not_dropped(built, monkeypatch):
+    """The short-circuit step B closes: a fresh layer session used to replace the stored calendar outright."""
+    from RevenueChaser.core import earnings_dates
+    monkeypatch.setattr(earnings_dates.rawstore, "query",
+                        lambda *a, **k: [{"ticker": "OTHER", "d": NEXT}])
+    assert earnings_dates.stored_next_dates(SESSION) == {"GOOD": NEXT, "OTHER": NEXT}

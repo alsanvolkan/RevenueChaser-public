@@ -22,81 +22,117 @@ import os
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from collections.abc import Mapping
+
 from RevenueChaser.core import calendar, config
 from RevenueChaser.rcdata import caps, ops, retention, serving
+from RevenueChaser.rcdata.api import screen as api_screen
 
-LABELS = {"uw/spot_expiry_strike": "SPX expiry-strike (Unusual Whales)", "market_series": "Market series",
-          "sec/company_tickers_exchange": "SEC ticker and exchange file",
-          "wrds/sec_idhist": "Compustat securities and identifier history (WRDS)",
-          "wrds/co_hgic": "Compustat GICS history (WRDS)",
-          "wrds/idxcst_his": "Compustat index constituents (WRDS, the membership check)",
-          "openfigi/map": "OpenFIGI map of the CUSIPs", "funds/index_holdings": "Index membership (ETF holdings files)",
-          "spine/security": "Identity spine (security, tiers, history)"}
+
+class _FromScreen(Mapping):
+    """A map the screen reads from ``rcdata.api.screen`` and never writes.
+
+    Every read goes back to the one source, so a card changed there is what the screen shows without a second edit,
+    and setting a key raises: that is the point. It is a ``Mapping`` and **not** a ``dict`` subclass (the review's
+    m2): a subclass with empty storage answers ``[]``, ``get`` and ``{**x}`` correctly while ``.copy()`` returns
+    ``{}`` and ``json.dumps`` writes ``{}`` - a label map that silently serialises as empty.
+    """
+
+    def __init__(self, source, what: str):
+        self._source, self._what = source, what
+
+    def _now(self) -> dict:
+        return self._source()
+
+    def __getitem__(self, key):
+        return self._now()[key]
+
+    def get(self, key, default=None):
+        return self._now().get(key, default)
+
+    def __contains__(self, key):
+        return key in self._now()
+
+    def __iter__(self):
+        return iter(self._now())
+
+    def __len__(self):
+        return len(self._now())
+
+    def keys(self):
+        return self._now().keys()
+
+    def values(self):
+        return self._now().values()
+
+    def items(self):
+        return self._now().items()
+
+    def __eq__(self, other):
+        return self._now() == other
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    __hash__ = None
+
+    def __repr__(self):
+        return repr(self._now())
+
+    def copy(self) -> dict:
+        """A plain dict of what the source says now, so a copy is never the empty storage of a dict subclass."""
+        return dict(self._now())
+
+    def __setitem__(self, key, value):
+        raise TypeError(f"{key!r}: {self._what} lives in rcdata/api/screen.py (avo, 29 Oct 2026); set it there")
+
+    def update(self, *args, **kwargs):
+        raise TypeError(f"{self._what} lives in rcdata/api/screen.py (avo, 29 Oct 2026); set it there")
+
+
+def _card_label(dataset: str) -> str:
+    """The dataset's label as the screen shows it, or the dataset's own name when it has no card."""
+    return api_screen.labels().get(dataset, dataset)
+
+
+# The screen carries no list of its own: labels, cadence, coverage targets, the newest-date column, the status
+# order and the retirement list all come from ``rcdata/api/screen.py``, beside the need catalog (avo's plan, 29 Oct
+# 2026). A need or a dataset added there needs no second edit here, and a write to one of these maps is refused so
+# that a second copy cannot creep back in.
+LABELS = _FromScreen(api_screen.labels, "a dataset's label")
+CADENCE = _FromScreen(api_screen.cadences, "a dataset's cadence")
+COVERAGE_TARGET = _FromScreen(api_screen.coverage_targets, "a dataset's coverage target")
+DATE_COLUMN = _FromScreen(api_screen.written_columns, "a table's newest-date column")
+RETIRING = _FromScreen(lambda: api_screen.RETIRING, "the retirement list")
+CYCLE_DAYS = api_screen.CYCLE_DAYS
+RETIREMENT_DAYS = api_screen.RETIREMENT_DAYS
+STATUS_ORDER = api_screen.STATUS_ORDER
 # The ownership store (PR 16).
-LABELS.update({"finra/short_interest": "Short interest (FINRA)", "regsho/threshold": "Reg SHO threshold lists",
-               "ibkr/shortable": "Borrow fee and shares available (IBKR file)", "sec/ftd": "Fails to deliver (SEC)",
-               "sec/13f": "13F holdings (SEC data sets, then forms)", "sec/form4": "Insider transactions (Form 4)",
-               "sec/13dg": "5% owners (Schedules 13D and 13G)", "ownership/serve": "13F totals per ticker and quarter"})
 # The fundamentals layer (PR 12).
-LABELS.update({
-    "sec/companyfacts": "SEC company facts (re-read on the filing day)",
-    "sec/filings": "SEC filing lists, 8-K items and report texts",
-    "alphavantage/earnings_calendar": "Earnings calendar (Alpha Vantage)",
-    "uw/financials": "Preliminary quarters (Unusual Whales, off by default)",
-    "yfinance/estimates": "Analyst estimates (yfinance)",
-    "sec/fsds": "SEC Financial Statement Data Sets (the check)",
-    "wrds/fundq": "Compustat quarterly fundamentals (WRDS, the revision check)",
-    "wrds/funda": "Compustat annual fundamentals (WRDS, the revision check)",
-    "wrds/firm_ratio": "WRDS financial ratios (the debt check)",
-    "wrds/segments": "Compustat segments and customers (WRDS)",
-    "fundamentals/tables": "Fundamentals (served tables, peers, build issues)"})
 # Default cadence per dataset (the dataset's own ``cadence`` when it has one); a ``dataset_schedule.cadence`` of
 # daily / weekly / monthly overrides it.
-CADENCE = {"uw/spot_expiry_strike": "daily", "market_series": "daily"}
-CYCLE_DAYS = {"weekly": 8, "monthly": 35}
 # Coverage targets: alarm limits as proposed, to be re-checked after two weeks of real data (decision 1, 27 Oct).
 # spine/security's coverage is the share of Tier A with a CUSIP (the plan's target, >= 98%).
-COVERAGE_TARGET: dict[str, float | None] = {"uw/spot_expiry_strike": 0.95, "market_series": None,
-                                            "spine/security": 0.98}
 # The newest-date column of each serving table.
-DATE_COLUMN = {"spx_gamma_expiry_strike": "session_date", "market_series": "obs_date", "security": "source_as_of",
-               "security_history": "valid_from", "gics_history": "valid_from", "index_membership": "valid_from"}
-DATE_COLUMN.update({"finra_short_interest": "settlement_date", "regsho_threshold": "list_date",
-                    "ibkr_shortable": "session_date", "sec_ftd": "settlement_date", "sec13f_filings": "filed",
-                    "insider_transactions": "filed", "beneficial_ownership": "filed", "sec13f_cusip_map": "period",
-                    "sec13f_filer_period": "period", "sec13f_ticker_period": "period", "sec13f_periods": "period"})
-DATE_COLUMN.update({"fundamental_company": "facts_as_of", "fundamental_fact": "filed", "filing_item": "filing_date",
-                    "earnings_event": "source_as_of", "fundamental_revision": "new_as_of",
-                    "segment_revenue": "document_date", "customer_share": "document_date",
-                    "estimate_latest": "source_as_of"})
 # The identity funnel (PR 5, D9): the indexes it counts, and the dataset whose build issues it lists.
 SPINE_INDEXES = ("sp500", "sp400", "sp600", "ndx")
 SPINE_ISSUES = "spine/security"
 # The WRDS difference slot (decision 3): these check datasets' cards show their newest monthly difference report,
 # the note of their newest run that read WRDS (PR 12, decided 27 Oct); every other card says no WRDS run yet.
 WRDS_DIFFERENCE = ("wrds/fundq", "wrds/funda", "wrds/firm_ratio", "wrds/segments")
-NO_WRDS = {"text": "no WRDS run yet"}
+# S8: a report that has not run shows a dash and says so, rather than a sentence that reads like a result.
+NO_WRDS = {"text": "no WRDS run yet", "produced": False}
 # Old .store tables a new dataset replaces: their reads in read_log are the retirement count (read for 14 days).
-RETIRING = {"macro_series": "market_series", "vol_index_daily": "market_series", "cftc_cot": "market_series",
-            "economic_calendar": "market_series", "estimate_snapshots": "estimate_latest"}
-RETIREMENT_DAYS = 14
 BACKUP_WARN_DAYS = 35
 PORTABLE_DATASET = "backup/portable"
 # The raw-option retention: on as a warning until one of these says how many days raw option files are kept
 # (``rcdata/retention.py``, the rule the builder's retention hook reads too).
 RETENTION_ENV = retention.ENV
 RETENTION_ROW = retention.ROW             # a dataset_schedule row whose cadence holds the days
-STATUS_ORDER = ("stale", "never", "late", "unchanged", "fresh")
 
 # The options data (G8), in a block of its own. Coverage: the share of the names a run set out to fetch that it has
 # (the list names; the earnings set and the screener batches of the evening). The IBKR year has no target: a name
 # just added to the list is uncovered until the next run, which is not a late dataset.
-LABELS.update({"uw/option_list": "Options of SPX and the option list (Unusual Whales)",
-               "uw/option_screener": "Earnings options: calendar, screener and earnings set (Unusual Whales)",
-               "ibkr/iv_history": "One year of 30-day implied volatility per list name (IBKR)"})
-COVERAGE_TARGET.update({"uw/option_list": 0.95, "uw/option_screener": 0.95, "ibkr/iv_history": None})
-DATE_COLUMN.update({t: "session_date" for t in ("option_eod", "option_strike", "option_expiry", "option_daily",
-                                                "option_print", "iv_daily", "option_screener_daily", "er_options")})
 
 
 def _datasets() -> dict:
@@ -193,7 +229,8 @@ def _wrds_difference(dataset: str) -> dict:
         return dict(NO_WRDS)                     # a copy: a caller that edits its card must not edit the constant
     report = next((c for c in ops.recent_checks(dataset, limit=24)
                    if c["result"] in ("changed", "unchanged") and c.get("note")), None)
-    return {"text": report["note"], "as_of": report.get("source_as_of")} if report else dict(NO_WRDS)
+    return ({"text": report["note"], "as_of": report.get("source_as_of"), "produced": True} if report
+            else dict(NO_WRDS))
 
 
 def _held(dataset: str, ds) -> str | None:
@@ -276,16 +313,7 @@ BACKFILL = {"uw/spot_expiry_strike": _backfill_sessions, "market_series": _backf
 
 # ── The prices store (PR 7, G2) ───────────────────────────────────────────────────────────────────────────────
 
-LABELS.update({"alpaca/bars": "Daily bars (Alpaca)", "alpaca/corporate_actions": "Corporate actions (Alpaca)",
-               "sec/cover_shares": "Shares per class (SEC filing covers)", "yfinance/float": "Float (Yahoo)",
-               "uw/total_float": "Float check (Unusual Whales)",
-               "wrds/prices": "Price history and actions (WRDS: Compustat, CRSP)",
-               "prices/serving": "Prices store (bars, actions, factors, shares, market cap)"})
 # The plan's acceptance: Tier A sessions complete >= 99% (sized against the real Tier A, 5,655 names on 28 Oct).
-COVERAGE_TARGET.update({"alpaca/bars": 0.99})
-DATE_COLUMN.update({"price_bar_daily": "session_date", "corporate_action": "ex_date", "adj_factor": "valid_to",
-                    "shares_class": "as_of", "security_symbol": "valid_from", "market_cap_daily": "session_date",
-                    "price_revision": "session_date", "wrds_price_diff": "as_of"})
 # An attended dataset's own command, where it is not its kind's (``attended_command``).
 ATTENDED_COMMANDS = {"wrds/prices": "python -m RevenueChaser.rcdata.build backfill wrds/prices"}
 # The rows of the WRDS difference report (``wrds_price_diff``), as the card words them.
@@ -327,7 +355,7 @@ def _wrds_slot(dataset: str, facts: dict) -> dict:
     report = (facts.get("wrds_price_diff") or {}).get("report") if dataset == "wrds/prices" else None
     as_of = max((r["as_of"] for r in report or [] if r.get("as_of")), default=None)
     if not report or as_of is None:
-        return {"text": "no WRDS run yet"}
+        return dict(NO_WRDS)                     # a copy, as above: a card's slot is the card's own
     parts = []
     for r in sorted(report, key=lambda r: list(WRDS_REPORT_LABELS).index(r["comparison"])
                     if r["comparison"] in WRDS_REPORT_LABELS else 99):
@@ -340,14 +368,105 @@ def _wrds_slot(dataset: str, facts: dict) -> dict:
             continue
         parts.append(f"{label}: {r['sessions']:,} sessions, {differs or 0:,} over 1 bp"
                      + (f" (max {worst:.3%})" if differs and worst is not None else ""))
-    return {"text": f"as of {as_of}: " + "; ".join(parts), "rows": report}
+    return {"text": f"as of {as_of}: " + "; ".join(parts), "rows": report, "produced": True}
 
 
 # ── The serving file: one read-only handle per call ───────────────────────────────────────────────────────────
 
-def _serving_facts() -> tuple[dict[str, dict], dict[str, str | None], dict | None]:
-    """``({table: {rows, newest}}, {kind: last swap}, the spine's funnel counts or None)``, from one ``open_read`` per
-    kind, closed before return."""
+#: How many example rows a card shows (A16). Five: enough to see what a row looks like, few enough to read on a
+#: phone and to cost nothing to fetch.
+SAMPLE_ROWS = 5
+#: The cases in the data that look like a bug and are not (K13). One line each, shown beside that table's rows.
+SAMPLE_NOTES: dict[str, tuple[str, ...]] = {
+    "security_symbol": ("HEI and HEI-A are two share classes of one issuer: the symbol is not the key, the "
+                        "security is, and only one class carries the index membership.",),
+    "security": ("An OTC name can have no CUSIP at all, so it has no row here and is not missing data.",),
+    "price_bar_daily": ("A bar after a split is the adjusted price: the factor comes from adj_factor, not from "
+                        "the bar.",
+                        "A session with no bar for a name is a halt or a name not yet listed, not a gap in the "
+                        "fetch."),
+    "index_membership": ("A second share class does not inherit the first class's membership.",),
+    "adj_factor": ("A factor's day is the day it stops applying (valid_to), which is why the card dates it on "
+                   "that column.",),
+    "fundamental_fact": ("A fact's own day is the period it covers; the card dates the table by when it was "
+                         "filed, which is a different column on purpose.",),
+    "wrds_price_diff": ("A check that answers \"failed\" ran and could not compare, which is not the same as a "
+                        "check that found a difference.",),
+}
+_SAMPLE_CACHE: dict[str, tuple[str, dict | None]] = {}
+
+
+def clear_sample_cache() -> None:
+    _SAMPLE_CACHE.clear()
+
+
+def _sample_hour(now: datetime) -> str:
+    """The cache key: the hour the page was read. A sample is a picture of the store, not a live number."""
+    return now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H")
+
+
+def _sample_key(table: str, now: datetime) -> str:
+    """The cache key: the table, the hour, and the serving file it was read from with its last write.
+
+    The file belongs in the key for two reasons. A swap mid-hour replaces the rows, and a sample from before it is
+    then wrong rather than merely old. And the store root moves between runs (every test gets its own), so a key of
+    table and hour alone serves one test's rows to the next.
+    """
+    from RevenueChaser.rcdata import read
+    kind = read.KIND_OF_TABLE.get(table)
+    path = serving.live_path(kind) if kind is not None else None
+    try:
+        stamp = path.stat().st_mtime_ns if path is not None else None
+    except OSError:
+        stamp = None                           # not built yet: that is a key of its own
+    return f"{table}|{_sample_hour(now)}|{path}|{stamp}"
+
+
+def _cached_sample(table: str, now: datetime, read):
+    """``read(table)`` at most once an hour per table and serving file (A16's hourly cache)."""
+    key = _sample_key(table, now)
+    hit = _SAMPLE_CACHE.get(table)
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    value = read(table)
+    _SAMPLE_CACHE[table] = (key, value)
+    return value
+
+
+def _read_sample(con, table: str, day_column: str | None) -> dict:
+    """The newest ``SAMPLE_ROWS`` rows of one table, through the read-only connection already open.
+
+    One SELECT and nothing else: this runs on a page render, against the live store, and must not write.
+    """
+    order = f' ORDER BY "{day_column}" DESC' if day_column else ""
+    cur = con.execute(f'SELECT * FROM "{table}"{order} LIMIT {SAMPLE_ROWS}')
+    columns = [{"name": d[0], "type": str(d[1])} for d in cur.description]
+    rows = [[v.isoformat() if isinstance(v, (date, datetime)) else v for v in r] for r in cur.fetchall()]
+    return {"columns": columns, "rows": rows}
+
+
+def _sample_block(table: str, sample: dict | None) -> dict:
+    """One card's example block. Without a sample the kind's file has never been built, so the declared schema
+    stands in for the rows: "never built" and "built and empty" must not read the same (``rcdata/scaffold.py``)."""
+    from RevenueChaser.rcdata import scaffold
+    from RevenueChaser.rcdata import read
+    out = {"table": table, "dataset": read.DATASET_OF_TABLE.get(table), "notes": SAMPLE_NOTES.get(table, ())}
+    if sample is not None:
+        return {**out, "built": True, "columns": sample["columns"], "rows": sample["rows"]}
+    declared = next((cols for kind in scaffold.SCHEMA_OF_KIND
+                     for name, cols in scaffold.SCHEMA_OF_KIND[kind].items() if name == table), [])
+    return {**out, "built": False, "rows": [],
+            "columns": [{"name": name, "type": str(kind)} for name, kind in declared]}
+
+
+def _serving_facts(now: datetime | None = None) -> tuple[dict[str, dict], dict[str, str | None], dict | None]:
+    """``({table: {rows, newest, sample}}, {kind: last swap}, the spine's funnel counts or None)``, from one
+    ``open_read`` per kind, closed before return.
+
+    ``sample`` is the table's newest five rows (A16), read through this same connection and cached by the hour, so
+    a page render costs one read per table per hour rather than one per render. Without ``now`` no sample is read
+    at all, which is what a caller that only wants the counts asks for.
+    """
     tables: dict[str, dict] = {}
     swaps: dict[str, str | None] = {}
     funnel: dict | None = None
@@ -367,6 +486,9 @@ def _serving_facts() -> tuple[dict[str, dict], dict[str, str | None], dict | Non
                     continue
                 rows, newest = con.execute(f'SELECT count(*), max("{col}") FROM "{table}"').fetchone()
                 tables[table] = {"rows": int(rows), "newest": newest.isoformat() if newest else None}
+                if now is not None:
+                    tables[table]["sample"] = _cached_sample(
+                        table, now, lambda name, c=con, column=col: _read_sample(c, name, column))
             if kind == "spine" and {"security", "index_membership"} <= names:
                 funnel = _spine_counts(con)
             if kind == "prices" and "wrds_price_diff" in names:
@@ -538,7 +660,111 @@ def _retirement(now: datetime) -> list[dict]:
 
 # ── The section ───────────────────────────────────────────────────────────────────────────────────────────────
 
-def _card(dataset: str, ds, facts: dict, now: datetime) -> dict:
+def _cost(dataset: str, backfill_view: dict | None, used_today: dict[str, int] | None = None) -> dict:
+    """What one run of this dataset costs, for the line beside its buttons (M3, A22).
+
+    The call estimate is the backfill view's own ``calls_per_partition`` where it has one, and the provider is the
+    first part of the dataset's name (``uw/option_list`` is UW's; ``market_series`` has no provider of its own,
+    because several answer it). ``remaining`` is the day cap less what the provider has already sent today, and is
+    None for a provider with no cap.
+
+    The day's calls are handed in, from the spend section this collect has already read, rather than read again
+    here: ``caps.at_cap`` would open ops.sqlite, and a page render must never create or migrate it
+    (``test_the_collect_never_creates_ops_sqlite_or_a_serving_file``).
+    """
+    provider = dataset.split("/")[0] if "/" in dataset else None
+    cap = caps.cap_for(provider) if provider else None
+    used = (used_today or {}).get(provider, 0) if provider else 0
+    return {"provider": provider, "calls_per_partition": (backfill_view or {}).get("calls_per_partition"),
+            "remaining": None if cap is None else max(0, cap - used), "cap": cap}
+
+
+# ── The cross-check table (A17-B, Karar 32-B) ────────────────────────────────────────────────────────────────
+
+#: The one comparison of the WRDS report the prices row shows: our closes against CRSP's, which is the field's
+#: second source. The other rows of that report are on the WRDS card itself.
+CROSS_COMPARISON = "crsp_vs_alpaca"
+CROSS_SECOND_SOURCE = "WRDS (CRSP and Compustat)"
+#: Karar 32-B (avo, 29 Oct 2026): a real second source is looked for in two fields and no more.
+CROSS_FIELDS = ("prices", "interest rates")
+NO_SECOND_SOURCE = ("no second source is stored for this field yet: FRED is the only one that answers for it, so "
+                    "a cross-check would compare the series with itself")
+NO_REPORT_YET = "the monthly WRDS comparison has not run yet, so there is nothing to compare against"
+#: Why the prices check is not a button press away: its second source is WRDS, which needs a person to log in and
+#: confirm Duo, so the run is attended and the queue cannot start it (``rcdata/build``'s ``attended`` flag). avo's
+#: A17-B allows a press to ask the live source; this is the field where that cannot apply, and saying so is better
+#: than a button that queues a run nothing will pick up.
+CROSS_ATTENDED = ("this check is attended: WRDS asks for a login and Duo, so it runs from a terminal on the "
+                  "server and the queue cannot start it")
+
+
+def _diff_rows() -> list[dict]:
+    """The stored WRDS comparison, read once. Its own function so a test can stand in for the store."""
+    from RevenueChaser.rcdata import read
+    return read.price_source_diff(comparison=CROSS_COMPARISON)
+
+
+def cross_check(now: datetime, facts: dict, used_today: dict[str, int]) -> dict:
+    """The cross-check table: per field, what the second source said and what a fresh check would cost.
+
+    This reads the **stored** report and nothing else. The check itself runs only when the reader presses the
+    button, and then through the queue (``/api/build/request/<dataset>``), never by this page calling a provider:
+    that is what makes avo's choice of A17-B safe.
+    """
+    newest = next(iter(_diff_rows()), None)
+    prices = {"field": "prices", "need": "prices.wrds_diff", "second_source": CROSS_SECOND_SOURCE,
+              # Attended, so there is nothing for the button to queue; the command is shown instead.
+              "dataset": None, "attended": True, "command": ATTENDED_COMMANDS.get("wrds/prices"),
+              "calls": None, "remaining": _remaining("wrds", used_today), "as_of": None, "checked": None,
+              "differs": None, "worst": None, "why": NO_REPORT_YET, "cannot_queue": CROSS_ATTENDED}
+    if newest is not None:
+        worst = newest.get("max_close_diff")
+        prices.update({
+            "as_of": _day_text(newest.get("as_of")),
+            "checked": f'{_count(newest.get("sessions"))} sessions of {_count(newest.get("securities"))} names',
+            "differs": newest.get("close_differs"),
+            "worst": f"{worst:.3%}" if isinstance(worst, (int, float)) else None,
+            "why": None})
+    rates = {"field": "interest rates", "need": "macro.dgs10", "second_source": None, "dataset": None,
+             "attended": False, "command": None, "calls": None, "remaining": None, "as_of": None,
+             "checked": None, "differs": None, "worst": None, "why": NO_SECOND_SOURCE,
+             "cannot_queue": NO_SECOND_SOURCE}
+    return {"fields": [prices, rates]}
+
+
+def _remaining(provider: str, used_today: dict[str, int]) -> int | None:
+    cap = caps.cap_for(provider)
+    return None if cap is None else max(0, cap - (used_today or {}).get(provider, 0))
+
+
+def _count(value) -> str:
+    return "?" if value is None else f"{int(value):,}"
+
+
+def _day_text(value) -> str | None:
+    return value.isoformat() if isinstance(value, (date, datetime)) else (str(value) if value else None)
+
+
+def _measured_at(now: datetime) -> str:
+    """The clock the store was read at, for each card's "Measured" row (S6)."""
+    return now.strftime("%H:%M")
+
+
+def _silent_minutes(last_run: dict | None, now: datetime) -> int | None:
+    """How many whole minutes since the builder last *started* a run, or None when that cannot be read (M7)."""
+    started = (last_run or {}).get("started_at")
+    if not started:
+        return None
+    try:
+        when = datetime.fromisoformat(str(started))
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return max(0, int((now - when).total_seconds() // 60))
+
+
+def _card(dataset: str, ds, facts: dict, now: datetime, used_today: dict[str, int] | None = None) -> dict:
     newest = ops.recent_checks(dataset, limit=1)
     last = newest[0] if newest else None
     schedule = ops.read_schedule(dataset)
@@ -564,6 +790,10 @@ def _card(dataset: str, ds, facts: dict, now: datetime) -> dict:
                    for i in issues],
         "issues_open": n_issues,
         "backfill": backfill(now) if backfill else None,
+        "cost": _cost(dataset, backfill(now) if backfill else None, used_today),
+        "measured_at": _measured_at(now),
+        # A16: one example block per serving table this dataset writes, in the dataset's own order.
+        "samples": [_sample_block(name, (facts.get(name) or {}).get("sample")) for name in ds.tables],
         "wrds": _wrds_difference(dataset) if dataset in WRDS_DIFFERENCE else _wrds_slot(dataset, facts),
         "attended": bool(getattr(ds, "attended", False)),
         "attended_command": (ATTENDED_COMMANDS.get(dataset) or attended_command(ds.kind))
@@ -592,22 +822,27 @@ def _watchlists() -> dict:
 def collect(now: datetime | None = None) -> dict:
     """Everything the section shows, read now. ``now`` is the clock (aware; default ``calendar``'s seam)."""
     now = _now(now)
-    facts, swaps, spine_counts = _serving_facts()
-    cards = [_card(name, ds, facts, now) for name, ds in _datasets().items()]
+    facts, swaps, spine_counts = _serving_facts(now)
+    # Read once, used twice: the Spend card, and each dataset's cost line (M3).
+    spend = _spend(now)
+    used_today = {str(p["provider"]): int(p["today"] or 0) for p in spend["providers"]}
+    cards = [_card(name, ds, facts, now, used_today) for name, ds in _datasets().items()]
     cards.sort(key=lambda c: (STATUS_ORDER.index(c["status"]), c["dataset"]))
     last_run = ops.last_builder_run()
     if last_run:
         last_run = {**last_run, "started_at": _iso_utc(last_run["started_at"]),
                     "finished_at": _iso_utc(last_run["finished_at"])}
     return {
-        "verified": {"builder_last_run": last_run, "swaps": swaps, "ops_schema": ops.schema_version()},
+        "verified": {"builder_last_run": last_run, "swaps": swaps, "ops_schema": ops.schema_version(),
+                     "silent_minutes": _silent_minutes(last_run, now)},
         "datasets": cards,
         "identity": {**_identity(spine_counts), "universe_source": _universe_source()},
         "queue": ops.read_queue(finished=20),
-        "spend": _spend(now),
+        "spend": spend,
         "backups": _backups(now),
         "retention": _retention(),
         "retirement": _retirement(now),
+        "cross_check": cross_check(now, facts, used_today),
         **_watch_section(),
     }
 

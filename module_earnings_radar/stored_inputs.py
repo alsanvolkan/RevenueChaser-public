@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -37,7 +38,53 @@ logger = logging.getLogger(__name__)
 NY = ZoneInfo("America/New_York")
 
 # Trading sessions a stored session may lag the latest complete one by, before the reader goes live instead.
-MAX_LAG = {"earnings_calendar": 1, "short_interest": 3}
+# The catalog is the single owner of every one of these numbers (avo, 29 Oct 2026): a copy here would let the two
+# drift while ``model_version``, which hashes this map, claims nothing changed. PR 285 moved the yield, the estimates
+# and the volatility tables to the new store, so what is left here is the old store's calendar and short interest.
+NEED_OF_TABLE = {"earnings_calendar": "earnings.next", "short_interest": "ownership.short_interest"}
+
+
+def max_lag_map() -> dict[str, int]:
+    """``{table: how many sessions old a stored input may be}``, read from the catalog on every call."""
+    from RevenueChaser.rcdata import api
+    return {table: api.catalog.NEEDS[need].max_lag for table, need in NEED_OF_TABLE.items()}
+
+
+class _MaxLag(Mapping):
+    """``MAX_LAG`` as the board has always used it, answered from the catalog on every read.
+
+    A ``Mapping`` and not a ``dict`` subclass, for the reason in ``store_reads._FromCatalog`` (the review's m3):
+    a dict subclass answers ``.copy()`` and ``json.dumps`` from its own storage, which here would be a snapshot.
+    """
+
+    def __getitem__(self, table):
+        return max_lag_map()[table]
+
+    def get(self, table, default=None):
+        return max_lag_map().get(table, default)
+
+    def __iter__(self):
+        return iter(max_lag_map())
+
+    def __len__(self):
+        return len(max_lag_map())
+
+    def copy(self) -> dict:
+        return dict(max_lag_map())
+
+    def __repr__(self):
+        return repr(max_lag_map())
+
+    def __eq__(self, other):
+        return max_lag_map() == other
+
+    __hash__ = None
+
+    def __setitem__(self, table, value):
+        raise TypeError(f"{table!r} belongs to the need catalog (avo, 29 Oct 2026): set it there, not here")
+
+
+MAX_LAG = _MaxLag()
 
 _OHLC_MAX_BARS = 270              # ``pipeline.REACTION_OHLC_SESSIONS``
 _OHLC_LOOKBACK_DAYS = 400         # calendar days back from the latest complete session
