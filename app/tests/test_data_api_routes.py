@@ -200,3 +200,15 @@ def test_an_empty_parameter_is_the_same_refusal_as_no_parameter(client):
     for query in ("series_ids=", "series_ids=,", "series_ids=%20"):
         r = client.get(f"/api/data/market.series?{query}")
         assert r.status_code == 400 and "series_ids" in r.get_json()["error"], query
+
+
+def test_an_empty_ask_is_refused_on_every_need_not_only_the_one_that_must_be_asked(client):
+    """avo's decision of 30 Oct 2026, over HTTP: ``?tickers=`` names nothing, and a need whose reader reads the
+    whole table when the parameter is absent must not read an empty list as "everything" either - nor answer
+    200 / ``state: missing`` about a full table, which is what it did."""
+    for need, param in (("identity.security", "tickers"), ("earnings.options", "tickers"),
+                        ("ownership.holders_13f", "tickers"), ("ownership.shortable", "tickers"),
+                        ("prices.revision", "security_ids")):
+        r = client.get(f"/api/data/{need}?{param}=")
+        assert r.status_code == 400 and param in r.get_json()["error"], need
+        assert client.get(f"/api/data/{need}?summary=1").status_code == 200, f"{need}: the screen still answers"

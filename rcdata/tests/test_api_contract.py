@@ -280,3 +280,64 @@ def test_a_need_with_nothing_to_ask_for_never_requires_an_ask(name):
     """The review's nit 3: the rule above only walks the needs that have an ask parameter, so ``ask_required`` on
     one of the nine without one went unnoticed - and it makes every call raise with ``name None`` in the message."""
     assert not api.catalog.NEEDS[name].ask_required
+
+
+@pytest.mark.parametrize("name", sorted(n for n, d in api.catalog.NEEDS.items()
+                                        if d.ask_param and not (d.filter_values or d.filter_prefix)))
+def test_an_explicitly_empty_ask_is_nothing_never_everything(name):
+    """avo, 30 Oct 2026: "Boş liste 'hiçbir şey' demek, 400 dönsün".
+
+    Finding 2 was closed for ``market.series``, whose reader answers nothing unless asked. The same envelope is
+    reachable on every other need that takes an ask parameter: those readers default to ``None`` meaning "every
+    row", but an **empty** list is not the default - they return no rows for it (``read.identity``'s ``if not
+    wanted: return []``), and the envelope then reports ``state: missing`` about a table that is full. A card
+    rendering its URL from an emptied selection box reads "the store has nothing" where the truth is "you asked
+    for nothing".
+
+    So an ask parameter that is present and names nothing is refused in words, for every need, and the refusal
+    happens before the reader is called - which is why this case needs no store.
+    """
+    need = api.catalog.NEEDS[name]
+    empty = [] if need.ask_list else ""
+    with pytest.raises(api.AskRequired, match=need.ask_param):
+        api.get(name, **{need.ask_param: empty})
+
+
+def test_leaving_the_parameter_out_still_means_every_row():
+    """The other half of avo's decision: an empty ask is refused, an **absent** one is unchanged. These five needs
+    (and the others whose reader defaults to ``None``) answer over the whole table when nothing is named, and a
+    named ticker answers for that ticker; only the empty ask is new."""
+    import duckdb
+
+    from RevenueChaser.rcdata import scaffold, serving
+    scaffold.create_empty("spine")
+    con = duckdb.connect(str(serving.live_path("spine")))
+    con.execute("INSERT INTO security (ticker, tier, source, source_as_of) VALUES "
+                "('KO', 'A', 'sec', DATE '2026-10-27'), ('MSFT', 'A', 'sec', DATE '2026-10-27')")
+    con.close()
+    assert len(api.get("identity.security").rows) == 2, "no parameter is still every row"
+    # A Python caller may say so explicitly, and ``None`` is the reader's own default - every row, not nothing.
+    # (A surviving mutation found this gap: refusing ``None`` broke no test while it would break such a caller.)
+    assert len(api.get("identity.security", tickers=None).rows) == 2
+    assert [r["ticker"] for r in api.get("identity.security", tickers=["KO"]).rows] == ["KO"]
+    with pytest.raises(api.AskRequired, match="tickers"):
+        api.get("identity.security", tickers=[])
+    # The empty ask must not be read as "the store is empty": that table holds two rows.
+    assert api.summary("identity.security")["row_count"] == 2
+
+
+def test_a_need_that_names_its_own_rows_is_not_refused_an_empty_ask():
+    """``macro.dgs10``, ``market.vix`` and ``market.cot`` name their rows themselves, so the caller's value is
+    replaced before the reader sees it (``_with_needs_own_rows``). An empty ask there is not "nothing asked", it is
+    a parameter the need overrides, and refusing it would make the yield unreadable from a card that sends an
+    empty list by habit."""
+    import duckdb
+
+    from RevenueChaser.rcdata import scaffold, serving
+    scaffold.create_empty("market")
+    con = duckdb.connect(str(serving.live_path("market")))
+    con.execute("INSERT INTO market_series (series_id, obs_date, source, value) VALUES "
+                "('DGS10', DATE '2026-10-27', 'fred', 4.1)")
+    con.close()
+    assert api.get("macro.dgs10", series_ids=[]).rows, "the need's own keys win over an empty ask"
+    assert api.get("market.cot", series_ids=[]).state is not None
