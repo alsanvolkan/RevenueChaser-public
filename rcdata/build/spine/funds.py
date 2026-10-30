@@ -75,7 +75,7 @@ def _cusip(raw) -> str | None:
     return t if len(t) == 9 and t.isalnum() else None
 
 
-def _weight(raw) -> float | None:
+def weight_of(raw) -> float | None:
     try:
         return float(str(raw).replace("%", "").replace(",", "").strip())
     except (TypeError, ValueError):
@@ -102,16 +102,24 @@ def parse_ssga(data: bytes) -> list[dict]:
         if get("Sector") in ("", "-") and not _cusip(get("Identifier")):
             continue                                         # cash and futures lines carry no sector and no CUSIP
         out.append({"ticker_raw": get("Ticker"), "cusip": _cusip(get("Identifier")), "name": get("Name"),
-                    "weight": _weight(get("Weight"))})
+                    "weight": weight_of(get("Weight"))})
     if head is None:
         raise base.SourceError("ssga: no header row with Name and Ticker")
     return out
 
 
 def parse_ishares(data: bytes) -> list[dict]:
-    """iShares' ``latest-holdings.csv`` (format of Oct 2026): preamble lines (fund name, ``Fund Holdings as of``), a
-    header line starting ``Ticker,Name,Type,...``, the lines, then a blank line. ``Type`` EQUITY lines only: swaps and
-    warrants are filed under ``Asset Class`` Equity too. The weight is ``Market Weight``."""
+    """iShares' ``latest-holdings.csv``: preamble lines (fund name, ``Fund Holdings as of``), a header line starting
+    ``Ticker,``, the lines, then a blank line. The issuer serves **two shapes**, both measured 30 Oct 2026:
+
+    - the core funds (IVV, IJH, IJR, and IAK) carry a ``Type`` column and the weight in ``Market Weight``. Only
+      ``Type`` EQUITY lines are a holding of the stock: swaps and warrants are filed under ``Asset Class`` Equity too;
+    - the sector and industry funds (SOXX, IBB, ITA, ITB, IGV) carry neither. There the holdings are the
+      ``Asset Class`` Equity lines and the weight is ``Weight (%)``; the lines that are no stock are a money-market
+      fund, cash collateral, a future and cash, each under an ``Asset Class`` of its own. Without ``Type`` a swap
+      filed as Equity cannot be told from a stock — none of those five files held one on the day they were read.
+
+    A file with neither column is a failed file, never a quiet reshape."""
     text = data.decode("utf-8-sig", errors="replace")
     lines = text.splitlines()
     start = next((i for i, line in enumerate(lines) if line.startswith("Ticker,")), None)
@@ -123,14 +131,19 @@ def parse_ishares(data: bytes) -> list[dict]:
             break
         body.append(line)
     reader = csv.DictReader(io.StringIO("\n".join(body)))
-    if "Type" not in (reader.fieldnames or ()):
-        raise base.SourceError("ishares: no Type column")
+    fields = reader.fieldnames or ()
+    typed = "Type" in fields
+    if not typed and "Asset Class" not in fields:
+        raise base.SourceError("ishares: no Type and no Asset Class column")
+    weight_col = "Market Weight" if typed else "Weight (%)"
     out = []
     for r in reader:
-        if (r.get("Type") or "").strip() != "EQUITY":
+        held = ((r.get("Type") or "").strip() == "EQUITY" if typed
+                else (r.get("Asset Class") or "").strip() == "Equity")
+        if not held:
             continue
         out.append({"ticker_raw": r.get("Ticker"), "cusip": _cusip(r.get("CUSIP")), "name": r.get("Name"),
-                    "weight": _weight(r.get("Market Weight"))})
+                    "weight": weight_of(r.get(weight_col))})
     return out
 
 
@@ -143,7 +156,7 @@ def parse_vanguard(data: bytes) -> list[dict]:
     except (KeyError, TypeError) as e:
         raise base.SourceError("vanguard: no holding list") from e
     return [{"ticker_raw": h.get("ticker"), "cusip": _cusip(h.get("cusip")), "name": h.get("shrtName"),
-             "weight": _weight(h.get("weighting"))}
+             "weight": weight_of(h.get("weighting"))}
             for h in holding or [] if (h or {}).get("assetType") == "EQUITY" and (h.get("ticker") or h.get("cusip"))]
 
 
@@ -171,13 +184,13 @@ def parse_invesco(data: bytes) -> list[dict]:
     except (KeyError, TypeError) as e:
         raise base.SourceError("invesco: no holdings list") from e
     return [{"ticker_raw": h.get("ticker"), "cusip": _cusip(h.get("cusip")), "name": h.get("issuerName"),
-             "weight": _weight(h.get("percentageOfTotalNetAssets"))}
+             "weight": weight_of(h.get("percentageOfTotalNetAssets"))}
             for h in holdings or [] if (h or {}).get("securityTypeCode") in INVESCO_EQUITY_TYPES]
 
 
 # ── The files ─────────────────────────────────────────────────────────────────────────────────────────────────
 
-def _base(env: str, default: str) -> str:
+def provider_base(env: str, default: str) -> str:
     return (os.getenv(env) or default).strip().rstrip("/")
 
 
@@ -191,19 +204,20 @@ class FundFile:
 
     def url(self) -> str:
         if self.provider == "ssga":
-            return (_base("RC_SSGA_BASE", "https://www.ssga.com") + "/us/en/intermediary/library-content/products/"
-                    f"fund-data/etfs/us/holdings-daily-us-en-{self.fund.lower()}.xlsx")
+            return (provider_base("RC_SSGA_BASE", "https://www.ssga.com")
+                    + "/us/en/intermediary/library-content/products/fund-data/etfs/us/"
+                    + f"holdings-daily-us-en-{self.fund.lower()}.xlsx")
         if self.provider == "ishares":
             pid, slug = ISHARES_PRODUCTS[self.fund]
-            return (_base("RC_ISHARES_BASE", "https://www.ishares.com")
+            return (provider_base("RC_ISHARES_BASE", "https://www.ishares.com")
                     + f"/us/products/{pid}/{slug}/latest-holdings.csv")
         if self.provider == "vanguard":
-            return (_base("RC_VANGUARD_BASE", "https://etfportal.vanguard.com")
+            return (provider_base("RC_VANGUARD_BASE", "https://etfportal.vanguard.com")
                     + f"/extrapi/v2/us/standard/{VANGUARD_BASKETS[self.fund]}/CRRD/holdings.json")
         if self.provider == "invesco":
-            return (_base("RC_INVESCO_API_BASE", "https://dng-api.invesco.com")
+            return (provider_base("RC_INVESCO_API_BASE", "https://dng-api.invesco.com")
                     + f"/cache/v1/accounts/en_US/shareclasses/{self.fund}/holdings/fund?idType=ticker&productType=ETF")
-        return _base("RC_NASDAQ_API_BASE", "https://api.nasdaq.com") + "/api/quote/list-type/nasdaq100"
+        return provider_base("RC_NASDAQ_API_BASE", "https://api.nasdaq.com") + "/api/quote/list-type/nasdaq100"
 
     def raw_name(self) -> str:
         return f"{self.provider}-{self.fund}.{self.ext}"

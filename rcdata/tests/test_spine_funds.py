@@ -37,10 +37,21 @@ def test_ishares_keeps_stock_lines_only_and_reads_the_market_weight():
     assert rows[0]["weight"] == 1.0
 
 
-def test_an_ishares_file_without_the_type_column_is_a_source_error():
-    old = b'Ticker,Name,Sector,Asset Class,Market Value,Weight (%)\nMSFT,"MICROSOFT",IT,Equity,"1.00",1.00\n'
-    with pytest.raises(base.SourceError, match="Type"):
-        funds.parse_ishares(old)
+def test_the_sector_funds_ishares_file_has_no_type_column_and_still_parses():
+    """iShares serves two shapes (both measured 30 Oct 2026): the core funds (IVV, IJH, IJR, IAK) carry ``Type``
+    and ``Market Weight``, the sector and industry funds (SOXX, IBB, ITA, ITB, IGV) carry neither — their holdings
+    are the ``Asset Class`` Equity lines and the weight is ``Weight (%)``."""
+    rows = funds.parse_ishares(fx.ishares_csv(fx.SP500, typed=False))
+    assert [r["ticker_raw"] for r in rows] == [t for t, _c, _n in fx.SP500]
+    assert rows[0]["weight"] == 1.0 and rows[0]["cusip"] is None
+    assert not {"XTSLA", "WFFUT", "IXTZ6", "USD"} & {r["ticker_raw"] for r in rows}
+
+
+def test_an_ishares_file_with_neither_type_nor_asset_class_is_a_source_error():
+    """A shape that is neither of the issuer's two is a failed file, not a quiet reshape."""
+    moved = b'Ticker,Name,Sector,Market Value,Weight (%)\nMSFT,"MICROSOFT",IT,"1.00",1.00\n'
+    with pytest.raises(base.SourceError, match="Asset Class"):
+        funds.parse_ishares(moved)
 
 
 def test_the_ishares_file_is_the_product_pages_latest_holdings_csv():
