@@ -49,6 +49,12 @@ itself, can carry the PID in an old lock file. So a lock is live only when
     with job_lock.acquire("edgar_sync", wait=0) as got:
         if not got:
             return  # someone else is running it
+
+A gate that runs before a write asks a second question — "is a holder writing a file I am about to write?" — and
+``WRITES`` is where each family answers it. Two stores exist and no family writes into both: the old store's DuckDB
+files under ``RC_STORE_DIR`` (``STORE``) and the serving files plus ``ops.sqlite`` under ``RC_MARKET_DIR``
+(``MARKET``, the builder's, D1). ``blocking_holders(name)`` is ``holders()`` filtered to the locks that can meet
+``name`` on a file, so the market builder is no longer held off by an old-store job it shares nothing with.
 """
 from __future__ import annotations
 
@@ -266,6 +272,74 @@ def holders(directory: Path | None = None) -> list[tuple[str, int]]:
         if pid is not None:
             out.append((p.stem, pid))
     return out
+
+
+# ── Which files a writer family writes ─────────────────────────────────────────────────────────────────────────
+# The grain is the store, not the single file. A per-file split would need every family's table set measured, and a
+# wrong one would let two writers of one file meet; a store is a superset of every family's real file set, so this
+# map can only ever refuse too much. The two stores never overlap: the builder writes nothing in the old store but
+# its own lock file, and no other family writes a serving file (``rcdata/build`` is the only caller of
+# ``serving.build``).
+#: The old store's DuckDB files under ``RC_STORE_DIR``: ``raw``, ``edgar``, ``history`` and the legacy ``prices``.
+STORE = "store"
+#: The serving files and ``ops.sqlite`` under ``RC_MARKET_DIR``, written by the one builder (D1).
+MARKET = "market"
+#: What an undeclared family writes: everything, so a new writer that forgets to declare itself is held off rather
+#: than let through.
+UNKNOWN = "*"
+
+WRITES: dict[str, tuple[str, ...]] = {
+    "edgar_sync": (STORE,),
+    "relatedness": (STORE,),
+    "universe": (STORE,),
+    "universe_run": (STORE,),
+    "daily_bars": (STORE,),
+    "index_lists": (STORE,),
+    "index_levels": (STORE,),
+    "identity": (STORE,),
+    "sec_13f": (STORE,),
+    "forecast_outcomes": (STORE,),
+    "forecast_baselines": (STORE,),
+    "rcdata_build": (MARKET,),
+}
+#: The families whose name carries a tail — one per step, one per board. Matched by prefix.
+WRITES_PREFIX: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("nightly_inputs_", (STORE,)),
+    ("board_fetch_", (STORE,)),
+)
+
+
+def writes_of(name: str) -> tuple[str, ...]:
+    """The stores ``name``'s family writes, or ``(UNKNOWN,)`` when it has not declared itself."""
+    if name in WRITES:
+        return WRITES[name]
+    for prefix, stores in WRITES_PREFIX:
+        if name.startswith(prefix):
+            return stores
+    return (UNKNOWN,)
+
+
+def shares_files(one: str, other: str) -> bool:
+    """True when two lock names can write the same file, so one must hold the other off.
+
+    The same name always can (a second run of one writer). An undeclared name can meet anything. Otherwise it is
+    one store in common.
+    """
+    if one == other:
+        return True
+    first, second = writes_of(one), writes_of(other)
+    if UNKNOWN in first or UNKNOWN in second:
+        return True
+    return bool(set(first) & set(second))
+
+
+def blocking_holders(name: str, directory: Path | None = None) -> list[tuple[str, int]]:
+    """``holders()`` filtered to the locks whose family can write a file ``name``'s family writes.
+
+    This is what a start gate asks instead of ``holders()``: the Relatedness pilot writing the old store does not
+    stop the market builder, while a second builder, and any undeclared writer, still do (#309 follow-up).
+    """
+    return [(held, pid) for held, pid in holders(directory) if shares_files(name, held)]
 
 
 @contextmanager

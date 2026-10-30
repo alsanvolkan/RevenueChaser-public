@@ -12,6 +12,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -115,26 +116,50 @@ def test_the_builder_cli_builds_market_series_and_a_second_run_calls_nothing(cli
     assert len(seen) == first, f"the second run called {seen[first:]}"
 
 
-def test_the_builder_refuses_to_start_while_a_job_lock_is_held(cli_env):
+@contextmanager
+def _holding(env, name: str):
+    """Another process holding ``name``'s job lock in this env's store dir, for as long as the block runs."""
     hold = ("import sys,time; from RevenueChaser.core import job_lock\n"
-            "with job_lock.acquire('daily_bars', wait=0) as got:\n"
+            f"with job_lock.acquire({name!r}, wait=0) as got:\n"
             "    print(got, flush=True); time.sleep(30)")
-    p = subprocess.Popen([sys.executable, "-c", hold], cwd=REPO.parent, env=cli_env, stdout=subprocess.PIPE, text=True)
+    p = subprocess.Popen([sys.executable, "-c", hold], cwd=REPO.parent, env=env, stdout=subprocess.PIPE, text=True)
     try:
         assert p.stdout.readline().strip() == "True"
-        # A person's command waits for the writer turn now, so this one says not to: --wait 0 is today's exit 3.
-        r = _run(cli_env, "RevenueChaser.rcdata.build", "run", "--once", "--dataset", "market_series",
-                 "--wait", "0")
-        assert r.returncode == 3 and "daily_bars" in r.stderr
-        assert not (Path(cli_env["RC_MARKET_DIR"]) / "market.duckdb").exists()
-        # With a wait it says what it is waiting for, and the lock is still held when the wait runs out.
-        r = _run(cli_env, "RevenueChaser.rcdata.build", "run", "--once", "--dataset", "market_series",
-                 "--wait", "1")
-        assert r.returncode == 3 and "waiting for the writer turn" in r.stderr and "daily_bars" in r.stderr
-        assert not (Path(cli_env["RC_MARKET_DIR"]) / "market.duckdb").exists()
+        yield
     finally:
         p.kill()
         p.wait()
+
+
+def test_the_builder_starts_while_a_lock_on_the_old_store_is_held(cli_env, tmp_path):
+    """End to end for the per-file gate: ``daily_bars`` writes the old store, the builder the market one.
+
+    Before the gate asked ``job_lock.blocking_holders``, this exited 3 and built nothing — which is how the WRDS
+    price backfill was refused while the Relatedness pilot ran (30 Oct 2026).
+    """
+    with _holding(cli_env, "daily_bars"):
+        r = _run(cli_env, "RevenueChaser.rcdata.build", "run", "--once", "--dataset", "market_series",
+                 "--as-of", "2026-10-27")
+        assert r.returncode == 0, r.stderr[-3000:]
+        assert r.stdout.startswith("market_series changed as_of=2026-10-27")
+        assert (tmp_path / "market" / "market.duckdb").exists()
+
+
+def test_the_builder_refuses_to_start_while_an_undeclared_lock_is_held(cli_env):
+    """A family with no ``job_lock.WRITES`` entry still holds the builder off, and the message names it.
+
+    ``run --dataset`` is a command a person types, so it waits for the writer turn (#309): ``--wait 0`` is the
+    refusal at once, and a short wait says what it is waiting for and is still refused when the wait runs out.
+    """
+    with _holding(cli_env, "a_new_writer"):
+        r = _run(cli_env, "RevenueChaser.rcdata.build", "run", "--once", "--dataset", "market_series",
+                 "--wait", "0")
+        assert r.returncode == 3 and "a_new_writer" in r.stderr
+        assert not (Path(cli_env["RC_MARKET_DIR"]) / "market.duckdb").exists()
+        r = _run(cli_env, "RevenueChaser.rcdata.build", "run", "--once", "--dataset", "market_series",
+                 "--wait", "1")
+        assert r.returncode == 3 and "waiting for the writer turn" in r.stderr and "a_new_writer" in r.stderr
+        assert not (Path(cli_env["RC_MARKET_DIR"]) / "market.duckdb").exists()
 
 
 def test_the_backup_cli_writes_a_verified_copy_and_refuses_an_empty_folder(cli_env, tmp_path):
