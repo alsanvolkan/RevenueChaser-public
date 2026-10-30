@@ -664,6 +664,21 @@ def test_refresh_reuses_the_persisted_null_and_skips_the_permutations(
     assert any(c["significant"] for c in refreshed["clusters"]["4"])
 
 
+def test_a_recompute_with_the_type_filter_flipped_reuses_no_other_runs_null(rawstore_tmp_db):
+    """PR 2 review M1: a Fetch persisted with the filter off; a store-only recompute after the filter is switched on
+    must not judge its groups against that run's null (a different universe), so its groups stay unjudged."""
+    from RevenueChaser.core import board_settings
+    ret = _blocky_returns()
+    tickers = list(ret.columns)
+    _seed_universe(tickers)
+    _seed_ohlc(ret)
+    engine.run(no_fetch=True, tickers=tickers, cuts=(4,), persist=True)
+    board_settings.save("module_comovement", {"OPERATING_ONLY": 1})
+    p = engine.run(no_fetch=True, tickers=tickers, cuts=(4,), persist=False)
+    for c in p["clusters"]["4"]:
+        assert c["baseline_r"] is None and c["significant"] is None
+
+
 def test_refresh_without_a_persisted_null_leaves_groups_unjudged(rawstore_tmp_db):
     ret = _blocky_returns()
     tickers = list(ret.columns)

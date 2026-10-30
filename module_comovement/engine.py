@@ -71,11 +71,14 @@ def config_hash(window: int, linkage: str, cuts,
                 winsor_k: float | None = None, min_periods: int | None = None,
                 bench_stale_sessions: int | None = None,
                 floor: float | None = None,
-                benchmark_applied: bool | None = None) -> str:
+                benchmark_applied: bool | None = None,
+                operating_only: bool | None = None) -> str:
     """Identity of everything that changes a run's numbers.
 
     window, linkage, cuts, horizon, benchmark, MIN_OBS, OOS_HOLDOUT, WINSOR_K,
-    MIN_PERIODS, BENCH_STALE_SESSIONS, the market-cap floor and the engine's
+    MIN_PERIODS, BENCH_STALE_SESSIONS, the market-cap floor, the type filter
+    (``OPERATING_ONLY``, PR 2: like the floor it changes the universe, 7,670 names
+    against 5,655) and the engine's
     method (``config.METHOD``): a stored null or lagged test is reused only under
     exactly these inputs. An input left ``None``
     is resolved by ``settings.effective(window)`` (what a run at ``window``
@@ -92,7 +95,10 @@ def config_hash(window: int, linkage: str, cuts,
         pick(min_obs, eff.min_obs), pick(oos_holdout, eff.oos_holdout),
         f"{float(pick(winsor_k, eff.winsor_k)):g}", pick(min_periods, eff.min_periods),
         pick(bench_stale_sessions, eff.bench_stale_sessions),
-        f"{float(pick(floor, eff.floor)):g}", f"method={config.METHOD}"))
+        f"{float(pick(floor, eff.floor)):g}", f"method={config.METHOD}",
+        # Always written, the default too: a run stored before PR 2 clustered the operating companies only, so its
+        # null must not stand in for an A+B run's under the old hash (review M1).
+        f"types={'operating' if pick(operating_only, eff.operating_only) else 'all'}"))
     if benchmark_applied is False and config.BENCHMARKS.get(benchmark):
         raw += "|returns=raw"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
@@ -725,7 +731,8 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
                             oos_holdout=eff.oos_holdout, winsor_k=eff.winsor_k,
                             min_periods=eff.min_periods,
                             bench_stale_sessions=eff.bench_stale_sessions,
-                            floor=eff.floor, benchmark_applied=benchmark_applied)
+                            floor=eff.floor, benchmark_applied=benchmark_applied,
+                            operating_only=eff.operating_only)
         stored = _stored_run(chash, prices_through, set(universe_ret.columns),
                              price_tickers)
         if stored:
@@ -767,7 +774,8 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
                         min_obs=eff.min_obs, oos_holdout=eff.oos_holdout,
                         winsor_k=eff.winsor_k, min_periods=eff.min_periods,
                         bench_stale_sessions=eff.bench_stale_sessions,
-                        floor=eff.floor, benchmark_applied=benchmark_applied)
+                        floor=eff.floor, benchmark_applied=benchmark_applied,
+                        operating_only=eff.operating_only)
 
     # The significance null and the lagged persistence test are Fetch-only
     # costs — NULL_PERMS + 1 extra clusterings. A Refresh reuses the last

@@ -67,7 +67,8 @@ the old golden after removing the new keys (``funnel/operating_total``, ``funnel
 ``settings/operating_only``): exactly 12 differences, the three type-group funnel steps of each case, which are now
 notes ("Kept, of which: ...", count 0, no ``by_design``) instead of by-design drops, since Co-movement's type filter
 is off by default. No number, cluster, member, label or verdict changed. Then ``json.dumps(payloads())`` was
-written.
+written. The review's M1 then put the type filter into ``config_hash``: the four ``config_hash`` values moved and
+nothing else, edited by hand.
 """
 from __future__ import annotations
 
