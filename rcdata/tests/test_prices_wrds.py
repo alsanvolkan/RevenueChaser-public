@@ -78,6 +78,19 @@ def _data():
 
 DATE_OF = {"comp.secd": "datadate", "crsp.dsf_v2": "dlycaldt", "comp.sec_divid": "datadate"}
 
+# WRDS's own column list (``information_schema.columns``, the columns this login can read), as the documented names.
+COLUMNS = {
+    ("comp", "secd"): [c for c, _ in wrds_history.SECD],
+    ("crsp", "dsf_v2"): [c for c, _ in wrds_history.DSF],
+    ("comp", "sec_divid"): [c for c, _ in wrds_history.DIVID],
+    ("comp", "sec_split"): [c for c, _ in wrds_history.SPLIT],
+    ("crsp", "ccmxpf_lnkhist"): ["gvkey", "liid", "lpermno", "linktype", "linkprim", "linkdt", "linkenddt"],
+}
+
+
+def _catalog(columns=COLUMNS):
+    return [{"table_schema": lib, "table_name": t, "column_name": c} for (lib, t), cs in columns.items() for c in cs]
+
 
 class FakeWrds:
     """The worker's side: answers each table from ``data`` (a year's query its year's rows) as gzip JSON lines of
@@ -89,7 +102,7 @@ class FakeWrds:
     def query(self, sql: str, out) -> int:
         self.queries.append(sql)
         table = re.search(r"FROM (\w+\.\w+)", sql).group(1)
-        rows = self.data.get(table, [])
+        rows = self.data.get(table, _catalog() if table == "information_schema.columns" else [])
         year = re.search(r"BETWEEN '(\d{4})-01-01' AND '(\d{4})-12-31'", sql)
         if year:
             rows = [r for r in rows if r[DATE_OF[table]][:4] == year.group(1)]
@@ -173,11 +186,12 @@ def test_a_backfill_asks_each_table_and_year_once_and_skips_a_partition_that_exi
     conn, logins = fake
     row = _backfill()
     assert row["result"] == "changed", row
-    assert _asked(conn) == ["comp.sec_split", "crsp.ccmxpf_lnkhist",              # the snapshots first,
+    assert _asked(conn) == ["information_schema.columns",                          # the columns, checked first,
+                            "comp.sec_split", "crsp.ccmxpf_lnkhist",              # the snapshots,
                             "comp.secd 2026", "comp.sec_divid 2026",                # then the newest year first
                             "comp.secd 2025", "crsp.dsf_v2 2025", "comp.sec_divid 2025",
                             "comp.secd 2024", "crsp.dsf_v2 2024", "comp.sec_divid 2024"]
-    assert logins == [1] and ops.calls_today("wrds") == 10
+    assert logins == [1] and ops.calls_today("wrds") == 11
     conn.queries.clear()
     assert _backfill()["result"] in ("changed", "unchanged") and conn.queries == []     # every partition exists
     secd_2024 = wrds_history.partition_path("secd", 2024)
@@ -202,7 +216,7 @@ def test_the_backfill_stops_at_the_wrds_day_cap_and_serves_the_years_it_has(fake
     monkeypatch.setitem(caps.DAY_CAPS, "wrds", 4)
     row = _backfill()
     assert row["result"] == "changed", row
-    assert len(conn.queries) == 4 and "day cap" in row["note"]                # the snapshots and 2026
+    assert len(conn.queries) == 4 and "day cap" in row["note"]   # the columns, the snapshots and 2026's secd
     served = _q("SELECT security_id, count(*) AS n FROM price_bar_daily GROUP BY ALL")
     assert {(r["security_id"], r["n"]) for r in served} == {(AAPL, 2)}
 
@@ -317,7 +331,8 @@ def test_the_monthly_refresh_keeps_the_values_it_replaces_as_revisions(built):
     row = base.run_request({"dataset": wrds_history.NAME, "requested_by": "cli",
                             "params": {"as_of": "2026-11-27"}})
     assert row["result"] == "changed", row
-    assert _asked(conn) == ["comp.sec_split", "crsp.ccmxpf_lnkhist", "comp.secd 2026", "comp.sec_divid 2026",
+    assert _asked(conn) == ["information_schema.columns",                    # a new day: the columns again
+                            "comp.sec_split", "crsp.ccmxpf_lnkhist", "comp.secd 2026", "comp.sec_divid 2026",
                             "comp.secd 2025", "crsp.dsf_v2 2025", "comp.sec_divid 2025", "crsp.dsf_v2 2024"]
     revs = _q("SELECT * FROM price_revision WHERE source = ?", [wrds_history.COMPUSTAT])
     assert [(r["security_id"], str(r["session_date"]), r["close"]) for r in revs] == [(AAPL, "2025-06-03", 202.0)]
@@ -325,3 +340,146 @@ def test_the_monthly_refresh_keeps_the_values_it_replaces_as_revisions(built):
     report = {r["comparison"]: r for r in _q("SELECT * FROM wrds_price_diff")}
     assert report["crsp_vs_compustat"]["max_close_diff"] == pytest.approx(0.4 / 202.5)
     assert {str(r["as_of"]) for r in report.values()} == {"2026-11-27"}
+
+
+# ── A subscription without CRSP (homesrv, 30 Oct 2026: run 32 refused on ``crsp_a_ccm``) ──────────────────────
+
+REFUSED = ("ProgrammingError: (psycopg2.errors.InsufficientPrivilege) permission denied for schema {schema}\n\n"
+           "[SQL: {sql}]")
+
+
+class RefusingWrds(FakeWrds):
+    """The fake worker of a subscription that holds Compustat but not CRSP: every query of a ``refused`` schema
+    answers the error the real worker sends back, as ``wrds_worker.py`` reports a failed query."""
+
+    def __init__(self, data, refused=("crsp",)):
+        super().__init__(data)
+        self.refused = refused
+
+    def query(self, sql: str, out) -> int:
+        table = re.search(r"FROM (\w+\.\w+)", sql).group(1)
+        if table.split(".")[0] in self.refused:
+            self.queries.append(sql)
+            raise base.SourceError("wrds query failed: " + REFUSED.format(
+                schema="crsp_a_ccm" if "ccm" in table else "crsp_a_stock", sql=sql))
+        return super().query(sql, out)
+
+
+@pytest.fixture
+def refusing(monkeypatch):
+    def install(refused=("crsp",)):
+        conn = RefusingWrds(_data(), refused)
+        monkeypatch.setattr(wrds, "_factory", lambda: conn)
+        wrds.reset()
+        return conn
+    yield install
+    wrds.reset()
+
+
+def test_a_crsp_permission_refusal_skips_crsp_once_and_serves_compustat(refusing):
+    conn = refusing()
+    row = _backfill()
+    assert row["result"] == "changed", row
+    # The link is refused once; CRSP's years are then never asked in this run (no query per year, no loop).
+    assert _asked(conn) == ["information_schema.columns", "comp.sec_split", "crsp.ccmxpf_lnkhist",
+                            "comp.secd 2026", "comp.sec_divid 2026",
+                            "comp.secd 2025", "comp.sec_divid 2025",
+                            "comp.secd 2024", "comp.sec_divid 2024"]
+    assert "crsp_a_ccm" in row["note"] and "CRSP skipped" in row["note"]
+    issues = [i for i in ops.open_issues(wrds_history.NAME, limit=50)[1] if i["kind"] == "wrds_no_access"]
+    assert [i["key"] for i in issues] == ["crsp_a_ccm"]
+    # A refused query leaves no file behind: no raw answer, no sidecar that would read as "asked".
+    assert not any(wrds_history.raw_dir("link").rglob("*"))
+    assert not wrds_history.raw_dir("dsf").exists()
+    # Compustat alone serves the bars, the shares and so the cap.
+    assert base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
+    assert base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})["result"] == "changed"
+    june = _q("SELECT session_date, close, source, shares_outstanding FROM price_bar_daily WHERE security_id = ? "
+              "AND session_date < '2026-01-01' ORDER BY session_date", [AAPL])
+    assert [str(r["session_date"]) for r in june] == JUNE
+    assert {r["source"] for r in june} == {wrds_history.COMPUSTAT} and june[1]["close"] == 202.0
+    cap = _q("SELECT market_cap, shares_source FROM market_cap_daily WHERE security_id = ? "
+             "AND session_date = '2025-06-02'", [AAPL])
+    assert cap and cap[0]["market_cap"] == pytest.approx(200.0 * 7.5e9) and cap[0]["shares_source"] == (
+        wrds_history.COMPUSTAT)
+    # The difference report keeps its rows; the CRSP ones have no session to compare.
+    report = {r["comparison"]: r for r in _q("SELECT * FROM wrds_price_diff")}
+    assert set(report) == set(wrds_history.COMPARISONS)
+    assert {n: report[n]["sessions"] for n in ("crsp_vs_compustat", "crsp_vs_alpaca", "crsp_returns")} == {
+        "crsp_vs_compustat": 0, "crsp_vs_alpaca": 0, "crsp_returns": 0}
+    assert report["compustat_vs_alpaca"]["sessions"] == 2
+
+
+def test_the_next_backfill_asks_the_refused_link_again_and_nothing_compustat_holds(refusing):
+    refusing()
+    _backfill()
+    conn = refusing()
+    _backfill()
+    assert _asked(conn) == ["crsp.ccmxpf_lnkhist"]          # once a run, so a granted subscription is picked up
+
+
+def test_a_refused_compustat_query_still_fails_the_run(refusing):
+    refusing(refused=("comp",))
+    row = _backfill()
+    assert row["result"] == "failed" and "permission denied" in row["note"]
+
+
+def test_another_wrds_error_on_crsp_still_fails_the_run(fake, monkeypatch):
+    conn, _ = fake
+
+    def broken(sql, out):
+        if "crsp." in sql:
+            raise base.SourceError('wrds query failed: ProgrammingError: column "liid" does not exist')
+        return FakeWrds.query(conn, sql, out)
+    monkeypatch.setattr(conn, "query", broken)
+    row = _backfill()
+    assert row["result"] == "failed" and "liid" in row["note"]
+
+
+# ── The columns, checked before any data is asked (one ``information_schema`` query on the same login) ──────────
+
+def test_a_compustat_column_wrds_lacks_fails_the_run_before_any_data_is_asked(fake, monkeypatch):
+    conn, _ = fake
+    columns = dict(COLUMNS)
+    columns[("comp", "secd")] = [c for c in COLUMNS[("comp", "secd")] if c != "exchg"]
+    monkeypatch.setitem(conn.data, "information_schema.columns", _catalog(columns))
+    row = _backfill()
+    assert row["result"] == "failed" and "comp.secd" in row["note"] and "exchg" in row["note"], row
+    assert _asked(conn) == ["information_schema.columns"]            # no data query, no year spent
+
+
+def test_a_crsp_library_this_login_cannot_read_is_skipped_unasked(fake, monkeypatch):
+    conn, _ = fake
+    readable = {k: v for k, v in COLUMNS.items() if k[0] != "crsp"}
+    monkeypatch.setitem(conn.data, "information_schema.columns", _catalog(readable))
+    row = _backfill()
+    assert row["result"] == "changed", row
+    assert _asked(conn) == ["information_schema.columns", "comp.sec_split",
+                            "comp.secd 2026", "comp.sec_divid 2026", "comp.secd 2025", "comp.sec_divid 2025",
+                            "comp.secd 2024", "comp.sec_divid 2024"]
+    issues = [i for i in ops.open_issues(wrds_history.NAME, limit=50)[1] if i["kind"] == "wrds_no_access"]
+    assert [i["key"] for i in issues] == ["crsp"] and "CRSP skipped" in row["note"]
+
+
+def test_a_crsp_column_wrds_lacks_skips_crsp_and_compustat_still_serves(fake, monkeypatch):
+    # The delta review's MUST: a CRSP column the catalog lacks degrades like a CRSP library it lacks (crsp.dsf_v2's
+    # CIZ names are the least verified here), so the attended run still fills Compustat and no Duo is wasted.
+    conn, _ = fake
+    columns = dict(COLUMNS)
+    columns[("crsp", "dsf_v2")] = [c for c in COLUMNS[("crsp", "dsf_v2")] if c != "dlyopen"]
+    monkeypatch.setitem(conn.data, "information_schema.columns", _catalog(columns))
+    row = _backfill()
+    assert row["result"] == "changed", row
+    assert _asked(conn) == ["information_schema.columns", "comp.sec_split",
+                            "comp.secd 2026", "comp.sec_divid 2026", "comp.secd 2025", "comp.sec_divid 2025",
+                            "comp.secd 2024", "comp.sec_divid 2024"]
+    issues = [i for i in ops.open_issues(wrds_history.NAME, limit=50)[1] if i["kind"] == "wrds_no_access"]
+    assert [i["key"] for i in issues] == ["crsp"] and "dlyopen" in issues[0]["detail"]
+    assert "CRSP skipped" in row["note"]
+    assert base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
+    assert base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})["result"] == "changed"
+    june = _q("SELECT source FROM price_bar_daily WHERE security_id = ? AND session_date < '2026-01-01'", [AAPL])
+    assert len(june) == 5 and {r["source"] for r in june} == {wrds_history.COMPUSTAT}
+    cap = _q("SELECT market_cap FROM market_cap_daily WHERE security_id = ? AND session_date = '2025-06-02'",
+             [AAPL])
+    assert cap and cap[0]["market_cap"] == pytest.approx(200.0 * 7.5e9)
