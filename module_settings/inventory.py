@@ -22,7 +22,7 @@ from RevenueChaser.core.identity import types as identity_types
 # a dedicated alias for the identity-health code, so it does not lean on the shared universe import below
 from RevenueChaser.core.universe import DEFAULT_MC_MIN as _MC_FLOOR
 from RevenueChaser.module_settings import boards
-from RevenueChaser.core.universe import DEFAULT_MC_MIN, classification_universe
+from RevenueChaser.core.universe import DEFAULT_MC_MIN, classification_universe, excluded_tickers
 
 DASH = "—"
 # The drill's value for a security_master column this store does not carry yet (CUSIP / ISIN arrive later).
@@ -2184,7 +2184,10 @@ def _collect(now: datetime) -> dict:
     tickers = classification_universe()
     # The company datasets (10-K corpus, companyfacts, the Swing bar cache) are read by the operating-company
     # boards only (``BOARD_OPERATING_ONLY``), so their holes count that slice: a fund has no 10-K to miss.
-    operating = classification_universe(operating_only=True)
+    # ``classification_universe(operating_only=True)`` is this list less the excluded types: one type read, not a second
+    # universe read (the collect's time budget).
+    excluded = excluded_tickers()
+    operating = [t for t in tickers if t not in excluded]
     prov = _provenance()
 
     present_keys = [k for k in ("__meta__", "__stats__", "__fetch__") if k in prov]
