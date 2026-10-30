@@ -25,6 +25,16 @@ def test_every_serving_kind_has_a_declared_schema():
             assert columns and all(len(c) == 2 for c in columns), f"{kind}.{table}: not (name, type) pairs"
 
 
+def test_every_served_table_of_every_dataset_is_in_its_kinds_schema():
+    """The promise in ``scaffold``'s own docstring: the tables come from the build modules, so a dataset that
+    serves a table of its own appears in the empty file without a second list to keep. A table missing here is a
+    kind whose empty file would not hold it, and a reader of it would meet a missing table, not no rows."""
+    from RevenueChaser.rcdata.build import DATASETS
+    for ds in DATASETS.values():
+        for table in ds.tables:
+            assert table in scaffold.SCHEMA_OF_KIND[ds.kind], f"{ds.name} serves {table}"
+
+
 @pytest.mark.parametrize("kind", sorted(serving.KINDS))
 def test_an_empty_file_holds_every_table_of_its_kind_with_no_rows(kind):
     made = scaffold.create_empty(kind)

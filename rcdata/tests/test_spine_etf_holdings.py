@@ -37,7 +37,10 @@ def _served(where: str = "") -> list[tuple]:
 
 def test_the_funds_are_the_rotation_boards_sector_and_theme_etfs_but_the_commodity_trusts():
     """The board's own 34 are the dataset's, less GLD, SLV and USO (commodity trusts: no equity to hold), plus the
-    seven the relatedness peer sets need that the board does not run."""
+    seven the relatedness peer sets need that the board does not run.
+
+    The ``34`` is deliberate: adding an ETF to the board's sector or theme groups fails this test, which is where
+    the decision whether the new fund has a keyless holdings file or goes to UW belongs."""
     from RevenueChaser.core.rotation_reference import ROTATION_ETFS
     board = {t for t, info in ROTATION_ETFS.items() if info["group"] in ("sector", "theme")}
     assert len(board) == 34
@@ -59,6 +62,19 @@ def test_iak_is_an_ishares_fund_not_a_spdr():
     by_etf = {f.etf: f.provider for f in etf.FILES}
     assert by_etf["IAK"] == "ishares" and by_etf["KIE"] == "ssga"
     assert etf.ISHARES_PRODUCTS["IAK"][0] == "239515"
+
+
+def test_each_ishares_fund_is_read_as_the_shape_it_serves():
+    """The shape is the fund's, not the file's: IAK carries ``Type``, the five sector funds do not. A file that
+    changes shape is a failed file for that fund, not a quietly different read."""
+    typed = {name: shape[2] for name, shape in etf.ISHARES_PRODUCTS.items()}
+    assert typed == {"IAK": True, "SOXX": False, "IBB": False, "ITA": False, "ITB": False, "IGV": False}
+    iak = next(f for f in etf.FILES if f.etf == "IAK")
+    soxx = next(f for f in etf.FILES if f.etf == "SOXX")
+    assert len(iak.parse(fx.ishares_csv(fx.SP500))) == len(fx.SP500)
+    assert len(soxx.parse(fx.ishares_csv(fx.SP500, typed=False))) == len(fx.SP500)
+    with pytest.raises(base.SourceError, match="Type"):
+        iak.parse(fx.ishares_csv(fx.SP500, typed=False))
 
 
 def test_the_ishares_funds_are_their_product_pages_latest_holdings_csv():
@@ -149,6 +165,40 @@ def test_a_fund_already_fetched_is_not_fetched_again(env):
     env.requests.clear()
     base.run_request({"dataset": etf.NAME, "params": {"as_of": AS_OF}})
     assert env.requests == []
+
+
+def test_an_answer_with_no_holding_in_it_is_a_failed_file_not_the_funds_whole_day(env, http_mock):
+    """The raw file is the resume marker, so an empty answer kept once would be that fund's day: UW answers
+    ``{"data": []}`` for a ticker it does not know, and a header with no equity line is the same nothing."""
+    http_mock.routes.insert(0, ("/etfs/SMH/holdings", lambda r: (200, b'{"data": []}', {}), 200, {}))
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": AS_OF}})
+    assert row["result"] == "changed" and row["coverage"] == round(37 / 38, 4)
+    n, issues = ops.open_issues(etf.NAME)
+    assert n == 1 and [i["key"] for i in issues] == ["uw-SMH.json"]
+    assert "no holding line" in (issues[0]["detail"] or "") and not _served("etf = 'SMH'")
+
+
+def test_a_failed_fund_is_fetched_again_in_the_same_day_and_joins_the_others(monkeypatch, env, http_mock):
+    """The day's real pattern: one fund fails, the run is repeated, the 37 raw files are resumed and only the
+    missing one is asked. Its rows join the day's partition instead of replacing it."""
+    good = etf.ISHARES_PRODUCTS
+    monkeypatch.setattr(etf, "ISHARES_PRODUCTS", {**good, "IGV": ("999999", "moved", False)})
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": AS_OF}})
+    assert len(_served()) == 37 * len(fx.SP500)
+    monkeypatch.setattr(etf, "ISHARES_PRODUCTS", good)      # not monkeypatch.undo(): it would undo the env too
+    http_mock.requests.clear()
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": AS_OF}})
+    assert len(http_mock.requests) == 1, "only the fund that failed is asked again"
+    assert len(_served()) == 38 * len(fx.SP500) and len(_served("etf = 'IGV'")) == len(fx.SP500)
+    assert row["coverage"] == 1.0 and row["result"] == "changed"
+
+
+def test_a_second_day_is_a_second_partition_and_both_are_served(env):
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": AS_OF}})
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-10-28"}})
+    days = {str(r[0]) for r in _served()}
+    assert days == {AS_OF, "2026-10-28"} and len(_served()) == 2 * 38 * len(fx.SP500)
+    assert row["rows"] == 38 * len(fx.SP500), "the check row counts the newest day"
 
 
 def test_without_a_uw_key_the_issuer_files_are_read_and_the_missing_key_is_an_issue(monkeypatch, env):

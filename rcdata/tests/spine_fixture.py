@@ -375,9 +375,9 @@ def uw_holdings_json(holdings, repeat=()) -> bytes:
 
 
 def add_etf_routes(http_mock, holdings=None, fail=(), repeat=()) -> None:
-    """Answer every file of ``spine/etf_holdings.FILES``: the SPDR workbooks, the iShares CSVs (the sector funds'
-    shape, without ``Type``) and UW's holdings answers, each holding ``holdings`` (``SP500`` by default). An ETF
-    named in ``fail`` answers 500 instead."""
+    """Answer every file of ``spine/etf_holdings.FILES``: the SPDR workbooks, the iShares CSVs (each in the shape
+    its own fund serves — IAK typed, the five sector funds not) and UW's holdings answers, each holding
+    ``holdings`` (``SP500`` by default). An ETF named in ``fail`` answers 500 instead."""
     from RevenueChaser.rcdata.build.spine import etf_holdings as etf
     rows = SP500 if holdings is None else holdings
 
@@ -389,7 +389,8 @@ def add_etf_routes(http_mock, holdings=None, fail=(), repeat=()) -> None:
         if f.provider == "ssga":
             route, body = f"holdings-daily-us-en-{f.etf.lower()}.", ssga_xlsx(rows)
         elif f.provider == "ishares":
-            route, body = f"/products/{etf.ISHARES_PRODUCTS[f.etf][0]}/", ishares_csv(rows, typed=False)
+            pid, _slug, typed = etf.ISHARES_PRODUCTS[f.etf]
+            route, body = f"/products/{pid}/", ishares_csv(rows, typed=typed)
         else:
             route, body = f"/etfs/{f.etf}/holdings", uw_holdings_json(rows, repeat=repeat)
         http_mock.add(route, answer(body, f.etf))

@@ -108,18 +108,20 @@ def parse_ssga(data: bytes) -> list[dict]:
     return out
 
 
-def parse_ishares(data: bytes) -> list[dict]:
+def parse_ishares(data: bytes, typed: bool = True) -> list[dict]:
     """iShares' ``latest-holdings.csv``: preamble lines (fund name, ``Fund Holdings as of``), a header line starting
-    ``Ticker,``, the lines, then a blank line. The issuer serves **two shapes**, both measured 30 Oct 2026:
+    ``Ticker,``, the lines, then a blank line. The issuer serves **two shapes**, both measured 30 Oct 2026, and the
+    caller says which one its fund has, so a file that changed shape fails loudly instead of being read the other way:
 
-    - the core funds (IVV, IJH, IJR, and IAK) carry a ``Type`` column and the weight in ``Market Weight``. Only
-      ``Type`` EQUITY lines are a holding of the stock: swaps and warrants are filed under ``Asset Class`` Equity too;
-    - the sector and industry funds (SOXX, IBB, ITA, ITB, IGV) carry neither. There the holdings are the
-      ``Asset Class`` Equity lines and the weight is ``Weight (%)``; the lines that are no stock are a money-market
-      fund, cash collateral, a future and cash, each under an ``Asset Class`` of its own. Without ``Type`` a swap
-      filed as Equity cannot be told from a stock — none of those five files held one on the day they were read.
+    - ``typed`` (IVV, IJH, IJR, IAK): a ``Type`` column, and the weight in ``Market Weight``. Only ``Type`` EQUITY
+      lines are a holding of the stock: swaps and warrants are filed under ``Asset Class`` Equity too;
+    - not ``typed`` (SOXX, IBB, ITA, ITB, IGV): neither column. There the holdings are the ``Asset Class`` Equity
+      lines and the weight is ``Weight (%)``; the lines that are no stock are a money-market fund, cash collateral,
+      a future and cash, each under an ``Asset Class`` of its own. Without ``Type`` a swap filed as Equity cannot be
+      told from a stock — none of those five files held one on the day they were read, and that is the whole reason
+      the shape is the fund's and not the file's.
 
-    A file with neither column is a failed file, never a quiet reshape."""
+    A file without the columns its fund's shape needs is a failed file, never a quiet reshape."""
     text = data.decode("utf-8-sig", errors="replace")
     lines = text.splitlines()
     start = next((i for i, line in enumerate(lines) if line.startswith("Ticker,")), None)
@@ -132,15 +134,17 @@ def parse_ishares(data: bytes) -> list[dict]:
         body.append(line)
     reader = csv.DictReader(io.StringIO("\n".join(body)))
     fields = reader.fieldnames or ()
-    typed = "Type" in fields
-    if not typed and "Asset Class" not in fields:
-        raise base.SourceError("ishares: no Type and no Asset Class column")
-    weight_col = "Market Weight" if typed else "Weight (%)"
+    held_col, weight_col = ("Type", "Market Weight") if typed else ("Asset Class", "Weight (%)")
+    missing = [c for c in (held_col, weight_col) if c not in fields]
+    if missing:
+        shape = "typed" if typed else "untyped"
+        raise base.SourceError(f"ishares: the {shape} shape needs {' and '.join(missing)}, and the file has neither"
+                               if len(missing) == 2 else
+                               f"ishares: the {shape} shape needs {missing[0]}, which the file has not")
+    want = "EQUITY" if typed else "Equity"
     out = []
     for r in reader:
-        held = ((r.get("Type") or "").strip() == "EQUITY" if typed
-                else (r.get("Asset Class") or "").strip() == "Equity")
-        if not held:
+        if (r.get(held_col) or "").strip() != want:
             continue
         out.append({"ticker_raw": r.get("Ticker"), "cusip": _cusip(r.get("CUSIP")), "name": r.get("Name"),
                     "weight": weight_of(r.get(weight_col))})

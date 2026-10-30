@@ -1027,8 +1027,9 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 | `dataset_schedule` | Cadence and pause state per dataset (Pause / Resume on Settings, PR 2) |
 
 **Day caps** (`rcdata/caps.py`, avo's numbers, to be tuned): uw 150,000, sec 40,000, fred 10,000, alpaca 20,000;
-the spine's (PR 5, working numbers avo has not set): wrds 50 (queries), openfigi 1,000 (requests), ssga 50,
-ishares 50, vanguard 50, nasdaq 50, invesco 50 (one request per fund file); yfinance 5,000, shared by three stores
+the spine's (PR 5, working numbers avo has not set): wrds 50 (queries), openfigi 1,000 (requests), ssga 300,
+ishares 150, vanguard 50, nasdaq 50, invesco 50 (one request per fund file; ssga and ishares serve both
+`funds/index_holdings` and `funds/etf_holdings`, 21 and 9 files a run, and every retry attempt is counted); yfinance 5,000, shared by three stores
 (working numbers avo has not set): the prices store's float lookups (PR 7, 3,000), the fundamentals layer's
 weekly analyst estimates (PR 12, 2,000, one request per ticker) and the market store's `yahoo` source (PR 9, no
 share of its own: one whole-history read per symbol, MOVE and wheat, and as-of day); the ownership store's (PR 16, working numbers too;

@@ -57,14 +57,16 @@ META_SUFFIX = ".meta.json"
 # The SPDR funds: the 11 sector funds and the seven industry ones (all one URL template, by ticker).
 SSGA_FUNDS = ("XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY",
               "XBI", "XOP", "XME", "KRE", "XHB", "XRT", "KIE")
-# The iShares funds, by (product id, page slug), from the issuer's product screener (30 Oct 2026). The slug is the
-# page's own; the id is what answers, as ``funds.ISHARES_PRODUCTS`` says for the core funds.
-ISHARES_PRODUCTS = {"SOXX": ("239705", "ishares-semiconductor-etf"),
-                    "IBB": ("239699", "ishares-biotechnology-etf"),
-                    "ITA": ("239502", "ishares-u-s-aerospace-defense-etf"),
-                    "ITB": ("239512", "ishares-u-s-home-construction-etf"),
-                    "IGV": ("239771", "ishares-expanded-tech-software-sector-etf"),
-                    "IAK": ("239515", "ishares-u-s-insurance-etf")}
+# The iShares funds, by (product id, page slug, typed), from the issuer's product screener (30 Oct 2026). The slug
+# is the page's own; the id is what answers, as ``funds.ISHARES_PRODUCTS`` says for the core funds. ``typed`` is
+# which of the issuer's two CSV shapes the fund serves, measured per fund on that day: the five sector and industry
+# funds carry no ``Type`` column, IAK does. The shape is the fund's, so a file that changes shape fails loudly.
+ISHARES_PRODUCTS = {"SOXX": ("239705", "ishares-semiconductor-etf", False),
+                    "IBB": ("239699", "ishares-biotechnology-etf", False),
+                    "ITA": ("239502", "ishares-u-s-aerospace-defense-etf", False),
+                    "ITB": ("239512", "ishares-u-s-home-construction-etf", False),
+                    "IGV": ("239771", "ishares-expanded-tech-software-sector-etf", False),
+                    "IAK": ("239515", "ishares-u-s-insurance-etf", True)}
 # The themes whose issuer has no keyless holdings file (VanEck, Global X, First Trust, WisdomTree, ARK, ROBO Global,
 # U.S. Global) and the two Invesco funds its API answers 500 for.
 UW_FUNDS = ("SMH", "PAVE", "AIQ", "LIT", "URA", "NLR", "AIRR", "SKYY", "WCLD", "ARKQ", "ROBO", "JETS", "TAN", "PBW")
@@ -95,9 +97,6 @@ def parse_uw(data: bytes) -> list[dict]:
     return out
 
 
-PARSERS = {"ssga": parse_ssga, "ishares": parse_ishares, "uw": parse_uw}
-
-
 @dataclass(frozen=True)
 class EtfFile:
     etf: str
@@ -111,14 +110,18 @@ class EtfFile:
                     + "/us/en/intermediary/library-content/products/fund-data/etfs/us/"
                     + f"holdings-daily-us-en-{self.etf.lower()}.xlsx")
         if self.provider == "ishares":
-            pid, slug = ISHARES_PRODUCTS[self.etf]
+            pid, slug, _typed = ISHARES_PRODUCTS[self.etf]
             return (provider_base("RC_ISHARES_BASE", "https://www.ishares.com")
                     + f"/us/products/{pid}/{slug}/latest-holdings.csv")
         from ....core.providers import unusual_whales
         return f"{unusual_whales.BASE}/etfs/{self.etf}/holdings"
 
     def parse(self, data: bytes) -> list[dict]:
-        return PARSERS[self.provider](data)
+        if self.provider == "ssga":
+            return parse_ssga(data)
+        if self.provider == "ishares":
+            return parse_ishares(data, typed=ISHARES_PRODUCTS[self.etf][2])
+        return parse_uw(data)
 
     def raw_name(self) -> str:
         return f"{self.provider}-{self.etf}.{self.ext}"
@@ -180,7 +183,10 @@ class EtfHoldings:
                 continue
             try:
                 content = f.download(ctx)
-                f.parse(content)                              # refuse a file of the wrong shape before keeping it
+                # Refuse a file of the wrong shape, and an answer with no holding in it, before keeping it: the raw
+                # file is the resume marker, so a kept empty answer would be the fund's whole day.
+                if not f.parse(content):
+                    raise base.SourceError(f"{f.raw_name()}: the answer holds no holding line")
             except Exception as e:  # noqa: BLE001 - one fund down must not stop the others
                 failed.append(f.raw_name())
                 ctx.issue("source_failed", f.raw_name(), f"{type(e).__name__}: {e}"[:300])
@@ -216,6 +222,9 @@ class EtfHoldings:
                     "ticker": norm_ticker(line["ticker_raw"]), "ticker_raw": line["ticker_raw"],
                     "cusip": line["cusip"], "name": line["name"], "weight": line["weight"],
                     "fetched_at": meta["fetched_at"], "run_id": meta["run_id"]})
+        dropped = sum(1 for rows in by_day.values() for r in rows if r["ticker"] is None)
+        if dropped:
+            ctx.notes.append(f"{dropped} lines with no ticker of their own (not served)")
         out = []
         for as_of, rows in sorted(by_day.items()):
             final = parquet_dir() / f"date={as_of.isoformat()}" / "part-0.parquet"
