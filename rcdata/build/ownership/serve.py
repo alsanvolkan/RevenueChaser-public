@@ -3,9 +3,11 @@
 **13F totals**, over the filings ``sec/13f`` typed (``status`` ok) and their holdings in Parquet:
 
 - *The amendment rule* (the SEC's Form 13F instructions; the ownership review of 2026-10-02, Q1): per filer and
-  report period, in filed order, a holdings report (13F-HR) starts the period's set, an amendment of type ``NEW
-  HOLDINGS`` adds to it, and any other amendment (``RESTATEMENT``, or none stated) replaces it. An amendment belongs
-  to the period it reports on, not to the quarter it was filed in.
+  report period, in filed order, a holdings report (13F-HR) starts the period's set, a report of amendment type
+  ``NEW HOLDINGS`` adds to it (whether or not its form carries the ``/A``: one 13F-HR of 9,501 in a real set does
+  not, and read as a new report it replaced the quarter with its few names; 13F review B1, 2026-10-30), and any
+  other amendment (``RESTATEMENT``, or none stated) replaces it. An amendment belongs to the period it reports on,
+  not to the quarter it was filed in.
 - *Long equity only*: ``sh_type`` ``SH`` and no put or call. Principal amounts and options stay in Parquet.
 - *The quarters served*: a quarter whose filing deadline passed before the store's first 13F day (the walk's first
   day, which the data-set fill moves back) is left out: only its late filers and amendments are stored (the sets
@@ -166,14 +168,15 @@ def filing_deadline(period: date) -> date:
 
 def active_accessions(rows) -> list[str]:
     """The amendment rule over ``rows`` (accession, cik, period, ..., is_amendment, amendment_type), sorted by filer,
-    period and filed order: the accessions whose holdings count."""
+    period and filed order: the accessions whose holdings count. A ``NEW HOLDINGS`` report adds whatever its form
+    says (adding to an empty set is starting it)."""
     out: list[str] = []
     key, active = None, []
     for acc, cik, period, *_order, is_amendment, kind in rows:
         if (cik, period) != key:
             out += active
             key, active = (cik, period), []
-        if is_amendment and kind == "NEW HOLDINGS":
+        if kind == "NEW HOLDINGS":
             active.append(acc)
         else:
             active = [acc]

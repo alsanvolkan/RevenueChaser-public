@@ -11,6 +11,7 @@ from datetime import date, datetime, timezone
 import duckdb
 import pytest
 
+from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.rcdata import ops, read, serving
 from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.ownership import common, finra, ibkr, sec, sec13f, serve
@@ -319,6 +320,34 @@ def test_a_quarter_whose_deadline_passed_before_the_first_13f_day_is_not_served(
     assert _served(f"SELECT count(*) FROM {sec13f.TABLE} WHERE period = '2001-09-30'") == [(1,)]     # kept, raw
     assert ("1 filings of 1 quarters whose filing deadline passed before the first 13F day (2026-10-25) left out"
             in row["note"])
+
+
+def test_a_new_holdings_report_without_the_a_suffix_adds_to_the_quarter(monkeypatch, http_mock):
+    """Real data (01jun2025-31aug2025): one 13F-HR of 9,501 carries AMENDMENTTYPE NEW HOLDINGS without the /A. It
+    adds to the filer's report for the quarter, as a 13F-HR/A of that type does; read as a new report it replaced
+    the quarter with its few names and made every other position an exit."""
+    monkeypatch.setattr(sec_edgar, "SEC_WWW_BASE", "https://sec.test")
+    monkeypatch.setattr(sec, "_shared_pace", lambda: True)
+    monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
+    ox.make_spine()
+    name = "01sep2026-30nov2026_form13f.zip"
+    href = f"/files/structureddata/data/form-13f-data-sets/{name}"
+    http_mock.add(ox.SETS_PAGE_PATH, ox.sets_page([href]))
+    http_mock.add(href, ox.f13_set([
+        ox.set_filing("0004000001-26-000001", 4000001, "14-OCT-2026", [
+            _h("MICROSOFT CORP", "594918104", 400_000, 1000), _h("APPLE INC", "037833100", 23_000, 100)],
+            period="30-SEP-2026"),
+        ox.set_filing("0004000001-26-000002", 4000001, "20-OCT-2026", [_h("GAMESTOP CORP", "36467W109", 2_500, 100)],
+                      period="30-SEP-2026", form="13F-HR", amendment_type="NEW HOLDINGS", amendment_no="1",
+                      is_amendment="Y")]))
+    ox.Edgar().install(http_mock)
+    _thirteen_f(mode="backfill", **{"from": "2026-09-01", "to": "2026-10-27"})
+    _serve()
+    assert _served(f"SELECT form, is_amendment, amendment_type FROM {sec13f.TABLE} ORDER BY filed") == [
+        ("13F-HR", False, None), ("13F-HR", False, "NEW HOLDINGS")]
+    assert _served("SELECT ticker, shares, holders FROM sec13f_ticker_period WHERE period = ? ORDER BY ticker",
+                   Q3) == [("AAPL", 100.0, 1), ("GME", 100.0, 1), ("MSFT", 1000.0, 1)]
+    assert _served("SELECT filings, cusips FROM sec13f_filer_period") == [(2, 3)]
 
 
 # ── An exit that may not be a sale ──────────────────────────────────────────────────────────────────────────
