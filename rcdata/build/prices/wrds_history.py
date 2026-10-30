@@ -38,7 +38,8 @@ error, still fails the run.
 **The columns first.** The first query of a run that asks anything is ``information_schema.columns`` for the five
 tables (``fundamentals/wrds_fund.catalog``, the columns this login can read; one ``wrds`` call, the same login, so no
 second Duo): a Compustat table the login cannot read, or a column a query names that WRDS lacks (``ASKED_COLUMNS``,
-``exchg`` among them), fails the run before any data is asked; a CRSP table missing from it is skipped as above.
+``exchg`` among them), fails the run before any data is asked; a CRSP table missing from it, or a CRSP column it
+lacks, is skipped as above.
 
 **Served** by ``prices/serving``: the bars (``COMP_BARS``, ``CRSP_BARS``; CRSP first where linked, an Alpaca bar
 always winning its session), the actions (``ACTIONS_SQL``; an Alpaca action of the same kind and day winning), the
@@ -256,7 +257,8 @@ class WrdsPrices:
     def _check_columns(self, ctx: base.RunContext, as_of: date, run: dict) -> None:
         """One ``information_schema.columns`` query (``wrds_fund.catalog``, the columns this login can read) before
         any data is asked: a Compustat table the login cannot read, or a column a query names that WRDS lacks,
-        fails the run here; a CRSP library the login cannot read is skipped as a refusal (``wrds_no_access``)."""
+        fails the run here; a CRSP library the login cannot read, or a CRSP column it lacks, is skipped as a refusal
+        (``wrds_no_access``)."""
         found = wrds_fund.catalog(ctx, NAME, as_of, sorted({TABLES[t]["wrds"].split(".")[1] for t in TABLES}))
         for table in (*SNAPSHOTS, *YEARLY):
             library, name = TABLES[table]["wrds"].split(".")
@@ -272,6 +274,12 @@ class WrdsPrices:
                 raise base.SourceError(f"wrds {library}.{name} is not readable by this login; WRDS has {name} in "
                                        f"{', '.join(elsewhere) or 'no library this login can read'}")
             missing = [c for c in ASKED_COLUMNS[table] if c not in columns]
+            if missing and table in CRSP_TABLES:
+                # A CRSP column WRDS lacks degrades like a CRSP library it lacks: CRSP skipped, Compustat goes on.
+                if not run["refused"]:
+                    self._skip_crsp(ctx, table, base.SourceError(f"{library}.{name} has no {', '.join(missing)}, "
+                                                                 "which the query names"), run["refused"], library)
+                continue
             if missing:
                 raise base.SourceError(f"wrds {library}.{name} has no {', '.join(missing)}, which the query names "
                                        f"(it has {', '.join(sorted(columns))}); nothing was asked")

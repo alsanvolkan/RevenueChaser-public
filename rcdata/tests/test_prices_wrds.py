@@ -461,11 +461,25 @@ def test_a_crsp_library_this_login_cannot_read_is_skipped_unasked(fake, monkeypa
     assert [i["key"] for i in issues] == ["crsp"] and "CRSP skipped" in row["note"]
 
 
-def test_a_crsp_column_wrds_lacks_still_fails_the_run(fake, monkeypatch):
+def test_a_crsp_column_wrds_lacks_skips_crsp_and_compustat_still_serves(fake, monkeypatch):
+    # The delta review's MUST: a CRSP column the catalog lacks degrades like a CRSP library it lacks (crsp.dsf_v2's
+    # CIZ names are the least verified here), so the attended run still fills Compustat and no Duo is wasted.
     conn, _ = fake
     columns = dict(COLUMNS)
-    columns[("crsp", "ccmxpf_lnkhist")] = ["gvkey", "lpermno", "linktype", "linkprim", "linkdt", "linkenddt"]
+    columns[("crsp", "dsf_v2")] = [c for c in COLUMNS[("crsp", "dsf_v2")] if c != "dlyopen"]
     monkeypatch.setitem(conn.data, "information_schema.columns", _catalog(columns))
     row = _backfill()
-    assert row["result"] == "failed" and "liid" in row["note"], row
-    assert _asked(conn) == ["information_schema.columns"]
+    assert row["result"] == "changed", row
+    assert _asked(conn) == ["information_schema.columns", "comp.sec_split",
+                            "comp.secd 2026", "comp.sec_divid 2026", "comp.secd 2025", "comp.sec_divid 2025",
+                            "comp.secd 2024", "comp.sec_divid 2024"]
+    issues = [i for i in ops.open_issues(wrds_history.NAME, limit=50)[1] if i["kind"] == "wrds_no_access"]
+    assert [i["key"] for i in issues] == ["crsp"] and "dlyopen" in issues[0]["detail"]
+    assert "CRSP skipped" in row["note"]
+    assert base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
+    assert base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})["result"] == "changed"
+    june = _q("SELECT source FROM price_bar_daily WHERE security_id = ? AND session_date < '2026-01-01'", [AAPL])
+    assert len(june) == 5 and {r["source"] for r in june} == {wrds_history.COMPUSTAT}
+    cap = _q("SELECT market_cap FROM market_cap_daily WHERE security_id = ? AND session_date = '2025-06-02'",
+             [AAPL])
+    assert cap and cap[0]["market_cap"] == pytest.approx(200.0 * 7.5e9)

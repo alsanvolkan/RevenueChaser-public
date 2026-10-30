@@ -1264,9 +1264,10 @@ newest cover-sourced cap up to Yahoo's answer: a count from before a dilution or
 the sources: `not_a_session`, `symbol_refused`, `action_undated`, `no_inline_xbrl`, `submissions_missing`,
 `filing_not_in_submissions`, `instance_unreadable`, `wrds_column_empty` (a WRDS answer with rows and none of a
 column the store needs), `wrds_no_access` (a CRSP library the WRDS login cannot read, keyed by the schema: missing
-from `information_schema.columns` or refused with `InsufficientPrivilege`; CRSP is skipped for the run and the
-history is Compustat's alone). Before any data query `wrds/prices` asks `information_schema.columns` once and fails
-the run when a Compustat table or a column a query names is missing.
+from `information_schema.columns`, lacking a column a query names, or refused with `InsufficientPrivilege`; CRSP is
+skipped for the run and the history is Compustat's alone). Before any data query `wrds/prices` asks
+`information_schema.columns` once and fails the run when a Compustat table or a Compustat column a query names is
+missing.
 
 **Attended (WRDS).** `wrds/prices` runs on the spine's WRDS worker (`RC_WRDS_PYTHON`, `WRDS_USERNAME`) from the CLI
 only: `python -m RevenueChaser.rcdata.build backfill wrds/prices`. One query per table and year; a backfill asks the
