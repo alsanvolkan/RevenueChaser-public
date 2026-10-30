@@ -35,6 +35,35 @@ def test_medium_label_is_the_same_whichever_child_s_tags_are_scanned_first(rawst
     assert _medium_label("tieA", "f1") == _medium_label("tieB", "f2")
 
 
+def test_the_medium_label_on_a_tie_is_the_lowest_theme_id_child_s_tags(rawstore_tmp_db):
+    """The rule itself, not only that it is stable (#20, R1 review MUST 1).
+
+    ``f1``'s tags win over ``f2``'s whichever order the rows are scanned in. The e2e cannot pin this:
+    there the fine numbering comes out of NMF, and the #51 fixture's tied singular values leave it to
+    the LAPACK build. Here the ``theme_id``s are the test's own, so the rule is pinned where it is
+    decided.
+    """
+    assert _medium_label("pinA", "f1") == "deposits, branch, consumer"
+    assert _medium_label("pinB", "f2") == "deposits, branch, consumer"
+
+
+def test_the_tie_is_broken_on_the_theme_id_as_text_not_as_a_number(rawstore_tmp_db):
+    """``f10`` sorts before ``f2`` (#20 NIT): the comparison is ``sorted()``/``ORDER BY`` on the id
+    text, and the labels and docstrings say so. Deterministic either way; this is the one that is
+    written down."""
+    rawstore.write_rows("relatedness_themes", [
+        {"theme_id": "txt:m1", "level": "medium", "parent_id": None, "label": "", "size": 4},
+        {"theme_id": "txt:f2", "level": "fine", "parent_id": "txt:m1", "label": "", "size": 2},
+        {"theme_id": "txt:f10", "level": "fine", "parent_id": "txt:m1", "label": "", "size": 2},
+    ])
+    rawstore.write_rows("relatedness_theme_tags", [
+        {"theme_id": "txt:f2", "tag": t, "rank": i} for i, t in enumerate(("deposits", "branch", "consumer"))]
+        + [{"theme_id": "txt:f10", "tag": t, "rank": i}
+           for i, t in enumerate(("biologics", "clinical", "drugs"))])
+    themes.relabel_from_tags("txt")
+    assert rawstore.get("relatedness_themes", "txt:m1")["label"] == "biologics, clinical, drugs"
+
+
 def test_run_rows_order_does_not_depend_on_the_insertion_order(rawstore_tmp_db):
     """``run_rows`` is the one reader of a run's rows, so the order is its contract (#20)."""
     rawstore.write_rows("relatedness_theme_tags", [
@@ -46,10 +75,15 @@ def test_run_rows_order_does_not_depend_on_the_insertion_order(rawstore_tmp_db):
     assert read == sorted(read)
 
 
-def _naming_prompt(run_id: str, fine_first: str) -> str:
+def _naming_prompt(run_id: str, fine_first: str, members_reversed: bool = False) -> str:
     """The user prompt ``name_themes`` sends for the medium theme, with the theme rows written in
     ``fine_first`` order: ``_run_themes`` reads them back in that order and ``_descendant_fines``
-    hands them to ``_aggregate`` in it."""
+    hands them to ``_aggregate`` in it.
+
+    ``members_reversed`` writes ``relatedness_theme_members`` back to front instead. DuckDB returns
+    rows in insertion order when nothing orders them, so that is how a store whose member rows were
+    not written by today's ``build_shadow`` looks to the reader.
+    """
     medium = {"theme_id": f"{run_id}:m1", "level": "medium", "parent_id": None, "label": "", "size": 4}
     f1 = {"theme_id": f"{run_id}:f1", "level": "fine", "parent_id": f"{run_id}:m1", "label": "banks", "size": 2}
     f2 = {"theme_id": f"{run_id}:f2", "level": "fine", "parent_id": f"{run_id}:m1", "label": "biotech", "size": 2}
@@ -57,9 +91,9 @@ def _naming_prompt(run_id: str, fine_first: str) -> str:
     rawstore.write_rows("relatedness_theme_tags", [
         {"theme_id": f"{run_id}:f1", "tag": t, "rank": i} for i, t in enumerate(("deposits", "branch"))]
         + [{"theme_id": f"{run_id}:f2", "tag": t, "rank": i} for i, t in enumerate(("biologics", "clinical"))])
-    rawstore.write_rows("relatedness_theme_members", [
-        {"ticker": t, "theme_id": f"{run_id}:f1", "weight": 1.0} for t in ("BAC", "WFC")]
-        + [{"ticker": t, "theme_id": f"{run_id}:f2", "weight": 1.0} for t in ("AMGN", "BIIB")])
+    members = [{"ticker": t, "theme_id": f"{run_id}:f1", "weight": 1.0} for t in ("BAC", "WFC")] \
+        + [{"ticker": t, "theme_id": f"{run_id}:f2", "weight": 1.0} for t in ("AMGN", "BIIB")]
+    rawstore.write_rows("relatedness_theme_members", list(reversed(members)) if members_reversed else members)
     from RevenueChaser.module_relatedness import naming
     sent = []
 
@@ -105,14 +139,29 @@ def _tag_line(prompt: str) -> str:
 def test_the_naming_prompt_s_tags_do_not_rely_on_the_sql_order(rawstore_tmp_db, monkeypatch):
     """The same for the prompt ``naming.name_themes`` sends (#20).
 
-    Only the tag line: the example companies come from ``relatedness_theme_members``, which
-    :func:`themes.run_rows` leaves in the scan's order on purpose (the theme's largest names first,
-    which no column records), so a reversed member scan still reverses them. Parked, with the reason
-    in ``run_rows``.
+    The tag line, because this harness reverses what ``run_rows`` *returns*: it defeats the SQL
+    ``ORDER BY`` on purpose, so it can only test the Python side, and only the tag order has one
+    (``naming`` sorts ``fine_ids``). The example companies' order is a SQL contract, not a Python
+    one -- ``test_the_whole_naming_prompt_does_not_depend_on_the_member_insertion_order`` is the test
+    for it.
     """
     from RevenueChaser.module_relatedness import naming
     _reverse_for_b(monkeypatch, naming.themes_mod)
     assert _tag_line(_naming_prompt("nrevA", "f1")) == _tag_line(_naming_prompt("nrevB", "f1"))
+
+
+def test_the_whole_naming_prompt_does_not_depend_on_the_member_insertion_order(rawstore_tmp_db):
+    """The **whole** prompt, not only its tag line (#20, R1 review MUST 2).
+
+    The example companies come from ``relatedness_theme_members``, which ``themes.ROW_ORDER`` now
+    reads ``theme_id, ticker``. That reproduces the order today's ``build_shadow`` writes -- its
+    tickers come from ``tag_docs``' ``sorted(profiles)``, so within a theme they are already
+    alphabetical -- and makes it a contract rather than the scan's choice, so a run whose member
+    rows went in in some other order gives the same prompt. A prompt that differs between machines
+    also misses the LLM cache (``deepseek.complete`` hashes ``(system, user)``), so the same theme is
+    paid for twice.
+    """
+    assert _naming_prompt("memA", "f1") == _naming_prompt("memB", "f1", members_reversed=True)
 
 
 def _coarse_label(run_id: str) -> str:
@@ -138,5 +187,6 @@ def _coarse_label(run_id: str) -> str:
 
 
 def test_the_coarse_label_walks_its_medium_children_in_theme_id_order(rawstore_tmp_db):
-    """The coarse label is the lowest-numbered medium child's tags, not the fine loop's order (#20)."""
+    """The coarse label is the tags of the medium child with the lowest ``theme_id`` as text, not the
+    fine loop's order (#20)."""
     assert _coarse_label("crsA").split(", ")[0] == "biologics"

@@ -161,10 +161,15 @@ def test_board_renders_after_a_rebuild(rebuilt, store):
     assert set(stored.values()) == {"Technology", "Technology (2)"}
     assert by_ticker["G0"]["theme_coarse"] == "accelerated, data center, designer"
     # The bank and healthcare fines are equal in size and in tag counts, so the offline label of their merged medium
-    # theme is a tie between the two groups' top tags. It used to follow the row order of the tag table and differed
-    # between the Windows and the Linux run; since #20 the aggregation walks the children in theme_id order, so the
-    # tie resolves to the lowest-numbered fine child and one literal can be pinned.
-    assert by_ticker["B0"]["theme_coarse"] == "biologics, clinical, drugs"
+    # theme is a tie between the two groups' top tags. Since #20 the tie resolves to the child with the lowest
+    # theme_id -- but *which* group that is is not this test's to pin: the fixture's three groups give exactly tied
+    # singular values, so which one NMF numbers f0 is down to the LAPACK build (that, not the scan order, is what
+    # split the Windows and the Linux run in #20). The rule itself is pinned in
+    # module_relatedness/tests/test_theme_label_determinism_20.py, where the theme_ids are fixed. The test states
+    # what is guaranteed here: the merged theme carries one of the two groups' own labels, and both groups' cards
+    # show the same one.
+    merged = {"branch, consumer, deposits", "biologics, clinical, drugs"}
+    assert by_ticker["B0"]["theme_coarse"] in merged
     assert by_ticker["H0"]["theme_coarse"] == by_ticker["B0"]["theme_coarse"]
     assert rebuilt.table_count("ticker_themes") > 0
     assert rebuilt.table_count("relatedness_theme_etfs") >= 0
