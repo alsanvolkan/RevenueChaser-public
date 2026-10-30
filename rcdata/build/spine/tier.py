@@ -16,7 +16,7 @@ So:
 
 Tier A is therefore not every listed name: the plan's "A 7,691 exchange-listed" (2026-10-26) is A and B together.
 
-The $300M market-cap floor is not a tier: it needs market data, which the spine does not hold (``core/universe.py``
+The market-cap floor (gone since 29 Oct 2026) was never a tier: it needs market data, which the spine does not hold (``core/universe.py``
 applies it at read time). The type comes from ``core.identity.types.classify_type`` over the spine's own inputs
 (OpenFIGI's security types and the SEC name; no SEC submissions), so a preferred share written ``WFC-PC`` is typed by
 the ticker rule even before OpenFIGI answered. A name those leave untyped is typed, in this order, by:

@@ -37,7 +37,8 @@ def _comovement_params() -> list[str]:
         f"Window {eff.window} sessions",
         f"Min observations {eff.min_obs}",
         f"Out-of-sample holdout {eff.oos_holdout} sessions",
-        f"Market-cap floor ${DEFAULT_MC_MIN / 1e6:,.0f}M",
+        ("Market-cap floor none (Tiers A and B)" if not DEFAULT_MC_MIN
+         else f"Market-cap floor ${DEFAULT_MC_MIN / 1e6:,.0f}M"),
         f"Default benchmark {bench}",
         f"Default horizon {c.DEFAULT_HORIZON} day",
         f"Price history {c.OHLC_PERIOD}",

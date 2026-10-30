@@ -5,7 +5,8 @@ how, ``RESTATEMENT`` or ``NEW HOLDINGS``, the report type, the summary's entry a
 holdings out under confidential treatment, ``confidential_omitted``) and, unless it is a notice, its information
 table (one ``infoTable`` per holding: issuer, class, CUSIP, FIGI when the filer gives one, value, shares or principal
 and its type, put or call, discretion, voting authority). Tags are read by their local names (filers' namespace
-prefixes vary).
+prefixes vary). The period is the cover page's, the submission header's when the cover page has none (the sets
+path reads it the same way). A CUSIP written as a placeholder (``CUSIP_NONE``: ``000000000``, ``N/A``) is none.
 
 A filing is ``ok`` (its holdings typed), ``notice`` (a 13F notice: another manager reports its holdings) or
 ``unparsed`` (no cover page XML, no period, or a document that does not parse; ``detail`` says which). Every holding
@@ -40,6 +41,7 @@ TABLE = "sec13f_filings"
 FORMS = frozenset({"13F-HR", "13F-HR/A"})
 BUDGET_S = 15 * 60.0
 DOLLARS_FROM = date(2023, 1, 3)          # the SEC's rule: value in dollars, not thousands, from this filing day
+CUSIP_NONE = frozenset({"N/A", "NA", "NONE", "000000000"})      # written where the filer has no CUSIP: none
 FILINGS = [("accession", "TEXT"), ("cik", "TEXT"), ("filer_name", "TEXT"), ("form", "TEXT"), ("period", "DATE"),
            ("filed", "DATE"), ("index_day", "DATE"), ("is_amendment", "BOOLEAN"), ("amendment_no", "INTEGER"),
            ("amendment_type", "TEXT"), ("report_type", "TEXT"), ("other_managers", "INTEGER"),
@@ -53,7 +55,8 @@ HOLDINGS = [("accession", "TEXT"), ("cik", "TEXT"), ("period", "DATE"), ("filed"
             ("vote_shared", "BIGINT"), ("vote_none", "BIGINT")]
 SERVED = FILINGS + [("source", "TEXT")]
 ORIGIN = "edgar"
-SETS_SCHEMA = {"forms": FORMS, "filings": FILINGS, "holdings": HOLDINGS, "dollars_from": DOLLARS_FROM}
+SETS_SCHEMA = {"forms": FORMS, "filings": FILINGS, "holdings": HOLDINGS, "dollars_from": DOLLARS_FROM,
+               "cusip_none": CUSIP_NONE}
 
 
 def _mdy(value) -> date | None:
@@ -132,6 +135,8 @@ def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
     for n, it in enumerate(info.iter("infotable") if info is not None else ()):
         value = edgar.number(edgar.text(it, "value"))
         cusip = (edgar.text(it, "cusip") or "").upper() or None
+        if cusip in CUSIP_NONE:
+            cusip = None
         holdings.append({
             "accession": row["accession"], "cik": row["cik"], "period": row["period"], "filed": filed, "line": n,
             "name_of_issuer": edgar.text(it, "nameofissuer"), "title_of_class": edgar.text(it, "titleofclass"),
@@ -161,8 +166,8 @@ def recent_cusips(periods: int = 2) -> set[str]:
     con = duckdb.connect()
     try:
         newest = [r[0] for r in con.execute(
-            f"SELECT DISTINCT period FROM {common.files_sql(filings)} WHERE period IS NOT NULL AND holdings > 0 "
-            f"ORDER BY period DESC LIMIT {int(periods)}").fetchall()]
+            f"SELECT DISTINCT {common.quarter_end('period')} AS q FROM {common.files_sql(filings)} "
+            f"WHERE period IS NOT NULL AND holdings > 0 ORDER BY q DESC LIMIT {int(periods)}").fetchall()]
         files = [f for day, f in partitions(DATASET.parquet_dir() / "holdings", "day")
                  if newest and date.fromisoformat(str(day)) >= min(newest)]
         if not files:
@@ -170,7 +175,7 @@ def recent_cusips(periods: int = 2) -> set[str]:
         rows = con.execute(f"""
             SELECT DISTINCT upper(cusip) FROM {common.files_sql(files)}
             WHERE upper(sh_type) = 'SH' AND coalesce(trim(put_call), '') = '' AND cusip IS NOT NULL
-              AND period IN ({", ".join(f"DATE '{p}'" for p in newest)})""").fetchall()
+              AND {common.quarter_end('period')} IN ({", ".join(f"DATE '{p}'" for p in newest)})""").fetchall()
     finally:
         con.close()
     return {r[0] for r in rows}

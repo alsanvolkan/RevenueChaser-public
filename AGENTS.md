@@ -249,7 +249,7 @@ SSoT pointers (do not invent a second source):
 - Filters: `RevenueChaser/core/reporting_common.py`
 - Sector (UW's Morningstar names) and the two-level path: `RevenueChaser/core/gics_map.py`
 - Themes: `RevenueChaser/core/taxonomy.py`
-- Universe spine: `fetch_universe_stats()` → `equity_universe`; classification cut `$300M` and the security-type filter (funds / ETFs, SPACs, preferred / warrants / units leave the universe; Identity R4) in `core/universe.py`
+- Universe spine: `fetch_universe_stats()` → `equity_universe`; no market-cap cut (Tiers A and B are the whole limit, avo 29 Oct 2026) and the security-type filter (funds / ETFs, SPACs, preferred / warrants / units leave the universe; Identity R4) in `core/universe.py`
 - Index: `RevenueChaser/core/index_registry.py` (the boards' reads: the spine by default); the old store's weekly lists: `RevenueChaser/core/index_lists.py`
 - Shared data: `RevenueChaser/.store/` (`raw.duckdb`, `edgar.duckdb`); module caches in `module_<x>/data/`; dashboards in `.cache/`
 - HTML escaping and the board guard: `RevenueChaser/core/html_safe.py`, `core/tests/board_fixtures.py` (ADR-X1, §6)

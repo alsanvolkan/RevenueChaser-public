@@ -63,5 +63,7 @@ def test_a_session_one_past_max_lag_is_not_read(table):
 def test_the_lags_are_the_spec_values():
     """The boundaries above follow MAX_LAG; these are the values the spec and the model version name."""
     assert stored_inputs.MAX_LAG == {"earnings_calendar": 1, "short_interest": 3}
-    # The 10-year yield left this module with the market store; its own limit is the same 3 sessions.
-    assert store_reads.MAX_LAG["dgs10"] == 3
+    # The 10-year yield left this module with the market store and the catalog owns its limit, so this value
+    # follows ``macro.dgs10``. It was 4 from 30 Oct 2026: the live store measured an ordinary lag of 2 and 3 left
+    # one session of room, so a single missed run read "not stored" with nothing wrong.
+    assert store_reads.MAX_LAG["dgs10"] == 4

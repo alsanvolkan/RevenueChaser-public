@@ -59,7 +59,7 @@ def test_comovement_universe_is_the_classification_universe_at_the_floor(rawstor
          "quote": {"symbol": t}} for t, c in caps.items()])
     got = ohlc.universe_tickers()
     assert got == universe_mod.classification_universe(universe_mod.DEFAULT_MC_MIN)
-    assert got == ["BIG1", "BIG2", "EDGE"]
+    assert got == ["BIG1", "BIG2", "EDGE", "NOCAP"]   # no floor: EDGE at 0 and the NULL cap are both in
 
 
 # ── effective(): the single resolver ────────────────────────────────────────
@@ -68,7 +68,7 @@ def test_default_effective_equals_todays_constants(rawstore_tmp_db):
     assert (e.window, e.min_obs, e.min_periods) == (252, 126, 60)
     assert (e.oos_holdout, e.oos_min_obs) == (63, 40)
     assert (e.winsor_k, e.bench_stale_sessions) == (5.0, 2)
-    assert e.floor == universe_mod.DEFAULT_MC_MIN == 300_000_000.0
+    assert e.floor == universe_mod.DEFAULT_MC_MIN == 0        # no market-cap floor since 29 Oct 2026
     assert not e.short_window and not e.horizon_locked and e.oos_enabled
     assert e.custom is False and e.overridden == ()
 
@@ -140,7 +140,7 @@ def test_payload_block_for_the_ui(rawstore_tmp_db):
 # ── config_hash ─────────────────────────────────────────────────────────────
 _BASE = dict(window=252, linkage="ward", cuts=(20, 80, 250), horizon=1,
              benchmark="spy", min_obs=126, oos_holdout=63, winsor_k=5.0,
-             min_periods=60, bench_stale_sessions=2, floor=300_000_000.0)
+             min_periods=60, bench_stale_sessions=2, floor=0.0)
 
 
 def _hash(**over) -> str:
@@ -381,10 +381,16 @@ def test_default_settings_reproduce_the_pre_change_payload(rawstore_tmp_db):
                                             persist=True))
     # R4 (#87) adds the security-type counts to the funnel dict. Nothing is typed
     # as a fund here, so ``classification_total`` and every cluster stay identical.
+    # ``floor`` is not a new key: its value moved from 300,000,000 to 0 when the floor went (avo, 29 Oct
+    # 2026). The golden predates that, and the number it records is the setting, not a result, so it is
+    # compared no more than the hash string is.
     new_funnel_keys = {"listed_recently", "missing_bars", "window", "min_obs",
                        "floor_total", "funds_etfs", "spacs", "other_securities",
-                       "unknown_type"}
+                       "unknown_type", "floor"}
     for k, v in got.items():
+        v["funnel"] = {a: b for a, b in v["funnel"].items() if a not in new_funnel_keys}
+    # ``floor`` is in the golden with the old value, so it comes off both sides, not just the new one.
+    for v in golden.values():
         v["funnel"] = {a: b for a, b in v["funnel"].items() if a not in new_funnel_keys}
     diffs = _diff(json.loads(json.dumps(got, default=str)), golden)
     assert not diffs, diffs[:20]

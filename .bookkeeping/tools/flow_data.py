@@ -97,7 +97,7 @@ AREAS = [
      "raw", "quote_snapshot (source uw)", ":1602", "ticker + session_date + source", "append",
      "Asks only the tickers with no UW row for the session; runs when a UW key verifies (app/runners.py:1164); the session is checked again before each call and each write. Kept beside Yahoo's row; Data Health lists caps more than 5% apart.", "core/quotes.py:377"),
    ],
-   planned="quote_snapshot is written (#294): Yahoo first, UW beside it, one row per ticker per session per source. Swing and Fundamentals prefilter on it since #383 R3 C12 (price and dollar volume of each name's newest session row, Yahoo first, the average volume from the newest Yahoo row that has one: core/quotes.py:412 prefilter_quotes). The other boards and the $300M cut still read equity_universe until the D6 current view (#279) reads core/quotes.latest_caps; equity_universe.quote/price/market_cap retire then."),
+   planned="quote_snapshot is written (#294): Yahoo first, UW beside it, one row per ticker per session per source. Swing and Fundamentals prefilter on it since #383 R3 C12 (price and dollar volume of each name's newest session row, Yahoo first, the average volume from the newest Yahoo row that has one: core/quotes.py:412 prefilter_quotes). The other boards and the cap rule still read equity_universe until the D6 current view (#279) reads core/quotes.latest_caps; equity_universe.quote/price/market_cap retire then."),
  ]),
  ("Options and flow", [
   dict(id="D05", name="Option chain", readers="OIPD, SPX iron butterfly",

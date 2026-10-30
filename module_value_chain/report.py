@@ -131,7 +131,7 @@ def _summary_html(payload: dict, n_filings: int, n_drawn: int) -> str:
         f'<div class="stat"><div class="v">{n_drawn}</div>'
         f'<div class="l">Links drawn</div><div class="d">named near supplier / customer words</div></div>',
         f'<div class="stat"><div class="v">{payload.get("universe_total") or 0}</div>'
-        f'<div class="l">Universe (≥$300M)</div><div class="d">operating companies</div></div>',
+        f'<div class="l">Universe</div><div class="d">operating companies, no market-cap floor</div></div>',
         f'<div class="stat"><div class="v">{pending}</div>'
         f'<div class="l">Pending</div><div class="d">{esc(pending_d)}</div></div>',
         _precision_tile(payload.get("precision")),

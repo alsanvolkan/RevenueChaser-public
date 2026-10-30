@@ -1,16 +1,22 @@
 """``python -m RevenueChaser.rcdata.build`` — the builder CLI.
 
-    run [--once] [--dataset X [--as-of YYYY-MM-DD] [--allow-shrink]]
+    run [--once] [--dataset X [--as-of YYYY-MM-DD] [--allow-shrink] [--tiers A,B] [--names KO,MSFT]]
                                         take queued requests in order (FIFO) and run each; without --dataset, every
                                         dataset that is due (``due.py``) is queued first (by "schedule", once);
                                         with --dataset, a dataset with nothing queued (or any, with --as-of) is
                                         queued first (by "cli"); --once stops when the queue is empty
     backfill <dataset> [<dataset> ...] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-shrink]
+             [--tiers A,B] [--names KO,MSFT]
                                         queue one backfill request per dataset and run them now, in the order given,
                                         in this one process (so the WRDS datasets share one login); names may be
                                         separated by commas too; --from is required by a dataset that has no start
                                         of its own (the market datasets); the spine's start at their source's
                                         beginning
+    --tiers / --names / --include       what the request asks for instead of the dataset's own set: the spine's
+                                        tiers (A,B,C,D), an explicit ticker list, and the extra groups
+                                        (anchors = the benchmarks and rotation ETFs, watchlist, cover_classes).
+                                        A narrowed request gets only what it names (Karar 82); a dataset that
+                                        cannot narrow its fetch takes the request and says so on its check row
 
 It refuses to start while a job lock is held in the store directory or another builder runs (exit 3), and prints
 one line per dataset run: the ``dataset_check`` fields. Exit 0 when every run it made ended ok or skipped, 1 when
@@ -83,15 +89,35 @@ def main(argv: list[str] | None = None) -> int:
                    "without it a table that empties or loses more than 1%% of its rows refuses the swap, and "
                    "another dataset's table keeps that guard even with it")
     run.add_argument("--allow-shrink", action="store_true", help="with --dataset: " + shrink_help)
+    scope_help = ("with --dataset: ask only these spine tiers (A,B,C,D) / only these tickers, instead of the "
+                  "dataset's own set; a dataset that cannot narrow its fetch says so on its check row (#265)")
+    group_help = ("the extra groups to ask besides the tiers and names: anchors (the benchmarks and rotation "
+                  "ETFs), watchlist, cover_classes. A narrowed request gets only what it names; a request that "
+                  "names nothing is the daily run and gets all three (Karar 82)")
+    run.add_argument("--tiers", help=scope_help)
+    run.add_argument("--names", help=scope_help)
+    run.add_argument("--include", help=group_help)
     bf = sub.add_parser("backfill")
     bf.add_argument("datasets", nargs="+", metavar="dataset")
     bf.add_argument("--from", dest="start")
     bf.add_argument("--to", dest="end")
     bf.add_argument("--allow-shrink", action="store_true", help=shrink_help)
+    bf.add_argument("--tiers", help=scope_help)
+    bf.add_argument("--names", help=scope_help)
+    bf.add_argument("--include", help=group_help)
     args = p.parse_args(argv)
-    if args.cmd == "run" and not args.dataset and (args.as_of or args.allow_shrink):
+    if args.cmd == "run" and not args.dataset and (args.as_of or args.allow_shrink or args.tiers or args.names
+                                                   or args.include):
         # They only shape the request queued for --dataset; without it they would be dropped silently (F5).
-        p.error("--as-of and --allow-shrink need --dataset")
+        p.error("--as-of, --allow-shrink, --tiers, --names and --include need --dataset")
+    scope = {k: [n.strip() for n in v.split(",") if n.strip()]
+             for k, v in (("tiers", args.tiers), ("names", args.names), ("include", args.include)) if v}
+    try:
+        asked = base.parse_scope(scope)                 # the builder's own reader, so the CLI cannot differ from it
+    except ValueError as e:
+        p.error(str(e))
+    scope = {k: list(v) for k, v in (("tiers", asked.tiers), ("names", asked.names),
+                                     ("include", asked.include)) if v}
     if args.cmd == "backfill":
         args.datasets = [n.strip() for a in args.datasets for n in a.split(",") if n.strip()]
         unknown = [n for n in args.datasets if n not in DATASETS]
@@ -129,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "backfill":
             params = {"mode": "backfill", **({"from": args.start} if args.start else {}),
                       **({"to": args.end} if args.end else {}),
-                      **({"allow_shrink": True} if args.allow_shrink else {})}
+                      **({"allow_shrink": True} if args.allow_shrink else {}), **scope}
             worst = 0
             for name in args.datasets:
                 rid = ops.enqueue(name, params, by="cli")
@@ -141,9 +167,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(base.format_check(row), flush=True)
                 worst = max(worst, int(row["result"] == "failed"))
             return worst
-        if args.dataset and (args.as_of or args.allow_shrink or not ops.queued(args.dataset)):
+        if args.dataset and (args.as_of or args.allow_shrink or scope or not ops.queued(args.dataset)):
             params = {**({"as_of": args.as_of} if args.as_of else {}),
-                      **({"allow_shrink": True} if args.allow_shrink else {})}
+                      **({"allow_shrink": True} if args.allow_shrink else {}), **scope}
             ops.enqueue(args.dataset, params or None, by="cli")
         due_failed = 0
         if not args.dataset:

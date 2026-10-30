@@ -40,6 +40,17 @@ h-th row) regenerated it again. Compared key by key: only ``w252_h5``'s ``n_fact
 has eight blocks; 125-odd overlapping rows read as independent had counted more than there are). The 5-day case is
 store-only, so its null is the stored one and no verdict moved. Then ``json.dumps(payloads())`` was written.
 
+The market-cap floor going (avo, 29 Oct 2026: the tier is the whole limit) regenerated it once more. Compared
+key by key on a clean store: exactly 20 of 20,210 keys moved, five in each of the four cases -- ``config_hash``,
+``funnel/floor`` and ``settings/floor`` and ``source/floor_mc`` (300,000,000 -> 0) and the ``below_floor`` step's
+label, which no longer names a floor. No number, cluster, member, label or verdict changed: the fixture's 161
+names were all above the old floor, so the set it clusters is the same one. Then ``json.dumps(payloads())`` was
+written.
+
+(The first attempt at that comparison ran ``payloads()`` from a bare script instead of under ``rawstore_tmp_db``
+and reported 1,048 moved keys. They were the previous invocation's persisted run leaking into the next: on a clean
+store the number is 20. A capture outside the fixture is not a capture.)
+
 S2 (a window needs at most 95 % of its sessions) regenerated it again. Compared key by key: only ``w126_h1`` moved,
 its ``min_obs`` 126 -> 119 (in ``settings``, ``funnel`` and the "Missing price bars" label) and so its
 ``config_hash``; the fixture's two gappy names miss more than 7 sessions and stay dropped, and no cluster changed.

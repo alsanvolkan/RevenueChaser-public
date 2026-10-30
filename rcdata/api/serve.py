@@ -36,6 +36,14 @@ class UnknownNeed(KeyError):
     """A need name the catalog does not hold."""
 
 
+class AskRequired(ValueError):
+    """A need whose reader answers nothing unless something is named, called with nothing named.
+
+    Without this the answer was ``state: missing`` on a table holding 236 series (the live verification's finding
+    2, 30 Oct 2026): "no rows" is the truth about the call, not about the store, and a card cannot tell them apart.
+    """
+
+
 class FillNotSupported(NotImplementedError):
     """``fill`` other than ``"never"``: on-demand filling lands in PR C."""
 
@@ -118,6 +126,28 @@ def _asked(need: Need, params: dict) -> list[str] | None:
     return sorted(set(items))
 
 
+def _asked_nothing(need: Need, params: dict) -> bool:
+    """True when the caller named the need's ask parameter and named nothing in it.
+
+    avo, 30 Oct 2026: "Boş liste 'hiçbir şey' demek, 400 dönsün". The readers whose ask parameter defaults to
+    ``None`` read the whole table when it is absent, but an empty list is not that default - they answer no rows
+    for it (``read.identity``: ``if not wanted: return []``), and the envelope then called a full table
+    ``missing``. That is finding 2's envelope again, one need at a time, reachable from any card that renders its
+    URL from an emptied selection box. The ask is refused in words instead, before the reader is called.
+
+    Not refused: a need that names its own rows (``macro.dgs10`` and the other filtered ones), because
+    ``_with_needs_own_rows`` replaces the caller's value before the reader sees it; and an explicit ``None``,
+    which is the reader's own default and means every row.
+    """
+    if need.ask_param is None or need.ask_param not in params:
+        return False
+    if need.filter_values or need.filter_prefix:
+        return False
+    if params[need.ask_param] is None:
+        return False
+    return not _asked(need, params)
+
+
 def _provenance(need: Need, rows: list[dict]) -> list[dict]:
     return [{"key": r.get(need.key_column), "dataset": need.dataset, "source": r.get("source"),
              "source_as_of": r.get("source_as_of"), "fetched_at": r.get("fetched_at"), "run_id": r.get("run_id")}
@@ -191,6 +221,17 @@ def get(need: str, *, fill: str = NEVER, **params) -> Answer:
         raise UnknownNeed(f"unknown need {need!r}: one of {', '.join(sorted(NEEDS))}") from None
     if fill != NEVER:
         raise FillNotSupported(f"fill={fill!r} is not built yet (PR C); only fill={NEVER!r} exists")
+
+    # "Nothing was asked", not "the parameter was absent": ``_asked`` answers None only for an absent parameter,
+    # and an empty value normalises to ``[]``, which used to slip past and answer ``state: missing`` on a full
+    # table (the delta review of #295). ``prefix`` is the reader's other way of naming rows, so it counts as an ask.
+    if spec.ask_required and not _asked(spec, params) and not params.get("prefix"):
+        raise AskRequired(f"{need} answers nothing unless it is asked for something: name {spec.ask_param!r} "
+                          f"(or ask for the whole table's state with summary=1)")
+    if _asked_nothing(spec, params):
+        raise AskRequired(f"{need} was asked for nothing: {spec.ask_param!r} is there and names nothing. An empty "
+                          f"ask is nothing, never every row (avo, 30 Oct 2026): leave {spec.ask_param!r} out to "
+                          f"read every row, or ask for the whole table's state with summary=1")
 
     ops.read_log.bump(f"need:{need}")
     rows = spec.reader(**_with_needs_own_rows(spec, params))

@@ -88,7 +88,7 @@ def _summary_html(payload: dict) -> str:
         f'<div class="stat"><div class="v">{pending}</div>'
         f'<div class="l">Pending</div><div class="d">next off-peak run</div>{no_text_line}</div>',
         f'<div class="stat"><div class="v">{payload.get("universe_total") or 0}</div>'
-        f'<div class="l">Universe (≥$300M)</div><div class="d">operating companies</div></div>',
+        f'<div class="l">Universe</div><div class="d">operating companies, no market-cap floor</div></div>',
         f'<div class="stat"><div class="v">{pairs}</div>'
         f'<div class="l">Pairs scored</div><div class="d">cosine sample</div></div>',
     ])

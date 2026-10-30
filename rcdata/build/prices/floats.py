@@ -16,6 +16,7 @@ Parquet: ``parquet/uw/total_float/date=<as_of>/part-0.parquet`` keyed on the tic
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from datetime import date
@@ -86,6 +87,26 @@ def _tier_a() -> list[dict]:
     return [n for n in scope() if n.get("tier") == "A"]
 
 
+def _nothing_to_ask(ctx: base.RunContext) -> base.SourceError:
+    """Why a float run has no name to ask: the request's scope, or a spine that was never built.
+
+    A scope the Tier A rule answers nothing for is the request's own doing and a ``skipped`` row (review F4 of
+    #294); no spine at all is a broken build and stays a failure.
+    """
+    if ctx.scope:
+        return base.NothingInScope(f"no Tier A name in {ctx.scope.text()}: a fund has no float (#265)")
+    return base.SourceError("nothing to ask: no Tier A name (spine.duckdb not built?)")
+
+
+def asked(want=None) -> list[dict]:
+    """The names one float run asks: the scope's Tier A names, because a fund (Tier B) has no float (#265). An
+    explicit name list in the request is taken as it is: a person asking for one name means that name."""
+    names = scope(want=want)
+    if want is not None and want.names:
+        return names
+    return [n for n in names if n.get("tier") == "A"]
+
+
 def _partitions(*parts: str) -> list[Path]:
     return [f for _, f in stage.partitions(base.parquet_root().joinpath(*parts), "date")]
 
@@ -97,6 +118,7 @@ class YahooFloat:
     tables = ("shares_class",)
     cadence = "daily"
     starts_by_hand = True
+    honours_scope = True              # the request's names, else the scope's Tier A (``asked``)
 
     def default_as_of(self) -> date:
         return calendar.today_ny()
@@ -118,9 +140,9 @@ class YahooFloat:
         return sorted(names, key=lambda n: (n["ticker"] in last, last.get(n["ticker"], 0.0), n["ticker"]))
 
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
-        names = _tier_a()
+        names = asked(ctx.scope)
         if not names:
-            raise base.SourceError("the spine holds no Tier A name (spine.duckdb not built?): nothing to ask")
+            raise _nothing_to_ask(ctx)
         folder = self.raw_dir(as_of)
         have = sorted(folder.glob("batch-*.json.gz")) if folder.is_dir() else []
         done = {t for p in have for t in base.read_raw_json(p)["rows"]}
@@ -193,20 +215,35 @@ class UWFloat:
     tables = ("shares_class",)
     cadence = "daily"
     starts_by_hand = True
+    honours_scope = True              # the request's names, else the scope's Tier A (``asked``)
 
     def default_as_of(self) -> date:
         return calendar.today_ny()
 
-    def raw_path(self, as_of: date) -> Path:
-        return base.raw_root() / "uw" / "total_float" / f"{as_of.isoformat()}.json.gz"
+    def raw_path(self, as_of: date, scope=None) -> Path:
+        """The day's raw file, and a file of its own for a scoped ask.
+
+        One file a day was the resume marker, and ``fetch`` returned it before looking at the scope: a
+        ``names=["KO"]`` press wrote a one-row file and the day's later full run was handed that same file back, so
+        the day ended with a float for one name (review F3 of #294). A scoped ask keys its own file, and both type
+        into the same day's partition by upsert, so a narrow run and a later full run compose.
+        """
+        stem = as_of.isoformat()
+        if scope:
+            # Every part of the ask, groups included: without them ``include=["watchlist"]`` and
+            # ``include=["cover_classes"]`` shared one file on the same day and the first one run was handed back
+            # to the other (review D1 of #294).
+            key = "\n".join([*scope.tiers, "|", *scope.names, "|", *scope.include])
+            stem += "-" + hashlib.sha1(key.encode()).hexdigest()[:8]
+        return base.raw_root() / "uw" / "total_float" / f"{stem}.json.gz"
 
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
-        path = self.raw_path(as_of)
+        path = self.raw_path(as_of, ctx.scope)
         if path.exists():
             return [path]
-        names = {n["ticker"]: {"cik": n.get("cik"), "security_id": n["security_id"]} for n in _tier_a()}
+        names = {n["ticker"]: {"cik": n.get("cik"), "security_id": n["security_id"]} for n in asked(ctx.scope)}
         if not names:
-            raise base.SourceError("the spine holds no Tier A name (spine.duckdb not built?): nothing to ask")
+            raise _nothing_to_ask(ctx)
         ctx.check_cap("uw")
         res = ctx.uw_client().short_screener_result(sorted(names))
         if res.status == "failed":

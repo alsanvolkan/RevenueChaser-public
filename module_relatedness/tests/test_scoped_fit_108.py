@@ -30,7 +30,12 @@ def _seed(caps: dict[str, float]) -> None:
 
 @pytest.fixture
 def stored(rawstore_tmp_db, monkeypatch):
-    """100 names at $10B, SMALL at $100M (below the floor) and STRAY outside the universe, all profiled."""
+    """100 names at $10B, SMALL at $100M and STRAY with no universe row at all, all profiled.
+
+    There is no market-cap floor any more (avo, 29 Oct 2026), so SMALL is in the universe like the rest;
+    only STRAY is outside it. A floor asked for explicitly still leaves SMALL out, which the --floor case below
+    checks.
+    """
     profs = _profiles()
     _seed({t: 1e10 for t in profs} | {SMALL: 1e8})
     profs[SMALL] = dict(profs["G0"])
@@ -51,14 +56,15 @@ def _members(run_id):
 def test_the_stored_fit_leaves_out_profiles_outside_the_universe(stored):
     out = themes.build_shadow(run_id="s0")
     got = _members("s0")
-    assert got == set(stored) - {SMALL, STRAY}
-    assert out["n"] == 100 and out["out_of_universe"] == 2
+    assert got == set(stored) - {STRAY}                   # SMALL is in the universe: no floor
+    assert out["n"] == 101 and out["out_of_universe"] == 1
 
 
-def test_an_explicit_universe_widens_the_fit(stored):
+def test_an_explicit_floor_narrows_the_fit(stored):
+    """The floor is no longer the default, but a caller that asks for one still gets it."""
     from RevenueChaser.core.universe import classification_universe
-    themes.build_shadow(run_id="s1", universe=classification_universe(50e6))
-    assert SMALL in _members("s1") and STRAY not in _members("s1")
+    themes.build_shadow(run_id="s1", universe=classification_universe(300e6))
+    assert SMALL not in _members("s1") and STRAY not in _members("s1")
 
 
 def test_explicit_profiles_are_narrowed_only_by_an_explicit_universe(stored):
@@ -81,11 +87,12 @@ def run_spy(rawstore_tmp_db, monkeypatch):
 def test_a_run_with_no_new_argument_selects_exactly_today(run_spy):
     assert cli.main(["--run"]) == 0
     (call,) = run_spy
-    assert call.get("tickers") is None                    # engine.select_pilot(): the $300M universe
-    assert engine.select_pilot() == ["BIG"]
+    assert call.get("tickers") is None                    # engine.select_pilot(): the whole universe
+    assert engine.select_pilot() == ["BIG", "MID", "TINY"]   # no floor: every name, cap-descending
 
 
-def test_floor_50_adds_the_50_to_300m_names_only_when_given(run_spy):
+def test_floor_50_narrows_the_selection_to_the_names_above_it(run_spy):
+    """With no default floor the flag takes names away (TINY at $10M), it no longer adds them."""
     assert cli.main(["--run", "--floor", "50"]) == 0
     assert run_spy[-1]["tickers"] == ["BIG", "MID"]
 
@@ -119,7 +126,7 @@ def test_build_only_writes_the_shadow_run_and_keeps_the_boards(stored, capsys):
     out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert out["run_id"] == "shadow" and out["themes"] > 0 and out.get("rows") is None
     assert _live_state() == before                        # is_current and ticker_themes unchanged
-    assert _members("shadow") == set(stored) - {SMALL, STRAY}
+    assert _members("shadow") == set(stored) - {STRAY}
     assert rawstore.get("theme_runs", "shadow")["is_current"] == 0
     # The shadow is a normal --cutover input afterwards.
     assert cli.main(["--cutover", "--run-id", "shadow"]) == 0
@@ -160,9 +167,10 @@ def test_the_help_warns_what_a_selected_run_does(capsys):
     assert "full Fetch of exactly these names" in text and "replaces every peer score" in text
 
 
-def test_rebuild_with_a_floor_fits_the_wider_universe(stored):
-    assert cli.main(["--rebuild-themes", "--run-id", "wide", "--build-only", "--floor", "50"]) == 0
-    assert SMALL in _members("wide") and STRAY not in _members("wide")
+def test_rebuild_with_a_floor_fits_the_narrower_universe(stored):
+    """$1B leaves SMALL ($100M) out; without the flag it would be in, because there is no default floor."""
+    assert cli.main(["--rebuild-themes", "--run-id", "wide", "--build-only", "--floor", "1000"]) == 0
+    assert SMALL not in _members("wide") and STRAY not in _members("wide")
 
 
 @pytest.mark.parametrize("argv", [["--run", "--tickers", ","], ["--run", "--floor", "1e9"],

@@ -193,6 +193,9 @@ def build_shadow(candidates=(60, 90, 120, 150), k_medium: int | None = None,
     ``theme_runs`` has no column for it. When ``k_medium`` is not given it is derived as
     ``max(2, n_fine // 2)`` from the realised fine count; an explicit value is honoured but still clamped below
     ``n_fine`` as a safety net, so the effective value is ``min(requested_or_derived, n_fine - 1)`` with a floor of 1.
+    ``k_medium_requested`` in the result is the value asked for (``None`` when derived), so a caller can see the
+    clamp instead of only its effect: #57 compares ``k_medium`` in ``{n_fine, n_fine // 2, n_fine // 3}``, and the
+    first of those is clamped by definition.
     """
     if profiles is None:
         profiles = rel_store.load_profiles()
@@ -301,7 +304,7 @@ def build_shadow(candidates=(60, 90, 120, 150), k_medium: int | None = None,
         rawstore.ensure_table(name)
     rawstore.atomic(_write)
     return {"run_id": run_id, "n": len(tickers), "k_fine": k_fine,
-            "k_medium": int(len(set(med.tolist()))),
+            "k_medium": int(len(set(med.tolist()))), "k_medium_requested": requested,
             "k_coarse": int(len(set(coarse.tolist()))),
             "themes": len(theme_rows), "members": len(member_rows),
             "unthemed": unthemed, "out_of_universe": out_of_universe, "fit": asdict(fit)}
