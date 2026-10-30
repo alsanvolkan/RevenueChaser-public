@@ -11,12 +11,14 @@ The rule has two parts:
   2026). There is no market-cap floor any more: `mc_min` defaults to 0, so every
   tier A/B name is kept, NULL-cap names included. A caller that wants a floor of
   its own still passes one (`--floor`, the Co-movement setting);
-* **the security type** (Identity R4, #87) — names the identity master
-  (`security_master.security_type`) types as `identity.types.EXCLUDED_TYPES`
-  (funds, ETFs, SPACs, preferreds, warrants, units) are not operating companies and
-  leave the universe at every cap. A ticker with no master row, a NULL type, or a
-  type that is not excluded (`unknown`, `other`, ...) stays: an untyped name is
-  never hidden, only counted (`unknown_type`).
+* **the security type is data, not a cut** (avo, 30 Oct 2026, PR 2) — the universe
+  is Tiers A and B whole, funds, ETFs, SPACs, preferreds, warrants and units included.
+  A board that screens operating companies asks for them (`operating_only=True`): the
+  names the identity master types as `identity.types.EXCLUDED_TYPES` (Identity R4,
+  #87) leave that board's set at every cap. A ticker with no master row, a NULL type,
+  or a type that is not excluded (`unknown`, `other`, ...) stays even then: an untyped
+  name is never hidden, only counted (`unknown_type`). Each board's default is
+  `BOARD_OPERATING_ONLY`, the set it read before PR 2.
 
 The types are read with a separate query, never a JOIN: `rawstore.query` answers
 `[]` for a missing table, so a JOIN against an absent `security_master` would
@@ -61,6 +63,21 @@ STORE = "store"          # the value that selects the old store (any value but `
 logger = logging.getLogger(__name__)
 
 UNIVERSE_META_KEY = "__meta__"
+
+# Each board's type filter default (PR 2, the plan's table): True screens operating companies only (the set the
+# board read before PR 2), False the whole A+B universe. A board with an editable setting (``OPERATING_ONLY`` in
+# ``core.board_settings``) reads this as its default; the others pass it as they call.
+BOARD_OPERATING_ONLY = {
+    "module_fundamentals": True,
+    "module_swing_potential": True,
+    "module_asymmetric_growth": True,
+    "module_relatedness": True,
+    "module_value_chain": True,
+    "module_financials": True,       # the comps peer ladder reads balance sheets
+    "module_oipd": True,
+    "module_comovement": False,      # return correlation means something for ETFs too
+    "module_sec_13f": False,         # 13F holdings hold ETFs
+}
 
 # The excluded types, grouped into the funnel rows boards show for them:
 # ``(count key, row label, types)``. Disjoint, and together exactly EXCLUDED_TYPES
@@ -214,29 +231,29 @@ def excluded_tickers() -> set[str]:
     return {t for t, ty in _security_types().items() if ty in EXCLUDED_TYPES}
 
 
-def classification_universe(mc_min: float = DEFAULT_MC_MIN) -> list[str]:
-    """Operating-company tickers in `equity_universe` with `market_cap >= mc_min`.
+def classification_universe(mc_min: float = DEFAULT_MC_MIN, *, operating_only: bool = False) -> list[str]:
+    """The universe's tickers (Tiers A and B, every type) with ``COALESCE(market_cap, 0) >= mc_min``.
 
-    Cap-descending. Names whose identity-master type is excluded
-    (``identity.types.EXCLUDED_TYPES``) are dropped; untyped names stay.
+    Cap-descending. ``operating_only=True`` (a board that screens operating companies) drops the names whose
+    identity-master type is excluded (``identity.types.EXCLUDED_TYPES``); untyped names stay.
     """
+    excluded = excluded_tickers() if operating_only else set()
     if _spine():
-        excluded = excluded_tickers()
         return [r["ticker"] for r in _by_cap(_spine_universe(), mc_min) if r["ticker"] not in excluded]
     rows = rawstore.query(
         f"SELECT ticker FROM {_UNIVERSE_TABLE} "
         f"WHERE COALESCE(market_cap, 0) >= ? ORDER BY market_cap DESC",
         [mc_min])
-    excluded = excluded_tickers()
     return [r["ticker"] for r in rows if r["ticker"] not in excluded]
 
 
-def classification_universe_rows(mc_min: float = DEFAULT_MC_MIN) -> list[dict]:
+def classification_universe_rows(mc_min: float = DEFAULT_MC_MIN, *, operating_only: bool = False) -> list[dict]:
     """The ``classification_universe`` slice with the columns a board needs, not just the ticker.
 
-    Same floor, same excluded-type rule and same cap-descending order as
-    :func:`classification_universe`; one row per name: ``ticker``, ``market_cap``, ``sector``
-    (the stored label, not normalised) and ``industry``. FIN-3's comps peer ladder is the reader.
+    Same floor, same type filter and same cap-descending order as :func:`classification_universe`; one row per
+    name: ``ticker``, ``market_cap``, ``sector`` (the stored label, not normalised), ``industry`` and
+    ``security_type`` (the type seam's, None for an untyped name: the data a board filters on, PR 2). FIN-3's comps
+    peer ladder is the reader.
 
     ``sub_industry`` is deliberately absent: the identity master writes it and ``industry_group``
     NULL (the GICS-only levels were dropped), so a ladder can never widen through them.
@@ -248,12 +265,13 @@ def classification_universe_rows(mc_min: float = DEFAULT_MC_MIN) -> list[dict]:
             f"SELECT ticker, market_cap, sector, industry FROM {_UNIVERSE_TABLE} "
             f"WHERE COALESCE(market_cap, 0) >= ? ORDER BY market_cap DESC",
             [mc_min])
-    excluded = excluded_tickers()
+    types = _security_types()
     return [{"ticker": r["ticker"],
              "market_cap": r.get("market_cap"),
              "sector": r.get("sector") or "",
-             "industry": r.get("industry") or ""}
-            for r in rows if r["ticker"] not in excluded]
+             "industry": r.get("industry") or "",
+             "security_type": types.get(r["ticker"])}
+            for r in rows if not (operating_only and types.get(r["ticker"]) in EXCLUDED_TYPES)]
 
 
 def universe_counts(mc_min: float = DEFAULT_MC_MIN) -> dict:
@@ -266,11 +284,14 @@ def universe_counts(mc_min: float = DEFAULT_MC_MIN) -> dict:
     Only names at or above the floor are split by type, so no name is counted
     twice::
 
-        scanned_total  = below_floor + no_market_cap + floor_total
-        floor_total    = funds_etfs + spacs + other_securities + classification_total
+        scanned_total        = below_floor + no_market_cap + floor_total
+        floor_total          = funds_etfs + spacs + other_securities + operating_total
+        classification_total = floor_total
 
-    ``classification_total`` is what the boards read (``len(classification_universe(mc_min))``) at every
-    ``mc_min``: both ask through ``_at_floor``, so the funnel's last line and the universe are the same set.
+    The type groups are the slice's **type mix**, not names left out (PR 2: the universe is A+B whole).
+    ``classification_total`` is what the boards read (``len(classification_universe(mc_min))``) and
+    ``operating_total`` what an operating-only board reads (``operating_only=True``), at every ``mc_min``:
+    both ask through ``_at_floor``, so the funnel's last lines and the universe are the same sets.
     A NULL cap counts as 0, so at ``mc_min`` 0 — the default since the floor went — such a name is kept and
     ``no_market_cap`` is 0; above 0 it is out, and ``no_market_cap`` says how many were left out that way.
     ``unknown_type`` counts, among the
@@ -309,7 +330,8 @@ def universe_counts(mc_min: float = DEFAULT_MC_MIN) -> dict:
     return {"scanned_total": int(r.get("n") or 0),
             "floor_total": floor_total,
             **group_n,
-            "classification_total": floor_total - sum(group_n.values()),
+            "classification_total": floor_total,
+            "operating_total": floor_total - sum(group_n.values()),
             "unknown_type": unknown_type,
             "below_floor": int(r.get("low") or 0),
             "no_market_cap": int(r.get("nocap") or 0),
@@ -562,6 +584,6 @@ def filter_fields(tickers: list[str] | None = None) -> dict[str, dict]:
 
 
 __all__ = ["classification_universe", "classification_universe_rows", "spine_gics", "gics_of",
-           "DEFAULT_MC_MIN", "TYPE_GROUPS", "excluded_tickers", "filter_fields", "theme_catalog",
+           "DEFAULT_MC_MIN", "TYPE_GROUPS", "BOARD_OPERATING_ONLY", "excluded_tickers", "filter_fields", "theme_catalog",
            "current_theme_run", "universe_counts", "universe_source", "spine_provenance", "SOURCE_ENV", "SPINE",
            "STORE"]
