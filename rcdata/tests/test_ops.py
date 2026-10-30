@@ -260,3 +260,15 @@ def test_an_only_with_no_name_claims_nothing():
     assert ops.next_request(only=()) is None
     with ops.connect() as con:
         assert con.execute("SELECT status FROM build_requests WHERE id = ?", (rid,)).fetchone()[0] == "queued"
+
+
+def test_next_request_and_queued_can_be_limited_to_one_requester():
+    """A person's CLI run takes its own request, not the one a page left for the attended runner."""
+    theirs = ops.enqueue("wrds/sec_idhist", None, by="settings")
+    mine = ops.enqueue("wrds/sec_idhist", None, by="cli")
+    assert ops.queued("wrds/sec_idhist", by="cli") is True
+    assert ops.next_request("wrds/sec_idhist", by="cli")["id"] == mine
+    assert ops.next_request("wrds/sec_idhist", by="cli") is None
+    assert ops.queued("wrds/sec_idhist", by="cli") is False
+    with ops.connect() as con:
+        assert con.execute("SELECT status FROM build_requests WHERE id = ?", (theirs,)).fetchone()[0] == "queued"

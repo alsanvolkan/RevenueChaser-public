@@ -158,12 +158,53 @@ def test_the_hourly_pass_leaves_an_attended_request_in_the_queue(monkeypatch):
 def test_the_attended_runner_drains_the_attended_requests_only(monkeypatch):
     ran: list = []
     monkeypatch.setattr(cli.base, "run_request", _fake_run(ran))
+    monkeypatch.setattr(cli, "at_a_terminal", lambda: True)
     plain = ops.enqueue("market_series", None, by="settings")
     ops.enqueue("wrds/sec_idhist", None, by="settings")
     assert cli.main(["attended"]) == 0
     assert ran == [("wrds/sec_idhist", "settings", True)]
     with ops.connect() as con:
         assert con.execute("SELECT status FROM build_requests WHERE id = ?", (plain,)).fetchone()[0] == "queued"
+
+
+def test_the_attended_runner_says_so_when_nothing_is_queued(monkeypatch, capsys):
+    """N2: it must not sit on the writer turn for half an hour and then exit without a word."""
+    monkeypatch.setattr(cli, "at_a_terminal", lambda: True)
+    monkeypatch.setattr(cli.base, "idle_problem", lambda: (_ for _ in ()).throw(AssertionError("waited")))
+    assert cli.main(["attended"]) == 0
+    assert "no attended request queued" in capsys.readouterr().err
+
+
+def test_the_attended_runner_refuses_a_runner_with_nobody_at_it(monkeypatch, capsys):
+    """N4: the WRDS login and the Duo push need a person; a mis-wired timer must not reach them."""
+    monkeypatch.setattr(cli, "at_a_terminal", lambda: False)
+    ops.enqueue("wrds/sec_idhist", None, by="settings")
+    assert cli.main(["attended"]) == 3
+    assert "terminal" in capsys.readouterr().err
+    with ops.connect() as con:
+        assert con.execute("SELECT status FROM build_requests").fetchone()[0] == "queued"
+
+
+def test_a_named_dataset_runs_only_the_cli_s_own_request(monkeypatch):
+    """SHOULD-2: `run --dataset` and `backfill` are the person's own run. A page's attended request is not theirs
+    to spend the WRDS login and the day cap on, so it stays queued for the attended runner."""
+    ran: list = []
+    monkeypatch.setattr(cli.base, "run_request", _fake_run(ran))
+    theirs = ops.enqueue("wrds/sec_idhist", {"mode": "backfill"}, by="settings")
+    assert cli.main(["run", "--once", "--dataset", "wrds/sec_idhist", "--wait", "0"]) == 0
+    assert cli.main(["backfill", "wrds/sec_idhist", "--wait", "0"]) == 0
+    assert [r[1] for r in ran] == ["cli", "cli"]            # twice its own, never the page's
+    with ops.connect() as con:
+        assert con.execute("SELECT status FROM build_requests WHERE id = ?", (theirs,)).fetchone()[0] == "queued"
+
+
+def test_a_named_dataset_that_is_not_attended_still_drains_the_queue(monkeypatch):
+    """The rule is for the attended datasets only: elsewhere a CLI run still takes the older request first."""
+    ran: list = []
+    monkeypatch.setattr(cli.base, "run_request", _fake_run(ran))
+    ops.enqueue("market_series", None, by="settings")
+    assert cli.main(["run", "--once", "--dataset", "market_series"]) == 0
+    assert [r[1] for r in ran] == ["settings"]              # the page's request, then nothing of its own
 
 
 def test_a_backfill_waits_for_its_turn_and_runs_when_the_store_is_free(monkeypatch):
@@ -188,6 +229,53 @@ def test_a_wait_that_runs_out_is_still_exit_3(monkeypatch, capsys):
 
 
 def test_the_hourly_run_does_not_wait_but_a_person_s_commands_do():
-    assert cli.default_wait_s("run") == 0.0
-    assert cli.default_wait_s("backfill") == cli.DEFAULT_WAIT_S == 1800.0
-    assert cli.default_wait_s("attended") == cli.DEFAULT_WAIT_S
+    assert cli.default_wait_s("run", dataset=None) == 0.0
+    # N3: `run --dataset X` is a person at a terminal, like backfill; only the hourly pass has a timer behind it.
+    assert cli.default_wait_s("run", dataset="market_series") == cli.DEFAULT_WAIT_S
+    assert cli.default_wait_s("backfill", dataset=None) == cli.DEFAULT_WAIT_S == 1800.0
+    assert cli.default_wait_s("attended", dataset=None) == cli.DEFAULT_WAIT_S
+
+
+def test_the_waiting_line_is_printed_again_when_the_holder_changes(monkeypatch, capsys):
+    """N7: a terminal that waits must not keep showing a holder that has gone."""
+    monkeypatch.setattr(cli, "WAIT_POLL_S", 0)
+    held = ["job lock held: relatedness (pid 7)", "another builder runs: pid 9", None]
+    monkeypatch.setattr(cli.base, "idle_problem", lambda: held.pop(0))
+    assert cli._wait_for_turn(60.0) is None
+    err = capsys.readouterr().err
+    assert "relatedness (pid 7)" in err and "pid 9" in err
+
+
+def test_a_lock_another_builder_held_is_waited_for_and_then_taken(monkeypatch):
+    """N1: the gate and the lock are one loop, so a lock that frees inside the wait still starts this builder."""
+    import contextlib
+
+    ran: list = []
+    monkeypatch.setattr(cli.base, "run_request", _fake_run(ran))
+    monkeypatch.setattr(cli.base, "idle_problem", lambda: None)
+    monkeypatch.setattr(cli, "WAIT_POLL_S", 0)
+    tries = []
+
+    @contextlib.contextmanager
+    def busy_once(name, wait=0.0, **kw):
+        tries.append(wait)
+        yield len(tries) > 1
+    monkeypatch.setattr(cli.job_lock, "acquire", busy_once)
+    ops.enqueue("market_series", None, by="settings")
+    assert cli.main(["run", "--once", "--dataset", "market_series"]) == 0
+    assert len(tries) == 2 and tries == [0, 0]              # each try is non-blocking; the loop does the waiting
+    assert [r[0] for r in ran] == ["market_series"]
+
+
+def test_a_lock_that_never_frees_is_exit_3(monkeypatch, capsys):
+    import contextlib
+
+    monkeypatch.setattr(cli.base, "idle_problem", lambda: None)
+    monkeypatch.setattr(cli, "WAIT_POLL_S", 0)
+
+    @contextlib.contextmanager
+    def never(name, wait=0.0, **kw):
+        yield False
+    monkeypatch.setattr(cli.job_lock, "acquire", never)
+    assert cli.main(["run", "--once", "--dataset", "market_series", "--wait", "0"]) == 3
+    assert "another builder holds the lock" in capsys.readouterr().err

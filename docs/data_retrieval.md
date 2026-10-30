@@ -178,10 +178,13 @@ routes only enqueue and read `ops.sqlite`. Each call opens its own SQLite connec
   `backfill_from=YYYY-MM-DD` (JSON body or query string) it is a backfill request. 202 `{ok, id, dataset}`;
   400 for a dataset the builder does not know or a date that is not a past `YYYY-MM-DD`; 409 while one of that
   dataset is queued or running; 403 without the panel header.
-  An attended dataset (the spine's WRDS ones, PR 5) is queued too, always as a backfill, and the answer carries
-  `attended: true` and `waits_for`: the login and Duo need a terminal, so the request waits in the queue until
-  `python -m RevenueChaser.rcdata.build attended` on the server takes it, and the hourly builder leaves it there.
-  One that needs a first day is 400 without `backfill_from`.
+  An attended dataset (the WRDS ones: the three spine datasets, `wrds/prices` and the four fundamentals tables)
+  is queued too, with the press's own mode like any other dataset — the daily `fetch` unless `backfill_from` is
+  given — and the answer carries `attended: true` and `waits_for`: the login and Duo need a terminal, so the
+  request waits in the queue until `python -m RevenueChaser.rcdata.build attended` on the server takes it, and
+  the hourly builder leaves it there. A press is never turned into a backfill: each WRDS dataset's `fetch` is not
+  its backfill (for `wrds/prices` the monthly refresh of the last two years, where the backfill only fills
+  missing partitions).
 - **`GET /api/build/queue`**: `{ok, active, finished}`. `active` holds the queued and running requests, oldest
   first; `finished` the last 20 others, newest first.
 - **`POST /api/build/schedule/<dataset>/<pause|resume>`**: sets or clears `dataset_schedule.paused_at` /

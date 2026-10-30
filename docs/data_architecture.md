@@ -1049,10 +1049,17 @@ one; a 403 names the variable in the source's failure note).
 `python -m RevenueChaser.rcdata.build backfill <dataset> --from <date>` and
 `python -m RevenueChaser.rcdata.build attended` (the attended datasets' runner, below).
 
-The store takes one writer at a time, so a start whose turn it is not **waits** for it: for the job locks in the
-store directory, for another builder, and for the builder lock. `--wait SECONDS` is how long; a person's commands
-(`backfill`, `attended`) wait 1800 s by default and `run` waits none, because its hourly timer brings the next pass
-anyway. It exits 3 only when the wait runs out, and prints what it waits for while it waits.
+The store takes one writer at a time, so a start whose turn it is not **waits** for it: the gate (the job locks in
+the store directory, another builder) and the builder lock are one loop. `--wait SECONDS` is how long; a person's
+commands (`backfill`, `attended`, and `run --dataset X`) wait 1800 s by default and the hourly pass (`run` with no
+dataset) waits none, because its timer brings the next pass anyway. It exits 3 only when the wait runs out, and
+names the holder it is waiting for, again whenever that changes.
+
+`attended` refuses a runner with no terminal (`sys.stdin.isatty()`), because the WRDS login and the Duo push need a
+person, and it says so and exits 0 when no attended request is queued rather than waiting for a turn it has no use
+for. A person's `backfill <dataset>` and `run --dataset X` run **their own** request for an attended dataset
+(`ops.next_request(by="cli")`), never one a page left for `attended`: that would spend their login and the WRDS day
+cap on somebody else's params. For every other dataset an older queued request still goes first, as it always has.
 
 **The builder as a service (PR 2).** Scheduled jobs run hourly unless avo says otherwise. The registry row
 RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :07, with a 50 min limit, as the

@@ -147,7 +147,12 @@ def test_the_routes_never_open_a_duckdb_file(client, monkeypatch):
 
 def test_an_attended_dataset_is_queued_and_waits_for_the_runner_on_the_server(client):
     """PR 5 refused it with 409. It is queued now and waits: the WRDS login and Duo still happen at a terminal,
-    so only the attended runner on the server takes it out of the queue."""
+    so only the attended runner on the server takes it out of the queue.
+
+    A press with no window is the dataset's own daily run (``params`` None), not a backfill: every WRDS dataset
+    has a ``fetch`` of its own, and for ``wrds/prices`` that fetch is the monthly refresh of the last two years
+    while its backfill only fills missing partitions (review MUST-1).
+    """
     r = client.post("/api/build/request/wrds/sec_idhist")
     assert r.status_code == 202, r.get_json()
     body = r.get_json()
@@ -155,15 +160,7 @@ def test_an_attended_dataset_is_queued_and_waits_for_the_runner_on_the_server(cl
     assert "build attended" in body["waits_for"]
     rows = _rows()
     assert [(x["dataset"], x["status"], x["requested_by"], x["params"]) for x in rows] == [
-        ("wrds/sec_idhist", "queued", "test", '{"mode": "backfill"}')]
-
-
-def test_an_attended_dataset_that_needs_a_first_day_is_refused_without_one(client, monkeypatch):
-    from RevenueChaser.rcdata.build import DATASETS
-    monkeypatch.setattr(DATASETS["wrds/sec_idhist"], "backfill_needs_from", True, raising=False)
-    r = client.post("/api/build/request/wrds/sec_idhist")
-    assert r.status_code == 400 and "backfill_from" in r.get_json()["error"]
-    assert not ops.ops_path().exists() or _rows() == []
+        ("wrds/sec_idhist", "queued", "test", None)]
 
 
 def test_an_attended_request_keeps_the_window_the_press_asked_for(client):

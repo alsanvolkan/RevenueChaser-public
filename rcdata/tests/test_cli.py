@@ -122,8 +122,15 @@ def test_the_builder_refuses_to_start_while_a_job_lock_is_held(cli_env):
     p = subprocess.Popen([sys.executable, "-c", hold], cwd=REPO.parent, env=cli_env, stdout=subprocess.PIPE, text=True)
     try:
         assert p.stdout.readline().strip() == "True"
-        r = _run(cli_env, "RevenueChaser.rcdata.build", "run", "--once", "--dataset", "market_series")
+        # A person's command waits for the writer turn now, so this one says not to: --wait 0 is today's exit 3.
+        r = _run(cli_env, "RevenueChaser.rcdata.build", "run", "--once", "--dataset", "market_series",
+                 "--wait", "0")
         assert r.returncode == 3 and "daily_bars" in r.stderr
+        assert not (Path(cli_env["RC_MARKET_DIR"]) / "market.duckdb").exists()
+        # With a wait it says what it is waiting for, and the lock is still held when the wait runs out.
+        r = _run(cli_env, "RevenueChaser.rcdata.build", "run", "--once", "--dataset", "market_series",
+                 "--wait", "1")
+        assert r.returncode == 3 and "waiting for the writer turn" in r.stderr and "daily_bars" in r.stderr
         assert not (Path(cli_env["RC_MARKET_DIR"]) / "market.duckdb").exists()
     finally:
         p.kill()

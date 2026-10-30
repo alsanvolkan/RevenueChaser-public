@@ -1489,8 +1489,10 @@ def api_build_request(dataset: str):
     An attended dataset (WRDS: a person logs in and confirms Duo) is queued too, and the answer says what it waits
     for: the store takes one writer at a time and the login needs a terminal, so the request waits in the queue
     until ``python -m RevenueChaser.rcdata.build attended`` on the server takes it. The hourly builder leaves it
-    there (``base.attended_names``). It is always queued as a backfill, because that is the only mode those
-    datasets have, and one that needs a first day is refused without ``backfill_from``.
+    there (``base.attended_names``). Its mode is the press's own, like every other dataset's: the daily ``fetch``
+    unless ``backfill_from`` is given. Each WRDS dataset has a ``fetch`` that is not its backfill — for
+    ``wrds/prices`` the monthly refresh of the last two years, where the backfill only fills missing partitions —
+    so a press must not be turned into one (review MUST-1).
 
     A dataset that cannot narrow its fetch to a scope still takes the request and says so on its check row
     (``base.honours_scope``), so a press is never silently something else."""
@@ -1517,10 +1519,6 @@ def api_build_request(dataset: str):
     params.update(scope)
     waits_for = None
     if attended:
-        if not params.get("from") and getattr(ds, "backfill_needs_from", True):
-            return jsonify({"ok": False, "error": f"{dataset} is attended and needs a first day: "
-                                                  "send backfill_from"}), 400
-        params["mode"] = "backfill"
         waits_for = ("a person at a terminal on the server: python -m RevenueChaser.rcdata.build attended "
                      "(the WRDS login and Duo)")
     rid = ops.enqueue_once(dataset, params or None, by=_requested_by())
