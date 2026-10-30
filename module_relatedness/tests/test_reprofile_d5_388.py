@@ -19,7 +19,7 @@ import pytest
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.providers import deepseek
 from RevenueChaser.module_relatedness import config, engine, store
-from RevenueChaser.module_relatedness.tests.test_relatedness import _prof, _seed_universe
+from RevenueChaser.module_relatedness.tests.test_relatedness import _prof, _seed_universe, long_body
 
 TICKERS = ["AAA", "BBB", "CCC"]
 
@@ -27,7 +27,7 @@ TICKERS = ["AAA", "BBB", "CCC"]
 def _seed_filings(texts: dict[str, str]) -> None:
     rawstore.write_rows("chain_filings", [
         {"ticker": t, "cik": "", "form": "10-K", "filed": "2026-01-01", "accession": "a-" + t,
-         "primary_doc": "u", "item_text": text, "quality": "ok", "fetched_at": 1.0}
+         "primary_doc": "u", "item_text": long_body(text), "quality": "ok", "fetched_at": 1.0}
         for t, text in texts.items()])
 
 
@@ -64,7 +64,8 @@ def test_a_new_filing_text_is_profiled_again(calls):
     calls.clear()
     _seed_filings({"BBB": "BBB now sells banking software to regional banks"})
     engine.build_profiles(TICKERS)
-    assert [(t, text) for t, _, text in calls] == [("BBB", "BBB now sells banking software to regional banks")]
+    assert [(t, text) for t, _, text in calls] == [
+        ("BBB", long_body("BBB now sells banking software to regional banks"))]
     calls.clear()
     engine.build_profiles(TICKERS)                                    # the new profile holds the new hash
     assert calls == []

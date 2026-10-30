@@ -10,6 +10,7 @@ import pytest
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.providers import deepseek
 from RevenueChaser.module_relatedness import config, engine, profiles, similarity, store
+from RevenueChaser.module_relatedness.tests.test_relatedness import long_body
 
 
 def _prof(**kw):
@@ -81,7 +82,7 @@ def _count_complete(monkeypatch, content):
 
 def _one_group_per_ticker(monkeypatch):
     monkeypatch.setattr(engine, "_cik_for", lambda ts: {t: t for t in ts})
-    monkeypatch.setattr(engine, "_filing_text", lambda t: (t, "we make things"))
+    monkeypatch.setattr(engine, "_filing_text", lambda t: (t, long_body("we make things")))
 
 
 def test_cap_zero_makes_no_llm_calls(rawstore_tmp_db, monkeypatch):

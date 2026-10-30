@@ -79,14 +79,18 @@ def _summary_html(payload: dict) -> str:
     n = payload.get("n") or 0
     pending = payload.get("pending") or 0
     no_text = payload.get("no_text") or 0
+    short_text = payload.get("short_text") or 0
     pairs = payload.get("n_pairs") or len(payload.get("scores") or [])
     # The names without filing text are not pending (#388 D4): they wait for a 10-K text, not for the next run.
+    # Nor are the ones whose Item 1 came out under the splitter's own floor (#313): too short to profile from.
     no_text_line = f'<div class="d">{no_text:,} without filing text</div>' if no_text else ""
+    short_text_line = (f'<div class="d">{short_text:,} with too short a filing text</div>'
+                       if short_text else "")
     return "".join([
         f'<div class="stat"><div class="v">{n}</div>'
         f'<div class="l">Profiled</div><div class="d">business profiles</div></div>',
         f'<div class="stat"><div class="v">{pending}</div>'
-        f'<div class="l">Pending</div><div class="d">next off-peak run</div>{no_text_line}</div>',
+        f'<div class="l">Pending</div><div class="d">next off-peak run</div>{no_text_line}{short_text_line}</div>',
         f'<div class="stat"><div class="v">{payload.get("universe_total") or 0}</div>'
         f'<div class="l">Universe</div><div class="d">operating companies, no market-cap floor</div></div>',
         f'<div class="stat"><div class="v">{pairs}</div>'

@@ -30,7 +30,8 @@ def effective_config() -> dict:
     return {
         "MODEL": deepseek.MODEL, "THINKING": config.THINKING, "REASONING_EFFORT": config.REASONING_EFFORT,
         "PROMPT_VERSION": config.PROMPT_VERSION, "PILOT_N": config.PILOT_N,
-        "MAX_INPUT_CHARS": config.MAX_INPUT_CHARS, "PROFILE_FIELDS": list(config.PROFILE_FIELDS),
+        "MAX_INPUT_CHARS": config.MAX_INPUT_CHARS, "MIN_INPUT_CHARS": config.MIN_INPUT_CHARS,
+        "PROFILE_FIELDS": list(config.PROFILE_FIELDS),
         "FIELD_WEIGHTS": dict(config.FIELD_WEIGHTS), "TOP_PEERS": config.TOP_PEERS,
     }
 
@@ -62,7 +63,8 @@ def record(payload: dict, *, requested: int, run_id: str, run_at: float):
     rows = store.score_rows(payload.get("peers") or {})
     companies = payload.get("companies") or []
     context = {"as_of": payload.get("as_of"), "requested": requested, "profiled": payload.get("n"),
-               "pending": payload.get("pending"), "no_text": payload.get("no_text"), "stale": sum(1 for c in companies if c.get("stale")),
+               "pending": payload.get("pending"), "no_text": payload.get("no_text"),
+               "short_text": payload.get("short_text"), "stale": sum(1 for c in companies if c.get("stale")),
                "n_pairs": payload.get("n_pairs"), "universe_total": payload.get("universe_total"),
                "next_off_peak": payload.get("next_off_peak")}
     if payload.get("writer"):

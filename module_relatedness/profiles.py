@@ -75,6 +75,20 @@ def system_prompt(version: str | None = None) -> str:
     return f"{SYSTEM}\n\nPrompt version: {version or config.PROMPT_VERSION}."
 
 
+def text_status(item_text: str | None) -> str | None:
+    """``None`` when the filing text is long enough to profile, else why it is not.
+
+    ``no_text``: nothing at all (or whitespace). ``short_text``: under
+    :data:`config.MIN_INPUT_CHARS`, Value Chain's own floor for a sliced Item 1 — the slice is then a
+    table-of-contents fragment, and a model asked from it writes the profile from the company name
+    instead of refusing (#313), so the call is never made.
+    """
+    text = (item_text or "").strip()
+    if not text:
+        return "no_text"
+    return "short_text" if len(text) < config.MIN_INPUT_CHARS else None
+
+
 def build_user(name: str, item_text: str) -> str:
     text = (item_text or "")[:config.MAX_INPUT_CHARS]
     return f"Company: {name}\n\nBusiness description (10-K Item 1 / 20-F Item 4):\n{text}"

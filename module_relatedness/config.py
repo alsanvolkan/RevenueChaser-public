@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 
 from RevenueChaser.core.config import OUTPUT_DIR
+from RevenueChaser.module_value_chain import config as vc_config
 
 RELATEDNESS_LATEST = OUTPUT_DIR / "relatedness_latest.html"
 RELATEDNESS_JSON = OUTPUT_DIR / "relatedness" / "relatedness_latest.json"
@@ -17,6 +18,12 @@ RELATEDNESS_JSON = OUTPUT_DIR / "relatedness" / "relatedness_latest.json"
 PILOT_N = 200
 THINKING_SAMPLE = 20          # first N companies also profiled in thinking mode
 MAX_INPUT_CHARS = 12_000      # cost control: first chars of Item 1/4
+# The floor under which a filing text is not sent to the writer at all (#313). Value Chain's own
+# MIN_ITEM_CHARS, so "this is a sliced Item 1, not a table-of-contents fragment" means the same thing on both
+# boards. A model asked from a one-line description does not refuse; it writes the profile from the company
+# name (measured on the live store 2026-10-30: 20 of 1,503 pilot names carry an empty Item 1 and 58 one under
+# this floor, AAP's being 1 character).
+MIN_INPUT_CHARS = vc_config.MIN_ITEM_CHARS
 
 # Profile mode: thinking-high only (see docs/plan_rest.md Phase 6 and
 # the private notes validation/validation_thinking_vs_nonthinking_50.md). Thinking costs more tokens

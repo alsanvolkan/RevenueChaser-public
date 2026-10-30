@@ -71,7 +71,8 @@ def test_the_header_carries_model_version_params_and_context(seeded):
 
 
 @pytest.mark.parametrize("name, value", [("TOP_PEERS", 10), ("PROMPT_VERSION", "v3"), ("REASONING_EFFORT", "low"),
-                                         ("FIELD_WEIGHTS", {"products": 2.0}), ("PILOT_N", 100)])
+                                         ("FIELD_WEIGHTS", {"products": 2.0}), ("PILOT_N", 100),
+                                         ("MIN_INPUT_CHARS", 500)])
 def test_model_version_changes_with_a_setting(monkeypatch, name, value):
     before = rel_history.model_version()
     monkeypatch.setattr(config, name, value)

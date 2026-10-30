@@ -7,12 +7,13 @@ from RevenueChaser.core import rawstore
 from RevenueChaser.core.providers import deepseek
 from RevenueChaser.module_relatedness import config
 from RevenueChaser.module_relatedness import engine
+from RevenueChaser.module_relatedness.tests.test_relatedness import long_body
 
 
 def _seed_filings(n):
     rawstore.write_rows("chain_filings", [
         {"ticker": f"T{i}", "cik": str(i), "form": "10-K", "filed": "2026-01-01",
-         "accession": "a", "primary_doc": "u", "item_text": "we make things",
+         "accession": "a", "primary_doc": "u", "item_text": long_body("we make things"),
          "quality": "ok"} for i in range(n)])
 
 

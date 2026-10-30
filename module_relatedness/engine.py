@@ -218,7 +218,7 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
     names = _company_names(tickers)
 
     def _needs_llm(t: str, current: str | None = None) -> bool:
-        """Not done: no row, stale, made from another input, or empty/no_text and not out of retries.
+        """Not done: no row, stale, made from another input, or empty/no_text/short_text and not out of retries.
 
         ``current`` is the hash of the prompt the group would be profiled from today; a stored profile made from
         another one (a new filing text or company name) is redone like a stale one (#388 D5).
@@ -232,7 +232,7 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
             return stale and m["attempts"] < MAX_ATTEMPTS
         if m["status"] == "empty":
             return stale or m["attempts"] < MAX_ATTEMPTS
-        return True                        # no_text / unknown: re-check (no LLM cost)
+        return True                        # no_text / short_text / unknown: re-check (no LLM cost)
 
     # The input check reads filing texts, so it runs only for the groups nothing else already sends to the LLM.
     current = _input_hashes({k: ts for k, ts in groups.items() if not any(_needs_llm(t) for t in ts)}, names)
@@ -313,13 +313,16 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
         rep = next((t for t in ts if _filing_text(t)[1]), ts[0])
         name, text = _filing_text(rep)
         name = names.get(rep) or name             # the company, not the ticker (#388 D5)
-        if not text:
+        unusable = profiles_mod.text_status(text)
+        if unusable:
+            # No filing text (``no_text``) or one under Value Chain's MIN_ITEM_CHARS (``short_text``, #313):
+            # the writer would answer from the company name alone, so nothing is sent and nothing is spent.
             for t in ts:
                 if any((have.get(t) or {}).values()):
                     continue               # keep a usable (stale) profile
                 store.save_profile(t, ciks.get(t),
                                    {f: [] for f in config.PROFILE_FIELDS},
-                                   "", w_model, status="no_text")
+                                   "", w_model, status=unusable)
             return
         user = profiles_mod.build_user(name, text)
         # The profile's own cache key (structured JSON, the mode stamp checked by
@@ -779,14 +782,17 @@ def _run(no_fetch: bool, tickers: list[str] | None, limit: int | None,
     if next_reset is not None:
         next_off_peak = None
 
-    # "Profiled" counts usable profiles only: empty / no_text rows are not done.
+    # "Profiled" counts usable profiles only: empty / no_text / short_text rows are not done.
     profiles = {t: p for t, p in profiles.items() if any(p.values())}
     payload = _payload(profiles, {}, stale=store.stale_tickers(list(profiles)))
-    # Pending is what a next run can still profile (#388 D4): a name whose filing has no text waits for SEC, not for
-    # DeepSeek, so it is counted apart.
-    no_text = {t for t, m in store.profile_meta(tickers).items() if m["status"] == "no_text" and t not in profiles}
+    # Pending is what a next run can still profile (#388 D4): a name whose filing has no text, or one too short to
+    # profile from (#313), waits for a better filing, not for DeepSeek, so both are counted apart.
+    meta_now = store.profile_meta(tickers)
+    no_text = {t for t, m in meta_now.items() if m["status"] == "no_text" and t not in profiles}
+    short_text = {t for t, m in meta_now.items() if m["status"] == "short_text" and t not in profiles}
     payload["no_text"] = len(no_text)
-    payload["pending"] = max(0, len(tickers) - len(profiles) - len(no_text))
+    payload["short_text"] = len(short_text)
+    payload["pending"] = max(0, len(tickers) - len(profiles) - len(no_text) - len(short_text))
     if no_fetch:
         # A Refresh changes no profile or score, so it shows when the last Fetch ran (#388 REL-10).
         payload["as_of"] = _last_run_as_of() or payload["as_of"]
@@ -814,6 +820,7 @@ def _run(no_fetch: bool, tickers: list[str] | None, limit: int | None,
             "key": "relatedness_run",
             "value": json.dumps({"as_of": payload["as_of"], "n": payload["n"],
                                  "pending": payload["pending"], "no_text": payload["no_text"],
+                                 "short_text": payload["short_text"],
                                  "next_off_peak": payload.get("next_off_peak")})}])
         _record_history(payload, len(tickers), run_id, run_at)
     _save(config.RELATEDNESS_JSON, payload)
