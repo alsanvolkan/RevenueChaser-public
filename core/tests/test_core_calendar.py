@@ -1,10 +1,10 @@
-"""core.calendar — NYSE closure table + trade-by date. No network."""
+"""core.calendar — NYSE closure table, the federal holidays EDGAR keeps, + trade-by date. No network."""
 from datetime import date
 
 import pytest
 
 from RevenueChaser.core.calendar import (
-    MARKET_HOLIDAYS, is_trading_day, market_holidays,
+    MARKET_HOLIDAYS, federal_holidays, is_federal_holiday, is_trading_day, market_holidays,
     previous_trading_day, next_trading_day, trade_by_date,
 )
 
@@ -164,3 +164,39 @@ def test_bars_complete_needs_the_30_minute_margin():
     assert cal.bars_complete(date(2026, 10, 26), _utc(2026, 10, 26, 15, 35).timestamp()) is False
     # a later re-download still counts
     assert cal.bars_complete(date(2026, 10, 26), _utc(2026, 10, 28, 3, 0).timestamp()) is True
+
+
+# ── Federal holidays: the days EDGAR is closed ─────────────────────────────────────────────────────────────
+
+def test_federal_holidays_follow_the_statute_and_its_weekend_shift():
+    h = federal_holidays(2026)
+    for iso in ("2026-01-01", "2026-01-19", "2026-02-16", "2026-05-25", "2026-06-19",
+                "2026-07-03", "2026-09-07", "2026-10-12", "2026-11-11", "2026-11-26", "2026-12-25"):
+        assert date.fromisoformat(iso) in h, iso
+    assert len(h) == 11
+    # Columbus Day and Veterans Day close EDGAR although the NYSE trades.
+    assert date(2026, 10, 12) not in market_holidays(2026)
+    assert date(2026, 11, 11) not in market_holidays(2026)
+    # Good Friday closes the NYSE and not the federal offices: EDGAR published the 2026-04-03 index.
+    assert date(2026, 4, 3) in market_holidays(2026) and date(2026, 4, 3) not in h
+
+
+def test_a_fixed_date_holiday_on_a_saturday_is_observed_the_friday_before():
+    # 2028-01-01 is a Saturday, observed Friday 2027-12-31; it is not a 2028 closure.
+    assert date(2028, 1, 1).weekday() == 5
+    assert date(2027, 12, 31) in federal_holidays(2027)
+    assert date(2028, 1, 1) not in federal_holidays(2028)
+    # 2034-01-01 is a Sunday, observed Monday 2034-01-02.
+    assert date(2034, 1, 1).weekday() == 6
+    assert date(2034, 1, 2) in federal_holidays(2034) and date(2034, 1, 1) not in federal_holidays(2034)
+
+
+def test_a_closure_by_executive_order_is_in_the_table():
+    """Measured against sec.gov on 2026-10-30: the daily index of each of these days is absent."""
+    for iso in ("2025-01-09", "2025-12-24", "2025-12-26"):
+        assert is_federal_holiday(date.fromisoformat(iso)), iso
+
+
+def test_is_federal_holiday_of_an_ordinary_weekday():
+    assert is_federal_holiday(date(2026, 10, 13)) is False
+    assert is_federal_holiday(date(2026, 10, 12)) is True

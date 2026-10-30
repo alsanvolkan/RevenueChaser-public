@@ -254,6 +254,15 @@ class RunContext:
             self._uw = None
 
 
+def refusal_note(keyed: bool = False) -> str:
+    """What a 403 points at: the provider's key when the request carries one, else ``RC_HTTP_CONTACT``. A source
+    that accepts a 403 itself (``accept``) and then decides it is a real refusal raises with the same words."""
+    if keyed:
+        return " (refused: check the key and what it is allowed to read)"
+    return (f" (refused: set {CONTACT_ENV} to a contact for the User-Agent)"
+            if not (os.getenv(CONTACT_ENV) or "").strip() else " (refused although a contact is set)")
+
+
 def http_get(ctx: RunContext, provider: str, url: str, params: dict | None = None,
              headers: dict | None = None, keyed: bool = False, accept: tuple[int, ...] = ()) -> httpx.Response:
     """GET with the keyless retry ladder; every attempt is counted for ``provider``. Raises ``SourceError``.
@@ -277,11 +286,8 @@ def http_get(ctx: RunContext, provider: str, url: str, params: dict | None = Non
             if r.status_code < 400 or r.status_code in accept:
                 return r
             last = f"HTTP {r.status_code}"
-            if r.status_code == 403 and keyed:
-                last += " (refused: check the key and what it is allowed to read)"
-            elif r.status_code == 403:
-                last += (f" (refused: set {CONTACT_ENV} to a contact for the User-Agent)"
-                         if not (os.getenv(CONTACT_ENV) or "").strip() else " (refused although a contact is set)")
+            if r.status_code == 403:
+                last += refusal_note(keyed)
             if not (r.status_code == 429 or r.status_code >= 500):
                 break
         if attempt < HTTP_ATTEMPTS:

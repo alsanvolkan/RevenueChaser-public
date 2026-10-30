@@ -1,4 +1,4 @@
-"""US market calendar: NYSE full-day closures + trade-by date.
+"""US market calendar: NYSE full-day closures, the federal holidays EDGAR keeps + trade-by date.
 
 ``trade_by_date`` is used by the Earnings Radar GUI to show the last session in
 which a position can still be opened before an earnings print: PM reports trade
@@ -60,6 +60,63 @@ def market_holidays(year: int) -> frozenset[date]:
 
 def is_trading_day(d: date) -> bool:
     return d.weekday() < 5 and d not in market_holidays(d.year)
+
+
+# ── Federal holidays: the days EDGAR keeps closed ──────────────────────────────────────────────────────────────
+# Not the NYSE table: Columbus Day and Veterans Day close the federal offices while the exchange trades, and Good
+# Friday closes the exchange while the offices work. EDGAR follows the federal offices, so the SEC publishes no
+# daily index for a day below (measured against sec.gov on 2026-10-30: 403 for every one of them in 2025 and 2026,
+# 200 for 2026-04-03, Good Friday).
+#
+# These are computed, not transcribed, because 5 U.S.C. 6103 states them as rules (a fixed date, or the n-th
+# weekday of a month) and an observance shift: a Saturday date is kept the Friday before, a Sunday date the Monday
+# after. So, unlike the NYSE table, this one needs no horizon and never has to be extended.
+_FIXED = ((1, 1), (6, 19), (7, 4), (11, 11), (12, 25))
+#        month, n-th (1-4), weekday (0 = Monday); n = -1 is the last of the month
+_NTH = ((1, 3, 0), (2, 3, 0), (5, -1, 0), (9, 1, 0), (10, 2, 0), (11, 4, 3))
+
+# Days the federal offices were closed by executive order, which no rule gives. Each one is measured: the SEC
+# published no daily index for it (checked 2026-10-30).
+EXTRA_FEDERAL_CLOSURES: frozenset[date] = frozenset({
+    date(2025, 1, 9),     # national day of mourning, President Carter
+    date(2025, 12, 24),   # Christmas Eve, federal offices closed by executive order
+    date(2025, 12, 26),   # the day after Christmas, same order
+})
+
+
+def _observed(d: date) -> date:
+    """The day a fixed-date holiday is kept: Saturday falls back to Friday, Sunday forward to Monday."""
+    if d.weekday() == 5:
+        return d - timedelta(days=1)
+    if d.weekday() == 6:
+        return d + timedelta(days=1)
+    return d
+
+
+def _nth_weekday(year: int, month: int, nth: int, weekday: int) -> date:
+    """The ``nth`` ``weekday`` of ``month`` (``nth = -1``: the last one). Already a weekday, so never shifted."""
+    if nth == -1:
+        d = date(year, month + 1, 1) - timedelta(days=1) if month < 12 else date(year, 12, 31)
+        return d - timedelta(days=(d.weekday() - weekday) % 7)
+    first = date(year, month, 1)
+    return first + timedelta(days=(weekday - first.weekday()) % 7 + 7 * (nth - 1))
+
+
+def federal_holidays(year: int) -> frozenset[date]:
+    """The days the US federal offices, and so EDGAR, are closed in ``year``: the eleven statutory holidays as they
+    are observed, plus any closure by executive order. A New Year's Day that falls on a Saturday is kept on 31
+    December of the year before, so it belongs to that year's set, not to this one."""
+    days = {_observed(date(year, m, d)) for m, d in _FIXED}
+    days |= {_nth_weekday(year, m, n, w) for m, n, w in _NTH}
+    days = {d for d in days if d.year == year}
+    if date(year + 1, 1, 1).weekday() == 5:              # next New Year's Day is kept this 31 December
+        days.add(date(year, 12, 31))
+    return frozenset(days | {d for d in EXTRA_FEDERAL_CLOSURES if d.year == year})
+
+
+def is_federal_holiday(d: date) -> bool:
+    """Whether the federal offices are closed on ``d`` (so EDGAR publishes no daily index for it)."""
+    return d in federal_holidays(d.year)
 
 
 def previous_trading_day(d: date) -> date:
