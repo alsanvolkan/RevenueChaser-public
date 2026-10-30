@@ -280,6 +280,12 @@ def _promote(staged, final) -> None:
             except OSError as exc:
                 if attempt == 2 or exc.errno not in _RACE_ERRNOS:
                     raise
+                if (final / "manifest.json").exists():
+                    # What reappeared is a *complete* day another process promoted, and a complete day is never
+                    # replaced (the rule at the call site). Keep theirs and drop our staged copy (review m5).
+                    logger.warning("spx snapshot: raw/%s was completed by another run while promoting; kept it "
+                                   "and discarded this staging copy", final.name)
+                    return
                 logger.warning("spx snapshot: raw/%s reappeared while promoting; removing it and renaming again",
                                final.name)
 

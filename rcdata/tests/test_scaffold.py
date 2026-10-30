@@ -77,10 +77,18 @@ def test_a_read_of_an_empty_file_is_no_rows_never_an_error():
 
 # ── The command avo runs on the server ──────────────────────────────────────────────────────────────────────────
 
-def test_the_command_reports_what_it_created_and_what_it_left_alone(capsys):
+@pytest.fixture
+def backup_taken(monkeypatch):
+    """The verified backup, stubbed: a test has no backup folder, and what is under test here is the scaffold."""
     from RevenueChaser.rcdata import backup
+    monkeypatch.setattr(backup, "run_backup", lambda: {"ops.sqlite": "copied"})
+    return backup
+
+
+def test_the_command_reports_what_it_created_and_what_it_left_alone(capsys, backup_taken):
+    backup = backup_taken
     scaffold.create_empty("prices")
-    assert backup.main(["create-empty-stores"]) == 0
+    assert backup.main(["create-empty-stores", "--apply"]) == 0
     out = capsys.readouterr().out
     assert "prices: already built" in out
     for kind in sorted(set(serving.KINDS) - {"prices"}):
@@ -110,3 +118,33 @@ def test_every_table_a_need_names_is_in_some_kinds_schema():
     known = {t for tables in scaffold.SCHEMA_OF_KIND.values() for t in tables}
     missing = sorted({n.table for n in api.catalog.NEEDS.values()} - known)
     assert missing == [], f"needs over tables no serving file declares: {missing}"
+
+
+# ── The review's I3: a write to the live store needs its three protections ──
+
+def test_without_apply_the_command_only_says_what_it_would_do(capsys):
+    """CLAUDE.md: a write to the live store runs behind a verified backup, with an idle queue and a named rollback.
+    The command's own comment promised all three and then wrote straight away. The default is a dry run now, as
+    ``clean-scratch`` has been all along for far less."""
+    from RevenueChaser.rcdata import backup
+    assert backup.main(["create-empty-stores"]) == 0
+    out = capsys.readouterr().out
+    assert "would create" in out and "--apply" in out
+    assert not any(serving.live_path(k).exists() for k in serving.KINDS), "a dry run wrote to the store"
+
+
+def test_apply_prints_the_rollback_for_every_file_it_creates(capsys, backup_taken):
+    assert backup_taken.main(["create-empty-stores", "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert "rollback:" in out
+    for kind in serving.KINDS:
+        assert str(serving.live_path(kind)) in out, f"{kind}: no rollback names the file it created"
+
+
+def test_it_refuses_while_the_builder_has_work_queued(capsys, monkeypatch, backup_taken):
+    """An idle queue is one of the three: the builder is the serving files' writer, and a file appearing under a
+    running build is the one case the swap guard would have to catch."""
+    monkeypatch.setattr(backup_taken, "_queue_is_idle", lambda: (False, "1 queued, 0 running"))
+    assert backup_taken.main(["create-empty-stores", "--apply"]) == 2
+    assert "queue" in capsys.readouterr().out.lower()
+    assert not any(serving.live_path(k).exists() for k in serving.KINDS)

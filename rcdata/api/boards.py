@@ -15,6 +15,7 @@ board as the migration reaches it, and goes away with the last one.
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -55,10 +56,19 @@ def declared_reads(board: str) -> tuple[str, ...] | None:
     imports into whatever asked, and a declaration is a literal tuple of strings by construction.
     """
     text = (root() / board / "__init__.py").read_text(encoding="utf-8")
-    match = re.search(r"^READS\s*=\s*\(([^)]*)\)", text, re.MULTILINE)
-    if match is None:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
         return None
-    return tuple(name for name in re.findall(r"""["']([^"']+)["']""", match.group(1)))
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else []
+        if any(isinstance(t, ast.Name) and t.id == "READS" for t in targets):
+            try:
+                value = ast.literal_eval(node.value)
+            except ValueError:
+                return None
+            return tuple(str(v) for v in value)
+    return None
 
 
 def all_reads() -> dict[str, tuple[str, ...]]:
@@ -72,6 +82,21 @@ def readers_of(need: str) -> tuple[str, ...]:
     return tuple(b for b, reads in sorted(all_reads().items()) if need in reads)
 
 
+def _quoted_names(text: str) -> set[str]:
+    """Every string the module's code evaluates (the review's m6).
+
+    Parsed rather than matched: the old regex took any quoted run of characters anywhere in the file, so a need
+    named inside a comment or inside a sentence of a docstring read as a use, and the CI guard then asked for a
+    declaration of something the board does not read. A comment is not in the tree at all, and a docstring is one
+    string whose whole text is never a need name.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return set()
+    return {n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+
+
 def need_literals(board: str) -> tuple[str, ...]:
     """Every catalog need name quoted anywhere in the board's own source, tests left out.
 
@@ -81,8 +106,7 @@ def need_literals(board: str) -> tuple[str, ...]:
     for path in sorted((root() / board).rglob("*.py")):
         if "tests" in path.relative_to(root() / board).parts:
             continue
-        text = path.read_text(encoding="utf-8")
-        found.update(name for name in re.findall(r"""["']([^"'\s]+)["']""", text) if name in catalog.NEEDS)
+        found.update(n for n in _quoted_names(path.read_text(encoding="utf-8")) if n in catalog.NEEDS)
     return tuple(sorted(found))
 
 

@@ -82,13 +82,21 @@ def _day(value) -> date | None:
     return None if value is None else (value if isinstance(value, date) else date.fromisoformat(str(value)))
 
 
-def market_series(series_ids: Iterable[str], start=None, end=None) -> list[dict]:
-    """Observations of ``series_ids`` with ``start <= obs_date <= end`` (either bound optional), by series and date."""
+def market_series(series_ids: Iterable[str] = (), start=None, end=None, prefix: str | None = None) -> list[dict]:
+    """Observations of ``series_ids`` with ``start <= obs_date <= end`` (either bound optional), by series and date.
+
+    ``prefix`` takes every series whose id starts with it instead of naming them one by one: the CFTC report's
+    fields are built from the provider's own row, so the caller has a common start and not a list. Naming neither
+    is no rows, as an empty list has always been - never the whole table.
+    """
     ids = [str(s) for s in series_ids]
-    if not ids:
+    if not ids and not prefix:
         return []
-    sql = f"SELECT * FROM market_series WHERE series_id IN ({', '.join('?' * len(ids))})"
-    params: list = list(ids)
+    if ids:
+        sql = f"SELECT * FROM market_series WHERE series_id IN ({', '.join('?' * len(ids))})"
+        params: list = list(ids)
+    else:
+        sql, params = "SELECT * FROM market_series WHERE series_id LIKE ?", [f"{prefix}%"]
     if start is not None:
         sql += " AND obs_date >= ?"
         params.append(_day(start))
@@ -799,8 +807,18 @@ def price_revisions(security_ids: Iterable[str] | None = None, start=None, end=N
                  missing_table_ok=True)
 
 
+def _summary_filter(key_column: str | None, key_values, key_prefix) -> tuple[str, list]:
+    """``(" WHERE ...", params)`` for a summary over part of a table, or ``("", [])`` for the whole of it."""
+    values = [str(v) for v in (key_values or ())]
+    if not key_column or (not values and not key_prefix):
+        return "", []
+    if values:
+        return f" WHERE {key_column} IN ({', '.join('?' * len(values))})", list(values)
+    return f" WHERE {key_column} LIKE ?", [f"{key_prefix}%"]
+
+
 def table_summary(table: str, day_column: str | None = None, key_column: str | None = None,
-                  sample: int = 0) -> dict:
+                  sample: int = 0, key_values: Iterable[str] = (), key_prefix: str | None = None) -> dict:
     """How much one serving table holds and how new it is: ``row_count``, ``key_count``, ``newest_day``, ``status``.
 
     ``sample`` asks for that many whole rows as well (``sample_rows``, newest first where the table has a day), so a
@@ -823,14 +841,25 @@ def table_summary(table: str, day_column: str | None = None, key_column: str | N
     parts = ["count(*) AS row_count"]
     parts.append(f"count(DISTINCT {key_column}) AS key_count" if key_column else "0 AS key_count")
     parts.append(f"max({day_column}) AS newest_day" if day_column else "NULL AS newest_day")
+    # The caller's own rows inside a table several of them share (``market_series``): counting the whole table
+    # would let one caller's dead series read as fresh on another's current one.
+    where, where_params = _summary_filter(key_column, key_values, key_prefix)
     rows: list[dict] = []
     try:
-        row = con.execute(f"SELECT {', '.join(parts)} FROM {table}").fetchone()
-        if sample > 0:
-            order = f" ORDER BY {day_column} DESC" if day_column else ""
-            cur = con.execute(f"SELECT * FROM {table}{order} LIMIT ?", [int(sample)])
-            cols = [d[0] for d in cur.description]
-            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        try:
+            row = con.execute(f"SELECT {', '.join(parts)} FROM {table}{where}", where_params).fetchone()
+            if sample > 0:
+                order = f" ORDER BY {day_column} DESC" if day_column else ""
+                cur = con.execute(f"SELECT * FROM {table}{where}{order} LIMIT ?", [*where_params, int(sample)])
+                cols = [d[0] for d in cur.description]
+                rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        except Exception as exc:  # noqa: BLE001 - duckdb's catalog error is not a public class here
+            # A file built before this table was added to its kind: "no rows yet" is the truth, and the screen
+            # summarises every table on every render, so raising here is a 500 (the review's m1). The same guard
+            # ``_rows`` carries, and as narrow: the message must name this very table.
+            if "does not exist" in str(exc) and table in str(exc):
+                return empty
+            raise
     finally:
         con.close()
     if row is None:

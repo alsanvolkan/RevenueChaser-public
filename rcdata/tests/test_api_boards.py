@@ -86,3 +86,35 @@ def test_the_flow_chart_rows_come_from_the_record_and_carry_what_it_draws():
     counted_in_days = next(r for r in rows if r["need"] == "fundamentals.estimates")
     assert counted_in_days["max_lag_unit"] == "days", "the chart carries each need's own unit, not one for all"
 
+
+
+# ── The review's m6: the record is read from code, not from prose ──
+
+def test_a_need_named_only_in_a_comment_is_not_a_use(tmp_path, monkeypatch):
+    """``need_literals`` matched a need name in any string, docstrings and comments included, so a board that only
+    mentions a need in prose read as an undeclared use - and the CI guard then asks for a declaration of something
+    the board does not read."""
+    pkg = tmp_path / "module_fake"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text('READS = ("identity.universe",)\n', encoding="utf-8")
+    (pkg / "notes.py").write_text(
+        '"""This board once read \'prices.bars\' and no longer does."""\n'
+        "# see also 'identity.security' for why\n"
+        'NEEDS_READ = ("identity.universe",)\n', encoding="utf-8")
+    monkeypatch.setattr(boards, "root", lambda: tmp_path)
+    assert boards.need_literals("module_fake") == ("identity.universe",)
+    assert boards.undeclared_uses("module_fake") == ()
+
+
+def test_a_declaration_is_read_whole_even_with_a_bracket_in_a_comment(tmp_path, monkeypatch):
+    """The regex stopped at the first ``)``, so a comment carrying one inside the tuple truncated the declaration
+    silently - the board then looked as if it had never declared the needs below that line."""
+    pkg = tmp_path / "module_fake"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text(
+        'READS = (\n'
+        '    "identity.universe",   # the shared universe (see load_universe(), D6)\n'
+        '    "prices.bars",\n'
+        ')\n', encoding="utf-8")
+    monkeypatch.setattr(boards, "root", lambda: tmp_path)
+    assert boards.declared_reads("module_fake") == ("identity.universe", "prices.bars")

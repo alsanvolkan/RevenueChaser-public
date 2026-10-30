@@ -19,6 +19,13 @@ SOON = date(2026, 10, 30)
 LATER = date(2026, 11, 5)
 
 
+@pytest.fixture(autouse=True)
+def reference_session(monkeypatch):
+    """The day freshness is measured against (the review's I1): one shared function, not the caller's ``today``.
+    These cases are written around ``TODAY``, so ``TODAY`` is the newest complete session here."""
+    monkeypatch.setattr(api.serve.calendar, "latest_complete_session", lambda: TODAY)
+
+
 @pytest.fixture
 def layer(monkeypatch):
     """The options layer's screener rows, as ``rcdata.read.option_screener`` returns them."""

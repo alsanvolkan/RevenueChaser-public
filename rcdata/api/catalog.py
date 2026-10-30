@@ -46,6 +46,16 @@ class Need:
     #: for a table keyed ``security_id``). A summary counts this one; a row's key stays ``key_column``.
     table_key_column: str | None = None
     ask_param: str | None = None
+    #: False when ``ask_param`` is a single value rather than a list (``cik``, ``ticker``): the HTTP route then
+    #: passes the query string's value as it stands instead of splitting it on commas.
+    ask_list: bool = True
+    #: The rows this need is about inside a table several needs share. Four needs read ``market_series``; without a
+    #: key of their own each one counted the whole table, so a series that had stopped updating read ``fresh`` as
+    #: long as any other series in the table was current (the review's C2). ``filter_values`` names the keys,
+    #: ``filter_prefix`` names them by their common start where the list is built elsewhere (the CFTC report's
+    #: fields). Both are filters on ``summary_key``, and ``get`` asks the reader for exactly them.
+    filter_values: tuple[str, ...] = ()
+    filter_prefix: str | None = None
     normalize: str = IDENTIFIER
     providers: tuple[str, ...] = ()
     fallbacks: tuple[str, ...] = ()
@@ -101,11 +111,20 @@ _NEEDS = (
     # The numbers are the Earnings board's own, measured there: FRED posts the yield a day late, so a normal night
     # reads 1 or 2 sessions and 3 covers one missed night; the volatility indices are daily too; the CFTC publishes
     # on a Friday the positions held the Tuesday before, so a current night already reads a ~6-session-old row.
-    Need("macro.dgs10", "market_series", "market_series", "obs_date", "series_id", 3, providers=("fred",)),
-    Need("market.vix", "market_series", "market_series", "obs_date", "series_id", 3, providers=("yfinance",)),
-    Need("market.cot", "market_series", "market_series", "obs_date", "series_id", 10, providers=("cftc",)),
+    # Four needs over one table, so each names the series it is about (the review's C2). Without that filter every
+    # one of them counted the whole table and a series that had stopped updating still read ``fresh``. The ids are
+    # the ones the boards ask for: ``core.rotation_reference.MACRO_SERIES["US10Y"]`` for the yield,
+    # ``module_spx_gamma/store_reads.VIX_SERIES`` for the volatility indices, and the E-mini S&P 500 contract of the
+    # CFTC's TFF report for the positions - a prefix there, because the fields are built from the provider's row.
+    Need("macro.dgs10", "market_series", "market_series", "obs_date", "series_id", 3,
+         ask_param="series_ids", filter_values=("DGS10",), providers=("fred",)),
+    Need("market.vix", "market_series", "market_series", "obs_date", "series_id", 3, ask_param="series_ids",
+         filter_values=("VIX", "VIX9D", "VIX3M", "VIX6M", "VIX1Y", "VVIX"), providers=("yfinance",)),
+    Need("market.cot", "market_series", "market_series", "obs_date", "series_id", 10, ask_param="series_ids",
+         filter_prefix="cftc:tff:13874A:", providers=("cftc",)),
+    # The one need without a filter: the caller names the series it wants.
     Need("market.series", "market_series", "market_series", "obs_date", "series_id", 3,
-         providers=("fred", "yfinance")),
+         ask_param="series_ids", providers=("fred", "yfinance")),
     Need("market.spx_expiry_strike", "spx_expiry_strike", "spx_gamma_expiry_strike", "session_date", "expiry", 1,
          providers=("uw",)),
     # ── Ownership ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -124,16 +143,21 @@ _NEEDS = (
     # ── The fundamentals layer ──────────────────────────────────────────────────────────────────────────────────
     # The filings-driven needs are as old as the newest filing, so their window is wide: a company that has not
     # filed in a month is not stale data, it is a company that has not filed.
-    Need("fundamentals.statements", "statements", "fundamental_fact", "period_end", "cik", 65, providers=("sec",)),
+    Need("fundamentals.statements", "statements", "fundamental_fact", "period_end", "cik", 65,
+         ask_param="cik", ask_list=False, providers=("sec",)),
     Need("fundamentals.companies", "fundamental_companies", "fundamental_company", "facts_as_of", "cik", 5,
          ask_param="tickers", normalize=TICKER, providers=("sec",)),
     Need("fundamentals.earnings_event", "earnings_events", "earnings_event", "report_date", "cik", 1,
          providers=("sec", "uw")),
-    Need("fundamentals.filings", "filing_items", "filing_item", "filing_date", "cik", 1, providers=("sec",)),
-    Need("fundamentals.segments", "segments", "segment_revenue", "period_end", "cik", 65, providers=("sec",)),
-    Need("fundamentals.customers", "customers", "customer_share", "period_end", "cik", 65, providers=("sec",)),
+    Need("fundamentals.filings", "filing_items", "filing_item", "filing_date", "cik", 1,
+         ask_param="ciks", providers=("sec",)),
+    Need("fundamentals.segments", "segments", "segment_revenue", "period_end", "cik", 65,
+         ask_param="cik", ask_list=False, providers=("sec",)),
+    Need("fundamentals.customers", "customers", "customer_share", "period_end", "cik", 65,
+         ask_param="cik", ask_list=False, providers=("sec",)),
     # A peer group carries no date of its own: it is present or absent, never stale.
-    Need("fundamentals.peers", "peers", "peer_group", None, "cik", 65, providers=("sec",)),
+    Need("fundamentals.peers", "peers", "peer_group", None, "cik", 65,
+         ask_param="cik", ask_list=False, providers=("sec",)),
     Need("fundamentals.revision", "revisions", "fundamental_revision", "datadate", "cik", 65, providers=("wrds",)),
     # ── Ownership ───────────────────────────────────────────────────────────────────────────────────────────────
     # The 13F period tables are quarterly by construction: a filing deadline 45 days after a quarter end means the
@@ -153,12 +177,16 @@ _NEEDS = (
     Need("ownership.beneficial", "beneficial_ownership", "beneficial_ownership", "filed", "ticker", 5,
          ask_param="tickers", normalize=TICKER, providers=("sec",)),
     # ── Options ─────────────────────────────────────────────────────────────────────────────────────────────────
-    Need("options.chain", "option_chain", "option_eod", "session_date", "ticker", 1, providers=("uw",)),
-    Need("options.strikes", "option_strikes", "option_strike", "session_date", "ticker", 1, providers=("uw",)),
-    Need("options.expiries", "option_expiries", "option_expiry", "session_date", "ticker", 1, providers=("uw",)),
+    Need("options.chain", "option_chain", "option_eod", "session_date", "ticker", 1,
+         ask_param="ticker", ask_list=False, normalize=TICKER, providers=("uw",)),
+    Need("options.strikes", "option_strikes", "option_strike", "session_date", "ticker", 1,
+         ask_param="ticker", ask_list=False, normalize=TICKER, providers=("uw",)),
+    Need("options.expiries", "option_expiries", "option_expiry", "session_date", "ticker", 1,
+         ask_param="ticker", ask_list=False, normalize=TICKER, providers=("uw",)),
     Need("options.daily", "option_daily", "option_daily", "session_date", "ticker", 1,
          ask_param="tickers", normalize=TICKER, providers=("uw",)),
-    Need("options.prints", "option_prints", "option_print", "session_date", "ticker", 1, providers=("uw",)),
+    Need("options.prints", "option_prints", "option_print", "session_date", "ticker", 1,
+         ask_param="ticker", ask_list=False, normalize=TICKER, providers=("uw",)),
     Need("options.iv", "iv_history", "iv_daily", "session_date", "ticker", 1,
          ask_param="tickers", normalize=TICKER, providers=("uw", "ibkr")),
     Need("options.screener", "option_screener", "option_screener_daily", "session_date", "ticker", 1,

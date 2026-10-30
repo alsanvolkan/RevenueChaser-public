@@ -21,6 +21,7 @@ that table was empty or stale (``stored_inputs.dgs10_map`` and ``macro_watch.fre
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 import logging
 from datetime import date, timedelta
 
@@ -46,18 +47,39 @@ def max_lag() -> dict[str, int]:
     return {key: api.catalog.NEEDS[need].max_lag for key, need in _NEED_OF_LAG.items()}
 
 
-class _FromCatalog(dict):
-    """A mapping that answers from the catalog rather than from the copy it was built with."""
+class _FromCatalog(Mapping):
+    """A mapping that answers from the catalog rather than from the copy it was built with.
+
+    A ``Mapping`` and not a ``dict`` subclass (the review's m3): seeding a dict subclass at import made ``.copy()``
+    and ``json.dumps`` answer with the import-time snapshot while ``[]`` answered with the live number - two
+    answers from one map, which is the drift this whole arrangement exists to prevent.
+    """
 
     def __init__(self, source):
         self._source = source
-        super().__init__(source())
 
     def __getitem__(self, key):
         return self._source()[key]
 
     def get(self, key, default=None):
         return self._source().get(key, default)
+
+    def __iter__(self):
+        return iter(self._source())
+
+    def __len__(self):
+        return len(self._source())
+
+    def copy(self) -> dict:
+        return dict(self._source())
+
+    def __repr__(self):
+        return repr(self._source())
+
+    def __eq__(self, other):
+        return self._source() == other
+
+    __hash__ = None
 
     def __setitem__(self, key, value):
         raise TypeError(f"{key!r} belongs to the need catalog (avo, 29 Oct 2026): set it there, not here")

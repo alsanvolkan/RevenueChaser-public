@@ -18,6 +18,19 @@ from RevenueChaser.core import earnings_dates as ed
 TODAY = date(2026, 10, 22)
 
 
+@pytest.fixture(autouse=True)
+def reference_session(monkeypatch):
+    """Pin the day freshness is measured against.
+
+    Since the review's I1 the layer's age is counted against the market's newest complete session, the one day the
+    envelope and the boards share, instead of against the caller's ``today``: on a trading day whose session is not
+    over those two differ by one, and a card would say fresh while the filter had already dropped the layer. These
+    cases are written against ``TODAY``, so ``TODAY`` is the newest complete session here.
+    """
+    from RevenueChaser.rcdata import api
+    monkeypatch.setattr(api.serve.calendar, "latest_complete_session", lambda: TODAY)
+
+
 def _screener(rows):
     return lambda session_date=None, passing_only=False: [dict(r) for r in rows]
 

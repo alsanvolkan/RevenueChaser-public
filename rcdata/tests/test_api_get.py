@@ -1,7 +1,7 @@
 """``rcdata.api.get`` over a built store: the envelope's freshness, coverage, provenance and status.
 
 The spine's needs are read over the built spine of ``test_spine_security``, the prices store's over the fixture week
-of ``test_prices_serving``. Every test that asserts a state pins the reference session (``_latest_session``), so the
+of ``test_prices_serving``. Every test that asserts a state pins the reference session (``reference_session``), so the
 answer does not turn stale as the calendar moves past the fixtures.
 """
 from __future__ import annotations
@@ -23,7 +23,7 @@ SPINE_AS_OF = date(2026, 10, 27)   # the as-of of the spine fixture's SEC file
 def at_session(monkeypatch):
     """Pin the session the lag is counted against."""
     def pin(day: date):
-        monkeypatch.setattr(api.serve, "_latest_session", lambda: day)
+        monkeypatch.setattr(api.serve, "reference_session", lambda: day)
     return pin
 
 

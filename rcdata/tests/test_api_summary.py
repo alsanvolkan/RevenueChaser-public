@@ -20,7 +20,7 @@ SPINE_AS_OF = date(2026, 10, 27)
 @pytest.fixture
 def at_session(monkeypatch):
     def pin(day: date):
-        monkeypatch.setattr(api.serve, "_latest_session", lambda: day)
+        monkeypatch.setattr(api.serve, "reference_session", lambda: day)
     return pin
 
 

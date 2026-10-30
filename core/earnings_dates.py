@@ -90,7 +90,9 @@ def _layer_dates(ans, today: date, need) -> dict[str, date]:
         return {}
     from RevenueChaser.rcdata import api
 
-    if api.lag_in(need.max_lag_unit, session, today) > need.max_lag:
+    # The lag is counted against the day the API counts it against, not against ``today``: on a trading day whose
+    # session is not over yet those differ by one, and the card and the filter would disagree (review I1).
+    if api.lag_in(need.max_lag_unit, session, max(api.reference_session(), session)) > need.max_lag:
         return {}
     # One row per session and ticker (the table's key), so a name has one report date in the session.
     return {str(r["ticker"]).strip().upper(): r["report_date"] for r in ans.rows

@@ -128,3 +128,27 @@ def test_only_one_thread_is_inside_the_promotion_at_a_time(tmp_path, monkeypatch
     for t in threads:
         t.join(10)
     assert peak == 1, f"{peak} threads were promoting at once"
+
+
+def test_a_complete_day_another_process_promoted_meanwhile_is_kept(tmp_path, monkeypatch):
+    """The review's m5. The retry covers a second process renaming into the gap, and it used to remove whatever it
+    found there. If that second process promoted a *complete* day — a day with a manifest, which is not
+    regenerable — removing it contradicts the rule two lines below the call site: a complete day is never replaced.
+    Our staged copy is discarded instead."""
+    staged, final = _day(tmp_path, "staged"), tmp_path / "2026-10-28"
+    calls = {"n": 0}
+    real_replace = type(staged).replace
+
+    def wedge(self, dest):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # The other process promotes a complete day into the gap, exactly as the race does.
+            _day(tmp_path, "2026-10-28")
+            (final / "manifest.json").write_text("{}", encoding="utf-8")
+            raise OSError(errno.ENOTEMPTY, "Directory not empty")
+        return real_replace(self, dest)
+    monkeypatch.setattr(type(staged), "replace", wedge)
+
+    snapshot._promote(staged, final)
+    assert (final / "manifest.json").exists(), "the complete day another process promoted was removed"
+    assert calls["n"] == 1, "the rename was retried over a complete day"

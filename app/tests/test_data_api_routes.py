@@ -153,3 +153,32 @@ def test_summary_0_is_the_ordinary_read(client, answer):
 
 def test_an_unknown_need_is_still_404_with_summary(client):
     assert client.get("/api/data/prices.nope?summary=1").status_code == 404
+
+
+# ── The review's I2: the ordinary read path has a row cap ──
+
+def test_a_needs_answer_is_capped_and_says_so(client, answer, monkeypatch):
+    """Fourteen needs take no argument, so without a cap their URL serves the whole table as JSON - with one
+    provenance entry per row - from the process that holds the DuckDB writer. The summary path has had a cap of 50
+    all along; this is the same bound on the ordinary one, and the body says when it bit."""
+    monkeypatch.setattr(dashboard, "DATA_ROWS_MAX", 3)
+    answer(rows=[{"ticker": f"T{i}", "source_as_of": date(2026, 10, 27)} for i in range(10)],
+           provenance=[{"key": f"T{i}"} for i in range(10)])
+    body = client.get("/api/data/identity.universe").get_json()
+    assert len(body["rows"]) == 3 and len(body["provenance"]) == 3
+    assert body["truncated"] is True and body["row_cap"] == 3
+    assert body["coverage"]["served"] == 1, "the coverage counts are the store's, not the page's"
+
+
+def test_an_answer_inside_the_cap_is_not_marked_truncated(client, answer, monkeypatch):
+    monkeypatch.setattr(dashboard, "DATA_ROWS_MAX", 3)
+    answer(rows=[{"ticker": "MSFT"}], provenance=[{"key": "MSFT"}])
+    body = client.get("/api/data/identity.universe").get_json()
+    assert body["truncated"] is False and len(body["rows"]) == 1
+
+
+def test_the_caller_may_ask_for_fewer_rows_but_not_for_more(client, answer, monkeypatch):
+    monkeypatch.setattr(dashboard, "DATA_ROWS_MAX", 3)
+    answer(rows=[{"ticker": f"T{i}"} for i in range(10)], provenance=[{"key": f"T{i}"} for i in range(10)])
+    assert len(client.get("/api/data/identity.universe?limit=2").get_json()["rows"]) == 2
+    assert len(client.get("/api/data/identity.universe?limit=99").get_json()["rows"]) == 3

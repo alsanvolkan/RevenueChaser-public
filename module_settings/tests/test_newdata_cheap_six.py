@@ -8,6 +8,8 @@ can be linked to.
 from __future__ import annotations
 
 import re
+import pytest
+
 
 from RevenueChaser.core.tests.board_fixtures import newdata_fixture
 from RevenueChaser.module_settings import report
@@ -119,3 +121,33 @@ def test_s14_the_filter_hides_a_row_by_its_own_status_attribute():
     sec = _section(_page())
     assert 'data-status="late"' in sec and 'data-status="fresh"' in sec
     assert "getAttribute('data-status')" in report.ND_JS
+
+
+# ── The review's m2: the map must not serialise as empty ──
+
+def test_the_screens_map_carries_its_entries_into_a_copy_and_into_json():
+    """It used to subclass ``dict`` with the underlying storage left empty, so ``[]``, ``get`` and ``{**x}`` all
+    worked while ``.copy()`` returned ``{}`` and ``json.dumps`` wrote ``{}``. A label map that silently serialises
+    as empty is exactly the quiet failure the rest of this work goes out of its way to prevent."""
+    import json
+
+    from RevenueChaser.module_settings import newdata
+    labels = newdata.LABELS
+    assert labels, "the map is empty"
+    assert dict(labels) == dict(labels.items()) and len(labels.copy()) == len(labels)
+    assert json.loads(json.dumps(dict(labels))) == {k: v for k, v in labels.items()}
+    with pytest.raises(TypeError):
+        labels["spine/security"] = "no"
+
+
+def test_the_boards_lag_map_is_the_live_number_in_a_copy_too(monkeypatch):
+    """m3: the same trap on the other side. ``MAX_LAG`` seeded its storage at import, so ``.copy()`` and
+    ``json.dumps`` answered with the import-time snapshot while ``[]`` answered with the catalog's live value."""
+    import dataclasses
+
+    from RevenueChaser.module_earnings_radar import store_reads
+    from RevenueChaser.rcdata import api
+    need = api.catalog.NEEDS["macro.dgs10"]
+    monkeypatch.setitem(api.catalog.NEEDS, "macro.dgs10", dataclasses.replace(need, max_lag=99))
+    assert store_reads.MAX_LAG["dgs10"] == 99
+    assert dict(store_reads.MAX_LAG) == {"dgs10": 99} and store_reads.MAX_LAG.copy() == {"dgs10": 99}

@@ -59,8 +59,14 @@ class Answer:
         return self.state == FRESH
 
 
-def _latest_session() -> date:
-    """The market's newest complete session; the reference the lag is counted against."""
+def reference_session() -> date:
+    """The day every freshness answer is counted against: the market's newest complete session.
+
+    One function, because the number and the day it is measured from are two halves of the same rule. The envelope
+    counted the lag from here while ``core.earnings_dates`` counted it from *today*; on a trading day whose session
+    is not over yet those differ by one, so a card could say ``fresh`` while the board had already dropped the same
+    data (the review's I1).
+    """
     return calendar.latest_complete_session()
 
 
@@ -118,6 +124,24 @@ def _provenance(need: Need, rows: list[dict]) -> list[dict]:
             for r in rows]
 
 
+def _with_needs_own_rows(need: Need, params: dict) -> dict:
+    """``params`` with the need's own keys filled in, for a need that names its rows inside a shared table.
+
+    ``macro.dgs10`` is the 10-year yield and nothing else, so a caller does not have to know the series id, and a
+    caller cannot turn that need into another series either: the need's own keys win. A need with no filter is
+    untouched, and its caller names what it wants as before.
+    """
+    if not need.ask_param or (not need.filter_values and not need.filter_prefix):
+        return params
+    out = dict(params)
+    if need.filter_values:
+        out[need.ask_param] = list(need.filter_values)
+    else:
+        out.pop(need.ask_param, None)
+        out["prefix"] = need.filter_prefix
+    return out
+
+
 def summary(need: str, *, sample: int = 0) -> dict:
     """One need's state without naming anything: how much the store holds for it and how new that is.
 
@@ -134,10 +158,12 @@ def summary(need: str, *, sample: int = 0) -> dict:
         raise UnknownNeed(f"unknown need {need!r}: one of {', '.join(sorted(NEEDS))}") from None
 
     ops.read_log.bump(f"need:{need}")
-    s = read.table_summary(spec.table, day_column=spec.day_column, key_column=spec.summary_key, sample=sample)
+    # A need that names its own rows inside a shared table counts only those (the review's C2).
+    s = read.table_summary(spec.table, day_column=spec.day_column, key_column=spec.summary_key, sample=sample,
+                           key_values=spec.filter_values, key_prefix=spec.filter_prefix)
 
     as_of = s["newest_day"]
-    lag = lag_in(spec.max_lag_unit, as_of, _latest_session()) if as_of is not None else None
+    lag = lag_in(spec.max_lag_unit, as_of, reference_session()) if as_of is not None else None
     if s["row_count"] == 0:
         state = MISSING
     elif lag is None or lag <= spec.max_lag:
@@ -167,12 +193,12 @@ def get(need: str, *, fill: str = NEVER, **params) -> Answer:
         raise FillNotSupported(f"fill={fill!r} is not built yet (PR C); only fill={NEVER!r} exists")
 
     ops.read_log.bump(f"need:{need}")
-    rows = spec.reader(**params)
+    rows = spec.reader(**_with_needs_own_rows(spec, params))
     rows = list(rows.values()) if isinstance(rows, dict) else list(rows)
 
     days = [d for d in (_day(r.get(spec.day_column)) for r in rows) if d is not None]
     as_of = max(days) if days else None
-    lag = lag_in(spec.max_lag_unit, as_of, _latest_session()) if as_of is not None else None
+    lag = lag_in(spec.max_lag_unit, as_of, reference_session()) if as_of is not None else None
     freshness = {"as_of_session": as_of, "lag_sessions": lag, "max_lag": spec.max_lag,
                  "unit": spec.max_lag_unit}
 
@@ -190,8 +216,12 @@ def get(need: str, *, fill: str = NEVER, **params) -> Answer:
     else:
         state = STALE
 
-    if rows:
-        status = rows[0].get("status")
+    if rows and rows[0].get("status") is not None:
+        status = rows[0]["status"]
+    elif rows:
+        # A reader whose rows carry no status column: the dataset's own newest check, never the string "None"
+        # on a card (the review's m4).
+        status = read.dataset_status(spec.dataset) if spec.dataset else read.NEVER_CHECKED
     else:
         # No rows and no single owning dataset (a table several datasets write): there is no status to give.
         status = read.dataset_status(spec.dataset) if spec.dataset else read.NEVER_CHECKED

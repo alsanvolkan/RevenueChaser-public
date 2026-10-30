@@ -22,20 +22,23 @@ import os
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from collections.abc import Mapping
+
 from RevenueChaser.core import calendar, config
 from RevenueChaser.rcdata import caps, ops, retention, serving
 from RevenueChaser.rcdata.api import screen as api_screen
 
 
-class _FromScreen(dict):
+class _FromScreen(Mapping):
     """A map the screen reads from ``rcdata.api.screen`` and never writes.
 
-    It is a dict so that everything reading it keeps working, and every read goes back to the one source, so a card
-    changed there is what the screen shows without a second edit. Setting a key raises: that is the point.
+    Every read goes back to the one source, so a card changed there is what the screen shows without a second edit,
+    and setting a key raises: that is the point. It is a ``Mapping`` and **not** a ``dict`` subclass (the review's
+    m2): a subclass with empty storage answers ``[]``, ``get`` and ``{**x}`` correctly while ``.copy()`` returns
+    ``{}`` and ``json.dumps`` writes ``{}`` - a label map that silently serialises as empty.
     """
 
     def __init__(self, source, what: str):
-        super().__init__()
         self._source, self._what = source, what
 
     def _now(self) -> dict:
@@ -75,6 +78,10 @@ class _FromScreen(dict):
 
     def __repr__(self):
         return repr(self._now())
+
+    def copy(self) -> dict:
+        """A plain dict of what the source says now, so a copy is never the empty storage of a dict subclass."""
+        return dict(self._now())
 
     def __setitem__(self, key, value):
         raise TypeError(f"{key!r}: {self._what} lives in rcdata/api/screen.py (avo, 29 Oct 2026); set it there")

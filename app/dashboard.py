@@ -1229,8 +1229,8 @@ def api_data_catalog():
 
 # The scalar parameters a need's reader may take from the query string. Anything else is a 400 rather than a
 # TypeError inside the reader, so a typo in a page's URL is a readable answer and never a 500.
-_DATA_SCALARS = {"as_of", "basis", "end", "index", "measure", "on", "passing_only", "period_type", "session_date",
-                 "source", "start"}
+_DATA_SCALARS = {"as_of", "axis", "basis", "cik", "comparison", "end", "form", "index", "measure", "on",
+                 "passing_only", "period_type", "session_date", "set_name", "source", "start", "ticker"}
 
 
 def _data_params(need, args) -> dict:
@@ -1238,9 +1238,9 @@ def _data_params(need, args) -> dict:
     scalars above. ``tiers`` is a list too (the universe's)."""
     params: dict = {}
     for key, value in args.items():
-        if key in ("fill", "summary", "sample"):
+        if key in ("fill", "summary", "sample", "limit"):
             continue            # "fill" is dropped (a GET never fills: avo, 29 Oct 2026); the other two are ours
-        if key in (need.ask_param, "tiers"):
+        if key in (need.ask_param, "tiers") and (key == "tiers" or need.ask_list):
             params[key] = [v for v in (p.strip() for p in value.split(",")) if v]
         elif key in _DATA_SCALARS:
             params[key] = value
@@ -1252,6 +1252,11 @@ def _data_params(need, args) -> dict:
 #: Example rows a summary may carry back; the screen shows five.
 DATA_SAMPLE_DEFAULT = 5
 DATA_SAMPLE_MAX = 50
+#: The most rows one answer may carry over HTTP (the review's I2). Fourteen needs take no argument at all, so
+#: without a bound their URL serves a whole serving table as JSON - with a provenance entry per row - out of the
+#: process that holds the DuckDB writer. A caller may ask for fewer with ``limit``, never for more, and the body
+#: says when the cap bit rather than quietly serving part of the table.
+DATA_ROWS_MAX = 5000
 
 
 def _sample_size(args) -> int:
@@ -1260,6 +1265,15 @@ def _sample_size(args) -> int:
     except (TypeError, ValueError):
         return DATA_SAMPLE_DEFAULT
     return max(0, min(n, DATA_SAMPLE_MAX))
+
+
+def _row_cap(args) -> int:
+    """How many rows this answer may carry: ``DATA_ROWS_MAX``, or the caller's smaller ``limit``."""
+    try:
+        asked = int(args["limit"])
+    except (KeyError, TypeError, ValueError):
+        return DATA_ROWS_MAX
+    return max(0, min(asked, DATA_ROWS_MAX))
 
 
 def _json_safe(value):
@@ -1297,9 +1311,12 @@ def api_data_need(need: str):
         ans = api.get(need, fill="never", **params)
     except TypeError as e:
         return jsonify({"ok": False, "error": f"the need's reader refused the parameters: {e}"}), 400
+    cap = _row_cap(request.args)
+    rows, provenance = ans.rows[:cap], ans.provenance[:cap]
     return jsonify(_json_safe({"need": ans.need, "state": ans.state, "freshness": ans.freshness,
                                "coverage": ans.coverage, "status": ans.status, "fill": ans.fill,
-                               "provenance": ans.provenance, "rows": ans.rows}))
+                               "truncated": len(ans.rows) > cap, "row_cap": cap,
+                               "provenance": provenance, "rows": rows}))
 
 
 @app.route("/api/universe")
