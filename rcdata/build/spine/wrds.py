@@ -62,7 +62,10 @@ _DIGITS = re.compile(r"^\d{1,10}$")
 _GVKEY = re.compile(r"^\d{6}$")
 
 # table -> (dataset, schema, key, full query); the new-name queries are built in ``_new_name_queries``.
-COMPANY = [("gvkey", "TEXT"), ("conm", "TEXT"), ("cik", "TEXT")]
+# ``sic`` since #240: Compustat's company SIC, the spine's only SPAC source (``spine/tier.SIC_SPAC``). A
+# snapshot taken before this column was asked for has no ``sic`` in its Parquet; staging reads it as NULL
+# (``stage.create``), so the rule types nothing until the next attended snapshot.
+COMPANY = [("gvkey", "TEXT"), ("conm", "TEXT"), ("cik", "TEXT"), ("sic", "TEXT")]
 SECURITY = [("gvkey", "TEXT"), ("iid", "TEXT"), ("tic", "TEXT"), ("cusip", "TEXT"), ("exchg", "INTEGER"),
             ("excntry", "TEXT"), ("secstat", "TEXT"), ("tpci", "TEXT"), ("dldtei", "DATE")]
 IDHIST = [("gvkey", "TEXT"), ("iid", "TEXT"), ("item", "TEXT"), ("itemvalue", "TEXT"), ("efffrom", "DATE"),
@@ -74,7 +77,7 @@ PROVENANCE = [("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TE
 
 TABLES: dict[str, dict] = {
     "company": {"dataset": "wrds/sec_idhist", "schema": COMPANY, "key": ["gvkey"],
-                "sql": "SELECT gvkey, conm, cik FROM comp.company"},
+                "sql": "SELECT gvkey, conm, cik, sic FROM comp.company"},
     "security": {"dataset": "wrds/sec_idhist", "schema": SECURITY, "key": ["gvkey", "iid"],
                  "sql": "SELECT gvkey, iid, tic, cusip, exchg, excntry, secstat, tpci, dldtei FROM comp.security"},
     "sec_idhist": {"dataset": "wrds/sec_idhist", "schema": IDHIST, "key": ["gvkey", "iid", "item", "efffrom"],
@@ -87,6 +90,9 @@ TABLES: dict[str, dict] = {
 }
 STAGING = {"company": "stg_wrds_company", "security": "stg_wrds_security", "sec_idhist": "stg_wrds_idhist",
            "co_hgic": "stg_wrds_hgic", "idxcst_his": "stg_wrds_idx"}
+# Per table, the columns asked for after its stored snapshot was written: read as NULL, with a warning, until the
+# next attended backfill (``stage.create``). Any other missing column still fails the build.
+ADDED_LATER = {"company": {"sic"}}
 
 
 # ── The one connection: a worker subprocess under the interpreter that has ``wrds`` ──────────────────────────
@@ -94,6 +100,19 @@ STAGING = {"company": "stg_wrds_company", "security": "stg_wrds_security", "sec_
 class LoginFailed(base.SourceError):
     """The WRDS login (or its Duo confirmation) did not succeed, or the worker could not start: nothing was asked;
     the last snapshot stays."""
+
+
+class PermissionRefused(base.SourceError):
+    """WRDS answered a query with PostgreSQL's ``InsufficientPrivilege``: the subscription does not hold that schema
+    (homesrv's has no CRSP/CCM, run 32 on 30 Oct 2026). ``schema`` is the one the answer names, or None."""
+
+    def __init__(self, message: str, schema: str | None):
+        super().__init__(message)
+        self.schema = schema
+
+
+_REFUSED = re.compile(r"InsufficientPrivilege|permission denied for (?:schema|table|relation)", re.I)
+_REFUSED_OBJECT = re.compile(r"permission denied for (?:schema|table|relation) \"?([\w.]+)", re.I)
 
 
 PYTHON_ENV = "RC_WRDS_PYTHON"          # the python of the venv that has wrds; no default (a server path)
@@ -216,8 +235,11 @@ def query(ctx: base.RunContext, sql: str, out: Path) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     try:
         return worker.query(sql, out)
-    except base.SourceError:
+    except base.SourceError as e:
         ctx.count(PROVIDER, failures=1)
+        if not isinstance(e, LoginFailed) and _REFUSED.search(str(e)):
+            found = _REFUSED_OBJECT.search(str(e))
+            raise PermissionRefused(str(e), found.group(1) if found else None) from e
         raise
 
 
@@ -245,7 +267,11 @@ def _ask(ctx: base.RunContext, raw: Path, sql: str, as_of: date) -> Path:
         return raw
     meta = {"as_of": as_of.isoformat(), "fetched_at": time.time(), "run_id": ctx.run_id, "query": sql, "rows": None}
     base.write_raw_json(_meta(raw), meta)
-    meta["rows"] = query(ctx, sql, raw)
+    try:
+        meta["rows"] = query(ctx, sql, raw)
+    except base.SourceError:
+        _meta(raw).unlink(missing_ok=True)           # no answer: no sidecar that reads as one (``rows`` null)
+        raise
     base.write_raw_json(_meta(raw), meta)
     return raw
 
@@ -399,7 +425,7 @@ class WrdsDataset:
         padded = [c.zfill(10) for c in new]
         out = []
         raw = _ask(ctx, folder / f"new-company{RAW_SUFFIX}",
-                   f"SELECT gvkey, conm, cik FROM comp.company WHERE cik IN ({_in_list(padded)})", as_of)
+                   f"{TABLES['company']['sql']} WHERE cik IN ({_in_list(padded)})", as_of)
         out.append(raw)
         con = duckdb.connect()
         try:
@@ -462,7 +488,8 @@ class WrdsDataset:
             # The newest snapshot plus the deltas after it; a delta's row replaces the snapshot's (newest fetch wins).
             stage.create(con, STAGING[table], schema, _parquet_files(self.name, table),
                          select=f"SELECT * FROM {{src}} QUALIFY row_number() OVER (PARTITION BY {keys} "
-                                f"ORDER BY fetched_at DESC) = 1")
+                                f"ORDER BY fetched_at DESC) = 1",
+                         added_later=ADDED_LATER.get(table, ()))
         return {}
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:

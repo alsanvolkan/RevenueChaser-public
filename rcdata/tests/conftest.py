@@ -32,14 +32,21 @@ class HttpMock:
     ``add(substring, body, status=200, headers=None)`` answers the first route whose substring is in the URL; a
     callable ``body`` gets the request and returns ``(status, bytes, headers)``. Unknown URLs answer 404.
     ``requests`` keeps every request in order, so a test can assert the query string and count calls.
+
+    ``fallback(...)`` registers the same thing behind every route, whenever it was added: what the host answers for
+    a URL no test named (EDGAR publishes a daily index for every open day, not only the days a test cares about).
     """
 
     def __init__(self):
         self.routes: list[tuple[str, object, int, dict]] = []
+        self.fallbacks: list[tuple[str, object, int, dict]] = []
         self.requests = []
 
     def add(self, substring: str, body=b"", status: int = 200, headers: dict | None = None) -> None:
         self.routes.append((substring, body, status, headers or {}))
+
+    def fallback(self, substring: str, body=b"", status: int = 200, headers: dict | None = None) -> None:
+        self.fallbacks.append((substring, body, status, headers or {}))
 
     def calls(self, substring: str = "") -> list:
         return [r for r in self.requests if substring in str(r.url)]
@@ -49,7 +56,7 @@ class HttpMock:
 
         import httpx
         self.requests.append(request)
-        for sub, body, status, headers in self.routes:
+        for sub, body, status, headers in self.routes + self.fallbacks:
             if sub in str(request.url):
                 if callable(body):
                     status, body, headers = body(request)

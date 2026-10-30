@@ -80,6 +80,15 @@ def test_a_rate_limit_or_error_answer_is_a_failed_run_that_keeps_nothing(av, bod
     assert KEY not in check["note"] and not list(base.raw_root().rglob("*.csv.gz"))
 
 
+def test_a_403_from_the_calendar_points_at_the_key_not_at_the_sec_contact(av):
+    """``common.get`` serves both the SEC (keyless, a 403 means the User-Agent) and Alpha Vantage (the key is in the
+    query), so the note a 403 carries has to follow the request, not the module."""
+    av.add("EARNINGS_CALENDAR", b"forbidden", status=403)
+    check = fx.run(earnings.NAME, "2026-10-28")
+    assert check["result"] == "failed" and "check the key" in check["note"], check["note"]
+    assert "RC_HTTP_CONTACT" not in check["note"] and KEY not in check["note"]
+
+
 def test_an_8k_with_item_202_is_a_confirmed_report(av, monkeypatch):
     monkeypatch.setattr(sec_edgar, "SEC_WWW_BASE", "https://sec.test")
     monkeypatch.setattr(sec_edgar, "SEC_DATA_BASE", "https://data.sec.test")

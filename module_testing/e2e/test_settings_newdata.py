@@ -75,6 +75,8 @@ def _open_board(browser, dashboard, scheme="dark"):
     browser.emulate(*PHONE, scheme=scheme)
     browser.open(f"{dashboard.url}/view/{_APP}", ready="!!document.getElementById('newdata')")
     browser.eval(f"document.documentElement.setAttribute('data-theme', {scheme!r})")
+    # Since the control board (design v28) these sections sit folded below it: open the fold, as a reader would.
+    browser.eval("document.getElementById('old-settings').open = true")
 
 
 def test_a_settings_refresh_makes_no_provider_call(dashboard, provider_routes):

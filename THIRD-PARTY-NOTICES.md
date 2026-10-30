@@ -5,6 +5,7 @@
 | Component | Version | Licence | Notice |
 |---|---|---|---|
 | [plotly.js](https://github.com/plotly/plotly.js) | 2.35.2 | MIT | [`app/static/vendor/plotly.min.js.LICENSE.txt`](app/static/vendor/plotly.min.js.LICENSE.txt) |
+| [Tabler Icons](https://github.com/tabler/tabler-icons) | outline paths, as drawn in the v28 design | MIT | the source icons of the Settings / Data board (`module_settings/control.py`, `ICONS`); Copyright (c) 2020-2024 Paweł Kuna, MIT licence |
 
 Everything else in this repository is the project's own code, under the MIT
 licence in [`LICENSE`](LICENSE).

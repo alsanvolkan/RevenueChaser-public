@@ -97,3 +97,73 @@ def test_a_retiring_table_names_the_one_that_replaces_it():
     for old, new in screen.RETIRING.items():
         assert old not in screen.written_columns(), f"{old} is retiring, so the screen no longer dates it"
         assert new in screen.written_columns(), f"{old} is replaced by {new}, which the screen does not know"
+
+
+# ── The control board's own lists (design v28, 30 Oct 2026) ──────────────────────────────────────────────────────
+
+def test_every_card_names_its_build_step_and_its_role():
+    for name, card in screen.DATASETS.items():
+        assert 1 <= card.step <= 11, f"{name}: step {card.step}"
+        assert card.role in screen.ROLES, f"{name}: role {card.role!r}"
+
+
+def test_a_kinds_steps_sit_inside_its_files_steps():
+    from RevenueChaser.rcdata.build import DATASETS
+    spans = {"spine": range(1, 8), "prices": (8,), "fundamentals": (9,), "ownership": (10,), "options": (11,),
+             "market": (11,)}
+    for name, ds in DATASETS.items():
+        assert screen.DATASETS[name].step in spans[ds.kind], f"{name} ({ds.kind}): step {screen.DATASETS[name].step}"
+
+
+def test_the_files_are_every_serving_kind_in_build_order():
+    from RevenueChaser.rcdata import serving
+    assert set(screen.FILES) == set(serving.KINDS)
+    assert list(screen.FILES) == ["spine", "prices", "fundamentals", "ownership", "options", "market"]
+
+
+def test_a_dataset_that_does_not_fill_by_tier_has_words_for_why():
+    from RevenueChaser.rcdata.build import DATASETS, base
+    for name, ds in DATASETS.items():
+        if not base.honours_scope(ds):
+            assert screen.NO_TIER_DATASET_WORDS.get(name) or screen.NO_TIER_WORDS.get(ds.kind), name
+
+
+def test_the_universe_offers_a_and_b_in_three_sets_and_shows_c_and_d_unoffered():
+    offered = [s for s in screen.UNIVERSE_SETS if s.offered]
+    assert [s.key for s in offered] == ["A", "E", "R"]
+    assert {s.tier for s in offered} == {"A", "B"}
+    assert [s.key for s in screen.UNIVERSE_SETS if not s.offered] == ["C", "D"]
+    from RevenueChaser.core.identity.types import EXCLUDED_TYPES
+    assert set(screen.FUND_TYPES) <= EXCLUDED_TYPES
+
+
+def test_the_include_words_are_the_builders_own_groups():
+    from RevenueChaser.rcdata.build import base
+    assert tuple(screen.INCLUDE_WORDS) == base.SCOPE_GROUPS
+
+
+@pytest.mark.parametrize("value,on", [(None, False), ("", False), ("0", False), ("no", False), ("1", True),
+                                      ("true", True), ("ON", True)])
+def test_the_fill_switch_is_off_unless_set(monkeypatch, value, on):
+    if value is None:
+        monkeypatch.delenv(screen.FILL_ENV, raising=False)
+    else:
+        monkeypatch.setenv(screen.FILL_ENV, value)
+    assert screen.fill_enabled() is on
+
+
+# ── The control board's steps and providers (design v28) ───────────────────────────────────────────────────────────
+
+def test_every_card_step_is_a_step_the_board_names():
+    from RevenueChaser.rcdata.api import screen
+    assert set(screen.STEPS) == set(range(1, 12))
+    assert {c.step for c in screen.DATASETS.values()} <= set(screen.STEPS)
+
+
+def test_every_provider_a_dataset_names_has_its_words():
+    from RevenueChaser.rcdata.api import screen
+    from RevenueChaser.module_settings import newdata
+    named = {p for ds in newdata._datasets().values() for p in getattr(ds, "providers", ())}
+    assert named, "no provider found at all: the search is broken"
+    assert named <= set(screen.PROVIDERS), f"no words for {sorted(named - set(screen.PROVIDERS))}"
+    assert all(w.name and w.what for w in screen.PROVIDERS.values())

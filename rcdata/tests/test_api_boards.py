@@ -118,3 +118,26 @@ def test_a_declaration_is_read_whole_even_with_a_bracket_in_a_comment(tmp_path, 
         ')\n', encoding="utf-8")
     monkeypatch.setattr(boards, "root", lambda: tmp_path)
     assert boards.declared_reads("module_fake") == ("identity.universe", "prices.bars")
+
+
+# ── Planned reads: what a board not migrated yet will read (the control board's dashed lines) ──────────────────────
+
+def test_a_planned_read_belongs_to_a_board_not_migrated_yet():
+    assert set(boards.PLANNED_READS) <= boards.UNDECLARED
+    assert not set(boards.PLANNED_READS) & set(boards.all_reads()), "a declared board's reads are its own, not planned"
+
+
+def test_every_planned_need_is_a_need_the_catalog_has():
+    from RevenueChaser.rcdata.api import catalog
+    for board, needs in boards.PLANNED_READS.items():
+        assert needs == tuple(sorted(set(needs), key=needs.index)), f"{board}: a need named twice"
+        for name in needs:
+            assert name in catalog.NEEDS, f"{board}: planned need {name!r} is not in the catalog"
+
+
+def test_the_reads_of_a_board_say_whether_it_declared_them():
+    declared = boards.reads_of("module_earnings_radar")
+    assert declared["declared"] is True and "macro.dgs10" in declared["needs"]
+    planned = boards.reads_of("module_comovement")
+    assert planned["declared"] is False and "prices.bars" in planned["needs"]
+    assert boards.reads_of("module_no_such_board") == {"declared": False, "needs": ()}

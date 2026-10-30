@@ -215,10 +215,36 @@ def _no_rules(_v: dict) -> list[str]:
     return []
 
 
+#: The control board's universe (Settings / Data, design v28): which sets of names the board's Fetch and Fill presses
+#: ask for, and which named groups a narrowed press asks for besides them. Each is a bit mask, so one row holds the
+#: whole choice: a set's bit in the order of ``rcdata.api.screen.UNIVERSE_SETS`` (A, the funds of B, the rest of B),
+#: a group's in the order of ``rcdata.build.base.SCOPE_GROUPS``. A press drafts; Apply saves here (Karar 86 A).
+UNIVERSE_SET_BITS = {"A": 1, "E": 2, "R": 4}
+UNIVERSE_INCLUDE_BITS = {"anchors": 1, "watchlist": 2, "cover_classes": 4}
+
+
+def _universe_specs() -> dict[str, Setting]:
+    every_set, every_group = sum(UNIVERSE_SET_BITS.values()), sum(UNIVERSE_INCLUDE_BITS.values())
+    return {
+        "UNIVERSE_SETS": Setting("UNIVERSE_SETS", "int", lambda: every_set,
+                                 choices=lambda: tuple(range(1, every_set + 1)),
+                                 label="Universe sets (bits: 1 A operating, 2 B ETF + CEF, 4 B the rest)"),
+        "UNIVERSE_INCLUDE": Setting("UNIVERSE_INCLUDE", "int", lambda: every_group,
+                                    choices=lambda: tuple(range(0, every_group + 1)),
+                                    label="Named groups a narrowed press asks for (bits: 1 benchmarks, "
+                                          "2 stock watch list, 4 other classes)"),
+    }
+
+
+def _universe_rules(v: dict) -> list[str]:
+    return []
+
+
 SPEC: dict[str, tuple[Callable[[], dict[str, Setting]], Callable[[dict], list[str]]]] = {
     "module_comovement": (_comov_specs, _comov_rules),
     "module_fundamentals": (_fund_specs, _no_rules),
     "module_swing_potential": (_swing_specs, _swing_rules),
+    "module_settings": (_universe_specs, _universe_rules),
 }
 
 

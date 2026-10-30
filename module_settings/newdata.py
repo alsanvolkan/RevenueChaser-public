@@ -398,6 +398,7 @@ _SAMPLE_CACHE: dict[str, tuple[str, dict | None]] = {}
 
 def clear_sample_cache() -> None:
     _SAMPLE_CACHE.clear()
+    _STORAGE_CACHE.clear()
 
 
 def _sample_hour(now: datetime) -> str:
@@ -413,7 +414,7 @@ def _sample_key(table: str, now: datetime) -> str:
     table and hour alone serves one test's rows to the next.
     """
     from RevenueChaser.rcdata import read
-    kind = read.KIND_OF_TABLE.get(table)
+    kind = read.KIND_OF_TABLE.get(table.split("#")[0])      # "price_bar_daily#sessions" is that table's file
     path = serving.live_path(kind) if kind is not None else None
     try:
         stamp = path.stat().st_mtime_ns if path is not None else None
@@ -443,6 +444,36 @@ def _read_sample(con, table: str, day_column: str | None) -> dict:
     columns = [{"name": d[0], "type": str(d[1])} for d in cur.description]
     rows = [[v.isoformat() if isinstance(v, (date, datetime)) else v for v in r] for r in cur.fetchall()]
     return {"columns": columns, "rows": rows}
+
+
+class SampleUnavailable(LookupError):
+    """The table is one the screen samples, but its serving file is not built, or was built without it."""
+
+
+def read_sample_now(table: str, now: datetime | None = None) -> dict:
+    """The control board's **Refresh the example rows**: one table's newest rows, read again past the hourly cache.
+
+    Only a table the cards sample (``DATE_COLUMN``) is read, through one ``open_read`` handle on its own file; the
+    answer replaces the cached sample, so the next render shows the same rows. ``KeyError`` for any other name,
+    :class:`SampleUnavailable` when the file or the table is not there. No provider, no job, no write.
+    """
+    from RevenueChaser.rcdata import read
+    if table not in DATE_COLUMN or table not in read.KIND_OF_TABLE:
+        raise KeyError(table)
+    kind = read.KIND_OF_TABLE[table]
+    try:
+        con = serving.open_read(kind)
+    except serving.ServingFileMissing:
+        raise SampleUnavailable(f"the {kind} file has not been built yet") from None
+    try:
+        names = {r[0] for r in con.execute("SELECT table_name FROM duckdb_tables()").fetchall()}
+        if table not in names:
+            raise SampleUnavailable(f"the {kind} file has no {table} table yet")
+        sample = _read_sample(con, table, DATE_COLUMN[table])
+    finally:
+        con.close()
+    _SAMPLE_CACHE[table] = (_sample_key(table, now or datetime.now(timezone.utc)), sample)
+    return sample
 
 
 def _sample_block(table: str, sample: dict | None) -> dict:
@@ -491,6 +522,10 @@ def _serving_facts(now: datetime | None = None) -> tuple[dict[str, dict], dict[s
                         table, now, lambda name, c=con, column=col: _read_sample(c, name, column))
             if kind == "spine" and {"security", "index_membership"} <= names:
                 funnel = _spine_counts(con)
+                funnel["universe_sets"] = _universe_sets(con)
+            if kind == "prices" and "price_bar_daily" in names and now is not None:
+                tables["price_bar_daily"]["sessions"] = _cached_sample(
+                    "price_bar_daily#sessions", now, lambda name, c=con: _session_counts(c))
             if kind == "prices" and "wrds_price_diff" in names:
                 cur = con.execute("SELECT * FROM wrds_price_diff")
                 cols = [d[0] for d in cur.description]
@@ -524,6 +559,56 @@ def _spine_counts(con) -> dict:
     return out
 
 
+def _universe_sets(con) -> dict:
+    """The control board's universe bar, from the spine's ``security`` (design v28): how many names each set holds
+    (A operating, the funds of B, the rest of B, C, D) and the tickers of B's two sets, which a press asks for by
+    name when only one of them is in the universe (a request's scope names tiers, and B is one tier)."""
+    fund = ", ".join(repr(t) for t in api_screen.FUND_TYPES)
+    rows = con.execute(
+        f"SELECT CASE WHEN tier = 'B' AND security_type IN ({fund}) THEN 'E' WHEN tier = 'B' THEN 'R' ELSE tier END, "
+        "ticker FROM security WHERE tier IN ('A', 'B', 'C', 'D') ORDER BY ticker").fetchall()
+    counts = {s.key: 0 for s in api_screen.UNIVERSE_SETS}
+    tickers: dict[str, list[str]] = {"E": [], "R": []}
+    for key, ticker in rows:
+        counts[key] = counts.get(key, 0) + 1
+        if key in tickers and ticker:
+            tickers[key].append(str(ticker))
+    return {"counts": counts, "total": len(rows), "tickers": tickers}
+
+
+def _session_counts(con) -> dict[str, dict[str, int]]:
+    """``{session: {set: names}}``: how many names have a bar on each session of ``price_bar_daily``, by the spine's
+    tier set (A, E, R, C, D as the universe bar has them; ``-`` for a bar whose security is not on the spine).
+
+    The Backfill calendar and the universe tile sum the sets the universe holds, so a narrowed universe is compared
+    with its own names only (review M1). The live spine is attached read-only to the caller's handle for one
+    GROUP BY and detached; without a spine every bar counts as ``-``. Read once an hour with the samples.
+    """
+    from RevenueChaser.rcdata.build import base
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving
+    spine = serving.live_path("spine")
+    if spine.exists():
+        fund = ", ".join(repr(t) for t in api_screen.FUND_TYPES)
+        con.execute(f"ATTACH {base.sql_path(spine)} AS rc_spine (READ_ONLY)")
+        try:
+            rows = con.execute(
+                "WITH sets AS (SELECT DISTINCT " + prices_serving.SPINE_ID + " AS security_id, "
+                f"CASE WHEN tier = 'B' AND security_type IN ({fund}) THEN 'E' WHEN tier = 'B' THEN 'R' ELSE tier END "
+                "AS s FROM rc_spine.security WHERE tier IN ('A', 'B', 'C', 'D')) "
+                "SELECT b.session_date, coalesce(sets.s, '-'), count(DISTINCT b.security_id) FROM price_bar_daily b "
+                "LEFT JOIN sets USING (security_id) GROUP BY 1, 2 ORDER BY 1, 2").fetchall()
+        finally:
+            con.execute("DETACH rc_spine")
+    else:
+        rows = con.execute("SELECT session_date, '-', count(DISTINCT security_id) FROM price_bar_daily "
+                           "GROUP BY 1 ORDER BY 1").fetchall()
+    out: dict[str, dict[str, int]] = {}
+    for day, key, n in rows:
+        if day is not None:
+            out.setdefault(day.isoformat(), {})[key] = int(n)
+    return out
+
+
 def _universe_source() -> dict:
     """Which universe the boards read (``core.universe.source_state``): the flag and its fallback, if any."""
     from RevenueChaser.core import universe
@@ -554,6 +639,70 @@ def _identity(counts: dict | None) -> dict:
              {"key": "excluded_type", "label": "Listed, but an excluded security type (Tier B)",
               "count": c["excluded_type"]}]
     return {"steps": steps, "drops": drops, "indexes": c["indexes"], "as_of": c["as_of"], "note": None, **issues}
+
+
+# ── Where the data sits (the control board's journey table) ───────────────────────────────────────────────────
+
+#: A folder walk stops after this many entries and says so: the page renders in the dashboard, and the raw tree of
+#: a dataset with one file per company per day runs to tens of thousands of files.
+STORAGE_WALK_BUDGET = 50_000
+_STORAGE_CACHE: dict[str, tuple[str, dict]] = {}
+
+
+def _folder(path: Path, budget: list[int]) -> dict:
+    """``{"path", "files", "bytes", "capped"}`` of one folder, walked without following links; files None when the
+    folder does not exist. ``budget`` is the entries the whole storage walk may still look at, shared by every
+    folder of one render (review S3: a cap per folder let the HDD walk reach millions of stats); ``capped`` means it
+    ran out in or before this folder and the counts are a floor."""
+    if not path.is_dir():
+        return {"path": str(path), "files": None, "bytes": None, "capped": False}
+    files = size = 0
+    stack = [path]
+    while stack:
+        here = stack.pop()
+        try:
+            entries = list(os.scandir(here))
+        except OSError:
+            continue
+        for e in entries:
+            if budget[0] <= 0:
+                return {"path": str(path), "files": files, "bytes": size, "capped": True}
+            budget[0] -= 1
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    stack.append(Path(e.path))
+                elif e.is_file(follow_symlinks=False):
+                    files += 1
+                    size += e.stat(follow_symlinks=False).st_size
+            except OSError:
+                continue
+    return {"path": str(path), "files": files, "bytes": size, "capped": False}
+
+
+def _storage(now: datetime) -> dict:
+    """Where each dataset sits, for the journey table: the live serving file of each kind (its size), and each
+    dataset's HDD raw and Parquet folders (files and bytes). Read once an hour per root, like the samples: a walk of
+    the raw tree is a picture of the disk, not a live number."""
+    from RevenueChaser.rcdata.build import base
+    raw_root, parquet_root = base.raw_root(), base.parquet_root()
+    key = f"{_sample_hour(now)}|{raw_root}|{config.MARKET_DIR}"
+    hit = _STORAGE_CACHE.get("storage")
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    files = {}
+    for kind in serving.KINDS:
+        path = serving.live_path(kind)
+        try:
+            files[kind] = {"path": str(path), "bytes": path.stat().st_size}
+        except OSError:
+            files[kind] = {"path": str(path), "bytes": None}
+    budget = [STORAGE_WALK_BUDGET]
+    datasets = {name: {"raw": _folder(raw_root.joinpath(*name.split("/")), budget),
+                       "parquet": _folder(parquet_root.joinpath(*name.split("/")), budget)} for name in _datasets()}
+    out = {"roots": {"raw": str(raw_root), "parquet": str(parquet_root), "ssd": str(config.MARKET_DIR)},
+           "files": files, "datasets": datasets}
+    _STORAGE_CACHE["storage"] = (key, out)
+    return out
 
 
 # ── Page-level blocks ─────────────────────────────────────────────────────────────────────────────────────────
@@ -765,7 +914,7 @@ def _silent_minutes(last_run: dict | None, now: datetime) -> int | None:
 
 
 def _card(dataset: str, ds, facts: dict, now: datetime, used_today: dict[str, int] | None = None) -> dict:
-    newest = ops.recent_checks(dataset, limit=1)
+    newest = ops.recent_checks(dataset, limit=3)
     last = newest[0] if newest else None
     schedule = ops.read_schedule(dataset)
     cadence = _cadence(dataset, schedule)
@@ -795,6 +944,9 @@ def _card(dataset: str, ds, facts: dict, now: datetime, used_today: dict[str, in
         # A16: one example block per serving table this dataset writes, in the dataset's own order.
         "samples": [_sample_block(name, (facts.get(name) or {}).get("sample")) for name in ds.tables],
         "wrds": _wrds_difference(dataset) if dataset in WRDS_DIFFERENCE else _wrds_slot(dataset, facts),
+        # The control board's Health table: the last three checks, newest first (design v28).
+        "recent": [{k: r.get(k) for k in ("checked_on", "result", "source_as_of", "added", "removed", "calls",
+                                           "note")} for r in newest],
         "attended": bool(getattr(ds, "attended", False)),
         "attended_command": (ATTENDED_COMMANDS.get(dataset) or attended_command(ds.kind))
                             if getattr(ds, "attended", False) else None,
@@ -843,6 +995,12 @@ def collect(now: datetime | None = None) -> dict:
         "retention": _retention(),
         "retirement": _retirement(now),
         "cross_check": cross_check(now, facts, used_today),
+        # The control board (design v28): the universe bar's sets, the bars per session for the Backfill calendar,
+        # where each dataset sits, and every serving table's row count and newest day.
+        "universe": (spine_counts or {}).get("universe_sets"),
+        "sessions": (facts.get("price_bar_daily") or {}).get("sessions") or {},
+        "storage": _storage(now),
+        "tables": {t: {"rows": f["rows"], "newest": f["newest"]} for t, f in facts.items()},
         **_watch_section(),
     }
 

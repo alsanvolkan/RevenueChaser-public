@@ -3,7 +3,7 @@ Unusual Whales' ``total_float``, each mocked at its boundary (HTTP; Yahoo at its
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -16,6 +16,7 @@ from RevenueChaser.rcdata.build.prices import actions, cover_shares, floats, sta
 
 from .prices_fixture import (ALPHABET, GOOG_ACCESSION, SPINE, aapl_instance, goog_instance, master_index,
                              submissions, write_spine)
+from .sec_answers import MISSING_HEADERS, MISSING_OBJECT, REFUSED_HEADERS, REFUSED_PAGE
 
 TUE = date(2026, 10, 27)
 
@@ -119,6 +120,7 @@ def _sec_routes(http_mock):
         ("0000910073-26-000010", "10-Q", "2026-08-05", "2026-06-30", "flg-10q.htm", 0)]))
     http_mock.add(GOOG_URL, goog_instance())
     http_mock.add(AAPL_URL, aapl_instance())
+    http_mock.fallback("master.", master_index([]))     # EDGAR has an index for every open day, rows or none
 
 
 def test_cover_shares_from_the_daily_index_and_the_fill(http_mock, monkeypatch):
@@ -143,6 +145,81 @@ def test_cover_shares_from_the_daily_index_and_the_fill(http_mock, monkeypatch):
     assert len([k for k in rows if k[0] == "1652044"]) == 3               # the co-registrant's fact is not Alphabet's
     assert not any(k[0] == "910073" for k in rows)                        # no inline XBRL: a marker, no rows
     assert any(i["kind"] == "no_inline_xbrl" for i in ops.open_issues(cover_shares.NAME)[1])
+
+
+def test_a_day_the_archive_does_not_hold_is_marked_missing_and_a_refusal_is_not(http_mock, monkeypatch):
+    """A day with no index answers the bucket's 403; the SEC's own 403 is a refusal, and writing a real day off
+    under one would never ask for it again. Before this, both were read as "no index" by the status alone."""
+    monkeypatch.setattr(cover_shares, "FILL_PER_RUN", 0)
+    _sec_routes(http_mock)
+    old = TUE - cover_shares.MISSING_AFTER - timedelta(days=1)
+    http_mock.routes.insert(0, (f"master.{old:%Y%m%d}.idx", MISSING_OBJECT, 403, dict(MISSING_HEADERS)))
+    ctx = _ctx(cover_shares.NAME)
+    get = cover_shares.DATASET._getter(ctx)
+    assert cover_shares.DATASET._index(ctx, old, TUE, get) is None
+    assert cover_shares.index_path(old).with_name(f"master.{old:%Y%m%d}.idx.missing").exists()
+
+    refused = old - timedelta(days=1)
+    http_mock.routes.insert(0, (f"master.{refused:%Y%m%d}.idx", REFUSED_PAGE, 403, dict(REFUSED_HEADERS)))
+    with pytest.raises(base.SourceError, match="HTTP 403"):
+        cover_shares.DATASET._index(ctx, refused, TUE, get)
+    assert not cover_shares.index_path(refused).with_name(f"master.{refused:%Y%m%d}.idx.missing").exists()
+    # ``accept=(403, 404)`` means ``http_get`` returned rather than raised, so the count is this reader's to make.
+    assert ctx.calls[cover_shares.PROVIDER][1] == 1
+
+
+def test_an_archive_that_answers_nothing_writes_no_day_and_no_filing_off(http_mock, monkeypatch):
+    """A path or bucket refusing everything answers each index with the same ``AccessDenied`` as a day with no
+    index. On a cold store the day walk asks for them, so a stretch of open weekdays stops the run before any
+    filing and nothing — no ``.missing`` day, no ``.none`` filing — is written off; before this, four real days
+    were."""
+    monkeypatch.setattr(cover_shares, "FILL_PER_RUN", 2)
+    _sec_routes(http_mock)
+    http_mock.routes.insert(0, ("master.", MISSING_OBJECT, 403, dict(MISSING_HEADERS)))
+    with pytest.raises(base.SourceError, match="weekdays EDGAR was open"):
+        cover_shares.DATASET.fetch(_ctx(cover_shares.NAME), TUE)
+    assert not list((base.raw_root() / "sec").rglob("*.missing"))
+    assert not list((base.raw_root() / "sec" / "cover_shares").rglob("*.json.gz"))
+
+
+def test_three_filings_in_a_row_the_archive_will_not_hand_over_stop_the_run(http_mock, monkeypatch):
+    """In steady state the window's indexes are already stored, so a run asks for no day at all and the day guard
+    never fires: the refusal is met at the filings. Three in a row the archive answers ``AccessDenied`` for stop
+    the run with no ``.none`` marker, because a filing that has one is never asked again (the Opus review of the
+    round-2 fixes, which the PR text had claimed the day walk covered)."""
+    monkeypatch.setattr(cover_shares, "FILL_PER_RUN", 0)
+    _sec_routes(http_mock)
+    http_mock.routes.insert(0, ("submissions/CIK0001067983.json", submissions("1067983", [
+        ("0001067983-26-000011", "10-Q", "2026-10-26", "2026-06-30", "brk-10q.htm", 1)]), 200, {}))
+    http_mock.routes.insert(0, ("daily-index/2026/QTR4/master.20261026.idx", master_index([
+        ("1652044", "Alphabet Inc.", "10-Q", "20261026", f"edgar/data/1652044/{GOOG_ACCESSION}.txt"),
+        ("320193", "Apple Inc.", "10-K", "20261026", "edgar/data/320193/0000320193-26-000090.txt"),
+        ("1067983", "BERKSHIRE HATHAWAY INC", "10-Q", "20261026",
+         "edgar/data/1067983/0001067983-26-000011.txt")]), 200, {}))
+    http_mock.routes.insert(0, ("_htm.xml", MISSING_OBJECT, 403, dict(MISSING_HEADERS)))
+    with pytest.raises(base.SourceError, match="3 in a row"):
+        cover_shares.DATASET.fetch(_ctx(cover_shares.NAME), TUE)
+    assert not list((base.raw_root() / "sec" / "cover_shares").rglob("*.none.json.gz"))
+
+
+def test_held_filing_markers_are_written_once_the_archive_hands_one_over(http_mock, monkeypatch):
+    """Two filings the archive holds no object for are no proof of a refusal, and the third, which it hands over,
+    settles it: both markers are written then, so neither filing is asked again."""
+    monkeypatch.setattr(cover_shares, "FILL_PER_RUN", 0)
+    _sec_routes(http_mock)
+    http_mock.routes.insert(0, ("submissions/CIK0001067983.json", submissions("1067983", [
+        ("0001067983-26-000011", "10-Q", "2026-10-26", "2026-06-30", "brk-10q.htm", 1)]), 200, {}))
+    http_mock.routes.insert(0, ("daily-index/2026/QTR4/master.20261026.idx", master_index([
+        ("1652044", "Alphabet Inc.", "10-Q", "20261026", f"edgar/data/1652044/{GOOG_ACCESSION}.txt"),
+        ("320193", "Apple Inc.", "10-K", "20261026", "edgar/data/320193/0000320193-26-000090.txt"),
+        ("1067983", "BERKSHIRE HATHAWAY INC", "10-Q", "20261026",
+         "edgar/data/1067983/0001067983-26-000011.txt")]), 200, {}))
+    for doc in ("aapl-20260926_htm.xml", "brk-10q_htm.xml"):            # asked before Alphabet's, by CIK
+        http_mock.routes.insert(0, (doc, MISSING_OBJECT, 403, dict(MISSING_HEADERS)))
+    raws = cover_shares.DATASET.fetch(_ctx(cover_shares.NAME), TUE)
+    assert [p.name for p in raws] == [f"{GOOG_ACCESSION}.json.gz"]
+    assert sorted(p.name for p in (base.raw_root() / "sec" / "cover_shares").rglob("*.none.json.gz")) == [
+        "0000320193-26-000090.none.json.gz", "0001067983-26-000011.none.json.gz"]
 
 
 def test_a_stored_filing_is_never_asked_again(http_mock, monkeypatch):
