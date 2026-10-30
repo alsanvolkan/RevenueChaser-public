@@ -182,3 +182,21 @@ def test_the_caller_may_ask_for_fewer_rows_but_not_for_more(client, answer, monk
     answer(rows=[{"ticker": f"T{i}"} for i in range(10)], provenance=[{"key": f"T{i}"} for i in range(10)])
     assert len(client.get("/api/data/identity.universe?limit=2").get_json()["rows"]) == 2
     assert len(client.get("/api/data/identity.universe?limit=99").get_json()["rows"]) == 3
+
+
+def test_a_need_that_must_be_asked_answers_400_in_words_not_200_missing(client):
+    """The live verification's finding 2: ``GET /api/data/market.series`` answered 200 with ``state: missing`` on a
+    table holding 236 series, because the reader answers nothing unless a series is named. The refusal names the
+    parameter, and ``?summary=1`` still answers the table's own state."""
+    r = client.get("/api/data/market.series")
+    assert r.status_code == 400 and "series_ids" in r.get_json()["error"]
+    assert client.get("/api/data/market.series?summary=1").status_code == 200
+    assert client.get("/api/data/market.series?series_ids=DGS10").status_code == 200
+
+
+def test_an_empty_parameter_is_the_same_refusal_as_no_parameter(client):
+    """The delta review's MUST, over HTTP: ``?series_ids=`` and ``?series_ids=,`` both build an empty list, which
+    used to answer 200 / ``state: missing``."""
+    for query in ("series_ids=", "series_ids=,", "series_ids=%20"):
+        r = client.get(f"/api/data/market.series?{query}")
+        assert r.status_code == 400 and "series_ids" in r.get_json()["error"], query

@@ -203,3 +203,80 @@ def test_ask_list_agrees_with_what_the_reader_takes(name):
     takes_many = "Iterable" in str(text) or "list" in str(text)
     assert need.ask_list == takes_many, (
         f"{name}: ask_list={need.ask_list} but {need.reader_name}'s {need.ask_param!r} is {text!r}")
+
+
+# ── The live verification's two findings (homesrv, 30 Oct 2026) ────────────────────────────────────────────────
+
+def test_a_need_that_cannot_answer_without_an_ask_says_so_instead_of_missing():
+    """Finding 2. On the live store ``GET /api/data/market.series`` answered ``state: missing``, ``asked: 0``,
+    ``served: 0`` while ``market_series`` held 236 series and 162,000 rows: ``read.market_series`` with no series
+    named is no rows by design ("naming neither is no rows, never the whole table"), and the envelope turned that
+    into "the store has nothing". A card reading that would say the market series were never fetched.
+
+    The need declares that it must be asked, and the ask is refused in words instead."""
+    import duckdb
+
+    from RevenueChaser.rcdata import scaffold, serving
+    scaffold.create_empty("market")
+    con = duckdb.connect(str(serving.live_path("market")))
+    con.execute("INSERT INTO market_series (series_id, obs_date, source, value) VALUES "
+                "('DGS10', DATE '2026-10-27', 'fred', 4.1), ('VIX', DATE '2026-10-27', 'yfinance', 17.0)")
+    con.close()
+    assert api.catalog.NEEDS["market.series"].ask_required
+    with pytest.raises(api.AskRequired, match="series_ids"):
+        api.get("market.series")
+    assert api.get("market.series", series_ids=["DGS10"]).state != "missing", "a named series answers as before"
+    # The screen's own call does not name anything and must still see the table as it is (236 series, live).
+    s = api.summary("market.series")
+    assert s["state"] != "missing" and s["row_count"] == 2 and s["key_count"] == 2
+
+
+@pytest.mark.parametrize("name", sorted(n for n, d in api.catalog.NEEDS.items() if d.ask_param))
+def test_a_need_whose_reader_answers_nothing_by_default_declares_that_it_must_be_asked(name):
+    """The rule behind finding 2, over the whole catalog: when the reader's ask parameter defaults to an empty
+    collection and the need names no rows of its own, calling it with nothing is silently no rows. Such a need
+    declares ``ask_required``; a reader whose default is ``None`` means every row and is left alone."""
+    need = api.catalog.NEEDS[name]
+    default = inspect.signature(need.reader).parameters[need.ask_param].default
+    answers_nothing = isinstance(default, (tuple, list, set, frozenset)) and not default
+    if answers_nothing and not (need.filter_values or need.filter_prefix):
+        assert need.ask_required, f"{name}: {need.reader_name} answers nothing without {need.ask_param!r}"
+    else:
+        assert not need.ask_required, f"{name}: ask_required on a need that answers without being asked"
+
+
+def test_the_dgs10_window_has_more_than_one_session_of_room():
+    """Finding 1, measured on the live store on 30 Oct 2026: the newest DGS10 observation was 27 Oct and the
+    reference session 29 Oct, so the lag was 2 against a ``max_lag`` of 3 - one session of room. FRED publishes
+    DGS10 one business day late and the builder's run is in the morning, so an ordinary day can sit at 2 or 3; one
+    missed run then reads ``stale`` while nothing is wrong. 4 keeps a session of slack and still turns stale inside
+    a trading week."""
+    assert api.catalog.NEEDS["macro.dgs10"].max_lag == 4
+    assert api.catalog.NEEDS["macro.dgs10"].max_lag_unit == "sessions"
+
+
+def test_an_empty_ask_is_refused_like_a_missing_one():
+    """The delta review's MUST: ``_asked`` answers None only when the parameter is **absent**, so an empty value
+    (``?series_ids=``, which ``_data_params`` turns into ``[]``) slipped past the guard and answered 200 with
+    ``state: missing`` on a full table - the very envelope finding 2 exists to prevent. A card rendering its URL
+    from an empty selection box lands there."""
+    import duckdb
+
+    from RevenueChaser.rcdata import scaffold, serving
+    scaffold.create_empty("market")
+    con = duckdb.connect(str(serving.live_path("market")))
+    con.execute("INSERT INTO market_series (series_id, obs_date, source, value) VALUES "
+                "('DGS10', DATE '2026-10-27', 'fred', 4.1)")
+    con.close()
+    for empty in ([], (), ""):
+        with pytest.raises(api.AskRequired, match="series_ids"):
+            api.get("market.series", series_ids=empty)
+    # The reader's other way of naming rows is an ask too, so it must not be refused (the review's nit 2).
+    assert api.get("market.series", prefix="DGS").rows
+
+
+@pytest.mark.parametrize("name", sorted(n for n, d in api.catalog.NEEDS.items() if not d.ask_param))
+def test_a_need_with_nothing_to_ask_for_never_requires_an_ask(name):
+    """The review's nit 3: the rule above only walks the needs that have an ask parameter, so ``ask_required`` on
+    one of the nine without one went unnoticed - and it makes every call raise with ``name None`` in the message."""
+    assert not api.catalog.NEEDS[name].ask_required

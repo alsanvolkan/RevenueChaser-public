@@ -22,8 +22,8 @@ from __future__ import annotations
 
 from . import boards, catalog, serve
 from .catalog import NEEDS, Need
-from .serve import (Answer, FillNotSupported, UnknownNeed, get, lag_in, lag_sessions, reference_session,
-                    summary)
+from .serve import (Answer, AskRequired, FillNotSupported, UnknownNeed, get, lag_in, lag_sessions,
+                    reference_session, summary)
 
-__all__ = ["Answer", "FillNotSupported", "NEEDS", "Need", "UnknownNeed", "boards", "catalog", "get", "reference_session",
-           "lag_in", "lag_sessions", "serve", "summary"]
+__all__ = ["Answer", "AskRequired", "FillNotSupported", "NEEDS", "Need", "UnknownNeed", "boards", "catalog",
+           "get", "reference_session", "lag_in", "lag_sessions", "serve", "summary"]
