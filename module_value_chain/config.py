@@ -52,7 +52,7 @@ MAX_HOP2 = 40                 # cap edges followed on the second hop
 # 10-K still reaches the board within a week. A missing CIK is only counted.
 MISS_RETRY_DAYS = 7
 
-# Default corpus = the shared classification universe (>= $300M), so Value Chain,
+# Default corpus = the shared classification universe (>= the universe), so Value Chain,
 # Co-movement and Relatedness read the same ticker set (core/universe.py). SEED
 # remains an explicit override for tests/demos.
 USE_SHARED_UNIVERSE = True

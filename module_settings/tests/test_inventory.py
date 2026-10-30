@@ -50,13 +50,13 @@ def test_collect_reports_counts_last_dates_and_holes(rawstore_tmp_db):
     corpus = rows["corpus"]
     assert corpus["rows"] == 1
     assert corpus["last_date"] == "2026-01-15"
-    assert corpus["holes"] == 1  # MSFT is classified but has no filing
+    assert corpus["holes"] == 2  # MSFT and the name the floor used to drop are classified with no filing
     assert corpus["fetch"] == {"route": "/run/edgar-sync", "label": "Fetch 10-K sync"}
 
     ohlc = rows["ohlc"]
     assert ohlc["rows"] == 1
     assert ohlc["last_date"] == "2026-02-01"
-    assert ohlc["holes"] == 1  # MSFT is classified but has no bars
+    assert ohlc["holes"] == 2  # MSFT and the name the floor used to drop are classified with no bars
 
 
 def test_universe_row_fetches_caps_not_full_universe(rawstore_tmp_db):
@@ -157,8 +157,8 @@ def test_ticker_detail_reports_null_cap_as_none_and_out_of_universe(rawstore_tmp
     detail = inventory.ticker_detail("MU")
     assert detail["market_cap"] is None
     assert detail["name"] == "Micron Technology"
-    assert detail["presence"]["in_classification_universe"] is False
-    # A stored cap above $300M is in the classification universe.
+    assert detail["presence"]["in_classification_universe"] is True   # no floor: a NULL cap is still a member
+    # A stored cap is in the classification universe too.
     assert inventory.ticker_detail("AAPL")["presence"]["in_classification_universe"] is True
 
 
@@ -507,8 +507,8 @@ def test_the_identity_row_counts_the_master_and_reports_the_last_run_and_unclass
     row = _rows(inventory.collect(now=FIXED))["identity"]
     assert row["rows"] == len(MASTER)
     assert row["last_date"] == "2026-09-30", "the newest identity_runs.finished_at"
-    assert row["holes"] == 2, "ACQ and UNK are unclassified at >= $300M; SMALL is below, NOCAP has no cap"
-    assert row["hole_label"] == "unclassified ≥$300M"
+    assert row["holes"] == 3, "ACQ, UNK and SMALL are unclassified; no floor keeps SMALL in"
+    assert row["hole_label"] == "unclassified"            # no floor, so the label names none
     assert row["note"] == "last run ok"
     assert row["fetch"] == {"route": "/run/identity", "label": "Fetch identity"}
 
@@ -517,7 +517,7 @@ def test_the_identity_payload_is_empty_without_the_identity_tables_and_never_rai
     rawstore.write_rows("equity_universe", [{"ticker": "AAPL", "market_cap": 3.0e9, "name": "Apple"}])
     payload = inventory.collect(now=FIXED)
     ident = payload["identity"]
-    assert ident["last_run"] is None and ident["floor"] == 300_000_000.0
+    assert ident["last_run"] is None and ident["floor"] == 0
     assert ident["type_mix"] == [] and ident["source_mix"] == [] and ident["stale"] == []
     assert ident["conflicts"] == {"as_of": None, "by_kind": [], "top": [], "older": {"count": 0, "since": None}}
     assert ident["spdr"] == {"state": "never"}
@@ -546,7 +546,7 @@ def test_type_mix_counts_all_and_the_floor_flags_excluded_types_and_sorts_by_siz
     _seed_identity()
     mix = _identity()["type_mix"]
     assert mix == [
-        {"type": "common", "all": 8, "floor": 5, "excluded": False},     # floor: AAPL MSFT ORCL NVDA MANU
+        {"type": "common", "all": 8, "floor": 6, "excluded": False},     # no floor: one more common name is in
         {"type": "bank_nonsec", "all": 1, "floor": 1, "excluded": False},
         {"type": "cef", "all": 1, "floor": 1, "excluded": True},
         {"type": "etp", "all": 1, "floor": 1, "excluded": True},
@@ -563,7 +563,7 @@ def test_source_mix_buckets_in_a_fixed_order_and_other_only_when_non_zero(rawsto
         {"bucket": "provider", "all": 4, "floor": 3},         # provider_uw x3 (GONE is not in the universe), provider_yf
         {"bucket": "SIC", "all": 1, "floor": 1},              # sic_explicit: BANKX
         {"bucket": "type rule", "all": 2, "floor": 2},        # type_rule and type_rule(etp: no GICS)
-        {"bucket": "unclassified", "all": 4, "floor": 2},     # 'none' x3 and NULL
+        {"bucket": "unclassified", "all": 4, "floor": 3},     # 'none' x3 and NULL; no floor keeps one more
         {"bucket": "other", "all": 1, "floor": 1},            # manual
     ]
     rawstore.execute("UPDATE security_master SET sector_source = 'provider_uw' WHERE sector_source = 'manual'")
@@ -753,7 +753,7 @@ def test_the_identity_health_code_does_not_depend_on_the_shared_floor_import(raw
     payload = inventory.collect(now=FIXED)
     ident = payload["identity"]
     assert ident["floor"] == DEFAULT_MC_MIN and ident["type_mix"] and ident["source_mix"]
-    assert _rows(payload)["identity"]["holes"] == 2
+    assert _rows(payload)["identity"]["holes"] == 3
     assert payload["errors"] == []
 
 
@@ -868,7 +868,7 @@ def test_corpus_note_names_recorded_misses_and_no_cik(rawstore_tmp_db):
     rawstore.write_rows("chain_meta", [{"key": "miss:MSFT", "value": json.dumps(
         {"reason": "form_40f", "cik": "7", "checked": datetime.now(timezone.utc).isoformat()})}])
     note = _rows(inventory.collect())["corpus"]["note"]
-    assert note == "1 recorded misses (0 no 10-K/20-F, 1 40-F; 0 due for retry) - 1 no CIK"
+    assert note == "1 recorded misses (0 no 10-K/20-F, 1 40-F; 0 due for retry) - 2 no CIK"
 
 
 def test_corpus_note_is_empty_when_the_store_read_fails(rawstore_tmp_db, monkeypatch):

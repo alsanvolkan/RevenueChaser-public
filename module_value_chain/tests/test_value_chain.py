@@ -491,8 +491,10 @@ def test_the_universe_tile_says_operating_companies():
     html = report.render_value_chain_dashboard({
         "as_of": "2026-09-17T00:00:00+00:00", "filings": [], "edges": [],
         "universe_total": 5, "pending": 0})
-    assert ('<div class="l">Universe (≥$300M)</div>'
-            '<div class="d">operating companies</div>') in html
+    assert ('<div class="l">Universe</div>'
+            '<div class="d">operating companies, no market-cap floor</div>') in html
+    assert "Universe (≥" not in html               # the floor is gone; the tile must not claim one
+    # ("< $300M" still appears: that is the Micro bucket of the cap filter, not a floor.)
     assert "classification spine" not in html
 
 

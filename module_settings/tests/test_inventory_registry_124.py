@@ -493,17 +493,17 @@ def test_the_payload_carries_the_identity_coverage_over_the_classification_unive
     from RevenueChaser.core import universe
     rawstore.write_rows("equity_universe", [
         {"ticker": "AAPL", "market_cap": 3.0e9, "name": "Apple"},
-        {"ticker": "TINY", "market_cap": 1.0e6, "name": "Below The Floor"},
+        {"ticker": "TINY", "market_cap": 1.0e6, "name": "A Tiny Company"},
     ])
     rawstore.write_rows("sec_exchange_file", [
         {"ticker": "AAPL", "cik": "0000320193", "name": "Apple", "exchange": "Nasdaq",
          "status": "present", "run_at": 1.0},
-        {"ticker": "TINY", "cik": "0000000002", "name": "Below The Floor", "exchange": "NYSE",
+        {"ticker": "TINY", "cik": "0000000002", "name": "A Tiny Company", "exchange": "NYSE",
          "status": "present", "run_at": 1.0},
     ])
     cov = inventory.collect(now=_NOW)["identity_coverage"]
     kept = universe.classification_universe()
-    assert sorted(kept) == ["AAPL"]
-    assert cov["names_kept"] == 1
-    assert cov["funnel"][-1]["kind"] == "result" and cov["funnel"][-1]["count"] == 1
+    assert sorted(kept) == ["AAPL", "TINY"]              # no market-cap floor: both are universe names
+    assert cov["names_kept"] == 2
+    assert cov["funnel"][-1]["kind"] == "result" and cov["funnel"][-1]["count"] == 2
     assert cov["funnel"][0]["kind"] == "start" and cov["funnel"][0]["count"] == 2

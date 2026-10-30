@@ -3,7 +3,7 @@
 Layout (plan 2026-09-30_plan_filters_ux.md, pilot of the shared filter bar):
 
 * **Header** — what the board is, when the prices end, and always the universe
-  funnel: scanned universe (all caps) → ≥ $300M → operating companies → clustered.
+  funnel: scanned universe (all caps) → the cap floor, when one is set → operating companies → clustered.
 * **About this data** — source, date window, what Horizon does, the full
   funnel, and what a group is (and is not).
 * **Co-movement settings** — the board's own controls, each with an ⓘ
@@ -398,7 +398,7 @@ def _funnel_rows(payload: dict, f: dict, floor_txt: str, eff: dict, scanned,
     rows = []
     if scanned is not None:
         rows.append(("", "Scanned universe (<code>equity_universe</code>, all caps)", scanned))
-    if f.get("below_floor"):
+    if f.get("below_floor") and floor_txt:
         rows.append(("minus", f"Below the {floor_txt} classification floor", -f["below_floor"]))
     if f.get("no_market_cap"):
         rows.append(("minus", "No market cap on record", -f["no_market_cap"]))
@@ -433,12 +433,17 @@ def _about(payload: dict, horizon: int, benchmark: str, applied: bool,
         floor_n, op_n = op_n, None
     clustered = f.get("clustered", payload.get("eligible"))
     floor = src.get("floor_mc", DEFAULT_MC_MIN)
-    floor_txt = f"${floor / 1e9:.1f}B" if floor >= 1e9 else f"${floor / 1e6:.0f}M"
+    # No floor is the default since 29 Oct 2026: the step would read "≥ $0M", which is not a cut at all.
+    floor_txt = ("" if not floor else f"${floor / 1e9:.1f}B" if floor >= 1e9 else f"${floor / 1e6:.0f}M")
     steps = []
     if scanned is not None:
         steps.append(f'<span class="step">Scanned universe <b class="num">{_n(scanned)}</b> · all market caps</span>')
-    if floor_n is not None:
+    if floor_n is not None and floor_txt:
         steps.append(f'<span class="step">≥ {floor_txt} <b class="num">{_n(floor_n)}</b></span>')
+    elif floor_n is not None and op_n is None:
+        # No floor and no separate operating step (an old payload): the number is the operating count, so say
+        # that rather than drop it. With both steps present the floor step would only repeat "Scanned".
+        steps.append(f'<span class="step">operating companies <b class="num">{_n(floor_n)}</b></span>')
     if op_n is not None:
         steps.append(f'<span class="step">operating companies <b class="num">{_n(op_n)}</b></span>')
     steps.append(f'<span class="step">clustered <b class="num">{_n(clustered)}</b></span>')

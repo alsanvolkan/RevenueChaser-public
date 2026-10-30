@@ -590,7 +590,7 @@ function drillRow(label, value){
          '<span class="dval">' + rcEsc(value) + '</span></div>';
 }
 function drillCap(cap){
-  if(cap == null) return 'null — no cap stored (outside the $300M universe or not yet resolved)';
+  if(cap == null) return 'null — no cap stored (not yet resolved)';
   return '$' + Number(cap).toLocaleString('en-US', {maximumFractionDigits: 0});
 }
 // A dataset's presence as one line: its count, the newest stored session/date, and the source

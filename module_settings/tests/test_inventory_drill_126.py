@@ -242,8 +242,13 @@ def test_a_board_that_reads_no_store_table_says_not_checked(rawstore_tmp_db):
 
 
 def test_universe_membership_is_the_boards_own_cut_not_merely_a_row(rawstore_tmp_db):
-    """A row below the $300M floor is in ``equity_universe`` and outside the list boards scan."""
+    """An excluded security type is in ``equity_universe`` and outside the list the boards scan.
+
+    The subject used to be a name below the $300M floor. There is no floor any more (avo, 29 Oct 2026), so the
+    cut that is narrower than "a row exists" is the security type.
+    """
     rawstore.write_rows("equity_universe", [{"ticker": "TINY", "market_cap": 1.0e6}])
+    rawstore.write_rows("security_master", [{"ticker": "TINY", "security_type": "etp"}])
     rawstore.write_rows("price_bars_daily", _bars("TINY", "2026-02-02"))
 
     fit = _boards_of("TINY")

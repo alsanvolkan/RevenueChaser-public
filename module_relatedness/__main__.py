@@ -19,7 +19,7 @@ run id: the current (live) run is refused, so build a new one with
 ``--rebuild-themes``. ``--rebuild-themes`` refuses the current run id too.
 
 ``--floor`` (USD millions) and ``--tickers`` choose the names (#108 S0): the names ``--run`` profiles, and the
-universe ``--rebuild-themes`` fits. Without either, ``--run`` profiles the $300M classification universe and the fit
+universe ``--rebuild-themes`` fits. Without either, ``--run`` profiles the whole classification universe and the fit
 covers it, as before. They go with ``--run`` and ``--rebuild-themes`` only; ``--status``, ``--name-themes`` and
 ``--cutover`` refuse them. WARNING: ``--run`` with a selection is a full Fetch of exactly those names. It downloads
 their missing filings from SEC, calls DeepSeek for every name without a current profile, and replaces the board:
@@ -147,7 +147,7 @@ def _max_iter(value: str) -> int:
 
 
 def _selection(args) -> list[str] | None:
-    """The names ``--floor`` or ``--tickers`` choose; None keeps today's default (the $300M universe)."""
+    """The names ``--floor`` or ``--tickers`` choose; None keeps the default (the universe, no cap floor)."""
     if args.tickers:
         return [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
     if args.floor is not None:

@@ -362,9 +362,11 @@ def funnel_steps(f: dict) -> list[dict]:
     prices = None
     return [
         funnel_mod.step("scanned", "Scanned universe", f["scanned_total"], "start"),
+        # The run's own floor, not the live constant: a stored run that recorded 0 must not be relabelled
+        # from today's default. ``f["floor"]`` is written by ``universe_counts``; 0 means no cut was made.
         funnel_mod.step("below_floor",
-                        f"Below the ${(f.get('floor') or universe_mod.DEFAULT_MC_MIN) / 1e6:,.0f}M "
-                        "classification floor",
+                        (f"Below the ${f['floor'] / 1e6:,.0f}M classification floor"
+                         if f.get("floor") else "Below the classification floor (no floor is set)"),
                         f["below_floor"], "drop", by_design=True),
         funnel_mod.step("no_market_cap", "No market cap", f["no_market_cap"],
                         "drop", by_design=False, fix=caps),

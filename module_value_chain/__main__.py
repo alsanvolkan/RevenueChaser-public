@@ -7,7 +7,7 @@
     python -m RevenueChaser.module_value_chain --reslice-apply [--out DIR]
 
 ``--floor`` (USD millions) and ``--tickers`` choose the names (#108 S0). Without either, both commands cover the
-$300M classification universe as before, and the sync's submissions sweep covers every universe CIK (#299); with
+whole classification universe as before, and the sync's submissions sweep covers every universe CIK (#299); with
 either, the sweep covers the chosen names' CIKs only. WARNING: either command with a selection makes SEC requests
 for those names (``--floor 50`` adds about 900 filers) and rebuilds the Value Chain edges; run it only with the
 user's typed words, never under the standing permission.
@@ -38,7 +38,7 @@ def _floor(value: str) -> float:
 
 
 def _selection(args) -> list[str] | None:
-    """The names ``--floor`` or ``--tickers`` choose; None keeps today's default (the $300M universe)."""
+    """The names ``--floor`` or ``--tickers`` choose; None keeps the default (the universe, no cap floor)."""
     if args.tickers:
         return [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
     if args.floor is not None:

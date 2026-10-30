@@ -138,8 +138,9 @@ def test_the_funnel_result_is_the_classification_universe(rawstore_tmp_db):
     steps = cov["funnel"]
     assert funnel_mod.validate(steps) == [], "the funnel must add up: no name lost off the books"
     kept = universe.classification_universe()
-    assert sorted(kept) == ["AAPL", "MU"]
-    assert steps[-1]["kind"] == "result" and steps[-1]["count"] == len(kept) == 2
+    # No market-cap floor (avo, 29 Oct 2026): SMALL and the NULL-cap name are universe names too.
+    assert sorted(kept) == ["AAPL", "MU", "NOCAP", "SMALL"]
+    assert steps[-1]["kind"] == "result" and steps[-1]["count"] == len(kept) == 4
     assert steps[0]["kind"] == "start" and steps[0]["count"] == 8, "8 present rows in the SEC file"
     drops = sum(s["count"] for s in steps if s["kind"] == "drop")
     assert steps[0]["count"] - drops == steps[-1]["count"]
@@ -152,10 +153,10 @@ def test_every_drop_is_named_in_plain_words_and_carries_its_count(rawstore_tmp_d
     assert steps["venues"]["count"] == 2, "OTC and no-venue rows leave at the venue step"
     assert "Nasdaq" in steps["venues"]["label"] and "Cboe" in steps["venues"]["label"]
     assert steps["universe"]["count"] == 1, "LISTEDONLY is not in the equity universe"
-    assert steps["floor"]["count"] == 1, "SMALL is below $300M"
-    assert "$300 million" in steps["floor"]["label"]
-    assert steps["no_cap"]["count"] == 1 and steps["no_cap"]["by_design"] is False, \
-        "a missing market cap is not by design: it needs a look"
+    assert steps["floor"]["count"] == 0, "no floor is set, so nothing is below it"
+    assert "no floor is set" in steps["floor"]["label"]
+    assert steps["no_cap"]["count"] == 0 and steps["no_cap"]["by_design"] is False, \
+        "at floor 0 a missing cap keeps the name, so the row drops nobody"
     assert steps["funds_etfs"]["count"] == 1, "the exchange-traded fund leaves at the type step"
     assert steps["funds_etfs"]["by_design"] is True
     assert steps["universe"]["by_design"] is False, \
@@ -179,8 +180,8 @@ def test_a_kept_name_the_sec_file_does_not_list_is_said_not_counted(rawstore_tmp
     cov = _coverage()
     steps = _steps(cov)
     assert steps["unreached"]["kind"] == "note" and steps["unreached"]["count"] == 1
-    assert steps["kept"]["count"] == 2, "the chain's own result, not the classification count"
-    assert cov["names_kept"] == 3
+    assert steps["kept"]["count"] == 4, "the chain's own result, not the classification count"
+    assert cov["names_kept"] == 5
     assert funnel_mod.validate(cov["funnel"]) == []
 
 
@@ -212,15 +213,15 @@ def test_the_inputs_are_the_eight_the_plan_names_in_order(rawstore_tmp_db):
 def test_every_input_row_names_its_own_denominator(rawstore_tmp_db):
     _seed()
     for row in _coverage()["inputs"]:
-        assert row["denominator"] == "2 names the funnel keeps", row["key"]
-        assert row["expected"] == 2, row["key"]
+        assert row["denominator"] == "4 names the funnel keeps", row["key"]
+        assert row["expected"] == 4, row["key"]
         assert row["label"] and row["label"][0].isupper(), row["key"]
 
 
 def test_the_inputs_count_the_names_that_carry_each_one(rawstore_tmp_db):
     _seed()
     rows = _rows(_coverage(), "inputs")
-    assert (rows["cik"]["covered"], rows["cik"]["state"]) == (2, "")
+    assert (rows["cik"]["covered"], rows["cik"]["state"]) == (4, "")
     assert rows["quotes"]["covered"] == 2, "both names have a quote on the newest session"
     assert rows["bars"]["covered"] == 1, "MU's newest bar is behind the latest complete session"
     assert rows["cusip"]["covered"] == 2 and rows["figi"]["covered"] == 1
