@@ -37,6 +37,31 @@ UNDECLARED = frozenset({
     "module_spx_gamma", "module_swing_potential", "module_uw_interaction", "module_value_chain",
 })
 
+#: What each board not migrated yet will read, from the catalog's need list of 29 Oct 2026
+#: (``DataPlan/2026-10-29_katalog-need-listesi.md``, its "which board reads it" column). The control board draws
+#: these as dashed lines, so a reader can tell a board's own declaration from the plan. An entry goes away in the
+#: PR that migrates the board, the one that adds its ``READS``. A board whose data has no need in the catalog yet
+#: (Relatedness reads filing texts) is left out rather than given a need it does not read.
+PLANNED_READS: dict[str, tuple[str, ...]] = {
+    "module_spx_gamma": ("market.vix", "market.cot", "market.spx_expiry_strike", "options.strikes",
+                         "options.expiries", "options.iv"),
+    "module_oipd": ("macro.dgs10", "options.chain", "options.strikes", "options.expiries"),
+    "module_financials": ("identity.universe", "prices.shares", "prices.market_cap", "prices.latest", "macro.dgs10",
+                          "fundamentals.statements", "fundamentals.segments", "fundamentals.peers"),
+    "module_uw_interaction": ("options.prints",),
+    "module_comovement": ("identity.universe", "identity.membership", "prices.bars", "prices.market_cap"),
+    "module_value_chain": ("identity.universe", "fundamentals.segments", "fundamentals.customers"),
+    "module_sector_rotation": ("identity.membership", "prices.bars", "market.series"),
+    "module_asymmetric_growth": ("identity.universe", "prices.bars", "fundamentals.statements",
+                                 "fundamentals.companies", "fundamentals.earnings_event", "ownership.beneficial",
+                                 "earnings.next"),
+    "module_swing_potential": ("identity.universe", "prices.bars", "earnings.next"),
+    "module_fundamentals": ("identity.universe", "prices.bars", "fundamentals.statements", "fundamentals.companies",
+                            "fundamentals.filings", "earnings.next"),
+    "module_sec_13f": ("ownership.holders_13f", "ownership.periods_13f", "prices.actions"),
+    "module_leaps": ("options.daily",),
+}
+
 
 def root() -> Path:
     """The package root, the directory the board packages sit in."""
@@ -126,3 +151,11 @@ def flow_rows() -> tuple[dict, ...]:
                   "max_lag": need.max_lag,
                   "max_lag_unit": need.max_lag_unit}
                  for name, need in sorted(catalog.NEEDS.items()))
+
+
+def reads_of(board: str) -> dict:
+    """``{"declared": bool, "needs": (...)}``: the board's own ``READS`` when it has them, else its planned reads."""
+    own = declared_reads(board) if (root() / board / "__init__.py").exists() else None
+    if own is not None:
+        return {"declared": True, "needs": own}
+    return {"declared": False, "needs": PLANNED_READS.get(board, ())}

@@ -253,7 +253,9 @@ jobs.register("index_lists", runners.run_index_lists, ["module_settings"], lane=
 jobs.register("module_oipd", runners.run_oipd, ["module_oipd"], requires_uw=True)
 
 # Which store-only job a board's Save / Reset queues (``api_settings_board``, #40 / #384 SW-S4).
-SETTINGS_JOBS = {"module_comovement": "comovement_recompute", "module_swing_potential": "settings_refresh"}
+SETTINGS_JOBS = {"module_comovement": "comovement_recompute", "module_swing_potential": "settings_refresh",
+                 # The control board's universe (Apply, design v28): a saved choice, re-rendered store-only.
+                 "module_settings": "settings_refresh"}
 
 TABS = [
     {"type": "header", "label": "Research"},
@@ -1172,6 +1174,29 @@ def api_settings_ticker(ticker: str):
     if detail is None:
         return jsonify({"ok": False}), 404
     return jsonify({"ok": True, **detail})
+
+
+@app.route("/api/settings/sample/<table>")
+def api_settings_sample(table: str):
+    """The control board's **Refresh the example rows**: five rows of one serving table, read again (design v28).
+
+    One read-only handle on the table's own serving file and one SELECT: no job, no provider, no write. A name the
+    cards do not sample is 404; a file or table not built yet is 409 and says which; a file DuckDB cannot open
+    or read right now (locked, mid-swap) is 503 with the reason.
+    """
+    import duckdb
+
+    from RevenueChaser.module_settings import newdata
+
+    try:
+        sample = newdata.read_sample_now(table)
+    except KeyError:
+        return jsonify({"ok": False, "error": "unknown table"}), 404
+    except newdata.SampleUnavailable as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 409
+    except duckdb.Error as exc:                # mid-swap or locked: say so and let the reader press again
+        return jsonify({"ok": False, "error": f"the file could not be read right now: {str(exc)[:200]}"}), 503
+    return jsonify({"ok": True, "table": table, **sample})
 
 
 @app.route("/api/module_fundamentals/latest")

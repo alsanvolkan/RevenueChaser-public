@@ -132,7 +132,8 @@ def test_empty_payload_renders_the_empty_state():
     html = report.render_settings_dashboard({"rows": []})
     assert "empty" in html.lower()
     assert "store is empty" in html.lower()
-    assert "<table" not in html
+    # The control board on top has tables of its own (the journey, the queue); the old inventory table is gone.
+    assert 'table class="inv"' not in html
 
 
 def _run_verdicts(js: str, cases: list) -> list:
@@ -1503,6 +1504,9 @@ def _s5_payload():
 def _thead_cells(html: str) -> list[str]:
     """The table's header cells as plain text (a header may hold a button, e.g. Source)."""
     import re
+    # The inventory's own table, not the control board's tables above it.
+    if 'table class="inv"' in html:
+        html = html[html.index('table class="inv"'):]
     thead = re.search(r"<thead><tr>(.*?)</tr></thead>", html, re.S).group(1)
     return [h.split("<")[0].strip()
             for h in re.findall(r"<th[^>]*>(.*?)</th>", thead, re.S)]
