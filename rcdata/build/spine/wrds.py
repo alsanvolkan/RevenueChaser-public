@@ -62,7 +62,10 @@ _DIGITS = re.compile(r"^\d{1,10}$")
 _GVKEY = re.compile(r"^\d{6}$")
 
 # table -> (dataset, schema, key, full query); the new-name queries are built in ``_new_name_queries``.
-COMPANY = [("gvkey", "TEXT"), ("conm", "TEXT"), ("cik", "TEXT")]
+# ``sic`` since #240: Compustat's company SIC, the spine's only SPAC source (``spine/tier.SIC_SPAC``). A
+# snapshot taken before this column was asked for has no ``sic`` in its Parquet; staging reads it as NULL
+# (``stage.create``), so the rule types nothing until the next attended snapshot.
+COMPANY = [("gvkey", "TEXT"), ("conm", "TEXT"), ("cik", "TEXT"), ("sic", "TEXT")]
 SECURITY = [("gvkey", "TEXT"), ("iid", "TEXT"), ("tic", "TEXT"), ("cusip", "TEXT"), ("exchg", "INTEGER"),
             ("excntry", "TEXT"), ("secstat", "TEXT"), ("tpci", "TEXT"), ("dldtei", "DATE")]
 IDHIST = [("gvkey", "TEXT"), ("iid", "TEXT"), ("item", "TEXT"), ("itemvalue", "TEXT"), ("efffrom", "DATE"),
@@ -74,7 +77,7 @@ PROVENANCE = [("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TE
 
 TABLES: dict[str, dict] = {
     "company": {"dataset": "wrds/sec_idhist", "schema": COMPANY, "key": ["gvkey"],
-                "sql": "SELECT gvkey, conm, cik FROM comp.company"},
+                "sql": "SELECT gvkey, conm, cik, sic FROM comp.company"},
     "security": {"dataset": "wrds/sec_idhist", "schema": SECURITY, "key": ["gvkey", "iid"],
                  "sql": "SELECT gvkey, iid, tic, cusip, exchg, excntry, secstat, tpci, dldtei FROM comp.security"},
     "sec_idhist": {"dataset": "wrds/sec_idhist", "schema": IDHIST, "key": ["gvkey", "iid", "item", "efffrom"],
@@ -87,6 +90,9 @@ TABLES: dict[str, dict] = {
 }
 STAGING = {"company": "stg_wrds_company", "security": "stg_wrds_security", "sec_idhist": "stg_wrds_idhist",
            "co_hgic": "stg_wrds_hgic", "idxcst_his": "stg_wrds_idx"}
+# Per table, the columns asked for after its stored snapshot was written: read as NULL, with a warning, until the
+# next attended backfill (``stage.create``). Any other missing column still fails the build.
+ADDED_LATER = {"company": {"sic"}}
 
 
 # ── The one connection: a worker subprocess under the interpreter that has ``wrds`` ──────────────────────────
@@ -399,7 +405,7 @@ class WrdsDataset:
         padded = [c.zfill(10) for c in new]
         out = []
         raw = _ask(ctx, folder / f"new-company{RAW_SUFFIX}",
-                   f"SELECT gvkey, conm, cik FROM comp.company WHERE cik IN ({_in_list(padded)})", as_of)
+                   f"{TABLES['company']['sql']} WHERE cik IN ({_in_list(padded)})", as_of)
         out.append(raw)
         con = duckdb.connect()
         try:
@@ -462,7 +468,8 @@ class WrdsDataset:
             # The newest snapshot plus the deltas after it; a delta's row replaces the snapshot's (newest fetch wins).
             stage.create(con, STAGING[table], schema, _parquet_files(self.name, table),
                          select=f"SELECT * FROM {{src}} QUALIFY row_number() OVER (PARTITION BY {keys} "
-                                f"ORDER BY fetched_at DESC) = 1")
+                                f"ORDER BY fetched_at DESC) = 1",
+                         added_later=ADDED_LATER.get(table, ()))
         return {}
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
