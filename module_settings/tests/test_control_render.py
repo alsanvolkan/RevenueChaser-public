@@ -42,12 +42,12 @@ def test_the_board_is_on_top_in_the_designed_order_and_the_old_sections_fold_bel
     assert '<details class="oldfold" id="old-settings">' in html, "folded, not deleted: closed until pressed"
 
 
-def test_health_and_fetch_open_the_rest_closed():
+def test_health_fetch_and_the_flow_open_the_rest_closed():
     html = _page()
     for sec in SECTIONS:
         tag = re.search(r'<details class="sec" id="' + sec + r'"( open)?>', html)
         assert tag, sec
-        assert bool(tag.group(1)) == (sec in ("sec-health", "sec-fetch")), sec
+        assert bool(tag.group(1)) == (sec in ("sec-health", "sec-fetch", "sec-flow")), sec
 
 
 def test_the_data_cards_show_bars_and_no_fetch_fill_or_pause():
@@ -172,3 +172,31 @@ def test_a_board_that_could_not_be_built_is_one_line_and_the_rest_of_the_page_st
 
 def test_the_page_names_the_icons_licence():
     assert "Tabler Icons (MIT licence)" in _page()
+
+
+def test_the_calendar_counts_only_the_universes_sets_on_each_session(tmp_path):
+    """Review M1, on the page: a session's per-set counts are summed over the applied sets only, so a fund-only
+    universe is not painted filled by Tier A's bars."""
+    import json
+    import shutil
+    import subprocess
+    from RevenueChaser.core.tests.board_js import function_source
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    src = function_source(control_render.CTL_JS, "sessionN")
+    day = {"A": 5600, "E": 480, "R": 1300, "C": 40, "-": 2}
+    probe = tmp_path / "s.js"
+    probe.write_text(src + "\nconsole.log(JSON.stringify([sessionN(%s, {E: true}), sessionN(%s, {A: true, E: true, R: true}),"
+                     " sessionN(undefined, {A: true}), sessionN(%s, {})]));" % ((json.dumps(day),) * 3),
+                     encoding="utf-8")
+    out = subprocess.run(["node", str(probe)], capture_output=True, text=True, timeout=60)
+    assert json.loads(out.stdout) == [480, 7380, 0, 0], out.stderr
+    assert "c.universe ||" not in control_render.CTL_JS, "the fill state compares with the applied sets' size"
+
+
+def test_the_bits_apply_saves_are_the_servers_own_maps():
+    """Review S4: the page computes what Apply saves from these maps, so they are the server's, not a copy."""
+    from RevenueChaser.core import board_settings
+    data = control_render.client(control.build(control_nd(), now=NOW))
+    assert data["universe"]["bits"] is board_settings.UNIVERSE_SET_BITS
+    assert data["universe"]["inc_bits"] is board_settings.UNIVERSE_INCLUDE_BITS

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from RevenueChaser.core import board_settings
 from RevenueChaser.core.html_safe import esc, script_json
 from RevenueChaser.module_settings import control
 from RevenueChaser.rcdata.api import screen
@@ -322,7 +323,7 @@ def _flow(view: dict) -> str:
                      f'<code class="p">{esc(f["name"])}</code> → '
                      + (esc(", ".join(readers)) if readers else "<b>no board yet</b>") + '</span></div>')
     return (
-        '<details class="sec" id="sec-flow"><summary><h2>Where it comes from, who fetches it, where it ends · flow '
+        '<details class="sec" id="sec-flow" open><summary><h2>Where it comes from, who fetches it, where it ends · flow '
         'diagram</h2><span class="secs">source → plan step → SSD file → board · a press filters the Data section '
         'below and opens it · a board says what it reads</span></summary>'
         '<div class="group" style="border-left-color:var(--acc)"><div class="scroll flowwrap"><svg class="flowsvg" '
@@ -640,8 +641,8 @@ def client(view: dict) -> dict:
             "universe": {"sets": [{"k": s["key"], "tier": s["tier"], "label": s["label"], "n": s["n"] or 0,
                                    "on": s["on"]} for s in u["sets"] if s["offered"]],
                          "include": [g["key"] for g in u["include"]], "tickers": u["tickers"],
-                         "bits": {"A": 1, "E": 2, "R": 4}, "inc_bits": {"anchors": 1, "watchlist": 2,
-                                                                        "cover_classes": 4}},
+                         "bits": board_settings.UNIVERSE_SET_BITS,
+                         "inc_bits": board_settings.UNIVERSE_INCLUDE_BITS},
             "calendars": cals, "today": view["read_at_iso"][:10]}
 
 

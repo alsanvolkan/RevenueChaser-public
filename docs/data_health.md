@@ -134,18 +134,22 @@ the code records (`rcdata/scaffold`, `boards`, `catalog`, `caps`), and `control_
 closed fold under it (`details#old-settings`), unchanged.
 
 - **Order:** Health, Fetch (with the universe bar and the Backfill calendar), the flow diagram, Providers, Data
-  file by file, then the cross-check and the queue. Health and Fetch start open.
+  file by file, then the cross-check and the queue. Health, Fetch and the flow diagram start open.
 - **Health tiles** count the dataset cards. The builder tile turns red when the builder has been
   silent for over 70 minutes; a provider's cap tile warns at 50% of its day cap and is red from 70%.
 - **What can be pressed where.** Fetch, Pause and Fill are in the Fetch section only; the Data cards show bars and
   no button. A press on a tier set only drafts; **Apply** saves the universe as the Settings board's
   `UNIVERSE_SETS` and `UNIVERSE_INCLUDE` (`POST /api/settings/board/module_settings`) and fetches nothing. C and D are
   shown greyed and are never offered. The default universe (A and all of B) asks no scope: it is the daily run.
+- **Filled** is counted per tier set: the hourly read joins each session's bars to the spine's sets, and the
+  universe tile and the Backfill calendar sum only the sets the universe holds, so a fund-only universe is not
+  painted filled by Tier A's bars.
 - **Fill and "Fill this range"** are off unless the server sets `RC_FILL_ENABLED`; the page says why instead of
   drawing a live button. Tests never set it.
 - **Refresh the example rows** calls `GET /api/settings/sample/<table>`: 5 rows of one sampled table, through one
   read-only `open_read` handle on its own file, replacing the hourly cached sample. 404 for any other table, 409 when
-  the file or the table is not built yet. No job, no provider, no write.
+  the file or the table is not built yet, 503 when DuckDB cannot read the file right now (a swap). No job, no
+  provider, no write.
 - **Stale page:** when the page is older than 60 minutes on returning to it, a bar offers a reload.
 - **Planned reads** (a board's table read that `boards` does not declare yet) are drawn dashed and marked planned.
 

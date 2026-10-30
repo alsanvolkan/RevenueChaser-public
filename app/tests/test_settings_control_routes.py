@@ -133,3 +133,16 @@ def test_a_table_missing_from_its_built_file_is_409(client, market_roots, reads)
     duckdb.connect(str(path)).close()
     r = _get(client, "price_bar_daily")
     assert r.status_code == 409 and "price_bar_daily" in r.get_json()["error"]
+
+
+def test_a_file_that_cannot_be_read_right_now_is_503_not_a_crash(client, market_roots, reads, monkeypatch):
+    """Review S5: a press during a serving swap (the file locked or half-written) says so; it is not a 500."""
+    _bars(["2026-10-28"])
+
+    def locked(kind):
+        raise duckdb.IOException("Could not set lock on file")
+    monkeypatch.setattr(serving, "open_read", locked)
+    r = _get(client, "price_bar_daily")
+    assert r.status_code == 503
+    body = r.get_json()
+    assert body["ok"] is False and "could not be read right now" in body["error"] and "lock" in body["error"]

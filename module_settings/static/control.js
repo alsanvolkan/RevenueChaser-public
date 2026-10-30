@@ -305,14 +305,26 @@
   function pct(a, b) { return b ? Math.round(a * 1000 / b) / 10 : 0; }
   function yesterday() { return key(new Date(D(TODAY).getTime() - 864e5)); }
   function uniN() { var n = 0; [].forEach.call(document.querySelectorAll('#universe .useg[data-on="1"]'), function (b) { n += +b.getAttribute('data-n'); }); return n; }
+  function onSets() {
+    var on = {};
+    [].forEach.call(document.querySelectorAll('#universe .useg[data-on="1"]'), function (b) { on[b.getAttribute('data-tier')] = true; });
+    return on;
+  }
+  /* names with a bar on one session, counted only in the sets the universe holds (per = {set: names}) */
+  function sessionN(per, on) {
+    var n = 0;
+    if (!per) return 0;
+    for (var k in per) { if (on[k]) n += per[k] || 0; }
+    return n;
+  }
   function dstate(c, k, dow) {
     if (k >= TODAY) return 'future';
     if (dow === 0 || dow === 6) return 'nosess';
     if (k < c.from) return 'notoff';
     if (c.names_per_session) {
-      var n = c.names_per_session[k];
+      var n = sessionN(c.names_per_session[k], onSets());
       if (!n) return 'missing';
-      return n >= 0.98 * (c.universe || n) ? 'filled' : 'partly';
+      return n >= 0.98 * uniN() ? 'filled' : 'partly';
     }
     return (c.missing || []).indexOf(k) >= 0 ? 'missing' : 'filled';
   }

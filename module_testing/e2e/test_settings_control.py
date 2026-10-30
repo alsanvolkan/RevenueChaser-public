@@ -25,7 +25,7 @@ def test_the_board_is_on_top_and_the_old_sections_are_folded_below(dashboard, br
     _open(browser, dashboard)
     order = browser.eval("Array.prototype.map.call(document.querySelectorAll('#ctl details.sec'),"
                          " function(d){ return d.id + (d.open ? '+' : ''); })")
-    assert order[:5] == ["sec-health+", "sec-fetch+", "sec-flow", "sec-providers", "sec-data"]
+    assert order[:5] == ["sec-health+", "sec-fetch+", "sec-flow+", "sec-providers", "sec-data"]
     assert browser.eval("document.getElementById('old-settings').open") is False
     assert browser.eval("document.getElementById('ctl').compareDocumentPosition("
                         "document.getElementById('newdata')) & Node.DOCUMENT_POSITION_FOLLOWING") != 0

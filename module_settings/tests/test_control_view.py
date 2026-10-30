@@ -40,7 +40,8 @@ def control_nd() -> dict:
     nd["verified"]["silent_minutes"] = 24
     nd["universe"] = {"counts": {"A": 5655, "E": 558, "R": 1457, "C": 2577, "D": 183}, "total": 10430,
                       "tickers": {"E": ["SPY", "QQQ"], "R": ["XYZW"]}}
-    nd["sessions"] = {"2026-10-27": 7400, "2026-10-28": 7380}
+    nd["sessions"] = {"2026-10-27": {"A": 5600, "E": 500, "R": 1300, "C": 40},
+                      "2026-10-28": {"A": 5600, "E": 480, "R": 1300, "C": 40, "-": 2}}
     nd["identity"] = {"as_of": "2026-10-28"}
     nd["storage"] = {"roots": {"raw": "/r", "parquet": "/p", "ssd": "/s"},
                      "files": {"prices": {"path": "/s/prices.duckdb", "bytes": 1_200_000_000}},
@@ -91,7 +92,7 @@ def test_the_health_strip_has_its_twelve_tiles_counted_from_the_cards():
     tile = {t["key"]: t for t in h["tiles"]}
     assert (tile["fresh"]["n"], tile["late"]["n"], tile["stale"]["n"], tile["never"]["n"]) == ("1", "1", "1", "2")
     assert tile["problems"]["n"] == "10"
-    assert tile["session"]["n"] == "28 Oct" and "7,380 names" in tile["session"]["label"]
+    assert tile["session"]["n"] == "28 Oct" and "7,422 names" in tile["session"]["label"], "every bar in the file"
     assert tile["session"]["cls"] == "warn", "alpaca/bars is late, so the newest session is not complete"
     assert tile["cap"]["n"] == "72%" and "Alpha Vantage" in tile["cap"]["label"] and tile["cap"]["cls"] == "bad"
     assert tile["builder"]["n"] == "24 min" and tile["builder"]["cls"] == "ok"
@@ -111,7 +112,7 @@ def test_the_default_universe_is_a_and_b_and_asks_no_scope():
                                                         ("D", False)]
     assert u["size"] == 5655 + 558 + 1457 and u["default"] is True
     assert v["scope"] is None, "the default universe is the daily run: no scope, it takes them all"
-    assert u["filled"] == 7380
+    assert u["filled"] == 7380, "the picked sets' names only: C's bars and those off the spine are not the universe's"
 
 
 def test_a_narrowed_universe_asks_its_tiers_and_the_names_of_a_part_of_b():
@@ -120,6 +121,9 @@ def test_a_narrowed_universe_asks_its_tiers_and_the_names_of_a_part_of_b():
     funds = _build(applied={"UNIVERSE_SETS": 1 | 2, "UNIVERSE_INCLUDE": 0})
     assert funds["scope"] == {"tiers": ["A"], "names": ["SPY", "QQQ"], "include": []}
     assert funds["universe"]["size"] == 5655 + 558
+    only_funds = _build(applied={"UNIVERSE_SETS": 2, "UNIVERSE_INCLUDE": 7})["universe"]
+    assert (only_funds["size"], only_funds["filled"]) == (558, 480), \
+        "review M1: a fund-only universe is not filled by Tier A's bars"
 
 
 def test_c_and_d_are_never_in_the_universe_whatever_is_saved():
@@ -196,7 +200,7 @@ def test_the_flow_sources_are_the_datasets_providers():
 def test_the_bars_calendar_reads_the_sessions_and_the_page_size():
     from RevenueChaser.rcdata.build.prices import bars
     cal = _build()["calendars"]["alpaca/bars"]
-    assert cal["names_per_session"] == {"2026-10-27": 7400, "2026-10-28": 7380}
+    assert cal["names_per_session"] == control_nd()["sessions"], "by set: the page sums the sets the universe holds"
     assert cal["page"] == bars.LIMIT and cal["universe"] == 5655 + 558 + 1457 and cal["groups"] is True
 
 

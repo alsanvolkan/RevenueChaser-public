@@ -576,12 +576,37 @@ def _universe_sets(con) -> dict:
     return {"counts": counts, "total": len(rows), "tickers": tickers}
 
 
-def _session_counts(con) -> dict[str, int]:
-    """How many names have a bar on each session of ``price_bar_daily``: the Backfill calendar's fill state, read
-    once an hour with the samples (one GROUP BY over the served bars)."""
-    return {d.isoformat(): int(n) for d, n in con.execute(
-        "SELECT session_date, count(DISTINCT security_id) FROM price_bar_daily GROUP BY 1 ORDER BY 1").fetchall()
-        if d is not None}
+def _session_counts(con) -> dict[str, dict[str, int]]:
+    """``{session: {set: names}}``: how many names have a bar on each session of ``price_bar_daily``, by the spine's
+    tier set (A, E, R, C, D as the universe bar has them; ``-`` for a bar whose security is not on the spine).
+
+    The Backfill calendar and the universe tile sum the sets the universe holds, so a narrowed universe is compared
+    with its own names only (review M1). The live spine is attached read-only to the caller's handle for one
+    GROUP BY and detached; without a spine every bar counts as ``-``. Read once an hour with the samples.
+    """
+    from RevenueChaser.rcdata.build import base
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving
+    spine = serving.live_path("spine")
+    if spine.exists():
+        fund = ", ".join(repr(t) for t in api_screen.FUND_TYPES)
+        con.execute(f"ATTACH {base.sql_path(spine)} AS rc_spine (READ_ONLY)")
+        try:
+            rows = con.execute(
+                "WITH sets AS (SELECT DISTINCT " + prices_serving.SPINE_ID + " AS security_id, "
+                f"CASE WHEN tier = 'B' AND security_type IN ({fund}) THEN 'E' WHEN tier = 'B' THEN 'R' ELSE tier END "
+                "AS s FROM rc_spine.security WHERE tier IN ('A', 'B', 'C', 'D')) "
+                "SELECT b.session_date, coalesce(sets.s, '-'), count(DISTINCT b.security_id) FROM price_bar_daily b "
+                "LEFT JOIN sets USING (security_id) GROUP BY 1, 2 ORDER BY 1, 2").fetchall()
+        finally:
+            con.execute("DETACH rc_spine")
+    else:
+        rows = con.execute("SELECT session_date, '-', count(DISTINCT security_id) FROM price_bar_daily "
+                           "GROUP BY 1 ORDER BY 1").fetchall()
+    out: dict[str, dict[str, int]] = {}
+    for day, key, n in rows:
+        if day is not None:
+            out.setdefault(day.isoformat(), {})[key] = int(n)
+    return out
 
 
 def _universe_source() -> dict:
@@ -620,17 +645,18 @@ def _identity(counts: dict | None) -> dict:
 
 #: A folder walk stops after this many entries and says so: the page renders in the dashboard, and the raw tree of
 #: a dataset with one file per company per day runs to tens of thousands of files.
-STORAGE_WALK_MAX = 50_000
+STORAGE_WALK_BUDGET = 50_000
 _STORAGE_CACHE: dict[str, tuple[str, dict]] = {}
 
 
-def _folder(path: Path) -> dict:
+def _folder(path: Path, budget: list[int]) -> dict:
     """``{"path", "files", "bytes", "capped"}`` of one folder, walked without following links; files None when the
-    folder does not exist. ``capped`` means the walk stopped at ``STORAGE_WALK_MAX`` entries and the counts are a
-    floor."""
+    folder does not exist. ``budget`` is the entries the whole storage walk may still look at, shared by every
+    folder of one render (review S3: a cap per folder let the HDD walk reach millions of stats); ``capped`` means it
+    ran out in or before this folder and the counts are a floor."""
     if not path.is_dir():
         return {"path": str(path), "files": None, "bytes": None, "capped": False}
-    files = size = seen = 0
+    files = size = 0
     stack = [path]
     while stack:
         here = stack.pop()
@@ -639,9 +665,9 @@ def _folder(path: Path) -> dict:
         except OSError:
             continue
         for e in entries:
-            seen += 1
-            if seen > STORAGE_WALK_MAX:
+            if budget[0] <= 0:
                 return {"path": str(path), "files": files, "bytes": size, "capped": True}
+            budget[0] -= 1
             try:
                 if e.is_dir(follow_symlinks=False):
                     stack.append(Path(e.path))
@@ -670,8 +696,9 @@ def _storage(now: datetime) -> dict:
             files[kind] = {"path": str(path), "bytes": path.stat().st_size}
         except OSError:
             files[kind] = {"path": str(path), "bytes": None}
-    datasets = {name: {"raw": _folder(raw_root.joinpath(*name.split("/"))),
-                       "parquet": _folder(parquet_root.joinpath(*name.split("/")))} for name in _datasets()}
+    budget = [STORAGE_WALK_BUDGET]
+    datasets = {name: {"raw": _folder(raw_root.joinpath(*name.split("/")), budget),
+                       "parquet": _folder(parquet_root.joinpath(*name.split("/")), budget)} for name in _datasets()}
     out = {"roots": {"raw": str(raw_root), "parquet": str(parquet_root), "ssd": str(config.MARKET_DIR)},
            "files": files, "datasets": datasets}
     _STORAGE_CACHE["storage"] = (key, out)

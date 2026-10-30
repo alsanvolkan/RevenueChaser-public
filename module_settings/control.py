@@ -231,7 +231,7 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None) -
         _tile("never", "none", count(by["never"]), "never ran", "never"),
         _tile("problems", "neu", count(problems), "open problems in total · build_issues, one per row", "problems"),
         _tile("session", "ok" if bars_ok else "warn", day_words(newest) if newest else "none",
-              (f"newest session in prices · {count(sessions[newest])} names have a bar on it" if newest
+              (f"newest session in prices · {count(sum(sessions[newest].values()))} names have a bar on it" if newest
                else "no session in prices yet: price_bar_daily holds no bar"), "session"),
         _tile("queue", "ops", count(len(queue)), "waiting or running in the queue", "queue"),
         _tile("builder", "none" if silent is None else ("bad" if silent > BUILDER_SILENT_MINUTES else "ok"),
@@ -303,11 +303,13 @@ def universe(nd: dict, applied: dict | None) -> dict:
                 "on": bool(inc_bits & board_settings.UNIVERSE_INCLUDE_BITS[k])}
                for k in board_settings.UNIVERSE_INCLUDE_BITS]
     size = sum(int(s["n"] or 0) for s in sets if s["on"])
+    on_keys = {s["key"] for s in sets if s["on"]}
     sessions = nd.get("sessions") or {}
     newest = max(sessions) if sessions else None
     default = set_bits == every_set and inc_bits == every_group
     return {"sets": sets, "include": include, "size": size, "total": u.get("total"), "default": default,
-            "filled": sessions.get(newest) if newest else None, "tickers": u.get("tickers") or {},
+            "filled": sum(n for k, n in sessions[newest].items() if k in on_keys) if newest else None,
+            "tickers": u.get("tickers") or {},
             "as_of": ((nd.get("identity") or {}).get("as_of")), "set_bits": set_bits, "include_bits": inc_bits,
             "fill_enabled": screen.fill_enabled()}
 
@@ -515,7 +517,7 @@ def flow(file_views: list[dict], datasets: dict, reads: dict, universe_view: dic
             if not meta or meta.step not in steps:
                 continue
             for pid in getattr(ds, "providers", ()) or ():
-                it = items.setdefault(pid, {"name": screen.PROVIDERS[pid].name, "steps": [], "plan": False,
+                it = items.setdefault(pid, {"name": _provider_name(pid), "steps": [], "plan": False,
                                             "what": [], "icon": ICONS.get(pid, "")})
                 if str(meta.step) not in it["steps"]:
                     it["steps"].append(str(meta.step))
