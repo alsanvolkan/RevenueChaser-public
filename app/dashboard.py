@@ -1448,35 +1448,31 @@ def _request_days(raw_from, raw_to) -> tuple[dict, str | None]:
     return out, None
 
 
-# A name list longer than the whole listed universe (about 7,700 names) is a mistake, not an ask.
-SCOPE_NAMES_MAX = 20_000
-
-
-def _request_scope(raw_tiers, raw_names) -> tuple[dict, str | None]:
+def _request_scope(raw_tiers, raw_names, raw_include=None) -> tuple[dict, str | None]:
     """``{"tiers": [...], "names": [...]}`` of a Fetch press (#265), checked here so the queue holds only a request
     the builder can run. A comma-separated string is accepted from the query string, a JSON body sends a list.
 
     The normalising itself is ``rcdata.build.base.parse_scope``'s, the builder's own reader, so the page and the
-    builder cannot disagree about what a tier or a name is.
+    builder cannot disagree about what a tier or a name is - the list's own bound (``base.NAMES_MAX``) included,
+    which used to be checked here and nowhere else (review F5 of #294).
     """
     from RevenueChaser.rcdata.build import base
 
     out = {}
-    for raw, key in ((raw_tiers, "tiers"), (raw_names, "names")):
+    for raw, key in ((raw_tiers, "tiers"), (raw_names, "names"), (raw_include, "include")):
         if raw is None:
             continue
         values = [p for p in raw.split(",") if p.strip()] if isinstance(raw, str) else raw
         if not isinstance(values, (list, tuple)):
             return {}, f"{key} must be a list"
         out[key] = list(values)
-    if len(out.get("names") or ()) > SCOPE_NAMES_MAX:
-        return {}, f"names holds more than {SCOPE_NAMES_MAX} names"
     try:
         asked = base.parse_scope(out)
     except ValueError as e:
-        key = "tiers" if "tier" in str(e) else "names"
+        key = next((k for k in ("tiers", "include") if k[:-1] in str(e) or k in str(e)), "names")
         return {}, f"{key}: {e}"
-    return {k: list(v) for k, v in (("tiers", asked.tiers), ("names", asked.names)) if v}, None
+    return {k: list(v) for k, v in (("tiers", asked.tiers), ("names", asked.names),
+                                    ("include", asked.include)) if v}, None
 
 
 @app.route("/api/build/request/<path:dataset>", methods=["POST"])
@@ -1508,7 +1504,7 @@ def api_build_request(dataset: str):
     if problem:
         return jsonify({"ok": False, "error": problem}), 400
     params.update(days)
-    scope, problem = _request_scope(given("tiers"), given("names"))
+    scope, problem = _request_scope(given("tiers"), given("names"), given("include"))
     if problem:
         return jsonify({"ok": False, "error": problem}), 400
     params.update(scope)

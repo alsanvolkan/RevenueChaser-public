@@ -186,6 +186,19 @@ def test_a_comma_separated_scope_is_the_same_as_a_list(client):
     assert _params(client) == {"tiers": ["A", "B"], "names": ["KO"]}
 
 
+def test_the_extra_groups_are_carried_too(client):
+    """Karar 82: a narrowed fill asks only what it names, so the benchmarks, the watch list and the cover classes
+    are groups a request names for itself."""
+    assert client.post("/api/build/request/alpaca/bars", json={"include": ["Anchors"]}).status_code == 202
+    assert _params(client) == {"include": ["anchors"]}
+
+
+def test_an_unknown_group_is_refused_at_the_route(client):
+    r = client.post("/api/build/request/alpaca/bars", json={"include": ["etfs"]})
+    assert r.status_code == 400 and "include" in r.get_json()["error"]
+    assert not ops.ops_path().exists() or _rows() == []
+
+
 @pytest.mark.parametrize("body, word", [
     ({"tiers": ["Z"]}, "tiers"),
     ({"tiers": {"A": 1}}, "tiers"),

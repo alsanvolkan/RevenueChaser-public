@@ -60,6 +60,14 @@ class SourceError(RuntimeError):
     """A provider answer the dataset cannot use (an HTTP failure after retries, an empty or malformed body)."""
 
 
+class NothingInScope(SourceError):
+    """The request's scope names nothing this dataset can ask for: a ``skipped`` check row, not a failure.
+
+    ``tiers=["B"]`` on a float dataset is a legitimate request whose true answer is "a fund has no float", and a
+    failed row blaming the spine reads on the Data screen as a broken build (review F4 of #294).
+    """
+
+
 class CapReached(SourceError):
     """A provider reached its day cap during the run: nothing more is sent to it today."""
 
@@ -86,6 +94,14 @@ def parquet_root() -> Path:
 
 # The spine's tiers, in the order they are reported (``rcdata/build/spine/tier.py``).
 TIERS = ("A", "B", "C", "D")
+# More names than the whole listed universe (about 7,700) is a mistake, not an ask. Checked here, where the one
+# reader is, so the CLI's ``--names`` and a hand-written queue row are bounded too (review F5 of #294).
+NAMES_MAX = 20_000
+# The named groups a request may ask for besides the tiers and the names: the benchmarks and the rotation ETFs
+# (``anchors``), the stock watch list, and the other listed classes of a Tier A issuer. A request that names
+# nothing is the daily run and gets all three; a narrowed one gets only what it names (avo's Karar 82,
+# 30 Oct 2026, review F2 of #294).
+SCOPE_GROUPS = ("anchors", "watchlist", "cover_classes")
 
 
 @dataclass(frozen=True)
@@ -97,13 +113,15 @@ class Scope:
     """
     tiers: tuple[str, ...] = ()
     names: tuple[str, ...] = ()
+    include: tuple[str, ...] = ()
 
     def __bool__(self) -> bool:
-        return bool(self.tiers or self.names)
+        return bool(self.tiers or self.names or self.include)
 
     def text(self) -> str:
         parts = [f"tiers {'+'.join(self.tiers)}" if self.tiers else "",
-                 f"{len(self.names)} name{'s' if len(self.names) != 1 else ''}" if self.names else ""]
+                 f"{len(self.names)} name{'s' if len(self.names) != 1 else ''}" if self.names else "",
+                 "+".join(self.include) if self.include else ""]
         return ", ".join(p for p in parts if p) or "no scope"
 
 
@@ -116,13 +134,16 @@ def parse_scope(params: dict) -> Scope:
     """
     raw_tiers = params.get("tiers") or ()
     raw_names = params.get("names") or ()
-    for value, what in ((raw_tiers, "tiers"), (raw_names, "names")):
+    raw_include = params.get("include") or ()
+    for value, what in ((raw_tiers, "tiers"), (raw_names, "names"), (raw_include, "include")):
         if isinstance(value, str) or not isinstance(value, (list, tuple)):
             raise ValueError(f"{what} must be a list, not {type(value).__name__}")
     tiers = {str(t).strip().upper() for t in raw_tiers}
     unknown = sorted(t for t in tiers if t not in TIERS)
     if unknown:
         raise ValueError(f"unknown tier {', '.join(unknown)}: the spine has {', '.join(TIERS)}")
+    if len(raw_names) > NAMES_MAX:
+        raise ValueError(f"names holds {len(raw_names)} names, more than {NAMES_MAX}")
     names, seen = [], set()
     for n in raw_names:
         name = str(n).strip().upper()
@@ -131,7 +152,12 @@ def parse_scope(params: dict) -> Scope:
         if name not in seen:
             seen.add(name)
             names.append(name)
-    return Scope(tiers=tuple(t for t in TIERS if t in tiers), names=tuple(names))
+    include = {str(g).strip().lower() for g in raw_include}
+    unknown = sorted(g for g in include if g not in SCOPE_GROUPS)
+    if unknown:
+        raise ValueError(f"unknown include group {', '.join(unknown)}: one of {', '.join(SCOPE_GROUPS)}")
+    return Scope(tiers=tuple(t for t in TIERS if t in tiers), names=tuple(names),
+                 include=tuple(g for g in SCOPE_GROUPS if g in include))
 
 
 def honours_scope(ds) -> bool:
@@ -636,6 +662,8 @@ def _run(ctx: RunContext, ds, req: dict, params: dict) -> dict:
             raise ValueError(f"unknown mode {mode!r}")
         check = build_kind(ctx, ds)
         status = "ok"
+    except NothingInScope as e:
+        return _finish(ctx, req, {"result": "skipped", "note": f"skipped: {e}"}, "skipped", None)
     except Exception as e:  # noqa: BLE001 - every failure becomes a failed check row, never a half-swapped file
         logger.exception("%s run %s failed", req["dataset"], ctx.run_id)
         error = f"{type(e).__name__}: {e}"[:500]

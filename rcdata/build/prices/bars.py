@@ -33,7 +33,7 @@ import duckdb
 from ....core import calendar
 from .. import base
 from ..sources import alpaca
-from . import KIND, alpaca_symbol, scope, stage
+from . import DEFAULT_TIERS, KIND, alpaca_symbol, scope, stage
 
 NAME = "alpaca/bars"
 WINDOW = 5
@@ -116,7 +116,12 @@ class AlpacaBars:
         if not calendar.bars_complete(as_of, now.timestamp()):
             raise base.SourceError(f"the session of {as_of} is not complete yet (16:30 New York): not fetched")
         names = scope(want=ctx.scope)
-        if not ctx.scope.names and not any(n.get("tier") for n in names):
+        # A scope that matches nothing is the request's own doing (a skipped row); the daily run finding no tiered
+        # name at all is a broken spine (a failed one). Not "any tier whatsoever": the benchmarks carry the spine's
+        # own tier, so SPY alone used to pass this and a ``tiers=["D"]`` press spent 70 symbols' calls (review F1).
+        if not names:
+            raise base.NothingInScope(f"{ctx.scope.text()} matches no name: nothing to ask")
+        if not ctx.scope and not any(n.get("tier") in DEFAULT_TIERS for n in names):
             raise base.SourceError("the spine holds no name of the asked tiers (spine.duckdb not built?): "
                                    "nothing to ask")
         folder = raw_dir(as_of)
@@ -287,9 +292,15 @@ class AlpacaBars:
         added, removed = stage.compare_live(con, "price_bar_daily", cols, f"source = '{NAME}'")
         p = ctx.pending.get(NAME) or {}
         as_of = p.get("as_of") or (ctx.as_of or self.default_as_of()).isoformat()
+        coverage = round(p["with_bar"] / p["asked"], 4) if p.get("asked") else None
+        if ctx.scope:
+            # The acceptance (">= 99% of Tier A") is read off this row, and a narrow fill's share is not the
+            # universe's: a one-name fill would leave it at 1.0 or 0.0 until the next daily run (review F6).
+            ctx.notes.append(f"scope {ctx.scope.text()}: no coverage for this run, it is not the universe's")
+            coverage = None
         return {"dataset": NAME, "result": "changed" if added or removed else "unchanged", "source_as_of": as_of,
                 "rows": stage.count(con, "stg_alpaca_bars"), "added": added, "removed": removed,
-                "coverage": round(p["with_bar"] / p["asked"], 4) if p.get("asked") else None}
+                "coverage": coverage}
 
 
 DATASET = AlpacaBars()

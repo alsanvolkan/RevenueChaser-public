@@ -187,10 +187,13 @@ def test_a_request_can_ask_exactly_its_own_names(spine, monkeypatch):
     assert by["ZZZZ"]["security_id"] == "sym:ZZZZ", "a name the spine does not hold is still asked, under its symbol"
 
 
-def test_a_name_list_wins_over_a_tier_in_the_same_request(spine, monkeypatch):
+def test_a_tier_and_a_name_list_in_one_request_are_both_asked(spine, monkeypatch):
+    """Karar 82 replaced the earlier "a name list wins over the tiers" rule: a request that names both means both
+    ("tier B, and these two names besides"), and each name is asked once."""
     monkeypatch.setattr(prices, "cover_classes", lambda rows: [])
-    rows = prices.scope(watched=set(), want=base.Scope(tiers=("A", "B"), names=("AAPL",)))
-    assert _tickers(rows) == ["AAPL"]
+    rows = prices.scope(watched=set(), want=base.Scope(tiers=("B",), names=("AAPL", "ZZZZ")))
+    assert _tickers(rows) == ["AAPL", "SPY", "ZZZZ"]
+    assert _tickers(prices.scope(watched=set(), want=base.Scope(tiers=("A",), names=("AAPL",)))).count("AAPL") == 1
 
 
 def test_the_bars_ask_the_requests_names_and_nothing_else(spine, monkeypatch):
@@ -209,13 +212,15 @@ def test_the_bars_ask_the_requests_names_and_nothing_else(spine, monkeypatch):
 
 def test_a_scope_no_spine_row_answers_is_a_clear_refusal_before_any_call(monkeypatch):
     """No spine file (or a tier it holds nothing of): the benchmarks and the rotation ETFs alone are not a bar run,
-    and the refusal says so instead of asking Alpaca for five symbols."""
+    and the refusal says so instead of asking Alpaca for five symbols. With a scope it is the request's own doing,
+    so it is ``NothingInScope`` (a skipped row) rather than a failure - see the two F1 cases below, which the
+    review showed this one was too weak to catch on its own."""
     from RevenueChaser.rcdata.build.prices import bars
 
     monkeypatch.setattr(bars.calendar, "bars_complete", lambda day, now: True)
     monkeypatch.setattr(prices, "cover_classes", lambda rows: [])
     ctx = base.RunContext(run_id="t", dataset=bars.NAME, scope=base.Scope(tiers=("D",)))
-    with pytest.raises(base.SourceError, match="no name of the asked tiers"):
+    with pytest.raises(base.NothingInScope, match="tiers D matches no name"):
         bars.DATASET.fetch(ctx, date(2026, 10, 28))
 
 
@@ -242,3 +247,218 @@ def test_the_other_tiers_coverage_is_reported_beside_tier_as(spine):
     assert ctx.notes == ["1 of 2 Tier A names with a bar on 2026-10-28",
                          "1 of 1 Tier B names with a bar on 2026-10-28",
                          "0 of 1 Tier C names with a bar on 2026-10-28"]
+
+
+# ── The independent review of 2488db1 ──────────────────────────────────────────────────────────────────────────
+
+def test_f1_a_tier_the_spine_holds_nothing_of_is_refused_with_the_spine_in_place(spine, monkeypatch):
+    """F1. The guard asked whether *any* returned name carried *any* tier, and the benchmarks and rotation ETFs are
+    added beside the tier loop from the spine's own rows - so SPY alone satisfied it and a ``tiers=["D"]`` request
+    spent 70 symbols' worth of calls twice. The earlier case passed only because it did not write a spine, which is
+    the stub the review's probe went around."""
+    from RevenueChaser.rcdata.build.prices import bars
+
+    asked = []
+    monkeypatch.setattr(prices, "cover_classes", lambda rows: [])
+    monkeypatch.setattr(bars.AlpacaBars, "_ask", lambda *a, **k: asked.append(1) or [])
+    monkeypatch.setattr(bars.calendar, "bars_complete", lambda day, now: True)
+    ctx = base.RunContext(run_id="t", dataset=bars.NAME, scope=base.Scope(tiers=("D",)))
+    with pytest.raises(base.NothingInScope, match="tiers D"):
+        bars.DATASET.fetch(ctx, date(2026, 10, 28))
+    assert asked == [], "the run asked Alpaca for the benchmarks of a tier nobody asked for"
+    # The tiers that do hold names are unaffected.
+    ctx = base.RunContext(run_id="t", dataset=bars.NAME, scope=base.Scope(tiers=("B",)))
+    bars.DATASET.fetch(ctx, date(2026, 10, 28))
+    assert asked, "a tier the spine holds was refused"
+
+
+def test_f1_no_spine_at_all_is_still_a_failure_not_a_skip(monkeypatch):
+    """The two cases must not collapse into one: an empty scope with no spine file is a broken build (a failed
+    check row), while a scope the spine answers nothing for is the request's own doing (skipped)."""
+    from RevenueChaser.rcdata.build.prices import bars
+
+    monkeypatch.setattr(prices, "cover_classes", lambda rows: [])
+    monkeypatch.setattr(bars.calendar, "bars_complete", lambda day, now: True)
+    ctx = base.RunContext(run_id="t", dataset=bars.NAME)
+    with pytest.raises(base.SourceError, match="spine") as e:
+        bars.DATASET.fetch(ctx, date(2026, 10, 28))
+    assert not isinstance(e.value, base.NothingInScope)
+
+
+def test_f4_a_scope_this_dataset_can_ask_nothing_for_is_skipped_not_failed(recorder, monkeypatch):
+    """F4. ``tiers=["B"]`` on a float dataset is a legitimate request whose true answer is "a fund has no float".
+    It used to end as a **failed** check row blaming the spine, which on the Data screen reads as a broken build."""
+    def fetch(self, ctx, as_of):
+        raise base.NothingInScope("no Tier A name in the scope: a fund has no float")
+    monkeypatch.setattr(type(recorder), "fetch", fetch)
+    row = base.run_request({"dataset": recorder.name, "params": {"tiers": ["B"]}})
+    assert row["result"] == "skipped" and "a fund has no float" in row["note"]
+
+
+def test_f3_a_scoped_float_run_does_not_occupy_the_days_raw_file(spine, monkeypatch):
+    """F3. ``uw/total_float`` writes one raw file a day and returned it before looking at the scope, so a
+    ``names=["KO"]`` press wrote a one-row file and the day's later full run handed that same file back: the day
+    ended with a float for one name and a check row that looked normal."""
+    from RevenueChaser.rcdata.build.prices import floats
+
+    sent = []
+
+    class _Res:
+        status, error = "ok", None
+
+        def __init__(self, data):
+            self.data = data
+
+    class _Client:
+        def short_screener_result(self, names):
+            sent.append(sorted(names))
+            return _Res({n: {"total_float": 1_000.0} for n in names})
+
+    monkeypatch.setattr(prices, "cover_classes", lambda rows: [])
+    monkeypatch.setattr(base.RunContext, "uw_client", lambda self: _Client())
+    day = date(2026, 10, 28)
+    narrow = base.RunContext(run_id="t1", dataset=floats.UW, scope=base.Scope(names=("AAPL",)))
+    whole = base.RunContext(run_id="t2", dataset=floats.UW)
+    ds = floats.UW_FLOAT
+    assert ds.raw_path(day, narrow.scope) != ds.raw_path(day), "a scoped run writes the day's only file"
+    ds.fetch(narrow, day)
+    ds.fetch(whole, day)
+    assert sent == [["AAPL"], ["AAPL", "BRK-B", "FLG", "GAPX"]], \
+        "the day's full run was handed the narrow run's file and asked UW for nothing"
+    # Asking the same narrow scope again is still a no-op: the raw file is that ask's own resume marker.
+    ds.fetch(base.RunContext(run_id="t3", dataset=floats.UW, scope=base.Scope(names=("AAPL",))), day)
+    assert len(sent) == 2
+
+
+def test_f5_the_name_cap_is_the_one_readers_own(monkeypatch):
+    """F5. The cap was checked in the route only, so the CLI's ``--names`` and a hand-written queue row were
+    uncapped. It belongs where the one reader is."""
+    assert base.NAMES_MAX == 20_000
+    with pytest.raises(ValueError, match="names"):
+        base.parse_scope({"names": [f"T{i}" for i in range(base.NAMES_MAX + 1)]})
+    assert len(base.parse_scope({"names": [f"T{i}" for i in range(base.NAMES_MAX)]}).names) == base.NAMES_MAX
+
+
+def test_f6_a_narrow_fills_coverage_is_not_reported_as_the_universes(spine, monkeypatch):
+    """F6. ``coverage`` is the number a person reads the ">= 99% of Tier A" acceptance off, and it was written per
+    request - so a one-name fill left the dataset's newest check row at 1.0 or 0.0 until the next daily run."""
+    from RevenueChaser.rcdata.build.prices import bars
+
+    monkeypatch.setattr(bars.stage, "compare_live", lambda *a, **k: (0, 0))
+    monkeypatch.setattr(bars.stage, "count", lambda *a, **k: 1)
+    ctx = base.RunContext(run_id="t", dataset=bars.NAME, as_of=date(2026, 10, 28))
+    ctx.pending[bars.NAME] = {"as_of": "2026-10-28", "asked": 1, "with_bar": 1}
+    assert bars.DATASET.check(ctx, None)["coverage"] == 1.0, "the daily run reports its coverage as before"
+    scoped = base.RunContext(run_id="t", dataset=bars.NAME, as_of=date(2026, 10, 28),
+                             scope=base.Scope(names=("AAPL",)))
+    scoped.pending[bars.NAME] = {"as_of": "2026-10-28", "asked": 1, "with_bar": 1}
+    row = bars.DATASET.check(scoped, None)
+    assert row["coverage"] is None and any("scope" in n for n in scoped.notes)
+
+
+def test_f4_the_float_refusal_names_the_scope_not_the_spine(spine, monkeypatch):
+    """The other half of F4, which the first round's mutation check found untested: with a spine in place and a
+    tier that holds no company, the float run must blame the scope (and be skipped), not the spine file."""
+    from RevenueChaser.rcdata.build.prices import floats
+
+    monkeypatch.setattr(prices, "cover_classes", lambda rows: [])
+    ctx = base.RunContext(run_id="t", dataset=floats.UW, scope=base.Scope(tiers=("B",)))
+    with pytest.raises(base.NothingInScope, match="a fund has no float"):
+        floats.UW_FLOAT.fetch(ctx, date(2026, 10, 28))
+    with pytest.raises(base.NothingInScope, match="a fund has no float"):
+        floats.YAHOO_FLOAT.fetch(base.RunContext(run_id="t", dataset=floats.YAHOO,
+                                                 scope=base.Scope(tiers=("B",))), date(2026, 10, 28))
+
+
+# ── Karar 82 (avo, 30 Oct 2026): a narrowed fill asks only what it names ───────────────────────────────────────
+
+def test_karar_82_a_narrowed_fill_asks_no_benchmark_no_watch_list_and_no_cover_class(spine, monkeypatch):
+    """Review F2, avo's option A: ``tiers=["B"]`` used to ask 2,015 names **plus** every Tier A issuer's other
+    listed class and about 70 ETFs, which is the opposite of #265's point. The three extras are their own scopes
+    now and a narrowed fill does not get them for free."""
+    monkeypatch.setattr(prices, "cover_classes", lambda rows: [{"ticker": "BRK-A", "cik": "1067983", "tier": None,
+                                                                "security_id": "class:1067983:a"}])
+    rows = prices.scope(watched={"NVDA"}, want=base.Scope(tiers=("B",)))
+    assert _tickers(rows) == ["SPY"], "a tier fill asked something it did not name"
+
+
+def test_karar_82_the_anchors_are_a_scope_of_their_own(spine, monkeypatch):
+    monkeypatch.setattr(prices, "cover_classes", lambda rows: [])
+    rows = prices.scope(watched={"NVDA"}, want=base.Scope(include=("anchors",)))
+    assert set(_tickers(rows)) == {*prices.BENCHMARKS, *prices.ROTATION}
+    assert "AAPL" not in _tickers(rows) and "NVDA" not in _tickers(rows)
+
+
+def test_karar_82_the_watch_list_and_the_cover_classes_are_scopes_too(spine, monkeypatch):
+    monkeypatch.setattr(prices, "cover_classes", lambda rows: [{"ticker": "BRK-A", "cik": "1067983", "tier": None,
+                                                                "security_id": "class:1067983:a"}])
+    assert _tickers(prices.scope(watched={"NVDA"}, want=base.Scope(include=("watchlist",)))) == ["NVDA"]
+    assert _tickers(prices.scope(watched={"NVDA"}, want=base.Scope(include=("cover_classes",)))) == ["BRK-A"]
+    # And they compose with a tier.
+    rows = prices.scope(watched={"NVDA"}, want=base.Scope(tiers=("A",), include=("watchlist",)))
+    assert "NVDA" in _tickers(rows) and "AAPL" in _tickers(rows) and "SPY" not in _tickers(rows)
+
+
+def test_karar_82_the_daily_run_with_no_scope_is_unchanged(spine, monkeypatch):
+    """The one thing that must not move: a request that names nothing is the daily run, which asks the tiers and
+    all three extras."""
+    monkeypatch.setattr(prices, "cover_classes", lambda rows: [{"ticker": "BRK-A", "cik": "1067983", "tier": None,
+                                                                "security_id": "class:1067983:a"}])
+    rows = _tickers(prices.scope(watched={"NVDA"}))
+    assert {"AAPL", "SPY", "NVDA", "BRK-A", *prices.BENCHMARKS} <= set(rows)
+
+
+def test_karar_82_the_watch_list_is_not_read_when_it_was_not_asked_for(spine, monkeypatch):
+    """A tier fill must not even open the watch list: the read is a store call, and asking for it is the request's
+    choice now."""
+    monkeypatch.setattr(prices, "cover_classes", lambda rows: [])
+    calls = []
+
+    def fake_watched(kind):
+        calls.append(kind)
+        return set()
+    from RevenueChaser.rcdata import read
+    monkeypatch.setattr(read, "watched", fake_watched)
+    prices.scope(want=base.Scope(tiers=("A",)))
+    assert calls == []
+    prices.scope(want=base.Scope(include=("watchlist",)))
+    assert calls == ["stock"]
+
+
+def test_karar_82_the_groups_a_request_may_name_are_checked():
+    s = base.parse_scope({"include": ["Anchors", "watchlist", "anchors"]})
+    assert s.include == ("anchors", "watchlist") and s
+    assert base.SCOPE_GROUPS == ("anchors", "watchlist", "cover_classes")
+    with pytest.raises(ValueError, match="include"):
+        base.parse_scope({"include": ["etfs"]})
+
+
+def test_karar_82_a_tier_fill_that_matches_nothing_is_refused_before_a_call(spine, monkeypatch):
+    """With the extras gone from a narrowed fill, ``tiers=["D"]`` returns nothing at all - so the refusal is the
+    plain "this scope matches no name", with no benchmark left to hide it."""
+    from RevenueChaser.rcdata.build.prices import bars
+
+    asked = []
+    monkeypatch.setattr(prices, "cover_classes", lambda rows: [])
+    monkeypatch.setattr(bars.AlpacaBars, "_ask", lambda *a, **k: asked.append(1) or [])
+    monkeypatch.setattr(bars.calendar, "bars_complete", lambda day, now: True)
+    ctx = base.RunContext(run_id="t", dataset=bars.NAME, scope=base.Scope(tiers=("D",)))
+    with pytest.raises(base.NothingInScope, match="no name"):
+        bars.DATASET.fetch(ctx, date(2026, 10, 28))
+    assert asked == []
+
+
+def test_a_spine_with_no_name_of_the_asked_tiers_is_a_failure_even_if_a_benchmark_has_a_tier(monkeypatch):
+    """The daily run's guard must count the tiers it asked for. A spine holding only names outside A+B still gives
+    the benchmarks a tier (SPY as Tier C here), so "does any name carry any tier" would pass and the run would ask
+    Alpaca for five ETFs and call that a bars run."""
+    from RevenueChaser.rcdata.build.prices import bars
+
+    prices_fixture.write_spine([{"ticker": "SPY", "cik": "884394", "name": "SPDR S&P 500 ETF TRUST",
+                                 "exchange": "NYSE", "tier": "C", "security_type": "etf", "gvkey": None,
+                                 "iid": None, "composite_figi": None}])
+    monkeypatch.setattr(prices, "cover_classes", lambda rows: [])
+    monkeypatch.setattr(bars.calendar, "bars_complete", lambda day, now: True)
+    ctx = base.RunContext(run_id="t", dataset=bars.NAME)
+    with pytest.raises(base.SourceError, match="no name of the asked tiers"):
+        bars.DATASET.fetch(ctx, date(2026, 10, 28))

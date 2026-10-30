@@ -1206,9 +1206,14 @@ count; Tier B's own coverage is reported beside it and is not part of the accept
 may have no Alpaca bar.
 
 **A request's own scope (#265).** A queued request carries what it asks for, so a fill does not mean editing the
-code: `{"tiers": ["A", "B"], "names": ["KO"], "mode": "backfill", "from": ..., "to": ...}`. `tiers` replaces
-`DEFAULT_TIERS`; `names` is the whole ask, exactly those tickers and nothing beside them (a name the spine does not
-hold is asked under `sym:<ticker>`). `rcdata.build.base.parse_scope` is the one reader of it and
+code: `{"tiers": ["A", "B"], "names": ["KO"], "include": ["anchors"], "mode": "backfill", "from": ..., "to": ...}`.
+A request that names nothing is the daily run: `DEFAULT_TIERS`, the benchmarks and rotation ETFs, the stock watch
+list and the Tier A issuers' other listed classes. **A request that names something gets only what it names**
+(avo's Karar 82, 30 Oct 2026): its `tiers`, its `names` (a name the spine does not hold is asked under
+`sym:<ticker>`), and whichever of the three groups it lists in `include` — `anchors` (the benchmarks and the
+rotation ETFs), `watchlist`, `cover_classes`. So `tiers=["B"]` is 2,015 names, not 2,015 plus every Tier A
+issuer's other class plus about 70 ETFs. A narrowed run leaves `coverage` empty on its check row and says so in a
+note, because the acceptance is read off that number and a one-name fill is not the universe's share. `rcdata.build.base.parse_scope` is the one reader of it and
 `RunContext.scope` is how a dataset sees it; the Fetch route (`POST /api/build/request/<dataset>`) takes the same
 keys from its JSON body or query string. Three datasets narrow their fetch to it today: `alpaca/bars` (tiers and
 names), `yfinance/float` and `uw/total_float` (a name list; otherwise the scope's Tier A names, because a fund has

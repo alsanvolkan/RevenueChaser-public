@@ -18,8 +18,9 @@ last dataset of the kind, ``prices/serving``, builds the served tables and the b
 - ``prices/serving``: no fetch; the served tables, the views under the old ``prices.duckdb`` names, and the build
   issues (``serving.ISSUE_KINDS``), synced to ``ops.sqlite`` once the new file is live.
 
-**The scope** of the daily fetches is the spine's Tier A and B (``DEFAULT_TIERS``), the three benchmarks, the rotation ETFs the old nightly
-kept bars for, the stock watch list, and the other listed classes the SEC covers name for a Tier A issuer (``scope``).
+**The scope** of the daily fetches is the spine's Tier A and B (``DEFAULT_TIERS``), the three benchmarks, the
+rotation ETFs the old nightly kept bars for, the stock watch list, and the other listed classes the SEC covers
+name for a Tier A issuer (``scope``). A request may narrow it to its own tiers or names (#265).
 The spine is read from its live file, read-only.
 
 **The security id** keys every served table: ``<gvkey>:<iid>`` when the spine links the ticker to Compustat, else
@@ -131,40 +132,54 @@ def cover_classes(rows: list[dict]) -> list[dict]:
 
 
 def scope(rows: list[dict] | None = None, watched: set[str] | None = None,
-          want=None) -> list[dict]:
+          want: "base.Scope | None" = None) -> list[dict]:
     """The names the daily fetches ask for, as ``{ticker, cik, tier, security_id, ...}``.
 
-    Without a request's scope (``want``, ``base.Scope``): the spine's ``DEFAULT_TIERS``, then the benchmarks, the
-    rotation ETFs and the stock watch list (any tier), then the other listed classes of the Tier A issuers
-    (``cover_classes``), each once. A benchmark, ETF or watched name the spine does not hold is asked under its
-    ticker alone (``sym:<ticker>``).
+    A request that names nothing (``want`` empty) is the daily run: the spine's ``DEFAULT_TIERS``, then the
+    benchmarks and the rotation ETFs (``anchors``), the stock watch list, and the other listed classes the SEC
+    covers name for a Tier A issuer (``cover_classes``), each name once. A benchmark, ETF or watched name the
+    spine does not hold is asked under its ticker alone (``sym:<ticker>``).
 
-    With a scope (#265): ``want.names`` is the whole ask, exactly those names and nothing beside them, so a fill of
-    ten tickers sends ten tickers' worth of calls; else ``want.tiers`` replaces ``DEFAULT_TIERS`` and the rest is
-    unchanged.
+    A request that names something gets **only** what it names (avo's Karar 82, 30 Oct 2026): its ``tiers``, its
+    ``names``, and whichever of the three groups it lists in ``include``. So ``tiers=["B"]`` is 2,015 names and not
+    2,015 plus every Tier A issuer's other class plus 70 ETFs, which was the opposite of #265's point; and
+    ``include=["anchors"]`` alone is a benchmark-only fill.
     """
+    from .. import base
+
     if rows is None:
         rows = spine_rows()
-    if want is not None and want.names:
-        by_ticker = {r["ticker"]: r for r in rows}
-        return [with_id(by_ticker.get(t) or {"ticker": t, "cik": None, "tier": None}) for t in want.names]
-    tiers = tuple(want.tiers) if want is not None and want.tiers else DEFAULT_TIERS
-    if watched is None:
-        from ... import read
-        watched = read.watched("stock")
+    want = want if want is not None else base.Scope()
+    tiers = want.tiers or (() if want else DEFAULT_TIERS)
+    groups = want.include if want else base.SCOPE_GROUPS
     by_ticker = {r["ticker"]: r for r in rows}
     out, seen = [], set()
+
+    def add(ticker: str, row: dict | None = None) -> None:
+        ticker = str(ticker).strip().upper()
+        if not ticker or ticker in seen:
+            return
+        seen.add(ticker)
+        out.append(with_id(row if row is not None else
+                           (by_ticker.get(ticker) or {"ticker": ticker, "cik": None, "tier": None})))
+
     for r in rows:
-        if r.get("tier") in tiers:
-            out.append(with_id(r))
-            seen.add(r["ticker"])
-    for t in (*BENCHMARKS, *ROTATION, *sorted(watched)):
-        t = str(t).strip().upper()
-        if t and t not in seen:
-            seen.add(t)
-            out.append(with_id(by_ticker.get(t) or {"ticker": t, "cik": None, "tier": None}))
-    for r in cover_classes(rows):
-        if r["ticker"] not in seen:
-            seen.add(r["ticker"])
-            out.append(r)
+        if tiers and r.get("tier") in tiers:
+            add(r["ticker"], r)
+    for t in want.names:
+        add(t)
+    if "anchors" in groups:
+        for t in (*BENCHMARKS, *ROTATION):
+            add(t)
+    if "watchlist" in groups:
+        if watched is None:
+            from ... import read
+            watched = read.watched("stock")                 # only when it was asked for: this opens the store
+        for t in sorted(watched):
+            add(t)
+    if "cover_classes" in groups:
+        for r in cover_classes(rows):
+            if r["ticker"] not in seen:
+                seen.add(r["ticker"])
+                out.append(r)                               # already carries its own security_id
     return out
