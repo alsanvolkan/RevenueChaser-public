@@ -446,6 +446,36 @@ def _read_sample(con, table: str, day_column: str | None) -> dict:
     return {"columns": columns, "rows": rows}
 
 
+class SampleUnavailable(LookupError):
+    """The table is one the screen samples, but its serving file is not built, or was built without it."""
+
+
+def read_sample_now(table: str, now: datetime | None = None) -> dict:
+    """The control board's **Refresh the example rows**: one table's newest rows, read again past the hourly cache.
+
+    Only a table the cards sample (``DATE_COLUMN``) is read, through one ``open_read`` handle on its own file; the
+    answer replaces the cached sample, so the next render shows the same rows. ``KeyError`` for any other name,
+    :class:`SampleUnavailable` when the file or the table is not there. No provider, no job, no write.
+    """
+    from RevenueChaser.rcdata import read
+    if table not in DATE_COLUMN or table not in read.KIND_OF_TABLE:
+        raise KeyError(table)
+    kind = read.KIND_OF_TABLE[table]
+    try:
+        con = serving.open_read(kind)
+    except serving.ServingFileMissing:
+        raise SampleUnavailable(f"the {kind} file has not been built yet") from None
+    try:
+        names = {r[0] for r in con.execute("SELECT table_name FROM duckdb_tables()").fetchall()}
+        if table not in names:
+            raise SampleUnavailable(f"the {kind} file has no {table} table yet")
+        sample = _read_sample(con, table, DATE_COLUMN[table])
+    finally:
+        con.close()
+    _SAMPLE_CACHE[table] = (_sample_key(table, now or datetime.now(timezone.utc)), sample)
+    return sample
+
+
 def _sample_block(table: str, sample: dict | None) -> dict:
     """One card's example block. Without a sample the kind's file has never been built, so the declared schema
     stands in for the rows: "never built" and "built and empty" must not read the same (``rcdata/scaffold.py``)."""

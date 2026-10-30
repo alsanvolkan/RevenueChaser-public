@@ -1176,6 +1176,24 @@ def api_settings_ticker(ticker: str):
     return jsonify({"ok": True, **detail})
 
 
+@app.route("/api/settings/sample/<table>")
+def api_settings_sample(table: str):
+    """The control board's **Refresh the example rows**: five rows of one serving table, read again (design v28).
+
+    One read-only handle on the table's own serving file and one SELECT: no job, no provider, no write. A name the
+    cards do not sample is 404; a file or table not built yet is 409 and says which.
+    """
+    from RevenueChaser.module_settings import newdata
+
+    try:
+        sample = newdata.read_sample_now(table)
+    except KeyError:
+        return jsonify({"ok": False, "error": "unknown table"}), 404
+    except newdata.SampleUnavailable as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 409
+    return jsonify({"ok": True, "table": table, **sample})
+
+
 @app.route("/api/module_fundamentals/latest")
 def api_module_fundamentals_latest():
     """Last Fundamental Analysis scan generated_at (for the 'Last run' label)."""
