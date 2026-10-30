@@ -310,24 +310,27 @@ def sets_page(hrefs: list[str]) -> bytes:
 
 def set_filing(accession, cik, filed, holdings, period="30-JUN-2026", form="13F-HR", name=None, amendment_type="",
                amendment_no="", is_amendment="", confidential="N", report_type="13F HOLDINGS REPORT",
-               entries=None) -> dict:
+               entries=None, cover_period=None) -> dict:
     """One filing of a data set: dates ``DD-MON-YYYY``, the CIK zero-padded, ``ISAMENDMENT`` blank by default (as on
-    half the real rows)."""
+    half the real rows); ``cover_period`` when the cover page's period is not the submission header's."""
     return {"accession": accession, "cik": f"{cik:010d}", "filed": filed, "form": form, "period": period,
+            "cover_period": cover_period or period,
             "name": name or f"MANAGER {cik}", "amendment_type": amendment_type, "amendment_no": amendment_no,
             "is_amendment": is_amendment, "confidential": confidential, "report_type": report_type,
             "holdings": holdings, "entries": len(holdings) if entries is None else entries}
 
 
-def f13_set(filings: list[dict], folder: str | None = None, sk_from: int = 133_648_900) -> bytes:
+def f13_set(filings: list[dict], folder: str | None = None, sk_from: int = 133_648_900,
+            without: tuple[str, ...] = ()) -> bytes:
     """A Form 13F data-set zip in the SEC's layout (the columns of 01jun2026-31aug2026_form13f.zip), its members in
-    ``folder`` when given (one real set nests them), plus a member that is not read."""
+    ``folder`` when given (one real set nests them), plus a member that is not read; ``without`` leaves columns out
+    (the sets before 2023 have no ``FIGI``)."""
     rows = {t: [] for t in SET_COLUMNS}
     sk = sk_from
     for f in filings:
         rows["SUBMISSION"].append({"ACCESSION_NUMBER": f["accession"], "FILING_DATE": f["filed"],
                                    "SUBMISSIONTYPE": f["form"], "CIK": f["cik"], "PERIODOFREPORT": f["period"]})
-        rows["COVERPAGE"].append({"ACCESSION_NUMBER": f["accession"], "REPORTCALENDARORQUARTER": f["period"],
+        rows["COVERPAGE"].append({"ACCESSION_NUMBER": f["accession"], "REPORTCALENDARORQUARTER": f["cover_period"],
                                   "ISAMENDMENT": f["is_amendment"], "AMENDMENTNO": f["amendment_no"],
                                   "AMENDMENTTYPE": f["amendment_type"], "FILINGMANAGER_NAME": f["name"],
                                   "REPORTTYPE": f["report_type"]})
@@ -348,7 +351,8 @@ def f13_set(filings: list[dict], folder: str | None = None, sk_from: int = 133_6
                                       "VOTING_AUTH_NONE": "0"})
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        for table, cols in SET_COLUMNS.items():
+        for table, all_cols in SET_COLUMNS.items():
+            cols = tuple(c for c in all_cols if c not in without)
             body = "\t".join(cols) + "\n" + "".join("\t".join(r.get(c, "") for c in cols) + "\n"
                                                    for r in rows[table])
             z.writestr(f"{folder}/{table}.tsv" if folder else f"{table}.tsv", body)
