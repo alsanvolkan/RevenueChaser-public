@@ -66,7 +66,9 @@ UNIVERSE_META_KEY = "__meta__"
 
 # Each board's type filter default (PR 2, the plan's table): True screens operating companies only (the set the
 # board read before PR 2), False the whole A+B universe. A board with an editable setting (``OPERATING_ONLY`` in
-# ``core.board_settings``) reads this as its default; the others pass it as they call.
+# ``core.board_settings``) reads this as its default; the others pass it as they call. Every board whose inputs include
+# ``equity_universe`` (``module_settings.boards.BOARD_INPUTS``) has an entry, so a default is a decision, never the
+# ``.get`` fallback (a test pins it).
 BOARD_OPERATING_ONLY = {
     "module_fundamentals": True,
     "module_swing_potential": True,
@@ -77,6 +79,7 @@ BOARD_OPERATING_ONLY = {
     "module_oipd": True,
     "module_comovement": False,      # return correlation means something for ETFs too
     "module_sec_13f": False,         # 13F holdings hold ETFs
+    "module_sector_rotation": False,  # it screens its own sector ETF list, so a type cut would remove its subject
 }
 
 # The excluded types, grouped into the funnel rows boards show for them:

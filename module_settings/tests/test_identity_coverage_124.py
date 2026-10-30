@@ -216,8 +216,13 @@ def test_the_inputs_are_the_eight_the_plan_names_in_order(rawstore_tmp_db):
 def test_every_input_row_names_its_own_denominator(rawstore_tmp_db):
     _seed()
     for row in _coverage()["inputs"]:
-        assert row["denominator"] == "5 names the funnel keeps", row["key"]
-        assert row["expected"] == 5, row["key"]
+        if row["key"] in ("facts", "annual"):
+            # PR 2 review S1: a fund files neither, so these two count the operating companies, and say so
+            assert row["denominator"] == "4 operating companies the funnel keeps", row["key"]
+            assert row["expected"] == 4, row["key"]
+        else:
+            assert row["denominator"] == "5 names the funnel keeps", row["key"]
+            assert row["expected"] == 5, row["key"]
         assert row["label"] and row["label"][0].isupper(), row["key"]
 
 
@@ -364,7 +369,7 @@ def test_the_section_asks_each_store_summary_once_per_collect(rawstore_tmp_db, m
     with_section = dict(calls)
 
     calls.update(prices=0, quotes=0)
-    monkeypatch.setattr(inventory, "identity_coverage", lambda tickers, now=None: {
+    monkeypatch.setattr(inventory, "identity_coverage", lambda tickers, now=None, operating=None: {
         "names_kept": len(tickers), "funnel": [], "funnel_note": "", "inputs": [], "identifiers": []})
     inventory.collect(now=FIXED)
     without_section = dict(calls)

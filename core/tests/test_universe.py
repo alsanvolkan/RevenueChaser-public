@@ -310,6 +310,15 @@ def test_each_board_has_a_type_filter_default_that_keeps_its_old_set():
         assert d[board] is False, board
 
 
+def test_every_board_that_reads_the_universe_has_a_decided_type_filter_default():
+    """PR 2 review S2: no board reaches its default through the ``.get`` fallback."""
+    from RevenueChaser.module_settings import boards
+    readers = {e["key"] for e in boards.BOARD_INPUTS if "equity_universe" in (e.get("tables") or [])}
+    assert readers, "the registry names the universe's readers"
+    assert readers <= set(universe.BOARD_OPERATING_ONLY), sorted(readers - set(universe.BOARD_OPERATING_ONLY))
+    assert universe.BOARD_OPERATING_ONLY["module_sector_rotation"] is False
+
+
 def test_classification_universe_rows_carries_the_columns_the_peer_ladder_needs(rawstore_tmp_db):
     """FIN-3: comps peers are picked inside the spine, so the reader that feeds them carries sector and industry,
     and (PR 2) the security type, so a board can filter on it.

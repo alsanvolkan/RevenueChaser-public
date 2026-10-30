@@ -992,6 +992,7 @@ def _ticker_detail(ticker: str) -> dict | None:
     cik = (master or {}).get("cik") or next(
         (src["cik"] for src in (sec, sic, filing) if src and src.get("cik")), None)
     cap = universe.get("market_cap") if universe else None
+    in_universe = t in set(classification_universe())
     presence = {
         "edgar_financials": edgar,
         # D01 is the price of record. swing_ohlc is the SPY-fallback cache.
@@ -1006,9 +1007,10 @@ def _ticker_detail(ticker: str) -> dict | None:
         "chain_filings": filing is not None,
         # One universe definition: the very list the boards read (the tiers and the cap rule; every
         # security type since PR 2), not a second copy of the rule.
-        "in_classification_universe": t in set(classification_universe()),
-        # The slice a board with its type filter on reads (PR 2): ``_board_fit`` asks it for those boards.
-        "in_operating_universe": t in set(classification_universe(operating_only=True)),
+        "in_classification_universe": in_universe,
+        # The slice a board with its type filter on reads (PR 2): ``_board_fit`` asks it for those boards. The
+        # universe less the excluded types, as ``_collect`` derives it: one universe read, not two.
+        "in_operating_universe": in_universe and t not in excluded_tickers(),
     }
     return {
         "ticker": t,
@@ -2041,17 +2043,29 @@ def _count_text(n: int, word: str) -> str:
     return f"{int(n):,} {word}" if int(n) == 1 else f"{int(n):,} {word}s"
 
 
-def identity_coverage(tickers: list[str], now: datetime | None = None) -> dict:
+def identity_coverage(tickers: list[str], now: datetime | None = None,
+                      operating: list[str] | None = None) -> dict:
     """S7 (#124): the universe funnel, the inputs the kept names carry, and identifier coverage.
 
     ``tickers`` is ``classification_universe()`` — computed once by ``_collect`` and reused here, so
     the tables count the population the boards screen rather than a second definition of it. A
     stored universe that is ahead of the SEC file is named in the funnel as a note, never dropped.
     Store only, one read per store file.
+
+    ``operating`` is the operating-company slice of ``tickers`` (PR 2): the two company-filing inputs (EDGAR company
+    facts, the annual report) count over it, with a denominator that says so, because a fund or a SPAC files neither
+    and the dataset rows above count their holes over the same slice (review S1). None derives it from
+    ``tickers`` less the excluded types.
     """
     kept = sorted({str(t).upper() for t in (tickers or []) if str(t or "").strip()})
     n_kept = len(kept)
     denominator = f"{_count_text(n_kept, 'name')} the funnel keeps"
+    if operating is None:
+        excluded = excluded_tickers()
+        operating = [t for t in kept if t not in excluded]
+    kept_operating = sorted({str(t).upper() for t in operating if str(t or "").strip()} & set(kept))
+    n_op = len(kept_operating)
+    operating_denominator = f"{n_op:,} operating {'company' if n_op == 1 else 'companies'} the funnel keeps"
 
     present = _present_file_rows()
     funnel, funnel_note = _universe_funnel(set(kept), present, _universe_caps())
@@ -2109,11 +2123,13 @@ def identity_coverage(tickers: list[str], now: datetime | None = None) -> dict:
                                     covered=sum(1 for t in kept if _value(spine.get(t), column)),
                                     expected=n_kept))
 
-    for key, label, table in (("facts", "EDGAR company facts", "edgar_financials"),
-                              ("annual", "Annual report (10-K or 20-F)", "chain_filings"),
-                              ("ownership", "Ownership", "ownership_snapshot")):
-        covered = _covered_from_missing(kept, table)
-        inputs.append(_coverage(key, label, denominator, covered=covered, expected=n_kept,
+    for key, label, table, names, denom in (
+            ("facts", "EDGAR company facts", "edgar_financials", kept_operating, operating_denominator),
+            ("annual", "Annual report (10-K or 20-F)", "chain_filings", kept_operating, operating_denominator),
+            # Ownership is held in funds as in companies (13F holds ETFs), so it counts every kept name.
+            ("ownership", "Ownership", "ownership_snapshot", kept, denominator)):
+        covered = _covered_from_missing(names, table)
+        inputs.append(_coverage(key, label, denom, covered=covered, expected=len(names),
                                 state="" if covered is not None else COVERAGE_UNREADABLE))
 
     # ── the identifier matrix ──
@@ -2372,7 +2388,7 @@ def _collect(now: datetime) -> dict:
         "other_tables": unclaimed_tables(),
         # S7 (#124): the funnel, the inputs and the identifiers, over the same population ``rows``
         # above use (``tickers`` is ``classification_universe()``).
-        "identity_coverage": identity_coverage(tickers, now),
+        "identity_coverage": identity_coverage(tickers, now, operating),
         "errors": list(getattr(_CALL, "errors", None) or []),
         "generated_at": now.isoformat(timespec="seconds"),
         "provider_health": _provider_health(),

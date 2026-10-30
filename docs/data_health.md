@@ -653,7 +653,9 @@ exchange-traded funds, special purpose acquisition companies, and preferred shar
 units — are notes on that set (*Kept, of which: …*), its type mix, never drops: since PR 2 the
 universe keeps every type of Tiers A and B. The coverage rows of the company datasets (the 10-K
 corpus, companyfacts, the Swing bar cache) count the operating-company slice, the names the boards
-that read them screen: a fund has no 10-K to miss.
+that read them screen: a fund has no 10-K to miss. The two company-filing inputs below (EDGAR company
+facts, the annual report) count the same slice and their denominator says so (*N operating companies
+the funnel keeps*); every other input counts every kept name.
 
 Two of those drops are **not** rules and the funnel says so: a listed name the stored universe does
 not hold is the universe being behind the SEC file after a new listing, and a missing market cap is
