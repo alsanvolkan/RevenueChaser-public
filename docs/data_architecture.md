@@ -1045,13 +1045,12 @@ builder's calls are counted: the dashboard's own UW client is not yet.
 The keyless sources send one User-Agent with the contact from `RC_HTTP_CONTACT` (BLS refuses a client without
 one; a 403 names the variable in the source's failure note).
 
-<<<<<<< HEAD
 **Running it.** `python -m RevenueChaser.rcdata.build run [--once] [--dataset X [--as-of D]]`,
 `python -m RevenueChaser.rcdata.build backfill <dataset> --from <date>` and
 `python -m RevenueChaser.rcdata.build attended` (the attended datasets' runner, below).
 
-The store takes one writer at a time, so a start whose turn it is not **waits** for it: the gate (the job locks in
-the store directory, another builder) and the builder lock are one loop. `--wait SECONDS` is how long; a person's
+The store takes one writer at a time, so a start whose turn it is not **waits** for it: the gate (a job lock held
+on a file it writes, another builder) and the builder lock are one loop. `--wait SECONDS` is how long; a person's
 commands (`backfill`, `attended`, and `run --dataset X`) wait 1800 s by default and the hourly pass (`run` with no
 dataset) waits none, because its timer brings the next pass anyway. It exits 3 only when the wait runs out, and
 names the holder it is waiting for, again whenever that changes.
@@ -1061,21 +1060,16 @@ person, and it says so and exits 0 when no attended request is queued rather tha
 for. A person's `backfill <dataset>` and `run --dataset X` run **their own** request for an attended dataset
 (`ops.next_request(by="cli")`), never one a page left for `attended`: that would spend their login and the WRDS day
 cap on somebody else's params. For every other dataset an older queued request still goes first, as it always has.
-=======
-**Running it.** `python -m RevenueChaser.rcdata.build run [--once] [--dataset X [--as-of D]]` and
-`python -m RevenueChaser.rcdata.build backfill <dataset> --from <date>`. It refuses to start (exit 3) while a job
-lock is held **on a file it writes**, or another builder runs.
 
 **Which lock holds which off.** `core/job_lock.WRITES` says which store each writer family writes: `STORE` for the
 old store's DuckDB files under `RC_STORE_DIR` (`raw`, `edgar`, `history`, the legacy `prices`) and `MARKET` for the
 serving files and `ops.sqlite` under `RC_MARKET_DIR`, the builder's. The gate asks `blocking_holders(name)` —
 `holders()` filtered to the families that can meet `name` on a file — so an old-store job (the Relatedness pilot, an
-EDGAR sync, a nightly step) no longer stops the market builder, while a second builder still does. The grain is the
-store and not the single file on purpose: a store is a superset of every family's real file set, so the map can only
-refuse too much, never too little. A family with no entry writes `UNKNOWN` and holds everything off, which is what
-keeps a new writer from slipping past the gate; `core/tests/test_job_lock_names_pl6a.py` fails when a documented
-lock name has no entry.
->>>>>>> origin/main
+EDGAR sync, a nightly step) no longer makes the market builder wait, while a second builder still does. The grain is
+the store and not the single file on purpose: a store is a superset of every family's real file set, so the map can
+only refuse too much, never too little. A family with no entry writes `UNKNOWN` and holds everything off, which is
+what keeps a new writer from slipping past the gate; `core/tests/test_job_lock_names_pl6a.py` fails when a
+documented lock name has no entry.
 
 **The builder as a service (PR 2).** Scheduled jobs run hourly unless avo says otherwise. The registry row
 RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :07, with a 50 min limit, as the
