@@ -148,12 +148,17 @@ def period(a: str, sid: str, day: str) -> str:
 
 
 # The same lookup as an ASOF join: the factor period of a day is the one whose ``valid_to`` is the nearest after it.
-# ``ADJ_SQL`` makes a security's periods contiguous (each ``valid_from`` is the previous row's ``valid_to``, the first
-# NULL) and never leaves ``valid_to`` NULL, so this is the row ``IN_PERIOD`` picks. The range join above is evaluated
-# as a nested loop: on the WRDS history (5.6M bars, 64k factor rows, 30 Oct 2026) one such join took 347 s, the
-# ASOF join 1.7 s, and the serving build ran three of them on every bar (``market_cap_daily`` twice, the WRDS report).
-# A day that is no column (``DATE '9999-12-31'``) has no ASOF inequality, so that lookup keeps ``period``.
-AS_OF_PERIOD = "ASOF LEFT JOIN adj_factor {a} ON {a}.security_id = {sid} AND {day} < {a}.valid_to"
+# That is the row ``IN_PERIOD`` picks only while ``adj_factor`` keeps three preconditions, all made by ``ADJ_SQL`` (one
+# row per ex-date of the applied events, ``FROM _act_final WHERE applied ... GROUP BY ALL``): one row per
+# (security_id, valid_to); a security's periods contiguous (each ``valid_from`` is the previous row's ``valid_to``, the
+# first NULL); ``valid_to`` never NULL. A NULL day matches no period in ``IN_PERIOD`` (factor 1), but DuckDB's ASOF_JOIN
+# operator (used above ``asof_loop_join_threshold`` left rows) matches it to the oldest period, so the day is read as
+# ``DATE '9999-12-31'``, after every ``valid_to``: no row, as before. The range join is evaluated as a blockwise
+# nested loop: on the WRDS history (5.6M bars, 64k factor rows, 30 Oct 2026) one pass took 347 s, the ASOF join 1.7 s,
+# and the serving build ran three of them over every bar (``market_cap_daily`` twice, the WRDS report). A day that is
+# no column (``DATE '9999-12-31'``) has no ASOF inequality, so that lookup keeps ``period``.
+AS_OF_PERIOD = ("ASOF LEFT JOIN adj_factor {a} ON {a}.security_id = {sid} "
+                "AND coalesce({day}, DATE '9999-12-31') < {a}.valid_to")
 
 
 def factor_join(a: str, sid: str, day: str) -> str:
@@ -538,6 +543,8 @@ class PricesServing:
                            FROM (SELECT * FROM shares_class WHERE measure = 'outstanding'
                                  QUALIFY row_number() OVER (PARTITION BY security_id ORDER BY as_of DESC) = 1) o
                            {factor_join('a1', 'o.security_id', 'o.as_of')}
+                           -- No period has a NULL ``valid_to`` (``ADJ_SQL``), so a2 is always empty: factor 1, the
+                           -- newest basis being the stored one.
                            LEFT JOIN adj_factor a2 ON {period('a2', 'o.security_id', "DATE '9999-12-31'")})
                 SELECT f.security_id, max(f.value), any_value(o.value) FROM f JOIN o USING (security_id)
                 GROUP BY f.security_id HAVING max(f.value) > {FLOAT_OVER} * any_value(o.value) ORDER BY 1""").fetchall():
