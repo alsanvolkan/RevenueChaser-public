@@ -1,5 +1,12 @@
 """The cards' next earnings date and the earnings-week filter read UW's calendar from ``options.duckdb``
-(``option_screener_daily``, G8) first, the stored D26 calendar when the layer has no fresh session, Yahoo last."""
+(``option_screener_daily``, G8) first and the stored D26 calendar for the names the layer does not hold, Yahoo last.
+
+Since the internal data API (step B) the two are a **union**, not a choice, and the age window is counted in trading
+sessions (the ``earnings.next`` need's ``max_lag``) rather than calendar days, so the layer's freshness is
+measured the way the rest of the store's is. avo set that number to **one session** on 29 Oct 2026, which settles
+the contradiction the boards carried (four calendar days here, one session in ``stored_inputs``) in favour of the
+stricter one: a calendar older than the last session is not read at all.
+"""
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -11,17 +18,31 @@ from RevenueChaser.core import earnings_dates as ed
 TODAY = date(2026, 10, 22)
 
 
+@pytest.fixture(autouse=True)
+def reference_session(monkeypatch):
+    """Pin the day freshness is measured against.
+
+    Since the review's I1 the layer's age is counted against the market's newest complete session, the one day the
+    envelope and the boards share, instead of against the caller's ``today``: on a trading day whose session is not
+    over those two differ by one, and a card would say fresh while the filter had already dropped the layer. These
+    cases are written against ``TODAY``, so ``TODAY`` is the newest complete session here.
+    """
+    from RevenueChaser.rcdata import api
+    monkeypatch.setattr(api.serve.calendar, "latest_complete_session", lambda: TODAY)
+
+
 def _screener(rows):
     return lambda session_date=None, passing_only=False: [dict(r) for r in rows]
 
 
-def _raw_never(*a, **k):
-    raise AssertionError("the stored D26 calendar is read only when the layer has no fresh session")
+def _raw_none(*a, **k):
+    """The stored D26 calendar holding nothing, so a test about the layer reads only the layer."""
+    return []
 
 
 def test_a_fresh_layer_session_gives_each_names_nearest_coming_report(monkeypatch):
     from RevenueChaser.rcdata import read
-    s = date(2026, 10, 21)
+    s = date(2026, 10, 21)   # one session back: inside the window
     monkeypatch.setattr(read, "option_screener", _screener([
         {"session_date": s, "ticker": " aaa ", "report_date": date(2026, 10, 28)},
         {"session_date": s, "ticker": "BBB", "report_date": date(2026, 11, 2)},
@@ -29,12 +50,36 @@ def test_a_fresh_layer_session_gives_each_names_nearest_coming_report(monkeypatc
         {"session_date": s, "ticker": "DDD", "report_date": TODAY},
         {"session_date": s, "ticker": "EEE", "report_date": None},
         {"session_date": s, "ticker": None, "report_date": date(2026, 10, 30)}]))
-    monkeypatch.setattr(ed.rawstore, "query", _raw_never)
+    monkeypatch.setattr(ed.rawstore, "query", _raw_none)
     assert ed.stored_next_dates(TODAY) == {"AAA": date(2026, 10, 28), "BBB": date(2026, 11, 2), "DDD": TODAY}
 
 
-@pytest.mark.parametrize("session", [TODAY - timedelta(days=ed.MAX_AGE_DAYS + 1), TODAY + timedelta(days=1)])
-def test_a_layer_session_outside_the_age_window_falls_back_to_the_stored_calendar(monkeypatch, session):
+# 22 Oct 2026 is a Thursday, so 21 Oct is one session back and 20 Oct two. The window is the need's, read from the
+# catalog rather than restated, so this file cannot drift from it.
+MAX_AGE_SESSIONS = 1
+AT_THE_EDGE = date(2026, 10, 21)
+PAST_THE_EDGE = date(2026, 10, 20)
+
+
+def test_the_age_window_is_the_needs_own(monkeypatch):
+    from RevenueChaser.rcdata import api
+    need = api.catalog.NEEDS["earnings.next"]
+    assert need.max_lag == MAX_AGE_SESSIONS and need.max_lag_unit == "sessions"
+    assert api.lag_sessions(AT_THE_EDGE, TODAY) == MAX_AGE_SESSIONS
+    assert api.lag_sessions(PAST_THE_EDGE, TODAY) == MAX_AGE_SESSIONS + 1
+
+
+def test_a_session_exactly_at_the_edge_of_the_window_is_still_read(monkeypatch):
+    from RevenueChaser.rcdata import read
+    monkeypatch.setattr(read, "option_screener", _screener([
+        {"session_date": AT_THE_EDGE, "ticker": "AAA", "report_date": date(2026, 10, 28)}]))
+    monkeypatch.setattr(ed.rawstore, "query", lambda *a, **k: [{"ticker": "ZZZ", "d": date(2026, 10, 30)}])
+    assert ed.stored_next_dates(TODAY) == {"AAA": date(2026, 10, 28), "ZZZ": date(2026, 10, 30)}
+
+
+@pytest.mark.parametrize("session", [PAST_THE_EDGE, TODAY + timedelta(days=1)])
+def test_a_layer_session_outside_the_age_window_leaves_only_the_stored_calendar(monkeypatch, session):
+    """Too old, or from a run that has not happened for this day yet: the layer's rows are not read at all."""
     from RevenueChaser.rcdata import read
     monkeypatch.setattr(read, "option_screener", _screener([
         {"session_date": session, "ticker": "AAA", "report_date": date(2026, 10, 28)}]))
@@ -42,7 +87,16 @@ def test_a_layer_session_outside_the_age_window_falls_back_to_the_stored_calenda
     assert ed.stored_next_dates(TODAY) == {"ZZZ": date(2026, 10, 30)}
 
 
-def test_no_options_file_falls_back_to_the_stored_calendar(monkeypatch):
+def test_a_name_only_the_stored_calendar_holds_is_kept_beside_the_layers(monkeypatch):
+    """The short-circuit step B closes: a fresh layer session used to replace the stored calendar outright."""
+    from RevenueChaser.rcdata import read
+    monkeypatch.setattr(read, "option_screener", _screener([
+        {"session_date": date(2026, 10, 21), "ticker": "AAA", "report_date": date(2026, 10, 28)}]))
+    monkeypatch.setattr(ed.rawstore, "query", lambda *a, **k: [{"ticker": "ZZZ", "d": date(2026, 10, 30)}])
+    assert ed.stored_next_dates(TODAY) == {"AAA": date(2026, 10, 28), "ZZZ": date(2026, 10, 30)}
+
+
+def test_no_options_file_leaves_the_stored_calendar(monkeypatch):
     from RevenueChaser.rcdata import read
     monkeypatch.setattr(read, "option_screener", _screener([]))
     monkeypatch.setattr(ed.rawstore, "query", lambda *a, **k: [{"ticker": "ZZZ", "d": date(2026, 10, 30)}])

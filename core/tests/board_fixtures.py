@@ -278,7 +278,9 @@ def newdata_fixture() -> dict:
             "issues_open": 1,
             "backfill": {"done": 3, "expected": 9, "last_partition": "2026-10-27", "missing": ["2026-10-20"],
                          "resumable": True, "calls_per_partition": 1, "from_earliest": "2025-01-16"},
-            "wrds": {"text": "no WRDS run yet"},
+            "wrds": {"text": "no WRDS run yet", "produced": False},
+            "cost": {"provider": "uw", "calls_per_partition": 1, "remaining": 148_700, "cap": 150_000},
+            "measured_at": "18:00",
             "schedule": {"paused": True, "paused_by": "settings", "paused_at": "2026-10-27T10:00:00+00:00"}}
     req = {"id": 1, "dataset": "market_series", "status": "queued", "requested_by": "settings", "note": "n",
            "params": {"mode": "backfill"}}

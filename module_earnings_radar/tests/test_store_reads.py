@@ -210,10 +210,19 @@ def test_an_estimate_with_no_as_of_day_is_not_read():
 
 
 def test_the_read_limits_are_part_of_the_earnings_model_version(monkeypatch):
+    """Since avo's decision of 29 Oct 2026 the number lives in the need catalog and nowhere else, so that is where
+    this test moves it. Setting it on the reader is refused outright, which is the point: a second copy cannot be
+    introduced by accident, and the hash cannot go on claiming nothing changed."""
     from RevenueChaser.module_earnings_radar import history as er_history
+    from RevenueChaser.rcdata import api
     config = er_history.effective_config()
     assert config["MAX_LAG"]["dgs10"] == store_reads.MAX_LAG["dgs10"]
-    assert config["MAX_AGE_DAYS"] == store_reads.MAX_AGE_DAYS
+    assert config["MAX_AGE_DAYS"] == store_reads.max_age_days()
+    with pytest.raises(TypeError):
+        store_reads.MAX_AGE_DAYS["estimates"] = 99
     before = er_history.model_version()
-    monkeypatch.setitem(store_reads.MAX_AGE_DAYS, "estimates", store_reads.MAX_AGE_DAYS["estimates"] + 1)
+    need = api.catalog.NEEDS["fundamentals.estimates"]
+    monkeypatch.setitem(api.catalog.NEEDS, "fundamentals.estimates",
+                        type(need)(**{**need.__dict__, "max_lag": need.max_lag + 1}))
+    assert store_reads.MAX_AGE_DAYS["estimates"] == need.max_lag + 1
     assert er_history.model_version() != before
