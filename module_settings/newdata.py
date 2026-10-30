@@ -398,6 +398,7 @@ _SAMPLE_CACHE: dict[str, tuple[str, dict | None]] = {}
 
 def clear_sample_cache() -> None:
     _SAMPLE_CACHE.clear()
+    _STORAGE_CACHE.clear()
 
 
 def _sample_hour(now: datetime) -> str:
@@ -413,7 +414,7 @@ def _sample_key(table: str, now: datetime) -> str:
     table and hour alone serves one test's rows to the next.
     """
     from RevenueChaser.rcdata import read
-    kind = read.KIND_OF_TABLE.get(table)
+    kind = read.KIND_OF_TABLE.get(table.split("#")[0])      # "price_bar_daily#sessions" is that table's file
     path = serving.live_path(kind) if kind is not None else None
     try:
         stamp = path.stat().st_mtime_ns if path is not None else None
@@ -491,6 +492,10 @@ def _serving_facts(now: datetime | None = None) -> tuple[dict[str, dict], dict[s
                         table, now, lambda name, c=con, column=col: _read_sample(c, name, column))
             if kind == "spine" and {"security", "index_membership"} <= names:
                 funnel = _spine_counts(con)
+                funnel["universe_sets"] = _universe_sets(con)
+            if kind == "prices" and "price_bar_daily" in names and now is not None:
+                tables["price_bar_daily"]["sessions"] = _cached_sample(
+                    "price_bar_daily#sessions", now, lambda name, c=con: _session_counts(c))
             if kind == "prices" and "wrds_price_diff" in names:
                 cur = con.execute("SELECT * FROM wrds_price_diff")
                 cols = [d[0] for d in cur.description]
@@ -524,6 +529,31 @@ def _spine_counts(con) -> dict:
     return out
 
 
+def _universe_sets(con) -> dict:
+    """The control board's universe bar, from the spine's ``security`` (design v28): how many names each set holds
+    (A operating, the funds of B, the rest of B, C, D) and the tickers of B's two sets, which a press asks for by
+    name when only one of them is in the universe (a request's scope names tiers, and B is one tier)."""
+    fund = ", ".join(repr(t) for t in api_screen.FUND_TYPES)
+    rows = con.execute(
+        f"SELECT CASE WHEN tier = 'B' AND security_type IN ({fund}) THEN 'E' WHEN tier = 'B' THEN 'R' ELSE tier END, "
+        "ticker FROM security WHERE tier IN ('A', 'B', 'C', 'D') ORDER BY ticker").fetchall()
+    counts = {s.key: 0 for s in api_screen.UNIVERSE_SETS}
+    tickers: dict[str, list[str]] = {"E": [], "R": []}
+    for key, ticker in rows:
+        counts[key] = counts.get(key, 0) + 1
+        if key in tickers and ticker:
+            tickers[key].append(str(ticker))
+    return {"counts": counts, "total": len(rows), "tickers": tickers}
+
+
+def _session_counts(con) -> dict[str, int]:
+    """How many names have a bar on each session of ``price_bar_daily``: the Backfill calendar's fill state, read
+    once an hour with the samples (one GROUP BY over the served bars)."""
+    return {d.isoformat(): int(n) for d, n in con.execute(
+        "SELECT session_date, count(DISTINCT security_id) FROM price_bar_daily GROUP BY 1 ORDER BY 1").fetchall()
+        if d is not None}
+
+
 def _universe_source() -> dict:
     """Which universe the boards read (``core.universe.source_state``): the flag and its fallback, if any."""
     from RevenueChaser.core import universe
@@ -554,6 +584,68 @@ def _identity(counts: dict | None) -> dict:
              {"key": "excluded_type", "label": "Listed, but an excluded security type (Tier B)",
               "count": c["excluded_type"]}]
     return {"steps": steps, "drops": drops, "indexes": c["indexes"], "as_of": c["as_of"], "note": None, **issues}
+
+
+# ── Where the data sits (the control board's journey table) ───────────────────────────────────────────────────
+
+#: A folder walk stops after this many entries and says so: the page renders in the dashboard, and the raw tree of
+#: a dataset with one file per company per day runs to tens of thousands of files.
+STORAGE_WALK_MAX = 50_000
+_STORAGE_CACHE: dict[str, tuple[str, dict]] = {}
+
+
+def _folder(path: Path) -> dict:
+    """``{"path", "files", "bytes", "capped"}`` of one folder, walked without following links; files None when the
+    folder does not exist. ``capped`` means the walk stopped at ``STORAGE_WALK_MAX`` entries and the counts are a
+    floor."""
+    if not path.is_dir():
+        return {"path": str(path), "files": None, "bytes": None, "capped": False}
+    files = size = seen = 0
+    stack = [path]
+    while stack:
+        here = stack.pop()
+        try:
+            entries = list(os.scandir(here))
+        except OSError:
+            continue
+        for e in entries:
+            seen += 1
+            if seen > STORAGE_WALK_MAX:
+                return {"path": str(path), "files": files, "bytes": size, "capped": True}
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    stack.append(Path(e.path))
+                elif e.is_file(follow_symlinks=False):
+                    files += 1
+                    size += e.stat(follow_symlinks=False).st_size
+            except OSError:
+                continue
+    return {"path": str(path), "files": files, "bytes": size, "capped": False}
+
+
+def _storage(now: datetime) -> dict:
+    """Where each dataset sits, for the journey table: the live serving file of each kind (its size), and each
+    dataset's HDD raw and Parquet folders (files and bytes). Read once an hour per root, like the samples: a walk of
+    the raw tree is a picture of the disk, not a live number."""
+    from RevenueChaser.rcdata.build import base
+    raw_root, parquet_root = base.raw_root(), base.parquet_root()
+    key = f"{_sample_hour(now)}|{raw_root}|{config.MARKET_DIR}"
+    hit = _STORAGE_CACHE.get("storage")
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    files = {}
+    for kind in serving.KINDS:
+        path = serving.live_path(kind)
+        try:
+            files[kind] = {"path": str(path), "bytes": path.stat().st_size}
+        except OSError:
+            files[kind] = {"path": str(path), "bytes": None}
+    datasets = {name: {"raw": _folder(raw_root.joinpath(*name.split("/"))),
+                       "parquet": _folder(parquet_root.joinpath(*name.split("/")))} for name in _datasets()}
+    out = {"roots": {"raw": str(raw_root), "parquet": str(parquet_root), "ssd": str(config.MARKET_DIR)},
+           "files": files, "datasets": datasets}
+    _STORAGE_CACHE["storage"] = (key, out)
+    return out
 
 
 # ── Page-level blocks ─────────────────────────────────────────────────────────────────────────────────────────
@@ -765,7 +857,7 @@ def _silent_minutes(last_run: dict | None, now: datetime) -> int | None:
 
 
 def _card(dataset: str, ds, facts: dict, now: datetime, used_today: dict[str, int] | None = None) -> dict:
-    newest = ops.recent_checks(dataset, limit=1)
+    newest = ops.recent_checks(dataset, limit=3)
     last = newest[0] if newest else None
     schedule = ops.read_schedule(dataset)
     cadence = _cadence(dataset, schedule)
@@ -795,6 +887,9 @@ def _card(dataset: str, ds, facts: dict, now: datetime, used_today: dict[str, in
         # A16: one example block per serving table this dataset writes, in the dataset's own order.
         "samples": [_sample_block(name, (facts.get(name) or {}).get("sample")) for name in ds.tables],
         "wrds": _wrds_difference(dataset) if dataset in WRDS_DIFFERENCE else _wrds_slot(dataset, facts),
+        # The control board's Health table: the last three checks, newest first (design v28).
+        "recent": [{k: r.get(k) for k in ("checked_on", "result", "source_as_of", "added", "removed", "calls",
+                                           "note")} for r in newest],
         "attended": bool(getattr(ds, "attended", False)),
         "attended_command": (ATTENDED_COMMANDS.get(dataset) or attended_command(ds.kind))
                             if getattr(ds, "attended", False) else None,
@@ -843,6 +938,12 @@ def collect(now: datetime | None = None) -> dict:
         "retention": _retention(),
         "retirement": _retirement(now),
         "cross_check": cross_check(now, facts, used_today),
+        # The control board (design v28): the universe bar's sets, the bars per session for the Backfill calendar,
+        # where each dataset sits, and every serving table's row count and newest day.
+        "universe": (spine_counts or {}).get("universe_sets"),
+        "sessions": (facts.get("price_bar_daily") or {}).get("sessions") or {},
+        "storage": _storage(now),
+        "tables": {t: {"rows": f["rows"], "newest": f["newest"]} for t, f in facts.items()},
         **_watch_section(),
     }
 
