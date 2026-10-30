@@ -29,6 +29,11 @@ default run. Run it only with the user's typed words, never under the standing p
 it with ``--name-themes --run-id ID`` and switch with ``--cutover --run-id ID``.
 ``--nmf-init`` and ``--nmf-max-iter`` set the NMF fit of a ``--rebuild-themes`` run (default ``themes.DEFAULT_FIT``,
 nndsvda / 500 since #108 S1); the summary names the fit used, as ``theme_runs`` has no column for it.
+``--k-medium N`` sets that run's medium theme cut; without it the engine derives ``max(2, n_fine // 2)`` from the
+realised fine count, which is the live default and what #57 asks to compare. The value is still clamped below
+``n_fine``, so the summary names both: ``k_medium_requested`` (``"default"`` when the flag is absent) beside the
+realised ``k_fine`` and ``k_medium``. A sweep is therefore three ``--rebuild-themes --build-only --k-medium N``
+runs, which make no provider call and no cutover.
 
 Grok writer (#388, avo 2026-10-16 "grok kullan direk"; manual, never scheduled):
 
@@ -78,7 +83,8 @@ def _last_run() -> dict:
 def _summary(**kwargs) -> str:
     fields = ("provider", "run_id", "named", "copied", "pending", "next_off_peak", "stopped_reason",
               "next_reset", "themes", "rows", "adopted", "fines_reparented", "dropped_mediums", "profiled",
-              "unthemed", "out_of_universe", "fit", "coarse", "k_coarse", "error")
+              "unthemed", "out_of_universe", "fit", "k_fine", "k_medium", "k_medium_requested", "coarse",
+              "k_coarse", "error")
     return json.dumps({k: kwargs.get(k) for k in fields
                        if k in kwargs}, ensure_ascii=False)
 
@@ -146,6 +152,14 @@ def _max_iter(value: str) -> int:
     return n
 
 
+def _k_medium(value: str) -> int:
+    """The medium cut: a whole number, at least 1. The engine still clamps it below the realised fine count."""
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError("--k-medium must be at least 1")
+    return n
+
+
 def _selection(args) -> list[str] | None:
     """The names ``--floor`` or ``--tickers`` choose; None keeps today's default (the $300M universe)."""
     if args.tickers:
@@ -190,6 +204,9 @@ def main(argv: list[str] | None = None) -> int:
                       help="exactly these tickers, comma-separated." + warn)
     p.add_argument("--nmf-init", choices=NMF_INITS, default=None,
                    help=f"with --rebuild-themes: the NMF init (default {DEFAULT_FIT.init})")
+    p.add_argument("--k-medium", type=_k_medium, default=None, metavar="N",
+                   help="the medium theme cut of a --rebuild-themes run (default: the engine's "
+                        "max(2, n_fine // 2)); still clamped below the realised fine count")
     p.add_argument("--nmf-max-iter", type=_max_iter, default=None, metavar="N",
                    help=f"with --rebuild-themes: the NMF iterations (default {DEFAULT_FIT.max_iter})")
     p.add_argument("--provider", choices=("deepseek", "grok"), default="deepseek",
@@ -226,6 +243,8 @@ def main(argv: list[str] | None = None) -> int:
         p.error("--coarse goes with --cutover or --rebuild-themes (not --build-only)")
     if (args.nmf_init is not None or args.nmf_max_iter is not None) and not args.rebuild_themes:
         p.error("--nmf-init / --nmf-max-iter go with --rebuild-themes only")
+    if args.k_medium is not None and not args.rebuild_themes:
+        p.error("--k-medium goes with --rebuild-themes only")
     fit = NmfFit(init=args.nmf_init or DEFAULT_FIT.init, max_iter=args.nmf_max_iter or DEFAULT_FIT.max_iter)
     if args.build_only and (args.name or args.adopt_medium_from):
         p.error("--build-only writes the shadow run only: --name and --adopt-medium-from belong to "
@@ -304,21 +323,24 @@ def main(argv: list[str] | None = None) -> int:
                               "(live) run; a rebuild would blank it in place. "
                               "Use a new --run-id."}, ensure_ascii=False))
             return 1
-        built = themes.build_shadow(run_id=args.run_id, universe=chosen, fit=fit)
+        built = themes.build_shadow(run_id=args.run_id, universe=chosen, fit=fit, k_medium=args.k_medium)
         run_id = built.get("run_id")
         if not run_id:
             print(json.dumps(built, ensure_ascii=False))
             return 0
+        cuts = {"k_fine": built.get("k_fine"), "k_medium": built.get("k_medium"),
+                "k_medium_requested": (built.get("k_medium_requested")
+                                       if built.get("k_medium_requested") is not None else "default")}
         if args.build_only:
             print(_summary(run_id=run_id, themes=built.get("themes"), unthemed=built.get("unthemed"),
-                           out_of_universe=built.get("out_of_universe"), fit=built.get("fit")))
+                           out_of_universe=built.get("out_of_universe"), fit=built.get("fit"), **cuts))
             return 0
         try:
             cut = themes.finalize_run(run_id, args.adopt_medium_from, coarse=args.coarse)
         except ValueError as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False))
             return 1
-        out = {"run_id": run_id, "themes": built.get("themes"),
+        out = {"run_id": run_id, "themes": built.get("themes"), **cuts,
                "rows": cut.get("rows"), "named": 0, "pending": 0,
                "next_off_peak": None, "unthemed": built.get("unthemed"),
                "out_of_universe": built.get("out_of_universe"), "fit": built.get("fit"),
