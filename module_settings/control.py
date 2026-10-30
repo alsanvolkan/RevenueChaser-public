@@ -370,6 +370,11 @@ def _fill(ds_name: str, ds, kind: str, universe_view: dict, card: dict) -> dict:
     return {"cells": cells, "why": None, "calendar": ds_name in CALENDARS}
 
 
+def _provider_name(pid: str | None) -> str | None:
+    """A provider id in the words the page uses ("uw" is "Unusual Whales"); an id the screen does not list stays."""
+    return screen.PROVIDERS[pid].name if pid in screen.PROVIDERS else pid
+
+
 def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime) -> dict:
     name = str(card["dataset"])
     meta = screen.DATASETS.get(name)
@@ -396,7 +401,7 @@ def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime) 
         "checked_on": card.get("checked_on"), "source_as_of": card.get("source_as_of"),
         "coverage": _coverage(card), "age": _age(card, now),
         "fetch": {"self": name != "spine/security", "honours_scope": base.honours_scope(ds),
-                  "provider": cost.get("provider"), "remaining": cost.get("remaining"), "cap": cost.get("cap")},
+                  "provider": _provider_name(cost.get("provider")), "remaining": cost.get("remaining"), "cap": cost.get("cap")},
         "fill": _fill(name, ds, kind, universe_view, card),
         "issues": card.get("issues") or [], "issues_open": int(card.get("issues_open") or 0),
         "paused": bool((card.get("schedule") or {}).get("paused")),

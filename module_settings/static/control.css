@@ -995,3 +995,6 @@
 #ctl .uhnote{margin:6px 0 0;font-size:12px}
 #ctl .btree li.planned{font-style:italic}
 #ctl .btree li.planned i{opacity:.6}
+@media(max-width:760px){#ctl .tch .topen{min-width:44px;justify-content:center}
+#ctl .uhand input{min-height:44px}
+#ctl details.group>summary{min-height:44px}}

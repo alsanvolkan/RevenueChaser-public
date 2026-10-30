@@ -126,9 +126,32 @@ not an equity board.
 Same tokens as the rest of the app (`--bg #05111F`, `--accent #0EA5E9`). There is deliberately no
 "fetch everything" button: the locks, the provider quotas and the hours make it a trap.
 
+### 2.0a The control board (design v28, 30 Oct 2026)
+
+The top of the tab since the v28 design: `module_settings/control.py` arranges what `newdata.collect` read and what
+the code records (`rcdata/scaffold`, `boards`, `catalog`, `caps`), and `control_render.py` draws it with
+`static/control.css` and `static/control.js`. The old sections, the "New data system" below among them, sit in one
+closed fold under it (`details#old-settings`), unchanged.
+
+- **Order:** Health, Fetch (with the universe bar and the Backfill calendar), the flow diagram, Providers, Data
+  file by file, then the cross-check and the queue. Health and Fetch start open.
+- **Health tiles** count the dataset cards. The builder tile turns red when the builder has been
+  silent for over 70 minutes; a provider's cap tile warns at 50% of its day cap and is red from 70%.
+- **What can be pressed where.** Fetch, Pause and Fill are in the Fetch section only; the Data cards show bars and
+  no button. A press on a tier set only drafts; **Apply** saves the universe as the Settings board's
+  `UNIVERSE_SETS` and `UNIVERSE_INCLUDE` (`POST /api/settings/board/module_settings`) and fetches nothing. C and D are
+  shown greyed and are never offered. The default universe (A and all of B) asks no scope: it is the daily run.
+- **Fill and "Fill this range"** are off unless the server sets `RC_FILL_ENABLED`; the page says why instead of
+  drawing a live button. Tests never set it.
+- **Refresh the example rows** calls `GET /api/settings/sample/<table>`: 5 rows of one sampled table, through one
+  read-only `open_read` handle on its own file, replacing the hourly cached sample. 404 for any other table, 409 when
+  the file or the table is not built yet. No job, no provider, no write.
+- **Stale page:** when the page is older than 60 minutes on returning to it, a bar offers a reload.
+- **Planned reads** (a board's table read that `boards` does not declare yet) are drawn dashed and marked planned.
+
 ### 2.0 The "New data system" section (PR 2)
 
-The first section of the tab, above the old inventory (which stays until PR 21, with its drill, flow diagram and
+The first section of the old fold (2.0a), above the old inventory (which stays until PR 21, with its drill, flow diagram and
 board-input cards). It shows the market store that the builder (`python -m RevenueChaser.rcdata.build`) writes. The
 contract below binds the page; decisions D1, D6, D9, F6, F7 A, F8 A, F10 B and the five Settings decisions of
 27 Oct 2026 are the source.

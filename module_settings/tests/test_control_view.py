@@ -28,8 +28,10 @@ def _card(name, status="fresh", **kw):
 def control_nd() -> dict:
     nd = newdata_fixture()
     nd["datasets"] = [
-        _card("alpaca/bars", "late", issues_open=3, coverage=0.97, coverage_target=0.99),
-        _card("sec/13f", "never", checked_on=None),
+        _card("alpaca/bars", "late", issues_open=3, coverage=0.97, coverage_target=0.99,
+              cost={"provider": "alpaca", "calls_per_partition": 1, "remaining": None, "cap": None}),
+        _card("sec/13f", "never", checked_on=None,
+              cost={"provider": "sec", "calls_per_partition": 1, "remaining": 19_900, "cap": 40_000}),
         _card("wrds/prices", "never", checked_on=None, attended=True,
               attended_command="python -m RevenueChaser.rcdata.build backfill wrds/prices"),
         _card("spine/security", "fresh", issues_open=7, cadence="weekly", checked_on="2026-10-26"),
@@ -196,3 +198,9 @@ def test_the_bars_calendar_reads_the_sessions_and_the_page_size():
     cal = _build()["calendars"]["alpaca/bars"]
     assert cal["names_per_session"] == {"2026-10-27": 7400, "2026-10-28": 7380}
     assert cal["page"] == bars.LIMIT and cal["universe"] == 5655 + 558 + 1457 and cal["groups"] is True
+
+
+def test_the_fetch_line_names_its_provider_in_words():
+    rows = {d["dataset"]: d for f in _build()["files"] for d in f["datasets"]}
+    assert rows["market_series"]["fetch"]["provider"] == screen.PROVIDERS["uw"].name == "Unusual Whales"
+    assert rows["sec/13f"]["fetch"]["provider"] == screen.PROVIDERS["sec"].name
