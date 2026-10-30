@@ -57,8 +57,9 @@ def select_pilot(limit: int | None = None) -> list[str]:
     One selector for every classification board (core/universe.py). ``limit``
     caps the set for tests/demos.
     """
-    from RevenueChaser.core.universe import classification_universe
-    tickers = classification_universe()
+    from RevenueChaser.core.universe import BOARD_OPERATING_ONLY, classification_universe
+    # The board's type filter (PR 2): profiles need a 10-K, so operating companies only by default.
+    tickers = classification_universe(operating_only=BOARD_OPERATING_ONLY["module_relatedness"])
     return tickers[:limit] if limit else tickers
 
 
@@ -576,7 +577,8 @@ def _attach_peer_market(peers: dict) -> None:
 def _payload(profiles: dict[str, dict], thinking: dict[str, dict],
              stale: set[str] | None = None) -> dict:
     from RevenueChaser.core.gics_map import canonical_sector, sector_path
-    from RevenueChaser.core.universe import classification_universe, filter_fields, theme_catalog
+    from RevenueChaser.core.universe import (BOARD_OPERATING_ONLY, classification_universe, filter_fields,
+                                             theme_catalog)
     # One read of the company fields (#49): ``filter_fields`` carries name/sector/industry/market_cap already,
     # so the second ``equity_universe`` query this function used to run only risked disagreeing with it.
     extra = filter_fields(list(profiles))
@@ -661,7 +663,7 @@ def _payload(profiles: dict[str, dict], thinking: dict[str, dict],
         "n_pairs": n_pairs,
         "thinking_compare": thinking_cmp,
         "fields": list(config.PROFILE_FIELDS),
-        "universe_total": len(classification_universe()),
+        "universe_total": len(classification_universe(operating_only=BOARD_OPERATING_ONLY["module_relatedness"])),
         "theme_catalog": theme_catalog(),
     }
 

@@ -200,8 +200,8 @@ def build_shadow(candidates=(60, 90, 120, 150), k_medium: int | None = None,
     if profiles is None:
         profiles = rel_store.load_profiles()
         if universe is None:
-            from RevenueChaser.core.universe import classification_universe
-            universe = classification_universe()
+            from RevenueChaser.core.universe import BOARD_OPERATING_ONLY, classification_universe
+            universe = classification_universe(operating_only=BOARD_OPERATING_ONLY["module_relatedness"])
     profiles = {t: p for t, p in profiles.items() if any(p.values())}
     out_of_universe = 0
     if universe is not None:

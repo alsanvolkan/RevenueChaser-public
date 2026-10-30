@@ -41,8 +41,9 @@ logger = logging.getLogger(__name__)
 
 def _universe_split(tickers: list[str] | None = None) -> tuple[dict[str, str], list[str]]:
     """``({ticker: cik}, [tickers with no CIK])`` for the classification universe."""
-    from RevenueChaser.core.universe import classification_universe
-    want = {t.upper() for t in tickers} if tickers else set(classification_universe())
+    from RevenueChaser.core.universe import BOARD_OPERATING_ONLY, classification_universe
+    want = ({t.upper() for t in tickers} if tickers
+            else set(classification_universe(operating_only=BOARD_OPERATING_ONLY["module_value_chain"])))
     cmap = sec_edgar._cik_map()
     ciks = {t: str((cmap.get(t) or {}).get("cik"))
             for t in sorted(want) if (cmap.get(t) or {}).get("cik")}
