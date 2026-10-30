@@ -96,6 +96,19 @@ class LoginFailed(base.SourceError):
     the last snapshot stays."""
 
 
+class PermissionRefused(base.SourceError):
+    """WRDS answered a query with PostgreSQL's ``InsufficientPrivilege``: the subscription does not hold that schema
+    (homesrv's has no CRSP/CCM, run 32 on 30 Oct 2026). ``schema`` is the one the answer names, or None."""
+
+    def __init__(self, message: str, schema: str | None):
+        super().__init__(message)
+        self.schema = schema
+
+
+_REFUSED = re.compile(r"InsufficientPrivilege|permission denied for (?:schema|table|relation)", re.I)
+_REFUSED_OBJECT = re.compile(r"permission denied for (?:schema|table|relation) \"?([\w.]+)", re.I)
+
+
 PYTHON_ENV = "RC_WRDS_PYTHON"          # the python of the venv that has wrds; no default (a server path)
 WORKER = Path(__file__).with_name("wrds_worker.py")
 
@@ -216,8 +229,11 @@ def query(ctx: base.RunContext, sql: str, out: Path) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     try:
         return worker.query(sql, out)
-    except base.SourceError:
+    except base.SourceError as e:
         ctx.count(PROVIDER, failures=1)
+        if not isinstance(e, LoginFailed) and _REFUSED.search(str(e)):
+            found = _REFUSED_OBJECT.search(str(e))
+            raise PermissionRefused(str(e), found.group(1) if found else None) from e
         raise
 
 
@@ -245,7 +261,11 @@ def _ask(ctx: base.RunContext, raw: Path, sql: str, as_of: date) -> Path:
         return raw
     meta = {"as_of": as_of.isoformat(), "fetched_at": time.time(), "run_id": ctx.run_id, "query": sql, "rows": None}
     base.write_raw_json(_meta(raw), meta)
-    meta["rows"] = query(ctx, sql, raw)
+    try:
+        meta["rows"] = query(ctx, sql, raw)
+    except base.SourceError:
+        _meta(raw).unlink(missing_ok=True)           # no answer: no sidecar that reads as one (``rows`` null)
+        raise
     base.write_raw_json(_meta(raw), meta)
     return raw
 

@@ -26,6 +26,15 @@ year=<Y>/part-0.parquet`` (a snapshot: ``.../snapshot=<as_of>/part-0.parquet``);
 and first keeps every bar value it replaces or drops (``secd`` and ``dsf``: open, high, low, close, volume) in
 ``parquet/wrds/prices/revisions/<table>/year=<Y>/part-<run_id>.parquet`` (``price_revision`` in the served file).
 
+**Without CRSP.** A subscription that holds Compustat but not CRSP (homesrv's: run 32 on 30 Oct 2026 was refused
+``crsp.ccmxpf_lnkhist`` with "permission denied for schema crsp_a_ccm") answers a CRSP query with PostgreSQL's
+``InsufficientPrivilege`` (``spine/wrds.PermissionRefused``). The run then skips CRSP: the refusal is a
+``wrds_no_access`` issue keyed by the schema and a run note, every later CRSP query of the run is skipped unasked,
+and the history is Compustat's (``secd`` bars with ``cshoc`` shares, so the caps; ``sec_divid``; ``sec_split``). No
+file is left for the refused query, so the next backfill asks it once again and a subscription that gains CRSP is
+picked up. The CRSP rows of ``wrds_price_diff`` then count no session. A refused Compustat table, and every other
+error, still fails the run.
+
 **Served** by ``prices/serving``: the bars (``COMP_BARS``, ``CRSP_BARS``; CRSP first where linked, an Alpaca bar
 always winning its session), the actions (``ACTIONS_SQL``; an Alpaca action of the same kind and day winning), the
 revisions, and the difference report ``wrds_price_diff`` (``COMPARISONS``). Compustat's own adjusted return is
@@ -98,6 +107,9 @@ TABLES: dict[str, dict] = {
 }
 YEARLY = ("secd", "dsf", "sec_divid")
 SNAPSHOTS = ("sec_split", "link")
+# CRSP's tables: a subscription without CRSP (or without CCM, the link) answers them with a permission refusal,
+# and the history is then Compustat's alone (``_skip_crsp``).
+CRSP_TABLES = ("dsf", "link")
 STAGING = {"secd": "stg_wrds_secd", "dsf": "stg_wrds_dsf", "sec_divid": "stg_wrds_divid",
            "sec_split": "stg_wrds_split", "link": "stg_wrds_link"}
 
@@ -200,10 +212,36 @@ class WrdsPrices:
         every = sorted({y for ys in lo.values() for y in ys}, reverse=True)
         return [(t, y) for y in every for t in YEARLY if y in lo[t]]
 
+    def _ask_or_skip(self, ctx: base.RunContext, table: str, year: int | None, as_of: date,
+                     refused: list[str]) -> Path | None:
+        """``_ask``, except that a CRSP table the subscription refuses is skipped: once refused, every later CRSP
+        query of the run is skipped unasked (``refused`` holds the schema), so a run never asks it year by year.
+        A refusal of a Compustat table, and any other error, fails the run as before."""
+        if table in CRSP_TABLES and refused:
+            return None
+        try:
+            return self._ask(ctx, table, year, as_of)
+        except wrds.PermissionRefused as e:
+            if table not in CRSP_TABLES:
+                raise
+            self._skip_crsp(ctx, table, e, refused)
+            return None
+
+    @staticmethod
+    def _skip_crsp(ctx: base.RunContext, table: str, e: wrds.PermissionRefused, refused: list[str]) -> None:
+        schema = e.schema or TABLES[table]["wrds"]
+        refused.append(schema)
+        ctx.issue("wrds_no_access", schema,
+                  f"{TABLES[table]['wrds']}: the WRDS subscription refuses it ({e}); CRSP skipped, the history "
+                  "is Compustat's alone")
+        ctx.notes.append(f"{TABLES[table]['wrds']}: permission denied for {schema}; CRSP skipped, Compustat only")
+
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
         """The monthly run: the snapshots when due, then the last ``REFRESH_YEARS`` years of each table again."""
-        out = [self._ask(ctx, t, None, as_of) for t in SNAPSHOTS if self._snapshot_due(t, as_of)]
-        out += [self._ask(ctx, t, y, as_of) for t, y in self._plan(as_of, None, refresh=True)]
+        refused: list[str] = []
+        out = [self._ask_or_skip(ctx, t, None, as_of, refused) for t in SNAPSHOTS if self._snapshot_due(t, as_of)]
+        out += [self._ask_or_skip(ctx, t, y, as_of, refused) for t, y in self._plan(as_of, None, refresh=True)]
+        out = [p for p in out if p is not None]
         if not any(partition_path("secd", y).is_file() for y in years("secd", as_of)[:-REFRESH_YEARS]):
             ctx.notes.append("no history before the refreshed years: run the backfill (attended)")
         return out
@@ -211,16 +249,22 @@ class WrdsPrices:
     def backfill(self, ctx: base.RunContext, start: date | None, end: date) -> None:
         """Every missing snapshot and year partition up to ``end``; a partition that exists is never asked."""
         asked = 0
+        refused: list[str] = []
         try:
             for table in SNAPSHOTS:
                 if not _snapshots(table):
-                    self.to_parquet_all(ctx, [self._ask(ctx, table, None, end)])
-                    asked += 1
+                    raw = self._ask_or_skip(ctx, table, None, end, refused)
+                    if raw is not None:
+                        self.to_parquet_all(ctx, [raw])
+                        asked += 1
             for table, year in self._plan(end, start.year if start else None, refresh=False):
                 if partition_path(table, year).is_file():
                     continue
                 have = sorted(raw_dir(table, year).glob(f"*{RAW_SUFFIX}"))
-                self.to_parquet_all(ctx, [have[-1] if have else self._ask(ctx, table, year, end)])
+                raw = have[-1] if have else self._ask_or_skip(ctx, table, year, end, refused)
+                if raw is None:
+                    continue
+                self.to_parquet_all(ctx, [raw])
                 asked += 1
         except base.CapReached as e:
             ctx.notes.append(f"stopped at the WRDS day cap ({e}) after {asked} partition(s); the next backfill "

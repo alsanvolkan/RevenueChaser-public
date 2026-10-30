@@ -325,3 +325,97 @@ def test_the_monthly_refresh_keeps_the_values_it_replaces_as_revisions(built):
     report = {r["comparison"]: r for r in _q("SELECT * FROM wrds_price_diff")}
     assert report["crsp_vs_compustat"]["max_close_diff"] == pytest.approx(0.4 / 202.5)
     assert {str(r["as_of"]) for r in report.values()} == {"2026-11-27"}
+
+
+# ── A subscription without CRSP (homesrv, 30 Oct 2026: run 32 refused on ``crsp_a_ccm``) ──────────────────────
+
+REFUSED = ("ProgrammingError: (psycopg2.errors.InsufficientPrivilege) permission denied for schema {schema}\n\n"
+           "[SQL: {sql}]")
+
+
+class RefusingWrds(FakeWrds):
+    """The fake worker of a subscription that holds Compustat but not CRSP: every query of a ``refused`` schema
+    answers the error the real worker sends back, as ``wrds_worker.py`` reports a failed query."""
+
+    def __init__(self, data, refused=("crsp",)):
+        super().__init__(data)
+        self.refused = refused
+
+    def query(self, sql: str, out) -> int:
+        table = re.search(r"FROM (\w+\.\w+)", sql).group(1)
+        if table.split(".")[0] in self.refused:
+            self.queries.append(sql)
+            raise base.SourceError("wrds query failed: " + REFUSED.format(
+                schema="crsp_a_ccm" if "ccm" in table else "crsp_a_stock", sql=sql))
+        return super().query(sql, out)
+
+
+@pytest.fixture
+def refusing(monkeypatch):
+    def install(refused=("crsp",)):
+        conn = RefusingWrds(_data(), refused)
+        monkeypatch.setattr(wrds, "_factory", lambda: conn)
+        wrds.reset()
+        return conn
+    yield install
+    wrds.reset()
+
+
+def test_a_crsp_permission_refusal_skips_crsp_once_and_serves_compustat(refusing):
+    conn = refusing()
+    row = _backfill()
+    assert row["result"] == "changed", row
+    # The link is refused once; CRSP's years are then never asked in this run (no query per year, no loop).
+    assert _asked(conn) == ["comp.sec_split", "crsp.ccmxpf_lnkhist",
+                            "comp.secd 2026", "comp.sec_divid 2026",
+                            "comp.secd 2025", "comp.sec_divid 2025",
+                            "comp.secd 2024", "comp.sec_divid 2024"]
+    assert "crsp_a_ccm" in row["note"] and "CRSP skipped" in row["note"]
+    issues = [i for i in ops.open_issues(wrds_history.NAME, limit=50)[1] if i["kind"] == "wrds_no_access"]
+    assert [i["key"] for i in issues] == ["crsp_a_ccm"]
+    # A refused query leaves no file behind: no raw answer, no sidecar that would read as "asked".
+    assert not any(wrds_history.raw_dir("link").rglob("*"))
+    assert not wrds_history.raw_dir("dsf").exists()
+    # Compustat alone serves the bars, the shares and so the cap.
+    assert base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
+    assert base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})["result"] == "changed"
+    june = _q("SELECT session_date, close, source, shares_outstanding FROM price_bar_daily WHERE security_id = ? "
+              "AND session_date < '2026-01-01' ORDER BY session_date", [AAPL])
+    assert [str(r["session_date"]) for r in june] == JUNE
+    assert {r["source"] for r in june} == {wrds_history.COMPUSTAT} and june[1]["close"] == 202.0
+    cap = _q("SELECT market_cap, shares_source FROM market_cap_daily WHERE security_id = ? "
+             "AND session_date = '2025-06-02'", [AAPL])
+    assert cap and cap[0]["market_cap"] == pytest.approx(200.0 * 7.5e9) and cap[0]["shares_source"] == (
+        wrds_history.COMPUSTAT)
+    # The difference report keeps its rows; the CRSP ones have no session to compare.
+    report = {r["comparison"]: r for r in _q("SELECT * FROM wrds_price_diff")}
+    assert set(report) == set(wrds_history.COMPARISONS)
+    assert {n: report[n]["sessions"] for n in ("crsp_vs_compustat", "crsp_vs_alpaca", "crsp_returns")} == {
+        "crsp_vs_compustat": 0, "crsp_vs_alpaca": 0, "crsp_returns": 0}
+    assert report["compustat_vs_alpaca"]["sessions"] == 2
+
+
+def test_the_next_backfill_asks_the_refused_link_again_and_nothing_compustat_holds(refusing):
+    refusing()
+    _backfill()
+    conn = refusing()
+    _backfill()
+    assert _asked(conn) == ["crsp.ccmxpf_lnkhist"]          # once a run, so a granted subscription is picked up
+
+
+def test_a_refused_compustat_query_still_fails_the_run(refusing):
+    refusing(refused=("comp",))
+    row = _backfill()
+    assert row["result"] == "failed" and "permission denied" in row["note"]
+
+
+def test_another_wrds_error_on_crsp_still_fails_the_run(fake, monkeypatch):
+    conn, _ = fake
+
+    def broken(sql, out):
+        if "crsp." in sql:
+            raise base.SourceError('wrds query failed: ProgrammingError: column "liid" does not exist')
+        return FakeWrds.query(conn, sql, out)
+    monkeypatch.setattr(conn, "query", broken)
+    row = _backfill()
+    assert row["result"] == "failed" and "liid" in row["note"]
