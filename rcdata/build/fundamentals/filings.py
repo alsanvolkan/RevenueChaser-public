@@ -180,9 +180,10 @@ def read_documents(ctx: base.RunContext, cik: str, raw: Path, as_of: date) -> in
         if path.exists():
             continue
         url = document_url(cik, f["accession"], f["primary_document"])
-        r = common.sec_get(ctx, url, missing=(404,))
+        r = common.sec_get(ctx, url, missing_object=True)      # /Archives/: a missing document answers 403
         if r is None:
-            ctx.issue("document_missing", f"{cik}:{f['accession']}", f"404 for {f['primary_document']}")
+            ctx.issue("document_missing", f"{cik}:{f['accession']}",
+                      f"the archive holds no {f['primary_document']}")
             continue
         base.write_raw_json(common.meta_path(path), {"cik": cik, "accession": f["accession"], "form": f["form"],
                                                      "as_of": as_of.isoformat(), "url": url,

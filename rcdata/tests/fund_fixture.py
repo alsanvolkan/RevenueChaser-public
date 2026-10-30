@@ -144,9 +144,12 @@ def daily_index(rows: list[tuple[str, str, str, str, str]]) -> str:
 
 def sec_routes(http_mock, facts_by_cik: dict, indexes: dict | None = None) -> None:
     """Answer the companyfacts and daily-index URLs: ``facts_by_cik`` {cik: body or callable}, ``indexes``
-    {YYYYMMDD: body}. Anything else at the SEC answers 404 (the mock's default)."""
+    {YYYYMMDD: body}. Anything else at the SEC answers 404 (the mock's default), except a daily index no test
+    named: EDGAR publishes one for every open day, so that answers an index with no rows (an index the archive
+    does not hold answers 403, which a reader reads as a day EDGAR was closed)."""
     for day, body in (indexes or {}).items():
         http_mock.add(f"master.{day}.idx", body)
+    http_mock.fallback("master.", daily_index([]))
     for cik, body in facts_by_cik.items():
         http_mock.add(f"companyfacts/CIK{int(cik):010d}.json", body)
 
@@ -240,11 +243,13 @@ def ixbrl_10k() -> str:
 
 
 def filing_routes(http_mock, lists: dict, documents: dict | None = None) -> None:
-    """Answer the submissions URLs (``lists`` {cik: body}) and the archive documents (``documents`` {file: html})."""
+    """Answer the submissions URLs (``lists`` {cik: body}) and the archive documents (``documents`` {file: html}).
+    A daily index no test named answers an index with no rows, as EDGAR does for an open day."""
     for cik, body in lists.items():
         http_mock.add(f"submissions/CIK{int(cik):010d}.json", body)
     for name, html in (documents or {}).items():
         http_mock.add(f"/{name}", html)
+    http_mock.fallback("master.", daily_index([]))
 
 
 # ── WRDS: Compustat's statements and WRDS's ratios (a fake worker, never WRDS) ────────────────────────────────

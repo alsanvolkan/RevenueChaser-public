@@ -7,7 +7,7 @@ filing and filer (a Form 4 or a Schedule 13D/G is listed under each of its parti
 An answer without that header is refused. The index is kept under ``raw/sec/daily_index/`` and read by every feed:
 one request per day for all three. A day is asked once it has ended (the walk stops at the day before the run's
 as-of). A day with no index object (a weekend is never asked; EDGAR keeps the **federal** holidays, so Columbus Day
-and Veterans Day have no index although the NYSE trades) answers **403**, not 404 — see ``MISSING_CODE`` — and is
+and Veterans Day have no index although the NYSE trades) answers **403**, not 404 — see ``base.is_missing`` — and is
 marked absent (``.none``) once it is more than ``SETTLED`` old; a younger one is asked again on the next run. The
 SEC's own 403 (an undeclared User-Agent, the fair-access rate) is told apart by its body and stops the run, and so
 does a stretch of ``MISSING_RUN`` missing weekdays EDGAR was open, or that many of a day's filings in a row.
@@ -73,24 +73,9 @@ def index_url(day: date) -> str:
     return sec.www_base() + INDEX_PATH.format(year=day.year, q=(day.month - 1) // 3 + 1, ymd=f"{day:%Y%m%d}")
 
 
-# A day or a filing that is not in the ``/Archives/`` bucket answers **403**, not 404: the bucket grants the read
-# of an object and not the listing, so S3 answers ``AccessDenied`` for one that is not there (sec.gov, measured
-# 2026-10-30: 403 ``application/xml`` ``<Code>AccessDenied</Code>`` for ``master.20261012.idx``, Columbus Day, and
-# for a made-up file name; 200 for 20261009 and 20261013). The SEC's own refusal — an undeclared User-Agent, or the
-# fair-access rate — is also a 403, but Akamai's HTML page ("Your Request Originates from an Undeclared Automated
-# Tool"), never the XML error. So the answer's own body tells a day EDGAR does not have from a refusal that must
-# stop the run; the day's place in the calendar does not, because the closures are not only the statutory holidays
-# (24 and 26 December 2025 were closed by executive order, and only the answer says so).
-MISSING_CODE = b"<Code>AccessDenied</Code>"
-MISSING_RUN = 3     # consecutive missing weekdays EDGAR does not keep closed: a refusal of the whole bucket, not days
-
-
-def is_missing(r) -> bool:
-    """Whether the answer says the object is not there: a 404, or the bucket's XML ``AccessDenied``."""
-    if r.status_code == 404:
-        return True
-    return (r.status_code == 403 and "xml" in str(r.headers.get("content-type") or "").lower()
-            and MISSING_CODE in r.content)
+# A day or a filing the ``/Archives/`` bucket does not hold answers 403, not 404: ``base.is_missing`` reads the
+# answer's body, and the comment above it says why that, and not the calendar, is what decides.
+MISSING_RUN = base.MISSING_RUN   # consecutive missing weekdays EDGAR does not keep closed: a refusal, not days
 
 
 def ymd(text) -> date | None:
@@ -141,7 +126,7 @@ def read_index(ctx: base.RunContext, pacer: sec.Pacer, day: date) -> Index:
         return Index(parse_index(base.read_raw(index_path(day))))
     url = index_url(day)
     r = sec.get(ctx, pacer, url, accept=(403, 404))
-    if is_missing(r):
+    if base.is_missing(r):
         return Index(None)
     if r.status_code >= 400:
         raise base.SourceError(f"{sec.PROVIDER} {url}: HTTP {r.status_code}{base.refusal_note()}")
@@ -256,16 +241,6 @@ class _Held:
         done = [d for d, _ in self.days] + self.finished
         self.days, self.filings, self.finished = [], [], []
         return done
-
-
-def _open_weekdays(first: date, last: date) -> list[date]:
-    """The days from ``first`` to ``last`` EDGAR was open: weekdays that are no federal holiday."""
-    out, day = [], first
-    while day <= last:
-        if day.weekday() < 5 and not calendar.is_federal_holiday(day):
-            out.append(day)
-        day += timedelta(days=1)
-    return out
 
 
 class Feed:
@@ -409,7 +384,7 @@ class Feed:
         unexplained.append(day)
         # The walk goes newest first, so the days it just found are the last ones appended, not the earliest dates.
         run = sorted(unexplained[-MISSING_RUN:])
-        if len(run) >= MISSING_RUN and _open_weekdays(run[0], run[-1]) == run:
+        if len(run) >= MISSING_RUN and base.open_weekdays(run[0], run[-1]) == run:
             raise base.SourceError(f"sec: no daily index for {MISSING_RUN} weekdays EDGAR was open "
                                    f"({', '.join(str(d) for d in run)}); the bucket may be refusing every "
                                    "request, so none of them is written off and the next run asks them again")
@@ -426,7 +401,7 @@ class Feed:
         url = f"{sec.www_base()}/Archives/{row['path']}"
         r = sec.get(ctx, pacer, url, accept=(403, 404))
         acc = row["accession"]
-        if is_missing(r):
+        if base.is_missing(r):
             return acc, {"status": r.status_code, "url": url, "run_id": ctx.run_id, "form": row["form"],
                          "cik": row["cik"]}
         if r.status_code >= 400:

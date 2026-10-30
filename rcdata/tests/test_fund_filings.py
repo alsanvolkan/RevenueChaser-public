@@ -8,9 +8,11 @@ import duckdb
 import pytest
 
 from RevenueChaser.core.providers import sec_edgar
+from RevenueChaser.rcdata import ops
 from RevenueChaser.rcdata.build.fundamentals import filings, tables
 
 from . import fund_fixture as fx
+from .sec_answers import MISSING_HEADERS, MISSING_OBJECT
 
 CAP = 200_000
 
@@ -113,3 +115,15 @@ def test_a_40f_filer_is_a_named_miss(sec):
     assert fx.q("SELECT quality, text FROM filing_item WHERE kind = 'document' AND cik = '1094517'") == [
         ("form_40f", None)]
     assert not sec.calls("tm-40f.htm")
+
+
+def test_a_document_the_archive_does_not_hold_is_a_named_miss_not_a_failed_run(sec):
+    """A primary document that is not there answers the bucket's 403, where the code read only a 404: the run
+    failed instead of naming the miss."""
+    _msft(sec)
+    sec.routes = [r for r in sec.routes if "msft-10k.htm" not in r[0]]
+    sec.add("/msft-10k.htm", MISSING_OBJECT, status=403, headers=MISSING_HEADERS)
+    check = fx.run(filings.NAME, "2026-10-28")
+    assert check["result"] != "failed", check["note"]
+    kinds = [i["kind"] for i in ops.open_issues(filings.NAME)[1]]
+    assert "document_missing" in kinds

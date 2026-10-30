@@ -3,12 +3,14 @@
 ``GET <RC_SEC_WWW_BASE>/Archives/edgar/daily-index/<year>/QTR<n>/master.<YYYYMMDD>.idx``: a few header lines, then
 ``CIK|Company Name|Form Type|Date Filed|Filename`` per filing, the accession in the file name
 (``edgar/data/789019/0000950170-26-000123.txt``). The SEC publishes a day's index that night; a weekend or SEC holiday
-has none (404).
+has none (403: ``base.is_missing``).
 
 Raw: ``raw/sec/daily_index/<date>.idx.gz`` with a ``.meta.json`` sidecar, shared by every dataset that reads it (the
-first to need a day fetches it; a raw file that exists is not fetched again). A 404 for a day before yesterday writes
-``<date>.absent.json`` (no index will come: a holiday), so it is not asked again; a 404 or a 403 for yesterday or
-today writes nothing (the index may not be published yet: the SEC answers 403 for it). Weekends are never asked.
+first to need a day fetches it; a raw file that exists is not fetched again). A day before yesterday the archive holds
+no index for writes ``<date>.absent.json`` (no index will come), so it is not asked again, but **only when a federal
+holiday explains it**: the same answer comes from a path or bucket refusing everything, and a stretch of
+``base.MISSING_RUN`` open weekdays with no index stops the run with nothing written off (``base.MissingStreak``).
+The answer for yesterday or today writes nothing (the index may not be published yet). Weekends are never asked.
 
 **The scan window.** A run reads the last ``LOOKBACK_DAYS`` days, or further back when it has to: a dataset that
 reads the index writes ``raw/<dataset>/_scanned.json`` (the last day a run of it read whole) at the end of each run,
@@ -77,21 +79,27 @@ def mark_scanned(ctx: base.RunContext, dataset: str, through: date) -> None:
                                                             "written_at": time.time()})
 
 
-def fetch_day(ctx: base.RunContext, day: date, as_of: date) -> Path | None:
-    """The raw index of ``day`` (fetched now if it is not stored); None when there is none (yet)."""
+def fetch_day(ctx: base.RunContext, day: date, as_of: date,
+              streak: base.MissingStreak | None = None) -> Path | None:
+    """The raw index of ``day`` (fetched now if it is not stored); None when there is none (yet).
+
+    ``streak`` counts the open weekdays this walk found no index for and raises on a stretch of them
+    (``base.MissingStreak``); a lone call without one writes a day off only when a holiday explains it.
+    """
     raw = raw_path(day)
     if raw.exists():
         return raw
     if absent_path(day).exists():
         return None
     recent = day >= as_of - timedelta(days=1)
-    # The SEC answers 403, not 404, for an index not published yet (today's, seen 29 Oct 2026), so a 403 on today's
-    # or yesterday's index is "not out yet", like a 404. On an older index it is a real block and fails the run.
-    # shortcut: a block that starts today shows two days late (once the day is older); upgrade if the SEC documents
-    # one status for an unpublished index.
-    r = common.sec_get(ctx, url(day), missing=(404, 403) if recent else (404,))
+    # An index the archive does not hold answers 403 (``base.is_missing``), whether it is a day EDGAR keeps closed
+    # or a day not published yet; which of the two it is, is the day's age. A 403 that is not that answer is the
+    # SEC refusing, and fails the run however old the day is.
+    r = common.sec_get(ctx, url(day), missing_object=True)
     if r is None:
-        if not recent:
+        # The same answer comes from a path or bucket that refuses everything, so a day is written off only when a
+        # holiday explains it; a stretch of open weekdays raises and nothing is written off.
+        if not recent and (streak or base.MissingStreak("daily index")).missing(ctx, day):
             base.write_raw_json(absent_path(day), {"day": day.isoformat(), "fetched_at": time.time(),
                                                    "run_id": ctx.run_id, "url": url(day)})
         return None
@@ -125,8 +133,9 @@ def filings(ctx: base.RunContext, as_of: date, forms: set[str] | None = None,
             ciks: set[str] | None = None, lookback: int = LOOKBACK_DAYS) -> list[dict]:
     """The filings of the last ``lookback`` days (indexes fetched as needed), kept to ``forms`` and ``ciks``."""
     out = []
+    streak = base.MissingStreak("daily index")
     for day in days(as_of, lookback):
-        raw = fetch_day(ctx, day, as_of)
+        raw = fetch_day(ctx, day, as_of, streak)
         if raw is None:
             continue
         for row in parse(base.read_raw(raw).decode("latin-1")):

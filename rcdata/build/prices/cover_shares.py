@@ -15,7 +15,7 @@ and whether it is inline XBRL) and the instance: two requests, ``SEC_INTERVAL_S`
 through the box's shared SEC bucket (``core/sec_throttle.py``), with the builder's User-Agent.
 
 **Raw**: ``raw/sec/daily_index/master.<YYYYMMDD>.idx.gz`` (a ``.missing`` marker for a day with no index, two days
-past), and ``raw/sec/cover_shares/cik=<CIK>/<accession>.json.gz``, the cover facts only (an instance runs to
+past, and only when EDGAR's closure explains it: ``base.MissingStreak``), and ``raw/sec/cover_shares/cik=<CIK>/<accession>.json.gz``, the cover facts only (an instance runs to
 megabytes); ``<accession>.none.json.gz`` for a filing with no instance to read, ``_asked.json.gz`` for a CIK whose
 submissions file has no ``FORMS`` filing. A filing that has a raw file is never asked again.
 
@@ -181,10 +181,18 @@ def _recent(body: dict) -> dict[str, dict]:
                 "inline": bool(col("isInlineXBRL", i))} for i, a in enumerate(accs)}
 
 
-def _status(e: Exception) -> str:
-    import re
-    m = re.search(r"HTTP (\d{3})", str(e))
-    return m.group(1) if m else ""
+class MissingObject(base.SourceError):
+    """The host answered that it holds no object for the URL: a 404, or the ``/Archives/`` bucket's 403
+    ``AccessDenied`` (``base.is_missing``). A plain 403 is the SEC refusing and stays a ``SourceError``, because
+    writing a day or a filing off under a refusal would never ask for it again.
+
+    ``status`` is that answer's own: a 404 (``data.sec.gov``, ``/files/``) says the key is not there and nothing
+    else, while the bucket's 403 is also what a path refusing everything answers, so only the 403 is counted
+    against ``base.MissingObjects``."""
+
+    def __init__(self, message: str, status: int = 403) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class SecCoverShares:
@@ -205,10 +213,19 @@ class SecCoverShares:
         def get(url: str):
             sec_throttle.pace()
             spacer.wait()
-            return base.http_get(ctx, PROVIDER, url)
+            r = base.http_get(ctx, PROVIDER, url, accept=(403, 404))
+            if base.is_missing(r):
+                raise MissingObject(f"{PROVIDER} {url}: HTTP {r.status_code} (the host holds no such object)",
+                                    r.status_code)
+            if r.status_code >= 400:
+                # ``accept`` means ``http_get`` returned instead of raising, so it counted no failure for this one.
+                ctx.count(PROVIDER, failures=1)
+                raise base.SourceError(f"{PROVIDER} {url}: HTTP {r.status_code}{base.refusal_note()}")
+            return r
         return get
 
-    def _index(self, ctx: base.RunContext, day: date, as_of: date, get) -> str | None:
+    def _index(self, ctx: base.RunContext, day: date, as_of: date, get,
+               streak: base.MissingStreak | None = None) -> str | None:
         path = index_path(day)
         missing = path.with_name(path.name.removesuffix(".gz") + ".missing")
         if path.exists():
@@ -219,10 +236,10 @@ class SecCoverShares:
             r = get(index_url(day))
         except base.CapReached:
             raise
-        except base.SourceError as e:
-            if _status(e) not in ("403", "404"):
-                raise
-            if as_of - day >= MISSING_AFTER:
+        except MissingObject:
+            # The archive answers the same for an index it does not hold and for a path that refuses everything, so
+            # a day is written off only when EDGAR's closure explains it; a stretch of open weekdays raises instead.
+            if as_of - day >= MISSING_AFTER and (streak or base.MissingStreak("daily index")).missing(ctx, day):
                 base.write_raw(missing, b"")
             return None
         base.write_raw(path, r.content)
@@ -236,9 +253,15 @@ class SecCoverShares:
         wanted: dict[str, set[str]] = {}
         known = set(tier_a)
         day = as_of - LOOKBACK
+        # A path refusing everything answers each index and each filing with the same ``AccessDenied``, so both
+        # walks hold their write-offs back: the days by the calendar (``base.MissingStreak``) and the filings by
+        # how many came in a row (``base.MissingObjects``). The day walk alone is not enough, because in steady
+        # state the days of the window are already stored and this run asks for none of them.
+        streak = base.MissingStreak("daily index")
+        gone = base.MissingObjects("filing instance")
         while day < as_of:
             if day.weekday() < 5:
-                for row in parse_index(self._index(ctx, day, as_of, get) or ""):
+                for row in parse_index(self._index(ctx, day, as_of, get, streak) or ""):
                     if row["cik"] in known and row["form"] in FORMS:
                         wanted.setdefault(row["cik"], set()).add(row["accession"])
             day += timedelta(days=1)
@@ -254,7 +277,7 @@ class SecCoverShares:
             except base.CapReached:
                 raise
             except (base.SourceError, ValueError) as e:
-                if isinstance(e, base.SourceError) and _status(e) not in ("403", "404"):
+                if isinstance(e, base.SourceError) and not isinstance(e, MissingObject):
                     raise
                 ctx.issue("submissions_missing", cik, str(e)[-160:])
                 base.write_raw_json(cik_dir(cik) / "_asked.json.gz", {"as_of": as_of.isoformat(), "error": str(e)})
@@ -271,12 +294,14 @@ class SecCoverShares:
                     ctx.issue("filing_not_in_submissions", f"{cik}:{acc}", "the daily index names it; the "
                               "submissions file's recent filings do not")
                     continue
-                path = self._filing(ctx, cik, f, as_of, get)
+                path = self._filing(ctx, cik, f, as_of, get, gone)
                 if path is not None:
                     out.append(path)
+        gone.release(ctx)
         return out + [p for p in self._untyped() if p not in out]
 
-    def _filing(self, ctx: base.RunContext, cik: str, f: dict, as_of: date, get) -> Path | None:
+    def _filing(self, ctx: base.RunContext, cik: str, f: dict, as_of: date, get,
+                gone: base.MissingObjects | None = None) -> Path | None:
         acc, doc = f["accession"], f.get("primary_document") or ""
         meta = {"cik": cik, **f, "as_of": as_of.isoformat(), "run_id": ctx.run_id}
         if not f.get("inline") or not doc.lower().endswith((".htm", ".html")):
@@ -289,11 +314,20 @@ class SecCoverShares:
         except base.CapReached:
             raise
         except (base.SourceError, ET.ParseError) as e:
-            if isinstance(e, base.SourceError) and _status(e) not in ("403", "404"):
+            if isinstance(e, base.SourceError) and not isinstance(e, MissingObject):
                 raise
+            run = gone if gone is not None else base.MissingObjects("filing instance")
             ctx.issue("instance_unreadable", f"{cik}:{acc}", f"{type(e).__name__}: {str(e)[-160:]}")
-            base.write_raw_json(none_path(cik, acc), {**meta, "why": f"{type(e).__name__}"})
+            mark = {**meta, "why": f"{type(e).__name__}"}
+            if isinstance(e, MissingObject) and e.status == 403:
+                # Held, not written: a stretch of these raises, and then none of them has been written off.
+                run.gone(f"{cik}:{acc}", lambda: base.write_raw_json(none_path(cik, acc), mark))
+            else:
+                run.answered()                  # the archive handed over a body, unreadable as it was
+                base.write_raw_json(none_path(cik, acc), mark)
             return None
+        if gone is not None:
+            gone.answered()
         return base.write_raw_json(filing_path(cik, acc), {**meta, "url": url, "facts": facts,
                                                            "fetched_at": calendar._now().timestamp()})
 
