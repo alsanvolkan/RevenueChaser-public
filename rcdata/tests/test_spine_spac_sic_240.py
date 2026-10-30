@@ -216,3 +216,33 @@ def test_a_column_read_as_null_is_logged(tmp_path, caplog):
 
 def test_the_company_table_declares_sic_as_added_later():
     assert wrds.ADDED_LATER == {"company": {"sic"}}
+
+
+# ── A stored snapshot written before the column existed (review SHOULD 3) ────────────────────────────────────
+
+def test_a_spine_build_on_a_snapshot_without_the_sic_column_still_builds(built_with, monkeypatch):
+    """The migration, end to end rather than at ``stage.create``: the stored Parquet of a snapshot taken before
+    ``sic`` was asked for has no such column, and the attended backfill that would add it needs a person. So the
+    whole spine build has to run on that file and type nothing from the SIC, not fail."""
+    import duckdb as ddb
+
+    built_with("002968", "6770")                       # a first build, whose Parquet does carry sic
+    assert _sec("CNA")["security_type"] == "spac"       # the rule fired, so the removal below is a real test
+
+    snap = wrds.parquet_dir("wrds/sec_idhist") / "snapshot=2026-10-27" / "company.parquet"
+    assert snap.is_file(), snap
+    con = ddb.connect()
+    try:
+        cols = [r[0] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet('{snap}')").fetchall()]
+        assert "sic" in cols
+        keep = ", ".join(f'"{c}"' for c in cols if c != "sic")
+        tmp = snap.with_suffix(".old.parquet")
+        con.execute(f"COPY (SELECT {keep} FROM read_parquet('{snap}')) TO '{tmp}' (FORMAT parquet)")
+    finally:
+        con.close()
+    tmp.replace(snap)                                   # the snapshot as it was before #240
+
+    run_all("2026-10-27", names=[security.NAME])        # the build that must survive it
+    row = _sec("CNA")
+    assert (row["tier"], row["security_type"]) == ("A", "common")
+    assert row["type_source"] != "compustat_sic(6770)"
