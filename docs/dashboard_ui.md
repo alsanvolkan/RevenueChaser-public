@@ -398,7 +398,8 @@ nested grouping). Count is `{n} names`.
 - Retire the parent-header `#oipd-ticker` text box. Fetch still `POST /run/module_oipd`
   with that ticker; the parent reads the iframe’s selected value (do not keep
   a second free-text field in `templates/dashboard.html`).
-- The pool is the classification universe (operating companies, `core/universe.py`).
+- The pool is the classification universe's operating companies (`core/universe.py`,
+  `BOARD_OPERATING_ONLY["module_oipd"]`).
   A ticker outside it (SPY, a fund) is typed into the combobox and opened anyway
   (`allowFree`); Refresh and Fetch accept any valid ticker.
 - Default focal: last stored `oipd_meta` ticker, else a name that is actually

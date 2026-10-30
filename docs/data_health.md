@@ -585,11 +585,15 @@ a link to where its cause is shown. A note renders with a warning mark, a positi
 link, never a button: long store-writing jobs start only from Settings. A board whose payload emits
 no funnel never asks for a Refresh to grow one, and a missing artifact reads as not rendered.
 
-The classification universe drops the excluded identity-master types at every market cap. Co-movement
-states that as three by-design drops after *No market cap* — funds and exchange-traded funds, blank
-cheque companies, and preferred shares, warrants and units — and then, when kept names have no
-established type, the note *Unknown security type — kept* linking to Settings → Identity. A funnel
-persisted before that change has no type rows and no note. The counts come from `universe_counts()`,
+The classification universe is the spine's Tiers A and B whole (PR 2, avo 30 Oct 2026): a security
+type is data a board filters on, not a cut of the universe. Each screening board has a type filter
+(`OPERATING_ONLY`, a setting on Co-movement, Swing and Fundamentals; `core.universe.BOARD_OPERATING_ONLY`
+holds every board's default, the set it read before PR 2). With the filter on, the board states the
+three groups — funds and exchange-traded funds, blank cheque companies, and preferred shares, warrants
+and units — as by-design drops after *No market cap*; with it off (Co-movement's default) they are notes,
+*Kept, of which: …*, the kept names' type mix. Then, when kept names have no established type, the note
+*Unknown security type — kept* links to Settings → Identity. A funnel persisted before PR 2 carries no
+filter flag and reads as the filter on; one persisted before the type rows has no type rows and no note. The counts come from `universe_counts()`,
 and the types are read with a separate query, never a join: a missing table answers with no rows, so
 a join would silently empty the universe.
 
@@ -617,9 +621,12 @@ denominator. A nought on this card is always a real nought.
 applies, counted here and nowhere else: the companies in the SEC ticker and exchange file, less the
 names not listed on Nasdaq, the New York Stock Exchange or Cboe, less the names the stored equity
 universe does not hold yet, less the names with no market cap
-stored, less the three excluded security-type groups — funds and exchange-traded funds, special
-purpose acquisition companies, and preferred shares, warrants and units — leaving the names the
-boards screen.
+stored, leaving the names the boards screen. The three security-type groups — funds and
+exchange-traded funds, special purpose acquisition companies, and preferred shares, warrants and
+units — are notes on that set (*Kept, of which: …*), its type mix, never drops: since PR 2 the
+universe keeps every type of Tiers A and B. The coverage rows of the company datasets (the 10-K
+corpus, companyfacts, the Swing bar cache) count the operating-company slice, the names the boards
+that read them screen: a fund has no 10-K to miss.
 
 Two of those drops are **not** rules and the funnel says so: a listed name the stored universe does
 not hold is the universe being behind the SEC file after a new listing, and a missing market cap is
