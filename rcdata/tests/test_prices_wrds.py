@@ -342,6 +342,37 @@ def test_the_monthly_refresh_keeps_the_values_it_replaces_as_revisions(built):
     assert {str(r["as_of"]) for r in report.values()} == {"2026-11-27"}
 
 
+# ── The factor lookup at the WRDS history's size (homesrv, 30 Oct 2026: request 34 took 41 of its 50 minutes) ──
+
+def test_a_day_finds_its_factor_by_asof_join_as_the_period_rule_does():
+    """``factor_join`` matches the row ``period`` matches, at every edge: before the first period, on an ex-date, after
+    the last one (no row: factor 1), and a NULL day."""
+    con = duckdb.connect()
+    con.execute("CREATE TABLE adj_factor (security_id TEXT, valid_from DATE, valid_to DATE, split_factor DOUBLE)")
+    con.execute("""INSERT INTO adj_factor VALUES ('x', NULL, DATE '2025-03-03', 4.0),
+        ('x', DATE '2025-03-03', DATE '2025-06-04', 2.0), ('y', NULL, DATE '2025-06-04', 3.0)""")
+    con.execute("CREATE TABLE b (security_id TEXT, session_date DATE)")
+    days = ["2024-01-02", "2025-03-02", "2025-03-03", "2025-06-03", "2025-06-04", "2026-10-27", None]
+    con.executemany("INSERT INTO b VALUES (?, ?)", [(s, d) for s in ("x", "y", "z") for d in days])
+    rule = con.execute(f"""SELECT b.security_id, b.session_date, a.split_factor FROM b LEFT JOIN adj_factor a
+        ON {prices_serving.period('a', 'b.security_id', 'b.session_date')} ORDER BY ALL""").fetchall()
+    asof = con.execute(f"""SELECT b.security_id, b.session_date, a.split_factor FROM b
+        {prices_serving.factor_join('a', 'b.security_id', 'b.session_date')} ORDER BY ALL""").fetchall()
+    assert asof == rule
+    assert [f for s, d, f in rule if s == "x"] == [4.0, 4.0, 2.0, 2.0, None, None, None]
+
+
+def test_no_served_lookup_of_the_factors_is_a_blockwise_loop(built):
+    """The range join on ``adj_factor`` planned as ``BLOCKWISE_NL_JOIN``: 347 s for one pass over 5.6M Compustat bars,
+    three passes in the build. Every lookup of a column day is now an ASOF join, the read views too."""
+    with serving.open_read("prices") as con:
+        for view in ("price_bars_daily", "price_actions"):
+            plan = "\n".join(r[1] for r in con.execute(f"EXPLAIN SELECT * FROM {view}").fetchall())
+            assert "BLOCKWISE_NL_JOIN" not in plan, (view, plan)
+        for sql in (prices_serving.MARKET_CAP_SQL.format(within=prices_serving.ISSUER_WITHIN_DAYS),):
+            assert sql.count("ASOF LEFT JOIN adj_factor") == 2
+
+
 # ── A subscription without CRSP (homesrv, 30 Oct 2026: run 32 refused on ``crsp_a_ccm``) ──────────────────────
 
 REFUSED = ("ProgrammingError: (psycopg2.errors.InsufficientPrivilege) permission denied for schema {schema}\n\n"

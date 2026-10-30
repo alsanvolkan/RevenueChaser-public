@@ -147,6 +147,20 @@ def period(a: str, sid: str, day: str) -> str:
     return IN_PERIOD.format(a=a, sid=sid, day=day)
 
 
+# The same lookup as an ASOF join: the factor period of a day is the one whose ``valid_to`` is the nearest after it.
+# ``ADJ_SQL`` makes a security's periods contiguous (each ``valid_from`` is the previous row's ``valid_to``, the first
+# NULL) and never leaves ``valid_to`` NULL, so this is the row ``IN_PERIOD`` picks. The range join above is evaluated
+# as a nested loop: on the WRDS history (5.6M bars, 64k factor rows, 30 Oct 2026) one such join took 347 s, the
+# ASOF join 1.7 s, and the serving build ran three of them on every bar (``market_cap_daily`` twice, the WRDS report).
+# A day that is no column (``DATE '9999-12-31'``) has no ASOF inequality, so that lookup keeps ``period``.
+AS_OF_PERIOD = "ASOF LEFT JOIN adj_factor {a} ON {a}.security_id = {sid} AND {day} < {a}.valid_to"
+
+
+def factor_join(a: str, sid: str, day: str) -> str:
+    """``ASOF LEFT JOIN adj_factor <a>`` on the factor period of ``day`` (a column), the rows ``period`` would match."""
+    return AS_OF_PERIOD.format(a=a, sid=sid, day=day)
+
+
 def _create(con: duckdb.DuckDBPyConnection, table: str, select: str) -> int:
     schema = SCHEMAS[table]
     cols = ", ".join(f'"{c}" {t}' for c, t in schema)
@@ -399,7 +413,7 @@ class PricesServing:
             x AS (SELECT h.source, h.security_id, h.session_date, h.own_return,
                          h.close * coalesce(a.split_factor, 1) AS sc,
                          coalesce(d.amount, 0) * coalesce(a.split_factor, 1) AS dv
-                  FROM _hist_all h LEFT JOIN adj_factor a ON {period('a', 'h.security_id', 'h.session_date')}
+                  FROM _hist_all h {factor_join('a', 'h.security_id', 'h.session_date')}
                   LEFT JOIN d ON d.security_id = h.security_id AND d.ex_date = h.session_date WHERE h.close > 0),
             y AS (SELECT *, lag(sc) OVER w AS prev_sc, lag(session_date) OVER w AS prev_day FROM x
                   WINDOW w AS (PARTITION BY source, security_id ORDER BY session_date))
@@ -449,7 +463,7 @@ class PricesServing:
                    b.volume / coalesce(a.split_factor, 1) AS volume, CAST(NULL AS DOUBLE) AS split_ratio,
                    'prices/adj_factor' AS adj_source, b.source, {built} AS fetched_at, b.run_id, {built} AS run_at
             FROM price_bar_daily b JOIN security_symbol_now n USING (security_id)
-            LEFT JOIN adj_factor a ON {period('a', 'b.security_id', 'b.session_date')}
+            {factor_join('a', 'b.security_id', 'b.session_date')}
             WHERE b.security_id NOT LIKE 'index:%'""")
         con.execute(f"""CREATE VIEW price_actions AS
             SELECT n.symbol AS ticker, c.ex_date, CASE WHEN c.action = 'cash_dividend' THEN 'dividend'
@@ -458,7 +472,7 @@ class PricesServing:
                         ELSE c.ratio END AS value,
                    c.ex_date AS session_date, c.source, {built} AS fetched_at, c.run_id, {built} AS run_at
             FROM corporate_action c JOIN security_symbol_now n USING (security_id)
-            LEFT JOIN adj_factor a ON {period('a', 'c.security_id', 'c.ex_date')}
+            {factor_join('a', 'c.security_id', 'c.ex_date')}
             WHERE c.applied""")
         con.execute(f"""CREATE VIEW index_levels_daily AS
             SELECT '^GSPC' AS symbol, session_date, open, high, low, close, volume, source, {built} AS fetched_at,
@@ -489,7 +503,7 @@ class PricesServing:
                    lag(b.session_date) OVER w AS prev_day,
                    lag(b.close * coalesce(a.split_factor, 1)) OVER w AS prev_split,
                    lag(b.close * coalesce(a.tr_factor, 1)) OVER w AS prev_tr
-            FROM price_bar_daily b LEFT JOIN adj_factor a ON {period('a', 'b.security_id', 'b.session_date')}
+            FROM price_bar_daily b {factor_join('a', 'b.security_id', 'b.session_date')}
             WHERE b.security_id NOT LIKE 'index:%' AND b.close > 0
             WINDOW w AS (PARTITION BY b.security_id ORDER BY b.session_date)""")
         for sid, day, ratio in con.execute(f"""
@@ -523,7 +537,7 @@ class PricesServing:
                                   / coalesce(a1.split_factor, 1) AS value
                            FROM (SELECT * FROM shares_class WHERE measure = 'outstanding'
                                  QUALIFY row_number() OVER (PARTITION BY security_id ORDER BY as_of DESC) = 1) o
-                           LEFT JOIN adj_factor a1 ON {period('a1', 'o.security_id', 'o.as_of')}
+                           {factor_join('a1', 'o.security_id', 'o.as_of')}
                            LEFT JOIN adj_factor a2 ON {period('a2', 'o.security_id', "DATE '9999-12-31'")})
                 SELECT f.security_id, max(f.value), any_value(o.value) FROM f JOIN o USING (security_id)
                 GROUP BY f.security_id HAVING max(f.value) > {FLOAT_OVER} * any_value(o.value) ORDER BY 1""").fetchall():
@@ -615,8 +629,8 @@ MARKET_CAP_SQL = f"""
                FROM b ASOF LEFT JOIN o ON o.security_id = b.security_id AND b.session_date >= o.as_of),
          s AS (SELECT j.*, CASE WHEN own IS NOT NULL THEN own
                                 ELSE cover * coalesce(a1.split_factor, 1) / coalesce(a2.split_factor, 1) END AS shares
-               FROM j LEFT JOIN adj_factor a1 ON {period('a1', 'j.security_id', 'j.session_date')}
-               LEFT JOIN adj_factor a2 ON {period('a2', 'j.security_id', 'j.cover_as_of')}),
+               FROM j {factor_join('a1', 'j.security_id', 'j.session_date')}
+               {factor_join('a2', 'j.security_id', 'j.cover_as_of')}),
          c AS (SELECT security_id, session_date, issuer AS cik, close, shares,
                       CASE WHEN own IS NOT NULL THEN bar_source ELSE cover_source END AS shares_source,
                       CASE WHEN own IS NOT NULL THEN session_date ELSE cover_as_of END AS shares_as_of,
