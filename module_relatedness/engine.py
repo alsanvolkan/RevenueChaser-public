@@ -52,7 +52,7 @@ def _now() -> str:
 
 
 def select_pilot(limit: int | None = None) -> list[str]:
-    """The shared classification universe (>= $300M), cap-descending.
+    """The shared classification universe (no market-cap floor), cap-descending.
 
     One selector for every classification board (core/universe.py). ``limit``
     caps the set for tests/demos.

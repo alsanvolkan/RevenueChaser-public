@@ -1081,7 +1081,7 @@ def _last_run(runs: list[dict]) -> dict | None:
 
 
 def _master_mix(group_expr: str) -> list[tuple]:
-    """``[(key, all, at_floor)]`` over ``security_master`` grouped by ``group_expr`` (floor: cap >= $300M).
+    """``[(key, all, at_floor)]`` over ``security_master`` grouped by ``group_expr`` (the cap rule, no floor since 29 Oct 2026).
 
     The cap comes from ``equity_universe``; a master ticker with no universe row counts in ``all`` only.
     """
@@ -1118,7 +1118,7 @@ def _source_mix() -> list[dict]:
 
 
 def _unclassified_holes() -> int | None:
-    """Master tickers with no sector source at or above the $300M floor (``sector_source`` none / NULL)."""
+    """Master tickers with no sector source inside the universe (``sector_source`` none / NULL); no cap floor."""
     if not (_table_exists("security_master") and _table_exists("equity_universe")):
         return None
     try:
@@ -1812,7 +1812,7 @@ def unclaimed_tables() -> list[dict]:
 # Three objects, counted over the same population (the names the boards screen):
 #
 # 1. the universe funnel — the SEC ticker and exchange file's present rows, down through the
-#    listed venues, the stored universe, the $300M floor and the excluded security types to
+#    listed venues, the stored universe, the cap rule (no floor now) and the excluded security types to
 #    ``universe.classification_universe()``. The steps are the rules the rest of the store already
 #    applies (``sec_files.latest``, ``universe_fetch.SEC_LIST_EXCHANGES``, ``DEFAULT_MC_MIN``,
 #    ``universe.TYPE_GROUPS``); this block only counts them, in one read per store file.
@@ -1922,9 +1922,11 @@ def _universe_funnel(kept: set[str], present: list[dict] | None,
     listed = {str(r["ticker"]).upper() for r in present
               if str(r.get("exchange") or "").strip().casefold() in SEC_LIST_EXCHANGES}
     in_universe = listed & set(caps)
+    # The cap rule is ``universe``'s own (``spine._at_floor``), so this funnel's last step is the set the
+    # boards screen. At floor 0 a NULL cap is kept, so neither drop row takes it.
     below = {t for t in in_universe
-             if caps[t] is not None and float(caps[t]) < floor}
-    no_cap = {t for t in in_universe if caps[t] is None}
+             if caps[t] is not None and not spine._at_floor(float(caps[t]), floor)}
+    no_cap = {t for t in in_universe if caps[t] is None and not spine._at_floor(None, floor)}
     # The type rule is ``universe``'s own (``TYPE_GROUPS``, together ``EXCLUDED_TYPES``); untyped
     # names stay, exactly as ``classification_universe`` keeps them.
     types = spine._security_types()
@@ -1944,7 +1946,8 @@ def _universe_funnel(kept: set[str], present: list[dict] | None,
         # (a new listing since the last Fetch), not a rule: the row says so.
         funnel_mod.step("universe", "Not in the stored equity universe",
                         len(listed) - len(in_universe), "drop", by_design=False),
-        funnel_mod.step("floor", f"Market cap below ${floor / 1e6:,.0f} million",
+        funnel_mod.step("floor", (f"Market cap below ${floor / 1e6:,.0f} million" if floor
+                                  else "Market cap below the floor (no floor is set)"),
                         len(below), "drop", by_design=True),
         # A missing cap is not a rule: it is the store's own hole, and the row says so.
         funnel_mod.step("no_cap", "No market cap stored", len(no_cap), "drop", by_design=False),
@@ -2221,7 +2224,8 @@ def _collect(now: datetime) -> dict:
             "rows": _count("security_master"),
             "last_date": _max_date(("identity_runs", "finished_at")),
             "holes": _unclassified_holes(),
-            "hole_label": "unclassified ≥$300M",
+            "hole_label": ("unclassified ≥${:,.0f}M".format(float(_MC_FLOOR) / 1e6) if _MC_FLOOR
+                       else "unclassified"),
             "fetch": {"route": "/run/identity", "label": "Fetch identity"},
             "note": identity_note,
             "master_age": master_age,

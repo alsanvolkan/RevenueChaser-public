@@ -12,10 +12,10 @@ COMOVEMENT_LATEST = OUTPUT_DIR / "comovement_latest.html"
 COMOVEMENT_JSON = OUTPUT_DIR / "comovement" / "comovement_latest.json"
 
 # ── Universe / OHLC ─────────────────────────────────────────────────────────
-# Cluster the liquid slice of the shared universe. Microcaps/OTC have thin or
-# absent history, which is noise for a return-correlation hierarchy. The floor is
-# NOT defined here: ``core.universe.DEFAULT_MC_MIN`` ($300M) is the one definition
-# and it is not editable (issue #40); read it from there.
+# Cluster the shared universe. There is no market-cap floor any more (avo, 29 Oct
+# 2026): ``core.universe.DEFAULT_MC_MIN`` is 0 and the universe is the spine's
+# Tiers A and B. The board's own ``floor`` setting defaults to it, so a run can
+# still ask for a floor; the default asks for none.
 # The span of the prices store the board reads, back from its newest session (``ohlc.history_start``; PR 8): the
 # history the old ``swing_ohlc`` cache held. The bars themselves come from the prices build only.
 OHLC_PERIOD = "2y"

@@ -23,13 +23,18 @@ def _http(code):
 
 @pytest.fixture
 def env(rawstore_tmp_db, monkeypatch):
-    """NVDA and its dual class NVDB (one CIK) at the classification floor, TINY below it."""
+    """NVDA and its dual class NVDB (one CIK), and TINY at $1M on a CIK of its own.
+
+    TINY used to sit below the $300M floor and stay out of the universe. The floor is gone (avo, 29 Oct 2026),
+    so all three are in it now and TINY takes a document step like the rest: one more CIK, one more request.
+    """
     rawstore.replace_all("equity_universe", [
         {"ticker": "NVDA", "market_cap": 2e9, "name": "N"}, {"ticker": "NVDB", "market_cap": 1e9, "name": "N"},
         {"ticker": "TINY", "market_cap": 1e6, "name": "T"}])
     rawstore.write_rows("sec_exchange_file", [
         {"ticker": "NVDA", "cik": "1045810", "name": "N", "status": "present", "run_at": 1.0}, {"ticker": "NVDB", "cik": "1045810", "name": "N", "status": "present", "run_at": 1.0},
-        {"ticker": "TINY", "cik": "0000000077", "name": "T", "status": "present", "run_at": 1.0}])
+        {"ticker": "TINY", "cik": "0000000077", "name": "T", "status": "present", "run_at": 1.0},
+        {"ticker": "OUT", "cik": "0000000099", "name": "O", "status": "present", "run_at": 1.0}])
     e = {"urls": [], "downloads": 0, "subs": {1045810: _subs(), 77: _subs("tiny-1", sic="1000")}, "raise": {}}
 
     def _get_json(url, client=None):
@@ -70,16 +75,23 @@ def test_the_sweep_stores_every_universe_cik_once_with_the_run_id(env):
 
 
 def test_only_the_classification_universe_takes_the_document_step(env):
+    """OUT is in the SEC file with a CIK of its own but has no universe row, so the sync never asks for it.
+
+    TINY used to be this test's subject while the $300M floor kept it out; with no floor it is a universe name
+    like the others, so the case needs a name that is genuinely not in the universe.
+    """
     out = sync.sync_filings()
-    assert out["updated"] == 2 and env["downloads"] == 1               # NVDB re-slices NVDA's stored doc
-    assert rawstore.get("chain_filings", "TINY") is None
+    assert out["updated"] == 3 and env["downloads"] == 2               # NVDB re-slices NVDA's stored doc; TINY has its own
+    assert rawstore.get("chain_filings", "OUT") is None
+    assert "99" not in {r["cik"] for r in _filings()}
+    assert rawstore.get("chain_filings", "TINY") is not None           # in the universe now
     assert rawstore.get("chain_filings", "NVDB")["accession"] == "acc-1"
 
 
 def test_a_second_run_appends_nothing_and_downloads_nothing(env):
     sync.sync_filings(run_id="r1")
     out = sync.sync_filings(run_id="r2")
-    assert out["current"] == 2 and env["downloads"] == 1
+    assert out["current"] == 3 and env["downloads"] == 2
     assert out["submissions"]["filings_appended"] == 0 and out["submissions"]["headers_appended"] == 0
     assert out["submissions"]["headers_unchanged"] == 2
     assert {r["run_id"] for r in _filings()} == {"r1"} and len(_headers()) == 2
@@ -99,7 +111,7 @@ def test_a_failed_cik_writes_nothing_and_is_named(env):
     out = sync.sync_filings()
     assert out["submissions"]["failed"] == 1 and out["submissions"]["failed_ciks"] == ["77"]
     assert {r["cik"] for r in _filings()} == {"1045810"}
-    assert out["failed"] == 0                                          # TINY has no document step to fail
+    assert out["failed"] == 1                                          # TINY is in the universe now: its step fails too
 
 
 @pytest.mark.parametrize("code", [503, 403])
@@ -142,7 +154,7 @@ def test_a_padded_cik_in_the_store_is_the_same_filer_to_the_document_step(env):
     out = sync.sync_filings()
     assert len(env["urls"]) == 2                                       # one request for NVDA and NVDB
     assert rawstore.get("chain_filings", "NVDA")["cik"] == "1045810"
-    assert rawstore.get("chain_filings", "NVDB")["cik"] == "1045810" and out["updated"] == 2
+    assert rawstore.get("chain_filings", "NVDB")["cik"] == "1045810" and out["updated"] == 3
 
 
 def test_refresh_makes_no_request_and_writes_nothing(env):
@@ -161,7 +173,7 @@ def test_a_known_miss_is_still_swept_but_takes_no_document_step(env):
     sync.sync_filings(run_id="r1")
     env["subs"][1045810] = _subs("acc-9", form="S-1")
     out = sync.sync_filings(run_id="r2")
-    assert out["known_miss"] == 2 and env["downloads"] == 0
+    assert out["known_miss"] == 2 and env["downloads"] == 1            # only NVDA's CIK misses; TINY still downloads
     assert ("1045810", "acc-9") in {(r["cik"], r["accession"]) for r in _filings()}
 
 
@@ -172,7 +184,7 @@ def test_a_store_failure_is_a_result_and_the_corpus_still_updates(env, monkeypat
     monkeypatch.setattr(sec_submissions, "record", boom)
     out = sync.sync_filings()
     assert "edgar locked" in out["submissions"]["error"]
-    assert out["updated"] == 2 and rawstore.get("chain_filings", "NVDA") is not None
+    assert out["updated"] == 3 and rawstore.get("chain_filings", "NVDA") is not None
 
 
 def test_a_document_step_failure_keeps_the_submissions_answer(env, monkeypatch):
@@ -181,7 +193,7 @@ def test_a_document_step_failure_keeps_the_submissions_answer(env, monkeypatch):
 
     monkeypatch.setattr(edgar_text, "fetch_document", broken)
     out = sync.sync_filings()
-    assert out["failed"] == 2 and out["submissions"]["failed"] == 0
+    assert out["failed"] == 3 and out["submissions"]["failed"] == 0
     assert {r["cik"] for r in _filings()} == {"1045810", "77"}
 
 
@@ -216,7 +228,7 @@ def test_the_sync_stores_the_document_with_source_and_run_at(env):
     doc = rawstore.get("edgar_documents", "acc-1")
     assert doc["source"] == "sec_archives" and doc["tickers"] == "NVDA"
     assert doc["run_at"] is not None and doc["fetched_at"] >= doc["run_at"]
-    assert out["updated"] == 2
+    assert out["updated"] == 3
 
 
 def test_a_forced_rerun_does_not_rewrite_a_stored_document(env):
@@ -224,7 +236,7 @@ def test_a_forced_rerun_does_not_rewrite_a_stored_document(env):
     first = rawstore.get("edgar_documents", "acc-1")
     sync.sync_filings(force=True)
     again = rawstore.get("edgar_documents", "acc-1")
-    assert again == first and env["downloads"] == 1
+    assert again == first and env["downloads"] == 2
 
 
 def test_the_value_chain_fetch_download_joins_the_document_path(env, monkeypatch):

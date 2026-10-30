@@ -394,7 +394,7 @@ login is what asks for credentials.
   `unreadable`) unless a readable table it needs already has no row, which stays "no — missing …".
   A store file whose table list cannot be read counts as a failed read for every table in it. The
   drill also has the shared ticker combobox, and a null market cap
-  rendered as "no cap stored (outside the $300M universe or not yet resolved)". It shows **stored**
+  rendered as "no cap stored (not yet resolved)". It shows **stored**
   data only: it asks neither SEC nor Yahoo. Price coverage in the drill is the daily bar count and
   newest session from `price_bars_daily`; `swing_ohlc` appears as the legacy cache and is not the
   price of record.
@@ -410,13 +410,13 @@ The **Identity spine** row carries the **Fetch identity** button, which posts `P
 writer**: a run that ends `ok` or `partial` applies the master's sector and industry, plus the next
 earnings date, to `equity_universe`, so it changes sectors on every board. The help text and the card
 say so. Each run writes an `identity_runs` row with per-source status, rows, fetched count, seconds
-and error. The row's holes are the master tickers with no sector source at a market cap of $300M or
+and error. The row's holes are the master tickers with no sector source in the universe (Tiers A and B, no
 more; its note is `last run <status>` or `no identity run yet`.
 
 The card itself (`<section id="identity">`) is built from the store only; a missing table is an empty
 section, not an error. With no run and no master rows it reads
 `No identity run yet. Use Fetch identity in the table above.` Otherwise it shows the last run, the
-SPDR check line, the security-type mix at and above the $300M floor with excluded types tagged, the
+SPDR check line, the security-type mix of the universe with excluded types tagged, the
 sector-source mix (the S&P 1500 list, a provider, the SIC table, the type rule, unclassified, and
 `other` only when non-nought), the conflicts by kind with the top fifty by market cap, and the
 newest fetch per cached source with the number of universe tickers past each source's window.
@@ -616,7 +616,7 @@ denominator. A nought on this card is always a real nought.
 **Where names drop out of the universe** is a funnel over the rules the rest of the store already
 applies, counted here and nowhere else: the companies in the SEC ticker and exchange file, less the
 names not listed on Nasdaq, the New York Stock Exchange or Cboe, less the names the stored equity
-universe does not hold yet, less the names below the $300M floor, less the names with no market cap
+universe does not hold yet, less the names with no market cap
 stored, less the three excluded security-type groups — funds and exchange-traded funds, special
 purpose acquisition companies, and preferred shares, warrants and units — leaving the names the
 boards screen.
@@ -754,7 +754,7 @@ Comparing the stored accession to the SEC's own submissions list, end to end:
    - no 10-K or 20-F in the list, so `no_filing`.
 
 Run: `python -m RevenueChaser.module_value_chain --sync-filings [--limit N] [--force] [--floor M | --tickers A,B]`.
-Without a floor or a ticker list it covers the $300M classification universe, and the submissions
+Without a floor or a ticker list it covers the whole classification universe, and the submissions
 sweep covers every universe central index key. Cost: one submissions call per key at the shared
 SEC rate, and archive downloads only on a mismatch.
 

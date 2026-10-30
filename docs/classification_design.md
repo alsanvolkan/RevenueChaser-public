@@ -25,7 +25,7 @@ single work order.
 - Canonical per-domain tables + derived `company_profile` **VIEW**.
 - Gates/signals in typed `*_gates` tables (filterable).
 - `equity_universe` = only membership + sector source; **all three classification
-  boards read one set: market_cap >= $300M (~3,634)** via
+  boards read one set: the spine's Tiers A and B, no market-cap floor** via
   `core/universe.py::classification_universe`, minus the identity-master security
   types that are not operating companies (`identity.types.EXCLUDED_TYPES`: funds /
   ETFs, SPACs, preferred / warrants / units; Identity R4, #87). A name with no

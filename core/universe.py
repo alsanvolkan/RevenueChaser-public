@@ -7,8 +7,10 @@ place the membership rule lives.
 
 The rule has two parts:
 
-* **the floor** — `market_cap >= mc_min`, `mc_min` defaulting to $300M (the liquid
-  slice used by the boards; pass a lower value, or 0, for the full universe);
+* **the tier** — the spine's Tiers A and B, which is the whole limit (avo, 29 Oct
+  2026). There is no market-cap floor any more: `mc_min` defaults to 0, so every
+  tier A/B name is kept, NULL-cap names included. A caller that wants a floor of
+  its own still passes one (`--floor`, the Co-movement setting);
 * **the security type** (Identity R4, #87) — names the identity master
   (`security_master.security_type`) types as `identity.types.EXCLUDED_TYPES`
   (funds, ETFs, SPACs, preferreds, warrants, units) are not operating companies and
@@ -48,7 +50,9 @@ if TYPE_CHECKING:
 _UNIVERSE_TABLE = ("equity_universe" if "equity_universe" in rawstore.MANIFEST
                    else "equity_universe")
 
-DEFAULT_MC_MIN = 300_000_000.0
+# No market-cap floor (avo, 29 Oct 2026): the universe is the spine's Tiers A and B and nothing else.
+# The parameter stays, so a caller can still ask for a floor of its own; 0 keeps NULL-cap names too.
+DEFAULT_MC_MIN = 0.0
 
 # The source switch (PR 5): read at call time, so a test or a restart with the variable set changes it.
 SOURCE_ENV = "RC_UNIVERSE_SOURCE"
@@ -162,9 +166,19 @@ def _spine_universe() -> list[dict]:
     return out
 
 
+def _at_floor(cap, mc_min: float) -> bool:
+    """The one cap rule: ``COALESCE(market_cap, 0) >= mc_min``.
+
+    ``_by_cap`` (the universe) and ``universe_counts`` (the funnel) both ask through this, so the funnel can never
+    report a different set than the boards read. It matters at ``mc_min`` 0, the default since the floor went: a
+    NULL cap reads as 0 and the name is kept, where the old funnel counted it out as ``no_market_cap``.
+    """
+    return (cap or 0) >= mc_min
+
+
 def _by_cap(rows: list[dict], mc_min: float) -> list[dict]:
     """``COALESCE(market_cap, 0) >= mc_min ORDER BY market_cap DESC`` (NULLs last), as the store query does."""
-    kept = [r for r in rows if (r.get("market_cap") or 0) >= mc_min]
+    kept = [r for r in rows if _at_floor(r.get("market_cap"), mc_min)]
     return sorted(kept, key=lambda r: (r.get("market_cap") is None, -(r.get("market_cap") or 0), r["ticker"]))
 
 
@@ -255,29 +269,31 @@ def universe_counts(mc_min: float = DEFAULT_MC_MIN) -> dict:
         scanned_total  = below_floor + no_market_cap + floor_total
         floor_total    = funds_etfs + spacs + other_securities + classification_total
 
-    ``classification_total`` is what the boards read
-    (``len(classification_universe(mc_min))``, for ``mc_min > 0``: at 0 the universe
-    also keeps NULL-cap names, which the counts have always kept apart in
-    ``no_market_cap``). ``unknown_type`` counts, among the
+    ``classification_total`` is what the boards read (``len(classification_universe(mc_min))``) at every
+    ``mc_min``: both ask through ``_at_floor``, so the funnel's last line and the universe are the same set.
+    A NULL cap counts as 0, so at ``mc_min`` 0 — the default since the floor went — such a name is kept and
+    ``no_market_cap`` is 0; above 0 it is out, and ``no_market_cap`` says how many were left out that way.
+    ``unknown_type`` counts, among the
     kept names, those whose type is not an operating type (no master row, NULL,
     ``unknown``, ``other``): kept, but their type is not established.
     """
     if _spine():
         spine = _spine_universe()
         caps = [x.get("market_cap") for x in spine]
-        r = {"n": len(spine), "ok": sum(1 for c in caps if c is not None and c >= mc_min),
-             "low": sum(1 for c in caps if c is not None and c < mc_min), "nocap": caps.count(None)}
-        at_floor = [x for x in spine if x.get("market_cap") is not None and x["market_cap"] >= mc_min]
+        r = {"n": len(spine), "ok": sum(1 for c in caps if _at_floor(c, mc_min)),
+             "low": sum(1 for c in caps if c is not None and c < mc_min),
+             "nocap": sum(1 for c in caps if c is None and not _at_floor(c, mc_min))}
+        at_floor = [x for x in spine if _at_floor(x.get("market_cap"), mc_min)]
     else:
         rows = rawstore.query(
             f"SELECT count(*) n, "
-            f"count(*) FILTER (WHERE market_cap >= ?) ok, "
+            f"count(*) FILTER (WHERE COALESCE(market_cap, 0) >= ?) ok, "
             f"count(*) FILTER (WHERE market_cap < ?) low, "
-            f"count(*) FILTER (WHERE market_cap IS NULL) nocap "
-            f"FROM {_UNIVERSE_TABLE}", [mc_min, mc_min])
+            f"count(*) FILTER (WHERE market_cap IS NULL AND COALESCE(market_cap, 0) < ?) nocap "
+            f"FROM {_UNIVERSE_TABLE}", [mc_min, mc_min, mc_min])
         r = rows[0] if rows else {}
         at_floor = rawstore.query(
-            f"SELECT ticker FROM {_UNIVERSE_TABLE} WHERE market_cap >= ?", [mc_min])
+            f"SELECT ticker FROM {_UNIVERSE_TABLE} WHERE COALESCE(market_cap, 0) >= ?", [mc_min])
     floor_total = int(r.get("ok") or 0)
 
     types = _security_types()

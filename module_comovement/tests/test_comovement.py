@@ -2277,20 +2277,23 @@ def test_the_header_line_adds_the_operating_companies_step():
     line = _universe_line(_render(funnel={
         "scanned_total": 100, "floor_total": 80, "classification_total": 70,
         "funds_etfs": 8, "spacs": 1, "other_securities": 1, "clustered": 65}))
+    # No market-cap floor (avo, 29 Oct 2026), so there is no "≥ $xM" step: it would only repeat "Scanned".
     parts = ['Scanned universe <b class="num">100</b> · all market caps',
-             '≥ $300M <b class="num">80</b>',
              'operating companies <b class="num">70</b>',
              'clustered <b class="num">65</b>']
     at = [line.index(p) for p in parts]
     assert at == sorted(at), line
-    assert line.count('<span class="arrow"') == 3          # four steps, three arrows
+    assert "≥ $" not in line
+    assert line.count('<span class="arrow"') == 2          # three steps, two arrows
 
 
 def test_an_old_payload_keeps_todays_header_line():
     html = _render(funnel={"scanned_total": 100, "classification_total": 80, "clustered": 75})
     line = _universe_line(html)
-    assert '≥ $300M <b class="num">80</b>' in line
-    assert "operating companies" not in line
+    # The old payload's 80 is its classification total; with no floor the step says what the number is
+    # instead of naming a floor that is not there, and the count is not dropped.
+    assert 'operating companies <b class="num">80</b>' in line
+    assert "≥ $" not in line
     assert 'clustered <b class="num">75</b>' in line
 
 

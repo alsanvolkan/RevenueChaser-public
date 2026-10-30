@@ -1,6 +1,6 @@
 ---
 name: revenuechaser-conventions
-description: RevenueChaser project conventions — load before changing dashboard filters (market cap, earnings, index, GICS, theme, ticker combobox), GICS/SIC/sector/theme mapping, equity_universe / classification_universe / the $300M cut, index membership, board registration (Fetch vs Refresh), or where data lives (.store / .cache / module data). Gives the single source of truth (SSoT) file for each rule and the known traps, so a change lands in the right place instead of forking a second copy.
+description: RevenueChaser project conventions — load before changing dashboard filters (market cap, earnings, index, GICS, theme, ticker combobox), GICS/SIC/sector/theme mapping, equity_universe / classification_universe / the tier and type cut, index membership, board registration (Fetch vs Refresh), or where data lives (.store / .cache / module data). Gives the single source of truth (SSoT) file for each rule and the known traps, so a change lands in the right place instead of forking a second copy.
 ---
 
 # RevenueChaser conventions
@@ -103,13 +103,13 @@ file disagree, trust the code, then fix this file in the same change.
   NULL caps, null-only, stops early when rate-limited). Moved out of
   `module_asymmetric_growth/engine.py` in #146 (from #217); the engine re-exports the names.
 - **Reader:** `core/universe.py::classification_universe(mc_min=DEFAULT_MC_MIN)`, with
-  `DEFAULT_MC_MIN = $300M`, minus the identity-master types in
+  `DEFAULT_MC_MIN = 0` (no cap floor since 29 Oct 2026; the tier is the limit), minus the identity-master types in
   `identity.types.EXCLUDED_TYPES` (funds / ETFs, SPACs, preferred / warrants / units;
   Identity R4, #87; a name with no type stays). `universe_counts()` states the same steps
   and `universe.TYPE_GROUPS` is the funnel-row grouping of the excluded types. Types are
   read with a separate query, never a JOIN (a missing table reads as empty). Co-movement,
   Relatedness, Value Chain and Implied Probability must read this same set. Do not add a
-  second `$300M` constant in a board config (#40 removed the old copies; a test enforces
+  second market-cap floor constant in a board config (#40 removed the old copies; a test enforces
   one definition).
 - **Provenance:** `equity_universe_provenance` with key `__meta__` (membership), key
   `__stats__` (cap backfill) and key `__fetch__` (the last pull: `refreshed_by` is `full` or

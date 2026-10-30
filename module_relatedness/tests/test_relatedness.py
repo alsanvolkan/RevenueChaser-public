@@ -438,8 +438,10 @@ def test_the_universe_tile_says_operating_companies():
                        "industry": "Semiconductors", "market_cap": 1e12, "weights": {"gpu": 1.0},
                        "profile": {}}],
         "peers": {}, "scores": []})
-    assert ('<div class="l">Universe (≥$300M)</div>'
-            '<div class="d">operating companies</div>') in html
+    assert ('<div class="l">Universe</div>'
+            '<div class="d">operating companies, no market-cap floor</div>') in html
+    assert "Universe (≥" not in html               # the floor is gone; the tile must not claim one
+    # ("< $300M" still appears: that is the Micro bucket of the cap filter, not a floor.)
     assert "classification spine" not in html
 
 
