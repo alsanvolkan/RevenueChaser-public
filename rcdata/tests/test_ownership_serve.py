@@ -351,8 +351,8 @@ def test_a_new_holdings_report_without_the_a_suffix_adds_to_the_quarter(monkeypa
 
 
 def test_a_period_that_is_not_a_quarter_end_is_read_as_its_calendar_quarter(monkeypatch, http_mock):
-    """13F review B2 (2026-10-30): a filer that writes 09-29 for the September quarter is one of that quarter's
-    filers, not a quarter of its own (where it was the only filer, breadth 100 %, and its other quarters never
+    """13F review B2 (2026-10-30): a filer that writes 09-29 or 10-01 for the September quarter (review S1: the
+    nearest quarter end, not the quarter the day falls in) is one of that quarter's filers, not a quarter of its own (where it was the only filer, breadth 100 %, and its other quarters never
     paired with it: a new holder every quarter). The filing keeps the period as written."""
     monkeypatch.setattr(sec, "_shared_pace", lambda: True)
     monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
@@ -363,17 +363,19 @@ def test_a_period_that_is_not_a_quarter_end_is_read_as_its_calendar_quarter(monk
     e.add_day("2026-10-27", [
         _f("0005000001-26-000011", 5000001, "2026-10-27", [_h("MICROSOFT CORP", "594918104", 400_000, 1000)]),
         _f("0005000002-26-000012", 5000002, "2026-10-27", [_h("MICROSOFT CORP", "594918104", 48_000, 120)],
-           period="09-29-2026")])
+           period="09-29-2026"),
+        _f("0005000003-26-000013", 5000003, "2026-10-27", [_h("MICROSOFT CORP", "594918104", 4_000, 10)],
+           period="10-01-2026")])
     e.install(http_mock)
     _thirteen_f(as_of="2026-10-28")
     _thirteen_f(mode="backfill", **{"from": "2026-08-14", "to": "2026-08-14"})
     _serve()
     assert _served(f"SELECT period FROM {sec13f.TABLE} WHERE accession = '0005000002-26-000012'") == [
         (date(2026, 9, 29),)]
-    assert _served("SELECT period, filers FROM sec13f_periods ORDER BY period") == [(Q2, 1), (Q3, 2)]
+    assert _served("SELECT period, filers FROM sec13f_periods ORDER BY period") == [(Q2, 1), (Q3, 3)]
     assert _served("SELECT period, shares, holders, new_holders, exited_holders, breadth, filers "
                    "FROM sec13f_ticker_period WHERE ticker = 'MSFT' ORDER BY period") == [
-        (Q2, 100.0, 1, None, None, 100.0, 1), (Q3, 1120.0, 2, 1, 0, 100.0, 2)]
+        (Q2, 100.0, 1, None, None, 100.0, 1), (Q3, 1130.0, 3, 2, 0, 100.0, 3)]
     assert _served("SELECT period, cusips FROM sec13f_filer_period WHERE cik = '5000002' ORDER BY period") == [
         (Q2, 1), (Q3, 1)]
 

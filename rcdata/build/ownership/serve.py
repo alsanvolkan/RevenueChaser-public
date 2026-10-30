@@ -10,7 +10,7 @@
   not to the quarter it was filed in.
 - *Long equity only*: ``sh_type`` ``SH`` and no put or call. Principal amounts and options stay in Parquet.
 - *The period is the calendar quarter*: a report period that is not a quarter end (a filer writes 09-29 or 10-01
-  for the September quarter) counts in the quarter it falls in (``common.quarter_end``); the filing keeps the
+  for the September quarter) counts in the nearest quarter end (``common.quarter_end``); the filing keeps the
   period as written. Read as written it was a quarter of its own: one filer, breadth 100 %, never paired with the
   filer's other quarters (13F review B2, 2026-10-30).
 - *The quarters served*: a quarter whose filing deadline passed before the store's first 13F day (the walk's first
