@@ -90,6 +90,11 @@ def text_status(item_text: str | None) -> str | None:
 
 
 def build_user(name: str, item_text: str) -> str:
+    """The user prompt: the company's name and its **whole** filing text (#317).
+
+    ``config.MAX_INPUT_CHARS`` is a context ceiling, not a cost control, and it is at least what the splitter
+    stores, so a stored slice reaches the writer uncut.
+    """
     text = (item_text or "")[:config.MAX_INPUT_CHARS]
     return f"Company: {name}\n\nBusiness description (10-K Item 1 / 20-F Item 4):\n{text}"
 

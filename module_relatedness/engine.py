@@ -115,7 +115,8 @@ def _company_names(tickers: list[str]) -> dict[str, str]:
     return {r["ticker"]: str(r["name"]) for r in rows if r.get("name")}
 
 
-# How many tickers' filing texts ``_input_hashes`` holds at once (each is up to ~50 KB of prose).
+# How many tickers' filing texts ``_input_hashes`` holds at once. Since #317 the hash is taken over the whole
+# text, so one is up to the splitter's ``MAX_ITEM_CHARS`` (200 KB) and a chunk up to ~40 MB, transient.
 _HASH_CHUNK = 200
 
 

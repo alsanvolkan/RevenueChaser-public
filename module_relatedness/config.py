@@ -17,7 +17,20 @@ RELATEDNESS_JSON = OUTPUT_DIR / "relatedness" / "relatedness_latest.json"
 # Pilot: seed names + a sector-diverse fill from the liquid universe.
 PILOT_N = 200
 THINKING_SAMPLE = 20          # first N companies also profiled in thinking mode
-MAX_INPUT_CHARS = 12_000      # cost control: first chars of Item 1/4
+# No business-length limit on the profile input (avo 2026-10-30): the **whole** sliced Item 1 / Item 4 goes to
+# the writer. The old 12,000-character cut was a cost control, and on a large filer it threw away the segment,
+# customer-concentration, competition and geography sections — the parts ``PROFILE_FIELDS`` is built from.
+# What is left is a hard ceiling for the model's **context**, not for cost: the splitter never stores more than
+# ``MAX_ITEM_CHARS`` of a slice (``module_value_chain/splitter.py``), so this ceiling truncates no stored text;
+# it only stops a caller handing the request an arbitrarily large string. ``WRITER_CONTEXT_TOKENS`` is what it
+# is checked against (``tests/test_full_item_text_317.py``).
+MAX_INPUT_CHARS = vc_config.MAX_ITEM_CHARS
+# The writer's context window, and the prose-to-token ratio the ceiling is converted with. 128,000 is the
+# smallest context among the writers in use (DeepSeek V3.2/V4 Flash and Grok); 4 characters per token is the
+# usual ratio for English prose, deliberately not optimistic. 200,000 chars -> ~50,000 tokens, plus the 8,000
+# answer budget of ``profiles.token_budget`` — inside the window with room to spare.
+WRITER_CONTEXT_TOKENS = 128_000
+CHARS_PER_TOKEN = 4
 # The floor under which a filing text is not sent to the writer at all (#313). Value Chain's own
 # MIN_ITEM_CHARS, so "this is a sliced Item 1, not a table-of-contents fragment" means the same thing on both
 # boards. A model asked from a one-line description does not refuse; it writes the profile from the company
@@ -35,7 +48,12 @@ REASONING_EFFORT = "high"
 PROMPT_VERSION = "v2"
 
 # $ hard-stop: cap the number of LLM calls per run (~1.5x the expected spend).
-EST_USD_PER_CALL = 0.00143          # thinking-high, measured
+# 0.00143 was measured with the 12,000-character prompt (~3,000 input tokens). The input is now the whole
+# Item 1, typically ~40,000 characters (~10,000 tokens), so the input share of a call roughly triples. Tripling
+# the **whole** per-call figure is therefore an upper bound on that growth (it would be exact only if the input
+# were the entire cost), which is the direction a spend ceiling has to err in. It is an estimate, not a
+# measurement: re-measure it from the first full off-peak run and put the measured number here.
+EST_USD_PER_CALL = 0.0043           # 3x the 12,000-char measurement; see above (#317)
 USD_CAP = float(os.getenv("RC_RELATEDNESS_USD_CAP", "8.0"))
 LLM_WORKERS = 8
 # Grok writer (#388): a run whose first N replies hold no usable profile stops (``unusable``) before it counts an
