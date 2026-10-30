@@ -161,11 +161,10 @@ def test_board_renders_after_a_rebuild(rebuilt, store):
     assert set(stored.values()) == {"Technology", "Technology (2)"}
     assert by_ticker["G0"]["theme_coarse"] == "accelerated, data center, designer"
     # The bank and healthcare fines are equal in size and in tag counts, so the offline label of their merged medium
-    # theme is a tie between the two groups' top tags: which one comes first follows the row order of the tag table
-    # (it differed between the Windows and the Linux run). The test states what is guaranteed: the merged theme
-    # carries one of the two groups' own labels, and both groups' cards show the same one.
-    merged = {"branch, consumer, deposits", "biologics, clinical, drugs"}
-    assert by_ticker["B0"]["theme_coarse"] in merged
+    # theme is a tie between the two groups' top tags. It used to follow the row order of the tag table and differed
+    # between the Windows and the Linux run; since #20 the aggregation walks the children in theme_id order, so the
+    # tie resolves to the lowest-numbered fine child and one literal can be pinned.
+    assert by_ticker["B0"]["theme_coarse"] == "biologics, clinical, drugs"
     assert by_ticker["H0"]["theme_coarse"] == by_ticker["B0"]["theme_coarse"]
     assert rebuilt.table_count("ticker_themes") > 0
     assert rebuilt.table_count("relatedness_theme_etfs") >= 0
