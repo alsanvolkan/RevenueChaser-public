@@ -89,6 +89,7 @@ WRITTEN_COLUMN: dict[str, str] = {
     'earnings_event': 'source_as_of',
     'er_options': 'session_date',
     'estimate_latest': 'source_as_of',
+    'etf_holdings': 'as_of',
     'filing_item': 'filing_date',
     'finra_short_interest': 'settlement_date',
     'fundamental_company': 'facts_as_of',
