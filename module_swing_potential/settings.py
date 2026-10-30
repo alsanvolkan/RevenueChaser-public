@@ -38,6 +38,7 @@ class Effective:
     stop_atr: float
     target_r: float
     custom: bool
+    operating_only: bool = True           # the type filter (PR 2): operating companies only, else every A+B type
     overridden: tuple = ()
     override_values: tuple = ()           # ((KEY, stored value), ...): what the ledger's model version hashes
 
@@ -53,6 +54,7 @@ class Effective:
             "breakout_high_pct": self.breakout_high_pct, "move_min": self.move_min,
             "adr_min": self.adr_min, "w_prox": self.w_prox, "w_cons": self.w_cons,
             "stop_atr": self.stop_atr, "target_r": self.target_r,
+            "operating_only": self.operating_only,
             "custom": self.custom, "overridden": list(self.overridden),
             "overrides": dict(self.override_values),
         }
@@ -65,10 +67,12 @@ def from_payload(settings: dict | None) -> Effective | None:
         return None
     try:
         numbers = {f.name: float(settings[f.name]) for f in fields(Effective)
-                   if f.name not in ("custom", "overridden", "override_values")}
+                   if f.name not in ("custom", "operating_only", "overridden", "override_values")}
     except (KeyError, TypeError, ValueError):
         return None
+    # A payload written before PR 2 carries no type filter: it screened operating companies only.
     return Effective(**numbers, custom=bool(settings.get("custom")),
+                     operating_only=bool(settings.get("operating_only", True)),
                      overridden=tuple(settings.get("overridden") or ()),
                      override_values=tuple((settings.get("overrides") or {}).items()))
 
@@ -125,6 +129,7 @@ def effective() -> Effective:
         stop_atr=_num(v, "STOP_ATR", config.STOP_ATR),
         target_r=_num(v, "TARGET_R", config.TARGET_R),
         custom=bool(vals.get("overridden")),
+        operating_only=bool(int(_num(v, "OPERATING_ONLY", config.OPERATING_ONLY))),
         overridden=tuple(vals.get("overridden") or ()),
         override_values=tuple((k, v[k]) for k in vals.get("overridden") or () if k in v),
     )

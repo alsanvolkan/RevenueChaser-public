@@ -61,6 +61,13 @@ PR 8 (G3) regenerated it again: the market is seeded in the prices store (``pric
 Compared key by key: in each of the four payloads only the ``config_hash`` (the method), the three ``source`` texts
 and the "Missing price bars" label (a missing session can come back, review S2) moved; no number, member, label or
 verdict changed. Then ``json.dumps(payloads())`` was written.
+
+PR 2 (the universe is Tiers A and B whole, avo 30 Oct 2026) regenerated it once more. Compared key by key with
+the old golden after removing the new keys (``funnel/operating_total``, ``funnel/operating_only`` and
+``settings/operating_only``): exactly 12 differences, the three type-group funnel steps of each case, which are now
+notes ("Kept, of which: ...", count 0, no ``by_design``) instead of by-design drops, since Co-movement's type filter
+is off by default. No number, cluster, member, label or verdict changed. Then ``json.dumps(payloads())`` was
+written.
 """
 from __future__ import annotations
 

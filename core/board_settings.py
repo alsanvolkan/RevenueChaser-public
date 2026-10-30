@@ -104,7 +104,17 @@ def _comov_specs() -> dict[str, Setting]:
         "BENCH_STALE_SESSIONS": Setting(
             "BENCH_STALE_SESSIONS", "int", lambda: _comov_cfg().BENCH_STALE_SESSIONS,
             lo=cfg.BENCH_STALE_LO, hi=cfg.BENCH_STALE_HI, label="Benchmark lag (sessions)"),
+        "OPERATING_ONLY": _operating_only(lambda: _comov_cfg().OPERATING_ONLY),
     }
+
+
+TYPE_FILTER_CHOICES = (0, 1)
+
+
+def _operating_only(default: Callable[[], int]) -> Setting:
+    """A board's type filter (PR 2): 1 screens operating companies only, 0 every type of Tiers A and B."""
+    return Setting("OPERATING_ONLY", "int", default, choices=lambda: TYPE_FILTER_CHOICES,
+                   label="Security types: 1 = operating companies only, 0 = every type (funds, SPACs, ...)")
 
 
 # board -> (spec factory, cross-rule). The factory runs at call time so bounds
@@ -160,6 +170,7 @@ def _swing_specs() -> dict[str, Setting]:
         "TARGET_R": Setting("TARGET_R", "float", default("TARGET_R"),
                             lo=cfg.TARGET_R_LO, hi=cfg.TARGET_R_HI,
                             label="Target (x the risk)"),
+        "OPERATING_ONLY": _operating_only(default("OPERATING_ONLY")),
     }
 
 
@@ -177,8 +188,36 @@ def _swing_rules(v: dict) -> list[str]:
     return []
 
 
+def _fund_cfg():
+    from RevenueChaser.module_fundamentals import config
+    return config
+
+
+def _fund_specs() -> dict[str, Setting]:
+    """Fundamentals' editable inputs (PR 2): the 7-A prefilter's two floors, no longer fixed, and the type filter.
+    The score thresholds (Rule of 40, Quality, Momentum) stay config-only."""
+    cfg = _fund_cfg()
+
+    def default(name: str):
+        return lambda: getattr(_fund_cfg(), name)
+
+    return {
+        "MIN_PRICE": Setting("MIN_PRICE", "float", default("MIN_PRICE"),
+                             lo=cfg.MIN_PRICE_LO, hi=cfg.MIN_PRICE_HI, label="Minimum price ($)"),
+        "MIN_DOLLAR_VOLUME": Setting("MIN_DOLLAR_VOLUME", "float", default("MIN_DOLLAR_VOLUME"),
+                                     lo=cfg.MIN_DOLLAR_VOLUME_LO, hi=cfg.MIN_DOLLAR_VOLUME_HI,
+                                     label="Minimum daily dollar volume ($)"),
+        "OPERATING_ONLY": _operating_only(default("OPERATING_ONLY")),
+    }
+
+
+def _no_rules(_v: dict) -> list[str]:
+    return []
+
+
 SPEC: dict[str, tuple[Callable[[], dict[str, Setting]], Callable[[dict], list[str]]]] = {
     "module_comovement": (_comov_specs, _comov_rules),
+    "module_fundamentals": (_fund_specs, _no_rules),
     "module_swing_potential": (_swing_specs, _swing_rules),
 }
 

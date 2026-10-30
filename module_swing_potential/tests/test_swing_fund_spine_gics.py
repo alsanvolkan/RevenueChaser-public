@@ -106,3 +106,23 @@ def test_run_scan_drops_excluded_types_and_counts_them(rawstore_tmp_db, monkeypa
     monkeypatch.setattr(mod, "load_ticker_info", lambda *a, **k: {})      # no live yfinance info call
     mod.run_scan()
     assert [r["ticker"] for r in seen["rows"]] == ["OPCO"]
+
+
+@pytest.mark.parametrize("mod", [sp, fp])
+def test_with_the_type_filter_off_the_scan_screens_every_type(rawstore_tmp_db, monkeypatch, mod):
+    """PR 2: the board's ``OPERATING_ONLY`` setting at 0 lets a fund reach the prefilter like any name."""
+    from RevenueChaser.core import board_settings
+    board_settings.save({sp: "module_swing_potential", fp: "module_fundamentals"}[mod], {"OPERATING_ONLY": 0})
+    _seed([("OPCO", "Energy", "Oil & Gas E&P"), ("FUND", "Financial Services", "Asset Management")],
+          master={"OPCO": "common", "FUND": "cef"})
+    seen = {}
+    monkeypatch.setattr(mod, "fetch_universe_stats", lambda **kw: (
+        [{"ticker": "OPCO", "market_cap": 1e9, "price": 10.0, "name": "O", "sector": "Energy"},
+         {"ticker": "FUND", "market_cap": 1e9, "price": 10.0, "name": "F", "sector": "Financial Services"}],
+        {"out_of_universe": 0}))
+    monkeypatch.setattr(mod, "prefilter", lambda rows: screen_common.Prefiltered(seen.setdefault("rows", rows)))
+    monkeypatch.setattr(screen_common, "load_bars", lambda *a, **k: (pd.DataFrame(), pd.DataFrame()))
+    monkeypatch.setattr(mod, "load_ohlc", lambda *a, **k: None)
+    monkeypatch.setattr(mod, "load_ticker_info", lambda *a, **k: {})
+    mod.run_scan()
+    assert [r["ticker"] for r in seen["rows"]] == ["OPCO", "FUND"]

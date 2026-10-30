@@ -14,8 +14,15 @@ FUNDAMENTALS_JSON = OUTPUT_DIR / "fundamentals" / "fundamentals_latest.json"
 
 # ── Phase-1 pre-filter (7-A: price and dollar volume on D04's quotes, before EDGAR) ──
 # Every name that passes is scored and every candidate reaches the page (no cap, no top-N; #383 R3 C12, card C).
+# Settings since PR 2 (``core/board_settings.py``, ``module_fundamentals/settings.py``): these are the defaults, and
+# a user may lower either to 0 (no floor).
 MIN_PRICE = 5.0
 MIN_DOLLAR_VOLUME = 250_000
+MIN_PRICE_LO, MIN_PRICE_HI = 0.0, 100.0                     # $ per share; 0 = no price floor
+MIN_DOLLAR_VOLUME_LO, MIN_DOLLAR_VOLUME_HI = 0, 50_000_000  # $/day; 0 = no liquidity floor
+# The board's type filter (PR 2, a setting): 1 screens operating companies only (a fund or a SPAC has no balance
+# sheet to score), 0 every type the universe holds.
+OPERATING_ONLY = 1
 
 # ── Rule of 40 ──
 RO40_MIN = 40.0

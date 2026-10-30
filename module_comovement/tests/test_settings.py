@@ -386,7 +386,10 @@ def test_default_settings_reproduce_the_pre_change_payload(rawstore_tmp_db):
     # compared no more than the hash string is.
     new_funnel_keys = {"listed_recently", "missing_bars", "window", "min_obs",
                        "floor_total", "funds_etfs", "spacs", "other_securities",
-                       "unknown_type", "floor"}
+                       "unknown_type", "floor",
+                       # PR 2 (the universe is A+B whole): the operating-only slice and the run's type filter flag.
+                       # Nothing is typed here, so both equal what the golden already holds.
+                       "operating_total", "operating_only"}
     for k, v in got.items():
         v["funnel"] = {a: b for a, b in v["funnel"].items() if a not in new_funnel_keys}
     # ``floor`` is in the golden with the old value, so it comes off both sides, not just the new one.
