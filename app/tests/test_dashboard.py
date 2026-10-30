@@ -1537,7 +1537,8 @@ class TestSettingsDrillApi:
         assert body["name"] == "Micron Technology"
         assert body["market_cap"] is None
         assert body["filing"]["form"] == "10-K"
-        assert body["presence"]["in_classification_universe"] is False
+        # No market-cap floor (avo, 29 Oct 2026): a NULL cap no longer keeps a name out of the universe.
+        assert body["presence"]["in_classification_universe"] is True
 
     def test_unknown_ticker_404(self, rawstore_tmp_db):
         self._seed()
