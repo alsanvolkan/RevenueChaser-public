@@ -150,3 +150,20 @@ def test_the_fill_switch_is_off_unless_set(monkeypatch, value, on):
     else:
         monkeypatch.setenv(screen.FILL_ENV, value)
     assert screen.fill_enabled() is on
+
+
+# ── The control board's steps and providers (design v28) ───────────────────────────────────────────────────────────
+
+def test_every_card_step_is_a_step_the_board_names():
+    from RevenueChaser.rcdata.api import screen
+    assert set(screen.STEPS) == set(range(1, 12))
+    assert {c.step for c in screen.DATASETS.values()} <= set(screen.STEPS)
+
+
+def test_every_provider_a_dataset_names_has_its_words():
+    from RevenueChaser.rcdata.api import screen
+    from RevenueChaser.module_settings import newdata
+    named = {p for ds in newdata._datasets().values() for p in getattr(ds, "providers", ())}
+    assert named, "no provider found at all: the search is broken"
+    assert named <= set(screen.PROVIDERS), f"no words for {sorted(named - set(screen.PROVIDERS))}"
+    assert all(w.name and w.what for w in screen.PROVIDERS.values())

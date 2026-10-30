@@ -239,3 +239,61 @@ def fill_enabled() -> bool:
     """True only when ``RC_FILL_ENABLED`` is ``1``, ``true``, ``yes`` or ``on``."""
     import os
     return os.environ.get(FILL_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+#: The build plan's steps as the flow diagram's middle column names them (``DatasetCard.step``). Step 2 has no dataset
+#: of its own: the tiers are worked out by ``spine/security`` from what steps 1 and 3-6 brought.
+STEPS: dict[int, str] = {
+    1: "Security", 2: "Tiers", 3: "CIK ↔ CUSIP", 4: "FIGI", 5: "Sector classification", 6: "Index membership",
+    7: "Build and health check", 8: "Prices and corporate actions", 9: "Fundamentals and earnings",
+    10: "Short side and ownership", 11: "Options and market-wide series",
+}
+
+
+@dataclass(frozen=True)
+class ProviderWords:
+    """One provider as the control board names it: its name, what it brings, our own pace and the provider's rule.
+    The day cap is not here: it is ``rcdata.caps.DAY_CAPS``, read where it is shown."""
+
+    name: str
+    what: str
+    pace: str = "none"
+    rule: str = "none quoted in the code"
+
+
+#: Every provider a dataset names (``Dataset.providers``). A provider a dataset names and this map does not raises in
+#: CI, so the screen never shows a bare id.
+PROVIDERS: dict[str, ProviderWords] = {
+    "sec": ProviderWords("SEC", "the ticker file, company facts, filings, 13F, Form 4, 13D/G, fails to deliver",
+                         "4.5 a second (ownership) · 0.25 s apart (fundamentals)",
+                         "10 a second per User-Agent (fair access)"),
+    "uw": ProviderWords("UW", "options, SPX, float, financials", "a budget a run · 500 rows a page"),
+    "alpaca": ProviderWords("Alpaca", "bars, corporate actions", "190 a minute",
+                            "200 a minute (free plan) · no SIP data of the last 15 minutes"),
+    "yfinance": ProviderWords("yfinance", "float, estimates, MOVE", "float lookups 1.5 s apart · a 429 stops the run",
+                              "unofficial · a 429 is its limit"),
+    "alphavantage": ProviderWords("Alpha Vantage", "the earnings calendar", "one request a run", "25 a day (free tier)"),
+    "openfigi": ProviderWords("OpenFIGI", "the FIGI of each CUSIP", "24 a minute · up to 100 CUSIPs a request",
+                              "keyed limit, not quoted in the code"),
+    "fred": ProviderWords("FRED", "DGS10 and the macro series", "110 a minute", "120 a minute"),
+    "finra": ProviderWords("FINRA", "short interest", "5,000 rows a page"),
+    "nasdaqtrader": ProviderWords("Nasdaq Trader", "Reg SHO threshold list", "60 a minute"),
+    "nyse": ProviderWords("NYSE", "Reg SHO threshold list", "60 a minute"),
+    "ibkr": ProviderWords("IBKR", "shortable file, IV year", "IV: 6 a minute", "60 historical requests in 10 minutes"),
+    "ishares": ProviderWords("iShares", "index fund holdings", "one request a file and run"),
+    "ssga": ProviderWords("SSGA", "index fund holdings", "one request a file and run"),
+    "vanguard": ProviderWords("Vanguard", "index fund holdings", "one request a file and run"),
+    "nasdaq": ProviderWords("Nasdaq", "the Nasdaq-100 list", "one request a file and run"),
+    "invesco": ProviderWords("Invesco", "index fund holdings", "one request a file and run"),
+    "wrds": ProviderWords("WRDS", "Compustat and CRSP", "run by hand: a login and Duo each time"),
+    "treasury": ProviderWords("Treasury", "yields and auctions"),
+    "cboe": ProviderWords("Cboe", "VIX and the index series"),
+    "cftc": ProviderWords("CFTC", "futures positioning"),
+    "fed": ProviderWords("Fed", "policy rates"),
+    "bls": ProviderWords("BLS", "CPI and jobs"),
+}
+
+#: The first day each Backfill calendar offers: the provider's own first day, where the code has no constant of its
+#: own for it. Alpaca's daily bars start in 2016 (its market-data docs); the SPX expiry-strike set starts at
+#: ``uw_spot_expiry_strike.FIRST_SESSION`` and is read from there.
+CALENDAR_FIRST: dict[str, str] = {"alpaca/bars": "2016-01-04"}
