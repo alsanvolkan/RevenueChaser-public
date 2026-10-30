@@ -382,13 +382,14 @@ class Edgar:
     EDGAR publishes an index for every day it is open, so a day no test gave entries for answers an index with no
     rows; a day in ``missing``, a weekend and a federal holiday have no index object at all and answer the
     bucket's 403. ``refuse`` makes every answer the SEC's own 403 instead (the undeclared-tool page), which is the
-    answer a walk must stop on.
+    answer a walk must stop on, and ``refuse_days`` does the same for one day's index alone.
     """
 
     def __init__(self):
         self.indexes: dict[str, bytes] = {}
         self.filings: dict[str, bytes] = {}
         self.missing: set[str] = set()
+        self.refuse_days: set[str] = set()
         self.refuse = False
 
     def _answer(self, body):
@@ -401,6 +402,8 @@ class Edgar:
     def index(self, request):
         ymd = str(request.url).rsplit("master.", 1)[1][:8]
         day = date(int(ymd[:4]), int(ymd[4:6]), int(ymd[6:]))
+        if ymd in self.refuse_days:
+            return 403, REFUSED_PAGE, dict(REFUSED_HEADERS)
         if ymd in self.missing:
             return self._answer(None)
         body = self.indexes.get(ymd)

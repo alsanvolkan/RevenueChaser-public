@@ -160,7 +160,9 @@ def test_a_stretch_of_missing_weekdays_edgar_does_not_keep_closed_stops_the_run(
     row = base.run_request({"dataset": sec13f.NAME, "params": {"mode": "backfill", "from": "2026-09-01",
                                                                "to": "2026-09-30"}}, sleep=lambda s: None)
     assert row["result"] == "failed" and "no daily index" in row["note"]
-    assert not edgar.index_none(date(2026, 9, 28)).exists()      # nothing marked absent once it is suspicious
+    # Not one of them is written off, the first two included: the next run asks all three again.
+    for day in (date(2026, 9, 30), date(2026, 9, 29), date(2026, 9, 28)):
+        assert not edgar.index_none(day).exists(), day
 
 
 def test_a_filing_the_archive_does_not_hold_is_marked_absent(feed, http_mock):
@@ -187,7 +189,59 @@ def test_a_stretch_of_filings_the_archive_does_not_answer_for_stops_the_run(feed
                                             f"0001000010-26-00000{i}"), None) for i in range(4)])
     row = _run()
     assert row["result"] == "failed" and "the archive does not answer for" in row["note"]
-    assert not sec13f.DATASET.filing_none(date(2026, 10, 26), "0001000010-26-000000").exists()
+    for i in range(3):
+        assert not sec13f.DATASET.filing_none(date(2026, 10, 26), f"0001000010-26-00000{i}").exists()
+
+
+def test_a_day_held_at_the_end_of_a_run_is_written_once_the_archive_answers(feed, http_mock):
+    """Nothing answered after the last missing day, so the walk asks again for one index the archive is known to
+    hold: a 200 says it is not refusing, and only then is the day written off."""
+    feed.missing.add("20261012")
+    _run()                                                       # keeps the indexes of 26 and 27 Oct
+    http_mock.requests.clear()
+    base.run_request({"dataset": sec13f.NAME, "params": {"mode": "backfill", "from": "2026-10-12",
+                                                         "to": "2026-10-12"}}, sleep=lambda s: None)
+    assert edgar.index_none(date(2026, 10, 12)).exists()
+    assert sec13f.DATASET.is_done(date(2026, 10, 12))
+    # The check re-asks a day whose index is already kept, not the missing one.
+    asked = [str(c.url).rsplit("master.", 1)[1][:8] for c in http_mock.calls("daily-index")]
+    assert asked == ["20261012", "20261027"]
+
+
+def test_a_day_no_answer_can_confirm_is_left_for_the_next_run(feed):
+    """The run kept no index of its own and the archive answered nothing: the missing day may be the bucket
+    refusing, so it is neither written off nor finished."""
+    feed.missing.add("20261012")
+    base.run_request({"dataset": sec13f.NAME, "params": {"mode": "backfill", "from": "2026-10-12",
+                                                         "to": "2026-10-12"}}, sleep=lambda s: None)
+    assert not edgar.index_none(date(2026, 10, 12)).exists()
+    assert not sec13f.DATASET.is_done(date(2026, 10, 12))
+
+
+def test_the_last_filing_of_a_day_is_written_off_only_with_the_archive_answering(feed):
+    """A day whose last listed filing is missing: the marker is written, and the day finished, because the day's
+    own index came from the archive in this run."""
+    gone = "0001000008-26-000009"
+    feed.add_day("2026-10-26", [
+        (ox.idx_row(1000008, "THETA FUND", "13F-HR", "2026-10-26", "0001000008-26-000001"),
+         ox.f13_filing("0001000008-26-000001", 1000008, "2026-10-26", [MSFT], period="09-30-2026")),
+        (ox.idx_row(1000009, "IOTA FUND", "13F-HR", "2026-10-26", gone), None)])
+    _run()
+    assert sec13f.DATASET.filing_none(date(2026, 10, 26), gone).exists()
+    assert sec13f.DATASET.is_done(date(2026, 10, 26))
+
+
+def test_a_day_whose_filing_markers_are_held_is_not_finished(feed):
+    """A ``.done`` would skip the day for good, so a day is finished only once its markers are written: here the
+    archive refuses the check, so the filing is neither written off nor forgotten."""
+    gone = "0001000009-26-000009"
+    _run()                                                       # keeps the indexes of 26 and 27 Oct
+    feed.add_day("2026-10-23", [(ox.idx_row(1000009, "IOTA FUND", "13F-HR", "2026-10-23", gone), None)])
+    feed.refuse_days.add("20261027")                             # the newest kept index: what the check asks for
+    base.run_request({"dataset": sec13f.NAME, "params": {"mode": "backfill", "from": "2026-10-23",
+                                                         "to": "2026-10-23"}}, sleep=lambda s: None)
+    assert not sec13f.DATASET.filing_none(date(2026, 10, 23), gone).exists()
+    assert not sec13f.DATASET.is_done(date(2026, 10, 23))
 
 
 def test_the_time_budget_stops_a_run_and_the_next_one_goes_on(feed, http_mock, monkeypatch):

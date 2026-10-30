@@ -11,6 +11,8 @@ and Veterans Day have no index although the NYSE trades) answers **403**, not 40
 marked absent (``.none``) once it is more than ``SETTLED`` old; a younger one is asked again on the next run. The
 SEC's own 403 (an undeclared User-Agent, the fair-access rate) is told apart by its body and stops the run, and so
 does a stretch of ``MISSING_RUN`` missing weekdays EDGAR was open, or that many of a day's filings in a row.
+A marker that writes a day or a filing off is written only once the archive has answered something in the same run
+(``_Held``), so a refusal of the whole bucket leaves nothing written off and the next run asks again.
 
 **The filings.** ``GET <base>/Archives/<File Name>``: the full submission (``.txt``): the SGML header (accession, form,
 period, filed date, and each party's CIK and name under ``FILER``, ``SUBJECT COMPANY``, ``FILED BY``,
@@ -34,9 +36,10 @@ import json
 import re
 import time
 import xml.etree.ElementTree as ET
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from datetime import date, timedelta
 from pathlib import Path
+from typing import NamedTuple
 
 import duckdb
 
@@ -119,33 +122,38 @@ def parse_index(body: bytes) -> list[dict]:
     return rows
 
 
-def read_index(ctx: base.RunContext, pacer: sec.Pacer, day: date, as_of: date,
-               on_absent: Callable[[date], None] | None = None) -> list[dict] | None:
-    """The index rows of ``day``: from the raw file once fetched, ``[]`` for a day with no index, None while it is
-    not published yet. A 403 that is a refusal and not a missing day raises ``SourceError``.
+class Index(NamedTuple):
+    """One day's index. ``rows`` is None when the archive holds no index object for the day, and ``[]`` for a day
+    already marked absent. ``answered`` is whether the archive itself answered this day in this run (a 200), which
+    is what says it is not refusing; a kept file and a ``.none`` marker answer from disk and say nothing."""
 
-    ``on_absent`` is called with a settled day EDGAR has no index for, before the day is marked absent, so a caller
-    that finds the day suspicious can raise and leave nothing written.
-    """
+    rows: list[dict] | None
+    answered: bool = False
+
+
+def read_index(ctx: base.RunContext, pacer: sec.Pacer, day: date) -> Index:
+    """The index of ``day``, from the raw file once fetched. Writes no marker of its own: whether a day with no
+    index object is written off is the walk's decision (``_Held``). A 403 that is a refusal and not a missing
+    object raises ``SourceError``."""
     if index_none(day).exists():
-        return []
+        return Index([])
     if index_path(day).exists():
-        return parse_index(base.read_raw(index_path(day)))
+        return Index(parse_index(base.read_raw(index_path(day))))
     url = index_url(day)
     r = sec.get(ctx, pacer, url, accept=(403, 404))
     if is_missing(r):
-        if as_of - day > SETTLED:
-            if on_absent is not None:
-                on_absent(day)
-            base.write_raw_json(index_none(day), {"status": r.status_code, "url": url, "run_id": ctx.run_id,
-                                                  "closed": calendar.is_federal_holiday(day)})
-            return []
-        return None
+        return Index(None)
     if r.status_code >= 400:
         raise base.SourceError(f"{sec.PROVIDER} {url}: HTTP {r.status_code}{base.refusal_note()}")
     rows = parse_index(r.content)
     base.write_raw(index_path(day), r.content)
-    return rows
+    return Index(rows, True)
+
+
+def kept_index_days() -> list[date]:
+    """The days whose index file is kept, oldest first: objects the archive is known to hold."""
+    days = [ymd(p.name[len("master."):len("master.") + 8]) for p in index_dir().glob("master.*.idx.gz")]
+    return sorted(d for d in days if d is not None)
 
 
 # ── A full submission ──────────────────────────────────────────────────────────────────────────────────────────
@@ -225,6 +233,31 @@ def integer(value) -> int | None:
 
 # ── The feed ───────────────────────────────────────────────────────────────────────────────────────────────────
 
+class _Held:
+    """What a walk has found absent but not written yet: a day with no index, and a filing the archive answered
+    nothing for. Nothing is written until the archive has answered something in this run, because a refusal of the
+    whole bucket answers every day and every filing the same way, and a marker written under one is never asked
+    again. What is still held when the run ends is simply left: the next run asks those days and filings again."""
+
+    def __init__(self):
+        self.days: list[tuple[date, dict]] = []
+        self.filings: list[tuple[date, str, dict]] = []
+        self.finished: list[date] = []       # days whose filings are all in, waiting on their markers
+
+    def count(self) -> int:
+        return len(self.days) + len(self.filings)
+
+    def flush(self, feed: "Feed") -> list[date]:
+        """Write every held marker; the days that are finished by it, for the walk to add to ``complete``."""
+        for day, acc, payload in self.filings:
+            base.write_raw_json(feed.filing_none(day, acc), payload)
+        for day, payload in self.days:
+            base.write_raw_json(index_none(day), payload)
+        done = [d for d, _ in self.days] + self.finished
+        self.days, self.filings, self.finished = [], [], []
+        return done
+
+
 def _open_weekdays(first: date, last: date) -> list[date]:
     """The days from ``first`` to ``last`` EDGAR was open: weekdays that are no federal holiday."""
     out, day = [], first
@@ -297,43 +330,74 @@ class Feed:
         t0 = ctx.clock()
         complete, partial, fetched = [], [], 0
         day = last
-        unexplained: list[date] = []
+        held, unexplained = _Held(), []
         while day >= first:
             if day.weekday() < 5 and not self.is_done(day):
                 if budget_s is not None and ctx.clock() - t0 >= budget_s:
+                    complete += self._release(ctx, pacer, held)
                     return self._stopped(ctx, complete, partial, fetched)
-                rows = read_index(ctx, pacer, day, as_of, lambda d: self._absent(ctx, d, unexplained))
-                if rows is not None:
-                    wanted: dict[str, dict] = {}
-                    for r in rows:
-                        if r["form"] in self.forms:
-                            wanted.setdefault(r["accession"], r)
-                    todo = [r for acc, r in sorted(wanted.items()) if not self.filing_path(day, acc).exists()
-                            and not self.filing_none(day, acc).exists()]
-                    absent: list[tuple[str, dict]] = []
-                    for r in todo:
-                        if budget_s is not None and ctx.clock() - t0 >= budget_s:
-                            self._mark_absent_filings(day, absent)
-                            partial.append(day)
-                            return self._stopped(ctx, complete, partial, fetched)
-                        gone = self._fetch_filing(ctx, pacer, day, r)
-                        fetched += 1
-                        if gone is None:
-                            self._mark_absent_filings(day, absent)
-                            absent = []
-                            continue
-                        absent.append(gone)
-                        if len(absent) >= MISSING_RUN:
-                            # The index listed them, so the archive holds them: this many in a row is the bucket
-                            # refusing, not the filings missing. Nothing is marked, so the next run asks again.
-                            raise base.SourceError(f"sec: {len(absent)} filings of {day} in a row the archive does "
-                                                   f"not answer for, last {r['accession']}; the bucket may be "
-                                                   "refusing every request")
-                    self._mark_absent_filings(day, absent)
-                    complete.append(day)
+                index = read_index(ctx, pacer, day)
+                if index.answered:
+                    complete += held.flush(self)
+                if index.rows is None:
+                    if as_of - day > SETTLED:
+                        self._absent(ctx, day, unexplained)
+                        held.days.append((day, {"status": 403, "url": index_url(day), "run_id": ctx.run_id,
+                                                "closed": calendar.is_federal_holiday(day)}))
+                    day -= timedelta(days=1)
+                    continue
+                wanted: dict[str, dict] = {}
+                for r in index.rows:
+                    if r["form"] in self.forms:
+                        wanted.setdefault(r["accession"], r)
+                todo = [r for acc, r in sorted(wanted.items()) if not self.filing_path(day, acc).exists()
+                        and not self.filing_none(day, acc).exists()]
+                gone_run = 0
+                for r in todo:
+                    if budget_s is not None and ctx.clock() - t0 >= budget_s:
+                        complete += self._release(ctx, pacer, held)
+                        partial.append(day)
+                        return self._stopped(ctx, complete, partial, fetched)
+                    gone = self._fetch_filing(ctx, pacer, day, r)
+                    fetched += 1
+                    if gone is None:
+                        gone_run = 0
+                        complete += held.flush(self)
+                        continue
+                    held.filings.append((day, *gone))
+                    gone_run += 1
+                    if gone_run >= MISSING_RUN:
+                        # The index listed them, so the archive holds them: this many in a row is the bucket
+                        # refusing, not the filings missing. Nothing is written, so the next run asks them again.
+                        raise base.SourceError(f"sec: {gone_run} filings of {day} in a row the archive does "
+                                               f"not answer for, last {r['accession']}; the bucket may be "
+                                               "refusing every request, so no filing is written off")
+                # A day is finished once its markers are written, never before: a ``.done`` would skip it for good.
+                (held.finished if held.filings else complete).append(day)
             day -= timedelta(days=1)
+        complete += self._release(ctx, pacer, held)
         ctx.notes.append(f"{fetched} filings fetched")
         return complete, partial, False
+
+    def _release(self, ctx: base.RunContext, pacer: sec.Pacer, held: _Held) -> list[date]:
+        """Write what is still held at the end of a walk. Nothing the archive answered came after it, so one index
+        the archive is known to hold is asked again: a 200 says it is not refusing and the markers are written;
+        anything else leaves them, and the next run asks those days and filings again."""
+        if not held.count():
+            return []
+        if not self._archive_answers(ctx, pacer):
+            ctx.notes.append(f"{held.count()} absent markers held back: the archive answered nothing, so the next "
+                             "run asks those days and filings again")
+            return []
+        return held.flush(self)
+
+    def _archive_answers(self, ctx: base.RunContext, pacer: sec.Pacer) -> bool:
+        """Whether the archive answers at all: one more request for the newest index file already kept."""
+        kept = kept_index_days()
+        if not kept:
+            return False
+        r = sec.get(ctx, pacer, index_url(kept[-1]), accept=(403, 404))
+        return r.status_code == 200
 
     def _absent(self, ctx: base.RunContext, day: date, unexplained: list[date]) -> None:
         """A day this run found no index for. A federal holiday explains it; a weekday that is none is noted, and a
@@ -348,18 +412,12 @@ class Feed:
         if len(run) >= MISSING_RUN and _open_weekdays(run[0], run[-1]) == run:
             raise base.SourceError(f"sec: no daily index for {MISSING_RUN} weekdays EDGAR was open "
                                    f"({', '.join(str(d) for d in run)}); the bucket may be refusing every "
-                                   "request, so no day is marked absent until a person has looked")
+                                   "request, so none of them is written off and the next run asks them again")
         ctx.notes.append(f"{day}: no daily index although EDGAR was open")
 
     def _stopped(self, ctx, complete, partial, fetched):
         ctx.notes.append(f"{fetched} filings fetched; stopped at the time budget, the rest on the next run")
         return complete, partial, True
-
-    def _mark_absent_filings(self, day: date, absent: list[tuple[str, dict]]) -> None:
-        """Mark the filings the archive answered nothing for (``.none``, so they are not asked again). Held back
-        until the walk has seen the archive answer, so a refused stretch is left for the next run."""
-        for acc, payload in absent:
-            base.write_raw_json(self.filing_none(day, acc), payload)
 
     def _fetch_filing(self, ctx: base.RunContext, pacer: sec.Pacer, day: date,
                       row: dict) -> tuple[str, dict] | None:
