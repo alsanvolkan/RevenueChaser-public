@@ -230,7 +230,10 @@ class UWFloat:
         """
         stem = as_of.isoformat()
         if scope:
-            key = "\n".join([*scope.tiers, "|", *scope.names])
+            # Every part of the ask, groups included: without them ``include=["watchlist"]`` and
+            # ``include=["cover_classes"]`` shared one file on the same day and the first one run was handed back
+            # to the other (review D1 of #294).
+            key = "\n".join([*scope.tiers, "|", *scope.names, "|", *scope.include])
             stem += "-" + hashlib.sha1(key.encode()).hexdigest()[:8]
         return base.raw_root() / "uw" / "total_float" / f"{stem}.json.gz"
 

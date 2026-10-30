@@ -462,3 +462,21 @@ def test_a_spine_with_no_name_of_the_asked_tiers_is_a_failure_even_if_a_benchmar
     ctx = base.RunContext(run_id="t", dataset=bars.NAME)
     with pytest.raises(base.SourceError, match="no name of the asked tiers"):
         bars.DATASET.fetch(ctx, date(2026, 10, 28))
+
+
+def test_d1_the_scoped_raw_file_keys_the_groups_too(spine):
+    """The delta review's D1: the raw file's key was built from the tiers and the names only, so two different
+    asks of the same day - ``include=["watchlist"]`` and ``include=["cover_classes"]`` - shared one file, and
+    whichever ran first was handed back to the other."""
+    from RevenueChaser.rcdata.build.prices import floats
+
+    ds, day = floats.UW_FLOAT, date(2026, 10, 28)
+    paths = {ds.raw_path(day, s) for s in (base.Scope(include=("watchlist",)),
+                                           base.Scope(include=("cover_classes",)),
+                                           base.Scope(names=("KO",)),
+                                           base.Scope(names=("KO",), include=("anchors",)),
+                                           base.Scope(tiers=("A",)))}
+    assert len(paths) == 5, "two different asks of the same day share one raw file"
+    assert ds.raw_path(day) not in paths, "a scoped ask still takes the daily run's own file"
+    assert ds.raw_path(day, base.Scope(names=("KO",))) == ds.raw_path(day, base.Scope(names=("KO",))), \
+        "the same ask must key the same file, or it would re-fetch every run"
