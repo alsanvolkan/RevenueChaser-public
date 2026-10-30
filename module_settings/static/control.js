@@ -607,8 +607,11 @@
 
 /* The flow diagram is the filter (design v28). A press picks a box and a second press drops it; its own lines and
    the boxes they reach light up, the rest fades, and the Data section below follows. Same column = any of them;
-   different columns = all must hold. A picked board fills the info box under the diagram. Every box and line comes
-   from window.RC_FLOW, which the page builds from the code; a line to a board not migrated yet is dashed. */
+   different columns = all must hold. A file's health badge picks that one file, like pressing the file itself.
+   A picked board fills the info box under the diagram. Every box and line comes from window.RC_FLOW, which the
+   page builds from the code; a line to a board not migrated yet is dashed. A press never moves the page (avo,
+   30 Oct): the cards below close, the one file that is left opens where it is, and only the 'open them ↓'
+   button carries the reader down. */
 (function () {
   var D = window.RC_FLOW;
   if (!D) return;
@@ -639,8 +642,7 @@
   D.edges.tabBoard.forEach(function (e) { link('tab:' + e[0], 'bd:' + e[1]); });
   (D.edges.fileBoard || []).forEach(function (e) { link('file:' + e[0], 'bd:' + e[1]); });
 
-  var picks = { src: {}, step: {}, file: {}, bd: {}, hs: {} };
-  var STATE = { ok: 'every dataset fresh', warn: 'some late', none: 'never ran', old: 'being cut' };
+  var picks = { src: {}, step: {}, file: {}, bd: {} };
   function colOf(id) { return id.indexOf('tab:') === 0 ? 'file' : id.split(':')[0]; }
   function seedsOf(id) {
     if (id.indexOf('file:') !== 0) return [id];
@@ -664,10 +666,7 @@
       if (!ids.length) return;
       var U = {};
       ids.forEach(function (id) {
-        var seeds = [];
-        if (k === 'hs') D.files.forEach(function (f) { if (f.health.state === id) seeds = seeds.concat(seedsOf('file:' + f.name)); });
-        else seeds = seedsOf(id);
-        var R = reach(seeds);
+        var R = reach(seedsOf(id));
         for (var x in R) U[x] = 1;
       });
       if (L === null) L = U;
@@ -848,10 +847,10 @@
         text(tg, p.x + 7, p.cy + 4, open[f.name] ? '▾' : '▸', 'car');
       }
       var fill = st === 'ok' ? '#1a7f37' : st === 'warn' ? '#9a6700' : st === 'old' ? '#b42318' : '#6b7280';
-      var hb = el('g', { class: 'flow-hb', tabindex: '0', role: 'button', 'data-state': st,
-                         'aria-pressed': picks.hs[st] ? 'true' : 'false',
+      var hb = el('g', { class: 'flow-hb', tabindex: '0', role: 'button', 'data-state': st, 'data-file': f.name,
+                         'aria-pressed': picks.file['file:' + f.name] ? 'true' : 'false',
                          'aria-label': 'Health of ' + f.name + ': ' + (h.label || (h.fresh + ' of ' + h.total + ' fresh')) +
-                                       '. Press to show every file whose health is: ' + STATE[st] }, n);
+                                       '. Press to leave only this file\'s card below' }, n);
       el('rect', { x: p.x + p.w - BW - 4, y: p.y + 3, width: BW, height: p.h - 6, rx: 5, style: 'fill:' + fill }, hb);
       text(hb, p.x + p.w - BW / 2 - 4, p.cy + 4, h.label || (h.fresh + '/' + h.total), 'hbt').setAttribute('text-anchor', 'middle');
       if (!open[f.name]) return;
@@ -879,7 +878,6 @@
     if (c === 'step') return 'step ' + v;
     return v;
   }
-  var wasPicked = false;
   function RM() { return window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'; }
   function paint() {
     var L = litSet();
@@ -889,24 +887,26 @@
       n.setAttribute('aria-pressed', picks[colOf(id)][id] ? 'true' : 'false');
     });
     svg.querySelectorAll('.flow-hb').forEach(function (b) {
-      b.setAttribute('aria-pressed', picks.hs[b.getAttribute('data-state')] ? 'true' : 'false');
+      b.setAttribute('aria-pressed', picks.file['file:' + b.getAttribute('data-file')] ? 'true' : 'false');
     });
     svg.querySelectorAll('.flow-edge').forEach(function (p) {
       var on = L && p._under.some(function (u) { return L[u[0]] && L[u[1]]; });
       p.classList.toggle('flow-on', !!on);
       p.classList.toggle('flow-dim', !!L && !on);
     });
-    var cards = [].slice.call(document.querySelectorAll('details.group[data-file]')), shown = 0;
+    var names = [];
+    Object.keys(picks).forEach(function (k) {
+      Object.keys(picks[k]).forEach(function (id) { names.push(label(id)); });
+    });
+    var cards = [].slice.call(document.querySelectorAll('details.group[data-file]')), shown = 0, last = null;
     cards.forEach(function (c) {
       var name = c.getAttribute('data-file'), key = name === '.store' ? 'file:.store (old)' : 'file:' + name;
       var ok = !L || !!L[key];
       c.hidden = !ok;
-      if (ok) shown++;
+      if (names.length) c.open = false;
+      if (ok) { shown++; last = c; }
     });
-    var names = [];
-    Object.keys(picks).forEach(function (k) {
-      Object.keys(picks[k]).forEach(function (id) { names.push(k === 'hs' ? 'health: ' + STATE[id] : label(id)); });
-    });
+    if (names.length && shown === 1) last.open = true;
     var cs = document.getElementById('cardsum');
     info();
     if (cs) cs.textContent = names.length
@@ -924,11 +924,10 @@
         : '<b>No file matches these picks.</b> <button type="button" class="lnk" data-clearpicks>Clear the picks</button>';
     }
     if (de) de.hidden = !names.length || !!shown;
-    if (names.length && !wasPicked) {
+    if (names.length) {
       var ds = document.getElementById('sec-data');
-      if (ds) { ds.open = true; ds.querySelector('summary').scrollIntoView({ block: 'start', behavior: RM() }); }
+      if (ds) ds.open = true;
     }
-    wasPicked = names.length > 0;
   }
 
   /* item 6: a picked board says what it reads · its catalog needs, its tier set and how many names */
@@ -985,8 +984,8 @@
       return;
     }
     if (t.classList.contains('flow-hb')) {
-      var s = t.getAttribute('data-state');
-      if (picks.hs[s]) delete picks.hs[s]; else picks.hs[s] = 1;
+      var fid = 'file:' + t.getAttribute('data-file');
+      if (picks.file[fid]) delete picks.file[fid]; else picks.file[fid] = 1;
       paint();
       return;
     }
