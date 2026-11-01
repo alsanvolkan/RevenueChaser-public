@@ -42,3 +42,16 @@ def test_3_reports_five_to_nine_days_apart_are_consecutive(rcdata_market, report
     cot = store_reads.cot_tff(day)["payload"]
     assert cot["report_date"] == reports[-1].isoformat() and cot["change_gap"] is gap
     assert (cot["asset_manager"]["change"] is None) is gap
+
+
+def test_5_a_locked_status_read_keeps_the_stored_rows(rcdata_market, monkeypatch):
+    """Item 5: ``read._rows`` read the store, then the read log or the status raised and the rows were lost, so the
+    board lost its pin flag and squeeze trigger. Now the rows come back stamped ``status_unknown``."""
+    monkeypatch.setattr(ops.read_log, "flush", _boom)
+    monkeypatch.setattr(ops.read_log, "_last", float("-inf"))        # every read is due to flush
+    monkeypatch.setattr(ops, "read_latest_check", _boom)
+    rows = read.market_series(["VIX"])
+    assert rows and {r["status"] for r in rows} == {read.STATUS_UNKNOWN}
+    for reader in (store_reads.zero_one_dte_dollars, store_reads.cot_tff):
+        out = reader(fx.LAST)
+        assert out["stored"] is True and out["status"] == read.STATUS_UNKNOWN, out["label"]

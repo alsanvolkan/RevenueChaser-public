@@ -14,13 +14,18 @@ in the read log. No serving file yet means no rows, not an error: the status say
 """
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Iterable
 
 from ..core import calendar
 from . import ops, serving
 
+logger = logging.getLogger(__name__)
+
 NEVER_CHECKED = "never_checked"
+# #228 item 5: the status read failed (a locked ops.sqlite); the rows were read and are served.
+STATUS_UNKNOWN = "status_unknown"
 DATASET_OF_TABLE = {"market_series": "market_series", "spx_gamma_expiry_strike": "uw/spot_expiry_strike",
                     "security": "spine/security", "index_membership": "funds/index_holdings",
                     "fund": "sec/company_tickers_mf", "etf_holdings": "funds/etf_holdings"}
@@ -37,7 +42,11 @@ KIND_OF_TABLE.update({t: "ownership" for t in ("sec13f_ticker_period", "sec13f_p
 
 
 def dataset_status(dataset: str) -> str:
-    check = ops.read_latest_check(dataset)      # never creates ops.sqlite: a page read (#336)
+    try:
+        check = ops.read_latest_check(dataset)      # never creates ops.sqlite: a page read (#336)
+    except Exception as exc:  # noqa: BLE001 - #228 item 5: a locked ops.sqlite must not blank rows already read
+        logger.warning("status read failed for %s: %s", dataset, exc)
+        return STATUS_UNKNOWN
     return check["result"] if check else NEVER_CHECKED
 
 

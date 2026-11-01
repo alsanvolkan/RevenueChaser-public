@@ -511,7 +511,10 @@ class ReadLog:
             self._counts[key] = self._counts.get(key, 0) + 1
             due = self._clock() - self._last >= READ_LOG_FLUSH_S
         if due:
-            self.flush()
+            try:
+                self.flush()
+            except Exception:  # noqa: BLE001 - #228 item 5: a lost minute of counts, never a lost read
+                pass
 
     def flush(self) -> None:
         with self._lock:
