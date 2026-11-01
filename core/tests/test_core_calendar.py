@@ -200,3 +200,60 @@ def test_a_closure_by_executive_order_is_in_the_table():
 def test_is_federal_holiday_of_an_ordinary_weekday():
     assert is_federal_holiday(date(2026, 10, 13)) is False
     assert is_federal_holiday(date(2026, 10, 12)) is True
+
+
+# ── 1993-2024: the table extended back (#348), verified against CRSP's trading dates ─────────────────────
+
+def _sessions(year):
+    d, n = date(year, 1, 1), 0
+    while d.year == year:
+        n += is_trading_day(d)
+        d += timedelta(days=1)
+    return n
+
+
+@pytest.mark.parametrize("year, sessions", [
+    (1993, 253), (1996, 254), (2001, 248), (2012, 250), (2018, 251), (2022, 251), (2024, 252),
+])
+def test_session_count_per_year_matches_crsp(year, sessions):
+    """``select distinct date from crsp_a_stock.dsi`` per year (WRDS, 2026-11-01)."""
+    assert _sessions(year) == sessions
+
+
+@pytest.mark.parametrize("iso", [
+    "1994-04-27",                                          # Nixon
+    "2001-09-11", "2001-09-12", "2001-09-13", "2001-09-14",  # 9/11
+    "2004-06-11",                                          # Reagan
+    "2007-01-02",                                          # Ford
+    "2012-10-29", "2012-10-30",                            # Hurricane Sandy
+    "2018-12-05",                                          # G.H.W. Bush
+])
+def test_special_closures_are_closed(iso):
+    assert is_trading_day(date.fromisoformat(iso)) is False
+
+
+@pytest.mark.parametrize("iso", ["1993-04-09", "2001-04-13", "2016-03-25", "2024-03-29"])
+def test_good_friday_is_closed(iso):
+    assert is_trading_day(date.fromisoformat(iso)) is False
+
+
+def test_juneteenth_only_from_2022():
+    assert is_trading_day(date(2021, 6, 18)) is True       # federal Juneteenth observed 2021, NYSE open
+    assert is_trading_day(date(2020, 6, 19)) is True
+    assert is_trading_day(date(2022, 6, 20)) is False      # 06-19 a Sunday, kept Monday
+    assert is_trading_day(date(2024, 6, 19)) is False
+
+
+def test_mlk_day_only_from_1998():
+    assert is_trading_day(date(1997, 1, 20)) is True
+    assert is_trading_day(date(1998, 1, 19)) is False
+
+
+def test_a_saturday_new_year_does_not_close_the_friday_before():
+    assert is_trading_day(date(2021, 12, 31)) is True      # 2022-01-01 a Saturday
+
+
+def test_table_starts_in_1993():
+    assert min(MARKET_HOLIDAYS) == 1993
+    with pytest.raises(ValueError, match="1993-2028"):
+        market_holidays(1992)

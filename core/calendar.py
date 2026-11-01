@@ -5,11 +5,13 @@ which a position can still be opened before an earnings print: PM reports trade
 by that day's close, AM reports trade by the previous session's close (rolling
 back over weekends and holidays).
 
-The closure table is transcribed from https://www.nyse.com/markets/hours-calendars
-(the same table the uw-earnings-vol-scan skill ships). It stops after 2028
-because that is as far as the NYSE publishes — past its horizon these helpers
-RAISE rather than guess, because a guessed holiday would move a deadline onto a
-closed day.
+The closure table runs 1993-2028. 2025-2028 is transcribed from
+https://www.nyse.com/markets/hours-calendars (the same table the uw-earnings-vol-scan
+skill ships); it stops after 2028 because that is as far as the NYSE publishes.
+1993-2024 (#348) follows each year's observance rules plus the special closures, and its
+sessions equal CRSP's trading dates (``crsp_a_stock.dsi``) exactly, every year. Outside
+1993-2028 these helpers RAISE rather than guess, because a guessed holiday would move a
+deadline onto a closed day.
 
 The second half of the module is the New York clock the forecast ledger (#128) and the
 post-close Fetch (#129) share: when a session closed, which session is the latest
@@ -20,8 +22,8 @@ daylight-saving gap weeks (late Oct, mid Mar) and the Nov/Mar US changes stay co
 The last part (#283, ADR-3) is the one session date every dated table is keyed on:
 ``session_for`` maps a run time to its New York session (rule B) and ``to_session_date`` is
 the read helper that does the same for the old run-time columns (epoch, ISO text, plain
-dates). Rule C: the holiday table is NOT extended back; a date outside 2025-2028 raises, and
-sessions before 2025 come from the stored price bars, not from this module.
+dates). Rule C: a date outside the holiday table (1993-2028) raises; sessions before 1993 come from
+the stored price bars, not from this module.
 """
 
 from __future__ import annotations
@@ -30,9 +32,43 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
-# MM-DD in date order. A Saturday New Year's (2028) drops the January entry
-# because the NYSE does not close the preceding Friday.
+# MM-DD in date order. A Saturday New Year's (1994, 2000, 2005, 2011, 2022, 2028) drops the January
+# entry because the NYSE does not close the preceding Friday. MLK Day closes from 1998, Juneteenth from
+# 2022. The one-off closures: 1994-04-27 Nixon, 2001-09-11..14 the attacks, 2004-06-11 Reagan,
+# 2007-01-02 Ford, 2012-10-29/30 Hurricane Sandy, 2018-12-05 G.H.W. Bush, 2025-01-09 Carter.
 _MARKET_HOLIDAYS = {
+    1993: "01-01 02-15 04-09 05-31 07-05 09-06 11-25 12-24",
+    1994: "02-21 04-01 04-27 05-30 07-04 09-05 11-24 12-26",
+    1995: "01-02 02-20 04-14 05-29 07-04 09-04 11-23 12-25",
+    1996: "01-01 02-19 04-05 05-27 07-04 09-02 11-28 12-25",
+    1997: "01-01 02-17 03-28 05-26 07-04 09-01 11-27 12-25",
+    1998: "01-01 01-19 02-16 04-10 05-25 07-03 09-07 11-26 12-25",
+    1999: "01-01 01-18 02-15 04-02 05-31 07-05 09-06 11-25 12-24",
+    2000: "01-17 02-21 04-21 05-29 07-04 09-04 11-23 12-25",
+    2001: "01-01 01-15 02-19 04-13 05-28 07-04 09-03 09-11 09-12 09-13 09-14 11-22 12-25",
+    2002: "01-01 01-21 02-18 03-29 05-27 07-04 09-02 11-28 12-25",
+    2003: "01-01 01-20 02-17 04-18 05-26 07-04 09-01 11-27 12-25",
+    2004: "01-01 01-19 02-16 04-09 05-31 06-11 07-05 09-06 11-25 12-24",
+    2005: "01-17 02-21 03-25 05-30 07-04 09-05 11-24 12-26",
+    2006: "01-02 01-16 02-20 04-14 05-29 07-04 09-04 11-23 12-25",
+    2007: "01-01 01-02 01-15 02-19 04-06 05-28 07-04 09-03 11-22 12-25",
+    2008: "01-01 01-21 02-18 03-21 05-26 07-04 09-01 11-27 12-25",
+    2009: "01-01 01-19 02-16 04-10 05-25 07-03 09-07 11-26 12-25",
+    2010: "01-01 01-18 02-15 04-02 05-31 07-05 09-06 11-25 12-24",
+    2011: "01-17 02-21 04-22 05-30 07-04 09-05 11-24 12-26",
+    2012: "01-02 01-16 02-20 04-06 05-28 07-04 09-03 10-29 10-30 11-22 12-25",
+    2013: "01-01 01-21 02-18 03-29 05-27 07-04 09-02 11-28 12-25",
+    2014: "01-01 01-20 02-17 04-18 05-26 07-04 09-01 11-27 12-25",
+    2015: "01-01 01-19 02-16 04-03 05-25 07-03 09-07 11-26 12-25",
+    2016: "01-01 01-18 02-15 03-25 05-30 07-04 09-05 11-24 12-26",
+    2017: "01-02 01-16 02-20 04-14 05-29 07-04 09-04 11-23 12-25",
+    2018: "01-01 01-15 02-19 03-30 05-28 07-04 09-03 11-22 12-05 12-25",
+    2019: "01-01 01-21 02-18 04-19 05-27 07-04 09-02 11-28 12-25",
+    2020: "01-01 01-20 02-17 04-10 05-25 07-03 09-07 11-26 12-25",
+    2021: "01-01 01-18 02-15 04-02 05-31 07-05 09-06 11-25 12-24",
+    2022: "01-17 02-21 04-15 05-30 06-20 07-04 09-05 11-24 12-26",
+    2023: "01-02 01-16 02-20 04-07 05-29 06-19 07-04 09-04 11-23 12-25",
+    2024: "01-01 01-15 02-19 03-29 05-27 06-19 07-04 09-02 11-28 12-25",
     2025: "01-01 01-09 01-20 02-17 04-18 05-26 06-19 07-04 09-01 11-27 12-25",
     2026: "01-01 01-19 02-16 04-03 05-25 06-19 07-03 09-07 11-26 12-25",
     2027: "01-01 01-18 02-15 03-26 05-31 06-18 07-05 09-06 11-25 12-24",
@@ -252,7 +288,7 @@ def session_for(run_at: datetime | float | int) -> SessionStamp:
     ``run_at`` is a timezone-aware datetime or epoch seconds (UTC). The date is the New York
     one, never the UTC or Amsterdam one. Early closes count as full days (see
     ``session_close``). Raises ``ValueError`` for a naive datetime or a day outside the
-    holiday table (2025-2028); it never guesses.
+    holiday table (1993-2028); it never guesses.
     """
     if isinstance(run_at, bool):
         raise ValueError("run_at must be a datetime or epoch seconds")
@@ -273,7 +309,7 @@ def to_session_date(value) -> date | None:
     text with or without a time, or a ``date``. A value with a time goes through rule B
     (``session_for``). A date-only value has no time of day, so it becomes the latest session
     on or before it (a Saturday gives Friday). ``None`` and ``""`` give ``None``; anything
-    else unparseable raises ``ValueError``, and so does a date outside 2025-2028.
+    else unparseable raises ``ValueError``, and so does a date outside 1993-2028.
     """
     if value is None or value == "":
         return None

@@ -30,7 +30,7 @@ from .catalog import DAYS, NEEDS, SESSIONS, TICKER, Need
 
 FRESH, STALE, MISSING = "fresh", "stale", "missing"
 #: Rows the store holds whose lag the calendar cannot count: an ``as_of`` outside the NYSE holiday table (it runs
-#: 2025-2028; Cboe's SPX series starts in 1975). The answer keeps its rows and says why in ``freshness["lag_reason"]``
+#: 1993-2028; Cboe's SPX series starts in 1975). The answer keeps its rows and says why in ``freshness["lag_reason"]``
 #: instead of raising (#334 review, blocker 1): a reader that never judges freshness must not lose its data to it.
 UNDECIDED = "undecided"
 NEVER = "never"

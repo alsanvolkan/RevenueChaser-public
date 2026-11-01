@@ -118,7 +118,7 @@ def symbol_map(con: duckdb.DuckDBPyConnection, symbols_sql: str, notes: list[str
 # ── Sessions ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 def is_session(d: date) -> bool:
-    """An NYSE session (``core/calendar.py``); outside its 2025-2028 table, a weekday (a list that does not exist
+    """An NYSE session (``core/calendar.py``); outside its 1993-2028 table, a weekday (a list that does not exist
     on a holiday answers 404 and is marked absent, never invented)."""
     try:
         return calendar.is_trading_day(d)
