@@ -267,8 +267,9 @@ def _log_section(model: dict) -> str:
             f'<code>need:&lt;name&gt;</code> by day · {asked} of {total} needs asked in 30 days</span></h2>'
             f'{body}{never_html}'
             '<p class="legend">The process is the name the reading process wrote: <code>RC_PROCESS_NAME</code>, '
-            'else its script\'s name (the dashboard writes <code>dashboard</code>; a <code>python -m</code> job '
-            'writes <code>__main__</code>). Counted per New York day.</p></section>')
+            'else its script\'s name: the dashboard writes <code>dashboard</code>, the builder <code>builder</code>, '
+            'and another <code>python -m</code> run its package\'s name (<code>rcdata</code> for the backup CLI). '
+            'Rows from before 1 Nov 2026 may say <code>__main__</code>. Counted per New York day.</p></section>')
 
 
 def _routes_section(model: dict) -> str:

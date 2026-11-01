@@ -29,6 +29,7 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -491,8 +492,26 @@ def calls_today(provider: str) -> int:
 
 # ── The read log ───────────────────────────────────────────────────────────────────────────────────────────────
 
+#: A ``python -m <package>`` run starts from ``__main__.py``; its read-log name is its package's, or this word.
+_MAIN_NAMES = {"build": "builder"}
+
+
 def _process_name() -> str:
-    return os.getenv("RC_PROCESS_NAME") or Path(sys.argv[0] or "python").stem or "python"
+    """``RC_PROCESS_NAME``, else the script's name; a ``__main__.py`` is named after its package (#331).
+
+    Without that, the builder, the backup CLI and every board run as ``python -m`` all counted under ``__main__``.
+    Both separators are split, because the live machine is Windows.
+    """
+    env = os.getenv("RC_PROCESS_NAME")
+    if env:
+        return env
+    parts = [p for p in re.split(r"[\\/]", sys.argv[0] or "") if p]
+    if not parts:
+        return "python"
+    stem = parts[-1].rsplit(".", 1)[0] if "." in parts[-1] else parts[-1]
+    if stem == "__main__" and len(parts) > 1:
+        return _MAIN_NAMES.get(parts[-2], parts[-2])
+    return stem or "python"
 
 
 class ReadLog:

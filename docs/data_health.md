@@ -175,9 +175,10 @@ Data tab again sends a `resize`, because the flow diagram lays itself out from a
 2. **The request log.** `ops.need_reads(first_day)`: the `read_log` rows named `need:<name>` (which `needs.ask` and
    `needs.summary` count beside the table name), per process and New York day. The tab sums them over today, 7 and
    30 days, busiest first, and lists the needs never asked in 30 days. A name the catalog no longer holds is shown
-   and marked. The process is what the reader wrote: `RC_PROCESS_NAME`, else its script's name, so the dashboard
-   writes `dashboard` and a `python -m` job `__main__`. A process writes its counts at most once a minute and at
-   exit. `need_reads` never creates `ops.sqlite`.
+   and marked. The process is what the reader wrote: `RC_PROCESS_NAME`, else its script's name. A `python -m`
+   run starts from a `__main__.py`, so it is named after its package instead (`ops._process_name`): the dashboard
+   writes `dashboard`, the builder `builder`, the backup CLI `rcdata`, a board's own run its package. Rows written
+   before that (1 Nov 2026) may say `__main__`. A process writes its counts at most once a minute and at exit. `need_reads` never creates `ops.sqlite`.
 3. **The routes.** `GET /needs`, `GET /needs/<need>` and `GET /needs/<need>?summary=1`, each with one example link.
 
 **The tab does not count itself.** It asks `needs.summary(name, count=False)`, so a render adds no `need:` read

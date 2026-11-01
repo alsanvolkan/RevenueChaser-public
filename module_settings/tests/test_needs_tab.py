@@ -286,3 +286,8 @@ def test_the_lag_names_its_unit_and_a_need_breaks_only_after_a_dot():
     assert "fundamentals.<wbr>companies" in html
     assert re.search(r'<td class="d" data-label="Newest day">2026-10-20</td>', html)
     assert re.search(r"#needs td\.d\{white-space:nowrap\}", needs_tab.NEEDS_CSS)
+
+
+def test_the_legend_names_the_builder_and_says_old_rows_may_say___main__():
+    html = needs_tab.render(_model())
+    assert "<code>builder</code>" in html and "<code>__main__</code>" in html and "before 1 Nov 2026" in html
