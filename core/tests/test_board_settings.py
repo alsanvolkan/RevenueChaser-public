@@ -192,7 +192,7 @@ def test_the_universe_is_saved_as_its_bit_mask_and_an_empty_one_is_refused(rawst
 
 
 def test_the_universe_masks_are_named_by_the_screens_own_lists():
-    from RevenueChaser.rcdata.api import screen
+    from RevenueChaser.rcdata.needs import screen
     from RevenueChaser.rcdata.build import base
     assert bs.UNIVERSE_SET_BITS == {s.key: 1 << i for i, s in enumerate(x for x in screen.UNIVERSE_SETS if x.offered)}
     assert bs.UNIVERSE_INCLUDE_BITS == {g: 1 << i for i, g in enumerate(base.SCOPE_GROUPS)}

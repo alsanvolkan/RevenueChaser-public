@@ -146,8 +146,8 @@ def test_the_boards_lag_map_is_the_live_number_in_a_copy_too(monkeypatch):
     import dataclasses
 
     from RevenueChaser.module_earnings_radar import store_reads
-    from RevenueChaser.rcdata import api
-    need = api.catalog.NEEDS["macro.dgs10"]
-    monkeypatch.setitem(api.catalog.NEEDS, "macro.dgs10", dataclasses.replace(need, max_lag=99))
+    from RevenueChaser.rcdata import needs
+    need = needs.catalog.NEEDS["macro.dgs10"]
+    monkeypatch.setitem(needs.catalog.NEEDS, "macro.dgs10", dataclasses.replace(need, max_lag=99))
     assert store_reads.MAX_LAG["dgs10"] == 99
     assert dict(store_reads.MAX_LAG) == {"dgs10": 99} and store_reads.MAX_LAG.copy() == {"dgs10": 99}

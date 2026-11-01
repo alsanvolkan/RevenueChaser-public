@@ -1,7 +1,7 @@
 """The cards' next earnings date and the earnings-week filter read UW's calendar from ``options.duckdb``
 (``option_screener_daily``, G8) first and the stored D26 calendar for the names the layer does not hold, Yahoo last.
 
-Since the internal data API (step B) the two are a **union**, not a choice, and the age window is counted in trading
+Since the needs layer (step B) the two are a **union**, not a choice, and the age window is counted in trading
 sessions (the ``earnings.next`` need's ``max_lag``) rather than calendar days, so the layer's freshness is
 measured the way the rest of the store's is. avo set that number to **one session** on 29 Oct 2026, which settles
 the contradiction the boards carried (four calendar days here, one session in ``stored_inputs``) in favour of the
@@ -27,8 +27,8 @@ def reference_session(monkeypatch):
     over those two differ by one, and a card would say fresh while the filter had already dropped the layer. These
     cases are written against ``TODAY``, so ``TODAY`` is the newest complete session here.
     """
-    from RevenueChaser.rcdata import api
-    monkeypatch.setattr(api.serve.calendar, "latest_complete_session", lambda: TODAY)
+    from RevenueChaser.rcdata import needs
+    monkeypatch.setattr(needs.serve.calendar, "latest_complete_session", lambda: TODAY)
 
 
 def _screener(rows):
@@ -62,11 +62,11 @@ PAST_THE_EDGE = date(2026, 10, 20)
 
 
 def test_the_age_window_is_the_needs_own(monkeypatch):
-    from RevenueChaser.rcdata import api
-    need = api.catalog.NEEDS["earnings.next"]
+    from RevenueChaser.rcdata import needs
+    need = needs.catalog.NEEDS["earnings.next"]
     assert need.max_lag == MAX_AGE_SESSIONS and need.max_lag_unit == "sessions"
-    assert api.lag_sessions(AT_THE_EDGE, TODAY) == MAX_AGE_SESSIONS
-    assert api.lag_sessions(PAST_THE_EDGE, TODAY) == MAX_AGE_SESSIONS + 1
+    assert needs.lag_sessions(AT_THE_EDGE, TODAY) == MAX_AGE_SESSIONS
+    assert needs.lag_sessions(PAST_THE_EDGE, TODAY) == MAX_AGE_SESSIONS + 1
 
 
 def test_a_session_exactly_at_the_edge_of_the_window_is_still_read(monkeypatch):

@@ -16,21 +16,27 @@ The Discord archive was a fourth store file until October 2026. It is now its ow
 (`discord-archive`), with its own database, schema version and backup, because nothing here ever
 read it for analysis.
 
-## Decision note — the internal data API comes after the setup (avo, 2026-10-29)
+## The needs layer (avo, 2026-10-29 and 2026-11-01)
 
-The bridge between the dashboards and the store (an internal data API: a board asks for a named
-need, the API serves it from the store with its freshness, coverage and provenance, and enqueues a
-fill when something is missing or stale) is **not built before the data setup is finished**. The
-order avo set: finish the setup, purge the data, run the backfill, then build the API in one go, so
-its final shape is settled by real data rather than guessed. Nothing of the API — no catalog, no
-`get()` envelope, no on-demand fill, no HTTP surface — is built before that. The design it will be
-built from is `/mnt/project-files/earnings_bridge/2026-10-29_internal_data_api.md`; earnings dates
-are its first use case, not the whole design. Its locking follows the concurrency model below rather
-than adding a scheme of its own: a file lock (`core/job_lock.py`) where liveness matters, an
-`ops.sqlite` row under `BEGIN IMMEDIATE` for shared state and for collapsing concurrent fill
-requests, the existing `Pacer` and `DAY_CAPS` for provider rate and budget, and no leases while
-homesrv is the only runtime (avo asked for mutex and semaphore to be worked out; that section of the
-design file holds it).
+The bridge between the dashboards and the store is the **needs layer**, `rcdata/needs/` (PR #290; renamed on 1 Nov 2026 from
+its first name, `api`, #329): a board asks for a named **need** (`needs.ask("macro.dgs10")`) and the answer is
+the store's rows in an envelope that says how fresh they are (`state`: fresh, stale or missing, counted in the
+need's own unit against the market's last complete session, or against the `as_of` day a board passes),
+how much of what was asked the store holds (`coverage`), and where each row came from (`provenance`).
+The catalog (`rcdata/needs/catalog.py`) is the single owner of every freshness constant; a board reads
+`max_lag` from there and never keeps a copy. The layer runs no SQL of its own and owns no store: every
+need points at an `rcdata.read` function, and `rcdata.read` is the only SQL a board's data goes through.
+Over HTTP the same envelope is `GET /needs` (the catalog) and `GET /needs/<need>` (`docs/data_retrieval.md`).
+
+What is **not** built yet: the on-demand fill. `ask()` accepts only `fill="never"`; filling is a press of
+Fetch, which enqueues a build request for the builder (`ops.enqueue_once`), so the single-writer rule (D1)
+holds. avo's order of 29 Oct stands for that part: finish the setup, purge, backfill, then build the fill
+in one go from real data. The design it will be built from is
+`/mnt/project-files/earnings_bridge/2026-10-29_internal_data_api.md`. Its locking follows the concurrency
+model below rather than adding a scheme of its own: a file lock (`core/job_lock.py`) where liveness
+matters, an `ops.sqlite` row under `BEGIN IMMEDIATE` for shared state and for collapsing concurrent fill
+requests, the existing `Pacer` and `DAY_CAPS` for provider rate and budget, and no leases while homesrv
+is the only runtime.
 
 **What a purge loses for good.** The backfill cannot bring these back, so the purge decision has to
 cover them first:

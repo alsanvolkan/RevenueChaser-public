@@ -209,7 +209,7 @@ def summary(need: str, *, sample: int = 0) -> dict:
             "sample_rows": s["sample_rows"], "provenance": _provenance(spec, s["sample_rows"])}
 
 
-def get(need: str, *, fill: str = NEVER, **params) -> Answer:
+def ask(need: str, *, fill: str = NEVER, **params) -> Answer:
     """Answer ``need`` from the store. ``params`` go to the need's ``rcdata.read`` function unchanged.
 
     ``fill`` must be ``"never"`` in this PR: the answer serves what the store holds and says how old it is. No

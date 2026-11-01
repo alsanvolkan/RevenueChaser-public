@@ -194,6 +194,22 @@ routes only enqueue and read `ops.sqlite`. Each call opens its own SQLite connec
   process's live `.rc-proc-<pid>` marker sits in the store dir or the market dir (F8 A). `stop.ps1` reads it, and
   so does the deploy gate.
 
+### The needs layer's routes (#290, renamed #329)
+
+The needs layer (`rcdata/needs/`, `docs/data_architecture.md` "The needs layer") over HTTP. Both are `GET`, so they
+need no panel header; both are read-only and never fill: a `fill` in the query string is dropped, not honoured.
+
+- **`GET /needs`**: the catalog, one row per need: `need`, `kind` (the serving file), `dataset` (who writes it),
+  `reader`, `max_lag` and `max_lag_unit`, `ask_param`, `providers`, `fallbacks`, `legacy`.
+- **`GET /needs/<need>`**: one need's answer, the envelope `needs.ask` returns as JSON: `state`, `freshness`,
+  `coverage`, `status`, `provenance` and `rows`, capped at `DATA_ROWS_MAX` rows (5,000) with `truncated: true`
+  when the cap bit; `?limit=` asks for fewer, never for more. The need's list parameter is split on commas
+  (`/needs/identity.security?tickers=MSFT,AAPL`); a scalar the reader takes is passed through; anything else is a 400
+  in words. A need that answers nothing unless something is named (`market.series`) is a 400 when nothing is named,
+  and an empty ask (`?tickers=`) is refused the same way on every need (avo, 30 Oct 2026: an empty list is nothing,
+  never every row). `?summary=1` answers the need's state without naming anything (rows, keys, newest day, the last
+  check, `sample` example rows, five by default). 404 for a need the catalog does not hold.
+
 ### The watch-list routes (PR 4)
 
 The two watch lists (D2) live in `ops.sqlite` (`rcdata/ops.py`); each write is one `BEGIN IMMEDIATE` transaction

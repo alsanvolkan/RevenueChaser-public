@@ -1,4 +1,4 @@
-"""The internal data API: a board asks for a **need** by name and gets the store's rows in an envelope.
+"""The needs layer: a board asks for a **need** by name and gets the store's rows in an envelope.
 
 One front for the dashboards (the goal of 3 Oct 2026): a board names what it needs, not which table or provider it
 comes from, and the answer says how fresh it is, how much of what was asked the store holds, where each row came
@@ -22,8 +22,8 @@ from __future__ import annotations
 
 from . import boards, catalog, serve
 from .catalog import NEEDS, Need
-from .serve import (Answer, AskRequired, FillNotSupported, UnknownNeed, get, lag_in, lag_sessions,
+from .serve import (Answer, AskRequired, FillNotSupported, UnknownNeed, ask, lag_in, lag_sessions,
                     reference_session, summary)
 
 __all__ = ["Answer", "AskRequired", "FillNotSupported", "NEEDS", "Need", "UnknownNeed", "boards", "catalog",
-           "get", "reference_session", "lag_in", "lag_sessions", "serve", "summary"]
+           "ask", "reference_session", "lag_in", "lag_sessions", "serve", "summary"]

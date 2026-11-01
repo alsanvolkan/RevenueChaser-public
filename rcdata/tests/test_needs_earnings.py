@@ -12,7 +12,7 @@ from datetime import date, timedelta
 import pytest
 
 from RevenueChaser.core import earnings_dates
-from RevenueChaser.rcdata import api
+from RevenueChaser.rcdata import needs
 
 TODAY = date(2026, 10, 27)
 SOON = date(2026, 10, 30)
@@ -23,14 +23,14 @@ LATER = date(2026, 11, 5)
 def reference_session(monkeypatch):
     """The day freshness is measured against (the review's I1): one shared function, not the caller's ``today``.
     These cases are written around ``TODAY``, so ``TODAY`` is the newest complete session here."""
-    monkeypatch.setattr(api.serve.calendar, "latest_complete_session", lambda: TODAY)
+    monkeypatch.setattr(needs.serve.calendar, "latest_complete_session", lambda: TODAY)
 
 
 @pytest.fixture
 def layer(monkeypatch):
     """The options layer's screener rows, as ``rcdata.read.option_screener`` returns them."""
     def set_rows(rows):
-        monkeypatch.setattr(api.catalog.read, "option_screener", lambda **kw: list(rows))
+        monkeypatch.setattr(needs.catalog.read, "option_screener", lambda **kw: list(rows))
     return set_rows
 
 
@@ -48,7 +48,7 @@ def _screener(ticker, report_date, session=TODAY):
 
 
 def test_the_catalog_holds_the_need():
-    need = api.catalog.NEEDS["earnings.next"]
+    need = needs.catalog.NEEDS["earnings.next"]
     assert need.reader_name == "option_screener" and need.dataset == "uw/option_screener"
     assert need.fallbacks == ("d26_calendar",) and need.key_column == "ticker"
 
@@ -105,7 +105,7 @@ def test_an_unreadable_stored_calendar_still_leaves_the_layers_dates(layer, monk
 def test_an_unreadable_layer_still_leaves_the_stored_dates(monkeypatch, d26):
     def boom(**kw):
         raise RuntimeError("no options file")
-    monkeypatch.setattr(api.catalog.read, "option_screener", boom)
+    monkeypatch.setattr(needs.catalog.read, "option_screener", boom)
     d26([{"ticker": "BBB", "d": LATER}])
     assert earnings_dates.stored_next_dates(TODAY) == {"BBB": LATER}
 

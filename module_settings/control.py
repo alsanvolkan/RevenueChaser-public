@@ -2,7 +2,7 @@
 ``newdata.collect`` read and from the code's own records.
 
 This module only arranges. Every number comes from ``collect`` (``ops.sqlite``, the serving files, the raw and Parquet
-folders); every name, step, role, cadence and word comes from ``rcdata.api.screen``; every column from
+folders); every name, step, role, cadence and word comes from ``rcdata.needs.screen``; every column from
 ``rcdata.scaffold.SCHEMA_OF_KIND``; and which board reads which table from the boards' declared reads (or their
 planned reads, drawn dashed) and the need catalog. Nothing here opens a store or calls a provider, so a render is
 pure and a test builds the whole board from a dictionary.
@@ -24,9 +24,9 @@ from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 from RevenueChaser.rcdata import caps, scaffold
-from RevenueChaser.rcdata.api import boards as api_boards
-from RevenueChaser.rcdata.api import catalog
-from RevenueChaser.rcdata.api import screen
+from RevenueChaser.rcdata.needs import boards as api_boards
+from RevenueChaser.rcdata.needs import catalog
+from RevenueChaser.rcdata.needs import screen
 
 #: The page shows avo's clock (CLAUDE.md: Europe/Amsterdam).
 LOCAL = ZoneInfo("Europe/Amsterdam")

@@ -46,8 +46,8 @@ NEED_OF_TABLE = {"earnings_calendar": "earnings.next", "short_interest": "owners
 
 def max_lag_map() -> dict[str, int]:
     """``{table: how many sessions old a stored input may be}``, read from the catalog on every call."""
-    from RevenueChaser.rcdata import api
-    return {table: api.catalog.NEEDS[need].max_lag for table, need in NEED_OF_TABLE.items()}
+    from RevenueChaser.rcdata import needs
+    return {table: needs.catalog.NEEDS[need].max_lag for table, need in NEED_OF_TABLE.items()}
 
 
 class _MaxLag(Mapping):

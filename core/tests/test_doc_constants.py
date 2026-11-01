@@ -429,7 +429,7 @@ def test_the_options_section_states_what_the_code_owns():
 def test_data_health_states_the_control_boards_values_the_code_owns():
     """Design v28: the control board's thresholds, its fill switch and its one read route, as the code has them."""
     from RevenueChaser.module_settings import control, control_render, newdata
-    from RevenueChaser.rcdata.api import screen
+    from RevenueChaser.rcdata.needs import screen
     text = (_REPO / "docs" / "data_health.md").read_text(encoding="utf-8")
     section = text[text.index("### 2.0a The control board"):text.index('### 2.0 The "New data system" section')]
     assert f"silent for over {control.BUILDER_SILENT_MINUTES} minutes" in section
