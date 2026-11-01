@@ -10,7 +10,8 @@ A dataset is due (``is_due``) when nothing holds it and its last run is old enou
   paused dataset that was queued anyway (a Fetch, the CLI's), with a ``skipped: paused`` check row (PR #222);
 - so does ``dataset_schedule.next_due`` while it is later than today in New York (a hold until that day);
 - never built (no ``dataset_check`` row), or a last check that ``failed`` or was ``skipped`` (the day cap writes one,
-  and so does the pause skip): due;
+  and so does the pause skip): due; except a failure of a ``DAY_CAPPED`` provider's dataset (Alpha Vantage), due
+  again only on the next New York day;
 - ``daily`` (the default, and what an unknown cadence reads as): due once the dataset's own ``default_as_of()`` has
   reached the last check's ``next_check_due`` (the next session after the as-of it ran for), so the SPX slice waits
   for the next complete session and the market series (as-of: today) run on the first pass of each trading day.
@@ -35,6 +36,9 @@ DEFAULT_CADENCE = "daily"
 CYCLE_DAYS = {"weekly": 7, "monthly": 30}
 REQUESTED_BY = "schedule"
 ATTENDED_WHY = "attended: run from the CLI on the server (a person logs in; WRDS_USERNAME must be set)"
+#: Providers whose day is too small to retry a failure every hourly pass (Alpha Vantage: 25 calls a day, shared by
+#: the earnings calendar and the listing status): a failed check is due again on the next New York day (#349 S6).
+DAY_CAPPED = frozenset({"alphavantage"})
 BY_HAND_WHY = "starts by hand: not due until a first run from the CLI or a Fetch has built it"
 
 
@@ -54,6 +58,9 @@ def is_due(ds) -> tuple[bool, str]:
     check = ops.latest_check(ds.name)
     if check is None:
         return True, "never built"
+    if check["result"] == "failed" and DAY_CAPPED & set(getattr(ds, "providers", ())) \
+            and str(check.get("checked_on"))[:10] >= today:
+        return False, "failed today: again on the next New York day (the provider allows 25 calls a day)"
     if check["result"] in ("failed", "skipped"):
         return True, f"the last check {'failed' if check['result'] == 'failed' else 'was skipped'}"
     cadence = schedule.get("cadence") if schedule.get("cadence") in CADENCES else getattr(ds, "cadence", None)

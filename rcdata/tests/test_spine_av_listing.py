@@ -29,6 +29,7 @@ DELISTED = ("symbol,name,exchange,assetType,ipoDate,delistingDate,status\r\n"
 def env(monkeypatch, http_mock):
     monkeypatch.setenv("RC_ALPHAVANTAGE_BASE", "https://av.test")
     monkeypatch.setenv("ALPHAVANTAGE_API_KEY", KEY)
+    monkeypatch.setattr(av, "MIN_ETFS", 1)                   # the fixture's list is a few rows, the real one 5,907
     return http_mock
 
 
@@ -38,7 +39,7 @@ def _answer(env, active=ACTIVE, delisted=DELISTED):
 
 
 def _run(day="2026-11-02") -> dict:
-    return base.run_request({"dataset": av.NAME, "params": {"as_of": day}})
+    return base.run_request({"dataset": av.NAME, "params": {"as_of": day}}, sleep=lambda _s: None)
 
 
 def _parquet(day="2026-11-02") -> list[tuple]:
@@ -113,9 +114,9 @@ def test_the_build_stages_the_newest_snapshot_only(env):
     _answer(env)
     _run("2026-11-02")
     env.routes.clear()
-    _answer(env, active=ACTIVE.replace("BNKU,Bank of Montreal,NYSE ARCA,ETF,2019-04-03,null,Active\r\n", ""))
+    _answer(env, active=ACTIVE.replace("A,Agilent Technologies Inc,NYSE,Stock,1999-11-18,null,Active\r\n", ""))
     row = _run("2026-11-03")
-    assert "1 ETF, 2 Stock active" in row["note"]
+    assert "2 ETF, 1 Stock active" in row["note"]
 
 
 def test_it_is_a_daily_spine_dataset_that_starts_by_hand_inside_the_alpha_vantage_cap():
@@ -124,3 +125,78 @@ def test_it_is_a_daily_spine_dataset_that_starts_by_hand_inside_the_alpha_vantag
     ds = DATASETS[av.NAME]
     assert ds.kind == "spine" and ds.cadence == "daily" and ds.starts_by_hand and ds.providers == ("alphavantage",)
     assert caps.DAY_CAPS["alphavantage"] == 25
+
+
+# ── Review round 1 of PR 349 ──────────────────────────────────────────────────────────────────────────────────
+
+def test_a_list_under_the_floor_fails_and_is_not_kept_as_the_days_resume_marker(env, monkeypatch):
+    """S4: a truncated answer must not become today's list (its raw file would stop every retry that day)."""
+    monkeypatch.setattr(av, "MIN_ETFS", 3)
+    _answer(env)
+    row = _run()
+    assert row["result"] == "failed" and "2 ETF rows" in row["note"] and "under 3" in row["note"]
+    assert not av.raw_path(date(2026, 11, 2)).exists()
+
+
+def test_a_list_that_lost_a_fifth_of_its_etfs_since_the_last_snapshot_fails(env):
+    _answer(env)
+    assert _run("2026-11-02")["result"] == "changed"
+    env.routes.clear()
+    truncated = "".join(line + "\r\n" for line in ACTIVE.split("\r\n")[:3] if line)   # header, A, XLK
+    _answer(env, active=truncated)
+    row = _run("2026-11-03")
+    assert row["result"] == "failed" and "1 ETF rows" in row["note"] and "80% of the 2" in row["note"]
+    assert not av.raw_path(date(2026, 11, 3)).exists()
+
+
+def test_the_delisted_issue_stays_one_open_row_and_resolves_when_the_list_answers(env):
+    """S5: the delisted call answers ``{}`` every day for now; that is one open issue, not one a day."""
+    _answer(env, delisted="{}")
+    _run("2026-11-02")
+    _run("2026-11-03")
+    _run("2026-11-04")
+    assert [(i["kind"], i["key"]) for i in ops.open_issues(av.NAME)[1]] == [("no_rows", "delisted")]
+    env.routes.clear()
+    _answer(env)
+    _run("2026-11-05")
+    assert ops.open_issues(av.NAME)[0] == 0
+
+
+def test_a_failed_run_is_not_due_again_until_the_next_new_york_day(monkeypatch):
+    """S6: the hourly pass must not spend Alpha Vantage's 25 a day retrying a failure every hour."""
+    from datetime import datetime, timezone
+    from RevenueChaser.core import calendar
+    from RevenueChaser.rcdata.build import DATASETS, due
+    monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 11, 20, 15, 0, tzinfo=timezone.utc))
+    ops.record_check(av.NAME, "changed", source_as_of="2026-11-19", checked_on="2026-11-19")
+    ops.record_check(av.NAME, "failed", note="alphavantage listing status: a JSON answer", checked_on="2026-11-20")
+    due_now, why = due.is_due(DATASETS[av.NAME])
+    assert not due_now and "next New York day" in why
+    monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 11, 21, 15, 0, tzinfo=timezone.utc))
+    assert due.is_due(DATASETS[av.NAME])[0] is True
+    # Narrow: a keyless dataset's failure is still due on the next hourly pass.
+    ops.record_check("sec/ncen", "changed", checked_on="2026-11-19")
+    ops.record_check("sec/ncen", "failed", note="x", checked_on="2026-11-21")
+    assert due.is_due(DATASETS["sec/ncen"])[0] is True
+
+
+def test_the_key_is_in_no_parquet_and_no_log_record_of_ours(env, caplog):
+    """S7. httpx's own request log carries the query; the builder silences it (``rcdata/build/__main__.py``), so
+    only our loggers are read here."""
+    import logging
+    _answer(env, delisted="{}")
+    with caplog.at_level(logging.DEBUG):
+        row = _run()
+    assert row["result"] == "changed"
+    parquet = b"".join(p.read_bytes() for p in base.parquet_root().rglob("*") if p.is_file())
+    assert parquet and KEY.encode() not in parquet
+    ours = [r.getMessage() for r in caplog.records if not r.name.startswith(("httpx", "httpcore"))]
+    assert ours and not [m for m in ours if KEY in m]
+
+
+def test_a_5xx_fails_with_the_url_and_never_the_key(env):
+    env.add("av.test/query", b"down", status=500)
+    env.routes.reverse()                                          # the 500 first
+    row = _run()
+    assert row["result"] == "failed" and "HTTP 500" in row["note"] and "av.test/query" in row["note"]
+    assert KEY not in row["note"] and row["calls"] == base.HTTP_ATTEMPTS

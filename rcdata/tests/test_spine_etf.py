@@ -41,6 +41,7 @@ def built(monkeypatch, http_mock):
     monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
     monkeypatch.setenv("RC_ALPHAVANTAGE_BASE", "https://av.test")
     monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "av-test-key")
+    monkeypatch.setattr(av_listing, "MIN_ETFS", 1)           # the fixture's list is a few rows, the real one 5,907
     http_mock.add("company_tickers_exchange.json", SEC_FILE)
     fx.add_ncen_routes(http_mock)
     http_mock.add("state=delisted", "{}")
