@@ -41,6 +41,7 @@ ROLES = ("first", "only source", "fills", "cross-check", "build")
 DATASETS: dict[str, DatasetCard] = {
     'alpaca/bars': DatasetCard('Daily bars (Alpaca)', coverage_target=0.99, step=8, role='first'),
     'alpaca/corporate_actions': DatasetCard('Corporate actions (Alpaca)', step=8, role='first'),
+    'alphavantage/listing_status': DatasetCard('Every US listing, the ETF list (Alpha Vantage)', step=1, role='first'),
     'alphavantage/earnings_calendar': DatasetCard('Earnings calendar (Alpha Vantage)', step=9, role='first'),
     'finra/short_interest': DatasetCard('Short interest (FINRA)', step=10, role='first'),
     'fundamentals/tables': DatasetCard('Fundamentals (served tables, peers, build issues)', step=9, role='build'),
@@ -276,7 +277,8 @@ PROVIDERS: dict[str, ProviderWords] = {
                             "200 a minute (free plan) · no SIP data of the last 15 minutes"),
     "yfinance": ProviderWords("yfinance", "float, estimates, MOVE", "float lookups 1.5 s apart · a 429 stops the run",
                               "unofficial · a 429 is its limit"),
-    "alphavantage": ProviderWords("Alpha Vantage", "the earnings calendar", "one request a run", "25 a day (free tier)"),
+    "alphavantage": ProviderWords("Alpha Vantage", "the earnings calendar, the listing status (ETF list)",
+                                  "one request a run (calendar) · two (listing status)", "25 a day (free tier)"),
     "openfigi": ProviderWords("OpenFIGI", "the FIGI of each CUSIP", "24 a minute · up to 100 CUSIPs a request",
                               "keyed limit, not quoted in the code"),
     "fred": ProviderWords("FRED", "DGS10 and the macro series", "110 a minute", "120 a minute"),
