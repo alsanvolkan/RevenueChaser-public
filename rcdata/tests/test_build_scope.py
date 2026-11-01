@@ -111,7 +111,6 @@ def test_every_dataset_either_honours_the_scope_or_is_named_here():
         "alphavantage/earnings_calendar": "a calendar, asked by day",
         "finra/short_interest": "one file a settlement cycle for the whole market",
         "fundamentals/tables": "no fetch",
-        "funds/etf_holdings": "a fixed list of ETFs: the board's sector and theme funds",
         "funds/index_holdings": "the index funds' own holdings files",
         "ibkr/iv_history": "the options universe, from the option list",
         "ibkr/shortable": "IBKR's one shortable-shares file",
@@ -148,7 +147,7 @@ def test_every_dataset_either_honours_the_scope_or_is_named_here():
         "yfinance/estimates": "the fundamentals universe (its own PR)",
     }
     honours = {n for n, d in DATASETS.items() if getattr(d, "honours_scope", False)}
-    assert honours == {"alpaca/bars", "yfinance/float", "uw/total_float"}, honours
+    assert honours == {"alpaca/bars", "yfinance/float", "uw/total_float", "funds/etf_holdings"}, honours
     unnamed = sorted(set(DATASETS) - honours - set(ignores))
     assert not unnamed, (f"these datasets neither honour a scope nor are named as ignoring it: {unnamed}. "
                          "Declare honours_scope = True, or name it here with the reason.")

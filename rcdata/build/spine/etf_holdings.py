@@ -286,6 +286,7 @@ class EtfHoldings:
     cadence = "daily"
     backfill_needs_from = False
     starts_by_hand = True             # not due until a first CLI run or Fetch built it
+    honours_scope = True              # a request's ``names``: those funds and ETFs only, no sweep (the trial)
 
     def default_as_of(self) -> date:
         return calendar.today_ny()
@@ -301,7 +302,10 @@ class EtfHoldings:
             ctx.notes.append(f"no key for {UW_KEY}: the {len(UW_FUNDS)} UW funds were not asked")
         out, failed = [], []
         day = raw_dir() / as_of.isoformat()
+        names = set(ctx.scope.names)
         for f in FILES:
+            if names and f.etf not in names:
+                continue
             sources = [f] + ([FALLBACKS[f.etf]] if f.provider == "uw" and f.etf in FALLBACKS else [])
             if f.provider == "uw" and not keyed:
                 sources = sources[1:]
@@ -338,8 +342,34 @@ class EtfHoldings:
             if not out:
                 raise base.SourceError("every fund file failed")
         if keyed:
-            out += self._sweep(ctx, as_of)
+            out += self._named(ctx, as_of, sorted(names - DAILY)) if names else self._sweep(ctx, as_of)
         self._retain(ctx, as_of)
+        return out
+
+    def _named(self, ctx: base.RunContext, as_of: date, tickers: list[str]) -> list[Path]:
+        """The ETFs a request names that are no daily fund, from UW under ``as_of``; the sweep's state is untouched."""
+        out, empty, failed = [], [], []
+        for t in tickers[:SWEEP_PER_RUN]:
+            f = EtfFile(t, "uw", "json")
+            raw = raw_dir() / as_of.isoformat() / f.raw_name()
+            if raw.exists():
+                out.append(raw)
+                continue
+            try:
+                content = f.download(ctx)
+            except base.CapReached:
+                raise
+            except Exception:  # noqa: BLE001 - one ETF down must not stop the others
+                failed.append(t)
+                continue
+            if not f.parse(content):
+                empty.append(t)
+                continue
+            base.write_raw_json(_meta(raw), {"as_of": as_of.isoformat(), "fetched_at": time.time(),
+                                             "run_id": ctx.run_id, "etf": t, "provider": "uw", "url": f.url()})
+            out.append(base.write_raw(raw, content))
+        ctx.notes.append(f"named: {len(tickers)} ETFs, {len(out)} held, {len(empty)} empty, {len(failed)} failed"
+                         + (f" ({', '.join(empty + failed)[:200]})" if empty or failed else ""))
         return out
 
     def _retain(self, ctx: base.RunContext, as_of: date) -> None:

@@ -46,7 +46,8 @@ DATASETS: dict[str, DatasetCard] = {
     'finra/short_interest': DatasetCard('Short interest (FINRA)', step=10, role='first'),
     'fundamentals/tables': DatasetCard('Fundamentals (served tables, peers, build issues)', step=9, role='build'),
     'funds/index_holdings': DatasetCard('Index membership (ETF holdings files)', step=6, role='first'),
-    'funds/etf_holdings': DatasetCard('ETF holdings, whole: 38 funds daily (SPDR, iShares, UW), every ETF every 30 days (UW)', step=6,
+    'funds/etf_holdings': DatasetCard('ETF holdings, whole: 38 funds daily (SPDR, iShares, Unusual Whales), every other ETF '
+                                      'every 30 days (Unusual Whales)', step=6,
                                       role='only source'),
     'ibkr/iv_history': DatasetCard('One year of 30-day implied volatility per list name (IBKR)', coverage_target=None, step=11, role='first'),
     'ibkr/shortable': DatasetCard('Borrow fee and shares available (IBKR file)', step=10, role='first'),

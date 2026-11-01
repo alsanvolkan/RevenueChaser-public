@@ -140,3 +140,13 @@ def test_retention_keeps_30_days_each_months_last_day_and_each_sweep_day(monkeyp
 def test_coverage_is_the_daily_funds_share_and_a_sweep_does_not_lift_it_past_one(env):
     row = base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
     assert row["coverage"] == 1.0
+
+
+def test_a_request_naming_etfs_asks_only_those_and_starts_no_sweep(env):
+    """The trial before the first sweep: a Fetch with ``names`` asks those ETFs (daily funds or not) and nothing else."""
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY, "names": ["GLD", "SPY", "SMH"]}})
+    assert _uw_asked(env) == ["GLD", "SMH", "SPY"] and len(env.requests) == 3
+    assert {"GLD", "SPY", "SMH"} <= _served_etfs() and not (etf.raw_dir() / etf.SWEEP_STATE).exists()
+    env.requests.clear()
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
+    assert _sweep_calls(env) == [t for t in OTHERS if t not in ("GLD", "SPY")], "the sweep starts on the next run"
