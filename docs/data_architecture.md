@@ -938,8 +938,9 @@ old table names, the routes and the Settings cards come in later PRs.
 **The first board on it: SPX Gamma (PR 3, D7).** `module_spx_gamma/store_reads.py` is the board's one reader (D4:
 no SQL of its own, no kept connection; a missing day is a "not stored" marker, never an exception or a provider call).
 Since #330 it reads through the needs layer, `needs.ask(need, as_of=day)` over `market.spx_expiry_strike`,
-`market.vix`, `market.cot` and `market.spx_close` (its `READS`), so every input is judged against the day rendered,
-not the newest session, and the lag limits are the catalog's: the 0-1 DTE dollar OI gamma per strike (`call_gamma_oi + put_gamma_oi` over the
+`market.vix`, `market.cot` and `market.spx_close` (its `READS`). VIX and COT are judged against the day rendered, not
+the newest session, with the catalog's lag limits; the closes and the 0-1 DTE slice keep their own rules, and a day
+the calendar's holiday table does not cover keeps its rows with the lag left undecided: the 0-1 DTE dollar OI gamma per strike (`call_gamma_oi + put_gamma_oi` over the
 expiries 0 and 1 DTE of `spx_gamma_expiry_strike`; a day whose session has not closed reads the previous session's
 snapshot kept to the expiries from the day on, decision A3; that is the day's 0 DTE expiry only, labelled "0 DTE only
 (previous-session snapshot, <date> <time>)" on the pin line and in the banner, a smaller and conservative sum, review

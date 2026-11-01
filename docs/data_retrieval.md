@@ -155,7 +155,7 @@ button silently degrades to a plain iframe reload.
   CFTC COT, the 8-week SPX closes and the 0-1 DTE dollar gamma the pin and squeeze
   tests size by are read from the market store at render time
   (`module_spx_gamma/store_reads.py` through `needs.ask(..., as_of=day)`, #330:
-  `market_series` and `spx_gamma_expiry_strike`, each input judged against the
+  `market_series` and `spx_gamma_expiry_strike`; VIX and COT judged against the
   day rendered), so a Fetch and a Refresh of a day render the same.
 - **SPX Gamma's Fetch (`POST /run/spxgamma`) also asks the builder** (PR 3, decision
   A4): the job of an accepted Fetch first queues one `uw/spot_expiry_strike` and
