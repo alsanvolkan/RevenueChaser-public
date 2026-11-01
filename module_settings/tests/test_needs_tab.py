@@ -130,7 +130,9 @@ def test_the_default_build_reads_the_real_log_and_does_not_count_its_own_summari
     assert {r["state"] for r in m["catalog"]} <= {"missing", "fresh", "stale", "unreadable"}
 
 
-def test_the_default_build_never_creates_the_ops_file():
+def test_the_log_read_never_creates_the_ops_file():
+    """``ops.need_reads`` only. A real ``needs.summary`` still creates the file today, through
+    ``read.dataset_status`` → ``ops.latest_check`` (outside this tab; reported on #331's PR)."""
     assert not ops.ops_path().exists()
     needs_tab.build(today=TODAY, summarize=_summary)
     assert not ops.ops_path().exists()
@@ -185,10 +187,36 @@ def test_render_escapes_every_string_of_the_tab():
     assert_inert(needs_tab.render({"error": H("tab_error"), "read_at": H("read_at")}))
 
 
+def test_the_page_has_the_tab_strip_and_both_panels_and_stays_inert():
+    html = _page(_hostile_model())
+    assert_inert(html)
+    check_page(html)
+    strip = html[html.index('id="settings-tabs"'):]
+    assert strip.index('role="tablist"') < strip.index('id="tab-data"') < strip.index('id="tab-needs"')
+    assert re.search(r'<div[^>]*id="panel-data"[^>]*role="tabpanel"', html)
+    assert re.search(r'<div[^>]*id="needs"[^>]*role="tabpanel"[^>]*hidden', html), "Needs starts hidden"
+    data = html[html.index('id="panel-data"'):html.index('id="needs"')]
+    assert 'id="sec-health"' in data and 'id="old-settings"' in data, "the Data tab is the page as it was"
+    needs = html[html.index('id="needs"'):]
+    for part in ("needs-catalog", "needs-log", "needs-routes"):
+        assert f'id="{part}"' in needs, part
 
 
+def test_the_pages_scripts_parse_with_the_tab_switch(tmp_path):
+    assert_scripts_parse(_page(_hostile_model()), tmp_path)
 
 
+def test_the_tab_switch_is_remembered_per_viewer_and_reads_the_hash():
+    html = _page(_model())
+    assert "localStorage" in html and "try{" in html.replace(" ", ""), "storage wrapped in try"
+    assert "#needs" in html and "aria-selected" in html and "ArrowRight" in html
+
+
+def test_the_page_still_renders_when_the_tab_cannot_be_built(monkeypatch):
+    monkeypatch.setattr(needs_tab, "build", lambda **kw: (_ for _ in ()).throw(RuntimeError("catalog import")))
+    html = report.render_settings_dashboard({"newdata": control_nd()})
+    assert "The Needs tab could not be read" in html and "RuntimeError: catalog import" in html
+    assert 'id="sec-health"' in html
 
 
 # ── Phone and theme ────────────────────────────────────────────────────────────────────────────────────────────
