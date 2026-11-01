@@ -124,6 +124,10 @@ def _log(today: date, catalog_names: list[str], read: Callable[[str], list[dict]
                 row[key] += n
         row["by_process"][proc] = row["by_process"].get(proc, 0) + n
         processes.add(proc)
+    for row in per.values():
+        # A list, not a map: a process name is a string the page shows, and a map's keys are not its values.
+        row["by_process"] = [{"process": p, "reads": n}
+                             for p, n in sorted(row["by_process"].items(), key=lambda kv: (-kv[1], kv[0]))]
     out["rows"] = sorted((r for r in per.values() if r["d30"] > 0), key=lambda r: (-r["d30"], -r["d7"], r["need"]))
     out["processes"] = sorted(processes)
     asked = {r["need"] for r in out["rows"]}
@@ -220,9 +224,8 @@ def _catalog_section(model: dict) -> str:
             '<span class="chip plan">board</span> planned, not declared yet</p></section>')
 
 
-def _by_process(by: dict) -> str:
-    parts = sorted(by.items(), key=lambda kv: (-kv[1], kv[0]))
-    return " · ".join(f'<span class="proc">{esc(p)} <b>{esc(_num(n))}</b></span>' for p, n in parts)
+def _by_process(by: list[dict]) -> str:
+    return " · ".join(f'<span class="proc">{esc(p["process"])} <b>{esc(_num(p["reads"]))}</b></span>' for p in by)
 
 
 def _log_row(row: dict) -> str:

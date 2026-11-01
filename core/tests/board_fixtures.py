@@ -258,11 +258,34 @@ def _settings(tmp_path, monkeypatch):
                           "default_install": True,
                           "offmachine": {"configured": True, "kind": "red", "text": "t"}}]}
     p["newdata"] = newdata_fixture()
+    p["needs"] = needs_fixture()
     hp = hostile(p)
     hp["provider_health"] = health("settings")
+    # ``hostile`` leaves a ``route`` key alone (it is parsed elsewhere); the Needs tab shows its routes as text and
+    # as a link, so they are made hostile here (#331).
+    hp["needs"]["routes"] = [{k: H("route_" + k) for k in r} for r in p["needs"]["routes"]]
     # A live state, so the row's buttons (and their hostile data-name) render too.
     hp["automations"][0]["state"] = "enabled"
     return report.render_settings_dashboard(hp)
+
+
+def needs_fixture() -> dict:
+    """#331: the Settings page's Needs tab model (``needs_tab.build``'s shape), every string field filled: a need that
+    read, one whose summary failed (``unreadable``, with its error), the log by process, and the routes."""
+    row = {"need": "prices.bars", "kind": "prices", "table": "price_bar_daily", "dataset": "prices/serving",
+           "day_column": "session_date", "max_lag": 1, "unit": "sessions", "ask_param": "security_ids",
+           "ask_required": False, "providers": ["alpaca"], "legacy": False, "declared": ["earnings_radar"],
+           "planned": ["swing_potential"], "state": "fresh", "newest_day": "2026-10-30", "lag": 0, "rows": 10,
+           "keys": 2, "status": "changed", "error": None}
+    log_row = {"need": "prices.bars", "in_catalog": True, "today": 1, "d7": 2, "d30": 3,
+               "by_process": [{"process": "dashboard", "reads": 3}]}
+    return {"read_at": "14:05", "catalog": [row, {**row, "need": "market.cot", "state": "unreadable",
+                                                  "error": "OSError: swapped"}],
+            "counts": {"fresh": 1, "stale": 0, "missing": 0, "unreadable": 1}, "readers_error": "boards unreadable",
+            "log": {"first_day": "2026-10-03", "today": "2026-11-01", "rows": [log_row, {**log_row, "need": "old.x",
+                                                                                         "in_catalog": False}],
+                    "processes": ["dashboard"], "never_asked": ["market.vix"], "error": None},
+            "routes": [{"method": "GET", "path": "/needs", "what": "the catalog", "example": "/needs"}]}
 
 
 def newdata_fixture() -> dict:

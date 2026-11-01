@@ -92,7 +92,7 @@ def test_the_log_sums_today_7_and_30_days_by_process_busiest_first():
     assert [r["need"] for r in log["rows"]] == ["earnings.next", "prices.bars", "old.renamed"]
     bars = rows["prices.bars"]
     assert (bars["today"], bars["d7"], bars["d30"]) == (3, 8, 17)
-    assert bars["by_process"] == {"dashboard": 10, "__main__": 7}
+    assert bars["by_process"] == [{"process": "dashboard", "reads": 10}, {"process": "__main__", "reads": 7}]
     assert rows["old.renamed"]["in_catalog"] is False and rows["prices.bars"]["in_catalog"] is True
     assert log["processes"] == ["__main__", "dashboard"]
     assert "prices.bars" not in log["never_asked"] and "market.vix" in log["never_asked"]
@@ -166,7 +166,7 @@ def _hostile_model() -> dict:
         r.update(newest_day=H("newest_day"), state=H("state") if r["state"] != "unreadable" else r["state"],
                  kind=H("kind"), unit=H("unit"))
     for r in hm["log"]["rows"]:
-        r["by_process"] = {H("process"): 3}
+        r["by_process"] = [{"process": H("process"), "reads": 3}]
     hm["log"].update(first_day=H("first_day"), today=H("today"))
     hm["routes"] = [{k: H("route_" + k) for k in r} for r in hm["routes"]]
     hm["readers_error"] = H("readers_error")
@@ -265,3 +265,14 @@ def test_no_style_or_script_escapes_the_tab_scope():
         for part in sel.split(","):
             part = part.strip()
             assert ("#needs" in part or "#settings-tabs" in part or part.startswith('[role="tabpanel"]')), part
+
+
+def test_the_board_fixture_carries_the_hostile_payload_into_the_needs_tab(tmp_path, monkeypatch):
+    """The board HTML guard renders Settings from ``board_fixtures``; its payload must reach this tab's strings."""
+    from RevenueChaser.core.tests.board_fixtures import BOARDS
+    html = BOARDS["module_settings"].render(tmp_path, monkeypatch)
+    assert_inert(html)
+    needs = html[html.index('<div id="needs" role="tabpanel"'):]
+    for tag in ("need", "table", "dataset", "declared", "planned", "error", "process", "ask_param",
+                "route_path", "route_what", "route_example", "readers_error"):
+        assert f"&lt;img src=x onerror=__x(&#x27;{tag}T&#x27;)" in needs, tag
