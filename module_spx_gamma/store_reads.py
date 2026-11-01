@@ -320,7 +320,7 @@ def cot_tff(day) -> dict:
                           "net": (long - short) if long is not None and short is not None else None,
                           "change": (long - prev_long) if long is not None and prev_long is not None else None}
     row = meta[released[-1]]
-    when = (f"~{payload['release_date']} (report + {RELEASE_DAYS} days; holiday weeks can differ)" if estimated
+    when = (f"~{payload['release_date']} (Tuesday + {RELEASE_DAYS} days; holiday weeks can differ)" if estimated
             else f"{payload['release_date']} (CFTC schedule)")
     return {"stored": True, "label": f"CFTC TFF report of {payload['report_date']}, released {when} "
                                      f"({SERIES_SOURCE}, {row.get('source')}, status {row.get('status')})",
