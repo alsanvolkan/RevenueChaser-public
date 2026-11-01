@@ -30,6 +30,7 @@ import atexit
 import json
 import logging
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -492,8 +493,26 @@ def calls_today(provider: str) -> int:
 
 # ── The read log ───────────────────────────────────────────────────────────────────────────────────────────────
 
+#: A ``python -m <package>`` run starts from ``__main__.py``; its read-log name is its package's, or this word.
+_MAIN_NAMES = {"build": "builder"}
+
+
 def _process_name() -> str:
-    return os.getenv("RC_PROCESS_NAME") or Path(sys.argv[0] or "python").stem or "python"
+    """``RC_PROCESS_NAME``, else the script's name; a ``__main__.py`` is named after its package (#331).
+
+    Without that, the builder, the backup CLI and every board run as ``python -m`` all counted under ``__main__``.
+    Both separators are split, because the live machine is Windows.
+    """
+    env = os.getenv("RC_PROCESS_NAME")
+    if env:
+        return env
+    parts = [p for p in re.split(r"[\\/]", sys.argv[0] or "") if p]
+    if not parts:
+        return "python"
+    stem = parts[-1].rsplit(".", 1)[0] if "." in parts[-1] else parts[-1]
+    if stem == "__main__" and len(parts) > 1:
+        return _MAIN_NAMES.get(parts[-2], parts[-2])
+    return stem or "python"
 
 
 class ReadLog:
@@ -748,6 +767,22 @@ def reads_since(first_day: str, tables) -> dict[str, int]:
                    f"({', '.join('?' * len(names))}) GROUP BY table_name", (first_day, *names))
     got = {r["table_name"]: int(r["n"]) for r in rows}
     return {t: got.get(t, 0) for t in names}
+
+
+#: The prefix ``rcdata.needs`` counts a need under in ``read_log``, beside the table name (``serve.ask``/``summary``).
+NEED_READ_PREFIX = "need:"
+
+
+def need_reads(first_day: str) -> list[dict]:
+    """``[{need, process, day, reads}]``: every ``need:<name>`` row of ``read_log`` since ``first_day``.
+
+    The Settings Needs tab's request log (#331). Day granularity, because that is what the log holds; the table rows
+    beside them are left out, and the name comes back without its prefix. Never creates the file.
+    """
+    rows = _select("SELECT table_name, process, day, reads FROM read_log WHERE day >= ? AND table_name LIKE 'need:%' "
+                   "ORDER BY table_name, process, day", (first_day,))
+    return [{"need": r["table_name"][len(NEED_READ_PREFIX):], "process": r["process"], "day": r["day"],
+             "reads": int(r["reads"])} for r in rows]
 
 
 def last_builder_run() -> dict | None:
