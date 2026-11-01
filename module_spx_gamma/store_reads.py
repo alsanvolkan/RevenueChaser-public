@@ -1,33 +1,40 @@
 """SPX Gamma's one reader of the market store (D4, PR 3): the board's other modules import only this for market data.
 
-Each reader is a thin mapping over ``rcdata.read``, which opens the serving file read-only for the one call and closes
-it again; nothing here keeps a connection or runs SQL of its own. A day the store does not hold comes back as a
-"not stored" marker (``stored: False`` and a label naming the day), never as an exception and never as a provider
-call: there is no live fallback any more.
+Each reader is a thin mapping over the needs layer (#330): it asks ``needs.ask(need, as_of=day, ...)``, which calls the
+need's ``rcdata.read`` function (the serving file opened read-only for the one call and closed again) and judges the
+answer's lag against the board's own day, not against the market's newest session. The board names needs, never a
+series id; nothing here keeps a connection, runs SQL of its own or counts sessions. The lag limits are the catalog's
+(``MAX_LAG`` reads them from ``market.vix`` and ``market.cot`` on every call). A day the store does not hold comes
+back as a "not stored" marker (``stored: False`` and a label naming the day), never as an exception and never as a
+provider call: there is no live fallback any more.
 
-- ``zero_one_dte_dollars``: dollar OI gamma per strike, ``call_gamma_oi + put_gamma_oi`` summed over the expiries 0
-  and 1 DTE of ``spx_gamma_expiry_strike``, for the pin and squeeze tests (review S4). A day the builder has not
-  stored yet because its session is not closed reads the previous session's snapshot, kept to the expiries on or
-  after the day (decision A3): that is the day's 0 DTE expiry only, so it is labelled "0 DTE only (previous-session
-  snapshot, ...)" and the tests run on that smaller, conservative sum (review SF2).
-- ``vix_family``: the Cboe closes of the VIX family on the newest observation on or before the day, within
-  ``MAX_LAG`` sessions, keyed with the caret the board's payload always used (``^VIX`` ...).
-- ``cot_tff``: the CFTC TFF row of the E-mini S&P 500 (``13874A``, futures only): the newest report released on or
-  before the day (a Tuesday report counts as released on the Friday, ``RELEASE_DAYS``: an approximation of CFTC's
-  schedule, which holiday weeks move), within ``MAX_LAG`` sessions. The
+- ``zero_one_dte_dollars`` (``market.spx_expiry_strike``): dollar OI gamma per strike,
+  ``call_gamma_oi + put_gamma_oi`` summed over the expiries 0 and 1 DTE of ``spx_gamma_expiry_strike``, for the pin and
+  squeeze tests (review S4). A day the builder has not stored yet because its session is not closed reads the previous
+  session's snapshot, kept to the expiries on or after the day (decision A3): that is the day's 0 DTE expiry only, so
+  it is labelled "0 DTE only (previous-session snapshot, ...)" and the tests run on that smaller, conservative sum
+  (review SF2).
+- ``vix_family`` (``market.vix``): the Cboe closes of the VIX family on the newest observation of VIX on or before the
+  day, within ``MAX_LAG["vix"]`` sessions of the day, keyed with the caret the board's payload always used (``^VIX``).
+- ``cot_tff`` (``market.cot``): the CFTC TFF row of the E-mini S&P 500 (``13874A``, futures only): the newest report
+  released on or before the day (a Tuesday report counts as released on the Friday, ``RELEASE_DAYS``: an approximation
+  of CFTC's schedule, which holiday weeks move; the ask ends ``RELEASE_DAYS`` before the day, so an unreleased report is
+  never read), within ``MAX_LAG["cot"]`` sessions of the day. The
   weekly change is this report's long minus the previous report's (decision A5): the builder keeps no ``change_*``.
   It is None (``change_gap``) when the two newest reports are not exactly a week apart (review SF4).
-- ``spx_candles``: the SPX closes of the 8-week window. Cboe's SPX file has one column, so a row has a close and no
-  open, high, low or volume (decision A6).
+- ``spx_candles`` (``market.spx_close``): the SPX closes of the 8-week window. Cboe's SPX file has one column, so a
+  row has a close and no open, high, low or volume (decision A6).
 """
 from __future__ import annotations
 
 import functools
 import logging
+import sqlite3
 from datetime import date, timedelta
 
 from RevenueChaser.core import calendar
-from RevenueChaser.rcdata import ops, read
+from RevenueChaser.rcdata import needs, ops, read, serving
+from RevenueChaser.rcdata.needs.catalog import FromCatalog
 
 from .candles import window_lag, window_start
 from .vix import vix_term_mode
@@ -37,8 +44,17 @@ logger = logging.getLogger(__name__)
 SPX_SOURCE = "rcdata:spx_gamma_expiry_strike"
 SERIES_SOURCE = "rcdata:market_series"
 CANDLE_SOURCE = f"{SERIES_SOURCE} SPX (cboe)"
-# Sessions an observation may lag the board's day by (the limits the old stored readers had, stored_inputs.MAX_LAG).
-MAX_LAG = {"vix": 3, "cot": 10}
+# Sessions an observation may lag the board's day by. The catalog owns the numbers (avo, 29 Oct 2026; #330): this map
+# reads them from the needs on every call, the way Earnings Radar's does, so the board keeps no copy.
+_NEED_OF_LAG = {"vix": "market.vix", "cot": "market.cot"}
+
+
+def max_lag() -> dict[str, int]:
+    """``{input: sessions it may lag the board's day by}``, read from the need catalog on every call."""
+    return {key: needs.catalog.NEEDS[need].max_lag for key, need in _NEED_OF_LAG.items()}
+
+
+MAX_LAG = FromCatalog(max_lag)
 # A TFF report holds Tuesday's positions and is usually published on the Friday after it. An approximation (review
 # SF5): a holiday week moves the release to the next business day and the 2025 shutdown delayed it by weeks, so a
 # past day's render can count a report as released a little early. CFTC's own schedule is a parked follow-up.
@@ -69,23 +85,25 @@ def _iso(value) -> str | None:
     return None if value is None else str(value)[:10]
 
 
-def _sessions_after(obs: date, day: date) -> int | None:
-    """NYSE sessions after ``obs`` up to and including ``day`` (0 when ``obs >= day``); None past the calendar."""
-    n, d = 0, obs
-    while n <= 40:
-        try:
-            d = calendar.next_trading_day(d)
-        except ValueError:
-            return None
-        if d > day:
-            return n
-        n += 1
-    return None
+def _stale(ans, obs: date, kind: str) -> bool:
+    """True when the board's observation ``obs`` is more than ``MAX_LAG[kind]`` behind the day the answer was judged
+    from (``ans.freshness["reference"]``, the session on or before the board's day).
 
+    The envelope counts the lag from the newest day its rows carry. The board reads the newest day of one series of
+    the need (VIX's own close, not a sibling's), which is that day unless a sibling series is newer; then the lag is
+    counted from the board's day with the envelope's own count, so the rule stays "the observation the board shows".
 
-def _within(obs: date, day: date, kind: str) -> bool:
-    lag = _sessions_after(obs, day)
-    return lag is not None and lag <= MAX_LAG[kind]
+    A lag the calendar cannot count (a day outside its holiday table: the envelope's ``lag_reason``) is stale, so the
+    input reads "not stored" as the board's old ``_sessions_after`` had it.
+    """
+    f = ans.freshness
+    if f.get("lag_reason"):
+        return True
+    try:
+        lag = f["lag_sessions"] if f["as_of_session"] == obs else needs.lag_in(f["unit"], obs, f["reference"])
+    except ValueError:
+        return True
+    return lag is None or lag > MAX_LAG[kind]
 
 
 def _missing(what: str, day, reason: str | None = None, **extra) -> dict:
@@ -118,7 +136,7 @@ def _board_status(dataset: str) -> tuple[str, str | None]:
     """``(status, skip note)``: the newest check that is not ``skipped`` (``ops.latest_unskipped_check``, as the
     Settings card reads it), so a Fetch while the dataset is paused or day-capped does not make a built dataset read
     "skipped" (review SF6b); a newer skip is named in the note."""
-    last = ops.latest_check(dataset)
+    last = ops.read_latest_check(dataset)       # a page read: never creates ops.sqlite (#336)
     if last is None:
         return read.NEVER_CHECKED, None
     if last.get("result") != "skipped":
@@ -153,25 +171,40 @@ def _with_board_status(dataset: str):
 
 # ── 0-1 DTE dollar gamma ──
 
+def _expiry_strike(session: date, day: date) -> tuple[list[dict], str | None, str | None]:
+    """``(rows, status, note)`` of one session's 0-1 DTE slice, judged from the board's ``day``.
+
+    Review SF3: with no serving file yet the reader answers no rows without touching ``ops.sqlite``, and the
+    envelope then reads the dataset's status from it; a broken file there (locked, stamped newer, corrupt) is a note
+    on the "not stored" marker, never a failed board, and A3 may still look at the previous session. With the file
+    there, ``read._rows`` reads the status together with the rows, so the same error is the row read failing: it
+    goes up as "read failed" and stops, as the board's direct read always did (#334 review, should-fix 3).
+    """
+    try:
+        ans = needs.ask("market.spx_expiry_strike", as_of=day, session_date=session, min_dte=0, max_dte=1)
+    except sqlite3.Error as exc:
+        if serving.live_path(needs.NEEDS["market.spx_expiry_strike"].kind).exists():
+            raise
+        return [], None, f"status unknown, {_failed(exc)}"
+    return ans.rows, ans.status, None
+
+
 @_with_board_status("uw/spot_expiry_strike")
 def zero_one_dte_dollars(day) -> dict:
     """``{strike: dollars}`` of 0-1 DTE OI gamma for the board's ``day``, with the snapshot it came from."""
     d = _day(day)
     try:
         session, fallback = d, False
-        rows = read.spx_expiry_strike(d, 0, 1)
+        rows, status, note = _expiry_strike(d, d)
         if not rows and _not_closed(d):
             # A3: the builder stores a session after its close; before that the previous session's snapshot is the
             # newest there is, and of it only the expiries on or after the board's day are 0-1 DTE for that day.
             session, fallback = calendar.previous_trading_day(d - timedelta(days=1)), True
-            rows = [r for r in read.spx_expiry_strike(session, 0, 1) if _day(r["expiry"]) >= d]
+            rows, status, note = _expiry_strike(session, d)
+            rows = [r for r in rows if _day(r["expiry"]) >= d]
     except Exception as exc:  # noqa: BLE001 - a store problem is "not stored", never a failed board
         return _missing("0-1 DTE", d, _failed(exc), source=SPX_SOURCE, dollars={}, fallback=False)
     if not rows:
-        try:
-            status, note = read.dataset_status(read.DATASET_OF_TABLE["spx_gamma_expiry_strike"]), None
-        except Exception as exc:  # noqa: BLE001 - review SF3: a broken ops.sqlite is a note, never a failed board
-            status, note = None, f"status unknown, {_failed(exc)}"
         return _missing("0-1 DTE", d, note, source=SPX_SOURCE, dollars={}, fallback=False, status=status)
     dollars: dict[float, float] = {}
     for r in rows:
@@ -202,15 +235,17 @@ def vix_family(day) -> dict:
     """The VIX family closes as ``{"tickers": {"^VIX": ...}, "term_mode": ...}`` (the old payload) in ``payload``."""
     d = _day(day)
     try:
-        rows = read.market_series(list(VIX_SERIES), start=d - timedelta(days=_LOOKBACK_DAYS["vix"]), end=d)
+        ans = needs.ask("market.vix", as_of=d, start=d - timedelta(days=_LOOKBACK_DAYS["vix"]), end=d)
+        rows = ans.rows
+        vix_days = [_day(r["obs_date"]) for r in rows if r["series_id"] == "VIX" and _value(r) is not None]
+        obs = max(vix_days) if vix_days else None
+        stale = obs is None or _stale(ans, obs, "vix")
     except Exception as exc:  # noqa: BLE001
         return _missing("VIX family", d, _failed(exc), source=SERIES_SOURCE, payload=None)
-    vix_days = [r["obs_date"] for r in rows if r["series_id"] == "VIX" and _value(r) is not None]
-    obs = max(vix_days) if vix_days else None
-    if obs is None or not _within(_day(obs), d, "vix"):
+    if stale:
         return _missing("VIX family", d, source=SERIES_SOURCE, payload=None,
                         status=rows[0]["status"] if rows else None)
-    on_day = [r for r in rows if r["obs_date"] == obs]
+    on_day = [r for r in rows if _day(r["obs_date"]) == obs]
     tickers = {caret: None for caret in VIX_SERIES.values()}
     for r in on_day:
         tickers[VIX_SERIES[r["series_id"]]] = _value(r)
@@ -231,19 +266,26 @@ def _cot_report(by_field: dict[str, float], fields: tuple[str, ...]) -> float | 
 def cot_tff(day) -> dict:
     """The E-mini TFF row in the shape ``normalize.normalize_cftc`` reads, in ``payload``."""
     d = _day(day)
-    ids = [COT_PREFIX + f for f in COT_FIELDS]
     try:
-        rows = read.market_series(ids, start=d - timedelta(days=_LOOKBACK_DAYS["cot"]), end=d)
+        # Only reports released by the day: a report dated more than RELEASE_DAYS before it. The window ends there,
+        # so the envelope judges the newest *released* report against the board's day.
+        ans = needs.ask("market.cot", as_of=d, start=d - timedelta(days=_LOOKBACK_DAYS["cot"]),
+                        end=d - timedelta(days=RELEASE_DAYS))
+        rows = ans.rows
+        reports: dict[date, dict[str, float]] = {}
+        meta: dict[date, dict] = {}
+        for r in rows:
+            field_name = r["series_id"][len(COT_PREFIX):]
+            if field_name not in COT_FIELDS:
+                continue
+            obs = _day(r["obs_date"])
+            reports.setdefault(obs, {})[field_name] = r.get("value")
+            meta.setdefault(obs, r)
+        released = sorted(reports)
+        stale = not released or _stale(ans, released[-1], "cot")
     except Exception as exc:  # noqa: BLE001
         return _missing("CFTC COT", d, _failed(exc), source=SERIES_SOURCE, payload=None)
-    reports: dict[date, dict[str, float]] = {}
-    meta: dict[date, dict] = {}
-    for r in rows:
-        obs = _day(r["obs_date"])
-        reports.setdefault(obs, {})[r["series_id"][len(COT_PREFIX):]] = r.get("value")
-        meta.setdefault(obs, r)
-    released = sorted(obs for obs in reports if obs + timedelta(days=RELEASE_DAYS) <= d)
-    if not released or not _within(released[-1], d, "cot"):
+    if stale:
         return _missing("CFTC COT", d, source=SERIES_SOURCE, payload=None, status=rows[0]["status"] if rows else None)
     now = reports[released[-1]]
     # review SF4: a weekly change only between reports exactly a week apart; across a missing report it is None
@@ -275,7 +317,7 @@ def spx_candles(day) -> dict:
     """The SPX closes from the 8-week window's start through ``day`` in ``rows`` (oldest first)."""
     d = _day(day)
     try:
-        rows = read.market_series(["SPX"], start=window_start(d), end=d)
+        rows = needs.ask("market.spx_close", as_of=d, start=window_start(d), end=d).rows
     except Exception as exc:  # noqa: BLE001
         return _missing("SPX closes", d, _failed(exc), source=SERIES_SOURCE, rows=[])
     out = [{"date": _iso(r["obs_date"]), "open": r.get("open"), "high": r.get("high"), "low": r.get("low"),

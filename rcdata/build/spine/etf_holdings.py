@@ -9,11 +9,19 @@ relatedness peer sets have a source (``module_relatedness`` Step 0 derives them 
 | SSGA SPDR (18) | the 11 sector funds, ``XBI XOP XME KRE XHB XRT KIE`` | the issuer's daily holdings xlsx |
 | iShares (6) | ``SOXX IBB ITA ITB IGV IAK`` | the product page's ``latest-holdings.csv`` |
 | Unusual Whales (14) | ``SMH PAVE AIQ LIT URA NLR AIRR SKYY WCLD ARKQ ROBO JETS TAN PBW`` | ``/etfs/<t>/holdings`` |
+| ARK, behind UW (1) | ``ARKQ``, on a day UW holds nothing for it | ARK's daily holdings CSV |
 
 **The issuer of each fund was confirmed by fetching it once, 30 Oct 2026**, not taken from memory: IAK is iShares'
 insurance fund (the SPDR path answers 404; KIE is the SPDR one), and the iShares product ids are the issuer's own
 product screener's. Both parsers are ``funds``' own, unchanged but for the two iShares shapes (``parse_ishares``).
 Invesco answers 500 for TAN and PBW, so those two are UW's like the rest of the themes.
+
+**UW first, the issuer file behind it (#339).** On 1 Nov 2026 UW answered ``{"data": []}`` for AIRR, SKYY, WCLD, ARKQ
+and ROBO. Their issuers were checked that day: ARK publishes ARKQ's holdings as a CSV, and that file is ``FALLBACKS``.
+First Trust (AIRR, SKYY) serves an HTML table whose Excel export is an ASP.NET postback, WisdomTree (WCLD) embeds
+the list in its page and refused the builder's User-Agent, and Exchange Traded Concepts (ROBO) builds its CSV in
+the browser. None of those is a file, so those four stay UW's alone and are not scraped. The raw file's name says
+which source served a fund's day (``uw-ARKQ.json`` or ``ark-ARKQ.csv``), and the run note names each fallback.
 
 The funds are the board's ``sector`` and ``theme`` ETFs (``core/rotation_reference.ROTATION_ETFS``) less GLD, SLV and
 USO — commodity trusts, with no equity holdings — plus the seven in ``EXTRA`` that the peer sets need and the board
@@ -21,10 +29,11 @@ does not run. **UW's answer is kept whole:** the top-10 cap is the Rotation boar
 (``module_sector_rotation/etf_holdings.py``), and that board's ``raw.duckdb.etf_holdings`` is untouched by this
 dataset, which writes only the market store.
 
-One request per fund per run (24 issuer files, 14 UW calls), each inside its provider's day cap. No key for the
-issuer files; without ``UNUSUAL_WHALES_API_KEY`` the issuer files are still read and the missing key is one
-``missing_key`` issue. A file whose shape or URL moved is a ``source_failed`` issue for that fund and the others go
-on, as the index job does; every fund failing fails the run.
+One request per fund per run (24 issuer files, 14 UW calls, plus ARK's file on a day it is needed), each inside
+its provider's day cap. No key for the issuer files; without ``UNUSUAL_WHALES_API_KEY`` the issuer files are still
+read (ARKQ's among them) and the missing key is one ``missing_key`` issue. A fund whose every source failed (a moved
+shape or URL, an empty answer) is a ``source_failed`` issue for that fund, and the others go on, as the index job
+does; every fund failing fails the run.
 
 Raw: ``raw/funds/etf_holdings/<as-of>/<provider>-<etf>.<ext>`` (+ ``.meta.json``, written first: the raw file is the
 resume marker). Parquet: ``parquet/funds/etf_holdings/date=<as-of>/part-0.parquet``, every day kept. Served:
@@ -32,6 +41,8 @@ resume marker). Parquet: ``parquet/funds/etf_holdings/date=<as-of>/part-0.parque
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
 import time
 from dataclasses import dataclass
@@ -43,7 +54,7 @@ import duckdb
 from ....core import calendar, credentials
 from .. import base
 from . import KIND, stage
-from .funds import norm_ticker, parse_ishares, parse_ssga, weight_of
+from .funds import _cusip, norm_ticker, parse_ishares, parse_ssga, weight_of
 
 NAME = "funds/etf_holdings"
 TABLE = "etf_holdings"
@@ -67,8 +78,18 @@ ISHARES_PRODUCTS = {"SOXX": ("239705", "ishares-semiconductor-etf", False),
                     "ITB": ("239512", "ishares-u-s-home-construction-etf", False),
                     "IGV": ("239771", "ishares-expanded-tech-software-sector-etf", False),
                     "IAK": ("239515", "ishares-u-s-insurance-etf", True)}
-# The themes whose issuer has no keyless holdings file (VanEck, Global X, First Trust, WisdomTree, ARK, ROBO Global,
-# U.S. Global) and the two Invesco funds its API answers 500 for.
+# ARK's daily holdings CSV, by fund: the file name under ``/fund-documents/funds-etf-csv/`` on ARK's asset host, as
+# the fund page links it (read 1 Nov 2026, #339). ARK is the issuer file UW's empty answer falls back to.
+ARK_FUNDS = {"ARKQ": "ARK_AUTONOMOUS_TECH._&_ROBOTICS_ETF_ARKQ_HOLDINGS.csv"}
+ARK_COLUMNS = ("fund", "company", "ticker", "cusip", "weight (%)")
+# Bloomberg's US exchange codes. ARK's file writes a few tickers with one (``SYM UQ``, 30 Oct 2026); any of these is
+# the US listing itself, so dropping it is no guess. Any other suffix is a foreign listing (``6954 JT``, ``KOG NO``):
+# ``ticker_raw`` keeps what the file wrote and the line has no ticker, because ``norm_ticker`` would read ``KOG NO`` as
+# the US share class ``KOG-NO``.
+US_EXCHANGE_CODES = frozenset({"UA", "UN", "UP", "UQ", "UR", "US", "UV", "UW"})
+# The themes whose issuer has no keyless holdings file (VanEck, Global X, First Trust, WisdomTree, ROBO's adviser
+# Exchange Traded Concepts, U.S. Global) and the two Invesco funds its API answers 500 for. ARKQ is UW's first and
+# ARK's file second (``FALLBACKS``).
 UW_FUNDS = ("SMH", "PAVE", "AIQ", "LIT", "URA", "NLR", "AIRR", "SKYY", "WCLD", "ARKQ", "ROBO", "JETS", "TAN", "PBW")
 # The funds the relatedness peer sets need that the rotation board does not run.
 EXTRA = frozenset({"XHB", "XRT", "KIE", "IAK", "ITB", "TAN", "PBW"})
@@ -76,7 +97,9 @@ EXTRA = frozenset({"XHB", "XRT", "KIE", "IAK", "ITB", "TAN", "PBW"})
 
 def parse_uw(data: bytes) -> list[dict]:
     """UW's ``/etfs/<ticker>/holdings`` answer: every holding, by weight, one row per ticker (the newest ``updated``
-    wins, the client's own rule — ``core/providers/unusual_whales._holdings``). No CUSIP: UW's rows carry none."""
+    wins, the client's own rule — ``core/providers/unusual_whales._holdings``). The ``cusip`` a row carries (the live
+    answer has the key though ``docs/openapi.yaml`` does not name it, SMH on 1 Nov 2026) is kept when it is a CUSIP,
+    normalised as the issuer parsers' are; None when absent or not one."""
     try:
         rows = json.loads(data)["data"]
     except (ValueError, KeyError, TypeError) as e:
@@ -91,10 +114,61 @@ def parse_uw(data: bytes) -> list[dict]:
         prev = by_ticker.get(t)
         if prev is None or (r.get("updated") or "") > (prev.get("updated") or ""):
             by_ticker[t] = r
-    out = [{"ticker_raw": r.get("ticker"), "cusip": None, "name": r.get("name") or r.get("short_name"),
+    out = [{"ticker_raw": r.get("ticker"), "cusip": _cusip(r.get("cusip")), "name": r.get("name") or r.get("short_name"),
             "weight": weight_of(r.get("weight"))} for r in by_ticker.values()]
     out.sort(key=lambda h: h["weight"] if h["weight"] is not None else -1.0, reverse=True)
     return out
+
+
+def _ark_ticker(raw: str) -> str:
+    parts = raw.split()
+    return parts[0] if len(parts) == 2 and parts[1] in US_EXCHANGE_CODES else raw
+
+
+def parse_ark(data: bytes, fund: str) -> list[dict]:
+    """ARK's daily holdings CSV (read 1 Nov 2026, #339): a header ``date, fund, company, ticker, cusip, shares,
+    market value ($), weight (%)``, one line per position, then one quoted disclaimer line.
+
+    **Kept:** the lines with a ticker (the file's 36 stocks and ADRs on 30 Oct 2026), with their CUSIP and the weight
+    in percent. **Dropped:** a line with no ticker — on that day the one money-market fund (``GOLDMAN FS TRSY OBLIG
+    INST 468``, identifier ``X9USDGSFT``, which looks like a CUSIP and is none) — and the disclaimer, which has no
+    ``fund``. A trailing US Bloomberg exchange code is dropped (``SYM UQ`` is ``SYM``); nothing else is rewritten. A
+    ticker with any other suffix is a foreign listing (``6954 JT``, ``KOG NO``): ``ticker_raw`` keeps it and the
+    line's ``ticker`` is None, so the served table drops it and its CUSIP stays in the Parquet.
+
+    A file without the header, without one of its columns, or whose lines name another fund is a failed file (a
+    moved URL answers a page or another fund's file), never a quiet reread."""
+    text = data.decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(text))
+    fields = [f.strip() for f in reader.fieldnames or ()]
+    if "ticker" not in fields or "fund" not in fields:
+        raise base.SourceError("ark: no header line with fund and ticker")
+    missing = [c for c in ARK_COLUMNS if c not in fields]
+    if missing:
+        raise base.SourceError(f"ark: the file has no {', '.join(missing)} column")
+    reader.fieldnames = fields
+    out = []
+    for r in reader:
+        name_of_fund = (r.get("fund") or "").strip()
+        if not name_of_fund:
+            continue                                         # the disclaimer line
+        if name_of_fund != fund:
+            raise base.SourceError(f"ark: the file for {fund} holds {name_of_fund} lines")
+        ticker = _ark_ticker((r.get("ticker") or "").strip())
+        if not ticker:
+            continue                                         # the money-market fund (cash)
+        line = {"ticker_raw": ticker, "cusip": _cusip(r.get("cusip")), "name": (r.get("company") or "").strip(),
+                "weight": weight_of(r.get("weight (%)"))}
+        if " " in ticker:
+            line["ticker"] = None                            # a foreign listing: no US ticker, the CUSIP stays
+        out.append(line)
+    return out
+
+
+def served_ticker(line: dict) -> str | None:
+    """The ticker a parsed line is served under: the parser's own verdict when it gave one (ARK's foreign listings
+    carry ``ticker`` None), else ``norm_ticker`` of the raw ticker."""
+    return line["ticker"] if "ticker" in line else norm_ticker(line["ticker_raw"])
 
 
 @dataclass(frozen=True)
@@ -113,6 +187,9 @@ class EtfFile:
             pid, slug, _typed = ISHARES_PRODUCTS[self.etf]
             return (provider_base("RC_ISHARES_BASE", "https://www.ishares.com")
                     + f"/us/products/{pid}/{slug}/latest-holdings.csv")
+        if self.provider == "ark":
+            return (provider_base("RC_ARK_BASE", "https://assets.ark-funds.com")
+                    + "/fund-documents/funds-etf-csv/" + ARK_FUNDS[self.etf])
         from ....core.providers import unusual_whales
         return f"{unusual_whales.BASE}/etfs/{self.etf}/holdings"
 
@@ -121,6 +198,8 @@ class EtfFile:
             return parse_ssga(data)
         if self.provider == "ishares":
             return parse_ishares(data, typed=ISHARES_PRODUCTS[self.etf][2])
+        if self.provider == "ark":
+            return parse_ark(data, self.etf)
         return parse_uw(data)
 
     def raw_name(self) -> str:
@@ -140,8 +219,10 @@ class EtfFile:
 FILES = (tuple(EtfFile(t, "ssga", "xlsx") for t in SSGA_FUNDS)
          + tuple(EtfFile(t, "ishares", "csv") for t in ISHARES_PRODUCTS)
          + tuple(EtfFile(t, "uw", "json") for t in UW_FUNDS))
-PROVIDERS = tuple(dict.fromkeys(f.provider for f in FILES))
-_BY_RAW = {f.raw_name(): f for f in FILES}
+# The issuer file behind a UW fund, asked only when UW holds nothing for it that day (or there is no UW key).
+FALLBACKS = {t: EtfFile(t, "ark", "csv") for t in ARK_FUNDS}
+PROVIDERS = tuple(dict.fromkeys([f.provider for f in FILES] + [f.provider for f in FALLBACKS.values()]))
+_BY_RAW = {f.raw_name(): f for f in FILES + tuple(FALLBACKS.values())}
 
 
 def raw_dir() -> Path:
@@ -169,32 +250,48 @@ class EtfHoldings:
         return calendar.today_ny()
 
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
+        """Each fund's file of the day, once. A UW fund with an issuer file in ``FALLBACKS`` takes UW's answer when
+        it holds at least one holding, else the issuer file; the raw file's name says which one served the day and
+        the run note names every fallback. Only when every source of a fund fails is it a ``source_failed`` issue,
+        keyed by the fund's own file and naming each source's failure."""
         keyed = bool(credentials.key_for(UW_KEY))
         if not keyed:
             ctx.issue("missing_key", UW_KEY, credentials.missing_message(UW_KEY))
             ctx.notes.append(f"no key for {UW_KEY}: the {len(UW_FUNDS)} UW funds were not asked")
         out, failed = [], []
+        day = raw_dir() / as_of.isoformat()
         for f in FILES:
+            sources = [f] + ([FALLBACKS[f.etf]] if f.provider == "uw" and f.etf in FALLBACKS else [])
             if f.provider == "uw" and not keyed:
+                sources = sources[1:]
+            if not sources:
                 continue
-            raw = raw_dir() / as_of.isoformat() / f.raw_name()
-            if raw.exists():
-                out.append(raw)
+            done = next((day / s.raw_name() for s in sources if (day / s.raw_name()).exists()), None)
+            if done is not None:
+                out.append(done)
                 continue
-            try:
-                content = f.download(ctx)
-                # Refuse a file of the wrong shape, and an answer with no holding in it, before keeping it: the raw
-                # file is the resume marker, so a kept empty answer would be the fund's whole day.
-                if not f.parse(content):
-                    raise base.SourceError(f"{f.raw_name()}: the answer holds no holding line")
-            except Exception as e:  # noqa: BLE001 - one fund down must not stop the others
+            errors = [] if keyed or f.provider != "uw" else [f"{f.raw_name()}: no {UW_KEY} key"]
+            for src in sources:
+                try:
+                    content = src.download(ctx)
+                    # Refuse a file of the wrong shape, and an answer with no holding in it, before keeping it: the
+                    # raw file is the resume marker, so a kept empty answer would be the fund's whole day.
+                    if not src.parse(content):
+                        raise base.SourceError("the answer holds no holding line")
+                except Exception as e:  # noqa: BLE001 - one fund down must not stop the others
+                    errors.append(f"{src.raw_name()}: {type(e).__name__}: {e}"[:200])
+                    continue
+                raw = day / src.raw_name()
+                base.write_raw_json(_meta(raw), {"as_of": as_of.isoformat(), "fetched_at": time.time(),
+                                                 "run_id": ctx.run_id, "etf": src.etf, "provider": src.provider,
+                                                 "url": src.url().split("?")[0]})
+                out.append(base.write_raw(raw, content))
+                if src is not f:
+                    ctx.notes.append(f"fallback: {f.etf} served by {src.raw_name()} ({errors[0][:140]})")
+                break
+            else:
                 failed.append(f.raw_name())
-                ctx.issue("source_failed", f.raw_name(), f"{type(e).__name__}: {e}"[:300])
-                continue
-            base.write_raw_json(_meta(raw), {"as_of": as_of.isoformat(), "fetched_at": time.time(),
-                                             "run_id": ctx.run_id, "etf": f.etf, "provider": f.provider,
-                                             "url": f.url().split("?")[0]})
-            out.append(base.write_raw(raw, content))
+                ctx.issue("source_failed", f.raw_name(), " | ".join(errors)[:400])
         if failed:
             ctx.notes.append("failed files: " + ", ".join(failed))
             if not out:
@@ -219,7 +316,7 @@ class EtfHoldings:
             for line in f.parse(base.read_raw(raw)):
                 by_day.setdefault(as_of, []).append({
                     "as_of": as_of, "etf": f.etf, "provider": f.provider,
-                    "ticker": norm_ticker(line["ticker_raw"]), "ticker_raw": line["ticker_raw"],
+                    "ticker": served_ticker(line), "ticker_raw": line["ticker_raw"],
                     "cusip": line["cusip"], "name": line["name"], "weight": line["weight"],
                     "fetched_at": meta["fetched_at"], "run_id": meta["run_id"]})
         dropped = sum(1 for rows in by_day.values() for r in rows if r["ticker"] is None)

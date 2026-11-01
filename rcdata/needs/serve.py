@@ -5,7 +5,9 @@ What the envelope adds, and nothing else:
 - ``state``: ``fresh`` | ``stale`` | ``missing`` — one word a card can show without knowing the store's shape.
 - ``freshness``: the newest day the rows carry, how far behind the market that is, the need's own ``max_lag`` and
   the unit both are counted in. Sessions by default, so a Monday answer is not "stale by three" because of the
-  weekend; calendar days for a need whose build has no session of its own (avo, 29 Oct 2026).
+  weekend; calendar days for a need whose build has no session of its own (avo, 29 Oct 2026). ``reference`` names
+  the day the lag was counted against: the market's newest complete session, or the session on or before the
+  ``as_of`` day a board renders (#330: SPX Gamma renders past days and judges each input against that day).
 - ``coverage``: how many things were asked for, how many came back, and which ones the store does not hold.
 - ``provenance``: per row, where it came from (``source``, ``source_as_of``, ``fetched_at``, ``run_id``) and which
   dataset owns writing it.
@@ -27,6 +29,10 @@ from .. import ops, read
 from .catalog import DAYS, NEEDS, SESSIONS, TICKER, Need
 
 FRESH, STALE, MISSING = "fresh", "stale", "missing"
+#: Rows the store holds whose lag the calendar cannot count: an ``as_of`` outside the NYSE holiday table (it runs
+#: 1993-2028; Cboe's SPX series starts in 1975). The answer keeps its rows and says why in ``freshness["lag_reason"]``
+#: instead of raising (#334 review, blocker 1): a reader that never judges freshness must not lose its data to it.
+UNDECIDED = "undecided"
 NEVER = "never"
 #: How far back the session walk looks before it gives up and reports the lag as this many sessions.
 MAX_LAG_WALK = 400
@@ -42,6 +48,10 @@ class AskRequired(ValueError):
     Without this the answer was ``state: missing`` on a table holding 236 series (the live verification's finding
     2, 30 Oct 2026): "no rows" is the truth about the call, not about the store, and a card cannot tell them apart.
     """
+
+
+class BadAsOf(ValueError):
+    """An ``as_of`` that is not a day (``"15 Oct"``): the caller's mistake, refused before anything is read."""
 
 
 class FillNotSupported(NotImplementedError):
@@ -100,14 +110,20 @@ def lag_in(unit: str, as_of: date, latest: date) -> int:
 
 
 def lag_sessions(as_of: date, latest: date) -> int:
-    """Trading sessions between ``as_of`` and ``latest`` (0 when the rows are up to the newest session)."""
+    """Trading sessions between ``as_of`` and ``latest`` (0 when the rows are up to the newest session).
+
+    ``latest`` counts as one, and every trading day strictly between the two as one more. Only days after ``as_of``
+    are put to the calendar (#334 review): the walk used to step back to the session on or before ``as_of``, so a
+    2024-12-31 row read on 2025-01-02 asked the calendar about 2024, which its holiday table did not hold then, where
+    the board's own forward count never did. The numbers inside the table are the same.
+    """
     if as_of >= latest:
         return 0
-    day, lag = latest, 0
+    lag, day = 1, latest - timedelta(days=1)
     while day > as_of and lag < MAX_LAG_WALK:
-        # ``previous_trading_day`` returns the latest trading day **on or before** its argument, so step a day first.
-        day = calendar.previous_trading_day(day - timedelta(days=1))
-        lag += 1
+        if calendar.is_trading_day(day):
+            lag += 1
+        day -= timedelta(days=1)
     return lag
 
 
@@ -146,6 +162,26 @@ def _asked_nothing(need: Need, params: dict) -> bool:
     if params[need.ask_param] is None:
         return False
     return not _asked(need, params)
+
+
+def _reference(as_of: Any) -> date:
+    """The day an answer's lag is counted against: ``reference_session()``, or the session on or before ``as_of``.
+
+    A board that renders a past day (SPX Gamma, #330) judges each input against that day, not against the market's
+    newest session: for a render of 15 October a 14 October row is one session behind, not twelve. A weekend or a
+    holiday is judged from the session before it, so a Friday row read on the Sunday is 0 behind, as the board's own
+    session count always had it. A day past the calendar's holiday table raises ``ValueError``, as the lag walk does.
+    """
+    if as_of is None:
+        return reference_session()
+    return calendar.previous_trading_day(_as_of_day(as_of))
+
+
+def _as_of_day(as_of: Any) -> date:
+    day = _day(as_of)
+    if day is None:
+        raise BadAsOf(f"as_of must be a date or an ISO day (YYYY-MM-DD), not {as_of!r}")
+    return day
 
 
 def _provenance(need: Need, rows: list[dict]) -> list[dict]:
@@ -213,11 +249,15 @@ def summary(need: str, *, sample: int = 0, count: bool = True) -> dict:
             "sample_rows": s["sample_rows"], "provenance": _provenance(spec, s["sample_rows"])}
 
 
-def ask(need: str, *, fill: str = NEVER, **params) -> Answer:
+def ask(need: str, *, fill: str = NEVER, as_of: date | str | None = None, **params) -> Answer:
     """Answer ``need`` from the store. ``params`` go to the need's ``rcdata.read`` function unchanged.
 
     ``fill`` must be ``"never"`` in this PR: the answer serves what the store holds and says how old it is. No
     provider is called and nothing is written, so a page render can call this without holding anything up.
+
+    ``as_of`` is the day the answer is judged from (#330); it is never handed to the reader, whose window stays the
+    caller's own ``start`` / ``end``. Without it the lag is counted against ``reference_session()``, exactly as
+    before, and ``freshness["reference"]`` names the day it was counted against either way.
     """
     try:
         spec = NEEDS[need]
@@ -237,15 +277,29 @@ def ask(need: str, *, fill: str = NEVER, **params) -> Answer:
                           f"ask is nothing, never every row (avo, 30 Oct 2026): leave {spec.ask_param!r} out to "
                           f"read every row, or ask for the whole table's state with summary=1")
 
+    if as_of is not None:
+        as_of = _as_of_day(as_of)          # refused in words before anything is read
     ops.read_log.bump(f"need:{need}")
     rows = spec.reader(**_with_needs_own_rows(spec, params))
     rows = list(rows.values()) if isinstance(rows, dict) else list(rows)
 
     days = [d for d in (_day(r.get(spec.day_column)) for r in rows) if d is not None]
-    as_of = max(days) if days else None
-    lag = lag_in(spec.max_lag_unit, as_of, reference_session()) if as_of is not None else None
-    freshness = {"as_of_session": as_of, "lag_sessions": lag, "max_lag": spec.max_lag,
-                 "unit": spec.max_lag_unit}
+    newest = max(days) if days else None
+    lag_reason = None
+    if as_of is None:
+        reference = _reference(None)
+        lag = lag_in(spec.max_lag_unit, newest, reference) if newest is not None else None
+    else:
+        try:
+            reference = _reference(as_of)
+            lag = lag_in(spec.max_lag_unit, newest, reference) if newest is not None else None
+        except ValueError as exc:
+            # A day the holiday table does not hold: the rows stand, the lag is not counted (blocker 1).
+            reference, lag, lag_reason = as_of, None, str(exc)
+    freshness = {"as_of_session": newest, "lag_sessions": lag, "max_lag": spec.max_lag,
+                 "unit": spec.max_lag_unit, "reference": reference}
+    if lag_reason is not None:
+        freshness["lag_reason"] = lag_reason
 
     asked = _asked(spec, params)
     served_keys = {str(r.get(spec.key_column)) for r in rows if r.get(spec.key_column) is not None}
@@ -256,6 +310,8 @@ def ask(need: str, *, fill: str = NEVER, **params) -> Answer:
 
     if not rows:
         state = MISSING
+    elif lag_reason is not None:
+        state = UNDECIDED
     elif lag is None or lag <= spec.max_lag:
         state = FRESH
     else:

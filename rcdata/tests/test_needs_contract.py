@@ -86,6 +86,22 @@ def test_a_filtered_need_asks_its_own_series_without_being_told(monkeypatch):
     assert seen["prefix"] == needs.catalog.NEEDS["market.cot"].filter_prefix
 
 
+def test_the_spx_close_need_names_the_spx_series_so_a_board_never_does(monkeypatch):
+    """#330: SPX Gamma's 8-week candles are Cboe's ``SPX`` closes in ``market_series``; the need names the series,
+    the board names the need. Daily like the VIX family, so the same 3 sessions."""
+    need = needs.catalog.NEEDS["market.spx_close"]
+    assert (need.table, need.ask_param, need.filter_values) == ("market_series", "series_ids", ("SPX",))
+    assert (need.max_lag, need.max_lag_unit) == (3, "sessions") and need.providers == ("cboe",)
+    seen = {}
+
+    def fake(series_ids=(), start=None, end=None, prefix=None):
+        seen.update(series_ids=tuple(series_ids), start=start, end=end)
+        return []
+    monkeypatch.setattr(needs.catalog.read, "market_series", fake)
+    needs.ask("market.spx_close", start="2026-09-01", end="2026-10-26")
+    assert seen == {"series_ids": ("SPX",), "start": "2026-09-01", "end": "2026-10-26"}
+
+
 def test_a_filtered_needs_summary_counts_its_own_series_only(monkeypatch):
     seen = {}
 

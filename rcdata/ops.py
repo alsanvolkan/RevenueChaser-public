@@ -677,6 +677,16 @@ def recent_checks(dataset: str, limit: int = 20) -> list[dict]:
     return _select("SELECT * FROM dataset_check WHERE dataset = ? ORDER BY id DESC LIMIT ?", (dataset, int(limit)))
 
 
+def read_latest_check(dataset: str) -> dict | None:
+    """``latest_check`` for a reader: the same row, without creating the file or a table (#336).
+
+    ``latest_check`` opens through ``_open``, which ensures the file; that is right for the builder, which writes it
+    anyway, and wrong for a page render (F7 A). ``read.dataset_status`` and the boards' status reads use this one.
+    """
+    rows = _select("SELECT * FROM dataset_check WHERE dataset = ? ORDER BY id DESC LIMIT 1", (dataset,))
+    return rows[0] if rows else None
+
+
 def latest_unskipped_check(dataset: str) -> dict | None:
     """The newest ``dataset_check`` row of ``dataset`` that is not ``skipped``, however many skips came after it."""
     rows = _select("SELECT * FROM dataset_check WHERE dataset = ? AND result != 'skipped' ORDER BY id DESC LIMIT 1",

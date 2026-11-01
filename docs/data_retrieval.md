@@ -154,8 +154,9 @@ button silently degrades to a plain iframe reload.
   (`SPX_GAMMA_DATA_ROOT`) from disk and makes no network call. The VIX family, the
   CFTC COT, the 8-week SPX closes and the 0-1 DTE dollar gamma the pin and squeeze
   tests size by are read from the market store at render time
-  (`module_spx_gamma/store_reads.py` over `rcdata.read`: `market_series` and
-  `spx_gamma_expiry_strike`), so a Fetch and a Refresh of a day render the same.
+  (`module_spx_gamma/store_reads.py` through `needs.ask(..., as_of=day)`, #330:
+  `market_series` and `spx_gamma_expiry_strike`; VIX and COT judged against the
+  day rendered), so a Fetch and a Refresh of a day render the same.
 - **SPX Gamma's Fetch (`POST /run/spxgamma`) also asks the builder** (PR 3, decision
   A4): the job of an accepted Fetch first queues one `uw/spot_expiry_strike` and
   one `market_series` build (`ops.enqueue_once`, `requested_by` `spx_gamma`; one
@@ -348,6 +349,7 @@ whole app at a local server:
 | `RC_SPDR_BASE` | SPDR index-ETF holdings files (identity refresh) |
 | `RC_SSGA_BASE` | SSGA daily ETF holdings workbooks: SPY, MDY, SPSM, the spine's index membership (`rcdata/build/spine/funds.py`, read at call time) |
 | `RC_ISHARES_BASE` | iShares `latest-holdings.csv` files: IVV, IJH, IJR (`rcdata/build/spine/funds.py`) |
+| `RC_ARK_BASE` | ARK's daily holdings CSV: ARKQ, read when UW holds nothing for it (`rcdata/build/spine/etf_holdings.py`, #339) |
 | `RC_VANGUARD_BASE` | Vanguard's daily creation baskets (PCF, `etfportal.vanguard.com`): VOO, IVOO, VIOO (`rcdata/build/spine/funds.py`) |
 | `RC_NASDAQ_API_BASE` | Nasdaq's list API, the Nasdaq-100 members (`rcdata/build/spine/funds.py`) |
 | `RC_INVESCO_API_BASE` | Invesco's fund holdings API: QQQ, the second Nasdaq-100 file (`rcdata/build/spine/funds.py`) |

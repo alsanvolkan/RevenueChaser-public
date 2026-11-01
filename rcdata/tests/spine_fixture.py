@@ -409,25 +409,40 @@ def add_fund_routes(http_mock, sp500=SP500, sp400=SP400, ndx=("MSFT",), fail=())
 
 # ── The ETFs' own holdings (``funds/etf_holdings``) ───────────────────────────────────────────────────────────
 
-def uw_holdings_json(holdings, repeat=()) -> bytes:
+def uw_holdings_json(holdings, repeat=(), cusips=False) -> bytes:
     """UW's ``/etfs/<ticker>/holdings`` answer (``docs/openapi.yaml``, ``Holdings``): one row per holding, the
-    weights as strings, no CUSIP. A ticker in ``repeat`` is sent twice, the second row newer and lighter: the read
-    keeps the newer one, as the client's own rule does (``core/providers/unusual_whales._holdings``)."""
+    weights as strings. The schema names no CUSIP, but the live answer of 1 Nov 2026 (SMH) carried a ``cusip`` key:
+    ``cusips`` adds it, written as UW might (lower case, padded). A ticker in ``repeat`` is sent twice, the second
+    row newer and lighter: the read keeps the newer one, as the client's own rule does
+    (``core/providers/unusual_whales._holdings``)."""
     rows = []
-    for i, (t, _cusip, name) in enumerate(holdings):
+    for i, (t, cusip, name) in enumerate(holdings):
         rows.append({"ticker": t, "name": name, "short_name": name.split()[0], "weight": f"{10 - i:.3f}",
                      "shares": 1_000 + i, "sector": "Technology", "type": "stock", "has_options": True,
                      "updated": "2026-10-29T20:00:00Z"})
+        if cusips:
+            rows[-1]["cusip"] = f" {cusip.lower()} "
         if t in repeat:
             rows.append({**rows[-1], "weight": "0.001", "updated": "2026-10-30T20:00:00Z"})
     rows.append({"ticker": None, "name": "CASH", "weight": "0.1", "updated": "2026-10-29T20:00:00Z"})
     return json.dumps({"data": rows}).encode()
 
 
+def ark_csv(holdings, fund: str = "ARKQ") -> bytes:
+    """ARK's daily holdings CSV, in the shape of the real file of 30 Oct 2026 (``fixtures/ark_arkq_holdings.csv``
+    is a trimmed copy): the header, one line per holding, the money-market line with no ticker, the disclaimer."""
+    lines = ["date,fund,company,ticker,cusip,shares,market value ($),weight (%)"]
+    for i, (t, cusip, name) in enumerate(holdings):
+        lines.append(f'10/30/2026,{fund},{name},{t},{cusip},"1,000","$1,000.00",{10 - i:.2f}%')
+    lines.append(f'10/30/2026,{fund},GOLDMAN FS TRSY OBLIG INST 468,,X9USDGSFT,"1","$1.00",0.13%')
+    lines.append('"Investors should carefully consider the investment objectives and risks of an ARK ETF."')
+    return ("\n".join(lines) + "\n").encode()
+
+
 def add_etf_routes(http_mock, holdings=None, fail=(), repeat=()) -> None:
-    """Answer every file of ``spine/etf_holdings.FILES``: the SPDR workbooks, the iShares CSVs (each in the shape
-    its own fund serves — IAK typed, the five sector funds not) and UW's holdings answers, each holding
-    ``holdings`` (``SP500`` by default). An ETF named in ``fail`` answers 500 instead."""
+    """Answer every file of ``spine/etf_holdings.FILES`` and of its ``FALLBACKS``: the SPDR workbooks, the iShares
+    CSVs (each in the shape its own fund serves — IAK typed, the five sector funds not), UW's holdings answers and
+    ARK's CSV, each holding ``holdings`` (``SP500`` by default). An ETF named in ``fail`` answers 500 instead."""
     from RevenueChaser.rcdata.build.spine import etf_holdings as etf
     rows = SP500 if holdings is None else holdings
 
@@ -435,12 +450,94 @@ def add_etf_routes(http_mock, holdings=None, fail=(), repeat=()) -> None:
         def go(_request):
             return (500, b"down", {}) if etf_name in fail else (200, body, {})
         return go
-    for f in etf.FILES:
+    for f in etf.FILES + tuple(etf.FALLBACKS.values()):
         if f.provider == "ssga":
             route, body = f"holdings-daily-us-en-{f.etf.lower()}.", ssga_xlsx(rows)
         elif f.provider == "ishares":
             pid, _slug, typed = etf.ISHARES_PRODUCTS[f.etf]
             route, body = f"/products/{pid}/", ishares_csv(rows, typed=typed)
+        elif f.provider == "ark":
+            route, body = f"_{f.etf}_HOLDINGS.csv", ark_csv(rows, f.etf)
         else:
             route, body = f"/etfs/{f.etf}/holdings", uw_holdings_json(rows, repeat=repeat)
         http_mock.add(route, answer(body, f.etf))
+
+
+# ── The SEC's Form N-CEN data sets (``sec/ncen``) ────────────────────────────────────────────────────────────
+
+#: ``FUND_REPORTED_INFO.tsv``'s columns the dataset reads, in the real file's order (the file has ~90 more).
+NCEN_FUND_COLS = ("FUND_ID", "ACCESSION_NUMBER", "FUND_NAME", "SERIES_ID", "IS_ETF", "IS_INDEX",
+                  "IS_MULTI_INVERSE_INDEX", "IS_FUND_OF_FUND", "IS_MONEY_MARKET", "MONTHLY_AVG_NET_ASSETS",
+                  "DAILY_AVG_NET_ASSETS")
+
+
+def ncen_fund(accession, cik, series, name, etf=True, index="", inverse="", fof="", mm="", monthly="", daily="",
+              ticker=None, exchange="ARCX") -> dict:
+    """One series of one filing; the real file's flags are ``Y`` or blank, and its AUM mostly monthly only."""
+    return {"FUND_ID": f"{accession}_{cik:010d}_{series}", "ACCESSION_NUMBER": accession, "FUND_NAME": name,
+            "SERIES_ID": series, "IS_ETF": "Y" if etf else "", "IS_INDEX": index,
+            "IS_MULTI_INVERSE_INDEX": inverse, "IS_FUND_OF_FUND": fof, "IS_MONEY_MARKET": mm,
+            "MONTHLY_AVG_NET_ASSETS": monthly, "DAILY_AVG_NET_ASSETS": daily, "_cik": cik, "_ticker": ticker,
+            "_exchange": exchange}
+
+
+def ncen_zip(funds, filings) -> bytes:
+    """A quarter's zip in the real one's shape (1 Nov 2026): tab-separated, a header row, ``DD-MON-YYYY`` dates.
+
+    ``filings``: ``[(accession, cik, filing_date, report_end)]``, a UIT's filing among them with no series of its own
+    (the real SPY and DIA file N-CEN as S-6 registrants and have no ``FUND_REPORTED_INFO`` row)."""
+    import zipfile
+
+    def tsv(cols, rows):
+        return "\n".join(["\t".join(cols)] + ["\t".join(str(r.get(c, "")) for c in cols) for r in rows]) + "\n"
+    sub = [{"ACCESSION_NUMBER": a, "SUBMISSION_TYPE": "N-CEN", "CIK": f"{c:010d}", "FILING_DATE": f,
+            "REPORT_ENDING_PERIOD": e} for a, c, f, e in filings]
+    exch = [{"FUND_ID": f["FUND_ID"], "FUND_EXCHANGE": f["_exchange"], "FUND_TICKER_SYMBOL": f["_ticker"]}
+            for f in funds if f["_ticker"]]
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("SUBMISSION.tsv", tsv(("ACCESSION_NUMBER", "SUBMISSION_TYPE", "CIK", "FILING_DATE",
+                                          "REPORT_ENDING_PERIOD"), sub))
+        z.writestr("FUND_REPORTED_INFO.tsv", tsv(NCEN_FUND_COLS, funds))
+        z.writestr("SECURITY_EXCHANGE.tsv", tsv(("FUND_ID", "FUND_EXCHANGE", "FUND_TICKER_SYMBOL"), exch))
+        z.writestr("ncen_readme.htm", "<html></html>")
+    return buf.getvalue()
+
+
+#: Two quarters of N-CEN. XLK files in both: the 2026q3 filing is newer and wins. SPY's trust files with no series.
+NCEN_Q2 = ncen_zip(
+    [ncen_fund("0001-26-000001", 1064641, "S000006408", "Technology Select Sector SPDR Fund", index="Y",
+               monthly="70000000000.5", ticker="XLK"),
+     ncen_fund("0001-26-000002", 1100663, "S000004348", "iShares Semiconductor ETF", index="Y",
+               daily="15000000000", monthly="14000000000", ticker="SOXX", exchange="XNAS"),
+     ncen_fund("0001-26-000003", 2110, "S000009184", "Columbia Acorn Fund", etf=False, monthly="900000000")],
+    [("0001-26-000001", 1064641, "28-APR-2026", "31-JAN-2026"),
+     ("0001-26-000002", 1100663, "29-MAY-2026", "31-MAR-2026"),
+     ("0001-26-000003", 2110, "30-JUN-2026", "31-MAR-2026"),
+     ("0001-26-000004", 884394, "15-MAY-2026", "31-JAN-2026")])
+NCEN_Q3 = ncen_zip(
+    [ncen_fund("0001-26-000010", 1064641, "S000006408", "Technology Select Sector SPDR Fund", index="Y",
+               monthly="80000000000", ticker="XLK"),
+     ncen_fund("0001-26-000011", 1424958, "S000024908", "Direxion Daily Semiconductor Bull 3X Shares",
+               inverse="Y", monthly="11000000000", ticker="SOXL"),
+     ncen_fund("0001-26-000012", 1415726, "S000099001", "Example Covered Call Option Income ETF",
+               fof="Y", monthly="50000000", ticker="CCOI", exchange="BATS")],
+    [("0001-26-000010", 1064641, "29-JUL-2026", "30-APR-2026"),
+     ("0001-26-000011", 1424958, "25-AUG-2026", "31-MAY-2026"),
+     ("0001-26-000012", 1415726, "10-SEP-2026", "30-JUN-2026")])
+#: Two more quarters (LEVX: leveraged by its name only, N-CEN's flag blank; TAPR: an ETF AV names after a bank),
+#: so a fixture can hold the four quarters the commodity rule needs.
+NCEN_Q1 = ncen_zip(
+    [ncen_fund("0001-26-000020", 3000001, "S000099100", "Tradr 2X Long Example Daily ETF", monthly="20000000",
+               ticker="LEVX"),
+     ncen_fund("0001-26-000020", 3000001, "S000099101", "Example Tactical Rotation ETF", monthly="30000000",
+               ticker="TAPR")],
+    [("0001-26-000020", 3000001, "02-FEB-2026", "30-NOV-2025")])
+NCEN_Q4 = ncen_zip([], [("0001-25-000030", 3000002, "03-NOV-2025", "31-AUG-2025")])
+
+
+def add_ncen_routes(http_mock, quarters=("2026q3", "2026q2", "2026q1", "2025q4")) -> None:
+    """Answer the named quarters' zips; any other quarter is the mock's 404, "not published"."""
+    zips = {"2026q3": NCEN_Q3, "2026q2": NCEN_Q2, "2026q1": NCEN_Q1, "2025q4": NCEN_Q4}
+    for q in quarters:
+        http_mock.add(f"{q}_ncen.zip", zips[q])

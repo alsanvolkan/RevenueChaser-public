@@ -34,7 +34,7 @@ NOT_A_BOARD = frozenset({"module_testing", "module_settings"})
 UNDECLARED = frozenset({
     "module_asymmetric_growth", "module_comovement", "module_financials", "module_fundamentals", "module_leaps",
     "module_oipd", "module_relatedness", "module_sec_13f", "module_sector_rotation",
-    "module_spx_gamma", "module_swing_potential", "module_uw_interaction", "module_value_chain",
+    "module_swing_potential", "module_uw_interaction", "module_value_chain",
 })
 
 #: What each board not migrated yet will read, from the catalog's need list of 29 Oct 2026
@@ -43,8 +43,6 @@ UNDECLARED = frozenset({
 #: PR that migrates the board, the one that adds its ``READS``. A board whose data has no need in the catalog yet
 #: (Relatedness reads filing texts) is left out rather than given a need it does not read.
 PLANNED_READS: dict[str, tuple[str, ...]] = {
-    "module_spx_gamma": ("market.vix", "market.cot", "market.spx_expiry_strike", "options.strikes",
-                         "options.expiries", "options.iv"),
     "module_oipd": ("macro.dgs10", "options.chain", "options.strikes", "options.expiries"),
     "module_financials": ("identity.universe", "prices.shares", "prices.market_cap", "prices.latest", "macro.dgs10",
                           "fundamentals.statements", "fundamentals.segments", "fundamentals.peers"),
