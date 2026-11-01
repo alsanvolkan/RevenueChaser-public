@@ -29,6 +29,10 @@ from .. import ops, read
 from .catalog import DAYS, NEEDS, SESSIONS, TICKER, Need
 
 FRESH, STALE, MISSING = "fresh", "stale", "missing"
+#: Rows the store holds whose lag the calendar cannot count: an ``as_of`` outside the NYSE holiday table (it runs
+#: 2025-2028; Cboe's SPX series starts in 1975). The answer keeps its rows and says why in ``freshness["lag_reason"]``
+#: instead of raising (#334 review, blocker 1): a reader that never judges freshness must not lose its data to it.
+UNDECIDED = "undecided"
 NEVER = "never"
 #: How far back the session walk looks before it gives up and reports the lag as this many sessions.
 MAX_LAG_WALK = 400
@@ -44,6 +48,10 @@ class AskRequired(ValueError):
     Without this the answer was ``state: missing`` on a table holding 236 series (the live verification's finding
     2, 30 Oct 2026): "no rows" is the truth about the call, not about the store, and a card cannot tell them apart.
     """
+
+
+class BadAsOf(ValueError):
+    """An ``as_of`` that is not a day (``"15 Oct"``): the caller's mistake, refused before anything is read."""
 
 
 class FillNotSupported(NotImplementedError):
@@ -102,14 +110,20 @@ def lag_in(unit: str, as_of: date, latest: date) -> int:
 
 
 def lag_sessions(as_of: date, latest: date) -> int:
-    """Trading sessions between ``as_of`` and ``latest`` (0 when the rows are up to the newest session)."""
+    """Trading sessions between ``as_of`` and ``latest`` (0 when the rows are up to the newest session).
+
+    ``latest`` counts as one, and every trading day strictly between the two as one more. Only days after ``as_of``
+    are put to the calendar (#334 review): the walk used to step back to the session on or before ``as_of``, so a
+    2024-12-31 row read on 2025-01-02 asked the calendar about 2024, which its holiday table does not hold, where
+    the board's own forward count never did. The numbers inside the table are the same.
+    """
     if as_of >= latest:
         return 0
-    day, lag = latest, 0
+    lag, day = 1, latest - timedelta(days=1)
     while day > as_of and lag < MAX_LAG_WALK:
-        # ``previous_trading_day`` returns the latest trading day **on or before** its argument, so step a day first.
-        day = calendar.previous_trading_day(day - timedelta(days=1))
-        lag += 1
+        if calendar.is_trading_day(day):
+            lag += 1
+        day -= timedelta(days=1)
     return lag
 
 
@@ -166,7 +180,7 @@ def _reference(as_of: Any) -> date:
 def _as_of_day(as_of: Any) -> date:
     day = _day(as_of)
     if day is None:
-        raise ValueError(f"as_of must be a date or an ISO day (YYYY-MM-DD), not {as_of!r}")
+        raise BadAsOf(f"as_of must be a date or an ISO day (YYYY-MM-DD), not {as_of!r}")
     return day
 
 
@@ -267,10 +281,21 @@ def ask(need: str, *, fill: str = NEVER, as_of: date | str | None = None, **para
 
     days = [d for d in (_day(r.get(spec.day_column)) for r in rows) if d is not None]
     newest = max(days) if days else None
-    reference = _reference(as_of)
-    lag = lag_in(spec.max_lag_unit, newest, reference) if newest is not None else None
+    lag_reason = None
+    if as_of is None:
+        reference = _reference(None)
+        lag = lag_in(spec.max_lag_unit, newest, reference) if newest is not None else None
+    else:
+        try:
+            reference = _reference(as_of)
+            lag = lag_in(spec.max_lag_unit, newest, reference) if newest is not None else None
+        except ValueError as exc:
+            # A day the holiday table does not hold: the rows stand, the lag is not counted (blocker 1).
+            reference, lag, lag_reason = as_of, None, str(exc)
     freshness = {"as_of_session": newest, "lag_sessions": lag, "max_lag": spec.max_lag,
                  "unit": spec.max_lag_unit, "reference": reference}
+    if lag_reason is not None:
+        freshness["lag_reason"] = lag_reason
 
     asked = _asked(spec, params)
     served_keys = {str(r.get(spec.key_column)) for r in rows if r.get(spec.key_column) is not None}
@@ -281,6 +306,8 @@ def ask(need: str, *, fill: str = NEVER, as_of: date | str | None = None, **para
 
     if not rows:
         state = MISSING
+    elif lag_reason is not None:
+        state = UNDECIDED
     elif lag is None or lag <= spec.max_lag:
         state = FRESH
     else:

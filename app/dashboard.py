@@ -1346,8 +1346,10 @@ def needs_ask(need: str):
         # A need that answers nothing unless something is named (``market.series``): the refusal says so, where a
         # bare call used to answer "missing" on a full table (the live verification's finding 2).
         return jsonify({"ok": False, "error": str(e)}), 400
-    except ValueError as e:
-        # ``?as_of=`` the envelope cannot read as a day (#330): refused in words before anything is read.
+    except needs.BadAsOf as e:
+        # ``?as_of=`` the envelope cannot read as a day (#330): refused in words before anything is read. Only that:
+        # a valid day the calendar cannot count answers 200 with the lag undecided, and a reader's own ValueError
+        # is not the client's mistake (#334 review, should-fix 2).
         return jsonify({"ok": False, "error": str(e)}), 400
     except TypeError as e:
         return jsonify({"ok": False, "error": f"the need's reader refused the parameters: {e}"}), 400

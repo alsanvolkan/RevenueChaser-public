@@ -225,3 +225,20 @@ def test_an_unreadable_as_of_is_a_400_in_words_not_a_500(client):
     """The real ``ask`` refuses it before anything is read."""
     resp = client.get("/needs/market.vix?as_of=15-Oct")
     assert resp.status_code == 400 and "as_of" in resp.get_json()["error"]
+
+
+def test_a_valid_day_outside_the_holiday_table_answers_200_with_the_lag_undecided(client):
+    """Review of #334, should-fix 2: a calendar range error is not the client's mistake."""
+    resp = client.get("/needs/market.vix?as_of=2024-10-25")
+    assert resp.status_code == 200, resp.get_json()
+    body = resp.get_json()
+    assert body["freshness"]["reference"] == "2024-10-25" and body["freshness"]["lag_sessions"] is None
+
+
+def test_a_readers_own_value_error_is_not_dressed_up_as_a_bad_as_of(client, monkeypatch):
+    def boom(*a, **k):
+        raise ValueError("a reader's own problem")
+    monkeypatch.setattr(needs.catalog.read, "market_series", boom)
+    monkeypatch.setitem(dashboard.app.config, "PROPAGATE_EXCEPTIONS", False)
+    assert client.get("/needs/market.vix?as_of=2026-10-15").status_code == 500
+

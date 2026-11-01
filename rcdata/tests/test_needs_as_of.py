@@ -100,3 +100,57 @@ def test_a_need_without_rows_still_names_the_day_it_was_judged_from(vix_rows):
 def test_no_reader_takes_as_of_so_the_envelope_never_swallows_a_readers_argument(name):
     import inspect
     assert "as_of" not in inspect.signature(needs.catalog.NEEDS[name].reader).parameters
+
+
+# ── review of 1e1b250 (#334): a day the calendar cannot count is an undecided lag, never a lost answer ──
+
+def test_a_valid_day_before_the_holiday_table_keeps_its_rows_and_leaves_the_lag_undecided(vix_rows):
+    """Blocker 1: the calendar's holiday table starts in 2025, Cboe's SPX series in 1975. A 2024 render must keep
+    its rows; only the lag cannot be counted, and the answer says so instead of raising."""
+    vix_rows(date(2024, 10, 24), date(2024, 10, 25))
+    ans = needs.ask("market.vix", as_of=date(2024, 10, 25))
+    assert len(ans.rows) == 2 and ans.state == needs.serve.UNDECIDED and not ans.ok
+    assert ans.freshness["lag_sessions"] is None and ans.freshness["as_of_session"] == date(2024, 10, 25)
+    assert ans.freshness["reference"] == date(2024, 10, 25)
+    assert "2024" in ans.freshness["lag_reason"]
+
+
+def test_a_day_after_the_holiday_table_is_undecided_too(vix_rows):
+    vix_rows(date(2029, 3, 1))
+    ans = needs.ask("market.vix", as_of=date(2029, 3, 2))
+    assert ans.rows and ans.state == needs.serve.UNDECIDED and ans.freshness["lag_sessions"] is None
+
+
+def test_no_rows_outside_the_table_is_still_missing(vix_rows):
+    vix_rows()
+    ans = needs.ask("market.vix", as_of=date(2024, 10, 25))
+    assert ans.state == "missing" and ans.freshness["lag_sessions"] is None
+
+
+def test_an_in_table_holiday_is_judged_from_the_session_before_it(vix_rows):
+    """Thu 26 Nov 2026 (Thanksgiving): the reference is Wed 25 Nov."""
+    vix_rows(date(2026, 11, 25))
+    ans = needs.ask("market.vix", as_of=date(2026, 11, 26))
+    assert ans.freshness["reference"] == date(2026, 11, 25) and ans.freshness["lag_sessions"] == 0
+    assert ans.state == "fresh"
+
+
+def test_a_future_as_of_is_judged_against_that_future_session(vix_rows):
+    vix_rows(date(2026, 10, 26))
+    ans = needs.ask("market.vix", as_of=date(2026, 12, 15))
+    assert ans.state == "stale" and ans.freshness["reference"] == date(2026, 12, 15)
+
+
+def test_the_session_count_only_reads_the_calendar_after_the_observation():
+    """2025-01-02 is one session after a 2024-12-31 row (1 Jan is a holiday). The old board counted forward from the
+    row and never asked the calendar about 2024; the walk back must not either."""
+    assert needs.lag_sessions(date(2024, 12, 31), date(2025, 1, 2)) == 1
+    assert needs.lag_sessions(date(2026, 10, 26), date(2026, 10, 29)) == 3        # unchanged inside the table
+    assert needs.lag_sessions(date(2026, 10, 23), date(2026, 10, 25)) == 1        # a Sunday counts as one, as before
+
+
+def test_an_unreadable_as_of_is_its_own_error_class(vix_rows):
+    vix_rows(date(2026, 10, 14))
+    with pytest.raises(needs.BadAsOf):
+        needs.ask("market.vix", as_of="15 Oct")
+    assert issubclass(needs.BadAsOf, ValueError)
