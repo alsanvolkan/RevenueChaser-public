@@ -82,6 +82,17 @@ ISSUER_WITHIN_DAYS = 14
 APPLIED = ("split", "stock_dividend", "cash_dividend")
 NOT_APPLIED = ("spin_off", "unit_split", "rights_distribution")
 
+# The CRSP bars no action adjusts (review S1 of #353): a security named otherwise than ``gvkey:iid``, with no Compustat
+# action, before its first Alpaca bar. ``UNADJUSTED_WINDOW`` is that first bar per security; ``UNADJUSTED`` the row
+# test over a bar ``{b}`` and that window ``{u}``.
+UNADJUSTED_WINDOW = (f"SELECT security_id, min(session_date) FILTER (WHERE source = '{ALPACA_BARS}') AS start "
+                     "FROM price_bar_daily GROUP BY security_id")
+UNADJUSTED = ("coalesce({b}.source = '" + wrds_history.CRSP + "' AND ({b}.security_id LIKE 'figi:%' OR "
+              "{b}.security_id LIKE 'cik:%' OR {b}.security_id LIKE 'sym:%') "
+              "AND {b}.session_date < coalesce({u}.start, DATE '9999-12-31') "
+              "AND NOT EXISTS (SELECT 1 FROM corporate_action c WHERE c.security_id = {b}.security_id "
+              "AND c.source = '" + wrds_history.NAME + "'), false)")
+
 ISSUE_KINDS = {
     "source_never_run": "a source this build needs has no data yet (key: the dataset)",
     "crsp_ticker_link": ("CRSP PERMNOs linked to a spine security by ticker alone, no CUSIP behind it (key: the "
@@ -311,6 +322,12 @@ class PricesServing:
                                            f"{REVISION_SQL} UNION ALL {wrds_history.REVISIONS_SQL}")
         counts["wrds_price_diff"] = self._wrds_report(con)
         self._views(con)
+        kept_out = con.execute(f"SELECT count(*), count(DISTINCT b.security_id) FROM price_bar_daily b "
+                               f"LEFT JOIN ({UNADJUSTED_WINDOW}) u USING (security_id) "
+                               f"WHERE {UNADJUSTED.format(b='b', u='u')}").fetchone()
+        if kept_out[0]:
+            ctx.notes.append(f"{kept_out[0]} CRSP bars of {kept_out[1]} securit{'y' if kept_out[1] == 1 else 'ies'} "
+                             "without Compustat actions kept out of price_bars_daily (nominal in price_bar_daily)")
         found += self._issues(con, have)
         ctx.pending[NAME] = found
         return counts
@@ -490,6 +507,9 @@ class PricesServing:
 
     @staticmethod
     def _views(con: duckdb.DuckDBPyConnection) -> None:
+        # Review S1 of #353: before its Alpaca window only Compustat's actions adjust a history bar, so a CRSP bar of a
+        # security named otherwise than ``gvkey:iid`` with no Compustat action (an ETF, a name without a Compustat
+        # link) has none applied. It stays in ``price_bar_daily`` (nominal) and out of the adjusted view.
         built = "(SELECT max(built_at) FROM serving_schema_version)"
         con.execute("CREATE VIEW security_symbol_now AS SELECT security_id, symbol FROM security_symbol "
                     "QUALIFY row_number() OVER (PARTITION BY security_id ORDER BY valid_to IS NULL DESC, "
@@ -502,7 +522,8 @@ class PricesServing:
                    'prices/adj_factor' AS adj_source, b.source, {built} AS fetched_at, b.run_id, {built} AS run_at
             FROM price_bar_daily b JOIN security_symbol_now n USING (security_id)
             {factor_join('a', 'b.security_id', 'b.session_date')}
-            WHERE b.security_id NOT LIKE 'index:%'""")
+            LEFT JOIN ({UNADJUSTED_WINDOW}) u ON u.security_id = b.security_id
+            WHERE b.security_id NOT LIKE 'index:%' AND NOT ({UNADJUSTED.format(b='b', u='u')})""")
         con.execute(f"""CREATE VIEW price_actions AS
             SELECT n.symbol AS ticker, c.ex_date, CASE WHEN c.action = 'cash_dividend' THEN 'dividend'
                    ELSE 'split' END AS action,

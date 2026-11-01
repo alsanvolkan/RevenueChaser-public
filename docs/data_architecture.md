@@ -1322,6 +1322,11 @@ are stored **nominal**; the factors are applied on read.
 applies no split a second time), `price_actions` (splits and dividends, the amount in today's share basis) and
 `index_levels_daily` (`^GSPC`).
 
+**Unadjusted history (review S1 of #353):** a CRSP bar of a security named otherwise than `gvkey:iid` (an ETF, a
+name without a Compustat link) that has no Compustat action, dated before its first Alpaca bar, has no split or
+dividend applied. It stays in `price_bar_daily` (nominal) and is left out of `price_bars_daily`; the build note
+counts those bars.
+
 **Build issues** (dataset `prices/serving`, synced after each swap): `source_never_run`, `crsp_ticker_link` (the CRSP
 PERMNOs linked to a spine security by ticker alone, named in one issue), `tier_a_no_bar`,
 `tier_a_no_shares`, `price_gap_no_action` (the split-adjusted close moved by 1.9 times or more, either way, within 7

@@ -295,6 +295,17 @@ def test_a_ticker_never_hands_a_delisted_names_history_to_the_listing_that_took_
     assert got == {"60003": ("figi:GOOD", "ticker"), "60004": ("012345:01", "ticker")}
 
 
+def test_the_rules_rank_ticker_before_compustat_and_the_newest_permno_wins_a_security():
+    """Review N3 of #353: a swap of rules 3 and 4, or of the newest-first order, must turn a test red."""
+    got = _link(
+        dsf=[("61000", END, "13131313", "13131313", "BOTH"),            # its ticker and a Compustat CUSIP both match
+             ("62000", "2012-05-01", "16161616", "14141414", "TWIN"),   # two PERMNOs carried the spine's CUSIP:
+             ("62001", "2021-08-02", "15151515", "14141414", "TWIN2")], # the newer one serves the security
+        spine=[("figi:BOTH", "BOTH", None, True, "2000-01-03"), ("033333:01", "TWINX", "141414145")],
+        secd=[("054321", "01", "131313139")])
+    assert got == {"61000": ("figi:BOTH", "ticker"), "62001": ("033333:01", "cusip")}
+
+
 def test_compustat_bars_of_a_permnos_gvkey_join_the_security_its_crsp_bars_won():
     """Review S2 of #353: an ETF the spine names by FIGI links its PERMNO by ticker, and Compustat holds the same
     fund under a gvkey:iid (the CUSIP matches). Its Compustat bars and actions must join the FIGI security, not stay
@@ -394,6 +405,34 @@ def test_the_build_note_counts_the_crsp_link_by_rule_and_the_unlinked_permnos(fa
     assert _backfill()["result"] == "changed"
     row = base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
     assert "CRSP link: 1 by hdrcusip, 0 by cusip, 0 by ticker, 0 by compustat; 0 unlinked; 0 gvkey aliases" in row["note"]
+
+
+def test_crsp_history_of_a_security_without_compustat_actions_stays_out_of_the_adjusted_view(monkeypatch):
+    """Review S1 of #353: FLG (spine: FIGI, no gvkey, no CUSIP) links its PERMNO by ticker, and before its Alpaca
+    window no split or dividend reaches it. Its CRSP bars stay served as they are (nominal ``price_bar_daily``) but
+    not in ``price_bars_daily``, whose closes are split- and dividend-adjusted, and the note counts them."""
+    data = _data()
+    data["crsp.dsf_v2"] += [{**r, "permno": "77777", "hdrcusip": "99999999", "cusip": "99999999", "ticker": "FLG"}
+                            for r in _crsp_rows()]
+    data["crsp.dsf_v2"] += [{**r, "permno": "88888", "hdrcusip": "88888888", "cusip": "88888888", "ticker": "BRK-B"}
+                            for r in _crsp_rows()]          # a gvkey:iid security, no Compustat action either
+    conn = FakeWrds(data)
+    monkeypatch.setattr(wrds, "_factory", lambda: conn)
+    wrds.reset()
+    assert _backfill()["result"] == "changed"
+    assert base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
+    row = base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    flg = "figi:BBG000BWBX65"
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = ? AND source = ?",
+              [flg, wrds_history.CRSP])[0]["n"] == len(JUNE)
+    assert _q("SELECT count(*) AS n FROM price_bars_daily WHERE ticker = 'FLG' AND session_date < '2026-01-01'"
+              )[0]["n"] == 0
+    assert _q("SELECT count(*) AS n FROM price_bars_daily WHERE ticker = 'AAPL' AND session_date < '2026-01-01'"
+              )[0]["n"] == len(JUNE), "a gvkey security's CRSP history stays: Compustat's actions reach it"
+    assert _q("SELECT count(*) AS n FROM price_bars_daily WHERE ticker = 'BRK-B' AND session_date < '2026-01-01'"
+              )[0]["n"] == len(JUNE), "so does one whose Compustat record holds no action"
+    assert f"{len(JUNE)} CRSP bars of 1 security without Compustat actions kept out of price_bars_daily" in row["note"]
+    wrds.reset()
 
 
 def test_crsp_rows_reach_their_securities_without_ccm(fake):
