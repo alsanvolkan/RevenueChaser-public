@@ -17,7 +17,6 @@
 
 /* ── The tab strip ── */
 #settings-tabs{background:var(--bg);color:var(--fg);font:15px/1.55 var(--f-body);border-bottom:1px solid var(--line);
-  position:sticky;top:0;z-index:20;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 #settings-tabs .tabs{display:flex;gap:4px;max-width:1600px;margin:0 auto}
 #settings-tabs [role="tab"]{font:inherit;font-size:14px;font-weight:600;min-height:44px;min-width:44px;padding:0 18px;

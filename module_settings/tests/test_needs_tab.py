@@ -131,10 +131,9 @@ def test_the_default_build_reads_the_real_log_and_does_not_count_its_own_summari
 
 
 def test_the_log_read_never_creates_the_ops_file():
-    """``ops.need_reads`` only. A real ``needs.summary`` still creates the file today, through
-    ``read.dataset_status`` → ``ops.latest_check`` (outside this tab; reported on #331's PR)."""
+    """The whole ``build()``, the real ``needs.summary`` included: since #336 no read creates ``ops.sqlite``."""
     assert not ops.ops_path().exists()
-    needs_tab.build(today=TODAY, summarize=_summary)
+    needs_tab.build(today=TODAY)
     assert not ops.ops_path().exists()
 
 
