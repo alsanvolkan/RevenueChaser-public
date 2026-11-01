@@ -124,6 +124,7 @@ def test_every_dataset_either_honours_the_scope_or_is_named_here():
         "sec/13f": "the SEC daily index's 13F filers",
         "sec/company_tickers_exchange": "the SEC file is the spine's own source: the tiers come out of it",
         "alphavantage/listing_status": "one list of every US listing at once",
+        "sec/ncen": "one N-CEN file a quarter for every fund at once",
         "sec/company_tickers_mf": "one fund file for every series and class at once",
         "sec/companyfacts": "the SEC daily index's statement filers among the Tier A CIKs",
         "sec/cover_shares": "its names are the SEC daily index's filers among the Tier A CIKs",

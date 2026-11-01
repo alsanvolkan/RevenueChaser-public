@@ -58,6 +58,7 @@ DATASETS: dict[str, DatasetCard] = {
     'sec/13f': DatasetCard('13F holdings (SEC data sets, then forms)', step=10, role='first'),
     'sec/company_tickers_exchange': DatasetCard('SEC ticker and exchange file', step=1, role='first'),
     'sec/company_tickers_mf': DatasetCard('SEC fund file (the ETF universe)', step=1, role='first'),
+    'sec/ncen': DatasetCard('Form N-CEN data sets: fund type, index, assets (SEC)', cadence='monthly', step=1, role='fills'),
     'sec/companyfacts': DatasetCard('SEC company facts (re-read on the filing day)', step=9, role='first'),
     'sec/cover_shares': DatasetCard('Shares per class (SEC filing covers)', step=8, role='first'),
     'sec/filings': DatasetCard('SEC filing lists, 8-K items and report texts', step=9, role='first'),
@@ -202,6 +203,7 @@ NO_TIER_WORDS: dict[str, str] = {
 NO_TIER_DATASET_WORDS: dict[str, str] = {
     "alphavantage/earnings_calendar": "one call brings the whole calendar, every name at once.",
     "sec/fsds": "one file a quarter holds every filer at once.",
+    "sec/ncen": "one file a quarter holds every fund at once.",
 }
 #: A hand-run (attended) dataset is never filled by tier.
 NO_TIER_ATTENDED = "a check source run by hand, not filled by tier."
@@ -269,7 +271,7 @@ class ProviderWords:
 #: Every provider a dataset names (``Dataset.providers``). A provider a dataset names and this map does not raises in
 #: CI, so the screen never shows a bare id.
 PROVIDERS: dict[str, ProviderWords] = {
-    "sec": ProviderWords("SEC", "the ticker file, company facts, filings, 13F, Form 4, 13D/G, fails to deliver",
+    "sec": ProviderWords("SEC", "the ticker file, company facts, filings, 13F, Form 4, 13D/G, fails to deliver, N-CEN",
                          "4.5 a second (ownership) · 0.25 s apart (fundamentals)",
                          "10 a second per User-Agent (fair access)"),
     "uw": ProviderWords("Unusual Whales", "options, SPX, float, financials", "a budget a run · 500 rows a page"),
