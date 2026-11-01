@@ -84,6 +84,8 @@ NOT_APPLIED = ("spin_off", "unit_split", "rights_distribution")
 
 ISSUE_KINDS = {
     "source_never_run": "a source this build needs has no data yet (key: the dataset)",
+    "crsp_ticker_link": ("CRSP PERMNOs linked to a spine security by ticker alone, no CUSIP behind it (key: the "
+                         "dataset; the detail names them, review S4 of #353)"),
     "tier_a_no_bar": "a Tier A name with no bar on the newest Alpaca session (key: the security id)",
     "tier_a_no_shares": "a Tier A name with no shares, so no market cap, on the newest session (key: the security id)",
     "price_gap_no_action": ("the split-adjusted close moved by GAP_FACTOR or more with no split that day "
@@ -290,6 +292,7 @@ class PricesServing:
         con.execute(BUILD_SQL.format(bars=ALPACA_BARS, actions=ALPACA_ACTIONS, crsp=wrds_history.CRSP_BARS,
                                      comp=wrds_history.COMP_BARS, link=wrds_history.PERMNO_LINK,
                                      alias=wrds_history.GVKEY_ALIAS))
+        self._link_note(ctx, con, found)
         counts = {}
         cols = ", ".join(c for c, _ in PRICE_BAR)
         # Alpaca's bar wins its session; of the history bars, CRSP's before Compustat's.
@@ -311,6 +314,26 @@ class PricesServing:
         found += self._issues(con, have)
         ctx.pending[NAME] = found
         return counts
+
+    @staticmethod
+    def _link_note(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, found: list) -> None:
+        """The CRSP link, observable (review S4 of #353): PERMNOs per rule, the unlinked ones, the gvkey aliases; the
+        ticker links, the one rule without an identifier behind it, as one issue naming them."""
+        if not stage.count(con, "stg_wrds_dsf"):
+            return
+        by = dict(con.execute("SELECT how, count(*) FROM _permno_link GROUP BY how").fetchall())
+        unlinked = con.execute("SELECT count(DISTINCT permno) FROM stg_wrds_dsf "
+                               "WHERE permno NOT IN (SELECT permno FROM _permno_link)").fetchone()[0]
+        aliases = stage.count(con, "_gvkey_alias")
+        ctx.notes.append("CRSP link: " + ", ".join(f"{by.get(h, 0)} by {h}" for h in
+                                                   ("hdrcusip", "cusip", "ticker", "compustat"))
+                         + f"; {unlinked} unlinked; {aliases} gvkey aliases")
+        if by.get("ticker"):
+            names = [r[0] for r in con.execute(
+                "SELECT s.ticker FROM _permno_link l JOIN stg_spine s USING (security_id) WHERE l.how = 'ticker' "
+                "ORDER BY s.ticker LIMIT 40").fetchall()]
+            found.append(("crsp_ticker_link", wrds_history.NAME,
+                          f"{by['ticker']} PERMNOs linked by ticker only (no CUSIP behind them): " + ", ".join(names)))
 
     # ── Actions ───────────────────────────────────────────────────────────────────────────────────────────────
 

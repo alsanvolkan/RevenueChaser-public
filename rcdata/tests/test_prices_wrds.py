@@ -374,6 +374,28 @@ def test_history_bars_crsp_first_then_compustat_and_alpaca_wins_its_sessions(bui
     assert _q("SELECT ticker FROM price_bars_daily WHERE session_date = '2024-03-01'")[0]["ticker"] == "OLD-A"
 
 
+@pytest.mark.parametrize("col", ["hdrcusip", "ticker"])
+def test_a_crsp_year_without_its_link_columns_is_a_run_issue(monkeypatch, col):
+    """Review N1 of #353: the link reads ``hdrcusip`` and ``ticker``; a year that answers none is an issue, not a
+    quiet year of unlinked PERMNOs."""
+    data = _data()
+    data["crsp.dsf_v2"] = [{**r, col: None} for r in data["crsp.dsf_v2"]]
+    conn = FakeWrds(data)
+    monkeypatch.setattr(wrds, "_factory", lambda: conn)
+    wrds.reset()
+    _backfill()
+    n, issues = ops.open_issues(wrds_history.NAME)
+    assert f"dsf.{col}" in {i["key"] for i in issues}
+    wrds.reset()
+
+
+def test_the_build_note_counts_the_crsp_link_by_rule_and_the_unlinked_permnos(fake):
+    """Review S4 of #353: the link is observable. AAPL's PERMNO links by its header CUSIP; nothing is unlinked."""
+    assert _backfill()["result"] == "changed"
+    row = base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    assert "CRSP link: 1 by hdrcusip, 0 by cusip, 0 by ticker, 0 by compustat; 0 unlinked; 0 gvkey aliases" in row["note"]
+
+
 def test_crsp_rows_reach_their_securities_without_ccm(fake):
     conn, _ = fake
     # SPY by ticker on CRSP's last day (the spine holds no CUSIP for it), OLDCO by Compustat's CUSIP.

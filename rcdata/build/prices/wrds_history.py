@@ -118,7 +118,7 @@ TABLES: dict[str, dict] = {
              "bar": (COMPUSTAT, "gvkey || ':' || iid", "replace(upper(tic), '.', '-')", "prcod", "prchd", "prcld",
                      "prccd", "cshtrd")},
     "dsf": {"wrds": "crsp.dsf_v2", "schema": DSF, "key": ["permno", "dlycaldt"], "date": "dlycaldt",
-            "last_year": CRSP_LAST_YEAR, "needed": ("dlyprc", "dlyret", "shrout"),
+            "last_year": CRSP_LAST_YEAR, "needed": ("dlyprc", "dlyret", "shrout", "hdrcusip", "ticker"),
             "sql": ("SELECT " + ", ".join(c for c, _ in DSF) + " FROM crsp.dsf_v2 WHERE {range}"),
             "bar": (CRSP, "permno", "CAST(NULL AS TEXT)", "dlyopen", "dlyhigh", "dlylow", "abs(dlyprc)", "dlyvol")},
     "sec_divid": {"wrds": "comp.sec_divid", "schema": DIVID, "key": ["gvkey", "iid", "datadate"], "date": "datadate",

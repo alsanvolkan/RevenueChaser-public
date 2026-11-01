@@ -1322,7 +1322,8 @@ are stored **nominal**; the factors are applied on read.
 applies no split a second time), `price_actions` (splits and dividends, the amount in today's share basis) and
 `index_levels_daily` (`^GSPC`).
 
-**Build issues** (dataset `prices/serving`, synced after each swap): `source_never_run`, `tier_a_no_bar`,
+**Build issues** (dataset `prices/serving`, synced after each swap): `source_never_run`, `crsp_ticker_link` (the CRSP
+PERMNOs linked to a spine security by ticker alone, named in one issue), `tier_a_no_bar`,
 `tier_a_no_shares`, `price_gap_no_action` (the split-adjusted close moved by 1.9 times or more, either way, within 7
 days, with no split), `adjustment_differs` (the store's total-return day return more than 1 bp from Alpaca's own, or
 more than half a cent on each of Alpaca's cent-rounded adjusted closes, the exact bound, where that is larger: about
