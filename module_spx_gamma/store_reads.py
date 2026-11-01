@@ -22,7 +22,7 @@ provider call: there is no live fallback any more.
   before the first weekly fetch) counts as released on its Tuesday + ``RELEASE_DAYS`` (the Friday), an estimate the
   label and ``release_estimated`` say is one. The
   weekly change is this report's long minus the previous report's (decision A5): the builder keeps no ``change_*``.
-  It is None (``change_gap``) when the two newest reports are not exactly a week apart (review SF4).
+  It is None (``change_gap``, "n/a (gap)") when the two newest reports are not 5 to 9 days apart (review SF4, #228).
 - ``spx_candles`` (``market.spx_close``): the SPX closes of the 8-week window. Cboe's SPX file has one column, so a
   row has a close and no open, high, low or volume (decision A6).
 """
@@ -61,6 +61,7 @@ MAX_LAG = FromCatalog(max_lag)
 # past day's render can count a report as released a little early. Used only where CFTC's schedule has no row (#227).
 RELEASE_DAYS = 3
 WEEK_DAYS = 7
+CONSECUTIVE_DAYS = range(WEEK_DAYS - 2, WEEK_DAYS + 3)
 VIX_SERIES = {"VIX": "^VIX", "VIX9D": "^VIX9D", "VIX3M": "^VIX3M", "VIX6M": "^VIX6M", "VIX1Y": "^VIX1Y",
               "VVIX": "^VVIX"}
 COT_PREFIX = "cftc:tff:13874A:"
@@ -305,9 +306,9 @@ def cot_tff(day) -> dict:
     if stale:
         return _missing("CFTC COT", d, source=SERIES_SOURCE, payload=None, status=rows[0]["status"] if rows else None)
     now = reports[released[-1]]
-    # review SF4: a weekly change only between reports exactly a week apart; across a missing report it is None
-    # and the board says "n/a (gap)".
-    gap = len(released) > 1 and (released[-1] - released[-2]).days != WEEK_DAYS
+    # review SF4: a weekly change only between consecutive reports; across a missing report it is None and the board
+    # says "n/a (gap)". Consecutive is 5 to 9 days apart (#228 item 3): a holiday week dates a report on the Monday.
+    gap = len(released) > 1 and (released[-1] - released[-2]).days not in CONSECUTIVE_DAYS
     prev = reports[released[-2]] if len(released) > 1 and not gap else {}
     released_on, estimated = release[released[-1]]
     payload: dict = {"report_date": released[-1].isoformat(), "release_date": released_on.isoformat(),
