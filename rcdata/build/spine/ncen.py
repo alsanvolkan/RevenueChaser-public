@@ -8,12 +8,15 @@ row per series and filing: ``SERIES_ID``, ``FUND_NAME``, the fund-type flags ``I
 assets ``DAILY_AVG_NET_ASSETS`` / ``MONTHLY_AVG_NET_ASSETS``) and ``SECURITY_EXCHANGE.tsv`` (the ticker and exchange,
 filled for the ETFs). ``SUBMISSION.tsv`` gives each filing's CIK and dates.
 
-**Cadence: monthly, the ``sec/fsds`` rule.** ``due.py`` knows daily, weekly and monthly, not quarterly. A run asks the
-newest quarter that has ended, then the one before (a 404 is "not published yet"), and stops at the first quarter it
-holds: a published quarter's file is not re-issued, so a held one is never asked again and a month is at most a
-month late for a new quarter. If-Modified-Since is not needed for that, and the raw file stays the resume marker. A
-backfill asks the last four quarters (an N-CEN is filed once a fiscal year, so four quarters hold every fund's
-newest one; measured 1 Nov 2026 over 2025q4-2026q3: 12,422 series, 4,248 ``IS_ETF=Y``, every one with a ticker).
+**Cadence: monthly.** ``due.py`` knows daily, weekly and monthly, not quarterly. Every run, the daily Fetch and the
+backfill alike, holds the last four published quarters: from the newest quarter that has ended backwards, a quarter
+not held is asked (a 404 is "not published yet", and the walk goes one quarter further), until four are held. An
+N-CEN is filed once a fiscal year, so four quarters hold every fund's newest one (measured 1 Nov 2026 over
+2025q4-2026q3: 12,422 series, 4,248 ``IS_ETF=Y``, every one with a ticker); one quarter alone holds a fraction of the
+filers (2026q3: 396 CIKs, 2026q1: 1,796), which would mislabel trusts under ``etf``'s commodity rule (review M1 of
+PR 349). A published quarter is not re-issued, so a held one is never asked again (If-Modified-Since buys nothing
+and the raw file stays the resume marker), and a month is at most a month late for a new quarter. A quarter held
+raw but never typed is typed on the next run.
 
 **Newest filing per series wins**: the build stages every held quarter and keeps each series' rows of its newest
 filing (``filing_date``, then the accession). Every filer's CIK is kept as well (``filer.parquet``), a unit
@@ -77,6 +80,11 @@ def meta_path(raw: Path) -> Path:
     return raw.with_name(raw.name + META_SUFFIX)
 
 
+def quarters_held() -> int:
+    """How many quarters are typed to Parquet; ``etf``'s commodity rule needs :data:`BACKFILL_QUARTERS`."""
+    return len(stage.partitions(parquet_dir(), "quarter"))
+
+
 def _refuse(quarter: str, content: bytes) -> None:
     """``SourceError`` unless ``content`` is a zip holding the three tables read, before it is kept."""
     if not zipfile.is_zipfile(io.BytesIO(content)):
@@ -112,23 +120,32 @@ class Ncen:
         return base.write_raw(raw, r.content)
 
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
-        for quarter in ended_quarters(as_of):
-            if raw_path(quarter).exists():
-                ctx.notes.append(f"{quarter} held: nothing newer published")
-                return []
+        """Hold the last :data:`BACKFILL_QUARTERS` published quarters (review M1 of PR 349: a first Fetch is the
+        Backfill); a missing one is asked, a 404 is "not published yet" and the walk goes one quarter further back.
+        A held quarter is never asked again; one held raw but never typed (a run that died after its zip) is
+        returned to be typed (review S3)."""
+        out, held = [], 0
+        for quarter in ended_quarters(as_of, BACKFILL_QUARTERS + 1):
+            if held == BACKFILL_QUARTERS:
+                break
+            raw = raw_path(quarter)
+            if raw.exists():
+                held += 1
+                if not (parquet_dir() / f"quarter={quarter}" / "part-0.parquet").exists():
+                    ctx.pending.setdefault(NAME, []).append(quarter)
+                    out.append(raw)
+                continue
             raw = self._get(ctx, quarter, as_of)
             if raw is not None:
-                return [raw]
-        ctx.notes.append(f"none of {', '.join(ended_quarters(as_of))} published yet")
-        return []
+                held += 1
+                out.append(raw)
+        ctx.notes.append(f"{held} quarters held" + ("" if held == BACKFILL_QUARTERS else
+                                                    f", fewer than the {BACKFILL_QUARTERS} the commodity rule needs"))
+        return out
 
     def backfill(self, ctx: base.RunContext, start: date | None, end: date) -> None:
-        raws = []
-        for quarter in ended_quarters(end, BACKFILL_QUARTERS):
-            raw = raw_path(quarter) if raw_path(quarter).exists() else self._get(ctx, quarter, end)
-            if raw is not None:
-                raws.append(raw)
-        self.to_parquet_all(ctx, raws)
+        # The daily rule already holds the last four quarters: a backfill is that rule at its end day.
+        self.to_parquet_all(ctx, self.fetch(ctx, end))
 
     def to_parquet(self, ctx: base.RunContext, raw: Path) -> list[Path]:
         return self.to_parquet_all(ctx, [raw])

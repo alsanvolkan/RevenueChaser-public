@@ -41,8 +41,7 @@ def built(monkeypatch, http_mock):
     monkeypatch.setenv("RC_ALPHAVANTAGE_BASE", "https://av.test")
     monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "av-test-key")
     http_mock.add("company_tickers_exchange.json", SEC_FILE)
-    http_mock.add("2026q3_ncen.zip", fx.NCEN_Q3)
-    http_mock.add("2026q2_ncen.zip", fx.NCEN_Q2)
+    fx.add_ncen_routes(http_mock)
     http_mock.add("state=delisted", "{}")
     http_mock.add("av.test/query", AV)
     base.run_request({"dataset": ncen.NAME, "params": {"mode": "backfill", "to": "2026-11-02"}})
@@ -139,6 +138,18 @@ def test_an_etp_trust_that_files_no_ncen_is_a_commodity_and_a_uit_that_files_one
 def test_the_columns_later_prs_fill_stay_null(built):
     for r in _etf().values():
         assert (r["focus"], r["country"], r["adv_usd_20d"], r["expense_ratio"]) == (None, None, None, None)
+
+
+def test_with_fewer_than_four_quarters_held_no_etp_row_is_called_a_commodity(monkeypatch, http_mock):
+    """Review M1 of PR 349: one or two quarters hold a fraction of the filers, so a 1940-Act trust that filed in
+    another quarter would read as "files no N-CEN". GLD's call waits for the four quarters."""
+    monkeypatch.setattr(sec_edgar, "SEC_WWW_BASE", "https://sec.test")
+    http_mock.add("company_tickers_exchange.json", SEC_FILE)
+    fx.add_ncen_routes(http_mock, quarters=("2026q3", "2026q2"))
+    base.run_request({"dataset": ncen.NAME, "params": {"as_of": "2026-11-02"}})
+    base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": "2026-11-02"}})
+    assert ncen.quarters_held() == 2
+    assert {r["asset_class"] for r in _etf().values()} == {None}
 
 
 def test_without_ncen_no_etp_row_is_called_a_commodity(monkeypatch, http_mock):

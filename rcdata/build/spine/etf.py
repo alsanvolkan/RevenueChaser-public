@@ -17,8 +17,8 @@ until later PRs: ``focus``, ``country``, ``adv_usd_20d``, ``expense_ratio`` and 
 **The commodity rule.** An ``etp`` row of the spine that is no note, has no N-CEN series, and whose CIK filed no
 N-CEN at all is not a registered investment company: a grantor trust or commodity pool registered under the 1933
 Act only (GLD, SLV, USO, the bitcoin trusts), so ``asset_class='commodity'``. A unit investment trust does file
-N-CEN (SPY and DIA as S-6 registrants, with no series row), so it is not caught. With no N-CEN quarter held the rule
-says nothing.
+N-CEN (SPY and DIA as S-6 registrants, with no series row), so it is not caught. Until ``sec/ncen`` holds four
+quarters (a fund files once a fiscal year) the rule says nothing: one quarter holds a fraction of the filers.
 """
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ import duckdb
 from ....core.rotation_reference import ROTATION_ETFS
 from .. import base
 from .av_listing import STAGING as AV
+from . import ncen
 from .ncen import FILERS, STAGING as NCEN
 
 TABLE = "etf"
@@ -90,13 +91,15 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
     cols = [d[0] for d in cur.description]
     found = [dict(zip(cols, x)) for x in cur.fetchall()]      # before the next execute replaces the result
     filers = {r[0] for r in con.execute(f"SELECT DISTINCT cik FROM {FILERS}").fetchall()}
+    # Fewer quarters hold a fraction of the filers: "files no N-CEN" is only known over a full year (review M1).
+    year_held = ncen.quarters_held() >= ncen.BACKFILL_QUARTERS
     out = []
     for r in found:
         names = (r["fund_name"], r["av_name"], r["etp_name"])
         nc = r["in_nc"]
         etn = is_etn(*names)
         aum = r["daily_avg_net_assets"] if r["daily_avg_net_assets"] is not None else r["monthly_avg_net_assets"]
-        commodity = r["in_etp"] and not nc and not etn and bool(filers) and r["etp_cik"] not in filers
+        commodity = r["in_etp"] and not nc and not etn and year_held and r["etp_cik"] not in filers
         out.append({
             "ticker": r["ticker"], "name": next((n for n in names if n), None), "series_id": r["series_id"],
             "cik": r["nc_cik"] or r["etp_cik"],

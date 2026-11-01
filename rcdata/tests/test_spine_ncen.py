@@ -24,9 +24,12 @@ ROOT = "https://sec.test/files/dera/data/form-n-cen-data-sets/"
 def env(monkeypatch, http_mock):
     monkeypatch.setattr(sec_edgar, "SEC_WWW_BASE", "https://sec.test")
     monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
-    http_mock.add("2026q3_ncen.zip", fx.NCEN_Q3)
-    http_mock.add("2026q2_ncen.zip", fx.NCEN_Q2)
+    fx.add_ncen_routes(http_mock)
     return http_mock
+
+
+def _asked(env) -> list[str]:
+    return [str(r.url).rsplit("/", 1)[1] for r in env.requests]
 
 
 def _run(day="2026-11-02", **params) -> dict:
@@ -39,11 +42,16 @@ def _read(quarter: str, name: str = "part-0.parquet", select: str = "*", order: 
     return duckdb.connect().execute(sql).fetchall()
 
 
-def test_the_daily_run_asks_the_newest_ended_quarter_once_and_types_it(env):
+def test_the_daily_run_holds_the_last_four_published_quarters_and_types_them(env):
+    """Review M1 of PR 349: a first Fetch behaves like the Backfill, so the commodity rule never meets one quarter's
+    filers (2026q3 had 396 filer CIKs, 2026q1 alone 1,796)."""
     row = _run()
     assert row["result"] == "changed", row["note"]
-    (req,) = env.requests
+    assert _asked(env) == ["2026q3_ncen.zip", "2026q2_ncen.zip", "2026q1_ncen.zip", "2025q4_ncen.zip"]
+    req = env.requests[0]
     assert str(req.url) == ROOT + "2026q3_ncen.zip" and "ops@example.org" in req.headers["user-agent"]
+    assert sorted(p.name for p in ncen.parquet_dir().iterdir()) == [
+        "quarter=2025q4", "quarter=2026q1", "quarter=2026q2", "quarter=2026q3"]
     rows = _read("2026q3", select="series_id, ticker, exchange, cik, accession, filing_date, report_end, is_etf, "
                                   "is_index, is_multi_inverse_index, is_fund_of_fund, is_money_market, "
                                   "daily_avg_net_assets, monthly_avg_net_assets", order="ticker")
@@ -56,25 +64,38 @@ def test_the_daily_run_asks_the_newest_ended_quarter_once_and_types_it(env):
 
 def test_a_quarter_not_published_yet_falls_back_to_the_one_before(env):
     env.routes.insert(0, ("2026q3_ncen.zip", b"not found", 404, {}))
+    env.add("2025q3_ncen.zip", fx.NCEN_Q4)
     row = _run()
     assert row["result"] == "changed"
-    assert [str(r.url).rsplit("/", 1)[1] for r in env.requests] == ["2026q3_ncen.zip", "2026q2_ncen.zip"]
+    assert _asked(env) == ["2026q3_ncen.zip", "2026q2_ncen.zip", "2026q1_ncen.zip", "2025q4_ncen.zip",
+                           "2025q3_ncen.zip"]
     assert _read("2026q2", select="count(*)") == [(3,)]
+    assert ncen.quarters_held() == 4
 
 
 def test_a_quarter_held_is_not_asked_again(env):
     _run()
     env.requests.clear()
     row = _run("2026-12-01")
-    assert not env.requests and row["result"] == "unchanged" and "2026q3 held" in row["note"]
+    assert not env.requests and row["result"] == "unchanged" and "4 quarters held" in row["note"]
+
+
+def test_a_quarter_held_raw_but_never_typed_is_typed_on_the_next_run(env):
+    """Review S3: a run that kept the zip and died before its Parquet must not leave the quarter out for good."""
+    import shutil
+    _run()
+    shutil.rmtree(ncen.parquet_dir() / "quarter=2026q2")
+    env.requests.clear()
+    row = _run("2026-11-03")
+    assert not env.requests and row["result"] == "changed", row["note"]
+    assert _read("2026q2", select="count(*)") == [(3,)]
 
 
 def test_the_backfill_fetches_the_last_four_quarters(env):
     row = base.run_request({"dataset": ncen.NAME, "params": {"mode": "backfill", "to": "2026-11-02"}})
     assert row["result"] == "changed", row["note"]
-    asked = [str(r.url).rsplit("/", 1)[1] for r in env.requests]
-    assert asked == ["2026q3_ncen.zip", "2026q2_ncen.zip", "2026q1_ncen.zip", "2025q4_ncen.zip"]
-    assert sorted(p.name for p in ncen.parquet_dir().iterdir()) == ["quarter=2026q2", "quarter=2026q3"]
+    assert _asked(env) == ["2026q3_ncen.zip", "2026q2_ncen.zip", "2026q1_ncen.zip", "2025q4_ncen.zip"]
+    assert ncen.quarters_held() == 4
 
 
 def test_the_newest_filing_of_a_series_wins(env):

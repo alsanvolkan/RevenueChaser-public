@@ -525,3 +525,13 @@ NCEN_Q3 = ncen_zip(
     [("0001-26-000010", 1064641, "29-JUL-2026", "30-APR-2026"),
      ("0001-26-000011", 1424958, "25-AUG-2026", "31-MAY-2026"),
      ("0001-26-000012", 1415726, "10-SEP-2026", "30-JUN-2026")])
+#: Two quarters with one filing each and no ETF, so a fixture can hold the four quarters the commodity rule needs.
+NCEN_Q1 = ncen_zip([], [("0001-26-000020", 3000001, "02-FEB-2026", "30-NOV-2025")])
+NCEN_Q4 = ncen_zip([], [("0001-25-000030", 3000002, "03-NOV-2025", "31-AUG-2025")])
+
+
+def add_ncen_routes(http_mock, quarters=("2026q3", "2026q2", "2026q1", "2025q4")) -> None:
+    """Answer the named quarters' zips; any other quarter is the mock's 404, "not published"."""
+    zips = {"2026q3": NCEN_Q3, "2026q2": NCEN_Q2, "2026q1": NCEN_Q1, "2025q4": NCEN_Q4}
+    for q in quarters:
+        http_mock.add(f"{q}_ncen.zip", zips[q])
