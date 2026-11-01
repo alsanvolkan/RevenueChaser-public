@@ -972,12 +972,15 @@ def test_a_chain_step_cannot_wait_on_an_hourly_row():
         A.check_chain(A.REGISTRY + (step,))
 
 
-def test_the_spx_gamma_fetch_runs_tuesday_to_saturday_after_the_stored_close():
-    """#291: the scheduled SPX Gamma Fetch keeps a raw day (all expiries) for every session. 06:30 Amsterdam,
-    Tuesday to Saturday, is after the builder stored the previous session's Cboe SPX close; it is not chained,
-    because the CLI itself waits for that close (exit 3, no UW call)."""
+def test_the_spx_gamma_fetch_runs_on_weekdays_after_the_stored_close():
+    """#291: the scheduled SPX Gamma Fetch keeps a raw day (all expiries) for every session. The builder stores the
+    market series on the first pass of each trading day (00:07 New York, ``rcdata/build/due.py``), so 06:30
+    Amsterdam Monday to Friday finds the previous session's Cboe SPX close: Monday fetches Friday. A Saturday run
+    would never find Friday's close (no trading day, no builder pass). Not chained: the CLI waits for that close
+    itself (exit 3, no UW call)."""
     e = A.entry("RC-SPX-Gamma-Fetch")
     assert e.args == ("-m", "RevenueChaser.module_spx_gamma", "--nightly")
-    assert e.time == "06:30" and e.days == A._TUE_SAT and e.after is None and not e.hourly
+    assert e.time == "06:30" and e.days == A._WEEKDAYS and e.after is None and not e.hourly
     assert e.tables_written == () and e.default_install is False
-    assert e.schedule == "weekly Tuesday, Wednesday, Thursday, Friday, Saturday 06:30 (local)"
+    assert e.settings.start_when_available is False
+    assert e.schedule == "weekly Monday, Tuesday, Wednesday, Thursday, Friday 06:30 (local)"
