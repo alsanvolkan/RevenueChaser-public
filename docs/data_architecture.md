@@ -972,7 +972,7 @@ rather than growing: without it a connection may take 80 % of the machine's RAM,
 first `prices/serving` build on #319's code (request #35, 30 Oct 2026, 7.7 GB peak on a 15 GB server).
 
 **Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`. Each kind is one
-file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `3`), is described under
+file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `4`), is described under
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
 below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `1`), under "Fundamentals" after it; and the options
@@ -1144,7 +1144,7 @@ the old identity tables there are untouched (D5: they are empty since 27 Oct).
 | `funds/etf_holdings` | daily | the SPDR workbooks of the 11 sector funds and XBI/XOP/XME/KRE/XHB/XRT/KIE, the iShares `latest-holdings.csv` of SOXX/IBB/ITA/ITB/IGV/IAK, and UW `/etfs/<t>/holdings` whole (no top-10 cap) for the 14 themes; on a day UW holds nothing for ARKQ, ARK's own holdings CSV (`ark-ARKQ.csv`, #339; AIRR, SKYY, WCLD and ROBO have no machine-readable issuer file) | none: serves `etf_holdings` itself |
 | `alphavantage/listing_status` | daily, keyed (builder service) | Alpha Vantage `LISTING_STATUS` (CSV, every US listing: `assetType` `ETF` or `Stock`, `ipoDate`), plus one `state=delisted` call whose non-CSV answer is a `no_rows` build issue, never a failed run (#346); the key is never stored or logged | `stg_av_listing` (the newest snapshot) |
 | `sec/ncen` | monthly (the `sec/fsds` rule: the newest ended quarter, a 404 is not yet, a held quarter is not asked again; a backfill asks the last 4) | `www.sec.gov/files/dera/data/form-n-cen-data-sets/<YYYY>q<N>_ncen.zip`: `FUND_REPORTED_INFO.tsv` joined to `SECURITY_EXCHANGE.tsv` on `FUND_ID` (the series' name, ticker, fund-type flags, average net assets), `SUBMISSION.tsv` for each filing's CIK and dates (#346) | `stg_ncen` (each series' newest filing, every held quarter), `stg_ncen_filer` (every filer's CIK) |
-| `spine/security` | daily | none: builds the served tables from the staging tables | the four tables below except `fund` and `etf_holdings` |
+| `spine/security` | daily | none: builds the served tables from the staging tables | the tables below except `fund` and `etf_holdings` |
 
 The sources load their Parquet into TEMP tables of the build connection (never stored in the file), and all
 but one stop there; `sec/company_tickers_mf` also serves `fund` from its own staging, because nothing derives
@@ -1173,7 +1173,7 @@ own mark: a panel header that says `cli` is recorded as `panel:cli`.
 the CLI or a Fetch), so the first hourly builder pass after a deploy calls no spine source before the attended
 steps, and a first attempt that failed is not retried every hour.
 
-**Served tables** (`spine` serving schema version `3`). Periods are `valid_from` inclusive, `valid_to` exclusive
+**Served tables** (`spine` serving schema version `4`). Periods are `valid_from` inclusive, `valid_to` exclusive
 (Compustat's inclusive ends are moved one day on), `valid_to` NULL while current.
 
 | Table | Rows |
@@ -1182,6 +1182,7 @@ steps, and a first attempt that failed is not retried every hour.
 | `security_history` | the SEC file's `cik`, `name`, `exchange` per ticker over the stored snapshots; Compustat's identifier history of the linked securities |
 | `gics_history` | Compustat's GICS periods of the linked companies |
 | `index_membership` | the fund-file members (source `funds/index_holdings`) and Compustat's constituents (source `wrds/idxcst_his`, the check) |
+| `etf` | the ETF universe, one row per ticker (#346): Alpha Vantage's active `assetType=ETF` rows ∪ N-CEN's `IS_ETF=Y` series ∪ `security`'s `etp` rows, `source` `both` / `av` / `ncen` / `etp`. Every one is stored: no threshold and no `active` column (a board's thresholds are its settings, applied at read time). `is_etn` by a name rule (ETN, ETRACS, a dated note, a bank issuer's name): flagged, kept, not counted as ETFs. From the series' newest N-CEN: `is_index`, `is_lev_inverse` (`IS_MULTI_INVERSE_INDEX`), `is_money_market`, `is_fund_of_funds` (NULL, not false, for a row N-CEN does not hold) and `aum` (`DAILY_AVG_NET_ASSETS`, else `MONTHLY_AVG_NET_ASSETS`, `aum_as_of` the filing's report end); `inception` from AV's `ipoDate`; `is_option_income` by a name rule (option income, covered call, buffer, autocallable, defined or target outcome); `asset_class` `commodity` for an `etp` row that is no note and whose CIK files no N-CEN at all (a 1933-Act trust: GLD, SLV, USO; a UIT such as SPY files one as an S-6 registrant); `sector_name` for the 11 sector SPDRs (`core/rotation_reference.py`). Still NULL: `focus`, `country`, `adv_usd_20d`, `expense_ratio` and every other `asset_class` (later PRs). Built by `spine/security` (`rcdata/build/spine/etf.py`), after `security` |
 | `etf_holdings` | every holding of each ETF of `funds/etf_holdings`, per day: `as_of`, `etf`, `provider`, `ticker`, `cusip`, `name`, `weight` (the relatedness peer sets' source) |
 | `fund` | one per share class of the newest SEC fund file: `cik`, `series_id`, `class_id`, the normalised `ticker` and the file's `ticker_raw`, `is_etf` with the `is_etf_source` that decided it, and the file's provenance. `security`'s counterpart: an ETF is a series of a trust, so it has no row of its own in the equity file (the ETF rule, and the two exceptions, below). The kind's only source-owned served table, so `base.shrink_scope` relaxes it for `allow_shrink` on `sec/company_tickers_mf` alone: an empty `fund` refuses the swap for every spine dataset until that one is run |
 
@@ -1197,9 +1198,10 @@ every filter — the error to weigh when the second signal (the ticker trading o
 the N-CEN ETF field) is chosen. A symbol that does not parse (`(NWAGX)`, `n/a`, the empty string) is dropped and counted in the
 run's note.
 
-**The ETF universe is `fund` plus `security`'s `etp` rows.** SPY is a unit investment trust and GLD a commodity
-trust: neither has a series and a class, so neither is in the fund file. Both are rows of the equity file (GLD,
-SLV and USO are its `etp` rows). A reader after the whole ETF universe reads both tables, never `fund` alone.
+**The ETF universe is `etf`** (#346). Before it, a reader took `fund` plus `security`'s `etp` rows: SPY is a unit
+investment trust and GLD a commodity trust, so neither has a series and a class in the fund file, and both are rows
+of the equity file (GLD, SLV and USO are its `etp` rows). `etf` carries those `etp` rows itself, so a reader after
+the ETF universe reads `etf`, never `fund` alone.
 
 **Tier rule v2** (`rcdata/build/spine/tier.py`): A = listed on Nasdaq, NYSE or Cboe and not an excluded type
 (`core.identity.types.EXCLUDED_TYPES`; an untyped name stays); B = listed, excluded type; C = OTC; D = no exchange.

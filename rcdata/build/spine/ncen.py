@@ -175,7 +175,7 @@ class Ncen:
                    TRY_STRPTIME(s.FILING_DATE, '%d-%b-%Y')::DATE AS filing_date,
                    TRY_STRPTIME(s.REPORT_ENDING_PERIOD, '%d-%b-%Y')::DATE AS report_end,
                    trim(f.SERIES_ID) AS series_id, trim(f.FUND_NAME) AS fund_name,
-                   nullif(upper(trim(e.FUND_TICKER_SYMBOL)), '') AS ticker, nullif(trim(e.FUND_EXCHANGE), '') AS exchange,
+                   nullif(replace(upper(trim(e.FUND_TICKER_SYMBOL)), '.', '-'), '') AS ticker, nullif(trim(e.FUND_EXCHANGE), '') AS exchange,
                    {flag('IS_ETF')}, {flag('IS_INDEX')}, {flag('IS_MULTI_INVERSE_INDEX')}, {flag('IS_MONEY_MARKET')},
                    {flag('IS_FUND_OF_FUND')},
                    TRY_CAST(f.DAILY_AVG_NET_ASSETS AS DOUBLE) AS daily_avg_net_assets,
