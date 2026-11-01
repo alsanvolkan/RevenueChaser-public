@@ -201,7 +201,7 @@ class WrdsPrices:
     providers = (wrds.PROVIDER,)
     tables = ("price_bar_daily", "corporate_action", "price_revision", "wrds_price_diff")
     cadence = "monthly"
-    attended = True
+    attended = property(lambda self: base.wrds_attended())   # RC_WRDS_UNATTENDED=1: the builder runs it
     backfill_needs_from = False
     starts_by_hand = True
 
