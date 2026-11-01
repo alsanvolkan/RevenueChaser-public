@@ -1,5 +1,5 @@
 """ADR-3 / #283: one session date. Rule B maps a run time to its NY session; rule C keeps the
-calendar at 2025-2028 (raises outside, never guesses). No network."""
+calendar at 1993-2028 (raises outside, never guesses). No network."""
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
@@ -107,14 +107,14 @@ def test_outside_calendar_raises_rather_than_guesses():
     with pytest.raises(ValueError):
         session_for(ny(2029, 3, 5, 12, 0))
     with pytest.raises(ValueError):
-        session_for(ny(2024, 6, 5, 18, 0))
-    # 2025-01-02 pre-open needs 2024-12-31: outside the table, so it raises
+        session_for(ny(1992, 6, 5, 18, 0))
+    # 1993-01-04 pre-open needs 1992-12-31: outside the table, so it raises
     with pytest.raises(ValueError):
-        session_for(ny(2025, 1, 2, 8, 0))
+        session_for(ny(1993, 1, 4, 8, 0))
 
 
 def test_first_and_last_covered_sessions():
-    assert session_for(ny(2025, 1, 2, 17, 0)).session_date == date(2025, 1, 2)
+    assert session_for(ny(1993, 1, 4, 17, 0)).session_date == date(1993, 1, 4)
     assert session_for(ny(2028, 12, 29, 17, 0)).session_date == date(2028, 12, 29)
 
 

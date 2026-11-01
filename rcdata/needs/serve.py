@@ -30,7 +30,7 @@ from .catalog import DAYS, NEEDS, SESSIONS, TICKER, Need
 
 FRESH, STALE, MISSING = "fresh", "stale", "missing"
 #: Rows the store holds whose lag the calendar cannot count: an ``as_of`` outside the NYSE holiday table (it runs
-#: 2025-2028; Cboe's SPX series starts in 1975). The answer keeps its rows and says why in ``freshness["lag_reason"]``
+#: 1993-2028; Cboe's SPX series starts in 1975). The answer keeps its rows and says why in ``freshness["lag_reason"]``
 #: instead of raising (#334 review, blocker 1): a reader that never judges freshness must not lose its data to it.
 UNDECIDED = "undecided"
 NEVER = "never"
@@ -114,7 +114,7 @@ def lag_sessions(as_of: date, latest: date) -> int:
 
     ``latest`` counts as one, and every trading day strictly between the two as one more. Only days after ``as_of``
     are put to the calendar (#334 review): the walk used to step back to the session on or before ``as_of``, so a
-    2024-12-31 row read on 2025-01-02 asked the calendar about 2024, which its holiday table does not hold, where
+    2024-12-31 row read on 2025-01-02 asked the calendar about 2024, which its holiday table did not hold then, where
     the board's own forward count never did. The numbers inside the table are the same.
     """
     if as_of >= latest:

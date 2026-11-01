@@ -11,7 +11,7 @@ A source that fails is a build issue and the others go on; its earlier Parquet s
 served. All sources failing is a failed run.
 
 ``session_date`` is the New York session on or before ``obs_date`` from ``core/calendar.py``, and empty outside its
-2025-2028 table (the calendar's rule C).
+1993-2028 table (the calendar's rule C).
 """
 from __future__ import annotations
 

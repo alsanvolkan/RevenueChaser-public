@@ -362,7 +362,7 @@ def test_f1_est_boundary_uses_the_est_close(rawstore_tmp_db, clock, yahoo):
 
 
 def test_f1_the_rule_compares_dates_not_the_calendar_on_the_last_bar(rawstore_tmp_db, clock, yahoo):
-    """Fixtures end in 2024 or 2025, before the holiday table starts; the last bar is never looked up in it."""
+    """Fixtures end in 2024 or 2025; the rule compares dates, so the last bar is never looked up in the holiday table."""
     clock(RUN)
     _seed_at("OLDFIX", date(2024, 5, 1), RUN)                          # written after D's close + 30: not stale
     assert not indicators.load_ohlc("OLDFIX").empty
