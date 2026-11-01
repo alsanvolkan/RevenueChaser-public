@@ -38,7 +38,7 @@ CYCLE_DAYS = {"weekly": 7, "monthly": 30}
 REQUESTED_BY = "schedule"
 ATTENDED_WHY = "attended: run from the CLI on the server (a person logs in; WRDS_USERNAME must be set)"
 WRDS_FAILED_WHY = ("the last WRDS run failed: it waits for a person (no hourly retry, the last snapshot stays); "
-                   "a successful Fetch or CLI run clears it")
+                   "a newer run by a person (Fetch or CLI) that does not fail clears it")
 BY_HAND_WHY = "starts by hand: not due until a first run from the CLI or a Fetch has built it"
 
 
