@@ -233,11 +233,11 @@ def _link(dsf, spine, secd=()):
     con = duckdb.connect()
     con.execute("CREATE TABLE stg_wrds_dsf (permno TEXT, dlycaldt DATE, hdrcusip TEXT, cusip TEXT, ticker TEXT)")
     con.executemany("INSERT INTO stg_wrds_dsf VALUES (?, ?, ?, ?, ?)", dsf)
-    con.execute("CREATE TABLE stg_spine (security_id TEXT, ticker TEXT, cusip TEXT)")
-    con.executemany("INSERT INTO stg_spine VALUES (?, ?, ?)", spine)
-    con.execute("CREATE TABLE stg_wrds_secd (gvkey TEXT, iid TEXT, cusip TEXT)")
+    con.execute("CREATE TABLE stg_spine (security_id TEXT, ticker TEXT, cusip TEXT, is_etf BOOLEAN, inception DATE)")
+    con.executemany("INSERT INTO stg_spine VALUES (?, ?, ?, ?, ?)", [tuple(r) + (None, None)[len(r) - 3:] for r in spine])
+    con.execute("CREATE TABLE stg_wrds_secd (gvkey TEXT, iid TEXT, cusip TEXT, datadate DATE)")
     if secd:
-        con.executemany("INSERT INTO stg_wrds_secd VALUES (?, ?, ?)", secd)
+        con.executemany("INSERT INTO stg_wrds_secd VALUES (?, ?, ?, ?)", [tuple(r) + (None,)[len(r) - 3:] for r in secd])
     return {p: (sid, how) for p, sid, how in con.execute(
         f"SELECT permno, security_id, how FROM ({wrds_history.PERMNO_LINK})").fetchall()}
 
@@ -252,7 +252,7 @@ def test_a_permno_links_by_its_header_cusip_then_an_old_cusip_then_its_last_tick
              ("10001", END, "11111111", "11111111", "NEWN"),
              ("84398", END, "78462F10", "78462F10", "SPY")],           # an ETF the spine holds without a CUSIP
         spine=[("001690:01", "AAPL", "037833100"), ("002000:01", "NEWX", "222222229"),
-               ("figi:BBG000BDTBL9", "SPY", None)])
+               ("figi:BBG000BDTBL9", "SPY", None, True, "1993-01-22")])
     assert got == {"14593": ("001690:01", "hdrcusip"), "10001": ("002000:01", "cusip"),
                    "84398": ("figi:BBG000BDTBL9", "ticker")}
 
@@ -275,6 +275,24 @@ def test_an_unlinked_permno_reaches_compustat_by_cusip_and_one_permno_takes_one_
         spine=[("001690:01", "AAPL", "037833100")],
         secd=[("099999", "01", "680000101"), ("001690", "01", "037833100")])
     assert got == {"50000": ("099999:01", "compustat"), "14593": ("001690:01", "hdrcusip")}
+
+
+def test_a_ticker_never_hands_a_delisted_names_history_to_the_listing_that_took_its_ticker():
+    """Review M1 of #353: ABC is listed on CRSP's last day, delisted in 2026, and its ticker went to a new listing on
+    today's spine. Its 1993-2025 bars must not become the newcomer's history: a spine CUSIP that contradicts, an ETF
+    that did not exist on CRSP's last day, and a newest row without a ticker all leave the PERMNO unlinked."""
+    got = _link(
+        dsf=[("60000", END, "55555555", "55555555", "ABC"),             # spine ABC carries another CUSIP
+             ("60001", END, "66666666", "66666666", "NEWF"),            # an ETF of that name launched in 2026
+             ("60002", "2019-03-01", "77777777", "77777777", "OLDT"),   # its newest row has no ticker
+             ("60002", END, "77777777", "77777777", None),
+             ("60003", END, "88888888", "88888888", "GOOD"),            # an ETF listed before CRSP's last day
+             ("60004", END, "12121212", "12121212", "KEPT")],           # Compustat holds the spine row that day
+        spine=[("figi:ABC", "ABC", "999999999"), ("figi:NEWF", "NEWF", None, True, "2026-03-02"),
+               ("figi:OLDT", "OLDT", None), ("figi:GOOD", "GOOD", None, True, "2010-05-04"),
+               ("012345:01", "KEPT", "343434343")],
+        secd=[("012345", "01", "343434343", END)])
+    assert got == {"60003": ("figi:GOOD", "ticker"), "60004": ("012345:01", "ticker")}
 
 
 # ── Compustat's own adjusted return: the ajexdi/trfd rule ─────────────────────────────────────────────────────

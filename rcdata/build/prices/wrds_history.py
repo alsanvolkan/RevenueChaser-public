@@ -433,9 +433,12 @@ class WrdsPrices:
 # so the whole PERMNO links to one security, by the first rule that matches:
 #   1. ``hdrcusip``: its header CUSIP (8 characters) is the first 8 of a spine security's 9-character CUSIP;
 #   2. ``cusip``: any CUSIP it carried on a staged day is (a CUSIP changed since);
-#   3. ``ticker``: its ticker on its newest staged row is a spine ticker, when that row is on CRSP's newest staged day
-#      (still listed: a delisted PERMNO's old ticker is often someone else's today) and no other PERMNO had that ticker
-#      that day (CRSP names both Berkshire classes ``BRK``). This is how ETFs link: the spine holds no CUSIP for them;
+#   3. ``ticker``: its ticker on its newest staged row (NULL if that row has none) is a spine ticker, when that row is on
+#      CRSP's newest staged day (still listed: a delisted PERMNO's old ticker is often someone else's today) and no other
+#      PERMNO had that ticker that day (CRSP names both Berkshire classes ``BRK``); and the spine row existed then: it
+#      has no CUSIP to contradict, or Compustat holds its ``gvkey:iid`` on that day, and an ETF's ``etf.inception`` is
+#      on or before it (review M1 of #353: a 2026 listing that took a delisted name's ticker gets none of its history).
+#      This is how ETFs link: the spine holds no CUSIP for them;
 #   4. ``compustat``: as 2 against a Compustat security's CUSIP in ``comp.secd`` (a delisted name, off the spine).
 # Then one PERMNO per security (the best rule, then the newest PERMNO), so two never fill one security's day.
 # An unlinked PERMNO keeps ``permno:<PERMNO>``; it links at the next build once the spine holds it (no new query).
@@ -448,12 +451,13 @@ class WrdsPrices:
 # shortcut: one security per PERMNO and the reverse; a security that changed PERMNO keeps only its newest one's
 # history, measure ``permno:`` rows with a spine ticker once the full history is built.
 PERMNO_LINK = """
-    WITH p AS (SELECT permno, max(dlycaldt) AS last, arg_max(ticker, dlycaldt) AS ticker,
-                      arg_max(hdrcusip, dlycaldt) AS hdrcusip FROM stg_wrds_dsf GROUP BY permno),
-    c AS (SELECT DISTINCT permno, cusip FROM stg_wrds_dsf WHERE cusip IS NOT NULL),
+    WITH p AS (SELECT permno, max(dlycaldt) AS last, arg_max_null(ticker, dlycaldt) AS ticker,
+                      left(arg_max_null(hdrcusip, dlycaldt), 8) AS hdrcusip FROM stg_wrds_dsf GROUP BY permno),
+    c AS (SELECT DISTINCT permno, left(cusip, 8) AS cusip FROM stg_wrds_dsf WHERE cusip IS NOT NULL),
     newest AS (SELECT * FROM p WHERE last = (SELECT max(last) FROM p)),
     alone AS (SELECT ticker FROM newest GROUP BY ticker HAVING count(*) = 1),
-    s AS (SELECT security_id, ticker, left(cusip, 8) AS c8 FROM stg_spine),
+    s AS (SELECT security_id, ticker, left(cusip, 8) AS c8, coalesce(is_etf, false) AS is_etf, inception
+          FROM stg_spine),
     comp AS (SELECT DISTINCT gvkey || ':' || iid AS security_id, left(cusip, 8) AS c8 FROM stg_wrds_secd
              WHERE cusip IS NOT NULL),
     cand AS (
@@ -461,6 +465,9 @@ PERMNO_LINK = """
         UNION ALL SELECT c.permno, s.security_id, 2, 'cusip' FROM c JOIN s ON s.c8 = c.cusip
         UNION ALL SELECT n.permno, s.security_id, 3, 'ticker' FROM newest n JOIN alone USING (ticker)
                   JOIN s ON s.ticker = n.ticker
+                  WHERE (s.c8 IS NULL OR EXISTS (SELECT 1 FROM stg_wrds_secd d WHERE d.datadate = n.last
+                                                 AND d.gvkey || ':' || d.iid = s.security_id))
+                    AND (NOT s.is_etf OR s.inception <= n.last)
         UNION ALL SELECT c.permno, m.security_id, 4, 'compustat' FROM c JOIN comp m ON m.c8 = c.cusip),
     best AS (SELECT cand.*, p.last FROM cand JOIN p USING (permno)
              QUALIFY row_number() OVER (PARTITION BY permno ORDER BY rule, security_id) = 1)

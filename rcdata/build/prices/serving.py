@@ -177,17 +177,24 @@ def _create(con: duckdb.DuckDBPyConnection, table: str, select: str) -> int:
 
 
 def _spine(con: duckdb.DuckDBPyConnection) -> int:
-    """``stg_spine``: the live spine's ``security`` rows with their security id (empty before a first spine)."""
+    """``stg_spine``: the live spine's ``security`` rows with their security id (empty before a first spine), and
+    ``is_etf`` / ``inception`` from its ``etf`` table when it has one (schema 4, #349), for the CRSP ticker rule."""
     from ... import serving
     con.execute("CREATE OR REPLACE TEMP TABLE stg_spine (ticker TEXT, cik TEXT, tier TEXT, security_type TEXT, "
-                "gvkey TEXT, iid TEXT, composite_figi TEXT, security_id TEXT, cusip TEXT)")
+                "gvkey TEXT, iid TEXT, composite_figi TEXT, security_id TEXT, cusip TEXT, is_etf BOOLEAN, "
+                "inception DATE)")
     live = serving.live_path("spine")
     if not live.exists():
         return 0
     con.execute(f"ATTACH {base.sql_path(live)} AS live_spine (READ_ONLY)")
     try:
+        has_etf = con.execute("SELECT count(*) FROM duckdb_tables() WHERE database_name = 'live_spine' "
+                              "AND table_name = 'etf'").fetchone()[0]
+        etf = ("LEFT JOIN (SELECT ticker AS etf_ticker, inception FROM live_spine.etf) e ON e.etf_ticker = ticker"
+               if has_etf else "LEFT JOIN (SELECT NULL AS etf_ticker, CAST(NULL AS DATE) AS inception) e ON false")
         con.execute(f"INSERT INTO stg_spine SELECT ticker, cik, tier, security_type, gvkey, iid, composite_figi, "
-                    f"{SPINE_ID}, nullif(cusip, '') FROM live_spine.security")
+                    f"{SPINE_ID}, nullif(cusip, ''), e.etf_ticker IS NOT NULL, e.inception "
+                    f"FROM live_spine.security {etf}")
     finally:
         con.execute("DETACH live_spine")
     return stage.count(con, "stg_spine")
