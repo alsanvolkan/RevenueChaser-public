@@ -120,6 +120,23 @@ def test_cftc_schedule_keys_each_release_on_the_tuesday_it_reports(fixture_text)
     assert all(d.weekday() == 1 for d in lag)
 
 
+def test_cftc_schedule_dates_each_table_by_its_own_heading():
+    """Review B1: a page with two years (December may show the next one) keeps each table's months in its year,
+    in either order, so no past key is overwritten with a wrong lag."""
+    table = lambda year, cells: (f"<h3>{year} Release Schedule</h3><table>"
+                                 f"<tr><td>January</td>{''.join(f'<td>{c}</td>' for c in cells)}</tr></table>")
+    a, b = table(2026, ("05*", "09")), table(2027, ("04*", "08"))
+    for page in (a + b, b + a):
+        lag = {r["obs_date"]: r["value"] for r in cftc_schedule.parse(page, {})}
+        assert lag == {date(2025, 12, 30): 6.0, date(2026, 1, 6): 3.0, date(2026, 12, 29): 6.0, date(2027, 1, 5): 3.0}
+
+
+def test_cftc_schedule_keys_a_tuesday_release_on_the_tuesday_before():
+    lag = {r["obs_date"]: r["value"] for r in cftc_schedule.parse(
+        "<h3>2026 Release Schedule</h3><table><tr><td>May</td><td>26*</td></tr></table>", {})}
+    assert lag == {date(2026, 5, 19): 7.0}
+
+
 def test_cftc_schedule_without_a_year_heading_parses_to_nothing():
     assert cftc_schedule.parse("<table><tr><td>January</td><td>09</td></tr></table>", {}) == []
 

@@ -6,7 +6,7 @@ November 2026: Veterans Day moves the 10 Nov report to Monday 16 Nov, and Thanks
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -49,3 +49,20 @@ def test_the_schedule_is_read_through_its_own_need(rcdata_market):
     assert need.providers == ("cftc",)
     from RevenueChaser.module_spx_gamma import READS
     assert "market.cot_release" in READS
+
+
+@pytest.mark.parametrize("releases, day, shown, released, estimated", [
+    # A Monday-dated report (Tuesday a holiday) maps to its week's Tuesday row: 9 Nov + Tue 10 Nov's 6 days.
+    (RELEASES, date(2026, 11, 13), "2026-11-02", "2026-11-06", False),
+    (RELEASES, date(2026, 11, 16), "2026-11-09", "2026-11-16", False),
+    # Review N1: without a schedule the estimate is the week's Friday (Tuesday + 3), not the Monday + 3.
+    ((), date(2026, 11, 12), "2026-11-02", "~2026-11-06", True),
+    ((), date(2026, 11, 13), "2026-11-09", "~2026-11-13", True),
+])
+def test_a_monday_dated_report_is_released_with_its_week(rcdata_market, releases, day, shown, released, estimated):
+    """Review S2: the Monday branch of ``_release_of``."""
+    mondays = tuple(r - timedelta(days=1) for r in REPORTS)
+    fx.serve(cot_reports=mondays, releases=releases, series_end=date(2026, 11, 30))
+    out = store_reads.cot_tff(day)
+    assert (out["payload"]["report_date"], out["payload"]["release_estimated"]) == (shown, estimated)
+    assert f"released {released}" in out["label"]

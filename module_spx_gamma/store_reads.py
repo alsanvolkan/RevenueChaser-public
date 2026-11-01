@@ -265,11 +265,10 @@ def _cot_report(by_field: dict[str, float], fields: tuple[str, ...]) -> float | 
 
 def _release_of(report: date, lags: dict[date, float]) -> tuple[date, bool]:
     """``(release day, estimated)``: from the schedule row of the report's week (keyed on its Tuesday; a holiday can
-    date a report on the Monday), else the report + ``RELEASE_DAYS`` estimate."""
+    date a report on the Monday), else the estimate: that Tuesday + ``RELEASE_DAYS``, the Friday."""
     tuesday = report + timedelta(days=1 - report.weekday())
     lag = lags.get(tuesday)
-    return (tuesday + timedelta(days=int(lag)), False) if lag is not None else (
-        report + timedelta(days=RELEASE_DAYS), True)
+    return tuesday + timedelta(days=int(lag) if lag is not None else RELEASE_DAYS), lag is None
 
 
 @_with_board_status("market_series")

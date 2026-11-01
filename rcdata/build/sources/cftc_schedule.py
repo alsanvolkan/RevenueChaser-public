@@ -43,16 +43,17 @@ def backfill(ctx, start: date, end: date) -> list[Path]:
 
 
 def releases(html: str) -> list[date]:
-    """The release dates of the page's year, in page order; nothing without the "<year> Release Schedule" heading."""
-    m = _YEAR.search(html)
-    if not m:
-        return []
+    """The release dates on the page, in page order. Each "<year> Release Schedule" heading dates the month rows up
+    to the next heading (December can show two years); rows before the first heading are not read."""
     out = []
-    for row in _ROW.findall(html[m.end():]):
-        cells = [re.sub(r"<[^>]+>|&nbsp;", " ", c).strip() for c in _CELL.findall(row)]
-        month = _MONTHS.get(cells[0].lower()) if cells else None
-        if month:
-            out += [date(int(m.group(1)), month, int(d)) for c in cells[1:] for d in re.findall(r"^(\d{1,2})", c)]
+    marks = list(_YEAR.finditer(html))
+    for i, m in enumerate(marks):
+        section = html[m.end(): marks[i + 1].start() if i + 1 < len(marks) else len(html)]
+        for row in _ROW.findall(section):
+            cells = [re.sub(r"<[^>]+>|&nbsp;", " ", c).strip() for c in _CELL.findall(row)]
+            month = _MONTHS.get(cells[0].lower()) if cells else None
+            if month:
+                out += [date(int(m.group(1)), month, int(d)) for c in cells[1:] for d in re.findall(r"^(\d{1,2})", c)]
     return out
 
 
