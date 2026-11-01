@@ -29,9 +29,9 @@ NEVER_CHECKED = "never_checked"
 STATUS_UNKNOWN = "status_unknown"
 DATASET_OF_TABLE = {"market_series": "market_series", "spx_gamma_expiry_strike": "uw/spot_expiry_strike",
                     "security": "spine/security", "index_membership": "funds/index_holdings",
-                    "fund": "sec/company_tickers_mf", "etf_holdings": "funds/etf_holdings"}
+                    "fund": "sec/company_tickers_mf", "etf_holdings": "funds/etf_holdings", "etf": "spine/security"}
 KIND_OF_TABLE = {"market_series": "market", "spx_gamma_expiry_strike": "market", "security": "spine",
-                 "index_membership": "spine", "fund": "spine", "etf_holdings": "spine"}
+                 "index_membership": "spine", "fund": "spine", "etf_holdings": "spine", "etf": "spine"}
 # The ownership store (PR 16).
 DATASET_OF_TABLE.update({"sec13f_ticker_period": "ownership/serve", "sec13f_periods": "ownership/serve",
                          "finra_short_interest": "finra/short_interest", "ibkr_shortable": "ibkr/shortable",

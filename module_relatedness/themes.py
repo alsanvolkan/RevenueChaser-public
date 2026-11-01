@@ -23,6 +23,7 @@ from RevenueChaser.core.gics_map import MORNINGSTAR_SECTORS, UNCLASSIFIED, canon
 from RevenueChaser.core.universe import SECTOR_COARSE_PREFIX
 
 from . import config, store as rel_store
+from .validation.metrics import THEME_RUNS_COLUMNS as _VALIDATION_COLUMNS
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +289,10 @@ def build_shadow(candidates=(60, 90, 120, 150), k_medium: int | None = None,
     existing = rawstore.get("theme_runs", run_id)
     if existing:                      # a rebuild of a live id keeps its pointer
         run_row["is_current"] = existing.get("is_current") or 0
+        # ... and its validation numbers: theme_runs is upsert, so a column left out of run_row would be
+        # written NULL (review R5, #342; the five val_* columns of module_relatedness/validation).
+        for col in _VALIDATION_COLUMNS:
+            run_row[col] = existing.get(col)
 
     # One transaction, scoped to this run: older runs' themes/tags/members stay
     # untouched, and a crash leaves either the old state or the whole new run.
