@@ -158,17 +158,32 @@ def test_the_real_ark_file_reads_its_stock_lines_with_their_cusips():
 
 def test_a_us_bloomberg_exchange_code_is_dropped_and_nothing_else_is_guessed():
     """``SYM UQ`` is Symbotic on Nasdaq: the real file of 30 Oct 2026 wrote it so. Without the rule the shared
-    ``norm_ticker`` reads it as the share class ``SYM-UQ``. A foreign listing (``6954 JT``) keeps what the file
-    wrote, which is no US ticker, so the served table drops it and its CUSIP stays in the Parquet."""
+    ``norm_ticker`` reads it as the share class ``SYM-UQ``. A foreign listing keeps what the file wrote in
+    ``ticker_raw`` and gets **no** ticker, whether its code is a number (``6954 JT``) or letters (``KOG NO``,
+    ``ABBN SE``, which ``norm_ticker`` alone would serve as the US share classes ``KOG-NO`` and ``ABBN-SE``)."""
     head = b"date,fund,company,ticker,cusip,shares,market value ($),weight (%)\n"
     body = (b'10/30/2026,ARKQ,SYMBOTIC INC,SYM UQ,87151X101,"1","$1.00",1.80%\n'
             b'10/30/2026,ARKQ,FANUC CORP,6954 JT,J13440102,"1","$1.00",1.00%\n'
+            b'10/30/2026,ARKQ,KONGSBERG GRUPPEN,KOG NO,R3796D109,"1","$1.00",0.90%\n'
+            b'10/30/2026,ARKQ,ABB LTD-REG,ABBN SE,H0010V101,"1","$1.00",0.80%\n'
             b'10/30/2026,ARKQ,DEERE & CO,DE UN,244199105,"1","$1.00",0.50%\n')
     rows = etf.parse_ark(head + body, "ARKQ")
-    assert [r["ticker_raw"] for r in rows] == ["SYM", "6954 JT", "DE"]
-    from RevenueChaser.rcdata.build.spine.funds import norm_ticker
-    assert [norm_ticker(r["ticker_raw"]) for r in rows] == ["SYM", None, "DE"]
-    assert rows[1]["cusip"] == "J13440102"
+    assert [r["ticker_raw"] for r in rows] == ["SYM", "6954 JT", "KOG NO", "ABBN SE", "DE"]
+    assert [etf.served_ticker(r) for r in rows] == ["SYM", None, None, None, "DE"]
+    assert [r["cusip"] for r in rows[1:4]] == ["J13440102", "R3796D109", "H0010V101"]
+
+
+def test_a_foreign_listing_reaches_the_parquet_but_not_the_served_table(env, http_mock):
+    _uw_empty(http_mock, "ARKQ")
+    body = fx.ark_csv([("TSLA", "88160R101", "TESLA INC"), ("KOG NO", "R3796D109", "KONGSBERG GRUPPEN")])
+    http_mock.routes.insert(0, ("_ARKQ_HOLDINGS.csv", lambda r: (200, body, {}), 200, {}))
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": AS_OF}})
+    assert [r[3] for r in _served("etf = 'ARKQ'")] == ["TSLA"]
+    import duckdb
+    part = etf.parquet_dir() / f"date={AS_OF}" / "part-0.parquet"
+    kept = duckdb.connect().execute(f"SELECT ticker, ticker_raw, cusip FROM read_parquet('{part.as_posix()}') "
+                                    "WHERE etf = 'ARKQ' AND cusip = 'R3796D109'").fetchall()
+    assert kept == [(None, "KOG NO", "R3796D109")]
 
 
 @pytest.mark.parametrize("body, match", [

@@ -83,7 +83,9 @@ ISHARES_PRODUCTS = {"SOXX": ("239705", "ishares-semiconductor-etf", False),
 ARK_FUNDS = {"ARKQ": "ARK_AUTONOMOUS_TECH._&_ROBOTICS_ETF_ARKQ_HOLDINGS.csv"}
 ARK_COLUMNS = ("fund", "company", "ticker", "cusip", "weight (%)")
 # Bloomberg's US exchange codes. ARK's file writes a few tickers with one (``SYM UQ``, 30 Oct 2026); any of these is
-# the US listing itself, so dropping it is no guess. Every other suffix (``6954 JT``) stays as the file wrote it.
+# the US listing itself, so dropping it is no guess. Any other suffix is a foreign listing (``6954 JT``, ``KOG NO``):
+# ``ticker_raw`` keeps what the file wrote and the line has no ticker, because ``norm_ticker`` would read ``KOG NO`` as
+# the US share class ``KOG-NO``.
 US_EXCHANGE_CODES = frozenset({"UA", "UN", "UP", "UQ", "UR", "US", "UV", "UW"})
 # The themes whose issuer has no keyless holdings file (VanEck, Global X, First Trust, WisdomTree, ROBO's adviser
 # Exchange Traded Concepts, U.S. Global) and the two Invesco funds its API answers 500 for. ARKQ is UW's first and
@@ -130,7 +132,9 @@ def parse_ark(data: bytes, fund: str) -> list[dict]:
     **Kept:** the lines with a ticker (the file's 36 stocks and ADRs on 30 Oct 2026), with their CUSIP and the weight
     in percent. **Dropped:** a line with no ticker — on that day the one money-market fund (``GOLDMAN FS TRSY OBLIG
     INST 468``, identifier ``X9USDGSFT``, which looks like a CUSIP and is none) — and the disclaimer, which has no
-    ``fund``. A trailing US Bloomberg exchange code is dropped (``SYM UQ`` is ``SYM``); nothing else is rewritten.
+    ``fund``. A trailing US Bloomberg exchange code is dropped (``SYM UQ`` is ``SYM``); nothing else is rewritten. A
+    ticker with any other suffix is a foreign listing (``6954 JT``, ``KOG NO``): ``ticker_raw`` keeps it and the
+    line's ``ticker`` is None, so the served table drops it and its CUSIP stays in the Parquet.
 
     A file without the header, without one of its columns, or whose lines name another fund is a failed file (a
     moved URL answers a page or another fund's file), never a quiet reread."""
@@ -153,9 +157,18 @@ def parse_ark(data: bytes, fund: str) -> list[dict]:
         ticker = _ark_ticker((r.get("ticker") or "").strip())
         if not ticker:
             continue                                         # the money-market fund (cash)
-        out.append({"ticker_raw": ticker, "cusip": _cusip(r.get("cusip")), "name": (r.get("company") or "").strip(),
-                    "weight": weight_of(r.get("weight (%)"))})
+        line = {"ticker_raw": ticker, "cusip": _cusip(r.get("cusip")), "name": (r.get("company") or "").strip(),
+                "weight": weight_of(r.get("weight (%)"))}
+        if " " in ticker:
+            line["ticker"] = None                            # a foreign listing: no US ticker, the CUSIP stays
+        out.append(line)
     return out
+
+
+def served_ticker(line: dict) -> str | None:
+    """The ticker a parsed line is served under: the parser's own verdict when it gave one (ARK's foreign listings
+    carry ``ticker`` None), else ``norm_ticker`` of the raw ticker."""
+    return line["ticker"] if "ticker" in line else norm_ticker(line["ticker_raw"])
 
 
 @dataclass(frozen=True)
@@ -303,7 +316,7 @@ class EtfHoldings:
             for line in f.parse(base.read_raw(raw)):
                 by_day.setdefault(as_of, []).append({
                     "as_of": as_of, "etf": f.etf, "provider": f.provider,
-                    "ticker": norm_ticker(line["ticker_raw"]), "ticker_raw": line["ticker_raw"],
+                    "ticker": served_ticker(line), "ticker_raw": line["ticker_raw"],
                     "cusip": line["cusip"], "name": line["name"], "weight": line["weight"],
                     "fetched_at": meta["fetched_at"], "run_id": meta["run_id"]})
         dropped = sum(1 for rows in by_day.values() for r in rows if r["ticker"] is None)
