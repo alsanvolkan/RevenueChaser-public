@@ -172,12 +172,30 @@ def test_a_failed_run_is_not_due_again_until_the_next_new_york_day(monkeypatch):
     ops.record_check(av.NAME, "failed", note="alphavantage listing status: a JSON answer", checked_on="2026-11-20")
     due_now, why = due.is_due(DATASETS[av.NAME])
     assert not due_now and "next New York day" in why
+    # The day's raw file is held: a rerun reuses it at 0 calls, so a failed build or swap retries hourly (S6a).
+    base.write_raw(av.raw_path(date(2026, 11, 20)), ACTIVE.encode())
+    due_now, why = due.is_due(DATASETS[av.NAME])
+    assert due_now and "the last check failed" in why
     monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 11, 21, 15, 0, tzinfo=timezone.utc))
     assert due.is_due(DATASETS[av.NAME])[0] is True
     # Narrow: a keyless dataset's failure is still due on the next hourly pass.
     ops.record_check("sec/ncen", "changed", checked_on="2026-11-19")
     ops.record_check("sec/ncen", "failed", note="x", checked_on="2026-11-21")
     assert due.is_due(DATASETS["sec/ncen"])[0] is True
+
+
+def test_the_earnings_calendar_shares_the_hold_and_its_raw_file_lifts_it(monkeypatch):
+    """S6a for the other Alpha Vantage dataset: no raw file for the day, held; the day's raw file held, due."""
+    from datetime import datetime, timezone
+    from RevenueChaser.core import calendar
+    from RevenueChaser.rcdata.build import DATASETS, due
+    from RevenueChaser.rcdata.build.fundamentals import earnings
+    monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 11, 20, 15, 0, tzinfo=timezone.utc))
+    ops.record_check(earnings.NAME, "changed", source_as_of="2026-11-19", checked_on="2026-11-19")
+    ops.record_check(earnings.NAME, "failed", note="x", checked_on="2026-11-20")
+    assert due.is_due(DATASETS[earnings.NAME])[0] is False
+    base.write_raw(earnings.raw_path(DATASETS[earnings.NAME].default_as_of()), b"symbol\r\n")
+    assert due.is_due(DATASETS[earnings.NAME])[0] is True
 
 
 def test_the_key_is_in_no_parquet_and_no_log_record_of_ours(env, caplog):

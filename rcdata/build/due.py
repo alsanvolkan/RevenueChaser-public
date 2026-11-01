@@ -10,8 +10,9 @@ A dataset is due (``is_due``) when nothing holds it and its last run is old enou
   paused dataset that was queued anyway (a Fetch, the CLI's), with a ``skipped: paused`` check row (PR #222);
 - so does ``dataset_schedule.next_due`` while it is later than today in New York (a hold until that day);
 - never built (no ``dataset_check`` row), or a last check that ``failed`` or was ``skipped`` (the day cap writes one,
-  and so does the pause skip): due; except a failure of a ``DAY_CAPPED`` provider's dataset (Alpha Vantage), due
-  again only on the next New York day;
+  and so does the pause skip): due; except a failure of a ``DAY_CAPPED`` provider's dataset (Alpha Vantage) that
+  holds no raw file for the day yet, due again only on the next New York day (with the day's raw file held a rerun
+  costs no call, so a failed build or swap retries on the next pass);
 - ``daily`` (the default, and what an unknown cadence reads as): due once the dataset's own ``default_as_of()`` has
   reached the last check's ``next_check_due`` (the next session after the as-of it ran for), so the SPX slice waits
   for the next complete session and the market series (as-of: today) run on the first pass of each trading day.
@@ -26,6 +27,7 @@ already has a request queued or running gets no second one, whoever queued the f
 from __future__ import annotations
 
 import sqlite3
+import sys
 from datetime import date
 
 from ...core import calendar
@@ -40,6 +42,13 @@ ATTENDED_WHY = "attended: run from the CLI on the server (a person logs in; WRDS
 #: the earnings calendar and the listing status): a failed check is due again on the next New York day (#349 S6).
 DAY_CAPPED = frozenset({"alphavantage"})
 BY_HAND_WHY = "starts by hand: not due until a first run from the CLI or a Fetch has built it"
+
+
+def _day_raw_held(ds) -> bool:
+    """True when ``ds`` already holds its raw file for ``default_as_of()``: a rerun reuses it at no call, so a failed
+    build or swap may retry on the next hourly pass (review S6a of #349). A dataset with no ``raw_path`` holds none."""
+    raw_path = getattr(sys.modules[type(ds).__module__], "raw_path", None)
+    return bool(raw_path and raw_path(ds.default_as_of()).exists())
 
 
 def is_due(ds) -> tuple[bool, str]:
@@ -59,7 +68,7 @@ def is_due(ds) -> tuple[bool, str]:
     if check is None:
         return True, "never built"
     if check["result"] == "failed" and DAY_CAPPED & set(getattr(ds, "providers", ())) \
-            and str(check.get("checked_on"))[:10] >= today:
+            and str(check.get("checked_on"))[:10] >= today and not _day_raw_held(ds):
         return False, "failed today: again on the next New York day (the provider allows 25 calls a day)"
     if check["result"] in ("failed", "skipped"):
         return True, f"the last check {'failed' if check['result'] == 'failed' else 'was skipped'}"

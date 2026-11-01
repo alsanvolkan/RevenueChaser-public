@@ -6,9 +6,10 @@
 answered ``{}`` (2 bytes) that day, so a delisted answer that is not the CSV is a ``no_rows`` build issue (one open
 row, resolved when the call answers a list) and the active list is kept. An active list under :data:`MIN_ETFS` ETF
 rows, or under :data:`MIN_SHARE` of the previous snapshot's, fails the run and is not kept. A failed run is due
-again on the next New York day, not on the next hourly pass (``due.py``), so the 25 a day are not spent on it. A JSON answer to the active call (a rate limit or an error, HTTP 200) fails the run and keeps
-nothing; its body is never echoed (it can repeat the key). Two requests a run, inside the ``alphavantage`` day cap
-it shares with the earnings calendar.
+again on the next New York day, not on the next hourly pass (``due.py``), so the 25 a day are not spent on it
+(unless the day's raw file is held: a rerun then costs no call). A JSON answer to the active call (a rate limit or
+an error, HTTP 200) fails the run and keeps nothing; its body is never echoed (it can repeat the key). Two requests
+a run, inside the ``alphavantage`` day cap it shares with the earnings calendar.
 
 The key (``ALPHAVANTAGE_API_KEY``, through ``core.credentials``) travels in the query string, which is never stored
 or logged: the meta keeps the URL without its query, and the builder silences httpx's request log

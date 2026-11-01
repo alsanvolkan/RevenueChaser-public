@@ -39,7 +39,8 @@ SCHEMA = [("ticker", "TEXT PRIMARY KEY"), ("name", "TEXT"), ("series_id", "TEXT"
           ("is_option_income", "BOOLEAN"), ("is_fund_of_funds", "BOOLEAN"), ("inception", "DATE"),
           # aum: N-CEN's average net assets over the filing's fiscal year (daily, else monthly average), not a
           # point-in-time AUM; aum_as_of is that year's end (review N4 of #349). A point-in-time AUM is a later PR's.
-          ("aum", "DOUBLE"), ("aum_as_of", "DATE"), ("adv_usd_20d", "DOUBLE"), ("expense_ratio", "DOUBLE"), ("sector_name", "TEXT"),
+          ("aum", "DOUBLE"), ("aum_as_of", "DATE"), ("adv_usd_20d", "DOUBLE"), ("expense_ratio", "DOUBLE"),
+          ("sector_name", "TEXT"),
           ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
 
 #: A note, by its name: ETN / ETRACS, a dated note, or a bank issuer's name (Alpha Vantage lists BMO's, UBS's,
@@ -56,12 +57,12 @@ OPTION_INCOME_NAME = re.compile(
     re.I)
 #: Leveraged or inverse, by the fund's name: a **name rule** beside N-CEN's ``IS_MULTI_INVERSE_INDEX``, which 185
 #: leveraged ``IS_ETF=Y`` series leave blank (review S1 of PR 349: Tradr 2X Long IBM, Defiance 2X Long RIOT). A
-#: multiple (2x-5x, 1.25x, -1x), ProShares' Ultra / UltraPro / UltraShort / Short (only ProShares': elsewhere "Ultra"
-#: is an ultra-short bond fund, a buffer or a dividend fund, measured over the N-CEN names of 1 Nov 2026), inverse,
-#: leveraged (not a leveraged-loan fund), and a daily fund that is long, short, bull or bear. A bare "short" is not
-#: enough: "iShares Short Treasury Bond" is no such fund.
+#: multiple (2x-5x, 1.25x, -1x, 1x short), ProShares' Ultra / UltraPro / UltraShort / Short (only ProShares':
+#: elsewhere "Ultra" is an ultra-short bond fund, a buffer or a dividend fund, measured over the N-CEN names of
+#: 1 Nov 2026), inverse, leveraged (not a leveraged-loan fund), and a daily fund that is long, short, bull or bear.
+#: A bare "short" is not enough: "iShares Short Treasury Bond" is no such fund.
 LEV_INVERSE_NAME = re.compile(
-    r"\b(?:[2-5]|1\.\d+)\s*x\b|-\s*1\s*x\b"
+    r"\b(?:[2-5]|1\.\d+)\s*x\b|-\s*1\s*x\b|\b1\s*x\s+short\b"
     r"|\bproshares\s+(?:ultra|short\b)|\binverse\b|\bleveraged\b(?!\s+loans?)"
     r"|\bdaily\b.*\b(?:long|short|bull|bear)\b|\b(?:long|short|bull|bear)\b.*\bdaily\b", re.I)
 #: The 11 sector SPDRs' Morningstar sector names, the ones ``engine.sector_etf_trees`` matches.
@@ -94,7 +95,8 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
                     QUALIFY row_number() OVER (PARTITION BY ticker
                                                ORDER BY filing_date DESC NULLS LAST, accession DESC, series_id) = 1),
              etp AS (SELECT ticker, cik, name, source_as_of, fetched_at FROM security WHERE security_type = 'etp')
-        SELECT t.ticker, av.ticker IS NOT NULL AS in_av, nc.ticker IS NOT NULL AS in_nc, etp.ticker IS NOT NULL AS in_etp,
+        SELECT t.ticker, av.ticker IS NOT NULL AS in_av, nc.ticker IS NOT NULL AS in_nc,
+               etp.ticker IS NOT NULL AS in_etp,
                av.name AS av_name, av.ipo_date, nc.fund_name, nc.series_id, nc.cik AS nc_cik, nc.is_index,
                nc.is_multi_inverse_index, nc.is_money_market, nc.is_fund_of_fund, nc.daily_avg_net_assets,
                nc.monthly_avg_net_assets, nc.report_end, etp.cik AS etp_cik, etp.name AS etp_name,
@@ -121,7 +123,8 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
             "cik": r["nc_cik"] or r["etp_cik"],
             "source": "both" if r["in_av"] and nc else "av" if r["in_av"] else "ncen" if nc else "etp",
             "is_etn": etn, "asset_class": "commodity" if commodity else None, "focus": None, "country": None,
-            "is_index": _flag(nc, r["is_index"]), "is_lev_inverse": True if is_lev_inverse(*names) else _flag(nc, r["is_multi_inverse_index"]),
+            "is_index": _flag(nc, r["is_index"]),
+            "is_lev_inverse": True if is_lev_inverse(*names) else _flag(nc, r["is_multi_inverse_index"]),
             "is_money_market": _flag(nc, r["is_money_market"]), "is_option_income": is_option_income(*names),
             "is_fund_of_funds": _flag(nc, r["is_fund_of_fund"]), "inception": r["ipo_date"], "aum": aum,
             "aum_as_of": r["report_end"] if aum is not None else None, "adv_usd_20d": None, "expense_ratio": None,

@@ -525,7 +525,8 @@ NCEN_Q3 = ncen_zip(
     [("0001-26-000010", 1064641, "29-JUL-2026", "30-APR-2026"),
      ("0001-26-000011", 1424958, "25-AUG-2026", "31-MAY-2026"),
      ("0001-26-000012", 1415726, "10-SEP-2026", "30-JUN-2026")])
-#: Two more quarters (LEVX: leveraged by its name only, N-CEN's flag blank; TAPR: an ETF AV names after a bank), so a fixture can hold the four quarters the commodity rule needs.
+#: Two more quarters (LEVX: leveraged by its name only, N-CEN's flag blank; TAPR: an ETF AV names after a bank),
+#: so a fixture can hold the four quarters the commodity rule needs.
 NCEN_Q1 = ncen_zip(
     [ncen_fund("0001-26-000020", 3000001, "S000099100", "Tradr 2X Long Example Daily ETF", monthly="20000000",
                ticker="LEVX"),

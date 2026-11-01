@@ -80,6 +80,16 @@ def test_a_quarter_held_is_not_asked_again(env):
     assert not env.requests and row["result"] == "unchanged" and "4 quarters held" in row["note"]
 
 
+def test_a_quarter_missing_only_its_filer_file_is_typed_again(env):
+    """Round 2, nit 1: a quarter counts as typed only with both of its Parquet files."""
+    _run()
+    (ncen.parquet_dir() / "quarter=2026q2" / "filer.parquet").unlink()
+    env.requests.clear()
+    row = _run("2026-11-03")
+    assert not env.requests and row["result"] == "changed", row["note"]
+    assert (ncen.parquet_dir() / "quarter=2026q2" / "filer.parquet").exists()
+
+
 def test_a_quarter_held_raw_but_never_typed_is_typed_on_the_next_run(env):
     """Review S3: a run that kept the zip and died before its Parquet must not leave the quarter out for good."""
     import shutil
