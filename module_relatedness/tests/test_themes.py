@@ -930,3 +930,15 @@ def test_fewer_than_three_distinct_tags_is_an_error_dict(rawstore_tmp_db):
     profs.update({f"U{i}": {"products": [f"unique{i}"]} for i in range(30)})
     out = themes.build_shadow(run_id="onetag", profiles=profs)
     assert "error" in out and rawstore.get("theme_runs", "onetag") is None
+
+
+def test_rebuild_keeps_the_validation_numbers_of_the_run(rawstore_tmp_db):
+    """Review R5 (#342): theme_runs is upsert, so a rebuild of the same id must carry the five val_* over."""
+    vals = {"val_peer_recall_25": 0.31, "val_hand_precision_10": 0.72, "val_gics_purity": 0.66,
+            "val_etf_recall_medium": 0.58, "val_seed_ari": 0.91}
+    themes.build_shadow(candidates=(2, 3, 4), k_medium=2, k_coarse=2, run_id="val-run", profiles=_profiles())
+    row = rawstore.get("theme_runs", "val-run")
+    rawstore.write_rows("theme_runs", [{**row, **vals}])
+    themes.build_shadow(candidates=(2, 3, 4), k_medium=2, k_coarse=2, run_id="val-run", profiles=_profiles())
+    after = rawstore.get("theme_runs", "val-run")
+    assert {k: after[k] for k in vals} == vals

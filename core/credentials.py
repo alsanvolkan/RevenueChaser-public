@@ -80,7 +80,8 @@ PROVIDERS: dict[str, Provider] = {
         label="Alpha Vantage",
         env_var="ALPHAVANTAGE_API_KEY",
         signup_url="https://www.alphavantage.co/support/#api-key",
-        required_for="the fundamentals layer's earnings calendar (optional; the SEC 8-K item 2.02 still dates reports)",
+        required_for=("the fundamentals layer's earnings calendar (optional; the SEC 8-K item 2.02 still dates reports) "
+                      "and the spine's listing status, the ETF list (rcdata alphavantage/listing_status)"),
     ),
     "claude_subscription": Provider(
         slug="claude_subscription",
