@@ -118,6 +118,16 @@ def test_a_repeated_uw_ticker_keeps_the_newer_row():
     assert len(msft) == 1 and msft[0]["weight"] == 0.001
 
 
+def test_a_uw_row_with_a_cusip_keeps_it_normalised_and_one_without_has_none():
+    """The live answer carries ``cusip`` (SMH, 1 Nov 2026) though the schema does not name it: kept when it is a
+    CUSIP, as the issuer parsers keep theirs, so the peer sets can match by CUSIP; None when absent or no CUSIP."""
+    rows = etf.parse_uw(fx.uw_holdings_json(fx.SP500, cusips=True))
+    assert {(r["ticker_raw"], r["cusip"]) for r in rows} == {(t, c) for t, c, _n in fx.SP500}
+    assert {r["cusip"] for r in etf.parse_uw(fx.uw_holdings_json(fx.SP500))} == {None}
+    odd = b'{"data": [{"ticker": "A", "cusip": "N/A", "weight": "1"}, {"ticker": "B", "cusip": null, "weight": "1"}]}'
+    assert {r["cusip"] for r in etf.parse_uw(odd)} == {None}
+
+
 @pytest.mark.parametrize("body", [b"{}", b'{"data": {"holdings": []}}', b"not json"])
 def test_a_uw_answer_of_another_shape_is_a_source_error(body):
     with pytest.raises(base.SourceError):
@@ -185,7 +195,7 @@ def test_a_run_reads_every_fund_once_and_serves_its_whole_holdings(env):
     xlk = _served("etf = 'XLK'")
     assert {(r[3], r[4]) for r in xlk} == {(t, c) for t, c, _n in fx.SP500}, "the SPDR file's CUSIPs are kept"
     assert str(xlk[0][0]) == AS_OF
-    smh = _served("etf = 'SMH'")                               # UW: by weight, and UW's rows carry no CUSIP
+    smh = _served("etf = 'SMH'")                               # UW: by weight; these rows carry no CUSIP key
     assert [r[3] for r in smh] == [t for t, _c, _n in fx.SP500] and {r[4] for r in smh} == {None}
     assert smh[0][6] == 10.0 and smh[-1][6] == 6.0
 

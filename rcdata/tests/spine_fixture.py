@@ -409,15 +409,19 @@ def add_fund_routes(http_mock, sp500=SP500, sp400=SP400, ndx=("MSFT",), fail=())
 
 # ── The ETFs' own holdings (``funds/etf_holdings``) ───────────────────────────────────────────────────────────
 
-def uw_holdings_json(holdings, repeat=()) -> bytes:
+def uw_holdings_json(holdings, repeat=(), cusips=False) -> bytes:
     """UW's ``/etfs/<ticker>/holdings`` answer (``docs/openapi.yaml``, ``Holdings``): one row per holding, the
-    weights as strings, no CUSIP. A ticker in ``repeat`` is sent twice, the second row newer and lighter: the read
-    keeps the newer one, as the client's own rule does (``core/providers/unusual_whales._holdings``)."""
+    weights as strings. The schema names no CUSIP, but the live answer of 1 Nov 2026 (SMH) carried a ``cusip`` key:
+    ``cusips`` adds it, written as UW might (lower case, padded). A ticker in ``repeat`` is sent twice, the second
+    row newer and lighter: the read keeps the newer one, as the client's own rule does
+    (``core/providers/unusual_whales._holdings``)."""
     rows = []
-    for i, (t, _cusip, name) in enumerate(holdings):
+    for i, (t, cusip, name) in enumerate(holdings):
         rows.append({"ticker": t, "name": name, "short_name": name.split()[0], "weight": f"{10 - i:.3f}",
                      "shares": 1_000 + i, "sector": "Technology", "type": "stock", "has_options": True,
                      "updated": "2026-10-29T20:00:00Z"})
+        if cusips:
+            rows[-1]["cusip"] = f" {cusip.lower()} "
         if t in repeat:
             rows.append({**rows[-1], "weight": "0.001", "updated": "2026-10-30T20:00:00Z"})
     rows.append({"ticker": None, "name": "CASH", "weight": "0.1", "updated": "2026-10-29T20:00:00Z"})

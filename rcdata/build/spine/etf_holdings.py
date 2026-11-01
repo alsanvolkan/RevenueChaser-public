@@ -95,7 +95,9 @@ EXTRA = frozenset({"XHB", "XRT", "KIE", "IAK", "ITB", "TAN", "PBW"})
 
 def parse_uw(data: bytes) -> list[dict]:
     """UW's ``/etfs/<ticker>/holdings`` answer: every holding, by weight, one row per ticker (the newest ``updated``
-    wins, the client's own rule — ``core/providers/unusual_whales._holdings``). No CUSIP: UW's rows carry none."""
+    wins, the client's own rule — ``core/providers/unusual_whales._holdings``). The ``cusip`` a row carries (the live
+    answer has the key though ``docs/openapi.yaml`` does not name it, SMH on 1 Nov 2026) is kept when it is a CUSIP,
+    normalised as the issuer parsers' are; None when absent or not one."""
     try:
         rows = json.loads(data)["data"]
     except (ValueError, KeyError, TypeError) as e:
@@ -110,7 +112,7 @@ def parse_uw(data: bytes) -> list[dict]:
         prev = by_ticker.get(t)
         if prev is None or (r.get("updated") or "") > (prev.get("updated") or ""):
             by_ticker[t] = r
-    out = [{"ticker_raw": r.get("ticker"), "cusip": None, "name": r.get("name") or r.get("short_name"),
+    out = [{"ticker_raw": r.get("ticker"), "cusip": _cusip(r.get("cusip")), "name": r.get("name") or r.get("short_name"),
             "weight": weight_of(r.get("weight"))} for r in by_ticker.values()]
     out.sort(key=lambda h: h["weight"] if h["weight"] is not None else -1.0, reverse=True)
     return out
