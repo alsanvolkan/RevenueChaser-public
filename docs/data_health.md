@@ -153,6 +153,40 @@ closed fold under it (`details#old-settings`), unchanged.
 - **Stale page:** when the page is older than 60 minutes on returning to it, a bar offers a reload.
 - **Planned reads** (a board's table read that `boards` does not declare yet) are drawn dashed and marked planned.
 
+### 2.0b The two tabs: Data and Needs (#331)
+
+A tab strip sits at the top of the page, under the provider banner: **Data** is the page as described in 2.0a and
+below (the control board, then the closed fold of the old sections), and **Needs** shows the needs layer
+(`rcdata.needs`): what a board can ask for, how fresh it is now, and how often it was asked. The strip is
+`role="tablist"`; the arrow keys move between the two tabs, the choice is remembered per viewer (`localStorage`,
+key `rc.settings.tab`), and `#needs` in the URL opens the Needs tab. With no script the Data tab shows. Showing the
+Data tab again sends a `resize`, because the flow diagram lays itself out from a width that is 0 while hidden.
+
+`module_settings/needs_tab.py` builds the model (`build`) and draws it (`render`); the styles are
+`static/needs.css`, scoped to `#needs` and `#settings-tabs`, with the control board's own light and dark tokens
+(`test_needs_tab` holds them equal to `control.css`). Three parts:
+
+1. **The catalog.** One row per need: its serving file and table, the dataset that owns writing it, its freshness
+   rule (`max_lag` and its unit, or "present or absent" for a need with no day column), the parameter it is asked
+   by, and who reads it: a solid chip is the board's own `READS`, a dashed chip a planned read
+   (`boards.PLANNED_READS`) of a board that has not declared any yet. The state is `needs.summary`, read once per
+   render: `fresh`, `stale`, `missing`, or `unreadable` when that need's summary raised. An unreadable row shows its
+   error; the other rows are unaffected.
+2. **The request log.** `ops.need_reads(first_day)`: the `read_log` rows named `need:<name>` (which `needs.ask` and
+   `needs.summary` count beside the table name), per process and New York day. The tab sums them over today, 7 and
+   30 days, busiest first, and lists the needs never asked in 30 days. A name the catalog no longer holds is shown
+   and marked. The process is what the reader wrote: `RC_PROCESS_NAME`, else its script's name, so the dashboard
+   writes `dashboard` and a `python -m` job `__main__`. A process writes its counts at most once a minute and at
+   exit. `need_reads` never creates `ops.sqlite`.
+3. **The routes.** `GET /needs`, `GET /needs/<need>` and `GET /needs/<need>?summary=1`, each with one example link.
+
+**The tab does not count itself.** It asks `needs.summary(name, count=False)`, so a render adds no `need:` read
+(the table read is still counted, as every read is); without that, each render would add one read per need under
+`dashboard` and bury the requests the log exists to show. Read-only throughout: no provider, no write, no queue.
+A failed log read is one line in its part; a failed build of the whole tab is one line in its panel, never a blank
+page. On a phone (under 600 px) each table row is a full-width card, one cell per line with its column name, and the
+tabs share the width at 44 px.
+
 ### 2.0 The "New data system" section (PR 2)
 
 The first section of the old fold (2.0a), above the old inventory (which stays until PR 21, with its drill, flow diagram and
