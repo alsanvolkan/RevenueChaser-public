@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "note": "Narrow ETFs whose holdings are the ETF peer sets (approved by avo, 1 Nov 2026). The first 13 are named in the v2 plan; the other 16 were proposed by Claude and approved as is. Holdings are read from the store's etf_holdings at run time; an ETF with no holdings is dropped and reported. Do not add ETFs beyond these 29; any change requires a version bump (see peer_sets.FINGERPRINTS).",
+  "etfs": [
+    "SMH", "XBI", "KRE", "ITB", "JETS", "TAN", "XOP", "PAVE", "XHB", "KIE", "IAK", "XRT", "PBW",
+    "SOXX", "IBB", "KBE", "IYT", "XME", "ITA", "IHI", "IHF", "XPH", "KCE", "ICLN", "URA", "GDX", "OIH", "IGV", "CIBR"
+  ]
+}

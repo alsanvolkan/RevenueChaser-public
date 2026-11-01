@@ -1212,6 +1212,11 @@ MANIFEST: dict[str, dict] = {
             "id TEXT PRIMARY KEY", "created_at TEXT", "k_fine INTEGER",
             "k_medium INTEGER", "k_coarse INTEGER", "jaccard DOUBLE",
             "is_current INTEGER", "session_date DATE", "run_at DOUBLE",
+            # Relatedness v2 Step 0 (#341, avo 1 Nov 2026): the run's validation numbers
+            # (module_relatedness/validation/metrics.py, THEME_RUNS_COLUMNS). Nullable; added to an existing
+            # store by ``_reconcile_table`` (ALTER TABLE ADD COLUMN) on the first store call, no schema bump.
+            "val_peer_recall_25 DOUBLE", "val_hand_precision_10 DOUBLE", "val_gics_purity DOUBLE",
+            "val_etf_recall_medium DOUBLE", "val_seed_ari DOUBLE",
         ],
         "kind": "tabular",
         "write": "upsert",
