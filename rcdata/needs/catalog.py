@@ -50,15 +50,15 @@ class Need:
     #: passes the query string's value as it stands instead of splitting it on commas.
     ask_list: bool = True
     #: True when the reader answers **nothing** unless something is named, and the need names no rows of its own:
-    #: ``read.market_series`` with no series is no rows by design, so ``get("market.series")`` read as
-    #: ``state: missing`` on a full table (the live verification's finding 2, 30 Oct 2026). ``get`` refuses such a
+    #: ``read.market_series`` with no series is no rows by design, so ``ask("market.series")`` read as
+    #: ``state: missing`` on a full table (the live verification's finding 2, 30 Oct 2026). ``ask`` refuses such a
     #: call in words instead; ``summary`` still answers, because it counts the table rather than asking the reader.
     ask_required: bool = False
     #: The rows this need is about inside a table several needs share. Four needs read ``market_series``; without a
     #: key of their own each one counted the whole table, so a series that had stopped updating read ``fresh`` as
     #: long as any other series in the table was current (the review's C2). ``filter_values`` names the keys,
     #: ``filter_prefix`` names them by their common start where the list is built elsewhere (the CFTC report's
-    #: fields). Both are filters on ``summary_key``, and ``get`` asks the reader for exactly them.
+    #: fields). Both are filters on ``summary_key``, and ``ask`` asks the reader for exactly them.
     filter_values: tuple[str, ...] = ()
     filter_prefix: str | None = None
     normalize: str = IDENTIFIER

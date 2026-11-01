@@ -16,15 +16,17 @@ The Discord archive was a fourth store file until October 2026. It is now its ow
 (`discord-archive`), with its own database, schema version and backup, because nothing here ever
 read it for analysis.
 
-## Decision note — the internal data API comes after the setup (avo, 2026-10-29)
+## Decision note — the needs layer: built (PR #290); filling not yet (avo, 2026-10-29, renamed 2026-11-01)
 
-The bridge between the dashboards and the store (an internal data API: a board asks for a named
-need, the API serves it from the store with its freshness, coverage and provenance, and enqueues a
-fill when something is missing or stale) is **not built before the data setup is finished**. The
-order avo set: finish the setup, purge the data, run the backfill, then build the API in one go, so
-its final shape is settled by real data rather than guessed. Nothing of the API — no catalog, no
-`get()` envelope, no on-demand fill, no HTTP surface — is built before that. The design it will be
-built from is `/mnt/project-files/earnings_bridge/2026-10-29_internal_data_api.md`; earnings dates
+The bridge between the dashboards and the store is **the needs layer**, `rcdata/needs/`: a board asks for a
+named need with `needs.ask(need)`, and the layer serves it from the store with its freshness, coverage and
+provenance. It was built in PR #290 (the catalog, the `ask()` envelope, `summary`, the board declarations and the
+Settings / Data screen), and renamed from `rcdata.api` / `api.get` in #329 (`GET /needs`,
+`GET /needs/<need>`; the old `/api/data` routes are gone). **What is not built is the filling:** `ask()`
+accepts only `fill="never"`, so a missing or stale need is reported, never fetched, and nothing enqueues a
+fill on demand yet. The order avo set still holds for that part: finish the setup, purge the data, run the
+backfill, then add the on-demand fill, so its final shape is settled by real data rather than guessed. The
+design it follows is `/mnt/project-files/earnings_bridge/2026-10-29_internal_data_api.md`; earnings dates
 are its first use case, not the whole design. Its locking follows the concurrency model below rather
 than adding a scheme of its own: a file lock (`core/job_lock.py`) where liveness matters, an
 `ops.sqlite` row under `BEGIN IMMEDIATE` for shared state and for collapsing concurrent fill

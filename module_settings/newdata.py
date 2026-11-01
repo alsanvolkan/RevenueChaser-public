@@ -26,11 +26,11 @@ from collections.abc import Mapping
 
 from RevenueChaser.core import calendar, config
 from RevenueChaser.rcdata import caps, ops, retention, serving
-from RevenueChaser.rcdata.api import screen as api_screen
+from RevenueChaser.rcdata.needs import screen as api_screen
 
 
 class _FromScreen(Mapping):
-    """A map the screen reads from ``rcdata.api.screen`` and never writes.
+    """A map the screen reads from ``rcdata.needs.screen`` and never writes.
 
     Every read goes back to the one source, so a card changed there is what the screen shows without a second edit,
     and setting a key raises: that is the point. It is a ``Mapping`` and **not** a ``dict`` subclass (the review's
@@ -84,10 +84,10 @@ class _FromScreen(Mapping):
         return dict(self._now())
 
     def __setitem__(self, key, value):
-        raise TypeError(f"{key!r}: {self._what} lives in rcdata/api/screen.py (avo, 29 Oct 2026); set it there")
+        raise TypeError(f"{key!r}: {self._what} lives in rcdata/needs/screen.py (avo, 29 Oct 2026); set it there")
 
     def update(self, *args, **kwargs):
-        raise TypeError(f"{self._what} lives in rcdata/api/screen.py (avo, 29 Oct 2026); set it there")
+        raise TypeError(f"{self._what} lives in rcdata/needs/screen.py (avo, 29 Oct 2026); set it there")
 
 
 def _card_label(dataset: str) -> str:
@@ -96,7 +96,7 @@ def _card_label(dataset: str) -> str:
 
 
 # The screen carries no list of its own: labels, cadence, coverage targets, the newest-date column, the status
-# order and the retirement list all come from ``rcdata/api/screen.py``, beside the need catalog (avo's plan, 29 Oct
+# order and the retirement list all come from ``rcdata/needs/screen.py``, beside the need catalog (avo's plan, 29 Oct
 # 2026). A need or a dataset added there needs no second edit here, and a write to one of these maps is refused so
 # that a second copy cannot creep back in.
 LABELS = _FromScreen(api_screen.labels, "a dataset's label")

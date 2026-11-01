@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 
 from RevenueChaser.rcdata import read
-from RevenueChaser.rcdata.api import catalog, screen
+from RevenueChaser.rcdata.needs import catalog, screen
 
 DIFFER = {"index_membership", "fundamental_fact", "earnings_event", "segment_revenue", "customer_share",
           "fundamental_revision", "sec13f_periods"}
@@ -172,13 +172,13 @@ def test_the_fill_switch_is_off_unless_set(monkeypatch, value, on):
 # ── The control board's steps and providers (design v28) ───────────────────────────────────────────────────────────
 
 def test_every_card_step_is_a_step_the_board_names():
-    from RevenueChaser.rcdata.api import screen
+    from RevenueChaser.rcdata.needs import screen
     assert set(screen.STEPS) == set(range(1, 12))
     assert {c.step for c in screen.DATASETS.values()} <= set(screen.STEPS)
 
 
 def test_every_provider_a_dataset_names_has_its_words():
-    from RevenueChaser.rcdata.api import screen
+    from RevenueChaser.rcdata.needs import screen
     from RevenueChaser.module_settings import newdata
     named = {p for ds in newdata._datasets().values() for p in getattr(ds, "providers", ())}
     assert named, "no provider found at all: the search is broken"

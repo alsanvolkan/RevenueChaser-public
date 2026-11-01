@@ -129,7 +129,7 @@ Same tokens as the rest of the app (`--bg #05111F`, `--accent #0EA5E9`). There i
 ### 2.0a The control board (design v28, 30 Oct 2026)
 
 The top of the tab since the v28 design: `module_settings/control.py` arranges what `newdata.collect` read and what
-the code records (`rcdata/scaffold`, `boards`, `catalog`, `caps`), and `control_render.py` draws it with
+the code records (`rcdata/scaffold`, `rcdata/caps`, and the needs layer's `boards`, `catalog` and `screen` in `rcdata/needs/`), and `control_render.py` draws it with
 `static/control.css` and `static/control.js`. The old sections, the "New data system" below among them, sit in one
 closed fold under it (`details#old-settings`), unchanged.
 

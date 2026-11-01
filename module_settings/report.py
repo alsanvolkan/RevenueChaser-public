@@ -17,7 +17,7 @@ from datetime import datetime
 from urllib.parse import urlsplit
 
 from RevenueChaser.core import automations, datasets
-from RevenueChaser.rcdata.api import screen as api_screen
+from RevenueChaser.rcdata.needs import screen as api_screen
 from RevenueChaser.module_settings import control as control_model, control_render
 from RevenueChaser.core.html_safe import esc, script_json
 from RevenueChaser.core.reporting_common import (

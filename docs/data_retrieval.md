@@ -194,6 +194,19 @@ routes only enqueue and read `ops.sqlite`. Each call opens its own SQLite connec
   process's live `.rc-proc-<pid>` marker sits in the store dir or the market dir (F8 A). `stop.ps1` reads it, and
   so does the deploy gate.
 
+### The needs routes (#290, renamed in #329)
+
+Read-only HTTP over `rcdata.needs`, the layer a board asks for a named need by (`needs.ask(need)`). They call no
+provider, write nothing and open no second DuckDB writer, so a page may ask them on every render. The older
+`/api/data` routes are gone; use these.
+
+- **`GET /needs`**: `{needs: [...]}`, the need catalog sorted by name, each with `need`, `kind`, `dataset`,
+  `reader`, `max_lag`, `max_lag_unit`, `ask_param`, `providers`, `fallbacks` and `legacy`.
+- **`GET /needs/<need>`**: one need's answer, the rows with freshness, coverage and per-row provenance. A `fill`
+  in the query string is ignored (a GET never fills). `?summary=1` (with `sample=N`, at most 50) answers the
+  need's state without naming a ticker; `limit=N` bounds the rows, never above 5,000. 404 for an unknown need,
+  400 for an unknown parameter or for a need that must be asked for something (`market.series`).
+
 ### The watch-list routes (PR 4)
 
 The two watch lists (D2) live in `ops.sqlite` (`rcdata/ops.py`); each write is one `BEGIN IMMEDIATE` transaction

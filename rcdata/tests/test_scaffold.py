@@ -133,9 +133,9 @@ def test_the_ownership_file_holds_every_providers_table_too():
 
 def test_every_table_a_need_names_is_in_some_kinds_schema():
     """A need over a table no empty file would hold is a need no screen can ever show as 'built, empty'."""
-    from RevenueChaser.rcdata import api
+    from RevenueChaser.rcdata import needs
     known = {t for tables in scaffold.SCHEMA_OF_KIND.values() for t in tables}
-    missing = sorted({n.table for n in api.catalog.NEEDS.values()} - known)
+    missing = sorted({n.table for n in needs.catalog.NEEDS.values()} - known)
     assert missing == [], f"needs over tables no serving file declares: {missing}"
 
 
