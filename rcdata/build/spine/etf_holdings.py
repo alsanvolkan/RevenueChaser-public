@@ -32,6 +32,8 @@ resume marker). Parquet: ``parquet/funds/etf_holdings/date=<as-of>/part-0.parque
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
 import time
 from dataclasses import dataclass
@@ -43,7 +45,7 @@ import duckdb
 from ....core import calendar, credentials
 from .. import base
 from . import KIND, stage
-from .funds import norm_ticker, parse_ishares, parse_ssga, weight_of
+from .funds import _cusip, norm_ticker, parse_ishares, parse_ssga, weight_of
 
 NAME = "funds/etf_holdings"
 TABLE = "etf_holdings"
@@ -67,6 +69,13 @@ ISHARES_PRODUCTS = {"SOXX": ("239705", "ishares-semiconductor-etf", False),
                     "ITB": ("239512", "ishares-u-s-home-construction-etf", False),
                     "IGV": ("239771", "ishares-expanded-tech-software-sector-etf", False),
                     "IAK": ("239515", "ishares-u-s-insurance-etf", True)}
+# ARK's daily holdings CSV, by fund: the file name under ``/fund-documents/funds-etf-csv/`` on ARK's asset host, as
+# the fund page links it (read 1 Nov 2026, #339). ARK is the issuer file UW's empty answer falls back to.
+ARK_FUNDS = {"ARKQ": "ARK_AUTONOMOUS_TECH._&_ROBOTICS_ETF_ARKQ_HOLDINGS.csv"}
+ARK_COLUMNS = ("fund", "company", "ticker", "cusip", "weight (%)")
+# Bloomberg's US exchange codes. ARK's file writes a few tickers with one (``SYM UQ``, 30 Oct 2026); any of these is
+# the US listing itself, so dropping it is no guess. Every other suffix (``6954 JT``) stays as the file wrote it.
+US_EXCHANGE_CODES = frozenset({"UA", "UN", "UP", "UQ", "UR", "US", "UV", "UW"})
 # The themes whose issuer has no keyless holdings file (VanEck, Global X, First Trust, WisdomTree, ARK, ROBO Global,
 # U.S. Global) and the two Invesco funds its API answers 500 for.
 UW_FUNDS = ("SMH", "PAVE", "AIQ", "LIT", "URA", "NLR", "AIRR", "SKYY", "WCLD", "ARKQ", "ROBO", "JETS", "TAN", "PBW")
@@ -97,6 +106,46 @@ def parse_uw(data: bytes) -> list[dict]:
     return out
 
 
+def _ark_ticker(raw: str) -> str:
+    parts = raw.split()
+    return parts[0] if len(parts) == 2 and parts[1] in US_EXCHANGE_CODES else raw
+
+
+def parse_ark(data: bytes, fund: str) -> list[dict]:
+    """ARK's daily holdings CSV (read 1 Nov 2026, #339): a header ``date, fund, company, ticker, cusip, shares,
+    market value ($), weight (%)``, one line per position, then one quoted disclaimer line.
+
+    **Kept:** the lines with a ticker (the file's 36 stocks and ADRs on 30 Oct 2026), with their CUSIP and the weight
+    in percent. **Dropped:** a line with no ticker — on that day the one money-market fund (``GOLDMAN FS TRSY OBLIG
+    INST 468``, identifier ``X9USDGSFT``, which looks like a CUSIP and is none) — and the disclaimer, which has no
+    ``fund``. A trailing US Bloomberg exchange code is dropped (``SYM UQ`` is ``SYM``); nothing else is rewritten.
+
+    A file without the header, without one of its columns, or whose lines name another fund is a failed file (a
+    moved URL answers a page or another fund's file), never a quiet reread."""
+    text = data.decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(text))
+    fields = [f.strip() for f in reader.fieldnames or ()]
+    if "ticker" not in fields or "fund" not in fields:
+        raise base.SourceError("ark: no header line with fund and ticker")
+    missing = [c for c in ARK_COLUMNS if c not in fields]
+    if missing:
+        raise base.SourceError(f"ark: the file has no {', '.join(missing)} column")
+    reader.fieldnames = fields
+    out = []
+    for r in reader:
+        name_of_fund = (r.get("fund") or "").strip()
+        if not name_of_fund:
+            continue                                         # the disclaimer line
+        if name_of_fund != fund:
+            raise base.SourceError(f"ark: the file for {fund} holds {name_of_fund} lines")
+        ticker = _ark_ticker((r.get("ticker") or "").strip())
+        if not ticker:
+            continue                                         # the money-market fund (cash)
+        out.append({"ticker_raw": ticker, "cusip": _cusip(r.get("cusip")), "name": (r.get("company") or "").strip(),
+                    "weight": weight_of(r.get("weight (%)"))})
+    return out
+
+
 @dataclass(frozen=True)
 class EtfFile:
     etf: str
@@ -113,6 +162,9 @@ class EtfFile:
             pid, slug, _typed = ISHARES_PRODUCTS[self.etf]
             return (provider_base("RC_ISHARES_BASE", "https://www.ishares.com")
                     + f"/us/products/{pid}/{slug}/latest-holdings.csv")
+        if self.provider == "ark":
+            return (provider_base("RC_ARK_BASE", "https://assets.ark-funds.com")
+                    + "/fund-documents/funds-etf-csv/" + ARK_FUNDS[self.etf])
         from ....core.providers import unusual_whales
         return f"{unusual_whales.BASE}/etfs/{self.etf}/holdings"
 
@@ -121,6 +173,8 @@ class EtfFile:
             return parse_ssga(data)
         if self.provider == "ishares":
             return parse_ishares(data, typed=ISHARES_PRODUCTS[self.etf][2])
+        if self.provider == "ark":
+            return parse_ark(data, self.etf)
         return parse_uw(data)
 
     def raw_name(self) -> str:

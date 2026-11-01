@@ -3,6 +3,8 @@ SPDR workbooks and the iShares CSVs, both parsers already the index job's), UW's
 top-10 cap and no membership vote."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from RevenueChaser.core.providers import sec_edgar, unusual_whales
@@ -120,6 +122,55 @@ def test_a_repeated_uw_ticker_keeps_the_newer_row():
 def test_a_uw_answer_of_another_shape_is_a_source_error(body):
     with pytest.raises(base.SourceError):
         etf.parse_uw(body)
+
+
+# ── ARK's own holdings CSV (ARKQ; the issuer file of #339, read 1 Nov 2026) ─────────────────────────────────────
+
+ARK_FILE = Path(__file__).parent / "fixtures" / "ark_arkq_holdings.csv"
+
+
+def test_the_ark_file_is_the_issuers_own_csv():
+    ark = etf.EtfFile("ARKQ", "ark", "csv")
+    assert ark.url() == ("https://assets.ark-funds.com/fund-documents/funds-etf-csv/"
+                         "ARK_AUTONOMOUS_TECH._&_ROBOTICS_ETF_ARKQ_HOLDINGS.csv")
+    assert ark.raw_name() == "ark-ARKQ.csv"
+
+
+def test_the_real_ark_file_reads_its_stock_lines_with_their_cusips():
+    """A trimmed copy of the real file of 30 Oct 2026: the equity lines with ticker, CUSIP and weight; the
+    money-market line (no ticker, the made-up identifier ``X9USDGSFT``) and the disclaimer line are no holding."""
+    rows = etf.parse_ark(ARK_FILE.read_bytes(), "ARKQ")
+    assert [r["ticker_raw"] for r in rows] == ["TSLA", "NVDA", "SYM", "KMTUY", "ESLT", "BYDDY"]
+    assert rows[0] == {"ticker_raw": "TSLA", "cusip": "88160R101", "name": "TESLA INC", "weight": 12.55}
+    assert rows[4]["cusip"] == "M3760D101", "a CINS CUSIP (Israel) is kept"
+    assert not any(r["cusip"] == "X9USDGSFT" for r in rows)
+
+
+def test_a_us_bloomberg_exchange_code_is_dropped_and_nothing_else_is_guessed():
+    """``SYM UQ`` is Symbotic on Nasdaq: the real file of 30 Oct 2026 wrote it so. Without the rule the shared
+    ``norm_ticker`` reads it as the share class ``SYM-UQ``. A foreign listing (``6954 JT``) keeps what the file
+    wrote, which is no US ticker, so the served table drops it and its CUSIP stays in the Parquet."""
+    head = b"date,fund,company,ticker,cusip,shares,market value ($),weight (%)\n"
+    body = (b'10/30/2026,ARKQ,SYMBOTIC INC,SYM UQ,87151X101,"1","$1.00",1.80%\n'
+            b'10/30/2026,ARKQ,FANUC CORP,6954 JT,J13440102,"1","$1.00",1.00%\n'
+            b'10/30/2026,ARKQ,DEERE & CO,DE UN,244199105,"1","$1.00",0.50%\n')
+    rows = etf.parse_ark(head + body, "ARKQ")
+    assert [r["ticker_raw"] for r in rows] == ["SYM", "6954 JT", "DE"]
+    from RevenueChaser.rcdata.build.spine.funds import norm_ticker
+    assert [norm_ticker(r["ticker_raw"]) for r in rows] == ["SYM", None, "DE"]
+    assert rows[1]["cusip"] == "J13440102"
+
+
+@pytest.mark.parametrize("body, match", [
+    (b"<html><body>Not found</body></html>", "header"),
+    (b"date,fund,company,ticker,weight (%)\n10/30/2026,ARKQ,TESLA INC,TSLA,12.55%\n", "cusip"),
+    (ARK_FILE.read_bytes().replace(b",ARKQ,", b",ARKK,"), "ARKK"),
+])
+def test_an_ark_file_of_another_shape_or_fund_is_a_source_error(body, match):
+    """A moved URL answers a page, a changed file loses a column, and a file of another fund is no holding of
+    this one: each fails the fund loudly instead of being read some other way."""
+    with pytest.raises(base.SourceError, match=match):
+        etf.parse_ark(body, "ARKQ")
 
 
 # ── A run ────────────────────────────────────────────────────────────────────────────────────────────────────
