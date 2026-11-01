@@ -9,11 +9,19 @@ relatedness peer sets have a source (``module_relatedness`` Step 0 derives them 
 | SSGA SPDR (18) | the 11 sector funds, ``XBI XOP XME KRE XHB XRT KIE`` | the issuer's daily holdings xlsx |
 | iShares (6) | ``SOXX IBB ITA ITB IGV IAK`` | the product page's ``latest-holdings.csv`` |
 | Unusual Whales (14) | ``SMH PAVE AIQ LIT URA NLR AIRR SKYY WCLD ARKQ ROBO JETS TAN PBW`` | ``/etfs/<t>/holdings`` |
+| ARK, behind UW (1) | ``ARKQ``, on a day UW holds nothing for it | ARK's daily holdings CSV |
 
 **The issuer of each fund was confirmed by fetching it once, 30 Oct 2026**, not taken from memory: IAK is iShares'
 insurance fund (the SPDR path answers 404; KIE is the SPDR one), and the iShares product ids are the issuer's own
 product screener's. Both parsers are ``funds``' own, unchanged but for the two iShares shapes (``parse_ishares``).
 Invesco answers 500 for TAN and PBW, so those two are UW's like the rest of the themes.
+
+**UW first, the issuer file behind it (#339).** On 1 Nov 2026 UW answered ``{"data": []}`` for AIRR, SKYY, WCLD, ARKQ
+and ROBO. Their issuers were checked that day: ARK publishes ARKQ's holdings as a CSV, and that file is ``FALLBACKS``.
+First Trust (AIRR, SKYY) serves an HTML table whose Excel export is an ASP.NET postback, WisdomTree (WCLD) embeds
+the list in its page and refused the builder's User-Agent, and Exchange Traded Concepts (ROBO) builds its CSV in
+the browser. None of those is a file, so those four stay UW's alone and are not scraped. The raw file's name says
+which source served a fund's day (``uw-ARKQ.json`` or ``ark-ARKQ.csv``), and the run note names each fallback.
 
 The funds are the board's ``sector`` and ``theme`` ETFs (``core/rotation_reference.ROTATION_ETFS``) less GLD, SLV and
 USO — commodity trusts, with no equity holdings — plus the seven in ``EXTRA`` that the peer sets need and the board
@@ -21,10 +29,11 @@ does not run. **UW's answer is kept whole:** the top-10 cap is the Rotation boar
 (``module_sector_rotation/etf_holdings.py``), and that board's ``raw.duckdb.etf_holdings`` is untouched by this
 dataset, which writes only the market store.
 
-One request per fund per run (24 issuer files, 14 UW calls), each inside its provider's day cap. No key for the
-issuer files; without ``UNUSUAL_WHALES_API_KEY`` the issuer files are still read and the missing key is one
-``missing_key`` issue. A file whose shape or URL moved is a ``source_failed`` issue for that fund and the others go
-on, as the index job does; every fund failing fails the run.
+One request per fund per run (24 issuer files, 14 UW calls, plus ARK's file on a day it is needed), each inside
+its provider's day cap. No key for the issuer files; without ``UNUSUAL_WHALES_API_KEY`` the issuer files are still
+read (ARKQ's among them) and the missing key is one ``missing_key`` issue. A fund whose every source failed (a moved
+shape or URL, an empty answer) is a ``source_failed`` issue for that fund, and the others go on, as the index job
+does; every fund failing fails the run.
 
 Raw: ``raw/funds/etf_holdings/<as-of>/<provider>-<etf>.<ext>`` (+ ``.meta.json``, written first: the raw file is the
 resume marker). Parquet: ``parquet/funds/etf_holdings/date=<as-of>/part-0.parquet``, every day kept. Served:
@@ -76,8 +85,9 @@ ARK_COLUMNS = ("fund", "company", "ticker", "cusip", "weight (%)")
 # Bloomberg's US exchange codes. ARK's file writes a few tickers with one (``SYM UQ``, 30 Oct 2026); any of these is
 # the US listing itself, so dropping it is no guess. Every other suffix (``6954 JT``) stays as the file wrote it.
 US_EXCHANGE_CODES = frozenset({"UA", "UN", "UP", "UQ", "UR", "US", "UV", "UW"})
-# The themes whose issuer has no keyless holdings file (VanEck, Global X, First Trust, WisdomTree, ARK, ROBO Global,
-# U.S. Global) and the two Invesco funds its API answers 500 for.
+# The themes whose issuer has no keyless holdings file (VanEck, Global X, First Trust, WisdomTree, ROBO's adviser
+# Exchange Traded Concepts, U.S. Global) and the two Invesco funds its API answers 500 for. ARKQ is UW's first and
+# ARK's file second (``FALLBACKS``).
 UW_FUNDS = ("SMH", "PAVE", "AIQ", "LIT", "URA", "NLR", "AIRR", "SKYY", "WCLD", "ARKQ", "ROBO", "JETS", "TAN", "PBW")
 # The funds the relatedness peer sets need that the rotation board does not run.
 EXTRA = frozenset({"XHB", "XRT", "KIE", "IAK", "ITB", "TAN", "PBW"})
@@ -194,8 +204,10 @@ class EtfFile:
 FILES = (tuple(EtfFile(t, "ssga", "xlsx") for t in SSGA_FUNDS)
          + tuple(EtfFile(t, "ishares", "csv") for t in ISHARES_PRODUCTS)
          + tuple(EtfFile(t, "uw", "json") for t in UW_FUNDS))
-PROVIDERS = tuple(dict.fromkeys(f.provider for f in FILES))
-_BY_RAW = {f.raw_name(): f for f in FILES}
+# The issuer file behind a UW fund, asked only when UW holds nothing for it that day (or there is no UW key).
+FALLBACKS = {t: EtfFile(t, "ark", "csv") for t in ARK_FUNDS}
+PROVIDERS = tuple(dict.fromkeys([f.provider for f in FILES] + [f.provider for f in FALLBACKS.values()]))
+_BY_RAW = {f.raw_name(): f for f in FILES + tuple(FALLBACKS.values())}
 
 
 def raw_dir() -> Path:
@@ -223,32 +235,48 @@ class EtfHoldings:
         return calendar.today_ny()
 
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
+        """Each fund's file of the day, once. A UW fund with an issuer file in ``FALLBACKS`` takes UW's answer when
+        it holds at least one holding, else the issuer file; the raw file's name says which one served the day and
+        the run note names every fallback. Only when every source of a fund fails is it a ``source_failed`` issue,
+        keyed by the fund's own file and naming each source's failure."""
         keyed = bool(credentials.key_for(UW_KEY))
         if not keyed:
             ctx.issue("missing_key", UW_KEY, credentials.missing_message(UW_KEY))
             ctx.notes.append(f"no key for {UW_KEY}: the {len(UW_FUNDS)} UW funds were not asked")
         out, failed = [], []
+        day = raw_dir() / as_of.isoformat()
         for f in FILES:
+            sources = [f] + ([FALLBACKS[f.etf]] if f.provider == "uw" and f.etf in FALLBACKS else [])
             if f.provider == "uw" and not keyed:
+                sources = sources[1:]
+            if not sources:
                 continue
-            raw = raw_dir() / as_of.isoformat() / f.raw_name()
-            if raw.exists():
-                out.append(raw)
+            done = next((day / s.raw_name() for s in sources if (day / s.raw_name()).exists()), None)
+            if done is not None:
+                out.append(done)
                 continue
-            try:
-                content = f.download(ctx)
-                # Refuse a file of the wrong shape, and an answer with no holding in it, before keeping it: the raw
-                # file is the resume marker, so a kept empty answer would be the fund's whole day.
-                if not f.parse(content):
-                    raise base.SourceError(f"{f.raw_name()}: the answer holds no holding line")
-            except Exception as e:  # noqa: BLE001 - one fund down must not stop the others
+            errors = [] if keyed or f.provider != "uw" else [f"{f.raw_name()}: no {UW_KEY} key"]
+            for src in sources:
+                try:
+                    content = src.download(ctx)
+                    # Refuse a file of the wrong shape, and an answer with no holding in it, before keeping it: the
+                    # raw file is the resume marker, so a kept empty answer would be the fund's whole day.
+                    if not src.parse(content):
+                        raise base.SourceError("the answer holds no holding line")
+                except Exception as e:  # noqa: BLE001 - one fund down must not stop the others
+                    errors.append(f"{src.raw_name()}: {type(e).__name__}: {e}"[:200])
+                    continue
+                raw = day / src.raw_name()
+                base.write_raw_json(_meta(raw), {"as_of": as_of.isoformat(), "fetched_at": time.time(),
+                                                 "run_id": ctx.run_id, "etf": src.etf, "provider": src.provider,
+                                                 "url": src.url().split("?")[0]})
+                out.append(base.write_raw(raw, content))
+                if src is not f:
+                    ctx.notes.append(f"fallback: {f.etf} served by {src.raw_name()} ({errors[0][:140]})")
+                break
+            else:
                 failed.append(f.raw_name())
-                ctx.issue("source_failed", f.raw_name(), f"{type(e).__name__}: {e}"[:300])
-                continue
-            base.write_raw_json(_meta(raw), {"as_of": as_of.isoformat(), "fetched_at": time.time(),
-                                             "run_id": ctx.run_id, "etf": f.etf, "provider": f.provider,
-                                             "url": f.url().split("?")[0]})
-            out.append(base.write_raw(raw, content))
+                ctx.issue("source_failed", f.raw_name(), " | ".join(errors)[:400])
         if failed:
             ctx.notes.append("failed files: " + ", ".join(failed))
             if not out:

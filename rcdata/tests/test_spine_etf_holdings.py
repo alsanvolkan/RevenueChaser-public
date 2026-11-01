@@ -253,10 +253,78 @@ def test_a_second_day_is_a_second_partition_and_both_are_served(env):
 
 
 def test_without_a_uw_key_the_issuer_files_are_read_and_the_missing_key_is_an_issue(monkeypatch, env):
+    """The 24 issuer files, and ARKQ from ARK's own file: a fund with an issuer file needs no UW key."""
     monkeypatch.delenv("UNUSUAL_WHALES_API_KEY")
     row = base.run_request({"dataset": etf.NAME, "params": {"as_of": AS_OF}})
-    assert row["result"] == "changed" and row["calls"] == 24
-    assert row["coverage"] == round(24 / 38, 4)
+    assert row["result"] == "changed" and row["calls"] == 25
+    assert row["coverage"] == round(25 / 38, 4)
     n, issues = ops.open_issues(etf.NAME)
     assert n == 1 and issues[0]["kind"] == "missing_key"
-    assert len(_served()) == 24 * len(fx.SP500) and not _served("provider = 'uw'")
+    assert len(_served()) == 25 * len(fx.SP500) and not _served("provider = 'uw'")
+    assert {r[2] for r in _served("etf = 'ARKQ'")} == {"ark"} and "ARKQ served by ark-ARKQ.csv" in row["note"]
+
+
+# ── The source rule: UW first, the issuer file when UW holds nothing (#339) ─────────────────────────────────
+
+def _uw_empty(http_mock, fund: str) -> None:
+    http_mock.routes.insert(0, (f"/etfs/{fund}/holdings", lambda r: (200, b'{"data": []}', {}), 200, {}))
+
+
+def test_the_funds_with_an_issuer_file_behind_uw_are_arkq_only():
+    """Step 0 of #339: ARKQ has ARK's CSV; AIRR and SKYY (First Trust), WCLD (WisdomTree) and ROBO (ETC) serve
+    their holdings in HTML only, so they have no fallback and stay UW's alone."""
+    assert {etf_name: f.raw_name() for etf_name, f in etf.FALLBACKS.items()} == {"ARKQ": "ark-ARKQ.csv"}
+    assert {f.etf for f in etf.FILES if f.provider == "uw"} >= set(etf.FALLBACKS)
+    assert "ark" in etf.PROVIDERS
+
+
+def test_uw_with_holdings_serves_the_day_and_the_issuer_file_is_not_asked(env):
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": AS_OF}})
+    assert row["calls"] == 38 and not [r for r in env.requests if "ark-funds" in str(r.url)]
+    assert {r[2] for r in _served("etf = 'ARKQ'")} == {"uw"} and "ARKQ served by" not in (row["note"] or "")
+
+
+def test_an_empty_uw_answer_falls_back_to_the_issuer_file_and_the_note_says_so(env, http_mock):
+    """The day of build #40: UW answers ``{"data": []}`` for ARKQ. ARK's file serves the fund, the raw file's name
+    says which source served the day, and no issue is opened (the fund is served)."""
+    _uw_empty(http_mock, "ARKQ")
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": AS_OF}})
+    assert row["result"] == "changed" and row["coverage"] == 1.0 and row["calls"] == 39
+    assert ops.open_issues(etf.NAME)[0] == 0
+    arkq = _served("etf = 'ARKQ'")
+    assert {r[2] for r in arkq} == {"ark"} and {(r[3], r[4]) for r in arkq} == {(t, c) for t, c, _n in fx.SP500}
+    day = etf.raw_dir() / AS_OF
+    assert (day / "ark-ARKQ.csv").exists() and not (day / "uw-ARKQ.json").exists()
+    assert "ARKQ served by ark-ARKQ.csv" in row["note"] and "no holding line" in row["note"]
+
+
+def test_a_fund_the_issuer_file_served_is_resumed_without_asking_uw_again(env, http_mock):
+    _uw_empty(http_mock, "ARKQ")
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": AS_OF}})
+    http_mock.requests.clear()
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": AS_OF}})
+    assert http_mock.requests == []
+
+
+def test_both_sources_failing_is_one_source_failed_issue_naming_both(env, http_mock):
+    _uw_empty(http_mock, "ARKQ")
+    http_mock.routes.insert(0, ("_ARKQ_HOLDINGS.csv", lambda r: (200, b"<html>moved</html>", {}), 200, {}))
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": AS_OF}})
+    assert row["coverage"] == round(37 / 38, 4) and not _served("etf = 'ARKQ'")
+    n, issues = ops.open_issues(etf.NAME)
+    assert n == 1 and issues[0]["kind"] == "source_failed" and issues[0]["key"] == "uw-ARKQ.json"
+    assert "no holding line" in issues[0]["detail"] and "ark-ARKQ.csv" in issues[0]["detail"]
+    assert "failed files: uw-ARKQ.json" in row["note"]
+
+
+def test_a_fund_with_no_issuer_file_still_fails_alone_on_an_empty_uw_answer(env, http_mock):
+    _uw_empty(http_mock, "WCLD")
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": AS_OF}})
+    assert row["calls"] == 38 and row["coverage"] == round(37 / 38, 4)
+    assert [i["key"] for i in ops.open_issues(etf.NAME)[1]] == ["uw-WCLD.json"]
+
+
+def test_the_issuer_file_host_has_a_day_cap_and_board_words():
+    from RevenueChaser.rcdata import caps
+    from RevenueChaser.rcdata.needs import screen
+    assert caps.DAY_CAPS["ark"] > 0 and screen.PROVIDERS["ark"].name == "ARK"
