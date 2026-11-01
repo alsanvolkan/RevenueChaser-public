@@ -936,8 +936,10 @@ PR 1 lays the skeleton and proves it on the SPX expiry-strike slice and the mark
 old table names, the routes and the Settings cards come in later PRs.
 
 **The first board on it: SPX Gamma (PR 3, D7).** `module_spx_gamma/store_reads.py` is the board's one reader (D4:
-`rcdata.read` only, no SQL of its own, no kept connection; a missing day is a "not stored" marker, never an
-exception or a provider call): the 0-1 DTE dollar OI gamma per strike (`call_gamma_oi + put_gamma_oi` over the
+no SQL of its own, no kept connection; a missing day is a "not stored" marker, never an exception or a provider call).
+Since #330 it reads through the needs layer, `needs.ask(need, as_of=day)` over `market.spx_expiry_strike`,
+`market.vix`, `market.cot` and `market.spx_close` (its `READS`), so every input is judged against the day rendered,
+not the newest session, and the lag limits are the catalog's: the 0-1 DTE dollar OI gamma per strike (`call_gamma_oi + put_gamma_oi` over the
 expiries 0 and 1 DTE of `spx_gamma_expiry_strike`; a day whose session has not closed reads the previous session's
 snapshot kept to the expiries from the day on, decision A3; that is the day's 0 DTE expiry only, labelled "0 DTE only
 (previous-session snapshot, <date> <time>)" on the pin line and in the banner, a smaller and conservative sum, review
@@ -945,7 +947,7 @@ SF2) for the $10B pin and $200M squeeze tests (review S4; a day without the slic
 trigger, avo 28 Oct 2026); the
 VIX family (`VIX`, `VIX9D`, `VIX3M`, `VIX6M`, `VIX1Y`, `VVIX`: the newest observation on or before the day, inside
 3 sessions); the E-mini TFF report (`cftc:tff:13874A:*`: the newest report released, Tuesday + 3 days (an approximation of CFTC's schedule: a holiday week or a shutdown moves the release later, so a past day's render may count a report released a little early), on or before
-the day, inside 10 sessions; the weekly change is this report minus the previous one, decision A5); and Cboe's
+the day, inside 10 sessions; the ask ends 3 days before the day, so an unreleased report is never judged; the weekly change is this report minus the previous one, decision A5); and Cboe's
 `SPX` closes for the 8-week window (one column: no open, high, low or volume, decision A6). The job of an accepted
 Fetch queues `uw/spot_expiry_strike` and `market_series` with `requested_by` `spx_gamma` (`ops.enqueue_once`) and
 renders at once with what is stored.

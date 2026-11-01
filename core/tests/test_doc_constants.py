@@ -291,9 +291,21 @@ def test_data_architecture_states_the_spx_gamma_store_reads_the_code_owns():
     for kind in ("vix", "cot"):
         assert f"inside {store_reads.MAX_LAG[kind]} sessions" in section, kind
     assert f"Tuesday + {store_reads.RELEASE_DAYS} days" in section
+    # #330: the board reads through the needs layer, judged against the rendered day; the needs are its READS.
+    from RevenueChaser import module_spx_gamma
+    assert "`needs.ask(need, as_of=day)`" in section
+    for need in module_spx_gamma.READS:
+        assert f"`{need}`" in section, need
     assert f"`requested_by` `{runners.SPX_REQUESTED_BY}`" in section
     for name in runners.SPX_BUILDER_DATASETS:
         assert f"`{name}`" in section
+
+
+def test_data_retrieval_says_spx_gamma_reads_through_the_needs_layer():
+    """#330: the Refresh bullet names the path the code takes, judged against the rendered day."""
+    text = (_REPO / "docs" / "data_retrieval.md").read_text(encoding="utf-8")
+    bullet = text[text.index("- **SPX Gamma's `?refresh=1` is its own.**"):].split("\n- ")[0].replace("\n", " ")
+    assert "`needs.ask(..., as_of=day)`" in bullet and "over `rcdata.read`" not in bullet
 
 
 def test_the_spine_section_states_what_the_code_owns():
