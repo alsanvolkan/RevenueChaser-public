@@ -54,6 +54,8 @@ def _redirect_data_roots() -> None:
     # copy of every test store (#275), and RAW_STORE_BACKUP_WEEKLY=0 would break the weekly-copy tests (#277).
     os.environ["RAW_STORE_BACKUP_MIRROR"] = ""
     os.environ["RAW_STORE_BACKUP_WEEKLY"] = "1"
+    # The WRDS switch is forced off: a server .env with RC_WRDS_UNATTENDED=1 would make the attended tests fail (#344).
+    os.environ["RC_WRDS_UNATTENDED"] = ""
     # rawstore applies the whole schema manifest on a process's first store
     # call (~1 s on a fresh file). Every test gets a fresh DB, so that would add
     # minutes to the suite; tests that need the manifest call
