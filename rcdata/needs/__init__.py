@@ -1,4 +1,4 @@
-"""The internal data API: a board asks for a **need** by name and gets the store's rows in an envelope.
+"""The needs layer: a board asks for a **need** by name and gets the store's rows in an envelope.
 
 One front for the dashboards (the goal of 3 Oct 2026): a board names what it needs, not which table or provider it
 comes from, and the answer says how fresh it is, how much of what was asked the store holds, where each row came
@@ -6,9 +6,9 @@ from, and — from PR C — whether a fill was queued.
 
 Two hard rules, both under test:
 
-- **The API runs no SQL and owns no store.** Every need points at an existing ``rcdata.read`` function; the envelope
-  wraps the rows, never the query (``test_every_need_points_at_a_read_function``, ``test_the_api_package_writes_no_sql``).
-- **The API calls no provider and writes to no serving file.** When something is missing or stale it will (PR C)
+- **The needs layer runs no SQL and owns no store.** Every need points at an existing ``rcdata.read`` function; the envelope
+  wraps the rows, never the query (``test_every_need_points_at_a_read_function``, ``test_the_needs_package_writes_no_sql``).
+- **The needs layer calls no provider and writes to no serving file.** When something is missing or stale it will (PR C)
   queue the fill through ``ops.enqueue_once`` and let the builder do it, so the single-writer rule (D1) holds. In
   this PR only ``fill="never"`` exists: the answer serves what the store has and says how old it is.
 
@@ -22,8 +22,8 @@ from __future__ import annotations
 
 from . import boards, catalog, serve
 from .catalog import NEEDS, Need
-from .serve import (Answer, AskRequired, FillNotSupported, UnknownNeed, get, lag_in, lag_sessions,
+from .serve import (Answer, AskRequired, BadAsOf, FillNotSupported, UnknownNeed, ask, lag_in, lag_sessions,
                     reference_session, summary)
 
-__all__ = ["Answer", "AskRequired", "FillNotSupported", "NEEDS", "Need", "UnknownNeed", "boards", "catalog",
-           "get", "reference_session", "lag_in", "lag_sessions", "serve", "summary"]
+__all__ = ["Answer", "AskRequired", "BadAsOf", "FillNotSupported", "NEEDS", "Need", "UnknownNeed", "boards",
+           "catalog", "ask", "reference_session", "lag_in", "lag_sessions", "serve", "summary"]

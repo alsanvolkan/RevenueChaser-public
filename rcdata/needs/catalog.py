@@ -17,6 +17,7 @@ is a one-line change in one file.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -50,15 +51,15 @@ class Need:
     #: passes the query string's value as it stands instead of splitting it on commas.
     ask_list: bool = True
     #: True when the reader answers **nothing** unless something is named, and the need names no rows of its own:
-    #: ``read.market_series`` with no series is no rows by design, so ``get("market.series")`` read as
-    #: ``state: missing`` on a full table (the live verification's finding 2, 30 Oct 2026). ``get`` refuses such a
+    #: ``read.market_series`` with no series is no rows by design, so ``ask("market.series")`` read as
+    #: ``state: missing`` on a full table (the live verification's finding 2, 30 Oct 2026). ``ask`` refuses such a
     #: call in words instead; ``summary`` still answers, because it counts the table rather than asking the reader.
     ask_required: bool = False
     #: The rows this need is about inside a table several needs share. Four needs read ``market_series``; without a
     #: key of their own each one counted the whole table, so a series that had stopped updating read ``fresh`` as
     #: long as any other series in the table was current (the review's C2). ``filter_values`` names the keys,
     #: ``filter_prefix`` names them by their common start where the list is built elsewhere (the CFTC report's
-    #: fields). Both are filters on ``summary_key``, and ``get`` asks the reader for exactly them.
+    #: fields). Both are filters on ``summary_key``, and ``ask`` asks the reader for exactly them.
     filter_values: tuple[str, ...] = ()
     filter_prefix: str | None = None
     normalize: str = IDENTIFIER
@@ -116,7 +117,7 @@ _NEEDS = (
     # The numbers are the Earnings board's own, measured there: FRED posts the yield a day late, so a normal night
     # reads 1 or 2 sessions and 3 covers one missed night; the volatility indices are daily too; the CFTC publishes
     # on a Friday the positions held the Tuesday before, so a current night already reads a ~6-session-old row.
-    # Four needs over one table, so each names the series it is about (the review's C2). Without that filter every
+    # Five needs over one table, so each names the series it is about (the review's C2). Without that filter every
     # one of them counted the whole table and a series that had stopped updating still read ``fresh``. The ids are
     # the ones the boards ask for: ``core.rotation_reference.MACRO_SERIES["US10Y"]`` for the yield,
     # ``module_spx_gamma/store_reads.VIX_SERIES`` for the volatility indices, and the E-mini S&P 500 contract of the
@@ -130,6 +131,10 @@ _NEEDS = (
          filter_values=("VIX", "VIX9D", "VIX3M", "VIX6M", "VIX1Y", "VVIX"), providers=("yfinance",)),
     Need("market.cot", "market_series", "market_series", "obs_date", "series_id", 10, ask_param="series_ids",
          filter_prefix="cftc:tff:13874A:", providers=("cftc",)),
+    # Cboe's SPX closes, SPX Gamma's 8-week candle window (#330): the need names the series so the board never
+    # does. Daily like the VIX family, so the same 3 sessions.
+    Need("market.spx_close", "market_series", "market_series", "obs_date", "series_id", 3, ask_param="series_ids",
+         filter_values=("SPX",), providers=("cboe",)),
     # The one need without a filter: the caller names the series it wants, and must (``ask_required``), because
     # the reader answers nothing otherwise and the envelope would call a full table missing. Its window is the
     # generic 3, so the same observation can read ``stale`` here and ``fresh`` through ``macro.dgs10`` (4): a need
@@ -226,3 +231,43 @@ _NEEDS = (
 )
 
 NEEDS: dict[str, Need] = {n.name: n for n in _NEEDS}
+
+
+class FromCatalog(Mapping):
+    """A board's ``{input: limit}`` map that answers from the catalog rather than from the copy it was built with.
+
+    The catalog is the single owner of a freshness number (avo, 29 Oct 2026), and a board that still wants its
+    limits as a mapping (Earnings Radar's ``MAX_LAG``, SPX Gamma's) wraps a function that reads them from ``NEEDS``.
+    A ``Mapping`` and not a ``dict`` subclass (the review's m3): seeding a dict subclass at import made ``.copy()``
+    and ``json.dumps`` answer with the import-time snapshot while ``[]`` answered with the live number - two
+    answers from one map, which is the drift this whole arrangement exists to prevent.
+    """
+
+    def __init__(self, source: Callable[[], dict]):
+        self._source = source
+
+    def __getitem__(self, key):
+        return self._source()[key]
+
+    def get(self, key, default=None):
+        return self._source().get(key, default)
+
+    def __iter__(self):
+        return iter(self._source())
+
+    def __len__(self):
+        return len(self._source())
+
+    def copy(self) -> dict:
+        return dict(self._source())
+
+    def __repr__(self):
+        return repr(self._source())
+
+    def __eq__(self, other):
+        return self._source() == other
+
+    __hash__ = None
+
+    def __setitem__(self, key, value):
+        raise TypeError(f"{key!r} belongs to the need catalog (avo, 29 Oct 2026): set it there, not here")

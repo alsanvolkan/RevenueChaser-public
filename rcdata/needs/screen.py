@@ -41,10 +41,12 @@ ROLES = ("first", "only source", "fills", "cross-check", "build")
 DATASETS: dict[str, DatasetCard] = {
     'alpaca/bars': DatasetCard('Daily bars (Alpaca)', coverage_target=0.99, step=8, role='first'),
     'alpaca/corporate_actions': DatasetCard('Corporate actions (Alpaca)', step=8, role='first'),
+    'alphavantage/listing_status': DatasetCard('Every US listing, the ETF list (Alpha Vantage)', step=1, role='first'),
     'alphavantage/earnings_calendar': DatasetCard('Earnings calendar (Alpha Vantage)', step=9, role='first'),
     'finra/short_interest': DatasetCard('Short interest (FINRA)', step=10, role='first'),
     'fundamentals/tables': DatasetCard('Fundamentals (served tables, peers, build issues)', step=9, role='build'),
     'funds/index_holdings': DatasetCard('Index membership (ETF holdings files)', step=6, role='first'),
+    'funds/etf_holdings': DatasetCard('ETF holdings, whole (SPDR, iShares, Unusual Whales)', step=6, role='only source'),
     'ibkr/iv_history': DatasetCard('One year of 30-day implied volatility per list name (IBKR)', coverage_target=None, step=11, role='first'),
     'ibkr/shortable': DatasetCard('Borrow fee and shares available (IBKR file)', step=10, role='first'),
     'market_series': DatasetCard('Market series', coverage_target=None, step=11, role='first'),
@@ -56,6 +58,7 @@ DATASETS: dict[str, DatasetCard] = {
     'sec/13f': DatasetCard('13F holdings (SEC data sets, then forms)', step=10, role='first'),
     'sec/company_tickers_exchange': DatasetCard('SEC ticker and exchange file', step=1, role='first'),
     'sec/company_tickers_mf': DatasetCard('SEC fund file (the ETF universe)', step=1, role='first'),
+    'sec/ncen': DatasetCard('Form N-CEN data sets: fund type, index, assets (SEC)', step=1, role='fills'),
     'sec/companyfacts': DatasetCard('SEC company facts (re-read on the filing day)', step=9, role='first'),
     'sec/cover_shares': DatasetCard('Shares per class (SEC filing covers)', step=8, role='first'),
     'sec/filings': DatasetCard('SEC filing lists, 8-K items and report texts', step=9, role='first'),
@@ -89,6 +92,8 @@ WRITTEN_COLUMN: dict[str, str] = {
     'earnings_event': 'source_as_of',
     'er_options': 'session_date',
     'estimate_latest': 'source_as_of',
+    'etf': 'source_as_of',
+    'etf_holdings': 'as_of',
     'filing_item': 'filing_date',
     'finra_short_interest': 'settlement_date',
     'fund': 'source_as_of',
@@ -199,6 +204,7 @@ NO_TIER_WORDS: dict[str, str] = {
 NO_TIER_DATASET_WORDS: dict[str, str] = {
     "alphavantage/earnings_calendar": "one call brings the whole calendar, every name at once.",
     "sec/fsds": "one file a quarter holds every filer at once.",
+    "sec/ncen": "one file a quarter holds every fund at once.",
 }
 #: A hand-run (attended) dataset is never filled by tier.
 NO_TIER_ATTENDED = "a check source run by hand, not filled by tier."
@@ -266,7 +272,7 @@ class ProviderWords:
 #: Every provider a dataset names (``Dataset.providers``). A provider a dataset names and this map does not raises in
 #: CI, so the screen never shows a bare id.
 PROVIDERS: dict[str, ProviderWords] = {
-    "sec": ProviderWords("SEC", "the ticker file, company facts, filings, 13F, Form 4, 13D/G, fails to deliver",
+    "sec": ProviderWords("SEC", "the ticker file, company facts, filings, 13F, Form 4, 13D/G, fails to deliver, N-CEN",
                          "4.5 a second (ownership) · 0.25 s apart (fundamentals)",
                          "10 a second per User-Agent (fair access)"),
     "uw": ProviderWords("Unusual Whales", "options, SPX, float, financials", "a budget a run · 500 rows a page"),
@@ -274,7 +280,8 @@ PROVIDERS: dict[str, ProviderWords] = {
                             "200 a minute (free plan) · no SIP data of the last 15 minutes"),
     "yfinance": ProviderWords("yfinance", "float, estimates, MOVE", "float lookups 1.5 s apart · a 429 stops the run",
                               "unofficial · a 429 is its limit"),
-    "alphavantage": ProviderWords("Alpha Vantage", "the earnings calendar", "one request a run", "25 a day (free tier)"),
+    "alphavantage": ProviderWords("Alpha Vantage", "the earnings calendar, the listing status (ETF list)",
+                                  "one request a run (calendar) · two (listing status)", "25 a day (free tier)"),
     "openfigi": ProviderWords("OpenFIGI", "the FIGI of each CUSIP", "24 a minute · up to 100 CUSIPs a request",
                               "keyed limit, not quoted in the code"),
     "fred": ProviderWords("FRED", "DGS10 and the macro series", "110 a minute", "120 a minute"),
@@ -287,6 +294,7 @@ PROVIDERS: dict[str, ProviderWords] = {
     "vanguard": ProviderWords("Vanguard", "index fund holdings", "one request a file and run"),
     "nasdaq": ProviderWords("Nasdaq", "the Nasdaq-100 list", "one request a file and run"),
     "invesco": ProviderWords("Invesco", "index fund holdings", "one request a file and run"),
+    "ark": ProviderWords("ARK", "ARKQ holdings when Unusual Whales has none", "one request a file and run"),
     "wrds": ProviderWords("WRDS", "Compustat and CRSP", "run by hand: a login and Duo each time"),
     "treasury": ProviderWords("Treasury", "yields and auctions"),
     "cboe": ProviderWords("Cboe", "VIX and the index series"),

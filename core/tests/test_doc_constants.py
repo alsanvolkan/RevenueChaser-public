@@ -28,7 +28,8 @@ _ENV_EXTRAS = ("RC_SEC_USER_AGENT",
                "RC_SCHEDULER",                                                  # #158
                "RC_HTTP_CONTACT",                                               # #206, the builder's User-Agent
                "WRDS_USERNAME", "RC_UNIVERSE_SOURCE", "RC_WRDS_PYTHON",         # PR 5, the spine
-               "RC_UW_PRELIMINARY")                                             # PR 12, the fundamentals
+               "RC_UW_PRELIMINARY",                                             # PR 12, the fundamentals
+               "RC_WRDS_UNATTENDED")                                            # #344, WRDS from the builder
 
 
 def _env_example_lines() -> list[str]:
@@ -167,7 +168,8 @@ def test_data_architecture_names_no_scheduled_job_or_history_the_code_does_not_h
                      "RC-Forecast-Baselines": "23:50",
                      "RC-Index-Lists": "10:00", "RC-Earnings-Inputs": "01:30",
                      "RC-Open-Issues-Check": "09:30", "RC-IBKR-Login-Check": "09:15",
-                     "RC-Build": "hourly at :07", "RC-Build-Backup": "04:30"}
+                     "RC-Build": "hourly at :07", "RC-Build-Backup": "04:30",
+                     "RC-SPX-Gamma-Fetch": "06:30"}
     for stamp in times.values():
         assert stamp in text, f"the registered time {stamp} is not in docs/data_architecture.md"
     ps1 = (_REPO / "register_tasks.ps1").read_text(encoding="utf-8")
@@ -291,9 +293,21 @@ def test_data_architecture_states_the_spx_gamma_store_reads_the_code_owns():
     for kind in ("vix", "cot"):
         assert f"inside {store_reads.MAX_LAG[kind]} sessions" in section, kind
     assert f"Tuesday + {store_reads.RELEASE_DAYS} days" in section
+    # #330: the board reads through the needs layer, judged against the rendered day; the needs are its READS.
+    from RevenueChaser import module_spx_gamma
+    assert "`needs.ask(need, as_of=day)`" in section
+    for need in module_spx_gamma.READS:
+        assert f"`{need}`" in section, need
     assert f"`requested_by` `{runners.SPX_REQUESTED_BY}`" in section
     for name in runners.SPX_BUILDER_DATASETS:
         assert f"`{name}`" in section
+
+
+def test_data_retrieval_says_spx_gamma_reads_through_the_needs_layer():
+    """#330: the Refresh bullet names the path the code takes, judged against the rendered day."""
+    text = (_REPO / "docs" / "data_retrieval.md").read_text(encoding="utf-8")
+    bullet = text[text.index("- **SPX Gamma's `?refresh=1` is its own.**"):].split("\n- ")[0].replace("\n", " ")
+    assert "`needs.ask(..., as_of=day)`" in bullet and "over `rcdata.read`" not in bullet
 
 
 def test_the_spine_section_states_what_the_code_owns():
@@ -429,7 +443,7 @@ def test_the_options_section_states_what_the_code_owns():
 def test_data_health_states_the_control_boards_values_the_code_owns():
     """Design v28: the control board's thresholds, its fill switch and its one read route, as the code has them."""
     from RevenueChaser.module_settings import control, control_render, newdata
-    from RevenueChaser.rcdata.api import screen
+    from RevenueChaser.rcdata.needs import screen
     text = (_REPO / "docs" / "data_health.md").read_text(encoding="utf-8")
     section = text[text.index("### 2.0a The control board"):text.index('### 2.0 The "New data system" section')]
     assert f"silent for over {control.BUILDER_SILENT_MINUTES} minutes" in section

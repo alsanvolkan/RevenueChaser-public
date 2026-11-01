@@ -10,7 +10,7 @@ import pytest
 from RevenueChaser.core.tests.board_fixtures import newdata_fixture
 from RevenueChaser.module_settings import control, newdata
 from RevenueChaser.rcdata import scaffold, serving
-from RevenueChaser.rcdata.api import screen
+from RevenueChaser.rcdata.needs import screen
 
 NOW = datetime(2026, 10, 30, 17, 31, tzinfo=timezone.utc)
 
@@ -208,3 +208,34 @@ def test_the_fetch_line_names_its_provider_in_words():
     rows = {d["dataset"]: d for f in _build()["files"] for d in f["datasets"]}
     assert rows["market_series"]["fetch"]["provider"] == screen.PROVIDERS["uw"].name == "Unusual Whales"
     assert rows["sec/13f"]["fetch"]["provider"] == screen.PROVIDERS["sec"].name
+
+
+def test_the_spine_file_lists_the_etf_datasets_in_build_order_and_the_etf_table():
+    """#346: the two halves of the ETF list are step 1 rows of spine.duckdb, and ``etf`` is one of its tables,
+    written by ``spine/security`` (the Data tab, "Data, file by file")."""
+    nd = control_nd()
+    nd["datasets"] += [_card("alphavantage/listing_status", "never", checked_on=None),
+                       _card("sec/ncen", "never", checked_on=None)]
+    nd["tables"]["etf"] = {"rows": 6_200, "newest": "2026-11-02"}
+    spine = next(f for f in _build(nd)["files"] if f["kind"] == "spine")
+    rows = [(d["dataset"], d["step"], d["role"]) for d in spine["datasets"]]
+    assert rows[:2] == [("alphavantage/listing_status", 1, "first"), ("sec/ncen", 1, "fills")]
+    assert rows[-1][0] == "spine/security"
+    av = next(d for d in spine["datasets"] if d["dataset"] == "alphavantage/listing_status")
+    assert av["providers"] == ("alphavantage",) and av["fetch"]["self"] is True
+    etf = next(t for t in spine["tables"] if t["name"] == "etf")
+    assert etf["writers"] == ["spine/security"] and (etf["rows"], etf["newest"]) == (6_200, "2026-11-02")
+    assert [c for c, _ in etf["columns"]][:5] == ["ticker", "name", "series_id", "cik", "source"]
+
+
+def test_the_providers_card_names_alpha_vantage_with_its_cap_and_the_sec_with_n_cen():
+    providers = {p["id"]: p for p in _build()["providers"]}
+    assert providers["alphavantage"]["cap"] == 25 and "listing status" in providers["alphavantage"]["what"]
+    assert providers["alphavantage"]["icon"] and "N-CEN" in providers["sec"]["what"]
+
+
+def test_ncens_monthly_cadence_is_the_datasets_own_not_a_second_copy_on_its_card():
+    """Review N6 of PR 349: the dataset carries ``cadence = "monthly"``; the screen's card does not repeat it."""
+    from RevenueChaser.module_settings import newdata as nd_mod
+    assert screen.DATASETS["sec/ncen"].cadence == "daily"           # the card's default, not read for this dataset
+    assert nd_mod._cadence("sec/ncen", None) == "monthly"

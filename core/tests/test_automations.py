@@ -32,7 +32,7 @@ def test_registry_names_are_stable_and_prefixed():
     assert [e.name for e in A.REGISTRY] == [
         "RC-Store-Backup", "RC-Relatedness-OffPeak", "RC-ValueChain-Sync", "RC-Daily-Bars", "RC-Screeners-Daily",
         "RC-Forecast-Outcomes", "RC-Forecast-Baselines", "RC-Index-Lists", "RC-Earnings-Inputs",
-        "RC-Open-Issues-Check", "RC-IBKR-Login-Check", "RC-Build", "RC-Build-Backup"]
+        "RC-Open-Issues-Check", "RC-IBKR-Login-Check", "RC-Build", "RC-Build-Backup", "RC-SPX-Gamma-Fetch"]
     assert all(e.name.startswith("RC-") for e in A.REGISTRY)
 
 
@@ -46,7 +46,7 @@ def test_the_index_lists_row_runs_weekly_on_saturday():
     assert not e.default_install
     assert all(x.days == () and x.schedule == f"daily {x.time} (local)" for x in A.REGISTRY
                if x.name not in (e.name, "RC-Screeners-Daily", "RC-Forecast-Outcomes", "RC-Forecast-Baselines",
-                                 "RC-Earnings-Inputs", "RC-Build"))
+                                 "RC-Earnings-Inputs", "RC-Build", "RC-SPX-Gamma-Fetch"))
 
 
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
@@ -970,3 +970,17 @@ def test_a_chain_step_cannot_wait_on_an_hourly_row():
                              after="RC-Build")
     with pytest.raises(ValueError, match="hourly"):
         A.check_chain(A.REGISTRY + (step,))
+
+
+def test_the_spx_gamma_fetch_runs_on_weekdays_after_the_stored_close():
+    """#291: the scheduled SPX Gamma Fetch keeps a raw day (all expiries) for every session. The builder stores the
+    market series on the first pass of each trading day (00:07 New York, ``rcdata/build/due.py``), so 06:30
+    Amsterdam Monday to Friday finds the previous session's Cboe SPX close: Monday fetches Friday. A Saturday run
+    would never find Friday's close (no trading day, no builder pass). Not chained: the CLI waits for that close
+    itself (exit 3, no UW call)."""
+    e = A.entry("RC-SPX-Gamma-Fetch")
+    assert e.args == ("-m", "RevenueChaser.module_spx_gamma", "--nightly")
+    assert e.time == "06:30" and e.days == A._WEEKDAYS and e.after is None and not e.hourly
+    assert e.tables_written == () and e.default_install is False
+    assert e.settings.start_when_available is False
+    assert e.schedule == "weekly Monday, Tuesday, Wednesday, Thursday, Friday 06:30 (local)"

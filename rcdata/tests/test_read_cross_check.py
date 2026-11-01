@@ -14,7 +14,7 @@ import duckdb
 import pytest
 
 from RevenueChaser.rcdata import ops, read, serving
-from RevenueChaser.rcdata.api import catalog
+from RevenueChaser.rcdata.needs import catalog
 from RevenueChaser.rcdata.build.prices import serving as prices_serving
 
 

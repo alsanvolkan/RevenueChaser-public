@@ -129,7 +129,7 @@ Same tokens as the rest of the app (`--bg #05111F`, `--accent #0EA5E9`). There i
 ### 2.0a The control board (design v28, 30 Oct 2026)
 
 The top of the tab since the v28 design: `module_settings/control.py` arranges what `newdata.collect` read and what
-the code records (`rcdata/scaffold`, `boards`, `catalog`, `caps`), and `control_render.py` draws it with
+the code records (`rcdata/scaffold`, `rcdata/caps`, and the needs layer's `boards`, `catalog` and `screen` in `rcdata/needs/`), and `control_render.py` draws it with
 `static/control.css` and `static/control.js`. The old sections, the "New data system" below among them, sit in one
 closed fold under it (`details#old-settings`), unchanged.
 
@@ -164,7 +164,10 @@ contract below binds the page; decisions D1, D6, D9, F6, F7 A, F8 A, F10 B and t
 with no network:
 
 - `ops.sqlite` through the read helpers of `rcdata/ops.py` (D6). They never create the file or a table: no file
-  yet, or a table an older file lacks, reads as no rows.
+  yet, or a table an older file lacks, reads as no rows. A row's status (`read.dataset_status`, and SPX Gamma's
+  board status) is one of them, `ops.read_latest_check` (#336); only the builder calls `ops.latest_check`, which
+  ensures the file because the builder writes it anyway (`rcdata/tests/test_read_never_creates_ops.py`). The read
+  log a read counts into is a write of its own: it reaches the file at its once-a-minute flush.
 - Row counts, the newest date and the last swap from the live serving file. **The handle rule:** every read opens
   its own read-only handle with `rcdata.serving.open_read(kind)`, the path resolved at that moment, and closes it
   before `collect()` returns. No connection is cached, at module level or across requests, because DuckDB keeps

@@ -13,7 +13,7 @@ from pathlib import Path
 from RevenueChaser.core import board_settings
 from RevenueChaser.core.html_safe import esc, script_json
 from RevenueChaser.module_settings import control
-from RevenueChaser.rcdata.api import screen
+from RevenueChaser.rcdata.needs import screen
 
 _STATIC = Path(__file__).resolve().parent / "static"
 CTL_CSS = (_STATIC / "control.css").read_text(encoding="utf-8")

@@ -13,7 +13,7 @@ from RevenueChaser.core.tests.test_board_html_guard import assert_inert
 from RevenueChaser.core.tests.test_one_escaper_175 import check_page
 from RevenueChaser.module_settings import control, control_render, report
 from RevenueChaser.module_settings.tests.test_control_view import NOW, control_nd
-from RevenueChaser.rcdata.api import screen
+from RevenueChaser.rcdata.needs import screen
 
 SECTIONS = ("sec-health", "sec-fetch", "sec-flow", "sec-providers", "sec-data", "sec-crosscheck", "sec-queue")
 

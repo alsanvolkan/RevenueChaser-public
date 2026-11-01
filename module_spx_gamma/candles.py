@@ -43,7 +43,7 @@ def window_lag(rows: list[dict], asof: date | str) -> tuple[str | None, str | No
         from RevenueChaser.core import calendar as nyse_calendar
         expected = min(nyse_calendar.latest_complete_session(), asof_date)
         if not nyse_calendar.is_trading_day(expected):
-            # the holiday table starts at 2025; an older as-of must not read as a failed window
+            # the holiday table starts at 1993; an older as-of must not read as a failed window
             expected = nyse_calendar.previous_trading_day(expected)
     except (ValueError, ImportError):
         return None, None

@@ -1,6 +1,6 @@
-"""``GET /api/data`` and ``GET /api/data/<need>`` (step D): the internal data API over HTTP.
+"""``GET /needs`` and ``GET /needs/<need>`` (step D): the internal data API over HTTP.
 
-Read-only. The routes call ``rcdata.api.get``, which calls no provider and writes nothing, so a page may ask them on
+Read-only. The routes call ``rcdata.needs.get``, which calls no provider and writes nothing, so a page may ask them on
 every render. Filling (``POST .../fill``) arrives with step C, where filling itself is built.
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ from datetime import date
 import pytest
 
 from RevenueChaser.app import dashboard
-from RevenueChaser.rcdata import api
+from RevenueChaser.rcdata import needs
 
 
 @pytest.fixture
@@ -20,7 +20,7 @@ def client():
 
 @pytest.fixture
 def answer(monkeypatch):
-    """Pin what ``api.get`` returns, so the route is tested and not the store."""
+    """Pin what ``needs.ask`` returns, so the route is tested and not the store."""
     seen = {}
 
     def set_answer(**over):
@@ -31,18 +31,18 @@ def answer(monkeypatch):
                     provenance=[{"key": "MSFT", "dataset": "spine/security", "source": "sec",
                                  "source_as_of": date(2026, 10, 27), "fetched_at": 1.0, "run_id": "r1"}],
                     status="changed", fill=None)
-        ans = api.Answer(**{**base, **over})
+        ans = needs.Answer(**{**base, **over})
 
         def fake_get(need, *, fill="never", **params):
             seen["need"], seen["fill"], seen["params"] = need, fill, params
             return ans
-        monkeypatch.setattr(api, "get", fake_get)
+        monkeypatch.setattr(needs, "ask", fake_get)
         return seen
     return set_answer
 
 
 def test_the_catalog_is_listed_with_its_freshness_rule(client):
-    body = client.get("/api/data").get_json()
+    body = client.get("/needs").get_json()
     names = {n["need"]: n for n in body["needs"]}
     assert "identity.universe" in names and "earnings.next" in names
     assert names["earnings.next"]["max_lag"] == 1 and names["earnings.next"]["max_lag_unit"] == "sessions"
@@ -53,7 +53,7 @@ def test_the_catalog_is_listed_with_its_freshness_rule(client):
 
 def test_an_answer_comes_back_as_json_with_dates_as_iso_strings(client, answer):
     answer()
-    body = client.get("/api/data/identity.universe").get_json()
+    body = client.get("/needs/identity.universe").get_json()
     assert body["need"] == "identity.universe" and body["state"] == "fresh"
     assert body["freshness"] == {"as_of_session": "2026-10-27", "lag_sessions": 0, "max_lag": 5,
                                  "unit": "sessions"}
@@ -64,36 +64,36 @@ def test_an_answer_comes_back_as_json_with_dates_as_iso_strings(client, answer):
 
 def test_the_list_param_of_the_need_is_split_on_commas(client, answer):
     seen = answer()
-    client.get("/api/data/identity.security?tickers=msft,aapl")
+    client.get("/needs/identity.security?tickers=msft,aapl")
     assert seen["params"] == {"tickers": ["msft", "aapl"]}
 
 
 def test_a_scalar_param_is_passed_through(client, answer):
     seen = answer()
-    client.get("/api/data/prices.bars?security_ids=sec:1&basis=split")
+    client.get("/needs/prices.bars?security_ids=sec:1&basis=split")
     assert seen["params"] == {"security_ids": ["sec:1"], "basis": "split"}
 
 
 def test_an_unknown_need_is_404(client):
-    r = client.get("/api/data/prices.nope")
+    r = client.get("/needs/prices.nope")
     assert r.status_code == 404 and r.get_json()["ok"] is False
 
 
 def test_an_unknown_param_is_400_never_a_500(client):
-    r = client.get("/api/data/identity.universe?nonsense=1")
+    r = client.get("/needs/identity.universe?nonsense=1")
     assert r.status_code == 400 and "nonsense" in r.get_json()["error"]
 
 
 def test_the_route_never_fills(client, answer):
     seen = answer()
-    client.get("/api/data/identity.universe?fill=if_stale")
+    client.get("/needs/identity.universe?fill=if_stale")
     assert seen["fill"] == "never", "a GET must never trigger a fill (avo, 29 Oct 2026)"
     assert seen["params"] == {}, "a fill in the query string must be dropped, not smuggled into the reader"
 
 
 def test_a_get_needs_no_panel_header(client, answer):
     answer()
-    assert client.get("/api/data/identity.universe").status_code == 200
+    assert client.get("/needs/identity.universe").status_code == 200
 
 
 # ── summary=1: the Settings / Data screen's read (no ticker, never a fill) ───────────────────────────────────────
@@ -116,14 +116,14 @@ def summary(monkeypatch):
         def fake_summary(need, *, sample=0):
             seen["need"], seen["sample"] = need, sample
             return {**base, **over}
-        monkeypatch.setattr(api, "summary", fake_summary)
+        monkeypatch.setattr(needs, "summary", fake_summary)
         return seen
     return set_summary
 
 
 def test_summary_answers_without_a_ticker_and_dates_are_iso(client, summary):
     summary()
-    body = client.get("/api/data/identity.universe?summary=1").get_json()
+    body = client.get("/needs/identity.universe?summary=1").get_json()
     assert body["row_count"] == 14 and body["coverage"]["asked"] is None and body["fill"] is None
     assert body["freshness"]["as_of_session"] == "2026-10-27" and body["freshness"]["unit"] == "sessions"
     assert body["sample_rows"][0]["source_as_of"] == "2026-10-27"
@@ -131,28 +131,28 @@ def test_summary_answers_without_a_ticker_and_dates_are_iso(client, summary):
 
 def test_summary_asks_for_five_sample_rows_by_default(client, summary):
     seen = summary()
-    client.get("/api/data/identity.universe?summary=1")
+    client.get("/needs/identity.universe?summary=1")
     assert seen["sample"] == 5
-    client.get("/api/data/identity.universe?summary=1&sample=2")
+    client.get("/needs/identity.universe?summary=1&sample=2")
     assert seen["sample"] == 2
 
 
 def test_the_sample_size_is_bounded_and_a_bad_one_falls_back(client, summary):
     seen = summary()
-    client.get("/api/data/identity.universe?summary=1&sample=5000")
+    client.get("/needs/identity.universe?summary=1&sample=5000")
     assert seen["sample"] == 50
-    client.get("/api/data/identity.universe?summary=1&sample=lots")
+    client.get("/needs/identity.universe?summary=1&sample=lots")
     assert seen["sample"] == 5
 
 
 def test_summary_0_is_the_ordinary_read(client, answer):
     seen = answer()
-    client.get("/api/data/identity.universe?summary=0")
-    assert seen["fill"] == "never" and "rows" in client.get("/api/data/identity.universe").get_json()
+    client.get("/needs/identity.universe?summary=0")
+    assert seen["fill"] == "never" and "rows" in client.get("/needs/identity.universe").get_json()
 
 
 def test_an_unknown_need_is_still_404_with_summary(client):
-    assert client.get("/api/data/prices.nope?summary=1").status_code == 404
+    assert client.get("/needs/prices.nope?summary=1").status_code == 404
 
 
 # ── The review's I2: the ordinary read path has a row cap ──
@@ -164,7 +164,7 @@ def test_a_needs_answer_is_capped_and_says_so(client, answer, monkeypatch):
     monkeypatch.setattr(dashboard, "DATA_ROWS_MAX", 3)
     answer(rows=[{"ticker": f"T{i}", "source_as_of": date(2026, 10, 27)} for i in range(10)],
            provenance=[{"key": f"T{i}"} for i in range(10)])
-    body = client.get("/api/data/identity.universe").get_json()
+    body = client.get("/needs/identity.universe").get_json()
     assert len(body["rows"]) == 3 and len(body["provenance"]) == 3
     assert body["truncated"] is True and body["row_cap"] == 3
     assert body["coverage"]["served"] == 1, "the coverage counts are the store's, not the page's"
@@ -173,32 +173,32 @@ def test_a_needs_answer_is_capped_and_says_so(client, answer, monkeypatch):
 def test_an_answer_inside_the_cap_is_not_marked_truncated(client, answer, monkeypatch):
     monkeypatch.setattr(dashboard, "DATA_ROWS_MAX", 3)
     answer(rows=[{"ticker": "MSFT"}], provenance=[{"key": "MSFT"}])
-    body = client.get("/api/data/identity.universe").get_json()
+    body = client.get("/needs/identity.universe").get_json()
     assert body["truncated"] is False and len(body["rows"]) == 1
 
 
 def test_the_caller_may_ask_for_fewer_rows_but_not_for_more(client, answer, monkeypatch):
     monkeypatch.setattr(dashboard, "DATA_ROWS_MAX", 3)
     answer(rows=[{"ticker": f"T{i}"} for i in range(10)], provenance=[{"key": f"T{i}"} for i in range(10)])
-    assert len(client.get("/api/data/identity.universe?limit=2").get_json()["rows"]) == 2
-    assert len(client.get("/api/data/identity.universe?limit=99").get_json()["rows"]) == 3
+    assert len(client.get("/needs/identity.universe?limit=2").get_json()["rows"]) == 2
+    assert len(client.get("/needs/identity.universe?limit=99").get_json()["rows"]) == 3
 
 
 def test_a_need_that_must_be_asked_answers_400_in_words_not_200_missing(client):
-    """The live verification's finding 2: ``GET /api/data/market.series`` answered 200 with ``state: missing`` on a
+    """The live verification's finding 2: ``GET /needs/market.series`` answered 200 with ``state: missing`` on a
     table holding 236 series, because the reader answers nothing unless a series is named. The refusal names the
     parameter, and ``?summary=1`` still answers the table's own state."""
-    r = client.get("/api/data/market.series")
+    r = client.get("/needs/market.series")
     assert r.status_code == 400 and "series_ids" in r.get_json()["error"]
-    assert client.get("/api/data/market.series?summary=1").status_code == 200
-    assert client.get("/api/data/market.series?series_ids=DGS10").status_code == 200
+    assert client.get("/needs/market.series?summary=1").status_code == 200
+    assert client.get("/needs/market.series?series_ids=DGS10").status_code == 200
 
 
 def test_an_empty_parameter_is_the_same_refusal_as_no_parameter(client):
     """The delta review's MUST, over HTTP: ``?series_ids=`` and ``?series_ids=,`` both build an empty list, which
     used to answer 200 / ``state: missing``."""
     for query in ("series_ids=", "series_ids=,", "series_ids=%20"):
-        r = client.get(f"/api/data/market.series?{query}")
+        r = client.get(f"/needs/market.series?{query}")
         assert r.status_code == 400 and "series_ids" in r.get_json()["error"], query
 
 
@@ -209,6 +209,36 @@ def test_an_empty_ask_is_refused_on_every_need_not_only_the_one_that_must_be_ask
     for need, param in (("identity.security", "tickers"), ("earnings.options", "tickers"),
                         ("ownership.holders_13f", "tickers"), ("ownership.shortable", "tickers"),
                         ("prices.revision", "security_ids")):
-        r = client.get(f"/api/data/{need}?{param}=")
+        r = client.get(f"/needs/{need}?{param}=")
         assert r.status_code == 400 and param in r.get_json()["error"], need
-        assert client.get(f"/api/data/{need}?summary=1").status_code == 200, f"{need}: the screen still answers"
+        assert client.get(f"/needs/{need}?summary=1").status_code == 200, f"{need}: the screen still answers"
+
+
+def test_as_of_in_the_query_string_reaches_ask_as_the_day_to_judge_from(client, answer):
+    """#330: ``?as_of=`` is the envelope's own argument, the day the answer is judged from."""
+    seen = answer()
+    assert client.get("/needs/market.vix?as_of=2026-10-15").status_code == 200
+    assert seen["params"]["as_of"] == "2026-10-15"
+
+
+def test_an_unreadable_as_of_is_a_400_in_words_not_a_500(client):
+    """The real ``ask`` refuses it before anything is read."""
+    resp = client.get("/needs/market.vix?as_of=15-Oct")
+    assert resp.status_code == 400 and "as_of" in resp.get_json()["error"]
+
+
+def test_a_valid_day_outside_the_holiday_table_answers_200_with_the_lag_undecided(client):
+    """Review of #334, should-fix 2: a calendar range error is not the client's mistake."""
+    resp = client.get("/needs/market.vix?as_of=2024-10-25")
+    assert resp.status_code == 200, resp.get_json()
+    body = resp.get_json()
+    assert body["freshness"]["reference"] == "2024-10-25" and body["freshness"]["lag_sessions"] is None
+
+
+def test_a_readers_own_value_error_is_not_dressed_up_as_a_bad_as_of(client, monkeypatch):
+    def boom(*a, **k):
+        raise ValueError("a reader's own problem")
+    monkeypatch.setattr(needs.catalog.read, "market_series", boom)
+    monkeypatch.setitem(dashboard.app.config, "PROPAGATE_EXCEPTIONS", False)
+    assert client.get("/needs/market.vix?as_of=2026-10-15").status_code == 500
+

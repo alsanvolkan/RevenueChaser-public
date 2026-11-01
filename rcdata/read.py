@@ -23,9 +23,9 @@ from . import ops, serving
 NEVER_CHECKED = "never_checked"
 DATASET_OF_TABLE = {"market_series": "market_series", "spx_gamma_expiry_strike": "uw/spot_expiry_strike",
                     "security": "spine/security", "index_membership": "funds/index_holdings",
-                    "fund": "sec/company_tickers_mf"}
+                    "fund": "sec/company_tickers_mf", "etf_holdings": "funds/etf_holdings", "etf": "spine/security"}
 KIND_OF_TABLE = {"market_series": "market", "spx_gamma_expiry_strike": "market", "security": "spine",
-                 "index_membership": "spine", "fund": "spine"}
+                 "index_membership": "spine", "fund": "spine", "etf_holdings": "spine", "etf": "spine"}
 # The ownership store (PR 16).
 DATASET_OF_TABLE.update({"sec13f_ticker_period": "ownership/serve", "sec13f_periods": "ownership/serve",
                          "finra_short_interest": "finra/short_interest", "ibkr_shortable": "ibkr/shortable",
@@ -37,7 +37,7 @@ KIND_OF_TABLE.update({t: "ownership" for t in ("sec13f_ticker_period", "sec13f_p
 
 
 def dataset_status(dataset: str) -> str:
-    check = ops.latest_check(dataset)
+    check = ops.read_latest_check(dataset)      # never creates ops.sqlite: a page read (#336)
     return check["result"] if check else NEVER_CHECKED
 
 

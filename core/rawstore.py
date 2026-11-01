@@ -3450,7 +3450,7 @@ def _session_of(run_at: float):
     from RevenueChaser.core import calendar
     try:
         return calendar.session_for(run_at).session_date
-    except ValueError:      # outside the holiday table (2025-2028): the row keeps run_at, valid_from is unknown
+    except ValueError:      # outside the holiday table (1993-2028): the row keeps run_at, valid_from is unknown
         return None
 
 

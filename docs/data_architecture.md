@@ -16,15 +16,17 @@ The Discord archive was a fourth store file until October 2026. It is now its ow
 (`discord-archive`), with its own database, schema version and backup, because nothing here ever
 read it for analysis.
 
-## Decision note — the internal data API comes after the setup (avo, 2026-10-29)
+## Decision note — the needs layer: built (PR #290); filling not yet (avo, 2026-10-29, renamed 2026-11-01)
 
-The bridge between the dashboards and the store (an internal data API: a board asks for a named
-need, the API serves it from the store with its freshness, coverage and provenance, and enqueues a
-fill when something is missing or stale) is **not built before the data setup is finished**. The
-order avo set: finish the setup, purge the data, run the backfill, then build the API in one go, so
-its final shape is settled by real data rather than guessed. Nothing of the API — no catalog, no
-`get()` envelope, no on-demand fill, no HTTP surface — is built before that. The design it will be
-built from is `/mnt/project-files/earnings_bridge/2026-10-29_internal_data_api.md`; earnings dates
+The bridge between the dashboards and the store is **the needs layer**, `rcdata/needs/`: a board asks for a
+named need with `needs.ask(need)`, and the layer serves it from the store with its freshness, coverage and
+provenance. It was built in PR #290 (the catalog, the `ask()` envelope, `summary`, the board declarations and the
+Settings / Data screen), and renamed from `rcdata.api` / `api.get` in #329 (`GET /needs`,
+`GET /needs/<need>`; the old `/api/data` routes are gone). **What is not built is the filling:** `ask()`
+accepts only `fill="never"`, so a missing or stale need is reported, never fetched, and nothing enqueues a
+fill on demand yet. The order avo set still holds for that part: finish the setup, purge the data, run the
+backfill, then add the on-demand fill, so its final shape is settled by real data rather than guessed. The
+design it follows is `/mnt/project-files/earnings_bridge/2026-10-29_internal_data_api.md`; earnings dates
 are its first use case, not the whole design. Its locking follows the concurrency model below rather
 than adding a scheme of its own: a file lock (`core/job_lock.py`) where liveness matters, an
 `ops.sqlite` row under `BEGIN IMMEDIATE` for shared state and for collapsing concurrent fill
@@ -283,8 +285,9 @@ date; no table or board does its own `date.today()` or UTC-date cut.
 - `to_session_date(value)` is the read helper for old run-time columns (epoch, ISO text, `date`): a value with a time
   goes through `session_for`, a date-only value becomes the latest session on or before it. Naive text is read as New
   York time. `provenance.session_of` is the never-raising wrapper for labels.
-- Rule C: the holiday table stays 2025-2028 and raises outside it. Sessions before 2025 come from the stored price
-  bars (D01 / D03 fill), not from this module. Early-close days count as full days (conservative).
+- Rule C: the holiday table runs 1993-2028 and raises outside it. 1993-2024 (#348) equals CRSP's trading dates
+  (`crsp_a_stock.dsi`) exactly, every year. Sessions before 1993 come from the stored price bars, not from this
+  module; the D01 / D03 fill (`core/prices.py`, `CALENDAR_START`) still keeps its pre-2025 rows on SPY's dates. Early-close days count as full days (conservative).
 - Not in this slice: Rotation's weekend and holiday rows (wave 5, with #182) and migrating old tables.
 - Open items, kept out of this slice so no board display changes: `provenance._day` still reads epoch as the UTC
   date; the move to `provenance.session_of` happens in wave 5 (#182, Rotation and Co-movement), because it changes
@@ -647,7 +650,10 @@ worker thread writes while Flask request threads read. So:
   no store file, only its own record under `.cache/ibkr_login/`, and exits 0 whatever it finds — a session that
   expired on its weekly cycle is not a failed job), plus the market-store builder RC-Build hourly at :07 (one
   `rcdata.build run --once` pass over the request queue, unit `life-rc-builder`, 50 min limit) and its backup
-  RC-Build-Backup daily 04:30 (`rcdata backup`, unit `life-rc-builder-backup`, 30 min limit), PR 2;
+  RC-Build-Backup daily 04:30 (`rcdata backup`, unit `life-rc-builder-backup`, 30 min limit), PR 2, plus
+  Monday to Friday 06:30 (the SPX Gamma Fetch RC-SPX-Gamma-Fetch, #291: `module_spx_gamma --nightly`, the
+  latest complete session's raw day with all expiries, only once its Cboe SPX close is stored and outside the US
+  session, else exit 3; no catch-up);
   `core/automations.py`: the Relatedness and Value Chain rows are 30 min apart.
 
 ### Full-refresh vs. incremental tables
@@ -934,8 +940,11 @@ PR 1 lays the skeleton and proves it on the SPX expiry-strike slice and the mark
 old table names, the routes and the Settings cards come in later PRs.
 
 **The first board on it: SPX Gamma (PR 3, D7).** `module_spx_gamma/store_reads.py` is the board's one reader (D4:
-`rcdata.read` only, no SQL of its own, no kept connection; a missing day is a "not stored" marker, never an
-exception or a provider call): the 0-1 DTE dollar OI gamma per strike (`call_gamma_oi + put_gamma_oi` over the
+no SQL of its own, no kept connection; a missing day is a "not stored" marker, never an exception or a provider call).
+Since #330 it reads through the needs layer, `needs.ask(need, as_of=day)` over `market.spx_expiry_strike`,
+`market.vix`, `market.cot` and `market.spx_close` (its `READS`). VIX and COT are judged against the day rendered, not
+the newest session, with the catalog's lag limits; the closes and the 0-1 DTE slice keep their own rules, and a day
+the calendar's holiday table does not cover keeps its rows with the lag left undecided: the 0-1 DTE dollar OI gamma per strike (`call_gamma_oi + put_gamma_oi` over the
 expiries 0 and 1 DTE of `spx_gamma_expiry_strike`; a day whose session has not closed reads the previous session's
 snapshot kept to the expiries from the day on, decision A3; that is the day's 0 DTE expiry only, labelled "0 DTE only
 (previous-session snapshot, <date> <time>)" on the pin line and in the banner, a smaller and conservative sum, review
@@ -943,7 +952,7 @@ SF2) for the $10B pin and $200M squeeze tests (review S4; a day without the slic
 trigger, avo 28 Oct 2026); the
 VIX family (`VIX`, `VIX9D`, `VIX3M`, `VIX6M`, `VIX1Y`, `VVIX`: the newest observation on or before the day, inside
 3 sessions); the E-mini TFF report (`cftc:tff:13874A:*`: the newest report released, Tuesday + 3 days (an approximation of CFTC's schedule: a holiday week or a shutdown moves the release later, so a past day's render may count a report released a little early), on or before
-the day, inside 10 sessions; the weekly change is this report minus the previous one, decision A5); and Cboe's
+the day, inside 10 sessions; the ask ends 3 days before the day, so an unreleased report is never judged; the weekly change is this report minus the previous one, decision A5); and Cboe's
 `SPX` closes for the 8-week window (one column: no open, high, low or volume, decision A6). The job of an accepted
 Fetch queues `uw/spot_expiry_strike` and `market_series` with `requested_by` `spx_gamma` (`ops.enqueue_once`) and
 renders at once with what is stored.
@@ -964,7 +973,7 @@ rather than growing: without it a connection may take 80 % of the machine's RAM,
 first `prices/serving` build on #319's code (request #35, 30 Oct 2026, 7.7 GB peak on a 15 GB server).
 
 **Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`. Each kind is one
-file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `2`), is described under
+file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `4`), is described under
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
 below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `1`), under "Fundamentals" after it; and the options
@@ -973,7 +982,7 @@ data, `options` (serving schema version `1`), under "The options data" last. The
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
 `source`, `source_as_of`, `fetched_at`, `run_id`, `observed`) and `market_series` (key series id, observation date,
 source; `value`, OHLC for the index files, `frequency`, `session_date`, provenance). `session_date` comes from
-`core/calendar.py` and is empty outside its 2025-2028 table (its rule C: no second calendar). The previous file
+`core/calendar.py` and is empty outside its 1993-2028 table (its rule C: no second calendar). The previous file
 stays as `<kind>.prev.duckdb`.
 
 **The swap rule.** A kind is built as a new file `<kind>.<build_id>.duckdb`, from Parquet only (no network), and
@@ -1033,8 +1042,10 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 | `dataset_schedule` | Cadence and pause state per dataset (Pause / Resume on Settings, PR 2) |
 
 **Day caps** (`rcdata/caps.py`, avo's numbers, to be tuned): uw 150,000, sec 40,000, fred 10,000, alpaca 20,000;
-the spine's (PR 5, working numbers avo has not set): wrds 50 (queries), openfigi 1,000 (requests), ssga 50,
-ishares 50, vanguard 50, nasdaq 50, invesco 50 (one request per fund file); yfinance 5,000, shared by three stores
+the spine's (PR 5, working numbers avo has not set): wrds 50 (queries), openfigi 1,000 (requests), ssga 300,
+ishares 150, vanguard 50, nasdaq 50, invesco 50 (one request per fund file; ssga and ishares serve both
+`funds/index_holdings` and `funds/etf_holdings`, 21 and 9 files a run, and every retry attempt is counted), ark 50
+(ARKQ's holdings CSV, asked only on a day UW holds nothing for it, #339); yfinance 5,000, shared by three stores
 (working numbers avo has not set): the prices store's float lookups (PR 7, 3,000), the fundamentals layer's
 weekly analyst estimates (PR 12, 2,000, one request per ticker) and the market store's `yahoo` source (PR 9, no
 share of its own: one whole-history read per symbol, MOVE and wheat, and as-of day); the ownership store's (PR 16, working numbers too;
@@ -1042,7 +1053,7 @@ its SEC filings count under sec): finra 2,000 (pages of 5,000 rows), nasdaqtrade
 threshold file per market and day); ibkr 1,050, shared by two stores (working numbers): 50 for one download of
 IBKR's public short-stock file a run (PR 16) and 1,000 for the options data's IV year through the gateway (PR 18,
 one historical request per list name, once); the
-fundamentals layer's (PR 12, working numbers): alphavantage 25 (its free tier);
+fundamentals layer's (PR 12, working numbers): alphavantage 25 (its free tier, shared with the spine's `alphavantage/listing_status`, two requests a run, #346);
 a dataset whose providers have all reached their cap for the New York day gets a `skipped` check row and sends
 nothing; inside a run every call checks its provider's cap first (one capped provider, FRED among the market series,
 is a source failure and the others go on), and the counter is written every 25 calls, at the end, and on SIGTERM (systemd's stop, turned into a clean exit) or Ctrl-C; a keyless call is counted when it is sent, a UW call when its answer arrives (the UW client's observer), so a UW request cut off by a stop is not counted. Only the
@@ -1131,7 +1142,10 @@ the old identity tables there are untouched (D5: they are empty since 27 Oct).
 | `wrds/idxcst_his` | monthly, attended | `comp.idxcst_his` for the S&P 500, 400 and 600 index keys | `stg_wrds_idx` |
 | `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet (a CINS, a letter first, asked as `ID_CINS`), under 25 requests a minute | `stg_figi` |
 | `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR (`latest-holdings.csv`), Vanguard VOO/IVOO/VIOO (daily creation basket), Nasdaq's nasdaq100 list and Invesco QQQ (both vote `ndx`) | `stg_fund_lines`, `stg_fund_files` |
-| `spine/security` | daily | none: builds the served tables from the staging tables | the four tables below except `fund` |
+| `funds/etf_holdings` | daily | the SPDR workbooks of the 11 sector funds and XBI/XOP/XME/KRE/XHB/XRT/KIE, the iShares `latest-holdings.csv` of SOXX/IBB/ITA/ITB/IGV/IAK, and UW `/etfs/<t>/holdings` whole (no top-10 cap) for the 14 themes; on a day UW holds nothing for ARKQ, ARK's own holdings CSV (`ark-ARKQ.csv`, #339; AIRR, SKYY, WCLD and ROBO have no machine-readable issuer file) | none: serves `etf_holdings` itself |
+| `alphavantage/listing_status` | daily, keyed (builder service) | Alpha Vantage `LISTING_STATUS` (CSV, every US listing: `assetType` `ETF` or `Stock`, `ipoDate`), plus one `state=delisted` call whose non-CSV answer is one open `no_rows` build issue (resolved when it answers a list), never a failed run (#346); an active list under 3,000 ETF rows or under 80% of the last snapshot's fails and is not kept; a failed run is due again on the next New York day, not every hourly pass (`due.DAY_CAPPED`, the 25 a day it shares with the calendar), unless the day's raw file is held (a rerun then costs no call); the key is never stored or logged | `stg_av_listing` (the newest snapshot) |
+| `sec/ncen` | monthly; every run (Fetch or backfill) holds the last 4 published quarters (a 404 is not yet, the walk goes one quarter further back; a held quarter is never asked again; one held but not typed is typed) | `www.sec.gov/files/dera/data/form-n-cen-data-sets/<YYYY>q<N>_ncen.zip`: `FUND_REPORTED_INFO.tsv` joined to `SECURITY_EXCHANGE.tsv` on `FUND_ID` (the series' name, ticker, fund-type flags, average net assets), `SUBMISSION.tsv` for each filing's CIK and dates (#346) | `stg_ncen` (each series' newest filing, every held quarter), `stg_ncen_filer` (every filer's CIK) |
+| `spine/security` | daily | none: builds the served tables from the staging tables | the tables below except `fund` and `etf_holdings` |
 
 The sources load their Parquet into TEMP tables of the build connection (never stored in the file), and all
 but one stop there; `sec/company_tickers_mf` also serves `fund` from its own staging, because nothing derives
@@ -1160,7 +1174,7 @@ own mark: a panel header that says `cli` is recorded as `panel:cli`.
 the CLI or a Fetch), so the first hourly builder pass after a deploy calls no spine source before the attended
 steps, and a first attempt that failed is not retried every hour.
 
-**Served tables** (`spine` serving schema version `2`). Periods are `valid_from` inclusive, `valid_to` exclusive
+**Served tables** (`spine` serving schema version `4`). Periods are `valid_from` inclusive, `valid_to` exclusive
 (Compustat's inclusive ends are moved one day on), `valid_to` NULL while current.
 
 | Table | Rows |
@@ -1169,6 +1183,8 @@ steps, and a first attempt that failed is not retried every hour.
 | `security_history` | the SEC file's `cik`, `name`, `exchange` per ticker over the stored snapshots; Compustat's identifier history of the linked securities |
 | `gics_history` | Compustat's GICS periods of the linked companies |
 | `index_membership` | the fund-file members (source `funds/index_holdings`) and Compustat's constituents (source `wrds/idxcst_his`, the check) |
+| `etf` | the ETF universe, one row per ticker (#346): Alpha Vantage's active `assetType=ETF` rows ∪ N-CEN's `IS_ETF=Y` series ∪ `security`'s `etp` rows, `source` `both` / `av` / `ncen` / `etp`. Every one is stored: no threshold and no `active` column (a board's thresholds are its settings, applied at read time). `is_etn` by a name rule (ETN, ETRACS, a dated note, a bank issuer's name), never for a row N-CEN calls an ETF: flagged, kept, not counted as ETFs. `is_cef` for a row the spine types `cef` (Alpha Vantage lists some closed-end funds as `ETF`, e.g. DHY; avo, 1 Nov 2026): flagged, kept, not counted as ETFs. From the series' newest N-CEN: `is_index`, `is_lev_inverse` (`IS_MULTI_INVERSE_INDEX`, or true by a name rule: 2x-5x, -1x, ProShares Ultra/Short, inverse, leveraged, a daily long/short/bull/bear fund), `is_money_market`, `is_fund_of_funds` (NULL, not false, for a row N-CEN does not hold) and `aum` (`DAILY_AVG_NET_ASSETS`, else `MONTHLY_AVG_NET_ASSETS`: an average over the filing's fiscal year, not a point-in-time AUM; `aum_as_of` that year's end); `inception` from AV's `ipoDate`; `is_option_income` by a name rule (option income, covered call, buffer, autocallable, defined or target outcome; premium income, buy-write, put-write, option strategy, managed floor, defined or structured protection); `asset_class` `commodity` for an `etp` row that is no note and whose CIK files no N-CEN at all (a 1933-Act trust: GLD, SLV, USO; a UIT such as SPY files one as an S-6 registrant), applied only once `sec/ncen` holds four quarters; `sector_name` for the 11 sector SPDRs (`core/rotation_reference.py`). Still NULL: `focus`, `country`, `adv_usd_20d`, `expense_ratio` and every other `asset_class` (later PRs). Built by `spine/security` (`rcdata/build/spine/etf.py`), after `security` |
+| `etf_holdings` | every holding of each ETF of `funds/etf_holdings`, per day: `as_of`, `etf`, `provider`, `ticker`, `cusip`, `name`, `weight` (the relatedness peer sets' source) |
 | `fund` | one per share class of the newest SEC fund file: `cik`, `series_id`, `class_id`, the normalised `ticker` and the file's `ticker_raw`, `is_etf` with the `is_etf_source` that decided it, and the file's provenance. `security`'s counterpart: an ETF is a series of a trust, so it has no row of its own in the equity file (the ETF rule, and the two exceptions, below). The kind's only source-owned served table, so `base.shrink_scope` relaxes it for `allow_shrink` on `sec/company_tickers_mf` alone: an empty `fund` refuses the swap for every spine dataset until that one is run |
 
 **The ETF rule** (`rcdata/build/spine/sec_tickers_mf.py`). The fund file carries no "this is an ETF" field, so
@@ -1183,9 +1199,10 @@ every filter — the error to weigh when the second signal (the ticker trading o
 the N-CEN ETF field) is chosen. A symbol that does not parse (`(NWAGX)`, `n/a`, the empty string) is dropped and counted in the
 run's note.
 
-**The ETF universe is `fund` plus `security`'s `etp` rows.** SPY is a unit investment trust and GLD a commodity
-trust: neither has a series and a class, so neither is in the fund file. Both are rows of the equity file (GLD,
-SLV and USO are its `etp` rows). A reader after the whole ETF universe reads both tables, never `fund` alone.
+**The ETF universe is `etf`** (#346). Before it, a reader took `fund` plus `security`'s `etp` rows: SPY is a unit
+investment trust and GLD a commodity trust, so neither has a series and a class in the fund file, and both are rows
+of the equity file (GLD, SLV and USO are its `etp` rows). `etf` carries those `etp` rows itself, so a reader after
+the ETF universe reads `etf`, never `fund` alone.
 
 **Tier rule v2** (`rcdata/build/spine/tier.py`): A = listed on Nasdaq, NYSE or Cboe and not an excluded type
 (`core.identity.types.EXCLUDED_TYPES`; an untyped name stays); B = listed, excluded type; C = OTC; D = no exchange.

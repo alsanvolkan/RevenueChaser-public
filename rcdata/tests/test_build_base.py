@@ -136,3 +136,10 @@ def test_a_403_to_a_keyed_request_points_at_the_key_not_the_contact(http_mock, m
         base.http_get(ctx, "alpaca", "https://alpaca.test/v2/stocks/bars", headers={"APCA-API-KEY-ID": "test-key"},
                       keyed=True)
     assert "RC_HTTP_CONTACT" not in str(err.value) and "test-key" not in str(err.value)
+
+
+def test_iter_sessions_crosses_the_2015_2016_year_end():
+    """Before 2025 the calendar's table now has the sessions (#348): New Year's Day 2016 is closed."""
+    from datetime import date
+    got = list(base.iter_sessions(date(2015, 12, 28), date(2016, 1, 5)))
+    assert got == [date(2015, 12, d) for d in (28, 29, 30, 31)] + [date(2016, 1, 4), date(2016, 1, 5)]

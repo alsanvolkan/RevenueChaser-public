@@ -42,6 +42,18 @@ def test_a_dataset_name_with_a_slash_is_one_dataset(client):
     assert _rows()[0]["dataset"] == "uw/spot_expiry_strike"
 
 
+@pytest.mark.parametrize("dataset", ["alphavantage/listing_status", "sec/ncen"])
+def test_the_etf_lists_datasets_take_a_fetch_and_a_backfill(client, dataset):
+    """#346: Settings' Fetch and Backfill on the two halves of the ETF list go through the one route, unchanged."""
+    assert client.post(f"/api/build/request/{dataset}").status_code == 202
+    ops.next_request()                                         # the builder took the Fetch
+    ops.finish_request(_rows()[0]["id"], "done")
+    start = calendar.today_ny().replace(day=1).isoformat()
+    assert client.post(f"/api/build/request/{dataset}", json={"backfill_from": start}).status_code == 202
+    assert [(x["dataset"], x["params"]) for x in _rows()] == [
+        (dataset, None), (dataset, '{"from": "%s", "mode": "backfill"}' % start)]
+
+
 def test_a_request_without_the_panel_header_is_refused_and_enqueues_nothing():
     from RevenueChaser.app.dashboard import app
     r = app.test_client().post("/api/build/request/market_series")

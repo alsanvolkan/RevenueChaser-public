@@ -2,7 +2,7 @@
 
 The catalog said which function answers a need, but not which arguments a caller must give it, and nothing checked
 that the two matched. Thirteen of the forty-two needs named a reader with a required argument the catalog never
-declared: ``api.get`` raised ``TypeError`` and ``GET /api/data/<need>`` answered 400 for a third of the catalog,
+declared: ``needs.ask`` raised ``TypeError`` and ``GET /needs/<need>`` answered 400 for a third of the catalog,
 with green tests, because every test called one of the handful of needs that happen to take no argument.
 
 These tests need no store. They bind the declared parameters to the reader's own signature, which raises exactly
@@ -16,7 +16,7 @@ import inspect
 import pytest
 
 from RevenueChaser.app import dashboard
-from RevenueChaser.rcdata import api
+from RevenueChaser.rcdata import needs
 
 
 def _required(need) -> list[str]:
@@ -42,17 +42,17 @@ def _declared_params(need) -> dict:
     return params
 
 
-@pytest.mark.parametrize("name", sorted(api.catalog.NEEDS))
+@pytest.mark.parametrize("name", sorted(needs.catalog.NEEDS))
 def test_every_required_argument_of_a_needs_reader_can_be_asked_for(name):
-    need = api.catalog.NEEDS[name]
+    need = needs.catalog.NEEDS[name]
     missing = [p for p in _required(need) if p not in _suppliable(need)]
     assert not missing, (f"{name}: {need.reader_name} requires {missing}, which neither the need's ask_param "
                          f"({need.ask_param!r}) nor the route's scalars can supply, so the need answers 400")
 
 
-@pytest.mark.parametrize("name", sorted(api.catalog.NEEDS))
+@pytest.mark.parametrize("name", sorted(needs.catalog.NEEDS))
 def test_the_declared_parameters_fit_the_readers_signature(name):
-    need = api.catalog.NEEDS[name]
+    need = needs.catalog.NEEDS[name]
     try:
         inspect.signature(need.reader).bind(**_declared_params(need))
     except TypeError as exc:
@@ -62,7 +62,7 @@ def test_the_declared_parameters_fit_the_readers_signature(name):
 def test_the_four_market_series_needs_each_name_their_own_series():
     """C2: four needs read one table. Without a key of their own every one of them summarises the whole table, so a
     series that stopped updating reads fresh as long as any other series in that table is current."""
-    series = {n: api.catalog.NEEDS[n] for n in ("macro.dgs10", "market.vix", "market.cot", "market.series")}
+    series = {n: needs.catalog.NEEDS[n] for n in ("macro.dgs10", "market.vix", "market.cot", "market.series")}
     for name, need in series.items():
         assert need.table == "market_series" and need.ask_param == "series_ids"
     assert series["macro.dgs10"].filter_values == ("DGS10",)
@@ -78,12 +78,28 @@ def test_a_filtered_need_asks_its_own_series_without_being_told(monkeypatch):
     def fake(series_ids=(), start=None, end=None, prefix=None):
         seen.update(series_ids=tuple(series_ids), prefix=prefix)
         return []
-    monkeypatch.setattr(api.catalog.read, "market_series", fake)
-    api.get("macro.dgs10")
+    monkeypatch.setattr(needs.catalog.read, "market_series", fake)
+    needs.ask("macro.dgs10")
     assert seen == {"series_ids": ("DGS10",), "prefix": None}
     seen.clear()
-    api.get("market.cot")
-    assert seen["prefix"] == api.catalog.NEEDS["market.cot"].filter_prefix
+    needs.ask("market.cot")
+    assert seen["prefix"] == needs.catalog.NEEDS["market.cot"].filter_prefix
+
+
+def test_the_spx_close_need_names_the_spx_series_so_a_board_never_does(monkeypatch):
+    """#330: SPX Gamma's 8-week candles are Cboe's ``SPX`` closes in ``market_series``; the need names the series,
+    the board names the need. Daily like the VIX family, so the same 3 sessions."""
+    need = needs.catalog.NEEDS["market.spx_close"]
+    assert (need.table, need.ask_param, need.filter_values) == ("market_series", "series_ids", ("SPX",))
+    assert (need.max_lag, need.max_lag_unit) == (3, "sessions") and need.providers == ("cboe",)
+    seen = {}
+
+    def fake(series_ids=(), start=None, end=None, prefix=None):
+        seen.update(series_ids=tuple(series_ids), start=start, end=end)
+        return []
+    monkeypatch.setattr(needs.catalog.read, "market_series", fake)
+    needs.ask("market.spx_close", start="2026-09-01", end="2026-10-26")
+    assert seen == {"series_ids": ("SPX",), "start": "2026-09-01", "end": "2026-10-26"}
 
 
 def test_a_filtered_needs_summary_counts_its_own_series_only(monkeypatch):
@@ -93,11 +109,11 @@ def test_a_filtered_needs_summary_counts_its_own_series_only(monkeypatch):
         seen.update(table=table, key_values=tuple(key_values), key_prefix=key_prefix)
         return {"row_count": 0, "key_count": 0, "newest_day": None, "status": "never checked", "dataset": None,
                 "sample_rows": []}
-    monkeypatch.setattr(api.serve.read, "table_summary", fake_summary)
-    api.summary("macro.dgs10")
+    monkeypatch.setattr(needs.serve.read, "table_summary", fake_summary)
+    needs.summary("macro.dgs10")
     assert seen["key_values"] == ("DGS10",), "the summary counts every series in the table"
-    api.summary("market.cot")
-    assert seen["key_prefix"] == api.catalog.NEEDS["market.cot"].filter_prefix
+    needs.summary("market.cot")
+    assert seen["key_prefix"] == needs.catalog.NEEDS["market.cot"].filter_prefix
 
 
 # ── I1: one reference day for every freshness answer ──
@@ -110,16 +126,16 @@ def test_the_lag_is_counted_against_one_shared_reference_day(monkeypatch):
 
     from RevenueChaser.core import earnings_dates
 
-    assert api.reference_session is api.serve.reference_session
+    assert needs.reference_session is needs.serve.reference_session
     seen = []
-    monkeypatch.setattr(api.serve.calendar, "latest_complete_session", lambda: (seen.append(1), _date(2026, 10, 28))[1])
+    monkeypatch.setattr(needs.serve.calendar, "latest_complete_session", lambda: (seen.append(1), _date(2026, 10, 28))[1])
     # Thursday 29 Oct: the newest complete session is Wednesday 28th, and the layer's session is Tuesday 27th.
-    ans = api.Answer(need="earnings.next", rows=[], state="fresh",
+    ans = needs.Answer(need="earnings.next", rows=[], state="fresh",
                      freshness={"as_of_session": _date(2026, 10, 27), "lag_sessions": 1, "max_lag": 1,
                                 "unit": "sessions"},
                      coverage={"asked": 0, "served": 0, "missing": [], "from_fallback": 0},
                      provenance=[], status="changed")
-    need = api.catalog.NEEDS["earnings.next"]
+    need = needs.catalog.NEEDS["earnings.next"]
     monkeypatch.setattr(earnings_dates, "_d26_dates", lambda today: {})
     dates = earnings_dates._layer_dates(ans, _date(2026, 10, 29), need)
     assert seen, "the board counted the lag against its own day, not the shared reference"
@@ -144,8 +160,8 @@ def test_a_summary_of_a_table_the_file_does_not_have_is_no_rows_not_an_error():
 def test_a_row_without_a_status_column_does_not_put_the_word_none_on_a_card(monkeypatch):
     """m4: ``rows[0].get("status")`` with no fallback wrote the literal string ``"None"`` wherever a reader's rows
     carry no status column."""
-    monkeypatch.setattr(api.catalog.read, "universe", lambda **kw: [{"ticker": "MSFT"}])
-    ans = api.get("identity.universe")
+    monkeypatch.setattr(needs.catalog.read, "universe", lambda **kw: [{"ticker": "MSFT"}])
+    ans = needs.ask("identity.universe")
     assert ans.status != "None" and ans.status
 
 
@@ -177,9 +193,9 @@ def test_on_a_day_whose_session_is_not_closed_the_card_and_the_filter_agree(monk
     from RevenueChaser.core import earnings_dates
 
     tuesday, wednesday, thursday = _date(2026, 10, 27), _date(2026, 10, 28), _date(2026, 10, 29)
-    monkeypatch.setattr(api.serve.calendar, "latest_complete_session", lambda: wednesday)
-    need = api.catalog.NEEDS["earnings.next"]
-    ans = api.Answer(need="earnings.next",
+    monkeypatch.setattr(needs.serve.calendar, "latest_complete_session", lambda: wednesday)
+    need = needs.catalog.NEEDS["earnings.next"]
+    ans = needs.Answer(need="earnings.next",
                      rows=[{"session_date": tuesday, "ticker": "KO", "report_date": _date(2026, 11, 3)}],
                      state="fresh",
                      freshness={"as_of_session": tuesday, "lag_sessions": 1, "max_lag": need.max_lag,
@@ -189,13 +205,13 @@ def test_on_a_day_whose_session_is_not_closed_the_card_and_the_filter_agree(monk
     assert earnings_dates._layer_dates(ans, thursday, need) == {"KO": _date(2026, 11, 3)}
 
 
-@pytest.mark.parametrize("name", sorted(n for n, d in api.catalog.NEEDS.items() if d.ask_param))
+@pytest.mark.parametrize("name", sorted(n for n, d in needs.catalog.NEEDS.items() if d.ask_param))
 def test_ask_list_agrees_with_what_the_reader_takes(name):
     """``bind()`` checks how many arguments there are, not what they are, so a list fitting a ``str`` parameter
     binds fine and then matches no row. ``prices.wrds_diff`` was exactly that: the route passed
     ``["crsp_vs_alpaca"]`` to a reader that does ``str(comparison)``, so the query asked for the literal text
     ``"['crsp_vs_alpaca']"`` and answered empty where the row exists - silently, with no error."""
-    need = api.catalog.NEEDS[name]
+    need = needs.catalog.NEEDS[name]
     annotation = inspect.signature(need.reader).parameters[need.ask_param].annotation
     text = annotation if isinstance(annotation, str) else getattr(annotation, "__name__", str(annotation))
     if text is inspect.Parameter.empty or "empty" in str(text):
@@ -208,7 +224,7 @@ def test_ask_list_agrees_with_what_the_reader_takes(name):
 # ── The live verification's two findings (homesrv, 30 Oct 2026) ────────────────────────────────────────────────
 
 def test_a_need_that_cannot_answer_without_an_ask_says_so_instead_of_missing():
-    """Finding 2. On the live store ``GET /api/data/market.series`` answered ``state: missing``, ``asked: 0``,
+    """Finding 2. On the live store ``GET /needs/market.series`` answered ``state: missing``, ``asked: 0``,
     ``served: 0`` while ``market_series`` held 236 series and 162,000 rows: ``read.market_series`` with no series
     named is no rows by design ("naming neither is no rows, never the whole table"), and the envelope turned that
     into "the store has nothing". A card reading that would say the market series were never fetched.
@@ -222,21 +238,21 @@ def test_a_need_that_cannot_answer_without_an_ask_says_so_instead_of_missing():
     con.execute("INSERT INTO market_series (series_id, obs_date, source, value) VALUES "
                 "('DGS10', DATE '2026-10-27', 'fred', 4.1), ('VIX', DATE '2026-10-27', 'yfinance', 17.0)")
     con.close()
-    assert api.catalog.NEEDS["market.series"].ask_required
-    with pytest.raises(api.AskRequired, match="series_ids"):
-        api.get("market.series")
-    assert api.get("market.series", series_ids=["DGS10"]).state != "missing", "a named series answers as before"
+    assert needs.catalog.NEEDS["market.series"].ask_required
+    with pytest.raises(needs.AskRequired, match="series_ids"):
+        needs.ask("market.series")
+    assert needs.ask("market.series", series_ids=["DGS10"]).state != "missing", "a named series answers as before"
     # The screen's own call does not name anything and must still see the table as it is (236 series, live).
-    s = api.summary("market.series")
+    s = needs.summary("market.series")
     assert s["state"] != "missing" and s["row_count"] == 2 and s["key_count"] == 2
 
 
-@pytest.mark.parametrize("name", sorted(n for n, d in api.catalog.NEEDS.items() if d.ask_param))
+@pytest.mark.parametrize("name", sorted(n for n, d in needs.catalog.NEEDS.items() if d.ask_param))
 def test_a_need_whose_reader_answers_nothing_by_default_declares_that_it_must_be_asked(name):
     """The rule behind finding 2, over the whole catalog: when the reader's ask parameter defaults to an empty
     collection and the need names no rows of its own, calling it with nothing is silently no rows. Such a need
     declares ``ask_required``; a reader whose default is ``None`` means every row and is left alone."""
-    need = api.catalog.NEEDS[name]
+    need = needs.catalog.NEEDS[name]
     default = inspect.signature(need.reader).parameters[need.ask_param].default
     answers_nothing = isinstance(default, (tuple, list, set, frozenset)) and not default
     if answers_nothing and not (need.filter_values or need.filter_prefix):
@@ -251,8 +267,8 @@ def test_the_dgs10_window_has_more_than_one_session_of_room():
     DGS10 one business day late and the builder's run is in the morning, so an ordinary day can sit at 2 or 3; one
     missed run then reads ``stale`` while nothing is wrong. 4 keeps a session of slack and still turns stale inside
     a trading week."""
-    assert api.catalog.NEEDS["macro.dgs10"].max_lag == 4
-    assert api.catalog.NEEDS["macro.dgs10"].max_lag_unit == "sessions"
+    assert needs.catalog.NEEDS["macro.dgs10"].max_lag == 4
+    assert needs.catalog.NEEDS["macro.dgs10"].max_lag_unit == "sessions"
 
 
 def test_an_empty_ask_is_refused_like_a_missing_one():
@@ -269,20 +285,20 @@ def test_an_empty_ask_is_refused_like_a_missing_one():
                 "('DGS10', DATE '2026-10-27', 'fred', 4.1)")
     con.close()
     for empty in ([], (), ""):
-        with pytest.raises(api.AskRequired, match="series_ids"):
-            api.get("market.series", series_ids=empty)
+        with pytest.raises(needs.AskRequired, match="series_ids"):
+            needs.ask("market.series", series_ids=empty)
     # The reader's other way of naming rows is an ask too, so it must not be refused (the review's nit 2).
-    assert api.get("market.series", prefix="DGS").rows
+    assert needs.ask("market.series", prefix="DGS").rows
 
 
-@pytest.mark.parametrize("name", sorted(n for n, d in api.catalog.NEEDS.items() if not d.ask_param))
+@pytest.mark.parametrize("name", sorted(n for n, d in needs.catalog.NEEDS.items() if not d.ask_param))
 def test_a_need_with_nothing_to_ask_for_never_requires_an_ask(name):
     """The review's nit 3: the rule above only walks the needs that have an ask parameter, so ``ask_required`` on
     one of the nine without one went unnoticed - and it makes every call raise with ``name None`` in the message."""
-    assert not api.catalog.NEEDS[name].ask_required
+    assert not needs.catalog.NEEDS[name].ask_required
 
 
-@pytest.mark.parametrize("name", sorted(n for n, d in api.catalog.NEEDS.items()
+@pytest.mark.parametrize("name", sorted(n for n, d in needs.catalog.NEEDS.items()
                                         if d.ask_param and not (d.filter_values or d.filter_prefix)))
 def test_an_explicitly_empty_ask_is_nothing_never_everything(name):
     """avo, 30 Oct 2026: "Boş liste 'hiçbir şey' demek, 400 dönsün".
@@ -297,10 +313,10 @@ def test_an_explicitly_empty_ask_is_nothing_never_everything(name):
     So an ask parameter that is present and names nothing is refused in words, for every need, and the refusal
     happens before the reader is called - which is why this case needs no store.
     """
-    need = api.catalog.NEEDS[name]
+    need = needs.catalog.NEEDS[name]
     empty = [] if need.ask_list else ""
-    with pytest.raises(api.AskRequired, match=need.ask_param):
-        api.get(name, **{need.ask_param: empty})
+    with pytest.raises(needs.AskRequired, match=need.ask_param):
+        needs.ask(name, **{need.ask_param: empty})
 
 
 def test_leaving_the_parameter_out_still_means_every_row():
@@ -315,15 +331,15 @@ def test_leaving_the_parameter_out_still_means_every_row():
     con.execute("INSERT INTO security (ticker, tier, source, source_as_of) VALUES "
                 "('KO', 'A', 'sec', DATE '2026-10-27'), ('MSFT', 'A', 'sec', DATE '2026-10-27')")
     con.close()
-    assert len(api.get("identity.security").rows) == 2, "no parameter is still every row"
+    assert len(needs.ask("identity.security").rows) == 2, "no parameter is still every row"
     # A Python caller may say so explicitly, and ``None`` is the reader's own default - every row, not nothing.
     # (A surviving mutation found this gap: refusing ``None`` broke no test while it would break such a caller.)
-    assert len(api.get("identity.security", tickers=None).rows) == 2
-    assert [r["ticker"] for r in api.get("identity.security", tickers=["KO"]).rows] == ["KO"]
-    with pytest.raises(api.AskRequired, match="tickers"):
-        api.get("identity.security", tickers=[])
+    assert len(needs.ask("identity.security", tickers=None).rows) == 2
+    assert [r["ticker"] for r in needs.ask("identity.security", tickers=["KO"]).rows] == ["KO"]
+    with pytest.raises(needs.AskRequired, match="tickers"):
+        needs.ask("identity.security", tickers=[])
     # The empty ask must not be read as "the store is empty": that table holds two rows.
-    assert api.summary("identity.security")["row_count"] == 2
+    assert needs.summary("identity.security")["row_count"] == 2
 
 
 def test_a_need_that_names_its_own_rows_is_not_refused_an_empty_ask():
@@ -339,5 +355,5 @@ def test_a_need_that_names_its_own_rows_is_not_refused_an_empty_ask():
     con.execute("INSERT INTO market_series (series_id, obs_date, source, value) VALUES "
                 "('DGS10', DATE '2026-10-27', 'fred', 4.1)")
     con.close()
-    assert api.get("macro.dgs10", series_ids=[]).rows, "the need's own keys win over an empty ask"
-    assert api.get("market.cot", series_ids=[]).state is not None
+    assert needs.ask("macro.dgs10", series_ids=[]).rows, "the need's own keys win over an empty ask"
+    assert needs.ask("market.cot", series_ids=[]).state is not None

@@ -21,13 +21,13 @@ that table was empty or stale (``stored_inputs.dgs10_map`` and ``macro_watch.fre
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
 import logging
 from datetime import date, timedelta
 
 from RevenueChaser.core import calendar
 from RevenueChaser.core.rotation_reference import MACRO_SERIES
 from RevenueChaser.rcdata import read
+from RevenueChaser.rcdata.needs.catalog import FromCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -43,46 +43,12 @@ _NEED_OF_LAG = {"dgs10": "macro.dgs10"}
 
 def max_lag() -> dict[str, int]:
     """``{input: sessions it may lag by}``, read from the need catalog on every call."""
-    from RevenueChaser.rcdata import api
-    return {key: api.catalog.NEEDS[need].max_lag for key, need in _NEED_OF_LAG.items()}
+    from RevenueChaser.rcdata import needs
+    return {key: needs.catalog.NEEDS[need].max_lag for key, need in _NEED_OF_LAG.items()}
 
 
-class _FromCatalog(Mapping):
-    """A mapping that answers from the catalog rather than from the copy it was built with.
-
-    A ``Mapping`` and not a ``dict`` subclass (the review's m3): seeding a dict subclass at import made ``.copy()``
-    and ``json.dumps`` answer with the import-time snapshot while ``[]`` answered with the live number - two
-    answers from one map, which is the drift this whole arrangement exists to prevent.
-    """
-
-    def __init__(self, source):
-        self._source = source
-
-    def __getitem__(self, key):
-        return self._source()[key]
-
-    def get(self, key, default=None):
-        return self._source().get(key, default)
-
-    def __iter__(self):
-        return iter(self._source())
-
-    def __len__(self):
-        return len(self._source())
-
-    def copy(self) -> dict:
-        return dict(self._source())
-
-    def __repr__(self):
-        return repr(self._source())
-
-    def __eq__(self, other):
-        return self._source() == other
-
-    __hash__ = None
-
-    def __setitem__(self, key, value):
-        raise TypeError(f"{key!r} belongs to the need catalog (avo, 29 Oct 2026): set it there, not here")
+# One class for every board's limits map, in the needs layer since #330 (SPX Gamma reads its lags the same way).
+_FromCatalog = FromCatalog
 
 
 MAX_LAG = _FromCatalog(max_lag)
@@ -104,10 +70,10 @@ _NEED_OF_AGE = {"estimates": "fundamentals.estimates"}
 
 def max_age_days() -> dict[str, int]:
     """``{input: calendar days it may be old}``, read from the need catalog on every call."""
-    from RevenueChaser.rcdata import api
+    from RevenueChaser.rcdata import needs
     out = {}
     for key, name in _NEED_OF_AGE.items():
-        need = api.catalog.NEEDS[name]
+        need = needs.catalog.NEEDS[name]
         if need.max_lag_unit != "days":
             raise ValueError(f"{name}: this reader counts calendar days, the catalog says {need.max_lag_unit}")
         out[key] = need.max_lag

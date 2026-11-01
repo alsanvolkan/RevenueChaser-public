@@ -191,11 +191,12 @@ def test_the_build_stages_only_the_newest_snapshot(monkeypatch):
     assert "stg_sec_mf" in staged and "stg_sec_mf_all" not in staged
 
 
-def test_the_spine_serves_the_fund_table_at_schema_version_two():
-    assert serving.SERVING_SCHEMA_VERSION["spine"] == 2
+def test_the_spine_serves_the_fund_table_at_schema_version_four():
+    """2 brought ``fund``; 3 is ``etf_holdings`` (``funds/etf_holdings``); 4 is ``etf`` (#346)."""
+    assert serving.SERVING_SCHEMA_VERSION["spine"] == 4
     _run()
     with serving.open_read("spine") as con:
-        assert con.execute("SELECT version FROM serving_schema_version").fetchone() == (2,)
+        assert con.execute("SELECT version FROM serving_schema_version").fetchone() == (4,)
 
 
 def test_the_served_columns_are_the_parquets_without_last_modified():
@@ -209,13 +210,13 @@ def test_the_served_columns_are_the_parquets_without_last_modified():
 
 def test_the_spine_builds_with_no_fund_file_yet_and_serves_the_table_empty(env):
     """The likely first state after this deploy: ``sec/company_tickers_mf`` starts by hand, so a daily spine build
-    gets there first. ``fund`` is served at 0 rows, the file goes to version 2, and a never-run fund file is one
+    gets there first. ``fund`` is served at 0 rows, the file goes to the current version, and a never-run fund file is one
     ``source_never_run`` issue — not a silently absent table."""
     row = _run(dataset=sec_tickers.NAME)
     assert row["result"] == "changed"
     with serving.open_read("spine") as con:
         assert con.execute(f"SELECT count(*) FROM {mf.TABLE}").fetchone() == (0,)
-        assert con.execute("SELECT version FROM serving_schema_version").fetchone() == (2,)
+        assert con.execute("SELECT version FROM serving_schema_version").fetchone() == (4,)
     from RevenueChaser.rcdata import ops
     from RevenueChaser.rcdata.build.spine import security
     issues = {(i["kind"], i["key"]) for i in ops.open_issues(security.NAME, limit=500)[1]}

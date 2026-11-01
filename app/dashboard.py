@@ -1238,19 +1238,19 @@ def api_data_asof(mod: str):
     return jsonify({"module": mod, "data_as_of": provenance.data_as_of(mod)})
 
 
-@app.route("/api/data")
-def api_data_catalog():
+@app.route("/needs")
+def needs_catalog():
     """The need catalog: what a board can ask for, which dataset owns it and how fresh it has to be.
 
     The Settings / Data screen reads this instead of carrying its own list, so a need added to the catalog shows up
     there without a second edit (the plan's "generate the screen from the code").
     """
-    from RevenueChaser.rcdata import api
-    needs = [{"need": n.name, "kind": n.kind, "dataset": n.dataset, "reader": n.reader_name,
+    from RevenueChaser.rcdata import needs
+    rows = [{"need": n.name, "kind": n.kind, "dataset": n.dataset, "reader": n.reader_name,
               "max_lag": n.max_lag, "max_lag_unit": n.max_lag_unit, "ask_param": n.ask_param,
               "providers": list(n.providers), "fallbacks": list(n.fallbacks), "legacy": n.legacy}
-             for n in sorted(api.catalog.NEEDS.values(), key=lambda n: n.name)]
-    return jsonify({"needs": needs})
+             for n in sorted(needs.catalog.NEEDS.values(), key=lambda n: n.name)]
+    return jsonify({"needs": rows})
 
 
 # The scalar parameters a need's reader may take from the query string. Anything else is a 400 rather than a
@@ -1283,7 +1283,7 @@ DATA_SAMPLE_MAX = 50
 #: ask for fewer with ``limit``, never for more, and the body says when the cap bit rather than quietly serving
 #: part of the table.
 #:
-#: What it does **not** do, said plainly (the delta review): it bounds the response, not the read. ``api.get``
+#: What it does **not** do, said plainly (the delta review): it bounds the response, not the read. ``needs.ask``
 #: has already materialised every row and built a provenance entry for each by the time this slices, so the peak
 #: memory in the process that holds the DuckDB writer is still the whole result. Pushing the bound into the
 #: readers is the real fix and belongs with the work that gives a need its own ask parameters; today the
@@ -1321,30 +1321,35 @@ def _json_safe(value):
     return value
 
 
-@app.route("/api/data/<path:need>")
-def api_data_need(need: str):
+@app.route("/needs/<path:need>")
+def needs_ask(need: str):
     """One need's answer: the store's rows with how fresh they are, what is missing and where each row came from.
 
-    Read-only and never a fill: ``rcdata.api.get`` calls no provider and writes nothing, so a page may ask this on
+    Read-only and never a fill: ``rcdata.needs.ask`` calls no provider and writes nothing, so a page may ask this on
     every render without holding the panel up. Filling is a press of Fetch (avo's decision of 29 Oct 2026) and
     arrives with the queue work; a ``fill`` in the query string is ignored here, not honoured quietly.
     """
-    from RevenueChaser.rcdata import api
-    spec = api.catalog.NEEDS.get(need)
+    from RevenueChaser.rcdata import needs
+    spec = needs.catalog.NEEDS.get(need)
     if spec is None:
         return jsonify({"ok": False, "error": f"unknown need {need!r}"}), 404
     if request.args.get("summary") not in (None, "", "0", "false"):
         # The Settings / Data screen asks for a need's state without naming a ticker. Read-only, never a fill.
-        return jsonify(_json_safe(api.summary(need, sample=_sample_size(request.args))))
+        return jsonify(_json_safe(needs.summary(need, sample=_sample_size(request.args))))
     try:
         params = _data_params(spec, request.args)
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     try:
-        ans = api.get(need, fill="never", **params)
-    except api.AskRequired as e:
+        ans = needs.ask(need, fill="never", **params)
+    except needs.AskRequired as e:
         # A need that answers nothing unless something is named (``market.series``): the refusal says so, where a
         # bare call used to answer "missing" on a full table (the live verification's finding 2).
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except needs.BadAsOf as e:
+        # ``?as_of=`` the envelope cannot read as a day (#330): refused in words before anything is read. Only that:
+        # a valid day the calendar cannot count answers 200 with the lag undecided, and a reader's own ValueError
+        # is not the client's mistake (#334 review, should-fix 2).
         return jsonify({"ok": False, "error": str(e)}), 400
     except TypeError as e:
         return jsonify({"ok": False, "error": f"the need's reader refused the parameters: {e}"}), 400

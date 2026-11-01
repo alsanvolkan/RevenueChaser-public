@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from RevenueChaser.rcdata import api
-from RevenueChaser.rcdata.api import boards
+from RevenueChaser.rcdata import needs
+from RevenueChaser.rcdata.needs import boards
 
 
 def test_every_board_package_is_either_declared_or_named_as_not_migrated():
@@ -38,7 +38,7 @@ def test_the_boards_search_finds_the_ones_that_exist_and_leaves_out_what_is_not_
 def test_every_declared_need_is_a_need_the_catalog_has():
     for board, reads in boards.all_reads().items():
         for name in reads:
-            assert name in api.NEEDS, f"{board} declares {name!r}, which the catalog does not have"
+            assert name in needs.NEEDS, f"{board} declares {name!r}, which the catalog does not have"
 
 
 def test_a_declaration_is_sorted_and_without_a_repeat():
@@ -50,6 +50,16 @@ def test_a_declaration_is_sorted_and_without_a_repeat():
 def test_the_migrated_board_declares_the_four_needs_it_reads():
     assert boards.all_reads()["module_earnings_radar"] == (
         "earnings.next", "fundamentals.estimates", "macro.dgs10", "ownership.short_interest")
+
+
+def test_spx_gamma_is_the_second_migrated_board_and_leaves_the_plan():
+    """#330: SPX Gamma declares the four needs it reads and is neither "not migrated" nor "planned" any more (its
+    plan named three option needs it never read)."""
+    reads = boards.all_reads()
+    assert reads["module_spx_gamma"] == ("market.cot", "market.spx_close", "market.spx_expiry_strike", "market.vix")
+    assert "module_spx_gamma" not in boards.UNDECLARED and "module_spx_gamma" not in boards.PLANNED_READS
+    assert boards.reads_of("module_spx_gamma") == {"declared": True, "needs": reads["module_spx_gamma"]}
+    assert boards.readers_of("market.spx_close") == ("module_spx_gamma",)
 
 
 def test_no_board_names_a_need_it_has_not_declared():
@@ -71,18 +81,18 @@ def test_the_source_search_sees_a_need_named_in_the_board_and_not_one_named_in_i
 def test_which_boards_read_a_need_is_answered_from_the_same_record():
     assert "module_earnings_radar" in boards.readers_of("earnings.next")
     assert boards.readers_of("prices.bars") == ()
-    with pytest.raises(api.UnknownNeed):
+    with pytest.raises(needs.UnknownNeed):
         boards.readers_of("no.such.need")
 
 
 def test_the_flow_chart_rows_come_from_the_record_and_carry_what_it_draws():
     rows = boards.flow_rows()
     row = next(r for r in rows if r["need"] == "earnings.next")
-    need = api.NEEDS["earnings.next"]
+    need = needs.NEEDS["earnings.next"]
     assert row["boards"] == ("module_earnings_radar",)
     assert row["dataset"] == need.dataset and row["kind"] == need.kind
     assert row["max_lag"] == need.max_lag and row["max_lag_unit"] == need.max_lag_unit
-    assert {r["need"] for r in rows} == set(api.NEEDS)
+    assert {r["need"] for r in rows} == set(needs.NEEDS)
     counted_in_days = next(r for r in rows if r["need"] == "fundamentals.estimates")
     assert counted_in_days["max_lag_unit"] == "days", "the chart carries each need's own unit, not one for all"
 
@@ -128,7 +138,7 @@ def test_a_planned_read_belongs_to_a_board_not_migrated_yet():
 
 
 def test_every_planned_need_is_a_need_the_catalog_has():
-    from RevenueChaser.rcdata.api import catalog
+    from RevenueChaser.rcdata.needs import catalog
     for board, needs in boards.PLANNED_READS.items():
         assert needs == tuple(sorted(set(needs), key=needs.index)), f"{board}: a need named twice"
         for name in needs:
