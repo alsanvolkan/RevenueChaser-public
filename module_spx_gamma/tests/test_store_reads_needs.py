@@ -1,8 +1,8 @@
 """SPX Gamma reads the market store through the needs layer, judged against the board's own day (#330).
 
 ``test_store_reads.py`` keeps its assertions unchanged: the same numbers on the same fixture store. These pin the new
-path: each of the four readers asks ``needs.ask(need, as_of=day, ...)``; the COT ask ends ``RELEASE_DAYS`` before the
-day, so only released reports are judged; and the lag limits are the catalog's, read on every call.
+path: each of the four readers asks ``needs.ask(need, as_of=day, ...)``; the COT ask ends on the day and keeps only the
+reports released by it (#227); and the lag limits are the catalog's, read on every call.
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def asks(monkeypatch):
 def test_every_reader_asks_its_need_judged_from_the_boards_day(rcdata_market, asks):
     day = fx.FRIDAY
     store_reads.read_day(day)
-    assert {need for need, _, _ in asks} == {"market.vix", "market.cot", "market.spx_close",
+    assert {need for need, _, _ in asks} == {"market.vix", "market.cot", "market.cot_release", "market.spx_close",
                                              "market.spx_expiry_strike"}
     assert all(as_of == day for _, as_of, _ in asks), asks
 
@@ -53,11 +53,14 @@ def test_a_past_day_not_yet_closed_asks_the_previous_session_judged_from_the_day
     assert sessions == [(date(2026, 10, 27), date(2026, 10, 27)), (date(2026, 10, 26), date(2026, 10, 27))]
 
 
-def test_the_cot_ask_ends_release_days_before_the_day_so_only_released_reports_are_judged(rcdata_market, asks):
+def test_the_cot_asks_end_on_the_day_and_only_released_reports_are_judged(rcdata_market, asks):
+    """#227: the 20 Oct report is in the window on Thu 22 Oct but not released (no schedule row: Fri 23 Oct)."""
     day = date(2026, 10, 22)
-    store_reads.cot_tff(day)
-    (_, as_of, params), = [a for a in asks if a[0] == "market.cot"]
-    assert as_of == day and params["end"] == day - timedelta(days=store_reads.RELEASE_DAYS)
+    out = store_reads.cot_tff(day)
+    for need in ("market.cot", "market.cot_release"):
+        (_, as_of, params), = [a for a in asks if a[0] == need]
+        assert as_of == day and params["end"] == day
+    assert out["payload"]["report_date"] == "2026-10-13"
 
 
 def test_the_board_names_no_series_id_and_calls_no_reader_of_its_own():

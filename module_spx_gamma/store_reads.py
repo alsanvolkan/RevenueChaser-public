@@ -16,10 +16,11 @@ provider call: there is no live fallback any more.
   (review SF2).
 - ``vix_family`` (``market.vix``): the Cboe closes of the VIX family on the newest observation of VIX on or before the
   day, within ``MAX_LAG["vix"]`` sessions of the day, keyed with the caret the board's payload always used (``^VIX``).
-- ``cot_tff`` (``market.cot``): the CFTC TFF row of the E-mini S&P 500 (``13874A``, futures only): the newest report
-  released on or before the day (a Tuesday report counts as released on the Friday, ``RELEASE_DAYS``: an approximation
-  of CFTC's schedule, which holiday weeks move; the ask ends ``RELEASE_DAYS`` before the day, so an unreleased report is
-  never read), within ``MAX_LAG["cot"]`` sessions of the day. The
+- ``cot_tff`` (``market.cot``, ``market.cot_release``): the CFTC TFF row of the E-mini S&P 500 (``13874A``, futures
+  only): the newest report released on or before the day, within ``MAX_LAG["cot"]`` sessions of the day. A report is
+  released on CFTC's own release day from the stored schedule (#227); a report the schedule does not cover (a year
+  before the first weekly fetch) counts as released on its Tuesday + ``RELEASE_DAYS`` (the Friday), an estimate the
+  label and ``release_estimated`` say is one. The
   weekly change is this report's long minus the previous report's (decision A5): the builder keeps no ``change_*``.
   It is None (``change_gap``) when the two newest reports are not exactly a week apart (review SF4).
 - ``spx_candles`` (``market.spx_close``): the SPX closes of the 8-week window. Cboe's SPX file has one column, so a
@@ -57,7 +58,7 @@ def max_lag() -> dict[str, int]:
 MAX_LAG = FromCatalog(max_lag)
 # A TFF report holds Tuesday's positions and is usually published on the Friday after it. An approximation (review
 # SF5): a holiday week moves the release to the next business day and the 2025 shutdown delayed it by weeks, so a
-# past day's render can count a report as released a little early. CFTC's own schedule is a parked follow-up.
+# past day's render can count a report as released a little early. Used only where CFTC's schedule has no row (#227).
 RELEASE_DAYS = 3
 WEEK_DAYS = 7
 VIX_SERIES = {"VIX": "^VIX", "VIX9D": "^VIX9D", "VIX3M": "^VIX3M", "VIX6M": "^VIX6M", "VIX1Y": "^VIX1Y",
@@ -262,15 +263,22 @@ def _cot_report(by_field: dict[str, float], fields: tuple[str, ...]) -> float | 
     return next((by_field[f] for f in fields if by_field.get(f) is not None), None)
 
 
+def _release_of(report: date, lags: dict[date, float]) -> tuple[date, bool]:
+    """``(release day, estimated)``: from the schedule row of the report's week (keyed on its Tuesday; a holiday can
+    date a report on the Monday), else the report + ``RELEASE_DAYS`` estimate."""
+    tuesday = report + timedelta(days=1 - report.weekday())
+    lag = lags.get(tuesday)
+    return (tuesday + timedelta(days=int(lag)), False) if lag is not None else (
+        report + timedelta(days=RELEASE_DAYS), True)
+
+
 @_with_board_status("market_series")
 def cot_tff(day) -> dict:
     """The E-mini TFF row in the shape ``normalize.normalize_cftc`` reads, in ``payload``."""
     d = _day(day)
     try:
-        # Only reports released by the day: a report dated more than RELEASE_DAYS before it. The window ends there,
-        # so the envelope judges the newest *released* report against the board's day.
-        ans = needs.ask("market.cot", as_of=d, start=d - timedelta(days=_LOOKBACK_DAYS["cot"]),
-                        end=d - timedelta(days=RELEASE_DAYS))
+        start = d - timedelta(days=_LOOKBACK_DAYS["cot"])
+        ans = needs.ask("market.cot", as_of=d, start=start, end=d)
         rows = ans.rows
         reports: dict[date, dict[str, float]] = {}
         meta: dict[date, dict] = {}
@@ -281,6 +289,11 @@ def cot_tff(day) -> dict:
             obs = _day(r["obs_date"])
             reports.setdefault(obs, {})[field_name] = r.get("value")
             meta.setdefault(obs, r)
+        lags = {_day(r["obs_date"]): r["value"]
+                for r in needs.ask("market.cot_release", as_of=d, start=start, end=d).rows}
+        release = {obs: _release_of(obs, lags) for obs in reports}
+        # Only reports released by the day, so the envelope judges the newest *released* report against it.
+        reports = {obs: v for obs, v in reports.items() if release[obs][0] <= d}
         released = sorted(reports)
         stale = not released or _stale(ans, released[-1], "cot")
     except Exception as exc:  # noqa: BLE001
@@ -292,9 +305,9 @@ def cot_tff(day) -> dict:
     # and the board says "n/a (gap)".
     gap = len(released) > 1 and (released[-1] - released[-2]).days != WEEK_DAYS
     prev = reports[released[-2]] if len(released) > 1 and not gap else {}
-    payload: dict = {"report_date": released[-1].isoformat(),
-                     "release_date": (released[-1] + timedelta(days=RELEASE_DAYS)).isoformat(),
-                     "open_interest": now.get(COT_OPEN_INTEREST), "change_gap": gap}
+    released_on, estimated = release[released[-1]]
+    payload: dict = {"report_date": released[-1].isoformat(), "release_date": released_on.isoformat(),
+                     "release_estimated": estimated, "open_interest": now.get(COT_OPEN_INTEREST), "change_gap": gap}
     for group, (longs, shorts) in COT_GROUPS.items():
         long, short = _cot_report(now, longs), _cot_report(now, shorts)
         prev_long = _cot_report(prev, longs)
@@ -302,10 +315,10 @@ def cot_tff(day) -> dict:
                           "net": (long - short) if long is not None and short is not None else None,
                           "change": (long - prev_long) if long is not None and prev_long is not None else None}
     row = meta[released[-1]]
-    return {"stored": True, "label": f"CFTC TFF report of {payload['report_date']}, released "
-                                     f"~{payload['release_date']} (report + {RELEASE_DAYS} days; holiday weeks can "
-                                     f"differ) ({SERIES_SOURCE}, {row.get('source')}, "
-                                     f"status {row.get('status')})",
+    when = (f"~{payload['release_date']} (report + {RELEASE_DAYS} days; holiday weeks can differ)" if estimated
+            else f"{payload['release_date']} (CFTC schedule)")
+    return {"stored": True, "label": f"CFTC TFF report of {payload['report_date']}, released {when} "
+                                     f"({SERIES_SOURCE}, {row.get('source')}, status {row.get('status')})",
             "payload": payload, "obs_date": payload["report_date"], "status": row.get("status"),
             "source": SERIES_SOURCE, "source_as_of": _iso(row.get("source_as_of"))}
 
