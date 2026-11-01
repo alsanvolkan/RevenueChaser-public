@@ -16,7 +16,7 @@ import duckdb
 import pytest
 
 from RevenueChaser.core import calendar
-from RevenueChaser.rcdata import caps, ops, serving
+from RevenueChaser.rcdata import caps, ops, read, serving
 from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.prices import actions, bars, cover_shares, floats, wrds_history
 from RevenueChaser.rcdata.build.prices import serving as prices_serving
@@ -340,6 +340,44 @@ def test_the_monthly_refresh_keeps_the_values_it_replaces_as_revisions(built):
     report = {r["comparison"]: r for r in _q("SELECT * FROM wrds_price_diff")}
     assert report["crsp_vs_compustat"]["max_close_diff"] == pytest.approx(0.4 / 202.5)
     assert {str(r["as_of"]) for r in report.values()} == {"2026-11-27"}
+
+
+# ── The factor lookup at the WRDS history's size (homesrv, 30 Oct 2026: request 34 took 41 of its 50 minutes) ──
+
+@pytest.mark.parametrize("threshold", [0, 1000])
+def test_a_day_finds_its_factor_by_asof_join_as_the_period_rule_does(threshold):
+    """``factor_join`` (and the read side's ``_FACTOR_JOIN``) match the row ``period`` matches, at every edge: before
+    the first period, on an ex-date, after the last one (no row: factor 1), a NULL day (a SEC cover with no as-of) and
+    a NULL security on either side. Run under both of DuckDB's ASOF plans: threshold 0 is the ASOF_JOIN operator every
+    real build uses (more than ``asof_loop_join_threshold`` left rows), 1000 the nested-loop rewrite of a small table;
+    the operator matched a NULL day to the oldest period until the day was read as ``DATE '9999-12-31'``."""
+    con = duckdb.connect()
+    con.execute(f"SET asof_loop_join_threshold = {threshold}")
+    con.execute("CREATE TABLE adj_factor (security_id TEXT, valid_from DATE, valid_to DATE, split_factor DOUBLE)")
+    con.execute("""INSERT INTO adj_factor VALUES ('x', NULL, DATE '2025-03-03', 4.0),
+        ('x', DATE '2025-03-03', DATE '2025-06-04', 2.0), ('y', NULL, DATE '2025-06-04', 3.0),
+        (NULL, NULL, DATE '2025-06-04', 5.0)""")
+    con.execute("CREATE TABLE b (security_id TEXT, session_date DATE)")
+    days = ["2024-01-02", "2025-03-02", "2025-03-03", "2025-06-03", "2025-06-04", "2026-10-27", None]
+    con.executemany("INSERT INTO b VALUES (?, ?)", [(s, d) for s in ("x", "y", "z", None) for d in days])
+    rule = con.execute(f"""SELECT b.security_id, b.session_date, a.split_factor FROM b LEFT JOIN adj_factor a
+        ON {prices_serving.period('a', 'b.security_id', 'b.session_date')} ORDER BY ALL""").fetchall()
+    for join in (prices_serving.factor_join("a", "b.security_id", "b.session_date"), read._FACTOR_JOIN):
+        asof = con.execute(f"SELECT b.security_id, b.session_date, a.split_factor FROM b {join} ORDER BY ALL").fetchall()
+        assert asof == rule, join
+    assert [f for s, d, f in rule if s == "x"] == [4.0, 4.0, 2.0, 2.0, None, None, None]
+    assert all(f is None for s, d, f in rule if s is None or d is None)
+
+
+def test_no_served_lookup_of_the_factors_is_a_blockwise_loop(built):
+    """The range join on ``adj_factor`` planned as ``BLOCKWISE_NL_JOIN``: 347 s for one pass over 5.6M Compustat bars,
+    three passes in the build. Every lookup of a column day is now an ASOF join, the read views too."""
+    with serving.open_read("prices") as con:
+        for view in ("price_bars_daily", "price_actions"):
+            plan = "\n".join(r[1] for r in con.execute(f"EXPLAIN SELECT * FROM {view}").fetchall())
+            assert "BLOCKWISE_NL_JOIN" not in plan, (view, plan)
+        for sql in (prices_serving.MARKET_CAP_SQL.format(within=prices_serving.ISSUER_WITHIN_DAYS),):
+            assert sql.count("ASOF LEFT JOIN adj_factor") == 2
 
 
 # ── A subscription without CRSP (homesrv, 30 Oct 2026: run 32 refused on ``crsp_a_ccm``) ──────────────────────

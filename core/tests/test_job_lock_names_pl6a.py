@@ -125,3 +125,18 @@ def test_every_writer_cli_takes_a_documented_lock():
             found.append(mod.CLI.lock)
     assert found, "no WriterCli found: the scan is looking at the wrong tree"
     assert set(found) <= set(NAMES), f"undocumented WriterCli lock(s): {sorted(set(found) - set(NAMES))}"
+
+
+def test_every_lock_name_declares_the_store_it_writes():
+    """The second half of the same guard (#309 follow-up): a documented name with no ``WRITES`` entry fails here.
+
+    A name the map does not carry writes ``UNKNOWN``, which holds every other writer off — safe, but it also means
+    a new family silently keeps the old all-or-nothing gate. So the contract list and the map are asserted
+    together, with the two tail families (``<step>``, ``<board>``) matched through their prefix.
+    """
+    undeclared = []
+    for name in NAMES:
+        probe = re.sub(r"<[a-z]+>", "x", name)
+        if job_lock.writes_of(probe) == (job_lock.UNKNOWN,):
+            undeclared.append(name)
+    assert undeclared == [], f"lock name(s) with no job_lock.WRITES entry: {undeclared}"

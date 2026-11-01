@@ -957,8 +957,14 @@ renders at once with what is stored.
 | `RC_MARKET_RAW_DIR` | `MARKET_RAW_DIR` | `raw/<source>/<dataset>/...` and `parquet/<source>/<dataset>/<partition>/` (the HDD) |
 | `RC_MARKET_RAW_COPY_DIR` | `MARKET_RAW_COPY_DIR` | Where the backup copies the newest raw days; empty = off |
 
+**Build memory.** The one read-write connection of a build (`serving.build`) is opened with DuckDB's `memory_limit`
+from `RC_DUCKDB_MEMORY_LIMIT` (a DuckDB size such as `5GB`; default `5GB`) and `threads` from `RC_DUCKDB_THREADS`
+(default `3`); an empty or invalid value keeps the default. Over the limit DuckDB spills to `<build file>.tmp`
+rather than growing: without it a connection may take 80 % of the machine's RAM, and the kernel OOM-killed the
+first `prices/serving` build on #319's code (request #35, 30 Oct 2026, 7.7 GB peak on a 15 GB server).
+
 **Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`. Each kind is one
-file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `2`), is described under
+file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `3`), is described under
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
 below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `1`), under "Fundamentals" after it; and the options
@@ -1046,9 +1052,31 @@ builder's calls are counted: the dashboard's own UW client is not yet.
 The keyless sources send one User-Agent with the contact from `RC_HTTP_CONTACT` (BLS refuses a client without
 one; a 403 names the variable in the source's failure note).
 
-**Running it.** `python -m RevenueChaser.rcdata.build run [--once] [--dataset X [--as-of D]]` and
-`python -m RevenueChaser.rcdata.build backfill <dataset> --from <date>`. It refuses to start (exit 3) while a job
-lock is held in the store directory or another builder runs.
+**Running it.** `python -m RevenueChaser.rcdata.build run [--once] [--dataset X [--as-of D]]`,
+`python -m RevenueChaser.rcdata.build backfill <dataset> --from <date>` and
+`python -m RevenueChaser.rcdata.build attended` (the attended datasets' runner, below).
+
+The store takes one writer at a time, so a start whose turn it is not **waits** for it: the gate (a job lock held
+on a file it writes, another builder) and the builder lock are one loop. `--wait SECONDS` is how long; a person's
+commands (`backfill`, `attended`, and `run --dataset X`) wait 1800 s by default and the hourly pass (`run` with no
+dataset) waits none, because its timer brings the next pass anyway. It exits 3 only when the wait runs out, and
+names the holder it is waiting for, again whenever that changes.
+
+`attended` refuses a runner with no terminal (`sys.stdin.isatty()`), because the WRDS login and the Duo push need a
+person, and it says so and exits 0 when no attended request is queued rather than waiting for a turn it has no use
+for. A person's `backfill <dataset>` and `run --dataset X` run **their own** request for an attended dataset
+(`ops.next_request(by="cli")`), never one a page left for `attended`: that would spend their login and the WRDS day
+cap on somebody else's params. For every other dataset an older queued request still goes first, as it always has.
+
+**Which lock holds which off.** `core/job_lock.WRITES` says which store each writer family writes: `STORE` for the
+old store's DuckDB files under `RC_STORE_DIR` (`raw`, `edgar`, `history`, the legacy `prices`) and `MARKET` for the
+serving files and `ops.sqlite` under `RC_MARKET_DIR`, the builder's. The gate asks `blocking_holders(name)` —
+`holders()` filtered to the families that can meet `name` on a file — so an old-store job (the Relatedness pilot, an
+EDGAR sync, a nightly step) no longer makes the market builder wait, while a second builder still does. The grain is
+the store and not the single file on purpose: a store is a superset of every family's real file set, so the map can
+only refuse too much, never too little. A family with no entry writes `UNKNOWN` and holds everything off, which is
+what keeps a new writer from slipping past the gate; `core/tests/test_job_lock_names_pl6a.py` fails when a
+documented lock name has no entry.
 
 **The builder as a service (PR 2).** Scheduled jobs run hourly unless avo says otherwise. The registry row
 RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :07, with a 50 min limit, as the
@@ -1061,8 +1089,9 @@ alone. Neither row writes an old `job_runs` row: the builder records its own `jo
 market-store builder's routes").
 
 **Known limits.** The idle gate is checked when the builder starts, not again before each request: a job that takes
-a lock after that runs beside it (both write different files, so nothing breaks; the gate keeps a live store write
-from starting in a busy moment). DuckDB keeps a database instance per path inside a process, so a reader that holds
+a lock after that runs beside it (both write different files, so nothing breaks). Since the gate only asks about the
+files the builder writes, that is now the same answer it would give later — only a second builder, or an undeclared
+writer, can change it. DuckDB keeps a database instance per path inside a process, so a reader that holds
 a connection open across overlapping requests can keep reading the build it opened while a newer one is swapped
 in; `open_read` opens and closes per call so each request sees the file live at its start.
 
@@ -1097,16 +1126,18 @@ the old identity tables there are untouched (D5: they are empty since 27 Oct).
 | Dataset | Cadence | Source | Stages |
 |---|---|---|---|
 | `sec/company_tickers_exchange` | weekly | `www.sec.gov/files/company_tickers_exchange.json`, `If-Modified-Since` from the last copy (a 304 writes nothing) | `stg_sec`, `stg_sec_all` |
+| `sec/company_tickers_mf` | weekly | `www.sec.gov/files/company_tickers_mf.json`, the same shape and the same `If-Modified-Since` fetch: the fund file, one row per series and share class | `stg_sec_mf` (the newest snapshot only: nothing reads the older ones, which stay in the Parquet tree) |
 | `wrds/sec_idhist` | monthly, attended | `comp.company`, `comp.security`, `comp.sec_idhist`; between snapshots only the new listed CIKs | `stg_wrds_company`, `stg_wrds_security`, `stg_wrds_idhist` |
 | `wrds/co_hgic` | monthly, attended | `comp.co_hgic` | `stg_wrds_hgic` |
 | `wrds/idxcst_his` | monthly, attended | `comp.idxcst_his` for the S&P 500, 400 and 600 index keys | `stg_wrds_idx` |
 | `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet (a CINS, a letter first, asked as `ID_CINS`), under 25 requests a minute | `stg_figi` |
 | `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR (`latest-holdings.csv`), Vanguard VOO/IVOO/VIOO (daily creation basket), Nasdaq's nasdaq100 list and Invesco QQQ (both vote `ndx`) | `stg_fund_lines`, `stg_fund_files` |
 | `funds/etf_holdings` | daily | the SPDR workbooks of the 11 sector funds and XBI/XOP/XME/KRE/XHB/XRT/KIE, the iShares `latest-holdings.csv` of SOXX/IBB/ITA/ITB/IGV/IAK, and UW `/etfs/<t>/holdings` whole (no top-10 cap) for the 14 themes whose issuer has no keyless file | none: serves `etf_holdings` itself |
-| `spine/security` | daily | none: builds the served tables from the staging tables | the four tables below |
+| `spine/security` | daily | none: builds the served tables from the staging tables | the four tables below except `fund` and `etf_holdings` |
 
-The sources load their Parquet into TEMP tables of the build connection (never stored in the file); the kind's
-datasets build in `DATASETS` order, so `spine/security` builds last. Raw and Parquet follow the market store's
+The sources load their Parquet into TEMP tables of the build connection (never stored in the file), and all
+but one stop there; `sec/company_tickers_mf` also serves `fund` from its own staging, because nothing derives
+that table from anything. The kind's datasets build in `DATASETS` order, so `spine/security` builds last. Raw and Parquet follow the market store's
 rules (`raw/<source>/<dataset>/...`, `parquet/<source>/<dataset>/...`; a raw file that exists is the resume marker).
 
 **Attended (WRDS).** The three WRDS datasets need a person, and run in their own interpreter: `wrds` is not in the
@@ -1115,8 +1146,12 @@ builder's venv (on the server it has a venv of its own, because its pandas has n
 no default), one subprocess per builder process, so one WRDS connection: the login is that venv's
 `wrds.Connection` (the user from `WRDS_USERNAME`, which is required, the password from that user's `~/.pgpass`; WRDS may ask
 for a Duo push). The worker streams each answer in chunks to `<table>.jsonl.gz`; the builder types it in DuckDB.
-The datasets are never due, a request a page or the schedule queued is skipped (`skipped: attended ...`), the
-route answers 409, and the CLI runs them: `python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist
+The datasets are never due, and only a runner with a person at it runs one: the CLI's own request
+(`requested_by` `cli`) or `python -m RevenueChaser.rcdata.build attended`. A request a page queued **waits in the
+queue** for that runner — the route answers 202 with `waits_for`, the hourly builder leaves it there
+(`ops.next_request(skip=base.attended_names())`) and `attended` claims nothing else
+(`only=base.attended_names()`); the schedule queues none. So the CLI runs them:
+`python -m RevenueChaser.rcdata.build backfill wrds/sec_idhist
 wrds/co_hgic wrds/idxcst_his openfigi/map` starts one worker for the whole process. Run it in a foreground terminal:
 the worker reads a WRDS prompt from `/dev/tty`, and a background job that reads its terminal is stopped (SIGTTIN).
 A failed login, or no
@@ -1127,7 +1162,7 @@ own mark: a panel header that says `cli` is recorded as `panel:cli`.
 the CLI or a Fetch), so the first hourly builder pass after a deploy calls no spine source before the attended
 steps, and a first attempt that failed is not retried every hour.
 
-**Served tables** (`spine` serving schema version `2`). Periods are `valid_from` inclusive, `valid_to` exclusive
+**Served tables** (`spine` serving schema version `3`). Periods are `valid_from` inclusive, `valid_to` exclusive
 (Compustat's inclusive ends are moved one day on), `valid_to` NULL while current.
 
 | Table | Rows |
@@ -1137,6 +1172,23 @@ steps, and a first attempt that failed is not retried every hour.
 | `gics_history` | Compustat's GICS periods of the linked companies |
 | `index_membership` | the fund-file members (source `funds/index_holdings`) and Compustat's constituents (source `wrds/idxcst_his`, the check) |
 | `etf_holdings` | every holding of each ETF of `funds/etf_holdings`, per day: `as_of`, `etf`, `provider`, `ticker`, `cusip`, `name`, `weight` (the relatedness peer sets' source) |
+| `fund` | one per share class of the newest SEC fund file: `cik`, `series_id`, `class_id`, the normalised `ticker` and the file's `ticker_raw`, `is_etf` with the `is_etf_source` that decided it, and the file's provenance. `security`'s counterpart: an ETF is a series of a trust, so it has no row of its own in the equity file (the ETF rule, and the two exceptions, below). The kind's only source-owned served table, so `base.shrink_scope` relaxes it for `allow_shrink` on `sec/company_tickers_mf` alone: an empty `fund` refuses the swap for every spine dataset until that one is run |
+
+**The ETF rule** (`rcdata/build/spine/sec_tickers_mf.py`). The fund file carries no "this is an ETF" field, so
+`is_etf` is a rule and says so in `is_etf_source` (`length_rule_v1`): a symbol of five letters ending in X is
+the classic open-end mutual-fund share class and is not an ETF. Measured 30 Oct 2026 over the file's 28,614
+rows: 22,797 such share classes, leaving 5,811 ETF candidates — the same order as a third-party count of US
+ETFs (5,394), which is the only corroboration there is. The rule reads the **normalised** ticker, because 25 of
+the symbols are written lower case. It is wrong in both directions, and only one of them is visible to a reader filtering on
+`is_etf`: a **fund** whose symbol is not five letters ending in X is in the ETF set (`AAAX`,
+`QINSQ`), and an **ETF** whose symbol is five letters ending in X is outside it and so outside
+every filter — the error to weigh when the second signal (the ticker trading on an exchange, or
+the N-CEN ETF field) is chosen. A symbol that does not parse (`(NWAGX)`, `n/a`, the empty string) is dropped and counted in the
+run's note.
+
+**The ETF universe is `fund` plus `security`'s `etp` rows.** SPY is a unit investment trust and GLD a commodity
+trust: neither has a series and a class, so neither is in the fund file. Both are rows of the equity file (GLD,
+SLV and USO are its `etp` rows). A reader after the whole ETF universe reads both tables, never `fund` alone.
 
 **Tier rule v2** (`rcdata/build/spine/tier.py`): A = listed on Nasdaq, NYSE or Cboe and not an excluded type
 (`core.identity.types.EXCLUDED_TYPES`; an untyped name stays); B = listed, excluded type; C = OTC; D = no exchange.

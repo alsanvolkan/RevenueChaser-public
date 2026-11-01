@@ -67,12 +67,39 @@ def test_upsert_partition_merges_by_key_and_the_newest_fetch_wins(tmp_path):
     assert not list(tmp_path.rglob("*.tmp"))
 
 
-def test_the_builder_is_not_idle_while_a_job_lock_is_held():
+def test_an_old_store_job_no_longer_holds_the_builder_off():
+    """The behaviour change of #309's follow-up: ``daily_bars`` writes the old store, the builder the market one.
+
+    This is the refusal that stopped the WRDS price backfill while the Relatedness pilot ran (30 Oct 2026).
+    """
     assert base.idle_problem() is None
     with job_lock.acquire("daily_bars", wait=0) as got:
         assert got
-        assert "daily_bars" in base.idle_problem()
+        assert base.idle_problem() is None
     assert base.idle_problem() is None
+
+
+def test_a_second_builder_still_stops_the_builder():
+    with job_lock.acquire(base.BUILDER_LOCK, wait=0) as got:
+        assert got
+        assert base.BUILDER_LOCK in base.idle_problem()
+    assert base.idle_problem() is None
+
+
+def test_a_lock_that_declared_nothing_still_stops_the_builder():
+    """An undeclared family keeps the old all-or-nothing gate, so a new writer cannot slip past it."""
+    with job_lock.acquire("a_new_writer", wait=0) as got:
+        assert got
+        assert "a_new_writer" in base.idle_problem()
+    assert base.idle_problem() is None
+
+
+def test_the_gate_answers_for_the_lock_it_is_asked_about():
+    """``idle_problem`` takes the lock name, so an old-store writer can ask the same gate about its own files."""
+    with job_lock.acquire("relatedness", wait=0) as got:
+        assert got
+        assert base.idle_problem() is None
+        assert "relatedness" in base.idle_problem("edgar_sync")
 
 
 def test_session_date_is_empty_outside_the_calendar_table():

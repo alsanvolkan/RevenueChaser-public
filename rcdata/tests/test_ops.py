@@ -227,3 +227,48 @@ def test_a_writer_waits_for_the_other_process_instead_of_failing():
     finally:
         p.wait(timeout=30)
     assert ops.calls_today("uw") == 1
+
+
+# ── Who may claim which request (#queueing the attended and CLI jobs) ──────────────────────────────────────────
+
+def test_next_request_skips_the_datasets_it_was_told_to_leave_alone():
+    """The hourly builder must leave an attended request queued instead of consuming it as a skip."""
+    first = ops.enqueue("wrds/sec_idhist", None, by="settings")
+    second = ops.enqueue("market_series", None, by="settings")
+    assert ops.next_request(skip=("wrds/sec_idhist",))["id"] == second
+    assert ops.next_request(skip=("wrds/sec_idhist",)) is None
+    with ops.connect() as con:
+        assert con.execute("SELECT status FROM build_requests WHERE id = ?", (first,)).fetchone()[0] == "queued"
+
+
+def test_next_request_can_be_limited_to_the_datasets_it_was_given():
+    """The attended runner claims only the attended datasets, whoever queued them."""
+    ops.enqueue("market_series", None, by="settings")
+    attended = ops.enqueue("wrds/sec_idhist", None, by="settings")
+    assert ops.next_request(only=("wrds/sec_idhist",))["id"] == attended
+    assert ops.next_request(only=("wrds/sec_idhist",)) is None
+
+
+def test_next_request_refuses_a_skip_and_an_only_together():
+    with pytest.raises(ValueError):
+        ops.next_request(skip=("a",), only=("b",))
+
+
+def test_an_only_with_no_name_claims_nothing():
+    """A host with no attended dataset must leave every request alone, not take the whole queue."""
+    rid = ops.enqueue("market_series", None, by="settings")
+    assert ops.next_request(only=()) is None
+    with ops.connect() as con:
+        assert con.execute("SELECT status FROM build_requests WHERE id = ?", (rid,)).fetchone()[0] == "queued"
+
+
+def test_next_request_and_queued_can_be_limited_to_one_requester():
+    """A person's CLI run takes its own request, not the one a page left for the attended runner."""
+    theirs = ops.enqueue("wrds/sec_idhist", None, by="settings")
+    mine = ops.enqueue("wrds/sec_idhist", None, by="cli")
+    assert ops.queued("wrds/sec_idhist", by="cli") is True
+    assert ops.next_request("wrds/sec_idhist", by="cli")["id"] == mine
+    assert ops.next_request("wrds/sec_idhist", by="cli") is None
+    assert ops.queued("wrds/sec_idhist", by="cli") is False
+    with ops.connect() as con:
+        assert con.execute("SELECT status FROM build_requests WHERE id = ?", (theirs,)).fetchone()[0] == "queued"

@@ -35,6 +35,15 @@ def test_every_served_table_of_every_dataset_is_in_its_kinds_schema():
             assert table in scaffold.SCHEMA_OF_KIND[ds.kind], f"{ds.name} serves {table}"
 
 
+def test_every_served_table_a_reader_knows_is_in_the_scaffolds_schema():
+    """``create_empty`` exists to close the gap between "never built" and "built and empty", so a served table the
+    scaffold does not declare reopens it — and the panel's file card, which reads the same map, never lists it.
+    The assertion below is a subset, so it passes with a table missing; this one is the equality."""
+    from RevenueChaser.rcdata import read
+    declared = {t for tables in scaffold.SCHEMA_OF_KIND.values() for t in tables}
+    assert set(read.KIND_OF_TABLE) <= declared, sorted(set(read.KIND_OF_TABLE) - declared)
+
+
 @pytest.mark.parametrize("kind", sorted(serving.KINDS))
 def test_an_empty_file_holds_every_table_of_its_kind_with_no_rows(kind):
     made = scaffold.create_empty(kind)

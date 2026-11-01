@@ -30,8 +30,9 @@ import duckdb
 from ..core import config
 
 # The serving schema of each kind. A change to a kind's tables bumps its number in its own PR (box rule).
-# ``spine`` is 2 since PR 2 of the ETF universe: the kind gained ``etf_holdings`` (``build/spine/etf_holdings.py``).
-SERVING_SCHEMA_VERSION = {"market": 1, "spine": 2, "ownership": 1}
+SERVING_SCHEMA_VERSION = {"market": 1, "spine": 3, "ownership": 1}
+# spine 2: ``fund``, the SEC fund file's share classes and the ETF rule (``build/spine/sec_tickers_mf.py``).
+# spine 3: ``etf_holdings``, the rotation board's ETFs read whole (``build/spine/etf_holdings.py``).
 
 # PR 7 (G2): ``prices.duckdb``, the daily bars, corporate actions, shares and market cap (``build/prices/``).
 SERVING_SCHEMA_VERSION["prices"] = 1
@@ -49,6 +50,24 @@ MAX_SHRINK = 0.01
 # build file (``declare_window``), so the shrink check compares the rows both files are meant to hold: a session
 # that left the window is not a loss, a session inside it that lost rows is.
 WINDOW_TABLE = "serving_window"
+# The build connection's memory and threads. DuckDB's own default is 80 % of the machine's RAM per connection, and the
+# kernel, not DuckDB, ended the first ``prices/serving`` build on #319's ASOF joins: request #35, 30 Oct 2026, OOM-killed
+# at a 7.7 GB peak on the 15 GB server beside the dashboard. Under a limit DuckDB spills to ``<build file>.tmp`` instead.
+# A DuckDB size string (``5GB``) and a positive whole number; empty or invalid keeps the default.
+MEMORY_LIMIT_DEFAULT = "5GB"
+THREADS_DEFAULT = 3
+
+
+def build_config() -> dict[str, str | int]:
+    """``memory_limit`` and ``threads`` for a build connection, from ``RC_DUCKDB_MEMORY_LIMIT`` / ``RC_DUCKDB_THREADS``."""
+    memory = os.getenv("RC_DUCKDB_MEMORY_LIMIT", "").strip().replace(" ", "")
+    if not (memory[:1].isdigit() and memory.upper().endswith(("KB", "MB", "GB", "TB", "KIB", "MIB", "GIB", "TIB"))):
+        memory = MEMORY_LIMIT_DEFAULT
+    try:
+        threads = int(os.getenv("RC_DUCKDB_THREADS", "").strip())
+    except ValueError:
+        threads = THREADS_DEFAULT
+    return {"memory_limit": memory, "threads": threads if threads > 0 else THREADS_DEFAULT}
 
 
 class SwapRefused(RuntimeError):
@@ -250,7 +269,7 @@ def build(kind: str) -> Iterator[BuildFile]:
     build_id = new_build_id()
     path = build_path(kind, build_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    con = duckdb.connect(str(path))
+    con = duckdb.connect(str(path), config=build_config())
     b = BuildFile(kind, build_id, path, con)
     try:
         con.execute(f"CREATE TABLE {VERSION_TABLE} (kind TEXT, version INTEGER, built_at DOUBLE, build_id TEXT)")

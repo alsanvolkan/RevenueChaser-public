@@ -23,9 +23,9 @@ from . import ops, serving
 NEVER_CHECKED = "never_checked"
 DATASET_OF_TABLE = {"market_series": "market_series", "spx_gamma_expiry_strike": "uw/spot_expiry_strike",
                     "security": "spine/security", "index_membership": "funds/index_holdings",
-                    "etf_holdings": "funds/etf_holdings"}
+                    "fund": "sec/company_tickers_mf", "etf_holdings": "funds/etf_holdings"}
 KIND_OF_TABLE = {"market_series": "market", "spx_gamma_expiry_strike": "market", "security": "spine",
-                 "index_membership": "spine", "etf_holdings": "spine"}
+                 "index_membership": "spine", "fund": "spine", "etf_holdings": "spine"}
 # The ownership store (PR 16).
 DATASET_OF_TABLE.update({"sec13f_ticker_period": "ownership/serve", "sec13f_periods": "ownership/serve",
                          "finra_short_interest": "finra/short_interest", "ibkr_shortable": "ibkr/shortable",
@@ -195,9 +195,11 @@ KIND_OF_TABLE.update({t: "prices" for t in ("price_bar_daily", "security_symbol"
                                             "corporate_action", "shares_class", "wrds_price_diff",
                                             "price_revision")})
 BASES = ("nominal", "split", "total_return")
-# The factor period of a bar: ``valid_from <= session_date < valid_to``, open at both ends (no row: factor 1).
-_PERIOD = ("a.security_id = b.security_id AND b.session_date >= coalesce(a.valid_from, DATE '0001-01-01') "
-           "AND (a.valid_to IS NULL OR b.session_date < a.valid_to)")
+# The factor period of a bar: ``valid_from <= session_date < valid_to`` (no row: factor 1), found by an ASOF join on
+# the nearest ``valid_to`` after the session: ``rcdata.build.prices.serving.AS_OF_PERIOD``, the same lookup and the
+# same preconditions on ``adj_factor``. A range join here is a blockwise nested loop over every bar read.
+_FACTOR_JOIN = ("ASOF LEFT JOIN adj_factor a ON a.security_id = b.security_id "
+                "AND coalesce(b.session_date, DATE '9999-12-31') < a.valid_to")
 
 
 def _ids(security_ids: Iterable[str]) -> list[str]:
@@ -245,7 +247,7 @@ def bars(security_ids: Iterable[str], start=None, end=None, basis: str = "nomina
            f"b.vwap * {price} AS vwap, b.trade_count, b.shares_outstanding / {shares} AS shares_outstanding, "
            f"'{basis}' AS basis, coalesce(a.split_factor, 1) AS split_factor, coalesce(a.tr_factor, 1) AS tr_factor, "
            "b.source, b.source_as_of, b.fetched_at, b.run_id "
-           f"FROM price_bar_daily b LEFT JOIN adj_factor a ON {_PERIOD} "
+           f"FROM price_bar_daily b {_FACTOR_JOIN} "
            f"WHERE b.security_id IN ({', '.join('?' * len(ids))})")
     params: list = list(ids)
     sql = _bounded(sql, params, "b.session_date", start, end)
@@ -381,7 +383,7 @@ def ticker_bars(tickers: Iterable[str], start=None, end=None, basis: str = "spli
     sql = (f"WITH {_now_cte(len(names))} SELECT now.ticker, b.security_id, CAST(b.session_date AS TIMESTAMP) AS "
            f"session_date, b.open * {price} AS open, b.high * {price} AS high, b.low * {price} AS low, "
            f"b.close * {price} AS close, b.volume / {shares} AS volume, b.source, b.fetched_at, '{basis}' AS basis "
-           f"FROM price_bar_daily b JOIN now USING (security_id) LEFT JOIN adj_factor a ON {_PERIOD} "
+           f"FROM price_bar_daily b JOIN now USING (security_id) {_FACTOR_JOIN} "
            "WHERE b.close IS NOT NULL AND NOT isnan(b.close)")
     params: list = list(names)
     sql = _bounded(sql, params, "b.session_date", start, end)
