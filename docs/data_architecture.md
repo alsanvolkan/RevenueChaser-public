@@ -957,6 +957,12 @@ renders at once with what is stored.
 | `RC_MARKET_RAW_DIR` | `MARKET_RAW_DIR` | `raw/<source>/<dataset>/...` and `parquet/<source>/<dataset>/<partition>/` (the HDD) |
 | `RC_MARKET_RAW_COPY_DIR` | `MARKET_RAW_COPY_DIR` | Where the backup copies the newest raw days; empty = off |
 
+**Build memory.** The one read-write connection of a build (`serving.build`) is opened with DuckDB's `memory_limit`
+from `RC_DUCKDB_MEMORY_LIMIT` (a DuckDB size such as `5GB`; default `5GB`) and `threads` from `RC_DUCKDB_THREADS`
+(default `3`); an empty or invalid value keeps the default. Over the limit DuckDB spills to `<build file>.tmp`
+rather than growing: without it a connection may take 80 % of the machine's RAM, and the kernel OOM-killed the
+first `prices/serving` build on #319's code (request #35, 30 Oct 2026, 7.7 GB peak on a 15 GB server).
+
 **Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`. Each kind is one
 file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `1`), is described under
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
