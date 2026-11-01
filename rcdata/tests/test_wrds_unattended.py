@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from RevenueChaser.rcdata import ops
 from RevenueChaser.rcdata.build import DATASETS, base, due
 from RevenueChaser.rcdata.build.spine import wrds
 
@@ -34,3 +35,27 @@ def test_worker_login_has_a_connect_timeout(monkeypatch):
     assert wrds.worker_env()["PGCONNECT_TIMEOUT"] == str(wrds.CONNECT_TIMEOUT_S) == "120"
     monkeypatch.setenv("PGCONNECT_TIMEOUT", "30")
     assert wrds.worker_env()["PGCONNECT_TIMEOUT"] == "30"
+
+
+@pytest.mark.parametrize("name", WRDS)
+def test_a_failed_run_waits_for_a_person_instead_of_retrying_hourly(monkeypatch, name):
+    # Review must-fix 1: after one success, a failed WRDS run must not be due again every hour (one login each).
+    monkeypatch.setenv(base.WRDS_UNATTENDED_ENV, "1")
+    ops.record_check(name, "changed", source_as_of="2026-10-01", checked_on="2026-10-01")
+    ops.record_check(name, "failed", note="WRDS login failed")
+    is_due, why = due.is_due(DATASETS[name])
+    assert is_due is False and why == due.WRDS_FAILED_WHY
+    ops.record_check(name, "changed", source_as_of="2026-10-01", checked_on="2026-10-01")
+    assert due.is_due(DATASETS[name])[1] != due.WRDS_FAILED_WHY       # a person's successful run clears it
+
+
+def test_an_empty_inherited_timeout_still_gets_the_default(monkeypatch):
+    monkeypatch.setenv("PGCONNECT_TIMEOUT", "")
+    assert wrds.worker_env()["PGCONNECT_TIMEOUT"] == "120"
+
+
+def test_attended_command_says_wrds_runs_unattended(monkeypatch, capsys):
+    from RevenueChaser.rcdata.build import __main__ as cli
+    monkeypatch.setenv(base.WRDS_UNATTENDED_ENV, "1")
+    assert cli.main(["attended", "--dataset", WRDS[0]]) == 0
+    assert base.WRDS_UNATTENDED_ENV in capsys.readouterr().err

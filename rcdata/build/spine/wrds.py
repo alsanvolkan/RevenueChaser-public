@@ -201,7 +201,8 @@ def worker_env() -> dict[str, str]:
     never waits on a login past it."""
     env = {k: v for k, v in os.environ.items()
            if k in _WORKER_ENV or k.startswith(("PG", "LC_", "RC_WRDS_"))}
-    env.setdefault("PGCONNECT_TIMEOUT", str(CONNECT_TIMEOUT_S))
+    if not (env.get("PGCONNECT_TIMEOUT") or "").strip():
+        env["PGCONNECT_TIMEOUT"] = str(CONNECT_TIMEOUT_S)
     return env
 
 
