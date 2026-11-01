@@ -338,6 +338,7 @@ whole app at a local server:
 | `RC_TREASURY_BASE` | US Treasury daily par yield curve CSV (`rcdata/build/sources/treasury.py`) |
 | `RC_FED_BASE` | Federal Reserve site, the FOMC calendar page (`rcdata/build/sources/fed.py`) |
 | `RC_BLS_BASE` | BLS site, the release calendar `.ics` (`rcdata/build/sources/bls.py`) |
+| `RC_CFTC_SCHEDULE_BASE` | CFTC site, the COT release schedule page (`rcdata/build/sources/cftc_schedule.py`) |
 | `RC_YAHOO_BASE` | Unset in production: Yahoo is read through yfinance, which has no base URL. When set, the MOVE and wheat history is read as `<base>/<quoted symbol>.json` instead (the CLI test's loopback mock; `rcdata/build/sources/yahoo.py`) |
 | `RC_FDA_OOPD_BASE` | FDA Office of Orphan Products Development (OOPD) search |
 | `RC_DEEPSEEK_BASE` | DeepSeek chat API (`core/providers/deepseek.py`; read at call time) |

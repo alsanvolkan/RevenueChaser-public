@@ -6,4 +6,4 @@ critical levels table, and concentration warnings.
 """
 
 #: The needs this board reads (``rcdata.needs.boards``; #330), all through ``store_reads``.
-READS = ("market.cot", "market.spx_close", "market.spx_expiry_strike", "market.vix")
+READS = ("market.cot", "market.cot_release", "market.spx_close", "market.spx_expiry_strike", "market.vix")
