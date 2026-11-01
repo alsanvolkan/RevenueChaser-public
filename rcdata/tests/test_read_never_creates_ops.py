@@ -45,3 +45,14 @@ def test_an_old_file_without_the_check_table_reads_as_never_checked():
     with sqlite3.connect(path) as con:
         tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert tables == {"something_else"}, "a read added no table to the file"
+
+
+def test_only_the_builder_calls_latest_check():
+    """``latest_check`` ensures the file; a reader uses ``read_latest_check``. Tests are left out."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    callers = sorted(str(p.relative_to(root)).replace("\\", "/") for p in root.rglob("*.py")
+                     if "tests" not in p.relative_to(root).parts and ".git" not in p.parts
+                     and re.search(r"\bops\.latest_check\(", p.read_text(encoding="utf-8", errors="replace")))
+    assert callers == ["rcdata/build/base.py", "rcdata/build/due.py"], callers
