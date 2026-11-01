@@ -92,18 +92,19 @@ def peer_recall_at_k(tickers: Sequence[str], scores: np.ndarray, sets, k: int = 
 
 
 def precision_at_k(tickers: Sequence[str], scores: np.ndarray, sets, k: int = PRECISION_K) -> dict:
-    """Per set: the mean over its members of ``|top-k ∩ other members| / k``.
+    """Per set: the mean over its members of ``|top-k ∩ other members| / min(k, other members)``.
 
-    The denominator is ``k`` (standard precision@k), so a set smaller than ``k + 1`` can never reach 1.0; its
-    ``ceiling`` (``min(k, other members) / k``) is reported beside it so a 5-name set is read against 0.4.
+    Only scored members count as "other members". The denominator is ``min(k, other members)`` (avo, 1 Nov 2026),
+    not ``k``: the hand sets hold 5 to 9 names, so with ``/ k`` a perfect method would average about 0.61 over them
+    (a 5-name set tops out at 0.4) and the plan's precision@10 >= 0.6 target would be out of reach. A perfect method
+    scores 1.0 on every set; a set larger than ``k + 1`` still divides by ``k``.
     """
-    per_set, ceiling = {}, {}
+    per_set = {}
     for s in sets:
         hits = _member_hits(tickers, scores, s.tickers, k)
         if hits:
-            per_set[s.name] = float(np.mean([h / k for _, h, _ in hits]))
-            ceiling[s.name] = float(np.mean([min(k, n) / k for _, _, n in hits]))
-    return {"k": k, "per_set": per_set, "ceiling": ceiling, **_summary(per_set)}
+            per_set[s.name] = float(np.mean([h / min(k, n) for _, h, n in hits]))
+    return {"k": k, "per_set": per_set, **_summary(per_set)}
 
 
 def _members(theme) -> list[str]:

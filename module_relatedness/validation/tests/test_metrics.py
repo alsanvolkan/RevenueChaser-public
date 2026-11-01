@@ -86,13 +86,44 @@ def test_precision_at_k_known_answer():
     assert out["mean"] == pytest.approx((0.5 + 2 / 3) / 2)
 
 
-def test_precision_at_10_divides_by_k_and_reports_the_ceiling():
+def _set_first_scores(members, outsiders, first_outsider=False):
+    """Every name scores its set's members above every outsider (optionally one outsider ranks first)."""
+    tickers = list(members) + list(outsiders)
+    s = np.full((len(tickers), len(tickers)), 0.1)
+    for i, a in enumerate(tickers):
+        for j, b in enumerate(tickers):
+            if a in members and b in members:
+                s[i, j] = 0.8
+    if first_outsider:
+        for i, a in enumerate(tickers):
+            if a in members:
+                s[i, tickers.index(outsiders[0])] = 0.9
+    np.fill_diagonal(s, np.nan)
+    return tickers, s
+
+
+def test_precision_at_10_scores_a_perfect_small_set_one():
+    # avo, 1 Nov 2026: the denominator is min(k, other scored members), so a perfect 5-name set is 1.0, not 0.4.
     assert metrics.PRECISION_K == 10
+    members = ["R1", "R2", "R3", "R4", "R5"]
+    tickers, s = _set_first_scores(members, [f"O{i}" for i in range(12)])
+    out = metrics.precision_at_k(tickers, s, [_ps("rail", members)])
+    assert out["per_set"]["rail"] == pytest.approx(1.0)
+    assert "ceiling" not in out
+
+
+def test_precision_at_10_still_divides_a_large_set_by_ten():
+    members = [f"M{i:02d}" for i in range(12)]        # 11 other members each: the denominator is min(10, 11) = 10
+    outsiders = ["O1", "O2", "O3"]
+    tickers, s = _set_first_scores(members, outsiders, first_outsider=True)
+    out = metrics.precision_at_k(tickers, s, [_ps("big", members)])
+    assert out["per_set"]["big"] == pytest.approx(9 / 10)   # top 10 = O1 + 9 members; 9/11 would be wrong
+
+
+def test_precision_counts_only_scored_members_in_the_denominator():
     s = _toy_scores()
-    out = metrics.precision_at_k(TICKERS, s, [_ps("abc", ["A", "B", "C"])])
-    # Only 5 peers exist per row; A,B,C each find both others in their top 10 -> 2 hits / 10
-    assert out["per_set"]["abc"] == pytest.approx(0.2)
-    assert out["ceiling"]["abc"] == pytest.approx(0.2)  # a 3-name set can never pass 2/10
+    out = metrics.precision_at_k(TICKERS, s, [_ps("abq", ["A", "B", "Q"])])   # Q unscored: 1 other member each
+    assert out["per_set"]["abq"] == pytest.approx(1.0)
 
 
 def test_purity_is_size_weighted_and_lists_low_themes_by_name():
