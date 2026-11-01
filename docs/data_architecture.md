@@ -285,8 +285,9 @@ date; no table or board does its own `date.today()` or UTC-date cut.
 - `to_session_date(value)` is the read helper for old run-time columns (epoch, ISO text, `date`): a value with a time
   goes through `session_for`, a date-only value becomes the latest session on or before it. Naive text is read as New
   York time. `provenance.session_of` is the never-raising wrapper for labels.
-- Rule C: the holiday table stays 2025-2028 and raises outside it. Sessions before 2025 come from the stored price
-  bars (D01 / D03 fill), not from this module. Early-close days count as full days (conservative).
+- Rule C: the holiday table runs 1993-2028 and raises outside it. 1993-2024 (#348) equals CRSP's trading dates
+  (`crsp_a_stock.dsi`) exactly, every year. Sessions before 1993 come from the stored price bars, not from this
+  module; the D01 / D03 fill (`core/prices.py`, `CALENDAR_START`) still keeps its pre-2025 rows on SPY's dates. Early-close days count as full days (conservative).
 - Not in this slice: Rotation's weekend and holiday rows (wave 5, with #182) and migrating old tables.
 - Open items, kept out of this slice so no board display changes: `provenance._day` still reads epoch as the UTC
   date; the move to `provenance.session_of` happens in wave 5 (#182, Rotation and Co-movement), because it changes
@@ -981,7 +982,7 @@ data, `options` (serving schema version `1`), under "The options data" last. The
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
 `source`, `source_as_of`, `fetched_at`, `run_id`, `observed`) and `market_series` (key series id, observation date,
 source; `value`, OHLC for the index files, `frequency`, `session_date`, provenance). `session_date` comes from
-`core/calendar.py` and is empty outside its 2025-2028 table (its rule C: no second calendar). The previous file
+`core/calendar.py` and is empty outside its 1993-2028 table (its rule C: no second calendar). The previous file
 stays as `<kind>.prev.duckdb`.
 
 **The swap rule.** A kind is built as a new file `<kind>.<build_id>.duckdb`, from Parquet only (no network), and

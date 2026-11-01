@@ -445,7 +445,7 @@ def _price_bars_row(now: datetime) -> dict:
 
 def _levels_behind(newest: str | None, latest: str | None) -> int | None:
     """Complete sessions the stored levels are missing, through ``core.prices.sessions_behind`` so the calendar
-    guard lives in one place: the holiday table starts at ``CALENDAR_START``, and a newest session older than
+    guard lives in one place: the price fill's calendar starts at ``CALENDAR_START``, and a newest session older than
     that answers ``None`` instead of walking off the table (#293 review). The column is a count, so a 0/1 flag
     would read as "one hole" for any size of gap."""
     from datetime import date as _date
