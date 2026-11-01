@@ -4,7 +4,7 @@
         [--themes T.json] [--industries I.json] [--seeds SEEDS.json]
         [--etf-holdings H.json | --etf-holdings-from-store] [--out REPORT.json]
     python -m RevenueChaser.module_relatedness.validation pairs-generate --scores S.json --seed N
-        --sheet SHEET.csv --key KEY.json [--method NAME]
+        --sheet SHEET.csv --key KEY.json [--method NAME] [--force]
     python -m RevenueChaser.module_relatedness.validation pairs-score --sheet SHEET.csv --key KEY.json
 
 Input files (JSON):
@@ -18,7 +18,8 @@ Input files (JSON):
   on a real store run it with ``RC_STORE_AUTO_ENSURE=0`` (``CLAUDE.md``, Data safety).
 
 The report prints one JSON object (or writes it to ``--out``); ``theme_runs`` in it holds the five column values.
-``pairs-generate`` writes the blind sheet avo marks and its key; ``pairs-score`` prints the agreement.
+``pairs-generate`` writes the blind sheet avo marks and its key, and refuses to overwrite either without
+``--force``; ``pairs-score`` prints the agreement.
 """
 from __future__ import annotations
 
@@ -67,7 +68,8 @@ def _report(args) -> int:
 def _pairs_generate(args) -> int:
     tickers, m = _scores(args.scores)
     pairs = pair_sheet.generate(tickers, m, seed=args.seed)
-    pair_sheet.write_sheet(pairs, Path(args.sheet), Path(args.key), seed=args.seed, method=args.method)
+    pair_sheet.write_sheet(pairs, Path(args.sheet), Path(args.key), seed=args.seed, method=args.method,
+                           force=args.force)
     _emit({"sheet": args.sheet, "key": args.key, "pairs": len(pairs), "seed": args.seed}, None)
     return 0
 
@@ -99,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--sheet", required=True)
     g.add_argument("--key", required=True)
     g.add_argument("--method", default="")
+    g.add_argument("--force", action="store_true", help="overwrite an existing sheet and key (a marked sheet is lost)")
     g.set_defaults(func=_pairs_generate)
 
     s = sub.add_parser("pairs-score", help="agreement of a marked sheet with its key")

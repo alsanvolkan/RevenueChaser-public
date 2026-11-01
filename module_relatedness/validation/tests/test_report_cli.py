@@ -158,3 +158,53 @@ def test_report_upper_cases_input_keys_and_counts_the_unmatched(tmp_path, capsys
     assert out["purity"]["purity"] == pytest.approx(1.0)
     assert out["seed_ari"] == pytest.approx(1.0)
     assert out["unmatched"] == {"themes": 1, "industries": 1, "seeds": 0}
+
+
+def test_pairs_generate_refuses_to_overwrite_without_force(tmp_path, capsys, no_store):
+    tickers = [f"T{i:02d}" for i in range(40)]
+    s = np.random.default_rng(1).random((40, 40))
+    np.fill_diagonal(s, np.nan)
+    sp = tmp_path / "scores.json"
+    sp.write_text(json.dumps({"tickers": tickers,
+                              "matrix": [[None if np.isnan(v) else float(v) for v in r] for r in s]}),
+                  encoding="utf-8")
+    sheet, key = tmp_path / "sheet.csv", tmp_path / "key.json"
+    args = ["pairs-generate", "--scores", str(sp), "--seed", "5", "--sheet", str(sheet), "--key", str(key)]
+    assert cli.main(args) == 0
+    sheet.write_text(sheet.read_text(encoding="utf-8") + "# marked\n", encoding="utf-8")
+    marked = sheet.read_bytes()
+    with pytest.raises(FileExistsError):
+        cli.main(args)
+    assert sheet.read_bytes() == marked
+    assert cli.main(args + ["--force"]) == 0
+    assert sheet.read_bytes() != marked
+
+
+def test_matrix_from_dense_refuses_a_shape_mismatch():
+    from RevenueChaser.module_relatedness.validation import report
+    with pytest.raises(ValueError, match="3 tickers"):
+        report.matrix_from_dense(["A", "B", "C"], [[0.0] * 4 for _ in range(4)])
+
+
+def test_build_report_upper_cases_the_score_tickers():
+    from RevenueChaser.module_relatedness.validation import report
+    names = ["jpm", "bac", "c", "wfc"]
+    m = np.full((4, 4), 0.5)
+    np.fill_diagonal(m, np.nan)
+    out = report.build_report(names, m)
+    assert "us_large_banks" in out["hand_precision"]["per_set"]
+
+
+def test_by_kind_reuses_the_per_set_recall(monkeypatch):
+    from RevenueChaser.module_relatedness.validation import report
+    calls = []
+    real = metrics.peer_recall_at_k
+    monkeypatch.setattr(metrics, "peer_recall_at_k", lambda *a, **k: calls.append(1) or real(*a, **k))
+    names = BANKS + RAIL
+    m = np.random.default_rng(2).random((len(names), len(names)))
+    np.fill_diagonal(m, np.nan)
+    out = report.build_report(names, m, etf_holdings={"KRE": ["USB", "PNC", "TFC"], "IYT": RAIL})
+    assert len(calls) == 1
+    per = out["peer_recall"]["per_set"]
+    assert out["peer_recall"]["by_kind"]["hand"] == pytest.approx(np.mean([per["us_large_banks"], per["railroads"]]))
+    assert out["peer_recall"]["by_kind"]["etf"] == pytest.approx(np.mean([per["KRE"], per["IYT"]]))

@@ -30,6 +30,9 @@ def matrix_from_pairs(rows) -> tuple[list[str], np.ndarray]:
 
 def matrix_from_dense(tickers: Sequence[str], matrix) -> tuple[list[str], np.ndarray]:
     m = np.array([[np.nan if v is None else float(v) for v in row] for row in matrix], dtype=float)
+    if m.shape != (len(tickers), len(tickers)):
+        raise ValueError(f"{len(tickers)} tickers but a {m.shape} score matrix; it must be square, one row and "
+                         f"one column per ticker")
     return [str(t).upper() for t in tickers], m
 
 
@@ -71,6 +74,7 @@ def build_report(tickers: Sequence[str], scores: np.ndarray, *,
                  industry_by: Mapping[str, str] | None = None,
                  seeds: Sequence[Mapping[str, object]] | None = None,
                  etf_holdings: Mapping[str, object] | None = None) -> dict:
+    tickers = [str(t).upper() for t in tickers]
     universe = set(tickers)
     fine, miss_fine = _upper_themes(fine, universe)
     medium, miss_medium = _upper_themes(medium, universe)
@@ -81,9 +85,11 @@ def build_report(tickers: Sequence[str], scores: np.ndarray, *,
     all_sets = hand.sets + etf.sets
 
     recall = metrics.peer_recall_at_k(tickers, scores, all_sets)
-    recall["by_kind"] = {
-        kind: metrics.peer_recall_at_k(tickers, scores, [s for s in all_sets if s.kind == kind])["mean"]
-        for kind in ("hand", "etf")}
+    # The per-kind means come from the per-set values already computed (one top-k pass, not three).
+    recall["by_kind"] = {}
+    for kind in ("hand", "etf"):
+        vals = [recall["per_set"][s.name] for s in all_sets if s.kind == kind and s.name in recall["per_set"]]
+        recall["by_kind"][kind] = float(np.mean(vals)) if vals else None
     out = {
         "hand_sets_version": hand.version,
         "etf_sets_version": etf.version,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import json
 
 import numpy as np
 import pytest
@@ -224,3 +225,91 @@ def test_a_full_sheet_passes_at_eighty_percent(tmp_path, n_wrong, passes):
     out = pair_sheet.score(sheet, key)
     assert out["n_marked"] == 100 and out["n_missing"] == 0
     assert out["n_agree"] == 100 - n_wrong and out["passes"] is passes
+
+
+# ── review round 2 (#342): R1 sparse share, R3 Excel-saved sheets, R4 no silent overwrite ──────────
+
+def _top_k_sparse(n, top=25, seed=0):
+    """A store-shaped matrix of ``n`` names: a random symmetric score cut to each name's top ``top`` peers, NaN
+    elsewhere (``relatedness_scores`` keeps only those). float32 for the dense step, to keep 3,500 names light."""
+    rng = np.random.default_rng(seed)
+    full = rng.random((n, n), dtype=np.float32)
+    full += full.T
+    np.fill_diagonal(full, -1.0)
+    keep = np.argpartition(-full, top, axis=1)[:, :top]
+    s = np.full((n, n), np.nan)
+    rows = np.arange(n)[:, None]
+    s[rows, keep] = full[rows, keep]
+    del full
+    return [f"T{i:04d}" for i in range(n)], s
+
+
+def test_a_matrix_with_under_one_percent_scored_pairs_is_refused():
+    tickers, s = _top_k_sparse(3500)
+    with pytest.raises(ValueError, match=r"0\.\d+% of pairs are scored.*dense"):
+        pair_sheet.generate(tickers, s, seed=1)
+
+
+def test_the_pilot_universe_size_still_gives_fifty_scored_high_pairs():
+    tickers, s = _top_k_sparse(1503)
+    idx = {t: i for i, t in enumerate(tickers)}
+    highs = [p for p in pair_sheet.generate(tickers, s, seed=1) if p["band"] == "high"]
+    assert len(highs) == 50
+    for p in highs:
+        i, j = idx[p["a"]], idx[p["b"]]
+        assert not (np.isnan(s[i, j]) and np.isnan(s[j, i]))
+
+
+def _plain_marked(tmp_path):
+    pairs, sheet, key = _keyed_sheet(tmp_path)
+    rows = [{"pair_no": p["pair_no"], "a": p["a"], "b": p["b"], "related": _right(p) if k % 7 else _wrong(p)}
+            for k, p in enumerate(pairs)]
+    _write_rows(sheet, rows)
+    return rows, sheet, key
+
+
+def test_a_sheet_saved_with_a_bom_scores_like_the_plain_one(tmp_path):
+    rows, sheet, key = _plain_marked(tmp_path)
+    plain = pair_sheet.score(sheet, key)
+    sheet.write_bytes(b"\xef\xbb\xbf" + sheet.read_bytes())
+    assert pair_sheet.score(sheet, key) == plain
+
+
+def test_a_semicolon_sheet_scores_like_the_plain_one(tmp_path):
+    rows, sheet, key = _plain_marked(tmp_path)
+    plain = pair_sheet.score(sheet, key)
+    with sheet.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=["pair_no", "a", "b", "related"], delimiter=";")
+        w.writeheader()
+        w.writerows(rows)
+    assert pair_sheet.score(sheet, key) == plain
+
+
+def test_a_sheet_without_the_header_names_the_expected_one(tmp_path):
+    rows, sheet, key = _plain_marked(tmp_path)
+    sheet.write_text("1,A,B,y\n2,C,D,n\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="pair_no, a, b, related"):
+        pair_sheet.score(sheet, key)
+
+
+def test_writing_over_a_marked_sheet_is_refused_without_force(tmp_path):
+    rows, sheet, key = _plain_marked(tmp_path)
+    before_sheet, before_key = sheet.read_bytes(), key.read_bytes()
+    tickers, s = _matrix()
+    pairs = pair_sheet.generate(tickers, s, seed=8)
+    with pytest.raises(FileExistsError, match="sheet.csv"):
+        pair_sheet.write_sheet(pairs, sheet, key, seed=8)
+    assert sheet.read_bytes() == before_sheet and key.read_bytes() == before_key
+    pair_sheet.write_sheet(pairs, sheet, key, seed=8, force=True)
+    assert sheet.read_bytes() != before_sheet
+    assert json.loads(key.read_text(encoding="utf-8"))["seed"] == 8
+
+
+def test_an_existing_key_alone_also_blocks_the_write(tmp_path):
+    tickers, s = _matrix()
+    pairs = pair_sheet.generate(tickers, s, seed=8)
+    sheet, key = tmp_path / "sheet.csv", tmp_path / "key.json"
+    key.write_text("{}", encoding="utf-8")
+    with pytest.raises(FileExistsError, match="key.json"):
+        pair_sheet.write_sheet(pairs, sheet, key, seed=8)
+    assert not sheet.exists()

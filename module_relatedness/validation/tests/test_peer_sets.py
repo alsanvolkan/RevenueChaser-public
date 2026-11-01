@@ -146,3 +146,50 @@ def test_etf_holdings_from_store_never_applies_the_manifest(monkeypatch):
     assert shape() == before
     import os
     assert "RC_STORE_AUTO_ENSURE" not in os.environ      # the read put the caller's environment back
+
+
+def _scratch_holdings(path):
+    import duckdb
+    con = duckdb.connect(str(path))
+    try:
+        con.execute("CREATE TABLE etf_holdings (ticker TEXT PRIMARY KEY, entry JSON, provider TEXT, "
+                    "fetched_at DOUBLE)")
+        con.execute("INSERT INTO etf_holdings VALUES ('SMH', '[{\"ticker\": \"nvda\"}, {\"ticker\": \"TSM\"}]', "
+                    "'x', 1.0)")
+    finally:
+        con.close()
+
+
+def test_etf_holdings_are_read_through_a_read_only_handle(tmp_path):
+    """Review R2 (#342): the read opens the file read-only, so it runs beside another read-only handle."""
+    import os
+
+    import duckdb
+
+    path = tmp_path / "scratch.duckdb"
+    _scratch_holdings(path)
+    mtime = os.stat(path).st_mtime_ns
+    held = duckdb.connect(str(path), read_only=True)
+    try:
+        tables = held.execute("SELECT table_name FROM information_schema.tables ORDER BY 1").fetchall()
+        out = peer_sets.etf_holdings_from_store(db_path=path)
+        assert held.execute("SELECT table_name FROM information_schema.tables ORDER BY 1").fetchall() == tables
+    finally:
+        held.close()
+    assert out["SMH"] == {"NVDA", "TSM"} and out["KRE"] == set() and len(out) == 29
+    assert os.stat(path).st_mtime_ns == mtime
+
+
+def test_etf_holdings_table_is_an_argument(tmp_path):
+    import duckdb
+
+    path = tmp_path / "scratch.duckdb"
+    con = duckdb.connect(str(path))
+    try:
+        con.execute("CREATE TABLE spine_holdings (ticker TEXT, entry JSON)")
+        con.execute("INSERT INTO spine_holdings VALUES ('XBI', '[{\"ticker\": \"VRTX\"}]')")
+    finally:
+        con.close()
+    assert peer_sets.etf_holdings_from_store(db_path=path, table="spine_holdings")["XBI"] == {"VRTX"}
+    with pytest.raises(ValueError, match="table"):
+        peer_sets.etf_holdings_from_store(db_path=path, table="x; DROP TABLE spine_holdings")

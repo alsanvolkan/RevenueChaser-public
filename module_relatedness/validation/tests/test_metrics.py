@@ -214,3 +214,15 @@ def test_purity_leaves_out_single_member_themes_and_counts_them():
     assert out["purity"] == pytest.approx(0.25)          # not (8 + 2) / 16 = 0.625
     assert out["n_singletons"] == 8
     assert "solo 0" not in out["below_floor"] and out["below_floor"] == ["Mixed"]
+
+
+# ── review round 2 (#342): N3 ETF theme tie, N4 NaN ARI ──────────────────────────────────────────────
+
+def test_etf_theme_recall_keeps_the_first_theme_id_on_a_tie():
+    medium = {"m2": {"label": "b", "members": ["C", "D"]}, "m1": {"label": "a", "members": ["A", "B"]}}
+    out = metrics.etf_theme_recall([_ps("E1", ["A", "B", "C", "D"], kind="etf")], medium)
+    assert out["per_etf"]["E1"]["theme"] == "m1" and out["per_etf"]["E1"]["recall"] == pytest.approx(0.5)
+
+
+def test_theme_runs_values_turns_a_nan_ari_into_none():
+    assert metrics.theme_runs_values({"seed_ari": float("nan")})["val_seed_ari"] is None

@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Mapping
@@ -147,28 +148,53 @@ def etf_sets_for(holdings: Mapping[str, Iterable[str]], universe: Iterable[str],
     return LoadedSets(version, out, report)
 
 
-def etf_holdings_from_store(path: Path | None = None) -> dict[str, set[str]]:
-    """Holding tickers per listed ETF from the store's ``etf_holdings`` (read only; empty set when none).
+_TABLE_NAME = re.compile(r"^[A-Za-z_]\w*(\.[A-Za-z_]\w*)?$")
 
-    The same table and the same entry parser as ``themes.match_theme_etfs``; that function itself writes
-    ``relatedness_theme_etfs`` and covers only the rotation ETFs, so it is not called here.
 
-    **Never a store write** (review S1, #342): a store call with ``RC_STORE_AUTO_ENSURE`` unset applies the whole
-    schema manifest first, which on a live store would run a migration as a side effect of this read. The variable
-    is held at ``0`` for the read and then put back as the caller had it, so the caller's process keeps its own
-    auto-ensure behaviour.
+def etf_holdings_from_store(db_path: Path | None = None, table: str = "etf_holdings",
+                            list_path: Path | None = None) -> dict[str, set[str]]:
+    """Holding tickers per listed ETF from ``table`` in the DuckDB file ``db_path`` (empty set when none).
+
+    ``db_path`` defaults to the raw store (``rawstore.DB_PATH``). ``table`` is an argument because which table holds
+    the ETF holdings (``raw.etf_holdings`` or the spine's) is still an owner decision (E1, #342); it needs a
+    ``ticker`` and an ``entry`` column. The entry parser is ``themes.match_theme_etfs``'s; that function itself
+    writes ``relatedness_theme_etfs`` and covers only the rotation ETFs, so it is not called here.
+
+    **Never a store write** (reviews S1 and R2, #342). The file is opened with ``duckdb.connect(read_only=True)``,
+    not through ``rawstore`` (whose handles are always read-write, ``core/rawstore.py`` ``connect``), and
+    ``RC_STORE_AUTO_ENSURE`` is held at ``0`` for the read and then put back as the caller had it. A read-only handle
+    cannot open a file that another process holds for writing, nor share a process with a read-write handle on it:
+    run this from the CLI while no dashboard holds the store, never from inside the dashboard.
     """
-    _, etfs = read_etf_list(path)
+    import duckdb
+
+    from RevenueChaser.module_relatedness.themes import _etf_holding_tickers
+
+    if not _TABLE_NAME.match(table):
+        raise ValueError(f"not a table name: {table!r}")
+    _, etfs = read_etf_list(list_path)
     prev = os.environ.get(_AUTO_ENSURE)
     os.environ[_AUTO_ENSURE] = "0"
     try:
-        from RevenueChaser.core import rawstore
-        from RevenueChaser.module_relatedness.themes import _etf_holding_tickers
-
-        out: dict[str, set[str]] = {}
-        for etf in etfs:
-            row = rawstore.get("etf_holdings", etf)
-            out[etf] = _etf_holding_tickers(row.get("entry")) if row else set()
+        if db_path is None:
+            from RevenueChaser.core import rawstore
+            db_path = rawstore.DB_PATH
+        db_path = Path(db_path)
+        if not db_path.exists():
+            raise FileNotFoundError(f"no store file at {db_path}")
+        ident = ".".join(f'"{part}"' for part in table.split("."))
+        con = duckdb.connect(str(db_path), read_only=True)
+        try:
+            try:
+                rows = con.execute(f"SELECT upper(ticker), entry FROM {ident} WHERE upper(ticker) IN "
+                                   f"({', '.join('?' * len(etfs))})", etfs).fetchall()
+            except duckdb.CatalogException:
+                rows = []        # no such table: every ETF is reported as "no holdings"
+        finally:
+            con.close()
+        out: dict[str, set[str]] = {etf: set() for etf in etfs}
+        for ticker, entry in rows:
+            out[ticker] = _etf_holding_tickers(entry)
         return out
     finally:
         if prev is None:

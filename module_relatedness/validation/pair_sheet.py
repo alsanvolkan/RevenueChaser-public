@@ -10,7 +10,11 @@ once, with the pair's score the mean of its two directed scores where both exist
 pairs would draw the "low" band from near-neighbours. On such a matrix most pairs tie at 0, so when fewer than
 ``n_low`` pairs lie strictly below the median the low band becomes the pairs at or below it (``low_rule`` in the
 key says which), and a high pair must also score above the median, since p90 is itself 0 when fewer than 10% of
-pairs are scored. The random seed is a parameter: the same matrix and seed give the same sheet.
+pairs are scored. Under 1% scored pairs (``MIN_SCORED_SHARE``) no high band is left at all, so ``generate`` refuses
+the matrix and asks for a dense one. The random seed is a parameter: the same matrix and seed give the same sheet.
+
+Both files are created, never overwritten, unless ``force`` is passed (review R4): a marked sheet is avo's work.
+The scorer reads a sheet saved by Excel too, with a byte-order mark or ``;`` / tab as the delimiter (review R3).
 
 Two files are written: the **sheet** (CSV ``pair_no, a, b, related``) avo fills in, which shows neither the score
 nor the band so the marking is blind, and the **key** (JSON) that the scorer reads to know each pair's band.
@@ -20,6 +24,7 @@ sheet, count as unmarked. ``passes`` is set only when every pair of the key is m
 from __future__ import annotations
 
 import csv
+import io
 import json
 import warnings
 from pathlib import Path
@@ -33,6 +38,9 @@ N_HIGH = 50
 N_LOW = 50
 HIGH_BAND = (90.0, 99.0)   # percentiles, inclusive
 LOW_BELOW = 50.0           # percentile, exclusive
+# Below this share of scored pairs p99 is itself 0 and the high band is empty (review R1, #342: 3,500 names with
+# top-25 peers is 0.8%), so the sheet asks for a dense matrix instead. 1,503 names (the pilot) is about 1.8%.
+MIN_SCORED_SHARE = 0.01
 
 SHEET_FIELDS = ["pair_no", "a", "b", "related"]
 _YES = {"y", "yes", "1", "true", "related", "r"}
@@ -43,6 +51,17 @@ def _pair_scores(tickers: Sequence[str], scores: np.ndarray):
     s = np.asarray(scores, dtype=float)
     if s.shape != (len(tickers), len(tickers)):
         raise ValueError(f"score matrix is {s.shape}, expected {(len(tickers), len(tickers))}")
+    n = len(tickers)
+    if n >= 2:
+        scored = ~np.isnan(s)
+        scored |= scored.T
+        np.fill_diagonal(scored, False)
+        share = float(scored.sum()) / (n * (n - 1))
+        del scored
+        if share < MIN_SCORED_SHARE:
+            raise ValueError(
+                f"only {share:.2%} of pairs are scored (under {MIN_SCORED_SHARE:.0%}), so the 90th-99th percentile "
+                f"band is empty: pass a dense score matrix (every pair scored), not the stored top-25 peers")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)   # a pair scored in neither direction: NaN, then 0 below
         sym = np.nanmean(np.stack([s, s.T]), axis=0)
@@ -83,10 +102,20 @@ def generate(tickers: Sequence[str], scores: np.ndarray, seed: int,
     return out
 
 
-def write_sheet(pairs: list[dict], sheet_path: Path, key_path: Path, seed: int, method: str = "") -> None:
-    """Write the blind sheet (CSV) and its key (JSON: seed, method, band and score per pair number)."""
+def write_sheet(pairs: list[dict], sheet_path: Path, key_path: Path, seed: int, method: str = "",
+                force: bool = False) -> None:
+    """Write the blind sheet (CSV) and its key (JSON: seed, method, band and score per pair number).
+
+    Refuses (``FileExistsError``, naming the file) when either file exists, before writing anything, unless
+    ``force``: a sheet avo has marked is never overwritten by accident.
+    """
     sheet_path, key_path = Path(sheet_path), Path(key_path)
-    with sheet_path.open("w", newline="", encoding="utf-8") as fh:
+    if not force:
+        for path in (sheet_path, key_path):
+            if path.exists():
+                raise FileExistsError(f"{path} already exists; pass force (--force) to overwrite it")
+    mode = "w" if force else "x"
+    with sheet_path.open(mode, newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=SHEET_FIELDS)
         w.writeheader()
         for p in pairs:
@@ -95,7 +124,8 @@ def write_sheet(pairs: list[dict], sheet_path: Path, key_path: Path, seed: int, 
            "low_rule": pairs[0].get("low_rule", "< p50") if pairs else None,
            "pairs": {str(p["pair_no"]): {"a": p["a"], "b": p["b"], "band": p["band"], "score": p["score"]}
                      for p in pairs}}
-    key_path.write_text(json.dumps(key, indent=1), encoding="utf-8")
+    with key_path.open(mode, encoding="utf-8") as fh:
+        fh.write(json.dumps(key, indent=1))
 
 
 def _mark(value: str, pair_no: str) -> bool | None:
@@ -109,6 +139,21 @@ def _mark(value: str, pair_no: str) -> bool | None:
     raise ValueError(f"pair {pair_no}: cannot read the mark {value!r}; use y/n (related / not)")
 
 
+def _read_rows(sheet_path: Path) -> list[dict]:
+    """The sheet's rows; a byte-order mark is dropped and the delimiter (``,`` ``;`` or tab) is detected."""
+    text = sheet_path.read_text(encoding="utf-8-sig")
+    try:
+        delimiter = csv.Sniffer().sniff(text[:4096], delimiters=",;\t").delimiter
+    except csv.Error:
+        delimiter = ","
+    reader = csv.DictReader(io.StringIO(text, newline=""), delimiter=delimiter)
+    header = [h.strip() for h in (reader.fieldnames or [])]
+    if "pair_no" not in header:
+        raise ValueError(f"{sheet_path} has no header row {', '.join(SHEET_FIELDS)} (found: {header})")
+    reader.fieldnames = header
+    return list(reader)
+
+
 def score(sheet_path: Path, key_path: Path, target: float = PAIR_AGREEMENT_TARGET) -> dict:
     """Agreement of avo's marks with the bands: related on a high pair, not related on a low pair.
 
@@ -116,8 +161,7 @@ def score(sheet_path: Path, key_path: Path, target: float = PAIR_AGREEMENT_TARGE
     cut-down sheet cannot pass. A ``pair_no`` that appears twice is refused.
     """
     key = json.loads(Path(key_path).read_text(encoding="utf-8"))["pairs"]
-    with Path(sheet_path).open(newline="", encoding="utf-8") as fh:
-        rows = list(csv.DictReader(fh))
+    rows = _read_rows(Path(sheet_path))
     n_agree = n_marked = n_unmarked = 0
     seen: set[str] = set()
     for r in rows:
