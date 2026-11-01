@@ -729,6 +729,22 @@ def reads_since(first_day: str, tables) -> dict[str, int]:
     return {t: got.get(t, 0) for t in names}
 
 
+#: The prefix ``rcdata.needs`` counts a need under in ``read_log``, beside the table name (``serve.ask``/``summary``).
+NEED_READ_PREFIX = "need:"
+
+
+def need_reads(first_day: str) -> list[dict]:
+    """``[{need, process, day, reads}]``: every ``need:<name>`` row of ``read_log`` since ``first_day``.
+
+    The Settings Needs tab's request log (#331). Day granularity, because that is what the log holds; the table rows
+    beside them are left out, and the name comes back without its prefix. Never creates the file.
+    """
+    rows = _select("SELECT table_name, process, day, reads FROM read_log WHERE day >= ? AND table_name LIKE 'need:%' "
+                   "ORDER BY table_name, process, day", (first_day,))
+    return [{"need": r["table_name"][len(NEED_READ_PREFIX):], "process": r["process"], "day": r["day"],
+             "reads": int(r["reads"])} for r in rows]
+
+
 def last_builder_run() -> dict | None:
     rows = _select("SELECT run_id, dataset, trigger, pid, started_at, finished_at, status, error FROM job_runs2 "
                    "ORDER BY started_at DESC LIMIT 1")
