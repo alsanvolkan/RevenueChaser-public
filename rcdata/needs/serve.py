@@ -30,7 +30,7 @@ from .catalog import DAYS, NEEDS, SESSIONS, TICKER, Need
 
 FRESH, STALE, MISSING = "fresh", "stale", "missing"
 #: Rows the store holds whose lag the calendar cannot count: an ``as_of`` outside the NYSE holiday table (it runs
-#: 2025-2028; Cboe's SPX series starts in 1975). The answer keeps its rows and says why in ``freshness["lag_reason"]``
+#: 1993-2028; Cboe's SPX series starts in 1975). The answer keeps its rows and says why in ``freshness["lag_reason"]``
 #: instead of raising (#334 review, blocker 1): a reader that never judges freshness must not lose its data to it.
 UNDECIDED = "undecided"
 NEVER = "never"
@@ -114,7 +114,7 @@ def lag_sessions(as_of: date, latest: date) -> int:
 
     ``latest`` counts as one, and every trading day strictly between the two as one more. Only days after ``as_of``
     are put to the calendar (#334 review): the walk used to step back to the session on or before ``as_of``, so a
-    2024-12-31 row read on 2025-01-02 asked the calendar about 2024, which its holiday table does not hold, where
+    2024-12-31 row read on 2025-01-02 asked the calendar about 2024, which its holiday table did not hold then, where
     the board's own forward count never did. The numbers inside the table are the same.
     """
     if as_of >= latest:
@@ -208,7 +208,7 @@ def _with_needs_own_rows(need: Need, params: dict) -> dict:
     return out
 
 
-def summary(need: str, *, sample: int = 0) -> dict:
+def summary(need: str, *, sample: int = 0, count: bool = True) -> dict:
     """One need's state without naming anything: how much the store holds for it and how new that is.
 
     The Settings / Data screen asks this of every need; it wants row and key counts, the newest day, the last
@@ -217,13 +217,17 @@ def summary(need: str, *, sample: int = 0) -> dict:
 
     The envelope is the same shape ``ask`` returns, so a card reads one shape either way; ``coverage["asked"]`` is
     None because nothing was asked for. Read-only: no provider, no write, no fill.
+
+    ``count=False`` leaves ``need:<name>`` out of the read log (the table read is still counted). The Settings Needs
+    tab asks every need on each render, and those reads would bury the requests it exists to show (#331).
     """
     try:
         spec = NEEDS[need]
     except KeyError:
         raise UnknownNeed(f"unknown need {need!r}: one of {', '.join(sorted(NEEDS))}") from None
 
-    ops.read_log.bump(f"need:{need}")
+    if count:
+        ops.read_log.bump(f"need:{need}")
     # A need that names its own rows inside a shared table counts only those (the review's C2).
     s = read.table_summary(spec.table, day_column=spec.day_column, key_column=spec.summary_key, sample=sample,
                            key_values=spec.filter_values, key_prefix=spec.filter_prefix)

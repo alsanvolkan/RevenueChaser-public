@@ -105,14 +105,14 @@ def test_no_reader_takes_as_of_so_the_envelope_never_swallows_a_readers_argument
 # ── review of 1e1b250 (#334): a day the calendar cannot count is an undecided lag, never a lost answer ──
 
 def test_a_valid_day_before_the_holiday_table_keeps_its_rows_and_leaves_the_lag_undecided(vix_rows):
-    """Blocker 1: the calendar's holiday table starts in 2025, Cboe's SPX series in 1975. A 2024 render must keep
+    """Blocker 1: the calendar's holiday table starts in 1993, Cboe's SPX series in 1975. A 1992 render must keep
     its rows; only the lag cannot be counted, and the answer says so instead of raising."""
-    vix_rows(date(2024, 10, 24), date(2024, 10, 25))
-    ans = needs.ask("market.vix", as_of=date(2024, 10, 25))
+    vix_rows(date(1992, 10, 22), date(1992, 10, 23))
+    ans = needs.ask("market.vix", as_of=date(1992, 10, 23))
     assert len(ans.rows) == 2 and ans.state == needs.serve.UNDECIDED and not ans.ok
-    assert ans.freshness["lag_sessions"] is None and ans.freshness["as_of_session"] == date(2024, 10, 25)
-    assert ans.freshness["reference"] == date(2024, 10, 25)
-    assert "2024" in ans.freshness["lag_reason"]
+    assert ans.freshness["lag_sessions"] is None and ans.freshness["as_of_session"] == date(1992, 10, 23)
+    assert ans.freshness["reference"] == date(1992, 10, 23)
+    assert "1992" in ans.freshness["lag_reason"]
 
 
 def test_a_day_after_the_holiday_table_is_undecided_too(vix_rows):
@@ -123,7 +123,7 @@ def test_a_day_after_the_holiday_table_is_undecided_too(vix_rows):
 
 def test_no_rows_outside_the_table_is_still_missing(vix_rows):
     vix_rows()
-    ans = needs.ask("market.vix", as_of=date(2024, 10, 25))
+    ans = needs.ask("market.vix", as_of=date(1992, 10, 23))
     assert ans.state == "missing" and ans.freshness["lag_sessions"] is None
 
 

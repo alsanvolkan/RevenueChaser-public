@@ -551,9 +551,9 @@ class Pacer:
 # ── Sessions ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 def session_date_of(obs: date) -> date | None:
-    """The New York session on or before ``obs`` (``core/calendar.py``); None outside its 2025-2028 table.
+    """The New York session on or before ``obs`` (``core/calendar.py``); None outside its 1993-2028 table.
 
-    Rule C of the calendar: no second holiday table, so an older observation has no session date here.
+    Rule C of the calendar: no second holiday table, so an observation before 1993 has no session date here.
     """
     try:
         return calendar.to_session_date(obs)

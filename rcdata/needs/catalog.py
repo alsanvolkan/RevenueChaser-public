@@ -131,6 +131,11 @@ _NEEDS = (
          filter_values=("VIX", "VIX9D", "VIX3M", "VIX6M", "VIX1Y", "VVIX"), providers=("yfinance",)),
     Need("market.cot", "market_series", "market_series", "obs_date", "series_id", 10, ask_param="series_ids",
          filter_prefix="cftc:tff:13874A:", providers=("cftc",)),
+    # CFTC's release schedule (#227): days from each COT report to its release, keyed on the report. The page lists
+    # the whole year at once, so its newest row is a report weeks ahead and the lag reads 0 until the stored year runs
+    # out: the 14 days catch that, not a missed weekly fetch (the builder's own check row reports that one).
+    Need("market.cot_release", "market_series", "market_series", "obs_date", "series_id", 14, max_lag_unit=DAYS,
+         ask_param="series_ids", filter_values=("CFTC_COT_RELEASE_LAG",), providers=("cftc",)),
     # Cboe's SPX closes, SPX Gamma's 8-week candle window (#330): the need names the series so the board never
     # does. Daily like the VIX family, so the same 3 sessions.
     Need("market.spx_close", "market_series", "market_series", "obs_date", "series_id", 3, ask_param="series_ids",
