@@ -184,12 +184,18 @@ def test_seed_ari_needs_two_runs():
 
 
 def test_theme_runs_values_names_the_five_columns():
-    report = {"peer_recall": {"mean": 0.5}, "hand_precision": {"mean": 0.4}, "purity": {"purity": 0.7},
-              "etf_recall": {"median": 0.6}, "seed_ari": 0.95}
+    # avo, 1 Nov 2026 (Q3): val_peer_recall_25 stores the ETF-set mean only; hand sets are scored by precision@10.
+    report = {"peer_recall": {"mean": 0.8, "by_kind": {"hand": 1.0, "etf": 0.5}}, "hand_precision": {"mean": 0.4},
+              "purity": {"purity": 0.7}, "etf_recall": {"median": 0.6}, "seed_ari": 0.95}
     vals = metrics.theme_runs_values(report)
     assert tuple(vals) == metrics.THEME_RUNS_COLUMNS and len(vals) == 5
     assert vals == {"val_peer_recall_25": 0.5, "val_hand_precision_10": 0.4, "val_gics_purity": 0.7,
                     "val_etf_recall_medium": 0.6, "val_seed_ari": 0.95}
+
+
+def test_val_peer_recall_25_is_none_without_etf_sets():
+    report = {"peer_recall": {"mean": 1.0, "by_kind": {"hand": 1.0, "etf": None}}}
+    assert metrics.theme_runs_values(report)["val_peer_recall_25"] is None
     empty = metrics.theme_runs_values({})
     assert all(v is None for v in empty.values())
 
@@ -226,3 +232,26 @@ def test_etf_theme_recall_keeps_the_first_theme_id_on_a_tie():
 
 def test_theme_runs_values_turns_a_nan_ari_into_none():
     assert metrics.theme_runs_values({"seed_ari": float("nan")})["val_seed_ari"] is None
+
+
+# ── Part B (#342): recall@25 denominator, avo 1 Nov 2026 (Q3) ───────────────────────────────────────
+
+def test_recall_at_25_scores_a_perfect_large_set_one():
+    members = [f"E{i:02d}" for i in range(60)]          # 59 other members each: min(25, 59) = 25
+    tickers, s = _set_first_scores(members, [f"O{i}" for i in range(5)])
+    out = metrics.peer_recall_at_k(tickers, s, [_ps("etf60", members, kind="etf")])
+    assert out["per_set"]["etf60"] == pytest.approx(1.0)  # 25/59 = 0.42 with the old / n
+
+
+def test_recall_at_25_still_divides_a_small_set_by_its_other_members():
+    members = ["R1", "R2", "R3", "R4", "R5"]
+    outsiders = [f"O{i:02d}" for i in range(30)]
+    tickers = members + outsiders
+    s = np.full((len(tickers), len(tickers)), 0.5)    # every member ranks outsiders at 0.5
+    for i, a in enumerate(members):
+        for j, b in enumerate(members):
+            s[i, j] = 0.8
+        s[i, (i + 1) % 5] = 0.0                        # ... and one fellow member below all 30 outsiders
+    np.fill_diagonal(s, np.nan)
+    out = metrics.peer_recall_at_k(tickers, s, [_ps("five", members)])
+    assert out["per_set"]["five"] == pytest.approx(3 / 4)  # 3 hits of min(25, 4) = 4; not 3/25

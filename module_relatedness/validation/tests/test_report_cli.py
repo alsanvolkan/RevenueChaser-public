@@ -208,3 +208,16 @@ def test_by_kind_reuses_the_per_set_recall(monkeypatch):
     per = out["peer_recall"]["per_set"]
     assert out["peer_recall"]["by_kind"]["hand"] == pytest.approx(np.mean([per["us_large_banks"], per["railroads"]]))
     assert out["peer_recall"]["by_kind"]["etf"] == pytest.approx(np.mean([per["KRE"], per["IYT"]]))
+
+
+def test_the_report_stores_the_etf_recall_mean_in_the_column():
+    """Part B (#342, avo 1 Nov 2026): val_peer_recall_25 is the ETF-set mean; None when no ETF set loaded."""
+    from RevenueChaser.module_relatedness.validation import report
+    names = BANKS + RAIL
+    m = np.random.default_rng(2).random((len(names), len(names)))
+    np.fill_diagonal(m, np.nan)
+    out = report.build_report(names, m, etf_holdings={"KRE": ["USB", "PNC", "TFC"], "IYT": RAIL})
+    assert out["theme_runs"]["val_peer_recall_25"] == pytest.approx(out["peer_recall"]["by_kind"]["etf"])
+    assert out["peer_recall"]["by_kind"]["hand"] is not None
+    alone = report.build_report(names, m)
+    assert alone["theme_runs"]["val_peer_recall_25"] is None

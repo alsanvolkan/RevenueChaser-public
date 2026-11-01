@@ -78,16 +78,22 @@ def _summary(per_set: dict[str, float]) -> dict:
 
 
 def peer_recall_at_k(tickers: Sequence[str], scores: np.ndarray, sets, k: int = RECALL_K) -> dict:
-    """Per set: the mean over its members of ``|top-k ∩ other members| / |other members|``.
+    """Per set: the mean over its members of ``|top-k ∩ other members| / min(k, other members)``.
 
-    Members missing from the matrix are left out (the loader has already dropped and reported names outside the
-    universe). A set with fewer than two scored members has no value.
+    The denominator is ``min(k, other members)`` (avo, 1 Nov 2026), the same form as ``precision_at_k``: with
+    ``/ other members`` a perfect method tops out at ``25 / (n - 1)`` on a set of ``n``, so the ETF sets measured
+    their size, not the method (a 60-holding set 0.42, XBI's 157 holdings 0.16). A perfect method now scores 1.0 on
+    every set; a set of up to 26 names still divides by its other members.
+
+    Report only, no target: recall@25 compares methods and never gates a cutover (avo, 1 Nov 2026). Members missing
+    from the matrix are left out (the loader has already dropped and reported names outside the universe). A set
+    with fewer than two scored members has no value.
     """
     per_set = {}
     for s in sets:
         hits = _member_hits(tickers, scores, s.tickers, k)
         if hits:
-            per_set[s.name] = float(np.mean([h / n for _, h, n in hits]))
+            per_set[s.name] = float(np.mean([h / min(k, n) for _, h, n in hits]))
     return {"k": k, "per_set": per_set, **_summary(per_set)}
 
 
@@ -183,7 +189,11 @@ def seed_ari(assignments: Sequence[Mapping[str, object]]) -> float:
 
 
 def theme_runs_values(report: Mapping) -> dict:
-    """The five ``theme_runs`` column values from a report dict (``None`` where the report has no number)."""
+    """The five ``theme_runs`` column values from a report dict (``None`` where the report has no number).
+
+    ``val_peer_recall_25`` is the **ETF-set** mean (``peer_recall.by_kind.etf``; avo, 1 Nov 2026): the hand sets are
+    scored by precision@10, and their recall stays in the report only. ``None`` when no ETF set loaded.
+    """
     def pick(section, key):
         sec = report.get(section)
         return sec.get(key) if isinstance(sec, Mapping) else None
@@ -192,5 +202,5 @@ def theme_runs_values(report: Mapping) -> dict:
     if isinstance(ari, float) and np.isnan(ari):
         ari = None
     return dict(zip(THEME_RUNS_COLUMNS, (
-        pick("peer_recall", "mean"), pick("hand_precision", "mean"), pick("purity", "purity"),
+        (pick("peer_recall", "by_kind") or {}).get("etf"), pick("hand_precision", "mean"), pick("purity", "purity"),
         pick("etf_recall", "median"), ari)))

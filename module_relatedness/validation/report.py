@@ -4,8 +4,9 @@
 tickers (the universe), and returns one JSON-ready dict: the five metrics, the per-set load report, and the five
 ``theme_runs`` column values. A metric with no input is ``None``, never a made-up number.
 
-Peer recall@25 is measured on every loaded set (hand and ETF) and is also broken out by kind; precision@10 is
-measured on the hand sets only. ETF theme recall is gated at the medium level and reported at the fine level.
+Peer recall@25 (denominator ``min(25, other members)``) is measured on every loaded set and broken out by kind;
+the ``theme_runs`` column stores the ETF-set mean only, and the hand-set mean stays in ``peer_recall.by_kind.hand``
+(avo, 1 Nov 2026). Precision@10 is measured on the hand sets only. ETF theme recall is gated at the medium level and reported at the fine level.
 """
 from __future__ import annotations
 
