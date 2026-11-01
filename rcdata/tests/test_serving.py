@@ -109,6 +109,50 @@ def test_build_paths_and_unknown_kinds():
         serving.live_path("nope")
 
 
+def _settings(con) -> tuple[str, int]:
+    return (con.execute("SELECT current_setting('memory_limit')").fetchone()[0],
+            con.execute("SELECT current_setting('threads')").fetchone()[0])
+
+
+def test_a_build_connection_is_capped_by_default(monkeypatch):
+    """#319's OOM: the build connection must not take DuckDB's default 80 % of RAM, nor every core."""
+    monkeypatch.delenv("RC_DUCKDB_MEMORY_LIMIT", raising=False)
+    monkeypatch.delenv("RC_DUCKDB_THREADS", raising=False)
+    with serving.build("market") as b:
+        memory, threads = _settings(b.con)
+    assert memory in ("4.6 GiB", "5.0 GB", "4.6GiB"), memory
+    assert threads == serving.THREADS_DEFAULT
+
+
+def test_the_cap_comes_from_the_environment(monkeypatch):
+    monkeypatch.setenv("RC_DUCKDB_MEMORY_LIMIT", "2GB")
+    monkeypatch.setenv("RC_DUCKDB_THREADS", "2")
+    with serving.build("market") as b:
+        memory, threads = _settings(b.con)
+    assert memory.replace(" ", "") in ("1.8GiB", "2.0GB"), memory
+    assert threads == 2
+
+
+@pytest.mark.parametrize("memory, threads", [("", ""), ("lots", "x"), ("5", "0"), ("GB", "-3")])
+def test_an_empty_or_invalid_cap_keeps_the_default(monkeypatch, memory, threads):
+    monkeypatch.setenv("RC_DUCKDB_MEMORY_LIMIT", memory)
+    monkeypatch.setenv("RC_DUCKDB_THREADS", threads)
+    assert serving.build_config() == {"memory_limit": serving.MEMORY_LIMIT_DEFAULT,
+                                      "threads": serving.THREADS_DEFAULT}
+
+
+def test_a_build_over_its_memory_limit_spills_and_leaves_no_scratch(monkeypatch):
+    """Under a small limit a sort larger than it still finishes (DuckDB spills beside the build file), and the
+    spill directory goes with the build."""
+    monkeypatch.setenv("RC_DUCKDB_MEMORY_LIMIT", "64MB")
+    monkeypatch.setenv("RC_DUCKDB_THREADS", "1")
+    rows = 3_000_000
+    with serving.build("market") as b:
+        b.con.execute(f"CREATE TABLE t AS SELECT range AS i, md5(range::VARCHAR) AS h FROM range({rows}) ORDER BY h")
+        b.swap({"t": rows})
+    assert _leftovers() == []
+
+
 def _build_t(rows: int, **swap_kw) -> None:
     with serving.build("market") as b:
         b.con.execute(f"CREATE TABLE t AS SELECT range AS i FROM range({rows})")
