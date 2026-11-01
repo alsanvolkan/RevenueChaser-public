@@ -192,11 +192,17 @@ _WORKER_ENV = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "TZ", "TMPDIR", "PYTHO
                "LD_LIBRARY_PATH", USER_ENV)
 
 
+CONNECT_TIMEOUT_S = 120             # libpq's connect_timeout: a login that waits for a Duo push nobody confirms ends
+
+
 def worker_env() -> dict[str, str]:
     """The worker's environment. Server only (Linux): a Windows worker would also need SYSTEMROOT, APPDATA and
-    USERPROFILE, which are not kept."""
-    return {k: v for k, v in os.environ.items()
-            if k in _WORKER_ENV or k.startswith(("PG", "LC_", "RC_WRDS_"))}
+    USERPROFILE, which are not kept. ``PGCONNECT_TIMEOUT`` defaults to ``CONNECT_TIMEOUT_S`` so an unattended run
+    never waits on a login past it."""
+    env = {k: v for k, v in os.environ.items()
+           if k in _WORKER_ENV or k.startswith(("PG", "LC_", "RC_WRDS_"))}
+    env.setdefault("PGCONNECT_TIMEOUT", str(CONNECT_TIMEOUT_S))
+    return env
 
 
 _factory: Callable[[], Any] = Worker            # the seam the tests replace
@@ -385,7 +391,7 @@ class WrdsDataset:
     providers = (PROVIDER,)
     tables: tuple[str, ...] = ()
     cadence = "monthly"
-    attended = True
+    attended = property(lambda self: base.wrds_attended())   # RC_WRDS_UNATTENDED=1: the builder runs it
     backfill_needs_from = False
     starts_by_hand = True             # not due until a first CLI run or Fetch built it (review should-fix 2)
 
