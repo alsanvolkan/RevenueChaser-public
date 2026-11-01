@@ -181,9 +181,19 @@ def _chips(row: dict) -> str:
     return (own + plan) or '<span class="dim">no board yet</span>'
 
 
+def _need_name(name) -> str:
+    """The need's name, allowed to break after a dot and nowhere else (escaped first, then the break inserted)."""
+    return esc(name).replace(".", ".<wbr>")
+
+
+def _lag(row: dict) -> str:
+    unit = "session" if row["unit"] == "sessions" else "day"
+    return f"{row['lag']} {unit}{'' if row['lag'] == 1 else 's'} behind"
+
+
 def _state_cell(row: dict) -> str:
     state = row["state"] if row["state"] in STATES else UNREADABLE
-    lag = (f'<span class="dim"> · {esc(row["lag"])} behind</span>'
+    lag = (f'<span class="dim"> · {esc(_lag(row))}</span>'
            if row["lag"] not in (None, 0) and state in ("fresh", "stale") else "")
     return f'<span class="st st-{esc(state)}">{esc(state)}</span>{lag}'
 
@@ -192,7 +202,7 @@ def _catalog_row(row: dict) -> str:
     asked = (f'<div class="dim">asked by <code>{esc(row["ask_param"])}</code>'
              f'{" (required)" if row["ask_required"] else ""}</div>' if row["ask_param"] else
              '<div class="dim">asked with no argument</div>')
-    name = f'<td class="nm" data-label="Need"><code class="need">{esc(row["need"])}</code>{asked}</td>'
+    name = f'<td class="nm" data-label="Need"><code class="need">{_need_name(row["need"])}</code>{asked}</td>'
     state = f'<td data-label="State">{_state_cell(row)}</td>'
     if row["error"]:
         return (f'<tr class="unreadable">{name}{state}<td class="err" colspan="5" data-label="Error">'
@@ -201,7 +211,7 @@ def _catalog_row(row: dict) -> str:
     served = (f'<code>{esc(row["kind"])}</code> · <code>{esc(row["table"])}</code>'
               f'<div class="dim">{esc(row["dataset"] or "several datasets")}</div>')
     return (f'<tr data-state="{esc(row["state"])}">{name}{state}'
-            f'<td data-label="Newest day">{esc(row["newest_day"] or "—")}</td>'
+            f'<td class="d" data-label="Newest day">{esc(row["newest_day"] or "—")}</td>'
             f'<td class="n" data-label="Rows">{esc(_num(row["rows"]))}{keys}</td>'
             f'<td data-label="Fresh if">{esc(_fresh_rule(row))}</td>'
             f'<td data-label="Served from">{served}</td>'
@@ -232,7 +242,7 @@ def _log_row(row: dict) -> str:
     off = '' if row["in_catalog"] else ' <span class="dim">not in the catalog</span>'
     cells = "".join(f'<td class="n" data-label="{esc(label)}">{esc(_num(row[key]) if row[key] else "—")}</td>'
                     for key, label, _ in WINDOWS)
-    return (f'<tr><td class="nm" data-label="Need"><code class="need">{esc(row["need"])}</code>{off}</td>{cells}'
+    return (f'<tr><td class="nm" data-label="Need"><code class="need">{_need_name(row["need"])}</code>{off}</td>{cells}'
             f'<td data-label="By process (30 days)">{_by_process(row["by_process"])}</td></tr>')
 
 

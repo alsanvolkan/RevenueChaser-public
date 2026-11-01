@@ -49,7 +49,8 @@
 #needs .wialbox p:last-child{margin:0}
 #needs .wialbox[hidden]{display:none}
 #needs code{font:12.5px var(--f-mono);background:var(--acc2);padding:1px 5px;border-radius:5px;overflow-wrap:anywhere}
-#needs code.need{font-weight:600}
+#needs code.need{font-weight:600;overflow-wrap:normal;word-break:normal}
+#needs td.d{white-space:nowrap}
 #needs .dim{color:var(--mut);font-size:12px}
 #needs .warn{background:var(--warnb);color:var(--warn);border-radius:8px;padding:8px 12px;font-size:13px;overflow-wrap:anywhere}
 #needs .empty{color:var(--mut);font-size:13.5px}

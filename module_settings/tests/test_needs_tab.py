@@ -276,3 +276,13 @@ def test_the_board_fixture_carries_the_hostile_payload_into_the_needs_tab(tmp_pa
     for tag in ("need", "table", "dataset", "declared", "planned", "error", "process", "ask_param",
                 "route_path", "route_what", "route_example", "readers_error"):
         assert f"&lt;img src=x onerror=__x(&#x27;{tag}T&#x27;)" in needs, tag
+
+
+def test_the_lag_names_its_unit_and_a_need_breaks_only_after_a_dot():
+    m = _model(summarize=lambda n: {**_summary(n), "state": "stale",
+                                    "freshness": {"as_of_session": date(2026, 10, 20), "lag_sessions": 6}})
+    html = needs_tab.render(m)
+    assert "6 sessions behind" in html and "6 days behind" in html     # prices.* in sessions, estimates in days
+    assert "fundamentals.<wbr>companies" in html
+    assert re.search(r'<td class="d" data-label="Newest day">2026-10-20</td>', html)
+    assert re.search(r"#needs td\.d\{white-space:nowrap\}", needs_tab.NEEDS_CSS)
