@@ -1,4 +1,4 @@
-"""``get(need, **params)``: the envelope around one ``rcdata.read`` call.
+"""``ask(need, **params)``: the envelope around one ``rcdata.read`` call.
 
 What the envelope adds, and nothing else:
 
@@ -179,7 +179,7 @@ def summary(need: str, *, sample: int = 0) -> dict:
     check's result and a few example rows, not a ticker's rows. The by-key readers cannot answer it, so the single
     query is ``rcdata.read.table_summary`` — in the module that owns the store's SQL, never here.
 
-    The envelope is the same shape ``get`` returns, so a card reads one shape either way; ``coverage["asked"]`` is
+    The envelope is the same shape ``ask`` returns, so a card reads one shape either way; ``coverage["asked"]`` is
     None because nothing was asked for. Read-only: no provider, no write, no fill.
     """
     try:
@@ -209,7 +209,7 @@ def summary(need: str, *, sample: int = 0) -> dict:
             "sample_rows": s["sample_rows"], "provenance": _provenance(spec, s["sample_rows"])}
 
 
-def get(need: str, *, fill: str = NEVER, **params) -> Answer:
+def ask(need: str, *, fill: str = NEVER, **params) -> Answer:
     """Answer ``need`` from the store. ``params`` go to the need's ``rcdata.read`` function unchanged.
 
     ``fill`` must be ``"never"`` in this PR: the answer serves what the store holds and says how old it is. No
