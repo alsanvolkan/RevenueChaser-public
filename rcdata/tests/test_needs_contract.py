@@ -2,7 +2,7 @@
 
 The catalog said which function answers a need, but not which arguments a caller must give it, and nothing checked
 that the two matched. Thirteen of the forty-two needs named a reader with a required argument the catalog never
-declared: ``api.get`` raised ``TypeError`` and ``GET /api/data/<need>`` answered 400 for a third of the catalog,
+declared: ``needs.ask`` raised ``TypeError`` and ``GET /needs/<need>`` answered 400 for a third of the catalog,
 with green tests, because every test called one of the handful of needs that happen to take no argument.
 
 These tests need no store. They bind the declared parameters to the reader's own signature, which raises exactly
@@ -208,7 +208,7 @@ def test_ask_list_agrees_with_what_the_reader_takes(name):
 # ── The live verification's two findings (homesrv, 30 Oct 2026) ────────────────────────────────────────────────
 
 def test_a_need_that_cannot_answer_without_an_ask_says_so_instead_of_missing():
-    """Finding 2. On the live store ``GET /api/data/market.series`` answered ``state: missing``, ``asked: 0``,
+    """Finding 2. On the live store ``GET /needs/market.series`` answered ``state: missing``, ``asked: 0``,
     ``served: 0`` while ``market_series`` held 236 series and 162,000 rows: ``read.market_series`` with no series
     named is no rows by design ("naming neither is no rows, never the whole table"), and the envelope turned that
     into "the store has nothing". A card reading that would say the market series were never fetched.
