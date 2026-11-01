@@ -9,7 +9,7 @@ import pytest
 from RevenueChaser.core import calendar
 from RevenueChaser.rcdata import ops, read, serving
 from RevenueChaser.rcdata.build import base, market_series as ms
-from RevenueChaser.rcdata.build.sources import bls, cboe, cftc, fed, fred, treasury, yahoo
+from RevenueChaser.rcdata.build.sources import bls, cboe, cftc, cftc_schedule, fed, fred, treasury, yahoo
 
 
 def _keys(rows):
@@ -84,6 +84,7 @@ def sources(http_mock, fixture_text, monkeypatch):
     monkeypatch.setattr(cftc, "DISAGG_BASE", "https://cftc.test/resource/72hh-3qpy.json")
     monkeypatch.setattr(fed, "BASE", "https://fed.test")
     monkeypatch.setattr(bls, "BASE", "https://bls.test")
+    monkeypatch.setattr(cftc_schedule, "BASE", "https://cftcschedule.test")
     history = json.loads(fixture_text("yahoo_history_MOVE.json"))["bars"]
     http_mock.yahoo = []                                    # the symbols yfinance was asked for (no HTTP seam)
     monkeypatch.setattr(yahoo, "_history", lambda symbol: http_mock.yahoo.append(symbol) or history)
@@ -96,6 +97,7 @@ def sources(http_mock, fixture_text, monkeypatch):
     http_mock.add("72hh-3qpy", fixture_text("cftc_disagg.json"))
     http_mock.add("fed.test", fixture_text("fomc.htm"))
     http_mock.add("bls.test", fixture_text("bls.ics"))
+    http_mock.add("cftcschedule.test", fixture_text("cftc_release_schedule.htm"))
     return http_mock
 
 
@@ -103,12 +105,43 @@ def _run():
     return base.run_request({"dataset": ms.NAME, "params": {"as_of": "2026-10-27"}}, sleep=lambda s: None)
 
 
+def test_cftc_schedule_keys_each_release_on_the_tuesday_it_reports(fixture_text):
+    """#227: one row per release, on the report's Tuesday (the last one before the release), valued in days to the
+    release, so a moved release overwrites its own key instead of leaving the old date served."""
+    rows = cftc_schedule.parse(fixture_text("cftc_release_schedule.htm"), {})
+    lag = {r["obs_date"]: r["value"] for r in rows if r["series_id"] == cftc_schedule.SERIES}
+    assert len(lag) == len(rows) == 5 + 4 + 4 + 4
+    assert lag[date(2025, 12, 30)] == 6.0                   # Mon 5 Jan 2026, after New Year
+    assert lag[date(2026, 1, 6)] == 3.0                     # an ordinary Friday
+    assert lag[date(2026, 6, 16)] == 6.0                    # Mon 22 Jun, after Juneteenth
+    assert lag[date(2026, 11, 10)] == 6.0                   # Mon 16 Nov, after Veterans Day
+    assert lag[date(2026, 11, 24)] == 6.0                   # Mon 30 Nov, the Thanksgiving week of the issue
+    assert lag[date(2026, 12, 22)] == 6.0                   # Mon 28 Dec, after Christmas
+    assert all(d.weekday() == 1 for d in lag)
+
+
+def test_cftc_schedule_without_a_year_heading_parses_to_nothing():
+    assert cftc_schedule.parse("<table><tr><td>January</td><td>09</td></tr></table>", {}) == []
+
+
+def test_cftc_schedule_is_fetched_once_a_week(sources, monkeypatch):
+    """B1 weekly: one fetch per week (Monday to Sunday); the other days of that week reuse its raw file."""
+    _run()                                                  # Tue 27 Oct
+    for now, as_of, calls in ((datetime(2026, 10, 28, 22, 0, tzinfo=timezone.utc), "2026-10-28", 1),
+                              (datetime(2026, 11, 2, 22, 0, tzinfo=timezone.utc), "2026-11-02", 2)):
+        monkeypatch.setattr(calendar, "_now", lambda now=now: now)
+        base.run_request({"dataset": ms.NAME, "params": {"as_of": as_of}}, sleep=lambda s: None)
+        assert len(sources.calls("cftcschedule.test")) == calls, as_of
+    assert "cftc" in ms.DATASET.providers and "cftc_schedule" not in ms.DATASET.providers
+
+
 def test_a_daily_run_builds_every_source_and_a_second_run_makes_no_call(sources):
     row = _run()
     assert row["result"] == "changed", row
     first_calls = len(sources.requests)
-    # 1 Treasury year + 8 Cboe + 13 FRED + 2 CFTC reports + 1 FOMC + 1 BLS over HTTP, and 2 yfinance reads
-    assert first_calls == 1 + len(cboe.SYMBOLS) + len(fred.SERIES) + 2 + 1 + 1
+    # 1 Treasury year + 8 Cboe + 13 FRED + 2 CFTC reports + 1 FOMC + 1 BLS + 1 CFTC schedule over HTTP, and 2
+    # yfinance reads
+    assert first_calls == 1 + len(cboe.SYMBOLS) + len(fred.SERIES) + 2 + 1 + 1 + 1
     assert row["calls"] == first_calls + len(yahoo.SYMBOLS) and len(sources.yahoo) == len(yahoo.SYMBOLS)
     assert row["coverage"] == 1.0 and row["added"] == row["rows"] and row["removed"] == 0
     second = _run()
@@ -157,8 +190,9 @@ def test_one_source_down_is_an_issue_and_its_old_rows_stay_served(sources, http_
 def test_a_new_as_of_with_the_same_values_is_unchanged(sources):
     first = _run()
     later = base.run_request({"dataset": ms.NAME, "params": {"as_of": "2026-10-28"}}, sleep=lambda s: None)
-    # Every source fetches again for a new as-of date, except CFTC: it already holds the newest report.
-    assert later["calls"] == first["calls"] - 2
+    # Every source fetches again for a new as-of date, except CFTC: it already holds the newest report, and the
+    # release schedule is fetched once a week (27 and 28 Oct are one week).
+    assert later["calls"] == first["calls"] - 2 - 1
     assert later["result"] == "unchanged" and later["added"] == later["removed"] == 0
 
 
