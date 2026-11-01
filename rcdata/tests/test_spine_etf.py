@@ -31,7 +31,8 @@ AV = ("symbol,name,exchange,assetType,ipoDate,delistingDate,status\r\n"
       "GLD,SPDR GOLD SHARES ,NYSE ARCA,ETF,2004-11-18,null,Active\r\n"
       "BNKU,Bank of Montreal,NYSE ARCA,ETF,2019-04-03,null,Active\r\n"
       "QYLD,GLOBAL X NASDAQ 100 COVERED CALL ETF ,NASDAQ,ETF,2013-12-12,null,Active\r\n"
-      "NEWE,NEW EXAMPLE ETF ,NYSE ARCA,ETF,2026-10-01,null,Active\r\n")
+      "NEWE,NEW EXAMPLE ETF ,NYSE ARCA,ETF,2026-10-01,null,Active\r\n"
+      "TAPR,Barclays Bank PLC,BATS,ETF,2014-07-15,null,Active\r\n")
 
 
 @pytest.fixture
@@ -60,7 +61,7 @@ def test_the_universe_is_av_etfs_and_ncen_etfs_and_the_spines_etp_rows_with_thei
     rows = _etf()
     assert {t: r["source"] for t, r in rows.items()} == {
         "XLK": "both", "SOXX": "both", "SOXL": "ncen", "CCOI": "ncen", "SPY": "av", "GLD": "av", "BNKU": "av",
-        "QYLD": "av", "NEWE": "av", "FNGU": "etp"}
+        "QYLD": "av", "NEWE": "av", "FNGU": "etp", "LEVX": "ncen", "TAPR": "both"}
     assert "A" not in rows and "MSFT" not in rows             # AV stocks and the spine's common rows are not ETFs
 
 
@@ -121,6 +122,41 @@ def test_the_option_income_name_rule(name, income):
     assert etf.is_option_income(name) is income
 
 
+@pytest.mark.parametrize("name,lev", [
+    ("Tradr 2X Long IBM Daily ETF", True), ("Defiance Daily Target 2X Long RIOT ETF", True),
+    ("ProShares UltraPro QQQ", True), ("ProShares Ultra S&P500", True),
+    ("ProShares UltraShort 20+ Year Treasury", True), ("ProShares UltraPro Short QQQ", True),
+    ("Innovator U.S. Equity Ultra Buffer ETF - January", False), ("Angel Oak UltraShort Income ETF", False),
+    ("Invesco S&P Ultra Dividend Revenue ETF", False), ("YieldMax Ultra Option Income Strategy ETF", False), ("Direxion Daily Semiconductor Bear 3X Shares", True),
+    ("Direxion Daily Regional Banks Bull 3X Shares", True), ("ProShares Short S&P500", True),
+    ("MicroSectors FANG+ Index -3X Inverse Leveraged ETNs", True), ("Simplify 1.5x Example ETF", True),
+    ("AXS 1.25X NVDA Bear Daily ETF", True), ("GraniteShares 1x Short TSLA Daily ETF", True),
+    ("ProShares S&P 500 Dividend Aristocrats ETF", False), ("iShares Short Treasury Bond ETF", False),
+    ("JPMorgan Ultra-Short Income ETF", False), ("iShares Ultra Short-Term Bond ETF", False),
+    ("SPDR Blackstone Senior Loan ETF", False), ("Invesco Senior Loan ETF", False),
+    ("VanEck BDC Income ETF", False), ("Vanguard Short-Term Bond ETF", False),
+    ("Technology Select Sector SPDR Fund", False)])
+def test_the_leveraged_or_inverse_name_rule(name, lev):
+    """Review S1 of PR 349: 185 leveraged ``IS_ETF=Y`` series lack N-CEN's flag. "Short" counts only in a
+    leveraged or inverse context, never a short-duration bond fund's."""
+    assert etf.is_lev_inverse(name) is lev
+
+
+def test_lev_inverse_is_ncens_flag_or_the_name_rule(built):
+    rows = _etf()
+    assert rows["SOXL"]["is_lev_inverse"] is True              # N-CEN's flag
+    assert rows["XLK"]["is_lev_inverse"] is False
+    assert rows["LEVX"]["is_lev_inverse"] is True              # N-CEN has no flag; its name has the leverage
+    assert rows["QYLD"]["is_lev_inverse"] is None              # not in N-CEN and no leverage in its name
+
+
+def test_an_ncen_etf_is_never_flagged_a_note(built):
+    """Review N3: N-CEN's ``IS_ETF=Y`` is a registered fund's own word, so it overrules the name rule (TAPR, a
+    fund AV names "Barclays Bank PLC")."""
+    rows = _etf()
+    assert rows["TAPR"]["is_etn"] is False and rows["TAPR"]["source"] == "both"
+
+
 def test_etns_are_flagged_and_kept(built):
     rows = _etf()
     assert rows["BNKU"]["is_etn"] is True and rows["FNGU"]["is_etn"] is True
@@ -163,7 +199,7 @@ def test_without_ncen_no_etp_row_is_called_a_commodity(monkeypatch, http_mock):
 
 
 def test_the_spine_note_counts_etfs_without_the_etns(built):
-    assert "10 in etf: 8 ETFs, 2 ETNs flagged" in built["note"]
+    assert "12 in etf: 10 ETFs, 2 ETNs flagged" in built["note"]
 
 
 def test_the_spine_serves_etf_at_schema_version_four(built):

@@ -102,8 +102,8 @@ def test_the_newest_filing_of_a_series_wins(env):
     """XLK files in 2026q2 and 2026q3: the build counts it once, as the July filing."""
     base.run_request({"dataset": ncen.NAME, "params": {"mode": "backfill", "to": "2026-11-02"}})
     row = _run()
-    assert row["rows"] == 5                         # staged rows: XLK once, SOXX, SOXL, CCOI and the Acorn fund (not an ETF)
-    assert "4 ETF series" in row["note"]
+    assert row["rows"] == 7          # staged rows: XLK once, SOXX, SOXL, CCOI, LEVX, TAPR and the Acorn fund (no ETF)
+    assert "6 ETF series" in row["note"]
 
 
 @pytest.mark.parametrize("body", [b"<html>not a zip</html>", "no_fund_table"])

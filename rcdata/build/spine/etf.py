@@ -52,6 +52,16 @@ ETN_NAME = re.compile(
 OPTION_INCOME_NAME = re.compile(
     r"\boptions?\s+income\b|\bcovered\s+call|\bbuffer|\bautocallable\b|\bdefined\s+outcome\b|\btarget\s+outcome\b",
     re.I)
+#: Leveraged or inverse, by the fund's name: a **name rule** beside N-CEN's ``IS_MULTI_INVERSE_INDEX``, which 185
+#: leveraged ``IS_ETF=Y`` series leave blank (review S1 of PR 349: Tradr 2X Long IBM, Defiance 2X Long RIOT). A
+#: multiple (2x-5x, 1.25x, -1x), ProShares' Ultra / UltraPro / UltraShort / Short (only ProShares': elsewhere "Ultra"
+#: is an ultra-short bond fund, a buffer or a dividend fund, measured over the N-CEN names of 1 Nov 2026), inverse,
+#: leveraged (not a leveraged-loan fund), and a daily fund that is long, short, bull or bear. A bare "short" is not
+#: enough: "iShares Short Treasury Bond" is no such fund.
+LEV_INVERSE_NAME = re.compile(
+    r"\b(?:[2-5]|1\.\d+)\s*x\b|-\s*1\s*x\b"
+    r"|\bproshares\s+(?:ultra|short\b)|\binverse\b|\bleveraged\b(?!\s+loans?)"
+    r"|\bdaily\b.*\b(?:long|short|bull|bear)\b|\b(?:long|short|bull|bear)\b.*\bdaily\b", re.I)
 #: The 11 sector SPDRs' Morningstar sector names, the ones ``engine.sector_etf_trees`` matches.
 SECTOR_NAMES = {t: e["name"] for t, e in ROTATION_ETFS.items() if e.get("group") == "sector"}
 
@@ -62,6 +72,10 @@ def is_etn(*names) -> bool:
 
 def is_option_income(*names) -> bool:
     return any(OPTION_INCOME_NAME.search(n) for n in names if n)
+
+
+def is_lev_inverse(*names) -> bool:
+    return any(LEV_INVERSE_NAME.search(n) for n in names if n)
 
 
 def _flag(nc: bool, value) -> bool | None:
@@ -97,7 +111,7 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
     for r in found:
         names = (r["fund_name"], r["av_name"], r["etp_name"])
         nc = r["in_nc"]
-        etn = is_etn(*names)
+        etn = not nc and is_etn(*names)          # N-CEN's IS_ETF=Y is a registered fund's word: no note (N3)
         aum = r["daily_avg_net_assets"] if r["daily_avg_net_assets"] is not None else r["monthly_avg_net_assets"]
         commodity = r["in_etp"] and not nc and not etn and year_held and r["etp_cik"] not in filers
         out.append({
@@ -105,7 +119,7 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
             "cik": r["nc_cik"] or r["etp_cik"],
             "source": "both" if r["in_av"] and nc else "av" if r["in_av"] else "ncen" if nc else "etp",
             "is_etn": etn, "asset_class": "commodity" if commodity else None, "focus": None, "country": None,
-            "is_index": _flag(nc, r["is_index"]), "is_lev_inverse": _flag(nc, r["is_multi_inverse_index"]),
+            "is_index": _flag(nc, r["is_index"]), "is_lev_inverse": True if is_lev_inverse(*names) else _flag(nc, r["is_multi_inverse_index"]),
             "is_money_market": _flag(nc, r["is_money_market"]), "is_option_income": is_option_income(*names),
             "is_fund_of_funds": _flag(nc, r["is_fund_of_fund"]), "inception": r["ipo_date"], "aum": aum,
             "aum_as_of": r["report_end"] if aum is not None else None, "adv_usd_20d": None, "expense_ratio": None,
