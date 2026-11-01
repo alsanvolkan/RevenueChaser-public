@@ -1,0 +1,100 @@
+/* The Settings page's tab strip (#settings-tabs) and its Needs tab (#needs), #331.
+   The tokens are the control board's own (static/control.css, #ctl), light by default and dark under the shell's
+   choice: data-theme="dark", or "auto" on a dark device. test_needs_tab holds the values equal to control.css. */
+#needs,#settings-tabs{--bg:#f6f7f9; --card:#fcfcfd; --fg:#1d2430; --mut:#667085; --line:#e3e7ee;
+  --acc:#0e7bd6; --acc2:#e9f3fc;
+  --ok:#1a7f37; --okb:#e6f4ea; --warn:#9a6700; --warnb:#fff4d6; --bad:#b42318; --badb:#fde8e7;
+  --f-body:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --f-mono:ui-monospace,Menlo,Consolas,monospace;}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) #needs,:root:not([data-theme="light"]) #settings-tabs{
+  --bg:#0d1117; --card:#151b23; --fg:#e6edf3; --mut:#8b949e; --line:#2a313c;
+  --acc:#4aa3f0; --acc2:#132536;
+  --ok:#56d364; --okb:#12261a; --warn:#e3b341; --warnb:#2b230f; --bad:#ff7b72; --badb:#2d1414; color-scheme:dark}}
+:root[data-theme="dark"] #needs,:root[data-theme="dark"] #settings-tabs{
+  --bg:#0d1117; --card:#151b23; --fg:#e6edf3; --mut:#8b949e; --line:#2a313c;
+  --acc:#4aa3f0; --acc2:#132536;
+  --ok:#56d364; --okb:#12261a; --warn:#e3b341; --warnb:#2b230f; --bad:#ff7b72; --badb:#2d1414; color-scheme:dark}
+
+/* ── The tab strip ── */
+#settings-tabs{background:var(--bg);color:var(--fg);font:15px/1.55 var(--f-body);border-bottom:1px solid var(--line);
+  position:sticky;top:0;z-index:20;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+#settings-tabs .tabs{display:flex;gap:4px;max-width:1600px;margin:0 auto}
+#settings-tabs [role="tab"]{font:inherit;font-size:14px;font-weight:600;min-height:44px;min-width:44px;padding:0 18px;
+  border:0;border-bottom:3px solid transparent;background:none;color:var(--mut);cursor:pointer}
+#settings-tabs [role="tab"]:hover{color:var(--fg)}
+#settings-tabs [role="tab"][aria-selected="true"]{color:var(--acc);border-bottom-color:var(--acc)}
+#settings-tabs [role="tab"]:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
+@media(max-width:600px){#settings-tabs [role="tab"]{flex:1 1 0}}
+[role="tabpanel"][hidden]{display:none}
+
+/* ── The Needs tab ── */
+#needs *{box-sizing:border-box}
+#needs{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 var(--f-body);min-height:100vh}
+#needs .wrap{max-width:1600px;margin:0 auto;padding-block:20px 56px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+#needs h1{font-size:25px;margin:0 0 2px;letter-spacing:-.01em;text-wrap:balance}
+#needs .sub{color:var(--mut);font-size:13.5px;margin:0 0 16px}
+#needs h2{font-size:11.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--mut);
+  margin:28px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+#needs h2 .secs{text-transform:none;letter-spacing:0;font-weight:400;margin-left:6px}
+#needs .wiali{font:inherit;font-size:12.5px;line-height:1;min-height:44px;padding:0 12px;margin-left:2px;
+  border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--acc);cursor:pointer}
+#needs .wiali:hover{border-color:var(--acc)}
+#needs .wiali:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+#needs .wiali::before{content:"? ";font-weight:700}
+#needs .wialbox{background:var(--acc2);border:1px solid var(--line);border-left:3px solid var(--acc);
+  border-radius:10px;padding:10px 14px;margin:0 0 16px;font-size:13px}
+#needs .wialbox p{margin:0 0 6px}
+#needs .wialbox p:last-child{margin:0}
+#needs .wialbox[hidden]{display:none}
+#needs code{font:12.5px var(--f-mono);background:var(--acc2);padding:1px 5px;border-radius:5px;overflow-wrap:anywhere}
+#needs code.need{font-weight:600}
+#needs .dim{color:var(--mut);font-size:12px}
+#needs .warn{background:var(--warnb);color:var(--warn);border-radius:8px;padding:8px 12px;font-size:13px;overflow-wrap:anywhere}
+#needs .empty{color:var(--mut);font-size:13.5px}
+#needs .legend{color:var(--mut);font-size:12px;margin:8px 0 0}
+#needs .part{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:4px 16px 14px;margin:0 0 16px}
+#needs .part>h2{margin-top:14px}
+
+#needs table{border-collapse:collapse;width:100%;font-size:13.5px;font-variant-numeric:tabular-nums}
+#needs th,#needs td{text-align:left;padding:7px 10px 7px 0;border-bottom:1px solid var(--line);vertical-align:top}
+#needs th{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);font-weight:700}
+#needs th.n,#needs td.n{text-align:right}
+#needs tr:last-child td{border-bottom:0}
+#needs td.err{color:var(--bad);overflow-wrap:anywhere}
+
+#needs .st{display:inline-block;font-size:12px;font-weight:700;padding:2px 8px;border-radius:999px}
+#needs .st-fresh{color:var(--ok);background:var(--okb)}
+#needs .st-stale{color:var(--warn);background:var(--warnb)}
+#needs .st-missing{color:var(--mut);background:var(--acc2)}
+#needs .st-unreadable{color:var(--bad);background:var(--badb)}
+
+#needs .chips{display:flex;flex-wrap:wrap;gap:4px}
+#needs .chip{display:inline-block;font:11.5px var(--f-mono);padding:2px 8px;border-radius:999px;
+  border:1px solid var(--acc);color:var(--acc)}
+#needs .chip.plan{border-style:dashed;border-color:var(--mut);color:var(--mut)}
+#needs .proc{white-space:nowrap}
+
+#needs .never summary{cursor:pointer;color:var(--acc);font-size:13px;min-height:44px;display:flex;align-items:center}
+#needs .never p{margin:0;font-size:12.5px;line-height:1.9}
+
+#needs .routes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+#needs .route{border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:var(--bg);min-width:0}
+#needs .route .rh{font-size:14px}
+#needs .route .verb{font:700 11.5px var(--f-mono);color:var(--ok);background:var(--okb);padding:2px 6px;border-radius:5px}
+#needs .route p{font-size:13px;margin:8px 0 0}
+#needs .route .try a{color:var(--acc);display:inline-flex;align-items:center;min-height:44px}
+@media(max-width:900px){#needs .routes{grid-template-columns:1fr}}
+
+/* Under 600 px a table row is a full-width card, one cell per line, the column name before the value. */
+@media(max-width:600px){
+  #needs .part{padding:4px 12px 12px}
+  #needs table.stk,#needs table.stk tbody,#needs table.stk tr,#needs table.stk td{display:block;width:auto}
+  #needs table.stk thead{display:none}
+  #needs table.stk tr{border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:0 0 10px;background:var(--bg)}
+  #needs table.stk td{border:0;padding:3px 0;text-align:left}
+  #needs table.stk td.nm{font-size:14px;padding-bottom:6px}
+  #needs table.stk td:not(.nm)::before{content:attr(data-label);display:block;font-size:10.5px;text-transform:uppercase;
+    letter-spacing:.06em;color:var(--mut);font-weight:700}
+}
