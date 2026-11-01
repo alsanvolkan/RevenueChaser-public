@@ -181,6 +181,16 @@ def test_the_etf_universe_is_the_fund_file_plus_the_etp_rows_of_the_equity_file(
         assert con.execute("SELECT security_type FROM security WHERE ticker = 'SPY'").fetchone() == ("etp",)
 
 
+def test_the_build_stages_only_the_newest_snapshot(monkeypatch):
+    """No ``stg_sec_mf_all``: nothing reads every snapshot, so the build does not load them (avo, 1 Nov 2026).
+    The Parquet snapshots stay on disk for the reader that would need them."""
+    staged = []
+    create = mf.stage.create
+    monkeypatch.setattr(mf.stage, "create", lambda con, name, *a, **kw: (staged.append(name), create(con, name, *a, **kw))[1])
+    _run()
+    assert "stg_sec_mf" in staged and "stg_sec_mf_all" not in staged
+
+
 def test_the_spine_serves_the_fund_table_at_schema_version_two():
     assert serving.SERVING_SCHEMA_VERSION["spine"] == 2
     _run()

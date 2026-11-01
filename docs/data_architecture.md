@@ -1096,7 +1096,7 @@ the old identity tables there are untouched (D5: they are empty since 27 Oct).
 | Dataset | Cadence | Source | Stages |
 |---|---|---|---|
 | `sec/company_tickers_exchange` | weekly | `www.sec.gov/files/company_tickers_exchange.json`, `If-Modified-Since` from the last copy (a 304 writes nothing) | `stg_sec`, `stg_sec_all` |
-| `sec/company_tickers_mf` | weekly | `www.sec.gov/files/company_tickers_mf.json`, the same shape and the same `If-Modified-Since` fetch: the fund file, one row per series and share class | `stg_sec_mf`, `stg_sec_mf_all` |
+| `sec/company_tickers_mf` | weekly | `www.sec.gov/files/company_tickers_mf.json`, the same shape and the same `If-Modified-Since` fetch: the fund file, one row per series and share class | `stg_sec_mf` (the newest snapshot only: nothing reads the older ones, which stay in the Parquet tree) |
 | `wrds/sec_idhist` | monthly, attended | `comp.company`, `comp.security`, `comp.sec_idhist`; between snapshots only the new listed CIKs | `stg_wrds_company`, `stg_wrds_security`, `stg_wrds_idhist` |
 | `wrds/co_hgic` | monthly, attended | `comp.co_hgic` | `stg_wrds_hgic` |
 | `wrds/idxcst_his` | monthly, attended | `comp.idxcst_his` for the S&P 500, 400 and 600 index keys | `stg_wrds_idx` |

@@ -41,11 +41,11 @@ only a request on this dataset can clear it with ``allow_shrink``. Fetching this
 out; widening the hatch means letting the datasets declare which tables each source feeds, which is the upgrade
 ``shrink_scope``'s own docstring already anticipates and is not this PR's to make (#326).
 
-``stg_sec_mf_all`` has **no reader yet.** The equity file keeps every snapshot because ``security_history`` is built
-from them; nothing is built from these yet, and the obvious consumer — a share class that changed ticker or moved
-series — is not written. It is here because the brief asked for the equity file's shape exactly, and it costs one
-load of every stored snapshot (about 28.6k rows a week) on every spine build. Drop it or give it a reader; do not
-leave it to grow on the strength of the symmetry alone.
+Only the newest snapshot is staged (``stg_sec_mf``). Unlike the equity file, whose every snapshot is staged because
+``security_history`` is built from them, no ``stg_sec_mf_all`` exists: nothing reads these snapshots, and loading
+every one (about 28.6k rows a week) on every spine build had no reader to pay for it (avo, 1 Nov 2026). The changed
+snapshots stay in the Parquet tree, so the reader that would need them — a share class that changed ticker or moved
+series — stages them itself: ``stage.create(con, "stg_sec_mf_all", SCHEMA, [f for _, f in parts])``.
 """
 from __future__ import annotations
 
@@ -249,7 +249,6 @@ class SecTickersMf:
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         parts = stage.partitions(parquet_dir(), "date")
-        stage.create(con, "stg_sec_mf_all", SCHEMA, [f for _, f in parts])
         stage.create(con, "stg_sec_mf", SCHEMA, [parts[-1][1]] if parts else [])
         return {TABLE: _create_fund(con)}
 
