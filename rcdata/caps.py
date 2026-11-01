@@ -16,8 +16,12 @@ DAY_CAPS: dict[str, int] = {
     # CUSIPs), and the fund-file hosts (one request per file and run).
     "wrds": 50,
     "openfigi": 1_000,
-    "ssga": 50,
-    "ishares": 50,
+    # ssga and ishares serve two datasets since ``funds/etf_holdings``: 3 + 18 files a run and 3 + 6, and
+    # ``http_get`` counts every attempt of its ladder of 3. One bad day is 63 and 27 calls, and a cap reached
+    # mid-list fails the rest of the funds and refuses ``funds/index_holdings`` for the day, so the cap allows a
+    # few runs of both datasets with every attempt spent (working numbers, not avo's).
+    "ssga": 300,
+    "ishares": 150,
     "vanguard": 50,
     "nasdaq": 50,
     "invesco": 50,
