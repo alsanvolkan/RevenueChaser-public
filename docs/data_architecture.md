@@ -785,7 +785,7 @@ schema, reachable with path expressions like `payload.market_cap::DOUBLE`).
 | `relatedness_attributes` | `ticker`, `field`, `value` (TEXT holding a JSON list), `value_num` | — |
 | `relatedness_scores` | `ticker`, `peer`, `score` | — |
 | `relatedness_themes` / `relatedness_theme_tags` / `relatedness_theme_members` / `relatedness_theme_etfs` | `theme_id` (run id is its prefix), `level`, `parent_id`, `label`, `size` / `tag`, `rank` / `ticker`, `weight` / `etf`, `overlap`, `rank` | — |
-| `theme_runs` | `id`, `created_at`, `k_fine`, `k_medium`, `k_coarse`, `jaccard`, `is_current`, `session_date DATE`, `run_at DOUBLE` (schema 11) | — |
+| `theme_runs` | `id`, `created_at`, `k_fine`, `k_medium`, `k_coarse`, `jaccard`, `is_current`, `session_date DATE`, `run_at DOUBLE` (schema 11); the five nullable validation numbers `val_peer_recall_25`, `val_hand_precision_10`, `val_gics_purity`, `val_etf_recall_medium`, `val_seed_ari` (all `DOUBLE`, #341, `module_relatedness/validation/`; added by `ALTER TABLE ADD COLUMN`, no schema bump; `val_peer_recall_25` = ETF-set mean, denominator `min(25, n-1)`) | — |
 | `llm_cache` | `cache_key`, `ticker`, `cik`, `model`, `thinking`, `effort`, `prompt_version`, `input_hash`, `fetched_at`, `status` | `response` |
 | `job_runs` | `run_id`, `job_id`, `module`, `lane`, `trigger`, `source`, `pid`, `registry_name`, `queued_at DOUBLE`, `started_at DOUBLE`, `finished_at DOUBLE`, `status` (`queued`/`running`/`done`/`error`/`cancelled`/`lost`, the `app/jobs.py` vocabulary), `error`, `message` | `params`, `counts` |
 | `run_registry` | `key`, `value` | — |

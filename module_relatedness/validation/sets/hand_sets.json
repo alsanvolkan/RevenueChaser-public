@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "note": "Relatedness v2 hand peer sets. Claude proposed them and avo reviewed them on 1 Nov 2026. Sets 7-10 are borderline by design (a diversified or mixed name beside pure-play rivals) so precision@10 is not inflated by easy cases. Tickers were written from memory: the loader drops and reports any that the universe it is given does not hold. Changing any set requires a version bump (see peer_sets.FINGERPRINTS).",
+  "sets": [
+    {"id": 1, "name": "us_large_banks", "borderline": false,
+     "tickers": ["JPM", "BAC", "C", "WFC", "GS", "MS", "USB", "PNC", "TFC"]},
+    {"id": 2, "name": "semi_equipment", "borderline": false,
+     "tickers": ["AMAT", "LRCX", "KLAC", "ASML", "TER", "ENTG", "MKSI", "ONTO"]},
+    {"id": 3, "name": "pharma_biopharma", "borderline": false,
+     "tickers": ["PFE", "MRK", "LLY", "ABBV", "BMY", "AMGN", "GILD", "JNJ"]},
+    {"id": 4, "name": "homebuilders", "borderline": false,
+     "tickers": ["DHI", "LEN", "PHM", "NVR", "TOL", "KBH", "MTH"]},
+    {"id": 5, "name": "us_airlines", "borderline": false,
+     "tickers": ["DAL", "UAL", "AAL", "LUV", "ALK", "JBLU"]},
+    {"id": 6, "name": "railroads", "borderline": false,
+     "tickers": ["UNP", "CSX", "NSC", "CNI", "CP"]},
+    {"id": 7, "name": "payments_beside_banks", "borderline": true,
+     "tickers": ["V", "MA", "PYPL", "AXP", "COF", "SYF"]},
+    {"id": 8, "name": "diversified_industrials", "borderline": true,
+     "tickers": ["HON", "MMM", "ITW", "DOV", "EMR", "PH", "ETN", "AME", "ROK"]},
+    {"id": 9, "name": "cloud_hyperscale", "borderline": true,
+     "tickers": ["AMZN", "MSFT", "GOOGL", "ORCL", "IBM", "SNOW", "DDOG"]},
+    {"id": 10, "name": "tesla_beside_legacy_autos", "borderline": true,
+     "tickers": ["TSLA", "F", "GM", "STLA", "RIVN", "LCID"]}
+  ]
+}
