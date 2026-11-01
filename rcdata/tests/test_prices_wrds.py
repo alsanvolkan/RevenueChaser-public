@@ -5,8 +5,9 @@ and actions in the served tables, Compustat's ``ajexdi``/``trfd`` return within 
 The fixture: AAPL (``001690:01``, CRSP permno 14593) does a 2-for-1 split ex 4 Jun 2025 and goes ex a 1.00
 dividend on the 5th (Compustat's ``trfd`` reinvests it at that close); CRSP's close on the 3rd is 202.1 against
 Compustat's 202.0; Compustat's 27 Oct 2026 close is 202.5 against Alpaca's 202.0; OLDCO is a delisted Compustat
-name the spine does not hold; a CAD row is never served. **Column names are Compustat's and CRSP's as documented,
-not read from WRDS** (no cloud thread logs in)."""
+name the spine does not hold; a CAD row is never served. There is no CCM link (homesrv's subscription refuses
+``crsp_a_ccm``): CRSP's rows reach a security by CUSIP or ticker (``wrds_history.PERMNO_LINK``). The CRSP column names
+were read from WRDS's ``information_schema`` on homesrv (1 Nov 2026)."""
 from __future__ import annotations
 
 import re
@@ -35,8 +36,8 @@ OCT = [date(2026, 10, 21), date(2026, 10, 22), date(2026, 10, 23), date(2026, 10
 ALPACA_AAPL = [199.5, 200.0, 199.9, 201.0, 202.0]
 
 
-def _secd(gvkey, iid, day, tic, close, ajexdi=1.0, trfd=1.0, cshoc=15e9, curcdd="USD", exchg=14):
-    return {"gvkey": gvkey, "iid": iid, "datadate": day, "tic": tic, "cusip": "037833100", "curcdd": curcdd,
+def _secd(gvkey, iid, day, tic, close, ajexdi=1.0, trfd=1.0, cshoc=15e9, curcdd="USD", exchg=14, cusip="037833100"):
+    return {"gvkey": gvkey, "iid": iid, "datadate": day, "tic": tic, "cusip": cusip, "curcdd": curcdd,
             "prccd": close, "prcod": close, "prchd": close * 1.01, "prcld": close * 0.99, "cshtrd": 1_000_000,
             "cshoc": cshoc, "ajexdi": ajexdi, "trfd": trfd, "exchg": exchg}
 
@@ -51,7 +52,9 @@ def _crsp_rows():
             ret = close / (prev / split) - 1 if split != 1 else (close + div) / prev - 1
         out.append({"permno": "14593", "dlycaldt": day, "dlyprc": close, "dlyopen": close, "dlyhigh": close * 1.01,
                     "dlylow": close * 0.99, "dlyvol": 1_000_000, "dlyret": ret,
-                    "shrout": 7_500_000 if day < "2025-06-04" else 15_000_000})
+                    "shrout": 7_500_000 if day < "2025-06-04" else 15_000_000,
+                    "hdrcusip": "03783310", "cusip": "03783310", "ticker": "AAPL",
+                    "dlycumfacpr": 1.0 if day >= "2025-06-04" else 2.0, "dlyorddivamt": div})
         prev = close
     return out
 
@@ -61,9 +64,9 @@ def _data():
             for d, c, a, t in zip(JUNE, COMP_CLOSE, AJEXDI, TRFD)]
     secd += [_secd("001690", "01", "2026-10-26", "AAPL", 201.0, 1.0, 1.0113),
              _secd("001690", "01", "2026-10-27", "AAPL", 202.5, 1.0, 1.0113),
-             _secd("099999", "01", "2024-03-01", "OLD.A", 5.0, exchg=11),
-             _secd("099999", "01", "2024-03-04", "OLD.A", 5.1, exchg=11),
-             _secd("088888", "01", "2025-06-02", "MAPLE", 30.0, curcdd="CAD", exchg=14)]
+             _secd("099999", "01", "2024-03-01", "OLD.A", 5.0, exchg=11, cusip="680000101"),
+             _secd("099999", "01", "2024-03-04", "OLD.A", 5.1, exchg=11, cusip="680000101"),
+             _secd("088888", "01", "2025-06-02", "MAPLE", 30.0, curcdd="CAD", exchg=14, cusip="56000A109")]
     return {
         "comp.secd": secd,
         "crsp.dsf_v2": _crsp_rows(),
@@ -71,8 +74,6 @@ def _data():
         "comp.sec_divid": [{"gvkey": "001690", "iid": "01", "datadate": "2025-06-05", "divd": 1.0, "curcddv": "USD"},
                            {"gvkey": "001690", "iid": "01", "datadate": "2026-10-23", "divd": 0.26,
                             "curcddv": "USD"}],
-        "crsp.ccmxpf_lnkhist": [{"gvkey": "001690", "iid": "01", "permno": "14593", "linktype": "LC",
-                                 "linkprim": "P", "linkdt": "1980-12-12", "linkenddt": None}],
     }
 
 
@@ -84,7 +85,6 @@ COLUMNS = {
     ("crsp", "dsf_v2"): [c for c, _ in wrds_history.DSF],
     ("comp", "sec_divid"): [c for c, _ in wrds_history.DIVID],
     ("comp", "sec_split"): [c for c, _ in wrds_history.SPLIT],
-    ("crsp", "ccmxpf_lnkhist"): ["gvkey", "liid", "lpermno", "linktype", "linkprim", "linkdt", "linkenddt"],
 }
 
 
@@ -170,16 +170,20 @@ def _asked(conn) -> list[str]:
 
 # ── What is asked ─────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_the_history_is_asked_per_year_from_1984_on_the_us_exchanges_crsp_to_2025(monkeypatch):
-    monkeypatch.setattr(wrds_history, "START_YEAR", 1984)
+def test_the_history_is_asked_per_year_from_1993_on_the_us_exchanges_crsp_to_2025(monkeypatch):
+    monkeypatch.undo()                                   # the real START_YEAR, not the fixture's 2024
     as_of = date(2026, 10, 27)
-    assert wrds_history.years("secd", as_of) == list(range(1984, 2027))
-    assert wrds_history.years("dsf", as_of) == list(range(1984, 2026))
-    assert wrds_history.years("sec_divid", as_of)[0] == 1984
-    sql = wrds_history.year_sql("secd", 1984)
-    assert "FROM comp.secd" in sql and "BETWEEN '1984-01-01' AND '1984-12-31'" in sql
+    assert wrds_history.years("secd", as_of) == list(range(1993, 2027))
+    assert wrds_history.years("dsf", as_of) == list(range(1993, 2026))
+    assert wrds_history.years("sec_divid", as_of)[0] == 1993
+    sql = wrds_history.year_sql("secd", 1993)
+    assert "FROM comp.secd" in sql and "BETWEEN '1993-01-01' AND '1993-12-31'" in sql
     assert "exchg IN (11, 12, 14)" in sql and "ajexdi" in sql and "trfd" in sql and "cshoc" in sql
-    assert "FROM crsp.dsf_v2" in wrds_history.year_sql("dsf", 2025)
+    dsf = wrds_history.year_sql("dsf", 2025)
+    assert "FROM crsp.dsf_v2" in dsf
+    for col in ("hdrcusip", "cusip", "ticker", "dlycumfacpr", "dlycumfacshr", "dlyorddivamt"):
+        assert col in dsf, col                           # the link columns and the adjustment factor
+    assert "ccm" not in " ".join(t["sql"] for t in wrds_history.TABLES.values())
 
 
 def test_a_backfill_asks_each_table_and_year_once_and_skips_a_partition_that_exists(fake):
@@ -187,11 +191,11 @@ def test_a_backfill_asks_each_table_and_year_once_and_skips_a_partition_that_exi
     row = _backfill()
     assert row["result"] == "changed", row
     assert _asked(conn) == ["information_schema.columns",                          # the columns, checked first,
-                            "comp.sec_split", "crsp.ccmxpf_lnkhist",              # the snapshots,
+                            "comp.sec_split",                                      # the snapshot (no CCM link),
                             "comp.secd 2026", "comp.sec_divid 2026",                # then the newest year first
                             "comp.secd 2025", "crsp.dsf_v2 2025", "comp.sec_divid 2025",
                             "comp.secd 2024", "crsp.dsf_v2 2024", "comp.sec_divid 2024"]
-    assert logins == [1] and ops.calls_today("wrds") == 11
+    assert logins == [1] and ops.calls_today("wrds") == 10
     conn.queries.clear()
     assert _backfill()["result"] in ("changed", "unchanged") and conn.queries == []     # every partition exists
     secd_2024 = wrds_history.partition_path("secd", 2024)
@@ -216,9 +220,61 @@ def test_the_backfill_stops_at_the_wrds_day_cap_and_serves_the_years_it_has(fake
     monkeypatch.setitem(caps.DAY_CAPS, "wrds", 4)
     row = _backfill()
     assert row["result"] == "changed", row
-    assert len(conn.queries) == 4 and "day cap" in row["note"]   # the columns, the snapshots and 2026's secd
+    assert len(conn.queries) == 4 and "day cap" in row["note"]   # the columns, the snapshot, 2026's secd and divid
     served = _q("SELECT security_id, count(*) AS n FROM price_bar_daily GROUP BY ALL")
     assert {(r["security_id"], r["n"]) for r in served} == {(AAPL, 2)}
+
+
+
+# ── The PERMNO link without CCM (homesrv's subscription refuses crsp_a_ccm, 30 Oct 2026) ─────────────────────────
+
+def _link(dsf, spine, secd=()):
+    """``PERMNO_LINK`` over the given staging rows: {permno: (security_id, how)}."""
+    con = duckdb.connect()
+    con.execute("CREATE TABLE stg_wrds_dsf (permno TEXT, dlycaldt DATE, hdrcusip TEXT, cusip TEXT, ticker TEXT)")
+    con.executemany("INSERT INTO stg_wrds_dsf VALUES (?, ?, ?, ?, ?)", dsf)
+    con.execute("CREATE TABLE stg_spine (security_id TEXT, ticker TEXT, cusip TEXT)")
+    con.executemany("INSERT INTO stg_spine VALUES (?, ?, ?)", spine)
+    con.execute("CREATE TABLE stg_wrds_secd (gvkey TEXT, iid TEXT, cusip TEXT)")
+    if secd:
+        con.executemany("INSERT INTO stg_wrds_secd VALUES (?, ?, ?)", secd)
+    return {p: (sid, how) for p, sid, how in con.execute(
+        f"SELECT permno, security_id, how FROM ({wrds_history.PERMNO_LINK})").fetchall()}
+
+
+END = "2025-12-31"
+
+
+def test_a_permno_links_by_its_header_cusip_then_an_old_cusip_then_its_last_ticker():
+    got = _link(
+        dsf=[("14593", END, "03783310", "03783310", "AAPL"),          # header CUSIP = the spine's 9-char's first 8
+             ("10001", "2009-06-01", "11111111", "22222222", "OLDN"),   # an old CUSIP of the permno matches
+             ("10001", END, "11111111", "11111111", "NEWN"),
+             ("84398", END, "78462F10", "78462F10", "SPY")],           # an ETF the spine holds without a CUSIP
+        spine=[("001690:01", "AAPL", "037833100"), ("002000:01", "NEWX", "222222229"),
+               ("figi:BBG000BDTBL9", "SPY", None)])
+    assert got == {"14593": ("001690:01", "hdrcusip"), "10001": ("002000:01", "cusip"),
+                   "84398": ("figi:BBG000BDTBL9", "ticker")}
+
+
+def test_a_ticker_links_only_a_permno_listed_on_crsps_last_day_and_alone_with_that_ticker():
+    got = _link(
+        dsf=[("70000", "2015-03-02", "33333333", "33333333", "XYZ"),   # delisted 2015; XYZ today is someone else
+             ("80000", END, "44444444", "44444444", "XYZW"),
+             ("17778", END, "08467010", "08467010", "BRK"),             # CRSP gives both Berkshire classes "BRK"
+             ("83443", END, "08467070", "08467070", "BRK")],
+        spine=[("figi:X", "XYZ", None), ("figi:B", "BRK", None), ("072726:02", "BRK-B", "084670702")])
+    assert got == {"83443": ("072726:02", "hdrcusip")}           # by CUSIP only; no ticker guess
+
+
+def test_an_unlinked_permno_reaches_compustat_by_cusip_and_one_permno_takes_one_security():
+    got = _link(
+        dsf=[("50000", "2004-05-03", "68000010", "68000010", "OLDA"),   # delisted, not on today's spine
+             ("14593", END, "03783310", "03783310", "AAPL"),
+             ("99990", "2001-01-02", "99999999", "03783310", "APPL")],  # a second PERMNO with AAPL's CUSIP
+        spine=[("001690:01", "AAPL", "037833100")],
+        secd=[("099999", "01", "680000101"), ("001690", "01", "037833100")])
+    assert got == {"50000": ("099999:01", "compustat"), "14593": ("001690:01", "hdrcusip")}
 
 
 # ── Compustat's own adjusted return: the ajexdi/trfd rule ─────────────────────────────────────────────────────
@@ -267,6 +323,24 @@ def test_history_bars_crsp_first_then_compustat_and_alpaca_wins_its_sessions(bui
                                                                      (5.1, "OLD-A", wrds_history.COMPUSTAT)]
     assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = '088888:01'")[0]["n"] == 0  # CAD
     assert _q("SELECT ticker FROM price_bars_daily WHERE session_date = '2024-03-01'")[0]["ticker"] == "OLD-A"
+
+
+def test_crsp_rows_reach_their_securities_without_ccm(fake):
+    conn, _ = fake
+    # SPY by ticker on CRSP's last day (the spine holds no CUSIP for it), OLDCO by Compustat's CUSIP.
+    conn.data["crsp.dsf_v2"] += [
+        {"permno": "84398", "dlycaldt": "2025-06-06", "dlyprc": 590.0, "dlyvol": 5e7, "dlyret": 0.001,
+         "shrout": 1e6, "hdrcusip": "78462F10", "cusip": "78462F10", "ticker": "SPY"},
+        {"permno": "77777", "dlycaldt": "2024-03-01", "dlyprc": -5.05, "dlyvol": 1e4, "dlyret": 0.0,
+         "shrout": 1e3, "hdrcusip": "68000010", "cusip": "68000010", "ticker": "OLDA"}]
+    _build()
+    spy = _q("SELECT security_id, close, source FROM price_bar_daily WHERE session_date = '2025-06-06' "
+             "AND source = ?", [wrds_history.CRSP])
+    assert {(r["security_id"], r["close"]) for r in spy} == {(AAPL, 100.5), ("001000:01", 590.0)}
+    old = _q("SELECT close, source FROM price_bar_daily WHERE security_id = ? AND session_date = '2024-03-01'",
+             [OLDCO])
+    assert old == [{"close": 5.05, "source": wrds_history.CRSP}]           # CRSP first, as with the CCM link
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id LIKE 'permno:%'")
 
 
 def test_the_yahoo_shares_check_reads_the_newest_cover_sourced_cap_not_the_newest_cap(fake):
@@ -332,7 +406,7 @@ def test_the_monthly_refresh_keeps_the_values_it_replaces_as_revisions(built):
                             "params": {"as_of": "2026-11-27"}})
     assert row["result"] == "changed", row
     assert _asked(conn) == ["information_schema.columns",                    # a new day: the columns again
-                            "comp.sec_split", "crsp.ccmxpf_lnkhist", "comp.secd 2026", "comp.sec_divid 2026",
+                            "comp.sec_split", "comp.secd 2026", "comp.sec_divid 2026",
                             "comp.secd 2025", "crsp.dsf_v2 2025", "comp.sec_divid 2025", "crsp.dsf_v2 2024"]
     revs = _q("SELECT * FROM price_revision WHERE source = ?", [wrds_history.COMPUSTAT])
     assert [(r["security_id"], str(r["session_date"]), r["close"]) for r in revs] == [(AAPL, "2025-06-03", 202.0)]
@@ -418,17 +492,16 @@ def test_a_crsp_permission_refusal_skips_crsp_once_and_serves_compustat(refusing
     conn = refusing()
     row = _backfill()
     assert row["result"] == "changed", row
-    # The link is refused once; CRSP's years are then never asked in this run (no query per year, no loop).
-    assert _asked(conn) == ["information_schema.columns", "comp.sec_split", "crsp.ccmxpf_lnkhist",
+    # CRSP is refused once; its later years are then never asked in this run (no query per year, no loop).
+    assert _asked(conn) == ["information_schema.columns", "comp.sec_split",
                             "comp.secd 2026", "comp.sec_divid 2026",
-                            "comp.secd 2025", "comp.sec_divid 2025",
+                            "comp.secd 2025", "crsp.dsf_v2 2025", "comp.sec_divid 2025",
                             "comp.secd 2024", "comp.sec_divid 2024"]
-    assert "crsp_a_ccm" in row["note"] and "CRSP skipped" in row["note"]
+    assert "crsp_a_stock" in row["note"] and "CRSP skipped" in row["note"]
     issues = [i for i in ops.open_issues(wrds_history.NAME, limit=50)[1] if i["kind"] == "wrds_no_access"]
-    assert [i["key"] for i in issues] == ["crsp_a_ccm"]
+    assert [i["key"] for i in issues] == ["crsp_a_stock"]
     # A refused query leaves no file behind: no raw answer, no sidecar that would read as "asked".
-    assert not any(wrds_history.raw_dir("link").rglob("*"))
-    assert not wrds_history.raw_dir("dsf").exists()
+    assert not [f for f in wrds_history.raw_dir("dsf").rglob("*") if f.is_file()]
     # Compustat alone serves the bars, the shares and so the cap.
     assert base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
     assert base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})["result"] == "changed"
@@ -448,12 +521,12 @@ def test_a_crsp_permission_refusal_skips_crsp_once_and_serves_compustat(refusing
     assert report["compustat_vs_alpaca"]["sessions"] == 2
 
 
-def test_the_next_backfill_asks_the_refused_link_again_and_nothing_compustat_holds(refusing):
+def test_the_next_backfill_asks_the_refused_crsp_year_again_and_nothing_compustat_holds(refusing):
     refusing()
     _backfill()
     conn = refusing()
     _backfill()
-    assert _asked(conn) == ["crsp.ccmxpf_lnkhist"]          # once a run, so a granted subscription is picked up
+    assert _asked(conn) == ["crsp.dsf_v2 2025"]             # once a run, so a granted subscription is picked up
 
 
 def test_a_refused_compustat_query_still_fails_the_run(refusing):
@@ -467,11 +540,11 @@ def test_another_wrds_error_on_crsp_still_fails_the_run(fake, monkeypatch):
 
     def broken(sql, out):
         if "crsp." in sql:
-            raise base.SourceError('wrds query failed: ProgrammingError: column "liid" does not exist')
+            raise base.SourceError('wrds query failed: ProgrammingError: column "hdrcusip" does not exist')
         return FakeWrds.query(conn, sql, out)
     monkeypatch.setattr(conn, "query", broken)
     row = _backfill()
-    assert row["result"] == "failed" and "liid" in row["note"]
+    assert row["result"] == "failed" and "hdrcusip" in row["note"]
 
 
 # ── The columns, checked before any data is asked (one ``information_schema`` query on the same login) ──────────

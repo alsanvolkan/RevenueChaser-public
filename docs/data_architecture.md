@@ -1259,7 +1259,7 @@ only through `rcdata.read`.
 | `sec/cover_shares` | daily | The SEC daily master index (10-K, 10-Q, 20-F, 40-F and their -T forms of the last 7 days), each filer's submissions file, the filing's inline-XBRL instance: `dei:EntityCommonStockSharesOutstanding` per class member | `stg_sec_cover` |
 | `yfinance/float` | daily | Yahoo `floatShares` (`yfinance` `get_info`), 400 Tier A names a run, 1.5 s apart, stopped by a 401 or 429 | `stg_yahoo_float` |
 | `uw/total_float` | daily | Unusual Whales `/short_screener` `total_float`, every Tier A name (the client's batching) | `stg_uw_float` |
-| `wrds/prices` | monthly, attended | Compustat `comp.secd` from 1984 on the US exchanges and `comp.sec_divid` per year, CRSP `crsp.dsf_v2` per year to 2025, `comp.sec_split` and the CRSP link `crsp.ccmxpf_lnkhist` whole | `stg_wrds_secd`, `stg_wrds_dsf`, `stg_wrds_divid`, `stg_wrds_split`, `stg_wrds_link`, `stg_wrds_revisions` |
+| `wrds/prices` | monthly, attended | Compustat `comp.secd` from 1993 on the US exchanges and `comp.sec_divid` per year, CRSP `crsp.dsf_v2` per year to 2025 (stocks and ETFs, from 1993), `comp.sec_split` whole; no CCM link (`wrds_history.PERMNO_LINK`) | `stg_wrds_secd`, `stg_wrds_dsf`, `stg_wrds_divid`, `stg_wrds_split`, `stg_wrds_revisions` |
 | `prices/serving` | daily | none: builds the served tables from the staging tables | the tables below |
 
 **The universe.** The bars ask the live spine's Tier A and B (`prices.DEFAULT_TIERS`; 5,655 + 2,015 = 7,670 names
@@ -1287,7 +1287,7 @@ day) and records `scope ignored: ...` on its check row rather than fetching some
 
 **The security id** (`rcdata/build/prices/__init__.py`, `security_id`): `<gvkey>:<iid>` when the spine links the name
 to Compustat, else `figi:<composite FIGI>`, else `cik:<CIK>:<TICKER>`, else `sym:<TICKER>`; a WRDS bar with no spine
-row keeps `<gvkey>:<iid>` (a CRSP one with no link `permno:<PERMNO>`). A source row stores its provider's facts and the
+row keeps `<gvkey>:<iid>`. A CRSP PERMNO takes, with no CCM link, the spine security of its CUSIP (CRSP's 8 characters against the spine's first 8), else of its ticker on CRSP's last day when no other PERMNO had it, else the Compustat `<gvkey>:<iid>` of its CUSIP, else `permno:<PERMNO>` (`wrds_history.PERMNO_LINK`, with its measured coverage). A source row stores its provider's facts and the
 id of its fetch day; the build resolves each row against the live spine on (ticker, CIK), so a spine change re-keys
 the history at the next build without a refetch.
 
@@ -1301,7 +1301,7 @@ are stored **nominal**; the factors are applied on read.
 
 | Table | Rows |
 |---|---|
-| `price_bar_daily` | one nominal bar per security and session (key `security_id`, `session_date`): Alpaca's, then WRDS's where Alpaca has none (CRSP where it links to the Compustat security, else Compustat; only USD rows), and the S&P 500 level from the market store's Cboe Parquet (`index:SPX`); `shares_outstanding` is a WRDS bar's own (`cshoc`; CRSP `shrout` in thousands) |
+| `price_bar_daily` | one nominal bar per security and session (key `security_id`, `session_date`): Alpaca's, then WRDS's where Alpaca has none (CRSP where it is the same security, else Compustat; only USD rows), and the S&P 500 level from the market store's Cboe Parquet (`index:SPX`); `shares_outstanding` is a WRDS bar's own (`cshoc`; CRSP `shrout` in thousands) |
 | `corporate_action` | Alpaca's actions of the store's securities (resolved to the security that traded under the action's symbol nearest its date, else the spine's ticker) and Compustat's splits and dividends where Alpaca has none of that kind that day; `ratio` new over old shares, `amount` per share, `applied` and `not_applied_why` |
 | `adj_factor` | per security, the periods between two ex-dates and their `split_factor` (the product of `1 / ratio` of every later split and stock dividend) and `tr_factor` (that, times `1 - amount / close before the ex-date` of every later cash dividend, the close at most 7 days before) |
 | `shares_class` | `outstanding` per class from the SEC covers (an unlisted class keyed `class:<CIK>:<member>`, and so is an ADR issuer's count of ordinary shares), `float` from Yahoo and from UW |

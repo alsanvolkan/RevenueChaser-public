@@ -3,8 +3,8 @@
 **Tables** (``prices.duckdb``, serving schema version 1), every one keyed on the security id (``prices.security_id``):
 
 - ``price_bar_daily``: one bar per security and New York session, **nominal** (the prices as traded that day):
-  Alpaca's daily bars, then the WRDS history where Alpaca has no bar (``wrds/prices``: CRSP where it links to the
-  Compustat security, else Compustat; the long run is Phase 8), and the S&P 500 index level from the market store's
+  Alpaca's daily bars, then the WRDS history where Alpaca has no bar (``wrds/prices``: CRSP where it is the same
+  security, through ``wrds_history.PERMNO_LINK``, else Compustat), and the S&P 500 index level from the market store's
   Cboe file (``index:SPX``, the close only);
 - ``corporate_action``: Alpaca's actions of the store's securities, resolved to the security that traded under the
   action's symbol nearest its date (else the spine's current ticker), and Compustat's splits and dividends of the
@@ -180,14 +180,14 @@ def _spine(con: duckdb.DuckDBPyConnection) -> int:
     """``stg_spine``: the live spine's ``security`` rows with their security id (empty before a first spine)."""
     from ... import serving
     con.execute("CREATE OR REPLACE TEMP TABLE stg_spine (ticker TEXT, cik TEXT, tier TEXT, security_type TEXT, "
-                "gvkey TEXT, iid TEXT, composite_figi TEXT, security_id TEXT)")
+                "gvkey TEXT, iid TEXT, composite_figi TEXT, security_id TEXT, cusip TEXT)")
     live = serving.live_path("spine")
     if not live.exists():
         return 0
     con.execute(f"ATTACH {base.sql_path(live)} AS live_spine (READ_ONLY)")
     try:
         con.execute(f"INSERT INTO stg_spine SELECT ticker, cik, tier, security_type, gvkey, iid, composite_figi, "
-                    f"{SPINE_ID} FROM live_spine.security")
+                    f"{SPINE_ID}, nullif(cusip, '') FROM live_spine.security")
     finally:
         con.execute("DETACH live_spine")
     return stage.count(con, "stg_spine")
@@ -234,6 +234,7 @@ CREATE OR REPLACE TEMP TABLE _act AS
     best AS (SELECT action_id, security_id FROM cand
              QUALIFY row_number() OVER (PARTITION BY action_id ORDER BY pri, dist, security_id) = 1)
     SELECT best.security_id, a.*, '{actions}' AS source FROM a JOIN best USING (action_id);
+CREATE OR REPLACE TEMP TABLE _permno_link AS {link};
 CREATE OR REPLACE TEMP TABLE _hist_all AS
     SELECT * FROM ({crsp}) UNION ALL BY NAME SELECT * FROM ({comp});
 """
@@ -279,7 +280,7 @@ class PricesServing:
                 found.append(("source_never_run", ds, f"{ds} has no rows in this build"))
         _spine(con)
         con.execute(BUILD_SQL.format(bars=ALPACA_BARS, actions=ALPACA_ACTIONS, crsp=wrds_history.CRSP_BARS,
-                                     comp=wrds_history.COMP_BARS))
+                                     comp=wrds_history.COMP_BARS, link=wrds_history.PERMNO_LINK))
         counts = {}
         cols = ", ".join(c for c, _ in PRICE_BAR)
         # Alpaca's bar wins its session; of the history bars, CRSP's before Compustat's.

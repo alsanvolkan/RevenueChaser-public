@@ -209,7 +209,7 @@ confirms Duo on the server).
 store"): Alpaca's daily bars (coverage = Tier A names with a bar on the session, target 99%; backfill = its day
 partitions), Alpaca's corporate actions, the SEC cover shares, the Yahoo and UW float, the WRDS history and
 `prices/serving`. The WRDS history card is attended (`python -m RevenueChaser.rcdata.build backfill wrds/prices`);
-its backfill progress counts the table-year partitions (`secd 1984` ...) out of those expected, and its WRDS
+its backfill progress counts the table-year partitions (`secd 1993` ...) out of those expected, and its WRDS
 difference slot shows the store's monthly report (`wrds_price_diff`): per comparison the sessions compared and how
 many differ by more than 1 bp, with the largest difference. Every other card still says "no WRDS run yet", except
 the four WRDS checks of the fundamentals layer below.
