@@ -212,3 +212,16 @@ def test_an_empty_ask_is_refused_on_every_need_not_only_the_one_that_must_be_ask
         r = client.get(f"/needs/{need}?{param}=")
         assert r.status_code == 400 and param in r.get_json()["error"], need
         assert client.get(f"/needs/{need}?summary=1").status_code == 200, f"{need}: the screen still answers"
+
+
+def test_as_of_in_the_query_string_reaches_ask_as_the_day_to_judge_from(client, answer):
+    """#330: ``?as_of=`` is the envelope's own argument, the day the answer is judged from."""
+    seen = answer()
+    assert client.get("/needs/market.vix?as_of=2026-10-15").status_code == 200
+    assert seen["params"]["as_of"] == "2026-10-15"
+
+
+def test_an_unreadable_as_of_is_a_400_in_words_not_a_500(client):
+    """The real ``ask`` refuses it before anything is read."""
+    resp = client.get("/needs/market.vix?as_of=15-Oct")
+    assert resp.status_code == 400 and "as_of" in resp.get_json()["error"]

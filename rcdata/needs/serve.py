@@ -5,7 +5,9 @@ What the envelope adds, and nothing else:
 - ``state``: ``fresh`` | ``stale`` | ``missing`` — one word a card can show without knowing the store's shape.
 - ``freshness``: the newest day the rows carry, how far behind the market that is, the need's own ``max_lag`` and
   the unit both are counted in. Sessions by default, so a Monday answer is not "stale by three" because of the
-  weekend; calendar days for a need whose build has no session of its own (avo, 29 Oct 2026).
+  weekend; calendar days for a need whose build has no session of its own (avo, 29 Oct 2026). ``reference`` names
+  the day the lag was counted against: the market's newest complete session, or the session on or before the
+  ``as_of`` day a board renders (#330: SPX Gamma renders past days and judges each input against that day).
 - ``coverage``: how many things were asked for, how many came back, and which ones the store does not hold.
 - ``provenance``: per row, where it came from (``source``, ``source_as_of``, ``fetched_at``, ``run_id``) and which
   dataset owns writing it.
@@ -148,6 +150,26 @@ def _asked_nothing(need: Need, params: dict) -> bool:
     return not _asked(need, params)
 
 
+def _reference(as_of: Any) -> date:
+    """The day an answer's lag is counted against: ``reference_session()``, or the session on or before ``as_of``.
+
+    A board that renders a past day (SPX Gamma, #330) judges each input against that day, not against the market's
+    newest session: for a render of 15 October a 14 October row is one session behind, not twelve. A weekend or a
+    holiday is judged from the session before it, so a Friday row read on the Sunday is 0 behind, as the board's own
+    session count always had it. A day past the calendar's holiday table raises ``ValueError``, as the lag walk does.
+    """
+    if as_of is None:
+        return reference_session()
+    return calendar.previous_trading_day(_as_of_day(as_of))
+
+
+def _as_of_day(as_of: Any) -> date:
+    day = _day(as_of)
+    if day is None:
+        raise ValueError(f"as_of must be a date or an ISO day (YYYY-MM-DD), not {as_of!r}")
+    return day
+
+
 def _provenance(need: Need, rows: list[dict]) -> list[dict]:
     return [{"key": r.get(need.key_column), "dataset": need.dataset, "source": r.get("source"),
              "source_as_of": r.get("source_as_of"), "fetched_at": r.get("fetched_at"), "run_id": r.get("run_id")}
@@ -209,11 +231,15 @@ def summary(need: str, *, sample: int = 0) -> dict:
             "sample_rows": s["sample_rows"], "provenance": _provenance(spec, s["sample_rows"])}
 
 
-def ask(need: str, *, fill: str = NEVER, **params) -> Answer:
+def ask(need: str, *, fill: str = NEVER, as_of: date | str | None = None, **params) -> Answer:
     """Answer ``need`` from the store. ``params`` go to the need's ``rcdata.read`` function unchanged.
 
     ``fill`` must be ``"never"`` in this PR: the answer serves what the store holds and says how old it is. No
     provider is called and nothing is written, so a page render can call this without holding anything up.
+
+    ``as_of`` is the day the answer is judged from (#330); it is never handed to the reader, whose window stays the
+    caller's own ``start`` / ``end``. Without it the lag is counted against ``reference_session()``, exactly as
+    before, and ``freshness["reference"]`` names the day it was counted against either way.
     """
     try:
         spec = NEEDS[need]
@@ -233,15 +259,18 @@ def ask(need: str, *, fill: str = NEVER, **params) -> Answer:
                           f"ask is nothing, never every row (avo, 30 Oct 2026): leave {spec.ask_param!r} out to "
                           f"read every row, or ask for the whole table's state with summary=1")
 
+    if as_of is not None:
+        as_of = _as_of_day(as_of)          # refused in words before anything is read
     ops.read_log.bump(f"need:{need}")
     rows = spec.reader(**_with_needs_own_rows(spec, params))
     rows = list(rows.values()) if isinstance(rows, dict) else list(rows)
 
     days = [d for d in (_day(r.get(spec.day_column)) for r in rows) if d is not None]
-    as_of = max(days) if days else None
-    lag = lag_in(spec.max_lag_unit, as_of, reference_session()) if as_of is not None else None
-    freshness = {"as_of_session": as_of, "lag_sessions": lag, "max_lag": spec.max_lag,
-                 "unit": spec.max_lag_unit}
+    newest = max(days) if days else None
+    reference = _reference(as_of)
+    lag = lag_in(spec.max_lag_unit, newest, reference) if newest is not None else None
+    freshness = {"as_of_session": newest, "lag_sessions": lag, "max_lag": spec.max_lag,
+                 "unit": spec.max_lag_unit, "reference": reference}
 
     asked = _asked(spec, params)
     served_keys = {str(r.get(spec.key_column)) for r in rows if r.get(spec.key_column) is not None}
