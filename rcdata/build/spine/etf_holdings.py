@@ -30,7 +30,15 @@ does not run. **UW's answer is kept whole:** the top-10 cap is the Rotation boar
 dataset, which writes only the market store.
 
 One request per fund per run (24 issuer files, 14 UW calls, plus ARK's file on a day it is needed), each inside
-its provider's day cap. No key for the issuer files; without ``UNUSUAL_WHALES_API_KEY`` the issuer files are still
+its provider's day cap.
+
+**The sweep (#358, avo 1-2 Nov 2026):** every other ETF of the live spine's ``etf`` table, no ETN and no CEF (5,854 on
+2 Nov 2026), is asked from UW once every ``SWEEP_DAYS`` (30), at most ``SWEEP_PER_RUN`` (3,000) a run, under the
+``uw`` day cap: a sweep is about 5,850 calls over two hourly runs, the daily funds 14 a day. Its state is
+``raw/funds/etf_holdings/sweep.json`` (its day, empty and failed answers, every sweep day); a cut sweep goes on under
+its first day, an empty answer is not asked again within the sweep and ends as one ``uw_empty`` issue.
+**Retention:** the last 30 days whole; older, each month's last held day and each sweep day. It only names what it
+would remove unless ``RC_ETF_HOLDINGS_PRUNE=1``. No key for the issuer files; without ``UNUSUAL_WHALES_API_KEY`` the issuer files are still
 read (ARKQ's among them) and the missing key is one ``missing_key`` issue. A fund whose every source failed (a moved
 shape or URL, an empty answer) is a ``source_failed`` issue for that fund, and the others go on, as the index job
 does; every fund failing fails the run.
@@ -44,6 +52,8 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
+import shutil
 import time
 from dataclasses import dataclass
 from datetime import date
@@ -93,6 +103,15 @@ US_EXCHANGE_CODES = frozenset({"UA", "UN", "UP", "UQ", "UR", "US", "UV", "UW"})
 UW_FUNDS = ("SMH", "PAVE", "AIQ", "LIT", "URA", "NLR", "AIRR", "SKYY", "WCLD", "ARKQ", "ROBO", "JETS", "TAN", "PBW")
 # The funds the relatedness peer sets need that the rotation board does not run.
 EXTRA = frozenset({"XHB", "XRT", "KIE", "IAK", "ITB", "TAN", "PBW"})
+# The sweep (#358, avo 1-2 Nov 2026): every other ETF of the spine's ``etf`` table, no ETN and no CEF, from UW once
+# every ``SWEEP_DAYS``. One run asks at most ``SWEEP_PER_RUN`` of them (the step's own guard, under the ``uw`` cap);
+# the rest wait for the next run, which goes on with the same sweep day.
+SWEEP_DAYS = 30
+SWEEP_PER_RUN = 3000
+SWEEP_STATE = "sweep.json"
+# Retention (avo, option 1): the last ``SWEEP_DAYS`` days whole; older, each month's last day and each sweep day. It
+# only reports what it would remove unless ``PRUNE_ENV`` is "1": the first real removal is avo's word at that time.
+PRUNE_ENV = "RC_ETF_HOLDINGS_PRUNE"
 
 
 def parse_uw(data: bytes) -> list[dict]:
@@ -223,6 +242,28 @@ FILES = (tuple(EtfFile(t, "ssga", "xlsx") for t in SSGA_FUNDS)
 FALLBACKS = {t: EtfFile(t, "ark", "csv") for t in ARK_FUNDS}
 PROVIDERS = tuple(dict.fromkeys([f.provider for f in FILES] + [f.provider for f in FALLBACKS.values()]))
 _BY_RAW = {f.raw_name(): f for f in FILES + tuple(FALLBACKS.values())}
+DAILY = frozenset(f.etf for f in FILES)
+
+
+def _file_of(raw_name: str) -> "EtfFile | None":
+    """The daily fund a raw file is, else the swept ETF its ``uw-<ticker>.json`` name says."""
+    f = _BY_RAW.get(raw_name)
+    if f is None and raw_name.startswith("uw-") and raw_name.endswith(".json"):
+        f = EtfFile(raw_name[3:-5], "uw", "json")
+    return f
+
+
+def sweep_etfs() -> list[str]:
+    """The live spine's ETFs the sweep asks: no ETN, no CEF, none of the daily funds. Empty before the first spine."""
+    from ... import serving
+    if not serving.live_path(KIND).exists():
+        return []
+    with serving.open_read(KIND) as con:
+        if not con.execute("SELECT count(*) FROM information_schema.tables WHERE table_name = 'etf'").fetchone()[0]:
+            return []
+        rows = con.execute("SELECT ticker FROM etf WHERE NOT coalesce(is_etn, false) AND NOT coalesce(is_cef, false) "
+                           "ORDER BY ticker").fetchall()
+    return [t for (t,) in rows if t not in DAILY]
 
 
 def raw_dir() -> Path:
@@ -296,6 +337,83 @@ class EtfHoldings:
             ctx.notes.append("failed files: " + ", ".join(failed))
             if not out:
                 raise base.SourceError("every fund file failed")
+        if keyed:
+            out += self._sweep(ctx, as_of)
+        self._retain(ctx, as_of)
+        return out
+
+    def _retain(self, ctx: base.RunContext, as_of: date) -> None:
+        """The days past ``SWEEP_DAYS`` that are neither their month's last held day nor a sweep day: named in the
+        note, and removed (raw day folder and Parquet partition together) only when ``PRUNE_ENV`` is "1"."""
+        path = raw_dir() / SWEEP_STATE
+        sweeps = set(json.loads(path.read_text()).get("days", [])) if path.exists() else set()
+        folders = {p.name: p for p in raw_dir().iterdir() if p.is_dir()} if raw_dir().exists() else {}
+        parts = {p.name.split("=", 1)[1]: p for p in parquet_dir().iterdir()
+                 if p.is_dir() and p.name.startswith("date=")} if parquet_dir().exists() else {}
+        days = sorted(set(folders) | set(parts))
+        last = {}
+        for d in days:
+            last[d[:7]] = d
+        drop = [d for d in days if (as_of - date.fromisoformat(d)).days > SWEEP_DAYS
+                and d not in sweeps and last[d[:7]] != d]
+        if not drop:
+            return
+        n = f"{len(drop)} day{'s' if len(drop) != 1 else ''}"
+        if os.environ.get(PRUNE_ENV) != "1":
+            ctx.notes.append(f"retention (dry run): {n} past {SWEEP_DAYS} would be removed: " + ", ".join(drop))
+            return
+        for d in drop:
+            for p in (folders.get(d), parts.get(d)):
+                if p is not None:
+                    shutil.rmtree(p)
+        ctx.notes.append(f"retention: removed {n} past {SWEEP_DAYS}: " + ", ".join(drop))
+
+    def _sweep(self, ctx: base.RunContext, as_of: date) -> list[Path]:
+        """The sweep's share of this run: start one when the last is ``SWEEP_DAYS`` old (or there is none), else go on
+        with an unfinished one under its own day. An empty or failed answer is recorded and not asked again within
+        the sweep; the raw file is the resume marker. A cap stop leaves the sweep for the next run."""
+        path = raw_dir() / SWEEP_STATE
+        state = json.loads(path.read_text()) if path.exists() else None
+        if state is None or (state["done"] and (as_of - date.fromisoformat(state["day"])).days >= SWEEP_DAYS):
+            state = {"day": as_of.isoformat(), "done": False, "empty": [], "failed": [],
+                     "days": (state or {}).get("days", []) + [as_of.isoformat()]}
+        elif state["done"]:
+            return []
+        day = date.fromisoformat(state["day"])
+        folder = raw_dir() / day.isoformat()
+        skip = set(state["empty"]) | set(state["failed"])
+        todo = [t for t in sweep_etfs() if t not in skip and not (folder / f"uw-{t}.json").exists()]
+        out, asked, stopped = [], 0, None
+        for t in todo:
+            if asked >= SWEEP_PER_RUN:
+                stopped = f"the run's {SWEEP_PER_RUN} sweep calls"
+                break
+            f = EtfFile(t, "uw", "json")
+            try:
+                asked += 1
+                content = f.download(ctx)
+                if not f.parse(content):
+                    state["empty"].append(t)
+                    continue
+            except base.CapReached as e:
+                asked -= 1
+                stopped = str(e)
+                break
+            except Exception:  # noqa: BLE001 - one ETF down must not stop the sweep
+                state["failed"].append(t)
+                continue
+            raw = folder / f.raw_name()
+            base.write_raw_json(_meta(raw), {"as_of": day.isoformat(), "fetched_at": time.time(),
+                                             "run_id": ctx.run_id, "etf": t, "provider": "uw", "url": f.url()})
+            out.append(base.write_raw(raw, content))
+        left = len(todo) - asked
+        state["done"] = stopped is None
+        base.write_raw_json(path, state)
+        ctx.notes.append(f"sweep {day}: {asked} asked this run, {len(out)} held, {len(state['empty'])} empty, "
+                         f"{len(state['failed'])} failed, {max(left, 0)} left" + (f" (stopped: {stopped})" if stopped else ""))
+        if state["done"] and (state["empty"] or state["failed"]):
+            names = state["empty"] + state["failed"]
+            ctx.issue("uw_empty", f"sweep-{day}", f"{len(names)} ETFs with no UW holdings: " + ", ".join(names[:30]))
         return out
 
     def backfill(self, ctx: base.RunContext, start: date | None, end: date) -> None:
@@ -308,7 +426,7 @@ class EtfHoldings:
     def to_parquet_all(self, ctx: base.RunContext, raws: list[Path]) -> list[Path]:
         by_day: dict[date, list[dict]] = {}
         for raw in raws:
-            f = _BY_RAW.get(raw.name)
+            f = _file_of(raw.name)
             if f is None:
                 continue
             meta = base.read_raw_json(_meta(raw))
@@ -360,7 +478,9 @@ class EtfHoldings:
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
         latest = con.execute(f"SELECT max(as_of) FROM {TABLE}").fetchone()[0]
         day = f"as_of = DATE '{latest}'"
-        funds = int(con.execute(f"SELECT count(DISTINCT etf) FROM {TABLE} WHERE {day}").fetchone()[0]) if latest else 0
+        daily = ", ".join(f"'{t}'" for t in sorted(DAILY))   # the sweep's ETFs on a sweep day are no daily fund
+        funds = int(con.execute(f"SELECT count(DISTINCT etf) FROM {TABLE} WHERE {day} AND etf IN ({daily})")
+                    .fetchone()[0]) if latest else 0
         keys = ["as_of", "etf", "ticker"]
         added, removed = stage.compare_live(con, f"SELECT as_of, etf, ticker FROM {TABLE}", TABLE, keys)
         return {"dataset": NAME, "result": "changed" if added or removed else "unchanged",
