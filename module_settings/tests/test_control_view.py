@@ -232,3 +232,10 @@ def test_the_providers_card_names_alpha_vantage_with_its_cap_and_the_sec_with_n_
     providers = {p["id"]: p for p in _build()["providers"]}
     assert providers["alphavantage"]["cap"] == 25 and "listing status" in providers["alphavantage"]["what"]
     assert providers["alphavantage"]["icon"] and "N-CEN" in providers["sec"]["what"]
+
+
+def test_ncens_monthly_cadence_is_the_datasets_own_not_a_second_copy_on_its_card():
+    """Review N6 of PR 349: the dataset carries ``cadence = "monthly"``; the screen's card does not repeat it."""
+    from RevenueChaser.module_settings import newdata as nd_mod
+    assert screen.DATASETS["sec/ncen"].cadence == "daily"           # the card's default, not read for this dataset
+    assert nd_mod._cadence("sec/ncen", None) == "monthly"

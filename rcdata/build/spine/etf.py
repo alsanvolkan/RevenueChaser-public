@@ -36,8 +36,10 @@ TABLE = "etf"
 SCHEMA = [("ticker", "TEXT PRIMARY KEY"), ("name", "TEXT"), ("series_id", "TEXT"), ("cik", "TEXT"),
           ("source", "TEXT"), ("is_etn", "BOOLEAN"), ("asset_class", "TEXT"), ("focus", "TEXT"), ("country", "TEXT"),
           ("is_index", "BOOLEAN"), ("is_lev_inverse", "BOOLEAN"), ("is_money_market", "BOOLEAN"),
-          ("is_option_income", "BOOLEAN"), ("is_fund_of_funds", "BOOLEAN"), ("inception", "DATE"), ("aum", "DOUBLE"),
-          ("aum_as_of", "DATE"), ("adv_usd_20d", "DOUBLE"), ("expense_ratio", "DOUBLE"), ("sector_name", "TEXT"),
+          ("is_option_income", "BOOLEAN"), ("is_fund_of_funds", "BOOLEAN"), ("inception", "DATE"),
+          # aum: N-CEN's average net assets over the filing's fiscal year (daily, else monthly average), not a
+          # point-in-time AUM; aum_as_of is that year's end (review N4 of #349). A point-in-time AUM is a later PR's.
+          ("aum", "DOUBLE"), ("aum_as_of", "DATE"), ("adv_usd_20d", "DOUBLE"), ("expense_ratio", "DOUBLE"), ("sector_name", "TEXT"),
           ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
 
 #: A note, by its name: ETN / ETRACS, a dated note, or a bank issuer's name (Alpha Vantage lists BMO's, UBS's,
