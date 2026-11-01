@@ -167,7 +167,8 @@ def test_data_architecture_names_no_scheduled_job_or_history_the_code_does_not_h
                      "RC-Forecast-Baselines": "23:50",
                      "RC-Index-Lists": "10:00", "RC-Earnings-Inputs": "01:30",
                      "RC-Open-Issues-Check": "09:30", "RC-IBKR-Login-Check": "09:15",
-                     "RC-Build": "hourly at :07", "RC-Build-Backup": "04:30"}
+                     "RC-Build": "hourly at :07", "RC-Build-Backup": "04:30",
+                     "RC-SPX-Gamma-Fetch": "06:30"}
     for stamp in times.values():
         assert stamp in text, f"the registered time {stamp} is not in docs/data_architecture.md"
     ps1 = (_REPO / "register_tasks.ps1").read_text(encoding="utf-8")
