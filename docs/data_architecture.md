@@ -966,7 +966,7 @@ rather than growing: without it a connection may take 80 % of the machine's RAM,
 first `prices/serving` build on #319's code (request #35, 30 Oct 2026, 7.7 GB peak on a 15 GB server).
 
 **Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`. Each kind is one
-file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `2`), is described under
+file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `3`), is described under
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
 below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `1`), under "Fundamentals" after it; and the options
@@ -1035,8 +1035,9 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 | `dataset_schedule` | Cadence and pause state per dataset (Pause / Resume on Settings, PR 2) |
 
 **Day caps** (`rcdata/caps.py`, avo's numbers, to be tuned): uw 150,000, sec 40,000, fred 10,000, alpaca 20,000;
-the spine's (PR 5, working numbers avo has not set): wrds 50 (queries), openfigi 1,000 (requests), ssga 50,
-ishares 50, vanguard 50, nasdaq 50, invesco 50 (one request per fund file); yfinance 5,000, shared by three stores
+the spine's (PR 5, working numbers avo has not set): wrds 50 (queries), openfigi 1,000 (requests), ssga 300,
+ishares 150, vanguard 50, nasdaq 50, invesco 50 (one request per fund file; ssga and ishares serve both
+`funds/index_holdings` and `funds/etf_holdings`, 21 and 9 files a run, and every retry attempt is counted); yfinance 5,000, shared by three stores
 (working numbers avo has not set): the prices store's float lookups (PR 7, 3,000), the fundamentals layer's
 weekly analyst estimates (PR 12, 2,000, one request per ticker) and the market store's `yahoo` source (PR 9, no
 share of its own: one whole-history read per symbol, MOVE and wheat, and as-of day); the ownership store's (PR 16, working numbers too;
@@ -1133,7 +1134,8 @@ the old identity tables there are untouched (D5: they are empty since 27 Oct).
 | `wrds/idxcst_his` | monthly, attended | `comp.idxcst_his` for the S&P 500, 400 and 600 index keys | `stg_wrds_idx` |
 | `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet (a CINS, a letter first, asked as `ID_CINS`), under 25 requests a minute | `stg_figi` |
 | `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR (`latest-holdings.csv`), Vanguard VOO/IVOO/VIOO (daily creation basket), Nasdaq's nasdaq100 list and Invesco QQQ (both vote `ndx`) | `stg_fund_lines`, `stg_fund_files` |
-| `spine/security` | daily | none: builds the served tables from the staging tables | the four tables below except `fund` |
+| `funds/etf_holdings` | daily | the SPDR workbooks of the 11 sector funds and XBI/XOP/XME/KRE/XHB/XRT/KIE, the iShares `latest-holdings.csv` of SOXX/IBB/ITA/ITB/IGV/IAK, and UW `/etfs/<t>/holdings` whole (no top-10 cap) for the 14 themes whose issuer has no keyless file | none: serves `etf_holdings` itself |
+| `spine/security` | daily | none: builds the served tables from the staging tables | the four tables below except `fund` and `etf_holdings` |
 
 The sources load their Parquet into TEMP tables of the build connection (never stored in the file), and all
 but one stop there; `sec/company_tickers_mf` also serves `fund` from its own staging, because nothing derives
@@ -1162,7 +1164,7 @@ own mark: a panel header that says `cli` is recorded as `panel:cli`.
 the CLI or a Fetch), so the first hourly builder pass after a deploy calls no spine source before the attended
 steps, and a first attempt that failed is not retried every hour.
 
-**Served tables** (`spine` serving schema version `2`). Periods are `valid_from` inclusive, `valid_to` exclusive
+**Served tables** (`spine` serving schema version `3`). Periods are `valid_from` inclusive, `valid_to` exclusive
 (Compustat's inclusive ends are moved one day on), `valid_to` NULL while current.
 
 | Table | Rows |
@@ -1171,6 +1173,7 @@ steps, and a first attempt that failed is not retried every hour.
 | `security_history` | the SEC file's `cik`, `name`, `exchange` per ticker over the stored snapshots; Compustat's identifier history of the linked securities |
 | `gics_history` | Compustat's GICS periods of the linked companies |
 | `index_membership` | the fund-file members (source `funds/index_holdings`) and Compustat's constituents (source `wrds/idxcst_his`, the check) |
+| `etf_holdings` | every holding of each ETF of `funds/etf_holdings`, per day: `as_of`, `etf`, `provider`, `ticker`, `cusip`, `name`, `weight` (the relatedness peer sets' source) |
 | `fund` | one per share class of the newest SEC fund file: `cik`, `series_id`, `class_id`, the normalised `ticker` and the file's `ticker_raw`, `is_etf` with the `is_etf_source` that decided it, and the file's provenance. `security`'s counterpart: an ETF is a series of a trust, so it has no row of its own in the equity file (the ETF rule, and the two exceptions, below). The kind's only source-owned served table, so `base.shrink_scope` relaxes it for `allow_shrink` on `sec/company_tickers_mf` alone: an empty `fund` refuses the swap for every spine dataset until that one is run |
 
 **The ETF rule** (`rcdata/build/spine/sec_tickers_mf.py`). The fund file carries no "this is an ETF" field, so
