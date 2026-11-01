@@ -110,12 +110,15 @@ def _stale(ans, obs: date, kind: str) -> bool:
 def _missing(what: str, day, reason: str | None = None, **extra) -> dict:
     label = f"{what} not stored for {_iso(day)}" + (f" ({reason})" if reason else "")
     return {"stored": False, "label": label, "status": extra.pop("status", None), "source": extra.pop("source"),
-            "source_as_of": None, **extra}
+            "source_as_of": None, "failed": bool(reason and reason.startswith(FAILED_PREFIX)), **extra}
+
+
+FAILED_PREFIX = "read failed: "
 
 
 def _failed(exc: Exception) -> str:
     logger.warning("spx gamma store read failed: %s", exc)
-    return f"read failed: {type(exc).__name__}: {exc}"[:200]
+    return f"{FAILED_PREFIX}{type(exc).__name__}: {exc}"[:200]
 
 
 def _value(row: dict) -> float | None:
@@ -154,6 +157,8 @@ def _with_board_status(dataset: str):
         @functools.wraps(reader)
         def inner(day) -> dict:
             out = reader(day)
+            if out.get("failed"):
+                return out          # #228 item 2: a read-failed marker keeps no status, not the board's
             try:
                 status, skip = _board_status(dataset)
             except Exception as exc:  # noqa: BLE001
