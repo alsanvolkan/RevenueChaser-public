@@ -135,3 +135,26 @@ def test_module_runs_as_a_command(tmp_path):
                           cwd=root.parent, env={**__import__("os").environ, "RC_STORE_AUTO_ENSURE": "0"})
     assert proc.returncode == 0, proc.stderr
     assert "peer_recall" in json.loads(proc.stdout)
+
+
+def test_report_upper_cases_input_keys_and_counts_the_unmatched(tmp_path, capsys, no_store):
+    """Review N4 (#342): lower-case theme members, industries and seed tickers still match the scores."""
+    f = _fixtures(tmp_path)
+    ind = json.loads(f["industries"].read_text(encoding="utf-8"))
+    ind = {k.lower(): v for k, v in ind.items()}
+    ind["nosuch"] = "Banks"
+    f["industries"].write_text(json.dumps(ind), encoding="utf-8")
+    th = json.loads(f["themes"].read_text(encoding="utf-8"))
+    for level in th.values():
+        for t in level.values():
+            t["members"] = [m.lower() for m in t["members"]]
+    th["fine"]["f1"]["members"].append("ghost")
+    f["themes"].write_text(json.dumps(th), encoding="utf-8")
+    seeds = [{k.lower(): v for k, v in s.items()} for s in json.loads(f["seeds"].read_text(encoding="utf-8"))]
+    f["seeds"].write_text(json.dumps(seeds), encoding="utf-8")
+    assert cli.main(["report", "--scores", str(f["scores"]), "--themes", str(f["themes"]),
+                     "--industries", str(f["industries"]), "--seeds", str(f["seeds"])]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["purity"]["purity"] == pytest.approx(1.0)
+    assert out["seed_ari"] == pytest.approx(1.0)
+    assert out["unmatched"] == {"themes": 1, "industries": 1, "seeds": 0}

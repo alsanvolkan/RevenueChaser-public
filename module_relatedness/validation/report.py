@@ -33,6 +33,33 @@ def matrix_from_dense(tickers: Sequence[str], matrix) -> tuple[list[str], np.nda
     return [str(t).upper() for t in tickers], m
 
 
+def _upper_themes(themes: Mapping | None, universe: set[str]) -> tuple[dict | None, set[str]]:
+    """Themes with upper-cased members, and the members (upper-cased) that are not in the score matrix."""
+    if not themes:
+        return themes, set()
+    out, missing = {}, set()
+    for tid, t in themes.items():
+        raw = t["members"] if isinstance(t, Mapping) else t
+        members = [str(m).upper() for m in raw]
+        missing |= {m for m in members if m not in universe}
+        out[tid] = {**t, "members": members} if isinstance(t, Mapping) else members
+    return out, missing
+
+
+def _upper_keys(by: Mapping | None, universe: set[str]) -> tuple[dict | None, int]:
+    if not by:
+        return by, 0
+    out = {str(k).upper(): v for k, v in by.items()}
+    return out, sum(1 for k in out if k not in universe)
+
+
+def _upper_seeds(seeds, universe: set[str]) -> tuple[list | None, int]:
+    if not seeds:
+        return seeds, 0
+    out = [{str(k).upper(): v for k, v in s.items()} for s in seeds]
+    return out, len({k for s in out for k in s} - universe)
+
+
 def _clean(value):
     if isinstance(value, float) and math.isnan(value):
         return None
@@ -45,6 +72,10 @@ def build_report(tickers: Sequence[str], scores: np.ndarray, *,
                  seeds: Sequence[Mapping[str, object]] | None = None,
                  etf_holdings: Mapping[str, object] | None = None) -> dict:
     universe = set(tickers)
+    fine, miss_fine = _upper_themes(fine, universe)
+    medium, miss_medium = _upper_themes(medium, universe)
+    industry_by, miss_ind = _upper_keys(industry_by, universe)
+    seeds, miss_seeds = _upper_seeds(seeds, universe)
     hand = peer_sets.hand_sets_for(universe)
     etf = peer_sets.etf_sets_for(etf_holdings or {}, universe)
     all_sets = hand.sets + etf.sets
@@ -64,6 +95,8 @@ def build_report(tickers: Sequence[str], scores: np.ndarray, *,
         "etf_recall_fine": metrics.etf_theme_recall(etf.sets, fine) if fine else None,
         "seed_ari": _clean(metrics.seed_ari(seeds)) if seeds else None,
         "peer_set_report": {"hand": hand.report, "etf": etf.report},
+        # Input keys that name no ticker of the score matrix (after upper-casing), so a typo is visible, not silent.
+        "unmatched": {"themes": len(miss_fine | miss_medium), "industries": miss_ind, "seeds": miss_seeds},
     }
     out["theme_runs"] = metrics.theme_runs_values(out)
     return out

@@ -124,3 +124,103 @@ def test_scorer_refuses_an_unreadable_mark(tmp_path):
     _mark(sheet, {1: "maybe"})
     with pytest.raises(ValueError, match="maybe"):
         pair_sheet.score(sheet, key)
+
+
+# ── review round 1 (#342): B1 sparse input, N2 low-band edge, S3 scorer ─────────────────────────────
+
+def _store_shaped(n=300, top=25, seed=0):
+    """A full random symmetric matrix, and the same cut to each name's top ``top`` peers (NaN elsewhere),
+    the way ``relatedness_scores`` keeps it."""
+    rng = np.random.default_rng(seed)
+    full = rng.random((n, n))
+    full = (full + full.T) / 2
+    np.fill_diagonal(full, np.nan)
+    sparse = np.full_like(full, np.nan)
+    for i in range(n):
+        row = np.where(np.isnan(full[i]), -np.inf, full[i])
+        keep = np.argsort(-row, kind="stable")[:top]
+        sparse[i, keep] = full[i, keep]
+    return [f"T{i:03d}" for i in range(n)], full, sparse
+
+
+def test_a_store_shaped_matrix_never_puts_a_stored_pair_in_the_low_band():
+    tickers, full, sparse = _store_shaped()
+    idx = {t: i for i, t in enumerate(tickers)}
+    pairs = pair_sheet.generate(tickers, sparse, seed=1)
+    lows = [p for p in pairs if p["band"] == "low"]
+    assert len(lows) == 50
+    for p in lows:
+        i, j = idx[p["a"]], idx[p["b"]]
+        assert np.isnan(sparse[i, j]) and np.isnan(sparse[j, i]), f"{p['a']}/{p['b']} is a stored top-25 pair"
+        assert p["score"] == 0.0
+    # The high band is still drawn from the stored (near-neighbour) pairs.
+    highs = [p for p in pairs if p["band"] == "high"]
+    assert all(not np.isnan(sparse[idx[p["a"]], idx[p["b"]]]) or not np.isnan(sparse[idx[p["b"]], idx[p["a"]]])
+               for p in highs)
+
+
+def test_the_low_band_is_strictly_below_the_median_when_enough_pairs_are():
+    # 40 names, 780 pairs: 290 below 0.5, 200 exactly at 0.5 (the median), 290 above.
+    n = 40
+    iu, ju = np.triu_indices(n, 1)
+    rng = np.random.default_rng(4)
+    vals = np.concatenate([rng.uniform(0.0, 0.4, 290), np.full(200, 0.5), rng.uniform(0.6, 1.0, 290)])
+    vals = rng.permutation(vals)
+    s = np.full((n, n), np.nan)
+    s[iu, ju] = vals
+    s[ju, iu] = vals
+    tickers = [f"T{i:02d}" for i in range(n)]
+    lows = [p for p in pair_sheet.generate(tickers, s, seed=3) if p["band"] == "low"]
+    assert all(p["score"] < 0.5 for p in lows)
+
+
+def _keyed_sheet(tmp_path, seed=7):
+    tickers, s = _matrix()
+    pairs = pair_sheet.generate(tickers, s, seed=seed)
+    sheet, key = tmp_path / "sheet.csv", tmp_path / "key.json"
+    pair_sheet.write_sheet(pairs, sheet, key, seed=seed, method="toy")
+    return pairs, sheet, key
+
+
+def _write_rows(sheet, rows):
+    with sheet.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=["pair_no", "a", "b", "related"])
+        w.writeheader()
+        w.writerows(rows)
+
+
+def _right(p):
+    return "y" if p["band"] == "high" else "n"
+
+
+def _wrong(p):
+    return "n" if p["band"] == "high" else "y"
+
+
+def test_one_correct_row_of_a_hundred_does_not_pass(tmp_path):
+    pairs, sheet, key = _keyed_sheet(tmp_path)
+    p = pairs[0]
+    _write_rows(sheet, [{"pair_no": p["pair_no"], "a": p["a"], "b": p["b"], "related": _right(p)}])
+    out = pair_sheet.score(sheet, key)
+    assert out["agreement"] == pytest.approx(1.0)
+    assert out["n_marked"] == 1 and out["n_unmarked"] == 99 and out["n_missing"] == 99
+    assert out["passes"] is None
+
+
+def test_a_duplicate_pair_number_is_refused(tmp_path):
+    pairs, sheet, key = _keyed_sheet(tmp_path)
+    rows = [{"pair_no": p["pair_no"], "a": p["a"], "b": p["b"], "related": _right(p)} for p in pairs]
+    _write_rows(sheet, rows + [rows[0]])
+    with pytest.raises(ValueError, match="more than once"):
+        pair_sheet.score(sheet, key)
+
+
+@pytest.mark.parametrize("n_wrong, passes", [(20, True), (21, False)])
+def test_a_full_sheet_passes_at_eighty_percent(tmp_path, n_wrong, passes):
+    pairs, sheet, key = _keyed_sheet(tmp_path)
+    rows = [{"pair_no": p["pair_no"], "a": p["a"], "b": p["b"],
+             "related": _wrong(p) if k < n_wrong else _right(p)} for k, p in enumerate(pairs)]
+    _write_rows(sheet, rows)
+    out = pair_sheet.score(sheet, key)
+    assert out["n_marked"] == 100 and out["n_missing"] == 0
+    assert out["n_agree"] == 100 - n_wrong and out["passes"] is passes

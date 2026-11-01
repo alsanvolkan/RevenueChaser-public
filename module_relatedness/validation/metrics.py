@@ -120,12 +120,15 @@ def theme_purity(themes: Mapping[str, object], industry_by: Mapping[str, str],
     """Size-weighted share of fine-theme members in their theme's modal GICS industry.
 
     ``themes`` maps theme id to ``{"label", "members"}`` (or a bare member list). A member with no industry is left
-    out of both the count and the size. Themes below ``floor`` are listed by label. Report only, never a gate.
+    out of both the count and the size. A theme with fewer than two classified members is pure by construction, so
+    it is left out and counted in ``n_singletons`` (review N5, #342). Themes below ``floor`` are listed by label.
+    Report only, never a gate.
     """
-    per_theme, below, num, den = {}, [], 0, 0
+    per_theme, below, num, den, singletons = {}, [], 0, 0, 0
     for tid, theme in themes.items():
         inds = [industry_by[m] for m in _members(theme) if industry_by.get(m)]
-        if not inds:
+        if len(inds) < 2:
+            singletons += bool(inds)
             continue
         modal = Counter(inds).most_common(1)[0][1]
         p = modal / len(inds)
@@ -135,8 +138,8 @@ def theme_purity(themes: Mapping[str, object], industry_by: Mapping[str, str],
         if p < floor:
             below.append(_label(tid, theme))
     purity = num / den if den else None
-    return {"purity": purity, "per_theme": per_theme, "below_floor": sorted(below), "target": target,
-            "floor": floor, "passes": None if purity is None else purity >= target}
+    return {"purity": purity, "per_theme": per_theme, "below_floor": sorted(below), "n_singletons": singletons,
+            "target": target, "floor": floor, "passes": None if purity is None else purity >= target}
 
 
 def etf_theme_recall(etf_sets, themes: Mapping[str, object], target: float = ETF_RECALL_TARGET) -> dict:

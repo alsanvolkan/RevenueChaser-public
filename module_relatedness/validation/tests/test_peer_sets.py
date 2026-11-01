@@ -113,3 +113,36 @@ def test_etf_holdings_from_store_reads_etf_holdings_only(rawstore_tmp_db):
     assert "XLK" not in out          # not one of the 29
     assert out["KRE"] == set()       # in the list, no holdings stored
     assert len(out) == 29
+
+
+def test_etf_holdings_from_store_never_applies_the_manifest(monkeypatch):
+    """Review S1 (#342): with RC_STORE_AUTO_ENSURE unset, a read must not create tables or columns."""
+    import duckdb
+
+    path = rawstore.DB_PATH                  # the per-test file from the autouse isolate_rawstore
+    con = duckdb.connect(str(path))
+    try:
+        con.execute("CREATE TABLE etf_holdings (ticker TEXT PRIMARY KEY, entry JSON, provider TEXT, "
+                    "fetched_at DOUBLE)")
+        con.execute("INSERT INTO etf_holdings VALUES ('SMH', '[{\"ticker\": \"NVDA\"}]', 'x', 1.0)")
+        con.execute("CREATE TABLE theme_runs (id TEXT PRIMARY KEY, created_at TEXT)")
+    finally:
+        con.close()
+
+    def shape():
+        c = duckdb.connect(str(path), read_only=True)
+        try:
+            return c.execute("SELECT table_name, column_name FROM information_schema.columns "
+                             "ORDER BY table_name, column_name").fetchall()
+        finally:
+            c.close()
+
+    before = shape()
+    monkeypatch.setenv("RC_STORE_AUTO_ENSURE", "1")   # recorded, so the teardown restores the session's value
+    monkeypatch.delenv("RC_STORE_AUTO_ENSURE")
+    monkeypatch.setattr(rawstore, "_ENSURED", {})
+    out = peer_sets.etf_holdings_from_store()
+    assert out["SMH"] == {"NVDA"}
+    assert shape() == before
+    import os
+    assert "RC_STORE_AUTO_ENSURE" not in os.environ      # the read put the caller's environment back

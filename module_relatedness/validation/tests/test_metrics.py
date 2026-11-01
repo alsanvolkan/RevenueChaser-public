@@ -192,3 +192,25 @@ def test_theme_runs_values_names_the_five_columns():
                     "val_etf_recall_medium": 0.6, "val_seed_ari": 0.95}
     empty = metrics.theme_runs_values({})
     assert all(v is None for v in empty.values())
+
+
+# ── review round 1 (#342): N1 tie order, N5 singleton themes ───────────────────────────────────────
+
+def test_top_k_breaks_ties_by_ticker():
+    tickers = ["Q", "D", "M", "B", "Z"]
+    s = np.full((5, 5), 0.5)
+    np.fill_diagonal(s, np.nan)
+    s[0, 4] = 0.9                       # Q's best peer is Z; D, M and B tie behind it
+    assert metrics.top_k(tickers, s, "Q", 4) == ["Z", "B", "D", "M"]
+    assert metrics.top_k(tickers, s, "Q", 2) == ["Z", "B"]
+
+
+def test_purity_leaves_out_single_member_themes_and_counts_them():
+    industry = {f"S{i}": f"Ind{i}" for i in range(8)}
+    industry.update({f"X{i}": f"Mix{i % 4}" for i in range(8)})
+    themes = {f"s{i}": {"label": f"solo {i}", "members": [f"S{i}"]} for i in range(8)}
+    themes["mixed"] = {"label": "Mixed", "members": [f"X{i}" for i in range(8)]}   # 2 of 8 per industry
+    out = metrics.theme_purity(themes, industry)
+    assert out["purity"] == pytest.approx(0.25)          # not (8 + 2) / 16 = 0.625
+    assert out["n_singletons"] == 8
+    assert "solo 0" not in out["below_floor"] and out["below_floor"] == ["Mixed"]
