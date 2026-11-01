@@ -116,7 +116,7 @@ _NEEDS = (
     # The numbers are the Earnings board's own, measured there: FRED posts the yield a day late, so a normal night
     # reads 1 or 2 sessions and 3 covers one missed night; the volatility indices are daily too; the CFTC publishes
     # on a Friday the positions held the Tuesday before, so a current night already reads a ~6-session-old row.
-    # Four needs over one table, so each names the series it is about (the review's C2). Without that filter every
+    # Five needs over one table, so each names the series it is about (the review's C2). Without that filter every
     # one of them counted the whole table and a series that had stopped updating still read ``fresh``. The ids are
     # the ones the boards ask for: ``core.rotation_reference.MACRO_SERIES["US10Y"]`` for the yield,
     # ``module_spx_gamma/store_reads.VIX_SERIES`` for the volatility indices, and the E-mini S&P 500 contract of the
@@ -130,6 +130,10 @@ _NEEDS = (
          filter_values=("VIX", "VIX9D", "VIX3M", "VIX6M", "VIX1Y", "VVIX"), providers=("yfinance",)),
     Need("market.cot", "market_series", "market_series", "obs_date", "series_id", 10, ask_param="series_ids",
          filter_prefix="cftc:tff:13874A:", providers=("cftc",)),
+    # Cboe's SPX closes, SPX Gamma's 8-week candle window (#330): the need names the series so the board never
+    # does. Daily like the VIX family, so the same 3 sessions.
+    Need("market.spx_close", "market_series", "market_series", "obs_date", "series_id", 3, ask_param="series_ids",
+         filter_values=("SPX",), providers=("cboe",)),
     # The one need without a filter: the caller names the series it wants, and must (``ask_required``), because
     # the reader answers nothing otherwise and the envelope would call a full table missing. Its window is the
     # generic 3, so the same observation can read ``stale`` here and ``fresh`` through ``macro.dgs10`` (4): a need
