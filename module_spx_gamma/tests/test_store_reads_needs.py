@@ -61,7 +61,8 @@ def test_the_cot_ask_ends_release_days_before_the_day_so_only_released_reports_a
 
 
 def test_the_board_names_no_series_id_and_calls_no_reader_of_its_own():
-    """The four reads go through needs.ask; ``rcdata.read`` is left for the dataset status only."""
+    """The four reads go through needs.ask; what remains of ``rcdata.read`` is the ``NEVER_CHECKED`` constant (the
+    status itself comes from ``ops``)."""
     source = Path(store_reads.__file__).read_text(encoding="utf-8")
     for call in ("read.market_series(", "read.spx_expiry_strike(", '["SPX"]'):
         assert call not in source, call
@@ -110,3 +111,71 @@ def test_the_boards_caret_map_covers_exactly_the_series_the_vix_need_names():
     the whole family into "not stored", so the two lists are one."""
     assert set(needs.NEEDS["market.vix"].filter_values) == set(store_reads.VIX_SERIES)
     assert needs.NEEDS["market.cot"].filter_prefix == store_reads.COT_PREFIX
+
+
+# ── review of 1e1b250 (#334): days outside the calendar's holiday table keep their data ──
+
+HISTORY_DAY = date(2024, 10, 25)      # a Friday the UW history pull covers; the holiday table starts in 2025
+
+
+@pytest.fixture
+def a_2024_store(monkeypatch):
+    """Readers answering rows for 25 Oct 2024 (and the 2029 day), as a store built from Cboe's 1975- file would."""
+    from RevenueChaser.rcdata import read
+
+    def series(series_ids=(), start=None, end=None, prefix=None):
+        days = [d for d in (date(2024, 10, 24), HISTORY_DAY, date(2029, 3, 1), date(2029, 3, 2))
+                if (start is None or d >= start) and (end is None or d <= end)]
+        return [{"series_id": "SPX", "obs_date": d, "value": 5800.0 + d.day, "close": None, "status": "changed",
+                 "source": "cboe", "source_as_of": d} for d in days]
+
+    def strikes(session_date, min_dte=0, max_dte=1):
+        return [{"session_date": session_date, "expiry": session_date, "strike": 5800.0, "call_gamma_oi": 1e9,
+                 "put_gamma_oi": -2e8, "snapshot_time": "2024-10-25T20:15:00Z", "status": "changed",
+                 "source_as_of": session_date}]
+    monkeypatch.setattr(read, "market_series", series)
+    monkeypatch.setattr(read, "spx_expiry_strike", strikes)
+
+
+@pytest.mark.usefixtures("a_2024_store")
+@pytest.mark.parametrize("day", [HISTORY_DAY, date(2029, 3, 2)])
+def test_spx_closes_of_a_day_outside_the_holiday_table_are_kept(day):
+    out = store_reads.spx_candles(day)
+    assert out["stored"] is True and out["rows"][-1]["date"] == day.isoformat(), out["label"]
+
+
+@pytest.mark.usefixtures("a_2024_store")
+def test_the_0_1_dte_slice_of_a_2024_day_is_kept():
+    out = store_reads.zero_one_dte_dollars(HISTORY_DAY)
+    assert out["stored"] is True and out["dollars"] == {5800.0: 8e8}, out["label"]
+
+
+@pytest.mark.usefixtures("a_2024_store")
+def test_history_mode_finds_the_stored_close_of_a_2024_day():
+    """The history pull reads its spot from the stored close; without it the day is skipped_no_close."""
+    from RevenueChaser.module_spx_gamma import snapshot
+    assert snapshot._stored_close(snapshot.stored_spx_candles, "SPX", HISTORY_DAY.isoformat()) == 5800.0 + 25
+
+
+@pytest.mark.usefixtures("a_2024_store")
+def test_vix_and_cot_outside_the_table_stay_not_stored_with_no_reason_as_before():
+    """The lag cannot be counted, so the two readers that judge it say "not stored", as _sessions_after did."""
+    assert store_reads.vix_family(HISTORY_DAY)["label"] == "VIX family not stored for 2024-10-25"
+    assert store_reads.cot_tff(HISTORY_DAY)["label"] == "CFTC COT not stored for 2024-10-25"
+
+
+def test_a_failed_row_read_is_read_failed_and_does_not_retry_the_previous_session(rcdata_market, monkeypatch):
+    """Should-fix 3: with the market file there, a sqlite3 error comes from the row read itself (read._rows reads the
+    status with the rows). The old board said "read failed" and stopped; A3 retries only on no rows."""
+    import sqlite3
+
+    from RevenueChaser.rcdata import read
+    calls = []
+
+    def locked(*a, **k):
+        calls.append(a)
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(read, "spx_expiry_strike", locked)
+    out = store_reads.zero_one_dte_dollars(date(2026, 10, 27))                  # not closed: A3 would apply
+    assert out["stored"] is False and "read failed: OperationalError: database is locked" in out["label"]
+    assert "status unknown" not in out["label"] and len(calls) == 1

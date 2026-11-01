@@ -33,7 +33,7 @@ import sqlite3
 from datetime import date, timedelta
 
 from RevenueChaser.core import calendar
-from RevenueChaser.rcdata import needs, ops, read
+from RevenueChaser.rcdata import needs, ops, read, serving
 from RevenueChaser.rcdata.needs.catalog import FromCatalog
 
 from .candles import window_lag, window_start
@@ -92,9 +92,17 @@ def _stale(ans, obs: date, kind: str) -> bool:
     The envelope counts the lag from the newest day its rows carry. The board reads the newest day of one series of
     the need (VIX's own close, not a sibling's), which is that day unless a sibling series is newer; then the lag is
     counted from the board's day with the envelope's own count, so the rule stays "the observation the board shows".
+
+    A lag the calendar cannot count (a day outside its holiday table: the envelope's ``lag_reason``) is stale, so the
+    input reads "not stored" as the board's old ``_sessions_after`` had it.
     """
     f = ans.freshness
-    lag = f["lag_sessions"] if f["as_of_session"] == obs else needs.lag_in(f["unit"], obs, f["reference"])
+    if f.get("lag_reason"):
+        return True
+    try:
+        lag = f["lag_sessions"] if f["as_of_session"] == obs else needs.lag_in(f["unit"], obs, f["reference"])
+    except ValueError:
+        return True
     return lag is None or lag > MAX_LAG[kind]
 
 
@@ -166,12 +174,17 @@ def _with_board_status(dataset: str):
 def _expiry_strike(session: date, day: date) -> tuple[list[dict], str | None, str | None]:
     """``(rows, status, note)`` of one session's 0-1 DTE slice, judged from the board's ``day``.
 
-    With no rows the envelope reads the dataset's status from ``ops.sqlite``; a broken file there (locked, stamped
-    newer, corrupt) is a note on the "not stored" marker, never a failed board (review SF3).
+    Review SF3: with no serving file yet the reader answers no rows without touching ``ops.sqlite``, and the
+    envelope then reads the dataset's status from it; a broken file there (locked, stamped newer, corrupt) is a note
+    on the "not stored" marker, never a failed board, and A3 may still look at the previous session. With the file
+    there, ``read._rows`` reads the status together with the rows, so the same error is the row read failing: it
+    goes up as "read failed" and stops, as the board's direct read always did (#334 review, should-fix 3).
     """
     try:
         ans = needs.ask("market.spx_expiry_strike", as_of=day, session_date=session, min_dte=0, max_dte=1)
     except sqlite3.Error as exc:
+        if serving.live_path(needs.NEEDS["market.spx_expiry_strike"].kind).exists():
+            raise
         return [], None, f"status unknown, {_failed(exc)}"
     return ans.rows, ans.status, None
 
