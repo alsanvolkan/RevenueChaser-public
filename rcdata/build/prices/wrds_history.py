@@ -474,6 +474,18 @@ PERMNO_LINK = """
     SELECT permno, security_id, how FROM best
     QUALIFY row_number() OVER (PARTITION BY security_id ORDER BY rule, last DESC, permno) = 1"""
 
+# Compustat's ``gvkey:iid`` of a PERMNO whose own link is a security the spine names otherwise (``figi:``, ``cik:``,
+# ``sym:``: the ETFs), when the PERMNO's CUSIP matches it and the spine holds no such ``gvkey:iid``. Its Compustat bars,
+# actions and revisions are served as that security's, so one fund is one security (review S2 of #353; ``serving``
+# makes it the temp table ``_gvkey_alias`` after ``_permno_link``). One security per ``gvkey:iid``.
+GVKEY_ALIAS = """
+    WITH c AS (SELECT DISTINCT permno, left(cusip, 8) AS c8 FROM stg_wrds_dsf WHERE cusip IS NOT NULL),
+    comp AS (SELECT DISTINCT gvkey || ':' || iid AS gid, left(cusip, 8) AS c8 FROM stg_wrds_secd WHERE cusip IS NOT NULL)
+    SELECT m.gid, l.security_id FROM _permno_link l JOIN c USING (permno) JOIN comp m USING (c8)
+    WHERE (l.security_id LIKE 'figi:%' OR l.security_id LIKE 'cik:%' OR l.security_id LIKE 'sym:%')
+      AND m.gid NOT IN (SELECT security_id FROM stg_spine WHERE security_id IS NOT NULL)
+    QUALIFY row_number() OVER (PARTITION BY m.gid ORDER BY l.security_id) = 1"""
+
 # Every history bar of both sources (``PRICE_BAR``'s columns, then the source's own day return and the previous
 # session it is over): ``prices/serving`` serves one per session (CRSP first) and compares them all.
 CRSP_BARS = f"""
@@ -484,7 +496,8 @@ CRSP_BARS = f"""
            dlyret AS own_return, 1 AS priority
     FROM stg_wrds_dsf d LEFT JOIN _permno_link l USING (permno) WHERE dlyprc IS NOT NULL AND dlyprc <> 0"""
 COMP_BARS = f"""
-    SELECT gvkey || ':' || iid AS security_id, datadate AS session_date, replace(upper(tic), '.', '-') AS symbol,
+    SELECT coalesce((SELECT a.security_id FROM _gvkey_alias a WHERE a.gid = gvkey || ':' || iid), gvkey || ':' || iid)
+               AS security_id, datadate AS session_date, replace(upper(tic), '.', '-') AS symbol,
            CAST(NULL AS TEXT) AS cik, prcod AS open, prchd AS high, prcld AS low, prccd AS close, cshtrd AS volume,
            CAST(NULL AS DOUBLE) AS vwap, CAST(NULL AS BIGINT) AS trade_count, cshoc AS shares_outstanding,
            '{COMPUSTAT}' AS source, source_as_of, fetched_at, run_id, {COMP_RETURN} AS own_return, 2 AS priority
@@ -492,7 +505,7 @@ COMP_BARS = f"""
     WINDOW w AS (PARTITION BY gvkey, iid ORDER BY datadate)"""
 
 # Compustat's splits and dividends in the shape of ``_act`` (the Alpaca actions' columns, by name).
-ACTIONS_SQL = f"""
+_ACTIONS = f"""
     SELECT gvkey || ':' || iid AS security_id, 'wrds:split:' || gvkey || ':' || iid || ':' || CAST(datadate AS TEXT) AS action_id,
            CASE WHEN split < 1 THEN 'reverse_split' ELSE 'forward_split' END AS action_type, datadate AS ex_date,
            datadate AS eff, 1.0 AS old_rate, split AS new_rate, CAST(NULL AS DOUBLE) AS rate, false AS special,
@@ -509,12 +522,17 @@ ACTIONS_SQL = f"""
            datadate, NULL, NULL, divsp, true, coalesce(curcddv, 'USD'), recorddate, paydate, '{NAME}', source_as_of,
            fetched_at, run_id
     FROM stg_wrds_divid WHERE divsp > 0"""
+# The actions served: a ``gvkey:iid`` that ``_gvkey_alias`` names is its security's (review S2 of #353).
+ACTIONS_SQL = f"""
+    SELECT coalesce(a.security_id, w.security_id) AS security_id, w.* EXCLUDE (security_id)
+    FROM ({_ACTIONS}) w LEFT JOIN _gvkey_alias a ON a.gid = w.security_id"""
 
 # The revisions of the history bars, keyed on their security (a CRSP one through ``_permno_link``).
 REVISIONS_SQL = f"""
     SELECT CASE WHEN r.source = '{CRSP}' THEN coalesce(
                (SELECT l.security_id FROM _permno_link l WHERE l.permno = r.security_key), 'permno:' || r.security_key)
-           ELSE r.security_key END AS security_id, r.session_date, r.symbol, r.open, r.high, r.low, r.close, r.volume,
+           ELSE coalesce((SELECT a.security_id FROM _gvkey_alias a WHERE a.gid = r.security_key), r.security_key)
+           END AS security_id, r.session_date, r.symbol, r.open, r.high, r.low, r.close, r.volume,
            r.source, r.fetched_at, r.run_id, r.revised_at, r.revised_by
     FROM stg_wrds_revisions r"""
 

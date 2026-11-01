@@ -295,6 +295,37 @@ def test_a_ticker_never_hands_a_delisted_names_history_to_the_listing_that_took_
     assert got == {"60003": ("figi:GOOD", "ticker"), "60004": ("012345:01", "ticker")}
 
 
+def test_compustat_bars_of_a_permnos_gvkey_join_the_security_its_crsp_bars_won():
+    """Review S2 of #353: an ETF the spine names by FIGI links its PERMNO by ticker, and Compustat holds the same
+    fund under a gvkey:iid (the CUSIP matches). Its Compustat bars and actions must join the FIGI security, not stay
+    a second security with a bar on every day CRSP has one."""
+    con = duckdb.connect()
+    con.execute("CREATE TABLE stg_wrds_dsf (permno TEXT, dlycaldt DATE, hdrcusip TEXT, cusip TEXT, ticker TEXT)")
+    con.execute(f"INSERT INTO stg_wrds_dsf VALUES ('84398', '{END}', '78462F10', '78462F10', 'SPY')")
+    con.execute("CREATE TABLE stg_spine (security_id TEXT, ticker TEXT, cusip TEXT, is_etf BOOLEAN, inception DATE)")
+    con.execute("INSERT INTO stg_spine VALUES ('figi:BBG000BDTBL9', 'SPY', NULL, true, '1993-01-22'), "
+                "('001690:01', 'AAPL', '037833100', false, NULL)")
+    con.execute("CREATE TABLE stg_wrds_secd (gvkey TEXT, iid TEXT, datadate DATE, tic TEXT, cusip TEXT, curcdd TEXT, "
+                "prccd DOUBLE, prcod DOUBLE, prchd DOUBLE, prcld DOUBLE, cshtrd DOUBLE, cshoc DOUBLE, ajexdi DOUBLE, "
+                "trfd DOUBLE, source_as_of DATE, fetched_at DOUBLE, run_id TEXT)")
+    for gvkey, tic, cusip in (("001000", "SPY", "78462F103"), ("001690", "AAPL", "037833100")):
+        con.execute("INSERT INTO stg_wrds_secd VALUES (?, '01', ?, ?, ?, 'USD', 400, 400, 401, 399, 1, 1, 1, 1, "
+                    "NULL, NULL, NULL)", [gvkey, END, tic, cusip])
+    con.execute(f"CREATE TEMP TABLE _permno_link AS {wrds_history.PERMNO_LINK}")
+    con.execute(f"CREATE TEMP TABLE _gvkey_alias AS {wrds_history.GVKEY_ALIAS}")
+    got = sorted(con.execute(f"SELECT security_id, symbol FROM ({wrds_history.COMP_BARS})").fetchall())
+    assert got == [("001690:01", "AAPL"), ("figi:BBG000BDTBL9", "SPY")], "SPY's Compustat bar is the FIGI's own"
+    con.execute("CREATE TABLE stg_wrds_split (gvkey TEXT, iid TEXT, datadate DATE, split DOUBLE, source_as_of DATE, "
+                "fetched_at DOUBLE, run_id TEXT)")
+    con.execute("CREATE TABLE stg_wrds_divid (gvkey TEXT, iid TEXT, datadate DATE, divd DOUBLE, div DOUBLE, "
+                "divsp DOUBLE, curcddv TEXT, recorddate DATE, paydate DATE, source_as_of DATE, fetched_at DOUBLE, "
+                "run_id TEXT)")
+    con.execute(f"INSERT INTO stg_wrds_divid VALUES ('001000', '01', '{END}', 1.5, NULL, NULL, 'USD', NULL, NULL, "
+                "NULL, NULL, NULL)")
+    acts = con.execute(f"SELECT security_id FROM ({wrds_history.ACTIONS_SQL})").fetchall()
+    assert acts == [("figi:BBG000BDTBL9",)], "and so is its Compustat dividend"
+
+
 # ── Compustat's own adjusted return: the ajexdi/trfd rule ─────────────────────────────────────────────────────
 
 def test_compustat_adjusted_return_is_the_true_total_return_within_1bp():

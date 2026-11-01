@@ -242,6 +242,7 @@ CREATE OR REPLACE TEMP TABLE _act AS
              QUALIFY row_number() OVER (PARTITION BY action_id ORDER BY pri, dist, security_id) = 1)
     SELECT best.security_id, a.*, '{actions}' AS source FROM a JOIN best USING (action_id);
 CREATE OR REPLACE TEMP TABLE _permno_link AS {link};
+CREATE OR REPLACE TEMP TABLE _gvkey_alias AS {alias};
 CREATE OR REPLACE TEMP TABLE _hist_all AS
     SELECT * FROM ({crsp}) UNION ALL BY NAME SELECT * FROM ({comp});
 """
@@ -287,7 +288,8 @@ class PricesServing:
                 found.append(("source_never_run", ds, f"{ds} has no rows in this build"))
         _spine(con)
         con.execute(BUILD_SQL.format(bars=ALPACA_BARS, actions=ALPACA_ACTIONS, crsp=wrds_history.CRSP_BARS,
-                                     comp=wrds_history.COMP_BARS, link=wrds_history.PERMNO_LINK))
+                                     comp=wrds_history.COMP_BARS, link=wrds_history.PERMNO_LINK,
+                                     alias=wrds_history.GVKEY_ALIAS))
         counts = {}
         cols = ", ".join(c for c, _ in PRICE_BAR)
         # Alpaca's bar wins its session; of the history bars, CRSP's before Compustat's.
