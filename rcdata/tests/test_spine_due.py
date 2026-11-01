@@ -22,7 +22,7 @@ def clock(monkeypatch):
 
 
 def test_every_spine_dataset_starts_by_hand():
-    assert len(SPINE) == 7 and all(getattr(DATASETS[n], "starts_by_hand", False) for n in SPINE)
+    assert len(SPINE) == 8 and all(getattr(DATASETS[n], "starts_by_hand", False) for n in SPINE)
     assert not any(getattr(DATASETS[n], "starts_by_hand", False) for n in ("market_series", "uw/spot_expiry_strike"))
 
 

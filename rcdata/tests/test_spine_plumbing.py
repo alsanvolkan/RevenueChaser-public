@@ -57,8 +57,9 @@ def fake(monkeypatch):
     return ds
 
 
-def test_spine_is_a_serving_kind_of_version_1():
-    assert serving.SERVING_SCHEMA_VERSION["spine"] == 1
+def test_spine_is_a_serving_kind_of_version_2():
+    """2 since ``fund`` joined it (``sec/company_tickers_mf``, #320)."""
+    assert serving.SERVING_SCHEMA_VERSION["spine"] == 2
     assert "spine" in serving.KINDS
     assert serving.live_path("spine").name == "spine.duckdb"
 

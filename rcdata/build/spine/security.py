@@ -46,6 +46,7 @@ from . import KIND, stage, tier as tier_rule, views
 from .funds import NAME as FUNDS
 from .openfigi_map import NAME as OPENFIGI, PRESENT
 from .sec_tickers import NAME as SEC
+from .sec_tickers_mf import NAME as SEC_MF
 from .wrds import CO_HGIC, IDXCST_HIS, INDEX_GVKEYX, SEC_IDHIST, norm_cik
 
 NAME = "spine/security"
@@ -307,7 +308,8 @@ class SpineSecurity:
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         found: list[tuple[str, str, str]] = []
-        have = {SEC: stage.count(con, "stg_sec"), SEC_IDHIST.name: stage.count(con, "stg_wrds_company"),
+        have = {SEC: stage.count(con, "stg_sec"), SEC_MF: stage.count(con, "stg_sec_mf"),
+                SEC_IDHIST.name: stage.count(con, "stg_wrds_company"),
                 CO_HGIC.name: stage.count(con, "stg_wrds_hgic"), IDXCST_HIS.name: stage.count(con, "stg_wrds_idx"),
                 OPENFIGI: stage.count(con, "stg_figi"), FUNDS: stage.count(con, "stg_fund_lines")}
         for ds, n in have.items():
