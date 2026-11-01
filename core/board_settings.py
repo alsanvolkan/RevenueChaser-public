@@ -217,7 +217,7 @@ def _no_rules(_v: dict) -> list[str]:
 
 #: The control board's universe (Settings / Data, design v28): which sets of names the board's Fetch and Fill presses
 #: ask for, and which named groups a narrowed press asks for besides them. Each is a bit mask, so one row holds the
-#: whole choice: a set's bit in the order of ``rcdata.api.screen.UNIVERSE_SETS`` (A, the funds of B, the rest of B),
+#: whole choice: a set's bit in the order of ``rcdata.needs.screen.UNIVERSE_SETS`` (A, the funds of B, the rest of B),
 #: a group's in the order of ``rcdata.build.base.SCOPE_GROUPS``. A press drafts; Apply saves here (Karar 86 A).
 UNIVERSE_SET_BITS = {"A": 1, "E": 2, "R": 4}
 UNIVERSE_INCLUDE_BITS = {"anchors": 1, "watchlist": 2, "cover_classes": 4}

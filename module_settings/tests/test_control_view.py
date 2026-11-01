@@ -10,7 +10,7 @@ import pytest
 from RevenueChaser.core.tests.board_fixtures import newdata_fixture
 from RevenueChaser.module_settings import control, newdata
 from RevenueChaser.rcdata import scaffold, serving
-from RevenueChaser.rcdata.api import screen
+from RevenueChaser.rcdata.needs import screen
 
 NOW = datetime(2026, 10, 30, 17, 31, tzinfo=timezone.utc)
 

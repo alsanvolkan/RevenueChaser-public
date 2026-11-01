@@ -43,8 +43,8 @@ _NEED_OF_LAG = {"dgs10": "macro.dgs10"}
 
 def max_lag() -> dict[str, int]:
     """``{input: sessions it may lag by}``, read from the need catalog on every call."""
-    from RevenueChaser.rcdata import api
-    return {key: api.catalog.NEEDS[need].max_lag for key, need in _NEED_OF_LAG.items()}
+    from RevenueChaser.rcdata import needs
+    return {key: needs.catalog.NEEDS[need].max_lag for key, need in _NEED_OF_LAG.items()}
 
 
 class _FromCatalog(Mapping):
@@ -104,10 +104,10 @@ _NEED_OF_AGE = {"estimates": "fundamentals.estimates"}
 
 def max_age_days() -> dict[str, int]:
     """``{input: calendar days it may be old}``, read from the need catalog on every call."""
-    from RevenueChaser.rcdata import api
+    from RevenueChaser.rcdata import needs
     out = {}
     for key, name in _NEED_OF_AGE.items():
-        need = api.catalog.NEEDS[name]
+        need = needs.catalog.NEEDS[name]
         if need.max_lag_unit != "days":
             raise ValueError(f"{name}: this reader counts calendar days, the catalog says {need.max_lag_unit}")
         out[key] = need.max_lag

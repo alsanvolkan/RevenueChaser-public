@@ -214,15 +214,15 @@ def test_the_read_limits_are_part_of_the_earnings_model_version(monkeypatch):
     this test moves it. Setting it on the reader is refused outright, which is the point: a second copy cannot be
     introduced by accident, and the hash cannot go on claiming nothing changed."""
     from RevenueChaser.module_earnings_radar import history as er_history
-    from RevenueChaser.rcdata import api
+    from RevenueChaser.rcdata import needs
     config = er_history.effective_config()
     assert config["MAX_LAG"]["dgs10"] == store_reads.MAX_LAG["dgs10"]
     assert config["MAX_AGE_DAYS"] == store_reads.max_age_days()
     with pytest.raises(TypeError):
         store_reads.MAX_AGE_DAYS["estimates"] = 99
     before = er_history.model_version()
-    need = api.catalog.NEEDS["fundamentals.estimates"]
-    monkeypatch.setitem(api.catalog.NEEDS, "fundamentals.estimates",
+    need = needs.catalog.NEEDS["fundamentals.estimates"]
+    monkeypatch.setitem(needs.catalog.NEEDS, "fundamentals.estimates",
                         type(need)(**{**need.__dict__, "max_lag": need.max_lag + 1}))
     assert store_reads.MAX_AGE_DAYS["estimates"] == need.max_lag + 1
     assert er_history.model_version() != before

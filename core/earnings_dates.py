@@ -10,7 +10,7 @@ Since G6 the first source is ``options.duckdb``'s ``option_screener_daily`` (``u
 calendar endpoints, every name reporting in the 28 days after its session.
 
 Since the internal data API (step B) the two sources are **one ordered union**, not a choice. The layer is asked
-through ``api.get("earnings.next")``; the stored D26 calendar then fills in every name the layer does not hold, and
+through ``needs.ask("earnings.next")``; the stored D26 calendar then fills in every name the layer does not hold, and
 Yahoo's own value stays for whatever neither holds. Before this, a fresh layer session returned early and a name
 only the D26 sweep had a date for silently lost it, although the two sources cover different names.
 
@@ -44,16 +44,16 @@ def next_dates_answer(today: date | None = None):
     """
     import dataclasses
 
-    from RevenueChaser.rcdata import api
+    from RevenueChaser.rcdata import needs
 
     today = today or calendar.today_ny()
-    need = api.catalog.NEEDS[NEED]
+    need = needs.catalog.NEEDS[NEED]
     try:
-        ans = api.get(NEED)
+        ans = needs.ask(NEED)
     except Exception as exc:  # noqa: BLE001 - the D26 store is the fallback, as before the API
         logger.warning("the options layer's earnings calendar could not be read (%s); the stored D26 calendar is "
                        "read", exc)
-        ans = api.Answer(need=NEED, rows=[], state="missing", status="unreadable",
+        ans = needs.Answer(need=NEED, rows=[], state="missing", status="unreadable",
                          freshness={"as_of_session": None, "lag_sessions": None,
                                     "max_lag": need.max_lag, "unit": need.max_lag_unit},
                          coverage={"asked": 0, "served": 0, "missing": [], "from_fallback": 0}, provenance=[])
@@ -68,11 +68,11 @@ def stored_next_dates(today: date | None = None) -> dict[str, date]:
     """``{ticker: next earnings date on or after today}``: the layer's calendar, then the stored D26 one for the names
     the layer does not hold. ``{}`` when neither source answers; never an error."""
     today = today or calendar.today_ny()      # the New York date: after midnight in Amsterdam it is still yesterday there
-    from RevenueChaser.rcdata import api
+    from RevenueChaser.rcdata import needs
 
-    need = api.catalog.NEEDS[NEED]
+    need = needs.catalog.NEEDS[NEED]
     try:
-        ans = api.get(NEED)
+        ans = needs.ask(NEED)
         layer = _layer_dates(ans, today, need)
     except Exception as exc:  # noqa: BLE001 - the D26 store is the fallback, as before the API
         logger.warning("the options layer's earnings calendar could not be read (%s); the stored D26 calendar is "
@@ -88,11 +88,11 @@ def _layer_dates(ans, today: date, need) -> dict[str, date]:
     session = ans.freshness["as_of_session"]
     if session is None or session > today:
         return {}
-    from RevenueChaser.rcdata import api
+    from RevenueChaser.rcdata import needs
 
     # The lag is counted against the day the API counts it against, not against ``today``: on a trading day whose
     # session is not over yet those differ by one, and the card and the filter would disagree (review I1).
-    if api.lag_in(need.max_lag_unit, session, max(api.reference_session(), session)) > need.max_lag:
+    if needs.lag_in(need.max_lag_unit, session, max(needs.reference_session(), session)) > need.max_lag:
         return {}
     # One row per session and ticker (the table's key), so a name has one report date in the session.
     return {str(r["ticker"]).strip().upper(): r["report_date"] for r in ans.rows

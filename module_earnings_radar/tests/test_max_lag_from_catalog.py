@@ -9,12 +9,12 @@ from __future__ import annotations
 import pytest
 
 from RevenueChaser.module_earnings_radar import history, stored_inputs
-from RevenueChaser.rcdata import api
+from RevenueChaser.rcdata import needs
 
 
 def test_every_limit_with_a_need_is_the_needs_own_number():
     for table, need_name in stored_inputs.NEED_OF_TABLE.items():
-        need = api.catalog.NEEDS[need_name]
+        need = needs.catalog.NEEDS[need_name]
         assert stored_inputs.MAX_LAG[table] == need.max_lag, f"{table}: not the catalog's number"
         assert need.max_lag_unit == "sessions", f"{need_name}: MAX_LAG counts sessions"
 
@@ -33,8 +33,8 @@ def test_a_limit_cannot_be_set_on_the_board():
 def test_moving_a_catalog_number_moves_the_board(monkeypatch):
     """The point of one owner: a catalog change reaches the hash instead of being swallowed."""
     before = history.model_version()
-    need = api.catalog.NEEDS["earnings.next"]
-    monkeypatch.setitem(api.catalog.NEEDS, "earnings.next", type(need)(**{**need.__dict__, "max_lag": need.max_lag + 7}))
+    need = needs.catalog.NEEDS["earnings.next"]
+    monkeypatch.setitem(needs.catalog.NEEDS, "earnings.next", type(need)(**{**need.__dict__, "max_lag": need.max_lag + 7}))
     assert stored_inputs.max_lag_map()["earnings_calendar"] == need.max_lag + 7
     assert history.model_version() != before
 

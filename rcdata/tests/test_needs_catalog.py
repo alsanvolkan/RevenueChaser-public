@@ -9,19 +9,19 @@ from datetime import date
 
 import pytest
 
-from RevenueChaser.rcdata import api, read
+from RevenueChaser.rcdata import needs, read
 
 
 def test_every_need_points_at_a_read_function():
-    assert api.catalog.NEEDS, "the catalog is empty"
-    for name, need in api.catalog.NEEDS.items():
+    assert needs.catalog.NEEDS, "the catalog is empty"
+    for name, need in needs.catalog.NEEDS.items():
         assert need.name == name
         assert getattr(read, need.reader_name, None) is need.reader, \
             f"{name}: reader is not rcdata.read.{need.reader_name}"
 
 
-def test_the_api_package_writes_no_sql():
-    root = pathlib.Path(api.__file__).parent
+def test_the_needs_package_writes_no_sql():
+    root = pathlib.Path(needs.__file__).parent
     for path in sorted(root.glob("*.py")):
         text = path.read_text(encoding="utf-8").upper()
         for word in ("SELECT ", "INSERT ", "UPDATE ", "DELETE FROM", "CREATE TABLE"):
@@ -29,9 +29,9 @@ def test_the_api_package_writes_no_sql():
 
 
 def test_every_need_names_its_freshness_in_one_place():
-    for name, need in api.catalog.NEEDS.items():
+    for name, need in needs.catalog.NEEDS.items():
         assert isinstance(need.max_lag, int) and need.max_lag >= 0, f"{name}: no max_lag"
-        assert need.max_lag_unit in api.catalog.UNITS, f"{name}: {need.max_lag_unit!r} is not a unit"
+        assert need.max_lag_unit in needs.catalog.UNITS, f"{name}: {need.max_lag_unit!r} is not a unit"
         assert need.kind and need.key_column, f"{name}: an empty catalog field"
         # ``dataset`` is None for a table several datasets write: there each row carries its own source's status.
         assert need.dataset is None or need.dataset, f"{name}: an empty dataset"
@@ -40,19 +40,19 @@ def test_every_need_names_its_freshness_in_one_place():
 
 
 def test_unknown_need_is_an_error():
-    with pytest.raises(api.UnknownNeed):
-        api.get("prices.nope")
+    with pytest.raises(needs.UnknownNeed):
+        needs.ask("prices.nope")
 
 
 def test_fill_is_not_supported_yet():
-    with pytest.raises(api.FillNotSupported):
-        api.get("identity.universe", fill="if_stale")
-    with pytest.raises(api.FillNotSupported):
-        api.get("identity.universe", fill="wait")
+    with pytest.raises(needs.FillNotSupported):
+        needs.ask("identity.universe", fill="if_stale")
+    with pytest.raises(needs.FillNotSupported):
+        needs.ask("identity.universe", fill="wait")
 
 
 def test_nothing_built_yet_is_missing_never_an_error():
-    ans = api.get("identity.universe")
+    ans = needs.ask("identity.universe")
     assert ans.rows == [] and ans.state == "missing" and ans.fill is None
     assert ans.coverage["served"] == 0 and ans.freshness["as_of_session"] is None
     assert ans.status == read.NEVER_CHECKED
@@ -61,10 +61,10 @@ def test_nothing_built_yet_is_missing_never_an_error():
 def test_the_lag_is_counted_in_sessions_not_calendar_days():
     # Friday 23 Oct 2026 to Monday 26 Oct: three calendar days, one session. Thanksgiving week: Wed 25 Nov to
     # Friday 27 Nov is two calendar days and one session, because the Thursday is a holiday.
-    assert api.lag_sessions(date(2026, 10, 23), date(2026, 10, 26)) == 1
-    assert api.lag_sessions(date(2026, 11, 25), date(2026, 11, 27)) == 1
-    assert api.lag_sessions(date(2026, 10, 26), date(2026, 10, 26)) == 0
-    assert api.lag_sessions(date(2026, 10, 27), date(2026, 10, 26)) == 0   # rows newer than the reference
+    assert needs.lag_sessions(date(2026, 10, 23), date(2026, 10, 26)) == 1
+    assert needs.lag_sessions(date(2026, 11, 25), date(2026, 11, 27)) == 1
+    assert needs.lag_sessions(date(2026, 10, 26), date(2026, 10, 26)) == 0
+    assert needs.lag_sessions(date(2026, 10, 27), date(2026, 10, 26)) == 0   # rows newer than the reference
 
 
 def test_a_summary_of_a_table_with_no_serving_file_is_empty_never_an_error():
@@ -89,7 +89,7 @@ def test_every_needs_day_and_key_column_is_a_real_column():
     """A catalog typo is a wrong answer, not an error: ``max(no_such_column)`` would simply never look fresh."""
     served = _served_columns()
     assert served, "no serving kind declares its tables any more"
-    for name, need in api.catalog.NEEDS.items():
+    for name, need in needs.catalog.NEEDS.items():
         cols = served.get(need.table)
         assert cols, f"{name}: {need.table} is not a table any serving file declares"
         if need.day_column is not None:
