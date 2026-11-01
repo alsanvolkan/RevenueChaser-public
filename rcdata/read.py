@@ -37,7 +37,7 @@ KIND_OF_TABLE.update({t: "ownership" for t in ("sec13f_ticker_period", "sec13f_p
 
 
 def dataset_status(dataset: str) -> str:
-    check = ops.latest_check(dataset)
+    check = ops.read_latest_check(dataset)      # never creates ops.sqlite: a page read (#336)
     return check["result"] if check else NEVER_CHECKED
 
 

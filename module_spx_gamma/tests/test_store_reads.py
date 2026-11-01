@@ -254,3 +254,20 @@ def test_only_skipped_checks_read_as_never_built(rcdata_market):
     ops.record_check("uw/spot_expiry_strike", "skipped", note="paused by avo")
     zod = store_reads.zero_one_dte_dollars(fx.LAST)
     assert zod["status"] == read.NEVER_CHECKED and "last run skipped (paused by avo)" in zod["label"]
+
+
+def test_the_board_status_without_an_ops_file_is_never_checked_and_creates_nothing():
+    """#336: the board's status read is a page read, so it never creates ``ops.sqlite`` (F7 A)."""
+    from RevenueChaser.rcdata import ops
+    assert not ops.ops_path().exists()
+    assert store_reads._board_status("uw/spot_expiry_strike") == (read.NEVER_CHECKED, None)
+    assert not ops.ops_path().exists()
+
+
+def test_the_board_status_reads_the_newest_check_and_names_a_newer_skip():
+    from RevenueChaser.rcdata import ops
+    ops.record_check("uw/spot_expiry_strike", "changed")
+    assert store_reads._board_status("uw/spot_expiry_strike") == ("changed", None)
+    ops.record_check("uw/spot_expiry_strike", "skipped", note="paused")
+    status, note = store_reads._board_status("uw/spot_expiry_strike")
+    assert status == "changed" and "paused" in note

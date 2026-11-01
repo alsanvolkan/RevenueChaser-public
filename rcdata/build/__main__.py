@@ -202,7 +202,8 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--names", help=scope_help)
     run.add_argument("--include", help=group_help)
     at = sub.add_parser("attended")
-    at.add_argument("--dataset", choices=sorted(base.attended_names()), help="only this attended dataset")
+    at.add_argument("--dataset", choices=sorted(n for n in DATASETS if n.startswith("wrds/")),
+                    help="only this attended dataset")
     bf = sub.add_parser("backfill")
     bf.add_argument("datasets", nargs="+", metavar="dataset")
     bf.add_argument("--from", dest="start")
@@ -247,6 +248,10 @@ def main(argv: list[str] | None = None) -> int:
     # counter, instead of ending the process where it stands.
     signal.signal(signal.SIGTERM, _terminate)
     if args.cmd == "attended":
+        if not base.wrds_attended():
+            print(f"nothing to do: the WRDS datasets run unattended ({base.WRDS_UNATTENDED_ENV}=1), from the hourly "
+                  "builder; use backfill or a Settings Fetch", file=sys.stderr)
+            return 0
         if not at_a_terminal():
             # N4: the WRDS login and the Duo push need a person. Refusing a runner with no terminal turns the
             # convention into a guard, so a mis-wired timer cannot reach them; the requests stay queued.

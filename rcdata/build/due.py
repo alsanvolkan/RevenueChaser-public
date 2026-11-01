@@ -3,6 +3,8 @@
 A dataset is due (``is_due``) when nothing holds it and its last run is old enough:
 
 - an attended dataset (WRDS: a person logs in and confirms Duo) is never due: it runs only from the CLI (PR 5);
+  with ``RC_WRDS_UNATTENDED=1`` the WRDS datasets are not attended and follow their cadence, but a WRDS dataset whose
+  last run failed is not due again until a person's run succeeds (#344: no hourly login retries);
 - a dataset that ``starts_by_hand`` (every spine dataset) is not due until it has built once (a ``changed`` or
   ``unchanged`` check from a CLI run or a Fetch), so the first hourly pass after a deploy does not start it before
   the attended steps, and a first attempt that failed is not retried every hour before a person has seen it work;
@@ -35,6 +37,8 @@ DEFAULT_CADENCE = "daily"
 CYCLE_DAYS = {"weekly": 7, "monthly": 30}
 REQUESTED_BY = "schedule"
 ATTENDED_WHY = "attended: run from the CLI on the server (a person logs in; WRDS_USERNAME must be set)"
+WRDS_FAILED_WHY = ("the last WRDS run failed: it waits for a person (no hourly retry, the last snapshot stays); "
+                   "a newer run by a person (Fetch or CLI) that does not fail clears it")
 BY_HAND_WHY = "starts by hand: not due until a first run from the CLI or a Fetch has built it"
 
 
@@ -54,6 +58,8 @@ def is_due(ds) -> tuple[bool, str]:
     check = ops.latest_check(ds.name)
     if check is None:
         return True, "never built"
+    if "wrds" in getattr(ds, "providers", ()) and check["result"] == "failed":
+        return False, WRDS_FAILED_WHY           # RC_WRDS_UNATTENDED: one failure never becomes an hourly login
     if check["result"] in ("failed", "skipped"):
         return True, f"the last check {'failed' if check['result'] == 'failed' else 'was skipped'}"
     cadence = schedule.get("cadence") if schedule.get("cadence") in CADENCES else getattr(ds, "cadence", None)
