@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 from RevenueChaser.core import automations, datasets
 from RevenueChaser.rcdata.needs import screen as api_screen
-from RevenueChaser.module_settings import control as control_model, control_render
+from RevenueChaser.module_settings import control as control_model, control_render, needs_tab
 from RevenueChaser.core.html_safe import esc, script_json
 from RevenueChaser.core.reporting_common import (
     FILTERS_CSS,
@@ -2909,6 +2909,69 @@ def _collect_newdata() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"[:300]}
 
 
+#: The page's two tabs (#331): the key a viewer's choice is remembered under, and each tab's panel id.
+SETTINGS_TABS = {"key": "rc.settings.tab", "tabs": {"data": "panel-data", "needs": "needs"}}
+
+TABS_JS = """
+(function(){
+  var CFG = window.RC_SETTINGS_TABS || {key: '', tabs: {}};
+  var tabs = [].slice.call(document.querySelectorAll('#settings-tabs [role="tab"]'));
+  if (!tabs.length) return;
+  function show(name, save) {
+    if (!CFG.tabs[name]) name = 'data';
+    var dataWasHidden = document.getElementById('panel-data').hidden;
+    tabs.forEach(function (t) {
+      var on = t.getAttribute('data-tab') === name;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+    });
+    if (save) { try { localStorage.setItem(CFG.key, name); } catch (e) {} }
+    // The flow chart lays itself out from its width, which is 0 while its panel is hidden.
+    if (name === 'data' && dataWasHidden) { try { window.dispatchEvent(new Event('resize')); } catch (e) {} }
+  }
+  function fromHash() { return location.hash === '#needs' ? 'needs' : null; }
+  var start = fromHash();
+  if (!start) { try { start = localStorage.getItem(CFG.key); } catch (e) { start = null; } }
+  show(start || 'data', false);
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function () { show(t.getAttribute('data-tab'), true); });
+    t.addEventListener('keydown', function (e) {
+      var d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!d) return;
+      e.preventDefault();
+      var n = tabs[(i + d + tabs.length) % tabs.length];
+      n.focus();
+      show(n.getAttribute('data-tab'), true);
+    });
+  });
+  window.addEventListener('hashchange', function () { if (fromHash()) show('needs', true); });
+  var w = document.querySelector('#needs .wiali'), box = document.getElementById('needs-wial');
+  if (w && box) w.addEventListener('click', function () {
+    box.hidden = !box.hidden;
+    w.setAttribute('aria-expanded', box.hidden ? 'false' : 'true');
+  });
+})();
+"""
+
+
+def _needs_panel(payload: dict) -> str:
+    """The Needs tab's body (#331); a failure anywhere in it is one line in the panel, never a blank Settings page."""
+    try:
+        return needs_tab.render(needs_tab.view(payload))
+    except Exception as exc:  # noqa: BLE001 - the tab must never take the Settings page down
+        return needs_tab.render({"error": f"{type(exc).__name__}: {exc}"[:300],
+                                 "read_at": datetime.now().strftime("%H:%M")})
+
+
+def _tab_strip() -> str:
+    return ('<nav id="settings-tabs" aria-label="Settings tabs"><div class="tabs" role="tablist">'
+            '<button type="button" role="tab" id="tab-data" data-tab="data" aria-controls="panel-data" '
+            'aria-selected="true" tabindex="0">Data</button>'
+            '<button type="button" role="tab" id="tab-needs" data-tab="needs" aria-controls="needs" '
+            'aria-selected="false" tabindex="-1">Needs</button></div></nav>')
+
+
 def render_settings_dashboard(payload: dict) -> str:
     payload = payload or {}
     rows = payload.get("rows") or []
@@ -2971,6 +3034,7 @@ def render_settings_dashboard(payload: dict) -> str:
     view = _control_view(nd, payload)
     control_html = control_render.render(view)
     control_js = control_render.scripts(view)
+    needs_html = _needs_panel(payload)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -2982,11 +3046,14 @@ def render_settings_dashboard(payload: dict) -> str:
 <style>{ND_CSS}</style>
 <style>{control_render.CTL_CSS}</style>
 <style>{OLD_FOLD_CSS}</style>
+<style>{needs_tab.NEEDS_CSS}</style>
 {FILTERS_CSS}
 <script>{THEME_JS}</script>
 </head>
 <body>
 {provider_health_html(payload.get("provider_health"))}
+{_tab_strip()}
+<div id="panel-data" role="tabpanel" aria-labelledby="tab-data">
 {control_html}
 <details class="oldfold" id="old-settings">
 <summary>Old Settings sections <span class="oldfold-sub">not deleted, folded · each opens on its own</span></summary>
@@ -3014,6 +3081,10 @@ def render_settings_dashboard(payload: dict) -> str:
   {flow_html}
 </div>
 </details>
+</div>
+<div id="needs" role="tabpanel" aria-labelledby="tab-needs" hidden>
+{needs_html}
+</div>
 <script>{FILTERS_JS}</script>
 <script>
 var DATA = {data_json};
@@ -3028,6 +3099,10 @@ var ND_PAGE_STALE_MS = {ND_PAGE_STALE_MINUTES * 60 * 1000};
 </script>
 <script>
 {control_js}
+</script>
+<script>
+window.RC_SETTINGS_TABS = {script_json(SETTINGS_TABS)};
+{TABS_JS}
 </script>
 </body>
 </html>
