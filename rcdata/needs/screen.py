@@ -289,6 +289,7 @@ PROVIDERS: dict[str, ProviderWords] = {
     "vanguard": ProviderWords("Vanguard", "index fund holdings", "one request a file and run"),
     "nasdaq": ProviderWords("Nasdaq", "the Nasdaq-100 list", "one request a file and run"),
     "invesco": ProviderWords("Invesco", "index fund holdings", "one request a file and run"),
+    "ark": ProviderWords("ARK", "ARKQ holdings when Unusual Whales has none", "one request a file and run"),
     "wrds": ProviderWords("WRDS", "Compustat and CRSP", "run by hand: a login and Duo each time"),
     "treasury": ProviderWords("Treasury", "yields and auctions"),
     "cboe": ProviderWords("Cboe", "VIX and the index series"),

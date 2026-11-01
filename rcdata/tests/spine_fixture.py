@@ -409,25 +409,40 @@ def add_fund_routes(http_mock, sp500=SP500, sp400=SP400, ndx=("MSFT",), fail=())
 
 # ── The ETFs' own holdings (``funds/etf_holdings``) ───────────────────────────────────────────────────────────
 
-def uw_holdings_json(holdings, repeat=()) -> bytes:
+def uw_holdings_json(holdings, repeat=(), cusips=False) -> bytes:
     """UW's ``/etfs/<ticker>/holdings`` answer (``docs/openapi.yaml``, ``Holdings``): one row per holding, the
-    weights as strings, no CUSIP. A ticker in ``repeat`` is sent twice, the second row newer and lighter: the read
-    keeps the newer one, as the client's own rule does (``core/providers/unusual_whales._holdings``)."""
+    weights as strings. The schema names no CUSIP, but the live answer of 1 Nov 2026 (SMH) carried a ``cusip`` key:
+    ``cusips`` adds it, written as UW might (lower case, padded). A ticker in ``repeat`` is sent twice, the second
+    row newer and lighter: the read keeps the newer one, as the client's own rule does
+    (``core/providers/unusual_whales._holdings``)."""
     rows = []
-    for i, (t, _cusip, name) in enumerate(holdings):
+    for i, (t, cusip, name) in enumerate(holdings):
         rows.append({"ticker": t, "name": name, "short_name": name.split()[0], "weight": f"{10 - i:.3f}",
                      "shares": 1_000 + i, "sector": "Technology", "type": "stock", "has_options": True,
                      "updated": "2026-10-29T20:00:00Z"})
+        if cusips:
+            rows[-1]["cusip"] = f" {cusip.lower()} "
         if t in repeat:
             rows.append({**rows[-1], "weight": "0.001", "updated": "2026-10-30T20:00:00Z"})
     rows.append({"ticker": None, "name": "CASH", "weight": "0.1", "updated": "2026-10-29T20:00:00Z"})
     return json.dumps({"data": rows}).encode()
 
 
+def ark_csv(holdings, fund: str = "ARKQ") -> bytes:
+    """ARK's daily holdings CSV, in the shape of the real file of 30 Oct 2026 (``fixtures/ark_arkq_holdings.csv``
+    is a trimmed copy): the header, one line per holding, the money-market line with no ticker, the disclaimer."""
+    lines = ["date,fund,company,ticker,cusip,shares,market value ($),weight (%)"]
+    for i, (t, cusip, name) in enumerate(holdings):
+        lines.append(f'10/30/2026,{fund},{name},{t},{cusip},"1,000","$1,000.00",{10 - i:.2f}%')
+    lines.append(f'10/30/2026,{fund},GOLDMAN FS TRSY OBLIG INST 468,,X9USDGSFT,"1","$1.00",0.13%')
+    lines.append('"Investors should carefully consider the investment objectives and risks of an ARK ETF."')
+    return ("\n".join(lines) + "\n").encode()
+
+
 def add_etf_routes(http_mock, holdings=None, fail=(), repeat=()) -> None:
-    """Answer every file of ``spine/etf_holdings.FILES``: the SPDR workbooks, the iShares CSVs (each in the shape
-    its own fund serves — IAK typed, the five sector funds not) and UW's holdings answers, each holding
-    ``holdings`` (``SP500`` by default). An ETF named in ``fail`` answers 500 instead."""
+    """Answer every file of ``spine/etf_holdings.FILES`` and of its ``FALLBACKS``: the SPDR workbooks, the iShares
+    CSVs (each in the shape its own fund serves — IAK typed, the five sector funds not), UW's holdings answers and
+    ARK's CSV, each holding ``holdings`` (``SP500`` by default). An ETF named in ``fail`` answers 500 instead."""
     from RevenueChaser.rcdata.build.spine import etf_holdings as etf
     rows = SP500 if holdings is None else holdings
 
@@ -435,12 +450,14 @@ def add_etf_routes(http_mock, holdings=None, fail=(), repeat=()) -> None:
         def go(_request):
             return (500, b"down", {}) if etf_name in fail else (200, body, {})
         return go
-    for f in etf.FILES:
+    for f in etf.FILES + tuple(etf.FALLBACKS.values()):
         if f.provider == "ssga":
             route, body = f"holdings-daily-us-en-{f.etf.lower()}.", ssga_xlsx(rows)
         elif f.provider == "ishares":
             pid, _slug, typed = etf.ISHARES_PRODUCTS[f.etf]
             route, body = f"/products/{pid}/", ishares_csv(rows, typed=typed)
+        elif f.provider == "ark":
+            route, body = f"_{f.etf}_HOLDINGS.csv", ark_csv(rows, f.etf)
         else:
             route, body = f"/etfs/{f.etf}/holdings", uw_holdings_json(rows, repeat=repeat)
         http_mock.add(route, answer(body, f.etf))

@@ -1040,7 +1040,8 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 **Day caps** (`rcdata/caps.py`, avo's numbers, to be tuned): uw 150,000, sec 40,000, fred 10,000, alpaca 20,000;
 the spine's (PR 5, working numbers avo has not set): wrds 50 (queries), openfigi 1,000 (requests), ssga 300,
 ishares 150, vanguard 50, nasdaq 50, invesco 50 (one request per fund file; ssga and ishares serve both
-`funds/index_holdings` and `funds/etf_holdings`, 21 and 9 files a run, and every retry attempt is counted); yfinance 5,000, shared by three stores
+`funds/index_holdings` and `funds/etf_holdings`, 21 and 9 files a run, and every retry attempt is counted), ark 50
+(ARKQ's holdings CSV, asked only on a day UW holds nothing for it, #339); yfinance 5,000, shared by three stores
 (working numbers avo has not set): the prices store's float lookups (PR 7, 3,000), the fundamentals layer's
 weekly analyst estimates (PR 12, 2,000, one request per ticker) and the market store's `yahoo` source (PR 9, no
 share of its own: one whole-history read per symbol, MOVE and wheat, and as-of day); the ownership store's (PR 16, working numbers too;
@@ -1137,7 +1138,7 @@ the old identity tables there are untouched (D5: they are empty since 27 Oct).
 | `wrds/idxcst_his` | monthly, attended | `comp.idxcst_his` for the S&P 500, 400 and 600 index keys | `stg_wrds_idx` |
 | `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet (a CINS, a letter first, asked as `ID_CINS`), under 25 requests a minute | `stg_figi` |
 | `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR (`latest-holdings.csv`), Vanguard VOO/IVOO/VIOO (daily creation basket), Nasdaq's nasdaq100 list and Invesco QQQ (both vote `ndx`) | `stg_fund_lines`, `stg_fund_files` |
-| `funds/etf_holdings` | daily | the SPDR workbooks of the 11 sector funds and XBI/XOP/XME/KRE/XHB/XRT/KIE, the iShares `latest-holdings.csv` of SOXX/IBB/ITA/ITB/IGV/IAK, and UW `/etfs/<t>/holdings` whole (no top-10 cap) for the 14 themes whose issuer has no keyless file | none: serves `etf_holdings` itself |
+| `funds/etf_holdings` | daily | the SPDR workbooks of the 11 sector funds and XBI/XOP/XME/KRE/XHB/XRT/KIE, the iShares `latest-holdings.csv` of SOXX/IBB/ITA/ITB/IGV/IAK, and UW `/etfs/<t>/holdings` whole (no top-10 cap) for the 14 themes; on a day UW holds nothing for ARKQ, ARK's own holdings CSV (`ark-ARKQ.csv`, #339; AIRR, SKYY, WCLD and ROBO have no machine-readable issuer file) | none: serves `etf_holdings` itself |
 | `spine/security` | daily | none: builds the served tables from the staging tables | the four tables below except `fund` and `etf_holdings` |
 
 The sources load their Parquet into TEMP tables of the build connection (never stored in the file), and all

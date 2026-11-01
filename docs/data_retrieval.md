@@ -349,6 +349,7 @@ whole app at a local server:
 | `RC_SPDR_BASE` | SPDR index-ETF holdings files (identity refresh) |
 | `RC_SSGA_BASE` | SSGA daily ETF holdings workbooks: SPY, MDY, SPSM, the spine's index membership (`rcdata/build/spine/funds.py`, read at call time) |
 | `RC_ISHARES_BASE` | iShares `latest-holdings.csv` files: IVV, IJH, IJR (`rcdata/build/spine/funds.py`) |
+| `RC_ARK_BASE` | ARK's daily holdings CSV: ARKQ, read when UW holds nothing for it (`rcdata/build/spine/etf_holdings.py`, #339) |
 | `RC_VANGUARD_BASE` | Vanguard's daily creation baskets (PCF, `etfportal.vanguard.com`): VOO, IVOO, VIOO (`rcdata/build/spine/funds.py`) |
 | `RC_NASDAQ_API_BASE` | Nasdaq's list API, the Nasdaq-100 members (`rcdata/build/spine/funds.py`) |
 | `RC_INVESCO_API_BASE` | Invesco's fund holdings API: QQQ, the second Nasdaq-100 file (`rcdata/build/spine/funds.py`) |

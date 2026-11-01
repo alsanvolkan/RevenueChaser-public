@@ -22,6 +22,8 @@ DAY_CAPS: dict[str, int] = {
     # few runs of both datasets with every attempt spent (working numbers, not avo's).
     "ssga": 300,
     "ishares": 150,
+    # ARK's holdings CSV (#339): one request a run for ARKQ, and only on a day UW holds nothing for it.
+    "ark": 50,
     "vanguard": 50,
     "nasdaq": 50,
     "invesco": 50,
