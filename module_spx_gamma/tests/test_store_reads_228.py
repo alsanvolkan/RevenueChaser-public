@@ -45,8 +45,9 @@ def test_3_reports_five_to_nine_days_apart_are_consecutive(rcdata_market, report
 
 
 def test_5_a_locked_status_read_keeps_the_stored_rows(rcdata_market, monkeypatch):
-    """Item 5: ``read._rows`` read the store, then the read log or the status raised and the rows were lost, so the
-    board lost its pin flag and squeeze trigger. Now the rows come back stamped ``status_unknown``."""
+    """Item 5: a locked ``ops.sqlite`` (the read log's flush before the read, the status read after it) failed the
+    whole read, so the board lost its pin flag and squeeze trigger. Now the rows come back stamped
+    ``status_unknown``."""
     monkeypatch.setattr(ops.read_log, "flush", _boom)
     monkeypatch.setattr(ops.read_log, "_last", float("-inf"))        # every read is due to flush
     monkeypatch.setattr(ops, "read_latest_check", _boom)
@@ -55,3 +56,19 @@ def test_5_a_locked_status_read_keeps_the_stored_rows(rcdata_market, monkeypatch
     for reader in (store_reads.zero_one_dte_dollars, store_reads.cot_tff):
         out = reader(fx.LAST)
         assert out["stored"] is True and out["status"] == read.STATUS_UNKNOWN, out["label"]
+
+
+@pytest.mark.parametrize("days, gap", [(4, True), (5, False), (9, False), (10, True), (13, True)])
+def test_3_the_consecutive_window_is_five_to_nine_days(days, gap):
+    """Review N3 (#356): the limits of ``CONSECUTIVE_DAYS``."""
+    assert (days not in store_reads.CONSECUTIVE_DAYS) is gap
+
+
+def test_5_a_failed_read_log_flush_keeps_its_counts_for_the_next_one(monkeypatch):
+    """Review S1 (#356): the counts feed the retirement count, so a failed flush puts them back."""
+    log = ops.ReadLog(process="test")
+    monkeypatch.setattr(ops, "_open", _boom)
+    log.bump("market_series")
+    with pytest.raises(RuntimeError):
+        log.flush()
+    assert sum(log._counts.values()) == 1

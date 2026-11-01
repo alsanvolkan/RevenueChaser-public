@@ -1544,7 +1544,7 @@ at once `rcdata.read.statements_many(ciks, annual_years, quarters)`, `rcdata.rea
 `rcdata.read.filing_items(ciks, form, since)`, `rcdata.read.filing_texts(ciks, item)` and
 `rcdata.read.customer_shares(ciks, benchmark)`. Every row carries its provenance and `status`, the newest check of
 the dataset its own row came from (a segment row from Compustat reads `wrds/segments`' check, one from the annual
-report `sec/filings`'), or `never_checked`.
+report `sec/filings`'), or `never_checked`, or `status_unknown` when `ops.sqlite` cannot be read (#228).
 
 **The boards on the layer (G6, build plan PR 13-15 and 20).** `core/fundamentals_layer.py` rebuilds the old
 `edgar_financials` record shape from `fundamental_fact`, so a board keeps its rules and reads current rows. The

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import atexit
 import json
+import logging
 import os
 import sqlite3
 import sys
@@ -513,8 +514,8 @@ class ReadLog:
         if due:
             try:
                 self.flush()
-            except Exception:  # noqa: BLE001 - #228 item 5: a lost minute of counts, never a lost read
-                pass
+            except Exception as exc:  # noqa: BLE001 - #228 item 5: a failed flush never fails the read
+                logging.getLogger(__name__).warning("read log flush failed, kept for the next one: %s", exc)
 
     def flush(self) -> None:
         with self._lock:
@@ -523,10 +524,17 @@ class ReadLog:
         if not counts:
             return
         process = self.process or _process_name()
-        with _open() as con, _tx(con):
-            con.executemany("INSERT INTO read_log (day, process, table_name, reads) VALUES (?, ?, ?, ?) "
-                            "ON CONFLICT (day, process, table_name) DO UPDATE SET reads = reads + excluded.reads",
-                            [(day, process, table, n) for (day, table), n in counts.items()])
+        try:
+            with _open() as con, _tx(con):
+                con.executemany("INSERT INTO read_log (day, process, table_name, reads) VALUES (?, ?, ?, ?) "
+                                "ON CONFLICT (day, process, table_name) DO UPDATE SET reads = reads + excluded.reads",
+                                [(day, process, table, n) for (day, table), n in counts.items()])
+        except Exception:
+            # Review S1 (#356): the counts go back, so the next flush retries them; the retirement count reads them.
+            with self._lock:
+                for key, n in counts.items():
+                    self._counts[key] = self._counts.get(key, 0) + n
+            raise
 
 
 read_log = ReadLog()

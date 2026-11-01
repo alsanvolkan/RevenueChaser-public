@@ -184,8 +184,8 @@ def _expiry_strike(session: date, day: date) -> tuple[list[dict], str | None, st
     Review SF3: with no serving file yet the reader answers no rows without touching ``ops.sqlite``, and the
     envelope then reads the dataset's status from it; a broken file there (locked, stamped newer, corrupt) is a note
     on the "not stored" marker, never a failed board, and A3 may still look at the previous session. With the file
-    there, ``read._rows`` reads the status together with the rows, so the same error is the row read failing: it
-    goes up as "read failed" and stops, as the board's direct read always did (#334 review, should-fix 3).
+    there, a status that cannot be read comes back as ``status_unknown`` on rows that are kept (#228 item 5); any
+    other sqlite error of the row read goes up as "read failed" and stops (#334 review, should-fix 3).
     """
     try:
         ans = needs.ask("market.spx_expiry_strike", as_of=day, session_date=session, min_dte=0, max_dte=1)

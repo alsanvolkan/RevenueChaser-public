@@ -8,7 +8,8 @@ Five serving kinds: ``market`` (``market_series``, ``spx_expiry_strike``), since
 ``estimates``, ``filing_text``, ``segments``, ``customers``, ``peers``, ``revisions``).
 
 Every row comes back with its provenance (``session_date``, ``source``, ``fetched_at``, ``source_as_of``, ``run_id``)
-and ``status``, the newest ``dataset_check`` result of its dataset (``never_checked`` before the first). Each call
+and ``status``, the newest ``dataset_check`` result of its dataset (``never_checked`` before the first,
+``status_unknown`` when ``ops.sqlite`` cannot be read, #228). Each call
 opens the live serving file read-only and closes it again (``serving.open_read``), and counts one read of its table
 in the read log. No serving file yet means no rows, not an error: the status says why.
 """
