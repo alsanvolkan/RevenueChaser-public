@@ -69,8 +69,8 @@ def test_the_universe_is_av_etfs_and_ncen_etfs_and_the_spines_etp_rows_with_thei
 def test_the_columns_are_the_plans_and_there_is_no_active_column(built):
     with serving.open_read("spine") as con:
         cols = [d[0] for d in con.execute("SELECT * FROM etf LIMIT 0").description]
-    assert cols == ["ticker", "name", "series_id", "cik", "source", "is_etn", "asset_class", "focus", "country",
-                    "is_index", "is_lev_inverse", "is_money_market", "is_option_income", "is_fund_of_funds",
+    assert cols == ["ticker", "name", "series_id", "cik", "source", "is_etn", "is_cef", "asset_class", "focus",
+                    "country", "is_index", "is_lev_inverse", "is_money_market", "is_option_income", "is_fund_of_funds",
                     "inception", "aum", "aum_as_of", "adv_usd_20d", "expense_ratio", "sector_name", "source_as_of",
                     "fetched_at", "run_id"]
 
@@ -114,12 +114,18 @@ def test_the_etn_name_rule(name, etn):
 
 
 @pytest.mark.parametrize("name,income", [
-    ("Global X Nasdaq 100 Covered Call ETF", True), ("JPMorgan Equity Premium Income ETF", False),
+    ("Global X Nasdaq 100 Covered Call ETF", True), ("JPMorgan Equity Premium Income ETF", True),
+    ("Invesco S&P 500 BuyWrite ETF", True), ("Example Buy-Write Income ETF", True),
+    ("WisdomTree PutWrite Strategy Fund", True), ("Example Put-Write ETF", True),
+    ("REX IncomeMax Option Strategy ETF", True), ("Example Managed Floor ETF", True),
+    ("Example Defined Protection ETF", True), ("Example Structured Protection ETF", True),
+    ("Vanguard Dividend Appreciation ETF", False), ("Schwab U.S. Dividend Equity ETF", False),
     ("FT Vest U.S. Equity Buffer ETF - March", True), ("Innovator Defined Outcome Buffered ETF", True),
     ("Calamos Autocallable Income ETF", True), ("Example Target Outcome ETF", True),
     ("Example Option Income Strategy ETF", True), ("Technology Select Sector SPDR Fund", False)])
 def test_the_option_income_name_rule(name, income):
-    """The plan's words only; ``premium income`` is not one of them (an open question, not a guess)."""
+    """The plan's words plus avo's of 1 Nov 2026 (premium income, buy-write, put-write, option strategy, managed
+    floor, defined or structured protection); a plain dividend fund stays false."""
     assert etf.is_option_income(name) is income
 
 
@@ -202,10 +208,36 @@ def test_without_ncen_no_etp_row_is_called_a_commodity(monkeypatch, http_mock):
 
 
 def test_the_spine_note_counts_etfs_without_the_etns(built):
-    assert "12 in etf: 10 ETFs, 2 ETNs flagged" in built["note"]
+    assert "12 in etf: 10 ETFs, 2 ETNs flagged, 0 CEFs flagged" in built["note"]
 
 
 def test_the_spine_serves_etf_at_schema_version_four(built):
     assert serving.SERVING_SCHEMA_VERSION["spine"] == 4 and "etf" in security.TABLES
     with serving.open_read("spine") as con:
         assert con.execute("SELECT version FROM serving_schema_version").fetchone() == (4,)
+
+
+def test_a_cef_that_av_calls_an_etf_is_flagged_kept_and_not_counted():
+    """avo, 1 Nov 2026: Alpha Vantage lists closed-end funds as ``ETF`` (DHY, CIK); a row the spine types ``cef``
+    stays in ``etf`` with ``is_cef`` and is not counted as an ETF, like a note. Built from the staging tables
+    directly: the spine types a CEF from OpenFIGI, which this file's fixture does not route."""
+    import duckdb
+    from RevenueChaser.rcdata.build.spine import stage
+    con = duckdb.connect()
+    stage.create(con, av_listing.STAGING, av_listing.SCHEMA)
+    stage.create(con, ncen.STAGING, ncen.SCHEMA)
+    stage.create(con, ncen.FILERS, ncen.FILER)
+    con.executemany(f"INSERT INTO {av_listing.STAGING} (ticker, symbol, name, asset_type, status) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    [("DHY", "DHY", "Credit Suisse High Yield Bond Fund", "ETF", "Active"),
+                     ("XLK", "XLK", "TECHNOLOGY SELECT SECTOR SPDR FUND", "ETF", "Active")])
+    con.execute("CREATE TABLE security (ticker TEXT, cik TEXT, name TEXT, security_type TEXT, source_as_of DATE, "
+                "fetched_at DOUBLE)")
+    con.execute("INSERT INTO security VALUES ('DHY', '1061630', 'CREDIT SUISSE HIGH YIELD BOND FUND', 'cef', "
+                "NULL, NULL), ('MSFT', '789019', 'MICROSOFT CORP', 'common', NULL, NULL)")
+    ctx = base.RunContext(run_id="r", dataset=security.NAME)
+    rows = {r["ticker"]: r for r in etf.rows(ctx, con)}
+    assert set(rows) == {"DHY", "XLK"}
+    assert rows["DHY"]["is_cef"] is True and rows["XLK"]["is_cef"] is False
+    assert rows["DHY"]["source"] == "av" and rows["DHY"]["is_etn"] is False
+    assert "2 in etf: 1 ETFs, 0 ETNs flagged, 1 CEFs flagged" in ctx.notes

@@ -7,6 +7,8 @@
 and no ``active`` column** here; a board's thresholds (AUM, dollar volume) are its settings, applied when it reads.
 
 **ETNs and notes** are flagged ``is_etn`` by a name rule (:data:`ETN_NAME`), kept, and not counted as ETFs.
+**Closed-end funds** are flagged ``is_cef`` the same way (avo, 1 Nov 2026): Alpha Vantage lists some as ``ETF``
+(DHY), and a row the spine types ``cef`` (``security.security_type``) stays, flagged, not counted as an ETF.
 
 **What fills which column in this PR:** the ``is_*`` fund flags and ``aum`` (``DAILY_AVG_NET_ASSETS``, else
 ``MONTHLY_AVG_NET_ASSETS``, with the filing's report end as ``aum_as_of``) from the series' newest N-CEN, NULL for
@@ -34,7 +36,9 @@ from .ncen import FILERS, STAGING as NCEN
 
 TABLE = "etf"
 SCHEMA = [("ticker", "TEXT PRIMARY KEY"), ("name", "TEXT"), ("series_id", "TEXT"), ("cik", "TEXT"),
-          ("source", "TEXT"), ("is_etn", "BOOLEAN"), ("asset_class", "TEXT"), ("focus", "TEXT"), ("country", "TEXT"),
+          ("source", "TEXT"), ("is_etn", "BOOLEAN"),
+          # is_cef: the spine types the ticker a closed-end fund (AV calls some CEFs ETF); kept, not counted as ETFs.
+          ("is_cef", "BOOLEAN"), ("asset_class", "TEXT"), ("focus", "TEXT"), ("country", "TEXT"),
           ("is_index", "BOOLEAN"), ("is_lev_inverse", "BOOLEAN"), ("is_money_market", "BOOLEAN"),
           ("is_option_income", "BOOLEAN"), ("is_fund_of_funds", "BOOLEAN"), ("inception", "DATE"),
           # aum: N-CEN's average net assets over the filing's fiscal year (daily, else monthly average), not a
@@ -51,10 +55,12 @@ ETN_NAME = re.compile(
     r"|jpmorgan\s+chase\s+(?:bank|financial|&\s+co)|citigroup\s+global\s+markets|morgan\s+stanley\s+finance"
     r"|goldman\s+sachs\s+international|royal\s+bank\s+of\s+canada|canadian\s+imperial\s+bank)\b", re.I)
 #: Option income, by the fund's name: a **name rule** (the plan's words: option income, covered call, buffer,
-#: autocallable, defined outcome, target outcome); nothing in N-CEN says it.
+#: autocallable, defined outcome, target outcome; avo's of 1 Nov 2026: premium income, buy-write, put-write, option
+#: strategy, managed floor, defined or structured protection); nothing in N-CEN says it.
 OPTION_INCOME_NAME = re.compile(
-    r"\boptions?\s+income\b|\bcovered\s+call|\bbuffer|\bautocallable\b|\bdefined\s+outcome\b|\btarget\s+outcome\b",
-    re.I)
+    r"\boptions?\s+income\b|\bcovered\s+call|\bbuffer|\bautocallable\b|\bdefined\s+outcome\b|\btarget\s+outcome\b"
+    r"|\bpremium\s+income\b|\bbuy-?write\b|\bput-?write\b|\boptions?\s+strategy\b|\bmanaged\s+floor\b"
+    r"|\b(?:defined|structured)\s+protection\b", re.I)
 #: Leveraged or inverse, by the fund's name: a **name rule** beside N-CEN's ``IS_MULTI_INVERSE_INDEX``, which 185
 #: leveraged ``IS_ETF=Y`` series leave blank (review S1 of PR 349: Tradr 2X Long IBM, Defiance 2X Long RIOT). A
 #: multiple (2x-5x, 1.25x, -1x, 1x short), ProShares' Ultra / UltraPro / UltraShort / Short (only ProShares':
@@ -94,9 +100,10 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
              nc AS (SELECT * FROM {NCEN} WHERE is_etf AND ticker IS NOT NULL
                     QUALIFY row_number() OVER (PARTITION BY ticker
                                                ORDER BY filing_date DESC NULLS LAST, accession DESC, series_id) = 1),
-             etp AS (SELECT ticker, cik, name, source_as_of, fetched_at FROM security WHERE security_type = 'etp')
+             etp AS (SELECT ticker, cik, name, source_as_of, fetched_at FROM security WHERE security_type = 'etp'),
+             cef AS (SELECT ticker FROM security WHERE security_type = 'cef')
         SELECT t.ticker, av.ticker IS NOT NULL AS in_av, nc.ticker IS NOT NULL AS in_nc,
-               etp.ticker IS NOT NULL AS in_etp,
+               etp.ticker IS NOT NULL AS in_etp, cef.ticker IS NOT NULL AS is_cef,
                av.name AS av_name, av.ipo_date, nc.fund_name, nc.series_id, nc.cik AS nc_cik, nc.is_index,
                nc.is_multi_inverse_index, nc.is_money_market, nc.is_fund_of_fund, nc.daily_avg_net_assets,
                nc.monthly_avg_net_assets, nc.report_end, etp.cik AS etp_cik, etp.name AS etp_name,
@@ -104,7 +111,7 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
                greatest(av.fetched_at, nc.fetched_at, etp.fetched_at) AS fetched_at
         FROM (SELECT ticker FROM av UNION SELECT ticker FROM nc UNION SELECT ticker FROM etp) t
         LEFT JOIN av ON av.ticker = t.ticker LEFT JOIN nc ON nc.ticker = t.ticker
-        LEFT JOIN etp ON etp.ticker = t.ticker
+        LEFT JOIN etp ON etp.ticker = t.ticker LEFT JOIN cef ON cef.ticker = t.ticker
         ORDER BY t.ticker""")
     cols = [d[0] for d in cur.description]
     found = [dict(zip(cols, x)) for x in cur.fetchall()]      # before the next execute replaces the result
@@ -122,7 +129,8 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
             "ticker": r["ticker"], "name": next((n for n in names if n), None), "series_id": r["series_id"],
             "cik": r["nc_cik"] or r["etp_cik"],
             "source": "both" if r["in_av"] and nc else "av" if r["in_av"] else "ncen" if nc else "etp",
-            "is_etn": etn, "asset_class": "commodity" if commodity else None, "focus": None, "country": None,
+            "is_etn": etn, "is_cef": r["is_cef"], "asset_class": "commodity" if commodity else None, "focus": None,
+            "country": None,
             "is_index": _flag(nc, r["is_index"]),
             "is_lev_inverse": True if is_lev_inverse(*names) else _flag(nc, r["is_multi_inverse_index"]),
             "is_money_market": _flag(nc, r["is_money_market"]), "is_option_income": is_option_income(*names),
@@ -132,5 +140,6 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
             # The newest of its sources' fetch times; run_id is the build that wrote the row (it is derived).
             "fetched_at": r["fetched_at"], "run_id": ctx.run_id})
     etns = sum(1 for r in out if r["is_etn"])
-    ctx.notes.append(f"{len(out)} in etf: {len(out) - etns} ETFs, {etns} ETNs flagged")
+    cefs = sum(1 for r in out if r["is_cef"] and not r["is_etn"])
+    ctx.notes.append(f"{len(out)} in etf: {len(out) - etns - cefs} ETFs, {etns} ETNs flagged, {cefs} CEFs flagged")
     return out
