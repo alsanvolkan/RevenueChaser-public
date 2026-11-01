@@ -649,7 +649,10 @@ worker thread writes while Flask request threads read. So:
   no store file, only its own record under `.cache/ibkr_login/`, and exits 0 whatever it finds — a session that
   expired on its weekly cycle is not a failed job), plus the market-store builder RC-Build hourly at :07 (one
   `rcdata.build run --once` pass over the request queue, unit `life-rc-builder`, 50 min limit) and its backup
-  RC-Build-Backup daily 04:30 (`rcdata backup`, unit `life-rc-builder-backup`, 30 min limit), PR 2;
+  RC-Build-Backup daily 04:30 (`rcdata backup`, unit `life-rc-builder-backup`, 30 min limit), PR 2, plus
+  Monday to Friday 06:30 (the SPX Gamma Fetch RC-SPX-Gamma-Fetch, #291: `module_spx_gamma --nightly`, the
+  latest complete session's raw day with all expiries, only once its Cboe SPX close is stored and outside the US
+  session, else exit 3; no catch-up);
   `core/automations.py`: the Relatedness and Value Chain rows are 30 min apart.
 
 ### Full-refresh vs. incremental tables

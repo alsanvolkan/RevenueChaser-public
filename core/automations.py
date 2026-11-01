@@ -265,6 +265,18 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "serving file, checked row by row against the source, into RAW_STORE_BACKUP_DIR/market/ (the "
                     "newest 5 kept), then the 35-day raw copy. Writes no table.",
         settings=TaskSettings(restart_count=0, time_limit_minutes=30)),
+    AutomationEntry(
+        name="RC-SPX-Gamma-Fetch", label="SPX Gamma Fetch (nightly)",
+        args=("-m", "RevenueChaser.module_spx_gamma", "--nightly"), time="06:30", days=_WEEKDAYS,
+        description="The SPX Gamma board's Fetch of the latest complete New York session (#291), so every session "
+                    "keeps its raw day with the all-expiry ladder the band walls are read from, and the board moves "
+                    "to it. About 70 Unusual Whales calls a session, plus the same per session the run's own backfill "
+                    "fills (the last two weeks, missing days only). 06:30 Monday to Friday is after the builder's "
+                    "first pass of the New York trading day (00:07) stored the previous session's Cboe SPX close, so "
+                    "Monday fetches Friday; without that close, or inside the US session, it exits 3 and calls "
+                    "nothing. A missed run is not caught up. Writes the SPX Gamma tree (raw day, latest.json, GEX "
+                    "history), no table.",
+        settings=TaskSettings(start_when_available=False, restart_count=0, time_limit_minutes=30)),
 )
 _BY_NAME = {e.name: e for e in REGISTRY}
 

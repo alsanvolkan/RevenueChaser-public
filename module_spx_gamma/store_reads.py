@@ -136,7 +136,7 @@ def _board_status(dataset: str) -> tuple[str, str | None]:
     """``(status, skip note)``: the newest check that is not ``skipped`` (``ops.latest_unskipped_check``, as the
     Settings card reads it), so a Fetch while the dataset is paused or day-capped does not make a built dataset read
     "skipped" (review SF6b); a newer skip is named in the note."""
-    last = ops.latest_check(dataset)
+    last = ops.read_latest_check(dataset)       # a page read: never creates ops.sqlite (#336)
     if last is None:
         return read.NEVER_CHECKED, None
     if last.get("result") != "skipped":
