@@ -17,6 +17,7 @@ is a one-line change in one file.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -230,3 +231,43 @@ _NEEDS = (
 )
 
 NEEDS: dict[str, Need] = {n.name: n for n in _NEEDS}
+
+
+class FromCatalog(Mapping):
+    """A board's ``{input: limit}`` map that answers from the catalog rather than from the copy it was built with.
+
+    The catalog is the single owner of a freshness number (avo, 29 Oct 2026), and a board that still wants its
+    limits as a mapping (Earnings Radar's ``MAX_LAG``, SPX Gamma's) wraps a function that reads them from ``NEEDS``.
+    A ``Mapping`` and not a ``dict`` subclass (the review's m3): seeding a dict subclass at import made ``.copy()``
+    and ``json.dumps`` answer with the import-time snapshot while ``[]`` answered with the live number - two
+    answers from one map, which is the drift this whole arrangement exists to prevent.
+    """
+
+    def __init__(self, source: Callable[[], dict]):
+        self._source = source
+
+    def __getitem__(self, key):
+        return self._source()[key]
+
+    def get(self, key, default=None):
+        return self._source().get(key, default)
+
+    def __iter__(self):
+        return iter(self._source())
+
+    def __len__(self):
+        return len(self._source())
+
+    def copy(self) -> dict:
+        return dict(self._source())
+
+    def __repr__(self):
+        return repr(self._source())
+
+    def __eq__(self, other):
+        return self._source() == other
+
+    __hash__ = None
+
+    def __setitem__(self, key, value):
+        raise TypeError(f"{key!r} belongs to the need catalog (avo, 29 Oct 2026): set it there, not here")
