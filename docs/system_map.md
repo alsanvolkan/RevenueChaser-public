@@ -218,6 +218,8 @@ Line numbers are this worktree's.
   store (`engine.macro_points` over `rcdata.read.market_series`, PR 9) and
   `macro_weekly_closes` is gone, so the rotation → earnings direction `#13` asked about
   closed with it.
+- The needs layer (`rcdata/needs/`, asked as `needs.ask(...)`) is read by Earnings Radar and by Settings; it
+  runs no SQL of its own and sits on `rcdata.read`. It was `rcdata.api` until #329.
 - `module_asymmetric_growth/engine.py:842` — a screener imports
   `module_sec_13f.engine`. **Worth an issue** only if the two are meant to stay
   independent; today an AG run cannot be reasoned about without the 13F store.
