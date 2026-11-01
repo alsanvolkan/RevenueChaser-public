@@ -87,11 +87,9 @@ def market_holidays(year: int) -> frozenset[date]:
         return MARKET_HOLIDAYS[year]
     except KeyError:
         lo, hi = min(MARKET_HOLIDAYS), max(MARKET_HOLIDAYS)
-        raise ValueError(
-            f"the NYSE holiday table does not cover {year}; it runs {lo}-{hi}. "
-            f"Add {year} to _MARKET_HOLIDAYS from "
-            "https://www.nyse.com/markets/hours-calendars."
-        )
+        hint = (f"Add {year} to _MARKET_HOLIDAYS from https://www.nyse.com/markets/hours-calendars." if year > hi
+                else "Sessions before it come from the stored price bars (rule C).")
+        raise ValueError(f"the NYSE holiday table does not cover {year}; it runs {lo}-{hi}. {hint}")
 
 
 def is_trading_day(d: date) -> bool:

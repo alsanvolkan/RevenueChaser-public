@@ -114,7 +114,7 @@ def lag_sessions(as_of: date, latest: date) -> int:
 
     ``latest`` counts as one, and every trading day strictly between the two as one more. Only days after ``as_of``
     are put to the calendar (#334 review): the walk used to step back to the session on or before ``as_of``, so a
-    2024-12-31 row read on 2025-01-02 asked the calendar about 2024, which its holiday table does not hold, where
+    2024-12-31 row read on 2025-01-02 asked the calendar about 2024, which its holiday table did not hold then, where
     the board's own forward count never did. The numbers inside the table are the same.
     """
     if as_of >= latest:
