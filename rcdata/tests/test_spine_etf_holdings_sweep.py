@@ -252,8 +252,10 @@ def test_a_sweep_stopped_on_the_same_etfs_run_after_run_records_them_and_goes_on
     env.requests.clear()
     base.run_request({"dataset": etf.NAME, "params": {"as_of": days[-1]}})
     assert _sweep_calls(env) == OTHERS[len(bad):], "the recorded five are not asked again"
-    issues = {i["key"]: i["detail"] for i in ops.open_issues(etf.NAME)[1]}
-    assert all(t in issues[f"sweep-{DAY}"] for t in bad) and f"sweep-{DAY}-stopped" in issues
+    rows = ops.open_issues(etf.NAME, limit=200)[1]
+    issues = {i["key"]: i["detail"] for i in rows}
+    assert all(t in issues[f"sweep-{DAY}"] for t in bad)
+    assert [i["key"] for i in rows].count(f"sweep-{DAY}-stopped") == 1, "one issue for the stops at one place"
 
 
 def test_a_spine_without_etfs_starts_no_sweep_that_would_wait_30_days(monkeypatch, env):
@@ -332,3 +334,33 @@ def test_a_daily_funds_403_does_not_stop_the_sweep_at_its_first_404(env):
     env.routes.insert(0, ("/etfs/LEVX/holdings", _answer(404), 404, {}))
     base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
     assert _sweep_calls(env) == OTHERS and set(OTHERS) - {"LEVX"} <= _served_etfs()
+
+
+@pytest.mark.parametrize("status", [503, 401])
+def test_uw_down_or_a_dead_key_run_after_run_records_no_etf(monkeypatch, env, status):
+    """Review 3: a whole UW outage (every call 503) or a rejected key stops the sweep on its first ETF every run. That
+    is UW's state, not the ETF's: however many runs it lasts, nothing is recorded, one issue says so, and the sweep
+    goes on whole once UW answers again."""
+    monkeypatch.setattr(unusual_whales, "_sleep", lambda s: None)
+    env.routes.insert(0, ("uw.test/api/etfs/", _answer(status), status, {}))      # UW only, not the SSGA files
+    for d in [DAY, "2026-11-03", "2026-11-04", "2026-11-05"]:
+        base.run_request({"dataset": etf.NAME, "params": {"as_of": d}})
+    env.routes.pop(0)
+    env.requests.clear()
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-06"}})
+    assert _sweep_calls(env) == OTHERS and set(OTHERS) <= _served_etfs(DAY)
+    keys = [i["key"] for i in ops.open_issues(etf.NAME, limit=200)[1] if i["key"].startswith("sweep-")]
+    assert keys == [f"sweep-{DAY}-stopped"], keys
+
+
+def test_a_breaker_stop_un_records_only_the_failures_since_uws_last_answer(monkeypatch, env):
+    """CCOI's 404 is CCOI's; GLD answers; the next five open the breaker. Only those five are left for the next run."""
+    monkeypatch.setattr(unusual_whales, "_sleep", lambda s: None)
+    env.routes.insert(0, ("/etfs/CCOI/holdings", _answer(404), 404, {}))
+    for t in OTHERS[2:7]:
+        env.routes.insert(0, (f"/etfs/{t}/holdings", _answer(503), 503, {}))
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
+    del env.routes[:5]
+    env.requests.clear()
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-03"}})
+    assert _sweep_calls(env) == OTHERS[2:], "CCOI stays recorded, GLD is held"
