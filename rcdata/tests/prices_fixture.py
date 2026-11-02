@@ -22,7 +22,8 @@ import duckdb
 
 SPINE = [
     {"ticker": "AAPL", "cik": "320193", "name": "Apple Inc.", "exchange": "Nasdaq", "tier": "A",
-     "security_type": "common", "gvkey": "001690", "iid": "01", "composite_figi": "BBG000B9XRY4"},
+     "security_type": "common", "gvkey": "001690", "iid": "01", "composite_figi": "BBG000B9XRY4",
+     "cusip": "037833100"},
     {"ticker": "BRK-B", "cik": "1067983", "name": "BERKSHIRE HATHAWAY INC", "exchange": "NYSE", "tier": "A",
      "security_type": "common", "gvkey": "072726", "iid": "02", "composite_figi": None},
     {"ticker": "FLG", "cik": "910073", "name": "Flagstar Financial, Inc.", "exchange": "NYSE", "tier": "A",

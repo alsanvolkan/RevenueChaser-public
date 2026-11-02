@@ -131,6 +131,13 @@ def test_cftc_schedule_dates_each_table_by_its_own_heading():
         assert lag == {date(2025, 12, 30): 6.0, date(2026, 1, 6): 3.0, date(2026, 12, 29): 6.0, date(2027, 1, 5): 3.0}
 
 
+def test_cftc_schedule_reads_the_year_from_a_heading_only():
+    """Review nit (#355): a sentence naming another year's schedule must not re-date the table under it."""
+    page = ("<h3>2027 Release Schedule</h3><p>The 2026 Release Schedule stays below until 31 Dec.</p>"
+            "<table><tr><td>January</td><td>08</td></tr></table>")
+    assert [r["obs_date"] for r in cftc_schedule.parse(page, {})] == [date(2027, 1, 5)]
+
+
 def test_cftc_schedule_keys_a_tuesday_release_on_the_tuesday_before():
     lag = {r["obs_date"]: r["value"] for r in cftc_schedule.parse(
         "<h3>2026 Release Schedule</h3><table><tr><td>May</td><td>26*</td></tr></table>", {})}

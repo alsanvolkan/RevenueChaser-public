@@ -1,5 +1,5 @@
 """#227: a COT report counts as released on CFTC's own release day, read from the stored schedule; a report the
-schedule does not cover keeps the report + ``RELEASE_DAYS`` estimate and the board says it is one.
+schedule does not cover keeps the Tuesday + ``RELEASE_DAYS`` estimate (the week's Friday) and the board says it is one.
 
 November 2026: Veterans Day moves the 10 Nov report to Monday 16 Nov, and Thanksgiving the 24 Nov one to Monday
 30 Nov (CFTC's page, fetched 1 Nov 2026). The old rule showed each of them on the Friday before.
@@ -40,7 +40,7 @@ def test_a_report_counts_from_cftcs_release_day(november, day, report, released)
 def test_a_report_the_schedule_does_not_cover_keeps_the_estimate_and_says_so(rcdata_market):
     out = store_reads.cot_tff(fx.LAST)
     assert out["payload"]["release_estimated"] is True
-    assert "released ~2026-10-23 (report + 3 days; holiday weeks can differ)" in out["label"]
+    assert "released ~2026-10-23 (Tuesday + 3 days; holiday weeks can differ)" in out["label"]
 
 
 def test_the_schedule_is_read_through_its_own_need(rcdata_market):

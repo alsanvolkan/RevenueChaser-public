@@ -222,7 +222,8 @@ with its history row. No provider call, no DuckDB file.
   in_watchlist}` as before. `rawstore.toggle_watchlist`, `load_watchlist` and `save_watchlist` are the stock list too.
 - **`GET /api/watchlists`**: `{ok, option: [tickers], stock: [tickers]}`, what the board buttons show as pressed.
   The read itself never creates `ops.sqlite`; the read log it counts into is flushed to it once a minute, which
-  may, as for every `rcdata.read` call.
+  may, as for every `rcdata.read` call. A flush that fails keeps its counts for the next one and never fails the
+  read (#228).
 
 ### Known deviation (fixed 2026-09-30)
 

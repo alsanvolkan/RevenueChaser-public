@@ -229,9 +229,9 @@ def test_a_weekly_change_of_consecutive_reports_has_no_gap(rcdata_market):
 
 
 def test_the_cot_release_date_is_called_an_approximation(rcdata_market):
-    """Review SF5: report + 3 days is not CFTC's schedule (holiday weeks, the 2025 shutdown); the board says so."""
+    """Review SF5: Tuesday + 3 days is not CFTC's schedule (holiday weeks, the 2025 shutdown); the board says so."""
     label = store_reads.cot_tff(fx.LAST)["label"]
-    assert "released ~2026-10-23 (report + 3 days; holiday weeks can differ)" in label
+    assert "released ~2026-10-23 (Tuesday + 3 days; holiday weeks can differ)" in label
 
 
 def test_a_skipped_run_after_a_build_keeps_the_built_status_and_says_skipped(rcdata_market):

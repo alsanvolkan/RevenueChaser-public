@@ -202,7 +202,8 @@ with no network:
   yet, or a table an older file lacks, reads as no rows. A row's status (`read.dataset_status`, and SPX Gamma's
   board status) is one of them, `ops.read_latest_check` (#336); only the builder calls `ops.latest_check`, which
   ensures the file because the builder writes it anyway (`rcdata/tests/test_read_never_creates_ops.py`). The read
-  log a read counts into is a write of its own: it reaches the file at its once-a-minute flush.
+  log a read counts into is a write of its own: it reaches the file at its once-a-minute flush (a failed flush keeps
+  its counts for the next one). A status that cannot be read is `status_unknown` on rows that are still served (#228).
 - Row counts, the newest date and the last swap from the live serving file. **The handle rule:** every read opens
   its own read-only handle with `rcdata.serving.open_read(kind)`, the path resolved at that moment, and closes it
   before `collect()` returns. No connection is cached, at module level or across requests, because DuckDB keeps
@@ -244,7 +245,7 @@ confirms Duo on the server).
 store"): Alpaca's daily bars (coverage = Tier A names with a bar on the session, target 99%; backfill = its day
 partitions), Alpaca's corporate actions, the SEC cover shares, the Yahoo and UW float, the WRDS history and
 `prices/serving`. The WRDS history card is attended (`python -m RevenueChaser.rcdata.build backfill wrds/prices`);
-its backfill progress counts the table-year partitions (`secd 1984` ...) out of those expected, and its WRDS
+its backfill progress counts the table-year partitions (`secd 1993` ...) out of those expected, and its WRDS
 difference slot shows the store's monthly report (`wrds_price_diff`): per comparison the sessions compared and how
 many differ by more than 1 bp, with the largest difference. Every other card still says "no WRDS run yet", except
 the four WRDS checks of the fundamentals layer below.
