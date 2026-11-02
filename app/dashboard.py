@@ -700,15 +700,16 @@ def run_relatedness_compare():
 
     body = request.get_json(silent=True) or {}
     provider, model, raw = body.get("provider"), body.get("model"), body.get("tickers")
-    names = [str(t).strip().upper() for t in raw] if isinstance(raw, list) else []
-    names = [t for t in names if t]
+    names = [t.strip().upper() for t in raw if isinstance(t, str)] if isinstance(raw, list) else []
+    bad = isinstance(raw, list) and (len(names) != len(raw) or not all(_valid_ticker(t) for t in names))
+    names = list(dict.fromkeys(t for t in names if t))     # one run per name (review nit)
     error = None
-    if provider not in writers.WRITERS:
+    if not isinstance(provider, str) or provider not in writers.WRITERS:
         error = f"provider must be one of {', '.join(writers.WRITERS)}"
-    elif model not in writers.get(provider).models:
+    elif not isinstance(model, str) or model not in writers.get(provider).models:
         error = f"model must be one of {provider}'s: {', '.join(writers.get(provider).models)}"
-    elif not names or len(names) > compare.MAX_NAMES:
-        error = f"tickers must be a list of 1 to {compare.MAX_NAMES} names"
+    elif bad or not names or len(names) > compare.MAX_NAMES:
+        error = f"tickers must be a list of 1 to {compare.MAX_NAMES} ticker symbols"
     elif writers.missing_text(provider):
         error = f"{provider} cannot run: {writers.missing_text(provider)}"
     if error:
