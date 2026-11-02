@@ -22,6 +22,7 @@ def env(monkeypatch, http_mock):
     monkeypatch.setattr(sec_edgar, "SEC_WWW_BASE", "https://sec.test")
     monkeypatch.setattr(unusual_whales, "BASE", "https://uw.test/api")
     monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "uw-test-key")
+    monkeypatch.setattr(etf, "SWEEP_PER_RUN", 0)     # these tests are the daily funds; the sweep has its own file
     http_mock.add("company_tickers_exchange.json", fx.SEC_FILE)
     base.run_request({"dataset": sec_tickers.NAME, "params": {"as_of": AS_OF}})
     http_mock.requests.clear()
