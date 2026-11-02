@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 from RevenueChaser.core import job_lock, ledger, rawstore
 from RevenueChaser.core.reporting_common import write_artifact
-from RevenueChaser.core.providers import deepseek, grok
+from RevenueChaser.core.providers import deepseek, evren, grok
 from RevenueChaser.module_value_chain import engine as vc_engine
 
 from . import config
@@ -164,9 +164,11 @@ def _writer(provider: str) -> tuple[str, bool, str]:
     """``(model, thinking, effort)`` a profile written by ``provider`` records in its cache key.
 
     DeepSeek's are the profile mode's, as before. Grok is sent neither DeepSeek knob (``core/providers/grok.py``), so
-    its key says so; its staleness does not read them (``store.is_stale``, ``ALT_WRITERS``)."""
+    its key says so; so is EVREN (#360). Staleness compares the writer's provider and model (``store.is_stale``)."""
     if provider == "grok":
         return grok.MODEL, False, ""
+    if provider == "evren":
+        return evren.MODEL, False, ""
     return deepseek.MODEL, config.THINKING, config.REASONING_EFFORT
 
 
@@ -199,8 +201,9 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
 
     profiles_mod.llm(provider)                 # an unknown writer fails here, before anything is written
     grok_run = provider == "grok"
+    free_run = provider != "deepseek"          # EVREN and Grok (#360): no fee, a call count is the only cap
     w_model, w_thinking, w_effort = _writer(provider)
-    mode = store.mode_stamp()
+    mode = store.mode_stamp((provider, w_model))
     if use_llm and store.get_mode() != mode:
         # Never delete on a mode change (#114 C2): profiles made under the old
         # mode stay visible, flagged stale, until each is re-profiled below.
@@ -242,15 +245,18 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
     # ``cap`` is a spend ceiling: ``0`` means no LLM call at all. It counts calls
     # (the thinking retry included), so the call budget is threaded into
     # ``profile_for`` and the group slice below only bounds how many groups start.
-    if grok_run:
-        # SuperGrok costs 0 USD a call: the cap is a call count (``--limit N``), the allowance gate the ceiling.
+    if free_run:
+        # EVREN and SuperGrok cost 0 USD a call: the cap is a call count (``--limit N``; none by default, avo 2 Nov
+        # 2026), Grok's allowance gate its ceiling.
         max_calls = None if max_calls is None else max(0, int(max_calls))
         if max_calls == 0:
             todo = {}
         elif max_calls is not None and len(todo) > max_calls:
-            logger.warning("relatedness: grok call cap %d -> %d/%d groups this run", max_calls, max_calls, len(todo))
+            logger.warning("relatedness: %s call cap %d -> %d/%d groups this run", provider, max_calls, max_calls,
+                           len(todo))
             todo = dict(list(todo.items())[:max_calls])
-        grok.reset_gate()                      # the first request of the run reads the allowance
+        if grok_run:
+            grok.reset_gate()                  # the first request of the run reads the allowance
     else:
         cap = usd_cap if usd_cap is not None else config.USD_CAP
         max_calls = None
@@ -293,9 +299,10 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
             stop.set()
 
     def _unusable_before_any_usable(usable: bool) -> bool:
-        """A Grok run: count the reply; True when it is unusable and no usable reply came yet in this run (it is
-        then not saved), and stop the run once ``GROK_UNUSABLE_STOP`` such replies came. DeepSeek: always False."""
-        if not grok_run:
+        """A free writer's run (EVREN, Grok): count the reply; True when it is unusable and no usable reply came yet
+        in this run (it is then not saved), and stop the run once ``GROK_UNUSABLE_STOP`` such replies came. DeepSeek:
+        always False."""
+        if not free_run:
             return False
         with state_lock:
             replies["usable" if usable else "unusable"] += 1
@@ -303,8 +310,8 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
             hit = first and replies["unusable"] >= config.GROK_UNUSABLE_STOP
         if hit:
             _fail("unusable", RuntimeError(
-                f"the first {config.GROK_UNUSABLE_STOP} Grok replies of this run held no usable profile; check the "
-                f"endpoint and model with --grok-ping (model {grok.MODEL})"))
+                f"the first {config.GROK_UNUSABLE_STOP} {provider} replies of this run held no usable profile; check "
+                f"the endpoint and model (model {w_model})"))
         return first
 
     def _work(item):
@@ -320,7 +327,7 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
                     continue               # keep a usable (stale) profile
                 store.save_profile(t, ciks.get(t),
                                    {f: [] for f in config.PROFILE_FIELDS},
-                                   "", w_model, status="no_text")
+                                   "", w_model, status="no_text", provider=provider)
             return
         user = profiles_mod.build_user(name, text)
         # The profile's own cache key (structured JSON, the mode stamp checked by
@@ -367,7 +374,7 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
         for t in ts:
             m = meta.get(t)
             if usable:
-                store.save_profile(t, ciks.get(t), prof, ck, w_model)
+                store.save_profile(t, ciks.get(t), prof, ck, w_model, provider=provider)
                 continue
             # Unusable answer: counted, never saved as done, and never allowed
             # to overwrite a profile that still has content.
@@ -382,10 +389,11 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
                                    row.get("model") or w_model,
                                    prompt_version=row.get("prompt_version")
                                    or store.PROMPT_VERSION,
-                                   status="ok", attempts=tries)
+                                   status="ok", attempts=tries,
+                                   provider=row.get("provider") or (store.key_writer(old_ck) or (provider,))[0])
             else:
                 store.save_profile(t, ciks.get(t), prof, ck, w_model,
-                                   status="empty", attempts=tries)
+                                   status="empty", attempts=tries, provider=provider)
 
     if todo:
         # LLM workers are a separate pool from the SEC pool (sec_edgar._throttle).
@@ -575,7 +583,7 @@ def _attach_peer_market(peers: dict) -> None:
 
 
 def _payload(profiles: dict[str, dict], thinking: dict[str, dict],
-             stale: set[str] | None = None) -> dict:
+             stale: set[str] | None = None, model: str | None = None) -> dict:
     from RevenueChaser.core.gics_map import canonical_sector, sector_path
     from RevenueChaser.core.universe import (BOARD_OPERATING_ONLY, classification_universe, filter_fields,
                                              theme_catalog)
@@ -656,7 +664,7 @@ def _payload(profiles: dict[str, dict], thinking: dict[str, dict],
 
     return {
         "as_of": _now(),
-        "model": deepseek.MODEL,
+        "model": model or deepseek.MODEL,
         "n": len(companies),
         "companies": companies,
         "peers": peers,
@@ -705,11 +713,12 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
     """A Fetch records its scores and payload in result history (#388) under ``run_id`` (the dashboard job's id; the
     CLI gets ``ledger.new_run_id()``, a scheduled task's ``job_runs`` id).
 
-    ``provider="grok"`` (#388, the CLI's ``--run --provider grok --limit N``) writes the missing and stale profiles
-    through SuperGrok; ``max_calls`` caps its calls while the run still covers every name (``limit`` slices the names
-    and is meant for DeepSeek demos). The dashboard Fetch and RC-Relatedness-OffPeak stay on DeepSeek."""
+    ``provider`` is the profile writer (``writers.WRITERS``, #360): the CLI and the dashboard pass the board's
+    (``settings.writer``); ``deepseek`` stays this function's default for its callers and tests. A free writer
+    (``evren``, ``grok``) writes the missing and stale profiles with no call cap unless ``max_calls`` is given (``limit``
+    slices the names). A Refresh (``no_fetch``) shows only ``provider``'s profiles: one writer per board."""
     if no_fetch:
-        return _run(True, tickers, limit, usd_cap)
+        return _run(True, tickers, limit, usd_cap, provider=provider)
     # Scheduled (CLI) and dashboard Fetch runs must not overlap. Refresh writes
     # nothing, so it never needs the lock.
     with job_lock.acquire("relatedness", wait=0) as got:
@@ -754,9 +763,9 @@ def _run(no_fetch: bool, tickers: list[str] | None, limit: int | None,
     tickers = select_pilot() if tickers is None else list(tickers)
     if limit:
         tickers = tickers[:limit]
-    # A Grok run asks SEC nothing (review B M1): it profiles the filings already stored; the DeepSeek nightly and
-    # the Value Chain sync fetch the rest.
-    vc_engine.fetch_corpus(tickers, no_fetch=no_fetch or provider != "deepseek")
+    # A Grok run asks SEC nothing (review B M1): it profiles the filings already stored. The nightly writer (EVREN by
+    # default, #360, or DeepSeek) and the Value Chain sync fetch the rest.
+    vc_engine.fetch_corpus(tickers, no_fetch=no_fetch or provider == "grok")
 
     next_off_peak = None
     stopped_reason = None
@@ -781,9 +790,14 @@ def _run(no_fetch: bool, tickers: list[str] | None, limit: int | None,
     if next_reset is not None:
         next_off_peak = None
 
-    # "Profiled" counts usable profiles only: empty / no_text rows are not done.
-    profiles = {t: p for t, p in profiles.items() if any(p.values())}
-    payload = _payload(profiles, {}, stale=store.stale_tickers(list(profiles)))
+    # "Profiled" counts usable profiles only: empty / no_text rows are not done. One writer per board (#360): another
+    # writer's profiles stay in the store, out of the matrix, until this writer redoes them.
+    writer = (provider, _writer(provider)[0])
+    other = store.other_writer_tickers(list(profiles), writer)
+    profiles = {t: p for t, p in profiles.items() if any(p.values()) and t not in other}
+    payload = _payload(profiles, {}, stale=store.stale_tickers(list(profiles), writer=writer), model=writer[1])
+    payload["other_writer"] = len(other)
+    payload["writer"] = {"provider": writer[0], "model": writer[1]}
     # Pending is what a next run can still profile (#388 D4): a name whose filing has no text waits for SEC, not for
     # DeepSeek, so it is counted apart.
     no_text = {t for t, m in store.profile_meta(tickers).items() if m["status"] == "no_text" and t not in profiles}
@@ -796,9 +810,6 @@ def _run(no_fetch: bool, tickers: list[str] | None, limit: int | None,
         payload["next_off_peak"] = next_off_peak.strftime("%Y-%m-%d %H:%M")
     if next_reset is not None:
         payload["next_reset"] = next_reset.strftime("%Y-%m-%d %H:%M")
-    if provider != "deepseek" and not no_fetch:
-        # Which writer this Fetch ran with (#388): the board's ``model`` stays the profile mode's (DeepSeek).
-        payload["writer"] = {"provider": provider, "model": _writer(provider)[0]}
     if stopped_reason:
         payload["stopped_reason"] = stopped_reason
     if stopped_message:

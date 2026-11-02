@@ -342,6 +342,7 @@ whole app at a local server:
 | `RC_YAHOO_BASE` | Unset in production: Yahoo is read through yfinance, which has no base URL. When set, the MOVE and wheat history is read as `<base>/<quoted symbol>.json` instead (the CLI test's loopback mock; `rcdata/build/sources/yahoo.py`) |
 | `RC_FDA_OOPD_BASE` | FDA Office of Orphan Products Development (OOPD) search |
 | `RC_DEEPSEEK_BASE` | DeepSeek chat API (`core/providers/deepseek.py`; read at call time) |
+| `RC_EVREN_BASE` | EVREN chat API, the default Relatedness writer (`core/providers/evren.py`, #360; read at call time). Default `https://evren-llmapi.ssyz.org.tr/v1`; the model is `RC_EVREN_MODEL` or the board's `WRITER_MODEL` |
 | `RC_GROK_BASE` | SuperGrok chat API, the Relatedness Grok writer (`core/providers/grok.py`, #388; read at call time). Default the Grok CLI chat proxy `https://cli-chat-proxy.grok.com/v1`. Only https on `grok.com` / `*.grok.com` or a loopback mock is accepted, so the subscription token never goes elsewhere (`api.x.ai`, the metered developer API, is refused); the model is `RC_GROK_MODEL` |
 | `RC_OPENFIGI_BASE` | OpenFIGI mapping API (identity refresh; the 13F CUSIP map, `core/providers/openfigi.py`, read at call time; the spine's `openfigi/map`) |
 | `RC_NASDAQTRADER_BASE` | Nasdaq Trader symbol directory (identity refresh) |

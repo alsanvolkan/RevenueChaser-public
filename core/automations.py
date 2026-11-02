@@ -150,8 +150,9 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         settings=TaskSettings(wake_to_run=True, time_limit_hours=2), offmachine=True),
     AutomationEntry(
         name="RC-Relatedness-OffPeak", label="Relatedness (off-peak)",
-        args=("-m", "RevenueChaser.module_relatedness", "--run", "--cap", "8"), time="12:30",
-        description="Relatedness profiling through DeepSeek; defers itself outside off-peak hours.",
+        args=("-m", "RevenueChaser.module_relatedness", "--run", "--cap", "10"), time="12:30",
+        description=("Relatedness profiling with the board's writer (Settings, #360: EVREN by default, no call cap); "
+                     "with DeepSeek it is capped at 10 USD (avo, 2 Nov 2026) and defers itself outside off-peak hours."),
         tables_written=("relatedness_profiles", "relatedness_attributes", "relatedness_scores",
                         "run_registry", "llm_cache", "chain_filings", "chain_meta", "edgar_documents",
                         "result_runs", "relatedness_scores_history"),

@@ -256,7 +256,9 @@ jobs.register("module_oipd", runners.run_oipd, ["module_oipd"], requires_uw=True
 SETTINGS_JOBS = {"module_comovement": "comovement_recompute", "module_swing_potential": "settings_refresh",
                  "module_fundamentals": "settings_refresh",
                  # The control board's universe (Apply, design v28): a saved choice, re-rendered store-only.
-                 "module_settings": "settings_refresh"}
+                 "module_settings": "settings_refresh",
+                 # The Relatedness writer (#360): a saved choice shows on the Settings card; the next run uses it.
+                 "module_relatedness": "settings_refresh"}
 
 TABS = [
     {"type": "header", "label": "Research"},

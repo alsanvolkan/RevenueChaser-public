@@ -4,21 +4,33 @@ Every engine derives its paths from BASE_DIR / DATA_DIR / OUTPUT_DIR, so they
 stay inside the RC_STORE_DIR / RC_CACHE_DIR / RC_EDGAR_DOCS_DIR overrides that
 _root() reads here and nowhere else; set them before the first RevenueChaser
 import. .store/ (DuckDB) and edgar_docs/ are durable, .cache/ is regenerable,
-and keys come from the environment, then .env. The rule tunables sit in TUNABLES,
+and keys come from the environment (writer keys never from .env, #360). The rule tunables sit in TUNABLES,
 the flat name -> value registry the rule modules and the calibration replay
 read. See docs/data_architecture.md; core/tests/test_store_layout.py
 enforces the path-derivation rule.
 """
 import os
 from pathlib import Path
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Never taken from .env (#360, framework D5, avo 1 Nov 2026): a writer key reaches the process only through its
+# environment (on homesrv the unit's EnvironmentFile, /etc/life/secrets.env). .env keeps paths and settings.
+ENV_ONLY_KEYS = frozenset({"EVREN_API_KEY", "DEEPSEEK_API_KEY"})
+
+
+def load_env_file(path: Path) -> None:
+    """Load ``path`` like ``load_dotenv`` (a real environment variable still wins), minus :data:`ENV_ONLY_KEYS`."""
+    for name, value in dotenv_values(path).items():
+        if name not in ENV_ONLY_KEYS and value is not None and name not in os.environ:
+            os.environ[name] = value
+
+
 # Load .env FIRST: the roots below read RC_STORE_DIR / RC_CACHE_DIR /
 # RC_EDGAR_DOCS_DIR, and a value set in .env must count. (Real environment
-# variables still win — load_dotenv never overrides them.)
-load_dotenv(BASE_DIR / ".env")
+# variables still win.)
+load_env_file(BASE_DIR / ".env")
 
 # Both roots are overridable by environment variable, read HERE and nowhere
 # else. Dozens of module-level constants are derived from them at import time

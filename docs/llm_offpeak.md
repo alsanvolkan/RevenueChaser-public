@@ -118,8 +118,9 @@ Reference (informational; DST shifts these):
 ## Grok writer (#388, no off-peak gate)
 
 The D5 v2 re-profile may run through a SuperGrok subscription instead of DeepSeek. It is a manual CLI path;
-the dashboard Fetch and the scheduled `RC-Relatedness-OffPeak` (`--run --cap 8`)
-stay on DeepSeek, unchanged.
+since #360 the dashboard Fetch and the scheduled `RC-Relatedness-OffPeak` (`--run --cap 10`) write with the
+board's writer (Settings: EVREN by default, no fee; DeepSeek capped at 10 USD and off-peak gated; Grok). One writer
+per board: a profile of another writer is stale and stays out of the peer matrix until it is redone.
 
 - **Client** `core/providers/grok.py`: order **cache → login → allowance → HTTP**.
   The login is an xAI OAuth token, read at call time through

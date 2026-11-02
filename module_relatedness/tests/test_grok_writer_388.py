@@ -4,9 +4,8 @@
   caps the calls (never the universe), the allowance gate stops the run cleanly, there is no off-peak gate.
 - The stored row names its writer: ``relatedness_profiles.model`` is the Grok model and the cache key carries
   ``"provider": "grok"``; the LLM cache keeps the two providers apart.
-- **The trap:** a Grok profile at the current prompt version is CURRENT for the default DeepSeek nightly
-  (RC-Relatedness-OffPeak ``--run --cap 8``), and a DeepSeek v2 profile is current for a Grok run; a v1 profile stays
-  stale for both. The scheduled entry is byte-identical.
+- **One writer per board (#360, replacing #388's trap):** a Grok profile is STALE for a DeepSeek run and a DeepSeek
+  profile is stale for a Grok run, so the board's writer redoes them; a v1 profile stays stale for both.
 - Peer scores do not depend on which model wrote a profile.
 
 Offline, temp store: the Grok HTTP client and ``deepseek.complete`` are fakes; nothing reaches xAI, DeepSeek or SEC.
@@ -127,21 +126,22 @@ def _ck(ticker: str) -> dict:
 
 # ── the trap: staleness across providers ────────────────────────────────────
 
-def test_a_grok_v2_profile_is_current_for_the_default_deepseek_run(world, deepseek_calls):
+def test_a_grok_v2_profile_is_redone_by_a_deepseek_run(world, deepseek_calls):
     engine.build_profiles(TICKERS, provider="grok", max_calls=10)
     assert len(world.posts) == 3
-    payload = engine.run(usd_cap=8.0)                    # what RC-Relatedness-OffPeak runs: --run --cap 8
-    assert deepseek_calls == []
+    assert store.stale_tickers(TICKERS) == set(TICKERS)                  # stale under the DeepSeek mode (#360)
+    payload = engine.run(usd_cap=10.0)
+    assert len(deepseek_calls) == 3
     assert payload["pending"] == 0 and payload["n"] == 3
     assert not any(c["stale"] for c in payload["companies"])
     assert store.stale_tickers(TICKERS) == set()
 
 
-def test_a_deepseek_v2_profile_is_current_for_a_grok_run(world, deepseek_calls):
+def test_a_deepseek_v2_profile_is_redone_by_a_grok_run(world, deepseek_calls):
     engine.build_profiles(TICKERS)
     assert len(deepseek_calls) == 3
     engine.build_profiles(TICKERS, provider="grok", max_calls=10)
-    assert world.posts == []
+    assert len(world.posts) == 3
 
 
 def test_a_v1_profile_stays_stale_for_both_providers(world, deepseek_calls):
@@ -151,7 +151,8 @@ def test_a_v1_profile_stays_stale_for_both_providers(world, deepseek_calls):
     store.save_profile("BBB", "", _prof(products=["old"]), grok_v1, grok.MODEL, prompt_version="v1")
     assert store.stale_tickers(TICKERS) == {"AAA", "BBB"}
     engine.build_profiles(["AAA"], provider="grok", max_calls=10)       # Grok redoes a v1 DeepSeek profile
-    assert len(world.posts) == 1 and store.stale_tickers(["AAA"]) == set()
+    assert len(world.posts) == 1
+    assert store.stale_tickers(["AAA"], writer=("grok", grok.MODEL)) == set()
     engine.build_profiles(["BBB"])                                       # DeepSeek redoes a v1 Grok profile
     assert len(deepseek_calls) == 1 and store.stale_tickers(["BBB"]) == set()
 
@@ -160,8 +161,10 @@ def test_a_grok_profile_from_an_old_input_is_redone(world, deepseek_calls):
     """The input check (#388 D5) holds for a Grok row too: same prompt hash, so a new filing text redoes it."""
     engine.build_profiles(TICKERS, provider="grok", max_calls=10)
     _seed_filings({"BBB": "BBB now sells banking software"})
-    engine.build_profiles(TICKERS)
-    assert len(deepseek_calls) == 1 and "BBB now sells banking software" in deepseek_calls[0]
+    world.posts.clear()
+    engine.build_profiles(TICKERS, provider="grok")
+    assert len(world.posts) == 1
+    assert "BBB now sells banking software" in world.posts[0]["json"]["messages"][-1]["content"]
 
 
 # ── the stored writer ───────────────────────────────────────────────────────
@@ -272,10 +275,10 @@ def test_a_run_whose_unusable_replies_stay_below_the_stop_saves_none_of_them(wor
 
 # ── the CLI ─────────────────────────────────────────────────────────────────
 
-def test_the_default_run_calls_the_engine_exactly_as_before(monkeypatch, capsys):
+def test_a_deepseek_run_calls_the_engine_exactly_as_before(monkeypatch, capsys):
     got = {}
     monkeypatch.setattr(cli.engine, "run", lambda **k: got.update(k) or {"n": 1, "pending": 0})
-    assert cli.main(["--run", "--cap", "8"]) == 0
+    assert cli.main(["--run", "--provider", "deepseek", "--cap", "8"]) == 0
     assert got == {"tickers": None, "limit": None, "usd_cap": 8.0}
     assert json.loads(capsys.readouterr().out.strip().splitlines()[-1]) == {"n": 1, "pending": 0,
                                                                            "next_off_peak": None}
@@ -290,7 +293,6 @@ def test_the_grok_run_passes_the_limit_as_a_call_cap(monkeypatch, capsys):
 
 
 @pytest.mark.parametrize("argv", [
-    ["--run", "--provider", "grok"],                               # no call cap
     ["--run", "--provider", "grok", "--limit", "5", "--cap", "8"],  # --cap is USD, DeepSeek only
     ["--run", "--provider", "grok", "--limit", "0"],
     ["--rebuild-themes", "--provider", "grok"],                    # Grok names themes only with --name
@@ -305,10 +307,13 @@ def test_bad_grok_combinations_are_refused(argv, monkeypatch):
     assert exit_.value.code == 2
 
 
-def test_the_scheduled_job_is_unchanged():
-    from RevenueChaser.core import automations
-    e = automations.entry("RC-Relatedness-OffPeak")
-    assert e.args == ("-m", "RevenueChaser.module_relatedness", "--run", "--cap", "8") and e.time == "12:30"
+def test_a_grok_run_needs_no_limit(monkeypatch):
+    """No call cap for Grok (avo, 2 Nov 2026, #360): ``--limit`` is optional."""
+    monkeypatch.setattr(grok, "preflight", lambda now=None: None)
+    got = {}
+    monkeypatch.setattr(cli.engine, "run", lambda **k: got.update(k) or {"n": 1, "pending": 0, "companies": []})
+    assert cli.main(["--run", "--provider", "grok"]) == 0
+    assert got == {"tickers": None, "provider": "grok", "max_calls": None}
 
 
 def test_the_grok_ping_makes_one_call_and_writes_nothing(world, capsys):
@@ -390,8 +395,8 @@ def test_an_allowance_stop_is_recorded_partial_and_names_the_writer(world, monke
     assert ctx["writer"] == {"provider": "grok", "model": grok.MODEL}
 
 
-def test_a_deepseek_run_records_no_writer_key(world, deepseek_calls):
+def test_a_deepseek_run_names_its_writer_too(world, deepseek_calls):
     engine.run(usd_cap=8.0, run_id="d1")
     row = rawstore.query("SELECT context FROM result_runs WHERE run_id = 'd1'", db="history")[0]
     ctx = row["context"] if isinstance(row["context"], dict) else json.loads(row["context"])
-    assert "writer" not in ctx
+    assert ctx["writer"] == {"provider": "deepseek", "model": deepseek.MODEL}             # every run, #360
