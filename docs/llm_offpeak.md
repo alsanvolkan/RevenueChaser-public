@@ -122,6 +122,14 @@ since #360 the dashboard Fetch and the scheduled `RC-Relatedness-OffPeak` (`--ru
 board's writer (Settings: EVREN by default, no fee; DeepSeek capped at 10 USD and off-peak gated; Grok). One writer
 per board: a profile of another writer is stale and stays out of the peer matrix until it is redone.
 
+Two consequences to expect (PR 362 review nit5):
+
+- **Deploy day.** EVREN becomes the board's writer, so every stored DeepSeek or Grok profile leaves the peer matrix
+  and counts as pending until the first EVREN run redoes it. The board shows few or no peers in between.
+- **One model everywhere.** Pick the model on the board, not with `RC_EVREN_MODEL` / `RC_DEEPSEEK_MODEL` /
+  `RC_GROK_MODEL`. The board's model goes to every caller with each call. An environment default can differ
+  between the dashboard and the scheduled unit, and then each process redoes the other's profiles.
+
 - **Client** `core/providers/grok.py`: order **cache → login → allowance → HTTP**.
   The login is an xAI OAuth token, read at call time through
   `subscription_usage.xai_token` (`XAI_OAUTH_TOKEN`, else the file named by
