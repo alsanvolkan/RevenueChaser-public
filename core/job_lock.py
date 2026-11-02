@@ -301,6 +301,8 @@ WRITES: dict[str, tuple[str, ...]] = {
     "forecast_outcomes": (STORE,),
     "forecast_baselines": (STORE,),
     "rcdata_build": (MARKET,),
+    # RC's xAI login refresh (#368): writes the login file only, no store, so it holds off nothing else.
+    "xai-login": (),
 }
 #: The families whose name carries a tail — one per step, one per board. Matched by prefix.
 WRITES_PREFIX: tuple[tuple[str, tuple[str, ...]], ...] = (

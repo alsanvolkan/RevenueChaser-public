@@ -57,9 +57,13 @@ def missing(slug: str) -> str | None:
     """The NAME of the absent credential of ``slug``, or ``None`` when it is present. Never a value."""
     w = get(slug)
     if slug == "grok":
-        from RevenueChaser.core import subscription_usage
+        # Presence only, no request (#368): the Settings card renders with zero network; a run refreshes the login.
+        import os
+        from RevenueChaser.core import subscription_usage, xai_login
+        if os.getenv("XAI_OAUTH_TOKEN", "").strip() or xai_login.present(subscription_usage.xai_auth_file()):
+            return None
         try:
-            subscription_usage.xai_token()
+            subscription_usage.xai_token()      # a Hermes file: its offline reader (an RC login never reaches here)
         except subscription_usage.SubscriptionUsageError:
             return w.credential
         return None
