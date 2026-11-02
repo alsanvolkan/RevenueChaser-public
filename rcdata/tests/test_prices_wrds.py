@@ -402,6 +402,26 @@ def test_history_bars_crsp_first_then_compustat_and_alpaca_wins_its_sessions(bui
     assert _q("SELECT ticker FROM price_bars_daily WHERE session_date = '2024-03-01'")[0]["ticker"] == "OLD-A"
 
 
+def test_a_delisted_compustat_security_whose_sessions_crsp_all_wins_keeps_its_symbol(monkeypatch):
+    """#363 (homesrv, 2 Nov 2026: the swap refused ``security_symbol`` shrinking 10,436 to 9,856). OLD.A is
+    Compustat's alone, delisted, and its PERMNO links by rule 4. CRSP wins both its sessions and carries no symbol
+    (a delisted PERMNO's ticker can be another listing's today), so the symbol must come from Compustat's bars that
+    lost, or the security leaves ``security_symbol`` and every bar of it leaves ``price_bars_daily``."""
+    data = _data()
+    data["crsp.dsf_v2"] += [{**_crsp_rows()[0], "permno": "50000", "dlycaldt": d, "dlyprc": c, "dlyopen": c,
+                             "dlyhigh": c, "dlylow": c, "dlyret": None, "hdrcusip": "68000010", "cusip": "68000010",
+                             "ticker": "OLDA"} for d, c in (("2024-03-01", 5.0), ("2024-03-04", 5.1))]
+    conn = FakeWrds(data)
+    monkeypatch.setattr(wrds, "_factory", lambda: conn)
+    wrds.reset()
+    assert _backfill()["result"] == "changed"
+    assert {r["source"] for r in _q("SELECT source FROM price_bar_daily WHERE security_id = ?", [OLDCO])} == {
+        wrds_history.CRSP}, "CRSP wins both sessions"
+    assert [r["symbol"] for r in _q("SELECT symbol FROM security_symbol WHERE security_id = ?", [OLDCO])] == ["OLD-A"]
+    assert _q("SELECT count(*) AS n FROM price_bars_daily WHERE ticker = 'OLD-A'")[0]["n"] == 2
+    wrds.reset()
+
+
 @pytest.mark.parametrize("col", ["hdrcusip", "ticker"])
 def test_a_crsp_year_without_its_link_columns_is_a_run_issue(monkeypatch, col):
     """Review N1 of #353: the link reads ``hdrcusip`` and ``ticker``; a year that answers none is an issue, not a

@@ -118,6 +118,7 @@ def _derive(con: duckdb.DuckDBPyConnection) -> None:
     """``adj_factor`` and ``security_symbol`` again from the bars and actions the file now holds (a dividend takes
     the close of the last bar before its ex-date, the builder's ``close_before``, which the served table does not keep)."""
     con.execute("CREATE OR REPLACE TEMP TABLE stg_spine (ticker TEXT, cik TEXT, tier TEXT, security_id TEXT)")
+    con.execute("CREATE OR REPLACE TEMP TABLE _hist_all AS SELECT * FROM price_bar_daily WHERE false")
     con.execute("""CREATE OR REPLACE TEMP TABLE _act_final AS
         SELECT a.*, p.close AS close_before FROM corporate_action a ASOF LEFT JOIN price_bar_daily p
             ON p.security_id = a.security_id AND a.ex_date > p.session_date""")
