@@ -5,13 +5,11 @@ import json
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
-
-from RevenueChaser.core.config import OUTPUT_DIR, to_float
+from RevenueChaser.core.config import OUTPUT_DIR, load_env_file, to_float
 
 BASE_DIR = Path(__file__).resolve().parent
 REVENUE_CHASER_ROOT = BASE_DIR.parent
-load_dotenv(REVENUE_CHASER_ROOT / ".env")
+load_env_file(REVENUE_CHASER_ROOT / ".env")   # writer keys never from .env (#360)
 
 UW_API_KEY = os.getenv("UNUSUAL_WHALES_API_KEY", "")
 

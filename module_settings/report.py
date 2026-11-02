@@ -297,7 +297,8 @@ function settingsSave(btn){
   var changes = {};
   inputs.forEach(function(i){
     if(String(i.value).trim() !== String(i.getAttribute('data-orig'))){
-      changes[i.getAttribute('data-setting')] = String(i.value).trim() === '' ? null : Number(i.value);
+      var text = i.getAttribute('data-kind') === 'text';
+      changes[i.getAttribute('data-setting')] = String(i.value).trim() === '' ? null : (text ? String(i.value) : Number(i.value));
     }
   });
   if(!Object.keys(changes).length){ if(out) out.textContent = 'No changes to save.'; return; }
@@ -950,13 +951,18 @@ def _setting_field(f: dict) -> str:
     key = str(f.get("key") or "")
     k = _html.escape(key, quote=True)
     label = _html.escape(str(f.get("label") or key))
-    orig = _num(f.get("value"))
+    text = f.get("kind") == "text"           # a text setting (#360): the value is the string itself
+    val = (lambda v: "" if v is None else str(v)) if text else _num
+    orig = val(f.get("value"))
     if f.get("choices"):
+        # A choice is ``[value, label]`` or ``[value, label, why it is unavailable]`` (greyed, #360).
         opts = "".join(
-            f'<option value="{_html.escape(_num(c[0]), quote=True)}"'
-            f'{" selected" if _num(c[0]) == orig else ""}>{_html.escape(str(c[1]))}</option>'
+            f'<option value="{_html.escape(val(c[0]), quote=True)}"'
+            f'{" selected" if val(c[0]) == orig else ""}{" disabled" if len(c) > 2 and c[2] else ""}>'
+            f'{_html.escape(str(c[1]) + (f" ({c[2]})" if len(c) > 2 and c[2] else ""))}</option>'
             for c in f["choices"])
-        control = (f'<select id="in-{k}" data-setting="{k}" data-orig="{_html.escape(orig, quote=True)}">'
+        kind = ' data-kind="text"' if text else ""
+        control = (f'<select id="in-{k}" data-setting="{k}"{kind} data-orig="{_html.escape(orig, quote=True)}">'
                    f"{opts}</select>")
     else:
         attrs = ""
@@ -970,7 +976,7 @@ def _setting_field(f: dict) -> str:
                    f'data-orig="{_html.escape(orig, quote=True)}">')
     mark = ""
     if f.get("overridden"):
-        mark = (f'<span class="ovr">custom (default {_html.escape(_num(f.get("default")))})</span>')
+        mark = (f'<span class="ovr">custom (default {_html.escape(val(f.get("default")))})</span>')
     rng = f'<span class="rng">{_html.escape(str(f.get("range") or ""))}</span>'
     return (f'<div class="sfield"><label for="in-{k}">{label}{mark}</label>{control}{rng}'
             f'<div class="ferr" id="err-{k}" role="alert"></div></div>')

@@ -134,7 +134,8 @@ def test_empty_change_set_is_invalid(rawstore_tmp_db):
 def test_unknown_board_raises(rawstore_tmp_db):
     with pytest.raises(KeyError):
         bs.values("module_nope")
-    assert bs.boards() == ["module_comovement", "module_fundamentals", "module_settings", "module_swing_potential"]
+    assert bs.boards() == ["module_comovement", "module_fundamentals", "module_relatedness", "module_settings",
+                          "module_swing_potential"]
 
 
 def test_describe_lists_every_field_with_value_default_and_override_flag(rawstore_tmp_db):

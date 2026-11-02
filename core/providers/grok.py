@@ -245,11 +245,11 @@ def _retry_delay(resp, attempt: int) -> float:
     return min(_MAX_DELAY, _random() * _RETRY_BASE * 2.0 ** min(max(attempt - 1, 0), 16))
 
 
-def build_body(system: str, user: str, *, max_tokens: int, json_mode: bool) -> dict:
+def build_body(system: str, user: str, *, max_tokens: int, json_mode: bool, model: str | None = None) -> dict:
     """The request body: model, the two messages, ``max_tokens``, no streaming, and the JSON mode when asked.
     Nothing else is sent (see the module note on DeepSeek's knobs)."""
     body = {
-        "model": MODEL,
+        "model": model or MODEL,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "max_tokens": max_tokens,
         "stream": False,
@@ -266,7 +266,8 @@ def complete(system: str, user: str, *, thinking: bool = False,
              client: httpx.Client | None = None, now=None,
              ticker: str | None = None, cik=None,
              prompt_version: str | None = None,
-             validate: Callable[[str], bool] | None = None) -> str:
+             validate: Callable[[str], bool] | None = None,
+             model: str | None = None) -> str:
     """One chat completion through SuperGrok: cache, then the login, then the allowance gate, then HTTP.
 
     The signature is ``deepseek.complete``'s, so a caller swaps the client and nothing else. ``thinking``,
@@ -275,7 +276,8 @@ def complete(system: str, user: str, *, thinking: bool = False,
     """
     global _calls
     del thinking, reasoning_effort, temperature          # DeepSeek knobs: dropped on purpose, never sent
-    key = _cache_key(system, user, MODEL)
+    model = model or MODEL                 # the board's model (#360), a parameter, never a module-level swap
+    key = _cache_key(system, user, model)
     if use_cache:
         hit = _cache_get(key)
         if hit is not None:
@@ -287,7 +289,7 @@ def complete(system: str, user: str, *, thinking: bool = False,
         raise GrokAuthError(str(exc)) from None
     _check_allowance(now)
 
-    body = build_body(system, user, max_tokens=max_tokens, json_mode=json_mode)
+    body = build_body(system, user, max_tokens=max_tokens, json_mode=json_mode, model=model)
     own = client is None
     if own:
         client = _new_client()
@@ -321,8 +323,8 @@ def complete(system: str, user: str, *, thinking: bool = False,
             if status == 402:
                 raise GrokAllowanceError(f"SuperGrok refused the call (HTTP 402): {_scrub(r.text, token)}")
             if status >= 400:
-                raise GrokRequestError(f"Grok HTTP {status} from {url} (model {MODEL}): {_scrub(r.text, token)}")
-            return _finish(r, key, token, use_cache, validate, ticker, cik, prompt_version)
+                raise GrokRequestError(f"Grok HTTP {status} from {url} (model {model}): {_scrub(r.text, token)}")
+            return _finish(r, key, token, use_cache, validate, ticker, cik, prompt_version, model)
         raise GrokError("Grok request failed")  # pragma: no cover - the loop always returns or raises
     finally:
         if own:
@@ -340,7 +342,8 @@ def _content(data) -> str | None:
     return content if isinstance(content, str) and content.strip() else None
 
 
-def _finish(r, key: str, token: str, use_cache: bool, validate, ticker, cik, prompt_version) -> str:
+def _finish(r, key: str, token: str, use_cache: bool, validate, ticker, cik, prompt_version,
+            model: str | None = None) -> str:
     """Turn a 2xx reply into its content (and cache it when the caller accepts it)."""
     try:
         data = r.json()
@@ -357,7 +360,7 @@ def _finish(r, key: str, token: str, use_cache: bool, validate, ticker, cik, pro
             logger.warning("grok validate hook raised %s; not caching", type(exc).__name__)
             cacheable = False
     if cacheable:
-        _cache_put(key, content, {"model": MODEL, "usage": data.get("usage"), "ticker": ticker, "cik": cik,
+        _cache_put(key, content, {"model": model or MODEL, "usage": data.get("usage"), "ticker": ticker, "cik": cik,
                                   "prompt_version": prompt_version})
     return content
 

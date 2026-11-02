@@ -83,7 +83,10 @@ def store(dashboard, monkeypatch):
 
 def _seed_universe(rawstore, tickers):
     """Universe rows, a CIK map and a cached filing per ticker, so ``fetch_corpus``
-    and ``build_profiles`` have nothing to fetch from SEC."""
+    and ``build_profiles`` have nothing to fetch from SEC. The board's writer is DeepSeek (the mock this file counts;
+    #360 made EVREN the default): one ``board_settings`` row, as a Save on Settings would write it."""
+    rawstore.write_rows("board_settings", [{"board": "module_relatedness", "key": "WRITER", "value": None,
+                                            "value_text": "deepseek", "updated_at": "2026-11-02T00:00:00+00:00"}])
     rawstore.write_rows("equity_universe", [
         {"ticker": t, "name": t + " Inc", "market_cap": 1e10,
          "sector": "Technology", "industry": "Semiconductors"} for t in tickers])
