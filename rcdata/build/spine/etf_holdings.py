@@ -38,10 +38,12 @@ its provider's day cap.
 ``uw`` day cap: a sweep is about 5,850 calls over two daily runs (about 3,014 on its first day with the daily funds'
 14, the rest on the next trading day). Its state is ``raw/funds/etf_holdings/sweep.json`` (its day, empty and failed
 answers, every sweep day), written before the first call: a cut or killed sweep goes on under its first day, and each
-run types the sweep day's held raws its partition lacks. An empty answer, and a refused one (a 404), is not asked
-again within the sweep; at its end they are one ``uw_empty`` and one ``source_failed`` issue. A rejected key or an
-open breaker (UW down) stops the sweep with nothing recorded, so the next run asks again. A scoped request asks its
-``names`` only and starts no sweep.
+run types the sweep day's held raws its partition lacks. An empty answer, and a failed one (a 404, or a 5xx or a
+timeout after the client's retries), is not asked again within the sweep; at its end they are one ``uw_empty`` and
+one ``source_failed`` issue. A rejected key on an ETF's own call or an open breaker (UW down) stops the sweep with
+nothing recorded, so the next run asks again; its first stop is a ``source_failed`` issue, and when the same ETFs
+stop it ``SWEEP_STOPS`` (3) times in a row they are recorded as failed and the sweep goes on past them. A spine with no
+ETF starts no sweep. A scoped request asks its ``names`` only and starts no sweep.
 **Retention:** the last 30 days whole; older, each month's last held day and each sweep day. It only names what it
 would remove unless ``RC_ETF_HOLDINGS_PRUNE=1`` **and** the request's ``allow_shrink`` (the swap's shrink guard would
 refuse the smaller table after the files are gone). No key for the issuer files; without ``UNUSUAL_WHALES_API_KEY`` the issuer files are still
@@ -116,6 +118,9 @@ EXTRA = frozenset({"XHB", "XRT", "KIE", "IAK", "ITB", "TAN", "PBW"})
 SWEEP_DAYS = 30
 SWEEP_PER_RUN = 3000
 SWEEP_STATE = "sweep.json"
+# Outage stops on the same ETFs before they are taken as those ETFs' own failures (review 2: five neighbours that
+# answer 503 every time would open the breaker on every run and stall the sweep for good).
+SWEEP_STOPS = 3
 # Retention (avo, option 1): the last ``SWEEP_DAYS`` days whole; older, each month's last day and each sweep day. It
 # only reports what it would remove unless ``PRUNE_ENV`` is "1": the first real removal is avo's word at that time.
 PRUNE_ENV = "RC_ETF_HOLDINGS_PRUNE"
@@ -239,8 +244,7 @@ class EtfFile:
         if self.provider != "uw":
             return base.http_get(ctx, self.provider, self.url(), headers={"Accept": "*/*"}).content
         ctx.check_cap("uw")
-        from ....core.providers.unusual_whales import _seg
-        endpoint = f"/etfs/{_seg(self.etf)}/holdings"
+        endpoint = _endpoint(self.etf)
         res = ctx.uw_client().get_result(endpoint)
         if res.status != "ok":
             raise base.SourceError(f"uw {endpoint}: {res.error}")
@@ -278,10 +282,19 @@ def sweep_etfs() -> list[str]:
     return [t for (t,) in rows if t not in DAILY]
 
 
-def _uw_down(ctx: base.RunContext) -> str | None:
-    """Why UW answers no ETF this run (a rejected key, the client's open breaker), else None."""
+def _endpoint(etf: str) -> str:
+    from ....core.providers.unusual_whales import _seg
+    return f"/etfs/{_seg(etf)}/holdings"
+
+
+def _uw_down(ctx: base.RunContext, etf: str) -> str | None:
+    """Why UW answers no ETF this run: the client's open breaker, or a rejected key on ``etf``'s own call (an earlier
+    fund's 403 is that fund's), else None."""
     h = ctx.uw_client().health()
-    return "UW rejected the key" if h["auth_error"] else "UW breaker open" if h["breaker_open"] else None
+    if h["breaker_open"]:
+        return "UW breaker open"
+    auth = h["auth_error"]
+    return "UW rejected the key" if auth and auth.get("endpoint") == _endpoint(etf) else None
 
 
 def _is_day(name: str) -> bool:
@@ -309,14 +322,16 @@ def _untyped(day: str) -> list[Path]:
     folder = raw_dir() / day
     if not folder.is_dir():
         return []
-    held = {p.name[3:-5]: p for p in folder.glob("uw-*.json") if not p.name.endswith(META_SUFFIX)}
+    # A raw whose meta is gone (only a hand can remove it, the meta is written first) is left alone, not typed.
+    held = {p.name[3:-5]: p for p in folder.glob("uw-*.json")
+            if not p.name.endswith(META_SUFFIX) and _meta(p).exists()}
     part = parquet_dir() / f"date={day}" / "part-0.parquet"
     typed: set[str] = set()
     if part.exists():
         con = duckdb.connect()
         try:
-            typed = {t for (t,) in con.execute(f"SELECT DISTINCT etf FROM read_parquet({base.sql_path(part)})")
-                     .fetchall()}
+            typed = {t for (t,) in con.execute(f"SELECT DISTINCT etf FROM read_parquet({base.sql_path(part)}, "
+                                               "hive_partitioning = false)").fetchall()}
         finally:
             con.close()
     return [p for t, p in sorted(held.items()) if t not in typed]
@@ -459,9 +474,14 @@ class EtfHoldings:
         """The sweep's share of this run: start one when the last is ``SWEEP_DAYS`` old (or there is none), else go on
         with an unfinished one under its own day, and type the day's held raws its partition lacks. An empty answer
         or a refused one (a 404) is recorded and not asked again within the sweep; the raw file is the resume marker.
-        A cap stop, a rejected key or an open breaker records nothing and leaves the sweep for the next run."""
+        A cap stop, a rejected key or an open breaker records nothing and leaves the sweep for the next run, until the
+        same ETFs stopped it ``SWEEP_STOPS`` times."""
         path = raw_dir() / SWEEP_STATE
         state = json.loads(path.read_text()) if path.exists() else None
+        etfs = sweep_etfs()
+        if not etfs:                                    # no spine or no etf table: no sweep that then waits 30 days
+            ctx.notes.append("no sweep: the spine holds no ETF to sweep")
+            return _untyped(state["day"]) if state else []
         if state is None or (state["done"] and (as_of - date.fromisoformat(state["day"])).days >= SWEEP_DAYS):
             state = {"day": as_of.isoformat(), "done": False, "empty": [], "failed": [],
                      "days": (state or {}).get("days", []) + [as_of.isoformat()]}
@@ -472,7 +492,7 @@ class EtfHoldings:
             return out
         folder = raw_dir() / day.isoformat()
         skip = set(state["empty"]) | set(state["failed"])
-        todo = [t for t in sweep_etfs() if t not in skip and not (folder / f"uw-{t}.json").exists()]
+        todo = [t for t in etfs if t not in skip and not (folder / f"uw-{t}.json").exists()]
         held, asked, streak, stopped = 0, 0, [], None
         for t in todo:
             if asked >= SWEEP_PER_RUN:
@@ -492,9 +512,16 @@ class EtfHoldings:
                 stopped = str(e)
                 break
             except Exception:  # noqa: BLE001 - one ETF down must not stop the sweep
-                stopped = _uw_down(ctx)
-                if stopped:      # UW, not these ETFs: the failures since its last answer are no ETF's own either
-                    state["failed"] = [x for x in state["failed"] if x not in streak]
+                stopped = _uw_down(ctx, t)
+                if stopped:
+                    state["stops"] = state.get("stops", 0) + 1
+                    if state["stops"] == 1:
+                        ctx.issue("source_failed", f"sweep-{day}-stopped", f"{stopped} at {t}: the sweep waits")
+                    if state["stops"] < SWEEP_STOPS:   # UW, not these ETFs: the failures since its last answer either
+                        state["failed"] = [x for x in state["failed"] if x not in streak]
+                    else:                              # the same ETFs again and again: theirs, the sweep goes past
+                        state["failed"].append(t)
+                        state["stops"] = 0
                     break
                 state["failed"].append(t)
                 streak.append(t)
@@ -551,8 +578,8 @@ class EtfHoldings:
                     base.rows_table(con, "rows", SCHEMA, rows)
                     select = "SELECT * FROM rows"
                     if final.exists():               # the day's other ETFs, typed by an earlier run or pass, stay in
-                        select = (f"SELECT * FROM read_parquet({base.sql_path(final)}) WHERE etf NOT IN "
-                                  f"(SELECT etf FROM rows) UNION ALL BY NAME {select}")
+                        select = (f"SELECT * FROM read_parquet({base.sql_path(final)}, hive_partitioning = false) "
+                                  f"WHERE etf NOT IN (SELECT etf FROM rows) UNION ALL BY NAME {select}")
                     out.append(base.write_parquet(
                         con, f"SELECT * FROM ({select}) ORDER BY etf, weight DESC NULLS LAST, ticker", final))
                 finally:

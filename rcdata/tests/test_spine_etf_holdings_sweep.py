@@ -60,6 +60,10 @@ def test_a_first_run_sweeps_every_etf_but_the_etns_and_the_daily_funds_once_from
     assert len(asked) == len(set(asked)), "one request per ETF"
     assert _served_etfs() >= set(OTHERS) | {f.etf for f in etf.FILES}
     assert "sweep" in row["note"]
+    import duckdb
+    part = etf.parquet_dir() / f"date={DAY}" / "part-0.parquet"
+    cols = [d[0] for d in duckdb.sql(f"SELECT * FROM read_parquet('{part}', hive_partitioning = false)").description]
+    assert cols == [c for c, _ in etf.SCHEMA], "a merged partition holds the schema's columns, no hive date column"
 
 
 def _sweep_calls(env) -> list[str]:
@@ -216,20 +220,63 @@ def test_a_rejected_key_stops_the_sweep_unrecorded_and_the_next_run_asks_again(e
     env.requests.clear()
     base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-03"}})
     assert _sweep_calls(env) == OTHERS and set(OTHERS) <= _served_etfs(DAY)
-    assert ops.open_issues(etf.NAME)[0] == 0, "an outage is no ETF's failure"
+    assert [i["key"] for i in ops.open_issues(etf.NAME)[1]] == [f"sweep-{DAY}-stopped"], "the stop, no ETF failure"
 
 
 def test_a_uw_outage_opens_the_breaker_and_records_no_etf_as_failed(monkeypatch, env):
     monkeypatch.setattr(unusual_whales, "_sleep", lambda s: None)
     for t in OTHERS:
         env.routes.insert(0, (f"/etfs/{t}/holdings", _answer(503), 503, {}))
-    base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
     assert sorted(set(_sweep_calls(env))) == OTHERS[:unusual_whales.BREAKER_THRESHOLD]
+    assert "0 failed, 8 left" in row["note"], "the outage's ETFs are left, none failed"
     del env.routes[:len(OTHERS)]
     env.requests.clear()
     base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-03"}})
     assert _sweep_calls(env) == OTHERS and set(OTHERS) <= _served_etfs(DAY)
-    assert ops.open_issues(etf.NAME)[0] == 0
+    assert [i["key"] for i in ops.open_issues(etf.NAME)[1]] == [f"sweep-{DAY}-stopped"], "the stop was one issue"
+
+
+def test_a_sweep_stopped_on_the_same_etfs_run_after_run_records_them_and_goes_on(monkeypatch, env):
+    """Five ETFs side by side that UW answers 503 every time open the breaker on every run. Un-recording them each
+    time would stall the sweep for good; after ``SWEEP_STOPS`` stops they are recorded and the sweep moves past them."""
+    monkeypatch.setattr(unusual_whales, "_sleep", lambda s: None)
+    bad = OTHERS[:unusual_whales.BREAKER_THRESHOLD]
+    for t in bad:
+        env.routes.insert(0, (f"/etfs/{t}/holdings", _answer(503), 503, {}))
+    days = ["2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"][:etf.SWEEP_STOPS]
+    for d in [DAY] + days[:-1]:
+        env.requests.clear()
+        base.run_request({"dataset": etf.NAME, "params": {"as_of": d}})
+        assert sorted(set(_sweep_calls(env))) == bad
+    env.requests.clear()
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": days[-1]}})
+    assert _sweep_calls(env) == OTHERS[len(bad):], "the recorded five are not asked again"
+    issues = {i["key"]: i["detail"] for i in ops.open_issues(etf.NAME)[1]}
+    assert all(t in issues[f"sweep-{DAY}"] for t in bad) and f"sweep-{DAY}-stopped" in issues
+
+
+def test_a_spine_without_etfs_starts_no_sweep_that_would_wait_30_days(monkeypatch, env):
+    real = etf.sweep_etfs
+    monkeypatch.setattr(etf, "sweep_etfs", lambda: [])
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
+    assert not (etf.raw_dir() / etf.SWEEP_STATE).exists() and "no sweep" in row["note"]
+    monkeypatch.setattr(etf, "sweep_etfs", real)
+    env.requests.clear()
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-03"}})
+    assert _sweep_calls(env) == OTHERS
+
+
+def test_a_held_raw_without_its_meta_file_fails_no_later_run(monkeypatch, env):
+    monkeypatch.setattr(etf, "SWEEP_PER_RUN", 3)
+    real = etf.EtfHoldings.to_parquet_all
+    monkeypatch.setattr(etf.EtfHoldings, "to_parquet_all", lambda self, ctx, raws: [])   # held, never typed
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
+    etf._meta(etf.raw_dir() / DAY / "uw-CCOI.json").unlink()
+    monkeypatch.setattr(etf.EtfHoldings, "to_parquet_all", real)
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-03"}})
+    assert row["result"] in ("changed", "unchanged"), row["note"]
+    assert {"GLD", "LEVX"} <= _served_etfs(DAY) and "CCOI" not in _served_etfs(DAY)
 
 
 def test_a_404_is_that_etfs_failure_named_apart_from_the_empty_answers(env):
@@ -244,7 +291,7 @@ def test_a_404_is_that_etfs_failure_named_apart_from_the_empty_answers(env):
 def test_the_uw_day_cap_cuts_a_sweep_and_the_next_run_goes_on(monkeypatch, env):
     monkeypatch.setitem(caps.DAY_CAPS, "uw", len(etf.UW_FUNDS) + 3)
     row = base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
-    assert len(_sweep_calls(env)) == 3 and "day cap" in row["note"]
+    assert len(_sweep_calls(env)) == 3 and "day cap" in row["note"] and "3 asked this run" in row["note"]
     monkeypatch.setitem(caps.DAY_CAPS, "uw", 150_000)
     env.requests.clear()
     base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-03"}})
@@ -276,3 +323,12 @@ def test_coverage_reads_the_latest_day_that_has_the_daily_funds(env):
     base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
     row = base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-07", "names": ["GLD"]}})
     assert row["coverage"] == 1.0, "a weekend trial of one ETF is no day of the daily funds"
+
+
+def test_a_daily_funds_403_does_not_stop_the_sweep_at_its_first_404(env):
+    """Review 2: the client keeps a rejected call's ``auth_error`` for the run. Only a rejection of the ETF's own call
+    stops the sweep; SMH's 403 is SMH's, and LEVX's 404 is LEVX's."""
+    env.routes.insert(0, ("/etfs/SMH/holdings", _answer(403), 403, {}))
+    env.routes.insert(0, ("/etfs/LEVX/holdings", _answer(404), 404, {}))
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
+    assert _sweep_calls(env) == OTHERS and set(OTHERS) - {"LEVX"} <= _served_etfs()
