@@ -12,22 +12,15 @@ from . import writers
 BOARD = "module_relatedness"
 
 
-def _stored_writer() -> str:
-    try:
-        slug = board_settings._stored(BOARD).get("WRITER")
-    except Exception:  # noqa: BLE001 - no store yet: the default
-        slug = None
-    return slug if slug in writers.WRITERS else writers.DEFAULT
-
-
 def specs() -> dict[str, board_settings.Setting]:
     return {
         "WRITER": board_settings.Setting(
             "WRITER", "text", lambda: writers.DEFAULT, choices=lambda: tuple(writers.WRITERS),
             label="Profile writer"),
-        # The default follows the saved provider, so a saved Grok without a model reads Grok's model.
+        # A fixed default (review nit4): a save's drop-on-default never depends on the provider stored before it.
+        # ``writer()`` reads a provider's own default model when the stored pair does not fit (review S2).
         "WRITER_MODEL": board_settings.Setting(
-            "WRITER_MODEL", "text", lambda: writers.get(_stored_writer()).models[0],
+            "WRITER_MODEL", "text", lambda: writers.get(writers.DEFAULT).models[0],
             choices=writers.all_models, label="Writer model"),
     }
 
@@ -46,14 +39,28 @@ def rules(v: dict) -> list[str]:
     return out
 
 
+def _pair() -> tuple[str, str, bool]:
+    """``(provider, model, model_chosen)``. A stored pair that does not fit (a one-key reset, a model saved for
+    another provider; PR 362 review S2) reads the provider's own default model, never an invalid pair."""
+    vals = board_settings.values(BOARD)
+    slug = vals["values"]["WRITER"]
+    if slug not in writers.WRITERS:
+        slug = writers.DEFAULT
+    model = vals["values"]["WRITER_MODEL"]
+    models = writers.get(slug).models
+    if model in models:
+        return slug, model, "WRITER_MODEL" in vals["overridden"] or model != models[0]
+    return slug, models[0], False
+
+
 def writer() -> tuple[str, str]:
     """``(provider, model)`` the board runs with (the saved pair, else EVREN and its default model)."""
-    vals = board_settings.values(BOARD)["values"]
-    return vals["WRITER"], vals["WRITER_MODEL"]
+    slug, model, _ = _pair()
+    return slug, model
 
 
 def chosen_model() -> str | None:
-    """The saved model, or ``None`` when none is saved (the chat module's own ``MODEL`` then stays, which honours
-    ``RC_<PROVIDER>_MODEL``)."""
-    return board_settings.values(BOARD)["values"]["WRITER_MODEL"] if (
-        "WRITER_MODEL" in board_settings.values(BOARD)["overridden"]) else None
+    """The chosen model, or ``None`` when the provider's default applies (the chat module's own ``MODEL`` then
+    stays, which honours ``RC_<PROVIDER>_MODEL``)."""
+    _, model, chosen = _pair()
+    return model if chosen else None

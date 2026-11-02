@@ -260,3 +260,30 @@ def test_the_writer_modules_take_the_model_per_call(rawstore_tmp_db, monkeypatch
     ev.complete("s", "u", client=_C(), use_cache=False, model="glm-5.3")
     assert posts == ["glm-5.3"] and ev.MODEL != "glm-5.3"
     assert not hasattr(writers, "use")                      # no module-level swap left
+
+
+# ── review S2 + nit4 (PR 362): a partial reset and a shared model name never leave an invalid pair ──────────
+
+def test_a_partial_reset_falls_back_to_the_providers_default_model(rawstore_tmp_db, monkeypatch, tmp_path):
+    from RevenueChaser.core import subscription_usage
+    monkeypatch.setattr(subscription_usage, "xai_token", lambda now=None: "x")
+    board_settings.save(settings.BOARD, {"WRITER": "grok", "WRITER_MODEL": "grok-4.6"})
+    board_settings.reset(settings.BOARD, ["WRITER"])        # the API accepts a one-key reset
+    assert settings.writer() == ("evren", "deepseek-v4.1-flash")
+    assert settings.chosen_model() is None                  # an invalid saved pair is never sent
+
+
+def test_a_saved_provider_without_a_model_runs_its_own_default(rawstore_tmp_db, monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", DS_KEY)
+    rawstore.write_rows("board_settings", [{"board": settings.BOARD, "key": "WRITER", "value": None,
+                                            "value_text": "deepseek", "updated_at": "t"}])
+    assert settings.writer() == ("deepseek", "deepseek-flash") and settings.chosen_model() is None
+
+
+def test_a_model_shared_by_two_providers_is_kept_for_the_one_saved(rawstore_tmp_db, monkeypatch):
+    shared = writers.Writer("deepseek", "DeepSeek", "RevenueChaser.core.providers.deepseek",
+                            ("deepseek-flash", "deepseek-v4.1-flash"), "DEEPSEEK_API_KEY", paid=True)
+    monkeypatch.setitem(writers.WRITERS, "deepseek", shared)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", DS_KEY)
+    board_settings.save(settings.BOARD, {"WRITER": "deepseek", "WRITER_MODEL": "deepseek-v4.1-flash"})
+    assert settings.writer() == ("deepseek", "deepseek-v4.1-flash")
