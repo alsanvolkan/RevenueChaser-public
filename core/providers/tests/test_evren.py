@@ -118,3 +118,15 @@ def test_there_is_no_off_peak_gate(monkeypatch):
     c = _Client(_ok())
     assert evren.complete("s", "u", client=c, use_cache=False)
     assert evren.COST_USD_PER_CALL == 0.0
+
+
+def test_an_echoed_key_never_reaches_an_error_message():
+    """Review nit3 (PR 362): the 'not JSON' and 'no content' messages are scrubbed like every other path."""
+    class _Bad(_Resp):
+        def json(self):
+            raise ValueError("not json")
+
+    for resp in (_Bad(200, text=f"echo {KEY}"), _Resp(200, {"choices": [], "echo": KEY})):
+        with pytest.raises(evren.EvrenError) as exc:
+            evren.complete("s", "u", client=_Client(resp), use_cache=False)
+        assert KEY not in str(exc.value)
