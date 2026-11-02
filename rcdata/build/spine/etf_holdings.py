@@ -33,7 +33,9 @@ dataset, which writes only the market store.
 One request per fund per run (24 issuer files, 14 UW calls, plus ARK's file on a day it is needed), each inside
 its provider's day cap.
 
-**The sweep (#358, avo 1-2 Nov 2026):** every other ETF of the live spine's ``etf`` table, no ETN and no CEF (5,854 on
+**The sweep (#358, avo 1-2 Nov 2026), off until ``RC_ETF_HOLDINGS_SWEEP=1``** (avo, 2 Nov: UW answers at most 250
+holdings a fund, measured on VTI, so it waits for N-PORT's full lists, #354): every other ETF of the live spine's
+``etf`` table, no ETN and no CEF (5,854 on
 2 Nov 2026), is asked from UW once every ``SWEEP_DAYS`` (30), at most ``SWEEP_PER_RUN`` (3,000) a run, under the
 ``uw`` day cap: a sweep is about 5,850 calls over two daily runs (about 3,014 on its first day with the daily funds'
 14, the rest on the next trading day). Its state is ``raw/funds/etf_holdings/sweep.json`` (its day, empty and failed
@@ -125,6 +127,9 @@ SWEEP_STOPS = 3
 # Retention (avo, option 1): the last ``SWEEP_DAYS`` days whole; older, each month's last day and each sweep day. It
 # only reports what it would remove unless ``PRUNE_ENV`` is "1": the first real removal is avo's word at that time.
 PRUNE_ENV = "RC_ETF_HOLDINGS_PRUNE"
+# The sweep runs only when this is "1" (owner, 2 Nov 2026, option B): UW answers at most 250 holdings a fund, so the
+# sweep waits for N-PORT's full lists (#354). A named request still asks UW; the 38 daily funds are untouched.
+SWEEP_ENV = "RC_ETF_HOLDINGS_SWEEP"
 # Raws typed per pass: a sweep run types up to ``SWEEP_PER_RUN`` answers, merged into the day's partition in DuckDB.
 TYPE_CHUNK = 500
 # A requested name that can be a ticker (and so a path segment); the spine's own tickers are normalised already.
@@ -405,6 +410,8 @@ class EtfHoldings:
             out += self._named(ctx, as_of, sorted(names - DAILY))
         elif keyed and ctx.scope:
             ctx.notes.append(f"no sweep: the request's scope ({ctx.scope.text()}) names no ETF")
+        elif keyed and os.environ.get(SWEEP_ENV) != "1":
+            ctx.notes.append(f"no sweep: off until {SWEEP_ENV}=1 (UW's 250-holdings cap; N-PORT first, #354)")
         elif keyed:
             out += self._sweep(ctx, as_of)
         try:

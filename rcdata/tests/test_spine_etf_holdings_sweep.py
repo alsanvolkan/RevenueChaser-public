@@ -22,6 +22,7 @@ def env(monkeypatch, http_mock):
     monkeypatch.setattr(unusual_whales, "BASE", "https://uw.test/api")
     monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "uw-test-key")
     monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
+    monkeypatch.setenv(etf.SWEEP_ENV, "1")                     # the sweep is off unless switched on (owner, 2 Nov)
     monkeypatch.setenv("RC_ALPHAVANTAGE_BASE", "https://av.test")
     monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "av-test-key")
     monkeypatch.setattr(av_listing, "MIN_ETFS", 1)
@@ -419,3 +420,16 @@ def test_stops_at_different_places_record_nothing(monkeypatch, env):
     env.requests.clear()
     base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-05"}})
     assert _sweep_calls(env) == OTHERS[2:] and not _failed_issue() and set(OTHERS) <= _served_etfs(DAY)
+
+
+def test_the_sweep_is_off_until_its_switch_says_1(monkeypatch, env):
+    """Owner, 2 Nov 2026 (option B on UW's 250-holdings cap): no sweep until the full lists of N-PORT (#354) are there.
+    An unscoped run asks the 38 daily funds as before and no other ETF; a named trial still works."""
+    monkeypatch.delenv(etf.SWEEP_ENV)
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
+    assert _sweep_calls(env) == [] and not (etf.raw_dir() / etf.SWEEP_STATE).exists()
+    assert f"no sweep: off until {etf.SWEEP_ENV}=1" in row["note"]
+    assert {f.etf for f in etf.FILES} <= _served_etfs()
+    env.requests.clear()
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY, "names": ["GLD"]}})
+    assert _uw_asked(env) == ["GLD"]
