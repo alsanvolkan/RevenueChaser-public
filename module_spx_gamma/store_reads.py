@@ -22,7 +22,7 @@ provider call: there is no live fallback any more.
   before the first weekly fetch) counts as released on its Tuesday + ``RELEASE_DAYS`` (the Friday), an estimate the
   label and ``release_estimated`` say is one. The
   weekly change is this report's long minus the previous report's (decision A5): the builder keeps no ``change_*``.
-  It is None (``change_gap``) when the two newest reports are not exactly a week apart (review SF4).
+  It is None (``change_gap``, "n/a (gap)") when the two newest reports are not 5 to 9 days apart (review SF4, #228).
 - ``spx_candles`` (``market.spx_close``): the SPX closes of the 8-week window. Cboe's SPX file has one column, so a
   row has a close and no open, high, low or volume (decision A6).
 """
@@ -61,6 +61,7 @@ MAX_LAG = FromCatalog(max_lag)
 # past day's render can count a report as released a little early. Used only where CFTC's schedule has no row (#227).
 RELEASE_DAYS = 3
 WEEK_DAYS = 7
+CONSECUTIVE_DAYS = range(WEEK_DAYS - 2, WEEK_DAYS + 3)
 VIX_SERIES = {"VIX": "^VIX", "VIX9D": "^VIX9D", "VIX3M": "^VIX3M", "VIX6M": "^VIX6M", "VIX1Y": "^VIX1Y",
               "VVIX": "^VVIX"}
 COT_PREFIX = "cftc:tff:13874A:"
@@ -110,12 +111,15 @@ def _stale(ans, obs: date, kind: str) -> bool:
 def _missing(what: str, day, reason: str | None = None, **extra) -> dict:
     label = f"{what} not stored for {_iso(day)}" + (f" ({reason})" if reason else "")
     return {"stored": False, "label": label, "status": extra.pop("status", None), "source": extra.pop("source"),
-            "source_as_of": None, **extra}
+            "source_as_of": None, "failed": bool(reason and reason.startswith(FAILED_PREFIX)), **extra}
+
+
+FAILED_PREFIX = "read failed: "
 
 
 def _failed(exc: Exception) -> str:
     logger.warning("spx gamma store read failed: %s", exc)
-    return f"read failed: {type(exc).__name__}: {exc}"[:200]
+    return f"{FAILED_PREFIX}{type(exc).__name__}: {exc}"[:200]
 
 
 def _value(row: dict) -> float | None:
@@ -154,6 +158,8 @@ def _with_board_status(dataset: str):
         @functools.wraps(reader)
         def inner(day) -> dict:
             out = reader(day)
+            if out.get("failed"):
+                return out          # #228 item 2: a read-failed marker keeps no status, not the board's
             try:
                 status, skip = _board_status(dataset)
             except Exception as exc:  # noqa: BLE001
@@ -178,8 +184,8 @@ def _expiry_strike(session: date, day: date) -> tuple[list[dict], str | None, st
     Review SF3: with no serving file yet the reader answers no rows without touching ``ops.sqlite``, and the
     envelope then reads the dataset's status from it; a broken file there (locked, stamped newer, corrupt) is a note
     on the "not stored" marker, never a failed board, and A3 may still look at the previous session. With the file
-    there, ``read._rows`` reads the status together with the rows, so the same error is the row read failing: it
-    goes up as "read failed" and stops, as the board's direct read always did (#334 review, should-fix 3).
+    there, a status that cannot be read comes back as ``status_unknown`` on rows that are kept (#228 item 5); any
+    other sqlite error of the row read goes up as "read failed" and stops (#334 review, should-fix 3).
     """
     try:
         ans = needs.ask("market.spx_expiry_strike", as_of=day, session_date=session, min_dte=0, max_dte=1)
@@ -300,9 +306,9 @@ def cot_tff(day) -> dict:
     if stale:
         return _missing("CFTC COT", d, source=SERIES_SOURCE, payload=None, status=rows[0]["status"] if rows else None)
     now = reports[released[-1]]
-    # review SF4: a weekly change only between reports exactly a week apart; across a missing report it is None
-    # and the board says "n/a (gap)".
-    gap = len(released) > 1 and (released[-1] - released[-2]).days != WEEK_DAYS
+    # review SF4: a weekly change only between consecutive reports; across a missing report it is None and the board
+    # says "n/a (gap)". Consecutive is 5 to 9 days apart (#228 item 3): a holiday week dates a report on the Monday.
+    gap = len(released) > 1 and (released[-1] - released[-2]).days not in CONSECUTIVE_DAYS
     prev = reports[released[-2]] if len(released) > 1 and not gap else {}
     released_on, estimated = release[released[-1]]
     payload: dict = {"report_date": released[-1].isoformat(), "release_date": released_on.isoformat(),
@@ -314,7 +320,7 @@ def cot_tff(day) -> dict:
                           "net": (long - short) if long is not None and short is not None else None,
                           "change": (long - prev_long) if long is not None and prev_long is not None else None}
     row = meta[released[-1]]
-    when = (f"~{payload['release_date']} (report + {RELEASE_DAYS} days; holiday weeks can differ)" if estimated
+    when = (f"~{payload['release_date']} (Tuesday + {RELEASE_DAYS} days; holiday weeks can differ)" if estimated
             else f"{payload['release_date']} (CFTC schedule)")
     return {"stored": True, "label": f"CFTC TFF report of {payload['report_date']}, released {when} "
                                      f"({SERIES_SOURCE}, {row.get('source')}, status {row.get('status')})",

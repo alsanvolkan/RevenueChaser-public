@@ -5,7 +5,7 @@ release carries the report of the last Tuesday before it. Series ``CFTC_COT_RELE
 that Tuesday, valued in calendar days from the report to its release (3 for an ordinary Friday, 6 for a Monday). Keyed
 on the report, so when CFTC moves a release, the next weekly fetch overwrites that key; a key on the release day would
 leave the old day served. The page holds one year only: earlier years were never fetched, and their reports have no
-row (``store_reads.cot_tff`` falls back to its report + 3 days estimate there).
+row (``store_reads.cot_tff`` falls back to its Tuesday + 3 days estimate, the week's Friday).
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ BASE = os.getenv("RC_CFTC_SCHEDULE_BASE") or "https://www.cftc.gov"
 PATH = "/MarketReports/CommitmentsofTraders/ReleaseSchedule/index.htm"
 _MONTHS = {m: i for i, m in enumerate(("january", "february", "march", "april", "may", "june", "july", "august",
                                        "september", "october", "november", "december"), 1)}
-_YEAR = re.compile(r"(\d{4})\s+Release\s+Schedule", re.I)
+_YEAR = re.compile(r"<h\d[^>]*>(?:\s*<[^>]+>)*\s*(\d{4})\s+Release\s+Schedule", re.I)   # a heading only
 _ROW = re.compile(r"<tr.*?</tr>", re.S | re.I)
 _CELL = re.compile(r"<td[^>]*>(.*?)</td>", re.S | re.I)
 
