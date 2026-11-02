@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from RevenueChaser.core.providers import sec_edgar, unusual_whales
-from RevenueChaser.rcdata import ops, serving
+from RevenueChaser.rcdata import caps, ops, serving
 from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.spine import av_listing, etf_holdings as etf, ncen, sec_tickers
 
@@ -52,7 +52,8 @@ def _served_etfs(day: str = DAY) -> set[str]:
         return {r[0] for r in con.execute(f"SELECT DISTINCT etf FROM {etf.TABLE} WHERE as_of = DATE '{day}'").fetchall()}
 
 
-def test_a_first_run_sweeps_every_etf_but_the_etns_and_the_daily_funds_once_from_uw(env):
+def test_a_first_run_sweeps_every_etf_but_the_etns_and_the_daily_funds_once_from_uw(monkeypatch, env):
+    monkeypatch.setattr(etf, "TYPE_CHUNK", 3)                 # the day's partition is merged chunk by chunk
     row = base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
     asked = _uw_asked(env)
     assert sorted(set(asked) - set(etf.UW_FUNDS)) == OTHERS, "the sweep asks each other ETF, and no ETN"
@@ -131,7 +132,7 @@ def test_retention_is_a_dry_run_by_default_and_deletes_nothing(env):
 def test_retention_keeps_30_days_each_months_last_day_and_each_sweep_day(monkeypatch, env):
     monkeypatch.setenv("RC_ETF_HOLDINGS_PRUNE", "1")
     for d in RUN_DAYS:
-        row = base.run_request({"dataset": etf.NAME, "params": {"as_of": d}})
+        row = base.run_request({"dataset": etf.NAME, "params": {"as_of": d, "allow_shrink": True}})
     kept = {DAY, "2026-11-30", "2026-12-15", "2027-01-05"}    # 11-02 a sweep day, 11-30 November's last
     assert "retention: removed 1 day past 30: 2026-11-15" in row["note"]
     assert _served_days() == kept and _raw_days() == kept
@@ -150,3 +151,128 @@ def test_a_request_naming_etfs_asks_only_those_and_starts_no_sweep(env):
     env.requests.clear()
     base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
     assert _sweep_calls(env) == [t for t in OTHERS if t not in ("GLD", "SPY")], "the sweep starts on the next run"
+
+
+def test_pruning_needs_the_requests_allow_shrink_as_well(monkeypatch, env):
+    """The shrink guard would refuse the swap after the files are gone: without ``allow_shrink`` it stays a dry run."""
+    monkeypatch.setenv("RC_ETF_HOLDINGS_PRUNE", "1")
+    for d in RUN_DAYS:
+        row = base.run_request({"dataset": etf.NAME, "params": {"as_of": d}})
+    assert "retention (dry run, the request has no allow_shrink): 1 day past 30" in row["note"]
+    assert _raw_days() == set(RUN_DAYS)
+
+
+def test_a_stray_folder_beside_the_days_is_no_day_and_fails_nothing(env):
+    (etf.raw_dir() / "scratch").mkdir(parents=True)
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
+    assert row["result"] in ("changed", "unchanged"), row["note"]
+
+
+class Killed(BaseException):
+    """A kill mid-run (the unit stopped, the box restarted): nothing after it runs, no ``except Exception`` sees it."""
+
+
+def test_a_sweep_killed_mid_run_goes_on_under_its_day_and_types_what_it_held(monkeypatch, env):
+    real, calls = etf.EtfFile.download, []
+
+    def download(self, ctx):
+        if self.etf not in etf.DAILY:
+            calls.append(self.etf)
+            if len(calls) == 4:
+                raise Killed
+        return real(self, ctx)
+    monkeypatch.setattr(etf.EtfFile, "download", download)
+    with pytest.raises(Killed):
+        base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
+    monkeypatch.setattr(etf.EtfFile, "download", real)
+    env.requests.clear()
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-03"}})
+    assert _sweep_calls(env) == OTHERS[3:], "the next day goes on with the same sweep, not a new one"
+    assert set(OTHERS) <= _served_etfs(DAY), "the three held before the kill are typed too"
+
+
+def test_held_sweep_raws_a_failed_typing_left_behind_are_typed_by_the_next_run(monkeypatch, env):
+    real = etf.EtfHoldings.to_parquet_all
+
+    def full(self, ctx, raws):
+        raise OSError("no space left on device")
+    monkeypatch.setattr(etf.EtfHoldings, "to_parquet_all", full)
+    assert base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})["result"] == "failed"
+    monkeypatch.setattr(etf.EtfHoldings, "to_parquet_all", real)
+    env.requests.clear()
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-03"}})
+    assert _sweep_calls(env) == [] and set(OTHERS) <= _served_etfs(DAY)
+
+
+def _answer(status: int):
+    return lambda r: (status, b'{"message": "refused"}', {})
+
+
+def test_a_rejected_key_stops_the_sweep_unrecorded_and_the_next_run_asks_again(env):
+    env.routes.insert(0, ("/etfs/CCOI/holdings", _answer(401), 401, {}))
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
+    assert _sweep_calls(env) == ["CCOI"] and "stopped" in row["note"], "a dead key is no reason to ask 3,000 more"
+    env.routes.pop(0)
+    env.requests.clear()
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-03"}})
+    assert _sweep_calls(env) == OTHERS and set(OTHERS) <= _served_etfs(DAY)
+    assert ops.open_issues(etf.NAME)[0] == 0, "an outage is no ETF's failure"
+
+
+def test_a_uw_outage_opens_the_breaker_and_records_no_etf_as_failed(monkeypatch, env):
+    monkeypatch.setattr(unusual_whales, "_sleep", lambda s: None)
+    for t in OTHERS:
+        env.routes.insert(0, (f"/etfs/{t}/holdings", _answer(503), 503, {}))
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
+    assert sorted(set(_sweep_calls(env))) == OTHERS[:unusual_whales.BREAKER_THRESHOLD]
+    del env.routes[:len(OTHERS)]
+    env.requests.clear()
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-03"}})
+    assert _sweep_calls(env) == OTHERS and set(OTHERS) <= _served_etfs(DAY)
+    assert ops.open_issues(etf.NAME)[0] == 0
+
+
+def test_a_404_is_that_etfs_failure_named_apart_from_the_empty_answers(env):
+    env.routes.insert(0, ("/etfs/LEVX/holdings", _answer(404), 404, {}))
+    env.routes.insert(0, ("/etfs/GLD/holdings", lambda r: (200, b'{"data": []}', {}), 200, {}))
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
+    issues = {i["kind"]: i for i in ops.open_issues(etf.NAME)[1]}
+    assert "GLD" in issues["uw_empty"]["detail"] and "LEVX" not in issues["uw_empty"]["detail"]
+    assert "LEVX" in issues["source_failed"]["detail"]
+
+
+def test_the_uw_day_cap_cuts_a_sweep_and_the_next_run_goes_on(monkeypatch, env):
+    monkeypatch.setitem(caps.DAY_CAPS, "uw", len(etf.UW_FUNDS) + 3)
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
+    assert len(_sweep_calls(env)) == 3 and "day cap" in row["note"]
+    monkeypatch.setitem(caps.DAY_CAPS, "uw", 150_000)
+    env.requests.clear()
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-03"}})
+    assert _sweep_calls(env) == OTHERS[3:]
+
+
+def test_a_cef_in_the_etf_table_is_not_swept(env):
+    import duckdb
+    con = duckdb.connect(str(serving.live_path("spine")))
+    try:
+        con.execute("UPDATE etf SET is_cef = true WHERE ticker = 'TAPR'")
+    finally:
+        con.close()
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
+    assert _sweep_calls(env) == [t for t in OTHERS if t != "TAPR"]
+
+
+def test_a_request_scoped_by_tier_starts_no_sweep(env):
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY, "tiers": ["A"]}})
+    assert _sweep_calls(env) == [] and "no sweep" in row["note"]
+
+
+def test_a_named_etf_that_is_no_ticker_is_not_asked(env):
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY, "names": ["GLD", "A/B"]}})
+    assert _uw_asked(env) == ["GLD"] and "A/B" in row["note"]
+
+
+def test_coverage_reads_the_latest_day_that_has_the_daily_funds(env):
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": DAY}})
+    row = base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-07", "names": ["GLD"]}})
+    assert row["coverage"] == 1.0, "a weekend trial of one ETF is no day of the daily funds"
