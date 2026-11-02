@@ -137,7 +137,8 @@ Two consequences to expect (PR 362 review nit5):
   the token never appears in a log or an error. On homesrv the file is **RC's own login** (#368,
   `core/xai_login.py`): avo creates it once with `python -m RevenueChaser.core.xai_login` (the Grok CLI's device
   flow, a link to approve, no token printed), and RC refreshes it under the `xai-login` lock when 30 minutes or less
-  remain. A refused refresh asks for the login again. It is never the usage monitor's `xai_auth.json`. Endpoint `RC_GROK_BASE` +
+  remain. A refused refresh asks for the login again; a transient failure keeps a still-valid token. The login refuses
+  to replace a file that is not an RC login (Hermes's, the usage monitor's `xai_auth.json`) unless `--force`. Endpoint `RC_GROK_BASE` +
   `/chat/completions` (default the Grok CLI chat proxy
   `https://cli-chat-proxy.grok.com/v1`; only `grok.com` hosts or a loopback mock
   are accepted), model `RC_GROK_MODEL` (default `grok-4.6`). DeepSeek's

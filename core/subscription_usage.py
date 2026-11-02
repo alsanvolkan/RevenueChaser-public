@@ -376,7 +376,7 @@ def xai_token(now: datetime | None = None) -> str:
         if xai_login.is_rc_login(auth):
             # RC's own login (#368, homesrv): refreshed here when 30 minutes or less remain.
             try:
-                return xai_login.ensure(path)
+                return xai_login.ensure(path, now=None if now is None else _as_utc(now).timestamp())
             except xai_login.LoginError as exc:
                 raise SubscriptionUsageError(str(exc)) from None
         state = (auth.get("providers") or {}).get("xai-oauth") or {} if isinstance(auth, dict) else {}

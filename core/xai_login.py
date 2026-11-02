@@ -109,6 +109,8 @@ def _pair(reply: dict, now: float, previous: dict | None = None) -> dict | None:
     if not (isinstance(access, str) and access and isinstance(refresh, str) and refresh):
         return None
     exp = _jwt_exp(access)
+    if exp is None and isinstance(reply.get("expires_at"), (int, float)):
+        exp = float(reply["expires_at"])                     # a stored pair being saved again (review S2)
     if exp is None and isinstance(reply.get("expires_in"), (int, float)):
         exp = now + float(reply["expires_in"])
     out = {MARK: 1, "access_token": access, "refresh_token": refresh, "saved_at": now}
@@ -124,6 +126,11 @@ def save(path, tokens: dict) -> None:
         raise LoginError("refusing to save an xAI login without an access and a refresh token")
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    for stale in path.parent.glob(path.name + ".*.tmp"):     # a kill between mkstemp and replace (review N6)
+        try:
+            stale.unlink()
+        except OSError:
+            pass
     fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))   # mkstemp is 0600
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -131,6 +138,12 @@ def save(path, tokens: dict) -> None:
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
+        if hasattr(os, "O_DIRECTORY"):                        # the rename itself survives a power loss (review N2)
+            dfd = os.open(str(path.parent), os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(dfd)
+            finally:
+                os.close(dfd)
     except BaseException:
         try:
             os.unlink(tmp)
@@ -154,13 +167,18 @@ def read(path) -> dict:
 
 
 def present(path) -> bool:
-    """Presence only (the Settings card, zero network): a readable RC login with a refresh token, or any other
-    file there (a Hermes login is judged by its reader)."""
+    """Presence only (the Settings card, zero network): a readable RC login with a refresh token. Any other file
+    is not RC's (a Hermes login is judged by its own offline reader, ``subscription_usage.xai_token``)."""
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    return bool(data.get("refresh_token")) if is_rc_login(data) else isinstance(data, dict)
+    return is_rc_login(data) and bool(data.get("refresh_token"))
+
+
+def _valid(data: dict, now: float) -> bool:
+    exp = data.get("expires_at") or _jwt_exp(data.get("access_token") or "")
+    return isinstance(exp, (int, float)) and exp > now
 
 
 def _fresh(data: dict, now: float) -> bool:
@@ -176,41 +194,75 @@ def ensure(path, transport=None, now: float | None = None) -> str:
     data = read(path)
     if _fresh(data, now):
         return data["access_token"]
-    with job_lock.acquire("xai-login", wait=30.0) as got:
-        if not got:
-            raise LoginError("another process holds the xAI login lock; re-run")
-        data = read(path)                                     # another process may have refreshed meanwhile
-        if _fresh(data, now):
-            return data["access_token"]
-        ep = _endpoints(transport)
-        status, reply = _call(transport, "POST", ep["token_endpoint"],
-                              {"grant_type": "refresh_token", "refresh_token": data["refresh_token"],
-                               "client_id": CLIENT_ID})
-        if status in DEAD_STATUS:
-            raise LoginError(f"xAI refused the RC login's refresh (HTTP {status}); {LOGIN_HINT}")
-        new = _pair(reply, now, previous=data) if status == 200 else None
-        if new is None:
-            raise LoginError(f"xAI refresh answered HTTP {status} without a usable token pair; re-run")
-        save(path, new)                                       # persisted BEFORE the new access token is used
-        return new["access_token"]
+    try:
+        # 60 s: a holder's worst case is two 15 s requests and a write (review N3).
+        with job_lock.acquire("xai-login", wait=60.0) as got:
+            if not got:
+                if _valid(data, now):
+                    return data["access_token"]
+                raise LoginError("another process holds the xAI login lock; re-run")
+            data = read(path)                                 # another process may have refreshed meanwhile
+            if _fresh(data, now):
+                return data["access_token"]
+            try:
+                ep = _endpoints(transport)
+                status, reply = _call(transport, "POST", ep["token_endpoint"],
+                                      {"grant_type": "refresh_token", "refresh_token": data["refresh_token"],
+                                       "client_id": CLIENT_ID})
+            except LoginError:
+                status, reply = None, {}                      # network: transient
+            if status in DEAD_STATUS:
+                raise LoginError(f"xAI refused the RC login's refresh (HTTP {status}); {LOGIN_HINT}")
+            new = _pair(reply, now, previous=data) if status == 200 else None
+            if new is None:
+                # A transient failure keeps a still-valid token (review S3); an expired one is never returned.
+                if _valid(data, now):
+                    return data["access_token"]
+                raise LoginError(f"xAI refresh failed (HTTP {status or 'no answer'}) and the RC login has expired; "
+                                 "re-run later")
+            save(path, new)                                   # persisted BEFORE the new access token is used
+            return new["access_token"]
+    except OSError as exc:                                    # the lock or the write (review S4); the path only
+        raise LoginError(f"the RC xAI login at {path} could not be read or written ({type(exc).__name__})") from None
 
 
-def login(path, transport=None, out=print) -> None:
-    """The device flow: print the link, poll until approved, save the pair. Never prints a token."""
+def login(path, transport=None, out=print, force: bool = False) -> None:
+    """The device flow: print the link, poll until approved, save the pair. Never prints a token.
+
+    It refuses to replace a file that is not an RC login (Hermes's ``auth.json``, the usage monitor's login; review B1)
+    unless ``force``."""
     transport = transport or default_transport
+    path = Path(path)
+    if path.exists() and not force:
+        try:
+            mine = is_rc_login(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            mine = False
+        if not mine:
+            raise LoginError(f"{path} exists and is not an RC xAI login (another program's?); set RC_XAI_AUTH_FILE "
+                             "to RC's own file, or pass --force to replace it")
     ep = _endpoints(transport)
     status, dev = _call(transport, "POST", ep["device_authorization_endpoint"],
                         {"client_id": CLIENT_ID, "scope": SCOPE})
     if status != 200 or not dev.get("device_code"):
         raise LoginError(f"xAI device authorization answered HTTP {status}")
     link = dev.get("verification_uri_complete") or dev.get("verification_uri") or ""
+    host = (urlparse(link).hostname or "").lower()
+    if urlparse(link).scheme != "https" or not (host == "x.ai" or host.endswith(".x.ai")):
+        raise LoginError("xAI gave a verification link outside x.ai; not shown")   # review N5
     out(f"Open {link} and approve (code {dev.get('user_code', '')}). Waiting ...")
-    interval = float(dev.get("interval") or 5)
-    deadline = time.time() + float(dev.get("expires_in") or 600)
+    # 0 is a real value here (review S1): only a missing field takes the RFC 8628 defaults.
+    interval = float(dev["interval"]) if isinstance(dev.get("interval"), (int, float)) else 5.0
+    life = float(dev["expires_in"]) if isinstance(dev.get("expires_in"), (int, float)) else 600.0
+    deadline = time.time() + life
     while time.time() < deadline:
         _sleep(interval)
-        status, reply = _call(transport, "POST", ep["token_endpoint"],
-                              {"grant_type": DEVICE_GRANT, "device_code": dev["device_code"], "client_id": CLIENT_ID})
+        try:
+            status, reply = _call(transport, "POST", ep["token_endpoint"],
+                                  {"grant_type": DEVICE_GRANT, "device_code": dev["device_code"],
+                                   "client_id": CLIENT_ID})
+        except LoginError:
+            continue                                          # one network error does not end the login (N5)
         err = reply.get("error") if status != 200 else None
         if err == "authorization_pending":
             continue
@@ -233,10 +285,11 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="python -m RevenueChaser.core.xai_login",
                                 description="RC's own xAI login for the Grok writer (#368). Prints no token.")
     p.add_argument("--path", default=None, help="the login file (default: RC_XAI_AUTH_FILE)")
+    p.add_argument("--force", action="store_true", help="replace a file at the path that is not an RC login")
     args = p.parse_args(argv)
     path = Path(args.path) if args.path else xai_auth_file()
     try:
-        login(path)
+        login(path, force=args.force)
     except LoginError as exc:
         print(str(exc), file=sys.stderr)
         return 1

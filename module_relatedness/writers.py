@@ -62,7 +62,11 @@ def missing(slug: str) -> str | None:
         from RevenueChaser.core import subscription_usage, xai_login
         if os.getenv("XAI_OAUTH_TOKEN", "").strip() or xai_login.present(subscription_usage.xai_auth_file()):
             return None
-        return w.credential
+        try:
+            subscription_usage.xai_token()      # a Hermes file: its offline reader (an RC login never reaches here)
+        except subscription_usage.SubscriptionUsageError:
+            return w.credential
+        return None
     return None if credentials.key_for(slug) else w.credential
 
 
