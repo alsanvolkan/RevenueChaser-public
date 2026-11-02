@@ -133,7 +133,6 @@ def test_the_cli_runs_the_boards_writer_without_a_call_cap(rawstore_tmp_db, monk
     monkeypatch.setattr(cli.engine, "run", lambda **k: got.update(k) or {"n": 1, "pending": 0, "companies": []})
     assert cli.main(["--run", "--cap", "10"]) == 0          # what RC-Relatedness-OffPeak runs
     assert got == {"tickers": None, "provider": "evren", "max_calls": None}
-    assert evren.MODEL == "deepseek-v4.1-flash"
 
 
 def test_the_cli_keeps_the_usd_cap_for_a_deepseek_board(rawstore_tmp_db, monkeypatch):
@@ -142,7 +141,7 @@ def test_the_cli_keeps_the_usd_cap_for_a_deepseek_board(rawstore_tmp_db, monkeyp
     got = {}
     monkeypatch.setattr(cli.engine, "run", lambda **k: got.update(k) or {"n": 1, "pending": 0})
     assert cli.main(["--run", "--cap", "10"]) == 0
-    assert got == {"tickers": None, "limit": None, "usd_cap": 10.0}
+    assert got == {"tickers": None, "limit": None, "usd_cap": 10.0, "model": "deepseek-flash"}
 
 
 def test_a_writer_without_its_key_stops_before_any_call(rawstore_tmp_db, monkeypatch, capsys):
@@ -201,3 +200,63 @@ def test_the_same_model_name_under_another_provider_is_another_writer(world):
     engine.run(provider="evren")
     assert store.stale_tickers(TICKERS, writer=("grok", evren.MODEL)) == set(TICKERS)
     assert store.other_writer_tickers(TICKERS, ("grok", evren.MODEL)) == set(TICKERS)
+
+
+# ── review S1 (PR 362): the board's model is a parameter, never a module-level swap ─────────────────
+
+def test_a_fetch_with_the_boards_model_sends_and_stamps_it_and_leaks_nothing(world):
+    default = evren.MODEL
+    payload = engine.run(provider="evren", model="glm-5.3")
+    assert {p["json"]["model"] for p in world.posts} == {"glm-5.3"}
+    assert payload["writer"] == {"provider": "evren", "model": "glm-5.3"} and payload["model"] == "glm-5.3"
+    assert rawstore.get("relatedness_profiles", "AAA")["model"] == "glm-5.3"
+    assert evren.MODEL == default                            # the module default is never touched
+    assert store.stale_tickers(TICKERS, writer=("evren", "glm-5.3")) == set()
+
+
+def test_a_refresh_with_another_model_changes_nothing_in_the_process(world):
+    default = evren.MODEL
+    engine.run(provider="evren", model="glm-5.3")
+    refresh = engine.run(no_fetch=True, provider="evren", model="qwen3.8-flash-next")
+    assert refresh["n"] == 0 and refresh["other_writer"] == 3   # the glm profiles are another writer's
+    assert evren.MODEL == default
+
+
+def test_the_dashboard_passes_the_boards_writer_and_model(rawstore_tmp_db, monkeypatch):
+    from RevenueChaser.app import runners
+    from RevenueChaser.module_relatedness import report
+    monkeypatch.setenv("EVREN_API_KEY", EVREN_KEY)
+    board_settings.save(settings.BOARD, {"WRITER": "evren", "WRITER_MODEL": "glm-5.3"})
+    got = []
+    monkeypatch.setattr(engine, "run", lambda **k: got.append(k) or {"n": 0, "pending": 0})
+    monkeypatch.setattr(report, "render_relatedness_dashboard", lambda payload: "<html></html>")
+    monkeypatch.setattr(runners, "_write_to", lambda *a, **k: None)
+    runners.run_relatedness(no_fetch=True)
+    assert got[0]["provider"] == "evren" and got[0]["model"] == "glm-5.3" and got[0]["no_fetch"] is True
+
+
+def test_the_cli_passes_a_saved_model(rawstore_tmp_db, monkeypatch):
+    monkeypatch.setenv("EVREN_API_KEY", EVREN_KEY)
+    board_settings.save(settings.BOARD, {"WRITER": "evren", "WRITER_MODEL": "qwen3.8-flash-next"})
+    got = {}
+    monkeypatch.setattr(cli.engine, "run", lambda **k: got.update(k) or {"n": 1, "pending": 0, "companies": []})
+    assert cli.main(["--run"]) == 0
+    assert got == {"tickers": None, "provider": "evren", "max_calls": None, "model": "qwen3.8-flash-next"}
+
+
+def test_the_writer_modules_take_the_model_per_call(rawstore_tmp_db, monkeypatch):
+    from RevenueChaser.core.providers import evren as ev
+    posts = []
+
+    class _C:
+        def post(self, url, **k):
+            posts.append(k["json"]["model"])
+            return _Resp(200, {"choices": [{"message": {"content": "{}"}}]})
+
+        def close(self):
+            pass
+
+    monkeypatch.setenv("EVREN_API_KEY", EVREN_KEY)
+    ev.complete("s", "u", client=_C(), use_cache=False, model="glm-5.3")
+    assert posts == ["glm-5.3"] and ev.MODEL != "glm-5.3"
+    assert not hasattr(writers, "use")                      # no module-level swap left

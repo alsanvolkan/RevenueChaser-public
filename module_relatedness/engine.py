@@ -177,7 +177,8 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
                    workers: int | None = None,
                    usd_cap: float | None = None,
                    provider: str = "deepseek",
-                   max_calls: int | None = None) -> dict[str, dict]:
+                   max_calls: int | None = None,
+                   model: str | None = None) -> dict[str, dict]:
     """Ensure a durable profile per ticker (cache-first, CIK-grained).
 
     Profiles live in ``relatedness_profiles`` / ``relatedness_attributes`` (not
@@ -203,6 +204,7 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
     grok_run = provider == "grok"
     free_run = provider != "deepseek"          # EVREN and Grok (#360): no fee, a call count is the only cap
     w_model, w_thinking, w_effort = _writer(provider)
+    w_model = model or w_model                 # the board's model (#360): sent and stamped, never swapped in a module
     mode = store.mode_stamp((provider, w_model))
     if use_llm and store.get_mode() != mode:
         # Never delete on a mode change (#114 C2): profiles made under the old
@@ -345,7 +347,7 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
         try:
             prof = profiles_mod.profile_for(rep, name, text, thinking=config.THINKING,
                                             effort=config.REASONING_EFFORT,
-                                            budget=budget, provider=provider)
+                                            budget=budget, provider=provider, model=model)
         except profiles_mod.BudgetExceeded:
             return                     # out of LLM budget: this group stays pending
         except deepseek.PeakHoursError as exc:
@@ -709,24 +711,25 @@ class AlreadyRunning(RuntimeError):
 
 def run(no_fetch: bool = False, tickers: list[str] | None = None,
         limit: int | None = None, usd_cap: float | None = None, run_id: str | None = None,
-        provider: str = "deepseek", max_calls: int | None = None) -> dict:
+        provider: str = "deepseek", max_calls: int | None = None, model: str | None = None) -> dict:
     """A Fetch records its scores and payload in result history (#388) under ``run_id`` (the dashboard job's id; the
     CLI gets ``ledger.new_run_id()``, a scheduled task's ``job_runs`` id).
 
     ``provider`` is the profile writer (``writers.WRITERS``, #360): the CLI and the dashboard pass the board's
     (``settings.writer``); ``deepseek`` stays this function's default for its callers and tests. A free writer
     (``evren``, ``grok``) writes the missing and stale profiles with no call cap unless ``max_calls`` is given (``limit``
-    slices the names). A Refresh (``no_fetch``) shows only ``provider``'s profiles: one writer per board."""
+    slices the names). ``model`` is the board's model (``None``: the chat module's ``MODEL``). A Refresh (``no_fetch``)
+    shows only that writer's profiles: one writer per board."""
     if no_fetch:
-        return _run(True, tickers, limit, usd_cap, provider=provider)
+        return _run(True, tickers, limit, usd_cap, provider=provider, model=model)
     # Scheduled (CLI) and dashboard Fetch runs must not overlap. Refresh writes
     # nothing, so it never needs the lock.
     with job_lock.acquire("relatedness", wait=0) as got:
         if not got:
             raise AlreadyRunning("Another Relatedness run is already in progress.")
-        if provider == "deepseek":
+        if provider == "deepseek" and model is None:
             return _run(False, tickers, limit, usd_cap, run_id)
-        return _run(False, tickers, limit, usd_cap, run_id, provider=provider, max_calls=max_calls)
+        return _run(False, tickers, limit, usd_cap, run_id, provider=provider, max_calls=max_calls, model=model)
 
 
 def _record_history(payload: dict, requested: int, run_id: str | None, run_at: float) -> None:
@@ -757,7 +760,7 @@ def _last_run_as_of() -> str | None:
 
 def _run(no_fetch: bool, tickers: list[str] | None, limit: int | None,
          usd_cap: float | None, run_id: str | None = None, provider: str = "deepseek",
-         max_calls: int | None = None) -> dict:
+         max_calls: int | None = None, model: str | None = None) -> dict:
     from . import store
     run_at = time.time()
     tickers = select_pilot() if tickers is None else list(tickers)
@@ -771,10 +774,13 @@ def _run(no_fetch: bool, tickers: list[str] | None, limit: int | None,
     stopped_reason = None
     stopped_message = None
     try:
-        if provider == "deepseek":
+        if provider == "deepseek" and model is None:
             profiles = build_profiles(tickers, use_llm=not no_fetch, usd_cap=usd_cap)
+        elif provider == "deepseek":
+            profiles = build_profiles(tickers, use_llm=not no_fetch, usd_cap=usd_cap, provider=provider, model=model)
         else:
-            profiles = build_profiles(tickers, use_llm=not no_fetch, provider=provider, max_calls=max_calls)
+            profiles = build_profiles(tickers, use_llm=not no_fetch, provider=provider, max_calls=max_calls,
+                                      model=model)
     except RunStopped as exc:
         # Boundary reached or a hard failure: render from the durable profiles
         # already written; the rest stay pending for the next off-peak run.
@@ -792,7 +798,7 @@ def _run(no_fetch: bool, tickers: list[str] | None, limit: int | None,
 
     # "Profiled" counts usable profiles only: empty / no_text rows are not done. One writer per board (#360): another
     # writer's profiles stay in the store, out of the matrix, until this writer redoes them.
-    writer = (provider, _writer(provider)[0])
+    writer = (provider, model or _writer(provider)[0])
     other = store.other_writer_tickers(list(profiles), writer)
     profiles = {t: p for t, p in profiles.items() if any(p.values()) and t not in other}
     payload = _payload(profiles, {}, stale=store.stale_tickers(list(profiles), writer=writer), model=writer[1])

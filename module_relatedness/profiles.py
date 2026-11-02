@@ -125,7 +125,7 @@ def token_budget(thinking: bool) -> int:
 def profile_for(ticker: str, name: str, item_text: str, thinking: bool = False,
                 effort: str | None = None, max_tokens: int | None = None,
                 client=None, budget: "CallBudget | None" = None,
-                provider: str = "deepseek") -> dict:
+                provider: str = "deepseek", model: str | None = None) -> dict:
     """Call the LLM and return the parsed profile (empty fields when unusable).
 
     ``provider`` picks the writer (``llm``); the prompt, the token budget and the parse are the same for both, so a
@@ -147,11 +147,13 @@ def profile_for(ticker: str, name: str, item_text: str, thinking: bool = False,
     def _call(use_cache: bool, tokens: int) -> str:
         if budget is not None and not budget.consume():
             raise BudgetExceeded()
+        # The board's model (#360) only when one is chosen, so a caller's fake ``complete`` keeps its signature.
+        extra = {"model": model} if model else {}
         return client_mod.complete(
             system_prompt(), user, thinking=thinking, reasoning_effort=effort,
             max_tokens=tokens, json_mode=True, use_cache=use_cache, client=client,
             ticker=ticker, prompt_version=config.PROMPT_VERSION,
-            validate=lambda c: any(parse_profile(c).values()))
+            validate=lambda c: any(parse_profile(c).values()), **extra)
 
     raw = _call(True, budget_tokens)
     prof = parse_profile(raw)

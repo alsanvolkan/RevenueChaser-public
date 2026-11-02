@@ -1937,15 +1937,15 @@ def run_relatedness(uw=None, no_fetch: bool = False) -> Path:
     off-peak gated); the ``no_fetch`` (model-only) path re-renders from that writer's stored profiles with zero
     network.
     """
-    from RevenueChaser.module_relatedness import engine, report, writers
+    from RevenueChaser.module_relatedness import engine, report
     from RevenueChaser.module_relatedness import settings as rel_settings
 
+    # The model is a parameter (PR 362 review S1): a Refresh and a Save beside a Fetch never change a module default.
     provider, model = rel_settings.writer()[0], rel_settings.chosen_model()
     try:
         # One id per Fetch (jobs.py:97): its result history header (#388). A Refresh records nothing.
-        with writers.use(provider, model):
-            payload = engine.run(no_fetch=no_fetch, run_id=None if no_fetch else _freeze_run_id(),
-                                 provider=provider)
+        payload = engine.run(no_fetch=no_fetch, run_id=None if no_fetch else _freeze_run_id(),
+                             provider=provider, model=model)
     except engine.AlreadyRunning as exc:
         raise JobMessage(str(exc)) from exc
     _write_to(RELATEDNESS_JSON, json.dumps(payload, ensure_ascii=False, default=str))

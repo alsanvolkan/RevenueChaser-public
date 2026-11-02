@@ -118,18 +118,18 @@ def _grok_ping() -> int:
     return 0 if out["ok"] else 1
 
 
-def _free_run(provider: str, chosen, limit: int | None) -> int:
+def _free_run(provider: str, chosen, limit: int | None, model: str | None = None) -> int:
     """``--run`` with EVREN or Grok (#360, #388): the summary names the provider, the model and the calls (0 USD
     each). ``limit`` caps the calls; none by default (avo, 2 Nov 2026)."""
     mod = engine.profiles_mod.llm(provider)
     before = mod.calls()
     try:
-        payload = engine.run(tickers=chosen, provider=provider, max_calls=limit)
+        payload = engine.run(tickers=chosen, provider=provider, max_calls=limit, **_model_kw(model))
     except engine.AlreadyRunning as exc:
         print(json.dumps({"skipped": str(exc)}, ensure_ascii=False))
         return 1
     reason = payload.get("stopped_reason")
-    out = {"provider": provider, "model": mod.MODEL, "calls": mod.calls() - before,
+    out = {"provider": provider, "model": model or mod.MODEL, "calls": mod.calls() - before,
            "cost_usd": mod.COST_USD_PER_CALL * (mod.calls() - before),
            "done": payload.get("n"), "pending": payload.get("pending") or 0,
            "stale": sum(1 for c in payload.get("companies") or [] if c.get("stale"))}
@@ -393,15 +393,19 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"provider": run_writer, "model": run_model or evren.MODEL, "calls": 0, "cost_usd": 0.0,
                           "stopped_reason": "missing", "error": absent}, ensure_ascii=False))
         return 1
-    with writers.use(run_writer, run_model):
-        if run_writer != "deepseek":
-            return _free_run(run_writer, chosen, args.limit)
-        return _deepseek_run(chosen, args.limit, args.cap)
+    if run_writer != "deepseek":
+        return _free_run(run_writer, chosen, args.limit, run_model)
+    return _deepseek_run(chosen, args.limit, args.cap, run_model)
 
 
-def _deepseek_run(chosen, limit, cap) -> int:
+def _model_kw(model: str | None) -> dict:
+    """The board's model (#360) as a keyword, only when one is saved: a run without one is called as before."""
+    return {"model": model} if model else {}
+
+
+def _deepseek_run(chosen, limit, cap, model: str | None = None) -> int:
     try:
-        payload = engine.run(tickers=chosen, limit=limit, usd_cap=cap)
+        payload = engine.run(tickers=chosen, limit=limit, usd_cap=cap, **_model_kw(model))
     except engine.AlreadyRunning as exc:
         # Not green: nothing ran. (An off-peak deferral is different: it exits 0 below.)
         print(json.dumps({"skipped": str(exc)}, ensure_ascii=False))

@@ -85,7 +85,7 @@ def _cache_put(key: str, content: str, meta: dict) -> None:
         rawstore.ensure_table("llm_cache")
         rawstore.write_rows("llm_cache", [{
             "cache_key": key, "ticker": (meta.get("ticker") or "").upper(), "cik": str(meta.get("cik") or ""),
-            "model": MODEL, "thinking": 0, "effort": "", "prompt_version": meta.get("prompt_version") or "",
+            "model": meta.get("model") or MODEL, "thinking": 0, "effort": "", "prompt_version": meta.get("prompt_version") or "",
             "input_hash": key,
             "response": {"content": content, "usage": meta.get("usage") or {}, "provider": PROVIDER},
             "fetched_at": time.time(), "status": "ok",
@@ -105,10 +105,13 @@ def complete(system: str, user: str, *, thinking: bool = False,
              client: httpx.Client | None = None, now=None,
              ticker: str | None = None, cik=None,
              prompt_version: str | None = None,
-             validate: Callable[[str], bool] | None = None) -> str:
+             validate: Callable[[str], bool] | None = None,
+             model: str | None = None) -> str:
     """One chat completion: cache, then the key, then HTTP. ``thinking`` / ``reasoning_effort`` / ``now`` are
-    accepted for the writer signature (``module_relatedness.profiles``) and not sent."""
-    key = _cache_key(system, user, MODEL)
+    accepted for the writer signature (``module_relatedness.profiles``) and not sent. ``model`` is the board's
+    (#360), else ``MODEL``; it is a parameter, never a module-level swap."""
+    model = model or MODEL
+    key = _cache_key(system, user, model)
     if use_cache:
         hit = deepseek._cache_get(key)
         if hit is not None:
@@ -119,7 +122,7 @@ def complete(system: str, user: str, *, thinking: bool = False,
         raise EvrenAuthError("EVREN API key is missing. Set EVREN_API_KEY in /etc/life/secrets.env "
                              "(see core/credentials.py).")
 
-    body = {"model": MODEL, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+    body = {"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             "max_tokens": max_tokens, "temperature": temperature, "stream": False}
     if json_mode:
         body["response_format"] = {"type": "json_object"}
@@ -153,24 +156,24 @@ def complete(system: str, user: str, *, thinking: bool = False,
                                      f"Renew EVREN_API_KEY in /etc/life/secrets.env and re-run.")
             if r.status_code >= 400:
                 raise EvrenError(f"EVREN HTTP {r.status_code}: {text}")
-            return _finish(r, key, use_cache, validate, ticker, cik, prompt_version)
+            return _finish(r, key, use_cache, validate, ticker, cik, prompt_version, model, api_key)
         raise EvrenError("EVREN request failed")  # pragma: no cover - the loop always returns or raises
     finally:
         if own:
             client.close()
 
 
-def _finish(r, key: str, use_cache: bool, validate, ticker, cik, prompt_version) -> str:
+def _finish(r, key: str, use_cache: bool, validate, ticker, cik, prompt_version, model: str, api_key: str) -> str:
     try:
         data = r.json()
     except ValueError as exc:
-        raise EvrenError(f"EVREN returned a reply that is not JSON: {(r.text or '')[:300]}") from exc
+        raise EvrenError(f"EVREN returned a reply that is not JSON: {_scrub((r.text or '')[:300], api_key)}") from exc
     choices = data.get("choices") if isinstance(data, dict) else None
     first = choices[0] if isinstance(choices, list) and choices else {}
     message = first.get("message") if isinstance(first, dict) else None
     content = message.get("content") if isinstance(message, dict) else None
     if not content:
-        raise EvrenError(f"EVREN returned no content: {str(data)[:300]}")
+        raise EvrenError(f"EVREN returned no content: {_scrub(str(data)[:300], api_key)}")
     cacheable = use_cache
     if cacheable and validate is not None:
         try:
@@ -180,7 +183,7 @@ def _finish(r, key: str, use_cache: bool, validate, ticker, cik, prompt_version)
             cacheable = False
     if cacheable:
         _cache_put(key, content, {"usage": data.get("usage"), "ticker": ticker, "cik": cik,
-                                  "prompt_version": prompt_version})
+                                  "prompt_version": prompt_version, "model": model})
     return content
 
 

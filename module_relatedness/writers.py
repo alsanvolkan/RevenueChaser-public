@@ -10,7 +10,6 @@ never a value: the check is presence only, like ``core.credentials.problem``.
 from __future__ import annotations
 
 import importlib
-from contextlib import contextmanager
 from dataclasses import dataclass
 
 from RevenueChaser.core import credentials
@@ -80,23 +79,3 @@ def options() -> list[dict]:
         out.append({"provider": slug, "label": w.label, "models": list(w.models), "paid": w.paid,
                     "available": name is None, "missing": name})
     return out
-
-
-@contextmanager
-def use(slug: str, model: str | None):
-    """Run with ``model`` as the writer's ``MODEL``, restored afterwards.
-
-    shortcut: the chat modules read their module-level ``MODEL`` at call time, so the board's model is set there for
-    the length of one run (the ``relatedness`` job lock keeps runs from overlapping); pass the model through
-    ``complete`` instead if two writers ever run in one process at once.
-    """
-    mod = client(slug)
-    if model is not None and model not in get(slug).models:
-        raise ValueError(f"model {model!r} is not one of {slug}'s: {', '.join(get(slug).models)}")
-    before = mod.MODEL
-    if model is not None:
-        mod.MODEL = model
-    try:
-        yield mod
-    finally:
-        mod.MODEL = before
