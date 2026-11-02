@@ -127,30 +127,39 @@ def test_a_build_connection_is_capped_by_default(monkeypatch):
 def test_the_cap_comes_from_the_environment(monkeypatch):
     monkeypatch.setenv("RC_DUCKDB_MEMORY_LIMIT", "2GB")
     monkeypatch.setenv("RC_DUCKDB_THREADS", "2")
+    monkeypatch.setenv("RC_DUCKDB_MAX_TEMP", "50GB")
     with serving.build("market") as b:
         memory, threads = _settings(b.con)
+        max_temp = b.con.execute("SELECT current_setting('max_temp_directory_size')").fetchone()[0]
     assert memory.replace(" ", "") in ("1.8GiB", "2.0GB"), memory
     assert threads == 2
+    assert max_temp.replace(" ", "") in ("46.5GiB", "50.0GB"), max_temp
 
 
-@pytest.mark.parametrize("memory, threads", [("", ""), ("lots", "x"), ("5", "0"), ("GB", "-3")])
-def test_an_empty_or_invalid_cap_keeps_the_default(monkeypatch, memory, threads):
+@pytest.mark.parametrize("memory, threads, max_temp",
+                         [("", "", ""), ("lots", "x", "much"), ("5", "0", "200"), ("GB", "-3", "TB")])
+def test_an_empty_or_invalid_cap_keeps_the_default(monkeypatch, memory, threads, max_temp):
     monkeypatch.setenv("RC_DUCKDB_MEMORY_LIMIT", memory)
     monkeypatch.setenv("RC_DUCKDB_THREADS", threads)
+    monkeypatch.setenv("RC_DUCKDB_MAX_TEMP", max_temp)
     assert serving.build_config() == {"memory_limit": serving.MEMORY_LIMIT_DEFAULT,
-                                      "threads": serving.THREADS_DEFAULT}
+                                      "threads": serving.THREADS_DEFAULT,
+                                      "max_temp_directory_size": serving.MAX_TEMP_DEFAULT}
 
 
-def test_a_build_over_its_memory_limit_spills_and_leaves_no_scratch(monkeypatch):
-    """Under a small limit a sort larger than it still finishes (DuckDB spills beside the build file), and the
-    spill directory goes with the build."""
+def test_a_build_over_its_memory_limit_spills_on_the_raw_disk_and_leaves_no_scratch(monkeypatch):
+    """Under a small limit a sort larger than it still finishes, and the spill directory goes with the build. #372:
+    the spill lives under the raw root (the server's HDD), not beside the live files: request 71 spilled 47 GB
+    there, on the SSD the live stores share."""
     monkeypatch.setenv("RC_DUCKDB_MEMORY_LIMIT", "64MB")
     monkeypatch.setenv("RC_DUCKDB_THREADS", "1")
     rows = 3_000_000
     with serving.build("market") as b:
+        spill = Path(b.con.execute("SELECT current_setting('temp_directory')").fetchone()[0])
         b.con.execute(f"CREATE TABLE t AS SELECT range AS i, md5(range::VARCHAR) AS h FROM range({rows}) ORDER BY h")
         b.swap({"t": rows})
-    assert _leftovers() == []
+    assert Path(config.MARKET_RAW_DIR) in spill.parents, spill
+    assert not spill.exists() and _leftovers() == []
 
 
 def _build_t(rows: int, **swap_kw) -> None:

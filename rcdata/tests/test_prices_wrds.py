@@ -422,6 +422,22 @@ def test_a_delisted_compustat_security_whose_sessions_crsp_all_wins_keeps_its_sy
     wrds.reset()
 
 
+def test_a_crsp_bar_without_shares_takes_compustats_shares_of_that_session(monkeypatch):
+    """The market cap's history shares come from the lowest-priority bar of the session that has any (#372 moved that
+    pick out of a window): CRSP's bar wins 2 Jun 2025 but carries no SHROUT, so Compustat's count sizes it."""
+    data = _data()
+    data["crsp.dsf_v2"][0]["shrout"] = None
+    conn = FakeWrds(data)
+    monkeypatch.setattr(wrds, "_factory", lambda: conn)
+    wrds.reset()
+    _build()
+    cap = _q("SELECT market_cap, shares, shares_source FROM market_cap_daily WHERE security_id = ? "
+             "AND session_date = '2025-06-02'", [AAPL])
+    assert cap == [{"market_cap": pytest.approx(200.0 * 7.5e9), "shares": 7.5e9,
+                    "shares_source": wrds_history.COMPUSTAT}]
+    wrds.reset()
+
+
 def test_a_compustat_tic_on_a_session_alpaca_won_never_names_the_security(monkeypatch):
     """Review of #364: Compustat writes a security's current ``tic`` on every past session, so its bars that lost to
     Alpaca's would pull a new ticker's start back in time and could make an old one the "now" symbol. Only the
