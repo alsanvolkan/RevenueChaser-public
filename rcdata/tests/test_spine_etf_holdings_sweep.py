@@ -364,3 +364,58 @@ def test_a_breaker_stop_un_records_only_the_failures_since_uws_last_answer(monke
     env.requests.clear()
     base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-03"}})
     assert _sweep_calls(env) == OTHERS[2:], "CCOI stays recorded, GLD is held"
+
+
+def _fail(env, tickers, status=503) -> int:
+    for t in tickers:
+        env.routes.insert(0, (f"/etfs/{t}/holdings", _answer(status), status, {}))
+    return len(tickers)
+
+
+def _failed_issue() -> list:
+    return [i for i in ops.open_issues(etf.NAME, limit=200)[1] if i["key"] == f"sweep-{DAY}"]
+
+
+def test_a_breaker_the_daily_funds_opened_before_the_sweep_records_no_etf(monkeypatch, env):
+    """Review 4, SHOULD: SMH answers, then five daily UW funds fail and open the breaker before the sweep asks
+    anything. Three such runs must not record CCOI, which UW was never asked for."""
+    monkeypatch.setattr(unusual_whales, "_sleep", lambda s: None)
+    n = _fail(env, etf.UW_FUNDS[1:1 + unusual_whales.BREAKER_THRESHOLD])
+    for d in [DAY, "2026-11-03", "2026-11-04"]:
+        env.requests.clear()
+        base.run_request({"dataset": etf.NAME, "params": {"as_of": d}})
+        assert _sweep_calls(env) == [], "the open breaker sends no sweep call"
+    del env.routes[:n]
+    env.requests.clear()
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-05"}})
+    assert _sweep_calls(env) == OTHERS and not _failed_issue()
+
+
+def test_a_same_day_rerun_that_asks_no_daily_fund_keeps_the_stop_count(monkeypatch, env):
+    """Review 4, NIT 2: a rerun of the day holds the daily raws and asks UW only for the five bad neighbours, so UW
+    answered nothing that run. It keeps the count; it must not start it over and stall the sweep for good."""
+    monkeypatch.setattr(unusual_whales, "_sleep", lambda s: None)
+    bad = OTHERS[:unusual_whales.BREAKER_THRESHOLD]
+    _fail(env, bad)
+    for d in [DAY, "2026-11-03"]:
+        for _ in range(2):                                   # the day's run, then its rerun
+            env.requests.clear()
+            base.run_request({"dataset": etf.NAME, "params": {"as_of": d}})
+            assert sorted(set(_sweep_calls(env))) == bad
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-04"}})   # the third counted stop
+    env.requests.clear()
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-04"}})
+    assert _sweep_calls(env) == OTHERS[len(bad):] and all(t in _failed_issue()[0]["detail"] for t in bad)
+
+
+def test_stops_at_different_places_record_nothing(monkeypatch, env):
+    """Review 4, NIT 3: three runs stopped at CCOI, then GLD, then LEVX are three outages, not one ETF's failure."""
+    monkeypatch.setattr(unusual_whales, "_sleep", lambda s: None)
+    k = unusual_whales.BREAKER_THRESHOLD
+    for i, d in enumerate([DAY, "2026-11-03", "2026-11-04"]):
+        n = _fail(env, OTHERS[i:i + k])
+        base.run_request({"dataset": etf.NAME, "params": {"as_of": d}})
+        del env.routes[:n]
+    env.requests.clear()
+    base.run_request({"dataset": etf.NAME, "params": {"as_of": "2026-11-05"}})
+    assert _sweep_calls(env) == OTHERS[2:] and not _failed_issue() and set(OTHERS) <= _served_etfs(DAY)

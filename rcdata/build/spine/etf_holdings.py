@@ -517,19 +517,20 @@ class EtfHoldings:
                 stopped = _uw_down(ctx, t)
                 if stopped:
                     # A stop counts only where the last one was and while UW answered this run: a whole outage or a
-                    # dead key stops every run at the same ETF and is UW's state, never the ETF's (review 3).
+                    # dead key stops every run at the same ETF and is UW's state, never the ETF's (review 3). A
+                    # breaker that skipped a call opened before this ETF was asked (review 4); a run where UW
+                    # answered nothing, a same-day rerun of the bad neighbours, keeps the count as it was.
                     at = (streak or [t])[0]
                     h = ctx.uw_client().health()
-                    answered = h["calls"] > h["failed"]
+                    answered = h["calls"] > h["failed"] and not h["skipped_calls"]
                     if at != state.get("stop_at"):
                         ctx.issue("source_failed", f"sweep-{day}-stopped", f"{stopped} at {at}: the sweep waits")
-                    same = answered and at == state.get("stop_at")
-                    state["stops"], state["stop_at"] = (state.get("stops", 0) + 1 if same else int(answered)), at
+                    kept = state.get("stops", 0) if at == state.get("stop_at") else 0
+                    state["stops"], state["stop_at"] = kept + int(answered), at
                     if state["stops"] < SWEEP_STOPS:   # UW, not these ETFs: the failures since its last answer either
                         state["failed"] = [x for x in state["failed"] if x not in streak]
                     else:                              # the same ETFs again and again: theirs, the sweep goes past
                         state["failed"].append(t)
-                        state["stops"], state["stop_at"] = 0, None
                     break
                 state["failed"].append(t)
                 streak.append(t)
