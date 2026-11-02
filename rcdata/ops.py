@@ -562,8 +562,8 @@ read_log = ReadLog()
 def _flush_at_exit() -> None:
     try:
         read_log.flush()
-    except Exception:  # noqa: BLE001 - a lost minute of read counts is not worth a traceback at exit
-        pass
+    except Exception as exc:  # noqa: BLE001 - no traceback at exit, but say so: kept counts can span many minutes
+        logging.getLogger(__name__).warning("read log flush at exit failed, counts lost: %s", exc)
 
 
 atexit.register(_flush_at_exit)

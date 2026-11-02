@@ -72,3 +72,6 @@ def test_5_a_failed_read_log_flush_keeps_its_counts_for_the_next_one(monkeypatch
     with pytest.raises(RuntimeError):
         log.flush()
     assert sum(log._counts.values()) == 1
+    monkeypatch.undo()                              # #359 N4: the next flush writes the kept count once
+    log.flush()
+    assert log._counts == {} and ops.reads_since(ops._today(), ["market_series"]) == {"market_series": 1}
