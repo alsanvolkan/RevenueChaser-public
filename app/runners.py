@@ -1930,6 +1930,15 @@ def _submissions_message(subs: dict | None) -> str:
     return text
 
 
+def run_relatedness_compare(uw=None, provider: str = "", model: str = "", tickers: list | None = None) -> None:
+    """The writer comparison (#370): ``tickers`` (at most 100) with one provider + model; no board table is written.
+    The counts are the job's message; the scores file is under ``.cache/research/360/``."""
+    from RevenueChaser.module_relatedness import compare
+
+    out = compare.run(list(tickers or []), provider=provider, model=model)
+    raise JobMessage(json.dumps(out, ensure_ascii=False))
+
+
 def run_relatedness(uw=None, no_fetch: bool = False) -> Path:
     """Run the Relatedness board (LLM business-profile similarity).
 
