@@ -422,6 +422,23 @@ def test_a_delisted_compustat_security_whose_sessions_crsp_all_wins_keeps_its_sy
     wrds.reset()
 
 
+def test_a_compustat_tic_on_a_session_alpaca_won_never_names_the_security(monkeypatch):
+    """Review of #364: Compustat writes a security's current ``tic`` on every past session, so its bars that lost to
+    Alpaca's would pull a new ticker's start back in time and could make an old one the "now" symbol. Only the
+    sessions whose winner has no symbol (CRSP's) take a history bar's symbol."""
+    data = _data()
+    data["comp.secd"] += [_secd("001690", "01", "2026-10-21", "ZZZZ", 199.0)]   # an Alpaca session of AAPL
+    conn = FakeWrds(data)
+    monkeypatch.setattr(wrds, "_factory", lambda: conn)
+    wrds.reset()
+    assert base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
+    assert _backfill()["result"] == "changed"                    # as live: Alpaca's bars first, then the WRDS history
+    assert "ZZZZ" not in {r["symbol"] for r in _q("SELECT symbol FROM security_symbol WHERE security_id = ?", [AAPL])}
+    assert _q("SELECT DISTINCT ticker FROM price_bars_daily WHERE session_date >= '2026-10-21' "
+              "AND ticker IN ('AAPL', 'ZZZZ')") == [{"ticker": "AAPL"}]
+    wrds.reset()
+
+
 @pytest.mark.parametrize("col", ["hdrcusip", "ticker"])
 def test_a_crsp_year_without_its_link_columns_is_a_run_issue(monkeypatch, col):
     """Review N1 of #353: the link reads ``hdrcusip`` and ``ticker``; a year that answers none is an issue, not a
