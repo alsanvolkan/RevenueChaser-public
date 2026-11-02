@@ -64,11 +64,14 @@ def test_3_the_consecutive_window_is_five_to_nine_days(days, gap):
     assert (days not in store_reads.CONSECUTIVE_DAYS) is gap
 
 
-def test_5_a_failed_read_log_flush_keeps_its_counts_for_the_next_one(monkeypatch):
+def test_5_a_failed_read_log_flush_keeps_its_counts_for_the_next_one():
     """Review S1 (#356): the counts feed the retirement count, so a failed flush puts them back."""
     log = ops.ReadLog(process="test")
-    monkeypatch.setattr(ops, "_open", _boom)
-    log.bump("market_series")
-    with pytest.raises(RuntimeError):
-        log.flush()
-    assert sum(log._counts.values()) == 1
+    with pytest.MonkeyPatch.context() as mp:        # its own patch: undoing it leaves the store roots alone
+        mp.setattr(ops, "_open", _boom)
+        log.bump("market_series")
+        with pytest.raises(RuntimeError):
+            log.flush()
+        assert sum(log._counts.values()) == 1
+    log.flush()                                     # #359 N4: the next flush writes the kept count once
+    assert log._counts == {} and ops.reads_since(ops._today(), ["market_series"]) == {"market_series": 1}
