@@ -56,6 +56,11 @@ COST_USD_PER_CALL = 0.0      # a subscription allowance, not a per-token bill
 MAX_ATTEMPTS = 2             # one call and at most one retry (429 / pre-send failure only)
 GATE_EVERY = 25              # requests between two allowance readings ("before each batch")
 USER_AGENT = "RevenueChaser/1.0 (relatedness profile writer)"
+# cli-chat-proxy gates clients on ``x-grok-client-version`` and answers 426 below its minimum (#375). The value is
+# the Grok CLI release it was read from: xai-org/grok-build ``crates/codegen/xai-grok-shell/Cargo.toml`` at commit
+# 2bdd1d6 (29 Sep 2026). shortcut: it rots when xAI raises the gate; then set RC_GROK_CLIENT_VERSION to the
+# version the 426 names, and bump this default from the newest grok-build release.
+CLIENT_VERSION = "1.0.45"
 _RETRY_BASE = 2.0
 _MAX_DELAY = 30.0
 _PRE_SEND_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
@@ -295,7 +300,8 @@ def complete(system: str, user: str, *, thinking: bool = False,
         client = _new_client()
     url = endpoint()
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
-               "Accept": "application/json", "User-Agent": USER_AGENT}
+               "Accept": "application/json", "User-Agent": USER_AGENT,
+               "x-grok-client-version": os.getenv("RC_GROK_CLIENT_VERSION") or CLIENT_VERSION}
     try:
         for attempt in range(1, MAX_ATTEMPTS + 1):
             with _state_lock:
@@ -322,6 +328,10 @@ def complete(system: str, user: str, *, thinking: bool = False,
                                     "Renew it with any `hermes` command and re-run.")
             if status == 402:
                 raise GrokAllowanceError(f"SuperGrok refused the call (HTTP 402): {_scrub(r.text, token)}")
+            if status == 426:
+                raise GrokRequestError(f"Grok HTTP 426: the proxy refuses client version "
+                                       f"{headers['x-grok-client-version']}: {_scrub(r.text, token)}. "
+                                       "Set RC_GROK_CLIENT_VERSION to the version it names.")
             if status >= 400:
                 raise GrokRequestError(f"Grok HTTP {status} from {url} (model {model}): {_scrub(r.text, token)}")
             return _finish(r, key, token, use_cache, validate, ticker, cik, prompt_version, model)

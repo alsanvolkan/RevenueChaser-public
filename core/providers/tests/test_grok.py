@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import urllib.error
 from datetime import datetime, timedelta, timezone
 
@@ -106,6 +107,29 @@ def test_the_call_goes_to_the_cli_proxy_chat_endpoint_with_the_bearer():
     _call(c, use_cache=False)
     assert c.posts[0]["url"] == "https://cli-chat-proxy.grok.com/v1/chat/completions"
     assert c.posts[0]["headers"]["Authorization"] == f"Bearer {TOKEN}"
+
+
+def test_the_call_names_the_grok_cli_version_the_proxy_gates_on(monkeypatch):
+    """cli-chat-proxy answers 426 to a request without ``x-grok-client-version`` (#375)."""
+    monkeypatch.delenv("RC_GROK_CLIENT_VERSION", raising=False)
+    c = _Client()
+    _call(c, use_cache=False)
+    assert c.posts[0]["headers"]["x-grok-client-version"] == grok.CLIENT_VERSION
+    assert re.fullmatch(r"\d+\.\d+\.\d+", grok.CLIENT_VERSION)
+
+
+def test_rc_grok_client_version_overrides_the_version_at_call_time(monkeypatch):
+    monkeypatch.setenv("RC_GROK_CLIENT_VERSION", "9.8.7")
+    c = _Client()
+    _call(c, use_cache=False)
+    assert c.posts[0]["headers"]["x-grok-client-version"] == "9.8.7"
+
+
+def test_a_426_is_a_request_error_that_names_the_version_setting():
+    c = _Client(_Resp(426, text="Your Grok CLI version (0.2.99) is outdated."))
+    with pytest.raises(grok.GrokRequestError, match="RC_GROK_CLIENT_VERSION") as err:
+        _call(c, use_cache=False)
+    assert "0.2.99" in str(err.value) and len(c.posts) == 1
 
 
 @pytest.mark.parametrize("override,expected", [
