@@ -128,7 +128,7 @@ _NEEDS = (
     Need("macro.dgs10", "market_series", "market_series", "obs_date", "series_id", 4,
          ask_param="series_ids", filter_values=("DGS10",), providers=("fred",)),
     Need("market.vix", "market_series", "market_series", "obs_date", "series_id", 3, ask_param="series_ids",
-         filter_values=("VIX", "VIX9D", "VIX3M", "VIX6M", "VIX1Y", "VVIX"), providers=("yfinance",)),
+         filter_values=("VIX", "VIX9D", "VIX3M", "VIX6M", "VIX1Y", "VVIX"), providers=("cboe",)),
     Need("market.cot", "market_series", "market_series", "obs_date", "series_id", 10, ask_param="series_ids",
          filter_prefix="cftc:tff:13874A:", providers=("cftc",)),
     # CFTC's release schedule (#227): days from each COT report to its release, keyed on the report. The page lists
