@@ -155,6 +155,21 @@ def test_cftc_schedule_ignores_a_year_outside_any_heading():
     assert cftc_schedule.parse(page, {}) == []
 
 
+@pytest.mark.parametrize("page, dates", [
+    # Review S1 (#367): an unclosed heading must not swallow the next year's heading and date its rows.
+    ("<h3>2026 Release Schedule<table><tr><td>December</td><td>28*</td></tr></table>"
+     "<h3>2027 Release Schedule</h3><table><tr><td>January</td><td>08</td></tr></table>", [date(2027, 1, 5)]),
+    # Review S2: a heading without a year ends the previous year's section; its table is not dated.
+    ("<h3>2026 Release Schedule</h3><table><tr><td>December</td><td>28*</td></tr></table>"
+     "<h3>Release Schedule</h3><table><tr><td>January</td><td>08</td></tr></table>", [date(2026, 12, 22)]),
+    # Review N1: any entity before the year (&#160;, upper-case &NBSP;) is still a space.
+    ("<h3>2027&#160;Release Schedule</h3><table><tr><td>January</td><td>08</td></tr></table>", [date(2027, 1, 5)]),
+    ("<h3>&NBSP;2027 Release Schedule</h3><table><tr><td>January</td><td>08</td></tr></table>", [date(2027, 1, 5)]),
+])
+def test_cftc_schedule_never_dates_a_table_with_another_headings_year(page, dates):
+    assert [r["obs_date"] for r in cftc_schedule.parse(page, {})] == dates
+
+
 def test_cftc_schedule_keys_a_tuesday_release_on_the_tuesday_before():
     lag = {r["obs_date"]: r["value"] for r in cftc_schedule.parse(
         "<h3>2026 Release Schedule</h3><table><tr><td>May</td><td>26*</td></tr></table>", {})}
