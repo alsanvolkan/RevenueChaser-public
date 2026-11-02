@@ -295,6 +295,23 @@ def test_a_ticker_never_hands_a_delisted_names_history_to_the_listing_that_took_
     assert got == {"60003": ("figi:GOOD", "ticker"), "60004": ("012345:01", "ticker")}
 
 
+def test_a_gvkey_listing_whose_compustat_starts_after_crsps_last_day_takes_no_ticker_history():
+    """Review SHOULD 1 of the #353 delta: the gvkey half of M1. LATE's spine CUSIP is no PERMNO's, and its Compustat
+    rows start in 2026: CRSP's last day saw no such security, so the old PERMNO's ticker hands it nothing."""
+    got = _link(dsf=[("60005", END, "23232323", "23232323", "LATE")],
+                spine=[("054545:01", "LATE", "565656565")],
+                secd=[("054545", "01", "565656565", "2026-02-02")])
+    assert got == {}
+
+
+def test_an_etf_without_an_inception_day_takes_no_ticker_link():
+    """Review NIT of the #353 delta: an ETF row from N-CEN or the ETP list has no ``inception`` (AV's ipoDate), so
+    nothing says it existed on CRSP's last day; the build note counts these."""
+    got = _link(dsf=[("60006", END, "24242424", "24242424", "NOINC")],
+                spine=[("figi:NOINC", "NOINC", None, True, None)])
+    assert got == {}
+
+
 def test_the_rules_rank_ticker_before_compustat_and_the_newest_permno_wins_a_security():
     """Review N3 of #353: a swap of rules 3 and 4, or of the newest-first order, must turn a test red."""
     got = _link(
@@ -404,14 +421,26 @@ def test_the_build_note_counts_the_crsp_link_by_rule_and_the_unlinked_permnos(fa
     """Review S4 of #353: the link is observable. AAPL's PERMNO links by its header CUSIP; nothing is unlinked."""
     assert _backfill()["result"] == "changed"
     row = base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
-    assert "CRSP link: 1 by hdrcusip, 0 by cusip, 0 by ticker, 0 by compustat; 0 unlinked; 0 gvkey aliases" in row["note"]
+    assert ("CRSP link: 1 by hdrcusip, 0 by cusip, 0 by ticker, 0 by compustat; 0 unlinked; 0 gvkey aliases; "
+            "0 ETFs without an inception day unlinked") in row["note"]
 
 
-def test_crsp_history_of_a_security_without_compustat_actions_stays_out_of_the_adjusted_view(monkeypatch):
+@pytest.mark.parametrize("dividend", [False, True])
+def test_crsp_history_of_a_security_without_a_compustat_record_stays_out_of_the_adjusted_view(monkeypatch, dividend):
     """Review S1 of #353: FLG (spine: FIGI, no gvkey, no CUSIP) links its PERMNO by ticker, and before its Alpaca
     window no split or dividend reaches it. Its CRSP bars stay served as they are (nominal ``price_bar_daily``) but
-    not in ``price_bars_daily``, whose closes are split- and dividend-adjusted, and the note counts them."""
+    not in ``price_bars_daily``, whose closes are split- and dividend-adjusted, and the note counts them.
+
+    The #353 delta review, SHOULD 2 and 3: GAPX (``cik:``) links its PERMNO by ticker too, but Compustat holds it
+    under a gvkey:iid of its CUSIP (the alias). Compustat's actions reach it, so its CRSP history stays in the view,
+    with a Compustat dividend or with none (a trust that never pays out)."""
     data = _data()
+    data["crsp.dsf_v2"] += [{**r, "permno": "66666", "hdrcusip": "45454545", "cusip": "45454545", "ticker": "GAPX"}
+                            for r in _crsp_rows()]
+    data["comp.secd"] += [_secd("077777", "01", JUNE[0], "GAPX", 200.0, cusip="454545459")]
+    if dividend:
+        data["comp.sec_divid"] += [{"gvkey": "077777", "iid": "01", "datadate": JUNE[3], "divd": 1.0,
+                                    "curcddv": "USD"}]
     data["crsp.dsf_v2"] += [{**r, "permno": "77777", "hdrcusip": "99999999", "cusip": "99999999", "ticker": "FLG"}
                             for r in _crsp_rows()]
     data["crsp.dsf_v2"] += [{**r, "permno": "88888", "hdrcusip": "88888888", "cusip": "88888888", "ticker": "BRK-B"}
@@ -431,7 +460,17 @@ def test_crsp_history_of_a_security_without_compustat_actions_stays_out_of_the_a
               )[0]["n"] == len(JUNE), "a gvkey security's CRSP history stays: Compustat's actions reach it"
     assert _q("SELECT count(*) AS n FROM price_bars_daily WHERE ticker = 'BRK-B' AND session_date < '2026-01-01'"
               )[0]["n"] == len(JUNE), "so does one whose Compustat record holds no action"
-    assert f"{len(JUNE)} CRSP bars of 1 security without Compustat actions kept out of price_bars_daily" in row["note"]
+    assert _q("SELECT count(*) AS n FROM price_bars_daily WHERE ticker = 'GAPX' AND session_date < '2026-01-01'"
+              )[0]["n"] == len(JUNE), "and an aliased cik: security's: Compustat's actions reach it as well"
+    assert f"{len(JUNE)} CRSP bars of 1 security without a Compustat record kept out of price_bars_daily" in row["note"]
+    links = {i["key"]: i["detail"] for i in ops.open_issues(prices_serving.NAME, limit=500)[1]
+             if i["kind"] == "crsp_ticker_link"}
+    assert set(links) == {flg, "cik:4000001:GAPX", "072726:02"}, links      # BRK-B: the spine holds no CUSIP
+    assert "77777" in links[flg] and "FLG" in links[flg], "one issue per ticker-linked security, its PERMNO named"
+    with serving.open_read("prices") as con:
+        view = con.execute("SELECT sql FROM duckdb_views() WHERE view_name = 'price_bars_daily'").fetchone()[0]
+    assert prices_serving.UNADJUSTED_TABLE in view and "GROUP BY" not in view.upper(), \
+        "the view joins the per-security table the build wrote, no GROUP BY over every bar on each read"
     wrds.reset()
 
 

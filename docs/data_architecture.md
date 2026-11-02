@@ -1322,13 +1322,16 @@ are stored **nominal**; the factors are applied on read.
 applies no split a second time), `price_actions` (splits and dividends, the amount in today's share basis) and
 `index_levels_daily` (`^GSPC`).
 
-**Unadjusted history (review S1 of #353):** a CRSP bar of a security named otherwise than `gvkey:iid` (an ETF, a
-name without a Compustat link) that has no Compustat action, dated before its first Alpaca bar, has no split or
-dividend applied. It stays in `price_bar_daily` (nominal) and is left out of `price_bars_daily`; the build note
-counts those bars.
+**Unadjusted history (review S1 of #353):** a CRSP bar of a security no Compustat record reaches (named otherwise
+than `gvkey:iid`, and no `GVKEY_ALIAS` joins a Compustat `gvkey:iid` of its CUSIP to it), dated before its first
+Alpaca bar, has no split or dividend applied. It stays in `price_bar_daily` (nominal) and is left out of
+`price_bars_daily`; the build note counts those bars. The build writes the per-security cut-off once
+(`crsp_unadjusted`, one row per security with a CRSP bar), so a read of the view does not group every bar. A ticker
+link (rule 3) needs, for a spine `gvkey:iid` with a CUSIP, a Compustat row of it on CRSP's last day, and for an ETF
+an inception day on or before it (review M1).
 
 **Build issues** (dataset `prices/serving`, synced after each swap): `source_never_run`, `crsp_ticker_link` (the CRSP
-PERMNOs linked to a spine security by ticker alone, named in one issue), `tier_a_no_bar`,
+PERMNO linked to a spine security by ticker alone: one issue per security, its PERMNO named), `tier_a_no_bar`,
 `tier_a_no_shares`, `price_gap_no_action` (the split-adjusted close moved by 1.9 times or more, either way, within 7
 days, with no split), `adjustment_differs` (the store's total-return day return more than 1 bp from Alpaca's own, or
 more than half a cent on each of Alpaca's cent-rounded adjusted closes, the exact bound, where that is larger: about

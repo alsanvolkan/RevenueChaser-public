@@ -58,8 +58,9 @@ return is ``COMP_RETURN``: ``prccd / ajexdi * trfd`` over the previous session's
 
 **Adjustment.** A served bar is nominal, CRSP's (``abs(dlyprc)``: a negative price is CRSP's bid/ask midpoint) as
 Alpaca's raw bar, and the factors are applied on read from ``corporate_action``. Before Alpaca's action window the
-only actions are Compustat's, keyed ``gvkey:iid``: a security whose spine id is no ``gvkey:iid`` (the ETFs) has no
-split or dividend applied to its CRSP history yet, unlike Alpaca's adjusted bars. ``dlycumfacpr`` and
+only actions are Compustat's, keyed ``gvkey:iid`` or a security's ``GVKEY_ALIAS`` (an ETF the spine names by FIGI
+whose CUSIP Compustat holds). A security no Compustat record reaches has no split or dividend applied to its CRSP
+history, so ``prices/serving`` keeps those bars out of the adjusted view (``crsp_unadjusted``). ``dlycumfacpr`` and
 ``dlyorddivamt`` are stored for that.
 """
 from __future__ import annotations
@@ -467,7 +468,7 @@ PERMNO_LINK = """
                   JOIN s ON s.ticker = n.ticker
                   WHERE (s.c8 IS NULL OR EXISTS (SELECT 1 FROM stg_wrds_secd d WHERE d.datadate = n.last
                                                  AND d.gvkey || ':' || d.iid = s.security_id))
-                    AND (NOT s.is_etf OR s.inception <= n.last)
+                    AND (NOT s.is_etf OR coalesce(s.inception <= n.last, false))   -- no inception day: no link
         UNION ALL SELECT c.permno, m.security_id, 4, 'compustat' FROM c JOIN comp m ON m.c8 = c.cusip),
     best AS (SELECT cand.*, p.last FROM cand JOIN p USING (permno)
              QUALIFY row_number() OVER (PARTITION BY permno ORDER BY rule, security_id) = 1)
@@ -484,6 +485,7 @@ GVKEY_ALIAS = """
     SELECT m.gid, l.security_id FROM _permno_link l JOIN c USING (permno) JOIN comp m USING (c8)
     WHERE (l.security_id LIKE 'figi:%' OR l.security_id LIKE 'cik:%' OR l.security_id LIKE 'sym:%')
       AND m.gid NOT IN (SELECT security_id FROM stg_spine WHERE security_id IS NOT NULL)
+      AND m.gid NOT IN (SELECT security_id FROM _permno_link)        -- another PERMNO's own rule-4 security
     QUALIFY row_number() OVER (PARTITION BY m.gid ORDER BY l.security_id) = 1"""
 
 # Every history bar of both sources (``PRICE_BAR``'s columns, then the source's own day return and the previous
