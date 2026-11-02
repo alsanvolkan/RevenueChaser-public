@@ -1266,7 +1266,7 @@ only through `rcdata.read`.
 | `sec/cover_shares` | daily | The SEC daily master index (10-K, 10-Q, 20-F, 40-F and their -T forms of the last 7 days), each filer's submissions file, the filing's inline-XBRL instance: `dei:EntityCommonStockSharesOutstanding` per class member | `stg_sec_cover` |
 | `yfinance/float` | daily | Yahoo `floatShares` (`yfinance` `get_info`), 400 Tier A names a run, 1.5 s apart, stopped by a 401 or 429 | `stg_yahoo_float` |
 | `uw/total_float` | daily | Unusual Whales `/short_screener` `total_float`, every Tier A name (the client's batching) | `stg_uw_float` |
-| `wrds/prices` | monthly, attended | Compustat `comp.secd` from 1984 on the US exchanges and `comp.sec_divid` per year, CRSP `crsp.dsf_v2` per year to 2025, `comp.sec_split` and the CRSP link `crsp.ccmxpf_lnkhist` whole | `stg_wrds_secd`, `stg_wrds_dsf`, `stg_wrds_divid`, `stg_wrds_split`, `stg_wrds_link`, `stg_wrds_revisions` |
+| `wrds/prices` | monthly, attended | Compustat `comp.secd` from 1993 on the US exchanges and `comp.sec_divid` per year, CRSP `crsp.dsf_v2` per year to 2025 (stocks and ETFs, from 1993), `comp.sec_split` whole; no CCM link (`wrds_history.PERMNO_LINK`) | `stg_wrds_secd`, `stg_wrds_dsf`, `stg_wrds_divid`, `stg_wrds_split`, `stg_wrds_revisions` |
 | `prices/serving` | daily | none: builds the served tables from the staging tables | the tables below |
 
 **The universe.** The bars ask the live spine's Tier A and B (`prices.DEFAULT_TIERS`; 5,655 + 2,015 = 7,670 names
@@ -1294,7 +1294,7 @@ day) and records `scope ignored: ...` on its check row rather than fetching some
 
 **The security id** (`rcdata/build/prices/__init__.py`, `security_id`): `<gvkey>:<iid>` when the spine links the name
 to Compustat, else `figi:<composite FIGI>`, else `cik:<CIK>:<TICKER>`, else `sym:<TICKER>`; a WRDS bar with no spine
-row keeps `<gvkey>:<iid>` (a CRSP one with no link `permno:<PERMNO>`). A source row stores its provider's facts and the
+row keeps `<gvkey>:<iid>`. A CRSP PERMNO takes, with no CCM link, the spine security of its CUSIP (CRSP's 8 characters against the spine's first 8), else of its ticker on CRSP's last day when no other PERMNO had it, else the Compustat `<gvkey>:<iid>` of its CUSIP, else `permno:<PERMNO>` (`wrds_history.PERMNO_LINK`, with its measured coverage). A source row stores its provider's facts and the
 id of its fetch day; the build resolves each row against the live spine on (ticker, CIK), so a spine change re-keys
 the history at the next build without a refetch.
 
@@ -1308,13 +1308,14 @@ are stored **nominal**; the factors are applied on read.
 
 | Table | Rows |
 |---|---|
-| `price_bar_daily` | one nominal bar per security and session (key `security_id`, `session_date`): Alpaca's, then WRDS's where Alpaca has none (CRSP where it links to the Compustat security, else Compustat; only USD rows), and the S&P 500 level from the market store's Cboe Parquet (`index:SPX`); `shares_outstanding` is a WRDS bar's own (`cshoc`; CRSP `shrout` in thousands) |
+| `price_bar_daily` | one nominal bar per security and session (key `security_id`, `session_date`): Alpaca's, then WRDS's where Alpaca has none (CRSP where it is the same security, else Compustat; only USD rows), and the S&P 500 level from the market store's Cboe Parquet (`index:SPX`); `shares_outstanding` is a WRDS bar's own (`cshoc`; CRSP `shrout` in thousands) |
 | `corporate_action` | Alpaca's actions of the store's securities (resolved to the security that traded under the action's symbol nearest its date, else the spine's ticker) and Compustat's splits and dividends where Alpaca has none of that kind that day; `ratio` new over old shares, `amount` per share, `applied` and `not_applied_why` |
 | `adj_factor` | per security, the periods between two ex-dates and their `split_factor` (the product of `1 / ratio` of every later split and stock dividend) and `tr_factor` (that, times `1 - amount / close before the ex-date` of every later cash dividend, the close at most 7 days before) |
 | `shares_class` | `outstanding` per class from the SEC covers (an unlisted class keyed `class:<CIK>:<member>`, and so is an ADR issuer's count of ordinary shares), `float` from Yahoo and from UW |
 | `security_symbol` | the symbols a security traded under and when |
 | `market_cap_daily` | close times shares per security and session (the bar's own shares, else a WRDS source's of that session, else the newest cover on or before it moved over the splits between); `issuer_market_cap` sums the issuer's listed classes, each at its newest cap at most 14 days old (a class with no bar that session still counts); the bars' scope asks every listed class a cover names for a Tier A issuer, under `class:<CIK>:<member>` when the spine lacks it (BRK-A) |
 | `price_revision` | the values a later read replaced: Alpaca's re-read and the monthly WRDS refresh, with `revised_at` and `revised_by` |
+| `crsp_unadjusted` | the view's helper, no dataset's own table: one row per security with a CRSP bar in the history, `unadjusted_before` its first Alpaca session where no Compustat record reaches it (NULL where one does); `price_bars_daily` leaves out its CRSP bars before that day |
 | `wrds_price_diff` | the WRDS difference report, one row per comparison: CRSP against Compustat and each against Alpaca on the closes of the sessions both have, and each WRDS source's own day return (Compustat's `prccd / ajexdi * trfd` over the previous session's, CRSP's `dlyret`) against the store's on consecutive sessions; a difference over 1 bp counts; on the `wrds/prices` Settings card |
 
 **The bridge (D4).** Views under the old `.store/prices.duckdb` names with the old columns: `price_bars_daily`
@@ -1322,7 +1323,16 @@ are stored **nominal**; the factors are applied on read.
 applies no split a second time), `price_actions` (splits and dividends, the amount in today's share basis) and
 `index_levels_daily` (`^GSPC`).
 
-**Build issues** (dataset `prices/serving`, synced after each swap): `source_never_run`, `tier_a_no_bar`,
+**Unadjusted history (review S1 of #353):** a CRSP bar of a security no Compustat record reaches (named otherwise
+than `gvkey:iid`, and no `GVKEY_ALIAS` joins a Compustat `gvkey:iid` of its CUSIP to it), dated before its first
+Alpaca bar, has no split or dividend applied. It stays in `price_bar_daily` (nominal) and is left out of
+`price_bars_daily`; the build note counts those bars. The build writes the per-security cut-off once
+(`crsp_unadjusted`, one row per security with a CRSP bar), so a read of the view does not group every bar. A ticker
+link (rule 3) needs, for a spine `gvkey:iid` with a CUSIP, a Compustat row of it on CRSP's last day, and for an ETF
+an inception day on or before it (review M1).
+
+**Build issues** (dataset `prices/serving`, synced after each swap): `source_never_run`, `crsp_ticker_link` (the CRSP
+PERMNO linked to a spine security, no ETF, by ticker alone: one issue per security, its PERMNO named), `tier_a_no_bar`,
 `tier_a_no_shares`, `price_gap_no_action` (the split-adjusted close moved by 1.9 times or more, either way, within 7
 days, with no split), `adjustment_differs` (the store's total-return day return more than 1 bp from Alpaca's own, or
 more than half a cent on each of Alpaca's cent-rounded adjusted closes, the exact bound, where that is larger: about
