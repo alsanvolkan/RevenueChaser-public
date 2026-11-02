@@ -474,6 +474,23 @@ def test_crsp_history_of_a_security_without_a_compustat_record_stays_out_of_the_
     wrds.reset()
 
 
+def test_alpaca_history_over_a_crsp_span_keeps_the_securitys_cut_off_row_and_the_swap_goes_through(fake, http_mock):
+    """Review 2 of the #353 delta, SHOULD: once Alpaca's bars cover a security's whole CRSP span (Phase 8's fill to
+    2016), ``price_bar_daily`` holds no CRSP bar of it any more. Its ``crsp_unadjusted`` row must stay: the table is
+    no dataset's own, so ``allow_shrink`` cannot let it shrink, and the swap would refuse every prices build."""
+    assert _backfill()["result"] == "changed"
+    assert base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
+    before = _q(f"SELECT count(*) AS n FROM {prices_serving.UNADJUSTED_TABLE}")[0]["n"]
+    june = [date.fromisoformat(d) for d in JUNE]
+    series = [bar(d, c) for d, c in zip(june + OCT, CRSP_CLOSE + ALPACA_AAPL)]
+    http_mock.routes.insert(0, ("/v2/stocks/bars", BarsAnswer({"raw": {"AAPL": series}, "all": {"AAPL": series}}),
+                                200, {}))
+    row = base.run_request({"dataset": bars.NAME, "params": {"mode": "backfill", "from": JUNE[0], "to": JUNE[-1],
+                                                            "allow_shrink": True}})
+    assert row["result"] != "failed", row["note"]
+    assert _q(f"SELECT count(*) AS n FROM {prices_serving.UNADJUSTED_TABLE}")[0]["n"] == before
+
+
 def test_crsp_rows_reach_their_securities_without_ccm(fake):
     conn, _ = fake
     # SPY by ticker on CRSP's last day (the spine holds no CUSIP for it), OLDCO by Compustat's CUSIP.

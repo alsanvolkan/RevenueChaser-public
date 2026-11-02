@@ -85,8 +85,9 @@ NOT_APPLIED = ("spin_off", "unit_split", "rights_distribution")
 # The CRSP bars no action adjusts (review S1 of #353 and its delta review, SHOULD 3-4): those of a security no Compustat
 # record reaches (named otherwise than ``gvkey:iid`` and no ``_gvkey_alias``), before its first Alpaca bar. One row
 # per security with a CRSP bar, built once, so the view joins a small table instead of grouping every bar on each
-# read; ``unadjusted_before`` is NULL where Compustat's actions reach the security. Every CRSP security has its row,
-# so the table grows with the history and the swap's shrink guard holds for it as for ``price_bar_daily``.
+# read; ``unadjusted_before`` is NULL where Compustat's actions reach the security. Its rows are every security with a
+# CRSP bar in the history (``_hist_all``), not only those still served one: an Alpaca fill over a CRSP span must not
+# drop the row (review 2 of the delta), because the table is no dataset's own and ``allow_shrink`` cannot relax it.
 UNADJUSTED_TABLE = "crsp_unadjusted"
 CRSP_UNADJUSTED = [("security_id", "TEXT"), ("unadjusted_before", "DATE")]
 UNADJUSTED_SQL = f"""
@@ -94,7 +95,7 @@ UNADJUSTED_SQL = f"""
            CASE WHEN (h.security_id LIKE 'figi:%' OR h.security_id LIKE 'cik:%' OR h.security_id LIKE 'sym:%')
                  AND h.security_id NOT IN (SELECT security_id FROM _gvkey_alias)
                 THEN coalesce(min(a.session_date), DATE '9999-12-31') END AS unadjusted_before
-    FROM (SELECT DISTINCT security_id FROM price_bar_daily WHERE source = '{wrds_history.CRSP}') h
+    FROM (SELECT DISTINCT security_id FROM _hist_all WHERE source = '{wrds_history.CRSP}') h
     LEFT JOIN price_bar_daily a ON a.security_id = h.security_id AND a.source = '{ALPACA_BARS}'
     GROUP BY h.security_id"""
 UNADJUSTED = ("coalesce({b}.source = '" + wrds_history.CRSP + "' AND {b}.session_date < {u}.unadjusted_before, "
@@ -102,9 +103,9 @@ UNADJUSTED = ("coalesce({b}.source = '" + wrds_history.CRSP + "' AND {b}.session
 
 ISSUE_KINDS = {
     "source_never_run": "a source this build needs has no data yet (key: the dataset)",
-    "crsp_ticker_link": ("a spine security whose CRSP PERMNO linked by ticker alone, no CUSIP behind it (key: the "
-                         "security id; the detail names the PERMNO and the ticker, review S4 of #353 and SHOULD 5 of "
-                         "its delta review)"),
+    "crsp_ticker_link": ("a spine security, no ETF, whose CRSP PERMNO linked by ticker alone, no CUSIP behind it "
+                         "(key: the security id; the detail names the PERMNO and the ticker, review S4 of #353 and "
+                         "SHOULD 5 of its delta review)"),
     "tier_a_no_bar": "a Tier A name with no bar on the newest Alpaca session (key: the security id)",
     "tier_a_no_shares": "a Tier A name with no shares, so no market cap, on the newest session (key: the security id)",
     "price_gap_no_action": ("the split-adjusted close moved by GAP_FACTOR or more with no split that day "
@@ -352,15 +353,17 @@ class PricesServing:
                                "WHERE permno NOT IN (SELECT permno FROM _permno_link)").fetchone()[0]
         aliases = stage.count(con, "_gvkey_alias")
         no_day = con.execute("SELECT count(*) FROM stg_spine WHERE is_etf AND inception IS NULL AND security_id "
-                             "NOT IN (SELECT security_id FROM _permno_link)").fetchone()[0]
+                             "NOT IN (SELECT security_id FROM _permno_link) AND ticker IN "
+                             "(SELECT arg_max_null(ticker, dlycaldt) FROM stg_wrds_dsf GROUP BY permno)").fetchone()[0]
         ctx.notes.append("CRSP link: " + ", ".join(f"{by.get(h, 0)} by {h}" for h in
                                                    ("hdrcusip", "cusip", "ticker", "compustat"))
                          + f"; {unlinked} unlinked; {aliases} gvkey aliases; "
                          f"{no_day} ETFs without an inception day unlinked")
         # One issue per security (an open issue's detail is not rewritten, so one shared row would freeze its list).
+        # An ETF's ticker link is its designed one (the spine holds no CUSIP for it; the inception day guards it).
         for sid, permno, ticker in con.execute(
                 "SELECT l.security_id, l.permno, s.ticker FROM _permno_link l JOIN stg_spine s USING (security_id) "
-                "WHERE l.how = 'ticker' ORDER BY s.ticker").fetchall():
+                "WHERE l.how = 'ticker' AND NOT coalesce(s.is_etf, false) ORDER BY s.ticker").fetchall():
             found.append(("crsp_ticker_link", sid, f"PERMNO {permno} linked to {ticker} by ticker only (no CUSIP)"))
 
     # ── Actions ───────────────────────────────────────────────────────────────────────────────────────────────
