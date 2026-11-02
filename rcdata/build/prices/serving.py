@@ -154,6 +154,10 @@ SCHEMAS = {"price_bar_daily": PRICE_BAR, "corporate_action": CORPORATE_ACTION, "
            "shares_class": SHARES_CLASS, "security_symbol": SECURITY_SYMBOL, "market_cap_daily": MARKET_CAP,
            "price_revision": PRICE_REVISION, "wrds_price_diff": WRDS_PRICE_DIFF, UNADJUSTED_TABLE: CRSP_UNADJUSTED}
 KEYS = {"price_bar_daily": ("security_id", "session_date"), "market_cap_daily": ("security_id", "session_date")}
+# One ``_hist_all`` row per (security, session), the lowest priority (CRSP before Compustat) of those ``where`` keeps,
+# as a filter on ``rowid``. A hash aggregate, not a ``row_number()`` window: the window over every security and
+# session of 2010-2025 (60.7M rows, 39.2M partitions) ran out of DuckDB's 5 GB, where this spills (#372).
+HIST_FIRST = "rowid IN (SELECT arg_min(rowid, priority) FROM _hist_all {where} GROUP BY security_id, session_date)"
 
 # The security id of a spine row, the SQL twin of ``prices.security_id``.
 SPINE_ID = ("CASE WHEN nullif(gvkey, '') IS NOT NULL AND nullif(iid, '') IS NOT NULL THEN gvkey || ':' || iid "
@@ -317,9 +321,9 @@ class PricesServing:
         cols = ", ".join(c for c, _ in PRICE_BAR)
         # Alpaca's bar wins its session; of the history bars, CRSP's before Compustat's.
         bars_sql = (f"SELECT {cols} FROM _alp UNION ALL SELECT * FROM ({_index_levels(con)}) UNION ALL "
-                    f"SELECT {cols} FROM (SELECT * FROM _hist_all h WHERE NOT EXISTS (SELECT 1 FROM _alp a "
-                    "WHERE a.security_id = h.security_id AND a.session_date = h.session_date) "
-                    "QUALIFY row_number() OVER (PARTITION BY h.security_id, h.session_date ORDER BY h.priority) = 1)")
+                    f"SELECT {cols} FROM (SELECT * FROM _hist_all h WHERE {HIST_FIRST.format(where='')} "
+                    "AND NOT EXISTS (SELECT 1 FROM _alp a "
+                    "WHERE a.security_id = h.security_id AND a.session_date = h.session_date))")
         counts["price_bar_daily"] = _create(con, "price_bar_daily", bars_sql)
         counts["corporate_action"] = self._actions(con, found)
         counts["adj_factor"] = _create(con, "adj_factor", ADJ_SQL)
@@ -697,8 +701,7 @@ MARKET_CAP_SQL = f"""
     WITH o AS (SELECT security_id, as_of, value, source FROM shares_class WHERE measure = 'outstanding'
                QUALIFY row_number() OVER (PARTITION BY security_id, as_of ORDER BY fetched_at DESC) = 1),
          h AS (SELECT security_id, session_date, shares_outstanding, source FROM _hist_all
-               WHERE shares_outstanding > 0
-               QUALIFY row_number() OVER (PARTITION BY security_id, session_date ORDER BY priority) = 1),
+               WHERE {HIST_FIRST.format(where="WHERE shares_outstanding > 0")}),
          b AS (SELECT b.*, coalesce(s.cik, b.cik) AS issuer, h.shares_outstanding AS hist_shares,
                       h.source AS hist_source FROM price_bar_daily b
                LEFT JOIN (SELECT DISTINCT security_id, cik FROM stg_spine) s USING (security_id)

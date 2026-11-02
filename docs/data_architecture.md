@@ -970,9 +970,12 @@ renders at once with what is stored.
 
 **Build memory.** The one read-write connection of a build (`serving.build`) is opened with DuckDB's `memory_limit`
 from `RC_DUCKDB_MEMORY_LIMIT` (a DuckDB size such as `5GB`; default `5GB`) and `threads` from `RC_DUCKDB_THREADS`
-(default `3`); an empty or invalid value keeps the default. Over the limit DuckDB spills to `<build file>.tmp`
-rather than growing: without it a connection may take 80 % of the machine's RAM, and the kernel OOM-killed the
-first `prices/serving` build on #319's code (request #35, 30 Oct 2026, 7.7 GB peak on a 15 GB server).
+(default `3`); an empty or invalid value keeps the default. Over the limit DuckDB spills rather than growing: without
+it a connection may take 80 % of the machine's RAM, and the kernel OOM-killed the first `prices/serving` build on
+#319's code (request #35, 30 Oct 2026, 7.7 GB peak on a 15 GB server). The spill goes to
+`<MARKET_RAW_DIR>/build_tmp/<build file>.tmp` (`serving.spill_dir`, the HDD), never beside the live files on the SSD
+(#372: request 71 spilled 47 GB there), and DuckDB removes it when the build closes. `max_temp_directory_size` comes
+from `RC_DUCKDB_MAX_TEMP` (default `200GB`): past it the build fails instead of filling the disk.
 
 **Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`. Each kind is one
 file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `4`), is described under

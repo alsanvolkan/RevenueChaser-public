@@ -53,22 +53,38 @@ MAX_SHRINK = 0.01
 WINDOW_TABLE = "serving_window"
 # The build connection's memory and threads. DuckDB's own default is 80 % of the machine's RAM per connection, and the
 # kernel, not DuckDB, ended the first ``prices/serving`` build on #319's ASOF joins: request #35, 30 Oct 2026, OOM-killed
-# at a 7.7 GB peak on the 15 GB server beside the dashboard. Under a limit DuckDB spills to ``<build file>.tmp`` instead.
+# at a 7.7 GB peak on the 15 GB server beside the dashboard. Under a limit DuckDB spills instead (``spill_dir``).
 # A DuckDB size string (``5GB``) and a positive whole number; empty or invalid keeps the default.
 MEMORY_LIMIT_DEFAULT = "5GB"
 THREADS_DEFAULT = 3
+# The most a build may spill (``RC_DUCKDB_MAX_TEMP``, a DuckDB size): past it the build fails, it does not fill the disk.
+# DuckDB's own default is 90 % of the free space. 2010-2025 of history spilled 9.5 GB at its largest statement (#372).
+MAX_TEMP_DEFAULT = "200GB"
+_SIZE_UNITS = ("KB", "MB", "GB", "TB", "KIB", "MIB", "GIB", "TIB")
+
+
+def _size(env: str, default: str) -> str:
+    value = os.getenv(env, "").strip().replace(" ", "")
+    return value if value[:1].isdigit() and value.upper().endswith(_SIZE_UNITS) else default
 
 
 def build_config() -> dict[str, str | int]:
-    """``memory_limit`` and ``threads`` for a build connection, from ``RC_DUCKDB_MEMORY_LIMIT`` / ``RC_DUCKDB_THREADS``."""
-    memory = os.getenv("RC_DUCKDB_MEMORY_LIMIT", "").strip().replace(" ", "")
-    if not (memory[:1].isdigit() and memory.upper().endswith(("KB", "MB", "GB", "TB", "KIB", "MIB", "GIB", "TIB"))):
-        memory = MEMORY_LIMIT_DEFAULT
+    """``memory_limit``, ``threads`` and ``max_temp_directory_size`` for a build connection, from
+    ``RC_DUCKDB_MEMORY_LIMIT`` / ``RC_DUCKDB_THREADS`` / ``RC_DUCKDB_MAX_TEMP``."""
     try:
         threads = int(os.getenv("RC_DUCKDB_THREADS", "").strip())
     except ValueError:
         threads = THREADS_DEFAULT
-    return {"memory_limit": memory, "threads": threads if threads > 0 else THREADS_DEFAULT}
+    return {"memory_limit": _size("RC_DUCKDB_MEMORY_LIMIT", MEMORY_LIMIT_DEFAULT),
+            "threads": threads if threads > 0 else THREADS_DEFAULT,
+            "max_temp_directory_size": _size("RC_DUCKDB_MAX_TEMP", MAX_TEMP_DEFAULT)}
+
+
+def spill_dir(path: Path) -> Path:
+    """Where the build file ``path`` spills: under the raw root (the server's HDD), one folder per build, which DuckDB
+    removes when the build closes. Not beside the build file: request 71 spilled 47 GB on the SSD the live files share
+    (#372)."""
+    return Path(config.MARKET_RAW_DIR) / "build_tmp" / f"{path.name}.tmp"
 
 
 class SwapRefused(RuntimeError):
@@ -270,7 +286,9 @@ def build(kind: str) -> Iterator[BuildFile]:
     build_id = new_build_id()
     path = build_path(kind, build_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    con = duckdb.connect(str(path), config=build_config())
+    spill = spill_dir(path)
+    spill.parent.mkdir(parents=True, exist_ok=True)               # DuckDB makes only the last level
+    con = duckdb.connect(str(path), config={**build_config(), "temp_directory": str(spill)})
     b = BuildFile(kind, build_id, path, con)
     try:
         con.execute(f"CREATE TABLE {VERSION_TABLE} (kind TEXT, version INTEGER, built_at DOUBLE, build_id TEXT)")
