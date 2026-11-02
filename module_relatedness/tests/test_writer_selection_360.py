@@ -265,8 +265,7 @@ def test_the_writer_modules_take_the_model_per_call(rawstore_tmp_db, monkeypatch
 # ── review S2 + nit4 (PR 362): a partial reset and a shared model name never leave an invalid pair ──────────
 
 def test_a_partial_reset_falls_back_to_the_providers_default_model(rawstore_tmp_db, monkeypatch, tmp_path):
-    from RevenueChaser.core import subscription_usage
-    monkeypatch.setattr(subscription_usage, "xai_token", lambda now=None: "x")
+    monkeypatch.setenv("XAI_OAUTH_TOKEN", "x")                # Grok present (presence only, #368)
     board_settings.save(settings.BOARD, {"WRITER": "grok", "WRITER_MODEL": "grok-4.6"})
     board_settings.reset(settings.BOARD, ["WRITER"])        # the API accepts a one-key reset
     assert settings.writer() == ("evren", "deepseek-v4.1-flash")
