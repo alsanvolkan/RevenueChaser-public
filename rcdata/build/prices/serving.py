@@ -675,10 +675,18 @@ ADJ_SQL = f"""
            CAST(n AS INTEGER) AS events
     FROM ev ORDER BY security_id, ex_date"""
 
+# The symbols of the served bars, and of a history bar on a session whose winner has none (#363): CRSP's bar carries no
+# symbol (a delisted PERMNO's ticker can be another listing's today), so a Compustat-only name whose sessions CRSP all
+# wins keeps Compustat's ``tic``. Not on a session Alpaca won: Compustat writes the current ``tic`` on every past day,
+# which would pull a new ticker's start back in time (review of #364).
 SYMBOL_SQL = """
-    WITH p AS (SELECT security_id, symbol, any_value(cik) AS cik, min(session_date) AS lo,
-                      arg_max(source, session_date) AS source
-               FROM price_bar_daily WHERE symbol IS NOT NULL AND security_id NOT LIKE 'index:%' GROUP BY ALL)
+    WITH b AS (SELECT security_id, symbol, cik, session_date, source FROM price_bar_daily
+               UNION ALL SELECT h.security_id, h.symbol, h.cik, h.session_date, h.source FROM _hist_all h
+               WHERE NOT EXISTS (SELECT 1 FROM price_bar_daily w WHERE w.security_id = h.security_id
+                                 AND w.session_date = h.session_date AND w.symbol IS NOT NULL)),
+    p AS (SELECT security_id, symbol, any_value(cik) AS cik, min(session_date) AS lo,
+                 arg_max(source, session_date) AS source
+          FROM b WHERE symbol IS NOT NULL AND security_id NOT LIKE 'index:%' GROUP BY ALL)
     SELECT security_id, symbol, cik, lo AS valid_from,
            lead(lo) OVER (PARTITION BY security_id ORDER BY lo) AS valid_to, source FROM p
     UNION ALL
