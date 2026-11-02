@@ -156,15 +156,26 @@ def test_cftc_schedule_ignores_a_year_outside_any_heading():
 
 
 @pytest.mark.parametrize("page, dates", [
-    # Review S1 (#367): an unclosed heading must not swallow the next year's heading and date its rows.
+    # Review S1 (#367): an unclosed heading still dates its own table, and never swallows the next year's heading.
     ("<h3>2026 Release Schedule<table><tr><td>December</td><td>28*</td></tr></table>"
-     "<h3>2027 Release Schedule</h3><table><tr><td>January</td><td>08</td></tr></table>", [date(2027, 1, 5)]),
+     "<h3>2027 Release Schedule</h3><table><tr><td>January</td><td>08</td></tr></table>",
+     [date(2026, 12, 22), date(2027, 1, 5)]),
+    # ... nor is its table left to the year heading before it (delta review S1 at 129a004).
+    ("<h3>2025 Release Schedule</h3><table><tr><td>March</td><td>07</td></tr></table>"
+     "<h3>2026 Release Schedule<table><tr><td>March</td><td>06</td></tr></table>"
+     "<h3>2027 Release Schedule</h3><table><tr><td>March</td><td>05</td></tr></table>",
+     [date(2025, 3, 4), date(2026, 3, 3), date(2027, 3, 2)]),
+    ("<h3>2026 Release Schedule</h4><table><tr><td>March</td><td>06</td></tr></table>", [date(2026, 3, 3)]),
+    # A closed table inside the heading does not hide the heading (delta review N1).
+    ("<h3>2027 Release Schedule<table></table></h3><table><tr><td>January</td><td>08</td></tr></table>",
+     [date(2027, 1, 5)]),
     # Review S2: a heading without a year ends the previous year's section; its table is not dated.
     ("<h3>2026 Release Schedule</h3><table><tr><td>December</td><td>28*</td></tr></table>"
      "<h3>Release Schedule</h3><table><tr><td>January</td><td>08</td></tr></table>", [date(2026, 12, 22)]),
-    # Review N1: any entity before the year (&#160;, upper-case &NBSP;) is still a space.
+    # Review N1: a numeric no-break space between the year and the words is still a space.
     ("<h3>2027&#160;Release Schedule</h3><table><tr><td>January</td><td>08</td></tr></table>", [date(2027, 1, 5)]),
-    ("<h3>&NBSP;2027 Release Schedule</h3><table><tr><td>January</td><td>08</td></tr></table>", [date(2027, 1, 5)]),
+    # A cell with an entity before its day keeps the day (delta review N2).
+    ("<h3>2027 Release Schedule</h3><table><tr><td>January</td><td>&#160;08</td></tr></table>", [date(2027, 1, 5)]),
 ])
 def test_cftc_schedule_never_dates_a_table_with_another_headings_year(page, dates):
     assert [r["obs_date"] for r in cftc_schedule.parse(page, {})] == dates

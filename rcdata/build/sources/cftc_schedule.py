@@ -24,8 +24,9 @@ BASE = os.getenv("RC_CFTC_SCHEDULE_BASE") or "https://www.cftc.gov"
 PATH = "/MarketReports/CommitmentsofTraders/ReleaseSchedule/index.htm"
 _MONTHS = {m: i for i, m in enumerate(("january", "february", "march", "april", "may", "june", "july", "august",
                                        "september", "october", "november", "december"), 1)}
-# A heading's body stops at a nested heading or table, so an unclosed heading cannot swallow the next one (#367 S1).
-_HEADING = re.compile(r"<h([1-6])[^>]*>((?:(?!<h[1-6][\s>]|<table).)*?)</h\1\s*>", re.S | re.I)
+# A heading's body stops at any heading close, a nested heading or a table, and the close is optional: an unclosed
+# heading still dates its own table and never swallows the next heading (#367 S1).
+_HEADING = re.compile(r"<h[1-6][^>]*>((?:(?!<h[1-6][\s>]|<table|</h[1-6]\s*>).)*)(?:</h[1-6]\s*>)?", re.S | re.I)
 _YEAR = re.compile(r"\b(\d{4})\s+Release\s+Schedule\b", re.I)
 _ROW = re.compile(r"<tr.*?</tr>", re.S | re.I)
 _CELL = re.compile(r"<td[^>]*>(.*?)</td>", re.S | re.I)
@@ -61,12 +62,12 @@ def releases(page: str) -> list[date]:
     headings = list(_HEADING.finditer(page))
     for i, h in enumerate(headings):
         # Every heading ends the section before it; only a heading with a year dates the rows under it (#367 S2).
-        year = _heading_year(h.group(2))
+        year = _heading_year(h.group(1))
         if year is None:
             continue
         section = page[h.end(): headings[i + 1].start() if i + 1 < len(headings) else len(page)]
         for row in _ROW.findall(section):
-            cells = [re.sub(r"<[^>]+>|&nbsp;", " ", c).strip() for c in _CELL.findall(row)]
+            cells = [html.unescape(re.sub(r"<[^>]+>", " ", c)).strip() for c in _CELL.findall(row)]
             month = _MONTHS.get(cells[0].lower()) if cells else None
             if month:
                 out += [date(year, month, int(d)) for c in cells[1:] for d in re.findall(r"^(\d{1,2})", c)]
