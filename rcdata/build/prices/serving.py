@@ -3,8 +3,8 @@
 **Tables** (``prices.duckdb``, serving schema version 1), every one keyed on the security id (``prices.security_id``):
 
 - ``price_bar_daily``: one bar per security and New York session, **nominal** (the prices as traded that day):
-  Alpaca's daily bars, then the WRDS history where Alpaca has no bar (``wrds/prices``: CRSP where it links to the
-  Compustat security, else Compustat; the long run is Phase 8), and the S&P 500 index level from the market store's
+  Alpaca's daily bars, then the WRDS history where Alpaca has no bar (``wrds/prices``: CRSP where it is the same
+  security, through ``wrds_history.PERMNO_LINK``, else Compustat), and the S&P 500 index level from the market store's
   Cboe file (``index:SPX``, the close only);
 - ``corporate_action``: Alpaca's actions of the store's securities, resolved to the security that traded under the
   action's symbol nearest its date (else the spine's current ticker), and Compustat's splits and dividends of the
@@ -82,8 +82,30 @@ ISSUER_WITHIN_DAYS = 14
 APPLIED = ("split", "stock_dividend", "cash_dividend")
 NOT_APPLIED = ("spin_off", "unit_split", "rights_distribution")
 
+# The CRSP bars no action adjusts (review S1 of #353 and its delta review, SHOULD 3-4): those of a security no Compustat
+# record reaches (named otherwise than ``gvkey:iid`` and no ``_gvkey_alias``), before its first Alpaca bar. One row
+# per security with a CRSP bar, built once, so the view joins a small table instead of grouping every bar on each
+# read; ``unadjusted_before`` is NULL where Compustat's actions reach the security. Its rows are every security with a
+# CRSP bar in the history (``_hist_all``), not only those still served one: an Alpaca fill over a CRSP span must not
+# drop the row (review 2 of the delta), because the table is no dataset's own and ``allow_shrink`` cannot relax it.
+UNADJUSTED_TABLE = "crsp_unadjusted"
+CRSP_UNADJUSTED = [("security_id", "TEXT"), ("unadjusted_before", "DATE")]
+UNADJUSTED_SQL = f"""
+    SELECT h.security_id,
+           CASE WHEN (h.security_id LIKE 'figi:%' OR h.security_id LIKE 'cik:%' OR h.security_id LIKE 'sym:%')
+                 AND h.security_id NOT IN (SELECT security_id FROM _gvkey_alias)
+                THEN coalesce(min(a.session_date), DATE '9999-12-31') END AS unadjusted_before
+    FROM (SELECT DISTINCT security_id FROM _hist_all WHERE source = '{wrds_history.CRSP}') h
+    LEFT JOIN price_bar_daily a ON a.security_id = h.security_id AND a.source = '{ALPACA_BARS}'
+    GROUP BY h.security_id"""
+UNADJUSTED = ("coalesce({b}.source = '" + wrds_history.CRSP + "' AND {b}.session_date < {u}.unadjusted_before, "
+              "false)")
+
 ISSUE_KINDS = {
     "source_never_run": "a source this build needs has no data yet (key: the dataset)",
+    "crsp_ticker_link": ("a spine security, no ETF, whose CRSP PERMNO linked by ticker alone, no CUSIP behind it "
+                         "(key: the security id; the detail names the PERMNO and the ticker, review S4 of #353 and "
+                         "SHOULD 5 of its delta review)"),
     "tier_a_no_bar": "a Tier A name with no bar on the newest Alpaca session (key: the security id)",
     "tier_a_no_shares": "a Tier A name with no shares, so no market cap, on the newest session (key: the security id)",
     "price_gap_no_action": ("the split-adjusted close moved by GAP_FACTOR or more with no split that day "
@@ -130,7 +152,7 @@ WRDS_PRICE_DIFF = [("comparison", "TEXT"), ("as_of", "DATE"), ("securities", "IN
                    ("max_return_diff", "DOUBLE"), ("first_session", "DATE"), ("last_session", "DATE")]
 SCHEMAS = {"price_bar_daily": PRICE_BAR, "corporate_action": CORPORATE_ACTION, "adj_factor": ADJ_FACTOR,
            "shares_class": SHARES_CLASS, "security_symbol": SECURITY_SYMBOL, "market_cap_daily": MARKET_CAP,
-           "price_revision": PRICE_REVISION, "wrds_price_diff": WRDS_PRICE_DIFF}
+           "price_revision": PRICE_REVISION, "wrds_price_diff": WRDS_PRICE_DIFF, UNADJUSTED_TABLE: CRSP_UNADJUSTED}
 KEYS = {"price_bar_daily": ("security_id", "session_date"), "market_cap_daily": ("security_id", "session_date")}
 
 # The security id of a spine row, the SQL twin of ``prices.security_id``.
@@ -177,17 +199,24 @@ def _create(con: duckdb.DuckDBPyConnection, table: str, select: str) -> int:
 
 
 def _spine(con: duckdb.DuckDBPyConnection) -> int:
-    """``stg_spine``: the live spine's ``security`` rows with their security id (empty before a first spine)."""
+    """``stg_spine``: the live spine's ``security`` rows with their security id (empty before a first spine), and
+    ``is_etf`` / ``inception`` from its ``etf`` table when it has one (schema 4, #349), for the CRSP ticker rule."""
     from ... import serving
     con.execute("CREATE OR REPLACE TEMP TABLE stg_spine (ticker TEXT, cik TEXT, tier TEXT, security_type TEXT, "
-                "gvkey TEXT, iid TEXT, composite_figi TEXT, security_id TEXT)")
+                "gvkey TEXT, iid TEXT, composite_figi TEXT, security_id TEXT, cusip TEXT, is_etf BOOLEAN, "
+                "inception DATE)")
     live = serving.live_path("spine")
     if not live.exists():
         return 0
     con.execute(f"ATTACH {base.sql_path(live)} AS live_spine (READ_ONLY)")
     try:
+        has_etf = con.execute("SELECT count(*) FROM duckdb_tables() WHERE database_name = 'live_spine' "
+                              "AND table_name = 'etf'").fetchone()[0]
+        etf = ("LEFT JOIN (SELECT ticker AS etf_ticker, inception FROM live_spine.etf) e ON e.etf_ticker = ticker"
+               if has_etf else "LEFT JOIN (SELECT NULL AS etf_ticker, CAST(NULL AS DATE) AS inception) e ON false")
         con.execute(f"INSERT INTO stg_spine SELECT ticker, cik, tier, security_type, gvkey, iid, composite_figi, "
-                    f"{SPINE_ID} FROM live_spine.security")
+                    f"{SPINE_ID}, nullif(cusip, ''), e.etf_ticker IS NOT NULL, e.inception "
+                    f"FROM live_spine.security {etf}")
     finally:
         con.execute("DETACH live_spine")
     return stage.count(con, "stg_spine")
@@ -234,6 +263,8 @@ CREATE OR REPLACE TEMP TABLE _act AS
     best AS (SELECT action_id, security_id FROM cand
              QUALIFY row_number() OVER (PARTITION BY action_id ORDER BY pri, dist, security_id) = 1)
     SELECT best.security_id, a.*, '{actions}' AS source FROM a JOIN best USING (action_id);
+CREATE OR REPLACE TEMP TABLE _permno_link AS {link};
+CREATE OR REPLACE TEMP TABLE _gvkey_alias AS {alias};
 CREATE OR REPLACE TEMP TABLE _hist_all AS
     SELECT * FROM ({crsp}) UNION ALL BY NAME SELECT * FROM ({comp});
 """
@@ -279,7 +310,9 @@ class PricesServing:
                 found.append(("source_never_run", ds, f"{ds} has no rows in this build"))
         _spine(con)
         con.execute(BUILD_SQL.format(bars=ALPACA_BARS, actions=ALPACA_ACTIONS, crsp=wrds_history.CRSP_BARS,
-                                     comp=wrds_history.COMP_BARS))
+                                     comp=wrds_history.COMP_BARS, link=wrds_history.PERMNO_LINK,
+                                     alias=wrds_history.GVKEY_ALIAS))
+        self._link_note(ctx, con, found)
         counts = {}
         cols = ", ".join(c for c, _ in PRICE_BAR)
         # Alpaca's bar wins its session; of the history bars, CRSP's before Compustat's.
@@ -297,10 +330,41 @@ class PricesServing:
         counts["price_revision"] = _create(con, "price_revision",
                                            f"{REVISION_SQL} UNION ALL {wrds_history.REVISIONS_SQL}")
         counts["wrds_price_diff"] = self._wrds_report(con)
+        counts[UNADJUSTED_TABLE] = _create(con, UNADJUSTED_TABLE, UNADJUSTED_SQL)
         self._views(con)
+        kept_out = con.execute(f"SELECT count(*), count(DISTINCT b.security_id) FROM price_bar_daily b "
+                               f"JOIN {UNADJUSTED_TABLE} u USING (security_id) "
+                               f"WHERE {UNADJUSTED.format(b='b', u='u')}").fetchone()
+        if kept_out[0]:
+            ctx.notes.append(f"{kept_out[0]} CRSP bars of {kept_out[1]} securit{'y' if kept_out[1] == 1 else 'ies'} "
+                             "without a Compustat record kept out of price_bars_daily (nominal in price_bar_daily)")
         found += self._issues(con, have)
         ctx.pending[NAME] = found
         return counts
+
+    @staticmethod
+    def _link_note(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, found: list) -> None:
+        """The CRSP link, observable (review S4 of #353): PERMNOs per rule, the unlinked ones, the gvkey aliases; the
+        ticker links, the one rule without an identifier behind it, as one issue naming them."""
+        if not stage.count(con, "stg_wrds_dsf"):
+            return
+        by = dict(con.execute("SELECT how, count(*) FROM _permno_link GROUP BY how").fetchall())
+        unlinked = con.execute("SELECT count(DISTINCT permno) FROM stg_wrds_dsf "
+                               "WHERE permno NOT IN (SELECT permno FROM _permno_link)").fetchone()[0]
+        aliases = stage.count(con, "_gvkey_alias")
+        no_day = con.execute("SELECT count(*) FROM stg_spine WHERE is_etf AND inception IS NULL AND security_id "
+                             "NOT IN (SELECT security_id FROM _permno_link) AND ticker IN "
+                             "(SELECT arg_max_null(ticker, dlycaldt) FROM stg_wrds_dsf GROUP BY permno)").fetchone()[0]
+        ctx.notes.append("CRSP link: " + ", ".join(f"{by.get(h, 0)} by {h}" for h in
+                                                   ("hdrcusip", "cusip", "ticker", "compustat"))
+                         + f"; {unlinked} unlinked; {aliases} gvkey aliases; "
+                         f"{no_day} ETFs without an inception day unlinked")
+        # One issue per security (an open issue's detail is not rewritten, so one shared row would freeze its list).
+        # An ETF's ticker link is its designed one (the spine holds no CUSIP for it; the inception day guards it).
+        for sid, permno, ticker in con.execute(
+                "SELECT l.security_id, l.permno, s.ticker FROM _permno_link l JOIN stg_spine s USING (security_id) "
+                "WHERE l.how = 'ticker' AND NOT coalesce(s.is_etf, false) ORDER BY s.ticker").fetchall():
+            found.append(("crsp_ticker_link", sid, f"PERMNO {permno} linked to {ticker} by ticker only (no CUSIP)"))
 
     # ── Actions ───────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -457,6 +521,9 @@ class PricesServing:
 
     @staticmethod
     def _views(con: duckdb.DuckDBPyConnection) -> None:
+        # Review S1 of #353: before its Alpaca window only Compustat's actions adjust a history bar, so a CRSP bar of a
+        # security no Compustat record reaches (``UNADJUSTED_SQL``) has none applied. It stays in ``price_bar_daily``
+        # (nominal) and out of the adjusted view.
         built = "(SELECT max(built_at) FROM serving_schema_version)"
         con.execute("CREATE VIEW security_symbol_now AS SELECT security_id, symbol FROM security_symbol "
                     "QUALIFY row_number() OVER (PARTITION BY security_id ORDER BY valid_to IS NULL DESC, "
@@ -469,7 +536,8 @@ class PricesServing:
                    'prices/adj_factor' AS adj_source, b.source, {built} AS fetched_at, b.run_id, {built} AS run_at
             FROM price_bar_daily b JOIN security_symbol_now n USING (security_id)
             {factor_join('a', 'b.security_id', 'b.session_date')}
-            WHERE b.security_id NOT LIKE 'index:%'""")
+            LEFT JOIN {UNADJUSTED_TABLE} u ON u.security_id = b.security_id
+            WHERE b.security_id NOT LIKE 'index:%' AND NOT ({UNADJUSTED.format(b='b', u='u')})""")
         con.execute(f"""CREATE VIEW price_actions AS
             SELECT n.symbol AS ticker, c.ex_date, CASE WHEN c.action = 'cash_dividend' THEN 'dividend'
                    ELSE 'split' END AS action,
