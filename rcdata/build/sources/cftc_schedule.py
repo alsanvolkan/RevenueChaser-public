@@ -23,7 +23,8 @@ BASE = os.getenv("RC_CFTC_SCHEDULE_BASE") or "https://www.cftc.gov"
 PATH = "/MarketReports/CommitmentsofTraders/ReleaseSchedule/index.htm"
 _MONTHS = {m: i for i, m in enumerate(("january", "february", "march", "april", "may", "june", "july", "august",
                                        "september", "october", "november", "december"), 1)}
-_YEAR = re.compile(r"<h\d[^>]*>(?:\s*<[^>]+>)*\s*(\d{4})\s+Release\s+Schedule", re.I)   # a heading only
+_HEADING = re.compile(r"<h([1-6])[^>]*>(.*?)</h\1\s*>", re.S | re.I)
+_YEAR = re.compile(r"\b(\d{4})\s+Release\s+Schedule\b", re.I)
 _ROW = re.compile(r"<tr.*?</tr>", re.S | re.I)
 _CELL = re.compile(r"<td[^>]*>(.*?)</td>", re.S | re.I)
 
@@ -42,18 +43,26 @@ def backfill(ctx, start: date, end: date) -> list[Path]:
     return fetch(ctx, end)
 
 
+def _heading_year(inner: str) -> int | None:
+    """The year of a "<year> Release Schedule" heading, read from its text (tags and &nbsp; stripped, #359), so a
+    word or a space before the year still counts and a sentence outside a heading never does."""
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>|&nbsp;|\xa0", " ", inner))
+    m = _YEAR.search(text)
+    return int(m.group(1)) if m else None
+
+
 def releases(html: str) -> list[date]:
     """The release dates on the page, in page order. Each "<year> Release Schedule" heading dates the month rows up
     to the next heading (December can show two years); rows before the first heading are not read."""
     out = []
-    marks = list(_YEAR.finditer(html))
-    for i, m in enumerate(marks):
-        section = html[m.end(): marks[i + 1].start() if i + 1 < len(marks) else len(html)]
+    marks = [(h, year) for h in _HEADING.finditer(html) if (year := _heading_year(h.group(2)))]
+    for i, (h, year) in enumerate(marks):
+        section = html[h.end(): marks[i + 1][0].start() if i + 1 < len(marks) else len(html)]
         for row in _ROW.findall(section):
             cells = [re.sub(r"<[^>]+>|&nbsp;", " ", c).strip() for c in _CELL.findall(row)]
             month = _MONTHS.get(cells[0].lower()) if cells else None
             if month:
-                out += [date(int(m.group(1)), month, int(d)) for c in cells[1:] for d in re.findall(r"^(\d{1,2})", c)]
+                out += [date(year, month, int(d)) for c in cells[1:] for d in re.findall(r"^(\d{1,2})", c)]
     return out
 
 

@@ -138,6 +138,23 @@ def test_cftc_schedule_reads_the_year_from_a_heading_only():
     assert [r["obs_date"] for r in cftc_schedule.parse(page, {})] == [date(2027, 1, 5)]
 
 
+@pytest.mark.parametrize("heading", ["<h3>&nbsp;2027 Release Schedule</h3>", "<h3>CFTC 2027 Release Schedule</h3>",
+                                     "<h2 class='x'><strong>2027&nbsp;Release\n Schedule</strong></h2>"])
+def test_cftc_schedule_reads_the_year_from_the_heading_text(heading):
+    """#359 N1: the year is read from the heading's text, so a leading &nbsp; or a word before the year still dates
+    the table; in December the 2027 rows must never fall into the 2026 section."""
+    page = (f"<h3>2026 Release Schedule</h3><table><tr><td>December</td><td>28*</td></tr></table>"
+            f"{heading}<table><tr><td>January</td><td>08</td></tr></table>")
+    assert [r["obs_date"] for r in cftc_schedule.parse(page, {})] == [date(2026, 12, 22), date(2027, 1, 5)]
+
+
+def test_cftc_schedule_ignores_a_year_outside_any_heading():
+    """#359 N2: an empty heading followed by a sentence that starts with a year is not a heading for that year."""
+    page = ("<h2><a id='t'></a></h2><p>2027 Release Schedule note</p>"
+            "<table><tr><td>January</td><td>08</td></tr></table>")
+    assert cftc_schedule.parse(page, {}) == []
+
+
 def test_cftc_schedule_keys_a_tuesday_release_on_the_tuesday_before():
     lag = {r["obs_date"]: r["value"] for r in cftc_schedule.parse(
         "<h3>2026 Release Schedule</h3><table><tr><td>May</td><td>26*</td></tr></table>", {})}
