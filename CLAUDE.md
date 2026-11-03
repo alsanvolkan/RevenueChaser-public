@@ -50,6 +50,10 @@ Code, comments, commit messages, issues and docs are written in **English**.
   or a migration itself is marked `@pytest.mark.rawstore_schema_from_scratch` and gets the apply on its own file.
 - CI (`.github/workflows/tests.yml`) runs both tiers on every pull request into `main` and on `main`. The unit tier
   runs under `pytest -n auto --dist loadfile`, because a single pytest process is single-core bound.
+  A push to a PR runs only the test files that import a changed file (`scripts/select_tests.py`; check names
+  `unit (SELECTIVE)` / `e2e (SELECTIVE)`), and falls back to FULL when that is not safe to say. **The merge gate is a
+  green `merge-gate` check on the current head** (it fails on purpose for a SELECTIVE run): label the PR `full-ci` before merging, and every
+  later push stays FULL. `main` and a manual dispatch always run FULL.
 - **TDD:** watch each new test fail before implementing it, and run the tests of the modules you touched before
   pushing. Report honestly which tests you saw red first and which mutation checks you ran — "not done" is an
   acceptable answer, an implied "done" is not.
