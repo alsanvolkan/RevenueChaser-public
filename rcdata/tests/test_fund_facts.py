@@ -200,12 +200,23 @@ def test_the_backfill_reads_every_tier_a_company_once_and_serves_its_facts(sec):
     assert len(sec.calls("companyfacts")) == 4                         # resumable: nobody is read twice
 
 
-def test_requests_to_the_sec_are_spaced_under_five_a_second(sec):
+def test_requests_to_the_sec_are_spaced_at_most_five_a_second(sec):
     _answers(sec)
     slept = []
     fx.run(companyfacts.NAME, mode="backfill", to="2026-10-28", sleep=slept.append, clock=lambda: 100.0)
     assert len(slept) == len(sec.requests) - 1 and set(slept) == {companyfacts.common.SEC_INTERVAL_S}
-    assert 1 / companyfacts.common.SEC_INTERVAL_S < 5
+    assert 1 / companyfacts.common.SEC_INTERVAL_S <= companyfacts.common.sec_throttle.FALLBACK_RATE
+
+
+def test_every_sec_request_takes_a_token_of_the_shared_sec_bucket(sec, monkeypatch):
+    """Review of #380, finding 2: the fundamentals' SEC requests spend from ``core/sec_throttle``'s box-wide bucket
+    like every other SEC caller, so the box stays under the SEC's 10 a second."""
+    from RevenueChaser.core import sec_throttle
+    _answers(sec)
+    tokens = []
+    monkeypatch.setattr(sec_throttle, "pace", lambda: tokens.append(1) or True)
+    fx.run(companyfacts.NAME, mode="backfill", to="2026-10-28", sleep=lambda s: None, clock=lambda: 100.0)
+    assert sec.requests and len(tokens) == len(sec.requests)
 
 
 def test_a_newer_filing_that_restates_an_old_quarter_is_served_with_its_accession(sec):

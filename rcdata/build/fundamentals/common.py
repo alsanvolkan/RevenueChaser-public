@@ -6,8 +6,9 @@ when the kind is built (no network: ``spine.duckdb`` is a local file). No spine 
 fetch asks nothing and the build serves empty tables.
 
 **The SEC.** Every SEC request carries ``RC_SEC_USER_AGENT`` ("Name email", the SEC's rule) when it is set, else the
-builder's own User-Agent with ``RC_HTTP_CONTACT``; requests are spaced ``SEC_INTERVAL_S`` apart: 4 a second
-against the SEC's 10 (``caps.WINDOWS``), a margin of 6 for the box's other SEC callers, because this spacing does not take ``core/sec_throttle.py``'s shared bucket.
+builder's own User-Agent with ``RC_HTTP_CONTACT``; each request takes a token of ``core/sec_throttle.py``'s
+box-wide bucket (every SEC caller's, 8 a second against the SEC's 10, ``caps.WINDOWS``) and is spaced ``SEC_INTERVAL_S``
+apart, 5 a second: half the 10, this process's share when the bucket cannot be used.
 """
 from __future__ import annotations
 
@@ -19,12 +20,13 @@ from typing import Any, Callable, Iterable
 import duckdb
 import httpx
 
+from ....core import sec_throttle
 from .. import base
 from . import KIND
 
 SEC = "sec"
 SEC_UA_ENV = "RC_SEC_USER_AGENT"
-SEC_INTERVAL_S = 0.25          # official 10/s (caps.WINDOWS["sec"]); 4/s, margin 6/s for the other SEC callers
+SEC_INTERVAL_S = 1 / sec_throttle.FALLBACK_RATE   # 5/s: half the SEC's 10/s, the share if the bucket falls back
 META_SUFFIX = ".meta.json"
 _DIGITS = re.compile(r"^\d{1,10}$")
 
@@ -58,10 +60,12 @@ def norm_cik(value) -> str | None:
 
 
 class Spacing:
-    """At least ``interval`` seconds between two calls: ``wait()`` before each one sleeps the rest of the gap."""
+    """At least ``interval`` seconds between two calls: ``wait()`` before each one sleeps the rest of the gap, then
+    takes one token of ``shared`` when it is given (the box-wide SEC bucket)."""
 
-    def __init__(self, interval: float, clock: Callable[[], float], sleep: Callable[[float], Any]):
-        self.interval, self._clock, self._sleep = interval, clock, sleep
+    def __init__(self, interval: float, clock: Callable[[], float], sleep: Callable[[float], Any],
+                 shared: Callable[[], Any] | None = None):
+        self.interval, self._clock, self._sleep, self._shared = interval, clock, sleep, shared
         self._last: float | None = None
 
     def wait(self) -> None:
@@ -69,6 +73,8 @@ class Spacing:
             gap = self.interval - (self._clock() - self._last)
             if gap > 0:
                 self._sleep(gap)
+        if self._shared is not None:
+            self._shared()
         self._last = self._clock()
 
 
@@ -76,7 +82,8 @@ def sec_spacing(ctx: base.RunContext) -> Spacing:
     """One spacing per run, shared by every SEC dataset of the run (``ctx.pending``)."""
     spacing = ctx.pending.get("_sec_spacing")
     if spacing is None:
-        spacing = ctx.pending["_sec_spacing"] = Spacing(SEC_INTERVAL_S, ctx.clock, ctx.sleep)
+        spacing = ctx.pending["_sec_spacing"] = Spacing(SEC_INTERVAL_S, ctx.clock, ctx.sleep,
+                                                         shared=lambda: sec_throttle.pace())
     return spacing
 
 
